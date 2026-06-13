@@ -79,9 +79,15 @@ customer-work:
     msg-threshold: 40
     last-keep: 10
   skill:
-    # Skill 技能库：从 classpath 的 skills/<name>/SKILL.md 加载 Markdown 技能
+    # Skill 技能库
     enabled: true
+    # 仓库：classpath（只读内置）| filesystem（可写，支持技能自进化/写回）
+    repository: classpath
     location: skills
+    directory: ./data/skills
+    writable: true
+    # 注册"运行时加载技能"工具，允许 Agent 按需自行加载技能
+    runtime-load-tool-enabled: false
   mcp:
     # MCP 接入：把存量 HTTP 系统零改造接成 Agent 工具。默认关闭，配置 servers 后生效
     enabled: false

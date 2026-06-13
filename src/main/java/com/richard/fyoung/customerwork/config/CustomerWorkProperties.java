@@ -231,10 +231,18 @@ public class CustomerWorkProperties {
     /** Skill 技能库配置。 */
     @Data
     public static class Skill {
-        /** 是否启用 Skill（从 classpath 加载 Markdown 技能）。 */
+        /** 是否启用 Skill。 */
         private boolean enabled = true;
-        /** classpath 下技能目录。 */
+        /** 仓库类型：classpath（只读内置）| filesystem（可读写，支持技能自进化/写回）。 */
+        private String repository = "classpath";
+        /** classpath 仓库的资源目录。 */
         private String location = "skills";
+        /** filesystem 仓库的磁盘目录。 */
+        private String directory = "./data/skills";
+        /** filesystem 仓库是否可写（支持 Agent 沉淀 / 上传新技能）。 */
+        private boolean writable = true;
+        /** 是否注册"运行时加载技能"工具，允许 Agent 按需自行加载技能。 */
+        private boolean runtimeLoadToolEnabled = false;
     }
 
     /** MCP 接入配置。 */

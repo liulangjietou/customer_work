@@ -20,6 +20,7 @@ import io.agentscope.core.rag.RAGMode;
 import io.agentscope.core.skill.AgentSkill;
 import io.agentscope.core.skill.SkillBox;
 import io.agentscope.core.skill.repository.ClasspathSkillRepository;
+import io.agentscope.core.skill.repository.FileSystemSkillRepository;
 import io.agentscope.core.tool.Toolkit;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -29,6 +30,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -194,14 +196,27 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         return builder.build();
     }
 
-    /** 从 classpath 加载 Markdown 技能并注册进 SkillBox。 */
+    /** 加载技能并注册进 SkillBox（支持 classpath 只读 / filesystem 可写自进化）。 */
     private SkillBox buildSkillBox(Toolkit toolkit) {
+        CustomerWorkProperties.Skill cfg = properties.getSkill();
         try {
-            ClasspathSkillRepository repo =
-                new ClasspathSkillRepository(properties.getSkill().getLocation());
+            List<AgentSkill> skills;
+            if ("filesystem".equalsIgnoreCase(cfg.getRepository())) {
+                java.nio.file.Path dir = Path.of(cfg.getDirectory());
+                java.nio.file.Files.createDirectories(dir);
+                skills = new FileSystemSkillRepository(dir, cfg.isWritable()).getAllSkills();
+                log.info("[Skill] filesystem 仓库({}, writable={})", dir.toAbsolutePath(), cfg.isWritable());
+            } else {
+                skills = new ClasspathSkillRepository(cfg.getLocation()).getAllSkills();
+            }
             SkillBox skillBox = new SkillBox(toolkit);
-            for (AgentSkill skill : repo.getAllSkills()) {
+            for (AgentSkill skill : skills) {
                 skillBox.registerSkill(skill);
+            }
+            // 运行时加载技能工具：允许 Agent 按需自行加载技能（技能自进化）
+            if (cfg.isRuntimeLoadToolEnabled()) {
+                skillBox.registerSkillLoadTool();
+                log.info("[Skill] 已注册运行时加载技能工具");
             }
             log.info("[Skill] 已加载技能 {} 个: {}", skillBox.getAllSkillIds().size(),
                 skillBox.getAllSkillIds());
