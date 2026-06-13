@@ -157,6 +157,15 @@ customer-work:
   interrupt:
     # 中断后无缝恢复：再次调用可恢复被打断的待执行工具调用
     pending-tool-recovery-enabled: true
+  protocol:
+    # AG-UI：标准 Agent-UI 事件协议（POST /api/customer/agui，SSE）
+    agui:
+      enabled: true
+      enable-reasoning: true
+      emit-tool-call-args: true
+    # TTS 语音合成（实时多模态）：需 DashScope 实时 TTS 模型与音频输出，默认关闭
+    tts:
+      enabled: false
   higress:
     # Higress AI 网关接入：按需工具发现 / 流量治理。默认关闭，配置 endpoint 后生效
     enabled: false

@@ -69,6 +69,9 @@ public class CustomerWorkProperties {
     /** 中断恢复。 */
     private final Interrupt interrupt = new Interrupt();
 
+    /** 交互协议（AG-UI / TTS）。 */
+    private final Protocol protocol = new Protocol();
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -385,6 +388,29 @@ public class CustomerWorkProperties {
     public static class Interrupt {
         /** 是否启用待执行工具恢复：中断后再次调用可无缝恢复被打断的工具调用。 */
         private boolean pendingToolRecoveryEnabled = true;
+    }
+
+    /** 交互协议配置（AG-UI / TTS）。 */
+    @Data
+    public static class Protocol {
+        private final Agui agui = new Agui();
+        private final Tts tts = new Tts();
+
+        /** AG-UI：标准 Agent-UI 事件协议（前端可直接消费的类型化事件流）。 */
+        @Data
+        public static class Agui {
+            private boolean enabled = true;
+            /** 是否在事件流中输出推理增量。 */
+            private boolean enableReasoning = true;
+            /** 是否输出工具调用参数事件。 */
+            private boolean emitToolCallArgs = true;
+        }
+
+        /** TTS：语音合成（实时多模态）。需 DashScope 实时 TTS 模型与音频输出，默认关闭。 */
+        @Data
+        public static class Tts {
+            private boolean enabled = false;
+        }
     }
 
     /** 运行时与调度配置。 */

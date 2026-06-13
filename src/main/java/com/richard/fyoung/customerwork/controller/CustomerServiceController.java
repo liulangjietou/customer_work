@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.controller;
 
+import com.richard.fyoung.customerwork.agent.AguiService;
 import com.richard.fyoung.customerwork.agent.MultiAgentOrchestrator;
 import com.richard.fyoung.customerwork.dto.ChatRequest;
 import com.richard.fyoung.customerwork.dto.ChatResponse;
@@ -35,11 +36,14 @@ public class CustomerServiceController {
 
     private final CustomerServiceService service;
     private final MultiAgentOrchestrator multiAgentOrchestrator;
+    private final AguiService aguiService;
 
     public CustomerServiceController(CustomerServiceService service,
-                                     MultiAgentOrchestrator multiAgentOrchestrator) {
+                                     MultiAgentOrchestrator multiAgentOrchestrator,
+                                     AguiService aguiService) {
         this.service = service;
         this.multiAgentOrchestrator = multiAgentOrchestrator;
+        this.aguiService = aguiService;
     }
 
     /**
@@ -96,6 +100,15 @@ public class CustomerServiceController {
     @PostMapping("/consult")
     public Mono<String> consult(@Valid @RequestBody ChatRequest request) {
         return multiAgentOrchestrator.consult(request.message());
+    }
+
+    /**
+     * AG-UI 协议对话（SSE）：输出标准 Agent-UI 事件流，兼容 AG-UI 的前端可直接对接。
+     */
+    @PostMapping(value = "/agui", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> agui(@Valid @RequestBody ChatRequest request) {
+        String sessionId = resolveSessionId(request.sessionId());
+        return aguiService.run(sessionId, request.message());
     }
 
     /**
