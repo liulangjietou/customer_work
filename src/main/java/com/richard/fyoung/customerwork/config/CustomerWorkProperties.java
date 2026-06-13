@@ -72,14 +72,35 @@ public class CustomerWorkProperties {
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
+        /** 模型厂商：dashscope（百炼）| openai | anthropic | gemini | ollama。 */
+        private String provider = "dashscope";
         private String apiKey;
         private String name = "qwen-max";
         private String baseUrl;
         private Double temperature = 0.3;
         private Integer maxTokens = 1500;
         private boolean stream = true;
+        /** 采样 topP（GenerateOptions 高级）。 */
+        private Double topP;
+        /** 推理强度（reasoning effort）：low / medium / high（GenerateOptions 高级）。 */
+        private String reasoningEffort;
+        /** DashScope 联网搜索（仅 dashscope 生效）。 */
+        private Boolean enableSearch;
+        /** DashScope 深度思考（仅 dashscope 生效）。 */
+        private Boolean enableThinking;
         /** Embedding 模型名（RAG 接百炼向量检索时使用）。 */
         private String embeddingName = "text-embedding-v3";
+        /** 私有化兜底：主模型失败时切换到兜底模型。 */
+        private final Fallback fallback = new Fallback();
+
+        @Data
+        public static class Fallback {
+            private boolean enabled = false;
+            private String provider = "ollama";
+            private String name = "qwen2.5";
+            private String apiKey = "";
+            private String baseUrl = "";
+        }
     }
 
     /** 会话持久化配置：memory | json | redis | mysql。 */
