@@ -1,0 +1,17 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: customer-work
+
+customer-work:
+  model:
+    # 可切换为 qwen-plus / qwen-turbo 等；模型名对应 DashScope 通义千问系列
+    name: qwen-max
+
+logging:
+  level:
+    root: INFO
+    com.example.customerwork: DEBUG
+    io.agentscope: INFO
