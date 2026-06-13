@@ -152,7 +152,9 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             .toolkit(toolkit)
             .memory(contextMemoryFactory.create())        // 短期记忆 / 智能上下文压缩
             .hook(new ObservabilityHook(meterRegistry))   // 可观测采集（日志 + Micrometer 指标）
-            .maxIters(properties.getAgent().getMaxIters());
+            .maxIters(properties.getAgent().getMaxIters())
+            // 中断后无缝恢复：保留并恢复被打断的待执行工具调用
+            .enablePendingToolRecovery(properties.getInterrupt().isPendingToolRecoveryEnabled());
 
         // Human-in-the-Loop：工具级人工确认闸门
         if (properties.getHumanApproval().isEnabled()) {

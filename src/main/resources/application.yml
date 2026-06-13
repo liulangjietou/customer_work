@@ -130,6 +130,9 @@ customer-work:
     # 定时维护任务（默认关闭）；需定时驱动 Agent 跑批可接 Quartz/XXL-JOB
     scheduler-enabled: false
     scheduler-fixed-delay-ms: 60000
+  interrupt:
+    # 中断后无缝恢复：再次调用可恢复被打断的待执行工具调用
+    pending-tool-recovery-enabled: true
   higress:
     # Higress AI 网关接入：按需工具发现 / 流量治理。默认关闭，配置 endpoint 后生效
     enabled: false
@@ -153,5 +156,5 @@ management:
 logging:
   level:
     root: INFO
-    com.example.customerwork: DEBUG
+    com.richard.fyoung.customerwork: DEBUG
     io.agentscope: INFO

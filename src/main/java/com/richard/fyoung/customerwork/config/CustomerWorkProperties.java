@@ -66,6 +66,9 @@ public class CustomerWorkProperties {
     /** 运行时与调度（优雅停机、定时维护）。 */
     private final Runtime runtime = new Runtime();
 
+    /** 中断恢复。 */
+    private final Interrupt interrupt = new Interrupt();
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -342,6 +345,13 @@ public class CustomerWorkProperties {
         private String mode = "fanout";
         /** 每个专家 Agent 的 ReAct 最大轮次。 */
         private int maxIters = 6;
+    }
+
+    /** 中断恢复配置。 */
+    @Data
+    public static class Interrupt {
+        /** 是否启用待执行工具恢复：中断后再次调用可无缝恢复被打断的工具调用。 */
+        private boolean pendingToolRecoveryEnabled = true;
     }
 
     /** 运行时与调度配置。 */
