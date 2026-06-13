@@ -2,6 +2,7 @@ package com.example.customerwork;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 /**
  * 智能客服系统启动类。
@@ -13,6 +14,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 需要结合各自基础设施落地，本项目以注释与扩展点（Hook、接口）的形式预留位置，不内置实现。</p>
  */
 @SpringBootApplication
+@ConfigurationPropertiesScan
 public class CustomerWorkApplication {
 
     public static void main(String[] args) {

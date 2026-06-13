@@ -2,39 +2,51 @@ package com.example.customerwork.service;
 
 import com.example.customerwork.agent.CustomerServiceAgentFactory;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.agent.EventType;
+import io.agentscope.core.agent.StreamOptions;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.session.Session;
+import io.agentscope.core.state.SimpleSessionKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 客服会话服务（对应流程图②"会话恢复与上下文装配"与⑤"记忆写入/状态持久化"）。
+ * 客服会话服务（对应深度解析一文②"会话恢复与上下文装配"与⑤"记忆写入 / 状态持久化"）。
  *
- * <p>核心职责：按 {@code sessionId} 维护 Agent 实例，使同一会话的多轮对话共享上下文记忆。</p>
+ * <p>核心职责：按 {@code sessionId} 维护 Agent 实例并做状态持久化，使同一会话的多轮对话
+ * 共享上下文，且重启 / 跨请求可恢复。</p>
  *
- * <p><b>关于会话持久化（重要工程说明）</b>：本示例用进程内 {@link ConcurrentHashMap} 缓存 Agent，
- * 演示"同一 sessionId 多轮连续对话"。但要实现图中"容器重启/扩缩容不丢会话、跨进程恢复"，
- * 需要把会话状态外置——使用 AgentScope 的 Session/State 能力把状态序列化到共享存储
- * （Redis / DB），并在请求到来时按 sessionId 反序列化恢复。这部分依赖你的存储基础设施，
- * 属于生产工程化范畴，此处以方法注释与扩展点形式预留，不内置具体存储实现。</p>
+ * <p><b>持久化机制</b>：进程内用 {@link ConcurrentHashMap} 缓存热 Agent（避免重复装配开销）；
+ * 每轮对话结束后调用 {@code agent.saveTo(session, key)} 把记忆与状态写入 {@link Session}；
+ * 首次为某会话创建 Agent 时调用 {@code agent.loadIfExists(session, key)} 恢复历史。
+ * {@link Session} 的具体实现（内存 / Json / Redis / MySQL）由 {@code SessionConfig} 决定，
+ * 本服务对存储无感知。</p>
  */
 @Service
 public class CustomerServiceService {
 
     private static final Logger log = LoggerFactory.getLogger(CustomerServiceService.class);
 
-    private final CustomerServiceAgentFactory agentFactory;
+    private static final String FALLBACK_REPLY =
+        "抱歉，系统繁忙，已为您记录问题，建议稍后再试或转人工坐席。";
 
-    /** 进程内会话缓存：sessionId -> Agent。生产中替换为基于 Session/State 的外置存储恢复。 */
+    private final CustomerServiceAgentFactory agentFactory;
+    private final Session session;
+
+    /** 进程内热 Agent 缓存：sessionId -> Agent。冷数据由 {@link Session} 持久化恢复。 */
     private final ConcurrentHashMap<String, ReActAgent> sessionAgents = new ConcurrentHashMap<>();
 
-    public CustomerServiceService(CustomerServiceAgentFactory agentFactory) {
+    public CustomerServiceService(CustomerServiceAgentFactory agentFactory, Session session) {
         this.agentFactory = agentFactory;
+        this.session = session;
     }
 
     /**
@@ -46,29 +58,88 @@ public class CustomerServiceService {
      */
     public Mono<String> chat(String sessionId, String userText) {
         log.info("[会话 {}] 收到用户消息: {}", sessionId, userText);
+        ReActAgent agent = resolveAgent(sessionId);
 
-        // 按 sessionId 获取/恢复 Agent（多轮共享记忆）
-        ReActAgent agent = sessionAgents.computeIfAbsent(sessionId, agentFactory::createAgent);
+        return agent.call(toUserMsg(userText))
+            .map(Msg::getTextContent)
+            .doOnNext(reply -> log.info("[会话 {}] 助手回复: {}", sessionId, reply))
+            .doOnSuccess(reply -> persist(sessionId, agent))
+            .onErrorResume(e -> {
+                log.error("[会话 {}] 处理失败", sessionId, e);
+                return Mono.just(FALLBACK_REPLY);
+            });
+    }
 
-        Msg userMsg = Msg.builder()
+    /**
+     * 处理一条用户消息，流式返回增量文本（对应⑤ streamEvents 逐 token 渲染）。
+     *
+     * <p>订阅 Agent 的类型化事件流，提取推理（文本）增量片段下发。会话状态在流结束后持久化。</p>
+     *
+     * @return 增量文本片段流（Flux，非阻塞）
+     */
+    public Flux<String> chatStream(String sessionId, String userText) {
+        log.info("[会话 {}] 收到用户消息(流式): {}", sessionId, userText);
+        ReActAgent agent = resolveAgent(sessionId);
+
+        StreamOptions options = StreamOptions.builder()
+            .eventTypes(EventType.REASONING, EventType.AGENT_RESULT)
+            .incremental(true)
+            .includeReasoningChunk(true)
+            .build();
+
+        return agent.stream(toUserMsg(userText), options)
+            .map(event -> event.getMessage() == null ? "" : event.getMessage().getTextContent())
+            .filter(text -> text != null && !text.isEmpty())
+            .doOnComplete(() -> persist(sessionId, agent))
+            .onErrorResume(e -> {
+                log.error("[会话 {}] 流式处理失败", sessionId, e);
+                return Flux.just(FALLBACK_REPLY);
+            });
+    }
+
+    /** 主动结束并清理会话：移除热缓存并删除持久化状态。 */
+    public void endSession(String sessionId) {
+        sessionAgents.remove(sessionId);
+        try {
+            session.delete(SimpleSessionKey.of(sessionId));
+        } catch (Exception e) {
+            log.warn("[会话 {}] 删除持久化状态失败（已忽略）: {}", sessionId, e.getMessage());
+        }
+        log.info("[会话 {}] 已结束并清理", sessionId);
+    }
+
+    /** 获取热 Agent；首次创建时尝试从持久化存储恢复历史会话。 */
+    private ReActAgent resolveAgent(String sessionId) {
+        return sessionAgents.computeIfAbsent(sessionId, id -> {
+            ReActAgent agent = agentFactory.createAgent(id);
+            try {
+                boolean restored = agent.loadIfExists(session, SimpleSessionKey.of(id));
+                if (restored) {
+                    log.info("[会话 {}] 已从持久化存储恢复历史上下文", id);
+                }
+            } catch (Exception e) {
+                log.warn("[会话 {}] 恢复历史上下文失败（按新会话处理）: {}", id, e.getMessage());
+            }
+            return agent;
+        });
+    }
+
+    /** 持久化会话状态。落盘可能涉及 IO，放到 boundedElastic 调度，避免阻塞响应式线程。 */
+    private void persist(String sessionId, ReActAgent agent) {
+        Schedulers.boundedElastic().schedule(() -> {
+            try {
+                agent.saveTo(session, SimpleSessionKey.of(sessionId));
+            } catch (Exception e) {
+                log.warn("[会话 {}] 持久化状态失败（已忽略）: {}", sessionId, e.getMessage());
+            }
+        });
+    }
+
+    private Msg toUserMsg(String userText) {
+        return Msg.builder()
             .role(MsgRole.USER)
             .name("user")
             .content(TextBlock.builder().text(userText).build())
             .build();
-
-        // 非阻塞调用：禁止在此处 .block()
-        return agent.call(userMsg)
-            .map(Msg::getTextContent)
-            .doOnNext(reply -> log.info("[会话 {}] 助手回复: {}", sessionId, reply))
-            .onErrorResume(e -> {
-                log.error("[会话 {}] 处理失败", sessionId, e);
-                return Mono.just("抱歉，系统繁忙，已为您记录问题，建议稍后再试或转人工。");
-            });
-    }
-
-    /** 主动结束并清理会话（生产中同时落库归档，供⑥数据飞轮复盘）。 */
-    public void endSession(String sessionId) {
-        sessionAgents.remove(sessionId);
-        log.info("[会话 {}] 已结束并清理", sessionId);
     }
 }
