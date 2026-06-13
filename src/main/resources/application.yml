@@ -60,7 +60,7 @@ customer-work:
   memory:
     # 长期记忆（跨会话、按租户隔离）
     long-term-enabled: true
-    # 实现：memory（内置内存）| bailian（阿里云百炼长期记忆）
+    # 实现：memory（内置内存）| bailian（百炼长期记忆）| mem0 | reme
     provider: memory
     # 租户解析分隔符：sessionId 形如 tenantA:conv-1 时，分隔符前为租户，同租户跨会话共享记忆
     tenant-delimiter: ":"
@@ -71,6 +71,13 @@ customer-work:
       memory-library-id: ""  # 百炼控制台创建的记忆库 ID
       project-id: ""
       top-k: 5
+    mem0:
+      api-key: ""
+      api-base-url: https://api.mem0.ai
+      api-type: platform     # platform | self_hosted
+      agent-name: customer-work
+    reme:
+      api-base-url: ""
   plan:
     # PlanNotebook 任务规划：引导 Agent 有序完成长链路任务
     enabled: true
@@ -78,9 +85,12 @@ customer-work:
   rag:
     # RAG 知识检索
     enabled: true
-    # 实现：memory（内置内存关键词）| bailian（百炼企业知识库，语义检索+重排）
+    # 实现：memory（内存关键词）| simple（百炼Embedding+内存向量库，真实语义）
+    #     | bailian（百炼企业知识库）| dify
     provider: memory
     top-k: 3
+    simple:
+      dimensions: 1024      # text-embedding-v3 维度
     bailian:
       access-key-id: ""
       access-key-secret: ""
@@ -88,6 +98,11 @@ customer-work:
       index-id: ""          # 百炼控制台创建的知识库索引 ID
       endpoint: ""
       enable-reranking: true
+    dify:
+      api-key: ""
+      api-base-url: ""
+      dataset-id: ""
+      enable-rerank: true
   context:
     # 智能上下文压缩（AutoContext）：长对话上下文有界。默认关闭（开启需可用模型）
     compression-enabled: false
@@ -104,6 +119,9 @@ customer-work:
     writable: true
     # 注册"运行时加载技能"工具，允许 Agent 按需自行加载技能
     runtime-load-tool-enabled: false
+    # 代码执行技能（注册读写/Shell 工具）。默认关闭
+    code-execution-enabled: false
+    code-execution-work-dir: ./data/skill-workspace
   mcp:
     # MCP 接入：把存量 HTTP 系统零改造接成 Agent 工具。默认关闭，配置 servers 后生效
     enabled: false

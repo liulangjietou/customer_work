@@ -26,21 +26,39 @@
 | ReActAgent | `CustomerServiceAgentFactory` 装配，`max-iters` 控制轮次 | 开 |
 | 流式输出 | `POST /chat/stream` 订阅 `agent.stream()` 类型化事件流逐片段 SSE 下发 | 开 |
 | 结构化输出 | `POST /intent` 用 `call(msg, IntentResult.class)` 返回强类型意图 | 开 |
-| 多轮会话 & 会话持久化 | 框架 `Session/State`，按 sessionId `saveTo`/`loadIfExists`，支持 **memory / json / redis / mysql** 四种存储 | 开 |
-| 长期记忆（多租户隔离） | 自实现 `LongTermMemory`，跨会话共享、按租户隔离 | 开 |
+| 多轮会话 & 持久化 | 框架 `Session/State`，按 sessionId `saveTo`/`loadIfExists`，支持 **memory/json/redis/mysql** | 开 |
+| 状态自动编排 | `SessionStateManager` 用 `SessionManager` 把多 StateModule 整体 save/load | 开 |
+| 长期记忆（多租户） | `LongTermMemoryProvider` 切换：内存 / **百炼** / **Mem0** / **ReMe**，按租户隔离 | 开 |
 | 智能上下文压缩 | `AutoContextMemory`，长对话自动压缩、上下文有界 | 关（需模型） |
-| Hook 可观测 | `ObservabilityHook` 采集 token/时延/工具/异常（日志 + Micrometer 指标）；可选 `JsonlTraceExporter` 导出 trace | 开 / trace 关 |
-| 运维就绪 | Actuator 健康检查（含会话后端 `SessionHealthIndicator`）+ Prometheus 指标 | 开 |
 | 三层记忆体系 | L1 短期 `Memory` + L2 长期 `LongTermMemory` + L3 只追加 `FactLog`（JSONL 审计） | 开 |
+| RAG | `KnowledgeProvider` 切换：内存关键词 / **simple 向量(百炼Embedding)** / **百炼知识库** / **Dify** | 开 |
 | 工具集成 | Toolkit + 四业务域 Tool Group + 可选 Meta-Tool 运行时启停 | 开 / meta 关 |
-| MCP 接入 | `McpToolkitConfigurer` 按配置把存量 HTTP 系统接成 Agent 工具 | 关 |
-| RAG | `KnowledgeProvider` 切换：内存关键词 / **百炼企业知识库**（`ragMode=AGENTIC`） | 开 |
-| 长期记忆（实现可切） | `LongTermMemoryProvider` 切换：内存多租户 / **百炼长期记忆** | 开 |
-| Skill | `SkillBox` + `ClasspathSkillRepository` 加载 `skills/<name>/SKILL.md` | 开 |
-| Human-in-the-Loop | `HumanApprovalHook` 对高风险工具执行后暂停 Agent 待人工复核 + 安全中断端点 | 开 |
-| **Higress AI 网关** | `HigressToolkitConfigurer` 接入 Higress，按需工具发现 / 流量治理 | 关 |
-| **接入层安全** | `ApiKeyAuthWebFilter`（API Key 鉴权）+ `RateLimitWebFilter`（限流） | 关 |
-| Harness | 1.0.12 暂无（属 1.1+），升级后可接入分层记忆 + 子 Agent | — |
+| Skill | `SkillBox`：classpath 只读 / **filesystem 可写自进化** / 运行时加载工具 / **代码执行** | 开 |
+| 多 Agent 编排 | `MultiAgentOrchestrator` 用 `Pipelines` fanout/sequential 编排订单/售后/知识库专家 + `POST /consult` | 开 |
+| Human-in-the-Loop | `HumanApprovalHook` 高风险工具执行后暂停待人工 + `POST /session/{id}/interrupt` 安全中断 | 开 |
+| 中断恢复 | `enablePendingToolRecovery` 中断后无缝恢复待执行工具调用 | 开 |
+| Hook 可观测 | `ObservabilityHook` 采集 token/时延/工具/异常（日志 + Micrometer 指标） | 开 |
+| 原生 Tracing | `LoggingTracer` 注册到 `TracerRegistry` 按调用打 span（可换 OTel TelemetryTracer） | 关 |
+| 运维就绪 | Actuator 健康检查（含 `SessionHealthIndicator`）+ Prometheus 指标 + 优雅停机 + 定时维护 | 开 |
+| 模型层进阶 | 多厂商（dashscope/openai/anthropic/gemini/ollama）+ `FallbackChatModel` 私有化兜底 + GenerateOptions 高级 | 开 |
+| 交互协议 AG-UI | `AguiService` 适配标准 AG-UI 事件流 + `POST /agui`（SSE） | 开 |
+| 交互协议 TTS | `TtsHookProvider` 实时语音合成 Hook（audioCallback 回推音频） | 关 |
+| MCP 接入 | `McpToolkitConfigurer` 把存量 HTTP 系统接成 Agent 工具 | 关 |
+| Higress AI 网关 | `HigressToolkitConfigurer` 接入 Higress，按需工具发现 / 流量治理 | 关 |
+| Studio 可视化 | `StudioConfigurer` 连接 AgentScope Studio 做可视化调试 | 关 |
+| 接入层安全 | `ApiKeyAuthWebFilter`（API Key 鉴权）+ `RateLimitWebFilter`（限流） | 关 |
+
+### 需外部基础设施的扩展点（配置即用，默认关闭）
+
+以下能力框架已提供，但需引入额外依赖并部署对应服务，按需开启（本项目预留配置位与文档）：
+
+- **A2A + Nacos 注册发现**：跨进程 Agent 互通，需 `nacos-client` 与 Nacos 注册中心；
+- **RocketMQ 异步消息**：长任务解耦 / A2A over MQ，需 RocketMQ broker；
+- **定时 Agent 调度**：`QuartzAgentScheduler` / `XxlJobAgentScheduler`，需 Quartz / XXL-JOB；
+- **Runtime 沙箱**：工具执行隔离，需独立项目 `agentscope-runtime-java`；
+- **Training（数据飞轮）**：RM Gallery 评估 + Trinity-RFT 强化学习，需训练平台；
+- **Anthropic / Gemini 模型**：需各自厂商 SDK 依赖；**RAGFlow / Haystack** 知识库同 Dify 模式可插拔。
+- **Harness**：1.0.12 暂无（属 1.1+），升级后可接入分层记忆 + 子 Agent 声明。
 
 > 每项能力均为**配置开关 + 可替换实现**：内置进程内实现保证开箱即用与可单测，
 > 生产可无感切换为百炼长期记忆 / 百炼企业知识库 / Redis 会话 / 真实 MCP 服务等后端。

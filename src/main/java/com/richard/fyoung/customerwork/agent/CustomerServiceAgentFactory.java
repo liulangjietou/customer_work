@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.agent;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.memory.ContextMemoryFactory;
 import com.richard.fyoung.customerwork.memory.LongTermMemoryProvider;
+import com.richard.fyoung.customerwork.observability.TtsHookProvider;
 import com.richard.fyoung.customerwork.rag.KnowledgeProvider;
 import com.richard.fyoung.customerwork.tool.AfterSalesTools;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
@@ -84,6 +85,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     private final HigressToolkitConfigurer higressToolkitConfigurer;
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
+    private final TtsHookProvider ttsHookProvider;
 
     /** 共享的 trace 导出器（AutoCloseable，进程级单例）。 */
     private volatile JsonlTraceExporter traceExporter;
@@ -95,6 +97,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        KnowledgeProvider knowledgeProvider,
                                        McpToolkitConfigurer mcpToolkitConfigurer,
                                        HigressToolkitConfigurer higressToolkitConfigurer,
+                                       TtsHookProvider ttsHookProvider,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
         this.properties = properties;
@@ -103,6 +106,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.knowledgeProvider = knowledgeProvider;
         this.mcpToolkitConfigurer = mcpToolkitConfigurer;
         this.higressToolkitConfigurer = higressToolkitConfigurer;
+        this.ttsHookProvider = ttsHookProvider;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
 
@@ -167,6 +171,9 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             builder.hook(traceExporter());
         }
 
+        // TTS：实时语音合成 Hook（默认关闭）
+        ttsHookProvider.create().ifPresent(builder::hook);
+
         // PlanNotebook：长链路任务规划
         if (properties.getPlan().isEnabled()) {
             builder.planNotebook(PlanNotebook.builder()
@@ -219,6 +226,15 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             if (cfg.isRuntimeLoadToolEnabled()) {
                 skillBox.registerSkillLoadTool();
                 log.info("[Skill] 已注册运行时加载技能工具");
+            }
+            // 代码执行技能：注册读写 / Shell 工具，使技能可执行代码（沙箱内）
+            if (cfg.isCodeExecutionEnabled()) {
+                skillBox.codeExecution()
+                    .workDir(cfg.getCodeExecutionWorkDir())
+                    .withRead()
+                    .withWrite()
+                    .enable();
+                log.info("[Skill] 已启用代码执行技能，workDir={}", cfg.getCodeExecutionWorkDir());
             }
             log.info("[Skill] 已加载技能 {} 个: {}", skillBox.getAllSkillIds().size(),
                 skillBox.getAllSkillIds());

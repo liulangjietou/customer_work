@@ -5,6 +5,8 @@ import io.agentscope.core.embedding.dashscope.DashScopeTextEmbedding;
 import io.agentscope.core.rag.Knowledge;
 import io.agentscope.core.rag.integration.bailian.BailianConfig;
 import io.agentscope.core.rag.integration.bailian.BailianKnowledge;
+import io.agentscope.core.rag.integration.dify.DifyKnowledge;
+import io.agentscope.core.rag.integration.dify.DifyRAGConfig;
 import io.agentscope.core.rag.knowledge.SimpleKnowledge;
 import io.agentscope.core.rag.store.InMemoryStore;
 import org.slf4j.Logger;
@@ -64,6 +66,8 @@ public class KnowledgeProvider {
                 return buildSimple();
             case "bailian":
                 return buildBailian();
+            case "dify":
+                return buildDify();
             default:
                 InMemoryKeywordKnowledge knowledge =
                     new InMemoryKeywordKnowledge(properties.getRag().getTopK());
@@ -104,5 +108,19 @@ public class KnowledgeProvider {
         }
         log.info("[RAG] 使用百炼企业知识库 indexId={}", b.getIndexId());
         return BailianKnowledge.builder().config(cfg.build()).build();
+    }
+
+    /** Dify 知识库（外部 Dify 服务）。 */
+    private Knowledge buildDify() {
+        CustomerWorkProperties.Rag.Dify d = properties.getRag().getDify();
+        DifyRAGConfig cfg = DifyRAGConfig.builder()
+            .apiKey(d.getApiKey())
+            .apiBaseUrl(d.getApiBaseUrl())
+            .datasetId(d.getDatasetId())
+            .topK(properties.getRag().getTopK())
+            .enableRerank(d.isEnableRerank())
+            .build();
+        log.info("[RAG] 使用 Dify 知识库 datasetId={}", d.getDatasetId());
+        return DifyKnowledge.builder().config(cfg).build();
     }
 }

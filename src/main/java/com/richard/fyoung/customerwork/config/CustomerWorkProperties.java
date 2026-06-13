@@ -222,6 +222,16 @@ public class CustomerWorkProperties {
         private final Simple simple = new Simple();
         /** 百炼企业知识库配置（provider=bailian 时生效）。 */
         private final Bailian bailian = new Bailian();
+        /** Dify 知识库配置（provider=dify 时生效）。 */
+        private final Dify dify = new Dify();
+
+        @Data
+        public static class Dify {
+            private String apiKey = "";
+            private String apiBaseUrl = "";
+            private String datasetId = "";
+            private boolean enableRerank = true;
+        }
 
         /** 真实 Embedding 向量 RAG：使用 model.embedding-name 与 model.api-key。 */
         @Data
@@ -270,6 +280,10 @@ public class CustomerWorkProperties {
         private boolean writable = true;
         /** 是否注册"运行时加载技能"工具，允许 Agent 按需自行加载技能。 */
         private boolean runtimeLoadToolEnabled = false;
+        /** 是否启用代码执行技能（注册读写/Shell 工具，使技能可执行代码）。默认关闭。 */
+        private boolean codeExecutionEnabled = false;
+        /** 代码执行工作目录。 */
+        private String codeExecutionWorkDir = "./data/skill-workspace";
     }
 
     /** MCP 接入配置。 */

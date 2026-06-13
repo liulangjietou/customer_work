@@ -46,4 +46,16 @@ class KnowledgeProviderTest {
 
         assertInstanceOf(SimpleKnowledge.class, new KnowledgeProvider(props).get());
     }
+
+    @Test
+    void get_shouldBuildDifyKnowledge_whenProviderDify() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getRag().setProvider("dify");
+        props.getRag().getDify().setApiKey("dify-test");
+        props.getRag().getDify().setApiBaseUrl("http://localhost:8080/v1");
+        props.getRag().getDify().setDatasetId("ds-1");
+
+        assertInstanceOf(io.agentscope.core.rag.integration.dify.DifyKnowledge.class,
+            new KnowledgeProvider(props).get());
+    }
 }
