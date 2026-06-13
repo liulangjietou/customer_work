@@ -1,6 +1,7 @@
 package com.example.customerwork.service;
 
 import com.example.customerwork.agent.CustomerServiceAgentFactory;
+import com.example.customerwork.dto.IntentResult;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Event;
 import io.agentscope.core.agent.EventType;
@@ -19,6 +20,7 @@ import reactor.test.StepVerifier;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -108,6 +110,44 @@ class CustomerServiceServiceTest {
         StepVerifier.create(service.chatStream("u4", "你好"))
             .assertNext(chunk -> org.junit.jupiter.api.Assertions.assertTrue(chunk.contains("系统繁忙")))
             .verifyComplete();
+    }
+
+    @Test
+    void classifyIntent_shouldReturnStructuredResult() {
+        IntentResult expected = new IntentResult("refund", "20260613001", true, "用户要求退款");
+        Msg structuredMsg = mock(Msg.class);
+        when(structuredMsg.getStructuredData(IntentResult.class)).thenReturn(expected);
+        when(agent.call(any(Msg.class), eq(IntentResult.class))).thenReturn(Mono.just(structuredMsg));
+
+        StepVerifier.create(service.classifyIntent("u5", "这个订单我要退款"))
+            .expectNext(expected)
+            .verifyComplete();
+    }
+
+    @Test
+    void classifyIntent_shouldFallback_whenParsingFails() {
+        when(agent.call(any(Msg.class), eq(IntentResult.class)))
+            .thenReturn(Mono.error(new RuntimeException("bad json")));
+
+        StepVerifier.create(service.classifyIntent("u6", "随便说点啥"))
+            .assertNext(result -> org.junit.jupiter.api.Assertions.assertEquals("other", result.intent()))
+            .verifyComplete();
+    }
+
+    @Test
+    void interrupt_shouldCallAgentInterrupt_whenSessionActive() {
+        when(agent.call(any(Msg.class))).thenReturn(Mono.just(assistantMsg("ok")));
+        service.chat("active", "hi").block();   // 触发 Agent 装配进缓存
+
+        boolean result = service.interrupt("active");
+
+        org.junit.jupiter.api.Assertions.assertTrue(result);
+        verify(agent).interrupt();
+    }
+
+    @Test
+    void interrupt_shouldReturnFalse_whenNoActiveSession() {
+        org.junit.jupiter.api.Assertions.assertFalse(service.interrupt("never-started"));
     }
 
     @Test

@@ -25,6 +25,18 @@ customer-work:
   agent:
     # ReAct 最大推理-行动轮次
     max-iters: 10
+    # Meta-Tool（元工具）：允许 Agent 运行时自主启停工具组，缓解上下文压力。默认关闭
+    meta-tool-enabled: false
+  memory:
+    # 长期记忆（跨会话、按租户隔离）。内置进程内实现，生产可切百炼长期记忆 / Mem0 / ReMe
+    long-term-enabled: true
+    # 租户解析分隔符：sessionId 形如 tenantA:conv-1 时，分隔符前为租户，同租户跨会话共享记忆
+    tenant-delimiter: ":"
+    retrieve-top-k: 5
+  plan:
+    # PlanNotebook 任务规划：引导 Agent 有序完成长链路任务
+    enabled: true
+    max-subtasks: 20
 
 logging:
   level:

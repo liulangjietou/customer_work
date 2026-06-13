@@ -1,6 +1,7 @@
 package com.example.customerwork.controller;
 
 import com.example.customerwork.dto.ChatRequest;
+import com.example.customerwork.dto.IntentResult;
 import com.example.customerwork.service.CustomerServiceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -78,6 +79,32 @@ class CustomerServiceControllerTest {
             .returnResult(String.class)
             .getResponseBody()
             .blockLast();
+    }
+
+    @Test
+    void classifyIntent_shouldReturnStructuredResult() {
+        when(service.classifyIntent(anyString(), anyString()))
+            .thenReturn(Mono.just(new IntentResult("refund", "20260613001", true, "用户要求退款")));
+
+        webTestClient.post().uri("/api/customer/intent")
+            .bodyValue(new ChatRequest("u1", "这个订单我要退款"))
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.intent").isEqualTo("refund")
+            .jsonPath("$.orderId").isEqualTo("20260613001")
+            .jsonPath("$.urgent").isEqualTo(true);
+    }
+
+    @Test
+    void interrupt_shouldReturnConfirmation() {
+        when(service.interrupt("u1")).thenReturn(true);
+
+        webTestClient.post().uri("/api/customer/session/u1/interrupt")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody(String.class).value(body ->
+                org.assertj.core.api.Assertions.assertThat(body).contains("已发出中断"));
     }
 
     @Test

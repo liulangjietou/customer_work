@@ -21,6 +21,12 @@ public class CustomerWorkProperties {
     /** Agent 运行时配置。 */
     private final Agent agent = new Agent();
 
+    /** 长期记忆配置（对应深度解析 3.4，跨会话、多租户隔离）。 */
+    private final Memory memory = new Memory();
+
+    /** 任务规划配置（对应深度解析 3.3 PlanNotebook）。 */
+    private final Plan plan = new Plan();
+
     public Model getModel() {
         return model;
     }
@@ -31,6 +37,14 @@ public class CustomerWorkProperties {
 
     public Agent getAgent() {
         return agent;
+    }
+
+    public Memory getMemory() {
+        return memory;
+    }
+
+    public Plan getPlan() {
+        return plan;
     }
 
     /**
@@ -136,6 +150,11 @@ public class CustomerWorkProperties {
     public static class Agent {
         /** ReAct 最大推理-行动轮次，防止失控空转。 */
         private int maxIters = 10;
+        /**
+         * 是否启用 Meta-Tool（元工具）：允许 Agent 在运行时自主启停工具组，
+         * 缓解大量工具时的上下文窗口压力（对应深度解析 3.2）。默认关闭，保持工具全量可见。
+         */
+        private boolean metaToolEnabled = false;
 
         public int getMaxIters() {
             return maxIters;
@@ -143,6 +162,80 @@ public class CustomerWorkProperties {
 
         public void setMaxIters(int maxIters) {
             this.maxIters = maxIters;
+        }
+
+        public boolean isMetaToolEnabled() {
+            return metaToolEnabled;
+        }
+
+        public void setMetaToolEnabled(boolean metaToolEnabled) {
+            this.metaToolEnabled = metaToolEnabled;
+        }
+    }
+
+    /**
+     * 长期记忆配置（对应深度解析 3.4）。
+     *
+     * <p>跨会话沉淀用户事实，并按租户隔离（ToB 硬要求）。本项目内置一个进程内内存实现，
+     * 生产可切换为百炼长期记忆 / Mem0 / ReMe（框架均有扩展）。</p>
+     */
+    public static class Memory {
+        /** 是否启用长期记忆。 */
+        private boolean longTermEnabled = true;
+        /**
+         * 租户解析分隔符：sessionId 形如 {@code tenantA:conv-1} 时，分隔符前为租户 ID，
+         * 同租户不同会话共享长期记忆；无分隔符则整个 sessionId 视为一个租户。
+         */
+        private String tenantDelimiter = ":";
+        /** 单次召回的最大记忆条数。 */
+        private int retrieveTopK = 5;
+
+        public boolean isLongTermEnabled() {
+            return longTermEnabled;
+        }
+
+        public void setLongTermEnabled(boolean longTermEnabled) {
+            this.longTermEnabled = longTermEnabled;
+        }
+
+        public String getTenantDelimiter() {
+            return tenantDelimiter;
+        }
+
+        public void setTenantDelimiter(String tenantDelimiter) {
+            this.tenantDelimiter = tenantDelimiter;
+        }
+
+        public int getRetrieveTopK() {
+            return retrieveTopK;
+        }
+
+        public void setRetrieveTopK(int retrieveTopK) {
+            this.retrieveTopK = retrieveTopK;
+        }
+    }
+
+    /** 任务规划配置（对应深度解析 3.3 PlanNotebook）。 */
+    public static class Plan {
+        /** 是否启用 PlanNotebook，引导 Agent 有序完成长链路任务。 */
+        private boolean enabled = true;
+        /** 单个计划的最大子任务数。 */
+        private int maxSubtasks = 20;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMaxSubtasks() {
+            return maxSubtasks;
+        }
+
+        public void setMaxSubtasks(int maxSubtasks) {
+            this.maxSubtasks = maxSubtasks;
         }
     }
 }

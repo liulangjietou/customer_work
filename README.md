@@ -19,6 +19,19 @@
 
 一句话：**核心 Agent 链路（②③④⑤）是框架原生支持、可直接运行的；①和⑥是生产工程化范畴，本项目以 Hook、配置项、扩展点的形式预留对接位置。**
 
+### 已落地的关键组件（对应文章第三章）
+
+| 关键组件 | 章节 | 本项目落地方式 |
+|---|---|---|
+| ReActAgent + 安全中断 | 3.1 | `ReActAgent` 推理循环；`POST /session/{id}/interrupt` 暴露 `agent.interrupt()` |
+| Toolkit + Tool Group + Meta-Tool | 3.2 | 四个业务域工具组；`meta-tool-enabled` 开启后 Agent 可运行时启停工具组 |
+| PlanNotebook 任务规划 | 3.3 | `PlanNotebook` + `InMemoryPlanStorage`，引导长链路任务拆解 |
+| 结构化输出 | 3.3 | `POST /intent` 用 `call(msg, IntentResult.class)` 返回强类型意图，免二次解析 |
+| 短期 + 多租户长期记忆 | 3.4 | 会话级 `InMemoryMemory` + 自实现 `LongTermMemory`（跨会话、按租户隔离） |
+| 可观测 / 数据飞轮采集 | 3.6 | `ObservabilityHook` 采集 token 用量、时延、工具调用与异常 |
+
+> 长期记忆、RAG、Plan 等均以**可配置开关 + 可替换实现**给出：内置进程内实现保证开箱即用与可测，生产可无感切换为百炼长期记忆 / 企业知识库 / Redis 等后端。
+
 ## 二、环境要求
 
 - JDK 17+（本仓库用 21 验证通过）
@@ -67,9 +80,19 @@ curl -N -X POST http://localhost:8080/api/customer/chat/stream \
   -H "Content-Type: application/json" \
   -d '{"sessionId":"u1001","message":"你们支持七天无理由退货吗？"}'
 
+# 结构化意图识别（返回强类型 JSON）
+curl -X POST http://localhost:8080/api/customer/intent \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId":"u1001","message":"这个订单 20260613001 我要退款"}'
+
+# 安全中断正在执行的会话
+curl -X POST http://localhost:8080/api/customer/session/u1001/interrupt
+
 # 结束会话
 curl -X DELETE http://localhost:8080/api/customer/session/u1001
 ```
+
+> 长期记忆支持多租户：把 sessionId 写成 `租户ID:会话ID`（如 `u1001:conv-1`），同一租户的不同会话即可共享长期记忆，租户之间严格隔离。
 
 ## 五、跑测试（无需 API Key）
 
@@ -80,8 +103,9 @@ curl -X DELETE http://localhost:8080/api/customer/session/u1001
 mvn test
 ```
 
-覆盖范围：四个工具组的业务逻辑、Tool Group 注册完整性、可观测 Hook 的只读透传与异常兜底、
-会话服务的多轮复用 / 错误兜底 / 流式拼接 / 持久化、控制器的参数校验与路由。
+覆盖范围（40 个用例）：四个工具组的业务逻辑、Tool Group 注册完整性、Meta-Tool 开关、租户解析、
+多租户长期记忆的记录/召回/隔离、可观测 Hook 的只读透传与异常兜底、会话服务的多轮复用 / 错误兜底 /
+流式拼接 / 持久化 / 结构化意图 / 安全中断、控制器的参数校验与路由。
 
 ## 六、代码结构
 
@@ -89,22 +113,25 @@ mvn test
 src/main/java/com/example/customerwork/
 ├── CustomerWorkApplication.java            # Spring Boot 启动类
 ├── config/
-│   ├── CustomerWorkProperties.java         # 强类型配置（model/session/agent）
+│   ├── CustomerWorkProperties.java         # 强类型配置（model/session/agent/memory/plan）
 │   ├── ModelConfig.java                    # 模型层：百炼 DashScope 统一抽象
 │   └── SessionConfig.java                  # 会话持久化 Session Bean（memory/json）
 ├── agent/
-│   ├── CustomerServiceAgentFactory.java    # ③④ 主 Agent 装配 + Tool Group 注册
+│   ├── CustomerServiceAgentFactory.java    # ③④ 主 Agent 装配 + Tool Group/Meta-Tool/Plan/长期记忆
 │   └── ObservabilityHook.java              # ⑥ 全链路采集（token/时延/异常）
+├── memory/
+│   ├── LongTermMemoryStore.java            # 3.4 多租户长期记忆存储（按租户隔离）
+│   └── InMemoryLongTermMemory.java         # 3.4 LongTermMemory 接口的内存实现
 ├── tool/
 │   ├── OrderTools.java                     # ④ 订单 / 物流工具组
 │   ├── AfterSalesTools.java                # ④ 售后 / 退款（涉资金走人工确认）
 │   ├── KnowledgeBaseTools.java             # ② RAG 知识检索（伪 RAG，可换真实 RAG）
 │   └── HumanHandoffTools.java              # ④ 人工坐席转接 / ③ 风险熔断
-├── service/CustomerServiceService.java     # ② 会话恢复 / ⑤ 状态持久化 / 流式编排
+├── service/CustomerServiceService.java     # ② 会话恢复 / ⑤ 持久化 / 流式 / 结构化意图 / 安全中断
 ├── controller/
-│   ├── CustomerServiceController.java      # ① 应用入口 / ⑤ 同步与 SSE 流式回复
+│   ├── CustomerServiceController.java      # ① 应用入口 / ⑤ 同步与 SSE 流式 / 意图 / 中断
 │   └── GlobalExceptionHandler.java         # 统一错误响应
-└── dto/ (ChatRequest, ChatResponse)
+└── dto/ (ChatRequest, ChatResponse, IntentResult)
 ```
 
 ## 七、从示例到大规模生产，还可以补什么

@@ -1,6 +1,7 @@
 package com.example.customerwork.service;
 
 import com.example.customerwork.agent.CustomerServiceAgentFactory;
+import com.example.customerwork.dto.IntentResult;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.StreamOptions;
@@ -95,6 +96,46 @@ public class CustomerServiceService {
                 log.error("[会话 {}] 流式处理失败", sessionId, e);
                 return Flux.just(FALLBACK_REPLY);
             });
+    }
+
+    /**
+     * 结构化意图识别（对应深度解析 3.3"结构化输出"）。
+     *
+     * <p>用 ReActAgent 的结构化输出能力，让模型严格按 {@link IntentResult} 的 Schema 返回，
+     * 业务侧直接拿到强类型对象，免去"二次解析 + 格式校验"。</p>
+     *
+     * @return 结构化意图；解析失败时返回一个标注为 other 的兜底结果
+     */
+    public Mono<IntentResult> classifyIntent(String sessionId, String userText) {
+        log.info("[会话 {}] 结构化意图识别: {}", sessionId, userText);
+        ReActAgent agent = resolveAgent(sessionId);
+
+        Msg prompt = toUserMsg("请判断以下用户消息的意图，并按要求结构化输出：" + userText);
+        return agent.call(prompt, IntentResult.class)
+            .map(msg -> msg.getStructuredData(IntentResult.class))
+            .doOnSuccess(result -> persist(sessionId, agent))
+            .onErrorResume(e -> {
+                log.error("[会话 {}] 意图识别失败", sessionId, e);
+                return Mono.just(new IntentResult("other", "", false, "意图识别失败，转人工兜底"));
+            });
+    }
+
+    /**
+     * 安全中断当前会话正在执行的 Agent（对应深度解析 3.1"安全中断 / 实时打断"）。
+     *
+     * <p>用于任务跑偏、超时或用户主动叫停的场景。框架会保留上下文与工具状态，后续可无缝恢复。</p>
+     *
+     * @return 是否存在可中断的活跃会话
+     */
+    public boolean interrupt(String sessionId) {
+        ReActAgent agent = sessionAgents.get(sessionId);
+        if (agent == null) {
+            log.info("[会话 {}] 无活跃 Agent，忽略中断", sessionId);
+            return false;
+        }
+        agent.interrupt();
+        log.warn("[会话 {}] 已发出安全中断", sessionId);
+        return true;
     }
 
     /** 主动结束并清理会话：移除热缓存并删除持久化状态。 */

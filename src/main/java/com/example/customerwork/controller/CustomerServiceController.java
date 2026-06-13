@@ -2,6 +2,7 @@ package com.example.customerwork.controller;
 
 import com.example.customerwork.dto.ChatRequest;
 import com.example.customerwork.dto.ChatResponse;
+import com.example.customerwork.dto.IntentResult;
 import com.example.customerwork.service.CustomerServiceService;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
@@ -61,6 +62,26 @@ public class CustomerServiceController {
                 .event("done")
                 .data("[DONE]")
                 .build());
+    }
+
+    /**
+     * 结构化意图识别：返回强类型 {@link IntentResult}（对应⑤上游路由可直接消费的结构化结果）。
+     */
+    @PostMapping("/intent")
+    public Mono<IntentResult> classifyIntent(@Valid @RequestBody ChatRequest request) {
+        String sessionId = resolveSessionId(request.sessionId());
+        return service.classifyIntent(sessionId, request.message());
+    }
+
+    /**
+     * 安全中断：终止指定会话正在执行的 Agent，保留上下文以便后续恢复。
+     */
+    @PostMapping("/session/{sessionId}/interrupt")
+    public Mono<String> interrupt(@PathVariable String sessionId) {
+        boolean interrupted = service.interrupt(sessionId);
+        return Mono.just(interrupted
+            ? "会话 " + sessionId + " 已发出中断"
+            : "会话 " + sessionId + " 无活跃任务");
     }
 
     /**
