@@ -23,8 +23,11 @@ import io.agentscope.core.skill.AgentSkill;
 import io.agentscope.core.skill.SkillBox;
 import io.agentscope.core.skill.repository.ClasspathSkillRepository;
 import io.agentscope.core.tool.Toolkit;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -49,7 +52,7 @@ import java.util.Set;
  * </ul>
  */
 @Component
-public class CustomerServiceAgentFactory {
+public class CustomerServiceAgentFactory implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(CustomerServiceAgentFactory.class);
 
@@ -85,6 +88,8 @@ public class CustomerServiceAgentFactory {
     private final FactLog factLog;
     private final ContextMemoryFactory contextMemoryFactory;
     private final McpToolkitConfigurer mcpToolkitConfigurer;
+    /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
+    private final MeterRegistry meterRegistry;
 
     /** 共享的 RAG 知识库（一次灌库，所有会话复用）。 */
     private volatile Knowledge ragKnowledge;
@@ -96,13 +101,15 @@ public class CustomerServiceAgentFactory {
                                        LongTermMemoryStore longTermMemoryStore,
                                        FactLog factLog,
                                        ContextMemoryFactory contextMemoryFactory,
-                                       McpToolkitConfigurer mcpToolkitConfigurer) {
+                                       McpToolkitConfigurer mcpToolkitConfigurer,
+                                       ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
         this.properties = properties;
         this.longTermMemoryStore = longTermMemoryStore;
         this.factLog = factLog;
         this.contextMemoryFactory = contextMemoryFactory;
         this.mcpToolkitConfigurer = mcpToolkitConfigurer;
+        this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
 
     /**
@@ -147,8 +154,8 @@ public class CustomerServiceAgentFactory {
             .sysPrompt(SYSTEM_PROMPT)
             .model(model)
             .toolkit(toolkit)
-            .memory(contextMemoryFactory.create())   // 短期记忆 / 智能上下文压缩
-            .hook(new ObservabilityHook())            // 可观测采集
+            .memory(contextMemoryFactory.create())        // 短期记忆 / 智能上下文压缩
+            .hook(new ObservabilityHook(meterRegistry))   // 可观测采集（日志 + Micrometer 指标）
             .maxIters(properties.getAgent().getMaxIters());
 
         // Human-in-the-Loop：工具级人工确认闸门
@@ -261,5 +268,18 @@ public class CustomerServiceAgentFactory {
             }
         }
         return sessionId;
+    }
+
+    /** 容器关闭时优雅释放 trace 导出器（AutoCloseable）。 */
+    @Override
+    public void destroy() {
+        if (traceExporter != null) {
+            try {
+                traceExporter.close();
+                log.info("[OTEL] trace 导出器已关闭");
+            } catch (Exception e) {
+                log.warn("[OTEL] 关闭 trace 导出器失败: {}", e.getMessage());
+            }
+        }
     }
 }

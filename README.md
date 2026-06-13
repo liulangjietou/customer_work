@@ -29,7 +29,8 @@
 | 多轮会话 & 会话持久化 | 框架 `Session/State`，按 sessionId `saveTo`/`loadIfExists`，支持 **memory / json / redis / mysql** 四种存储 | 开 |
 | 长期记忆（多租户隔离） | 自实现 `LongTermMemory`，跨会话共享、按租户隔离 | 开 |
 | 智能上下文压缩 | `AutoContextMemory`，长对话自动压缩、上下文有界 | 关（需模型） |
-| Hook 可观测 | `ObservabilityHook` 采集 token/时延/工具/异常；可选 `JsonlTraceExporter` 导出 trace | 开 / trace 关 |
+| Hook 可观测 | `ObservabilityHook` 采集 token/时延/工具/异常（日志 + Micrometer 指标）；可选 `JsonlTraceExporter` 导出 trace | 开 / trace 关 |
+| 运维就绪 | Actuator 健康检查（含会话后端 `SessionHealthIndicator`）+ Prometheus 指标 | 开 |
 | 三层记忆体系 | L1 短期 `Memory` + L2 长期 `LongTermMemory` + L3 只追加 `FactLog`（JSONL 审计） | 开 |
 | 工具集成 | Toolkit + 四业务域 Tool Group + 可选 Meta-Tool 运行时启停 | 开 / meta 关 |
 | MCP 接入 | `McpToolkitConfigurer` 按配置把存量 HTTP 系统接成 Agent 工具 | 关 |
@@ -61,6 +62,24 @@ customer-work:
 `RedisSessionPersistenceTest` / `MysqlSessionPersistenceTest` 做真实存-取-删往返验证：
 **服务可达时执行并通过，不可达时自动跳过**（`assumeTrue`），因此 `mvn test` 在任何环境都绿。
 （本机有 Redis/MySQL 时直接 `mvn test` 即会真实跑这两条用例。）
+
+### 生产可观测 / 运维就绪
+
+应用暴露 Spring Boot Actuator 端点（`management.endpoints.web.exposure.include`）：
+
+```bash
+curl localhost:8080/actuator/health      # 含自定义 session 后端健康（memory/json/redis/mysql 探活）
+curl localhost:8080/actuator/metrics     # 指标清单
+curl localhost:8080/actuator/prometheus  # Prometheus 抓取端点
+```
+
+`ObservabilityHook` 在接入 Micrometer 后会上报业务指标，供监控与数据飞轮消费：
+
+- `customerwork.agent.requests`：请求数
+- `customerwork.agent.reasoning`：推理轮次数
+- `customerwork.agent.tool.calls{tool=...}`：按工具维度的调用数
+- `customerwork.agent.errors`：错误数
+- `customerwork.agent.tokens.total`：累计 token 消耗（成本可观测）
 
 ### 对接百炼平台的真实集成测试
 

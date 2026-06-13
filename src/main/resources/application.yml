@@ -86,6 +86,16 @@ customer-work:
     enabled: true
     directory: ./data/facts
 
+# 生产可观测：Actuator 健康检查 / 指标 / Prometheus
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
 logging:
   level:
     root: INFO

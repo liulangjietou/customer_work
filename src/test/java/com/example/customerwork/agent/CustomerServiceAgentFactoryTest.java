@@ -29,7 +29,8 @@ class CustomerServiceAgentFactoryTest {
         return new CustomerServiceAgentFactory(
             model, props, store, factLog,
             new ContextMemoryFactory(props, model),
-            new McpToolkitConfigurer(props));
+            new McpToolkitConfigurer(props),
+            null);   // 无 MeterRegistry（观测降级为仅日志）
     }
 
     @Test
