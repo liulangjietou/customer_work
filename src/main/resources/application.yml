@@ -19,9 +19,23 @@ customer-work:
     stream: true
   session:
     # 会话持久化模式：memory（默认，重启丢）| json（单机落盘可恢复）
-    # 分布式生产请扩展为 redis / mysql（框架内置 RedisSession / MysqlSession）
+    #                | redis（分布式共享）| mysql（强一致持久化）
     mode: memory
     directory: ./data/sessions
+    redis:
+      host: localhost
+      port: 6379
+      password: "123456"
+      key-prefix: customer-work
+    mysql:
+      host: localhost
+      port: 3306
+      database: agent_scope_customer_work
+      username: root
+      password: root
+      # 留空则按 host/port/database 自动拼装（含 createDatabaseIfNotExist）
+      jdbc-url: ""
+      auto-create: true
   agent:
     # ReAct 最大推理-行动轮次
     max-iters: 10

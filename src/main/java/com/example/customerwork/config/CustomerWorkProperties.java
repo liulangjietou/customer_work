@@ -66,11 +66,46 @@ public class CustomerWorkProperties {
         private String embeddingName = "text-embedding-v3";
     }
 
-    /** 会话持久化配置：memory | json（分布式可扩展为 redis/mysql）。 */
+    /** 会话持久化配置：memory | json | redis | mysql。 */
     @Data
     public static class Session {
         private String mode = "memory";
         private String directory = "./data/sessions";
+        /** Redis 连接配置（mode=redis 时生效）。 */
+        private final Redis redis = new Redis();
+        /** MySQL 连接配置（mode=mysql 时生效）。 */
+        private final Mysql mysql = new Mysql();
+
+        @Data
+        public static class Redis {
+            private String host = "localhost";
+            private int port = 6379;
+            private String password = "";
+            private String keyPrefix = "customer-work";
+        }
+
+        @Data
+        public static class Mysql {
+            private String host = "localhost";
+            private int port = 3306;
+            private String database = "agent_scope_customer_work";
+            private String username = "root";
+            private String password = "root";
+            /** 完整 JDBC URL（留空则按 host/port/database 自动拼装）。 */
+            private String jdbcUrl = "";
+            /** 是否自动建库建表。 */
+            private boolean autoCreate = true;
+
+            /** 解析最终使用的 JDBC URL。 */
+            public String resolveJdbcUrl() {
+                if (jdbcUrl != null && !jdbcUrl.isBlank()) {
+                    return jdbcUrl;
+                }
+                return "jdbc:mysql://" + host + ":" + port + "/" + database
+                    + "?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true"
+                    + "&serverTimezone=UTC&characterEncoding=utf8mb4";
+            }
+        }
     }
 
     /** Agent 运行时配置。 */

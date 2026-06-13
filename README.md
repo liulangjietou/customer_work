@@ -26,7 +26,7 @@
 | ReActAgent | `CustomerServiceAgentFactory` 装配，`max-iters` 控制轮次 | 开 |
 | 流式输出 | `POST /chat/stream` 订阅 `agent.stream()` 类型化事件流逐片段 SSE 下发 | 开 |
 | 结构化输出 | `POST /intent` 用 `call(msg, IntentResult.class)` 返回强类型意图 | 开 |
-| 多轮会话 & 会话持久化 | 框架 `Session/State`，按 sessionId `saveTo`/`loadIfExists`（memory/json，可扩展 redis/mysql） | 开 |
+| 多轮会话 & 会话持久化 | 框架 `Session/State`，按 sessionId `saveTo`/`loadIfExists`，支持 **memory / json / redis / mysql** 四种存储 | 开 |
 | 长期记忆（多租户隔离） | 自实现 `LongTermMemory`，跨会话共享、按租户隔离 | 开 |
 | 智能上下文压缩 | `AutoContextMemory`，长对话自动压缩、上下文有界 | 关（需模型） |
 | Hook 可观测 | `ObservabilityHook` 采集 token/时延/工具/异常；可选 `JsonlTraceExporter` 导出 trace | 开 / trace 关 |
@@ -41,6 +41,26 @@
 > 每项能力均为**配置开关 + 可替换实现**：内置进程内实现保证开箱即用与可单测，
 > 生产可无感切换为百炼长期记忆 / 百炼企业知识库 / Redis 会话 / 真实 MCP 服务等后端。
 > 全部配置见 `application.yml` 的 `customer-work.*`。
+
+### 会话持久化：Redis / MySQL
+
+切换存储只改一行 `customer-work.session.mode`：
+
+```yaml
+customer-work:
+  session:
+    mode: redis          # memory | json | redis | mysql
+    redis:   { host: localhost, port: 6379, password: "123456", key-prefix: customer-work }
+    mysql:   { host: localhost, port: 3306, database: agent_scope_customer_work, username: root, password: root, auto-create: true }
+```
+
+- **Redis**：基于 Jedis 的 `RedisSession`，多实例共享会话；
+- **MySQL**：基于 HikariCP + `MysqlSession`，表 `agentscope_sessions` 可自动创建。
+  手工建库脚本见 `mysql/schema.sql`（`mysql -h localhost -u root -proot < mysql/schema.sql`）。
+
+`RedisSessionPersistenceTest` / `MysqlSessionPersistenceTest` 做真实存-取-删往返验证：
+**服务可达时执行并通过，不可达时自动跳过**（`assumeTrue`），因此 `mvn test` 在任何环境都绿。
+（本机有 Redis/MySQL 时直接 `mvn test` 即会真实跑这两条用例。）
 
 ### 对接百炼平台的真实集成测试
 
@@ -136,7 +156,7 @@ src/main/java/com/example/customerwork/
 ├── config/
 │   ├── CustomerWorkProperties.java         # 强类型配置（model/session/agent/memory/plan/rag/context/skill/mcp/observability/...）
 │   ├── ModelConfig.java                    # 模型层：百炼 DashScope 统一抽象
-│   └── SessionConfig.java                  # 会话持久化 Session Bean（memory/json）
+│   └── SessionConfig.java                  # 会话持久化 Session Bean（memory/json/redis/mysql）
 ├── agent/
 │   ├── CustomerServiceAgentFactory.java    # 主 Agent 装配：工具组/Meta-Tool/Plan/记忆/RAG/Skill/MCP/Hook
 │   ├── ObservabilityHook.java              # 全链路采集（token/时延/异常）
@@ -157,6 +177,7 @@ src/main/java/com/example/customerwork/
 └── dto/ (ChatRequest, ChatResponse, IntentResult)
 
 src/main/resources/skills/refund-handling/SKILL.md   # Markdown 技能（Skill 特性）
+mysql/schema.sql                                      # MySQL 会话持久化建库建表脚本
 ```
 
 ## 七、从示例到大规模生产，还可以补什么
