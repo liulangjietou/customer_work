@@ -47,12 +47,13 @@
 | Higress AI 网关 | `HigressToolkitConfigurer` 接入 Higress，按需工具发现 / 流量治理 | 关 |
 | Studio 可视化 | `StudioConfigurer` 连接 AgentScope Studio 做可视化调试 | 关 |
 | 接入层安全 | `ApiKeyAuthWebFilter`（API Key 鉴权）+ `RateLimitWebFilter`（限流） | 关 |
+| Nacos 配置中心 | `NacosPromptService` 把系统提示词托管 Nacos，运营侧热更新无需重启（A/B、话术调优） | 关 |
 
 ### 需外部基础设施的扩展点（配置即用，默认关闭）
 
 以下能力框架已提供，但需引入额外依赖并部署对应服务，按需开启（本项目预留配置位与文档）：
 
-- **A2A + Nacos 注册发现**：跨进程 Agent 互通，需 `nacos-client` 与 Nacos 注册中心；
+- **A2A Agent Card 注册发现**：跨进程 Agent 互通，需 Nacos **AI/A2A API**（`com.alibaba.nacos.api.ai.AiService`，新版 nacos-client）与 `io.a2a` SDK（`AgentCard`）；本项目已用 Nacos 配置中心（提示词热更新），A2A 注册层属此扩展点；
 - **RocketMQ 异步消息**：长任务解耦 / A2A over MQ，需 RocketMQ broker；
 - **定时 Agent 调度**：`QuartzAgentScheduler` / `XxlJobAgentScheduler`，需 Quartz / XXL-JOB；
 - **Runtime 沙箱**：工具执行隔离，需独立项目 `agentscope-runtime-java`；

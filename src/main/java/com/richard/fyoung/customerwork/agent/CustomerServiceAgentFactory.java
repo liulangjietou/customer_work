@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.agent;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.config.NacosPromptService;
 import com.richard.fyoung.customerwork.memory.ContextMemoryFactory;
 import com.richard.fyoung.customerwork.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.observability.TtsHookProvider;
@@ -86,6 +87,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
     private final TtsHookProvider ttsHookProvider;
+    private final NacosPromptService nacosPromptService;
 
     /** 共享的 trace 导出器（AutoCloseable，进程级单例）。 */
     private volatile JsonlTraceExporter traceExporter;
@@ -98,6 +100,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        McpToolkitConfigurer mcpToolkitConfigurer,
                                        HigressToolkitConfigurer higressToolkitConfigurer,
                                        TtsHookProvider ttsHookProvider,
+                                       NacosPromptService nacosPromptService,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
         this.properties = properties;
@@ -107,7 +110,13 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.mcpToolkitConfigurer = mcpToolkitConfigurer;
         this.higressToolkitConfigurer = higressToolkitConfigurer;
         this.ttsHookProvider = ttsHookProvider;
+        this.nacosPromptService = nacosPromptService;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+    }
+
+    /** 生效的系统提示词：优先 Nacos 配置中心下发，缺省回退内置提示词。 */
+    String systemPrompt() {
+        return nacosPromptService.currentPrompt().orElse(SYSTEM_PROMPT);
     }
 
     /**
@@ -151,7 +160,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
         ReActAgent.Builder builder = ReActAgent.builder()
             .name("CustomerServiceAgent-" + sessionId)
-            .sysPrompt(SYSTEM_PROMPT)
+            .sysPrompt(systemPrompt())
             .model(model)
             .toolkit(toolkit)
             .memory(contextMemoryFactory.create())        // 短期记忆 / 智能上下文压缩

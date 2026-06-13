@@ -175,6 +175,16 @@ customer-work:
   interrupt:
     # 中断后无缝恢复：再次调用可恢复被打断的待执行工具调用
     pending-tool-recovery-enabled: true
+  nacos:
+    # Nacos 配置中心：系统提示词集中管理 + 热更新（运营侧改提示词无需重启）。默认关闭
+    enabled: false
+    server-addr: localhost:8848
+    namespace: ""
+    group: DEFAULT_GROUP
+    prompt-data-id: customer-work-system-prompt
+    username: ""
+    password: ""
+    timeout-ms: 3000
   protocol:
     # AG-UI：标准 Agent-UI 事件协议（POST /api/customer/agui，SSE）
     agui:

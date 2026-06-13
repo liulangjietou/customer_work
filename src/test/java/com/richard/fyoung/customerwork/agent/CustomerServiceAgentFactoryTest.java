@@ -38,6 +38,7 @@ class CustomerServiceAgentFactoryTest {
             new McpToolkitConfigurer(props),
             new HigressToolkitConfigurer(props),
             new com.richard.fyoung.customerwork.observability.TtsHookProvider(props),
+            new com.richard.fyoung.customerwork.config.NacosPromptService(props),
             null);   // 无 MeterRegistry（观测降级为仅日志）
     }
 

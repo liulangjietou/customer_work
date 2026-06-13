@@ -73,6 +73,13 @@
             <artifactId>okhttp</artifactId>
         </dependency>
 
+        <!-- Nacos 配置中心：系统提示词集中管理 + 热更新（A2A 注册发现见 README 扩展点） -->
+        <dependency>
+            <groupId>com.alibaba.nacos</groupId>
+            <artifactId>nacos-client</artifactId>
+            <version>3.0.2</version>
+        </dependency>
+
         <!-- ============ AgentScope Java 核心 ============ -->
         <!-- 注意：聚合包 artifactId 就是 agentscope，不要写成 agentscope-model-xxx（不存在） -->
         <dependency>

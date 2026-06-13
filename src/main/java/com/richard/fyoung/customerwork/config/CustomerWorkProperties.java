@@ -72,6 +72,9 @@ public class CustomerWorkProperties {
     /** 交互协议（AG-UI / TTS）。 */
     private final Protocol protocol = new Protocol();
 
+    /** Nacos 接入（配置中心：系统提示词集中管理 + 热更新）。 */
+    private final Nacos nacos = new Nacos();
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -402,6 +405,25 @@ public class CustomerWorkProperties {
     public static class Interrupt {
         /** 是否启用待执行工具恢复：中断后再次调用可无缝恢复被打断的工具调用。 */
         private boolean pendingToolRecoveryEnabled = true;
+    }
+
+    /**
+     * Nacos 接入配置（配置中心）。
+     *
+     * <p>把 Agent 的系统提示词托管到 Nacos 配置中心，支持运营侧在不重启服务的情况下热更新提示词
+     * （A/B、话术调优）。A2A Agent Card 注册发现需 Nacos AI API 与 a2a SDK，见 README 扩展点。</p>
+     */
+    @Data
+    public static class Nacos {
+        private boolean enabled = false;
+        private String serverAddr = "localhost:8848";
+        private String namespace = "";
+        private String group = "DEFAULT_GROUP";
+        /** 系统提示词配置项 dataId。 */
+        private String promptDataId = "customer-work-system-prompt";
+        private String username = "";
+        private String password = "";
+        private long timeoutMs = 3000;
     }
 
     /** 交互协议配置（AG-UI / TTS）。 */
