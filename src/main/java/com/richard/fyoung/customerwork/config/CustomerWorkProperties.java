@@ -60,6 +60,9 @@ public class CustomerWorkProperties {
     /** Higress AI 网关接入。 */
     private final Higress higress = new Higress();
 
+    /** 多 Agent 编排。 */
+    private final MultiAgent multiAgent = new MultiAgent();
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -286,5 +289,16 @@ public class CustomerWorkProperties {
         private int maxTools = 10;
         /** 连接超时（秒）。 */
         private int timeoutSeconds = 30;
+    }
+
+    /** 多 Agent 编排配置。 */
+    @Data
+    public static class MultiAgent {
+        /** 是否启用多 Agent 编排端点。 */
+        private boolean enabled = true;
+        /** 编排模式：fanout（并行多专家聚合）| sequential（流水串行细化）。 */
+        private String mode = "fanout";
+        /** 每个专家 Agent 的 ReAct 最大轮次。 */
+        private int maxIters = 6;
     }
 }

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.controller;
 
+import com.richard.fyoung.customerwork.agent.MultiAgentOrchestrator;
 import com.richard.fyoung.customerwork.dto.ChatRequest;
 import com.richard.fyoung.customerwork.dto.ChatResponse;
 import com.richard.fyoung.customerwork.dto.IntentResult;
@@ -33,9 +34,12 @@ import java.util.UUID;
 public class CustomerServiceController {
 
     private final CustomerServiceService service;
+    private final MultiAgentOrchestrator multiAgentOrchestrator;
 
-    public CustomerServiceController(CustomerServiceService service) {
+    public CustomerServiceController(CustomerServiceService service,
+                                     MultiAgentOrchestrator multiAgentOrchestrator) {
         this.service = service;
+        this.multiAgentOrchestrator = multiAgentOrchestrator;
     }
 
     /**
@@ -83,6 +87,15 @@ public class CustomerServiceController {
         return Mono.just(interrupted
             ? "会话 " + sessionId + " 已发出中断"
             : "会话 " + sessionId + " 无活跃任务");
+    }
+
+    /**
+     * 多 Agent 协作咨询：把问题分发给订单 / 售后 / 知识库多个专家 Agent 并聚合结论
+     * （fanout 模式）或流水细化（sequential 模式）。
+     */
+    @PostMapping("/consult")
+    public Mono<String> consult(@Valid @RequestBody ChatRequest request) {
+        return multiAgentOrchestrator.consult(request.message());
     }
 
     /**

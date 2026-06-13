@@ -34,6 +34,9 @@ class CustomerServiceControllerTest {
     @MockBean
     private CustomerServiceService service;
 
+    @MockBean
+    private com.richard.fyoung.customerwork.agent.MultiAgentOrchestrator multiAgentOrchestrator;
+
     @Test
     void chat_shouldReturnReply() {
         when(service.chat(anyString(), eq("你好"))).thenReturn(Mono.just("您好，有什么可以帮您？"));
