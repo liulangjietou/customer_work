@@ -113,6 +113,17 @@ customer-work:
     rate-limit:
       enabled: false
       requests-per-minute: 120
+  multi-agent:
+    # 多 Agent 编排：fanout（并行多专家聚合）| sequential（流水串行细化）
+    enabled: true
+    mode: fanout
+    max-iters: 6
+  runtime:
+    # 优雅停机：等待在途请求完成的超时（秒）
+    shutdown-timeout-seconds: 30
+    # 定时维护任务（默认关闭）；需定时驱动 Agent 跑批可接 Quartz/XXL-JOB
+    scheduler-enabled: false
+    scheduler-fixed-delay-ms: 60000
   higress:
     # Higress AI 网关接入：按需工具发现 / 流量治理。默认关闭，配置 endpoint 后生效
     enabled: false

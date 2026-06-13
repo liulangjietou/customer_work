@@ -63,6 +63,9 @@ public class CustomerWorkProperties {
     /** 多 Agent 编排。 */
     private final MultiAgent multiAgent = new MultiAgent();
 
+    /** 运行时与调度（优雅停机、定时维护）。 */
+    private final Runtime runtime = new Runtime();
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -300,5 +303,16 @@ public class CustomerWorkProperties {
         private String mode = "fanout";
         /** 每个专家 Agent 的 ReAct 最大轮次。 */
         private int maxIters = 6;
+    }
+
+    /** 运行时与调度配置。 */
+    @Data
+    public static class Runtime {
+        /** 优雅停机：等待在途请求处理完成的超时（秒）。 */
+        private int shutdownTimeoutSeconds = 30;
+        /** 是否启用定时维护任务。 */
+        private boolean schedulerEnabled = false;
+        /** 定时维护任务的执行间隔（毫秒）。 */
+        private long schedulerFixedDelayMs = 60_000;
     }
 }

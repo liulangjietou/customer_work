@@ -4,6 +4,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 智能客服系统启动类。
@@ -19,6 +20,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 // 因此排除 Spring Boot 的 DataSource 自动配置（避免要求 spring.datasource.url）。
 @SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
 @ConfigurationPropertiesScan
+@EnableScheduling
 public class CustomerWorkApplication {
 
     public static void main(String[] args) {
