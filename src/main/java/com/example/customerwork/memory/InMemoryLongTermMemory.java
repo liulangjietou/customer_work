@@ -27,11 +27,14 @@ public class InMemoryLongTermMemory implements LongTermMemory {
     private static final Logger log = LoggerFactory.getLogger(InMemoryLongTermMemory.class);
 
     private final LongTermMemoryStore store;
+    private final FactLog factLog;
     private final String tenantId;
     private final int retrieveTopK;
 
-    public InMemoryLongTermMemory(LongTermMemoryStore store, String tenantId, int retrieveTopK) {
+    public InMemoryLongTermMemory(LongTermMemoryStore store, FactLog factLog,
+                                  String tenantId, int retrieveTopK) {
         this.store = store;
+        this.factLog = factLog;
         this.tenantId = tenantId;
         this.retrieveTopK = retrieveTopK;
     }
@@ -46,7 +49,10 @@ public class InMemoryLongTermMemory implements LongTermMemory {
                 if (msg != null && msg.getRole() == MsgRole.USER) {
                     String text = msg.getTextContent();
                     if (text != null && !text.isBlank()) {
-                        store.add(tenantId, text);
+                        store.add(tenantId, text);        // L2：可语义召回的长期记忆
+                        if (factLog != null) {
+                            factLog.append(tenantId, text); // L3：只追加事实日志（可审计）
+                        }
                     }
                 }
             }

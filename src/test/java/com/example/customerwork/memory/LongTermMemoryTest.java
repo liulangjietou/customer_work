@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -30,7 +31,9 @@ class LongTermMemoryTest {
     }
 
     private InMemoryLongTermMemory memoryFor(String tenant) {
-        return new InMemoryLongTermMemory(store, tenant, 5);
+        // 事实日志关闭，单测只聚焦语义召回与租户隔离（FactLog 另有专测）
+        FactLog factLog = new FactLog(false, Path.of("target/test-facts"));
+        return new InMemoryLongTermMemory(store, factLog, tenant, 5);
     }
 
     @Test

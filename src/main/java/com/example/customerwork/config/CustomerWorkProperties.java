@@ -1,241 +1,172 @@
 package com.example.customerwork.config;
 
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 应用级配置（强类型绑定 {@code customer-work.*}）。
  *
- * <p>统一收口模型、会话持久化、Agent 运行参数三类配置，便于在不同环境
- * （dev / staging / prod）通过 {@code application-*.yml} 或环境变量覆盖，
- * 而无需改动任何业务代码。</p>
+ * <p>统一收口模型、会话、Agent、记忆、规划、RAG、上下文压缩、Skill、MCP、可观测、
+ * 人工确认等所有可调能力，便于在不同环境通过 {@code application-*.yml} 或环境变量覆盖，
+ * 而无需改动业务代码。每个能力均为"配置开关 + 可替换实现"。</p>
  */
+@Data
 @ConfigurationProperties(prefix = "customer-work")
 public class CustomerWorkProperties {
 
     /** 模型层配置（对接百炼 / DashScope 通义千问）。 */
     private final Model model = new Model();
 
-    /** 会话持久化配置（支撑跨进程会话恢复）。 */
+    /** 会话持久化配置。 */
     private final Session session = new Session();
 
     /** Agent 运行时配置。 */
     private final Agent agent = new Agent();
 
-    /** 长期记忆配置（对应深度解析 3.4，跨会话、多租户隔离）。 */
+    /** 长期记忆配置（跨会话、多租户隔离）。 */
     private final Memory memory = new Memory();
 
-    /** 任务规划配置（对应深度解析 3.3 PlanNotebook）。 */
+    /** 任务规划配置（PlanNotebook）。 */
     private final Plan plan = new Plan();
 
-    public Model getModel() {
-        return model;
-    }
+    /** RAG 知识检索配置。 */
+    private final Rag rag = new Rag();
 
-    public Session getSession() {
-        return session;
-    }
+    /** 智能上下文压缩配置（AutoContext）。 */
+    private final Context context = new Context();
 
-    public Agent getAgent() {
-        return agent;
-    }
+    /** Skill 技能库配置。 */
+    private final Skill skill = new Skill();
 
-    public Memory getMemory() {
-        return memory;
-    }
+    /** MCP 接入配置。 */
+    private final Mcp mcp = new Mcp();
 
-    public Plan getPlan() {
-        return plan;
-    }
+    /** 可观测性配置。 */
+    private final Observability observability = new Observability();
 
-    /**
-     * 模型层配置。API Key 强烈建议用环境变量 {@code DASHSCOPE_API_KEY} 注入，
-     * 不要把真实密钥提交到代码仓库。
-     */
+    /** Human-in-the-Loop 人工确认配置。 */
+    private final HumanApproval humanApproval = new HumanApproval();
+
+    /** 三层记忆体系第三层：事实日志（只追加、可审计）。 */
+    private final FactLog factLog = new FactLog();
+
+    /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
+    @Data
     public static class Model {
-        /** 百炼 / DashScope API Key。 */
         private String apiKey;
-        /** 模型名，默认通义千问 qwen-max；可切 qwen-plus / qwen-turbo 等。 */
         private String name = "qwen-max";
-        /** 自定义网关地址（如走 Higress AI 网关或百炼兼容模式）；为空则用 SDK 默认。 */
         private String baseUrl;
-        /** 采样温度。客服场景偏确定性，默认较低。 */
         private Double temperature = 0.3;
-        /** 单次回复最大 token 数。 */
         private Integer maxTokens = 1500;
-        /** 是否开启流式输出（逐 token）。 */
         private boolean stream = true;
-
-        public String getApiKey() {
-            return apiKey;
-        }
-
-        public void setApiKey(String apiKey) {
-            this.apiKey = apiKey;
-        }
-
-        public String getName() {
-            return name;
-        }
-
-        public void setName(String name) {
-            this.name = name;
-        }
-
-        public String getBaseUrl() {
-            return baseUrl;
-        }
-
-        public void setBaseUrl(String baseUrl) {
-            this.baseUrl = baseUrl;
-        }
-
-        public Double getTemperature() {
-            return temperature;
-        }
-
-        public void setTemperature(Double temperature) {
-            this.temperature = temperature;
-        }
-
-        public Integer getMaxTokens() {
-            return maxTokens;
-        }
-
-        public void setMaxTokens(Integer maxTokens) {
-            this.maxTokens = maxTokens;
-        }
-
-        public boolean isStream() {
-            return stream;
-        }
-
-        public void setStream(boolean stream) {
-            this.stream = stream;
-        }
+        /** Embedding 模型名（RAG 接百炼向量检索时使用）。 */
+        private String embeddingName = "text-embedding-v3";
     }
 
-    /**
-     * 会话持久化配置。
-     *
-     * <ul>
-     *   <li>{@code memory}：进程内存储，重启即丢，适合本地联调；</li>
-     *   <li>{@code json}：文件落盘，单机重启可恢复，适合单实例生产；</li>
-     *   <li>分布式多实例生产请扩展为 Redis/MySQL Session（框架内置 RedisSession / MysqlSession）。</li>
-     * </ul>
-     */
+    /** 会话持久化配置：memory | json（分布式可扩展为 redis/mysql）。 */
+    @Data
     public static class Session {
-        /** 持久化模式：memory | json。 */
         private String mode = "memory";
-        /** json 模式下的落盘目录。 */
         private String directory = "./data/sessions";
-
-        public String getMode() {
-            return mode;
-        }
-
-        public void setMode(String mode) {
-            this.mode = mode;
-        }
-
-        public String getDirectory() {
-            return directory;
-        }
-
-        public void setDirectory(String directory) {
-            this.directory = directory;
-        }
     }
 
     /** Agent 运行时配置。 */
+    @Data
     public static class Agent {
-        /** ReAct 最大推理-行动轮次，防止失控空转。 */
         private int maxIters = 10;
-        /**
-         * 是否启用 Meta-Tool（元工具）：允许 Agent 在运行时自主启停工具组，
-         * 缓解大量工具时的上下文窗口压力（对应深度解析 3.2）。默认关闭，保持工具全量可见。
-         */
+        /** Meta-Tool（元工具）：Agent 运行时自主启停工具组，缓解上下文窗口压力。 */
         private boolean metaToolEnabled = false;
-
-        public int getMaxIters() {
-            return maxIters;
-        }
-
-        public void setMaxIters(int maxIters) {
-            this.maxIters = maxIters;
-        }
-
-        public boolean isMetaToolEnabled() {
-            return metaToolEnabled;
-        }
-
-        public void setMetaToolEnabled(boolean metaToolEnabled) {
-            this.metaToolEnabled = metaToolEnabled;
-        }
     }
 
-    /**
-     * 长期记忆配置（对应深度解析 3.4）。
-     *
-     * <p>跨会话沉淀用户事实，并按租户隔离（ToB 硬要求）。本项目内置一个进程内内存实现，
-     * 生产可切换为百炼长期记忆 / Mem0 / ReMe（框架均有扩展）。</p>
-     */
+    /** 长期记忆配置。 */
+    @Data
     public static class Memory {
-        /** 是否启用长期记忆。 */
         private boolean longTermEnabled = true;
-        /**
-         * 租户解析分隔符：sessionId 形如 {@code tenantA:conv-1} 时，分隔符前为租户 ID，
-         * 同租户不同会话共享长期记忆；无分隔符则整个 sessionId 视为一个租户。
-         */
+        /** 租户解析分隔符：sessionId 形如 tenantA:conv-1 时分隔符前为租户。 */
         private String tenantDelimiter = ":";
-        /** 单次召回的最大记忆条数。 */
         private int retrieveTopK = 5;
+    }
 
-        public boolean isLongTermEnabled() {
-            return longTermEnabled;
-        }
+    /** 任务规划配置。 */
+    @Data
+    public static class Plan {
+        private boolean enabled = true;
+        private int maxSubtasks = 20;
+    }
 
-        public void setLongTermEnabled(boolean longTermEnabled) {
-            this.longTermEnabled = longTermEnabled;
-        }
+    /** RAG 配置。 */
+    @Data
+    public static class Rag {
+        /** 是否启用 RAG（内置内存关键词实现，生产可切百炼企业知识库）。 */
+        private boolean enabled = true;
+        /** 召回条数上限。 */
+        private int topK = 3;
+    }
 
-        public String getTenantDelimiter() {
-            return tenantDelimiter;
-        }
+    /** 智能上下文压缩配置（对应 AutoContextMemory）。 */
+    @Data
+    public static class Context {
+        /** 是否启用自动上下文压缩（长对话上下文有界）。默认关闭，开启需可用模型。 */
+        private boolean compressionEnabled = false;
+        /** 触发压缩的最大 token 阈值。 */
+        private long maxToken = 8000;
+        /** 触发压缩的消息条数阈值。 */
+        private int msgThreshold = 40;
+        /** 压缩时保留最近 N 条消息原文。 */
+        private int lastKeep = 10;
+    }
 
-        public void setTenantDelimiter(String tenantDelimiter) {
-            this.tenantDelimiter = tenantDelimiter;
-        }
+    /** Skill 技能库配置。 */
+    @Data
+    public static class Skill {
+        /** 是否启用 Skill（从 classpath 加载 Markdown 技能）。 */
+        private boolean enabled = true;
+        /** classpath 下技能目录。 */
+        private String location = "skills";
+    }
 
-        public int getRetrieveTopK() {
-            return retrieveTopK;
-        }
+    /** MCP 接入配置。 */
+    @Data
+    public static class Mcp {
+        /** 是否启用 MCP 接入（把存量 HTTP 系统零改造接成 Agent 工具）。默认关闭。 */
+        private boolean enabled = false;
+        /** MCP 服务列表。 */
+        private List<Server> servers = new ArrayList<>();
 
-        public void setRetrieveTopK(int retrieveTopK) {
-            this.retrieveTopK = retrieveTopK;
+        @Data
+        public static class Server {
+            private String name;
+            private String url;
+            /** 传输类型：sse | streamable-http。 */
+            private String transport = "sse";
         }
     }
 
-    /** 任务规划配置（对应深度解析 3.3 PlanNotebook）。 */
-    public static class Plan {
-        /** 是否启用 PlanNotebook，引导 Agent 有序完成长链路任务。 */
+    /** 可观测性配置。 */
+    @Data
+    public static class Observability {
+        /** 是否把全链路 trace 导出为 JSONL 文件（可对接 OpenTelemetry / 数据飞轮）。 */
+        private boolean traceEnabled = false;
+        private String traceFile = "./data/traces/agent-trace.jsonl";
+    }
+
+    /** Human-in-the-Loop 人工确认配置。 */
+    @Data
+    public static class HumanApproval {
+        /** 是否启用工具级人工确认（高风险工具执行后暂停 Agent 待人工复核）。 */
         private boolean enabled = true;
-        /** 单个计划的最大子任务数。 */
-        private int maxSubtasks = 20;
+        /** 受控（需人工确认）的工具名集合。 */
+        private List<String> guardedTools = new ArrayList<>(List.of("submitRefund"));
+    }
 
-        public boolean isEnabled() {
-            return enabled;
-        }
-
-        public void setEnabled(boolean enabled) {
-            this.enabled = enabled;
-        }
-
-        public int getMaxSubtasks() {
-            return maxSubtasks;
-        }
-
-        public void setMaxSubtasks(int maxSubtasks) {
-            this.maxSubtasks = maxSubtasks;
-        }
+    /** 事实日志配置（三层记忆第三层）。 */
+    @Data
+    public static class FactLog {
+        /** 是否启用只追加事实日志（可审计、跨会话）。 */
+        private boolean enabled = true;
+        private String directory = "./data/facts";
     }
 }

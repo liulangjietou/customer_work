@@ -37,6 +37,40 @@ customer-work:
     # PlanNotebook 任务规划：引导 Agent 有序完成长链路任务
     enabled: true
     max-subtasks: 20
+  rag:
+    # RAG 知识检索：内置内存关键词实现，生产可切百炼企业知识库 / Dify
+    enabled: true
+    top-k: 3
+  context:
+    # 智能上下文压缩（AutoContext）：长对话上下文有界。默认关闭（开启需可用模型）
+    compression-enabled: false
+    max-token: 8000
+    msg-threshold: 40
+    last-keep: 10
+  skill:
+    # Skill 技能库：从 classpath 的 skills/<name>/SKILL.md 加载 Markdown 技能
+    enabled: true
+    location: skills
+  mcp:
+    # MCP 接入：把存量 HTTP 系统零改造接成 Agent 工具。默认关闭，配置 servers 后生效
+    enabled: false
+    servers: []
+      # - name: inventory
+      #   url: http://localhost:9000/sse
+      #   transport: sse
+  observability:
+    # 全链路 trace 导出为 JSONL（可对接 OpenTelemetry / 数据飞轮）。默认关闭
+    trace-enabled: false
+    trace-file: ./data/traces/agent-trace.jsonl
+  human-approval:
+    # 工具级人工确认：高风险工具执行后暂停 Agent 待人工复核
+    enabled: true
+    guarded-tools:
+      - submitRefund
+  fact-log:
+    # 三层记忆第三层：只追加事实日志（可审计、跨会话）
+    enabled: true
+    directory: ./data/facts
 
 logging:
   level:

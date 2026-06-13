@@ -19,18 +19,39 @@
 
 一句话：**核心 Agent 链路（②③④⑤）是框架原生支持、可直接运行的；①和⑥是生产工程化范畴，本项目以 Hook、配置项、扩展点的形式预留对接位置。**
 
-### 已落地的关键组件（对应文章第三章）
+### 已落地的特性全景（覆盖系列文章各专题）
 
-| 关键组件 | 章节 | 本项目落地方式 |
+| 特性 | 本项目落地方式 | 默认 |
 |---|---|---|
-| ReActAgent + 安全中断 | 3.1 | `ReActAgent` 推理循环；`POST /session/{id}/interrupt` 暴露 `agent.interrupt()` |
-| Toolkit + Tool Group + Meta-Tool | 3.2 | 四个业务域工具组；`meta-tool-enabled` 开启后 Agent 可运行时启停工具组 |
-| PlanNotebook 任务规划 | 3.3 | `PlanNotebook` + `InMemoryPlanStorage`，引导长链路任务拆解 |
-| 结构化输出 | 3.3 | `POST /intent` 用 `call(msg, IntentResult.class)` 返回强类型意图，免二次解析 |
-| 短期 + 多租户长期记忆 | 3.4 | 会话级 `InMemoryMemory` + 自实现 `LongTermMemory`（跨会话、按租户隔离） |
-| 可观测 / 数据飞轮采集 | 3.6 | `ObservabilityHook` 采集 token 用量、时延、工具调用与异常 |
+| ReActAgent | `CustomerServiceAgentFactory` 装配，`max-iters` 控制轮次 | 开 |
+| 流式输出 | `POST /chat/stream` 订阅 `agent.stream()` 类型化事件流逐片段 SSE 下发 | 开 |
+| 结构化输出 | `POST /intent` 用 `call(msg, IntentResult.class)` 返回强类型意图 | 开 |
+| 多轮会话 & 会话持久化 | 框架 `Session/State`，按 sessionId `saveTo`/`loadIfExists`（memory/json，可扩展 redis/mysql） | 开 |
+| 长期记忆（多租户隔离） | 自实现 `LongTermMemory`，跨会话共享、按租户隔离 | 开 |
+| 智能上下文压缩 | `AutoContextMemory`，长对话自动压缩、上下文有界 | 关（需模型） |
+| Hook 可观测 | `ObservabilityHook` 采集 token/时延/工具/异常；可选 `JsonlTraceExporter` 导出 trace | 开 / trace 关 |
+| 三层记忆体系 | L1 短期 `Memory` + L2 长期 `LongTermMemory` + L3 只追加 `FactLog`（JSONL 审计） | 开 |
+| 工具集成 | Toolkit + 四业务域 Tool Group + 可选 Meta-Tool 运行时启停 | 开 / meta 关 |
+| MCP 接入 | `McpToolkitConfigurer` 按配置把存量 HTTP 系统接成 Agent 工具 | 关 |
+| RAG | 自实现 `Knowledge`（内存关键词），`ragMode=AGENTIC`，生产可切百炼企业知识库 | 开 |
+| Skill | `SkillBox` + `ClasspathSkillRepository` 加载 `skills/<name>/SKILL.md` | 开 |
+| Human-in-the-Loop | `HumanApprovalHook` 对高风险工具执行后暂停 Agent 待人工复核 + 安全中断端点 | 开 |
+| Harness | 1.0.12 暂无（属 1.1+），升级后可接入分层记忆 + 子 Agent | — |
 
-> 长期记忆、RAG、Plan 等均以**可配置开关 + 可替换实现**给出：内置进程内实现保证开箱即用与可测，生产可无感切换为百炼长期记忆 / 企业知识库 / Redis 等后端。
+> 每项能力均为**配置开关 + 可替换实现**：内置进程内实现保证开箱即用与可单测，
+> 生产可无感切换为百炼长期记忆 / 百炼企业知识库 / Redis 会话 / 真实 MCP 服务等后端。
+> 全部配置见 `application.yml` 的 `customer-work.*`。
+
+### 对接百炼平台的真实集成测试
+
+`BailianIntegrationTest` 真实调用百炼（DashScope），默认随 `mvn test` **跳过**以保证离线可过。
+联调时：
+
+```bash
+export RUN_BAILIAN_IT=true
+export DASHSCOPE_API_KEY=你的百炼密钥   # 不设则用项目默认 key
+mvn test -Dtest=BailianIntegrationTest
+```
 
 ## 二、环境要求
 
@@ -103,9 +124,9 @@ curl -X DELETE http://localhost:8080/api/customer/session/u1001
 mvn test
 ```
 
-覆盖范围（40 个用例）：四个工具组的业务逻辑、Tool Group 注册完整性、Meta-Tool 开关、租户解析、
-多租户长期记忆的记录/召回/隔离、可观测 Hook 的只读透传与异常兜底、会话服务的多轮复用 / 错误兜底 /
-流式拼接 / 持久化 / 结构化意图 / 安全中断、控制器的参数校验与路由。
+覆盖范围（60 个用例，含 1 个默认跳过的百炼集成测试）：工具组业务逻辑、Tool Group/Meta-Tool 装配、
+租户解析、RAG 召回、智能上下文压缩选择、Skill 加载、MCP 开关、Human-in-the-Loop 闸门、
+多租户长期记忆与事实日志、可观测 Hook、会话服务编排、控制器路由与校验、以及全 Bean 装配冒烟测试。
 
 ## 六、代码结构
 
@@ -113,25 +134,29 @@ mvn test
 src/main/java/com/example/customerwork/
 ├── CustomerWorkApplication.java            # Spring Boot 启动类
 ├── config/
-│   ├── CustomerWorkProperties.java         # 强类型配置（model/session/agent/memory/plan）
+│   ├── CustomerWorkProperties.java         # 强类型配置（model/session/agent/memory/plan/rag/context/skill/mcp/observability/...）
 │   ├── ModelConfig.java                    # 模型层：百炼 DashScope 统一抽象
 │   └── SessionConfig.java                  # 会话持久化 Session Bean（memory/json）
 ├── agent/
-│   ├── CustomerServiceAgentFactory.java    # ③④ 主 Agent 装配 + Tool Group/Meta-Tool/Plan/长期记忆
-│   └── ObservabilityHook.java              # ⑥ 全链路采集（token/时延/异常）
+│   ├── CustomerServiceAgentFactory.java    # 主 Agent 装配：工具组/Meta-Tool/Plan/记忆/RAG/Skill/MCP/Hook
+│   ├── ObservabilityHook.java              # 全链路采集（token/时延/异常）
+│   └── HumanApprovalHook.java              # Human-in-the-Loop：高风险工具人工确认闸门
 ├── memory/
-│   ├── LongTermMemoryStore.java            # 3.4 多租户长期记忆存储（按租户隔离）
-│   └── InMemoryLongTermMemory.java         # 3.4 LongTermMemory 接口的内存实现
+│   ├── LongTermMemoryStore.java            # L2 多租户长期记忆存储
+│   ├── InMemoryLongTermMemory.java         # L2 LongTermMemory 接口实现（同时写 L3）
+│   ├── ContextMemoryFactory.java           # 短期记忆 / 智能上下文压缩（AutoContext）
+│   └── FactLog.java                        # L3 只追加事实日志（JSONL 审计）
+├── rag/InMemoryKeywordKnowledge.java       # RAG：Knowledge 接口内存实现
 ├── tool/
-│   ├── OrderTools.java                     # ④ 订单 / 物流工具组
-│   ├── AfterSalesTools.java                # ④ 售后 / 退款（涉资金走人工确认）
-│   ├── KnowledgeBaseTools.java             # ② RAG 知识检索（伪 RAG，可换真实 RAG）
-│   └── HumanHandoffTools.java              # ④ 人工坐席转接 / ③ 风险熔断
-├── service/CustomerServiceService.java     # ② 会话恢复 / ⑤ 持久化 / 流式 / 结构化意图 / 安全中断
+│   ├── OrderTools / AfterSalesTools / KnowledgeBaseTools / HumanHandoffTools.java
+│   └── McpToolkitConfigurer.java           # MCP 接入装配器
+├── service/CustomerServiceService.java     # 会话恢复 / 持久化 / 流式 / 结构化意图 / 安全中断
 ├── controller/
-│   ├── CustomerServiceController.java      # ① 应用入口 / ⑤ 同步与 SSE 流式 / 意图 / 中断
+│   ├── CustomerServiceController.java      # 入口：同步 / SSE 流式 / 意图 / 中断
 │   └── GlobalExceptionHandler.java         # 统一错误响应
 └── dto/ (ChatRequest, ChatResponse, IntentResult)
+
+src/main/resources/skills/refund-handling/SKILL.md   # Markdown 技能（Skill 特性）
 ```
 
 ## 七、从示例到大规模生产，还可以补什么

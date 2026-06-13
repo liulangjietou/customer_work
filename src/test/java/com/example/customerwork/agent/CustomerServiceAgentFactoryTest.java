@@ -1,11 +1,15 @@
 package com.example.customerwork.agent;
 
 import com.example.customerwork.config.CustomerWorkProperties;
+import com.example.customerwork.memory.ContextMemoryFactory;
+import com.example.customerwork.memory.FactLog;
 import com.example.customerwork.memory.LongTermMemoryStore;
+import com.example.customerwork.tool.McpToolkitConfigurer;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.tool.Toolkit;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -13,8 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 /**
- * Agent 工厂单测：校验工具分组注册的完整性、Meta-Tool 开关、以及租户解析逻辑。
- * 无需模型 / Spring 上下文。
+ * Agent 工厂单测：工具分组注册完整性、Meta-Tool 开关、租户解析。无需 Spring 上下文。
  */
 class CustomerServiceAgentFactoryTest {
 
@@ -22,7 +25,11 @@ class CustomerServiceAgentFactoryTest {
     private final LongTermMemoryStore store = new LongTermMemoryStore();
 
     private CustomerServiceAgentFactory factory(CustomerWorkProperties props) {
-        return new CustomerServiceAgentFactory(model, props, store);
+        FactLog factLog = new FactLog(false, Path.of("target/test-facts"));
+        return new CustomerServiceAgentFactory(
+            model, props, store, factLog,
+            new ContextMemoryFactory(props, model),
+            new McpToolkitConfigurer(props));
     }
 
     @Test
@@ -58,12 +65,9 @@ class CustomerServiceAgentFactoryTest {
     @Test
     void resolveTenant_shouldSplitOnDelimiter() {
         CustomerServiceAgentFactory f = factory(new CustomerWorkProperties());
-        // 默认分隔符为 ":"，同租户不同会话应解析到同一租户
         assertEquals("tenantA", f.resolveTenant("tenantA:conv-1"));
         assertEquals("tenantA", f.resolveTenant("tenantA:conv-2"));
-        // 无分隔符时整个 sessionId 作为租户
         assertEquals("u1001", f.resolveTenant("u1001"));
-        // 空会话回退到 default
         assertEquals("default", f.resolveTenant(""));
     }
 }
