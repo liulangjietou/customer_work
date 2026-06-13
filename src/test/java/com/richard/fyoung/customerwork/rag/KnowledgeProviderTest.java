@@ -2,10 +2,12 @@ package com.richard.fyoung.customerwork.rag;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.rag.Knowledge;
+import io.agentscope.core.rag.knowledge.SimpleKnowledge;
 import io.agentscope.core.rag.model.RetrieveConfig;
 import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -33,5 +35,15 @@ class KnowledgeProviderTest {
     void get_shouldReturnSameInstance() {
         KnowledgeProvider provider = new KnowledgeProvider(new CustomerWorkProperties());
         assertSame(provider.get(), provider.get(), "应复用同一共享知识库实例");
+    }
+
+    @Test
+    void get_shouldBuildSimpleVectorKnowledge_whenProviderSimple() {
+        // 真实 Embedding 向量 RAG：构造离线（嵌入调用发生在 retrieve/add 时），仅校验装配
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getModel().setApiKey("sk-test");
+        props.getRag().setProvider("simple");
+
+        assertInstanceOf(SimpleKnowledge.class, new KnowledgeProvider(props).get());
     }
 }

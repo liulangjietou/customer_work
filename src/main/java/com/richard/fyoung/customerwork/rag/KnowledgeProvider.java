@@ -1,9 +1,12 @@
 package com.richard.fyoung.customerwork.rag;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import io.agentscope.core.embedding.dashscope.DashScopeTextEmbedding;
 import io.agentscope.core.rag.Knowledge;
 import io.agentscope.core.rag.integration.bailian.BailianConfig;
 import io.agentscope.core.rag.integration.bailian.BailianKnowledge;
+import io.agentscope.core.rag.knowledge.SimpleKnowledge;
+import io.agentscope.core.rag.store.InMemoryStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -56,13 +59,36 @@ public class KnowledgeProvider {
 
     private Knowledge build() {
         String provider = properties.getRag().getProvider();
-        if ("bailian".equalsIgnoreCase(provider)) {
-            return buildBailian();
+        switch (provider == null ? "memory" : provider.toLowerCase()) {
+            case "simple":
+                return buildSimple();
+            case "bailian":
+                return buildBailian();
+            default:
+                InMemoryKeywordKnowledge knowledge =
+                    new InMemoryKeywordKnowledge(properties.getRag().getTopK());
+                knowledge.addTexts(KNOWLEDGE_DOCS).block();
+                log.info("[RAG] 使用内存知识库，预置文档 {} 条", KNOWLEDGE_DOCS.size());
+                return knowledge;
         }
-        InMemoryKeywordKnowledge knowledge = new InMemoryKeywordKnowledge(properties.getRag().getTopK());
-        knowledge.addTexts(KNOWLEDGE_DOCS).block();
-        log.info("[RAG] 使用内存知识库，预置文档 {} 条", KNOWLEDGE_DOCS.size());
-        return knowledge;
+    }
+
+    /** 真实 Embedding 向量 RAG：百炼 Embedding + 内存向量库（语义检索）。 */
+    private Knowledge buildSimple() {
+        CustomerWorkProperties.Model m = properties.getModel();
+        DashScopeTextEmbedding embedding = DashScopeTextEmbedding.builder()
+            .apiKey(m.getApiKey())
+            .modelName(m.getEmbeddingName())
+            .dimensions(properties.getRag().getSimple().getDimensions())
+            .build();
+        log.info("[RAG] 使用 SimpleKnowledge（百炼 Embedding {} + 内存向量库）", m.getEmbeddingName());
+        // 文档灌库由运维侧通过 addDocuments 异步完成（嵌入需调用 Embedding 服务，避免启动期阻塞）
+        return SimpleKnowledge.builder()
+            .embeddingModel(embedding)
+            .embeddingStore(InMemoryStore.builder()
+                .dimensions(properties.getRag().getSimple().getDimensions())
+                .build())
+            .build();
     }
 
     private Knowledge buildBailian() {

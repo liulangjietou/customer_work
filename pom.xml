@@ -67,6 +67,12 @@
             <artifactId>jedis</artifactId>
         </dependency>
 
+        <!-- 长期记忆 Mem0 / ReMe 客户端依赖的 HTTP 库 -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+        </dependency>
+
         <!-- ============ AgentScope Java 核心 ============ -->
         <!-- 注意：聚合包 artifactId 就是 agentscope，不要写成 agentscope-model-xxx（不存在） -->
         <dependency>

@@ -3,6 +3,9 @@ package com.richard.fyoung.customerwork.memory;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.memory.LongTermMemory;
 import io.agentscope.core.memory.bailian.BailianLongTermMemory;
+import io.agentscope.core.memory.mem0.Mem0ApiType;
+import io.agentscope.core.memory.mem0.Mem0LongTermMemory;
+import io.agentscope.core.memory.reme.ReMeLongTermMemory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -39,10 +42,41 @@ public class LongTermMemoryProvider {
     /** 为指定租户创建长期记忆实例。 */
     public LongTermMemory create(String tenantId) {
         CustomerWorkProperties.Memory cfg = properties.getMemory();
-        if ("bailian".equalsIgnoreCase(cfg.getProvider())) {
-            return buildBailian(tenantId, cfg);
+        switch (cfg.getProvider() == null ? "memory" : cfg.getProvider().toLowerCase()) {
+            case "bailian":
+                return buildBailian(tenantId, cfg);
+            case "mem0":
+                return buildMem0(tenantId, cfg);
+            case "reme":
+                return buildReMe(tenantId, cfg);
+            default:
+                return new InMemoryLongTermMemory(store, factLog, tenantId, cfg.getRetrieveTopK());
         }
-        return new InMemoryLongTermMemory(store, factLog, tenantId, cfg.getRetrieveTopK());
+    }
+
+    private LongTermMemory buildMem0(String tenantId, CustomerWorkProperties.Memory cfg) {
+        CustomerWorkProperties.Memory.Mem0 m = cfg.getMem0();
+        Mem0LongTermMemory.Builder builder = Mem0LongTermMemory.builder()
+            .userId(tenantId)
+            .agentName(m.getAgentName())
+            .apiKey(m.getApiKey())
+            .apiType("self_hosted".equalsIgnoreCase(m.getApiType())
+                ? Mem0ApiType.SELF_HOSTED : Mem0ApiType.PLATFORM);
+        if (StringUtils.hasText(m.getApiBaseUrl())) {
+            builder.apiBaseUrl(m.getApiBaseUrl());
+        }
+        log.info("[LTM] 使用 Mem0 长期记忆 userId(tenant)={} apiType={}", tenantId, m.getApiType());
+        return builder.build();
+    }
+
+    private LongTermMemory buildReMe(String tenantId, CustomerWorkProperties.Memory cfg) {
+        CustomerWorkProperties.Memory.ReMe r = cfg.getReme();
+        ReMeLongTermMemory.Builder builder = ReMeLongTermMemory.builder().userId(tenantId);
+        if (StringUtils.hasText(r.getApiBaseUrl())) {
+            builder.apiBaseUrl(r.getApiBaseUrl());
+        }
+        log.info("[LTM] 使用 ReMe 长期记忆 userId(tenant)={}", tenantId);
+        return builder.build();
     }
 
     private LongTermMemory buildBailian(String tenantId, CustomerWorkProperties.Memory cfg) {

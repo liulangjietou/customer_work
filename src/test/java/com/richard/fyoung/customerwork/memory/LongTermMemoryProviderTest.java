@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.memory;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.memory.LongTermMemory;
+import io.agentscope.core.memory.mem0.Mem0LongTermMemory;
+import io.agentscope.core.memory.reme.ReMeLongTermMemory;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -25,5 +27,21 @@ class LongTermMemoryProviderTest {
     void create_shouldReturnInMemory_byDefault() {
         LongTermMemory ltm = provider(new CustomerWorkProperties()).create("tenantA");
         assertInstanceOf(InMemoryLongTermMemory.class, ltm);
+    }
+
+    @Test
+    void create_shouldReturnMem0_whenProviderMem0() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getMemory().setProvider("mem0");
+        props.getMemory().getMem0().setApiKey("m0-test");
+        assertInstanceOf(Mem0LongTermMemory.class, provider(props).create("tenantA"));
+    }
+
+    @Test
+    void create_shouldReturnReMe_whenProviderReMe() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getMemory().setProvider("reme");
+        props.getMemory().getReme().setApiBaseUrl("http://localhost:8001");
+        assertInstanceOf(ReMeLongTermMemory.class, provider(props).create("tenantA"));
     }
 }
