@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>对当前 {@link Session}（memory/json/redis/mysql）做一次轻量探测：能完成一次只读查询即视为 UP，
  * 否则 DOWN 并附带后端类型与错误信息，便于运维快速定位 Redis/MySQL 连接问题。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class SessionHealthIndicator implements HealthIndicator {

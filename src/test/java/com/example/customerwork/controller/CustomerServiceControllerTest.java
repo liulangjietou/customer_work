@@ -22,6 +22,7 @@ import static org.mockito.Mockito.when;
 /**
  * 控制器 Web 层切片测试：用 WebTestClient 驱动 HTTP 行为，
  * Service 被 mock，不触达模型与 Spring 全量上下文（无需 API Key）。
+ * @author owlzhangfq@gmail.com
  */
 @WebFluxTest(CustomerServiceController.class)
 @Import(CustomerWorkProperties.class)   // 提供安全过滤器所需配置（默认鉴权/限流关闭，放行）

@@ -21,6 +21,7 @@ import java.util.List;
  *
  * <p>挂到 ReActAgent 后，配合 {@code LongTermMemoryMode.BOTH}（静态注入 + Agent 主动调用）
  * 即可在多轮、跨会话场景中复用用户画像与历史诉求。</p>
+ * @author owlzhangfq@gmail.com
  */
 public class InMemoryLongTermMemory implements LongTermMemory {
 

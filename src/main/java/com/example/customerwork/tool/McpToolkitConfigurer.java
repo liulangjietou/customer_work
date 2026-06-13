@@ -17,6 +17,7 @@ import java.time.Duration;
  * 构建 {@link McpClientWrapper} 并注册到 {@link Toolkit}。默认关闭，配置后即生效。</p>
  *
  * <p>注册在应用启动 / Agent 装配期同步完成（{@code block}），属一次性初始化开销，可接受。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class McpToolkitConfigurer {

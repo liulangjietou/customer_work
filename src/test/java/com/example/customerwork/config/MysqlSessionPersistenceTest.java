@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *
  * <p>当 MySQL 不可达时<b>自动跳过</b>（assumeTrue），保证 {@code mvn test} 在无 MySQL 的环境
  * 仍然通过；在 MySQL 在线的机器上则真实执行存-取-删往返，验证 {@code MysqlSession}（含自动建库建表）。</p>
+ * @author owlzhangfq@gmail.com
  */
 class MysqlSessionPersistenceTest {
 

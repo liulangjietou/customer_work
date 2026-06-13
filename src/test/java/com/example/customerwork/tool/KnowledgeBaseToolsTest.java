@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 知识库工具组单测：命中返回带来源标注的内容，未命中给出兜底提示。
+ * @author owlzhangfq@gmail.com
  */
 class KnowledgeBaseToolsTest {
 

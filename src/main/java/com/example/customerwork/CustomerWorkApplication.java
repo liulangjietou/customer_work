@@ -13,6 +13,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
  *
  * <p>①接入治理（Higress/RocketMQ）与 ⑥数据飞轮（RM Gallery/Trinity-RFT）属于生产工程化范畴，
  * 需要结合各自基础设施落地，本项目以注释与扩展点（Hook、接口）的形式预留位置，不内置实现。</p>
+ * @author owlzhangfq@gmail.com
  */
 // 会话用 DataSource 仅在 mode=mysql 时由 SessionConfig 手动构建，
 // 因此排除 Spring Boot 的 DataSource 自动配置（避免要求 spring.datasource.url）。

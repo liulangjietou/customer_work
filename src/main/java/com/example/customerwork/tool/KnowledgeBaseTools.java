@@ -21,6 +21,7 @@ import java.util.stream.Collectors;
  *   <li>通过 agentscope-extensions-rag-dify 接入 Dify，或</li>
  *   <li>接阿里云百炼企业级知识库（更强的检索与重排）。</li>
  * </ul>
+ * @author owlzhangfq@gmail.com
  */
 public class KnowledgeBaseTools {
 

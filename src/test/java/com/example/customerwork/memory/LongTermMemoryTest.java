@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 多租户长期记忆单测（对应深度解析 3.4）：记忆沉淀、相关召回、以及最关键的租户隔离。
+ * @author owlzhangfq@gmail.com
  */
 class LongTermMemoryTest {
 

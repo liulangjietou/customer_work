@@ -19,6 +19,7 @@ import reactor.core.publisher.Mono;
  * <p>生产中本工具会把当前 {@code sessionId} 对应的完整上下文（依托框架的 Session/State）
  * 推送到人工坐席工作台。借助 ReActAgent 的安全中断能力，移交时上下文与工具状态被完整保存，
  * 人工处理后可无缝恢复。</p>
+ * @author owlzhangfq@gmail.com
  */
 public class HumanHandoffTools {
 

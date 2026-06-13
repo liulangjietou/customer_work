@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 事实日志单测（三层记忆第三层）：只追加持久化、跨租户隔离、可禁用。
+ * @author owlzhangfq@gmail.com
  */
 class FactLogTest {
 

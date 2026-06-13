@@ -47,6 +47,7 @@ import java.util.Set;
  *   <li>可观测 Hook + 可选 JSONL trace 导出；</li>
  *   <li>Human-in-the-Loop 工具级人工确认 Hook。</li>
  * </ul>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class CustomerServiceAgentFactory implements DisposableBean {

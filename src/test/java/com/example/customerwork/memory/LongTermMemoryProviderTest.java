@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 /**
  * 长期记忆提供方单测：默认 provider=memory 返回内置内存实现。
  * （bailian 实现需真实百炼凭据，由集成环境验证。）
+ * @author owlzhangfq@gmail.com
  */
 class LongTermMemoryProviderTest {
 

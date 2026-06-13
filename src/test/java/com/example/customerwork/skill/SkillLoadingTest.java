@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Skill 技能库单测（进阶「Skill」）：从 classpath 的 skills 目录加载 Markdown 技能，
  * 并注册进 SkillBox。
+ * @author owlzhangfq@gmail.com
  */
 class SkillLoadingTest {
 

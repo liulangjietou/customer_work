@@ -31,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>该测试构建真实 {@link DashScopeChatModel} + {@link ReActAgent}，发起一轮带工具调用的对话，
  * 验证端到端链路可在百炼平台跑通。</p>
+ * @author owlzhangfq@gmail.com
  */
 @EnabledIfEnvironmentVariable(named = "RUN_BAILIAN_IT", matches = "true")
 class BailianIntegrationTest {

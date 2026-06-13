@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 会话后端健康检查单测：可用→UP，探测异常→DOWN，并附带后端类型。
+ * @author owlzhangfq@gmail.com
  */
 class SessionHealthIndicatorTest {
 

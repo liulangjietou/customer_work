@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * MCP 接入装配器单测（特性「MCP 接入」）：开关与配置判定逻辑。
  * 不连接真实 MCP 服务，只验证装配决策。
+ * @author owlzhangfq@gmail.com
  */
 class McpToolkitConfigurerTest {
 

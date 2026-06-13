@@ -21,6 +21,7 @@ import java.util.List;
  * </ul>
  *
  * <p>对调用方（{@code CustomerServiceAgentFactory}）只暴露统一的 {@link Knowledge}，切换实现零代码改动。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class KnowledgeProvider {

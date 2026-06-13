@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 可观测 Hook 单测：必须只读透传事件，且观测逻辑异常绝不打断主链路。
+ * @author owlzhangfq@gmail.com
  */
 class ObservabilityHookTest {
 

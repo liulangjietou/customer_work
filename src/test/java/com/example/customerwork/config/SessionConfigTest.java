@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 会话持久化配置单测（离线，不连接任何外部服务）：
  * 验证按 mode 选择正确的 Session 类型，以及 Redis/MySQL 客户端构建与 JDBC URL 拼装。
+ * @author owlzhangfq@gmail.com
  */
 class SessionConfigTest {
 

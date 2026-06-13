@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 首次为某会话创建 Agent 时调用 {@code agent.loadIfExists(session, key)} 恢复历史。
  * {@link Session} 的具体实现（内存 / Json / Redis / MySQL）由 {@code SessionConfig} 决定，
  * 本服务对存储无感知。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Service
 public class CustomerServiceService {

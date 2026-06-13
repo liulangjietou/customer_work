@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Redis / MySQL 会话持久化测试的共享工具：服务可达性探测与一套通用的"存-取-删"断言。
+ * @author owlzhangfq@gmail.com
  */
 final class SessionPersistenceTestSupport {
 

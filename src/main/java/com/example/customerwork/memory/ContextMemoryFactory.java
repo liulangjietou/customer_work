@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
  *       卸载大工具结果、保留最近若干轮原文，保证上下文始终有界，
  *       直接缓解"长对话上下文爆炸、Token 成本失控"。</li>
  * </ul>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class ContextMemoryFactory {

@@ -18,6 +18,7 @@ import java.util.Set;
  *
  * <p>校验请求头中的 API Key 是否合法；健康检查与 Actuator 端点放行。默认关闭，
  * 生产开启 {@code customer-work.security.auth.enabled=true} 并配置 {@code api-keys} 后强制鉴权。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)

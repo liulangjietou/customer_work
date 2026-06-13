@@ -10,6 +10,7 @@ package com.example.customerwork.dto;
  * @param orderId 若用户消息中包含订单号则回填，否则为空字符串
  * @param urgent  是否为高优先级 / 需尽快人工介入
  * @param summary 一句话概括用户诉求
+ * @author owlzhangfq@gmail.com
  */
 public record IntentResult(String intent, String orderId, boolean urgent, String summary) {
 }

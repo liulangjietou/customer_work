@@ -17,6 +17,7 @@ import java.util.Map;
  *
  * <p>关键点：工具返回 {@code Mono<String>}（异步），框架会统一为异步流式处理；多个查询类工具
  * 可由 Agent 并行调用并聚合结果，缓解上下文与时延压力。</p>
+ * @author owlzhangfq@gmail.com
  */
 public class OrderTools {
 

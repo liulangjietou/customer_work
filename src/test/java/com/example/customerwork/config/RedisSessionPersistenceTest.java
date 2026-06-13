@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *
  * <p>当 Redis 不可达时<b>自动跳过</b>（assumeTrue），保证 {@code mvn test} 在无 Redis 的环境
  * 仍然通过；在 Redis 在线的机器上则真实执行存-取-删往返，验证 {@code RedisSession} 可用。</p>
+ * @author owlzhangfq@gmail.com
  */
 class RedisSessionPersistenceTest {
 

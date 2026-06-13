@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>采用进程内固定窗计数；分布式部署应换成基于 Redis 的分布式限流（如 Bucket4j + Redis），
  * 本实现接口不变、可平滑替换。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)

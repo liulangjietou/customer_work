@@ -12,6 +12,7 @@ import java.util.List;
  * <p>统一收口模型、会话、Agent、记忆、规划、RAG、上下文压缩、Skill、MCP、可观测、
  * 人工确认等所有可调能力，便于在不同环境通过 {@code application-*.yml} 或环境变量覆盖，
  * 而无需改动业务代码。每个能力均为"配置开关 + 可替换实现"。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Data
 @ConfigurationProperties(prefix = "customer-work")

@@ -12,6 +12,7 @@ import static org.mockito.Mockito.mock;
 
 /**
  * 短期记忆工厂单测（特性「智能上下文压缩」）：按开关返回普通记忆或自动压缩记忆。
+ * @author owlzhangfq@gmail.com
  */
 class ContextMemoryFactoryTest {
 

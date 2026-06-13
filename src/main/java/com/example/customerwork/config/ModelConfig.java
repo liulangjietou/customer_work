@@ -22,6 +22,7 @@ import org.springframework.util.StringUtils;
  *   <li>配置项 {@code customer-work.model.api-key}；</li>
  *   <li>环境变量 {@code DASHSCOPE_API_KEY}（生产推荐，避免密钥入库）。</li>
  * </ol>
+ * @author owlzhangfq@gmail.com
  */
 @Configuration
 @EnableConfigurationProperties(CustomerWorkProperties.class)

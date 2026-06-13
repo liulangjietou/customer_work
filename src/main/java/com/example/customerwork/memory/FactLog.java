@@ -28,6 +28,7 @@ import java.util.List;
  * </ol>
  *
  * <p>采用 append-only 写入（{@link StandardOpenOption#APPEND}），保证历史事实不被覆盖。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class FactLog {

@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * RAG 知识库单测（特性「RAG」）：灌库与按相关度召回。
+ * @author owlzhangfq@gmail.com
  */
 class InMemoryKeywordKnowledgeTest {
 

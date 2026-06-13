@@ -19,6 +19,7 @@ import java.util.Set;
  *
  * <p>这是把"涉及资金操作必须人工确认"从提示词约定升级为框架级强约束——
  * 即使模型判断失误，闸门依然生效。</p>
+ * @author owlzhangfq@gmail.com
  */
 public class HumanApprovalHook implements Hook {
 

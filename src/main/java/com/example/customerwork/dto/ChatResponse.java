@@ -5,6 +5,7 @@ package com.example.customerwork.dto;
  *
  * @param sessionId 实际使用的会话 ID（匿名请求会回填服务端生成的 ID）。
  * @param reply     助手回复文本。
+ * @author owlzhangfq@gmail.com
  */
 public record ChatResponse(String sessionId, String reply) {
 }

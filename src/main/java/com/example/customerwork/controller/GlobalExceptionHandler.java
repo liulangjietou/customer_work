@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 /**
  * 全局异常处理：把校验失败与未预期异常转换为统一的 JSON 错误响应，
  * 避免把堆栈直接暴露给调用方。
+ * @author owlzhangfq@gmail.com
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {

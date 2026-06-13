@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Higress 接入装配器单测（接入 Higress）：开关与配置判定逻辑，不连接真实网关。
+ * @author owlzhangfq@gmail.com
  */
 class HigressToolkitConfigurerTest {
 

@@ -32,6 +32,7 @@ import java.nio.file.Path;
  *
  * <p>{@code CustomerServiceService} 通过 {@code agent.saveTo/loadIfExists} 使用该 Bean，
  * 对底层存储无感知——切换模式只改一行配置。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Configuration
 public class SessionConfig {

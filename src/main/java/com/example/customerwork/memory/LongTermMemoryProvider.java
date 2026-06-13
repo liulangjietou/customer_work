@@ -17,6 +17,7 @@ import org.springframework.util.StringUtils;
  *   <li><b>bailian</b>：阿里云百炼长期记忆 {@link BailianLongTermMemory}，托管的画像抽取与语义召回，
  *       以 userId=租户 ID 做多租户隔离。</li>
  * </ul>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class LongTermMemoryProvider {

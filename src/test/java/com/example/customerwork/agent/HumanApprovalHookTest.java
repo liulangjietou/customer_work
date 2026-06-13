@@ -18,6 +18,7 @@ import static org.mockito.Mockito.mock;
 /**
  * 人工确认 Hook 单测（进阶「Human-in-the-Loop」）：
  * 受控的高风险工具执行后应请求暂停 Agent，普通工具不受影响。
+ * @author owlzhangfq@gmail.com
  */
 class HumanApprovalHookTest {
 

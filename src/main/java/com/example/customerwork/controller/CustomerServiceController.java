@@ -26,6 +26,7 @@ import java.util.UUID;
  * <p>这里是 Agent 应用自身暴露的 HTTP 入口。Higress AI 网关、鉴权限流、A/B 分流、
  * RocketMQ 异步削峰等，是部署在本应用<b>前面</b>的基础设施，不在应用代码内实现——
  * 生产中本应用作为上游被网关路由即可。</p>
+ * @author owlzhangfq@gmail.com
  */
 @RestController
 @RequestMapping("/api/customer")

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 订单工具组单测：只验证工具自身的响应式逻辑，不调用真实模型（无需 API Key）。
+ * @author owlzhangfq@gmail.com
  */
 class OrderToolsTest {
 

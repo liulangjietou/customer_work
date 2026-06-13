@@ -20,6 +20,7 @@ import java.time.Duration;
  *
  * <p>默认关闭；配置 {@code customer-work.higress.enabled=true} 且给定 endpoint 后生效。
  * 注册在装配期同步完成（一次性初始化）。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class HigressToolkitConfigurer {

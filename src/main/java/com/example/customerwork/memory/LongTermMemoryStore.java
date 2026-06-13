@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
  * <p>这是一个最小可用实现：召回采用基于字符重合度的轻量打分（伪语义检索）。生产中可替换为
  * 百炼长期记忆 / Mem0 / ReMe，或接入向量库做真正的语义召回——只要继续实现
  * {@code io.agentscope.core.memory.LongTermMemory} 接口即可，调用方无感知。</p>
+ * @author owlzhangfq@gmail.com
  */
 @Component
 public class LongTermMemoryStore {

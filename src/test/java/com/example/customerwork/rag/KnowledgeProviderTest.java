@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 知识库提供方单测：默认 memory 实现灌入预置文档并可召回，且实例为单例复用。
  * （bailian 实现需真实百炼凭据，由集成环境验证；此处只覆盖默认实现与选择逻辑。）
+ * @author owlzhangfq@gmail.com
  */
 class KnowledgeProviderTest {
 

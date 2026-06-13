@@ -22,6 +22,7 @@ import reactor.core.publisher.Mono;
  * 暴露为指标，经 Actuator / Prometheus 供监控与数据飞轮消费。</p>
  *
  * <p>Hook 必须只读透传事件且不抛异常，因此整体包了兜底。</p>
+ * @author owlzhangfq@gmail.com
  */
 public class ObservabilityHook implements Hook {
 

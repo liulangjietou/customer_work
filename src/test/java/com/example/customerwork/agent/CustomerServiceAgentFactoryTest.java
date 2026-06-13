@@ -21,6 +21,7 @@ import static org.mockito.Mockito.mock;
 
 /**
  * Agent 工厂单测：工具分组注册完整性、Meta-Tool 开关、租户解析。无需 Spring 上下文。
+ * @author owlzhangfq@gmail.com
  */
 class CustomerServiceAgentFactoryTest {
 

@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p><b>生产替换</b>：换成框架内置的 {@code SimpleKnowledge}（百炼 Embedding + 向量库）
  * 或 {@code BailianKnowledge}（百炼企业知识库）即可获得真正的语义检索与重排，
  * 调用方无需改动——这正是 {@link Knowledge} 抽象的价值。</p>
+ * @author owlzhangfq@gmail.com
  */
 public class InMemoryKeywordKnowledge implements Knowledge {
 

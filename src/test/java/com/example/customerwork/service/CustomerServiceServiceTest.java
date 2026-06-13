@@ -29,6 +29,7 @@ import static org.mockito.Mockito.when;
 /**
  * 会话服务单测：用 Mockito 隔离模型与框架，验证编排逻辑——
  * 多轮共享 Agent、错误兜底、流式拼接、会话持久化的调用。
+ * @author owlzhangfq@gmail.com
  */
 class CustomerServiceServiceTest {
 
