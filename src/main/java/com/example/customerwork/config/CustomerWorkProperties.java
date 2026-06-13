@@ -53,6 +53,12 @@ public class CustomerWorkProperties {
     /** 三层记忆体系第三层：事实日志（只追加、可审计）。 */
     private final FactLog factLog = new FactLog();
 
+    /** 接入层安全：API Key 鉴权 + 限流。 */
+    private final Security security = new Security();
+
+    /** Higress AI 网关接入。 */
+    private final Higress higress = new Higress();
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -120,9 +126,24 @@ public class CustomerWorkProperties {
     @Data
     public static class Memory {
         private boolean longTermEnabled = true;
+        /** 长期记忆实现：memory（内置内存）| bailian（阿里云百炼长期记忆）。 */
+        private String provider = "memory";
         /** 租户解析分隔符：sessionId 形如 tenantA:conv-1 时分隔符前为租户。 */
         private String tenantDelimiter = ":";
         private int retrieveTopK = 5;
+        /** 百炼长期记忆配置（provider=bailian 时生效）。 */
+        private final Bailian bailian = new Bailian();
+
+        @Data
+        public static class Bailian {
+            /** 百炼 API Key；留空则复用 model.api-key。 */
+            private String apiKey = "";
+            private String apiBaseUrl = "";
+            /** 记忆库 ID（在百炼控制台创建）。 */
+            private String memoryLibraryId = "";
+            private String projectId = "";
+            private int topK = 5;
+        }
     }
 
     /** 任务规划配置。 */
@@ -135,10 +156,25 @@ public class CustomerWorkProperties {
     /** RAG 配置。 */
     @Data
     public static class Rag {
-        /** 是否启用 RAG（内置内存关键词实现，生产可切百炼企业知识库）。 */
+        /** 是否启用 RAG。 */
         private boolean enabled = true;
+        /** 知识库实现：memory（内置内存关键词）| bailian（百炼企业知识库）。 */
+        private String provider = "memory";
         /** 召回条数上限。 */
         private int topK = 3;
+        /** 百炼企业知识库配置（provider=bailian 时生效）。 */
+        private final Bailian bailian = new Bailian();
+
+        @Data
+        public static class Bailian {
+            private String accessKeyId = "";
+            private String accessKeySecret = "";
+            private String workspaceId = "";
+            /** 知识库索引 ID（在百炼控制台创建）。 */
+            private String indexId = "";
+            private String endpoint = "";
+            private boolean enableReranking = true;
+        }
     }
 
     /** 智能上下文压缩配置（对应 AutoContextMemory）。 */
@@ -203,5 +239,51 @@ public class CustomerWorkProperties {
         /** 是否启用只追加事实日志（可审计、跨会话）。 */
         private boolean enabled = true;
         private String directory = "./data/facts";
+    }
+
+    /** 接入层安全配置。 */
+    @Data
+    public static class Security {
+        private final Auth auth = new Auth();
+        private final RateLimit rateLimit = new RateLimit();
+
+        /** API Key 鉴权。 */
+        @Data
+        public static class Auth {
+            /** 是否启用鉴权（默认关闭，生产建议开启并配置 api-keys）。 */
+            private boolean enabled = false;
+            /** 携带 API Key 的请求头名。 */
+            private String headerName = "X-API-Key";
+            /** 合法 API Key 列表。 */
+            private List<String> apiKeys = new ArrayList<>();
+        }
+
+        /** 限流（固定时间窗，按 API Key 或客户端 IP 维度）。 */
+        @Data
+        public static class RateLimit {
+            /** 是否启用限流。 */
+            private boolean enabled = false;
+            /** 每分钟允许的最大请求数。 */
+            private int requestsPerMinute = 120;
+        }
+    }
+
+    /** Higress AI 网关接入配置。 */
+    @Data
+    public static class Higress {
+        /** 是否启用 Higress 接入。 */
+        private boolean enabled = false;
+        /** 客户端名称。 */
+        private String name = "higress";
+        /** Higress MCP 端点 URL。 */
+        private String endpoint = "";
+        /** 传输类型：sse | streamable-http。 */
+        private String transport = "sse";
+        /** 工具搜索关键词（Higress 按需路由工具）；留空则不启用工具搜索。 */
+        private String toolSearch = "";
+        /** 工具搜索返回的最大工具数。 */
+        private int maxTools = 10;
+        /** 连接超时（秒）。 */
+        private int timeoutSeconds = 30;
     }
 }

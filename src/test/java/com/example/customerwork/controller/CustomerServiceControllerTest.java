@@ -1,5 +1,6 @@
 package com.example.customerwork.controller;
 
+import com.example.customerwork.config.CustomerWorkProperties;
 import com.example.customerwork.dto.ChatRequest;
 import com.example.customerwork.dto.IntentResult;
 import com.example.customerwork.service.CustomerServiceService;
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -22,6 +24,7 @@ import static org.mockito.Mockito.when;
  * Service 被 mock，不触达模型与 Spring 全量上下文（无需 API Key）。
  */
 @WebFluxTest(CustomerServiceController.class)
+@Import(CustomerWorkProperties.class)   // 提供安全过滤器所需配置（默认鉴权/限流关闭，放行）
 class CustomerServiceControllerTest {
 
     @Autowired

@@ -1,0 +1,78 @@
+package com.example.customerwork.security;
+
+import com.example.customerwork.config.CustomerWorkProperties;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import org.springframework.mock.web.server.MockServerWebExchange;
+import org.springframework.web.server.WebFilterChain;
+import reactor.core.publisher.Mono;
+
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * API Key 鉴权过滤器单测（接入层安全）。
+ */
+class ApiKeyAuthWebFilterTest {
+
+    private CustomerWorkProperties propsWithAuth(boolean enabled, String... keys) {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getSecurity().getAuth().setEnabled(enabled);
+        props.getSecurity().getAuth().setApiKeys(List.of(keys));
+        return props;
+    }
+
+    private boolean runFilter(CustomerWorkProperties props, MockServerHttpRequest request) {
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+        WebFilterChain chain = ex -> {
+            chainCalled.set(true);
+            return Mono.empty();
+        };
+        new ApiKeyAuthWebFilter(props).filter(exchange, chain).block();
+        return chainCalled.get();
+    }
+
+    @Test
+    void shouldPass_whenAuthDisabled() {
+        boolean passed = runFilter(propsWithAuth(false),
+            MockServerHttpRequest.post("/api/customer/chat").build());
+        assertTrue(passed, "鉴权关闭时应放行");
+    }
+
+    @Test
+    void shouldReject_whenEnabledAndNoKey() {
+        CustomerWorkProperties props = propsWithAuth(true, "secret-key");
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/chat").build());
+        AtomicBoolean chainCalled = new AtomicBoolean(false);
+        new ApiKeyAuthWebFilter(props).filter(exchange, ex -> {
+            chainCalled.set(true);
+            return Mono.empty();
+        }).block();
+
+        assertFalse(chainCalled.get(), "无 Key 不应放行");
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+    }
+
+    @Test
+    void shouldPass_whenValidKey() {
+        boolean passed = runFilter(propsWithAuth(true, "secret-key"),
+            MockServerHttpRequest.post("/api/customer/chat").header("X-API-Key", "secret-key").build());
+        assertTrue(passed, "合法 Key 应放行");
+    }
+
+    @Test
+    void shouldExemptHealthAndActuator() {
+        CustomerWorkProperties props = propsWithAuth(true, "secret-key");
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/api/customer/health").build()),
+            "健康检查应免鉴权");
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/actuator/health").build()),
+            "Actuator 应免鉴权");
+    }
+}

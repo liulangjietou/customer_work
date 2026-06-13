@@ -42,19 +42,36 @@ customer-work:
     # Meta-Tool（元工具）：允许 Agent 运行时自主启停工具组，缓解上下文压力。默认关闭
     meta-tool-enabled: false
   memory:
-    # 长期记忆（跨会话、按租户隔离）。内置进程内实现，生产可切百炼长期记忆 / Mem0 / ReMe
+    # 长期记忆（跨会话、按租户隔离）
     long-term-enabled: true
+    # 实现：memory（内置内存）| bailian（阿里云百炼长期记忆）
+    provider: memory
     # 租户解析分隔符：sessionId 形如 tenantA:conv-1 时，分隔符前为租户，同租户跨会话共享记忆
     tenant-delimiter: ":"
     retrieve-top-k: 5
+    bailian:
+      api-key: ""            # 留空则复用 model.api-key
+      api-base-url: ""
+      memory-library-id: ""  # 百炼控制台创建的记忆库 ID
+      project-id: ""
+      top-k: 5
   plan:
     # PlanNotebook 任务规划：引导 Agent 有序完成长链路任务
     enabled: true
     max-subtasks: 20
   rag:
-    # RAG 知识检索：内置内存关键词实现，生产可切百炼企业知识库 / Dify
+    # RAG 知识检索
     enabled: true
+    # 实现：memory（内置内存关键词）| bailian（百炼企业知识库，语义检索+重排）
+    provider: memory
     top-k: 3
+    bailian:
+      access-key-id: ""
+      access-key-secret: ""
+      workspace-id: ""
+      index-id: ""          # 百炼控制台创建的知识库索引 ID
+      endpoint: ""
+      enable-reranking: true
   context:
     # 智能上下文压缩（AutoContext）：长对话上下文有界。默认关闭（开启需可用模型）
     compression-enabled: false
@@ -85,6 +102,26 @@ customer-work:
     # 三层记忆第三层：只追加事实日志（可审计、跨会话）
     enabled: true
     directory: ./data/facts
+  security:
+    # 接入层安全：API Key 鉴权（默认关闭，生产开启并配置 api-keys）
+    auth:
+      enabled: false
+      header-name: X-API-Key
+      api-keys: []
+        # - your-production-api-key
+    # 限流：固定时间窗，按 API Key 或客户端 IP 维度（默认关闭）
+    rate-limit:
+      enabled: false
+      requests-per-minute: 120
+  higress:
+    # Higress AI 网关接入：按需工具发现 / 流量治理。默认关闭，配置 endpoint 后生效
+    enabled: false
+    name: higress
+    endpoint: ""
+    transport: sse           # sse | streamable-http
+    tool-search: ""          # 工具搜索关键词；留空则不启用按需工具发现
+    max-tools: 10
+    timeout-seconds: 30
 
 # 生产可观测：Actuator 健康检查 / 指标 / Prometheus
 management:

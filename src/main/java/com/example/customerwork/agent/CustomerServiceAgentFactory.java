@@ -2,11 +2,10 @@ package com.example.customerwork.agent;
 
 import com.example.customerwork.config.CustomerWorkProperties;
 import com.example.customerwork.memory.ContextMemoryFactory;
-import com.example.customerwork.memory.FactLog;
-import com.example.customerwork.memory.InMemoryLongTermMemory;
-import com.example.customerwork.memory.LongTermMemoryStore;
-import com.example.customerwork.rag.InMemoryKeywordKnowledge;
+import com.example.customerwork.memory.LongTermMemoryProvider;
+import com.example.customerwork.rag.KnowledgeProvider;
 import com.example.customerwork.tool.AfterSalesTools;
+import com.example.customerwork.tool.HigressToolkitConfigurer;
 import com.example.customerwork.tool.HumanHandoffTools;
 import com.example.customerwork.tool.KnowledgeBaseTools;
 import com.example.customerwork.tool.McpToolkitConfigurer;
@@ -17,7 +16,6 @@ import io.agentscope.core.memory.LongTermMemoryMode;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.plan.PlanNotebook;
 import io.agentscope.core.plan.storage.InMemoryPlanStorage;
-import io.agentscope.core.rag.Knowledge;
 import io.agentscope.core.rag.RAGMode;
 import io.agentscope.core.skill.AgentSkill;
 import io.agentscope.core.skill.SkillBox;
@@ -31,7 +29,6 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -61,13 +58,6 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     static final String GROUP_AFTER_SALES = "after_sales";
     static final String GROUP_HUMAN = "human";
 
-    /** RAG 预置知识：企业政策文档（生产中由真实知识库 / 百炼企业知识库提供）。 */
-    private static final List<String> KNOWLEDGE_DOCS = List.of(
-        "支持七天无理由退货，商品需保持完好、不影响二次销售；定制类、生鲜类除外。（来源：《售后服务政策》第 3 条）",
-        "支持开具电子普通发票与增值税专用发票，可在订单详情页自助申请，1-3 个工作日开具。（来源：《发票管理规则》第 1 条）",
-        "单笔订单满 99 元包邮，偏远地区除外；退货运费由责任方承担。（来源：《运费说明》第 2 条）",
-        "大额退款（单笔超过 1000 元）需人工坐席复核后处理，预计 1 个工作日内完成。（来源：《资金安全规范》第 5 条）");
-
     private static final String SYSTEM_PROMPT = """
         你是一名专业、耐心的电商智能客服助手。请严格遵循以下规则：
         1. 先理解用户意图（咨询 / 订单查询 / 售后退款 / 投诉）。
@@ -84,31 +74,32 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
     private final Model model;
     private final CustomerWorkProperties properties;
-    private final LongTermMemoryStore longTermMemoryStore;
-    private final FactLog factLog;
     private final ContextMemoryFactory contextMemoryFactory;
+    private final LongTermMemoryProvider longTermMemoryProvider;
+    private final KnowledgeProvider knowledgeProvider;
     private final McpToolkitConfigurer mcpToolkitConfigurer;
+    private final HigressToolkitConfigurer higressToolkitConfigurer;
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
 
-    /** 共享的 RAG 知识库（一次灌库，所有会话复用）。 */
-    private volatile Knowledge ragKnowledge;
     /** 共享的 trace 导出器（AutoCloseable，进程级单例）。 */
     private volatile JsonlTraceExporter traceExporter;
 
     public CustomerServiceAgentFactory(Model model,
                                        CustomerWorkProperties properties,
-                                       LongTermMemoryStore longTermMemoryStore,
-                                       FactLog factLog,
                                        ContextMemoryFactory contextMemoryFactory,
+                                       LongTermMemoryProvider longTermMemoryProvider,
+                                       KnowledgeProvider knowledgeProvider,
                                        McpToolkitConfigurer mcpToolkitConfigurer,
+                                       HigressToolkitConfigurer higressToolkitConfigurer,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
         this.properties = properties;
-        this.longTermMemoryStore = longTermMemoryStore;
-        this.factLog = factLog;
         this.contextMemoryFactory = contextMemoryFactory;
+        this.longTermMemoryProvider = longTermMemoryProvider;
+        this.knowledgeProvider = knowledgeProvider;
         this.mcpToolkitConfigurer = mcpToolkitConfigurer;
+        this.higressToolkitConfigurer = higressToolkitConfigurer;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
 
@@ -135,6 +126,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
         // MCP：把存量 HTTP 系统接成 Agent 工具（默认关闭）
         mcpToolkitConfigurer.configure(toolkit);
+        // Higress AI 网关：按需工具发现 / 流量治理（默认关闭）
+        higressToolkitConfigurer.configure(toolkit);
 
         return toolkit;
     }
@@ -177,17 +170,16 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                 .build());
         }
 
-        // 多租户长期记忆
+        // 多租户长期记忆（memory / 百炼，由 Provider 选择）
         if (properties.getMemory().isLongTermEnabled()) {
             String tenantId = resolveTenant(sessionId);
-            builder.longTermMemory(new InMemoryLongTermMemory(
-                    longTermMemoryStore, factLog, tenantId, properties.getMemory().getRetrieveTopK()))
+            builder.longTermMemory(longTermMemoryProvider.create(tenantId))
                 .longTermMemoryMode(LongTermMemoryMode.BOTH);
         }
 
-        // RAG 知识检索
+        // RAG 知识检索（memory / 百炼企业知识库，由 Provider 选择）
         if (properties.getRag().isEnabled()) {
-            builder.knowledge(ragKnowledge()).ragMode(RAGMode.AGENTIC);
+            builder.knowledge(knowledgeProvider.get()).ragMode(RAGMode.AGENTIC);
         }
 
         // Skill 技能库
@@ -199,22 +191,6 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         }
 
         return builder.build();
-    }
-
-    /** 懒加载并灌入预置文档的共享 RAG 知识库。 */
-    private Knowledge ragKnowledge() {
-        if (ragKnowledge == null) {
-            synchronized (this) {
-                if (ragKnowledge == null) {
-                    InMemoryKeywordKnowledge knowledge =
-                        new InMemoryKeywordKnowledge(properties.getRag().getTopK());
-                    knowledge.addTexts(KNOWLEDGE_DOCS).block();
-                    ragKnowledge = knowledge;
-                    log.info("[RAG] 知识库已就绪，预置文档 {} 条", KNOWLEDGE_DOCS.size());
-                }
-            }
-        }
-        return ragKnowledge;
     }
 
     /** 从 classpath 加载 Markdown 技能并注册进 SkillBox。 */

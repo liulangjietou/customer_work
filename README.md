@@ -34,9 +34,12 @@
 | 三层记忆体系 | L1 短期 `Memory` + L2 长期 `LongTermMemory` + L3 只追加 `FactLog`（JSONL 审计） | 开 |
 | 工具集成 | Toolkit + 四业务域 Tool Group + 可选 Meta-Tool 运行时启停 | 开 / meta 关 |
 | MCP 接入 | `McpToolkitConfigurer` 按配置把存量 HTTP 系统接成 Agent 工具 | 关 |
-| RAG | 自实现 `Knowledge`（内存关键词），`ragMode=AGENTIC`，生产可切百炼企业知识库 | 开 |
+| RAG | `KnowledgeProvider` 切换：内存关键词 / **百炼企业知识库**（`ragMode=AGENTIC`） | 开 |
+| 长期记忆（实现可切） | `LongTermMemoryProvider` 切换：内存多租户 / **百炼长期记忆** | 开 |
 | Skill | `SkillBox` + `ClasspathSkillRepository` 加载 `skills/<name>/SKILL.md` | 开 |
 | Human-in-the-Loop | `HumanApprovalHook` 对高风险工具执行后暂停 Agent 待人工复核 + 安全中断端点 | 开 |
+| **Higress AI 网关** | `HigressToolkitConfigurer` 接入 Higress，按需工具发现 / 流量治理 | 关 |
+| **接入层安全** | `ApiKeyAuthWebFilter`（API Key 鉴权）+ `RateLimitWebFilter`（限流） | 关 |
 | Harness | 1.0.12 暂无（属 1.1+），升级后可接入分层记忆 + 子 Agent | — |
 
 > 每项能力均为**配置开关 + 可替换实现**：内置进程内实现保证开箱即用与可单测，
@@ -62,6 +65,50 @@ customer-work:
 `RedisSessionPersistenceTest` / `MysqlSessionPersistenceTest` 做真实存-取-删往返验证：
 **服务可达时执行并通过，不可达时自动跳过**（`assumeTrue`），因此 `mvn test` 在任何环境都绿。
 （本机有 Redis/MySQL 时直接 `mvn test` 即会真实跑这两条用例。）
+
+### 切换百炼知识库 / 百炼长期记忆
+
+只改配置即可从内置内存实现切到阿里云百炼托管能力（代码零改动）：
+
+```yaml
+customer-work:
+  rag:
+    provider: bailian
+    bailian: { access-key-id: ..., access-key-secret: ..., workspace-id: ..., index-id: ... }
+  memory:
+    provider: bailian
+    bailian: { api-key: ..., memory-library-id: ..., top-k: 5 }   # api-key 留空则复用 model.api-key
+```
+
+### 接入层安全：API Key 鉴权 + 限流
+
+默认关闭，生产开启：
+
+```yaml
+customer-work:
+  security:
+    auth: { enabled: true, header-name: X-API-Key, api-keys: [your-key-1, your-key-2] }
+    rate-limit: { enabled: true, requests-per-minute: 120 }
+```
+
+- `ApiKeyAuthWebFilter`：校验请求头 API Key，健康检查 / Actuator 免鉴权；
+- `RateLimitWebFilter`：按 API Key 或客户端 IP 固定窗限流，超限返回 429（分布式可换 Redis 限流）。
+
+### Higress AI 网关接入
+
+```yaml
+customer-work:
+  higress:
+    enabled: true
+    endpoint: http://higress.local/mcp/sse
+    transport: sse              # sse | streamable-http
+    tool-search: "订单 物流"     # 按需工具发现关键词（避免上百工具 Schema 撑爆上下文）
+```
+
+### CI
+
+`.github/workflows/ci.yml`：push / PR 触发 `mvn test` + 打包，并启动 **Redis 与 MySQL 服务容器**
+（含密码 / 库名），使会话持久化测试在 CI 中真实执行；百炼集成测试默认跳过。
 
 ### 生产可观测 / 运维就绪
 

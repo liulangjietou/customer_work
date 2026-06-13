@@ -3,7 +3,10 @@ package com.example.customerwork.agent;
 import com.example.customerwork.config.CustomerWorkProperties;
 import com.example.customerwork.memory.ContextMemoryFactory;
 import com.example.customerwork.memory.FactLog;
+import com.example.customerwork.memory.LongTermMemoryProvider;
 import com.example.customerwork.memory.LongTermMemoryStore;
+import com.example.customerwork.rag.KnowledgeProvider;
+import com.example.customerwork.tool.HigressToolkitConfigurer;
 import com.example.customerwork.tool.McpToolkitConfigurer;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.tool.Toolkit;
@@ -27,9 +30,12 @@ class CustomerServiceAgentFactoryTest {
     private CustomerServiceAgentFactory factory(CustomerWorkProperties props) {
         FactLog factLog = new FactLog(false, Path.of("target/test-facts"));
         return new CustomerServiceAgentFactory(
-            model, props, store, factLog,
+            model, props,
             new ContextMemoryFactory(props, model),
+            new LongTermMemoryProvider(props, store, factLog),
+            new KnowledgeProvider(props),
             new McpToolkitConfigurer(props),
+            new HigressToolkitConfigurer(props),
             null);   // 无 MeterRegistry（观测降级为仅日志）
     }
 
