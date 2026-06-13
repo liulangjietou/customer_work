@@ -96,9 +96,17 @@ customer-work:
       #   url: http://localhost:9000/sse
       #   transport: sse
   observability:
-    # 全链路 trace 导出为 JSONL（可对接 OpenTelemetry / 数据飞轮）。默认关闭
+    # 全链路 trace 导出为 JSONL（数据飞轮采集）。默认关闭
     trace-enabled: false
     trace-file: ./data/traces/agent-trace.jsonl
+    # 框架原生链路追踪 Hook（按模型/工具/Agent 调用打 span）。默认关闭
+    tracing-enabled: false
+    # Studio 可视化调试（需外部 Studio 服务）。默认关闭
+    studio:
+      enabled: false
+      url: ""
+      project: customer-work
+      run-name: customer-work-run
   human-approval:
     # 工具级人工确认：高风险工具执行后暂停 Agent 待人工复核
     enabled: true

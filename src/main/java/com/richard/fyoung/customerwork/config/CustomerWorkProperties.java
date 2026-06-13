@@ -268,9 +268,21 @@ public class CustomerWorkProperties {
     /** 可观测性配置。 */
     @Data
     public static class Observability {
-        /** 是否把全链路 trace 导出为 JSONL 文件（可对接 OpenTelemetry / 数据飞轮）。 */
+        /** 是否把全链路 trace 导出为 JSONL 文件（数据飞轮采集）。 */
         private boolean traceEnabled = false;
         private String traceFile = "./data/traces/agent-trace.jsonl";
+        /** 是否启用框架原生链路追踪 Hook（TracerRegistry），按模型/工具/Agent 调用打 span。 */
+        private boolean tracingEnabled = false;
+        /** Studio 可视化调试对接。 */
+        private final Studio studio = new Studio();
+
+        @Data
+        public static class Studio {
+            private boolean enabled = false;
+            private String url = "";
+            private String project = "customer-work";
+            private String runName = "customer-work-run";
+        }
     }
 
     /** Human-in-the-Loop 人工确认配置。 */
