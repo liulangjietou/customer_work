@@ -1,0 +1,6 @@
+# 测试专用配置：提供占位 API Key，保证全上下文测试离线可加载（不发起真实调用）。
+customer-work:
+  model:
+    api-key: test-dummy-key
+  nacos:
+    enabled: false
