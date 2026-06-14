@@ -102,6 +102,10 @@
 | DELETE | `/api/customer/session/{id}` | 结束并清理会话 |
 | GET | `/api/customer/health` | 健康检查 |
 | GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
+| GET | `/swagger-ui.html` | Swagger UI 交互式 API 文档 |
+| GET | `/v3/api-docs` | OpenAPI JSON |
+
+> 启动后打开 **http://localhost:8080/swagger-ui.html** 即可在线查看 / 调试全部接口（Swagger / springdoc-openapi）。鉴权开启时，Swagger 与 `/v3/api-docs`、`/webjars/**` 均免鉴权。
 
 ---
 

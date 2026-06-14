@@ -45,8 +45,12 @@ public class ApiKeyAuthWebFilter implements WebFilter {
         return exchange.getResponse().setComplete();
     }
 
-    /** 健康检查与可观测端点免鉴权（便于探针 / 监控抓取）。 */
+    /** 健康检查、可观测端点、Swagger 文档免鉴权（便于探针 / 监控抓取 / 查看 API 文档）。 */
     private boolean isExempt(String path) {
-        return path.startsWith("/actuator") || path.equals("/api/customer/health");
+        return path.startsWith("/actuator")
+            || path.equals("/api/customer/health")
+            || path.startsWith("/swagger-ui")
+            || path.startsWith("/v3/api-docs")
+            || path.startsWith("/webjars");
     }
 }

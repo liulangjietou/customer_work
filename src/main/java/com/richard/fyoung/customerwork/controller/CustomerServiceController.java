@@ -6,6 +6,8 @@ import com.richard.fyoung.customerwork.dto.ChatRequest;
 import com.richard.fyoung.customerwork.dto.ChatResponse;
 import com.richard.fyoung.customerwork.dto.IntentResult;
 import com.richard.fyoung.customerwork.service.CustomerServiceService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -32,6 +34,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/customer")
+@Tag(name = "智能客服", description = "对话 / 流式 / 结构化意图 / 多 Agent 协作 / AG-UI / 会话管理")
 public class CustomerServiceController {
 
     private final CustomerServiceService service;
@@ -49,6 +52,7 @@ public class CustomerServiceController {
     /**
      * 同步对话：返回完整回复。适合内部联调与简单接入。
      */
+    @Operation(summary = "同步对话", description = "返回完整回复")
     @PostMapping("/chat")
     public Mono<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
@@ -59,6 +63,7 @@ public class CustomerServiceController {
     /**
      * 流式对话（SSE）：逐增量片段推送，对应⑤ streamEvents 的逐 token 渲染体验。
      */
+    @Operation(summary = "流式对话(SSE)", description = "逐增量片段推送")
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chatStream(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
@@ -76,6 +81,7 @@ public class CustomerServiceController {
     /**
      * 结构化意图识别：返回强类型 {@link IntentResult}（对应⑤上游路由可直接消费的结构化结果）。
      */
+    @Operation(summary = "结构化意图识别", description = "返回强类型 IntentResult")
     @PostMapping("/intent")
     public Mono<IntentResult> classifyIntent(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
@@ -85,6 +91,7 @@ public class CustomerServiceController {
     /**
      * 安全中断：终止指定会话正在执行的 Agent，保留上下文以便后续恢复。
      */
+    @Operation(summary = "安全中断会话", description = "终止正在执行的 Agent，保留上下文")
     @PostMapping("/session/{sessionId}/interrupt")
     public Mono<String> interrupt(@PathVariable String sessionId) {
         boolean interrupted = service.interrupt(sessionId);
@@ -97,6 +104,7 @@ public class CustomerServiceController {
      * 多 Agent 协作咨询：把问题分发给订单 / 售后 / 知识库多个专家 Agent 并聚合结论
      * （fanout 模式）或流水细化（sequential 模式）。
      */
+    @Operation(summary = "多 Agent 协作咨询", description = "订单/售后/知识库专家并行或串行协作")
     @PostMapping("/consult")
     public Mono<String> consult(@Valid @RequestBody ChatRequest request) {
         return multiAgentOrchestrator.consult(request.message());
@@ -105,6 +113,7 @@ public class CustomerServiceController {
     /**
      * AG-UI 协议对话（SSE）：输出标准 Agent-UI 事件流，兼容 AG-UI 的前端可直接对接。
      */
+    @Operation(summary = "AG-UI 协议对话(SSE)", description = "标准 Agent-UI 事件流")
     @PostMapping(value = "/agui", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> agui(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
@@ -114,6 +123,7 @@ public class CustomerServiceController {
     /**
      * 结束会话。
      */
+    @Operation(summary = "结束会话", description = "清理会话与持久化状态")
     @DeleteMapping("/session/{sessionId}")
     public Mono<String> endSession(@PathVariable String sessionId) {
         service.endSession(sessionId);
@@ -121,6 +131,7 @@ public class CustomerServiceController {
     }
 
     /** 健康检查。 */
+    @Operation(summary = "健康检查")
     @GetMapping("/health")
     public Mono<String> health() {
         return Mono.just("OK");
