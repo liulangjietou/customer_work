@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * 意图识别的结构化输出（对应深度解析 3.3"结构化输出"）。
  *
@@ -12,5 +14,16 @@ package com.richard.fyoung.customerwork.dto;
  * @param summary 一句话概括用户诉求
  * @author owlzhangfq@gmail.com
  */
-public record IntentResult(String intent, String orderId, boolean urgent, String summary) {
+@Schema(description = "意图识别的结构化输出")
+public record IntentResult(
+        @Schema(description = "意图分类",
+                allowableValues = {"consult", "order", "refund", "complaint", "other"},
+                example = "refund")
+        String intent,
+        @Schema(description = "订单号（消息中包含时回填，否则为空）", example = "20260613001")
+        String orderId,
+        @Schema(description = "是否高优先级 / 需尽快人工介入", example = "true")
+        boolean urgent,
+        @Schema(description = "一句话概括用户诉求", example = "用户要求对订单退款")
+        String summary) {
 }
