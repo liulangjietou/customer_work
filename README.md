@@ -1,7 +1,18 @@
 # customer-work · 基于 AgentScope Java 的生产级智能客服系统
 
+[![CI](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml/badge.svg)](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](#四环境要求)
+[![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12-green.svg)](https://github.com/agentscope-ai/agentscope-java)
+
+> English version: [README_EN.md](README_EN.md)
+
 本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。
+
+> 开源说明：本项目以**可改造为你自己的业务 Agent** 为目标——业务工具走 `tool.backend.*` 接口，
+> 你只需实现接口（或覆盖 Bean）即可接入自有订单/售后/知识系统，无需改框架代码。详见
+> [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
 - 单元测试：**115 个全绿**（其中 3 个按外部服务可用性自动跳过：百炼 / Redis / MySQL）
