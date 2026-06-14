@@ -239,13 +239,31 @@ customer-work.rag:
 ```
 测试：`InMemoryKeywordKnowledgeTest`、`KnowledgeProviderTest`（含 simple/dify 装配）。
 
-### 6.9 工具集成 + Meta-Tool
+### 6.9 工具集成 + 把它改成你自己的业务 Agent
 
 四业务域 Tool Group（knowledge/order/after_sales/human）默认全激活；开启元工具后 Agent 可运行时启停工具组：
 ```yaml
 customer-work.agent: { max-iters: 10, meta-tool-enabled: true }
 ```
-测试：`CustomerServiceAgentFactoryTest`、`OrderToolsTest` / `AfterSalesToolsTest` / `KnowledgeBaseToolsTest` / `HumanHandoffToolsTest`。
+
+**接入你自己的业务系统（无需改框架代码）**：业务工具壳（`OrderTools` 等）只暴露给 LLM 的 Schema，
+真正逻辑委托给 `tool.backend` 下的接口（`OrderBackend` / `AfterSalesBackend` / `KnowledgeBackend`）。
+默认由 `ToolBackendConfig` 以 `@ConditionalOnMissingBean` 注册内存 Mock；你只要声明自己的同类型 Bean，
+默认实现就自动让位：
+
+```java
+@Component
+public class MyOrderBackend implements OrderBackend {
+    public Mono<String> queryOrder(String orderId) { /* WebClient 调你的订单服务 */ }
+    public Mono<String> queryLogistics(String orderId) { /* ... */ }
+}
+```
+
+其他定制点：系统提示词（`SYSTEM_PROMPT` 或 Nacos 热更新）、工具组（`ToolRegistrar`）、
+RAG 文档（`KnowledgeProvider`）、技能（`resources/skills/<name>/SKILL.md`）。
+
+测试：`OrderToolsTest` / `AfterSalesToolsTest` / `KnowledgeBaseToolsTest` / `HumanHandoffToolsTest`、
+`ToolBackendOverrideTest`（自定义后端覆盖）、`CustomerServiceAgentFactoryTest`。
 
 ### 6.10 Skill 技能库
 

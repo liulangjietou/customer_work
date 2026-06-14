@@ -1,6 +1,9 @@
 package com.richard.fyoung.customerwork.agent;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockOrderBackend;
 import io.agentscope.core.agent.AgentBase;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -29,7 +32,8 @@ class MultiAgentOrchestratorTest {
 
     @Test
     void buildSpecialists_shouldCreateThreeNamedExperts() {
-        MultiAgentOrchestrator orch = new MultiAgentOrchestrator(model, new CustomerWorkProperties());
+        MultiAgentOrchestrator orch = new MultiAgentOrchestrator(model, new CustomerWorkProperties(),
+            new MockOrderBackend(), new MockAfterSalesBackend(), new MockKnowledgeBackend());
         List<AgentBase> specialists = orch.buildSpecialists();
 
         assertEquals(3, specialists.size());
@@ -61,7 +65,8 @@ class MultiAgentOrchestratorTest {
 
     @Test
     void aggregate_shouldJoinWithExpertNames() {
-        MultiAgentOrchestrator orch = new MultiAgentOrchestrator(model, new CustomerWorkProperties());
+        MultiAgentOrchestrator orch = new MultiAgentOrchestrator(model, new CustomerWorkProperties(),
+            new MockOrderBackend(), new MockAfterSalesBackend(), new MockKnowledgeBackend());
         String merged = orch.aggregate(List.of(
             Msg.builder().role(MsgRole.ASSISTANT).name("OrderExpert")
                 .content(TextBlock.builder().text("已发货").build()).build(),

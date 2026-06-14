@@ -55,7 +55,7 @@ class BailianIntegrationTest {
     @Test
     void agent_shouldAnswerWithToolCall_onBailian() {
         Toolkit toolkit = new Toolkit();
-        toolkit.registerTool(new OrderTools());
+        toolkit.registerTool(new OrderTools(new com.richard.fyoung.customerwork.tool.backend.MockOrderBackend()));
 
         ReActAgent agent = ReActAgent.builder()
             .name("it-agent")

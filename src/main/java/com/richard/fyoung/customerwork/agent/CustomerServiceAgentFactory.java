@@ -6,12 +6,9 @@ import com.richard.fyoung.customerwork.memory.ContextMemoryFactory;
 import com.richard.fyoung.customerwork.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.observability.TtsHookProvider;
 import com.richard.fyoung.customerwork.rag.KnowledgeProvider;
-import com.richard.fyoung.customerwork.tool.AfterSalesTools;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
-import com.richard.fyoung.customerwork.tool.HumanHandoffTools;
-import com.richard.fyoung.customerwork.tool.KnowledgeBaseTools;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
-import com.richard.fyoung.customerwork.tool.OrderTools;
+import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.hook.recorder.JsonlTraceExporter;
 import io.agentscope.core.memory.LongTermMemoryMode;
@@ -58,11 +55,6 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(CustomerServiceAgentFactory.class);
 
-    static final String GROUP_KNOWLEDGE = "knowledge";
-    static final String GROUP_ORDER = "order";
-    static final String GROUP_AFTER_SALES = "after_sales";
-    static final String GROUP_HUMAN = "human";
-
     private static final String SYSTEM_PROMPT = """
         你是一名专业、耐心的电商智能客服助手。请严格遵循以下规则：
         1. 先理解用户意图（咨询 / 订单查询 / 售后退款 / 投诉）。
@@ -84,6 +76,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     private final KnowledgeProvider knowledgeProvider;
     private final McpToolkitConfigurer mcpToolkitConfigurer;
     private final HigressToolkitConfigurer higressToolkitConfigurer;
+    private final ToolRegistrar toolRegistrar;
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
     private final TtsHookProvider ttsHookProvider;
@@ -99,6 +92,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        KnowledgeProvider knowledgeProvider,
                                        McpToolkitConfigurer mcpToolkitConfigurer,
                                        HigressToolkitConfigurer higressToolkitConfigurer,
+                                       ToolRegistrar toolRegistrar,
                                        TtsHookProvider ttsHookProvider,
                                        NacosPromptService nacosPromptService,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
@@ -109,6 +103,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.knowledgeProvider = knowledgeProvider;
         this.mcpToolkitConfigurer = mcpToolkitConfigurer;
         this.higressToolkitConfigurer = higressToolkitConfigurer;
+        this.toolRegistrar = toolRegistrar;
         this.ttsHookProvider = ttsHookProvider;
         this.nacosPromptService = nacosPromptService;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
@@ -125,15 +120,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     Toolkit buildToolkit() {
         Toolkit toolkit = new Toolkit();
 
-        toolkit.createToolGroup(GROUP_KNOWLEDGE, "知识库检索：产品政策、售后规则、发票运费等 FAQ", true);
-        toolkit.createToolGroup(GROUP_ORDER, "订单与物流查询", true);
-        toolkit.createToolGroup(GROUP_AFTER_SALES, "售后与退款（涉资金走人工确认）", true);
-        toolkit.createToolGroup(GROUP_HUMAN, "人工坐席转接与风险熔断", true);
-
-        toolkit.registration().tool(new KnowledgeBaseTools()).group(GROUP_KNOWLEDGE).apply();
-        toolkit.registration().tool(new OrderTools()).group(GROUP_ORDER).apply();
-        toolkit.registration().tool(new AfterSalesTools()).group(GROUP_AFTER_SALES).apply();
-        toolkit.registration().tool(new HumanHandoffTools()).group(GROUP_HUMAN).apply();
+        // 业务工具按域分组注册（壳 + 可替换后端）
+        toolRegistrar.registerBusinessTools(toolkit);
 
         if (properties.getAgent().isMetaToolEnabled()) {
             toolkit.registerMetaTool();

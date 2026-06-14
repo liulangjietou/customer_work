@@ -1,17 +1,18 @@
 package com.richard.fyoung.customerwork.tool;
 
+import com.richard.fyoung.customerwork.tool.backend.MockOrderBackend;
 import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 订单工具组单测：只验证工具自身的响应式逻辑，不调用真实模型（无需 API Key）。
+ * 订单工具组单测：工具壳委托默认 Mock 后端，验证响应式逻辑（无需 API Key）。
  * @author owlzhangfq@gmail.com
  */
 class OrderToolsTest {
 
-    private final OrderTools tools = new OrderTools();
+    private final OrderTools tools = new OrderTools(new MockOrderBackend());
 
     @Test
     void queryOrder_shouldReturnStatus_forKnownOrder() {

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.tool;
 
+import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
 import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 
@@ -12,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AfterSalesToolsTest {
 
-    private final AfterSalesTools tools = new AfterSalesTools();
+    private final AfterSalesTools tools = new AfterSalesTools(new MockAfterSalesBackend());
 
     @Test
     void checkRefund_shouldRejectWhenOverSevenDays() {

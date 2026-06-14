@@ -4,6 +4,9 @@ import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.tool.AfterSalesTools;
 import com.richard.fyoung.customerwork.tool.KnowledgeBaseTools;
 import com.richard.fyoung.customerwork.tool.OrderTools;
+import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
+import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
+import com.richard.fyoung.customerwork.tool.backend.OrderBackend;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.AgentBase;
 import io.agentscope.core.memory.InMemoryMemory;
@@ -40,10 +43,20 @@ public class MultiAgentOrchestrator {
 
     private final Model model;
     private final CustomerWorkProperties properties;
+    private final OrderBackend orderBackend;
+    private final AfterSalesBackend afterSalesBackend;
+    private final KnowledgeBackend knowledgeBackend;
 
-    public MultiAgentOrchestrator(Model model, CustomerWorkProperties properties) {
+    public MultiAgentOrchestrator(Model model,
+                                  CustomerWorkProperties properties,
+                                  OrderBackend orderBackend,
+                                  AfterSalesBackend afterSalesBackend,
+                                  KnowledgeBackend knowledgeBackend) {
         this.model = model;
         this.properties = properties;
+        this.orderBackend = orderBackend;
+        this.afterSalesBackend = afterSalesBackend;
+        this.knowledgeBackend = knowledgeBackend;
     }
 
     /** 构建三个专职专家 Agent。 */
@@ -51,13 +64,13 @@ public class MultiAgentOrchestrator {
         return List.of(
             specialist("OrderExpert",
                 "你是订单与物流专家。只就订单状态、物流轨迹、金额等问题作答，调用订单工具查询后回答；与你无关的问题简要说明并建议转交对应专家。",
-                new OrderTools()),
+                new OrderTools(orderBackend)),
             specialist("AfterSalesExpert",
                 "你是售后与退款专家。处理退款资格校验与退款工单；涉及资金只生成待人工确认工单，绝不承诺已打款。",
-                new AfterSalesTools()),
+                new AfterSalesTools(afterSalesBackend)),
             specialist("KnowledgeExpert",
                 "你是政策咨询专家。依据知识库回答退换货、发票、运费等政策问题，并保留来源标注。",
-                new KnowledgeBaseTools()));
+                new KnowledgeBaseTools(knowledgeBackend)));
     }
 
     private ReActAgent specialist(String name, String prompt, Object tool) {

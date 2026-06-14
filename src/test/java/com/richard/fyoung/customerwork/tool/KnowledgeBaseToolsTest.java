@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.tool;
 
+import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
 import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 
@@ -11,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class KnowledgeBaseToolsTest {
 
-    private final KnowledgeBaseTools tools = new KnowledgeBaseTools();
+    private final KnowledgeBaseTools tools = new KnowledgeBaseTools(new MockKnowledgeBackend());
 
     @Test
     void searchKnowledge_shouldHitRefundPolicy_withSource() {
