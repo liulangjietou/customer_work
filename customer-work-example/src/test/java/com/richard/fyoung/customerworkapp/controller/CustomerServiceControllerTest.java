@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerwork.controller;
+package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.dto.ChatRequest;

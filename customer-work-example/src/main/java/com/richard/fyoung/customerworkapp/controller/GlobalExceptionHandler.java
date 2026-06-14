@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerwork.controller;
+package com.richard.fyoung.customerworkapp.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

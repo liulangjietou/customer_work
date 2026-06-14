@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerwork;
+package com.richard.fyoung.customerworkapp;
 
 import com.richard.fyoung.customerwork.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.service.CustomerServiceService;

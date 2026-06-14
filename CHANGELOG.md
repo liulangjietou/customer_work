@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Changed
+- 工程拆分为多模块：`customer-work-spring-boot-starter`（可复用，含 `@AutoConfiguration` 自动装配）
+  + `customer-work-example`（可运行示例，包 `com.richard.fyoung.customerworkapp`）
+- starter 改用 HikariCP（替代 spring-jdbc），不再触发 DataSourceAutoConfiguration，下游零排除即插即用
+
 ### Added
 - 多 Agent 编排（Pipeline fanout/sequential）、AG-UI 协议、TTS Hook
 - 记忆/RAG 多后端：内存 / 百炼 / Mem0 / ReMe / 真实向量(SimpleKnowledge) / Dify

@@ -438,28 +438,31 @@ mvn test -Dtest=ModelConfigTest            # 单类
 
 ```
 customer_work/                                  # 父 pom（packaging=pom，聚合两模块）
-├── customer-work-spring-boot-starter/          # 【可复用能力库】无 main，作为依赖被引入
-│   └── src/main/java/com/richard/fyoung/customerwork/
-│       ├── config/      CustomerWorkProperties / ModelConfig / FallbackChatModel / ResilientChatModel
-│       │                SessionConfig / ToolBackendConfig / OpenApiConfig / NacosPromptService
-│       ├── agent/       CustomerServiceAgentFactory / MultiAgentOrchestrator / AguiService
-│       │                ObservabilityHook / HumanApprovalHook
-│       ├── service/     CustomerServiceService / SessionStateManager
-│       ├── memory/      LongTermMemoryProvider / Store / InMemoryLongTermMemory / FactLog / ContextMemoryFactory
-│       ├── rag/         KnowledgeProvider / InMemoryKeywordKnowledge
-│       ├── tool/        OrderTools / AfterSalesTools / KnowledgeBaseTools / HumanHandoffTools
-│       │                ToolRegistrar / McpToolkitConfigurer / HigressToolkitConfigurer
-│       │   └── backend/ OrderBackend / AfterSalesBackend / KnowledgeBackend（SPI）+ Mock 默认实现
-│       ├── observability/ LoggingTracer / TracingConfig / TtsHookProvider / StudioConfigurer
-│       ├── runtime/     GracefulShutdownService / MaintenanceScheduler
-│       ├── security/    ApiKeyAuthWebFilter / RateLimitWebFilter / RequestIdWebFilter
-│       ├── health/      SessionHealthIndicator
-│       └── dto/         ChatRequest / ChatResponse / IntentResult
+├── customer-work-spring-boot-starter/          # 【可复用 starter】无 main，作为依赖被引入
+│   └── src/main/
+│       ├── java/com/richard/fyoung/customerwork/
+│       │   ├── autoconfigure/ CustomerWorkAutoConfiguration   # @AutoConfiguration 自动装配入口
+│       │   ├── config/      CustomerWorkProperties / ModelConfig / FallbackChatModel / ResilientChatModel
+│       │   │                SessionConfig / ToolBackendConfig / OpenApiConfig / NacosPromptService
+│       │   ├── agent/       CustomerServiceAgentFactory / MultiAgentOrchestrator / AguiService
+│       │   │                ObservabilityHook / HumanApprovalHook
+│       │   ├── service/     CustomerServiceService / SessionStateManager
+│       │   ├── memory/      LongTermMemoryProvider / Store / InMemoryLongTermMemory / FactLog / ContextMemoryFactory
+│       │   ├── rag/         KnowledgeProvider / InMemoryKeywordKnowledge
+│       │   ├── tool/        OrderTools / AfterSalesTools / KnowledgeBaseTools / HumanHandoffTools
+│       │   │                ToolRegistrar / McpToolkitConfigurer / HigressToolkitConfigurer
+│       │   │   └── backend/ OrderBackend / AfterSalesBackend / KnowledgeBackend（SPI）+ Mock 默认实现
+│       │   ├── observability/ LoggingTracer / TracingConfig / TtsHookProvider / StudioConfigurer
+│       │   ├── runtime/     GracefulShutdownService / MaintenanceScheduler
+│       │   ├── security/    ApiKeyAuthWebFilter / RateLimitWebFilter / RequestIdWebFilter
+│       │   ├── health/      SessionHealthIndicator
+│       │   └── dto/         ChatRequest / ChatResponse / IntentResult
+│       └── resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
 │
 ├── customer-work-example/                       # 【可运行示例】依赖 starter
 │   └── src/main/
-│       ├── java/com/richard/fyoung/customerwork/
-│       │   ├── CustomerWorkApplication.java     # 启动类（与 starter 共享基础包，单次组件扫描覆盖两模块）
+│       ├── java/com/richard/fyoung/customerworkapp/    # 独立包，与 starter 基础包不重叠
+│       │   ├── CustomerWorkApplication.java     # 仅 @SpringBootApplication；能力由 starter 自动装配
 │       │   └── controller/                      # CustomerServiceController / GlobalExceptionHandler
 │       └── resources/  application.yml / application-prod.yml / logback-spring.xml / skills/
 │
@@ -468,10 +471,28 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 └── .github/workflows/ci.yml                    # CI（Redis/MySQL/Nacos 服务容器）
 ```
 
-> **模块边界**：`starter` 装可复用的 Agent 基础设施与扩展点（SPI、配置、装配、记忆/RAG/安全/可观测/Nacos）；
-> `example` 只装"客服业务"（启动类、HTTP 接口、提示词/技能资源）。下游可**只依赖 starter**，写自己的
-> `*Backend` Bean 与 Controller，即得到完整能力——不 fork 整个应用。
-> 两模块共享基础包 `com.richard.fyoung.customerwork`，示例的 `@SpringBootApplication` 一次组件扫描即覆盖两个 jar。
+> **模块边界**：`starter` 装可复用的 Agent 基础设施与扩展点（SPI、配置、装配、记忆/RAG/安全/可观测/Nacos），
+> 并通过 **`@AutoConfiguration` 自动装配**（注册于 `META-INF/spring/...AutoConfiguration.imports`）；
+> `example` 只装"客服业务"（启动类、HTTP 接口、提示词/技能资源）。
+>
+> **下游接入（零扫描）**：任意工程只要 `引入 starter 依赖 + 写自己的 *Backend Bean / Controller`，
+> 即自动获得全部能力，**无需关心自身基础包、无需手动 `@ComponentScan`**。starter 固定扫描自身包
+> `com.richard.fyoung.customerwork`，与下游包名互不影响、不重复装配。
+
+### 9.1 作为依赖引入（其他工程）
+
+```xml
+<dependency>
+  <groupId>io.github.richardfyoung</groupId>
+  <artifactId>customer-work-spring-boot-starter</artifactId>
+  <version>1.0.0</version>
+</dependency>
+```
+```java
+// 你的应用（任意包名）：引入后能力自动装配；只需提供自己的业务后端
+@Component
+public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 */ }
+```
 
 ---
 

@@ -72,6 +72,23 @@ curl -X POST http://localhost:8080/api/customer/chat \
   -d '{"sessionId":"u1001","message":"Where is my order 20260613001?"}'
 ```
 
+## Modules & use as a dependency
+
+Multi-module Maven project:
+- `customer-work-spring-boot-starter` — reusable agent infrastructure, **auto-configured** via
+  `@AutoConfiguration` (registered in `META-INF/spring/...AutoConfiguration.imports`).
+- `customer-work-example` — runnable customer-service demo (package `com.richard.fyoung.customerworkapp`).
+
+Any downstream app just adds the starter dependency — **no base-package assumptions, no manual `@ComponentScan`**:
+
+```xml
+<dependency>
+  <groupId>io.github.richardfyoung</groupId>
+  <artifactId>customer-work-spring-boot-starter</artifactId>
+  <version>1.0.0</version>
+</dependency>
+```
+
 ## Make it your own business agent
 
 Business tools delegate to interfaces under `com.richard.fyoung.customerwork.tool.backend`

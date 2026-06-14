@@ -44,10 +44,12 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
-        <!-- 会话持久化：MySQL(JDBC+Hikari) / Redis(Jedis) -->
+        <!-- 会话持久化：HikariCP 连接池 + MySQL 驱动。
+             用 HikariCP 而非 spring-boot-starter-jdbc，避免引入 spring-jdbc 触发
+             DataSourceAutoConfiguration（否则下游需配 spring.datasource.url 或排除它）。 -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-jdbc</artifactId>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
         </dependency>
         <dependency>
             <groupId>com.mysql</groupId>
