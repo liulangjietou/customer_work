@@ -5,6 +5,7 @@
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](#四环境要求)
 [![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12-green.svg)](https://github.com/agentscope-ai/agentscope-java)
 
+> 🚀 **新人从这里开始**：[docs/新人必读.md](docs/新人必读.md)（15 分钟跑起来 + 看懂结构 + 知道改哪里）
 > English version: [README_EN.md](README_EN.md)
 > 详细技术文档（原理 / 架构图 / 时序图 / UML 类图 / 扩展点）：[docs/详细技术文档.md](docs/详细技术文档.md)
 
