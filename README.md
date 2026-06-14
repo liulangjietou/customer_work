@@ -6,6 +6,7 @@
 [![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12-green.svg)](https://github.com/agentscope-ai/agentscope-java)
 
 > English version: [README_EN.md](README_EN.md)
+> 详细技术文档（原理 / 架构图 / 时序图 / UML 类图 / 扩展点）：[docs/详细技术文档.md](docs/详细技术文档.md)
 
 本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。
