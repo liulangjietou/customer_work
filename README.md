@@ -1,281 +1,454 @@
 # customer-work · 基于 AgentScope Java 的生产级智能客服系统
 
 本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
-基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，对接**阿里云百炼（DashScope / 通义千问）**。
+基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。
 
-## 一、它实现了流程图里的哪部分？
+- 包名：`com.richard.fyoung.customerwork`
+- 单元测试：**115 个全绿**（其中 3 个按外部服务可用性自动跳过：百炼 / Redis / MySQL）
+- 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
-那张流程图是一个**生产目标形态**，分六个阶段。一半是框架能力，另一半是企业自有基础设施。
-本项目的边界划分如下：
+---
 
-| 流程图阶段 | 本项目实现 | 说明 |
+## 目录
+
+1. [流程图映射](#一流程图映射)
+2. [功能总表（已实现 + 未实现）](#二功能总表)
+3. [HTTP 接口速查](#三http-接口速查)
+4. [环境要求](#四环境要求)
+5. [快速开始](#五快速开始)
+6. [各功能用法与测试](#六各功能用法与测试)
+7. [配置项总表](#七配置项总表)
+8. [测试说明](#八测试说明)
+9. [代码结构](#九代码结构)
+10. [未实现 / 需外部基础设施的扩展点](#十未实现--需外部基础设施的扩展点)
+11. [重要说明](#十一重要说明)
+
+---
+
+## 一、流程图映射
+
+| 流程图阶段 | 实现 | 说明 |
 |---|---|---|
-| ② 会话恢复与上下文装配 | ✅ 真实实现 | `CustomerServiceService` 按 sessionId 维护 Agent，并用框架 `Session`/`State` 做持久化恢复（内存 / Json 可切，Redis/MySQL 可扩展） |
-| ③ 主 Agent 意图识别与路由 | ✅ 真实实现 | `CustomerServiceAgentFactory` 用 `ReActAgent` + 系统提示词实现意图理解、工具路由、高风险熔断 |
-| ④ 子能力分层执行 | ✅ 真实实现 | 四个 **Tool Group**（知识库 / 订单 / 售后 / 人工转接）+ 涉资金人工确认 + 安全转人工 |
-| ⑤ 观察-再推理循环 → 回复 | ✅ 真实实现 | `ReActAgent` 内置 ReAct 循环；SSE 接口订阅 `agent.stream()` 的类型化事件流逐片段下发 |
-| ① 接入与流量治理（Higress/RocketMQ/A-B） | ⚠️ 扩展点 | 部署在应用**前面**的基础设施，本应用作为上游被网关路由，代码内不实现 |
-| ⑥ 数据飞轮（OTel/RM Gallery/Trinity-RFT） | ⚠️ 扩展点 | `ObservabilityHook` 给出全链路采集打点（含 token 用量、时延、异常）；评估与强化学习对接你的平台 |
+| ② 会话恢复与上下文装配 | ✅ | `CustomerServiceService` 按 sessionId 维护 Agent，框架 `Session/State` 持久化恢复（memory/json/redis/mysql） |
+| ③ 主 Agent 意图识别与路由 | ✅ | `CustomerServiceAgentFactory` 用 `ReActAgent` + 系统提示词实现意图理解、工具路由、高风险熔断 |
+| ④ 子能力分层执行 | ✅ | 四个 Tool Group（知识库/订单/售后/人工）+ 涉资金人工确认 + 多 Agent 编排 |
+| ⑤ 观察-再推理循环 → 回复 | ✅ | `ReActAgent` 内置 ReAct 循环；SSE 订阅 `agent.stream()` 逐片段下发 |
+| ① 接入与流量治理 | ✅/⚠️ | 鉴权限流 ✅；Higress ✅(可选)；RocketMQ ⚠️ 扩展点 |
+| ⑥ 数据飞轮 | ✅/⚠️ | 可观测/Tracing/指标 ✅；RM Gallery / Trinity-RFT ⚠️ 扩展点 |
 
-一句话：**核心 Agent 链路（②③④⑤）是框架原生支持、可直接运行的；①和⑥是生产工程化范畴，本项目以 Hook、配置项、扩展点的形式预留对接位置。**
+---
 
-### 已落地的特性全景（覆盖系列文章各专题）
+## 二、功能总表
 
-| 特性 | 本项目落地方式 | 默认 |
+> 「默认」列：开=随应用启动生效；关=需配置开启；⚠️=需外部基础设施/SDK 的扩展点。
+
+### 已实现（开箱即用 / 配置开启）
+
+| 功能 | 核心类 | 默认 | 开启方式 |
+|---|---|---|---|
+| ReActAgent 推理 | `CustomerServiceAgentFactory` | 开 | — |
+| 流式输出（SSE） | `CustomerServiceController#chatStream` | 开 | `POST /chat/stream` |
+| 结构化输出（意图） | `CustomerServiceService#classifyIntent` | 开 | `POST /intent` |
+| 多轮会话 & 持久化 | `SessionConfig` | 开 | `session.mode=memory/json/redis/mysql` |
+| 状态自动编排 | `SessionStateManager` | 开 | 注入使用 |
+| 长期记忆（多租户） | `LongTermMemoryProvider` | 开 | `memory.provider=memory/bailian/mem0/reme` |
+| 三层记忆 + 事实日志 | `InMemoryLongTermMemory` + `FactLog` | 开 | `fact-log.enabled` |
+| 智能上下文压缩 | `ContextMemoryFactory`(AutoContext) | 关 | `context.compression-enabled=true` |
+| RAG 知识检索 | `KnowledgeProvider` | 开 | `rag.provider=memory/simple/bailian/dify` |
+| 工具集成 + Tool Group | `CustomerServiceAgentFactory#buildToolkit` | 开 | — |
+| Meta-Tool 元工具 | 同上 | 关 | `agent.meta-tool-enabled=true` |
+| Skill 技能库 | `SkillBox` 装配 | 开 | `skill.repository=classpath/filesystem` |
+| Skill 运行时加载 / 代码执行 | 同上 | 关 | `skill.runtime-load-tool-enabled` / `skill.code-execution-enabled` |
+| 多 Agent 编排 | `MultiAgentOrchestrator` | 开 | `POST /consult`，`multi-agent.mode=fanout/sequential` |
+| Human-in-the-Loop | `HumanApprovalHook` | 开 | `human-approval.enabled` + `POST /session/{id}/interrupt` |
+| 中断恢复 | `enablePendingToolRecovery` | 开 | `interrupt.pending-tool-recovery-enabled` |
+| 可观测 Hook + 指标 | `ObservabilityHook` + Micrometer | 开 | `/actuator/prometheus` |
+| 原生 Tracing | `LoggingTracer` + `TracerRegistry` | 关 | `observability.tracing-enabled=true` |
+| 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
+| 模型多厂商 + 私有化兜底 | `ModelConfig` + `FallbackChatModel` | 开 | `model.provider`、`model.fallback.enabled` |
+| AG-UI 协议 | `AguiService` | 开 | `POST /agui` |
+| TTS 语音合成 | `TtsHookProvider` | 关 | `protocol.tts.enabled=true` |
+| MCP 接入 | `McpToolkitConfigurer` | 关 | `mcp.enabled=true` |
+| Higress AI 网关 | `HigressToolkitConfigurer` | 关 | `higress.enabled=true` |
+| Studio 可视化 | `StudioConfigurer` | 关 | `observability.studio.enabled=true` |
+| 接入层安全（鉴权/限流） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter` | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
+| Nacos 配置中心（提示词热更新） | `NacosPromptService` | 关 | `nacos.enabled=true` |
+
+### 未实现 / 需外部基础设施（扩展点，见 [第十节](#十未实现--需外部基础设施的扩展点)）
+
+| 功能 | 状态 | 需要 |
 |---|---|---|
-| ReActAgent | `CustomerServiceAgentFactory` 装配，`max-iters` 控制轮次 | 开 |
-| 流式输出 | `POST /chat/stream` 订阅 `agent.stream()` 类型化事件流逐片段 SSE 下发 | 开 |
-| 结构化输出 | `POST /intent` 用 `call(msg, IntentResult.class)` 返回强类型意图 | 开 |
-| 多轮会话 & 持久化 | 框架 `Session/State`，按 sessionId `saveTo`/`loadIfExists`，支持 **memory/json/redis/mysql** | 开 |
-| 状态自动编排 | `SessionStateManager` 用 `SessionManager` 把多 StateModule 整体 save/load | 开 |
-| 长期记忆（多租户） | `LongTermMemoryProvider` 切换：内存 / **百炼** / **Mem0** / **ReMe**，按租户隔离 | 开 |
-| 智能上下文压缩 | `AutoContextMemory`，长对话自动压缩、上下文有界 | 关（需模型） |
-| 三层记忆体系 | L1 短期 `Memory` + L2 长期 `LongTermMemory` + L3 只追加 `FactLog`（JSONL 审计） | 开 |
-| RAG | `KnowledgeProvider` 切换：内存关键词 / **simple 向量(百炼Embedding)** / **百炼知识库** / **Dify** | 开 |
-| 工具集成 | Toolkit + 四业务域 Tool Group + 可选 Meta-Tool 运行时启停 | 开 / meta 关 |
-| Skill | `SkillBox`：classpath 只读 / **filesystem 可写自进化** / 运行时加载工具 / **代码执行** | 开 |
-| 多 Agent 编排 | `MultiAgentOrchestrator` 用 `Pipelines` fanout/sequential 编排订单/售后/知识库专家 + `POST /consult` | 开 |
-| Human-in-the-Loop | `HumanApprovalHook` 高风险工具执行后暂停待人工 + `POST /session/{id}/interrupt` 安全中断 | 开 |
-| 中断恢复 | `enablePendingToolRecovery` 中断后无缝恢复待执行工具调用 | 开 |
-| Hook 可观测 | `ObservabilityHook` 采集 token/时延/工具/异常（日志 + Micrometer 指标） | 开 |
-| 原生 Tracing | `LoggingTracer` 注册到 `TracerRegistry` 按调用打 span（可换 OTel TelemetryTracer） | 关 |
-| 运维就绪 | Actuator 健康检查（含 `SessionHealthIndicator`）+ Prometheus 指标 + 优雅停机 + 定时维护 | 开 |
-| 模型层进阶 | 多厂商（dashscope/openai/anthropic/gemini/ollama）+ `FallbackChatModel` 私有化兜底 + GenerateOptions 高级 | 开 |
-| 交互协议 AG-UI | `AguiService` 适配标准 AG-UI 事件流 + `POST /agui`（SSE） | 开 |
-| 交互协议 TTS | `TtsHookProvider` 实时语音合成 Hook（audioCallback 回推音频） | 关 |
-| MCP 接入 | `McpToolkitConfigurer` 把存量 HTTP 系统接成 Agent 工具 | 关 |
-| Higress AI 网关 | `HigressToolkitConfigurer` 接入 Higress，按需工具发现 / 流量治理 | 关 |
-| Studio 可视化 | `StudioConfigurer` 连接 AgentScope Studio 做可视化调试 | 关 |
-| 接入层安全 | `ApiKeyAuthWebFilter`（API Key 鉴权）+ `RateLimitWebFilter`（限流） | 关 |
-| Nacos 配置中心 | `NacosPromptService` 把系统提示词托管 Nacos，运营侧热更新无需重启（A/B、话术调优） | 关 |
+| A2A Agent Card 注册发现 | ⚠️ | Nacos AI API（新版 nacos-client）+ `io.a2a` SDK |
+| RocketMQ 异步消息 | ⚠️ | RocketMQ broker + client |
+| 定时 Agent 调度 | ⚠️ | Quartz / XXL-JOB |
+| Runtime 工具沙箱 | ⚠️ | 独立项目 `agentscope-runtime-java` |
+| Training 数据飞轮 | ⚠️ | RM Gallery + Trinity-RFT 平台 |
+| Anthropic / Gemini 模型 | ⚠️ | 各自厂商 SDK 依赖 |
+| RAGFlow / Haystack 知识库 | ⚠️ | 同 Dify 模式，按需补依赖 |
+| Harness 长任务脚手架 | ⚠️ | AgentScope 1.1+（1.0.12 暂无） |
 
-### 需外部基础设施的扩展点（配置即用，默认关闭）
+---
 
-以下能力框架已提供，但需引入额外依赖并部署对应服务，按需开启（本项目预留配置位与文档）：
+## 三、HTTP 接口速查
 
-- **A2A Agent Card 注册发现**：跨进程 Agent 互通，需 Nacos **AI/A2A API**（`com.alibaba.nacos.api.ai.AiService`，新版 nacos-client）与 `io.a2a` SDK（`AgentCard`）；本项目已用 Nacos 配置中心（提示词热更新），A2A 注册层属此扩展点；
-- **RocketMQ 异步消息**：长任务解耦 / A2A over MQ，需 RocketMQ broker；
-- **定时 Agent 调度**：`QuartzAgentScheduler` / `XxlJobAgentScheduler`，需 Quartz / XXL-JOB；
-- **Runtime 沙箱**：工具执行隔离，需独立项目 `agentscope-runtime-java`；
-- **Training（数据飞轮）**：RM Gallery 评估 + Trinity-RFT 强化学习，需训练平台；
-- **Anthropic / Gemini 模型**：需各自厂商 SDK 依赖；**RAGFlow / Haystack** 知识库同 Dify 模式可插拔。
-- **Harness**：1.0.12 暂无（属 1.1+），升级后可接入分层记忆 + 子 Agent 声明。
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/customer/chat` | 同步对话，返回完整回复 |
+| POST | `/api/customer/chat/stream` | 流式对话（SSE，逐片段） |
+| POST | `/api/customer/intent` | 结构化意图识别（强类型 JSON） |
+| POST | `/api/customer/consult` | 多 Agent 协作咨询（多专家聚合） |
+| POST | `/api/customer/agui` | AG-UI 标准事件流（SSE） |
+| POST | `/api/customer/session/{id}/interrupt` | 安全中断会话 |
+| DELETE | `/api/customer/session/{id}` | 结束并清理会话 |
+| GET | `/api/customer/health` | 健康检查 |
+| GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
 
-> 每项能力均为**配置开关 + 可替换实现**：内置进程内实现保证开箱即用与可单测，
-> 生产可无感切换为百炼长期记忆 / 百炼企业知识库 / Redis 会话 / 真实 MCP 服务等后端。
-> 全部配置见 `application.yml` 的 `customer-work.*`。
+---
 
-### 会话持久化：Redis / MySQL
+## 四、环境要求
 
-切换存储只改一行 `customer-work.session.mode`：
-
-```yaml
-customer-work:
-  session:
-    mode: redis          # memory | json | redis | mysql
-    redis:   { host: localhost, port: 6379, password: "123456", key-prefix: customer-work }
-    mysql:   { host: localhost, port: 3306, database: agent_scope_customer_work, username: root, password: root, auto-create: true }
-```
-
-- **Redis**：基于 Jedis 的 `RedisSession`，多实例共享会话；
-- **MySQL**：基于 HikariCP + `MysqlSession`，表 `agentscope_sessions` 可自动创建。
-  手工建库脚本见 `mysql/schema.sql`（`mysql -h localhost -u root -proot < mysql/schema.sql`）。
-
-`RedisSessionPersistenceTest` / `MysqlSessionPersistenceTest` 做真实存-取-删往返验证：
-**服务可达时执行并通过，不可达时自动跳过**（`assumeTrue`），因此 `mvn test` 在任何环境都绿。
-（本机有 Redis/MySQL 时直接 `mvn test` 即会真实跑这两条用例。）
-
-### 切换百炼知识库 / 百炼长期记忆
-
-只改配置即可从内置内存实现切到阿里云百炼托管能力（代码零改动）：
-
-```yaml
-customer-work:
-  rag:
-    provider: bailian
-    bailian: { access-key-id: ..., access-key-secret: ..., workspace-id: ..., index-id: ... }
-  memory:
-    provider: bailian
-    bailian: { api-key: ..., memory-library-id: ..., top-k: 5 }   # api-key 留空则复用 model.api-key
-```
-
-### 接入层安全：API Key 鉴权 + 限流
-
-默认关闭，生产开启：
-
-```yaml
-customer-work:
-  security:
-    auth: { enabled: true, header-name: X-API-Key, api-keys: [your-key-1, your-key-2] }
-    rate-limit: { enabled: true, requests-per-minute: 120 }
-```
-
-- `ApiKeyAuthWebFilter`：校验请求头 API Key，健康检查 / Actuator 免鉴权；
-- `RateLimitWebFilter`：按 API Key 或客户端 IP 固定窗限流，超限返回 429（分布式可换 Redis 限流）。
-
-### Higress AI 网关接入
-
-```yaml
-customer-work:
-  higress:
-    enabled: true
-    endpoint: http://higress.local/mcp/sse
-    transport: sse              # sse | streamable-http
-    tool-search: "订单 物流"     # 按需工具发现关键词（避免上百工具 Schema 撑爆上下文）
-```
-
-### CI
-
-`.github/workflows/ci.yml`：push / PR 触发 `mvn test` + 打包，并启动 **Redis 与 MySQL 服务容器**
-（含密码 / 库名），使会话持久化测试在 CI 中真实执行；百炼集成测试默认跳过。
-
-### 生产可观测 / 运维就绪
-
-应用暴露 Spring Boot Actuator 端点（`management.endpoints.web.exposure.include`）：
-
-```bash
-curl localhost:8080/actuator/health      # 含自定义 session 后端健康（memory/json/redis/mysql 探活）
-curl localhost:8080/actuator/metrics     # 指标清单
-curl localhost:8080/actuator/prometheus  # Prometheus 抓取端点
-```
-
-`ObservabilityHook` 在接入 Micrometer 后会上报业务指标，供监控与数据飞轮消费：
-
-- `customerwork.agent.requests`：请求数
-- `customerwork.agent.reasoning`：推理轮次数
-- `customerwork.agent.tool.calls{tool=...}`：按工具维度的调用数
-- `customerwork.agent.errors`：错误数
-- `customerwork.agent.tokens.total`：累计 token 消耗（成本可观测）
-
-### 对接百炼平台的真实集成测试
-
-`BailianIntegrationTest` 真实调用百炼（DashScope），默认随 `mvn test` **跳过**以保证离线可过。
-联调时：
-
-```bash
-export RUN_BAILIAN_IT=true
-export DASHSCOPE_API_KEY=你的百炼密钥   # 不设则用项目默认 key
-mvn test -Dtest=BailianIntegrationTest
-```
-
-## 二、环境要求
-
-- JDK 17+（本仓库用 21 验证通过）
+- JDK 17+（本仓库用 JDK 21 验证通过）
 - Maven 3.8+
 - 一个阿里云百炼（DashScope）API Key
+- 可选：Redis（密码 123456）、MySQL（root/root，库 `agent_scope_customer_work`）、Nacos、Higress 等
 
-## 三、配置
+---
 
-所有配置集中在 `application.yml` 的 `customer-work.*`，可被环境变量覆盖：
-
-```yaml
-customer-work:
-  model:
-    api-key: ${DASHSCOPE_API_KEY:...}   # 百炼 API Key，强烈建议用环境变量注入
-    name: qwen-max                      # 可切 qwen-plus / qwen-turbo
-    base-url: ""                        # 自定义网关 / 兼容地址，留空用 SDK 默认
-    temperature: 0.3
-    max-tokens: 1500
-    stream: true
-  session:
-    mode: memory                        # memory | json（json 单机重启可恢复）
-    directory: ./data/sessions
-  agent:
-    max-iters: 10                       # ReAct 最大轮次
-```
-
-> 安全提示：请勿把生产密钥长期留在代码仓库。生产部署用 `export DASHSCOPE_API_KEY=...` 注入。
-
-## 四、快速开始
+## 五、快速开始
 
 ```bash
-export DASHSCOPE_API_KEY=你的百炼密钥   # 覆盖默认值
+export DASHSCOPE_API_KEY=你的百炼密钥     # 不设则用 application.yml 内置默认 key
 mvn spring-boot:run
 ```
-
-Web 启动后调用：
 
 ```bash
 # 同步对话
 curl -X POST http://localhost:8080/api/customer/chat \
   -H "Content-Type: application/json" \
   -d '{"sessionId":"u1001","message":"帮我查一下订单 20260613001 的状态和物流"}'
-
-# 流式对话（SSE，逐片段返回）
-curl -N -X POST http://localhost:8080/api/customer/chat/stream \
-  -H "Content-Type: application/json" \
-  -d '{"sessionId":"u1001","message":"你们支持七天无理由退货吗？"}'
-
-# 结构化意图识别（返回强类型 JSON）
-curl -X POST http://localhost:8080/api/customer/intent \
-  -H "Content-Type: application/json" \
-  -d '{"sessionId":"u1001","message":"这个订单 20260613001 我要退款"}'
-
-# 安全中断正在执行的会话
-curl -X POST http://localhost:8080/api/customer/session/u1001/interrupt
-
-# 结束会话
-curl -X DELETE http://localhost:8080/api/customer/session/u1001
 ```
 
-> 长期记忆支持多租户：把 sessionId 写成 `租户ID:会话ID`（如 `u1001:conv-1`），同一租户的不同会话即可共享长期记忆，租户之间严格隔离。
+---
 
-## 五、跑测试（无需 API Key）
+## 六、各功能用法与测试
 
-单元测试用 Mockito 隔离模型与框架、用 `StepVerifier` 校验响应式链路、用 `WebTestClient` 驱动 Web 层，
-全程不调真实大模型：
+> 约定：sessionId 写成 `租户ID:会话ID`（如 `u1001:conv-1`）时，同租户不同会话**共享长期记忆**，跨租户严格隔离。
+
+### 6.1 对话：同步 / 流式 / 结构化意图 / 中断 / 结束
 
 ```bash
-mvn test
+# 同步
+curl -X POST localhost:8080/api/customer/chat \
+  -H "Content-Type: application/json" -d '{"sessionId":"u1001","message":"你们支持七天无理由退货吗？"}'
+
+# 流式（SSE，逐片段）
+curl -N -X POST localhost:8080/api/customer/chat/stream \
+  -H "Content-Type: application/json" -d '{"sessionId":"u1001","message":"查订单 20260613001"}'
+
+# 结构化意图（返回 {intent, orderId, urgent, summary}）
+curl -X POST localhost:8080/api/customer/intent \
+  -H "Content-Type: application/json" -d '{"sessionId":"u1001","message":"这个订单我要退款"}'
+
+# 安全中断 / 结束会话
+curl -X POST localhost:8080/api/customer/session/u1001/interrupt
+curl -X DELETE localhost:8080/api/customer/session/u1001
+```
+测试：`CustomerServiceServiceTest`、`CustomerServiceControllerTest`。
+
+### 6.2 多 Agent 编排（订单/售后/知识库专家协作）
+
+```yaml
+customer-work.multi-agent: { enabled: true, mode: fanout }   # fanout 并行聚合 | sequential 串行细化
+```
+```bash
+curl -X POST localhost:8080/api/customer/consult \
+  -H "Content-Type: application/json" -d '{"message":"订单 20260613001 想退款，能开发票吗？"}'
+```
+测试：`MultiAgentOrchestratorTest`（用离线 `EchoAgent` 验证 Pipeline 编排与聚合）。
+
+### 6.3 AG-UI 标准协议
+
+```bash
+curl -N -X POST localhost:8080/api/customer/agui \
+  -H "Content-Type: application/json" -d '{"sessionId":"u1001","message":"你好"}'
+```
+返回 AG-UI 编码事件流，兼容 AG-UI 前端直接对接。测试：`AguiServiceTest`。
+
+### 6.4 会话持久化（memory / json / redis / mysql）
+
+```yaml
+customer-work:
+  session:
+    mode: redis     # memory | json | redis | mysql
+    redis: { host: localhost, port: 6379, password: "123456", key-prefix: customer-work }
+    mysql: { host: localhost, port: 3306, database: agent_scope_customer_work, username: root, password: root, auto-create: true }
+```
+- MySQL 表 `agentscope_sessions` 自动建；手工脚本 `mysql/schema.sql`。
+- 测试：`SessionConfigTest`（离线）、`RedisSessionPersistenceTest` / `MysqlSessionPersistenceTest`（服务可达才真实跑，不可达自动跳过）。
+
+### 6.5 长期记忆（多租户，可切后端）
+
+```yaml
+customer-work.memory:
+  provider: memory          # memory | bailian | mem0 | reme
+  bailian: { api-key: "", memory-library-id: "", top-k: 5 }   # api-key 留空复用 model.api-key
+  mem0:    { api-key: "", api-base-url: https://api.mem0.ai, api-type: platform }
+  reme:    { api-base-url: "" }
+```
+测试：`LongTermMemoryTest`（记录/召回/租户隔离）、`LongTermMemoryProviderTest`（provider 选择）。
+
+### 6.6 三层记忆体系 + 事实日志
+
+L1 短期 `Memory` + L2 长期 `LongTermMemory` + L3 只追加 `FactLog`（JSONL，可审计）。
+```yaml
+customer-work.fact-log: { enabled: true, directory: ./data/facts }
+```
+测试：`FactLogTest`（追加/读取/租户隔离/禁用）。
+
+### 6.7 智能上下文压缩（长对话上下文有界）
+
+```yaml
+customer-work.context: { compression-enabled: true, max-token: 8000, msg-threshold: 40, last-keep: 10 }
+```
+开启后短期记忆用 `AutoContextMemory`（自动压缩 + 大工具结果卸载）。测试：`ContextMemoryFactoryTest`。
+
+### 6.8 RAG 知识检索（内存 / 真实向量 / 百炼 / Dify）
+
+```yaml
+customer-work.rag:
+  provider: simple          # memory(关键词) | simple(百炼Embedding+内存向量库) | bailian | dify
+  top-k: 3
+  simple:  { dimensions: 1024 }
+  bailian: { access-key-id: "", access-key-secret: "", workspace-id: "", index-id: "" }
+  dify:    { api-key: "", api-base-url: "", dataset-id: "" }
+```
+测试：`InMemoryKeywordKnowledgeTest`、`KnowledgeProviderTest`（含 simple/dify 装配）。
+
+### 6.9 工具集成 + Meta-Tool
+
+四业务域 Tool Group（knowledge/order/after_sales/human）默认全激活；开启元工具后 Agent 可运行时启停工具组：
+```yaml
+customer-work.agent: { max-iters: 10, meta-tool-enabled: true }
+```
+测试：`CustomerServiceAgentFactoryTest`、`OrderToolsTest` / `AfterSalesToolsTest` / `KnowledgeBaseToolsTest` / `HumanHandoffToolsTest`。
+
+### 6.10 Skill 技能库
+
+```yaml
+customer-work.skill:
+  enabled: true
+  repository: filesystem        # classpath(只读内置) | filesystem(可写，技能自进化/写回)
+  directory: ./data/skills
+  runtime-load-tool-enabled: true   # 注册"运行时加载技能"工具
+  code-execution-enabled: true      # 注册读写/Shell 代码执行工具
+```
+内置技能：`src/main/resources/skills/refund-handling/SKILL.md`。
+测试：`SkillLoadingTest`、`FileSystemSkillRepositoryTest`、`CodeExecutionSkillTest`。
+
+### 6.11 Human-in-the-Loop + 中断恢复
+
+```yaml
+customer-work:
+  human-approval: { enabled: true, guarded-tools: [submitRefund] }   # 受控工具执行后暂停待人工
+  interrupt: { pending-tool-recovery-enabled: true }                  # 中断后无缝恢复待执行工具
+```
+测试：`HumanApprovalHookTest`、`CustomerServiceServiceTest#interrupt_*`。
+
+### 6.12 模型层（多厂商 + 私有化兜底 + 高级参数）
+
+```yaml
+customer-work.model:
+  provider: dashscope      # dashscope | openai | anthropic | gemini | ollama
+  name: qwen-max
+  temperature: 0.3
+  top-p:                   # GenerateOptions 高级
+  reasoning-effort:        # low | medium | high
+  enable-search:           # 仅 dashscope：联网搜索
+  enable-thinking:         # 仅 dashscope：深度思考
+  fallback: { enabled: true, provider: ollama, name: qwen2.5, base-url: "" }   # 主失败切私有化兜底
+```
+> anthropic/gemini 需各自厂商 SDK 依赖。测试：`ModelConfigTest`（DashScope/OpenAI 离线构建 + Fallback 切换）。
+
+### 6.13 可观测 / 运维就绪
+
+```bash
+curl localhost:8080/actuator/health      # 含 session 后端探活
+curl localhost:8080/actuator/prometheus  # 业务指标
+```
+- 指标：`customerwork.agent.requests / reasoning / tool.calls{tool} / errors / tokens.total`
+- 原生 Tracing：`observability.tracing-enabled=true`（`LoggingTracer`，可换 OTel `TelemetryTracer`）
+- 优雅停机：`runtime.shutdown-timeout-seconds`；定时巡检：`runtime.scheduler-enabled`
+- 测试：`ObservabilityHookTest`、`LoggingTracerTest`、`SessionHealthIndicatorTest`、`GracefulShutdownServiceTest`、`MaintenanceSchedulerTest`。
+
+### 6.14 接入层安全（API Key 鉴权 + 限流）
+
+```yaml
+customer-work.security:
+  auth:       { enabled: true, header-name: X-API-Key, api-keys: [your-key-1] }
+  rate-limit: { enabled: true, requests-per-minute: 120 }
+```
+```bash
+curl -X POST localhost:8080/api/customer/chat -H "X-API-Key: your-key-1" \
+  -H "Content-Type: application/json" -d '{"message":"你好"}'
+```
+健康检查 / Actuator 免鉴权。测试：`ApiKeyAuthWebFilterTest`、`RateLimitWebFilterTest`。
+
+### 6.15 MCP / Higress
+
+```yaml
+customer-work:
+  mcp:     { enabled: true, servers: [ { name: inventory, url: http://localhost:9000/sse, transport: sse } ] }
+  higress: { enabled: true, endpoint: http://higress.local/mcp/sse, transport: sse, tool-search: "订单 物流" }
+```
+测试：`McpToolkitConfigurerTest`、`HigressToolkitConfigurerTest`（开关与装配判定，不连真实服务）。
+
+### 6.16 Studio / TTS
+
+```yaml
+customer-work:
+  observability.studio: { enabled: true, url: ws://localhost:3000, project: customer-work }
+  protocol.tts: { enabled: true }     # 需 DashScope 实时 TTS 模型；audioCallback 回推音频帧
+```
+测试：`ProtocolExtensionTest`（默认关闭、未配置 url 视为未启用）。
+
+### 6.17 Nacos 配置中心（系统提示词热更新）
+
+把系统提示词托管 Nacos，运营侧改提示词**无需重启即热更新**；Nacos 不可用时回退内置提示词。
+```yaml
+customer-work.nacos:
+  enabled: true
+  server-addr: localhost:8848
+  group: DEFAULT_GROUP
+  prompt-data-id: customer-work-system-prompt
+```
+在 Nacos 控制台新增 dataId=`customer-work-system-prompt` 的配置内容即可生效。
+测试：`NacosPromptServiceTest`（mock `ConfigService`：初始拉取 + `ArgumentCaptor` 验证热更新 + 空白回退）。
+
+---
+
+## 七、配置项总表
+
+全部位于 `application.yml` 的 `customer-work.*`（支持环境变量覆盖）：
+
+| 前缀 | 关键项（默认） |
+|---|---|
+| `model` | provider(dashscope), name(qwen-max), api-key(${DASHSCOPE_API_KEY}), temperature(0.3), max-tokens(1500), stream(true), top-p, reasoning-effort, enable-search, enable-thinking, embedding-name(text-embedding-v3), fallback.* |
+| `session` | mode(memory), directory, redis.*, mysql.* |
+| `agent` | max-iters(10), meta-tool-enabled(false) |
+| `memory` | long-term-enabled(true), provider(memory), tenant-delimiter(":"), retrieve-top-k(5), bailian.*/mem0.*/reme.* |
+| `plan` | enabled(true), max-subtasks(20) |
+| `rag` | enabled(true), provider(memory), top-k(3), simple.dimensions(1024), bailian.*/dify.* |
+| `context` | compression-enabled(false), max-token(8000), msg-threshold(40), last-keep(10) |
+| `skill` | enabled(true), repository(classpath), location(skills), directory, writable(true), runtime-load-tool-enabled(false), code-execution-enabled(false) |
+| `mcp` | enabled(false), servers[] |
+| `observability` | trace-enabled(false), trace-file, tracing-enabled(false), studio.* |
+| `human-approval` | enabled(true), guarded-tools([submitRefund]) |
+| `fact-log` | enabled(true), directory(./data/facts) |
+| `security` | auth.{enabled(false),header-name(X-API-Key),api-keys[]}, rate-limit.{enabled(false),requests-per-minute(120)} |
+| `multi-agent` | enabled(true), mode(fanout), max-iters(6) |
+| `runtime` | shutdown-timeout-seconds(30), scheduler-enabled(false), scheduler-fixed-delay-ms(60000) |
+| `interrupt` | pending-tool-recovery-enabled(true) |
+| `nacos` | enabled(false), server-addr(localhost:8848), namespace, group(DEFAULT_GROUP), prompt-data-id, username, password, timeout-ms(3000) |
+| `higress` | enabled(false), name(higress), endpoint, transport(sse), tool-search, max-tools(10), timeout-seconds(30) |
+| `protocol` | agui.{enabled(true),enable-reasoning(true),emit-tool-call-args(true)}, tts.enabled(false) |
+
+---
+
+## 八、测试说明
+
+```bash
+mvn test                                   # 全部单测（115 个），离线即可全绿
+mvn test -Dtest=ModelConfigTest            # 单类
 ```
 
-覆盖范围（60 个用例，含 1 个默认跳过的百炼集成测试）：工具组业务逻辑、Tool Group/Meta-Tool 装配、
-租户解析、RAG 召回、智能上下文压缩选择、Skill 加载、MCP 开关、Human-in-the-Loop 闸门、
-多租户长期记忆与事实日志、可观测 Hook、会话服务编排、控制器路由与校验、以及全 Bean 装配冒烟测试。
+- **离线单测**用 Mockito 隔离模型/框架、`StepVerifier` 校验响应式链路、`WebTestClient` 驱动 Web 层、`@SpringBootTest` 冒烟全 Bean 装配——不调真实大模型。
+- **条件集成测试**（服务可达才跑，不可达自动 `assumeTrue` 跳过，保证任何环境 `mvn test` 都绿）：
+  - `RedisSessionPersistenceTest`：本机 Redis(6379, 密码 123456) 存-取-删往返
+  - `MysqlSessionPersistenceTest`：本机 MySQL(3306, root/root, 库 agent_scope_customer_work)
+  - `BailianIntegrationTest`：真实百炼调用，需 `export RUN_BAILIAN_IT=true`（消耗额度）
+- **CI**：`.github/workflows/ci.yml` 在 push/PR 时跑 `mvn test` + 打包，并启动 Redis/MySQL 服务容器，使持久化用例在 CI 真实执行。
 
-## 六、代码结构
+---
+
+## 九、代码结构
 
 ```
-src/main/java/com/example/customerwork/
-├── CustomerWorkApplication.java            # Spring Boot 启动类
+src/main/java/com/richard/fyoung/customerwork/
+├── CustomerWorkApplication.java              # 启动类（@EnableScheduling，排除 DataSource 自动配置）
 ├── config/
-│   ├── CustomerWorkProperties.java         # 强类型配置（model/session/agent/memory/plan/rag/context/skill/mcp/observability/...）
-│   ├── ModelConfig.java                    # 模型层：百炼 DashScope 统一抽象
-│   └── SessionConfig.java                  # 会话持久化 Session Bean（memory/json/redis/mysql）
+│   ├── CustomerWorkProperties.java           # 全部 customer-work.* 强类型配置
+│   ├── ModelConfig.java                      # 模型层：多厂商构建 + 高级生成参数
+│   ├── FallbackChatModel.java                # 私有化兜底模型（主失败切兜底）
+│   ├── SessionConfig.java                    # 会话持久化 Session Bean（memory/json/redis/mysql）
+│   └── NacosPromptService.java               # Nacos 配置中心：系统提示词热更新
 ├── agent/
-│   ├── CustomerServiceAgentFactory.java    # 主 Agent 装配：工具组/Meta-Tool/Plan/记忆/RAG/Skill/MCP/Hook
-│   ├── ObservabilityHook.java              # 全链路采集（token/时延/异常）
-│   └── HumanApprovalHook.java              # Human-in-the-Loop：高风险工具人工确认闸门
+│   ├── CustomerServiceAgentFactory.java      # 主 Agent 装配（工具组/记忆/RAG/Skill/MCP/Higress/Hook/Plan）
+│   ├── MultiAgentOrchestrator.java           # 多 Agent 编排（Pipeline fanout/sequential）
+│   ├── AguiService.java                      # AG-UI 协议适配
+│   ├── ObservabilityHook.java                # 可观测采集（token/时延/工具/异常 + Micrometer）
+│   └── HumanApprovalHook.java                # Human-in-the-Loop 人工确认闸门
 ├── memory/
-│   ├── LongTermMemoryStore.java            # L2 多租户长期记忆存储
-│   ├── InMemoryLongTermMemory.java         # L2 LongTermMemory 接口实现（同时写 L3）
-│   ├── ContextMemoryFactory.java           # 短期记忆 / 智能上下文压缩（AutoContext）
-│   └── FactLog.java                        # L3 只追加事实日志（JSONL 审计）
-├── rag/InMemoryKeywordKnowledge.java       # RAG：Knowledge 接口内存实现
+│   ├── LongTermMemoryProvider.java           # 长期记忆 provider（memory/bailian/mem0/reme）
+│   ├── LongTermMemoryStore.java              # L2 多租户记忆存储
+│   ├── InMemoryLongTermMemory.java           # L2 LongTermMemory 内存实现（同时写 L3）
+│   ├── FactLog.java                          # L3 只追加事实日志（JSONL）
+│   └── ContextMemoryFactory.java             # 短期记忆 / 智能上下文压缩
+├── rag/
+│   ├── KnowledgeProvider.java                # RAG provider（memory/simple/bailian/dify）
+│   └── InMemoryKeywordKnowledge.java         # 内存关键词 Knowledge
+├── skill/ （技能资源见 resources/skills）
 ├── tool/
 │   ├── OrderTools / AfterSalesTools / KnowledgeBaseTools / HumanHandoffTools.java
-│   └── McpToolkitConfigurer.java           # MCP 接入装配器
-├── service/CustomerServiceService.java     # 会话恢复 / 持久化 / 流式 / 结构化意图 / 安全中断
+│   ├── McpToolkitConfigurer.java             # MCP 接入
+│   └── HigressToolkitConfigurer.java         # Higress 接入
+├── observability/
+│   ├── LoggingTracer.java / TracingConfig.java   # 原生链路追踪
+│   ├── TtsHookProvider.java                  # TTS 语音合成 Hook
+│   └── StudioConfigurer.java                 # Studio 可视化
+├── runtime/
+│   ├── GracefulShutdownService.java          # 优雅停机
+│   └── MaintenanceScheduler.java             # 定时维护巡检
+├── security/
+│   ├── ApiKeyAuthWebFilter.java              # API Key 鉴权
+│   └── RateLimitWebFilter.java               # 限流
+├── health/SessionHealthIndicator.java        # 会话后端健康检查
+├── service/
+│   ├── CustomerServiceService.java           # 会话恢复/持久化/流式/意图/中断
+│   └── SessionStateManager.java              # SessionManager 状态自动编排
 ├── controller/
-│   ├── CustomerServiceController.java      # 入口：同步 / SSE 流式 / 意图 / 中断
-│   └── GlobalExceptionHandler.java         # 统一错误响应
+│   ├── CustomerServiceController.java        # HTTP 入口（chat/stream/intent/consult/agui/interrupt）
+│   └── GlobalExceptionHandler.java           # 统一错误响应
 └── dto/ (ChatRequest, ChatResponse, IntentResult)
 
-src/main/resources/skills/refund-handling/SKILL.md   # Markdown 技能（Skill 特性）
-mysql/schema.sql                                      # MySQL 会话持久化建库建表脚本
+src/main/resources/skills/refund-handling/SKILL.md   # Markdown 技能
+mysql/schema.sql                                      # MySQL 会话表建库脚本
+.github/workflows/ci.yml                              # CI（含 Redis/MySQL 服务容器）
 ```
 
-## 七、从示例到大规模生产，还可以补什么
+---
 
-1. **分布式会话持久化**：把 `session.mode` 扩展为 redis/mysql，返回框架内置 `RedisSession` / `MysqlSession`，多实例共享状态。
-2. **真实长期记忆**：接 `agentscope-extensions-mem0` 或百炼长期记忆，在 builder 上加 `.longTermMemory(...).longTermMemoryMode(BOTH)`。
-3. **真实 RAG**：把 `KnowledgeBaseTools` 的关键词命中替换为 AgentScope 内置 Embedding RAG（`.knowledge(...)`）/ Dify / 百炼企业知识库。
-4. **存量系统对接**：把工具方法体里的 Mock 换成 WebClient 调用内部微服务，或用 MCP 协议零改造接入存量 HTTP 系统。
-5. **多 Agent 进程级编排**：把单 Agent + 多工具组升级为子 Agent 声明 / Pipeline 编排。
-6. **接入治理与数据飞轮**：①交给 Higress + RocketMQ；⑥把 `ObservabilityHook` 改为上报 OpenTelemetry，再接 RM Gallery 评估与 Trinity-RFT。
+## 十、未实现 / 需外部基础设施的扩展点
 
-## 八、重要说明
+这些能力框架已提供，但需引入额外依赖并部署对应服务，硬编入会破坏「开箱即用 + bug-free」，故保留为**配置即用**扩展点：
 
-- 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`。框架仍在高速迭代，若升级版本遇到 API 不匹配，请对照该版本源码微调。
-- API Key 支持配置项与环境变量两种来源，生产请用环境变量。
-- 工具均为异步 `Mono`，业务逻辑全程无 `.block()`；持久化落盘放在 `boundedElastic` 调度，不阻塞响应式线程。
+| 功能 | 需要 | 落地路径 |
+|---|---|---|
+| **A2A Agent Card 注册发现** | Nacos AI/A2A API（`com.alibaba.nacos.api.ai.AiService`，新版 nacos-client）+ `io.a2a` SDK（`AgentCard`） | 用 `NacosAgentRegistry` / `NacosAgentCardResolver` 注册与发现 Agent Card；本项目已落地 Nacos 配置中心层 |
+| **RocketMQ 异步消息** | RocketMQ broker + client 依赖 | `extensions.rocketmq` 做任务解耦 / A2A over MQ |
+| **定时 Agent 调度** | Quartz 或 XXL-JOB | `QuartzAgentScheduler` / `XxlJobAgentScheduler` 定时驱动 Agent 跑批 |
+| **Runtime 工具沙箱** | 独立项目 `agentscope-runtime-java` | 工具执行隔离（Shell/文件/浏览器/移动端沙箱） |
+| **Training 数据飞轮** | RM Gallery + Trinity-RFT 平台 | 奖励函数评估 + 强化学习闭环 |
+| **Anthropic / Gemini 模型** | 各自厂商 SDK（`com.anthropic` / `com.google.genai`） | `model.provider=anthropic/gemini`，代码已就绪，补依赖即可 |
+| **RAGFlow / Haystack 知识库** | 对应 client 依赖 | 同 Dify 模式扩展 `KnowledgeProvider` |
+| **Harness 长任务脚手架** | AgentScope 1.1+ | 升级框架后接入分层记忆 + 子 Agent 声明 |
+
+> 说明：A2A 所需的新版 nacos-client（含 AI API）与 `io.a2a` SDK 在当前受限网络环境无法检索/确定可用版本，因此未强行引入。提供确切 Maven 坐标后即可补齐 A2A 注册发现 + 集成测试。
+
+---
+
+## 十一、重要说明
+
+- 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`；框架高速迭代，升级遇 API 不匹配请对照该版本源码微调。
+- API Key 支持配置项与环境变量两种来源；**生产请用环境变量注入**，勿把生产密钥留在仓库。
+- 工具均为异步 `Mono`，业务链路无 `.block()`；持久化落盘放在 `boundedElastic` 调度，不阻塞响应式线程。
+- 所有外部后端（百炼/Redis/MySQL/Nacos/Mem0/ReMe/Dify/Higress/MCP/Studio/TTS）均为**配置开关**，默认实现保证离线开箱即用与单测全绿。
