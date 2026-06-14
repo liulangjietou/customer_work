@@ -5,11 +5,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.github.richardfyoung</groupId>
-    <artifactId>customer-work</artifactId>
+    <artifactId>customer-work-parent</artifactId>
     <version>1.0.0</version>
-    <packaging>jar</packaging>
-    <name>customer-work</name>
-    <description>基于 AgentScope Java 的生产级智能客服系统（核心链路可运行示例）</description>
+    <packaging>pom</packaging>
+    <name>customer-work-parent</name>
+    <description>基于 AgentScope Java 的生产级智能客服系统（多模块：可复用 starter + 可运行示例）</description>
 
     <parent>
         <groupId>org.springframework.boot</groupId>
@@ -18,149 +18,41 @@
         <relativePath/>
     </parent>
 
+    <modules>
+        <module>customer-work-spring-boot-starter</module>
+        <module>customer-work-example</module>
+    </modules>
+
     <properties>
         <java.version>17</java.version>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <!-- 官方推荐：生产用稳定版 agentscope（聚合包），从 Maven Central 拉取 -->
         <agentscope.version>1.0.12</agentscope.version>
+        <springdoc.version>2.3.0</springdoc.version>
+        <nacos.version>3.0.2</nacos.version>
     </properties>
 
-    <dependencies>
-        <!-- Spring Boot WebFlux：与 AgentScope 的 Reactor 响应式模型天然契合 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-        </dependency>
-
-        <!-- 请求参数校验（@Valid / @NotBlank 等） -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-
-        <!-- Swagger / OpenAPI（WebFlux）：/swagger-ui.html 与 /v3/api-docs -->
-        <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
-            <version>2.3.0</version>
-        </dependency>
-
-        <!-- 生产可观测：健康检查 / 指标 / Prometheus（运维就绪） -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-prometheus</artifactId>
-        </dependency>
-
-        <!-- 会话持久化（MySQL）：JDBC + HikariCP 连接池 + MySQL 驱动 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-jdbc</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.mysql</groupId>
-            <artifactId>mysql-connector-j</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- 会话持久化（Redis）：Jedis 客户端（RedisSession 使用 UnifiedJedis） -->
-        <dependency>
-            <groupId>redis.clients</groupId>
-            <artifactId>jedis</artifactId>
-        </dependency>
-
-        <!-- 长期记忆 Mem0 / ReMe 客户端依赖的 HTTP 库 -->
-        <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp</artifactId>
-        </dependency>
-
-        <!-- Nacos 配置中心：系统提示词集中管理 + 热更新（A2A 注册发现见 README 扩展点） -->
-        <dependency>
-            <groupId>com.alibaba.nacos</groupId>
-            <artifactId>nacos-client</artifactId>
-            <version>3.0.2</version>
-        </dependency>
-
-        <!-- ============ AgentScope Java 核心 ============ -->
-        <!-- 注意：聚合包 artifactId 就是 agentscope，不要写成 agentscope-model-xxx（不存在） -->
-        <dependency>
-            <groupId>io.agentscope</groupId>
-            <artifactId>agentscope</artifactId>
-            <version>${agentscope.version}</version>
-        </dependency>
-
-        <!-- 可选：长期记忆扩展（Mem0）。生产里启用长期记忆时再放开 -->
-        <!--
-        <dependency>
-            <groupId>io.agentscope</groupId>
-            <artifactId>agentscope-extensions-mem0</artifactId>
-            <version>${agentscope.version}</version>
-        </dependency>
-        -->
-
-        <!-- Lombok：减少样板代码 -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-
-        <!-- 测试 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
     <build>
-        <finalName>customer-work</finalName>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <excludes>
-                        <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
-            </plugin>
-
-            <!-- 测试覆盖率报告：target/site/jacoco/index.html -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.12</version>
-                <executions>
-                    <execution>
-                        <id>prepare-agent</id>
-                        <goals>
-                            <goal>prepare-agent</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>report</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>report</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>0.8.12</version>
+                    <executions>
+                        <execution>
+                            <id>prepare-agent</id>
+                            <goals><goal>prepare-agent</goal></goals>
+                        </execution>
+                        <execution>
+                            <id>report</id>
+                            <phase>test</phase>
+                            <goals><goal>report</goal></goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
 </project>

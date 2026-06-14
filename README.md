@@ -434,60 +434,44 @@ mvn test -Dtest=ModelConfigTest            # 单类
 
 ---
 
-## 九、代码结构
+## 九、代码结构（多模块）
 
 ```
-src/main/java/com/richard/fyoung/customerwork/
-├── CustomerWorkApplication.java              # 启动类（@EnableScheduling，排除 DataSource 自动配置）
-├── config/
-│   ├── CustomerWorkProperties.java           # 全部 customer-work.* 强类型配置
-│   ├── ModelConfig.java                      # 模型层：多厂商构建 + 高级生成参数
-│   ├── FallbackChatModel.java                # 私有化兜底模型（主失败切兜底）
-│   ├── SessionConfig.java                    # 会话持久化 Session Bean（memory/json/redis/mysql）
-│   └── NacosPromptService.java               # Nacos 配置中心：系统提示词热更新
-├── agent/
-│   ├── CustomerServiceAgentFactory.java      # 主 Agent 装配（工具组/记忆/RAG/Skill/MCP/Higress/Hook/Plan）
-│   ├── MultiAgentOrchestrator.java           # 多 Agent 编排（Pipeline fanout/sequential）
-│   ├── AguiService.java                      # AG-UI 协议适配
-│   ├── ObservabilityHook.java                # 可观测采集（token/时延/工具/异常 + Micrometer）
-│   └── HumanApprovalHook.java                # Human-in-the-Loop 人工确认闸门
-├── memory/
-│   ├── LongTermMemoryProvider.java           # 长期记忆 provider（memory/bailian/mem0/reme）
-│   ├── LongTermMemoryStore.java              # L2 多租户记忆存储
-│   ├── InMemoryLongTermMemory.java           # L2 LongTermMemory 内存实现（同时写 L3）
-│   ├── FactLog.java                          # L3 只追加事实日志（JSONL）
-│   └── ContextMemoryFactory.java             # 短期记忆 / 智能上下文压缩
-├── rag/
-│   ├── KnowledgeProvider.java                # RAG provider（memory/simple/bailian/dify）
-│   └── InMemoryKeywordKnowledge.java         # 内存关键词 Knowledge
-├── skill/ （技能资源见 resources/skills）
-├── tool/
-│   ├── OrderTools / AfterSalesTools / KnowledgeBaseTools / HumanHandoffTools.java
-│   ├── McpToolkitConfigurer.java             # MCP 接入
-│   └── HigressToolkitConfigurer.java         # Higress 接入
-├── observability/
-│   ├── LoggingTracer.java / TracingConfig.java   # 原生链路追踪
-│   ├── TtsHookProvider.java                  # TTS 语音合成 Hook
-│   └── StudioConfigurer.java                 # Studio 可视化
-├── runtime/
-│   ├── GracefulShutdownService.java          # 优雅停机
-│   └── MaintenanceScheduler.java             # 定时维护巡检
-├── security/
-│   ├── ApiKeyAuthWebFilter.java              # API Key 鉴权
-│   └── RateLimitWebFilter.java               # 限流
-├── health/SessionHealthIndicator.java        # 会话后端健康检查
-├── service/
-│   ├── CustomerServiceService.java           # 会话恢复/持久化/流式/意图/中断
-│   └── SessionStateManager.java              # SessionManager 状态自动编排
-├── controller/
-│   ├── CustomerServiceController.java        # HTTP 入口（chat/stream/intent/consult/agui/interrupt）
-│   └── GlobalExceptionHandler.java           # 统一错误响应
-└── dto/ (ChatRequest, ChatResponse, IntentResult)
-
-src/main/resources/skills/refund-handling/SKILL.md   # Markdown 技能
-mysql/schema.sql                                      # MySQL 会话表建库脚本
-.github/workflows/ci.yml                              # CI（含 Redis/MySQL 服务容器）
+customer_work/                                  # 父 pom（packaging=pom，聚合两模块）
+├── customer-work-spring-boot-starter/          # 【可复用能力库】无 main，作为依赖被引入
+│   └── src/main/java/com/richard/fyoung/customerwork/
+│       ├── config/      CustomerWorkProperties / ModelConfig / FallbackChatModel / ResilientChatModel
+│       │                SessionConfig / ToolBackendConfig / OpenApiConfig / NacosPromptService
+│       ├── agent/       CustomerServiceAgentFactory / MultiAgentOrchestrator / AguiService
+│       │                ObservabilityHook / HumanApprovalHook
+│       ├── service/     CustomerServiceService / SessionStateManager
+│       ├── memory/      LongTermMemoryProvider / Store / InMemoryLongTermMemory / FactLog / ContextMemoryFactory
+│       ├── rag/         KnowledgeProvider / InMemoryKeywordKnowledge
+│       ├── tool/        OrderTools / AfterSalesTools / KnowledgeBaseTools / HumanHandoffTools
+│       │                ToolRegistrar / McpToolkitConfigurer / HigressToolkitConfigurer
+│       │   └── backend/ OrderBackend / AfterSalesBackend / KnowledgeBackend（SPI）+ Mock 默认实现
+│       ├── observability/ LoggingTracer / TracingConfig / TtsHookProvider / StudioConfigurer
+│       ├── runtime/     GracefulShutdownService / MaintenanceScheduler
+│       ├── security/    ApiKeyAuthWebFilter / RateLimitWebFilter / RequestIdWebFilter
+│       ├── health/      SessionHealthIndicator
+│       └── dto/         ChatRequest / ChatResponse / IntentResult
+│
+├── customer-work-example/                       # 【可运行示例】依赖 starter
+│   └── src/main/
+│       ├── java/com/richard/fyoung/customerwork/
+│       │   ├── CustomerWorkApplication.java     # 启动类（与 starter 共享基础包，单次组件扫描覆盖两模块）
+│       │   └── controller/                      # CustomerServiceController / GlobalExceptionHandler
+│       └── resources/  application.yml / application-prod.yml / logback-spring.xml / skills/
+│
+├── mysql/schema.sql                            # MySQL 会话表建库脚本
+├── Dockerfile / docker-compose.yml             # 多模块构建 + 一键起依赖
+└── .github/workflows/ci.yml                    # CI（Redis/MySQL/Nacos 服务容器）
 ```
+
+> **模块边界**：`starter` 装可复用的 Agent 基础设施与扩展点（SPI、配置、装配、记忆/RAG/安全/可观测/Nacos）；
+> `example` 只装"客服业务"（启动类、HTTP 接口、提示词/技能资源）。下游可**只依赖 starter**，写自己的
+> `*Backend` Bean 与 Controller，即得到完整能力——不 fork 整个应用。
+> 两模块共享基础包 `com.richard.fyoung.customerwork`，示例的 `@SpringBootApplication` 一次组件扫描即覆盖两个 jar。
 
 ---
 
