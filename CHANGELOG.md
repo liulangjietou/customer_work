@@ -7,6 +7,7 @@
 ### Changed
 - 工程拆分为多模块：`customer-work-spring-boot-starter`（可复用，含 `@AutoConfiguration` 自动装配）
   + `customer-work-example`（可运行示例，包 `com.richard.fyoung.customerworkapp`）
+  + `customer-work-downstream-sample`（下游接入示例，包 `com.acme.support`，含接入契约测试）
 - starter 改用 HikariCP（替代 spring-jdbc），不再触发 DataSourceAutoConfiguration，下游零排除即插即用
 
 ### Added

@@ -1,0 +1,8 @@
+# 下游应用自己的配置：只需提供密钥（仍走环境变量），其余沿用 starter 默认。
+spring:
+  application:
+    name: acme-support
+# 想用真实后端时再按需打开 starter 的开关，例如：
+# customer-work:
+#   session: { mode: redis }
+#   rag: { provider: bailian }

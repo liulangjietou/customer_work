@@ -467,6 +467,11 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   └── controller/                      # CustomerServiceController / GlobalExceptionHandler
 │       └── resources/  application.yml / application-prod.yml / logback-spring.xml / skills/
 │
+├── customer-work-downstream-sample/             # 【下游接入示例】完全不同包名 com.acme.support
+│   └── src/                                     #   仅依赖 starter；SupportApplication + AcmeOrderBackend(覆盖默认)
+│                                                #   + SupportController(复用 CustomerServiceService)
+│                                                #   契约测试 DownstreamIntegrationTest 证明"零扫描自动装配 + 覆盖默认"
+│
 ├── mysql/schema.sql                            # MySQL 会话表建库脚本
 ├── Dockerfile / docker-compose.yml             # 多模块构建 + 一键起依赖
 └── .github/workflows/ci.yml                    # CI（Redis/MySQL/Nacos 服务容器）
@@ -494,6 +499,9 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 @Component
 public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 */ }
 ```
+
+> 完整可运行范例见模块 **`customer-work-downstream-sample`**（包名 `com.acme.support`，仅依赖 starter）；
+> 其 `DownstreamIntegrationTest` 在 CI 持续校验"零扫描自动装配 + 自定义后端覆盖默认"的接入契约。
 
 ---
 
