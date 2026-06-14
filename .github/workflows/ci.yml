@@ -33,6 +33,17 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+      nacos:
+        image: nacos/nacos-server:v2.3.2
+        env:
+          MODE: standalone
+        ports:
+          - 8848:8848
+        options: >-
+          --health-cmd "curl -f http://localhost:8848/nacos || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
 
     steps:
       - name: Checkout
@@ -51,11 +62,18 @@ jobs:
           sudo apt-get update && sudo apt-get install -y redis-tools
           redis-cli -h 127.0.0.1 -p 6379 CONFIG SET requirepass 123456
 
-      - name: Build and test
+      - name: Build and test (with coverage)
         run: mvn -B test
         # 说明：
-        # - 会话持久化测试探测 localhost:6379 / localhost:3306，服务在线即真实执行存-取-删
+        # - Redis/MySQL/Nacos 服务容器在线，相关集成测试真实执行（探测可达性后运行）
         # - 百炼集成测试默认跳过（未设置 RUN_BAILIAN_IT）
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco
 
       - name: Package
         run: mvn -B -DskipTests package

@@ -1,0 +1,21 @@
+# 生产 profile 示例：用环境变量驱动外部后端。激活：SPRING_PROFILES_ACTIVE=prod
+customer-work:
+  session:
+    mode: ${SESSION_MODE:redis}        # 多实例共享会话
+  memory:
+    provider: ${MEMORY_PROVIDER:memory}
+  rag:
+    provider: ${RAG_PROVIDER:memory}
+  security:
+    auth:
+      enabled: ${AUTH_ENABLED:false}   # 生产建议 true 并配置 api-keys
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      requests-per-minute: ${RATE_LIMIT_RPM:120}
+  observability:
+    tracing-enabled: ${TRACING_ENABLED:true}
+
+logging:
+  level:
+    root: INFO
+    com.richard.fyoung.customerwork: INFO

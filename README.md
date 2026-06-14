@@ -131,9 +131,17 @@
 
 ## 五、快速开始
 
+**方式一：本地运行（默认内存模式，零依赖）**
 ```bash
-export DASHSCOPE_API_KEY=你的百炼密钥     # 不设则用 application.yml 内置默认 key
+cp .env.example .env                       # 填入 DASHSCOPE_API_KEY
+export DASHSCOPE_API_KEY=你的百炼密钥        # 必填，密钥仅从环境变量读取
 mvn spring-boot:run
+```
+
+**方式二：Docker Compose 一键起（app + Redis + MySQL + Nacos）**
+```bash
+export DASHSCOPE_API_KEY=你的百炼密钥
+docker compose up -d                       # 全部起；或仅起依赖：docker compose up -d redis mysql nacos
 ```
 
 ```bash
@@ -142,6 +150,9 @@ curl -X POST http://localhost:8080/api/customer/chat \
   -H "Content-Type: application/json" \
   -d '{"sessionId":"u1001","message":"帮我查一下订单 20260613001 的状态和物流"}'
 ```
+
+> 生产 profile：`SPRING_PROFILES_ACTIVE=prod`（见 `application-prod.yml`，env 驱动 redis/mysql/鉴权/限流/Tracing）。
+> 测试覆盖率报告：`mvn test` 后见 `target/site/jacoco/index.html`。
 
 ---
 
