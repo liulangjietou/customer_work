@@ -37,15 +37,23 @@ public class ModelConfig {
         CustomerWorkProperties.Model cfg = properties.getModel();
         Model primary = buildPrimary(cfg);
 
+        Model model = primary;
         CustomerWorkProperties.Model.Fallback fb = cfg.getFallback();
         if (fb.isEnabled()) {
             Model fallback = buildByProvider(fb.getProvider(), fb.getName(),
                 fb.getApiKey(), fb.getBaseUrl(), cfg);
             log.info("已启用私有化兜底：主 {} -> 兜底 {}({})",
                 primary.getModelName(), fb.getProvider(), fb.getName());
-            return new FallbackChatModel(primary, fallback);
+            model = new FallbackChatModel(primary, fallback);
         }
-        return primary;
+
+        CustomerWorkProperties.Model.Retry retry = cfg.getRetry();
+        if (retry.isEnabled()) {
+            log.info("已启用模型调用重试：maxAttempts={}, backoffMs={}",
+                retry.getMaxAttempts(), retry.getBackoffMs());
+            model = new ResilientChatModel(model, retry.getMaxAttempts(), retry.getBackoffMs());
+        }
+        return model;
     }
 
     private Model buildPrimary(CustomerWorkProperties.Model cfg) {

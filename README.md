@@ -322,7 +322,21 @@ curl localhost:8080/actuator/prometheus  # 业务指标
 - 指标：`customerwork.agent.requests / reasoning / tool.calls{tool} / errors / tokens.total`
 - 原生 Tracing：`observability.tracing-enabled=true`（`LoggingTracer`，可换 OTel `TelemetryTracer`）
 - 优雅停机：`runtime.shutdown-timeout-seconds`；定时巡检：`runtime.scheduler-enabled`
-- 测试：`ObservabilityHookTest`、`LoggingTracerTest`、`SessionHealthIndicatorTest`、`GracefulShutdownServiceTest`、`MaintenanceSchedulerTest`。
+- 请求关联：`RequestIdWebFilter` 为每个请求生成 / 透传 `X-Request-Id`（写回响应头 + Reactor 上下文）
+- 结构化日志：`logback-spring.xml` 日志含 requestId；引入 logstash-encoder 可一键切 JSON（见文件注释）
+- Grafana：示例仪表盘 `docs/grafana-dashboard.json`（基于上述 Prometheus 指标）
+- 测试：`ObservabilityHookTest`、`LoggingTracerTest`、`SessionHealthIndicatorTest`、`GracefulShutdownServiceTest`、`MaintenanceSchedulerTest`、`RequestIdWebFilterTest`。
+
+### 6.13b 模型高可用与成本护栏
+
+```yaml
+customer-work.model:
+  retry: { enabled: true, max-attempts: 2, backoff-ms: 500 }   # 瞬时错误指数退避重试
+  token-warn-threshold: 4000                                    # 单次请求 token 超阈值打 WARN（0=关闭）
+```
+- `ResilientChatModel` 包装模型调用做退避重试（可与 `FallbackChatModel` 叠加：先重试、仍失败再兜底）。
+- 测试：`ResilientChatModelTest`。
+- 效果评估 / 回归：见 [docs/EVAL.md](docs/EVAL.md)（提示词版本化 + 评测集 + 数据飞轮）。
 
 ### 6.14 接入层安全（API Key 鉴权 + 限流）
 

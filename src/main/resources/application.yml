@@ -25,6 +25,8 @@ customer-work:
     enable-search:          # DashScope 联网搜索（仅 dashscope）
     enable-thinking:        # DashScope 深度思考（仅 dashscope）
     embedding-name: text-embedding-v3
+    # 单次请求 token 用量告警阈值（0=关闭）：超过打 WARN，便于成本护栏
+    token-warn-threshold: 0
     # 私有化兜底：主模型失败时自动切换（典型：云端主模型 + 本地 Ollama 兜底）
     fallback:
       enabled: false
@@ -32,6 +34,11 @@ customer-work:
       name: qwen2.5
       api-key: ""
       base-url: ""
+    # 模型调用重试（瞬时错误指数退避，提升高可用）
+    retry:
+      enabled: false
+      max-attempts: 2
+      backoff-ms: 500
   session:
     # 会话持久化模式：memory（默认，重启丢）| json（单机落盘可恢复）
     #                | redis（分布式共享）| mysql（强一致持久化）

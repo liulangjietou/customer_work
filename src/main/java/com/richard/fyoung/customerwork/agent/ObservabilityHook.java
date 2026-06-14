@@ -36,13 +36,20 @@ public class ObservabilityHook implements Hook {
 
     /** 可为 null：未接入 Micrometer 时降级为仅日志。 */
     private final MeterRegistry meterRegistry;
+    /** 单次请求 token 用量告警阈值（0=关闭）。 */
+    private final int tokenWarnThreshold;
 
     public ObservabilityHook() {
-        this(null);
+        this(null, 0);
     }
 
     public ObservabilityHook(MeterRegistry meterRegistry) {
+        this(meterRegistry, 0);
+    }
+
+    public ObservabilityHook(MeterRegistry meterRegistry, int tokenWarnThreshold) {
         this.meterRegistry = meterRegistry;
+        this.tokenWarnThreshold = tokenWarnThreshold;
     }
 
     @Override
@@ -86,6 +93,10 @@ public class ObservabilityHook implements Hook {
                 usage.getTotalTokens(), usage.getTime());
             if (meterRegistry != null) {
                 meterRegistry.counter(M_TOKENS).increment(usage.getTotalTokens());
+            }
+            if (tokenWarnThreshold > 0 && usage.getTotalTokens() > tokenWarnThreshold) {
+                log.warn("[COST] 单次请求 token 用量 {} 超过告警阈值 {}，请关注成本",
+                    usage.getTotalTokens(), tokenWarnThreshold);
             }
         } else {
             log.info("[OTEL] 请求结束（无 token 用量信息）");

@@ -96,8 +96,19 @@ public class CustomerWorkProperties {
         private Boolean enableThinking;
         /** Embedding 模型名（RAG 接百炼向量检索时使用）。 */
         private String embeddingName = "text-embedding-v3";
+        /** 单次请求 token 用量告警阈值（0=关闭）；超过则可观测 Hook 打 WARN，便于成本护栏。 */
+        private int tokenWarnThreshold = 0;
         /** 私有化兜底：主模型失败时切换到兜底模型。 */
         private final Fallback fallback = new Fallback();
+        /** 模型调用重试（瞬时错误指数退避，提升高可用）。 */
+        private final Retry retry = new Retry();
+
+        @Data
+        public static class Retry {
+            private boolean enabled = false;
+            private int maxAttempts = 2;
+            private long backoffMs = 500;
+        }
 
         @Data
         public static class Fallback {
