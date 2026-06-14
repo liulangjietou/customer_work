@@ -322,11 +322,15 @@ customer-work:
 customer-work.nacos:
   enabled: true
   server-addr: localhost:8848
+  username: nacos          # 本机默认 nacos/nacos（http://localhost:8848/nacos）
+  password: nacos
   group: DEFAULT_GROUP
   prompt-data-id: customer-work-system-prompt
 ```
-在 Nacos 控制台新增 dataId=`customer-work-system-prompt` 的配置内容即可生效。
-测试：`NacosPromptServiceTest`（mock `ConfigService`：初始拉取 + `ArgumentCaptor` 验证热更新 + 空白回退）。
+在 Nacos 控制台新增 dataId=`customer-work-system-prompt`、group=`DEFAULT_GROUP` 的配置（内容即系统提示词）即生效；之后在控制台修改内容会**实时热更新**。
+测试：
+- `NacosPromptServiceTest`（离线 mock `ConfigService`：初始拉取 + `ArgumentCaptor` 验证热更新 + 空白回退）；
+- `NacosPromptIntegrationTest`（**真实连本机 Nacos**：发布配置→`NacosPromptService` 拉取生效→清理；Nacos 不可达时自动跳过）。
 
 ---
 
@@ -369,6 +373,7 @@ mvn test -Dtest=ModelConfigTest            # 单类
 - **条件集成测试**（服务可达才跑，不可达自动 `assumeTrue` 跳过，保证任何环境 `mvn test` 都绿）：
   - `RedisSessionPersistenceTest`：本机 Redis(6379, 密码 123456) 存-取-删往返
   - `MysqlSessionPersistenceTest`：本机 MySQL(3306, root/root, 库 agent_scope_customer_work)
+  - `NacosPromptIntegrationTest`：本机 Nacos(8848, nacos/nacos) 发布→拉取提示词往返
   - `BailianIntegrationTest`：真实百炼调用，需 `export RUN_BAILIAN_IT=true`（消耗额度）
 - **CI**：`.github/workflows/ci.yml` 在 push/PR 时跑 `mvn test` + 打包，并启动 Redis/MySQL 服务容器，使持久化用例在 CI 真实执行。
 
