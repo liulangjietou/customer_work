@@ -11,6 +11,7 @@
 -- 执行：mysql -h localhost -u root -proot < mysql/schema.sql
 -- =============================================================================
 
+
 CREATE DATABASE IF NOT EXISTS `agent_scope_customer_work`
     DEFAULT CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci;
