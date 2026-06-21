@@ -17,7 +17,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 客服会话服务（对应深度解析一文②"会话恢复与上下文装配"与⑤"记忆写入 / 状态持久化"）。
@@ -40,15 +42,33 @@ public class CustomerServiceService {
     private static final String FALLBACK_REPLY =
         "抱歉，系统繁忙，已为您记录问题，建议稍后再试或转人工坐席。";
 
+    /** 进程内热 Agent 缓存上限：超过则按 LRU 淘汰最久未用的会话，淘汰时落盘，避免无界缓存导致 OOM。 */
+    private static final int MAX_HOT_AGENTS = 1000;
+
     private final CustomerServiceAgentFactory agentFactory;
     private final Session session;
 
-    /** 进程内热 Agent 缓存：sessionId -> Agent。冷数据由 {@link Session} 持久化恢复。 */
-    private final ConcurrentHashMap<String, ReActAgent> sessionAgents = new ConcurrentHashMap<>();
+    /**
+     * 进程内热 Agent 缓存：sessionId -> Agent，有界 LRU（访问序）。
+     * 超过 {@link #MAX_HOT_AGENTS} 时淘汰最久未访问的会话并异步落盘，冷数据由 {@link Session} 恢复。
+     * 用 {@code synchronizedMap} 包装以保证 {@code computeIfAbsent/get/remove} 线程安全。
+     */
+    private final Map<String, ReActAgent> sessionAgents;
 
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory, Session session) {
         this.agentFactory = agentFactory;
         this.session = session;
+        this.sessionAgents = Collections.synchronizedMap(
+            new LinkedHashMap<String, ReActAgent>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, ReActAgent> eldest) {
+                    if (size() > MAX_HOT_AGENTS) {
+                        evictAndPersist(eldest.getKey(), eldest.getValue());
+                        return true;
+                    }
+                    return false;
+                }
+            });
     }
 
     /**
@@ -109,12 +129,13 @@ public class CustomerServiceService {
      */
     public Mono<IntentResult> classifyIntent(String sessionId, String userText) {
         log.info("[会话 {}] 结构化意图识别: {}", sessionId, userText);
-        ReActAgent agent = resolveAgent(sessionId);
+        // 用一次性的独立 Agent 做分类，绝不复用会话 Agent，也不写入会话缓存 / 不持久化：
+        // 否则"请判断意图……"这类分类指令会被写进用户真实对话记忆，污染后续多轮上下文。
+        ReActAgent intentAgent = agentFactory.createAgent("intent:" + sessionId);
 
         Msg prompt = toUserMsg("请判断以下用户消息的意图，并按要求结构化输出：" + userText);
-        return agent.call(prompt, IntentResult.class)
+        return intentAgent.call(prompt, IntentResult.class)
             .map(msg -> msg.getStructuredData(IntentResult.class))
-            .doOnSuccess(result -> persist(sessionId, agent))
             .onErrorResume(e -> {
                 log.error("[会话 {}] 意图识别失败", sessionId, e);
                 return Mono.just(new IntentResult("other", "", false, "意图识别失败，转人工兜底"));
@@ -164,6 +185,15 @@ public class CustomerServiceService {
             }
             return agent;
         });
+    }
+
+    /** LRU 淘汰回调：被淘汰会话的状态异步落盘，做到"淘汰即持久化"，冷数据后续可从 {@link Session} 恢复。 */
+    private void evictAndPersist(String sessionId, ReActAgent agent) {
+        if (agent == null) {
+            return;
+        }
+        log.info("[会话 {}] 热缓存达到上限，LRU 淘汰并落盘", sessionId);
+        persist(sessionId, agent);
     }
 
     /** 持久化会话状态。落盘可能涉及 IO，放到 boundedElastic 调度，避免阻塞响应式线程。 */

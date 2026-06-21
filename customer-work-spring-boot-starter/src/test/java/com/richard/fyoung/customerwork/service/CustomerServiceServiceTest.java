@@ -161,4 +161,24 @@ class CustomerServiceServiceTest {
         service.chat("to-end", "again").block();
         verify(factory, org.mockito.Mockito.times(2)).createAgent("to-end");
     }
+
+    /**
+     * P4 修复：意图识别用独立的 "intent:" 前缀 Agent，不复用会话 Agent、不持久化，
+     * 避免分类指令污染真实对话记忆。
+     */
+    @Test
+    void classifyIntent_shouldUseSeparateAgent_andNotPersist() {
+        IntentResult expected = new IntentResult("refund", "", true, "x");
+        Msg structuredMsg = mock(Msg.class);
+        when(structuredMsg.getStructuredData(IntentResult.class)).thenReturn(expected);
+        when(agent.call(any(Msg.class), eq(IntentResult.class))).thenReturn(Mono.just(structuredMsg));
+
+        service.classifyIntent("u7", "我要退款").block();
+
+        // 用独立 intent: 前缀 Agent，不碰会话 Agent
+        verify(factory).createAgent("intent:u7");
+        verify(factory, org.mockito.Mockito.never()).createAgent("u7");
+        // 分类不落盘（不污染会话状态）
+        verify(agent, org.mockito.Mockito.never()).saveTo(any(Session.class), any(SessionKey.class));
+    }
 }
