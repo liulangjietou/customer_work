@@ -76,4 +76,21 @@ class ApiKeyAuthWebFilterTest {
         assertTrue(runFilter(props, MockServerHttpRequest.get("/actuator/health").build()),
             "Actuator 应免鉴权");
     }
+
+    /** P11 修复（常量时间比较）后，配置多个 Key 时命中其中任意一个仍应放行。 */
+    @Test
+    void shouldPass_whenMatchesOneOfMultipleKeys() {
+        boolean passed = runFilter(propsWithAuth(true, "k1", "k2", "k3"),
+            MockServerHttpRequest.post("/api/customer/chat").header("X-API-Key", "k2").build());
+        assertTrue(passed, "命中多 Key 之一应放行");
+    }
+
+    /** P11：等长但不相等的错误 Key 仍应拒绝（常量时间比较不改变正确性）。 */
+    @Test
+    void shouldReject_whenKeyWrongButSameLength() {
+        CustomerWorkProperties props = propsWithAuth(true, "secret-key");
+        boolean passed = runFilter(props,
+            MockServerHttpRequest.post("/api/customer/chat").header("X-API-Key", "secret-keX").build());
+        assertFalse(passed, "等长错误 Key 不应放行");
+    }
 }

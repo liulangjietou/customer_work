@@ -28,6 +28,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
 public class RateLimitWebFilter implements WebFilter {
 
+    /** 进程内跟踪的客户端窗口数量上限，超过则清扫过期窗口，避免 Map 无界增长导致内存泄漏。 */
+    private static final int MAX_TRACKED_CLIENTS = 100_000;
+
     private final CustomerWorkProperties properties;
     private final Map<String, Window> windows = new ConcurrentHashMap<>();
 
@@ -59,7 +62,16 @@ public class RateLimitWebFilter implements WebFilter {
             }
             return w;
         });
+        // 跟踪的客户端过多时，清扫掉已不属于当前分钟的过期窗口，防止 Map 无界增长。
+        if (windows.size() > MAX_TRACKED_CLIENTS) {
+            evictStaleWindows(currentMinute);
+        }
         return window.count.incrementAndGet() <= limit;
+    }
+
+    /** 移除非当前分钟的过期窗口（旧窗口的计数已无意义，留着只会泄漏内存）。 */
+    private void evictStaleWindows(long currentMinute) {
+        windows.entrySet().removeIf(e -> e.getValue().minute != currentMinute);
     }
 
     private String resolveClientId(ServerWebExchange exchange) {

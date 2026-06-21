@@ -44,4 +44,32 @@ class ResilientChatModelTest {
         when(delegate.getModelName()).thenReturn("qwen-max");
         assertEquals("qwen-max", new ResilientChatModel(delegate, 2, 1).getModelName());
     }
+
+    /** P6 修复：4xx 等客户端错误不应重试，避免白白浪费时延与 Token。 */
+    @Test
+    void stream_shouldNotRetry_onClientError() {
+        Model delegate = mock(Model.class);
+        when(delegate.stream(any(), any(), any()))
+            .thenReturn(Flux.error(new RuntimeException("HTTP 401 Unauthorized: invalid api key")))
+            .thenReturn(Flux.just(mock(ChatResponse.class)));
+
+        ResilientChatModel model = new ResilientChatModel(delegate, 3, 10);
+
+        StepVerifier.create(model.stream(List.<Msg>of(), List.<ToolSchema>of(),
+                GenerateOptions.builder().build()))
+            .expectErrorMatches(e -> e.getMessage() != null && e.getMessage().contains("401"))
+            .verify();
+
+        org.mockito.Mockito.verify(delegate, org.mockito.Mockito.times(1))
+            .stream(any(), any(), any());
+    }
+
+    /** P6 兜底：未识别为客户端错误的瞬时异常仍重试；可识别的客户端错误不重试。 */
+    @Test
+    void isRetryable_defaultsToRetryForUnknownErrors() {
+        org.junit.jupiter.api.Assertions.assertTrue(
+            ResilientChatModel.isRetryable(new RuntimeException("connection reset")));
+        org.junit.jupiter.api.Assertions.assertFalse(
+            ResilientChatModel.isRetryable(new RuntimeException("400 invalid_api_key")));
+    }
 }

@@ -10,8 +10,9 @@ import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.List;
 
 /**
  * API Key 鉴权过滤器（接入层安全）。
@@ -37,12 +38,31 @@ public class ApiKeyAuthWebFilter implements WebFilter {
             return chain.filter(exchange);
         }
         String provided = exchange.getRequest().getHeaders().getFirst(auth.getHeaderName());
-        Set<String> validKeys = new HashSet<>(auth.getApiKeys());
-        if (provided != null && validKeys.contains(provided)) {
+        if (matches(provided, auth.getApiKeys())) {
             return chain.filter(exchange);
         }
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
         return exchange.getResponse().setComplete();
+    }
+
+    /**
+     * 常量时间校验：用 {@link MessageDigest#isEqual} 比对，且遍历所有配置的 Key 不做短路返回，
+     * 避免按"命中位置 / 前缀匹配长度"产生可被测量的耗时差异（时序侧信道）。
+     * 同时省去原先每请求 {@code new HashSet<>(...)} 的临时对象分配。
+     */
+    private boolean matches(String provided, List<String> validKeys) {
+        if (provided == null || validKeys == null || validKeys.isEmpty()) {
+            return false;
+        }
+        byte[] providedBytes = provided.getBytes(StandardCharsets.UTF_8);
+        boolean matched = false;
+        for (String key : validKeys) {
+            if (key != null
+                && MessageDigest.isEqual(providedBytes, key.getBytes(StandardCharsets.UTF_8))) {
+                matched = true;   // 不 break：保持比对次数与输入无关
+            }
+        }
+        return matched;
     }
 
     /** 健康检查、可观测端点、Swagger 文档免鉴权（便于探针 / 监控抓取 / 查看 API 文档）。 */
