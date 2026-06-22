@@ -530,3 +530,6 @@ public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 *
 - API Key 支持配置项与环境变量两种来源；**生产请用环境变量注入**，勿把生产密钥留在仓库。
 - 工具均为异步 `Mono`，业务链路无 `.block()`；持久化落盘放在 `boundedElastic` 调度，不阻塞响应式线程。
 - 所有外部后端（百炼/Redis/MySQL/Nacos/Mem0/ReMe/Dify/Higress/MCP/Studio/TTS）均为**配置开关**，默认实现保证离线开箱即用与单测全绿。
+
+## 我的微信公众号
+![img_2.png](img_2.png)<img src="https://raw.githubusercontent.com/richardfyoung/customer_work/main/docs/wechat_public_number.png" alt="微信公众号" width="300">
