@@ -75,6 +75,9 @@ public class CustomerWorkProperties {
     /** Nacos 接入（配置中心：系统提示词集中管理 + 热更新）。 */
     private final Nacos nacos = new Nacos();
 
+    /** Hook 扩展能力（延迟埋点 / 出站脱敏 / 合规审计 / 自我纠错）。 */
+    private final Hooks hooks = new Hooks();
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -469,5 +472,69 @@ public class CustomerWorkProperties {
         private boolean schedulerEnabled = false;
         /** 定时维护任务的执行间隔（毫秒）。 */
         private long schedulerFixedDelayMs = 60_000;
+    }
+
+    /**
+     * Hook 扩展能力配置。
+     *
+     * <p>这四个 Hook 都以 Spring Bean 形式注册，由 {@code CustomerServiceAgentFactory} 通过
+     * {@code ObjectProvider<Hook>} 自动织入每个会话 Agent；下游应用声明自己的 {@code Hook} Bean
+     * 即可一并被织入（Hook 可插拔）。每个 Hook 在关闭时为零副作用透传。</p>
+     */
+    @Data
+    public static class Hooks {
+        /** 延迟埋点：端到端 / 每轮推理 / 每个工具耗时 + 首字时间（TTFT）。 */
+        private final Latency latency = new Latency();
+        /** 出站脱敏：对最终回复中的手机号 / 身份证 / 银行卡 / 邮箱做掩码。 */
+        private final Masking masking = new Masking();
+        /** 合规审计：把工具调用与最终决策写入只追加审计轨迹。 */
+        private final Audit audit = new Audit();
+        /** 自我纠错：检测到未调用退款工具却承诺打款时，强制重新推理。 */
+        private final SelfCorrection selfCorrection = new SelfCorrection();
+
+        /** 延迟埋点配置。开销极低，默认开启。 */
+        @Data
+        public static class Latency {
+            private boolean enabled = true;
+        }
+
+        /** 出站脱敏配置。会改写最终回复内容，默认关闭，需显式开启。 */
+        @Data
+        public static class Masking {
+            private boolean enabled = false;
+            /** 命中后替换为的占位串。 */
+            private String replacement = "***";
+            /** 是否脱敏手机号（中国大陆 11 位）。 */
+            private boolean maskPhone = true;
+            /** 是否脱敏身份证号（15/18 位）。 */
+            private boolean maskIdCard = true;
+            /** 是否脱敏银行卡号（13~19 位连续数字）。 */
+            private boolean maskBankCard = true;
+            /** 是否脱敏邮箱。 */
+            private boolean maskEmail = true;
+            /** 额外自定义脱敏正则（命中即替换为 replacement）。 */
+            private List<String> extraPatterns = new ArrayList<>();
+        }
+
+        /** 合规审计配置。默认关闭。 */
+        @Data
+        public static class Audit {
+            private boolean enabled = false;
+            /** 审计记录中工具入参是否复用脱敏规则（避免把敏感入参写进审计）。 */
+            private boolean maskArgs = true;
+        }
+
+        /** 自我纠错配置。默认关闭（会触发额外一轮推理）。 */
+        @Data
+        public static class SelfCorrection {
+            private boolean enabled = false;
+            /** 单次请求内最多强制纠错的次数（防止无限自我纠错）。 */
+            private int maxCorrections = 1;
+            /** 视为"已承诺打款/退款"的关键词。 */
+            private List<String> paymentKeywords = new ArrayList<>(List.of(
+                "已退款", "已打款", "已为您退款", "退款成功", "已经退", "已到账", "款项已退"));
+            /** 合法的退款类工具名（推理里调用了这些工具则不算违规）。 */
+            private List<String> refundTools = new ArrayList<>(List.of("submitRefund"));
+        }
     }
 }

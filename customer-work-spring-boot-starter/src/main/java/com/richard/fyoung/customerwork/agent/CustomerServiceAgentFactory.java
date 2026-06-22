@@ -10,6 +10,7 @@ import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.hook.Hook;
 import io.agentscope.core.hook.recorder.JsonlTraceExporter;
 import io.agentscope.core.memory.LongTermMemoryMode;
 import io.agentscope.core.model.Model;
@@ -81,6 +82,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     private final MeterRegistry meterRegistry;
     private final TtsHookProvider ttsHookProvider;
     private final NacosPromptService nacosPromptService;
+    /** 可插拔 Hook：本库内置（延迟/脱敏/审计/自我纠错）+ 下游自定义的所有 {@link Hook} Bean。 */
+    private final ObjectProvider<Hook> pluggableHooks;
 
     /** 共享的 trace 导出器（AutoCloseable，进程级单例）。 */
     private volatile JsonlTraceExporter traceExporter;
@@ -95,6 +98,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        ToolRegistrar toolRegistrar,
                                        TtsHookProvider ttsHookProvider,
                                        NacosPromptService nacosPromptService,
+                                       ObjectProvider<Hook> pluggableHooks,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
         this.properties = properties;
@@ -106,6 +110,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.toolRegistrar = toolRegistrar;
         this.ttsHookProvider = ttsHookProvider;
         this.nacosPromptService = nacosPromptService;
+        this.pluggableHooks = pluggableHooks;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
 
@@ -161,6 +166,11 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         if (properties.getHumanApproval().isEnabled()) {
             builder.hook(new HumanApprovalHook(
                 Set.copyOf(properties.getHumanApproval().getGuardedTools())));
+        }
+
+        // 可插拔 Hook：内置（延迟/脱敏/审计/自我纠错）+ 下游自定义 Hook Bean 一并织入
+        if (pluggableHooks != null) {
+            pluggableHooks.orderedStream().forEach(builder::hook);
         }
 
         // 可观测：JSONL trace 导出（数据飞轮采集）

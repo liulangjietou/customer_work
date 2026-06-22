@@ -14,7 +14,7 @@ implementations make it run offline out of the box and keep the test suite green
 config line swaps to a cloud / self-hosted backend — **without touching business code**.
 
 - Base package: `com.richard.fyoung.customerwork`
-- **116 unit tests** (4 auto-skip when their external service — Bailian / Redis / MySQL / Nacos — is absent)
+- **157 unit tests** (4 auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent)
 
 ## Feature overview
 
@@ -33,6 +33,11 @@ config line swaps to a cloud / self-hosted backend — **without touching busine
 | Multi-agent orchestration | `MultiAgentOrchestrator` | on | `POST /consult` |
 | Human-in-the-loop + interrupt | `HumanApprovalHook` | on | `POST /session/{id}/interrupt` |
 | Observability + metrics + tracing | `ObservabilityHook` / `LoggingTracer` | on/off | `/actuator/prometheus` |
+| Latency metrics (E2E/reasoning/tool/TTFT, P50/P95) | `LatencyHook` | on | `hooks.latency.enabled` |
+| Outbound PII masking | `MaskingHook` / `SensitiveDataMasker` | off | `hooks.masking.enabled` |
+| Compliance audit trail | `AuditHook` / `AuditSink` | off | `hooks.audit.enabled` |
+| Self-correction (block unauthorized refund promises) | `SelfCorrectionHook` | off | `hooks.self-correction.enabled` |
+| Pluggable hooks (downstream `Hook` beans auto-wired) | `ObjectProvider<Hook>` | on | declare a `Hook` bean |
 | Multi-vendor model + fallback | `ModelConfig` / `FallbackChatModel` | on | `model.provider`, `model.fallback.enabled` |
 | AG-UI protocol | `AguiService` | on | `POST /agui` |
 | TTS | `TtsHookProvider` | off | `protocol.tts.enabled` |

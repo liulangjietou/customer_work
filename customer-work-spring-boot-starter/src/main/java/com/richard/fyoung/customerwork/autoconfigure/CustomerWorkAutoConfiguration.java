@@ -1,8 +1,12 @@
 package com.richard.fyoung.customerwork.autoconfigure;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.observability.AuditSink;
+import com.richard.fyoung.customerwork.observability.LoggingAuditSink;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
@@ -23,4 +27,14 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableConfigurationProperties(CustomerWorkProperties.class)
 @EnableScheduling
 public class CustomerWorkAutoConfiguration {
+
+    /**
+     * 默认审计落地实现（写专用 logger）。下游声明自己的 {@link AuditSink} Bean 即可覆盖，
+     * 把审计轨迹投递到 Kafka / 数据库 / SIEM。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditSink auditSink() {
+        return new LoggingAuditSink();
+    }
 }
