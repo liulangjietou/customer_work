@@ -531,5 +531,10 @@ public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 *
 - 工具均为异步 `Mono`，业务链路无 `.block()`；持久化落盘放在 `boundedElastic` 调度，不阻塞响应式线程。
 - 所有外部后端（百炼/Redis/MySQL/Nacos/Mem0/ReMe/Dify/Higress/MCP/Studio/TTS）均为**配置开关**，默认实现保证离线开箱即用与单测全绿。
 
-## 我的微信公众号
-![img_2.png](img_2.png)<img src="https://raw.githubusercontent.com/richardfyoung/customer_work/main/docs/wechat_public_number.png" alt="微信公众号" width="300">
+## 关注作者
+
+如果你对 AI 及本项目感兴趣，欢迎关注我的微信公众号 **AI赛博炼丹炉**，将带来更多高质量文章和干货。
+
+<p align="center">
+  <img src="docs/assets/wechat-qr.png" alt="微信公众号：AI赛博炼丹炉" width="420">
+</p>

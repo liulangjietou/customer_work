@@ -124,3 +124,12 @@ CI (`.github/workflows/ci.yml`) spins up Redis/MySQL service containers so persi
 ## License
 
 [Apache-2.0](LICENSE) · See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+
+## Follow the Author
+
+If you are interested in AI and this project, follow my WeChat official account
+**AI赛博炼丹炉** for more high-quality articles and hands-on content.
+
+<p align="center">
+  <img src="docs/assets/wechat-qr.png" alt="WeChat official account: AI赛博炼丹炉" width="420">
+</p>
