@@ -195,15 +195,28 @@ customer-work:
       mask-bank-card: true
       mask-email: true
       extra-patterns: []
+      # 是否对工具返回结果在进入上下文前脱敏（可能影响模型可用信息）。默认关闭
+      mask-tool-results: false
     audit:
       # 合规审计：把工具调用与最终决策写入只追加审计轨迹（默认 logger=customer-work.audit）。默认关闭
       enabled: false
       # 审计中的工具入参是否复用脱敏规则
       mask-args: true
     self-correction:
-      # 自我纠错：未调用退款工具却承诺打款时强制重新推理（会多一轮推理）。默认关闭
+      # 自我纠错：纯文本最终答复承诺打款却未走工具时强制重新推理（会多一轮推理）。默认关闭
       enabled: false
       max-corrections: 1
+    tool-guard:
+      # 工具护栏：执行前注入公共参数 / 对数值参数做上限钳制（PreActingEvent.setToolUse）。默认关闭
+      enabled: false
+      inject-params: {}        # 例：{ channel: online }
+      numeric-caps: {}         # 例：{ amount: 1000 } 退款金额上限钳制
+    dynamic-options:
+      # 动态生成参数：命中高风险关键词切到精确档（低温+高推理强度）。默认关闭
+      enabled: false
+      precise-keywords: [投诉, 退款, 纠纷, 赔偿, 升级, 维权]
+      precise-temperature: 0.1
+      precise-reasoning-effort: high
   nacos:
     # Nacos 配置中心：系统提示词集中管理 + 热更新（运营侧改提示词无需重启）。
     # 本机 Nacos 已就绪（http://localhost:8848/nacos, nacos/nacos）时，把 enabled 改为 true 即生效。

@@ -17,7 +17,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：**157 个全绿**（其中 4 个按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
+- 单元测试：**176 个全绿**（其中 4 个按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -77,10 +77,13 @@
 | 中断恢复 | `enablePendingToolRecovery` | 开 | `interrupt.pending-tool-recovery-enabled` |
 | 可观测 Hook + 指标 | `ObservabilityHook` + Micrometer | 开 | `/actuator/prometheus` |
 | 延迟埋点 Hook（E2E/推理/工具/TTFT，P50/P95） | `LatencyHook` | 开 | `hooks.latency.enabled` |
-| 出站脱敏 Hook（手机号/身份证/银行卡/邮箱） | `MaskingHook` + `SensitiveDataMasker` | 关 | `hooks.masking.enabled=true` |
+| 出站脱敏 Hook（回复+可选工具结果脱敏） | `MaskingHook` + `SensitiveDataMasker` | 关 | `hooks.masking.enabled` / `hooks.masking.mask-tool-results` |
 | 合规审计 Hook（工具调用/决策可追溯） | `AuditHook` + `AuditSink` | 关 | `hooks.audit.enabled=true` |
 | 自我纠错 Hook（越权承诺打款强制重推理） | `SelfCorrectionHook` | 关 | `hooks.self-correction.enabled=true` |
-| Hook 可插拔（下游自定义 Hook Bean 自动织入） | `ObjectProvider<Hook>` | 开 | 声明 `Hook` Bean 即接入 |
+| 工具护栏 Hook（入参注入 + 数值上限钳制） | `ToolGuardHook` | 关 | `hooks.tool-guard.enabled=true` |
+| 动态生成参数 Hook（按意图调温度/推理强度） | `DynamicGenerateOptionsHook` | 关 | `hooks.dynamic-options.enabled=true` |
+| 总结阶段观测/计时（超 maxIters） | `ObservabilityHook` / `LatencyHook` | 开 | 自动 |
+| Hook 可插拔 + 全局热插拔 | `ObjectProvider<Hook>` / `GlobalHookRegistry` | 开 | 声明 `Hook` Bean / `register(hook)` |
 | 原生 Tracing | `LoggingTracer` + `TracerRegistry` | 关 | `observability.tracing-enabled=true` |
 | 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
 | 模型多厂商 + 私有化兜底 | `ModelConfig` + `FallbackChatModel` | 开 | `model.provider`、`model.fallback.enabled` |

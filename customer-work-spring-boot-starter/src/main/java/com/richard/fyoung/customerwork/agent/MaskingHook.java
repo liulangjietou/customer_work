@@ -4,10 +4,12 @@ import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.security.SensitiveDataMasker;
 import io.agentscope.core.hook.Hook;
 import io.agentscope.core.hook.HookEvent;
+import io.agentscope.core.hook.PostActingEvent;
 import io.agentscope.core.hook.PostCallEvent;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.message.ToolResultBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -33,28 +35,61 @@ public class MaskingHook implements Hook {
     private static final Logger log = LoggerFactory.getLogger(MaskingHook.class);
 
     private final boolean enabled;
+    private final boolean maskToolResults;
     private final SensitiveDataMasker masker;
 
     public MaskingHook(CustomerWorkProperties properties, SensitiveDataMasker masker) {
         this.enabled = properties.getHooks().getMasking().isEnabled();
+        this.maskToolResults = properties.getHooks().getMasking().isMaskToolResults();
         this.masker = masker;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <T extends HookEvent> Mono<T> onEvent(T event) {
-        if (!enabled || !masker.hasRules() || !(event instanceof PostCallEvent pce)) {
+        if (!enabled || !masker.hasRules()) {
             return Mono.just(event);
         }
         try {
-            Msg masked = maskMessage(pce.getFinalMessage());
-            if (masked != null) {
-                pce.setFinalMessage(masked);
+            if (event instanceof PostCallEvent pce) {
+                Msg masked = maskMessage(pce.getFinalMessage());
+                if (masked != null) {
+                    pce.setFinalMessage(masked);
+                }
+            } else if (maskToolResults && event instanceof PostActingEvent pae) {
+                ToolResultBlock masked = maskToolResult(pae.getToolResult());
+                if (masked != null) {
+                    pae.setToolResult(masked);
+                }
             }
         } catch (Exception e) {
-            log.warn("[MASK] 出站脱敏异常（已忽略，回复原样下发）: {}", e.getMessage());
+            log.warn("[MASK] 脱敏异常（已忽略，原样下发）: {}", e.getMessage());
         }
         return Mono.just(event);
+    }
+
+    /** 对工具结果中的文本块脱敏；无改动则返回 null。 */
+    private ToolResultBlock maskToolResult(ToolResultBlock result) {
+        if (result == null || result.getOutput() == null || result.getOutput().isEmpty()) {
+            return null;
+        }
+        boolean changed = false;
+        List<ContentBlock> rebuilt = new ArrayList<>(result.getOutput().size());
+        for (ContentBlock block : result.getOutput()) {
+            if (block instanceof TextBlock tb) {
+                String masked = masker.mask(tb.getText());
+                if (masked != null && !masked.equals(tb.getText())) {
+                    rebuilt.add(TextBlock.builder().text(masked).build());
+                    changed = true;
+                    continue;
+                }
+            }
+            rebuilt.add(block);
+        }
+        if (!changed) {
+            return null;
+        }
+        log.info("[MASK] 已对工具结果脱敏 tool={}", result.getName());
+        return new ToolResultBlock(result.getId(), result.getName(), rebuilt, result.getMetadata());
     }
 
     /** 返回脱敏后的新消息；无文本或无需改动则返回 null。 */

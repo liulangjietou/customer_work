@@ -4,8 +4,10 @@ import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.hook.PostActingEvent;
 import io.agentscope.core.hook.PostCallEvent;
+import io.agentscope.core.hook.PostSummaryEvent;
 import io.agentscope.core.hook.PreActingEvent;
 import io.agentscope.core.hook.PreCallEvent;
+import io.agentscope.core.hook.PreSummaryEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
@@ -76,6 +78,19 @@ class LatencyHookTest {
 
         assertEquals(1, registry.get("customerwork.agent.latency.tool").tag("tool", "queryOrder")
             .timer().count());
+    }
+
+    @Test
+    void shouldRecordSummaryTimer() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LatencyHook hook = hook(true, registry);
+        Agent agent = agent();
+        Msg summary = Msg.builder().role(MsgRole.ASSISTANT).name("bot").textContent("总结").build();
+
+        hook.onEvent(new PreSummaryEvent(agent, "qwen-max", null, List.of(), 10, 10)).block();
+        hook.onEvent(new PostSummaryEvent(agent, "qwen-max", null, summary)).block();
+
+        assertEquals(1, registry.get("customerwork.agent.latency.summary").timer().count());
     }
 
     @Test

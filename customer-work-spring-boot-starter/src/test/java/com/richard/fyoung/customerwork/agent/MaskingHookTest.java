@@ -3,14 +3,20 @@ package com.richard.fyoung.customerwork.agent;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.security.SensitiveDataMasker;
 import io.agentscope.core.agent.Agent;
+import io.agentscope.core.hook.PostActingEvent;
 import io.agentscope.core.hook.PostCallEvent;
 import io.agentscope.core.hook.PreCallEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.message.ToolUseBlock;
+import io.agentscope.core.tool.Toolkit;
 import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -82,5 +88,37 @@ class MaskingHookTest {
     @Test
     void priority_shouldRunLate() {
         assertEquals(900, hook(true).priority());
+    }
+
+    @Test
+    void shouldMaskToolResult_whenEnabled() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getHooks().getMasking().setEnabled(true);
+        props.getHooks().getMasking().setMaskToolResults(true);
+        MaskingHook hook = new MaskingHook(props, new SensitiveDataMasker(props));
+
+        ToolUseBlock use = new ToolUseBlock("c1", "queryOrder", Map.of("orderId", "1"));
+        ToolResultBlock result = new ToolResultBlock("c1", "queryOrder",
+            TextBlock.builder().text("收件人电话 13800138000").build());
+        PostActingEvent event = new PostActingEvent(agent(), new Toolkit(), use, result);
+
+        hook.onEvent(event).block();
+
+        String masked = ((TextBlock) event.getToolResult().getOutput().get(0)).getText();
+        assertTrue(masked.contains("***"), "工具结果应脱敏: " + masked);
+    }
+
+    @Test
+    void shouldNotMaskToolResult_whenFlagOff() {
+        MaskingHook hook = hook(true);   // maskToolResults 默认 false
+        ToolUseBlock use = new ToolUseBlock("c1", "queryOrder", Map.of("orderId", "1"));
+        ToolResultBlock result = new ToolResultBlock("c1", "queryOrder",
+            TextBlock.builder().text("电话 13800138000").build());
+        PostActingEvent event = new PostActingEvent(agent(), new Toolkit(), use, result);
+
+        hook.onEvent(event).block();
+
+        String text = ((TextBlock) event.getToolResult().getOutput().get(0)).getText();
+        assertEquals("电话 13800138000", text);
     }
 }

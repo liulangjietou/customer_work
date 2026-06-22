@@ -5,8 +5,10 @@ import io.agentscope.core.hook.Hook;
 import io.agentscope.core.hook.HookEvent;
 import io.agentscope.core.hook.PostActingEvent;
 import io.agentscope.core.hook.PostCallEvent;
+import io.agentscope.core.hook.PostSummaryEvent;
 import io.agentscope.core.hook.PreActingEvent;
 import io.agentscope.core.hook.PreReasoningEvent;
+import io.agentscope.core.hook.PreSummaryEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatUsage;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -33,6 +35,7 @@ public class ObservabilityHook implements Hook {
     private static final String M_TOOL_CALLS = "customerwork.agent.tool.calls";
     private static final String M_ERRORS = "customerwork.agent.errors";
     private static final String M_TOKENS = "customerwork.agent.tokens.total";
+    private static final String M_SUMMARY = "customerwork.agent.summary";
 
     /** 可为 null：未接入 Micrometer 时降级为仅日志。 */
     private final MeterRegistry meterRegistry;
@@ -73,6 +76,12 @@ public class ObservabilityHook implements Hook {
         } else if (event instanceof PostActingEvent e) {
             log.info("[OTEL] 工具调用结束 tool={} stopRequested={}",
                 e.getToolUse().getName(), e.isStopRequested());
+        } else if (event instanceof PreSummaryEvent e) {
+            log.info("[OTEL] 进入总结（达到最大迭代）iter={}/{}",
+                e.getCurrentIteration(), e.getMaxIterations());
+            count(M_SUMMARY);
+        } else if (event instanceof PostSummaryEvent e) {
+            log.info("[OTEL] 总结完成 stopRequested={}", e.isStopRequested());
         } else if (event instanceof PostCallEvent e) {
             count(M_REQUESTS);
             logUsage(e.getFinalMessage());

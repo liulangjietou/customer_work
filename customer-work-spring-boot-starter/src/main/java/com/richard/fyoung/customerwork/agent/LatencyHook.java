@@ -6,9 +6,11 @@ import io.agentscope.core.hook.HookEvent;
 import io.agentscope.core.hook.PostActingEvent;
 import io.agentscope.core.hook.PostCallEvent;
 import io.agentscope.core.hook.PostReasoningEvent;
+import io.agentscope.core.hook.PostSummaryEvent;
 import io.agentscope.core.hook.PreActingEvent;
 import io.agentscope.core.hook.PreCallEvent;
 import io.agentscope.core.hook.PreReasoningEvent;
+import io.agentscope.core.hook.PreSummaryEvent;
 import io.agentscope.core.hook.ReasoningChunkEvent;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -48,6 +50,7 @@ public class LatencyHook implements Hook {
     private static final String M_REASONING = "customerwork.agent.latency.reasoning";
     private static final String M_TOOL = "customerwork.agent.latency.tool";
     private static final String M_TTFT = "customerwork.agent.latency.ttft";
+    private static final String M_SUMMARY = "customerwork.agent.latency.summary";
 
     private final boolean enabled;
     /** 可为 null：未接入 Micrometer 时仅日志。 */
@@ -99,6 +102,10 @@ public class LatencyHook implements Hook {
         } else if (event instanceof PostActingEvent e) {
             String tool = e.getToolUse() == null ? "unknown" : e.getToolUse().getName();
             record(M_TOOL, tool, since("tool:" + toolKey(e.getToolUse() == null ? null : e.getToolUse().getId(), agent), now));
+        } else if (event instanceof PreSummaryEvent) {
+            startNanos.put("summary:" + agent, now);
+        } else if (event instanceof PostSummaryEvent) {
+            record(M_SUMMARY, null, since("summary:" + agent, now));
         } else if (event instanceof PostCallEvent) {
             record(M_E2E, null, since("call:" + agent, now));
             ttftRecorded.remove(agent);

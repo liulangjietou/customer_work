@@ -4,7 +4,9 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 应用级配置（强类型绑定 {@code customer-work.*}）。
@@ -491,6 +493,10 @@ public class CustomerWorkProperties {
         private final Audit audit = new Audit();
         /** 自我纠错：检测到未调用退款工具却承诺打款时，强制重新推理。 */
         private final SelfCorrection selfCorrection = new SelfCorrection();
+        /** 工具调用护栏：执行前注入公共参数 / 对数值参数做上限钳制。 */
+        private final ToolGuard toolGuard = new ToolGuard();
+        /** 动态生成参数：按用户意图调整推理温度 / 推理强度。 */
+        private final DynamicOptions dynamicOptions = new DynamicOptions();
 
         /** 延迟埋点配置。开销极低，默认开启。 */
         @Data
@@ -514,6 +520,8 @@ public class CustomerWorkProperties {
             private boolean maskEmail = true;
             /** 额外自定义脱敏正则（命中即替换为 replacement）。 */
             private List<String> extraPatterns = new ArrayList<>();
+            /** 是否对工具返回结果在进入上下文前脱敏（默认关闭，开启可能影响模型可用信息）。 */
+            private boolean maskToolResults = false;
         }
 
         /** 合规审计配置。默认关闭。 */
@@ -533,6 +541,29 @@ public class CustomerWorkProperties {
             /** 视为"已承诺打款/退款"的关键词。 */
             private List<String> paymentKeywords = new ArrayList<>(List.of(
                 "已退款", "已打款", "已为您退款", "退款成功", "已经退", "已到账", "款项已退"));
+        }
+
+        /** 工具调用护栏配置。默认关闭。 */
+        @Data
+        public static class ToolGuard {
+            private boolean enabled = false;
+            /** 对每个工具调用注入的公共参数（仅当入参中缺失该键时注入）。 */
+            private Map<String, String> injectParams = new LinkedHashMap<>();
+            /** 数值参数上限钳制：参数名 -> 最大值（超出则改写为最大值）。 */
+            private Map<String, Double> numericCaps = new LinkedHashMap<>();
+        }
+
+        /** 动态生成参数配置。默认关闭。 */
+        @Data
+        public static class DynamicOptions {
+            private boolean enabled = false;
+            /** 命中以下关键词时切换到"精确档"参数（低温 + 高推理强度）。 */
+            private List<String> preciseKeywords = new ArrayList<>(List.of(
+                "投诉", "退款", "纠纷", "赔偿", "升级", "维权"));
+            /** 精确档温度。 */
+            private Double preciseTemperature = 0.1;
+            /** 精确档推理强度：low / medium / high。 */
+            private String preciseReasoningEffort = "high";
         }
     }
 }

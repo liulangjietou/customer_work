@@ -81,6 +81,19 @@ class ObservabilityHookTest {
     }
 
     @Test
+    void onEvent_shouldCountSummary_whenEnteringSummary() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        ObservabilityHook metricHook = new ObservabilityHook(registry);
+        Agent agent = mock(Agent.class);
+        when(agent.getName()).thenReturn("a");
+
+        metricHook.onEvent(new io.agentscope.core.hook.PreSummaryEvent(
+            agent, "qwen-max", null, List.of(), 10, 10)).block();
+
+        assertEquals(1.0, registry.counter("customerwork.agent.summary").count());
+    }
+
+    @Test
     void onEvent_shouldPassThroughUnhandledEventType() {
         // PreCallEvent 不在 Hook 的特殊处理分支中，应被原样透传
         Agent agent = mock(Agent.class);
