@@ -517,16 +517,16 @@ public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 *
 
 这些能力框架已提供，但需引入额外依赖并部署对应服务，硬编入会破坏「开箱即用 + bug-free」，故保留为**配置即用**扩展点：
 
-| 功能 | 需要 | 落地路径 |
-|---|---|---|
-| **A2A Agent Card 注册发现** | Nacos AI/A2A API（`com.alibaba.nacos.api.ai.AiService`，新版 nacos-client）+ `io.a2a` SDK（`AgentCard`） | 用 `NacosAgentRegistry` / `NacosAgentCardResolver` 注册与发现 Agent Card；本项目已落地 Nacos 配置中心层 |
-| **RocketMQ 异步消息** | RocketMQ broker + client 依赖 | `extensions.rocketmq` 做任务解耦 / A2A over MQ |
-| **定时 Agent 调度** | Quartz 或 XXL-JOB | `QuartzAgentScheduler` / `XxlJobAgentScheduler` 定时驱动 Agent 跑批 |
-| **Runtime 工具沙箱** | 独立项目 `agentscope-runtime-java` | 工具执行隔离（Shell/文件/浏览器/移动端沙箱） |
-| **Training 数据飞轮** | RM Gallery + Trinity-RFT 平台 | 奖励函数评估 + 强化学习闭环 |
-| **Anthropic / Gemini 模型** | 各自厂商 SDK（`com.anthropic` / `com.google.genai`） | `model.provider=anthropic/gemini`，代码已就绪，补依赖即可 |
-| **RAGFlow / Haystack 知识库** | 对应 client 依赖 | 同 Dify 模式扩展 `KnowledgeProvider` |
-| **Harness 长任务脚手架** | AgentScope 1.1+ | 升级框架后接入分层记忆 + 子 Agent 声明 |
+| 功能 | 需要 | 落地路径 | 可测试性（离线单测） | 工作量 |
+|---|---|---|---|---|
+| **A2A Agent Card 注册发现** | Nacos AI/A2A API（`com.alibaba.nacos.api.ai.AiService`，新版 nacos-client）+ `io.a2a` SDK（`AgentCard`） | 用 `NacosAgentRegistry` / `NacosAgentCardResolver` 注册与发现 Agent Card；本项目已落地 Nacos 配置中心层 | ✅ SPI 抽象层 + 内存默认实现可离线全测，SDK 适配器待坐标 | 中 |
+| **RocketMQ 异步消息** | RocketMQ broker + client 依赖 | `extensions.rocketmq` 做任务解耦 / A2A over MQ | ⚠️ 需 broker；可先做 `AgentMessageBus` SPI + 内存实现离线测 | 中 |
+| **定时 Agent 调度** | Quartz 或 XXL-JOB | `QuartzAgentScheduler` / `XxlJobAgentScheduler` 定时驱动 Agent 跑批 | ✅ 现有 `MaintenanceScheduler`(Spring `@Scheduled`) 已落地；SPI 化后可用虚拟时钟测 | 小～中 |
+| **Runtime 工具沙箱** | 独立项目 `agentscope-runtime-java` | 工具执行隔离（Shell/文件/浏览器/移动端沙箱） | ❌ 依赖坐标未知，无法验证 | 待坐标 |
+| **Training 数据飞轮** | RM Gallery + Trinity-RFT 平台 | 奖励函数评估 + 强化学习闭环 | ❌ Python 平台，仅能 HTTP 集成，需平台地址 | 待平台 |
+| **Anthropic / Gemini 模型** | 各自厂商 SDK（`com.anthropic` / `com.google.genai`） | `model.provider=anthropic/gemini`，代码已就绪，补依赖即可 | ✅ 装配可 mock 离线测；真实联调需网络 + Key | 极小（已就绪） |
+| **RAGFlow / Haystack 知识库** | 对应 client 依赖 | 同 Dify 模式扩展 `KnowledgeProvider` | ✅ REST 调用，可用 MockWebServer 离线测 | 小～中 |
+| **Harness 长任务脚手架** | AgentScope 1.1+ | 升级框架后接入分层记忆 + 子 Agent 声明 | ❌ 当前 1.0.12 无对应 API | 待框架升级 |
 
 > 说明：A2A 所需的新版 nacos-client（含 AI API）与 `io.a2a` SDK 在当前受限网络环境无法检索/确定可用版本，因此未强行引入。提供确切 Maven 坐标后即可补齐 A2A 注册发现 + 集成测试。
 
