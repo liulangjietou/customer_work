@@ -533,8 +533,6 @@ public class CustomerWorkProperties {
             /** 视为"已承诺打款/退款"的关键词。 */
             private List<String> paymentKeywords = new ArrayList<>(List.of(
                 "已退款", "已打款", "已为您退款", "退款成功", "已经退", "已到账", "款项已退"));
-            /** 合法的退款类工具名（推理里调用了这些工具则不算违规）。 */
-            private List<String> refundTools = new ArrayList<>(List.of("submitRefund"));
         }
     }
 }

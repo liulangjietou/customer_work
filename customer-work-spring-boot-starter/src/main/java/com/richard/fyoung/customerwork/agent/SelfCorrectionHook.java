@@ -35,7 +35,6 @@ public class SelfCorrectionHook implements Hook {
     private final boolean enabled;
     private final int maxCorrections;
     private final List<String> paymentKeywords;
-    private final List<String> refundTools;
 
     /** agent 名 -> 本次请求已纠错次数。 */
     private final ConcurrentMap<String, Integer> corrections = new ConcurrentHashMap<>();
@@ -45,7 +44,6 @@ public class SelfCorrectionHook implements Hook {
         this.enabled = cfg.isEnabled();
         this.maxCorrections = cfg.getMaxCorrections();
         this.paymentKeywords = cfg.getPaymentKeywords();
-        this.refundTools = cfg.getRefundTools();
     }
 
     @Override
@@ -72,7 +70,10 @@ public class SelfCorrectionHook implements Hook {
             return;
         }
         String text = reasoning.getTextContent();
-        if (text == null || text.isBlank() || !promisesPayment(text) || callsRefundTool(reasoning)) {
+        // 仅在"纯文本最终答复（无任何工具调用）却承诺打款"时纠错：
+        // 若该轮含工具调用，gotoReasoning 注入的消息缺少对应 ToolResult 会触发框架校验异常，
+        // 且此时模型尚在行动而非给出最终承诺，不应打断。
+        if (text == null || text.isBlank() || !promisesPayment(text) || hasAnyToolUse(reasoning)) {
             return;
         }
         String agent = agentName(event);
@@ -95,16 +96,9 @@ public class SelfCorrectionHook implements Hook {
         return false;
     }
 
-    private boolean callsRefundTool(Msg reasoning) {
-        if (!reasoning.hasContentBlocks(ToolUseBlock.class)) {
-            return false;
-        }
-        for (ToolUseBlock use : reasoning.getContentBlocks(ToolUseBlock.class)) {
-            if (use.getName() != null && refundTools.contains(use.getName())) {
-                return true;
-            }
-        }
-        return false;
+    /** 该轮推理是否包含任何工具调用（含则视为模型在行动，不纠错）。 */
+    private boolean hasAnyToolUse(Msg reasoning) {
+        return reasoning.hasContentBlocks(ToolUseBlock.class);
     }
 
     private Msg correctionMsg() {

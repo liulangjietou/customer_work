@@ -67,6 +67,21 @@ class SelfCorrectionHookTest {
     }
 
     @Test
+    void shouldNotCorrect_whenOtherToolCalled() {
+        // 关键安全用例：该轮含非退款工具调用时也不得 gotoReasoning，
+        // 否则注入消息缺少对应 ToolResult 会触发框架校验异常
+        SelfCorrectionHook hook = hook(true, 1);
+        ToolUseBlock query = new ToolUseBlock("c1", "queryOrder", Map.of("orderId", "1"));
+        Msg msg = Msg.builder().role(MsgRole.ASSISTANT).name("bot")
+            .content(List.of(TextBlock.builder().text("已为您退款").build(), query)).build();
+        PostReasoningEvent event = reasoning(agent(), msg);
+
+        hook.onEvent(event).block();
+
+        assertFalse(event.isGotoReasoningRequested(), "含任何工具调用都不应纠错");
+    }
+
+    @Test
     void shouldNotCorrect_whenNoPaymentPromise() {
         SelfCorrectionHook hook = hook(true, 1);
         Msg msg = Msg.builder().role(MsgRole.ASSISTANT).name("bot")
