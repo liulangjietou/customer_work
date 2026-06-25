@@ -146,6 +146,16 @@ customer-work:
     subagent:
       # 把订单/售后/知识库专家作为 HarnessAgent 子智能体编排
       enabled: false
+    sandbox:
+      # 安全沙箱执行：none（不隔离）| local（本地子进程）| docker（容器隔离）
+      # Local/Docker 内置于 Harness；k8s/e2b/daytona/agentrun 远端沙箱需引入 agentscope-extensions-sandbox-*
+      mode: none
+      # 隔离粒度：session | user | agent | global
+      isolation-scope: session
+      # docker 模式镜像
+      image: python:3.11-slim
+      # local 模式工具/代码执行超时秒数
+      execute-timeout-seconds: 60
   skill:
     # Skill 技能库
     enabled: true

@@ -599,6 +599,26 @@ public class CustomerWorkProperties {
         private final PlanMode planMode = new PlanMode();
         /** 子智能体编排配置。 */
         private final Subagent subagent = new Subagent();
+        /** 安全沙箱执行配置。 */
+        private final Sandbox sandbox = new Sandbox();
+
+        /**
+         * 安全沙箱执行：把工具执行 / 代码执行限定在隔离环境内，快照状态可跨进程恢复。
+         *
+         * <p>Local 与 Docker 沙箱内置于 Harness（无需额外依赖）；Kubernetes / e2b / daytona / AgentRun
+         * 远端沙箱需引入对应 {@code agentscope-extensions-sandbox-*}（见 docs/MIGRATION-2.0.md）。</p>
+         */
+        @Data
+        public static class Sandbox {
+            /** 沙箱模式：none（不隔离，默认）| local（本地子进程）| docker（容器隔离）。 */
+            private String mode = "none";
+            /** 隔离粒度：session | user | agent | global。 */
+            private String isolationScope = "session";
+            /** docker 模式镜像。 */
+            private String image = "python:3.11-slim";
+            /** local 模式工具/代码执行超时秒数。 */
+            private int executeTimeoutSeconds = 60;
+        }
 
         /** 权限系统：控制工具 / 写操作的授权策略。 */
         @Data

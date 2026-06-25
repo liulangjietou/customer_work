@@ -83,4 +83,16 @@ class HarnessAgentFactoryTest {
 
         assertNotNull(agent, "启用分层记忆/结果落盘后 HarnessAgent 应成功构建");
     }
+
+    @Test
+    void createHarnessAgent_shouldBuild_withLocalSandbox() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getHarness().setWorkspaceDir("target/test-workspace");
+        props.getHarness().getSandbox().setMode("local");
+        props.getHarness().getSandbox().setIsolationScope("session");
+
+        HarnessAgent agent = factory(props).createHarnessAgent("conv-sandbox");
+
+        assertNotNull(agent, "启用本地沙箱后 HarnessAgent 应成功构建");
+    }
 }

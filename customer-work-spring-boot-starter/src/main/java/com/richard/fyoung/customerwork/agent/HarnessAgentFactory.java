@@ -7,6 +7,10 @@ import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.harness.agent.HarnessAgent;
+import io.agentscope.harness.agent.IsolationScope;
+import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
+import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
+import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
 import io.agentscope.harness.agent.memory.MemoryConfig;
 import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
 import io.agentscope.harness.agent.memory.compaction.ToolResultEvictionConfig;
@@ -121,6 +125,9 @@ public class HarnessAgentFactory {
                 cfg.getPlanMode().isAllowShell());
         }
 
+        // 安全沙箱执行：把工具/代码执行限定在隔离环境（Local 子进程 / Docker 容器），快照可跨进程恢复
+        applySandbox(builder, cfg.getSandbox());
+
         // 子智能体：把专家 Agent 注册为 HarnessAgent 的 subagent
         if (cfg.getSubagent().isEnabled()) {
             for (ReActAgent expert : multiAgentOrchestrator.buildSpecialists()) {
@@ -131,6 +138,49 @@ public class HarnessAgentFactory {
 
         log.info("[Harness] HarnessAgent built for session {}", sessionId);
         return builder.build();
+    }
+
+    /** 按配置选择并应用沙箱文件系统（none 时不隔离）。 */
+    private void applySandbox(HarnessAgent.Builder builder, CustomerWorkProperties.Harness.Sandbox cfg) {
+        String mode = cfg.getMode() == null ? "none" : cfg.getMode().trim().toLowerCase();
+        IsolationScope scope = resolveIsolation(cfg.getIsolationScope());
+        switch (mode) {
+            case "local": {
+                LocalFilesystemSpec spec = new LocalFilesystemSpec()
+                    .executeTimeoutSeconds(cfg.getExecuteTimeoutSeconds())
+                    .isolationScope(scope);
+                builder.filesystem(spec);
+                log.info("[Harness] sandbox=local (timeout={}s, scope={})",
+                    cfg.getExecuteTimeoutSeconds(), scope);
+                break;
+            }
+            case "docker": {
+                SandboxFilesystemSpec spec = new DockerFilesystemSpec()
+                    .image(cfg.getImage())
+                    .isolationScope(scope);
+                builder.filesystem(spec);
+                log.info("[Harness] sandbox=docker (image={}, scope={})", cfg.getImage(), scope);
+                break;
+            }
+            default:
+                // none：不隔离，沿用工作区目录
+        }
+    }
+
+    private IsolationScope resolveIsolation(String scope) {
+        if (scope == null) {
+            return IsolationScope.SESSION;
+        }
+        switch (scope.trim().toLowerCase()) {
+            case "user":
+                return IsolationScope.USER;
+            case "agent":
+                return IsolationScope.AGENT;
+            case "global":
+                return IsolationScope.GLOBAL;
+            default:
+                return IsolationScope.SESSION;
+        }
     }
 
     /** 解析并创建工作区目录（沙箱 / 文件工具的隔离根）。 */

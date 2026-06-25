@@ -88,7 +88,61 @@ mvn -s settings-rc2.xml clean test
 - 会话持久化往返测试改为基于 `AgentStateStore` + `Msg`（`Msg` 在 2.0 实现 `State`）。
 - 新增 `PermissionConfigTest`、`HarnessAgentFactoryTest` 覆盖 2.0 新能力装配。
 
-## 6. 环境说明（构建注意）
+## 7. rc2.0 能力补全（对照 2.0 三大支柱，缺口已闭合）
+
+在首轮迁移基础上，进一步补齐 2.0 官方概览页所列、首轮未落地的能力：
+
+### 7.1 Middleware 取代松散 Hook（底层框架升级）
+8 个业务 Hook 全部从 deprecated `core.hook.Hook` 迁移到 2.0 五段 `MiddlewareBase`
+（`com.richard.fyoung.customerwork.middleware`），并经 `.middleware()` 织入：
+
+| 中间件 | 段 | 承接的 1.x Hook |
+| --- | --- | --- |
+| `ToolGuardMiddleware` | `onActing` | ToolGuardHook（入参注入 / 数值钳制） |
+| `DynamicOptionsMiddleware` | `onModelCall` | DynamicGenerateOptionsHook（精确档参数） |
+| `MaskingMiddleware` | `onAgent` | MaskingHook（出站脱敏 AgentResultEvent） |
+| `ObservabilityMiddleware` | `onReasoning`+`onActing`+`onAgent` | ObservabilityHook（指标 / 日志 / 错误） |
+| `AuditMiddleware` | `onActing`+`onAgent` | AuditHook（审计轨迹） |
+| `LatencyMiddleware` | `onAgent`/`onReasoning`/`onActing` | LatencyHook（分段延迟 Timer） |
+| `SelfCorrectionMiddleware` | `onAgent` | SelfCorrectionHook（检测+告警，详见下） |
+| `HumanApprovalMiddleware` | `onActing` | HumanApprovalHook（观测，闸门交 Permission） |
+| `TenantContextMiddleware` | `onSystemPrompt` | 新增（第五段：租户上下文注入） |
+
+- `pluggable` 注入由 `ObjectProvider<Hook>` → `ObjectProvider<MiddlewareBase>`；框架 `JsonlTraceExporter` 仍走 `.hook()`。
+- **语义降级说明**：1.x `SelfCorrectionHook.gotoReasoning(强制重新推理)` 与 `HumanApprovalHook.stopAgent()`
+  在中间件模型下无等价语义 —— "涉资金硬约束 / 工具放行闸门"已上升为框架原生 **Permission System**（ask/deny 规则），
+  两个中间件退化为"检测 + 告警"，与 Permission 形成双层。
+- `GlobalHookRegistry` 保留：系统级热插拔在 2.0 仍只有 `AgentBase.addSystemHook` 一种 API。
+
+### 7.2 Harness 深度能力（Harness 工程化）
+`HarnessAgentFactory` 经 `HarnessAgent.Builder.fromAgent(...)` 叠加（均 `customer-work.harness.*` 配置化）：
+
+| 能力 | 落地 | 开关 |
+| --- | --- | --- |
+| 分层记忆（MEMORY.md + consolidation） | `MemoryConfig.builder().model(...).build()` | `harness.memory-enabled` |
+| 超大工具结果落盘 | `ToolResultEvictionConfig.defaults()` | `harness.tool-result-eviction-enabled` |
+| 技能自进化 | `enableSkillManageTool(true)` + `SkillCuratorConfig.defaults()` | `harness.skill-curator-enabled` |
+| Plan 文件持久化 | `planFileDirectory(workspace/plans)` | 随 `harness.plan-mode.enabled` |
+| 额外上下文文件注入 | `additionalContextFile(...)` | `harness.additional-context-file` |
+| org 维度多租户 | `RuntimeContext.put("org", ...)` KV 命名空间 | `harness.org` |
+
+### 7.3 安全沙箱执行（企业级分布式部署）
+`HarnessAgentFactory#applySandbox` 按 `harness.sandbox.mode` 选择文件系统隔离：
+
+| 模式 | Spec | 依赖 |
+| --- | --- | --- |
+| `local` | `LocalFilesystemSpec`（子进程隔离 + 超时） | Harness 内置 |
+| `docker` | `DockerFilesystemSpec`（容器隔离 + 镜像/资源限制） | Harness 内置 |
+| `none` | 不隔离（默认） | — |
+
+- 隔离粒度 `IsolationScope`：session / user / agent / global。
+- 快照跨进程恢复由 `SandboxLifecycleMiddleware` + `SessionSandboxStateStore` 在配置沙箱后自动管理。
+- **远端沙箱**（Kubernetes / e2b / Daytona / AgentRun）需额外引入对应
+  `agentscope-extensions-sandbox-{kubernetes,e2b,daytona,agentrun}`，本仓库默认未引入（按需启用）。
+
+---
+
+## 8. 环境说明（构建注意）
 
 部分开发机全局 `~/.m2/settings.xml` 配置了 `<mirrorOf>external:*</mirrorOf>` 镜像（如内网 nexus 或已停服的 oschina），
 会拦截 Maven Central 导致 RC4 传递依赖拉取失败。仓库根的 `settings-rc2.xml`：去除 external 镜像、直连 Central，
