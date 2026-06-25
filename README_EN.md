@@ -6,7 +6,13 @@
 
 > 中文版：[README.md](README.md)
 
-A production-grade reference implementation of an AI customer-service agent built on
+> 🆕 **AgentScope 2.0 migration (`rc2.0` branch)**: the `rc2.0` branch migrates everything to
+> `io.agentscope:agentscope-harness:2.0.0-RC4` and adds the 2.0 capabilities (Permission System,
+> Plan Mode, Compaction, Workspace/Sandbox, Subagent, and the 5-stage Middleware that replaces v1 hooks).
+> See **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)** for the mapping, API changes and non-migratable
+> features. The `main` branch stays on the stable 1.0.12 release.
+
+A production-grade reference implementation of an AI customer-service agent. The `main` branch is built on
 **AgentScope Java 1.0.12**, defaulting to **Alibaba Cloud Bailian (DashScope / Qwen)**.
 
 Every capability is **"a config switch + a replaceable implementation"**: built-in in-process
