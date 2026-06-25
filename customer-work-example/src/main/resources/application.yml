@@ -110,11 +110,32 @@ customer-work:
       dataset-id: ""
       enable-rerank: true
   context:
-    # 智能上下文压缩（AutoContext）：长对话上下文有界。默认关闭（开启需可用模型）
+    # 智能上下文压缩（2.0 用 Harness Compaction 实现）：长对话上下文有界。默认关闭（开启需可用模型）
     compression-enabled: false
     max-token: 8000
     msg-threshold: 40
     last-keep: 10
+  harness:
+    # AgentScope 2.0 Harness 新能力（详见 docs/MIGRATION-2.0.md）
+    # 启用后由 HarnessAgentFactory 经 HarnessAgent.fromAgent(...) 叠加 Plan Mode / Compaction / Subagent / Workspace
+    enabled: false
+    # 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）
+    workspace-dir: ./data/workspace
+    permission:
+      # 权限系统：声明式工具授权（与 HumanApprovalHook 形成双层闸门）。默认关闭
+      enabled: false
+      # default | acceptEdits | explore | bypass | dontAsk
+      mode: default
+      # 命中以下工具进入"询问/人工确认"
+      ask-tools: [submitRefund, transferToHuman]
+      deny-tools: []
+    plan-mode:
+      # 只读规划期：先出 markdown 方案、获批后再写
+      enabled: false
+      allow-shell: false
+    subagent:
+      # 把订单/售后/知识库专家作为 HarnessAgent 子智能体编排
+      enabled: false
   skill:
     # Skill 技能库
     enabled: true

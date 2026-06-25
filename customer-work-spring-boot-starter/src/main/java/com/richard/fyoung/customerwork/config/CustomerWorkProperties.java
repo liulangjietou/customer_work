@@ -80,6 +80,9 @@ public class CustomerWorkProperties {
     /** Hook 扩展能力（延迟埋点 / 出站脱敏 / 合规审计 / 自我纠错）。 */
     private final Hooks hooks = new Hooks();
 
+    /** AgentScope 2.0 Harness 能力（权限系统 / Plan Mode / 上下文压缩 / 工作区沙箱 / 子智能体）。 */
+    private final Harness harness = new Harness();
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -564,6 +567,54 @@ public class CustomerWorkProperties {
             private Double preciseTemperature = 0.1;
             /** 精确档推理强度：low / medium / high。 */
             private String preciseReasoningEffort = "high";
+        }
+    }
+
+    /**
+     * AgentScope 2.0 Harness 新能力配置。
+     *
+     * <p>{@code harness.enabled=true} 时，{@code HarnessAgentFactory} 在内层 ReActAgent 之上
+     * 叠加 Harness 能力（{@code HarnessAgent.fromAgent(...)}）：权限系统、Plan Mode、上下文压缩、
+     * 工作区沙箱、子智能体编排。Permission 始终对主 Agent 生效（ReActAgent 原生支持）。</p>
+     */
+    @Data
+    public static class Harness {
+        /** 是否启用 HarnessAgent 包装（叠加 Plan Mode / Compaction / Subagent / Workspace）。默认关闭。 */
+        private boolean enabled = false;
+        /** 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）。 */
+        private String workspaceDir = "./data/workspace";
+        /** 权限系统配置。 */
+        private final Permission permission = new Permission();
+        /** Plan Mode（只读规划期）配置。 */
+        private final PlanMode planMode = new PlanMode();
+        /** 子智能体编排配置。 */
+        private final Subagent subagent = new Subagent();
+
+        /** 权限系统：控制工具 / 写操作的授权策略。 */
+        @Data
+        public static class Permission {
+            /** 是否启用权限系统（对主 Agent 注入 PermissionContextState）。默认关闭。 */
+            private boolean enabled = false;
+            /** 权限模式：default | acceptEdits | explore | bypass | dontAsk。 */
+            private String mode = "default";
+            /** 命中以下工具名时进入"询问/人工确认"（ask 规则）。 */
+            private List<String> askTools = new ArrayList<>(List.of("submitRefund", "transferToHuman"));
+            /** 命中以下工具名时直接拒绝（deny 规则）。 */
+            private List<String> denyTools = new ArrayList<>();
+        }
+
+        /** Plan Mode：先只读规划、获批后再写。 */
+        @Data
+        public static class PlanMode {
+            private boolean enabled = false;
+            /** Plan Mode 下是否允许执行 Shell。 */
+            private boolean allowShell = false;
+        }
+
+        /** 子智能体编排（把订单/售后/知识库专家作为 HarnessAgent 的 subagent）。 */
+        @Data
+        public static class Subagent {
+            private boolean enabled = false;
         }
     }
 }
