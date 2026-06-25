@@ -73,11 +73,66 @@
             <version>${nacos.version}</version>
         </dependency>
 
-        <!-- AgentScope Java 核心 -->
+        <!-- AgentScope Java 2.0 Harness（含 agentscope-core：Agent/Model/Tool/Middleware/State/Skill/RAG/Memory/Permission/Sandbox/Subagent/PlanMode/Compaction） -->
         <dependency>
             <groupId>io.agentscope</groupId>
-            <artifactId>agentscope</artifactId>
-            <version>${agentscope.version}</version>
+            <artifactId>agentscope-harness</artifactId>
+        </dependency>
+
+        <!-- 会话/状态持久化：AgentStateStore 的 Redis / MySQL 实现（替代 1.x 的 session.redis/mysql） -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-mysql</artifactId>
+        </dependency>
+
+        <!-- 长期记忆扩展：Mem0 / ReMe / 百炼 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-mem0</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-reme</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-memory-bailian</artifactId>
+        </dependency>
+
+        <!-- RAG 知识库扩展：简单内存 / Dify / 百炼 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-rag-simple</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-rag-dify</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-rag-bailian</artifactId>
+        </dependency>
+
+        <!-- 协议 / 网关 / 观测扩展：AG-UI / Higress / Studio / Nacos 提示词 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-agui</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-higress</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-studio</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-nacos-prompt</artifactId>
         </dependency>
 
         <!-- Lombok -->

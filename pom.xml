@@ -29,10 +29,23 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <agentscope.version>1.0.12</agentscope.version>
+        <agentscope.version>2.0.0-RC4</agentscope.version>
         <springdoc.version>2.3.0</springdoc.version>
         <nacos.version>3.0.2</nacos.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- AgentScope 2.0 BOM：统一管理 core / harness / extensions 全部坐标版本 -->
+            <dependency>
+                <groupId>io.agentscope</groupId>
+                <artifactId>agentscope-bom</artifactId>
+                <version>${agentscope.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <build>
         <pluginManagement>
