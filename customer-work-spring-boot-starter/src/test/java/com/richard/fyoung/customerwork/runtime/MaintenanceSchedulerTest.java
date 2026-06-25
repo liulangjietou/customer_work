@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.runtime;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import io.agentscope.core.session.InMemorySession;
+import io.agentscope.core.state.InMemoryAgentStateStore;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,12 +18,12 @@ class MaintenanceSchedulerTest {
         props.getSession().setMode("memory");
         GracefulShutdownService shutdown = new GracefulShutdownService(props);
         MaintenanceScheduler scheduler =
-            new MaintenanceScheduler(props, new InMemorySession(), shutdown);
+            new MaintenanceScheduler(props, new InMemoryAgentStateStore(), shutdown);
 
         String summary = scheduler.runMaintenance();
 
         assertTrue(summary.contains("backend=memory"), summary);
-        assertTrue(summary.contains("impl=InMemorySession"), summary);
+        assertTrue(summary.contains("impl=InMemoryAgentStateStore"), summary);
         assertTrue(summary.contains("activeRequests="), summary);
         assertTrue(summary.contains("accepting="), summary);
     }

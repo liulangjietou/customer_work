@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerwork.config;
 
-import io.agentscope.core.session.Session;
+import io.agentscope.core.state.AgentStateStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,7 +21,7 @@ class MysqlSessionPersistenceTest {
     private static final String HOST = "localhost";
     private static final int PORT = 3306;
 
-    private Session session;
+    private AgentStateStore store;
 
     @BeforeEach
     void setUp() {
@@ -37,18 +37,18 @@ class MysqlSessionPersistenceTest {
         cfg.getMysql().setPassword("root");
         cfg.getMysql().setAutoCreate(true);
 
-        session = new SessionConfig().buildSession(cfg);
+        store = new SessionConfig().buildStateStore(cfg);
     }
 
     @AfterEach
     void tearDown() {
-        if (session != null) {
-            session.close();
+        if (store != null) {
+            store.close();
         }
     }
 
     @Test
     void saveGetDelete_overMysql() {
-        SessionPersistenceTestSupport.assertSaveGetDelete(session, "it-mysql:" + UUID.randomUUID());
+        SessionPersistenceTestSupport.assertSaveGetDelete(store, "it-mysql:" + UUID.randomUUID());
     }
 }

@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerwork.config;
 
-import io.agentscope.core.session.Session;
+import io.agentscope.core.state.AgentStateStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +22,7 @@ class RedisSessionPersistenceTest {
     private static final int PORT = 6379;
     private static final String PASSWORD = "123456";
 
-    private Session session;
+    private AgentStateStore store;
 
     @BeforeEach
     void setUp() {
@@ -36,18 +36,18 @@ class RedisSessionPersistenceTest {
         cfg.getRedis().setPassword(PASSWORD);
         cfg.getRedis().setKeyPrefix("customer-work-it");
 
-        session = new SessionConfig().buildSession(cfg);
+        store = new SessionConfig().buildStateStore(cfg);
     }
 
     @AfterEach
     void tearDown() {
-        if (session != null) {
-            session.close();
+        if (store != null) {
+            store.close();
         }
     }
 
     @Test
     void saveGetDelete_overRedis() {
-        SessionPersistenceTestSupport.assertSaveGetDelete(session, "it-redis:" + UUID.randomUUID());
+        SessionPersistenceTestSupport.assertSaveGetDelete(store, "it-redis:" + UUID.randomUUID());
     }
 }

@@ -1,30 +1,29 @@
 package com.richard.fyoung.customerwork.health;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import io.agentscope.core.session.InMemorySession;
-import io.agentscope.core.session.Session;
-import io.agentscope.core.state.SessionKey;
+import io.agentscope.core.state.AgentStateStore;
+import io.agentscope.core.state.InMemoryAgentStateStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.Status;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * 会话后端健康检查单测：可用→UP，探测异常→DOWN，并附带后端类型。
+ * 状态后端健康检查单测：可用→UP，探测异常→DOWN，并附带后端类型。
  * @author owlzhangfq@gmail.com
  */
 class SessionHealthIndicatorTest {
 
     @Test
-    void health_shouldBeUp_whenSessionReachable() {
+    void health_shouldBeUp_whenStoreReachable() {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getSession().setMode("memory");
         SessionHealthIndicator indicator =
-            new SessionHealthIndicator(new InMemorySession(), props);
+            new SessionHealthIndicator(new InMemoryAgentStateStore(), props);
 
         Health health = indicator.health();
 
@@ -33,11 +32,11 @@ class SessionHealthIndicatorTest {
     }
 
     @Test
-    void health_shouldBeDown_whenSessionThrows() {
+    void health_shouldBeDown_whenStoreThrows() {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getSession().setMode("redis");
-        Session failing = mock(Session.class);
-        when(failing.exists(any(SessionKey.class)))
+        AgentStateStore failing = mock(AgentStateStore.class);
+        when(failing.exists(anyString(), anyString()))
             .thenThrow(new RuntimeException("connection refused"));
 
         Health health = new SessionHealthIndicator(failing, props).health();
