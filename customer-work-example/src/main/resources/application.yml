@@ -123,6 +123,8 @@ customer-work:
     workspace-dir: ./data/workspace
     # 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation
     memory-enabled: false
+    # 环境级记忆（跨会话共享的环境记忆标识），留空不启用
+    environment-memory: ""
     # 超大工具结果落盘：上下文只留占位符与预览，原文落盘到工作区
     tool-result-eviction-enabled: false
     # 技能自进化：SkillCurator + 技能管理/晋升工具（成功模式沉淀为可复用技能）

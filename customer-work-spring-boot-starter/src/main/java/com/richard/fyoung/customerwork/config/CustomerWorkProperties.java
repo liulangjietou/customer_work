@@ -585,6 +585,8 @@ public class CustomerWorkProperties {
         private String workspaceDir = "./data/workspace";
         /** 分层记忆：启用 MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation（MemoryConfig）。 */
         private boolean memoryEnabled = false;
+        /** 环境级记忆（environmentMemory）：跨会话共享的环境记忆标识/文件，留空则不启用。 */
+        private String environmentMemory = "";
         /** 超大工具结果落盘（ToolResultEviction）：把超长工具结果落盘、上下文只留占位符与预览。 */
         private boolean toolResultEvictionEnabled = false;
         /** 技能自进化：启用 SkillCurator + 技能管理/晋升工具（成功模式沉淀为可复用技能）。 */

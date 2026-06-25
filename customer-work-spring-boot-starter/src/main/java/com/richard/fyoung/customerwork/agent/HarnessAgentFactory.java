@@ -97,6 +97,12 @@ public class HarnessAgentFactory {
             log.info("[Harness] layered memory enabled (MEMORY.md + consolidation)");
         }
 
+        // 环境级记忆：跨会话共享的环境记忆
+        if (StringUtils.hasText(cfg.getEnvironmentMemory())) {
+            builder.environmentMemory(cfg.getEnvironmentMemory());
+            log.info("[Harness] environment memory enabled: {}", cfg.getEnvironmentMemory());
+        }
+
         // 超大工具结果落盘：上下文只留占位符与预览，原文落盘到工作区
         if (cfg.isToolResultEvictionEnabled()) {
             builder.toolResultEviction(ToolResultEvictionConfig.defaults());
