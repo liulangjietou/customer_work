@@ -9,8 +9,10 @@ import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
-import io.agentscope.core.hook.Hook;
+import com.richard.fyoung.customerwork.middleware.HumanApprovalMiddleware;
+import com.richard.fyoung.customerwork.middleware.ObservabilityMiddleware;
 import io.agentscope.core.hook.recorder.JsonlTraceExporter;
+import io.agentscope.core.middleware.MiddlewareBase;
 import io.agentscope.core.memory.LongTermMemoryMode;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
@@ -83,8 +85,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
     private final NacosPromptService nacosPromptService;
-    /** 可插拔 Hook：本库内置（延迟/脱敏/审计/自我纠错）+ 下游自定义的所有 {@link Hook} Bean。 */
-    private final ObjectProvider<Hook> pluggableHooks;
+    /** 可插拔 Middleware：本库内置（延迟/脱敏/审计/自我纠错/护栏/动态参数/租户）+ 下游自定义的所有 {@link MiddlewareBase} Bean。 */
+    private final ObjectProvider<MiddlewareBase> pluggableMiddlewares;
 
     /** 共享的 trace 导出器（AutoCloseable，进程级单例）。 */
     private volatile JsonlTraceExporter traceExporter;
@@ -99,7 +101,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        AgentStateStore stateStore,
                                        PermissionContextState permissionContext,
                                        NacosPromptService nacosPromptService,
-                                       ObjectProvider<Hook> pluggableHooks,
+                                       ObjectProvider<MiddlewareBase> pluggableMiddlewares,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
         this.properties = properties;
@@ -111,7 +113,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.stateStore = stateStore;
         this.permissionContext = permissionContext;
         this.nacosPromptService = nacosPromptService;
-        this.pluggableHooks = pluggableHooks;
+        this.pluggableMiddlewares = pluggableMiddlewares;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
 
@@ -173,25 +175,26 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             // 2.0：状态外置到 StateStore，按 (userId, sessionId) 自动加载/持久化短期会话状态
             .stateStore(stateStore)
             .defaultSessionId(sessionId)
-            // 2.0 权限系统：声明式工具授权（与 HumanApprovalHook 形成双层闸门）
+            // 2.0 权限系统：声明式工具授权（与 HumanApprovalMiddleware 形成双层闸门）
             .permissionContext(permissionContext)
-            .hook(new ObservabilityHook(meterRegistry, properties.getModel().getTokenWarnThreshold()))
+            // 2.0 Middleware：可观测中间件（请求/工具/错误打点）
+            .middleware(new ObservabilityMiddleware(meterRegistry))
             .maxIters(properties.getAgent().getMaxIters())
             // 中断后无缝恢复：保留并恢复被打断的待执行工具调用
             .enablePendingToolRecovery(properties.getInterrupt().isPendingToolRecoveryEnabled());
 
-        // Human-in-the-Loop：工具级人工确认闸门
+        // Human-in-the-Loop：工具级人工确认（观测层，实际闸门由 Permission ask 规则承担）
         if (properties.getHumanApproval().isEnabled()) {
-            builder.hook(new HumanApprovalHook(
+            builder.middleware(new HumanApprovalMiddleware(
                 Set.copyOf(properties.getHumanApproval().getGuardedTools())));
         }
 
-        // 可插拔 Hook：内置（延迟/脱敏/审计/自我纠错）+ 下游自定义 Hook Bean 一并织入
-        if (pluggableHooks != null) {
-            pluggableHooks.orderedStream().forEach(builder::hook);
+        // 可插拔 Middleware：内置（延迟/脱敏/审计/自我纠错/护栏/动态参数/租户）+ 下游自定义 MiddlewareBase Bean
+        if (pluggableMiddlewares != null) {
+            pluggableMiddlewares.orderedStream().forEach(builder::middleware);
         }
 
-        // 可观测：JSONL trace 导出（数据飞轮采集）
+        // 可观测：JSONL trace 导出（框架 Hook，数据飞轮采集）
         if (properties.getObservability().isTraceEnabled()) {
             builder.hook(traceExporter());
         }
