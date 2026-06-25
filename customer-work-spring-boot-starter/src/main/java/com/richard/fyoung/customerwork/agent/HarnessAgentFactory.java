@@ -3,13 +3,18 @@ package com.richard.fyoung.customerwork.agent;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.memory.ContextMemoryFactory;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.harness.agent.HarnessAgent;
+import io.agentscope.harness.agent.memory.MemoryConfig;
 import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
+import io.agentscope.harness.agent.memory.compaction.ToolResultEvictionConfig;
+import io.agentscope.harness.agent.skill.curator.SkillCuratorConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,6 +47,7 @@ public class HarnessAgentFactory {
     private final MultiAgentOrchestrator multiAgentOrchestrator;
     private final AgentStateStore stateStore;
     private final PermissionContextState permissionContext;
+    private final Model model;
     private final CustomerWorkProperties properties;
 
     public HarnessAgentFactory(CustomerServiceAgentFactory agentFactory,
@@ -49,12 +55,14 @@ public class HarnessAgentFactory {
                                MultiAgentOrchestrator multiAgentOrchestrator,
                                AgentStateStore stateStore,
                                PermissionContextState permissionContext,
+                               Model model,
                                CustomerWorkProperties properties) {
         this.agentFactory = agentFactory;
         this.contextMemoryFactory = contextMemoryFactory;
         this.multiAgentOrchestrator = multiAgentOrchestrator;
         this.stateStore = stateStore;
         this.permissionContext = permissionContext;
+        this.model = model;
         this.properties = properties;
     }
 
@@ -79,10 +87,38 @@ public class HarnessAgentFactory {
             builder.compaction(compaction);
         }
 
-        // Plan Mode（只读规划期）
+        // 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation
+        if (cfg.isMemoryEnabled()) {
+            builder.memory(MemoryConfig.builder().model(model).build());
+            log.info("[Harness] layered memory enabled (MEMORY.md + consolidation)");
+        }
+
+        // 超大工具结果落盘：上下文只留占位符与预览，原文落盘到工作区
+        if (cfg.isToolResultEvictionEnabled()) {
+            builder.toolResultEviction(ToolResultEvictionConfig.defaults());
+            log.info("[Harness] tool-result eviction enabled");
+        }
+
+        // 技能自进化：SkillCurator + 技能管理/晋升工具（成功模式沉淀为可复用技能）
+        if (cfg.isSkillCuratorEnabled()) {
+            builder.enableSkillManageTool(true)
+                .enableSkillCurator(SkillCuratorConfig.defaults());
+            log.info("[Harness] skill curator + manage tool enabled (self-evolution)");
+        }
+
+        // 额外上下文文件（人格 / 领域知识，磁盘 Markdown 每轮注入 system prompt）
+        if (StringUtils.hasText(cfg.getAdditionalContextFile())) {
+            builder.additionalContextFile(cfg.getAdditionalContextFile());
+            log.info("[Harness] additional context file: {}", cfg.getAdditionalContextFile());
+        }
+
+        // Plan Mode（只读规划期）：计划文件持久化到 workspace/plans
         if (cfg.getPlanMode().isEnabled()) {
-            builder.enablePlanMode().allowShellInPlanMode(cfg.getPlanMode().isAllowShell());
-            log.info("[Harness] plan mode enabled (allowShell={})", cfg.getPlanMode().isAllowShell());
+            builder.enablePlanMode()
+                .allowShellInPlanMode(cfg.getPlanMode().isAllowShell())
+                .planFileDirectory(resolveWorkspace(cfg.getWorkspaceDir()).resolve("plans").toString());
+            log.info("[Harness] plan mode enabled (allowShell={}, plans dir=workspace/plans)",
+                cfg.getPlanMode().isAllowShell());
         }
 
         // 子智能体：把专家 Agent 注册为 HarnessAgent 的 subagent

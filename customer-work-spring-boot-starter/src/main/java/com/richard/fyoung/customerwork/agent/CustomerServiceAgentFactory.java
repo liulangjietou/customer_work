@@ -124,10 +124,15 @@ public class CustomerServiceAgentFactory implements DisposableBean {
      * 整个会话 ID 作为 {@code sessionId}，与状态存储 / 长期记忆的租户维度保持一致。</p>
      */
     public RuntimeContext contextFor(String sessionId) {
-        return RuntimeContext.builder()
+        RuntimeContext.Builder b = RuntimeContext.builder()
             .userId(resolveTenant(sessionId))
-            .sessionId(sessionId == null || sessionId.isBlank() ? "default" : sessionId)
-            .build();
+            .sessionId(sessionId == null || sessionId.isBlank() ? "default" : sessionId);
+        // org 维度：写入 KV 命名空间，实现 session/user/org 多维隔离
+        String org = properties.getHarness().getOrg();
+        if (org != null && !org.isBlank()) {
+            b.put("org", org);
+        }
+        return b.build();
     }
 
     /** 生效的系统提示词：优先 Nacos 配置中心下发，缺省回退内置提示词。 */

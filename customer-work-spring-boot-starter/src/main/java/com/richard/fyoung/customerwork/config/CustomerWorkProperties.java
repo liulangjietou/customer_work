@@ -583,6 +583,16 @@ public class CustomerWorkProperties {
         private boolean enabled = false;
         /** 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）。 */
         private String workspaceDir = "./data/workspace";
+        /** 分层记忆：启用 MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation（MemoryConfig）。 */
+        private boolean memoryEnabled = false;
+        /** 超大工具结果落盘（ToolResultEviction）：把超长工具结果落盘、上下文只留占位符与预览。 */
+        private boolean toolResultEvictionEnabled = false;
+        /** 技能自进化：启用 SkillCurator + 技能管理/晋升工具（成功模式沉淀为可复用技能）。 */
+        private boolean skillCuratorEnabled = false;
+        /** 额外上下文文件（人格 / 领域知识等，磁盘 Markdown，每轮注入 system prompt），留空则不注入。 */
+        private String additionalContextFile = "";
+        /** 组织维度（org）：写入 RuntimeContext KV 命名空间，实现 session/user/org 多维隔离。留空则不写。 */
+        private String org = "";
         /** 权限系统配置。 */
         private final Permission permission = new Permission();
         /** Plan Mode（只读规划期）配置。 */

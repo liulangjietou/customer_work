@@ -42,7 +42,7 @@ class HarnessAgentFactoryTest {
             .mode(PermissionMode.DEFAULT).build();
 
         return new HarnessAgentFactory(agentFactory, contextMemoryFactory, orchestrator,
-            new InMemoryAgentStateStore(), permission, props);
+            new InMemoryAgentStateStore(), permission, mock(Model.class), props);
     }
 
     @Test
@@ -68,5 +68,19 @@ class HarnessAgentFactoryTest {
         HarnessAgent agent = factory(props).createHarnessAgent("conv-compaction");
 
         assertNotNull(agent, "启用压缩后 HarnessAgent 应成功构建");
+    }
+
+    @Test
+    void createHarnessAgent_shouldBuild_withHarnessDepthCapabilities() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        CustomerWorkProperties.Harness h = props.getHarness();
+        h.setWorkspaceDir("target/test-workspace");
+        h.setMemoryEnabled(true);              // 分层记忆 MEMORY.md
+        h.setToolResultEvictionEnabled(true);  // 超大工具结果落盘
+        h.setOrg("acme");                      // org 维度
+
+        HarnessAgent agent = factory(props).createHarnessAgent("tenantB:conv-9");
+
+        assertNotNull(agent, "启用分层记忆/结果落盘后 HarnessAgent 应成功构建");
     }
 }

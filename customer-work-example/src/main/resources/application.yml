@@ -121,6 +121,16 @@ customer-work:
     enabled: false
     # 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）
     workspace-dir: ./data/workspace
+    # 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation
+    memory-enabled: false
+    # 超大工具结果落盘：上下文只留占位符与预览，原文落盘到工作区
+    tool-result-eviction-enabled: false
+    # 技能自进化：SkillCurator + 技能管理/晋升工具（成功模式沉淀为可复用技能）
+    skill-curator-enabled: false
+    # 额外上下文文件（人格 / 领域知识，磁盘 Markdown 每轮注入 system prompt），留空不注入
+    additional-context-file: ""
+    # 组织维度（org）：写入 RuntimeContext KV，实现 session/user/org 多维隔离，留空不写
+    org: ""
     permission:
       # 权限系统：声明式工具授权（与 HumanApprovalHook 形成双层闸门）。默认关闭
       enabled: false
