@@ -4,34 +4,30 @@ import com.richard.fyoung.customerwork.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.dto.IntentResult;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.EventType;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.agent.StreamOptions;
 import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.MsgRole;
-import io.agentscope.core.message.TextBlock;
-import io.agentscope.core.session.Session;
-import io.agentscope.core.state.SimpleSessionKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
- * 客服会话服务（对应深度解析一文②"会话恢复与上下文装配"与⑤"记忆写入 / 状态持久化"）。
+ * 客服会话服务（AgentScope 2.0 迁移版，对应②"会话恢复与上下文装配"与⑤"状态持久化"）。
  *
- * <p>核心职责：按 {@code sessionId} 维护 Agent 实例并做状态持久化，使同一会话的多轮对话
- * 共享上下文，且重启 / 跨请求可恢复。</p>
+ * <p><b>2.0 状态模型</b>：Agent 不再自持会话状态，也不再需要手工 {@code saveTo/loadIfExists}。
+ * 会话状态按 {@code (userId, sessionId)} 由框架在 {@code call/stream} 链路自动写入 / 恢复
+ * {@link io.agentscope.core.state.AgentStateStore}（见 {@code SessionConfig}）。本服务通过
+ * {@link RuntimeContext} 把"租户 + 会话"传入每次调用，单实例即可并发服务多租户多会话。</p>
  *
- * <p><b>持久化机制</b>：进程内用 {@link ConcurrentHashMap} 缓存热 Agent（避免重复装配开销）；
- * 每轮对话结束后调用 {@code agent.saveTo(session, key)} 把记忆与状态写入 {@link Session}；
- * 首次为某会话创建 Agent 时调用 {@code agent.loadIfExists(session, key)} 恢复历史。
- * {@link Session} 的具体实现（内存 / Json / Redis / MySQL）由 {@code SessionConfig} 决定，
- * 本服务对存储无感知。</p>
+ * <p>进程内仍保留一个有界 LRU 热 Agent 缓存，仅用于摊薄"按会话装配 Agent"的构建开销
+ * （并非状态存储）；缓存未命中时新建的 Agent 会在首次 {@code call} 时自动从 StateStore 恢复历史。</p>
  * @author owlzhangfq@gmail.com
  */
 @Service
@@ -42,31 +38,27 @@ public class CustomerServiceService {
     private static final String FALLBACK_REPLY =
         "抱歉，系统繁忙，已为您记录问题，建议稍后再试或转人工坐席。";
 
-    /** 进程内热 Agent 缓存上限：超过则按 LRU 淘汰最久未用的会话，淘汰时落盘，避免无界缓存导致 OOM。 */
+    /** 进程内热 Agent 缓存上限：超过则按 LRU 淘汰最久未用的会话，避免无界缓存导致 OOM。 */
     private static final int MAX_HOT_AGENTS = 1000;
 
     private final CustomerServiceAgentFactory agentFactory;
-    private final Session session;
+    private final SessionStateManager sessionStateManager;
 
     /**
      * 进程内热 Agent 缓存：sessionId -> Agent，有界 LRU（访问序）。
-     * 超过 {@link #MAX_HOT_AGENTS} 时淘汰最久未访问的会话并异步落盘，冷数据由 {@link Session} 恢复。
-     * 用 {@code synchronizedMap} 包装以保证 {@code computeIfAbsent/get/remove} 线程安全。
+     * 仅为摊薄装配开销；会话状态由 StateStore 持久化，淘汰不丢数据。
      */
     private final Map<String, ReActAgent> sessionAgents;
 
-    public CustomerServiceService(CustomerServiceAgentFactory agentFactory, Session session) {
+    public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
+                                  SessionStateManager sessionStateManager) {
         this.agentFactory = agentFactory;
-        this.session = session;
+        this.sessionStateManager = sessionStateManager;
         this.sessionAgents = Collections.synchronizedMap(
             new LinkedHashMap<String, ReActAgent>(256, 0.75f, true) {
                 @Override
                 protected boolean removeEldestEntry(Map.Entry<String, ReActAgent> eldest) {
-                    if (size() > MAX_HOT_AGENTS) {
-                        evictAndPersist(eldest.getKey(), eldest.getValue());
-                        return true;
-                    }
-                    return false;
+                    return size() > MAX_HOT_AGENTS;
                 }
             });
     }
@@ -74,34 +66,35 @@ public class CustomerServiceService {
     /**
      * 处理一条用户消息，返回完整回复（非流式）。
      *
-     * @param sessionId 会话 ID（来自接入层，关联用户与会话）
+     * @param sessionId 会话 ID（来自接入层，可含租户前缀如 tenantA:conv-1）
      * @param userText  用户输入文本
      * @return 助手回复文本（Mono，非阻塞）
      */
     public Mono<String> chat(String sessionId, String userText) {
-        log.info("[会话 {}] 收到用户消息: {}", sessionId, userText);
+        log.info("[session {}] received user message: {}", sessionId, userText);
         ReActAgent agent = resolveAgent(sessionId);
+        RuntimeContext ctx = agentFactory.contextFor(sessionId);
 
-        return agent.call(toUserMsg(userText))
+        return agent.call(userText, ctx)
             .map(Msg::getTextContent)
-            .doOnNext(reply -> log.info("[会话 {}] 助手回复: {}", sessionId, reply))
-            .doOnSuccess(reply -> persist(sessionId, agent))
+            .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
             .onErrorResume(e -> {
-                log.error("[会话 {}] 处理失败", sessionId, e);
+                log.error("[session {}] chat failed, code={}", sessionId, "AGENT_CALL_ERROR", e);
                 return Mono.just(FALLBACK_REPLY);
             });
     }
 
     /**
-     * 处理一条用户消息，流式返回增量文本（对应⑤ streamEvents 逐 token 渲染）。
+     * 处理一条用户消息，流式返回增量文本（对应⑤ 逐 token 渲染）。
      *
-     * <p>订阅 Agent 的类型化事件流，提取推理（文本）增量片段下发。会话状态在流结束后持久化。</p>
+     * <p>订阅 Agent 的类型化事件流，提取推理增量片段下发。会话状态由框架在流结束后自动持久化。</p>
      *
      * @return 增量文本片段流（Flux，非阻塞）
      */
     public Flux<String> chatStream(String sessionId, String userText) {
-        log.info("[会话 {}] 收到用户消息(流式): {}", sessionId, userText);
+        log.info("[session {}] received user message (stream): {}", sessionId, userText);
         ReActAgent agent = resolveAgent(sessionId);
+        RuntimeContext ctx = agentFactory.contextFor(sessionId);
 
         StreamOptions options = StreamOptions.builder()
             .eventTypes(EventType.REASONING, EventType.AGENT_RESULT)
@@ -109,54 +102,53 @@ public class CustomerServiceService {
             .includeReasoningChunk(true)
             .build();
 
-        return agent.stream(toUserMsg(userText), options)
+        return agent.stream(List.of(toUserMsg(userText)), options, ctx)
             .map(event -> event.getMessage() == null ? "" : event.getMessage().getTextContent())
             .filter(text -> text != null && !text.isEmpty())
-            .doOnComplete(() -> persist(sessionId, agent))
             .onErrorResume(e -> {
-                log.error("[会话 {}] 流式处理失败", sessionId, e);
+                log.error("[session {}] stream chat failed, code={}", sessionId, "AGENT_STREAM_ERROR", e);
                 return Flux.just(FALLBACK_REPLY);
             });
     }
 
     /**
-     * 结构化意图识别（对应深度解析 3.3"结构化输出"）。
+     * 结构化意图识别（对应 3.3"结构化输出"）。
      *
-     * <p>用 ReActAgent 的结构化输出能力，让模型严格按 {@link IntentResult} 的 Schema 返回，
-     * 业务侧直接拿到强类型对象，免去"二次解析 + 格式校验"。</p>
+     * <p>用 ReActAgent 的结构化输出能力，让模型严格按 {@link IntentResult} 的 Schema 返回。
+     * 用一次性独立 Agent 与独立 sessionId 做分类，绝不污染真实对话会话的记忆。</p>
      *
      * @return 结构化意图；解析失败时返回一个标注为 other 的兜底结果
      */
     public Mono<IntentResult> classifyIntent(String sessionId, String userText) {
-        log.info("[会话 {}] 结构化意图识别: {}", sessionId, userText);
-        // 用一次性的独立 Agent 做分类，绝不复用会话 Agent，也不写入会话缓存 / 不持久化：
-        // 否则"请判断意图……"这类分类指令会被写进用户真实对话记忆，污染后续多轮上下文。
-        ReActAgent intentAgent = agentFactory.createAgent("intent:" + sessionId);
+        log.info("[session {}] structured intent classification: {}", sessionId, userText);
+        String intentSessionId = "intent:" + sessionId;
+        ReActAgent intentAgent = agentFactory.createAgent(intentSessionId);
+        RuntimeContext ctx = agentFactory.contextFor(intentSessionId);
 
-        Msg prompt = toUserMsg("请判断以下用户消息的意图，并按要求结构化输出：" + userText);
-        return intentAgent.call(prompt, IntentResult.class)
+        String prompt = "请判断以下用户消息的意图，并按要求结构化输出：" + userText;
+        return intentAgent.call(prompt, IntentResult.class, ctx)
             .map(msg -> msg.getStructuredData(IntentResult.class))
             .onErrorResume(e -> {
-                log.error("[会话 {}] 意图识别失败", sessionId, e);
+                log.error("[session {}] intent classification failed, code={}", sessionId,
+                    "INTENT_CLASSIFY_ERROR", e);
                 return Mono.just(new IntentResult("other", "", false, "意图识别失败，转人工兜底"));
             });
     }
 
     /**
-     * 安全中断当前会话正在执行的 Agent（对应深度解析 3.1"安全中断 / 实时打断"）。
-     *
-     * <p>用于任务跑偏、超时或用户主动叫停的场景。框架会保留上下文与工具状态，后续可无缝恢复。</p>
+     * 安全中断当前会话正在执行的 Agent（对应 3.1"安全中断 / 实时打断"）。
      *
      * @return 是否存在可中断的活跃会话
      */
     public boolean interrupt(String sessionId) {
         ReActAgent agent = sessionAgents.get(sessionId);
         if (agent == null) {
-            log.info("[会话 {}] 无活跃 Agent，忽略中断", sessionId);
+            log.info("[session {}] no active agent, ignore interrupt", sessionId);
             return false;
         }
-        agent.interrupt();
-        log.warn("[会话 {}] 已发出安全中断", sessionId);
+        RuntimeContext ctx = agentFactory.contextFor(sessionId);
+        agent.interrupt(ctx);
+        log.info("[session {}] safe interrupt issued", sessionId);
         return true;
     }
 
@@ -164,54 +156,25 @@ public class CustomerServiceService {
     public void endSession(String sessionId) {
         sessionAgents.remove(sessionId);
         try {
-            session.delete(SimpleSessionKey.of(sessionId));
+            RuntimeContext ctx = agentFactory.contextFor(sessionId);
+            sessionStateManager.delete(ctx.getUserId(), ctx.getSessionId());
         } catch (Exception e) {
-            log.warn("[会话 {}] 删除持久化状态失败（已忽略）: {}", sessionId, e.getMessage());
+            log.error("[session {}] delete persisted state failed (ignored), code={}", sessionId,
+                "SESSION_DELETE_ERROR", e);
         }
-        log.info("[会话 {}] 已结束并清理", sessionId);
+        log.info("[session {}] ended and cleaned", sessionId);
     }
 
-    /** 获取热 Agent；首次创建时尝试从持久化存储恢复历史会话。 */
+    /** 获取热 Agent；未命中时新建（首次 call 自动从 StateStore 恢复历史，无需手工 load）。 */
     private ReActAgent resolveAgent(String sessionId) {
-        return sessionAgents.computeIfAbsent(sessionId, id -> {
-            ReActAgent agent = agentFactory.createAgent(id);
-            try {
-                boolean restored = agent.loadIfExists(session, SimpleSessionKey.of(id));
-                if (restored) {
-                    log.info("[会话 {}] 已从持久化存储恢复历史上下文", id);
-                }
-            } catch (Exception e) {
-                log.warn("[会话 {}] 恢复历史上下文失败（按新会话处理）: {}", id, e.getMessage());
-            }
-            return agent;
-        });
-    }
-
-    /** LRU 淘汰回调：被淘汰会话的状态异步落盘，做到"淘汰即持久化"，冷数据后续可从 {@link Session} 恢复。 */
-    private void evictAndPersist(String sessionId, ReActAgent agent) {
-        if (agent == null) {
-            return;
-        }
-        log.info("[会话 {}] 热缓存达到上限，LRU 淘汰并落盘", sessionId);
-        persist(sessionId, agent);
-    }
-
-    /** 持久化会话状态。落盘可能涉及 IO，放到 boundedElastic 调度，避免阻塞响应式线程。 */
-    private void persist(String sessionId, ReActAgent agent) {
-        Schedulers.boundedElastic().schedule(() -> {
-            try {
-                agent.saveTo(session, SimpleSessionKey.of(sessionId));
-            } catch (Exception e) {
-                log.warn("[会话 {}] 持久化状态失败（已忽略）: {}", sessionId, e.getMessage());
-            }
-        });
+        return sessionAgents.computeIfAbsent(sessionId, agentFactory::createAgent);
     }
 
     private Msg toUserMsg(String userText) {
         return Msg.builder()
-            .role(MsgRole.USER)
+            .role(io.agentscope.core.message.MsgRole.USER)
             .name("user")
-            .content(TextBlock.builder().text(userText).build())
+            .content(io.agentscope.core.message.TextBlock.builder().text(userText).build())
             .build();
     }
 }

@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.runtime;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import io.agentscope.core.session.Session;
+import io.agentscope.core.state.AgentStateStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,14 +24,14 @@ public class MaintenanceScheduler {
     private static final Logger log = LoggerFactory.getLogger(MaintenanceScheduler.class);
 
     private final CustomerWorkProperties properties;
-    private final Session session;
+    private final AgentStateStore stateStore;
     private final GracefulShutdownService shutdownService;
 
     public MaintenanceScheduler(CustomerWorkProperties properties,
-                                Session session,
+                                AgentStateStore stateStore,
                                 GracefulShutdownService shutdownService) {
         this.properties = properties;
-        this.session = session;
+        this.stateStore = stateStore;
         this.shutdownService = shutdownService;
     }
 
@@ -46,7 +46,7 @@ public class MaintenanceScheduler {
     /** 巡检逻辑（抽出以便单测）：汇总会话后端、在途请求、是否接收请求。 */
     String runMaintenance() {
         String backend = properties.getSession().getMode();
-        String impl = session.getClass().getSimpleName();
+        String impl = stateStore.getClass().getSimpleName();
         return String.format("backend=%s impl=%s activeRequests=%d accepting=%s",
             backend, impl, shutdownService.activeRequests(), shutdownService.isAcceptingRequests());
     }

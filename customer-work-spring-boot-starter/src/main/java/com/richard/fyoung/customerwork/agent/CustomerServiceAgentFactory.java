@@ -2,25 +2,24 @@ package com.richard.fyoung.customerwork.agent;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.config.NacosPromptService;
-import com.richard.fyoung.customerwork.memory.ContextMemoryFactory;
 import com.richard.fyoung.customerwork.memory.LongTermMemoryProvider;
-import com.richard.fyoung.customerwork.observability.TtsHookProvider;
 import com.richard.fyoung.customerwork.rag.KnowledgeProvider;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.hook.Hook;
 import io.agentscope.core.hook.recorder.JsonlTraceExporter;
 import io.agentscope.core.memory.LongTermMemoryMode;
 import io.agentscope.core.model.Model;
-import io.agentscope.core.plan.PlanNotebook;
-import io.agentscope.core.plan.storage.InMemoryPlanStorage;
+import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.rag.RAGMode;
 import io.agentscope.core.skill.AgentSkill;
 import io.agentscope.core.skill.SkillBox;
 import io.agentscope.core.skill.repository.ClasspathSkillRepository;
 import io.agentscope.core.skill.repository.FileSystemSkillRepository;
+import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -72,15 +71,17 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
     private final Model model;
     private final CustomerWorkProperties properties;
-    private final ContextMemoryFactory contextMemoryFactory;
     private final LongTermMemoryProvider longTermMemoryProvider;
     private final KnowledgeProvider knowledgeProvider;
     private final McpToolkitConfigurer mcpToolkitConfigurer;
     private final HigressToolkitConfigurer higressToolkitConfigurer;
     private final ToolRegistrar toolRegistrar;
+    /** 状态外置存储：2.0 中 Agent 无状态，会话状态按 (userId, sessionId) 自动持久化到此。 */
+    private final AgentStateStore stateStore;
+    /** 权限上下文（2.0 Permission System）：声明式控制工具授权，对主 Agent 原生生效。 */
+    private final PermissionContextState permissionContext;
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
-    private final TtsHookProvider ttsHookProvider;
     private final NacosPromptService nacosPromptService;
     /** 可插拔 Hook：本库内置（延迟/脱敏/审计/自我纠错）+ 下游自定义的所有 {@link Hook} Bean。 */
     private final ObjectProvider<Hook> pluggableHooks;
@@ -90,28 +91,41 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
     public CustomerServiceAgentFactory(Model model,
                                        CustomerWorkProperties properties,
-                                       ContextMemoryFactory contextMemoryFactory,
                                        LongTermMemoryProvider longTermMemoryProvider,
                                        KnowledgeProvider knowledgeProvider,
                                        McpToolkitConfigurer mcpToolkitConfigurer,
                                        HigressToolkitConfigurer higressToolkitConfigurer,
                                        ToolRegistrar toolRegistrar,
-                                       TtsHookProvider ttsHookProvider,
+                                       AgentStateStore stateStore,
+                                       PermissionContextState permissionContext,
                                        NacosPromptService nacosPromptService,
                                        ObjectProvider<Hook> pluggableHooks,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
         this.properties = properties;
-        this.contextMemoryFactory = contextMemoryFactory;
         this.longTermMemoryProvider = longTermMemoryProvider;
         this.knowledgeProvider = knowledgeProvider;
         this.mcpToolkitConfigurer = mcpToolkitConfigurer;
         this.higressToolkitConfigurer = higressToolkitConfigurer;
         this.toolRegistrar = toolRegistrar;
-        this.ttsHookProvider = ttsHookProvider;
+        this.stateStore = stateStore;
+        this.permissionContext = permissionContext;
         this.nacosPromptService = nacosPromptService;
         this.pluggableHooks = pluggableHooks;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+    }
+
+    /**
+     * 构造一次 Agent 调用的运行时上下文：把"会话 ID"映射为 2.0 的 {@code (userId, sessionId)}。
+     *
+     * <p>会话 ID 形如 {@code tenantA:conv-1} 时，租户作为 {@code userId}（多租户隔离），
+     * 整个会话 ID 作为 {@code sessionId}，与状态存储 / 长期记忆的租户维度保持一致。</p>
+     */
+    public RuntimeContext contextFor(String sessionId) {
+        return RuntimeContext.builder()
+            .userId(resolveTenant(sessionId))
+            .sessionId(sessionId == null || sessionId.isBlank() ? "default" : sessionId)
+            .build();
     }
 
     /** 生效的系统提示词：优先 Nacos 配置中心下发，缺省回退内置提示词。 */
@@ -156,7 +170,11 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             .sysPrompt(systemPrompt())
             .model(model)
             .toolkit(toolkit)
-            .memory(contextMemoryFactory.create())        // 短期记忆 / 智能上下文压缩
+            // 2.0：状态外置到 StateStore，按 (userId, sessionId) 自动加载/持久化短期会话状态
+            .stateStore(stateStore)
+            .defaultSessionId(sessionId)
+            // 2.0 权限系统：声明式工具授权（与 HumanApprovalHook 形成双层闸门）
+            .permissionContext(permissionContext)
             .hook(new ObservabilityHook(meterRegistry, properties.getModel().getTokenWarnThreshold()))
             .maxIters(properties.getAgent().getMaxIters())
             // 中断后无缝恢复：保留并恢复被打断的待执行工具调用
@@ -178,17 +196,6 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             builder.hook(traceExporter());
         }
 
-        // TTS：实时语音合成 Hook（默认关闭）
-        ttsHookProvider.create().ifPresent(builder::hook);
-
-        // PlanNotebook：长链路任务规划
-        if (properties.getPlan().isEnabled()) {
-            builder.planNotebook(PlanNotebook.builder()
-                .storage(new InMemoryPlanStorage())
-                .maxSubtasks(properties.getPlan().getMaxSubtasks())
-                .build());
-        }
-
         // 多租户长期记忆（memory / 百炼，由 Provider 选择）
         if (properties.getMemory().isLongTermEnabled()) {
             String tenantId = resolveTenant(sessionId);
@@ -206,6 +213,13 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             SkillBox skillBox = buildSkillBox(toolkit);
             if (skillBox != null) {
                 builder.skillBox(skillBox);
+                // 代码执行技能：2.0 由 Builder 内置开关承接（替代 1.x 的 skillBox.codeExecution() 流式构建）
+                CustomerWorkProperties.Skill skillCfg = properties.getSkill();
+                if (skillCfg.isCodeExecutionEnabled()) {
+                    builder.skillCodeExecutionEnabled(true)
+                        .skillWorkDir(Path.of(skillCfg.getCodeExecutionWorkDir()));
+                    log.info("[Skill] code execution enabled, workDir={}", skillCfg.getCodeExecutionWorkDir());
+                }
             }
         }
 
@@ -232,22 +246,17 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             // 运行时加载技能工具：允许 Agent 按需自行加载技能（技能自进化）
             if (cfg.isRuntimeLoadToolEnabled()) {
                 skillBox.registerSkillLoadTool();
-                log.info("[Skill] 已注册运行时加载技能工具");
+                log.info("[Skill] runtime skill-load tool registered");
             }
-            // 代码执行技能：注册读写 / Shell 工具，使技能可执行代码（沙箱内）
+            // 代码执行 workDir：2.0 工作目录在 SkillBox 上设置，开关在 Builder 上（见 createAgent）
             if (cfg.isCodeExecutionEnabled()) {
-                skillBox.codeExecution()
-                    .workDir(cfg.getCodeExecutionWorkDir())
-                    .withRead()
-                    .withWrite()
-                    .enable();
-                log.info("[Skill] 已启用代码执行技能，workDir={}", cfg.getCodeExecutionWorkDir());
+                skillBox.setWorkDir(Path.of(cfg.getCodeExecutionWorkDir()));
             }
-            log.info("[Skill] 已加载技能 {} 个: {}", skillBox.getAllSkillIds().size(),
+            log.info("[Skill] loaded {} skills: {}", skillBox.getAllSkillIds().size(),
                 skillBox.getAllSkillIds());
             return skillBox;
         } catch (Exception e) {
-            log.warn("[Skill] 技能加载失败（跳过 Skill 装配）: {}", e.getMessage());
+            log.error("[Skill] skill loading failed (skip skill wiring), code={}", "SKILL_LOAD_ERROR", e);
             return null;
         }
     }

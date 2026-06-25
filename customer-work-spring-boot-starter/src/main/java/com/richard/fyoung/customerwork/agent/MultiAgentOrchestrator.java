@@ -8,33 +8,33 @@ import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
 import com.richard.fyoung.customerwork.tool.backend.OrderBackend;
 import io.agentscope.core.ReActAgent;
-import io.agentscope.core.agent.AgentBase;
-import io.agentscope.core.memory.InMemoryMemory;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.Model;
-import io.agentscope.core.pipeline.Pipelines;
 import io.agentscope.core.tool.Toolkit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 多 Agent 编排器（对应「多 Agent 与分布式协作」：Pipeline 串/并行 + 主从分层）。
+ * 多 Agent 编排器（对应「多 Agent 与分布式协作」：串/并行 + 主从分层，AgentScope 2.0 迁移版）。
  *
- * <p>构建三个专职专家 Agent（订单 / 售后 / 知识库），并用框架 {@link Pipelines} 编排：</p>
+ * <p>1.x 的 {@code Pipelines} 在 2.0 已移除；本类改用 Reactor 直接编排三个专职专家 Agent
+ * （订单 / 售后 / 知识库）：</p>
  * <ul>
- *   <li><b>fanout</b>：把同一问题并行分发给所有专家，聚合各自结论（适合"多视角会诊"）；</li>
- *   <li><b>sequential</b>：让问题依次流过各专家逐步细化（适合"流水线处理"）。</li>
+ *   <li><b>fanout</b>：把同一问题并行分发给所有专家（{@code Flux.flatMap}），聚合各自结论；</li>
+ *   <li><b>sequential</b>：让问题依次流过各专家逐步细化（{@code Mono} 链式）。</li>
  * </ul>
  *
- * <p>这是文档「主从分层」模式的进程内实现；跨进程的多 Agent 协作可进一步用 A2A + Nacos
- * 注册发现（见 {@code DistributedAgentConfig}）。</p>
+ * <p>这是文档「主从分层」模式的进程内实现；2.0 也可用 HarnessAgent 的 Subagent 能力做更强的
+ * 子智能体编排（见 {@code SubagentOrchestrator}），跨进程则用 A2A + Nacos 注册发现。</p>
  */
 @Component
 public class MultiAgentOrchestrator {
@@ -59,8 +59,11 @@ public class MultiAgentOrchestrator {
         this.knowledgeBackend = knowledgeBackend;
     }
 
+    private static final RuntimeContext CONSULT_CTX = RuntimeContext.builder()
+        .userId("multi-agent").sessionId("consult").build();
+
     /** 构建三个专职专家 Agent。 */
-    public List<AgentBase> buildSpecialists() {
+    public List<ReActAgent> buildSpecialists() {
         return List.of(
             specialist("OrderExpert",
                 "你是订单与物流专家。只就订单状态、物流轨迹、金额等问题作答，调用订单工具查询后回答；与你无关的问题简要说明并建议转交对应专家。",
@@ -81,7 +84,6 @@ public class MultiAgentOrchestrator {
             .sysPrompt(prompt)
             .model(model)
             .toolkit(toolkit)
-            .memory(new InMemoryMemory())
             .maxIters(properties.getMultiAgent().getMaxIters())
             .build();
     }
@@ -92,16 +94,28 @@ public class MultiAgentOrchestrator {
      * @return 聚合后的回复（fanout 模式拼接各专家结论；sequential 模式取最终结论）
      */
     public Mono<String> consult(String userText) {
-        List<AgentBase> specialists = buildSpecialists();
+        List<ReActAgent> specialists = buildSpecialists();
         Msg msg = Msg.builder().role(MsgRole.USER).name("user")
             .content(TextBlock.builder().text(userText).build()).build();
 
         if ("sequential".equalsIgnoreCase(properties.getMultiAgent().getMode())) {
-            log.info("多 Agent 编排：sequential，{} 个专家", specialists.size());
-            return Pipelines.sequential(specialists, msg).map(Msg::getTextContent);
+            log.info("multi-agent orchestration: sequential, {} specialists", specialists.size());
+            return sequential(specialists, msg).map(Msg::getTextContent);
         }
-        log.info("多 Agent 编排：fanout，{} 个专家", specialists.size());
-        return Pipelines.fanout(specialists, msg).map(this::aggregate);
+        log.info("multi-agent orchestration: fanout, {} specialists", specialists.size());
+        return Flux.fromIterable(specialists)
+            .flatMap(agent -> agent.call(List.of(msg), CONSULT_CTX))
+            .collectList()
+            .map(this::aggregate);
+    }
+
+    /** 串行编排：问题依次流过各专家，后一个以前一个的回复为输入逐步细化，取最终结论。 */
+    private Mono<Msg> sequential(List<ReActAgent> specialists, Msg input) {
+        Mono<Msg> chain = Mono.just(input);
+        for (ReActAgent agent : specialists) {
+            chain = chain.flatMap(prev -> agent.call(List.of(prev), CONSULT_CTX));
+        }
+        return chain;
     }
 
     /** 聚合 fanout 各专家回复。 */

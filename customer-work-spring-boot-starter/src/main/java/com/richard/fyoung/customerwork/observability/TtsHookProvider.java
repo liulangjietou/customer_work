@@ -2,8 +2,6 @@ package com.richard.fyoung.customerwork.observability;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.hook.Hook;
-import io.agentscope.core.hook.TTSHook;
-import io.agentscope.core.model.tts.DashScopeRealtimeTTSModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -11,11 +9,15 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 
 /**
- * TTS 语音合成 Hook 提供方（对应「交互协议 · TTS / 实时多模态」）。
+ * TTS 语音合成 Hook 提供方（AgentScope 2.0 已下线该能力，保留为文档化空实现）。
  *
- * <p>启用后构建一个把 Agent 文本回复实时合成为语音的 {@link TTSHook}（基于 DashScope 实时 TTS），
- * 通过 audioCallback 把音频帧回推给调用方（而非直接占用服务端音频设备），便于在无声卡的服务端运行、
- * 由前端播放。默认关闭。</p>
+ * <p><b>不可迁移说明</b>：1.x 的 {@code io.agentscope.core.hook.TTSHook} 与
+ * {@code io.agentscope.core.model.tts.DashScopeRealtimeTTSModel} 在 2.0 中已从核心移除
+ * （核心不再内置 TTS，"Core no longer ships TTS"），需直接集成厂商实时语音 SDK。详见
+ * {@code docs/MIGRATION-2.0.md} 的"不可迁移能力"一节。</p>
+ *
+ * <p>为保持装配与下游兼容，本类保留但 {@link #create()} 恒返回空：开启 TTS 配置时记录一条提示日志，
+ * 引导改用外部 TTS SDK。</p>
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -33,24 +35,14 @@ public class TtsHookProvider {
         return properties.getProtocol().getTts().isEnabled();
     }
 
-    /** 启用时返回 TTS Hook，否则返回空。 */
+    /**
+     * 2.0 核心已移除 TTS Hook，恒返回空。开启配置时给出迁移提示。
+     */
     public Optional<Hook> create() {
-        if (!isEnabled()) {
-            return Optional.empty();
+        if (isEnabled()) {
+            log.info("[TTS] TTS hook removed in AgentScope 2.0 core; integrate a vendor realtime-TTS "
+                + "SDK at the gateway/front-end instead. See docs/MIGRATION-2.0.md");
         }
-        DashScopeRealtimeTTSModel ttsModel = DashScopeRealtimeTTSModel.builder()
-            .apiKey(properties.getModel().getApiKey())
-            .modelName("cosyvoice-v1")
-            .voice("longxiaochun")
-            .build();
-        TTSHook hook = TTSHook.builder()
-            .ttsModel(ttsModel)
-            .autoStartPlayer(false)
-            // 音频帧回推给调用方（前端播放），不直接占用服务端音频设备
-            .audioCallback(audio -> log.debug("[TTS] 产出音频帧 {} 字节",
-                audio == null ? 0 : 1))
-            .build();
-        log.info("[TTS] 已启用语音合成 Hook");
-        return Optional.of(hook);
+        return Optional.empty();
     }
 }
