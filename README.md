@@ -3,14 +3,19 @@
 [![CI](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml/badge.svg)](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](#四环境要求)
-[![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12-green.svg)](https://github.com/agentscope-ai/agentscope-java)
+[![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12%20%7C%20rc2.0%3A2.0.0--RC4-green.svg)](https://github.com/agentscope-ai/agentscope-java)
 
 > 🚀 **新人从这里开始**：[docs/新人必读.md](docs/新人必读.md)（15 分钟跑起来 + 看懂结构 + 知道改哪里）
 > English version: [README_EN.md](README_EN.md)
 > 详细技术文档（原理 / 架构图 / 时序图 / UML 类图 / 扩展点）：[docs/详细技术文档.md](docs/详细技术文档.md)
 
+> 🆕 **AgentScope 2.0 迁移（`rc2.0` 分支）**：本仓库 `rc2.0` 分支已将全部功能迁移到
+> `io.agentscope:agentscope-harness:2.0.0-RC4`，并补齐 2.0 新能力（Permission System / Plan Mode /
+> Compaction / Workspace-Sandbox / Subagent）。迁移映射、API 变更与**不可迁移能力说明**见
+> **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**。`main` 分支仍维持 1.0.12 稳定版。
+
 本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
-基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。
+`main` 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。
 
 > 开源说明：本项目以**可改造为你自己的业务 Agent** 为目标——业务工具走 `tool.backend.*` 接口，
 > 你只需实现接口（或覆盖 Bean）即可接入自有订单/售后/知识系统，无需改框架代码。详见
