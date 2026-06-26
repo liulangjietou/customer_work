@@ -66,17 +66,24 @@ mvn -s settings-rc2.xml -pl customer-web spring-boot:run
 java -jar customer-web/target/customer-web-1.0.0.jar
 ```
 
-### 3.3 访问入口
+### 3.3 访问入口（已实测，端口 8081）
+
+> **主页面 = Swagger UI**（admin starter 未打包独立 SPA 仪表盘，交互页面即 Swagger UI；根路径 `/` 返回 404）。
+
 | 入口 | 地址 | 说明 |
 | --- | --- | --- |
-| Swagger UI | `http://localhost:8081/swagger-ui.html` | 在线浏览/调试全部 REST 端点 |
+| **Swagger UI（主页面）** | `http://localhost:8081/swagger-ui/index.html`<br/>（`/swagger-ui.html` 会 302 跳到此） | 浏览 / 在线调试全部管理 REST 端点 |
+| OpenAPI 文档 | `http://localhost:8081/v3/api-docs` | OpenAPI JSON |
 | 健康检查 | `http://localhost:8081/actuator/health` | 含 AgentStateStore 后端探测 |
-| Agent 列表 | `http://localhost:8081/actuator/agentscopeagents` | 已接管的 Agent 清单（AgentDescriptor） |
-| 工具/权限/用量/状态 | `/actuator/agentscope{tools,permissions,usage,status}` | 工具、三态权限、用量、运行状态 |
-| 子智能体/巡检/排干 | `/actuator/agentscope{subagents,doctor,drain}` | 子智能体、健康巡检、优雅 drain |
-| 会话管理 | `GET {base-path}/sessions`、`/sessions/{id}/messages`、`/state`、`/compact`、`/abort`、`/undo`、`/redo`、`/export` | `SessionAdminController`，`base-path` 默认 `/admin` |
+| Agent 清单 | `http://localhost:8081/actuator/agentscope-agents` | 已接管的 Agent（返回本项目 `CustomerServiceAgent`） |
+| 工具/权限/用量/状态 | `/actuator/agentscope-tools`、`-permissions`、`-usage`、`-status` | 工具、三态权限、用量、运行状态 |
+| 子智能体/巡检/排干/模型/命令 | `/actuator/agentscope-subagents`、`-doctor`、`-drain`、`-models`、`-commands` | 子智能体、健康巡检、优雅 drain、模型、命令 |
+| 会话管理（REST） | `GET /admin/sessions`、`/admin/sessions/{id}/messages`、`/state`、`/plan`、`/tasks`、`/subagent-tasks`；动作 `/admin/sessions/{id}:compact` `:abort` `:undo` `:redo` `:export` `:enter-plan-mode` `:exit-plan-mode` | `SessionAdminController`/`SubagentTaskController`，前缀由 `agentscope.admin.base-path`（默认 `/admin`）控制 |
 
-> 端点 id 以实际 Actuator 暴露为准（`management.endpoints.web.exposure.include`）。本模块默认 `*` 全暴露，**生产请收敛并加鉴权**。
+> 实测：10 个 `agentscope-*` actuator 端点均 200；`/actuator/agentscope-agents` 返回
+> `{"name":"CustomerServiceAgent","type":"ReActAgent","modelName":"qwen-plus",...}`。
+> actuator 端点 id 为<b>带连字符</b>形式（`agentscope-agents` 等）；本模块默认 `management...exposure.include: "*"` 全暴露，
+> **生产请收敛暴露面并加鉴权**。
 
 ---
 
