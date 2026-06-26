@@ -15,8 +15,8 @@
 > **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**；2.0 版深度技术文档见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
 > 配套前端为 `customer-web` 模块，把客服 Agent 同时接到**五套官方能力**：**admin** 管理控制台、
 > **chat-completions-web**（OpenAI 兼容 `/v1/chat/completions` + 内置聊天页）、**AG-UI**（`/agui/run` 富事件协议）、
-> **Studio** 观测台、**Channel·钉钉**（Stream 模式接入钉钉机器人），见
-> **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。`main` 分支仍维持 1.0.12 稳定版。
+> **Studio** 观测台、**Channel·钉钉/飞书/企业微信**（IM 平台接入：钉钉 Stream 模式、飞书/企业微信 应用回调 +
+> 飞书 webhook 推送），见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。`main` 分支仍维持 1.0.12 稳定版。
 
 本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
 `main` 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。

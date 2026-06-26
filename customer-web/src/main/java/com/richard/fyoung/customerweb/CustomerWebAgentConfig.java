@@ -13,6 +13,7 @@ import com.richard.fyoung.customerwork.tool.backend.MockOrderBackend;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.extensions.channel.feishu.FeishuCallbackController;
+import io.agentscope.extensions.channel.wecom.WeComCallbackController;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.state.AgentStateStore;
@@ -84,6 +85,15 @@ public class CustomerWebAgentConfig {
     @Bean
     public FeishuCallbackController feishuCallbackController() {
         return new FeishuCallbackController();
+    }
+
+    /**
+     * 企业微信事件回调控制器（inbound 入口 {@code /api/channels/wecom/{channelId}/callback}，
+     * GET 做 URL 验证、POST 收事件）。同飞书，显式注册让端点生效。
+     */
+    @Bean
+    public WeComCallbackController weComCallbackController() {
+        return new WeComCallbackController();
     }
 
     /** 业务工具集（复用 ToolRegistrar + 默认 Mock 后端；生产可换真实后端）。 */

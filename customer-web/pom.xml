@@ -65,6 +65,15 @@
             <version>${agentscope.version}</version>
         </dependency>
 
+        <!-- AgentScope 2.0 Channel · 企业微信：把客服 Agent 接入企业微信应用（应用 + 回调）。
+             inbound：企业微信把事件推到 /api/channels/wecom/{channelId}/callback（GET 验证 + POST 事件）。
+             需企业微信凭证 corpId/agentId/secret/token/encodingAesKey 与公网可达的回调地址。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-channel-wecom</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
         <!-- admin starter 把以下 web 依赖标为 optional（要求宿主自带 web 栈），需显式声明；
              版本由 spring-boot-starter-parent 3.2.5 统一管理，避免与 starter 的 webflux 版本错配。 -->
         <dependency>

@@ -32,7 +32,12 @@
   - **Studio**（`agentscope-extensions-studio`）：轨迹推送到外部 Studio 应用做可视化（默认关，连接失败优雅降级）。
   - **Channel·钉钉**（`agentscope-extensions-channel-dingtalk`）：`HarnessAgent.fromAgent(...).channel(DingTalkChannel)`
     Stream 模式接入钉钉机器人，群内 @ 即可对话（默认关，需 appKey/appSecret/robotCode；连接失败优雅降级）。
-  - 详见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md)。
+  - **Channel·飞书**（`agentscope-extensions-channel-feishu`）：inbound 应用+事件回调
+    `/api/channels/feishu/{channelId}/callback`（url_verification 握手已实测：正确 token→200、错误→401）；
+    outbound `FeishuWebhookNotifier` + `POST /push/feishu` 经自定义机器人 webhook 推送（关键词可配）。
+  - **Channel·企业微信**（`agentscope-extensions-channel-wecom`）：inbound 应用+回调
+    `/api/channels/wecom/{channelId}/callback`（GET URL 验证，实测端点映射+签名校验 401）。
+  - 飞书/企业微信完整消息流转需自建应用回调地址指向公网可达地址；详见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md)。
 - **不可迁移**（框架移除）：TTS（`TTSHook`/`DashScopeRealtimeTTSModel`）、`PlanNotebook`、`Pipelines`、
   `SessionManager`/`StateModule` —— 详见 [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)。
 

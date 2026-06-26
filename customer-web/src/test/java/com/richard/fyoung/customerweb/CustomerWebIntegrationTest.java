@@ -62,6 +62,12 @@ class CustomerWebIntegrationTest {
     @Autowired
     private FeishuWebhookNotifier feishuWebhookNotifier;
 
+    @Autowired
+    private WeComChannelConfigurer weComChannelConfigurer;
+
+    @Autowired
+    private io.agentscope.extensions.channel.wecom.WeComCallbackController weComCallbackController;
+
     @Test
     void contextLoads_andCoreBeansWired() {
         assertNotNull(customerServiceAgent, "客服 Agent Bean 应装配");
@@ -83,6 +89,10 @@ class CustomerWebIntegrationTest {
             "飞书事件回调控制器应装配（inbound /api/channels/feishu/{id}/callback）");
         assertNotNull(feishuWebhookNotifier,
             "飞书出站推送器应装配（outbound /push/feishu）");
+        assertNotNull(weComChannelConfigurer,
+            "企业微信 Channel 接入应装配（WeComChannelConfigurer，默认关闭）");
+        assertNotNull(weComCallbackController,
+            "企业微信事件回调控制器应装配（inbound /api/channels/wecom/{id}/callback）");
     }
 
     @Test

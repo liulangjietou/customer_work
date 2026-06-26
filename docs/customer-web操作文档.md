@@ -20,6 +20,9 @@
      事件订阅指向**公网可达**的该回调地址。
    - **飞书 outbound**（`FeishuWebhookNotifier` + `POST /push/feishu`）：通过飞书**自定义机器人 Webhook** 主动把消息
      推送到群（运营通知 / 告警 / 人工转接提醒）。机器人若配了关键词安全校验，填 `webhook-keyword` 自动带上。
+   - **企业微信**（`WeComChannelConfigurer` + `WeComCallbackController`）：**应用 + 回调**——企业微信把用户消息
+     POST 到 `/api/channels/wecom/{channelId}/callback`（首次配置 GET 做 URL 验证），经 channel 派发给 agent，回复经
+     企业微信 API 下发。需企业微信自建应用回调地址指向**公网可达**的该地址。
 
 > 前三者是"前端入口"，Studio 是"可观测连接器"，Channel 是"IM 平台入口"。同一个 `customerServiceAgent` Bean 被各自接管：
 > admin 按 `Agent` 类型、chat 按 `ReActAgent` 类型、AG-UI 按 **Spring bean 名**（`customerServiceAgent`）、
@@ -104,6 +107,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar
 | **Channel · 钉钉（IM 平台）** | 钉钉客户端（群 @ 机器人） | 开 `customer-web.channel.dingtalk.enabled` 并配 `app-key/app-secret/robot-code` 后，本应用 Stream 模式连钉钉；在群里 @ 机器人即可对话 |
 | **Channel · 飞书 inbound（事件回调）** | `POST /api/channels/feishu/{channelId}/callback` | 开 `customer-web.channel.feishu.enabled` 并配 `app-id/app-secret(+verification-token)` 后映射；飞书事件订阅填**公网**此地址，url_verification 握手通过即接收用户消息 |
 | **Channel · 飞书 outbound（推送）** | `POST /push/feishu?text=...` | 配 `customer-web.channel.feishu.webhook-url`（+机器人关键词 `webhook-keyword`）后，主动把文本推送到飞书群 |
+| **Channel · 企业微信 inbound（回调）** | `GET/POST /api/channels/wecom/{channelId}/callback` | 开 `customer-web.channel.wecom.enabled` 并配 `corp-id/agent-id/secret/token/encoding-aes-key` 后映射；企业微信自建应用回调地址填**公网**此地址，GET 验证通过即接收用户消息 |
 
 > 实测：10 个 `agentscope-*` actuator 端点均 200；`/actuator/agentscope-agents` 返回
 > `{"name":"CustomerServiceAgent","type":"ReActAgent","modelName":"qwen-plus",...}`。
@@ -158,6 +162,16 @@ customer-web:
       app-secret: ${FEISHU_APP_SECRET:}
       encrypt-key: ${FEISHU_ENCRYPT_KEY:}            # 加密回调才需要
       verification-token: ${FEISHU_VERIFICATION_TOKEN:}
+      webhook-url: ${FEISHU_WEBHOOK_URL:}            # outbound：自定义机器人 webhook
+      webhook-keyword: ${FEISHU_WEBHOOK_KEYWORD:}    # 机器人关键词安全校验
+    wecom:                               # 企业微信 Channel（应用+回调，默认关）
+      enabled: false
+      channel-id: wecom
+      corp-id: ${WECOM_CORP_ID:}
+      agent-id: ${WECOM_AGENT_ID:0}
+      secret: ${WECOM_SECRET:}
+      token: ${WECOM_TOKEN:}
+      encoding-aes-key: ${WECOM_ENCODING_AES_KEY:}
 ```
 
 > **写操作保护**：`agentscope.admin.write-token` 非空时，对 compact / abort / drain 等写端点需在请求头带 `X-Admin-Token`。
@@ -179,6 +193,11 @@ customer-web:
 > ③ 重启本应用，飞书会先对回调地址做 **url_verification 握手**（通过即接收用户消息，派发给客服 agent）。
 > **实测**：开启后回调端点 `/api/channels/feishu/{id}/callback` 已映射，url_verification 握手正确回显 challenge（正确 token→200，错误 token→401）；
 > 完整真实消息流转需飞书应用事件订阅指向**公网可达**的该回调地址。
+>
+> **企业微信 Channel 开启步骤**：① 在企业微信管理后台创建自建应用，取 `CorpID/AgentId/Secret`，在"接收消息"里设置 API 接收，
+> 回调 URL 填 `https://<你的公网域名>/api/channels/wecom/{channel-id}/callback`，并取 `Token/EncodingAESKey`；
+> ② 设 `customer-web.channel.wecom.enabled=true` + 上述凭证；③ 重启本应用，企业微信会先 GET 回调地址做 URL 验证（通过即接收用户消息）。
+> **实测**：开启后回调端点 `/api/channels/wecom/{id}/callback` 已映射并做签名校验（GET 假参数→401，非 404）；完整消息流转需公网可达回调地址。
 
 ---
 
