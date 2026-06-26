@@ -41,6 +41,13 @@
             <version>${agentscope.version}</version>
         </dependency>
 
+        <!-- AgentScope 2.0 Studio 观测台：把 agent 运行轨迹推送到外部 Studio 应用做可视化调试/回放。
+             随 starter 已传递，此处显式声明以表意；接入复用 starter 的 StudioConfigurer（StudioManager）。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-studio</artifactId>
+        </dependency>
+
         <!-- admin starter 把以下 web 依赖标为 optional（要求宿主自带 web 栈），需显式声明；
              版本由 spring-boot-starter-parent 3.2.5 统一管理，避免与 starter 的 webflux 版本错配。 -->
         <dependency>

@@ -5,6 +5,7 @@ import com.richard.fyoung.customerwork.config.ModelConfig;
 import com.richard.fyoung.customerwork.config.PermissionConfig;
 import com.richard.fyoung.customerwork.config.SessionConfig;
 import com.richard.fyoung.customerwork.middleware.ObservabilityMiddleware;
+import com.richard.fyoung.customerwork.observability.StudioConfigurer;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
@@ -59,6 +60,18 @@ public class CustomerWebAgentConfig {
     @Bean
     public PermissionContextState permissionContextState(CustomerWorkProperties properties) {
         return new PermissionConfig().permissionContextState(properties);
+    }
+
+    /**
+     * Studio 观测台接入（复用 starter 的 {@link StudioConfigurer}）。
+     *
+     * <p>其 {@code @PostConstruct} 在 {@code customer-work.observability.studio.enabled=true} 且配置了
+     * {@code url} 时，连接外部 AgentScope Studio 应用并推送 agent 运行轨迹做可视化调试；默认关闭，
+     * 连接失败不影响应用启动（异步、已兜底）。</p>
+     */
+    @Bean
+    public StudioConfigurer studioConfigurer(CustomerWorkProperties properties) {
+        return new StudioConfigurer(properties);
     }
 
     /** 业务工具集（复用 ToolRegistrar + 默认 Mock 后端；生产可换真实后端）。 */

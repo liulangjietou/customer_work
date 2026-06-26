@@ -10,9 +10,12 @@
    同步 + SSE 流式），任意 OpenAI 客户端 / 聊天前端均可对话。本模块另附一个最简内置聊天页（`/`），开箱即可在浏览器对话。
 3. **agentscope-agui（AG-UI 富事件协议）**：标准 Agent↔前端事件协议（`POST /agui/run`，SSE 类型化事件
    `RUN_STARTED / TEXT_MESSAGE_* / TOOL_CALL_* / RUN_FINISHED`），供 AG-UI/CopilotKit 生态前端渲染推理、工具调用、状态与 HITL。
+4. **Studio 观测台（可视化调试）**：复用 starter 的 `StudioConfigurer`（`StudioManager`），把 agent 运行轨迹推送到
+   **外部 AgentScope Studio 应用**做可视化调试 / 回放。这是"看 agent 怎么跑"的研发/排障工具，**不是嵌入页面**。
 
-> 同一个 `customerServiceAgent` Bean 被三者按各自方式接管：admin 按 `Agent` 类型、chat 按 `ReActAgent` 类型、
-> AG-UI 按 **Spring bean 名**（`customerServiceAgent`，即 `agentscope.agui.default-agent-id`）。
+> 前三者是"前端入口"，Studio 是"可观测连接器"。同一个 `customerServiceAgent` Bean 被各自接管：admin 按 `Agent` 类型、
+> chat 按 `ReActAgent` 类型、AG-UI 按 **Spring bean 名**（`customerServiceAgent`，即 `agentscope.agui.default-agent-id`）；
+> Studio 则把该 agent 的运行轨迹经 WebSocket 推给外部 Studio。
 
 ---
 
@@ -89,6 +92,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar
 | 工具/权限/用量/状态 | `/actuator/agentscope-tools`、`-permissions`、`-usage`、`-status` | 工具、三态权限、用量、运行状态 |
 | 子智能体/巡检/排干/模型/命令 | `/actuator/agentscope-subagents`、`-doctor`、`-drain`、`-models`、`-commands` | 子智能体、健康巡检、优雅 drain、模型、命令 |
 | 会话管理（REST） | `GET /admin/sessions`、`/admin/sessions/{id}/messages`、`/state`、`/plan`、`/tasks`、`/subagent-tasks`；动作 `/admin/sessions/{id}:compact` `:abort` `:undo` `:redo` `:export` `:enter-plan-mode` `:exit-plan-mode` | `SessionAdminController`/`SubagentTaskController`，前缀由 `agentscope.admin.base-path`（默认 `/admin`）控制 |
+| **Studio 观测台（外部应用）** | 你单独运行的 Studio 实例（如 `ws://localhost:8501`） | 开 `customer-work.observability.studio.enabled` 并配 `url` 后，本应用把 agent 轨迹推送到该 Studio 做可视化；**不是本应用的页面** |
 
 > 实测：10 个 `agentscope-*` actuator 端点均 200；`/actuator/agentscope-agents` 返回
 > `{"name":"CustomerServiceAgent","type":"ReActAgent","modelName":"qwen-plus",...}`。
@@ -114,15 +118,30 @@ agentscope:
     base-path: /admin                    # 会话管理 REST 前缀
     write-token: ""                      # 写操作保护令牌；调用 compact/abort/drain 等写端点需带 X-Admin-Token
     compact-keep-last-messages: 10
+  chat-completions:
+    enabled: true                        # 开启 POST /v1/chat/completions（OpenAI 兼容）
+  agui:
+    default-agent-id: customerServiceAgent  # AG-UI 默认 agent（= Spring bean 名）；亦支持 /agui/run/{agentId}
 customer-work:                           # 复用 customer-work 的客服 Agent 配置子集
   model: { provider: dashscope, name: qwen-plus, api-key: ${DASHSCOPE_API_KEY:} }
   session: { mode: memory }              # 控制台默认进程内；生产可切 redis/mysql
   harness:
     permission: { enabled: true, mode: default }   # 三态权限：退款/转人工默认走人工确认(ask)
+  observability:
+    studio:                              # Studio 观测台：把轨迹推到外部 Studio 应用（默认关，需先跑 Studio）
+      enabled: false
+      url: ""                            # 例如 ws://localhost:8501（以你的 Studio 实例为准）
+      project: customer-web
+      run-name: customer-web-run
 ```
 
 > **写操作保护**：`agentscope.admin.write-token` 非空时，对 compact / abort / drain 等写端点需在请求头带 `X-Admin-Token`。
 > 生产务必设置并配合网关鉴权。
+>
+> **Studio 观测台开启步骤**：① 单独运行一个 AgentScope Studio 实例；② 设 `customer-work.observability.studio.enabled=true`
+> 且 `url` 指向它；③ 重启本应用，agent 运行轨迹即推送到 Studio 可视化。**未配置/Studio 不可达时连接失败被兜底，不影响应用启动**
+> （实测：开启但无 Studio 时日志输出 `[Studio] 连接失败（忽略）`，应用照常启动、三套前端不受影响）。`StudioManager` 为 2.0
+> deprecated-for-removal API，后续版本可能调整。
 
 ---
 

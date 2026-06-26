@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerweb;
 
+import com.richard.fyoung.customerwork.observability.StudioConfigurer;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.state.AgentStateStore;
@@ -46,6 +47,9 @@ class CustomerWebIntegrationTest {
     @Autowired
     private AguiMvcController aguiMvcController;
 
+    @Autowired
+    private StudioConfigurer studioConfigurer;
+
     @Test
     void contextLoads_andCoreBeansWired() {
         assertNotNull(customerServiceAgent, "客服 Agent Bean 应装配");
@@ -57,6 +61,8 @@ class CustomerWebIntegrationTest {
             "Chat Completions Web 控制器应装配（/v1/chat/completions）");
         assertNotNull(aguiMvcController,
             "AG-UI MVC 控制器应装配（/agui/run）");
+        assertNotNull(studioConfigurer,
+            "Studio 观测台接入应装配（StudioConfigurer，默认关闭）");
     }
 
     @Test

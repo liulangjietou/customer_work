@@ -50,6 +50,14 @@ customer-work:
     permission:
       enabled: true
       mode: default
+  # Studio 观测台：把 agent 运行轨迹推送到外部 AgentScope Studio 应用做可视化调试/回放。
+  # 默认关闭；启用需先单独运行一个 Studio 实例并把 url 指向它（连接失败不影响应用启动）。
+  observability:
+    studio:
+      enabled: false
+      url: ""                       # 例如 ws://localhost:8501 （以你的 Studio 实例为准）
+      project: customer-web
+      run-name: customer-web-run
 
 # Actuator：暴露 agentscope 管理端点（控制台内部应用，全部暴露；生产请按需收敛 + 加鉴权）
 management:
