@@ -23,6 +23,13 @@ agentscope:
   chat-completions:
     # 开启后暴露 POST /v1/chat/completions（OpenAI 兼容，同步 + SSE 流式），绑定客服 ReActAgent
     enabled: true
+  agui:
+    # AG-UI 标准事件协议端点 POST /agui/run（SSE 类型化事件）。
+    # AguiAgentAutoRegistration 按 Spring bean 名注册 Agent，故默认 agent 取 bean 名 customerServiceAgent；
+    # 也可显式路由 POST /agui/run/{agentId}。
+    default-agent-id: customerServiceAgent
+    emit-tool-call-args: true
+    enable-reasoning: true
 
 # 复用 customer-work 的客服 Agent 配置（仅取所需子集）
 customer-work:

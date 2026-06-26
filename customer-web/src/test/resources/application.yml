@@ -12,6 +12,8 @@ agentscope:
     write-token: ""
   chat-completions:
     enabled: true
+  agui:
+    default-agent-id: customerServiceAgent
 
 customer-work:
   model:
