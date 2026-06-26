@@ -28,6 +28,10 @@ public class FeishuProperties {
     private String encryptKey = "";
     /** 事件订阅 Verification Token（用于校验回调来源）。 */
     private String verificationToken = "";
+    /** 出站推送 · 飞书自定义机器人 Webhook 地址（"给我推送消息"用）。 */
+    private String webhookUrl = "";
+    /** 出站推送 · 机器人安全设置的关键词（自定义机器人若配了关键词校验，消息须含该词）。 */
+    private String webhookKeyword = "";
 
     public boolean isEnabled() {
         return enabled;
@@ -75,5 +79,21 @@ public class FeishuProperties {
 
     public void setVerificationToken(String verificationToken) {
         this.verificationToken = verificationToken;
+    }
+
+    public String getWebhookUrl() {
+        return webhookUrl;
+    }
+
+    public void setWebhookUrl(String webhookUrl) {
+        this.webhookUrl = webhookUrl;
+    }
+
+    public String getWebhookKeyword() {
+        return webhookKeyword;
+    }
+
+    public void setWebhookKeyword(String webhookKeyword) {
+        this.webhookKeyword = webhookKeyword;
     }
 }

@@ -75,6 +75,9 @@ customer-web:
       app-secret: ${FEISHU_APP_SECRET:}
       encrypt-key: ${FEISHU_ENCRYPT_KEY:}            # 加密回调才需要，否则留空
       verification-token: ${FEISHU_VERIFICATION_TOKEN:}
+      # 飞书 outbound（给我推送消息）：自定义机器人 webhook。POST /push/feishu?text=... 触发推送。
+      webhook-url: ${FEISHU_WEBHOOK_URL:}            # 机器人 webhook 地址（env 注入，勿硬编码入库）
+      webhook-keyword: ${FEISHU_WEBHOOK_KEYWORD:}    # 机器人若配了关键词安全校验，填该关键词
 
 # Actuator：暴露 agentscope 管理端点（控制台内部应用，全部暴露；生产请按需收敛 + 加鉴权）
 management:

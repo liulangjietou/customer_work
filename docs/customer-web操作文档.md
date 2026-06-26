@@ -15,9 +15,11 @@
 5. **Channel · 钉钉 / 飞书（IM 平台接入）**：把客服 Agent 包成 `HarnessAgent` 后挂上对应 `Channel`，用户在 IM 平台
    与客服 agent 对话。
    - **钉钉**（`DingTalkChannelConfigurer`）：钉钉 **Stream 模式**（出站 WebSocket，无需公网回调），群内 @ 机器人对话。
-   - **飞书**（`FeishuChannelConfigurer` + `FeishuCallbackController`）：**应用 + 事件回调**——inbound 飞书把用户消息
+   - **飞书 inbound**（`FeishuChannelConfigurer` + `FeishuCallbackController`）：**应用 + 事件回调**——飞书把用户消息
      POST 到 `/api/channels/feishu/{channelId}/callback`，经 channel 派发给 agent，回复经飞书 API 下发。需飞书应用
      事件订阅指向**公网可达**的该回调地址。
+   - **飞书 outbound**（`FeishuWebhookNotifier` + `POST /push/feishu`）：通过飞书**自定义机器人 Webhook** 主动把消息
+     推送到群（运营通知 / 告警 / 人工转接提醒）。机器人若配了关键词安全校验，填 `webhook-keyword` 自动带上。
 
 > 前三者是"前端入口"，Studio 是"可观测连接器"，Channel 是"IM 平台入口"。同一个 `customerServiceAgent` Bean 被各自接管：
 > admin 按 `Agent` 类型、chat 按 `ReActAgent` 类型、AG-UI 按 **Spring bean 名**（`customerServiceAgent`）、
@@ -101,6 +103,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar
 | **Studio 观测台（外部应用）** | 你单独运行的 Studio 实例（如 `ws://localhost:8501`） | 开 `customer-work.observability.studio.enabled` 并配 `url` 后，本应用把 agent 轨迹推送到该 Studio 做可视化；**不是本应用的页面** |
 | **Channel · 钉钉（IM 平台）** | 钉钉客户端（群 @ 机器人） | 开 `customer-web.channel.dingtalk.enabled` 并配 `app-key/app-secret/robot-code` 后，本应用 Stream 模式连钉钉；在群里 @ 机器人即可对话 |
 | **Channel · 飞书 inbound（事件回调）** | `POST /api/channels/feishu/{channelId}/callback` | 开 `customer-web.channel.feishu.enabled` 并配 `app-id/app-secret(+verification-token)` 后映射；飞书事件订阅填**公网**此地址，url_verification 握手通过即接收用户消息 |
+| **Channel · 飞书 outbound（推送）** | `POST /push/feishu?text=...` | 配 `customer-web.channel.feishu.webhook-url`（+机器人关键词 `webhook-keyword`）后，主动把文本推送到飞书群 |
 
 > 实测：10 个 `agentscope-*` actuator 端点均 200；`/actuator/agentscope-agents` 返回
 > `{"name":"CustomerServiceAgent","type":"ReActAgent","modelName":"qwen-plus",...}`。

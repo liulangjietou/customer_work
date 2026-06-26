@@ -59,6 +59,9 @@ class CustomerWebIntegrationTest {
     @Autowired
     private io.agentscope.extensions.channel.feishu.FeishuCallbackController feishuCallbackController;
 
+    @Autowired
+    private FeishuWebhookNotifier feishuWebhookNotifier;
+
     @Test
     void contextLoads_andCoreBeansWired() {
         assertNotNull(customerServiceAgent, "客服 Agent Bean 应装配");
@@ -78,6 +81,8 @@ class CustomerWebIntegrationTest {
             "飞书 Channel 接入应装配（FeishuChannelConfigurer，默认关闭）");
         assertNotNull(feishuCallbackController,
             "飞书事件回调控制器应装配（inbound /api/channels/feishu/{id}/callback）");
+        assertNotNull(feishuWebhookNotifier,
+            "飞书出站推送器应装配（outbound /push/feishu）");
     }
 
     @Test
