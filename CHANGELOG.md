@@ -21,10 +21,16 @@
   org 维度（`RuntimeContext.put`）。
 - **安全沙箱执行**：`harness.sandbox.mode` = local（子进程）/ docker（容器，均 Harness 内置）；
   远端 k8s/e2b/daytona/agentrun 需 `agentscope-extensions-sandbox-*`。
-- **配套前端 `customer-web` 模块**：基于 `agentscope-admin-spring-boot-starter` 的客服 Agent 管理控制台
-  （Spring MVC，独立于 WebFlux 对话 API）；暴露 `@Bean Agent/Model/Toolkit/AgentStateStore` 由 admin
-  自动接管，提供会话/工具/权限/用量/子智能体管理端点 + Swagger UI，集成 AgentEvent 与 Permission HITL。
-  详见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md)。
+- **配套前端 `customer-web` 模块**（Spring MVC，独立于 WebFlux 对话 API；同一个 `customerServiceAgent` Bean
+  被四套官方能力接管）：
+  - **admin**（`agentscope-admin-spring-boot-starter`）：管理控制台——会话/工具/权限/用量/子智能体端点 + Swagger UI，
+    集成 AgentEvent 与 Permission HITL。
+  - **chat-completions-web**（`agentscope-chat-completions-web-starter`）：OpenAI 兼容 `POST /v1/chat/completions`
+    （同步 + SSE 流式）+ 内置聊天页 `/`。真机自测：自我介绍 / 订单查询(触发工具) / 流式 三轮真实对话通过。
+  - **AG-UI**（`agentscope-agui-spring-boot-starter`）：`POST /agui/run` 标准富事件协议（SSE 类型化事件）。
+    真机自测：事件流 `RUN_STARTED→TEXT_MESSAGE_*→RUN_FINISHED` + 真实回复通过。
+  - **Studio**（`agentscope-extensions-studio`）：轨迹推送到外部 Studio 应用做可视化（默认关，连接失败优雅降级）。
+  - 详见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md)。
 - **不可迁移**（框架移除）：TTS（`TTSHook`/`DashScopeRealtimeTTSModel`）、`PlanNotebook`、`Pipelines`、
   `SessionManager`/`StateModule` —— 详见 [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)。
 
