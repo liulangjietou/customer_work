@@ -71,16 +71,20 @@ public class CustomerWebAgentConfig {
     }
 
     /**
-     * 客服 Agent（暴露为 {@link Agent} Bean → 被 agentscope-admin 的 AgentRegistry 自动接管）。
+     * 客服 Agent（暴露为 {@link ReActAgent} Bean）。
+     *
+     * <p>同时被两套前端接管：① agentscope-admin 的 {@code AgentRegistry}（按 {@link Agent} 类型收集，
+     * 管控/观测）；② chat-completions-web 的 {@code ChatCompletionsController}（按 {@code ReActAgent}
+     * 类型注入，OpenAI 兼容对话）。因此声明为具体 {@link ReActAgent} 类型，二者皆可绑定。</p>
      *
      * <p>与 customer-work 主链路同栈：系统提示词 + 业务工具 + 状态存储 + 三态权限 + 可观测中间件。</p>
      */
     @Bean
-    public Agent customerServiceAgent(Model chatModel,
-                                      Toolkit customerToolkit,
-                                      AgentStateStore agentStateStore,
-                                      PermissionContextState permissionContextState,
-                                      CustomerWorkProperties properties) {
+    public ReActAgent customerServiceAgent(Model chatModel,
+                                           Toolkit customerToolkit,
+                                           AgentStateStore agentStateStore,
+                                           PermissionContextState permissionContextState,
+                                           CustomerWorkProperties properties) {
         ReActAgent agent = ReActAgent.builder()
             .name("CustomerServiceAgent")
             .sysPrompt(SYSTEM_PROMPT)

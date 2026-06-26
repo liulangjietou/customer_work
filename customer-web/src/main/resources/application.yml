@@ -12,7 +12,7 @@ spring:
     exclude:
       - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
 
-# AgentScope Admin 控制台
+# AgentScope Admin 控制台 + Chat Completions Web（OpenAI 兼容对话 API）
 agentscope:
   admin:
     enabled: true
@@ -20,6 +20,9 @@ agentscope:
     # 写操作保护令牌：调用 compact/abort/drain 等写端点需带 X-Admin-Token（留空=不校验，生产务必设置）
     write-token: ""
     compact-keep-last-messages: 10
+  chat-completions:
+    # 开启后暴露 POST /v1/chat/completions（OpenAI 兼容，同步 + SSE 流式），绑定客服 ReActAgent
+    enabled: true
 
 # 复用 customer-work 的客服 Agent 配置（仅取所需子集）
 customer-work:

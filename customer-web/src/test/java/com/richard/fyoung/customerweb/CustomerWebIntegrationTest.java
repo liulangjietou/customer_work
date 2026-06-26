@@ -6,6 +6,7 @@ import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.spring.boot.admin.registry.AgentDescriptor;
 import io.agentscope.spring.boot.admin.registry.AgentRegistry;
+import io.agentscope.spring.boot.chat.web.ChatCompletionsController;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -38,6 +39,9 @@ class CustomerWebIntegrationTest {
     @Autowired
     private AgentStateStore agentStateStore;
 
+    @Autowired
+    private ChatCompletionsController chatCompletionsController;
+
     @Test
     void contextLoads_andCoreBeansWired() {
         assertNotNull(customerServiceAgent, "客服 Agent Bean 应装配");
@@ -45,6 +49,8 @@ class CustomerWebIntegrationTest {
         assertNotNull(agentStateStore, "状态存储 Bean 应装配");
         assertTrue(customerToolkit.getToolNames().contains("queryOrder"),
             "工具集应含业务工具: " + customerToolkit.getToolNames());
+        assertNotNull(chatCompletionsController,
+            "Chat Completions Web 控制器应装配（/v1/chat/completions）");
     }
 
     @Test

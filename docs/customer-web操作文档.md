@@ -1,11 +1,13 @@
-# customer-web 操作文档（AgentScope 2.0 配套前端 · 客服 Agent 管理控制台）
+# customer-web 操作文档（AgentScope 2.0 配套前端 · 客服 Agent 控制台 + 对话入口）
 
-> 模块：`customer-web` ｜ 依赖：`agentscope-admin-spring-boot-starter:2.0.0-RC4` ｜ Web 栈：Spring **MVC** ｜ JDK 17
+> 模块：`customer-web` ｜ 依赖：`agentscope-admin-spring-boot-starter` + `agentscope-chat-completions-web-starter`（均 2.0.0-RC4）｜ Web 栈：Spring **MVC** ｜ JDK 17
 
-`customer-web` 是基于 AgentScope 官方 **`agentscope-admin`** 的开箱即用 Web 管理控制台。它复用 customer-work
-的客服 Agent 能力（模型层 / 工具 / 权限 / 中间件 / 状态存储），把 Agent 暴露为 Spring Bean 后由 admin **自动接管**，
-提供与 ReActAgent 协议对齐的管理界面：会话查看与导出、工具与权限巡检、用量统计、子智能体任务、优雅 drain 等，
-并与 **AgentEvent** 事件系统、**Permission** 三态权限的 HITL 流程无缝集成。开发者无需自行写 UI 即可体验已部署的 agent。
+`customer-web` 把 customer-work 的客服 Agent 同时接到两套官方前端能力（复用同一个 `ReActAgent` Bean）：
+
+1. **agentscope-admin（管理控制台）**：管控/观测已部署 agent——会话查看与导出、工具与权限巡检、用量统计、子智能体任务、
+   优雅 drain 等，集成 **AgentEvent** 与 **Permission** 三态权限的 HITL 流程。开发者无需写 UI 即可体验已部署的 agent。
+2. **agentscope-chat-completions-web（对话入口）**：把客服 Agent 包成 **OpenAI 兼容 API**（`POST /v1/chat/completions`，
+   同步 + SSE 流式），任意 OpenAI 客户端 / 聊天前端均可对话。本模块另附一个最简内置聊天页（`/`），开箱即可在浏览器对话。
 
 ---
 
@@ -72,7 +74,9 @@ java -jar customer-web/target/customer-web-1.0.0.jar
 
 | 入口 | 地址 | 说明 |
 | --- | --- | --- |
-| **Swagger UI（主页面）** | `http://localhost:8081/swagger-ui/index.html`<br/>（`/swagger-ui.html` 会 302 跳到此） | 浏览 / 在线调试全部管理 REST 端点 |
+| **内置聊天页（对话）** | `http://localhost:8081/` | 最简聊天页，直接在浏览器与客服 Agent 对话（调 `/v1/chat/completions`） |
+| **对话 API（OpenAI 兼容）** | `POST http://localhost:8081/v1/chat/completions` | 同步 + SSE 流式；任意 OpenAI 客户端/前端可接入；绑定客服 `ReActAgent` |
+| **Swagger UI（管理主页面）** | `http://localhost:8081/swagger-ui/index.html`<br/>（`/swagger-ui.html` 会 302 跳到此） | 浏览 / 在线调试全部管理 REST 端点 |
 | OpenAPI 文档 | `http://localhost:8081/v3/api-docs` | OpenAPI JSON |
 | 健康检查 | `http://localhost:8081/actuator/health` | 含 AgentStateStore 后端探测 |
 | Agent 清单 | `http://localhost:8081/actuator/agentscope-agents` | 已接管的 Agent（返回本项目 `CustomerServiceAgent`） |

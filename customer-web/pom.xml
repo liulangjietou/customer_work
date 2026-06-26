@@ -25,6 +25,14 @@
             <version>${agentscope.version}</version>
         </dependency>
 
+        <!-- AgentScope 2.0 Chat Completions Web：把客服 ReActAgent 包成 OpenAI 兼容 API
+             （POST /v1/chat/completions，同步 + SSE 流式），供任意 OpenAI 客户端 / 聊天前端对话。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-chat-completions-web-starter</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
         <!-- admin starter 把以下 web 依赖标为 optional（要求宿主自带 web 栈），需显式声明；
              版本由 spring-boot-starter-parent 3.2.5 统一管理，避免与 starter 的 webflux 版本错配。 -->
         <dependency>

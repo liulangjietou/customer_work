@@ -10,6 +10,8 @@ agentscope:
     enabled: true
     base-path: /admin
     write-token: ""
+  chat-completions:
+    enabled: true
 
 customer-work:
   model:
