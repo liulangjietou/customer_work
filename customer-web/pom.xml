@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.richardfyoung</groupId>
+        <artifactId>customer-work-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>customer-web</artifactId>
+    <packaging>jar</packaging>
+    <name>customer-web</name>
+    <description>AgentScope 2.0 配套前端：基于 agentscope-admin 的客服 Agent 管理控制台（Spring MVC）</description>
+
+    <dependencies>
+        <!-- AgentScope 2.0 官方 Admin Web 控制台（Spring MVC + Actuator 端点 + Swagger UI）。
+             与 ReActAgent 协议对齐：容器内 Agent / Toolkit / Model / AgentStateStore Bean 自动接管。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-admin-spring-boot-starter</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
+        <!-- admin starter 把以下 web 依赖标为 optional（要求宿主自带 web 栈），需显式声明；
+             版本由 spring-boot-starter-parent 3.2.5 统一管理，避免与 starter 的 webflux 版本错配。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
+        </dependency>
+
+        <!-- 复用本项目客服 Agent 能力（模型层/工具/权限/中间件/状态存储等叶子类）。
+             排除 springdoc-webflux-ui：admin 是 Spring MVC，避免与 starter 的 webflux Swagger 冲突。
+             starter 的 WebFlux 自动装配在本模块以 spring.autoconfigure.exclude 关闭，仅复用 web 无关类。 -->
+        <dependency>
+            <groupId>io.github.richardfyoung</groupId>
+            <artifactId>customer-work-spring-boot-starter</artifactId>
+            <version>1.0.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springdoc</groupId>
+                    <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- 测试 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

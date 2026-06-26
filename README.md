@@ -11,8 +11,10 @@
 
 > 🆕 **AgentScope 2.0 迁移（`rc2.0` 分支）**：本仓库 `rc2.0` 分支已将全部功能迁移到
 > `io.agentscope:agentscope-harness:2.0.0-RC4`，并补齐 2.0 新能力（Permission System / Plan Mode /
-> Compaction / Workspace-Sandbox / Subagent）。迁移映射、API 变更与**不可迁移能力说明**见
-> **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**。`main` 分支仍维持 1.0.12 稳定版。
+> Compaction / Workspace-Sandbox / Subagent / 五段 Middleware）。迁移映射、API 变更与**不可迁移能力说明**见
+> **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**；2.0 版深度技术文档见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
+> 配套前端（`agentscope-admin` 客服 Agent 管理控制台）为 `customer-web` 模块，见
+> **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。`main` 分支仍维持 1.0.12 稳定版。
 
 本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
 `main` 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。
@@ -22,7 +24,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **147 个全绿**（starter 137 + example 9 + downstream 1，其中 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
+- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **149 个全绿**（starter 137 + example 9 + downstream 1 + customer-web 2，其中 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---

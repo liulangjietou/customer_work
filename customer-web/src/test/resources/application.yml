@@ -1,0 +1,27 @@
+spring:
+  main:
+    web-application-type: servlet
+  autoconfigure:
+    exclude:
+      - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
+
+agentscope:
+  admin:
+    enabled: true
+    base-path: /admin
+    write-token: ""
+
+customer-work:
+  model:
+    provider: dashscope
+    name: qwen-plus
+    api-key: test-dummy-key   # 离线单测用：构造模型不联网，仅验证装配
+    stream: false
+  session:
+    mode: memory
+  agent:
+    max-iters: 5
+  harness:
+    permission:
+      enabled: true
+      mode: default

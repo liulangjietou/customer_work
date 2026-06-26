@@ -22,6 +22,7 @@
         <module>customer-work-spring-boot-starter</module>
         <module>customer-work-example</module>
         <module>customer-work-downstream-sample</module>
+        <module>customer-web</module>
     </modules>
 
     <properties>

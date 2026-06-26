@@ -21,6 +21,10 @@
   org 维度（`RuntimeContext.put`）。
 - **安全沙箱执行**：`harness.sandbox.mode` = local（子进程）/ docker（容器，均 Harness 内置）；
   远端 k8s/e2b/daytona/agentrun 需 `agentscope-extensions-sandbox-*`。
+- **配套前端 `customer-web` 模块**：基于 `agentscope-admin-spring-boot-starter` 的客服 Agent 管理控制台
+  （Spring MVC，独立于 WebFlux 对话 API）；暴露 `@Bean Agent/Model/Toolkit/AgentStateStore` 由 admin
+  自动接管，提供会话/工具/权限/用量/子智能体管理端点 + Swagger UI，集成 AgentEvent 与 Permission HITL。
+  详见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md)。
 - **不可迁移**（框架移除）：TTS（`TTSHook`/`DashScopeRealtimeTTSModel`）、`PlanNotebook`、`Pipelines`、
   `SessionManager`/`StateModule` —— 详见 [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)。
 

@@ -1,0 +1,57 @@
+server:
+  port: 8081   # 与 customer-work-example 的对话 API (8080) 分开
+
+spring:
+  application:
+    name: customer-web
+  main:
+    # 类路径同时存在 webflux(starter) 与 web(admin)；admin 是 Spring MVC，强制 servlet
+    web-application-type: servlet
+  autoconfigure:
+    # 关闭 starter 的 WebFlux 自动装配（WebFilter / 响应式 OpenApi 等），仅复用其 web 无关的 Agent 能力类
+    exclude:
+      - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
+
+# AgentScope Admin 控制台
+agentscope:
+  admin:
+    enabled: true
+    base-path: /admin
+    # 写操作保护令牌：调用 compact/abort/drain 等写端点需带 X-Admin-Token（留空=不校验，生产务必设置）
+    write-token: ""
+    compact-keep-last-messages: 10
+
+# 复用 customer-work 的客服 Agent 配置（仅取所需子集）
+customer-work:
+  model:
+    provider: dashscope
+    name: qwen-plus
+    # 生产用环境变量 DASHSCOPE_API_KEY 注入；缺省启动会报错并提示
+    api-key: ${DASHSCOPE_API_KEY:}
+    stream: false
+  session:
+    mode: memory          # 控制台默认进程内；生产可切 redis/mysql
+  agent:
+    max-iters: 10
+  interrupt:
+    pending-tool-recovery-enabled: true
+  # 权限系统：控制台演示开启 ask 规则（退款/转人工需人工确认）
+  harness:
+    permission:
+      enabled: true
+      mode: default
+
+# Actuator：暴露 agentscope 管理端点（控制台内部应用，全部暴露；生产请按需收敛 + 加鉴权）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.richard.fyoung: info
+    io.agentscope: info
