@@ -30,6 +30,8 @@
   - **AG-UI**（`agentscope-agui-spring-boot-starter`）：`POST /agui/run` 标准富事件协议（SSE 类型化事件）。
     真机自测：事件流 `RUN_STARTED→TEXT_MESSAGE_*→RUN_FINISHED` + 真实回复通过。
   - **Studio**（`agentscope-extensions-studio`）：轨迹推送到外部 Studio 应用做可视化（默认关，连接失败优雅降级）。
+  - **Channel·钉钉**（`agentscope-extensions-channel-dingtalk`）：`HarnessAgent.fromAgent(...).channel(DingTalkChannel)`
+    Stream 模式接入钉钉机器人，群内 @ 即可对话（默认关，需 appKey/appSecret/robotCode；连接失败优雅降级）。
   - 详见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md)。
 - **不可迁移**（框架移除）：TTS（`TTSHook`/`DashScopeRealtimeTTSModel`）、`PlanNotebook`、`Pipelines`、
   `SessionManager`/`StateModule` —— 详见 [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)。

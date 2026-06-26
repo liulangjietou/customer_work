@@ -12,10 +12,12 @@
    `RUN_STARTED / TEXT_MESSAGE_* / TOOL_CALL_* / RUN_FINISHED`），供 AG-UI/CopilotKit 生态前端渲染推理、工具调用、状态与 HITL。
 4. **Studio 观测台（可视化调试）**：复用 starter 的 `StudioConfigurer`（`StudioManager`），把 agent 运行轨迹推送到
    **外部 AgentScope Studio 应用**做可视化调试 / 回放。这是"看 agent 怎么跑"的研发/排障工具，**不是嵌入页面**。
+5. **Channel · 钉钉（IM 平台接入）**：`DingTalkChannelConfigurer` 把客服 Agent 包成 `HarnessAgent` 后挂上
+   `DingTalkChannel`（钉钉 **Stream 模式**，主动出站 WebSocket，无需公网回调）。用户在**钉钉群 @ 机器人**即可与客服 agent 对话。
 
-> 前三者是"前端入口"，Studio 是"可观测连接器"。同一个 `customerServiceAgent` Bean 被各自接管：admin 按 `Agent` 类型、
-> chat 按 `ReActAgent` 类型、AG-UI 按 **Spring bean 名**（`customerServiceAgent`，即 `agentscope.agui.default-agent-id`）；
-> Studio 则把该 agent 的运行轨迹经 WebSocket 推给外部 Studio。
+> 前三者是"前端入口"，Studio 是"可观测连接器"，Channel 是"IM 平台入口"。同一个 `customerServiceAgent` Bean 被各自接管：
+> admin 按 `Agent` 类型、chat 按 `ReActAgent` 类型、AG-UI 按 **Spring bean 名**（`customerServiceAgent`）、
+> Channel 经 `HarnessAgent.fromAgent(...).channel(...)` 的 gateway 路由；Studio 把运行轨迹经 WebSocket 推给外部 Studio。
 
 ---
 
@@ -93,6 +95,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar
 | 子智能体/巡检/排干/模型/命令 | `/actuator/agentscope-subagents`、`-doctor`、`-drain`、`-models`、`-commands` | 子智能体、健康巡检、优雅 drain、模型、命令 |
 | 会话管理（REST） | `GET /admin/sessions`、`/admin/sessions/{id}/messages`、`/state`、`/plan`、`/tasks`、`/subagent-tasks`；动作 `/admin/sessions/{id}:compact` `:abort` `:undo` `:redo` `:export` `:enter-plan-mode` `:exit-plan-mode` | `SessionAdminController`/`SubagentTaskController`，前缀由 `agentscope.admin.base-path`（默认 `/admin`）控制 |
 | **Studio 观测台（外部应用）** | 你单独运行的 Studio 实例（如 `ws://localhost:8501`） | 开 `customer-work.observability.studio.enabled` 并配 `url` 后，本应用把 agent 轨迹推送到该 Studio 做可视化；**不是本应用的页面** |
+| **Channel · 钉钉（IM 平台）** | 钉钉客户端（群 @ 机器人） | 开 `customer-web.channel.dingtalk.enabled` 并配 `app-key/app-secret/robot-code` 后，本应用 Stream 模式连钉钉；在群里 @ 机器人即可对话 |
 
 > 实测：10 个 `agentscope-*` actuator 端点均 200；`/actuator/agentscope-agents` 返回
 > `{"name":"CustomerServiceAgent","type":"ReActAgent","modelName":"qwen-plus",...}`。
@@ -133,6 +136,13 @@ customer-work:                           # 复用 customer-work 的客服 Agent 
       url: ""                            # 例如 ws://localhost:8501（以你的 Studio 实例为准）
       project: customer-web
       run-name: customer-web-run
+customer-web:
+  channel:
+    dingtalk:                            # 钉钉 Channel（Stream 模式，默认关，需钉钉应用凭证）
+      enabled: false
+      app-key: ${DINGTALK_APP_KEY:}
+      app-secret: ${DINGTALK_APP_SECRET:}
+      robot-code: ${DINGTALK_ROBOT_CODE:}
 ```
 
 > **写操作保护**：`agentscope.admin.write-token` 非空时，对 compact / abort / drain 等写端点需在请求头带 `X-Admin-Token`。
@@ -140,8 +150,13 @@ customer-work:                           # 复用 customer-work 的客服 Agent 
 >
 > **Studio 观测台开启步骤**：① 单独运行一个 AgentScope Studio 实例；② 设 `customer-work.observability.studio.enabled=true`
 > 且 `url` 指向它；③ 重启本应用，agent 运行轨迹即推送到 Studio 可视化。**未配置/Studio 不可达时连接失败被兜底，不影响应用启动**
-> （实测：开启但无 Studio 时日志输出 `[Studio] 连接失败（忽略）`，应用照常启动、三套前端不受影响）。`StudioManager` 为 2.0
+> （实测：开启但无 Studio 时日志输出 `[Studio] 连接失败（忽略）`，应用照常启动、其它前端不受影响）。`StudioManager` 为 2.0
 > deprecated-for-removal API，后续版本可能调整。
+>
+> **钉钉 Channel 开启步骤**：① 在[钉钉开放平台](https://open-dev.dingtalk.com)创建企业内部机器人应用，取 `AppKey/AppSecret/RobotCode`，
+> 并开启 **Stream 模式**；② 设 `customer-web.channel.dingtalk.enabled=true` 并配齐三项凭证（建议用环境变量
+> `DINGTALK_APP_KEY/SECRET/ROBOT_CODE` 注入）；③ 重启本应用，在群里 @ 机器人即可与客服 agent 对话。
+> **凭证缺失/连接失败被兜底，不影响应用启动**（实测：开启但用假凭证时应用照常启动、其它前端仍 200，真实群对话需有效凭证 + 群内配置机器人）。
 
 ---
 

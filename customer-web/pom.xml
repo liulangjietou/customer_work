@@ -48,6 +48,14 @@
             <artifactId>agentscope-extensions-studio</artifactId>
         </dependency>
 
+        <!-- AgentScope 2.0 Channel · 钉钉：把客服 Agent 接入钉钉机器人（Stream 模式，无需公网回调）。
+             用户在钉钉群 @ 机器人即可与 agent 对话。需钉钉应用凭证 appKey/appSecret/robotCode。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-channel-dingtalk</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
         <!-- admin starter 把以下 web 依赖标为 optional（要求宿主自带 web 栈），需显式声明；
              版本由 spring-boot-starter-parent 3.2.5 统一管理，避免与 starter 的 webflux 版本错配。 -->
         <dependency>

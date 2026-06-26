@@ -11,8 +11,9 @@
 > Plan Mode, Compaction, Workspace/Sandbox, Subagent, and the 5-stage Middleware that replaces v1 hooks).
 > See **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)** for the mapping, API changes and non-migratable
 > features. The companion frontends live in the **`customer-web`** module, wiring the customer-service agent to
-> four official surfaces — **admin** console, **chat-completions-web** (OpenAI-compatible `/v1/chat/completions`
-> + a built-in chat page), **AG-UI** (`/agui/run` rich event protocol), and **Studio** observability — see
+> five official surfaces — **admin** console, **chat-completions-web** (OpenAI-compatible `/v1/chat/completions`
+> + a built-in chat page), **AG-UI** (`/agui/run` rich event protocol), **Studio** observability, and
+> **Channel · DingTalk** (stream-mode bot integration) — see
 > **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**. The `main` branch stays on the stable 1.0.12 release.
 
 A production-grade reference implementation of an AI customer-service agent. The `main` branch is built on

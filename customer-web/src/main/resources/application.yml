@@ -59,6 +59,15 @@ customer-work:
       project: customer-web
       run-name: customer-web-run
 
+# Channel 接入：把客服 Agent 接到 IM 平台。当前支持钉钉（Stream 模式，无需公网回调）。
+customer-web:
+  channel:
+    dingtalk:
+      enabled: false               # 启用需在钉钉开放平台建机器人应用并配齐下面凭证
+      app-key: ${DINGTALK_APP_KEY:}
+      app-secret: ${DINGTALK_APP_SECRET:}
+      robot-code: ${DINGTALK_ROBOT_CODE:}
+
 # Actuator：暴露 agentscope 管理端点（控制台内部应用，全部暴露；生产请按需收敛 + 加鉴权）
 management:
   endpoints:

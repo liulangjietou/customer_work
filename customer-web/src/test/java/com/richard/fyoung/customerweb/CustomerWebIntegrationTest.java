@@ -50,6 +50,9 @@ class CustomerWebIntegrationTest {
     @Autowired
     private StudioConfigurer studioConfigurer;
 
+    @Autowired
+    private DingTalkChannelConfigurer dingTalkChannelConfigurer;
+
     @Test
     void contextLoads_andCoreBeansWired() {
         assertNotNull(customerServiceAgent, "客服 Agent Bean 应装配");
@@ -63,6 +66,8 @@ class CustomerWebIntegrationTest {
             "AG-UI MVC 控制器应装配（/agui/run）");
         assertNotNull(studioConfigurer,
             "Studio 观测台接入应装配（StudioConfigurer，默认关闭）");
+        assertNotNull(dingTalkChannelConfigurer,
+            "钉钉 Channel 接入应装配（DingTalkChannelConfigurer，默认关闭）");
     }
 
     @Test

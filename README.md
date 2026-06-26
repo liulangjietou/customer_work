@@ -13,9 +13,10 @@
 > `io.agentscope:agentscope-harness:2.0.0-RC4`，并补齐 2.0 新能力（Permission System / Plan Mode /
 > Compaction / Workspace-Sandbox / Subagent / 五段 Middleware）。迁移映射、API 变更与**不可迁移能力说明**见
 > **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**；2.0 版深度技术文档见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
-> 配套前端为 `customer-web` 模块，把客服 Agent 同时接到**四套官方能力**：**admin** 管理控制台、
+> 配套前端为 `customer-web` 模块，把客服 Agent 同时接到**五套官方能力**：**admin** 管理控制台、
 > **chat-completions-web**（OpenAI 兼容 `/v1/chat/completions` + 内置聊天页）、**AG-UI**（`/agui/run` 富事件协议）、
-> **Studio** 观测台，见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。`main` 分支仍维持 1.0.12 稳定版。
+> **Studio** 观测台、**Channel·钉钉**（Stream 模式接入钉钉机器人），见
+> **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。`main` 分支仍维持 1.0.12 稳定版。
 
 本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
 `main` 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。
