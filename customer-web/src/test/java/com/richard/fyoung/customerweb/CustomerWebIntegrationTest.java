@@ -53,6 +53,12 @@ class CustomerWebIntegrationTest {
     @Autowired
     private DingTalkChannelConfigurer dingTalkChannelConfigurer;
 
+    @Autowired
+    private FeishuChannelConfigurer feishuChannelConfigurer;
+
+    @Autowired
+    private io.agentscope.extensions.channel.feishu.FeishuCallbackController feishuCallbackController;
+
     @Test
     void contextLoads_andCoreBeansWired() {
         assertNotNull(customerServiceAgent, "客服 Agent Bean 应装配");
@@ -68,6 +74,10 @@ class CustomerWebIntegrationTest {
             "Studio 观测台接入应装配（StudioConfigurer，默认关闭）");
         assertNotNull(dingTalkChannelConfigurer,
             "钉钉 Channel 接入应装配（DingTalkChannelConfigurer，默认关闭）");
+        assertNotNull(feishuChannelConfigurer,
+            "飞书 Channel 接入应装配（FeishuChannelConfigurer，默认关闭）");
+        assertNotNull(feishuCallbackController,
+            "飞书事件回调控制器应装配（inbound /api/channels/feishu/{id}/callback）");
     }
 
     @Test

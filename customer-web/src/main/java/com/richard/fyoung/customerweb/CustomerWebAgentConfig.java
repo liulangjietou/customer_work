@@ -12,6 +12,7 @@ import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockOrderBackend;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
+import io.agentscope.extensions.channel.feishu.FeishuCallbackController;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.state.AgentStateStore;
@@ -72,6 +73,17 @@ public class CustomerWebAgentConfig {
     @Bean
     public StudioConfigurer studioConfigurer(CustomerWorkProperties properties) {
         return new StudioConfigurer(properties);
+    }
+
+    /**
+     * 飞书事件回调控制器（inbound 入口 {@code POST /api/channels/feishu/{channelId}/callback}）。
+     *
+     * <p>该 {@code @RestController} 在 extension 包内，不被本模块组件扫描覆盖，故显式注册为 Bean 让端点生效。
+     * 飞书把用户消息事件推到此端点，控制器经 {@code FeishuChannelRegistry} 找到对应 channel 派发给 agent。</p>
+     */
+    @Bean
+    public FeishuCallbackController feishuCallbackController() {
+        return new FeishuCallbackController();
     }
 
     /** 业务工具集（复用 ToolRegistrar + 默认 Mock 后端；生产可换真实后端）。 */

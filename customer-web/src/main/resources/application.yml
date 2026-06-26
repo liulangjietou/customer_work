@@ -67,6 +67,14 @@ customer-web:
       app-key: ${DINGTALK_APP_KEY:}
       app-secret: ${DINGTALK_APP_SECRET:}
       robot-code: ${DINGTALK_ROBOT_CODE:}
+    feishu:
+      # 飞书 inbound：飞书事件订阅指向公网 https://<host>/api/channels/feishu/{channel-id}/callback
+      enabled: false
+      channel-id: feishu
+      app-id: ${FEISHU_APP_ID:}
+      app-secret: ${FEISHU_APP_SECRET:}
+      encrypt-key: ${FEISHU_ENCRYPT_KEY:}            # 加密回调才需要，否则留空
+      verification-token: ${FEISHU_VERIFICATION_TOKEN:}
 
 # Actuator：暴露 agentscope 管理端点（控制台内部应用，全部暴露；生产请按需收敛 + 加鉴权）
 management:

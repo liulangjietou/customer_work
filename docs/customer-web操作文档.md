@@ -12,8 +12,12 @@
    `RUN_STARTED / TEXT_MESSAGE_* / TOOL_CALL_* / RUN_FINISHED`），供 AG-UI/CopilotKit 生态前端渲染推理、工具调用、状态与 HITL。
 4. **Studio 观测台（可视化调试）**：复用 starter 的 `StudioConfigurer`（`StudioManager`），把 agent 运行轨迹推送到
    **外部 AgentScope Studio 应用**做可视化调试 / 回放。这是"看 agent 怎么跑"的研发/排障工具，**不是嵌入页面**。
-5. **Channel · 钉钉（IM 平台接入）**：`DingTalkChannelConfigurer` 把客服 Agent 包成 `HarnessAgent` 后挂上
-   `DingTalkChannel`（钉钉 **Stream 模式**，主动出站 WebSocket，无需公网回调）。用户在**钉钉群 @ 机器人**即可与客服 agent 对话。
+5. **Channel · 钉钉 / 飞书（IM 平台接入）**：把客服 Agent 包成 `HarnessAgent` 后挂上对应 `Channel`，用户在 IM 平台
+   与客服 agent 对话。
+   - **钉钉**（`DingTalkChannelConfigurer`）：钉钉 **Stream 模式**（出站 WebSocket，无需公网回调），群内 @ 机器人对话。
+   - **飞书**（`FeishuChannelConfigurer` + `FeishuCallbackController`）：**应用 + 事件回调**——inbound 飞书把用户消息
+     POST 到 `/api/channels/feishu/{channelId}/callback`，经 channel 派发给 agent，回复经飞书 API 下发。需飞书应用
+     事件订阅指向**公网可达**的该回调地址。
 
 > 前三者是"前端入口"，Studio 是"可观测连接器"，Channel 是"IM 平台入口"。同一个 `customerServiceAgent` Bean 被各自接管：
 > admin 按 `Agent` 类型、chat 按 `ReActAgent` 类型、AG-UI 按 **Spring bean 名**（`customerServiceAgent`）、
@@ -96,6 +100,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar
 | 会话管理（REST） | `GET /admin/sessions`、`/admin/sessions/{id}/messages`、`/state`、`/plan`、`/tasks`、`/subagent-tasks`；动作 `/admin/sessions/{id}:compact` `:abort` `:undo` `:redo` `:export` `:enter-plan-mode` `:exit-plan-mode` | `SessionAdminController`/`SubagentTaskController`，前缀由 `agentscope.admin.base-path`（默认 `/admin`）控制 |
 | **Studio 观测台（外部应用）** | 你单独运行的 Studio 实例（如 `ws://localhost:8501`） | 开 `customer-work.observability.studio.enabled` 并配 `url` 后，本应用把 agent 轨迹推送到该 Studio 做可视化；**不是本应用的页面** |
 | **Channel · 钉钉（IM 平台）** | 钉钉客户端（群 @ 机器人） | 开 `customer-web.channel.dingtalk.enabled` 并配 `app-key/app-secret/robot-code` 后，本应用 Stream 模式连钉钉；在群里 @ 机器人即可对话 |
+| **Channel · 飞书 inbound（事件回调）** | `POST /api/channels/feishu/{channelId}/callback` | 开 `customer-web.channel.feishu.enabled` 并配 `app-id/app-secret(+verification-token)` 后映射；飞书事件订阅填**公网**此地址，url_verification 握手通过即接收用户消息 |
 
 > 实测：10 个 `agentscope-*` actuator 端点均 200；`/actuator/agentscope-agents` 返回
 > `{"name":"CustomerServiceAgent","type":"ReActAgent","modelName":"qwen-plus",...}`。
@@ -143,6 +148,13 @@ customer-web:
       app-key: ${DINGTALK_APP_KEY:}
       app-secret: ${DINGTALK_APP_SECRET:}
       robot-code: ${DINGTALK_ROBOT_CODE:}
+    feishu:                              # 飞书 Channel（应用+事件回调，默认关）
+      enabled: false
+      channel-id: feishu
+      app-id: ${FEISHU_APP_ID:}
+      app-secret: ${FEISHU_APP_SECRET:}
+      encrypt-key: ${FEISHU_ENCRYPT_KEY:}            # 加密回调才需要
+      verification-token: ${FEISHU_VERIFICATION_TOKEN:}
 ```
 
 > **写操作保护**：`agentscope.admin.write-token` 非空时，对 compact / abort / drain 等写端点需在请求头带 `X-Admin-Token`。
@@ -157,6 +169,13 @@ customer-web:
 > 并开启 **Stream 模式**；② 设 `customer-web.channel.dingtalk.enabled=true` 并配齐三项凭证（建议用环境变量
 > `DINGTALK_APP_KEY/SECRET/ROBOT_CODE` 注入）；③ 重启本应用，在群里 @ 机器人即可与客服 agent 对话。
 > **凭证缺失/连接失败被兜底，不影响应用启动**（实测：开启但用假凭证时应用照常启动、其它前端仍 200，真实群对话需有效凭证 + 群内配置机器人）。
+>
+> **飞书 Channel · inbound（收到用户消息）开启步骤**：① 在[飞书开放平台](https://open.feishu.cn)创建企业自建应用，取 `App ID/App Secret`，
+> 配置**事件订阅**，回调地址填 `https://<你的公网域名>/api/channels/feishu/{channel-id}/callback`（如本机调试用内网穿透），
+> 并把 `Verification Token`（如开加密再加 `Encrypt Key`）填入配置；② 设 `customer-web.channel.feishu.enabled=true` + 上述凭证；
+> ③ 重启本应用，飞书会先对回调地址做 **url_verification 握手**（通过即接收用户消息，派发给客服 agent）。
+> **实测**：开启后回调端点 `/api/channels/feishu/{id}/callback` 已映射，url_verification 握手正确回显 challenge（正确 token→200，错误 token→401）；
+> 完整真实消息流转需飞书应用事件订阅指向**公网可达**的该回调地址。
 
 ---
 
