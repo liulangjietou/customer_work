@@ -90,6 +90,7 @@
 | **子智能体 Subagent** | `HarnessAgentFactory` | 关 | `harness.subagent.enabled=true` |
 | 中断恢复 | `enablePendingToolRecovery` | 开 | `interrupt.pending-tool-recovery-enabled` |
 | Human-in-the-Loop | `HumanApprovalMiddleware` + Permission ask | 开 | `human-approval.enabled` + `POST /session/{id}/interrupt` |
+| **人工审批闭环（退款放行）** | `PendingApprovalService` + `ApprovalController` | 开 | `GET /approvals` · `POST /approvals/{id}/approve\|deny` |
 | 可观测 + 指标 | `ObservabilityMiddleware` + Micrometer | 开 | `/actuator/prometheus` |
 | 原生 Tracing | `TracingConfig` | 关 | `observability.tracing-enabled=true` |
 | 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
@@ -136,6 +137,9 @@
 | POST | `/api/customer/consult` | 多 Agent 协作咨询（多专家聚合） |
 | POST | `/api/customer/agui` | AG-UI 标准事件流（SSE） |
 | POST | `/api/customer/session/{id}/interrupt` | 安全中断会话 |
+| GET | `/api/customer/approvals` | 人工审批单列表（`?status=pending` 过滤） |
+| POST | `/api/customer/approvals/{id}/approve` | 放行审批单（人工放行退款打款） |
+| POST | `/api/customer/approvals/{id}/deny` | 拒绝审批单 |
 | DELETE | `/api/customer/session/{id}` | 结束并清理会话 |
 | GET | `/api/customer/health` | 健康检查 |
 | GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
@@ -350,6 +354,20 @@ customer-work:
   interrupt: { pending-tool-recovery-enabled: true }                  # 中断后无缝恢复待执行工具
 ```
 测试：`MiddlewareBehaviorTest`（humanApproval）、`CustomerServiceServiceTest#interrupt_*`。
+
+**人工审批闭环（退款放行）**：退款工具不直接打款，而是经 `PendingApprovalService` 生成待审单（附审批单号），
+人工坐席经 REST 端点放行后才执行——形成 **挂起 → 人工决策 → 生效** 的闭环。
+```bash
+curl localhost:8080/api/customer/approvals?status=pending          # 列出待审单
+curl -X POST 'localhost:8080/api/customer/approvals/AP-xxxx/approve?operator=alice'   # 放行
+curl -X POST 'localhost:8080/api/customer/approvals/AP-xxxx/deny?operator=bob&note=金额存疑'  # 拒绝
+```
+> **与框架 Permission 的关系（互补双层）**：Permission ASK（`harness.permission.ask-tools`）把关"是否允许
+> Agent 调用退款工具"；本审批闭环把关"工单生成后是否真打款"。之所以落在应用层而非绑定框架运行时确认
+> （`RequireUserConfirmEvent` / `ReActAgent.CONFIRM_SINK_KEY`），是因为后者在 2.0-RC4 未暴露 Web 友好的公共
+> 回填 API，且"退款先生成待确认工单、人工放行后执行"本就是更稳健的领域建模。审批单状态机终态不可变，
+> approve/deny 幂等（重复决策返回 409）。
+> 测试：`PendingApprovalServiceTest`（状态机 + 回调 + fast-fail）、`AfterSalesToolsApprovalTest`（退款登记待审单）。
 
 ### 6.12 模型层（多厂商 + 私有化兜底 + 高级参数）
 

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.tool;
 
+import com.richard.fyoung.customerwork.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
 import com.richard.fyoung.customerwork.tool.backend.OrderBackend;
@@ -24,13 +25,16 @@ public class ToolRegistrar {
     private final OrderBackend orderBackend;
     private final AfterSalesBackend afterSalesBackend;
     private final KnowledgeBackend knowledgeBackend;
+    private final PendingApprovalService approvalService;
 
     public ToolRegistrar(OrderBackend orderBackend,
                          AfterSalesBackend afterSalesBackend,
-                         KnowledgeBackend knowledgeBackend) {
+                         KnowledgeBackend knowledgeBackend,
+                         PendingApprovalService approvalService) {
         this.orderBackend = orderBackend;
         this.afterSalesBackend = afterSalesBackend;
         this.knowledgeBackend = knowledgeBackend;
+        this.approvalService = approvalService;
     }
 
     /** 创建四个业务域工具组并注册对应工具。 */
@@ -42,7 +46,7 @@ public class ToolRegistrar {
 
         toolkit.registration().tool(new KnowledgeBaseTools(knowledgeBackend)).group(GROUP_KNOWLEDGE).apply();
         toolkit.registration().tool(new OrderTools(orderBackend)).group(GROUP_ORDER).apply();
-        toolkit.registration().tool(new AfterSalesTools(afterSalesBackend)).group(GROUP_AFTER_SALES).apply();
+        toolkit.registration().tool(new AfterSalesTools(afterSalesBackend, approvalService)).group(GROUP_AFTER_SALES).apply();
         toolkit.registration().tool(new HumanHandoffTools()).group(GROUP_HUMAN).apply();
     }
 }

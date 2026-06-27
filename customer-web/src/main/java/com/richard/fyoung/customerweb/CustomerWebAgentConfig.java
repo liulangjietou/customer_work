@@ -100,7 +100,8 @@ public class CustomerWebAgentConfig {
     @Bean
     public Toolkit customerToolkit() {
         Toolkit toolkit = new Toolkit();
-        new ToolRegistrar(new MockOrderBackend(), new MockAfterSalesBackend(), new MockKnowledgeBackend())
+        new ToolRegistrar(new MockOrderBackend(), new MockAfterSalesBackend(), new MockKnowledgeBackend(),
+            new com.richard.fyoung.customerwork.approval.PendingApprovalService())
             .registerBusinessTools(toolkit);
         return toolkit;
     }

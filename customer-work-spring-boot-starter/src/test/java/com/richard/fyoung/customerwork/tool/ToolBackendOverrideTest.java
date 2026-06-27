@@ -41,7 +41,8 @@ class ToolBackendOverrideTest {
         new ToolRegistrar(
             new CustomOrderBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend(),
-            new com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend())
+            new com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend(),
+            new com.richard.fyoung.customerwork.approval.PendingApprovalService())
             .registerBusinessTools(toolkit);
 
         Set<String> names = toolkit.getToolNames();

@@ -21,6 +21,11 @@
 - **并行编排可观测埋点**：`MultiAgentOrchestrator` 注入可选 `MeterRegistry`，暴露 `customerwork.mas.route{intent}`、
   `customerwork.mas.fanout.experts`、`customerwork.mas.expert{expert,outcome}`、`customerwork.mas.reduce{triggered}`
   到 `/actuator/prometheus`（无 Micrometer 时 no-op）；新增指标记录单测。
+- **人工审批闭环（Human-in-the-Loop）**：新增 `approval` 包（`PendingApprovalService` + `ApprovalRequest` 充血状态机
+  + `ApprovalType`/`ApprovalStatus`）与 `ApprovalController`（`GET /approvals`、`POST /approvals/{id}/approve|deny`）；
+  退款工具 `submitRefund` 登记待审单（附审批单号），人工放行后经回调执行打款——**挂起 → 人工决策 → 生效** 闭环。
+  与框架 Permission ASK（工具调用层闸门）互补；之所以落应用层而非绑定 `ReActAgent.CONFIRM_SINK_KEY`，因后者
+  在 RC4 未暴露 Web 友好的公共回填 API。状态机终态不可变、重复决策 409、not-found 404。新增 7 个单测。
 - **新增 2.0 能力**：Permission System（`PermissionConfig` 注入主 Agent）、Plan Mode、Compaction、
   Workspace/Sandbox、Subagent（统一经 `HarnessAgent.Builder.fromAgent(...)` 装配，见 `HarnessAgentFactory`）。
 - **Middleware 五段**：8 个业务 Hook 全部迁移到 `MiddlewareBase`（ToolGuard/DynamicOptions/Masking/
