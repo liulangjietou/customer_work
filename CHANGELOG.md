@@ -15,6 +15,12 @@
   `subscribeOn(Schedulers.boundedElastic())` 挪到独立线程（即便底层模型调用阻塞也能并行），叠加
   `flatMap` 并发限流（`multi-agent.max-concurrency`）、单专家 `timeout`（`multi-agent.timeout-seconds`）
   与 `onErrorResume` 错误隔离；新增确定性单测断言运行期峰值并发度（≥2 真并发 / =1 限流退化 / 错误隔离）。
+- **多 Agent 智能路由 + reduce 归纳**：fanout 链路升级为 **路由 → 并行 → 归纳**——`routing-enabled` 用分诊器
+  （`IntentResult`）只把问题发给相关专家（`expertsForIntent` 纯映射，other/失败广播全部）；`reduce-enabled` 用
+  归纳器把多专家结论二次合成统一口径回复（单专家/关闭退化为拼接）。新增意图映射 / 退化路径单测。
+- **并行编排可观测埋点**：`MultiAgentOrchestrator` 注入可选 `MeterRegistry`，暴露 `customerwork.mas.route{intent}`、
+  `customerwork.mas.fanout.experts`、`customerwork.mas.expert{expert,outcome}`、`customerwork.mas.reduce{triggered}`
+  到 `/actuator/prometheus`（无 Micrometer 时 no-op）；新增指标记录单测。
 - **新增 2.0 能力**：Permission System（`PermissionConfig` 注入主 Agent）、Plan Mode、Compaction、
   Workspace/Sandbox、Subagent（统一经 `HarnessAgent.Builder.fromAgent(...)` 装配，见 `HarnessAgentFactory`）。
 - **Middleware 五段**：8 个业务 Hook 全部迁移到 `MiddlewareBase`（ToolGuard/DynamicOptions/Masking/

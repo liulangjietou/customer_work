@@ -421,6 +421,10 @@ public class CustomerWorkProperties {
         private int maxConcurrency = 8;
         /** 单个专家调用超时（秒）：超时按错误隔离，不拖垮整体并行。 */
         private long timeoutSeconds = 60;
+        /** 智能路由：先用分诊器判断意图，只把问题发给相关专家（省 token / 更准）；关则广播全部专家。 */
+        private boolean routingEnabled = true;
+        /** reduce 归纳：fanout 后用归纳器把多专家结论二次合成统一口径回复；关则直接拼接各专家结论。 */
+        private boolean reduceEnabled = true;
     }
 
     /** 中断恢复配置。 */

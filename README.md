@@ -215,20 +215,30 @@ customer-work.multi-agent:
   mode: fanout            # fanout 真并行聚合 | sequential 串行细化
   max-concurrency: 8      # 并行模式同时在跑的专家数上限
   timeout-seconds: 60     # 单专家超时；超时/异常被隔离成占位结果，不拖垮整体
+  routing-enabled: true   # 智能路由：先分诊只发相关专家（省 token / 更准）；关则广播全部
+  reduce-enabled: true    # reduce 归纳：多专家结论二次合成统一口径回复；关则直接拼接
 ```
 ```bash
 curl -X POST localhost:8080/api/customer/consult \
   -H "Content-Type: application/json" -d '{"message":"订单 20260613001 想退款，能开发票吗？"}'
 ```
-> 2.0 用 **Reactor 直接编排**取代 1.x `Pipelines`：
+> 2.0 用 **Reactor 直接编排**取代 1.x `Pipelines`，fanout 链路为 **路由 → 并行 → 归纳**：
+> - **智能路由（routing）**——先用轻量分诊器判断意图（`IntentResult`），只把问题发给**相关专家**
+>   （order→订单 / refund·complaint→售后 / consult→知识库 / other→全部）；分诊失败或 other 广播全部，保证不漏。
 > - **fanout（真并行）**——每个 `agent.call` 经 `subscribeOn(Schedulers.boundedElastic())` 挪到独立线程，
 >   即便底层模型调用是阻塞式也能**真并发**（不是"并行写法、串行执行"）；`flatMap(..., maxConcurrency)` 限流，
->   单专家 `timeout` + `onErrorResume` 错误隔离，最后聚合各专家结论。
+>   单专家 `timeout` + `onErrorResume` 错误隔离。
+> - **reduce 归纳（reduce）**——用归纳器把多专家结论二次合成**统一口径**回复（去重、消解冲突），而非简单拼接；
+>   单专家或关闭时退化为拼接。
 > - **sequential（串行）**——`Mono` 链式，问题依次流过各专家逐步细化。
+>
+> **可观测**（Micrometer → `/actuator/prometheus`）：`customerwork.mas.route{intent}`（意图分布）、
+> `customerwork.mas.fanout.experts`（每次实际并行专家数）、`customerwork.mas.expert{expert,outcome}`（各专家耗时/成败）、
+> `customerwork.mas.reduce{triggered}`（归纳触发数）。
 >
 > 注：HarnessAgent 的 **Subagent**（`harness.subagent.enabled`）由主智能体在 ReAct 循环里自行逐个 spawn，
 > 本质串行、不可编程控制；需要"主 + 子智能体"**可控并行**时走本编排器（它构造的正是注册为 subagent 的那批专家）。
-> 测试：`MultiAgentOrchestratorTest`（专家装配 + 聚合 + **真并发度≥2** + 限流退化为 1 + 错误隔离，离线确定性断言）。
+> 测试：`MultiAgentOrchestratorTest`（专家装配 + 聚合 + **真并发度≥2** + 限流退化为 1 + 错误隔离 + 路由映射 + reduce 退化 + 指标埋点，离线确定性断言）。
 >
 > **备注（测试边界）**：单测证明的是"运行期峰值并发度 ≥ 2"，即并发是真实发生的；但**端到端三专家同时打真实大模型的墙钟加速比**，需配置真实 `DASHSCOPE_API_KEY` 跑 `POST /consult` 现场观测——离线测试覆盖的是**并发度**，而非真实网络延迟下的**加速倍数**。
 
