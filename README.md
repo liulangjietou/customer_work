@@ -216,7 +216,8 @@ customer-work.multi-agent: { enabled: true, mode: fanout }   # fanout 并行聚�
 curl -X POST localhost:8080/api/customer/consult \
   -H "Content-Type: application/json" -d '{"message":"订单 20260613001 想退款，能开发票吗？"}'
 ```
-测试：`MultiAgentOrchestratorTest`（用离线 `EchoAgent` 验证 Pipeline 编排与聚合）。
+> 2.0 用 **Reactor 直接编排**（`Flux.flatMap` 并行 / `Mono` 链式串行，取代 1.x `Pipelines`）；HarnessAgent 亦可用 **Subagent** 做子智能体编排（`harness.subagent.enabled`）。
+> 测试：`MultiAgentOrchestratorTest`（专家装配 + `aggregate` 聚合，离线）。
 
 ### 6.3 AG-UI 标准协议
 
@@ -226,7 +227,10 @@ curl -N -X POST localhost:8080/api/customer/agui \
 ```
 返回 AG-UI 编码事件流，兼容 AG-UI 前端直接对接。测试：`AguiServiceTest`。
 
-### 6.4 会话持久化（memory / json / redis / mysql）
+### 6.4 会话 / 状态持久化（memory / json / redis / mysql）
+
+> 2.0：Agent 无状态，状态按 `(userId, sessionId)` 由框架自动持久化到 **`AgentStateStore`**（取代 1.x `Session`）；
+> `session.mode` 选择后端：`InMemoryAgentStateStore` / `JsonFileAgentStateStore` / `JedisAgentStateStore` / `MysqlAgentStateStore`。
 
 ```yaml
 customer-work:
@@ -235,8 +239,8 @@ customer-work:
     redis: { host: localhost, port: 6379, password: "123456", key-prefix: customer-work }
     mysql: { host: localhost, port: 3306, database: agent_scope_customer_work, username: root, password: root, auto-create: true }
 ```
-- MySQL 表 `agentscope_sessions` 自动建；手工脚本 `mysql/schema.sql`。
-- 测试：`SessionConfigTest`（离线）、`RedisSessionPersistenceTest` / `MysqlSessionPersistenceTest`（服务可达才真实跑，不可达自动跳过）。
+- MySQL 模式由 `MysqlAgentStateStore` 自动建表；`Msg` 在 2.0 实现 `State`，可直接作为状态值持久化。
+- 测试：`SessionConfigTest`（离线，验证 `buildStateStore` 选型）、`RedisSessionPersistenceTest` / `MysqlSessionPersistenceTest`（服务可达才真实跑，不可达自动跳过）。
 
 ### 6.5 长期记忆（多租户，可切后端）
 
@@ -361,6 +365,7 @@ customer-work.model:
   token-warn-threshold: 4000                                    # 单次请求 token 超阈值打 WARN（0=关闭）
 ```
 - `ResilientChatModel` 包装模型调用做退避重试（可与 `FallbackChatModel` 叠加：先重试、仍失败再兜底）。
+- > 2.0 亦内置 `ReActAgent.Builder.maxRetries(int)` / `.fallbackModel(...)`，与自研装饰器二选一；本项目保留自研版以演示装饰器组合。
 - 测试：`ResilientChatModelTest`。
 - 效果评估 / 回归：见 [docs/EVAL.md](docs/EVAL.md)（提示词版本化 + 评测集 + 数据飞轮）。
 
@@ -386,14 +391,17 @@ customer-work:
 ```
 测试：`McpToolkitConfigurerTest`、`HigressToolkitConfigurerTest`（开关与装配判定，不连真实服务）。
 
-### 6.16 Studio / TTS
+### 6.16 Studio 观测台（TTS 见备注）
 
 ```yaml
 customer-work:
   observability.studio: { enabled: true, url: ws://localhost:3000, project: customer-work }
-  protocol.tts: { enabled: true }     # 需 DashScope 实时 TTS 模型；audioCallback 回推音频帧
 ```
-测试：`ProtocolExtensionTest`（默认关闭、未配置 url 视为未启用）。
+Studio 把 agent 运行轨迹推到外部 Studio 应用做可视化（`StudioConfigurer` / `StudioManager`，需先运行 Studio 实例）。
+
+> ⚠️ **TTS 不可迁移**：2.0 核心已移除实时语音合成（`TTSHook` / `DashScopeRealtimeTTSModel`），`protocol.tts.enabled`
+> 仍可配但 `TtsHookProvider` 已降级为**文档化空实现**（恒返回空），需在网关/前端直连厂商实时语音 SDK（见 [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)）。
+> 测试：`ProtocolExtensionTest`（默认关闭、未配置视为未启用）。
 
 ### 6.17 Nacos 配置中心（系统提示词热更新）
 
@@ -411,6 +419,47 @@ customer-work.nacos:
 测试：
 - `NacosPromptServiceTest`（离线 mock `ConfigService`：初始拉取 + `ArgumentCaptor` 验证热更新 + 空白回退）；
 - `NacosPromptIntegrationTest`（**真实连本机 Nacos**：发布配置→`NacosPromptService` 拉取生效→清理；Nacos 不可达时自动跳过）。
+
+### 6.18 AgentScope 2.0 Harness 新能力（Permission / Plan Mode / Compaction / Sandbox / Subagent）
+
+`HarnessAgentFactory` 经 `HarnessAgent.Builder.fromAgent(客服ReActAgent)` 在主链路之上叠加 2.0 Harness 能力（均配置化）：
+
+```yaml
+customer-work:
+  harness:
+    enabled: true                 # 启用 HarnessAgent 包装
+    workspace-dir: ./data/workspace
+    permission: { enabled: true, mode: default, ask-tools: [submitRefund, transferToHuman] }  # 三态权限闸门
+    plan-mode:  { enabled: true, allow-shell: false }     # 只读规划期：先出 markdown 计划、获批后再写
+    subagent:   { enabled: true }                          # 订单/售后/知识库专家作为子智能体(spawn/send)
+    sandbox:    { mode: docker, isolation-scope: session, image: python:3.11-slim }  # local | docker | none
+    memory-enabled: true          # 分层记忆 MEMORY.md + consolidation
+    tool-result-eviction-enabled: true   # 超大工具结果落盘
+    skill-curator-enabled: true   # 技能自进化
+  context: { compression-enabled: true }   # 上下文压缩 Compaction（见 6.7）
+```
+- **权限系统**：`PermissionConfig` 注入主 Agent（`.permissionContext()`），退款/转人工默认走 ask（人工确认），与 HumanApproval 双层。
+- **Plan Mode / Sandbox / Subagent / Compaction / 分层记忆**：见 [docs/MIGRATION-2.0.md §7](docs/MIGRATION-2.0.md)、[docs/详细技术文档.md §14](docs/详细技术文档.md)。
+- 测试：`PermissionConfigTest`、`HarnessAgentFactoryTest`、`ContextMemoryFactoryTest`、`middleware/*Test`。
+
+### 6.19 配套前端模块 `customer-web`（admin / chat / AG-UI / Studio / Channel）
+
+独立 Spring MVC 模块，把客服 Agent 同时接到五套官方能力（复用同一个 `customerServiceAgent` Bean）：
+
+```bash
+export DASHSCOPE_API_KEY=sk-xxxx
+java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
+```
+| 入口 | 能力 |
+|---|---|
+| `http://localhost:8081/` | 内置聊天页（调 `/v1/chat/completions`） |
+| `POST /v1/chat/completions` | **chat-completions-web**：OpenAI 兼容对话（同步 + SSE 流式） |
+| `POST /agui/run` | **AG-UI**：标准富事件协议（SSE 类型化事件） |
+| `/swagger-ui/index.html` + `/actuator/agentscope-*` | **admin**：会话/工具/权限/用量/子智能体管理控制台 |
+| `observability.studio.*` | **Studio**：运行轨迹推送到外部 Studio 观测台 |
+| `POST /api/channels/{feishu,wecom}/{id}/callback`、`POST /push/feishu` | **Channel**：钉钉(Stream) / 飞书 / 企业微信（收发消息 + 主动推送） |
+
+详见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。
 
 ---
 
