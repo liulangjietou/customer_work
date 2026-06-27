@@ -210,14 +210,25 @@ curl -X DELETE localhost:8080/api/customer/session/u1001
 ### 6.2 多 Agent 编排（订单/售后/知识库专家协作）
 
 ```yaml
-customer-work.multi-agent: { enabled: true, mode: fanout }   # fanout 并行聚合 | sequential 串行细化
+customer-work.multi-agent:
+  enabled: true
+  mode: fanout            # fanout 真并行聚合 | sequential 串行细化
+  max-concurrency: 8      # 并行模式同时在跑的专家数上限
+  timeout-seconds: 60     # 单专家超时；超时/异常被隔离成占位结果，不拖垮整体
 ```
 ```bash
 curl -X POST localhost:8080/api/customer/consult \
   -H "Content-Type: application/json" -d '{"message":"订单 20260613001 想退款，能开发票吗？"}'
 ```
-> 2.0 用 **Reactor 直接编排**（`Flux.flatMap` 并行 / `Mono` 链式串行，取代 1.x `Pipelines`）；HarnessAgent 亦可用 **Subagent** 做子智能体编排（`harness.subagent.enabled`）。
-> 测试：`MultiAgentOrchestratorTest`（专家装配 + `aggregate` 聚合，离线）。
+> 2.0 用 **Reactor 直接编排**取代 1.x `Pipelines`：
+> - **fanout（真并行）**——每个 `agent.call` 经 `subscribeOn(Schedulers.boundedElastic())` 挪到独立线程，
+>   即便底层模型调用是阻塞式也能**真并发**（不是"并行写法、串行执行"）；`flatMap(..., maxConcurrency)` 限流，
+>   单专家 `timeout` + `onErrorResume` 错误隔离，最后聚合各专家结论。
+> - **sequential（串行）**——`Mono` 链式，问题依次流过各专家逐步细化。
+>
+> 注：HarnessAgent 的 **Subagent**（`harness.subagent.enabled`）由主智能体在 ReAct 循环里自行逐个 spawn，
+> 本质串行、不可编程控制；需要"主 + 子智能体"**可控并行**时走本编排器（它构造的正是注册为 subagent 的那批专家）。
+> 测试：`MultiAgentOrchestratorTest`（专家装配 + 聚合 + **真并发度≥2** + 限流退化为 1 + 错误隔离，离线确定性断言）。
 
 ### 6.3 AG-UI 标准协议
 

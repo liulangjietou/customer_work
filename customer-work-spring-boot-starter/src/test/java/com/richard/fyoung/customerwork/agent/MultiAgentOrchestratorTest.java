@@ -10,8 +10,14 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.Model;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
 
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -53,5 +59,82 @@ class MultiAgentOrchestratorTest {
 
         assertTrue(merged.contains("【OrderExpert】已发货"));
         assertTrue(merged.contains("【KnowledgeExpert】支持七天无理由"));
+    }
+
+    private MultiAgentOrchestrator newOrchestrator(CustomerWorkProperties props) {
+        return new MultiAgentOrchestrator(model, props,
+            new MockOrderBackend(), new MockAfterSalesBackend(), new MockKnowledgeBackend());
+    }
+
+    /**
+     * 真并行验证：3 个各阻塞 200ms 的任务，记录运行期峰值并发度。
+     * fanout 经 subscribeOn(boundedElastic) 后应≥2（实际并发），证明不是"并行写法、串行执行"。
+     */
+    @Test
+    void fanout_shouldRunTasksConcurrently() {
+        MultiAgentOrchestrator orch = newOrchestrator(new CustomerWorkProperties());
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+
+        List<Mono<Msg>> tasks = IntStream.range(0, 3)
+            .mapToObj(i -> blockingTask("E" + i, running, peak, 200))
+            .collect(Collectors.toList());
+
+        List<Msg> replies = orch.fanout(tasks, 8).block(Duration.ofSeconds(5));
+
+        assertEquals(3, replies.size());
+        assertTrue(peak.get() >= 2, "fanout 应真并发执行，峰值并发度=" + peak.get());
+    }
+
+    /** 限流验证：concurrency=1 时即便用并行组合子，峰值并发度也应被压到 1（退化为串行）。 */
+    @Test
+    void fanout_shouldRespectConcurrencyLimit() {
+        MultiAgentOrchestrator orch = newOrchestrator(new CustomerWorkProperties());
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+
+        List<Mono<Msg>> tasks = IntStream.range(0, 3)
+            .mapToObj(i -> blockingTask("E" + i, running, peak, 80))
+            .collect(Collectors.toList());
+
+        orch.fanout(tasks, 1).block(Duration.ofSeconds(5));
+
+        assertEquals(1, peak.get(), "concurrency=1 应把峰值并发度限制为 1");
+    }
+
+    /** 错误隔离验证：单个任务抛错不应让整体失败，其余结果照常聚合。 */
+    @Test
+    void fanout_shouldIsolateFailures() {
+        MultiAgentOrchestrator orch = newOrchestrator(new CustomerWorkProperties());
+
+        List<Mono<Msg>> tasks = new ArrayList<>();
+        tasks.add(Mono.just(reply("Ok", "正常")));
+        tasks.add(Mono.<Msg>error(new RuntimeException("boom"))
+            .onErrorResume(e -> Mono.just(reply("Bad", "[暂不可用]"))));
+
+        List<Msg> replies = orch.fanout(tasks, 8).block(Duration.ofSeconds(5));
+
+        assertEquals(2, replies.size());
+        String merged = orch.aggregate(replies);
+        assertTrue(merged.contains("【Ok】正常"));
+        assertTrue(merged.contains("【Bad】[暂不可用]"));
+    }
+
+    private Mono<Msg> blockingTask(String name, AtomicInteger running, AtomicInteger peak, long sleepMs) {
+        return Mono.fromCallable(() -> {
+            int now = running.incrementAndGet();
+            peak.accumulateAndGet(now, Math::max);
+            try {
+                Thread.sleep(sleepMs);
+            } finally {
+                running.decrementAndGet();
+            }
+            return reply(name, "done");
+        });
+    }
+
+    private Msg reply(String name, String text) {
+        return Msg.builder().role(MsgRole.ASSISTANT).name(name)
+            .content(TextBlock.builder().text(text).build()).build();
     }
 }

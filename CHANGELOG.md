@@ -11,6 +11,10 @@
 - Agent 装配：`.memory()` → `.stateStore()`；调用入参全部带 `RuntimeContext`。
 - 上下文压缩：`AutoContextMemory` → Harness `CompactionConfig`。
 - 多 Agent：`core.pipeline.Pipelines` → Reactor 直接编排 / HarnessAgent Subagent。
+- **多 Agent 真并行编排**：`MultiAgentOrchestrator` 的 `fanout` 修正为真并发——每个 `agent.call` 经
+  `subscribeOn(Schedulers.boundedElastic())` 挪到独立线程（即便底层模型调用阻塞也能并行），叠加
+  `flatMap` 并发限流（`multi-agent.max-concurrency`）、单专家 `timeout`（`multi-agent.timeout-seconds`）
+  与 `onErrorResume` 错误隔离；新增确定性单测断言运行期峰值并发度（≥2 真并发 / =1 限流退化 / 错误隔离）。
 - **新增 2.0 能力**：Permission System（`PermissionConfig` 注入主 Agent）、Plan Mode、Compaction、
   Workspace/Sandbox、Subagent（统一经 `HarnessAgent.Builder.fromAgent(...)` 装配，见 `HarnessAgentFactory`）。
 - **Middleware 五段**：8 个业务 Hook 全部迁移到 `MiddlewareBase`（ToolGuard/DynamicOptions/Masking/

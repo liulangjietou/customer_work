@@ -417,6 +417,10 @@ public class CustomerWorkProperties {
         private String mode = "fanout";
         /** 每个专家 Agent 的 ReAct 最大轮次。 */
         private int maxIters = 6;
+        /** 并行 fanout 的最大并发度（同时在跑的专家数上限，&lt;=0 视为 1）。 */
+        private int maxConcurrency = 8;
+        /** 单个专家调用超时（秒）：超时按错误隔离，不拖垮整体并行。 */
+        private long timeoutSeconds = 60;
     }
 
     /** 中断恢复配置。 */
