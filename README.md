@@ -229,6 +229,8 @@ curl -X POST localhost:8080/api/customer/consult \
 > 注：HarnessAgent 的 **Subagent**（`harness.subagent.enabled`）由主智能体在 ReAct 循环里自行逐个 spawn，
 > 本质串行、不可编程控制；需要"主 + 子智能体"**可控并行**时走本编排器（它构造的正是注册为 subagent 的那批专家）。
 > 测试：`MultiAgentOrchestratorTest`（专家装配 + 聚合 + **真并发度≥2** + 限流退化为 1 + 错误隔离，离线确定性断言）。
+>
+> **备注（测试边界）**：单测证明的是"运行期峰值并发度 ≥ 2"，即并发是真实发生的；但**端到端三专家同时打真实大模型的墙钟加速比**，需配置真实 `DASHSCOPE_API_KEY` 跑 `POST /consult` 现场观测——离线测试覆盖的是**并发度**，而非真实网络延迟下的**加速倍数**。
 
 ### 6.3 AG-UI 标准协议
 
