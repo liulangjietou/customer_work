@@ -28,39 +28,49 @@ config line swaps to a cloud / self-hosted backend — **without touching busine
 
 ## Feature overview
 
+> This table reflects the **`rc2.0` branch (AgentScope 2.0.0-RC4)**. Per-feature 1.x→2.0 API mapping is in
+> **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**.
+
 | Capability | Class | Default | Enable |
 |---|---|---|---|
-| ReAct agent | `CustomerServiceAgentFactory` | on | — |
-| Streaming (SSE) | controller `chatStream` | on | `POST /chat/stream` |
+| Agent (ReAct / Harness) | `CustomerServiceAgentFactory` / `HarnessAgentFactory` | on | — |
+| Streaming events (SSE / `streamEvents`) | controller `chatStream` | on | `POST /chat/stream` |
 | Structured output | `classifyIntent` | on | `POST /intent` |
-| Sessions & persistence | `SessionConfig` | on | `session.mode=memory/json/redis/mysql` |
+| **Session/state persistence (AgentStateStore)** | `SessionConfig` | on | `session.mode=memory/json/redis/mysql` (replaces v1 Session) |
 | Long-term memory (multi-tenant) | `LongTermMemoryProvider` | on | `memory.provider=memory/bailian/mem0/reme` |
 | Three-tier memory + fact log | `FactLog` | on | `fact-log.enabled` |
-| Context compression | `ContextMemoryFactory` (AutoContext) | off | `context.compression-enabled` |
+| **Context compression (Compaction)** | `ContextMemoryFactory`→`CompactionConfig` | off | `context.compression-enabled` (replaces v1 AutoContext) |
 | RAG | `KnowledgeProvider` | on | `rag.provider=memory/simple/bailian/dify` |
-| Tools + Tool Group + Meta-Tool | factory | on | `agent.meta-tool-enabled` |
-| Skill (classpath/filesystem/code-exec) | `SkillBox` | on | `skill.*` |
-| Multi-agent orchestration | `MultiAgentOrchestrator` | on | `POST /consult` |
-| Human-in-the-loop + interrupt | `HumanApprovalHook` | on | `POST /session/{id}/interrupt` |
-| Observability + metrics + tracing | `ObservabilityHook` / `LoggingTracer` | on/off | `/actuator/prometheus` |
-| Latency metrics (E2E/reasoning/tool/TTFT, P50/P95) | `LatencyHook` | on | `hooks.latency.enabled` |
-| PII masking (reply + optional tool results) | `MaskingHook` / `SensitiveDataMasker` | off | `hooks.masking.enabled` / `mask-tool-results` |
-| Compliance audit trail | `AuditHook` / `AuditSink` | off | `hooks.audit.enabled` |
-| Self-correction (block unauthorized refund promises) | `SelfCorrectionHook` | off | `hooks.self-correction.enabled` |
-| Tool guard (param injection + numeric caps) | `ToolGuardHook` | off | `hooks.tool-guard.enabled` |
-| Dynamic generate options (per-intent tuning) | `DynamicGenerateOptionsHook` | off | `hooks.dynamic-options.enabled` |
-| Summary-phase observability/latency | `ObservabilityHook` / `LatencyHook` | on | automatic |
-| Pluggable + global runtime hooks | `ObjectProvider<Hook>` / `GlobalHookRegistry` | on | declare a `Hook` bean / `register(hook)` |
-| Multi-vendor model + fallback | `ModelConfig` / `FallbackChatModel` | on | `model.provider`, `model.fallback.enabled` |
-| AG-UI protocol | `AguiService` | on | `POST /agui` |
-| TTS | `TtsHookProvider` | off | `protocol.tts.enabled` |
-| MCP / Higress / Studio | configurers | off | `mcp.*` / `higress.*` / `observability.studio.*` |
+| Tools + Tool Group + Meta-Tool | `ToolRegistrar` | on | `agent.meta-tool-enabled` |
+| Skill + **self-evolution (SkillCurator)** | `SkillBox` / `enableSkillCurator` | on/off | `skill.*` / `harness.skill-curator-enabled` |
+| **Multi-agent orchestration (Reactor)** | `MultiAgentOrchestrator` | on | `POST /consult` (replaces v1 Pipelines) |
+| **5-stage Middleware** | `middleware/*Middleware` (Observability/Audit/Latency/Masking/ToolGuard/DynamicOptions/SelfCorrection/HumanApproval/TenantContext) | on/off | declare a `MiddlewareBase` bean (replaces v1 Hook) |
+| **Permission system (3-state)** | `PermissionConfig` | off | `harness.permission.enabled` |
+| **Plan Mode** | `HarnessAgentFactory` | off | `harness.plan-mode.enabled` |
+| **Workspace / Sandbox** | `HarnessAgentFactory#applySandbox` | off | `harness.sandbox.mode=local/docker` |
+| **Subagent** | `HarnessAgentFactory` | off | `harness.subagent.enabled` |
+| Human-in-the-loop + interrupt | `HumanApprovalMiddleware` + Permission ask | on | `POST /session/{id}/interrupt` |
+| Observability + metrics + tracing | `ObservabilityMiddleware` / `TracingConfig` | on/off | `/actuator/prometheus` |
+| Multi-vendor model + fallback/retry | `ModelConfig` (or v2 built-in `maxRetries`/`fallbackModel`) | on | `model.provider`, `model.fallback.enabled` |
+| MCP / Higress / Nacos | configurers | off | `mcp.*` / `higress.*` / `nacos.*` |
 | API-key auth + rate limit | web filters | off | `security.*` |
-| Nacos config center (prompt hot-reload) | `NacosPromptService` | off | `nacos.enabled` |
+| **Companion frontends (`customer-web`)** | admin / chat-completions / AG-UI / Studio / Channel (DingTalk·Feishu·WeCom) | off | see [docs/customer-web操作文档.md](docs/customer-web操作文档.md) |
 
-**Extension points (need extra infra/SDK):** A2A registry (Nacos AI API + `io.a2a` SDK), RocketMQ,
-Quartz/XXL-JOB scheduling, Runtime sandbox, Training (RM Gallery/Trinity), Anthropic/Gemini SDKs,
-RAGFlow/Haystack, Harness (1.1+).
+### ⚠️ Non-migratable / carry-over notes (v1 → v2)
+
+> The following were **removed or restructured by AgentScope 2.0** and cannot migrate 1:1; handled the v2-recommended way or kept as documented placeholders. See [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md).
+
+| v1 capability | v2 disposition | Note |
+|---|---|---|
+| **Realtime TTS** (`TTSHook` / `DashScopeRealtimeTTSModel`) | ❌ removed from core | `TtsHookProvider` degraded to a documented no-op; integrate a vendor realtime-TTS SDK at the gateway/front-end |
+| **PlanNotebook** (`core.plan.*`) | 🔁 replaced by **Plan Mode** | semantics shift from "structured subtask store" to "read-only plan + approve-then-write" (not equivalent) |
+| **Pipelines** (`core.pipeline.Pipelines`) | 🔁 replaced by **Reactor / Subagent** | removed; `MultiAgentOrchestrator` uses Reactor, or use HarnessAgent Subagent |
+| **SessionManager / StateModule** | ❌ removed | agents are stateless in v2; framework auto-manages state by `(userId,sessionId)`; `SessionStateManager` is now an `AgentStateStore` admin facade |
+| **legacy Hook API** (`core.hook.Hook`) | 🔁 replaced by **5-stage Middleware** | 8 business hooks migrated to `MiddlewareBase`; `gotoReasoning`/`stopAgent` have no middleware equivalent → hard constraints enforced by **Permission ask/deny**; `GlobalHookRegistry` still uses `AgentBase.addSystemHook` (only v2 API for system hooks, deprecated-for-removal) |
+
+**Extension points (need extra infra/SDK):** remote sandbox (k8s/e2b/daytona/agentrun; local/docker built-in),
+Channel·GitHub/GitLab (DingTalk/Feishu/WeCom done), A2A registry (Nacos AI API + `io.a2a`), RocketMQ,
+Quartz/XXL-JOB scheduling, Training (RM Gallery/Trinity), Anthropic/Gemini SDKs, RAGFlow/Haystack.
 
 ## HTTP endpoints
 

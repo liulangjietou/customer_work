@@ -62,60 +62,67 @@
 
 ## 二、功能总表
 
-> 「默认」列：开=随应用启动生效；关=需配置开启；⚠️=需外部基础设施/SDK 的扩展点。
+> 本表为 **`rc2.0` 分支（AgentScope 2.0.0-RC4）** 现状。「默认」列：开=随应用启动生效；关=需配置开启；⚠️=需外部基础设施/SDK 的扩展点。
+> 逐项 1.x→2.0 API 映射见 **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**，深度架构见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
 
-### 已实现（开箱即用 / 配置开启）
+### 已实现（2.0，开箱即用 / 配置开启）
 
 | 功能 | 核心类 | 默认 | 开启方式 |
 |---|---|---|---|
-| ReActAgent 推理 | `CustomerServiceAgentFactory` | 开 | — |
-| 流式输出（SSE） | `CustomerServiceController#chatStream` | 开 | `POST /chat/stream` |
+| 智能体（ReAct / Harness） | `CustomerServiceAgentFactory` / `HarnessAgentFactory` | 开 | — |
+| 流式事件输出（SSE / `streamEvents`） | `CustomerServiceService#chatStream` | 开 | `POST /chat/stream` |
 | 结构化输出（意图） | `CustomerServiceService#classifyIntent` | 开 | `POST /intent` |
-| 多轮会话 & 持久化 | `SessionConfig` | 开 | `session.mode=memory/json/redis/mysql` |
-| 状态自动编排 | `SessionStateManager` | 开 | 注入使用 |
+| **会话/状态持久化（AgentStateStore）** | `SessionConfig` | 开 | `session.mode=memory/json/redis/mysql`（取代 1.x Session） |
+| 状态运维门面 | `SessionStateManager`(AgentStateStore) | 开 | 注入使用 |
 | 长期记忆（多租户） | `LongTermMemoryProvider` | 开 | `memory.provider=memory/bailian/mem0/reme` |
 | 三层记忆 + 事实日志 | `InMemoryLongTermMemory` + `FactLog` | 开 | `fact-log.enabled` |
-| 智能上下文压缩 | `ContextMemoryFactory`(AutoContext) | 关 | `context.compression-enabled=true` |
+| **上下文压缩（Compaction）** | `ContextMemoryFactory`→`CompactionConfig` | 关 | `context.compression-enabled=true`（取代 1.x AutoContext） |
 | RAG 知识检索 | `KnowledgeProvider` | 开 | `rag.provider=memory/simple/bailian/dify` |
-| 工具集成 + Tool Group | `CustomerServiceAgentFactory#buildToolkit` | 开 | — |
+| 工具集成 + Tool Group | `ToolRegistrar` / `buildToolkit` | 开 | — |
 | Meta-Tool 元工具 | 同上 | 关 | `agent.meta-tool-enabled=true` |
-| Skill 技能库 | `SkillBox` 装配 | 开 | `skill.repository=classpath/filesystem` |
-| Skill 运行时加载 / 代码执行 | 同上 | 关 | `skill.runtime-load-tool-enabled` / `skill.code-execution-enabled` |
-| 多 Agent 编排 | `MultiAgentOrchestrator` | 开 | `POST /consult`，`multi-agent.mode=fanout/sequential` |
-| Human-in-the-Loop | `HumanApprovalHook` | 开 | `human-approval.enabled` + `POST /session/{id}/interrupt` |
+| Skill 技能库 + **自进化(SkillCurator)** | `SkillBox` / `enableSkillCurator` | 开/关 | `skill.repository=...` / `harness.skill-curator-enabled` |
+| Skill 运行时加载 / 代码执行 | Builder `skillCodeExecutionEnabled` | 关 | `skill.runtime-load-tool-enabled` / `skill.code-execution-enabled` |
+| **多 Agent 编排（Reactor）** | `MultiAgentOrchestrator` | 开 | `POST /consult`（取代 1.x Pipelines） |
+| **五段 Middleware** | `middleware/*Middleware`（Observability/Audit/Latency/Masking/ToolGuard/DynamicOptions/SelfCorrection/HumanApproval/TenantContext） | 开/关 | 声明 `MiddlewareBase` Bean（取代 1.x Hook） |
+| **权限系统 Permission（三态）** | `PermissionConfig` | 关 | `harness.permission.enabled=true` |
+| **Plan Mode（只读规划）** | `HarnessAgentFactory` | 关 | `harness.plan-mode.enabled=true` |
+| **Workspace / 安全沙箱（Sandbox）** | `HarnessAgentFactory#applySandbox` | 关 | `harness.sandbox.mode=local/docker` |
+| **子智能体 Subagent** | `HarnessAgentFactory` | 关 | `harness.subagent.enabled=true` |
 | 中断恢复 | `enablePendingToolRecovery` | 开 | `interrupt.pending-tool-recovery-enabled` |
-| 可观测 Hook + 指标 | `ObservabilityHook` + Micrometer | 开 | `/actuator/prometheus` |
-| 延迟埋点 Hook（E2E/推理/工具/TTFT，P50/P95） | `LatencyHook` | 开 | `hooks.latency.enabled` |
-| 出站脱敏 Hook（回复+可选工具结果脱敏） | `MaskingHook` + `SensitiveDataMasker` | 关 | `hooks.masking.enabled` / `hooks.masking.mask-tool-results` |
-| 合规审计 Hook（工具调用/决策可追溯） | `AuditHook` + `AuditSink` | 关 | `hooks.audit.enabled=true` |
-| 自我纠错 Hook（越权承诺打款强制重推理） | `SelfCorrectionHook` | 关 | `hooks.self-correction.enabled=true` |
-| 工具护栏 Hook（入参注入 + 数值上限钳制） | `ToolGuardHook` | 关 | `hooks.tool-guard.enabled=true` |
-| 动态生成参数 Hook（按意图调温度/推理强度） | `DynamicGenerateOptionsHook` | 关 | `hooks.dynamic-options.enabled=true` |
-| 总结阶段观测/计时（超 maxIters） | `ObservabilityHook` / `LatencyHook` | 开 | 自动 |
-| Hook 可插拔 + 全局热插拔 | `ObjectProvider<Hook>` / `GlobalHookRegistry` | 开 | 声明 `Hook` Bean / `register(hook)` |
-| 原生 Tracing | `LoggingTracer` + `TracerRegistry` | 关 | `observability.tracing-enabled=true` |
+| Human-in-the-Loop | `HumanApprovalMiddleware` + Permission ask | 开 | `human-approval.enabled` + `POST /session/{id}/interrupt` |
+| 可观测 + 指标 | `ObservabilityMiddleware` + Micrometer | 开 | `/actuator/prometheus` |
+| 原生 Tracing | `TracingConfig` | 关 | `observability.tracing-enabled=true` |
 | 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
-| 模型多厂商 + 私有化兜底 | `ModelConfig` + `FallbackChatModel` | 开 | `model.provider`、`model.fallback.enabled` |
-| AG-UI 协议 | `AguiService` | 开 | `POST /agui` |
-| TTS 语音合成 | `TtsHookProvider` | 关 | `protocol.tts.enabled=true` |
+| 模型多厂商 + 私有化兜底 / 重试 | `ModelConfig`（或 2.0 内置 `maxRetries`/`fallbackModel`） | 开 | `model.provider`、`model.fallback.enabled` |
 | MCP 接入 | `McpToolkitConfigurer` | 关 | `mcp.enabled=true` |
 | Higress AI 网关 | `HigressToolkitConfigurer` | 关 | `higress.enabled=true` |
-| Studio 可视化 | `StudioConfigurer` | 关 | `observability.studio.enabled=true` |
-| 接入层安全（鉴权/限流） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter` | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
 | Nacos 配置中心（提示词热更新） | `NacosPromptService` | 关 | `nacos.enabled=true` |
+| 接入层安全（鉴权/限流） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter` | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
+| **配套前端模块 `customer-web`** | admin / chat-completions / AG-UI / Studio / Channel(钉钉·飞书·企业微信) | 关 | 见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md) |
 
-### 未实现 / 需外部基础设施（扩展点，见 [第十节](#十未实现--需外部基础设施的扩展点)）
+### ⚠️ 不可迁移 / 沿用说明（1.x→2.0 备注）
+
+> 以下能力因 **AgentScope 2.0 框架主动移除或重构** 无法 1:1 迁移，已按 2.0 推荐方式处置或保留为文档化占位；详见 [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)。
+
+| 1.x 能力 | 2.0 处置 | 备注 |
+|---|---|---|
+| **TTS 实时语音合成**（`TTSHook` / `DashScopeRealtimeTTSModel`） | ❌ 框架移除 | 2.0 核心不再内置 TTS；`TtsHookProvider` 降级为**文档化空实现**（恒返回空），需在网关/前端直连厂商实时语音 SDK |
+| **PlanNotebook 任务清单**（`core.plan.*`） | 🔁 改为 **Plan Mode** | 语义从"结构化子任务存储"转为"只读规划 markdown + 获批写"，**非等价**；用 `HarnessAgent.enablePlanMode()` |
+| **Pipelines 编排原语**（`core.pipeline.Pipelines`） | 🔁 改为 **Reactor / Subagent** | 框架移除；`MultiAgentOrchestrator` 改用 Reactor 手写，或用 HarnessAgent Subagent |
+| **SessionManager / StateModule 手工编排** | ❌ 框架移除 | 2.0 Agent 无状态、框架按 `(userId,sessionId)` 自动管理；`SessionStateManager` 退化为 `AgentStateStore` 运维门面 |
+| **legacy Hook API**（`core.hook.Hook`） | 🔁 改为**五段 Middleware** | 8 个业务 Hook 已全部转 `MiddlewareBase`；`SelfCorrection.gotoReasoning`/`HumanApproval.stopAgent` 无中间件等价语义，硬约束交 **Permission ask/deny** 承担；系统级热插拔 `GlobalHookRegistry` 沿用 `AgentBase.addSystemHook`（2.0 唯一可用 API，deprecated-for-removal） |
+
+### 仍需外部基础设施 / SDK 的扩展点
 
 | 功能 | 状态 | 需要 |
 |---|---|---|
-| A2A Agent Card 注册发现 | ⚠️ | Nacos AI API（新版 nacos-client）+ `io.a2a` SDK |
-| RocketMQ 异步消息 | ⚠️ | RocketMQ broker + client |
-| 定时 Agent 调度 | ⚠️ | Quartz / XXL-JOB |
-| Runtime 工具沙箱 | ⚠️ | 独立项目 `agentscope-runtime-java` |
+| 远端云沙箱（k8s / e2b / daytona / agentrun） | ⚠️ | `agentscope-extensions-sandbox-*`（local/docker 已内置开箱即用） |
+| Channel·GitHub / GitLab | ⚠️ | `agentscope-extensions-channel-github/gitlab`（钉钉/飞书/企业微信已接入） |
+| A2A Agent Card 注册发现 | ⚠️ | Nacos AI API + `io.a2a` SDK |
+| RocketMQ 异步消息 / 定时 Agent 调度 | ⚠️ | RocketMQ / Quartz / XXL-JOB 扩展 |
 | Training 数据飞轮 | ⚠️ | RM Gallery + Trinity-RFT 平台 |
 | Anthropic / Gemini 模型 | ⚠️ | 各自厂商 SDK 依赖 |
-| RAGFlow / Haystack 知识库 | ⚠️ | 同 Dify 模式，按需补依赖 |
-| Harness 长任务脚手架 | ⚠️ | AgentScope 1.1+（1.0.12 暂无） |
+| RAGFlow / Haystack 知识库 | ⚠️ | 同 Dify 模式，按需补 `agentscope-extensions-rag-*` |
 
 ---
 
@@ -255,7 +262,7 @@ customer-work.fact-log: { enabled: true, directory: ./data/facts }
 ```yaml
 customer-work.context: { compression-enabled: true, max-token: 8000, msg-threshold: 40, last-keep: 10 }
 ```
-开启后短期记忆用 `AutoContextMemory`（自动压缩 + 大工具结果卸载）。测试：`ContextMemoryFactoryTest`。
+开启后用 Harness `Compaction`（`ContextMemoryFactory`→`CompactionConfig`，自动压缩历史 + 大工具结果卸载，取代 1.x AutoContextMemory）。测试：`ContextMemoryFactoryTest`。
 
 ### 6.8 RAG 知识检索（内存 / 真实向量 / 百炼 / Dify）
 
@@ -315,7 +322,7 @@ customer-work:
   human-approval: { enabled: true, guarded-tools: [submitRefund] }   # 受控工具执行后暂停待人工
   interrupt: { pending-tool-recovery-enabled: true }                  # 中断后无缝恢复待执行工具
 ```
-测试：`HumanApprovalHookTest`、`CustomerServiceServiceTest#interrupt_*`。
+测试：`MiddlewareBehaviorTest`（humanApproval）、`CustomerServiceServiceTest#interrupt_*`。
 
 ### 6.12 模型层（多厂商 + 私有化兜底 + 高级参数）
 
@@ -344,7 +351,7 @@ curl localhost:8080/actuator/prometheus  # 业务指标
 - 请求关联：`RequestIdWebFilter` 为每个请求生成 / 透传 `X-Request-Id`（写回响应头 + Reactor 上下文）
 - 结构化日志：`logback-spring.xml` 日志含 requestId；引入 logstash-encoder 可一键切 JSON（见文件注释）
 - Grafana：示例仪表盘 `docs/grafana-dashboard.json`（基于上述 Prometheus 指标）
-- 测试：`ObservabilityHookTest`、`LoggingTracerTest`、`SessionHealthIndicatorTest`、`GracefulShutdownServiceTest`、`MaintenanceSchedulerTest`、`RequestIdWebFilterTest`。
+- 测试：`MiddlewareBehaviorTest`、`LoggingTracerTest`、`SessionHealthIndicatorTest`、`GracefulShutdownServiceTest`、`MaintenanceSchedulerTest`、`RequestIdWebFilterTest`。
 
 ### 6.13b 模型高可用与成本护栏
 
@@ -461,10 +468,12 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       ├── java/com/richard/fyoung/customerwork/
 │       │   ├── autoconfigure/ CustomerWorkAutoConfiguration   # @AutoConfiguration 自动装配入口
 │       │   ├── config/      CustomerWorkProperties / ModelConfig / FallbackChatModel / ResilientChatModel
-│       │   │                SessionConfig / ToolBackendConfig / OpenApiConfig / NacosPromptService
-│       │   ├── agent/       CustomerServiceAgentFactory / MultiAgentOrchestrator / AguiService
-│       │   │                ObservabilityHook / HumanApprovalHook
-│       │   ├── service/     CustomerServiceService / SessionStateManager
+│       │   │                SessionConfig(AgentStateStore) / PermissionConfig / ToolBackendConfig / OpenApiConfig / NacosPromptService
+│       │   ├── agent/       CustomerServiceAgentFactory / HarnessAgentFactory / MultiAgentOrchestrator
+│       │   │                AguiService / GlobalHookRegistry
+│       │   ├── middleware/  五段 Middleware：Observability / Audit / Latency / Masking / ToolGuard
+│       │   │                DynamicOptions / SelfCorrection / HumanApproval / TenantContext（取代 1.x Hook）
+│       │   ├── service/     CustomerServiceService / SessionStateManager(AgentStateStore 运维门面)
 │       │   ├── memory/      LongTermMemoryProvider / Store / InMemoryLongTermMemory / FactLog / ContextMemoryFactory
 │       │   ├── rag/         KnowledgeProvider / InMemoryKeywordKnowledge
 │       │   ├── tool/        OrderTools / AfterSalesTools / KnowledgeBaseTools / HumanHandoffTools
