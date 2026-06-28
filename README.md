@@ -53,7 +53,7 @@
 |---|---|---|
 | ② 会话恢复与上下文装配 | ✅ | `CustomerServiceService` 按 sessionId 维护 Agent，框架 `Session/State` 持久化恢复（memory/json/redis/mysql） |
 | ③ 主 Agent 意图识别与路由 | ✅ | `CustomerServiceAgentFactory` 用 `ReActAgent` + 系统提示词实现意图理解、工具路由、高风险熔断 |
-| ④ 子能力分层执行 | ✅ | 四个 Tool Group（知识库/订单/售后/人工）+ 涉资金人工确认 + 多 Agent 编排 |
+| ④ 子能力分层执行 | ✅ | 五个 Tool Group（知识库/订单/售后/售前导购/人工）+ 涉资金人工确认 + 多 Agent 编排 |
 | ⑤ 观察-再推理循环 → 回复 | ✅ | `ReActAgent` 内置 ReAct 循环；SSE 订阅 `agent.stream()` 逐片段下发 |
 | ① 接入与流量治理 | ✅/⚠️ | 鉴权限流 ✅；Higress ✅(可选)；RocketMQ ⚠️ 扩展点 |
 | ⑥ 数据飞轮 | ✅/⚠️ | 可观测/Tracing/指标 ✅；RM Gallery / Trinity-RFT ⚠️ 扩展点 |
@@ -313,13 +313,19 @@ customer-work.rag:
 
 ### 6.9 工具集成 + 把它改成你自己的业务 Agent
 
-四业务域 Tool Group（knowledge/order/after_sales/human）默认全激活；开启元工具后 Agent 可运行时启停工具组：
+五业务域 Tool Group（knowledge/order/after_sales/**presale**/human）默认全激活；开启元工具后 Agent 可运行时启停工具组：
 ```yaml
 customer-work.agent: { max-iters: 10, meta-tool-enabled: true }
 ```
+覆盖完整客服旅程的业务工具：
+- **售前导购**（`ProductTools`）：商品咨询 `queryProduct`、推荐 `recommendProducts`、库存 `checkStock`、优惠 `queryPromotions`
+- **订单**（`OrderTools`）：`queryOrder`、`queryLogistics`
+- **售后**（`AfterSalesTools`）：退款资格 `checkRefundEligibility`、退款 `submitRefund`、**退款进度 `queryRefundProgress`**、退货 `submitReturn`、换货 `submitExchange`、价保 `checkPriceProtection`、发票 `requestInvoice`
+- **知识/人工**：`searchKnowledge`、`transferToHuman`
+- 测试：`ProductToolsTest`、`AfterSalesToolsTest`、`OrderToolsTest`、`ToolBackendOverrideTest`。
 
 **接入你自己的业务系统（无需改框架代码）**：业务工具壳（`OrderTools` 等）只暴露给 LLM 的 Schema，
-真正逻辑委托给 `tool.backend` 下的接口（`OrderBackend` / `AfterSalesBackend` / `KnowledgeBackend`）。
+真正逻辑委托给 `tool.backend` 下的接口（`OrderBackend` / `AfterSalesBackend` / `KnowledgeBackend` / `ProductBackend`）。
 默认由 `ToolBackendConfig` 以 `@ConditionalOnMissingBean` 注册内存 Mock；你只要声明自己的同类型 Bean，
 默认实现就自动让位：
 
@@ -599,7 +605,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   ├── rag/         KnowledgeProvider / InMemoryKeywordKnowledge
 │       │   ├── tool/        OrderTools / AfterSalesTools / KnowledgeBaseTools / HumanHandoffTools
 │       │   │                ToolRegistrar / McpToolkitConfigurer / HigressToolkitConfigurer
-│       │   │   └── backend/ OrderBackend / AfterSalesBackend / KnowledgeBackend（SPI）+ Mock 默认实现
+│       │   │   └── backend/ OrderBackend / AfterSalesBackend / KnowledgeBackend / ProductBackend（SPI）+ Mock 默认实现
 │       │   ├── observability/ LoggingTracer / TracingConfig / TtsHookProvider / StudioConfigurer
 │       │   ├── runtime/     GracefulShutdownService / MaintenanceScheduler
 │       │   ├── security/    ApiKeyAuthWebFilter / RateLimitWebFilter / RequestIdWebFilter

@@ -14,4 +14,19 @@ public interface AfterSalesBackend {
 
     /** 发起退款（生产应只生成待人工确认工单，不直接打款）。 */
     Mono<String> submitRefund(String orderId, String amount, String reason);
+
+    /** 查询退款/退货进度。 */
+    Mono<String> queryRefundProgress(String orderId);
+
+    /** 提交退货申请（生成退货工单）。 */
+    Mono<String> submitReturn(String orderId, String reason);
+
+    /** 提交换货申请（生成换货工单）。 */
+    Mono<String> submitExchange(String orderId, String reason, String newSpec);
+
+    /** 校验并申请价保（买后降价补差）。 */
+    Mono<String> checkPriceProtection(String orderId);
+
+    /** 申请/重开发票。 */
+    Mono<String> requestInvoice(String orderId, String invoiceTitle);
 }

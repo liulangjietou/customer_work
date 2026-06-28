@@ -101,6 +101,7 @@ public class CustomerWebAgentConfig {
     public Toolkit customerToolkit() {
         Toolkit toolkit = new Toolkit();
         new ToolRegistrar(new MockOrderBackend(), new MockAfterSalesBackend(), new MockKnowledgeBackend(),
+            new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
             new com.richard.fyoung.customerwork.approval.PendingApprovalService())
             .registerBusinessTools(toolkit);
         return toolkit;

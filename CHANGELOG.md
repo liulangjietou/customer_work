@@ -33,6 +33,12 @@
   `SlotFillingResult`/`SlotFillingService`）——按 (sessionId, form) 维护进度，带正则槽位任意句抽取、
   自由文本槽位追问轮取值；内置退款表单（订单号→原因）。`RefundFormController`（`POST /api/customer/forms/refund`）
   收齐后**串接 HITL** 生成待审退款单。新增 3 个确定性单测。
+- **业务功能补全 · 售前导购**：新增 `ProductBackend`/`MockProductBackend`/`ProductTools` + `presale` 工具组——
+  商品咨询 `queryProduct`、推荐 `recommendProducts`、库存 `checkStock`、优惠 `queryPromotions`；
+  `IntentResult` 意图加 `presale`。补全客服旅程"售前"半段（关联下单转化）。新增 `ProductToolsTest`（4 例）。
+- **业务功能补全 · 售后**：`AfterSalesBackend`/`AfterSalesTools` 扩 5 个工具——退款进度 `queryRefundProgress`、
+  退货 `submitReturn`、换货 `submitExchange`、价保 `checkPriceProtection`、发票 `requestInvoice`；
+  `AfterSalesToolsTest` 补 5 例。`ToolRegistrar` 工具组 4→5、构造增 `ProductBackend`（修齐 3 处调用点）。
 - **对话阶段状态机 / 动态 Prompt（借鉴 AliGo 状态机式 Prompt 组装）**：新增 `dialog` 包（`DialogStage` 枚举
   + `DialogStageService`）+ `DialogStageMiddleware`（第五段 `onSystemPrompt`）——按会话当前阶段
   （接待/收集/处理/确认/转人工）动态注入"聚焦当前主链路"指令，替代全量规则塞一个静态大 Prompt（降 token、提准）。

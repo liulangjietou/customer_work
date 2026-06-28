@@ -5,7 +5,9 @@ import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockOrderBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockProductBackend;
 import com.richard.fyoung.customerwork.tool.backend.OrderBackend;
+import com.richard.fyoung.customerwork.tool.backend.ProductBackend;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -37,5 +39,11 @@ public class ToolBackendConfig {
     @ConditionalOnMissingBean(KnowledgeBackend.class)
     public KnowledgeBackend knowledgeBackend() {
         return new MockKnowledgeBackend();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ProductBackend.class)
+    public ProductBackend productBackend() {
+        return new MockProductBackend();
     }
 }

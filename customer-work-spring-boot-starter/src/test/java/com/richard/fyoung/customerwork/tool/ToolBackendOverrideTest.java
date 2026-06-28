@@ -42,12 +42,14 @@ class ToolBackendOverrideTest {
             new CustomOrderBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend(),
+            new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
             new com.richard.fyoung.customerwork.approval.PendingApprovalService())
             .registerBusinessTools(toolkit);
 
         Set<String> names = toolkit.getToolNames();
         assertTrue(names.contains("queryOrder") && names.contains("submitRefund")
-            && names.contains("searchKnowledge") && names.contains("transferToHuman"),
-            "应注册全部业务工具: " + names);
+            && names.contains("searchKnowledge") && names.contains("transferToHuman")
+            && names.contains("recommendProducts") && names.contains("queryRefundProgress"),
+            "应注册全部业务工具（含售前导购 + 售后补全）: " + names);
     }
 }

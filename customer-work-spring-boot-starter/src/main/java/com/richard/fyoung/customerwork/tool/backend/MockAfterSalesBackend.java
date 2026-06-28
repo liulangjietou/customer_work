@@ -41,4 +41,44 @@ public class MockAfterSalesBackend implements AfterSalesBackend {
             .delayElement(Duration.ofMillis(90))
             .onErrorResume(e -> Mono.just("退款工单系统暂时不可用，已为您转接人工坐席。"));
     }
+
+    @Override
+    public Mono<String> queryRefundProgress(String orderId) {
+        log.info("[MockAfterSalesBackend] query refund progress: {}", orderId);
+        return Mono.just("订单 " + orderId + " 的退款进度：审核通过，款项已原路退回，预计 1-3 个工作日到账"
+                + "（具体以银行/支付渠道为准）。")
+            .delayElement(Duration.ofMillis(70));
+    }
+
+    @Override
+    public Mono<String> submitReturn(String orderId, String reason) {
+        log.info("[MockAfterSalesBackend] submit return: order={}, reason={}", orderId, reason);
+        return Mono.just("已生成退货工单 RT" + System.currentTimeMillis() + "：订单=" + orderId + "，原因=" + reason
+                + "。请在 7 天内将商品寄回，回寄地址与运费规则将以短信发送。")
+            .delayElement(Duration.ofMillis(80));
+    }
+
+    @Override
+    public Mono<String> submitExchange(String orderId, String reason, String newSpec) {
+        log.info("[MockAfterSalesBackend] submit exchange: order={}, reason={}, newSpec={}", orderId, reason, newSpec);
+        return Mono.just("已生成换货工单 EX" + System.currentTimeMillis() + "：订单=" + orderId
+                + "，换为「" + newSpec + "」，原因=" + reason + "。新规格有货，收到回寄商品后为您发出。")
+            .delayElement(Duration.ofMillis(80));
+    }
+
+    @Override
+    public Mono<String> checkPriceProtection(String orderId) {
+        log.info("[MockAfterSalesBackend] check price protection: {}", orderId);
+        return Mono.just("订单 " + orderId + " 价保校验：在价保有效期内，当前价低于下单价 30 元，"
+                + "已为您生成价保补差工单，差价将退回原支付方式。")
+            .delayElement(Duration.ofMillis(70));
+    }
+
+    @Override
+    public Mono<String> requestInvoice(String orderId, String invoiceTitle) {
+        log.info("[MockAfterSalesBackend] request invoice: order={}, title={}", orderId, invoiceTitle);
+        return Mono.just("已受理订单 " + orderId + " 的发票申请，抬头=「" + invoiceTitle + "」，"
+                + "电子发票将于 24 小时内发送至您账户预留邮箱。")
+            .delayElement(Duration.ofMillis(70));
+    }
 }

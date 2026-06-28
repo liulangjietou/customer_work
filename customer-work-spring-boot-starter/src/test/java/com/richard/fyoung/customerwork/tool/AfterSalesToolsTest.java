@@ -38,4 +38,39 @@ class AfterSalesToolsTest {
             })
             .verifyComplete();
     }
+
+    @Test
+    void queryRefundProgress_shouldReturnProgress() {
+        StepVerifier.create(tools.queryRefundProgress("20260613001"))
+            .assertNext(r -> assertTrue(r.contains("进度") || r.contains("到账")))
+            .verifyComplete();
+    }
+
+    @Test
+    void submitReturn_shouldGenerateReturnTicket() {
+        StepVerifier.create(tools.submitReturn("20260613001", "尺码不合适"))
+            .assertNext(r -> assertTrue(r.contains("退货工单")))
+            .verifyComplete();
+    }
+
+    @Test
+    void submitExchange_shouldGenerateExchangeTicket() {
+        StepVerifier.create(tools.submitExchange("20260613001", "颜色不喜欢", "白色"))
+            .assertNext(r -> assertTrue(r.contains("换货工单") && r.contains("白色")))
+            .verifyComplete();
+    }
+
+    @Test
+    void checkPriceProtection_shouldReturnResult() {
+        StepVerifier.create(tools.checkPriceProtection("20260613001"))
+            .assertNext(r -> assertTrue(r.contains("价保")))
+            .verifyComplete();
+    }
+
+    @Test
+    void requestInvoice_shouldAcceptApplication() {
+        StepVerifier.create(tools.requestInvoice("20260613001", "张三"))
+            .assertNext(r -> assertTrue(r.contains("发票") && r.contains("张三")))
+            .verifyComplete();
+    }
 }
