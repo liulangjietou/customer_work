@@ -260,9 +260,9 @@ public class MultiAgentOrchestrator {
      * 规则快车道：用关键词表判定意图。仅当命中<b>唯一</b>意图时返回该意图（直路由）；
      * 命中多类（语义可能跨域）或无命中时返回 {@code empty}，交 LLM 慢车道兜底。
      *
-     * <p>纯函数，可离线确定性单测。</p>
+     * <p>纯函数，可离线确定性单测，亦供意图评测框架（{@code eval} 包）复用。</p>
      */
-    Optional<String> fastRouteIntent(String userText) {
+    public Optional<String> fastRouteIntent(String userText) {
         if (userText == null || userText.trim().isEmpty()) {
             return Optional.empty();
         }

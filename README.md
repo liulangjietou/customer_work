@@ -387,6 +387,15 @@ curl -X POST localhost:8080/api/customer/forms/refund -H 'Content-Type: applicat
 > 抽取规则确定性：带正则的槽位（订单号）从任意句抽取，自由文本槽位（原因）在追问轮整句取值。
 > 测试：`SlotFillingServiceTest`（多轮收集 / 首句抽取 / 完成清理）。
 
+**自动化意图评测（借鉴 AliGo 测评系统）**：`IntentEvalRunner` 对 classpath 评测集
+`eval/intent-eval-cases.json`（用例沉淀复用）量化**规则快车道**的准确率/覆盖率，离线确定性、可 CI 跑、可版本对比：
+```java
+EvalReport r = intentEvalRunner.run();
+System.out.println(r.format());   // accuracy / fastLaneCoverage / 失败用例
+```
+> 当前评测集快车道判定 100% 正确（含模糊用例正确地交 LLM）。真实回复相关性评测需 LLM-as-judge（真实 Key），不在离线范围。
+> 测试：`IntentEvalRunnerTest`（数据集加载 + 准确率≥95% / 覆盖率≥80% 质量基线）。
+
 ### 6.12 模型层（多厂商 + 私有化兜底 + 高级参数）
 
 ```yaml
