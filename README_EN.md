@@ -41,9 +41,20 @@ config line swaps to a cloud / self-hosted backend — **without touching busine
 | Three-tier memory + fact log | `FactLog` | on | `fact-log.enabled` |
 | **Context compression (Compaction)** | `ContextMemoryFactory`→`CompactionConfig` | off | `context.compression-enabled` (replaces v1 AutoContext) |
 | RAG | `KnowledgeProvider` | on | `rag.provider=memory/simple/bailian/dify` |
-| Tools + Tool Group + Meta-Tool | `ToolRegistrar` | on | `agent.meta-tool-enabled` |
+| Business tools — 7 Tool Groups (presale/order/after-sales/member/complaint/knowledge/human) | `ToolRegistrar` + `*Backend` SPIs | on | `agent.meta-tool-enabled` |
+| **Pre-sale guide** | `ProductTools` / `ProductBackend` | on | `queryProduct`/`recommendProducts`/`checkStock`/`queryPromotions` |
+| **In-sale** | `OrderTools` (default-method evolution) | on | `modifyAddress`/`cancelOrder`/`urgeShipment` |
+| **After-sales (full)** | `AfterSalesTools` / `AfterSalesBackend` | on | refund/return/exchange/price-protection/invoice + `queryRefundProgress` |
+| **Member / account** | `MemberTools` / `MemberBackend` | on | `queryPoints`/`queryMemberLevel`/`resolveAccountIssue` |
+| **Complaint ticket** | `ComplaintTools` / `ComplaintBackend` | on | `fileComplaint`/`queryComplaint` |
 | Skill + **self-evolution (SkillCurator)** | `SkillBox` / `enableSkillCurator` | on/off | `skill.*` / `harness.skill-curator-enabled` |
-| **Multi-agent orchestration (Reactor)** | `MultiAgentOrchestrator` | on | `POST /consult` (replaces v1 Pipelines) |
+| **Multi-agent orchestration (Reactor)** — true-parallel fanout + rule fast-lane routing + reduce | `MultiAgentOrchestrator` | on | `POST /consult`; `multi-agent.fast-route-enabled`/`routing-enabled`/`reduce-enabled` (replaces v1 Pipelines) |
+| **Human approval loop (refund)** | `PendingApprovalService` + `ApprovalController` | on | `GET /approvals` · `POST /approvals/{id}/approve\|deny` |
+| **Multi-turn slot filling** | `SlotFillingService` + `RefundFormController` | on | `POST /forms/refund` |
+| **Proactive service (notify/survey, reuses Channel push)** | `ProactiveNotificationService` + `NotificationChannel` | on | `POST /notify/order-status\|survey` |
+| **Agent-assist + quality inspection** | `AgentAssistService` + `QualityInspectionService` | on | `POST /assist` · `POST /quality/inspect` |
+| **Dialog-stage state machine (dynamic prompt)** | `DialogStageMiddleware` + `DialogStageService` | on | onSystemPrompt stage injection |
+| **Automated intent eval** | `IntentEvalRunner` + `eval/intent-eval-cases.json` | on | accuracy/coverage baseline |
 | **5-stage Middleware** | `middleware/*Middleware` (Observability/Audit/Latency/Masking/ToolGuard/DynamicOptions/SelfCorrection/HumanApproval/TenantContext/DialogStage) | on/off | declare a `MiddlewareBase` bean (replaces v1 Hook) |
 | **Permission system (3-state)** | `PermissionConfig` | off | `harness.permission.enabled` |
 | **Plan Mode** | `HarnessAgentFactory` | off | `harness.plan-mode.enabled` |
@@ -76,6 +87,10 @@ Quartz/XXL-JOB scheduling, Training (RM Gallery/Trinity), Anthropic/Gemini SDKs,
 
 `POST /api/customer/chat` · `/chat/stream` · `/intent` · `/consult` · `/agui` ·
 `POST /session/{id}/interrupt` · `DELETE /session/{id}` · `GET /health` ·
+`GET /approvals` · `POST /approvals/{id}/approve|deny` (human approval) ·
+`POST /forms/refund` (slot filling) ·
+`POST /notify/order-status|survey` (proactive service) ·
+`POST /assist` · `POST /quality/inspect` (agent-assist + quality) ·
 Swagger UI at `/swagger-ui.html`, OpenAPI at `/v3/api-docs`.
 
 ## Requirements
