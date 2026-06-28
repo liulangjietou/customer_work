@@ -29,6 +29,10 @@
 - **多 Agent 规则快车道（借鉴阿里商旅 AliGo 快慢车道）**：`MultiAgentOrchestrator` 路由前置规则层
   （`fast-route-enabled`）——关键词命中**唯一**意图直路由、跳过 LLM 分诊（省一次模型调用、提准降延迟）；
   命中多类/无命中再走 LLM 慢车道。`fastRouteIntent` 纯函数，新增 2 个确定性单测。
+- **多轮槽位收集（借鉴 AliGo 事项收集智能体）**：新增 `slotfilling` 包（`Slot`/`SlotFillingForm`/
+  `SlotFillingResult`/`SlotFillingService`）——按 (sessionId, form) 维护进度，带正则槽位任意句抽取、
+  自由文本槽位追问轮取值；内置退款表单（订单号→原因）。`RefundFormController`（`POST /api/customer/forms/refund`）
+  收齐后**串接 HITL** 生成待审退款单。新增 3 个确定性单测。
 - **customer-web 端到端测试补强**：新增 `CustomerWebEndpointAvailabilityTest`（`@SpringBootTest` RANDOM_PORT +
   `TestRestTemplate`），离线确定性验证五套前端端点真实注册可达——actuator/health、OpenAPI、chat-completions、
   AG-UI、飞书 inbound 回调 + OpenAPI 装配。诚实标注覆盖边界：真实对话/事件序列/签名收发依赖真实 Key/公网/签名，

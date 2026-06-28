@@ -140,6 +140,7 @@
 | GET | `/api/customer/approvals` | 人工审批单列表（`?status=pending` 过滤） |
 | POST | `/api/customer/approvals/{id}/approve` | 放行审批单（人工放行退款打款） |
 | POST | `/api/customer/approvals/{id}/deny` | 拒绝审批单 |
+| POST | `/api/customer/forms/refund` | 退款多轮信息收集（逐轮收订单号/原因，收齐→生成待审单）|
 | DELETE | `/api/customer/session/{id}` | 结束并清理会话 |
 | GET | `/api/customer/health` | 健康检查 |
 | GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
@@ -371,6 +372,20 @@ curl -X POST 'localhost:8080/api/customer/approvals/AP-xxxx/deny?operator=bob&no
 > 回填 API，且"退款先生成待确认工单、人工放行后执行"本就是更稳健的领域建模。审批单状态机终态不可变，
 > approve/deny 幂等（重复决策返回 409）。
 > 测试：`PendingApprovalServiceTest`（状态机 + 回调 + fast-fail）、`AfterSalesToolsApprovalTest`（退款登记待审单）。
+
+**多轮信息收集（slot-filling，借鉴 AliGo「事项收集智能体」）**：退货/退款需逐步收集 `订单号→原因` 等关键信息，
+`SlotFillingService` 按 (sessionId, form) 维护进度，每轮抽取/追问，收齐后**串接 HITL** 生成待审退款单。
+```bash
+# 同一 sessionId 连续提交推进表单；complete=false 按 nextPrompt 追问，complete=true 附 approvalId
+curl -X POST localhost:8080/api/customer/forms/refund -H 'Content-Type: application/json' -d '{"sessionId":"u1","message":"我要退款"}'
+# → {complete:false, nextPrompt:"请提供需要退款的订单号。"}
+curl -X POST localhost:8080/api/customer/forms/refund -H 'Content-Type: application/json' -d '{"sessionId":"u1","message":"20260613001"}'
+# → {complete:false, nextPrompt:"请简要说明退款原因…"}
+curl -X POST localhost:8080/api/customer/forms/refund -H 'Content-Type: application/json' -d '{"sessionId":"u1","message":"质量问题"}'
+# → {complete:true, approvalId:"AP-…"}
+```
+> 抽取规则确定性：带正则的槽位（订单号）从任意句抽取，自由文本槽位（原因）在追问轮整句取值。
+> 测试：`SlotFillingServiceTest`（多轮收集 / 首句抽取 / 完成清理）。
 
 ### 6.12 模型层（多厂商 + 私有化兜底 + 高级参数）
 
