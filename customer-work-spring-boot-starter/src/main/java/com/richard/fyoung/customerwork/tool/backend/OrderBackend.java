@@ -17,4 +17,22 @@ public interface OrderBackend {
 
     /** 查询订单物流轨迹。 */
     Mono<String> queryLogistics(String orderId);
+
+    /**
+     * 售中：修改收货地址。接口以 {@code default} 演进——老实现无需改动即兜底为"转人工"，
+     * 自定义后端可按需 override 对接真实订单系统。
+     */
+    default Mono<String> modifyAddress(String orderId, String newAddress) {
+        return Mono.just("当前订单暂不支持自助改址，已为您转人工坐席处理。");
+    }
+
+    /** 售中：取消订单（default 兜底转人工）。 */
+    default Mono<String> cancelOrder(String orderId, String reason) {
+        return Mono.just("当前订单暂不支持自助取消，已为您转人工坐席处理。");
+    }
+
+    /** 售中：催发货（default 兜底登记，由人工跟进）。 */
+    default Mono<String> urgeShipment(String orderId) {
+        return Mono.just("已记录您的催发货诉求，稍后由人工坐席跟进。");
+    }
 }

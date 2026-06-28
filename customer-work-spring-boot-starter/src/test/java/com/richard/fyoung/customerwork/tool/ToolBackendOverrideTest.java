@@ -43,13 +43,17 @@ class ToolBackendOverrideTest {
             new com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
+            new com.richard.fyoung.customerwork.tool.backend.MockMemberBackend(),
+            new com.richard.fyoung.customerwork.tool.backend.MockComplaintBackend(),
             new com.richard.fyoung.customerwork.approval.PendingApprovalService())
             .registerBusinessTools(toolkit);
 
         Set<String> names = toolkit.getToolNames();
         assertTrue(names.contains("queryOrder") && names.contains("submitRefund")
             && names.contains("searchKnowledge") && names.contains("transferToHuman")
-            && names.contains("recommendProducts") && names.contains("queryRefundProgress"),
-            "应注册全部业务工具（含售前导购 + 售后补全）: " + names);
+            && names.contains("recommendProducts") && names.contains("queryRefundProgress")
+            && names.contains("cancelOrder") && names.contains("queryPoints")
+            && names.contains("fileComplaint"),
+            "应注册全部业务工具（售前/订单/售后/会员/投诉/人工）: " + names);
     }
 }

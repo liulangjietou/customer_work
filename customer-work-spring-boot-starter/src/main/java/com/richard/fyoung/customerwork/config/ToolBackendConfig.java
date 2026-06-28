@@ -3,7 +3,11 @@ package com.richard.fyoung.customerwork.config;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
+import com.richard.fyoung.customerwork.tool.backend.ComplaintBackend;
+import com.richard.fyoung.customerwork.tool.backend.MemberBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockComplaintBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockMemberBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockOrderBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockProductBackend;
 import com.richard.fyoung.customerwork.tool.backend.OrderBackend;
@@ -45,5 +49,17 @@ public class ToolBackendConfig {
     @ConditionalOnMissingBean(ProductBackend.class)
     public ProductBackend productBackend() {
         return new MockProductBackend();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(MemberBackend.class)
+    public MemberBackend memberBackend() {
+        return new MockMemberBackend();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ComplaintBackend.class)
+    public ComplaintBackend complaintBackend() {
+        return new MockComplaintBackend();
     }
 }

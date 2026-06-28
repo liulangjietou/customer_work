@@ -33,6 +33,13 @@
   `SlotFillingResult`/`SlotFillingService`）——按 (sessionId, form) 维护进度，带正则槽位任意句抽取、
   自由文本槽位追问轮取值；内置退款表单（订单号→原因）。`RefundFormController`（`POST /api/customer/forms/refund`）
   收齐后**串接 HITL** 生成待审退款单。新增 3 个确定性单测。
+- **业务功能补全 · 售中**：`OrderBackend`（`default` 方法演进，不破坏 Acme/Custom 实现）+ `OrderTools` 扩
+  `modifyAddress`(改址)/`cancelOrder`(取消)/`urgeShipment`(催发货)；`MockOrderBackend` 提供演示实现。
+- **业务功能补全 · 会员/账户**：新增 `MemberBackend`/`MockMemberBackend`/`MemberTools` + `member` 工具组——
+  `queryPoints`/`queryMemberLevel`/`resolveAccountIssue`。新增 `MemberToolsTest`。
+- **业务功能补全 · 投诉工单**：新增 `ComplaintBackend`/`MockComplaintBackend`(内存工单)/`ComplaintTools`
+  + `complaint` 工具组——`fileComplaint`(建单)/`queryComplaint`(查单)，投诉从"仅识别意图"升级为"可建单+可跟踪"。
+  新增 `ComplaintToolsTest`。Tool Group 5→7，`ToolRegistrar` 构造增 Member/Complaint Backend（修齐 3 处调用点）。
 - **业务功能补全 · 售前导购**：新增 `ProductBackend`/`MockProductBackend`/`ProductTools` + `presale` 工具组——
   商品咨询 `queryProduct`、推荐 `recommendProducts`、库存 `checkStock`、优惠 `queryPromotions`；
   `IntentResult` 意图加 `presale`。补全客服旅程"售前"半段（关联下单转化）。新增 `ProductToolsTest`（4 例）。

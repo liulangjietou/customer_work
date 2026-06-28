@@ -41,6 +41,8 @@ class CustomerServiceAgentFactoryTest {
                 new com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend(),
                 new com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend(),
                 new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
+                new com.richard.fyoung.customerwork.tool.backend.MockMemberBackend(),
+                new com.richard.fyoung.customerwork.tool.backend.MockComplaintBackend(),
                 new com.richard.fyoung.customerwork.approval.PendingApprovalService()),
             new InMemoryAgentStateStore(),
             new com.richard.fyoung.customerwork.config.PermissionConfig().permissionContextState(props),
