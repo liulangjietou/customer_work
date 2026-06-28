@@ -44,7 +44,7 @@ config line swaps to a cloud / self-hosted backend — **without touching busine
 | Tools + Tool Group + Meta-Tool | `ToolRegistrar` | on | `agent.meta-tool-enabled` |
 | Skill + **self-evolution (SkillCurator)** | `SkillBox` / `enableSkillCurator` | on/off | `skill.*` / `harness.skill-curator-enabled` |
 | **Multi-agent orchestration (Reactor)** | `MultiAgentOrchestrator` | on | `POST /consult` (replaces v1 Pipelines) |
-| **5-stage Middleware** | `middleware/*Middleware` (Observability/Audit/Latency/Masking/ToolGuard/DynamicOptions/SelfCorrection/HumanApproval/TenantContext) | on/off | declare a `MiddlewareBase` bean (replaces v1 Hook) |
+| **5-stage Middleware** | `middleware/*Middleware` (Observability/Audit/Latency/Masking/ToolGuard/DynamicOptions/SelfCorrection/HumanApproval/TenantContext/DialogStage) | on/off | declare a `MiddlewareBase` bean (replaces v1 Hook) |
 | **Permission system (3-state)** | `PermissionConfig` | off | `harness.permission.enabled` |
 | **Plan Mode** | `HarnessAgentFactory` | off | `harness.plan-mode.enabled` |
 | **Workspace / Sandbox** | `HarnessAgentFactory#applySandbox` | off | `harness.sandbox.mode=local/docker` |

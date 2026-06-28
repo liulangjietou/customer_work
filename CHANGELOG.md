@@ -33,6 +33,10 @@
   `SlotFillingResult`/`SlotFillingService`）——按 (sessionId, form) 维护进度，带正则槽位任意句抽取、
   自由文本槽位追问轮取值；内置退款表单（订单号→原因）。`RefundFormController`（`POST /api/customer/forms/refund`）
   收齐后**串接 HITL** 生成待审退款单。新增 3 个确定性单测。
+- **对话阶段状态机 / 动态 Prompt（借鉴 AliGo 状态机式 Prompt 组装）**：新增 `dialog` 包（`DialogStage` 枚举
+  + `DialogStageService`）+ `DialogStageMiddleware`（第五段 `onSystemPrompt`）——按会话当前阶段
+  （接待/收集/处理/确认/转人工）动态注入"聚焦当前主链路"指令，替代全量规则塞一个静态大 Prompt（降 token、提准）。
+  中间件第 10 个，`@Component` 自动收集进 Agent。新增 4 个单测；starter 全套 164 tests 全绿。
 - **自动化意图评测框架（借鉴 AliGo 测评系统）**：新增 `eval` 包（`EvalCase`/`EvalReport`/`IntentEvalRunner`）
   + classpath 评测集 `eval/intent-eval-cases.json`（用例沉淀复用）——量化规则快车道的准确率/覆盖率，
   离线确定性、可 CI 跑、可版本对比；`EvalReport.format()` 输出文本报告。新增 2 个单测（数据集加载 + 质量基线）。

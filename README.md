@@ -83,7 +83,7 @@
 | Skill 技能库 + **自进化(SkillCurator)** | `SkillBox` / `enableSkillCurator` | 开/关 | `skill.repository=...` / `harness.skill-curator-enabled` |
 | Skill 运行时加载 / 代码执行 | Builder `skillCodeExecutionEnabled` | 关 | `skill.runtime-load-tool-enabled` / `skill.code-execution-enabled` |
 | **多 Agent 编排（Reactor）** | `MultiAgentOrchestrator` | 开 | `POST /consult`（取代 1.x Pipelines） |
-| **五段 Middleware** | `middleware/*Middleware`（Observability/Audit/Latency/Masking/ToolGuard/DynamicOptions/SelfCorrection/HumanApproval/TenantContext） | 开/关 | 声明 `MiddlewareBase` Bean（取代 1.x Hook） |
+| **五段 Middleware** | `middleware/*Middleware`（Observability/Audit/Latency/Masking/ToolGuard/DynamicOptions/SelfCorrection/HumanApproval/TenantContext/DialogStage） | 开/关 | 声明 `MiddlewareBase` Bean（取代 1.x Hook） |
 | **权限系统 Permission（三态）** | `PermissionConfig` | 关 | `harness.permission.enabled=true` |
 | **Plan Mode（只读规划）** | `HarnessAgentFactory` | 关 | `harness.plan-mode.enabled=true` |
 | **Workspace / 安全沙箱（Sandbox）** | `HarnessAgentFactory#applySandbox` | 关 | `harness.sandbox.mode=local/docker` |
@@ -589,7 +589,11 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   ├── agent/       CustomerServiceAgentFactory / HarnessAgentFactory / MultiAgentOrchestrator
 │       │   │                AguiService / GlobalHookRegistry
 │       │   ├── middleware/  五段 Middleware：Observability / Audit / Latency / Masking / ToolGuard
-│       │   │                DynamicOptions / SelfCorrection / HumanApproval / TenantContext（取代 1.x Hook）
+│       │   │                DynamicOptions / SelfCorrection / HumanApproval / TenantContext / DialogStage（取代 1.x Hook）
+│       │   ├── approval/    人工审批闭环：PendingApprovalService / ApprovalRequest(充血状态机)
+│       │   ├── slotfilling/ 多轮槽位收集：SlotFillingService / SlotFillingForm（事项收集）
+│       │   ├── dialog/      对话阶段状态机：DialogStage / DialogStageService（动态 Prompt）
+│       │   ├── eval/        意图评测框架：IntentEvalRunner / EvalReport（测评系统）
 │       │   ├── service/     CustomerServiceService / SessionStateManager(AgentStateStore 运维门面)
 │       │   ├── memory/      LongTermMemoryProvider / Store / InMemoryLongTermMemory / FactLog / ContextMemoryFactory
 │       │   ├── rag/         KnowledgeProvider / InMemoryKeywordKnowledge
