@@ -137,6 +137,33 @@ class MultiAgentOrchestratorTest {
         assertEquals(3, orch.expertsForIntent(null, all).size());
     }
 
+    /** 规则快车道：命中唯一意图关键词→返回该意图；命中多类/无命中→empty（交 LLM）。 */
+    @Test
+    void fastRouteIntent_shouldHitUniqueIntentOnly() {
+        MultiAgentOrchestrator orch = newOrchestrator(new CustomerWorkProperties());
+
+        assertEquals("refund", orch.fastRouteIntent("我要退款").orElse(null));
+        assertEquals("order", orch.fastRouteIntent("我的快递到哪了").orElse(null));
+        assertEquals("complaint", orch.fastRouteIntent("我要投诉你们").orElse(null));
+        assertEquals("consult", orch.fastRouteIntent("能开发票吗").orElse(null));
+        // 命中多类（退款 + 投诉）→ 语义模糊，交 LLM
+        assertTrue(orch.fastRouteIntent("我要退款不然就投诉").isEmpty());
+        // 无命中 → 交 LLM
+        assertTrue(orch.fastRouteIntent("你好在吗").isEmpty());
+        assertTrue(orch.fastRouteIntent("").isEmpty());
+    }
+
+    /** 快车道直路由：命中唯一意图时 selectExperts 不调模型即返回相关专家。 */
+    @Test
+    void selectExperts_shouldUseFastLaneWithoutModel() {
+        MultiAgentOrchestrator orch = newOrchestrator(new CustomerWorkProperties());
+        List<ReActAgent> all = orch.buildSpecialists();
+
+        // "退款" 命中快车道 → 直接售后专家，全程不触发 routerAgent（mock model 也不会被调用）
+        List<ReActAgent> picked = orch.selectExperts("我要退款", all).block(Duration.ofSeconds(2));
+        assertEquals(List.of("AfterSalesExpert"), names(picked));
+    }
+
     /** 路由关闭：selectExperts 不调模型，直接返回全部专家（离线可验证）。 */
     @Test
     void selectExperts_shouldReturnAllWhenRoutingDisabled() {

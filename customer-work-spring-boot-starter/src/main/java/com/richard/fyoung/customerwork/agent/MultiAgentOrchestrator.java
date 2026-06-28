@@ -26,7 +26,10 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -69,6 +72,20 @@ public class MultiAgentOrchestrator {
     private static final String ERR_EXPERT_FAIL = "MAS-EXPERT-FAIL";
     private static final String ERR_ROUTE_FAIL = "MAS-ROUTE-FAIL";
     private static final String ERR_REDUCE_FAIL = "MAS-REDUCE-FAIL";
+
+    /**
+     * 规则快车道关键词表（intent → 触发词）。命中<b>唯一</b>意图时直路由、跳过 LLM 分诊；
+     * 命中多类或无命中则交慢车道（LLM）。借鉴 AliGo「快慢车道」：规则保确定性、LLM 保灵活性。
+     * 用 {@link LinkedHashMap} 固定遍历序，避免魔法值散落。
+     */
+    private static final Map<String, List<String>> FAST_ROUTE_KEYWORDS = new LinkedHashMap<>();
+
+    static {
+        FAST_ROUTE_KEYWORDS.put("refund", List.of("退款", "退货", "退钱", "申请退", "已读不退"));
+        FAST_ROUTE_KEYWORDS.put("order", List.of("物流", "快递", "到哪了", "发货", "签收", "运单", "几天到"));
+        FAST_ROUTE_KEYWORDS.put("complaint", List.of("投诉", "差评", "举报", "态度", "315", "曝光"));
+        FAST_ROUTE_KEYWORDS.put("consult", List.of("发票", "运费", "政策", "几天无理由", "保修", "能不能开票"));
+    }
 
     /** 可观测指标名（并行编排健康度，经 Micrometer 暴露到 /actuator/prometheus）。 */
     private static final String M_ROUTE = "customerwork.mas.route";
@@ -179,10 +196,23 @@ public class MultiAgentOrchestrator {
      * <p>包级可见，便于单测以关闭路径离线断言退化为全部专家。</p>
      */
     Mono<List<ReActAgent>> selectExperts(String userText, List<ReActAgent> all) {
-        if (!properties.getMultiAgent().isRoutingEnabled()) {
+        CustomerWorkProperties.MultiAgent cfg = properties.getMultiAgent();
+        if (!cfg.isRoutingEnabled()) {
             recordRoute("disabled", all.size());
             return Mono.just(all);
         }
+        // 快车道：规则命中唯一意图则直路由，跳过 LLM 分诊（省一次模型调用、提准降延迟）
+        if (cfg.isFastRouteEnabled()) {
+            Optional<String> fast = fastRouteIntent(userText);
+            if (fast.isPresent()) {
+                List<ReActAgent> picked = expertsForIntent(fast.get(), all);
+                log.info("multi-agent routing(fast-lane): intent={}, picked={}", fast.get(),
+                    picked.stream().map(ReActAgent::getName).collect(Collectors.toList()));
+                recordRoute("fast:" + fast.get(), picked.size());
+                return Mono.just(picked);
+            }
+        }
+        // 慢车道：交 LLM 分诊
         return routerAgent().call("判断用户意图并结构化输出：" + userText, IntentResult.class, ROUTER_CTX)
             .map(m -> m.getStructuredData(IntentResult.class))
             .map(intent -> {
@@ -224,6 +254,29 @@ public class MultiAgentOrchestrator {
             .filter(a -> names.contains(a.getName()))
             .collect(Collectors.toList());
         return picked.isEmpty() ? all : picked;
+    }
+
+    /**
+     * 规则快车道：用关键词表判定意图。仅当命中<b>唯一</b>意图时返回该意图（直路由）；
+     * 命中多类（语义可能跨域）或无命中时返回 {@code empty}，交 LLM 慢车道兜底。
+     *
+     * <p>纯函数，可离线确定性单测。</p>
+     */
+    Optional<String> fastRouteIntent(String userText) {
+        if (userText == null || userText.trim().isEmpty()) {
+            return Optional.empty();
+        }
+        String hit = null;
+        for (Map.Entry<String, List<String>> e : FAST_ROUTE_KEYWORDS.entrySet()) {
+            boolean matched = e.getValue().stream().anyMatch(userText::contains);
+            if (matched) {
+                if (hit != null) {
+                    return Optional.empty();   // 命中多类意图，语义模糊 → 交 LLM
+                }
+                hit = e.getKey();
+            }
+        }
+        return Optional.ofNullable(hit);
     }
 
     /**

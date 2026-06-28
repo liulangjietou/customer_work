@@ -220,6 +220,7 @@ customer-work.multi-agent:
   max-concurrency: 8      # 并行模式同时在跑的专家数上限
   timeout-seconds: 60     # 单专家超时；超时/异常被隔离成占位结果，不拖垮整体
   routing-enabled: true   # 智能路由：先分诊只发相关专家（省 token / 更准）；关则广播全部
+  fast-route-enabled: true  # 规则快车道：关键词命中唯一意图直路由，跳过 LLM 分诊（省一次模型调用）
   reduce-enabled: true    # reduce 归纳：多专家结论二次合成统一口径回复；关则直接拼接
 ```
 ```bash
@@ -227,8 +228,10 @@ curl -X POST localhost:8080/api/customer/consult \
   -H "Content-Type: application/json" -d '{"message":"订单 20260613001 想退款，能开发票吗？"}'
 ```
 > 2.0 用 **Reactor 直接编排**取代 1.x `Pipelines`，fanout 链路为 **路由 → 并行 → 归纳**：
-> - **智能路由（routing）**——先用轻量分诊器判断意图（`IntentResult`），只把问题发给**相关专家**
->   （order→订单 / refund·complaint→售后 / consult→知识库 / other→全部）；分诊失败或 other 广播全部，保证不漏。
+> - **智能路由（routing）= 快车道 + 慢车道**（借鉴阿里商旅 AliGo「快慢车道」）——
+>   **快车道**先用关键词规则命中**唯一**意图就直路由、**跳过 LLM 分诊**（省一次模型调用、提准降延迟，
+>   命中多类/无命中再走慢车道）；**慢车道**用轻量分诊器（`IntentResult`）判断意图。
+>   再按意图只发**相关专家**（order→订单 / refund·complaint→售后 / consult→知识库 / other→全部），分诊失败广播全部保证不漏。
 > - **fanout（真并行）**——每个 `agent.call` 经 `subscribeOn(Schedulers.boundedElastic())` 挪到独立线程，
 >   即便底层模型调用是阻塞式也能**真并发**（不是"并行写法、串行执行"）；`flatMap(..., maxConcurrency)` 限流，
 >   单专家 `timeout` + `onErrorResume` 错误隔离。

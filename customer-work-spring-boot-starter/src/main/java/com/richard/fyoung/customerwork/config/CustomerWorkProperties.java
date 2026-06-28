@@ -423,6 +423,8 @@ public class CustomerWorkProperties {
         private long timeoutSeconds = 60;
         /** 智能路由：先用分诊器判断意图，只把问题发给相关专家（省 token / 更准）；关则广播全部专家。 */
         private boolean routingEnabled = true;
+        /** 规则快车道：在 LLM 分诊前先用关键词规则命中确定意图（命中即直路由，省一次模型调用、提准降延迟）。 */
+        private boolean fastRouteEnabled = true;
         /** reduce 归纳：fanout 后用归纳器把多专家结论二次合成统一口径回复；关则直接拼接各专家结论。 */
         private boolean reduceEnabled = true;
     }
