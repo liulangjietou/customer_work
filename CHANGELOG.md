@@ -33,6 +33,13 @@
   `SlotFillingResult`/`SlotFillingService`）——按 (sessionId, form) 维护进度，带正则槽位任意句抽取、
   自由文本槽位追问轮取值；内置退款表单（订单号→原因）。`RefundFormController`（`POST /api/customer/forms/refund`）
   收齐后**串接 HITL** 生成待审退款单。新增 3 个确定性单测。
+- **业务功能补全 · 主动服务（复用 Channel 推送）**：新增 `notification` 包（`NotificationChannel` 抽象 +
+  `LoggingNotificationChannel` 默认 + `ProactiveNotificationService`）——订单状态通知 / 满意度回访；
+  customer-web 提供 `FeishuNotificationChannel`（`@Primary`，复用飞书 webhook，未配置降级日志）覆盖默认。
+  `ProactiveNotificationController`（`/api/customer/notify/order-status|survey`）。新增 3 个单测。
+- **业务功能补全 · 坐席辅助 + 会话质检（借鉴 AliGo）**：`assist` 包（`AgentAssistService` 给坐席实时
+  话术/知识/工具建议）+ `quality` 包（`QualityInspectionService` 规则质检：资金违规承诺判不通过、绝对化/禁语扣分）；
+  `AgentAssistController`（`/api/customer/assist`、`/api/customer/quality/inspect`）。新增 6 个单测。
 - **业务功能补全 · 售中**：`OrderBackend`（`default` 方法演进，不破坏 Acme/Custom 实现）+ `OrderTools` 扩
   `modifyAddress`(改址)/`cancelOrder`(取消)/`urgeShipment`(催发货)；`MockOrderBackend` 提供演示实现。
 - **业务功能补全 · 会员/账户**：新增 `MemberBackend`/`MockMemberBackend`/`MemberTools` + `member` 工具组——

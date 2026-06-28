@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.autoconfigure;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.notification.LoggingNotificationChannel;
+import com.richard.fyoung.customerwork.notification.NotificationChannel;
 import com.richard.fyoung.customerwork.observability.AuditSink;
 import com.richard.fyoung.customerwork.observability.LoggingAuditSink;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -36,5 +38,15 @@ public class CustomerWorkAutoConfiguration {
     @ConditionalOnMissingBean
     public AuditSink auditSink() {
         return new LoggingAuditSink();
+    }
+
+    /**
+     * 默认主动通知通道（仅日志）。下游声明自己的 {@link NotificationChannel} Bean 即可覆盖，
+     * 复用飞书 / 钉钉等 Channel 推送把订单状态通知 / 满意度回访推达用户。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public NotificationChannel notificationChannel() {
+        return new LoggingNotificationChannel();
     }
 }

@@ -91,6 +91,9 @@
 | 中断恢复 | `enablePendingToolRecovery` | 开 | `interrupt.pending-tool-recovery-enabled` |
 | Human-in-the-Loop | `HumanApprovalMiddleware` + Permission ask | 开 | `human-approval.enabled` + `POST /session/{id}/interrupt` |
 | **人工审批闭环（退款放行）** | `PendingApprovalService` + `ApprovalController` | 开 | `GET /approvals` · `POST /approvals/{id}/approve\|deny` |
+| **多轮信息收集（slot-filling）** | `SlotFillingService` + `RefundFormController` | 开 | `POST /forms/refund` |
+| **主动服务（通知/回访，复用 Channel 推送）** | `ProactiveNotificationService` + `NotificationChannel` | 开 | `POST /notify/order-status\|survey` |
+| **坐席辅助 + 会话质检** | `AgentAssistService` + `QualityInspectionService` | 开 | `POST /assist` · `POST /quality/inspect` |
 | 可观测 + 指标 | `ObservabilityMiddleware` + Micrometer | 开 | `/actuator/prometheus` |
 | 原生 Tracing | `TracingConfig` | 关 | `observability.tracing-enabled=true` |
 | 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
@@ -141,6 +144,9 @@
 | POST | `/api/customer/approvals/{id}/approve` | 放行审批单（人工放行退款打款） |
 | POST | `/api/customer/approvals/{id}/deny` | 拒绝审批单 |
 | POST | `/api/customer/forms/refund` | 退款多轮信息收集（逐轮收订单号/原因，收齐→生成待审单）|
+| POST | `/api/customer/notify/order-status` `/notify/survey` | 主动服务：订单状态通知 / 满意度回访（复用 Channel 推送）|
+| POST | `/api/customer/assist` | 坐席辅助：实时话术/知识/工具建议 |
+| POST | `/api/customer/quality/inspect` | 会话质检：合规与服务规范打分 |
 | DELETE | `/api/customer/session/{id}` | 结束并清理会话 |
 | GET | `/api/customer/health` | 健康检查 |
 | GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
@@ -603,6 +609,9 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   ├── slotfilling/ 多轮槽位收集：SlotFillingService / SlotFillingForm（事项收集）
 │       │   ├── dialog/      对话阶段状态机：DialogStage / DialogStageService（动态 Prompt）
 │       │   ├── eval/        意图评测框架：IntentEvalRunner / EvalReport（测评系统）
+│       │   ├── notification/ 主动服务：ProactiveNotificationService / NotificationChannel（通知/回访）
+│       │   ├── assist/      坐席辅助：AgentAssistService（实时话术建议）
+│       │   ├── quality/     会话质检：QualityInspectionService（合规打分）
 │       │   ├── service/     CustomerServiceService / SessionStateManager(AgentStateStore 运维门面)
 │       │   ├── memory/      LongTermMemoryProvider / Store / InMemoryLongTermMemory / FactLog / ContextMemoryFactory
 │       │   ├── rag/         KnowledgeProvider / InMemoryKeywordKnowledge
