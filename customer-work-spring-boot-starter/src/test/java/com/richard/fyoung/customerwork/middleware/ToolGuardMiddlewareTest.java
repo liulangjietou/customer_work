@@ -50,6 +50,47 @@ class ToolGuardMiddlewareTest {
     }
 
     @Test
+    void guard_shouldRewriteDestructiveParam_andCount() {
+        // 默认破坏性模式生效（rm -rf 等）
+        ToolGuardMiddleware mw = new ToolGuardMiddleware(propsWith(Map.of(), Map.of()));
+
+        ToolUseBlock use = new ToolUseBlock("t3", "shellExec",
+            Map.of("command", "rm -rf /data/workspace"), null);
+        ToolUseBlock guarded = mw.guard(use);
+
+        assertEquals(CustomerWorkProperties.Hooks.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
+            guarded.getInput().get("command"), "命中破坏性模式的入参应被改写为安全占位");
+        assertEquals(1L, mw.destructiveHitCount(), "命中应被计数");
+    }
+
+    @Test
+    void guard_shouldNotTouchBenignParam() {
+        ToolGuardMiddleware mw = new ToolGuardMiddleware(propsWith(Map.of(), Map.of()));
+
+        ToolUseBlock use = new ToolUseBlock("t4", "shellExec",
+            Map.of("command", "ls -al /data/workspace"), null);
+        assertNull(mw.guard(use), "未命中破坏性模式不应改写");
+        assertEquals(0L, mw.destructiveHitCount(), "未命中不应计数");
+    }
+
+    @Test
+    void guard_shouldRespectConfiguredDestructivePatterns() {
+        CustomerWorkProperties props = propsWith(Map.of(), Map.of());
+        // 覆盖默认模式：只拦 "danger" 这一自定义模式
+        props.getHooks().getToolGuard().setDestructivePatterns(List.of("danger"));
+        ToolGuardMiddleware mw = new ToolGuardMiddleware(props);
+
+        // 默认会拦的 rm -rf 现在不在自定义列表里，应放行
+        assertNull(mw.guard(new ToolUseBlock("t5", "shellExec",
+            Map.of("command", "rm -rf /tmp"), null)), "覆盖默认模式后 rm -rf 应放行");
+        // 自定义模式命中
+        ToolUseBlock guarded = mw.guard(new ToolUseBlock("t6", "shellExec",
+            Map.of("command", "run danger op"), null));
+        assertEquals(CustomerWorkProperties.Hooks.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
+            guarded.getInput().get("command"), "自定义破坏性模式应命中改写");
+    }
+
+    @Test
     void onActing_shouldRewriteToolCalls_whenGuarded() {
         ToolGuardMiddleware mw = new ToolGuardMiddleware(
             propsWith(Map.of("channel", "app"), Map.of()));

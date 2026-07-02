@@ -65,6 +65,18 @@
   `TestRestTemplate`），离线确定性验证五套前端端点真实注册可达——actuator/health、OpenAPI、chat-completions、
   AG-UI、飞书 inbound 回调 + OpenAPI 装配。诚实标注覆盖边界：真实对话/事件序列/签名收发依赖真实 Key/公网/签名，
   企业微信 inbound 端点映射依赖 channel 启用（由 bean 装配测试覆盖）。customer-web 测试 1 → 7 个。
+- **生产加固（对照框架 open issues 的缓解措施）**：四项面向生产的加固——
+  ①`HarnessAgentFactory` 在 `HarnessAgent.Builder` 上显式补默认 `generateOptions`，规避 **#1644**
+  （未设 `generateOptions` 时 `streamEvents()` NPE）；
+  ②`ToolGuardMiddleware.onActing` 增加**破坏性命令拦截**——对工具字符串入参匹配危险正则
+  （默认覆盖 `rm -rf`、删除 `.agentscope/workspace`、Windows `del /f|/s`、`format `）命中即改写为安全占位
+  `[BLOCKED_BY_TOOL_GUARD]` 并 `TOOL-GUARD-DESTRUCTIVE` 告警计数，缓解 **#1898/#1896**（沙箱可删 workspace / 跨用户写），
+  正则经 `hooks.tool-guard.destructive-patterns` 可整体覆盖；
+  ③`CustomerServiceService` 意图分类失败与 chat 兜底新增 Micrometer 计数 `customerwork.intent.classify.errors`、
+  `customerwork.chat.fallback`（`ObjectProvider<MeterRegistry>` 可选注入、无则 no-op），缓解 **#1852/#1699**
+  结构化输出静默失效；
+  ④`chatStream()` 增加 **SSE 空闲超时**（`stream.idle-timeout-seconds`，默认 120，`<=0` 禁用）——空闲超时以
+  `STREAM_IDLE_TIMEOUT` 友好收尾而非挂死，缓解 **#1741**（SSE 关不掉导致连接泄漏）。新增 9 个单测。
 - **新增 2.0 能力**：Permission System（`PermissionConfig` 注入主 Agent）、Plan Mode、Compaction、
   Workspace/Sandbox、Subagent（统一经 `HarnessAgent.Builder.fromAgent(...)` 装配，见 `HarnessAgentFactory`）。
 - **Middleware 五段**：8 个业务 Hook 全部迁移到 `MiddlewareBase`（ToolGuard/DynamicOptions/Masking/

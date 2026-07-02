@@ -7,14 +7,18 @@ import io.agentscope.core.agent.Event;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.agent.StreamOptions;
+import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
+
+import java.time.Duration;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -181,5 +185,78 @@ class CustomerServiceServiceTest {
         // 用独立 intent: 前缀 Agent，不碰会话 Agent
         verify(factory).createAgent("intent:u7");
         verify(factory, org.mockito.Mockito.never()).createAgent("u7");
+    }
+
+    /** chat 失败走兜底时应递增 customerwork.chat.fallback 计数。 */
+    @Test
+    void chat_shouldIncrementFallbackMetric_whenAgentFails() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        service.setMeterRegistry(registry);
+        when(agent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.error(new RuntimeException("model down")));
+
+        service.chat("m1", "查询订单").block();
+
+        org.junit.jupiter.api.Assertions.assertEquals(1.0,
+            registry.counter("customerwork.chat.fallback").count(), "chat 兜底应计数");
+    }
+
+    /** 意图分类失败时应递增 customerwork.intent.classify.errors 计数。 */
+    @Test
+    void classifyIntent_shouldIncrementErrorMetric_whenParsingFails() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        service.setMeterRegistry(registry);
+        when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
+            .thenReturn(Mono.error(new RuntimeException("bad json")));
+
+        service.classifyIntent("m2", "随便").block();
+
+        org.junit.jupiter.api.Assertions.assertEquals(1.0,
+            registry.counter("customerwork.intent.classify.errors").count(), "意图失败应计数");
+    }
+
+    /** 未注入 MeterRegistry 时计数降级为 no-op，不应抛异常。 */
+    @Test
+    void chat_shouldNotThrow_whenNoMeterRegistry() {
+        when(agent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.error(new RuntimeException("model down")));
+
+        StepVerifier.create(service.chat("m3", "hi"))
+            .assertNext(reply -> org.junit.jupiter.api.Assertions.assertTrue(reply.contains("系统繁忙")))
+            .verifyComplete();
+    }
+
+    /**
+     * SSE 空闲超时：用一个永不产元素的流 + 1 秒超时，断言超时后收到兜底收尾消息而非挂死。
+     */
+    @Test
+    void chatStream_shouldEmitFallback_onIdleTimeout() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getStream().setIdleTimeoutSeconds(1);
+        CustomerServiceService timedService =
+            new CustomerServiceService(factory, sessionStateManager, props);
+        // 永不产元素、也不完成的流
+        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.never());
+
+        StepVerifier.create(timedService.chatStream("s1", "你好"))
+            .assertNext(chunk -> org.junit.jupiter.api.Assertions.assertTrue(chunk.contains("系统繁忙")))
+            .thenAwait(Duration.ofSeconds(2))
+            .verifyComplete();
+    }
+
+    /** idleTimeoutSeconds<=0 时禁用超时：正常流不受影响。 */
+    @Test
+    void chatStream_shouldNotTimeout_whenDisabled() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getStream().setIdleTimeoutSeconds(0);
+        CustomerServiceService noTimeoutService =
+            new CustomerServiceService(factory, sessionStateManager, props);
+        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, assistantMsg("好"), true)));
+
+        StepVerifier.create(noTimeoutService.chatStream("s2", "你好"))
+            .expectNext("好")
+            .verifyComplete();
     }
 }

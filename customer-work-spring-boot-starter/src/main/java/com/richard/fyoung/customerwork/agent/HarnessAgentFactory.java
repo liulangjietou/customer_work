@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.agent;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.memory.ContextMemoryFactory;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.state.AgentStateStore;
@@ -83,6 +84,10 @@ public class HarnessAgentFactory {
             .stateStore(stateStore)
             .defaultSessionId(sessionId)
             .permissionContext(permissionContext)
+            // 框架 #1644：HarnessAgent 未显式设置 generateOptions 时，streamEvents() 会因空的
+            // generateOptions 触发 NPE。此处显式设置一份保守默认，规避该缺陷；具体模型参数仍以
+            // 内层 ReActAgent 的模型配置为准，这里只保证 generateOptions 非空。
+            .generateOptions(defaultGenerateOptions())
             .workspace(resolveWorkspace(cfg.getWorkspaceDir()));
 
         // 上下文压缩（长对话有界）
@@ -144,6 +149,15 @@ public class HarnessAgentFactory {
 
         log.info("[Harness] HarnessAgent built for session {}", sessionId);
         return builder.build();
+    }
+
+    /**
+     * 默认 generateOptions（框架 #1644 缓解）：仅用于保证 HarnessAgent 的 generateOptions 非空，
+     * 避免 streamEvents() NPE。不覆盖任何具体模型参数（温度 / maxTokens 等），实际推理参数仍由
+     * 内层 ReActAgent 的模型配置决定。
+     */
+    private GenerateOptions defaultGenerateOptions() {
+        return GenerateOptions.builder().build();
     }
 
     /** 按配置选择并应用沙箱文件系统（none 时不隔离）。 */

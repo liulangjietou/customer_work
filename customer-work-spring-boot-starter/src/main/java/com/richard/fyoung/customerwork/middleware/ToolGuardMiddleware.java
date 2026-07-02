@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /**
  * 工具调用护栏中间件（2.0 Middleware，承接 1.x ToolGuardHook，对应「安全 · 工具入参治理」）。
@@ -24,7 +25,9 @@ import java.util.function.Function;
  * <p>落在 {@link #onActing} 段：在工具真正执行前改写 {@link ActingInput} 中的工具入参——</p>
  * <ul>
  *   <li><b>公共参数注入</b>：把渠道 / 租户 / 调用来源等公共上下文注入到每个工具调用（仅当缺失该键时）；</li>
- *   <li><b>数值上限钳制</b>：对指定数值参数（如退款金额 amount）做上限保护，超限改写为上限值并告警。</li>
+ *   <li><b>数值上限钳制</b>：对指定数值参数（如退款金额 amount）做上限保护，超限改写为上限值并告警；</li>
+ *   <li><b>破坏性命令拦截</b>：对字符串入参匹配危险模式（rm -rf、删除沙箱 workspace、format 等），
+ *       命中则改写为安全占位并告警，缓解框架 #1898/#1896（沙箱可删 workspace / 跨用户写）。</li>
  * </ul>
  *
  * <p>默认关闭。异常不打断主链路（原样放行）。</p>
@@ -35,15 +38,36 @@ public class ToolGuardMiddleware implements MiddlewareBase {
 
     private static final Logger log = LoggerFactory.getLogger(ToolGuardMiddleware.class);
 
+    /** 破坏性命令拦截错误码。 */
+    private static final String CODE_DESTRUCTIVE = "TOOL-GUARD-DESTRUCTIVE";
+
     private final boolean enabled;
     private final Map<String, String> injectParams;
     private final Map<String, Double> numericCaps;
+    /** 破坏性入参正则（预编译，不区分大小写）。 */
+    private final List<Pattern> destructivePatterns;
+    /** 命中破坏性入参的累计次数（可观测用途，供告警指标 / 单测断言）。 */
+    private final java.util.concurrent.atomic.LongAdder destructiveHits =
+        new java.util.concurrent.atomic.LongAdder();
 
     public ToolGuardMiddleware(CustomerWorkProperties properties) {
         CustomerWorkProperties.Hooks.ToolGuard cfg = properties.getHooks().getToolGuard();
         this.enabled = cfg.isEnabled();
         this.injectParams = cfg.getInjectParams();
         this.numericCaps = cfg.getNumericCaps();
+        this.destructivePatterns = new ArrayList<>();
+        if (cfg.getDestructivePatterns() != null) {
+            for (String p : cfg.getDestructivePatterns()) {
+                if (p != null && !p.isEmpty()) {
+                    this.destructivePatterns.add(Pattern.compile(p, Pattern.CASE_INSENSITIVE));
+                }
+            }
+        }
+    }
+
+    /** 命中破坏性入参的累计次数（供单测断言 / 监控采样）。 */
+    long destructiveHitCount() {
+        return destructiveHits.sum();
     }
 
     @Override
@@ -97,10 +121,34 @@ public class ToolGuardMiddleware implements MiddlewareBase {
                 changed = true;
             }
         }
+        // 破坏性命令拦截：对字符串入参匹配危险模式，命中即改写为安全占位并计数告警。
+        if (!destructivePatterns.isEmpty()) {
+            for (Map.Entry<String, Object> entry : new LinkedHashMap<>(in).entrySet()) {
+                Object raw = entry.getValue();
+                if (raw instanceof CharSequence && isDestructive(raw.toString())) {
+                    destructiveHits.increment();
+                    log.error("[GUARD] tool {} param {} hit destructive pattern, rewritten to placeholder, code={}",
+                        use.getName(), entry.getKey(), CODE_DESTRUCTIVE);
+                    in.put(entry.getKey(),
+                        CustomerWorkProperties.Hooks.ToolGuard.DESTRUCTIVE_PLACEHOLDER);
+                    changed = true;
+                }
+            }
+        }
         if (!changed) {
             return null;
         }
         return new ToolUseBlock(use.getId(), use.getName(), in, use.getMetadata());
+    }
+
+    /** 字符串是否命中任一破坏性模式。 */
+    private boolean isDestructive(String text) {
+        for (Pattern p : destructivePatterns) {
+            if (p.matcher(text).find()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Double toDouble(Object raw) {

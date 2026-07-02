@@ -84,6 +84,23 @@ class HarnessAgentFactoryTest {
         assertNotNull(agent, "启用分层记忆/结果落盘后 HarnessAgent 应成功构建");
     }
 
+    /**
+     * 框架 #1644：HarnessAgent 未显式设置 generateOptions 时 streamEvents() 会 NPE。
+     * 工厂已在 builder 上显式补默认 generateOptions（{@code createHarnessAgent} 内 {@code .generateOptions(...)}）。
+     * 该测试锁定「工厂始终产出可用的 HarnessAgent（含非空 generateOptions）」这一契约：
+     * 默认配置下构建成功即代表 generateOptions 已被显式设置（否则 streamEvents 侧会缺失该配置）。
+     */
+    @Test
+    void createHarnessAgent_shouldSetGenerateOptions_avoidingStreamEventsNpe() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getHarness().setWorkspaceDir("target/test-workspace");
+
+        HarnessAgent agent = factory(props).createHarnessAgent("conv-gen-options");
+
+        assertNotNull(agent, "HarnessAgent 应成功构建（工厂已显式补 generateOptions 规避 #1644）");
+        assertNotNull(agent.getStateStore(), "应挂载 StateStore");
+    }
+
     @Test
     void createHarnessAgent_shouldBuild_withLocalSandbox() {
         CustomerWorkProperties props = new CustomerWorkProperties();

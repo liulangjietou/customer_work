@@ -1,22 +1,28 @@
 package com.richard.fyoung.customerwork.service;
 
 import com.richard.fyoung.customerwork.agent.CustomerServiceAgentFactory;
+import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.dto.IntentResult;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.agent.StreamOptions;
 import io.agentscope.core.message.Msg;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 客服会话服务（AgentScope 2.0 迁移版，对应②"会话恢复与上下文装配"与⑤"状态持久化"）。
@@ -41,8 +47,16 @@ public class CustomerServiceService {
     /** 进程内热 Agent 缓存上限：超过则按 LRU 淘汰最久未用的会话，避免无界缓存导致 OOM。 */
     private static final int MAX_HOT_AGENTS = 1000;
 
+    /** 意图分类失败计数指标名（缓解框架 #1852/#1699 结构化输出静默失效）。 */
+    private static final String M_INTENT_CLASSIFY_ERRORS = "customerwork.intent.classify.errors";
+    /** 对话兜底计数指标名（chat 调用失败走 FALLBACK_REPLY）。 */
+    private static final String M_CHAT_FALLBACK = "customerwork.chat.fallback";
+
     private final CustomerServiceAgentFactory agentFactory;
     private final SessionStateManager sessionStateManager;
+    private final CustomerWorkProperties properties;
+    /** 可为 null：未接入 Micrometer 时降级为无指标（仅日志），不影响主链路。 */
+    private MeterRegistry meterRegistry;
 
     /**
      * 进程内热 Agent 缓存：sessionId -> Agent，有界 LRU（访问序）。
@@ -50,10 +64,29 @@ public class CustomerServiceService {
      */
     private final Map<String, ReActAgent> sessionAgents;
 
+    /** Spring 注入构造：MeterRegistry 经 ObjectProvider 可选注入（actuator 缺席时降级为无指标）。 */
+    @Autowired
+    public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
+                                  SessionStateManager sessionStateManager,
+                                  CustomerWorkProperties properties,
+                                  ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        this(agentFactory, sessionStateManager, properties);
+        this.meterRegistry = meterRegistryProvider.getIfAvailable();
+    }
+
+    /** 无指标构造（单测 / 未接入 Micrometer 场景）；properties 为空时使用默认配置。 */
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
                                   SessionStateManager sessionStateManager) {
+        this(agentFactory, sessionStateManager, new CustomerWorkProperties());
+    }
+
+    /** 无指标构造（携带配置）。 */
+    public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
+                                  SessionStateManager sessionStateManager,
+                                  CustomerWorkProperties properties) {
         this.agentFactory = agentFactory;
         this.sessionStateManager = sessionStateManager;
+        this.properties = properties;
         this.sessionAgents = Collections.synchronizedMap(
             new LinkedHashMap<String, ReActAgent>(256, 0.75f, true) {
                 @Override
@@ -61,6 +94,11 @@ public class CustomerServiceService {
                     return size() > MAX_HOT_AGENTS;
                 }
             });
+    }
+
+    /** 测试可注入指标注册表（避免暴露 setter 给生产链路误用）。 */
+    void setMeterRegistry(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -80,6 +118,7 @@ public class CustomerServiceService {
             .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
             .onErrorResume(e -> {
                 log.error("[session {}] chat failed, code={}", sessionId, "AGENT_CALL_ERROR", e);
+                incr(M_CHAT_FALLBACK);
                 return Mono.just(FALLBACK_REPLY);
             });
     }
@@ -102,13 +141,25 @@ public class CustomerServiceService {
             .includeReasoningChunk(true)
             .build();
 
-        return agent.stream(List.of(toUserMsg(userText)), options, ctx)
+        Flux<String> flux = agent.stream(List.of(toUserMsg(userText)), options, ctx)
             .map(event -> event.getMessage() == null ? "" : event.getMessage().getTextContent())
-            .filter(text -> text != null && !text.isEmpty())
-            .onErrorResume(e -> {
-                log.error("[session {}] stream chat failed, code={}", sessionId, "AGENT_STREAM_ERROR", e);
+            .filter(text -> text != null && !text.isEmpty());
+
+        // SSE 空闲超时（框架 #1741 缓解）：相邻元素间隔超过阈值即超时收尾，避免连接泄漏。<=0 禁用。
+        long idle = properties.getStream().getIdleTimeoutSeconds();
+        if (idle > 0) {
+            flux = flux.timeout(Duration.ofSeconds(idle));
+        }
+
+        return flux.onErrorResume(e -> {
+            if (e instanceof TimeoutException) {
+                log.error("[session {}] stream idle timeout after {}s, closing, code={}",
+                    sessionId, idle, "STREAM_IDLE_TIMEOUT");
                 return Flux.just(FALLBACK_REPLY);
-            });
+            }
+            log.error("[session {}] stream chat failed, code={}", sessionId, "AGENT_STREAM_ERROR", e);
+            return Flux.just(FALLBACK_REPLY);
+        });
     }
 
     /**
@@ -131,6 +182,7 @@ public class CustomerServiceService {
             .onErrorResume(e -> {
                 log.error("[session {}] intent classification failed, code={}", sessionId,
                     "INTENT_CLASSIFY_ERROR", e);
+                incr(M_INTENT_CLASSIFY_ERRORS);
                 return Mono.just(new IntentResult("other", "", false, "意图识别失败，转人工兜底"));
             });
     }
@@ -163,6 +215,13 @@ public class CustomerServiceService {
                 "SESSION_DELETE_ERROR", e);
         }
         log.info("[session {}] ended and cleaned", sessionId);
+    }
+
+    /** 计数指标 +1（未接入 Micrometer 时降级为 no-op，不影响主链路）。 */
+    private void incr(String metric) {
+        if (meterRegistry != null) {
+            meterRegistry.counter(metric).increment();
+        }
     }
 
     /** 获取热 Agent；未命中时新建（首次 call 自动从 StateStore 恢复历史，无需手工 load）。 */

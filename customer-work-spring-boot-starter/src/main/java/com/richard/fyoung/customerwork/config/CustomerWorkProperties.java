@@ -83,6 +83,24 @@ public class CustomerWorkProperties {
     /** AgentScope 2.0 Harness 能力（权限系统 / Plan Mode / 上下文压缩 / 工作区沙箱 / 子智能体）。 */
     private final Harness harness = new Harness();
 
+    /** 流式（SSE）传输配置：空闲超时等连接治理。 */
+    private final Stream stream = new Stream();
+
+    /**
+     * 流式（SSE）传输配置。
+     *
+     * <p>缓解框架 #1741：SSE 流在下游长时间无数据时无法自行关闭，导致连接泄漏。
+     * 通过空闲超时把长时间不产元素的流转成一条友好收尾消息后正常结束。</p>
+     */
+    @Data
+    public static class Stream {
+        /**
+         * SSE 流空闲超时（秒）：相邻两个元素间隔超过该值即触发超时兜底收尾。
+         * 默认 120；{@code <=0} 表示禁用空闲超时。
+         */
+        private long idleTimeoutSeconds = 120;
+    }
+
     /** 模型层配置。生产建议用环境变量 {@code DASHSCOPE_API_KEY} 注入密钥。 */
     @Data
     public static class Model {
@@ -559,11 +577,29 @@ public class CustomerWorkProperties {
         /** 工具调用护栏配置。默认关闭。 */
         @Data
         public static class ToolGuard {
+            /** 破坏性入参命中后改写成的安全占位（避免误删 / 误格式化真正落到工具执行）。 */
+            public static final String DESTRUCTIVE_PLACEHOLDER = "[BLOCKED_BY_TOOL_GUARD]";
+            /**
+             * 破坏性字符串入参的默认拦截正则（不区分大小写）：
+             * 覆盖 rm -rf、删除 .agentscope 沙箱工作区、Windows del /f|/s、format 磁盘格式化。
+             * 缓解框架 #1898/#1896（沙箱可删 workspace / 跨用户写）。
+             */
+            public static final List<String> DEFAULT_DESTRUCTIVE_PATTERNS = List.of(
+                "rm\\s+-rf",
+                "\\.agentscope[/\\\\]workspace",
+                "del\\s+/[fs]",
+                "format\\s");
+
             private boolean enabled = false;
             /** 对每个工具调用注入的公共参数（仅当入参中缺失该键时注入）。 */
             private Map<String, String> injectParams = new LinkedHashMap<>();
             /** 数值参数上限钳制：参数名 -> 最大值（超出则改写为最大值）。 */
             private Map<String, Double> numericCaps = new LinkedHashMap<>();
+            /**
+             * 破坏性命令拦截正则列表（不区分大小写）：命中的字符串入参会被改写为安全占位并告警。
+             * 默认覆盖 rm -rf / 删除沙箱 workspace / Windows del/format；可在 yml 中整体覆盖。
+             */
+            private List<String> destructivePatterns = new ArrayList<>(DEFAULT_DESTRUCTIVE_PATTERNS);
         }
 
         /** 动态生成参数配置。默认关闭。 */
