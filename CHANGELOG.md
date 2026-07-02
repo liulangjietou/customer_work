@@ -77,6 +77,15 @@
   结构化输出静默失效；
   ④`chatStream()` 增加 **SSE 空闲超时**（`stream.idle-timeout-seconds`，默认 120，`<=0` 禁用）——空闲超时以
   `STREAM_IDLE_TIMEOUT` 友好收尾而非挂死，缓解 **#1741**（SSE 关不掉导致连接泄漏）。新增 9 个单测。
+- **生产就绪评估文档 + 生产配置基线**：新增 [docs/生产就绪评估.md](docs/生产就绪评估.md)——对 agentscope-java（RC4）
+  120 个 open issues 与本项目实际链路的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 /
+  仍受框架限制需等待修复的项 / 版本升级策略）；新增
+  [application-prod.yml](customer-work-example/src/main/resources/application-prod.yml) 生产配置基线
+  （skill 仓库切 filesystem 规避 #1979/#1985、session 切 redis/mysql 规避 #1769、harness.subagent 生产关闭
+  规避 #1954 系列、context 压缩阈值保守规避 #1740、stream 空闲超时规避 #1741、model.fallback 启用自研
+  `FallbackChatModel` 规避 #1850），逐项配置均在注释中标注对应 issue 编号；README 6.13b 标注框架内置
+  `fallbackModel` 已知缺陷（#1850），customer-web 操作文档 Channel 部分新增"生产边界"声明（#1966/#1619，
+  多用户共享群存在上下文串扰风险，生产建议单租户群部署）。
 - **新增 2.0 能力**：Permission System（`PermissionConfig` 注入主 Agent）、Plan Mode、Compaction、
   Workspace/Sandbox、Subagent（统一经 `HarnessAgent.Builder.fromAgent(...)` 装配，见 `HarnessAgentFactory`）。
 - **Middleware 五段**：8 个业务 Hook 全部迁移到 `MiddlewareBase`（ToolGuard/DynamicOptions/Masking/

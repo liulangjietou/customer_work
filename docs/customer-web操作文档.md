@@ -199,6 +199,13 @@ customer-web:
 > 回调 URL 填 `https://<你的公网域名>/api/channels/wecom/{channel-id}/callback`，并取 `Token/EncodingAESKey`；
 > ② 设 `customer-web.channel.wecom.enabled=true` + 上述凭证；③ 重启本应用，企业微信会先 GET 回调地址做 URL 验证（通过即接收用户消息）。
 > **实测**：开启后回调端点 `/api/channels/wecom/{id}/callback` 已映射并做签名校验（GET 假参数→401，非 404）；完整消息流转需公网可达回调地址。
+>
+> **生产边界（诚实声明）**：对照 agentscope-java 框架 [#1966](https://github.com/agentscope-ai/agentscope-java/issues/1966) /
+> [#1619](https://github.com/agentscope-ai/agentscope-java/issues/1619)，Channel inbound 链路（钉钉/飞书/企业微信）暂时**无法把
+> IM 平台侧的真实用户身份映射进 `RuntimeContext`**——也就是说框架收到消息时识别不到"群里具体是哪个平台用户在说话"这一层身份。
+> 如果同一个群/会话里有多个真实用户跟机器人对话，存在**上下文被当作同一租户共享**的风险（串话）。
+> **生产建议**：Channel 面按**单租户群**部署（一个群/一个渠道会话只对应一个业务身份，例如客户专属服务群），
+> 不要在多用户共享大群场景下依赖框架自动做按人隔离；待框架修复后再评估放开。完整评估见 [docs/生产就绪评估.md](生产就绪评估.md)。
 
 ---
 

@@ -449,6 +449,8 @@ customer-work.model:
 ```
 - `ResilientChatModel` 包装模型调用做退避重试（可与 `FallbackChatModel` 叠加：先重试、仍失败再兜底）。
 - > 2.0 亦内置 `ReActAgent.Builder.maxRetries(int)` / `.fallbackModel(...)`，与自研装饰器二选一；本项目保留自研版以演示装饰器组合。
+  > **注**：框架内置 `fallbackModel` 存在已知缺陷（[agentscope-java #1850](https://github.com/agentscope-ai/agentscope-java/issues/1850)，实际不工作），
+  > 本项目生产环境使用自研 `FallbackChatModel`，不依赖框架内置实现；详见 [docs/生产就绪评估.md](docs/生产就绪评估.md)。
 - 测试：`ResilientChatModelTest`。
 - 效果评估 / 回归：见 [docs/EVAL.md](docs/EVAL.md)（提示词版本化 + 评测集 + 数据飞轮）。
 
@@ -543,6 +545,13 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 | `POST /api/channels/{feishu,wecom}/{id}/callback`、`POST /push/feishu` | **Channel**：钉钉(Stream) / 飞书 / 企业微信（收发消息 + 主动推送） |
 
 详见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。
+
+### 6.20 生产就绪评估与生产配置基线
+
+上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4）120 个 open issues
+与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / 仍受框架限制需等待修复的项 / 版本升级策略）。
+对应的生产配置示例见 **[application-prod.yml](customer-work-example/src/main/resources/application-prod.yml)**
+（`SPRING_PROFILES_ACTIVE=prod` 激活），逐项配置均在注释中注明所对应缓解的 issue 编号。
 
 ---
 

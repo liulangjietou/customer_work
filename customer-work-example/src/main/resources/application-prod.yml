@@ -1,17 +1,118 @@
-# 生产 profile 示例：用环境变量驱动外部后端。激活：SPRING_PROFILES_ACTIVE=prod
+# 生产 profile 示例：用环境变量驱动外部后端，激活方式 SPRING_PROFILES_ACTIVE=prod
+#
+# 本文件是「生产配置基线」，逐项对应 agentscope-java（2.0.0-RC4）open issues 的缓解/规避手段。
+# 完整评估结论见 docs/生产就绪评估.md；本文件只做配置层面的落地，不改变 customer-work 业务代码。
+# 所有键名已对照 CustomerWorkProperties.java 逐一核实，均为真实存在的配置项（无杜撰键）。
+
 customer-work:
+  # ------------------------------------------------------------------
+  # Skill 技能库：生产切换为 filesystem 仓库
+  # 规避 #1979 / #1985—— ClasspathSkillRepository 在 fat-jar（Spring Boot 可执行 jar）中
+  # 用 classpath 资源枚举/读取技能目录会失败（jar 内路径不是普通文件系统路径）。
+  # filesystem 仓库直接读磁盘目录，天然绕开该问题；同时天然支持技能自进化/写回（SkillCurator）。
+  # ------------------------------------------------------------------
+  skill:
+    enabled: true
+    repository: filesystem
+    # 生产建议外置到独立数据盘/共享存储路径，用环境变量注入，避免和应用部署目录耦合
+    directory: ${SKILL_DIRECTORY:/data/customer-work/skills}
+    writable: true
+    runtime-load-tool-enabled: false
+    code-execution-enabled: false
+
+  # ------------------------------------------------------------------
+  # 会话持久化：生产用 redis（多实例共享）或 mysql（强一致持久化），不用 json 模式
+  # 规避 #1769 —— JsonFileAgentStateStore 每次落盘整份重写（非增量追加），长会话/高频对话下
+  # 单文件体积和写放大持续膨胀，磁盘 IO 和延迟劣化。redis/mysql 后端无此问题。
+  # 二选一：redis 更适合无状态多实例水平扩展；mysql 更适合需要强一致 + 现成运维体系的团队。
+  # ------------------------------------------------------------------
   session:
-    mode: ${SESSION_MODE:redis}        # 多实例共享会话
+    mode: ${SESSION_MODE:redis}
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      key-prefix: ${REDIS_KEY_PREFIX:customer-work}
+    # 若选择 mysql，取消下面注释并把 session.mode 改为 mysql（二者互斥，按 mode 生效）：
+    # mysql:
+    #   host: ${MYSQL_HOST:localhost}
+    #   port: ${MYSQL_PORT:3306}
+    #   database: ${MYSQL_DATABASE:agent_scope_customer_work}
+    #   username: ${MYSQL_USERNAME:root}
+    #   password: ${MYSQL_PASSWORD:}
+    #   auto-create: false   # 生产建议关闭自动建表，由 DBA 走变更流程建库建表
+
   memory:
     provider: ${MEMORY_PROVIDER:memory}
+
   rag:
     provider: ${RAG_PROVIDER:memory}
+
+  # ------------------------------------------------------------------
+  # Harness 子智能体编排：生产先关闭
+  # 规避 #1954 / #1953 / #1700 / #1911 —— 子智能体在部分场景下存在跳过执行、
+  # 父子上下文不传递、子智能体资源不回收等问题，RC4 尚未修复。
+  # 生产阶段需要的"可控并行多专家协作"改走本项目自研的 MultiAgentOrchestrator
+  # （真并发 fanout + 路由 + reduce 归纳，已有确定性单测覆盖），不依赖框架原生 subagent。
+  # ------------------------------------------------------------------
+  harness:
+    subagent:
+      enabled: false
+    # 权限系统：生产建议开启，ask-tools 保持默认（退款/转人工需人工确认），与应用层审批闭环双保险
+    permission:
+      enabled: true
+      mode: default
+      ask-tools: [submitRefund, transferToHuman]
+      deny-tools: []
+    # 若需要沙箱隔离工具/代码执行，隔离粒度用 session（按会话隔离，避免跨会话串扰）
+    sandbox:
+      mode: ${HARNESS_SANDBOX_MODE:none}
+      isolation-scope: session
+
+  # ------------------------------------------------------------------
+  # 上下文压缩（Compaction）：生产开启，但阈值须保守
+  # 提醒 #1740 —— compressIfNeeded 只在单次调用时机执行一次判断，不是持续循环压缩；
+  # 如果单轮新增内容本身就超过阈值，不会被二次压缩兜底。因此生产阈值要预留安全余量，
+  # 不能把 max-token / msg-threshold 设到接近模型上下文上限。
+  # ------------------------------------------------------------------
+  context:
+    compression-enabled: true
+    max-token: ${CONTEXT_MAX_TOKEN:8000}
+    msg-threshold: ${CONTEXT_MSG_THRESHOLD:40}
+    last-keep: ${CONTEXT_LAST_KEEP:10}
+
+  # ------------------------------------------------------------------
+  # SSE 流式空闲超时：缓解 #1741（SSE 流长时间无数据无法自行关闭，连接泄漏）
+  # ------------------------------------------------------------------
+  stream:
+    idle-timeout-seconds: ${STREAM_IDLE_TIMEOUT_SECONDS:120}
+
+  # ------------------------------------------------------------------
+  # 模型私有化兜底：生产开启，使用自研 FallbackChatModel
+  # 框架内置的 ReActAgent.Builder.fallbackModel(...) 存在已知缺陷（#1850），生产不采用；
+  # 本项目 FallbackChatModel 是自研装饰器（主模型失败时切换兜底模型），行为已被单测覆盖。
+  # ------------------------------------------------------------------
+  model:
+    provider: dashscope
+    api-key: ${DASHSCOPE_API_KEY:}
+    fallback:
+      enabled: true
+      provider: ${MODEL_FALLBACK_PROVIDER:ollama}
+      name: ${MODEL_FALLBACK_NAME:qwen2.5}
+      api-key: ${MODEL_FALLBACK_API_KEY:}
+      base-url: ${MODEL_FALLBACK_BASE_URL:}
+    retry:
+      enabled: true
+      max-attempts: 2
+      backoff-ms: 500
+
   security:
     auth:
       enabled: ${AUTH_ENABLED:false}   # 生产建议 true 并配置 api-keys
     rate-limit:
       enabled: ${RATE_LIMIT_ENABLED:true}
       requests-per-minute: ${RATE_LIMIT_RPM:120}
+
   observability:
     tracing-enabled: ${TRACING_ENABLED:true}
 
