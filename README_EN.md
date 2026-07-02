@@ -24,7 +24,7 @@ implementations make it run offline out of the box and keep the test suite green
 config line swaps to a cloud / self-hosted backend — **without touching business code**.
 
 - Base package: `com.richard.fyoung.customerwork`
-- **176 unit tests** (4 auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent)
+- **176 unit tests** on `main`; **219** on `rc2.0` (starter 202 + example 9 + downstream 1 + customer-web 7; 4 auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent)
 
 ## Feature overview
 

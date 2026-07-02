@@ -26,7 +26,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **149 个全绿**（starter 137 + example 9 + downstream 1 + customer-web 2，其中 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
+- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **219 个全绿**（starter 202 + example 9 + downstream 1 + customer-web 7，其中 starter 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -248,7 +248,9 @@ curl -X POST localhost:8080/api/customer/consult \
 >
 > **可观测**（Micrometer → `/actuator/prometheus`）：`customerwork.mas.route{intent}`（意图分布）、
 > `customerwork.mas.fanout.experts`（每次实际并行专家数）、`customerwork.mas.expert{expert,outcome}`（各专家耗时/成败）、
-> `customerwork.mas.reduce{triggered}`（归纳触发数）。
+> `customerwork.mas.reduce{triggered}`（归纳触发数）；此外 `CustomerServiceService` 侧还有
+> `customerwork.intent.classify.errors`（意图分类失败计数）、`customerwork.chat.fallback`（对话兜底触发计数），
+> 便于对分类失败率、兜底占比设置告警阈值。
 >
 > 注：HarnessAgent 的 **Subagent**（`harness.subagent.enabled`）由主智能体在 ReAct 循环里自行逐个 spawn，
 > 本质串行、不可编程控制；需要"主 + 子智能体"**可控并行**时走本编排器（它构造的正是注册为 subagent 的那批专家）。
@@ -580,6 +582,8 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 | `nacos` | enabled(false), server-addr(localhost:8848), namespace, group(DEFAULT_GROUP), prompt-data-id, username, password, timeout-ms(3000) |
 | `higress` | enabled(false), name(higress), endpoint, transport(sse), tool-search, max-tools(10), timeout-seconds(30) |
 | `protocol` | agui.{enabled(true),enable-reasoning(true),emit-tool-call-args(true)}, tts.enabled(false) |
+| `stream` | idle-timeout-seconds(120)（SSE 流空闲超时；`<=0` 禁用，缓解框架 #1741 长连接泄漏） |
+| `hooks.tool-guard` | enabled(false), inject-params, numeric-caps, destructive-patterns(rm -rf / .agentscope/workspace / del /[fs] / format，命中改写为 `[BLOCKED_BY_TOOL_GUARD]`，缓解框架 #1898/#1896） |
 
 ---
 
