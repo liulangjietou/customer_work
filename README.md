@@ -570,7 +570,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 
 上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4）120 个 open issues
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / 仍受框架限制需等待修复的项 / 版本升级策略）。
-对应的生产配置示例见 **[application-prod.yml](customer-work-app/src/main/resources/application-prod.yml)**
+对应的生产配置参考见 **[application-prod.yml](customer-work-app/src/main/resources/application-prod.yml)**
 （`SPRING_PROFILES_ACTIVE=prod` 激活），逐项配置均在注释中注明所对应缓解的 issue 编号。
 
 ---
@@ -663,7 +663,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   └── controller/                      # CustomerServiceController / GlobalExceptionHandler
 │       └── resources/  application.yml / application-prod.yml / logback-spring.xml / skills/
 │
-├── customer-work-downstream-sample/             # 【下游接入示例】完全不同包名 com.acme.support
+├── customer-work-downstream-app/             # 【下游接入应用】完全不同包名 com.acme.support
 │   └── src/                                     #   仅依赖 starter；SupportApplication + AcmeOrderBackend(覆盖默认)
 │                                                #   + SupportController(复用 CustomerServiceService)
 │                                                #   契约测试 DownstreamIntegrationTest 证明"零扫描自动装配 + 覆盖默认"
@@ -696,7 +696,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 */ }
 ```
 
-> 完整可运行范例见模块 **`customer-work-downstream-sample`**（包名 `com.acme.support`，仅依赖 starter）；
+> 完整可运行范例见模块 **`customer-work-downstream-app`**（包名 `com.acme.support`，仅依赖 starter）；
 > 其 `DownstreamIntegrationTest` 在 CI 持续校验"零扫描自动装配 + 自定义后端覆盖默认"的接入契约。
 
 ---

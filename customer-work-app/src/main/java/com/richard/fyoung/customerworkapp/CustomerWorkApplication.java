@@ -4,7 +4,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * 智能客服示例应用启动类。
+ * 智能客服应用启动类。
  *
  * <p>本应用位于独立包 {@code com.richard.fyoung.customerworkapp}，自身只装配本模块的 Controller；
  * 全部可复用能力（模型 / 记忆 / RAG / 工具 / 会话 / 安全 / 可观测 / Nacos 等）由

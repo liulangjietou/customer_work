@@ -1,4 +1,4 @@
-# 生产 profile 示例：用环境变量驱动外部后端，激活方式 SPRING_PROFILES_ACTIVE=prod
+# 生产 profile 配置参考：用环境变量驱动外部后端，激活方式 SPRING_PROFILES_ACTIVE=prod
 #
 # 本文件是「生产配置基线」，逐项对应 agentscope-java（2.0.0-RC4）open issues 的缓解/规避手段。
 # 完整评估结论见 docs/生产就绪评估.md；本文件只做配置层面的落地，不改变 customer-work 业务代码。

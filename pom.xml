@@ -9,7 +9,7 @@
     <version>1.0.0</version>
     <packaging>pom</packaging>
     <name>customer-work-parent</name>
-    <description>基于 AgentScope Java 的生产级智能客服系统（多模块：可复用 starter + 可运行示例）</description>
+    <description>基于 AgentScope Java 的生产级智能客服系统（多模块：可复用 starter + 可运行应用）</description>
 
     <parent>
         <groupId>org.springframework.boot</groupId>
@@ -21,7 +21,7 @@
     <modules>
         <module>customer-work-spring-boot-starter</module>
         <module>customer-work-app</module>
-        <module>customer-work-downstream-sample</module>
+        <module>customer-work-downstream-app</module>
         <module>customer-web</module>
     </modules>
 

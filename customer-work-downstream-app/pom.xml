@@ -11,10 +11,10 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>customer-work-downstream-sample</artifactId>
+    <artifactId>customer-work-downstream-app</artifactId>
     <packaging>jar</packaging>
-    <name>customer-work-downstream-sample</name>
-    <description>最小下游接入示例：独立包名(com.acme.support)，仅依赖 starter，提供自定义后端</description>
+    <name>customer-work-downstream-app</name>
+    <description>最小下游接入应用：独立包名(com.acme.support)，仅依赖 starter，提供自定义后端</description>
 
     <dependencies>
         <!-- 下游只需引入这一个依赖，即自动获得全部能力 -->
@@ -32,7 +32,7 @@
     </dependencies>
 
     <build>
-        <finalName>downstream-sample</finalName>
+        <finalName>downstream-app</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
