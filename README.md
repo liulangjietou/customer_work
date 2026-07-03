@@ -26,7 +26,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **219 个全绿**（starter 202 + example 9 + downstream 1 + customer-web 7，其中 starter 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
+- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **277 个全绿**（starter 259 + example 9 + downstream 1 + customer-web 7 + customer-web-test 1，其中 starter 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -75,7 +75,7 @@
 | **会话/状态持久化（AgentStateStore）** | `SessionConfig` | 开 | `session.mode=memory/json/redis/mysql`（取代 1.x Session） |
 | 状态运维门面 | `SessionStateManager`(AgentStateStore) | 开 | 注入使用 |
 | 长期记忆（多租户） | `LongTermMemoryProvider` | 开 | `memory.provider=memory/bailian/mem0/reme` |
-| 三层记忆 + 事实日志 | `InMemoryLongTermMemory` + `FactLog` | 开 | `fact-log.enabled` |
+| 三层记忆 + 事实日志（**文件轮转**） | `InMemoryLongTermMemory` + `FactLog` | 开 | `fact-log.enabled`、`fact-log.max-file-mb` |
 | **上下文压缩（Compaction）** | `ContextMemoryFactory`→`CompactionConfig` | 关 | `context.compression-enabled=true`（取代 1.x AutoContext） |
 | RAG 知识检索 | `KnowledgeProvider` | 开 | `rag.provider=memory/simple/bailian/dify` |
 | 工具集成 + Tool Group | `ToolRegistrar` / `buildToolkit` | 开 | — |
@@ -90,18 +90,18 @@
 | **子智能体 Subagent** | `HarnessAgentFactory` | 关 | `harness.subagent.enabled=true` |
 | 中断恢复 | `enablePendingToolRecovery` | 开 | `interrupt.pending-tool-recovery-enabled` |
 | Human-in-the-Loop | `HumanApprovalMiddleware` + Permission ask | 开 | `human-approval.enabled` + `POST /session/{id}/interrupt` |
-| **人工审批闭环（退款放行）** | `PendingApprovalService` + `ApprovalController` | 开 | `GET /approvals` · `POST /approvals/{id}/approve\|deny` |
+| **人工审批闭环（退款放行）+ 审批持久化 SPI + 超时巡检** | `PendingApprovalService` + `ApprovalController` + `ApprovalStore` SPI + `ApprovalTimeoutScheduler` | 开 | `GET /approvals` · `POST /approvals/{id}/approve\|deny` · `human-approval.timeout-seconds` |
 | **多轮信息收集（slot-filling）** | `SlotFillingService` + `RefundFormController` | 开 | `POST /forms/refund` |
 | **主动服务（通知/回访，复用 Channel 推送）** | `ProactiveNotificationService` + `NotificationChannel` | 开 | `POST /notify/order-status\|survey` |
 | **坐席辅助 + 会话质检** | `AgentAssistService` + `QualityInspectionService` | 开 | `POST /assist` · `POST /quality/inspect` |
 | 可观测 + 指标 | `ObservabilityMiddleware` + Micrometer | 开 | `/actuator/prometheus` |
 | 原生 Tracing | `TracingConfig` | 关 | `observability.tracing-enabled=true` |
 | 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
-| 模型多厂商 + 私有化兜底 / 重试 | `ModelConfig`（或 2.0 内置 `maxRetries`/`fallbackModel`） | 开 | `model.provider`、`model.fallback.enabled` |
+| 模型多厂商 + 私有化兜底 / 重试 / **成本熔断** | `ModelConfig`（或 2.0 内置 `maxRetries`/`fallbackModel`）+ `ModelCostCircuitBreaker` | 开 | `model.provider`、`model.fallback.enabled`、`model.cost-control.enabled` |
 | MCP 接入 | `McpToolkitConfigurer` | 关 | `mcp.enabled=true` |
 | Higress AI 网关 | `HigressToolkitConfigurer` | 关 | `higress.enabled=true` |
 | Nacos 配置中心（提示词热更新） | `NacosPromptService` | 关 | `nacos.enabled=true` |
-| 接入层安全（鉴权/限流） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter` | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
+| 接入层安全（鉴权/**滑动窗口限流**） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter`（fixed/sliding-window 双算法） | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
 | **配套前端模块 `customer-web`** | admin / chat-completions / AG-UI / Studio / Channel(钉钉·飞书·企业微信) | 关 | 见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md) |
 
 ### ⚠️ 不可迁移 / 沿用说明（1.x→2.0 备注）
@@ -296,9 +296,10 @@ customer-work.memory:
 
 L1 短期 `Memory` + L2 长期 `LongTermMemory` + L3 只追加 `FactLog`（JSONL，可审计）。
 ```yaml
-customer-work.fact-log: { enabled: true, directory: ./data/facts }
+customer-work.fact-log: { enabled: true, directory: ./data/facts, max-file-mb: 10, max-archived-files: 5 }
 ```
-测试：`FactLogTest`（追加/读取/租户隔离/禁用）。
+> 文件轮转：超过 `max-file-mb` 自动归档为 `.1` / `.2`，超出 `max-archived-files` 的最旧文件自动删除；`<=0` 禁用轮转。
+测试：`FactLogTest`（追加/读取/租户隔离/禁用/文件轮转）。
 
 ### 6.7 智能上下文压缩（长对话上下文有界）
 
@@ -371,10 +372,18 @@ customer-work.skill:
 
 ```yaml
 customer-work:
-  human-approval: { enabled: true, guarded-tools: [submitRefund] }   # 受控工具执行后暂停待人工
+  human-approval:
+    enabled: true
+    guarded-tools: [submitRefund]     # 受控工具执行后暂停待人工
+    timeout-seconds: 0                 # 审批超时（秒）；<=0 禁用超时巡检
+    timeout-action: escalate           # escalate（升级转人工）| deny（自动拒绝）
+    store-mode: memory                 # memory（进程内）| jdbc（数据库持久化，重启不丢）
   interrupt: { pending-tool-recovery-enabled: true }                  # 中断后无缝恢复待执行工具
 ```
-测试：`MiddlewareBehaviorTest`（humanApproval）、`CustomerServiceServiceTest#interrupt_*`。
+> **审批持久化（SPI）**：`ApprovalStore` 接口 + `InMemoryApprovalStore` 默认实现（`@ConditionalOnMissingBean`），下游可声明 JDBC/Redis 实现覆盖默认，保证审批单重启不丢失。
+> **审批超时巡检**：`ApprovalTimeoutScheduler` 周期扫描 PENDING 审批单，超时按 `timeout-action` 自动处理（默认禁用）。
+> **会话级并发控制**：同一 `sessionId` 请求串行执行（`withSessionLock`），防止并发写 StateStore 导致状态覆盖。
+测试：`MiddlewareBehaviorTest`（humanApproval）、`CustomerServiceServiceTest#interrupt_*`、`ApprovalStoreTest`、`ApprovalTimeoutSchedulerTest`。
 
 **人工审批闭环（退款放行）**：退款工具不直接打款，而是经 `PendingApprovalService` 生成待审单（附审批单号），
 人工坐席经 REST 端点放行后才执行——形成 **挂起 → 人工决策 → 生效** 的闭环。
@@ -448,8 +457,13 @@ curl localhost:8080/actuator/prometheus  # 业务指标
 customer-work.model:
   retry: { enabled: true, max-attempts: 2, backoff-ms: 500 }   # 瞬时错误指数退避重试
   token-warn-threshold: 4000                                    # 单次请求 token 超阈值打 WARN（0=关闭）
+  cost-control:
+    enabled: true                                               # 成本熔断：按分钟/小时窗口限制 token 消耗
+    max-tokens-per-minute: 100000                                # 每分钟最大 token 消耗；超限熔断拒绝请求
+    max-tokens-per-hour: 1000000                                # 每小时最大 token 消耗；超限熔断
 ```
 - `ResilientChatModel` 包装模型调用做退避重试（可与 `FallbackChatModel` 叠加：先重试、仍失败再兜底）。
+- `ModelCostCircuitBreaker` 成本熔断器：`tryConsume(int)` 原子检查+回滚，`isCircuitOpen()` 检查熔断状态。超限拒绝请求防刷量打爆成本。测试：`ModelCostCircuitBreakerTest`（9 例）。
 - > 2.0 亦内置 `ReActAgent.Builder.maxRetries(int)` / `.fallbackModel(...)`，与自研装饰器二选一；本项目保留自研版以演示装饰器组合。
   > **注**：框架内置 `fallbackModel` 存在已知缺陷（[agentscope-java #1850](https://github.com/agentscope-ai/agentscope-java/issues/1850)，实际不工作），
   > 本项目生产环境使用自研 `FallbackChatModel`，不依赖框架内置实现；详见 [docs/生产就绪评估.md](docs/生产就绪评估.md)。
@@ -461,13 +475,17 @@ customer-work.model:
 ```yaml
 customer-work.security:
   auth:       { enabled: true, header-name: X-API-Key, api-keys: [your-key-1] }
-  rate-limit: { enabled: true, requests-per-minute: 120 }
+  rate-limit:
+    enabled: true
+    requests-per-minute: 120
+    algorithm: sliding-window    # fixed-window（固定窗口，默认）| sliding-window（滑动窗口，更平滑防突刺）
+    window-seconds: 60            # 滑动窗口时间窗大小（秒），仅 sliding-window 时生效
 ```
 ```bash
 curl -X POST localhost:8080/api/customer/chat -H "X-API-Key: your-key-1" \
   -H "Content-Type: application/json" -d '{"message":"你好"}'
 ```
-健康检查 / Actuator 免鉴权。测试：`ApiKeyAuthWebFilterTest`、`RateLimitWebFilterTest`。
+健康检查 / Actuator 免鉴权。测试：`ApiKeyAuthWebFilterTest`、`RateLimitWebFilterTest`（含固定窗口/滑动窗口双算法）。
 
 ### 6.15 MCP / Higress
 
@@ -563,8 +581,8 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 
 | 前缀 | 关键项（默认） |
 |---|---|
-| `model` | provider(dashscope), name(qwen-max), api-key(${DASHSCOPE_API_KEY}), temperature(0.3), max-tokens(1500), stream(true), top-p, reasoning-effort, enable-search, enable-thinking, embedding-name(text-embedding-v3), fallback.* |
-| `session` | mode(memory), directory, redis.*, mysql.* |
+| `model` | provider(dashscope), name(qwen-max), api-key(${DASHSCOPE_API_KEY}), temperature(0.3), max-tokens(1500), stream(true), top-p, reasoning-effort, enable-search, enable-thinking, embedding-name(text-embedding-v3), token-warn-threshold(0), fallback.*, retry.*, cost-control.{enabled(false),max-tokens-per-minute(100000),max-tokens-per-hour(1000000)} |
+| `session` | mode(memory), directory, idle-timeout-minutes(0), redis.*, mysql.* |
 | `agent` | max-iters(10), meta-tool-enabled(false) |
 | `memory` | long-term-enabled(true), provider(memory), tenant-delimiter(":"), retrieve-top-k(5), bailian.*/mem0.*/reme.* |
 | `plan` | enabled(true), max-subtasks(20) |
@@ -573,9 +591,9 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 | `skill` | enabled(true), repository(classpath), location(skills), directory, writable(true), runtime-load-tool-enabled(false), code-execution-enabled(false) |
 | `mcp` | enabled(false), servers[] |
 | `observability` | trace-enabled(false), trace-file, tracing-enabled(false), studio.* |
-| `human-approval` | enabled(true), guarded-tools([submitRefund]) |
-| `fact-log` | enabled(true), directory(./data/facts) |
-| `security` | auth.{enabled(false),header-name(X-API-Key),api-keys[]}, rate-limit.{enabled(false),requests-per-minute(120)} |
+| `human-approval` | enabled(true), guarded-tools([submitRefund]), timeout-seconds(0), timeout-action(escalate), store-mode(memory) |
+| `fact-log` | enabled(true), directory(./data/facts), max-file-mb(10), max-archived-files(5) |
+| `security` | auth.{enabled(false),header-name(X-API-Key),api-keys[]}, rate-limit.{enabled(false),requests-per-minute(120),algorithm(fixed-window),window-seconds(60)} |
 | `multi-agent` | enabled(true), mode(fanout), max-iters(6) |
 | `runtime` | shutdown-timeout-seconds(30), scheduler-enabled(false), scheduler-fixed-delay-ms(60000) |
 | `interrupt` | pending-tool-recovery-enabled(true) |

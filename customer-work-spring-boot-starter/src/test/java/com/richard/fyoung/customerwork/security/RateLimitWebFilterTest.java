@@ -71,6 +71,40 @@ class RateLimitWebFilterTest {
         assertEquals(5, chainCalls.get(), "关闭限流时全部放行");
     }
 
+    // ======== 滑动窗口限流测试 ========
+
+    @Test
+    void slidingWindow_shouldEnforceLimitWithinWindow() {
+        RateLimitWebFilter filter = new RateLimitWebFilter(props(true, 3));
+        // 窗口 60 秒，limit=3
+        assertTrue(filter.allowSliding("client-sw", 3, 60), "第 1 次应放行");
+        assertTrue(filter.allowSliding("client-sw", 3, 60), "第 2 次应放行");
+        assertTrue(filter.allowSliding("client-sw", 3, 60), "第 3 次应放行");
+        assertFalse(filter.allowSliding("client-sw", 3, 60), "第 4 次应被限流");
+    }
+
+    @Test
+    void slidingWindow_shouldAllowAfterWindowExpires() throws InterruptedException {
+        RateLimitWebFilter filter = new RateLimitWebFilter(props(true, 2));
+        // 窗口 1 秒，limit=2
+        assertTrue(filter.allowSliding("client-exp", 2, 1));
+        assertTrue(filter.allowSliding("client-exp", 2, 1));
+        assertFalse(filter.allowSliding("client-exp", 2, 1), "窗口内第 3 次应被限流");
+        // 等待窗口过期
+        Thread.sleep(1100);
+        assertTrue(filter.allowSliding("client-exp", 2, 1), "窗口过期后应放行");
+    }
+
+    @Test
+    void slidingWindow_shouldIsolateClients() {
+        RateLimitWebFilter filter = new RateLimitWebFilter(props(true, 2));
+        assertTrue(filter.allowSliding("client-a", 2, 60));
+        assertTrue(filter.allowSliding("client-a", 2, 60));
+        assertFalse(filter.allowSliding("client-a", 2, 60));
+        // 不同客户端独立计数
+        assertTrue(filter.allowSliding("client-b", 2, 60), "另一客户端不受影响");
+    }
+
     private void runOnce(RateLimitWebFilter filter, String ip) {
         MockServerWebExchange exchange = MockServerWebExchange.from(
             MockServerHttpRequest.post("/api/customer/chat")

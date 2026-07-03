@@ -24,7 +24,7 @@ implementations make it run offline out of the box and keep the test suite green
 config line swaps to a cloud / self-hosted backend — **without touching business code**.
 
 - Base package: `com.richard.fyoung.customerwork`
-- **176 unit tests** on `main`; **219** on `rc2.0` (starter 202 + example 9 + downstream 1 + customer-web 7; 4 auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent)
+- **176 unit tests** on `main`; **277** on `rc2.0` (starter 259 + example 9 + downstream 1 + customer-web 7 + customer-web-test 1; 4 auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent)
 
 ## Feature overview
 
@@ -38,7 +38,7 @@ config line swaps to a cloud / self-hosted backend — **without touching busine
 | Structured output | `classifyIntent` | on | `POST /intent` |
 | **Session/state persistence (AgentStateStore)** | `SessionConfig` | on | `session.mode=memory/json/redis/mysql` (replaces v1 Session) |
 | Long-term memory (multi-tenant) | `LongTermMemoryProvider` | on | `memory.provider=memory/bailian/mem0/reme` |
-| Three-tier memory + fact log | `FactLog` | on | `fact-log.enabled` |
+| Three-tier memory + fact log (**file rotation**) | `FactLog` | on | `fact-log.enabled`, `fact-log.max-file-mb` |
 | **Context compression (Compaction)** | `ContextMemoryFactory`→`CompactionConfig` | off | `context.compression-enabled` (replaces v1 AutoContext) |
 | RAG | `KnowledgeProvider` | on | `rag.provider=memory/simple/bailian/dify` |
 | Business tools — 7 Tool Groups (presale/order/after-sales/member/complaint/knowledge/human) | `ToolRegistrar` + `*Backend` SPIs | on | `agent.meta-tool-enabled` |
@@ -49,7 +49,7 @@ config line swaps to a cloud / self-hosted backend — **without touching busine
 | **Complaint ticket** | `ComplaintTools` / `ComplaintBackend` | on | `fileComplaint`/`queryComplaint` |
 | Skill + **self-evolution (SkillCurator)** | `SkillBox` / `enableSkillCurator` | on/off | `skill.*` / `harness.skill-curator-enabled` |
 | **Multi-agent orchestration (Reactor)** — true-parallel fanout + rule fast-lane routing + reduce | `MultiAgentOrchestrator` | on | `POST /consult`; `multi-agent.fast-route-enabled`/`routing-enabled`/`reduce-enabled` (replaces v1 Pipelines) |
-| **Human approval loop (refund)** | `PendingApprovalService` + `ApprovalController` | on | `GET /approvals` · `POST /approvals/{id}/approve\|deny` |
+| **Human approval loop + persistence SPI + timeout patrol** | `PendingApprovalService` + `ApprovalController` + `ApprovalStore` SPI + `ApprovalTimeoutScheduler` | on | `GET /approvals` · `POST /approvals/{id}/approve\|deny` · `human-approval.timeout-seconds` |
 | **Multi-turn slot filling** | `SlotFillingService` + `RefundFormController` | on | `POST /forms/refund` |
 | **Proactive service (notify/survey, reuses Channel push)** | `ProactiveNotificationService` + `NotificationChannel` | on | `POST /notify/order-status\|survey` |
 | **Agent-assist + quality inspection** | `AgentAssistService` + `QualityInspectionService` | on | `POST /assist` · `POST /quality/inspect` |
@@ -62,9 +62,9 @@ config line swaps to a cloud / self-hosted backend — **without touching busine
 | **Subagent** | `HarnessAgentFactory` | off | `harness.subagent.enabled` |
 | Human-in-the-loop + interrupt | `HumanApprovalMiddleware` + Permission ask | on | `POST /session/{id}/interrupt` |
 | Observability + metrics + tracing | `ObservabilityMiddleware` / `TracingConfig` | on/off | `/actuator/prometheus` |
-| Multi-vendor model + fallback/retry | `ModelConfig` (or v2 built-in `maxRetries`/`fallbackModel`) | on | `model.provider`, `model.fallback.enabled` |
+| Multi-vendor model + fallback/retry/**cost circuit breaker** | `ModelConfig` (or v2 built-in `maxRetries`/`fallbackModel`) + `ModelCostCircuitBreaker` | on | `model.provider`, `model.fallback.enabled`, `model.cost-control.enabled` |
 | MCP / Higress / Nacos | configurers | off | `mcp.*` / `higress.*` / `nacos.*` |
-| API-key auth + rate limit | web filters | off | `security.*` |
+| API-key auth + **sliding-window rate limit** | `ApiKeyAuthWebFilter` / `RateLimitWebFilter` (fixed & sliding-window) | off | `security.auth.enabled` / `security.rate-limit.enabled` |
 | **Companion frontends (`customer-web`)** | admin / chat-completions / AG-UI / Studio / Channel (DingTalk·Feishu·WeCom) | off | see [docs/customer-web操作文档.md](docs/customer-web操作文档.md) |
 
 ### ⚠️ Non-migratable / carry-over notes (v1 → v2)
@@ -82,6 +82,31 @@ config line swaps to a cloud / self-hosted backend — **without touching busine
 **Extension points (need extra infra/SDK):** remote sandbox (k8s/e2b/daytona/agentrun; local/docker built-in),
 Channel·GitHub/GitLab (DingTalk/Feishu/WeCom done), A2A registry (Nacos AI API + `io.a2a`), RocketMQ,
 Quartz/XXL-JOB scheduling, Training (RM Gallery/Trinity), Anthropic/Gemini SDKs, RAGFlow/Haystack.
+
+## Production hardening (P0–P3)
+
+The `rc2.0` branch includes a full production-hardening pass (P0–P3). Key items:
+
+### P0 — Production-critical
+- **Approval store SPI**: `PendingApprovalService` storage extracted to `ApprovalStore` interface + `InMemoryApprovalStore` default (`@ConditionalOnMissingBean`). Downstream can declare a JDBC/Redis implementation to persist approval tickets across restarts — critical for refund approvals involving money.
+- **Session-level concurrency control**: `CustomerServiceService` uses a `Semaphore(1)` per `sessionId` to serialize concurrent requests to the same session, preventing concurrent writes to `AgentStateStore` from causing state overwrites. Lock acquisition happens on `boundedElastic`, not blocking the Netty event loop.
+
+### P1 — Architectural robustness
+- **SlotFilling store SPI**: `SlotFillingService` storage extracted to `SlotFillingStore` interface + `InMemorySlotFillingStore` default. Progress survives restarts when a JDBC/Redis implementation is provided.
+- **Approval timeout patrol**: `ApprovalTimeoutScheduler` (`@Scheduled`) periodically scans PENDING approvals; those exceeding `human-approval.timeout-seconds` are auto-processed per `timeout-action` (`escalate` or `deny`). Disabled by default.
+- **Session idle cleanup**: `SessionTimeoutScheduler` periodically cleans up sessions idle for longer than `session.idle-timeout-minutes` (removes hot agent cache + persisted state + session lock). Disabled by default.
+
+### P2 — Robustness continued
+- **Sliding-window rate limit**: `RateLimitWebFilter` supports `algorithm=sliding-window` (uses `ArrayDeque<Long>` timestamps, evicts expired) in addition to the default fixed-window, avoiding boundary 2× burst.
+- **Model cost circuit breaker**: `ModelCostCircuitBreaker` tracks token consumption per minute/hour window; `tryConsume(int)` atomically checks + rolls back, `isCircuitOpen()` reports status. Config: `model.cost-control.enabled` / `max-tokens-per-minute` / `max-tokens-per-hour`.
+- **FactLog file rotation**: `FactLog` rotates when file size exceeds `max-file-mb`, archiving to `.1`/`.2`; oldest archives beyond `max-archived-files` are auto-deleted.
+- **Jacoco coverage gate**: starter POM adds `check-coverage` execution — line ≥ 50%, branch ≥ 40%.
+
+### P3 — Feature completeness + engineering quality
+- **JDBC audit sink**: `JdbcAuditSink` writes audit events to `cw_audit_log` table (auto-creates table). Downstream declares `DataSource` + `JdbcAuditSink` bean to override the default `LoggingAuditSink`.
+- **LLM-as-Judge quality eval**: `QualityEvalRunner` uses an LLM to score agent replies (1–5) on relevance, accuracy, and completeness. Complements `IntentEvalRunner` (offline deterministic). Uses `JudgeModel` functional interface for decoupling.
+- **Multi-agent specialist cache**: `MultiAgentOrchestrator.buildSpecialists()` uses double-check locking + volatile cache; `clearSpecialistCache()` supports hot-reload.
+- **Skill version management**: `SkillVersionManager` parses `<!-- version: x.y.z -->` from skill Markdown, tracks loaded versions, and `checkUpdates()` detects version changes for hot-reload.
 
 ## HTTP endpoints
 
@@ -153,7 +178,31 @@ skills under `resources/skills/<name>/SKILL.md`.
 ## Configuration
 
 All under `customer-work.*` in `application.yml`, overridable by environment variables.
-**Secrets are never committed** — see `.env.example`. Full table is in the Chinese README §7.
+**Secrets are never committed** — see `.env.example`.
+
+| Prefix | Key items (defaults) |
+|---|---|
+| `model` | provider(dashscope), name(qwen-max), api-key(${DASHSCOPE_API_KEY}), temperature(0.3), max-tokens(1500), stream(true), top-p, reasoning-effort, enable-search, enable-thinking, embedding-name(text-embedding-v3), token-warn-threshold(0), fallback.*, retry.*, cost-control.{enabled(false),max-tokens-per-minute(100000),max-tokens-per-hour(1000000)} |
+| `session` | mode(memory), directory, idle-timeout-minutes(0), redis.*, mysql.* |
+| `agent` | max-iters(10), meta-tool-enabled(false) |
+| `memory` | long-term-enabled(true), provider(memory), tenant-delimiter(":"), retrieve-top-k(5), bailian.*/mem0.*/reme.* |
+| `plan` | enabled(true), max-subtasks(20) |
+| `rag` | enabled(true), provider(memory), top-k(3), simple.dimensions(1024), bailian.*/dify.* |
+| `context` | compression-enabled(false), max-token(8000), msg-threshold(40), last-keep(10) |
+| `skill` | enabled(true), repository(classpath), location(skills), directory, writable(true), runtime-load-tool-enabled(false), code-execution-enabled(false) |
+| `mcp` | enabled(false), servers[] |
+| `observability` | trace-enabled(false), trace-file, tracing-enabled(false), studio.* |
+| `human-approval` | enabled(true), guarded-tools([submitRefund]), timeout-seconds(0), timeout-action(escalate), store-mode(memory) |
+| `fact-log` | enabled(true), directory(./data/facts), max-file-mb(10), max-archived-files(5) |
+| `security` | auth.{enabled(false),header-name(X-API-Key),api-keys[]}, rate-limit.{enabled(false),requests-per-minute(120),algorithm(fixed-window),window-seconds(60)} |
+| `multi-agent` | enabled(true), mode(fanout), max-iters(6) |
+| `runtime` | shutdown-timeout-seconds(30), scheduler-enabled(false), scheduler-fixed-delay-ms(60000) |
+| `interrupt` | pending-tool-recovery-enabled(true) |
+| `nacos` | enabled(false), server-addr(localhost:8848), namespace, group(DEFAULT_GROUP), prompt-data-id, username, password, timeout-ms(3000) |
+| `higress` | enabled(false), name(higress), endpoint, transport(sse), tool-search, max-tools(10), timeout-seconds(30) |
+| `protocol` | agui.{enabled(true),enable-reasoning(true),emit-tool-call-args(true)}, tts.enabled(false) |
+| `stream` | idle-timeout-seconds(120) (SSE idle timeout; `<=0` disables, mitigates framework #1741) |
+| `hooks.tool-guard` | enabled(false), inject-params, numeric-caps, destructive-patterns(rm -rf / .agentscope/workspace / del /[fs] / format) |
 
 ## Testing
 
@@ -161,8 +210,12 @@ All under `customer-work.*` in `application.yml`, overridable by environment var
 mvn test                                 # all unit tests, green offline
 mvn test -Dtest=BailianIntegrationTest   # real Bailian call (needs RUN_BAILIAN_IT=true)
 ```
+
+**259 tests** in the starter (0 failures, 0 errors; 4 integration tests auto-skip when external services are absent).
 Redis/MySQL/Nacos integration tests run when the service is reachable and auto-skip otherwise.
 CI (`.github/workflows/ci.yml`) spins up Redis/MySQL service containers so persistence tests run for real.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full P0–P3 hardening changelog.
 
 ## License
 

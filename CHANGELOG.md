@@ -4,6 +4,57 @@
 
 ## [Unreleased]
 
+### 生产加固与功能完善（P0-P3）
+
+#### P0 — 生产关键项
+- **审批工单持久化（ApprovalStore SPI）**：从 `PendingApprovalService` 抽取存储层为 `ApprovalStore` 接口 +
+  `InMemoryApprovalStore` 默认实现（`@ConditionalOnMissingBean`），下游可声明 JDBC / Redis 实现覆盖默认，
+  保证审批单重启不丢失——对涉及资金的退款审批至关重要。`approve`/`deny` 后调用 `store.update` 持久化状态变更。
+  新增 `ApprovalConfig` 配置类、`ApprovalStoreTest`（10 例）。
+- **会话级并发控制（sessionId 锁）**：`CustomerServiceService` 新增 `ConcurrentHashMap<String, ReentrantLock>` 
+  会话级锁，同一 `sessionId` 的请求串行执行（`withSessionLock` / `withSessionLockFlux`），防止并发写 StateStore 
+  导致状态覆盖。锁在 `boundedElastic` 上获取，不阻塞 Netty 事件循环线程。`endSession` 清理会话锁。
+  新增 3 个并发控制单测（同会话串行 / 不同会话并行 / endSession 清理锁）。
+
+#### P1 — 架构健壮性
+- **SlotFillingService 持久化（SlotFillingStore SPI）**：从 `SlotFillingService` 抽取存储层为
+  `SlotFillingStore` 接口 + `InMemorySlotFillingStore` 默认实现，`SlotFillingProgress` 从内部类提取为公共类。
+  下游可声明 JDBC / Redis 实现保证退款表单多轮信息收集中途重启可恢复。新增 `SlotFillingStoreTest`（7 例）。
+- **审批超时自动处理（ApprovalTimeoutScheduler）**：新增 `@Scheduled` 巡检器，周期性扫描 PENDING 审批单，
+  超过 `human-approval.timeout-seconds` 未决策的按 `timeout-action` 处理——
+  `escalate`（升级告警）或 `deny`（自动拒绝）。默认禁用（`timeout-seconds=0`）。
+  新增 `ApprovalTimeoutSchedulerTest`（4 例）。
+- **会话超时自动清理（SessionTimeoutScheduler）**：`CustomerServiceService` 新增会话活跃时间追踪
+  （`sessionActivity` map），`SessionTimeoutScheduler` 周期性清理超过 `session.idle-timeout-minutes` 未活跃的
+  会话（移除热 Agent 缓存 + 删除持久化状态 + 清理会话锁）。默认禁用（`idle-timeout-minutes=0`）。
+  新增 `SessionTimeoutSchedulerTest`（3 例）。
+
+#### P2 — 架构健壮性续
+- **限流算法升级（滑动窗口）**：`RateLimitWebFilter` 新增滑动窗口算法支持（`security.rate-limit.algorithm=sliding-window`），
+  用 `ArrayDeque` 记录每个请求的时间戳，过期出队，避免固定窗口边界突刺（2x 突刺问题）。
+  原固定窗口算法保留为默认。新增 3 个滑动窗口单测。
+- **模型成本熔断（ModelCostCircuitBreaker）**：新增 `@Component` 成本熔断器，按分钟 / 小时窗口追踪 token 消耗量，
+  超限拒绝请求防刷量打爆成本。`tryConsume(int)` 原子检查 + 回滚，`isCircuitOpen()` 检查熔断状态。
+  配置：`model.cost-control.enabled` / `max-tokens-per-minute` / `max-tokens-per-hour`。新增 9 个单测。
+- **FactLog 文件轮转**：`FactLog` 新增文件大小检查与轮转——超过 `max-file-mb` 时归档为 `.1` / `.2`，
+  超出 `max-archived-files` 的最旧文件自动删除。新增 3 个轮转单测。
+- **Jacoco 覆盖率门槛**：starter POM 新增 `check-coverage` 执行（`verify` 阶段），
+  行覆盖率 ≥ 50%、分支覆盖率 ≥ 40%，低于门槛构建失败。
+
+#### P3 — 功能补全 + 工程质量
+- **审计日志结构化存储（JdbcAuditSink）**：新增 JDBC 审计落地实现，把审计事件结构化写入 `cw_audit_log` 表
+  （自动建表），支持按类型 / 时间 / Agent 维度查询。`mysql/schema.sql` 新增建表 DDL。
+  下游声明 `DataSource` Bean + `JdbcAuditSink` Bean 即可覆盖默认 `LoggingAuditSink`。
+- **LLM-as-Judge 回复质量评测（QualityEvalRunner）**：新增 `QualityEvalCase`/`QualityEvalReport`/`QualityEvalRunner`，
+  用 LLM 对 Agent 回复进行质量打分（1-5 分），量化回复的相关性、准确性、完整性。
+  与 `IntentEvalRunner`（离线确定性评测）互补。新增 5 个单测。
+- **多 Agent 专家 Agent 缓存**：`MultiAgentOrchestrator.buildSpecialists()` 新增 double-check locking 缓存，
+  首次构建后复用，避免每次 `consult` 重建 Agent（Agent 无状态可安全复用）。
+  `clearSpecialistCache()` 支持热更新。
+- **技能版本管理（SkillVersionManager）**：新增 `@Component` 技能版本管理器，从技能内容（Markdown）中
+  解析版本号（`<!-- version: x.y.z -->` 或 `# version: x.y.z`），追踪当前加载版本，
+  `checkUpdates()` 检测版本更新触发热重载。新增 7 个单测。
+
 ### Migration — AgentScope 2.0（`rc2.0` 分支）
 - 全量迁移到 `io.agentscope:agentscope-harness:2.0.0-RC4`（经 `agentscope-bom` 管理），JDK 17。
 - 会话持久化：`core.session.Session` → `core.state.AgentStateStore`（InMemory/JsonFile + extensions Redis/Mysql），

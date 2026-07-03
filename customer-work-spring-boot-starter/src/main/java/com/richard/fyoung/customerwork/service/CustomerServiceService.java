@@ -22,7 +22,10 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 /**
  * 客服会话服务（AgentScope 2.0 迁移版，对应②"会话恢复与上下文装配"与⑤"状态持久化"）。
@@ -63,6 +66,17 @@ public class CustomerServiceService {
      * 仅为摊薄装配开销；会话状态由 StateStore 持久化，淘汰不丢数据。
      */
     private final Map<String, ReActAgent> sessionAgents;
+
+    /**
+     * 会话级并发锁：同一 sessionId 的请求串行执行，防止并发写状态导致状态冲突 / 覆盖。
+     * 锁对象在 sessionId 首次使用时懒创建，进程内有效。
+     */
+    private final ConcurrentHashMap<String, java.util.concurrent.Semaphore> sessionLocks = new ConcurrentHashMap<>();
+
+    /**
+     * 会话最后活跃时间戳（用于超时清理）：sessionId -> lastActivityMs。
+     */
+    private final ConcurrentHashMap<String, Long> sessionActivity = new ConcurrentHashMap<>();
 
     /** Spring 注入构造：MeterRegistry 经 ObjectProvider 可选注入（actuator 缺席时降级为无指标）。 */
     @Autowired
@@ -110,17 +124,20 @@ public class CustomerServiceService {
      */
     public Mono<String> chat(String sessionId, String userText) {
         log.info("[session {}] received user message: {}", sessionId, userText);
+        touchSession(sessionId);
         ReActAgent agent = resolveAgent(sessionId);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
 
-        return agent.call(userText, ctx)
-            .map(Msg::getTextContent)
-            .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
-            .onErrorResume(e -> {
-                log.error("[session {}] chat failed, code={}", sessionId, "AGENT_CALL_ERROR", e);
-                incr(M_CHAT_FALLBACK);
-                return Mono.just(FALLBACK_REPLY);
-            });
+        return withSessionLock(sessionId, () ->
+            agent.call(userText, ctx)
+                .map(Msg::getTextContent)
+                .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
+                .onErrorResume(e -> {
+                    log.error("[session {}] chat failed, code={}", sessionId, "AGENT_CALL_ERROR", e);
+                    incr(M_CHAT_FALLBACK);
+                    return Mono.just(FALLBACK_REPLY);
+                })
+        );
     }
 
     /**
@@ -132,6 +149,7 @@ public class CustomerServiceService {
      */
     public Flux<String> chatStream(String sessionId, String userText) {
         log.info("[session {}] received user message (stream): {}", sessionId, userText);
+        touchSession(sessionId);
         ReActAgent agent = resolveAgent(sessionId);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
 
@@ -141,9 +159,11 @@ public class CustomerServiceService {
             .includeReasoningChunk(true)
             .build();
 
-        Flux<String> flux = agent.stream(List.of(toUserMsg(userText)), options, ctx)
-            .map(event -> event.getMessage() == null ? "" : event.getMessage().getTextContent())
-            .filter(text -> text != null && !text.isEmpty());
+        Flux<String> flux = withSessionLockFlux(sessionId,
+            agent.stream(List.of(toUserMsg(userText)), options, ctx)
+                .map(event -> event.getMessage() == null ? "" : event.getMessage().getTextContent())
+                .filter(text -> text != null && !text.isEmpty())
+        );
 
         // SSE 空闲超时（框架 #1741 缓解）：相邻元素间隔超过阈值即超时收尾，避免连接泄漏。<=0 禁用。
         long idle = properties.getStream().getIdleTimeoutSeconds();
@@ -204,9 +224,11 @@ public class CustomerServiceService {
         return true;
     }
 
-    /** 主动结束并清理会话：移除热缓存并删除持久化状态。 */
+    /** 主动结束并清理会话：移除热缓存、删除持久化状态、清理会话锁。 */
     public void endSession(String sessionId) {
         sessionAgents.remove(sessionId);
+        sessionLocks.remove(sessionId);
+        sessionActivity.remove(sessionId);
         try {
             RuntimeContext ctx = agentFactory.contextFor(sessionId);
             sessionStateManager.delete(ctx.getUserId(), ctx.getSessionId());
@@ -215,6 +237,37 @@ public class CustomerServiceService {
                 "SESSION_DELETE_ERROR", e);
         }
         log.info("[session {}] ended and cleaned", sessionId);
+    }
+
+    /** 更新会话活跃时间戳。 */
+    private void touchSession(String sessionId) {
+        sessionActivity.put(sessionId, System.currentTimeMillis());
+    }
+
+    /**
+     * 清理空闲超时会话（由定时任务调用）：移除超过 timeoutMinutes 未活跃的会话缓存与状态。
+     *
+     * @param timeoutMinutes 空闲超时（分钟）；<=0 不清理
+     * @return 清理的会话数
+     */
+    public int cleanupIdleSessions(int timeoutMinutes) {
+        if (timeoutMinutes <= 0) {
+            return 0;
+        }
+        long threshold = System.currentTimeMillis() - timeoutMinutes * 60_000L;
+        int cleaned = 0;
+        for (Map.Entry<String, Long> entry : sessionActivity.entrySet()) {
+            if (entry.getValue() < threshold) {
+                String sessionId = entry.getKey();
+                log.info("[session {}] idle timeout ({}min), cleaning up", sessionId, timeoutMinutes);
+                endSession(sessionId);
+                cleaned++;
+            }
+        }
+        if (cleaned > 0) {
+            log.info("[SessionTimeout] cleaned {} idle sessions (threshold={}min)", cleaned, timeoutMinutes);
+        }
+        return cleaned;
     }
 
     /** 计数指标 +1（未接入 Micrometer 时降级为 no-op，不影响主链路）。 */
@@ -227,6 +280,35 @@ public class CustomerServiceService {
     /** 获取热 Agent；未命中时新建（首次 call 自动从 StateStore 恢复历史，无需手工 load）。 */
     private ReActAgent resolveAgent(String sessionId) {
         return sessionAgents.computeIfAbsent(sessionId, agentFactory::createAgent);
+    }
+
+    /**
+     * 会话级锁包装（Mono）：同一 sessionId 的请求串行执行，防止并发写 StateStore 导致状态覆盖。
+     * 在 boundedElastic 上获取锁并执行，不阻塞 Netty 事件循环线程。
+     */
+    private <T> Mono<T> withSessionLock(String sessionId, Supplier<Mono<T>> supplier) {
+        java.util.concurrent.Semaphore lock = sessionLocks.computeIfAbsent(sessionId, k -> new java.util.concurrent.Semaphore(1));
+        return Mono.fromCallable(() -> {
+                lock.acquire();
+                return true;
+            })
+            .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+            .flatMap(ignored -> supplier.get())
+            .doFinally(signal -> lock.release());
+    }
+
+    /**
+     * 会话级锁包装（Flux）：同 {@link #withSessionLock}，用于流式输出。
+     */
+    private <T> Flux<T> withSessionLockFlux(String sessionId, Flux<T> flux) {
+        java.util.concurrent.Semaphore lock = sessionLocks.computeIfAbsent(sessionId, k -> new java.util.concurrent.Semaphore(1));
+        return Mono.fromCallable(() -> {
+                lock.acquire();
+                return true;
+            })
+            .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+            .flatMapMany(ignored -> flux)
+            .doFinally(signal -> lock.release());
     }
 
     private Msg toUserMsg(String userText) {

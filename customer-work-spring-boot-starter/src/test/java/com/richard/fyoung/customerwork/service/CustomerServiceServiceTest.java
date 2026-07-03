@@ -259,4 +259,75 @@ class CustomerServiceServiceTest {
             .expectNext("好")
             .verifyComplete();
     }
+
+    // ======== 会话级并发控制测试 ========
+
+    /**
+     * 同一 sessionId 的并发请求应串行执行：第一个未完成时第二个不应开始。
+     */
+    @Test
+    void chat_shouldSerializeConcurrentRequests_forSameSession() {
+        java.util.concurrent.atomic.AtomicInteger executionOrder = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger overlapCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenAnswer(inv -> {
+            int current = inFlight.incrementAndGet();
+            if (current > 1) {
+                overlapCount.incrementAndGet();
+            }
+            executionOrder.incrementAndGet();
+            return Mono.defer(() -> Mono.just(assistantMsg("ok")))
+                .delayElement(Duration.ofMillis(100))
+                .doFinally(s -> inFlight.decrementAndGet());
+        });
+
+        // 并发发起两个同一会话的请求
+        Mono.zip(
+            service.chat("concurrent", "msg1").subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()),
+            service.chat("concurrent", "msg2").subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+        ).block(Duration.ofSeconds(5));
+
+        org.junit.jupiter.api.Assertions.assertEquals(0, overlapCount.get(),
+            "同一会话的并发请求不应重叠执行");
+    }
+
+    /**
+     * 不同 sessionId 的请求可并行执行（锁粒度是会话级，不是全局）。
+     */
+    @Test
+    void chat_shouldAllowConcurrentRequests_forDifferentSessions() {
+        java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger maxInFlight = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenAnswer(inv -> {
+            int current = inFlight.incrementAndGet();
+            maxInFlight.accumulateAndGet(current, Math::max);
+            return Mono.just(assistantMsg("ok"))
+                .delayElement(Duration.ofMillis(100))
+                .doFinally(s -> inFlight.decrementAndGet());
+        });
+
+        Mono.zip(
+            service.chat("session-a", "msg1").subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()),
+            service.chat("session-b", "msg2").subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+        ).block(Duration.ofSeconds(5));
+
+        org.junit.jupiter.api.Assertions.assertTrue(maxInFlight.get() >= 2,
+            "不同会话的请求应可并行执行，maxInFlight=" + maxInFlight.get());
+    }
+
+    /** endSession 应清理会话锁，使后续请求不被旧锁阻塞。 */
+    @Test
+    void endSession_shouldCleanUpLock() {
+        when(agent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.just(assistantMsg("ok")));
+
+        service.chat("lock-test", "hi").block();
+        service.endSession("lock-test");
+        // 结束后再次对话应正常工作（锁已清理，不会死锁）
+        StepVerifier.create(service.chat("lock-test", "again"))
+            .expectNext("ok")
+            .verifyComplete();
+    }
 }

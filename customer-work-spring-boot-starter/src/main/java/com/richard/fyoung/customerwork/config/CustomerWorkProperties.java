@@ -124,6 +124,8 @@ public class CustomerWorkProperties {
         private String embeddingName = "text-embedding-v3";
         /** 单次请求 token 用量告警阈值（0=关闭）；超过则可观测 Hook 打 WARN，便于成本护栏。 */
         private int tokenWarnThreshold = 0;
+        /** 成本熔断配置（按时间窗口限制 token 消耗量）。 */
+        private final CostControl costControl = new CostControl();
         /** 私有化兜底：主模型失败时切换到兜底模型。 */
         private final Fallback fallback = new Fallback();
         /** 模型调用重试（瞬时错误指数退避，提升高可用）。 */
@@ -144,6 +146,17 @@ public class CustomerWorkProperties {
             private String apiKey = "";
             private String baseUrl = "";
         }
+
+        /** 成本熔断：按时间窗口限制 token 消耗量，超限拒绝请求防刷量打爆成本。 */
+        @Data
+        public static class CostControl {
+            /** 是否启用成本熔断。 */
+            private boolean enabled = false;
+            /** 每分钟最大 token 消耗量；超过则熔断拒绝请求。 */
+            private int maxTokensPerMinute = 100_000;
+            /** 每小时最大 token 消耗量；超过则熔断。 */
+            private int maxTokensPerHour = 1_000_000;
+        }
     }
 
     /** 会话持久化配置：memory | json | redis | mysql。 */
@@ -151,6 +164,8 @@ public class CustomerWorkProperties {
     public static class Session {
         private String mode = "memory";
         private String directory = "./data/sessions";
+        /** 会话空闲超时（分钟）：超过该时间无活动的会话自动清理；<=0 禁用。 */
+        private int idleTimeoutMinutes = 0;
         /** Redis 连接配置（mode=redis 时生效）。 */
         private final Redis redis = new Redis();
         /** MySQL 连接配置（mode=mysql 时生效）。 */
@@ -370,6 +385,12 @@ public class CustomerWorkProperties {
         private boolean enabled = true;
         /** 受控（需人工确认）的工具名集合。 */
         private List<String> guardedTools = new ArrayList<>(List.of("submitRefund"));
+        /** 审批超时（秒）：PENDING 超过该时间未决策则自动超时处理；<=0 禁用。 */
+        private long timeoutSeconds = 0;
+        /** 超时动作：escalate（升级转人工）| deny（自动拒绝）。 */
+        private String timeoutAction = "escalate";
+        /** 审批存储模式：memory（进程内，默认）| jdbc（数据库持久化）。 */
+        private String storeMode = "memory";
     }
 
     /** 事实日志配置（三层记忆第三层）。 */
@@ -378,6 +399,10 @@ public class CustomerWorkProperties {
         /** 是否启用只追加事实日志（可审计、跨会话）。 */
         private boolean enabled = true;
         private String directory = "./data/facts";
+        /** 单文件最大大小（MB），超过则轮转到 .1 / .2 归档；<=0 禁用轮转。 */
+        private int maxFileMb = 10;
+        /** 最多保留的归档文件数（超出最旧的自动删除）；<=0 不限制。 */
+        private int maxArchivedFiles = 5;
     }
 
     /** 接入层安全配置。 */
@@ -404,6 +429,10 @@ public class CustomerWorkProperties {
             private boolean enabled = false;
             /** 每分钟允许的最大请求数。 */
             private int requestsPerMinute = 120;
+            /** 限流算法：fixed-window（固定窗口，默认）| sliding-window（滑动窗口，更平滑防突刺）。 */
+            private String algorithm = "fixed-window";
+            /** 滑动窗口时间窗大小（秒），仅 algorithm=sliding-window 时生效。 */
+            private int windowSeconds = 60;
         }
     }
 

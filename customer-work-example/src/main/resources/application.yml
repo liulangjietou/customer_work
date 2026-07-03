@@ -27,6 +27,11 @@ customer-work:
     embedding-name: text-embedding-v3
     # 单次请求 token 用量告警阈值（0=关闭）：超过打 WARN，便于成本护栏
     token-warn-threshold: 0
+    # 成本熔断：按分钟/小时窗口限制 token 消耗量，超限拒绝请求防刷量打爆成本
+    cost-control:
+      enabled: false
+      max-tokens-per-minute: 100000   # 每分钟最大 token 消耗；超限熔断
+      max-tokens-per-hour: 1000000     # 每小时最大 token 消耗；超限熔断
     # 私有化兜底：主模型失败时自动切换（典型：云端主模型 + 本地 Ollama 兜底）
     fallback:
       enabled: false
@@ -43,6 +48,8 @@ customer-work:
     # 会话持久化模式：memory（默认，重启丢）| json（单机落盘可恢复）
     #                | redis（分布式共享）| mysql（强一致持久化）
     mode: memory
+    # 会话空闲超时（分钟）：超过该时间无活动的会话自动清理（移除缓存+状态+锁）；<=0 禁用
+    idle-timeout-minutes: 0
     directory: ./data/sessions
     redis:
       host: ${REDIS_HOST:localhost}
@@ -195,10 +202,20 @@ customer-work:
     enabled: true
     guarded-tools:
       - submitRefund
+    # 审批超时（秒）：PENDING 超过该时间未决策自动处理；<=0 禁用超时巡检
+    timeout-seconds: 0
+    # 超时动作：escalate（升级转人工）| deny（自动拒绝）
+    timeout-action: escalate
+    # 审批存储模式：memory（进程内，默认）| jdbc（数据库持久化，重启不丢）
+    store-mode: memory
   fact-log:
     # 三层记忆第三层：只追加事实日志（可审计、跨会话）
     enabled: true
     directory: ./data/facts
+    # 单文件最大大小（MB），超过则轮转到 .1 / .2 归档；<=0 禁用轮转
+    max-file-mb: 10
+    # 最多保留的归档文件数（超出最旧的自动删除）；<=0 不限制
+    max-archived-files: 5
   security:
     # 接入层安全：API Key 鉴权（默认关闭，生产开启并配置 api-keys）
     auth:
@@ -206,10 +223,14 @@ customer-work:
       header-name: X-API-Key
       api-keys: []
         # - your-production-api-key
-    # 限流：固定时间窗，按 API Key 或客户端 IP 维度（默认关闭）
+    # 限流：按 API Key 或客户端 IP 维度（默认关闭）
     rate-limit:
       enabled: false
       requests-per-minute: 120
+      # 限流算法：fixed-window（固定窗口，默认）| sliding-window（滑动窗口，更平滑防突刺）
+      algorithm: fixed-window
+      # 滑动窗口时间窗大小（秒），仅 algorithm=sliding-window 时生效
+      window-seconds: 60
   multi-agent:
     # 多 Agent 编排：fanout（并行多专家聚合）| sequential（流水串行细化）
     enabled: true

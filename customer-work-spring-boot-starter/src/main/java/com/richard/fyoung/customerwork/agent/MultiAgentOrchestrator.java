@@ -101,6 +101,12 @@ public class MultiAgentOrchestrator {
     /** 可为 null：未接入 Micrometer 时降级为无指标（仅日志）。 */
     private MeterRegistry meterRegistry;
 
+    /**
+     * 专家 Agent 缓存（P3：避免每次 consult 都重建 Agent）。
+     * Agent 无状态（状态由 StateStore 按 sessionId 持久化），可安全复用。
+     */
+    private volatile List<ReActAgent> cachedSpecialists;
+
     /** Spring 注入构造：MeterRegistry 经 ObjectProvider 可选注入（actuator 缺席时降级）。 */
     @Autowired
     public MultiAgentOrchestrator(Model model,
@@ -138,18 +144,38 @@ public class MultiAgentOrchestrator {
     private static final RuntimeContext REDUCER_CTX = RuntimeContext.builder()
         .userId("multi-agent").sessionId("reducer").build();
 
-    /** 构建三个专职专家 Agent。 */
+    /**
+     * 构建三个专职专家 Agent（带缓存：首次构建后复用，避免每次 consult 重建 Agent）。
+     * Agent 无状态（状态由 StateStore 按 sessionId 持久化），可安全复用。
+     */
     public List<ReActAgent> buildSpecialists() {
-        return List.of(
-            specialist(EXPERT_ORDER,
-                "你是订单与物流专家。只就订单状态、物流轨迹、金额等问题作答，调用订单工具查询后回答；与你无关的问题简要说明并建议转交对应专家。",
-                new OrderTools(orderBackend)),
-            specialist(EXPERT_AFTERSALES,
-                "你是售后与退款专家。处理退款资格校验与退款工单；涉及资金只生成待人工确认工单，绝不承诺已打款。",
-                new AfterSalesTools(afterSalesBackend)),
-            specialist(EXPERT_KNOWLEDGE,
-                "你是政策咨询专家。依据知识库回答退换货、发票、运费等政策问题，并保留来源标注。",
-                new KnowledgeBaseTools(knowledgeBackend)));
+        if (cachedSpecialists != null) {
+            return cachedSpecialists;
+        }
+        synchronized (this) {
+            if (cachedSpecialists != null) {
+                return cachedSpecialists;
+            }
+            List<ReActAgent> specialists = List.of(
+                specialist(EXPERT_ORDER,
+                    "你是订单与物流专家。只就订单状态、物流轨迹、金额等问题作答，调用订单工具查询后回答；与你无关的问题简要说明并建议转交对应专家。",
+                    new OrderTools(orderBackend)),
+                specialist(EXPERT_AFTERSALES,
+                    "你是售后与退款专家。处理退款资格校验与退款工单；涉及资金只生成待人工确认工单，绝不承诺已打款。",
+                    new AfterSalesTools(afterSalesBackend)),
+                specialist(EXPERT_KNOWLEDGE,
+                    "你是政策咨询专家。依据知识库回答退换货、发票、运费等政策问题，并保留来源标注。",
+                    new KnowledgeBaseTools(knowledgeBackend)));
+            cachedSpecialists = specialists;
+            log.info("[MultiAgent] specialists cached: {} experts", specialists.size());
+            return specialists;
+        }
+    }
+
+    /** 清除专家缓存（测试 / 热更新场景使用）。 */
+    public void clearSpecialistCache() {
+        cachedSpecialists = null;
+        log.info("[MultiAgent] specialist cache cleared");
     }
 
     private ReActAgent specialist(String name, String prompt, Object tool) {
