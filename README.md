@@ -26,7 +26,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **277 个全绿**（starter 259 + example 9 + downstream 1 + customer-web 7 + customer-web-test 1，其中 starter 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
+- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **277 个全绿**（starter 259 + app 9 + downstream 1 + customer-web 7 + customer-web-test 1，其中 starter 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -570,7 +570,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 
 上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4）120 个 open issues
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / 仍受框架限制需等待修复的项 / 版本升级策略）。
-对应的生产配置示例见 **[application-prod.yml](customer-work-example/src/main/resources/application-prod.yml)**
+对应的生产配置示例见 **[application-prod.yml](customer-work-app/src/main/resources/application-prod.yml)**
 （`SPRING_PROFILES_ACTIVE=prod` 激活），逐项配置均在注释中注明所对应缓解的 issue 编号。
 
 ---
@@ -656,7 +656,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   └── dto/         ChatRequest / ChatResponse / IntentResult
 │       └── resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
 │
-├── customer-work-example/                       # 【可运行示例】依赖 starter
+├── customer-work-app/                           # 【可运行应用】依赖 starter
 │   └── src/main/
 │       ├── java/com/richard/fyoung/customerworkapp/    # 独立包，与 starter 基础包不重叠
 │       │   ├── CustomerWorkApplication.java     # 仅 @SpringBootApplication；能力由 starter 自动装配
@@ -675,7 +675,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 
 > **模块边界**：`starter` 装可复用的 Agent 基础设施与扩展点（SPI、配置、装配、记忆/RAG/安全/可观测/Nacos），
 > 并通过 **`@AutoConfiguration` 自动装配**（注册于 `META-INF/spring/...AutoConfiguration.imports`）；
-> `example` 只装"客服业务"（启动类、HTTP 接口、提示词/技能资源）。
+> `app` 只装"客服业务"（启动类、HTTP 接口、提示词/技能资源）。
 >
 > **下游接入（零扫描）**：任意工程只要 `引入 starter 依赖 + 写自己的 *Backend Bean / Controller`，
 > 即自动获得全部能力，**无需关心自身基础包、无需手动 `@ComponentScan`**。starter 固定扫描自身包

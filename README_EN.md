@@ -24,7 +24,7 @@ implementations make it run offline out of the box and keep the test suite green
 config line swaps to a cloud / self-hosted backend — **without touching business code**.
 
 - Base package: `com.richard.fyoung.customerwork`
-- **176 unit tests** on `main`; **277** on `rc2.0` (starter 259 + example 9 + downstream 1 + customer-web 7 + customer-web-test 1; 4 auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent)
+- **176 unit tests** on `main`; **277** on `rc2.0` (starter 259 + app 9 + downstream 1 + customer-web 7 + customer-web-test 1; 4 auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent)
 
 ## Feature overview
 
@@ -145,7 +145,7 @@ curl -X POST http://localhost:8080/api/customer/chat \
 Multi-module Maven project:
 - `customer-work-spring-boot-starter` — reusable agent infrastructure, **auto-configured** via
   `@AutoConfiguration` (registered in `META-INF/spring/...AutoConfiguration.imports`).
-- `customer-work-example` — runnable customer-service demo (package `com.richard.fyoung.customerworkapp`).
+- `customer-work-app` — runnable customer-service application (package `com.richard.fyoung.customerworkapp`).
 
 Any downstream app just adds the starter dependency — **no base-package assumptions, no manual `@ComponentScan`**:
 
