@@ -410,6 +410,7 @@ public class CustomerWorkProperties {
     public static class Security {
         private final Auth auth = new Auth();
         private final RateLimit rateLimit = new RateLimit();
+        private final ApprovalAuth approvalAuth = new ApprovalAuth();
 
         /** API Key 鉴权。 */
         @Data
@@ -433,6 +434,22 @@ public class CustomerWorkProperties {
             private String algorithm = "fixed-window";
             /** 滑动窗口时间窗大小（秒），仅 algorithm=sliding-window 时生效。 */
             private int windowSeconds = 60;
+        }
+
+        /**
+         * 审批操作员身份鉴权（把关退款审批 approve/deny 的身份来源）。
+         *
+         * <p>关闭时，审批操作员身份取自请求方自报的 {@code operator} 参数，任何人可冒充任意坐席放行退款；
+         * 生产必须开启并配置 {@code operators}，使操作员身份改由服务端凭 token 解析，而非客户端自由输入。</p>
+         */
+        @Data
+        public static class ApprovalAuth {
+            /** 是否启用（默认关闭；生产建议开启，仅作用于 approve/deny 两个资金放行端点）。 */
+            private boolean enabled = false;
+            /** 携带审批操作员 token 的请求头名。 */
+            private String headerName = "X-Approval-Token";
+            /** token → 操作员姓名映射；每个坐席一个独立 token，避免共享凭证导致的责任不可追溯。 */
+            private Map<String, String> operators = new LinkedHashMap<>();
         }
     }
 
