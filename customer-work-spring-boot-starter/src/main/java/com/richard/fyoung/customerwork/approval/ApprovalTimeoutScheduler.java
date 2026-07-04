@@ -21,6 +21,9 @@ import java.util.List;
  *
  * <p>与 {@link PendingApprovalService} 的关系：巡检器只读扫描 + 委托 deny，
  * 不引入新状态（避免状态机膨胀）；approve 仍需人工。</p>
+ *
+ * <p>同时承担审批<b>执行失败重试</b>：对 {@code APPROVED} 但下游回调（如打款）失败的工单，按
+ * {@code human-approval.max-execution-retry-attempts} 周期性重试，见 {@link #retryExecutionFailures()}。</p>
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -77,5 +80,15 @@ public class ApprovalTimeoutScheduler {
     /** 可被单测调用的同步入口（跳过 @Scheduled 注解）。 */
     public void runTimeoutCheck() {
         checkTimeouts();
+    }
+
+    /** 巡检重试执行失败的审批单（如打款回调异常）；{@code maxExecutionRetryAttempts<=1} 时禁用。 */
+    @Scheduled(fixedDelayString = "${customer-work.runtime.scheduler-fixed-delay-ms:60000}")
+    public void retryExecutionFailures() {
+        int maxAttempts = properties.getHumanApproval().getMaxExecutionRetryAttempts();
+        int retried = approvalService.retryExecutionFailures(maxAttempts);
+        if (retried > 0) {
+            log.info("approval execution retry batch: retried={}", retried);
+        }
     }
 }

@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /**
  * 待审批单服务（Human-in-the-Loop 闭环的应用层实现）。
@@ -81,17 +82,62 @@ public class PendingApprovalService {
         req.approve(operator, null, System.currentTimeMillis());
         store.update(req);
         log.info("approval approved: id={}, operator={}", id, operator);
-        onApprove.get().accept(req);
+        executeApproval(req);
         return req;
     }
 
-    /** 人工拒绝：推进状态并触发 onDeny 回调。 */
+    /**
+     * 触发下游执行（如实际打款）；失败不回滚已生效的人工决策，只推进 {@link ExecutionStatus}
+     * 供 {@link #retryExecutionFailures} 巡检重试与告警——避免"工单显示已放行、钱其实没动"被静默吞掉。
+     */
+    private void executeApproval(ApprovalRequest req) {
+        try {
+            onApprove.get().accept(req);
+            req.markExecuted();
+        } catch (Exception e) {
+            req.markExecutionFailed(e.getMessage());
+            log.error("approval execution failed, errorCode={}, id={}, attempts={}",
+                "APPROVAL-EXEC-FAIL", req.getId(), req.getExecutionAttempts(), e);
+        }
+        store.update(req);
+    }
+
+    /**
+     * 巡检重试执行失败的审批单（由 {@code ApprovalTimeoutScheduler} 定期调用）。
+     *
+     * <p><b>幂等性约定</b>：注册给 {@link #onApprove} 的回调必须对同一
+     * {@link ApprovalRequest#getId()} 幂等（如按工单号去重后再打款），否则重试可能导致下游
+     * 动作被重复执行——本方法只负责"再触发一次"，不做去重。</p>
+     *
+     * @param maxAttempts 最大执行尝试次数（含首次执行）；&lt;=1 表示不重试
+     * @return 本次实际重试的审批单数
+     */
+    public int retryExecutionFailures(int maxAttempts) {
+        if (maxAttempts <= 1) {
+            return 0;
+        }
+        List<ApprovalRequest> candidates = store.findByStatus(ApprovalStatus.APPROVED).stream()
+            .filter(r -> r.getExecutionStatus() == ExecutionStatus.EXECUTE_FAILED)
+            .filter(r -> r.getExecutionAttempts() < maxAttempts)
+            .collect(Collectors.toList());
+        for (ApprovalRequest req : candidates) {
+            log.info("approval execution retry: id={}, attempts={}", req.getId(), req.getExecutionAttempts());
+            executeApproval(req);
+        }
+        return candidates.size();
+    }
+
+    /** 人工拒绝：推进状态并触发 onDeny 回调；回调失败不影响拒绝决策本身（仅告警）。 */
     public ApprovalRequest deny(String id, String operator, String note) {
         ApprovalRequest req = require(id);
         req.deny(operator, note, System.currentTimeMillis());
         store.update(req);
         log.info("approval denied: id={}, operator={}, note={}", id, operator, note);
-        onDeny.get().accept(req);
+        try {
+            onDeny.get().accept(req);
+        } catch (Exception e) {
+            log.error("approval deny callback failed, errorCode={}, id={}", "APPROVAL-DENY-CALLBACK-FAIL", id, e);
+        }
         return req;
     }
 

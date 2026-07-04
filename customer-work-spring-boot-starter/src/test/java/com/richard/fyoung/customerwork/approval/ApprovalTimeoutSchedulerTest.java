@@ -89,4 +89,24 @@ class ApprovalTimeoutSchedulerTest {
         // 刚创建的审批单未超时，不应被处理
         assertEquals(1, svc.listByStatus(ApprovalStatus.PENDING).size());
     }
+
+    @Test
+    void retryExecutionFailures_shouldDelegateToService() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getHumanApproval().setMaxExecutionRetryAttempts(3);
+
+        PendingApprovalService svc = new PendingApprovalService();
+        svc.onApprove(r -> {
+            throw new RuntimeException("boom");
+        });
+        ApprovalRequest req = svc.submit(ApprovalType.REFUND, "s1", "O1", "100", "test");
+        svc.approve(req.getId(), "alice");
+        assertEquals(ExecutionStatus.EXECUTE_FAILED, svc.find(req.getId()).orElseThrow().getExecutionStatus());
+
+        ApprovalTimeoutScheduler scheduler = new ApprovalTimeoutScheduler(props, svc);
+        scheduler.retryExecutionFailures();
+
+        // 重试后 attempts 累加（回调依旧抛异常，状态仍是 EXECUTE_FAILED，但已发起过重试）
+        assertEquals(2, svc.find(req.getId()).orElseThrow().getExecutionAttempts());
+    }
 }

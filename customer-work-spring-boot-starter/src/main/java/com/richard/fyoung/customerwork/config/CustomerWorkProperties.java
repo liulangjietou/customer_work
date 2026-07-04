@@ -391,6 +391,8 @@ public class CustomerWorkProperties {
         private String timeoutAction = "escalate";
         /** 审批存储模式：memory（进程内，默认）| jdbc（数据库持久化）。 */
         private String storeMode = "memory";
+        /** 审批放行后下游执行（如实际打款）失败的最大重试次数（含首次执行）；&lt;=1 表示不重试。 */
+        private int maxExecutionRetryAttempts = 3;
     }
 
     /** 事实日志配置（三层记忆第三层）。 */

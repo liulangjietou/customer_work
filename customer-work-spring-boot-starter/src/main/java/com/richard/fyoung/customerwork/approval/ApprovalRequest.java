@@ -8,6 +8,10 @@ import lombok.Setter;
  *
  * <p>标识与诉求字段不可变；状态与决策字段随人工决策流转。状态机由 {@link #approve}/{@link #deny}
  * 在 PENDING 终态校验下推进，避免重复决策。</p>
+ *
+ * <p><b>决策 vs 执行分层</b>：{@link #approve} 只推进"人工决策"（{@code status=APPROVED}）；
+ * 决策生效（如实际打款）是否成功由 {@link #markExecuted}/{@link #markExecutionFailed} 另行推进
+ * {@link #executionStatus}——避免下游回调失败被 approve 的 fast-fail 状态机悄悄吞掉。</p>
  * @author owlzhangfq@gmail.com
  */
 @Getter
@@ -26,6 +30,10 @@ public class ApprovalRequest {
     private volatile String operator;
     private volatile String decisionNote;
     private volatile long decidedAtMs;
+
+    private volatile ExecutionStatus executionStatus = ExecutionStatus.NOT_APPLICABLE;
+    private volatile String executionFailureReason;
+    private volatile int executionAttempts;
 
     public ApprovalRequest(String id, ApprovalType type, String sessionId,
                            String orderId, String amount, String reason, long createdAtMs) {
@@ -56,5 +64,19 @@ public class ApprovalRequest {
         this.operator = operator;
         this.decisionNote = note;
         this.decidedAtMs = whenMs;
+    }
+
+    /** 下游执行（如实际打款）成功：清除失败原因，累计执行次数。 */
+    public void markExecuted() {
+        this.executionAttempts++;
+        this.executionStatus = ExecutionStatus.EXECUTED;
+        this.executionFailureReason = null;
+    }
+
+    /** 下游执行失败：记录失败原因，累计执行次数，供巡检重试与告警。 */
+    public void markExecutionFailed(String reason) {
+        this.executionAttempts++;
+        this.executionStatus = ExecutionStatus.EXECUTE_FAILED;
+        this.executionFailureReason = reason;
     }
 }
