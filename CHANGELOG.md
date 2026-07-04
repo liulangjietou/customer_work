@@ -90,6 +90,10 @@
   筛选回流知识库/评测集"是离线人工或独立批处理任务的职责。新增 3 个单测。
 - 本轮全仓测试 **202 → 309**（starter 290 + example 10 + downstream 1 + customer-web 8，0 failures，
   13 skipped 为 MySQL 门控集成测试）。
+- **部署手册（docs/部署手册.md）**：操作向生产部署文档——部署架构与组件清单、基础设施准备、
+  数据库初始化（5 张表 DDL 走 DBA 流程）、环境变量清单（必填/可选分级）、operators 秘密配置下发、
+  Mock 实现替换核对、多实例注意事项、安全暴露面收口、可观测性告警、灰度上线流程、回滚预案、
+  已知框架限制复查表、部署前最终核对单（13 项可勾选）。README §6.20 增加入口链接。
 
 ### Migration — AgentScope 2.0（`rc2.0` 分支）
 - 全量迁移到 `io.agentscope:agentscope-harness:2.0.0-RC4`（经 `agentscope-bom` 管理），JDK 17。
