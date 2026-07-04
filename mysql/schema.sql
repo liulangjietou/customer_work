@@ -85,3 +85,15 @@ CREATE TABLE IF NOT EXISTS `cw_slot_filling_progress` (
     `asking`          VARCHAR(64) COMMENT '当前追问的槽位名',
     `collected_json`  TEXT COMMENT '已收集槽位值（JSON）'
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- 对话阶段状态机表（JdbcDialogStageStore 结构化存储，dialog.store-mode=jdbc 时启用）
+-- =============================================================================
+-- 说明：由 JdbcDialogStageStore 自动建表（CREATE TABLE IF NOT EXISTS），
+--       本脚本用于 DBA 预审 / 受限权限环境。多实例部署下跨实例共享同一份会话阶段，
+--       避免负载均衡到不同实例导致阶段状态"归零"回 GREETING。
+
+CREATE TABLE IF NOT EXISTS `cw_dialog_stage` (
+    `session_id`  VARCHAR(191) PRIMARY KEY COMMENT '会话 ID',
+    `stage`       VARCHAR(24) NOT NULL COMMENT '当前对话阶段：GREETING/COLLECTING/PROCESSING/CONFIRMING/ESCALATED'
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
