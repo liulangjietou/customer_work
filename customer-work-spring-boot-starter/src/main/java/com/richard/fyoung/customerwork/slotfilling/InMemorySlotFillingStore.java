@@ -1,20 +1,16 @@
 package com.richard.fyoung.customerwork.slotfilling;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.stereotype.Component;
-
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 进程内槽位收集进度存储（默认实现）。
  *
- * <p>用 {@link ConcurrentHashMap} 保证线程安全。以 {@code @ConditionalOnMissingBean} 注册，
- * 下游声明自己的 {@link SlotFillingStore} Bean 即可覆盖。</p>
+ * <p>用 {@link ConcurrentHashMap} 保证线程安全。由 {@link SlotFillingConfig} 按
+ * {@code slot-filling.store-mode} 装配（默认 memory）；下游声明自己的 {@link SlotFillingStore}
+ * Bean 即可整体覆盖。</p>
  * @author owlzhangfq@gmail.com
  */
-@Component
-@ConditionalOnMissingBean(SlotFillingStore.class)
 public class InMemorySlotFillingStore implements SlotFillingStore {
 
     private final ConcurrentHashMap<String, SlotFillingProgress> store = new ConcurrentHashMap<>();

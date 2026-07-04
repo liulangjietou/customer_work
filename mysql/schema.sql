@@ -46,3 +46,42 @@ CREATE TABLE IF NOT EXISTS `cw_audit_log` (
     INDEX `idx_audit_created` (`created_at`),
     INDEX `idx_audit_agent` (`agent_name`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- 人工审批工单表（JdbcApprovalStore 结构化存储，human-approval.store-mode=jdbc 时启用）
+-- =============================================================================
+-- 说明：由 JdbcApprovalStore 自动建表（CREATE TABLE IF NOT EXISTS），
+--       本脚本用于 DBA 预审 / 受限权限环境。退款等资金动作的审批单持久化于此，
+--       保证应用重启 / 多实例部署下审批单不丢失。
+
+CREATE TABLE IF NOT EXISTS `cw_approval` (
+    `id`                        VARCHAR(64) PRIMARY KEY COMMENT '审批单号',
+    `type`                      VARCHAR(32) NOT NULL COMMENT '审批类型：REFUND 等',
+    `session_id`                VARCHAR(128) COMMENT '关联会话',
+    `order_id`                  VARCHAR(64) COMMENT '关联订单号',
+    `amount`                    VARCHAR(32) COMMENT '涉及金额',
+    `reason`                    TEXT COMMENT '诉求原因',
+    `created_at_ms`             BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    `status`                    VARCHAR(16) NOT NULL COMMENT 'PENDING/APPROVED/DENIED',
+    `operator`                  VARCHAR(64) COMMENT '决策操作员',
+    `decision_note`             TEXT COMMENT '决策备注',
+    `decided_at_ms`             BIGINT DEFAULT 0 COMMENT '决策时间戳（毫秒）',
+    `execution_status`          VARCHAR(24) DEFAULT 'NOT_APPLICABLE' COMMENT '下游执行状态',
+    `execution_failure_reason`  TEXT COMMENT '下游执行失败原因',
+    `execution_attempts`        INT DEFAULT 0 COMMENT '下游执行尝试次数',
+    INDEX `idx_approval_status` (`status`),
+    INDEX `idx_approval_created` (`created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- 多轮槽位收集进度表（JdbcSlotFillingStore 结构化存储，slot-filling.store-mode=jdbc 时启用）
+-- =============================================================================
+-- 说明：由 JdbcSlotFillingStore 自动建表（CREATE TABLE IF NOT EXISTS），
+--       本脚本用于 DBA 预审 / 受限权限环境。保证多轮信息收集（如退款表单：订单号→原因）
+--       中途重启可续填，用户无需从头重答。
+
+CREATE TABLE IF NOT EXISTS `cw_slot_filling_progress` (
+    `progress_key`    VARCHAR(191) PRIMARY KEY COMMENT '收集进度键：sessionId:formName',
+    `asking`          VARCHAR(64) COMMENT '当前追问的槽位名',
+    `collected_json`  TEXT COMMENT '已收集槽位值（JSON）'
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

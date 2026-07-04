@@ -86,6 +86,22 @@ public class CustomerWorkProperties {
     /** 流式（SSE）传输配置：空闲超时等连接治理。 */
     private final Stream stream = new Stream();
 
+    /** 多轮槽位收集（表单信息采集）存储配置。 */
+    private final SlotFilling slotFilling = new SlotFilling();
+
+    /**
+     * 多轮槽位收集存储配置。
+     *
+     * <p>决定 {@code SlotFillingService} 收集进度的持久化方式，语义与 {@link HumanApproval#storeMode}
+     * 一致：memory 模式下应用重启会丢失正在进行的多轮收集（用户需重新开始）；jdbc 模式持久化到数据库，
+     * 重启可续填。</p>
+     */
+    @Data
+    public static class SlotFilling {
+        /** 存储模式：memory（进程内，默认）| jdbc（数据库持久化）。 */
+        private String storeMode = "memory";
+    }
+
     /**
      * 流式（SSE）传输配置。
      *
