@@ -93,7 +93,7 @@
 | **人工审批闭环（退款放行）+ 审批持久化 SPI + 超时巡检** | `PendingApprovalService` + `ApprovalController` + `ApprovalStore` SPI + `ApprovalTimeoutScheduler` | 开 | `GET /approvals` · `POST /approvals/{id}/approve\|deny` · `human-approval.timeout-seconds` |
 | **多轮信息收集（slot-filling）** | `SlotFillingService` + `RefundFormController` | 开 | `POST /forms/refund` |
 | **主动服务（通知/回访，复用 Channel 推送）** | `ProactiveNotificationService` + `NotificationChannel` | 开 | `POST /notify/order-status\|survey` |
-| **坐席辅助 + 会话质检** | `AgentAssistService` + `QualityInspectionService` | 开 | `POST /assist` · `POST /quality/inspect` |
+| **坐席辅助 + 会话质检（数据飞轮）** | `AgentAssistService` + `QualityFeedbackRecorder` | 开 | `POST /assist` · `POST /quality/inspect`（不通过自动落 `FactLog` 供离线复盘） |
 | 可观测 + 指标 | `ObservabilityMiddleware` + Micrometer | 开 | `/actuator/prometheus` |
 | 原生 Tracing | `TracingConfig` | 关 | `observability.tracing-enabled=true` |
 | 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
@@ -646,7 +646,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   ├── eval/        意图评测框架：IntentEvalRunner / EvalReport（测评系统）
 │       │   ├── notification/ 主动服务：ProactiveNotificationService / NotificationChannel（通知/回访）
 │       │   ├── assist/      坐席辅助：AgentAssistService（实时话术建议）
-│       │   ├── quality/     会话质检：QualityInspectionService（合规打分）
+│       │   ├── quality/     会话质检：QualityInspectionService（合规打分）+ QualityFeedbackRecorder（数据飞轮）
 │       │   ├── service/     CustomerServiceService / SessionStateManager(AgentStateStore 运维门面)
 │       │   ├── memory/      LongTermMemoryProvider / Store / InMemoryLongTermMemory / FactLog / ContextMemoryFactory
 │       │   ├── rag/         KnowledgeProvider / InMemoryKeywordKnowledge

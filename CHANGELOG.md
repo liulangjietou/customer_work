@@ -55,6 +55,42 @@
   解析版本号（`<!-- version: x.y.z -->` 或 `# version: x.y.z`），追踪当前加载版本，
   `checkUpdates()` 检测版本更新触发热重载。新增 7 个单测。
 
+#### P4 — 生产就绪缺口收尾（安全 / 数据一致性 / 多实例 / 数据飞轮）
+- **审批端点操作员身份鉴权**（`af10745`）：`ApprovalController.approve/deny` 的 `operator` 此前是客户端自报的
+  query 参数（有默认值），任何持有通用 API Key 的调用方都能冒充任意坐席放行退款、且无审计留痕。新增
+  `ApprovalAuthWebFilter`（只拦截 approve/deny 两个资金放行端点，按 `security.approval-auth.operators` 的
+  token→操作员姓名映射解析身份）+ 决策成功后经 `AuditSink` 留痕。新增 7 个单测。
+- **审批放行后下游执行失败补偿**（`3d6eb42`）：`PendingApprovalService.approve()` 此前裸调用
+  `onApprove.get().accept(req)`（无 try/catch），下游回调（如实际打款）失败时异常直接抛出、无执行态记录，
+  呈现"工单显示已放行、钱其实没动"且无法追踪/重试的静默不一致。新增 `ExecutionStatus`
+  （`NOT_APPLICABLE`/`EXECUTED`/`EXECUTE_FAILED`）与 `ApprovalStatus` 分层，`retryExecutionFailures(maxAttempts)`
+  巡检重试（`human-approval.max-execution-retry-attempts`，默认 3），`deny()` 回调同款异常隔离。新增 6 个单测。
+- **补齐 `store-mode=jdbc` 死配置**（`7d9c2aa`）：`human-approval.store-mode` 配置项文档写着 memory\|jdbc 二选一，
+  但 `ApprovalConfig` 无条件返回 `InMemoryApprovalStore`，jdbc 从未被实现；`SlotFillingStore` 则完全没有存储模式
+  概念。新增 `JdbcApprovalStore`（写入 `cw_approval` 表）+ `slot-filling.store-mode` 配置 + `JdbcSlotFillingStore`
+  （写入 `cw_slot_filling_progress` 表），均复用 `session.mysql.*` 连接配置。`ApprovalRequest` 新增包级
+  `reconstruct()` 静态方法供存储层重建持久化状态。新增 10 个单测（含 assumeTrue(MySQL reachable) 门控的 JDBC
+  往返测试）。
+- **对话阶段状态机可插拔存储**（`59c89b4`）：`DialogStageService` 此前直接持有 `ConcurrentHashMap`（进程内），
+  多实例部署下同一用户请求被负载均衡到不同实例会导致阶段状态"归零"回 `GREETING`。新增 `DialogStageStore` SPI
+  + `InMemoryDialogStageStore` 默认 + `JdbcDialogStageStore`（写入 `cw_dialog_stage` 表）+ `dialog.store-mode`
+  配置。新增 9 个单测（含"两个 store 实例共享同一 MySQL"的跨实例模拟测试）。
+- **生产基线补新配置项 + 多实例部署注意事项**（`62982d2`）：`application-prod.yml` 补齐上述新能力对应配置
+  （`security.approval-auth.enabled`、`human-approval/slot-filling/dialog.store-mode: jdbc`），
+  `security.auth.enabled` 生产默认值翻转为 `true`（fail-safe），`management` 收敛暴露面为
+  `health,prometheus` + `show-details: when-authorized`；新增 `customer-web/application-prod.yml`
+  （此前完全没有，收敛 admin 控制台暴露面 + `write-token` 走环境变量）。新增"多实例部署注意事项"文档
+  （`docs/生产就绪评估.md` + README）：如实说明 `security.rate-limit`/`model.cost-control`/
+  `CustomerServiceService` 会话级锁仍是进程内实现，横向扩容会放大配额/锁失效；`MockComplaintBackend`
+  需在生产替换为真实实现。新增 `ProdProfileConfigTest`（两个 web 模块各一份，用
+  `YamlPropertySourceLoader` 离线校验 prod yml 语法与关键配置键，不激活 profile 真实启动）。
+- **质检失败数据飞轮闭环**（`C2`）：新增 `QualityFeedbackRecorder`——质检不通过时把回复内容 + 扣分项
+  作为事实写入 `FactLog`（按 sessionId 解析出的租户分文件追加），供离线复盘；`AgentAssistController` 的
+  `/quality/inspect` 接入本类而非直接调用 `QualityInspectionService`。诚实边界：只做"记录"，"从事实流水
+  筛选回流知识库/评测集"是离线人工或独立批处理任务的职责。新增 3 个单测。
+- 本轮全仓测试 **202 → 309**（starter 290 + example 10 + downstream 1 + customer-web 8，0 failures，
+  13 skipped 为 MySQL 门控集成测试）。
+
 ### Migration — AgentScope 2.0（`rc2.0` 分支）
 - 全量迁移到 `io.agentscope:agentscope-harness:2.0.0-RC4`（经 `agentscope-bom` 管理），JDK 17。
 - 会话持久化：`core.session.Session` → `core.state.AgentStateStore`（InMemory/JsonFile + extensions Redis/Mysql），
