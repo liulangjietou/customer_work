@@ -25,6 +25,10 @@ customer-work:
   # 规避 #1769 —— JsonFileAgentStateStore 每次落盘整份重写（非增量追加），长会话/高频对话下
   # 单文件体积和写放大持续膨胀，磁盘 IO 和延迟劣化。redis/mysql 后端无此问题。
   # 二选一：redis 更适合无状态多实例水平扩展；mysql 更适合需要强一致 + 现成运维体系的团队。
+  #
+  # 注意：下面的 session.mysql.* 连接信息不只服务于 session.mode=mysql 这一种情况——
+  # human-approval / slot-filling / dialog 三个 store-mode=jdbc（见下方）都复用同一份连接配置
+  # 构建各自独立的连接池，因此即便 session.mode 选的是 redis，也必须填好这段 mysql 连接信息。
   # ------------------------------------------------------------------
   session:
     mode: ${SESSION_MODE:redis}
@@ -33,14 +37,13 @@ customer-work:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       key-prefix: ${REDIS_KEY_PREFIX:customer-work}
-    # 若选择 mysql，取消下面注释并把 session.mode 改为 mysql（二者互斥，按 mode 生效）：
-    # mysql:
-    #   host: ${MYSQL_HOST:localhost}
-    #   port: ${MYSQL_PORT:3306}
-    #   database: ${MYSQL_DATABASE:agent_scope_customer_work}
-    #   username: ${MYSQL_USERNAME:root}
-    #   password: ${MYSQL_PASSWORD:}
-    #   auto-create: false   # 生产建议关闭自动建表，由 DBA 走变更流程建库建表
+    mysql:
+      host: ${MYSQL_HOST:localhost}
+      port: ${MYSQL_PORT:3306}
+      database: ${MYSQL_DATABASE:agent_scope_customer_work}
+      username: ${MYSQL_USERNAME:root}
+      password: ${MYSQL_PASSWORD:}
+      auto-create: false   # 生产建议关闭自动建表，由 DBA 按 mysql/schema.sql 走变更流程建库建表
 
   memory:
     provider: ${MEMORY_PROVIDER:memory}
@@ -88,6 +91,22 @@ customer-work:
     idle-timeout-seconds: ${STREAM_IDLE_TIMEOUT_SECONDS:120}
 
   # ------------------------------------------------------------------
+  # 审批工单 / 多轮槽位收集 / 对话阶段：生产切 jdbc，多实例部署下跨实例共享状态
+  # memory（默认）是进程内存储，请求被负载均衡到不同实例会导致：
+  #   - 审批工单查不到（人工坐席在实例 A 提交退款申请，实例 B 处理 approve 请求时找不到工单）；
+  #   - 多轮信息收集进度丢失（用户被路由到另一实例，需要从头重答）；
+  #   - 对话阶段状态机"归零"回 GREETING（动态 Prompt 状态机的分阶段聚焦失效）。
+  # 三者均复用上面的 session.mysql.* 连接配置，jdbc 模式下应用重启 / 多实例部署均不受影响。
+  # ------------------------------------------------------------------
+  human-approval:
+    store-mode: jdbc
+    max-execution-retry-attempts: 3   # 审批放行后下游执行（如打款）失败的最大重试次数
+  slot-filling:
+    store-mode: jdbc
+  dialog:
+    store-mode: jdbc
+
+  # ------------------------------------------------------------------
   # 模型私有化兜底：生产开启，使用自研 FallbackChatModel
   # 框架内置的 ReActAgent.Builder.fallbackModel(...) 存在已知缺陷（#1850），生产不采用；
   # 本项目 FallbackChatModel 是自研装饰器（主模型失败时切换兜底模型），行为已被单测覆盖。
@@ -108,13 +127,50 @@ customer-work:
 
   security:
     auth:
-      enabled: ${AUTH_ENABLED:false}   # 生产建议 true 并配置 api-keys
+      # 生产默认开启（与非 prod profile 相反的 fail-safe 默认值）：忘记设置环境变量时
+      # 宁可鉴权拦住合法请求（需要运维介入排查），也不要默认放行造成接口裸奔
+      enabled: ${AUTH_ENABLED:true}
+      api-keys: ${AUTH_API_KEYS:}   # 逗号分隔的多个 Key，经 Spring 数组/List 绑定（如 "key1,key2"）
     rate-limit:
       enabled: ${RATE_LIMIT_ENABLED:true}
       requests-per-minute: ${RATE_LIMIT_RPM:120}
+    # 审批操作员身份鉴权：堵住"任何人可冒充任意坐席放行退款"的身份伪造漏洞（仅作用于
+    # approve/deny 两个资金放行端点，不影响审批单查询）。operators（token→操作员姓名映射）
+    # 涉及每个坐席的真实凭证，不适合写进这份共享的生产配置模板——务必通过独立的运维侧配置
+    # 覆盖（如 Spring Cloud Config / K8s Secret 挂载的 application-prod-secrets.yml）单独下发，
+    # 严禁把真实 token 提交进代码仓库。
+    approval-auth:
+      enabled: true
 
   observability:
     tracing-enabled: ${TRACING_ENABLED:true}
+
+# ------------------------------------------------------------------
+# Actuator 管理端点：生产收敛暴露面，避免内部诊断信息对外泄漏
+# ------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ------------------------------------------------------------------
+# 多实例部署注意事项（诚实声明：以下能力当前实现是进程内统计/存储，横向扩容时需知悉）
+# ------------------------------------------------------------------
+# 1. 限流（security.rate-limit）与模型成本熔断（model.cost-control，本文件未开启，默认关闭）
+#    均是进程内计数器，N 个实例横向扩容 = 实际总配额被放大为 N 倍，而非全局共享配额。
+#    需要全局精确限流/熔断时，应在 Higress/网关层做全局限流，或改造为 Redis 计数实现。
+# 2. CustomerServiceService 的会话级串行锁（同一 sessionId 并发请求排队执行，避免状态覆盖）
+#    是进程内 Semaphore，只在同一实例内生效；若同一 sessionId 的并发请求被负载均衡到不同实例，
+#    该锁不能跨实例互斥。生产建议在网关层为同一 sessionId 配置会话粘性路由（sticky session），
+#    避免依赖跨实例分布式锁。
+# 3. MockComplaintBackend（投诉工单默认实现）是进程内 Map 存储，多实例下建单与查单落在不同
+#    实例会导致查不到。生产必须提供真实的 ComplaintBackend Bean（对接自有工单系统），
+#    不能依赖默认 Mock 实现跨实例工作。
+# 完整评估结论见 docs/生产就绪评估.md。
 
 logging:
   level:

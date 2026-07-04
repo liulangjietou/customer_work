@@ -569,9 +569,13 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 ### 6.20 生产就绪评估与生产配置基线
 
 上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4）120 个 open issues
-与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / 仍受框架限制需等待修复的项 / 版本升级策略）。
+与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / **多实例部署注意事项** /
+仍受框架限制需等待修复的项 / 版本升级策略）。
 对应的生产配置参考见 **[application-prod.yml](customer-work-app/src/main/resources/application-prod.yml)**
-（`SPRING_PROFILES_ACTIVE=prod` 激活），逐项配置均在注释中注明所对应缓解的 issue 编号。
+（主应用）与 **[customer-web/application-prod.yml](customer-web/src/main/resources/application-prod.yml)**
+（管理控制台，收敛 admin 暴露面），`SPRING_PROFILES_ACTIVE=prod` 激活，逐项配置均在注释中注明所对应缓解的 issue 编号。
+两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-web` 各一份）离线校验，
+不激活 profile 真实启动（prod 依赖真实 Redis/MySQL/DashScope 凭据，无这些外部依赖时无法真实连接）。
 
 ---
 
