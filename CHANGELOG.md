@@ -22,6 +22,23 @@
   未处理异常日志改为占位符错误码 `UNHANDLED_ERROR`。新增 `GlobalExceptionHandlerTest`（3 例）。
 - 修正 `docs/生产接口使用手册.md` §1.3/§9：明确 MDC 自动关联与错误体 requestId 的落地事实。
 
+#### P0/P1 — 会话诊断聚合 API + 审计/FactLog 查询打通
+- **会话故障诊断全景（`DiagnosticService` + `GET /api/customer/diagnostics/session/{sessionId}`）**：
+  把此前散落在 StateStore / 对话阶段 / 槽位 / 审批 / 审计 / 质检六处、需人肉查 4 张表 + grep 日志才能
+  拼出的会话现场，聚合为单个只读 `SessionDiagnostic`。**每个数据源独立 try/catch**——单源不可用
+  （MySQL 瞬断 / 审计后端未接入）只标注到 `degradedSources` 并降级，绝不让诊断工具自身崩溃
+  （它恰恰要在系统部分故障时还能用）。读取涉及 JDBC/文件 IO，统一在 `boundedElastic` 执行不阻塞事件循环。
+- **审计查询 SPI（`AuditQuery` + `AuditRecord`）**：与写入侧 `AuditSink` 做接口隔离，仅可检索的
+  `JdbcAuditSink` 实现（按 `agent_name=CustomerServiceAgent-<sessionId>` 后缀 LIKE 匹配、ESCAPE 转义
+  通配符、时间倒序）；默认 `LoggingAuditSink` 不实现，诊断链路以 `ObjectProvider<AuditQuery>` 可选注入、
+  缺失时优雅降级。审计事件下钻端点 `.../audit?limit=`。
+- **FactLog 按会话过滤**：诊断聚合读取租户事实流水并按 sessionId 过滤，取最近 N 条。
+- **`SlotFillingService.peek`**：新增只读窥视收集进度（不推进/不创建状态），供诊断读取。
+- **`TenantResolver` 抽取（DRY 收敛）**：把此前在 `CustomerServiceAgentFactory`、`QualityFeedbackRecorder`
+  各复制一份的租户解析逻辑收敛为唯一 `@Component`，二者与诊断链路统一调用（遵循"防御式编程只保留一处"约定）。
+- 新增 `DiagnosticServiceTest`（3：多源聚合 / 审计后端可选 / 单源失败降级不崩溃）+
+  `JdbcAuditSinkQueryTest`（2，MySQL 门控）；`docs/生产接口使用手册.md` 增 §7.5 诊断端点。
+
 ### 生产加固与功能完善（P0-P3）
 
 #### P0 — 生产关键项

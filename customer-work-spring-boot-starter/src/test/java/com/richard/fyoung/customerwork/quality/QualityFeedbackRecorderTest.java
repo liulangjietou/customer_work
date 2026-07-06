@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.quality;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.memory.FactLog;
+import com.richard.fyoung.customerwork.support.TenantResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,7 +20,8 @@ class QualityFeedbackRecorderTest {
 
     private QualityFeedbackRecorder newRecorder(Path tempDir) {
         FactLog factLog = new FactLog(true, tempDir);
-        return new QualityFeedbackRecorder(new QualityInspectionService(), factLog, new CustomerWorkProperties());
+        return new QualityFeedbackRecorder(new QualityInspectionService(), factLog,
+            new TenantResolver(new CustomerWorkProperties()));
     }
 
     @Test

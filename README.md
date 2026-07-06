@@ -95,6 +95,8 @@
 | **主动服务（通知/回访，复用 Channel 推送）** | `ProactiveNotificationService` + `NotificationChannel` | 开 | `POST /notify/order-status\|survey` |
 | **坐席辅助 + 会话质检（数据飞轮）** | `AgentAssistService` + `QualityFeedbackRecorder` | 开 | `POST /assist` · `POST /quality/inspect`（不通过自动落 `FactLog` 供离线复盘） |
 | 可观测 + 指标 | `ObservabilityMiddleware` + Micrometer | 开 | `/actuator/prometheus` |
+| **全链路日志关联（MDC 贯穿）** | `MdcContextLifter` + `MdcConfig` | 开 | `observability.mdc-enabled`（requestId/sessionId 自动进日志 + 错误体） |
+| **会话故障诊断聚合** | `DiagnosticService` + `AuditQuery` SPI | 开 | `GET /api/customer/diagnostics/session/{id}`（六源聚合 + 降级标注） |
 | 原生 Tracing | `TracingConfig` | 关 | `observability.tracing-enabled=true` |
 | 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
 | 模型多厂商 + 私有化兜底 / 重试 / **成本熔断** | `ModelConfig`（或 2.0 内置 `maxRetries`/`fallbackModel`）+ `ModelCostCircuitBreaker` | 开 | `model.provider`、`model.fallback.enabled`、`model.cost-control.enabled` |

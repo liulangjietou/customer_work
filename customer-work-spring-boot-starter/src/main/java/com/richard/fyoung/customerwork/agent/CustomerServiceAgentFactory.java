@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.agent;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.support.TenantResolver;
 import com.richard.fyoung.customerwork.config.NacosPromptService;
 import com.richard.fyoung.customerwork.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.rag.KnowledgeProvider;
@@ -85,6 +86,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
     private final NacosPromptService nacosPromptService;
+    /** 租户解析（单一职责，与质检/诊断链路共用同一实现）。 */
+    private final TenantResolver tenantResolver;
     /** 可插拔 Middleware：本库内置（延迟/脱敏/审计/自我纠错/护栏/动态参数/租户）+ 下游自定义的所有 {@link MiddlewareBase} Bean。 */
     private final ObjectProvider<MiddlewareBase> pluggableMiddlewares;
 
@@ -101,6 +104,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        AgentStateStore stateStore,
                                        PermissionContextState permissionContext,
                                        NacosPromptService nacosPromptService,
+                                       TenantResolver tenantResolver,
                                        ObjectProvider<MiddlewareBase> pluggableMiddlewares,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
@@ -113,6 +117,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.stateStore = stateStore;
         this.permissionContext = permissionContext;
         this.nacosPromptService = nacosPromptService;
+        this.tenantResolver = tenantResolver;
         this.pluggableMiddlewares = pluggableMiddlewares;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
@@ -291,17 +296,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
      * 使同租户不同会话共享长期记忆；无分隔符则整个 sessionId 作为租户。
      */
     String resolveTenant(String sessionId) {
-        if (sessionId == null || sessionId.isBlank()) {
-            return "default";
-        }
-        String delimiter = properties.getMemory().getTenantDelimiter();
-        if (delimiter != null && !delimiter.isEmpty()) {
-            int idx = sessionId.indexOf(delimiter);
-            if (idx > 0) {
-                return sessionId.substring(0, idx);
-            }
-        }
-        return sessionId;
+        return tenantResolver.resolve(sessionId);
     }
 
     /** 容器关闭时优雅释放 trace 导出器（AutoCloseable）。 */

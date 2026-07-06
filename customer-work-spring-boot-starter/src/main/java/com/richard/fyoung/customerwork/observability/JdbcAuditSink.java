@@ -7,9 +7,12 @@ import org.slf4j.LoggerFactory;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -31,12 +34,20 @@ import java.util.Map;
  * }</pre>
  * @author owlzhangfq@gmail.com
  */
-public class JdbcAuditSink implements AuditSink {
+public class JdbcAuditSink implements AuditSink, AuditQuery {
 
     private static final Logger log = LoggerFactory.getLogger(JdbcAuditSink.class);
 
     private static final String INSERT_SQL =
         "INSERT INTO cw_audit_log (event_type, agent_name, event_data, created_at) VALUES (?, ?, ?, ?)";
+
+    /**
+     * 按会话查询：agent_name 形如 {@code CustomerServiceAgent-<sessionId>}，用后缀 LIKE 匹配，
+     * 时间倒序取最近 N 条。ESCAPE 转义 sessionId 里可能出现的 LIKE 通配符（%、_）。
+     */
+    private static final String QUERY_BY_SESSION_SQL =
+        "SELECT event_type, agent_name, event_data, created_at FROM cw_audit_log "
+        + "WHERE agent_name LIKE ? ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT ?";
 
     private final DataSource dataSource;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -62,6 +73,39 @@ public class JdbcAuditSink implements AuditSink {
         } catch (Exception e) {
             log.warn("[JdbcAuditSink] 写入审计记录失败（已忽略）: {}", e.getMessage());
         }
+    }
+
+    @Override
+    public List<AuditRecord> queryBySession(String sessionId, int limit) {
+        if (sessionId == null || sessionId.isBlank() || limit <= 0) {
+            return List.of();
+        }
+        String pattern = "%" + escapeLike(sessionId);
+        List<AuditRecord> records = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(QUERY_BY_SESSION_SQL)) {
+            ps.setString(1, pattern);
+            ps.setInt(2, limit);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Timestamp ts = rs.getTimestamp("created_at");
+                    records.add(new AuditRecord(
+                        rs.getString("event_type"),
+                        rs.getString("agent_name"),
+                        rs.getString("event_data"),
+                        ts == null ? 0L : ts.getTime()));
+                }
+            }
+        } catch (Exception e) {
+            log.error("[JdbcAuditSink] query audit by session failed, code={}, sessionId={}",
+                "AUDIT_QUERY_ERROR", sessionId, e);
+        }
+        return records;
+    }
+
+    /** 转义 LIKE 通配符，避免 sessionId 中的 % / _ / \ 被当作模式匹配符。 */
+    private static String escapeLike(String raw) {
+        return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     /** 自动建表（幂等，表已存在则跳过）。 */

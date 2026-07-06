@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 多轮槽位收集服务（借鉴 AliGo「事项收集智能体」）：按 (sessionId, form) 维护收集进度，
@@ -79,6 +80,11 @@ public class SlotFillingService {
     /** 放弃当前会话的某表单收集（用户中途取消）。 */
     public void reset(String sessionId, String formName) {
         store.delete(sessionId + ":" + formName);
+    }
+
+    /** 只读窥视某会话某表单的当前收集进度（供故障诊断，不推进/不创建状态）。 */
+    public Optional<SlotFillingProgress> peek(String sessionId, String formName) {
+        return store.find(sessionId + ":" + formName);
     }
 
     private Slot findSlot(SlotFillingForm form, String name) {

@@ -1,8 +1,8 @@
 package com.richard.fyoung.customerwork.quality;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.memory.FactLog;
+import com.richard.fyoung.customerwork.support.TenantResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -28,18 +28,17 @@ public class QualityFeedbackRecorder {
     private static final Logger log = LoggerFactory.getLogger(QualityFeedbackRecorder.class);
 
     private static final String FACT_TYPE = "quality-failure";
-    private static final String DEFAULT_TENANT = "default";
 
     private final QualityInspectionService qualityService;
     private final FactLog factLog;
-    private final CustomerWorkProperties properties;
+    private final TenantResolver tenantResolver;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public QualityFeedbackRecorder(QualityInspectionService qualityService, FactLog factLog,
-                                   CustomerWorkProperties properties) {
+                                   TenantResolver tenantResolver) {
         this.qualityService = qualityService;
         this.factLog = factLog;
-        this.properties = properties;
+        this.tenantResolver = tenantResolver;
     }
 
     /** 质检并在不通过时记录反馈事实；返回值与 {@link QualityInspectionService#inspect} 一致。 */
@@ -59,29 +58,10 @@ public class QualityFeedbackRecorder {
             fact.put("score", report.getScore());
             fact.put("issues", report.getIssues());
             fact.put("replies", replies);
-            factLog.append(resolveTenant(sessionId), mapper.writeValueAsString(fact));
+            factLog.append(tenantResolver.resolve(sessionId), mapper.writeValueAsString(fact));
         } catch (Exception e) {
             log.error("record quality failure fact failed, errorCode={}, sessionId={}",
                 "QUALITY-FEEDBACK-RECORD-FAIL", sessionId, e);
         }
-    }
-
-    /**
-     * 从 sessionId 解析租户 ID，与 {@code CustomerServiceAgentFactory#resolveTenant} 同一约定
-     * （sessionId 形如 {@code tenantA:conv-1} 时取分隔符前部分），复用同一配置键
-     * {@code memory.tenant-delimiter}，避免运维需要学习两套租户解析规则。
-     */
-    private String resolveTenant(String sessionId) {
-        if (sessionId == null || sessionId.isBlank()) {
-            return DEFAULT_TENANT;
-        }
-        String delimiter = properties.getMemory().getTenantDelimiter();
-        if (delimiter != null && !delimiter.isEmpty()) {
-            int idx = sessionId.indexOf(delimiter);
-            if (idx > 0) {
-                return sessionId.substring(0, idx);
-            }
-        }
-        return sessionId;
     }
 }

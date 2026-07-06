@@ -47,6 +47,7 @@ class CustomerServiceAgentFactoryTest {
             new InMemoryAgentStateStore(),
             new com.richard.fyoung.customerwork.config.PermissionConfig().permissionContextState(props),
             new com.richard.fyoung.customerwork.config.NacosPromptService(props),
+            new com.richard.fyoung.customerwork.support.TenantResolver(props),
             null,    // 无可插拔 Hook
             null);   // 无 MeterRegistry（观测降级为仅日志）
     }
