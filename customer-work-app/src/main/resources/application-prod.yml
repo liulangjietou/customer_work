@@ -144,6 +144,15 @@ customer-work:
 
   observability:
     tracing-enabled: ${TRACING_ENABLED:true}
+    # 全链路日志关联：MDC 贯穿(requestId/sessionId 自动进日志)与 W3C traceparent 关联，默认已开，
+    # 无需显式配置；如需关闭：mdc-enabled / trace-correlation-enabled 置 false。
+
+  # 合成监控(主动探活)：定时用固定探针会话打真实对话链路，在用户上报前发现故障。
+  # 默认关闭——每次探测真实调用模型会产生费用；如需开启，评估探测频率与成本后打开。
+  synthetic-monitor:
+    enabled: ${SYNTHETIC_MONITOR_ENABLED:false}
+    interval-ms: ${SYNTHETIC_MONITOR_INTERVAL_MS:300000}
+    message: ${SYNTHETIC_MONITOR_MESSAGE:你好}
 
 # ------------------------------------------------------------------
 # Actuator 管理端点：生产收敛暴露面，避免内部诊断信息对外泄漏

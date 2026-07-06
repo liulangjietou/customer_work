@@ -97,6 +97,9 @@
 | 可观测 + 指标 | `ObservabilityMiddleware` + Micrometer | 开 | `/actuator/prometheus` |
 | **全链路日志关联（MDC 贯穿）** | `MdcContextLifter` + `MdcConfig` | 开 | `observability.mdc-enabled`（requestId/sessionId 自动进日志 + 错误体） |
 | **会话故障诊断聚合** | `DiagnosticService` + `AuditQuery` SPI | 开 | `GET /api/customer/diagnostics/session/{id}`（六源聚合 + 降级标注） |
+| **慢请求/异常留证** | `LatencyMiddleware` | 开 | `hooks.latency.slow-request-threshold-ms`（默认 5000，指标 `customerwork.agent.slow.requests`） |
+| **W3C trace-context 关联** | `TraceContextWebFilter` | 开 | `observability.trace-correlation-enabled`（traceparent → traceId 进日志） |
+| **合成监控（主动探活）** | `SyntheticMonitor` | 关 | `synthetic-monitor.enabled=true`（真实链路探测，指标 `customerwork.synthetic.probe`） |
 | 原生 Tracing | `TracingConfig` | 关 | `observability.tracing-enabled=true` |
 | 运维就绪（健康/停机/巡检） | `SessionHealthIndicator` / `GracefulShutdownService` / `MaintenanceScheduler` | 开 | `/actuator/health` |
 | 模型多厂商 + 私有化兜底 / 重试 / **成本熔断** | `ModelConfig`（或 2.0 内置 `maxRetries`/`fallbackModel`）+ `ModelCostCircuitBreaker` | 开 | `model.provider`、`model.fallback.enabled`、`model.cost-control.enabled` |

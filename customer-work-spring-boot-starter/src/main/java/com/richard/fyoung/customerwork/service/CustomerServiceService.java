@@ -44,7 +44,8 @@ public class CustomerServiceService {
 
     private static final Logger log = LoggerFactory.getLogger(CustomerServiceService.class);
 
-    private static final String FALLBACK_REPLY =
+    /** 对话兜底回复文本（chat 调用失败时返回）。公开以便合成监控据此判定探测是否走了兜底。 */
+    public static final String FALLBACK_REPLY =
         "抱歉，系统繁忙，已为您记录问题，建议稍后再试或转人工坐席。";
 
     /** 进程内热 Agent 缓存上限：超过则按 LRU 淘汰最久未用的会话，避免无界缓存导致 OOM。 */

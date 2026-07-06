@@ -56,6 +56,14 @@
   需引入 OpenTelemetry SDK（当前构建未含、本地镜像不确定可用），属基础设施扩展点，可另行声明框架
   `Tracer` Bean 接入（见 `TracingConfig`）。新增 `TraceContextWebFilterTest`（4）。
 
+#### P2 — 合成监控（主动探活）
+- **合成监控（`SyntheticMonitor`）**：定时用固定探针会话打真实对话链路（`CustomerServiceService.chat`），
+  校验能返回/非空/非兜底回复，结果发指标 `customerwork.synthetic.probe`（tag result=UP/DEGRADED/DOWN）
+  + 结构化日志供告警，在用户上报前发现故障。探针用独立 sessionId、探测后清理状态。
+  **默认关闭**（`synthetic-monitor.enabled=true` 才 `@ConditionalOnProperty` 装配）——每次探测真实调用模型
+  产生费用。`CustomerServiceService.FALLBACK_REPLY` 提升为 public 供探针判定降级。prod yml 增 synthetic-monitor
+  块（默认关、可环境变量开）。新增 `SyntheticMonitorTest`（4）。
+
 ### 生产加固与功能完善（P0-P3）
 
 #### P0 — 生产关键项
