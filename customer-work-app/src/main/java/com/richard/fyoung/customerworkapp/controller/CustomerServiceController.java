@@ -5,6 +5,7 @@ import com.richard.fyoung.customerwork.agent.MultiAgentOrchestrator;
 import com.richard.fyoung.customerwork.dto.ChatRequest;
 import com.richard.fyoung.customerwork.dto.ChatResponse;
 import com.richard.fyoung.customerwork.dto.IntentResult;
+import com.richard.fyoung.customerwork.observability.MdcContextLifter;
 import com.richard.fyoung.customerwork.service.CustomerServiceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -57,7 +58,8 @@ public class CustomerServiceController {
     public Mono<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
         return service.chat(sessionId, request.message())
-            .map(reply -> new ChatResponse(sessionId, reply));
+            .map(reply -> new ChatResponse(sessionId, reply))
+            .contextWrite(ctx -> ctx.put(MdcContextLifter.SESSION_ID_KEY, sessionId));
     }
 
     /**
@@ -75,7 +77,8 @@ public class CustomerServiceController {
             .concatWithValues(ServerSentEvent.<String>builder()
                 .event("done")
                 .data("[DONE]")
-                .build());
+                .build())
+            .contextWrite(ctx -> ctx.put(MdcContextLifter.SESSION_ID_KEY, sessionId));
     }
 
     /**
@@ -85,7 +88,8 @@ public class CustomerServiceController {
     @PostMapping("/intent")
     public Mono<IntentResult> classifyIntent(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
-        return service.classifyIntent(sessionId, request.message());
+        return service.classifyIntent(sessionId, request.message())
+            .contextWrite(ctx -> ctx.put(MdcContextLifter.SESSION_ID_KEY, sessionId));
     }
 
     /**
@@ -117,7 +121,8 @@ public class CustomerServiceController {
     @PostMapping(value = "/agui", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> agui(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
-        return aguiService.run(sessionId, request.message());
+        return aguiService.run(sessionId, request.message())
+            .contextWrite(ctx -> ctx.put(MdcContextLifter.SESSION_ID_KEY, sessionId));
     }
 
     /**

@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### 生产级线上故障定位（P5 — 可观测性纵深）
+
+补齐"从用户报障到定位根因"链路上此前半实现/未实现的环节。
+
+#### P0 — 全链路日志关联（requestId / sessionId 打通）
+- **MDC 日志贯穿（Reactor Context → SLF4J MDC 桥接）**：此前 `RequestIdWebFilter` 已把 requestId 放进
+  Reactor Context、logback pattern 也已写 `%X{requestId}`，但 WebFlux 反应式栈跨线程流转，ThreadLocal 的
+  MDC 拿不到 Context 里的值——`%X{requestId}` 永远是空，日志无法按请求聚合（"断头路"）。新增
+  `MdcContextLifter`（`CoreSubscriber` 实现，每个信号回调前把 Context 的 requestId/sessionId 同步到 MDC，
+  Context 无该键时从 MDC 清除防线程复用串号）+ `MdcConfig`（`Hooks.onEachOperator` 全局织入，
+  `observability.mdc-enabled` 默认开）。sessionId 由 `CustomerServiceController` 的 chat/stream/intent/agui
+  经 `contextWrite` 注入。logback pattern 增加 `%X{sessionId}`。`RequestIdWebFilter.CONTEXT_KEY` 复用
+  `MdcContextLifter.REQUEST_ID_KEY` 常量避免两处漂移。新增 `MdcContextLifterTest`（5 例）。
+- **错误响应体带 requestId**：`GlobalExceptionHandler` 各处理方法接收 `ServerWebExchange`，从
+  `X-Request-Id` 响应头取值放入错误体 `requestId` 字段（无则省略），用户报障可直接自助提供定位凭据。
+  未处理异常日志改为占位符错误码 `UNHANDLED_ERROR`。新增 `GlobalExceptionHandlerTest`（3 例）。
+- 修正 `docs/生产接口使用手册.md` §1.3/§9：明确 MDC 自动关联与错误体 requestId 的落地事实。
+
 ### 生产加固与功能完善（P0-P3）
 
 #### P0 — 生产关键项

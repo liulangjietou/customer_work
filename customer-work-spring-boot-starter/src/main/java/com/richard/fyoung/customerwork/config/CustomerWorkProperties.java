@@ -398,6 +398,12 @@ public class CustomerWorkProperties {
         private String traceFile = "./data/traces/agent-trace.jsonl";
         /** 是否启用框架原生链路追踪 Hook（TracerRegistry），按模型/工具/Agent 调用打 span。 */
         private boolean tracingEnabled = false;
+        /**
+         * 是否把 Reactor Context 中的 requestId / sessionId 同步到 SLF4J MDC，
+         * 使反应式链路上任意线程的日志都能带上全链路关联字段（配合 logback pattern 的 %X{requestId}）。
+         * 生产建议开启——线上故障定位的最短路径（用户报障给 requestId，日志按之聚合）。
+         */
+        private boolean mdcEnabled = true;
         /** Studio 可视化调试对接。 */
         private final Studio studio = new Studio();
 
