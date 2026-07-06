@@ -39,6 +39,14 @@
 - 新增 `DiagnosticServiceTest`（3：多源聚合 / 审计后端可选 / 单源失败降级不崩溃）+
   `JdbcAuditSinkQueryTest`（2，MySQL 门控）；`docs/生产接口使用手册.md` 增 §7.5 诊断端点。
 
+#### P1 — 慢请求/异常请求留证
+- **慢请求留证（`LatencyMiddleware` 增强）**：端到端耗时超过 `hooks.latency.slow-request-threshold-ms`
+  （默认 5000ms）的请求、或出错的请求，输出一条结构化慢请求日志（outcome/agent/耗时/错误）+ 计数指标
+  `customerwork.agent.slow.requests`（按 outcome=SLOW/ERROR 打标签），借 MDC 自动带 requestId/sessionId，
+  供事后按 requestId 复盘；工具调用序列已由审计日志承载，日志只留精简现场并指引用诊断 API 拉全景。
+  用 `doOnEach` 在终止信号向下游传播前完成留证（而非 `doFinally` 事后异步执行），确保时序确定。
+  新增 `LatencyMiddlewareSlowRequestTest`（4）。
+
 ### 生产加固与功能完善（P0-P3）
 
 #### P0 — 生产关键项

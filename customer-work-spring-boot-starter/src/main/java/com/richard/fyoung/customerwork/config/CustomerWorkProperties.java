@@ -619,6 +619,12 @@ public class CustomerWorkProperties {
         @Data
         public static class Latency {
             private boolean enabled = true;
+            /**
+             * 慢请求留证阈值（毫秒）：端到端耗时超过此值的请求会输出一条结构化慢请求日志（含
+             * agent/会话/耗时/出错信息）+ 计数指标 {@code customerwork.agent.slow.requests}，
+             * 供事后按 requestId 复盘。出错请求无论耗时都留证。<=0 关闭留证（仍保留分位埋点）。
+             */
+            private long slowRequestThresholdMs = 5000;
         }
 
         /** 出站脱敏配置。会改写最终回复内容，默认关闭，需显式开启。 */
