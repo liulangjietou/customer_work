@@ -29,8 +29,10 @@ public class MdcContextLifter<T> implements CoreSubscriber<T> {
     public static final String REQUEST_ID_KEY = "requestId";
     /** Reactor Context / MDC 中 sessionId 的键。 */
     public static final String SESSION_ID_KEY = "sessionId";
+    /** Reactor Context / MDC 中 traceId 的键（W3C trace-context 的 trace-id，用于跨服务关联）。 */
+    public static final String TRACE_ID_KEY = "traceId";
     /** 需要从 Context 同步到 MDC 的字段集合。 */
-    public static final List<String> MDC_KEYS = List.of(REQUEST_ID_KEY, SESSION_ID_KEY);
+    public static final List<String> MDC_KEYS = List.of(REQUEST_ID_KEY, SESSION_ID_KEY, TRACE_ID_KEY);
 
     private final CoreSubscriber<? super T> delegate;
 

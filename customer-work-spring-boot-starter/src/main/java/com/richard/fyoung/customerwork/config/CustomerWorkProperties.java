@@ -404,6 +404,11 @@ public class CustomerWorkProperties {
          * 生产建议开启——线上故障定位的最短路径（用户报障给 requestId，日志按之聚合）。
          */
         private boolean mdcEnabled = true;
+        /**
+         * 是否解析上游 W3C {@code traceparent} 头，把 trace-id 关联进日志 MDC（键 traceId），
+         * 使本服务日志与外部分布式链路（Jaeger/Tempo）共享同一 traceId。零外部依赖，默认开启。
+         */
+        private boolean traceCorrelationEnabled = true;
         /** Studio 可视化调试对接。 */
         private final Studio studio = new Studio();
 

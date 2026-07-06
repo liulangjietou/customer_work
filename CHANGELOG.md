@@ -47,6 +47,15 @@
   用 `doOnEach` 在终止信号向下游传播前完成留证（而非 `doFinally` 事后异步执行），确保时序确定。
   新增 `LatencyMiddlewareSlowRequestTest`（4）。
 
+#### P2 — 分布式追踪关联（W3C trace-context）
+- **traceId ↔ 日志关联（`TraceContextWebFilter`，零外部依赖）**：解析上游传入的 W3C `traceparent` 头
+  （`00-<32hex traceId>-<16hex spanId>-<flags>`），把 trace-id 放入 Reactor Context（键 traceId）经
+  MDC 落到日志 + 回写 `X-Trace-Id` 响应头——本服务日志因此与上游 Jaeger/Tempo 链路共享同一 traceId，
+  实现"外部分布式链路 ↔ 本服务日志"交叉关联。`observability.trace-correlation-enabled` 默认开。
+  logback pattern 增 `%X{traceId:-}`。**诚实边界**：本项只做关联；进程内真正采集 span 并导出 OTLP/Jaeger
+  需引入 OpenTelemetry SDK（当前构建未含、本地镜像不确定可用），属基础设施扩展点，可另行声明框架
+  `Tracer` Bean 接入（见 `TracingConfig`）。新增 `TraceContextWebFilterTest`（4）。
+
 ### 生产加固与功能完善（P0-P3）
 
 #### P0 — 生产关键项
