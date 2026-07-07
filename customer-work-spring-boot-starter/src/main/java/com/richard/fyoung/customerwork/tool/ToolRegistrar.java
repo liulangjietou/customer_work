@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.approval.PendingApprovalService;
+import com.richard.fyoung.customerwork.handoff.HandoffService;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.ComplaintBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
@@ -35,6 +36,7 @@ public class ToolRegistrar {
     private final MemberBackend memberBackend;
     private final ComplaintBackend complaintBackend;
     private final PendingApprovalService approvalService;
+    private final HandoffService handoffService;
 
     public ToolRegistrar(OrderBackend orderBackend,
                          AfterSalesBackend afterSalesBackend,
@@ -42,7 +44,8 @@ public class ToolRegistrar {
                          ProductBackend productBackend,
                          MemberBackend memberBackend,
                          ComplaintBackend complaintBackend,
-                         PendingApprovalService approvalService) {
+                         PendingApprovalService approvalService,
+                         HandoffService handoffService) {
         this.orderBackend = orderBackend;
         this.afterSalesBackend = afterSalesBackend;
         this.knowledgeBackend = knowledgeBackend;
@@ -50,6 +53,7 @@ public class ToolRegistrar {
         this.memberBackend = memberBackend;
         this.complaintBackend = complaintBackend;
         this.approvalService = approvalService;
+        this.handoffService = handoffService;
     }
 
     /** 创建各业务域工具组并注册对应工具。 */
@@ -68,6 +72,6 @@ public class ToolRegistrar {
         toolkit.registration().tool(new ProductTools(productBackend)).group(GROUP_PRESALE).apply();
         toolkit.registration().tool(new MemberTools(memberBackend)).group(GROUP_MEMBER).apply();
         toolkit.registration().tool(new ComplaintTools(complaintBackend)).group(GROUP_COMPLAINT).apply();
-        toolkit.registration().tool(new HumanHandoffTools()).group(GROUP_HUMAN).apply();
+        toolkit.registration().tool(new HumanHandoffTools(handoffService)).group(GROUP_HUMAN).apply();
     }
 }

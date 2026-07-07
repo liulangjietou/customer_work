@@ -4,6 +4,37 @@
 
 ## [Unreleased]
 
+### 工单系统 + 人机切换闭环（P6）
+
+补齐"AI→人工转接"此前只打日志、生成不落库随机字符串的空实现——转人工升级为可查询、可流转的工单闭环。
+
+- **`HandoffTicket`（充血领域模型）**：状态机 `PENDING`（待坐席接单）→（claim）`CLAIMED`（处理中）→
+  （resolve）`RESOLVED`（结案，会话可回收给 AI 续接），`claim`/`resolve` 各自前置状态校验、重复
+  流转 fast-fail（`IllegalStateException`）；包级 `reconstruct()` 静态工厂供存储层重建跳过状态机校验。
+- **`HandoffStore` SPI + `InMemoryHandoffStore` + `JdbcHandoffStore`**：与 `ApprovalStore` 同一模式——
+  默认进程内实现离线可测，`human-handoff.store-mode=jdbc` 落 `cw_handoff_ticket` 表（`HandoffConfig`
+  按 `@ConditionalOnMissingBean` 装配，复用 `session.mysql.*` 连接配置构建独立连接池）；下游声明同类型
+  Bean 即可整体覆盖（如 Redis 实现）。JDBC 实现 `catch(Exception)` 而非 `catch(SQLException)`（同
+  既有 JDBC store 约定：HikariPool 连接失败抛非受检异常）。
+- **`HandoffService`**：create（AI 转出登记 PENDING）/ claim（坐席接单）/ resolve（结案回收）/
+  list / listByStatus / find，单一防御点 `require()` 保证工单必须存在。
+- **`HumanHandoffTools.transferToHuman` 重写**：注入 `HandoffService` 后真实登记工单（未注入退化为
+  纯文案兜底，保持工具向后兼容）。**已知限制（如实记录，非本次范围）**：框架工具调用未打通
+  RuntimeContext 注入，本工具与 `AfterSalesTools#submitRefund` 同样拿不到真实 sessionId，沿用同一
+  占位值 `"agent-tool"`——工单暂无法精确关联发起会话。
+- **`HandoffController`**：`GET /api/customer/handoffs`（按 status 过滤）、`GET /{id}`、
+  `POST /{id}/claim`、`POST /{id}/resolve`；领域异常转 404/409；决策写入 `cw_audit_log` 审计留痕。
+  与资金类 `ApprovalController` 不同，接单/结案不产生资金动作，未接入同等强度的操作员令牌鉴权。
+- **`TenantResolver` 式的既有约定复用**：`ToolRegistrar` 新增 `HandoffService` 构造参数，3 处调用点
+  （2 个测试 + `customer-web` `CustomerWebAgentConfig`）同步更新。
+- **文档**：README 特性表/API 表/闭环说明新增人机切换条目；`docs/生产接口使用手册.md` 新增 §6
+  "人机切换接口"（后续章节整体重新编号 §6→§10）；`docs/部署手册.md` 表数从 5 张更新为 6 张、
+  JDBC store 从 3 个更新为 4 个；`mysql/schema.sql` 补 `cw_handoff_ticket` DDL；prod yml 新增
+  `human-handoff.store-mode: jdbc`。
+- 新增 `HandoffStoreTest`（13：状态机 + fast-fail + 委托存储）、`HandoffConfigTest`（2）、
+  `JdbcHandoffStoreTest`（3，MySQL 门控）、`HumanHandoffToolsTest` 扩展（2：兜底 + 真实登记）。
+  本轮全仓测试 starter 312 → 331（+19），全仓 BUILD SUCCESS，0 failures。
+
 ### 生产级线上故障定位（P5 — 可观测性纵深）
 
 补齐"从用户报障到定位根因"链路上此前半实现/未实现的环节。

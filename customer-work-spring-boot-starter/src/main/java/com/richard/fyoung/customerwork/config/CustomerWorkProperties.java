@@ -461,6 +461,21 @@ public class CustomerWorkProperties {
         private int maxExecutionRetryAttempts = 3;
     }
 
+    /** 人机切换工单配置。 */
+    private final HumanHandoff humanHandoff = new HumanHandoff();
+
+    /**
+     * 人机切换工单存储配置。
+     *
+     * <p>决定 {@code HandoffService} 的工单持久化方式：memory 模式下多实例部署时，坐席在实例 A
+     * 接单、坐席工作台轮询落到实例 B 会查不到最新状态；jdbc 模式跨实例共享同一份工单状态。</p>
+     */
+    @Data
+    public static class HumanHandoff {
+        /** 存储模式：memory（进程内，默认，仅单实例场景适用）| jdbc（跨实例共享）。 */
+        private String storeMode = "memory";
+    }
+
     /** 事实日志配置（三层记忆第三层）。 */
     @Data
     public static class FactLog {

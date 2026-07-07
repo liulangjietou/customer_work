@@ -91,6 +91,7 @@
 | 中断恢复 | `enablePendingToolRecovery` | 开 | `interrupt.pending-tool-recovery-enabled` |
 | Human-in-the-Loop | `HumanApprovalMiddleware` + Permission ask | 开 | `human-approval.enabled` + `POST /session/{id}/interrupt` |
 | **人工审批闭环（退款放行）+ 审批持久化 SPI + 超时巡检** | `PendingApprovalService` + `ApprovalController` + `ApprovalStore` SPI + `ApprovalTimeoutScheduler` | 开 | `GET /approvals` · `POST /approvals/{id}/approve\|deny` · `human-approval.timeout-seconds` |
+| **人机切换闭环（工单系统）**：AI 转出→坐席接单→结案回收 | `HandoffService` + `HandoffController` + `HandoffStore` SPI | 开 | `GET /handoffs` · `POST /handoffs/{id}/claim\|resolve` · `human-handoff.store-mode` |
 | **多轮信息收集（slot-filling）** | `SlotFillingService` + `RefundFormController` | 开 | `POST /forms/refund` |
 | **主动服务（通知/回访，复用 Channel 推送）** | `ProactiveNotificationService` + `NotificationChannel` | 开 | `POST /notify/order-status\|survey` |
 | **坐席辅助 + 会话质检（数据飞轮）** | `AgentAssistService` + `QualityFeedbackRecorder` | 开 | `POST /assist` · `POST /quality/inspect`（不通过自动落 `FactLog` 供离线复盘） |
@@ -148,6 +149,9 @@
 | GET | `/api/customer/approvals` | 人工审批单列表（`?status=pending` 过滤） |
 | POST | `/api/customer/approvals/{id}/approve` | 放行审批单（人工放行退款打款） |
 | POST | `/api/customer/approvals/{id}/deny` | 拒绝审批单 |
+| GET | `/api/customer/handoffs` | 人机切换工单列表（`?status=pending` 过滤） |
+| POST | `/api/customer/handoffs/{id}/claim` | 坐席接单（PENDING→CLAIMED） |
+| POST | `/api/customer/handoffs/{id}/resolve` | 结案回收给 AI（CLAIMED→RESOLVED） |
 | POST | `/api/customer/forms/refund` | 退款多轮信息收集（逐轮收订单号/原因，收齐→生成待审单）|
 | POST | `/api/customer/notify/order-status` `/notify/survey` | 主动服务：订单状态通知 / 满意度回访（复用 Channel 推送）|
 | POST | `/api/customer/assist` | 坐席辅助：实时话术/知识/工具建议 |
@@ -404,6 +408,24 @@ curl -X POST 'localhost:8080/api/customer/approvals/AP-xxxx/deny?operator=bob&no
 > approve/deny 幂等（重复决策返回 409）。
 > 测试：`PendingApprovalServiceTest`（状态机 + 回调 + fast-fail）、`AfterSalesToolsApprovalTest`（退款登记待审单）。
 
+**人机切换闭环（工单系统）**：`transferToHuman` 工具此前只打日志、生成一个不落库的随机字符串工单号——
+坐席工作台无从查询、也无法标记"已处理"。现经 `HandoffService` 登记为可查询、可流转的 `HandoffTicket`：
+AI 转出生成 `PENDING` 工单 → 坐席经 REST 端点 `claim` 接单（`CLAIMED`）→ 处理完毕 `resolve` 结案
+（`RESOLVED`，会话可回收给 AI 续接）。
+```bash
+curl localhost:8080/api/customer/handoffs?status=pending                       # 列出待接单工单
+curl -X POST 'localhost:8080/api/customer/handoffs/HO-xxxx/claim?operator=alice'         # 坐席接单
+curl -X POST 'localhost:8080/api/customer/handoffs/HO-xxxx/resolve?note=已安抚，问题解决'  # 结案回收给 AI
+```
+> **工单持久化（SPI）**：`HandoffStore` 接口 + `InMemoryHandoffStore` 默认实现（`@ConditionalOnMissingBean`），
+> 下游可声明 JDBC/Redis 实现覆盖默认，生产建议 `human-handoff.store-mode=jdbc`（表 `cw_handoff_ticket`），
+> 保证坐席在实例 A 接单、坐席工作台轮询落到实例 B 也能查到最新状态。状态机终态不可变，重复接单/未接单先
+> 结案返回 409。
+> **已知限制**：框架当前的工具调用未打通 RuntimeContext 注入，`HumanHandoffTools` 拿不到真实 `sessionId`
+> （与 `AfterSalesTools#submitRefund` 同一限制），沿用同一占位值 `"agent-tool"`——工单因此无法精确关联到
+> 发起会话，需要精确会话关联需先在框架/Toolkit 层打通会话上下文注入。
+> 测试：`HandoffStoreTest`（状态机 + fast-fail + 委托存储）、`HumanHandoffToolsTest`（真实登记工单）。
+
 **多轮信息收集（slot-filling，借鉴 AliGo「事项收集智能体」）**：退货/退款需逐步收集 `订单号→原因` 等关键信息，
 `SlotFillingService` 按 (sessionId, form) 维护进度，每轮抽取/追问，收齐后**串接 HITL** 生成待审退款单。
 ```bash
@@ -576,7 +598,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 实际执行部署按 **[docs/部署手册.md](docs/部署手册.md)** 操作——基础设施准备、建表、环境变量清单、
 operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案与部署前最终核对单，按顺序可勾选执行。
 接入方对接接口按 **[docs/生产接口使用手册.md](docs/生产接口使用手册.md)**——鉴权/限流/sessionId 约定、
-全部 17 个端点的请求响应示例、退款闭环双路径流程、审批状态机字段语义、SSE 客户端处理规则与故障排查表。
+全部 23 个端点的请求响应示例、退款闭环双路径流程、人机切换工单闭环、审批状态机字段语义、SSE 客户端处理规则与故障排查表。
 上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4）120 个 open issues
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / **多实例部署注意事项** /
 仍受框架限制需等待修复的项 / 版本升级策略）。

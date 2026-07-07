@@ -27,7 +27,7 @@ customer-work:
   # 二选一：redis 更适合无状态多实例水平扩展；mysql 更适合需要强一致 + 现成运维体系的团队。
   #
   # 注意：下面的 session.mysql.* 连接信息不只服务于 session.mode=mysql 这一种情况——
-  # human-approval / slot-filling / dialog 三个 store-mode=jdbc（见下方）都复用同一份连接配置
+  # human-approval / slot-filling / dialog / human-handoff 四个 store-mode=jdbc（见下方）都复用同一份连接配置
   # 构建各自独立的连接池，因此即便 session.mode 选的是 redis，也必须填好这段 mysql 连接信息。
   # ------------------------------------------------------------------
   session:
@@ -91,12 +91,13 @@ customer-work:
     idle-timeout-seconds: ${STREAM_IDLE_TIMEOUT_SECONDS:120}
 
   # ------------------------------------------------------------------
-  # 审批工单 / 多轮槽位收集 / 对话阶段：生产切 jdbc，多实例部署下跨实例共享状态
+  # 审批工单 / 多轮槽位收集 / 对话阶段 / 人机切换工单：生产切 jdbc，多实例部署下跨实例共享状态
   # memory（默认）是进程内存储，请求被负载均衡到不同实例会导致：
   #   - 审批工单查不到（人工坐席在实例 A 提交退款申请，实例 B 处理 approve 请求时找不到工单）；
   #   - 多轮信息收集进度丢失（用户被路由到另一实例，需要从头重答）；
-  #   - 对话阶段状态机"归零"回 GREETING（动态 Prompt 状态机的分阶段聚焦失效）。
-  # 三者均复用上面的 session.mysql.* 连接配置，jdbc 模式下应用重启 / 多实例部署均不受影响。
+  #   - 对话阶段状态机"归零"回 GREETING（动态 Prompt 状态机的分阶段聚焦失效）；
+  #   - 人机切换工单查不到（坐席在实例 A 接单，坐席工作台轮询落到实例 B 看不到最新状态）。
+  # 四者均复用上面的 session.mysql.* 连接配置，jdbc 模式下应用重启 / 多实例部署均不受影响。
   # ------------------------------------------------------------------
   human-approval:
     store-mode: jdbc
@@ -104,6 +105,8 @@ customer-work:
   slot-filling:
     store-mode: jdbc
   dialog:
+    store-mode: jdbc
+  human-handoff:
     store-mode: jdbc
 
   # ------------------------------------------------------------------

@@ -97,3 +97,26 @@ CREATE TABLE IF NOT EXISTS `cw_dialog_stage` (
     `session_id`  VARCHAR(191) PRIMARY KEY COMMENT '会话 ID',
     `stage`       VARCHAR(24) NOT NULL COMMENT '当前对话阶段：GREETING/COLLECTING/PROCESSING/CONFIRMING/ESCALATED'
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- 人机切换工单表（JdbcHandoffStore 结构化存储，human-handoff.store-mode=jdbc 时启用）
+-- =============================================================================
+-- 说明：由 JdbcHandoffStore 自动建表（CREATE TABLE IF NOT EXISTS），
+--       本脚本用于 DBA 预审 / 受限权限环境。取代此前 transferToHuman "只打日志 + 生成随机字符串"
+--       的空实现——AI 转出生成 PENDING 工单，坐席 claim 接单（CLAIMED），处理完毕 resolve
+--       结案（RESOLVED，会话可回收给 AI 续接）。多实例部署下坐席在实例 A 接单、
+--       坐席工作台轮询落到实例 B 也应查到最新状态。
+
+CREATE TABLE IF NOT EXISTS `cw_handoff_ticket` (
+    `id`                VARCHAR(64) PRIMARY KEY COMMENT '工单号',
+    `session_id`        VARCHAR(128) COMMENT '关联会话',
+    `reason`            TEXT COMMENT '转人工原因',
+    `created_at_ms`     BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    `status`            VARCHAR(16) NOT NULL COMMENT 'PENDING/CLAIMED/RESOLVED',
+    `claimed_by`        VARCHAR(64) COMMENT '接单坐席',
+    `claimed_at_ms`     BIGINT DEFAULT 0 COMMENT '接单时间戳（毫秒）',
+    `resolution_note`   TEXT COMMENT '处理结果备注',
+    `resolved_at_ms`    BIGINT DEFAULT 0 COMMENT '结案时间戳（毫秒）',
+    INDEX `idx_handoff_status` (`status`),
+    INDEX `idx_handoff_created` (`created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
