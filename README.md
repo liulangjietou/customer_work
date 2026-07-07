@@ -92,6 +92,8 @@
 | Human-in-the-Loop | `HumanApprovalMiddleware` + Permission ask | 开 | `human-approval.enabled` + `POST /session/{id}/interrupt` |
 | **人工审批闭环（退款放行）+ 审批持久化 SPI + 超时巡检** | `PendingApprovalService` + `ApprovalController` + `ApprovalStore` SPI + `ApprovalTimeoutScheduler` | 开 | `GET /approvals` · `POST /approvals/{id}/approve\|deny` · `human-approval.timeout-seconds` |
 | **人机切换闭环（工单系统）**：AI 转出→坐席接单→结案回收 | `HandoffService` + `HandoffController` + `HandoffStore` SPI | 开 | `GET /handoffs` · `POST /handoffs/{id}/claim\|resolve` · `human-handoff.store-mode` |
+| **人机切换 SLA 升级引擎** | `HandoffSlaScheduler` | 关 | `human-handoff.sla-pending-seconds` / `sla-claimed-seconds`（超时告警 + 指标 `customerwork.handoff.sla.breach`） |
+| **业务数据分析聚合** | `BusinessAnalyticsService` + `BusinessAnalyticsController` | 开 | `GET /api/customer/analytics/business?windowStartMs=&windowEndMs=&tenantId=`（审批放行率/平均决策时长 + 人机切换平均接单结案时长 + 质检失败均分，均含当前积压快照） |
 | **多轮信息收集（slot-filling）** | `SlotFillingService` + `RefundFormController` | 开 | `POST /forms/refund` |
 | **主动服务（通知/回访，复用 Channel 推送）** | `ProactiveNotificationService` + `NotificationChannel` | 开 | `POST /notify/order-status\|survey` |
 | **坐席辅助 + 会话质检（数据飞轮）** | `AgentAssistService` + `QualityFeedbackRecorder` | 开 | `POST /assist` · `POST /quality/inspect`（不通过自动落 `FactLog` 供离线复盘） |
@@ -156,6 +158,7 @@
 | POST | `/api/customer/notify/order-status` `/notify/survey` | 主动服务：订单状态通知 / 满意度回访（复用 Channel 推送）|
 | POST | `/api/customer/assist` | 坐席辅助：实时话术/知识/工具建议 |
 | POST | `/api/customer/quality/inspect` | 会话质检：合规与服务规范打分 |
+| GET | `/api/customer/analytics/business` | 业务数据分析报表（`?windowStartMs=&windowEndMs=&tenantId=`，默认最近 24 小时） |
 | DELETE | `/api/customer/session/{id}` | 结束并清理会话 |
 | GET | `/api/customer/health` | 健康检查 |
 | GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
@@ -426,6 +429,29 @@ curl -X POST 'localhost:8080/api/customer/handoffs/HO-xxxx/resolve?note=已安�
 > 发起会话，需要精确会话关联需先在框架/Toolkit 层打通会话上下文注入。
 > 测试：`HandoffStoreTest`（状态机 + fast-fail + 委托存储）、`HumanHandoffToolsTest`（真实登记工单）。
 
+**人机切换 SLA 升级引擎**：`HandoffSlaScheduler` 周期性巡检 `PENDING`（超 `sla-pending-seconds` 无人接单）
+与 `CLAIMED`（超 `sla-claimed-seconds` 未结案）两阶段超标工单，结构化告警日志 + 指标
+`customerwork.handoff.sla.breach`（tag `stage=pending|claimed`）。与 `ApprovalTimeoutScheduler` 的
+"escalate" 分支同一设计语言——只读扫描 + 告警，不引入新状态、不做自动流转（人机切换没有"自动接单/
+自动结案"这种合理兜底，升级只能靠人工介入）；每个巡检周期对仍超标的工单重复告警，依赖下游日志/指标系统
+做去重聚合。默认两阈值均为 0（禁用）。
+> 测试：`HandoffSlaSchedulerTest`（PENDING/CLAIMED 超时告警、未超时不告警、阈值禁用）。
+
+**业务数据分析聚合**：`BusinessAnalyticsService` 一次性聚合审批 / 人机切换 / 质检三个维度的窗口内统计，
+回答"这段时间业务运转得怎么样"（区别于按 sessionId 聚合单会话现场的 `DiagnosticService`）——审批放行率
+与平均决策时长、人机切换平均接单/结案时长、质检失败数与均分，均附带**不受时间窗影响的当前积压快照**
+（`currentPendingBacklog` 等）区分"周期活动量"与"现在卡了多少"两类运维视角。
+```bash
+# 默认最近 24 小时；tenantId 缺省时质检维度返回空占位（FactLog 按租户分文件，无法跨租户汇总）
+curl "localhost:8080/api/customer/analytics/business?tenantId=u1001"
+curl "localhost:8080/api/customer/analytics/business?windowStartMs=1751000000000&windowEndMs=1751600000000"
+```
+> **诚实边界**：不提供"转人工率"（handoff 量 / 会话总量）——`SessionStateManager` 只能列举当前仍存续的
+> 会话，已结束会话已从状态存储删除，无法反推历史某窗口内开启过的会话总数，编造一个不可靠的分母不如不给；
+> 只给 handoff 总量作为业务活动信号。审批/人机切换维度在应用层内存过滤（两张表体量小，属可控案例数而非
+> 海量流水），未新增按时间范围查询的 SQL 方法。
+> 测试：`BusinessAnalyticsServiceTest`（放行率/平均决策时长/积压快照、接单结案时长、质检均分与非质检事实安全跳过）。
+
 **多轮信息收集（slot-filling，借鉴 AliGo「事项收集智能体」）**：退货/退款需逐步收集 `订单号→原因` 等关键信息，
 `SlotFillingService` 按 (sessionId, form) 维护进度，每轮抽取/追问，收齐后**串接 HITL** 生成待审退款单。
 ```bash
@@ -598,7 +624,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 实际执行部署按 **[docs/部署手册.md](docs/部署手册.md)** 操作——基础设施准备、建表、环境变量清单、
 operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案与部署前最终核对单，按顺序可勾选执行。
 接入方对接接口按 **[docs/生产接口使用手册.md](docs/生产接口使用手册.md)**——鉴权/限流/sessionId 约定、
-全部 23 个端点的请求响应示例、退款闭环双路径流程、人机切换工单闭环、审批状态机字段语义、SSE 客户端处理规则与故障排查表。
+全部 24 个端点的请求响应示例、退款闭环双路径流程、人机切换工单闭环 + SLA 升级引擎、业务数据分析聚合、审批状态机字段语义、SSE 客户端处理规则与故障排查表。
 上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4）120 个 open issues
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / **多实例部署注意事项** /
 仍受框架限制需等待修复的项 / 版本升级策略）。

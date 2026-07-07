@@ -474,6 +474,10 @@ public class CustomerWorkProperties {
     public static class HumanHandoff {
         /** 存储模式：memory（进程内，默认，仅单实例场景适用）| jdbc（跨实例共享）。 */
         private String storeMode = "memory";
+        /** SLA 告警：PENDING（无人接单）超过该秒数即告警；&lt;=0 禁用。 */
+        private long slaPendingSeconds = 0;
+        /** SLA 告警：CLAIMED（接单未结案）超过该秒数即告警；&lt;=0 禁用。 */
+        private long slaClaimedSeconds = 0;
     }
 
     /** 事实日志配置（三层记忆第三层）。 */

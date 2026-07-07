@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+### SLA 升级引擎 + 业务数据分析聚合（P7）
+
+在工单系统落地的基础上补齐运营视角：工单卡了多久要告警、这段时间业务运转得怎么样。
+
+- **`HandoffSlaScheduler`（SLA 升级引擎）**：周期扫描 `PENDING`（超 `human-handoff.sla-pending-seconds`
+  无人接单）与 `CLAIMED`（超 `human-handoff.sla-claimed-seconds` 未结案）两阶段超标工单，结构化告警
+  日志 + 指标 `customerwork.handoff.sla.breach`（tag `stage=pending|claimed`）。与
+  `ApprovalTimeoutScheduler` 的 "escalate" 分支同一设计语言——只读扫描 + 告警，不引入新状态、不做
+  自动流转（人机切换没有"自动接单/自动结案"这种合理兜底）；每周期对仍超标工单重复告警，依赖下游
+  日志/指标系统去重聚合（与既有 `ApprovalTimeoutScheduler` escalate 分支一致，不新增去重状态）。
+  两阈值默认 0（禁用）。新增 `HandoffSlaSchedulerTest`（4）。
+- **`FactLog.readRecords`（纯增量扩展）**：新增 `FactRecord(ts, tenant, fact)` + 按租户读取带时间戳的
+  事实记录，供按窗口聚合统计；不改动既有 `read()` 方法与其调用方，零回归风险。
+- **`BusinessAnalyticsService` + `GET /api/customer/analytics/business`**：一次性聚合审批 / 人机切换 /
+  质检三个业务维度的窗口内统计（`ApprovalStats`/`HandoffStats`/`QualityStats`，均为纯数据 record，
+  区别于有状态机行为的 `ApprovalRequest`/`HandoffTicket` 充血模型）——审批放行率与平均决策时长、
+  人机切换平均接单/结案时长、质检失败数与均分，均附带**不受时间窗影响的当前积压快照**
+  （`currentPendingBacklog` 等）。审批/人机切换维度在应用层内存过滤（两表体量小，属可控案例数
+  而非海量流水），未新增按时间范围查询的 SQL 方法。质检维度按租户查询 `FactLog`（无法跨租户汇总）
+  且用 try/catch 安全跳过非质检失败的事实（`FactLog` 还被 `InMemoryLongTermMemory` 写入纯文本长期
+  记忆事实，双写入源已验证）。**诚实边界**：不提供"转人工率"——没有可靠的"时间窗内会话总量"数据源
+  （已结束会话已从状态存储删除，无法反推历史开启量），不编造不可靠的分母。
+  新增 `BusinessAnalyticsServiceTest`（5：放行率/平均决策时长/积压快照、接单结案时长、质检均分与
+  非质检事实安全跳过）。
+- 文档：README 特性表/API 表/闭环说明新增两条目；`docs/生产接口使用手册.md` 新增 §8.6"业务数据分析
+  报表"、接口总表增至 24 个端点。
+
 ### 工单系统 + 人机切换闭环（P6）
 
 补齐"AI→人工转接"此前只打日志、生成不落库随机字符串的空实现——转人工升级为可查询、可流转的工单闭环。

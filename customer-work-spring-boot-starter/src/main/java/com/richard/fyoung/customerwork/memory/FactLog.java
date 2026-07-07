@@ -134,6 +134,30 @@ public class FactLog {
         return facts;
     }
 
+    /**
+     * 读取某租户的全部事实记录（含时间戳，按写入顺序），供按时间窗聚合统计使用。
+     * 与 {@link #read} 相互独立、互不影响——纯增量新增，不改变既有调用方行为。
+     */
+    public List<FactRecord> readRecords(String tenantId) {
+        Path file = tenantFile(tenantId);
+        if (!Files.exists(file)) {
+            return List.of();
+        }
+        List<FactRecord> records = new ArrayList<>();
+        try {
+            for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                var node = mapper.readTree(line);
+                records.add(new FactRecord(node.path("ts").asLong(), tenantId, node.path("fact").asText()));
+            }
+        } catch (IOException e) {
+            log.warn("[FactLog] 读取事实记录失败（已忽略）: {}", e.getMessage());
+        }
+        return records;
+    }
+
     private Path tenantFile(String tenantId) {
         String safe = tenantId == null ? "default" : tenantId.replaceAll("[^a-zA-Z0-9_.-]", "_");
         return directory.resolve(safe + ".jsonl");
