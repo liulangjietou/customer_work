@@ -110,6 +110,8 @@
 | Higress AI 网关 | `HigressToolkitConfigurer` | 关 | `higress.enabled=true` |
 | Nacos 配置中心（提示词热更新） | `NacosPromptService` | 关 | `nacos.enabled=true` |
 | 接入层安全（鉴权/**滑动窗口限流**） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter`（fixed/sliding-window 双算法） | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
+| **入站防注入围栏** | `PromptInjectionGuardMiddleware` | 关 | `hooks.prompt-guard.enabled`（命中注入/越狱模式硬拦截，不调用模型，指标 `customerwork.prompt.guard.blocked`） |
+| **用户反馈闭环（消息级点赞/点踩）** | `FeedbackService` + `FeedbackController` | 开 | `POST /api/customer/feedback`（DOWN 自动落 `FactLog` 供数据飞轮复盘） |
 | **配套前端模块 `customer-web`** | admin / chat-completions / AG-UI / Studio / Channel(钉钉·飞书·企业微信) | 关 | 见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md) |
 
 ### ⚠️ 不可迁移 / 沿用说明（1.x→2.0 备注）
@@ -159,6 +161,9 @@
 | POST | `/api/customer/assist` | 坐席辅助：实时话术/知识/工具建议 |
 | POST | `/api/customer/quality/inspect` | 会话质检：合规与服务规范打分 |
 | GET | `/api/customer/analytics/business` | 业务数据分析报表（`?windowStartMs=&windowEndMs=&tenantId=`，默认最近 24 小时） |
+| POST | `/api/customer/feedback` | 提交消息级反馈（点赞/点踩，同 messageId 重复提交覆盖） |
+| GET | `/api/customer/feedback/{messageId}` | 查询单条消息反馈 |
+| GET | `/api/customer/feedback?sessionId=` | 查询某会话全部反馈 |
 | DELETE | `/api/customer/session/{id}` | 结束并清理会话 |
 | GET | `/api/customer/health` | 健康检查 |
 | GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
@@ -452,6 +457,27 @@ curl "localhost:8080/api/customer/analytics/business?windowStartMs=1751000000000
 > 海量流水），未新增按时间范围查询的 SQL 方法。
 > 测试：`BusinessAnalyticsServiceTest`（放行率/平均决策时长/积压快照、接单结案时长、质检均分与非质检事实安全跳过）。
 
+**入站防注入围栏（`PromptInjectionGuardMiddleware`）**：落在 `onAgent`——`MiddlewareBase` 唯一"拦截整次
+Agent 调用"的钩子，天然适合入站硬拦截。命中中英文常见注入/越狱模式（"忽略之前的指令"/"ignore the above
+instructions"/套取系统提示词/角色扮演绕过限制等）即**不调用 `next`**，直接返回统一拒绝话术，不产生模型
+调用——与 `ToolGuardMiddleware`（工具入参层，命中后改写为安全占位继续放行）刻意不同：一句已被识别为注入
+攻击的用户输入没有"安全改写后继续对话"的合理中间态。默认关闭；fail-open（围栏自身异常不应导致正常对话
+不可用）；指标 `customerwork.prompt.guard.blocked`。
+> 测试：`PromptInjectionGuardMiddlewareTest`（命中不调用 next、未命中放行、禁用直通、默认模式覆盖 10 种常见注入表述）。
+
+**用户反馈闭环（消息级点赞/点踩）**：`/chat` 响应新增 `messageId` 字段（`ChatResponse#messageId`），
+客户端据此对具体一条回复提交反馈；`DOWN` 类型与 `QualityFeedbackRecorder`（系统主动质检）同一模式沉淀到
+`FactLog`——是数据飞轮除系统主动质检外的**另一条用户主动输入通道**。同一 `messageId` 重复提交按最新一次
+覆盖（用户改主意允许更正）。
+```bash
+curl -X POST localhost:8080/api/customer/feedback -H 'Content-Type: application/json' \
+  -d '{"sessionId":"u1","messageId":"MSG-xxxx","type":"DOWN","comment":"答非所问"}'
+```
+> **诚实边界**：同 `QualityFeedbackRecorder`——只做"记录"，"从事实流水筛选、回流知识库/评测集"是离线人工或
+> 独立批处理任务的职责。V1 仅覆盖非流式 `/chat`；`/chat/stream` 逐 token 输出没有单一终态对象可挂
+> `messageId`，需要注入协议层事件才能覆盖，属后续扩展点。
+> 测试：`FeedbackStoreTest`（upsert/按会话查询）、`FeedbackServiceTest`（UP 不落事实/DOWN 落事实/改主意覆盖）。
+
 **多轮信息收集（slot-filling，借鉴 AliGo「事项收集智能体」）**：退货/退款需逐步收集 `订单号→原因` 等关键信息，
 `SlotFillingService` 按 (sessionId, form) 维护进度，每轮抽取/追问，收齐后**串接 HITL** 生成待审退款单。
 ```bash
@@ -624,7 +650,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 实际执行部署按 **[docs/部署手册.md](docs/部署手册.md)** 操作——基础设施准备、建表、环境变量清单、
 operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案与部署前最终核对单，按顺序可勾选执行。
 接入方对接接口按 **[docs/生产接口使用手册.md](docs/生产接口使用手册.md)**——鉴权/限流/sessionId 约定、
-全部 24 个端点的请求响应示例、退款闭环双路径流程、人机切换工单闭环 + SLA 升级引擎、业务数据分析聚合、审批状态机字段语义、SSE 客户端处理规则与故障排查表。
+全部 27 个端点的请求响应示例、退款闭环双路径流程、人机切换工单闭环 + SLA 升级引擎、业务数据分析聚合、入站防注入围栏、用户反馈闭环、审批状态机字段语义、SSE 客户端处理规则与故障排查表。
 上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4）120 个 open issues
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / **多实例部署注意事项** /
 仍受框架限制需等待修复的项 / 版本升级策略）。

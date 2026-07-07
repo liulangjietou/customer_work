@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+### 入站防注入围栏 + 用户反馈闭环（P8）
+
+安全防护与数据飞轮的第二条输入通道。
+
+- **`PromptInjectionGuardMiddleware`（入站防注入围栏）**：落在 `onAgent`——`MiddlewareBase` 唯一"拦截
+  整次 Agent 调用"的钩子。命中中英文常见注入/越狱模式（"忽略之前的指令"/"ignore the above
+  instructions"/套取系统提示词/角色扮演绕过限制/`DAN` 等）即**不调用 `next`**，直接返回统一拒绝话术，
+  不产生模型调用——省成本 + 防止注入内容触达推理。与 `ToolGuardMiddleware`（工具入参层，命中后改写为
+  安全占位继续放行）刻意不同：一句已被识别为注入攻击的用户输入没有"安全改写后继续对话"的合理中间态，
+  故为硬拦截而非改写。默认关闭；fail-open（围栏自身异常不打断正常对话）；指标
+  `customerwork.prompt.guard.blocked`；config-driven 正则列表（`hooks.prompt-guard.injection-patterns`，
+  与 `ToolGuard.destructivePatterns` 同一预编译 + 不区分大小写模式）。新增
+  `PromptInjectionGuardMiddlewareTest`（5，覆盖 10 种默认模式的正/反例）。
+- **消息级用户反馈闭环（点赞/点踩）**：`ChatResponse` 新增 `messageId` 字段（`/chat` 单一调用点新增，
+  低风险），`POST /api/customer/feedback` 提交反馈、同 `messageId` 重复提交按最新覆盖（用户改主意允许
+  更正）。`DOWN` 类型与 `QualityFeedbackRecorder`（系统主动质检）同一模式沉淀到 `FactLog`——是数据飞轮
+  除系统主动质检外的**另一条用户主动输入通道**。`MessageFeedback`/`FeedbackStore`/`InMemoryFeedbackStore`/
+  `JdbcFeedbackStore`（`cw_message_feedback` 表）/`FeedbackConfig`/`FeedbackService` 是第 5 次套用本仓库
+  已验证的 Store SPI 模式。`FeedbackService` 复用 `TenantResolver`（第 3 处调用点）。反馈本身建模为不可变
+  事实快照（record），非状态机实体——没有合理的"待确认反馈"这种中间态。**诚实边界**：只做"记录"，筛选
+  回流是离线人工职责（同 `QualityFeedbackRecorder`）；V1 仅覆盖非流式 `/chat`，`/chat/stream` 逐 token
+  输出没有单一终态对象可挂 `messageId`，需注入协议层事件才能覆盖，属后续扩展点。
+  新增 `FeedbackStoreTest`（5）、`FeedbackServiceTest`（5）、`FeedbackConfigTest`（2）、
+  `JdbcFeedbackStoreTest`（3，MySQL 门控）。
+- 文档：README 特性表/API 表/闭环说明新增两条目；`docs/生产接口使用手册.md` 新增 §3.8"消息级反馈"、
+  §9 补入站防注入围栏行为说明、接口总表增至 27 个端点；`docs/部署手册.md` 表数从 6 张更新为 7 张、
+  JDBC store 从 4 个更新为 5 个；`mysql/schema.sql` 补 `cw_message_feedback` DDL；prod yml 新增
+  `feedback.store-mode: jdbc`。
+
 ### SLA 升级引擎 + 业务数据分析聚合（P7）
 
 在工单系统落地的基础上补齐运营视角：工单卡了多久要告警、这段时间业务运转得怎么样。

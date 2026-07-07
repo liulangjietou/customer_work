@@ -480,6 +480,21 @@ public class CustomerWorkProperties {
         private long slaClaimedSeconds = 0;
     }
 
+    /** 用户反馈（消息级点赞/点踩）存储配置。 */
+    private final Feedback feedback = new Feedback();
+
+    /**
+     * 用户反馈存储配置。
+     *
+     * <p>决定 {@code FeedbackService} 的反馈持久化方式：memory 模式下多实例部署时，反馈写在实例 A、
+     * 查询落到实例 B 会查不到；jdbc 模式跨实例共享同一份反馈数据。</p>
+     */
+    @Data
+    public static class Feedback {
+        /** 存储模式：memory（进程内，默认，仅单实例场景适用）| jdbc（跨实例共享）。 */
+        private String storeMode = "memory";
+    }
+
     /** 事实日志配置（三层记忆第三层）。 */
     @Data
     public static class FactLog {
@@ -661,6 +676,8 @@ public class CustomerWorkProperties {
         private final ToolGuard toolGuard = new ToolGuard();
         /** 动态生成参数：按用户意图调整推理温度 / 推理强度。 */
         private final DynamicOptions dynamicOptions = new DynamicOptions();
+        /** 入站防注入围栏：命中提示词注入/越狱模式的用户输入直接拒绝，不进入模型推理。 */
+        private final PromptGuard promptGuard = new PromptGuard();
 
         /** 延迟埋点配置。开销极低，默认开启。 */
         @Data
@@ -739,6 +756,39 @@ public class CustomerWorkProperties {
              * 默认覆盖 rm -rf / 删除沙箱 workspace / Windows del/format；可在 yml 中整体覆盖。
              */
             private List<String> destructivePatterns = new ArrayList<>(DEFAULT_DESTRUCTIVE_PATTERNS);
+        }
+
+        /**
+         * 入站防注入围栏配置。默认关闭。
+         *
+         * <p>识别常见提示词注入 / 越狱模式（要求忽略先前指令、套取系统提示词、角色扮演绕过限制等），
+         * 命中即拒绝——<b>不调用模型</b>，与 {@link ToolGuard} 的"改写入参放行"不同，这里是入站硬拦截，
+         * 因为一句已被识别为注入攻击的用户输入没有"安全改写后继续"的合理中间态。</p>
+         */
+        @Data
+        public static class PromptGuard {
+            /** 命中拦截后的统一拒绝话术。 */
+            public static final String DEFAULT_REFUSAL_REPLY = "抱歉，我无法处理这类请求，请重新描述您的问题。";
+            /**
+             * 默认注入/越狱模式（不区分大小写）：覆盖"忽略先前指令"“套取系统提示词”“角色扮演绕过限制”
+             * 中英文常见表述。可在 yml 中整体覆盖。
+             */
+            public static final List<String> DEFAULT_INJECTION_PATTERNS = List.of(
+                "忽略(以上|之前|上面|上述)[\\s\\S]{0,6}(指令|规则|设定|要求|prompt)",
+                "ignore\\s+(the\\s+)?(above|previous|prior)\\s+(instructions?|rules?|prompt)",
+                "(输出|显示|展示|告诉我)[\\s\\S]{0,6}(你的|系统)[\\s\\S]{0,6}(prompt|提示词|指令)",
+                "reveal\\s+(your\\s+)?(system\\s+)?prompt",
+                "你现在是\\s*DAN\\b",
+                "you\\s+are\\s+now\\s+DAN\\b",
+                "(假装|扮演)[\\s\\S]{0,10}(没有|无)[\\s\\S]{0,6}(限制|规则)",
+                "pretend\\s+(that\\s+)?you\\s+have\\s+no\\s+(restrictions?|rules?)",
+                "disregard\\s+(your\\s+)?(guidelines?|rules?|instructions?)");
+
+            private boolean enabled = false;
+            /** 拦截正则列表（不区分大小写）：命中即拒绝，不进入模型推理。 */
+            private List<String> injectionPatterns = new ArrayList<>(DEFAULT_INJECTION_PATTERNS);
+            /** 命中拦截后返回给用户的话术。 */
+            private String refusalReply = DEFAULT_REFUSAL_REPLY;
         }
 
         /** 动态生成参数配置。默认关闭。 */

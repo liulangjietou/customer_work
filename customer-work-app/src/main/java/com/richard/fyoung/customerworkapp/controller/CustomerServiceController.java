@@ -58,7 +58,7 @@ public class CustomerServiceController {
     public Mono<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
         return service.chat(sessionId, request.message())
-            .map(reply -> new ChatResponse(sessionId, reply))
+            .map(reply -> new ChatResponse(sessionId, reply, newMessageId()))
             .contextWrite(ctx -> ctx.put(MdcContextLifter.SESSION_ID_KEY, sessionId));
     }
 
@@ -145,5 +145,10 @@ public class CustomerServiceController {
     /** 匿名或空会话 ID 时生成一个稳定的服务端会话 ID。 */
     private String resolveSessionId(String sessionId) {
         return StringUtils.hasText(sessionId) ? sessionId : "anonymous-" + UUID.randomUUID();
+    }
+
+    /** 生成本条回复的消息 ID，供客户端提交点赞/点踩反馈时引用。 */
+    private String newMessageId() {
+        return "MSG-" + UUID.randomUUID();
     }
 }

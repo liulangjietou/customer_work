@@ -120,3 +120,21 @@ CREATE TABLE IF NOT EXISTS `cw_handoff_ticket` (
     INDEX `idx_handoff_status` (`status`),
     INDEX `idx_handoff_created` (`created_at_ms`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- 消息级用户反馈表（JdbcFeedbackStore 结构化存储，feedback.store-mode=jdbc 时启用）
+-- =============================================================================
+-- 说明：由 JdbcFeedbackStore 自动建表（CREATE TABLE IF NOT EXISTS），
+--       本脚本用于 DBA 预审 / 受限权限环境。用户对 /chat 回复的点赞/点踩，DOWN 类型自动沉淀
+--       到 FactLog 供离线复盘，是数据飞轮除系统主动质检外的另一条用户主动输入通道。
+--       同一 message_id 重复提交按最新一次覆盖（用户改变主意允许更正）。
+
+CREATE TABLE IF NOT EXISTS `cw_message_feedback` (
+    `message_id`     VARCHAR(64) PRIMARY KEY COMMENT '被反馈的消息ID',
+    `session_id`     VARCHAR(128) COMMENT '所属会话',
+    `type`           VARCHAR(8) NOT NULL COMMENT 'UP/DOWN',
+    `comment`        TEXT COMMENT '文字说明',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '提交时间戳（毫秒，重复提交取最新）',
+    INDEX `idx_feedback_session` (`session_id`),
+    INDEX `idx_feedback_type` (`type`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
