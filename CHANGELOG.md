@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **模型连通性测试落库失败，前端只显示"系统繁忙"**：`ModelConfigService#testConnectivity` 的结果落库
+  发生在独立线程池 `model-test-worker` 的 `CompletableFuture` 回调里，而不是发起请求的 Tomcat 线程；
+  MyBatis-Plus 审计字段自动填充要调 `StpUtil.isLogin()`，脱离 Servlet 线程时 Sa-Token 不返回 `false`
+  而是直接抛异常（`NotWebContextException`/`SaTokenContextException`，公共父类
+  `SaTokenException`），导致整个 `updateById` 失败、真实的连通性测试结果（成功/超时/HTTP 错误）永远
+  落不了库，前端只能看到语焉不详的兜底错误码。`MyMetaObjectHandler.currentUserId()` 捕获
+  `SaTokenException` 返回 `null`（审计填充的唯一入口，一处兜底不用每个后台线程调用点都记得处理）。
+  新增 `MyMetaObjectHandlerTest`（2，验证非 Web 上下文调用不抛异常）。
+
 ### 客服后台运营管理系统 customer-admin-web（批次五：前端 SPA，全部批次完成）
 
 `customer-admin-web`：Vue 3 + TypeScript + Vite 独立 SPA（非 Maven 子模块，与仓库根目录平级），Element

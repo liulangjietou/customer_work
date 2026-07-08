@@ -725,9 +725,22 @@ cd customer-admin-web && npm install && npm run dev
 `AgentServiceTest`（字段校验/关联表整体替换事务/生命周期启停/菜单版本联动）、
 `MenuAggregationServiceTest`（智能体动态节点拼接/workspace 未授权时不可见，`Mockito.mockStatic`
 模拟 `StpUtil`，仓库内首次用到静态方法 mock）、`AgentInstanceCacheTest`（惰性重建/命中不重建/
-evict 后重建）、`VibeCodingServiceTest`（能力校验/流式对话委托/workspace 目录快照 diff）。
+evict 后重建）、`VibeCodingServiceTest`（能力校验/流式对话委托/workspace 目录快照 diff）、
+`MyMetaObjectHandlerTest`（非 Web 上下文调用不应抛异常，见下方"真实联调 bug"）。
 `AdminAgentInstanceFactory.build()` 的端到端装配（真实构建 ReActAgent/HarnessAgent、注册 MCP 客户端）
 未覆盖单测——需要真实模型 API Key 或本地 MCP 进程，留给联调 / 集成测试阶段，如实标注不假装已覆盖。
+
+**真实联调发现并修复的 bug**：给 DeepSeek 模型点"测试连通性"报"系统繁忙"（`SYSTEM_ERROR` 兜底码，
+掩盖了真实原因）。根因：`ModelConfigService#testConnectivity` 的结果落库（`persistTestResult`，走
+`updateById`）发生在 `CompletableFuture.thenApply` 回调里，该回调运行在独立线程池
+`model-test-worker`（`MODEL_TEST_EXECUTOR`）的线程上，而不是发起请求的 Tomcat 线程。MyBatis-Plus 的
+`MyMetaObjectHandler` 审计字段自动填充要调 `StpUtil.isLogin()`，这个调用要读
+`HttpServletRequest`——脱离 Servlet 线程时 Sa-Token 不是返回 `false` 而是直接抛
+`NotWebContextException`/`SaTokenContextException`（视上下文缺失程度而定，两者共同父类是
+`SaTokenException`），导致整个 `updateById` 失败、连通性测试结果永远落不了库，前端只能看到一个
+语焉不详的系统错误。修复：`MyMetaObjectHandler.currentUserId()` 捕获 `SaTokenException`（这两个
+具体异常的公共父类）返回 `null`，即"不在 Web 上下文里就不填充审计人，不是异常"——这是审计填充的
+唯一入口，按 fast-fail 原则一处兜底即可，不需要每个未来的后台线程调用点都记得处理。
 
 **customer-admin-web 前端要点**：`GET /api/auth/permissions`（批次五新增的小接口，返回当前用户全量权限点
 含按钮/接口级 type=2，与菜单树接口只返回 type=1 菜单节点区分开）供 `v-permission` 指令判断按钮显隐；
