@@ -4,6 +4,43 @@
 
 ## [Unreleased]
 
+### 客服后台运营管理系统 customer-admin-web（批次五：前端 SPA，全部批次完成）
+
+`customer-admin-web`：Vue 3 + TypeScript + Vite 独立 SPA（非 Maven 子模块，与仓库根目录平级），Element
+Plus + Pinia + Vue Router + Axios。至此《客服项目后台管理系统需求文档 v1.0》五个批次全部交付。
+
+- **脚手架**：`api/request.ts` 统一 axios 拦截器（Result 拆箱、10001 未登录/20002 强制改密两种错误码
+  特殊跳转），`types/api.ts` 与后端全部 DTO/VO 字段严格对齐。
+- **鉴权**：`store/auth.ts`（token/nickname/forceChangePassword/permissions 持久化到 localStorage）+
+  登录页 + 强制改密页；后端新增 `GET /api/auth/permissions`（返回当前用户全量权限点，含按钮/接口级
+  type=2，与菜单树接口只返回 type=1 菜单节点区分开），供前端 `v-permission` 指令用。
+- **动态路由 + 菜单轮询**：登录后按 `GET /api/menu/routes` 返回的树用 `router.addRoute('Layout', ...)`
+  运行时注册路由（静态叶子 path -> 组件映射表在 `router/component-map.ts`，动态智能体节点复用同一个
+  `workspace/:agentCode` 通配路由，不逐个注册）；`store/menu.ts` 2s 轮询 `GET /api/menu/version`，版本
+  变化才拉全量菜单树，智能体页面自身的 CRUD/启停操作后也会主动 `refreshMenu()`，两者叠加满足需求文档
+  "菜单刷新≤1s"。
+- **v-permission 指令**：没有对应权限点时直接从 DOM 移除元素（不是仅隐藏），前端只是体验层，真正裁决
+  始终是后端 `@SaCheckPermission`。
+- **系统管理三页 + AI 配置四页**：用户/角色（权限树勾选）/操作日志（只读）、模型配置（AppKey 脱敏输入框
+  + 测试连通性按钮 + 默认模型开关）/ MCP（stdio/sse 两种 config JSON 占位符提示）/ Skill（SKILL.md 正文
+  编辑）/ 智能体（模型下拉 + MCP·Skill 多选 + 能力勾选 + 启停按钮）。
+- **智能体工作区**：`utils/sse.ts` 用 `fetch` + `ReadableStream` 手写 SSE 解析（不能用原生
+  `EventSource`——聊天/VibeCoding 端点是 POST 且需要自定义 `Authorization` 头，原生 `EventSource` 只支持
+  GET 且不能自定义头）；`ChatPanel.vue` 逐 token 渲染，`VibeCodingPanel.vue` 额外提供产物清单查看
+  （对话结束后拉取一次变更文件列表）。
+- **联调时发现并修复的真实 bug（非纸面走查能发现）**：Element Plus 的 `<el-form>` 渲染出原生 `<form>`
+  标签，登录页/改密页原来只绑定 `@keyup.enter`、没有 `@submit.prevent`——密码框回车会同时触发浏览器
+  原生表单提交（整页刷新）和 Vue 的 keyup 处理器。原生提交造成的整页刷新会让只存在 Pinia 内存里的
+  `forceChangePassword` 状态丢失（localStorage 里 token 仍有效，但强制改密标记被重置为默认值
+  `false`），相当于用户绕过强制改密门禁直接进入系统。修复两处：① 两个表单补 `@submit.prevent`；
+  ② `forceChangePassword` 改为持久化到 localStorage（不再只活在内存里），双重兜底。
+- 验证：`npm run build`（`vue-tsc -b && vite build`）通过；用浏览器工具走通登录 -> 强制改密页跳转 ->
+  主布局动态菜单渲染 -> 7 个静态 CRUD 页面路由与后端 VO 字段一一对应的表头 全流程，过程中无控制台报错；
+  后端侧 `customer-admin-server` 45 个单测保持全绿，全仓（含批次五新增的 `/api/auth/permissions`）
+  `mvn test` 无回归。
+- 文档：README §6.21 更新为"批次一~五全部完成"，新增前端要点与联调 bug 记录；代码结构树补充
+  `customer-admin-server`/`customer-admin-web` 条目。
+
 ### 客服后台运营管理系统 customer-admin-server（新模块，批次一/五：后端骨架）
 
 按《客服项目后台管理系统需求文档 v1.0》新增独立子模块，前后端分离，本批次交付后端 RBAC 骨架。

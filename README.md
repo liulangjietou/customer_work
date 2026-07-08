@@ -660,25 +660,30 @@ operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案�
 两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-web` 各一份）离线校验，
 不激活 profile 真实启动（prod 依赖真实 Redis/MySQL/DashScope 凭据，无这些外部依赖时无法真实连接）。
 
-### 6.21 客服后台运营管理系统 `customer-admin-server`（新模块，分批开发中）
+### 6.21 客服后台运营管理系统 `customer-admin-server` + `customer-admin-web`
 
-独立的 Spring MVC 后台管理系统:面向系统管理员/运营人员统一管理用户权限(RBAC)、AI 模型、MCP、
+后端是独立的 Spring MVC 后台管理系统:面向系统管理员/运营人员统一管理用户权限(RBAC)、AI 模型、MCP、
 Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按需求文档锁定:**MyBatis-Plus + Sa-Token**
 (与仓库其余模块的手写 JDBC Store SPI 模式并存、互不冲突,原因见模块内 Javadoc)。前端
-`customer-admin-web`(Vue3 + TS + Vite 独立 SPA,非 Maven 子模块)随批次五接入。
+**[customer-admin-web](customer-admin-web)** 是独立的 Vue 3 + TypeScript + Vite SPA(非 Maven 子模块,
+与仓库根目录平级),用 Element Plus 做中后台 UI、Pinia 做状态管理、原生 `fetch` + `ReadableStream`
+手写 SSE 解析(POST + 自定义 Authorization 头,原生 `EventSource` 做不到)。
 
-**当前进度(批次一~四:后端全部能力域已完成)**——RBAC 五表(用户/角色/权限/关联表/操作日志) + 登录改密
-+ 用户/角色/权限/日志四个业务域完整 CRUD + AI 配置域三个 CRUD:模型配置(AES/GCM 加密存储 + 脱敏回显 +
-默认模型互斥设置 + 连通性测试)、MCP、Skill，智能体管理:`ai_agent` CRUD + 关联表(MCP/Skill 多选)整体
-替换式维护 + 启用停用生命周期 + 动态菜单 + 菜单版本号轮询，以及智能体运行时:`AdminAgentInstanceFactory`
-动态装配(按数据库配置现场构建 Model/Toolkit/SkillBox，`vibecoding` 能力叠加 Harness 本地沙箱) +
-`AgentInstanceCache` 缓存(配置变更自动失效) + Chat 流式对话(SSE) + VibeCoding(SSE + 降级版产物清单)。
-仅剩批次五前端 SPA 尚未接入,如实标注不假装已完成。
+**批次一~五全部完成**——后端:RBAC 五表(用户/角色/权限/关联表/操作日志) + 登录改密 + 用户/角色/权限/
+日志四个业务域完整 CRUD + AI 配置域三个 CRUD(模型配置含 AES/GCM 加密存储/脱敏回显/默认模型互斥/连通性
+测试、MCP、Skill) + 智能体管理(`ai_agent` CRUD + 关联表整体替换式维护 + 启用停用生命周期 + 动态菜单 +
+菜单版本号轮询) + 智能体运行时(`AdminAgentInstanceFactory` 动态装配 + `AgentInstanceCache` 缓存 + Chat
+流式对话 SSE + VibeCoding SSE + 降级版产物清单)。前端:登录/强制改密页 + 动态路由(按菜单树运行时
+`router.addRoute`)+ 菜单版本号轮询兜底刷新 + `v-permission` 按钮级权限指令 + 系统管理三页 + AI 配置四页
++ 智能体工作区(聊天 + VibeCoding 双 Tab)。
 
 ```bash
+# 后端：端口 8082；dev profile 自动跑 Flyway 迁移建出 customer_admin 库全部表 + 种子数据（admin/admin）
 export ADMIN_MYSQL_PASSWORD=root ADMIN_AES_SECRET_KEY=<32字节密钥>
 java -jar customer-admin-server/target/customer-admin-server-1.0.0.jar --spring.profiles.active=dev
-# 端口 8082；dev profile 自动跑 Flyway 迁移建出 customer_admin 库全部表 + 种子数据（admin/admin）
+
+# 前端：端口 5173（默认），开发期把 /api 代理到后端 8082，见 customer-admin-web/vite.config.ts
+cd customer-admin-web && npm install && npm run dev
 ```
 
 | 入口 | 能力 |
@@ -723,6 +728,22 @@ java -jar customer-admin-server/target/customer-admin-server-1.0.0.jar --spring.
 evict 后重建）、`VibeCodingServiceTest`（能力校验/流式对话委托/workspace 目录快照 diff）。
 `AdminAgentInstanceFactory.build()` 的端到端装配（真实构建 ReActAgent/HarnessAgent、注册 MCP 客户端）
 未覆盖单测——需要真实模型 API Key 或本地 MCP 进程，留给联调 / 集成测试阶段，如实标注不假装已覆盖。
+
+**customer-admin-web 前端要点**：`GET /api/auth/permissions`（批次五新增的小接口，返回当前用户全量权限点
+含按钮/接口级 type=2，与菜单树接口只返回 type=1 菜单节点区分开）供 `v-permission` 指令判断按钮显隐；
+动态路由用 `router.addRoute('Layout', ...)` 在登录后按菜单树运行时注册，静态叶子节点 path 与组件的映射表
+在 `router/component-map.ts`，动态智能体节点复用同一个 `workspace/:agentCode` 通配路由；菜单版本号 2s
+轮询（`store/menu.ts`），智能体页面自身的 CRUD/启停操作后也会主动 `refreshMenu()`，两者叠加满足"菜单
+刷新≤1s"。SSE 用 `utils/sse.ts` 手写 `fetch` + `ReadableStream` 解析（不能用原生 `EventSource`，因为
+聊天/VibeCoding 端点是 POST 且需要自定义 `Authorization` 头）。
+
+**联调时发现并修复的一个真实 bug**：Element Plus 的 `<el-form>` 渲染出的是原生 `<form>` 标签，登录页/
+改密页原来只绑定了 `@keyup.enter`、没有 `@submit.prevent`——在密码输入框按回车会同时触发浏览器原生表单
+提交（整页刷新）和 Vue 的 `keyup` 处理器。原生提交造成的整页刷新会让只存在 Pinia 内存里的
+`forceChangePassword` 状态丢失（读 localStorage 里仍有效的 token，但强制改密标记被重置为默认值
+`false`），相当于用户绕过了强制改密门禁直接进入系统——这是在真实浏览器联调时点出来的，单纯读代码不容易
+发现。修复两处：① 给 `Login.vue`/`ChangePassword.vue` 的 `<el-form>` 补上 `@submit.prevent`；
+② `forceChangePassword` 改为持久化到 localStorage（`store/auth.ts`）而不是只活在内存里，双重兜底。
 
 ---
 
@@ -818,6 +839,9 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │   └── src/                                     #   仅依赖 starter；SupportApplication + AcmeOrderBackend(覆盖默认)
 │                                                #   + SupportController(复用 CustomerServiceService)
 │                                                #   契约测试 DownstreamIntegrationTest 证明"零扫描自动装配 + 覆盖默认"
+│
+├── customer-admin-server/                       # 【客服后台管理系统·后端】独立 Spring MVC 应用，见 §6.21
+├── customer-admin-web/                          # 【客服后台管理系统·前端】Vue3+TS+Vite SPA，非 Maven 子模块，见 §6.21
 │
 ├── mysql/schema.sql                            # MySQL 会话表建库脚本（客服主业务库）
 ├── mysql/admin-schema.sql                      # customer-admin-server 建库脚本（独立库，物理隔离）

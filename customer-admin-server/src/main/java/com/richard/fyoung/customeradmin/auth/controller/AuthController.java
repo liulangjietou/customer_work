@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * 登录认证：登录（含失败记录）/ 登出 / 改密 / 当前用户信息。
  * @author owlzhangfq@gmail.com
@@ -50,5 +52,11 @@ public class AuthController {
     @GetMapping("/me")
     public Result<Long> me() {
         return Result.success(StpUtil.getLoginIdAsLong());
+    }
+
+    /** 当前用户的全量权限点（含按钮/接口级 type=2，菜单树接口只返回 type=1），前端 v-permission 指令用。 */
+    @GetMapping("/permissions")
+    public Result<List<String>> permissions() {
+        return Result.success(StpUtil.getPermissionList());
     }
 }

@@ -1,0 +1,147 @@
+<script setup lang="ts">
+import { onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { createSkill, deleteSkill, pageSkills, updateSkill } from '@/api/skill'
+import type { PageQuery, SkillSaveRequest, SkillVO } from '@/types/api'
+
+const loading = ref(false)
+const list = ref<SkillVO[]>([])
+const total = ref(0)
+const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
+
+const dialogVisible = ref(false)
+const dialogMode = ref<'create' | 'edit'>('create')
+const formRef = ref<FormInstance>()
+const editingId = ref<number | null>(null)
+const form = reactive<SkillSaveRequest>({ skillName: '', skillCode: '', content: '', description: '', status: 1 })
+
+async function loadList() {
+  loading.value = true
+  try {
+    const result = await pageSkills(query)
+    list.value = result.list
+    total.value = result.total
+  } finally {
+    loading.value = false
+  }
+}
+
+function handleSearch() {
+  query.pageNum = 1
+  loadList()
+}
+
+function openCreate() {
+  dialogMode.value = 'create'
+  editingId.value = null
+  Object.assign(form, { skillName: '', skillCode: '', content: '', description: '', status: 1 })
+  dialogVisible.value = true
+}
+
+function openEdit(row: SkillVO) {
+  dialogMode.value = 'edit'
+  editingId.value = row.id
+  Object.assign(form, { skillName: row.skillName, skillCode: row.skillCode, content: row.content, description: row.description, status: row.status })
+  dialogVisible.value = true
+}
+
+async function handleSubmit() {
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) {
+    return
+  }
+  if (dialogMode.value === 'create') {
+    await createSkill(form)
+    ElMessage.success('新建成功')
+  } else if (editingId.value) {
+    await updateSkill(editingId.value, form)
+    ElMessage.success('保存成功')
+  }
+  dialogVisible.value = false
+  await loadList()
+}
+
+async function handleDelete(row: SkillVO) {
+  await ElMessageBox.confirm(`确认删除 Skill「${row.skillName}」？`, '提示', { type: 'warning' })
+  try {
+    await deleteSkill(row.id)
+    ElMessage.success('删除成功')
+    await loadList()
+  } catch {
+    // 引用校验失败的提示已由 axios 拦截器统一弹出
+  }
+}
+
+onMounted(loadList)
+</script>
+
+<template>
+  <div class="page">
+    <el-card>
+      <div class="toolbar">
+        <el-input v-model="query.keyword" placeholder="按名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
+        <el-button type="primary" @click="handleSearch">搜索</el-button>
+        <el-button v-permission="'skill:add'" type="primary" @click="openCreate">新建 Skill</el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="list" style="width: 100%">
+        <el-table-column prop="skillName" label="名称" />
+        <el-table-column prop="skillCode" label="编码" width="160" />
+        <el-table-column prop="description" label="描述" show-overflow-tooltip />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createTime" label="创建时间" width="180" />
+        <el-table-column label="操作" width="160" fixed="right">
+          <template #default="{ row }">
+            <el-button v-permission="'skill:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-permission="'skill:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-pagination
+        v-model:current-page="query.pageNum"
+        v-model:page-size="query.pageSize"
+        :total="total"
+        layout="total, prev, pager, next"
+        style="margin-top: 16px; justify-content: flex-end"
+        @current-change="loadList"
+      />
+    </el-card>
+
+    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建 Skill' : '编辑 Skill'" width="600px">
+      <el-form ref="formRef" :model="form" label-width="90px">
+        <el-form-item label="名称" prop="skillName" :rules="[{ required: true, message: '请输入名称' }]">
+          <el-input v-model="form.skillName" />
+        </el-form-item>
+        <el-form-item label="编码" prop="skillCode" :rules="[{ required: true, message: '请输入编码' }]">
+          <el-input v-model="form.skillCode" :disabled="dialogMode === 'edit'" placeholder="用于 SKILL.md 落盘目录名" />
+        </el-form-item>
+        <el-form-item label="SKILL.md" prop="content" :rules="[{ required: true, message: '请输入 SKILL.md 正文' }]">
+          <el-input v-model="form.content" type="textarea" :rows="10" placeholder="含 YAML frontmatter 的 SKILL.md 正文" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="form.description!" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmit">确定</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<style scoped>
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+</style>
