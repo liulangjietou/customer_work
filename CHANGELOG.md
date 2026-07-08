@@ -101,6 +101,53 @@
   仓库内首次用到，Mockito 5.x 默认 inline mock maker 无需额外依赖）。全仓测试 394，BUILD SUCCESS。
 - 文档：README §6.21 更新为"批次一~三"进度，补充智能体管理与动态菜单接口说明。
 
+### 客服后台运营管理系统 customer-admin-server（批次四：智能体运行时）
+
+在批次三智能体管理基础上接入动态运行时——本计划的架构核心。
+
+- **`AdminAgentInstanceFactory`（动态智能体运行时工厂）**：按 `ai_agent` 任意一行现场组装，不复用
+  启动期一次性装配的 `CustomerServiceAgentFactory`（构建时机与数据来源本质不同，见实施计划"上下文"
+  一节）。装配步骤：① 校验智能体已启用（否则 `AGENT_DISABLED`）→ ② 查关联模型，解密 apiKey 后经
+  `AdminModelFactory#buildModel` 现场构建 OpenAI 兼容 `Model`（新增方法，与已有的 `testConnectivity`
+  区分"短生命周期探测请求" vs "可直接注入 Agent 的真实实例"）→ ③ 查 `ai_agent_mcp` 关联行，逐个用
+  `McpClientBuilder` 动态注册进 `Toolkit`（参考 `McpToolkitConfigurer` 的写法，改为读数据库行；
+  支持 `stdio`/`sse` 两种 `mcpType`，`config` JSON 解析出 command/args 或 url）→ ④ 查 `ai_agent_skill`
+  关联行，把 `content`（SKILL.md 正文）落盘到 `./data/admin-skills/{agentCode}/{skillCode}/SKILL.md`
+  后复用框架自带的 `FileSystemSkillRepository` 加载（不自造 Skill 解析逻辑）→ ⑤ `ReActAgent.Builder`
+  组装；`capabilities` 含 `vibecoding` 时用 `HarnessAgent.Builder.fromAgent` 在内层 ReActAgent 上叠加
+  本地沙箱（`LocalFilesystemSpec` + `IsolationScope.AGENT`），workspace 目录限定到
+  `./data/admin-workspace/{agentCode}`。
+- **API 版本坑**：项目锁定 agentscope 2.0.0-RC4，`stream(List<Msg>, StreamOptions, RuntimeContext)`
+  这个重载只直接声明在 `ReActAgent`/`HarnessAgent` 各自的类上，未收敛进共享的 `Agent`/`StreamableAgent`
+  接口（后续版本可能已收敛，本地开发分支的源码与 RC4 实际发布的 jar 不一致，靠 `javap` 核实实际 jar
+  才发现）——`ChatService` 因此按运行时具体类型（`instanceof ReActAgent` / `instanceof HarnessAgent`）
+  分派，而不能直接对 `Agent` 接口类型变量调用。
+- **`AgentInstanceCache`**：`ConcurrentHashMap<agentCode, Agent>`，`computeIfAbsent` 保证同 agentCode
+  并发只构建一次，惰性重建、不预热。智能体自身的 create/update/delete/enable/disable，以及它引用的
+  模型/MCP/Skill 的 `update()`，都会 evict 受影响的 agentCode（model 变更需反查引用它的所有 agent 批量
+  evict；MCP/Skill 同理反查 `ai_agent_mcp`/`ai_agent_skill`）——delete 路径不需要额外处理，批次三已加的
+  引用校验本就阻止删除仍被引用的资源。
+- **`AgentStateStore`/`PermissionContextState`**：`AdminAgentRuntimeConfig` 仿 `customer-web` 的
+  `CustomerWebAgentConfig` 手法手动暴露 Bean（本模块已用 `spring.autoconfigure.exclude` 关闭 starter
+  自动装配）。刻意用 `InMemoryAgentStateStore` + `PermissionMode.DEFAULT`（trivial，不拦截任何工具
+  调用）——admin 工作区是运营调试场景，不需要 `customer-work.session.*` 那套四后端可切换的持久化能力，
+  调用方也已经过 Sa-Token 鉴权，不需要在 Agent 内部再叠一层工具级授权。
+- **Chat 流式对话（SSE）**：`ChatController` 返回 `Flux<ServerSentEvent<String>>`——本模块是 Spring MVC
+  非 WebFlux，但 `reactor-core` 经 starter 传递可用，Spring MVC 6.x 原生支持控制器方法返回该类型做流式
+  响应（内置 `ReactiveTypeHandler`），无需手动桥接 `SseEmitter`，与 `CustomerServiceController#chatStream`
+  同一套写法。权限点复用 `workspace`（菜单聚合已在用的同一个 permCode），不新增按智能体粒度的权限点。
+- **VibeCoding（降级版）**：明确不自研代码生成引擎——`VibeCodingService` 校验智能体确有 `vibecoding`
+  能力后直接复用 `ChatService` 的流式对话；产物清单用"对话前后对比 workspace 目录文件快照"的降级方案
+  （进程内 `Map<agentCode:sessionId, 快照>`，`stream()` 调用前拍照，`listChangedArtifacts()` 与当前状态
+  比对 size+mtime），不做实时 `file_change` 事件（工程量大，一期明确砍掉，见实施计划 3.4 节）。
+- 测试：`AgentInstanceCacheTest`（4，惰性重建/命中不重建/evict 后重建/evictAll）、
+  `VibeCodingServiceTest`（5，能力校验两种拒绝场景/流式对话委托/快照 diff 正确识别新增与修改文件且
+  不误报未改动文件）、`AdminModelFactoryTest` 新增 `buildModel` 两个用例（openai 成功构建/非 openai
+  拒绝）。`AdminAgentInstanceFactory.build()` 的端到端装配（真实构建 Agent、注册 MCP 客户端）未覆盖
+  单测——需要真实模型 API Key 或本地 MCP 进程，如实标注留给联调阶段，不假装已覆盖。全仓测试 405，
+  BUILD SUCCESS。
+- 文档：README §6.21 更新为"批次一~四"进度，新增"智能体运行时架构要点"小节。
+
 ### 入站防注入围栏 + 用户反馈闭环（P8）
 
 安全防护与数据飞轮的第二条输入通道。

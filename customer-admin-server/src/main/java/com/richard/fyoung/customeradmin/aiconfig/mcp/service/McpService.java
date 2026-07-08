@@ -5,7 +5,9 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
@@ -14,10 +16,13 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * MCP 管理。
@@ -30,11 +35,16 @@ public class McpService {
 
     private final AiMcpMapper mcpMapper;
     private final AiAgentMcpMapper agentMcpMapper;
+    private final AiAgentMapper agentMapper;
+    private final AgentInstanceCache agentInstanceCache;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public McpService(AiMcpMapper mcpMapper, AiAgentMcpMapper agentMcpMapper) {
+    public McpService(AiMcpMapper mcpMapper, AiAgentMcpMapper agentMcpMapper, AiAgentMapper agentMapper,
+                       AgentInstanceCache agentInstanceCache) {
         this.mcpMapper = mcpMapper;
         this.agentMcpMapper = agentMcpMapper;
+        this.agentMapper = agentMapper;
+        this.agentInstanceCache = agentInstanceCache;
     }
 
     public PageResult<McpVO> page(PageQuery query) {
@@ -67,6 +77,19 @@ public class McpService {
         validate(request);
         fillFromRequest(mcp, request);
         mcpMapper.updateById(mcp);
+        evictAgentsReferencingMcp(id);
+    }
+
+    /** MCP 连接配置变更（url/command 等）会让引用它的智能体运行时用上旧配置，需一并失效。 */
+    private void evictAgentsReferencingMcp(Long mcpId) {
+        List<Long> agentIds = agentMcpMapper.selectList(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getMcpId, mcpId))
+            .stream().map(AiAgentMcp::getAgentId).collect(Collectors.toList());
+        if (agentIds.isEmpty()) {
+            return;
+        }
+        List<String> agentCodes = agentMapper.selectBatchIds(agentIds).stream()
+            .map(AiAgent::getAgentCode).collect(Collectors.toList());
+        agentInstanceCache.evictAll(agentCodes);
     }
 
     public void delete(Long id) {

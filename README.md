@@ -665,14 +665,15 @@ operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案�
 独立的 Spring MVC 后台管理系统:面向系统管理员/运营人员统一管理用户权限(RBAC)、AI 模型、MCP、
 Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按需求文档锁定:**MyBatis-Plus + Sa-Token**
 (与仓库其余模块的手写 JDBC Store SPI 模式并存、互不冲突,原因见模块内 Javadoc)。前端
-`customer-admin-web`(Vue3 + TS + Vite 独立 SPA,非 Maven 子模块)随后续批次接入。
+`customer-admin-web`(Vue3 + TS + Vite 独立 SPA,非 Maven 子模块)随批次五接入。
 
-**当前进度(批次一~三/五:后端骨架 + AI 配置域 + 智能体管理已完成)**——RBAC 五表(用户/角色/权限/关联表/
-操作日志) + 登录改密 + 用户/角色/权限/日志四个业务域完整 CRUD + AI 配置域三个 CRUD:模型配置
-(AES/GCM 加密存储 + 脱敏回显 + 默认模型互斥设置 + 连通性测试)、MCP、Skill，以及智能体管理:
-`ai_agent` CRUD + 关联表(MCP/Skill 多选)整体替换式维护 + 启用停用生命周期 + 动态菜单(启用中的智能体
-运行时拼进 workspace 节点)+ 菜单版本号轮询接口。智能体运行时(chat 流式+VibeCoding)、前端 SPA
-均为后续批次,尚未接入,如实标注不假装已完成。
+**当前进度(批次一~四:后端全部能力域已完成)**——RBAC 五表(用户/角色/权限/关联表/操作日志) + 登录改密
++ 用户/角色/权限/日志四个业务域完整 CRUD + AI 配置域三个 CRUD:模型配置(AES/GCM 加密存储 + 脱敏回显 +
+默认模型互斥设置 + 连通性测试)、MCP、Skill，智能体管理:`ai_agent` CRUD + 关联表(MCP/Skill 多选)整体
+替换式维护 + 启用停用生命周期 + 动态菜单 + 菜单版本号轮询，以及智能体运行时:`AdminAgentInstanceFactory`
+动态装配(按数据库配置现场构建 Model/Toolkit/SkillBox，`vibecoding` 能力叠加 Harness 本地沙箱) +
+`AgentInstanceCache` 缓存(配置变更自动失效) + Chat 流式对话(SSE) + VibeCoding(SSE + 降级版产物清单)。
+仅剩批次五前端 SPA 尚未接入,如实标注不假装已完成。
 
 ```bash
 export ADMIN_MYSQL_PASSWORD=root ADMIN_AES_SECRET_KEY=<32字节密钥>
@@ -687,23 +688,41 @@ java -jar customer-admin-server/target/customer-admin-server-1.0.0.jar --spring.
 | `/api/system/{user,role,permission,log}` | 用户/角色权限/权限树/操作日志 CRUD（`@SaCheckPermission` 权限点校验） |
 | `/api/aiconfig/model` | 模型配置 CRUD（AppKey 加密存储/脱敏回显/默认模型互斥） |
 | `POST /api/aiconfig/model/{id}/test-connectivity` | 连通性测试（异步 `CompletableFuture` 返回，独立线程池执行，不占 Tomcat 请求线程，硬性超时兜底） |
-| `/api/aiconfig/mcp` / `/api/aiconfig/skill` | MCP / Skill 管理 CRUD（删除前校验是否被智能体引用） |
+| `/api/aiconfig/mcp` / `/api/aiconfig/skill` | MCP / Skill 管理 CRUD（删除前校验是否被智能体引用，编辑后自动失效引用它的智能体运行时缓存） |
 | `/api/aiconfig/agent` | 智能体 CRUD（modelId 必填/mcpIds·skillIds 可选多选，关联表整体替换式维护） |
-| `PUT /api/aiconfig/agent/{id}/enable` / `disable` | 智能体启用/停用（联动动态菜单） |
+| `PUT /api/aiconfig/agent/{id}/enable` / `disable` | 智能体启用/停用（联动动态菜单 + 运行时缓存失效） |
 | `GET /api/menu/routes` | 按当前用户权限点过滤的菜单树，`workspace` 节点下挂启用中的智能体动态节点 |
 | `GET /api/menu/version` | 菜单版本号（进程内自增），前端轻量轮询，仅版本变化才拉全量菜单 |
+| `POST /api/workspace/{agentCode}/chat/stream` | 智能体在线聊天（SSE，权限点复用 `workspace`，停用智能体报 `AGENT_DISABLED`） |
+| `POST /api/workspace/{agentCode}/vibecoding/stream` | VibeCoding 对话（SSE，仅 `capabilities` 含 `vibecoding` 的智能体可用） |
+| `GET /api/workspace/{agentCode}/vibecoding/artifacts?sessionId=` | VibeCoding 产物清单（对话前后对比 workspace 目录快照，降级版方案，无实时 `file_change` 事件） |
 | `/swagger-ui/index.html` | 接口文档 |
 
 生产建表由 DBA 参照 **[mysql/admin-schema.sql](mysql/admin-schema.sql)** 手工执行（与 `mysql/schema.sql`
 客服主业务库物理隔离，独立数据库 `customer_admin`），与仓库既有"生产不自动建表"约定一致。
+
+**智能体运行时架构要点**（`workspace.runtime` 包）：`AdminAgentInstanceFactory` 按 `ai_agent` 任意一行
+现场组装——查关联模型经 `AdminModelFactory#buildModel` 构建 OpenAI 兼容 `Model`（当前仅支持
+`provider=openai`）、查 `ai_agent_mcp` 关联行逐个用 `McpClientBuilder` 动态注册进 `Toolkit`（支持
+`stdio`/`sse` 两种 `mcpType`）、查 `ai_agent_skill` 关联行把 `content`（SKILL.md 正文）落盘后复用框架
+自带的 `FileSystemSkillRepository` 加载；`capabilities` 含 `vibecoding` 时用
+`HarnessAgent.Builder.fromAgent` 在内层 `ReActAgent` 上叠加本地沙箱，workspace 目录限定到
+`./data/admin-workspace/{agentCode}`。`AgentInstanceCache`（`agentCode -> Agent`）惰性重建、不预热；
+智能体自身的 CRUD/启停、其引用的模型/MCP/Skill 编辑，都会驱动对应 agentCode 的缓存失效。
+`AgentStateStore`/`PermissionContextState` 用进程内简单实现（`AdminAgentRuntimeConfig`），刻意不复用
+`customer-work.session.*` 那套四后端可切换的持久化能力——admin 工作区是运营调试场景，过度设计不划算。
+
 测试：`AesGcmCryptoUtilTest`（加解密往返/掩码）、`SensitiveDataMaskerTest`（参数脱敏）、
 `SeedAdminPasswordTest`（种子哈希回归，防止手改种子脚本导致默认超管登录不了）、
 `ModelConfigServiceTest`（AppKey 加密落库/脱敏回显/默认模型互斥事务）、
-`AdminModelFactoryTest`（连通性测试成功/结构非法/HTTP 错误/硬超时四种场景，用 JDK 内置
-`com.sun.net.httpserver.HttpServer` 模拟 OpenAI 兼容端点，不引入三方 mock 依赖）、
+`AdminModelFactoryTest`（连通性测试成功/结构非法/HTTP 错误/硬超时四种场景 + `buildModel` provider 校验，
+用 JDK 内置 `com.sun.net.httpserver.HttpServer` 模拟 OpenAI 兼容端点，不引入三方 mock 依赖）、
 `AgentServiceTest`（字段校验/关联表整体替换事务/生命周期启停/菜单版本联动）、
 `MenuAggregationServiceTest`（智能体动态节点拼接/workspace 未授权时不可见，`Mockito.mockStatic`
-模拟 `StpUtil`，仓库内首次用到静态方法 mock）。
+模拟 `StpUtil`，仓库内首次用到静态方法 mock）、`AgentInstanceCacheTest`（惰性重建/命中不重建/
+evict 后重建）、`VibeCodingServiceTest`（能力校验/流式对话委托/workspace 目录快照 diff）。
+`AdminAgentInstanceFactory.build()` 的端到端装配（真实构建 ReActAgent/HarnessAgent、注册 MCP 客户端）
+未覆盖单测——需要真实模型 API Key 或本地 MCP 进程，留给联调 / 集成测试阶段，如实标注不假装已覆盖。
 
 ---
 

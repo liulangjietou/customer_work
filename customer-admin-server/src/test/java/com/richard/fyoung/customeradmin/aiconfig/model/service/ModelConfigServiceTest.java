@@ -10,6 +10,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -50,6 +51,8 @@ class ModelConfigServiceTest {
     @BeforeAll
     static void initMybatisPlusLambdaCache() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiModelConfig.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""),
+            com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent.class);
     }
 
     @BeforeEach
@@ -57,9 +60,10 @@ class ModelConfigServiceTest {
         mapper = mock(AiModelConfigMapper.class);
         modelFactory = mock(AdminModelFactory.class);
         AiAgentMapper agentMapper = mock(AiAgentMapper.class);
+        AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
         // 16 字节测试密钥，满足 AES-128 长度要求
         AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil("0123456789abcdef");
-        service = new ModelConfigService(mapper, agentMapper, cryptoUtil, modelFactory);
+        service = new ModelConfigService(mapper, agentMapper, cryptoUtil, modelFactory, agentInstanceCache);
     }
 
     @Test

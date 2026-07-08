@@ -17,6 +17,7 @@ import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.menu.service.MenuVersionHolder;
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -64,8 +65,9 @@ class AgentServiceTest {
         mcpMapper = mock(AiMcpMapper.class);
         skillMapper = mock(AiSkillMapper.class);
         menuVersionHolder = new MenuVersionHolder();
+        AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
         service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, modelConfigMapper,
-            mcpMapper, skillMapper, menuVersionHolder);
+            mcpMapper, skillMapper, menuVersionHolder, agentInstanceCache);
 
         when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
     }

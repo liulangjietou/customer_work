@@ -20,6 +20,7 @@ import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.menu.service.MenuVersionHolder;
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
@@ -50,10 +51,12 @@ public class AgentService {
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
     private final MenuVersionHolder menuVersionHolder;
+    private final AgentInstanceCache agentInstanceCache;
 
     public AgentService(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
                          AiAgentSkillMapper agentSkillMapper, AiModelConfigMapper modelConfigMapper,
-                         AiMcpMapper mcpMapper, AiSkillMapper skillMapper, MenuVersionHolder menuVersionHolder) {
+                         AiMcpMapper mcpMapper, AiSkillMapper skillMapper, MenuVersionHolder menuVersionHolder,
+                         AgentInstanceCache agentInstanceCache) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -61,6 +64,7 @@ public class AgentService {
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
         this.menuVersionHolder = menuVersionHolder;
+        this.agentInstanceCache = agentInstanceCache;
     }
 
     public PageResult<AgentVO> page(PageQuery query) {
@@ -100,30 +104,36 @@ public class AgentService {
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, AgentSaveRequest request) {
         AiAgent agent = requireAgent(id);
+        String oldAgentCode = agent.getAgentCode();
         validate(request);
         fillFromRequest(agent, request);
         agentMapper.updateById(agent);
         replaceRelations(id, request.mcpIds(), request.skillIds());
         menuVersionHolder.bump();
+        // agentCode 理论上不应改变，但仍按新旧两个 code 双清，避免缓存键错位残留旧实例
+        agentInstanceCache.evict(oldAgentCode);
+        agentInstanceCache.evict(request.agentCode());
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireAgent(id);
+        AiAgent agent = requireAgent(id);
         agentMapper.deleteById(id);
         agentMcpMapper.delete(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, id));
         agentSkillMapper.delete(new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, id));
         menuVersionHolder.bump();
+        agentInstanceCache.evict(agent.getAgentCode());
     }
 
     /** 启用/停用（生命周期），不改动其余字段。 */
     public void updateStatus(Long id, int status) {
-        requireAgent(id);
+        AiAgent agent = requireAgent(id);
         AiAgent update = new AiAgent();
         update.setId(id);
         update.setStatus(status);
         agentMapper.updateById(update);
         menuVersionHolder.bump();
+        agentInstanceCache.evict(agent.getAgentCode());
     }
 
     /** modelId 必须引用真实存在的模型；mcpIds/skillIds（若提供）里每个 id 也必须真实存在；agentCode 格式与能力标识做一处防御式校验，供 create/update 复用。 */

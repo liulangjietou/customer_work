@@ -3,9 +3,15 @@ package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
+import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import io.agentscope.core.model.GenerateOptions;
+import io.agentscope.core.model.Model;
+import io.agentscope.core.model.OpenAIChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -89,6 +95,29 @@ public class AdminModelFactory {
             log.error("model connectivity test failed, code={}", "MODEL-TEST-FAIL", e);
             return new ModelTestResult(ModelTestResult.STATUS_FAILED, now, truncate(e.getMessage()));
         }
+    }
+
+    /**
+     * 构建可直接注入 {@code ReActAgent.Builder#model(Model)} 的真实模型实例（动态智能体运行时用，
+     * 区别于 {@link #testConnectivity}——后者是短生命周期的连通性探测请求）。
+     *
+     * <p>当前仅接受 {@code provider=openai}，与需求文档 3.1 及 {@code ModelConfigService} 的默认
+     * provider 保持一致；非 openai 直接报业务错误，不做插件化过度设计（实施计划 3.2 节）。</p>
+     */
+    public Model buildModel(String provider, String baseUrl, String apiKey, String modelName) {
+        if (!"openai".equalsIgnoreCase(provider)) {
+            throw new BizException(ResultCode.AGENT_CAPABILITY_NOT_SUPPORTED,
+                "暂不支持的模型 provider: " + provider + "（当前仅支持 openai）");
+        }
+        OpenAIChatModel.Builder builder = OpenAIChatModel.builder()
+            .apiKey(apiKey)
+            .modelName(modelName)
+            .stream(true)
+            .generateOptions(GenerateOptions.builder().build());
+        if (StringUtils.hasText(baseUrl)) {
+            builder.baseUrl(baseUrl);
+        }
+        return builder.build();
     }
 
     private boolean isSuccessStatus(int statusCode) {

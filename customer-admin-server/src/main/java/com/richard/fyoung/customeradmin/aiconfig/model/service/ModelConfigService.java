@@ -17,6 +17,7 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,11 +25,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 /**
  * AI 模型配置管理：CRUD + AppKey 加密存储 + 默认模型互斥设置 + 连通性测试。
@@ -51,13 +54,16 @@ public class ModelConfigService {
     private final AiAgentMapper agentMapper;
     private final AesGcmCryptoUtil cryptoUtil;
     private final AdminModelFactory modelFactory;
+    private final AgentInstanceCache agentInstanceCache;
 
     public ModelConfigService(AiModelConfigMapper modelConfigMapper, AiAgentMapper agentMapper,
-                               AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory) {
+                               AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
+                               AgentInstanceCache agentInstanceCache) {
         this.modelConfigMapper = modelConfigMapper;
         this.agentMapper = agentMapper;
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
+        this.agentInstanceCache = agentInstanceCache;
     }
 
     public PageResult<ModelVO> page(PageQuery query) {
@@ -106,6 +112,14 @@ public class ModelConfigService {
         if (Boolean.TRUE.equals(request.isDefault())) {
             clearOtherDefaults(id);
         }
+        evictAgentsReferencingModel(id);
+    }
+
+    /** 模型配置变更（baseUrl/apiKey/model 等）会让引用它的智能体运行时用上旧配置构建的实例，需一并失效。 */
+    private void evictAgentsReferencingModel(Long modelId) {
+        List<String> agentCodes = agentMapper.selectList(new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getModelId, modelId))
+            .stream().map(AiAgent::getAgentCode).collect(Collectors.toList());
+        agentInstanceCache.evictAll(agentCodes);
     }
 
     public void delete(Long id) {

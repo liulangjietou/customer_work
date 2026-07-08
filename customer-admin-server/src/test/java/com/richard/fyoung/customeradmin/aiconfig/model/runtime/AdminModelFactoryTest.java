@@ -1,7 +1,9 @@
 package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
+import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.sun.net.httpserver.HttpServer;
+import io.agentscope.core.model.Model;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -13,6 +15,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -105,6 +109,22 @@ class AdminModelFactoryTest {
         assertTrue(requestReceived.await(2, TimeUnit.SECONDS));
         assertEquals(ModelTestResult.STATUS_FAILED, result.testStatus());
         assertTrue(result.message().contains("超时"));
+    }
+
+    @Test
+    void buildModel_shouldSucceed_forOpenAiProvider() {
+        AdminModelFactory factory = new AdminModelFactory();
+
+        Model model = factory.buildModel("openai", "https://api.openai.com/v1", "sk-test", "gpt-4o-mini");
+
+        assertNotNull(model);
+    }
+
+    @Test
+    void buildModel_shouldReject_nonOpenAiProvider() {
+        AdminModelFactory factory = new AdminModelFactory();
+
+        assertThrows(BizException.class, () -> factory.buildModel("anthropic", "https://api.anthropic.com", "sk-test", "claude"));
     }
 
     private interface Handler {
