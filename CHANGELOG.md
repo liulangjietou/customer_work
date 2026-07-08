@@ -73,6 +73,34 @@
   BUILD SUCCESS。
 - 文档：README §6.21 更新为"批次一~二"进度，补充 AI 配置域三个入口说明。
 
+### 客服后台运营管理系统 customer-admin-server（批次三：智能体管理 + 动态菜单）
+
+在批次二 AI 配置域基础上接入智能体管理与动态菜单聚合。
+
+- **`ai_agent` CRUD + 关联表整体替换式维护**：`AgentSaveRequest.modelId` 必填、`mcpIds`/`skillIds`
+  可选多选；`AgentService` 校验 `modelId` 引用真实存在的模型、`mcpIds`/`skillIds`（若提供）逐个真实
+  存在、`agentCode` 格式 `^[a-z0-9-]+$`（用于动态菜单路由）、`capabilities` 仅接受 `chat`/`vibecoding`
+  （一处防御式校验，`create`/`update` 复用）。关联表 `ai_agent_mcp`/`ai_agent_skill` 采用"整体替换"
+  （先删该智能体现有关联行，再按本次提交的 ids 批量插入）而非增量比对——关联行数很少，比对差异没有
+  必要，`@Transactional` 保证原子性。
+- **生命周期**：`PUT /api/aiconfig/agent/{id}/enable`/`disable` 独立于普通编辑，只改 `status` 字段。
+- **跨域引用完整性**（补齐批次二遗留项，`ai_agent` 落地后才具备校验条件）：模型/MCP/Skill 的
+  `delete()` 现在会检查是否被 `ai_agent`/`ai_agent_mcp`/`ai_agent_skill` 引用，命中则拒绝并返回新增的
+  `RESOURCE_IN_USE(30005)`，避免删除后关联表出现悬挂行。
+- **动态菜单聚合**：`MenuAggregationService` 在静态菜单剪枝树基础上，把 `AgentService.listEnabled()`
+  的结果拼进 `permCode=workspace` 的节点下（找不到 workspace 节点——即当前用户没有该菜单权限——则
+  跳过，动态节点天然继承父节点的可见性，不需要额外的按智能体权限过滤）。
+- **`MenuVersionHolder`**：进程内 `AtomicLong`，智能体 CRUD/启停任一操作后自增；新增
+  `GET /api/menu/version` 供前端轻量轮询，仅版本变化才拉全量 `GET /api/menu/routes`（需求文档"菜单
+  刷新≤1s"：当前操作用户前端主动刷新即时生效，本机制兜底"其它在线用户下次轮询感知"；预留未来多实例
+  部署换 Redis 实现，接口签名不变）。
+- 权限点 `agent:*`（`view`/`add`/`edit`/`delete`，均已在批次一种子数据里预置）。
+- 测试：`AgentServiceTest`（10，字段校验四种失败场景/关联表整体替换/生命周期启停/菜单版本联动/
+  modelName 与关联 id 正确解析），`MenuAggregationServiceTest`（2，智能体动态节点正确拼接/workspace
+  未授权时整个节点及其动态子节点均不可见；用 `Mockito.mockStatic(StpUtil.class)` 模拟静态方法，
+  仓库内首次用到，Mockito 5.x 默认 inline mock maker 无需额外依赖）。全仓测试 394，BUILD SUCCESS。
+- 文档：README §6.21 更新为"批次一~三"进度，补充智能体管理与动态菜单接口说明。
+
 ### 入站防注入围栏 + 用户反馈闭环（P8）
 
 安全防护与数据飞轮的第二条输入通道。

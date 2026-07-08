@@ -667,10 +667,12 @@ Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按
 (与仓库其余模块的手写 JDBC Store SPI 模式并存、互不冲突,原因见模块内 Javadoc)。前端
 `customer-admin-web`(Vue3 + TS + Vite 独立 SPA,非 Maven 子模块)随后续批次接入。
 
-**当前进度(批次一~二/五:后端骨架 + AI 配置域已完成)**——RBAC 五表(用户/角色/权限/关联表/操作日志) +
-登录改密 + 用户/角色/权限/日志四个业务域完整 CRUD + 静态菜单聚合接口，以及 AI 配置域三个 CRUD:
-模型配置(AES/GCM 加密存储 + 脱敏回显 + 默认模型互斥设置 + 连通性测试)、MCP、Skill。智能体管理+动态菜单、
-智能体运行时(chat 流式+VibeCoding)、前端 SPA 均为后续批次,尚未接入,如实标注不假装已完成。
+**当前进度(批次一~三/五:后端骨架 + AI 配置域 + 智能体管理已完成)**——RBAC 五表(用户/角色/权限/关联表/
+操作日志) + 登录改密 + 用户/角色/权限/日志四个业务域完整 CRUD + AI 配置域三个 CRUD:模型配置
+(AES/GCM 加密存储 + 脱敏回显 + 默认模型互斥设置 + 连通性测试)、MCP、Skill，以及智能体管理:
+`ai_agent` CRUD + 关联表(MCP/Skill 多选)整体替换式维护 + 启用停用生命周期 + 动态菜单(启用中的智能体
+运行时拼进 workspace 节点)+ 菜单版本号轮询接口。智能体运行时(chat 流式+VibeCoding)、前端 SPA
+均为后续批次,尚未接入,如实标注不假装已完成。
 
 ```bash
 export ADMIN_MYSQL_PASSWORD=root ADMIN_AES_SECRET_KEY=<32字节密钥>
@@ -685,8 +687,11 @@ java -jar customer-admin-server/target/customer-admin-server-1.0.0.jar --spring.
 | `/api/system/{user,role,permission,log}` | 用户/角色权限/权限树/操作日志 CRUD（`@SaCheckPermission` 权限点校验） |
 | `/api/aiconfig/model` | 模型配置 CRUD（AppKey 加密存储/脱敏回显/默认模型互斥） |
 | `POST /api/aiconfig/model/{id}/test-connectivity` | 连通性测试（异步 `CompletableFuture` 返回，独立线程池执行，不占 Tomcat 请求线程，硬性超时兜底） |
-| `/api/aiconfig/mcp` / `/api/aiconfig/skill` | MCP / Skill 管理 CRUD |
-| `GET /api/menu/routes` | 按当前用户权限点过滤的静态菜单树 |
+| `/api/aiconfig/mcp` / `/api/aiconfig/skill` | MCP / Skill 管理 CRUD（删除前校验是否被智能体引用） |
+| `/api/aiconfig/agent` | 智能体 CRUD（modelId 必填/mcpIds·skillIds 可选多选，关联表整体替换式维护） |
+| `PUT /api/aiconfig/agent/{id}/enable` / `disable` | 智能体启用/停用（联动动态菜单） |
+| `GET /api/menu/routes` | 按当前用户权限点过滤的菜单树，`workspace` 节点下挂启用中的智能体动态节点 |
+| `GET /api/menu/version` | 菜单版本号（进程内自增），前端轻量轮询，仅版本变化才拉全量菜单 |
 | `/swagger-ui/index.html` | 接口文档 |
 
 生产建表由 DBA 参照 **[mysql/admin-schema.sql](mysql/admin-schema.sql)** 手工执行（与 `mysql/schema.sql`
@@ -695,7 +700,10 @@ java -jar customer-admin-server/target/customer-admin-server-1.0.0.jar --spring.
 `SeedAdminPasswordTest`（种子哈希回归，防止手改种子脚本导致默认超管登录不了）、
 `ModelConfigServiceTest`（AppKey 加密落库/脱敏回显/默认模型互斥事务）、
 `AdminModelFactoryTest`（连通性测试成功/结构非法/HTTP 错误/硬超时四种场景，用 JDK 内置
-`com.sun.net.httpserver.HttpServer` 模拟 OpenAI 兼容端点，不引入三方 mock 依赖）。
+`com.sun.net.httpserver.HttpServer` 模拟 OpenAI 兼容端点，不引入三方 mock 依赖）、
+`AgentServiceTest`（字段校验/关联表整体替换事务/生命周期启停/菜单版本联动）、
+`MenuAggregationServiceTest`（智能体动态节点拼接/workspace 未授权时不可见，`Mockito.mockStatic`
+模拟 `StpUtil`，仓库内首次用到静态方法 mock）。
 
 ---
 

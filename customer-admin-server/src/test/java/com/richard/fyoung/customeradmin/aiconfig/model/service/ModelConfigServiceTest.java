@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.aiconfig.model.service;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelVO;
@@ -55,9 +56,10 @@ class ModelConfigServiceTest {
     void setUp() {
         mapper = mock(AiModelConfigMapper.class);
         modelFactory = mock(AdminModelFactory.class);
+        AiAgentMapper agentMapper = mock(AiAgentMapper.class);
         // 16 字节测试密钥，满足 AES-128 长度要求
         AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil("0123456789abcdef");
-        service = new ModelConfigService(mapper, cryptoUtil, modelFactory);
+        service = new ModelConfigService(mapper, agentMapper, cryptoUtil, modelFactory);
     }
 
     @Test

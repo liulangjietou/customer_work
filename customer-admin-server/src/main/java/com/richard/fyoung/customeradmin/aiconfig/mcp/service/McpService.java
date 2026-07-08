@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
@@ -27,10 +29,12 @@ public class McpService {
     private static final Set<String> VALID_MCP_TYPES = Set.of("stdio", "sse");
 
     private final AiMcpMapper mcpMapper;
+    private final AiAgentMcpMapper agentMcpMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public McpService(AiMcpMapper mcpMapper) {
+    public McpService(AiMcpMapper mcpMapper, AiAgentMcpMapper agentMcpMapper) {
         this.mcpMapper = mcpMapper;
+        this.agentMcpMapper = agentMcpMapper;
     }
 
     public PageResult<McpVO> page(PageQuery query) {
@@ -67,6 +71,9 @@ public class McpService {
 
     public void delete(Long id) {
         requireMcp(id);
+        if (agentMcpMapper.exists(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getMcpId, id))) {
+            throw new BizException(ResultCode.RESOURCE_IN_USE, "该 MCP 正被智能体引用，无法删除");
+        }
         mcpMapper.deleteById(id);
     }
 

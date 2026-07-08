@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelVO;
@@ -46,12 +48,14 @@ public class ModelConfigService {
     private static final long TEST_FUTURE_TIMEOUT_SECONDS = 10;
 
     private final AiModelConfigMapper modelConfigMapper;
+    private final AiAgentMapper agentMapper;
     private final AesGcmCryptoUtil cryptoUtil;
     private final AdminModelFactory modelFactory;
 
-    public ModelConfigService(AiModelConfigMapper modelConfigMapper, AesGcmCryptoUtil cryptoUtil,
-                               AdminModelFactory modelFactory) {
+    public ModelConfigService(AiModelConfigMapper modelConfigMapper, AiAgentMapper agentMapper,
+                               AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory) {
         this.modelConfigMapper = modelConfigMapper;
+        this.agentMapper = agentMapper;
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
     }
@@ -106,6 +110,9 @@ public class ModelConfigService {
 
     public void delete(Long id) {
         requireModel(id);
+        if (agentMapper.exists(new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getModelId, id))) {
+            throw new BizException(ResultCode.RESOURCE_IN_USE, "该模型配置正被智能体引用，无法删除");
+        }
         modelConfigMapper.deleteById(id);
     }
 

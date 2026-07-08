@@ -3,6 +3,8 @@ package com.richard.fyoung.customeradmin.aiconfig.skill.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSkill;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillVO;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
@@ -22,9 +24,11 @@ import org.springframework.util.StringUtils;
 public class SkillService {
 
     private final AiSkillMapper skillMapper;
+    private final AiAgentSkillMapper agentSkillMapper;
 
-    public SkillService(AiSkillMapper skillMapper) {
+    public SkillService(AiSkillMapper skillMapper, AiAgentSkillMapper agentSkillMapper) {
         this.skillMapper = skillMapper;
+        this.agentSkillMapper = agentSkillMapper;
     }
 
     public PageResult<SkillVO> page(PageQuery query) {
@@ -66,6 +70,9 @@ public class SkillService {
 
     public void delete(Long id) {
         requireSkill(id);
+        if (agentSkillMapper.exists(new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getSkillId, id))) {
+            throw new BizException(ResultCode.RESOURCE_IN_USE, "该 Skill 正被智能体引用，无法删除");
+        }
         skillMapper.deleteById(id);
     }
 
