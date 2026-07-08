@@ -22,13 +22,16 @@ public class AiMcp {
     private Long id;
 
     private String mcpName;
-    /** stdio / sse。 */
+    /** stdio / sse / http。 */
     private String mcpType;
     /** 连接配置（命令/URL/参数等，JSON）。 */
     private String config;
     private String description;
     /** 0禁用 / 1启用。 */
     private Integer status;
+    /** 0未测试 / 1成功 / 2失败。 */
+    private Integer testStatus;
+    private LocalDateTime testTime;
 
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;

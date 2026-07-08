@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -83,11 +84,11 @@ class VibeCodingServiceTest {
     @Test
     void stream_shouldDelegateToChatService_whenCapable() {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
-        when(chatService.chatStream("coder", "s1", "写个脚本")).thenReturn(Flux.just("好的"));
+        when(chatService.chatStream("coder", "s1", "写个脚本")).thenReturn(Flux.just(new ChatStreamChunk(false, "好的")));
 
-        List<String> emitted = service.stream("coder", "s1", "写个脚本").collectList().block();
+        List<ChatStreamChunk> emitted = service.stream("coder", "s1", "写个脚本").collectList().block();
 
-        assertEquals(List.of("好的"), emitted);
+        assertEquals(List.of(new ChatStreamChunk(false, "好的")), emitted);
     }
 
     @Test

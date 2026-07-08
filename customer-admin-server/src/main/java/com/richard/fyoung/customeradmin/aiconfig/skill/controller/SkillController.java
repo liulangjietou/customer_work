@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.skill.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.annotation.SaMode;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillVO;
 import com.richard.fyoung.customeradmin.aiconfig.skill.service.SkillService;
@@ -16,7 +17,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * Skill 管理：CRUD + 分页/搜索/筛选/排序。
@@ -66,5 +69,12 @@ public class SkillController {
     public Result<Void> delete(@PathVariable Long id) {
         skillService.delete(id);
         return Result.success();
+    }
+
+    /** 解析上传的 .md/.zip 文件为 SKILL.md 正文，不落库——前端拿到内容回填表单，仍走 create/update 保存。 */
+    @SaCheckPermission(value = {"skill:add", "skill:edit"}, mode = SaMode.OR)
+    @PostMapping("/parse-upload")
+    public Result<String> parseUpload(@RequestParam("file") MultipartFile file) {
+        return Result.success(skillService.parseUploadContent(file));
     }
 }

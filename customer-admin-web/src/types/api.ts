@@ -151,6 +151,8 @@ export interface McpVO {
   config: string
   description: string | null
   status: number
+  testStatus: number
+  testTime: string | null
   createTime: string
 }
 
@@ -160,6 +162,12 @@ export interface McpSaveRequest {
   config: string
   description?: string | null
   status?: number | null
+}
+
+export interface McpTestResult {
+  testStatus: number
+  testTime: string | null
+  message: string | null
 }
 
 // ---------- aiconfig.skill ----------
@@ -227,4 +235,17 @@ export interface MenuNode {
 export interface ChatRequest {
   sessionId: string
   message: string
+}
+
+export interface ChatSessionSummary {
+  sessionId: string
+  preview: string
+  lastMessageTime: string | null
+  messageCount: number
+}
+
+export interface ChatMessageVO {
+  role: 'user' | 'assistant'
+  text: string
+  timestamp: string
 }

@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import org.slf4j.Logger;
@@ -55,7 +56,7 @@ public class VibeCodingService {
     }
 
     /** 对话开始前先拍一次 workspace 快照，再复用 ChatService 的流式对话。 */
-    public Flux<String> stream(String agentCode, String sessionId, String userText) {
+    public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText) {
         requireVibeCodingCapable(agentCode);
         beforeSnapshots.put(snapshotKey(agentCode, sessionId), snapshot(agentInstanceFactory.resolveWorkspace(agentCode)));
         return chatService.chatStream(agentCode, sessionId, userText);

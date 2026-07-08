@@ -22,7 +22,10 @@ async function handleLogout() {
 <template>
   <el-container class="layout">
     <el-aside width="220px" class="layout-aside">
-      <div class="logo">客服后台管理</div>
+      <div class="logo">
+        <span class="logo-mark">CW</span>
+        <span class="logo-text">customer_work</span>
+      </div>
       <el-menu :default-active="activePath" router unique-opened background-color="#001529" text-color="#c9d1d9" active-text-color="#fff">
         <MenuTree :nodes="menuStore.tree" />
       </el-menu>
@@ -59,11 +62,33 @@ async function handleLogout() {
 }
 
 .logo {
-  color: #fff;
-  text-align: center;
-  line-height: 56px;
-  font-weight: 600;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.logo-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #409eff, #79bbff);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.logo-text {
+  color: #fff;
+  font-weight: 600;
+  font-size: 15px;
+  white-space: nowrap;
 }
 
 .layout-header {

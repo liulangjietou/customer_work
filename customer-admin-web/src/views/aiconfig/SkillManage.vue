@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
-import { createSkill, deleteSkill, pageSkills, updateSkill } from '@/api/skill'
+import { ElMessage, ElMessageBox, type FormInstance, type UploadRequestOptions } from 'element-plus'
+import { createSkill, deleteSkill, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
 import type { PageQuery, SkillSaveRequest, SkillVO } from '@/types/api'
 
 const loading = ref(false)
@@ -59,6 +59,19 @@ async function handleSubmit() {
   }
   dialogVisible.value = false
   await loadList()
+}
+
+const uploading = ref(false)
+
+async function handleUpload(options: UploadRequestOptions) {
+  uploading.value = true
+  try {
+    const content = await parseSkillUpload(options.file as File)
+    form.content = content
+    ElMessage.success('解析成功，已回填 SKILL.md 正文，确认无误后点“确定”保存')
+  } finally {
+    uploading.value = false
+  }
 }
 
 async function handleDelete(row: SkillVO) {
@@ -121,7 +134,19 @@ onMounted(loadList)
           <el-input v-model="form.skillCode" :disabled="dialogMode === 'edit'" placeholder="用于 SKILL.md 落盘目录名" />
         </el-form-item>
         <el-form-item label="SKILL.md" prop="content" :rules="[{ required: true, message: '请输入 SKILL.md 正文' }]">
-          <el-input v-model="form.content" type="textarea" :rows="10" placeholder="含 YAML frontmatter 的 SKILL.md 正文" />
+          <div style="width: 100%">
+            <el-upload
+              :show-file-list="false"
+              :http-request="handleUpload"
+              accept=".md,.zip"
+              style="margin-bottom: 8px"
+            >
+              <el-button :loading="uploading" size="small">
+                上传 .md 或 .zip 文件回填正文
+              </el-button>
+            </el-upload>
+            <el-input v-model="form.content" type="textarea" :rows="10" placeholder="含 YAML frontmatter 的 SKILL.md 正文，可直接编辑或用上方按钮上传文件回填" />
+          </div>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description!" type="textarea" :rows="2" />

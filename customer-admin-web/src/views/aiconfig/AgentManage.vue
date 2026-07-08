@@ -6,6 +6,7 @@ import { pageModels } from '@/api/model'
 import { pageMcps } from '@/api/mcp'
 import { pageSkills } from '@/api/skill'
 import { useMenuStore } from '@/store/menu'
+import IconPicker from '@/components/IconPicker.vue'
 import type { AgentSaveRequest, AgentVO, McpVO, ModelVO, PageQuery, SkillVO } from '@/types/api'
 
 const menuStore = useMenuStore()
@@ -131,6 +132,13 @@ onMounted(() => {
       </div>
 
       <el-table v-loading="loading" :data="list" style="width: 100%">
+        <el-table-column label="图标" width="70">
+          <template #default="{ row }">
+            <el-icon v-if="row.icon" :size="18">
+              <component :is="row.icon" />
+            </el-icon>
+          </template>
+        </el-table-column>
         <el-table-column prop="agentName" label="名称" />
         <el-table-column prop="agentCode" label="编码" width="140" />
         <el-table-column prop="modelName" label="关联模型" width="140" />
@@ -202,7 +210,7 @@ onMounted(() => {
           <el-input v-model="form.systemPrompt!" type="textarea" :rows="4" />
         </el-form-item>
         <el-form-item label="图标">
-          <el-input v-model="form.icon!" placeholder="Element Plus 图标名，可选" />
+          <IconPicker v-model="form.icon!" />
         </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />

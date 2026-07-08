@@ -30,10 +30,14 @@ const supportsVibeCoding = computed(() => agentNode.value?.capabilities?.include
     <h2 class="agent-title">{{ agentNode?.name ?? agentCode }}</h2>
     <el-tabs type="border-card" class="workspace-tabs">
       <el-tab-pane label="对话">
-        <ChatPanel :agent-code="agentCode" />
+        <!-- workspace/:agentCode 是同一条路由，只换参数，Vue Router 默认复用组件实例——
+             不加 :key 的话切换智能体时 ChatPanel 内部的 messages/sessionId 状态会跟着串到下一个
+             智能体身上。加 :key 强制按 agentCode 重建实例，天然顺带把上一个智能体未结束的 SSE
+             流也一起 abort 掉（复用 ChatPanel 自己 onUnmounted 里已有的 abortStream 逻辑）。 -->
+        <ChatPanel :key="agentCode" :agent-code="agentCode" />
       </el-tab-pane>
       <el-tab-pane v-if="supportsVibeCoding" label="VibeCoding">
-        <VibeCodingPanel :agent-code="agentCode" />
+        <VibeCodingPanel :key="agentCode" :agent-code="agentCode" />
       </el-tab-pane>
     </el-tabs>
   </div>

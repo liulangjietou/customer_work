@@ -136,10 +136,12 @@ CREATE TABLE IF NOT EXISTS `ai_model_config` (
 CREATE TABLE IF NOT EXISTS `ai_mcp` (
     `id`            BIGINT AUTO_INCREMENT PRIMARY KEY,
     `mcp_name`      VARCHAR(64) NOT NULL COMMENT 'MCP 名称',
-    `mcp_type`      VARCHAR(32) NOT NULL COMMENT '类型（stdio / sse）',
+    `mcp_type`      VARCHAR(32) NOT NULL COMMENT '类型（stdio / sse / http）',
     `config`        TEXT NOT NULL COMMENT 'MCP 连接配置（命令/URL/参数等，JSON）',
     `description`   VARCHAR(255) COMMENT '描述',
     `status`        TINYINT NOT NULL DEFAULT 1 COMMENT '状态：0禁用 / 1启用',
+    `test_status`   TINYINT NOT NULL DEFAULT 0 COMMENT '连通性测试：0未测试 / 1成功 / 2失败',
+    `test_time`     DATETIME NULL COMMENT '最近一次测试时间',
     `create_by`     BIGINT COMMENT '创建人ID',
     `create_time`   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_by`     BIGINT COMMENT '更新人ID',
@@ -193,6 +195,19 @@ CREATE TABLE IF NOT EXISTS `ai_agent_skill` (
     `skill_id`  BIGINT NOT NULL COMMENT 'Skill ID',
     UNIQUE KEY `uk_ai_agent_skill` (`agent_id`, `skill_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体-Skill关联';
+
+-- 对话历史持久化：AgentScope 框架自带的 MysqlAgentStateStore 表结构（表结构定义见
+-- io.agentscope.extensions.mysql.state.MysqlAgentStateStore 类注释），自定义表名而非框架默认的
+-- agentscope_sessions，与本库 ai_/sys_ 前缀命名约定保持一致。
+CREATE TABLE IF NOT EXISTS `ai_chat_session_state` (
+    `session_id`  VARCHAR(255) NOT NULL,
+    `state_key`   VARCHAR(255) NOT NULL,
+    `item_index`  INT NOT NULL DEFAULT 0,
+    `state_data`  LONGTEXT NOT NULL,
+    `created_at`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`session_id`, `state_key`, `item_index`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体对话状态持久化（AgentStateStore，含短期记忆/对话历史）';
 -- =============================================================================
 -- 客服后台管理系统 · 种子数据（Flyway V2，仅本地/测试 profile 自动执行）
 -- =============================================================================
@@ -224,18 +239,19 @@ INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type
     (2,  0, 'AI 配置',      'aiconfig',  1, '/aiconfig',  2),
     (3,  0, '智能体工作区', 'workspace', 1, '/workspace', 3);
 
--- 二级：系统管理 子菜单（type=1）
-INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `sort`) VALUES
-    (10, 1, '用户管理', 'user', 1, '/system/user', 1),
-    (11, 1, '角色权限', 'role', 1, '/system/role', 2),
-    (12, 1, '操作日志', 'log',  1, '/system/log',  3);
+-- 二级：系统管理 子菜单（type=1）；icon 为 Element Plus 图标组件名（全局已注册，见 main.ts），
+-- 具体颜色由前端 MenuTree.vue 按 perm_code 映射着色，不在这里存颜色值（图标库换皮不用改数据）。
+INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `sort`) VALUES
+    (10, 1, '用户管理', 'user', 1, '/system/user', 'User',    1),
+    (11, 1, '角色权限', 'role', 1, '/system/role', 'Avatar',  2),
+    (12, 1, '操作日志', 'log',  1, '/system/log',  'Tickets', 3);
 
 -- 二级：AI 配置 子菜单（type=1）
-INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `sort`) VALUES
-    (20, 2, '模型配置',   'model', 1, '/aiconfig/model', 1),
-    (21, 2, 'MCP 管理',   'mcp',   1, '/aiconfig/mcp',   2),
-    (22, 2, 'Skill 管理', 'skill', 1, '/aiconfig/skill', 3),
-    (23, 2, '智能体管理', 'agent', 1, '/aiconfig/agent', 4);
+INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `sort`) VALUES
+    (20, 2, '模型配置',   'model', 1, '/aiconfig/model', 'Cpu',        1),
+    (21, 2, 'MCP 管理',   'mcp',   1, '/aiconfig/mcp',   'Connection', 2),
+    (22, 2, 'Skill 管理', 'skill', 1, '/aiconfig/skill', 'Reading',    3),
+    (23, 2, '智能体管理', 'agent', 1, '/aiconfig/agent', 'MagicStick', 4);
 
 -- 三级：按钮/接口权限点（type=2），user/role/model/mcp/skill/agent 各 4 个（view/add/edit/delete），log 只读
 INSERT INTO `sys_permission` (`parent_id`, `perm_name`, `perm_code`, `type`, `sort`) VALUES

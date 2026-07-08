@@ -3,7 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.mcp.dto;
 import jakarta.validation.constraints.NotBlank;
 
 /**
- * MCP 新建/编辑请求。{@code mcpType} 仅接受 stdio/sse；{@code config} 须为合法 JSON
+ * MCP 新建/编辑请求。{@code mcpType} 仅接受 stdio/sse/http；{@code config} 须为合法 JSON
  * （校验见 {@code McpService}）。
  * @author owlzhangfq@gmail.com
  */

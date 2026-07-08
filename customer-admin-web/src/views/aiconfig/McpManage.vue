@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
-import { createMcp, deleteMcp, pageMcps, updateMcp } from '@/api/mcp'
+import { createMcp, deleteMcp, pageMcps, testMcpConnectivity, updateMcp } from '@/api/mcp'
 import type { McpSaveRequest, McpVO, PageQuery } from '@/types/api'
 
 const loading = ref(false)
 const list = ref<McpVO[]>([])
 const total = ref(0)
 const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
+const testingId = ref<number | null>(null)
 
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
@@ -15,11 +16,21 @@ const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 const form = reactive<McpSaveRequest>({ mcpName: '', mcpType: 'sse', config: '', description: '', status: 1 })
 
-const configPlaceholder = computed(() =>
-  form.mcpType === 'stdio'
-    ? '{"command": "python", "args": ["-m", "mcp_server_git"]}'
-    : '{"url": "https://mcp.example.com/sse"}',
-)
+const testStatusMap: Record<number, { label: string; type: 'info' | 'success' | 'danger' }> = {
+  0: { label: '未测试', type: 'info' },
+  1: { label: '连通成功', type: 'success' },
+  2: { label: '连通失败', type: 'danger' },
+}
+
+const configPlaceholder = computed(() => {
+  if (form.mcpType === 'stdio') {
+    return '{"command": "python", "args": ["-m", "mcp_server_git"]}'
+  }
+  if (form.mcpType === 'http') {
+    return '{"url": "https://mcp.example.com/mcp"}'
+  }
+  return '{"url": "https://mcp.example.com/sse"}'
+})
 
 function validateConfigJson(_rule: unknown, value: string, callback: (error?: Error) => void) {
   try {
@@ -87,6 +98,21 @@ async function handleDelete(row: McpVO) {
   }
 }
 
+async function handleTest(row: McpVO) {
+  testingId.value = row.id
+  try {
+    const result = await testMcpConnectivity(row.id)
+    if (result.testStatus === 1) {
+      ElMessage.success('连通性测试成功')
+    } else {
+      ElMessage.error(result.message || '连通性测试失败')
+    }
+    await loadList()
+  } finally {
+    testingId.value = null
+  }
+}
+
 onMounted(loadList)
 </script>
 
@@ -108,9 +134,15 @@ onMounted(loadList)
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="createTime" label="创建时间" width="180" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="连通性" width="140">
           <template #default="{ row }">
+            <el-tag :type="testStatusMap[row.testStatus]?.type ?? 'info'">{{ testStatusMap[row.testStatus]?.label ?? '未测试' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createTime" label="创建时间" width="180" />
+        <el-table-column label="操作" width="220" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" :loading="testingId === row.id" @click="handleTest(row)">测试连通性</el-button>
             <el-button v-permission="'mcp:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button v-permission="'mcp:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -135,11 +167,13 @@ onMounted(loadList)
         <el-form-item label="类型" prop="mcpType">
           <el-radio-group v-model="form.mcpType">
             <el-radio value="sse">sse</el-radio>
+            <el-radio value="http">http</el-radio>
             <el-radio value="stdio">stdio</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="连接配置" prop="config" :rules="[{ required: true, message: '请输入 config' }, { validator: validateConfigJson }]">
           <el-input v-model="form.config" type="textarea" :rows="4" :placeholder="configPlaceholder" />
+          <div class="config-hint">也支持直接粘贴 Claude/Cursor 等客户端的标准格式（外层带 mcpServers 包装），会自动识别</div>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description!" type="textarea" :rows="2" />
@@ -161,5 +195,11 @@ onMounted(loadList)
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.config-hint {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
 }
 </style>

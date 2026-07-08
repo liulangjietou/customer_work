@@ -758,6 +758,61 @@ evict 后重建）、`VibeCodingServiceTest`（能力校验/流式对话委托/w
 发现。修复两处：① 给 `Login.vue`/`ChangePassword.vue` 的 `<el-form>` 补上 `@submit.prevent`；
 ② `forceChangePassword` 改为持久化到 localStorage（`store/auth.ts`）而不是只活在内存里，双重兜底。
 
+**批次六（体验补强，10 项需求，全部完成）**：
+
+- **MCP 支持 http 传输 + 连通性测试**：`ai_mcp.mcp_type` 新增 `http`（`stdio`/`sse`/`http` 三选一）；
+  `AdminMcpFactory`（新组件）统一构建 `McpClientBuilder`（原来 `AdminAgentInstanceFactory` 里的重复
+  JSON 解析/transport 分支逻辑收敛到这里），`McpService#testConnectivity` 复用批次二模型连通性测试
+  同一套异步 `CompletableFuture` + 独立线程池 + 硬超时模式，落库到新增的 `test_status`/`test_time`
+  字段。
+- **Skill 支持上传 SKILL.md / zip**：`SkillService#parseUploadContent` 按扩展名分流——`.md` 直接读取
+  文本，`.zip` 用 `ZipInputStream` 按 basename 大小写不敏感匹配 `SKILL.md` 条目解出正文；zip 明确只是
+  `content` 字段的另一种录入方式，不支持多文件技能包（references/scripts 子目录），不做数据库改动。
+- **智能体图标库选择 + 新建 session + 工作区空状态**：`IconPicker.vue`（新组件）复用全局注册的
+  Element Plus 图标集做弹出选择器；`ChatPanel.vue`/`VibeCodingPanel.vue` 新增"新建会话"按钮
+  （`crypto.randomUUID()` 换 sessionId、清空消息列表）；`workspace` 路由新增静态空状态页
+  `WorkspaceEmpty.vue`（Vue Router 4 的路径打分机制保证静态路径优先于 `workspace/:agentCode` 动态
+  路由，不需要手动调整注册顺序），替换原来的 404。
+- **对话历史持久化（重启不丢）**：`AdminAgentRuntimeConfig` 的 `AgentStateStore` Bean 从
+  `InMemoryAgentStateStore` 换成 `MysqlAgentStateStore`（4 参构造函数显式传库名/表名，
+  `createIfNotExist=false`），新表 `ai_chat_session_state`（`V4__chat_session_state.sql`，Flyway 迁移
+  脚本，DDL 与 `mysql/admin-schema.sql` DBA 预审版本保持一致）。库名从 `admin.mysql.database-name`
+  配置项读取（`ADMIN_MYSQL_DATABASE` 环境变量覆盖）而不是硬编码字面量——联调时发现的真实 bug：早期
+  版本把库名写死成 `"customer_admin"`，一旦 `ADMIN_MYSQL_URL` 指向别的库名（比如联调环境用了
+  `customer_admin_verify`）就会在启动时报"表不存在"，现在跟数据源配置同源，不会再脱节。已用独立脚本
+  直接调用 `MysqlAgentStateStore.save/get/listSessionIds` 验证过落库/读回全链路（不依赖真实模型调用）。
+- **聊天/VibeCoding 流式区分思考过程与正文**：`ChatService#chatStream` 返回类型从 `Flux<String>` 改成
+  `Flux<ChatStreamChunk>`（按 `Event.getType() == REASONING` 打标），`ChatController`/
+  `VibeCodingController` 据此映射成不同的 SSE `event` 名（`reasoning` / `message`），前端
+  `ThinkingBlock.vue`（可折叠）与 `MarkdownRenderer.vue`（`markdown-it` 渲染表格 + `highlight.js`
+  代码块语法高亮）分别承接。
+- **历史对话列表**：新增只读端点 `GET /workspace/{agentCode}/chat/sessions`（枚举
+  `AgentStateStore#listSessionIds` 逐个取 `AgentState#getContext()` 拼摘要，按最后消息时间倒序）和
+  `GET /workspace/{agentCode}/chat/sessions/{sessionId}/messages`（取某次历史会话完整消息），前端
+  `ChatHistorySidebar.vue` 侧边栏（chat 与 vibecoding 共用同一套 session 状态，历史列表天然把两者混在
+  一起，不做类型区分）。
+- **视觉细节**：favicon 换成用户头像图（裁剪为 128×128 居中方图）；`MenuTree.vue` 无 `icon` 的菜单节点
+  用 `Folder`/`Document` 兜底，不再空白；`MainLayout.vue` 左上角新增 "CW" 图标块 + `customer_work`
+  文字 logo。
+
+批次六新增测试：`McpServiceTest`（6）、`AdminMcpFactoryTest`（4）、`SkillServiceTest`（6，含手工构造
+zip 用 `ZipOutputStream`）；`VibeCodingServiceTest` 同步更新断言类型（`Flux<ChatStreamChunk>`）。
+`AdminAgentInstanceFactory.build()` 端到端装配、真实模型完整对话往返仍未覆盖单测，理由同批次五。
+
+**历史对话列表 Redis 读缓存（批次六追加，非需求文档原始条目）**：明确定位——权威数据源始终是
+`MysqlAgentStateStore`（每轮对话仍同步写 MySQL，写路径不变），Redis 只是 `GET
+/workspace/{agentCode}/chat/sessions` 与 `.../sessions/{sessionId}/messages` 这两个只读接口前面的一层
+30 分钟 TTL 缓存，用来降低反复打开同一智能体历史列表/重新打开同一次历史会话时对 MySQL 的读压力，不是
+"30 分钟内数据只在 Redis、过期才落 MySQL"的写路径分层（那种设计需要处理崩溃时未刷盘数据丢失的问题，
+本场景不需要，过度设计不划算）。`ChatHistoryCache`（`workspace.chat.service` 包）封装 Jedis 读写，
+Key 前缀 `admin:chat:sessions:{agentCode}` / `admin:chat:messages:{agentCode}:{sessionId}`；一轮流式
+对话正常结束后 `ChatService` 主动调用 `evict` 让缓存立即失效，不必等 30 分钟自然过期就能在页面上看到
+最新一轮对话（VibeCoding 复用同一个 `chatStream`，天然一并覆盖）。Redis 不可达时 `ChatHistoryCache`
+内部捕获异常退化为"未命中"，`ChatHistoryService` 照常回源 MySQL，缓存故障不影响主流程可用性——本地
+未起 Redis 也能正常跑（`admin.redis.host/port/password`，`ADMIN_REDIS_HOST` 等环境变量覆盖，默认
+`localhost:6379` 无密码）。新增 `ChatHistoryCacheTest`（6：命中/未命中/写入回填/失效/Redis 不可达两种
+场景不抛异常）。
+
 ---
 
 ## 七、配置项总表

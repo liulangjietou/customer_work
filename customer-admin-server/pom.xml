@@ -89,6 +89,13 @@
             </exclusions>
         </dependency>
 
+        <!-- 历史对话列表读缓存（ChatHistoryCache）直接用 Jedis API；已经通过 starter 传递可用，
+             这里显式声明，版本随 starter 统一管理，不在本模块重复固定版本号。 -->
+        <dependency>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

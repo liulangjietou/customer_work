@@ -1,8 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSkill;
@@ -11,6 +9,7 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
@@ -68,7 +67,6 @@ public class AdminAgentInstanceFactory {
 
     private static final String CAPABILITY_VIBECODING = "vibecoding";
     private static final String CAPABILITY_DELIMITER = ",";
-    private static final String MCP_TYPE_STDIO = "stdio";
     private static final int STATUS_ENABLED = 1;
     private static final int DEFAULT_MAX_ITERS = 10;
     private static final int SANDBOX_EXECUTE_TIMEOUT_SECONDS = 60;
@@ -86,13 +84,14 @@ public class AdminAgentInstanceFactory {
     private final AesGcmCryptoUtil cryptoUtil;
     private final AgentStateStore stateStore;
     private final PermissionContextState permissionContext;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AdminMcpFactory mcpFactory;
 
     public AdminAgentInstanceFactory(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
                                       AiAgentSkillMapper agentSkillMapper, AiModelConfigMapper modelConfigMapper,
                                       AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
                                       AdminModelFactory modelFactory, AesGcmCryptoUtil cryptoUtil,
-                                      AgentStateStore stateStore, PermissionContextState permissionContext) {
+                                      AgentStateStore stateStore, PermissionContextState permissionContext,
+                                      AdminMcpFactory mcpFactory) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -103,6 +102,7 @@ public class AdminAgentInstanceFactory {
         this.cryptoUtil = cryptoUtil;
         this.stateStore = stateStore;
         this.permissionContext = permissionContext;
+        this.mcpFactory = mcpFactory;
     }
 
     /** 单次调用的运行时上下文：{@code userId=agentCode} 天然隔离不同智能体共享同一 StateStore 时的状态。 */
@@ -187,6 +187,15 @@ public class AdminAgentInstanceFactory {
         return modelFactory.buildModel(modelConfig.getProvider(), modelConfig.getBaseUrl(), apiKey, modelConfig.getModel());
     }
 
+    /**
+     * MCP 握手（{@code registerMcpClient} 内部先 {@code initialize()} 再 {@code listTools()}）的硬超时。
+     * 必须显式给 {@code .block(...)} 传超时——不传时 {@code Mono.block()} 会无限等待，一旦某个 MCP
+     * 服务握手卡住（比如服务端不支持可选的 SSE 长连接导致 SDK 内部状态卡死，见批次六联调排查），
+     * 整个 {@code /chat/stream} 请求线程会跟着永久挂起、前端界面看起来"没有响应"，且不会抛出任何
+     * 异常——下面的 try/catch 根本等不到超时异常被抛出。
+     */
+    private static final java.time.Duration MCP_REGISTER_TIMEOUT = java.time.Duration.ofSeconds(10);
+
     /** 读 {@code ai_agent_mcp} 关联行，逐个动态注册进 Toolkit（参考 McpToolkitConfigurer 的写法）。 */
     private Toolkit buildToolkit(Long agentId) {
         Toolkit toolkit = new Toolkit();
@@ -197,13 +206,13 @@ public class AdminAgentInstanceFactory {
         }
         for (AiMcp mcp : mcpMapper.selectBatchIds(mcpIds)) {
             try {
-                McpClientWrapper wrapper = buildMcpClient(mcp).block();
+                McpClientWrapper wrapper = buildMcpClient(mcp).block(MCP_REGISTER_TIMEOUT);
                 if (wrapper != null) {
-                    toolkit.registerMcpClient(wrapper).block();
+                    toolkit.registerMcpClient(wrapper).block(MCP_REGISTER_TIMEOUT);
                     log.info("[workspace] MCP registered: name={} type={}", mcp.getMcpName(), mcp.getMcpType());
                 }
             } catch (Exception e) {
-                // 单个 MCP 不可用不应阻断整个智能体的装配
+                // 单个 MCP 不可用（含握手超时）不应阻断整个智能体的装配，跳过它继续装配其余能力
                 log.error("[workspace] MCP registration failed, code={}, name={}", "MCP_REGISTER_FAIL", mcp.getMcpName(), e);
             }
         }
@@ -211,16 +220,9 @@ public class AdminAgentInstanceFactory {
     }
 
     private reactor.core.publisher.Mono<McpClientWrapper> buildMcpClient(AiMcp mcp) throws Exception {
-        JsonNode config = objectMapper.readTree(mcp.getConfig());
-        McpClientBuilder builder = McpClientBuilder.create(mcp.getMcpName());
-        if (MCP_TYPE_STDIO.equalsIgnoreCase(mcp.getMcpType())) {
-            String command = config.path("command").asText();
-            List<String> args = objectMapper.convertValue(config.path("args"), List.class);
-            builder.stdioTransport(command, (args == null ? List.<String>of() : args).toArray(new String[0]));
-        } else {
-            builder.sseTransport(config.path("url").asText());
-        }
-        return builder.timeout(java.time.Duration.ofSeconds(30)).buildAsync();
+        return mcpFactory.buildClientBuilder(mcp.getMcpName(), mcp.getMcpType(), mcp.getConfig())
+            .timeout(java.time.Duration.ofSeconds(30))
+            .buildAsync();
     }
 
     /** 读 {@code ai_agent_skill} 关联行，把 content（SKILL.md 正文）落盘后复用 FileSystemSkillRepository 加载。 */

@@ -20,3 +20,10 @@ export function updateSkill(id: number, data: SkillSaveRequest) {
 export function deleteSkill(id: number) {
   return request<void>({ url: `/aiconfig/skill/${id}`, method: 'delete' })
 }
+
+/** 解析上传的 .md/.zip 文件，返回 SKILL.md 正文；不落库，由调用方回填表单后仍走 create/update 保存。 */
+export function parseSkillUpload(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<string>({ url: '/aiconfig/skill/parse-upload', method: 'post', data: formData })
+}

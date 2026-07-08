@@ -29,6 +29,13 @@ const router = createRouter({
           component: () => import('@/views/Home.vue'),
         },
         {
+          // "智能体工作区"分组节点自身的 path（还没有任何启用中的智能体、或点了分组节点本身时命中），
+          // 展示空态引导去新建智能体，而不是落到通配路由变成 404。
+          path: 'workspace',
+          name: 'WorkspaceEmpty',
+          component: () => import('@/views/workspace/WorkspaceEmpty.vue'),
+        },
+        {
           // 动态智能体工作区节点：path 形如 /workspace/{agentCode}，运行时拼进菜单，不落库、不预注册
           path: 'workspace/:agentCode',
           name: 'Workspace',
@@ -61,8 +68,12 @@ router.beforeEach(async (to) => {
   const menuStore = useMenuStore()
   if (!menuStore.routesRegistered) {
     await menuStore.bootstrap()
-    // 动态路由刚注册完，重新触发一次导航解析，命中新加入的路由记录
-    return { ...to, replace: true }
+    // 动态路由刚注册完，重新触发一次导航解析，命中新加入的路由记录。
+    // 坑：不能 `{ ...to, replace: true }`——bootstrap() 之前 to 还没匹配到任何动态路由，
+    // 已经被解析成了 name: 'NotFound'；Vue Router 对返回的重定向目标只要带 name 字段就按
+    // 具名路由解析（优先级高于 path），会原样跳回 NotFound，前端表现就是刷新页面必现 404。
+    // 只传 path（用 fullPath 保留 query/hash），强制按路径重新匹配，才能命中刚注册的路由。
+    return { path: to.fullPath, replace: true }
   }
   return true
 })

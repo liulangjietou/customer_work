@@ -16,5 +16,7 @@ public class McpVO {
     private String config;
     private String description;
     private Integer status;
+    private Integer testStatus;
+    private LocalDateTime testTime;
     private LocalDateTime createTime;
 }

@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.aiconfig.mcp.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpSaveRequest;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.service.McpService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
@@ -17,6 +18,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.concurrent.CompletableFuture;
 
 /**
  * MCP 管理：CRUD + 分页/搜索/筛选/排序。
@@ -66,5 +69,13 @@ public class McpController {
     public Result<Void> delete(@PathVariable Long id) {
         mcpService.delete(id);
         return Result.success();
+    }
+
+    /** 不修改配置，仅探测可达性，复用 mcp:view 权限点即可，不额外新增权限点。 */
+    @SaCheckPermission("mcp:view")
+    @OperationLog(operation = "MCP连通性测试", target = "ai_mcp")
+    @PostMapping("/{id}/test-connectivity")
+    public CompletableFuture<Result<McpTestResult>> testConnectivity(@PathVariable Long id) {
+        return mcpService.testConnectivity(id).thenApply(Result::success);
     }
 }

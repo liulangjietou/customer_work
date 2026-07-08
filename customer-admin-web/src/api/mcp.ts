@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { McpSaveRequest, McpVO, PageQuery, PageResult } from '@/types/api'
+import type { McpSaveRequest, McpTestResult, McpVO, PageQuery, PageResult } from '@/types/api'
 
 export function pageMcps(query: PageQuery) {
   return request<PageResult<McpVO>>({ url: '/aiconfig/mcp', method: 'get', params: query })
@@ -19,4 +19,8 @@ export function updateMcp(id: number, data: McpSaveRequest) {
 
 export function deleteMcp(id: number) {
   return request<void>({ url: `/aiconfig/mcp/${id}`, method: 'delete' })
+}
+
+export function testMcpConnectivity(id: number) {
+  return request<McpTestResult>({ url: `/aiconfig/mcp/${id}/test-connectivity`, method: 'post' })
 }

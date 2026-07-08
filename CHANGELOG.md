@@ -4,7 +4,44 @@
 
 ## [Unreleased]
 
+### 客服后台运营管理系统（批次六：体验补强，10 项需求全部完成）
+
+- **MCP 支持 http 传输 + 连通性测试**：`ai_mcp.mcp_type` 新增 `http`；`AdminMcpFactory`（新组件）统一
+  构建 `McpClientBuilder`，`AdminAgentInstanceFactory` 收敛复用；`McpService#testConnectivity` 复用
+  模型连通性测试同一套异步线程池 + 硬超时模式，落库新增的 `test_status`/`test_time` 字段。
+- **Skill 支持上传 SKILL.md / zip**：`SkillService#parseUploadContent` 按扩展名分流，zip 用
+  `ZipInputStream` 解出 `SKILL.md` 正文；明确只是 `content` 字段的另一种录入方式，不支持多文件技能包。
+- **智能体图标库选择 + 新建 session + 工作区空状态**：`IconPicker.vue` 复用 Element Plus 全局图标集；
+  聊天/VibeCoding 面板新增"新建会话"按钮；`workspace` 路由新增静态空状态页替换原来的 404。
+- **对话历史持久化（重启不丢）**：`AgentStateStore` 从 `InMemoryAgentStateStore` 换成
+  `MysqlAgentStateStore`，新表 `ai_chat_session_state`。已用独立脚本直接验证 save/get/listSessionIds
+  全链路。
+- **聊天/VibeCoding 流式区分思考过程与正文**：`ChatService#chatStream` 返回 `Flux<ChatStreamChunk>`
+  （按 `Event.getType()` 打标），SSE 拆成 `reasoning`/`message` 两种 event；前端 `ThinkingBlock.vue`
+  可折叠展示思考过程，`MarkdownRenderer.vue`（`markdown-it` + `highlight.js`）渲染表格与代码块。
+- **历史对话列表**：新增 `GET /workspace/{agentCode}/chat/sessions` 与
+  `.../sessions/{sessionId}/messages` 只读端点，前端 `ChatHistorySidebar.vue` 侧边栏。
+- **视觉细节**：favicon 换成用户头像图；菜单节点无 `icon` 时用 `Folder`/`Document` 兜底；左上角新增
+  `customer_work` logo。
+- **历史对话列表 Redis 读缓存**（追加）：权威数据源仍是 `MysqlAgentStateStore`（写路径不变），新增
+  `ChatHistoryCache` 给两个只读历史接口加 30 分钟 TTL 缓存降低 MySQL 读压力；一轮对话结束后主动
+  `evict` 而不是被动等 TTL 过期，Redis 不可达时退化为直读 MySQL，不影响主流程。
+
 ### Fixed
+
+- **深链接直接刷新页面必现 404**：`router/index.ts` 的动态路由注册守卫里，等 `menuStore.bootstrap()`
+  注册完动态路由后用 `{ ...to, replace: true }` 重新触发导航——但 `to` 是路由注册前解析出来的，此时
+  已经带着 `name: 'NotFound'`；Vue Router 对重定向目标只要带 `name` 字段就按具名路由优先解析（无视
+  同时存在的 `path`），于是原样跳回 NotFound，表现就是任何非首页地址一刷新就 404。改成只传
+  `{ path: to.fullPath, replace: true }`，强制按路径重新匹配，命中刚注册的路由。
+- **MCP 连通性测试 config 只认平铺 JSON，贴 Claude/Cursor 标准格式（带 `mcpServers` 包装）会静默失败**：
+  `AdminMcpFactory` 新增 `unwrapMcpServers`，两种格式自动识别。
+- **MCP 连通性测试报 `"MCP client 'xxx' not initialized"`**：`McpClientBuilder.buildAsync()` 只构造
+  客户端对象不建立连接，`listTools()` 前必须先 `initialize()` 完成握手，之前漏了这一步；真实注册路径
+  （`Toolkit#registerMcpClient`）本身没问题。
+- **`MysqlAgentStateStore` 库名硬编码，联调环境换库名就报"表不存在"**：`AdminAgentRuntimeConfig` 早期
+  版本把库名字面量写死成 `"customer_admin"`，与 `spring.datasource.url` 实际指向的库脱节。改成从新增
+  的 `admin.mysql.database-name` 配置项（`ADMIN_MYSQL_DATABASE` 环境变量覆盖）读取，与数据源配置同源。
 
 - **模型连通性测试落库失败，前端只显示"系统繁忙"**：`ModelConfigService#testConnectivity` 的结果落库
   发生在独立线程池 `model-test-worker` 的 `CompletableFuture` 回调里，而不是发起请求的 Tomcat 线程；

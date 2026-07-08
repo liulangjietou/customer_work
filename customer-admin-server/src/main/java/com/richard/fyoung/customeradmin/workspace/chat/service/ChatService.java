@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import io.agentscope.core.ReActAgent;
@@ -26,6 +27,11 @@ import java.util.List;
  * （见 io.agentscope.core.agent.StreamOptions 用法），区别仅在于 Agent 实例来源：那边是启动期
  * 固定装配的单例，这里是按 agentCode 动态取的缓存实例，且底层可能是 ReActAgent 也可能是
  * HarnessAgent（{@link Agent} 接口统一了 {@code stream(...)} 签名，调用方无感知）。</p>
+ *
+ * <p>一轮流式对话正常结束（含内部异常被兜底成 {@link #FALLBACK_REPLY} 后正常结束的情形）后，主动调用
+ * {@link ChatHistoryCache#evict} 让该智能体的历史会话列表缓存与本次会话的消息缓存立即失效——写路径本身
+ * 不变（仍是 {@code MysqlAgentStateStore} 同步落库），只是让 {@link ChatHistoryService} 的 30 分钟读
+ * 缓存不必等自然过期就能看到最新一轮对话，VibeCoding 复用同一个 {@code chatStream} 天然一并覆盖。</p>
  * @author owlzhangfq@gmail.com
  */
 @Service
@@ -36,10 +42,13 @@ public class ChatService {
 
     private final AgentInstanceCache agentInstanceCache;
     private final AdminAgentInstanceFactory agentInstanceFactory;
+    private final ChatHistoryCache historyCache;
 
-    public ChatService(AgentInstanceCache agentInstanceCache, AdminAgentInstanceFactory agentInstanceFactory) {
+    public ChatService(AgentInstanceCache agentInstanceCache, AdminAgentInstanceFactory agentInstanceFactory,
+                        ChatHistoryCache historyCache) {
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
+        this.historyCache = historyCache;
     }
 
     /**
@@ -47,7 +56,7 @@ public class ChatService {
      * 同步抛出的 {@code BizException} 会在本方法返回 Flux 之前就传播给调用方（Controller 侧因此在
      * 任何 SSE 头下发之前就能拿到结构化错误响应，而不是半开的失败流）。
      */
-    public Flux<String> chatStream(String agentCode, String sessionId, String userText) {
+    public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
 
@@ -58,12 +67,14 @@ public class ChatService {
             .build();
 
         return streamEvents(agent, List.of(toUserMsg(userText)), options, ctx)
-            .map(event -> event.getMessage() == null ? "" : event.getMessage().getTextContent())
-            .filter(text -> text != null && !text.isEmpty())
+            .map(event -> new ChatStreamChunk(event.getType() == EventType.REASONING,
+                event.getMessage() == null ? "" : event.getMessage().getTextContent()))
+            .filter(chunk -> chunk.text() != null && !chunk.text().isEmpty())
             .onErrorResume(e -> {
                 log.error("[workspace] chat stream failed, code={}, agentCode={}", "WORKSPACE_CHAT_ERROR", agentCode, e);
-                return Flux.just(FALLBACK_REPLY);
-            });
+                return Flux.just(new ChatStreamChunk(false, FALLBACK_REPLY));
+            })
+            .doOnComplete(() -> historyCache.evict(agentCode, sessionId));
     }
 
     /**
