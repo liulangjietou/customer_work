@@ -667,8 +667,9 @@ Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按
 (与仓库其余模块的手写 JDBC Store SPI 模式并存、互不冲突,原因见模块内 Javadoc)。前端
 `customer-admin-web`(Vue3 + TS + Vite 独立 SPA,非 Maven 子模块)随后续批次接入。
 
-**当前进度(批次一/五:后端骨架已完成)**——RBAC 五表(用户/角色/权限/关联表/操作日志) + 登录改密 +
-用户/角色/权限/日志四个业务域完整 CRUD + 静态菜单聚合接口。AI 配置域 CRUD、智能体管理+动态菜单、
+**当前进度(批次一~二/五:后端骨架 + AI 配置域已完成)**——RBAC 五表(用户/角色/权限/关联表/操作日志) +
+登录改密 + 用户/角色/权限/日志四个业务域完整 CRUD + 静态菜单聚合接口，以及 AI 配置域三个 CRUD:
+模型配置(AES/GCM 加密存储 + 脱敏回显 + 默认模型互斥设置 + 连通性测试)、MCP、Skill。智能体管理+动态菜单、
 智能体运行时(chat 流式+VibeCoding)、前端 SPA 均为后续批次,尚未接入,如实标注不假装已完成。
 
 ```bash
@@ -682,13 +683,19 @@ java -jar customer-admin-server/target/customer-admin-server-1.0.0.jar --spring.
 | `POST /api/auth/login` | 登录（`admin/admin` 首次登录返回 `forceChangePassword=true`） |
 | `POST /api/auth/change-password` / `POST /api/auth/logout` | 改密 / 登出 |
 | `/api/system/{user,role,permission,log}` | 用户/角色权限/权限树/操作日志 CRUD（`@SaCheckPermission` 权限点校验） |
+| `/api/aiconfig/model` | 模型配置 CRUD（AppKey 加密存储/脱敏回显/默认模型互斥） |
+| `POST /api/aiconfig/model/{id}/test-connectivity` | 连通性测试（异步 `CompletableFuture` 返回，独立线程池执行，不占 Tomcat 请求线程，硬性超时兜底） |
+| `/api/aiconfig/mcp` / `/api/aiconfig/skill` | MCP / Skill 管理 CRUD |
 | `GET /api/menu/routes` | 按当前用户权限点过滤的静态菜单树 |
 | `/swagger-ui/index.html` | 接口文档 |
 
 生产建表由 DBA 参照 **[mysql/admin-schema.sql](mysql/admin-schema.sql)** 手工执行（与 `mysql/schema.sql`
 客服主业务库物理隔离，独立数据库 `customer_admin`），与仓库既有"生产不自动建表"约定一致。
 测试：`AesGcmCryptoUtilTest`（加解密往返/掩码）、`SensitiveDataMaskerTest`（参数脱敏）、
-`SeedAdminPasswordTest`（种子哈希回归，防止手改种子脚本导致默认超管登录不了）。
+`SeedAdminPasswordTest`（种子哈希回归，防止手改种子脚本导致默认超管登录不了）、
+`ModelConfigServiceTest`（AppKey 加密落库/脱敏回显/默认模型互斥事务）、
+`AdminModelFactoryTest`（连通性测试成功/结构非法/HTTP 错误/硬超时四种场景，用 JDK 内置
+`com.sun.net.httpserver.HttpServer` 模拟 OpenAI 兼容端点，不引入三方 mock 依赖）。
 
 ---
 

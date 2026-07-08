@@ -42,6 +42,37 @@
 - 文档：README 新增 §6.21 模块说明与启动方式；`mysql/admin-schema.sql` 新增（14 张表 DDL + 种子数据，
   DBA 预审用，与 `mysql/schema.sql` 物理隔离）。
 
+### 客服后台运营管理系统 customer-admin-server（批次二：AI 配置域三个 CRUD）
+
+在批次一 RBAC 骨架基础上接入模型/MCP/Skill 三个 AI 配置域管理能力。
+
+- **Skill / MCP 管理 CRUD**：与 `system.*` 四个业务域相同的分页/搜索/筛选/排序模式；MCP 新增
+  `mcpType`（仅 `stdio`/`sse`）与 `config`（须为合法 JSON）的一处防御式校验（`create`/`update` 复用）。
+- **模型配置 CRUD + AES 加密**：`ai_model_config.api_key` 用批次一已写好的 `AesGcmCryptoUtil` 加密落库，
+  新建必填 apiKey、编辑留空则不改（复用 `UserService` 改密的"留空不覆盖"手法）；列表/详情接口只回显
+  `apiKeyMasked`（解密后掩码末 4 位），真实密文/明文都不出现在响应体里。
+- **默认模型互斥设置**：`@Transactional` 内，设为默认时先 `LambdaUpdateWrapper` 清空其余行的
+  `is_default`，保证同一时刻至多一个默认模型（需求文档"可设置一个默认模型"）。
+- **连通性测试（`AdminModelFactory`）**：JDK 内置 `java.net.http.HttpClient` 直连
+  `{baseUrl}/chat/completions`（不引入三方 HTTP 客户端依赖），固定 prompt 探测，HTTP 2xx 且响应体含
+  `choices` 数组判定成功，超时（8s，落在需求文档 5~10s 区间）/HTTP 错误/结构非法均判定失败并记录原因。
+  超时时长做成构造参数（生产用无参构造走默认 8s，测试可注入短超时），避免单测真的等 8 秒。
+- **不阻塞 Tomcat 请求线程**：`ModelConfigController#testConnectivity` 返回
+  `CompletableFuture<Result<ModelTestResult>>`——Spring MVC 异步支持下，等待外部模型接口响应期间会释放
+  发起请求的 Tomcat 线程；`ModelConfigService` 内部把实际探测派发到独立的 8 线程守护线程池
+  （`model-test-worker`），与请求处理线程池物理隔离，`orTimeout` 做硬性截断兜底（对应实施计划 §五
+  "模型测试超时 5~10s 不阻塞"）。
+- 新增 `SkillService`/`McpService`/`ModelConfigService` 及对应 Controller，权限点 `skill:*`/`mcp:*`/
+  `model:*`（连通性测试复用 `model:view`，不新增权限点，因为它不修改配置）。
+- 测试：`ModelConfigServiceTest`（8，AppKey 加密落库非明文/编辑留空不覆盖/脱敏回显/默认模型互斥事务/
+  连通性测试结果落库/未知 id 拒绝；MyBatis-Plus 纯 Mockito 单测首次用到 `LambdaUpdateWrapper`，需手动
+  `TableInfoHelper.initTableInfo` 注册 lambda 缓存，否则报 "can not find lambda cache"——平时该缓存由
+  Spring 容器启动扫描 Mapper 时自动注册，纯单测没有容器）、`AdminModelFactoryTest`（4，成功/结构非法/
+  HTTP 错误/硬超时四种场景，用 JDK 内置 `com.sun.net.httpserver.HttpServer` 模拟 OpenAI 兼容端点，
+  与 `AdminModelFactory` 本身"零额外依赖"的设计取舍保持一致，不引入 WireMock）。全仓测试 360，
+  BUILD SUCCESS。
+- 文档：README §6.21 更新为"批次一~二"进度，补充 AI 配置域三个入口说明。
+
 ### 入站防注入围栏 + 用户反馈闭环（P8）
 
 安全防护与数据飞轮的第二条输入通道。
