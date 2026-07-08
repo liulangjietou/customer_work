@@ -1,0 +1,10 @@
+# 本地开发 profile：SPRING_PROFILES_ACTIVE=dev
+# 打开 Flyway 自动迁移，方便本地联调无需手工建表；生产禁止使用本 profile。
+spring:
+  flyway:
+    enabled: true
+    clean-disabled: true   # 禁止误跑 flyway:clean 清空开发库
+
+logging:
+  level:
+    com.richard.fyoung.customeradmin: DEBUG

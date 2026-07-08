@@ -4,6 +4,44 @@
 
 ## [Unreleased]
 
+### 客服后台运营管理系统 customer-admin-server（新模块，批次一/五：后端骨架）
+
+按《客服项目后台管理系统需求文档 v1.0》新增独立子模块，前后端分离，本批次交付后端 RBAC 骨架。
+
+- **技术选型**：需求文档锁定 MyBatis-Plus 3.5.7 + Sa-Token 1.39.0（新引入依赖，与仓库其余模块的
+  手写 JDBC Store SPI 模式并存互不冲突——14 张表带外键关系的 RBAC 系统更适合 ORM，不强行套用旧模式）。
+  `spring-security-crypto` 仅取 `BCryptPasswordEncoder`，不引入完整 Spring Security 自动装配（避免与
+  Sa-Token 鉴权流程冲突）。前端 `customer-admin-web` 独立 Vue3 SPA，后续批次接入。
+- **模块接入手法**：照抄 `customer-web` 已验证的 WebFlux/MVC 混合排除模式（`spring-boot-starter-web` +
+  `web-application-type: servlet` + `spring.autoconfigure.exclude: CustomerWorkAutoConfiguration`），
+  为批次四"动态智能体运行时工厂"复用 `customer-work-spring-boot-starter` 的 Agent 构建能力预留接口。
+- **RBAC 五表 + Flyway**：`sys_user`/`sys_role`/`sys_permission`（树形）/`sys_user_role`/`sys_role_permission`/
+  `sys_operation_log`（登录日志合并存储，需求文档 §5 本就只列一张表）。Flyway `V1__init_schema.sql`/
+  `V2__seed_data.sql` 仅本地/测试 profile 自动执行，生产 `flyway.enabled=false` 走 DBA 参照
+  `mysql/admin-schema.sql` 手工执行（与仓库既有"生产不自动建表"约定一致，两库物理隔离）。
+- **RBAC 落地**：`AdminStpInterfaceImpl`（`role_code=super_admin` 特判直接放行全部权限，不为超管冗余插入
+  `sys_role_permission` 记录）+ `@SaCheckPermission` 接口级权限点校验 + `SaInterceptor` 全局登录态兜底。
+- **登录闭环**：`admin/admin` 默认超管（BCrypt 哈希已本地校验 `matches("admin", hash)=true`），首次登录
+  按"当前密码是否仍等于种子哈希值"判定 `forceChangePassword`（不额外加表字段）；登录失败也记操作日志
+  （通用 `OperationLogAspect` 依赖已登录态解析操作人，覆盖不了失败场景，故登录走 `AuthService` 直接调用
+  `OperationLogMapper` 记录，logout/改密走已登录路径复用通用 AOP 切面）。
+- **AES 加密**：`AesGcmCryptoUtil`（JDK 内置 `javax.crypto`，IV 随机拼接密文自包含），仅
+  `ai_model_config.api_key` 一个敏感字段，不做成通用字段级注解框架（过度抽象不划算）。
+- **`system.user/role/permission/log` 四个业务域完整 CRUD**：统一 `PageQuery`/`PageResult`（服务端分页
+  默认 10 条 + 名称搜索 + 状态筛选 + 创建时间排序）；角色权限树剪枝算法（保留自身被授权或有后代被授权的
+  节点，标准"保留祖先路径"写法，避免前端因缺中间节点导致树渲染断裂）；超管角色不可编辑/删除。
+- **静态菜单聚合**：`GET /api/menu/routes` 按当前用户权限点过滤 `sys_permission`（type=1）组装树；
+  动态智能体节点与 `GET /api/menu/version` 版本号接口留到批次三（智能体管理落地后）接入。
+- **统一响应/异常/错误码**：`Result<T>{code,message,data,timestamp}`，错误码按认证/权限/参数/外部依赖
+  四段（1xxxx/2xxxx/3xxxx/4xxxx）分类，与 `customer-work-app` 现有的 `{status,error,message,requestId}`
+  响应体规范不同、不混用（两套系统独立演进）。
+- 新增 `AesGcmCryptoUtilTest`（6）、`SensitiveDataMaskerTest`（3）、`SeedAdminPasswordTest`（1，防止
+  手改种子脚本导致默认超管登录不了的回归测试）、`CustomerAdminServerApplicationTests`（MySQL 门控完整
+  上下文启动测试，已本地空跑验证 `assumeTrue` 在 Spring 上下文加载前正确拦截、不会在无 MySQL 环境报错）。
+  全仓测试 +10，BUILD SUCCESS。
+- 文档：README 新增 §6.21 模块说明与启动方式；`mysql/admin-schema.sql` 新增（14 张表 DDL + 种子数据，
+  DBA 预审用，与 `mysql/schema.sql` 物理隔离）。
+
 ### 入站防注入围栏 + 用户反馈闭环（P8）
 
 安全防护与数据飞轮的第二条输入通道。

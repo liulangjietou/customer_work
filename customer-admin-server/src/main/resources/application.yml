@@ -1,0 +1,62 @@
+server:
+  port: 8082   # 与 customer-work-app(8080)、customer-web(8081) 分开
+
+spring:
+  application:
+    name: customer-admin-server
+  main:
+    # 类路径同时存在 webflux(经 starter 传递) 与 web(MVC)；本模块是 Spring MVC，强制 servlet
+    web-application-type: servlet
+  autoconfigure:
+    # 关闭 starter 的 WebFlux 自动装配（WebFilter / 响应式 OpenApi 等），仅复用其 web 无关的 Agent 能力类
+    # （与 customer-web 同一手法：不依赖 starter 的自动装配 Bean，需要的能力在本模块的 Config 类里显式 new）
+    exclude:
+      - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${ADMIN_MYSQL_URL:jdbc:mysql://localhost:3306/customer_admin?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${ADMIN_MYSQL_USERNAME:root}
+    password: ${ADMIN_MYSQL_PASSWORD:root}
+    hikari:
+      pool-name: customer-admin-pool
+      maximum-pool-size: 30
+      minimum-idle: 5
+  flyway:
+    enabled: false   # 生产默认关闭，走 DBA 手工执行 mysql/admin-schema.sql；本地/测试环境见 application-dev.yml
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      id-type: auto
+
+# Sa-Token 认证配置
+sa-token:
+  token-name: Authorization      # 请求头 / 参数名
+  timeout: 7200                  # 登录态有效期（秒），2 小时
+  activity-timeout: -1           # 按最后活跃时间续期：-1 表示不限（依赖 timeout 硬过期）
+  is-concurrent: true            # 允许同一账号多端登录
+  is-share: true                 # 多端共用一个 token
+  token-style: uuid
+  is-log: false
+
+# AES 加密密钥：AES-256 需 32 字节明文密钥（不入库不硬编码，本地开发用固定测试值，生产由运维走 Secret 管理下发）
+admin:
+  aes-secret-key: ${ADMIN_AES_SECRET_KEY:0123456789abcdef0123456789abcdef}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    com.richard.fyoung.customeradmin: INFO

@@ -660,6 +660,36 @@ operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案�
 两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-web` 各一份）离线校验，
 不激活 profile 真实启动（prod 依赖真实 Redis/MySQL/DashScope 凭据，无这些外部依赖时无法真实连接）。
 
+### 6.21 客服后台运营管理系统 `customer-admin-server`（新模块，分批开发中）
+
+独立的 Spring MVC 后台管理系统:面向系统管理员/运营人员统一管理用户权限(RBAC)、AI 模型、MCP、
+Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按需求文档锁定:**MyBatis-Plus + Sa-Token**
+(与仓库其余模块的手写 JDBC Store SPI 模式并存、互不冲突,原因见模块内 Javadoc)。前端
+`customer-admin-web`(Vue3 + TS + Vite 独立 SPA,非 Maven 子模块)随后续批次接入。
+
+**当前进度(批次一/五:后端骨架已完成)**——RBAC 五表(用户/角色/权限/关联表/操作日志) + 登录改密 +
+用户/角色/权限/日志四个业务域完整 CRUD + 静态菜单聚合接口。AI 配置域 CRUD、智能体管理+动态菜单、
+智能体运行时(chat 流式+VibeCoding)、前端 SPA 均为后续批次,尚未接入,如实标注不假装已完成。
+
+```bash
+export ADMIN_MYSQL_PASSWORD=root ADMIN_AES_SECRET_KEY=<32字节密钥>
+java -jar customer-admin-server/target/customer-admin-server-1.0.0.jar --spring.profiles.active=dev
+# 端口 8082；dev profile 自动跑 Flyway 迁移建出 customer_admin 库全部表 + 种子数据（admin/admin）
+```
+
+| 入口 | 能力 |
+|---|---|
+| `POST /api/auth/login` | 登录（`admin/admin` 首次登录返回 `forceChangePassword=true`） |
+| `POST /api/auth/change-password` / `POST /api/auth/logout` | 改密 / 登出 |
+| `/api/system/{user,role,permission,log}` | 用户/角色权限/权限树/操作日志 CRUD（`@SaCheckPermission` 权限点校验） |
+| `GET /api/menu/routes` | 按当前用户权限点过滤的静态菜单树 |
+| `/swagger-ui/index.html` | 接口文档 |
+
+生产建表由 DBA 参照 **[mysql/admin-schema.sql](mysql/admin-schema.sql)** 手工执行（与 `mysql/schema.sql`
+客服主业务库物理隔离，独立数据库 `customer_admin`），与仓库既有"生产不自动建表"约定一致。
+测试：`AesGcmCryptoUtilTest`（加解密往返/掩码）、`SensitiveDataMaskerTest`（参数脱敏）、
+`SeedAdminPasswordTest`（种子哈希回归，防止手改种子脚本导致默认超管登录不了）。
+
 ---
 
 ## 七、配置项总表
@@ -755,7 +785,8 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │                                                #   + SupportController(复用 CustomerServiceService)
 │                                                #   契约测试 DownstreamIntegrationTest 证明"零扫描自动装配 + 覆盖默认"
 │
-├── mysql/schema.sql                            # MySQL 会话表建库脚本
+├── mysql/schema.sql                            # MySQL 会话表建库脚本（客服主业务库）
+├── mysql/admin-schema.sql                      # customer-admin-server 建库脚本（独立库，物理隔离）
 ├── Dockerfile / docker-compose.yml             # 多模块构建 + 一键起依赖
 └── .github/workflows/ci.yml                    # CI（Redis/MySQL/Nacos 服务容器）
 ```

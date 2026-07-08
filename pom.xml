@@ -23,6 +23,7 @@
         <module>customer-work-app</module>
         <module>customer-work-downstream-app</module>
         <module>customer-web</module>
+        <module>customer-admin-server</module>
     </modules>
 
     <properties>
@@ -33,6 +34,8 @@
         <agentscope.version>2.0.0-RC4</agentscope.version>
         <springdoc.version>2.3.0</springdoc.version>
         <nacos.version>3.0.2</nacos.version>
+        <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <sa-token.version>1.39.0</sa-token.version>
     </properties>
 
     <dependencyManagement>
