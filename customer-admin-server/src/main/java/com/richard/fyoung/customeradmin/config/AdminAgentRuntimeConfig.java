@@ -28,8 +28,15 @@ import javax.sql.DataSource;
  * 在代码里硬编码字面量），保证它始终跟 {@code spring.datasource.url} 指向同一个库——两者
  * 曾经分别硬编码导致库名不一致时启动直接报"表不存在"（见批次六本地联调排查记录）。</p>
  *
- * <p>权限上下文用 {@link PermissionMode#DEFAULT} 且不注册任何规则（trivial，不拦截任何工具调用）——
- * 调用方已经过 Sa-Token 鉴权 + {@code agent:*} 权限点校验，不需要在 Agent 内部再叠一层工具级授权。</p>
+ * <p><b>坑（批次六真实联调才暴露，之前测试全用假 API key 从没跑到工具执行这一步）</b>：
+ * {@link PermissionMode#DEFAULT} 官方语义是"所有操作都需要显式授权规则才能执行"——不是字面意义上
+ * "默认放行"。真实模型决定调用一个真实 MCP 工具时，该工具调用会被置为 ASKING（等待人工确认）状态，
+ * 而这套确认回传流程我们的 {@code ChatService} 根本没实现，于是框架直接抛
+ * {@code IllegalStateException}（"Agent is paused for human-in-the-loop confirmation..."），
+ * 前端表现为思考过程正常增量、决定调用工具后突然中断、只吐一句兜底话术。改用
+ * {@link PermissionMode#BYPASS}（"所有操作直接放行，不做规则评估"）——本场景的授权已经在
+ * Sa-Token 鉴权 + {@code agent:view} 权限点这一层做完了，不需要在 Agent 运行时内部再叠一层
+ * 工具级人工确认。</p>
  * @author owlzhangfq@gmail.com
  */
 @Configuration
@@ -47,6 +54,6 @@ public class AdminAgentRuntimeConfig {
 
     @Bean
     public PermissionContextState permissionContextState() {
-        return PermissionContextState.builder().mode(PermissionMode.DEFAULT).build();
+        return PermissionContextState.builder().mode(PermissionMode.BYPASS).build();
     }
 }

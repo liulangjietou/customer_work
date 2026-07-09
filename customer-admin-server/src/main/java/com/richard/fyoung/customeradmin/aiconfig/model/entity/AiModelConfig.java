@@ -9,7 +9,6 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -31,8 +30,6 @@ public class AiModelConfig {
     private String apiKey;
     private String baseUrl;
     private String model;
-    private BigDecimal temperature;
-    private Integer maxTokens;
     /** 0否 / 1是。 */
     private Integer isDefault;
     /** 0禁用 / 1启用。 */

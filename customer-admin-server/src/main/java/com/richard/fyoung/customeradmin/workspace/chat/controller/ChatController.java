@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatRequest;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
+import com.richard.fyoung.customeradmin.workspace.chat.service.ChatAttachmentService;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatHistoryService;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import jakarta.validation.Valid;
@@ -15,7 +16,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -37,10 +40,13 @@ public class ChatController {
 
     private final ChatService chatService;
     private final ChatHistoryService chatHistoryService;
+    private final ChatAttachmentService chatAttachmentService;
 
-    public ChatController(ChatService chatService, ChatHistoryService chatHistoryService) {
+    public ChatController(ChatService chatService, ChatHistoryService chatHistoryService,
+                           ChatAttachmentService chatAttachmentService) {
         this.chatService = chatService;
         this.chatHistoryService = chatHistoryService;
+        this.chatAttachmentService = chatAttachmentService;
     }
 
     @SaCheckPermission("workspace")
@@ -63,5 +69,15 @@ public class ChatController {
     @GetMapping("/sessions/{sessionId}/messages")
     public Result<List<ChatMessageVO>> messages(@PathVariable String agentCode, @PathVariable String sessionId) {
         return Result.success(chatHistoryService.getMessages(agentCode, sessionId));
+    }
+
+    /**
+     * 对话附件解析：.md/.txt 读成纯文本返回，不持久化——前端把解析结果插进输入框，让用户发送前
+     * 能看到/编辑，随普通消息文本一起发出去，供模型理解附件内容。
+     */
+    @SaCheckPermission("workspace")
+    @PostMapping("/attachment")
+    public Result<String> parseAttachment(@PathVariable String agentCode, @RequestParam("file") MultipartFile file) {
+        return Result.success(chatAttachmentService.parseAttachment(file));
     }
 }

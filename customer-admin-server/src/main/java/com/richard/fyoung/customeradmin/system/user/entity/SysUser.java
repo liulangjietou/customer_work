@@ -29,6 +29,8 @@ public class SysUser {
     private String password;
 
     private String nickname;
+    /** 账号来源：LOCAL 本地账号 / LDAP 域账号（OA 单点登录，见 AuthService#ssoLogin）。 */
+    private String loginType;
     /** 0禁用 / 1启用。 */
     private Integer status;
     private LocalDateTime lastLoginTime;

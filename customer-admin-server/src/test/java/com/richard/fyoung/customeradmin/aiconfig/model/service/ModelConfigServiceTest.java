@@ -70,7 +70,7 @@ class ModelConfigServiceTest {
     void create_shouldEncryptApiKey_notStorePlainText() {
         ModelSaveRequest request = new ModelSaveRequest(
             "gpt-4o", "openai", "sk-plain-secret-1234", "https://api.openai.com/v1", "gpt-4o-mini",
-            null, null, false, 1);
+            false, 1);
 
         ArgumentCaptor<AiModelConfig> captor = ArgumentCaptor.forClass(AiModelConfig.class);
         service.create(request);
@@ -85,7 +85,7 @@ class ModelConfigServiceTest {
     void create_shouldRejectMissingApiKey() {
         ModelSaveRequest request = new ModelSaveRequest(
             "gpt-4o", "openai", null, "https://api.openai.com/v1", "gpt-4o-mini",
-            null, null, false, 1);
+            false, 1);
 
         assertThrows(RuntimeException.class, () -> service.create(request));
     }
@@ -94,7 +94,7 @@ class ModelConfigServiceTest {
     void create_shouldClearOtherDefaults_whenSetAsDefault() {
         ModelSaveRequest request = new ModelSaveRequest(
             "gpt-4o", "openai", "sk-secret", "https://api.openai.com/v1", "gpt-4o-mini",
-            null, null, true, 1);
+            true, 1);
 
         service.create(request);
 
@@ -105,7 +105,7 @@ class ModelConfigServiceTest {
     void create_shouldNotTouchOtherDefaults_whenNotDefault() {
         ModelSaveRequest request = new ModelSaveRequest(
             "gpt-4o", "openai", "sk-secret", "https://api.openai.com/v1", "gpt-4o-mini",
-            null, null, false, 1);
+            false, 1);
 
         service.create(request);
 
@@ -123,7 +123,7 @@ class ModelConfigServiceTest {
 
         ModelSaveRequest request = new ModelSaveRequest(
             "gpt-4o", "openai", "", "https://api.openai.com/v1", "gpt-4o-mini",
-            null, null, false, 1);
+            false, 1);
 
         service.update(1L, request);
 

@@ -1,8 +1,13 @@
 import { request } from './request'
-import type { ChangePasswordRequest, LoginRequest, LoginResponse } from '@/types/api'
+import type { ChangePasswordRequest, LoginRequest, LoginResponse, SsoLoginRequest } from '@/types/api'
 
 export function login(data: LoginRequest) {
   return request<LoginResponse>({ url: '/auth/login', method: 'post', data })
+}
+
+/** OA 域账号（LDAP/AD）单点登录。 */
+export function ssoLogin(data: SsoLoginRequest) {
+  return request<LoginResponse>({ url: '/auth/sso-login', method: 'post', data })
 }
 
 export function logout() {

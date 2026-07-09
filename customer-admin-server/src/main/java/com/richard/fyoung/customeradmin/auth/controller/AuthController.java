@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.auth.dto.ChangePasswordRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginResponse;
+import com.richard.fyoung.customeradmin.auth.dto.SsoLoginRequest;
 import com.richard.fyoung.customeradmin.auth.service.AuthService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
@@ -33,6 +34,12 @@ public class AuthController {
     @PostMapping("/login")
     public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         return Result.success(authService.login(request));
+    }
+
+    /** OA 域账号（LDAP/AD）单点登录，与上面的账号密码登录入口共存，前端登录页 Tab 切换。 */
+    @PostMapping("/sso-login")
+    public Result<LoginResponse> ssoLogin(@Valid @RequestBody SsoLoginRequest request) {
+        return Result.success(authService.ssoLogin(request));
     }
 
     @OperationLog(operation = "登出")

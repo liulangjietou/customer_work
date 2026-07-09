@@ -16,7 +16,7 @@ const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 const form = reactive<ModelSaveRequest>({
   modelName: '', provider: 'openai', apiKey: '', baseUrl: '', model: '',
-  temperature: 0.7, maxTokens: 2000, isDefault: false, status: 1,
+  isDefault: false, status: 1,
 })
 
 const testStatusMap: Record<number, { label: string; type: 'info' | 'success' | 'danger' }> = {
@@ -44,7 +44,7 @@ function handleSearch() {
 function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
-  Object.assign(form, { modelName: '', provider: 'openai', apiKey: '', baseUrl: '', model: '', temperature: 0.7, maxTokens: 2000, isDefault: false, status: 1 })
+  Object.assign(form, { modelName: '', provider: 'openai', apiKey: '', baseUrl: '', model: '', isDefault: false, status: 1 })
   dialogVisible.value = true
 }
 
@@ -53,7 +53,7 @@ function openEdit(row: ModelVO) {
   editingId.value = row.id
   Object.assign(form, {
     modelName: row.modelName, provider: row.provider, apiKey: '', baseUrl: row.baseUrl, model: row.model,
-    temperature: row.temperature, maxTokens: row.maxTokens, isDefault: row.isDefault, status: row.status,
+    isDefault: row.isDefault, status: row.status,
   })
   dialogVisible.value = true
 }
@@ -171,12 +171,6 @@ onMounted(loadList)
         </el-form-item>
         <el-form-item label="AppKey">
           <el-input v-model="form.apiKey!" type="password" show-password :placeholder="dialogMode === 'edit' ? '留空则不修改' : '必填'" />
-        </el-form-item>
-        <el-form-item label="temperature">
-          <el-input-number v-model="form.temperature!" :min="0" :max="2" :step="0.1" />
-        </el-form-item>
-        <el-form-item label="maxTokens">
-          <el-input-number v-model="form.maxTokens!" :min="1" :max="32000" />
         </el-form-item>
         <el-form-item label="设为默认">
           <el-switch v-model="form.isDefault" />

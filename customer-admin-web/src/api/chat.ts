@@ -13,3 +13,10 @@ export function listChatSessions(agentCode: string) {
 export function getChatSessionMessages(agentCode: string, sessionId: string) {
   return httpRequest<ChatMessageVO[]>({ url: `/workspace/${agentCode}/chat/sessions/${sessionId}/messages`, method: 'get' })
 }
+
+/** 解析上传的 .md/.txt 附件为纯文本；不落库，由调用方插进输入框随消息一起发送。 */
+export function parseChatAttachment(agentCode: string, file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return httpRequest<string>({ url: `/workspace/${agentCode}/chat/attachment`, method: 'post', data: formData })
+}

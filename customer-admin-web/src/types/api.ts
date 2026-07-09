@@ -27,6 +27,15 @@ export interface PageQuery {
 export interface LoginRequest {
   username: string
   password: string
+  /** 记住我：勾选后登录态有效期延长（见后端 admin.remember-me-timeout-seconds），默认 7 天免登录。 */
+  rememberMe?: boolean
+}
+
+// OA 域账号（LDAP/AD）单点登录请求，字段与本地登录保持一致。
+export interface SsoLoginRequest {
+  username: string
+  password: string
+  rememberMe?: boolean
 }
 
 export interface LoginResponse {
@@ -116,8 +125,6 @@ export interface ModelVO {
   apiKeyMasked: string
   baseUrl: string
   model: string
-  temperature: number | null
-  maxTokens: number | null
   isDefault: boolean
   status: number
   testStatus: number
@@ -131,8 +138,6 @@ export interface ModelSaveRequest {
   apiKey?: string | null
   baseUrl: string
   model: string
-  temperature?: number | null
-  maxTokens?: number | null
   isDefault?: boolean | null
   status?: number | null
 }

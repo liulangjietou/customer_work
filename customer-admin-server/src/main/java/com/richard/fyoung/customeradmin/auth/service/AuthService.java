@@ -1,25 +1,35 @@
 package com.richard.fyoung.customeradmin.auth.service;
 
+import cn.dev33.satoken.stp.SaLoginModel;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.richard.fyoung.customeradmin.auth.config.AdminLdapProperties;
 import com.richard.fyoung.customeradmin.auth.dto.ChangePasswordRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginResponse;
+import com.richard.fyoung.customeradmin.auth.dto.SsoLoginRequest;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.system.log.entity.SysOperationLog;
 import com.richard.fyoung.customeradmin.system.log.mapper.OperationLogMapper;
+import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
+import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
+import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
+import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 登录/登出/改密。
@@ -42,12 +52,26 @@ public class AuthService {
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final OperationLogMapper operationLogMapper;
+    private final LdapAuthService ldapAuthService;
+    private final AdminLdapProperties ldapProperties;
+    private final SysRoleMapper roleMapper;
+    private final SysUserRoleMapper userRoleMapper;
+
+    /** “记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置。 */
+    @Value("${admin.remember-me-timeout-seconds:604800}")
+    private long rememberMeTimeoutSeconds;
 
     public AuthService(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
-                       OperationLogMapper operationLogMapper) {
+                       OperationLogMapper operationLogMapper, LdapAuthService ldapAuthService,
+                       AdminLdapProperties ldapProperties, SysRoleMapper roleMapper,
+                       SysUserRoleMapper userRoleMapper) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.operationLogMapper = operationLogMapper;
+        this.ldapAuthService = ldapAuthService;
+        this.ldapProperties = ldapProperties;
+        this.roleMapper = roleMapper;
+        this.userRoleMapper = userRoleMapper;
     }
 
     public LoginResponse login(LoginRequest request) {
@@ -59,14 +83,14 @@ public class AuthService {
             && passwordEncoder.matches(request.password(), user.getPassword());
 
         recordLoginLog(request.username(), user == null ? null : user.getId(), success,
-            success ? null : "用户名或密码错误，或账号已禁用");
+            success ? null : "用户名或密码错误，或账号已禁用",
+            success ? "登录" : "登录失败", "AuthController#login");
 
         if (!success) {
             throw new BizException(ResultCode.LOGIN_FAILED);
         }
 
-        StpUtil.login(user.getId());
-        StpUtil.getTokenSession().set("username", user.getUsername());
+        doLogin(user, request.rememberMe());
 
         user.setLastLoginTime(LocalDateTime.now());
         user.setLastLoginIp(resolveClientIp());
@@ -76,8 +100,62 @@ public class AuthService {
         return new LoginResponse(StpUtil.getTokenValue(), user.getNickname(), forceChangePassword);
     }
 
+    /**
+     * OA 域账号（LDAP/AD）单点登录。
+     *
+     * <p>密码本身交由企业 AD 域控校验（{@link LdapAuthService}），本方法不存不比对密码；
+     * 首次登录自动在 {@code sys_user} 创建本地影子账号（{@code login_type=LDAP}）并按配置默认角色，
+     * 后继开始复用同一行、不重复创建。</p>
+     */
+    public LoginResponse ssoLogin(SsoLoginRequest request) {
+        if (!ldapProperties.isEnabled()) {
+            throw new BizException(ResultCode.SSO_NOT_ENABLED);
+        }
+        String username = normalizeLdapUsername(request.username());
+
+        LdapBindResult bindResult = ldapAuthService.bind(username, request.password());
+        if (bindResult == LdapBindResult.SERVICE_UNAVAILABLE) {
+            recordLoginLog(username, null, false, "OA域服务不可用",
+                "OA登录失败", "AuthController#ssoLogin");
+            throw new BizException(ResultCode.SSO_SERVICE_UNAVAILABLE);
+        }
+        if (bindResult == LdapBindResult.INVALID_CREDENTIALS) {
+            recordLoginLog(username, null, false, "OA账号或密码错误",
+                "OA登录失败", "AuthController#ssoLogin");
+            throw new BizException(ResultCode.SSO_LOGIN_FAILED);
+        }
+
+        SysUser user = findOrCreateLdapUser(username);
+        if (user.getStatus() == null || user.getStatus() != 1) {
+            recordLoginLog(username, user.getId(), false, "账号已禁用",
+                "OA登录失败", "AuthController#ssoLogin");
+            throw new BizException(ResultCode.SSO_LOGIN_FAILED, "账号已被禁用，请联系管理员");
+        }
+
+        recordLoginLog(username, user.getId(), true, null, "OA登录", "AuthController#ssoLogin");
+
+        doLogin(user, request.rememberMe());
+
+        user.setLastLoginTime(LocalDateTime.now());
+        user.setLastLoginIp(resolveClientIp());
+        userMapper.updateById(user);
+
+        // LDAP 账号密码由企业域控统一管理，不走本地初始密码强制改密逻辑
+        return new LoginResponse(StpUtil.getTokenValue(), user.getNickname(), false);
+    }
+
     public void logout() {
         StpUtil.logout();
+    }
+
+    /** 勾选“记住我”时用 {@code rememberMeTimeoutSeconds} 覆盖登录态有效期，否则沿用 sa-token.timeout 全局配置。 */
+    private void doLogin(SysUser user, Boolean rememberMe) {
+        if (Boolean.TRUE.equals(rememberMe)) {
+            StpUtil.login(user.getId(), SaLoginModel.create().setTimeout(rememberMeTimeoutSeconds));
+        } else {
+            StpUtil.login(user.getId());
+        }
+        StpUtil.getTokenSession().set("username", user.getUsername());
     }
 
     public void changePassword(ChangePasswordRequest request) {
@@ -94,13 +172,14 @@ public class AuthService {
         log.info("password changed, userId={}", userId);
     }
 
-    private void recordLoginLog(String username, Long userId, boolean success, String errorMsg) {
+    private void recordLoginLog(String username, Long userId, boolean success, String errorMsg,
+                                 String operation, String method) {
         try {
             SysOperationLog entity = new SysOperationLog();
             entity.setUserId(userId);
             entity.setUsername(username);
-            entity.setOperation(success ? "登录" : "登录失败");
-            entity.setMethod("AuthController#login");
+            entity.setOperation(operation);
+            entity.setMethod(method);
             entity.setTarget("sys_user");
             entity.setResult(success ? 1 : 0);
             entity.setErrorMsg(errorMsg);
@@ -109,6 +188,47 @@ public class AuthService {
             operationLogMapper.insert(entity);
         } catch (Exception e) {
             log.error("record login log failed, code={}", "LOGIN-LOG-RECORD-FAIL", e);
+        }
+    }
+
+    /** 用户可直接输入 zhangfuqiang3 或 zhangfuqiang3@xxx，统一取 @ 前半部分再拼接配置的域名后缀发起 Bind。 */
+    private String normalizeLdapUsername(String rawUsername) {
+        String trimmed = rawUsername.trim();
+        int at = trimmed.indexOf('@');
+        return at > 0 ? trimmed.substring(0, at) : trimmed;
+    }
+
+    private SysUser findOrCreateLdapUser(String username) {
+        SysUser user = userMapper.selectOne(
+            new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username));
+        if (user != null) {
+            return user;
+        }
+
+        SysUser created = new SysUser();
+        created.setUsername(username);
+        created.setPassword(null);
+        created.setNickname(username);
+        created.setLoginType("LDAP");
+        created.setStatus(1);
+        userMapper.insert(created);
+        assignDefaultRoles(created.getId());
+        log.info("auto-created local account for LDAP sso login, username={}, userId={}", username, created.getId());
+        return created;
+    }
+
+    private void assignDefaultRoles(Long userId) {
+        List<String> roleCodes = ldapProperties.getDefaultRoleCodes();
+        if (CollectionUtils.isEmpty(roleCodes)) {
+            return;
+        }
+        List<SysRole> roles = roleMapper.selectList(
+            new LambdaQueryWrapper<SysRole>().in(SysRole::getRoleCode, roleCodes));
+        for (SysRole role : roles) {
+            SysUserRole ur = new SysUserRole();
+            ur.setUserId(userId);
+            ur.setRoleId(role.getId());
+            userRoleMapper.insert(ur);
         }
     }
 

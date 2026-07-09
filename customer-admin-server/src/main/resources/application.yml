@@ -55,6 +55,8 @@ sa-token:
 # AES 加密密钥：AES-256 需 32 字节明文密钥（不入库不硬编码，本地开发用固定测试值，生产由运维走 Secret 管理下发）
 admin:
   aes-secret-key: ${ADMIN_AES_SECRET_KEY:0123456789abcdef0123456789abcdef}
+  # 登录“记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置
+  remember-me-timeout-seconds: ${ADMIN_REMEMBER_ME_TIMEOUT_SECONDS:604800}
   mysql:
     # MysqlAgentStateStore 4 参构造函数要求显式库名（其 2 参构造函数会硬编码成 "agentscope"，见
     # AdminAgentRuntimeConfig 的坑注释）；必须与上面 spring.datasource.url 里的库名保持一致，
@@ -67,6 +69,15 @@ admin:
     host: ${ADMIN_REDIS_HOST:localhost}
     port: ${ADMIN_REDIS_PORT:6379}
     password: ${ADMIN_REDIS_PASSWORD:}
+  ldap:
+    # OA 域账号（LDAP/AD）单点登录：与用户名密码登录共存，前端登录页 Tab 切换，
+    # 后端 POST /api/auth/sso-login（见 AuthService#ssoLogin / LdapAuthService）。
+    # 域控地址/UPN 后缀因环境而异，生产由运维通过环境变量注入，不硬编码。
+    enabled: ${ADMIN_LDAP_ENABLED:false}
+    url: ${ADMIN_LDAP_URL:ldap://ad.gomefinance.com.cn:389}
+    domain-suffix: ${ADMIN_LDAP_DOMAIN_SUFFIX:@gomeholdings.grp}
+    connect-timeout-millis: ${ADMIN_LDAP_TIMEOUT_MILLIS:5000}
+    default-role-codes: ${ADMIN_LDAP_DEFAULT_ROLE_CODES:super_admin}
 
 springdoc:
   api-docs:

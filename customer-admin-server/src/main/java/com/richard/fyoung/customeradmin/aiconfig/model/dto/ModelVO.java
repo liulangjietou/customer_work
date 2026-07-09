@@ -2,7 +2,6 @@ package com.richard.fyoung.customeradmin.aiconfig.model.dto;
 
 import lombok.Data;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -17,8 +16,6 @@ public class ModelVO {
     private String apiKeyMasked;
     private String baseUrl;
     private String model;
-    private BigDecimal temperature;
-    private Integer maxTokens;
     private Boolean isDefault;
     private Integer status;
     private Integer testStatus;

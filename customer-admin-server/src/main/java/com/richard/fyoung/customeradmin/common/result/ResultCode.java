@@ -15,6 +15,9 @@ public enum ResultCode {
     UNAUTHORIZED(10001, "未登录或登录已失效"),
     LOGIN_FAILED(10002, "用户名或密码错误"),
     TOKEN_EXPIRED(10003, "登录状态已过期，请重新登录"),
+    SSO_LOGIN_FAILED(10004, "OA账号或密码错误"),
+    SSO_SERVICE_UNAVAILABLE(10005, "OA域服务暂不可用，请稍后重试或联系管理员"),
+    SSO_NOT_ENABLED(10006, "OA单点登录未开通"),
 
     // 2xxxx 权限类
     FORBIDDEN(20001, "无权限执行该操作"),

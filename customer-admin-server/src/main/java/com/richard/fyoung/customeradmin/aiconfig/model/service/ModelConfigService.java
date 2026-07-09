@@ -177,8 +177,6 @@ public class ModelConfigService {
         model.setProvider(StringUtils.hasText(request.provider()) ? request.provider() : "openai");
         model.setBaseUrl(request.baseUrl());
         model.setModel(request.model());
-        model.setTemperature(request.temperature());
-        model.setMaxTokens(request.maxTokens());
         model.setIsDefault(Boolean.TRUE.equals(request.isDefault()) ? 1 : 0);
         model.setStatus(request.status() == null ? 1 : request.status());
     }
@@ -191,8 +189,6 @@ public class ModelConfigService {
         vo.setApiKeyMasked(AesGcmCryptoUtil.mask(cryptoUtil.decrypt(model.getApiKey())));
         vo.setBaseUrl(model.getBaseUrl());
         vo.setModel(model.getModel());
-        vo.setTemperature(model.getTemperature());
-        vo.setMaxTokens(model.getMaxTokens());
         vo.setIsDefault(model.getIsDefault() != null && model.getIsDefault() == 1);
         vo.setStatus(model.getStatus());
         vo.setTestStatus(model.getTestStatus());
