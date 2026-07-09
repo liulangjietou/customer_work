@@ -101,7 +101,7 @@ async function handleSubmit() {
         <el-form-item prop="username">
           <el-input
             v-model="form.username"
-            :placeholder="loginMode === 'local' ? '用户名' : 'OA 账号（如 zhangfuqiang3）'"
+            :placeholder="loginMode === 'local' ? '用户名' : 'OA 账号（如 RichardFyoung）'"
             size="large"
             autocomplete="username"
             :prefix-icon="'User'"

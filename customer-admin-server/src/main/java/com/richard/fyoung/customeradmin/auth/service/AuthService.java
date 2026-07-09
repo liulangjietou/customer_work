@@ -191,7 +191,7 @@ public class AuthService {
         }
     }
 
-    /** 用户可直接输入 zhangfuqiang3 或 zhangfuqiang3@xxx，统一取 @ 前半部分再拼接配置的域名后缀发起 Bind。 */
+    /** 用户可直接输入 RichardFyoung 或 RichardFyoung@xxx，统一取 @ 前半部分再拼接配置的域名后缀发起 Bind。 */
     private String normalizeLdapUsername(String rawUsername) {
         String trimmed = rawUsername.trim();
         int at = trimmed.indexOf('@');

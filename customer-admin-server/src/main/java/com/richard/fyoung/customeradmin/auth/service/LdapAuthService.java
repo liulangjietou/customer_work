@@ -34,7 +34,7 @@ public class LdapAuthService {
     }
 
     /**
-     * @param username 不含域名后缀的登录名（如 zhangfuqiang3）；若用户输入时已带 {@code @xxx}，
+     * @param username 不含域名后缀的登录名（如 RichardFyoung）；若用户输入时已带 {@code @xxx}，
      *                  由调用方（AuthService）先行归一化再传入。
      */
     public LdapBindResult bind(String username, String password) {
