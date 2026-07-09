@@ -236,6 +236,27 @@ export interface MenuNode {
   children: MenuNode[]
 }
 
+// ---------- workspace.vibecoding ----------
+export interface WorkspaceFileNode {
+  name: string
+  relativePath: string
+  directory: boolean
+  children: WorkspaceFileNode[]
+}
+
+export interface WorkspaceFileContent {
+  relativePath: string
+  language: string
+  content: string
+  truncated: boolean
+}
+
+export interface SaveFileContentRequest {
+  sessionId: string
+  relativePath: string
+  content: string
+}
+
 // ---------- workspace.chat ----------
 export interface ChatRequest {
   sessionId: string

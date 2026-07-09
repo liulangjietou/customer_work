@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref } from 'vue'
 import { ElMessage, type UploadRequestOptions } from 'element-plus'
-import { listVibeCodingArtifacts, streamVibeCoding } from '@/api/vibecoding'
+import { listVibeCodingArtifacts, listWorkspaceFiles, readWorkspaceFileContent, saveWorkspaceFileContent, streamVibeCoding } from '@/api/vibecoding'
 import { getChatSessionMessages, parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import { generateUuid } from '@/utils/uuid'
+import type { WorkspaceFileContent, WorkspaceFileNode } from '@/types/api'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/github.css'
 
 const props = defineProps<{ agentCode: string }>()
 
@@ -35,6 +38,21 @@ const artifactsLoaded = ref(false)
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
 let abortStream: (() => void) | null = null
 
+// 目录树相关
+const fileNodes = ref<WorkspaceFileNode[]>([])
+const filesLoading = ref(false)
+const filesLoaded = ref(false)
+
+// 文件预览抽屉
+const previewVisible = ref(false)
+const previewLoading = ref(false)
+const previewFile = ref<WorkspaceFileContent | null>(null)
+const previewCodeRef = ref<HTMLElement>()
+// 编辑模式
+const editMode = ref(false)
+const editContent = ref('')
+const saving = ref(false)
+
 function newSession() {
   abortStream?.()
   streaming.value = false
@@ -44,6 +62,8 @@ function newSession() {
   attachments.value = []
   artifacts.value = []
   artifactsLoaded.value = false
+  fileNodes.value = []
+  filesLoaded.value = false
 }
 
 async function handleAttachmentUpload(options: UploadRequestOptions) {
@@ -63,11 +83,8 @@ function removeAttachment(index: number) {
   attachments.value.splice(index, 1)
 }
 
-/** 把附件内容拼进消息正文——用清晰的分隔符包起来，让模型分得清"附件材料"和"用户实际问题"。 */
 function buildMessageWithAttachments(text: string): string {
-  if (attachments.value.length === 0) {
-    return text
-  }
+  if (attachments.value.length === 0) return text
   const attachmentText = attachments.value
     .map((a) => `【附件：${a.name}】\n---\n${a.content}\n---`)
     .join('\n\n')
@@ -75,9 +92,7 @@ function buildMessageWithAttachments(text: string): string {
 }
 
 async function openSession(targetSessionId: string) {
-  if (streaming.value) {
-    return
-  }
+  if (streaming.value) return
   abortStream?.()
   historyLoading.value = true
   try {
@@ -87,6 +102,8 @@ async function openSession(targetSessionId: string) {
     input.value = ''
     artifacts.value = []
     artifactsLoaded.value = false
+    fileNodes.value = []
+    filesLoaded.value = false
     scrollToBottom()
   } catch (error) {
     ElMessage.error('历史会话加载失败：' + (error instanceof Error ? error.message : String(error)))
@@ -103,22 +120,15 @@ function scrollToBottom() {
 
 function send() {
   const text = input.value.trim()
-  if (!text || streaming.value) {
-    return
-  }
+  if (!text || streaming.value) return
   const messageToSend = buildMessageWithAttachments(text)
   const attachedNames = attachments.value.map((a) => a.name)
-  // 用户气泡只展示原始输入 + 附件文件名提示，不把拼进正文的附件全文也显示出来（那部分只是发给模型看的）。
   messages.value.push({
     role: 'user',
     text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
     reasoning: '',
   })
   messages.value.push({ role: 'assistant', text: '', reasoning: '' })
-  // 坑：不能拿 push 前创建的原始对象引用去改——Vue 的响应式数组对存进去的对象是"读取时才转成响应式
-  // 代理"，闭包里这个原始对象跟模板 v-for 里读到的 msg 不是同一个代理，直接改原始对象的属性绕过了
-  // 代理的 setter，Vue 感知不到，界面不会增量刷新（只有等 streaming 这类真正的响应式变量变化触发整体
-  // 重新渲染时才会一次性显示全部内容）。push 完再从数组里取出来，这时候拿到的才是响应式代理本身。
   const assistantMessage = messages.value[messages.value.length - 1]
   input.value = ''
   attachments.value = []
@@ -129,6 +139,8 @@ function send() {
     onEvent: (event) => {
       if (event.event === 'done') {
         streaming.value = false
+        // 对话结束后自动刷新文件目录树
+        loadFiles()
         return
       }
       if (event.event === 'reasoning') {
@@ -159,6 +171,86 @@ async function loadArtifacts() {
   }
 }
 
+/** 加载（刷新）会话 workspace 目录树。 */
+async function loadFiles() {
+  filesLoading.value = true
+  try {
+    fileNodes.value = await listWorkspaceFiles(props.agentCode, sessionId.value)
+    filesLoaded.value = true
+  } catch (error) {
+    ElMessage.error('目录加载失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    filesLoading.value = false
+  }
+}
+
+/** 点击文件节点，打开预览抽屉并加载内容。 */
+async function openFilePreview(node: WorkspaceFileNode) {
+  if (node.directory) return
+  previewVisible.value = true
+  previewLoading.value = true
+  previewFile.value = null
+  editMode.value = false
+  editContent.value = ''
+  try {
+    previewFile.value = await readWorkspaceFileContent(props.agentCode, sessionId.value, node.relativePath)
+    // 等 DOM 更新后触发代码高亮
+    await nextTick()
+    highlightPreview()
+  } catch (error) {
+    ElMessage.error('文件读取失败：' + (error instanceof Error ? error.message : String(error)))
+    previewVisible.value = false
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+/** 进入编辑模式。 */
+function enterEditMode() {
+  if (!previewFile.value || previewFile.value.truncated) return
+  editContent.value = previewFile.value.content
+  editMode.value = true
+}
+
+/** 取消编辑，还原到预览模式。 */
+async function cancelEdit() {
+  editMode.value = false
+  editContent.value = ''
+  await nextTick()
+  highlightPreview()
+}
+
+/** 保存编辑内容到服务端文件。 */
+async function saveEdit() {
+  if (!previewFile.value) return
+  saving.value = true
+  try {
+    await saveWorkspaceFileContent(props.agentCode, {
+      sessionId: sessionId.value,
+      relativePath: previewFile.value.relativePath,
+      content: editContent.value,
+    })
+    // 更新本地缓存，切回预览模式并重新高亮
+    previewFile.value = { ...previewFile.value, content: editContent.value }
+    editMode.value = false
+    ElMessage.success('保存成功')
+    await nextTick()
+    highlightPreview()
+  } catch (error) {
+    ElMessage.error('保存失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    saving.value = false
+  }
+}
+
+function highlightPreview() {
+  if (previewCodeRef.value && previewFile.value && !previewFile.value.truncated) {
+    previewCodeRef.value.removeAttribute('data-highlighted')
+    previewCodeRef.value.className = `language-${previewFile.value.language}`
+    hljs.highlightElement(previewCodeRef.value)
+  }
+}
+
 onUnmounted(() => {
   abortStream?.()
 })
@@ -166,6 +258,7 @@ onUnmounted(() => {
 
 <template>
   <div class="vibecoding-panel">
+    <!-- 左列：对话区 -->
     <div class="chat-column">
       <div class="panel-header">
         <el-button size="small" @click="newSession">
@@ -194,11 +287,7 @@ onUnmounted(() => {
         </el-tag>
       </div>
       <div class="input-bar">
-        <el-upload
-          :show-file-list="false"
-          :http-request="handleAttachmentUpload"
-          accept=".md,.txt"
-        >
+        <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" accept=".md,.txt">
           <el-button :loading="uploading" :disabled="streaming" title="上传 .md/.txt 附件，随消息一起发给智能体">
             <el-icon><Paperclip /></el-icon>
           </el-button>
@@ -207,25 +296,105 @@ onUnmounted(() => {
         <el-button type="primary" :loading="streaming" @click="send">发送</el-button>
       </div>
     </div>
+
+    <!-- 中列：产物文件树 -->
     <div class="artifacts-column">
       <div class="artifacts-header">
-        <span>产物清单</span>
-        <el-button link type="primary" :loading="artifactsLoading" @click="loadArtifacts">刷新</el-button>
+        <span>产物文件</span>
+        <el-button link type="primary" :loading="filesLoading" @click="loadFiles">刷新</el-button>
       </div>
-      <el-empty v-if="artifactsLoaded && artifacts.length === 0" description="本次会话暂无文件变更" :image-size="60" />
-      <el-empty v-else-if="!artifactsLoaded" description="对话结束后点击刷新查看变更文件" :image-size="60" />
+
+      <!-- 空状态 -->
+      <el-empty
+        v-if="!filesLoaded"
+        description="对话结束后自动刷新"
+        :image-size="50"
+      />
+      <el-empty
+        v-else-if="filesLoaded && fileNodes.length === 0"
+        description="本次会话暂无产出文件"
+        :image-size="50"
+      />
+
+      <!-- 目录树 -->
       <el-scrollbar v-else height="100%">
-        <ul class="artifact-list">
-          <li v-for="file in artifacts" :key="file">
-            <el-icon><Document /></el-icon>
-            {{ file }}
-          </li>
-        </ul>
+        <el-tree
+          :data="fileNodes"
+          :props="{ label: 'name', children: 'children', isLeaf: (n: WorkspaceFileNode) => !n.directory }"
+          node-key="relativePath"
+          default-expand-all
+          highlight-current
+          @node-click="openFilePreview"
+        >
+          <template #default="{ node, data }">
+            <span class="tree-node">
+              <el-icon v-if="data.directory" style="margin-right:4px;color:#e6a23c"><Folder /></el-icon>
+              <el-icon v-else style="margin-right:4px;color:#409eff"><Document /></el-icon>
+              <span :title="data.relativePath">{{ node.label }}</span>
+            </span>
+          </template>
+        </el-tree>
       </el-scrollbar>
     </div>
+
+    <!-- 右列：历史会话 -->
     <div class="history-column">
       <ChatHistorySidebar ref="historySidebar" :agent-code="agentCode" :active-session-id="sessionId" @select="openSession" />
     </div>
+
+    <!-- 文件内容预览抽屉 -->
+    <el-drawer
+      v-model="previewVisible"
+      direction="rtl"
+      size="55%"
+      :destroy-on-close="false"
+    >
+      <!-- 自定义标题：文件路径 + 右侧预览/编辑按鈕 -->
+      <template #header>
+        <div class="drawer-header">
+          <span class="drawer-title">{{ previewFile?.relativePath ?? '文件预览' }}</span>
+          <div class="drawer-actions">
+            <template v-if="!editMode">
+              <el-button
+                size="small"
+                :disabled="!previewFile || previewFile.truncated"
+                :title="previewFile?.truncated ? '文件过大，不支持编辑' : '编辑文件'"
+                @click="enterEditMode"
+              >
+                <el-icon style="margin-right:4px"><Edit /></el-icon>编辑
+              </el-button>
+            </template>
+            <template v-else>
+              <el-button size="small" @click="cancelEdit" :disabled="saving">取消</el-button>
+              <el-button size="small" type="primary" :loading="saving" @click="saveEdit">保存</el-button>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <div v-if="previewLoading" class="preview-loading">
+        <el-icon class="is-loading" :size="24"><Loading /></el-icon>
+        <span>加载中…</span>
+      </div>
+      <div v-else-if="previewFile">
+        <div v-if="previewFile.truncated" class="preview-truncated">
+          {{ previewFile.content }}
+        </div>
+        <!-- 预览模式 -->
+        <el-scrollbar v-else-if="!editMode" height="calc(100vh - 120px)">
+          <pre class="code-block"><code ref="previewCodeRef" :class="`language-${previewFile.language}`">{{ previewFile.content }}</code></pre>
+        </el-scrollbar>
+        <!-- 编辑模式 -->
+        <el-scrollbar v-else height="calc(100vh - 120px)">
+          <textarea
+            v-model="editContent"
+            class="code-editor"
+            spellcheck="false"
+            :placeholder="'请输入文件内容…'"
+          />
+        </el-scrollbar>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -295,6 +464,7 @@ onUnmounted(() => {
   margin-top: 12px;
 }
 
+/* 产物文件树列 */
 .artifacts-column {
   flex: 1;
   border-left: 1px solid #eee;
@@ -302,6 +472,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-width: 200px;
+  overflow: hidden;
 }
 
 .artifacts-header {
@@ -310,27 +481,104 @@ onUnmounted(() => {
   align-items: center;
   margin-bottom: 8px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
-.artifact-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.artifact-list li {
+.tree-node {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 0;
   font-size: 13px;
-  border-bottom: 1px dashed #eee;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
 }
 
+.tree-node:hover {
+  color: #409eff;
+}
+
+/* 历史会话列 */
 .history-column {
   flex: 1;
   border-left: 1px solid #eee;
   padding-left: 16px;
   min-width: 180px;
+}
+
+/* 预览抽屉 */
+.preview-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: #909399;
+}
+
+.preview-truncated {
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  color: #909399;
+  font-size: 13px;
+}
+
+.code-block {
+  margin: 0;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.code-block code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
+
+/* 抽屉标题行 */
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+}
+
+.drawer-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 编辑器文本域 */
+.code-editor {
+  width: 100%;
+  height: calc(100vh - 130px);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  resize: none;
+  outline: none;
+  background: #fafafa;
+  color: #303133;
+  box-sizing: border-box;
+}
+
+.code-editor:focus {
+  border-color: #409eff;
+  background: #fff;
 }
 </style>

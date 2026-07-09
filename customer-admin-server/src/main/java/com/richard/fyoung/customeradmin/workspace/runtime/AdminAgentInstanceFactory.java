@@ -156,13 +156,32 @@ public class AdminAgentInstanceFactory {
         return harnessAgent;
     }
 
-    /** VibeCoding 沙箱工作区路径：{@code ./data/admin-workspace/{agentCode}}，与他智能体物理隔离。 */
+    /**
+     * VibeCoding 沙箱工作区路径（智能体根目录）：{@code ./data/admin-workspace/{agentCode}}。
+     * 仅供快照根路径使用，Agent 运行时请使用 {@link #resolveSessionWorkspace(String, String)} 按会话隔离。
+     */
     public Path resolveWorkspace(String agentCode) {
         Path workspace = Path.of(WORKSPACE_ROOT, agentCode);
         try {
             Files.createDirectories(workspace);
         } catch (Exception e) {
             log.error("[workspace] create workspace dir failed, code={}, agentCode={}", "WORKSPACE_INIT_ERROR", agentCode, e);
+        }
+        return workspace;
+    }
+
+    /**
+     * VibeCoding 沙箱工作区路径（会话级隔离）：{@code ./data/admin-workspace/{agentCode}/sessions/{sessionId}}。
+     * HarnessAgent 的文件操作根目录，不同会话产出物物理隔离，互不污染。
+     */
+    public Path resolveSessionWorkspace(String agentCode, String sessionId) {
+        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        Path workspace = Path.of(WORKSPACE_ROOT, agentCode, "sessions", safeSession);
+        try {
+            Files.createDirectories(workspace);
+        } catch (Exception e) {
+            log.error("[workspace] create session workspace dir failed, code={}, agentCode={}, sessionId={}",
+                "SESSION_WORKSPACE_INIT_ERROR", agentCode, safeSession, e);
         }
         return workspace;
     }
