@@ -6,7 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableAsync;
 
 /**
- * customer-admin-server 启动类（客服后台运营管理系统 · Spring MVC）。
+ * customer-admin-server 启动类（智能体客服后台管理系统 · Spring MVC）。
  *
  * <p>面向系统管理员与运营人员：用户权限（RBAC/Sa-Token）、AI 模型 / MCP / Skill / 智能体管理
  * （MyBatis-Plus 持久化），并支持对智能体在线聊天与 VibeCoding（复用 customer-work-spring-boot-starter

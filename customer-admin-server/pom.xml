@@ -14,7 +14,7 @@
     <artifactId>customer-admin-server</artifactId>
     <packaging>jar</packaging>
     <name>customer-admin-server</name>
-    <description>客服后台运营管理系统：用户权限（RBAC）/ AI 模型 / MCP / Skill / 智能体管理，
+    <description>智能体客服后台管理系统：用户权限（RBAC）/ AI 模型 / MCP / Skill / 智能体管理，
         支持在线聊天与 VibeCoding（Spring MVC）</description>
 
     <dependencies>

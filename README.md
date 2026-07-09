@@ -660,7 +660,7 @@ operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案�
 两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-web` 各一份）离线校验，
 不激活 profile 真实启动（prod 依赖真实 Redis/MySQL/DashScope 凭据，无这些外部依赖时无法真实连接）。
 
-### 6.21 客服后台运营管理系统 `customer-admin-server` + `customer-admin-web`
+### 6.21 智能体客服后台管理系统 `customer-admin-server` + `customer-admin-web`
 
 后端是独立的 Spring MVC 后台管理系统:面向系统管理员/运营人员统一管理用户权限(RBAC)、AI 模型、MCP、
 Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按需求文档锁定:**MyBatis-Plus + Sa-Token**
@@ -908,8 +908,8 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │                                                #   + SupportController(复用 CustomerServiceService)
 │                                                #   契约测试 DownstreamIntegrationTest 证明"零扫描自动装配 + 覆盖默认"
 │
-├── customer-admin-server/                       # 【客服后台管理系统·后端】独立 Spring MVC 应用，见 §6.21
-├── customer-admin-web/                          # 【客服后台管理系统·前端】Vue3+TS+Vite SPA，非 Maven 子模块，见 §6.21
+├── customer-admin-server/                       # 【智能体客服后台管理系统·后端】独立 Spring MVC 应用，见 §6.21
+├── customer-admin-web/                          # 【智能体客服后台管理系统·前端】Vue3+TS+Vite SPA，非 Maven 子模块，见 §6.21
 │
 ├── mysql/schema.sql                            # MySQL 会话表建库脚本（客服主业务库）
 ├── mysql/admin-schema.sql                      # customer-admin-server 建库脚本（独立库，物理隔离）

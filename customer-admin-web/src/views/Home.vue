@@ -5,7 +5,7 @@ const auth = useAuthStore()
 </script>
 
 <template>
-  <el-empty description="欢迎使用客服后台运营管理系统">
+  <el-empty description="欢迎使用智能体客服后台管理系统">
     <template #image>
       <el-icon :size="64"><Platform /></el-icon>
     </template>
