@@ -22,6 +22,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -205,13 +206,39 @@ public class AuthService {
             return user;
         }
 
+        // 坑：sys_user.uk_sys_user_username 是纯数据库唯一约束，不包含 deleted 列。该用户名如果曾被
+        // 管理员删除过（UserService#delete 走的是逻辑删除，deleted 置 1），上面的 selectOne 会因
+        // MyBatis-Plus 自动拼接的 deleted=0 过滤而查不到，但直接 INSERT 会因用户名被旧行占住而报
+        // DuplicateKeyException（已实测复现）。这里先查有没有被软删除过的旧行，有就“复活”它而不是插新行；
+        // 即使确实无旧行（纯并发竞争），下面 insert 仍包 catch DuplicateKeyException 兼底。
+        SysUser deletedUser = userMapper.selectByUsernameIgnoreLogicDelete(username);
+        if (deletedUser != null) {
+            userMapper.reviveDeletedUser(deletedUser.getId(), username);
+            userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, deletedUser.getId()));
+            assignDefaultRoles(deletedUser.getId());
+            log.info("revived soft-deleted local account for LDAP sso login, username={}, userId={}",
+                username, deletedUser.getId());
+            return userMapper.selectById(deletedUser.getId());
+        }
+
         SysUser created = new SysUser();
         created.setUsername(username);
         created.setPassword(null);
         created.setNickname(username);
         created.setLoginType("LDAP");
         created.setStatus(1);
-        userMapper.insert(created);
+        try {
+            userMapper.insert(created);
+        } catch (DuplicateKeyException e) {
+            // 坑：高并发下两个请求同时到这里，上面的查询都没命中另一个已提交的 INSERT，先插那个提交了、
+            // 后插的就会撞唯一约束；这时其实对方已经建好了号，重新查一次拿那个已存在的行即可，不需要重试插入。
+            SysUser existing = userMapper.selectOne(
+                new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username));
+            if (existing != null) {
+                return existing;
+            }
+            throw e;
+        }
         assignDefaultRoles(created.getId());
         log.info("auto-created local account for LDAP sso login, username={}, userId={}", username, created.getId());
         return created;

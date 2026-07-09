@@ -80,12 +80,16 @@ public class ChatService {
 
         // 本轮对话内"最近一次已提示过的工具名"，用来给 ToolUseBlock 增量片段去重（见 toChunks）；
         // "是否已经通过 REASONING 增量流出过正文"，用来给 AGENT_RESULT 兜底去重（见 toChunks）。
+        // "上一个 reasoning 和 answer 增量片段"，用来对相邻重复的流式片段去重（某些场景下框架会
+        // 把同一句话连续发两次，导致前端显示重复内容）。
         // 都是每次 chatStream 调用各建一份，不跨请求共享。
         AtomicReference<String> lastAnnouncedTool = new AtomicReference<>();
+        AtomicReference<String> lastReasoningText = new AtomicReference<>();
+        AtomicReference<String> lastAnswerText = new AtomicReference<>();
         AtomicBoolean answerStreamed = new AtomicBoolean(false);
 
         return streamEvents(agent, List.of(toUserMsg(userText)), options, ctx)
-            .concatMap(event -> Flux.fromIterable(toChunks(event, lastAnnouncedTool, answerStreamed)))
+            .concatMap(event -> Flux.fromIterable(toChunks(event, lastAnnouncedTool, lastReasoningText, lastAnswerText, answerStreamed)))
             .onErrorResume(e -> {
                 log.error("[workspace] chat stream failed, code={}, agentCode={}", "WORKSPACE_CHAT_ERROR", agentCode, e);
                 return Flux.just(new ChatStreamChunk(false, FALLBACK_REPLY));
@@ -117,7 +121,10 @@ public class ChatService {
      * {@code lastAnnouncedTool} 记录"最近一次已经提示过的工具名"，同名只提示一次；工具真正返回
      * （TOOL_RESULT）后清空，下次再调用（哪怕是同一个工具）会重新提示一次。</p>
      */
-    private List<ChatStreamChunk> toChunks(Event event, AtomicReference<String> lastAnnouncedTool, AtomicBoolean answerStreamed) {
+    private List<ChatStreamChunk> toChunks(Event event, AtomicReference<String> lastAnnouncedTool,
+                                             AtomicReference<String> lastReasoningText,
+                                             AtomicReference<String> lastAnswerText,
+                                             AtomicBoolean answerStreamed) {
         Msg msg = event.getMessage();
         if (msg == null) {
             return List.of();
@@ -142,12 +149,13 @@ public class ChatService {
         // 两者可能同时出现在同一条消息里，都要各自送出去，不能只留一个。
         List<ChatStreamChunk> chunks = new ArrayList<>();
         for (ThinkingBlock block : msg.getContentBlocks(ThinkingBlock.class)) {
-            if (StringUtils.hasText(block.getThinking())) {
-                chunks.add(new ChatStreamChunk(true, block.getThinking()));
+            String thinking = block.getThinking();
+            if (StringUtils.hasText(thinking) && !thinking.equals(lastReasoningText.getAndSet(thinking))) {
+                chunks.add(new ChatStreamChunk(true, thinking));
             }
         }
         String text = msg.getTextContent();
-        if (StringUtils.hasText(text)) {
+        if (StringUtils.hasText(text) && !text.equals(lastAnswerText.getAndSet(text))) {
             answerStreamed.set(true);
             chunks.add(new ChatStreamChunk(false, text));
         }

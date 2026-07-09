@@ -31,7 +31,12 @@ http.interceptors.response.use(((response: { data: Result<unknown> }) => {
   if (body.code === CODE_UNAUTHORIZED) {
     const auth = useAuthStore()
     auth.clear()
-    router.push('/login')
+    // 用 replace 而不是 push：避免堆叠历史记录；若当前已在 /login 则不重复触发导航，
+    // 防止与其他地方（如 router.beforeEach 里拉菜单失败）发起的导航形成并发冲突，
+    // 那种并发导航实测会在 Vue 卸载中的组件上抛出 "parentNode" 空引用异常。
+    if (router.currentRoute.value.name !== 'Login') {
+      router.replace({ name: 'Login', query: { redirect: router.currentRoute.value.fullPath } })
+    }
     ElMessage.error(body.message || '登录已失效，请重新登录')
     return Promise.reject(body)
   }

@@ -67,7 +67,18 @@ router.beforeEach(async (to) => {
 
   const menuStore = useMenuStore()
   if (!menuStore.routesRegistered) {
-    await menuStore.bootstrap()
+    try {
+      await menuStore.bootstrap()
+    } catch (e) {
+      // 拉菜单/权限失败（网络抖动、token 失效等）时，由本守卫自己统一做重定向。
+      // 不能任异常未接住向外抛：否则会与 request.ts 拦截器里的 router.push('/login')
+      // 形成两个并发导航互打，在 Vue 卸载中那个组件上触发
+      // "Cannot read properties of null (reading 'parentNode')"（已实测复现）。
+      console.error('menu bootstrap failed, redirect to login', e)
+      auth.clear()
+      menuStore.reset()
+      return { name: 'Login', query: { redirect: to.fullPath } }
+    }
     // 动态路由刚注册完，重新触发一次导航解析，命中新加入的路由记录。
     // 坑：不能 `{ ...to, replace: true }`——bootstrap() 之前 to 还没匹配到任何动态路由，
     // 已经被解析成了 name: 'NotFound'；Vue Router 对返回的重定向目标只要带 name 字段就按

@@ -72,7 +72,7 @@ public class AdminAgentInstanceFactory {
     private static final int SANDBOX_EXECUTE_TIMEOUT_SECONDS = 60;
     private static final String WORKSPACE_ROOT = "./data/admin-workspace";
     private static final String SKILL_ROOT = "./data/admin-skills";
-    private static final String DEFAULT_SYSTEM_PROMPT = "你是一个乐于助人的智能助手。";
+    private static final String DEFAULT_SYSTEM_PROMPT = "你是一个乐于助人的智能助手。不清楚的问题说不知道，需要人工确认，不要瞎编或者胡说八道。";
 
     private final AiAgentMapper agentMapper;
     private final AiAgentMcpMapper agentMcpMapper;

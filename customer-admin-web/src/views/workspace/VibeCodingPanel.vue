@@ -6,6 +6,7 @@ import { getChatSessionMessages, parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
+import { generateUuid } from '@/utils/uuid'
 
 const props = defineProps<{ agentCode: string }>()
 
@@ -20,7 +21,7 @@ interface Attachment {
   content: string
 }
 
-const sessionId = ref(crypto.randomUUID())
+const sessionId = ref(generateUuid())
 const messages = ref<ChatMessage[]>([])
 const input = ref('')
 const streaming = ref(false)
@@ -37,7 +38,7 @@ let abortStream: (() => void) | null = null
 function newSession() {
   abortStream?.()
   streaming.value = false
-  sessionId.value = crypto.randomUUID()
+  sessionId.value = generateUuid()
   messages.value = []
   input.value = ''
   attachments.value = []
