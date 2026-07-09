@@ -74,7 +74,7 @@ public class ChatService {
         StreamOptions options = StreamOptions.builder()
             .eventTypes(EventType.REASONING, EventType.TOOL_RESULT, EventType.AGENT_RESULT)
             .incremental(true)
-            .includeReasoningChunk(true)
+            .includeReasoningChunk(true) // 关键：让 REASONING 事件把思考内容也流出来
             .includeActingChunk(true)
             .build();
 
@@ -100,6 +100,12 @@ public class ChatService {
     /**
      * 从一个事件拆出 0~N 个展示片段。
      *
+     *  提问： AgentScope 框架层为什么能产生 ThinkingBlock
+     * 项目里用的是 AgentScope 2.0.0-RC4（在 customer-admin-server/pom.xml 里引入依赖）。框架内部实现大致是：
+     * ReActAgent / HarnessAgent 在调用大模型时，会解析模型返回的 reasoning_content（或等效字段）。
+     * 对于支持推理的模型（如 OpenAI o1/o3、DeepSeek-R1、QwQ 等），模型 API 返回里通常有独立的 reasoning 字段。
+     * AgentScope 把这部分单独封装成 io.agentscope.core.message.ThinkingBlock，和普通 TextBlock 区分开。
+     * 当调用 agent.stream(...) 并设置 includeReasoningChunk(true) 时，框架会通过 EventType.REASONING 事件把这些 ThinkingBlock 增量流出来。
      * <p><b>坑（本方法存在的核心原因）</b>：{@link EventType#AGENT_RESULT} 官方文档写明
      * "Streaming: Not applicable"——它是对话结束时一次性吐出的完整最终文本，不是增量。而真正
      * 会逐字增量流式生成的可见回答文本，其实是通过 {@link EventType#REASONING} 事件里的
@@ -151,12 +157,14 @@ public class ChatService {
         for (ThinkingBlock block : msg.getContentBlocks(ThinkingBlock.class)) {
             String thinking = block.getThinking();
             if (StringUtils.hasText(thinking) && !thinking.equals(lastReasoningText.getAndSet(thinking))) {
+                // reasoning = true
                 chunks.add(new ChatStreamChunk(true, thinking));
             }
         }
         String text = msg.getTextContent();
         if (StringUtils.hasText(text) && !text.equals(lastAnswerText.getAndSet(text))) {
             answerStreamed.set(true);
+            // reasoning = false，正文
             chunks.add(new ChatStreamChunk(false, text));
         }
         if (chunks.isEmpty()) {
