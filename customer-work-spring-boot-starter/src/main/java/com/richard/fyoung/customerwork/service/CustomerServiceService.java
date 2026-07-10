@@ -189,23 +189,51 @@ public class CustomerServiceService {
      * <p>用 ReActAgent 的结构化输出能力，让模型严格按 {@link IntentResult} 的 Schema 返回。
      * 用一次性独立 Agent 与独立 sessionId 做分类，绝不污染真实对话会话的记忆。</p>
      *
-     * @return 结构化意图；解析失败时返回一个标注为 other 的兜底结果
+     * <p>结构化输出走的是框架 fallback 工具路径（{@code generate_response} 被当作普通工具塞给模型，
+     * 框架本身不会用 {@code tool_choice} 强制调用，见 agentscope-java #1852/#1699）：模型若这一轮
+     * 没有主动选择调用该工具，{@link Msg#hasStructuredData()} 就会是 false，这不是异常情况，是该
+     * 路径本身"不保证命中"的已知限制。提示词里显式要求模型必须调用该工具，只是提高命中率，不能
+     * 保证 100% 生效；未命中时走 other 兜底，交由人工处理，不影响主链路可用性。</p>
+     *
+     * @return 结构化意图；模型未产出结构化数据或调用异常时，返回一个标注为 other 的兜底结果
      */
     public Mono<IntentResult> classifyIntent(String sessionId, String userText) {
-        log.info("[session {}] structured intent classification: {}", sessionId, userText);
-        String intentSessionId = "intent:" + sessionId;
-        ReActAgent intentAgent = agentFactory.createAgent(intentSessionId);
-        RuntimeContext ctx = agentFactory.contextFor(intentSessionId);
+        // agent.call() 内部的 seedSystemMsg 只要注册了任意覆写 onSystemPrompt 的 MiddlewareBase
+        // （本项目里 TenantContextMiddleware/DialogStageMiddleware 都覆写了），就会同步 block()
+        // 一条 Mono 流水线（ReActAgent.applySystemPromptMiddlewares）。chat()/chatStream() 都经由
+        // withSessionLock(Flux) 先 subscribeOn(boundedElastic) 再执行 agent 调用，唯独这里此前直接
+        // 把 Mono 链交给调用方在 WebFlux 请求线程（reactor-http-nio-*）上订阅，会命中 Reactor 的
+        // "不允许在非阻塞线程上 block()" 检测而抛 IllegalStateException。用 Mono.defer + subscribeOn
+        // 把 agent 创建与调用整体挪到 boundedElastic 线程上执行，与 chat()/chatStream() 保持一致。
+        return Mono.defer(() -> {
+                log.info("[session {}] structured intent classification: {}", sessionId, userText);
+                String intentSessionId = "intent:" + sessionId;
+                ReActAgent intentAgent = agentFactory.createAgent(intentSessionId);
+                RuntimeContext ctx = agentFactory.contextFor(intentSessionId);
 
-        String prompt = "请判断以下用户消息的意图，并按要求结构化输出：" + userText;
-        return intentAgent.call(prompt, IntentResult.class, ctx)
-            .map(msg -> msg.getStructuredData(IntentResult.class))
+                String prompt = "请判断以下用户消息的意图，并调用工具输出结构化结果，不要直接用文本回答。"
+                    + "必须调用一次生成结构化响应的工具，且 intent 字段只能是"
+                    + " presale/consult/order/refund/complaint/other 之一。"
+                    + "待分类的用户消息：" + userText;
+                return intentAgent.call(prompt, IntentResult.class, ctx)
+                    .map(msg -> msg.hasStructuredData()
+                        ? msg.getStructuredData(IntentResult.class)
+                        : fallbackIntent(sessionId, "model did not produce structured output"));
+            })
+            .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
             .onErrorResume(e -> {
                 log.error("[session {}] intent classification failed, code={}", sessionId,
                     "INTENT_CLASSIFY_ERROR", e);
-                incr(M_INTENT_CLASSIFY_ERRORS);
-                return Mono.just(new IntentResult("other", "", false, "意图识别失败，转人工兜底"));
+                return Mono.just(fallbackIntent(sessionId, e.getMessage()));
             });
+    }
+
+    /** 意图识别兜底结果：结构化输出未命中（框架已知限制）或调用异常时统一走此分支。 */
+    private IntentResult fallbackIntent(String sessionId, String reason) {
+        log.info("[session {}] intent classify fallback to other, code={}, reason={}",
+            sessionId, "INTENT_CLASSIFY_FALLBACK", reason);
+        incr(M_INTENT_CLASSIFY_ERRORS);
+        return new IntentResult("other", "", false, "意图识别未命中，转人工兜底");
     }
 
     /**

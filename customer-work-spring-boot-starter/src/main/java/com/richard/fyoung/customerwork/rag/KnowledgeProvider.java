@@ -9,6 +9,7 @@ import io.agentscope.core.rag.integration.dify.DifyKnowledge;
 import io.agentscope.core.rag.integration.dify.DifyRAGConfig;
 import io.agentscope.core.rag.knowledge.SimpleKnowledge;
 import io.agentscope.core.rag.store.InMemoryStore;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -47,7 +48,23 @@ public class KnowledgeProvider {
         this.properties = properties;
     }
 
-    /** 获取共享 Knowledge 实例（懒加载，一次构建多会话复用）。 */
+    /**
+     * 启动期在主线程上预热一次，把 {@link #build()} 里那个 {@code .block()} 调用固定挪到应用启动
+     * 阶段执行——不这样做的话，{@link #get()} 的懒加载首次调用发生在谁身上完全看运气：如果调用方
+     * 是 WebFlux 反应式应用（比如 {@code customer-work-downstream-app} 把 starter 当依赖引入时），
+     * 处理第一个真实请求的线程是 Reactor 的 {@code reactor-http-nio} 事件循环线程，Reactor 3.4+
+     * 禁止在这类线程上调 {@code block()}，会直接抛
+     * {@code IllegalStateException: block()/blockFirst()/blockLast() are blocking, which is not
+     * supported in thread reactor-http-nio-*}——命中与否取决于"第一次访问 RAG 的请求恰好落在哪个
+     * 线程上"，纯属偶然，不改代码只能听天由命。启动期预热后 {@link #cached} 已经填好，运行期
+     * {@link #get()} 只读缓存，不会再触碰 {@link #build()}，从根上让"在哪个线程调用"这个问题不存在。
+     */
+    @PostConstruct
+    void warmUp() {
+        get();
+    }
+
+    /** 获取共享 Knowledge 实例（懒加载，一次构建多会话复用；正常情况下 {@link #warmUp()} 已经填好缓存）。 */
     public Knowledge get() {
         if (cached == null) {
             synchronized (this) {

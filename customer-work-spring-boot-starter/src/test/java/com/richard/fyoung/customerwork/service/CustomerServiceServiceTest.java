@@ -121,6 +121,7 @@ class CustomerServiceServiceTest {
     void classifyIntent_shouldReturnStructuredResult() {
         IntentResult expected = new IntentResult("refund", "20260613001", true, "用户要求退款");
         Msg structuredMsg = mock(Msg.class);
+        when(structuredMsg.hasStructuredData()).thenReturn(true);
         when(structuredMsg.getStructuredData(IntentResult.class)).thenReturn(expected);
         when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
             .thenReturn(Mono.just(structuredMsg));
@@ -138,6 +139,25 @@ class CustomerServiceServiceTest {
         StepVerifier.create(service.classifyIntent("u6", "随便说点啥"))
             .assertNext(result -> org.junit.jupiter.api.Assertions.assertEquals("other", result.intent()))
             .verifyComplete();
+    }
+
+    /**
+     * agentscope-java #1852/#1699 已知限制：fallback 结构化输出路径下，模型本轮没有调用
+     * generate_response 工具时，框架不抛异常、不设特殊标记，只是 Msg.hasStructuredData()==false。
+     * 这种情况不该走异常兜底分支，应直接识别为"未命中"并优雅降级为 other。
+     */
+    @Test
+    void classifyIntent_shouldFallback_whenModelSkipsStructuredOutputTool() {
+        Msg plainTextMsg = mock(Msg.class);
+        when(plainTextMsg.hasStructuredData()).thenReturn(false);
+        when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
+            .thenReturn(Mono.just(plainTextMsg));
+
+        StepVerifier.create(service.classifyIntent("u8", "随便聊聊"))
+            .assertNext(result -> org.junit.jupiter.api.Assertions.assertEquals("other", result.intent()))
+            .verifyComplete();
+        org.mockito.Mockito.verify(plainTextMsg, org.mockito.Mockito.never())
+            .getStructuredData(IntentResult.class);
     }
 
     @Test
@@ -176,6 +196,7 @@ class CustomerServiceServiceTest {
     void classifyIntent_shouldUseSeparateAgent() {
         IntentResult expected = new IntentResult("refund", "", true, "x");
         Msg structuredMsg = mock(Msg.class);
+        when(structuredMsg.hasStructuredData()).thenReturn(true);
         when(structuredMsg.getStructuredData(IntentResult.class)).thenReturn(expected);
         when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
             .thenReturn(Mono.just(structuredMsg));
