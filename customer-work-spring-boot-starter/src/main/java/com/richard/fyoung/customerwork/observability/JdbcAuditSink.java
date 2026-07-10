@@ -47,7 +47,7 @@ public class JdbcAuditSink implements AuditSink, AuditQuery {
      */
     private static final String QUERY_BY_SESSION_SQL =
         "SELECT event_type, agent_name, event_data, created_at FROM cw_audit_log "
-        + "WHERE agent_name LIKE ? ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT ?";
+        + "WHERE agent_name LIKE ? ESCAPE '\\\\' ORDER BY created_at DESC, id DESC LIMIT ?";
 
     private final DataSource dataSource;
     private final ObjectMapper mapper = new ObjectMapper();

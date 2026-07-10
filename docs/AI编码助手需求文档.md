@@ -1,6 +1,6 @@
 # 智能体客服后台管理系统 —— AI 编码助手需求文档
 
-> 基于 AgentScope 2.0（2.0.0-RC4）与现有 `customer-work-spring-boot-starter` 能力进行二次开发。  
+> 基于 AgentScope 2.0（2.0.0 GA，`ga2.0` 分支）与现有 `customer-work-spring-boot-starter` 能力进行二次开发。  
 > 版本：v1.0  
 > 目标读者：产品、后端/前端开发、测试  
 > 状态：待评审

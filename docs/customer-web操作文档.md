@@ -1,6 +1,6 @@
 # customer-web 操作文档（AgentScope 2.0 配套前端 · 客服 Agent 控制台 + 对话入口）
 
-> 模块：`customer-web` ｜ 依赖：`agentscope-admin` + `agentscope-chat-completions-web` + `agentscope-agui`（均 2.0.0-RC4 starter）｜ Web 栈：Spring **MVC** ｜ JDK 17
+> 模块：`customer-web` ｜ 依赖：`agentscope-admin` + `agentscope-chat-completions-web` + `agentscope-agui`（均 2.0.0 GA starter，`ga2.0` 分支）｜ Web 栈：Spring **MVC** ｜ JDK 17
 
 `customer-web` 把 customer-work 的客服 Agent 同时接到**三套官方前端能力**（复用同一个 `ReActAgent` Bean）：
 

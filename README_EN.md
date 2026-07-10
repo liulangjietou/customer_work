@@ -6,10 +6,11 @@
 
 > 中文版：[README.md](README.md)
 
-> 🆕 **AgentScope 2.0 migration (`rc2.0` branch)**: the `rc2.0` branch migrates everything to
-> `io.agentscope:agentscope-harness:2.0.0-RC4` and adds the 2.0 capabilities (Permission System,
-> Plan Mode, Compaction, Workspace/Sandbox, Subagent, and the 5-stage Middleware that replaces v1 hooks).
-> See **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)** for the mapping, API changes and non-migratable
+> 🆕 **AgentScope 2.0 migration (`ga2.0` branch, AgentScope Java 2.0.0 GA)**: the `ga2.0` branch migrates everything to
+> `io.agentscope:agentscope-harness:2.0.0` (the GA release, published 2026-07-10 after 5 RC iterations) and adds
+> the 2.0 capabilities (Permission System, Plan Mode, Compaction, Workspace/Sandbox, Subagent, and the 5-stage
+> Middleware that replaces v1 hooks). The `rc2.0` branch (2.0.0-RC4) is now a frozen historical snapshot — do new
+> work on `ga2.0`. See **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)** for the mapping, API changes and non-migratable
 > features. The companion frontends live in the **`customer-web`** module, wiring the customer-service agent to
 > five official surfaces — **admin** console, **chat-completions-web** (OpenAI-compatible `/v1/chat/completions`
 > + a built-in chat page), **AG-UI** (`/agui/run` rich event protocol), **Studio** observability, and
@@ -24,11 +25,11 @@ implementations make it run offline out of the box and keep the test suite green
 config line swaps to a cloud / self-hosted backend — **without touching business code**.
 
 - Base package: `com.richard.fyoung.customerwork`
-- **176 unit tests** on `main`; **277** on `rc2.0` (starter 259 + app 9 + downstream 1 + customer-web 7 + customer-web-test 1; 4 auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent)
+- **176 unit tests** on `main`; **384** on `ga2.0` (starter 362 + app 13 + downstream 1 + customer-web 8; several starter integration tests auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent); the standalone admin console `customer-admin-server` has its own **127 unit tests**
 
 ## Feature overview
 
-> This table reflects the **`rc2.0` branch (AgentScope 2.0.0-RC4)**. Per-feature 1.x→2.0 API mapping is in
+> This table reflects the **`ga2.0` branch (AgentScope 2.0.0 GA)**. Per-feature 1.x→2.0 API mapping is in
 > **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**.
 
 | Capability | Class | Default | Enable |
@@ -85,7 +86,7 @@ Quartz/XXL-JOB scheduling, Training (RM Gallery/Trinity), Anthropic/Gemini SDKs,
 
 ## Production hardening (P0–P3)
 
-The `rc2.0` branch includes a full production-hardening pass (P0–P3). Key items:
+The `ga2.0` branch includes a full production-hardening pass (P0–P3). Key items:
 
 ### P0 — Production-critical
 - **Approval store SPI**: `PendingApprovalService` storage extracted to `ApprovalStore` interface + `InMemoryApprovalStore` default (`@ConditionalOnMissingBean`). Downstream can declare a JDBC/Redis implementation to persist approval tickets across restarts — critical for refund approvals involving money.

@@ -79,6 +79,30 @@
             <artifactId>agentscope-harness</artifactId>
         </dependency>
 
+        <!-- 2.0.0 GA 起，内置模型实现从 agentscope-core 拆成独立扩展模块（io.agentscope.core.model.*
+             -> io.agentscope.extensions.model.{provider}.*，RC4 -> GA 升级踩的坑），ModelConfig 五个
+             厂商分支都要显式声明依赖，版本由父 pom 引入的 agentscope-bom 统一管理，这里不写版本号。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-dashscope</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-anthropic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-gemini</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-ollama</artifactId>
+        </dependency>
+
         <!-- 会话/状态持久化：AgentStateStore 的 Redis / MySQL 实现（替代 1.x 的 session.redis/mysql） -->
         <dependency>
             <groupId>io.agentscope</groupId>

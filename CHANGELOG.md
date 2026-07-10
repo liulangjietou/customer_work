@@ -4,6 +4,51 @@
 
 ## [Unreleased]
 
+### AgentScope Java 2.0.0-RC4 → 2.0.0 GA 升级（新建 `ga2.0` 分支，`rc2.0` 冻结为历史存档）
+
+- **背景**：AgentScope Java 2.0.0 GA 于 2026-07-10 发布（经 5 个 RC 迭代）。新建 `ga2.0` 分支承接升级，
+  `rc2.0` 分支本身不改动。
+- **验证方法**：用 `git worktree` 拉取 upstream 仓库 RC4 tag 与 v2.0.0 tag 源码逐行 diff（而非只读 release
+  notes），确认本项目实际调用的核心 API 面（`EventType`/`PermissionMode`/`MiddlewareBase`/`McpClientWrapper`/
+  `StreamOptions`/`ThinkingBlock`/`MysqlAgentStateStore` 等）零改动，`AgentBase`/`ReActAgent`/`HarnessAgent`
+  仅内部响应式接线变化（不影响未覆写受保护方法的用法）。
+- **唯一破坏性改动**：内置模型实现（`AnthropicChatModel`/`DashScopeChatModel`/`GeminiChatModel`/
+  `OllamaChatModel`/`OpenAIChatModel`）自 GA 起从 `agentscope-core` 拆分为独立的
+  `agentscope-extensions-model-{provider}` 模块，包名 `io.agentscope.core.model.*` → 
+  `io.agentscope.extensions.model.{provider}.*`（Builder API 本身零变化）。改动 4 个文件的 import 语句
+  （`ModelConfig.java`/`ModelConfigTest.java`/`BailianIntegrationTest.java`/`AdminModelFactory.java`）+
+  `pom.xml`/`customer-work-spring-boot-starter/pom.xml`（`agentscope.version=2.0.0` + 新增 5 个模型扩展依赖，
+  版本交由 `agentscope-bom` 统一管理）。
+- **已修复的已知缺陷**：框架内置 `fallbackModel` 的 bug（[#1850](https://github.com/agentscope-ai/agentscope-java/issues/1850)）
+  已由 [#1851](https://github.com/agentscope-ai/agentscope-java/pull/1851) 于 2026-07-06 修复并合入 GA。
+- **验证结果**：全仓 `mvn clean test` **全绿**（starter 362 + app 13 + downstream 1 + customer-web 8 +
+  `customer-admin-server` 127 = 511，0 失败 0 错误，1 跳过为需真实 API Key 的联调测试）；第二节固化的两个
+  P0 探针回归测试重跑全绿，框架行为未漂移。
+- **顺带修复的 2 个既有 bug（与 AgentScope 升级无关，此前被本机数据库凭据不匹配这个更表层的错误一直遮蔽）**：
+  1. `CustomerWorkProperties.java` 拼装 JDBC URL 时把 `characterEncoding` 设成 `utf8mb4`（MySQL 侧字符集名），
+     但该参数要的是 **Java NIO Charset 名**，Connector/J 无法识别直接连接失败；改为 `UTF-8`（表级
+     `DEFAULT CHARSET=utf8mb4` 不受影响，仍在各 `CREATE TABLE` 语句里）。
+  2. `JdbcAuditSink` 的 `QUERY_BY_SESSION_SQL` 里 `ESCAPE '\\'`（Java 源码里只有一个反斜杠）在实际 SQL 文本里
+     是未正确转义的单个反斜杠，MySQL 把它解析成转义下一个字符（右单引号），导致字符串字面量未正常闭合、
+     吞掉了后面的 `LIMIT ?` 占位符，报 `Parameter index out of range`；改为 `ESCAPE '\\\\'`（SQL 文本层面
+     两个反斜杠，表示一个转义后的字面反斜杠字符）。
+  3. **本机开发环境凭据对齐**（非代码改动）：本机 MySQL root 密码由 `rootpassword` 改为测试代码硬编码期望的
+     `root`（starter 模块多个 `Jdbc*Test` 无环境变量覆盖机制）；本机 Redis 设置 `requirepass=123456`
+     （匹配 `RedisSessionPersistenceTest`）。**副作用**：`customer-admin-server` 默认配置
+     （`ADMIN_MYSQL_PASSWORD` 默认值 `rootpassword`）随之失配，运行其测试/应用需显式
+     `export ADMIN_MYSQL_PASSWORD=root`。
+- **issue 全量重新核对（本次任务的核心工作）**：逐一核对文档原引用的 29 个 issue 在 GA 下的当前状态，确认
+  3 个已修复合入 GA（[#1850](https://github.com/agentscope-ai/agentscope-java/issues/1850) fallbackModel、
+  [#1979](https://github.com/agentscope-ai/agentscope-java/issues/1979) fat-jar 下 ClasspathSkillRepository、
+  [#1968](https://github.com/agentscope-ai/agentscope-java/issues/1968) 中断后状态未保存，均已核实修复 PR
+  合并时间早于 GA 发布），其余 26 个仍 open；另对仓库当前 402 个 open issues（RC4 时点 120 个）中 RC4 后
+  新提交的部分做关键词相关性筛选，新发现 3 条参考价值风险（[#1988](https://github.com/agentscope-ai/agentscope-java/issues/1988)/[#1989](https://github.com/agentscope-ai/agentscope-java/issues/1989) 中间件内
+  `interrupt()` 跨 session 静默失效、[#1906](https://github.com/agentscope-ai/agentscope-java/issues/1906)
+  skill 目录伴生文件 bug、[#2075](https://github.com/agentscope-ai/agentscope-java/issues/2075) MCP SDK
+  安全漏洞待修）。**子智能体相关 4 个已知问题**（#1954/#1953/#1700/#1911）按指示本轮不处理，维持既有规避方案。
+- 详见 [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md) 「9. RC4 → GA 升级」「10. GA issue 全量重新核对」两节，
+  及更新后的 [docs/生产就绪评估.md](docs/生产就绪评估.md)。
+
 ### 客服后台运营管理系统（批次六：体验补强，10 项需求全部完成）
 
 - **MCP 支持 http 传输 + 连通性测试**：`ai_mcp.mcp_type` 新增 `http`；`AdminMcpFactory`（新组件）统一

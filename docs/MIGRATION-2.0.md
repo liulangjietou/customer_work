@@ -1,11 +1,12 @@
-# AgentScope Java 1.x → 2.0 迁移说明（rc2.0 分支）
+# AgentScope Java 1.x → 2.0 迁移说明（ga2.0 分支）
 
-> 目标依赖：`io.agentscope:agentscope-harness:2.0.0-RC4`（经 `agentscope-bom` 统一管理）
-> 基线分支：`main`（`io.agentscope:agentscope:1.0.12`）→ 迁移分支：`rc2.0`
+> 当前依赖：`io.agentscope:agentscope-harness:2.0.0`（GA 正式版，经 `agentscope-bom` 统一管理）
+> 基线分支：`main`（`io.agentscope:agentscope:1.0.12`）→ 迁移分支：`rc2.0`（2.0.0-RC4，已冻结为历史存档）→ 现行分支：`ga2.0`（2.0.0 GA）
 > JDK 17 / Maven 3.9+ / Spring Boot 3.2.5
 
-本文记录本次将「生产级智能客服系统」从 AgentScope Java **1.0.12** 迁移到 **2.0.0-RC4** 的全部改动、
-API 映射、新增能力，以及**不能迁移**的能力及原因。
+本文第 1~8 节记录的是 **1.0.12 → 2.0.0-RC4** 首轮迁移的全部改动、API 映射、新增能力，以及**不能迁移**的
+能力及原因——这部分是历史记录，原样保留。**RC4 → GA（2.0.0 正式版）** 的后续升级改动见文末新增的
+[「9. RC4 → GA 升级」](#9-rc4--ga-升级)一节。
 
 ---
 
@@ -147,4 +148,132 @@ mvn -s settings-rc2.xml clean test
 部分开发机全局 `~/.m2/settings.xml` 配置了 `<mirrorOf>external:*</mirrorOf>` 镜像（如内网 nexus 或已停服的 oschina），
 会拦截 Maven Central 导致 RC4 传递依赖拉取失败。仓库根的 `settings-rc2.xml`：去除 external 镜像、直连 Central，
 **仅本次构建使用**（`mvn -s settings-rc2.xml ...`），不影响全局配置。如需复用本机已有本地仓库缓存以加速，
-可在该文件加 `<localRepository>…</localRepository>`。
+可在该文件加 `<localRepository>…</localRepository>`。文件名沿用历史命名 `settings-rc2.xml`，GA 后未重命名
+（纯本地构建工具脚本，非发布制品，重命名收益不大且会打断已有引用）。
+
+---
+
+## 9. RC4 → GA 升级
+
+> 升级时间：2026-07-10（AgentScope Java 2.0.0 GA 发布当日）｜ 迁移分支：`rc2.0`（2.0.0-RC4）→ `ga2.0`（2.0.0 GA）
+> `rc2.0` 分支本身**保持不变**、冻结为历史存档；`ga2.0` 是从 `rc2.0` 切出的新分支。
+
+### 9.1 方法论：源码 diff，不靠 release notes 猜
+
+AgentScope Java 官方 Release Notes 对"2.0 系列"的描述偏总览性质，容易和"RC4 相对之前 RC 的增量"混淆。
+本次升级改为**直接拉取 upstream 仓库、用 `git worktree` 把 RC4 tag 与 v2.0.0 tag 的源码摆在一起 `diff -u`**，
+逐个核对本项目实际用到的类：
+
+| 类/接口 | RC4 → GA 差异 |
+| --- | --- |
+| `EventType` / `Event` | 字节级无变化 |
+| `PermissionMode` / `PermissionContextState` | 字节级无变化 |
+| `MiddlewareBase` | 字节级无变化 |
+| `McpClientWrapper` | 字节级无变化 |
+| `StreamOptions` / `ThinkingBlock` | 字节级无变化 |
+| `agentscope-extensions` 的 `MysqlAgentStateStore` | 字节级无变化 |
+| `McpClientBuilder` / `Toolkit` / `ChatModelBase` / `GenerateReason` / `AgentEventType` | 仅新增方法/枚举值，原有签名不变 |
+| `AgentBase` / `ReActAgent` / `HarnessAgent` | 仅内部接线变化（[#2086](https://github.com/agentscope-ai/agentscope-java/pull/2086)：`seedSystemMsg`/`applySystemPromptMiddlewares` 由同步改响应式，`Msg`→`Mono<Msg>`、`String`→`Mono<String>`），不影响未覆写这些受保护方法的调用方代码 |
+
+结论：**对本项目的实际调用面而言，RC4→GA 风险极低**——不是"marketing 意义上的 2.0 系列新特性都是新的"，而是这次具体的 RC4→GA 增量本身很小。
+
+### 9.2 唯一的破坏性改动：内置模型实现拆分为独立扩展模块
+
+**这是本次升级唯一需要改代码的地方。**GA 起，内置的 5 家模型实现（`AnthropicChatModel` /
+`DashScopeChatModel` / `GeminiChatModel` / `OllamaChatModel` / `OpenAIChatModel`）从 `agentscope-core`
+拆出，独立为 5 个 Maven 模块：
+
+| 项 | RC4 | GA |
+| --- | --- | --- |
+| 归属 artifact | `agentscope-core`（内含） | `agentscope-extensions-model-{dashscope,openai,anthropic,gemini,ollama}`（独立坐标，版本由 `agentscope-bom` 统一管理，无需显式写版本号） |
+| 包名 | `io.agentscope.core.model.*` | `io.agentscope.extensions.model.{provider}.*` |
+| Builder API（`apiKey`/`modelName`/`stream`/`generateOptions`/`baseUrl`/`enableSearch`/`enableThinking` 等） | — | **与 RC4 完全一致，零方法签名变化** |
+
+> ⚠️ **验证方式的坑**：仅看 upstream 源码树是不够的——RC4 源码树里 `io.agentscope.extensions.model.*` 这套
+> 目录布局其实**已经存在**，但 RC4 **实际发布出来的 `agentscope-core` jar**（用 `unzip -l` 核实）里这些模型类
+> 打包在 `io.agentscope.core.model.*` 下，与源码树的目录结构不一致。只看源码路径会误判"没有破坏性变更"，
+> 必须直接解包对比**真实发布的 jar**。
+
+**改动内容**（4 个文件，均为纯 import 语句调整，Builder 调用代码零改动）：
+- [`pom.xml`](../pom.xml)：`agentscope.version` 由 `2.0.0-RC4` 改为 `2.0.0`。
+- [`customer-work-spring-boot-starter/pom.xml`](../customer-work-spring-boot-starter/pom.xml)：新增 5 个
+  `agentscope-extensions-model-*` 依赖声明（不写版本号，靠 `agentscope-bom`）。
+- `ModelConfig.java` / `ModelConfigTest.java` / `BailianIntegrationTest.java`（均在 starter 模块）、
+  `AdminModelFactory.java`（`customer-admin-server` 模块）：5 个模型类的 import 语句从
+  `io.agentscope.core.model.*` 改为 `io.agentscope.extensions.model.{provider}.*`。
+
+全仓 `grep -rln "io\.agentscope\.core\.model\.\(AnthropicChatModel\|DashScopeChatModel\|GeminiChatModel\|OllamaChatModel\|OpenAIChatModel\)"` 核实过，改动前后各出现且仅出现在这 4 个文件。
+
+### 9.3 已修复的已知缺陷
+
+`fallbackModel` 内置装饰器的已知 bug（[#1850](https://github.com/agentscope-ai/agentscope-java/issues/1850)，
+"实际不工作"）已由 [#1851](https://github.com/agentscope-ai/agentscope-java/pull/1851) 于 2026-07-06 修复并
+合入 GA（早于 2026-07-10 GA 发布）。本项目仍保留自研 `FallbackChatModel`，原因是要与 `ResilientChatModel`
+（退避重试）组合叠加，而非规避该缺陷；见 [README.md §6.13b](../README.md)。
+
+### 9.4 验证结果
+
+- **编译**：`customer-work-spring-boot-starter`、`customer-admin-server` 均 `mvn clean compile`/`clean test-compile`
+  通过。踩坑记录：不带 `clean` 的增量编译会因 Maven 增量编译器不检测 classpath/依赖版本变化而**误报成功**，
+  验证依赖版本变更后必须用 `clean compile`/`clean test-compile`。
+- **单元测试**：全仓 `mvn clean test` **全绿**（starter 362 + app 13 + downstream 1 + customer-web 8 +
+  `customer-admin-server` 127 = 511，0 失败 0 错误，1 跳过为需真实 API Key 的联调测试）。
+- **过程中定位并修复了 2 个既有 bug**（与 AgentScope 升级本身无关，最初被"本机 MySQL 密码不匹配"这个更表层
+  的错误现象掩盖，一路排查才发现）：
+  1. **`CustomerWorkProperties.java` JDBC URL 的 `characterEncoding=utf8mb4` 非法**——这是 MySQL 侧字符集名，
+     Connector/J 的 `characterEncoding` 连接参数要的是 Java NIO Charset 名（合法值应为 `UTF-8`），驱动直接
+     拒绝连接（`Unsupported character encoding 'utf8mb4'`）。改为 `characterEncoding=UTF-8`；4 字节 Unicode
+     支持不受影响，靠的是各表 `DEFAULT CHARSET=utf8mb4`（连接层与存储层是两回事）。
+  2. **`JdbcAuditSink.QUERY_BY_SESSION_SQL` 的 `ESCAPE` 子句反斜杠转义少了一层**——Java 源码 `"ESCAPE '\\'"`
+     只产生一个反斜杠字符，MySQL 解析该 SQL 文本时把这个反斜杠当成转义符去转义紧跟的右单引号，导致字符串
+     字面量未正常闭合、连带吞掉后面 `LIMIT ?` 的问号占位符，驱动报 `Parameter index out of range`。改为
+     `"ESCAPE '\\\\'"`（SQL 文本层两个反斜杠 = 一个正确转义、正常闭合的字面反斜杠字符）。
+  两处改动均定位在验证 GA 升级本身"编译/测试没问题"这一诉求的过程中，属于顺带修复，不改变任何业务行为，
+  只是让此前被环境问题掩盖、从未被真实执行到的代码路径首次跑通。
+- **本机开发环境凭据对齐**（纯环境配置，非代码改动）：本机 MySQL root 密码由 `rootpassword` 改为
+  starter 模块多个 `Jdbc*Test`（无环境变量覆盖机制，纯硬编码）期望的 `root`；本机 Redis 设置
+  `requirepass=123456`（匹配 `RedisSessionPersistenceTest`）。**连带影响**：`customer-admin-server` 的
+  `application.yml` 默认 `ADMIN_MYSQL_PASSWORD` 为 `rootpassword`，随本机密码变更而失配，运行其测试/应用
+  需显式 `export ADMIN_MYSQL_PASSWORD=root`（已验证生效）。
+- **第二节固化的两个 P0 探针测试**（`MiddlewareInvocationVerificationTest` / `TenantIsolationVerificationTest`，
+  见 [生产就绪评估.md](生产就绪评估.md)）在 GA 下重跑全绿，确认框架行为未漂移。
+- **issue 全量重新核对**：见下方「10. GA issue 全量重新核对」——已完成，不再是未覆盖项。
+- **仍未覆盖项**：`docs/详细技术文档.md` 等文档中除已更新章节外的深层架构描述、历史测试计数等细节，未逐字重新校验。
+
+---
+
+## 10. GA issue 全量重新核对
+
+> 本节是 RC4→GA 升级的收尾工作，与第 9 节（代码/依赖层面的升级）是两件独立的事：第 9 节回答"代码还能不能编译/跑通"，
+> 本节回答"[生产就绪评估.md](生产就绪评估.md) 里锚定在 RC4 时点的结论，在 GA 下还成不成立"。
+
+### 10.1 方法
+
+1. **逐一核对文档已引用的 29 个具体 issue 编号**：用已抓取的当前全量 open issues 列表本地比对（issue 编号
+   若不在当前 open 列表中，说明已关闭），命中 3 个后逐个调用 GitHub timeline API 找到关联的修复 PR，核实
+   PR 合并时间早于 2.0.0 GA 发布时间（2026-07-10T03:10:36Z），确认修复真正随 GA 发布，而不是"合了主干但
+   没赶上这个 tag"。
+2. **全量拉取仓库当前 open issues**：分页拉取（`state=open&per_page=100`），过滤掉 PR（`pull_request` 字段），
+   得到当前 open issues 总数 **402**（RC4 时点为 120，增长约 3.4 倍，判断为 GA 发布后正常的问题反馈增长，
+   非本项目风险信号本身）。
+3. **关键词相关性筛选**：对 RC4 发布日（2026-06-18）之后新提交的 issue，按本项目实际用到的能力域做关键词
+   命中（middleware/session/subagent/sandbox/tool guard/permission/compaction/SSE/structured output/
+   DashScope/fallback/MCP/skill/tenant/interrupt/HarnessAgent 等），命中 21 条，逐条读取标题+正文摘要，
+   甄别出 3 条对本项目有实质参考价值的新风险。
+
+### 10.2 结论汇总
+
+| 类别 | 结果 |
+| --- | --- |
+| 已确认修复合入 GA | [#1850](https://github.com/agentscope-ai/agentscope-java/issues/1850)（fallbackModel 不工作）、[#1979](https://github.com/agentscope-ai/agentscope-java/issues/1979)（fat-jar 下 ClasspathSkillRepository 加载失败）、[#1968](https://github.com/agentscope-ai/agentscope-java/issues/1968)（中断后状态未保存），均已核实修复 PR 合并早于 GA 发布 |
+| 仍 open（无变化） | 原文档引用的其余 26 个 issue，含 #1954/#1953/#1700/#1911（子智能体，按用户指示本轮不处理）、#1683（HarnessAgent 中断转发，与已修复的 #1968 是两个不同 bug，此前文档误合并为一行，已拆分）等 |
+| GA 后新发现（新增计入 [生产就绪评估.md §六](生产就绪评估.md)） | [#1988](https://github.com/agentscope-ai/agentscope-java/issues/1988)/[#1989](https://github.com/agentscope-ai/agentscope-java/issues/1989)（中间件回调内 `interrupt()` 跨 session 静默失效，本项目中间件未触发但作边界风险记录）、[#1906](https://github.com/agentscope-ai/agentscope-java/issues/1906)（框架 `SkillBox#uploadSkillFiles()` 伴生文件 bug，本项目自研上传逻辑未触发）、[#2075](https://github.com/agentscope-ai/agentscope-java/issues/2075)（MCP SDK 安全漏洞待修，本项目 MCP 默认关闭） |
+| 架构决策被新证据印证 | [#2024](https://github.com/agentscope-ai/agentscope-java/issues/2024)（AG-UI CopilotKit HITL 语义 bug）印证了 [生产就绪评估.md §四](生产就绪评估.md) 中"HITL 不绑定框架 AG-UI 确认机制"的架构决策是正确判断 |
+
+### 10.3 诚实边界（未做的事）
+
+- **未逐条人工阅读全部 402 个 open issue 原文**——工作量与首轮 120 个评估相当，本次用关键词相关性筛选替代，
+  可能遗漏未命中关键词但仍相关的 issue。
+- **未做"RC4 之后新提交且已关闭"的全量搜索**——只核对了文档历史引用过的 29 个 legacy issue 的关闭情况，
+  可能遗漏其他已随 GA 修复、但未被本文档历史引用过的 bug。
+- 详细的逐条结论更新见 [生产就绪评估.md](生产就绪评估.md) 第四～七节。

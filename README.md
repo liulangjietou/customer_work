@@ -3,15 +3,17 @@
 [![CI](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml/badge.svg)](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](#四环境要求)
-[![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12%20%7C%20rc2.0%3A2.0.0--RC4-green.svg)](https://github.com/agentscope-ai/agentscope-java)
+[![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12%20%7C%20ga2.0%3A2.0.0-green.svg)](https://github.com/agentscope-ai/agentscope-java)
 
 > 🚀 **新人从这里开始**：[docs/新人必读.md](docs/新人必读.md)（15 分钟跑起来 + 看懂结构 + 知道改哪里）
 > English version: [README_EN.md](README_EN.md)
 > 详细技术文档（原理 / 架构图 / 时序图 / UML 类图 / 扩展点）：[docs/详细技术文档.md](docs/详细技术文档.md)
 
-> 🆕 **AgentScope 2.0 迁移（`rc2.0` 分支）**：本仓库 `rc2.0` 分支已将全部功能迁移到
-> `io.agentscope:agentscope-harness:2.0.0-RC4`，并补齐 2.0 新能力（Permission System / Plan Mode /
-> Compaction / Workspace-Sandbox / Subagent / 五段 Middleware）。迁移映射、API 变更与**不可迁移能力说明**见
+> 🆕 **AgentScope 2.0 迁移（`ga2.0` 分支，AgentScope Java 2.0.0 正式版 / GA）**：本仓库 `ga2.0` 分支已将全部功能迁移到
+> `io.agentscope:agentscope-harness:2.0.0`（GA 正式版，经 5 个 RC 迭代后于 2026-07-10 发布），并补齐 2.0 新能力（Permission System / Plan Mode /
+> Compaction / Workspace-Sandbox / Subagent / 五段 Middleware）。`rc2.0`（2.0.0-RC4）分支保留作为历史存档，不再更新；新工作请基于 `ga2.0`。
+> GA 相对 RC4 的具体改动（内置模型实现拆分为独立扩展模块等）见 **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**「RC4 → GA」一节。
+> 迁移映射、API 变更与**不可迁移能力说明**见
 > **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**；2.0 版深度技术文档见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
 > 配套前端为 `customer-web` 模块，把客服 Agent 同时接到**五套官方能力**：**admin** 管理控制台、
 > **chat-completions-web**（OpenAI 兼容 `/v1/chat/completions` + 内置聊天页）、**AG-UI**（`/agui/run` 富事件协议）、
@@ -26,7 +28,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main` 分支 **176 个全绿**；`rc2.0`（AgentScope 2.0）分支 **277 个全绿**（starter 259 + app 9 + downstream 1 + customer-web 7 + customer-web-test 1，其中 starter 4 个集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）
+- 单元测试：`main` 分支 **176 个全绿**；`ga2.0`（AgentScope 2.0.0 GA）分支 **384 个全绿**（starter 362 + app 13 + downstream 1 + customer-web 8，其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；后台管理系统 `customer-admin-server` 另有 **127 个全绿**（独立统计，见 §6.21）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -62,7 +64,7 @@
 
 ## 二、功能总表
 
-> 本表为 **`rc2.0` 分支（AgentScope 2.0.0-RC4）** 现状。「默认」列：开=随应用启动生效；关=需配置开启；⚠️=需外部基础设施/SDK 的扩展点。
+> 本表为 **`ga2.0` 分支（AgentScope 2.0.0 GA）** 现状。「默认」列：开=随应用启动生效；关=需配置开启；⚠️=需外部基础设施/SDK 的扩展点。
 > 逐项 1.x→2.0 API 映射见 **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**，深度架构见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
 
 ### 已实现（2.0，开箱即用 / 配置开启）
@@ -411,8 +413,9 @@ curl -X POST 'localhost:8080/api/customer/approvals/AP-xxxx/deny?operator=bob&no
 ```
 > **与框架 Permission 的关系（互补双层）**：Permission ASK（`harness.permission.ask-tools`）把关"是否允许
 > Agent 调用退款工具"；本审批闭环把关"工单生成后是否真打款"。之所以落在应用层而非绑定框架运行时确认
-> （`RequireUserConfirmEvent` / `ReActAgent.CONFIRM_SINK_KEY`），是因为后者在 2.0-RC4 未暴露 Web 友好的公共
-> 回填 API，且"退款先生成待确认工单、人工放行后执行"本就是更稳健的领域建模。审批单状态机终态不可变，
+> （`RequireUserConfirmEvent` / `ReActAgent.CONFIRM_SINK_KEY`），是因为后者在 2.0.0 GA 仍未暴露 Web 友好的公共
+> 回填 API（RC4→GA 升级时逐行核对过 `ReActAgent`/`AgentBase` 源码，此处无变化），且"退款先生成待确认工单、
+> 人工放行后执行"本就是更稳健的领域建模。审批单状态机终态不可变，
 > approve/deny 幂等（重复决策返回 409）。
 > 测试：`PendingApprovalServiceTest`（状态机 + 回调 + fast-fail）、`AfterSalesToolsApprovalTest`（退款登记待审单）。
 
@@ -544,8 +547,11 @@ customer-work.model:
 - `ResilientChatModel` 包装模型调用做退避重试（可与 `FallbackChatModel` 叠加：先重试、仍失败再兜底）。
 - `ModelCostCircuitBreaker` 成本熔断器：`tryConsume(int)` 原子检查+回滚，`isCircuitOpen()` 检查熔断状态。超限拒绝请求防刷量打爆成本。测试：`ModelCostCircuitBreakerTest`（9 例）。
 - > 2.0 亦内置 `ReActAgent.Builder.maxRetries(int)` / `.fallbackModel(...)`，与自研装饰器二选一；本项目保留自研版以演示装饰器组合。
-  > **注**：框架内置 `fallbackModel` 存在已知缺陷（[agentscope-java #1850](https://github.com/agentscope-ai/agentscope-java/issues/1850)，实际不工作），
-  > 本项目生产环境使用自研 `FallbackChatModel`，不依赖框架内置实现；详见 [docs/生产就绪评估.md](docs/生产就绪评估.md)。
+  > **注（GA 已修复）**：框架内置 `fallbackModel` 在 RC4 阶段存在已知缺陷
+  > （[agentscope-java #1850](https://github.com/agentscope-ai/agentscope-java/issues/1850)，实际不工作），已由
+  > [#1851](https://github.com/agentscope-ai/agentscope-java/pull/1851) 于 2026-07-06 修复并合入 2.0.0 GA
+  > （早于 2026-07-10 GA 发布）。本项目生产环境仍使用自研 `FallbackChatModel`，原因是要保留退避重试
+  > （`ResilientChatModel`）与兜底叠加的装饰器组合能力，而非规避该缺陷；详见 [docs/生产就绪评估.md](docs/生产就绪评估.md)。
 - 测试：`ResilientChatModelTest`。
 - 效果评估 / 回归：见 [docs/EVAL.md](docs/EVAL.md)（提示词版本化 + 评测集 + 数据飞轮）。
 
@@ -651,7 +657,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案与部署前最终核对单，按顺序可勾选执行。
 接入方对接接口按 **[docs/生产接口使用手册.md](docs/生产接口使用手册.md)**——鉴权/限流/sessionId 约定、
 全部 27 个端点的请求响应示例、退款闭环双路径流程、人机切换工单闭环 + SLA 升级引擎、业务数据分析聚合、入站防注入围栏、用户反馈闭环、审批状态机字段语义、SSE 客户端处理规则与故障排查表。
-上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4）120 个 open issues
+上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4 时点）120 个 open issues
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / **多实例部署注意事项** /
 仍受框架限制需等待修复的项 / 版本升级策略）。
 对应的生产配置参考见 **[application-prod.yml](customer-work-app/src/main/resources/application-prod.yml)**
@@ -848,16 +854,17 @@ Key 前缀 `admin:chat:sessions:{agentCode}` / `admin:chat:messages:{agentCode}:
 ## 八、测试说明
 
 ```bash
-mvn test                                   # 全部单测（115 个），离线即可全绿
+mvn test                                   # 全 reactor 全部单测（当前 511 个：starter 362 + app 13 + downstream 1 + customer-web 8 + customer-admin-server 127），离线即可全绿
 mvn test -Dtest=ModelConfigTest            # 单类
 ```
 
 - **离线单测**用 Mockito 隔离模型/框架、`StepVerifier` 校验响应式链路、`WebTestClient` 驱动 Web 层、`@SpringBootTest` 冒烟全 Bean 装配——不调真实大模型。
-- **条件集成测试**（服务可达才跑，不可达自动 `assumeTrue` 跳过，保证任何环境 `mvn test` 都绿）：
+- **条件集成测试**（服务可达才跑，不可达自动 `assumeTrue` / `@EnabledIfEnvironmentVariable` 跳过，保证任何环境 `mvn test` 都绿）：
   - `RedisSessionPersistenceTest`：本机 Redis(6379, 密码 123456) 存-取-删往返
-  - `MysqlSessionPersistenceTest`：本机 MySQL(3306, root/root, 库 agent_scope_customer_work)
+  - `MysqlSessionPersistenceTest` 及各 `Jdbc*StoreTest`：本机 MySQL(3306, root/root, 库 agent_scope_customer_work)
   - `NacosPromptIntegrationTest`：本机 Nacos(8848, nacos/nacos) 发布→拉取提示词往返
   - `BailianIntegrationTest`：真实百炼调用，需 `export RUN_BAILIAN_IT=true`（消耗额度）
+  - `customer-admin-server` 的 `@SpringBootTest` 需本机 MySQL(库 `customer_admin`)，密码经 `ADMIN_MYSQL_PASSWORD` 注入（默认 `rootpassword`；若本机 root 密码为 `root`，需 `export ADMIN_MYSQL_PASSWORD=root`）
 - **CI**：`.github/workflows/ci.yml` 在 push/PR 时跑 `mvn test` + 打包，并启动 Redis/MySQL 服务容器，使持久化用例在 CI 真实执行。
 
 ---

@@ -253,7 +253,7 @@ public class CustomerWorkProperties {
                 }
                 return "jdbc:mysql://" + host + ":" + port + "/" + database
                     + "?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true"
-                    + "&serverTimezone=UTC&characterEncoding=utf8mb4";
+                    + "&serverTimezone=UTC&characterEncoding=UTF-8";
             }
         }
     }
