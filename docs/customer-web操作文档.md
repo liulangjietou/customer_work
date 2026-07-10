@@ -80,9 +80,9 @@ flowchart LR
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export DASHSCOPE_API_KEY=sk-xxxx
 # 首次构建依赖（绕开会拦截 Central 的镜像）
-mvn -s settings-rc2.xml -pl customer-web -am -DskipTests install
+mvn -s settings-central-direct.xml -pl customer-web -am -DskipTests install
 # 启动控制台（默认端口 8081）
-mvn -s settings-rc2.xml -pl customer-web spring-boot:run
+mvn -s settings-central-direct.xml -pl customer-web spring-boot:run
 # 或打包后运行
 java -jar customer-web/target/customer-web-1.0.0.jar
 ```
@@ -224,7 +224,7 @@ customer-web:
   工具集含业务工具（`queryOrder`）。
 - `agent_shouldBeRegisteredInAdminRegistry`：验证客服 Agent 被 `AgentRegistry` 自动接管（`AgentDescriptor.name()` 含
   `CustomerServiceAgent`）。
-- 测试用 dummy 模型密钥（构造不联网），`mvn -s settings-rc2.xml -pl customer-web test` 全绿。
+- 测试用 dummy 模型密钥（构造不联网），`mvn -s settings-central-direct.xml -pl customer-web test` 全绿。
 
 ---
 

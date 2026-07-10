@@ -25,11 +25,11 @@
 > `KnowledgeProvider`、`AguiService`、`StudioConfigurer`、`HigressToolkitConfigurer` 等整合层代码
 > **无需改动 import**，仅需补齐对应 extension 依赖即可编译运行。
 
-构建（仓库根提供可移植 `settings-rc2.xml`：直连 Central、去除会拦截 Central 的 `external:*` 镜像）：
+构建（仓库根提供可移植 `settings-central-direct.xml`：直连 Central、去除会拦截 Central 的 `external:*` 镜像）：
 
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
-mvn -s settings-rc2.xml clean test
+mvn -s settings-central-direct.xml clean test
 ```
 
 ---
@@ -85,7 +85,7 @@ mvn -s settings-rc2.xml clean test
 
 ## 5. 测试与验证
 
-- 全量 `mvn -s scripts/settings-rc2.xml test` 四模块 **BUILD SUCCESS**；starter 169 项用例通过，Redis/MySQL/百炼集成测试在无对应服务时按 `assumeTrue`/`@EnabledIfEnvironmentVariable` **自动跳过**。
+- 全量 `mvn -s scripts/settings-central-direct.xml test` 四模块 **BUILD SUCCESS**；starter 169 项用例通过，Redis/MySQL/百炼集成测试在无对应服务时按 `assumeTrue`/`@EnabledIfEnvironmentVariable` **自动跳过**。
 - 会话持久化往返测试改为基于 `AgentStateStore` + `Msg`（`Msg` 在 2.0 实现 `State`）。
 - 新增 `PermissionConfigTest`、`HarnessAgentFactoryTest` 覆盖 2.0 新能力装配。
 
@@ -146,10 +146,14 @@ mvn -s settings-rc2.xml clean test
 ## 8. 环境说明（构建注意）
 
 部分开发机全局 `~/.m2/settings.xml` 配置了 `<mirrorOf>external:*</mirrorOf>` 镜像（如内网 nexus 或已停服的 oschina），
-会拦截 Maven Central 导致 RC4 传递依赖拉取失败。仓库根的 `settings-rc2.xml`：去除 external 镜像、直连 Central，
-**仅本次构建使用**（`mvn -s settings-rc2.xml ...`），不影响全局配置。如需复用本机已有本地仓库缓存以加速，
-可在该文件加 `<localRepository>…</localRepository>`。文件名沿用历史命名 `settings-rc2.xml`，GA 后未重命名
-（纯本地构建工具脚本，非发布制品，重命名收益不大且会打断已有引用）。
+会拦截 Maven Central 导致 AgentScope 及其传递依赖拉取失败。仓库提供两份可移植 Maven settings（该文件与
+AgentScope 版本无关，早期名为 `settings-rc2.xml`，因职责就是"直连 Central、绕过镜像"、与版本解耦，已更名为
+`settings-central-direct.xml`）：
+- **仓库根 `settings-central-direct.xml`**：可移植版，不指定本地仓库，`mvn -s settings-central-direct.xml ...` 直连
+  Central，适合 CI / 他人机器。
+- **`scripts/settings-central-direct.xml`**：本机加速版，`<localRepository>` 指向本机 mavenjar 复用缓存。因 Maven
+  会合并全局+用户两处 `activeProfiles`，本机若全局激活了镜像 profile，须 `-gs` 与 `-s` **同传**本文件才能真正
+  覆盖：`mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.xml ...`。
 
 ---
 
