@@ -4,7 +4,7 @@ import { ElMessage, type UploadRequestOptions } from 'element-plus'
 import { listVibeCodingArtifacts, listWorkspaceFiles, readWorkspaceFileContent, saveWorkspaceFileContent, streamVibeCoding } from '@/api/vibecoding'
 import { getChatSessionMessages, parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import ThinkingBlock from '@/components/ThinkingBlock.vue'
+import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import { generateUuid } from '@/utils/uuid'
 import type { WorkspaceFileContent, WorkspaceFileNode } from '@/types/api'
@@ -16,7 +16,18 @@ const props = defineProps<{ agentCode: string }>()
 interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
-  reasoning: string
+  nodes: TraceNode[]
+}
+
+/** 追加一个执行轨迹节点：连续的 thinking 是同一段思考内容的增量分片，合并进上一个节点而不是各占一条；
+ * 其余节点类型（开始思考/调用大模型/调用 Skill 等）后端已经做过去重，各自独立成一条时间线项。 */
+function appendNode(msg: ChatMessage, kind: string, text: string) {
+  const last = msg.nodes[msg.nodes.length - 1]
+  if (last && last.kind === 'thinking' && kind === 'thinking') {
+    last.text += text
+  } else {
+    msg.nodes.push({ kind, text })
+  }
 }
 
 interface Attachment {
@@ -98,7 +109,7 @@ async function openSession(targetSessionId: string) {
   try {
     const history = await getChatSessionMessages(props.agentCode, targetSessionId)
     sessionId.value = targetSessionId
-    messages.value = history.map((msg) => ({ role: msg.role, text: msg.text, reasoning: '' }))
+    messages.value = history.map((msg) => ({ role: msg.role, text: msg.text, nodes: [] }))
     input.value = ''
     artifacts.value = []
     artifactsLoaded.value = false
@@ -126,9 +137,9 @@ function send() {
   messages.value.push({
     role: 'user',
     text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
-    reasoning: '',
+    nodes: [],
   })
-  messages.value.push({ role: 'assistant', text: '', reasoning: '' })
+  messages.value.push({ role: 'assistant', text: '', nodes: [] })
   const assistantMessage = messages.value[messages.value.length - 1]
   input.value = ''
   attachments.value = []
@@ -143,8 +154,8 @@ function send() {
         loadFiles()
         return
       }
-      if (event.event === 'reasoning') {
-        assistantMessage.reasoning += event.data
+      if (event.event.startsWith('node:')) {
+        appendNode(assistantMessage, event.event.slice('node:'.length), event.data)
       } else {
         assistantMessage.text += event.data
       }
@@ -269,14 +280,14 @@ onUnmounted(() => {
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in messages" :key="index" class="message-row" :class="msg.role">
           <div class="bubble">
-            <ThinkingBlock
-              v-if="msg.role === 'assistant' && msg.reasoning"
-              :text="msg.reasoning"
+            <TraceTimeline
+              v-if="msg.role === 'assistant' && msg.nodes.length > 0"
+              :nodes="msg.nodes"
               :active="streaming && index === messages.length - 1 && !msg.text"
             />
             <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
             <template v-else>{{ msg.text }}</template>
-            <span v-if="msg.role === 'assistant' && !msg.text && !msg.reasoning && streaming && index === messages.length - 1">生成中…</span>
+            <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && streaming && index === messages.length - 1">生成中…</span>
           </div>
         </div>
         <el-empty v-if="messages.length === 0" description="描述你想让智能体生成/修改的代码" />

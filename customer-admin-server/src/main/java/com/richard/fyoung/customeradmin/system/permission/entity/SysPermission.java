@@ -28,7 +28,10 @@ public class SysPermission {
     /** 1菜单 / 2按钮 / 3接口。 */
     private Integer type;
     private String path;
+    /** 图标库图标名或上传图片URL，按 iconType 区分。 */
     private String icon;
+    /** library=图标库图标名 / image=上传图片URL。 */
+    private String iconType;
     private Integer sort;
 
     @TableField(fill = FieldFill.INSERT)

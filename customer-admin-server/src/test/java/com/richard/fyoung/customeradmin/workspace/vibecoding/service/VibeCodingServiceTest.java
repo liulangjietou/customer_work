@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
@@ -98,11 +99,11 @@ class VibeCodingServiceTest {
         // stream 会在用户消息头部注入路径指引，所以 chatService 收到的消息不是原始 "write 文件"
         // 而是含指引的 enrichedText，这里用 anyString() 匹配即可。
         when(chatService.chatStream(anyString(), anyString(), anyString()))
-            .thenReturn(Flux.just(new ChatStreamChunk(false, "好的")));
+            .thenReturn(Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "好的")));
 
         List<ChatStreamChunk> emitted = service.stream("coder", "s1", "write 文件").collectList().block();
 
-        assertEquals(List.of(new ChatStreamChunk(false, "好的")), emitted);
+        assertEquals(List.of(new ChatStreamChunk(ChatNodeKind.ANSWER, "好的")), emitted);
     }
 
     @Test

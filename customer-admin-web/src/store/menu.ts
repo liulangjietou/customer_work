@@ -53,6 +53,7 @@ export const useMenuStore = defineStore('menu', {
           path: node.path.replace(/^\//, ''),
           name: `menu-${node.id}`,
           component: loader,
+          meta: { title: node.name },
         })
       }
     },

@@ -27,6 +27,7 @@ const router = createRouter({
           path: 'home',
           name: 'Home',
           component: () => import('@/views/Home.vue'),
+          meta: { title: '首页' },
         },
         {
           // "智能体工作区"分组节点自身的 path（还没有任何启用中的智能体、或点了分组节点本身时命中），
@@ -34,6 +35,7 @@ const router = createRouter({
           path: 'workspace',
           name: 'WorkspaceEmpty',
           component: () => import('@/views/workspace/WorkspaceEmpty.vue'),
+          meta: { title: '智能体工作区' },
         },
         {
           // 动态智能体工作区节点：path 形如 /workspace/{agentCode}，运行时拼进菜单，不落库、不预注册

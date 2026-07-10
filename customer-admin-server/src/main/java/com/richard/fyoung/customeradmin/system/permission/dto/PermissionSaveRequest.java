@@ -14,5 +14,7 @@ public record PermissionSaveRequest(
     @NotNull(message = "type 不能为空") Integer type,
     String path,
     String icon,
+    /** library=图标库图标名 / image=上传图片URL；不传时默认 library。 */
+    String iconType,
     Integer sort) {
 }

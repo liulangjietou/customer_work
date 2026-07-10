@@ -53,7 +53,7 @@ public class ChatController {
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
         return chatService.chatStream(agentCode, request.sessionId(), request.message())
-            .map(chunk -> ServerSentEvent.<String>builder().event(chunk.reasoning() ? "reasoning" : "message").data(chunk.text()).build())
+            .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.text()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
     }
 

@@ -134,6 +134,7 @@ public class MenuAggregationService {
         node.setName(p.getPermName());
         node.setPath(p.getPath());
         node.setIcon(p.getIcon());
+        node.setIconType(p.getIconType());
         node.setPermCode(p.getPermCode());
         node.setSort(p.getSort());
         return node;

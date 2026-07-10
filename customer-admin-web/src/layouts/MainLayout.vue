@@ -1,20 +1,29 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
+import { useTabsStore } from '@/store/tabs'
 import MenuTree from './MenuTree.vue'
+import TabsBar from './TabsBar.vue'
+import AppBreadcrumb from './AppBreadcrumb.vue'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const menuStore = useMenuStore()
+const tabsStore = useTabsStore()
 
 const activePath = computed(() => route.path)
+
+// MainLayout 只在 Layout 的子路由下挂载（登录页/改密页在其外层），路由一变化就落一个标签，
+// 已存在的标签只切激活态、不重复追加。
+watch(() => route.fullPath, () => tabsStore.openTab(route), { immediate: true })
 
 async function handleLogout() {
   await auth.logout()
   menuStore.reset()
+  tabsStore.reset()
   await router.replace({ name: 'Login' })
 }
 </script>
@@ -43,6 +52,8 @@ async function handleLogout() {
           </template>
         </el-dropdown>
       </el-header>
+      <TabsBar />
+      <AppBreadcrumb />
       <el-main class="layout-main">
         <router-view />
       </el-main>

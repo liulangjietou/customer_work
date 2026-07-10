@@ -42,7 +42,10 @@ import org.springframework.util.StringUtils;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -86,6 +89,12 @@ public class AdminAgentInstanceFactory {
     private final PermissionContextState permissionContext;
     private final AdminMcpFactory mcpFactory;
 
+    /**
+     * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
+     * {@link AgentInstanceCache} 的重建节奏保持新鲜，不需要额外的失效联动。
+     */
+    private final ConcurrentHashMap<String, ToolSourceInfo> toolSourceCache = new ConcurrentHashMap<>();
+
     public AdminAgentInstanceFactory(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
                                       AiAgentSkillMapper agentSkillMapper, AiModelConfigMapper modelConfigMapper,
                                       AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
@@ -105,6 +114,11 @@ public class AdminAgentInstanceFactory {
         this.mcpFactory = mcpFactory;
     }
 
+    /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
+    public ToolSourceInfo toolSourceFor(String agentCode) {
+        return toolSourceCache.getOrDefault(agentCode, ToolSourceInfo.EMPTY);
+    }
+
     /** 单次调用的运行时上下文：{@code userId=agentCode} 天然隔离不同智能体共享同一 StateStore 时的状态。 */
     public RuntimeContext contextFor(String agentCode, String sessionId) {
         return RuntimeContext.builder()
@@ -119,7 +133,8 @@ public class AdminAgentInstanceFactory {
         List<String> capabilities = parseCapabilities(agent.getCapabilities());
 
         Model model = buildModel(agent.getModelId());
-        Toolkit toolkit = buildToolkit(agent.getId());
+        Set<String> mcpToolNames = new HashSet<>();
+        Toolkit toolkit = buildToolkit(agent.getId(), mcpToolNames);
 
         ReActAgent.Builder builder = ReActAgent.builder()
             .name("AdminAgent-" + agentCode)
@@ -131,10 +146,12 @@ public class AdminAgentInstanceFactory {
             .permissionContext(permissionContext)
             .maxIters(DEFAULT_MAX_ITERS);
 
-        SkillBox skillBox = buildSkillBox(agent, toolkit);
+        Set<String> skillToolNames = new HashSet<>();
+        SkillBox skillBox = buildSkillBox(agent, toolkit, skillToolNames);
         if (skillBox != null) {
             builder.skillBox(skillBox);
         }
+        toolSourceCache.put(agentCode, new ToolSourceInfo(skillToolNames, mcpToolNames));
 
         ReActAgent inner = builder.build();
         if (!capabilities.contains(CAPABILITY_VIBECODING)) {
@@ -215,8 +232,12 @@ public class AdminAgentInstanceFactory {
      */
     private static final java.time.Duration MCP_REGISTER_TIMEOUT = java.time.Duration.ofSeconds(10);
 
-    /** 读 {@code ai_agent_mcp} 关联行，逐个动态注册进 Toolkit（参考 McpToolkitConfigurer 的写法）。 */
-    private Toolkit buildToolkit(Long agentId) {
+    /**
+     * 读 {@code ai_agent_mcp} 关联行，逐个动态注册进 Toolkit（参考 McpToolkitConfigurer 的写法）。
+     * {@code mcpToolNames} 收集本次注册进来的工具名——{@code ToolUseBlock} 不带来源信息，只能靠
+     * 注册前后 {@link Toolkit#getToolNames()} 的差集在装配时记下来，供对话流式展示按来源分类。
+     */
+    private Toolkit buildToolkit(Long agentId, Set<String> mcpToolNames) {
         Toolkit toolkit = new Toolkit();
         List<Long> mcpIds = agentMcpMapper.selectList(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, agentId))
             .stream().map(AiAgentMcp::getMcpId).collect(Collectors.toList());
@@ -225,9 +246,13 @@ public class AdminAgentInstanceFactory {
         }
         for (AiMcp mcp : mcpMapper.selectBatchIds(mcpIds)) {
             try {
+                Set<String> before = new HashSet<>(toolkit.getToolNames());
                 McpClientWrapper wrapper = buildMcpClient(mcp).block(MCP_REGISTER_TIMEOUT);
                 if (wrapper != null) {
                     toolkit.registerMcpClient(wrapper).block(MCP_REGISTER_TIMEOUT);
+                    Set<String> added = new HashSet<>(toolkit.getToolNames());
+                    added.removeAll(before);
+                    mcpToolNames.addAll(added);
                     log.info("[workspace] MCP registered: name={} type={}", mcp.getMcpName(), mcp.getMcpType());
                 }
             } catch (Exception e) {
@@ -244,8 +269,11 @@ public class AdminAgentInstanceFactory {
             .buildAsync();
     }
 
-    /** 读 {@code ai_agent_skill} 关联行，把 content（SKILL.md 正文）落盘后复用 FileSystemSkillRepository 加载。 */
-    private SkillBox buildSkillBox(AiAgent agent, Toolkit toolkit) {
+    /**
+     * 读 {@code ai_agent_skill} 关联行，把 content（SKILL.md 正文）落盘后复用 FileSystemSkillRepository 加载。
+     * {@code skillToolNames} 收集本次注册进来的工具名，同 {@link #buildToolkit} 的差集手法。
+     */
+    private SkillBox buildSkillBox(AiAgent agent, Toolkit toolkit, Set<String> skillToolNames) {
         List<Long> skillIds = agentSkillMapper.selectList(
                 new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, agent.getId()))
             .stream().map(AiAgentSkill::getSkillId).collect(Collectors.toList());
@@ -262,9 +290,13 @@ public class AdminAgentInstanceFactory {
             }
             List<AgentSkill> skills = new FileSystemSkillRepository(skillDir, false).getAllSkills();
             SkillBox skillBox = new SkillBox(toolkit);
+            Set<String> before = new HashSet<>(toolkit.getToolNames());
             for (AgentSkill skill : skills) {
                 skillBox.registerSkill(skill);
             }
+            Set<String> added = new HashSet<>(toolkit.getToolNames());
+            added.removeAll(before);
+            skillToolNames.addAll(added);
             log.info("[workspace] skills loaded: agentCode={} count={}", agent.getAgentCode(), skills.size());
             return skillBox;
         } catch (Exception e) {

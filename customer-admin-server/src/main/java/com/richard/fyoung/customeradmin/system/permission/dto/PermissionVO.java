@@ -18,6 +18,7 @@ public class PermissionVO {
     private Integer type;
     private String path;
     private String icon;
+    private String iconType;
     private Integer sort;
     private List<PermissionVO> children = new ArrayList<>();
 }

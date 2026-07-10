@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS `sys_permission` (
     `perm_code`    VARCHAR(128) NOT NULL COMMENT '权限标识（如 mcp:add / skill:delete）',
     `type`         TINYINT NOT NULL COMMENT '类型：1菜单 / 2按钮 / 3接口',
     `path`         VARCHAR(255) COMMENT '前端路由 / 接口路径',
-    `icon`         VARCHAR(64) COMMENT '菜单图标',
+    `icon`         VARCHAR(255) COMMENT '图标库图标名或上传图片URL（按 icon_type 区分）',
+    `icon_type`    VARCHAR(16) NOT NULL DEFAULT 'library' COMMENT '图标类型：library=图标库图标名，image=上传图片URL',
     `sort`         INT NOT NULL DEFAULT 0 COMMENT '排序',
     `create_by`    BIGINT COMMENT '创建人ID',
     `create_time`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -109,6 +110,19 @@ CREATE TABLE IF NOT EXISTS `sys_operation_log` (
     INDEX `idx_sys_operation_log_user` (`user_id`),
     INDEX `idx_sys_operation_log_time` (`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='操作日志（含登录/登出日志）';
+
+CREATE TABLE IF NOT EXISTS `sys_menu_change_log` (
+    `id`              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `menu_id`         BIGINT NOT NULL COMMENT '被操作的菜单节点ID（删除后节点已不存在，此处仍保留历史指向）',
+    `action`          VARCHAR(16) NOT NULL COMMENT '操作类型：CREATE/UPDATE/DELETE/MOVE',
+    `before_snapshot` TEXT COMMENT '变更前节点 JSON（CREATE 时为空）',
+    `after_snapshot`  TEXT COMMENT '变更后节点 JSON（DELETE 时为空）',
+    `operator_id`     BIGINT COMMENT '操作人用户ID',
+    `operator_name`   VARCHAR(64) COMMENT '操作人昵称（冗余存储，用户改名/删除后历史记录仍可读）',
+    `create_time`     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+    INDEX `idx_menu_change_log_menu` (`menu_id`),
+    INDEX `idx_menu_change_log_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='菜单变更审计流水（排查用，不支持回滚）';
 
 -- -----------------------------------------------------------------------------
 -- AI 配置域：模型 / MCP / Skill / 智能体
@@ -243,13 +257,14 @@ INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type
 INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `sort`) VALUES
     (10, 1, '用户管理', 'user', 1, '/system/user', 'User',    1),
     (11, 1, '角色权限', 'role', 1, '/system/role', 'Avatar',  2),
-    (12, 1, '操作日志', 'log',  1, '/system/log',  'Tickets', 3);
+    (12, 1, '操作日志', 'log',  1, '/system/log',  'Tickets', 3),
+    (13, 1, '菜单管理', 'menu', 1, '/system/menu', 'Menu',    4);
 
 -- 二级：AI 配置 子菜单（type=1）
 INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `sort`) VALUES
     (20, 2, '模型配置',   'model', 1, '/aiconfig/model', 'Cpu',        1),
     (21, 2, 'MCP 管理',   'mcp',   1, '/aiconfig/mcp',   'Connection', 2),
-    (22, 2, 'Skill 管理', 'skill', 1, '/aiconfig/skill', 'Reading',    3),
+    (22, 2, 'Skill 管理', 'skill', 1, '/aiconfig/skill', 'Tools',      3),
     (23, 2, '智能体管理', 'agent', 1, '/aiconfig/agent', 'MagicStick', 4);
 
 -- 三级：按钮/接口权限点（type=2），user/role/model/mcp/skill/agent 各 4 个（view/add/edit/delete），log 只读
@@ -259,6 +274,8 @@ INSERT INTO `sys_permission` (`parent_id`, `perm_name`, `perm_code`, `type`, `so
     (11, '查看角色', 'role:view',   2, 1), (11, '新增角色', 'role:add',   2, 2),
     (11, '编辑角色', 'role:edit',   2, 3), (11, '删除角色', 'role:delete', 2, 4),
     (12, '查看日志', 'log:view',    2, 1),
+    (13, '查看菜单', 'menu:view',   2, 1), (13, '新增菜单', 'menu:add',   2, 2),
+    (13, '编辑菜单', 'menu:edit',   2, 3), (13, '删除菜单', 'menu:delete', 2, 4),
     (20, '查看模型', 'model:view',  2, 1), (20, '新增模型', 'model:add',  2, 2),
     (20, '编辑模型', 'model:edit',  2, 3), (20, '删除模型', 'model:delete', 2, 4),
     (21, '查看MCP',  'mcp:view',    2, 1), (21, '新增MCP',  'mcp:add',    2, 2),

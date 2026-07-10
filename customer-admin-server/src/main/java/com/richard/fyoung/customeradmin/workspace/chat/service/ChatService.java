@@ -1,8 +1,10 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.Event;
@@ -67,6 +69,7 @@ public class ChatService {
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
+        ToolSourceInfo toolSource = agentInstanceFactory.toolSourceFor(agentCode);
 
         // 除了 REASONING/AGENT_RESULT，还订阅 TOOL_RESULT——不然模型调用 MCP 工具等待结果的这段时间
         // （可能好几秒）前端界面上什么都不会动，看起来像"卡住了"。includeActingChunk 让耗时较长的
@@ -82,17 +85,26 @@ public class ChatService {
         // "是否已经通过 REASONING 增量流出过正文"，用来给 AGENT_RESULT 兜底去重（见 toChunks）。
         // "上一个 reasoning 和 answer 增量片段"，用来对相邻重复的流式片段去重（某些场景下框架会
         // 把同一句话连续发两次，导致前端显示重复内容）。
+        // "本轮 ReAct 迭代是否已经标过一次调用大模型"，TOOL_RESULT 后重置——每次工具返回后模型都要
+        // 被重新调用一次做下一轮推理/总结，借此让"调用大模型"节点真实反映实际调用次数。
         // 都是每次 chatStream 调用各建一份，不跨请求共享。
         AtomicReference<String> lastAnnouncedTool = new AtomicReference<>();
         AtomicReference<String> lastReasoningText = new AtomicReference<>();
         AtomicReference<String> lastAnswerText = new AtomicReference<>();
         AtomicBoolean answerStreamed = new AtomicBoolean(false);
+        AtomicBoolean modelCallAnnounced = new AtomicBoolean(false);
 
-        return streamEvents(agent, List.of(toUserMsg(userText)), options, ctx)
-            .concatMap(event -> Flux.fromIterable(toChunks(event, lastAnnouncedTool, lastReasoningText, lastAnswerText, answerStreamed)))
+        Flux<ChatStreamChunk> body = streamEvents(agent, List.of(toUserMsg(userText)), options, ctx)
+            .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, lastAnnouncedTool,
+                lastReasoningText, lastAnswerText, answerStreamed, modelCallAnnounced)));
+
+        return Flux.concat(Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_START, "开始思考")), body)
+            .concatWith(Flux.defer(() -> Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"))))
             .onErrorResume(e -> {
                 log.error("[workspace] chat stream failed, code={}, agentCode={}", "WORKSPACE_CHAT_ERROR", agentCode, e);
-                return Flux.just(new ChatStreamChunk(false, FALLBACK_REPLY));
+                return Flux.just(
+                    new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"),
+                    new ChatStreamChunk(ChatNodeKind.ANSWER, FALLBACK_REPLY));
             })
             .doOnComplete(() -> historyCache.evict(agentCode, sessionId));
     }
@@ -126,11 +138,19 @@ public class ChatService {
      * 聚合的 {@code ToolCallsAccumulator} 是框架内部类，这层拿不到聚合后的结果）。用
      * {@code lastAnnouncedTool} 记录"最近一次已经提示过的工具名"，同名只提示一次；工具真正返回
      * （TOOL_RESULT）后清空，下次再调用（哪怕是同一个工具）会重新提示一次。</p>
+     *
+     * <p><b>节点化时间线</b>：{@code modelCallAnnounced} 标记"本轮 ReAct 迭代是否已经发过一条
+     * {@link ChatNodeKind#MODEL_CALL}"——TOOL_RESULT 到达后重置为 false，因为工具返回后模型必然
+     * 会被重新调用一轮做下一步推理/总结，这样"调用大模型"节点数就等于模型实际被调用的次数。
+     * {@code toolSource} 用于把 {@code ToolUseBlock} 按来源分类成
+     * {@link ChatNodeKind#TOOL_SKILL}/{@link ChatNodeKind#TOOL_MCP}/{@link ChatNodeKind#TOOL_BUILTIN}。</p>
      */
-    private List<ChatStreamChunk> toChunks(Event event, AtomicReference<String> lastAnnouncedTool,
+    private List<ChatStreamChunk> toChunks(Event event, ToolSourceInfo toolSource,
+                                             AtomicReference<String> lastAnnouncedTool,
                                              AtomicReference<String> lastReasoningText,
                                              AtomicReference<String> lastAnswerText,
-                                             AtomicBoolean answerStreamed) {
+                                             AtomicBoolean answerStreamed,
+                                             AtomicBoolean modelCallAnnounced) {
         Msg msg = event.getMessage();
         if (msg == null) {
             return List.of();
@@ -138,8 +158,9 @@ public class ChatService {
 
         if (event.getType() == EventType.TOOL_RESULT) {
             lastAnnouncedTool.set(null);
+            modelCallAnnounced.set(false);
             return msg.getContentBlocks(ToolResultBlock.class).stream()
-                .map(block -> new ChatStreamChunk(true, describeToolResult(block)))
+                .map(block -> new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, describeToolResult(block)))
                 .collect(Collectors.toList());
         }
 
@@ -148,34 +169,74 @@ public class ChatService {
                 return List.of();
             }
             String text = msg.getTextContent();
-            return StringUtils.hasText(text) ? List.of(new ChatStreamChunk(false, text)) : List.of();
+            return StringUtils.hasText(text) ? List.of(new ChatStreamChunk(ChatNodeKind.ANSWER, text)) : List.of();
         }
 
         // REASONING：ThinkingBlock 是真正的思考过程，TextBlock 是正在增量生成的可见回答正文，
-        // 两者可能同时出现在同一条消息里，都要各自送出去，不能只留一个。
+        // 两者可能同时出现在同一条消息里，都要各自送出去，不能只留一个。本轮迭代第一次收到任何
+        // REASONING 内容（思考/正文/工具调用），先补一条"调用大模型"节点，标出这轮模型调用的起点。
         List<ChatStreamChunk> chunks = new ArrayList<>();
         for (ThinkingBlock block : msg.getContentBlocks(ThinkingBlock.class)) {
-            String thinking = block.getThinking();
-            if (StringUtils.hasText(thinking) && !thinking.equals(lastReasoningText.getAndSet(thinking))) {
-                // reasoning = true
-                chunks.add(new ChatStreamChunk(true, thinking));
+            String delta = extractDelta(lastReasoningText, block.getThinking());
+            if (StringUtils.hasText(delta)) {
+                addModelCallIfNew(chunks, modelCallAnnounced);
+                chunks.add(new ChatStreamChunk(ChatNodeKind.THINKING, delta));
             }
         }
-        String text = msg.getTextContent();
-        if (StringUtils.hasText(text) && !text.equals(lastAnswerText.getAndSet(text))) {
+        String answerDelta = extractDelta(lastAnswerText, msg.getTextContent());
+        if (StringUtils.hasText(answerDelta)) {
             answerStreamed.set(true);
-            // reasoning = false，正文
-            chunks.add(new ChatStreamChunk(false, text));
+            addModelCallIfNew(chunks, modelCallAnnounced);
+            chunks.add(new ChatStreamChunk(ChatNodeKind.ANSWER, answerDelta));
         }
-        if (chunks.isEmpty()) {
-            // 既没有思考内容也没有正文，大概率是模型决定调用工具（ToolUseBlock）
-            msg.getContentBlocks(ToolUseBlock.class).stream()
-                .map(ToolUseBlock::getName)
-                .filter(name -> StringUtils.hasText(name) && !name.startsWith("__"))
-                .filter(name -> !name.equals(lastAnnouncedTool.getAndSet(name)))
-                .forEach(name -> chunks.add(new ChatStreamChunk(true, "正在调用工具「" + name + "」...")));
+        List<ChatStreamChunk> toolChunks = msg.getContentBlocks(ToolUseBlock.class).stream()
+            .map(ToolUseBlock::getName)
+            .filter(name -> StringUtils.hasText(name) && !name.startsWith("__"))
+            .filter(name -> !name.equals(lastAnnouncedTool.getAndSet(name)))
+            .map(name -> new ChatStreamChunk(classifyToolSource(toolSource, name), "「" + name + "」"))
+            .collect(Collectors.toList());
+        if (!toolChunks.isEmpty()) {
+            addModelCallIfNew(chunks, modelCallAnnounced);
+            chunks.addAll(toolChunks);
         }
         return chunks;
+    }
+
+    /**
+     * 提取本次内容相对上次的净增量。框架/模型对"增量"的语义不完全一致——有的 provider 每次给的是
+     * 真正独立的分片（delta），有的给的是"从头到现在"的累积全量文本（实测复现于某些 DeepSeek 风格
+     * 推理模型的 reasoning_content）；不区分对待、原样转发再让前端 {@code +=} 拼接，遇到累积型
+     * provider 就会把重叠部分重复拼接一遍，界面上看到同一句话连续出现两次。用"新值是否以旧值为
+     * 前缀"识别累积型场景，命中则只发净增量部分（旧值本身也涵盖了"两次内容完全相同、这次没有
+     * 新增"的去重场景，此时截出空串直接不发）；不构成前缀关系（真正的独立分片，或模型侧发生了
+     * 非累积性的改写）则原样发一遍，保底不丢内容。
+     */
+    private String extractDelta(AtomicReference<String> lastFull, String currentFull) {
+        if (!StringUtils.hasText(currentFull)) {
+            return "";
+        }
+        String previous = lastFull.getAndSet(currentFull);
+        if (!StringUtils.hasText(previous) || !currentFull.startsWith(previous)) {
+            return currentFull;
+        }
+        return currentFull.substring(previous.length());
+    }
+
+    /** 本轮迭代还没标过"调用大模型"就补一条，只在真正产出内容（思考/正文/工具调用）的那一刻才补，避免空跑一轮也占一个节点。 */
+    private void addModelCallIfNew(List<ChatStreamChunk> chunks, AtomicBoolean modelCallAnnounced) {
+        if (!modelCallAnnounced.getAndSet(true)) {
+            chunks.add(new ChatStreamChunk(ChatNodeKind.MODEL_CALL, "调用大模型"));
+        }
+    }
+
+    private ChatNodeKind classifyToolSource(ToolSourceInfo toolSource, String toolName) {
+        if (toolSource.isSkillTool(toolName)) {
+            return ChatNodeKind.TOOL_SKILL;
+        }
+        if (toolSource.isMcpTool(toolName)) {
+            return ChatNodeKind.TOOL_MCP;
+        }
+        return ChatNodeKind.TOOL_BUILTIN;
     }
 
     private String describeToolResult(ToolResultBlock block) {

@@ -23,6 +23,10 @@ public class SaTokenConfig implements WebMvcConfigurer {
             .excludePathPatterns(
                 "/api/auth/login",
                 "/api/auth/sso-login",
+                // 菜单图标图片：前端用 <img src="..."> 直接加载，浏览器不会带 axios 注入的
+                // Authorization 头，这类静态资源必须放行，鉴权收敛到"谁能上传"这一侧
+                // （见 MenuAdminController 的 @SaCheckPermission("menu:edit")）。
+                "/api/menu-icons/**",
                 "/actuator/**",
                 "/swagger-ui/**",
                 "/v3/api-docs/**",

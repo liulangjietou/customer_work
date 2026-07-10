@@ -98,8 +98,37 @@ export interface PermissionVO {
   type: number
   path: string | null
   icon: string | null
+  iconType: 'library' | 'image' | null
   sort: number | null
   children: PermissionVO[]
+}
+
+// ---------- system.menu ----------
+export interface MenuSaveRequest {
+  parentId: number | null
+  permName: string
+  permCode: string
+  type: number
+  path?: string | null
+  icon?: string | null
+  iconType?: 'library' | 'image' | null
+  sort?: number | null
+}
+
+export interface MenuReorderItem {
+  id: number
+  parentId: number
+  sort: number
+}
+
+export interface MenuChangeLogVO {
+  id: number
+  menuId: number
+  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'MOVE'
+  beforeSnapshot: string | null
+  afterSnapshot: string | null
+  operatorName: string | null
+  createTime: string
 }
 
 // ---------- system.log ----------
@@ -228,6 +257,7 @@ export interface MenuNode {
   name: string
   path: string | null
   icon: string | null
+  iconType: 'library' | 'image' | null
   permCode: string | null
   sort: number | null
   agentCode: string | null

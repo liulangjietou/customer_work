@@ -17,6 +17,8 @@ public class MenuNode {
     private String name;
     private String path;
     private String icon;
+    /** library=图标库图标名 / image=上传图片URL；默认 library，兼容历史未回填的静态菜单数据。 */
+    private String iconType = "library";
     private String permCode;
     private Integer sort;
     /** 动态智能体节点专用：批次三补齐。 */

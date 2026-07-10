@@ -25,14 +25,27 @@ function iconColor(permCode: string | null): string | undefined {
   <template v-for="node in nodes" :key="node.id">
     <el-sub-menu v-if="node.children && node.children.length > 0" :index="node.path || String(node.id)">
       <template #title>
-        <el-icon :style="{ color: iconColor(node.permCode) }"><component :is="node.icon || 'Folder'" /></el-icon>
+        <img v-if="node.iconType === 'image' && node.icon" :src="node.icon" alt="" class="menu-icon-img" />
+        <el-icon v-else :style="{ color: iconColor(node.permCode) }"><component :is="node.icon || 'Folder'" /></el-icon>
         <span>{{ node.name }}</span>
       </template>
       <MenuTree :nodes="node.children" />
     </el-sub-menu>
     <el-menu-item v-else :index="node.path || String(node.id)">
-      <el-icon :style="{ color: iconColor(node.permCode) }"><component :is="node.icon || 'Document'" /></el-icon>
+      <img v-if="node.iconType === 'image' && node.icon" :src="node.icon" alt="" class="menu-icon-img" />
+      <el-icon v-else :style="{ color: iconColor(node.permCode) }"><component :is="node.icon || 'Document'" /></el-icon>
       <span>{{ node.name }}</span>
     </el-menu-item>
   </template>
 </template>
+
+<style scoped>
+/* el-menu 自带的图标间距规则按 .el-icon 类选择器命中，<img> 标签享受不到，手动补一份保持视觉一致。 */
+.menu-icon-img {
+  width: 18px;
+  height: 18px;
+  margin-right: 5px;
+  object-fit: contain;
+  vertical-align: middle;
+}
+</style>

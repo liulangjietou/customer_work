@@ -3,7 +3,7 @@ import { nextTick, onUnmounted, ref } from 'vue'
 import { ElMessage, type UploadRequestOptions } from 'element-plus'
 import { getChatSessionMessages, parseChatAttachment, streamChat } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import ThinkingBlock from '@/components/ThinkingBlock.vue'
+import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import { generateUuid } from '@/utils/uuid'
 
@@ -12,7 +12,18 @@ const props = defineProps<{ agentCode: string }>()
 interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
-  reasoning: string
+  nodes: TraceNode[]
+}
+
+/** 追加一个执行轨迹节点：连续的 thinking 是同一段思考内容的增量分片，合并进上一个节点而不是各占一条；
+ * 其余节点类型（开始思考/调用大模型/调用 Skill 等）后端已经做过去重，各自独立成一条时间线项。 */
+function appendNode(msg: ChatMessage, kind: string, text: string) {
+  const last = msg.nodes[msg.nodes.length - 1]
+  if (last && last.kind === 'thinking' && kind === 'thinking') {
+    last.text += text
+  } else {
+    msg.nodes.push({ kind, text })
+  }
 }
 
 interface Attachment {
@@ -77,7 +88,7 @@ async function openSession(targetSessionId: string) {
   try {
     const history = await getChatSessionMessages(props.agentCode, targetSessionId)
     sessionId.value = targetSessionId
-    messages.value = history.map((msg) => ({ role: msg.role, text: msg.text, reasoning: '' }))
+    messages.value = history.map((msg) => ({ role: msg.role, text: msg.text, nodes: [] }))
     input.value = ''
     scrollToBottom()
   } catch (error) {
@@ -104,9 +115,9 @@ function send() {
   messages.value.push({
     role: 'user',
     text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
-    reasoning: '',
+    nodes: [],
   })
-  messages.value.push({ role: 'assistant', text: '', reasoning: '' })
+  messages.value.push({ role: 'assistant', text: '', nodes: [] })
   // 坑：不能拿 push 前创建的原始对象引用去改——Vue 的响应式数组对存进去的对象是"读取时才转成响应式
   // 代理"，闭包里这个原始对象跟模板 v-for 里读到的 msg 不是同一个代理，直接改原始对象的属性绕过了
   // 代理的 setter，Vue 感知不到，界面不会增量刷新（只有等 streaming 这类真正的响应式变量变化触发整体
@@ -123,8 +134,8 @@ function send() {
         streaming.value = false
         return
       }
-      if (event.event === 'reasoning') {
-        assistantMessage.reasoning += event.data
+      if (event.event.startsWith('node:')) {
+        appendNode(assistantMessage, event.event.slice('node:'.length), event.data)
       } else {
         assistantMessage.text += event.data
       }
@@ -160,14 +171,14 @@ defineExpose({ sessionId })
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in messages" :key="index" class="message-row" :class="msg.role">
           <div class="bubble">
-            <ThinkingBlock
-              v-if="msg.role === 'assistant' && msg.reasoning"
-              :text="msg.reasoning"
+            <TraceTimeline
+              v-if="msg.role === 'assistant' && msg.nodes.length > 0"
+              :nodes="msg.nodes"
               :active="streaming && index === messages.length - 1 && !msg.text"
             />
             <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
             <template v-else>{{ msg.text }}</template>
-            <span v-if="msg.role === 'assistant' && !msg.text && !msg.reasoning && streaming && index === messages.length - 1">思考中…</span>
+            <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && streaming && index === messages.length - 1">思考中…</span>
           </div>
         </div>
         <el-empty v-if="messages.length === 0" description="开始和智能体对话吧" />
