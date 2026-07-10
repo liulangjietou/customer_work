@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { changePassword } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
+import FooterCopyright from '@/components/FooterCopyright.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -67,6 +68,7 @@ async function handleSubmit() {
         </el-form-item>
       </el-form>
     </el-card>
+    <FooterCopyright />
   </div>
 </template>
 
@@ -74,6 +76,7 @@ async function handleSubmit() {
 .change-password-page {
   height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   background: #f5f5f5;
@@ -81,6 +84,8 @@ async function handleSubmit() {
 
 .change-password-card {
   width: 420px;
+  margin-bottom: auto;
+  margin-top: auto;
 }
 
 .title {

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, type UploadRequestOptions } from 'element-plus'
 import { getChatSessionMessages, parseChatAttachment, streamChat } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
+import ThemeToolbar from '@/components/ThemeToolbar.vue'
+import { useThemeStore } from '@/store/theme'
 import { generateUuid } from '@/utils/uuid'
 
 const props = defineProps<{ agentCode: string }>()
@@ -41,6 +43,7 @@ const attachments = ref<Attachment[]>([])
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
 let abortStream: (() => void) | null = null
+const themeStore = useThemeStore()
 
 function newSession() {
   abortStream?.()
@@ -152,6 +155,10 @@ function send() {
   })
 }
 
+onMounted(() => {
+  themeStore.apply()
+})
+
 onUnmounted(() => {
   abortStream?.()
 })
@@ -163,10 +170,7 @@ defineExpose({ sessionId })
   <div class="chat-panel">
     <div class="chat-column">
       <div class="panel-header">
-        <el-button size="small" @click="newSession">
-          <el-icon style="margin-right: 4px"><Plus /></el-icon>
-          新建会话
-        </el-button>
+        <ThemeToolbar :on-new-session="newSession" />
       </div>
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in messages" :key="index" class="message-row" :class="msg.role">
@@ -225,6 +229,10 @@ defineExpose({ sessionId })
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background-color: var(--theme-page-bg, #fff);
+  border-radius: 8px;
+  padding: 12px;
+  transition: background-color 0.3s ease;
 }
 
 .panel-header {
@@ -237,6 +245,7 @@ defineExpose({ sessionId })
   flex: 1;
   overflow-y: auto;
   padding: 8px;
+  border-radius: 6px;
 }
 
 .attachment-tags {
@@ -263,9 +272,13 @@ defineExpose({ sessionId })
 }
 
 .message-row.user .bubble {
-  background: #409eff;
+  background: var(--theme-primary, #409eff);
   color: #fff;
   white-space: pre-wrap;
+}
+
+.message-row.user .bubble:hover {
+  background: var(--theme-primary-light, #79bbff);
 }
 
 .message-row.assistant .bubble {
@@ -277,6 +290,16 @@ defineExpose({ sessionId })
   display: flex;
   gap: 8px;
   margin-top: 12px;
+}
+
+.input-bar :deep(.el-button--primary) {
+  background-color: var(--theme-primary, #409eff);
+  border-color: var(--theme-primary, #409eff);
+}
+
+.input-bar :deep(.el-button--primary:hover) {
+  background-color: var(--theme-primary-light, #79bbff);
+  border-color: var(--theme-primary-light, #79bbff);
 }
 
 .history-column {

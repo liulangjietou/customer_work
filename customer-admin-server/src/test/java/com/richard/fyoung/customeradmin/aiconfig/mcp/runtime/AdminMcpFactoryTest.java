@@ -4,9 +4,12 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * {@link AdminMcpFactory} 单测：三种 mcpType 都能正确解析出对应的传输方式（不发起真实连接——
@@ -73,5 +76,22 @@ class AdminMcpFactoryTest {
 
         assertEquals(McpTestResult.STATUS_FAILED, result.testStatus());
         assertNotNull(result.message());
+    }
+
+    /**
+     * 调试面板的 listDebugTools/callDebugTool 跟 testConnectivity 不一样，不在方法内部兜底成失败结果，
+     * 而是直接把连接异常往外抛——交给 McpService 层统一包成 BizException/McpDebugCallResult，
+     * 这里只验证"连不上会抛异常"这个边界，不吞掉。
+     */
+    @Test
+    void listDebugTools_shouldThrow_whenUrlUnreachable() {
+        assertThrows(Exception.class, () ->
+            factory.listDebugTools("test", "sse", "{\"url\": \"http://127.0.0.1:1\"}"));
+    }
+
+    @Test
+    void callDebugTool_shouldThrow_whenUrlUnreachable() {
+        assertThrows(Exception.class, () ->
+            factory.callDebugTool("test", "sse", "{\"url\": \"http://127.0.0.1:1\"}", "any-tool", Map.of()));
     }
 }

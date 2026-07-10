@@ -1,6 +1,9 @@
 package com.richard.fyoung.customeradmin.aiconfig.mcp.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallRequest;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallResult;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugToolVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpVO;
@@ -19,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -77,5 +81,21 @@ public class McpController {
     @PostMapping("/{id}/test-connectivity")
     public CompletableFuture<Result<McpTestResult>> testConnectivity(@PathVariable Long id) {
         return mcpService.testConnectivity(id).thenApply(Result::success);
+    }
+
+    /** 调试面板 · 列出该 MCP 提供的工具（只读探测，复用 mcp:view，不新增权限点）。 */
+    @SaCheckPermission("mcp:view")
+    @PostMapping("/{id}/debug/tools")
+    public CompletableFuture<Result<List<McpDebugToolVO>>> debugTools(@PathVariable Long id) {
+        return mcpService.listDebugTools(id).thenApply(Result::success);
+    }
+
+    /** 调试面板 · 单次调用工具——工具本身可能有副作用（比如真的查了/改了下游数据），落审计日志。 */
+    @SaCheckPermission("mcp:view")
+    @OperationLog(operation = "MCP调试工具调用", target = "ai_mcp")
+    @PostMapping("/{id}/debug/call")
+    public CompletableFuture<Result<McpDebugCallResult>> debugCall(
+        @PathVariable Long id, @Valid @RequestBody McpDebugCallRequest request) {
+        return mcpService.callDebugTool(id, request).thenApply(Result::success);
     }
 }

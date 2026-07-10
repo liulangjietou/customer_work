@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, type UploadRequestOptions } from 'element-plus'
-import { listVibeCodingArtifacts, listWorkspaceFiles, readWorkspaceFileContent, saveWorkspaceFileContent, streamVibeCoding } from '@/api/vibecoding'
+import { listWorkspaceFiles, readWorkspaceFileContent, saveWorkspaceFileContent, streamVibeCoding } from '@/api/vibecoding'
 import { getChatSessionMessages, parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
+import ThemeToolbar from '@/components/ThemeToolbar.vue'
+import { useThemeStore } from '@/store/theme'
 import { generateUuid } from '@/utils/uuid'
 import type { WorkspaceFileContent, WorkspaceFileNode } from '@/types/api'
 import hljs from 'highlight.js'
@@ -43,11 +45,9 @@ const historyLoading = ref(false)
 const uploading = ref(false)
 const attachments = ref<Attachment[]>([])
 const scrollRef = ref<HTMLElement>()
-const artifacts = ref<string[]>([])
-const artifactsLoading = ref(false)
-const artifactsLoaded = ref(false)
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
 let abortStream: (() => void) | null = null
+const themeStore = useThemeStore()
 
 // 目录树相关
 const fileNodes = ref<WorkspaceFileNode[]>([])
@@ -71,8 +71,6 @@ function newSession() {
   messages.value = []
   input.value = ''
   attachments.value = []
-  artifacts.value = []
-  artifactsLoaded.value = false
   fileNodes.value = []
   filesLoaded.value = false
 }
@@ -111,8 +109,6 @@ async function openSession(targetSessionId: string) {
     sessionId.value = targetSessionId
     messages.value = history.map((msg) => ({ role: msg.role, text: msg.text, nodes: [] }))
     input.value = ''
-    artifacts.value = []
-    artifactsLoaded.value = false
     fileNodes.value = []
     filesLoaded.value = false
     scrollToBottom()
@@ -170,16 +166,6 @@ function send() {
       historySidebar.value?.refresh()
     },
   })
-}
-
-async function loadArtifacts() {
-  artifactsLoading.value = true
-  try {
-    artifacts.value = await listVibeCodingArtifacts(props.agentCode, sessionId.value)
-    artifactsLoaded.value = true
-  } finally {
-    artifactsLoading.value = false
-  }
 }
 
 /** 加载（刷新）会话 workspace 目录树。 */
@@ -262,6 +248,10 @@ function highlightPreview() {
   }
 }
 
+onMounted(() => {
+  themeStore.apply()
+})
+
 onUnmounted(() => {
   abortStream?.()
 })
@@ -272,10 +262,7 @@ onUnmounted(() => {
     <!-- 左列：对话区 -->
     <div class="chat-column">
       <div class="panel-header">
-        <el-button size="small" @click="newSession">
-          <el-icon style="margin-right: 4px"><Plus /></el-icon>
-          新建会话
-        </el-button>
+        <ThemeToolbar :on-new-session="newSession" />
       </div>
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in messages" :key="index" class="message-row" :class="msg.role">
@@ -340,7 +327,7 @@ onUnmounted(() => {
           <template #default="{ node, data }">
             <span class="tree-node">
               <el-icon v-if="data.directory" style="margin-right:4px;color:#e6a23c"><Folder /></el-icon>
-              <el-icon v-else style="margin-right:4px;color:#409eff"><Document /></el-icon>
+              <el-icon v-else style="margin-right:4px;color:var(--theme-primary, #409eff)"><Document /></el-icon>
               <span :title="data.relativePath">{{ node.label }}</span>
             </span>
           </template>
@@ -421,6 +408,10 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background-color: var(--theme-page-bg, #fff);
+  border-radius: 8px;
+  padding: 12px;
+  transition: background-color 0.3s ease;
 }
 
 .panel-header {
@@ -433,6 +424,7 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
+  border-radius: 6px;
 }
 
 .attachment-tags {
@@ -459,9 +451,13 @@ onUnmounted(() => {
 }
 
 .message-row.user .bubble {
-  background: #409eff;
+  background: var(--theme-primary, #409eff);
   color: #fff;
   white-space: pre-wrap;
+}
+
+.message-row.user .bubble:hover {
+  background: var(--theme-primary-light, #79bbff);
 }
 
 .message-row.assistant .bubble {
@@ -473,6 +469,16 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   margin-top: 12px;
+}
+
+.input-bar :deep(.el-button--primary) {
+  background-color: var(--theme-primary, #409eff);
+  border-color: var(--theme-primary, #409eff);
+}
+
+.input-bar :deep(.el-button--primary:hover) {
+  background-color: var(--theme-primary-light, #79bbff);
+  border-color: var(--theme-primary-light, #79bbff);
 }
 
 /* 产物文件树列 */
@@ -507,7 +513,7 @@ onUnmounted(() => {
 }
 
 .tree-node:hover {
-  color: #409eff;
+  color: var(--theme-primary, #409eff);
 }
 
 /* 历史会话列 */
@@ -589,7 +595,7 @@ onUnmounted(() => {
 }
 
 .code-editor:focus {
-  border-color: #409eff;
+  border-color: var(--theme-primary, #409eff);
   background: #fff;
 }
 </style>

@@ -25,6 +25,17 @@ hljs.registerLanguage('yaml', yaml)
 
 // markdown-it 内置表格语法（GFM 表格属于其核心规则，无需额外插件）；代码块交给 highlight.js 高亮，
 // 语言不识别（或未注册）时退化成纯转义文本，不抛错中断整段渲染。
+function highlightCode(code: string, lang: string): string {
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(code, { language: lang }).value
+    } catch {
+      // fall through to escaped plain text
+    }
+  }
+  return md.utils.escapeHtml(code)
+}
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -32,14 +43,7 @@ const md = new MarkdownIt({
   // hljs 主题(github.css)按 .hljs 类选择器生效，markdown-it 默认只加 language-xxx，故拼上 hljs 前缀
   langPrefix: 'hljs language-',
   highlight(code, lang) {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        return hljs.highlight(code, { language: lang }).value
-      } catch {
-        // fall through to escaped plain text
-      }
-    }
-    return md.utils.escapeHtml(code)
+    return highlightCode(code, lang)
   },
 })
 

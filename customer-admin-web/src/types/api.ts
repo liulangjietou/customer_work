@@ -204,6 +204,22 @@ export interface McpTestResult {
   message: string | null
 }
 
+// ---------- aiconfig.mcp.debug ----------
+export interface McpDebugToolVO {
+  name: string
+  description: string | null
+  schemaType: string
+  /** JSON Schema properties：每个 value 是一段 schema 片段（{type, description, enum?, default?, ...}）。 */
+  properties: Record<string, Record<string, unknown>>
+  required: string[]
+}
+
+export interface McpDebugCallResult {
+  success: boolean
+  output: string | null
+  errorMessage: string | null
+}
+
 // ---------- aiconfig.skill ----------
 export interface SkillVO {
   id: number

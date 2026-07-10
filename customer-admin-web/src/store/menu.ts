@@ -12,6 +12,7 @@ interface MenuState {
   version: number
   routesRegistered: boolean
   pollTimer: ReturnType<typeof setInterval> | null
+  collapsed: boolean
 }
 
 export const useMenuStore = defineStore('menu', {
@@ -20,6 +21,7 @@ export const useMenuStore = defineStore('menu', {
     version: -1,
     routesRegistered: false,
     pollTimer: null,
+    collapsed: false,
   }),
   actions: {
     /** 登录后首次进入：拉权限点 + 菜单树 + 注册动态路由 + 起版本号轮询。 */
@@ -81,6 +83,10 @@ export const useMenuStore = defineStore('menu', {
       this.version = -1
       this.routesRegistered = false
       this.stopPolling()
+      this.collapsed = false
+    },
+    toggleCollapsed() {
+      this.collapsed = !this.collapsed
     },
   },
 })

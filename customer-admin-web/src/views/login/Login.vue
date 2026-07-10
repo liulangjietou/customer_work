@@ -5,6 +5,7 @@ import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { login, ssoLogin } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
+import FooterCopyright from '@/components/FooterCopyright.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -128,6 +129,7 @@ async function handleSubmit() {
         </el-form-item>
       </el-form>
     </el-card>
+    <FooterCopyright dark />
   </div>
 </template>
 
@@ -135,6 +137,7 @@ async function handleSubmit() {
 .login-page {
   height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #1f2937, #4b5563);
@@ -142,6 +145,8 @@ async function handleSubmit() {
 
 .login-card {
   width: 360px;
+  margin-bottom: auto;
+  margin-top: auto;
 }
 
 .login-title {

@@ -8,6 +8,9 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallRequest;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallResult;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugToolVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpVO;
@@ -143,6 +146,59 @@ public class McpService {
                 persistTestResult(id, result);
                 return result;
             });
+    }
+
+    /**
+     * 调试面板 · 列工具：跟连通性测试同一手法派发到独立线程池，避免 {@code AdminMcpFactory} 内部的
+     * {@code .block()} 占用 Tomcat 请求线程；异常统一包成 {@link BizException}，让前端拿到具体错误文案
+     * 而不是泛泛的 500。
+     */
+    public CompletableFuture<List<McpDebugToolVO>> listDebugTools(Long id) {
+        AiMcp mcp = requireMcp(id);
+        return CompletableFuture
+            .supplyAsync(() -> {
+                try {
+                    return mcpFactory.listDebugTools(mcp.getMcpName(), mcp.getMcpType(), mcp.getConfig());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }, MCP_TEST_EXECUTOR)
+            .orTimeout(TEST_FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .exceptionally(ex -> {
+                log.error("mcp debug listTools failed, code={}, mcpId={}", "MCP-DEBUG-LIST-FAIL", id, ex);
+                throw new BizException(ResultCode.MCP_CONNECT_FAILED, describeDebugError(ex));
+            });
+    }
+
+    /** 调试面板 · 单次调用工具：同上分发到独立线程池；工具调用本身可能有副作用（比如真的下了单/查了数据），不做重试。 */
+    public CompletableFuture<McpDebugCallResult> callDebugTool(Long id, McpDebugCallRequest request) {
+        AiMcp mcp = requireMcp(id);
+        return CompletableFuture
+            .supplyAsync(() -> {
+                try {
+                    return mcpFactory.callDebugTool(mcp.getMcpName(), mcp.getMcpType(), mcp.getConfig(),
+                        request.toolName(), request.arguments());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }, MCP_TEST_EXECUTOR)
+            .orTimeout(TEST_FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .exceptionally(ex -> new McpDebugCallResult(false, null, describeDebugError(ex)));
+    }
+
+    /** 一路走到根因——{@code supplyAsync} 里 checked Exception 包一层 RuntimeException，
+     * CompletableFuture 内部又会再包一层 CompletionException，不沿着 cause 链走到底，
+     * 拿到的会是外层包装类自己的 toString()，不是真正有意义的错误信息。 */
+    private String describeDebugError(Throwable ex) {
+        Throwable cause = ex;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        if (cause instanceof TimeoutException) {
+            return "调试请求超时";
+        }
+        String message = cause.getMessage();
+        return message == null ? cause.getClass().getSimpleName() : message;
     }
 
     private void persistTestResult(Long id, McpTestResult result) {

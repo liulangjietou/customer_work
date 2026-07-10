@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import type { MenuNode } from '@/types/api'
 
-defineProps<{ nodes: MenuNode[] }>()
+defineProps<{ nodes: MenuNode[]; collapsed?: boolean }>()
 
 // 按 perm_code 给系统管理 / AI 配置的叶子菜单个性化配色（图标名本身来自后端 sys_permission.icon
 // 种子数据，见 V5__menu_icons.sql）；未命中的节点（分组节点、动态智能体节点）不着色，继承菜单默认
 // 文字颜色，不强行统一风格。
 const ICON_COLORS: Record<string, string> = {
+  system: '#5B8FF9',
+  aiconfig: '#8B5CF6',
+  workspace: '#14B8A6',
   user: '#409EFF',
   role: '#9B59B6',
   log: '#E6A23C',
@@ -23,18 +26,26 @@ function iconColor(permCode: string | null): string | undefined {
 
 <template>
   <template v-for="node in nodes" :key="node.id">
-    <el-sub-menu v-if="node.children && node.children.length > 0" :index="node.path || String(node.id)">
+    <el-sub-menu
+      v-if="node.children && node.children.length > 0"
+      :index="node.path || String(node.id)"
+      :title="node.name"
+    >
       <template #title>
         <img v-if="node.iconType === 'image' && node.icon" :src="node.icon" alt="" class="menu-icon-img" />
         <el-icon v-else :style="{ color: iconColor(node.permCode) }"><component :is="node.icon || 'Folder'" /></el-icon>
-        <span>{{ node.name }}</span>
+        <span v-show="!collapsed">{{ node.name }}</span>
       </template>
-      <MenuTree :nodes="node.children" />
+      <MenuTree :nodes="node.children" :collapsed="collapsed" />
     </el-sub-menu>
-    <el-menu-item v-else :index="node.path || String(node.id)">
+    <el-menu-item
+      v-else
+      :index="node.path || String(node.id)"
+      :title="node.name"
+    >
       <img v-if="node.iconType === 'image' && node.icon" :src="node.icon" alt="" class="menu-icon-img" />
       <el-icon v-else :style="{ color: iconColor(node.permCode) }"><component :is="node.icon || 'Document'" /></el-icon>
-      <span>{{ node.name }}</span>
+      <span v-show="!collapsed">{{ node.name }}</span>
     </el-menu-item>
   </template>
 </template>
@@ -47,5 +58,10 @@ function iconColor(permCode: string | null): string | undefined {
   margin-right: 5px;
   object-fit: contain;
   vertical-align: middle;
+}
+
+/* 折叠模式下让图标居中，移除图片右侧多余间距 */
+:deep(.el-menu--collapse) .menu-icon-img {
+  margin-right: 0;
 }
 </style>

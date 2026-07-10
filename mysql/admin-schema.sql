@@ -247,10 +247,10 @@ INSERT INTO `sys_user_role` (`user_id`, `role_id`) VALUES (1, 1);
 
 -- ---- 默认权限树 ----
 -- 一级：系统管理 / AI 配置 / 智能体工作区（type=1 菜单，parent_id=0）
-INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `sort`) VALUES
-    (1,  0, '系统管理',     'system',    1, '/system',    1),
-    (2,  0, 'AI 配置',      'aiconfig',  1, '/aiconfig',  2),
-    (3,  0, '智能体工作区', 'workspace', 1, '/workspace', 3);
+INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `sort`) VALUES
+    (1,  0, '系统管理',     'system',    1, '/system',    'Setting',     1),
+    (2,  0, 'AI 配置',      'aiconfig',  1, '/aiconfig',  'Opportunity', 2),
+    (3,  0, '智能体工作区', 'workspace', 1, '/workspace', 'Service',     3);
 
 -- 二级：系统管理 子菜单（type=1）；icon 为 Element Plus 图标组件名（全局已注册，见 main.ts），
 -- 具体颜色由前端 MenuTree.vue 按 perm_code 映射着色，不在这里存颜色值（图标库换皮不用改数据）。

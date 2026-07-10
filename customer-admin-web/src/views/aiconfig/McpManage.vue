@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import { createMcp, deleteMcp, pageMcps, testMcpConnectivity, updateMcp } from '@/api/mcp'
+import McpDebugDialog from '@/components/McpDebugDialog.vue'
 import type { McpSaveRequest, McpVO, PageQuery } from '@/types/api'
 
 const loading = ref(false)
@@ -11,7 +12,7 @@ const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
 const testingId = ref<number | null>(null)
 
 const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
+const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 const form = reactive<McpSaveRequest>({ mcpName: '', mcpType: 'sse', config: '', description: '', status: 1 })
@@ -71,17 +72,31 @@ function openEdit(row: McpVO) {
   dialogVisible.value = true
 }
 
+/** 复制：预填选中行的配置，名称加"副本"提示，改名/改关键信息后当新建提交，不影响原 MCP。 */
+function openCopy(row: McpVO) {
+  dialogMode.value = 'copy'
+  editingId.value = null
+  Object.assign(form, {
+    mcpName: `${row.mcpName}-副本`,
+    mcpType: row.mcpType,
+    config: row.config,
+    description: row.description,
+    status: row.status,
+  })
+  dialogVisible.value = true
+}
+
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) {
     return
   }
-  if (dialogMode.value === 'create') {
-    await createMcp(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
+  if (dialogMode.value === 'edit' && editingId.value) {
     await updateMcp(editingId.value, form)
     ElMessage.success('保存成功')
+  } else {
+    await createMcp(form)
+    ElMessage.success(dialogMode.value === 'copy' ? '复制成功' : '新建成功')
   }
   dialogVisible.value = false
   await loadList()
@@ -113,6 +128,16 @@ async function handleTest(row: McpVO) {
   }
 }
 
+const debugVisible = ref(false)
+const debugMcpId = ref<number | null>(null)
+const debugMcpName = ref('')
+
+function openDebug(row: McpVO) {
+  debugMcpId.value = row.id
+  debugMcpName.value = row.mcpName
+  debugVisible.value = true
+}
+
 onMounted(loadList)
 </script>
 
@@ -140,10 +165,12 @@ onMounted(loadList)
           </template>
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="180" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" :loading="testingId === row.id" @click="handleTest(row)">测试连通性</el-button>
+            <el-button link type="primary" @click="openDebug(row)">调试</el-button>
             <el-button v-permission="'mcp:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-permission="'mcp:add'" link type="primary" @click="openCopy(row)">复制</el-button>
             <el-button v-permission="'mcp:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -159,7 +186,7 @@ onMounted(loadList)
       />
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建 MCP' : '编辑 MCP'" width="520px">
+    <el-dialog v-model="dialogVisible" :title="dialogMode === 'edit' ? '编辑 MCP' : dialogMode === 'copy' ? '复制 MCP' : '新建 MCP'" width="520px">
       <el-form ref="formRef" :model="form" label-width="90px">
         <el-form-item label="名称" prop="mcpName" :rules="[{ required: true, message: '请输入名称' }]">
           <el-input v-model="form.mcpName" />
@@ -187,6 +214,8 @@ onMounted(loadList)
         <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <McpDebugDialog v-model="debugVisible" :mcp-id="debugMcpId" :mcp-name="debugMcpName" />
   </div>
 </template>
 

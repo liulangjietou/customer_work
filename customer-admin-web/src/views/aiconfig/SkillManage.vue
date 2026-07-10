@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type UploadRequestOptions } from 'element-plus'
 import { createSkill, deleteSkill, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
 import type { PageQuery, SkillSaveRequest, SkillVO } from '@/types/api'
+import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
 const loading = ref(false)
 const list = ref<SkillVO[]>([])
@@ -43,6 +44,14 @@ function openEdit(row: SkillVO) {
   editingId.value = row.id
   Object.assign(form, { skillName: row.skillName, skillCode: row.skillCode, content: row.content, description: row.description, status: row.status })
   dialogVisible.value = true
+}
+
+const previewVisible = ref(false)
+const previewSkill = ref<SkillVO | null>(null)
+
+function openPreview(row: SkillVO) {
+  previewSkill.value = row
+  previewVisible.value = true
 }
 
 async function handleSubmit() {
@@ -107,8 +116,9 @@ onMounted(loadList)
           </template>
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="180" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
+            <el-button link type="primary" @click="openPreview(row)">查看</el-button>
             <el-button v-permission="'skill:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button v-permission="'skill:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -160,6 +170,26 @@ onMounted(loadList)
         <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="previewVisible" :title="previewSkill ? `查看 · ${previewSkill.skillName}` : '查看'" width="1000px" top="5vh">
+      <div v-if="previewSkill" class="preview-split">
+        <div class="preview-pane">
+          <div class="preview-pane-title">SKILL.md 原文</div>
+          <el-scrollbar class="preview-pane-body">
+            <pre class="preview-raw">{{ previewSkill.content }}</pre>
+          </el-scrollbar>
+        </div>
+        <div class="preview-pane">
+          <div class="preview-pane-title">预览</div>
+          <el-scrollbar class="preview-pane-body">
+            <MarkdownRenderer :text="previewSkill.content" />
+          </el-scrollbar>
+        </div>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="previewVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -168,5 +198,51 @@ onMounted(loadList)
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.preview-split {
+  display: flex;
+  gap: 16px;
+  height: 65vh;
+}
+
+.preview-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.preview-pane-title {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #606266;
+  background: #f5f7fa;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.preview-pane-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.preview-pane-body :deep(.markdown-body) {
+  padding: 12px;
+}
+
+.preview-raw {
+  margin: 0;
+  padding: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #303133;
 }
 </style>
