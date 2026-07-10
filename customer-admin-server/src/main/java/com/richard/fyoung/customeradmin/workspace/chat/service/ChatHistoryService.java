@@ -93,6 +93,21 @@ public class ChatHistoryService {
         return messages;
     }
 
+    /**
+     * 单条会话摘要：给定 agentCode+sessionId 直接解析，不走"列出全部再过滤"——Projects 详情页按需查
+     * 单条会话时用（一个项目里的会话可能横跨很多智能体，没必要把每个智能体的全部会话都拉一遍）。
+     * 会话已查不到内容（比如底层状态被清理）时返回空。
+     */
+    public Optional<ChatSessionSummary> getSessionSummary(String agentCode, String sessionId) {
+        Agent agent = agentInstanceCache.getOrBuild(agentCode);
+        List<Msg> context = agentStateAccessor.resolve(agent, agentCode, sessionId).getContext();
+        if (context.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new ChatSessionSummary(sessionId, previewOf(context),
+            context.get(context.size() - 1).getTimestamp(), context.size()));
+    }
+
     private String previewOf(List<Msg> context) {
         for (Msg msg : context) {
             if (msg.getRole() == MsgRole.USER && StringUtils.hasText(msg.getTextContent())) {

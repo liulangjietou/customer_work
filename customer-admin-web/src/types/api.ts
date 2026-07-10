@@ -321,3 +321,33 @@ export interface ChatMessageVO {
   text: string
   timestamp: string
 }
+
+// ---------- workspace.project ----------
+export interface ProjectVO {
+  id: number
+  projectName: string
+  description: string | null
+  sessionCount: number
+  createTime: string
+}
+
+export interface ProjectSaveRequest {
+  projectName: string
+  description?: string | null
+}
+
+export interface ProjectSessionVO {
+  agentCode: string
+  agentName: string
+  sessionId: string
+  preview: string | null
+  lastMessageTime: string | null
+  messageCount: number | null
+  addedTime: string
+  stale: boolean
+}
+
+export interface AddSessionRequest {
+  agentCode: string
+  sessionId: string
+}

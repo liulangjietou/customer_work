@@ -9,7 +9,7 @@ import ThemeToolbar from '@/components/ThemeToolbar.vue'
 import { useThemeStore } from '@/store/theme'
 import { generateUuid } from '@/utils/uuid'
 
-const props = defineProps<{ agentCode: string }>()
+const props = defineProps<{ agentCode: string; initialSessionId?: string }>()
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -157,6 +157,10 @@ function send() {
 
 onMounted(() => {
   themeStore.apply()
+  // 从 Project 详情页跳转过来时带上目标会话 id，直接打开对应历史会话，不用用户再手动点一遍。
+  if (props.initialSessionId) {
+    openSession(props.initialSessionId)
+  }
 })
 
 onUnmounted(() => {

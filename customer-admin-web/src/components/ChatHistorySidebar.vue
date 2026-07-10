@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listChatSessions } from '@/api/chat'
+import AddToProjectDialog from './AddToProjectDialog.vue'
 import type { ChatSessionSummary } from '@/types/api'
 
 const props = defineProps<{ agentCode: string; activeSessionId: string }>()
@@ -24,6 +25,14 @@ async function refresh() {
 onMounted(refresh)
 
 defineExpose({ refresh })
+
+const addToProjectVisible = ref(false)
+const addToProjectSessionId = ref('')
+
+function openAddToProject(sessionId: string) {
+  addToProjectSessionId.value = sessionId
+  addToProjectVisible.value = true
+}
 </script>
 
 <template>
@@ -42,14 +51,28 @@ defineExpose({ refresh })
           :class="{ active: session.sessionId === activeSessionId }"
           @click="emit('select', session.sessionId)"
         >
-          <div class="session-preview">{{ session.preview || '（空会话）' }}</div>
-          <div class="session-meta">
-            <span>{{ session.messageCount }} 条</span>
-            <span v-if="session.lastMessageTime">{{ session.lastMessageTime }}</span>
+          <div class="session-row">
+            <div class="session-main">
+              <div class="session-preview">{{ session.preview || '（空会话）' }}</div>
+              <div class="session-meta">
+                <span>{{ session.messageCount }} 条</span>
+                <span v-if="session.lastMessageTime">{{ session.lastMessageTime }}</span>
+              </div>
+            </div>
+            <el-dropdown trigger="click" @command="openAddToProject(session.sessionId)" @click.stop>
+              <el-icon class="session-more" @click.stop><MoreFilled /></el-icon>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="add-to-project">加入 Project</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </li>
       </ul>
     </el-scrollbar>
+
+    <AddToProjectDialog v-model="addToProjectVisible" :agent-code="agentCode" :session-id="addToProjectSessionId" />
   </div>
 </template>
 
@@ -89,6 +112,30 @@ defineExpose({ refresh })
 
 .session-item.active {
   background: #ecf5ff;
+}
+
+.session-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.session-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-more {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 2px;
+  border-radius: 4px;
+  color: #909399;
+}
+
+.session-more:hover {
+  background: #e4e7ed;
+  color: #409eff;
 }
 
 .session-preview {

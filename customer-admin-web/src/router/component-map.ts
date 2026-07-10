@@ -14,4 +14,5 @@ export const staticRouteComponents: Record<string, () => Promise<Component>> = {
   '/aiconfig/mcp': () => import('@/views/aiconfig/McpManage.vue'),
   '/aiconfig/skill': () => import('@/views/aiconfig/SkillManage.vue'),
   '/aiconfig/agent': () => import('@/views/aiconfig/AgentManage.vue'),
+  '/project': () => import('@/views/project/ProjectManage.vue'),
 }
