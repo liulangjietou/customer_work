@@ -6,30 +6,32 @@
 
 > 中文版：[README.md](README.md)
 
-> 🆕 **AgentScope 2.0 migration (`ga2.0` branch, AgentScope Java 2.0.0 GA)**: the `ga2.0` branch migrates everything to
+> 🆕 **AgentScope 2.0.0 GA**: the `main` branch has fully migrated to
 > `io.agentscope:agentscope-harness:2.0.0` (the GA release, published 2026-07-10 after 5 RC iterations) and adds
 > the 2.0 capabilities (Permission System, Plan Mode, Compaction, Workspace/Sandbox, Subagent, and the 5-stage
-> Middleware that replaces v1 hooks). The `rc2.0` branch (2.0.0-RC4) is now a frozen historical snapshot — do new
-> work on `ga2.0`. See **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)** for the mapping, API changes and non-migratable
+> Middleware that replaces v1 hooks). Historical snapshots: the `legacy-main-1.0.12` tag preserves `main`'s last
+> state on **AgentScope Java 1.0.12** before this upgrade; the `rc2.0` branch (2.0.0-RC4) is a frozen snapshot of
+> the first 1.x→2.0 migration pass. The `ga2.0` branch (the former parallel 2.0 migration branch) has been merged
+> into `main` — do new work on `main`. See **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)** for the mapping, API changes and non-migratable
 > features. The companion frontends live in the **`customer-web`** module, wiring the customer-service agent to
 > five official surfaces — **admin** console, **chat-completions-web** (OpenAI-compatible `/v1/chat/completions`
 > + a built-in chat page), **AG-UI** (`/agui/run` rich event protocol), **Studio** observability, and
 > **Channel · DingTalk** (stream-mode bot integration) — see
-> **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**. The `main` branch stays on the stable 1.0.12 release.
+> **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**.
 
 A production-grade reference implementation of an AI customer-service agent. The `main` branch is built on
-**AgentScope Java 1.0.12**, defaulting to **Alibaba Cloud Bailian (DashScope / Qwen)**.
+**`io.agentscope:agentscope-harness:2.0.0`** (GA release), defaulting to **Alibaba Cloud Bailian (DashScope / Qwen)**.
 
 Every capability is **"a config switch + a replaceable implementation"**: built-in in-process
 implementations make it run offline out of the box and keep the test suite green, while a single
 config line swaps to a cloud / self-hosted backend — **without touching business code**.
 
 - Base package: `com.richard.fyoung.customerwork`
-- **176 unit tests** on `main`; **384** on `ga2.0` (starter 362 + app 13 + downstream 1 + customer-web 8; several starter integration tests auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent); the standalone admin console `customer-admin-server` has its own **127 unit tests**
+- **511 unit tests** on `main` (AgentScope 2.0.0 GA): starter 362 + app 13 + downstream 1 + customer-web 8 + the standalone admin console `customer-admin-server` 127 (several starter integration tests auto-skip when their external service, Bailian / Redis / MySQL / Nacos, is absent); the pre-upgrade AgentScope 1.0.12 state (176 unit tests) is preserved under the `legacy-main-1.0.12` tag
 
 ## Feature overview
 
-> This table reflects the **`ga2.0` branch (AgentScope 2.0.0 GA)**. Per-feature 1.x→2.0 API mapping is in
+> This table reflects the **`main` branch (AgentScope 2.0.0 GA)**. Per-feature 1.x→2.0 API mapping is in
 > **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**.
 
 | Capability | Class | Default | Enable |
@@ -86,7 +88,7 @@ Quartz/XXL-JOB scheduling, Training (RM Gallery/Trinity), Anthropic/Gemini SDKs,
 
 ## Production hardening (P0–P3)
 
-The `ga2.0` branch includes a full production-hardening pass (P0–P3). Key items:
+The `main` branch includes a full production-hardening pass (P0–P3). Key items:
 
 ### P0 — Production-critical
 - **Approval store SPI**: `PendingApprovalService` storage extracted to `ApprovalStore` interface + `InMemoryApprovalStore` default (`@ConditionalOnMissingBean`). Downstream can declare a JDBC/Redis implementation to persist approval tickets across restarts — critical for refund approvals involving money.

@@ -3,32 +3,34 @@
 [![CI](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml/badge.svg)](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](#四环境要求)
-[![AgentScope](https://img.shields.io/badge/AgentScope-1.0.12%20%7C%20ga2.0%3A2.0.0-green.svg)](https://github.com/agentscope-ai/agentscope-java)
+[![AgentScope](https://img.shields.io/badge/AgentScope-2.0.0%20GA-green.svg)](https://github.com/agentscope-ai/agentscope-java)
 
 > 🚀 **新人从这里开始**：[docs/新人必读.md](docs/新人必读.md)（15 分钟跑起来 + 看懂结构 + 知道改哪里）
 > English version: [README_EN.md](README_EN.md)
 > 详细技术文档（原理 / 架构图 / 时序图 / UML 类图 / 扩展点）：[docs/详细技术文档.md](docs/详细技术文档.md)
 
-> 🆕 **AgentScope 2.0 迁移（`ga2.0` 分支，AgentScope Java 2.0.0 正式版 / GA）**：本仓库 `ga2.0` 分支已将全部功能迁移到
-> `io.agentscope:agentscope-harness:2.0.0`（GA 正式版，经 5 个 RC 迭代后于 2026-07-10 发布），并补齐 2.0 新能力（Permission System / Plan Mode /
-> Compaction / Workspace-Sandbox / Subagent / 五段 Middleware）。`rc2.0`（2.0.0-RC4）分支保留作为历史存档，不再更新；新工作请基于 `ga2.0`。
+> 🆕 **AgentScope 2.0.0 GA**：本仓库 `main` 分支已全量迁移到
+> `io.agentscope:agentscope-harness:2.0.0`（GA 正式版，经 5 个 RC 迭代后于 2026-07-10 发布），补齐 2.0 新能力（Permission System / Plan Mode /
+> Compaction / Workspace-Sandbox / Subagent / 五段 Middleware）。历史版本存档：`legacy-main-1.0.12` 标签保留升级前基于
+> `io.agentscope:agentscope:1.0.12` 的最后状态；`rc2.0`（2.0.0-RC4）分支保留作为 1.x→2.0 首轮迁移的历史存档，均不再更新。
+> `ga2.0` 分支曾是 2.0 迁移的并行开发分支，现已并入 `main`，后续新工作直接基于 `main`。
 > GA 相对 RC4 的具体改动（内置模型实现拆分为独立扩展模块等）见 **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**「RC4 → GA」一节。
 > 迁移映射、API 变更与**不可迁移能力说明**见
 > **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**；2.0 版深度技术文档见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
 > 配套前端为 `customer-web` 模块，把客服 Agent 同时接到**五套官方能力**：**admin** 管理控制台、
 > **chat-completions-web**（OpenAI 兼容 `/v1/chat/completions` + 内置聊天页）、**AG-UI**（`/agui/run` 富事件协议）、
 > **Studio** 观测台、**Channel·钉钉/飞书/企业微信**（IM 平台接入：钉钉 Stream 模式、飞书/企业微信 应用回调 +
-> 飞书 webhook 推送），见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。`main` 分支仍维持 1.0.12 稳定版。
+> 飞书 webhook 推送），见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。
 
 本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
-`main` 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`，默认对接**阿里云百炼（DashScope / 通义千问）**。
+`main` 基于 `io.agentscope:agentscope-harness:2.0.0`（GA 正式版），默认对接**阿里云百炼（DashScope / 通义千问）**。
 
 > 开源说明：本项目以**可改造为你自己的业务 Agent** 为目标——业务工具走 `tool.backend.*` 接口，
 > 你只需实现接口（或覆盖 Bean）即可接入自有订单/售后/知识系统，无需改框架代码。详见
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main` 分支 **176 个全绿**；`ga2.0`（AgentScope 2.0.0 GA）分支 **384 个全绿**（starter 362 + app 13 + downstream 1 + customer-web 8，其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；后台管理系统 `customer-admin-server` 另有 **127 个全绿**（独立统计，见 §6.21）
+- 单元测试：`main`（AgentScope 2.0.0 GA）分支 **511 个全绿**（starter 362 + app 13 + downstream 1 + customer-web 8 + 后台管理系统 `customer-admin-server` 127，见 §6.21；其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；升级前 1.0.12 版本的最后状态存档于 `legacy-main-1.0.12` 标签（176 个全绿）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -64,7 +66,7 @@
 
 ## 二、功能总表
 
-> 本表为 **`ga2.0` 分支（AgentScope 2.0.0 GA）** 现状。「默认」列：开=随应用启动生效；关=需配置开启；⚠️=需外部基础设施/SDK 的扩展点。
+> 本表为 **`main` 分支（AgentScope 2.0.0 GA）** 现状。「默认」列：开=随应用启动生效；关=需配置开启；⚠️=需外部基础设施/SDK 的扩展点。
 > 逐项 1.x→2.0 API 映射见 **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**，深度架构见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
 
 ### 已实现（2.0，开箱即用 / 配置开启）
