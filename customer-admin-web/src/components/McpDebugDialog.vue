@@ -18,6 +18,11 @@ const selectedTool = computed(() => tools.value.find((t) => t.name === selectedT
 const formValues = reactive<Record<string, unknown>>({})
 const calling = ref(false)
 const result = ref<McpDebugCallResult | null>(null)
+/** 疑似二进制乱码内容默认折叠——警告条已说明"字节已损毁无法恢复"，默认糊一整屏乱码没有信息增量，
+ * 只在用户主动要看（如需要复制原文上报给 MCP 服务方排查）时才展开。 */
+const showRawBinaryOutput = ref(false)
+/** 展开时也做长度上限，防止极端情况下一次读到超大二进制文件、整段塞进 DOM 卡死页面。 */
+const RAW_BINARY_OUTPUT_MAX_CHARS = 5000
 
 function fieldKind(schema: Record<string, unknown> | undefined): 'string' | 'number' | 'boolean' | 'json' {
   const type = schema?.type
@@ -102,14 +107,33 @@ async function callTool() {
 
   calling.value = true
   result.value = null
+  showRawBinaryOutput.value = false
   try {
     result.value = await debugMcpCallTool(props.mcpId, selectedTool.value.name, args)
   } catch (error) {
-    result.value = { success: false, output: null, errorMessage: error instanceof Error ? error.message : String(error) }
+    result.value = {
+      success: false,
+      output: null,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      images: [],
+      outputLooksBinary: false,
+    }
   } finally {
     calling.value = false
   }
 }
+
+/** MCP ImageContent 的 data 是纯 base64（不含 data URI 前缀），拼成 data URI 才能直接喂给 <img src>。 */
+function imageSrc(mimeType: string, data: string): string {
+  return `data:${mimeType};base64,${data}`
+}
+
+/** 疑似二进制乱码展开显示时的截断文本：超长时截到上限并附截断提示，避免一次性把超大内容塞进 DOM。 */
+const truncatedRawBinaryOutput = computed(() => {
+  const text = result.value?.output ?? ''
+  if (text.length <= RAW_BINARY_OUTPUT_MAX_CHARS) return text
+  return `${text.slice(0, RAW_BINARY_OUTPUT_MAX_CHARS)}\n\n…（已截断，原文共 ${text.length} 字符）`
+})
 
 watch(visible, (val) => {
   if (val) {
@@ -212,7 +236,37 @@ watch(visible, (val) => {
                   {{ result.success ? '调用成功' : '调用失败' }}
                 </el-tag>
               </div>
-              <pre class="result-content">{{ result.success ? result.output : result.errorMessage }}</pre>
+              <!-- 图片内容块：MCP ImageContent 是独立于文本的内容类型，渲染成图片而不是当文本硬塞进 pre，
+                   否则要么显示空白，要么（服务端不规范把图片字节当文本返回时）显示乱码。 -->
+              <div v-if="result.success && result.images.length > 0" class="result-images">
+                <el-image
+                  v-for="(img, idx) in result.images"
+                  :key="idx"
+                  :src="imageSrc(img.mimeType, img.data)"
+                  :preview-src-list="result.images.map((i) => imageSrc(i.mimeType, i.data))"
+                  :initial-index="idx"
+                  fit="contain"
+                  class="result-image"
+                />
+              </div>
+              <!-- 疑似二进制内容被 MCP 服务端误当文本读出并返回：字节已在服务端损毁、无法还原。
+                   警告条已把原因说清楚，默认不再糊一整屏乱码——按需展开查看/复制原文（如要上报给
+                   MCP 服务方排查），展开时也做长度上限，避免超大内容卡死页面。 -->
+              <template v-if="result.success && result.outputLooksBinary">
+                <el-alert
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  style="margin-bottom: 8px"
+                  title="返回内容疑似二进制文件（如图片）被该 MCP 工具当文本读取，字节已损毁无法正常显示"
+                  description="常见于通用文件读取类工具（如 read_file）：它们不区分文件是否为二进制，遇到图片等文件会直接按文本解码，原始字节在返回前就已损毁，此处已无法恢复。若需要读取图片内容，请使用该 MCP 提供的专用图片/二进制读取工具（如有）。"
+                />
+                <el-button link type="warning" size="small" style="margin-bottom: 8px" @click="showRawBinaryOutput = !showRawBinaryOutput">
+                  {{ showRawBinaryOutput ? '收起原始（已损毁）返回内容' : '仍要查看原始（已损毁）返回内容' }}
+                </el-button>
+                <pre v-if="showRawBinaryOutput" class="result-content">{{ truncatedRawBinaryOutput }}</pre>
+              </template>
+              <pre v-else-if="!result.success || result.output" class="result-content">{{ result.success ? result.output : result.errorMessage }}</pre>
             </div>
           </el-scrollbar>
         </template>
@@ -362,6 +416,21 @@ watch(visible, (val) => {
   word-break: break-word;
   max-height: 320px;
   overflow: auto;
+}
+
+.result-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.result-image {
+  width: 140px;
+  height: 140px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  cursor: zoom-in;
 }
 
 .pane-empty {

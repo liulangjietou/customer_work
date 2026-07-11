@@ -234,10 +234,10 @@ AgentScope Java 官方 Release Notes 对"2.0 系列"的描述偏总览性质，�
      `"ESCAPE '\\\\'"`（SQL 文本层两个反斜杠 = 一个正确转义、正常闭合的字面反斜杠字符）。
   两处改动均定位在验证 GA 升级本身"编译/测试没问题"这一诉求的过程中，属于顺带修复，不改变任何业务行为，
   只是让此前被环境问题掩盖、从未被真实执行到的代码路径首次跑通。
-- **本机开发环境凭据对齐**（纯环境配置，非代码改动）：本机 MySQL root 密码由 `rootpassword` 改为
+- **本机开发环境凭据对齐**（纯环境配置，非代码改动）：本机 MySQL root 密码由 `root` 改为
   starter 模块多个 `Jdbc*Test`（无环境变量覆盖机制，纯硬编码）期望的 `root`；本机 Redis 设置
   `requirepass=123456`（匹配 `RedisSessionPersistenceTest`）。**连带影响**：`customer-admin-server` 的
-  `application.yml` 默认 `ADMIN_MYSQL_PASSWORD` 为 `rootpassword`，随本机密码变更而失配，运行其测试/应用
+  `application.yml` 默认 `ADMIN_MYSQL_PASSWORD` 为 `root`，随本机密码变更而失配，运行其测试/应用
   需显式 `export ADMIN_MYSQL_PASSWORD=root`（已验证生效）。
 - **第二节固化的两个 P0 探针测试**（`MiddlewareInvocationVerificationTest` / `TenantIsolationVerificationTest`，
   见 [生产就绪评估.md](生产就绪评估.md)）在 GA 下重跑全绿，确认框架行为未漂移。

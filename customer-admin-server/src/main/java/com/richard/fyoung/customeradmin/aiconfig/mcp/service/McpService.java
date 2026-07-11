@@ -183,7 +183,7 @@ public class McpService {
                 }
             }, MCP_TEST_EXECUTOR)
             .orTimeout(TEST_FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .exceptionally(ex -> new McpDebugCallResult(false, null, describeDebugError(ex)));
+            .exceptionally(ex -> new McpDebugCallResult(false, null, describeDebugError(ex), List.of(), false));
     }
 
     /** 一路走到根因——{@code supplyAsync} 里 checked Exception 包一层 RuntimeException，

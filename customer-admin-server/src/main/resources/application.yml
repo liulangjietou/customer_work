@@ -21,7 +21,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: ${ADMIN_MYSQL_URL:jdbc:mysql://localhost:3306/customer_admin?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
     username: ${ADMIN_MYSQL_USERNAME:root}
-    password: ${ADMIN_MYSQL_PASSWORD:rootpassword}
+    password: ${ADMIN_MYSQL_PASSWORD:root}
     hikari:
       pool-name: customer-admin-pool
       maximum-pool-size: 30
@@ -79,6 +79,18 @@ admin:
     domain-suffix: ${ADMIN_LDAP_DOMAIN_SUFFIX:}
     connect-timeout-millis: ${ADMIN_LDAP_TIMEOUT_MILLIS:5000}
     default-role-codes: ${ADMIN_LDAP_DEFAULT_ROLE_CODES:super_admin}
+  scheduled-task:
+    # 单次任务执行超时（秒）：Agent 同步调用的硬性超时兜底，手动触发接口 / XXL-JOB JobHandler 共用。
+    execute-timeout-seconds: ${ADMIN_SCHEDULED_TASK_TIMEOUT_SECONDS:300}
+  xxl-job:
+    # 定时任务 XXL-JOB 接入：默认关闭，本地无调度中心也能正常启动；手动触发路径不依赖本配置。
+    # appname/port 与 customer-work-spring-boot-starter 的 customer-work.scheduler.xxl-job.*
+    # 相互独立（两个进程各自的执行器实例，避免注册成同一个执行器互相抢任务）。
+    enabled: ${ADMIN_XXL_JOB_ENABLED:false}
+    admin-addresses: ${ADMIN_XXL_JOB_ADMIN_ADDRESSES:http://localhost:8088/xxl-job-admin}
+    appname: ${ADMIN_XXL_JOB_APPNAME:customer-admin-executor}
+    port: ${ADMIN_XXL_JOB_PORT:9998}
+    access-token: ${ADMIN_XXL_JOB_ACCESS_TOKEN:}
 
 springdoc:
   api-docs:

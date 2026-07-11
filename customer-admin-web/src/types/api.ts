@@ -23,6 +23,21 @@ export interface PageQuery {
   sortOrder?: 'asc' | 'desc'
 }
 
+// MyBatis-Plus IPage 原生分页格式（current/size/records，与上面 PageResult 的
+// pageNum/pageSize/list 命名不同）——scheduled-task 模块的分页接口按此契约透出，不做二次包装。
+export interface MpPageResult<T> {
+  records: T[]
+  total: number
+  current: number
+  size: number
+}
+
+export interface MpPageQuery {
+  current?: number
+  size?: number
+  keyword?: string
+}
+
 // ---------- auth ----------
 export interface LoginRequest {
   username: string
@@ -214,10 +229,19 @@ export interface McpDebugToolVO {
   required: string[]
 }
 
+/** MCP 协议 ImageContent 内容块：base64 图片数据 + mimeType，前端拼成 data URI 渲染成 <img>。 */
+export interface McpDebugImageVO {
+  mimeType: string
+  data: string
+}
+
 export interface McpDebugCallResult {
   success: boolean
   output: string | null
   errorMessage: string | null
+  images: McpDebugImageVO[]
+  /** true 表示 output 疑似是二进制文件内容被 MCP 服务端误当文本读出、已损毁，原始字节不可还原。 */
+  outputLooksBinary: boolean
 }
 
 // ---------- aiconfig.skill ----------
@@ -265,6 +289,43 @@ export interface AgentSaveRequest {
   capabilities?: string[] | null
   icon?: string | null
   status?: number | null
+}
+
+// ---------- aiconfig.scheduled-task ----------
+export interface ScheduledTaskVO {
+  id: number
+  taskCode: string
+  taskName: string
+  agentId: number
+  /** 后端联查智能体名，智能体被删除等情况下可能为 null */
+  agentName?: string | null
+  prompt: string
+  enabled: boolean
+  remark: string | null
+  createTime?: string
+  updateTime?: string
+}
+
+export interface ScheduledTaskSaveRequest {
+  taskCode: string
+  taskName: string
+  agentId: number
+  prompt: string
+  enabled?: boolean | null
+  remark?: string | null
+}
+
+export interface ScheduledTaskRunVO {
+  id: number
+  taskId: number
+  taskCode: string
+  triggerType: 'XXL_JOB' | 'MANUAL'
+  startTime: string
+  endTime: string | null
+  costMs: number | null
+  status: 'SUCCESS' | 'FAILED'
+  output: string | null
+  errorMessage: string | null
 }
 
 // ---------- menu ----------

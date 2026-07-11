@@ -864,7 +864,7 @@ mvn test -Dtest=ModelConfigTest            # 单类
   - `MysqlSessionPersistenceTest` 及各 `Jdbc*StoreTest`：本机 MySQL(3306, root/root, 库 agent_scope_customer_work)
   - `NacosPromptIntegrationTest`：本机 Nacos(8848, nacos/nacos) 发布→拉取提示词往返
   - `BailianIntegrationTest`：真实百炼调用，需 `export RUN_BAILIAN_IT=true`（消耗额度）
-  - `customer-admin-server` 的 `@SpringBootTest` 需本机 MySQL(库 `customer_admin`)，密码经 `ADMIN_MYSQL_PASSWORD` 注入（默认 `rootpassword`；若本机 root 密码为 `root`，需 `export ADMIN_MYSQL_PASSWORD=root`）
+  - `customer-admin-server` 的 `@SpringBootTest` 需本机 MySQL(库 `customer_admin`)，密码经 `ADMIN_MYSQL_PASSWORD` 注入（默认 `root`；若本机 root 密码为 `root`，需 `export ADMIN_MYSQL_PASSWORD=root`）
 - **CI**：`.github/workflows/ci.yml` 在 push/PR 时跑 `mvn test` + 打包，并启动 Redis/MySQL 服务容器，使持久化用例在 CI 真实执行。
 
 ---

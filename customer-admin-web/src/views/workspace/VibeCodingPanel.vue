@@ -112,6 +112,8 @@ async function openSession(targetSessionId: string) {
     fileNodes.value = []
     filesLoaded.value = false
     scrollToBottom()
+    // 切到历史会话时该会话可能已有产物文件，无需等用户手动点“刷新”
+    loadFiles()
   } catch (error) {
     ElMessage.error('历史会话加载失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {

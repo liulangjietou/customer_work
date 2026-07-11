@@ -96,6 +96,16 @@
             <artifactId>jedis</artifactId>
         </dependency>
 
+        <!-- 定时任务 XXL-JOB 执行器（ScheduledTaskJobHandler 直接用 xxl-job-core API）；
+             已经通过 starter 传递可用（starter 引入 agentscope-extensions-scheduler-xxl-job），
+             这里显式声明便于直接引用其类。agentscope-bom 未管理该版本（同 starter pom 的坑），
+             需与 starter 保持一致的显式版本号。 -->
+        <dependency>
+            <groupId>com.xuxueli</groupId>
+            <artifactId>xxl-job-core</artifactId>
+            <version>3.3.2</version>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

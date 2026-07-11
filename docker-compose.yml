@@ -1,5 +1,5 @@
 # 一键起依赖 + 应用：docker compose up -d
-# 仅起依赖（本地用 mvn spring-boot:run 跑应用）：docker compose up -d redis mysql nacos
+# 仅起依赖（本地用 mvn spring-boot:run 跑应用）：docker compose up -d redis mysql nacos xxl-job-admin
 services:
   redis:
     image: redis:7
@@ -17,11 +17,27 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-root}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-agent_scope_customer_work}
     ports: ["3306:3306"]
+    # xxl-job-schema.sql 里自带 `CREATE DATABASE IF NOT EXISTS xxl_job`，随 MYSQL_DATABASE 一起在
+    # 容器首次初始化时执行；customer_admin 库走 DBA 手工执行 mysql/admin-schema.sql，不在此自动建。
+    volumes:
+      - ./mysql/xxl-job-schema.sql:/docker-entrypoint-initdb.d/xxl-job-schema.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_PASSWORD:-root}"]
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # XXL-JOB 调度中心（本项目定时任务功能的调度触发方；镜像版本与 pom 里的 xxl-job-core 严格对应，
+  # 见 mysql/xxl-job-schema.sql 头部说明）。默认账号 admin/123456，首次登录后请改密。
+  xxl-job-admin:
+    image: xuxueli/xxl-job-admin:3.3.2
+    depends_on:
+      mysql: { condition: service_healthy }
+    ports: ["8088:8080"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/xxl_job?useUnicode=true&characterEncoding=UTF-8&autoReconnect=true&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-root}
 
   nacos:
     image: nacos/nacos-server:v2.3.2

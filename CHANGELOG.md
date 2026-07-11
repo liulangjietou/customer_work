@@ -32,10 +32,10 @@
      是未正确转义的单个反斜杠，MySQL 把它解析成转义下一个字符（右单引号），导致字符串字面量未正常闭合、
      吞掉了后面的 `LIMIT ?` 占位符，报 `Parameter index out of range`；改为 `ESCAPE '\\\\'`（SQL 文本层面
      两个反斜杠，表示一个转义后的字面反斜杠字符）。
-  3. **本机开发环境凭据对齐**（非代码改动）：本机 MySQL root 密码由 `rootpassword` 改为测试代码硬编码期望的
+  3. **本机开发环境凭据对齐**（非代码改动）：本机 MySQL root 密码由 `root` 改为测试代码硬编码期望的
      `root`（starter 模块多个 `Jdbc*Test` 无环境变量覆盖机制）；本机 Redis 设置 `requirepass=123456`
      （匹配 `RedisSessionPersistenceTest`）。**副作用**：`customer-admin-server` 默认配置
-     （`ADMIN_MYSQL_PASSWORD` 默认值 `rootpassword`）随之失配，运行其测试/应用需显式
+     （`ADMIN_MYSQL_PASSWORD` 默认值 `root`）随之失配，运行其测试/应用需显式
      `export ADMIN_MYSQL_PASSWORD=root`。
 - **issue 全量重新核对（本次任务的核心工作）**：逐一核对文档原引用的 29 个 issue 在 GA 下的当前状态，确认
   3 个已修复合入 GA（[#1850](https://github.com/agentscope-ai/agentscope-java/issues/1850) fallbackModel、

@@ -160,7 +160,7 @@ class McpServiceTest {
         mcp.setConfig("{\"url\": \"https://mcp.example.com/mcp\"}");
         when(mcpMapper.selectById(1L)).thenReturn(mcp);
         when(mcpFactory.callDebugTool(anyString(), anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
-            .thenReturn(new McpDebugCallResult(true, "今日出勤：09:02 打卡", null));
+            .thenReturn(new McpDebugCallResult(true, "今日出勤：09:02 打卡", null, List.of(), false));
 
         McpDebugCallResult result = service.callDebugTool(1L, new McpDebugCallRequest("get_attendance", Map.of())).get();
 

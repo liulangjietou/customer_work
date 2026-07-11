@@ -29,6 +29,7 @@ public enum ResultCode {
     RESOURCE_NOT_FOUND(30003, "资源不存在"),
     RESOURCE_DUPLICATE(30004, "资源已存在，唯一键冲突"),
     RESOURCE_IN_USE(30005, "资源正被引用，无法删除"),
+    SCHEDULED_TASK_DISABLED(30006, "定时任务未启用"),
 
     // 4xxxx 外部依赖类
     MODEL_TEST_TIMEOUT(40001, "模型连通性测试超时"),

@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.mcp.runtime;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallResult;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugImageVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugToolVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
@@ -138,20 +139,58 @@ public class AdminMcpFactory {
             schema.required() == null ? List.of() : schema.required());
     }
 
-    /** {@code isError=true} 是"工具执行报错但协议调用成功"（如参数非法、下游查询无结果），不是异常，仍走成功返回。 */
+    /** 判定"疑似二进制内容被误当文本解码"的字符占比阈值——正常文本/代码/JSON 里控制字符占比接近 0，
+     * 二进制文件（如图片）被误按文本解码后控制字符/替换字符占比通常远高于此。 */
+    private static final double BINARY_TEXT_SUSPECT_RATIO = 0.05;
+    private static final int BINARY_TEXT_MIN_LENGTH = 20;
+
+    /**
+     * {@code isError=true} 是"工具执行报错但协议调用成功"（如参数非法、下游查询无结果），不是异常，仍走成功返回。
+     *
+     * <p>MCP 协议的内容块是多类型的（{@code TextContent}/{@code ImageContent}/{@code AudioContent}/
+     * 资源引用等），早期实现只提取 {@code TextContent} 会导致图片类工具调用结果被静默丢弃——用户看到的
+     * 是空白输出。这里把 {@code ImageContent} 单独提取为 {@link McpDebugImageVO} 列表交给前端渲染成
+     * {@code <img>}，不再和文本混在一起硬塞进纯文本展示区。</p>
+     *
+     * <p>另一类不同的问题：部分通用型 MCP 工具（如文件系统 server 的 {@code read_file}）不区分文件是否
+     * 为二进制，把图片等二进制文件内容当文本读出、通过 {@code TextContent}（而非 {@code ImageContent}）
+     * 返回——此时二进制字节在 MCP 服务端那一步已经损毁，我们收到的就已经是乱码，无法还原原始字节；
+     * 用 {@link #looksLikeBinaryText} 识别这种模式，让前端换成清晰提示而不是原样展示一坨乱码。</p>
+     */
     private McpDebugCallResult toCallResult(McpSchema.CallToolResult result) {
         if (result == null) {
-            return new McpDebugCallResult(false, null, "工具未返回任何结果");
+            return new McpDebugCallResult(false, null, "工具未返回任何结果", List.of(), false);
         }
-        String text = result.content() == null ? "" : result.content().stream()
+        List<McpSchema.Content> content = result.content() == null ? List.of() : result.content();
+        String text = content.stream()
             .filter(McpSchema.TextContent.class::isInstance)
             .map(McpSchema.TextContent.class::cast)
             .map(McpSchema.TextContent::text)
             .collect(Collectors.joining("\n"));
+        List<McpDebugImageVO> images = content.stream()
+            .filter(McpSchema.ImageContent.class::isInstance)
+            .map(McpSchema.ImageContent.class::cast)
+            .map(img -> new McpDebugImageVO(img.mimeType(), img.data()))
+            .collect(Collectors.toList());
         boolean isError = Boolean.TRUE.equals(result.isError());
         return isError
-            ? new McpDebugCallResult(false, null, StringUtils.hasText(text) ? text : "工具执行失败")
-            : new McpDebugCallResult(true, text, null);
+            ? new McpDebugCallResult(false, null, StringUtils.hasText(text) ? text : "工具执行失败", List.of(), false)
+            : new McpDebugCallResult(true, text, null, images, looksLikeBinaryText(text));
+    }
+
+    /** 控制字符（除 \t\n\r 外）或 Unicode 替换字符 U+FFFD 占比超阈值，判定为"疑似二进制内容被误当文本解码"。 */
+    private boolean looksLikeBinaryText(String text) {
+        if (text == null || text.length() < BINARY_TEXT_MIN_LENGTH) {
+            return false;
+        }
+        int suspicious = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\uFFFD' || (Character.isISOControl(c) && c != '\n' && c != '\r' && c != '\t')) {
+                suspicious++;
+            }
+        }
+        return suspicious > text.length() * BINARY_TEXT_SUSPECT_RATIO;
     }
 
     /**

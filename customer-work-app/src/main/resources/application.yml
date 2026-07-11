@@ -61,7 +61,7 @@ customer-work:
       port: ${MYSQL_PORT:3306}
       database: ${MYSQL_DATABASE:agent_scope_customer_work}
       username: ${MYSQL_USERNAME:root}
-      password: ${MYSQL_PASSWORD:rootpassword}
+      password: ${MYSQL_PASSWORD:root}
       # 留空则按 host/port/database 自动拼装（含 createDatabaseIfNotExist）
       jdbc-url: ""
       auto-create: true
