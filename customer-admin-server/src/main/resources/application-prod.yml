@@ -1,0 +1,24 @@
+# 生产 profile 配置参考，激活方式 SPRING_PROFILES_ACTIVE=prod
+#
+# 说明：本模块生产环境不自动建表——由 DBA 参照 mysql/admin-schema.sql 走变更流程手工执行
+# （与 customer-work 现有约定一致：生产 auto-create/flyway 均关闭）。ADMIN_MYSQL_* / ADMIN_AES_SECRET_KEY
+# 等敏感环境变量务必在部署环境注入真实值，不要沿用 application.yml 里的本地开发默认值。
+
+spring:
+  flyway:
+    enabled: false
+
+# Actuator：收敛暴露面，避免内部诊断信息对外泄漏
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    root: INFO
+    com.richard.fyoung.customeradmin: INFO

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  可移植构建用 Maven settings：直连 Maven Central、去除会拦截 Central 的 external:* 镜像。
+  与 AgentScope 版本无关（原名 settings-rc2.xml，因与版本解耦已更名为 settings-central-direct.xml）。
+  仅本次构建使用，不影响全局 ~/.m2/settings.xml：
+
+      mvn -s settings-central-direct.xml clean test
+
+  说明：本机若已为日常工作在 ~/.m2/settings.xml 配置了 external:* 镜像（如内网 nexus / 已停服的镜像），
+  会拦截 Maven Central 导致 AgentScope 及其传递依赖拉取失败；本文件用默认本地仓库 + 直连 Central 兜底。
+  如需复用本机其它本地仓库以加速，可自行加 <localRepository>…</localRepository>（见 scripts/ 下同名文件）。
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+    <profiles>
+        <profile>
+            <id>central-direct</id>
+            <repositories>
+                <repository>
+                    <id>central</id>
+                    <url>https://repo1.maven.org/maven2</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+            </repositories>
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>central</id>
+                    <url>https://repo1.maven.org/maven2</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </pluginRepository>
+            </pluginRepositories>
+        </profile>
+    </profiles>
+
+    <activeProfiles>
+        <activeProfile>central-direct</activeProfile>
+    </activeProfiles>
+</settings>

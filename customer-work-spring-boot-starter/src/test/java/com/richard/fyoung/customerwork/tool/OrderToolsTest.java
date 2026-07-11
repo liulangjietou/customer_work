@@ -44,4 +44,25 @@ class OrderToolsTest {
             .assertNext(result -> assertTrue(result.contains("未查询到")))
             .verifyComplete();
     }
+
+    @Test
+    void modifyAddress_shouldUpdateForKnownOrder() {
+        StepVerifier.create(tools.modifyAddress("20260613001", "上海市浦东新区xx路1号"))
+            .assertNext(r -> assertTrue(r.contains("地址已更新")))
+            .verifyComplete();
+    }
+
+    @Test
+    void cancelOrder_shouldAcceptForKnownOrder() {
+        StepVerifier.create(tools.cancelOrder("20260613001", "不想要了"))
+            .assertNext(r -> assertTrue(r.contains("取消")))
+            .verifyComplete();
+    }
+
+    @Test
+    void urgeShipment_shouldMarkExpedite_forKnownOrder() {
+        StepVerifier.create(tools.urgeShipment("20260613001"))
+            .assertNext(r -> assertTrue(r.contains("加急") || r.contains("优先")))
+            .verifyComplete();
+    }
 }

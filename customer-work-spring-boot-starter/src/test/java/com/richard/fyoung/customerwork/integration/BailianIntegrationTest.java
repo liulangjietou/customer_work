@@ -2,13 +2,13 @@ package com.richard.fyoung.customerwork.integration;
 
 import com.richard.fyoung.customerwork.tool.OrderTools;
 import io.agentscope.core.ReActAgent;
-import io.agentscope.core.memory.InMemoryMemory;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
-import io.agentscope.core.model.DashScopeChatModel;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.tool.Toolkit;
+import io.agentscope.extensions.model.dashscope.DashScopeChatModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
@@ -62,7 +62,6 @@ class BailianIntegrationTest {
             .sysPrompt("你是电商客服，遇到订单查询请调用订单工具后回答。")
             .model(bailianModel())
             .toolkit(toolkit)
-            .memory(new InMemoryMemory())
             .maxIters(5)
             .build();
 
@@ -72,7 +71,8 @@ class BailianIntegrationTest {
             .content(TextBlock.builder().text("帮我查一下订单 20260613001 的状态").build())
             .build();
 
-        Msg reply = agent.call(userMsg).block(Duration.ofSeconds(60));
+        RuntimeContext ctx = RuntimeContext.builder().userId("it").sessionId("it-bailian").build();
+        Msg reply = agent.call(java.util.List.of(userMsg), ctx).block(Duration.ofSeconds(60));
 
         assertNotNull(reply, "百炼应返回非空回复");
         String text = reply.getTextContent();

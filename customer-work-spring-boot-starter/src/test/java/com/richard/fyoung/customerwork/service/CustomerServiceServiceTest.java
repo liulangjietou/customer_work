@@ -5,47 +5,52 @@ import com.richard.fyoung.customerwork.dto.IntentResult;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Event;
 import io.agentscope.core.agent.EventType;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.agent.StreamOptions;
+import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
-import io.agentscope.core.session.InMemorySession;
-import io.agentscope.core.session.Session;
-import io.agentscope.core.state.SessionKey;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
+
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 会话服务单测：用 Mockito 隔离模型与框架，验证编排逻辑——
- * 多轮共享 Agent、错误兜底、流式拼接、会话持久化的调用。
+ * 会话服务单测（AgentScope 2.0 迁移版）：用 Mockito 隔离模型与框架，验证编排逻辑——
+ * 多轮共享 Agent、错误兜底、流式拼接、按 RuntimeContext 调用、结束会话清理状态。
+ *
+ * <p>2.0 中会话状态由框架按 {@code (userId, sessionId)} 自动持久化，本测试不再校验显式 save 调用。</p>
  * @author owlzhangfq@gmail.com
  */
 class CustomerServiceServiceTest {
 
     private CustomerServiceAgentFactory factory;
     private ReActAgent agent;
-    private Session session;
+    private SessionStateManager sessionStateManager;
     private CustomerServiceService service;
 
     @BeforeEach
     void setUp() {
         factory = mock(CustomerServiceAgentFactory.class);
         agent = mock(ReActAgent.class);
-        // 用真实的 InMemorySession，验证 saveTo/loadIfExists 真正可用
-        session = new InMemorySession();
+        sessionStateManager = mock(SessionStateManager.class);
         when(factory.createAgent(anyString())).thenReturn(agent);
-        service = new CustomerServiceService(factory, session);
+        when(factory.contextFor(anyString())).thenAnswer(inv ->
+            RuntimeContext.builder().userId("tenant").sessionId(inv.getArgument(0)).build());
+        service = new CustomerServiceService(factory, sessionStateManager);
     }
 
     private Msg assistantMsg(String text) {
@@ -58,19 +63,17 @@ class CustomerServiceServiceTest {
 
     @Test
     void chat_shouldReturnAssistantReply() {
-        when(agent.call(any(Msg.class))).thenReturn(Mono.just(assistantMsg("您好，有什么可以帮您？")));
+        when(agent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.just(assistantMsg("您好，有什么可以帮您？")));
 
         StepVerifier.create(service.chat("u1", "你好"))
             .expectNext("您好，有什么可以帮您？")
             .verifyComplete();
-
-        // 持久化在 boundedElastic 上异步触发，最终应被调用
-        verify(agent, timeout(2000)).saveTo(any(Session.class), any(SessionKey.class));
     }
 
     @Test
     void chat_shouldReuseAgentAcrossTurns_forSameSession() {
-        when(agent.call(any(Msg.class))).thenReturn(Mono.just(assistantMsg("ok")));
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenReturn(Mono.just(assistantMsg("ok")));
 
         service.chat("same-session", "第一轮").block();
         service.chat("same-session", "第二轮").block();
@@ -81,7 +84,8 @@ class CustomerServiceServiceTest {
 
     @Test
     void chat_shouldFallback_whenAgentFails() {
-        when(agent.call(any(Msg.class))).thenReturn(Mono.error(new RuntimeException("model down")));
+        when(agent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.error(new RuntimeException("model down")));
 
         StepVerifier.create(service.chat("u2", "查询订单"))
             .assertNext(reply -> org.junit.jupiter.api.Assertions.assertTrue(reply.contains("系统繁忙")))
@@ -90,7 +94,7 @@ class CustomerServiceServiceTest {
 
     @Test
     void chatStream_shouldEmitIncrementalChunks() {
-        when(agent.stream(any(Msg.class), any(StreamOptions.class)))
+        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
             .thenReturn(Flux.just(
                 new Event(EventType.REASONING, assistantMsg("您"), false),
                 new Event(EventType.REASONING, assistantMsg("好"), false),
@@ -105,7 +109,7 @@ class CustomerServiceServiceTest {
 
     @Test
     void chatStream_shouldFallback_whenStreamFails() {
-        when(agent.stream(any(Msg.class), any(StreamOptions.class)))
+        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
             .thenReturn(Flux.error(new RuntimeException("stream down")));
 
         StepVerifier.create(service.chatStream("u4", "你好"))
@@ -117,8 +121,10 @@ class CustomerServiceServiceTest {
     void classifyIntent_shouldReturnStructuredResult() {
         IntentResult expected = new IntentResult("refund", "20260613001", true, "用户要求退款");
         Msg structuredMsg = mock(Msg.class);
+        when(structuredMsg.hasStructuredData()).thenReturn(true);
         when(structuredMsg.getStructuredData(IntentResult.class)).thenReturn(expected);
-        when(agent.call(any(Msg.class), eq(IntentResult.class))).thenReturn(Mono.just(structuredMsg));
+        when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
+            .thenReturn(Mono.just(structuredMsg));
 
         StepVerifier.create(service.classifyIntent("u5", "这个订单我要退款"))
             .expectNext(expected)
@@ -127,7 +133,7 @@ class CustomerServiceServiceTest {
 
     @Test
     void classifyIntent_shouldFallback_whenParsingFails() {
-        when(agent.call(any(Msg.class), eq(IntentResult.class)))
+        when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
             .thenReturn(Mono.error(new RuntimeException("bad json")));
 
         StepVerifier.create(service.classifyIntent("u6", "随便说点啥"))
@@ -135,15 +141,34 @@ class CustomerServiceServiceTest {
             .verifyComplete();
     }
 
+    /**
+     * agentscope-java #1852/#1699 已知限制：fallback 结构化输出路径下，模型本轮没有调用
+     * generate_response 工具时，框架不抛异常、不设特殊标记，只是 Msg.hasStructuredData()==false。
+     * 这种情况不该走异常兜底分支，应直接识别为"未命中"并优雅降级为 other。
+     */
+    @Test
+    void classifyIntent_shouldFallback_whenModelSkipsStructuredOutputTool() {
+        Msg plainTextMsg = mock(Msg.class);
+        when(plainTextMsg.hasStructuredData()).thenReturn(false);
+        when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
+            .thenReturn(Mono.just(plainTextMsg));
+
+        StepVerifier.create(service.classifyIntent("u8", "随便聊聊"))
+            .assertNext(result -> org.junit.jupiter.api.Assertions.assertEquals("other", result.intent()))
+            .verifyComplete();
+        org.mockito.Mockito.verify(plainTextMsg, org.mockito.Mockito.never())
+            .getStructuredData(IntentResult.class);
+    }
+
     @Test
     void interrupt_shouldCallAgentInterrupt_whenSessionActive() {
-        when(agent.call(any(Msg.class))).thenReturn(Mono.just(assistantMsg("ok")));
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenReturn(Mono.just(assistantMsg("ok")));
         service.chat("active", "hi").block();   // 触发 Agent 装配进缓存
 
         boolean result = service.interrupt("active");
 
         org.junit.jupiter.api.Assertions.assertTrue(result);
-        verify(agent).interrupt();
+        verify(agent).interrupt(any(RuntimeContext.class));
     }
 
     @Test
@@ -152,33 +177,178 @@ class CustomerServiceServiceTest {
     }
 
     @Test
-    void endSession_shouldRemoveCachedAgent() {
-        when(agent.call(any(Msg.class))).thenReturn(Mono.just(assistantMsg("ok")));
+    void endSession_shouldRemoveCachedAgent_andDeleteState() {
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenReturn(Mono.just(assistantMsg("ok")));
         service.chat("to-end", "hi").block();
 
         service.endSession("to-end");
+        // 删除持久化状态
+        verify(sessionStateManager).delete("tenant", "to-end");
         // 结束后再对话会重新装配 Agent
         service.chat("to-end", "again").block();
         verify(factory, org.mockito.Mockito.times(2)).createAgent("to-end");
     }
 
     /**
-     * P4 修复：意图识别用独立的 "intent:" 前缀 Agent，不复用会话 Agent、不持久化，
-     * 避免分类指令污染真实对话记忆。
+     * 意图识别用独立的 "intent:" 前缀 Agent，不复用会话 Agent，避免分类指令污染真实对话记忆。
      */
     @Test
-    void classifyIntent_shouldUseSeparateAgent_andNotPersist() {
+    void classifyIntent_shouldUseSeparateAgent() {
         IntentResult expected = new IntentResult("refund", "", true, "x");
         Msg structuredMsg = mock(Msg.class);
+        when(structuredMsg.hasStructuredData()).thenReturn(true);
         when(structuredMsg.getStructuredData(IntentResult.class)).thenReturn(expected);
-        when(agent.call(any(Msg.class), eq(IntentResult.class))).thenReturn(Mono.just(structuredMsg));
+        when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
+            .thenReturn(Mono.just(structuredMsg));
 
         service.classifyIntent("u7", "我要退款").block();
 
         // 用独立 intent: 前缀 Agent，不碰会话 Agent
         verify(factory).createAgent("intent:u7");
         verify(factory, org.mockito.Mockito.never()).createAgent("u7");
-        // 分类不落盘（不污染会话状态）
-        verify(agent, org.mockito.Mockito.never()).saveTo(any(Session.class), any(SessionKey.class));
+    }
+
+    /** chat 失败走兜底时应递增 customerwork.chat.fallback 计数。 */
+    @Test
+    void chat_shouldIncrementFallbackMetric_whenAgentFails() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        service.setMeterRegistry(registry);
+        when(agent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.error(new RuntimeException("model down")));
+
+        service.chat("m1", "查询订单").block();
+
+        org.junit.jupiter.api.Assertions.assertEquals(1.0,
+            registry.counter("customerwork.chat.fallback").count(), "chat 兜底应计数");
+    }
+
+    /** 意图分类失败时应递增 customerwork.intent.classify.errors 计数。 */
+    @Test
+    void classifyIntent_shouldIncrementErrorMetric_whenParsingFails() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        service.setMeterRegistry(registry);
+        when(agent.call(anyString(), eq(IntentResult.class), any(RuntimeContext.class)))
+            .thenReturn(Mono.error(new RuntimeException("bad json")));
+
+        service.classifyIntent("m2", "随便").block();
+
+        org.junit.jupiter.api.Assertions.assertEquals(1.0,
+            registry.counter("customerwork.intent.classify.errors").count(), "意图失败应计数");
+    }
+
+    /** 未注入 MeterRegistry 时计数降级为 no-op，不应抛异常。 */
+    @Test
+    void chat_shouldNotThrow_whenNoMeterRegistry() {
+        when(agent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.error(new RuntimeException("model down")));
+
+        StepVerifier.create(service.chat("m3", "hi"))
+            .assertNext(reply -> org.junit.jupiter.api.Assertions.assertTrue(reply.contains("系统繁忙")))
+            .verifyComplete();
+    }
+
+    /**
+     * SSE 空闲超时：用一个永不产元素的流 + 1 秒超时，断言超时后收到兜底收尾消息而非挂死。
+     */
+    @Test
+    void chatStream_shouldEmitFallback_onIdleTimeout() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getStream().setIdleTimeoutSeconds(1);
+        CustomerServiceService timedService =
+            new CustomerServiceService(factory, sessionStateManager, props);
+        // 永不产元素、也不完成的流
+        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.never());
+
+        StepVerifier.create(timedService.chatStream("s1", "你好"))
+            .assertNext(chunk -> org.junit.jupiter.api.Assertions.assertTrue(chunk.contains("系统繁忙")))
+            .thenAwait(Duration.ofSeconds(2))
+            .verifyComplete();
+    }
+
+    /** idleTimeoutSeconds<=0 时禁用超时：正常流不受影响。 */
+    @Test
+    void chatStream_shouldNotTimeout_whenDisabled() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getStream().setIdleTimeoutSeconds(0);
+        CustomerServiceService noTimeoutService =
+            new CustomerServiceService(factory, sessionStateManager, props);
+        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, assistantMsg("好"), true)));
+
+        StepVerifier.create(noTimeoutService.chatStream("s2", "你好"))
+            .expectNext("好")
+            .verifyComplete();
+    }
+
+    // ======== 会话级并发控制测试 ========
+
+    /**
+     * 同一 sessionId 的并发请求应串行执行：第一个未完成时第二个不应开始。
+     */
+    @Test
+    void chat_shouldSerializeConcurrentRequests_forSameSession() {
+        java.util.concurrent.atomic.AtomicInteger executionOrder = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger overlapCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenAnswer(inv -> {
+            int current = inFlight.incrementAndGet();
+            if (current > 1) {
+                overlapCount.incrementAndGet();
+            }
+            executionOrder.incrementAndGet();
+            return Mono.defer(() -> Mono.just(assistantMsg("ok")))
+                .delayElement(Duration.ofMillis(100))
+                .doFinally(s -> inFlight.decrementAndGet());
+        });
+
+        // 并发发起两个同一会话的请求
+        Mono.zip(
+            service.chat("concurrent", "msg1").subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()),
+            service.chat("concurrent", "msg2").subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+        ).block(Duration.ofSeconds(5));
+
+        org.junit.jupiter.api.Assertions.assertEquals(0, overlapCount.get(),
+            "同一会话的并发请求不应重叠执行");
+    }
+
+    /**
+     * 不同 sessionId 的请求可并行执行（锁粒度是会话级，不是全局）。
+     */
+    @Test
+    void chat_shouldAllowConcurrentRequests_forDifferentSessions() {
+        java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger maxInFlight = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenAnswer(inv -> {
+            int current = inFlight.incrementAndGet();
+            maxInFlight.accumulateAndGet(current, Math::max);
+            return Mono.just(assistantMsg("ok"))
+                .delayElement(Duration.ofMillis(100))
+                .doFinally(s -> inFlight.decrementAndGet());
+        });
+
+        Mono.zip(
+            service.chat("session-a", "msg1").subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()),
+            service.chat("session-b", "msg2").subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+        ).block(Duration.ofSeconds(5));
+
+        org.junit.jupiter.api.Assertions.assertTrue(maxInFlight.get() >= 2,
+            "不同会话的请求应可并行执行，maxInFlight=" + maxInFlight.get());
+    }
+
+    /** endSession 应清理会话锁，使后续请求不被旧锁阻塞。 */
+    @Test
+    void endSession_shouldCleanUpLock() {
+        when(agent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.just(assistantMsg("ok")));
+
+        service.chat("lock-test", "hi").block();
+        service.endSession("lock-test");
+        // 结束后再次对话应正常工作（锁已清理，不会死锁）
+        StepVerifier.create(service.chat("lock-test", "again"))
+            .expectNext("ok")
+            .verifyComplete();
     }
 }

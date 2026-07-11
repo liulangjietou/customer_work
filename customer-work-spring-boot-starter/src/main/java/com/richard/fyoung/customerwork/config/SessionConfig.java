@@ -1,37 +1,37 @@
 package com.richard.fyoung.customerwork.config;
 
 import com.zaxxer.hikari.HikariDataSource;
-import io.agentscope.core.session.InMemorySession;
-import io.agentscope.core.session.JsonSession;
-import io.agentscope.core.session.Session;
-import io.agentscope.core.session.mysql.MysqlSession;
-import io.agentscope.core.session.redis.RedisSession;
+import io.agentscope.core.state.AgentStateStore;
+import io.agentscope.core.state.InMemoryAgentStateStore;
+import io.agentscope.core.state.JsonFileAgentStateStore;
+import io.agentscope.extensions.mysql.state.MysqlAgentStateStore;
+import io.agentscope.extensions.redis.state.jedis.JedisAgentStateStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import redis.clients.jedis.DefaultJedisClientConfig;
 import redis.clients.jedis.HostAndPort;
-import redis.clients.jedis.JedisClientConfig;
-import redis.clients.jedis.JedisPooled;
-import redis.clients.jedis.UnifiedJedis;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPoolConfig;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
 
 /**
- * 会话持久化配置（对应「多轮会话 & 会话持久化」）。
+ * 会话 / 状态持久化配置（对应「多轮会话 &amp; 会话持久化」，AgentScope 2.0 迁移版）。
  *
- * <p>提供一个 {@link Session} Bean 作为状态外置存储，支持四种模式：</p>
+ * <p>2.0 用 {@link AgentStateStore} 取代 1.x 的 {@code Session}：Agent 不再自持会话状态，而是把
+ * 可变状态按 {@code (userId, sessionId)} 外置到 StateStore，由框架在 {@code call} 链路上自动
+ * 加载 / 持久化，天然支持单实例并发服务多租户多会话。本配置提供一个 {@link AgentStateStore} Bean，
+ * 支持四种后端：</p>
  * <ul>
- *   <li><b>memory</b>：进程内，重启丢失，适合本地联调；</li>
- *   <li><b>json</b>：文件落盘，单机重启可恢复；</li>
- *   <li><b>redis</b>：基于 Jedis 的分布式共享存储，多实例共享会话，适合横向扩容；</li>
- *   <li><b>mysql</b>：基于 JDBC（HikariCP 连接池）的持久化存储，强一致、可审计。</li>
+ *   <li><b>memory</b>：{@link InMemoryAgentStateStore}，进程内、重启丢失，适合本地联调；</li>
+ *   <li><b>json</b>：{@link JsonFileAgentStateStore}，文件落盘，单机重启可恢复；</li>
+ *   <li><b>redis</b>：{@link JedisAgentStateStore}（基于 Jedis），分布式共享、多实例横向扩容；</li>
+ *   <li><b>mysql</b>：{@link MysqlAgentStateStore}（JDBC + HikariCP），强一致、可审计。</li>
  * </ul>
  *
- * <p>{@code CustomerServiceService} 通过 {@code agent.saveTo/loadIfExists} 使用该 Bean，
- * 对底层存储无感知——切换模式只改一行配置。</p>
+ * <p>切换后端只改一行配置 {@code customer-work.session.mode}，业务代码对底层存储无感知。</p>
  * @author owlzhangfq@gmail.com
  */
 @Configuration
@@ -40,53 +40,52 @@ public class SessionConfig {
     private static final Logger log = LoggerFactory.getLogger(SessionConfig.class);
 
     @Bean
-    public Session agentSession(CustomerWorkProperties properties) {
-        return buildSession(properties.getSession());
+    public AgentStateStore agentStateStore(CustomerWorkProperties properties) {
+        return buildStateStore(properties.getSession());
     }
 
-    /** 按配置构建 Session（抽出以便单测）。 */
-    Session buildSession(CustomerWorkProperties.Session cfg) {
+    /** 按配置构建 AgentStateStore（抽出以便单测）。 */
+    AgentStateStore buildStateStore(CustomerWorkProperties.Session cfg) {
         String mode = cfg.getMode() == null ? "memory" : cfg.getMode().trim().toLowerCase();
         switch (mode) {
             case "json": {
                 Path dir = Path.of(cfg.getDirectory());
-                log.info("会话持久化：JsonSession（目录 {}）", dir.toAbsolutePath());
-                return new JsonSession(dir);
+                log.info("State persistence: JsonFileAgentStateStore, directory={}", dir.toAbsolutePath());
+                return new JsonFileAgentStateStore(dir);
             }
             case "redis": {
                 CustomerWorkProperties.Session.Redis r = cfg.getRedis();
-                log.info("会话持久化：RedisSession（{}:{} keyPrefix={}）",
+                log.info("State persistence: JedisAgentStateStore, {}:{} keyPrefix={}",
                     r.getHost(), r.getPort(), r.getKeyPrefix());
-                return RedisSession.builder()
-                    .jedisClient(buildJedis(r))
+                return JedisAgentStateStore.builder()
+                    .jedisPool(buildJedisPool(r))
                     .keyPrefix(r.getKeyPrefix())
                     .build();
             }
             case "mysql": {
                 CustomerWorkProperties.Session.Mysql m = cfg.getMysql();
-                log.info("会话持久化：MysqlSession（{}）", m.resolveJdbcUrl());
-                return new MysqlSession(buildDataSource(m), m.isAutoCreate());
+                log.info("State persistence: MysqlAgentStateStore, {}", m.resolveJdbcUrl());
+                return new MysqlAgentStateStore(buildDataSource(m), m.isAutoCreate());
             }
             default: {
-                log.info("会话持久化：InMemorySession（进程内，重启丢失）");
-                return new InMemorySession();
+                log.info("State persistence: InMemoryAgentStateStore (in-process, lost on restart)");
+                return new InMemoryAgentStateStore();
             }
         }
     }
 
-    /** 构建 Jedis 客户端（连接惰性建立，构造本身不连接 Redis）。 */
-    UnifiedJedis buildJedis(CustomerWorkProperties.Session.Redis r) {
+    /** 构建 Jedis 连接池（惰性连接，构造本身不连接 Redis）。 */
+    JedisPool buildJedisPool(CustomerWorkProperties.Session.Redis r) {
         HostAndPort hostAndPort = new HostAndPort(r.getHost(), r.getPort());
+        JedisPoolConfig poolConfig = new JedisPoolConfig();
         if (r.getPassword() != null && !r.getPassword().isBlank()) {
-            JedisClientConfig clientConfig = DefaultJedisClientConfig.builder()
-                .password(r.getPassword())
-                .build();
-            return new JedisPooled(hostAndPort, clientConfig);
+            return new JedisPool(poolConfig, hostAndPort.getHost(), hostAndPort.getPort(),
+                2000, r.getPassword());
         }
-        return new JedisPooled(hostAndPort);
+        return new JedisPool(poolConfig, hostAndPort.getHost(), hostAndPort.getPort());
     }
 
-    /** 构建 MySQL DataSource（HikariCP）。用无参构造，连接池在首次取连接时才建立（惰性）。 */
+    /** 构建 MySQL DataSource（HikariCP）。无参构造，连接池在首次取连接时才建立（惰性）。 */
     DataSource buildDataSource(CustomerWorkProperties.Session.Mysql m) {
         HikariDataSource ds = new HikariDataSource();
         ds.setJdbcUrl(m.resolveJdbcUrl());

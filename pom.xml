@@ -9,7 +9,7 @@
     <version>1.0.0</version>
     <packaging>pom</packaging>
     <name>customer-work-parent</name>
-    <description>基于 AgentScope Java 的生产级智能客服系统（多模块：可复用 starter + 可运行示例）</description>
+    <description>基于 AgentScope Java 的生产级智能客服系统（多模块：可复用 starter + 可运行应用）</description>
 
     <parent>
         <groupId>org.springframework.boot</groupId>
@@ -20,8 +20,10 @@
 
     <modules>
         <module>customer-work-spring-boot-starter</module>
-        <module>customer-work-example</module>
-        <module>customer-work-downstream-sample</module>
+        <module>customer-work-app</module>
+        <module>customer-work-downstream-app</module>
+        <module>customer-web</module>
+        <module>customer-admin-server</module>
     </modules>
 
     <properties>
@@ -29,10 +31,25 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <agentscope.version>1.0.12</agentscope.version>
+        <agentscope.version>2.0.0</agentscope.version>
         <springdoc.version>2.3.0</springdoc.version>
         <nacos.version>3.0.2</nacos.version>
+        <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <sa-token.version>1.39.0</sa-token.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- AgentScope 2.0 BOM：统一管理 core / harness / extensions 全部坐标版本 -->
+            <dependency>
+                <groupId>io.agentscope</groupId>
+                <artifactId>agentscope-bom</artifactId>
+                <version>${agentscope.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <build>
         <pluginManagement>

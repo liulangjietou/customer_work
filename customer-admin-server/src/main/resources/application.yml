@@ -1,0 +1,104 @@
+server:
+  port: 8082   # 与 customer-work-app(8080)、customer-web(8081) 分开
+
+spring:
+  application:
+    name: customer-admin-server
+  main:
+    # 类路径同时存在 webflux(经 starter 传递) 与 web(MVC)；本模块是 Spring MVC，强制 servlet
+    web-application-type: servlet
+  servlet:
+    multipart:
+      # 与 SkillService#parseUploadContent 的 5MB 校验对齐（Skill zip/md 上传），留一点余量
+      max-file-size: 6MB
+      max-request-size: 6MB
+  autoconfigure:
+    # 关闭 starter 的 WebFlux 自动装配（WebFilter / 响应式 OpenApi 等），仅复用其 web 无关的 Agent 能力类
+    # （与 customer-web 同一手法：不依赖 starter 的自动装配 Bean，需要的能力在本模块的 Config 类里显式 new）
+    exclude:
+      - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${ADMIN_MYSQL_URL:jdbc:mysql://localhost:3306/customer_admin?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${ADMIN_MYSQL_USERNAME:root}
+    password: ${ADMIN_MYSQL_PASSWORD:root}
+    hikari:
+      pool-name: customer-admin-pool
+      maximum-pool-size: 30
+      minimum-idle: 5
+  flyway:
+    enabled: false   # 生产默认关闭，走 DBA 手工执行 mysql/admin-schema.sql；本地/测试环境见 application-dev.yml
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      id-type: auto
+
+# Sa-Token 认证配置
+sa-token:
+  token-name: Authorization      # 请求头 / 参数名
+  timeout: 7200                  # 登录态有效期（秒），2 小时
+  activity-timeout: -1           # 按最后活跃时间续期：-1 表示不限（依赖 timeout 硬过期）
+  is-concurrent: true            # 允许同一账号多端登录
+  is-share: true                 # 多端共用一个 token
+  token-style: uuid
+  is-log: false
+
+# AES 加密密钥：AES-256 需 32 字节明文密钥（不入库不硬编码，本地开发用固定测试值，生产由运维走 Secret 管理下发）
+admin:
+  aes-secret-key: ${ADMIN_AES_SECRET_KEY:0123456789abcdef0123456789abcdef}
+  # 登录“记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置
+  remember-me-timeout-seconds: ${ADMIN_REMEMBER_ME_TIMEOUT_SECONDS:604800}
+  mysql:
+    # MysqlAgentStateStore 4 参构造函数要求显式库名（其 2 参构造函数会硬编码成 "agentscope"，见
+    # AdminAgentRuntimeConfig 的坑注释）；必须与上面 spring.datasource.url 里的库名保持一致，
+    # 独立配置项而非从 JDBC URL 解析，避免字符串解析的脆弱性。
+    database-name: ${ADMIN_MYSQL_DATABASE:customer_admin}
+  redis:
+    # 历史对话列表读缓存（ChatHistoryCache）用，仅缓存/降压，不是权威数据源——权威数据始终是
+    # MysqlAgentStateStore；Redis 不可达时 ChatHistoryCache 内部捕获异常退化为直读 MySQL，
+    # 不影响主流程可用性，故本地未起 Redis 时也能正常跑。
+    host: ${ADMIN_REDIS_HOST:localhost}
+    port: ${ADMIN_REDIS_PORT:6379}
+    password: ${ADMIN_REDIS_PASSWORD:}
+  ldap:
+    # OA 域账号（LDAP/AD）单点登录：与用户名密码登录共存，前端登录页 Tab 切换，
+    # 后端 POST /api/auth/sso-login（见 AuthService#ssoLogin / LdapAuthService）。
+    # 域控地址/UPN 后缀因环境而异，生产由运维通过环境变量注入，不硬编码。
+    enabled: ${ADMIN_LDAP_ENABLED:false}
+    # yml 不配值时，AdminLdapProperties 会自动从环境变量 ADMIN_LDAP_URL / ADMIN_LDAP_DOMAIN_SUFFIX 读取
+    url: ${ADMIN_LDAP_URL:}
+    domain-suffix: ${ADMIN_LDAP_DOMAIN_SUFFIX:}
+    connect-timeout-millis: ${ADMIN_LDAP_TIMEOUT_MILLIS:5000}
+    default-role-codes: ${ADMIN_LDAP_DEFAULT_ROLE_CODES:super_admin}
+  scheduled-task:
+    # 单次任务执行超时（秒）：Agent 同步调用的硬性超时兜底，手动触发接口 / XXL-JOB JobHandler 共用。
+    execute-timeout-seconds: ${ADMIN_SCHEDULED_TASK_TIMEOUT_SECONDS:300}
+  xxl-job:
+    # 定时任务 XXL-JOB 接入：默认关闭，本地无调度中心也能正常启动；手动触发路径不依赖本配置。
+    # appname/port 与 customer-work-spring-boot-starter 的 customer-work.scheduler.xxl-job.*
+    # 相互独立（两个进程各自的执行器实例，避免注册成同一个执行器互相抢任务）。
+    enabled: ${ADMIN_XXL_JOB_ENABLED:false}
+    admin-addresses: ${ADMIN_XXL_JOB_ADMIN_ADDRESSES:http://localhost:8088/xxl-job-admin}
+    appname: ${ADMIN_XXL_JOB_APPNAME:customer-admin-executor}
+    port: ${ADMIN_XXL_JOB_PORT:9998}
+    access-token: ${ADMIN_XXL_JOB_ACCESS_TOKEN:}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    com.richard.fyoung.customeradmin: INFO

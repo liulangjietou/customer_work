@@ -1,0 +1,194 @@
+# 生产 profile 配置参考：用环境变量驱动外部后端，激活方式 SPRING_PROFILES_ACTIVE=prod
+#
+# 本文件是「生产配置基线」，逐项对应 agentscope-java（RC4 时点核对的）open issues 的缓解/规避手段；
+# 2.0.0 GA 已发布（ga2.0 分支），本文件配置项本身未受 RC4→GA 升级影响，见 docs/MIGRATION-2.0.md「9」节。
+# 完整评估结论见 docs/生产就绪评估.md；本文件只做配置层面的落地，不改变 customer-work 业务代码。
+# 所有键名已对照 CustomerWorkProperties.java 逐一核实，均为真实存在的配置项（无杜撰键）。
+
+customer-work:
+  # ------------------------------------------------------------------
+  # Skill 技能库：生产切换为 filesystem 仓库
+  # 规避 #1979 / #1985—— ClasspathSkillRepository 在 fat-jar（Spring Boot 可执行 jar）中
+  # 用 classpath 资源枚举/读取技能目录会失败（jar 内路径不是普通文件系统路径）。
+  # filesystem 仓库直接读磁盘目录，天然绕开该问题；同时天然支持技能自进化/写回（SkillCurator）。
+  # ------------------------------------------------------------------
+  skill:
+    enabled: true
+    repository: filesystem
+    # 生产建议外置到独立数据盘/共享存储路径，用环境变量注入，避免和应用部署目录耦合
+    directory: ${SKILL_DIRECTORY:/data/customer-work/skills}
+    writable: true
+    runtime-load-tool-enabled: false
+    code-execution-enabled: false
+
+  # ------------------------------------------------------------------
+  # 会话持久化：生产用 redis（多实例共享）或 mysql（强一致持久化），不用 json 模式
+  # 规避 #1769 —— JsonFileAgentStateStore 每次落盘整份重写（非增量追加），长会话/高频对话下
+  # 单文件体积和写放大持续膨胀，磁盘 IO 和延迟劣化。redis/mysql 后端无此问题。
+  # 二选一：redis 更适合无状态多实例水平扩展；mysql 更适合需要强一致 + 现成运维体系的团队。
+  #
+  # 注意：下面的 session.mysql.* 连接信息不只服务于 session.mode=mysql 这一种情况——
+  # human-approval / slot-filling / dialog / human-handoff / feedback 五个 store-mode=jdbc（见下方）都复用同一份连接配置
+  # 构建各自独立的连接池，因此即便 session.mode 选的是 redis，也必须填好这段 mysql 连接信息。
+  # ------------------------------------------------------------------
+  session:
+    mode: ${SESSION_MODE:redis}
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      key-prefix: ${REDIS_KEY_PREFIX:customer-work}
+    mysql:
+      host: ${MYSQL_HOST:localhost}
+      port: ${MYSQL_PORT:3306}
+      database: ${MYSQL_DATABASE:agent_scope_customer_work}
+      username: ${MYSQL_USERNAME:root}
+      password: ${MYSQL_PASSWORD:}
+      auto-create: false   # 生产建议关闭自动建表，由 DBA 按 mysql/schema.sql 走变更流程建库建表
+
+  memory:
+    provider: ${MEMORY_PROVIDER:memory}
+
+  rag:
+    provider: ${RAG_PROVIDER:memory}
+
+  # ------------------------------------------------------------------
+  # Harness 子智能体编排：生产先关闭
+  # 规避 #1954 / #1953 / #1700 / #1911 —— 子智能体在部分场景下存在跳过执行、
+  # 父子上下文不传递、子智能体资源不回收等问题，经核实截至 2.0.0 GA（2026-07-10）仍为 open 状态，未修复。
+  # 生产阶段需要的"可控并行多专家协作"改走本项目自研的 MultiAgentOrchestrator
+  # （真并发 fanout + 路由 + reduce 归纳，已有确定性单测覆盖），不依赖框架原生 subagent。
+  # ------------------------------------------------------------------
+  harness:
+    subagent:
+      enabled: false
+    # 权限系统：生产建议开启，ask-tools 保持默认（退款/转人工需人工确认），与应用层审批闭环双保险
+    permission:
+      enabled: true
+      mode: default
+      ask-tools: [submitRefund, transferToHuman]
+      deny-tools: []
+    # 若需要沙箱隔离工具/代码执行，隔离粒度用 session（按会话隔离，避免跨会话串扰）
+    sandbox:
+      mode: ${HARNESS_SANDBOX_MODE:none}
+      isolation-scope: session
+
+  # ------------------------------------------------------------------
+  # 上下文压缩（Compaction）：生产开启，但阈值须保守
+  # 提醒 #1740 —— compressIfNeeded 只在单次调用时机执行一次判断，不是持续循环压缩；
+  # 如果单轮新增内容本身就超过阈值，不会被二次压缩兜底。因此生产阈值要预留安全余量，
+  # 不能把 max-token / msg-threshold 设到接近模型上下文上限。
+  # ------------------------------------------------------------------
+  context:
+    compression-enabled: true
+    max-token: ${CONTEXT_MAX_TOKEN:8000}
+    msg-threshold: ${CONTEXT_MSG_THRESHOLD:40}
+    last-keep: ${CONTEXT_LAST_KEEP:10}
+
+  # ------------------------------------------------------------------
+  # SSE 流式空闲超时：缓解 #1741（SSE 流长时间无数据无法自行关闭，连接泄漏）
+  # ------------------------------------------------------------------
+  stream:
+    idle-timeout-seconds: ${STREAM_IDLE_TIMEOUT_SECONDS:120}
+
+  # ------------------------------------------------------------------
+  # 审批工单 / 多轮槽位收集 / 对话阶段 / 人机切换工单 / 用户反馈：生产切 jdbc，多实例部署下跨实例共享状态
+  # memory（默认）是进程内存储，请求被负载均衡到不同实例会导致：
+  #   - 审批工单查不到（人工坐席在实例 A 提交退款申请，实例 B 处理 approve 请求时找不到工单）；
+  #   - 多轮信息收集进度丢失（用户被路由到另一实例，需要从头重答）；
+  #   - 对话阶段状态机"归零"回 GREETING（动态 Prompt 状态机的分阶段聚焦失效）；
+  #   - 人机切换工单查不到（坐席在实例 A 接单，坐席工作台轮询落到实例 B 看不到最新状态）；
+  #   - 用户反馈丢失（点踩写在实例 A，重启或换实例后数据飞轮的负反馈信号就没了）。
+  # 五者均复用上面的 session.mysql.* 连接配置，jdbc 模式下应用重启 / 多实例部署均不受影响。
+  # ------------------------------------------------------------------
+  human-approval:
+    store-mode: jdbc
+    max-execution-retry-attempts: 3   # 审批放行后下游执行（如打款）失败的最大重试次数
+  slot-filling:
+    store-mode: jdbc
+  dialog:
+    store-mode: jdbc
+  human-handoff:
+    store-mode: jdbc
+  feedback:
+    store-mode: jdbc
+
+  # ------------------------------------------------------------------
+  # 模型私有化兜底：生产开启，使用自研 FallbackChatModel
+  # 框架内置的 ReActAgent.Builder.fallbackModel(...) 存在已知缺陷（#1850），生产不采用；
+  # 本项目 FallbackChatModel 是自研装饰器（主模型失败时切换兜底模型），行为已被单测覆盖。
+  # ------------------------------------------------------------------
+  model:
+    provider: dashscope
+    api-key: ${DASHSCOPE_API_KEY:}
+    fallback:
+      enabled: true
+      provider: ${MODEL_FALLBACK_PROVIDER:ollama}
+      name: ${MODEL_FALLBACK_NAME:qwen2.5}
+      api-key: ${MODEL_FALLBACK_API_KEY:}
+      base-url: ${MODEL_FALLBACK_BASE_URL:}
+    retry:
+      enabled: true
+      max-attempts: 2
+      backoff-ms: 500
+
+  security:
+    auth:
+      # 生产默认开启（与非 prod profile 相反的 fail-safe 默认值）：忘记设置环境变量时
+      # 宁可鉴权拦住合法请求（需要运维介入排查），也不要默认放行造成接口裸奔
+      enabled: ${AUTH_ENABLED:true}
+      api-keys: ${AUTH_API_KEYS:}   # 逗号分隔的多个 Key，经 Spring 数组/List 绑定（如 "key1,key2"）
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      requests-per-minute: ${RATE_LIMIT_RPM:120}
+    # 审批操作员身份鉴权：堵住"任何人可冒充任意坐席放行退款"的身份伪造漏洞（仅作用于
+    # approve/deny 两个资金放行端点，不影响审批单查询）。operators（token→操作员姓名映射）
+    # 涉及每个坐席的真实凭证，不适合写进这份共享的生产配置模板——务必通过独立的运维侧配置
+    # 覆盖（如 Spring Cloud Config / K8s Secret 挂载的 application-prod-secrets.yml）单独下发，
+    # 严禁把真实 token 提交进代码仓库。
+    approval-auth:
+      enabled: true
+
+  observability:
+    tracing-enabled: ${TRACING_ENABLED:true}
+    # 全链路日志关联：MDC 贯穿(requestId/sessionId 自动进日志)与 W3C traceparent 关联，默认已开，
+    # 无需显式配置；如需关闭：mdc-enabled / trace-correlation-enabled 置 false。
+
+  # 合成监控(主动探活)：定时用固定探针会话打真实对话链路，在用户上报前发现故障。
+  # 默认关闭——每次探测真实调用模型会产生费用；如需开启，评估探测频率与成本后打开。
+  synthetic-monitor:
+    enabled: ${SYNTHETIC_MONITOR_ENABLED:false}
+    interval-ms: ${SYNTHETIC_MONITOR_INTERVAL_MS:300000}
+    message: ${SYNTHETIC_MONITOR_MESSAGE:你好}
+
+# ------------------------------------------------------------------
+# Actuator 管理端点：生产收敛暴露面，避免内部诊断信息对外泄漏
+# ------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ------------------------------------------------------------------
+# 多实例部署注意事项（诚实声明：以下能力当前实现是进程内统计/存储，横向扩容时需知悉）
+# ------------------------------------------------------------------
+# 1. 限流（security.rate-limit）与模型成本熔断（model.cost-control，本文件未开启，默认关闭）
+#    均是进程内计数器，N 个实例横向扩容 = 实际总配额被放大为 N 倍，而非全局共享配额。
+#    需要全局精确限流/熔断时，应在 Higress/网关层做全局限流，或改造为 Redis 计数实现。
+# 2. CustomerServiceService 的会话级串行锁（同一 sessionId 并发请求排队执行，避免状态覆盖）
+#    是进程内 Semaphore，只在同一实例内生效；若同一 sessionId 的并发请求被负载均衡到不同实例，
+#    该锁不能跨实例互斥。生产建议在网关层为同一 sessionId 配置会话粘性路由（sticky session），
+#    避免依赖跨实例分布式锁。
+# 3. MockComplaintBackend（投诉工单默认实现）是进程内 Map 存储，多实例下建单与查单落在不同
+#    实例会导致查不到。生产必须提供真实的 ComplaintBackend Bean（对接自有工单系统），
+#    不能依赖默认 Mock 实现跨实例工作。
+# 完整评估结论见 docs/生产就绪评估.md。
+
+logging:
+  level:
+    root: INFO
+    com.richard.fyoung.customerwork: INFO

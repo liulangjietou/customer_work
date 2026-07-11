@@ -1,0 +1,18 @@
+# 本地开发 profile：SPRING_PROFILES_ACTIVE=dev
+# 打开 Flyway 自动迁移，方便本地联调无需手工建表；生产禁止使用本 profile。
+spring:
+  flyway:
+    enabled: false
+    clean-disabled: true   # 禁止误跑 flyway:clean 清空开发库
+
+# 本地/测试联调默认打开 OA 域账号登录入口；生产默认关闭，需运维显式设置 ADMIN_LDAP_ENABLED=true 开通。
+admin:
+  ldap:
+    enabled: true
+
+logging:
+  level:
+    com.richard.fyoung.customeradmin: DEBUG
+    # 排查 ReAct 循环/工具调用行为时打开：智能体决定调用工具后框架内部具体卡在哪一步
+    # （工具查找、参数校验、执行、结果回填）只能靠框架自身日志定位，业务代码这层只是透传事件。
+    io.agentscope: DEBUG

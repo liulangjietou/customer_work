@@ -46,4 +46,34 @@ public class MockOrderBackend implements OrderBackend {
             .delayElement(Duration.ofMillis(100))
             .onErrorResume(e -> Mono.just("物流系统暂时不可用，建议稍后再试。"));
     }
+
+    @Override
+    public Mono<String> modifyAddress(String orderId, String newAddress) {
+        log.info("[MockOrderBackend] 改地址: order={}, addr={}", orderId, newAddress);
+        return Mono.fromSupplier(() ->
+                MOCK_ORDERS.containsKey(orderId)
+                    ? "订单 " + orderId + " 收货地址已更新为「" + newAddress + "」，将按新地址派送。"
+                    : "未查询到订单 " + orderId + "，无法改址，请核对订单号。")
+            .delayElement(Duration.ofMillis(90));
+    }
+
+    @Override
+    public Mono<String> cancelOrder(String orderId, String reason) {
+        log.info("[MockOrderBackend] 取消订单: order={}, reason={}", orderId, reason);
+        return Mono.fromSupplier(() ->
+                MOCK_ORDERS.containsKey(orderId)
+                    ? "订单 " + orderId + " 已受理取消申请（原因：" + reason + "）；若已支付，款项原路退回。"
+                    : "未查询到订单 " + orderId + "，无法取消，请核对订单号。")
+            .delayElement(Duration.ofMillis(90));
+    }
+
+    @Override
+    public Mono<String> urgeShipment(String orderId) {
+        log.info("[MockOrderBackend] 催发货: {}", orderId);
+        return Mono.fromSupplier(() ->
+                MOCK_ORDERS.containsKey(orderId)
+                    ? "已为订单 " + orderId + " 提交加急发货标记，仓库将优先处理，预计 24 小时内出库。"
+                    : "未查询到订单 " + orderId + "，请核对订单号。")
+            .delayElement(Duration.ofMillis(80));
+    }
 }

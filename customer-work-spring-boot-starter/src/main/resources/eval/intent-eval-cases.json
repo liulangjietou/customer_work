@@ -1,0 +1,15 @@
+[
+  { "id": "refund-1",    "input": "我要退款",                 "expectedIntent": "refund",    "category": "明确-退款" },
+  { "id": "refund-2",    "input": "这件衣服质量太差要退货",     "expectedIntent": "refund",    "category": "明确-退款" },
+  { "id": "refund-3",    "input": "申请退钱",                   "expectedIntent": "refund",    "category": "明确-退款" },
+  { "id": "order-1",     "input": "我的快递到哪了",             "expectedIntent": "order",     "category": "明确-物流" },
+  { "id": "order-2",     "input": "什么时候发货",               "expectedIntent": "order",     "category": "明确-物流" },
+  { "id": "order-3",     "input": "运单号查一下物流",           "expectedIntent": "order",     "category": "明确-物流" },
+  { "id": "complaint-1", "input": "我要投诉你们的服务态度",     "expectedIntent": "complaint", "category": "明确-投诉" },
+  { "id": "complaint-2", "input": "再不解决我就去315曝光",      "expectedIntent": "complaint", "category": "明确-投诉" },
+  { "id": "consult-1",   "input": "你们支持开发票吗",           "expectedIntent": "consult",   "category": "明确-咨询" },
+  { "id": "consult-2",   "input": "运费怎么算的",               "expectedIntent": "consult",   "category": "明确-咨询" },
+  { "id": "ambig-1",     "input": "你好在吗",                   "expectedIntent": null,        "category": "模糊-应交LLM" },
+  { "id": "ambig-2",     "input": "我要退款不然就投诉",         "expectedIntent": null,        "category": "模糊-多意图交LLM" },
+  { "id": "ambig-3",     "input": "这个商品有货吗",             "expectedIntent": null,        "category": "模糊-售前交LLM" }
+]

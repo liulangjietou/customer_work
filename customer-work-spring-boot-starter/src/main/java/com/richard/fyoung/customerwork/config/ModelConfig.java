@@ -1,12 +1,12 @@
 package com.richard.fyoung.customerwork.config;
 
-import io.agentscope.core.model.AnthropicChatModel;
-import io.agentscope.core.model.DashScopeChatModel;
-import io.agentscope.core.model.GeminiChatModel;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
-import io.agentscope.core.model.OllamaChatModel;
-import io.agentscope.core.model.OpenAIChatModel;
+import io.agentscope.extensions.model.anthropic.AnthropicChatModel;
+import io.agentscope.extensions.model.dashscope.DashScopeChatModel;
+import io.agentscope.extensions.model.gemini.GeminiChatModel;
+import io.agentscope.extensions.model.ollama.OllamaChatModel;
+import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;

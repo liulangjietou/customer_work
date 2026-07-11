@@ -33,4 +33,29 @@ public class OrderTools {
             String orderId) {
         return backend.queryLogistics(orderId);
     }
+
+    @Tool(description = "修改订单的收货地址（售中）。用户在发货前要求改地址时调用。")
+    public Mono<String> modifyAddress(
+            @ToolParam(name = "orderId", description = "订单号")
+            String orderId,
+            @ToolParam(name = "newAddress", description = "新的完整收货地址")
+            String newAddress) {
+        return backend.modifyAddress(orderId, newAddress);
+    }
+
+    @Tool(description = "取消订单（售中）。用户在发货前要求取消订单时调用。")
+    public Mono<String> cancelOrder(
+            @ToolParam(name = "orderId", description = "订单号")
+            String orderId,
+            @ToolParam(name = "reason", description = "取消原因")
+            String reason) {
+        return backend.cancelOrder(orderId, reason);
+    }
+
+    @Tool(description = "催发货（售中）。用户催促'怎么还不发货''能不能快点发'时调用。")
+    public Mono<String> urgeShipment(
+            @ToolParam(name = "orderId", description = "订单号")
+            String orderId) {
+        return backend.urgeShipment(orderId);
+    }
 }

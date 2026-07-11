@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  本机加速版构建用 Maven settings：复用本机已有依赖缓存（localRepository 指向本机 mavenjar），
+  去除会拦截 Maven Central 的 external:* 镜像，未命中缓存时直连 Central 兜底。
+  与 AgentScope 版本无关（原名 scripts/settings-rc2.xml，因与版本解耦已更名为 settings-central-direct.xml）。
+  仅本次构建使用，不影响全局 ~/.m2/settings.xml。因 Maven 会合并全局+用户两处 activeProfiles，
+  本机若在全局 ~/.m2/settings.xml 激活了内网镜像 profile，须 -gs 与 -s 同传本文件才能真正覆盖：
+
+      mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.xml ...
+
+  注意：本文件含本机绝对路径 <localRepository>，仅供本机加速用；可移植/CI 场景请用仓库根的
+  settings-central-direct.xml（不指定 localRepository）。
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+    <localRepository>/Users/zhangfuqiang/mavenjar</localRepository>
+
+    <profiles>
+        <profile>
+            <id>central-direct</id>
+            <repositories>
+                <repository>
+                    <id>central</id>
+                    <url>https://repo1.maven.org/maven2</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+            </repositories>
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>central</id>
+                    <url>https://repo1.maven.org/maven2</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </pluginRepository>
+            </pluginRepositories>
+        </profile>
+    </profiles>
+
+    <activeProfiles>
+        <activeProfile>central-direct</activeProfile>
+    </activeProfiles>
+</settings>

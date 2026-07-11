@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.richardfyoung</groupId>
+        <artifactId>customer-work-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>customer-web</artifactId>
+    <packaging>jar</packaging>
+    <name>customer-web</name>
+    <description>AgentScope 2.0 配套前端：基于 agentscope-admin 的客服 Agent 管理控制台（Spring MVC）</description>
+
+    <dependencies>
+        <!-- AgentScope 2.0 官方 Admin Web 控制台（Spring MVC + Actuator 端点 + Swagger UI）。
+             与 ReActAgent 协议对齐：容器内 Agent / Toolkit / Model / AgentStateStore Bean 自动接管。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-admin-spring-boot-starter</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
+        <!-- AgentScope 2.0 Chat Completions Web：把客服 ReActAgent 包成 OpenAI 兼容 API
+             （POST /v1/chat/completions，同步 + SSE 流式），供任意 OpenAI 客户端 / 聊天前端对话。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-chat-completions-web-starter</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
+        <!-- AgentScope 2.0 AG-UI：标准 Agent↔前端事件协议（SSE 类型化事件：消息增量/工具调用/状态/HITL），
+             MVC 自动装配 AguiMvcController，AguiAgentAutoRegistration 自动接管容器里的 Agent Bean。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-agui-spring-boot-starter</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
+        <!-- AgentScope 2.0 Studio 观测台：把 agent 运行轨迹推送到外部 Studio 应用做可视化调试/回放。
+             随 starter 已传递，此处显式声明以表意；接入复用 starter 的 StudioConfigurer（StudioManager）。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-studio</artifactId>
+        </dependency>
+
+        <!-- AgentScope 2.0 Channel · 钉钉：把客服 Agent 接入钉钉机器人（Stream 模式，无需公网回调）。
+             用户在钉钉群 @ 机器人即可与 agent 对话。需钉钉应用凭证 appKey/appSecret/robotCode。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-channel-dingtalk</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
+        <!-- AgentScope 2.0 Channel · 飞书：把客服 Agent 接入飞书机器人（应用 + 事件回调）。
+             inbound：飞书把事件推到 /api/channels/feishu/{channelId}/callback；outbound：经飞书 API 回复。
+             需飞书应用凭证 appId/appSecret(+ encryptKey/verificationToken) 与公网可达的回调地址。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-channel-feishu</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
+        <!-- AgentScope 2.0 Channel · 企业微信：把客服 Agent 接入企业微信应用（应用 + 回调）。
+             inbound：企业微信把事件推到 /api/channels/wecom/{channelId}/callback（GET 验证 + POST 事件）。
+             需企业微信凭证 corpId/agentId/secret/token/encodingAesKey 与公网可达的回调地址。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-channel-wecom</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
+        <!-- admin starter 把以下 web 依赖标为 optional（要求宿主自带 web 栈），需显式声明；
+             版本由 spring-boot-starter-parent 3.2.5 统一管理，避免与 starter 的 webflux 版本错配。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
+        </dependency>
+
+        <!-- 复用本项目客服 Agent 能力（模型层/工具/权限/中间件/状态存储等叶子类）。
+             排除 springdoc-webflux-ui：admin 是 Spring MVC，避免与 starter 的 webflux Swagger 冲突。
+             starter 的 WebFlux 自动装配在本模块以 spring.autoconfigure.exclude 关闭，仅复用 web 无关类。 -->
+        <dependency>
+            <groupId>io.github.richardfyoung</groupId>
+            <artifactId>customer-work-spring-boot-starter</artifactId>
+            <version>1.0.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springdoc</groupId>
+                    <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- 测试 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

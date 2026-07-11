@@ -73,11 +73,109 @@
             <version>${nacos.version}</version>
         </dependency>
 
-        <!-- AgentScope Java 核心 -->
+        <!-- AgentScope Java 2.0 Harness（含 agentscope-core：Agent/Model/Tool/Middleware/State/Skill/RAG/Memory/Permission/Sandbox/Subagent/PlanMode/Compaction） -->
         <dependency>
             <groupId>io.agentscope</groupId>
-            <artifactId>agentscope</artifactId>
-            <version>${agentscope.version}</version>
+            <artifactId>agentscope-harness</artifactId>
+        </dependency>
+
+        <!-- 2.0.0 GA 起，内置模型实现从 agentscope-core 拆成独立扩展模块（io.agentscope.core.model.*
+             -> io.agentscope.extensions.model.{provider}.*，RC4 -> GA 升级踩的坑），ModelConfig 五个
+             厂商分支都要显式声明依赖，版本由父 pom 引入的 agentscope-bom 统一管理，这里不写版本号。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-dashscope</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-anthropic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-gemini</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-ollama</artifactId>
+        </dependency>
+
+        <!-- 会话/状态持久化：AgentStateStore 的 Redis / MySQL 实现（替代 1.x 的 session.redis/mysql） -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-mysql</artifactId>
+        </dependency>
+
+        <!-- 定时任务调度：把 Agent 注册为 XXL-JOB JobHandler，周期/启停/重试交给 XXL-JOB 控制台管理。
+             版本由父 pom 引入的 agentscope-bom 统一管理，这里不写版本号。scheduler-common 是
+             scheduler-xxl-job 自身 pom 里的 provided 依赖（不会传递），用到其 RuntimeAgentConfig /
+             ScheduleConfig / AgentScheduler 等类需显式声明。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-scheduler-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-scheduler-xxl-job</artifactId>
+        </dependency>
+        <!-- xxl-job-core：agentscope-bom 未管理其版本（仅托管 io.agentscope 自身制品），需显式声明。 -->
+        <dependency>
+            <groupId>com.xuxueli</groupId>
+            <artifactId>xxl-job-core</artifactId>
+            <version>3.3.2</version>
+        </dependency>
+
+        <!-- 长期记忆扩展：Mem0 / ReMe / 百炼 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-mem0</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-reme</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-memory-bailian</artifactId>
+        </dependency>
+
+        <!-- RAG 知识库扩展：简单内存 / Dify / 百炼 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-rag-simple</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-rag-dify</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-rag-bailian</artifactId>
+        </dependency>
+
+        <!-- 协议 / 网关 / 观测扩展：AG-UI / Higress / Studio / Nacos 提示词 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-agui</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-higress</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-studio</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-nacos-prompt</artifactId>
         </dependency>
 
         <!-- Lombok -->
@@ -105,6 +203,32 @@
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>check-coverage</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.50</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.40</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

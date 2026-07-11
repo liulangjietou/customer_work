@@ -1,7 +1,6 @@
 package com.richard.fyoung.customerwork.agent;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.memory.ContextMemoryFactory;
 import com.richard.fyoung.customerwork.memory.FactLog;
 import com.richard.fyoung.customerwork.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.memory.LongTermMemoryStore;
@@ -9,6 +8,7 @@ import com.richard.fyoung.customerwork.rag.KnowledgeProvider;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
 import io.agentscope.core.model.Model;
+import io.agentscope.core.state.InMemoryAgentStateStore;
 import io.agentscope.core.tool.Toolkit;
 import org.junit.jupiter.api.Test;
 
@@ -32,7 +32,6 @@ class CustomerServiceAgentFactoryTest {
         FactLog factLog = new FactLog(false, Path.of("target/test-facts"));
         return new CustomerServiceAgentFactory(
             model, props,
-            new ContextMemoryFactory(props, model),
             new LongTermMemoryProvider(props, store, factLog),
             new KnowledgeProvider(props),
             new McpToolkitConfigurer(props),
@@ -40,9 +39,16 @@ class CustomerServiceAgentFactoryTest {
             new com.richard.fyoung.customerwork.tool.ToolRegistrar(
                 new com.richard.fyoung.customerwork.tool.backend.MockOrderBackend(),
                 new com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend(),
-                new com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend()),
-            new com.richard.fyoung.customerwork.observability.TtsHookProvider(props),
+                new com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend(),
+                new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
+                new com.richard.fyoung.customerwork.tool.backend.MockMemberBackend(),
+                new com.richard.fyoung.customerwork.tool.backend.MockComplaintBackend(),
+                new com.richard.fyoung.customerwork.approval.PendingApprovalService(),
+                new com.richard.fyoung.customerwork.handoff.HandoffService()),
+            new InMemoryAgentStateStore(),
+            new com.richard.fyoung.customerwork.config.PermissionConfig().permissionContextState(props),
             new com.richard.fyoung.customerwork.config.NacosPromptService(props),
+            new com.richard.fyoung.customerwork.support.TenantResolver(props),
             null,    // 无可插拔 Hook
             null);   // 无 MeterRegistry（观测降级为仅日志）
     }
