@@ -61,7 +61,7 @@ async function handleSubmit() {
     } else {
       localStorage.removeItem(rememberKey)
     }
-    auth.applyLoginResult(result)
+    auth.applyLoginResult(result, form.username)
     if (result.forceChangePassword) {
       ElMessage.warning('首次登录请先修改密码')
       await router.replace({ name: 'ChangePassword' })

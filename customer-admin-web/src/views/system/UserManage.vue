@@ -3,7 +3,10 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import { createUser, deleteUser, pageUsers, updateUser } from '@/api/user'
 import { pageRoles } from '@/api/role'
+import { useAuthStore } from '@/store/auth'
 import type { PageQuery, RoleVO, UserSaveRequest, UserVO } from '@/types/api'
+
+const auth = useAuthStore()
 
 const loading = ref(false)
 const list = ref<UserVO[]>([])
@@ -65,8 +68,16 @@ async function handleSubmit() {
     await createUser(form)
     ElMessage.success('新建成功')
   } else if (editingId.value) {
-    await updateUser(editingId.value, form)
+    // 编辑时密码框留空表示"不改密码"：必须传 null 而不是空字符串——后端 password 字段有
+    // @Size(min=6) 校验，只对 null 跳过校验，空字符串会被当成"长度 0 的密码"直接拦截。
+    const payload: UserSaveRequest = { ...form, password: form.password?.trim() ? form.password : null }
+    await updateUser(editingId.value, payload)
     ElMessage.success('保存成功')
+    // 编辑的如果是当前登录用户自己，同步刷新右上角昵称缓存——否则要等重新登录才会更新，
+    // 页面上会一直显示登录时缓存的旧昵称，改了跟没改一样。
+    if (form.username === auth.username && form.nickname) {
+      auth.updateNickname(form.nickname)
+    }
   }
   dialogVisible.value = false
   await loadList()
