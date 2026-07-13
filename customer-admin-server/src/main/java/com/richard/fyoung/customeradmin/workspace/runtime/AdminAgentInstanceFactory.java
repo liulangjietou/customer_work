@@ -18,6 +18,7 @@ import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -34,6 +35,8 @@ import io.agentscope.core.tool.mcp.McpClientWrapper;
 import io.agentscope.harness.agent.HarnessAgent;
 import io.agentscope.harness.agent.IsolationScope;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
+import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
+import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -72,7 +75,7 @@ public class AdminAgentInstanceFactory {
     private static final String CAPABILITY_DELIMITER = ",";
     private static final int STATUS_ENABLED = 1;
     private static final int DEFAULT_MAX_ITERS = 10;
-    private static final int SANDBOX_EXECUTE_TIMEOUT_SECONDS = 60;
+    private static final long BYTES_PER_MB = 1024L * 1024L;
     private static final String WORKSPACE_ROOT = "./data/admin-workspace";
     private static final String SKILL_ROOT = "./data/admin-skills";
     private static final String DEFAULT_SYSTEM_PROMPT = "你是一个乐于助人的智能助手。不清楚的问题说不知道，需要人工确认，不要瞎编或者胡说八道。";
@@ -88,6 +91,8 @@ public class AdminAgentInstanceFactory {
     private final AgentStateStore stateStore;
     private final PermissionContextState permissionContext;
     private final AdminMcpFactory mcpFactory;
+    private final AdminSandboxProperties sandboxProperties;
+    private final SandboxGuardMiddleware sandboxGuardMiddleware;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -100,7 +105,8 @@ public class AdminAgentInstanceFactory {
                                       AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
                                       AdminModelFactory modelFactory, AesGcmCryptoUtil cryptoUtil,
                                       AgentStateStore stateStore, PermissionContextState permissionContext,
-                                      AdminMcpFactory mcpFactory) {
+                                      AdminMcpFactory mcpFactory, AdminSandboxProperties sandboxProperties,
+                                      SandboxGuardMiddleware sandboxGuardMiddleware) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -112,6 +118,8 @@ public class AdminAgentInstanceFactory {
         this.stateStore = stateStore;
         this.permissionContext = permissionContext;
         this.mcpFactory = mcpFactory;
+        this.sandboxProperties = sandboxProperties;
+        this.sandboxGuardMiddleware = sandboxGuardMiddleware;
     }
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
@@ -125,6 +133,16 @@ public class AdminAgentInstanceFactory {
             .userId(agentCode)
             .sessionId(StringUtils.hasText(sessionId) ? sessionId : "default")
             .build();
+    }
+
+    /**
+     * 按智能体当前关联的模型配置现场构建一个独立 {@link Model} 实例，供"一次性调用"场景使用
+     * （如 Git 助手的 diff 摘要/commit message/PR description 生成）——不经过 {@link #build}
+     * 的 ReAct 工具循环组装，不带 workspace/toolkit，纯粹的模型直连，避免节外生枝触发文件工具。
+     */
+    public Model buildModelForAgent(String agentCode) {
+        AiAgent agent = requireEnabledAgent(agentCode);
+        return buildModel(agent.getModelId());
     }
 
     /** 从零构建一次智能体实例（供 {@link AgentInstanceCache} 惰性重建时调用）。 */
@@ -145,6 +163,10 @@ public class AdminAgentInstanceFactory {
             .defaultSessionId(agentCode)
             .permissionContext(permissionContext)
             .maxIters(DEFAULT_MAX_ITERS);
+        if (capabilities.contains(CAPABILITY_VIBECODING)) {
+            // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载。
+            builder.middleware(sandboxGuardMiddleware);
+        }
 
         Set<String> skillToolNames = new HashSet<>();
         SkillBox skillBox = buildSkillBox(agent, toolkit, skillToolNames);
@@ -159,18 +181,49 @@ public class AdminAgentInstanceFactory {
             return inner;
         }
 
-        HarnessAgent harnessAgent = HarnessAgent.Builder.fromAgent(inner)
-            .stateStore(stateStore)
+        // Docker 模式下 HarnessAgent 内部的 SessionSandboxStateStore 会给沙箱状态槽位拼出带 "/"
+        // 的 sessionId（IsolationScope 四种取值全部如此，框架侧硬编码），而 MysqlAgentStateStore
+        // 拒绝接受含路径分隔符的 sessionId，两者组合必然抛异常——用 SandboxSafeAgentStateStore
+        // 包一层转义规避，local 模式不受影响（见该类 Javadoc）。
+        AgentStateStore harnessStateStore = sandboxProperties.isDockerMode()
+            ? new SandboxSafeAgentStateStore(stateStore) : stateStore;
+        HarnessAgent.Builder harnessBuilder = HarnessAgent.Builder.fromAgent(inner)
+            .stateStore(harnessStateStore)
             .defaultSessionId(agentCode)
             .permissionContext(permissionContext)
             .generateOptions(GenerateOptions.builder().build())
-            .workspace(resolveWorkspace(agentCode))
-            .filesystem(new LocalFilesystemSpec()
-                .executeTimeoutSeconds(SANDBOX_EXECUTE_TIMEOUT_SECONDS)
-                .isolationScope(IsolationScope.AGENT))
-            .build();
-        log.info("[workspace] harness agent built (vibecoding): agentCode={}", agentCode);
+            .workspace(resolveWorkspace(agentCode));
+        if (sandboxProperties.isDockerMode()) {
+            harnessBuilder.filesystem(buildDockerFilesystemSpec());
+        } else {
+            harnessBuilder.filesystem(buildLocalFilesystemSpec());
+        }
+        HarnessAgent harnessAgent = harnessBuilder.build();
+        log.info("[workspace] harness agent built (vibecoding): agentCode={} sandboxMode={}",
+            agentCode, sandboxProperties.getMode());
         return harnessAgent;
+    }
+
+    /** {@code admin.sandbox.mode=local}（默认）：无隔离，Agent 的 shell/文件工具直接跑在宿主机进程内。 */
+    private LocalFilesystemSpec buildLocalFilesystemSpec() {
+        return new LocalFilesystemSpec()
+            .executeTimeoutSeconds(sandboxProperties.getExecuteTimeoutSeconds())
+            .isolationScope(IsolationScope.AGENT);
+    }
+
+    /**
+     * {@code admin.sandbox.mode=docker}：容器级隔离，Agent 的 shell/文件工具跑在独立 Docker 容器内。
+     * {@code agentscope-harness} 已内置该实现，与 {@link #buildLocalFilesystemSpec()} 是同一套
+     * {@code HarnessAgent.Builder#filesystem(...)} 挂载点，本机/服务器需已安装并运行 Docker。
+     */
+    private SandboxFilesystemSpec buildDockerFilesystemSpec() {
+        AdminSandboxProperties.Docker docker = sandboxProperties.getDocker();
+        return new DockerFilesystemSpec()
+            .image(docker.getImage())
+            .memorySizeBytes(docker.getMemoryMb() * BYTES_PER_MB)
+            .cpuCount(docker.getCpuCount())
+            .network(docker.getNetwork())
+            .isolationScope(IsolationScope.AGENT);
     }
 
     /**

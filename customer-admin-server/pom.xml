@@ -18,6 +18,17 @@
         支持在线聊天与 VibeCoding（Spring MVC）</description>
 
     <dependencies>
+        <!-- 显式覆盖父 POM 继承下来的 commons-lang3:3.13.0（dependency:tree -Dverbose 证实来自某个
+             上游 BOM 的仲裁结果）——agentscope-harness 的 Docker 沙箱工作区投影（WorkspaceProjectionApplier
+             用 tar 归档同步文件到容器）依赖 commons-compress，commons-compress 用到的
+             org.apache.commons.lang3.ArrayFill 是 commons-lang3 3.14.0 才新增的类，3.13.0 下
+             直接 NoClassDefFoundError。只在本模块覆盖，不动根 pom 的 dependencyManagement（避免
+             影响其它模块的既有版本锁定）。 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.18.0</version>
+        </dependency>
         <!-- Spring MVC（非 WebFlux）：与 customer-web 同一手法接入 starter -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

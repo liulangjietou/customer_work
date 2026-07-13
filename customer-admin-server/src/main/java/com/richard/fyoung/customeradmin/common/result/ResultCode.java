@@ -30,6 +30,7 @@ public enum ResultCode {
     RESOURCE_DUPLICATE(30004, "资源已存在，唯一键冲突"),
     RESOURCE_IN_USE(30005, "资源正被引用，无法删除"),
     SCHEDULED_TASK_DISABLED(30006, "定时任务未启用"),
+    NO_FILE_CHANGES(30007, "本轮对话暂无文件变更"),
 
     // 4xxxx 外部依赖类
     MODEL_TEST_TIMEOUT(40001, "模型连通性测试超时"),
@@ -37,6 +38,8 @@ public enum ResultCode {
     MCP_CONNECT_FAILED(40003, "MCP 连接失败"),
     AGENT_CAPABILITY_NOT_SUPPORTED(40004, "智能体不支持该能力"),
     AGENT_DISABLED(40005, "智能体未启用"),
+    GIT_COMMAND_FAILED(40006, "Git 命令执行失败"),
+    GIT_ASSISTANT_AI_FAILED(40007, "AI 生成失败，请稍后重试"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

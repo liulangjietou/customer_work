@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, type UploadRequestOptions } from 'element-plus'
-import { listWorkspaceFiles, readWorkspaceFileContent, saveWorkspaceFileContent, streamVibeCoding } from '@/api/vibecoding'
+import {
+  generateCommitMessage,
+  generatePrDescription,
+  getGitDiffSummary,
+  getSandboxMode,
+  listWorkspaceFiles,
+  readWorkspaceFileContent,
+  saveWorkspaceFileContent,
+  streamVibeCoding,
+} from '@/api/vibecoding'
 import { getChatSessionMessages, parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
@@ -9,7 +18,7 @@ import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ThemeToolbar from '@/components/ThemeToolbar.vue'
 import { useThemeStore } from '@/store/theme'
 import { generateUuid } from '@/utils/uuid'
-import type { WorkspaceFileContent, WorkspaceFileNode } from '@/types/api'
+import type { FileChangeEvent, GitDiffSummary, WorkspaceFileContent, WorkspaceFileNode } from '@/types/api'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
 
@@ -54,6 +63,22 @@ const fileNodes = ref<WorkspaceFileNode[]>([])
 const filesLoading = ref(false)
 const filesLoaded = ref(false)
 
+// 沙箱模式（local/docker，全局配置，进面板时查一次即可，不随会话变化）
+const sandboxMode = ref<'local' | 'docker' | null>(null)
+
+// 实时文件变更时间线（本轮对话内累积，切会话/新建会话时清空）
+const fileChanges = ref<Array<FileChangeEvent & { time: number }>>([])
+
+// Git 助手抽屉
+const gitDrawerVisible = ref(false)
+const gitDiffLoading = ref(false)
+const gitDiff = ref<GitDiffSummary | null>(null)
+const commitStyle = ref<'conventional' | 'simple'>('conventional')
+const commitLoading = ref(false)
+const commitMessageText = ref('')
+const prLoading = ref(false)
+const prDescriptionText = ref('')
+
 // 文件预览抽屉
 const previewVisible = ref(false)
 const previewLoading = ref(false)
@@ -73,6 +98,9 @@ function newSession() {
   attachments.value = []
   fileNodes.value = []
   filesLoaded.value = false
+  fileChanges.value = []
+  // 新会话会用当前全局配置，不是上一个（可能是历史会话解析出的）沙箱模式
+  loadCurrentSandboxMode()
 }
 
 async function handleAttachmentUpload(options: UploadRequestOptions) {
@@ -111,6 +139,11 @@ async function openSession(targetSessionId: string) {
     input.value = ''
     fileNodes.value = []
     filesLoaded.value = false
+    fileChanges.value = []
+    // 标签要反映"这条会话当时真正用的模式"，从首条用户消息里解析；更早期没有该前缀的历史记录
+    // 解析不出来，此时不展示误导性的标签（不回退成当前全局配置，两者含义不同不能互相替代）
+    const firstUserMessage = history.find((msg) => msg.role === 'user')
+    sandboxMode.value = firstUserMessage ? parseSandboxModeFromMessage(firstUserMessage.text) : null
     scrollToBottom()
     // 切到历史会话时该会话可能已有产物文件，无需等用户手动点“刷新”
     loadFiles()
@@ -152,6 +185,10 @@ function send() {
         loadFiles()
         return
       }
+      if (event.event === 'file_change') {
+        handleFileChange(event.data)
+        return
+      }
       if (event.event.startsWith('node:')) {
         appendNode(assistantMessage, event.event.slice('node:'.length), event.data)
       } else {
@@ -168,6 +205,70 @@ function send() {
       historySidebar.value?.refresh()
     },
   })
+}
+
+/** 解析 file_change SSE 事件，追加到变更时间线（不按路径去重，同一文件多次改动各自成一条，还原真实操作顺序）。 */
+function handleFileChange(raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as FileChangeEvent
+    fileChanges.value.push({ ...parsed, time: Date.now() })
+  } catch {
+    // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/** 打开 Git 助手抽屉，并立即加载一次 diff 摘要。 */
+async function openGitAssistant() {
+  gitDrawerVisible.value = true
+  gitDiff.value = null
+  commitMessageText.value = ''
+  prDescriptionText.value = ''
+  await loadGitDiff()
+}
+
+async function loadGitDiff() {
+  gitDiffLoading.value = true
+  try {
+    gitDiff.value = await getGitDiffSummary(props.agentCode, sessionId.value)
+  } catch (error) {
+    ElMessage.error('diff 摘要加载失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    gitDiffLoading.value = false
+  }
+}
+
+async function handleGenerateCommitMessage() {
+  commitLoading.value = true
+  try {
+    const res = await generateCommitMessage(props.agentCode, { sessionId: sessionId.value, style: commitStyle.value })
+    commitMessageText.value = res.message
+  } catch (error) {
+    ElMessage.error('commit message 生成失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    commitLoading.value = false
+  }
+}
+
+async function handleGeneratePrDescription() {
+  prLoading.value = true
+  try {
+    const res = await generatePrDescription(props.agentCode, sessionId.value)
+    prDescriptionText.value = res.description
+  } catch (error) {
+    ElMessage.error('PR description 生成失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    prLoading.value = false
+  }
+}
+
+async function copyToClipboard(text: string, label: string) {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(`${label}已复制`)
+  } catch {
+    ElMessage.error('复制失败，请手动选择文本复制')
+  }
 }
 
 /** 加载（刷新）会话 workspace 目录树。 */
@@ -250,8 +351,27 @@ function highlightPreview() {
   }
 }
 
+/**
+ * 当前全局沙箱配置（admin.sandbox.mode），代表"新会话将会使用的模式"。
+ * 仅用于 newSession/挂载时的预览——一旦切到某条历史会话，标签要改成从那条会话消息里解析出的
+ * "当时真正用的模式"，不能一直显示"现在的全局配置"，否则历史记录和当前配置不一致时会互相矛盾
+ * （比如切到一条 local 时期的历史记录，标题却显示当前是 docker，误导用户以为这条记录也在容器里）。
+ */
+function loadCurrentSandboxMode() {
+  getSandboxMode(props.agentCode)
+    .then((res) => { sandboxMode.value = res.mode })
+    .catch(() => { sandboxMode.value = null })
+}
+
+/** 从会话首条用户消息里解析出发送时用的沙箱模式，解析不出来（更早期版本的历史记录）返回 null。 */
+function parseSandboxModeFromMessage(text: string): 'local' | 'docker' | null {
+  const match = text.match(/^\[VibeCoding指引-(docker|local)]/)
+  return match ? (match[1] as 'local' | 'docker') : null
+}
+
 onMounted(() => {
   themeStore.apply()
+  loadCurrentSandboxMode()
 })
 
 onUnmounted(() => {
@@ -300,8 +420,29 @@ onUnmounted(() => {
     <!-- 中列：产物文件树 -->
     <div class="artifacts-column">
       <div class="artifacts-header">
-        <span>产物文件</span>
-        <el-button link type="primary" :loading="filesLoading" @click="loadFiles">刷新</el-button>
+        <span>
+          产物文件
+          <el-tag v-if="sandboxMode" size="small" :type="sandboxMode === 'docker' ? 'warning' : 'info'" class="sandbox-mode-tag">
+            {{ sandboxMode === 'docker' ? 'docker' : 'local' }}
+          </el-tag>
+        </span>
+        <div class="artifacts-header-actions">
+          <el-button link type="primary" @click="openGitAssistant">Git 助手</el-button>
+          <el-button link type="primary" :loading="filesLoading" @click="loadFiles">刷新</el-button>
+        </div>
+      </div>
+
+      <!-- 实时文件变更时间线 -->
+      <div v-if="fileChanges.length > 0" class="file-change-timeline">
+        <div class="file-change-timeline-title">本轮变更</div>
+        <el-scrollbar max-height="120px">
+          <div v-for="(fc, idx) in fileChanges" :key="idx" class="file-change-item">
+            <el-icon v-if="fc.operation === 'CREATE'" style="color:#67c23a"><CirclePlus /></el-icon>
+            <el-icon v-else-if="fc.operation === 'MODIFY'" style="color:#e6a23c"><EditPen /></el-icon>
+            <el-icon v-else style="color:#f56c6c"><Delete /></el-icon>
+            <span class="file-change-path" :title="fc.path">{{ fc.path }}</span>
+          </div>
+        </el-scrollbar>
       </div>
 
       <!-- 空状态 -->
@@ -393,6 +534,67 @@ onUnmounted(() => {
             :placeholder="'请输入文件内容…'"
           />
         </el-scrollbar>
+      </div>
+    </el-drawer>
+
+    <!-- Git 助手抽屉 -->
+    <el-drawer v-model="gitDrawerVisible" direction="rtl" size="45%" title="Git 助手">
+      <div class="git-assistant">
+        <div class="git-section">
+          <div class="git-section-header">
+            <span>变更摘要</span>
+            <el-button link type="primary" :loading="gitDiffLoading" @click="loadGitDiff">刷新</el-button>
+          </div>
+          <div v-if="gitDiffLoading" class="git-loading">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>加载中…</span>
+          </div>
+          <template v-else-if="gitDiff">
+            <p class="git-summary-text">{{ gitDiff.summary }}</p>
+            <div v-if="gitDiff.changedFiles.length > 0" class="git-changed-files">
+              <el-tag v-for="f in gitDiff.changedFiles" :key="f" size="small" class="git-changed-file-tag">{{ f }}</el-tag>
+            </div>
+          </template>
+        </div>
+
+        <el-divider />
+
+        <div class="git-section">
+          <div class="git-section-header">
+            <span>Commit Message</span>
+            <el-radio-group v-model="commitStyle" size="small">
+              <el-radio-button value="conventional">Conventional</el-radio-button>
+              <el-radio-button value="simple">Simple</el-radio-button>
+            </el-radio-group>
+          </div>
+          <el-button type="primary" size="small" :loading="commitLoading" @click="handleGenerateCommitMessage">生成</el-button>
+          <el-input
+            v-if="commitMessageText"
+            v-model="commitMessageText"
+            type="textarea"
+            :rows="3"
+            readonly
+            class="git-result-text"
+          />
+          <el-button v-if="commitMessageText" link type="primary" @click="copyToClipboard(commitMessageText, 'commit message')">
+            复制
+          </el-button>
+        </div>
+
+        <el-divider />
+
+        <div class="git-section">
+          <div class="git-section-header">
+            <span>PR Description</span>
+          </div>
+          <el-button type="primary" size="small" :loading="prLoading" @click="handleGeneratePrDescription">生成</el-button>
+          <div v-if="prDescriptionText" class="git-pr-description">
+            <MarkdownRenderer :text="prDescriptionText" />
+          </div>
+          <el-button v-if="prDescriptionText" link type="primary" @click="copyToClipboard(prDescriptionText, 'PR description')">
+            复制
+          </el-button>
+        </div>
       </div>
     </el-drawer>
   </div>
@@ -501,6 +703,94 @@ onUnmounted(() => {
   margin-bottom: 8px;
   font-weight: 600;
   flex-shrink: 0;
+}
+
+.artifacts-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sandbox-mode-tag {
+  margin-left: 6px;
+  font-weight: normal;
+  vertical-align: middle;
+}
+
+/* 实时文件变更时间线 */
+.file-change-timeline {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.file-change-timeline-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #909399;
+  margin-bottom: 4px;
+}
+
+.file-change-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.file-change-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Git 助手抽屉 */
+.git-assistant {
+  padding: 0 4px;
+}
+
+.git-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.git-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #909399;
+  font-size: 13px;
+}
+
+.git-summary-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #303133;
+  margin: 0 0 8px;
+}
+
+.git-changed-files {
+  margin-bottom: 8px;
+}
+
+.git-changed-file-tag {
+  margin: 2px;
+}
+
+.git-result-text {
+  margin: 8px 0;
+}
+
+.git-pr-description {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
 }
 
 .tree-node {

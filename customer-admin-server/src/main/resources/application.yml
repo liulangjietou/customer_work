@@ -91,6 +91,20 @@ admin:
     appname: ${ADMIN_XXL_JOB_APPNAME:customer-admin-executor}
     port: ${ADMIN_XXL_JOB_PORT:9998}
     access-token: ${ADMIN_XXL_JOB_ACCESS_TOKEN:}
+  sandbox:
+    # VibeCoding 代码沙箱：local（默认，无隔离，直接跑宿主机）｜docker（容器隔离，需本机/服务器已装 Docker）。
+    mode: ${ADMIN_SANDBOX_MODE:local}
+    execute-timeout-seconds: ${ADMIN_SANDBOX_EXECUTE_TIMEOUT_SECONDS:60}
+    docker:
+      image: ${ADMIN_SANDBOX_DOCKER_IMAGE:maven:3.9-eclipse-temurin-17}
+      memory-mb: ${ADMIN_SANDBOX_DOCKER_MEMORY_MB:512}
+      cpu-count: ${ADMIN_SANDBOX_DOCKER_CPU_COUNT:1}
+      network: ${ADMIN_SANDBOX_DOCKER_NETWORK:none}
+    guard:
+      # 破坏性命令拦截：命中即改写为安全占位，不抛异常打断主链路。默认开启（不同于 starter 的
+      # ToolGuardMiddleware 默认关闭——那里客服业务场景默认信任内部工具，这里 Agent 会执行任意
+      # shell 命令，风险面更大，默认开更保守）。
+      enabled: ${ADMIN_SANDBOX_GUARD_ENABLED:true}
 
 springdoc:
   api-docs:

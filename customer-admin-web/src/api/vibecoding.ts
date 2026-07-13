@@ -1,9 +1,27 @@
 import { request } from './request'
 import { streamSse, type SseHandlers } from '@/utils/sse'
-import type { ChatRequest, SaveFileContentRequest, WorkspaceFileContent, WorkspaceFileNode } from '@/types/api'
+import type {
+  ChatRequest,
+  CommitMessageRequest,
+  CommitMessageResponse,
+  GitDiffSummary,
+  PrDescriptionResponse,
+  SandboxModeResponse,
+  SaveFileContentRequest,
+  WorkspaceFileContent,
+  WorkspaceFileNode,
+} from '@/types/api'
 
 export function streamVibeCoding(agentCode: string, req: ChatRequest, handlers: SseHandlers) {
   return streamSse(`/workspace/${agentCode}/vibecoding/stream`, req, handlers)
+}
+
+/** 当前 VibeCoding 沙箱模式（local/docker），全局配置，不随会话变化。 */
+export function getSandboxMode(agentCode: string) {
+  return request<SandboxModeResponse>({
+    url: `/workspace/${agentCode}/vibecoding/sandbox-mode`,
+    method: 'get',
+  })
 }
 
 export function listVibeCodingArtifacts(agentCode: string, sessionId: string) {
@@ -43,5 +61,32 @@ export function readWorkspaceFileContent(agentCode: string, sessionId: string, p
     url: `/workspace/${agentCode}/vibecoding/file-content`,
     method: 'get',
     params: { sessionId, path },
+  })
+}
+
+/** Git 助手 · diff 摘要：变更文件清单 + AI 生成的 1~3 句话摘要。 */
+export function getGitDiffSummary(agentCode: string, sessionId: string) {
+  return request<GitDiffSummary>({
+    url: `/workspace/${agentCode}/vibecoding/git-diff`,
+    method: 'get',
+    params: { sessionId },
+  })
+}
+
+/** Git 助手 · 生成 commit message（style 默认 conventional）。 */
+export function generateCommitMessage(agentCode: string, req: CommitMessageRequest) {
+  return request<CommitMessageResponse>({
+    url: `/workspace/${agentCode}/vibecoding/commit-message`,
+    method: 'post',
+    data: req,
+  })
+}
+
+/** Git 助手 · 生成 PR description（Markdown）。 */
+export function generatePrDescription(agentCode: string, sessionId: string) {
+  return request<PrDescriptionResponse>({
+    url: `/workspace/${agentCode}/vibecoding/pr-description`,
+    method: 'post',
+    data: { sessionId },
   })
 }

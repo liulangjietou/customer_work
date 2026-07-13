@@ -1,11 +1,19 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageResponse;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxModeResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SaveFileContentRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileNode;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.GitAssistantService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.VibeCodingService;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
@@ -21,6 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * VibeCoding：对话（SSE，与 chat 同一套流式基础设施）+ 产物清单（快照 diff）+
@@ -32,9 +41,11 @@ import java.util.List;
 public class VibeCodingController {
 
     private final VibeCodingService vibeCodingService;
+    private final GitAssistantService gitAssistantService;
 
-    public VibeCodingController(VibeCodingService vibeCodingService) {
+    public VibeCodingController(VibeCodingService vibeCodingService, GitAssistantService gitAssistantService) {
         this.vibeCodingService = vibeCodingService;
+        this.gitAssistantService = gitAssistantService;
     }
 
     @SaCheckPermission("workspace")
@@ -43,6 +54,13 @@ public class VibeCodingController {
         return vibeCodingService.stream(agentCode, request.sessionId(), request.message())
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.text()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
+    }
+
+    /** 当前 VibeCoding 沙箱模式（local/docker），全局配置，供前端在产物文件标题旁标注来源。 */
+    @SaCheckPermission("workspace")
+    @GetMapping("/sandbox-mode")
+    public Result<SandboxModeResponse> sandboxMode(@PathVariable String agentCode) {
+        return Result.success(new SandboxModeResponse(vibeCodingService.sandboxMode()));
     }
 
     /** 变更文件清单：与本次 {@code stream} 调用用同一个 sessionId。 */
@@ -88,5 +106,35 @@ public class VibeCodingController {
             @Valid @RequestBody SaveFileContentRequest request) {
         vibeCodingService.saveFileContent(agentCode, request.sessionId(), request.relativePath(), request.content());
         return Result.success(null);
+    }
+
+    /**
+     * Git 助手 · diff 摘要：会话 workspace 相对基线的变更文件清单 + AI 生成的 1~3 句话摘要。
+     * 与 {@code artifacts} 的区别：{@code artifacts} 只给文件路径清单，这里额外给自然语言摘要，
+     * 且底层走真实 {@code git diff}（有 unified diff 文本），不是文件指纹对比。
+     */
+    @SaCheckPermission("workspace")
+    @GetMapping("/git-diff")
+    public CompletableFuture<Result<GitDiffSummary>> gitDiff(@PathVariable String agentCode, @RequestParam String sessionId) {
+        return gitAssistantService.diffSummary(agentCode, sessionId).thenApply(Result::success);
+    }
+
+    /** Git 助手 · 生成 commit message（{@code style=conventional|simple}，默认 conventional）。 */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding生成commit message", target = "vibecoding_git_assistant")
+    @PostMapping("/commit-message")
+    public CompletableFuture<Result<CommitMessageResponse>> commitMessage(
+            @PathVariable String agentCode, @Valid @RequestBody CommitMessageRequest request) {
+        return gitAssistantService.commitMessage(agentCode, request.sessionId(), request.styleOrDefault())
+            .thenApply(Result::success);
+    }
+
+    /** Git 助手 · 生成 PR description（Markdown：变更摘要/改动文件清单/影响范围/自检清单）。 */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding生成PR描述", target = "vibecoding_git_assistant")
+    @PostMapping("/pr-description")
+    public CompletableFuture<Result<PrDescriptionResponse>> prDescription(
+            @PathVariable String agentCode, @Valid @RequestBody PrDescriptionRequest request) {
+        return gitAssistantService.prDescription(agentCode, request.sessionId()).thenApply(Result::success);
     }
 }
