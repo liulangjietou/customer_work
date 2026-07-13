@@ -24,14 +24,23 @@ public enum ChatNodeKind {
     /** 调用内置/业务工具（既非 Skill 也非 MCP）。 */
     TOOL_BUILTIN,
     /** 工具返回结果。 */
-    TOOL_RESULT;
+    TOOL_RESULT,
+    /** VibeCoding 专用：会话 workspace 文件发生变更（新增/修改/删除），仅由 VibeCodingService 产出。 */
+    FILE_CHANGE;
 
     /**
      * 映射成 SSE {@code event} 名：{@link #ANSWER} 走 {@code message}（向后兼容旧协议，前端正文
-     * 渲染逻辑不用改）；其余节点类型统一走 {@code node:<kind小写>}，前端按事件名前缀分流渲染成
-     * 执行轨迹时间线，不用解析 JSON。
+     * 渲染逻辑不用改）；{@link #FILE_CHANGE} 走独立的 {@code file_change} 事件（前端按固定 JSON
+     * 结构解析，不走时间线节点渲染）；其余节点类型统一走 {@code node:<kind小写>}，前端按事件名
+     * 前缀分流渲染成执行轨迹时间线，不用解析 JSON。
      */
     public String sseEventName() {
-        return this == ANSWER ? "message" : "node:" + name().toLowerCase();
+        if (this == ANSWER) {
+            return "message";
+        }
+        if (this == FILE_CHANGE) {
+            return "file_change";
+        }
+        return "node:" + name().toLowerCase();
     }
 }

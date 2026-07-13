@@ -94,7 +94,13 @@ public class ChatService {
         AtomicBoolean answerStreamed = new AtomicBoolean(false);
         AtomicBoolean modelCallAnnounced = new AtomicBoolean(false);
 
-        Flux<ChatStreamChunk> body = streamEvents(agent, List.of(toUserMsg(userText)), options, ctx)
+        // Flux.defer 包一层：像 HarnessAgent.stream(...) 在沙箱资源获取失败时（如 docker 容器创建
+        // 超时）是同步抛异常，不是发出错误信号——不包 defer 的话，streamEvents(...) 这行方法调用本身
+        // 就会直接向外抛，导致整个 chatStream(...) 方法体同步抛出，下面的 .onErrorResume(...) 根本
+        // 没机会接管。届时 Spring MVC 的 SSE 响应式适配器可能已经提交了响应头，连接就会挂起不报错
+        // 也不关闭，前端永远卡在"生成中..."。defer 把方法调用推迟到订阅时执行，任何同步异常都会被
+        // Reactor 自动转成 Flux.error(...)，从而能被 onErrorResume 正常捕获、优雅降级成兜底话术。
+        Flux<ChatStreamChunk> body = Flux.defer(() -> streamEvents(agent, List.of(toUserMsg(userText)), options, ctx))
             .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, lastAnnouncedTool,
                 lastReasoningText, lastAnswerText, answerStreamed, modelCallAnnounced)));
 

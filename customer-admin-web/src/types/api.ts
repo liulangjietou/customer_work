@@ -364,6 +364,36 @@ export interface SaveFileContentRequest {
   content: string
 }
 
+/** file_change SSE 事件的 data 载荷。 */
+export interface FileChangeEvent {
+  operation: 'CREATE' | 'MODIFY' | 'DELETE'
+  path: string
+  description: string
+}
+
+export interface GitDiffSummary {
+  summary: string
+  changedFiles: string[]
+}
+
+export interface CommitMessageRequest {
+  sessionId: string
+  style?: 'conventional' | 'simple'
+}
+
+export interface CommitMessageResponse {
+  message: string
+}
+
+export interface PrDescriptionResponse {
+  description: string
+}
+
+/** 当前 VibeCoding 沙箱模式：local（无隔离，跑宿主机）｜docker（容器隔离）。 */
+export interface SandboxModeResponse {
+  mode: 'local' | 'docker'
+}
+
 // ---------- workspace.chat ----------
 export interface ChatRequest {
   sessionId: string

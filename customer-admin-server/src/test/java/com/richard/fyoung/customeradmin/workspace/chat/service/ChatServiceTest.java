@@ -297,4 +297,19 @@ class ChatServiceTest {
 
         assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.THINKING_END, ChatNodeKind.ANSWER);
     }
+
+    @Test
+    void chatStream_shouldFallBackGracefully_whenAgentStreamThrowsSynchronously() {
+        // 复现真实场景：HarnessAgent.stream(...) 在沙箱资源获取失败时（如 docker 容器创建超时）是
+        // 方法调用本身同步抛异常，不是返回一个 error Flux。如果 streamEvents(...) 没有包 Flux.defer，
+        // 这个异常会在 chatStream(...) 方法体执行期间直接向外抛，onErrorResume 完全没机会接管，
+        // 前端会收不到任何 SSE 事件（连接挂起）。用 thenThrow（而非 thenReturn(Flux.error(...))）
+        // 模拟这种"同步抛"场景，断言依然能拿到完整的兜底话术，而不是让异常直接冒穿。
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenThrow(new RuntimeException("docker run timed out for image: maven:3.9-eclipse-temurin-17"));
+
+        List<ChatStreamChunk> chunks = stream("写一个 Fibonacci.java");
+
+        assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.THINKING_END, ChatNodeKind.ANSWER);
+    }
 }

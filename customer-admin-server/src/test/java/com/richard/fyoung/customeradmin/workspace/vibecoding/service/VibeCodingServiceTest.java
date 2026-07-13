@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
+import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -40,6 +42,7 @@ class VibeCodingServiceTest {
     private ChatService chatService;
     private AdminAgentInstanceFactory agentInstanceFactory;
     private AiAgentMapper agentMapper;
+    private GitWorkspaceService gitWorkspaceService;
     private VibeCodingService service;
 
     /** agentCode=coder 的 agentRoot（等价于 data/admin-workspace/coder） */
@@ -56,7 +59,10 @@ class VibeCodingServiceTest {
         chatService = mock(ChatService.class);
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         agentMapper = mock(AiAgentMapper.class);
-        service = new VibeCodingService(chatService, agentInstanceFactory, agentMapper);
+        gitWorkspaceService = mock(GitWorkspaceService.class);
+        // 默认 local 模式（isDockerMode()=false），docker 产物同步逻辑在单测里天然跳过
+        service = new VibeCodingService(chatService, agentInstanceFactory, agentMapper, gitWorkspaceService,
+            new AdminSandboxProperties());
 
         // resolveWorkspace 返回 agentRoot（向后兼容，listChangedArtifacts 旧逻辑已不使用此方法）
         when(agentInstanceFactory.resolveWorkspace("coder")).thenReturn(agentRoot);
@@ -222,6 +228,20 @@ class VibeCodingServiceTest {
         }
 
         @Test
+        void shouldExcludeGitDirectory_fromFileTree() throws IOException {
+            when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+            Path sessionWs = agentRoot.resolve("sessions/git-test");
+            Files.createDirectories(sessionWs.resolve(".git/hooks"));
+            Files.writeString(sessionWs.resolve(".git/hooks/pre-commit.sample"), "#!/bin/sh");
+            Files.writeString(sessionWs.resolve("Foo.java"), "class Foo {}");
+
+            List<WorkspaceFileNode> nodes = service.listWorkspaceFiles("coder", "git-test");
+
+            assertEquals(1, nodes.size(), ".git 目录不应出现在产物文件树里");
+            assertEquals("Foo.java", nodes.get(0).name());
+        }
+
+        @Test
         void shouldRejectAgentWithoutCapability_onListFiles() {
             AiAgent chatOnly = new AiAgent();
             chatOnly.setCapabilities("chat");
@@ -339,6 +359,94 @@ class VibeCodingServiceTest {
             when(agentMapper.selectOne(any())).thenReturn(chatOnly);
             assertThrows(BizException.class,
                 () -> service.saveFileContent("coder", "s1", "Foo.java", "class Foo {}"));
+        }
+    }
+
+    // ===== 实时 file_change 事件 =====
+
+    @Nested
+    class RealtimeFileChangeEvents {
+
+        @Test
+        void shouldEmitFileChangeEvent_afterToolResult_whenFileCreated() {
+            when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+            Path sessionWs = agentRoot.resolve("sessions/fc-1");
+
+            // 模拟 Agent 在收到 TOOL_RESULT 之前先把文件写进会话目录（跟真实 write_file 工具的时序一致）
+            Flux<ChatStreamChunk> simulated = Flux.concat(
+                Mono.fromRunnable(() -> writeQuietly(sessionWs, "output.txt", "hello"))
+                    .thenReturn(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, "工具「write_file」返回：ok")),
+                Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "已完成")));
+            when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(simulated);
+
+            List<ChatStreamChunk> emitted = service.stream("coder", "fc-1", "写个文件").collectList().block();
+
+            assertNotNull(emitted);
+            long fileChangeCount = emitted.stream().filter(c -> c.kind() == ChatNodeKind.FILE_CHANGE).count();
+            assertEquals(1, fileChangeCount, "应恰好产生一条 FILE_CHANGE 事件");
+            ChatStreamChunk fileChange = emitted.stream().filter(c -> c.kind() == ChatNodeKind.FILE_CHANGE).findFirst().orElseThrow();
+            assertTrue(fileChange.text().contains("\"operation\":\"CREATE\""));
+            assertTrue(fileChange.text().contains("\"path\":\"output.txt\""));
+        }
+
+        @Test
+        void shouldEmitFileChangeEvent_onStreamCompletion_evenWithoutTrailingToolResult() {
+            when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+            Path sessionWs = agentRoot.resolve("sessions/fc-2");
+
+            // 没有任何 TOOL_RESULT 节点，文件是在流结束前"悄悄"写入的（异步落盘边界场景）
+            Flux<ChatStreamChunk> simulated = Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "已完成"))
+                .doOnComplete(() -> writeQuietly(sessionWs, "late-file.txt", "late"));
+            when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(simulated);
+
+            List<ChatStreamChunk> emitted = service.stream("coder", "fc-2", "写个文件").collectList().block();
+
+            assertNotNull(emitted);
+            assertTrue(emitted.stream().anyMatch(c -> c.kind() == ChatNodeKind.FILE_CHANGE
+                && c.text().contains("late-file.txt")), "流结束后的兜底检测应捕获到最后一次写入");
+        }
+
+        @Test
+        void shouldNotEmitFileChangeEvent_whenNoFileWritten() {
+            when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+            when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(
+                Flux.just(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, "工具「read_file」返回：内容"),
+                    new ChatStreamChunk(ChatNodeKind.ANSWER, "已完成")));
+
+            List<ChatStreamChunk> emitted = service.stream("coder", "fc-3", "读个文件").collectList().block();
+
+            assertNotNull(emitted);
+            assertTrue(emitted.stream().noneMatch(c -> c.kind() == ChatNodeKind.FILE_CHANGE));
+        }
+
+        @Test
+        void shouldNotEmitFileChangeEvent_forGitInternalFiles() {
+            when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+            Path sessionWs = agentRoot.resolve("sessions/fc-4");
+
+            // 模拟 GitWorkspaceService.ensureRepo 在 TOOL_RESULT 之后才建仓（时序上不会真实发生，
+            // 这里只是验证即便 .git 子树发生变化，也不应被误判为用户可见的文件变更）
+            Flux<ChatStreamChunk> simulated = Flux.concat(
+                Mono.fromRunnable(() -> writeQuietly(sessionWs, ".git/hooks/pre-commit.sample", "#!/bin/sh"))
+                    .thenReturn(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, "工具「write_file」返回：ok")),
+                Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "已完成")));
+            when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(simulated);
+
+            List<ChatStreamChunk> emitted = service.stream("coder", "fc-4", "写个文件").collectList().block();
+
+            assertNotNull(emitted);
+            assertTrue(emitted.stream().noneMatch(c -> c.kind() == ChatNodeKind.FILE_CHANGE),
+                ".git 内部文件变化不应产生 FILE_CHANGE 事件");
+        }
+
+        private void writeQuietly(Path sessionWs, String fileName, String content) {
+            try {
+                Path target = sessionWs.resolve(fileName);
+                Files.createDirectories(target.getParent());
+                Files.writeString(target, content);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 }
