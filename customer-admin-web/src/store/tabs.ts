@@ -75,6 +75,32 @@ export const useTabsStore = defineStore('tabs', {
         router.push(HOME_KEY)
       }
     },
+    /** 关闭除 key 外的所有可关闭标签（首页等 closable=false 的标签天然保留），并激活 key。 */
+    closeOthers(key: string) {
+      const target = this.tabs.find((t) => t.key === key)
+      if (!target) {
+        return
+      }
+      this.tabs = this.tabs.filter((t) => t.key === key || !t.closable)
+      this.activeKey = key
+      router.push(target.fullPath)
+    },
+    /** 关闭 key 右侧的全部标签；若当前激活标签在被关闭之列，则激活态回落到 key。 */
+    closeToRight(key: string) {
+      const idx = this.tabs.findIndex((t) => t.key === key)
+      if (idx === -1) {
+        return
+      }
+      const removed = this.tabs.slice(idx + 1)
+      if (removed.length === 0) {
+        return
+      }
+      this.tabs = this.tabs.slice(0, idx + 1)
+      if (removed.some((t) => t.key === this.activeKey)) {
+        this.activeKey = key
+        router.push(this.tabs[idx].fullPath)
+      }
+    },
     reset() {
       this.tabs = [{ key: HOME_KEY, title: '首页', fullPath: HOME_KEY, closable: false }]
       this.activeKey = HOME_KEY
