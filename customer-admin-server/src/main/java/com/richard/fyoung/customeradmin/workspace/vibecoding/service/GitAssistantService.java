@@ -5,6 +5,9 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.workspace.audit.AiCodingOperation;
+import com.richard.fyoung.customeradmin.workspace.audit.entity.AiCodingAuditLog;
+import com.richard.fyoung.customeradmin.workspace.audit.service.AiCodingAuditService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
@@ -13,6 +16,7 @@ import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.ChatResponse;
+import io.agentscope.core.model.ChatUsage;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import org.slf4j.Logger;
@@ -24,6 +28,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -60,18 +65,22 @@ public class GitAssistantService {
     private final AiAgentMapper agentMapper;
     private final AdminAgentInstanceFactory agentInstanceFactory;
     private final GitWorkspaceService gitWorkspaceService;
+    private final AiCodingAuditService auditService;
 
     public GitAssistantService(AiAgentMapper agentMapper, AdminAgentInstanceFactory agentInstanceFactory,
-                                GitWorkspaceService gitWorkspaceService) {
+                                GitWorkspaceService gitWorkspaceService, AiCodingAuditService auditService) {
         this.agentMapper = agentMapper;
         this.agentInstanceFactory = agentInstanceFactory;
         this.gitWorkspaceService = gitWorkspaceService;
+        this.auditService = auditService;
     }
 
     /** diff 摘要：无变更时直接返回空摘要，不额外调用模型。 */
     public CompletableFuture<GitDiffSummary> diffSummary(String agentCode, String sessionId) {
         requireVibeCodingCapable(agentCode);
         Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        // 审计条目在请求线程同步段创建（操作人依赖 Sa-Token ThreadLocal），异步链路里只补结果
+        AiCodingAuditLog audit = auditService.begin(AiCodingOperation.GIT_DIFF_SUMMARY, agentCode, sessionId);
         return CompletableFuture.supplyAsync(() -> {
             String diff = gitWorkspaceService.diffAgainstBaseline(workspace);
             List<String> changedFiles = gitWorkspaceService.changedFilesAgainstBaseline(workspace);
@@ -79,18 +88,21 @@ public class GitAssistantService {
                 return new GitDiffSummary("本轮对话暂无文件变更", changedFiles);
             }
             Model model = agentInstanceFactory.buildModelForAgent(agentCode);
-            String summary = callModelOnce(model,
+            ModelCallOutcome outcome = callModelOnce(model,
                 "请用 1~3 句话总结以下 git diff 的变更内容，直接输出总结文字，不要输出多余的解释、前缀或代码块标记：\n\n"
                     + truncateDiff(diff));
-            return new GitDiffSummary(summary, changedFiles);
+            auditService.applyUsage(audit, outcome.usage());
+            return new GitDiffSummary(outcome.text(), changedFiles);
         }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .exceptionally(ex -> rethrow(ex, "GIT_DIFF_SUMMARY_FAIL", agentCode, sessionId));
+            .exceptionally(ex -> rethrow(ex, "GIT_DIFF_SUMMARY_FAIL", agentCode, sessionId))
+            .whenComplete((result, error) -> auditService.finish(audit, error));
     }
 
     /** 生成 commit message：无变更时直接报错，不调用模型（没有内容可总结）。 */
     public CompletableFuture<CommitMessageResponse> commitMessage(String agentCode, String sessionId, String style) {
         requireVibeCodingCapable(agentCode);
         Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        AiCodingAuditLog audit = auditService.begin(AiCodingOperation.COMMIT_MESSAGE, agentCode, sessionId);
         return CompletableFuture.supplyAsync(() -> {
             String diff = requireNonEmptyDiff(workspace);
             Model model = agentInstanceFactory.buildModelForAgent(agentCode);
@@ -100,15 +112,19 @@ public class GitAssistantService {
                     + "不要输出多余解释或代码块标记：\n\ndiff:\n" + truncateDiff(diff)
                 : "请根据以下 git diff 生成一条简洁的中文 commit message（一句话，不超过 50 字），"
                     + "直接输出文本，不要输出多余解释：\n\ndiff:\n" + truncateDiff(diff);
-            return new CommitMessageResponse(callModelOnce(model, prompt));
+            ModelCallOutcome outcome = callModelOnce(model, prompt);
+            auditService.applyUsage(audit, outcome.usage());
+            return new CommitMessageResponse(outcome.text());
         }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .exceptionally(ex -> rethrow(ex, "GIT_COMMIT_MESSAGE_FAIL", agentCode, sessionId));
+            .exceptionally(ex -> rethrow(ex, "GIT_COMMIT_MESSAGE_FAIL", agentCode, sessionId))
+            .whenComplete((result, error) -> auditService.finish(audit, error));
     }
 
     /** 生成 PR description：无变更时直接报错，不调用模型。 */
     public CompletableFuture<PrDescriptionResponse> prDescription(String agentCode, String sessionId) {
         requireVibeCodingCapable(agentCode);
         Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        AiCodingAuditLog audit = auditService.begin(AiCodingOperation.PR_DESCRIPTION, agentCode, sessionId);
         return CompletableFuture.supplyAsync(() -> {
             String diff = requireNonEmptyDiff(workspace);
             List<String> changedFiles = gitWorkspaceService.changedFilesAgainstBaseline(workspace);
@@ -117,9 +133,12 @@ public class GitAssistantService {
                 + "## 变更摘要、## 改动文件清单、## 影响范围、## 自检清单。直接输出 Markdown 正文，"
                 + "不要输出多余解释或额外代码块包裹：\n\n变更文件：\n" + String.join("\n", changedFiles)
                 + "\n\ndiff:\n" + truncateDiff(diff);
-            return new PrDescriptionResponse(callModelOnce(model, prompt));
+            ModelCallOutcome outcome = callModelOnce(model, prompt);
+            auditService.applyUsage(audit, outcome.usage());
+            return new PrDescriptionResponse(outcome.text());
         }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .exceptionally(ex -> rethrow(ex, "GIT_PR_DESCRIPTION_FAIL", agentCode, sessionId));
+            .exceptionally(ex -> rethrow(ex, "GIT_PR_DESCRIPTION_FAIL", agentCode, sessionId))
+            .whenComplete((result, error) -> auditService.finish(audit, error));
     }
 
     // ---------------------- private helpers ----------------------
@@ -140,8 +159,12 @@ public class GitAssistantService {
             + MAX_DIFF_CHARS_FOR_MODEL + " 个字符]";
     }
 
-    /** 一次性模型调用：单条 user 消息，不带工具，取全部返回内容块中的文本拼接结果。 */
-    private String callModelOnce(Model model, String prompt) {
+    /** 一次性模型调用的结果：拼接文本 + token 用量（流式响应中最后一个非空 usage，可能为空）。 */
+    private record ModelCallOutcome(String text, ChatUsage usage) {
+    }
+
+    /** 一次性模型调用：单条 user 消息，不带工具，取全部返回内容块中的文本拼接结果与 token 用量。 */
+    private ModelCallOutcome callModelOnce(Model model, String prompt) {
         Msg userMsg = Msg.builder()
             .role(MsgRole.USER)
             .name("user")
@@ -163,7 +186,13 @@ public class GitAssistantService {
         if (!StringUtils.hasText(text)) {
             throw new BizException(ResultCode.GIT_ASSISTANT_AI_FAILED, "模型返回内容为空");
         }
-        return text.trim();
+        // 流式分片中 usage 通常只在最后一个分片携带（或逐片累计），取最后一个非空即最终值
+        ChatUsage usage = responses.stream()
+            .map(ChatResponse::getUsage)
+            .filter(Objects::nonNull)
+            .reduce((first, second) -> second)
+            .orElse(null);
+        return new ModelCallOutcome(text.trim(), usage);
     }
 
     private void requireVibeCodingCapable(String agentCode) {

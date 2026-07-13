@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
+import com.richard.fyoung.customeradmin.workspace.audit.service.AiCodingAuditService;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
@@ -60,9 +61,10 @@ class VibeCodingServiceTest {
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         agentMapper = mock(AiAgentMapper.class);
         gitWorkspaceService = mock(GitWorkspaceService.class);
-        // 默认 local 模式（isDockerMode()=false），docker 产物同步逻辑在单测里天然跳过
+        // 默认 local 模式（isDockerMode()=false），docker 产物同步逻辑在单测里天然跳过；
+        // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
         service = new VibeCodingService(chatService, agentInstanceFactory, agentMapper, gitWorkspaceService,
-            new AdminSandboxProperties());
+            new AdminSandboxProperties(), mock(AiCodingAuditService.class));
 
         // resolveWorkspace 返回 agentRoot（向后兼容，listChangedArtifacts 旧逻辑已不使用此方法）
         when(agentInstanceFactory.resolveWorkspace("coder")).thenReturn(agentRoot);
@@ -104,7 +106,7 @@ class VibeCodingServiceTest {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
         // stream 会在用户消息头部注入路径指引，所以 chatService 收到的消息不是原始 "write 文件"
         // 而是含指引的 enrichedText，这里用 anyString() 匹配即可。
-        when(chatService.chatStream(anyString(), anyString(), anyString()))
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any()))
             .thenReturn(Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "好的")));
 
         List<ChatStreamChunk> emitted = service.stream("coder", "s1", "write 文件").collectList().block();
@@ -117,7 +119,7 @@ class VibeCodingServiceTest {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
         // 捕获实际传给 chatService 的消息内容
         java.util.concurrent.atomic.AtomicReference<String> capturedText = new java.util.concurrent.atomic.AtomicReference<>();
-        when(chatService.chatStream(anyString(), anyString(), anyString())).thenAnswer(inv -> {
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenAnswer(inv -> {
             capturedText.set(inv.getArgument(2));
             return Flux.empty();
         });
@@ -135,7 +137,7 @@ class VibeCodingServiceTest {
     @Test
     void listChangedArtifacts_shouldDetectNewAndModifiedFiles_butNotUntouchedFiles() throws IOException {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
-        when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(Flux.empty());
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(Flux.empty());
 
         // stream 开始前写两个文件（已存在于快照）
         Path sessionWs = agentRoot.resolve("sessions/s1");
@@ -159,7 +161,7 @@ class VibeCodingServiceTest {
     @Test
     void listChangedArtifacts_differentSessions_shouldBeIsolated() throws IOException {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
-        when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(Flux.empty());
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(Flux.empty());
 
         // 会话 s1 产出文件
         service.stream("coder", "s1", "任务A").blockLast();
@@ -377,7 +379,7 @@ class VibeCodingServiceTest {
                 Mono.fromRunnable(() -> writeQuietly(sessionWs, "output.txt", "hello"))
                     .thenReturn(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, "工具「write_file」返回：ok")),
                 Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "已完成")));
-            when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(simulated);
+            when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(simulated);
 
             List<ChatStreamChunk> emitted = service.stream("coder", "fc-1", "写个文件").collectList().block();
 
@@ -397,7 +399,7 @@ class VibeCodingServiceTest {
             // 没有任何 TOOL_RESULT 节点，文件是在流结束前"悄悄"写入的（异步落盘边界场景）
             Flux<ChatStreamChunk> simulated = Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "已完成"))
                 .doOnComplete(() -> writeQuietly(sessionWs, "late-file.txt", "late"));
-            when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(simulated);
+            when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(simulated);
 
             List<ChatStreamChunk> emitted = service.stream("coder", "fc-2", "写个文件").collectList().block();
 
@@ -409,7 +411,7 @@ class VibeCodingServiceTest {
         @Test
         void shouldNotEmitFileChangeEvent_whenNoFileWritten() {
             when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
-            when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(
+            when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(
                 Flux.just(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, "工具「read_file」返回：内容"),
                     new ChatStreamChunk(ChatNodeKind.ANSWER, "已完成")));
 
@@ -430,7 +432,7 @@ class VibeCodingServiceTest {
                 Mono.fromRunnable(() -> writeQuietly(sessionWs, ".git/hooks/pre-commit.sample", "#!/bin/sh"))
                     .thenReturn(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, "工具「write_file」返回：ok")),
                 Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "已完成")));
-            when(chatService.chatStream(anyString(), anyString(), anyString())).thenReturn(simulated);
+            when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(simulated);
 
             List<ChatStreamChunk> emitted = service.stream("coder", "fc-4", "写个文件").collectList().block();
 
