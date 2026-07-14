@@ -71,6 +71,13 @@ public class ChatController {
         return Result.success(chatHistoryService.getMessages(agentCode, sessionId));
     }
 
+    /** 安全中断该会话正在执行的流式对话，保留上下文以便后续续跑。 */
+    @SaCheckPermission("workspace")
+    @PostMapping("/sessions/{sessionId}/interrupt")
+    public Result<Boolean> interrupt(@PathVariable String agentCode, @PathVariable String sessionId) {
+        return Result.success(chatService.interrupt(agentCode, sessionId));
+    }
+
     /**
      * 对话附件解析：.md/.txt 读成纯文本返回，不持久化——前端把解析结果插进输入框，让用户发送前
      * 能看到/编辑，随普通消息文本一起发出去，供模型理解附件内容。

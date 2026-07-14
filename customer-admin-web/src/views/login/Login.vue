@@ -47,6 +47,9 @@ function switchMode(mode: 'local' | 'sso') {
 
 loadRememberedUsername(loginMode.value)
 
+// 登录页轮播背景图，RichardFyoung 提供，放在 public/ 根目录下
+const bgImages = ['/A1.jpg', '/A2.jpg', '/A3.jpg']
+
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) {
@@ -78,6 +81,14 @@ async function handleSubmit() {
 
 <template>
   <div class="login-page">
+    <div class="bg-carousel">
+      <el-carousel type="fade" height="100%" :interval="5000" arrow="never" indicator-position="none">
+        <el-carousel-item v-for="img in bgImages" :key="img">
+          <div class="bg-slide" :style="{ backgroundImage: `url(${img})` }" />
+        </el-carousel-item>
+      </el-carousel>
+      <div class="bg-overlay" />
+    </div>
     <el-card class="login-card">
       <template #header>
         <div class="login-title">智能体客服后台管理系统</div>
@@ -135,18 +146,68 @@ async function handleSubmit() {
 
 <style scoped>
 .login-page {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+}
+
+/* 背景轮播层：铺满整页，垫在登录卡片和页脚之下。深灰渐变作为兜底——背景图加载失败也不会白屏。
+   inset:0 只是撑出了"视觉上"的高度，CSS 百分比高度解析认的是父元素显式声明的 height 属性
+   （不认 inset 撑出来的隐式高度）——不显式补一个 height:100%，el-carousel 的 height="100%"
+   会算成 0，导致轮播完全不可见（只剩兜底渐变）。 */
+.bg-carousel {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+  z-index: 0;
   background: linear-gradient(135deg, #1f2937, #4b5563);
 }
 
+/* el-carousel 组件本身只把 height="100%" 这个 prop 透传给 .el-carousel__container，根节点
+   .el-carousel 自己不带任何高度样式——即便父级 .bg-carousel 有了显式高度，根节点 auto 高度
+   在只有一个百分比高度子节点的情况下仍会被解析为 0（子节点撑不起 auto 高度的父节点），
+   容器和 .el-carousel__item 的 100% 高度就跟着全部塌成 0。显式补上根节点高度打破这层循环。 */
+.bg-carousel :deep(.el-carousel) {
+  height: 100%;
+}
+
+.bg-slide {
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  animation: kenburns 8s ease-in-out infinite alternate;
+}
+
+@keyframes kenburns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.12);
+  }
+}
+
+/* 深色渐变遮罩：保证登录卡片和页脚文字在任意风景图上都有足够对比度可读 */
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.55) 0%, rgba(15, 23, 42, 0.35) 50%, rgba(15, 23, 42, 0.65) 100%);
+}
+
 .login-card {
+  position: relative;
+  z-index: 1;
   width: 360px;
   margin-bottom: auto;
   margin-top: auto;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
 }
 
 .login-title {
@@ -176,5 +237,11 @@ async function handleSubmit() {
   color: var(--el-color-primary);
   border-bottom-color: var(--el-color-primary);
   font-weight: 600;
+}
+
+/* FooterCopyright 是子组件，scoped 样式默认不穿透，显式提到背景遮罩之上 */
+.login-page :deep(.footer-copyright) {
+  position: relative;
+  z-index: 1;
 }
 </style>

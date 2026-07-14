@@ -124,6 +124,12 @@ public class VibeCodingService {
         return sandboxProperties.isDockerMode() ? "docker" : "local";
     }
 
+    /** 安全中断该会话正在执行的对话，薄委托——VibeCoding 与普通对话共用同一个 Agent 实例和会话状态，
+     * 中断本身跟文件快照/审计无关，不需要额外逻辑。 */
+    public boolean interrupt(String agentCode, String sessionId) {
+        return chatService.interrupt(agentCode, sessionId);
+    }
+
     /**
      * VibeCoding 中注入给 Agent 的文件操作路径指引模板。
      * 占位符 %s 依次为：沙箱模式标记（docker/local）、会话子目录相对路径 ×3、用户原始消息。

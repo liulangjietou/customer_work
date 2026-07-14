@@ -63,6 +63,13 @@ public class VibeCodingController {
         return Result.success(new SandboxModeResponse(vibeCodingService.sandboxMode()));
     }
 
+    /** 安全中断该会话正在执行的流式对话，保留上下文以便后续续跑。 */
+    @SaCheckPermission("workspace")
+    @PostMapping("/sessions/{sessionId}/interrupt")
+    public Result<Boolean> interrupt(@PathVariable String agentCode, @PathVariable String sessionId) {
+        return Result.success(vibeCodingService.interrupt(agentCode, sessionId));
+    }
+
     /** 变更文件清单：与本次 {@code stream} 调用用同一个 sessionId。 */
     @SaCheckPermission("workspace")
     @GetMapping("/artifacts")

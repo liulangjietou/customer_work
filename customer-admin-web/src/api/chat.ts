@@ -14,6 +14,11 @@ export function getChatSessionMessages(agentCode: string, sessionId: string) {
   return httpRequest<ChatMessageVO[]>({ url: `/workspace/${agentCode}/chat/sessions/${sessionId}/messages`, method: 'get' })
 }
 
+/** 安全中断该会话正在执行的流式对话（协作式中断，不保证立即生效）。 */
+export function interruptChat(agentCode: string, sessionId: string) {
+  return httpRequest<boolean>({ url: `/workspace/${agentCode}/chat/sessions/${sessionId}/interrupt`, method: 'post' })
+}
+
 /** 解析上传的 .md/.txt 附件为纯文本；不落库，由调用方插进输入框随消息一起发送。 */
 export function parseChatAttachment(agentCode: string, file: File) {
   const formData = new FormData()
