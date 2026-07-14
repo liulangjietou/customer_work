@@ -8,6 +8,7 @@ import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.Event;
+import io.agentscope.core.agent.EventSource;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.agent.StreamOptions;
@@ -53,6 +54,10 @@ public class ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
     private static final String FALLBACK_REPLY = "抱歉，我暂时无法处理这个请求，请稍后重试。";
+    /** 父 Agent 自身事件在 per-source 状态表里的 key（{@code EventSource == null}）。 */
+    private static final String MAIN_AGENT_SOURCE_KEY = "";
+    /** 子 Agent 的 {@code EventSource} 既无 path 也无 agentId 时的兜底 key，避免与父 Agent 的 "" 撞车。 */
+    private static final String SUBAGENT_FALLBACK_KEY = "subagent";
 
     private final AgentInstanceCache agentInstanceCache;
     private final AdminAgentInstanceFactory agentInstanceFactory;
@@ -131,18 +136,13 @@ public class ChatService {
             .includeActingChunk(true)
             .build();
 
-        // 本轮对话内"最近一次已提示过的工具名"，用来给 ToolUseBlock 增量片段去重（见 toChunks）；
-        // "是否已经通过 REASONING 增量流出过正文"，用来给 AGENT_RESULT 兜底去重（见 toChunks）。
-        // "上一个 reasoning 和 answer 增量片段"，用来对相邻重复的流式片段去重（某些场景下框架会
-        // 把同一句话连续发两次，导致前端显示重复内容）。
-        // "本轮 ReAct 迭代是否已经标过一次调用大模型"，TOOL_RESULT 后重置——每次工具返回后模型都要
-        // 被重新调用一次做下一轮推理/总结，借此让"调用大模型"节点真实反映实际调用次数。
-        // 都是每次 chatStream 调用各建一份，不跨请求共享。
-        AtomicReference<String> lastAnnouncedTool = new AtomicReference<>();
-        AtomicReference<String> lastReasoningText = new AtomicReference<>();
-        AtomicReference<String> lastAnswerText = new AtomicReference<>();
-        AtomicBoolean answerStreamed = new AtomicBoolean(false);
-        AtomicBoolean modelCallAnnounced = new AtomicBoolean(false);
+        // 增量去重状态（最近提示过的工具名 / 是否已通过 REASONING 流出正文 / 上一段 reasoning 与 answer
+        // 全量文本 / 本轮 ReAct 迭代是否已标过"调用大模型"）都收拢进 {@link StreamState}，并按事件来源
+        // （父 Agent 用 "" / 子 Agent 用其调用链 path）各存一份：harness spawn 出的子 Agent 事件会经
+        // SubagentEventBus 与父 Agent 事件交错推到同一个 sink，若父子共用一份去重状态，累积型 provider
+        // 的前缀判断会互相污染（父的全量文本被子的全量文本"顶掉"，反之亦然）。每次 chatStream 各建一份，
+        // 不跨请求共享。
+        Map<String, StreamState> stateBySource = new ConcurrentHashMap<>();
 
         // Flux.defer 包一层：像 HarnessAgent.stream(...) 在沙箱资源获取失败时（如 docker 容器创建
         // 超时）是同步抛异常，不是发出错误信号——不包 defer 的话，streamEvents(...) 这行方法调用本身
@@ -153,8 +153,7 @@ public class ChatService {
         Map<String, ChatUsage> usageByMessage = new ConcurrentHashMap<>();
         Flux<ChatStreamChunk> body = Flux.defer(() -> streamEvents(agent, List.of(toUserMsg(userText)), options, ctx))
             .doOnNext(event -> collectUsage(usageByMessage, event))
-            .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, lastAnnouncedTool,
-                lastReasoningText, lastAnswerText, answerStreamed, modelCallAnnounced)));
+            .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, stateBySource)));
 
         return Flux.concat(Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_START, "开始思考")), body)
             .concatWith(Flux.defer(() -> Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"))))
@@ -231,60 +230,156 @@ public class ChatService {
      * {@link ChatNodeKind#TOOL_SKILL}/{@link ChatNodeKind#TOOL_MCP}/{@link ChatNodeKind#TOOL_BUILTIN}。</p>
      */
     private List<ChatStreamChunk> toChunks(Event event, ToolSourceInfo toolSource,
-                                             AtomicReference<String> lastAnnouncedTool,
-                                             AtomicReference<String> lastReasoningText,
-                                             AtomicReference<String> lastAnswerText,
-                                             AtomicBoolean answerStreamed,
-                                             AtomicBoolean modelCallAnnounced) {
+                                             Map<String, StreamState> stateBySource) {
         Msg msg = event.getMessage();
         if (msg == null) {
             return List.of();
         }
+        EventSource source = event.getSource();
+        if (source == null) {
+            // 父 Agent 自身事件：行为与改造前逐字节等价（走 "" 这一份状态），前端拿到的 chunk 依旧
+            // source/subagentName 均为 null。
+            StreamState state = stateBySource.computeIfAbsent(MAIN_AGENT_SOURCE_KEY, k -> new StreamState());
+            return toMainChunks(event, msg, toolSource, state);
+        }
+        return toSubagentChunks(event, msg, source, stateBySource);
+    }
 
+    /**
+     * 父 Agent 事件 → 展示片段（原 {@code toChunks} 逻辑原样迁入，只是去重状态从方法局部变量收拢进
+     * per-source 的 {@link StreamState}）。REASONING 里 {@link ThinkingBlock} 是真正的思考过程，
+     * {@link TextBlock} 是正在增量生成的可见回答正文，两者可能同时出现在同一条消息里，都要各自送出。
+     * 本轮迭代第一次收到任何 REASONING 内容（思考/正文/工具调用）先补一条"调用大模型"节点。
+     */
+    private List<ChatStreamChunk> toMainChunks(Event event, Msg msg, ToolSourceInfo toolSource, StreamState state) {
         if (event.getType() == EventType.TOOL_RESULT) {
-            lastAnnouncedTool.set(null);
-            modelCallAnnounced.set(false);
+            state.lastAnnouncedTool.set(null);
+            state.modelCallAnnounced.set(false);
             return msg.getContentBlocks(ToolResultBlock.class).stream()
                 .map(block -> new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, describeToolResult(block)))
                 .collect(Collectors.toList());
         }
 
         if (event.getType() == EventType.AGENT_RESULT) {
-            if (answerStreamed.get()) {
+            if (state.answerStreamed.get()) {
                 return List.of();
             }
             String text = msg.getTextContent();
             return StringUtils.hasText(text) ? List.of(new ChatStreamChunk(ChatNodeKind.ANSWER, text)) : List.of();
         }
 
-        // REASONING：ThinkingBlock 是真正的思考过程，TextBlock 是正在增量生成的可见回答正文，
-        // 两者可能同时出现在同一条消息里，都要各自送出去，不能只留一个。本轮迭代第一次收到任何
-        // REASONING 内容（思考/正文/工具调用），先补一条"调用大模型"节点，标出这轮模型调用的起点。
         List<ChatStreamChunk> chunks = new ArrayList<>();
         for (ThinkingBlock block : msg.getContentBlocks(ThinkingBlock.class)) {
-            String delta = extractDelta(lastReasoningText, block.getThinking());
+            String delta = extractDelta(state.lastReasoningText, block.getThinking());
             if (StringUtils.hasText(delta)) {
-                addModelCallIfNew(chunks, modelCallAnnounced);
+                addModelCallIfNew(chunks, state, null, null);
                 chunks.add(new ChatStreamChunk(ChatNodeKind.THINKING, delta));
             }
         }
-        String answerDelta = extractDelta(lastAnswerText, msg.getTextContent());
+        String answerDelta = extractDelta(state.lastAnswerText, msg.getTextContent());
         if (StringUtils.hasText(answerDelta)) {
-            answerStreamed.set(true);
-            addModelCallIfNew(chunks, modelCallAnnounced);
+            state.answerStreamed.set(true);
+            addModelCallIfNew(chunks, state, null, null);
             chunks.add(new ChatStreamChunk(ChatNodeKind.ANSWER, answerDelta));
         }
         List<ChatStreamChunk> toolChunks = msg.getContentBlocks(ToolUseBlock.class).stream()
             .map(ToolUseBlock::getName)
             .filter(name -> StringUtils.hasText(name) && !name.startsWith("__"))
-            .filter(name -> !name.equals(lastAnnouncedTool.getAndSet(name)))
+            .filter(name -> !name.equals(state.lastAnnouncedTool.getAndSet(name)))
             .map(name -> new ChatStreamChunk(classifyToolSource(toolSource, name), "「" + name + "」"))
             .collect(Collectors.toList());
         if (!toolChunks.isEmpty()) {
-            addModelCallIfNew(chunks, modelCallAnnounced);
+            addModelCallIfNew(chunks, state, null, null);
             chunks.addAll(toolChunks);
         }
         return chunks;
+    }
+
+    /**
+     * 子 Agent 事件 → 展示片段。harness spawn 出的子 Agent 用 {@code StreamOptions.defaults()}
+     * （全量事件类型）经 {@code SubagentEventBus} 直推父 sink，绕过父流的 eventTypes 过滤，因此这里
+     * 可能收到父流本不会出现的类型，只认 REASONING/TOOL_RESULT/AGENT_RESULT，其余（HINT/SUMMARY 等）
+     * 直接忽略容错。片段统一带 {@code source}（调用链 path）与 {@code subagentName}（展示名），前端据此
+     * 归入独立卡片。
+     *
+     * <p>与父 Agent 的差异：① 该 source 首次出现时先补一条 {@link ChatNodeKind#SUBAGENT_START}；
+     * ② {@code AGENT_RESULT} 走 {@link ChatNodeKind#SUBAGENT_RESULT}（子 Agent 的最终文本），绝不
+     * 走父 Agent 的 ANSWER/answerStreamed 链路；③ 工具一律归 {@link ChatNodeKind#TOOL_BUILTIN}
+     * （子 Agent 的工具不在父的 {@link ToolSourceInfo} 里，不为此额外查询）；④ 不补"调用大模型"节点，
+     * 只复用需求约定的 THINKING/ANSWER/TOOL_BUILTIN/TOOL_RESULT。</p>
+     */
+    private List<ChatStreamChunk> toSubagentChunks(Event event, Msg msg, EventSource source,
+                                                     Map<String, StreamState> stateBySource) {
+        String sourceKey = resolveSourceKey(source);
+        String subagentName = resolveSubagentName(source);
+        boolean firstAppearance = !stateBySource.containsKey(sourceKey);
+        StreamState state = stateBySource.computeIfAbsent(sourceKey, k -> new StreamState());
+
+        List<ChatStreamChunk> chunks = new ArrayList<>();
+        // 该子 Agent 首次产出事件：补一条 SUBAGENT_START，标出子 Agent 执行轨迹的起点。
+        if (firstAppearance) {
+            log.info("[chat] subagent stream started: path={} name={}", sourceKey, subagentName);
+            chunks.add(new ChatStreamChunk(ChatNodeKind.SUBAGENT_START, subagentName, sourceKey, subagentName));
+        }
+
+        EventType type = event.getType();
+        if (type == EventType.TOOL_RESULT) {
+            state.lastAnnouncedTool.set(null);
+            for (ToolResultBlock block : msg.getContentBlocks(ToolResultBlock.class)) {
+                chunks.add(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, describeToolResult(block), sourceKey, subagentName));
+            }
+            return chunks;
+        }
+        if (type == EventType.AGENT_RESULT) {
+            String text = msg.getTextContent();
+            if (StringUtils.hasText(text)) {
+                chunks.add(new ChatStreamChunk(ChatNodeKind.SUBAGENT_RESULT, text, sourceKey, subagentName));
+                log.info("[chat] subagent stream finished: path={} name={}", sourceKey, subagentName);
+            }
+            return chunks;
+        }
+        if (type == EventType.REASONING) {
+            for (ThinkingBlock block : msg.getContentBlocks(ThinkingBlock.class)) {
+                String delta = extractDelta(state.lastReasoningText, block.getThinking());
+                if (StringUtils.hasText(delta)) {
+                    chunks.add(new ChatStreamChunk(ChatNodeKind.THINKING, delta, sourceKey, subagentName));
+                }
+            }
+            String answerDelta = extractDelta(state.lastAnswerText, msg.getTextContent());
+            if (StringUtils.hasText(answerDelta)) {
+                chunks.add(new ChatStreamChunk(ChatNodeKind.ANSWER, answerDelta, sourceKey, subagentName));
+            }
+            msg.getContentBlocks(ToolUseBlock.class).stream()
+                .map(ToolUseBlock::getName)
+                .filter(name -> StringUtils.hasText(name) && !name.startsWith("__"))
+                .filter(name -> !name.equals(state.lastAnnouncedTool.getAndSet(name)))
+                .forEach(name -> chunks.add(new ChatStreamChunk(ChatNodeKind.TOOL_BUILTIN, "「" + name + "」", sourceKey, subagentName)));
+            return chunks;
+        }
+        // 其它未知事件类型（HINT/SUMMARY/ALL 等）：直接忽略，只保留可能已补的 SUBAGENT_START。
+        return chunks;
+    }
+
+    /** 子 Agent 的状态表 key：优先用调用链 path，其次 agentId，都空时用兜底 key（不会与父 Agent 的 "" 撞车）。 */
+    private String resolveSourceKey(EventSource source) {
+        if (StringUtils.hasText(source.getPath())) {
+            return source.getPath();
+        }
+        if (StringUtils.hasText(source.getAgentId())) {
+            return source.getAgentId();
+        }
+        return SUBAGENT_FALLBACK_KEY;
+    }
+
+    /** 子 Agent 展示名：优先 {@code getAgentName()}，为空回退 {@code getAgentId()}，再空回退 path。 */
+    private String resolveSubagentName(EventSource source) {
+        if (StringUtils.hasText(source.getAgentName())) {
+            return source.getAgentName();
+        }
+        if (StringUtils.hasText(source.getAgentId())) {
+            return source.getAgentId();
+        }
+        return source.getPath();
     }
 
     /**
@@ -307,10 +402,13 @@ public class ChatService {
         return currentFull.substring(previous.length());
     }
 
-    /** 本轮迭代还没标过"调用大模型"就补一条，只在真正产出内容（思考/正文/工具调用）的那一刻才补，避免空跑一轮也占一个节点。 */
-    private void addModelCallIfNew(List<ChatStreamChunk> chunks, AtomicBoolean modelCallAnnounced) {
-        if (!modelCallAnnounced.getAndSet(true)) {
-            chunks.add(new ChatStreamChunk(ChatNodeKind.MODEL_CALL, "调用大模型"));
+    /**
+     * 本轮迭代还没标过"调用大模型"就补一条，只在真正产出内容（思考/正文/工具调用）的那一刻才补，
+     * 避免空跑一轮也占一个节点。仅父 Agent 主流程调用（{@code source}/{@code subagentName} 传 null）。
+     */
+    private void addModelCallIfNew(List<ChatStreamChunk> chunks, StreamState state, String source, String subagentName) {
+        if (!state.modelCallAnnounced.getAndSet(true)) {
+            chunks.add(new ChatStreamChunk(ChatNodeKind.MODEL_CALL, "调用大模型", source, subagentName));
         }
     }
 
@@ -355,5 +453,20 @@ public class ChatService {
             .name("user")
             .content(TextBlock.builder().text(userText).build())
             .build();
+    }
+
+    /**
+     * 单一事件来源（父 Agent 或某个子 Agent）在本轮对话内的增量去重状态。父子交错推流时各持一份，
+     * 互不污染（见 {@link #chatStream} 里 {@code stateBySource} 的说明）。字段语义同改造前的方法局部
+     * 变量：最近提示过的工具名 / 是否已通过 REASONING 流出正文 / 上一段 reasoning 与 answer 全量文本
+     * / 本轮迭代是否已标过"调用大模型"。沿用 {@code Atomic*} 类型是为了让 {@link #extractDelta}
+     * 等既有 helper 的 {@code getAndSet} 语义原样复用，主流程行为与改造前逐字节等价。
+     */
+    private static final class StreamState {
+        private final AtomicReference<String> lastAnnouncedTool = new AtomicReference<>();
+        private final AtomicReference<String> lastReasoningText = new AtomicReference<>();
+        private final AtomicReference<String> lastAnswerText = new AtomicReference<>();
+        private final AtomicBoolean answerStreamed = new AtomicBoolean(false);
+        private final AtomicBoolean modelCallAnnounced = new AtomicBoolean(false);
     }
 }
