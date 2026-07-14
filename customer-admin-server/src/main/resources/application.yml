@@ -91,6 +91,10 @@ admin:
     appname: ${ADMIN_XXL_JOB_APPNAME:customer-admin-executor}
     port: ${ADMIN_XXL_JOB_PORT:9998}
     access-token: ${ADMIN_XXL_JOB_ACCESS_TOKEN:}
+  sql-config:
+    # SQL 配置管理执行防护：目标多为生产库，超时与最大行数硬性兜底，防止慢 SQL/大结果集拖垮外部库。
+    query-timeout-seconds: ${ADMIN_SQL_QUERY_TIMEOUT_SECONDS:30}
+    max-rows: ${ADMIN_SQL_MAX_ROWS:2000}
   sandbox:
     # VibeCoding 代码沙箱：local（默认，无隔离，直接跑宿主机）｜docker（容器隔离，需本机/服务器已装 Docker）。
     mode: ${ADMIN_SANDBOX_MODE:local}

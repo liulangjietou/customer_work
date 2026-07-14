@@ -50,7 +50,11 @@ export const useTabsStore = defineStore('tabs', {
         return
       }
       const menuStore = useMenuStore()
+      // SQL 报表菜单节点的 path 存的是含 query 的完整链接（/sql/query?defineKey=xxx），
+      // 所以标题查找先按 fullPath 精确匹配；其它页面 node.path 不带 query，fullPath===path，
+      // 这一步天然是原来的行为，找不到再按 path 匹配作为兜底，最后才落到路由元信息/路由名。
       const title =
+        findTitleByPath(menuStore.tree, route.fullPath) ||
         findTitleByPath(menuStore.tree, route.path) ||
         (route.meta.title as string | undefined) ||
         (route.name ? String(route.name) : route.path)

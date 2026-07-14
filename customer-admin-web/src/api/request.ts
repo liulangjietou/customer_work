@@ -1,4 +1,4 @@
-import axios, { type AxiosRequestConfig } from 'axios'
+import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 import { useAuthStore } from '@/store/auth'
@@ -23,8 +23,14 @@ http.interceptors.request.use((config) => {
 
 // 拦截器把 AxiosResponse<Result<T>> 拆箱为 T 直接返回，与 axios 自身的类型声明（要求返回
 // AxiosResponse）不一致，是该封装模式的既有取舍，用 any 顶掉这一层类型摩擦。
-http.interceptors.response.use(((response: { data: Result<unknown> }) => {
-  const body = response.data
+http.interceptors.response.use(((response: { data: Result<unknown> | Blob; config: AxiosRequestConfig }) => {
+  // 二进制下载（responseType: 'blob'，如 SQL 查询导出 xlsx）响应体不是 Result 包装，
+  // 原样透传整个 response，交给下面的 download() 解析 Content-Disposition 后再落盘，
+  // 不复用下面的 Result 拆箱逻辑（body.code 在 Blob 上访问不到，会被误判成请求失败）。
+  if (response.config.responseType === 'blob') {
+    return response
+  }
+  const body = response.data as Result<unknown>
   if (body.code === 0) {
     return body.data
   }
@@ -54,6 +60,48 @@ http.interceptors.response.use(((response: { data: Result<unknown> }) => {
 /** 统一走 Result<T> 拦截解包，业务代码直接拿到 data。 */
 export function request<T>(config: AxiosRequestConfig): Promise<T> {
   return http.request(config) as unknown as Promise<T>
+}
+
+/** 从 Content-Disposition 头解析文件名，兼容 filename="x.xlsx" 与 RFC 5987 filename*=UTF-8''x.xlsx 两种形式。 */
+function parseFilename(disposition: string | undefined): string | null {
+  if (!disposition) {
+    return null
+  }
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (utf8Match) {
+    return decodeURIComponent(utf8Match[1])
+  }
+  const plainMatch = /filename="?([^";]+)"?/i.exec(disposition)
+  return plainMatch ? plainMatch[1] : null
+}
+
+/**
+ * 二进制文件下载（如 SQL 查询结果导出 xlsx）：以 responseType: 'blob' 请求，跳过上面拦截器的
+ * Result 拆箱，直接拿原始 AxiosResponse<Blob> 触发浏览器保存。文件名优先取响应头
+ * Content-Disposition，取不到则用调用方传入的兜底名。
+ *
+ * 若后端在导出场景下抛业务异常（如权限不足/参数缺失），仍会按 Result 包装返回
+ * content-type: application/json 的 JSON 体——此时 axios 依然把它当二进制读成 Blob，
+ * 必须显式识别 content-type 再转文本解析，否则会把错误信息当文件内容下载成一个打不开的 xlsx。
+ */
+export async function download(config: AxiosRequestConfig, fallbackFilename: string): Promise<void> {
+  const response = await http.request<Blob, AxiosResponse<Blob>>({ ...config, responseType: 'blob' })
+  const contentType = response.headers['content-type'] as string | undefined
+  if (contentType && contentType.includes('application/json')) {
+    const text = await response.data.text()
+    const body = JSON.parse(text) as Result<unknown>
+    ElMessage.error(body.message || '导出失败')
+    throw body
+  }
+  const filename = parseFilename(response.headers['content-disposition'] as string | undefined) || fallbackFilename
+  const url = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 
 export default http

@@ -44,6 +44,14 @@ const router = createRouter({
           component: () => import('@/views/workspace/WorkspaceView.vue'),
           props: true,
         },
+        {
+          // SQL 通用查询页：管理员在菜单管理里自建形如 /sql/query?defineKey=xxx 的报表菜单，
+          // 都指向这一个页面，靠 route.query.defineKey 区分渲染哪份参数表单+结果表格，不落库、不预注册子路由。
+          path: 'sql/query',
+          name: 'SqlQuery',
+          component: () => import('@/views/sql/SqlQueryView.vue'),
+          meta: { title: 'SQL查询' },
+        },
       ],
     },
     {
