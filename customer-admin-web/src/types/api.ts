@@ -303,6 +303,18 @@ export interface AgentVO {
   icon: string | null
   status: number
   createTime: string
+  /** 子Agent协作可用的子智能体ID列表，仅当 capabilities 包含 subagent 时生效 */
+  subAgentIds?: number[] | null
+  /** 最大迭代次数，为空使用系统默认值 */
+  maxIters?: number | null
+  /** 工具调用超时时间（秒），为空使用系统默认值 */
+  toolTimeoutSeconds?: number | null
+  /** 工具最大尝试次数，为空使用系统默认值 */
+  toolMaxAttempts?: number | null
+  /** 压缩触发消息数，为空表示不压缩 */
+  compressTriggerMsgs?: number | null
+  /** 压缩保留消息数，为空使用系统默认值 */
+  compressKeepMsgs?: number | null
 }
 
 export interface AgentSaveRequest {
@@ -315,6 +327,12 @@ export interface AgentSaveRequest {
   capabilities?: string[] | null
   icon?: string | null
   status?: number | null
+  subAgentIds?: number[] | null
+  maxIters?: number | null
+  toolTimeoutSeconds?: number | null
+  toolMaxAttempts?: number | null
+  compressTriggerMsgs?: number | null
+  compressKeepMsgs?: number | null
 }
 
 // ---------- aiconfig.scheduled-task ----------

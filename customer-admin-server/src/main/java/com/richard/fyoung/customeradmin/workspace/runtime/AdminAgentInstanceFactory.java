@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSkill;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSubAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
@@ -22,6 +24,7 @@ import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.model.ExecutionConfig;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
@@ -36,14 +39,18 @@ import io.agentscope.harness.agent.HarnessAgent;
 import io.agentscope.harness.agent.IsolationScope;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
+import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
+import io.agentscope.harness.agent.skill.curator.SkillCuratorConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -59,9 +66,11 @@ import java.util.stream.Collectors;
  * OpenAI 兼容 {@link Model} → ③ 查 {@code ai_agent_mcp} 关联行，逐个 {@link McpClientBuilder} 注册进
  * {@link Toolkit}（参考 {@code McpToolkitConfigurer} 的写法，改为读数据库行）→ ④ 查
  * {@code ai_agent_skill} 关联行，把 {@code content}（SKILL.md 正文）落盘后复用现成的
- * {@link FileSystemSkillRepository} 加载（不自造 Skill 解析逻辑）→ ⑤ {@link ReActAgent.Builder} 组装；
- * 若 {@code capabilities} 含 {@code vibecoding}，用 {@link HarnessAgent.Builder#fromAgent} 在内层
- * ReActAgent 上叠加本地沙箱（workspace 限定到 {@code ./data/admin-workspace/{agentCode}}）。</p>
+ * {@link FileSystemSkillRepository} 加载（不自造 Skill 解析逻辑）→ ⑤ {@link ReActAgent.Builder} 组装
+ * （tasklist/metatool/maxIters/工具超时重试等内层能力与参数一并接线）→ ⑥ 若命中 {@link #requiresHarness}
+ * （capabilities 含 vibecoding/plan/subagent/skill-learning 任一，或配置了上下文压缩），用
+ * {@link HarnessAgent.Builder#fromAgent} 在内层 ReActAgent 上按能力叠加沙箱/计划模式/技能自进化/
+ * 上下文压缩/子智能体编排（workspace 限定到 {@code ./data/admin-workspace/{agentCode}}）。</p>
  *
  * <p>本类只负责"从零构建一次"，不做缓存——缓存由 {@link AgentInstanceCache} 负责。</p>
  * @author owlzhangfq@gmail.com
@@ -72,9 +81,17 @@ public class AdminAgentInstanceFactory {
     private static final Logger log = LoggerFactory.getLogger(AdminAgentInstanceFactory.class);
 
     private static final String CAPABILITY_VIBECODING = "vibecoding";
+    private static final String CAPABILITY_PLAN = "plan";
+    private static final String CAPABILITY_SUBAGENT = "subagent";
+    private static final String CAPABILITY_TASKLIST = "tasklist";
+    private static final String CAPABILITY_SKILL_LEARNING = "skill-learning";
     private static final String CAPABILITY_DELIMITER = ",";
     private static final int STATUS_ENABLED = 1;
     private static final int DEFAULT_MAX_ITERS = 10;
+    /** compress_trigger_msgs 已填但 compress_keep_msgs 未填时的保留消息数默认值。 */
+    private static final int DEFAULT_COMPRESS_KEEP_MSGS = 10;
+    /** Plan Mode 计划文件目录名（workspace 下的子目录）。 */
+    private static final String PLAN_DIR_NAME = "plans";
     private static final long BYTES_PER_MB = 1024L * 1024L;
     private static final String WORKSPACE_ROOT = "./data/admin-workspace";
     private static final String SKILL_ROOT = "./data/admin-skills";
@@ -83,6 +100,7 @@ public class AdminAgentInstanceFactory {
     private final AiAgentMapper agentMapper;
     private final AiAgentMcpMapper agentMcpMapper;
     private final AiAgentSkillMapper agentSkillMapper;
+    private final AiAgentSubAgentMapper agentSubAgentMapper;
     private final AiModelConfigMapper modelConfigMapper;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
@@ -101,7 +119,8 @@ public class AdminAgentInstanceFactory {
     private final ConcurrentHashMap<String, ToolSourceInfo> toolSourceCache = new ConcurrentHashMap<>();
 
     public AdminAgentInstanceFactory(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
-                                      AiAgentSkillMapper agentSkillMapper, AiModelConfigMapper modelConfigMapper,
+                                      AiAgentSkillMapper agentSkillMapper, AiAgentSubAgentMapper agentSubAgentMapper,
+                                      AiModelConfigMapper modelConfigMapper,
                                       AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
                                       AdminModelFactory modelFactory, AesGcmCryptoUtil cryptoUtil,
                                       AgentStateStore stateStore, PermissionContextState permissionContext,
@@ -110,6 +129,7 @@ public class AdminAgentInstanceFactory {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
+        this.agentSubAgentMapper = agentSubAgentMapper;
         this.modelConfigMapper = modelConfigMapper;
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
@@ -149,8 +169,39 @@ public class AdminAgentInstanceFactory {
     public Agent build(String agentCode) {
         AiAgent agent = requireEnabledAgent(agentCode);
         List<String> capabilities = parseCapabilities(agent.getCapabilities());
-
         Model model = buildModel(agent.getModelId());
+        ReActAgent inner = buildInnerReActAgent(agent, capabilities, model);
+
+        if (!requiresHarness(capabilities, agent.getCompressTriggerMsgs())) {
+            log.info("[workspace] agent built: agentCode={} capabilities={}", agentCode, capabilities);
+            return inner;
+        }
+        // visited 记录子智能体构建链上的父链 agentCode，用于断开循环引用（A→B→A），根节点先入链
+        Set<String> visited = new HashSet<>();
+        visited.add(agentCode);
+        return buildHarnessAgent(agent, capabilities, inner, model, visited);
+    }
+
+    /**
+     * 是否需要用 {@link HarnessAgent.Builder#fromAgent} 把内层 ReActAgent 升级为 HarnessAgent：
+     * capabilities 含 vibecoding/plan/subagent/skill-learning 任一，或配置了上下文压缩触发阈值。
+     * tasklist 是 {@link ReActAgent.Builder#enableTaskList(boolean)} 的内层能力，单独勾选不触发升级。
+     * 抽成纯函数便于单测（不依赖任何注入的协作对象）。
+     */
+    static boolean requiresHarness(List<String> capabilities, Integer compressTriggerMsgs) {
+        return capabilities.contains(CAPABILITY_VIBECODING)
+            || capabilities.contains(CAPABILITY_PLAN)
+            || capabilities.contains(CAPABILITY_SUBAGENT)
+            || capabilities.contains(CAPABILITY_SKILL_LEARNING)
+            || compressTriggerMsgs != null;
+    }
+
+    /**
+     * 组装内层 ReActAgent（模型/工具/技能/高级参数）。子智能体也走这条路径——子智能体只构建为内层
+     * ReActAgent，不递归叠加它自己的 Harness 能力，避免嵌套复杂度。
+     */
+    private ReActAgent buildInnerReActAgent(AiAgent agent, List<String> capabilities, Model model) {
+        String agentCode = agent.getAgentCode();
         Set<String> mcpToolNames = new HashSet<>();
         Toolkit toolkit = buildToolkit(agent.getId(), mcpToolNames);
 
@@ -162,11 +213,20 @@ public class AdminAgentInstanceFactory {
             .stateStore(stateStore)
             .defaultSessionId(agentCode)
             .permissionContext(permissionContext)
-            .maxIters(DEFAULT_MAX_ITERS);
+            .maxIters(agent.getMaxIters() != null ? agent.getMaxIters() : DEFAULT_MAX_ITERS);
         if (capabilities.contains(CAPABILITY_VIBECODING)) {
             // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载。
             builder.middleware(sandboxGuardMiddleware);
         }
+        if (capabilities.contains(CAPABILITY_TASKLIST)) {
+            // 任务列表：内层 ReActAgent 自带能力，不依赖 Harness
+            builder.enableTaskList(true);
+        }
+        if (capabilities.contains(CAPABILITY_SKILL_LEARNING)) {
+            // 互动学习新技能（内层半边）：MetaTool 允许 Agent 自主编排技能；Harness 半边见 buildHarnessAgent
+            builder.enableMetaTool(true);
+        }
+        applyToolExecutionConfig(builder, agent);
 
         Set<String> skillToolNames = new HashSet<>();
         SkillBox skillBox = buildSkillBox(agent, toolkit, skillToolNames);
@@ -174,34 +234,138 @@ public class AdminAgentInstanceFactory {
             builder.skillBox(skillBox);
         }
         toolSourceCache.put(agentCode, new ToolSourceInfo(skillToolNames, mcpToolNames));
+        return builder.build();
+    }
 
-        ReActAgent inner = builder.build();
-        if (!capabilities.contains(CAPABILITY_VIBECODING)) {
-            log.info("[workspace] agent built: agentCode={} capabilities={}", agentCode, capabilities);
-            return inner;
+    /**
+     * 工具执行超时/重试：至少一个参数非空时才设置 {@link ExecutionConfig}；未填的项保持 null，
+     * 由框架的配置合并（ExecutionConfig#mergeConfigs）回落到默认值（超时5分钟/尝试1次）。
+     */
+    private void applyToolExecutionConfig(ReActAgent.Builder builder, AiAgent agent) {
+        if (agent.getToolTimeoutSeconds() == null && agent.getToolMaxAttempts() == null) {
+            return;
         }
+        ExecutionConfig.Builder execBuilder = ExecutionConfig.builder();
+        if (agent.getToolTimeoutSeconds() != null) {
+            execBuilder.timeout(Duration.ofSeconds(agent.getToolTimeoutSeconds()));
+        }
+        if (agent.getToolMaxAttempts() != null) {
+            execBuilder.maxAttempts(agent.getToolMaxAttempts());
+        }
+        builder.toolExecutionConfig(execBuilder.build());
+    }
+
+    /**
+     * 在内层 ReActAgent 上叠加 Harness 能力：vibecoding 沙箱 / plan 计划模式 / skill-learning 技能自进化 /
+     * 上下文压缩 / 子智能体编排。非 vibecoding 时不挂 filesystem 沙箱（SandboxSafeAgentStateStore 也只是
+     * docker filesystem 的 sessionId 转义问题，同样不需要），workspace 仍复用 {@link #resolveWorkspace}。
+     */
+    private HarnessAgent buildHarnessAgent(AiAgent agent, List<String> capabilities, ReActAgent inner,
+                                           Model model, Set<String> visited) {
+        String agentCode = agent.getAgentCode();
+        boolean vibecoding = capabilities.contains(CAPABILITY_VIBECODING);
 
         // Docker 模式下 HarnessAgent 内部的 SessionSandboxStateStore 会给沙箱状态槽位拼出带 "/"
         // 的 sessionId（IsolationScope 四种取值全部如此，框架侧硬编码），而 MysqlAgentStateStore
         // 拒绝接受含路径分隔符的 sessionId，两者组合必然抛异常——用 SandboxSafeAgentStateStore
-        // 包一层转义规避，local 模式不受影响（见该类 Javadoc）。
-        AgentStateStore harnessStateStore = sandboxProperties.isDockerMode()
+        // 包一层转义规避，local 模式与未挂 filesystem 沙箱的升级路径不受影响（见该类 Javadoc）。
+        AgentStateStore harnessStateStore = vibecoding && sandboxProperties.isDockerMode()
             ? new SandboxSafeAgentStateStore(stateStore) : stateStore;
+        Path workspace = resolveWorkspace(agentCode);
         HarnessAgent.Builder harnessBuilder = HarnessAgent.Builder.fromAgent(inner)
             .stateStore(harnessStateStore)
             .defaultSessionId(agentCode)
             .permissionContext(permissionContext)
+            // 框架 #1644 缓解：HarnessAgent 未显式设置 generateOptions 时 streamEvents() 会 NPE，
+            // 这里保证非空即可，实际推理参数仍由内层 ReActAgent 的模型配置决定
             .generateOptions(GenerateOptions.builder().build())
-            .workspace(resolveWorkspace(agentCode));
-        if (sandboxProperties.isDockerMode()) {
-            harnessBuilder.filesystem(buildDockerFilesystemSpec());
-        } else {
-            harnessBuilder.filesystem(buildLocalFilesystemSpec());
+            .workspace(workspace);
+
+        if (vibecoding) {
+            if (sandboxProperties.isDockerMode()) {
+                harnessBuilder.filesystem(buildDockerFilesystemSpec());
+            } else {
+                harnessBuilder.filesystem(buildLocalFilesystemSpec());
+            }
         }
+        if (capabilities.contains(CAPABILITY_PLAN)) {
+            // 计划模式：只读规划期禁 shell，计划文件持久化到 workspace/plans
+            harnessBuilder.enablePlanMode()
+                .allowShellInPlanMode(false)
+                .planFileDirectory(workspace.resolve(PLAN_DIR_NAME).toString());
+        }
+        if (capabilities.contains(CAPABILITY_SKILL_LEARNING)) {
+            // 互动学习新技能（Harness 半边）：技能管理工具 + SkillCurator 自动沉淀成功模式
+            harnessBuilder.enableSkillManageTool(true)
+                .enableSkillCurator(SkillCuratorConfig.defaults());
+        }
+        if (agent.getCompressTriggerMsgs() != null) {
+            int keepMsgs = agent.getCompressKeepMsgs() != null
+                ? agent.getCompressKeepMsgs() : DEFAULT_COMPRESS_KEEP_MSGS;
+            harnessBuilder.compaction(CompactionConfig.builder()
+                .triggerMessages(agent.getCompressTriggerMsgs())
+                .keepMessages(keepMsgs)
+                .model(model)
+                .build());
+        }
+        if (capabilities.contains(CAPABILITY_SUBAGENT)) {
+            registerSubagents(harnessBuilder, agent, visited);
+        }
+
         HarnessAgent harnessAgent = harnessBuilder.build();
-        log.info("[workspace] harness agent built (vibecoding): agentCode={} sandboxMode={}",
-            agentCode, sandboxProperties.getMode());
+        log.info("[workspace] harness agent built: agentCode={} capabilities={} sandboxMode={}",
+            agentCode, capabilities, vibecoding ? sandboxProperties.getMode() : "none");
         return harnessAgent;
+    }
+
+    /**
+     * 读 {@code ai_agent_sub_agent} 关联行，把子智能体注册进 HarnessAgent。子智能体的实际构建放在
+     * subagentFactory 的 lambda 里惰性执行——spawn 时才查库组装，天然拿到子智能体最新配置。
+     * 注册期跳过已停用/已删除/循环引用的子智能体并记 error 日志（参照 MCP 注册失败的容错风格，
+     * 不阻断父智能体装配）；lambda 捕获包含父链的 visited 集合。
+     */
+    private void registerSubagents(HarnessAgent.Builder harnessBuilder, AiAgent agent, Set<String> visited) {
+        List<Long> subAgentIds = agentSubAgentMapper.selectList(
+                new LambdaQueryWrapper<AiAgentSubAgent>().eq(AiAgentSubAgent::getAgentId, agent.getId()))
+            .stream().map(AiAgentSubAgent::getSubAgentId).collect(Collectors.toList());
+        if (CollectionUtils.isEmpty(subAgentIds)) {
+            return;
+        }
+        for (Long subAgentId : subAgentIds) {
+            AiAgent sub = agentMapper.selectById(subAgentId);
+            if (sub == null || sub.getStatus() == null || sub.getStatus() != STATUS_ENABLED) {
+                // 子智能体已删除/已停用：跳过注册，不阻断父智能体装配
+                log.error("[workspace] subagent unavailable (skip registration), code={}, parentAgentCode={}, subAgentId={}",
+                    "SUBAGENT_UNAVAILABLE", agent.getAgentCode(), subAgentId);
+                continue;
+            }
+            String subCode = sub.getAgentCode();
+            if (visited.contains(subCode)) {
+                // 循环引用（如 A→B→A 或自引用）：跳过并记日志，不抛异常
+                log.error("[workspace] subagent circular reference detected (skip registration), code={}, parentAgentCode={}, subAgentCode={}",
+                    "SUBAGENT_CIRCULAR_REF", agent.getAgentCode(), subCode);
+                continue;
+            }
+            // lambda 捕获包含父链 + 当前子节点的 visited 快照；子智能体只构建内层 ReActAgent（无递归），
+            // 该链主要用于防御未来引入递归构建时的死循环
+            Set<String> chain = new HashSet<>(visited);
+            chain.add(subCode);
+            harnessBuilder.subagentFactory(subCode, id -> buildSubagentInner(subCode, chain));
+            log.info("[workspace] subagent registered: parentAgentCode={} subAgentCode={}",
+                agent.getAgentCode(), subCode);
+        }
+    }
+
+    /**
+     * 惰性构建子智能体（spawn 时执行）：只构建内层 ReActAgent，不叠加子智能体自己的 Harness 能力。
+     * spawn 时子智能体已被停用/删除会抛 {@link BizException}，由框架按 spawn 失败向上反馈（fast-fail）。
+     */
+    private Agent buildSubagentInner(String subAgentCode, Set<String> visitedChain) {
+        AiAgent sub = requireEnabledAgent(subAgentCode);
+        List<String> capabilities = parseCapabilities(sub.getCapabilities());
+        Model model = buildModel(sub.getModelId());
+        log.info("[workspace] building subagent (lazy spawn): subAgentCode={} chain={}", subAgentCode, visitedChain);
+        return buildInnerReActAgent(sub, capabilities, model);
     }
 
     /** {@code admin.sandbox.mode=local}（默认）：无隔离，Agent 的 shell/文件工具直接跑在宿主机进程内。 */

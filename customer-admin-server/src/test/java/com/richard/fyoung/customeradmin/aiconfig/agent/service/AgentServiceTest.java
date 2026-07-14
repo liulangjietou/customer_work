@@ -6,9 +6,11 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentVO;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSkill;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSubAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
@@ -43,6 +45,7 @@ class AgentServiceTest {
     private AiAgentMapper agentMapper;
     private AiAgentMcpMapper agentMcpMapper;
     private AiAgentSkillMapper agentSkillMapper;
+    private AiAgentSubAgentMapper agentSubAgentMapper;
     private AiModelConfigMapper modelConfigMapper;
     private AiMcpMapper mcpMapper;
     private AiSkillMapper skillMapper;
@@ -54,6 +57,7 @@ class AgentServiceTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgent.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentMcp.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentSkill.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentSubAgent.class);
     }
 
     @BeforeEach
@@ -61,26 +65,43 @@ class AgentServiceTest {
         agentMapper = mock(AiAgentMapper.class);
         agentMcpMapper = mock(AiAgentMcpMapper.class);
         agentSkillMapper = mock(AiAgentSkillMapper.class);
+        agentSubAgentMapper = mock(AiAgentSubAgentMapper.class);
         modelConfigMapper = mock(AiModelConfigMapper.class);
         mcpMapper = mock(AiMcpMapper.class);
         skillMapper = mock(AiSkillMapper.class);
         menuVersionHolder = new MenuVersionHolder();
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
-        service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, modelConfigMapper,
-            mcpMapper, skillMapper, menuVersionHolder, agentInstanceCache);
+        service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, agentSubAgentMapper,
+            modelConfigMapper, mcpMapper, skillMapper, menuVersionHolder, agentInstanceCache);
 
         when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
     }
 
     private AgentSaveRequest validRequest() {
         return new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(10L), List.of(20L),
-            "你是客服助手", List.of("chat", "vibecoding"), "robot", 1);
+            "你是客服助手", List.of("chat", "vibecoding"), "robot", 1,
+            null, null, null, null, null, null);
+    }
+
+    /** 只带 5 个高级参数的请求（能力固定 chat），供取值范围校验用例复用。 */
+    private AgentSaveRequest requestWithParams(Integer maxIters, Integer toolTimeoutSeconds, Integer toolMaxAttempts,
+                                               Integer compressTriggerMsgs, Integer compressKeepMsgs) {
+        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null,
+            null, List.of("chat"), null, 1,
+            null, maxIters, toolTimeoutSeconds, toolMaxAttempts, compressTriggerMsgs, compressKeepMsgs);
+    }
+
+    /** 只带 capabilities + subAgentIds 的请求，供子智能体校验用例复用。 */
+    private AgentSaveRequest requestWithSubAgents(List<String> capabilities, List<Long> subAgentIds) {
+        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null,
+            null, capabilities, null, 1,
+            subAgentIds, null, null, null, null, null);
     }
 
     @Test
     void create_shouldRejectInvalidAgentCode() {
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "Customer_Helper", 1L, null, null,
-            null, null, null, 1);
+            null, null, null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -89,7 +110,7 @@ class AgentServiceTest {
     void create_shouldRejectUnknownModelId() {
         when(modelConfigMapper.selectById(999L)).thenReturn(null);
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 999L, null, null,
-            null, null, null, 1);
+            null, null, null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -98,7 +119,7 @@ class AgentServiceTest {
     void create_shouldRejectInvalidMcpIds() {
         when(mcpMapper.selectBatchIds(List.of(10L))).thenReturn(List.of()); // 只有 0 条命中，说明 10L 不存在
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(10L), null,
-            null, null, null, 1);
+            null, null, null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -106,7 +127,7 @@ class AgentServiceTest {
     @Test
     void create_shouldRejectInvalidCapability() {
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null,
-            null, List.of("not-a-real-capability"), null, 1);
+            null, List.of("not-a-real-capability"), null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -198,5 +219,154 @@ class AgentServiceTest {
         when(agentMapper.selectById(999L)).thenReturn(null);
 
         assertThrows(BizException.class, () -> service.get(999L));
+    }
+
+    // ---- 新能力编码白名单 ----
+
+    @Test
+    void create_shouldAcceptNewCapabilityCodes() {
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null,
+            null, List.of("chat", "subagent", "plan", "tasklist", "skill-learning"), null, 1,
+            null, null, null, null, null, null);
+
+        service.create(request);
+
+        verify(agentMapper).insert(any(AiAgent.class));
+    }
+
+    // ---- 高级参数取值范围校验 ----
+
+    @Test
+    void create_shouldRejectMaxItersOutOfRange() {
+        assertThrows(BizException.class, () -> service.create(requestWithParams(0, null, null, null, null)));
+        assertThrows(BizException.class, () -> service.create(requestWithParams(101, null, null, null, null)));
+    }
+
+    @Test
+    void create_shouldRejectToolTimeoutSecondsOutOfRange() {
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, 0, null, null, null)));
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, 3601, null, null, null)));
+    }
+
+    @Test
+    void create_shouldRejectToolMaxAttemptsOutOfRange() {
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, null, 0, null, null)));
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, null, 11, null, null)));
+    }
+
+    @Test
+    void create_shouldRejectCompressTriggerMsgsOutOfRange() {
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, null, null, 1, null)));
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, null, null, 1001, null)));
+    }
+
+    @Test
+    void create_shouldRejectCompressKeepMsgsOutOfRange() {
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, null, null, null, -1)));
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, null, null, null, 501)));
+    }
+
+    @Test
+    void create_shouldRejectKeepMsgsNotLessThanTriggerMsgs() {
+        // 两者都填时必须 keep < trigger
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, null, null, 20, 20)));
+        assertThrows(BizException.class, () -> service.create(requestWithParams(null, null, null, 20, 30)));
+    }
+
+    @Test
+    void create_shouldAcceptValidAdvancedParams_andPersistThem() {
+        service.create(requestWithParams(50, 600, 3, 100, 10));
+
+        ArgumentCaptor<AiAgent> captor = ArgumentCaptor.forClass(AiAgent.class);
+        verify(agentMapper).insert(captor.capture());
+        AiAgent saved = captor.getValue();
+        assertEquals(50, saved.getMaxIters());
+        assertEquals(600, saved.getToolTimeoutSeconds());
+        assertEquals(3, saved.getToolMaxAttempts());
+        assertEquals(100, saved.getCompressTriggerMsgs());
+        assertEquals(10, saved.getCompressKeepMsgs());
+    }
+
+    // ---- 子智能体校验与关联维护 ----
+
+    @Test
+    void create_shouldRejectSubAgentIdsWithoutSubagentCapability() {
+        when(agentMapper.selectBatchIds(List.of(30L))).thenReturn(List.of(new AiAgent()));
+
+        assertThrows(BizException.class,
+            () -> service.create(requestWithSubAgents(List.of("chat"), List.of(30L))));
+    }
+
+    @Test
+    void create_shouldRejectInvalidSubAgentIds() {
+        when(agentMapper.selectBatchIds(List.of(30L))).thenReturn(List.of()); // 0 条命中，说明 30L 不存在
+
+        assertThrows(BizException.class,
+            () -> service.create(requestWithSubAgents(List.of("chat", "subagent"), List.of(30L))));
+    }
+
+    @Test
+    void update_shouldRejectSelfReferencedSubAgentIds() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+        when(agentMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(existing));
+
+        assertThrows(BizException.class,
+            () -> service.update(1L, requestWithSubAgents(List.of("chat", "subagent"), List.of(1L))));
+    }
+
+    @Test
+    void update_shouldReplaceSubAgentRelations_deleteThenInsert() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+        when(agentMapper.selectBatchIds(List.of(30L))).thenReturn(List.of(new AiAgent()));
+
+        service.update(1L, requestWithSubAgents(List.of("chat", "subagent"), List.of(30L)));
+
+        verify(agentSubAgentMapper).delete(any());
+        ArgumentCaptor<AiAgentSubAgent> captor = ArgumentCaptor.forClass(AiAgentSubAgent.class);
+        verify(agentSubAgentMapper).insert(captor.capture());
+        assertEquals(1L, captor.getValue().getAgentId());
+        assertEquals(30L, captor.getValue().getSubAgentId());
+    }
+
+    @Test
+    void delete_shouldRemoveSubAgentRelations() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+
+        service.delete(1L);
+
+        verify(agentSubAgentMapper).delete(any());
+    }
+
+    @Test
+    void get_shouldReturnSubAgentIdsAndAdvancedParams_roundtrip() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        existing.setModelId(1L);
+        existing.setCapabilities("chat,subagent");
+        existing.setMaxIters(50);
+        existing.setToolTimeoutSeconds(600);
+        existing.setToolMaxAttempts(3);
+        existing.setCompressTriggerMsgs(100);
+        existing.setCompressKeepMsgs(10);
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+        AiAgentSubAgent relation = new AiAgentSubAgent();
+        relation.setSubAgentId(30L);
+        when(agentSubAgentMapper.selectList(any())).thenReturn(List.of(relation));
+
+        AgentVO vo = service.get(1L);
+
+        assertEquals(List.of(30L), vo.getSubAgentIds());
+        assertEquals(50, vo.getMaxIters());
+        assertEquals(600, vo.getToolTimeoutSeconds());
+        assertEquals(3, vo.getToolMaxAttempts());
+        assertEquals(100, vo.getCompressTriggerMsgs());
+        assertEquals(10, vo.getCompressKeepMsgs());
+        assertEquals(List.of("chat", "subagent"), vo.getCapabilities());
     }
 }
