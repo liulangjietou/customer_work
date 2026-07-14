@@ -15,7 +15,7 @@
 -- 手工同步注意：走 stdin 管道 apply 时客户端字符集可能回退 latin1 导致中文 COMMENT 字节级写坏，
 -- 故本文件首行显式 SET NAMES utf8mb4（Flyway JDBC 连接不受影响，此行对其无害）。
 --
--- 菜单/权限种子：菜单 id=120（V13 用到 100、V14 用到 110-112，跳到 120 留安全间隔），parent_id=2
+-- 菜单/权限种子：菜单 id=124（V13 用到 100、V14 用到 110-112，跳到 124 留安全间隔），parent_id=2
 -- 挂在"AI 配置"目录下，sort=6。按钮/接口权限点只有 view/edit（无 add/delete）。
 -- 超级管理员（super_admin）无需 sys_role_permission 记录——AdminStpInterfaceImpl 对超管直接放行
 -- 全部权限点（沿用 V12/V13/V14 同款做法，普通角色需在角色管理页手工授权）。
@@ -52,9 +52,9 @@ VALUES (1, 'httpclient', 'HTTP请求工具', 'http请求工具', 1, 'http请求�
 
 -- 菜单：系统工具（挂 AI 配置 id=2 下，sort=6）。
 INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `icon_type`, `sort`) VALUES
-    (120, 2, '系统工具', 'system-tool', 1, '/aiconfig/system-tool', 'SetUp', 'library', 6);
+    (124, 2, '系统工具', 'system-tool', 1, '/aiconfig/system-tool', 'SetUp', 'library', 6);
 
 -- 按钮/接口权限点（type=2）：只有 view/edit（系统工具不支持新增/删除）。
 INSERT INTO `sys_permission` (`parent_id`, `perm_name`, `perm_code`, `type`, `sort`) VALUES
-    (120, '查看系统工具', 'system-tool:view', 2, 1),
-    (120, '编辑系统工具', 'system-tool:edit', 2, 2);
+    (124, '查看系统工具', 'system-tool:view', 2, 1),
+    (124, '编辑系统工具', 'system-tool:edit', 2, 2);
