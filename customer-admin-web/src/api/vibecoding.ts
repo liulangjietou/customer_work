@@ -16,6 +16,14 @@ export function streamVibeCoding(agentCode: string, req: ChatRequest, handlers: 
   return streamSse(`/workspace/${agentCode}/vibecoding/stream`, req, handlers)
 }
 
+/** 安全中断该会话正在执行的流式对话（协作式中断，不保证立即生效）。 */
+export function interruptVibeCoding(agentCode: string, sessionId: string) {
+  return request<boolean>({
+    url: `/workspace/${agentCode}/vibecoding/sessions/${sessionId}/interrupt`,
+    method: 'post',
+  })
+}
+
 /** 当前 VibeCoding 沙箱模式（local/docker），全局配置，不随会话变化。 */
 export function getSandboxMode(agentCode: string) {
   return request<SandboxModeResponse>({

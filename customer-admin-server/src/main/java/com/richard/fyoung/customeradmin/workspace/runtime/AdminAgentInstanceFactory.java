@@ -177,7 +177,10 @@ public class AdminAgentInstanceFactory {
             .stateStore(stateStore)
             .defaultSessionId(agentCode)
             .permissionContext(permissionContext)
-            .maxIters(DEFAULT_MAX_ITERS);
+            .maxIters(DEFAULT_MAX_ITERS)
+            // 中断后无缝续跑：会话被安全中断（见 ChatService#interrupt）后再次调用，先恢复被打断的
+            // 挂起工具调用，再处理新消息，与 customer-work-spring-boot-starter 侧的默认行为保持一致。
+            .enablePendingToolRecovery(true);
         if (capabilities.contains(CAPABILITY_VIBECODING)) {
             // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载。
             builder.middleware(sandboxGuardMiddleware);
