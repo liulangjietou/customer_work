@@ -119,10 +119,25 @@
 
         <!-- SQL 查询结果导出 xlsx（SqlQueryController#export）。项目原本无 POI，EasyExcel 传递
              引入 poi/poi-ooxml 4.1.2；选本地仓库已存在的稳定版 3.3.2，避免额外下载/版本冲突。 -->
+        <!-- SQL 查询结果导出 xlsx。easyexcel 必须用 4.x（基于 POI 5.x）：starter 经
+             agentscope-extensions-rag-simple 传递 poi-ooxml 5.5.1，若用 easyexcel 3.x（声明 poi 4.1.2），
+             Maven nearest-wins 会裁出 poi 4.1.2 + poi-ooxml 5.5.1 的分裂 classpath，SXSSFWorkbook
+             静态初始化直接 NoClassDefFoundError（实测踩过）。下面显式钉 poi/poi-ooxml 5.5.1，
+             与 starter 侧完全对齐——同 commons-lang3 的覆盖手法，只在本模块生效。 -->
         <dependency>
             <groupId>com.alibaba</groupId>
             <artifactId>easyexcel</artifactId>
-            <version>3.3.2</version>
+            <version>4.0.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.5.1</version>
         </dependency>
 
         <!-- Lombok -->
