@@ -66,6 +66,39 @@ public class ChatService {
     }
 
     /**
+     * 安全中断指定会话正在执行的 Agent（协作式中断：只置一个信号，由 Agent 在推理/工具调用的
+     * checkpoint 检查后才真正停下，不保证立即生效）。中断后再次对同一 sessionId 发起
+     * {@link #chatStream}，框架会先无缝续跑被打断的挂起工具调用（见
+     * {@link AdminAgentInstanceFactory#build} 里的 {@code enablePendingToolRecovery(true)}）。
+     *
+     * @return 是否成功发出中断信号；智能体运行时类型不支持中断（既非 ReActAgent 也非 HarnessAgent）时返回 false
+     */
+    public boolean interrupt(String agentCode, String sessionId) {
+        Agent agent = agentInstanceCache.getOrBuild(agentCode);
+        ReActAgent interruptible = resolveInterruptible(agent);
+        if (interruptible == null) {
+            log.info("[workspace] interrupt skipped: unsupported agent runtime, agentCode={}", agentCode);
+            return false;
+        }
+        RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
+        interruptible.interrupt(ctx);
+        log.info("[workspace] interrupt issued, agentCode={}, sessionId={}", agentCode, sessionId);
+        return true;
+    }
+
+    /** {@link HarnessAgent} 本身只暴露不带 session 参数的 interrupt()（走错误的 defaultSessionId=agentCode），
+     * 真正按 (agentCode, sessionId) 精确路由需要拿到它内部委托的 {@link ReActAgent}。 */
+    private ReActAgent resolveInterruptible(Agent agent) {
+        if (agent instanceof ReActAgent reActAgent) {
+            return reActAgent;
+        }
+        if (agent instanceof HarnessAgent harnessAgent) {
+            return harnessAgent.getDelegate();
+        }
+        return null;
+    }
+
+    /**
      * 流式对话，返回增量文本片段。智能体不存在/未启用时，{@link AgentInstanceCache#getOrBuild}
      * 同步抛出的 {@code BizException} 会在本方法返回 Flux 之前就传播给调用方（Controller 侧因此在
      * 任何 SSE 头下发之前就能拿到结构化错误响应，而不是半开的失败流）。

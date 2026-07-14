@@ -6,6 +6,7 @@ import {
   generatePrDescription,
   getGitDiffSummary,
   getSandboxMode,
+  interruptVibeCoding,
   listWorkspaceFiles,
   readWorkspaceFileContent,
   saveWorkspaceFileContent,
@@ -50,6 +51,8 @@ const sessionId = ref(generateUuid())
 const messages = ref<ChatMessage[]>([])
 const input = ref('')
 const streaming = ref(false)
+const interrupting = ref(false) // 已点终止，等后端真正停下来（协作式中断，不保证立即生效）
+const interrupted = ref(false) // 上一轮是被终止结束的，可以点"继续"续跑挂起的工具调用
 const historyLoading = ref(false)
 const uploading = ref(false)
 const attachments = ref<Attachment[]>([])
@@ -92,6 +95,8 @@ const saving = ref(false)
 function newSession() {
   abortStream?.()
   streaming.value = false
+  interrupting.value = false
+  interrupted.value = false
   sessionId.value = generateUuid()
   messages.value = []
   input.value = ''
@@ -131,6 +136,8 @@ function buildMessageWithAttachments(text: string): string {
 async function openSession(targetSessionId: string) {
   if (streaming.value) return
   abortStream?.()
+  interrupting.value = false
+  interrupted.value = false
   historyLoading.value = true
   try {
     const history = await getChatSessionMessages(props.agentCode, targetSessionId)
@@ -163,6 +170,7 @@ function scrollToBottom() {
 function send() {
   const text = input.value.trim()
   if (!text || streaming.value) return
+  interrupted.value = false
   const messageToSend = buildMessageWithAttachments(text)
   const attachedNames = attachments.value.map((a) => a.name)
   messages.value.push({
@@ -200,13 +208,40 @@ function send() {
     },
     onError: (error) => {
       streaming.value = false
+      interrupting.value = false
       ElMessage.error('对话失败：' + (error instanceof Error ? error.message : String(error)))
     },
     onComplete: () => {
       streaming.value = false
+      // 若这轮是用户主动点了"终止"后自然结束的，翻转成"可继续"状态，冒出继续按钮
+      if (interrupting.value) {
+        interrupting.value = false
+        interrupted.value = true
+      }
       historySidebar.value?.refresh()
     },
   })
+}
+
+/** 点击"终止"：只通知后端安全中断（协作式，不保证立即生效），不调 abortStream() 断开前端连接——
+ * 让现有的 onComplete/onError 在后端真正停止、SSE 自然结束时收尾，避免界面显示"已停止"但后端其实
+ * 还在跑的假象。 */
+async function handleInterrupt() {
+  interrupting.value = true
+  try {
+    await interruptVibeCoding(props.agentCode, sessionId.value)
+  } catch (error) {
+    interrupting.value = false
+    ElMessage.error('终止失败：' + (error instanceof Error ? error.message : String(error)))
+  }
+}
+
+/** 点击"继续"：发一句非空续接文案触发框架续跑被打断的挂起工具调用（后端 ChatRequest.message 要求非空，
+ * 且续跑逻辑本就挂在正常的 stream 调用里，无需专门的续跑接口）。 */
+function resumeInterrupted() {
+  interrupted.value = false
+  input.value = '请继续刚才的任务。'
+  send()
 }
 
 /** 解析 file_change SSE 事件，追加到变更时间线（不按路径去重，同一文件多次改动各自成一条，还原真实操作顺序）。 */
@@ -415,7 +450,11 @@ onUnmounted(() => {
           </el-button>
         </el-upload>
         <el-input v-model="input" placeholder="描述需求，回车发送" :disabled="streaming" @keyup.enter="send" />
-        <el-button type="primary" :loading="streaming" @click="send">发送</el-button>
+        <el-button v-if="!streaming" type="primary" @click="send">发送</el-button>
+        <el-button v-else type="danger" :loading="interrupting" @click="handleInterrupt">
+          {{ interrupting ? '终止中…' : '终止' }}
+        </el-button>
+        <el-button v-if="interrupted && !streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
       </div>
     </div>
 
@@ -677,12 +716,14 @@ onUnmounted(() => {
   margin-top: 12px;
 }
 
-.input-bar :deep(.el-button--primary) {
+/* :not(.is-link) 排除"继续"链接按钮——link 按钮的文字色本就用的是同一个主题蓝（靠透明背景显色），
+   这条规则如果连它一起覆盖成纯色背景，文字会跟背景同色而"隐形"。 */
+.input-bar :deep(.el-button--primary:not(.is-link)) {
   background-color: var(--theme-primary, #409eff);
   border-color: var(--theme-primary, #409eff);
 }
 
-.input-bar :deep(.el-button--primary:hover) {
+.input-bar :deep(.el-button--primary:not(.is-link):hover) {
   background-color: var(--theme-primary-light, #79bbff);
   border-color: var(--theme-primary-light, #79bbff);
 }
