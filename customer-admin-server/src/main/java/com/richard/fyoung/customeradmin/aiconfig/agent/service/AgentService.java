@@ -47,7 +47,7 @@ public class AgentService {
 
     private static final Pattern AGENT_CODE_PATTERN = Pattern.compile("^[a-z0-9-]+$");
     private static final Set<String> VALID_CAPABILITIES =
-        Set.of("chat", "vibecoding", "subagent", "plan", "tasklist", "skill-learning");
+        Set.of("chat", "vibecoding", "subagent", "plan", "tasklist", "skill-learning", "dynamic-subagent");
     private static final String CAPABILITY_DELIMITER = ",";
     private static final String CAPABILITY_SUBAGENT = "subagent";
 
@@ -195,7 +195,7 @@ public class AgentService {
         if (!CollectionUtils.isEmpty(request.capabilities())
             && !VALID_CAPABILITIES.containsAll(request.capabilities())) {
             throw new BizException(ResultCode.PARAM_INVALID,
-                "capabilities 仅支持 chat/vibecoding/subagent/plan/tasklist/skill-learning");
+                "capabilities 仅支持 chat/vibecoding/subagent/plan/tasklist/skill-learning/dynamic-subagent");
         }
         validateAdvancedParams(request);
         validateSubAgentIds(request, selfId);
@@ -214,12 +214,17 @@ public class AgentService {
         }
     }
 
-    /** 子智能体多选校验：必须先勾选 subagent 能力；每个 id 真实存在且不含自身（update 场景）。 */
+    /** 子智能体多选校验：勾选 subagent 能力后必须至少选一个（避免空转配置）；反之选了子智能体也必须勾能力；每个 id 真实存在且不含自身（update 场景）。 */
     private void validateSubAgentIds(AgentSaveRequest request, Long selfId) {
+        boolean subagentChecked = !CollectionUtils.isEmpty(request.capabilities())
+            && request.capabilities().contains(CAPABILITY_SUBAGENT);
         if (CollectionUtils.isEmpty(request.subAgentIds())) {
+            if (subagentChecked) {
+                throw new BizException(ResultCode.PARAM_INVALID, "勾选 subagent 能力后需至少选择一个子智能体");
+            }
             return;
         }
-        if (CollectionUtils.isEmpty(request.capabilities()) || !request.capabilities().contains(CAPABILITY_SUBAGENT)) {
+        if (!subagentChecked) {
             throw new BizException(ResultCode.PARAM_INVALID, "选择子智能体前需先勾选 subagent 能力");
         }
         if (selfId != null && request.subAgentIds().contains(selfId)) {

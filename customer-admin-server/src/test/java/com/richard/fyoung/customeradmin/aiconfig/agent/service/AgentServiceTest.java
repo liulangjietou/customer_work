@@ -254,13 +254,21 @@ class AgentServiceTest {
 
     @Test
     void create_shouldAcceptNewCapabilityCodes() {
+        // subagent 能力单独用例覆盖（勾选后必须选子智能体），此处覆盖其余新能力编码
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null,
-            null, List.of("chat", "subagent", "plan", "tasklist", "skill-learning"), null, 1,
+            null, List.of("chat", "plan", "tasklist", "skill-learning", "dynamic-subagent"), null, 1,
             null, null, null, null, null, null);
 
         service.create(request);
 
         verify(agentMapper).insert(any(AiAgent.class));
+    }
+
+    @Test
+    void create_shouldRejectSubagentCapabilityWithoutSubAgentIds() {
+        // 勾选 subagent 能力但未选任何子智能体：空转配置，直接拒绝
+        assertThrows(BizException.class,
+            () -> service.create(requestWithSubAgents(List.of("chat", "subagent"), null)));
     }
 
     // ---- 高级参数取值范围校验 ----

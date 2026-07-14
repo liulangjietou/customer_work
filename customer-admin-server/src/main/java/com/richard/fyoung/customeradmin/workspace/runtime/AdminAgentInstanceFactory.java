@@ -73,7 +73,7 @@ import java.util.stream.Collectors;
  * {@code ai_agent_skill} 关联行，把 {@code content}（SKILL.md 正文）落盘后复用现成的
  * {@link FileSystemSkillRepository} 加载（不自造 Skill 解析逻辑）→ ⑤ {@link ReActAgent.Builder} 组装
  * （tasklist/metatool/maxIters/工具超时重试等内层能力与参数一并接线）→ ⑥ 若命中 {@link #requiresHarness}
- * （capabilities 含 vibecoding/plan/subagent/skill-learning 任一，或配置了上下文压缩），用
+ * （capabilities 含 vibecoding/plan/subagent/skill-learning/dynamic-subagent 任一，或配置了上下文压缩），用
  * {@link HarnessAgent.Builder#fromAgent} 在内层 ReActAgent 上按能力叠加沙箱/计划模式/技能自进化/
  * 上下文压缩/子智能体编排（workspace 限定到 {@code ./data/admin-workspace/{agentCode}}）。</p>
  *
@@ -90,6 +90,7 @@ public class AdminAgentInstanceFactory {
     private static final String CAPABILITY_SUBAGENT = "subagent";
     private static final String CAPABILITY_TASKLIST = "tasklist";
     private static final String CAPABILITY_SKILL_LEARNING = "skill-learning";
+    private static final String CAPABILITY_DYNAMIC_SUBAGENT = "dynamic-subagent";
     private static final String CAPABILITY_DELIMITER = ",";
     private static final int STATUS_ENABLED = 1;
     private static final int DEFAULT_MAX_ITERS = 10;
@@ -197,7 +198,7 @@ public class AdminAgentInstanceFactory {
 
     /**
      * 是否需要用 {@link HarnessAgent.Builder#fromAgent} 把内层 ReActAgent 升级为 HarnessAgent：
-     * capabilities 含 vibecoding/plan/subagent/skill-learning 任一，或配置了上下文压缩触发阈值。
+     * capabilities 含 vibecoding/plan/subagent/skill-learning/dynamic-subagent 任一，或配置了上下文压缩触发阈值。
      * tasklist 是 {@link ReActAgent.Builder#enableTaskList(boolean)} 的内层能力，单独勾选不触发升级。
      * 抽成纯函数便于单测（不依赖任何注入的协作对象）。
      */
@@ -206,6 +207,7 @@ public class AdminAgentInstanceFactory {
             || capabilities.contains(CAPABILITY_PLAN)
             || capabilities.contains(CAPABILITY_SUBAGENT)
             || capabilities.contains(CAPABILITY_SKILL_LEARNING)
+            || capabilities.contains(CAPABILITY_DYNAMIC_SUBAGENT)
             || compressTriggerMsgs != null;
     }
 
@@ -327,6 +329,14 @@ public class AdminAgentInstanceFactory {
         }
         if (capabilities.contains(CAPABILITY_SUBAGENT)) {
             registerSubagents(harnessBuilder, agent, visited);
+        }
+        if (capabilities.contains(CAPABILITY_DYNAMIC_SUBAGENT)) {
+            // 动态子Agent：框架在 HarnessAgent 上默认开启（DynamicSubagentsMiddleware），勾选时保留默认，
+            // 主 Agent 可在运行时按任务临时声明子 Agent（SubagentSpecGenerator 现场生成规格，无需预注册）
+            log.info("[workspace] dynamic subagents enabled: agentCode={}", agentCode);
+        } else {
+            // 未勾选则显式关闭，避免框架默认行为让所有 Harness 智能体都悄悄具备运行时造 Agent 的能力
+            harnessBuilder.disableDynamicSubagents();
         }
 
         HarnessAgent harnessAgent = harnessBuilder.build();

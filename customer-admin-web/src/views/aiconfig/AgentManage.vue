@@ -34,6 +34,7 @@ const CAPABILITY_OPTIONS: { value: string; label: string; tip?: string }[] = [
   { value: 'plan', label: '计划模式', tip: '支持多步骤计划推演' },
   { value: 'tasklist', label: '任务列表', tip: '跟踪和维护任务列表' },
   { value: 'skill-learning', label: '学习新技能', tip: '与用户互动学习并沉淀新技能' },
+  { value: 'dynamic-subagent', label: '动态子Agent', tip: '运行时按任务临时创建子 Agent，无需预先配置' },
 ]
 
 function capabilityLabel(code: string) {
@@ -141,12 +142,21 @@ function validateCompressParams(): boolean {
   return true
 }
 
+/** 勾选「子Agent协作」后必须至少选择一个子智能体，否则该能力是空转配置 */
+function validateSubAgents(): boolean {
+  if (showSubAgentSelect.value && (form.subAgentIds?.length ?? 0) === 0) {
+    ElMessage.error('勾选「子Agent协作」后需至少选择一个子智能体')
+    return false
+  }
+  return true
+}
+
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) {
     return
   }
-  if (!validateCompressParams()) {
+  if (!validateCompressParams() || !validateSubAgents()) {
     return
   }
   if (dialogMode.value === 'create') {

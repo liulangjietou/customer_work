@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link AdminAgentInstanceFactory#requiresHarness} 纯函数单测：
- * Harness 升级触发条件 = capabilities 含 vibecoding/plan/subagent/skill-learning 任一，
+ * Harness 升级触发条件 = capabilities 含 vibecoding/plan/subagent/skill-learning/dynamic-subagent 任一，
  * 或 compress_trigger_msgs 非空；tasklist 是内层能力，单独勾选不触发升级。
  * @author owlzhangfq@gmail.com
  */
@@ -33,6 +33,7 @@ class AdminAgentInstanceFactoryTest {
         assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "plan"), null));
         assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "subagent"), null));
         assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "skill-learning"), null));
+        assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "dynamic-subagent"), null));
     }
 
     @Test
