@@ -15,6 +15,9 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
+import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
+import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystemToolMapper;
+import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiSystemToolMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
@@ -50,19 +53,24 @@ public class AgentService {
     private final AiModelConfigMapper modelConfigMapper;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
+    private final AiAgentSystemToolMapper agentSystemToolMapper;
+    private final AiSystemToolMapper systemToolMapper;
     private final MenuVersionHolder menuVersionHolder;
     private final AgentInstanceCache agentInstanceCache;
 
     public AgentService(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
                          AiAgentSkillMapper agentSkillMapper, AiModelConfigMapper modelConfigMapper,
-                         AiMcpMapper mcpMapper, AiSkillMapper skillMapper, MenuVersionHolder menuVersionHolder,
-                         AgentInstanceCache agentInstanceCache) {
+                         AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
+                         AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
+                         MenuVersionHolder menuVersionHolder, AgentInstanceCache agentInstanceCache) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
         this.modelConfigMapper = modelConfigMapper;
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
+        this.agentSystemToolMapper = agentSystemToolMapper;
+        this.systemToolMapper = systemToolMapper;
         this.menuVersionHolder = menuVersionHolder;
         this.agentInstanceCache = agentInstanceCache;
     }
@@ -97,7 +105,7 @@ public class AgentService {
         AiAgent agent = new AiAgent();
         fillFromRequest(agent, request);
         agentMapper.insert(agent);
-        replaceRelations(agent.getId(), request.mcpIds(), request.skillIds());
+        replaceRelations(agent.getId(), request.mcpIds(), request.skillIds(), request.systemToolIds());
         menuVersionHolder.bump();
     }
 
@@ -108,7 +116,7 @@ public class AgentService {
         validate(request);
         fillFromRequest(agent, request);
         agentMapper.updateById(agent);
-        replaceRelations(id, request.mcpIds(), request.skillIds());
+        replaceRelations(id, request.mcpIds(), request.skillIds(), request.systemToolIds());
         menuVersionHolder.bump();
         // agentCode 理论上不应改变，但仍按新旧两个 code 双清，避免缓存键错位残留旧实例
         agentInstanceCache.evict(oldAgentCode);
@@ -121,6 +129,7 @@ public class AgentService {
         agentMapper.deleteById(id);
         agentMcpMapper.delete(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, id));
         agentSkillMapper.delete(new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, id));
+        agentSystemToolMapper.delete(new LambdaQueryWrapper<AiAgentSystemTool>().eq(AiAgentSystemTool::getAgentId, id));
         menuVersionHolder.bump();
         agentInstanceCache.evict(agent.getAgentCode());
     }
@@ -152,6 +161,10 @@ public class AgentService {
             && skillMapper.selectBatchIds(request.skillIds()).size() != request.skillIds().size()) {
             throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 skillIds");
         }
+        if (!CollectionUtils.isEmpty(request.systemToolIds())
+            && systemToolMapper.selectBatchIds(request.systemToolIds()).size() != request.systemToolIds().size()) {
+            throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 systemToolIds");
+        }
         if (!CollectionUtils.isEmpty(request.capabilities())
             && !VALID_CAPABILITIES.containsAll(request.capabilities())) {
             throw new BizException(ResultCode.PARAM_INVALID, "capabilities 仅支持 chat/vibecoding");
@@ -159,7 +172,7 @@ public class AgentService {
     }
 
     /** 关联表整体替换：先清空该智能体现有关联行，再按本次提交的 ids 批量插入（比对差异做增量删改无必要，行数很少）。 */
-    private void replaceRelations(Long agentId, List<Long> mcpIds, List<Long> skillIds) {
+    private void replaceRelations(Long agentId, List<Long> mcpIds, List<Long> skillIds, List<Long> systemToolIds) {
         agentMcpMapper.delete(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, agentId));
         if (!CollectionUtils.isEmpty(mcpIds)) {
             for (Long mcpId : mcpIds) {
@@ -176,6 +189,15 @@ public class AgentService {
                 relation.setAgentId(agentId);
                 relation.setSkillId(skillId);
                 agentSkillMapper.insert(relation);
+            }
+        }
+        agentSystemToolMapper.delete(new LambdaQueryWrapper<AiAgentSystemTool>().eq(AiAgentSystemTool::getAgentId, agentId));
+        if (!CollectionUtils.isEmpty(systemToolIds)) {
+            for (Long systemToolId : systemToolIds) {
+                AiAgentSystemTool relation = new AiAgentSystemTool();
+                relation.setAgentId(agentId);
+                relation.setSystemToolId(systemToolId);
+                agentSystemToolMapper.insert(relation);
             }
         }
     }
@@ -203,6 +225,8 @@ public class AgentService {
             .stream().map(AiAgentMcp::getMcpId).collect(Collectors.toList()));
         vo.setSkillIds(agentSkillMapper.selectList(new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, agent.getId()))
             .stream().map(AiAgentSkill::getSkillId).collect(Collectors.toList()));
+        vo.setSystemToolIds(agentSystemToolMapper.selectList(new LambdaQueryWrapper<AiAgentSystemTool>().eq(AiAgentSystemTool::getAgentId, agent.getId()))
+            .stream().map(AiAgentSystemTool::getSystemToolId).collect(Collectors.toList()));
         vo.setSystemPrompt(agent.getSystemPrompt());
         vo.setCapabilities(StringUtils.hasText(agent.getCapabilities())
             ? Arrays.asList(agent.getCapabilities().split(CAPABILITY_DELIMITER)) : List.of());

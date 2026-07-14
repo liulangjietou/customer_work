@@ -18,6 +18,7 @@ public class AgentVO {
     private String modelName;
     private List<Long> mcpIds;
     private List<Long> skillIds;
+    private List<Long> systemToolIds;
     private String systemPrompt;
     private List<String> capabilities;
     private String icon;
