@@ -468,3 +468,134 @@ export interface AddSessionRequest {
   agentCode: string
   sessionId: string
 }
+
+// ---------- sql.datasource ----------
+export interface SqlDatasourceVO {
+  id: number
+  name: string
+  jdbcUrl: string
+  username: string
+  passwordMasked: string
+  enabled: boolean
+  remark: string | null
+  createTime: string
+  updateTime: string
+}
+
+export interface SqlDatasourceSaveRequest {
+  name: string
+  jdbcUrl: string
+  username: string
+  /** 新建必填；编辑留空表示不修改密码，与 ModelManage 的 apiKey 约定一致。 */
+  password?: string | null
+  enabled?: boolean | null
+  remark?: string | null
+}
+
+// ---------- sql.define ----------
+export interface SqlDefineVO {
+  id: number
+  defineKey: string
+  datasourceId: number
+  datasourceName: string | null
+  sqlDescribe: string | null
+  querySql: string
+  countSql: string | null
+  autoLoad: boolean
+  enabled: boolean
+  remark: string | null
+  createTime: string
+  updateTime: string
+}
+
+export interface SqlDefineSaveRequest {
+  defineKey: string
+  datasourceId: number
+  sqlDescribe?: string | null
+  querySql: string
+  countSql?: string | null
+  autoLoad?: boolean | null
+  enabled?: boolean | null
+  remark?: string | null
+}
+
+export type SqlParamType = 'STRING' | 'INTEGER' | 'DATETIME'
+
+export interface SqlDefineParamVO {
+  id: number
+  defineId: number
+  paramName: string
+  paramDesc: string | null
+  paramType: SqlParamType
+  required: boolean
+  defaultValue: string | null
+  /** 下拉选项，后端存 JSON 字符串（如 {"1":"启用","0":"禁用"}），可空表示不是下拉参数。 */
+  dropDown: string | null
+  isPageNum: boolean
+  isPageSize: boolean
+  sort: number
+}
+
+export interface SqlDefineParamSaveRequest {
+  paramName: string
+  paramDesc?: string | null
+  paramType: SqlParamType
+  required?: boolean | null
+  defaultValue?: string | null
+  dropDown?: string | null
+  isPageNum?: boolean | null
+  isPageSize?: boolean | null
+  sort?: number | null
+}
+
+export type SqlTransformType = 'DATE_FORMAT' | 'VALUE_MAP'
+
+export interface SqlFieldTransformVO {
+  id: number
+  defineId: number
+  fieldName: string
+  transformType: SqlTransformType
+  transformConfig: string
+}
+
+export interface SqlFieldTransformSaveRequest {
+  fieldName: string
+  transformType: SqlTransformType
+  transformConfig: string
+}
+
+// ---------- sql.query（通用查询页：一个页面 + defineKey 参数驱动，服务几十个报表菜单） ----------
+export interface SqlQueryMetaParam {
+  paramName: string
+  paramDesc: string | null
+  paramType: SqlParamType
+  required: boolean
+  /** 已解析为实际值的字符串（如 ${now-14d} 表达式已在后端算成具体日期），前端直接预填。 */
+  defaultValue: string | null
+  /** 下拉选项：{ 值: 显示名 }，非下拉参数为 null。 */
+  dropDown: Record<string, string> | null
+  isPageNum: boolean
+  isPageSize: boolean
+  sort: number
+}
+
+export interface SqlQueryMetaVO {
+  defineKey: string
+  sqlDescribe: string | null
+  autoLoad: boolean
+  hasCountSql: boolean
+  params: SqlQueryMetaParam[]
+}
+
+export interface SqlQueryExecuteRequest {
+  defineKey: string
+  params: Record<string, unknown>
+}
+
+export interface SqlQueryResultVO {
+  columns: string[]
+  rows: Record<string, unknown>[]
+  /** -1 表示 count_sql 未配置，无总数（前端只显示上一页/下一页）。 */
+  total: number
+  useMillis: number
+}

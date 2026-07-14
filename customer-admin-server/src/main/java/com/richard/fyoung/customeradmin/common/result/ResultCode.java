@@ -31,6 +31,8 @@ public enum ResultCode {
     RESOURCE_IN_USE(30005, "资源正被引用，无法删除"),
     SCHEDULED_TASK_DISABLED(30006, "定时任务未启用"),
     NO_FILE_CHANGES(30007, "本轮对话暂无文件变更"),
+    SQL_NOT_READONLY(30008, "仅允许只读 SELECT/WITH 查询"),
+    SQL_PARAM_INVALID(30009, "SQL 查询参数不合法"),
 
     // 4xxxx 外部依赖类
     MODEL_TEST_TIMEOUT(40001, "模型连通性测试超时"),
@@ -40,6 +42,8 @@ public enum ResultCode {
     AGENT_DISABLED(40005, "智能体未启用"),
     GIT_COMMAND_FAILED(40006, "Git 命令执行失败"),
     GIT_ASSISTANT_AI_FAILED(40007, "AI 生成失败，请稍后重试"),
+    SQL_DATASOURCE_UNAVAILABLE(40008, "SQL 数据源不可用"),
+    SQL_QUERY_EXECUTE_FAILED(40009, "SQL 查询执行失败"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

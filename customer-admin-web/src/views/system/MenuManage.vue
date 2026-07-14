@@ -265,7 +265,7 @@ onMounted(loadTree)
           </el-radio-group>
         </el-form-item>
         <el-form-item label="路由/路径">
-          <el-input v-model="form.path!" placeholder="菜单类型填前端路由，如 /system/menu" />
+          <el-input v-model="form.path!" placeholder="菜单类型填前端路由，如 /system/menu；SQL 报表菜单填 /sql/query?defineKey=xxx" />
         </el-form-item>
         <el-form-item label="排序">
           <el-input-number v-model="form.sort!" :min="0" />

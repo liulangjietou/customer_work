@@ -15,7 +15,10 @@ const auth = useAuthStore()
 const menuStore = useMenuStore()
 const tabsStore = useTabsStore()
 
-const activePath = computed(() => route.path)
+// SQL 通用查询页（/sql/query）是所有报表菜单共用的同一个路由 path，靠 defineKey 区分不同菜单项，
+// 用 route.path 高亮时几十个报表菜单会全部一起高亮；此时改取 route.fullPath（含 query），
+// 与菜单节点 node.path 里存的 /sql/query?defineKey=xxx 完整链接对齐，其它页面维持原样按 path 高亮。
+const activePath = computed(() => (route.path === '/sql/query' ? route.fullPath : route.path))
 const asideWidth = computed(() => menuStore.collapsed ? '64px' : '220px')
 
 // MainLayout 只在 Layout 的子路由下挂载（登录页/改密页在其外层），路由一变化就落一个标签，

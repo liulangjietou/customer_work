@@ -117,6 +117,14 @@
             <version>3.3.2</version>
         </dependency>
 
+        <!-- SQL 查询结果导出 xlsx（SqlQueryController#export）。项目原本无 POI，EasyExcel 传递
+             引入 poi/poi-ooxml 4.1.2；选本地仓库已存在的稳定版 3.3.2，避免额外下载/版本冲突。 -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>easyexcel</artifactId>
+            <version>3.3.2</version>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
