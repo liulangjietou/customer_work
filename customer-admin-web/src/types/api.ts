@@ -161,6 +161,32 @@ export interface SysOperationLog {
   createTime: string
 }
 
+// ---------- workspace.ai-coding-audit ----------
+/** AI 编码操作审计日志（操作人、时间、变更文件、token 用量，需求 §5.2/§5.3）。 */
+export interface AiCodingAuditLog {
+  id: number
+  userId: number | null
+  username: string | null
+  agentCode: string
+  sessionId: string | null
+  operation: 'CHAT_STREAM' | 'FILE_SAVE' | 'GIT_DIFF_SUMMARY' | 'COMMIT_MESSAGE' | 'PR_DESCRIPTION'
+  changedFiles: string | null
+  inputTokens: number | null
+  outputTokens: number | null
+  totalTokens: number | null
+  durationMs: number | null
+  result: number
+  errorCode: string | null
+  createTime: string
+}
+
+/** AI 编码审计查询条件：通用分页之上追加三个精确过滤维度。 */
+export interface AiCodingAuditQuery extends PageQuery {
+  agentCode?: string
+  sessionId?: string
+  operation?: string
+}
+
 // ---------- aiconfig.model ----------
 export interface ModelVO {
   id: number

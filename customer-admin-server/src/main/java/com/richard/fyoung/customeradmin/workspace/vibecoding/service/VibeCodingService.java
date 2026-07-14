@@ -8,6 +8,9 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
+import com.richard.fyoung.customeradmin.workspace.audit.AiCodingOperation;
+import com.richard.fyoung.customeradmin.workspace.audit.entity.AiCodingAuditLog;
+import com.richard.fyoung.customeradmin.workspace.audit.service.AiCodingAuditService;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
@@ -15,11 +18,13 @@ import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFact
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.FileChangeEvent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileNode;
+import io.agentscope.core.model.ChatUsage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
 
 import java.io.IOException;
 import java.nio.charset.MalformedInputException;
@@ -97,6 +102,7 @@ public class VibeCodingService {
     private final AiAgentMapper agentMapper;
     private final GitWorkspaceService gitWorkspaceService;
     private final AdminSandboxProperties sandboxProperties;
+    private final AiCodingAuditService auditService;
 
     /** {@code agentCode:sessionId -> 对话开始前的目录快照}，进程内、重启丢失（v1 降级方案的一部分）。 */
     private final Map<String, Map<String, FileFingerprint>> beforeSnapshots = new ConcurrentHashMap<>();
@@ -104,12 +110,13 @@ public class VibeCodingService {
 
     public VibeCodingService(ChatService chatService, AdminAgentInstanceFactory agentInstanceFactory,
                               AiAgentMapper agentMapper, GitWorkspaceService gitWorkspaceService,
-                              AdminSandboxProperties sandboxProperties) {
+                              AdminSandboxProperties sandboxProperties, AiCodingAuditService auditService) {
         this.chatService = chatService;
         this.agentInstanceFactory = agentInstanceFactory;
         this.agentMapper = agentMapper;
         this.gitWorkspaceService = gitWorkspaceService;
         this.sandboxProperties = sandboxProperties;
+        this.auditService = auditService;
     }
 
     /** 当前 VibeCoding 沙箱模式（{@code admin.sandbox.mode} 全局配置，不随会话变化）："docker"｜"local"。 */
@@ -159,8 +166,13 @@ public class VibeCodingService {
         String modeTag = sandboxMode();
         String enrichedText = String.format(FILE_DIRECTIVE_TEMPLATE, modeTag, safeSession, safeSession, safeSession, userText);
 
+        // 审计条目必须在请求线程的同步段创建（操作人取自 Sa-Token 的 ThreadLocal），
+        // doFinally 跑在 reactor 线程，届时已拿不到登录上下文。
+        AiCodingAuditLog audit = auditService.begin(AiCodingOperation.CHAT_STREAM, agentCode, safeSession);
+        AtomicReference<ChatUsage> usageTotal = new AtomicReference<>();
+
         AtomicReference<Map<String, FileFingerprint>> lastSnapshot = new AtomicReference<>(initialSnapshot);
-        Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText)
+        Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, usageTotal::set)
             .concatMap(chunk -> chunk.kind() == ChatNodeKind.TOOL_RESULT
                 ? Flux.concat(Flux.just(chunk), Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot)))
                 : Flux.just(chunk));
@@ -169,7 +181,14 @@ public class VibeCodingService {
         return chatFlux.concatWith(Flux.defer(() -> {
             syncDockerArtifactsIfNeeded(agentCode, safeSession, sessionWorkspace);
             return Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot));
-        }));
+        })).doFinally(signal -> {
+            // 审计（需求 §5.2/§5.3）：变更文件 = 本轮初始快照 vs 最终快照（含删除），token 为本轮
+            // 全部模型调用的汇总；ChatService 内部已把流错误兜底成正常完成，这里的非 COMPLETE
+            // 信号主要是用户取消/连接断开，如实记录。
+            auditService.applyUsage(audit, usageTotal.get());
+            auditService.applyChangedFiles(audit, changedPaths(initialSnapshot, snapshot(sessionWorkspace)));
+            auditService.finish(audit, signal == SignalType.ON_COMPLETE ? null : "VIBECODING_STREAM_" + signal.name());
+        });
     }
 
     /**
@@ -266,22 +285,32 @@ public class VibeCodingService {
      */
     public void saveFileContent(String agentCode, String sessionId, String relativePath, String content) {
         requireVibeCodingCapable(agentCode);
-        Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
-        // 路径穿越防御
-        Path filePath = sessionWorkspace.resolve(relativePath).normalize();
-        if (!filePath.startsWith(sessionWorkspace.normalize())) {
-            throw new BizException(ResultCode.PARAM_INVALID, "非法文件路径：不允许写入 workspace 目录以外的文件");
-        }
-        if (Files.isDirectory(filePath)) {
-            throw new BizException(ResultCode.PARAM_INVALID, "指定路径是目录，无法写入: " + relativePath);
-        }
+        // 审计（需求 §5.2/§5.3）覆盖路径校验 + 写入全程：路径穿越等非法尝试同样留痕（result=0 +
+        // 错误码）。业务动作自持控制流，审计只在旁路记录——审计服务不可用/被替换都不影响保存本身。
+        AiCodingAuditLog audit = auditService.begin(AiCodingOperation.FILE_SAVE, agentCode, sessionId);
+        auditService.applyChangedFiles(audit, List.of(relativePath));
         try {
-            Files.createDirectories(filePath.getParent());
-            Files.writeString(filePath, content, StandardCharsets.UTF_8);
-            log.info("[workspace] file saved by user, agentCode={}, sessionId={}, path={}", agentCode, sessionId, relativePath);
-        } catch (IOException e) {
-            log.error("[workspace] save file content failed, agentCode={}, sessionId={}, path={}", agentCode, sessionId, relativePath, e);
-            throw new BizException(ResultCode.SYSTEM_ERROR, "文件保存失败: " + relativePath);
+            Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+            // 路径穿越防御
+            Path filePath = sessionWorkspace.resolve(relativePath).normalize();
+            if (!filePath.startsWith(sessionWorkspace.normalize())) {
+                throw new BizException(ResultCode.PARAM_INVALID, "非法文件路径：不允许写入 workspace 目录以外的文件");
+            }
+            if (Files.isDirectory(filePath)) {
+                throw new BizException(ResultCode.PARAM_INVALID, "指定路径是目录，无法写入: " + relativePath);
+            }
+            try {
+                Files.createDirectories(filePath.getParent());
+                Files.writeString(filePath, content, StandardCharsets.UTF_8);
+                log.info("[workspace] file saved by user, agentCode={}, sessionId={}, path={}", agentCode, sessionId, relativePath);
+            } catch (IOException e) {
+                log.error("[workspace] save file content failed, agentCode={}, sessionId={}, path={}", agentCode, sessionId, relativePath, e);
+                throw new BizException(ResultCode.SYSTEM_ERROR, "文件保存失败: " + relativePath);
+            }
+            auditService.finish(audit, (String) null);
+        } catch (RuntimeException e) {
+            auditService.finish(audit, e);
+            throw e;
         }
     }
 
@@ -426,6 +455,26 @@ public class VibeCodingService {
         }
         lastSnapshotRef.set(after);
         return chunks;
+    }
+
+    /**
+     * 两份快照间的全部变更文件路径（新增/修改/删除都算，与 file_change 事件口径一致），供审计
+     * 记录本轮对话的变更清单。与 {@link #listChangedArtifacts} 的差别：那边是"产物清单"语义
+     * （只含存在的文件，不含删除），两者语义不同不强行合并。
+     */
+    private List<String> changedPaths(Map<String, FileFingerprint> before, Map<String, FileFingerprint> after) {
+        List<String> changed = new ArrayList<>();
+        for (Map.Entry<String, FileFingerprint> entry : after.entrySet()) {
+            if (!entry.getValue().equals(before.get(entry.getKey()))) {
+                changed.add(entry.getKey());
+            }
+        }
+        for (String path : before.keySet()) {
+            if (!after.containsKey(path)) {
+                changed.add(path);
+            }
+        }
+        return changed;
     }
 
     private ChatStreamChunk fileChangeChunk(String operation, String path, String description) {

@@ -139,9 +139,10 @@ function send() {
       }
       if (event.event.startsWith('node:')) {
         appendNode(assistantMessage, event.event.slice('node:'.length), event.data)
-      } else {
+      } else if (event.event === 'message') {
         assistantMessage.text += event.data
       }
+      // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
       scrollToBottom()
     },
     onError: (error) => {

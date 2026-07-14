@@ -16,6 +16,7 @@ import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ThinkingBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
+import io.agentscope.core.model.ChatUsage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
@@ -23,8 +24,10 @@ import reactor.core.publisher.Flux;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -311,5 +314,43 @@ class ChatServiceTest {
         List<ChatStreamChunk> chunks = stream("写一个 Fibonacci.java");
 
         assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.THINKING_END, ChatNodeKind.ANSWER);
+    }
+
+    // ===== 模型用量聚合（审计需求 §5.3：token 数）=====
+
+    @Test
+    void chatStream_shouldAggregateUsageAcrossMessages_andDedupeByMessageId() {
+        // 同一 messageId 的增量事件重复携带 usage（后到为累计值，应覆盖而非累加），
+        // 不同 messageId 各算一次——总量 = msg-1 最终值(10+20) + msg-2(5+7)
+        Msg first = Msg.builder().id("msg-1").role(MsgRole.ASSISTANT).textContent("part")
+            .usage(new ChatUsage(3, 4, 0.1)).build();
+        Msg firstFinal = Msg.builder().id("msg-1").role(MsgRole.ASSISTANT).textContent("part2")
+            .usage(new ChatUsage(10, 20, 0.2)).build();
+        Msg second = Msg.builder().id("msg-2").role(MsgRole.ASSISTANT).textContent("done")
+            .usage(new ChatUsage(5, 7, 0.1)).build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(
+                new Event(EventType.REASONING, first, false),
+                new Event(EventType.REASONING, firstFinal, false),
+                new Event(EventType.AGENT_RESULT, second, true)));
+
+        AtomicReference<ChatUsage> observed = new AtomicReference<>();
+        chatService.chatStream("coder", "s1", "你好", observed::set).collectList().block();
+
+        assertEquals(15, observed.get().getInputTokens());
+        assertEquals(27, observed.get().getOutputTokens());
+        assertEquals(42, observed.get().getTotalTokens());
+    }
+
+    @Test
+    void chatStream_shouldObserveNullUsage_whenNoMessageCarriesUsage() {
+        Msg finalMsg = Msg.builder().role(MsgRole.ASSISTANT).textContent("你好").build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, finalMsg, true)));
+
+        AtomicReference<ChatUsage> observed = new AtomicReference<>(new ChatUsage(1, 1, 0));
+        chatService.chatStream("coder", "s1", "你好", observed::set).collectList().block();
+
+        assertNull(observed.get(), "无任何用量信息时应回调 null，区分“没有用量”与“用了 0 token”");
     }
 }

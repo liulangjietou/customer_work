@@ -1,404 +1,515 @@
 # 智能体客服后台管理系统 —— AI 编码助手需求文档
 
-> 基于 AgentScope 2.0（2.0.0 GA，`ga2.0` 分支）与现有 `customer-work-spring-boot-starter` 能力进行二次开发。  
-> 版本：v1.0  
-> 目标读者：产品、后端/前端开发、测试  
-> 状态：待评审
+> 基于 AgentScope Java 2.0.0 GA（`main` 分支，官方文档 https://java.agentscope.io ）与现有
+> `customer-work-spring-boot-starter` 能力进行二次开发，载体为 `customer-admin-server`（后端）+ `customer-admin-web`（前端）。
+> 版本：v2.0（2026-07-13 修订）
+> 目标读者：产品、后端/前端开发、测试
+> 状态：v2.0 待评审
+>
+> **v2.0 修订说明**：v1.0 中的两个 P0（实时 file_change、Git 工作流集成）与 Sandbox 能力已全部交付并合入 main
+> （commit `1ed6d77`，admin-server 测试 127 → 175 全绿）。本版将已交付能力沉淀为"第 2 章 能力基线"，
+> 剩余需求按「对项目重要性 × 提升开发效率 × 已有基础成熟度」重排优先级，并修正 v1.0 与实际实现不符的
+> 接口、数据模型与配置项描述。
 
 ---
 
 ## 1. 背景与目标
 
 ### 1.1 背景
-当前系统已在 `customer-admin-server` 中实现基础的 **VibeCoding** 能力：用户可在智能体工作区通过自然语言让 Agent 读/写 `workspace` 目录下的代码文件，并在对话结束后通过"前后快照对比"返回变更文件清单。但该能力仍处于"一期降级方案"阶段，缺少实时反馈、与 Git 工作流打通、代码审查等关键能力。
+
+`customer-admin-server` 的 **VibeCoding** 能力已完成两轮迭代：
+
+- **一期（降级方案）**：Agent 读/写会话 workspace（`sessions/{sessionId}/`）下的代码文件，对话结束后快照对比返回变更清单。
+- **二期（已交付，详见第 2 章）**：文件变更实时流式推送（`file_change` 事件）、Git 助手（diff 摘要 / commit message / PR description）、
+  AgentScope 2.0 代码沙箱（local/docker 双模式）+ 危险命令拦截。
+
+当前阶段的主要矛盾已从"看不见 Agent 在做什么"转移到：**改错了不能一键恢复、代码质量靠人工逐行看、
+生成的代码对不对要自己跑**。这三点是日常使用 VibeCoding 时最直接的效率损耗，也是本版 P0 的来源。
 
 ### 1.2 目标
-在不改动 AgentScope 2.0 核心框架的前提下，基于已有能力（`ChatService`、`VibeCodingService`、`HarnessAgentFactory`、`MultiAgentOrchestrator`、`KnowledgeProvider`、`MCP`、`Sandbox`、`Plan Mode`、`Subagent`）构建一套面向开发团队的 **AI 编码助手**，覆盖：代码生成、代码审查、Bug 诊断、自动化重构、多 Agent 协作编程、Git 工作流集成、代码知识库问答。
+
+在不改动 AgentScope 2.0 核心框架的前提下，基于已交付基线（`VibeCodingService`、`GitWorkspaceService`、
+`GitAssistantService`、`AdminAgentInstanceFactory` 沙箱装配、`SandboxGuardMiddleware`）持续构建面向开发团队的
+**AI 编码助手**，本版覆盖：会话回滚、AI Code Review、生成代码自动验证闭环、Plan Mode 人工确认、
+交互式运行面板、Docker 沙箱补齐、Bug 诊断、自动化重构、多 Agent 协作编程、代码知识库问答。
 
 ### 1.3 成功指标
-- VibeCoding 流式输出中 **file_change 事件实时可见**，延迟 < 1s。
-- 代码审查 Agent 对典型 Java 代码 diff 给出可行动的评论（覆盖率 ≥ 80% 的常见规范项）。
-- Git 工作流集成后，单次代码变更可自动生成 commit message / PR description，人工修改率 < 30%。
-- 代码知识库问答：Top-3 检索命中率 ≥ 70%（以内部接口定位任务评估）。
+
+| 指标 | 状态 |
+|---|---|
+| file_change 事件实时可见，延迟 < 1s | ✅ 已达成（TOOL_RESULT 后增量快照推送） |
+| commit message 人工无需修改直接可用比例 ≥ 50% | ✅ 已交付，待线上度量 |
+| 误操作后一键回滚，恢复到对话前状态 ≤ 3s | 🎯 本版 P0-1 |
+| 典型问题 diff（NPE/SQL 注入/硬编码密码）CRITICAL 检出率 ≥ 90% | 🎯 本版 P0-2 |
+| 生成代码在沙箱内自动编译+测试，结构化报告返回率 100% | 🎯 本版 P0-3 |
+| 代码知识库问答 Top-3 检索命中率 ≥ 70% | 🎯 本版 P3-2 |
 
 ---
 
-## 2. 功能需求总览
+## 2. 已交付能力基线（v1.x，main@`1ed6d77`）
 
-| 优先级 | 功能模块 | 核心能力 | 依赖 | 验收标准 |
-|---|---|---|---|---|
-| P0 | 实时 file_change 事件 | VibeCoding 文件变更实时流式推送 | ChatService、SSE | 文件创建/修改/删除即时出现在对话流 |
-| P0 | Git 工作流集成 | git diff 摘要、自动生成 commit message / PR description | Git MCP / JGit | 可一键复制或自动填充 |
-| P1 | Sandbox + Plan Mode | 代码执行隔离、重大修改前计划确认 | HarnessAgentFactory | 危险操作需用户确认 |
-| P1 | AI Code Review | 对 diff 做自动 Review | RAG + Subagent | 输出结构化 Review 意见 |
-| P2 | 智能 Bug 修复 | 根据异常堆栈/日志定位并生成补丁 | DiagnosticService | 生成可应用的 patch |
-| P2 | 代码生成 + 单测生成 | 需求→代码→单测→运行反馈 | VibeCoding + Sandbox | 单测可运行并反馈结果 |
-| P2 | 自动化重构助手 | 批量替换、API 迁移、依赖升级 | Plan Mode + Skill | 按计划执行并产出 diff |
-| P3 | 多 Agent 协作编程 | 产品/架构/开发/测试/Review Agent 协同 | MultiAgentOrchestrator | 完成端到端需求实现 |
-| P3 | 代码知识库问答 | 基于 RAG 的代码语义检索 | KnowledgeProvider | 接口/逻辑定位准确 |
+新需求一律在此基线上叠加，不重复建设。实现细节与踩坑记录见
+`docs/VibeCoding-Git助手与代码沙箱-开发总结.md`，此处只列对后续需求有约束力的事实。
 
----
+| 能力 | 实现要点 | 与 v1.0 需求稿的差异 |
+|---|---|---|
+| 实时 file_change 事件 | `VibeCodingService.stream()` 在每个 `TOOL_RESULT` 后做增量快照 diff，以独立 SSE 事件 `file_change` 推送（`ChatNodeKind.FILE_CHANGE`），流结束兜底再检测一次 | 未采用 v1.0 的"500ms 后台轮询"或"框架 Hook"方案；`FileChangeEvent` 仅 `operation/path/description` 三字段，**无 RENAME/oldPath** |
+| Git 助手 | `GitWorkspaceService`：会话目录轻量 `git init` + 空提交 baseline（`stream()` 本轮写入前建立），本轮变更 = 相对 baseline 的 diff；`GitAssistantService`：一次性模型调用（不经 ReAct 工具循环）生成摘要/commit message/PR description，独立线程池 + 超时兜底 | 只做只读 diff 与文本生成，**不做真正的 git commit/push**（v1.0 的"自动执行 git add + commit"可选项未做，业务提交仍由开发者本地完成） |
+| 代码沙箱 | `admin.sandbox.*` 配置（mode=local/docker、超时、docker 镜像/内存/CPU/网络）；`AdminAgentInstanceFactory` 按 mode 挂 `LocalFilesystemSpec` / `DockerFilesystemSpec`（框架内置，零新增依赖）；Docker 模式端到端实测跑通 | 配置前缀是 **`admin.sandbox.*`** 而非 v1.0 写的 `customer-work.harness.*`（admin-server 排除了 starter 自动装配） |
+| 危险命令拦截 | `SandboxGuardMiddleware` 挂 `onActing`，破坏性命令正则命中改写为 `[BLOCKED_BY_SANDBOX_GUARD]`，不打断主链路，默认开启 | 走自研正则拦截，**未走框架 `PermissionMode.ASK`**（现状 BYPASS，确认闭环见 P1-1） |
+| 沙箱内自动验证引导 | VibeCoding prompt 追加"生成代码后在沙箱内 javac/mvn test 验证"引导 | 仅 prompt 引导，验证结果混在文本流中，无结构化 `test_report`（见 P0-3） |
+| 文件树/文件读写 | `GET /files`、`GET/PUT /file-content`、`GET /artifacts`、`GET /sandbox-mode` | — |
 
-## 3. 详细功能需求
+**已知架构约束（对后续需求有直接影响）**：
 
-### 3.1 实时 file_change 事件（P0）
-
-#### 3.1.1 现状
-`VibeCodingService#stream` 仅返回 `ChatStreamChunk`（reasoning/message），文件变更在对话结束后通过 `listChangedArtifacts` 用快照对比得出，用户无法在对话过程中看到 Agent 正在改哪些文件。
-
-#### 3.1.2 需求
-1. **事件类型扩展**：在 `ChatStreamChunk` 中新增 `file_change` 类型，字段包括：
-   - `type`: `file_change`
-   - `operation`: `CREATE | MODIFY | DELETE | RENAME`
-   - `path`: 相对 workspace 的路径
-   - `oldPath`: RENAME 时原路径（可选）
-   - `description`: 变更摘要（Agent 生成的一句话说明）
-2. **采集机制**：
-   - 方式 A（推荐）：Hook AgentScope 的 `FileChangeEvent`（若框架暴露）或在 Agent 调用文件工具时拦截。
-   - 方式 B（兜底）：在 `stream` 开始后启动一个后台线程，每 500ms 扫描一次 workspace 目录，与初始快照对比，发现变更即 emit `file_change` 事件。
-3. **前端渲染**：
-   - 在对话流右侧或折叠面板中显示"文件变更时间线"。
-   - 支持点击文件路径查看 diff（调用后端的 git diff 或文件对比接口）。
-
-#### 3.1.3 接口
-```
-POST /api/workspace/{agentCode}/vibecoding/stream
-响应 SSE event:
-  event: message          data: {text}
-  event: reasoning        data: {text}
-  event: file_change      data: {"operation":"MODIFY","path":"src/main/java/...","description":"修改了登录校验逻辑"}
-  event: done             data: [DONE]
-```
-
-#### 3.1.4 验收标准
-- 用户说"把 UserService 的密码校验改成 BCrypt"，Agent 修改文件后 1s 内前端显示该文件变更。
-- 变更时间线按时间顺序排列，不遗漏、不重复。
+1. **Docker 模式产物在容器内**：宿主机侧的产物文件树、file_change 事件、Git 助手读不到容器内文件——这是
+   Docker 隔离的固有特性。凡依赖宿主机文件系统的功能（回滚、Review、Git 助手），在 Docker 模式下都需要
+   P1-3 的容器↔宿主机同步先行。
+2. **`HarnessAgent.stream()` 同步异常**：沙箱资源获取失败时同步抛异常，已用 `Flux.defer` 包裹兜底（`ChatService`），
+   新增 SSE 接口须沿用该模式。
+3. **Docker 模式 sessionId 转义**：`SandboxSafeAgentStateStore` 装饰器负责 `/`→`_` 转义，新增涉及沙箱状态
+   持久化的功能须复用。
 
 ---
 
-### 3.2 Git 工作流集成（P0）
+## 3. 功能需求总览（v2.0 优先级）
 
-#### 3.2.1 目标
-让 AI 编码助手能感知当前代码变更，并辅助生成 Git 相关文本，减少开发者在提交环节的重复劳动。
+排序依据：**对当前项目重要性 × 对开发效率的直接提升 × 已有基础成熟度（越现成越先做）**。
+P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 沙箱执行链路），属于"最后一公里"收口，
+投入小、每天都用。
 
-#### 3.2.2 需求
-1. **Git Diff 摘要**
-   - 后端提供接口 `GET /api/workspace/{agentCode}/vibecoding/git-diff?sessionId=xxx`。
-   - 对当前 workspace 执行 `git diff`，将 diff 文本传给 Agent，要求其用 1-3 句话总结变更内容。
-   - 返回结构化结果：`{ "summary": "...", "changedFiles": [...] }`。
-2. **自动生成 Commit Message**
-   - 接口：`POST /api/workspace/{agentCode}/vibecoding/commit-message`
-   - 请求体：`{ "sessionId": "...", "style": "conventional" | "simple" }`
-   - 返回：`{ "message": "feat(auth): 切换密码校验为 BCrypt" }`
-   - 默认采用 Conventional Commits 规范，可通过配置切换风格。
-3. **自动生成 PR Description**
-   - 接口：`POST /api/workspace/{agentCode}/vibecoding/pr-description`
-   - 返回 Markdown 格式 PR 描述，包含：变更摘要、改动文件清单、影响范围、自检清单。
-4. **前端集成**
-   - 在 VibeCoding 面板新增"Git 助手"抽屉：显示 diff 摘要、commit message、PR description，支持一键复制。
-   - （可选）提供"自动执行 git add + git commit"按钮，需二次确认。
+| 优先级 | 功能模块 | 核心能力 | 依托的已有基础 | 预估 | 验收标准 |
+|---|---|---|---|---|---|
+| **P0-1** | 会话一键回滚 | 撤销本次会话全部文件修改 | `GitWorkspaceService` baseline 机制已就位 | 0.5~1 天 | 点击后 ≤3s 恢复到对话前状态 |
+| **P0-2** | AI Code Review | 对本轮 diff 自动审查，输出结构化意见 | diff 能力 + `GitAssistantService` 一次性调用模式 | 2~3 天 | 典型问题 CRITICAL 检出率 ≥ 90% |
+| **P0-3** | 生成→验证→修复闭环 | 沙箱内编译/测试，结构化 `test_report`，失败自动修复 | 沙箱执行链路已通 + prompt 引导已有 | 3~5 天 | 测试结果 100% 结构化返回，失败自动修复 ≤3 轮 |
+| **P1-1** | Plan Mode 人工确认闭环 | 高风险操作先出计划、等确认再执行（HITL） | 框架 `PermissionMode`；starter 已有 Approval Store SPI 模式可参考 | 5~8 天 | 删除文件/批量修改前必须停下等确认 |
+| **P1-2** | 交互式运行面板 | 页面内直接对沙箱执行命令，输出流式回显 | 沙箱 execute 链路已通 | 3~5 天 | 常用命令（mvn test/java）免切终端 |
+| **P1-3** | Docker 沙箱补齐 | 容器↔宿主机产物同步 + `DockerSandboxIntegrationTest` | Docker 链路端到端已跑通 | 3~5 天 | Docker 模式下文件树/file_change/Git 助手可用 |
+| **P2-1** | 智能 Bug 修复 | 根据异常堆栈/日志定位并生成补丁 | workspace 文件检索 + 回滚保障 | 3~5 天 | 常见异常正确定位到源码行并给出合理修复 |
+| **P2-2** | 自动化重构助手 | 批量替换、API 迁移、依赖升级 | Plan Mode（P1-1）+ 回滚（P0-1） | 3~5 天 | 简单批量替换 100% 按预期完成 |
+| **P2-3** | 沙箱管理页面 | 会话沙箱状态查看、资源监控、手动清理 | `admin.sandbox.*` 配置体系 | 2~3 天 | 可查看并清理运行中的沙箱容器 |
+| **P3-1** | 多 Agent 协作编程 | 产品/架构/开发/测试/Review Agent 协同 | 需 starter 侧 SubAgent/Pipeline 编排能力先行 | 周级 | 简单需求走完全流程产出可编译代码 |
+| **P3-2** | 代码知识库问答 | 基于 RAG 的代码语义检索 | 需 starter 侧真实 Embedding RAG 先行（现为关键词版） | 周级 | Top-3 命中率 ≥ 70%，回答带出处 |
 
-#### 3.2.3 技术实现
-- 后端使用 **JGit** 或直接调用 `git` 命令读取 diff。
-- 接入 **Git MCP**（如果已有）或自定义 `GitTool`：
-  - `git_diff(workspace)`
-  - `git_status(workspace)`
-  - `git_commit(workspace, message)`
-  - `git_push(...)`
-- 将 diff 文本作为 user message 的一部分发送给 Agent，prompt 模板示例：
-  ```
-  请根据以下 git diff 生成一条符合 Conventional Commits 规范的 commit message，
-  要求：不超过 72 个字符的标题 + 详细描述。
-  diff:
-  {diff}
-  ```
-
-#### 3.2.4 验收标准
-- 对一次真实代码变更，生成的 commit message 人工无需修改即可直接使用的比例 ≥ 50%。
-- PR description 包含变更摘要、文件清单、影响范围三个部分。
+**P3 两项的前置依赖说明**：多 Agent 协作依赖 SubAgent/Pipeline 编排、知识库问答依赖真实 Embedding 向量检索，
+这两块是 `customer-work-spring-boot-starter` 的既定演进方向（见 `进度说明.txt` 缺口清单）。在 starter 能力
+就绪前，admin-server 侧不启动这两项，避免在业务模块里重复造框架轮子。
 
 ---
 
-### 3.3 Sandbox + Plan Mode（P1）
+## 4. 详细功能需求
 
-#### 3.3.1 目标
-让 Agent 的代码执行更安全，并在执行重大修改前给出可确认的计划。
+### 4.1 会话一键回滚（P0-1）
 
-#### 3.3.2 需求
-1. **Sandbox 配置开启**
-   - 默认使用 `local` 沙箱（限制在 workspace 目录内）。
-   - 生产环境可切换为 `docker` 沙箱，配置镜像、CPU/内存限制、网络策略。
-   - 沙箱内执行命令/代码时，禁止访问 `/etc`、`/root`、数据库连接等敏感资源。
-2. **Plan Mode 开启**
-   - 配置：`customer-work.harness.plan-mode.enabled=true`
-   - 当 Agent 计划执行以下高风险操作时，先输出计划并等待用户确认：
-     - 删除文件
-     - 批量修改多个文件（>3 个）
-     - 执行非只读命令（如 `mvn clean`、`rm -rf`）
-     - 修改依赖版本（pom.xml、package.json 等）
-   - 计划内容包含：操作类型、目标文件、预期效果、回滚方式。
-   - 前端在流中显示"计划确认卡片"，用户点击"确认"后 Agent 才继续执行。
-3. **回滚机制**
-   - 在执行高风险操作前，自动对目标文件做备份（拷贝到 `.ai-backup/{timestamp}/`）。
-   - 提供"撤销本次对话所有修改"按钮，恢复备份。
+#### 4.1.1 背景与依托
 
-#### 3.3.3 验收标准
-- 在 Plan Mode 下，Agent 删除文件前必须停下来等待用户确认。
-- 误操作后可一键撤销，文件恢复到对话前状态。
+`GitWorkspaceService` 已在每次 `stream()` 写入前对会话 workspace 建立 git baseline（空提交），
+"撤销本次会话全部修改"本质上就是 `git checkout baseline -- . && git clean -fd`，地基已完全就位。
+这是所有 AI 改代码场景的信任底座：**有回滚，才敢放手让 Agent 改**。
+
+#### 4.1.2 需求
+
+1. **会话级回滚（本期范围）**
+   - 接口：`POST /api/workspace/{agentCode}/vibecoding/rollback`，请求体 `{ "sessionId": "..." }`。
+   - 行为：将会话 workspace 恢复到 baseline 状态（已跟踪文件 checkout，新增未跟踪文件清理），
+     `.git` 目录本身保留。
+   - 返回：`{ "restoredFiles": [...], "deletedFiles": [...] }`，前端刷新文件树与"本轮变更"时间线。
+2. **前端交互**
+   - VibeCoding 面板"本轮变更"时间线顶部新增"撤销全部修改"按钮，二次确认后调用。
+   - 回滚成功后时间线清空、文件树刷新，并在对话流中插入一条系统提示。
+3. **轮次级回滚（增强项，可延后）**
+   - 每轮对话结束后自动 `git commit` 一次（message 带轮次号），支持"回滚到第 N 轮之后"。
+   - 本期只做会话级，轮次级待实际使用中确有需求再排。
+
+#### 4.1.3 约束
+
+- 复用 `GitWorkspaceService` 的 `ProcessBuilder` 调 git 方式与错误码体系（`GIT_COMMAND_FAILED`）。
+- 回滚是破坏性操作，接口幂等（重复调用恢复到同一 baseline），日志记录操作人、sessionId、恢复文件数。
+- Docker 模式下产物在容器内，本接口暂只支持 local 模式，Docker 支持随 P1-3 落地。
+
+#### 4.1.4 验收标准
+
+- Agent 修改/新增/删除多个文件后，点击撤销，≤3s 全部恢复到对话前状态，文件树与磁盘一致。
+- 回滚后再次对话可正常建立新变更（baseline 不被破坏）。
 
 ---
 
-### 3.4 AI Code Review（P1）
+### 4.2 AI Code Review（P0-2）
 
-#### 3.4.1 目标
-利用子智能体对代码 diff 进行自动化审查，输出结构化、可行动的 Review 意见。
+#### 4.2.1 背景与依托
 
-#### 3.4.2 需求
+`GitWorkspaceService.diffAgainstBaseline()` 已能拿到本轮完整 diff；`GitAssistantService` 已验证
+"一次性模型调用（不经 ReAct 工具循环）+ 独立线程池 + 超时兜底"的模式。Review 就是同一模式的第四个应用：
+输入 diff，输出结构化审查意见。
+
+#### 4.2.2 需求
+
 1. **入口**
-   - 工作区对话命令：`/review` 或 VibeCoding 面板"Review 本次变更"按钮。
-   - 接口：`POST /api/workspace/{agentCode}/vibecoding/review`
-2. **审查范围**
-   - 以当前 workspace 的 git diff 为输入。
-   - 可加载团队代码规范文档（通过 RAG 注入）。
-3. **Reviewer Agent（Subagent）**
-   - 角色：资深 Java 工程师 / 代码规范守门员。
-   - 系统提示词包含团队规范（如：禁止 SQL 注入、NPE 防护、异常处理、命名规范、单元测试要求等）。
-   - 输出结构化 JSON：
-     ```json
-     {
-       "issues": [
-         {
-           "severity": "CRITICAL|WARNING|SUGGESTION",
-           "file": "src/main/java/...",
-           "line": 42,
-           "category": "SECURITY|PERFORMANCE|READABILITY|BUG|STYLE",
-           "message": "...",
-           "suggestion": "..."
-         }
-       ],
-       "summary": "..."
-     }
-     ```
+   - 接口：`POST /api/workspace/{agentCode}/vibecoding/review`，请求体 `{ "sessionId": "..." }`。
+   - 前端：Git 助手抽屉内新增"Review 本次变更"标签页（与 diff 摘要/commit message/PR description 并列）。
+2. **审查范围与规则**
+   - 输入为本轮 diff（相对 baseline），diff 为空时返回 `NO_FILE_CHANGES` 错误码（复用现有）。
+   - 系统提示词内置团队规范：NPE 防护、SQL 注入、硬编码密钥、异常处理、命名规范、日志规范
+     （info/error、英文文案、错误码占位符）等。
+   - 规范后续可通过 RAG 注入团队文档（依赖 P3-2，本期先内置在 prompt）。
+3. **输出结构化 JSON**
+   ```json
+   {
+     "issues": [
+       {
+         "severity": "CRITICAL|WARNING|SUGGESTION",
+         "file": "src/main/java/...",
+         "line": 42,
+         "category": "SECURITY|PERFORMANCE|READABILITY|BUG|STYLE",
+         "message": "...",
+         "suggestion": "..."
+       }
+     ],
+     "summary": "..."
+   }
+   ```
 4. **前端展示**
-   - 以列表形式展示 Review 意见，按严重级别分组。
-   - 点击意见可定位到代码文件对应行（若信息足够）。
-   - 提供"一键生成修复"按钮，让 Agent 针对 CRITICAL/WARNING 项自动生成补丁。
+   - 按严重级别分组列表展示；点击 file 定位到工作区文件查看器（文件读取接口已有）。
+   - "一键生成修复"按钮：把选中的 CRITICAL/WARNING 意见拼成用户消息发回 `stream` 对话，
+     由 Agent 修复（修复本身走既有 VibeCoding 链路，天然带 file_change 与回滚保障）。
 
-#### 3.4.3 验收标准
-- 对包含 NPE、SQL 注入、硬编码密码等典型问题的代码 diff，CRITICAL 问题检出率 ≥ 90%。
-- Review 输出符合上述 JSON Schema，前端可正常解析展示。
+#### 4.2.3 约束
 
----
+- 模型输出 JSON 解析失败时降级：原文以 `summary` 返回、`issues` 为空，错误码 `GIT_ASSISTANT_AI_FAILED`（复用），
+  不让前端拿到裸异常。
+- 超大 diff（如 > 100KB）截断处理并在 summary 中声明"仅审查前 N 个文件"。
 
-### 3.5 智能 Bug 修复 / 日志诊断（P2）
+#### 4.2.4 验收标准
 
-#### 3.5.1 目标
-让 Agent 能根据异常堆栈、应用日志自动定位问题并生成修复补丁。
-
-#### 3.5.2 需求
-1. **输入方式**
-   - 用户粘贴异常堆栈到对话窗口。
-   - 用户选择时间范围，后端从日志文件/日志平台拉取相关日志。
-2. **诊断流程**
-   - Agent 解析堆栈，定位异常发生的类和方法。
-   - 在 workspace 中查找相关源码。
-   - 结合 RAG 中的历史修复记录/知识库，分析根因。
-   - 生成修复建议或补丁（patch 格式）。
-3. **输出**
-   - 根因分析说明。
-   - 修复后的代码片段或 patch 文件。
-   - （可选）自动生成单元测试覆盖该异常场景。
-4. **人工确认**
-   - 修复补丁需经用户确认后应用，应用前自动备份原文件。
-
-#### 3.5.3 验收标准
-- 对常见 NullPointerException、IndexOutOfBoundsException、SQL 语法错误等，能正确定位到源码行并给出合理修复。
+- 对包含 NPE、SQL 注入、硬编码密码等典型问题的 diff，CRITICAL 检出率 ≥ 90%。
+- Review 输出符合上述 Schema，前端可正常解析展示；"一键生成修复"能触发新一轮对话完成修复。
 
 ---
 
-### 3.6 代码生成 + 单元测试生成（P2）
+### 4.3 生成→沙箱验证→修复闭环（P0-3）
 
-#### 3.6.1 目标
-根据自然语言需求生成可运行的代码，并同步生成单元测试。
+#### 4.3.1 背景与依托
 
-#### 3.6.2 需求
-1. **需求→代码**
-   - 用户在 VibeCoding 面板输入需求文本，或者上传md文档、或者txt文件，如"实现一个基于 JWT 的登录接口"。
-   - Agent 自动分析需求，规划文件结构，生成代码，未明确的需求需要在页面提示人工确认后，明确需求后继续生成代码。
-   - 代码生成的文件采用 sessions/{sessionId}/ 方式存储，便于后续查询和管理。
-2. **同步生成单测**
-   - Agent 生成主代码后，自动识别需要测试的类/方法，保证编译通过。
-   - 生成 JUnit 5 / Mockito 测试用例，覆盖正常路径和异常路径。
-3. **运行反馈**
-   - 在 Sandbox 中执行 `mvn test`。
-   - 将测试结果（通过/失败、失败原因）流式返回给用户。
-   - 若测试失败，Agent 自动尝试修复（最多 3 轮）。
-4. **输出格式**
-   - `file_change` 事件实时展示生成的文件。
-   - 测试报告以 `test_report` 事件返回。
+沙箱执行链路已端到端跑通（实测 `write_file` → `javac Hello.java && java Hello` → `Exit code: 0`），
+且 prompt 已引导 Agent"生成代码后在沙箱内 javac/mvn test 验证"。当前缺口：**验证结果混在文本流里，
+前端无法结构化呈现，失败后是否修复完全靠 Agent 自觉**。本项是沙箱价值的最终变现，收口后
+"需求→代码→单测→验证→修复"全程免人工介入。
 
-#### 3.6.3 验收标准
-- 对简单 CRUD 接口，生成代码可编译通过。
-- 生成的单测全部覆盖主流程，运行成功率 ≥ 80%。
+#### 4.3.2 需求
+
+1. **结构化 `test_report` 事件**
+   - `VibeCodingService.stream()` 在检测到沙箱内执行编译/测试命令的 `TOOL_RESULT` 时
+     （识别 `javac`/`mvn test`/`mvn compile` 等命令特征 + Exit code），解析结果并以独立 SSE 事件推送：
+     ```
+     event: test_report
+     data: {"command":"mvn test","exitCode":0,"passed":12,"failed":0,"durationMs":8500,"failureDetails":[]}
+     ```
+   - 解析失败时降级为原始输出透传（`rawOutput` 字段），不阻断主流程。
+2. **失败自动修复循环**
+   - prompt 升级：明确要求"测试失败时分析失败原因并修复，最多重试 3 轮；3 轮后仍失败则停止并总结失败原因"。
+   - 每轮修复产生的文件变更照常走 `file_change` 事件。
+3. **单测生成约定**
+   - Agent 生成主代码后自动生成 JUnit 5 / Mockito 测试用例，覆盖正常路径与异常路径（prompt 约定，沿用现有引导）。
+   - 需求不明确时 Agent 在对话中先反问澄清（现有对话能力天然支持，不新增交互组件）。
+4. **前端渲染**
+   - 对话流中以"测试报告卡片"渲染 `test_report`：通过绿/失败红、展开可见失败明细。
+   - 多轮修复时按时间线依次展示各轮报告。
+
+#### 4.3.3 约束
+
+- 沙箱执行超时沿用 `admin.sandbox.execute-timeout-seconds`（默认 60s），`mvn test` 场景实测偏慢时
+  允许按 agent 粒度调大，但不全局放开。
+- Docker 模式（network=none）下 `mvn test` 需依赖预热镜像内的本地仓库缓存，首版验收只要求 local 模式，
+  Docker 模式随 P1-3 一并验证。
+
+#### 4.3.4 验收标准
+
+- 对简单 CRUD 需求，生成代码可编译通过，单测覆盖主流程，运行成功率 ≥ 80%。
+- 测试结果 100% 以 `test_report` 事件结构化返回；注入一个必然失败的用例，Agent 在 ≤3 轮内修复或明确报告失败原因。
 
 ---
 
-### 3.7 自动化重构助手（P2）
+### 4.4 Plan Mode 人工确认闭环（P1-1）
 
-#### 3.7.1 目标
-支持大规模、可审计、可回滚的代码重构任务。
+#### 4.4.1 背景与依托
 
-#### 3.7.2 需求
-1. **重构任务类型**
-   - 批量替换：如统一异常类、统一返回结果封装。
-   - API 迁移：如替换废弃的 API、升级 SDK。
-   - 依赖升级：如 Spring Boot 版本升级、依赖漏洞修复。
-   - 代码风格统一：如统一日志框架、统一常量命名。
-2. **执行流程**
+现状：`PermissionMode` 为 BYPASS，危险命令靠 `SandboxGuardMiddleware` 正则拦截兜底（简单可靠但一刀切，
+被拦截的命令 Agent 无法申请人工放行）。本项将其升级为框架级 HITL：高风险操作先出计划、等用户确认再执行。
+starter 侧已有 Approval Store SPI 模式（接口 + InMemory 默认 + Jdbc 实现）可参考，但 admin-server
+排除了 starter 自动装配，需在自己的 `@Configuration` 里显式装配。
+
+#### 4.4.2 需求
+
+1. **确认闭环（核心难点）**
+   - `ChatService`/`VibeCodingService` 实现"流中暂停等确认"：Agent 计划执行高风险操作时，
+     emit `plan` 事件后挂起等待，用户确认后恢复执行，拒绝则取消该操作并让 Agent 调整方案。
+   - 接口：`POST /api/workspace/{agentCode}/vibecoding/plan/confirm`，请求体
+     `{ "sessionId": "...", "planId": "...", "approved": true|false }`。
+   - 确认等待需有超时（默认 5 分钟），超时视为拒绝，流正常结束而非挂死。
+2. **高风险操作清单**
+   - 删除文件；单轮批量修改 > 3 个文件；执行非只读命令（`mvn clean`、`rm` 等）；修改依赖版本（pom.xml 等）。
+3. **`plan` SSE 事件**
+   ```
+   event: plan
+   data: {"planId":"...","actions":[{"type":"DELETE","target":"src/..."}],"reason":"...","requiresConfirmation":true}
+   ```
+4. **前端**：对话流中渲染"计划确认卡片"（操作类型、目标文件、预期效果），确认/拒绝按钮。
+5. **与现有拦截的关系**：`SandboxGuardMiddleware` 保留为最后防线（确认闭环故障时仍有兜底），
+   两者叠加而非替换。
+
+#### 4.4.3 技术风险提示
+
+- SSE 长连接挂起等确认涉及连接保活（心跳事件）与服务重启后的恢复策略，需在方案设计时明确
+  "挂起态不持久化、重启即取消"的简化边界，避免过度设计。
+- 沿用 `Flux.defer` 模式处理 `HarnessAgent.stream()` 的同步异常（见第 2 章约束 2）。
+
+#### 4.4.4 验收标准
+
+- Plan Mode 开启后，Agent 删除文件前必须停下等确认；拒绝后文件未被删除且对话正常继续。
+- 确认超时后流正常结束，不出现前端永久"生成中"。
+
+---
+
+### 4.5 交互式运行面板（P1-2）
+
+#### 4.5.1 目标
+
+让开发者在 VibeCoding 页面内直接对会话沙箱执行命令（编译、跑测试、运行程序），输出流式回显，
+免去"页面看代码、切终端跑命令"的割裂。
+
+#### 4.5.2 需求
+
+1. **命令执行接口**
+   - `POST /api/workspace/{agentCode}/vibecoding/execute`（SSE），请求体 `{ "sessionId": "...", "command": "mvn test" }`。
+   - 命令在会话对应的沙箱内执行（local/docker 跟随 `admin.sandbox.mode`），复用现有执行链路与超时配置。
+   - **必须过 `SandboxGuardMiddleware` 同一套危险命令校验**（用户手输的命令风险不低于 Agent 生成的）。
+2. **前端"运行"面板**
+   - VibeCoding 面板新增"运行"标签：命令输入框 + 常用命令快捷按钮（`javac`、`mvn compile`、`mvn test`）+
+     终端风格输出区（等宽字体、保留 ANSI 颜色可后置）。
+   - 执行历史保留本会话最近 20 条。
+3. **输出事件**：复用/对齐 `test_report` 的解析逻辑——命令属于编译/测试类时同步产出结构化报告。
+
+#### 4.5.3 验收标准
+
+- 页面输入 `mvn test` 可看到流式输出与最终 Exit code；危险命令被拦截并提示。
+
+---
+
+### 4.6 Docker 沙箱补齐（P1-3）
+
+#### 4.6.1 背景
+
+Docker 模式对话+执行链路已跑通，但产物文件在容器内，宿主机侧文件树 / file_change / Git 助手 / 回滚全部失效
+（隔离的固有特性，非 bug）。生产环境要用 Docker 模式，这条腿必须补齐。
+
+#### 4.6.2 需求
+
+1. **容器↔宿主机产物同步**
+   - 方案 A（优先评估）：容器启动时将会话 workspace 目录以 bind mount 挂载，产物直接落宿主机——
+     若框架 `DockerFilesystemSpec` 支持挂载配置则成本最低。
+   - 方案 B（兜底）：每轮 `TOOL_RESULT` 后通过 `docker cp` / tar 流增量同步容器内 workspace 到宿主机。
+   - 同步落地后，file_change / Git 助手 / 回滚（P0-1）/ Review（P0-2）在 Docker 模式下自动可用，无需改造。
+2. **`DockerSandboxIntegrationTest`（遗留待办）**
+   - 门控式集成测试（本机无 Docker 时自动跳过，对齐现有 MySQL/Redis/Nacos 门控测试约定）。
+   - 覆盖：容器内写文件→执行→读回、sessionId 转义（`SandboxSafeAgentStateStore`）、危险命令拦截、
+     沙箱资源获取失败时 SSE 正常报错不挂起（回归第 2 章约束 2 的坑）。
+3. **资源回收**：会话结束/超时后容器清理策略（对接 P2-3 沙箱管理页面的数据基础）。
+
+#### 4.6.3 验收标准
+
+- Docker 模式下：Agent 写文件后宿主机文件树可见、file_change 正常推送、Git 助手可生成 diff 摘要。
+- 集成测试在有 Docker 的环境全绿，无 Docker 环境自动跳过。
+
+---
+
+### 4.7 智能 Bug 修复 / 日志诊断（P2-1）
+
+#### 4.7.1 目标
+
+Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁。
+
+#### 4.7.2 需求
+
+1. **输入方式**：用户粘贴异常堆栈到对话窗口（首版）；后续可对接日志平台按时间范围拉取。
+2. **诊断流程**：解析堆栈定位类和方法 → workspace 中检索相关源码 → 分析根因 → 生成修复。
+3. **输出**：根因分析说明 + 修复代码（走既有 VibeCoding 文件写入，天然带 file_change / 回滚 / Review 保障）
+   +（可选）覆盖该异常场景的单元测试（联动 P0-3 验证闭环）。
+4. **入口**：对话命令 `/diagnose` 或独立接口 `POST /api/workspace/{agentCode}/vibecoding/diagnose`。
+
+#### 4.7.3 验收标准
+
+- 对常见 NullPointerException、IndexOutOfBoundsException、SQL 语法错误，能正确定位到源码行并给出合理修复；
+  修复后走 P0-3 闭环验证通过。
+
+---
+
+### 4.8 自动化重构助手（P2-2）
+
+#### 4.8.1 目标
+
+支持大规模、可审计、可回滚的代码重构任务。**强依赖 P1-1（Plan Mode）与 P0-1（回滚）先行**——
+没有确认与回滚保障的批量改动不允许上线。
+
+#### 4.8.2 需求
+
+1. **重构任务类型**：批量替换（统一异常类/返回封装）、API 迁移（替换废弃 API/升级 SDK）、
+   依赖升级（版本升级/漏洞修复）、代码风格统一（统一日志框架/常量命名）。
+2. **执行流程**：
    - Step 1：Plan Mode 输出重构计划（影响文件数、变更点、风险）。
-   - Step 2：用户确认后执行。
-   - Step 3：每完成一个文件 emit `file_change` 事件。
-   - Step 4：执行完成后运行编译/测试，反馈结果。
-3. **回滚与审计**
-   - 自动备份所有被修改文件。
-   - 记录重构日志（操作人、时间、变更文件、结果）。
+   - Step 2：用户确认后执行，每完成一个文件 emit `file_change`。
+   - Step 3：执行完成后走 P0-3 闭环编译/测试，反馈 `test_report`。
+3. **审计**：记录重构日志（操作人、时间、变更文件、结果）；回滚复用 P0-1。
 
-#### 3.7.3 验收标准
-- 对简单的批量替换任务（如替换某个工具类调用），100% 按预期完成。
-- 升级依赖后项目可编译通过。
+#### 4.8.3 验收标准
+
+- 简单批量替换任务 100% 按预期完成；升级依赖后项目在沙箱内编译通过。
 
 ---
 
-### 3.8 多 Agent 协作编程（P3）
+### 4.9 沙箱管理页面（P2-3）
 
-#### 3.8.1 目标
-模拟完整软件研发流程，让多个专家 Agent 协同完成需求。
+#### 4.9.1 目标
 
-#### 3.8.2 角色设计
+为运维/开发提供沙箱运行态的可见性与管理能力（Docker 模式为主）。
+
+#### 4.9.2 需求
+
+1. 会话沙箱列表：sessionId、模式、容器 ID、状态、创建时间、资源占用。
+2. 手动清理：停止并删除指定会话的沙箱容器（联动 P1-3 的资源回收策略）。
+3. 配置可视化：当前 `admin.sandbox.*` 生效配置只读展示（含 env 覆盖后的实际值）。
+
+#### 4.9.3 验收标准
+
+- 可查看运行中的沙箱并手动清理；清理后再次对话能正常重建沙箱。
+
+---
+
+### 4.10 多 Agent 协作编程（P3-1）
+
+> **前置依赖**：starter 侧 SubAgent / Pipeline 编排能力（`SubAgentProvider`、`SequentialPipeline` 等）
+> 在 admin-server 场景的显式装配验证。starter 能力就绪前本项不启动。
+
+#### 4.10.1 角色设计
+
 | 角色 | 职责 | 输出 |
 |---|---|---|
 | 产品经理 Agent | 理解用户需求，输出 PRD / 用户故事 | PRD 文档 |
 | 架构师 Agent | 设计接口、数据模型、模块划分 | 设计文档 / 接口契约 |
 | 开发 Agent | 根据设计写代码 | 代码文件 |
 | 测试 Agent | 写单测、集成测试 | 测试用例 |
-| Reviewer Agent | Code Review | Review 意见 |
+| Reviewer Agent | Code Review | Review 意见（复用 P0-2 结构） |
 
-#### 3.8.3 执行流程
-1. 用户输入原始需求。
-2. `MultiAgentOrchestrator` 按顺序调度各 Agent：
-   - 产品经理 → 架构师 → 开发 → 测试 → Reviewer。
-   - 每个 Agent 的输出作为下一个 Agent 的输入。
-3. 最终输出：PRD、设计文档、代码、测试、Review 意见汇总。
-4. 用户可中途介入，修改某一步的输出后继续。
+#### 4.10.2 执行流程
 
-#### 3.8.4 验收标准
-- 对简单需求（如"新增一个用户管理 CRUD 接口"），能走完完整流程并产出可编译代码。
+1. 用户输入原始需求，编排器按"产品经理 → 架构师 → 开发 → 测试 → Reviewer"顺序调度，
+   每个 Agent 的输出作为下一个的输入。
+2. 最终输出：PRD、设计文档、代码、测试、Review 意见汇总；代码/测试环节复用 P0-3 闭环验证。
+3. 用户可中途介入，修改某一步的输出后继续（依赖 P1-1 的暂停/恢复交互基础）。
 
----
+#### 4.10.3 验收标准
 
-### 3.9 代码知识库问答（P3）
-
-#### 3.9.1 目标
-让开发者通过自然语言查询私有代码库，快速定位业务逻辑和调用关系。
-
-#### 3.9.2 需求
-1. **代码库向量化**
-   - 扫描 workspace 或指定仓库的源码文件。
-   - 按类、方法、注释切块，使用 Embedding 模型生成向量。
-   - 存入向量数据库（RAG  Provider 已支持 bailian/dify/simple 等）。
-2. **问答能力**
-   - 接口： natural language → 相关代码片段 → 自然语言回答。
-   - 示例问题：
-     - "这段业务逻辑在哪实现的？"
-     - "这个接口有哪些调用方？"
-     - "UserService 的登录逻辑是怎么做的？"
-3. **与对话集成**
-   - 在 VibeCoding/Chat 面板中，用户可 @知识库 提问。
-   - Agent 在生成代码前可自动检索相关知识库做参考。
-
-#### 3.9.3 验收标准
-- 对常见接口定位问题，Top-3 检索命中率 ≥ 70%。
-- 回答中需标注引用来源（文件路径 + 行号范围）。
+- 对简单需求（如"新增一个用户管理 CRUD 接口"），走完完整流程并产出沙箱内可编译代码。
 
 ---
 
-## 4. 非功能需求
+### 4.11 代码知识库问答（P3-2）
 
-### 4.1 性能
+> **前置依赖**：starter 侧真实 Embedding RAG（`SimpleKnowledge` + `core.embedding` 向量语义检索）——
+> 当前项目 RAG 为自实现关键词版，语义检索命中率无法达标。starter 能力就绪前本项不启动。
+
+#### 4.11.1 需求
+
+1. **代码库向量化**：扫描 workspace 或指定仓库源码，按类/方法/注释切块，Embedding 后入向量库，
+   按用户/租户隔离，支持增量更新。
+2. **问答能力**：自然语言 → 相关代码片段 → 自然语言回答，回答标注引用来源（文件路径 + 行号范围）。
+   示例："这段业务逻辑在哪实现的？""这个接口有哪些调用方？"
+3. **与对话集成**：VibeCoding/Chat 面板 @知识库 提问；Agent 生成代码前自动检索知识库做参考；
+   Review（P0-2）的团队规范注入切换为 RAG 来源。
+
+#### 4.11.2 验收标准
+
+- 常见接口定位问题 Top-3 检索命中率 ≥ 70%；回答带出处。
+
+---
+
+## 5. 非功能需求
+
+### 5.1 性能
 - SSE 流首包响应时间 ≤ 2s（模型首 token 到达时间除外）。
-- file_change 事件从文件变更到前端展示 ≤ 1s。
-- 代码库向量化处理 1000 个文件 ≤ 10 分钟。
+- file_change 事件从文件变更到前端展示 ≤ 1s（✅ 已达成）。
+- 会话回滚 ≤ 3s；Review 单次 ≤ 30s（超时兜底沿用 `GitAssistantService` 模式）。
 
-### 4.2 安全
-- 所有代码执行必须在 Sandbox 内进行，禁止访问宿主机敏感路径。
-- Agent 调用 Git 写操作（commit/push）前必须人工确认。
-- 对代码库向量化的数据做访问控制，按用户/租户隔离。
+### 5.2 安全
+- 所有代码/命令执行必须经沙箱（local 受 workspace 路径约束，docker 受容器隔离 + network=none）。
+- `SandboxGuardMiddleware` 危险命令拦截默认开启，对 Agent 生成命令与用户手输命令（P1-2）一视同仁。
+- Agent 侧不做真正的 git commit/push；未来若放开，写操作必须人工确认 + 审计日志。
+- 回滚、计划确认等破坏性/敏感接口记录审计日志（操作人、时间、目标、结果）。
 
-### 4.3 可观测性
+### 5.3 可观测性
 - 所有 AI 编码操作记录审计日志（操作人、时间、变更文件、模型调用 token 数）。
-- 关键路径（代码生成、Review、重构）输出结构化日志，便于排查。
+- 关键路径（Review、验证闭环、回滚、重构）输出结构化日志；日志遵循项目规范
+  （info/error、英文文案、错误码占位符）。
 
-### 4.4 可回滚
-- 每次高风险操作前自动备份。
-- 提供"撤销本次对话所有修改"能力。
+### 5.4 可回滚
+- P0-1 落地后，"撤销本次会话所有修改"成为所有写操作类功能的统一兜底，不再各功能自建备份目录
+  （v1.0 的 `.ai-backup/{timestamp}/` 方案废弃，统一走 git baseline）。
 
-### 4.5 兼容性
-- 不影响现有 Chat / VibeCoding 核心流程。
-- 新功能通过配置开关控制，默认关闭，避免对未启用用户产生副作用。
-
----
-
-## 5. 接口设计（新增/调整）
-
-### 5.1 后端接口
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/workspace/{agentCode}/vibecoding/stream` | 已有，扩展 `file_change` 事件 |
-| GET | `/api/workspace/{agentCode}/vibecoding/git-diff` | 获取当前 workspace git diff |
-| POST | `/api/workspace/{agentCode}/vibecoding/commit-message` | 生成 commit message |
-| POST | `/api/workspace/{agentCode}/vibecoding/pr-description` | 生成 PR description |
-| POST | `/api/workspace/{agentCode}/vibecoding/review` | 对当前 diff 做 Code Review |
-| POST | `/api/workspace/{agentCode}/vibecoding/diagnose` | 根据堆栈/日志诊断 Bug |
-| POST | `/api/workspace/{agentCode}/vibecoding/generate-tests` | 为指定类生成单元测试 |
-| POST | `/api/workspace/{agentCode}/vibecoding/refactor` | 执行自动化重构任务 |
-| POST | `/api/workspace/{agentCode}/vibecoding/rollback` | 撤销本次对话所有修改 |
-| POST | `/api/workspace/{agentCode}/knowledge/ingest` | 代码库向量化入库 |
-| POST | `/api/workspace/{agentCode}/knowledge/query` | 代码知识库问答 |
-
-### 5.2 SSE 事件类型
-
-| event | data 示例 | 说明 |
-|---|---|---|
-| `reasoning` | `{text}` | 思考过程 |
-| `message` | `{text}` | 可见回答正文 |
-| `file_change` | `{operation, path, description}` | 文件变更事件 |
-| `test_report` | `{passed, failed, details}` | 测试报告 |
-| `plan` | `{actions, requiresConfirmation}` | Plan Mode 计划确认 |
-| `review_result` | `{issues, summary}` | Review 结果 |
-| `done` | `[DONE]` | 流结束 |
+### 5.5 兼容性
+- 不影响现有 Chat / VibeCoding 核心流程；新功能通过配置开关控制，默认关闭（沙箱 guard 除外，默认开启）。
+- 新增 SSE 事件类型对旧前端向后兼容（未知事件忽略不报错）。
 
 ---
 
-## 6. 数据模型
+## 6. 接口设计
 
-### 6.1 ChatStreamChunk（扩展）
+### 6.1 后端接口
+
+| 方法 | 路径（前缀 `/api/workspace/{agentCode}/vibecoding`） | 说明 | 状态 |
+|---|---|---|---|
+| POST | `/stream` | 流式对话（含 file_change 事件） | ✅ 已实现 |
+| GET | `/sandbox-mode` | 查询当前沙箱模式 | ✅ 已实现 |
+| GET | `/artifacts` | 会话产物清单 | ✅ 已实现 |
+| GET | `/files` | 会话文件树 | ✅ 已实现 |
+| GET | `/file-content` | 读文件内容 | ✅ 已实现 |
+| PUT | `/file-content` | 写文件内容 | ✅ 已实现 |
+| GET | `/git-diff` | 本轮 diff 摘要 | ✅ 已实现 |
+| POST | `/commit-message` | 生成 commit message | ✅ 已实现 |
+| POST | `/pr-description` | 生成 PR description | ✅ 已实现 |
+| POST | `/rollback` | 撤销本次会话全部修改 | 🎯 P0-1 |
+| POST | `/review` | 对本轮 diff 做 Code Review | 🎯 P0-2 |
+| POST | `/plan/confirm` | Plan Mode 计划确认/拒绝 | 🎯 P1-1 |
+| POST | `/execute` | 交互式沙箱命令执行（SSE） | 🎯 P1-2 |
+| POST | `/diagnose` | 根据堆栈/日志诊断 Bug | 🎯 P2-1 |
+| POST | `/refactor` | 执行自动化重构任务 | 🎯 P2-2 |
+| GET/DELETE | `/sandbox/**`（管理侧另定前缀） | 沙箱列表/清理 | 🎯 P2-3 |
+| POST | `/knowledge/ingest`、`/knowledge/query` | 代码库向量化/问答 | 🎯 P3-2 |
+
+### 6.2 SSE 事件类型
+
+| event | data 示例 | 说明 | 状态 |
+|---|---|---|---|
+| `message` | `{text}` | 可见回答正文 | ✅ 已实现 |
+| `node:*`（reasoning/tool_* 等） | `{text}` | 思考过程/工具执行节点（`ChatNodeKind` 派生） | ✅ 已实现 |
+| `file_change` | `{"operation":"MODIFY","path":"...","description":"..."}` | 文件变更事件（CREATE/MODIFY/DELETE） | ✅ 已实现 |
+| `done` | `[DONE]` | 流结束 | ✅ 已实现 |
+| `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,...}` | 沙箱编译/测试结构化报告 | 🎯 P0-3 |
+| `plan` | `{"planId":"...","actions":[...],"requiresConfirmation":true}` | Plan Mode 计划确认 | 🎯 P1-1 |
+| `review_result` | `{issues, summary}` | Review 结果（若走 SSE 增量返回；同步接口则不需要） | 🎯 P0-2 可选 |
+
+---
+
+## 7. 数据模型
+
+### 7.1 FileChangeEvent（✅ 已实现，以实际代码为准）
 ```java
-public record ChatStreamChunk(
-    boolean reasoning,    // 是否思考过程
-    String text,          // 文本内容
-    FileChange fileChange // 新增：文件变更信息
-) {}
-
-public record FileChange(
-    String operation,
-    String path,
-    String oldPath,
-    String description
-) {}
+// file_change SSE 事件的 data 载荷；无 RENAME/oldPath
+public record FileChangeEvent(String operation, String path, String description) {
+    // operation: CREATE | MODIFY | DELETE
+}
 ```
 
-### 6.2 ReviewIssue
+### 7.2 ReviewIssue（🎯 P0-2）
 ```java
 public record ReviewIssue(
     String severity,    // CRITICAL|WARNING|SUGGESTION
@@ -410,7 +521,20 @@ public record ReviewIssue(
 ) {}
 ```
 
-### 6.3 RefactorTask
+### 7.3 TestReport（🎯 P0-3）
+```java
+public record TestReport(
+    String command,          // 触发的命令，如 mvn test
+    int exitCode,
+    Integer passed,          // 解析不出时为 null，rawOutput 兜底
+    Integer failed,
+    Long durationMs,
+    List<String> failureDetails,
+    String rawOutput         // 解析失败时的原始输出兜底
+) {}
+```
+
+### 7.4 RefactorTask（🎯 P2-2）
 ```java
 public record RefactorTask(
     String taskType,     // REPLACE|API_MIGRATION|DEPENDENCY_UPGRADE|STYLE
@@ -422,66 +546,85 @@ public record RefactorTask(
 
 ---
 
-## 7. 实施路线图
+## 8. 实施路线图
 
-### 阶段一：基础体验增强（2 周）
-- 实现实时 `file_change` 事件（方式 B 兜底）。
-- Git diff 摘要、commit message、PR description 生成。
-- 前端 VibeCoding 面板新增"Git 助手"抽屉。
+### 阶段一：P0 收口——信任与闭环（1~1.5 周）
+- 会话一键回滚（P0-1）：半天出接口，联调前端按钮。
+- AI Code Review（P0-2）：复用 GitAssistantService 模式 + 前端 Review 标签页。
+- 生成→验证→修复闭环（P0-3）：`test_report` 事件 + prompt 升级 + 测试报告卡片。
+- **出口标准**：日常 VibeCoding 使用中，"改错可撤销、质量有 Review、对错自动验"三件事全部页面内完成。
 
-### 阶段二：安全与审查（2 周）
-- 开启 Sandbox + Plan Mode。
-- 实现自动备份与撤销能力。
-- 搭建 Reviewer Subagent，实现 AI Code Review。
+### 阶段二：P1 升级——HITL 与生产化（2~3 周）
+- Plan Mode 人工确认闭环（P1-1）：先做方案设计评审（SSE 挂起边界），再实现。
+- 交互式运行面板（P1-2）。
+- Docker 沙箱补齐（P1-3）：优先验证 bind mount 方案；补 `DockerSandboxIntegrationTest`（遗留待办）。
 
-### 阶段三：智能诊断与生成（3 周）
-- 智能 Bug 修复 / 日志诊断。
-- 代码生成 + 单元测试生成 + 测试运行反馈。
-- 自动化重构助手。
+### 阶段三：P2 扩展——诊断与批量操作（2~3 周）
+- 智能 Bug 修复/日志诊断（P2-1）。
+- 自动化重构助手（P2-2，依赖阶段二的 Plan Mode）。
+- 沙箱管理页面（P2-3）。
 
-### 阶段四：高级协作（4 周）
-- 多 Agent 协作编程。
-- 代码知识库问答（向量化 + 检索）。
-- 效果评估与迭代优化。
+### 阶段四：P3 远期——协作与知识库（依赖 starter 演进，不设时限）
+- starter 侧先行：SubAgent/Pipeline 编排验证、真实 Embedding RAG。
+- 多 Agent 协作编程（P3-1）、代码知识库问答（P3-2）。
 
 ---
 
-## 8. 风险与应对
+## 9. 风险与应对
 
 | 风险 | 影响 | 应对措施 |
 |---|---|---|
-| Agent 生成代码质量不稳定 | 高 | 引入 Plan Mode、Review Agent、单测运行反馈三重校验 |
-| 自动化重构误改大量文件 | 高 | 强制 Plan Mode 确认、自动备份、分批执行 |
-| Sandbox 性能开销大 | 中 | 默认 local 沙箱，Docker 沙箱按环境开启 |
-| 代码库向量化成本高 | 中 | 增量更新、按租户/项目隔离、缓存 Embedding |
-| Git 写操作安全风险 | 高 | 所有写操作必须人工确认，记录审计日志 |
+| Agent 生成代码质量不稳定 | 高 | P0 三件套（回滚 + Review + 验证闭环）构成三重校验，均为本版最高优先级 |
+| SSE 挂起等确认导致连接泄漏/前端假死 | 高 | P1-1 明确"挂起不持久化、超时即拒绝、重启即取消"边界；沿用 `Flux.defer` 兜底同步异常（一期实测坑） |
+| Docker 模式产物不可见导致功能"看似失效" | 中 | 第 2 章已声明为架构约束；P1-3 同步机制落地前，依赖宿主机文件的功能明确标注"仅 local 模式" |
+| 自动化重构误改大量文件 | 高 | 强制 Plan Mode 确认（P1-1 先行）+ git baseline 回滚（P0-1 先行）+ 分批执行 |
+| 沙箱执行 `mvn test` 超时/离线仓库缺依赖 | 中 | local 模式先行验收；Docker 镜像预热本地仓库；超时按 agent 粒度可调 |
+| 代码库向量化成本高 | 中 | P3 延后启动；增量更新、按租户隔离、缓存 Embedding |
+| Git 写操作安全风险 | 高 | 维持现状：Agent 侧只读 diff，不做真实 commit/push；未来放开必须人工确认 + 审计 |
 
 ---
 
-## 9. 附录
+## 10. 附录
 
-### 9.1 相关代码入口
-- `VibeCodingService.java` —— VibeCoding 业务入口
-- `ChatService.java` —— 流式对话服务
-- `HarnessAgentFactory.java` —— Sandbox / Subagent / Plan Mode 配置
-- `MultiAgentOrchestrator.java` —— 多 Agent 编排
-- `KnowledgeProvider.java` —— RAG 知识检索
-- `SessionConfig.java` —— AgentStateStore 持久化配置
+### 10.1 相关代码入口（admin-server 实际类名）
 
-### 9.2 关键配置项
+- `VibeCodingService` —— VibeCoding 业务入口（流式对话 + file_change 增量快照）
+- `VibeCodingController` —— 接口层（`/api/workspace/{agentCode}/vibecoding/**`）
+- `GitWorkspaceService` —— 会话 git baseline / diff（P0-1 回滚在此扩展）
+- `GitAssistantService` —— 一次性模型调用生成 Git 文本（P0-2 Review 复用此模式）
+- `AdminAgentInstanceFactory` —— HarnessAgent 装配（沙箱模式挂载、P1-1 PermissionMode 切换点）
+- `AdminSandboxProperties` / `SandboxGuardMiddleware` / `SandboxSafeAgentStateStore` —— 沙箱配置/命令拦截/Docker sessionId 转义
+- `ChatService` —— 通用流式对话（`Flux.defer` 同步异常兜底模式）
+- `ChatNodeKind` —— SSE 事件类型枚举（新增事件类型在此扩展）
+
+> 注意：admin-server 排除了 starter 的自动装配（`spring.autoconfigure.exclude`），需要 starter 能力时在
+> 自己的 `@Configuration` 里显式 new——文档中凡引用 starter 类（如 Approval Store SPI）均指"参考其模式"，
+> 不是假设容器里有现成 Bean。
+
+### 10.2 关键配置项（实际生效前缀为 `admin.sandbox.*`）
+
 ```yaml
-customer-work:
-  harness:
-    plan-mode:
-      enabled: true
-    sandbox:
-      mode: local   # local | docker
-    subagent:
-      enabled: true
-  skill:
-    runtime-load-tool-enabled: true
-    code-execution-enabled: true
+admin:
+  sandbox:
+    mode: ${ADMIN_SANDBOX_MODE:local}            # local | docker
+    execute-timeout-seconds: ${ADMIN_SANDBOX_EXECUTE_TIMEOUT_SECONDS:60}
+    docker:
+      image: ${ADMIN_SANDBOX_DOCKER_IMAGE:maven:3.9-eclipse-temurin-17}
+      memory-mb: ${ADMIN_SANDBOX_DOCKER_MEMORY_MB:512}
+      cpu-count: ${ADMIN_SANDBOX_DOCKER_CPU_COUNT:1}
+      network: ${ADMIN_SANDBOX_DOCKER_NETWORK:none}
+    guard:
+      enabled: ${ADMIN_SANDBOX_GUARD_ENABLED:true}
 ```
+
+新功能的配置项按同一约定扩展（如 `admin.vibecoding.review.*`、`admin.vibecoding.plan-mode.*`），
+均支持 env 覆盖，默认值保守（新功能默认关闭）。
+
+### 10.3 参考文档
+
+- `docs/VibeCoding-Git助手与代码沙箱-开发总结.md` —— 一期/二期实现细节与踩坑记录
+- AgentScope Java 官方文档 https://java.agentscope.io （Harness / Sandbox / Plan Mode / Subagent）
+- `进度说明.txt` —— starter 侧框架能力缺口与演进优先级（P3 前置依赖的依据）
 
 ---
 

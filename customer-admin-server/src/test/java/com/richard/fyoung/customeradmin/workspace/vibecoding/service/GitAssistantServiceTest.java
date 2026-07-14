@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.workspace.audit.service.AiCodingAuditService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
@@ -60,7 +61,9 @@ class GitAssistantServiceTest {
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         gitWorkspaceService = mock(GitWorkspaceService.class);
         model = mock(Model.class);
-        service = new GitAssistantService(agentMapper, agentInstanceFactory, gitWorkspaceService);
+        // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
+        service = new GitAssistantService(agentMapper, agentInstanceFactory, gitWorkspaceService,
+            mock(AiCodingAuditService.class));
 
         when(agentInstanceFactory.resolveSessionWorkspace(anyString(), anyString())).thenReturn(sessionWorkspace);
         when(agentInstanceFactory.buildModelForAgent(anyString())).thenReturn(model);

@@ -17,6 +17,7 @@ import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ThinkingBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
+import io.agentscope.core.model.ChatUsage;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,8 +27,11 @@ import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -67,6 +71,19 @@ public class ChatService {
      * 任何 SSE 头下发之前就能拿到结构化错误响应，而不是半开的失败流）。
      */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText) {
+        return chatStream(agentCode, sessionId, userText, usage -> { });
+    }
+
+    /**
+     * 流式对话（带模型用量观察者）：流终止时（完成/错误/取消）把本轮全部模型调用的 token 用量
+     * 汇总后回调一次 {@code usageTotalObserver}——供 VibeCoding 审计记录 token 数（需求文档 §5.3）。
+     * 本轮无任何用量信息（框架/模型未返回 usage）时回调 {@code null}。
+     *
+     * <p>聚合方式：框架把 usage 挂在事件消息（{@link Msg#getUsage()}）上，同一条消息的增量事件
+     * 会重复携带（后到覆盖先到），不同消息各算一次——按 messageId 去重后求和，两种语义都兼容。</p>
+     */
+    public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
+                                             Consumer<ChatUsage> usageTotalObserver) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
         ToolSourceInfo toolSource = agentInstanceFactory.toolSourceFor(agentCode);
@@ -100,7 +117,9 @@ public class ChatService {
         // 没机会接管。届时 Spring MVC 的 SSE 响应式适配器可能已经提交了响应头，连接就会挂起不报错
         // 也不关闭，前端永远卡在"生成中..."。defer 把方法调用推迟到订阅时执行，任何同步异常都会被
         // Reactor 自动转成 Flux.error(...)，从而能被 onErrorResume 正常捕获、优雅降级成兜底话术。
+        Map<String, ChatUsage> usageByMessage = new ConcurrentHashMap<>();
         Flux<ChatStreamChunk> body = Flux.defer(() -> streamEvents(agent, List.of(toUserMsg(userText)), options, ctx))
+            .doOnNext(event -> collectUsage(usageByMessage, event))
             .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, lastAnnouncedTool,
                 lastReasoningText, lastAnswerText, answerStreamed, modelCallAnnounced)));
 
@@ -112,7 +131,34 @@ public class ChatService {
                     new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"),
                     new ChatStreamChunk(ChatNodeKind.ANSWER, FALLBACK_REPLY));
             })
-            .doOnComplete(() -> historyCache.evict(agentCode, sessionId));
+            .doOnComplete(() -> historyCache.evict(agentCode, sessionId))
+            .doFinally(signal -> usageTotalObserver.accept(totalUsage(usageByMessage)));
+    }
+
+    /** 收集事件消息上的模型用量：同一 messageId 后到覆盖先到（增量事件重复携带累计值的场景）。 */
+    private void collectUsage(Map<String, ChatUsage> usageByMessage, Event event) {
+        Msg msg = event.getMessage();
+        if (msg != null && msg.getUsage() != null && msg.getId() != null) {
+            usageByMessage.put(msg.getId(), msg.getUsage());
+        }
+    }
+
+    /** 汇总本轮全部消息的用量；一条都没有时返回 null（区分"确实没有用量信息"与"用了 0 token"）。 */
+    private ChatUsage totalUsage(Map<String, ChatUsage> usageByMessage) {
+        if (usageByMessage.isEmpty()) {
+            return null;
+        }
+        int inputTokens = 0;
+        int outputTokens = 0;
+        int cachedTokens = 0;
+        double time = 0;
+        for (ChatUsage usage : usageByMessage.values()) {
+            inputTokens += usage.getInputTokens();
+            outputTokens += usage.getOutputTokens();
+            cachedTokens += usage.getCachedTokens();
+            time += usage.getTime();
+        }
+        return new ChatUsage(inputTokens, outputTokens, cachedTokens, time);
     }
 
     /**
