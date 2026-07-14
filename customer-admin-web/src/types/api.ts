@@ -289,6 +289,26 @@ export interface SkillSaveRequest {
   status?: number | null
 }
 
+// ---------- aiconfig.system-tool ----------
+export interface SystemToolVO {
+  id: number
+  toolCode: string
+  toolName: string
+  description: string | null
+  /** 0禁用 / 1启用 */
+  enabled: number
+  remark: string | null
+  createTime: string
+  updateTime: string
+}
+
+export interface SystemToolSaveRequest {
+  toolName: string
+  description?: string | null
+  enabled?: number | null
+  remark?: string | null
+}
+
 // ---------- aiconfig.agent ----------
 export interface AgentVO {
   id: number
@@ -298,6 +318,7 @@ export interface AgentVO {
   modelName: string | null
   mcpIds: number[]
   skillIds: number[]
+  systemToolIds: number[]
   systemPrompt: string | null
   capabilities: string[]
   icon: string | null
@@ -311,6 +332,7 @@ export interface AgentSaveRequest {
   modelId: number
   mcpIds?: number[] | null
   skillIds?: number[] | null
+  systemToolIds?: number[] | null
   systemPrompt?: string | null
   capabilities?: string[] | null
   icon?: string | null

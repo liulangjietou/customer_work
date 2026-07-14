@@ -5,9 +5,10 @@ import { createAgent, deleteAgent, disableAgent, enableAgent, pageAgents, update
 import { pageModels } from '@/api/model'
 import { pageMcps } from '@/api/mcp'
 import { pageSkills } from '@/api/skill'
+import { fetchSystemTools } from '@/api/system-tool'
 import { useMenuStore } from '@/store/menu'
 import IconPicker from '@/components/IconPicker.vue'
-import type { AgentSaveRequest, AgentVO, McpVO, ModelVO, PageQuery, SkillVO } from '@/types/api'
+import type { AgentSaveRequest, AgentVO, McpVO, ModelVO, PageQuery, SkillVO, SystemToolVO } from '@/types/api'
 
 const menuStore = useMenuStore()
 
@@ -19,13 +20,14 @@ const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
 const modelOptions = ref<ModelVO[]>([])
 const mcpOptions = ref<McpVO[]>([])
 const skillOptions = ref<SkillVO[]>([])
+const systemToolOptions = ref<SystemToolVO[]>([])
 
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 const form = reactive<AgentSaveRequest>({
-  agentName: '', agentCode: '', modelId: undefined as unknown as number, mcpIds: [], skillIds: [],
+  agentName: '', agentCode: '', modelId: undefined as unknown as number, mcpIds: [], skillIds: [], systemToolIds: [],
   systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
 })
 
@@ -43,14 +45,17 @@ async function loadList() {
 }
 
 async function loadOptions() {
-  const [models, mcps, skills] = await Promise.all([
+  const [models, mcps, skills, systemTools] = await Promise.all([
     pageModels({ pageNum: 1, pageSize: 100 }),
     pageMcps({ pageNum: 1, pageSize: 100 }),
     pageSkills({ pageNum: 1, pageSize: 100 }),
+    fetchSystemTools({ pageNum: 1, pageSize: 100 }),
   ])
   modelOptions.value = models.list
   mcpOptions.value = mcps.list
   skillOptions.value = skills.list
+  // 只展示已启用的系统工具供挂载（停用的不出现在下拉里）。
+  systemToolOptions.value = systemTools.list.filter((t) => t.enabled === 1)
 }
 
 function handleSearch() {
@@ -62,7 +67,7 @@ function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
   Object.assign(form, {
-    agentName: '', agentCode: '', modelId: undefined, mcpIds: [], skillIds: [],
+    agentName: '', agentCode: '', modelId: undefined, mcpIds: [], skillIds: [], systemToolIds: [],
     systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
   })
   dialogVisible.value = true
@@ -73,7 +78,7 @@ function openEdit(row: AgentVO) {
   editingId.value = row.id
   Object.assign(form, {
     agentName: row.agentName, agentCode: row.agentCode, modelId: row.modelId,
-    mcpIds: row.mcpIds, skillIds: row.skillIds, systemPrompt: row.systemPrompt,
+    mcpIds: row.mcpIds, skillIds: row.skillIds, systemToolIds: row.systemToolIds, systemPrompt: row.systemPrompt,
     capabilities: row.capabilities, icon: row.icon, status: row.status,
   })
   dialogVisible.value = true
@@ -198,6 +203,11 @@ onMounted(() => {
         <el-form-item label="Skill">
           <el-select v-model="form.skillIds" multiple style="width: 100%" placeholder="可选">
             <el-option v-for="s in skillOptions" :key="s.id" :label="s.skillName" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="系统工具">
+          <el-select v-model="form.systemToolIds" multiple style="width: 100%" placeholder="可选">
+            <el-option v-for="t in systemToolOptions" :key="t.id" :label="t.toolName" :value="t.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="能力">

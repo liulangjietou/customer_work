@@ -15,6 +15,10 @@ import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMappe
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
+import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
+import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiSystemTool;
+import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystemToolMapper;
+import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiSystemToolMapper;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -39,7 +43,9 @@ import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.nio.file.Files;
@@ -86,6 +92,9 @@ public class AdminAgentInstanceFactory {
     private final AiModelConfigMapper modelConfigMapper;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
+    private final AiAgentSystemToolMapper agentSystemToolMapper;
+    private final AiSystemToolMapper systemToolMapper;
+    private final ApplicationContext applicationContext;
     private final AdminModelFactory modelFactory;
     private final AesGcmCryptoUtil cryptoUtil;
     private final AgentStateStore stateStore;
@@ -103,6 +112,8 @@ public class AdminAgentInstanceFactory {
     public AdminAgentInstanceFactory(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
                                       AiAgentSkillMapper agentSkillMapper, AiModelConfigMapper modelConfigMapper,
                                       AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
+                                      AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
+                                      ApplicationContext applicationContext,
                                       AdminModelFactory modelFactory, AesGcmCryptoUtil cryptoUtil,
                                       AgentStateStore stateStore, PermissionContextState permissionContext,
                                       AdminMcpFactory mcpFactory, AdminSandboxProperties sandboxProperties,
@@ -113,6 +124,9 @@ public class AdminAgentInstanceFactory {
         this.modelConfigMapper = modelConfigMapper;
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
+        this.agentSystemToolMapper = agentSystemToolMapper;
+        this.systemToolMapper = systemToolMapper;
+        this.applicationContext = applicationContext;
         this.modelFactory = modelFactory;
         this.cryptoUtil = cryptoUtil;
         this.stateStore = stateStore;
@@ -153,6 +167,7 @@ public class AdminAgentInstanceFactory {
         Model model = buildModel(agent.getModelId());
         Set<String> mcpToolNames = new HashSet<>();
         Toolkit toolkit = buildToolkit(agent.getId(), mcpToolNames);
+        buildSystemTools(agent.getId(), toolkit);
 
         ReActAgent.Builder builder = ReActAgent.builder()
             .name("AdminAgent-" + agentCode)
@@ -320,6 +335,32 @@ public class AdminAgentInstanceFactory {
         return mcpFactory.buildClientBuilder(mcp.getMcpName(), mcp.getMcpType(), mcp.getConfig())
             .timeout(java.time.Duration.ofSeconds(30))
             .buildAsync();
+    }
+
+    /**
+     * 读 {@code ai_agent_system_tool} 关联行，按 {@code tool_code}（= Spring Bean 名）取工具 Bean 注册进 Toolkit。
+     * 只注册 {@code enabled=1} 的工具；某个 tool_code 取不到 Bean（比如种子行存在但代码没实现对应类）不抛异常、
+     * {@code log.error} 记录后跳过，避免一个坏配置拖垮整个智能体装配。
+     */
+    private void buildSystemTools(Long agentId, Toolkit toolkit) {
+        List<Long> toolIds = agentSystemToolMapper.selectList(
+                new LambdaQueryWrapper<AiAgentSystemTool>().eq(AiAgentSystemTool::getAgentId, agentId))
+            .stream().map(AiAgentSystemTool::getSystemToolId).collect(Collectors.toList());
+        if (CollectionUtils.isEmpty(toolIds)) {
+            return;
+        }
+        for (AiSystemTool tool : systemToolMapper.selectBatchIds(toolIds)) {
+            if (tool.getEnabled() == null || tool.getEnabled() != STATUS_ENABLED) {
+                continue;
+            }
+            try {
+                Object bean = applicationContext.getBean(tool.getToolCode());
+                toolkit.registerTool(bean);
+                log.info("[workspace] system tool registered: code={}", tool.getToolCode());
+            } catch (Exception e) {
+                log.error("system tool bean not found, code={}, toolCode={}", "SYSTOOL-BEAN-MISSING", tool.getToolCode(), e);
+            }
+        }
     }
 
     /**
