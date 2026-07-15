@@ -13,6 +13,7 @@
 | `customer-web` | 官方五套前端能力接入（admin/chat-completions/AG-UI/Studio/Channel，端口 8081） |
 | `customer-admin-server` | 后台管理系统后端（Spring MVC + MyBatis-Plus + Sa-Token，端口 8082，独立库 `customer_admin`） |
 | `customer-admin-web` | 后台管理前端（Vue3+TS+Vite+Element Plus，**非 Maven 模块**，端口 5174） |
+| `customer-user-mobile` | 智能客服用户端 H5（Vue3+TS+Vite+Vant4，**非 Maven 模块**，端口 5175，proxy → 8080） |
 
 ## 分支策略
 
@@ -31,7 +32,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：全仓 **511 个**（starter 362 + app 13 + downstream 1 + customer-web 8 + admin-server 127）。
+- 测试基线：全仓 **811 个**（starter 438 + app 58 + downstream 1 + customer-web 8 + admin-server 306）。
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
 - 模块 A 改完给模块 B 用时，先 `mvn install -Dmaven.test.skip=true -Djacoco.skip=true`（B 解析的是本地仓库的 jar，
   不是 A 的工作树）；根 pom 变更后父 POM 也要 `mvn -N install`，否则 B 读到旧版本号。
@@ -43,6 +44,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - 框架 open issues 与本项目链路的交叉评估 → `docs/生产就绪评估.md`
 - 生产部署步骤/环境变量/灰度回滚 → `docs/部署手册.md`
 - 架构原理/时序图/UML → `docs/详细技术文档.md`
+- 用户工单系统（7 态状态机/WS 帧协议/用户端/坐席端）→ `docs/详细技术文档.md` 工单章节 + `docs/生产接口使用手册.md`
 - 后台管理系统需求 → `docs/AI编码助手需求文档.md`（admin-server 相关）
 
 ## 项目编码规范（全局规范之外的项目特有约定）
@@ -50,7 +52,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - 日志只用 info/error（不用 warn），日志文本英文，error 带错误码占位符：
   `log.error("xxx failed, code={}, id={}", "MODULE-ACTION-FAIL", id, e)`
 - 持久化扩展走 Store SPI 模式（接口 + InMemory 默认 + Jdbc 实现 + `@ConditionalOnMissingBean`，
-  已套用 5 次：Approval/SlotFilling/DialogStage/Handoff/Feedback），别发明新模式。
+  已套用 8 次：Approval/SlotFilling/DialogStage/Handoff/Feedback/Ticket/UserAccount/ChatLog），别发明新模式。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - JDBC Store 的异常必须 `catch(Exception)` 而非 `SQLException`（HikariPool 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。
