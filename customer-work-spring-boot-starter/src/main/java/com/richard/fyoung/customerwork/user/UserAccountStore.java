@@ -6,7 +6,7 @@ import java.util.Optional;
  * 用户账户存储 SPI（持久化扩展点）。
  *
  * <p>默认 {@link InMemoryUserAccountStore}（进程内，离线可测）；生产按
- * {@code customer-work.user-auth.store-mode=jdbc} 切换为 {@link JdbcUserAccountStore}。
+ * {@code customer-work.user-auth.store-mode=jdbc} 切换为 {@link MybatisUserAccountStore}。
  * 下游亦可声明同类型 Bean 整体覆盖。</p>
  * @author owlzhangfq@gmail.com
  */

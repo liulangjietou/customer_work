@@ -4,7 +4,9 @@
 -- 说明：
 --   1. MysqlSession 在 autoCreate=true 时会自动建库建表，本脚本用于手工初始化 /
 --      DBA 审核 / 受限权限环境（生产 DB 账号通常无建库权限）。
---   2. 表结构与框架 io.agentscope.core.session.mysql.MysqlSession 内置 DDL 完全一致。
+--   2. 会话表结构与框架 io.agentscope.core.session.mysql.MysqlSession 内置 DDL 一致；
+--      cw_* 业务表由 starter 的 SchemaInitializer（MyBatis-Plus 持久层）在 auto-create=true 时执行
+--      classpath:customerwork/schema/customer-work-schema.sql 建表，本脚本的 cw_* DDL 与之保持一致。
 --   3. 连接信息（默认）：host=localhost:3306, user=root, password=root,
 --      database=agent_scope_customer_work。
 --

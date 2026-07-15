@@ -1,14 +1,14 @@
 package com.richard.fyoung.customerworkapp.service;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.tool.backend.JdbcOrderBackend;
-import com.richard.fyoung.customerwork.tool.backend.JdbcProductBackend;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 import javax.sql.DataSource;
 import java.net.InetSocketAddress;
@@ -29,8 +29,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /**
  * 演示订单播种测试（对接本机 MySQL；不可达自动跳过）：真实往返插入 2 笔订单，测试后删除自建数据。
  *
- * <p>先构造 {@link JdbcProductBackend}/{@link JdbcOrderBackend} 确保 cw_product（P001/P002 种子）与
- * cw_order 表就绪，再验证播种结果的状态/物流轨迹/商品名对齐。</p>
+ * <p>先执行 starter 的 {@code customerwork/schema/customer-work-schema.sql} 确保 cw_product（P001/P002 种子）与
+ * cw_order 表就绪（与生产 SchemaInitializer 同一脚本），再验证播种结果的状态/物流轨迹/商品名对齐。</p>
  * @author owlzhangfq@gmail.com
  */
 class DemoOrderSeederTest {
@@ -46,9 +46,12 @@ class DemoOrderSeederTest {
     void setUp() {
         assumeTrue(reachable(HOST, PORT), "MySQL 不可达（" + HOST + ":" + PORT + "），跳过该测试");
         dataSource = buildDataSource();
-        // 确保 cw_product（P001/P002 种子）与 cw_order 表存在
-        new JdbcProductBackend(dataSource);
-        new JdbcOrderBackend(dataSource);
+        // 确保 cw_product（P001/P002 种子）与 cw_order 表存在（执行 starter 统一建表脚本，幂等）
+        ResourceDatabasePopulator populator = new ResourceDatabasePopulator();
+        populator.addScript(new ClassPathResource("customerwork/schema/customer-work-schema.sql"));
+        populator.setSeparator(";");
+        populator.setCommentPrefixes("--");
+        populator.execute(dataSource);
         seeder = new DemoOrderSeeder(providerOf(dataSource));
         userId = "U-seedtest-" + UUID.randomUUID();
     }

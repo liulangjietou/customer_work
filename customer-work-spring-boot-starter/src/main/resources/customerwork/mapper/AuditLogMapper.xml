@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.observability.mapper.AuditLogMapper">
+
+    <!-- 按会话查询：agent_name 后缀 LIKE 匹配，ESCAPE 转义 sessionId 内的 LIKE 通配符，时间倒序取最近 limit 条。 -->
+    <select id="queryBySession" resultType="com.richard.fyoung.customerwork.observability.entity.AuditLogDO">
+        SELECT id, event_type, agent_name, event_data, created_at
+        FROM cw_audit_log
+        WHERE agent_name LIKE #{pattern} ESCAPE '\\'
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

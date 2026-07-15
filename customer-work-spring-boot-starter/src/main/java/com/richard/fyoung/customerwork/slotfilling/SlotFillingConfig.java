@@ -1,22 +1,21 @@
 package com.richard.fyoung.customerwork.slotfilling;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.zaxxer.hikari.HikariDataSource;
+import com.richard.fyoung.customerwork.slotfilling.mapper.SlotFillingMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import javax.sql.DataSource;
 
 /**
  * 槽位收集进度存储配置。
  *
  * <p>按 {@code slot-filling.store-mode} 选择实现：默认 {@code memory}（进程内）；{@code jdbc}
- * 落地为 {@link JdbcSlotFillingStore}，复用 {@code session.mysql.*} 连接配置，与审批工单
- * （见 {@code ApprovalConfig}）共享同一 MySQL 实例。下游声明自己的 {@link SlotFillingStore}
- * Bean 即可整体覆盖。</p>
+ * 落地为 {@link MybatisSlotFillingStore}，复用 {@code CustomerWorkPersistenceConfig} 的 MyBatis 环境
+ * （{@link SlotFillingMapper} 由 {@code @MapperScan} 装配），与审批工单共享同一 MySQL 实例。
+ * 下游声明自己的 {@link SlotFillingStore} Bean 即可整体覆盖。</p>
  * @author owlzhangfq@gmail.com
  */
 @Configuration
@@ -28,24 +27,14 @@ public class SlotFillingConfig {
 
     @Bean
     @ConditionalOnMissingBean(SlotFillingStore.class)
-    public SlotFillingStore slotFillingStore(CustomerWorkProperties properties) {
+    public SlotFillingStore slotFillingStore(CustomerWorkProperties properties,
+                                             ObjectProvider<SlotFillingMapper> mapperProvider) {
         String mode = properties.getSlotFilling().getStoreMode();
         if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
-            log.info("slot-filling store: jdbc (mysql, table=cw_slot_filling_progress)");
-            return new JdbcSlotFillingStore(buildDataSource(properties.getSession().getMysql()));
+            log.info("slot-filling store: jdbc (MyBatis-Plus 实现, table=cw_slot_filling_progress)");
+            return new MybatisSlotFillingStore(mapperProvider.getObject());
         }
         log.info("slot-filling store: memory (进程内，重启不保留，生产建议 store-mode=jdbc)");
         return new InMemorySlotFillingStore();
-    }
-
-    /** 复用 session.mysql.* 连接配置构建独立连接池（惰性：首次取连接时才建立）。 */
-    DataSource buildDataSource(CustomerWorkProperties.Session.Mysql m) {
-        HikariDataSource ds = new HikariDataSource();
-        ds.setJdbcUrl(m.resolveJdbcUrl());
-        ds.setUsername(m.getUsername());
-        ds.setPassword(m.getPassword());
-        ds.setMaximumPoolSize(5);
-        ds.setPoolName("cw-slotfilling-pool");
-        return ds;
     }
 }

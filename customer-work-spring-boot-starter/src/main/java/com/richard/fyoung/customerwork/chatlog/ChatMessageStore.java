@@ -6,7 +6,7 @@ import java.util.List;
  * 聊天消息存储 SPI（持久化扩展点）。
  *
  * <p>默认 {@link InMemoryChatMessageStore}；生产按 {@code customer-work.chat-log.store-mode=jdbc}
- * 切换为 {@link JdbcChatMessageStore}。历史查询支持基于自增主键的游标翻页（{@code beforeId}）。</p>
+ * 切换为 {@link MybatisChatMessageStore}。历史查询支持基于自增主键的游标翻页（{@code beforeId}）。</p>
  * @author owlzhangfq@gmail.com
  */
 public interface ChatMessageStore {

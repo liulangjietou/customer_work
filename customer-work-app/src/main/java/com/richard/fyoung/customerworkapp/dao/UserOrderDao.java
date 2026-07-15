@@ -17,9 +17,10 @@ import java.util.Optional;
 /**
  * 用户订单查询 Dao：基于 {@code cw_order} 表读当前用户订单（列表 / 详情）。
  *
- * <p>数据源由 {@code JdbcBackendConfig} 在 {@code tool-backend.mode=jdbc} 时以 {@code @Bean} 暴露，
- * 本 Dao 通过 {@link ObjectProvider} 注入并在 Bean 不存在时优雅降级（{@link #isEnabled()} 返回 false，
- * 控制器据此返回 503）——这样 mode!=jdbc 的部署下订单接口语义化不可用，而非启动即失败。</p>
+ * <p>数据源为 starter 的 {@code customerWorkDataSource}（由 {@code CustomerWorkPersistenceConfig} 在任一域
+ * jdbc / {@code tool-backend.mode=jdbc} 时装配）。本 Dao 通过 {@link ObjectProvider} 注入并在 Bean 不存在时
+ * 优雅降级（{@link #isEnabled()} 返回 false，控制器据此返回 503）——这样全 memory/mock 的部署下订单接口
+ * 语义化不可用，而非启动即失败。</p>
  * @author owlzhangfq@gmail.com
  */
 @Repository

@@ -495,6 +495,22 @@ public class CustomerWorkProperties {
     /** 聊天日志（会话/工单消息留痕）存储配置。 */
     private final ChatLog chatLog = new ChatLog();
 
+    /** 业务工具后端存储配置（订单/商品/售后/会员/投诉/知识库六域）。 */
+    private final ToolBackend toolBackend = new ToolBackend();
+
+    /**
+     * 业务工具后端配置。
+     *
+     * <p>{@code mode} 决定订单/商品/售后/会员/投诉/知识库六个后端的实现：{@code mock}（进程内示例，默认）|
+     * {@code jdbc}（MyBatis-Plus 实现，落 {@code cw_order} 等演示表）。jdbc 模式与各域 store-mode=jdbc 一样，
+     * 触发 starter 独立持久化环境（{@code CustomerWorkPersistenceConfig}）装配。</p>
+     */
+    @Data
+    public static class ToolBackend {
+        /** 存储模式：mock（进程内示例，默认）| jdbc（MyBatis-Plus 实现）。 */
+        private String mode = "mock";
+    }
+
     /** 坐席访问凭证（HMAC 令牌）配置。 */
     private final AgentAccess agentAccess = new AgentAccess();
 

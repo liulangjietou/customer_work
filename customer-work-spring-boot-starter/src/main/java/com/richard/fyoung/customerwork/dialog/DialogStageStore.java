@@ -7,7 +7,7 @@ import java.util.Optional;
  *
  * <p>默认由 {@link InMemoryDialogStageStore} 提供进程内实现；生产多实例部署下，进程内存储会导致
  * 请求被负载均衡到不同实例时阶段状态"归零"回 {@link DialogStage#GREETING}——可替换为
- * {@link JdbcDialogStageStore} 或自定义 Bean（如 Redis）跨实例共享同一份阶段状态。</p>
+ * {@link MybatisDialogStageStore} 或自定义 Bean（如 Redis）跨实例共享同一份阶段状态。</p>
  *
  * <p>是否默认为 {@link DialogStage#GREETING} 的判定逻辑由 {@link DialogStageService} 统一负责，
  * 本 SPI 只做纯粹的存取，不内置默认值语义。</p>

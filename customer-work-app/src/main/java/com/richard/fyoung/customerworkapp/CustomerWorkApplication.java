@@ -11,8 +11,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * customer-work-spring-boot-starter 通过 {@code @AutoConfiguration} 自动装配——
  * 这正是"下游引入 starter 即得完整能力、无需关心基础包、无需手动 @ComponentScan"的体现。</p>
  *
- * <p>说明：DataSource 自动配置无需排除（starter 用 HikariCP 而非 spring-jdbc）；定时任务与
- * 配置属性扫描已由 starter 的自动配置启用。</p>
+ * <p>说明：starter 引入 MyBatis-Plus 后 spring-jdbc 进入类路径，故在 application.yml 里以
+ * {@code spring.autoconfigure.exclude} 关闭 {@code DataSourceAutoConfiguration}——业务持久层由 starter 的
+ * {@code CustomerWorkPersistenceConfig} 显式装配独立数据源（customerWorkDataSource），不用 Spring 自动数据源；
+ * 定时任务与配置属性扫描已由 starter 的自动配置启用。</p>
  * @author owlzhangfq@gmail.com
  */
 @SpringBootApplication

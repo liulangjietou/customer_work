@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
  * 进程内聊天消息存储（默认实现，测试 / 演示用）。
  *
  * <p>{@link ConcurrentLinkedQueue} 承载全部消息，{@link AtomicLong} 模拟自增主键。游标翻页语义与
- * {@link JdbcChatMessageStore} 一致：{@code beforeId} 为 null 取最新一页，否则取更早消息，均按 id 升序返回。
+ * {@link MybatisChatMessageStore} 一致：{@code beforeId} 为 null 取最新一页，否则取更早消息，均按 id 升序返回。
  * 以 {@code @ConditionalOnMissingBean} 注册，下游声明自己的 {@link ChatMessageStore} Bean 即可覆盖。</p>
  * @author owlzhangfq@gmail.com
  */

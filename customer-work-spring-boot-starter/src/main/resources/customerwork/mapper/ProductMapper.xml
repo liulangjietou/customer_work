@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.ProductMapper">
+
+    <!-- 关键词推荐：在售商品按名称/品类模糊匹配，库存倒序取前 3（对应旧 RECOMMEND_LIMIT） -->
+    <select id="recommend" resultType="com.richard.fyoung.customerwork.tool.backend.entity.ProductDO">
+        SELECT *
+        FROM cw_product
+        WHERE status = 'ON_SALE'
+          AND (name LIKE CONCAT('%', #{keyword}, '%') OR category LIKE CONCAT('%', #{keyword}, '%'))
+        ORDER BY stock DESC
+        LIMIT 3
+    </select>
+</mapper>

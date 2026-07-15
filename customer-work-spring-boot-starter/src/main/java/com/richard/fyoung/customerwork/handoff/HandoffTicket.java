@@ -52,7 +52,7 @@ public class HandoffTicket {
     }
 
     /**
-     * 供持久化存储层（如 {@link JdbcHandoffStore}）从数据源重建已有工单——跳过
+     * 供持久化存储层（如 {@link MybatisHandoffStore}）从数据源重建已有工单——跳过
      * {@link #claim}/{@link #resolve} 的业务状态机校验（这不是一次新的坐席动作，只是把已发生过的
      * 流转结果读回内存）。包级可见，仅供本包内的 {@link HandoffStore} 实现使用。
      */

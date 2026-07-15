@@ -1,6 +1,13 @@
 # 测试专用配置：提供占位 API Key，保证全上下文测试离线可加载（不发起真实调用）。
 # 本文件在测试类路径上会整体遮蔽 src/main 的 application.yml；工单相关持久化一律退回
 # memory / mock，使全上下文测试无需 MySQL 等外部依赖即可加载（与生产 yml 的 jdbc/mysql 解耦）。
+spring:
+  # 全上下文测试走 memory/mock，无业务数据源；排除 DataSource 自动配置，避免 spring-jdbc（随 MyBatis-Plus 引入）
+  # 激活 DataSourceAutoConfiguration 后因无 spring.datasource.url 启动失败。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+
 customer-work:
   model:
     api-key: test-dummy-key

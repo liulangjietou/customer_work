@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper">
+
+    <!-- 关键词召回：keyword/title/content 任一命中，取前 5 条（对应旧 RECALL_LIMIT） -->
+    <select id="search" resultType="com.richard.fyoung.customerwork.tool.backend.entity.KnowledgeDO">
+        SELECT *
+        FROM cw_knowledge
+        WHERE keyword LIKE CONCAT('%', #{q}, '%')
+           OR title LIKE CONCAT('%', #{q}, '%')
+           OR content LIKE CONCAT('%', #{q}, '%')
+        LIMIT 5
+    </select>
+</mapper>

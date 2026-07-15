@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.OrderMapper">
+
+    <!-- 催发货：物流轨迹尾部追加加急标记（对应旧 JdbcOrderBackend.doUrgeShipment 的 CONCAT UPDATE） -->
+    <update id="urgeShipment">
+        UPDATE cw_order
+        SET logistics_trace = CONCAT(COALESCE(logistics_trace, ''), '→[已加急]')
+        WHERE order_id = #{orderId}
+    </update>
+</mapper>

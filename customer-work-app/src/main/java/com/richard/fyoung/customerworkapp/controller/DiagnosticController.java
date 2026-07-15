@@ -46,7 +46,7 @@ public class DiagnosticController {
     }
 
     @Operation(summary = "审计事件下钻",
-        description = "按 sessionId 查更多审计事件（需接入可查询审计后端如 JdbcAuditSink，否则返回空）")
+        description = "按 sessionId 查更多审计事件（需接入可查询审计后端如 MybatisAuditSink，否则返回空）")
     @GetMapping("/session/{sessionId}/audit")
     public Mono<List<AuditRecord>> audit(
             @PathVariable String sessionId,

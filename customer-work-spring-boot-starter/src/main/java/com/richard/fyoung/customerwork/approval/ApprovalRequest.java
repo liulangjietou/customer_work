@@ -81,7 +81,7 @@ public class ApprovalRequest {
     }
 
     /**
-     * 供持久化存储层（如 {@link JdbcApprovalStore}）从数据源重建已有工单——跳过
+     * 供持久化存储层（如 {@link MybatisApprovalStore}）从数据源重建已有工单——跳过
      * {@link #approve}/{@link #deny} 的业务状态机校验（这不是一次新的人工决策，只是把已发生过的
      * 决策结果读回内存）。包级可见，仅供本包内的 {@link ApprovalStore} 实现使用。
      */
