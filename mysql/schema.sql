@@ -142,11 +142,13 @@ CREATE TABLE IF NOT EXISTS `cw_message_feedback` (
 -- =============================================================================
 -- 智能客服工单系统（ticket / user / chatlog + JDBC 工具后端 演示表）
 -- =============================================================================
--- 说明：以下 6 张表分别由 JdbcTicketStore / JdbcUserAccountStore / JdbcChatMessageStore /
---       JdbcOrderBackend / JdbcProductBackend 自动建表（CREATE TABLE IF NOT EXISTS），
+-- 说明：以下 12 张表分别由 JdbcTicketStore / JdbcUserAccountStore / JdbcChatMessageStore /
+--       JdbcOrderBackend / JdbcProductBackend / JdbcAfterSalesBackend / JdbcMemberBackend /
+--       JdbcComplaintBackend / JdbcKnowledgeBackend 自动建表（CREATE TABLE IF NOT EXISTS），
 --       本脚本用于 DBA 预审 / 受限权限环境；列/索引与各 JdbcStore 的 ensureTable 一致。
---       cw_product / cw_order 的种子数据与各 Jdbc 后端 INSERT IGNORE 的种子完全一致
---       （含 Mock 示例订单 20260613001 / 20260613002），保证从 Mock 切到 JDBC 后系统提示词示例连续。
+--       cw_product / cw_order / cw_refund / cw_member / cw_complaint / cw_knowledge 的种子数据与各
+--       Jdbc 后端 INSERT IGNORE 的种子完全一致（含 Mock 示例订单 20260613001 / 20260613002），
+--       保证从 Mock 切到 JDBC 后系统提示词示例连续。
 
 -- 终端用户账户表（cw_user）：登录凭据以 BCrypt 哈希存储。
 CREATE TABLE IF NOT EXISTS `cw_user` (
@@ -251,3 +253,82 @@ INSERT IGNORE INTO `cw_order` (`order_id`, `user_id`, `product_id`, `product_nam
 ('20260613002', 'U-demo-1', 'P003', '商务降噪头戴耳机', 1599.00, '已签收', '上海市浦东新区世纪大道 100 号', '[5-18 已揽收]→[5-19 运输中]→[5-20 已签收]。', 1779235200000),
 ('20260613003', 'U-demo-2', 'P002', '运动防汗蓝牙耳机', 199.00, '待发货', '广州市天河区体育西路 1 号', '[6-13 已下单，仓库备货中]', 1781308800000),
 ('20260613004', 'U-demo-2', 'P001', '旗舰款无线降噪耳机', 299.00, '已退款', '深圳市南山区科技园路 5 号', '[6-08 已揽收]→[6-09 用户取消]→[6-10 已退款]', 1780876800000);
+
+-- 售后工单表（cw_refund）：JdbcAfterSalesBackend 演示表。退款/退货/换货共表，submitRefund 只落 PENDING 待人工复核（资金红线）。
+CREATE TABLE IF NOT EXISTS `cw_refund` (
+    `refund_no`      VARCHAR(64) PRIMARY KEY COMMENT '售后工单号',
+    `order_id`       VARCHAR(32) NOT NULL COMMENT '关联订单号',
+    `type`           VARCHAR(16) NOT NULL COMMENT '类型：REFUND/RETURN/EXCHANGE',
+    `status`         VARCHAR(16) NOT NULL COMMENT '状态：PENDING/APPROVED/DENIED',
+    `amount`         DECIMAL(10,2) COMMENT '退款金额（退货/换货可空）',
+    `reason`         VARCHAR(500) COMMENT '诉求原因',
+    `new_spec`       VARCHAR(128) COMMENT '换货目标规格',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    INDEX `idx_refund_order` (`order_id`, `created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO `cw_refund` (`refund_no`, `order_id`, `type`, `status`, `amount`, `reason`, `new_spec`, `created_at_ms`) VALUES
+('RF-seed-20260613004', '20260613004', 'REFUND', 'APPROVED', 299.00, '七天无理由退款', NULL, 1781049600000);
+
+-- 发票申请表（cw_invoice_request）：JdbcAfterSalesBackend 演示表。requestInvoice 真实落库。
+CREATE TABLE IF NOT EXISTS `cw_invoice_request` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '发票申请自增主键',
+    `order_id`       VARCHAR(32) NOT NULL COMMENT '关联订单号',
+    `invoice_title`  VARCHAR(255) NOT NULL COMMENT '发票抬头',
+    `status`         VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING/ISSUED',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    INDEX `idx_invoice_order` (`order_id`, `created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 会员表（cw_member）：JdbcMemberBackend 演示表。种子 U-demo-1 与 Mock 数据一致（黄金会员/积分 1280）。
+CREATE TABLE IF NOT EXISTS `cw_member` (
+    `member_id`        VARCHAR(64) PRIMARY KEY COMMENT '会员ID（对应用户ID）',
+    `level`            VARCHAR(32) NOT NULL COMMENT '会员等级',
+    `points`           INT NOT NULL DEFAULT 0 COMMENT '当前积分',
+    `points_expiring`  INT NOT NULL DEFAULT 0 COMMENT '本月底到期积分',
+    `benefits`         VARCHAR(255) COMMENT '等级权益',
+    `next_level`       VARCHAR(32) COMMENT '下一等级',
+    `upgrade_gap`      DECIMAL(10,2) DEFAULT 0 COMMENT '升级所需再消费金额',
+    `phone`            VARCHAR(32) COMMENT '注册手机号'
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO `cw_member` (`member_id`, `level`, `points`, `points_expiring`, `benefits`, `next_level`, `upgrade_gap`, `phone`) VALUES
+('U-demo-1', '黄金会员', 1280, 200, '免运费、专属客服、生日双倍积分', '铂金', 500.00, '138****0001'),
+('U-demo-2', '白银会员', 320, 0, '满额包邮、积分商城兑换', '黄金', 800.00, '139****0002');
+
+-- 会员账户问题处理日志表（cw_member_account_log）：JdbcMemberBackend 演示表。resolveAccountIssue 落一条处理日志。
+CREATE TABLE IF NOT EXISTS `cw_member_account_log` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '处理日志自增主键',
+    `issue`          VARCHAR(255) NOT NULL COMMENT '账户问题描述',
+    `handling`       VARCHAR(500) COMMENT '处置话术',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    INDEX `idx_account_log_created` (`created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 投诉工单表（cw_complaint）：JdbcComplaintBackend 演示表。种子 CP-seed-0001 支撑 queryComplaint 演示。
+CREATE TABLE IF NOT EXISTS `cw_complaint` (
+    `complaint_no`   VARCHAR(64) PRIMARY KEY COMMENT '投诉工单号',
+    `order_id`       VARCHAR(32) COMMENT '关联订单号（可空）',
+    `content`        TEXT COMMENT '投诉内容',
+    `status`         VARCHAR(16) NOT NULL COMMENT '状态：PROCESSING/RESOLVED',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    INDEX `idx_complaint_order` (`order_id`, `created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO `cw_complaint` (`complaint_no`, `order_id`, `content`, `status`, `created_at_ms`) VALUES
+('CP-seed-0001', '20260613002', '物流配送太慢，希望加快处理', 'PROCESSING', 1779235200000);
+
+-- 知识库 FAQ 表（cw_knowledge）：JdbcKnowledgeBackend 演示表。种子三条与 Mock 一致（退货/发票/运费），LIKE 关键词检索。
+CREATE TABLE IF NOT EXISTS `cw_knowledge` (
+    `id`         BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '知识条目自增主键',
+    `keyword`    VARCHAR(255) NOT NULL COMMENT '命中关键词（逗号分隔）',
+    `title`      VARCHAR(255) NOT NULL COMMENT '条目标题',
+    `content`    TEXT NOT NULL COMMENT '条目内容',
+    `source`     VARCHAR(255) COMMENT '来源标注',
+    UNIQUE KEY `uk_knowledge_title` (`title`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO `cw_knowledge` (`keyword`, `title`, `content`, `source`) VALUES
+('退货,退款,七天,无理由', '七天无理由退货政策', '支持七天无理由退货，商品需保持完好、不影响二次销售；定制类、生鲜类除外。', '《售后服务政策》第 3 条'),
+('发票,开票,报销', '发票开具规则', '支持开具电子普通发票与增值税专用发票，可在订单详情页自助申请，1-3 个工作日开具。', '《发票管理规则》第 1 条'),
+('运费,包邮,邮费', '运费说明', '单笔订单满 99 元包邮，偏远地区除外；退货运费由责任方承担。', '《运费说明》第 2 条');

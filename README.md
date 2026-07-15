@@ -121,7 +121,7 @@
 | **聊天消息落库（双维度游标分页）** | `ChatLogService` + `ChatMessageStore` SPI | 开 | `customer-work.chat-log.store-mode=jdbc`（表 `cw_chat_message`，按会话/工单 `beforeId+limit` 分页） |
 | **用户/坐席 WebSocket 双通道** | `UserChatWebSocketHandler` / `AgentChatWebSocketHandler` + `ChatDispatchService` | 开 | `/ws/user?token=<JWT>`、`/ws/agent?token=<HMAC凭证>`；AI 流式 / 坐席转发 / 关键词转人工 |
 | **坐席 HMAC 接入凭证** | `AgentAccessCredential`（HmacSHA256）+ `AgentAuthWebFilter` | 开 | REST 头 `X-Agent-Token` / WS query `token`，env `CW_AGENT_WS_SECRET`（8080+8082 共享） |
-| **真实业务后端（订单/商品）** | `JdbcOrderBackend` / `JdbcProductBackend` | 关 | `customer-work.tool-backend.mode=jdbc`（表 `cw_order`/`cw_product` 含种子），替换内存 Mock |
+| **真实业务后端（订单/商品/售后/会员/投诉/知识库）** | `JdbcOrderBackend` / `JdbcProductBackend` / `JdbcAfterSalesBackend` / `JdbcMemberBackend` / `JdbcComplaintBackend` / `JdbcKnowledgeBackend` | 关 | `customer-work.tool-backend.mode=jdbc`（8 张 `cw_*` 表含种子），六域后端整体替换内存 Mock |
 
 ### ⚠️ 不可迁移 / 沿用说明（1.x→2.0 备注）
 
@@ -874,7 +874,7 @@ customer-work:
   user-auth:   { store-mode: jdbc, jwt-secret: ${CW_USER_JWT_SECRET:...}, jwt-expire-hours: 168 }
   chat-log:    { store-mode: jdbc }
   agent-access: { secret: ${CW_AGENT_WS_SECRET:...}, expire-hours: 12 }
-  tool-backend: { mode: jdbc }   # 启用 JdbcOrderBackend/JdbcProductBackend 真实库
+  tool-backend: { mode: jdbc }   # 启用订单/商品/售后/会员/投诉/知识库六域 Jdbc 后端真实库
 ```
 
 - 完整状态机 / 数据模型（6 张表）/ WS 帧协议 / 消息分发时序 / 并发可靠性 → **[docs/详细技术文档.md](docs/详细技术文档.md)**「用户工单系统」章节。
@@ -918,7 +918,7 @@ customer-work:
 | `user-auth` | store-mode(memory), jwt-secret(${CW_USER_JWT_SECRET}), jwt-expire-hours(168) |
 | `chat-log` | store-mode(memory) |
 | `agent-access` | secret(${CW_AGENT_WS_SECRET}), expire-hours(12) |
-| `tool-backend` | mode(mock)：mock=starter 内存 Mock \| jdbc=app 层 `JdbcOrderBackend`/`JdbcProductBackend`（表 `cw_order`/`cw_product`） |
+| `tool-backend` | mode(mock)：mock=starter 内存 Mock \| jdbc=app 层订单/商品/售后/会员/投诉/知识库六域 Jdbc 后端（8 张 `cw_*` 表） |
 
 ---
 
