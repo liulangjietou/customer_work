@@ -92,4 +92,44 @@ class CustomerServiceAgentFactoryTest {
         assertEquals("u1001", f.resolveTenant("u1001"));
         assertEquals("default", f.resolveTenant(""));
     }
+
+    /**
+     * 端到端回归（AgentScope 2.0 GA 空状态覆盖激活组问题）：配置状态存储时，新会话首次调用
+     * 实际传给模型的工具清单必须包含业务工具。此前框架用 fresh state 的空 activatedGroups
+     * 覆盖 Toolkit 激活组，模型只能收到未分组基础工具（表现为"没有订单查询工具"）。
+     */
+    @Test
+    void createAgent_freshSessionWithStateStore_businessToolsShouldReachModel() {
+        CustomerServiceAgentFactory f = factory(new CustomerWorkProperties());
+        io.agentscope.core.ReActAgent agent = f.createAgent("tenantX:conv-tool-surface");
+
+        java.util.concurrent.atomic.AtomicReference<java.util.List<io.agentscope.core.model.ToolSchema>> captured =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        org.mockito.Mockito.when(model.getModelName()).thenReturn("capture-mock");
+        org.mockito.Mockito.when(model.stream(
+                org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.any()))
+            .thenAnswer(inv -> {
+                captured.set(inv.getArgument(1));
+                // 捕获后即终止推理循环（工具清单在模型调用前已确定，报错不影响断言目标）
+                return reactor.core.publisher.Flux.error(new IllegalStateException("capture-only"));
+            });
+
+        agent.call("帮我查订单 20260613001", f.contextFor("tenantX:conv-tool-surface"))
+            .onErrorResume(e -> {
+                System.out.println("[capture-test] call terminated: " + e.getClass().getSimpleName()
+                    + " - " + e.getMessage());
+                return reactor.core.publisher.Mono.empty();
+            })
+            .block(java.time.Duration.ofSeconds(15));
+
+        assertTrue(captured.get() != null && !captured.get().isEmpty(), "模型未收到任何工具 schema");
+        Set<String> names = captured.get().stream()
+            .map(io.agentscope.core.model.ToolSchema::getName)
+            .collect(java.util.stream.Collectors.toSet());
+        assertTrue(names.contains("queryOrder"), "新会话下订单工具未到达模型层: " + names);
+        assertTrue(names.contains("searchKnowledge"), "知识库工具未到达模型层: " + names);
+        assertTrue(names.contains("transferToHuman"), "转人工工具未到达模型层: " + names);
+    }
 }

@@ -26,6 +26,20 @@ import java.util.List;
  */
 public class DefaultActiveGroupsToolkit extends Toolkit {
 
+    /**
+     * 返回自身而非防御性拷贝。
+     *
+     * <p>{@code ReActAgent.Builder#build()} 会调用 {@code toolkit.copy()} 做防御性拷贝——拷贝产物是
+     * 基类 {@code Toolkit}，本类的两处守卫覆盖会在拷贝中<b>整体丢失</b>（实测导致修复失效）。本项目中
+     * Toolkit 由工厂按会话新建、交给 Builder 后原引用即弃，不存在"同一 Toolkit 喂多个 Agent"的共享
+     * 场景，防御性拷贝无隔离价值，故返回自身以保住守卫语义。若未来复用同一实例构建多个 Agent，
+     * 需改回拷贝并另寻守卫方案。</p>
+     */
+    @Override
+    public Toolkit copy() {
+        return this;
+    }
+
     /** 空集合视为"未初始化"而非"清空"，避免新会话状态把默认激活组抹掉。 */
     @Override
     public void setActiveGroups(List<String> groups) {
