@@ -8,6 +8,7 @@ import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ThemeToolbar from '@/components/ThemeToolbar.vue'
 import { useThemeStore } from '@/store/theme'
 import { generateUuid } from '@/utils/uuid'
+import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
 
 const props = defineProps<{ agentCode: string; initialSessionId?: string }>()
 
@@ -15,17 +16,6 @@ interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
-}
-
-/** 追加一个执行轨迹节点：连续的 thinking 是同一段思考内容的增量分片，合并进上一个节点而不是各占一条；
- * 其余节点类型（开始思考/调用大模型/调用 Skill 等）后端已经做过去重，各自独立成一条时间线项。 */
-function appendNode(msg: ChatMessage, kind: string, text: string) {
-  const last = msg.nodes[msg.nodes.length - 1]
-  if (last && last.kind === 'thinking' && kind === 'thinking') {
-    last.text += text
-  } else {
-    msg.nodes.push({ kind, text })
-  }
 }
 
 interface Attachment {
@@ -145,9 +135,18 @@ function send() {
         return
       }
       if (event.event.startsWith('node:')) {
-        appendNode(assistantMessage, event.event.slice('node:'.length), event.data)
+        const kind = event.event.slice('node:'.length)
+        const payload = parseChatStreamPayload(event.data)
+        appendChatStreamNode(assistantMessage.nodes, kind, payload.text, payload.source, payload.subagentName)
       } else if (event.event === 'message') {
-        assistantMessage.text += event.data
+        const payload = parseChatStreamPayload(event.data)
+        if (payload.source) {
+          // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板，
+          // 不算进主回答正文（主回答正文只承载主 Agent 自己的 message 事件，source 缺省）
+          appendChatStreamNode(assistantMessage.nodes, ANSWER_KIND, payload.text, payload.source, payload.subagentName)
+        } else {
+          assistantMessage.text += payload.text
+        }
       }
       // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
       scrollToBottom()

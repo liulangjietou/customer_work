@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.agent.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -31,6 +32,24 @@ public class AiAgent {
     private String icon;
     /** 0停用 / 1启用。 */
     private Integer status;
+
+    // ---- 高级参数（全部选填，null=用框架/工厂默认；updateStrategy=ALWAYS 保证编辑时能清空回默认） ----
+
+    /** ReAct 最大迭代轮数（null=默认10）。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private Integer maxIters;
+    /** 工具执行超时秒数（null=框架默认5分钟）。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private Integer toolTimeoutSeconds;
+    /** 工具执行最大尝试次数（null=框架默认1次）。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private Integer toolMaxAttempts;
+    /** 上下文压缩触发消息数（null=不启用压缩）。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private Integer compressTriggerMsgs;
+    /** 压缩后保留最近消息数（null=默认10）。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private Integer compressKeepMsgs;
 
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;
