@@ -79,6 +79,12 @@ admin:
     domain-suffix: ${ADMIN_LDAP_DOMAIN_SUFFIX:}
     connect-timeout-millis: ${ADMIN_LDAP_TIMEOUT_MILLIS:5000}
     default-role-codes: ${ADMIN_LDAP_DEFAULT_ROLE_CODES:super_admin}
+  model:
+    failover:
+      # 智能体模型主备容错熔断参数：主模型连续失败达 failure-threshold 次即熔断 open-duration-seconds 秒，
+      # 期间请求直接走备用模型；熔断到期自动半开（重置计数、放行一次主模型尝试）。见 ModelCircuitBreakerRegistry。
+      failure-threshold: ${ADMIN_MODEL_FAILOVER_FAILURE_THRESHOLD:3}
+      open-duration-seconds: ${ADMIN_MODEL_FAILOVER_OPEN_DURATION_SECONDS:60}
   scheduled-task:
     # 单次任务执行超时（秒）：Agent 同步调用的硬性超时兜底，手动触发接口 / XXL-JOB JobHandler 共用。
     execute-timeout-seconds: ${ADMIN_SCHEDULED_TASK_TIMEOUT_SECONDS:300}
@@ -109,6 +115,33 @@ admin:
       # ToolGuardMiddleware 默认关闭——那里客服业务场景默认信任内部工具，这里 Agent 会执行任意
       # shell 命令，风险面更大，默认开更保守）。
       enabled: ${ADMIN_SANDBOX_GUARD_ENABLED:true}
+  skill:
+    # Skill 保存/上传时把 SKILL.md 正文发布到勾选的存储目标（local/nacos/sftp）；运行时消费仍从数据库读。
+    storage:
+      local:
+        # 本地 workspace 目标（默认且始终启用），实际写入 {base-dir}/{skillCode}/SKILL.md。
+        base-dir: ${ADMIN_SKILL_STORAGE_LOCAL_BASE_DIR:./data/admin-workspace/skills}
+      nacos:
+        # Nacos 配置中心目标：默认关闭，enabled=true 才注册 Publisher。dataId={data-id-prefix}{skillCode}.md。
+        enabled: ${ADMIN_SKILL_STORAGE_NACOS_ENABLED:false}
+        server-addr: ${ADMIN_SKILL_STORAGE_NACOS_SERVER_ADDR:localhost:8848}
+        namespace: ${ADMIN_SKILL_STORAGE_NACOS_NAMESPACE:}
+        group: ${ADMIN_SKILL_STORAGE_NACOS_GROUP:SKILL_GROUP}
+        username: ${ADMIN_SKILL_STORAGE_NACOS_USERNAME:}
+        password: ${ADMIN_SKILL_STORAGE_NACOS_PASSWORD:}
+        data-id-prefix: ${ADMIN_SKILL_STORAGE_NACOS_DATA_ID_PREFIX:skill-}
+        timeout-ms: ${ADMIN_SKILL_STORAGE_NACOS_TIMEOUT_MS:3000}
+      sftp:
+        # SFTP 目录目标：默认关闭，enabled=true 才注册 Publisher。上传 {remote-dir}/{skillCode}/SKILL.md。
+        enabled: ${ADMIN_SKILL_STORAGE_SFTP_ENABLED:false}
+        host: ${ADMIN_SKILL_STORAGE_SFTP_HOST:}
+        port: ${ADMIN_SKILL_STORAGE_SFTP_PORT:22}
+        username: ${ADMIN_SKILL_STORAGE_SFTP_USERNAME:}
+        # 连接密码走环境变量注入，不入库、不硬编码。
+        password: ${ADMIN_SKILL_STORAGE_SFTP_PASSWORD:}
+        remote-dir: ${ADMIN_SKILL_STORAGE_SFTP_REMOTE_DIR:}
+        timeout-ms: ${ADMIN_SKILL_STORAGE_SFTP_TIMEOUT_MS:10000}
+        strict-host-key-checking: ${ADMIN_SKILL_STORAGE_SFTP_STRICT_HOST_KEY_CHECKING:false}
 
 springdoc:
   api-docs:

@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentBackupModel;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentBackupModelMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
@@ -25,7 +27,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -52,15 +57,18 @@ public class ModelConfigService {
 
     private final AiModelConfigMapper modelConfigMapper;
     private final AiAgentMapper agentMapper;
+    private final AiAgentBackupModelMapper agentBackupModelMapper;
     private final AesGcmCryptoUtil cryptoUtil;
     private final AdminModelFactory modelFactory;
     private final AgentInstanceCache agentInstanceCache;
 
     public ModelConfigService(AiModelConfigMapper modelConfigMapper, AiAgentMapper agentMapper,
+                               AiAgentBackupModelMapper agentBackupModelMapper,
                                AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
                                AgentInstanceCache agentInstanceCache) {
         this.modelConfigMapper = modelConfigMapper;
         this.agentMapper = agentMapper;
+        this.agentBackupModelMapper = agentBackupModelMapper;
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
         this.agentInstanceCache = agentInstanceCache;
@@ -115,17 +123,36 @@ public class ModelConfigService {
         evictAgentsReferencingModel(id);
     }
 
-    /** 模型配置变更（baseUrl/apiKey/model 等）会让引用它的智能体运行时用上旧配置构建的实例，需一并失效。 */
+    /**
+     * 模型配置变更（baseUrl/apiKey/model 等）会让引用它的智能体运行时用上旧配置构建的实例，需一并失效。
+     * 引用关系覆盖两处：作为主模型（{@code ai_agent.model_id}）与作为备用模型（{@code ai_agent_backup_model}）。
+     */
     private void evictAgentsReferencingModel(Long modelId) {
-        List<String> agentCodes = agentMapper.selectList(new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getModelId, modelId))
-            .stream().map(AiAgent::getAgentCode).collect(Collectors.toList());
-        agentInstanceCache.evictAll(agentCodes);
+        Set<String> agentCodes = new LinkedHashSet<>(agentMapper
+            .selectList(new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getModelId, modelId))
+            .stream().map(AiAgent::getAgentCode).collect(Collectors.toList()));
+        agentCodes.addAll(agentCodesReferencingModelAsBackup(modelId));
+        agentInstanceCache.evictAll(new ArrayList<>(agentCodes));
+    }
+
+    /** 查以该模型为备用模型的智能体 code 列表（backup 关联表 -> agentId -> agentCode）。 */
+    private List<String> agentCodesReferencingModelAsBackup(Long modelId) {
+        List<Long> agentIds = agentBackupModelMapper
+            .selectList(new LambdaQueryWrapper<AiAgentBackupModel>().eq(AiAgentBackupModel::getModelId, modelId))
+            .stream().map(AiAgentBackupModel::getAgentId).collect(Collectors.toList());
+        if (agentIds.isEmpty()) {
+            return List.of();
+        }
+        return agentMapper.selectBatchIds(agentIds).stream().map(AiAgent::getAgentCode).collect(Collectors.toList());
     }
 
     public void delete(Long id) {
         requireModel(id);
         if (agentMapper.exists(new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getModelId, id))) {
             throw new BizException(ResultCode.RESOURCE_IN_USE, "该模型配置正被智能体引用，无法删除");
+        }
+        if (agentBackupModelMapper.exists(new LambdaQueryWrapper<AiAgentBackupModel>().eq(AiAgentBackupModel::getModelId, id))) {
+            throw new BizException(ResultCode.RESOURCE_IN_USE, "该模型配置正被智能体作为备用模型引用，无法删除");
         }
         modelConfigMapper.deleteById(id);
     }

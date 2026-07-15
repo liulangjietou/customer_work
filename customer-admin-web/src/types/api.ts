@@ -279,6 +279,8 @@ export interface SkillVO {
   description: string | null
   status: number
   createTime: string
+  /** 上传目标：local(本地Workspace) / nacos / sftp，见 SkillStorageTarget。 */
+  storageTargets: string[]
 }
 
 export interface SkillSaveRequest {
@@ -287,6 +289,7 @@ export interface SkillSaveRequest {
   content: string
   description?: string | null
   status?: number | null
+  storageTargets: string[]
 }
 
 // ---------- aiconfig.system-tool ----------
@@ -316,6 +319,9 @@ export interface AgentVO {
   agentCode: string
   modelId: number
   modelName: string | null
+  /** 备用模型：主模型连通性异常时的降级候选，可空。 */
+  backupModelIds: number[]
+  backupModelNames: string[]
   mcpIds: number[]
   skillIds: number[]
   systemToolIds: number[]
@@ -330,6 +336,7 @@ export interface AgentSaveRequest {
   agentName: string
   agentCode: string
   modelId: number
+  backupModelIds?: number[] | null
   mcpIds?: number[] | null
   skillIds?: number[] | null
   systemToolIds?: number[] | null

@@ -2,8 +2,10 @@ package com.richard.fyoung.customeradmin.workspace.runtime;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentBackupModel;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSkill;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentBackupModelMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
@@ -13,6 +15,8 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
+import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.FailoverModel;
+import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.ModelCircuitBreakerRegistry;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
@@ -50,6 +54,7 @@ import org.springframework.util.StringUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -89,6 +94,7 @@ public class AdminAgentInstanceFactory {
     private final AiAgentMapper agentMapper;
     private final AiAgentMcpMapper agentMcpMapper;
     private final AiAgentSkillMapper agentSkillMapper;
+    private final AiAgentBackupModelMapper agentBackupModelMapper;
     private final AiModelConfigMapper modelConfigMapper;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
@@ -102,6 +108,7 @@ public class AdminAgentInstanceFactory {
     private final AdminMcpFactory mcpFactory;
     private final AdminSandboxProperties sandboxProperties;
     private final SandboxGuardMiddleware sandboxGuardMiddleware;
+    private final ModelCircuitBreakerRegistry circuitBreakerRegistry;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -110,17 +117,20 @@ public class AdminAgentInstanceFactory {
     private final ConcurrentHashMap<String, ToolSourceInfo> toolSourceCache = new ConcurrentHashMap<>();
 
     public AdminAgentInstanceFactory(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
-                                      AiAgentSkillMapper agentSkillMapper, AiModelConfigMapper modelConfigMapper,
+                                      AiAgentSkillMapper agentSkillMapper, AiAgentBackupModelMapper agentBackupModelMapper,
+                                      AiModelConfigMapper modelConfigMapper,
                                       AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
                                       AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
                                       ApplicationContext applicationContext,
                                       AdminModelFactory modelFactory, AesGcmCryptoUtil cryptoUtil,
                                       AgentStateStore stateStore, PermissionContextState permissionContext,
                                       AdminMcpFactory mcpFactory, AdminSandboxProperties sandboxProperties,
-                                      SandboxGuardMiddleware sandboxGuardMiddleware) {
+                                      SandboxGuardMiddleware sandboxGuardMiddleware,
+                                      ModelCircuitBreakerRegistry circuitBreakerRegistry) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
+        this.agentBackupModelMapper = agentBackupModelMapper;
         this.modelConfigMapper = modelConfigMapper;
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
@@ -134,6 +144,7 @@ public class AdminAgentInstanceFactory {
         this.mcpFactory = mcpFactory;
         this.sandboxProperties = sandboxProperties;
         this.sandboxGuardMiddleware = sandboxGuardMiddleware;
+        this.circuitBreakerRegistry = circuitBreakerRegistry;
     }
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
@@ -156,7 +167,7 @@ public class AdminAgentInstanceFactory {
      */
     public Model buildModelForAgent(String agentCode) {
         AiAgent agent = requireEnabledAgent(agentCode);
-        return buildModel(agent.getModelId());
+        return buildAgentModel(agent);
     }
 
     /** 从零构建一次智能体实例（供 {@link AgentInstanceCache} 惰性重建时调用）。 */
@@ -164,7 +175,7 @@ public class AdminAgentInstanceFactory {
         AiAgent agent = requireEnabledAgent(agentCode);
         List<String> capabilities = parseCapabilities(agent.getCapabilities());
 
-        Model model = buildModel(agent.getModelId());
+        Model model = buildAgentModel(agent);
         Set<String> mcpToolNames = new HashSet<>();
         Toolkit toolkit = buildToolkit(agent.getId(), mcpToolNames);
         buildSystemTools(agent.getId(), toolkit);
@@ -292,6 +303,30 @@ public class AdminAgentInstanceFactory {
         }
         String apiKey = cryptoUtil.decrypt(modelConfig.getApiKey());
         return modelFactory.buildModel(modelConfig.getProvider(), modelConfig.getBaseUrl(), apiKey, modelConfig.getModel());
+    }
+
+    /**
+     * 按智能体主备模型配置构建运行时 {@link Model}：无备用模型时行为与旧逻辑完全一致（直接返回单个主模型，
+     * 不包 {@link FailoverModel}）；有备用模型时按 {@code sort_order} 组装有序候选（主在前备在后）包成
+     * {@link FailoverModel}，运行时主模型失败自动按序切备并带熔断记忆。
+     */
+    private Model buildAgentModel(AiAgent agent) {
+        Model primaryModel = buildModel(agent.getModelId());
+        List<Long> backupModelIds = agentBackupModelMapper.selectList(
+                new LambdaQueryWrapper<AiAgentBackupModel>()
+                    .eq(AiAgentBackupModel::getAgentId, agent.getId())
+                    .orderByAsc(AiAgentBackupModel::getSortOrder))
+            .stream().map(AiAgentBackupModel::getModelId).collect(Collectors.toList());
+        if (CollectionUtils.isEmpty(backupModelIds)) {
+            return primaryModel;
+        }
+        List<FailoverModel.Candidate> candidates = new ArrayList<>();
+        candidates.add(new FailoverModel.Candidate(agent.getModelId(), primaryModel));
+        for (Long backupModelId : backupModelIds) {
+            candidates.add(new FailoverModel.Candidate(backupModelId, buildModel(backupModelId)));
+        }
+        log.info("[workspace] failover model built: agentCode={} candidates={}", agent.getAgentCode(), candidates.size());
+        return new FailoverModel(candidates, circuitBreakerRegistry);
     }
 
     /**

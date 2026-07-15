@@ -28,6 +28,8 @@ public class AiSkill {
     private String description;
     /** 0禁用 / 1启用。 */
     private Integer status;
+    /** 存储目标，逗号分隔（如 {@code "local,nacos"}），仿 ai_agent.capabilities 的存法。 */
+    private String storageTargets;
 
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;
