@@ -1,0 +1,46 @@
+package com.richard.fyoung.customerwork.tool;
+
+import io.agentscope.core.model.ToolSchema;
+import io.agentscope.core.tool.Toolkit;
+import org.springframework.util.CollectionUtils;
+
+import java.util.Collection;
+import java.util.List;
+
+/**
+ * 默认激活组语义的 Toolkit：把"空 activatedGroups"解释为"未初始化 → 沿用构建期默认激活组"，
+ * 而非"停用全部分组工具"。
+ *
+ * <p>背景（AgentScope 2.0.0 GA 实测行为）：配置了 AgentStateStore 时，{@code ReActAgent} 每次调用
+ * 会先用会话槽状态里的 activatedGroups <b>全量覆盖</b> Toolkit 的激活组（先全部停用再按集合激活），
+ * 推理时也只按该集合解析工具 schema。新会话的 fresh state 集合为空 → 构建期
+ * {@code createToolGroup(active=true)} 声明的业务工具组被整体清空，模型只能看到未分组的基础工具
+ * （对话表现为"没有订单查询工具"）。本类通过两处兜底修正该语义：</p>
+ * <ul>
+ *   <li>{@link #setActiveGroups(List)}：忽略空集合的覆盖，保留默认激活组；</li>
+ *   <li>{@link #getToolSchemas(Collection)}：入参为空时回退到按组内置激活标志解析。</li>
+ * </ul>
+ *
+ * <p>会话一旦真实持久化过非空激活组，仍以会话自身集合为准——不影响 meta-tool 运行时动态装备语义。</p>
+ * @author owlzhangfq@gmail.com
+ */
+public class DefaultActiveGroupsToolkit extends Toolkit {
+
+    /** 空集合视为"未初始化"而非"清空"，避免新会话状态把默认激活组抹掉。 */
+    @Override
+    public void setActiveGroups(List<String> groups) {
+        if (CollectionUtils.isEmpty(groups)) {
+            return;
+        }
+        super.setActiveGroups(groups);
+    }
+
+    /** 会话侧激活组为空时，回退到构建期默认激活组解析工具面。 */
+    @Override
+    public List<ToolSchema> getToolSchemas(Collection<String> activeGroups) {
+        if (CollectionUtils.isEmpty(activeGroups)) {
+            return getToolSchemas();
+        }
+        return super.getToolSchemas(activeGroups);
+    }
+}

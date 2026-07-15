@@ -6,6 +6,7 @@ import com.richard.fyoung.customerwork.config.PermissionConfig;
 import com.richard.fyoung.customerwork.config.SessionConfig;
 import com.richard.fyoung.customerwork.middleware.ObservabilityMiddleware;
 import com.richard.fyoung.customerwork.observability.StudioConfigurer;
+import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
@@ -99,7 +100,7 @@ public class CustomerWebAgentConfig {
     /** 业务工具集（复用 ToolRegistrar + 默认 Mock 后端；生产可换真实后端）。 */
     @Bean
     public Toolkit customerToolkit() {
-        Toolkit toolkit = new Toolkit();
+        Toolkit toolkit = new DefaultActiveGroupsToolkit();
         new ToolRegistrar(new MockOrderBackend(), new MockAfterSalesBackend(), new MockKnowledgeBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockMemberBackend(),

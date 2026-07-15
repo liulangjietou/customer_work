@@ -7,6 +7,7 @@ import com.richard.fyoung.customerwork.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.rag.KnowledgeProvider;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
+import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -156,7 +157,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
      * @param sessionId 会话标识；非空时转人工工具以真实会话驱动工单域
      */
     Toolkit buildToolkit(String sessionId) {
-        Toolkit toolkit = new Toolkit();
+        Toolkit toolkit = new DefaultActiveGroupsToolkit();
 
         // 业务工具按域分组注册（壳 + 可替换后端），透传真实会话以驱动工单域
         toolRegistrar.registerBusinessTools(toolkit, sessionId);

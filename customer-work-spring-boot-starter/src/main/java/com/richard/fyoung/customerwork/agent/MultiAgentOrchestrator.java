@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.agent;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.dto.IntentResult;
 import com.richard.fyoung.customerwork.tool.AfterSalesTools;
+import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.KnowledgeBaseTools;
 import com.richard.fyoung.customerwork.tool.OrderTools;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
@@ -179,7 +180,7 @@ public class MultiAgentOrchestrator {
     }
 
     private ReActAgent specialist(String name, String prompt, Object tool) {
-        Toolkit toolkit = new Toolkit();
+        Toolkit toolkit = new DefaultActiveGroupsToolkit();
         toolkit.registerTool(tool);
         return ReActAgent.builder()
             .name(name)
