@@ -93,17 +93,32 @@ class CustomerServiceServiceTest {
     }
 
     @Test
-    void chatStream_shouldEmitIncrementalChunks() {
+    void chatStream_shouldEmitIncrementalChunks_andDropReplayEvents() {
+        // 真实框架语义：增量块 isLast=false；每轮推理结束回放整段（isLast=true）；
+        // 最终 AGENT_RESULT 再回放全文——两类回放都不应二次下发，否则用户看到重复文本
         when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
             .thenReturn(Flux.just(
                 new Event(EventType.REASONING, assistantMsg("您"), false),
                 new Event(EventType.REASONING, assistantMsg("好"), false),
-                new Event(EventType.AGENT_RESULT, assistantMsg("！"), true)));
+                new Event(EventType.REASONING, assistantMsg("您好"), true),
+                new Event(EventType.AGENT_RESULT, assistantMsg("您好"), true)));
 
         StepVerifier.create(service.chatStream("u3", "你好"))
             .expectNext("您")
             .expectNext("好")
-            .expectNext("！")
+            .verifyComplete();
+    }
+
+    @Test
+    void chatStream_nonStreamingFallback_shouldEmitReplayOnce() {
+        // 非流式模型兜底：没有增量块，只有整段回放事件——应放行一次、去掉 AGENT_RESULT 的重复全文
+        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(
+                new Event(EventType.REASONING, assistantMsg("您好"), true),
+                new Event(EventType.AGENT_RESULT, assistantMsg("您好"), true)));
+
+        StepVerifier.create(service.chatStream("u3b", "你好"))
+            .expectNext("您好")
             .verifyComplete();
     }
 

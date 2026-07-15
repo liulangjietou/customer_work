@@ -14,6 +14,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -160,11 +162,30 @@ public class CustomerServiceService {
             .includeReasoningChunk(true)
             .build();
 
-        Flux<String> flux = withSessionLockFlux(sessionId,
-            agent.stream(List.of(toUserMsg(userText)), options, ctx)
-                .map(event -> event.getMessage() == null ? "" : event.getMessage().getTextContent())
-                .filter(text -> text != null && !text.isEmpty())
-        );
+        Flux<String> flux = withSessionLockFlux(sessionId, Flux.defer(() -> {
+            // 去重状态（每次订阅独立）：框架在增量块之外，还会按 isLast=true 回放"每轮推理整段 + 最终
+            // AGENT_RESULT 全文"——不过滤会导致用户看到同一段话重复 2-3 遍
+            AtomicBoolean chunkSeen = new AtomicBoolean(false);
+            AtomicReference<String> lastReplay = new AtomicReference<>("");
+            return agent.stream(List.of(toUserMsg(userText)), options, ctx)
+                .mapNotNull(event -> {
+                    String text = event.getMessage() == null ? null : event.getMessage().getTextContent();
+                    if (text == null || text.isEmpty()) {
+                        return null;
+                    }
+                    if (!event.isLast()) {
+                        chunkSeen.set(true);
+                        return text;
+                    }
+                    // 整段回放事件：已流式过增量块则一律丢弃；未流式（非流式模型兜底）时
+                    // 只放行与上一段不同的内容，避免 AGENT_RESULT 重复最后一轮推理文本
+                    if (chunkSeen.get() || text.equals(lastReplay.get())) {
+                        return null;
+                    }
+                    lastReplay.set(text);
+                    return text;
+                });
+        }));
 
         // SSE 空闲超时（框架 #1741 缓解）：相邻元素间隔超过阈值即超时收尾，避免连接泄漏。<=0 禁用。
         long idle = properties.getStream().getIdleTimeoutSeconds();
