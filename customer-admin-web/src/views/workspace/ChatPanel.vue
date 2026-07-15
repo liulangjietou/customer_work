@@ -5,7 +5,6 @@ import { getChatSessionMessages, interruptChat, parseChatAttachment, streamChat 
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
-import ThemeToolbar from '@/components/ThemeToolbar.vue'
 import { useThemeStore } from '@/store/theme'
 import { generateUuid } from '@/utils/uuid'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
@@ -201,15 +200,13 @@ onUnmounted(() => {
   abortStream?.()
 })
 
-defineExpose({ sessionId })
+// newSession 供 WorkspaceView 上提后的工具栏"新建会话"按钮按激活 Tab 分发调用
+defineExpose({ sessionId, newSession })
 </script>
 
 <template>
   <div class="chat-panel">
     <div class="chat-column">
-      <div class="panel-header">
-        <ThemeToolbar :on-new-session="newSession" />
-      </div>
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in messages" :key="index" class="message-row" :class="msg.role">
           <div class="bubble">
@@ -275,12 +272,6 @@ defineExpose({ sessionId })
   border-radius: 8px;
   padding: 12px;
   transition: background-color 0.3s ease;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
 }
 
 .messages {
