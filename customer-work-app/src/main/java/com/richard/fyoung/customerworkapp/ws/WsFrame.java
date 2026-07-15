@@ -1,0 +1,91 @@
+package com.richard.fyoung.customerworkapp.ws;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * WebSocket 帧（统一信封）：{@code {"type": "...", "data": ...}}。
+ *
+ * <p>所有上下行帧都走此结构，前端按 {@code type} 分派。静态工厂集中构帧，避免各处硬拼 type 字符串。
+ * {@code data} 用弱类型 {@link Object}（多为 Map / 字符串），交由 Jackson 序列化。</p>
+ * @author owlzhangfq@gmail.com
+ */
+public record WsFrame(String type, Object data) {
+
+    /** 用户/坐席一条完整对话消息（转发通道）。 */
+    public static final String TYPE_CHAT = "chat";
+    /** AI 流式增量片段。 */
+    public static final String TYPE_CHAT_CHUNK = "chat_chunk";
+    /** AI 流式结束（携带落库后的 messageId）。 */
+    public static final String TYPE_CHAT_DONE = "chat_done";
+    /** 工单状态流转事件。 */
+    public static final String TYPE_TICKET_EVENT = "ticket_event";
+    /** 新工单进入排队（广播给坐席抢单）。 */
+    public static final String TYPE_TICKET_NEW = "ticket_new";
+    /** 系统提示（如"正在转接人工"）。 */
+    public static final String TYPE_SYSTEM = "system";
+    /** 错误帧。 */
+    public static final String TYPE_ERROR = "error";
+    /** 心跳请求。 */
+    public static final String TYPE_PING = "ping";
+    /** 心跳响应。 */
+    public static final String TYPE_PONG = "pong";
+
+    private static final String KEY_CONTENT = "content";
+    private static final String KEY_MESSAGE_ID = "messageId";
+    private static final String KEY_TS = "ts";
+    private static final String KEY_CODE = "code";
+    private static final String KEY_MESSAGE = "message";
+
+    /** 对话转发帧（data 结构与前端契约对齐：messageId/sessionId/ticketId/senderType/senderId/content/ts）。 */
+    public static WsFrame chat(Object data) {
+        return new WsFrame(TYPE_CHAT, data);
+    }
+
+    /** AI 流式增量帧：{@code {content}}。 */
+    public static WsFrame chatChunk(String content) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_CONTENT, content);
+        return new WsFrame(TYPE_CHAT_CHUNK, data);
+    }
+
+    /** AI 流式结束帧：{@code {messageId, content, ts}}（content 为聚合后的全文，前端据此定稿流式气泡）。 */
+    public static WsFrame chatDone(String messageId, String content, long ts) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_MESSAGE_ID, messageId);
+        data.put(KEY_CONTENT, content);
+        data.put(KEY_TS, ts);
+        return new WsFrame(TYPE_CHAT_DONE, data);
+    }
+
+    /** 工单事件帧。 */
+    public static WsFrame ticketEvent(Object data) {
+        return new WsFrame(TYPE_TICKET_EVENT, data);
+    }
+
+    /** 新工单广播帧。 */
+    public static WsFrame ticketNew(Object data) {
+        return new WsFrame(TYPE_TICKET_NEW, data);
+    }
+
+    /** 系统提示帧：{@code {content, ts}}。 */
+    public static WsFrame system(String content) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_CONTENT, content);
+        data.put(KEY_TS, System.currentTimeMillis());
+        return new WsFrame(TYPE_SYSTEM, data);
+    }
+
+    /** 错误帧：{@code {code, message}}（code 用于排障定位，message 面向用户展示）。 */
+    public static WsFrame error(String code, String message) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_CODE, code);
+        data.put(KEY_MESSAGE, message);
+        return new WsFrame(TYPE_ERROR, data);
+    }
+
+    /** 心跳响应帧。 */
+    public static WsFrame pong() {
+        return new WsFrame(TYPE_PONG, null);
+    }
+}

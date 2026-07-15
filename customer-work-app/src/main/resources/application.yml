@@ -47,7 +47,8 @@ customer-work:
   session:
     # 会话持久化模式：memory（默认，重启丢）| json（单机落盘可恢复）
     #                | redis（分布式共享）| mysql（强一致持久化）
-    mode: memory
+    # 工单系统默认走 mysql：会话状态与工单/消息同库跨实例共享（本机库 agent_scope_customer_work）
+    mode: mysql
     # 会话空闲超时（分钟）：超过该时间无活动的会话自动清理（移除缓存+状态+锁）；<=0 禁用
     idle-timeout-minutes: 0
     directory: ./data/sessions
@@ -310,6 +311,37 @@ customer-work:
     tool-search: ""          # 工具搜索关键词；留空则不启用按需工具发现
     max-tools: 10
     timeout-seconds: 30
+  ticket:
+    # 智能客服工单：存储模式 memory（进程内）| jdbc（跨实例共享，与 session.mysql 同库不同池）
+    store-mode: jdbc
+    # 转人工触发关键词：用户消息命中即建单转人工，不进 LLM
+    handoff-keywords: [转人工, 人工客服, 人工服务, 真人客服, 找人工]
+    # SLA 告警阈值（秒）：WAITING_AGENT 无人接单 / PROCESSING 接单未处理完，超时 error 告警
+    sla-waiting-seconds: 300
+    sla-processing-seconds: 1800
+    # WAITING_CONFIRM 超时自动确认（默认 1 天）；RESOLVED 超时自动关闭归档（默认 3 天）
+    auto-confirm-seconds: 86400
+    auto-close-seconds: 259200
+    # SLA 巡检总开关（关闭则告警与自动流转全部停用）
+    sla-enabled: true
+  user-auth:
+    # 终端用户账户：存储模式 memory | jdbc（跨实例共享，与 session.mysql 同库）
+    store-mode: jdbc
+    # 登录态 JWT 签名密钥：生产必须用环境变量 CW_USER_JWT_SECRET 覆盖（默认值仅供本地开发）
+    jwt-secret: ${CW_USER_JWT_SECRET:dev-secret-change-me-in-production-0001}
+    # 登录态有效期（小时，默认 7 天）
+    jwt-expire-hours: 168
+  chat-log:
+    # 聊天日志（会话/工单消息留痕）：存储模式 memory | jdbc（跨实例共享）
+    store-mode: jdbc
+  agent-access:
+    # 坐席访问凭证 HMAC 签名密钥：生产必须用环境变量 CW_AGENT_WS_SECRET 覆盖
+    secret: ${CW_AGENT_WS_SECRET:dev-agent-secret-change-me-0001}
+    # 坐席访问令牌有效期（小时，默认 12）
+    expire-hours: 12
+  tool-backend:
+    # 业务工具后端：mock（默认，starter Mock 实现）| jdbc（app 层 JdbcOrderBackend/JdbcProductBackend）
+    mode: jdbc
 
 # 生产可观测：Actuator 健康检查 / 指标 / Prometheus
 management:
