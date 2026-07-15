@@ -361,7 +361,9 @@ onUnmounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* 锁定视口高度并禁止自身溢出：顶部导航/状态条与底部输入栏固定，仅消息区内部滚动 */
   height: 100vh;
+  overflow: hidden;
   background: #ececec;
 }
 
@@ -384,6 +386,8 @@ onUnmounted(() => {
 
 .message-area {
   flex: 1;
+  /* flex 子项默认 min-height:auto 不会收缩到内容以下，必须显式归零，滚动才发生在本区域内 */
+  min-height: 0;
   overflow-y: auto;
   padding: 12px;
 }
