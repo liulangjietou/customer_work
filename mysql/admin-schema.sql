@@ -321,3 +321,22 @@ INSERT INTO `sys_permission` (`parent_id`, `perm_name`, `perm_code`, `type`, `so
     (22, '编辑Skill', 'skill:edit', 2, 3), (22, '删除Skill', 'skill:delete', 2, 4),
     (23, '查看智能体', 'agent:view', 2, 1), (23, '新增智能体', 'agent:add', 2, 2),
     (23, '编辑智能体', 'agent:edit', 2, 3), (23, '删除智能体', 'agent:delete', 2, 4);
+
+-- =============================================================================
+-- 用户工单菜单权限（对应 Flyway V19__user_tickets_menu.sql）
+-- 说明：本文件相对迁移欠账 V12~V18（历史遗留，暂不回补），此处只追加本次 V19 的菜单/按钮种子。
+-- 工单数据全部在 customer-work-app（8080）侧，admin-server 只作代理，不建业务表。
+-- 权限点 id 段 130~138（现有最大 126，跳过 127~129 留缓冲）。超级管理员由 AdminStpInterfaceImpl 直接放行，无需绑定。
+-- =============================================================================
+INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `icon_type`, `sort`) VALUES
+    (130, 0, '客服工单', 'ticket', 1, '/ticket', 'Headset', 'library', 6),
+    (131, 130, '用户工单', 'user-ticket', 1, '/ticket/user-ticket', 'Tickets', 'library', 1);
+
+INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `sort`) VALUES
+    (132, 131, '查看用户工单',   'user-ticket:view',     2, 1),
+    (133, 131, '抢单受理工单',   'user-ticket:claim',    2, 2),
+    (134, 131, '回复工单',       'user-ticket:reply',    2, 3),
+    (135, 131, '转派工单',       'user-ticket:transfer', 2, 4),
+    (136, 131, '解决工单',       'user-ticket:resolve',  2, 5),
+    (137, 131, '关闭工单',       'user-ticket:close',    2, 6),
+    (138, 131, '编辑工单',       'user-ticket:edit',     2, 7);
