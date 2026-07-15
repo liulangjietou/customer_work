@@ -138,3 +138,116 @@ CREATE TABLE IF NOT EXISTS `cw_message_feedback` (
     INDEX `idx_feedback_session` (`session_id`),
     INDEX `idx_feedback_type` (`type`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- 智能客服工单系统（ticket / user / chatlog + JDBC 工具后端 演示表）
+-- =============================================================================
+-- 说明：以下 6 张表分别由 JdbcTicketStore / JdbcUserAccountStore / JdbcChatMessageStore /
+--       JdbcOrderBackend / JdbcProductBackend 自动建表（CREATE TABLE IF NOT EXISTS），
+--       本脚本用于 DBA 预审 / 受限权限环境；列/索引与各 JdbcStore 的 ensureTable 一致。
+--       cw_product / cw_order 的种子数据与各 Jdbc 后端 INSERT IGNORE 的种子完全一致
+--       （含 Mock 示例订单 20260613001 / 20260613002），保证从 Mock 切到 JDBC 后系统提示词示例连续。
+
+-- 终端用户账户表（cw_user）：登录凭据以 BCrypt 哈希存储。
+CREATE TABLE IF NOT EXISTS `cw_user` (
+    `id`             VARCHAR(64) PRIMARY KEY COMMENT '用户ID',
+    `username`       VARCHAR(64) NOT NULL COMMENT '用户名',
+    `password_hash`  VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码哈希',
+    `nickname`       VARCHAR(64) COMMENT '昵称',
+    `phone`          VARCHAR(32) COMMENT '手机号',
+    `status`         VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE/DISABLED',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    UNIQUE KEY `uk_user_username` (`username`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 客服工单主表（cw_ticket）：完整生命周期状态机（AI_SERVING→WAITING_AGENT→PROCESSING→...→CLOSED）。
+CREATE TABLE IF NOT EXISTS `cw_ticket` (
+    `id`              VARCHAR(64) PRIMARY KEY COMMENT '工单号',
+    `session_id`      VARCHAR(128) NOT NULL COMMENT '关联会话',
+    `user_id`         VARCHAR(64) NOT NULL COMMENT '发起用户',
+    `title`           VARCHAR(255) COMMENT '工单标题',
+    `category`        VARCHAR(32) NOT NULL DEFAULT 'OTHER' COMMENT '分类',
+    `priority`        VARCHAR(16) NOT NULL DEFAULT 'NORMAL' COMMENT '优先级',
+    `status`          VARCHAR(32) NOT NULL COMMENT '状态机状态',
+    `assignee`        VARCHAR(64) COMMENT '当前处理坐席',
+    `handoff_reason`  VARCHAR(255) COMMENT '转人工原因',
+    `resolve_note`    TEXT COMMENT '处理结论/备注',
+    `reopen_count`    INT NOT NULL DEFAULT 0 COMMENT '重开次数',
+    `created_at_ms`   BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`   BIGINT NOT NULL COMMENT '更新时间戳（毫秒）',
+    `handoff_at_ms`   BIGINT DEFAULT 0 COMMENT '最近转人工时间戳（毫秒）',
+    `claimed_at_ms`   BIGINT DEFAULT 0 COMMENT '接单时间戳（毫秒）',
+    `resolved_at_ms`  BIGINT DEFAULT 0 COMMENT '解决时间戳（毫秒）',
+    `closed_at_ms`    BIGINT DEFAULT 0 COMMENT '关闭时间戳（毫秒）',
+    INDEX `idx_ticket_session` (`session_id`),
+    INDEX `idx_ticket_user` (`user_id`, `created_at_ms`),
+    INDEX `idx_ticket_status` (`status`, `updated_at_ms`),
+    INDEX `idx_ticket_assignee` (`assignee`, `status`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 工单事件轨迹表（cw_ticket_event）：每次状态流转一条，不可变审计。
+CREATE TABLE IF NOT EXISTS `cw_ticket_event` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '事件自增主键',
+    `ticket_id`      VARCHAR(64) NOT NULL COMMENT '所属工单号',
+    `event_type`     VARCHAR(32) NOT NULL COMMENT '事件类型',
+    `from_status`    VARCHAR(32) COMMENT '流转前状态',
+    `to_status`      VARCHAR(32) COMMENT '流转后状态',
+    `actor_type`     VARCHAR(16) NOT NULL COMMENT '动作发起方类型',
+    `actor_id`       VARCHAR(64) COMMENT '动作发起方标识',
+    `note`           VARCHAR(500) COMMENT '备注',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '事件时间戳（毫秒）',
+    INDEX `idx_ticket_event` (`ticket_id`, `id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 聊天消息留痕表（cw_chat_message）：会话/工单双维度，自增主键用于游标翻页。
+CREATE TABLE IF NOT EXISTS `cw_chat_message` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键（游标翻页）',
+    `message_id`     VARCHAR(64) NOT NULL COMMENT '业务消息号 MSG-<uuid>',
+    `session_id`     VARCHAR(128) NOT NULL COMMENT '所属会话',
+    `ticket_id`      VARCHAR(64) COMMENT '关联工单号（可空）',
+    `sender_type`    VARCHAR(16) NOT NULL COMMENT '发送方类型 USER/BOT/AGENT/SYSTEM',
+    `sender_id`      VARCHAR(64) COMMENT '发送方标识（可空）',
+    `content`        TEXT NOT NULL COMMENT '消息内容',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    UNIQUE KEY `uk_chat_message_id` (`message_id`),
+    INDEX `idx_chat_session` (`session_id`, `id`),
+    INDEX `idx_chat_ticket` (`ticket_id`, `id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 商品表（cw_product）：JdbcProductBackend 演示表。
+CREATE TABLE IF NOT EXISTS `cw_product` (
+    `product_id`   VARCHAR(32) PRIMARY KEY COMMENT '商品ID',
+    `name`         VARCHAR(128) NOT NULL COMMENT '商品名称',
+    `category`     VARCHAR(64) COMMENT '品类',
+    `price`        DECIMAL(10,2) NOT NULL COMMENT '价格',
+    `stock`        INT NOT NULL DEFAULT 0 COMMENT '库存',
+    `description`  VARCHAR(500) COMMENT '商品描述',
+    `promotion`    VARCHAR(255) COMMENT '优惠活动',
+    `status`       VARCHAR(16) NOT NULL DEFAULT 'ON_SALE' COMMENT 'ON_SALE/OFF_SALE',
+    INDEX `idx_product_category` (`category`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO `cw_product` (`product_id`, `name`, `category`, `price`, `stock`, `description`, `promotion`, `status`) VALUES
+('P001', '旗舰款无线降噪耳机', '耳机', 299.00, 100, '旗舰款无线降噪耳机，蓝牙 5.3，续航 30 小时，支持多点连接，颜色 黑/白，质保 1 年', '满 300 减 50；可叠加新人券 20 元；下单送收纳包', 'ON_SALE'),
+('P002', '运动防汗蓝牙耳机', '耳机', 199.00, 50, '运动防汗蓝牙耳机，IPX5 级防水，佩戴稳固，适合健身运动', '限时直降 30 元，晒单再返 10 元', 'ON_SALE'),
+('P003', '商务降噪头戴耳机', '耳机', 599.00, 0, '商务降噪头戴耳机，主动降噪，麦克风通话清晰，续航 40 小时', '', 'ON_SALE');
+
+-- 订单表（cw_order）：JdbcOrderBackend 演示表。种子含 Mock 示例订单，状态/金额/下单日期与 Mock 一致。
+CREATE TABLE IF NOT EXISTS `cw_order` (
+    `order_id`         VARCHAR(32) PRIMARY KEY COMMENT '订单号',
+    `user_id`          VARCHAR(64) NOT NULL COMMENT '下单用户',
+    `product_id`       VARCHAR(32) NOT NULL COMMENT '商品ID',
+    `product_name`     VARCHAR(128) COMMENT '商品名称',
+    `amount`           DECIMAL(10,2) NOT NULL COMMENT '订单金额',
+    `status`           VARCHAR(32) NOT NULL COMMENT '订单状态',
+    `receiver_addr`    VARCHAR(255) COMMENT '收货地址',
+    `logistics_trace`  TEXT COMMENT '物流轨迹',
+    `created_at_ms`    BIGINT NOT NULL COMMENT '下单时间戳（毫秒）',
+    INDEX `idx_order_user` (`user_id`, `created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO `cw_order` (`order_id`, `user_id`, `product_id`, `product_name`, `amount`, `status`, `receiver_addr`, `logistics_trace`, `created_at_ms`) VALUES
+('20260613001', 'U-demo-1', 'P001', '旗舰款无线降噪耳机', 299.00, '已发货', '北京市朝阳区建国路 88 号', '[6-11 已揽收]→[6-12 到达分拨中心]→[6-13 派送中]。', 1781049600000),
+('20260613002', 'U-demo-1', 'P003', '商务降噪头戴耳机', 1599.00, '已签收', '上海市浦东新区世纪大道 100 号', '[5-18 已揽收]→[5-19 运输中]→[5-20 已签收]。', 1779235200000),
+('20260613003', 'U-demo-2', 'P002', '运动防汗蓝牙耳机', 199.00, '待发货', '广州市天河区体育西路 1 号', '[6-13 已下单，仓库备货中]', 1781308800000),
+('20260613004', 'U-demo-2', 'P001', '旗舰款无线降噪耳机', 299.00, '已退款', '深圳市南山区科技园路 5 号', '[6-08 已揽收]→[6-09 用户取消]→[6-10 已退款]', 1780876800000);

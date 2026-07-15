@@ -145,14 +145,21 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         return nacosPromptService.currentPrompt().orElse(SYSTEM_PROMPT);
     }
 
+    /** 无会话上下文的工具体系（保留重载委托 null，保证既有测试无需改动即绿）。 */
+    Toolkit buildToolkit() {
+        return buildToolkit(null);
+    }
+
     /**
      * 构建工具体系：按业务域分组注册工具，可选注册元工具与 MCP 工具。
+     *
+     * @param sessionId 会话标识；非空时转人工工具以真实会话驱动工单域
      */
-    Toolkit buildToolkit() {
+    Toolkit buildToolkit(String sessionId) {
         Toolkit toolkit = new Toolkit();
 
-        // 业务工具按域分组注册（壳 + 可替换后端）
-        toolRegistrar.registerBusinessTools(toolkit);
+        // 业务工具按域分组注册（壳 + 可替换后端），透传真实会话以驱动工单域
+        toolRegistrar.registerBusinessTools(toolkit, sessionId);
 
         if (properties.getAgent().isMetaToolEnabled()) {
             toolkit.registerMetaTool();
@@ -175,7 +182,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     public ReActAgent createAgent(String sessionId) {
         log.info("创建客服 Agent，会话: {}", sessionId);
 
-        Toolkit toolkit = buildToolkit();
+        Toolkit toolkit = buildToolkit(sessionId);
 
         ReActAgent.Builder builder = ReActAgent.builder()
             .name("CustomerServiceAgent-" + sessionId)

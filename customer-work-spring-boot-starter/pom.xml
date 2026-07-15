@@ -178,6 +178,14 @@
             <artifactId>agentscope-extensions-nacos-prompt</artifactId>
         </dependency>
 
+        <!-- 仅取密码哈希工具（BCryptPasswordEncoder，用户账户密码加密），不引入
+             spring-boot-starter-security 的自动装配（会拦截 WebFlux 端点）；版本随
+             spring-boot-starter-parent 统一管理，与 customer-admin-server 保持一致。 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

@@ -486,6 +486,84 @@ public class CustomerWorkProperties {
     /** 用户反馈（消息级点赞/点踩）存储配置。 */
     private final Feedback feedback = new Feedback();
 
+    /** 智能客服工单配置（存储 + 转人工关键词 + SLA 阈值与自动流转）。 */
+    private final Ticket ticket = new Ticket();
+
+    /** 终端用户账户鉴权配置（存储 + JWT 参数）。 */
+    private final UserAuth userAuth = new UserAuth();
+
+    /** 聊天日志（会话/工单消息留痕）存储配置。 */
+    private final ChatLog chatLog = new ChatLog();
+
+    /** 坐席访问凭证（HMAC 令牌）配置。 */
+    private final AgentAccess agentAccess = new AgentAccess();
+
+    /**
+     * 智能客服工单配置。
+     *
+     * <p>{@code store-mode} 决定 {@code TicketService} 的持久化方式（memory 单实例 / jdbc 跨实例共享）；
+     * {@code handoff-keywords} 供上层意图识别命中即建单转人工；SLA 阈值中 waiting/processing 仅告警，
+     * auto-confirm/auto-close 由 {@code TicketSlaScheduler} 做有意的自动流转兜底。</p>
+     */
+    @Data
+    public static class Ticket {
+        /** 存储模式：memory（进程内，默认）| jdbc（跨实例共享）。 */
+        private String storeMode = "memory";
+        /** 转人工触发关键词（命中即请求转人工）。 */
+        private List<String> handoffKeywords = new ArrayList<>(List.of(
+            "转人工", "人工客服", "人工服务", "真人客服", "找人工"));
+        /** SLA 告警：WAITING_AGENT（无人接单）超过该秒数即 error 告警。 */
+        private long slaWaitingSeconds = 300;
+        /** SLA 告警：PROCESSING（接单未处理完）超过该秒数即 error 告警。 */
+        private long slaProcessingSeconds = 1800;
+        /** WAITING_CONFIRM 超过该秒数用户未确认即自动确认（默认 1 天）。 */
+        private long autoConfirmSeconds = 86400;
+        /** RESOLVED 超过该秒数即自动关闭归档（默认 3 天）。 */
+        private long autoCloseSeconds = 259200;
+        /** SLA 巡检总开关（关闭则告警与自动流转全部停用）。 */
+        private boolean slaEnabled = true;
+    }
+
+    /**
+     * 终端用户账户鉴权配置。
+     *
+     * <p>{@code store-mode} 决定 {@code UserAccountService} 的账户持久化方式；{@code jwt-secret} /
+     * {@code jwt-expire-hours} 供上层签发用户登录态令牌（starter 只提供账户与密码校验能力，令牌签发在接入层）。</p>
+     */
+    @Data
+    public static class UserAuth {
+        /** 存储模式：memory（进程内，默认）| jdbc（跨实例共享）。 */
+        private String storeMode = "memory";
+        /** 用户登录态 JWT 签名密钥（生产必须用环境变量注入覆盖）。 */
+        private String jwtSecret = "";
+        /** 用户登录态有效期（小时，默认 7 天）。 */
+        private int jwtExpireHours = 168;
+    }
+
+    /**
+     * 聊天日志存储配置。
+     *
+     * <p>{@code store-mode} 决定 {@code ChatLogService} 的消息留痕持久化方式（memory 仅单实例 / jdbc 跨实例）。</p>
+     */
+    @Data
+    public static class ChatLog {
+        /** 存储模式：memory（进程内，默认）| jdbc（跨实例共享）。 */
+        private String storeMode = "memory";
+    }
+
+    /**
+     * 坐席访问凭证配置（对应 {@code AgentAccessCredential} 的 HMAC 令牌签发/校验）。
+     *
+     * <p>{@code secret} 为服务端签名密钥（生产必须用环境变量注入覆盖）；{@code expire-hours} 为坐席令牌有效期。</p>
+     */
+    @Data
+    public static class AgentAccess {
+        /** HMAC 签名密钥（生产必须用环境变量注入覆盖）。 */
+        private String secret = "";
+        /** 坐席访问令牌有效期（小时，默认 12）。 */
+        private int expireHours = 12;
+    }
+
     /**
      * 用户反馈存储配置。
      *

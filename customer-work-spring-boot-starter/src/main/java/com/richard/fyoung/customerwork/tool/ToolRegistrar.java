@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.handoff.HandoffService;
+import com.richard.fyoung.customerwork.ticket.TicketService;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.ComplaintBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
@@ -37,6 +38,8 @@ public class ToolRegistrar {
     private final ComplaintBackend complaintBackend;
     private final PendingApprovalService approvalService;
     private final HandoffService handoffService;
+    /** 可空：未装配工单域时退化为仅 handoff 旧链路（HumanHandoffTools 二参构造）。 */
+    private final TicketService ticketService;
 
     public ToolRegistrar(OrderBackend orderBackend,
                          AfterSalesBackend afterSalesBackend,
@@ -45,7 +48,8 @@ public class ToolRegistrar {
                          MemberBackend memberBackend,
                          ComplaintBackend complaintBackend,
                          PendingApprovalService approvalService,
-                         HandoffService handoffService) {
+                         HandoffService handoffService,
+                         TicketService ticketService) {
         this.orderBackend = orderBackend;
         this.afterSalesBackend = afterSalesBackend;
         this.knowledgeBackend = knowledgeBackend;
@@ -54,10 +58,20 @@ public class ToolRegistrar {
         this.complaintBackend = complaintBackend;
         this.approvalService = approvalService;
         this.handoffService = handoffService;
+        this.ticketService = ticketService;
     }
 
-    /** 创建各业务域工具组并注册对应工具。 */
+    /** 创建各业务域工具组并注册对应工具（无会话上下文：转人工工具不驱动工单域）。 */
     public void registerBusinessTools(Toolkit toolkit) {
+        registerBusinessTools(toolkit, null);
+    }
+
+    /**
+     * 创建各业务域工具组并注册对应工具。
+     *
+     * @param sessionId 会话标识；非空且工单域已装配时，转人工工具会以真实会话驱动 {@link TicketService}
+     */
+    public void registerBusinessTools(Toolkit toolkit, String sessionId) {
         toolkit.createToolGroup(GROUP_KNOWLEDGE, "知识库检索：产品政策、售后规则、发票运费等 FAQ", true);
         toolkit.createToolGroup(GROUP_ORDER, "订单与物流：查询/改址/取消/催发货", true);
         toolkit.createToolGroup(GROUP_AFTER_SALES, "售后：退款/退货/换货/价保/发票/进度（涉资金走人工确认）", true);
@@ -72,6 +86,14 @@ public class ToolRegistrar {
         toolkit.registration().tool(new ProductTools(productBackend)).group(GROUP_PRESALE).apply();
         toolkit.registration().tool(new MemberTools(memberBackend)).group(GROUP_MEMBER).apply();
         toolkit.registration().tool(new ComplaintTools(complaintBackend)).group(GROUP_COMPLAINT).apply();
-        toolkit.registration().tool(new HumanHandoffTools(handoffService)).group(GROUP_HUMAN).apply();
+        toolkit.registration().tool(buildHumanHandoffTools(sessionId)).group(GROUP_HUMAN).apply();
+    }
+
+    /** 有真实会话时用三参构造（driving 工单域 + handoff 双写），否则退化为仅 handoff 旧链路。 */
+    private HumanHandoffTools buildHumanHandoffTools(String sessionId) {
+        if (sessionId != null && ticketService != null) {
+            return new HumanHandoffTools(handoffService, ticketService, sessionId);
+        }
+        return new HumanHandoffTools(handoffService);
     }
 }
