@@ -1,0 +1,55 @@
+import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/store/auth'
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    {
+      path: '/login',
+      name: 'Login',
+      component: () => import('@/views/Login.vue'),
+      meta: { public: true },
+    },
+    {
+      path: '/register',
+      name: 'Register',
+      component: () => import('@/views/Register.vue'),
+      meta: { public: true },
+    },
+    {
+      path: '/chat',
+      name: 'Chat',
+      component: () => import('@/views/Chat.vue'),
+    },
+    {
+      path: '/tickets',
+      name: 'TicketList',
+      component: () => import('@/views/TicketList.vue'),
+    },
+    {
+      path: '/tickets/:id',
+      name: 'TicketDetail',
+      component: () => import('@/views/TicketDetail.vue'),
+      props: true,
+    },
+    {
+      path: '/',
+      redirect: '/chat',
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/chat',
+    },
+  ],
+})
+
+// 无 token 时除 /login /register 外一律跳 /login
+router.beforeEach((to) => {
+  const auth = useAuthStore()
+  if (!to.meta.public && !auth.isLoggedIn) {
+    return { name: 'Login', query: { redirect: to.fullPath } }
+  }
+  return true
+})
+
+export default router
