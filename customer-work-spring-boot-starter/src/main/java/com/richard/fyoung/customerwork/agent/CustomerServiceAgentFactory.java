@@ -141,9 +141,19 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         return b.build();
     }
 
-    /** 生效的系统提示词：优先 Nacos 配置中心下发，缺省回退内置提示词。 */
+    /** 生效的系统提示词：优先 Nacos 配置中心下发，缺省回退内置提示词；统一追加运行期事实注入。 */
     String systemPrompt() {
-        return nacosPromptService.currentPrompt().orElse(SYSTEM_PROMPT);
+        return nacosPromptService.currentPrompt().orElse(SYSTEM_PROMPT) + runtimeFacts();
+    }
+
+    /**
+     * 运行期事实注入（Nacos 覆盖与内置提示词都追加）：
+     * 模型训练知识存在时间滞后，不注入当前日期会把合法单号推理成"未来日期不合逻辑"而拒查。
+     */
+    private String runtimeFacts() {
+        return "\n补充事实与约束：\n"
+            + "- 当前日期：" + java.time.LocalDate.now() + "（以此为准判断时间，不要依赖你训练记忆里的年份）。\n"
+            + "- 订单号 / 单据编号不要凭格式或日期做有效性猜测，一律直接调用对应查询工具核实。\n";
     }
 
     /** 无会话上下文的工具体系（保留重载委托 null，保证既有测试无需改动即绿）。 */
