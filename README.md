@@ -29,7 +29,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main`（AgentScope 2.0.0 GA）分支 **811 个全绿**（starter 438 + app 58 + customer-channel 8 + 后台管理系统 `customer-admin-server` 306，见 §6.21、§6.22；其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；升级前 1.0.12 版本的最后状态存档于 `legacy-main-1.0.12` 标签（176 个全绿）
+- 单元测试：`main`（AgentScope 2.0.0 GA）分支 **873 个全绿**（starter 497 + app 56 + customer-channel 8 + 后台管理系统 `customer-admin-server` 312，见 §6.21、§6.22；其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；升级前 1.0.12 版本的最后状态存档于 `legacy-main-1.0.12` 标签（176 个全绿）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -121,7 +121,7 @@
 | **聊天消息落库（双维度游标分页）** | `ChatLogService` + `ChatMessageStore` SPI | 开 | `customer-work.chat-log.store-mode=jdbc`（表 `cw_chat_message`，按会话/工单 `beforeId+limit` 分页） |
 | **用户/坐席 WebSocket 双通道** | `UserChatWebSocketHandler` / `AgentChatWebSocketHandler` + `ChatDispatchService` | 开 | `/ws/user?token=<JWT>`、`/ws/agent?token=<HMAC凭证>`；AI 流式 / 坐席转发 / 关键词转人工 |
 | **坐席 HMAC 接入凭证** | `AgentAccessCredential`（HmacSHA256）+ `AgentAuthWebFilter` | 开 | REST 头 `X-Agent-Token` / WS query `token`，env `CW_AGENT_WS_SECRET`（8080+8082 共享） |
-| **真实业务后端（订单/商品/售后/会员/投诉/知识库）** | `JdbcOrderBackend` / `JdbcProductBackend` / `JdbcAfterSalesBackend` / `JdbcMemberBackend` / `JdbcComplaintBackend` / `JdbcKnowledgeBackend` | 关 | `customer-work.tool-backend.mode=jdbc`（8 张 `cw_*` 表含种子），六域后端整体替换内存 Mock |
+| **真实业务后端（订单/商品/售后/会员/投诉/知识库）** | `MybatisOrderBackend` / `MybatisProductBackend` / `MybatisAfterSalesBackend` / `MybatisMemberBackend` / `MybatisComplaintBackend` / `MybatisKnowledgeBackend` | 关 | `customer-work.tool-backend.mode=jdbc`（8 张 `cw_*` 表含种子，MyBatis-Plus 实现），六域后端整体替换内存 Mock |
 
 ### ⚠️ 不可迁移 / 沿用说明（1.x→2.0 备注）
 
@@ -181,6 +181,7 @@
 | GET | `/api/customer/user/sessions/{sid}/messages` | 会话消息历史（`beforeId`+`limit` 游标） |
 | POST | `/api/customer/user/tickets/{id}/handoff\|confirm\|reject\|reopen\|close` | 用户侧工单流转（越权 403、非法流转 409） |
 | GET/POST/PUT | `/api/customer/agent/tickets/**` | 坐席端工单池筛选 / 接单 / 回复 / 挂起 / 转派 / 解决 / 关单（`X-Agent-Token` 鉴权） |
+| GET/POST | `/api/customer/agent/orders` `/orders/{orderId}` `/orders/{orderId}/modify-address` `/orders/{orderId}/cancel` | 坐席订单分页查询 / 详情 / 改址 / 取消（`X-Agent-Token` 鉴权，仅未发货可取消，非法状态 409） |
 | WS | `/ws/user?token=<JWT>` · `/ws/agent?token=<HMAC>` | 用户 / 坐席 WebSocket 实时通道 |
 | GET | `/api/customer/health` | 健康检查 |
 | GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
@@ -687,7 +688,8 @@ operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案�
 
 后端是独立的 Spring MVC 后台管理系统:面向系统管理员/运营人员统一管理用户权限(RBAC)、AI 模型、MCP、
 Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按需求文档锁定:**MyBatis-Plus + Sa-Token**
-(与仓库其余模块的手写 JDBC Store SPI 模式并存、互不冲突,原因见模块内 Javadoc)。前端
+(与 `customer-work-spring-boot-starter` 业务持久层各自独立的 MyBatis-Plus 环境并存、互不冲突,原因见
+`CustomerWorkPersistenceConfig` Javadoc)。前端
 **[customer-admin-web](customer-admin-web)** 是独立的 Vue 3 + TypeScript + Vite SPA(非 Maven 子模块,
 与仓库根目录平级),用 Element Plus 做中后台 UI、Pinia 做状态管理、原生 `fetch` + `ReadableStream`
 手写 SSE 解析(POST + 自定义 Authorization 头,原生 `EventSource` 做不到)。
@@ -724,6 +726,7 @@ cd customer-admin-web && npm install && npm run dev
 | `POST /api/workspace/{agentCode}/chat/stream` | 智能体在线聊天（SSE，权限点复用 `workspace`，停用智能体报 `AGENT_DISABLED`） |
 | `POST /api/workspace/{agentCode}/vibecoding/stream` | VibeCoding 对话（SSE，仅 `capabilities` 含 `vibecoding` 的智能体可用） |
 | `GET /api/workspace/{agentCode}/vibecoding/artifacts?sessionId=` | VibeCoding 产物清单（对话前后对比 workspace 目录快照，降级版方案，无实时 `file_change` 事件） |
+| `/api/ticket/orders/**` | 用户订单管理（代理 8080 坐席订单 API：分页/详情/改址/取消，权限点 `user-order:view`/`user-order:edit`），见 §6.22 |
 | `/swagger-ui/index.html` | 接口文档 |
 
 生产建表由 DBA 参照 **[mysql/admin-schema.sql](mysql/admin-schema.sql)** 手工执行（与 `mysql/schema.sql`
@@ -860,9 +863,11 @@ customer-admin-server(8082 代理)─┘                         └─ 数据�
 - **7 态工单状态机**（`Ticket` 充血实体）：`AI_SERVING`→`WAITING_AGENT`→`PROCESSING`⇄`ON_HOLD`→
   `WAITING_CONFIRM`→`RESOLVED`→`CLOSED`，支持 `cancelHandoff` 回 AI、`transferToPool`/`transferToAgent`
   转派、`reject` 驳回退回 `PROCESSING`、`reopen` 重开（`RESOLVED|CLOSED`→`WAITING_AGENT`，计数）。
-  `JdbcTicketStore` 的 `claim` 用条件 `UPDATE ... WHERE status='WAITING_AGENT'` 乐观锁防并发抢单；
+  `MybatisTicketStore` 的 `claim` 用条件 `UPDATE ... WHERE status='WAITING_AGENT'` 乐观锁防并发抢单；
   `TicketSlaScheduler` 对 `WAITING_AGENT`/`PROCESSING` 超时仅告警，对 `WAITING_CONFIRM` 超时自动 confirm、
   `RESOLVED` 超时自动 close。
+- **坐席订单管理**：坐席可在 `customer-admin-web`「用户订单」页查询/改址/取消用户订单（8082 代理 8080
+  `OrderDirectoryService`，仅未发货订单可取消，见 §6.21 与 §3 接口速查）。
 - **鉴权体系**：用户 JWT（env `CW_USER_JWT_SECRET`）/ 坐席 HMAC 凭证（`AgentAccessCredential`，env
   `CW_AGENT_WS_SECRET`，8080 与 8082 共享）；开发有默认值、**生产必须覆盖**。
 - **与旧 handoff 域共存**：`HumanHandoffTools.transferToHuman` 打通真实 `sessionId` 后**双写** ticket 域
@@ -881,11 +886,12 @@ customer-work:
 
 - 完整状态机 / 数据模型（6 张表）/ WS 帧协议 / 消息分发时序 / 并发可靠性 → **[docs/详细技术文档.md](docs/详细技术文档.md)**「用户工单系统」章节。
 - 全部接口（用户认证 / 用户端工单 / 坐席端工单 / admin 代理 / WebSocket）请求响应示例 → **[docs/生产接口使用手册.md](docs/生产接口使用手册.md)**。
-- 测试：starter 侧 `TicketTest` / `TicketServiceTest` / `TicketSlaSchedulerTest` / `JdbcTicketStoreTest` /
-  `JdbcUserAccountStoreTest` / `ChatLogServiceTest` / `JdbcChatMessageStoreTest` / `AgentAccessCredentialTest` /
-  `Jdbc{Order,Product}BackendTest`；app 侧 `UserAuthControllerTest` / `UserTicketControllerTest` /
-  `AgentTicketControllerTest` / `ChatDispatchServiceTest` / `HandoffKeywordDetectorTest` /
-  `UserJwtServiceTest` / `WsSessionRegistryTest`；admin 侧 `CustomerWorkTicketClientTest` / `UserTicketServiceTest`。
+- 测试：starter 侧 `TicketTest` / `TicketServiceTest` / `TicketSlaSchedulerTest` / `MybatisTicketStoreTest` /
+  `MybatisUserAccountStoreTest` / `ChatLogServiceTest` / `MybatisChatMessageStoreTest` / `AgentAccessCredentialTest` /
+  `Mybatis{Order,Product}BackendTest`；app 侧 `UserAuthControllerTest` / `UserTicketControllerTest` /
+  `AgentTicketControllerTest` / `AgentOrderControllerTest` / `UserOrderControllerTest` / `ChatDispatchServiceTest` /
+  `HandoffKeywordDetectorTest` / `UserJwtServiceTest` / `WsSessionRegistryTest`；admin 侧
+  `CustomerWorkTicketClientTest` / `UserTicketServiceTest` / `UserOrderServiceTest`。
 
 ---
 
@@ -920,14 +926,14 @@ customer-work:
 | `user-auth` | store-mode(memory), jwt-secret(${CW_USER_JWT_SECRET}), jwt-expire-hours(168) |
 | `chat-log` | store-mode(memory) |
 | `agent-access` | secret(${CW_AGENT_WS_SECRET}), expire-hours(12) |
-| `tool-backend` | mode(mock)：mock=starter 内存 Mock \| jdbc=app 层订单/商品/售后/会员/投诉/知识库六域 Jdbc 后端（8 张 `cw_*` 表） |
+| `tool-backend` | mode(mock)：mock=starter 内存 Mock \| jdbc=订单/商品/售后/会员/投诉/知识库六域 MyBatis-Plus 后端（8 张 `cw_*` 表） |
 
 ---
 
 ## 八、测试说明
 
 ```bash
-mvn test                                   # 全 reactor 全部单测（当前 811 个：starter 438 + app 58 + customer-channel 8 + customer-admin-server 306），离线即可全绿
+mvn test                                   # 全 reactor 全部单测（当前 873 个：starter 497 + app 56 + customer-channel 8 + customer-admin-server 312），离线即可全绿
 mvn test -Dtest=ModelConfigTest            # 单类
 ```
 

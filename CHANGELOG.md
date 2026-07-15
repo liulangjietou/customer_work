@@ -4,6 +4,34 @@
 
 ## [Unreleased]
 
+### 持久层 MyBatis-Plus 化 + 通用能力下沉 + 坐席订单管理（2026-07-15，分支 `feature/user-ticket-system`）
+
+- **业务持久层全面 MyBatis-Plus 化，废除裸 JDBC 手写 SQL**：starter 15 个业务持久化类（Approval/
+  SlotFilling/DialogStage/Handoff/Feedback/AuditSink/Ticket/TicketEvent/ChatMessage/User/Order/Product/
+  AfterSales/Member/Complaint/Knowledge）统一改为贫血 DO（`entity/`）+ `BaseMapper`（`mapper/`）+ 复杂 SQL
+  写在 `resources/customerwork/mapper/*.xml`，`Jdbc*Store`/`Jdbc*Backend` 全部更名为 `Mybatis*Store`/
+  `Mybatis*Backend`（如 `JdbcTicketStore`→`MybatisTicketStore`、`JdbcOrderBackend`→`MybatisOrderBackend`）。
+  新增 `CustomerWorkPersistenceConfig`：独立 `customerWorkDataSource`/`customerWorkSqlSessionFactory`/
+  `customerWorkSqlSessionTemplate` + `@MapperScan(sqlSessionTemplateRef=...)` 精确绑定，不引入
+  `mybatis-plus-spring-boot3-starter` 自动装配，对宿主 MyBatis 环境零污染；`PersistenceJdbcCondition`
+  按任一业务域 `store-mode=jdbc`/`tool-backend.mode=jdbc` 时才装配。建表与种子从此前散落在 15 个类里的
+  `ensureTable`/`seed` 收敛为统一的 `SchemaInitializer`（执行 `customerwork/schema/customer-work-schema.sql`，
+  与 `mysql/schema.sql` 内容一致）。`store-mode=jdbc` 对外配置语义不变（仍是"落库"），仅内部实现从裸 JDBC
+  换成 MyBatis-Plus。
+- **通用能力下沉 starter**：原 app 模块的用户 JWT 认证全套（`UserPrincipal`/`UserJwtService`/
+  `UserAuthWebFilter`/`AgentAuthWebFilter` 等，含 `jjwt` 依赖）与 WebSocket 基建（`WsFrame`/
+  `WsSessionRegistry`）下沉到 `com.richard.fyoung.customerwork.security`/`.ws` 包；新增通用分页
+  `common.PageResult<T>{total,items}`。app 只保留 `WebSocketHandler` 实现、装配与业务编排。
+- **坐席订单管理**：8080 新增 `AgentOrderController`（`/api/customer/agent/orders`，`X-Agent-Token` 鉴权）：
+  分页查询（`userId`/`username`/`orderId`/`status` 过滤，JOIN `cw_user` 回填用户名）、详情（含物流轨迹）、
+  改址、取消（仅"待支付/已支付/待发货"未发货阶段可取消，否则 409）；`tool-backend.mode!=jdbc` 时整组 503。
+  `customer-admin-server` 新增 `/api/ticket/orders/**` 代理（权限点 `user-order:view`/`user-order:edit`）+
+  `V20__user_orders_menu.sql`（客服工单分组下新增"用户订单"菜单 id=139、按钮 140/141）；
+  `customer-admin-web` 新增用户订单管理页 `views/ticket/UserOrderManage.vue`。
+- **customer-user-mobile 登录记住密码**：`Login.vue` 勾选"记住用户名和密码"后，凭据 Base64 编码
+  （仅本地便捷用途混淆，非加密）存 `localStorage`，下次打开自动回填。
+- **测试基线**：811 → **873** 全绿（starter 497 + app 56 + customer-channel 8 + admin-server 312）。
+
 ### 用户工单系统（2026-07-15，分支 `feature/user-ticket-system`）
 
 面向真实终端用户的完整工单闭环：用户注册登录 → 与 AI 对话 → 关键词/状态机流转人工坐席 → 消息实时双向推送并落库。

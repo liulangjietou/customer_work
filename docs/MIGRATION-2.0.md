@@ -221,7 +221,7 @@ AgentScope Java 官方 Release Notes 对"2.0 系列"的描述偏总览性质，�
   通过。踩坑记录：不带 `clean` 的增量编译会因 Maven 增量编译器不检测 classpath/依赖版本变化而**误报成功**，
   验证依赖版本变更后必须用 `clean compile`/`clean test-compile`。
 - **单元测试**：全仓 `mvn clean test` **全绿**（starter 362 + app 13 + customer-channel 8 +
-  `customer-admin-server` 127 = 511，0 失败 0 错误，1 跳过为需真实 API Key 的联调测试）。
+  `customer-admin-server` 127 = 510，0 失败 0 错误，1 跳过为需真实 API Key 的联调测试）。
 - **过程中定位并修复了 2 个既有 bug**（与 AgentScope 升级本身无关，最初被"本机 MySQL 密码不匹配"这个更表层
   的错误现象掩盖，一路排查才发现）：
   1. **`CustomerWorkProperties.java` JDBC URL 的 `characterEncoding=utf8mb4` 非法**——这是 MySQL 侧字符集名，
