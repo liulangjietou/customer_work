@@ -27,6 +27,22 @@ const router = createRouter({
       component: () => import('@/views/TicketList.vue'),
     },
     {
+      path: '/orders',
+      name: 'OrderList',
+      component: () => import('@/views/OrderList.vue'),
+    },
+    {
+      path: '/orders/:id',
+      name: 'OrderDetail',
+      component: () => import('@/views/OrderDetail.vue'),
+      props: true,
+    },
+    {
+      path: '/profile',
+      name: 'Profile',
+      component: () => import('@/views/Profile.vue'),
+    },
+    {
       path: '/tickets/:id',
       name: 'TicketDetail',
       component: () => import('@/views/TicketDetail.vue'),

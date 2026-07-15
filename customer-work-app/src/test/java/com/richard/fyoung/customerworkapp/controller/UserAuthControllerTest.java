@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.user.UserAccount;
 import com.richard.fyoung.customerwork.user.UserAccountService;
 import com.richard.fyoung.customerworkapp.security.UserJwtService;
+import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
@@ -35,6 +36,9 @@ class UserAuthControllerTest {
 
     @MockBean
     private UserAccountService userAccountService;
+
+    @MockBean
+    private DemoOrderSeeder demoOrderSeeder;
 
     private UserAccount account() {
         return UserAccount.create("U-1", "alice", "hash", "Alice", "13800000000");

@@ -36,44 +36,19 @@ import javax.sql.DataSource;
 @ConditionalOnProperty(name = "customer-work.tool-backend.mode", havingValue = "jdbc")
 public class JdbcBackendConfig {
 
-    private final DataSource dataSource;
+    private static final String DATA_SOURCE_BEAN = "toolBackendDataSource";
 
-    public JdbcBackendConfig(CustomerWorkProperties properties) {
-        this.dataSource = buildDataSource(properties.getSession().getMysql());
-    }
-
-    @Bean
-    public OrderBackend jdbcOrderBackend() {
-        return new JdbcOrderBackend(dataSource);
-    }
-
-    @Bean
-    public ProductBackend jdbcProductBackend() {
-        return new JdbcProductBackend(dataSource);
-    }
-
-    @Bean
-    public AfterSalesBackend jdbcAfterSalesBackend() {
-        return new JdbcAfterSalesBackend(dataSource);
-    }
-
-    @Bean
-    public MemberBackend jdbcMemberBackend() {
-        return new JdbcMemberBackend(dataSource);
-    }
-
-    @Bean
-    public ComplaintBackend jdbcComplaintBackend() {
-        return new JdbcComplaintBackend(dataSource);
-    }
-
-    @Bean
-    public KnowledgeBackend jdbcKnowledgeBackend() {
-        return new JdbcKnowledgeBackend(dataSource);
-    }
-
-    /** 复用 session.mysql.* 连接配置构建独立连接池（六个后端共用一个池）。 */
-    private DataSource buildDataSource(CustomerWorkProperties.Session.Mysql m) {
+    /**
+     * 工具后端共享数据源（复用 session.mysql.* 连接配置，六个后端 + 订单查询 Dao + 演示订单播种共用一个池）。
+     *
+     * <p>提升为 {@code @Bean}（条件同本配置：{@code tool-backend.mode=jdbc}）后，
+     * {@code dao.UserOrderDao} / {@code service.DemoOrderSeeder} 可通过 {@code ObjectProvider<DataSource>}
+     * 注入并在 mode!=jdbc（Bean 不存在）时优雅降级。Bean 名 {@value #DATA_SOURCE_BEAN} 与 starter 会话池
+     * （customer-work-session-pool，非独立 DataSource Bean）不冲突。</p>
+     */
+    @Bean(DATA_SOURCE_BEAN)
+    public DataSource toolBackendDataSource(CustomerWorkProperties properties) {
+        CustomerWorkProperties.Session.Mysql m = properties.getSession().getMysql();
         HikariDataSource ds = new HikariDataSource();
         ds.setJdbcUrl(m.resolveJdbcUrl());
         ds.setUsername(m.getUsername());
@@ -81,5 +56,35 @@ public class JdbcBackendConfig {
         ds.setMaximumPoolSize(5);
         ds.setPoolName("cw-tool-backend-pool");
         return ds;
+    }
+
+    @Bean
+    public OrderBackend jdbcOrderBackend(DataSource toolBackendDataSource) {
+        return new JdbcOrderBackend(toolBackendDataSource);
+    }
+
+    @Bean
+    public ProductBackend jdbcProductBackend(DataSource toolBackendDataSource) {
+        return new JdbcProductBackend(toolBackendDataSource);
+    }
+
+    @Bean
+    public AfterSalesBackend jdbcAfterSalesBackend(DataSource toolBackendDataSource) {
+        return new JdbcAfterSalesBackend(toolBackendDataSource);
+    }
+
+    @Bean
+    public MemberBackend jdbcMemberBackend(DataSource toolBackendDataSource) {
+        return new JdbcMemberBackend(toolBackendDataSource);
+    }
+
+    @Bean
+    public ComplaintBackend jdbcComplaintBackend(DataSource toolBackendDataSource) {
+        return new JdbcComplaintBackend(toolBackendDataSource);
+    }
+
+    @Bean
+    public KnowledgeBackend jdbcKnowledgeBackend(DataSource toolBackendDataSource) {
+        return new JdbcKnowledgeBackend(toolBackendDataSource);
     }
 }

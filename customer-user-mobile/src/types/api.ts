@@ -107,6 +107,21 @@ export interface TicketDetail {
   events: TicketEvent[]
 }
 
+/**
+ * 订单视图（与 /api/customer/user/orders 契约对齐）。
+ * 列表返回除 logisticsTrace 外的字段（列表页 logisticsTrace 为 null）；详情额外含 logisticsTrace。
+ */
+export interface OrderView {
+  orderId: string
+  productId: string
+  productName: string
+  amount: string
+  status: string
+  receiverAddr: string
+  logisticsTrace: string | null
+  createdAtMs: number
+}
+
 export interface ChatMessage {
   id: number
   messageId: string

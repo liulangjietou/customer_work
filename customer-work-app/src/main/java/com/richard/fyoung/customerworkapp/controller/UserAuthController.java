@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.user.UserAccount;
 import com.richard.fyoung.customerwork.user.UserAccountService;
 import com.richard.fyoung.customerworkapp.security.UserJwtService;
 import com.richard.fyoung.customerworkapp.security.UserPrincipal;
+import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -41,10 +42,13 @@ public class UserAuthController {
 
     private final UserAccountService userAccountService;
     private final UserJwtService jwtService;
+    private final DemoOrderSeeder demoOrderSeeder;
 
-    public UserAuthController(UserAccountService userAccountService, UserJwtService jwtService) {
+    public UserAuthController(UserAccountService userAccountService, UserJwtService jwtService,
+                             DemoOrderSeeder demoOrderSeeder) {
         this.userAccountService = userAccountService;
         this.jwtService = jwtService;
+        this.demoOrderSeeder = demoOrderSeeder;
     }
 
     /** 注册请求体。 */
@@ -67,6 +71,8 @@ public class UserAuthController {
         return Mono.fromCallable(() -> {
                 UserAccount account = userAccountService.register(
                     request.username(), request.password(), request.nickname(), request.phone());
+                // 演示订单播种：失败已在 seeder 内部 catch 并 error 日志，不影响注册主流程
+                demoOrderSeeder.seedForNewUser(account.getId());
                 Map<String, Object> body = new LinkedHashMap<>();
                 body.put("userId", account.getId());
                 return body;

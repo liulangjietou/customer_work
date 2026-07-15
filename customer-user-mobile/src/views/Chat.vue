@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { showToast } from 'vant'
-import { createSession, fetchMessages, fetchTicketDetail, confirmTicket, handoffTicket, rejectTicket } from '@/api/ticket'
+import { useRoute } from 'vue-router'
+import { showConfirmDialog, showToast } from 'vant'
+import { closeTicket, createSession, fetchMessages, fetchTicketDetail, confirmTicket, handoffTicket, rejectTicket } from '@/api/ticket'
 import { useAuthStore } from '@/store/auth'
 import { chatSocket } from '@/utils/ws'
 import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT } from '@/types/api'
 import type { ChatMessage, Ticket, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
+import AppTabbar from '@/components/AppTabbar.vue'
 
-const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 
 const sessionId = ref('')
@@ -38,6 +39,15 @@ const canHandoff = computed(() => {
   const status = ticket.value?.status
   return status === 'AI_SERVING' || status === 'ON_HOLD'
 })
+
+// 顶栏会话管理 action-sheet
+const sessionMenuVisible = ref(false)
+// 有活跃工单才允许关闭当前会话（否则动作置灰）
+const canCloseSession = computed(() => !!ticketId.value)
+const sessionActions = computed(() => [
+  { name: '新建会话' },
+  { name: '关闭当前会话', disabled: !canCloseSession.value, color: '#ee0a24' },
+])
 
 async function scrollToBottom() {
   await nextTick()
@@ -265,8 +275,40 @@ async function submitReject() {
   }
 }
 
-function goTickets() {
-  router.push('/tickets')
+function openSessionMenu() {
+  sessionMenuVisible.value = true
+}
+
+async function onSelectSessionAction(action: { name: string }) {
+  sessionMenuVisible.value = false
+  if (action.name === '新建会话') {
+    await onNewSession()
+  } else if (action.name === '关闭当前会话') {
+    await onCloseSession()
+  }
+}
+
+async function onNewSession() {
+  // WS 连接按用户维度建立，切换会话无需重连
+  await openNewSession()
+  showToast('已新建会话')
+}
+
+async function onCloseSession() {
+  if (!ticketId.value) {
+    return
+  }
+  try {
+    await showConfirmDialog({ title: '关闭当前会话', message: '关闭后将自动开启一个新会话，确认关闭？' })
+  } catch {
+    return // 用户取消
+  }
+  await closeTicket(ticketId.value)
+  // 清空本地会话缓存后自动新建会话，衔接体验
+  localStorage.removeItem(sessionStorageKey.value)
+  localStorage.removeItem(ticketStorageKey.value)
+  showToast('会话已关闭')
+  await openNewSession()
 }
 
 onMounted(async () => {
@@ -274,6 +316,11 @@ onMounted(async () => {
     await initSession()
   } finally {
     initializing.value = false
+  }
+  // 带 orderId 进入（订单详情跳转）：预填咨询文案，仅预填不自动发送
+  const orderId = route.query.orderId
+  if (typeof orderId === 'string' && orderId) {
+    inputContent.value = `我想咨询订单 ${orderId} 的情况`
   }
   connectWs()
 })
@@ -287,7 +334,7 @@ onUnmounted(() => {
   <div class="chat-page">
     <van-nav-bar title="智能客服">
       <template #right>
-        <van-icon name="records" size="20" @click="goTickets" />
+        <van-icon name="ellipsis" size="20" @click="openSessionMenu" />
       </template>
     </van-nav-bar>
 
@@ -353,17 +400,32 @@ onUnmounted(() => {
     <van-dialog v-model:show="rejectVisible" title="仍有问题" show-cancel-button @confirm="submitReject">
       <van-field v-model="rejectReason" type="textarea" rows="3" placeholder="请描述遗留问题" class="dialog-field" />
     </van-dialog>
+
+    <van-action-sheet
+      v-model:show="sessionMenuVisible"
+      :actions="sessionActions"
+      cancel-text="取消"
+      close-on-click-action
+      @select="onSelectSessionAction"
+    />
+
+    <AppTabbar />
   </div>
 </template>
 
 <style scoped>
 .chat-page {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  /* 锁定视口高度并禁止自身溢出：顶部导航/状态条与底部输入栏固定，仅消息区内部滚动 */
+  /* 锁定视口高度并禁止自身溢出：顶部导航/状态条与底部输入栏固定，仅消息区内部滚动。
+     不能加 flex:1——其 flex-basis:0 会让父级 .mobile-shell 按消息内容 max-content 撑高，
+     滚动落到 body 上导致顶栏被顶走。 */
   height: 100vh;
+  max-height: 100vh;
   overflow: hidden;
+  /* 底部固定 tabbar（50px）留白：输入栏紧贴 tabbar 上方，内容不被遮挡 */
+  padding-bottom: 50px;
+  box-sizing: border-box;
   background: #ececec;
 }
 
