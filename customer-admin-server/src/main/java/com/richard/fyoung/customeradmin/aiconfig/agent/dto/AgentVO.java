@@ -28,4 +28,13 @@ public class AgentVO {
     private String icon;
     private Integer status;
     private LocalDateTime createTime;
+
+    /** 子智能体 id 列表（capabilities 含 subagent 时有意义）。 */
+    private List<Long> subAgentIds;
+    // ---- 高级参数（null=用框架/工厂默认） ----
+    private Integer maxIters;
+    private Integer toolTimeoutSeconds;
+    private Integer toolMaxAttempts;
+    private Integer compressTriggerMsgs;
+    private Integer compressKeepMsgs;
 }

@@ -25,6 +25,10 @@ public enum ChatNodeKind {
     TOOL_BUILTIN,
     /** 工具返回结果。 */
     TOOL_RESULT,
+    /** 子 Agent 开始：某个 harness spawn 出的子 Agent 首次产出事件时补发一次，text 为子 Agent 展示名。 */
+    SUBAGENT_START,
+    /** 子 Agent 完成：子 Agent 的 {@code AGENT_RESULT}（最终文本），不走父 Agent 的 {@link #ANSWER} 正文链路。 */
+    SUBAGENT_RESULT,
     /** VibeCoding 专用：会话 workspace 文件发生变更（新增/修改/删除），仅由 VibeCodingService 产出。 */
     FILE_CHANGE;
 

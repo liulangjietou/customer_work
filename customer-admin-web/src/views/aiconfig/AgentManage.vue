@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { createAgent, deleteAgent, disableAgent, enableAgent, pageAgents, updateAgent } from '@/api/agent'
@@ -22,6 +22,32 @@ const modelOptions = ref<ModelVO[]>([])
 const mcpOptions = ref<McpVO[]>([])
 const skillOptions = ref<SkillVO[]>([])
 const systemToolOptions = ref<SystemToolVO[]>([])
+// 智能体选项复用于「子Agent协作」多选，无独立全量接口，拉大页分页兜底
+const AGENT_OPTION_PAGE_SIZE = 200
+const agentOptions = ref<AgentVO[]>([])
+
+// 能力编码：value 与后端 capabilities 字段一一对应，tip 为勾选提示
+const CAPABILITY_SUBAGENT = 'subagent'
+const CAPABILITY_OPTIONS: { value: string; label: string; tip?: string }[] = [
+  { value: 'chat', label: 'chat（对话）' },
+  { value: 'vibecoding', label: 'vibecoding（代码生成）' },
+  { value: CAPABILITY_SUBAGENT, label: '子Agent协作', tip: '允许使用子 Agent 协作' },
+  { value: 'plan', label: '计划模式', tip: '支持多步骤计划推演' },
+  { value: 'tasklist', label: '任务列表', tip: '跟踪和维护任务列表' },
+  { value: 'skill-learning', label: '学习新技能', tip: '与用户互动学习并沉淀新技能' },
+  { value: 'dynamic-subagent', label: '动态子Agent', tip: '运行时按任务临时创建子 Agent，无需预先配置' },
+]
+
+function capabilityLabel(code: string) {
+  return CAPABILITY_OPTIONS.find((o) => o.value === code)?.label ?? code
+}
+
+// 高级参数取值范围，需与后端保持一致
+const MAX_ITERS_RANGE = { min: 1, max: 100 }
+const TOOL_TIMEOUT_SECONDS_RANGE = { min: 1, max: 3600 }
+const TOOL_MAX_ATTEMPTS_RANGE = { min: 1, max: 10 }
+const COMPRESS_TRIGGER_MSGS_RANGE = { min: 2, max: 1000 }
+const COMPRESS_KEEP_MSGS_RANGE = { min: 0, max: 500 }
 
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
@@ -30,6 +56,8 @@ const editingId = ref<number | null>(null)
 const form = reactive<AgentSaveRequest>({
   agentName: '', agentCode: '', modelId: undefined as unknown as number, backupModelIds: [], mcpIds: [], skillIds: [], systemToolIds: [],
   systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
+  subAgentIds: [], maxIters: null, toolTimeoutSeconds: null, toolMaxAttempts: null,
+  compressTriggerMsgs: null, compressKeepMsgs: null,
 })
 
 const agentCodePattern = /^[a-z0-9-]+$/
@@ -88,6 +116,19 @@ function handleRetestPrimaryModel() {
   }
 }
 
+// 仅勾选「子Agent协作」时才展示子Agent选择框
+const showSubAgentSelect = computed(() => form.capabilities?.includes(CAPABILITY_SUBAGENT) ?? false)
+// 可选子Agent：仅启用状态的智能体，编辑时排除自身，避免自引用
+const subAgentSelectOptions = computed(() =>
+  agentOptions.value.filter((a) => a.status === 1 && a.id !== editingId.value),
+)
+
+watch(showSubAgentSelect, (visible) => {
+  if (!visible) {
+    form.subAgentIds = []
+  }
+})
+
 async function loadList() {
   loading.value = true
   try {
@@ -100,17 +141,19 @@ async function loadList() {
 }
 
 async function loadOptions() {
-  const [models, mcps, skills, systemTools] = await Promise.all([
+  const [models, mcps, skills, systemTools, agents] = await Promise.all([
     pageModels({ pageNum: 1, pageSize: 100 }),
     pageMcps({ pageNum: 1, pageSize: 100 }),
     pageSkills({ pageNum: 1, pageSize: 100 }),
     fetchSystemTools({ pageNum: 1, pageSize: 100 }),
+    pageAgents({ pageNum: 1, pageSize: AGENT_OPTION_PAGE_SIZE }),
   ])
   modelOptions.value = models.list
   mcpOptions.value = mcps.list
   skillOptions.value = skills.list
   // 只展示已启用的系统工具供挂载（停用的不出现在下拉里）。
   systemToolOptions.value = systemTools.list.filter((t) => t.enabled === 1)
+  agentOptions.value = agents.list
 }
 
 function handleSearch() {
@@ -124,6 +167,8 @@ function openCreate() {
   Object.assign(form, {
     agentName: '', agentCode: '', modelId: undefined, backupModelIds: [], mcpIds: [], skillIds: [], systemToolIds: [],
     systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
+    subAgentIds: [], maxIters: null, toolTimeoutSeconds: null, toolMaxAttempts: null,
+    compressTriggerMsgs: null, compressKeepMsgs: null,
   })
   originalModelId.value = null
   primaryTestState.value = 'untested'
@@ -138,12 +183,34 @@ function openEdit(row: AgentVO) {
     agentName: row.agentName, agentCode: row.agentCode, modelId: row.modelId, backupModelIds: [...(row.backupModelIds ?? [])],
     mcpIds: row.mcpIds, skillIds: row.skillIds, systemToolIds: row.systemToolIds, systemPrompt: row.systemPrompt,
     capabilities: row.capabilities, icon: row.icon, status: row.status,
+    subAgentIds: row.subAgentIds ?? [], maxIters: row.maxIters ?? null,
+    toolTimeoutSeconds: row.toolTimeoutSeconds ?? null, toolMaxAttempts: row.toolMaxAttempts ?? null,
+    compressTriggerMsgs: row.compressTriggerMsgs ?? null, compressKeepMsgs: row.compressKeepMsgs ?? null,
   })
   originalModelId.value = row.modelId
   // 未改动主模型视为已通过历史校验，无需强制重测
   primaryTestState.value = 'passed'
   primaryTestMessage.value = null
   dialogVisible.value = true
+}
+
+/** 压缩触发消息数与保留消息数同时填写时，保留数须小于触发数，否则压缩逻辑无意义 */
+function validateCompressParams(): boolean {
+  const { compressTriggerMsgs, compressKeepMsgs } = form
+  if (compressTriggerMsgs != null && compressKeepMsgs != null && compressKeepMsgs >= compressTriggerMsgs) {
+    ElMessage.error('压缩保留消息数必须小于压缩触发消息数')
+    return false
+  }
+  return true
+}
+
+/** 勾选「子Agent协作」后必须至少选择一个子智能体，否则该能力是空转配置 */
+function validateSubAgents(): boolean {
+  if (showSubAgentSelect.value && (form.subAgentIds?.length ?? 0) === 0) {
+    ElMessage.error('勾选「子Agent协作」后需至少选择一个子智能体')
+    return false
+  }
+  return true
 }
 
 async function handleSubmit() {
@@ -155,6 +222,9 @@ async function handleSubmit() {
   if (!valid) {
     return
   }
+  if (!validateCompressParams() || !validateSubAgents()) {
+    return
+  }
   if (dialogMode.value === 'create') {
     await createAgent(form)
     ElMessage.success('新建成功')
@@ -164,6 +234,7 @@ async function handleSubmit() {
   }
   dialogVisible.value = false
   await loadList()
+  await loadOptions()
   await menuStore.refreshMenu()
 }
 
@@ -172,6 +243,7 @@ async function handleDelete(row: AgentVO) {
   await deleteAgent(row.id)
   ElMessage.success('删除成功')
   await loadList()
+  await loadOptions()
   await menuStore.refreshMenu()
 }
 
@@ -184,6 +256,7 @@ async function handleToggleStatus(row: AgentVO) {
     ElMessage.success('已启用')
   }
   await loadList()
+  await loadOptions()
   await menuStore.refreshMenu()
 }
 
@@ -219,9 +292,9 @@ onMounted(() => {
             <span v-if="!row.backupModelNames?.length" style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="能力" width="160">
+        <el-table-column label="能力" width="260">
           <template #default="{ row }">
-            <el-tag v-for="c in row.capabilities" :key="c" style="margin-right: 4px">{{ c }}</el-tag>
+            <el-tag v-for="c in row.capabilities" :key="c" style="margin: 2px">{{ capabilityLabel(c) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
@@ -310,9 +383,21 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="能力">
           <el-checkbox-group v-model="form.capabilities">
-            <el-checkbox value="chat">chat（对话）</el-checkbox>
-            <el-checkbox value="vibecoding">vibecoding（代码生成）</el-checkbox>
+            <el-tooltip
+              v-for="opt in CAPABILITY_OPTIONS"
+              :key="opt.value"
+              :content="opt.tip"
+              :disabled="!opt.tip"
+              placement="top"
+            >
+              <el-checkbox :value="opt.value">{{ opt.label }}</el-checkbox>
+            </el-tooltip>
           </el-checkbox-group>
+        </el-form-item>
+        <el-form-item v-if="showSubAgentSelect" label="子Agent">
+          <el-select v-model="form.subAgentIds" multiple style="width: 100%" placeholder="选择可协作的子智能体（仅展示启用状态）">
+            <el-option v-for="a in subAgentSelectOptions" :key="a.id" :label="a.agentName" :value="a.id" />
+          </el-select>
         </el-form-item>
         <el-form-item label="系统提示词">
           <el-input v-model="form.systemPrompt!" type="textarea" :rows="4" />
@@ -323,6 +408,60 @@ onMounted(() => {
         <el-form-item label="状态">
           <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
         </el-form-item>
+        <el-collapse class="advanced-params">
+          <el-collapse-item title="高级参数" name="advanced">
+            <el-form-item label="最大迭代次数">
+              <el-input-number
+                v-model="form.maxIters"
+                :min="MAX_ITERS_RANGE.min"
+                :max="MAX_ITERS_RANGE.max"
+                :value-on-clear="null"
+                placeholder="默认 10"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="工具超时（秒）">
+              <el-input-number
+                v-model="form.toolTimeoutSeconds"
+                :min="TOOL_TIMEOUT_SECONDS_RANGE.min"
+                :max="TOOL_TIMEOUT_SECONDS_RANGE.max"
+                :value-on-clear="null"
+                placeholder="默认 300"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="工具最大尝试次数">
+              <el-input-number
+                v-model="form.toolMaxAttempts"
+                :min="TOOL_MAX_ATTEMPTS_RANGE.min"
+                :max="TOOL_MAX_ATTEMPTS_RANGE.max"
+                :value-on-clear="null"
+                placeholder="默认 1"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="压缩触发消息数">
+              <el-input-number
+                v-model="form.compressTriggerMsgs"
+                :min="COMPRESS_TRIGGER_MSGS_RANGE.min"
+                :max="COMPRESS_TRIGGER_MSGS_RANGE.max"
+                :value-on-clear="null"
+                placeholder="默认不压缩"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="压缩保留消息数">
+              <el-input-number
+                v-model="form.compressKeepMsgs"
+                :min="COMPRESS_KEEP_MSGS_RANGE.min"
+                :max="COMPRESS_KEEP_MSGS_RANGE.max"
+                :value-on-clear="null"
+                placeholder="默认 10"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </el-collapse-item>
+        </el-collapse>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>

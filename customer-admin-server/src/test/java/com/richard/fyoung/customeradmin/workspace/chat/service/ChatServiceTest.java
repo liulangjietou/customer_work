@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Event;
+import io.agentscope.core.agent.EventSource;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.agent.StreamOptions;
@@ -314,6 +315,125 @@ class ChatServiceTest {
         List<ChatStreamChunk> chunks = stream("写一个 Fibonacci.java");
 
         assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.THINKING_END, ChatNodeKind.ANSWER);
+    }
+
+    // ===== 子 Agent 事件流透传（harness spawn 出的子 Agent 经 SubagentEventBus 直推父 sink）=====
+
+    /** 构造一个直接子级（depth=1）的 EventSource：path=main/doc-writer，展示名 DocWriter。 */
+    private EventSource subSource() {
+        return EventSource.builder()
+            .path("main/doc-writer").agentId("doc-writer").agentName("DocWriter").depth(1).build();
+    }
+
+    private Msg thinkingMsg(String thinking) {
+        return Msg.builder().role(MsgRole.ASSISTANT)
+            .content(ThinkingBlock.builder().thinking(thinking).build()).build();
+    }
+
+    @Test
+    void chatStream_mainChunks_shouldCarryNullSourceAndSubagentName() {
+        // 回归：source=null 的父 Agent 事件，产出 chunk 的 source/subagentName 必须为 null（前端据此判定"非子 Agent"）。
+        Msg finalMsg = Msg.builder().role(MsgRole.ASSISTANT).textContent("你今天已打卡").build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, finalMsg, true)));
+
+        List<ChatStreamChunk> chunks = stream("查一下我的考勤");
+
+        assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.ANSWER, ChatNodeKind.THINKING_END);
+        for (ChatStreamChunk chunk : chunks) {
+            assertNull(chunk.source(), "父 Agent 片段 source 应为 null，实际=" + chunk);
+            assertNull(chunk.subagentName(), "父 Agent 片段 subagentName 应为 null，实际=" + chunk);
+        }
+    }
+
+    @Test
+    void chatStream_subagentReasoningAndToolResult_shouldStampSource_andPrependSubagentStart() {
+        // 带 source 的 REASONING（思考）+ TOOL_RESULT：首事件前补一条 SUBAGENT_START，
+        // 后续 chunk 均带 source（调用链 path）与 subagentName（展示名）。
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(
+                new Event(EventType.REASONING, thinkingMsg("分析文档结构"), false, subSource()),
+                new Event(EventType.TOOL_RESULT, toolResultMsg("已生成大纲"), false, subSource())));
+
+        List<ChatStreamChunk> chunks = stream("帮我写文档");
+
+        assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.SUBAGENT_START,
+            ChatNodeKind.THINKING, ChatNodeKind.TOOL_RESULT, ChatNodeKind.THINKING_END);
+        // SUBAGENT_START 文本为展示名
+        assertEquals("DocWriter", chunks.get(1).text());
+        // 子 Agent 片段带 source/subagentName
+        for (int i = 1; i <= 3; i++) {
+            assertEquals("main/doc-writer", chunks.get(i).source(), "第 " + i + " 个 chunk source 不符，实际=" + chunks);
+            assertEquals("DocWriter", chunks.get(i).subagentName());
+        }
+        assertTrue(chunks.get(2).text().contains("分析文档结构"));
+        assertTrue(chunks.get(3).text().contains("已生成大纲"));
+        // 父 Agent 框架节点（THINKING_START/END）source 仍为 null
+        assertNull(chunks.get(0).source());
+        assertNull(chunks.get(4).source());
+    }
+
+    @Test
+    void chatStream_subagentAgentResult_shouldBeSubagentResultKind_notAnswer() {
+        // 带 source 的 AGENT_RESULT → SUBAGENT_RESULT（子 Agent 最终文本），绝不走父 Agent 的 ANSWER 链路。
+        Msg finalMsg = Msg.builder().role(MsgRole.ASSISTANT).textContent("文档已生成完毕").build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, finalMsg, true, subSource())));
+
+        List<ChatStreamChunk> chunks = stream("帮我写文档");
+
+        assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.SUBAGENT_START,
+            ChatNodeKind.SUBAGENT_RESULT, ChatNodeKind.THINKING_END);
+        assertEquals("文档已生成完毕", chunks.get(2).text());
+        assertEquals("main/doc-writer", chunks.get(2).source());
+        assertEquals("DocWriter", chunks.get(2).subagentName());
+    }
+
+    @Test
+    void chatStream_interleavedParentAndChild_shouldDedupeDeltaIndependently() {
+        // 父子交错推流：两边都是累积型全量文本（后值以前值为前缀）。若父子共用一份去重状态，
+        // 父的第二次全量会被子的全量"顶掉"、前缀判断失效，导致重复内容整段重发。这里断言父子各自
+        // 只发出净增量（父 A→B、子 X→Y），证明 per-source 状态隔离生效。
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(
+                new Event(EventType.REASONING, thinkingMsg("A"), false),
+                new Event(EventType.REASONING, thinkingMsg("X"), false, subSource()),
+                new Event(EventType.REASONING, thinkingMsg("AB"), false),
+                new Event(EventType.REASONING, thinkingMsg("XY"), false, subSource())));
+
+        List<ChatStreamChunk> chunks = stream("你好");
+
+        assertKinds(chunks, ChatNodeKind.THINKING_START,
+            ChatNodeKind.MODEL_CALL, ChatNodeKind.THINKING,  // 父：MODEL_CALL + THINKING("A")
+            ChatNodeKind.SUBAGENT_START, ChatNodeKind.THINKING, // 子：SUBAGENT_START + THINKING("X")
+            ChatNodeKind.THINKING,                            // 父：THINKING("B")，无新 MODEL_CALL
+            ChatNodeKind.THINKING,                            // 子：THINKING("Y")
+            ChatNodeKind.THINKING_END);
+        assertEquals("A", chunks.get(2).text());
+        assertNull(chunks.get(2).source());
+        assertEquals("X", chunks.get(4).text());
+        assertEquals("main/doc-writer", chunks.get(4).source());
+        assertEquals("B", chunks.get(5).text());
+        assertNull(chunks.get(5).source());
+        assertEquals("Y", chunks.get(6).text());
+        assertEquals("main/doc-writer", chunks.get(6).source());
+    }
+
+    @Test
+    void chatStream_subagentUnknownEventType_shouldBeIgnored_afterSubagentStart() {
+        // 子 Agent 全量事件绕过父流过滤，可能出现父流本不会有的类型（如 SUMMARY）——应被忽略不抛异常，
+        // 仅保留首次出现补的 SUBAGENT_START；随后真正的 REASONING 正常产出。
+        Msg summaryMsg = Msg.builder().role(MsgRole.ASSISTANT).textContent("到达最大迭代").build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(
+                new Event(EventType.SUMMARY, summaryMsg, true, subSource()),
+                new Event(EventType.REASONING, thinkingMsg("继续分析"), false, subSource())));
+
+        List<ChatStreamChunk> chunks = stream("帮我写文档");
+
+        assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.SUBAGENT_START,
+            ChatNodeKind.THINKING, ChatNodeKind.THINKING_END);
+        assertTrue(chunks.get(2).text().contains("继续分析"));
     }
 
     // ===== 模型用量聚合（审计需求 §5.3：token 数）=====
