@@ -89,11 +89,19 @@ class JdbcOrderBackendTest {
 
     @Test
     void modifyAddress_shouldReallyPersist() throws Exception {
+        // 不污染种子订单：改址前记录原值，断言后恢复（种子数据同时被演示环境使用）
+        String orderId = "20260613003";
+        String originalAddr = readAddr(orderId);
         String newAddr = "验证地址-" + UUID.randomUUID();
-        String result = backend.modifyAddress("20260613003", newAddr).block();
-        assertTrue(result.contains("已更新为「" + newAddr + "」"), "应返回更新成功文案");
-
-        assertEquals(newAddr, readAddr("20260613003"), "收货地址应真实落库");
+        try {
+            String result = backend.modifyAddress(orderId, newAddr).block();
+            assertTrue(result.contains("已更新为「" + newAddr + "」"), "应返回更新成功文案");
+            assertEquals(newAddr, readAddr(orderId), "收货地址应真实落库");
+        } finally {
+            if (originalAddr != null) {
+                backend.modifyAddress(orderId, originalAddr).block();
+            }
+        }
     }
 
     private String readAddr(String orderId) throws Exception {
