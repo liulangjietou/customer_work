@@ -9,8 +9,7 @@
 |---|---|
 | `customer-work-spring-boot-starter` | 可复用智能体基础设施（模型/记忆/RAG/工具SPI/中间件/调度等），`@AutoConfiguration` 自动装配 |
 | `customer-work-app` | 可运行客服示例（端口 8080） |
-| `customer-work-downstream-app` | 下游接入示例 |
-| `customer-web` | 官方五套前端能力接入（admin/chat-completions/AG-UI/Studio/Channel，端口 8081） |
+| `customer-channel` | 多渠道接入演示模块（官方五套前端能力接入：admin/chat-completions/AG-UI/Studio/Channel，端口 8081），非主链路必需 |
 | `customer-admin-server` | 后台管理系统后端（Spring MVC + MyBatis-Plus + Sa-Token，端口 8082，独立库 `customer_admin`） |
 | `customer-admin-web` | 后台管理前端（Vue3+TS+Vite+Element Plus，**非 Maven 模块**，端口 5174） |
 | `customer-user-mobile` | 智能客服用户端 H5（Vue3+TS+Vite+Vant4，**非 Maven 模块**，端口 5175，proxy → 8080） |
@@ -32,7 +31,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：全仓 **811 个**（starter 438 + app 58 + downstream 1 + customer-web 8 + admin-server 306）。
+- 测试基线：全仓 **811 个**（starter 438 + app 58 + customer-channel 8 + admin-server 306）。
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
 - 模块 A 改完给模块 B 用时，先 `mvn install -Dmaven.test.skip=true -Djacoco.skip=true`（B 解析的是本地仓库的 jar，
   不是 A 的工作树）；根 pom 变更后父 POM 也要 `mvn -N install`，否则 B 读到旧版本号。

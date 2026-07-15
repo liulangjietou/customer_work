@@ -16,10 +16,10 @@
 > GA 相对 RC4 的具体改动（内置模型实现拆分为独立扩展模块等）见 **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**「RC4 → GA」一节。
 > 迁移映射、API 变更与**不可迁移能力说明**见
 > **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**；2.0 版深度技术文档见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
-> 配套前端为 `customer-web` 模块，把客服 Agent 同时接到**五套官方能力**：**admin** 管理控制台、
+> 配套前端为 `customer-channel` 模块，把客服 Agent 同时接到**五套官方能力**：**admin** 管理控制台、
 > **chat-completions-web**（OpenAI 兼容 `/v1/chat/completions` + 内置聊天页）、**AG-UI**（`/agui/run` 富事件协议）、
 > **Studio** 观测台、**Channel·钉钉/飞书/企业微信**（IM 平台接入：钉钉 Stream 模式、飞书/企业微信 应用回调 +
-> 飞书 webhook 推送），见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。
+> 飞书 webhook 推送），见 **[docs/customer-channel操作文档.md](docs/customer-channel操作文档.md)**。
 
 本项目把一张典型的客服业务流程图落成**生产级代码实现**——从接入治理、意图路由、工具执行到人机切换工单全链路，
 `main` 基于 `io.agentscope:agentscope-harness:2.0.0`（GA 正式版），默认对接**阿里云百炼（DashScope / 通义千问）**。
@@ -29,7 +29,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main`（AgentScope 2.0.0 GA）分支 **811 个全绿**（starter 438 + app 58 + downstream 1 + customer-web 8 + 后台管理系统 `customer-admin-server` 306，见 §6.21、§6.22；其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；升级前 1.0.12 版本的最后状态存档于 `legacy-main-1.0.12` 标签（176 个全绿）
+- 单元测试：`main`（AgentScope 2.0.0 GA）分支 **811 个全绿**（starter 438 + app 58 + customer-channel 8 + 后台管理系统 `customer-admin-server` 306，见 §6.21、§6.22；其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；升级前 1.0.12 版本的最后状态存档于 `legacy-main-1.0.12` 标签（176 个全绿）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -115,7 +115,7 @@
 | 接入层安全（鉴权/**滑动窗口限流**） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter`（fixed/sliding-window 双算法） | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
 | **入站防注入围栏** | `PromptInjectionGuardMiddleware` | 关 | `hooks.prompt-guard.enabled`（命中注入/越狱模式硬拦截，不调用模型，指标 `customerwork.prompt.guard.blocked`） |
 | **用户反馈闭环（消息级点赞/点踩）** | `FeedbackService` + `FeedbackController` | 开 | `POST /api/customer/feedback`（DOWN 自动落 `FactLog` 供数据飞轮复盘） |
-| **配套前端模块 `customer-web`** | admin / chat-completions / AG-UI / Studio / Channel(钉钉·飞书·企业微信) | 关 | 见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md) |
+| **配套前端模块 `customer-channel`**（多渠道接入演示模块，非主链路必需） | admin / chat-completions / AG-UI / Studio / Channel(钉钉·飞书·企业微信) | 关 | 见 [docs/customer-channel操作文档.md](docs/customer-channel操作文档.md) |
 | **用户工单系统（7 态状态机）** | `Ticket`（充血实体）+ `TicketService` + `TicketStore` SPI + `TicketSlaScheduler` | 开 | `customer-work.ticket.store-mode=jdbc`（表 `cw_ticket`/`cw_ticket_event`），见 §6.22 |
 | **终端用户认证（JWT）** | `UserAccountService`(BCrypt) + `UserJwtService`(HS256) + `UserAuthWebFilter` | 开 | `customer-work.user-auth.store-mode=jdbc`（表 `cw_user`，env `CW_USER_JWT_SECRET`） |
 | **聊天消息落库（双维度游标分页）** | `ChatLogService` + `ChatMessageStore` SPI | 开 | `customer-work.chat-log.store-mode=jdbc`（表 `cw_chat_message`，按会话/工单 `beforeId+limit` 分页） |
@@ -647,13 +647,15 @@ customer-work:
 - **Plan Mode / Sandbox / Subagent / Compaction / 分层记忆**：见 [docs/MIGRATION-2.0.md §7](docs/MIGRATION-2.0.md)、[docs/详细技术文档.md §14](docs/详细技术文档.md)。
 - 测试：`PermissionConfigTest`、`HarnessAgentFactoryTest`、`ContextMemoryFactoryTest`、`middleware/*Test`。
 
-### 6.19 配套前端模块 `customer-web`（admin / chat / AG-UI / Studio / Channel）
+### 6.19 配套前端模块 `customer-channel`（admin / chat / AG-UI / Studio / Channel）
+
+> 多渠道接入演示模块（官方五套前端能力接入），非主链路必需。
 
 独立 Spring MVC 模块，把客服 Agent 同时接到五套官方能力（复用同一个 `customerServiceAgent` Bean）：
 
 ```bash
 export DASHSCOPE_API_KEY=sk-xxxx
-java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
+java -jar customer-channel/target/customer-channel-1.0.0.jar     # 端口 8081
 ```
 | 入口 | 能力 |
 |---|---|
@@ -664,7 +666,7 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 | `observability.studio.*` | **Studio**：运行轨迹推送到外部 Studio 观测台 |
 | `POST /api/channels/{feishu,wecom}/{id}/callback`、`POST /push/feishu` | **Channel**：钉钉(Stream) / 飞书 / 企业微信（收发消息 + 主动推送） |
 
-详见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。
+详见 **[docs/customer-channel操作文档.md](docs/customer-channel操作文档.md)**。
 
 ### 6.20 生产就绪评估与生产配置基线
 
@@ -676,9 +678,9 @@ operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案�
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / **多实例部署注意事项** /
 仍受框架限制需等待修复的项 / 版本升级策略）。
 对应的生产配置参考见 **[application-prod.yml](customer-work-app/src/main/resources/application-prod.yml)**
-（主应用）与 **[customer-web/application-prod.yml](customer-web/src/main/resources/application-prod.yml)**
+（主应用）与 **[customer-channel/application-prod.yml](customer-channel/src/main/resources/application-prod.yml)**
 （管理控制台，收敛 admin 暴露面），`SPRING_PROFILES_ACTIVE=prod` 激活，逐项配置均在注释中注明所对应缓解的 issue 编号。
-两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-web` 各一份）离线校验，
+两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-channel` 各一份）离线校验，
 不激活 profile 真实启动（prod 依赖真实 Redis/MySQL/DashScope 凭据，无这些外部依赖时无法真实连接）。
 
 ### 6.21 智能体客服后台管理系统 `customer-admin-server` + `customer-admin-web`
@@ -925,7 +927,7 @@ customer-work:
 ## 八、测试说明
 
 ```bash
-mvn test                                   # 全 reactor 全部单测（当前 811 个：starter 438 + app 58 + downstream 1 + customer-web 8 + customer-admin-server 306），离线即可全绿
+mvn test                                   # 全 reactor 全部单测（当前 811 个：starter 438 + app 58 + customer-channel 8 + customer-admin-server 306），离线即可全绿
 mvn test -Dtest=ModelConfigTest            # 单类
 ```
 
@@ -943,7 +945,7 @@ mvn test -Dtest=ModelConfigTest            # 单类
 ## 九、代码结构（多模块）
 
 ```
-customer_work/                                  # 父 pom（packaging=pom，聚合 5 个 Maven 模块；另有 2 个前端非 Maven 子模块）
+customer_work/                                  # 父 pom（packaging=pom，聚合 4 个 Maven 模块；另有 2 个前端非 Maven 子模块）
 ├── customer-work-spring-boot-starter/          # 【可复用 starter】无 main，作为依赖被引入
 │   └── src/main/
 │       ├── java/com/richard/fyoung/customerwork/
@@ -981,11 +983,6 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   └── controller/                      # CustomerServiceController / GlobalExceptionHandler
 │       └── resources/  application.yml / application-prod.yml / logback-spring.xml / skills/
 │
-├── customer-work-downstream-app/             # 【下游接入应用】完全不同包名 com.acme.support
-│   └── src/                                     #   仅依赖 starter；SupportApplication + AcmeOrderBackend(覆盖默认)
-│                                                #   + SupportController(复用 CustomerServiceService)
-│                                                #   契约测试 DownstreamIntegrationTest 证明"零扫描自动装配 + 覆盖默认"
-│
 ├── customer-admin-server/                       # 【智能体客服后台管理系统·后端】独立 Spring MVC 应用，见 §6.21；含用户工单代理模块，见 §6.22
 ├── customer-admin-web/                          # 【智能体客服后台管理系统·前端】Vue3+TS+Vite SPA，非 Maven 子模块，见 §6.21；含坐席工单工作台，见 §6.22
 ├── customer-user-mobile/                        # 【用户端 H5】Vue3+Vite+Vant4，端口 5175，非 Maven 子模块；登录/聊天/我的工单，vite proxy /api /ws → 8080，见 §6.22
@@ -1019,8 +1016,8 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 */ }
 ```
 
-> 完整可运行范例见模块 **`customer-work-downstream-app`**（包名 `com.acme.support`，仅依赖 starter）；
-> 其 `DownstreamIntegrationTest` 在 CI 持续校验"零扫描自动装配 + 自定义后端覆盖默认"的接入契约。
+> 只需引入 starter 依赖 + 提供自己的 `*Backend` Bean（任意包名，无需 `@ComponentScan`）即可完成接入，
+> starter 侧的自动装配契约由其自身单元测试覆盖。
 
 ---
 

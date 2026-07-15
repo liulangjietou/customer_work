@@ -1,5 +1,5 @@
 server:
-  port: 8082   # 与 customer-work-app(8080)、customer-web(8081) 分开
+  port: 8082   # 与 customer-work-app(8080)、customer-channel(8081) 分开
 
 spring:
   application:
@@ -14,7 +14,7 @@ spring:
       max-request-size: 6MB
   autoconfigure:
     # 关闭 starter 的 WebFlux 自动装配（WebFilter / 响应式 OpenApi 等），仅复用其 web 无关的 Agent 能力类
-    # （与 customer-web 同一手法：不依赖 starter 的自动装配 Bean，需要的能力在本模块的 Config 类里显式 new）
+    # （与 customer-channel 同一手法：不依赖 starter 的自动装配 Bean，需要的能力在本模块的 Config 类里显式 new）
     exclude:
       - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
   datasource:

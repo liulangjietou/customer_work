@@ -1,0 +1,37 @@
+# customer-channel 生产 profile 配置参考，激活方式 SPRING_PROFILES_ACTIVE=prod
+#
+# 默认 application.yml 是"控制台内部应用"取向的开箱即用配置（admin 全部端点暴露、
+# write-token 留空不校验），本文件收敛这两个明确的生产风险点。完整评估结论见
+# ../../docs/生产就绪评估.md；本文件只做配置层面的落地。
+
+agentscope:
+  admin:
+    # 写操作保护令牌：调用 compact/abort/drain 等写端点需带 X-Admin-Token。
+    # 生产必须通过环境变量注入真实令牌（不要把真实值提交进代码仓库）；留空等价于不校验。
+    write-token: ${ADMIN_WRITE_TOKEN:}
+
+customer-work:
+  session:
+    # 控制台默认 memory（进程内演示）；生产多实例部署下应与主应用一致，切 redis/mysql，
+    # 避免管理控制台自身的会话/状态在实例间不一致。
+    mode: ${SESSION_MODE:redis}
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      key-prefix: ${REDIS_KEY_PREFIX:customer-channel}
+
+# Actuator：收敛暴露面（默认 application.yml 为方便控制台调试全部暴露 "*"，生产不可沿用）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.richard.fyoung: info
+    io.agentscope: info

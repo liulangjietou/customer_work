@@ -1,4 +1,0 @@
-# 测试占位 key：让全上下文离线加载（不发起真实调用）
-customer-work:
-  model:
-    api-key: test-dummy-key

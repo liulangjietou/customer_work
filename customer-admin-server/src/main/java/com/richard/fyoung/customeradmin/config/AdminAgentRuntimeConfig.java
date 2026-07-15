@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import javax.sql.DataSource;
 
 /**
- * 智能体运行时公共 Bean：仿 {@code customer-web} 的 {@code CustomerWebAgentConfig} 手法——
+ * 智能体运行时公共 Bean：仿 {@code customer-channel} 的 {@code CustomerWebAgentConfig} 手法——
  * 本模块已用 {@code spring.autoconfigure.exclude} 关闭 starter 的自动装配，手动暴露
  * {@link AgentStateStore}/{@link PermissionContextState}，供 {@code AdminAgentInstanceFactory}
  * 动态装配任意智能体时复用（同进程共享，状态按 {@code (userId=agentCode, sessionId)} 天然隔离）。
