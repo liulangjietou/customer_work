@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerworkapp.security;
+package com.richard.fyoung.customerwork.security;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.jsonwebtoken.Jwts;

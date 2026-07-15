@@ -4,8 +4,8 @@ import com.richard.fyoung.customerwork.ticket.Ticket;
 import com.richard.fyoung.customerwork.ticket.TicketEvent;
 import com.richard.fyoung.customerwork.ticket.TicketEventListener;
 import com.richard.fyoung.customerwork.ticket.TicketEventType;
-import com.richard.fyoung.customerworkapp.ws.WsFrame;
-import com.richard.fyoung.customerworkapp.ws.WsSessionRegistry;
+import com.richard.fyoung.customerwork.ws.WsFrame;
+import com.richard.fyoung.customerwork.ws.WsSessionRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;

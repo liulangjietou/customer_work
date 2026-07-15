@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerworkapp.security;
+package com.richard.fyoung.customerwork.security;
 
 /**
  * 终端用户登录态主体（从已验签 JWT 解析得到，请求内只读）。

@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerworkapp.ws;
+package com.richard.fyoung.customerwork.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;

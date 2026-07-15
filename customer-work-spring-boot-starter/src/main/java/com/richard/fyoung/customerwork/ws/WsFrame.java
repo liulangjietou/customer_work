@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerworkapp.ws;
+package com.richard.fyoung.customerwork.ws;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -7,7 +7,8 @@ import java.util.Map;
  * WebSocket 帧（统一信封）：{@code {"type": "...", "data": ...}}。
  *
  * <p>所有上下行帧都走此结构，前端按 {@code type} 分派。静态工厂集中构帧，避免各处硬拼 type 字符串。
- * {@code data} 用弱类型 {@link Object}（多为 Map / 字符串），交由 Jackson 序列化。</p>
+ * {@code data} 用弱类型 {@link Object}（多为 Map / 字符串），交由 Jackson 序列化。仅依赖 JDK + Jackson，
+ * 与具体 WebFlux 路由无关，故作为可复用基建下沉 starter，接入方按业务绑定具体 WebSocketHandler。</p>
  * @author owlzhangfq@gmail.com
  */
 public record WsFrame(String type, Object data) {

@@ -47,6 +47,8 @@ public enum ResultCode {
     TICKET_STATE_CONFLICT(40010, "工单状态已变化或已被其他坐席处理，请刷新后重试"),
     CUSTOMER_WORK_AUTH_FAILED(40011, "客服坐席服务鉴权失败"),
     CUSTOMER_WORK_UNAVAILABLE(40012, "客服坐席服务暂不可用，请稍后重试"),
+    ORDER_NOT_FOUND(40013, "订单不存在"),
+    ORDER_STATE_CONFLICT(40014, "订单当前状态不允许该操作"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

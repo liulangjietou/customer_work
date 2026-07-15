@@ -2,6 +2,9 @@ package com.richard.fyoung.customeradmin.ticket.client;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.ticket.dto.OrderDetailVO;
+import com.richard.fyoung.customeradmin.ticket.dto.OrderPageQuery;
+import com.richard.fyoung.customeradmin.ticket.dto.OrderPageResult;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketDetailVO;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketMessageVO;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
@@ -35,8 +38,10 @@ public class CustomerWorkTicketClient {
     private static final Logger log = LoggerFactory.getLogger(CustomerWorkTicketClient.class);
 
     private static final String TICKETS_PATH = "/api/customer/agent/tickets";
+    private static final String ORDERS_PATH = "/api/customer/agent/orders";
     private static final int HTTP_CONFLICT = 409;
     private static final int HTTP_UNAUTHORIZED = 401;
+    private static final int HTTP_NOT_FOUND = 404;
 
     private static final String CLIENT_IO_FAIL = "TICKET-CLIENT-IO-FAIL";
     private static final String CLIENT_AUTH_FAIL = "TICKET-CLIENT-AUTH-FAIL";
@@ -131,6 +136,51 @@ public class CustomerWorkTicketClient {
         put(id, "/category", Map.of("category", category));
     }
 
+    // ==================== 用户订单（坐席侧）：/api/customer/agent/orders ====================
+
+    /** 订单分页查询：admin 的 pageNum/pageSize 映射为 8080 的 page/size。 */
+    public OrderPageResult pageOrders(OrderPageQuery query) {
+        return executeOrder(() -> restClient.get()
+            .uri(builder -> builder.path(ORDERS_PATH)
+                .queryParamIfPresent("userId", Optional.ofNullable(query.getUserId()))
+                .queryParamIfPresent("username", Optional.ofNullable(query.getUsername()))
+                .queryParamIfPresent("orderId", Optional.ofNullable(query.getOrderId()))
+                .queryParamIfPresent("status", Optional.ofNullable(query.getStatus()))
+                .queryParam("page", query.getPageNum())
+                .queryParam("size", query.getPageSize())
+                .build())
+            .retrieve()
+            .body(OrderPageResult.class));
+    }
+
+    /** 订单详情（含物流轨迹）；不存在 404→ORDER_NOT_FOUND。 */
+    public OrderDetailVO orderDetail(String orderId) {
+        return executeOrder(() -> restClient.get()
+            .uri(ORDERS_PATH + "/{orderId}", orderId)
+            .retrieve()
+            .body(OrderDetailVO.class));
+    }
+
+    /** 修改收货地址；不存在 404→ORDER_NOT_FOUND。 */
+    public void modifyOrderAddress(String orderId, String newAddress) {
+        executeOrder(() -> restClient.post()
+            .uri(ORDERS_PATH + "/{orderId}/modify-address", orderId)
+            .body(Map.of("newAddress", newAddress))
+            .retrieve()
+            .toBodilessEntity());
+    }
+
+    /** 取消订单；不存在 404→ORDER_NOT_FOUND，状态不允许 409→ORDER_STATE_CONFLICT。 */
+    public void cancelOrder(String orderId, String reason) {
+        executeOrder(() -> {
+            RestClient.RequestBodySpec spec = restClient.post().uri(ORDERS_PATH + "/{orderId}/cancel", orderId);
+            if (StringUtils.hasText(reason)) {
+                spec.body(Map.of("reason", reason));
+            }
+            return spec.retrieve().toBodilessEntity();
+        });
+    }
+
     private void post(String id, String action, Object body) {
         execute(() -> {
             RestClient.RequestBodySpec spec = restClient.post().uri(TICKETS_PATH + "/{id}" + action, id);
@@ -175,6 +225,37 @@ public class CustomerWorkTicketClient {
             return new BizException(ResultCode.CUSTOMER_WORK_AUTH_FAILED);
         }
         log.error("customer-work request failed, code={}, status={}", CLIENT_REQUEST_FAIL, status, e);
+        return new BizException(ResultCode.CUSTOMER_WORK_UNAVAILABLE);
+    }
+
+    /**
+     * 订单调用的执行 + 异常翻译：语义与 {@link #execute} 一致，但对 404/409 走订单专属错误码
+     * （404→订单不存在、409→订单状态不允许），其余复用鉴权失败 / 服务不可用。
+     */
+    private <T> T executeOrder(Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (RestClientResponseException e) {
+            throw translateOrder(e);
+        } catch (ResourceAccessException e) {
+            log.error("customer-work order request io failed, code={}", CLIENT_IO_FAIL, e);
+            throw new BizException(ResultCode.CUSTOMER_WORK_UNAVAILABLE);
+        }
+    }
+
+    private BizException translateOrder(RestClientResponseException e) {
+        int status = e.getStatusCode().value();
+        if (status == HTTP_NOT_FOUND) {
+            return new BizException(ResultCode.ORDER_NOT_FOUND);
+        }
+        if (status == HTTP_CONFLICT) {
+            return new BizException(ResultCode.ORDER_STATE_CONFLICT);
+        }
+        if (status == HTTP_UNAUTHORIZED) {
+            log.error("customer-work auth failed, code={}, status={}", CLIENT_AUTH_FAIL, status, e);
+            return new BizException(ResultCode.CUSTOMER_WORK_AUTH_FAILED);
+        }
+        log.error("customer-work order request failed, code={}, status={}", CLIENT_REQUEST_FAIL, status, e);
         return new BizException(ResultCode.CUSTOMER_WORK_UNAVAILABLE);
     }
 }

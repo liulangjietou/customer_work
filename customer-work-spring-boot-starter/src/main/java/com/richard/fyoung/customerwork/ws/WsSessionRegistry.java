@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerworkapp.ws;
+package com.richard.fyoung.customerwork.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -14,7 +14,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>每个在线连接对应一个 {@code unicast + onBackpressureBuffer} 的 {@link Sinks.Many}，处理器把其
  * {@code asFlux()} 作为出站流；业务侧（对话分发、工单事件监听）通过 {@code pushToUser/pushToAgent}
- * 把帧写入对应 Sink 实现服务端主动下推。</p>
+ * 把帧写入对应 Sink 实现服务端主动下推。仅依赖 reactor + jackson（与具体 WebFlux 路由无关），故作为
+ * 可复用基建下沉 starter，由自动装配扫描注册。</p>
  *
  * <p><b>顶号</b>：同一 id 重复连接时，先 {@code complete} 旧 Sink（旧连接出站流正常结束、随后被清理），
  * 再登记新 Sink——保证一个身份只有一条活跃下行，避免消息分裂到多条连接。</p>

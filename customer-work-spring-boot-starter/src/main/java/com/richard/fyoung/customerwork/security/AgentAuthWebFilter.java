@@ -1,7 +1,6 @@
-package com.richard.fyoung.customerworkapp.security;
+package com.richard.fyoung.customerwork.security;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.security.AgentAccessCredential;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.web.server.ServerWebExchange;
@@ -18,7 +17,8 @@ import java.util.Optional;
  * 失败 401 JSON；成功把 agentId 放入 exchange 属性（键 {@link #AGENT_ID_ATTR}）供控制器取用——坐席身份
  * 由服务端凭 token 解析而非客户端自报，避免冒充。</p>
  *
- * <p>由 {@code SecurityWebFilterConfig} 以 {@code @Bean} 注册（非 {@code @Component}），理由同 {@code UserAuthWebFilter}。</p>
+ * <p>本类为纯 {@link WebFilter}（不加 {@code @Component}），由接入方以 {@code @Bean} 显式注册，理由同
+ * {@link UserAuthWebFilter}。</p>
  * @author owlzhangfq@gmail.com
  */
 @Order(Ordered.HIGHEST_PRECEDENCE + 21)

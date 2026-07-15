@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.ticket;
 
+import com.richard.fyoung.customerwork.common.PageResult;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -49,7 +51,7 @@ public class InMemoryTicketStore implements TicketStore {
     }
 
     @Override
-    public PageResult findPage(TicketQuery query) {
+    public PageResult<Ticket> findPage(TicketQuery query) {
         List<Ticket> filtered = tickets.values().stream()
             .filter(t -> query.status() == null || t.getStatus() == query.status())
             .filter(t -> query.assignee() == null || query.assignee().equals(t.getAssignee()))
@@ -62,7 +64,7 @@ public class InMemoryTicketStore implements TicketStore {
         long total = filtered.size();
         int from = Math.min(query.offset(), filtered.size());
         int to = Math.min(from + query.normalizedPageSize(), filtered.size());
-        return new PageResult(total, new ArrayList<>(filtered.subList(from, to)));
+        return new PageResult<>(total, new ArrayList<>(filtered.subList(from, to)));
     }
 
     @Override

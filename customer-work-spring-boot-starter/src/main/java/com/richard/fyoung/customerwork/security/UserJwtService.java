@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerworkapp.security;
+package com.richard.fyoung.customerwork.security;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.jsonwebtoken.Claims;
@@ -18,10 +18,11 @@ import java.util.Optional;
 /**
  * 用户登录态 JWT 签发与校验（HS256，自签自验，无状态）。
  *
- * <p>starter 只提供账户与密码校验能力（{@code UserAccountService}），登录态令牌的签发/校验属于接入层
- * 职责，故落在 app。密钥取 {@code customer-work.user-auth.jwt-secret}；有效期取 {@code jwt-expire-hours}。
- * 为避免过短密钥触发 jjwt 的 WeakKeyException，统一把配置密钥做 SHA-256 摘要派生出 256bit 定长签名密钥
- * （既满足 HS256 强度要求，又不对运维配置的密钥长度做硬约束）。</p>
+ * <p>starter 提供账户与密码校验能力（{@code UserAccountService}）之外，把登录态令牌的签发/校验作为可复用的
+ * 接入层基础设施一并下沉到本包（与 {@link AgentAccessCredential} 同域）；接入方（app）只做装配与业务编排。
+ * 密钥取 {@code customer-work.user-auth.jwt-secret}；有效期取 {@code jwt-expire-hours}。为避免过短密钥触发
+ * jjwt 的 WeakKeyException，统一把配置密钥做 SHA-256 摘要派生出 256bit 定长签名密钥（既满足 HS256 强度要求，
+ * 又不对运维配置的密钥长度做硬约束）。</p>
  *
  * <p><b>安全提示</b>：默认密钥仅供本地开发，生产必须用环境变量 {@code CW_USER_JWT_SECRET} 覆盖。</p>
  * @author owlzhangfq@gmail.com

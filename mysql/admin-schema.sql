@@ -340,3 +340,15 @@ INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type
     (136, 131, '解决工单',       'user-ticket:resolve',  2, 5),
     (137, 131, '关闭工单',       'user-ticket:close',    2, 6),
     (138, 131, '编辑工单',       'user-ticket:edit',     2, 7);
+
+-- =============================================================================
+-- 用户订单菜单权限（对应 Flyway V20__user_orders_menu.sql）
+-- 说明：'用户订单' 二级菜单挂在 V19 建的一级分组 '客服工单'（id=130）下，sort=2；订单数据在 8080 侧，
+-- admin-server 只作代理不建业务表。权限点 id 段 139~141（续 V19 的 130~138）。
+-- =============================================================================
+INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `icon_type`, `sort`) VALUES
+    (139, 130, '用户订单', 'user-order', 1, '/ticket/user-order', 'List', 'library', 2);
+
+INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `sort`) VALUES
+    (140, 139, '查看用户订单', 'user-order:view', 2, 1),
+    (141, 139, '编辑用户订单', 'user-order:edit', 2, 2);

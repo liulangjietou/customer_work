@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerworkapp.security;
+package com.richard.fyoung.customerwork.security;
 
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;

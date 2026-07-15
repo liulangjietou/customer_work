@@ -1,4 +1,4 @@
-package com.richard.fyoung.customerworkapp.security;
+package com.richard.fyoung.customerwork.security;
 
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -19,8 +19,9 @@ import java.util.Optional;
  * <p>Order 排在 {@code ApiKeyAuthWebFilter}（{@code HIGHEST_PRECEDENCE + 10}）之后：API Key 是接入层
  * 基础设施闸门（默认关闭），用户登录态鉴权是其后的业务身份闸门，两者正交共存。</p>
  *
- * <p>由 {@code SecurityWebFilterConfig} 以 {@code @Bean} 注册（非 {@code @Component}）——避免被 {@code @WebFluxTest}
- * 切片自动纳入而在无 {@code UserJwtService} 的控制器切片里加载失败。</p>
+ * <p>本类为纯 {@link WebFilter}（不加 {@code @Component}）：由接入方以 {@code @Bean} 显式注册——避免被
+ * {@code @WebFluxTest} 切片按 WebFilter 类型自动纳入、却因切片未提供其依赖（{@link UserJwtService}）而加载失败。
+ * 切片测试需要它时 {@code @Import} 即可。</p>
  * @author owlzhangfq@gmail.com
  */
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)

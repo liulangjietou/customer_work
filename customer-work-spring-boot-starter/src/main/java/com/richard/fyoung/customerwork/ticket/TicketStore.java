@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.ticket;
 
+import com.richard.fyoung.customerwork.common.PageResult;
+
 import java.util.List;
 import java.util.Optional;
 
@@ -28,7 +30,7 @@ public interface TicketStore {
     Optional<Ticket> findActiveBySession(String sessionId);
 
     /** 分页查询（多维过滤 + 按 updatedAtMs 倒序）。 */
-    PageResult findPage(TicketQuery query);
+    PageResult<Ticket> findPage(TicketQuery query);
 
     /** 按状态查全部（SLA 巡检用）。 */
     List<Ticket> findByStatus(TicketStatus status);

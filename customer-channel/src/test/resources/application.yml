@@ -4,6 +4,9 @@ spring:
   autoconfigure:
     exclude:
       - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
+      # starter 引入 MyBatis-Plus 后 spring-jdbc 进入类路径，未配 spring.datasource 时
+      # DataSourceAutoConfiguration 会启动失败；本模块不用 Spring 自动数据源，显式关闭
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
 
 agentscope:
   admin:

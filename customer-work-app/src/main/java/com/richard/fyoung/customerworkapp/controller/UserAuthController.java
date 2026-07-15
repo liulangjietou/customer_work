@@ -2,8 +2,8 @@ package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.user.UserAccount;
 import com.richard.fyoung.customerwork.user.UserAccountService;
-import com.richard.fyoung.customerworkapp.security.UserJwtService;
-import com.richard.fyoung.customerworkapp.security.UserPrincipal;
+import com.richard.fyoung.customerwork.security.UserJwtService;
+import com.richard.fyoung.customerwork.security.UserPrincipal;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

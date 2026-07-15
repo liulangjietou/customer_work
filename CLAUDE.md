@@ -31,7 +31,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：全仓 **811 个**（starter 438 + app 58 + customer-channel 8 + admin-server 306）。
+- 测试基线：全仓 **873 个**（starter 497 + app 56 + customer-channel 8 + admin-server 312）。
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
 - 模块 A 改完给模块 B 用时，先 `mvn install -Dmaven.test.skip=true -Djacoco.skip=true`（B 解析的是本地仓库的 jar，
   不是 A 的工作树）；根 pom 变更后父 POM 也要 `mvn -N install`，否则 B 读到旧版本号。
@@ -50,10 +50,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 
 - 日志只用 info/error（不用 warn），日志文本英文，error 带错误码占位符：
   `log.error("xxx failed, code={}, id={}", "MODULE-ACTION-FAIL", id, e)`
-- 持久化扩展走 Store SPI 模式（接口 + InMemory 默认 + Jdbc 实现 + `@ConditionalOnMissingBean`，
+- 持久化扩展走 Store SPI 模式（接口 + InMemory 默认 + MyBatis-Plus 实现 + `@ConditionalOnMissingBean`，
   已套用 8 次：Approval/SlotFilling/DialogStage/Handoff/Feedback/Ticket/UserAccount/ChatLog），别发明新模式。
+  持久层规范：贫血 DO(entity/)+BaseMapper(mapper/)+复杂 SQL 进 resources/customerwork/mapper/*.xml，
+  代码里禁止手写 SQL；独立 customerWorkDataSource/SqlSessionFactory（CustomerWorkPersistenceConfig），
+  不污染宿主 MyBatis 环境；建表种子统一走 SchemaInitializer（customer-work-schema.sql，与 mysql/schema.sql 同步）。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
-- JDBC Store 的异常必须 `catch(Exception)` 而非 `SQLException`（HikariPool 初始化异常是 RuntimeException）。
+- 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。
 - admin-server 排除了 starter 的自动装配（`spring.autoconfigure.exclude`），需要 starter 能力时在自己的
   `@Configuration` 里显式 new，不要假设容器里有现成 Bean。

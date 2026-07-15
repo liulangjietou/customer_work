@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.ticket;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.richard.fyoung.customerwork.common.PageResult;
 import com.richard.fyoung.customerwork.ticket.entity.TicketDO;
 import com.richard.fyoung.customerwork.ticket.entity.TicketEventDO;
 import com.richard.fyoung.customerwork.ticket.mapper.TicketEventMapper;
@@ -76,7 +77,7 @@ public class MybatisTicketStore implements TicketStore {
     }
 
     @Override
-    public PageResult findPage(TicketQuery query) {
+    public PageResult<Ticket> findPage(TicketQuery query) {
         try {
             Page<TicketDO> page = Page.of(query.normalizedPageNum(), query.normalizedPageSize());
             QueryWrapper<TicketDO> wrapper = new QueryWrapper<>();
@@ -98,10 +99,10 @@ public class MybatisTicketStore implements TicketStore {
             wrapper.orderByDesc("updated_at_ms");
             ticketMapper.selectPage(page, wrapper);
             List<Ticket> list = page.getRecords().stream().map(this::toTicket).collect(Collectors.toList());
-            return new PageResult(page.getTotal(), list);
+            return new PageResult<>(page.getTotal(), list);
         } catch (Exception e) {
             log.error("ticket findPage failed, code={}", "TICKET-STORE-FINDPAGE-FAIL", e);
-            return new PageResult(0, List.of());
+            return new PageResult<>(0, List.of());
         }
     }
 

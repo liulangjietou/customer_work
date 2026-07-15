@@ -2,7 +2,7 @@ package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.chatlog.ChatMessage;
-import com.richard.fyoung.customerwork.ticket.PageResult;
+import com.richard.fyoung.customerwork.common.PageResult;
 import com.richard.fyoung.customerwork.ticket.Ticket;
 import com.richard.fyoung.customerwork.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.ticket.TicketCategory;
@@ -10,9 +10,9 @@ import com.richard.fyoung.customerwork.ticket.TicketPriority;
 import com.richard.fyoung.customerwork.ticket.TicketQuery;
 import com.richard.fyoung.customerwork.ticket.TicketService;
 import com.richard.fyoung.customerwork.ticket.TicketStatus;
-import com.richard.fyoung.customerworkapp.security.AgentAuthWebFilter;
-import com.richard.fyoung.customerworkapp.ws.WsFrame;
-import com.richard.fyoung.customerworkapp.ws.WsSessionRegistry;
+import com.richard.fyoung.customerwork.security.AgentAuthWebFilter;
+import com.richard.fyoung.customerwork.ws.WsFrame;
+import com.richard.fyoung.customerwork.ws.WsSessionRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -91,10 +91,10 @@ public class AgentTicketController {
         TicketQuery query = new TicketQuery(parseStatus(status), StringUtils.hasText(assignee) ? assignee : null,
             parseCategory(category), parsePriority(priority), null, page, size);
         return blocking(() -> {
-            PageResult result = ticketService.findPage(query);
+            PageResult<Ticket> result = ticketService.findPage(query);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("total", result.total());
-            body.put("items", result.list());
+            body.put("items", result.items());
             return body;
         });
     }

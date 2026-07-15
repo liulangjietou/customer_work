@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.ticket;
 
+import com.richard.fyoung.customerwork.common.PageResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -184,7 +185,7 @@ public class TicketService {
         return store.findActiveBySession(sessionId);
     }
 
-    public PageResult findPage(TicketQuery query) {
+    public PageResult<Ticket> findPage(TicketQuery query) {
         return store.findPage(query);
     }
 

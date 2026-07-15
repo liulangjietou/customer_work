@@ -2,15 +2,15 @@ package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.chatlog.ChatMessage;
-import com.richard.fyoung.customerwork.ticket.PageResult;
+import com.richard.fyoung.customerwork.common.PageResult;
 import com.richard.fyoung.customerwork.ticket.Ticket;
 import com.richard.fyoung.customerwork.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.ticket.TicketCategory;
 import com.richard.fyoung.customerwork.ticket.TicketQuery;
 import com.richard.fyoung.customerwork.ticket.TicketService;
 import com.richard.fyoung.customerwork.ticket.TicketStatus;
-import com.richard.fyoung.customerworkapp.security.UserAuthWebFilter;
-import com.richard.fyoung.customerworkapp.security.UserPrincipal;
+import com.richard.fyoung.customerwork.security.UserAuthWebFilter;
+import com.richard.fyoung.customerwork.security.UserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -86,11 +86,10 @@ public class UserTicketController {
         UserPrincipal user = principal(exchange);
         TicketQuery query = new TicketQuery(parseStatus(status), null, null, null, user.userId(), page, size);
         return blocking(() -> {
-            PageResult result = ticketService.findPage(query);
-            // 对外契约字段为 items（PageResult 内部字段名是 list，不直接外泄领域记录结构）
+            PageResult<Ticket> result = ticketService.findPage(query);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("total", result.total());
-            body.put("items", result.list());
+            body.put("items", result.items());
             return body;
         });
     }

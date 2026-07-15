@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.ticket;
 
+import com.richard.fyoung.customerwork.common.PageResult;
 import com.richard.fyoung.customerwork.support.MybatisTestSupport;
 import com.richard.fyoung.customerwork.ticket.mapper.TicketEventMapper;
 import com.richard.fyoung.customerwork.ticket.mapper.TicketMapper;
@@ -107,14 +108,14 @@ class MybatisTicketStoreTest {
             store.save(Ticket.create(id, "s-" + id, user, "标题" + i, TicketCategory.CONSULT));
         }
 
-        PageResult page1 = store.findPage(new TicketQuery(null, null, null, null, user, 1, 2));
+        PageResult<Ticket> page1 = store.findPage(new TicketQuery(null, null, null, null, user, 1, 2));
         assertEquals(3, page1.total());
-        assertEquals(2, page1.list().size());
+        assertEquals(2, page1.items().size());
 
-        PageResult page2 = store.findPage(new TicketQuery(null, null, null, null, user, 2, 2));
-        assertEquals(1, page2.list().size());
+        PageResult<Ticket> page2 = store.findPage(new TicketQuery(null, null, null, null, user, 2, 2));
+        assertEquals(1, page2.items().size());
 
-        PageResult byStatus = store.findPage(
+        PageResult<Ticket> byStatus = store.findPage(
             new TicketQuery(TicketStatus.AI_SERVING, null, null, null, user, 1, 10));
         assertEquals(3, byStatus.total(), "三张均为 AI_SERVING");
     }

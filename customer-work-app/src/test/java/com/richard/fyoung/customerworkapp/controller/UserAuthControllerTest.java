@@ -3,7 +3,7 @@ package com.richard.fyoung.customerworkapp.controller;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.user.UserAccount;
 import com.richard.fyoung.customerwork.user.UserAccountService;
-import com.richard.fyoung.customerworkapp.security.UserJwtService;
+import com.richard.fyoung.customerwork.security.UserJwtService;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

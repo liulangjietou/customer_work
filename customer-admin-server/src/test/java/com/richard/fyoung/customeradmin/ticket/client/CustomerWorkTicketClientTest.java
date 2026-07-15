@@ -2,6 +2,9 @@ package com.richard.fyoung.customeradmin.ticket.client;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.ticket.dto.OrderDetailVO;
+import com.richard.fyoung.customeradmin.ticket.dto.OrderPageQuery;
+import com.richard.fyoung.customeradmin.ticket.dto.OrderPageResult;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketMessageVO;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageResult;
@@ -89,6 +92,73 @@ class CustomerWorkTicketClientTest {
 
         BizException ex = assertThrows(BizException.class, () -> client.claim("TK-1005"));
         assertEquals(ResultCode.TICKET_STATE_CONFLICT, ex.getResultCode());
+        server.verify();
+    }
+
+    @Test
+    void pageOrders_shouldParse200Body() {
+        server.expect(requestTo(containsString("/api/customer/agent/orders?")))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess(
+                "{\"total\":1,\"items\":[{\"orderId\":\"O-1\",\"username\":\"alice\",\"amount\":\"299.00\","
+                    + "\"status\":\"待发货\"}]}",
+                MediaType.APPLICATION_JSON));
+
+        OrderPageQuery query = new OrderPageQuery();
+        query.setUsername("alice");
+        OrderPageResult result = client.pageOrders(query);
+
+        assertEquals(1, result.getTotal());
+        assertEquals("O-1", result.getItems().get(0).getOrderId());
+        assertEquals("alice", result.getItems().get(0).getUsername());
+        assertEquals("299.00", result.getItems().get(0).getAmount());
+        server.verify();
+    }
+
+    @Test
+    void orderDetail_shouldMapNotFoundToBizException() {
+        server.expect(requestTo(containsString("/api/customer/agent/orders/O-404")))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        BizException ex = assertThrows(BizException.class, () -> client.orderDetail("O-404"));
+        assertEquals(ResultCode.ORDER_NOT_FOUND, ex.getResultCode());
+        server.verify();
+    }
+
+    @Test
+    void orderDetail_shouldParse200Body() {
+        server.expect(requestTo(containsString("/api/customer/agent/orders/O-1")))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess(
+                "{\"orderId\":\"O-1\",\"logisticsTrace\":\"[已揽收]\",\"status\":\"已发货\"}",
+                MediaType.APPLICATION_JSON));
+
+        OrderDetailVO detail = client.orderDetail("O-1");
+        assertEquals("O-1", detail.getOrderId());
+        assertEquals("[已揽收]", detail.getLogisticsTrace());
+        server.verify();
+    }
+
+    @Test
+    void cancelOrder_shouldMapConflictToBizException() {
+        server.expect(requestTo(containsString("/api/customer/agent/orders/O-1/cancel")))
+            .andExpect(method(HttpMethod.POST))
+            .andRespond(withStatus(HttpStatus.CONFLICT));
+
+        BizException ex = assertThrows(BizException.class, () -> client.cancelOrder("O-1", "太晚"));
+        assertEquals(ResultCode.ORDER_STATE_CONFLICT, ex.getResultCode());
+        server.verify();
+    }
+
+    @Test
+    void modifyOrderAddress_shouldMapNotFoundToBizException() {
+        server.expect(requestTo(containsString("/api/customer/agent/orders/O-404/modify-address")))
+            .andExpect(method(HttpMethod.POST))
+            .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        BizException ex = assertThrows(BizException.class, () -> client.modifyOrderAddress("O-404", "x"));
+        assertEquals(ResultCode.ORDER_NOT_FOUND, ex.getResultCode());
         server.verify();
     }
 
