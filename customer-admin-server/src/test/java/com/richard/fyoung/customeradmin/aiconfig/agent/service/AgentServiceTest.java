@@ -4,17 +4,21 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentVO;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentBackupModel;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSkill;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSubAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentBackupModelMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
@@ -31,12 +35,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -49,12 +56,14 @@ class AgentServiceTest {
     private AiAgentMapper agentMapper;
     private AiAgentMcpMapper agentMcpMapper;
     private AiAgentSkillMapper agentSkillMapper;
+    private AiAgentBackupModelMapper agentBackupModelMapper;
     private AiAgentSubAgentMapper agentSubAgentMapper;
     private AiModelConfigMapper modelConfigMapper;
     private AiMcpMapper mcpMapper;
     private AiSkillMapper skillMapper;
     private AiAgentSystemToolMapper agentSystemToolMapper;
     private AiSystemToolMapper systemToolMapper;
+    private ModelConfigService modelConfigService;
     private MenuVersionHolder menuVersionHolder;
     private AgentService service;
 
@@ -65,6 +74,7 @@ class AgentServiceTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentSkill.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentSubAgent.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentSystemTool.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentBackupModel.class);
     }
 
     @BeforeEach
@@ -72,23 +82,28 @@ class AgentServiceTest {
         agentMapper = mock(AiAgentMapper.class);
         agentMcpMapper = mock(AiAgentMcpMapper.class);
         agentSkillMapper = mock(AiAgentSkillMapper.class);
+        agentBackupModelMapper = mock(AiAgentBackupModelMapper.class);
         agentSubAgentMapper = mock(AiAgentSubAgentMapper.class);
         modelConfigMapper = mock(AiModelConfigMapper.class);
         mcpMapper = mock(AiMcpMapper.class);
         skillMapper = mock(AiSkillMapper.class);
         agentSystemToolMapper = mock(AiAgentSystemToolMapper.class);
         systemToolMapper = mock(AiSystemToolMapper.class);
+        modelConfigService = mock(ModelConfigService.class);
         menuVersionHolder = new MenuVersionHolder();
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
-        service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, agentSubAgentMapper,
-            modelConfigMapper, mcpMapper, skillMapper, agentSystemToolMapper, systemToolMapper,
-            menuVersionHolder, agentInstanceCache);
+        service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, agentBackupModelMapper,
+            agentSubAgentMapper, modelConfigMapper, mcpMapper, skillMapper, agentSystemToolMapper, systemToolMapper,
+            menuVersionHolder, agentInstanceCache, modelConfigService);
 
         when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
+        // 默认主模型连通性门禁通过（个别用例覆写为失败）
+        when(modelConfigService.testConnectivity(any())).thenReturn(
+            CompletableFuture.completedFuture(new ModelTestResult(ModelTestResult.STATUS_SUCCESS, LocalDateTime.now(), null)));
     }
 
     private AgentSaveRequest validRequest() {
-        return new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(10L), List.of(20L), List.of(30L),
+        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, List.of(10L), List.of(20L), List.of(30L),
             "你是客服助手", List.of("chat", "vibecoding"), "robot", 1,
             null, null, null, null, null, null);
     }
@@ -96,21 +111,21 @@ class AgentServiceTest {
     /** 只带 5 个高级参数的请求（能力固定 chat），供取值范围校验用例复用。 */
     private AgentSaveRequest requestWithParams(Integer maxIters, Integer toolTimeoutSeconds, Integer toolMaxAttempts,
                                                Integer compressTriggerMsgs, Integer compressKeepMsgs) {
-        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null,
+        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, List.of("chat"), null, 1,
             null, maxIters, toolTimeoutSeconds, toolMaxAttempts, compressTriggerMsgs, compressKeepMsgs);
     }
 
     /** 只带 capabilities + subAgentIds 的请求，供子智能体校验用例复用。 */
     private AgentSaveRequest requestWithSubAgents(List<String> capabilities, List<Long> subAgentIds) {
-        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null,
+        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, capabilities, null, 1,
             subAgentIds, null, null, null, null, null);
     }
 
     @Test
     void create_shouldRejectInvalidAgentCode() {
-        AgentSaveRequest request = new AgentSaveRequest("客服助手", "Customer_Helper", 1L, null, null, null,
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "Customer_Helper", 1L, null, null, null, null,
             null, null, null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
@@ -119,7 +134,7 @@ class AgentServiceTest {
     @Test
     void create_shouldRejectUnknownModelId() {
         when(modelConfigMapper.selectById(999L)).thenReturn(null);
-        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 999L, null, null, null,
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 999L, null, null, null, null,
             null, null, null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
@@ -128,7 +143,7 @@ class AgentServiceTest {
     @Test
     void create_shouldRejectInvalidMcpIds() {
         when(mcpMapper.selectBatchIds(List.of(10L))).thenReturn(List.of()); // 只有 0 条命中，说明 10L 不存在
-        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(10L), null, null,
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, List.of(10L), null, null,
             null, null, null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
@@ -137,7 +152,7 @@ class AgentServiceTest {
     @Test
     void create_shouldRejectInvalidSystemToolIds() {
         when(systemToolMapper.selectBatchIds(List.of(30L))).thenReturn(List.of()); // 0 条命中，说明 30L 不存在
-        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, List.of(30L),
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, List.of(30L),
             null, null, null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
@@ -145,7 +160,7 @@ class AgentServiceTest {
 
     @Test
     void create_shouldRejectInvalidCapability() {
-        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null,
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, List.of("not-a-real-capability"), null, 1, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
@@ -250,12 +265,92 @@ class AgentServiceTest {
         assertThrows(BizException.class, () -> service.get(999L));
     }
 
+    // ------------------------------ 备用模型 / 连通性门禁 ------------------------------
+
+    @Test
+    void create_shouldRejectBackupContainingPrimaryModel() {
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(1L), null, null, null,
+            null, null, null, 1, null, null, null, null, null, null);
+
+        assertThrows(BizException.class, () -> service.create(request));
+    }
+
+    @Test
+    void create_shouldRejectInvalidBackupModelIds() {
+        when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
+        when(modelConfigMapper.selectBatchIds(List.of(2L))).thenReturn(List.of()); // 0 条命中，2L 不存在
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(2L), null, null, null,
+            null, null, null, 1, null, null, null, null, null, null);
+
+        assertThrows(BizException.class, () -> service.create(request));
+    }
+
+    @Test
+    void create_shouldInsertBackupRelations_deduplicatedAndOrdered() {
+        when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
+        // 去重后为 [2L, 3L]，两个都存在
+        when(modelConfigMapper.selectBatchIds(List.of(2L, 3L))).thenReturn(List.of(new AiModelConfig(), new AiModelConfig()));
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(2L, 3L, 2L),
+            null, null, null, null, null, null, 1, null, null, null, null, null, null);
+
+        service.create(request);
+
+        ArgumentCaptor<AiAgentBackupModel> captor = ArgumentCaptor.forClass(AiAgentBackupModel.class);
+        verify(agentBackupModelMapper, org.mockito.Mockito.times(2)).insert(captor.capture());
+        List<AiAgentBackupModel> inserted = captor.getAllValues();
+        assertEquals(2L, inserted.get(0).getModelId());
+        assertEquals(0, inserted.get(0).getSortOrder());
+        assertEquals(3L, inserted.get(1).getModelId());
+        assertEquals(1, inserted.get(1).getSortOrder());
+    }
+
+    @Test
+    void create_shouldRejectWhenPrimaryModelConnectivityFails() {
+        when(modelConfigService.testConnectivity(any())).thenReturn(CompletableFuture.completedFuture(
+            new ModelTestResult(ModelTestResult.STATUS_FAILED, LocalDateTime.now(), "HTTP 401")));
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
+            null, null, null, 1, null, null, null, null, null, null);
+
+        assertThrows(BizException.class, () -> service.create(request));
+        verify(agentMapper, never()).insert(any(AiAgent.class));
+    }
+
+    @Test
+    void update_shouldSkipConnectivityGate_whenPrimaryModelUnchanged() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        existing.setModelId(1L); // 与 validRequest 的 modelId 相同
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+        when(mcpMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(new AiMcp()));
+        when(skillMapper.selectBatchIds(List.of(20L))).thenReturn(List.of(new AiSkill()));
+        when(systemToolMapper.selectBatchIds(List.of(30L))).thenReturn(List.of(new AiSystemTool()));
+
+        service.update(1L, validRequest());
+
+        verify(modelConfigService, never()).testConnectivity(any());
+    }
+
+    @Test
+    void update_shouldRunConnectivityGate_whenPrimaryModelChanged() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        existing.setModelId(1L);
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+        when(modelConfigMapper.selectById(2L)).thenReturn(new AiModelConfig());
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 2L, null, null, null, null,
+            null, null, null, 1, null, null, null, null, null, null);
+
+        service.update(1L, request);
+
+        verify(modelConfigService).testConnectivity(2L);
+    }
+
     // ---- 新能力编码白名单 ----
 
     @Test
     void create_shouldAcceptNewCapabilityCodes() {
         // subagent 能力单独用例覆盖（勾选后必须选子智能体），此处覆盖其余新能力编码
-        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null,
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, List.of("chat", "plan", "tasklist", "skill-learning", "dynamic-subagent"), null, 1,
             null, null, null, null, null, null);
 

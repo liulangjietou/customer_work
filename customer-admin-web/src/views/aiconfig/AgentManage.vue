@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 import { createAgent, deleteAgent, disableAgent, enableAgent, pageAgents, updateAgent } from '@/api/agent'
-import { pageModels } from '@/api/model'
+import { pageModels, testModelConnectivity } from '@/api/model'
 import { pageMcps } from '@/api/mcp'
 import { pageSkills } from '@/api/skill'
 import { fetchSystemTools } from '@/api/system-tool'
@@ -53,13 +54,67 @@ const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 const form = reactive<AgentSaveRequest>({
-  agentName: '', agentCode: '', modelId: undefined as unknown as number, mcpIds: [], skillIds: [], systemToolIds: [],
+  agentName: '', agentCode: '', modelId: undefined as unknown as number, backupModelIds: [], mcpIds: [], skillIds: [], systemToolIds: [],
   systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
   subAgentIds: [], maxIters: null, toolTimeoutSeconds: null, toolMaxAttempts: null,
   compressTriggerMsgs: null, compressKeepMsgs: null,
 })
 
 const agentCodePattern = /^[a-z0-9-]+$/
+
+// ---------- 主模型连通性门禁 ----------
+// 状态机：untested（未选/未测）→ testing（测试中）→ passed（通过，可提交）/ failed（失败，需重测）。
+// 编辑态打开弹窗时，若主模型未被改动则直接视为 passed（复用后端已验证过的状态），一旦切换主模型必须重新测试通过。
+type PrimaryTestState = 'untested' | 'testing' | 'passed' | 'failed'
+const primaryTestState = ref<PrimaryTestState>('untested')
+const primaryTestMessage = ref<string | null>(null)
+const originalModelId = ref<number | null>(null)
+
+const enabledModelOptions = computed(() => modelOptions.value.filter((m) => m.status === 1))
+// 备用模型候选需排除当前已选的主模型，避免主备重复。
+const backupModelOptions = computed(() => enabledModelOptions.value.filter((m) => m.id !== form.modelId))
+const canSubmit = computed(() => primaryTestState.value === 'passed')
+
+async function runPrimaryModelTest(modelId: number) {
+  primaryTestState.value = 'testing'
+  primaryTestMessage.value = null
+  try {
+    const result = await testModelConnectivity(modelId)
+    if (result.testStatus === 1) {
+      primaryTestState.value = 'passed'
+    } else {
+      primaryTestState.value = 'failed'
+      primaryTestMessage.value = result.message || '连通性测试失败'
+    }
+  } catch {
+    primaryTestState.value = 'failed'
+    primaryTestMessage.value = '连通性测试请求异常'
+  }
+}
+
+function handlePrimaryModelChange(modelId: number | undefined) {
+  // 主模型切换后，备用模型里若含新主模型需自动移除
+  if (modelId != null && form.backupModelIds?.includes(modelId)) {
+    form.backupModelIds = form.backupModelIds.filter((id) => id !== modelId)
+  }
+  if (modelId == null) {
+    primaryTestState.value = 'untested'
+    primaryTestMessage.value = null
+    return
+  }
+  if (dialogMode.value === 'edit' && modelId === originalModelId.value) {
+    primaryTestState.value = 'passed'
+    primaryTestMessage.value = null
+    return
+  }
+  runPrimaryModelTest(modelId)
+}
+
+function handleRetestPrimaryModel() {
+  if (form.modelId != null) {
+    runPrimaryModelTest(form.modelId)
+  }
+}
 
 // 仅勾选「子Agent协作」时才展示子Agent选择框
 const showSubAgentSelect = computed(() => form.capabilities?.includes(CAPABILITY_SUBAGENT) ?? false)
@@ -110,11 +165,14 @@ function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
   Object.assign(form, {
-    agentName: '', agentCode: '', modelId: undefined, mcpIds: [], skillIds: [], systemToolIds: [],
+    agentName: '', agentCode: '', modelId: undefined, backupModelIds: [], mcpIds: [], skillIds: [], systemToolIds: [],
     systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
     subAgentIds: [], maxIters: null, toolTimeoutSeconds: null, toolMaxAttempts: null,
     compressTriggerMsgs: null, compressKeepMsgs: null,
   })
+  originalModelId.value = null
+  primaryTestState.value = 'untested'
+  primaryTestMessage.value = null
   dialogVisible.value = true
 }
 
@@ -122,13 +180,17 @@ function openEdit(row: AgentVO) {
   dialogMode.value = 'edit'
   editingId.value = row.id
   Object.assign(form, {
-    agentName: row.agentName, agentCode: row.agentCode, modelId: row.modelId,
+    agentName: row.agentName, agentCode: row.agentCode, modelId: row.modelId, backupModelIds: [...(row.backupModelIds ?? [])],
     mcpIds: row.mcpIds, skillIds: row.skillIds, systemToolIds: row.systemToolIds, systemPrompt: row.systemPrompt,
     capabilities: row.capabilities, icon: row.icon, status: row.status,
     subAgentIds: row.subAgentIds ?? [], maxIters: row.maxIters ?? null,
     toolTimeoutSeconds: row.toolTimeoutSeconds ?? null, toolMaxAttempts: row.toolMaxAttempts ?? null,
     compressTriggerMsgs: row.compressTriggerMsgs ?? null, compressKeepMsgs: row.compressKeepMsgs ?? null,
   })
+  originalModelId.value = row.modelId
+  // 未改动主模型视为已通过历史校验，无需强制重测
+  primaryTestState.value = 'passed'
+  primaryTestMessage.value = null
   dialogVisible.value = true
 }
 
@@ -152,6 +214,10 @@ function validateSubAgents(): boolean {
 }
 
 async function handleSubmit() {
+  if (!canSubmit.value) {
+    ElMessage.warning('主模型连通性测试尚未通过，无法提交')
+    return
+  }
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) {
     return
@@ -219,7 +285,13 @@ onMounted(() => {
         </el-table-column>
         <el-table-column prop="agentName" label="名称" />
         <el-table-column prop="agentCode" label="编码" width="140" />
-        <el-table-column prop="modelName" label="关联模型" width="140" />
+        <el-table-column prop="modelName" label="主模型" width="140" />
+        <el-table-column label="备用模型" width="180">
+          <template #default="{ row }">
+            <el-tag v-for="n in row.backupModelNames" :key="n" type="info" style="margin-right: 4px">{{ n }}</el-tag>
+            <span v-if="!row.backupModelNames?.length" style="color: #909399">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="能力" width="260">
           <template #default="{ row }">
             <el-tag v-for="c in row.capabilities" :key="c" style="margin: 2px">{{ capabilityLabel(c) }}</el-tag>
@@ -263,9 +335,35 @@ onMounted(() => {
         >
           <el-input v-model="form.agentCode" :disabled="dialogMode === 'edit'" placeholder="用于工作区路由，如 sales-assistant" />
         </el-form-item>
-        <el-form-item label="关联模型" prop="modelId" :rules="[{ required: true, message: '请选择模型' }]">
-          <el-select v-model="form.modelId" style="width: 100%">
-            <el-option v-for="m in modelOptions" :key="m.id" :label="m.modelName" :value="m.id" />
+        <el-form-item label="主模型" prop="modelId" :rules="[{ required: true, message: '请选择主模型' }]">
+          <div style="width: 100%">
+            <el-select v-model="form.modelId" style="width: 100%" @change="handlePrimaryModelChange">
+              <el-option v-for="m in enabledModelOptions" :key="m.id" :label="m.modelName" :value="m.id" />
+            </el-select>
+            <div class="connectivity-row">
+              <el-tag v-if="primaryTestState === 'testing'" type="info">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                测试中
+              </el-tag>
+              <el-tag v-else-if="primaryTestState === 'passed'" type="success">连通性通过</el-tag>
+              <el-tag v-else-if="primaryTestState === 'failed'" type="danger">连通性失败：{{ primaryTestMessage }}</el-tag>
+              <el-tag v-else type="info">未测试</el-tag>
+              <el-button
+                v-if="form.modelId != null"
+                link
+                type="primary"
+                :disabled="primaryTestState === 'testing'"
+                @click="handleRetestPrimaryModel"
+              >
+                重新测试
+              </el-button>
+            </div>
+            <div v-if="!canSubmit" class="connectivity-hint">主模型连通性测试通过后才能提交</div>
+          </div>
+        </el-form-item>
+        <el-form-item label="备用模型">
+          <el-select v-model="form.backupModelIds" multiple style="width: 100%" placeholder="可选，主模型异常时的降级候选">
+            <el-option v-for="m in backupModelOptions" :key="m.id" :label="m.modelName" :value="m.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="MCP">
@@ -367,7 +465,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button type="primary" :disabled="!canSubmit" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -378,5 +476,18 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.connectivity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.connectivity-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #f56c6c;
 }
 </style>

@@ -14,7 +14,14 @@ const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
-const form = reactive<SkillSaveRequest>({ skillName: '', skillCode: '', content: '', description: '', status: 1 })
+const form = reactive<SkillSaveRequest>({ skillName: '', skillCode: '', content: '', description: '', status: 1, storageTargets: ['local'] })
+
+// 上传目标选项：本地 Workspace / Nacos / SFTP，值与后端 SkillStorageTarget 枚举对齐。
+const storageTargetOptions = [
+  { label: '本地 Workspace', value: 'local' },
+  { label: 'Nacos', value: 'nacos' },
+  { label: 'SFTP', value: 'sftp' },
+]
 
 async function loadList() {
   loading.value = true
@@ -35,14 +42,17 @@ function handleSearch() {
 function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
-  Object.assign(form, { skillName: '', skillCode: '', content: '', description: '', status: 1 })
+  Object.assign(form, { skillName: '', skillCode: '', content: '', description: '', status: 1, storageTargets: ['local'] })
   dialogVisible.value = true
 }
 
 function openEdit(row: SkillVO) {
   dialogMode.value = 'edit'
   editingId.value = row.id
-  Object.assign(form, { skillName: row.skillName, skillCode: row.skillCode, content: row.content, description: row.description, status: row.status })
+  Object.assign(form, {
+    skillName: row.skillName, skillCode: row.skillCode, content: row.content, description: row.description, status: row.status,
+    storageTargets: [...(row.storageTargets ?? [])],
+  })
   dialogVisible.value = true
 }
 
@@ -109,6 +119,13 @@ onMounted(loadList)
       <el-table v-loading="loading" :data="list" style="width: 100%">
         <el-table-column prop="skillName" label="名称" />
         <el-table-column prop="skillCode" label="编码" width="160" />
+        <el-table-column label="存储目标" width="200">
+          <template #default="{ row }">
+            <el-tag v-for="t in row.storageTargets" :key="t" style="margin-right: 4px">
+              {{ storageTargetOptions.find((o) => o.value === t)?.label ?? t }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
@@ -157,6 +174,15 @@ onMounted(loadList)
             </el-upload>
             <el-input v-model="form.content" type="textarea" :rows="10" placeholder="含 YAML frontmatter 的 SKILL.md 正文，可直接编辑或用上方按钮上传文件回填" />
           </div>
+        </el-form-item>
+        <el-form-item
+          label="上传目标"
+          prop="storageTargets"
+          :rules="[{ required: true, type: 'array', min: 1, message: '请至少勾选一个上传目标' }]"
+        >
+          <el-checkbox-group v-model="form.storageTargets">
+            <el-checkbox v-for="opt in storageTargetOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</el-checkbox>
+          </el-checkbox-group>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description!" type="textarea" :rows="2" />

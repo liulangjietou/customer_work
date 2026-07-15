@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS `ai_skill` (
     `content`       TEXT NOT NULL COMMENT '技能内容/定义（SKILL.md 内容）',
     `description`   VARCHAR(255) COMMENT '描述',
     `status`        TINYINT NOT NULL DEFAULT 1 COMMENT '状态：0禁用 / 1启用',
+    `storage_targets` VARCHAR(64) NOT NULL DEFAULT 'local' COMMENT '存储目标，逗号分隔：local,nacos,sftp',
     `create_by`     BIGINT COMMENT '创建人ID',
     `create_time`   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_by`     BIGINT COMMENT '更新人ID',
@@ -208,6 +209,16 @@ CREATE TABLE IF NOT EXISTS `ai_agent_skill` (
     `skill_id`  BIGINT NOT NULL COMMENT 'Skill ID',
     UNIQUE KEY `uk_ai_agent_skill` (`agent_id`, `skill_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体-Skill关联';
+
+CREATE TABLE IF NOT EXISTS `ai_agent_backup_model` (
+    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `agent_id`    BIGINT NOT NULL COMMENT '智能体ID',
+    `model_id`    BIGINT NOT NULL COMMENT '备用模型ID',
+    `sort_order`  INT NOT NULL DEFAULT 0 COMMENT '容错切换顺序（升序，越小越先尝试）',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY `uk_agent_backup` (`agent_id`, `model_id`),
+    KEY `idx_backup_model` (`model_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体-备用模型关联';
 
 -- 对话历史持久化：AgentScope 框架自带的 MysqlAgentStateStore 表结构（表结构定义见
 -- io.agentscope.extensions.mysql.state.MysqlAgentStateStore 类注释），自定义表名而非框架默认的

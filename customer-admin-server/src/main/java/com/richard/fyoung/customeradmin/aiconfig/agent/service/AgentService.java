@@ -6,16 +6,20 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentVO;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentBackupModel;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSkill;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSubAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentBackupModelMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystemToolMapper;
@@ -26,14 +30,20 @@ import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.menu.service.MenuVersionHolder;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -45,10 +55,16 @@ import java.util.stream.Collectors;
 @Service
 public class AgentService {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentService.class);
+
     private static final Pattern AGENT_CODE_PATTERN = Pattern.compile("^[a-z0-9-]+$");
     private static final Set<String> VALID_CAPABILITIES =
         Set.of("chat", "vibecoding", "subagent", "plan", "tasklist", "skill-learning", "dynamic-subagent");
     private static final String CAPABILITY_DELIMITER = ",";
+    /** 保存门禁的连通性测试等待上限（秒）：给 ModelConfigService 内部 10s 硬超时留余量。 */
+    private static final long MODEL_TEST_GATE_TIMEOUT_SECONDS = 12;
+    /** 主模型连通性门禁失败的日志错误码。 */
+    private static final String CODE_MODEL_TEST_FAIL = "AGENT-MODEL-TEST-FAIL";
     private static final String CAPABILITY_SUBAGENT = "subagent";
 
     // ---- 高级参数取值范围（选填，null 不校验） ----
@@ -66,6 +82,7 @@ public class AgentService {
     private final AiAgentMapper agentMapper;
     private final AiAgentMcpMapper agentMcpMapper;
     private final AiAgentSkillMapper agentSkillMapper;
+    private final AiAgentBackupModelMapper agentBackupModelMapper;
     private final AiAgentSubAgentMapper agentSubAgentMapper;
     private final AiModelConfigMapper modelConfigMapper;
     private final AiMcpMapper mcpMapper;
@@ -74,16 +91,20 @@ public class AgentService {
     private final AiSystemToolMapper systemToolMapper;
     private final MenuVersionHolder menuVersionHolder;
     private final AgentInstanceCache agentInstanceCache;
+    private final ModelConfigService modelConfigService;
 
     public AgentService(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
-                         AiAgentSkillMapper agentSkillMapper, AiAgentSubAgentMapper agentSubAgentMapper,
+                         AiAgentSkillMapper agentSkillMapper, AiAgentBackupModelMapper agentBackupModelMapper,
+                         AiAgentSubAgentMapper agentSubAgentMapper,
                          AiModelConfigMapper modelConfigMapper,
                          AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
                          AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
-                         MenuVersionHolder menuVersionHolder, AgentInstanceCache agentInstanceCache) {
+                         MenuVersionHolder menuVersionHolder, AgentInstanceCache agentInstanceCache,
+                         ModelConfigService modelConfigService) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
+        this.agentBackupModelMapper = agentBackupModelMapper;
         this.agentSubAgentMapper = agentSubAgentMapper;
         this.modelConfigMapper = modelConfigMapper;
         this.mcpMapper = mcpMapper;
@@ -92,6 +113,7 @@ public class AgentService {
         this.systemToolMapper = systemToolMapper;
         this.menuVersionHolder = menuVersionHolder;
         this.agentInstanceCache = agentInstanceCache;
+        this.modelConfigService = modelConfigService;
     }
 
     public PageResult<AgentVO> page(PageQuery query) {
@@ -121,10 +143,12 @@ public class AgentService {
     @Transactional(rollbackFor = Exception.class)
     public void create(AgentSaveRequest request) {
         validate(request, null);
+        // 新建：主模型必须实测连通性通过才允许保存
+        assertPrimaryModelConnectivity(request.modelId());
         AiAgent agent = new AiAgent();
         fillFromRequest(agent, request);
         agentMapper.insert(agent);
-        replaceRelations(agent.getId(), request.mcpIds(), request.skillIds(),
+        replaceRelations(agent.getId(), request.backupModelIds(), request.mcpIds(), request.skillIds(),
             request.systemToolIds(), request.subAgentIds());
         menuVersionHolder.bump();
     }
@@ -133,15 +157,39 @@ public class AgentService {
     public void update(Long id, AgentSaveRequest request) {
         AiAgent agent = requireAgent(id);
         String oldAgentCode = agent.getAgentCode();
+        Long oldModelId = agent.getModelId();
         validate(request, id);
+        // 编辑：仅当主模型变更时才实测连通性
+        if (!request.modelId().equals(oldModelId)) {
+            assertPrimaryModelConnectivity(request.modelId());
+        }
         fillFromRequest(agent, request);
         agentMapper.updateById(agent);
-        replaceRelations(id, request.mcpIds(), request.skillIds(),
+        replaceRelations(id, request.backupModelIds(), request.mcpIds(), request.skillIds(),
             request.systemToolIds(), request.subAgentIds());
         menuVersionHolder.bump();
         // agentCode 理论上不应改变，但仍按新旧两个 code 双清，避免缓存键错位残留旧实例
         agentInstanceCache.evict(oldAgentCode);
         agentInstanceCache.evict(request.agentCode());
+    }
+
+    /**
+     * 保存门禁：同步实测主模型连通性，非成功即抛业务异常阻止保存。防御只做这一处（后端保存链路），
+     * 运行时不再重复校验（运行时靠 FailoverModel 主备容错兜底）。
+     */
+    private void assertPrimaryModelConnectivity(Long modelId) {
+        try {
+            ModelTestResult result = modelConfigService.testConnectivity(modelId)
+                .get(MODEL_TEST_GATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (result.testStatus() != ModelTestResult.STATUS_SUCCESS) {
+                throw new BizException(ResultCode.MODEL_TEST_FAILED, "主模型连通性测试未通过: " + result.message());
+            }
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("primary model connectivity gate failed, code={}, modelId={}", CODE_MODEL_TEST_FAIL, modelId, e);
+            throw new BizException(ResultCode.MODEL_TEST_FAILED, "主模型连通性测试执行异常: " + e.getMessage());
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -151,6 +199,7 @@ public class AgentService {
         agentMcpMapper.delete(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, id));
         agentSkillMapper.delete(new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, id));
         agentSystemToolMapper.delete(new LambdaQueryWrapper<AiAgentSystemTool>().eq(AiAgentSystemTool::getAgentId, id));
+        agentBackupModelMapper.delete(new LambdaQueryWrapper<AiAgentBackupModel>().eq(AiAgentBackupModel::getAgentId, id));
         agentSubAgentMapper.delete(new LambdaQueryWrapper<AiAgentSubAgent>().eq(AiAgentSubAgent::getAgentId, id));
         menuVersionHolder.bump();
         agentInstanceCache.evict(agent.getAgentCode());
@@ -180,6 +229,7 @@ public class AgentService {
         if (modelConfigMapper.selectById(request.modelId()) == null) {
             throw new BizException(ResultCode.PARAM_INVALID, "modelId 不存在: " + request.modelId());
         }
+        validateBackupModels(request);
         if (!CollectionUtils.isEmpty(request.mcpIds())
             && mcpMapper.selectBatchIds(request.mcpIds()).size() != request.mcpIds().size()) {
             throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 mcpIds");
@@ -241,9 +291,43 @@ public class AgentService {
         }
     }
 
+    /**
+     * 备用模型校验：去重保序后，每个 id 必须真实存在于 ai_model_config，且不得等于主模型 id。
+     * 校验失败抛业务异常（语义错误码 AGENT-BACKUP-MODEL-INVALID，落到 PARAM_INVALID 标准响应）。
+     */
+    private void validateBackupModels(AgentSaveRequest request) {
+        List<Long> backupIds = distinctBackupIds(request.backupModelIds());
+        if (backupIds.isEmpty()) {
+            return;
+        }
+        if (backupIds.contains(request.modelId())) {
+            throw new BizException(ResultCode.PARAM_INVALID, "备用模型不能包含主模型: " + request.modelId());
+        }
+        if (modelConfigMapper.selectBatchIds(backupIds).size() != backupIds.size()) {
+            throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 backupModelIds");
+        }
+    }
+
+    /** 去重保序（LinkedHashSet 保留首次出现顺序），空集合安全返回空 List。 */
+    private List<Long> distinctBackupIds(List<Long> backupModelIds) {
+        if (CollectionUtils.isEmpty(backupModelIds)) {
+            return List.of();
+        }
+        return new ArrayList<>(new LinkedHashSet<>(backupModelIds));
+    }
+
     /** 关联表整体替换：先清空该智能体现有关联行，再按本次提交的 ids 批量插入（比对差异做增量删改无必要，行数很少）。 */
-    private void replaceRelations(Long agentId, List<Long> mcpIds, List<Long> skillIds,
+    private void replaceRelations(Long agentId, List<Long> backupModelIds, List<Long> mcpIds, List<Long> skillIds,
                                   List<Long> systemToolIds, List<Long> subAgentIds) {
+        agentBackupModelMapper.delete(new LambdaQueryWrapper<AiAgentBackupModel>().eq(AiAgentBackupModel::getAgentId, agentId));
+        List<Long> orderedBackupIds = distinctBackupIds(backupModelIds);
+        for (int i = 0; i < orderedBackupIds.size(); i++) {
+            AiAgentBackupModel relation = new AiAgentBackupModel();
+            relation.setAgentId(agentId);
+            relation.setModelId(orderedBackupIds.get(i));
+            relation.setSortOrder(i);
+            agentBackupModelMapper.insert(relation);
+        }
         agentMcpMapper.delete(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, agentId));
         if (!CollectionUtils.isEmpty(mcpIds)) {
             for (Long mcpId : mcpIds) {
@@ -307,6 +391,7 @@ public class AgentService {
         vo.setModelId(agent.getModelId());
         AiModelConfig model = modelConfigMapper.selectById(agent.getModelId());
         vo.setModelName(model == null ? null : model.getModelName());
+        fillBackupModels(vo, agent.getId());
         vo.setMcpIds(agentMcpMapper.selectList(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, agent.getId()))
             .stream().map(AiAgentMcp::getMcpId).collect(Collectors.toList()));
         vo.setSkillIds(agentSkillMapper.selectList(new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, agent.getId()))
@@ -328,6 +413,25 @@ public class AgentService {
         vo.setCompressTriggerMsgs(agent.getCompressTriggerMsgs());
         vo.setCompressKeepMsgs(agent.getCompressKeepMsgs());
         return vo;
+    }
+
+    /**
+     * 回填有序备用模型 id 与名称：按 sort_order 升序取关联行，名称走一次批量查询（避免 N+1 单查）。
+     */
+    private void fillBackupModels(AgentVO vo, Long agentId) {
+        List<Long> backupIds = agentBackupModelMapper.selectList(
+                new LambdaQueryWrapper<AiAgentBackupModel>()
+                    .eq(AiAgentBackupModel::getAgentId, agentId)
+                    .orderByAsc(AiAgentBackupModel::getSortOrder))
+            .stream().map(AiAgentBackupModel::getModelId).collect(Collectors.toList());
+        vo.setBackupModelIds(backupIds);
+        if (CollectionUtils.isEmpty(backupIds)) {
+            vo.setBackupModelNames(List.of());
+            return;
+        }
+        Map<Long, String> nameById = modelConfigMapper.selectBatchIds(backupIds).stream()
+            .collect(Collectors.toMap(AiModelConfig::getId, AiModelConfig::getModelName));
+        vo.setBackupModelNames(backupIds.stream().map(nameById::get).collect(Collectors.toList()));
     }
 
     private AiAgent requireAgent(Long id) {

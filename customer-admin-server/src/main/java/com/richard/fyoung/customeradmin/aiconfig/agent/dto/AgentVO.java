@@ -16,6 +16,10 @@ public class AgentVO {
     private String agentCode;
     private Long modelId;
     private String modelName;
+    /** 有序备用模型ID（容错切换顺序），字段名为前端契约，不可改动。 */
+    private List<Long> backupModelIds;
+    /** 与 {@link #backupModelIds} 一一对应的模型名称。 */
+    private List<String> backupModelNames;
     private List<Long> mcpIds;
     private List<Long> skillIds;
     private List<Long> systemToolIds;

@@ -17,6 +17,12 @@
     <description>智能体客服后台管理系统：用户权限（RBAC）/ AI 模型 / MCP / Skill / 智能体管理，
         支持在线聊天与 VibeCoding（Spring MVC）</description>
 
+    <properties>
+        <!-- SFTP 客户端：JSch 官方已停更，改用社区维护版 mwiede/jsch（同 com.jcraft.jsch 包 API）；
+             版本只在本模块声明，不动根 pom。 -->
+        <jsch.version>0.2.23</jsch.version>
+    </properties>
+
     <dependencies>
         <!-- 显式覆盖父 POM 继承下来的 commons-lang3:3.13.0（dependency:tree -Dverbose 证实来自某个
              上游 BOM 的仲裁结果）——agentscope-harness 的 Docker 沙箱工作区投影（WorkspaceProjectionApplier
@@ -138,6 +144,22 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>5.5.1</version>
+        </dependency>
+
+        <!-- Skill 多存储目标：发布 SKILL.md 到 Nacos 配置中心（NacosSkillPublisher，publishConfig/removeConfig）。
+             版本随根 pom 的 ${nacos.version} 属性（与 starter 侧一致），避免在本模块重复固定版本号。 -->
+        <dependency>
+            <groupId>com.alibaba.nacos</groupId>
+            <artifactId>nacos-client</artifactId>
+            <version>${nacos.version}</version>
+        </dependency>
+
+        <!-- Skill 多存储目标：发布 SKILL.md 到 SFTP 目录（SftpSkillPublisher）。mwiede/jsch 是 JSch 的
+             社区维护版，保持 com.jcraft.jsch 包 API 兼容。 -->
+        <dependency>
+            <groupId>com.github.mwiede</groupId>
+            <artifactId>jsch</artifactId>
+            <version>${jsch.version}</version>
         </dependency>
 
         <!-- Lombok -->
