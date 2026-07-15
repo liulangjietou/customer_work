@@ -18,6 +18,7 @@ export const staticRouteComponents: Record<string, () => Promise<Component>> = {
   '/aiconfig/system-tool': () => import('@/views/aiconfig/SystemToolManage.vue'),
   '/aiconfig/scheduled-task': () => import('@/views/aiconfig/ScheduledTaskManage.vue'),
   '/ticket/user-ticket': () => import('@/views/ticket/UserTicketManage.vue'),
+  '/ticket/user-order': () => import('@/views/ticket/UserOrderManage.vue'),
   '/project': () => import('@/views/project/ProjectManage.vue'),
   '/sql/datasource': () => import('@/views/sql/SqlDatasourceManage.vue'),
   '/sql/define': () => import('@/views/sql/SqlDefineManage.vue'),
