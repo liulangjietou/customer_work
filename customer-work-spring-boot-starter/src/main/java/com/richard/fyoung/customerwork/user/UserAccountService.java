@@ -68,4 +68,19 @@ public class UserAccountService {
     public Optional<UserAccount> findById(String id) {
         return store.findById(id);
     }
+
+    /**
+     * 更新用户头像：查出账户 → 充血实体自改头像 → 持久化。
+     *
+     * @throws IllegalStateException 账户不存在
+     * @return 已更新头像的账户
+     */
+    public UserAccount updateAvatar(String userId, String avatarUrl) {
+        UserAccount account = store.findById(userId)
+            .orElseThrow(() -> new IllegalStateException("user not found: " + userId));
+        account.changeAvatar(avatarUrl);
+        store.updateAvatar(account.getId(), account.getAvatarUrl());
+        log.info("user avatar updated: id={}", userId);
+        return account;
+    }
 }

@@ -2,6 +2,24 @@
   box-sizing: border-box;
 }
 
+:root {
+  /* 主题色沿用 Vant 默认蓝（与 --van-primary-color 一致），渐变/背景/卡片等派生变量统一从这里读取，
+     各页面 scoped style 引用 var(--cw-*) 而非散落硬编码色值。 */
+  --cw-primary: #1989fa;
+  --cw-primary-light: #4facfe;
+  --cw-primary-dark: #0b5fd1;
+  --cw-gradient-brand: linear-gradient(135deg, #4facfe 0%, #1989fa 55%, #0b5fd1 100%);
+  --cw-page-bg: #f5f7fa;
+  --cw-card-bg: #ffffff;
+  --cw-card-radius: 12px;
+  --cw-card-shadow: 0 2px 12px rgba(25, 137, 250, 0.08);
+  --cw-border-color: #ebedf0;
+  --cw-text-primary: #323233;
+  --cw-text-secondary: #969799;
+  --cw-danger: #ee0a24;
+  --cw-bubble-user-bg: #d6ebff;
+}
+
 html,
 body,
 #app {
@@ -11,7 +29,7 @@ body,
 }
 
 body {
-  background: #ececec;
+  background: var(--cw-page-bg);
   font-family:
     -apple-system,
     BlinkMacSystemFont,

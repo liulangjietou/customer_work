@@ -328,6 +328,9 @@ customer-work:
     # WAITING_CONFIRM 超时自动确认（默认 1 天）；RESOLVED 超时自动关闭归档（默认 3 天）
     auto-confirm-seconds: 86400
     auto-close-seconds: 259200
+    # 进行中工单用户空闲超时自动强制结束（秒，默认 300=5 分钟，0=禁用）：
+    # now - lastUserActiveAtMs 超过该值即 forceClose 并推关闭事件给前端
+    idle-close-seconds: 300
     # SLA 巡检总开关（关闭则告警与自动流转全部停用）
     sla-enabled: true
   user-auth:
@@ -337,6 +340,14 @@ customer-work:
     jwt-secret: ${CW_USER_JWT_SECRET:dev-secret-change-me-in-production-0001}
     # 登录态有效期（小时，默认 7 天）
     jwt-expire-hours: 168
+    # 用户头像上传（无 OSS/MinIO，沿用 ./data/xxx 本地磁盘约定）
+    avatar:
+      # 落盘目录（相对启动工作目录）
+      directory: ./data/avatars
+      # 单文件大小上限（字节，默认 2MB=2097152），超限即中断上传
+      max-size-bytes: 2097152
+      # 对外访问 URL 前缀（落在 /api 下以复用前端 Vite 代理；须以 / 开头和结尾）
+      url-prefix: /api/avatars/
   chat-log:
     # 聊天日志（会话/工单消息留痕）：存储模式 memory | jdbc（MyBatis-Plus 实现，跨实例共享）
     store-mode: jdbc

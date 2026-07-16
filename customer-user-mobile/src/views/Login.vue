@@ -68,7 +68,7 @@ async function onSubmit() {
     }
     showToast('登录成功')
     const redirect = router.currentRoute.value.query.redirect
-    router.replace(typeof redirect === 'string' && redirect ? redirect : '/chat')
+    router.replace(typeof redirect === 'string' && redirect ? redirect : '/messages')
   } finally {
     submitting.value = false
   }
@@ -77,7 +77,11 @@ async function onSubmit() {
 
 <template>
   <div class="login-page">
-    <div class="brand">智能客服</div>
+    <div class="hero">
+      <div class="hero-brand">智能客服</div>
+      <div class="hero-sub">随时随地，贴心服务</div>
+    </div>
+    <div class="card">
     <van-form @submit="onSubmit">
       <van-cell-group inset>
         <van-field
@@ -107,21 +111,44 @@ async function onSubmit() {
       还没有账号？
       <router-link to="/register">立即注册</router-link>
     </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .login-page {
-  padding-top: 15vh;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--cw-page-bg);
 }
 
-.brand {
+.hero {
+  background: var(--cw-gradient-brand);
+  color: #fff;
+  padding: 64px 24px 56px;
   text-align: center;
-  font-size: 22px;
-  font-weight: 600;
-  margin-bottom: 32px;
-  color: #323233;
+  border-radius: 0 0 28px 28px;
+}
+
+.hero-brand {
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.hero-sub {
+  margin-top: 8px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.card {
+  flex: 1;
+  background: var(--cw-card-bg);
+  border-radius: var(--cw-card-radius) var(--cw-card-radius) 0 0;
+  margin-top: -28px;
+  padding-top: 24px;
+  box-shadow: var(--cw-card-shadow);
 }
 
 .remember-wrap {
@@ -135,11 +162,12 @@ async function onSubmit() {
 .link-wrap {
   text-align: center;
   margin-top: 16px;
+  padding-bottom: 24px;
   font-size: 14px;
-  color: #969799;
+  color: var(--cw-text-secondary);
 }
 
 .link-wrap a {
-  color: #1989fa;
+  color: var(--cw-primary);
 }
 </style>

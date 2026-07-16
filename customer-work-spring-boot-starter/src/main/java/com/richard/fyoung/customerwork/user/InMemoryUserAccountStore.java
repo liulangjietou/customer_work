@@ -33,4 +33,12 @@ public class InMemoryUserAccountStore implements UserAccountStore {
     public Optional<UserAccount> findById(String id) {
         return Optional.ofNullable(byId.get(id));
     }
+
+    @Override
+    public void updateAvatar(String id, String avatarUrl) {
+        UserAccount account = byId.get(id);
+        if (account != null) {
+            account.changeAvatar(avatarUrl);
+        }
+    }
 }

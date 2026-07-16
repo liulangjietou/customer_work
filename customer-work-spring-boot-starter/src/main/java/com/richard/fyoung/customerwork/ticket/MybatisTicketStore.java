@@ -77,6 +77,18 @@ public class MybatisTicketStore implements TicketStore {
     }
 
     @Override
+    public Optional<Ticket> findActiveByUser(String userId) {
+        try {
+            TicketDO record = ticketMapper.findActiveByUser(userId);
+            return record == null ? Optional.empty() : Optional.of(toTicket(record));
+        } catch (Exception e) {
+            log.error("ticket findActiveByUser failed, code={}, user={}",
+                "TICKET-STORE-FINDACTIVEUSER-FAIL", userId, e);
+            return Optional.empty();
+        }
+    }
+
+    @Override
     public PageResult<Ticket> findPage(TicketQuery query) {
         try {
             Page<TicketDO> page = Page.of(query.normalizedPageNum(), query.normalizedPageSize());
@@ -174,6 +186,7 @@ public class MybatisTicketStore implements TicketStore {
         record.setClaimedAtMs(t.getClaimedAtMs());
         record.setResolvedAtMs(t.getResolvedAtMs());
         record.setClosedAtMs(t.getClosedAtMs());
+        record.setLastUserActiveAtMs(t.getLastUserActiveAtMs());
         return record;
     }
 
@@ -196,7 +209,10 @@ public class MybatisTicketStore implements TicketStore {
             orZero(record.getHandoffAtMs()),
             orZero(record.getClaimedAtMs()),
             orZero(record.getResolvedAtMs()),
-            orZero(record.getClosedAtMs()));
+            orZero(record.getClosedAtMs()),
+            // 历史数据 last_user_active_at_ms 可能为 NULL：用 updated_at_ms 兜底，避免空闲巡检误判
+            record.getLastUserActiveAtMs() == null ? orZero(record.getUpdatedAtMs())
+                : record.getLastUserActiveAtMs());
     }
 
     /** 事件领域对象 → 事件 DO（id 交由自增回填，此处不设）。 */

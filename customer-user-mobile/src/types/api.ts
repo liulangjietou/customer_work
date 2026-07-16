@@ -34,6 +34,13 @@ export const TICKET_STATUS_TAG_TYPE: Record<TicketStatus, 'primary' | 'success' 
   CLOSED: 'default',
 }
 
+/** 已结束状态集合：消息列表"已结束"标记、Chat 页只读态判断共用同一份定义，避免两处各写一套判断散漂移 */
+const ENDED_TICKET_STATUSES: ReadonlySet<TicketStatus> = new Set(['CLOSED', 'RESOLVED'])
+
+export function isTicketEnded(status: TicketStatus): boolean {
+  return ENDED_TICKET_STATUSES.has(status)
+}
+
 /** 消息发送者类型 */
 export type SenderType = 'USER' | 'BOT' | 'AGENT' | 'SYSTEM'
 
@@ -65,6 +72,7 @@ export interface UserInfo {
   username: string
   nickname: string
   phone: string
+  avatarUrl?: string | null
 }
 
 export interface CreateSessionResponse {
@@ -178,6 +186,8 @@ export interface WsTicketEvent {
   fromStatus: TicketStatus | null
   toStatus: TicketStatus | null
   actorType: string
+  /** 系统超时自动关闭等场景下的原因说明（含 idle 字样），用户主动操作触发的事件通常为空 */
+  reason?: string | null
   ts: number
 }
 

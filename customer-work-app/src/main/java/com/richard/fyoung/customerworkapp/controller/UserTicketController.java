@@ -14,6 +14,7 @@ import com.richard.fyoung.customerwork.security.UserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 
@@ -51,6 +53,13 @@ public class UserTicketController {
     private static final String SESSION_DELIMITER = ":";
     private static final int DEFAULT_MESSAGE_LIMIT = 50;
 
+    /** 用户级已存在进行中会话时的错误码（前端据此提示"存在进行中的会话"）。createSession/reopen 共用同一错误码，仅提示文案按场景区分。 */
+    private static final String ACTIVE_SESSION_EXISTS_CODE = "TICKET-ACTIVE-SESSION-EXISTS";
+    private static final String CREATE_ACTIVE_SESSION_EXISTS_MSG = "存在进行中的会话，请先结束当前会话再新建";
+    private static final String REOPEN_ACTIVE_SESSION_EXISTS_MSG = "存在进行中的会话，请先结束后再重开";
+    /** 用户强制结束会话的默认关闭原因（与空闲超时的 idle timeout 区分）。 */
+    private static final String USER_FORCE_CLOSE_REASON = "user force close";
+
     private final TicketService ticketService;
     private final ChatLogService chatLogService;
 
@@ -59,21 +68,32 @@ public class UserTicketController {
         this.chatLogService = chatLogService;
     }
 
-    /** 带原因的请求体（转人工 / 驳回 / 重开 / 关闭复用）。 */
+    /** 带原因的请求体（转人工 / 驳回 / 重开复用）。 */
     public record ReasonRequest(String reason) {
     }
 
-    @Operation(summary = "新建会话", description = "生成归属当前用户的 sessionId 并建单")
+    /** 关闭工单请求体：{@code force=true} 走强制结束（任意非 CLOSED 态直达 CLOSED），否则走普通关闭语义。 */
+    public record CloseRequest(String reason, Boolean force) {
+    }
+
+    @Operation(summary = "新建会话",
+        description = "用户级唯一活跃会话：已有进行中会话返回 409（体带 sessionId/ticketId/status），否则建单")
     @PostMapping("/sessions")
-    public Mono<Map<String, Object>> createSession(ServerWebExchange exchange) {
+    public Mono<ResponseEntity<Map<String, Object>>> createSession(ServerWebExchange exchange) {
         UserPrincipal user = principal(exchange);
-        String sessionId = SESSION_PREFIX + user.userId() + SESSION_DELIMITER + "conv-" + UUID.randomUUID();
         return blocking(() -> {
+            // 用户级唯一活跃会话：命中进行中工单则拒绝新建，回传现有会话信息供前端跳转
+            Optional<Ticket> active = ticketService.findActiveByUser(user.userId());
+            if (active.isPresent()) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(activeSessionBody(active.get(), CREATE_ACTIVE_SESSION_EXISTS_MSG));
+            }
+            String sessionId = SESSION_PREFIX + user.userId() + SESSION_DELIMITER + "conv-" + UUID.randomUUID();
             Ticket ticket = ticketService.createForSession(sessionId, user.userId(), null, TicketCategory.CONSULT);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("sessionId", sessionId);
             body.put("ticketId", ticket.getId());
-            return body;
+            return ResponseEntity.ok(body);
         });
     }
 
@@ -152,25 +172,43 @@ public class UserTicketController {
         });
     }
 
-    @Operation(summary = "重新打开", description = "RESOLVED|CLOSED → WAITING_AGENT，非法状态 409")
+    @Operation(summary = "重新打开",
+        description = "RESOLVED|CLOSED → WAITING_AGENT；用户已存在另一张进行中会话时返回 409（体带该会话 sessionId/ticketId/status），"
+            + "其余非法状态流转 409")
     @PostMapping("/tickets/{id}/reopen")
-    public Mono<Ticket> reopen(@PathVariable String id, ServerWebExchange exchange,
+    public Mono<ResponseEntity<Object>> reopen(@PathVariable String id, ServerWebExchange exchange,
                                @RequestBody(required = false) ReasonRequest request) {
         UserPrincipal user = principal(exchange);
         return blocking(() -> {
-            ownedTicket(id, user);
-            return ticketService.reopen(id, reasonOf(request), TicketActorType.USER, user.userId());
+            Ticket ticket = ownedTicket(id, user);
+            // 用户级唯一活跃会话不变式：reopen 本质是"新开一张活跃工单"，需与 createSession 同样的前置校验，
+            // 否则用户已有活跃工单 B 时仍可 reopen 历史工单 A，造成一个用户两张活跃工单
+            Optional<Ticket> active = ticketService.findActiveByUser(user.userId());
+            if (active.isPresent() && !active.get().getId().equals(ticket.getId())) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .<Object>body(activeSessionBody(active.get(), REOPEN_ACTIVE_SESSION_EXISTS_MSG));
+            }
+            Ticket reopened = ticketService.reopen(id, reasonOf(request), TicketActorType.USER, user.userId());
+            return ResponseEntity.<Object>ok(reopened);
         });
     }
 
-    @Operation(summary = "关闭工单", description = "AI_SERVING|RESOLVED|WAITING_CONFIRM → CLOSED，非法状态 409")
+    @Operation(summary = "关闭工单",
+        description = "默认 AI_SERVING|RESOLVED|WAITING_CONFIRM → CLOSED（其余态返回 409，前端据此弹强制结束确认框）；"
+            + "请求体 force=true 时强制结束（任意非 CLOSED 态直达 CLOSED）")
     @PostMapping("/tickets/{id}/close")
     public Mono<Ticket> close(@PathVariable String id, ServerWebExchange exchange,
-                              @RequestBody(required = false) ReasonRequest request) {
+                              @RequestBody(required = false) CloseRequest request) {
         UserPrincipal user = principal(exchange);
+        boolean force = request != null && Boolean.TRUE.equals(request.force());
+        String reason = request == null ? null : request.reason();
         return blocking(() -> {
             ownedTicket(id, user);
-            return ticketService.close(id, reasonOf(request), TicketActorType.USER, user.userId());
+            if (force) {
+                String closeReason = StringUtils.hasText(reason) ? reason : USER_FORCE_CLOSE_REASON;
+                return ticketService.forceClose(id, closeReason, TicketActorType.USER, user.userId());
+            }
+            return ticketService.close(id, reason, TicketActorType.USER, user.userId());
         });
     }
 
@@ -197,6 +235,17 @@ public class UserTicketController {
 
     private String reasonOf(ReasonRequest request) {
         return request == null ? null : request.reason();
+    }
+
+    /** 409 响应体：回传现有进行中会话信息，供前端提示并跳转到该会话；message 按场景（新建/重开）区分文案。 */
+    private Map<String, Object> activeSessionBody(Ticket active, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", ACTIVE_SESSION_EXISTS_CODE);
+        body.put("message", message);
+        body.put("sessionId", active.getSessionId());
+        body.put("ticketId", active.getId());
+        body.put("status", active.getStatus().name());
+        return body;
     }
 
     private TicketStatus parseStatus(String status) {

@@ -101,6 +101,37 @@ class MybatisTicketStoreTest {
     }
 
     @Test
+    void findActiveByUser_shouldReturnLatestNonTerminal() {
+        String user = "u-active-" + UUID.randomUUID();
+        String id = "TK-it-" + UUID.randomUUID();
+        store.save(waitingAgentTicket(id, "s-" + id, user));
+
+        assertTrue(store.findActiveByUser(user).isPresent());
+
+        Ticket t = store.find(id).orElseThrow();
+        t.cancelHandoff();
+        t.close("done");
+        store.update(t);
+        assertTrue(store.findActiveByUser(user).isEmpty(), "已关闭后用户不应再算活跃");
+    }
+
+    @Test
+    void lastUserActive_shouldRoundTrip() {
+        String id = "TK-it-" + UUID.randomUUID();
+        Ticket t = Ticket.create(id, "s-" + id, "u-" + id, "标题", TicketCategory.CONSULT);
+        long created = t.getLastUserActiveAtMs();
+        assertTrue(created > 0, "建单即初始化最后活跃时间");
+        store.save(t);
+
+        Ticket loaded = store.find(id).orElseThrow();
+        assertEquals(created, loaded.getLastUserActiveAtMs(), "最后活跃时间应往返一致");
+
+        loaded.markUserActive();
+        store.update(loaded);
+        assertTrue(store.find(id).orElseThrow().getLastUserActiveAtMs() >= created, "刷新后应持久化新值");
+    }
+
+    @Test
     void findPage_shouldFilterAndPaginate() {
         String user = "u-page-" + UUID.randomUUID();
         for (int i = 0; i < 3; i++) {

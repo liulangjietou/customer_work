@@ -7,6 +7,13 @@ import { useAuthStore } from '@/store/auth'
 // （401 未登录/token 过期、403 越权、409 状态冲突、400 参数错），响应体里可能带 message 字段。
 const HTTP_UNAUTHORIZED = 401
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /** 调用方自行处理失败分支（如 409 会话冲突、关闭会话两段式强制确认），拦截器跳过默认 toast，仍会 reject。 */
+    silentError?: boolean
+  }
+}
+
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
   timeout: 30000,
@@ -34,6 +41,10 @@ http.interceptors.response.use(
         router.replace({ name: 'Login' })
       }
       showToast(message || '登录已失效，请重新登录')
+      return Promise.reject(error)
+    }
+
+    if (error.config?.silentError) {
       return Promise.reject(error)
     }
 

@@ -536,6 +536,8 @@ public class CustomerWorkProperties {
         private long autoConfirmSeconds = 86400;
         /** RESOLVED 超过该秒数即自动关闭归档（默认 3 天）。 */
         private long autoCloseSeconds = 259200;
+        /** 进行中工单用户空闲超过该秒数即强制关闭（默认 5 分钟，0=禁用）。 */
+        private long idleCloseSeconds = 300;
         /** SLA 巡检总开关（关闭则告警与自动流转全部停用）。 */
         private boolean slaEnabled = true;
     }
@@ -554,6 +556,25 @@ public class CustomerWorkProperties {
         private String jwtSecret = "";
         /** 用户登录态有效期（小时，默认 7 天）。 */
         private int jwtExpireHours = 168;
+        /** 用户头像上传配置。 */
+        private final Avatar avatar = new Avatar();
+
+        /**
+         * 用户头像上传配置。
+         *
+         * <p>{@code directory} 为本地磁盘落盘目录（项目无 OSS/MinIO，沿用 {@code ./data/xxx} 本地磁盘约定）；
+         * {@code maxSizeBytes} 为单文件大小上限（超过即中断，默认 2MB）；{@code urlPrefix} 为对外访问 URL 前缀，
+         * 落在 {@code /api} 下以复用前端 Vite 代理规则。</p>
+         */
+        @Data
+        public static class Avatar {
+            /** 头像落盘目录。 */
+            private String directory = "./data/avatars";
+            /** 单文件大小上限（字节，默认 2MB）。 */
+            private long maxSizeBytes = 2L * 1024 * 1024;
+            /** 对外访问 URL 前缀（须以 / 开头和结尾）。 */
+            private String urlPrefix = "/api/avatars/";
+        }
     }
 
     /**

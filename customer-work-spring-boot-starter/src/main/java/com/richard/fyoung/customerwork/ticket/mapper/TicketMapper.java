@@ -17,6 +17,9 @@ public interface TicketMapper extends BaseMapper<TicketDO> {
     /** 查该会话下"非 CLOSED 且非 RESOLVED"的最新一张工单（按创建时间倒序取第一条）。 */
     TicketDO findActiveBySession(@Param("sessionId") String sessionId);
 
+    /** 查该用户下"非 CLOSED 且非 RESOLVED"的最新一张工单（按创建时间倒序取第一条，用户级唯一活跃会话去重用）。 */
+    TicketDO findActiveByUser(@Param("userId") String userId);
+
     /** 原子抢单：仅当当前为 WAITING_AGENT 时置 PROCESSING 并绑定坐席，返回受影响行数（0 表示已被抢走）。 */
     int claimAtomically(@Param("id") String id, @Param("agentId") String agentId, @Param("nowMs") long nowMs);
 }

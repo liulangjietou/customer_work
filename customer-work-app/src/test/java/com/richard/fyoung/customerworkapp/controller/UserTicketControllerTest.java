@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
+import java.util.Map;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -91,6 +92,98 @@ class UserTicketControllerTest {
             .jsonPath("$.ticketId").isEqualTo("TK-1")
             .jsonPath("$.sessionId").value(id ->
                 org.assertj.core.api.Assertions.assertThat((String) id).startsWith("uU1:"));
+    }
+
+    @Test
+    void createSession_whenActiveSessionExists_shouldReturn409WithSessionInfo() {
+        Ticket active = ownedTicket(); // sessionId=uU1:conv-1, status=AI_SERVING
+        when(ticketService.findActiveByUser(USER_ID)).thenReturn(Optional.of(active));
+
+        webTestClient.post().uri("/api/customer/user/sessions")
+            .header(HttpHeaders.AUTHORIZATION, bearer())
+            .exchange()
+            .expectStatus().isEqualTo(409)
+            .expectBody()
+            .jsonPath("$.code").isEqualTo("TICKET-ACTIVE-SESSION-EXISTS")
+            .jsonPath("$.ticketId").isEqualTo("TK-1")
+            .jsonPath("$.sessionId").isEqualTo("uU1:conv-1")
+            .jsonPath("$.status").isEqualTo("AI_SERVING");
+    }
+
+    @Test
+    void reopen_whenNoOtherActiveSession_shouldSucceed() {
+        Ticket owned = ownedTicket(); // TK-1，closed 状态由 service 内部校验，这里只关心 controller 层前置校验
+        when(ticketService.find("TK-1")).thenReturn(Optional.of(owned));
+        when(ticketService.findActiveByUser(USER_ID)).thenReturn(Optional.empty());
+        when(ticketService.reopen(eq("TK-1"), any(), eq(TicketActorType.USER), eq(USER_ID))).thenReturn(owned);
+
+        webTestClient.post().uri("/api/customer/user/tickets/TK-1/reopen")
+            .header(HttpHeaders.AUTHORIZATION, bearer())
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody().jsonPath("$.id").isEqualTo("TK-1");
+    }
+
+    @Test
+    void reopen_whenAnotherActiveSessionExists_shouldReturn409WithSessionInfo() {
+        // 待重开的历史工单 TK-1，用户当前另有一张进行中工单 TK-2（uU1:conv-2）
+        Ticket toReopen = ownedTicket();
+        Ticket active = Ticket.create("TK-2", "uU1:conv-2", USER_ID, "标题2", TicketCategory.CONSULT);
+        when(ticketService.find("TK-1")).thenReturn(Optional.of(toReopen));
+        when(ticketService.findActiveByUser(USER_ID)).thenReturn(Optional.of(active));
+
+        webTestClient.post().uri("/api/customer/user/tickets/TK-1/reopen")
+            .header(HttpHeaders.AUTHORIZATION, bearer())
+            .exchange()
+            .expectStatus().isEqualTo(409)
+            .expectBody()
+            .jsonPath("$.code").isEqualTo("TICKET-ACTIVE-SESSION-EXISTS")
+            .jsonPath("$.ticketId").isEqualTo("TK-2")
+            .jsonPath("$.sessionId").isEqualTo("uU1:conv-2")
+            .jsonPath("$.status").isEqualTo("AI_SERVING");
+    }
+
+    @Test
+    void reopen_whenActiveSessionIsSameTicket_shouldSucceed() {
+        // findActiveByUser 命中的正是自己（边界防御：即便出现该状态，也不应误判为"另一张活跃会话"而拒绝）
+        Ticket owned = ownedTicket();
+        when(ticketService.find("TK-1")).thenReturn(Optional.of(owned));
+        when(ticketService.findActiveByUser(USER_ID)).thenReturn(Optional.of(owned));
+        when(ticketService.reopen(eq("TK-1"), any(), eq(TicketActorType.USER), eq(USER_ID))).thenReturn(owned);
+
+        webTestClient.post().uri("/api/customer/user/tickets/TK-1/reopen")
+            .header(HttpHeaders.AUTHORIZATION, bearer())
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody().jsonPath("$.id").isEqualTo("TK-1");
+    }
+
+    @Test
+    void close_withForce_shouldForceClose() {
+        Ticket owned = ownedTicket();
+        when(ticketService.find("TK-1")).thenReturn(Optional.of(owned));
+        when(ticketService.forceClose(eq("TK-1"), anyString(), eq(TicketActorType.USER), eq(USER_ID)))
+            .thenReturn(owned);
+
+        webTestClient.post().uri("/api/customer/user/tickets/TK-1/close")
+            .header(HttpHeaders.AUTHORIZATION, bearer())
+            .bodyValue(Map.of("force", true))
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody().jsonPath("$.id").isEqualTo("TK-1");
+    }
+
+    @Test
+    void close_nonForceIllegalTransition_shouldReturn409() {
+        when(ticketService.find("TK-1")).thenReturn(Optional.of(ownedTicket()));
+        when(ticketService.close(eq("TK-1"), any(), any(), any()))
+            .thenThrow(new IllegalStateException("illegal ticket transition"));
+
+        webTestClient.post().uri("/api/customer/user/tickets/TK-1/close")
+            .header(HttpHeaders.AUTHORIZATION, bearer())
+            .bodyValue(Map.of("force", false))
+            .exchange()
+            .expectStatus().isEqualTo(409);
     }
 
     @Test

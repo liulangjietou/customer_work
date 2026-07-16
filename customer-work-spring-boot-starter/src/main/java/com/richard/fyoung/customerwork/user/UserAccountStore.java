@@ -20,4 +20,7 @@ public interface UserAccountStore {
 
     /** 按账户 ID 查。 */
     Optional<UserAccount> findById(String id);
+
+    /** 更新账户头像 URL（按 ID 定向更新单列，不触碰其它字段）。 */
+    void updateAvatar(String id, String avatarUrl);
 }

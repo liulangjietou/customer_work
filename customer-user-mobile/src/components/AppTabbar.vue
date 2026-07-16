@@ -5,7 +5,7 @@
 
 <template>
   <van-tabbar route>
-    <van-tabbar-item to="/chat" icon="chat-o">客服</van-tabbar-item>
+    <van-tabbar-item to="/messages" icon="chat-o">消息</van-tabbar-item>
     <van-tabbar-item to="/orders" icon="orders-o">订单</van-tabbar-item>
     <van-tabbar-item to="/profile" icon="user-o">我的</van-tabbar-item>
   </van-tabbar>

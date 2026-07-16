@@ -6,22 +6,38 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.util.List;
+import java.util.Set;
 
 /**
- * 工单 SLA 巡检器：周期扫描超期工单，分阶段处置。
+ * 工单 SLA 巡检器：周期扫描超期工单，分阶段处置。与 {@code HandoffSlaScheduler} 的"只告警不流转"不同，
+ * 本调度器执行两个维度、彼此独立的检查——按状态定制的 SLA/自动流转，以及跨状态统一的用户空闲强关：
  *
- * <p><b>与 {@code HandoffSlaScheduler} 的"只告警不流转"不同</b>：本调度器对存在合理兜底动作的两个状态
- * 执行自动流转，属有意设计——</p>
+ * <p><b>维度一：按状态定制的 SLA 检查</b>（各状态对应的兜底动作不同，非"是否自动关闭"这一件事）——</p>
  * <ul>
  *   <li>{@code WAITING_AGENT} 超 {@code sla-waiting-seconds} 未接单 / {@code PROCESSING} 超
- *       {@code sla-processing-seconds} 未处理完：无自动兜底动作（不能替坐席接单/处理），仅 error 告警
- *       （错误码 {@code TICKET-SLA-BREACH}），交人工介入；</li>
+ *       {@code sla-processing-seconds} 未处理完：无法自动替坐席接单/处理，仅 error 告警
+ *       （错误码 {@code TICKET-SLA-BREACH}），交人工介入——这两条本身不会流转或关闭工单；</li>
  *   <li>{@code WAITING_CONFIRM} 超 {@code auto-confirm-seconds} 用户未确认：视为默认满意，
  *       自动确认（SYSTEM 发起）——这是合理兜底（长期无异议即认可）；</li>
  *   <li>{@code RESOLVED} 超 {@code auto-close-seconds}：自动关闭归档（SYSTEM 发起）。</li>
  * </ul>
  *
- * <p>整体受 {@code customer-work.ticket.sla-enabled} 开关控制，各阈值 &lt;=0 时对应检查单独禁用。
+ * <p><b>维度二：{@link #idleCloseStale()} 用户空闲强关</b>——产品已确认全部进行中状态（AI_SERVING/
+ * WAITING_AGENT/PROCESSING/ON_HOLD/WAITING_CONFIRM）统一按 {@code idle-close-seconds} 兜底：
+ * 用户静默超阈值即 {@code forceClose} 直达 CLOSED（SYSTEM 发起），与该状态在维度一里"有没有定制兜底动作"
+ * 无关。因此 {@code WAITING_AGENT}/{@code PROCESSING} 虽在维度一"无自动兜底"，仍会被维度二强关——
+ * 二者不矛盾，是两条独立巡检线：维度一回答"这个状态该怎么流转"，维度二回答"用户是否已经不在了"。</p>
+ *
+ * <p><b>触发优先级</b>：同一张工单可能同时满足两个维度的条件，实际以先到达阈值的为准——默认配置下
+ * {@code idle-close-seconds}（300s）远小于 {@code auto-confirm-seconds}（86400s）/
+ * {@code auto-close-seconds}（259200s）/{@code sla-processing-seconds}（1800s），生产场景下通常是
+ * idle-close 先触发；与 {@code sla-waiting-seconds} 默认值相同（均 300s），但两者计时锚点不同
+ * （idle-close 按用户最后活跃时间，SLA 告警按进入 {@code WAITING_AGENT} 的 handoff 时间），谁先触发取决于
+ * 用户静默是否早于进入该状态的时刻。两个维度由各自独立的 {@code autoFlow} 调用触发，互不感知、互不阻塞。</p>
+ *
+ * <p>整体受 {@code customer-work.ticket.sla-enabled} 开关控制，各阈值 &lt;=0 时对应检查单独禁用——
+ * 生产如需关闭 idle-close 兜底（例如需要人工判断静默工单是否真正结束），将
+ * {@code customer-work.ticket.idle-close-seconds} 置 0 即可，不影响维度一的 SLA 告警/自动确认/自动关闭。
  * 自动流转按单张容错：单张流转异常只 error 日志，不影响其余工单。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -34,7 +50,13 @@ public class TicketSlaScheduler {
     private static final String SYSTEM_ACTOR = "sla-scheduler";
     private static final String AUTO_CONFIRM_NOTE = "SLA auto-confirm: no user objection in time window";
     private static final String AUTO_CLOSE_NOTE = "SLA auto-close: resolved and aged out";
+    private static final String IDLE_CLOSE_NOTE = "idle timeout auto close: no user activity in time window";
     private static final int MILLIS_PER_SECOND = 1000;
+
+    /** 空闲超时巡检覆盖的进行中状态（RESOLVED/CLOSED 已终态，不在此列）。 */
+    private static final Set<TicketStatus> IDLE_SCAN_STATUSES = Set.of(
+        TicketStatus.AI_SERVING, TicketStatus.WAITING_AGENT, TicketStatus.PROCESSING,
+        TicketStatus.ON_HOLD, TicketStatus.WAITING_CONFIRM);
 
     private final CustomerWorkProperties properties;
     private final TicketService ticketService;
@@ -53,6 +75,7 @@ public class TicketSlaScheduler {
         checkProcessingSla();
         autoConfirmStale();
         autoCloseStale();
+        idleCloseStale();
     }
 
     /** WAITING_AGENT 超阈值未接单：仅告警（无自动兜底）。 */
@@ -111,6 +134,35 @@ public class TicketSlaScheduler {
                     TicketActorType.SYSTEM, SYSTEM_ACTOR), ticket.getId(), "auto-close");
             }
         }
+    }
+
+    /**
+     * 进行中工单用户空闲超时：{@code now - lastUserActiveAtMs > idle-close-seconds} 即强制关闭。
+     *
+     * <p>扫描所有进行中状态（{@link #IDLE_SCAN_STATUSES}），复用 {@code forceClose} 直达 CLOSED（不受
+     * 普通 close 前置态限制），并广播关闭事件（下游 WS 监听器据此推给前端）。历史数据 lastUserActiveAtMs
+     * 未刷新（&lt;=0）时用 updatedAtMs 兜底。{@code idle-close-seconds &lt;= 0} 时禁用本轮巡检。</p>
+     */
+    void idleCloseStale() {
+        long idleSeconds = properties.getTicket().getIdleCloseSeconds();
+        if (idleSeconds <= 0) {
+            return;
+        }
+        long threshold = System.currentTimeMillis() - idleSeconds * MILLIS_PER_SECOND;
+        for (TicketStatus status : IDLE_SCAN_STATUSES) {
+            for (Ticket ticket : store(status)) {
+                long lastActive = effectiveLastActive(ticket);
+                if (lastActive < threshold) {
+                    autoFlow(() -> ticketService.forceClose(ticket.getId(), IDLE_CLOSE_NOTE,
+                        TicketActorType.SYSTEM, SYSTEM_ACTOR), ticket.getId(), "idle-close");
+                }
+            }
+        }
+    }
+
+    /** 用户最后活跃时间：正常取 lastUserActiveAtMs，历史数据未刷新（&lt;=0）时用 updatedAtMs 兜底。 */
+    private long effectiveLastActive(Ticket ticket) {
+        return ticket.getLastUserActiveAtMs() > 0 ? ticket.getLastUserActiveAtMs() : ticket.getUpdatedAtMs();
     }
 
     private List<Ticket> store(TicketStatus status) {

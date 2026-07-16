@@ -80,7 +80,7 @@ function formatTime(ms: number) {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #f7f8fa;
+  background: var(--cw-page-bg);
 }
 
 .content {
@@ -101,7 +101,7 @@ function formatTime(ms: number) {
 
 .order-meta {
   font-size: 12px;
-  color: #969799;
+  color: var(--cw-text-secondary);
   margin-top: 4px;
 }
 
@@ -114,6 +114,6 @@ function formatTime(ms: number) {
 
 .order-amount {
   font-weight: 600;
-  color: #323233;
+  color: var(--cw-text-primary);
 }
 </style>

@@ -155,6 +155,8 @@ public class ChatDispatchService {
             chatLogService.append(sessionId, ticketId, TicketActorType.USER, user.userId(), content);
         // 首条消息前 50 字回填空标题（已有标题不覆盖）
         ticketService.fillTitle(ticketId, title(content));
+        // 刷新用户最后活跃时间：用户每发一条消息即重置空闲计时基准，避免活跃会话被空闲巡检误关
+        ticketService.touchUserActive(sessionId);
 
         if (keywordDetector.hit(content)) {
             ticketService.requestHandoff(sessionId, HANDOFF_KEYWORD_REASON, TicketActorType.USER, user.userId());

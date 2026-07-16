@@ -44,22 +44,20 @@ async function onLogout() {
 
     <div class="content">
       <div class="header">
-        <!-- 头像占位：无真实头像资源，用图标圆形占位（离线可用） -->
         <div class="avatar">
-          <van-icon name="manager" size="36" />
+          <img v-if="profile?.avatarUrl" :src="profile.avatarUrl" class="avatar-img" alt="头像" />
+          <van-icon v-else name="manager" size="36" />
         </div>
         <div class="nickname">{{ profile?.nickname || auth.nickname || '用户' }}</div>
       </div>
 
-      <van-cell-group inset>
-        <van-cell title="昵称" :value="profile?.nickname || '-'" />
-        <van-cell title="用户名" :value="profile?.username || '-'" />
-        <van-cell title="手机号" :value="profile?.phone || '-'" />
+      <van-cell-group inset class="menu-group">
+        <van-cell title="个人信息" icon="contact" is-link clickable @click="router.push('/profile/info')" />
       </van-cell-group>
 
-      <div class="logout-wrap">
-        <van-button type="danger" block round :loading="loading" @click="onLogout">退出登录</van-button>
-      </div>
+      <van-cell-group inset class="menu-group">
+        <van-cell title="退出登录" icon="warning-o" is-link clickable @click="onLogout" />
+      </van-cell-group>
     </div>
 
     <AppTabbar />
@@ -71,7 +69,7 @@ async function onLogout() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #f7f8fa;
+  background: var(--cw-page-bg);
 }
 
 .content {
@@ -85,28 +83,39 @@ async function onLogout() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 32px 0 24px;
+  padding: 32px 0 40px;
+  background: var(--cw-gradient-brand);
+  border-radius: 0 0 24px 24px;
+  color: #fff;
 }
 
 .avatar {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: #e8f3ff;
-  color: #1989fa;
+  background: #fff;
+  color: var(--cw-primary);
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .nickname {
   margin-top: 12px;
   font-size: 18px;
   font-weight: 600;
-  color: #323233;
+  color: #fff;
 }
 
-.logout-wrap {
-  margin: 32px 16px 0;
+.menu-group {
+  margin-top: 16px;
 }
 </style>

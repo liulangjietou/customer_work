@@ -141,6 +141,15 @@ public class TicketService {
             actorType, actorId, reason);
     }
 
+    /**
+     * 强制关闭：任意非 CLOSED 态直达 CLOSED（空闲超时自动结束 / 用户强制结束用）。
+     * 走统一闭环追加 FORCE_CLOSE 事件并广播（下游 WS 监听器据此实时推关闭事件给前端）。
+     */
+    public Ticket forceClose(String ticketId, String reason, TicketActorType actorType, String actorId) {
+        return applyTransition(ticketId, t -> t.forceClose(reason), TicketEventType.FORCE_CLOSE,
+            actorType, actorId, reason);
+    }
+
     /** 重新打开：RESOLVED|CLOSED → WAITING_AGENT。 */
     public Ticket reopen(String ticketId, String reason, TicketActorType actorType, String actorId) {
         return applyTransition(ticketId, t -> t.reopen(reason), TicketEventType.REOPEN,
@@ -175,6 +184,23 @@ public class TicketService {
         return filled;
     }
 
+    /**
+     * 刷新会话活跃工单的用户最后活跃时间（用户每发一条消息时调用）：仅当该会话有活跃工单时生效，
+     * <b>不发事件、不广播</b>——刷新活跃时间不是状态流转（与 {@link #fillTitle} 同属非流转持久化）。
+     *
+     * @return true 表示命中活跃工单并已刷新；false 表示会话无活跃工单（无需刷新）
+     */
+    public boolean touchUserActive(String sessionId) {
+        Optional<Ticket> active = store.findActiveBySession(sessionId);
+        if (active.isEmpty()) {
+            return false;
+        }
+        Ticket ticket = active.get();
+        ticket.markUserActive();
+        store.update(ticket);
+        return true;
+    }
+
     // ---- 查询透传 ----
 
     public Optional<Ticket> find(String ticketId) {
@@ -183,6 +209,11 @@ public class TicketService {
 
     public Optional<Ticket> findActiveBySession(String sessionId) {
         return store.findActiveBySession(sessionId);
+    }
+
+    /** 查该用户的活跃工单（非 CLOSED/RESOLVED 的最新一张，用于用户级唯一活跃会话去重）。 */
+    public Optional<Ticket> findActiveByUser(String userId) {
+        return store.findActiveByUser(userId);
     }
 
     public PageResult<Ticket> findPage(TicketQuery query) {

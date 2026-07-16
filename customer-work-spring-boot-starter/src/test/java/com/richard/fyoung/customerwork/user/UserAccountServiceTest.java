@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -76,5 +77,29 @@ class UserAccountServiceTest {
         init();
         UserAccount account = service.register("frank", "pw", "弗兰克", null);
         assertTrue(service.findById(account.getId()).isPresent());
+    }
+
+    @Test
+    void changeAvatar_shouldUpdateEntityField() {
+        UserAccount account = UserAccount.create("U-x", "grace", "hash", "格蕾丝", null);
+        assertNull(account.getAvatarUrl(), "注册时无头像");
+        account.changeAvatar("/api/avatars/abc.png");
+        assertEquals("/api/avatars/abc.png", account.getAvatarUrl());
+    }
+
+    @Test
+    void updateAvatar_shouldPersistAndReturnAccount() {
+        init();
+        UserAccount account = service.register("henry", "pw", "亨利", null);
+        UserAccount updated = service.updateAvatar(account.getId(), "/api/avatars/henry.png");
+        assertEquals("/api/avatars/henry.png", updated.getAvatarUrl());
+        assertEquals("/api/avatars/henry.png",
+            service.findById(account.getId()).orElseThrow().getAvatarUrl(), "头像必须落存储");
+    }
+
+    @Test
+    void updateAvatar_unknownUser_shouldFastFail() {
+        init();
+        assertThrows(IllegalStateException.class, () -> service.updateAvatar("U-ghost", "/api/avatars/x.png"));
     }
 }

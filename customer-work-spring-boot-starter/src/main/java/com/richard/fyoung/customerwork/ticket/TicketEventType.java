@@ -39,6 +39,9 @@ public enum TicketEventType {
     /** 关闭工单。 */
     CLOSE,
 
+    /** 强制关闭（空闲超时自动结束 / 用户强制结束，可从任意非 CLOSED 态直达）。 */
+    FORCE_CLOSE,
+
     /** 重新打开。 */
     REOPEN,
 
