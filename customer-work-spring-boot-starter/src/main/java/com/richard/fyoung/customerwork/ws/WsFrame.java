@@ -34,6 +34,8 @@ public record WsFrame(String type, Object data) {
 
     private static final String KEY_CONTENT = "content";
     private static final String KEY_MESSAGE_ID = "messageId";
+    private static final String KEY_SESSION_ID = "sessionId";
+    private static final String KEY_TICKET_ID = "ticketId";
     private static final String KEY_TS = "ts";
     private static final String KEY_CODE = "code";
     private static final String KEY_MESSAGE = "message";
@@ -69,10 +71,26 @@ public record WsFrame(String type, Object data) {
         return new WsFrame(TYPE_TICKET_NEW, data);
     }
 
-    /** 系统提示帧：{@code {content, ts}}。 */
+    /** 系统提示帧（无会话上下文的旧格式）：{@code {content, ts}}。有会话上下文时优先用三参重载。 */
     public static WsFrame system(String content) {
+        return system(content, null, null);
+    }
+
+    /**
+     * 系统提示帧（带会话归属）：{@code {content, sessionId?, ticketId?, ts}}。
+     *
+     * <p>sessionId/ticketId 供前端按当前查看会话过滤，避免跨会话误标；为空时不输出该键，
+     * 与旧格式帧完全一致（旧客户端对多余字段也天然宽容，双向兼容）。</p>
+     */
+    public static WsFrame system(String content, String sessionId, String ticketId) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put(KEY_CONTENT, content);
+        if (sessionId != null) {
+            data.put(KEY_SESSION_ID, sessionId);
+        }
+        if (ticketId != null) {
+            data.put(KEY_TICKET_ID, ticketId);
+        }
         data.put(KEY_TS, System.currentTimeMillis());
         return new WsFrame(TYPE_SYSTEM, data);
     }

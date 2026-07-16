@@ -70,6 +70,15 @@ class ChatDispatchServiceTest {
         return frame instanceof WsFrame && type.equals(((WsFrame) frame).type());
     }
 
+    /** system 帧且 data 携带指定会话/工单标识（前端按此过滤跨会话通知）。 */
+    private boolean systemWithSession(Object frame, String sessionId, String ticketId) {
+        if (!typeIs(frame, WsFrame.TYPE_SYSTEM)) {
+            return false;
+        }
+        java.util.Map<?, ?> data = (java.util.Map<?, ?>) ((WsFrame) frame).data();
+        return sessionId.equals(data.get("sessionId")) && ticketId.equals(data.get("ticketId"));
+    }
+
     @Test
     void keywordHit_shouldRequestHandoff_andNotCallLlm() {
         when(ticketService.findActiveBySession(SESSION_ID)).thenReturn(Optional.of(aiServing()));
@@ -79,7 +88,18 @@ class ChatDispatchServiceTest {
 
         verify(ticketService).requestHandoff(eq(SESSION_ID), anyString(), eq(TicketActorType.USER), eq(USER_ID));
         verify(customerServiceService, never()).chatStream(anyString(), anyString());
-        verify(registry).pushToUser(eq(USER_ID), argThat(f -> typeIs(f, WsFrame.TYPE_SYSTEM)));
+        // system 通知帧必须携带会话/工单标识，供前端按当前查看会话过滤
+        verify(registry).pushToUser(eq(USER_ID), argThat(f -> systemWithSession(f, SESSION_ID, "TK-1")));
+    }
+
+    @Test
+    void requestHandoff_shouldPushSystemNoticeWithSessionContext() {
+        when(ticketService.requestHandoff(eq(SESSION_ID), anyString(), eq(TicketActorType.USER), eq(USER_ID)))
+            .thenReturn(aiServing());
+
+        StepVerifier.create(dispatch.requestHandoff(user, SESSION_ID, "不想跟机器人聊")).verifyComplete();
+
+        verify(registry).pushToUser(eq(USER_ID), argThat(f -> systemWithSession(f, SESSION_ID, "TK-1")));
     }
 
     @Test

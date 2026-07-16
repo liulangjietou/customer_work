@@ -145,6 +145,19 @@ export interface ReasonPayload {
   reason: string
 }
 
+// ------------------------- 消息级反馈（点赞/点踩） -------------------------
+
+export type FeedbackType = 'UP' | 'DOWN'
+
+/** 后端 MessageFeedback record 的平铺 JSON（无 Result 包装） */
+export interface MessageFeedback {
+  messageId: string
+  sessionId: string
+  type: FeedbackType
+  comment: string | null
+  createdAtMs: number
+}
+
 // ------------------------- WebSocket 帧 -------------------------
 
 /** 用户 -> 服务端 */
@@ -193,6 +206,10 @@ export interface WsTicketEvent {
 
 export interface WsSystemMessage {
   content: string
+  /** 所属会话 ID：后端新格式携带，旧格式帧无此字段（兼容） */
+  sessionId?: string
+  /** 所属工单 ID：后端新格式携带，旧格式帧无此字段（兼容） */
+  ticketId?: string
   ts: number
 }
 
