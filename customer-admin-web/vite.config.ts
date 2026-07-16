@@ -4,6 +4,18 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { fileURLToPath, URL } from 'node:url'
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+
+// Element Plus 按需引入后，resolver 往各懒加载页面注入 element-plus/es/components/*/style/css
+// 深路径依赖，Vite 冷启动静态扫描不到（藏在动态 import 的 view chunk 里）；首次点击菜单进入
+// 新页面时才被发现 → 触发依赖重新预构建 → 飞行中的动态 import 报
+// "Failed to fetch dynamically imported module" → 整页 reload（表现为点左侧菜单闪白）。
+// 把全部组件样式深路径提前纳入预构建即可根除；用 fs 扫描生成精确列表，避免 glob 语义差异。
+const epComponentsDir = fileURLToPath(new URL('./node_modules/element-plus/es/components', import.meta.url))
+const elementPlusStyleDeps = readdirSync(epComponentsDir)
+  .filter((name) => existsSync(join(epComponentsDir, name, 'style', 'css.mjs')))
+  .map((name) => `element-plus/es/components/${name}/style/css`)
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -33,6 +45,9 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
+  },
+  optimizeDeps: {
+    include: ['element-plus/es', '@element-plus/icons-vue', ...elementPlusStyleDeps],
   },
   server: {
     port: 5174,
