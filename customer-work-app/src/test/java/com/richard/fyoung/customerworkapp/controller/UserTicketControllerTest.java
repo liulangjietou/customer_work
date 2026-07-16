@@ -115,7 +115,7 @@ class UserTicketControllerTest {
         Ticket owned = ownedTicket(); // TK-1，closed 状态由 service 内部校验，这里只关心 controller 层前置校验
         when(ticketService.find("TK-1")).thenReturn(Optional.of(owned));
         when(ticketService.findActiveByUser(USER_ID)).thenReturn(Optional.empty());
-        when(ticketService.reopen(eq("TK-1"), any(), eq(TicketActorType.USER), eq(USER_ID))).thenReturn(owned);
+        when(ticketService.reopenToAi(eq("TK-1"), any(), eq(TicketActorType.USER), eq(USER_ID))).thenReturn(owned);
 
         webTestClient.post().uri("/api/customer/user/tickets/TK-1/reopen")
             .header(HttpHeaders.AUTHORIZATION, bearer())
@@ -149,7 +149,7 @@ class UserTicketControllerTest {
         Ticket owned = ownedTicket();
         when(ticketService.find("TK-1")).thenReturn(Optional.of(owned));
         when(ticketService.findActiveByUser(USER_ID)).thenReturn(Optional.of(owned));
-        when(ticketService.reopen(eq("TK-1"), any(), eq(TicketActorType.USER), eq(USER_ID))).thenReturn(owned);
+        when(ticketService.reopenToAi(eq("TK-1"), any(), eq(TicketActorType.USER), eq(USER_ID))).thenReturn(owned);
 
         webTestClient.post().uri("/api/customer/user/tickets/TK-1/reopen")
             .header(HttpHeaders.AUTHORIZATION, bearer())

@@ -173,8 +173,8 @@ public class UserTicketController {
     }
 
     @Operation(summary = "重新打开",
-        description = "RESOLVED|CLOSED → WAITING_AGENT；用户已存在另一张进行中会话时返回 409（体带该会话 sessionId/ticketId/status），"
-            + "其余非法状态流转 409")
+        description = "RESOLVED|CLOSED → AI_SERVING（重开回 AI 自助，需要人工时用户再显式转人工）；"
+            + "用户已存在另一张进行中会话时返回 409（体带该会话 sessionId/ticketId/status），其余非法状态流转 409")
     @PostMapping("/tickets/{id}/reopen")
     public Mono<ResponseEntity<Object>> reopen(@PathVariable String id, ServerWebExchange exchange,
                                @RequestBody(required = false) ReasonRequest request) {
@@ -188,7 +188,8 @@ public class UserTicketController {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                     .<Object>body(activeSessionBody(active.get(), REOPEN_ACTIVE_SESSION_EXISTS_MSG));
             }
-            Ticket reopened = ticketService.reopen(id, reasonOf(request), TicketActorType.USER, user.userId());
+            // 用户端"重新开始对话"回到 AI 自助而非人工排队（reopen 直达人工的语义保留给坐席/管理链路）
+            Ticket reopened = ticketService.reopenToAi(id, reasonOf(request), TicketActorType.USER, user.userId());
             return ResponseEntity.<Object>ok(reopened);
         });
     }

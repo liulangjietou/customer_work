@@ -256,6 +256,27 @@ class TicketTest {
     }
 
     @Test
+    void reopenToAi_shouldReturnToAiServingAndCountUp() {
+        // RESOLVED → AI_SERVING：回 AI 自助而非人工排队，reopen 计数 +1、清坐席、刷新用户活跃基准
+        Ticket r = resolved();
+        long before = r.getLastUserActiveAtMs();
+        r.reopenToAi("重新开始对话");
+        assertEquals(TicketStatus.AI_SERVING, r.getStatus());
+        assertEquals(1, r.getReopenCount());
+        assertNull(r.getAssignee());
+        assertTrue(r.getLastUserActiveAtMs() >= before);
+
+        // CLOSED → AI_SERVING 同样允许
+        Ticket closed = aiServing();
+        closed.close("done");
+        closed.reopenToAi("重开");
+        assertEquals(TicketStatus.AI_SERVING, closed.getStatus());
+
+        // 非 RESOLVED|CLOSED 态 fast-fail
+        assertThrows(IllegalStateException.class, () -> processing().reopenToAi("x"));
+    }
+
+    @Test
     void fillTitleIfBlank_shouldFillOnlyWhenBlank() {
         // 已有标题：不覆盖
         Ticket withTitle = Ticket.create("TK-a", "s", "u", "原标题", TicketCategory.CONSULT);

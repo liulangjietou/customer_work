@@ -156,6 +156,12 @@ public class TicketService {
             actorType, actorId, reason);
     }
 
+    /** 重新打开回 AI 自助：RESOLVED|CLOSED → AI_SERVING（用户端"重新开始对话"专用）。 */
+    public Ticket reopenToAi(String ticketId, String reason, TicketActorType actorType, String actorId) {
+        return applyTransition(ticketId, t -> t.reopenToAi(reason), TicketEventType.REOPEN,
+            actorType, actorId, reason);
+    }
+
     /** 变更优先级（任意非 CLOSED 态）。 */
     public Ticket changePriority(String ticketId, TicketPriority priority, TicketActorType actorType, String actorId) {
         return applyTransition(ticketId, t -> t.changePriority(priority), TicketEventType.PRIORITY_CHANGE,
