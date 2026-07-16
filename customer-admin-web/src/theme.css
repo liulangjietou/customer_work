@@ -1,0 +1,40 @@
+/*
+ * 全站视觉 token（方案阶段 B-1）。
+ * 原则：只走运行时 CSS 变量覆盖，与 store/theme.ts 的换肤/明暗机制共存；
+ * 所有视觉定制收敛在本文件，可整体回滚。禁止改用 SCSS 编译期定制（会干掉运行时换肤）。
+ */
+
+:root {
+  /* 全局圆角从 4px 提到 6px，弹窗更圆润 */
+  --el-border-radius-base: 6px;
+  --el-dialog-border-radius: 10px;
+  /* 卡片投影：比 EP 默认更轻，减少大面积卡片的视觉噪音 */
+  --cw-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+html.dark {
+  --cw-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+body {
+  background: var(--el-bg-color-page);
+  color: var(--el-text-color-primary);
+}
+
+/* 卡片：轻投影 + 弱边框（body 前缀提高特异性，避免被按需加载的组件样式反超） */
+body .el-card {
+  --el-card-border-color: var(--el-border-color-lighter);
+  border-radius: 8px;
+  box-shadow: var(--cw-card-shadow);
+}
+
+/* 表格：表头带浅底色与页面主体区分，去掉表头文字的默认灰 */
+body .el-table {
+  --el-table-header-bg-color: var(--el-fill-color-light);
+  --el-table-header-text-color: var(--el-text-color-primary);
+}
+
+/* 弹窗标题与正文的间距收紧一点，视觉更聚拢 */
+body .el-dialog__header {
+  padding-bottom: 12px;
+}

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { executeSqlQuery, exportSqlQuery, fetchSqlQueryMeta } from '@/api/sql'
 import type { SqlQueryMetaParam, SqlQueryMetaVO, SqlQueryResultVO } from '@/types/api'
 
@@ -263,7 +262,7 @@ watch(() => route.query.defineKey, load, { immediate: true })
 .result-meta {
   margin-bottom: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .pagination-bar {
@@ -279,7 +278,7 @@ watch(() => route.query.defineKey, load, { immediate: true })
 }
 
 .simple-pager-current {
-  color: #606266;
+  color: var(--el-text-color-regular);
   font-size: 13px;
 }
 </style>

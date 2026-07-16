@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import type { FormInstance, FormRules } from 'element-plus'
 import { login, ssoLogin } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
@@ -208,6 +208,11 @@ async function handleSubmit() {
   margin-top: auto;
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(6px);
+}
+
+/* 暗色模式下毛玻璃卡片跟随变深，与内部表单控件的暗色保持一致 */
+html.dark .login-card {
+  background: rgba(20, 20, 20, 0.88);
 }
 
 .login-title {

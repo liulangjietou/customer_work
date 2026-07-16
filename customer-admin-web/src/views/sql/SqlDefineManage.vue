@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import type { FormInstance } from 'element-plus'
 import {
   createSqlDefine,
   createSqlDefineParam,
@@ -18,6 +18,7 @@ import {
   updateSqlDefineParam,
   updateSqlFieldTransform,
 } from '@/api/sql'
+import { useCrudPage } from '@/composables/useCrudPage'
 import type {
   PageQuery,
   SqlDatasourceVO,
@@ -43,88 +44,36 @@ const TRANSFORM_TYPE_OPTIONS: { label: string; value: SqlTransformType }[] = [
   { label: '值映射', value: 'VALUE_MAP' },
 ]
 
-const loading = ref(false)
-const list = ref<SqlDefineVO[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
 const datasourceOptions = ref<SqlDatasourceVO[]>([])
-
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageSqlDefines(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
 
 async function loadDatasourceOptions() {
   datasourceOptions.value = await listAllSqlDatasources()
 }
 
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
-
 // ---------- 新建/编辑（抽屉） ----------
-const drawerVisible = ref(false)
-const drawerMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<SqlDefineSaveRequest>({
-  defineKey: '', datasourceId: undefined as unknown as number, sqlDescribe: '',
-  querySql: '', countSql: '', autoLoad: false, enabled: true, remark: '',
-})
 
-function resetForm() {
-  Object.assign(form, {
-    defineKey: '', datasourceId: undefined, sqlDescribe: '',
+const {
+  loading, list, total, query,
+  dialogVisible: drawerVisible, dialogMode: drawerMode, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
+} = useCrudPage<SqlDefineVO, PageQuery, SqlDefineSaveRequest>({
+  page: pageSqlDefines,
+  formRef,
+  create: createSqlDefine,
+  update: updateSqlDefine,
+  remove: (row) => deleteSqlDefine(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+  initForm: () => ({
+    defineKey: '', datasourceId: undefined as unknown as number, sqlDescribe: '',
     querySql: '', countSql: '', autoLoad: false, enabled: true, remark: '',
-  })
-}
-
-function openCreate() {
-  drawerMode.value = 'create'
-  editingId.value = null
-  resetForm()
-  drawerVisible.value = true
-}
-
-function openEdit(row: SqlDefineVO) {
-  drawerMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, {
+  }),
+  toForm: (row) => ({
     defineKey: row.defineKey, datasourceId: row.datasourceId, sqlDescribe: row.sqlDescribe,
     querySql: row.querySql, countSql: row.countSql, autoLoad: row.autoLoad, enabled: row.enabled, remark: row.remark,
-  })
-  drawerVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (drawerMode.value === 'create') {
-    await createSqlDefine(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
-    await updateSqlDefine(editingId.value, form)
-    ElMessage.success('保存成功')
-  }
-  drawerVisible.value = false
-  await loadList()
-}
-
-async function handleDelete(row: SqlDefineVO) {
-  await ElMessageBox.confirm(`确认删除 SQL 定义「${row.defineKey}」？关联的参数与列转换器会一并删除。`, '提示', { type: 'warning' })
-  await deleteSqlDefine(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
-}
+  }),
+  deleteConfirm: (row) => `确认删除 SQL 定义「${row.defineKey}」？关联的参数与列转换器会一并删除。`,
+})
 
 async function handleCopy(row: SqlDefineVO) {
   await ElMessageBox.confirm(`确认复制 SQL 定义「${row.defineKey}」？会连同参数与列转换器一起复制一份。`, '提示', { type: 'info' })
@@ -526,7 +475,7 @@ onMounted(() => {
 .form-tip {
   margin-left: 12px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .sql-textarea :deep(textarea) {

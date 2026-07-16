@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import type { FormInstance } from 'element-plus'
 import { createMcp, deleteMcp, pageMcps, testMcpConnectivity, updateMcp } from '@/api/mcp'
 import McpDebugDialog from '@/components/McpDebugDialog.vue'
 import type { McpSaveRequest, McpVO, PageQuery } from '@/types/api'
@@ -228,7 +228,7 @@ onMounted(loadList)
 
 .config-hint {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-top: 4px;
 }
 </style>

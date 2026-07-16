@@ -1,8 +1,13 @@
 package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.sun.net.httpserver.HttpServer;
 import io.agentscope.core.tool.Toolkit;
 import org.junit.jupiter.api.Test;
+
+import java.net.InetSocketAddress;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -48,5 +53,38 @@ class McpToolkitConfigurerTest {
         new McpToolkitConfigurer(new CustomerWorkProperties()).configure(toolkit);
 
         assertEquals(before, toolkit.getToolNames().size(), "未启用时不应改动 toolkit");
+    }
+
+    /**
+     * 回归用例（修复"yml 配置的 headers 未透传、鉴权型 MCP 服务 401"）：起本地 HTTP server
+     * 捕获真实请求头。连接会因 server 回 500 而失败，configure 按设计吞掉单服务失败不阻断启动，
+     * 本用例只断言 Authorization 头确实随连接请求发出。
+     */
+    @Test
+    void configure_shouldSendConfiguredHeaders() throws Exception {
+        AtomicReference<String> receivedAuth = new AtomicReference<>();
+        HttpServer httpServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        httpServer.createContext("/mcp", exchange -> {
+            receivedAuth.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        httpServer.start();
+        try {
+            CustomerWorkProperties props = new CustomerWorkProperties();
+            props.getMcp().setEnabled(true);
+            CustomerWorkProperties.Mcp.Server server = new CustomerWorkProperties.Mcp.Server();
+            server.setName("secured");
+            server.setTransport("streamable-http");
+            server.setUrl("http://127.0.0.1:" + httpServer.getAddress().getPort() + "/mcp");
+            server.setHeaders(Map.of("Authorization", "Bearer starter-token"));
+            props.getMcp().getServers().add(server);
+
+            new McpToolkitConfigurer(props).configure(new Toolkit());
+
+            assertEquals("Bearer starter-token", receivedAuth.get(), "配置的 Authorization 头应随请求发出");
+        } finally {
+            httpServer.stop(0);
+        }
     }
 }

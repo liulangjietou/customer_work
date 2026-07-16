@@ -1,82 +1,51 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance, type TreeInstance } from 'element-plus'
+import { onMounted, ref } from 'vue'
+import type { FormInstance, TreeInstance } from 'element-plus'
 import { createRole, deleteRole, pageRoles, updateRole } from '@/api/role'
 import { permissionTree } from '@/api/permission'
+import { useCrudPage } from '@/composables/useCrudPage'
 import type { PageQuery, PermissionVO, RoleSaveRequest, RoleVO } from '@/types/api'
 
-const loading = ref(false)
-const list = ref<RoleVO[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
 const tree = ref<PermissionVO[]>([])
-
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
 const treeRef = ref<TreeInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<RoleSaveRequest>({ roleName: '', roleCode: '', remark: '', status: 1, permissionIds: [] })
 
 const treeProps = { label: 'permName', children: 'children' }
 
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageRoles(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
+const {
+  loading, list, total, query,
+  dialogVisible, dialogMode, form,
+  loadList, handleSearch,
+  openCreate: openCreateBase, openEdit: openEditBase,
+  handleSubmit, handleDelete,
+} = useCrudPage<RoleVO, PageQuery, RoleSaveRequest>({
+  page: pageRoles,
+  formRef,
+  create: createRole,
+  update: updateRole,
+  remove: (row) => deleteRole(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+  initForm: () => ({ roleName: '', roleCode: '', remark: '', status: 1, permissionIds: [] }),
+  toForm: (row) => ({ roleName: row.roleName, roleCode: row.roleCode, remark: row.remark, status: row.status, permissionIds: row.permissionIds }),
+  // 提交前把权限树的选中态（含半选的父节点）收集进表单，与原 handleSubmit 里的顺序一致
+  beforeSubmit: (_mode, f) => {
+    const checkedKeys = (treeRef.value?.getCheckedKeys() ?? []) as number[]
+    const halfCheckedKeys = (treeRef.value?.getHalfCheckedKeys() ?? []) as number[]
+    f.permissionIds = [...checkedKeys, ...halfCheckedKeys]
+    return true
+  },
+  deleteConfirm: (row) => `确认删除角色「${row.roleName}」？`,
+})
 
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
-
+// 弹窗打开后权限树的勾选状态需要单独同步（新建清空/编辑回填），composable 不感知树组件，留在页面包一层
 function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  Object.assign(form, { roleName: '', roleCode: '', remark: '', status: 1, permissionIds: [] })
-  dialogVisible.value = true
+  openCreateBase()
   requestAnimationFrame(() => treeRef.value?.setCheckedKeys([]))
 }
 
 function openEdit(row: RoleVO) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, { roleName: row.roleName, roleCode: row.roleCode, remark: row.remark, status: row.status, permissionIds: row.permissionIds })
-  dialogVisible.value = true
+  openEditBase(row)
   requestAnimationFrame(() => treeRef.value?.setCheckedKeys(row.permissionIds))
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  const checkedKeys = (treeRef.value?.getCheckedKeys() ?? []) as number[]
-  const halfCheckedKeys = (treeRef.value?.getHalfCheckedKeys() ?? []) as number[]
-  form.permissionIds = [...checkedKeys, ...halfCheckedKeys]
-
-  if (dialogMode.value === 'create') {
-    await createRole(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
-    await updateRole(editingId.value, form)
-    ElMessage.success('保存成功')
-  }
-  dialogVisible.value = false
-  await loadList()
-}
-
-async function handleDelete(row: RoleVO) {
-  await ElMessageBox.confirm(`确认删除角色「${row.roleName}」？`, '提示', { type: 'warning' })
-  await deleteRole(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
 }
 
 onMounted(async () => {

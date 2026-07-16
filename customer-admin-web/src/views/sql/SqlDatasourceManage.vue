@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { onMounted, ref } from 'vue'
+import type { FormInstance } from 'element-plus'
 import {
   createSqlDatasource,
   deleteSqlDatasource,
@@ -8,90 +8,37 @@ import {
   testSqlDatasourceConnection,
   updateSqlDatasource,
 } from '@/api/sql'
+import { useCrudPage } from '@/composables/useCrudPage'
 import type { PageQuery, SqlDatasourceSaveRequest, SqlDatasourceVO } from '@/types/api'
 
-const loading = ref(false)
-const list = ref<SqlDatasourceVO[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
 const testingId = ref<number | null>(null)
-
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageSqlDatasources(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
-
-// ---------- 新建/编辑 ----------
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<SqlDatasourceSaveRequest>({
-  name: '', jdbcUrl: '', username: '', password: '', enabled: true, remark: '',
-})
 
-function resetForm() {
-  Object.assign(form, { name: '', jdbcUrl: '', username: '', password: '', enabled: true, remark: '' })
-}
-
-function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  resetForm()
-  dialogVisible.value = true
-}
-
-function openEdit(row: SqlDatasourceVO) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, {
+const {
+  loading, list, total, query,
+  dialogVisible, dialogMode, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
+} = useCrudPage<SqlDatasourceVO, PageQuery, SqlDatasourceSaveRequest>({
+  page: pageSqlDatasources,
+  formRef,
+  create: createSqlDatasource,
+  update: updateSqlDatasource,
+  remove: (row) => deleteSqlDatasource(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+  initForm: () => ({ name: '', jdbcUrl: '', username: '', password: '', enabled: true, remark: '' }),
+  toForm: (row) => ({
     name: row.name, jdbcUrl: row.jdbcUrl, username: row.username, password: '',
     enabled: row.enabled, remark: row.remark,
-  })
-  dialogVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (dialogMode.value === 'create') {
-    if (!form.password) {
+  }),
+  beforeSubmit: (mode, f) => {
+    if (mode === 'create' && !f.password) {
       ElMessage.warning('新建数据源必须填写密码')
-      return
+      return false
     }
-    await createSqlDatasource(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
-    await updateSqlDatasource(editingId.value, form)
-    ElMessage.success('保存成功')
-  }
-  dialogVisible.value = false
-  await loadList()
-}
-
-async function handleDelete(row: SqlDatasourceVO) {
-  await ElMessageBox.confirm(
-    `确认删除数据源「${row.name}」？若仍有 SQL 定义引用该数据源，删除会失败。`,
-    '提示',
-    { type: 'warning' },
-  )
-  await deleteSqlDatasource(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
-}
+    return true
+  },
+  deleteConfirm: (row) => `确认删除数据源「${row.name}」？若仍有 SQL 定义引用该数据源，删除会失败。`,
+})
 
 async function handleTest(row: SqlDatasourceVO) {
   testingId.value = row.id

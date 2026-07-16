@@ -62,11 +62,11 @@ function select(name: string) {
 }
 
 .icon-cell:hover {
-  background: #f0f2f5;
+  background: var(--el-fill-color-light);
 }
 
 .icon-cell.active {
-  background: #ecf5ff;
-  color: #409eff;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
 }
 </style>

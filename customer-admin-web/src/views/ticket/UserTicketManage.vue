@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
-import { ElMessage, ElNotification } from 'element-plus'
 import { claimTicket, getTicketWsCredential, pageTickets } from '@/api/user-ticket'
 import { WsClient } from '@/utils/ws'
 import TicketChatPanel from './components/TicketChatPanel.vue'

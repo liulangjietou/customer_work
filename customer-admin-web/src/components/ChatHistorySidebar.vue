@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { listChatSessions } from '@/api/chat'
 import AddToProjectDialog from './AddToProjectDialog.vue'
 import type { ChatSessionSummary } from '@/types/api'

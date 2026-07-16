@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import type { FormInstance } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { createAgent, deleteAgent, disableAgent, enableAgent, pageAgents, updateAgent } from '@/api/agent'
 import { pageModels, testModelConnectivity } from '@/api/model'

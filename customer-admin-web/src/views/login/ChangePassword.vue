@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import type { FormInstance, FormRules } from 'element-plus'
 import { changePassword } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import FooterCopyright from '@/components/FooterCopyright.vue'
@@ -79,7 +79,7 @@ async function handleSubmit() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #f5f5f5;
+  background: var(--el-bg-color-page);
 }
 
 .change-password-card {

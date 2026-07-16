@@ -1,88 +1,47 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { onMounted, ref } from 'vue'
+import type { FormInstance } from 'element-plus'
 import { createModel, deleteModel, pageModels, testModelConnectivity, updateModel } from '@/api/model'
+import { useCrudPage } from '@/composables/useCrudPage'
 import type { ModelSaveRequest, ModelVO, PageQuery } from '@/types/api'
 
-const loading = ref(false)
-const list = ref<ModelVO[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
 const testingId = ref<number | null>(null)
-
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<ModelSaveRequest>({
-  modelName: '', provider: 'openai', apiKey: '', baseUrl: '', model: '',
-  isDefault: false, status: 1,
+
+const {
+  loading, list, total, query,
+  dialogVisible, dialogMode, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
+} = useCrudPage<ModelVO, PageQuery, ModelSaveRequest>({
+  page: pageModels,
+  formRef,
+  create: createModel,
+  update: updateModel,
+  remove: (row) => deleteModel(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+  initForm: () => ({
+    modelName: '', provider: 'openai', apiKey: '', baseUrl: '', model: '',
+    isDefault: false, status: 1,
+  }),
+  // 编辑回填时 apiKey 置空表示"留空则不修改"
+  toForm: (row) => ({
+    modelName: row.modelName, provider: row.provider, apiKey: '', baseUrl: row.baseUrl, model: row.model,
+    isDefault: row.isDefault, status: row.status,
+  }),
+  beforeSubmit: (mode, f) => {
+    if (mode === 'create' && !f.apiKey) {
+      ElMessage.warning('新建模型配置必须填写 AppKey')
+      return false
+    }
+    return true
+  },
+  deleteConfirm: (row) => `确认删除模型配置「${row.modelName}」？`,
 })
 
 const testStatusMap: Record<number, { label: string; type: 'info' | 'success' | 'danger' }> = {
   0: { label: '未测试', type: 'info' },
   1: { label: '连通成功', type: 'success' },
   2: { label: '连通失败', type: 'danger' },
-}
-
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageModels(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
-
-function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  Object.assign(form, { modelName: '', provider: 'openai', apiKey: '', baseUrl: '', model: '', isDefault: false, status: 1 })
-  dialogVisible.value = true
-}
-
-function openEdit(row: ModelVO) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, {
-    modelName: row.modelName, provider: row.provider, apiKey: '', baseUrl: row.baseUrl, model: row.model,
-    isDefault: row.isDefault, status: row.status,
-  })
-  dialogVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (dialogMode.value === 'create') {
-    if (!form.apiKey) {
-      ElMessage.warning('新建模型配置必须填写 AppKey')
-      return
-    }
-    await createModel(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
-    await updateModel(editingId.value, form)
-    ElMessage.success('保存成功')
-  }
-  dialogVisible.value = false
-  await loadList()
-}
-
-async function handleDelete(row: ModelVO) {
-  await ElMessageBox.confirm(`确认删除模型配置「${row.modelName}」？`, '提示', { type: 'warning' })
-  await deleteModel(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
 }
 
 async function handleTest(row: ModelVO) {

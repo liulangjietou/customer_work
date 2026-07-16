@@ -1,35 +1,42 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { onMounted, ref } from 'vue'
+import type { FormInstance } from 'element-plus'
 import { createUser, deleteUser, pageUsers, updateUser } from '@/api/user'
 import { pageRoles } from '@/api/role'
 import { useAuthStore } from '@/store/auth'
+import { useCrudPage } from '@/composables/useCrudPage'
 import type { PageQuery, RoleVO, UserSaveRequest, UserVO } from '@/types/api'
 
 const auth = useAuthStore()
 
-const loading = ref(false)
-const list = ref<UserVO[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '', status: undefined })
 const roleOptions = ref<RoleVO[]>([])
-
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<UserSaveRequest>({ username: '', password: '', nickname: '', status: 1, roleIds: [] })
 
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageUsers(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
+const {
+  loading, list, total, query,
+  dialogVisible, dialogMode, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
+} = useCrudPage<UserVO, PageQuery, UserSaveRequest>({
+  page: pageUsers,
+  formRef,
+  create: createUser,
+  update: async (id, f) => {
+    // 编辑时密码框留空表示"不改密码"：必须传 null 而不是空字符串——后端 password 字段有
+    // @Size(min=6) 校验，只对 null 跳过校验，空字符串会被当成"长度 0 的密码"直接拦截。
+    const payload: UserSaveRequest = { ...f, password: f.password?.trim() ? f.password : null }
+    await updateUser(id, payload)
+    // 编辑的如果是当前登录用户自己，同步刷新右上角昵称缓存——否则要等重新登录才会更新，
+    // 页面上会一直显示登录时缓存的旧昵称，改了跟没改一样。
+    if (f.username === auth.username && f.nickname) {
+      auth.updateNickname(f.nickname)
+    }
+  },
+  remove: (row) => deleteUser(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '', status: undefined }),
+  initForm: () => ({ username: '', password: '', nickname: '', status: 1, roleIds: [] }),
+  toForm: (row) => ({ username: row.username, password: '', nickname: row.nickname, status: row.status, roleIds: row.roleIds }),
+  deleteConfirm: (row) => `确认删除用户「${row.username}」？`,
+})
 
 async function loadRoleOptions() {
   try {
@@ -38,56 +45,6 @@ async function loadRoleOptions() {
   } catch {
     roleOptions.value = []
   }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
-
-function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  Object.assign(form, { username: '', password: '', nickname: '', status: 1, roleIds: [] })
-  dialogVisible.value = true
-}
-
-function openEdit(row: UserVO) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, { username: row.username, password: '', nickname: row.nickname, status: row.status, roleIds: row.roleIds })
-  dialogVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (dialogMode.value === 'create') {
-    await createUser(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
-    // 编辑时密码框留空表示"不改密码"：必须传 null 而不是空字符串——后端 password 字段有
-    // @Size(min=6) 校验，只对 null 跳过校验，空字符串会被当成"长度 0 的密码"直接拦截。
-    const payload: UserSaveRequest = { ...form, password: form.password?.trim() ? form.password : null }
-    await updateUser(editingId.value, payload)
-    ElMessage.success('保存成功')
-    // 编辑的如果是当前登录用户自己，同步刷新右上角昵称缓存——否则要等重新登录才会更新，
-    // 页面上会一直显示登录时缓存的旧昵称，改了跟没改一样。
-    if (form.username === auth.username && form.nickname) {
-      auth.updateNickname(form.nickname)
-    }
-  }
-  dialogVisible.value = false
-  await loadList()
-}
-
-async function handleDelete(row: UserVO) {
-  await ElMessageBox.confirm(`确认删除用户「${row.username}」？`, '提示', { type: 'warning' })
-  await deleteUser(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
 }
 
 onMounted(() => {

@@ -1,20 +1,12 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance, type UploadRequestOptions } from 'element-plus'
+import { onMounted, ref } from 'vue'
+import type { FormInstance, UploadRequestOptions } from 'element-plus'
 import { createSkill, deleteSkill, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
+import { useCrudPage } from '@/composables/useCrudPage'
 import type { PageQuery, SkillSaveRequest, SkillVO } from '@/types/api'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
-const loading = ref(false)
-const list = ref<SkillVO[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
-
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<SkillSaveRequest>({ skillName: '', skillCode: '', content: '', description: '', status: 1, storageTargets: ['local'] })
 
 // 上传目标选项：本地 Workspace / Nacos / SFTP，值与后端 SkillStorageTarget 枚举对齐。
 const storageTargetOptions = [
@@ -23,38 +15,24 @@ const storageTargetOptions = [
   { label: 'SFTP', value: 'sftp' },
 ]
 
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageSkills(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
-
-function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  Object.assign(form, { skillName: '', skillCode: '', content: '', description: '', status: 1, storageTargets: ['local'] })
-  dialogVisible.value = true
-}
-
-function openEdit(row: SkillVO) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, {
+const {
+  loading, list, total, query,
+  dialogVisible, dialogMode, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
+} = useCrudPage<SkillVO, PageQuery, SkillSaveRequest>({
+  page: pageSkills,
+  formRef,
+  create: createSkill,
+  update: updateSkill,
+  remove: (row) => deleteSkill(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+  initForm: () => ({ skillName: '', skillCode: '', content: '', description: '', status: 1, storageTargets: ['local'] }),
+  toForm: (row) => ({
     skillName: row.skillName, skillCode: row.skillCode, content: row.content, description: row.description, status: row.status,
     storageTargets: [...(row.storageTargets ?? [])],
-  })
-  dialogVisible.value = true
-}
+  }),
+  deleteConfirm: (row) => `确认删除 Skill「${row.skillName}」？`,
+})
 
 const previewVisible = ref(false)
 const previewSkill = ref<SkillVO | null>(null)
@@ -62,22 +40,6 @@ const previewSkill = ref<SkillVO | null>(null)
 function openPreview(row: SkillVO) {
   previewSkill.value = row
   previewVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (dialogMode.value === 'create') {
-    await createSkill(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
-    await updateSkill(editingId.value, form)
-    ElMessage.success('保存成功')
-  }
-  dialogVisible.value = false
-  await loadList()
 }
 
 const uploading = ref(false)
@@ -90,17 +52,6 @@ async function handleUpload(options: UploadRequestOptions) {
     ElMessage.success('解析成功，已回填 SKILL.md 正文，确认无误后点“确定”保存')
   } finally {
     uploading.value = false
-  }
-}
-
-async function handleDelete(row: SkillVO) {
-  await ElMessageBox.confirm(`确认删除 Skill「${row.skillName}」？`, '提示', { type: 'warning' })
-  try {
-    await deleteSkill(row.id)
-    ElMessage.success('删除成功')
-    await loadList()
-  } catch {
-    // 引用校验失败的提示已由 axios 拦截器统一弹出
   }
 }
 
@@ -237,7 +188,7 @@ onMounted(loadList)
   min-width: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -247,9 +198,9 @@ onMounted(loadList)
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 600;
-  color: #606266;
-  background: #f5f7fa;
-  border-bottom: 1px solid #ebeef5;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .preview-pane-body {
@@ -269,6 +220,6 @@ onMounted(loadList)
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 </style>

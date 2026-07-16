@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
 import { debugMcpCallTool, debugMcpTools } from '@/api/mcp'
 import type { McpDebugCallResult, McpDebugToolVO } from '@/types/api'
 

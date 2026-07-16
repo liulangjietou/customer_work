@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   claimTicket,
   closeTicket,
@@ -474,13 +473,13 @@ const categoryOptions = Object.entries(CATEGORY_LABELS) as [TicketCategory, stri
   flex: 1;
   overflow-y: auto;
   padding: 8px;
-  border: 1px solid #eee;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
 }
 
 .loading-more {
   text-align: center;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
   padding: 4px;
 }
@@ -507,18 +506,18 @@ const categoryOptions = Object.entries(CATEGORY_LABELS) as [TicketCategory, stri
   max-width: 70%;
   padding: 8px 12px;
   border-radius: 8px;
-  background: #f0f2f5;
+  background: var(--el-fill-color-light);
   word-break: break-word;
 }
 
 .message-row.agent .bubble {
-  background: var(--theme-primary, #409eff);
+  background: var(--theme-primary, var(--el-color-primary));
   color: #fff;
 }
 
 .bot-badge {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-bottom: 2px;
 }
 
@@ -531,7 +530,7 @@ const categoryOptions = Object.entries(CATEGORY_LABELS) as [TicketCategory, stri
 }
 
 .system-text {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 
@@ -563,16 +562,16 @@ const categoryOptions = Object.entries(CATEGORY_LABELS) as [TicketCategory, stri
 
 .event-status {
   font-size: 13px;
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 
 .event-note {
   font-size: 13px;
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 
 .event-actor {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 </style>

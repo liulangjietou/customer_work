@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
 import { useTabsStore } from '@/store/tabs'
+import { useThemeStore } from '@/store/theme'
 import MenuTree from './MenuTree.vue'
 import TabsBar from './TabsBar.vue'
 import AppBreadcrumb from './AppBreadcrumb.vue'
@@ -14,6 +15,7 @@ const route = useRoute()
 const auth = useAuthStore()
 const menuStore = useMenuStore()
 const tabsStore = useTabsStore()
+const themeStore = useThemeStore()
 
 // SQL 通用查询页（/sql/query）是所有报表菜单共用的同一个路由 path，靠 defineKey 区分不同菜单项，
 // 用 route.path 高亮时几十个报表菜单会全部一起高亮；此时改取 route.fullPath（含 query），
@@ -40,15 +42,14 @@ async function handleLogout() {
         <span class="logo-mark">CW</span>
         <span v-show="!menuStore.collapsed" class="logo-text">customer_work</span>
       </div>
+      <!-- 深色品牌侧边栏：配色走 .layout-aside 上的 CSS 变量（不用 props 传色，props 方式
+           已被 EP 标记废弃且无法参与明暗切换的变量级联） -->
       <el-menu
         :default-active="activePath"
         :collapse="menuStore.collapsed"
         :collapse-transition="true"
         router
         unique-opened
-        background-color="#001529"
-        text-color="#c9d1d9"
-        active-text-color="#fff"
       >
         <MenuTree :nodes="menuStore.tree" :collapsed="menuStore.collapsed" />
       </el-menu>
@@ -63,15 +64,24 @@ async function handleLogout() {
             @click="menuStore.toggleCollapsed"
           />
         </div>
-        <el-dropdown>
-          <span class="user-info">{{ auth.nickname }}<el-icon><ArrowDown /></el-icon></span>
+        <div class="header-right">
+          <el-button
+            class="collapse-btn"
+            text
+            :icon="themeStore.isDark ? 'Sunny' : 'Moon'"
+            :title="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
+            @click="themeStore.toggleDark()"
+          />
+          <el-dropdown>
+            <span class="user-info">{{ auth.nickname }}<el-icon><ArrowDown /></el-icon></span>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item @click="router.push({ name: 'ChangePassword' })">修改密码</el-dropdown-item>
               <el-dropdown-item @click="handleLogout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+            </template>
+          </el-dropdown>
+        </div>
       </el-header>
       <TabsBar />
       <AppBreadcrumb />
@@ -91,11 +101,19 @@ async function handleLogout() {
 }
 
 .layout-aside {
-  background: #001529;
+  /* 品牌深色侧边栏：明暗两态保持同一深色，不随模式切换 */
+  --cw-aside-bg: #001529;
+  background: var(--cw-aside-bg);
   display: flex;
   flex-direction: column;
   transition: width 0.28s ease-in-out;
   overflow-x: hidden;
+  /* el-menu 配色（替代已废弃的 background-color/text-color/active-text-color props） */
+  --el-menu-bg-color: var(--cw-aside-bg);
+  --el-menu-text-color: #c9d1d9;
+  --el-menu-active-color: #fff;
+  --el-menu-hover-bg-color: rgba(255, 255, 255, 0.08);
+  --el-menu-border-color: transparent;
 }
 
 .layout-aside.collapsed {
@@ -141,7 +159,8 @@ async function handleLogout() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #eee;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color-lighter);
   padding: 0 16px;
 }
 
@@ -150,15 +169,21 @@ async function handleLogout() {
   align-items: center;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .collapse-btn {
   font-size: 18px;
-  color: #606266;
+  color: var(--el-text-color-regular);
   padding: 8px;
 }
 
 .collapse-btn:hover {
-  color: #409eff;
-  background: #f5f7fa;
+  color: var(--el-color-primary);
+  background: var(--el-fill-color-light);
 }
 
 .user-info {
@@ -169,15 +194,15 @@ async function handleLogout() {
 }
 
 .layout-main {
-  background: #f5f7fa;
+  background: var(--el-bg-color-page);
 }
 
 .layout-footer {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
-  border-top: 1px solid #eee;
+  background: var(--el-bg-color);
+  border-top: 1px solid var(--el-border-color-lighter);
   padding: 0;
 }
 </style>
