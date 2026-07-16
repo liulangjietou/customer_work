@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted } from 'vue'
 import { pageAiCodingAudit } from '@/api/aiCodingAudit'
+import { useCrudPage } from '@/composables/useCrudPage'
 import type { AiCodingAuditLog, AiCodingAuditQuery } from '@/types/api'
 
 /** 操作类型 -> 中文展示与标签色（与后端 AiCodingOperation 枚举一一对应）。 */
@@ -12,26 +13,15 @@ const OPERATION_META: Record<string, { label: string; tag: 'primary' | 'success'
   PR_DESCRIPTION: { label: 'PR 描述', tag: 'info' },
 }
 
-const loading = ref(false)
-const list = ref<AiCodingAuditLog[]>([])
-const total = ref(0)
-const query = reactive<AiCodingAuditQuery>({ pageNum: 1, pageSize: 10, keyword: '', operation: '', sessionId: '' })
-
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageAiCodingAudit(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
+// 只读审计日志：无新建/编辑/删除能力，只接列表半套
+const {
+  loading, list, total, query,
+  loadList, handleSearch,
+} = useCrudPage<AiCodingAuditLog, AiCodingAuditQuery, Record<string, never>>({
+  page: pageAiCodingAudit,
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '', operation: '', sessionId: '' }),
+  initForm: () => ({}),
+})
 
 /** changed_files 列是 JSON 数组字符串，解析失败时原样返回单元素兜底展示。 */
 function parseChangedFiles(raw: string | null): string[] {
