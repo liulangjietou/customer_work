@@ -19,7 +19,7 @@ customer-work:
     # 百炼 API Key：仅从环境变量注入，切勿写入仓库。本地：export DASHSCOPE_API_KEY=sk-xxx
     api-key: ${DASHSCOPE_API_KEY:}
     # 可切换为 qwen-plus / qwen-turbo 等；模型名对应 DashScope 通义千问系列
-    name: qwen-max
+    name: qwen-plus
     # 自定义网关 / 百炼兼容地址；留空用 SDK 默认百炼地址
     base-url: ""
     temperature: 0.3

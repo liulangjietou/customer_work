@@ -4,7 +4,7 @@
 -- 说明：
 --   1. 覆盖九个持久化域（审计/审批/槽位/对话阶段/人机切换/反馈/工单/用户/聊天日志）
 --      与六个工具后端演示表（订单/商品/售后+发票/会员+账户日志/投诉/知识库）。
---   2. 内容与 mysql/schema.sql（DBA 手册）的业务表 DDL 一致；此处不含 CREATE DATABASE / USE
+--   2. 内容与 mysql/01-agent-scope-customer-work/customer-work-schema.sql（DBA 手册）的业务表 DDL 一致；此处不含 CREATE DATABASE / USE
 --      与框架会话表 agentscope_sessions（库由 JDBC URL 的 createDatabaseIfNotExist 建，会话表由框架建）。
 --   3. 全部 CREATE TABLE IF NOT EXISTS + INSERT IGNORE，可重复执行（幂等）。
 -- =============================================================================

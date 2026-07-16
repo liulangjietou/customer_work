@@ -19,7 +19,7 @@ import javax.sql.DataSource;
  * <p>状态存储用 {@link MysqlAgentStateStore}，复用本模块自身已配置的 {@link DataSource}（同一个
  * {@code customer_admin} 库，物理上不新开一个库）——需求"历史对话要能查到重启前的"要求持久化，
  * 不能再用进程内 {@code InMemoryAgentStateStore}。表结构由 Flyway {@code V4__chat_session_state.sql}
- * / DBA 预审的 {@code mysql/admin-schema.sql} 管理，故这里 {@code createIfNotExist=false}，与本模块
+ * / DBA 预审的 {@code mysql/02-customer-admin/} 迁移副本管理，故这里 {@code createIfNotExist=false}，与本模块
  * "生产不自动建表"的既有约定一致。</p>
  *
  * <p><b>坑</b>：{@link MysqlAgentStateStore} 的 2 参数构造函数会把库名硬编码成默认值

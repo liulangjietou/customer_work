@@ -7,7 +7,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 
 /**
- * 会员/账户后端的默认演示实现。生产替换为真实会员中心 / 积分 / 账户系统。
+ * 会员/账户后端的默认演示实现与单元测试。生产替换为真实会员中心 / 积分 / 账户系统。
  * @author owlzhangfq@gmail.com
  */
 public class MockMemberBackend implements MemberBackend {

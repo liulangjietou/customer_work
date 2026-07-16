@@ -729,7 +729,7 @@ cd customer-admin-web && npm install && npm run dev
 | `/api/ticket/orders/**` | 用户订单管理（代理 8080 坐席订单 API：分页/详情/改址/取消，权限点 `user-order:view`/`user-order:edit`），见 §6.22 |
 | `/swagger-ui/index.html` | 接口文档 |
 
-生产建表由 DBA 参照 **[mysql/admin-schema.sql](mysql/admin-schema.sql)** 手工执行（与 `mysql/schema.sql`
+生产建表由 DBA 参照 **[mysql/02-customer-admin/](mysql/02-customer-admin/)**（V1~V20 有序副本）手工执行（与 `mysql/01-agent-scope-customer-work/customer-work-schema.sql`
 客服主业务库物理隔离，独立数据库 `customer_admin`），与仓库既有"生产不自动建表"约定一致。
 
 **智能体运行时架构要点**（`workspace.runtime` 包）：`AdminAgentInstanceFactory` 按 `ai_agent` 任意一行
@@ -802,7 +802,7 @@ evict 后重建）、`VibeCodingServiceTest`（能力校验/流式对话委托/w
 - **对话历史持久化（重启不丢）**：`AdminAgentRuntimeConfig` 的 `AgentStateStore` Bean 从
   `InMemoryAgentStateStore` 换成 `MysqlAgentStateStore`（4 参构造函数显式传库名/表名，
   `createIfNotExist=false`），新表 `ai_chat_session_state`（`V4__chat_session_state.sql`，Flyway 迁移
-  脚本，DDL 与 `mysql/admin-schema.sql` DBA 预审版本保持一致）。库名从 `admin.mysql.database-name`
+  脚本，DDL 与 `mysql/02-customer-admin/` 下 DBA 预审版本保持一致）。库名从 `admin.mysql.database-name`
   配置项读取（`ADMIN_MYSQL_DATABASE` 环境变量覆盖）而不是硬编码字面量——联调时发现的真实 bug：早期
   版本把库名写死成 `"customer_admin"`，一旦 `ADMIN_MYSQL_URL` 指向别的库名（比如联调环境用了
   `customer_admin_verify`）就会在启动时报"表不存在"，现在跟数据源配置同源，不会再脱节。已用独立脚本
@@ -993,8 +993,9 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 ├── customer-admin-web/                          # 【智能体客服后台管理系统·前端】Vue3+TS+Vite SPA，非 Maven 子模块，见 §6.21；含坐席工单工作台，见 §6.22
 ├── customer-user-mobile/                        # 【用户端 H5】Vue3+Vite+Vant4，端口 5175，非 Maven 子模块；登录/聊天/我的工单，vite proxy /api /ws → 8080，见 §6.22
 │
-├── mysql/schema.sql                            # MySQL 会话表建库脚本（客服主业务库）
-├── mysql/admin-schema.sql                      # customer-admin-server 建库脚本（独立库，物理隔离）
+├── mysql/01-agent-scope-customer-work/         # 客服主业务库建库脚本（customer-work-schema.sql）
+├── mysql/02-customer-admin/                    # customer-admin-server 建库脚本（V1~V20 有序副本，独立库）
+├── mysql/03-xxl-job/                           # XXL-JOB 调度中心库（可选）
 ├── Dockerfile / docker-compose.yml             # 多模块构建 + 一键起依赖
 └── .github/workflows/ci.yml                    # CI（Redis/MySQL/Nacos 服务容器）
 ```

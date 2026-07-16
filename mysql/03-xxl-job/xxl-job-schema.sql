@@ -11,7 +11,7 @@
 --      不影响本项目实际使用，登录调度中心后台可自行删除，不删也没有副作用（不会被自动触发）。
 --   4. 默认管理员账号：admin / 123456（xxl_job_user 表种子数据），首次登录后请在调度中心后台改密。
 --
--- 执行：mysql -h127.0.0.1 -uroot -proot < mysql/xxl-job-schema.sql
+-- 执行：mysql -h127.0.0.1 -uroot -proot --default-character-set=utf8mb4 < mysql/03-xxl-job/xxl-job-schema.sql
 -- =============================================================================
 
 #

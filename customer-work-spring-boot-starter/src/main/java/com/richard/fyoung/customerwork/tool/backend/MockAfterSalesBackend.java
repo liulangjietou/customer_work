@@ -7,7 +7,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 
 /**
- * 售后后端的默认演示实现。保留资金安全红线：退款只生成待人工确认工单，不直接打款。
+ * 售后后端的默认演示实现与单元测试。保留资金安全红线：退款只生成待人工确认工单，不直接打款。
  * @author owlzhangfq@gmail.com
  */
 public class MockAfterSalesBackend implements AfterSalesBackend {

@@ -13,7 +13,7 @@ import javax.sql.DataSource;
  *
  * <p>启动时按 {@code session.mysql.auto-create} 开关执行 {@value #SCHEMA_LOCATION}——集中了工单/审批/
  * 槽位/对话阶段/人机切换/反馈/审计/用户/聊天日志九域，以及订单/商品/售后/会员/投诉/知识库六个工具后端演示表的
- * {@code CREATE TABLE IF NOT EXISTS} 与 {@code INSERT IGNORE} 种子，内容与 {@code mysql/schema.sql}（DBA 手册）一致。</p>
+ * {@code CREATE TABLE IF NOT EXISTS} 与 {@code INSERT IGNORE} 种子，内容与 {@code mysql/01-agent-scope-customer-work/customer-work-schema.sql}（DBA 手册）一致。</p>
  *
  * <p>仅在 {@link CustomerWorkPersistenceConfig} 激活（任一域 jdbc）时装配；建表失败只 error 记录不阻断启动
  * （与旧 ensureTable 语义一致：MySQL 冷启动瞬时不可达时后续读写各自重试）。</p>

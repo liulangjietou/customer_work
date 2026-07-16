@@ -54,7 +54,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   已套用 8 次：Approval/SlotFilling/DialogStage/Handoff/Feedback/Ticket/UserAccount/ChatLog），别发明新模式。
   持久层规范：贫血 DO(entity/)+BaseMapper(mapper/)+复杂 SQL 进 resources/customerwork/mapper/*.xml，
   代码里禁止手写 SQL；独立 customerWorkDataSource/SqlSessionFactory（CustomerWorkPersistenceConfig），
-  不污染宿主 MyBatis 环境；建表种子统一走 SchemaInitializer（customer-work-schema.sql，与 mysql/schema.sql 同步）。
+  不污染宿主 MyBatis 环境；建表种子统一走 SchemaInitializer（customer-work-schema.sql，与 mysql/01-agent-scope-customer-work/ 同步）。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。

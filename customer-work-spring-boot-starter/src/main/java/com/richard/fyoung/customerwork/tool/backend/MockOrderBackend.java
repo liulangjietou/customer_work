@@ -8,7 +8,7 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * 订单后端的默认演示实现（内存 Mock）。由 {@code ToolBackendConfig} 以
+ * 订单后端的默认演示实现（内存 Mock）与单元测试。由 {@code ToolBackendConfig} 以
  * {@code @ConditionalOnMissingBean} 注册为默认 Bean；生产提供自定义 {@link OrderBackend} Bean 即可覆盖。
  * @author owlzhangfq@gmail.com
  */

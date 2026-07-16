@@ -10,7 +10,7 @@
 --   3. 连接信息（默认）：host=localhost:3306, user=root, password=root,
 --      database=agent_scope_customer_work。
 --
--- 执行：mysql -h localhost -u root -proot < mysql/schema.sql
+-- 执行：mysql -h localhost -u root -proot --default-character-set=utf8mb4 < mysql/01-agent-scope-customer-work/customer-work-schema.sql
 -- =============================================================================
 
 
