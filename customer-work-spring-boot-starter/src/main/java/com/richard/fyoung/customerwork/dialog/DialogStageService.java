@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
  * 也可沿主链路 {@link #advance(String)} 顺序推进。未知会话默认 {@code GREETING}。</p>
  *
  * <p>存储委托给 {@link DialogStageStore} SPI：默认 {@link InMemoryDialogStageStore}（进程内），
- * 生产多实例部署可声明 {@link JdbcDialogStageStore} 或自定义实现（如 Redis），保证阶段状态
+ * 生产多实例部署可声明 {@link MybatisDialogStageStore} 或自定义实现（如 Redis），保证阶段状态
  * 跨实例共享，避免请求被负载均衡到不同实例时"阶段归零"回 {@code GREETING}。</p>
  * @author owlzhangfq@gmail.com
  */

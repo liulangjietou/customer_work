@@ -8,7 +8,7 @@ import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 投诉工单后端的默认演示实现（内存工单库）。生产替换为真实工单/客诉系统。
+ * 投诉工单后端的默认演示实现与单元测试（内存工单库）。生产替换为真实工单/客诉系统。
  * @author owlzhangfq@gmail.com
  */
 public class MockComplaintBackend implements ComplaintBackend {

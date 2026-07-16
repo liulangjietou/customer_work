@@ -1,20 +1,20 @@
 package com.richard.fyoung.customerwork.feedback;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.zaxxer.hikari.HikariDataSource;
+import com.richard.fyoung.customerwork.feedback.mapper.FeedbackMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import javax.sql.DataSource;
 
 /**
  * 用户反馈存储配置。
  *
  * <p>按 {@code feedback.store-mode} 选择实现：默认 {@code memory}（进程内，离线可测）；
- * {@code jdbc} 落地为 {@link JdbcFeedbackStore}，复用 {@code session.mysql.*} 的连接配置。
+ * {@code jdbc} 落地为 {@link MybatisFeedbackStore}（MyBatis-Plus，复用 {@code CustomerWorkPersistenceConfig}
+ * 的独立持久化环境）。{@link FeedbackMapper} 用 {@link ObjectProvider} 惰性获取，仅 jdbc 分支取用。
  * 下游声明自己的 {@link FeedbackStore} Bean 即可整体覆盖（如 Redis 实现）。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -27,24 +27,13 @@ public class FeedbackConfig {
 
     @Bean
     @ConditionalOnMissingBean(FeedbackStore.class)
-    public FeedbackStore feedbackStore(CustomerWorkProperties properties) {
+    public FeedbackStore feedbackStore(CustomerWorkProperties properties, ObjectProvider<FeedbackMapper> mapperProvider) {
         String mode = properties.getFeedback().getStoreMode();
         if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
-            log.info("feedback store: jdbc (mysql, table=cw_message_feedback)");
-            return new JdbcFeedbackStore(buildDataSource(properties.getSession().getMysql()));
+            log.info("feedback store: jdbc (MyBatis-Plus 实现, table=cw_message_feedback)");
+            return new MybatisFeedbackStore(mapperProvider.getObject());
         }
         log.info("feedback store: memory (进程内，重启不保留，生产建议 store-mode=jdbc)");
         return new InMemoryFeedbackStore();
-    }
-
-    /** 复用 session.mysql.* 连接配置构建独立连接池（惰性：首次取连接时才建立）。 */
-    DataSource buildDataSource(CustomerWorkProperties.Session.Mysql m) {
-        HikariDataSource ds = new HikariDataSource();
-        ds.setJdbcUrl(m.resolveJdbcUrl());
-        ds.setUsername(m.getUsername());
-        ds.setPassword(m.getPassword());
-        ds.setMaximumPoolSize(5);
-        ds.setPoolName("cw-feedback-pool");
-        return ds;
     }
 }

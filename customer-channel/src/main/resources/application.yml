@@ -1,0 +1,107 @@
+server:
+  port: 8081   # 与 customer-work-app 的对话 API (8080) 分开
+
+spring:
+  application:
+    name: customer-channel
+  main:
+    # 类路径同时存在 webflux(starter) 与 web(admin)；admin 是 Spring MVC，强制 servlet
+    web-application-type: servlet
+  autoconfigure:
+    # 关闭 starter 的 WebFlux 自动装配（WebFilter / 响应式 OpenApi 等），仅复用其 web 无关的 Agent 能力类
+    exclude:
+      - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
+      # starter 引入 MyBatis-Plus 后 spring-jdbc 进入类路径，未配 spring.datasource 时
+      # DataSourceAutoConfiguration 会启动失败；本模块不用 Spring 自动数据源，显式关闭
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+
+# AgentScope Admin 控制台 + Chat Completions Web（OpenAI 兼容对话 API）
+agentscope:
+  admin:
+    enabled: true
+    base-path: /admin
+    # 写操作保护令牌：调用 compact/abort/drain 等写端点需带 X-Admin-Token（留空=不校验，生产务必设置）
+    write-token: ""
+    compact-keep-last-messages: 10
+  chat-completions:
+    # 开启后暴露 POST /v1/chat/completions（OpenAI 兼容，同步 + SSE 流式），绑定客服 ReActAgent
+    enabled: true
+  agui:
+    # AG-UI 标准事件协议端点 POST /agui/run（SSE 类型化事件）。
+    # AguiAgentAutoRegistration 按 Spring bean 名注册 Agent，故默认 agent 取 bean 名 customerServiceAgent；
+    # 也可显式路由 POST /agui/run/{agentId}。
+    default-agent-id: customerServiceAgent
+    emit-tool-call-args: true
+    enable-reasoning: true
+
+# 复用 customer-work 的客服 Agent 配置（仅取所需子集）
+customer-work:
+  model:
+    provider: dashscope
+    name: qwen3.7-plus
+    # 生产用环境变量 DASHSCOPE_API_KEY 注入；缺省启动会报错并提示
+    api-key: ${DASHSCOPE_API_KEY:}
+    stream: true
+  session:
+    mode: memory          # 控制台默认进程内；生产可切 redis/mysql
+  agent:
+    max-iters: 10
+  interrupt:
+    pending-tool-recovery-enabled: true
+  # 权限系统：控制台演示开启 ask 规则（退款/转人工需人工确认）
+  harness:
+    permission:
+      enabled: true
+      mode: default
+  # Studio 观测台：把 agent 运行轨迹推送到外部 AgentScope Studio 应用做可视化调试/回放。
+  # 默认关闭；启用需先单独运行一个 Studio 实例并把 url 指向它（连接失败不影响应用启动）。
+  observability:
+    studio:
+      enabled: false
+      url: ""                       # 例如 ws://localhost:8501 （以你的 Studio 实例为准）
+      project: customer-channel
+      run-name: customer-channel-run
+
+# Channel 接入：把客服 Agent 接到 IM 平台。当前支持钉钉（Stream 模式，无需公网回调）。
+customer-channel:
+  channel:
+    dingtalk:
+      enabled: false               # 启用需在钉钉开放平台建机器人应用并配齐下面凭证
+      app-key: ${DINGTALK_APP_KEY:}
+      app-secret: ${DINGTALK_APP_SECRET:}
+      robot-code: ${DINGTALK_ROBOT_CODE:}
+    feishu:
+      # 飞书 inbound：飞书事件订阅指向公网 https://<host>/api/channels/feishu/{channel-id}/callback
+      enabled: false
+      channel-id: feishu
+      app-id: ${FEISHU_APP_ID:}
+      app-secret: ${FEISHU_APP_SECRET:}
+      encrypt-key: ${FEISHU_ENCRYPT_KEY:}            # 加密回调才需要，否则留空
+      verification-token: ${FEISHU_VERIFICATION_TOKEN:}
+      # 飞书 outbound（给我推送消息）：自定义机器人 webhook。POST /push/feishu?text=... 触发推送。
+      webhook-url: ${FEISHU_WEBHOOK_URL:}            # 机器人 webhook 地址（env 注入，勿硬编码入库）
+      webhook-keyword: ${FEISHU_WEBHOOK_KEYWORD:}    # 机器人若配了关键词安全校验，填该关键词
+    wecom:
+      # 企业微信 inbound：自建应用接收消息回调指向公网 https://<host>/api/channels/wecom/{channel-id}/callback
+      enabled: false
+      channel-id: wecom
+      corp-id: ${WECOM_CORP_ID:}
+      agent-id: ${WECOM_AGENT_ID:0}
+      secret: ${WECOM_SECRET:}
+      token: ${WECOM_TOKEN:}
+      encoding-aes-key: ${WECOM_ENCODING_AES_KEY:}
+
+# Actuator：暴露 agentscope 管理端点（控制台内部应用，全部暴露；生产请按需收敛 + 加鉴权）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.richard.fyoung: info
+    io.agentscope: info

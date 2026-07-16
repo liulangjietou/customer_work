@@ -27,6 +27,25 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- 用户登录态 JWT（HS256，UserJwtService 在本模块）：api 编译期可见，impl/jackson 仅运行期实现 -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.12.6</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Swagger / OpenAPI（OpenApiConfig 在本模块） -->
         <dependency>
             <groupId>org.springdoc</groupId>
@@ -58,6 +77,30 @@
         <dependency>
             <groupId>redis.clients</groupId>
             <artifactId>jedis</artifactId>
+        </dependency>
+
+        <!-- 业务持久层 ORM：MyBatis-Plus（版本对齐 customer-admin-server 的 3.5.7）。
+             刻意用 mybatis-plus（extension 聚合，非 mybatis-plus-spring-boot3-starter），不触发官方
+             MybatisPlusAutoConfiguration/DataSourceAutoConfiguration——本 starter 全部显式命名装配
+             （CustomerWorkPersistenceConfig 独立 DataSource/SqlSessionFactory/SqlSessionTemplate + @MapperScan Ref 绑定），
+             对 WebFlux 宿主与下游自有 MyBatis 环境零干扰。spring-jdbc 由其传递引入（SqlSessionTemplate 事务基础），
+             此处显式声明以示意图；DataSourceAutoConfiguration 由宿主 spring.autoconfigure.exclude 关闭。 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+        <!-- mybatis-plus 里的 mybatis-spring 是 optional(2.1.2, Spring5)，不传递；Boot 3(Spring 6) 需显式引入
+             mybatis-spring 3.0.x（与官方 mybatis-plus-spring-boot3-starter 3.5.7 对齐用 3.0.3），
+             提供 SqlSessionTemplate / @MapperScan / MapperScannerConfigurer 等 jakarta 版实现。 -->
+        <dependency>
+            <groupId>org.mybatis</groupId>
+            <artifactId>mybatis-spring</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
         </dependency>
 
         <!-- 长期记忆 Mem0/ReMe 客户端依赖 -->
@@ -176,6 +219,14 @@
         <dependency>
             <groupId>io.agentscope</groupId>
             <artifactId>agentscope-extensions-nacos-prompt</artifactId>
+        </dependency>
+
+        <!-- 仅取密码哈希工具（BCryptPasswordEncoder，用户账户密码加密），不引入
+             spring-boot-starter-security 的自动装配（会拦截 WebFlux 端点）；版本随
+             spring-boot-starter-parent 统一管理，与 customer-admin-server 保持一致。 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
         <!-- Lombok -->

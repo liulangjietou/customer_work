@@ -37,7 +37,7 @@ public class SessionDiagnostic {
     private List<ApprovalRequest> approvals = new ArrayList<>();
     /** 审计查询后端是否可用（false 表示未接入可查询的审计实现，如仅 LoggingAuditSink）。 */
     private boolean auditAvailable;
-    /** 最近的审计事件（时间倒序，需接入 JdbcAuditSink 等可查询实现）。 */
+    /** 最近的审计事件（时间倒序，需接入 MybatisAuditSink 等可查询实现）。 */
     private List<AuditRecord> recentAudit = new ArrayList<>();
     /** 该会话相关的质检失败事实（数据飞轮 L3，JSONL 原文）。 */
     private List<String> qualityFacts = new ArrayList<>();

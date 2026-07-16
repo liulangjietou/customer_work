@@ -42,7 +42,7 @@ public class DiagnosticService {
     private final PendingApprovalService approvalService;
     private final FactLog factLog;
     private final TenantResolver tenantResolver;
-    /** 可选：仅当接入了可查询的审计实现（JdbcAuditSink）时存在。 */
+    /** 可选：仅当接入了可查询的审计实现（MybatisAuditSink）时存在。 */
     private final ObjectProvider<AuditQuery> auditQueryProvider;
 
     public DiagnosticService(SessionStateManager sessionStateManager,

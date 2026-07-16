@@ -1,5 +1,5 @@
 server:
-  port: 8082   # 与 customer-work-app(8080)、customer-web(8081) 分开
+  port: 8082   # 与 customer-work-app(8080)、customer-channel(8081) 分开
 
 spring:
   application:
@@ -14,7 +14,7 @@ spring:
       max-request-size: 6MB
   autoconfigure:
     # 关闭 starter 的 WebFlux 自动装配（WebFilter / 响应式 OpenApi 等），仅复用其 web 无关的 Agent 能力类
-    # （与 customer-web 同一手法：不依赖 starter 的自动装配 Bean，需要的能力在本模块的 Config 类里显式 new）
+    # （与 customer-channel 同一手法：不依赖 starter 的自动装配 Bean，需要的能力在本模块的 Config 类里显式 new）
     exclude:
       - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
   datasource:
@@ -97,6 +97,19 @@ admin:
     appname: ${ADMIN_XXL_JOB_APPNAME:customer-admin-executor}
     port: ${ADMIN_XXL_JOB_PORT:9998}
     access-token: ${ADMIN_XXL_JOB_ACCESS_TOKEN:}
+  customer-work:
+    # 客服工单坐席服务（customer-work-app，8080）接入：admin-server 作为人工客服后台，通过 HTTP
+    # 代理调 8080 的坐席 API，并给 admin-web 前端签发坐席 WS 接入凭证（客服浏览器凭凭证直连 8080）。
+    base-url: ${CW_BASE_URL:http://localhost:8080}
+    # 坐席 WebSocket 接入地址（客服浏览器直连）。
+    ws-url: ${CW_WS_URL:ws://localhost:8080/ws/agent}
+    # 坐席令牌签名密钥：必须与 8080 侧共享同一 env（CW_AGENT_WS_SECRET），否则签发的令牌 8080 校验不过。
+    agent-secret: ${CW_AGENT_WS_SECRET:dev-agent-secret-change-me-0001}
+    # WS 接入凭证有效期（小时）：签发给前端的长有效期凭证。
+    credential-expire-hours: ${CW_CREDENTIAL_EXPIRE_HOURS:12}
+    # 调用 8080 的连接/读取超时（毫秒），防止 8080 卡死拖垮 admin-server 线程。
+    connect-timeout-ms: ${CW_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${CW_READ_TIMEOUT_MS:30000}
   sql-config:
     # SQL 配置管理执行防护：目标多为生产库，超时与最大行数硬性兜底，防止慢 SQL/大结果集拖垮外部库。
     query-timeout-seconds: ${ADMIN_SQL_QUERY_TIMEOUT_SECONDS:30}

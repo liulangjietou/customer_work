@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.RefundMapper">
+
+    <!-- 某订单指定类型的最近一笔工单状态（对应旧 JdbcAfterSalesBackend.doQueryRefundProgress 的 ORDER BY ... LIMIT 1） -->
+    <select id="queryLatestRefundStatus" resultType="java.lang.String">
+        SELECT status
+        FROM cw_refund
+        WHERE order_id = #{orderId} AND type = #{type}
+        ORDER BY created_at_ms DESC
+        LIMIT 1
+    </select>
+</mapper>

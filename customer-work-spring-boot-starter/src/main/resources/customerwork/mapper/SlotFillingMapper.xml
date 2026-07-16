@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.slotfilling.mapper.SlotFillingMapper">
+
+    <!-- 收集进度 upsert：progress_key 冲突时覆盖 asking 与 collected_json（对应旧 JdbcSlotFillingStore.UPSERT_SQL） -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.slotfilling.entity.SlotFillingProgressDO">
+        INSERT INTO cw_slot_filling_progress (progress_key, asking, collected_json)
+        VALUES (#{progressKey}, #{asking}, #{collectedJson})
+        ON DUPLICATE KEY UPDATE
+            asking = VALUES(asking),
+            collected_json = VALUES(collected_json)
+    </insert>
+</mapper>

@@ -6,7 +6,6 @@
 [![AgentScope](https://img.shields.io/badge/AgentScope-2.0.0%20GA-green.svg)](https://github.com/agentscope-ai/agentscope-java)
 
 > 🚀 **新人从这里开始**：[docs/新人必读.md](docs/新人必读.md)（15 分钟跑起来 + 看懂结构 + 知道改哪里）
-> English version: [README_EN.md](README_EN.md)
 > 详细技术文档（原理 / 架构图 / 时序图 / UML 类图 / 扩展点）：[docs/详细技术文档.md](docs/详细技术文档.md)
 
 > 🆕 **AgentScope 2.0.0 GA**：本仓库 `main` 分支已全量迁移到
@@ -17,12 +16,12 @@
 > GA 相对 RC4 的具体改动（内置模型实现拆分为独立扩展模块等）见 **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**「RC4 → GA」一节。
 > 迁移映射、API 变更与**不可迁移能力说明**见
 > **[docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md)**；2.0 版深度技术文档见 **[docs/详细技术文档.md](docs/详细技术文档.md)**。
-> 配套前端为 `customer-web` 模块，把客服 Agent 同时接到**五套官方能力**：**admin** 管理控制台、
+> 配套前端为 `customer-channel` 模块，把客服 Agent 同时接到**五套官方能力**：**admin** 管理控制台、
 > **chat-completions-web**（OpenAI 兼容 `/v1/chat/completions` + 内置聊天页）、**AG-UI**（`/agui/run` 富事件协议）、
 > **Studio** 观测台、**Channel·钉钉/飞书/企业微信**（IM 平台接入：钉钉 Stream 模式、飞书/企业微信 应用回调 +
-> 飞书 webhook 推送），见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。
+> 飞书 webhook 推送），见 **[docs/customer-channel操作文档.md](docs/customer-channel操作文档.md)**。
 
-本项目是配套文章《AgentScope Java 生产实践深度解析》中那张客服业务流程图的**生产级代码实现**，
+本项目把一张典型的客服业务流程图落成**生产级代码实现**——从接入治理、意图路由、工具执行到人机切换工单全链路，
 `main` 基于 `io.agentscope:agentscope-harness:2.0.0`（GA 正式版），默认对接**阿里云百炼（DashScope / 通义千问）**。
 
 > 开源说明：本项目以**可改造为你自己的业务 Agent** 为目标——业务工具走 `tool.backend.*` 接口，
@@ -30,7 +29,7 @@
 > [§6.9 把它改成你自己的业务 Agent](#69-工具集成--把它改成你自己的业务-agent)。
 
 - 包名：`com.richard.fyoung.customerwork`
-- 单元测试：`main`（AgentScope 2.0.0 GA）分支 **511 个全绿**（starter 362 + app 13 + downstream 1 + customer-web 8 + 后台管理系统 `customer-admin-server` 127，见 §6.21；其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；升级前 1.0.12 版本的最后状态存档于 `legacy-main-1.0.12` 标签（176 个全绿）
+- 单元测试：`main`（AgentScope 2.0.0 GA）分支 **873 个全绿**（starter 497 + app 56 + customer-channel 8 + 后台管理系统 `customer-admin-server` 312，见 §6.21、§6.22；其中 starter 若干集成测试按外部服务可用性自动跳过：百炼 / Redis / MySQL / Nacos）；升级前 1.0.12 版本的最后状态存档于 `legacy-main-1.0.12` 标签（176 个全绿）
 - 设计原则：**每个能力都是「配置开关 + 可替换实现」**——内置进程内实现保证开箱即用与可单测，生产可一行配置切到云端 / 私有化后端，业务代码零改动。
 
 ---
@@ -116,7 +115,13 @@
 | 接入层安全（鉴权/**滑动窗口限流**） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter`（fixed/sliding-window 双算法） | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
 | **入站防注入围栏** | `PromptInjectionGuardMiddleware` | 关 | `hooks.prompt-guard.enabled`（命中注入/越狱模式硬拦截，不调用模型，指标 `customerwork.prompt.guard.blocked`） |
 | **用户反馈闭环（消息级点赞/点踩）** | `FeedbackService` + `FeedbackController` | 开 | `POST /api/customer/feedback`（DOWN 自动落 `FactLog` 供数据飞轮复盘） |
-| **配套前端模块 `customer-web`** | admin / chat-completions / AG-UI / Studio / Channel(钉钉·飞书·企业微信) | 关 | 见 [docs/customer-web操作文档.md](docs/customer-web操作文档.md) |
+| **配套前端模块 `customer-channel`**（多渠道接入演示模块，非主链路必需） | admin / chat-completions / AG-UI / Studio / Channel(钉钉·飞书·企业微信) | 关 | 见 [docs/customer-channel操作文档.md](docs/customer-channel操作文档.md) |
+| **用户工单系统（7 态状态机）** | `Ticket`（充血实体）+ `TicketService` + `TicketStore` SPI + `TicketSlaScheduler` | 开 | `customer-work.ticket.store-mode=jdbc`（表 `cw_ticket`/`cw_ticket_event`），见 §6.22 |
+| **终端用户认证（JWT）** | `UserAccountService`(BCrypt) + `UserJwtService`(HS256) + `UserAuthWebFilter` | 开 | `customer-work.user-auth.store-mode=jdbc`（表 `cw_user`，env `CW_USER_JWT_SECRET`） |
+| **聊天消息落库（双维度游标分页）** | `ChatLogService` + `ChatMessageStore` SPI | 开 | `customer-work.chat-log.store-mode=jdbc`（表 `cw_chat_message`，按会话/工单 `beforeId+limit` 分页） |
+| **用户/坐席 WebSocket 双通道** | `UserChatWebSocketHandler` / `AgentChatWebSocketHandler` + `ChatDispatchService` | 开 | `/ws/user?token=<JWT>`、`/ws/agent?token=<HMAC凭证>`；AI 流式 / 坐席转发 / 关键词转人工 |
+| **坐席 HMAC 接入凭证** | `AgentAccessCredential`（HmacSHA256）+ `AgentAuthWebFilter` | 开 | REST 头 `X-Agent-Token` / WS query `token`，env `CW_AGENT_WS_SECRET`（8080+8082 共享） |
+| **真实业务后端（订单/商品/售后/会员/投诉/知识库）** | `MybatisOrderBackend` / `MybatisProductBackend` / `MybatisAfterSalesBackend` / `MybatisMemberBackend` / `MybatisComplaintBackend` / `MybatisKnowledgeBackend` | 关 | `customer-work.tool-backend.mode=jdbc`（8 张 `cw_*` 表含种子，MyBatis-Plus 实现），六域后端整体替换内存 Mock |
 
 ### ⚠️ 不可迁移 / 沿用说明（1.x→2.0 备注）
 
@@ -169,6 +174,15 @@
 | GET | `/api/customer/feedback/{messageId}` | 查询单条消息反馈 |
 | GET | `/api/customer/feedback?sessionId=` | 查询某会话全部反馈 |
 | DELETE | `/api/customer/session/{id}` | 结束并清理会话 |
+| POST | `/api/customer/auth/register` `/auth/login` | 终端用户注册 / 登录（返回 JWT） |
+| GET | `/api/customer/auth/me` | 当前用户信息（`Authorization: Bearer <JWT>`） |
+| POST | `/api/customer/user/sessions` | 开会话，返回 `{sessionId,ticketId}`（JWT 鉴权） |
+| GET | `/api/customer/user/tickets` `/tickets/{id}` | 我的工单分页 / 详情（含事件） |
+| GET | `/api/customer/user/sessions/{sid}/messages` | 会话消息历史（`beforeId`+`limit` 游标） |
+| POST | `/api/customer/user/tickets/{id}/handoff\|confirm\|reject\|reopen\|close` | 用户侧工单流转（越权 403、非法流转 409） |
+| GET/POST/PUT | `/api/customer/agent/tickets/**` | 坐席端工单池筛选 / 接单 / 回复 / 挂起 / 转派 / 解决 / 关单（`X-Agent-Token` 鉴权） |
+| GET/POST | `/api/customer/agent/orders` `/orders/{orderId}` `/orders/{orderId}/modify-address` `/orders/{orderId}/cancel` | 坐席订单分页查询 / 详情 / 改址 / 取消（`X-Agent-Token` 鉴权，仅未发货可取消，非法状态 409） |
+| WS | `/ws/user?token=<JWT>` · `/ws/agent?token=<HMAC>` | 用户 / 坐席 WebSocket 实时通道 |
 | GET | `/api/customer/health` | 健康检查 |
 | GET | `/actuator/health` `/metrics` `/prometheus` | 运维端点 |
 | GET | `/swagger-ui.html` | Swagger UI 交互式 API 文档 |
@@ -555,7 +569,7 @@ customer-work.model:
   > （早于 2026-07-10 GA 发布）。本项目生产环境仍使用自研 `FallbackChatModel`，原因是要保留退避重试
   > （`ResilientChatModel`）与兜底叠加的装饰器组合能力，而非规避该缺陷；详见 [docs/生产就绪评估.md](docs/生产就绪评估.md)。
 - 测试：`ResilientChatModelTest`。
-- 效果评估 / 回归：见 [docs/EVAL.md](docs/EVAL.md)（提示词版本化 + 评测集 + 数据飞轮）。
+- 效果评估 / 回归：AI 输出非确定，单测只保"工程正确性"；提示词 / 模型变更后应回归意图评测（`IntentEvalRunner` + classpath 评测集 `eval/intent-eval-cases.json`，见 §6.11）与真实链路抽检，避免效果劣化。
 
 ### 6.14 接入层安全（API Key 鉴权 + 限流）
 
@@ -634,13 +648,15 @@ customer-work:
 - **Plan Mode / Sandbox / Subagent / Compaction / 分层记忆**：见 [docs/MIGRATION-2.0.md §7](docs/MIGRATION-2.0.md)、[docs/详细技术文档.md §14](docs/详细技术文档.md)。
 - 测试：`PermissionConfigTest`、`HarnessAgentFactoryTest`、`ContextMemoryFactoryTest`、`middleware/*Test`。
 
-### 6.19 配套前端模块 `customer-web`（admin / chat / AG-UI / Studio / Channel）
+### 6.19 配套前端模块 `customer-channel`（admin / chat / AG-UI / Studio / Channel）
+
+> 多渠道接入演示模块（官方五套前端能力接入），非主链路必需。
 
 独立 Spring MVC 模块，把客服 Agent 同时接到五套官方能力（复用同一个 `customerServiceAgent` Bean）：
 
 ```bash
 export DASHSCOPE_API_KEY=sk-xxxx
-java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
+java -jar customer-channel/target/customer-channel-1.0.0.jar     # 端口 8081
 ```
 | 入口 | 能力 |
 |---|---|
@@ -651,28 +667,29 @@ java -jar customer-web/target/customer-web-1.0.0.jar     # 端口 8081
 | `observability.studio.*` | **Studio**：运行轨迹推送到外部 Studio 观测台 |
 | `POST /api/channels/{feishu,wecom}/{id}/callback`、`POST /push/feishu` | **Channel**：钉钉(Stream) / 飞书 / 企业微信（收发消息 + 主动推送） |
 
-详见 **[docs/customer-web操作文档.md](docs/customer-web操作文档.md)**。
+详见 **[docs/customer-channel操作文档.md](docs/customer-channel操作文档.md)**。
 
 ### 6.20 生产就绪评估与生产配置基线
 
 实际执行部署按 **[docs/部署手册.md](docs/部署手册.md)** 操作——基础设施准备、建表、环境变量清单、
 operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案与部署前最终核对单，按顺序可勾选执行。
 接入方对接接口按 **[docs/生产接口使用手册.md](docs/生产接口使用手册.md)**——鉴权/限流/sessionId 约定、
-全部 27 个端点的请求响应示例、退款闭环双路径流程、人机切换工单闭环 + SLA 升级引擎、业务数据分析聚合、入站防注入围栏、用户反馈闭环、审批状态机字段语义、SSE 客户端处理规则与故障排查表。
+全部端点的请求响应示例、退款闭环双路径流程、人机切换工单闭环 + SLA 升级引擎、业务数据分析聚合、入站防注入围栏、用户反馈闭环、审批状态机字段语义、用户工单系统（认证/用户端/坐席端/WebSocket）、SSE 客户端处理规则与故障排查表。
 上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4 时点）120 个 open issues
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / **多实例部署注意事项** /
 仍受框架限制需等待修复的项 / 版本升级策略）。
 对应的生产配置参考见 **[application-prod.yml](customer-work-app/src/main/resources/application-prod.yml)**
-（主应用）与 **[customer-web/application-prod.yml](customer-web/src/main/resources/application-prod.yml)**
+（主应用）与 **[customer-channel/application-prod.yml](customer-channel/src/main/resources/application-prod.yml)**
 （管理控制台，收敛 admin 暴露面），`SPRING_PROFILES_ACTIVE=prod` 激活，逐项配置均在注释中注明所对应缓解的 issue 编号。
-两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-web` 各一份）离线校验，
+两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-channel` 各一份）离线校验，
 不激活 profile 真实启动（prod 依赖真实 Redis/MySQL/DashScope 凭据，无这些外部依赖时无法真实连接）。
 
 ### 6.21 智能体客服后台管理系统 `customer-admin-server` + `customer-admin-web`
 
 后端是独立的 Spring MVC 后台管理系统:面向系统管理员/运营人员统一管理用户权限(RBAC)、AI 模型、MCP、
 Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按需求文档锁定:**MyBatis-Plus + Sa-Token**
-(与仓库其余模块的手写 JDBC Store SPI 模式并存、互不冲突,原因见模块内 Javadoc)。前端
+(与 `customer-work-spring-boot-starter` 业务持久层各自独立的 MyBatis-Plus 环境并存、互不冲突,原因见
+`CustomerWorkPersistenceConfig` Javadoc)。前端
 **[customer-admin-web](customer-admin-web)** 是独立的 Vue 3 + TypeScript + Vite SPA(非 Maven 子模块,
 与仓库根目录平级),用 Element Plus 做中后台 UI、Pinia 做状态管理、原生 `fetch` + `ReadableStream`
 手写 SSE 解析(POST + 自定义 Authorization 头,原生 `EventSource` 做不到)。
@@ -690,7 +707,7 @@ Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按
 export ADMIN_MYSQL_PASSWORD=root ADMIN_AES_SECRET_KEY=<32字节密钥>
 java -jar customer-admin-server/target/customer-admin-server-1.0.0.jar --spring.profiles.active=dev
 
-# 前端：端口 5173（默认），开发期把 /api 代理到后端 8082，见 customer-admin-web/vite.config.ts
+# 前端：端口 5174（vite.config.ts 固定），开发期把 /api 代理到后端 8082，见 customer-admin-web/vite.config.ts
 cd customer-admin-web && npm install && npm run dev
 ```
 
@@ -709,9 +726,10 @@ cd customer-admin-web && npm install && npm run dev
 | `POST /api/workspace/{agentCode}/chat/stream` | 智能体在线聊天（SSE，权限点复用 `workspace`，停用智能体报 `AGENT_DISABLED`） |
 | `POST /api/workspace/{agentCode}/vibecoding/stream` | VibeCoding 对话（SSE，仅 `capabilities` 含 `vibecoding` 的智能体可用） |
 | `GET /api/workspace/{agentCode}/vibecoding/artifacts?sessionId=` | VibeCoding 产物清单（对话前后对比 workspace 目录快照，降级版方案，无实时 `file_change` 事件） |
+| `/api/ticket/orders/**` | 用户订单管理（代理 8080 坐席订单 API：分页/详情/改址/取消，权限点 `user-order:view`/`user-order:edit`），见 §6.22 |
 | `/swagger-ui/index.html` | 接口文档 |
 
-生产建表由 DBA 参照 **[mysql/admin-schema.sql](mysql/admin-schema.sql)** 手工执行（与 `mysql/schema.sql`
+生产建表由 DBA 参照 **[mysql/02-customer-admin/](mysql/02-customer-admin/)**（V1~V20 有序副本）手工执行（与 `mysql/01-agent-scope-customer-work/customer-work-schema.sql`
 客服主业务库物理隔离，独立数据库 `customer_admin`），与仓库既有"生产不自动建表"约定一致。
 
 **智能体运行时架构要点**（`workspace.runtime` 包）：`AdminAgentInstanceFactory` 按 `ai_agent` 任意一行
@@ -784,7 +802,7 @@ evict 后重建）、`VibeCodingServiceTest`（能力校验/流式对话委托/w
 - **对话历史持久化（重启不丢）**：`AdminAgentRuntimeConfig` 的 `AgentStateStore` Bean 从
   `InMemoryAgentStateStore` 换成 `MysqlAgentStateStore`（4 参构造函数显式传库名/表名，
   `createIfNotExist=false`），新表 `ai_chat_session_state`（`V4__chat_session_state.sql`，Flyway 迁移
-  脚本，DDL 与 `mysql/admin-schema.sql` DBA 预审版本保持一致）。库名从 `admin.mysql.database-name`
+  脚本，DDL 与 `mysql/02-customer-admin/` 下 DBA 预审版本保持一致）。库名从 `admin.mysql.database-name`
   配置项读取（`ADMIN_MYSQL_DATABASE` 环境变量覆盖）而不是硬编码字面量——联调时发现的真实 bug：早期
   版本把库名写死成 `"customer_admin"`，一旦 `ADMIN_MYSQL_URL` 指向别的库名（比如联调环境用了
   `customer_admin_verify`）就会在启动时报"表不存在"，现在跟数据源配置同源，不会再脱节。已用独立脚本
@@ -821,6 +839,60 @@ Key 前缀 `admin:chat:sessions:{agentCode}` / `admin:chat:messages:{agentCode}:
 `localhost:6379` 无密码）。新增 `ChatHistoryCacheTest`（6：命中/未命中/写入回填/失效/Redis 不可达两种
 场景不抛异常）。
 
+### 6.22 用户工单系统（终端用户端 ↔ AI ↔ 人工坐席全链路）
+
+在既有"AI 客服 + 人机切换"能力之上，补齐了**面向真实终端用户的完整工单闭环**：用户注册登录后开会话与
+AI 对话，命中转人工或按状态机流转给人工坐席处理，全程消息实时双向推送并落库。链路横跨四个部署单元：
+
+```
+customer-user-mobile(5175 H5)  ─┐
+customer-admin-web(5174 坐席台) ─┼─ HTTP + WebSocket ─→ customer-work-app(8080, WebFlux)
+customer-admin-server(8082 代理)─┘                         └─ 数据全部落库 agent_scope_customer_work
+```
+
+- **用户端链路**：`customer-user-mobile`（Vue3+Vant4 H5，端口 5175）或任意前端 → 8080 的
+  `POST /api/customer/auth/register|login`（`UserJwtService` 签发 HS256 JWT）→ `POST /api/customer/user/sessions`
+  开会话拿到 `{sessionId, ticketId}`（sessionId 格式 `u<userId>:conv-<uuid>`，复用租户隔离机制）→ 连
+  `/ws/user?token=<JWT>` 收发消息。`ChatDispatchService` 按工单状态路由：`AI_SERVING` 走
+  `CustomerServiceService.chatStream` 流式桥接 WS（`chat_chunk`/`chat_done`）；命中关键词
+  （`customer-work.ticket.handoff-keywords`）直接转人工不进 LLM；`PROCESSING`/`ON_HOLD` 转发给受理坐席。
+- **坐席端链路**：`customer-admin-web`（5174）的"用户工单"菜单 → `customer-admin-server`（8082）的
+  `/api/ticket/**`（Sa-Token 权限 `user-ticket:view/claim/reply/...`）用 `RestClient` 现签 `X-Agent-Token`
+  代理到 8080 坐席 API；聊天面板经 `GET /api/ticket/ws-credential` 领取 HMAC 凭证后浏览器**直连**
+  8080 的 `/ws/agent?token=<凭证>` 收发。
+- **7 态工单状态机**（`Ticket` 充血实体）：`AI_SERVING`→`WAITING_AGENT`→`PROCESSING`⇄`ON_HOLD`→
+  `WAITING_CONFIRM`→`RESOLVED`→`CLOSED`，支持 `cancelHandoff` 回 AI、`transferToPool`/`transferToAgent`
+  转派、`reject` 驳回退回 `PROCESSING`、`reopen` 重开（`RESOLVED|CLOSED`→`WAITING_AGENT`，计数）。
+  `MybatisTicketStore` 的 `claim` 用条件 `UPDATE ... WHERE status='WAITING_AGENT'` 乐观锁防并发抢单；
+  `TicketSlaScheduler` 对 `WAITING_AGENT`/`PROCESSING` 超时仅告警，对 `WAITING_CONFIRM` 超时自动 confirm、
+  `RESOLVED` 超时自动 close。
+- **坐席订单管理**：坐席可在 `customer-admin-web`「用户订单」页查询/改址/取消用户订单（8082 代理 8080
+  `OrderDirectoryService`，仅未发货订单可取消，见 §6.21 与 §3 接口速查）。
+- **鉴权体系**：用户 JWT（env `CW_USER_JWT_SECRET`）/ 坐席 HMAC 凭证（`AgentAccessCredential`，env
+  `CW_AGENT_WS_SECRET`，8080 与 8082 共享）；开发有默认值、**生产必须覆盖**。
+- **与旧 handoff 域共存**：`HumanHandoffTools.transferToHuman` 打通真实 `sessionId` 后**双写** ticket 域
+  与旧 handoff 域（§6.11），旧域继续服务"AI 工具触发的转人工工单"，新 ticket 域服务"真实用户会话工单"。
+
+```yaml
+# customer-work-app application.yml 相关开关（默认已切 jdbc/mysql，启动自动建表）
+customer-work:
+  session: { mode: mysql }
+  ticket:      { store-mode: jdbc, handoff-keywords: [转人工, 人工客服, 人工服务, 真人客服, 找人工] }
+  user-auth:   { store-mode: jdbc, jwt-secret: ${CW_USER_JWT_SECRET:...}, jwt-expire-hours: 168 }
+  chat-log:    { store-mode: jdbc }
+  agent-access: { secret: ${CW_AGENT_WS_SECRET:...}, expire-hours: 12 }
+  tool-backend: { mode: jdbc }   # 启用订单/商品/售后/会员/投诉/知识库六域 Jdbc 后端真实库
+```
+
+- 完整状态机 / 数据模型（6 张表）/ WS 帧协议 / 消息分发时序 / 并发可靠性 → **[docs/详细技术文档.md](docs/详细技术文档.md)**「用户工单系统」章节。
+- 全部接口（用户认证 / 用户端工单 / 坐席端工单 / admin 代理 / WebSocket）请求响应示例 → **[docs/生产接口使用手册.md](docs/生产接口使用手册.md)**。
+- 测试：starter 侧 `TicketTest` / `TicketServiceTest` / `TicketSlaSchedulerTest` / `MybatisTicketStoreTest` /
+  `MybatisUserAccountStoreTest` / `ChatLogServiceTest` / `MybatisChatMessageStoreTest` / `AgentAccessCredentialTest` /
+  `Mybatis{Order,Product}BackendTest`；app 侧 `UserAuthControllerTest` / `UserTicketControllerTest` /
+  `AgentTicketControllerTest` / `AgentOrderControllerTest` / `UserOrderControllerTest` / `ChatDispatchServiceTest` /
+  `HandoffKeywordDetectorTest` / `UserJwtServiceTest` / `WsSessionRegistryTest`；admin 侧
+  `CustomerWorkTicketClientTest` / `UserTicketServiceTest` / `UserOrderServiceTest`。
+
 ---
 
 ## 七、配置项总表
@@ -850,17 +922,22 @@ Key 前缀 `admin:chat:sessions:{agentCode}` / `admin:chat:messages:{agentCode}:
 | `protocol` | agui.{enabled(true),enable-reasoning(true),emit-tool-call-args(true)}, tts.enabled(false) |
 | `stream` | idle-timeout-seconds(120)（SSE 流空闲超时；`<=0` 禁用，缓解框架 #1741 长连接泄漏） |
 | `hooks.tool-guard` | enabled(false), inject-params, numeric-caps, destructive-patterns(rm -rf / .agentscope/workspace / del /[fs] / format，命中改写为 `[BLOCKED_BY_TOOL_GUARD]`，缓解框架 #1898/#1896） |
+| `ticket` | store-mode(memory), handoff-keywords([转人工,人工客服,人工服务,真人客服,找人工]), sla-enabled(true), sla-waiting-seconds(300), sla-processing-seconds(1800), auto-confirm-seconds(86400), auto-close-seconds(259200) |
+| `user-auth` | store-mode(memory), jwt-secret(${CW_USER_JWT_SECRET}), jwt-expire-hours(168) |
+| `chat-log` | store-mode(memory) |
+| `agent-access` | secret(${CW_AGENT_WS_SECRET}), expire-hours(12) |
+| `tool-backend` | mode(mock)：mock=starter 内存 Mock \| jdbc=订单/商品/售后/会员/投诉/知识库六域 MyBatis-Plus 后端（8 张 `cw_*` 表） |
 
 ---
 
 ## 八、测试说明
 
 ```bash
-mvn test                                   # 全 reactor 全部单测（当前 511 个：starter 362 + app 13 + downstream 1 + customer-web 8 + customer-admin-server 127），离线即可全绿
+mvn test                                   # 全 reactor 全部单测（当前 873 个：starter 497 + app 56 + customer-channel 8 + customer-admin-server 312），离线即可全绿
 mvn test -Dtest=ModelConfigTest            # 单类
 ```
 
-- **离线单测**用 Mockito 隔离模型/框架、`StepVerifier` 校验响应式链路、`WebTestClient` 驱动 Web 层、`@SpringBootTest` 冒烟全 Bean 装配——不调真实大模型。
+- **离线单测**用 Mockito 隔离模型/框架、`StepVerifier` 校验响应式链路、`WebTestClient` 驱动 Web 层、`@SpringBootTest` 冒烟全 Bean 装配——不调真实大模型；用户工单系统的工单状态机/鉴权/WebSocket 帧协议/消息分发均有离线单测覆盖（见 §6.22）。
 - **条件集成测试**（服务可达才跑，不可达自动 `assumeTrue` / `@EnabledIfEnvironmentVariable` 跳过，保证任何环境 `mvn test` 都绿）：
   - `RedisSessionPersistenceTest`：本机 Redis(6379, 密码 123456) 存-取-删往返
   - `MysqlSessionPersistenceTest` 及各 `Jdbc*StoreTest`：本机 MySQL(3306, root/root, 库 agent_scope_customer_work)
@@ -874,7 +951,7 @@ mvn test -Dtest=ModelConfigTest            # 单类
 ## 九、代码结构（多模块）
 
 ```
-customer_work/                                  # 父 pom（packaging=pom，聚合两模块）
+customer_work/                                  # 父 pom（packaging=pom，聚合 4 个 Maven 模块；另有 2 个前端非 Maven 子模块）
 ├── customer-work-spring-boot-starter/          # 【可复用 starter】无 main，作为依赖被引入
 │   └── src/main/
 │       ├── java/com/richard/fyoung/customerwork/
@@ -912,16 +989,13 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   └── controller/                      # CustomerServiceController / GlobalExceptionHandler
 │       └── resources/  application.yml / application-prod.yml / logback-spring.xml / skills/
 │
-├── customer-work-downstream-app/             # 【下游接入应用】完全不同包名 com.acme.support
-│   └── src/                                     #   仅依赖 starter；SupportApplication + AcmeOrderBackend(覆盖默认)
-│                                                #   + SupportController(复用 CustomerServiceService)
-│                                                #   契约测试 DownstreamIntegrationTest 证明"零扫描自动装配 + 覆盖默认"
+├── customer-admin-server/                       # 【智能体客服后台管理系统·后端】独立 Spring MVC 应用，见 §6.21；含用户工单代理模块，见 §6.22
+├── customer-admin-web/                          # 【智能体客服后台管理系统·前端】Vue3+TS+Vite SPA，非 Maven 子模块，见 §6.21；含坐席工单工作台，见 §6.22
+├── customer-user-mobile/                        # 【用户端 H5】Vue3+Vite+Vant4，端口 5175，非 Maven 子模块；登录/聊天/我的工单，vite proxy /api /ws → 8080，见 §6.22
 │
-├── customer-admin-server/                       # 【智能体客服后台管理系统·后端】独立 Spring MVC 应用，见 §6.21
-├── customer-admin-web/                          # 【智能体客服后台管理系统·前端】Vue3+TS+Vite SPA，非 Maven 子模块，见 §6.21
-│
-├── mysql/schema.sql                            # MySQL 会话表建库脚本（客服主业务库）
-├── mysql/admin-schema.sql                      # customer-admin-server 建库脚本（独立库，物理隔离）
+├── mysql/01-agent-scope-customer-work/         # 客服主业务库建库脚本（customer-work-schema.sql）
+├── mysql/02-customer-admin/                    # customer-admin-server 建库脚本（V1~V20 有序副本，独立库）
+├── mysql/03-xxl-job/                           # XXL-JOB 调度中心库（可选）
 ├── Dockerfile / docker-compose.yml             # 多模块构建 + 一键起依赖
 └── .github/workflows/ci.yml                    # CI（Redis/MySQL/Nacos 服务容器）
 ```
@@ -949,8 +1023,8 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 */ }
 ```
 
-> 完整可运行范例见模块 **`customer-work-downstream-app`**（包名 `com.acme.support`，仅依赖 starter）；
-> 其 `DownstreamIntegrationTest` 在 CI 持续校验"零扫描自动装配 + 自定义后端覆盖默认"的接入契约。
+> 只需引入 starter 依赖 + 提供自己的 `*Backend` Bean（任意包名，无需 `@ComponentScan`）即可完成接入，
+> starter 侧的自动装配契约由其自身单元测试覆盖。
 
 ---
 
@@ -967,7 +1041,6 @@ public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 *
 | **Training 数据飞轮** | RM Gallery + Trinity-RFT 平台 | 奖励函数评估 + 强化学习闭环 | ❌ Python 平台，仅能 HTTP 集成，需平台地址 | 待平台 |
 | **Anthropic / Gemini 模型** | 各自厂商 SDK（`com.anthropic` / `com.google.genai`） | `model.provider=anthropic/gemini`，代码已就绪，补依赖即可 | ✅ 装配可 mock 离线测；真实联调需网络 + Key | 极小（已就绪） |
 | **RAGFlow / Haystack 知识库** | 对应 client 依赖 | 同 Dify 模式扩展 `KnowledgeProvider` | ✅ REST 调用，可用 MockWebServer 离线测 | 小～中 |
-| **Harness 长任务脚手架** | AgentScope 1.1+ | 升级框架后接入分层记忆 + 子 Agent 声明 | ❌ 当前 1.0.12 无对应 API | 待框架升级 |
 
 > 说明：A2A 所需的新版 nacos-client（含 AI API）与 `io.a2a` SDK 在当前受限网络环境无法检索/确定可用版本，因此未强行引入。提供确切 Maven 坐标后即可补齐 A2A 注册发现 + 集成测试。
 
@@ -975,7 +1048,7 @@ public class MyOrderBackend implements OrderBackend { /* 调你的订单系统 *
 
 ## 十一、重要说明
 
-- 基于官方稳定版坐标 `io.agentscope:agentscope:1.0.12`；框架高速迭代，升级遇 API 不匹配请对照该版本源码微调。
+- 基于官方 GA 坐标 `io.agentscope:agentscope-harness:2.0.0`（版本由 `agentscope-bom` 统一管理）；框架高速迭代，升级遇 API 不匹配请对照该版本源码微调。
 - API Key 支持配置项与环境变量两种来源；**生产请用环境变量注入**，勿把生产密钥留在仓库。
 - 工具均为异步 `Mono`，业务链路无 `.block()`；持久化落盘放在 `boundedElastic` 调度，不阻塞响应式线程。
 - 所有外部后端（百炼/Redis/MySQL/Nacos/Mem0/ReMe/Dify/Higress/MCP/Studio/TTS）均为**配置开关**，默认实现保证离线开箱即用与单测全绿。

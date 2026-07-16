@@ -4,6 +4,71 @@
 
 ## [Unreleased]
 
+### 持久层 MyBatis-Plus 化 + 通用能力下沉 + 坐席订单管理（2026-07-15，分支 `feature/user-ticket-system`）
+
+- **业务持久层全面 MyBatis-Plus 化，废除裸 JDBC 手写 SQL**：starter 15 个业务持久化类（Approval/
+  SlotFilling/DialogStage/Handoff/Feedback/AuditSink/Ticket/TicketEvent/ChatMessage/User/Order/Product/
+  AfterSales/Member/Complaint/Knowledge）统一改为贫血 DO（`entity/`）+ `BaseMapper`（`mapper/`）+ 复杂 SQL
+  写在 `resources/customerwork/mapper/*.xml`，`Jdbc*Store`/`Jdbc*Backend` 全部更名为 `Mybatis*Store`/
+  `Mybatis*Backend`（如 `JdbcTicketStore`→`MybatisTicketStore`、`JdbcOrderBackend`→`MybatisOrderBackend`）。
+  新增 `CustomerWorkPersistenceConfig`：独立 `customerWorkDataSource`/`customerWorkSqlSessionFactory`/
+  `customerWorkSqlSessionTemplate` + `@MapperScan(sqlSessionTemplateRef=...)` 精确绑定，不引入
+  `mybatis-plus-spring-boot3-starter` 自动装配，对宿主 MyBatis 环境零污染；`PersistenceJdbcCondition`
+  按任一业务域 `store-mode=jdbc`/`tool-backend.mode=jdbc` 时才装配。建表与种子从此前散落在 15 个类里的
+  `ensureTable`/`seed` 收敛为统一的 `SchemaInitializer`（执行 `customerwork/schema/customer-work-schema.sql`，
+  与 `mysql/schema.sql` 内容一致）。`store-mode=jdbc` 对外配置语义不变（仍是"落库"），仅内部实现从裸 JDBC
+  换成 MyBatis-Plus。
+- **通用能力下沉 starter**：原 app 模块的用户 JWT 认证全套（`UserPrincipal`/`UserJwtService`/
+  `UserAuthWebFilter`/`AgentAuthWebFilter` 等，含 `jjwt` 依赖）与 WebSocket 基建（`WsFrame`/
+  `WsSessionRegistry`）下沉到 `com.richard.fyoung.customerwork.security`/`.ws` 包；新增通用分页
+  `common.PageResult<T>{total,items}`。app 只保留 `WebSocketHandler` 实现、装配与业务编排。
+- **坐席订单管理**：8080 新增 `AgentOrderController`（`/api/customer/agent/orders`，`X-Agent-Token` 鉴权）：
+  分页查询（`userId`/`username`/`orderId`/`status` 过滤，JOIN `cw_user` 回填用户名）、详情（含物流轨迹）、
+  改址、取消（仅"待支付/已支付/待发货"未发货阶段可取消，否则 409）；`tool-backend.mode!=jdbc` 时整组 503。
+  `customer-admin-server` 新增 `/api/ticket/orders/**` 代理（权限点 `user-order:view`/`user-order:edit`）+
+  `V20__user_orders_menu.sql`（客服工单分组下新增"用户订单"菜单 id=139、按钮 140/141）；
+  `customer-admin-web` 新增用户订单管理页 `views/ticket/UserOrderManage.vue`。
+- **customer-user-mobile 登录记住密码**：`Login.vue` 勾选"记住用户名和密码"后，凭据 Base64 编码
+  （仅本地便捷用途混淆，非加密）存 `localStorage`，下次打开自动回填。
+- **测试基线**：811 → **873** 全绿（starter 497 + app 56 + customer-channel 8 + admin-server 312）。
+
+### 用户工单系统（2026-07-15，分支 `feature/user-ticket-system`）
+
+面向真实终端用户的完整工单闭环：用户注册登录 → 与 AI 对话 → 关键词/状态机流转人工坐席 → 消息实时双向推送并落库。
+
+- **starter 三新域 + 业务后端 + 坐席凭证**（`com.richard.fyoung.customerwork`）：
+  - **ticket 域**：7 态工单状态机充血实体 `Ticket`（`AI_SERVING`→`WAITING_AGENT`→`PROCESSING`⇄`ON_HOLD`→
+    `WAITING_CONFIRM`→`RESOLVED`→`CLOSED`，支持 cancelHandoff / transferToPool / transferToAgent / reject /
+    reopen（计数）/ 优先级 LOW·NORMAL·HIGH·URGENT / 分类 CONSULT·ORDER·AFTER_SALE·COMPLAINT·OTHER）；
+    `TicketStore` SPI + InMemory/Jdbc（`cw_ticket`/`cw_ticket_event`，`claim` 用条件 UPDATE 乐观锁防抢单并发）；
+    `TicketService`（`TicketEventListener` 事件广播）；`TicketSlaScheduler`（WAITING_AGENT/PROCESSING 超时仅告警，
+    WAITING_CONFIRM 超时自动 confirm、RESOLVED 超时自动 close）。
+  - **user 域**：`UserAccount` + `UserAccountService`（BCrypt 注册/登录校验），表 `cw_user`。
+  - **chatlog 域**：`ChatMessage` 一行一条落库（`cw_chat_message`），按会话/工单双维度游标分页（`beforeId`+`limit`）。
+  - **业务后端 jdbc 化**：`JdbcOrderBackend`/`JdbcProductBackend` 真实库（`cw_order`/`cw_product` 含种子数据）替换 Mock。
+  - **坐席接入凭证**：`AgentAccessCredential`（HmacSHA256，格式 `agentId:expiresAtMs:签名`，共享密钥 env `CW_AGENT_WS_SECRET`）；
+    `HumanHandoffTools.transferToHuman` 打通真实 `sessionId`，双写 ticket 域 + 旧 handoff 域。
+- **customer-work-app（8080，WebFlux）**：
+  - REST：`/api/customer/auth`（register/login/me，JWT HS256，env `CW_USER_JWT_SECRET`，默认 7 天）；
+    `/api/customer/user/**`（用户端会话/工单/消息/流转，JWT 鉴权，越权 403、非法流转 409）；
+    `/api/customer/agent/**`（坐席端筛选/接单/回复/挂起/转派/解决/关单，`X-Agent-Token` HMAC 鉴权，抢单冲突 409）。
+  - WebSocket：`/ws/user?token=<JWT>`、`/ws/agent?token=<HMAC凭证>`（握手失败 POLICY_VIOLATION 关闭、同身份顶号）；
+    统一 `{type,data}` 帧协议（chat / chat_chunk / chat_done / ticket_event / ticket_new / system / error / ping·pong）。
+  - `ChatDispatchService`：关键词命中直接转人工不进 LLM；按工单状态路由 AI 流式 / 坐席转发 / 系统提示；离线只落库、上线补历史。
+  - `application.yml`：session.mode=mysql、ticket/user-auth/chat-log store-mode=jdbc、tool-backend.mode=jdbc，六张表启动自动建（库 `agent_scope_customer_work`）。
+- **customer-admin-server（8082）**：ticket 模块 `RestClient` 现签 `X-Agent-Token` 代理 8080 坐席 API
+  （`/api/ticket/**`，Sa-Token 权限 `user-ticket:view/claim/reply/transfer/resolve/close/edit` + `@OperationLog` + `Result<T>`）；
+  `GET /api/ticket/ws-credential` 签发坐席 WS 凭证（浏览器直连 8080）；配置 `admin.customer-work.*`；
+  `V19__user_tickets_menu.sql`（客服工单分组 + 用户工单菜单 + 7 按钮权限，id 130~138），同步 `mysql/admin-schema.sql`。
+- **customer-admin-web（5174）**：`views/ticket/UserTicketManage.vue`（筛选/认领/`ticket_new` 实时提醒）+
+  `TicketChatPanel.vue` 聊天抽屉（历史 + WS 直连 8080 + 状态操作按权限显隐）+ `utils/ws.ts` 通用 `WsClient`。
+- **customer-user-mobile（5175，全新非 Maven 模块）**：Vue3+Vite+Vant4 用户端 H5，页面
+  `/login` `/register` `/chat`（WS 流式打字机 + 转人工 + 待确认卡片）`/tickets` `/tickets/:id`（事件时间线 + 确认/驳回/重开/关单）；
+  vite proxy `/api`、`/ws`→8080。
+- **测试基线**：511 → **811** 全绿（starter 438 + app 58 + downstream 1 + customer-web 8 + admin-server 306）；
+  已知例外 `RedisSessionPersistenceTest` 为本机环境问题。
+- **新增环境变量**：`CW_USER_JWT_SECRET`（8080 用户 JWT）、`CW_AGENT_WS_SECRET`（8080+8082 共享坐席凭证密钥），开发有默认值、生产必须覆盖。
+
 ### AgentScope Java 2.0.0-RC4 → 2.0.0 GA 升级（新建 `ga2.0` 分支，`rc2.0` 冻结为历史存档）
 
 - **背景**：AgentScope Java 2.0.0 GA 于 2026-07-10 发布（经 5 个 RC 迭代）。新建 `ga2.0` 分支承接升级，

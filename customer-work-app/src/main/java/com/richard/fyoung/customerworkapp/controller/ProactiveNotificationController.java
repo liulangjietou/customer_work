@@ -12,7 +12,7 @@ import reactor.core.publisher.Mono;
 /**
  * 主动服务端点：订单状态主动通知 / 满意度回访（由订单事件、定时任务或运营后台触发）。
  *
- * <p>推送复用 {@code NotificationChannel}（customer-web 默认绑定飞书 webhook；未配置则降级日志）。</p>
+ * <p>推送复用 {@code NotificationChannel}（customer-channel 默认绑定飞书 webhook；未配置则降级日志）。</p>
  * @author owlzhangfq@gmail.com
  */
 @RestController

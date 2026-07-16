@@ -44,6 +44,11 @@ public enum ResultCode {
     GIT_ASSISTANT_AI_FAILED(40007, "AI 生成失败，请稍后重试"),
     SQL_DATASOURCE_UNAVAILABLE(40008, "SQL 数据源不可用"),
     SQL_QUERY_EXECUTE_FAILED(40009, "SQL 查询执行失败"),
+    TICKET_STATE_CONFLICT(40010, "工单状态已变化或已被其他坐席处理，请刷新后重试"),
+    CUSTOMER_WORK_AUTH_FAILED(40011, "客服坐席服务鉴权失败"),
+    CUSTOMER_WORK_UNAVAILABLE(40012, "客服坐席服务暂不可用，请稍后重试"),
+    ORDER_NOT_FOUND(40013, "订单不存在"),
+    ORDER_STATE_CONFLICT(40014, "订单当前状态不允许该操作"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

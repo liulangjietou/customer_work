@@ -21,8 +21,7 @@
     <modules>
         <module>customer-work-spring-boot-starter</module>
         <module>customer-work-app</module>
-        <module>customer-work-downstream-app</module>
-        <module>customer-web</module>
+        <module>customer-channel</module>
         <module>customer-admin-server</module>
     </modules>
 

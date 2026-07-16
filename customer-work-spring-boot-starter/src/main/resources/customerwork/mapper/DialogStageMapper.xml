@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.dialog.mapper.DialogStageMapper">
+
+    <!-- 对话阶段 upsert：session_id 冲突时覆盖 stage（对应旧 JdbcDialogStageStore.UPSERT_SQL） -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.dialog.entity.DialogStageDO">
+        INSERT INTO cw_dialog_stage (session_id, stage)
+        VALUES (#{sessionId}, #{stage})
+        ON DUPLICATE KEY UPDATE
+            stage = VALUES(stage)
+    </insert>
+</mapper>

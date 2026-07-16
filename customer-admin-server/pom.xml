@@ -35,7 +35,7 @@
             <artifactId>commons-lang3</artifactId>
             <version>3.18.0</version>
         </dependency>
-        <!-- Spring MVC（非 WebFlux）：与 customer-web 同一手法接入 starter -->
+        <!-- Spring MVC（非 WebFlux）：与 customer-channel 同一手法接入 starter -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

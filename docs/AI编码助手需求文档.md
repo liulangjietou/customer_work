@@ -48,8 +48,8 @@
 
 ## 2. 已交付能力基线（v1.x，main@`1ed6d77`）
 
-新需求一律在此基线上叠加，不重复建设。实现细节与踩坑记录见
-`docs/VibeCoding-Git助手与代码沙箱-开发总结.md`，此处只列对后续需求有约束力的事实。
+新需求一律在此基线上叠加，不重复建设。此处只列对后续需求有约束力的事实
+（实现细节现场读 `customer-admin-server` 的 `workspace/vibecoding` 包源码）。
 
 | 能力 | 实现要点 | 与 v1.0 需求稿的差异 |
 |---|---|---|
@@ -93,7 +93,7 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 | **P3-2** | 代码知识库问答 | 基于 RAG 的代码语义检索 | 需 starter 侧真实 Embedding RAG 先行（现为关键词版） | 周级 | Top-3 命中率 ≥ 70%，回答带出处 |
 
 **P3 两项的前置依赖说明**：多 Agent 协作依赖 SubAgent/Pipeline 编排、知识库问答依赖真实 Embedding 向量检索，
-这两块是 `customer-work-spring-boot-starter` 的既定演进方向（见 `进度说明.txt` 缺口清单）。在 starter 能力
+这两块是 `customer-work-spring-boot-starter` 的既定演进方向。在 starter 能力
 就绪前，admin-server 侧不启动这两项，避免在业务模块里重复造框架轮子。
 
 ---
@@ -622,9 +622,7 @@ admin:
 
 ### 10.3 参考文档
 
-- `docs/VibeCoding-Git助手与代码沙箱-开发总结.md` —— 一期/二期实现细节与踩坑记录
 - AgentScope Java 官方文档 https://java.agentscope.io （Harness / Sandbox / Plan Mode / Subagent）
-- `进度说明.txt` —— starter 侧框架能力缺口与演进优先级（P3 前置依赖的依据）
 
 ---
 

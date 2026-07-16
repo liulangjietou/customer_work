@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.handoff.HandoffService;
 import com.richard.fyoung.customerwork.handoff.HandoffTicket;
+import com.richard.fyoung.customerwork.ticket.TicketActorType;
+import com.richard.fyoung.customerwork.ticket.TicketService;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
@@ -18,32 +20,43 @@ import reactor.core.publisher.Mono;
  *   <li>多轮仍无法解决。</li>
  * </ul>
  *
- * <p>注入 {@link HandoffService} 后，转人工会登记为可查询、可流转的 {@link HandoffTicket}
- * （PENDING 待接单 → 坐席 claim 接单 → resolve 处理完毕回收给 AI），供坐席经
- * {@code /api/customer/handoffs} 端点接单处理——取代此前"只打日志 + 生成随机字符串"的空实现。
- * 未注入时退化为仅生成话术文案，保持纯工具可用。</p>
+ * <p>注入协作方后，转人工形成双写闭环：</p>
+ * <ul>
+ *   <li>{@link TicketService}（有真实 {@code sessionId} 时）：把当前会话的活跃工单推进到
+ *       {@code WAITING_AGENT} 排队接单——工单域承载完整生命周期状态机；</li>
+ *   <li>{@link HandoffService}：登记一张 {@link HandoffTicket}（PENDING）供坐席工作台接单处理。</li>
+ * </ul>
  *
- * <p><b>已知限制</b>：框架当前的工具调用未打通 RuntimeContext 注入，本类拿不到真实
- * {@code sessionId}（与 {@code AfterSalesTools} 的 {@code submitRefund} 同一限制），
- * 沿用同一占位值 {@link #TOOL_SESSION}——工单因此无法精确关联到发起会话，
- * 若需要精确会话关联，需先在框架/Toolkit 层打通会话上下文注入（更大范围的改动，不在本次范围）。</p>
+ * <p>工单域驱动为尽力而为：其失败只 error 日志、不阻断话术返回（转人工的首要目标是给用户一个明确答复）。
+ * 未注入任何协作方时退化为仅生成话术文案，保持纯工具可用。</p>
  * @author owlzhangfq@gmail.com
  */
 public class HumanHandoffTools {
 
     private static final Logger log = LoggerFactory.getLogger(HumanHandoffTools.class);
 
+    /** 无真实会话上下文时的占位会话（沿用历史语义，保证纯工具可用）。 */
     private static final String TOOL_SESSION = "agent-tool";
 
-    /** 可空：未注入时不登记工单，保持纯工具可用。 */
+    /** 可空：未注入时不登记 handoff 工单，保持纯工具可用。 */
     private final HandoffService handoffService;
+    /** 可空：未注入 / 无真实会话时不驱动工单域。 */
+    private final TicketService ticketService;
+    /** 可空：真实会话标识（有则用于精确关联工单域并作为 handoff 会话号）。 */
+    private final String sessionId;
 
     public HumanHandoffTools() {
-        this(null);
+        this(null, null, null);
     }
 
     public HumanHandoffTools(HandoffService handoffService) {
+        this(handoffService, null, null);
+    }
+
+    public HumanHandoffTools(HandoffService handoffService, TicketService ticketService, String sessionId) {
         this.handoffService = handoffService;
+        this.ticketService = ticketService;
+        this.sessionId = sessionId;
     }
 
     @Tool(description = "将当前会话升级转接到人工坐席。当用户情绪激动、明确要求人工、或涉及高风险/大额资金/投诉升级时调用。")
@@ -51,17 +64,32 @@ public class HumanHandoffTools {
             @ToolParam(name = "reason", description = "转人工的原因，例如 '用户投诉升级' '涉及大额退款'")
             String reason) {
         return Mono.fromSupplier(() -> {
+                driveTicketDomain(reason);
                 if (handoffService == null) {
                     String fallbackId = "HO" + System.currentTimeMillis();
                     return replyText(fallbackId, reason);
                 }
-                HandoffTicket ticket = handoffService.create(TOOL_SESSION, reason);
+                String session = (sessionId != null && !sessionId.isBlank()) ? sessionId : TOOL_SESSION;
+                HandoffTicket ticket = handoffService.create(session, reason);
                 return replyText(ticket.getId(), reason);
             })
             .onErrorResume(e -> {
                 log.error("[HumanHandoffTools] transfer failed, code={}", "HANDOFF-CREATE-FAIL", e);
                 return Mono.just("人工坐席通道繁忙，已为您记录，将尽快回拨。");
             });
+    }
+
+    /** 尽力而为地把工单域活跃工单推进到 WAITING_AGENT；失败只 error 日志、不阻断话术返回。 */
+    private void driveTicketDomain(String reason) {
+        if (sessionId == null || sessionId.isBlank() || ticketService == null) {
+            return;
+        }
+        try {
+            ticketService.requestHandoff(sessionId, reason, TicketActorType.BOT, null);
+        } catch (Exception e) {
+            log.error("[HumanHandoffTools] ticket handoff drive failed, code={}, session={}",
+                "TICKET-HANDOFF-DRIVE-FAIL", sessionId, e);
+        }
     }
 
     private String replyText(String ticketId, String reason) {

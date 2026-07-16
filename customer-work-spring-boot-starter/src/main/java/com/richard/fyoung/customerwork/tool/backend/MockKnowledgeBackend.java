@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 知识库后端的默认演示实现（关键词命中）。生产可改为调用真实 FAQ / 向量库。
+ * 知识库后端的默认演示实现与单元测试（关键词命中）。生产可改为调用真实 FAQ / 向量库。
  * @author owlzhangfq@gmail.com
  */
 public class MockKnowledgeBackend implements KnowledgeBackend {

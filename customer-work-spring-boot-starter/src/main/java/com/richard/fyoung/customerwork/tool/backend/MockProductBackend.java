@@ -7,7 +7,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 
 /**
- * 商品/售前后端的默认演示实现。生产替换为真实商品中心 / 推荐 / 库存 / 营销系统。
+ * 商品/售前后端的默认演示实现与单元测试。生产替换为真实商品中心 / 推荐 / 库存 / 营销系统。
  * @author owlzhangfq@gmail.com
  */
 public class MockProductBackend implements ProductBackend {

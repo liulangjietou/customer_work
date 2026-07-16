@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.approval.mapper.ApprovalMapper">
+
+    <!-- 审批工单 upsert：新建或按主键 id 覆盖全部可变字段（对应旧 JdbcApprovalStore.UPSERT_SQL） -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.approval.entity.ApprovalRequestDO">
+        INSERT INTO cw_approval (id, type, session_id, order_id, amount, reason, created_at_ms,
+            status, operator, decision_note, decided_at_ms, execution_status, execution_failure_reason,
+            execution_attempts)
+        VALUES (#{id}, #{type}, #{sessionId}, #{orderId}, #{amount}, #{reason}, #{createdAtMs},
+            #{status}, #{operator}, #{decisionNote}, #{decidedAtMs}, #{executionStatus},
+            #{executionFailureReason}, #{executionAttempts})
+        ON DUPLICATE KEY UPDATE
+            status = VALUES(status),
+            operator = VALUES(operator),
+            decision_note = VALUES(decision_note),
+            decided_at_ms = VALUES(decided_at_ms),
+            execution_status = VALUES(execution_status),
+            execution_failure_reason = VALUES(execution_failure_reason),
+            execution_attempts = VALUES(execution_attempts)
+    </insert>
+</mapper>
