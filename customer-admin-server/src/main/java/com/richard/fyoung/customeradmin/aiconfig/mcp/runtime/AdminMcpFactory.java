@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.mcp.runtime;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallResult;
@@ -41,7 +42,13 @@ public class AdminMcpFactory {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /** 按 mcpType/config 构建一个尚未连接的 {@link McpClientBuilder}。支持 stdio / sse / http 三种传输。 */
+    /**
+     * 按 mcpType/config 构建一个尚未连接的 {@link McpClientBuilder}。支持 stdio / sse / http 三种传输。
+     *
+     * <p>http/sse 传输额外透传 config 里的 {@code headers} 对象（如 {@code Authorization}）——
+     * 需要鉴权的远程 MCP 服务（Bearer token 等）没有这层透传会在握手时被拒（401），
+     * 调试面板、连通性测试与真实注册路径共用本方法，一处透传三处生效。</p>
+     */
     public McpClientBuilder buildClientBuilder(String mcpName, String mcpType, String config) throws Exception {
         JsonNode node = unwrapMcpServers(objectMapper.readTree(config));
         McpClientBuilder builder = McpClientBuilder.create(mcpName);
@@ -52,10 +59,26 @@ public class AdminMcpFactory {
                 List<String> args = objectMapper.convertValue(node.path("args"), List.class);
                 builder.stdioTransport(command, (args == null ? List.<String>of() : args).toArray(new String[0]));
             }
-            case MCP_TYPE_HTTP -> builder.streamableHttpTransport(node.path("url").asText());
-            default -> builder.sseTransport(node.path("url").asText());
+            case MCP_TYPE_HTTP -> {
+                builder.streamableHttpTransport(node.path("url").asText());
+                applyHeaders(builder, node);
+            }
+            default -> {
+                builder.sseTransport(node.path("url").asText());
+                applyHeaders(builder, node);
+            }
         }
         return builder;
+    }
+
+    /** config 里配置了 headers 对象时透传给 HTTP 请求（值统一按字符串取，兼容用户误写数字/布尔）。 */
+    private void applyHeaders(McpClientBuilder builder, JsonNode node) {
+        JsonNode headersNode = node.path("headers");
+        if (!headersNode.isObject() || headersNode.isEmpty()) {
+            return;
+        }
+        Map<String, String> headers = objectMapper.convertValue(headersNode, new TypeReference<Map<String, String>>() {});
+        builder.headers(headers);
     }
 
     /** 调试面板手工操作，比连通性探测多给点耐心（选工具、填参数、点调用，人手速度比探测慢）。 */
