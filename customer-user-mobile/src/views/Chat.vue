@@ -1,15 +1,27 @@
 <script setup lang="ts">
+import type { AxiosError } from 'axios'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
-import { closeTicket, createSession, fetchMessages, fetchTicketDetail, confirmTicket, handoffTicket, rejectTicket } from '@/api/ticket'
+import {
+  closeTicket,
+  createSession,
+  fetchMessages,
+  fetchTicketDetail,
+  confirmTicket,
+  handoffTicket,
+  rejectTicket,
+  reopenTicket,
+} from '@/api/ticket'
 import { useAuthStore } from '@/store/auth'
 import { chatSocket } from '@/utils/ws'
-import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT } from '@/types/api'
+import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT, isTicketEnded } from '@/types/api'
 import type { ChatMessage, Ticket, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
-import AppTabbar from '@/components/AppTabbar.vue'
+
+const HTTP_CONFLICT = 409
 
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 
 const sessionId = ref('')
@@ -24,6 +36,12 @@ const initializing = ref(true)
 // 机器人流式回复：chat_chunk 增量拼接到这里做打字机效果，chat_done 定稿后清空并落入 messages
 const streamingContent = ref('')
 const streamingActive = computed(() => streamingContent.value.length > 0)
+/**
+ * chat_chunk/chat_done 帧本身不携带 sessionId/ticketId（后端 WsFrame.chatChunk/chatDone 只有
+ * content/messageId/ts），无法直接按帧内容与当前会话比对。这里记录"本页面最近一次发起流式请求所属的
+ * sessionId"作为本地归属标记：切换会话后 sessionId 变化，迟到的旧会话增量会因不匹配被丢弃。
+ */
+const streamingSessionId = ref<string | null>(null)
 
 const rejectVisible = ref(false)
 const rejectReason = ref('')
@@ -40,10 +58,13 @@ const canHandoff = computed(() => {
   return status === 'AI_SERVING' || status === 'ON_HOLD'
 })
 
+// 会话已结束（CLOSED/RESOLVED）：历史消息只读展示，输入区替换为"重新开始对话"
+const ended = computed(() => (ticket.value ? isTicketEnded(ticket.value.status) : false))
+
 // 顶栏会话管理 action-sheet
 const sessionMenuVisible = ref(false)
-// 有活跃工单才允许关闭当前会话（否则动作置灰）
-const canCloseSession = computed(() => !!ticketId.value)
+// 有活跃工单且未结束才允许关闭当前会话（否则动作置灰）
+const canCloseSession = computed(() => !!ticketId.value && !ended.value)
 const sessionActions = computed(() => [
   { name: '新建会话' },
   { name: '关闭当前会话', disabled: !canCloseSession.value, color: '#ee0a24' },
@@ -70,23 +91,54 @@ async function refreshTicket() {
   ticket.value = detail.ticket
 }
 
+function cacheSession(newSessionId: string, newTicketId: string) {
+  localStorage.setItem(sessionStorageKey.value, newSessionId)
+  localStorage.setItem(ticketStorageKey.value, newTicketId)
+}
+
+/** 切换会话前的公共收尾：清掉上一个会话遗留的流式增量状态，避免串到新会话的消息区里。 */
+function resetStreamingState() {
+  streamingContent.value = ''
+  streamingSessionId.value = null
+}
+
 async function openNewSession() {
   const result = await createSession()
+  resetStreamingState()
   sessionId.value = result.sessionId
   ticketId.value = result.ticketId
-  localStorage.setItem(sessionStorageKey.value, result.sessionId)
-  localStorage.setItem(ticketStorageKey.value, String(result.ticketId))
+  cacheSession(result.sessionId, result.ticketId)
   messages.value = []
   await refreshTicket()
 }
 
+/** 从消息列表点进某条会话：按 ticketId 精确加载，不依赖/不受本地缓存的"当前会话"影响。 */
+async function loadTicketFromRoute(id: string) {
+  const detail = await fetchTicketDetail(id)
+  resetStreamingState()
+  ticket.value = detail.ticket
+  ticketId.value = detail.ticket.id
+  sessionId.value = detail.ticket.sessionId
+  // 已结束的会话只是被查看，不应顶替本地缓存的"当前活跃会话"
+  if (!isTicketEnded(detail.ticket.status)) {
+    cacheSession(detail.ticket.sessionId, detail.ticket.id)
+  }
+  await loadHistory()
+}
+
 async function initSession() {
+  const queryTicketId = route.query.ticketId
+  if (typeof queryTicketId === 'string' && queryTicketId) {
+    await loadTicketFromRoute(queryTicketId)
+    return
+  }
+
   const cachedSessionId = localStorage.getItem(sessionStorageKey.value)
   const cachedTicketId = localStorage.getItem(ticketStorageKey.value)
   if (cachedSessionId && cachedTicketId) {
     try {
       const detail = await fetchTicketDetail(cachedTicketId)
-      if (detail.ticket.status !== 'CLOSED') {
+      if (!isTicketEnded(detail.ticket.status)) {
         sessionId.value = cachedSessionId
         ticketId.value = cachedTicketId
         ticket.value = detail.ticket
@@ -142,8 +194,16 @@ function onWsReconnecting() {
   wsReconnecting.value = true
 }
 
+/**
+ * WS 按用户维度广播：一个用户所有工单/会话的事件都走同一条连接，而 Chat 页可通过
+ * `/chat?ticketId=X` 查看任意历史会话，因此每个业务帧落地前必须先校验"是否属于当前正在查看的会话"，
+ * 不匹配的帧直接忽略——否则历史会话的消息/状态会污染当前页面（如已结束会话被误置为进行中）。
+ */
 function onWsChat(data: unknown) {
   const payload = data as WsChatMessage
+  if (payload.ticketId !== ticketId.value) {
+    return
+  }
   messages.value.push({
     id: Date.now(),
     messageId: payload.messageId,
@@ -159,12 +219,20 @@ function onWsChat(data: unknown) {
 
 function onWsChatChunk(data: unknown) {
   const payload = data as WsChatChunk
+  // chat_chunk 帧不带 sessionId/ticketId，改用本地记录的"发起流式请求时的会话"做归属匹配
+  if (streamingSessionId.value !== sessionId.value) {
+    return
+  }
   streamingContent.value += payload.content
   scrollToBottom()
 }
 
 function onWsChatDone(data: unknown) {
   const payload = data as WsChatDone
+  // 理由同 onWsChatChunk：chat_done 同样不带会话标识，按本地流式归属标记比对
+  if (streamingSessionId.value !== sessionId.value) {
+    return
+  }
   messages.value.push({
     id: Date.now(),
     messageId: payload.messageId,
@@ -176,18 +244,30 @@ function onWsChatDone(data: unknown) {
     createdAtMs: payload.ts,
   })
   streamingContent.value = ''
+  streamingSessionId.value = null
   scrollToBottom()
 }
 
 function onWsTicketEvent(data: unknown) {
   const payload = data as WsTicketEvent
+  if (payload.ticketId !== ticketId.value) {
+    return
+  }
+  const previousStatus = ticket.value?.status
   if (ticket.value && payload.toStatus) {
     ticket.value = { ...ticket.value, status: payload.toStatus }
   } else {
     refreshTicket()
   }
+  // 系统超时等原因自动关闭当前工单：输入区已随 ended 计算属性联动锁定，这里只需要提示用户
+  const justClosed = payload.toStatus === 'CLOSED' && previousStatus !== 'CLOSED'
+  if (justClosed) {
+    showToast('会话已结束')
+  }
 }
 
+// system 帧（转人工/排队等通知）同样不带 sessionId/ticketId（WsFrame.system 只有 content/ts），
+// 无法按会话过滤，属后端已知限制；当前仍归入当前查看会话展示，跨会话误标风险留待后端补充标识字段后再收紧。
 function onWsSystem(data: unknown) {
   const payload = data as WsSystemMessage
   messages.value.push({
@@ -223,6 +303,8 @@ function sendMessage() {
     content,
     createdAtMs: Date.now(),
   })
+  // 标记本次流式回复归属的会话，供 onWsChatChunk/onWsChatDone 比对，见 streamingSessionId 定义处注释
+  streamingSessionId.value = sessionId.value
   chatSocket.send({ type: 'chat', data: { sessionId: sessionId.value, content } })
   inputContent.value = ''
   scrollToBottom()
@@ -275,6 +357,35 @@ async function submitReject() {
   }
 }
 
+/**
+ * 已结束会话的"重新开始对话"：延续原工单上下文，恢复可聊状态。
+ * 用户已有另一张进行中会话时后端返回 409（reopenTicket 已设 silentError，跳过拦截器默认 toast），
+ * 这里识别状态码后用后端 message 提示，不做状态变更——避免绕过"用户级唯一活跃会话"不变式。
+ */
+async function onReopen() {
+  if (!ticketId.value) {
+    return
+  }
+  acting.value = true
+  try {
+    await reopenTicket(ticketId.value, '用户重新开始对话')
+    showToast('已重新开始对话')
+    cacheSession(sessionId.value, ticketId.value)
+    await refreshTicket()
+    await loadHistory()
+  } catch (error) {
+    // reopenTicket 已设 silentError，此处兜底所有失败分支的提示，409 用专属文案，其余沿用与拦截器一致的兜底话术
+    const axiosError = error as AxiosError<{ message?: string }>
+    if (axiosError.response?.status === HTTP_CONFLICT) {
+      showToast(axiosError.response.data?.message || '当前有进行中的会话，请先结束后再重开')
+    } else {
+      showToast(axiosError.response?.data?.message || axiosError.message || '重新开始对话失败')
+    }
+  } finally {
+    acting.value = false
+  }
+}
+
 function openSessionMenu() {
   sessionMenuVisible.value = true
 }
@@ -294,21 +405,36 @@ async function onNewSession() {
   showToast('已新建会话')
 }
 
+async function afterSessionClosed() {
+  showToast('会话已关闭')
+  await refreshTicket()
+}
+
+/**
+ * 两段式关闭：先不带 force 调用，工单仍在排队/处理中会失败（409/500），
+ * 失败后弹二次确认，用户确认则带 force:true 强制关闭；取消则保留会话不变。
+ */
 async function onCloseSession() {
   if (!ticketId.value) {
     return
   }
   try {
-    await showConfirmDialog({ title: '关闭当前会话', message: '关闭后将自动开启一个新会话，确认关闭？' })
+    await showConfirmDialog({ title: '关闭当前会话', message: '确认关闭当前会话？' })
   } catch {
     return // 用户取消
   }
-  await closeTicket(ticketId.value)
-  // 清空本地会话缓存后自动新建会话，衔接体验
-  localStorage.removeItem(sessionStorageKey.value)
-  localStorage.removeItem(ticketStorageKey.value)
-  showToast('会话已关闭')
-  await openNewSession()
+  try {
+    await closeTicket(ticketId.value, { silentError: true })
+    await afterSessionClosed()
+  } catch {
+    try {
+      await showConfirmDialog({ title: '强制结束会话', message: '会话仍在处理中，是否强制结束？' })
+    } catch {
+      return // 用户取消强制关闭，会话保持不变
+    }
+    await closeTicket(ticketId.value, { force: true })
+    await afterSessionClosed()
+  }
 }
 
 onMounted(async () => {
@@ -332,7 +458,7 @@ onUnmounted(() => {
 
 <template>
   <div class="chat-page">
-    <van-nav-bar title="智能客服">
+    <van-nav-bar title="智能客服" left-arrow @click-left="router.back()">
       <template #right>
         <van-icon name="ellipsis" size="20" @click="openSessionMenu" />
       </template>
@@ -382,7 +508,10 @@ onUnmounted(() => {
       </van-cell-group>
     </div>
 
-    <div class="input-bar">
+    <div v-if="ended" class="ended-bar">
+      <van-button block round type="primary" :loading="acting" @click="onReopen">重新开始对话</van-button>
+    </div>
+    <div v-else class="input-bar">
       <van-field
         v-model="inputContent"
         placeholder="请输入消息"
@@ -408,8 +537,6 @@ onUnmounted(() => {
       close-on-click-action
       @select="onSelectSessionAction"
     />
-
-    <AppTabbar />
   </div>
 </template>
 
@@ -419,14 +546,13 @@ onUnmounted(() => {
   flex-direction: column;
   /* 锁定视口高度并禁止自身溢出：顶部导航/状态条与底部输入栏固定，仅消息区内部滚动。
      不能加 flex:1——其 flex-basis:0 会让父级 .mobile-shell 按消息内容 max-content 撑高，
-     滚动落到 body 上导致顶栏被顶走。 */
+     滚动落到 body 上导致顶栏被顶走。
+     不再是 tabbar 根页面（改由消息列表点入），无需再为固定 tabbar 预留 padding-bottom。 */
   height: 100vh;
   max-height: 100vh;
   overflow: hidden;
-  /* 底部固定 tabbar（50px）留白：输入栏紧贴 tabbar 上方，内容不被遮挡 */
-  padding-bottom: 50px;
   box-sizing: border-box;
-  background: #ececec;
+  background: var(--cw-page-bg);
 }
 
 .status-bar {
@@ -434,14 +560,14 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: #fff;
-  border-bottom: 1px solid #ebedf0;
+  background: var(--cw-card-bg);
+  border-bottom: 1px solid var(--cw-border-color);
 }
 
 .reconnect-tip {
   text-align: center;
   font-size: 12px;
-  color: #ee0a24;
+  color: var(--cw-danger);
   background: #fff4f4;
   padding: 4px 0;
 }
@@ -478,7 +604,7 @@ onUnmounted(() => {
 
 .system-line {
   font-size: 12px;
-  color: #969799;
+  color: var(--cw-text-secondary);
   background: rgba(0, 0, 0, 0.04);
   padding: 4px 10px;
   border-radius: 10px;
@@ -490,21 +616,22 @@ onUnmounted(() => {
 
 .badge {
   font-size: 11px;
-  color: #969799;
+  color: var(--cw-text-secondary);
   margin-bottom: 2px;
 }
 
 .bubble {
   padding: 8px 12px;
-  border-radius: 8px;
-  background: #fff;
+  border-radius: 10px;
+  background: var(--cw-card-bg);
+  box-shadow: var(--cw-card-shadow);
   word-break: break-word;
   white-space: pre-wrap;
   line-height: 1.5;
 }
 
 .row-USER .bubble {
-  background: #a2e08e;
+  background: var(--cw-bubble-user-bg);
 }
 
 .cursor {
@@ -519,7 +646,7 @@ onUnmounted(() => {
 
 .confirm-card {
   padding: 8px 0;
-  background: #fff;
+  background: var(--cw-card-bg);
 }
 
 .confirm-actions {
@@ -528,8 +655,14 @@ onUnmounted(() => {
 }
 
 .input-bar {
-  border-top: 1px solid #ebedf0;
-  background: #fff;
+  border-top: 1px solid var(--cw-border-color);
+  background: var(--cw-card-bg);
+}
+
+.ended-bar {
+  padding: 10px 16px;
+  border-top: 1px solid var(--cw-border-color);
+  background: var(--cw-card-bg);
 }
 
 .dialog-field {

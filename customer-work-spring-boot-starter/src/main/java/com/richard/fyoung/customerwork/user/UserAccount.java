@@ -29,9 +29,11 @@ public class UserAccount {
     private final long createdAtMs;
 
     private volatile Status status;
+    /** 头像访问 URL（相对路径，可为空——注册时无头像，上传后回填）。 */
+    private volatile String avatarUrl;
 
     private UserAccount(String id, String username, String passwordHash, String nickname,
-                        String phone, Status status, long createdAtMs) {
+                        String phone, Status status, long createdAtMs, String avatarUrl) {
         this.id = id;
         this.username = username;
         this.passwordHash = passwordHash;
@@ -39,12 +41,13 @@ public class UserAccount {
         this.phone = phone;
         this.status = status;
         this.createdAtMs = createdAtMs;
+        this.avatarUrl = avatarUrl;
     }
 
-    /** 注册静态工厂：初始 ACTIVE。 */
+    /** 注册静态工厂：初始 ACTIVE，无头像。 */
     public static UserAccount create(String id, String username, String passwordHash, String nickname, String phone) {
         return new UserAccount(id, username, passwordHash, nickname, phone, Status.ACTIVE,
-            System.currentTimeMillis());
+            System.currentTimeMillis(), null);
     }
 
     /** 停用账户（禁止后续登录）。 */
@@ -57,9 +60,14 @@ public class UserAccount {
         return status == Status.ACTIVE;
     }
 
+    /** 更换头像（上传成功后回填访问 URL；传 null 视为清空头像）。头像是账户自身的展示属性，故内聚在实体上。 */
+    public void changeAvatar(String avatarUrl) {
+        this.avatarUrl = avatarUrl;
+    }
+
     /** 供持久化层从数据源重建（跳过业务语义，仅回填字段）。包级可见。 */
     static UserAccount reconstruct(String id, String username, String passwordHash, String nickname,
-                                   String phone, Status status, long createdAtMs) {
-        return new UserAccount(id, username, passwordHash, nickname, phone, status, createdAtMs);
+                                   String phone, Status status, long createdAtMs, String avatarUrl) {
+        return new UserAccount(id, username, passwordHash, nickname, phone, status, createdAtMs, avatarUrl);
     }
 }

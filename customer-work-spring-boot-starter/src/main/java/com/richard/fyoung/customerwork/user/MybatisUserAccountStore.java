@@ -61,6 +61,23 @@ public class MybatisUserAccountStore implements UserAccountStore {
         }
     }
 
+    @Override
+    public void updateAvatar(String id, String avatarUrl) {
+        if (id == null) {
+            return;
+        }
+        try {
+            UserDO row = new UserDO();
+            row.setId(id);
+            row.setAvatarUrl(avatarUrl);
+            // updateById 默认仅更新非空字段（FieldStrategy NOT_NULL），故只改 avatar_url 一列
+            mapper.updateById(row);
+        } catch (Exception e) {
+            log.error("user avatar update failed, code={}, id={}", "USER-STORE-UPDATE-AVATAR-FAIL", id, e);
+            throw new IllegalStateException("failed to update user avatar: " + id, e);
+        }
+    }
+
     private UserAccount toDomain(UserDO row) {
         return UserAccount.reconstruct(
             row.getId(),
@@ -69,7 +86,8 @@ public class MybatisUserAccountStore implements UserAccountStore {
             row.getNickname(),
             row.getPhone(),
             UserAccount.Status.valueOf(row.getStatus()),
-            row.getCreatedAtMs());
+            row.getCreatedAtMs(),
+            row.getAvatarUrl());
     }
 
     private UserDO toDO(UserAccount account) {
@@ -81,6 +99,7 @@ public class MybatisUserAccountStore implements UserAccountStore {
         row.setPhone(account.getPhone());
         row.setStatus(account.getStatus().name());
         row.setCreatedAtMs(account.getCreatedAtMs());
+        row.setAvatarUrl(account.getAvatarUrl());
         return row;
     }
 }

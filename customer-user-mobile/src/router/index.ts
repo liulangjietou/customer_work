@@ -22,9 +22,9 @@ const router = createRouter({
       component: () => import('@/views/Chat.vue'),
     },
     {
-      path: '/tickets',
-      name: 'TicketList',
-      component: () => import('@/views/TicketList.vue'),
+      path: '/messages',
+      name: 'Messages',
+      component: () => import('@/views/Messages.vue'),
     },
     {
       path: '/orders',
@@ -43,6 +43,11 @@ const router = createRouter({
       component: () => import('@/views/Profile.vue'),
     },
     {
+      path: '/profile/info',
+      name: 'ProfileInfo',
+      component: () => import('@/views/ProfileInfo.vue'),
+    },
+    {
       path: '/tickets/:id',
       name: 'TicketDetail',
       component: () => import('@/views/TicketDetail.vue'),
@@ -50,11 +55,11 @@ const router = createRouter({
     },
     {
       path: '/',
-      redirect: '/chat',
+      redirect: '/messages',
     },
     {
       path: '/:pathMatch(.*)*',
-      redirect: '/chat',
+      redirect: '/messages',
     },
   ],
 })

@@ -164,6 +164,54 @@ class TicketServiceTest {
     }
 
     @Test
+    void forceClose_shouldCloseFromHumanChainAndEmitForceCloseEvent() {
+        RecordingListener listener = new RecordingListener();
+        TicketService svc = service(listener);
+        Ticket t = svc.createForSession("s1", "u1", "标题", TicketCategory.ORDER);
+        svc.requestHandoff("s1", "要人工", TicketActorType.USER, "u1");
+        svc.claim(t.getId(), "agent-1"); // PROCESSING —— 普通 close 不放行
+
+        Ticket closed = svc.forceClose(t.getId(), "idle timeout", TicketActorType.SYSTEM, "sla-scheduler");
+        assertEquals(TicketStatus.CLOSED, closed.getStatus());
+
+        assertTrue(svc.findEvents(t.getId()).stream()
+                .anyMatch(e -> e.eventType() == TicketEventType.FORCE_CLOSE),
+            "强制关闭应追加 FORCE_CLOSE 事件");
+        assertTrue(listener.received.stream()
+                .anyMatch(e -> e.eventType() == TicketEventType.FORCE_CLOSE),
+            "强制关闭应广播给监听器（供 WS 推关闭事件）");
+    }
+
+    @Test
+    void touchUserActive_shouldRefreshOnlyWhenActiveTicketExists() {
+        RecordingListener listener = new RecordingListener();
+        TicketService svc = service(listener);
+        Ticket t = svc.createForSession("s1", "u1", "标题", TicketCategory.ORDER);
+        long before = t.getLastUserActiveAtMs();
+        int eventsBefore = listener.received.size();
+
+        assertTrue(svc.touchUserActive("s1"), "会话有活跃工单应刷新成功");
+        assertTrue(svc.find(t.getId()).orElseThrow().getLastUserActiveAtMs() >= before);
+        // 刷新活跃时间不是状态流转，不应发事件
+        assertEquals(eventsBefore, listener.received.size(), "刷新活跃时间不应广播事件");
+
+        assertFalse(svc.touchUserActive("no-such-session"), "无活跃工单会话应返回 false");
+    }
+
+    @Test
+    void findActiveByUser_shouldReturnLatestNonTerminalAndSkipClosed() {
+        TicketService svc = service();
+        svc.createForSession("s1", "u1", "标题", TicketCategory.ORDER);
+        assertTrue(svc.findActiveByUser("u1").isPresent(), "存在进行中会话应命中");
+        assertTrue(svc.findActiveByUser("other").isEmpty(), "他人无活跃会话应为空");
+
+        // 关闭后不再算活跃
+        Ticket t = svc.findActiveByUser("u1").orElseThrow();
+        svc.forceClose(t.getId(), "done", TicketActorType.USER, "u1");
+        assertTrue(svc.findActiveByUser("u1").isEmpty(), "已关闭后用户不应再有活跃会话");
+    }
+
+    @Test
     void reopen_shouldRequeueAndIncrementCount() {
         TicketService svc = service();
         Ticket t = svc.createForSession("s1", "u1", "标题", TicketCategory.ORDER);

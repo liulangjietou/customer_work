@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.user.UserAccount;
 import com.richard.fyoung.customerwork.user.UserAccountService;
 import com.richard.fyoung.customerwork.security.UserJwtService;
 import com.richard.fyoung.customerwork.security.UserPrincipal;
+import com.richard.fyoung.customerworkapp.service.AvatarStorageService;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -12,11 +13,14 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
@@ -43,12 +47,14 @@ public class UserAuthController {
     private final UserAccountService userAccountService;
     private final UserJwtService jwtService;
     private final DemoOrderSeeder demoOrderSeeder;
+    private final AvatarStorageService avatarStorageService;
 
     public UserAuthController(UserAccountService userAccountService, UserJwtService jwtService,
-                             DemoOrderSeeder demoOrderSeeder) {
+                             DemoOrderSeeder demoOrderSeeder, AvatarStorageService avatarStorageService) {
         this.userAccountService = userAccountService;
         this.jwtService = jwtService;
         this.demoOrderSeeder = demoOrderSeeder;
+        this.avatarStorageService = avatarStorageService;
     }
 
     /** 注册请求体。 */
@@ -104,11 +110,7 @@ public class UserAuthController {
     @GetMapping("/me")
     public Mono<Map<String, Object>> me(
         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
-            return Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "missing bearer token"));
-        }
-        UserPrincipal principal = jwtService.verify(authorization.substring(BEARER_PREFIX.length()))
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid or expired token"));
+        UserPrincipal principal = requirePrincipal(authorization);
         return Mono.fromCallable(() -> userAccountService.findById(principal.userId()))
             .subscribeOn(Schedulers.boundedElastic())
             .flatMap(Mono::justOrEmpty)
@@ -119,7 +121,36 @@ public class UserAuthController {
                 body.put("username", account.getUsername());
                 body.put("nickname", account.getNickname());
                 body.put("phone", account.getPhone());
+                body.put("avatarUrl", account.getAvatarUrl());
                 return body;
             });
+    }
+
+    @Operation(summary = "上传头像", description = "需 Bearer 令牌；multipart 字段名 file，支持 png/jpg/jpeg/gif，≤2MB；返回头像访问 URL")
+    @PostMapping(value = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Mono<Map<String, Object>> uploadAvatar(
+        @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+        @RequestPart("file") FilePart file) {
+        UserPrincipal principal = requirePrincipal(authorization);
+        return avatarStorageService.store(file)
+            .flatMap(url -> Mono.fromCallable(() -> {
+                    userAccountService.updateAvatar(principal.userId(), url);
+                    return url;
+                })
+                .subscribeOn(Schedulers.boundedElastic()))
+            .map(url -> {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("avatarUrl", url);
+                return body;
+            });
+    }
+
+    /** 手动验签取登录态主体（本控制器不在 {@code /user/**} 之下，故不经 UserAuthWebFilter，令牌无效即 401）。 */
+    private UserPrincipal requirePrincipal(String authorization) {
+        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "missing bearer token");
+        }
+        return jwtService.verify(authorization.substring(BEARER_PREFIX.length()))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid or expired token"));
     }
 }

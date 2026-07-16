@@ -37,4 +37,6 @@ public class TicketDO {
     private Long claimedAtMs;
     private Long resolvedAtMs;
     private Long closedAtMs;
+    /** 用户最后活跃时间戳（毫秒）：历史行可能为 NULL，读取时由 Store 用 updated_at_ms 兜底。 */
+    private Long lastUserActiveAtMs;
 }

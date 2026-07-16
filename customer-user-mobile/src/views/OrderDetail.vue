@@ -85,11 +85,11 @@ function goChat() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #f7f8fa;
+  background: var(--cw-page-bg);
 }
 
 .nav-service {
-  color: #1989fa;
+  color: var(--cw-primary);
   font-size: 14px;
 }
 
@@ -123,6 +123,6 @@ function goChat() {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #1989fa;
+  background: var(--cw-primary);
 }
 </style>

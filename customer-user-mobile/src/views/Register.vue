@@ -26,7 +26,11 @@ async function onSubmit() {
 
 <template>
   <div class="register-page">
-    <div class="brand">注册账号</div>
+    <div class="hero">
+      <div class="hero-brand">注册账号</div>
+      <div class="hero-sub">创建您的专属客服账号</div>
+    </div>
+    <div class="card">
     <van-form @submit="onSubmit">
       <van-cell-group inset>
         <van-field
@@ -67,21 +71,44 @@ async function onSubmit() {
       已有账号？
       <router-link to="/login">去登录</router-link>
     </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .register-page {
-  padding-top: 8vh;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--cw-page-bg);
 }
 
-.brand {
+.hero {
+  background: var(--cw-gradient-brand);
+  color: #fff;
+  padding: 48px 24px 40px;
   text-align: center;
-  font-size: 22px;
-  font-weight: 600;
-  margin-bottom: 32px;
-  color: #323233;
+  border-radius: 0 0 28px 28px;
+}
+
+.hero-brand {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.hero-sub {
+  margin-top: 8px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.card {
+  flex: 1;
+  background: var(--cw-card-bg);
+  border-radius: var(--cw-card-radius) var(--cw-card-radius) 0 0;
+  margin-top: -20px;
+  padding-top: 24px;
+  box-shadow: var(--cw-card-shadow);
 }
 
 .submit-wrap {
@@ -91,11 +118,12 @@ async function onSubmit() {
 .link-wrap {
   text-align: center;
   margin-top: 16px;
+  padding-bottom: 24px;
   font-size: 14px;
-  color: #969799;
+  color: var(--cw-text-secondary);
 }
 
 .link-wrap a {
-  color: #1989fa;
+  color: var(--cw-primary);
 }
 </style>

@@ -26,4 +26,6 @@ public class UserDO {
     private String phone;
     private String status;
     private Long createdAtMs;
+    /** 头像访问 URL（相对路径，可为空）。 */
+    private String avatarUrl;
 }

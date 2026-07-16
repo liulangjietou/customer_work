@@ -8,11 +8,11 @@
         INSERT INTO cw_ticket
             (id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
              resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
-             resolved_at_ms, closed_at_ms)
+             resolved_at_ms, closed_at_ms, last_user_active_at_ms)
         VALUES
             (#{id}, #{sessionId}, #{userId}, #{title}, #{category}, #{priority}, #{status}, #{assignee},
              #{handoffReason}, #{resolveNote}, #{reopenCount}, #{createdAtMs}, #{updatedAtMs},
-             #{handoffAtMs}, #{claimedAtMs}, #{resolvedAtMs}, #{closedAtMs})
+             #{handoffAtMs}, #{claimedAtMs}, #{resolvedAtMs}, #{closedAtMs}, #{lastUserActiveAtMs})
         ON DUPLICATE KEY UPDATE
             title = VALUES(title),
             category = VALUES(category),
@@ -26,16 +26,29 @@
             handoff_at_ms = VALUES(handoff_at_ms),
             claimed_at_ms = VALUES(claimed_at_ms),
             resolved_at_ms = VALUES(resolved_at_ms),
-            closed_at_ms = VALUES(closed_at_ms)
+            closed_at_ms = VALUES(closed_at_ms),
+            last_user_active_at_ms = VALUES(last_user_active_at_ms)
     </insert>
 
     <!-- 该会话的活跃工单：状态字面量 'CLOSED'/'RESOLVED' 对应 TicketStatus.CLOSED/RESOLVED 枚举名。 -->
     <select id="findActiveBySession" resultType="com.richard.fyoung.customerwork.ticket.entity.TicketDO">
         SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
                resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
-               resolved_at_ms, closed_at_ms
+               resolved_at_ms, closed_at_ms, last_user_active_at_ms
         FROM cw_ticket
         WHERE session_id = #{sessionId}
+          AND status NOT IN ('CLOSED', 'RESOLVED')
+        ORDER BY created_at_ms DESC
+        LIMIT 1
+    </select>
+
+    <!-- 该用户的活跃工单：状态字面量 'CLOSED'/'RESOLVED' 对应 TicketStatus.CLOSED/RESOLVED 枚举名。 -->
+    <select id="findActiveByUser" resultType="com.richard.fyoung.customerwork.ticket.entity.TicketDO">
+        SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
+               resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
+               resolved_at_ms, closed_at_ms, last_user_active_at_ms
+        FROM cw_ticket
+        WHERE user_id = #{userId}
           AND status NOT IN ('CLOSED', 'RESOLVED')
         ORDER BY created_at_ms DESC
         LIMIT 1

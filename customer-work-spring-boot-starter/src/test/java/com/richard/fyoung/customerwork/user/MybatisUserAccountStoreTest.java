@@ -12,6 +12,7 @@ import java.net.Socket;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -68,5 +69,22 @@ class MybatisUserAccountStoreTest {
         UserAccount byId = store.findById(id).orElseThrow();
         assertEquals(username, byId.getUsername());
         assertTrue(byId.isActive());
+    }
+
+    @Test
+    void updateAvatar_shouldPersistAvatarUrl() {
+        String username = "user-it-" + UUID.randomUUID();
+        String id = "U-" + UUID.randomUUID();
+        UserAccount account = UserAccount.create(id, username, "$2a$10$hashhashhashhashhashha", "昵称", "13800000000");
+        store.save(account);
+        assertNull(store.findById(id).orElseThrow().getAvatarUrl(), "初始无头像");
+
+        store.updateAvatar(id, "/api/avatars/" + id + ".png");
+
+        UserAccount reloaded = store.findById(id).orElseThrow();
+        assertEquals("/api/avatars/" + id + ".png", reloaded.getAvatarUrl());
+        // 定向更新只改 avatar_url，其它字段不受影响
+        assertEquals(username, reloaded.getUsername());
+        assertTrue(reloaded.isActive());
     }
 }

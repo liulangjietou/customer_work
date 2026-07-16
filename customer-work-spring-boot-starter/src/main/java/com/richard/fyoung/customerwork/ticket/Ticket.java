@@ -38,6 +38,8 @@ public class Ticket {
     private volatile long claimedAtMs;
     private volatile long resolvedAtMs;
     private volatile long closedAtMs;
+    /** 用户最后活跃时间戳（毫秒）：用户发消息 / 主动操作时刷新，供空闲超时巡检判定。 */
+    private volatile long lastUserActiveAtMs;
 
     private Ticket(String id, String sessionId, String userId, long createdAtMs) {
         this.id = id;
@@ -54,6 +56,8 @@ public class Ticket {
         ticket.priority = TicketPriority.NORMAL;
         ticket.status = TicketStatus.AI_SERVING;
         ticket.updatedAtMs = ticket.createdAtMs;
+        // 建单即视为一次用户活跃，避免刚建单就被空闲巡检误判
+        ticket.lastUserActiveAtMs = ticket.createdAtMs;
         return ticket;
     }
 
@@ -71,6 +75,7 @@ public class Ticket {
             this.status = TicketStatus.WAITING_AGENT;
             this.handoffReason = reason;
             this.handoffAtMs = System.currentTimeMillis();
+            markUserActive();
             touch();
             return true;
         }
@@ -142,6 +147,7 @@ public class Ticket {
         requireStatus("confirm", TicketStatus.WAITING_CONFIRM);
         this.status = TicketStatus.RESOLVED;
         this.resolvedAtMs = System.currentTimeMillis();
+        markUserActive();
         touch();
     }
 
@@ -150,6 +156,7 @@ public class Ticket {
         requireStatus("reject", TicketStatus.WAITING_CONFIRM);
         this.status = TicketStatus.PROCESSING;
         this.resolveNote = reason;
+        markUserActive();
         touch();
     }
 
@@ -158,6 +165,23 @@ public class Ticket {
         if (status != TicketStatus.AI_SERVING && status != TicketStatus.RESOLVED
             && status != TicketStatus.WAITING_CONFIRM) {
             throw new IllegalStateException(illegal("close"));
+        }
+        this.status = TicketStatus.CLOSED;
+        this.resolveNote = reason;
+        this.closedAtMs = System.currentTimeMillis();
+        touch();
+    }
+
+    /**
+     * 强制关闭：允许从任意非 CLOSED 态直接结案（记关闭时间戳与原因）。
+     *
+     * <p>与 {@link #close(String)} 的差异：close 只放行 AI_SERVING/RESOLVED/WAITING_CONFIRM 三个
+     * 前置态（下游用户主动关单依赖此约束）；forceClose 覆盖 WAITING_AGENT/PROCESSING/ON_HOLD 等
+     * 人工链路中的态，专供空闲超时自动结束与用户强制结束使用。已 CLOSED 再强关 fast-fail（幂等无意义）。</p>
+     */
+    public void forceClose(String reason) {
+        if (status == TicketStatus.CLOSED) {
+            throw new IllegalStateException(illegal("forceClose"));
         }
         this.status = TicketStatus.CLOSED;
         this.resolveNote = reason;
@@ -175,7 +199,18 @@ public class Ticket {
         this.handoffReason = reason;
         this.reopenCount++;
         this.handoffAtMs = System.currentTimeMillis();
+        markUserActive();
         touch();
+    }
+
+    /**
+     * 刷新用户最后活跃时间：用户发消息 / 主动操作（转人工/确认/驳回/重开）时调用。
+     *
+     * <p>非状态流转（不改 {@code status}），仅重置空闲计时基准，避免活跃会话被空闲巡检误关。
+     * 各用户驱动的流转方法内部已联动调用；独立刷新（如用户发消息）由 {@code TicketService} 编排。</p>
+     */
+    public void markUserActive() {
+        this.lastUserActiveAtMs = System.currentTimeMillis();
     }
 
     /** 变更优先级：任意非 CLOSED 态可改。 */
@@ -241,7 +276,7 @@ public class Ticket {
                               TicketCategory category, TicketPriority priority, TicketStatus status,
                               String assignee, String handoffReason, String resolveNote, int reopenCount,
                               long createdAtMs, long updatedAtMs, long handoffAtMs, long claimedAtMs,
-                              long resolvedAtMs, long closedAtMs) {
+                              long resolvedAtMs, long closedAtMs, long lastUserActiveAtMs) {
         Ticket ticket = new Ticket(id, sessionId, userId, createdAtMs);
         ticket.title = title;
         ticket.category = category;
@@ -256,6 +291,7 @@ public class Ticket {
         ticket.claimedAtMs = claimedAtMs;
         ticket.resolvedAtMs = resolvedAtMs;
         ticket.closedAtMs = closedAtMs;
+        ticket.lastUserActiveAtMs = lastUserActiveAtMs;
         return ticket;
     }
 }

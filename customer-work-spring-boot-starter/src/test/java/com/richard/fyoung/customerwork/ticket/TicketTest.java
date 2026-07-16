@@ -190,6 +190,54 @@ class TicketTest {
     }
 
     @Test
+    void forceClose_shouldAllowFromAnyNonClosedState() {
+        // 覆盖普通 close 不放行的人工链路态（WAITING_AGENT/PROCESSING/ON_HOLD）
+        Ticket wa = waitingAgent();
+        wa.forceClose("idle timeout");
+        assertEquals(TicketStatus.CLOSED, wa.getStatus());
+        assertTrue(wa.getClosedAtMs() > 0);
+        assertEquals("idle timeout", wa.getResolveNote());
+
+        Ticket p = processing();
+        p.forceClose("idle timeout");
+        assertEquals(TicketStatus.CLOSED, p.getStatus());
+
+        Ticket h = onHold();
+        h.forceClose("idle timeout");
+        assertEquals(TicketStatus.CLOSED, h.getStatus());
+
+        // 以及普通 close 本就放行的态
+        Ticket ai = aiServing();
+        ai.forceClose("user force close");
+        assertEquals(TicketStatus.CLOSED, ai.getStatus());
+
+        Ticket wc = waitingConfirm();
+        wc.forceClose("idle timeout");
+        assertEquals(TicketStatus.CLOSED, wc.getStatus());
+    }
+
+    @Test
+    void forceClose_whenAlreadyClosed_shouldFastFail() {
+        Ticket closed = aiServing();
+        closed.close("done");
+        assertThrows(IllegalStateException.class, () -> closed.forceClose("再关"));
+    }
+
+    @Test
+    void markUserActive_shouldRefreshLastActiveTimestamp() {
+        Ticket t = aiServing();
+        long before = t.getLastUserActiveAtMs();
+        assertTrue(before > 0, "建单即视为一次活跃");
+        t.markUserActive();
+        assertTrue(t.getLastUserActiveAtMs() >= before, "markUserActive 应刷新最后活跃时间");
+        // 用户驱动流转应联动刷新最后活跃时间
+        Ticket handoff = aiServing();
+        long h0 = handoff.getLastUserActiveAtMs();
+        handoff.requestHandoff("要人工");
+        assertTrue(handoff.getLastUserActiveAtMs() >= h0);
+    }
+
+    @Test
     void reopen_shouldRequeueAndCountUp() {
         Ticket r = resolved();
         r.reopen("又出问题");

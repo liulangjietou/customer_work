@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS `cw_user` (
     `phone`          VARCHAR(32) COMMENT '手机号',
     `status`         VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE/DISABLED',
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    `avatar_url`     VARCHAR(255) COMMENT '头像访问URL（相对路径，可为空）',
     UNIQUE KEY `uk_user_username` (`username`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -183,6 +184,7 @@ CREATE TABLE IF NOT EXISTS `cw_ticket` (
     `claimed_at_ms`   BIGINT DEFAULT 0 COMMENT '接单时间戳（毫秒）',
     `resolved_at_ms`  BIGINT DEFAULT 0 COMMENT '解决时间戳（毫秒）',
     `closed_at_ms`    BIGINT DEFAULT 0 COMMENT '关闭时间戳（毫秒）',
+    `last_user_active_at_ms` BIGINT DEFAULT 0 COMMENT '用户最后活跃时间戳（毫秒，空闲超时巡检基准）',
     INDEX `idx_ticket_session` (`session_id`),
     INDEX `idx_ticket_user` (`user_id`, `created_at_ms`),
     INDEX `idx_ticket_status` (`status`, `updated_at_ms`),
