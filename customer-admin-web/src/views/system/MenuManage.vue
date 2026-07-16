@@ -384,7 +384,7 @@ onMounted(loadTree)
 }
 
 .node-code {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 
@@ -409,7 +409,7 @@ onMounted(loadTree)
   flex: none;
   width: 48px;
   height: 48px;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   border-radius: 4px;
   display: flex;
   align-items: center;
@@ -424,7 +424,7 @@ onMounted(loadTree)
 
 .icon-preview-empty {
   font-size: 12px;
-  color: #c0c4cc;
+  color: var(--el-text-color-placeholder);
 }
 
 .icon-tabs {
@@ -451,18 +451,18 @@ onMounted(loadTree)
 }
 
 .icon-grid-item:hover {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
 }
 
 .icon-grid-item.active {
-  border-color: #409eff;
-  color: #409eff;
-  background: #ecf5ff;
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
 }
 
 .upload-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-top: 4px;
 }
 
@@ -478,13 +478,13 @@ onMounted(loadTree)
 
 .snapshot-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-bottom: 4px;
 }
 
 .snapshot-json {
   font-size: 12px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   padding: 8px;
   border-radius: 4px;
   max-height: 200px;

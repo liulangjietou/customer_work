@@ -79,7 +79,7 @@ async function handleSubmit() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #f5f5f5;
+  background: var(--el-bg-color-page);
 }
 
 .change-password-card {

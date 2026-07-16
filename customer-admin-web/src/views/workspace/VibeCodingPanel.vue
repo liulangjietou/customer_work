@@ -688,7 +688,7 @@ defineExpose({ newSession })
 }
 
 .message-row.user .bubble {
-  background: var(--theme-primary, #409eff);
+  background: var(--theme-primary, var(--el-color-primary));
   color: #fff;
   white-space: pre-wrap;
 }
@@ -698,8 +698,8 @@ defineExpose({ newSession })
 }
 
 .message-row.assistant .bubble {
-  background: #f0f2f5;
-  color: #333;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
 }
 
 .input-bar {
@@ -711,8 +711,8 @@ defineExpose({ newSession })
 /* :not(.is-link) 排除"继续"链接按钮——link 按钮的文字色本就用的是同一个主题蓝（靠透明背景显色），
    这条规则如果连它一起覆盖成纯色背景，文字会跟背景同色而"隐形"。 */
 .input-bar :deep(.el-button--primary:not(.is-link)) {
-  background-color: var(--theme-primary, #409eff);
-  border-color: var(--theme-primary, #409eff);
+  background-color: var(--theme-primary, var(--el-color-primary));
+  border-color: var(--theme-primary, var(--el-color-primary));
 }
 
 .input-bar :deep(.el-button--primary:not(.is-link):hover) {
@@ -723,7 +723,7 @@ defineExpose({ newSession })
 /* 产物文件树列 */
 .artifacts-column {
   flex: 1;
-  border-left: 1px solid #eee;
+  border-left: 1px solid var(--el-border-color-lighter);
   padding-left: 16px;
   display: flex;
   flex-direction: column;
@@ -756,14 +756,14 @@ defineExpose({ newSession })
   flex-shrink: 0;
   margin-bottom: 8px;
   padding: 6px 8px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 6px;
 }
 
 .file-change-timeline-title {
   font-size: 12px;
   font-weight: 600;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-bottom: 4px;
 }
 
@@ -798,14 +798,14 @@ defineExpose({ newSession })
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
 }
 
 .git-summary-text {
   font-size: 13px;
   line-height: 1.6;
-  color: #303133;
+  color: var(--el-text-color-primary);
   margin: 0 0 8px;
 }
 
@@ -824,7 +824,7 @@ defineExpose({ newSession })
 .git-pr-description {
   margin: 8px 0;
   padding: 8px 12px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 6px;
 }
 
@@ -840,13 +840,13 @@ defineExpose({ newSession })
 }
 
 .tree-node:hover {
-  color: var(--theme-primary, #409eff);
+  color: var(--theme-primary, var(--el-color-primary));
 }
 
 /* 历史会话列 */
 .history-column {
   flex: 1;
-  border-left: 1px solid #eee;
+  border-left: 1px solid var(--el-border-color-lighter);
   padding-left: 16px;
   min-width: 180px;
 }
@@ -857,14 +857,14 @@ defineExpose({ newSession })
   align-items: center;
   gap: 8px;
   padding: 24px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .preview-truncated {
   padding: 16px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 4px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
 }
 
@@ -892,7 +892,7 @@ defineExpose({ newSession })
   flex: 1;
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--el-text-color-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -912,17 +912,17 @@ defineExpose({ newSession })
   font-size: 13px;
   line-height: 1.6;
   padding: 12px;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   border-radius: 6px;
   resize: none;
   outline: none;
-  background: #fafafa;
-  color: #303133;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-primary);
   box-sizing: border-box;
 }
 
 .code-editor:focus {
-  border-color: var(--theme-primary, #409eff);
-  background: #fff;
+  border-color: var(--theme-primary, var(--el-color-primary));
+  background: var(--el-bg-color);
 }
 </style>

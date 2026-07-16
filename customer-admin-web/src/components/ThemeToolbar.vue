@@ -61,15 +61,15 @@ const showPicker = ref(false)
   height: 34px;
   padding: 0 14px;
   border-radius: 17px;
-  border: 1px solid #dcdfe6;
-  background: #fff;
+  border: 1px solid var(--el-border-color);
+  background: var(--el-bg-color);
   cursor: pointer;
   font-size: 13px;
   transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
 }
 
 .theme-btn:hover {
-  border-color: var(--theme-primary, #409eff);
+  border-color: var(--theme-primary, var(--el-color-primary));
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   transform: translateY(-1px);
 }
@@ -78,18 +78,18 @@ const showPicker = ref(false)
   width: 15px;
   height: 15px;
   border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #dcdfe6, 0 1px 3px rgba(0, 0, 0, 0.15);
+  border: 2px solid var(--el-bg-color);
+  box-shadow: 0 0 0 1px var(--el-border-color), 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
 .color-label {
-  color: #606266;
+  color: var(--el-text-color-regular);
   font-weight: 500;
 }
 
 .arrow {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   transition: transform 0.2s;
 }
 
@@ -106,10 +106,10 @@ const showPicker = ref(false)
   flex-wrap: wrap;
   gap: 10px;
   padding: 12px;
-  background: #fff;
+  background: var(--el-bg-color);
   border-radius: 10px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   width: 172px;
 }
 
@@ -127,8 +127,8 @@ const showPicker = ref(false)
 }
 
 .color-option.active {
-  border-color: #fff;
-  box-shadow: 0 0 0 2px var(--theme-primary, #409eff);
+  border-color: var(--el-bg-color);
+  box-shadow: 0 0 0 2px var(--theme-primary, var(--el-color-primary));
 }
 
 /* 新建会话：主题色渐变胶囊按钮，悬浮提亮并上浮 */
@@ -142,9 +142,10 @@ const showPicker = ref(false)
   border-radius: 17px;
   background: linear-gradient(
     135deg,
-    var(--theme-primary, #409eff),
+    var(--theme-primary, var(--el-color-primary)),
     var(--theme-primary-light, #79bbff)
   );
+  /* 主题色渐变底上的文字固定用白色，不随明暗模式切换 */
   color: #fff;
   font-size: 13px;
   font-weight: 500;

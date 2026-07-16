@@ -374,7 +374,7 @@ onMounted(() => {
 .result-pre {
   margin: 0;
   padding: 12px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   border-radius: 4px;
   font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
   font-size: 13px;

@@ -110,7 +110,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenu))
 <style scoped>
 .tabs-bar {
   padding: 8px 16px 0;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .tabs-bar :deep(.el-tabs__header) {
@@ -122,7 +122,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenu))
 }
 
 .tabs-bar :deep(.el-tabs__item) {
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--el-border-color);
   border-radius: 4px 4px 0 0;
   margin-right: 4px;
   height: 32px;
@@ -130,7 +130,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenu))
 }
 
 .tabs-bar :deep(.el-tabs__item.is-active) {
-  color: #409eff;
+  color: var(--el-color-primary);
   font-weight: 600;
 }
 
@@ -145,8 +145,8 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenu))
   padding: 4px 0;
   margin: 0;
   list-style: none;
-  background: #fff;
-  border: 1px solid #e4e7ed;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
   border-radius: 4px;
   box-shadow: 0 2px 12px rgb(0 0 0 / 10%);
 }
@@ -154,23 +154,23 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenu))
 .tab-context-menu li {
   padding: 6px 16px;
   font-size: 13px;
-  color: #606266;
+  color: var(--el-text-color-regular);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .tab-context-menu li:hover {
-  background: #f5f7fa;
-  color: #409eff;
+  background: var(--el-fill-color-light);
+  color: var(--el-color-primary);
 }
 
 .tab-context-menu li.disabled {
-  color: #c0c4cc;
+  color: var(--el-text-color-placeholder);
   cursor: not-allowed;
 }
 
 .tab-context-menu li.disabled:hover {
   background: transparent;
-  color: #c0c4cc;
+  color: var(--el-text-color-placeholder);
 }
 </style>

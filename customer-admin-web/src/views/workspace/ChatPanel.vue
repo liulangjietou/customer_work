@@ -305,7 +305,7 @@ defineExpose({ sessionId, newSession })
 }
 
 .message-row.user .bubble {
-  background: var(--theme-primary, #409eff);
+  background: var(--theme-primary, var(--el-color-primary));
   color: #fff;
   white-space: pre-wrap;
 }
@@ -315,8 +315,8 @@ defineExpose({ sessionId, newSession })
 }
 
 .message-row.assistant .bubble {
-  background: #f0f2f5;
-  color: #333;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
 }
 
 .input-bar {
@@ -328,8 +328,8 @@ defineExpose({ sessionId, newSession })
 /* :not(.is-link) 排除"继续"链接按钮——link 按钮的文字色本就用的是同一个主题蓝（靠透明背景显色），
    这条规则如果连它一起覆盖成纯色背景，文字会跟背景同色而"隐形"。 */
 .input-bar :deep(.el-button--primary:not(.is-link)) {
-  background-color: var(--theme-primary, #409eff);
-  border-color: var(--theme-primary, #409eff);
+  background-color: var(--theme-primary, var(--el-color-primary));
+  border-color: var(--theme-primary, var(--el-color-primary));
 }
 
 .input-bar :deep(.el-button--primary:not(.is-link):hover) {
@@ -340,7 +340,7 @@ defineExpose({ sessionId, newSession })
 .history-column {
   flex: 1;
   min-width: 200px;
-  border-left: 1px solid #eee;
+  border-left: 1px solid var(--el-border-color-lighter);
   padding-left: 16px;
 }
 </style>

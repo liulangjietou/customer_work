@@ -17,7 +17,7 @@ defineProps<{
   justify-content: center;
   padding: 12px 16px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .footer-copyright.dark {
