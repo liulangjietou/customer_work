@@ -224,4 +224,17 @@ class TicketServiceTest {
         assertEquals(TicketStatus.WAITING_AGENT, reopened.getStatus());
         assertEquals(1, reopened.getReopenCount());
     }
+
+    @Test
+    void reopenToAi_shouldReturnToAiServing() {
+        // 用户端"重新开始对话"：重开回 AI 自助，不进人工排队，重开后该会话重新成为用户的活跃会话
+        TicketService svc = service();
+        Ticket t = svc.createForSession("s1", "u1", "标题", TicketCategory.ORDER);
+        svc.close(t.getId(), "done", TicketActorType.USER, "u1");
+
+        Ticket reopened = svc.reopenToAi(t.getId(), "重新开始对话", TicketActorType.USER, "u1");
+        assertEquals(TicketStatus.AI_SERVING, reopened.getStatus());
+        assertEquals(1, reopened.getReopenCount());
+        assertEquals(t.getId(), svc.findActiveByUser("u1").orElseThrow().getId());
+    }
 }

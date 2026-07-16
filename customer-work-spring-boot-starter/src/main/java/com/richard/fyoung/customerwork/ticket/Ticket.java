@@ -204,6 +204,24 @@ public class Ticket {
     }
 
     /**
+     * 重新打开回 AI 自助：RESOLVED | CLOSED → AI_SERVING（reopen 计数 +1，清坐席）。
+     *
+     * <p>用户端"重新开始对话"专用：重开后由 AI 继续服务，需要人工时用户再显式转人工；
+     * 区别于 {@link #reopen}（重开直达人工排队，供"问题未解决重新找人工"场景）。</p>
+     */
+    public void reopenToAi(String reason) {
+        if (status != TicketStatus.RESOLVED && status != TicketStatus.CLOSED) {
+            throw new IllegalStateException(illegal("reopenToAi"));
+        }
+        this.status = TicketStatus.AI_SERVING;
+        this.assignee = null;
+        this.handoffReason = reason;
+        this.reopenCount++;
+        markUserActive();
+        touch();
+    }
+
+    /**
      * 刷新用户最后活跃时间：用户发消息 / 主动操作（转人工/确认/驳回/重开）时调用。
      *
      * <p>非状态流转（不改 {@code status}），仅重置空闲计时基准，避免活跃会话被空闲巡检误关。
