@@ -299,6 +299,13 @@ customer-work:
     username: ${NACOS_USERNAME:nacos}
     password: ${NACOS_PASSWORD:nacos}
     timeout-ms: 3000
+    # 运行时配置热更新：接收 admin(8082) 下发的整份运行时配置（模型/兜底/重试/提示词/MCP/maxIters），
+    # 无需重启即热替换模型链并重建 Agent。默认关闭；开启后监听 runtime-config-data-id。
+    runtime-config-enabled: ${CUSTOMER_WORK_RUNTIME_CONFIG_ENABLED:false}
+    # 须与 admin 的 admin.runtime-publish.nacos.data-id 一致。
+    runtime-config-data-id: customer-work-runtime-config
+    # API Key 密文 AES 解密密钥：必须与 admin 的 ADMIN_AES_SECRET_KEY 同值，否则整份配置解密失败并保留旧配置。
+    config-aes-key: ${CUSTOMER_WORK_CONFIG_AES_KEY:}
   protocol:
     # AG-UI：标准 Agent-UI 事件协议（POST /api/customer/agui，SSE）
     agui:

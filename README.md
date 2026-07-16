@@ -112,6 +112,7 @@
 | MCP 接入 | `McpToolkitConfigurer` | 关 | `mcp.enabled=true` |
 | Higress AI 网关 | `HigressToolkitConfigurer` | 关 | `higress.enabled=true` |
 | Nacos 配置中心（提示词热更新） | `NacosPromptService` | 关 | `nacos.enabled=true` |
+| **运行时配置热更新（admin 8082 → 8080）** | `NacosRuntimeConfigService` + `RuntimeConfigApplier` + `MutableDelegatingModel`（消费端）；`CustomerWorkConfigPublisher` + 渠道绑定（admin 发布端） | 关 | 消费端 `nacos.runtime-config-enabled=true`；发布端 `admin.runtime-publish.nacos.enabled=true`（后台改模型/提示词/MCP → Nacos → 8080 模型链热替换 + Agent 重建，无需重启） |
 | 接入层安全（鉴权/**滑动窗口限流**） | `ApiKeyAuthWebFilter` / `RateLimitWebFilter`（fixed/sliding-window 双算法） | 关 | `security.auth.enabled` / `security.rate-limit.enabled` |
 | **入站防注入围栏** | `PromptInjectionGuardMiddleware` | 关 | `hooks.prompt-guard.enabled`（命中注入/越狱模式硬拦截，不调用模型，指标 `customerwork.prompt.guard.blocked`） |
 | **用户反馈闭环（消息级点赞/点踩）** | `FeedbackService` + `FeedbackController` | 开 | `POST /api/customer/feedback`（DOWN 自动落 `FactLog` 供数据飞轮复盘） |

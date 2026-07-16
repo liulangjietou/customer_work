@@ -289,6 +289,20 @@ public class CustomerServiceService {
         log.info("[session {}] ended and cleaned", sessionId);
     }
 
+    /**
+     * 热配置刷新：清空进程内热 Agent 缓存，使下一次会话请求按最新配置（提示词/MCP/maxIters）重建 Agent。
+     *
+     * <p>只清热缓存，<b>不动</b> {@code AgentStateStore}（会话短期状态）与 {@code sessionLocks}（会话锁）：
+     * "淘汰即重建、状态从 StateStore 恢复"是既有 LRU 淘汰路径已验证的行为，热更新复用同一路径即可，不会
+     * 丢失任何进行中会话的上下文。模型链的热替换走 {@code MutableDelegatingModel#swap}，与本方法互补
+     * （模型链是共享单例，无需重建 Agent 即生效；提示词/MCP/maxIters 绑定在 Agent 上，需重建）。</p>
+     */
+    public void flushHotAgents() {
+        int before = sessionAgents.size();
+        sessionAgents.clear();
+        log.info("[hot-config] flushed hot agents, evicted={}, state preserved in store", before);
+    }
+
     /** 更新会话活跃时间戳。 */
     private void touchSession(String sessionId) {
         sessionActivity.put(sessionId, System.currentTimeMillis());

@@ -694,3 +694,23 @@ export interface SqlQueryResultVO {
   total: number
   useMillis: number
 }
+
+// ---------- channel-binding（渠道绑定）----------
+// 与后端 ChannelBindingVO 字段一一对应：渠道编码 -> 智能体的绑定关系。
+export interface ChannelBindingVO {
+  id: number
+  channelCode: string
+  agentId: number
+  agentName: string
+  /** 0 停用 / 1 启用 */
+  status: number
+  createTime: string
+  updateTime: string
+}
+
+export interface ChannelBindingSaveRequest {
+  channelCode: string
+  agentId: number
+  /** 可空，新建默认由后端置为启用。 */
+  status?: number
+}

@@ -55,6 +55,9 @@ public enum ResultCode {
     SYSTEM_TOOL_HTTP_FORBIDDEN(40018, "目标地址不在允许访问范围内，已被安全策略拦截"),
     AI_REVIEW_FAILED(40019, "AI 代码审查失败，请稍后重试"),
     MODEL_PROVIDER_NOT_SUPPORTED(40020, "暂不支持的模型 provider"),
+    RUNTIME_PUBLISH_DISABLED(40021, "运行时配置发布未启用"),
+    RUNTIME_PUBLISH_FAILED(40022, "运行时配置发布失败"),
+    CHANNEL_BINDING_NOT_FOUND(40023, "渠道绑定不存在"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

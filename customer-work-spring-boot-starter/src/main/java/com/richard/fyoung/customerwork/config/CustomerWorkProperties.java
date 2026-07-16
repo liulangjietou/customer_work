@@ -739,6 +739,20 @@ public class CustomerWorkProperties {
         private String username = "";
         private String password = "";
         private long timeoutMs = 3000;
+
+        /**
+         * 是否启用「运行时配置」热更新（admin 8082 下发的模型/MCP/提示词整体配置）。默认关闭，
+         * 不影响任何未接入的下游；开启后启动拉取 + 监听 {@link #runtimeConfigDataId}，热应用到运行中的 8080。
+         */
+        private boolean runtimeConfigEnabled = false;
+        /** 运行时配置项 dataId（与 admin 发布端 data-id 对齐）。 */
+        private String runtimeConfigDataId = "customer-work-runtime-config";
+        /**
+         * 运行时配置里 API Key 密文的 AES 解密密钥（16/24/32 字节）。生产用环境变量
+         * {@code CUSTOMER_WORK_CONFIG_AES_KEY} 注入，且必须与 admin 的 {@code ADMIN_AES_SECRET_KEY} 同值，
+         * 否则密文解不开、整份配置被判失败并保留旧配置。
+         */
+        private String configAesKey = "";
     }
 
     /** 交互协议配置（AG-UI / TTS）。 */

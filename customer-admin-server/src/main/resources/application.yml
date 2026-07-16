@@ -167,6 +167,20 @@ admin:
         remote-dir: ${ADMIN_SKILL_STORAGE_SFTP_REMOTE_DIR:}
         timeout-ms: ${ADMIN_SKILL_STORAGE_SFTP_TIMEOUT_MS:10000}
         strict-host-key-checking: ${ADMIN_SKILL_STORAGE_SFTP_STRICT_HOST_KEY_CHECKING:false}
+  runtime-publish:
+    # 客服机器人运行时配置发布：命中渠道绑定的智能体/模型被改动后，把运行时配置（模型/兜底/提示词/MCP/
+    # maxIters）发布到 Nacos，8080 客服机器人监听热生效。默认关闭，不影响任何现有后台功能。
+    # 载荷里的 API Key 密文用上面 admin.aes-secret-key 加密后原样携带，8080 侧用同一密钥（CUSTOMER_WORK_CONFIG_AES_KEY）解密。
+    nacos:
+      enabled: ${ADMIN_RUNTIME_PUBLISH_NACOS_ENABLED:false}
+      server-addr: ${ADMIN_RUNTIME_PUBLISH_NACOS_SERVER_ADDR:localhost:8848}
+      namespace: ${ADMIN_RUNTIME_PUBLISH_NACOS_NAMESPACE:}
+      group: ${ADMIN_RUNTIME_PUBLISH_NACOS_GROUP:DEFAULT_GROUP}
+      # dataId 必须与 8080 的 customer-work.nacos.runtime-config-data-id 一致。
+      data-id: ${ADMIN_RUNTIME_PUBLISH_NACOS_DATA_ID:customer-work-runtime-config}
+      username: ${ADMIN_RUNTIME_PUBLISH_NACOS_USERNAME:}
+      password: ${ADMIN_RUNTIME_PUBLISH_NACOS_PASSWORD:}
+      timeout-ms: ${ADMIN_RUNTIME_PUBLISH_NACOS_TIMEOUT_MS:3000}
 
 springdoc:
   api-docs:

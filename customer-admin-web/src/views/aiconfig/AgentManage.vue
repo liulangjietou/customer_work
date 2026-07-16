@@ -9,9 +9,13 @@ import { pageSkills } from '@/api/skill'
 import { fetchSystemTools } from '@/api/system-tool'
 import { useMenuStore } from '@/store/menu'
 import IconPicker from '@/components/IconPicker.vue'
+import ChannelBindingDrawer from '@/views/aiconfig/ChannelBindingDrawer.vue'
 import type { AgentSaveRequest, AgentVO, McpVO, ModelVO, PageQuery, SkillVO, SystemToolVO } from '@/types/api'
 
 const menuStore = useMenuStore()
+
+// 渠道绑定抽屉：后台菜单为动态 DB 驱动，不新增菜单种子，改为在本页复用 agent 权限入口打开。
+const channelBindingVisible = ref(false)
 
 const loading = ref(false)
 const list = ref<AgentVO[]>([])
@@ -273,6 +277,7 @@ onMounted(() => {
         <el-input v-model="query.keyword" placeholder="按名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
         <el-button v-permission="'agent:add'" type="primary" @click="openCreate">新建智能体</el-button>
+        <el-button v-permission="'agent:view'" @click="channelBindingVisible = true">渠道绑定</el-button>
       </div>
 
       <el-table v-loading="loading" :data="list" style="width: 100%">
@@ -468,6 +473,8 @@ onMounted(() => {
         <el-button type="primary" :disabled="!canSubmit" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <ChannelBindingDrawer v-model="channelBindingVisible" />
   </div>
 </template>
 

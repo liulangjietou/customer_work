@@ -65,7 +65,10 @@ class ModelConfigServiceTest {
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
         // 16 字节测试密钥，满足 AES-128 长度要求
         AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil("0123456789abcdef");
-        service = new ModelConfigService(mapper, agentMapper, agentBackupModelMapper, cryptoUtil, modelFactory, agentInstanceCache);
+        com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher runtimeConfigPublisher =
+            mock(com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher.class);
+        service = new ModelConfigService(mapper, agentMapper, agentBackupModelMapper, cryptoUtil, modelFactory,
+            agentInstanceCache, runtimeConfigPublisher);
     }
 
     @Test
