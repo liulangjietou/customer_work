@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance, type TreeInstance } from 'element-plus'
+import type { FormInstance, TreeInstance } from 'element-plus'
 import { createRole, deleteRole, pageRoles, updateRole } from '@/api/role'
 import { permissionTree } from '@/api/permission'
 import type { PageQuery, PermissionVO, RoleSaveRequest, RoleVO } from '@/types/api'

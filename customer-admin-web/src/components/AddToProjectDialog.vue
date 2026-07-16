@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
 import { addSessionToProject, createProject, listProjects } from '@/api/project'
 import type { ProjectVO } from '@/types/api'
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import type { FormInstance } from 'element-plus'
 import { createModel, deleteModel, pageModels, testModelConnectivity, updateModel } from '@/api/model'
 import type { ModelSaveRequest, ModelVO, PageQuery } from '@/types/api'
 

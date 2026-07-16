@@ -1,10 +1,34 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import AutoImport from 'unplugin-auto-import/vite'
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { fileURLToPath, URL } from 'node:url'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    // Element Plus 按需引入：模板里的 el-* 组件与 ElMessage 等函数式 API 由 resolver
+    // 自动注入 import 及配套样式。约定：业务代码不再手写 element-plus 的值 import
+    //（type import 不受影响，可保留），否则样式不会被按需带出。
+    // 图标是例外：MenuTree/MenuManage/IconPicker 按运行时字符串渲染图标，静态分析
+    // 覆盖不了，保持 plugins/icons.ts 全量全局注册，不做图标按需。
+    AutoImport({
+      resolvers: [ElementPlusResolver()],
+      dts: 'src/types/auto-imports.d.ts',
+    }),
+    Components({
+      resolvers: [ElementPlusResolver()],
+      // 只用于解析 Element Plus，本地组件维持显式 import 的现状
+      dirs: [],
+      // 不生成组件类型声明：生成后模板会启用 EP 组件的严格类型检查，
+      // 存量模板（el-table slot 的 DefaultRow、:value 传 null 等）会暴露 100+ 处
+      // 既有类型摩擦，与"按需引入行为不变"的目标无关；保持与全量引入时一致的
+      // 宽松模板类型，严格化留作后续独立改造。
+      dts: false,
+    }),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

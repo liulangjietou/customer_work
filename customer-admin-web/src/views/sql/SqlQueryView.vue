@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { executeSqlQuery, exportSqlQuery, fetchSqlQueryMeta } from '@/api/sql'
 import type { SqlQueryMetaParam, SqlQueryMetaVO, SqlQueryResultVO } from '@/types/api'
 

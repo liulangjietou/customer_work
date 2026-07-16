@@ -1,5 +1,4 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios'
-import { ElMessage } from 'element-plus'
 import router from '@/router'
 import { useAuthStore } from '@/store/auth'
 import type { Result } from '@/types/api'

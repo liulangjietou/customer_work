@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import type { FormInstance } from 'element-plus'
 import { cancelOrder, getOrderDetail, modifyOrderAddress, pageOrders } from '@/api/user-order'
 import { ORDER_STATUS_OPTIONS, ORDER_STATUS_TAG_TYPE, type OrderDetailVO, type OrderPageQuery, type OrderVO } from '@/types/order'
 

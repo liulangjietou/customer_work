@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { ElMessage, type UploadRequestOptions } from 'element-plus'
+import type { UploadRequestOptions } from 'element-plus'
 import { getChatSessionMessages, interruptChat, parseChatAttachment, streamChat } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'

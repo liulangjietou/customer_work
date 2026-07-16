@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, type FormInstance } from 'element-plus'
+import type { FormInstance } from 'element-plus'
 import { fetchSystemTools, updateSystemTool } from '@/api/system-tool'
 import type { PageQuery, SystemToolSaveRequest, SystemToolVO } from '@/types/api'
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import type { FormInstance } from 'element-plus'
 import type { AllowDropFunction } from 'element-plus/es/components/tree/src/tree.type'
 import type { UploadRequestOptions } from 'element-plus/es/components/upload/src/upload'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'

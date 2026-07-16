@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import type { FormInstance, FormRules } from 'element-plus'
 import { login, ssoLogin } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
