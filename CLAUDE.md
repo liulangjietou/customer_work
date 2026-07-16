@@ -38,7 +38,8 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 
 ## 文档地图（哪个问题去读哪个文档）
 
-- 功能总表/配置项/接口速查 → `README.md`
+- 项目概览/模块说明/全景架构图 → `README.md`
+- 功能总表/配置项/接口速查/各功能用法 → `docs/功能与配置全量参考.md`
 - 1.x→2.0 API 映射、RC4→GA 变更、issue 重新核对 → `docs/MIGRATION-2.0.md`
 - 框架 open issues 与本项目链路的交叉评估 → `docs/生产就绪评估.md`
 - 生产部署步骤/环境变量/灰度回滚 → `docs/部署手册.md`
