@@ -54,6 +54,7 @@ public enum ResultCode {
     SCHEDULER_CRON_INVALID(40017, "cron 表达式非法"),
     SYSTEM_TOOL_HTTP_FORBIDDEN(40018, "目标地址不在允许访问范围内，已被安全策略拦截"),
     AI_REVIEW_FAILED(40019, "AI 代码审查失败，请稍后重试"),
+    MODEL_PROVIDER_NOT_SUPPORTED(40020, "暂不支持的模型 provider"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

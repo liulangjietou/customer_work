@@ -166,7 +166,7 @@ public class ModelConfigService {
         String apiKey = cryptoUtil.decrypt(model.getApiKey());
 
         return CompletableFuture
-            .supplyAsync(() -> modelFactory.testConnectivity(model.getBaseUrl(), apiKey, model.getModel()), MODEL_TEST_EXECUTOR)
+            .supplyAsync(() -> modelFactory.testConnectivity(model.getProvider(), model.getBaseUrl(), apiKey, model.getModel()), MODEL_TEST_EXECUTOR)
             .orTimeout(TEST_FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .exceptionally(ex -> {
                 if (ex.getCause() instanceof TimeoutException || ex instanceof TimeoutException) {

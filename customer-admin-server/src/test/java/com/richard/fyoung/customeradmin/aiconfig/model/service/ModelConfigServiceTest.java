@@ -159,10 +159,11 @@ class ModelConfigServiceTest {
         existing.setId(1L);
         AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil("0123456789abcdef");
         existing.setApiKey(cryptoUtil.encrypt("sk-test"));
+        existing.setProvider("openai");
         existing.setBaseUrl("https://api.openai.com/v1");
         existing.setModel("gpt-4o-mini");
         when(mapper.selectById(1L)).thenReturn(existing);
-        when(modelFactory.testConnectivity(anyString(), anyString(), anyString()))
+        when(modelFactory.testConnectivity(anyString(), anyString(), anyString(), anyString()))
             .thenReturn(new ModelTestResult(ModelTestResult.STATUS_SUCCESS, LocalDateTime.now(), null));
 
         CompletableFuture<ModelTestResult> future = service.testConnectivity(1L);
