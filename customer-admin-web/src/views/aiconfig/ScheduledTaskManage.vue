@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
   createScheduledTask,
@@ -12,7 +12,7 @@ import {
   updateScheduledTask,
 } from '@/api/scheduled-task'
 import { pageAgents } from '@/api/agent'
-import type { AgentVO, MpPageQuery, ScheduledTaskRunVO, ScheduledTaskSaveRequest, ScheduledTaskVO } from '@/types/api'
+import type { AgentVO, MpPageQuery, ScheduledTaskRunVO, ScheduledTaskSaveRequest, ScheduledTaskVO, ScheduleMode } from '@/types/api'
 
 const loading = ref(false)
 const list = ref<ScheduledTaskVO[]>([])
@@ -21,12 +21,19 @@ const query = reactive<MpPageQuery>({ current: 1, size: 10, keyword: '' })
 
 const agentOptions = ref<AgentVO[]>([])
 
+// 当前全局调度模式（后端在列表数据里带回）：internal=内置调度器，xxl-job=外部 XXL-JOB
+const scheduleMode = ref<ScheduleMode>('internal')
+const isInternalMode = computed(() => scheduleMode.value !== 'xxl-job')
+
 async function loadList() {
   loading.value = true
   try {
     const result = await pageScheduledTasks(query)
     list.value = result.records
     total.value = result.total
+    if (result.records.length > 0 && result.records[0].scheduleMode) {
+      scheduleMode.value = result.records[0].scheduleMode
+    }
   } finally {
     loading.value = false
   }
@@ -52,13 +59,29 @@ const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 const form = reactive<ScheduledTaskSaveRequest>({
-  taskCode: '', taskName: '', agentId: undefined as unknown as number, prompt: '', enabled: true, remark: '',
+  taskCode: '', taskName: '', agentId: undefined as unknown as number, prompt: '', cron: '', enabled: true, remark: '',
 })
+
+// Spring cron 为 6 位（秒 分 时 日 月 周），前端只做位数粗校验拦低级错误，合法性以后端 CronExpression 校验为准
+const cronRule = {
+  validator: (_rule: unknown, value: string | null | undefined, callback: (error?: Error) => void) => {
+    if (!value || !value.trim()) {
+      callback()
+      return
+    }
+    if (value.trim().split(/\s+/).length !== 6) {
+      callback(new Error('cron 需为 6 位（秒 分 时 日 月 周），如 0 0 9 * * ?'))
+      return
+    }
+    callback()
+  },
+  trigger: 'blur',
+}
 
 function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
-  Object.assign(form, { taskCode: '', taskName: '', agentId: undefined, prompt: '', enabled: true, remark: '' })
+  Object.assign(form, { taskCode: '', taskName: '', agentId: undefined, prompt: '', cron: '', enabled: true, remark: '' })
   dialogVisible.value = true
 }
 
@@ -70,6 +93,7 @@ function openEdit(row: ScheduledTaskVO) {
     taskName: row.taskName,
     agentId: row.agentId,
     prompt: row.prompt,
+    cron: row.cron,
     enabled: row.enabled,
     remark: row.remark,
   })
@@ -149,6 +173,7 @@ const runsTotal = ref(0)
 const triggerTypeLabel: Record<ScheduledTaskRunVO['triggerType'], string> = {
   XXL_JOB: 'XXL-JOB',
   MANUAL: '手动触发',
+  INTERNAL: '内置调度',
 }
 
 async function openRuns(row: ScheduledTaskVO) {
@@ -188,10 +213,24 @@ onMounted(() => {
 <template>
   <div class="page">
     <el-alert
+      v-if="isInternalMode"
+      type="info"
+      :closable="false"
+      show-icon
+      title="当前为内置调度模式：调度周期（cron）直接在本页配置，无需外部 XXL-JOB"
+      style="margin-bottom: 16px"
+    >
+      <template #default>
+        <div>任务「启用」且填写了 cron 时按周期自动执行；cron 留空则仅可手动触发。</div>
+        <div>「手动触发」不受调度周期影响，可随时用于验证 prompt 是否符合预期。</div>
+      </template>
+    </el-alert>
+    <el-alert
+      v-else
       type="warning"
       :closable="false"
       show-icon
-      title="调度周期（cron）与启停在公司 XXL-JOB 控制台配置"
+      title="当前为 XXL-JOB 调度模式：调度周期与启停在公司 XXL-JOB 控制台配置，本页 cron 仅保存展示"
       style="margin-bottom: 16px"
     >
       <template #default>
@@ -213,6 +252,12 @@ onMounted(() => {
         <el-table-column label="关联智能体" width="160">
           <template #default="{ row }: { row: ScheduledTaskVO }">
             {{ row.agentName || `#${row.agentId}` }}
+          </template>
+        </el-table-column>
+        <el-table-column label="调度周期" width="150">
+          <template #default="{ row }: { row: ScheduledTaskVO }">
+            <code v-if="row.cron">{{ row.cron }}</code>
+            <span v-else class="cron-empty">仅手动触发</span>
           </template>
         </el-table-column>
         <el-table-column label="启用状态" width="100">
@@ -278,6 +323,14 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="执行指令" prop="prompt" :rules="[{ required: true, message: '请输入执行指令' }]">
           <el-input v-model="form.prompt" type="textarea" :rows="5" placeholder="每次定时执行时发给智能体的指令（prompt），与手动对话时的用户输入等价" />
+        </el-form-item>
+        <el-form-item label="调度周期" prop="cron" :rules="[cronRule]">
+          <el-input v-model="form.cron!" placeholder="cron 表达式（6 位：秒 分 时 日 月 周），如 0 0 9 * * ?；留空则仅手动触发" />
+          <div class="form-tip">
+            {{ isInternalMode
+              ? '内置调度模式：启用且填写 cron 后按周期自动执行，保存后立即生效'
+              : 'XXL-JOB 调度模式：此处 cron 仅保存展示，实际周期以 XXL-JOB 控制台配置为准' }}
+          </div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
@@ -369,6 +422,18 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.cron-empty {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.form-tip {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
 }
 
 .result-pre {

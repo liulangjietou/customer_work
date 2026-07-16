@@ -85,8 +85,14 @@ admin:
       # 期间请求直接走备用模型；熔断到期自动半开（重置计数、放行一次主模型尝试）。见 ModelCircuitBreakerRegistry。
       failure-threshold: ${ADMIN_MODEL_FAILOVER_FAILURE_THRESHOLD:3}
       open-duration-seconds: ${ADMIN_MODEL_FAILOVER_OPEN_DURATION_SECONDS:60}
+  scheduler:
+    # 定时任务调度模式：internal（默认，admin-server 内置动态调度器按 cron 执行，无需外部 XXL-JOB）
+    # ｜xxl-job（周期以 XXL-JOB 控制台为准，内置调度器不注册，cron 字段仅保存展示）。两模式互斥执行避免双跑。
+    mode: ${ADMIN_SCHEDULER_MODE:internal}
+    # 内置调度器线程池大小（需 > 1，单次执行可能是分钟级同步调用）。
+    pool-size: ${ADMIN_SCHEDULER_POOL_SIZE:4}
   scheduled-task:
-    # 单次任务执行超时（秒）：Agent 同步调用的硬性超时兜底，手动触发接口 / XXL-JOB JobHandler 共用。
+    # 单次任务执行超时（秒）：Agent 同步调用的硬性超时兜底，手动触发接口 / XXL-JOB JobHandler / 内置调度器共用。
     execute-timeout-seconds: ${ADMIN_SCHEDULED_TASK_TIMEOUT_SECONDS:300}
   xxl-job:
     # 定时任务 XXL-JOB 接入：默认关闭，本地无调度中心也能正常启动；手动触发路径不依赖本配置。
@@ -114,6 +120,12 @@ admin:
     # SQL 配置管理执行防护：目标多为生产库，超时与最大行数硬性兜底，防止慢 SQL/大结果集拖垮外部库。
     query-timeout-seconds: ${ADMIN_SQL_QUERY_TIMEOUT_SECONDS:30}
     max-rows: ${ADMIN_SQL_MAX_ROWS:2000}
+  system-tool:
+    http:
+      # httpclient 系统工具 SSRF 白名单：为空=默认模式（拒环回/内网、放公网）；
+      # 非空=收紧模式（仅放行白名单内 host，支持精确域名与 *.example.com 通配后缀）。
+      # 逗号分隔多个 host，如 api.example.com,*.internal.corp
+      allowed-hosts: ${ADMIN_SYSTEM_TOOL_HTTP_ALLOWED_HOSTS:}
   sandbox:
     # VibeCoding 代码沙箱：local（默认，无隔离，直接跑宿主机）｜docker（容器隔离，需本机/服务器已装 Docker）。
     mode: ${ADMIN_SANDBOX_MODE:local}

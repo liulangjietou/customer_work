@@ -13,8 +13,9 @@ import java.time.LocalDateTime;
 /**
  * 定时任务定义：绑定一个智能体 + 一段触发时传给它的 prompt。
  *
- * <p>调度周期（cron/固定频率）本身不落本表——统一在 XXL-JOB 控制台管理；{@code enabled} 只控制
- * "该任务是否允许被执行"，disabled 时无论 XXL-JOB 触发还是后台手动触发都 fast-fail 拒绝。</p>
+ * <p>{@code cron} 落本表：internal 调度模式下由内置动态调度器（{@code ScheduledTaskScheduler}）
+ * 按此周期执行；xxl-job 模式下 cron 仅保存展示，周期以 XXL-JOB 控制台配置为准。cron 为空则不参与
+ * 内置周期调度。{@code enabled} 控制"该任务是否允许被执行"，disabled 时任何触发都 fast-fail 拒绝。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data
@@ -31,6 +32,8 @@ public class AiScheduledTask {
     private Long agentId;
     /** 每次触发时传给 Agent 的用户消息内容。 */
     private String prompt;
+    /** cron 表达式（Spring 6 位；可空）：internal 模式内置调度器按此周期执行，xxl-job 模式仅展示。 */
+    private String cron;
     /** 0禁用 / 1启用。 */
     private Integer enabled;
     private String remark;

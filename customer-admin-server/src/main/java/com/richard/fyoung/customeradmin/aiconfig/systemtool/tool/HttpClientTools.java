@@ -17,6 +17,9 @@ import org.springframework.web.client.RestTemplate;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URI;
 import java.util.Map;
 
 /**
@@ -26,8 +29,12 @@ import java.util.Map;
  * <p>Bean 名精确等于 {@code tool_code}（"httpclient"），运行时
  * {@code AdminAgentInstanceFactory#buildSystemTools} 按此名从容器取实例注册进 Toolkit。</p>
  *
- * <p>安全说明：TLS 走 JDK 默认信任链校验（不做 trust-all / 不关主机名校验）；但本工具允许智能体请求
- * 任意可达 URL（含内网地址），是一个 SSRF 风险面，是否收紧到 URL 白名单后续按需迭代。</p>
+ * <p>安全说明：TLS 走 JDK 默认信任链校验（不做 trust-all / 不关主机名校验）；SSRF 面在
+ * {@link SystemToolHttpGuard} 收口——发起请求前对目标 URL 做白名单/内网判定（该链路唯一防御点），
+ * 默认拒内网/环回、放公网，配置白名单后仅放行白名单内 host（见 {@code admin.system-tool.http.allowed-hosts}）。
+ * 配套地，本工具**禁止自动跟随重定向**（见 {@link NoRedirectClientHttpRequestFactory}）：3xx 作为终态
+ * 响应返回（带 statusCode + location），Agent 若要跟进下一跳需再发一次工具调用，自然再过一遍 Guard——
+ * 否则"合规公网域名 302 指向内网地址"即可绕过校验。</p>
  * @author owlzhangfq@gmail.com
  */
 @Component("httpclient")
@@ -41,14 +48,33 @@ public class HttpClientTools {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final SystemToolHttpGuard httpGuard;
 
-    public HttpClientTools() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+    public HttpClientTools(SystemToolHttpGuard httpGuard) {
+        this.httpGuard = httpGuard;
+        SimpleClientHttpRequestFactory factory = new NoRedirectClientHttpRequestFactory();
         factory.setConnectTimeout(CONNECT_TIMEOUT_MS);
         factory.setReadTimeout(READ_TIMEOUT_MS);
         System.setProperty("http.keepAlive", "true");
         System.setProperty("http.maxConnections", "50");
         this.restTemplate = new RestTemplate(factory);
+    }
+
+    /**
+     * 所有方法统一禁止自动跟随重定向的请求工厂（SSRF 收口的配套约束，不要移除）。
+     *
+     * <p>Spring 的 {@link SimpleClientHttpRequestFactory#prepareConnection} 默认对 GET 开
+     * {@code setInstanceFollowRedirects(true)}——攻击者用一个能通过 {@link SystemToolHttpGuard}
+     * 校验的公网域名返回 302 Location 指向内网地址，HttpURLConnection 会自动跟到内网，Guard 即被绕过。
+     * 这里按连接实例覆写（不用 {@code HttpURLConnection.setFollowRedirects} 全局静态开关，避免污染
+     * 同 JVM 其它 HTTP 客户端）。</p>
+     */
+    static class NoRedirectClientHttpRequestFactory extends SimpleClientHttpRequestFactory {
+        @Override
+        protected void prepareConnection(HttpURLConnection connection, String httpMethod) throws IOException {
+            super.prepareConnection(connection, httpMethod);
+            connection.setInstanceFollowRedirects(false);
+        }
     }
 
     @Tool(name = "http_get", description = "get请求http地址")
@@ -117,13 +143,19 @@ public class HttpClientTools {
 
     /** 发起一次请求并把结果序列化成 JSON 字符串回传给 LLM；任何异常都收敛成 error 字段而非抛出。 */
     private String execute(String url, HttpMethod method, HttpHeaders headers, String body) {
+        // SSRF 收口：发起请求前统一校验目标地址（唯一防御点），命中安全策略 fast fail。
+        httpGuard.checkAllowed(url);
         HttpResponse response;
         try {
             HttpEntity<String> entity = body != null ? new HttpEntity<>(body, headers) : new HttpEntity<>(headers);
             ResponseEntity<String> resp = restTemplate.exchange(url, method, entity, String.class);
+            // 3xx 是终态结果（不自动跟随），带回 Location 让调用方决策下一跳
+            URI redirectLocation = resp.getHeaders().getLocation();
             response = HttpResponse.builder()
                 .url(url).method(method.name()).statusCode(resp.getStatusCode().value())
-                .body(resp.getBody()).build();
+                .body(resp.getBody())
+                .location(redirectLocation == null ? null : redirectLocation.toString())
+                .build();
         } catch (Exception e) {
             log.error("http tool request failed, code={}, url={}, method={}", ERROR_CODE_HTTP_FAIL, url, method, e);
             response = HttpResponse.builder()

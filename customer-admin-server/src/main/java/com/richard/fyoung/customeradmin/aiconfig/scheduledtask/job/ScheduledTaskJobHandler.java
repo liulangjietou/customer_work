@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.aiconfig.scheduledtask.job;
 
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.entity.AiScheduledTaskRun;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.service.ScheduledTaskService;
+import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import com.richard.fyoung.customeradmin.config.AdminXxlJobProperties;
 import com.xxl.job.core.context.XxlJobHelper;
 import com.xxl.job.core.executor.XxlJobExecutor;
@@ -54,8 +55,9 @@ public class ScheduledTaskJobHandler {
 
     /** 装配完成后立即把通用 JobHandler 注册进执行器，注册名固定为 {@link #JOB_HANDLER_NAME}。 */
     @Bean
-    public IJobHandler agentScheduledTaskHandler(XxlJobExecutor xxlJobExecutor, ScheduledTaskService scheduledTaskService) {
-        IJobHandler handler = new AgentScheduledTaskHandler(scheduledTaskService);
+    public IJobHandler agentScheduledTaskHandler(XxlJobExecutor xxlJobExecutor, ScheduledTaskService scheduledTaskService,
+                                                 AdminSchedulerProperties schedulerProperties) {
+        IJobHandler handler = new AgentScheduledTaskHandler(scheduledTaskService, schedulerProperties);
         XxlJobExecutor.registryJobHandler(JOB_HANDLER_NAME, handler);
         log.info("scheduled task xxl-job handler registered, handlerName={}", JOB_HANDLER_NAME);
         return handler;
@@ -65,13 +67,22 @@ public class ScheduledTaskJobHandler {
     static class AgentScheduledTaskHandler extends IJobHandler {
 
         private final ScheduledTaskService scheduledTaskService;
+        private final AdminSchedulerProperties schedulerProperties;
 
-        AgentScheduledTaskHandler(ScheduledTaskService scheduledTaskService) {
+        AgentScheduledTaskHandler(ScheduledTaskService scheduledTaskService, AdminSchedulerProperties schedulerProperties) {
             this.scheduledTaskService = scheduledTaskService;
+            this.schedulerProperties = schedulerProperties;
         }
 
         @Override
         public void execute() throws Exception {
+            // 调度模式门控：internal 模式下内置调度器负责周期执行，XXL-JOB 触发直接跳过，避免双跑。
+            if (!schedulerProperties.isXxlJobMode()) {
+                log.info("scheduled task xxl-job trigger skipped, internal scheduling mode active, mode={}",
+                    schedulerProperties.getMode());
+                XxlJobHelper.handleFail("当前为内置调度模式(admin.scheduler.mode=internal)，XXL-JOB 触发已跳过以避免双跑");
+                return;
+            }
             String taskCode = XxlJobHelper.getJobParam();
             if (!StringUtils.hasText(taskCode)) {
                 log.error("scheduled task xxl-job trigger missing task_code, code={}", "SCHED-TASK-MISSING-PARAM");
