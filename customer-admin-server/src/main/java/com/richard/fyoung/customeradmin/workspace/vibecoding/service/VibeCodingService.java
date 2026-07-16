@@ -44,7 +44,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -73,39 +72,12 @@ public class VibeCodingService {
     private static final long MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024;
     /** {@link GitWorkspaceService} 在会话目录里现场建的 git 仓库目录名，产物文件树/快照均需跳过。 */
     private static final String GIT_DIR_NAME = ".git";
-    /** docker 沙箱容器内 workspace 根（框架 DockerFilesystemSpec 默认值，系统提示实测为 /workspace）。 */
-    private static final String CONTAINER_WORKSPACE_ROOT = "/workspace";
-    /** 沙箱容器名前缀（框架 DockerSandbox 命名：agentscope-sandbox-{sandboxId}）。 */
-    private static final String SANDBOX_CONTAINER_PREFIX = "agentscope-sandbox";
-    /** 单条 docker cli 命令超时秒数。 */
-    private static final long DOCKER_CMD_TIMEOUT_SECONDS = 20;
     /**
      * 失败自动修复的轮数上限（需求 P0-3 §4.3.2）：Agent 侧由 prompt 约束"最多重试 3 轮"，
      * 服务侧据此统计失败次数——第 3 次仍失败的 test_report 标注 {@code exhausted=true}，
      * 供前端明确提示"已达最大修复轮次"。
      */
     private static final int MAX_FIX_ROUNDS = 3;
-    /**
-     * docker 可执行文件绝对路径：IDE/GUI 启动的 Java 进程不继承 shell 的 PATH（典型 macOS 坑，
-     * 本项目 CLAUDE.local.md 已记录过同类问题），而 docker 常见是 Homebrew 装的、不在系统默认
-     * PATH 里（不同于系统自带、默认 PATH 就有的 git）——裸写 "docker" 交给 PATH 解析在这种场景下
-     * 会静默 “command not found”。启动时探测一次常见安装路径，找不到再退回裸命令名兜底。
-     */
-    private static final String DOCKER_EXECUTABLE = resolveDockerExecutable();
-
-    private static String resolveDockerExecutable() {
-        for (String candidate : new String[] {
-            "/opt/homebrew/bin/docker",         // Apple Silicon Homebrew
-            "/usr/local/bin/docker",             // Intel Homebrew / Docker Desktop 旧版
-            "/Applications/Docker.app/Contents/Resources/bin/docker",
-            "/usr/bin/docker"
-        }) {
-            if (Files.isExecutable(Path.of(candidate))) {
-                return candidate;
-            }
-        }
-        return "docker"; // 兜底交给 PATH 解析，环境正常配置时依然可用
-    }
 
     private final ChatService chatService;
     private final AdminAgentInstanceFactory agentInstanceFactory;
@@ -205,12 +177,11 @@ public class VibeCodingService {
                     Flux.fromIterable(detectTestReport(chunk, testRun, failedRuns)),
                     Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot)))
                 : Flux.just(chunk));
-        // 流结束兜底：docker 模式先把容器产物拷回宿主机会话目录（隔离期间容器碰不到宿主机，用完主动搬回），
-        // 再检测一次文件变更——这样产物文件树/file_change/Git 助手在 docker 模式也能读到真实产物。
-        Flux<ChatStreamChunk> mainFlux = chatFlux.concatWith(Flux.defer(() -> {
-            syncDockerArtifactsIfNeeded(agentCode, safeSession, sessionWorkspace);
-            return Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot));
-        })).doFinally(signal -> {
+        // 流结束兜底：再检测一次文件变更，防止最后一次写入恰好没有跟在任何 TOOL_RESULT 之后（如异步落盘）。
+        // docker 模式产物经 bind mount（P1-3）实时落宿主机会话目录，与 local 一样直接读磁盘即可，无需事后搬运。
+        Flux<ChatStreamChunk> mainFlux = chatFlux.concatWith(Flux.defer(() ->
+            Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot))
+        )).doFinally(signal -> {
             // 审计（需求 §5.2/§5.3）：变更文件 = 本轮初始快照 vs 最终快照（含删除），token 为本轮
             // 全部模型调用的汇总；ChatService 内部已把流错误兜底成正常完成，这里的非 COMPLETE
             // 信号主要是用户取消/连接断开，如实记录。
@@ -332,14 +303,13 @@ public class VibeCodingService {
      * 会话一键回滚：把会话 workspace 恢复到对话前的 baseline 状态（新增文件删除、修改/删除的已跟踪文件
      * 还原），{@code .git} 保留，baseline 不被破坏（回滚后可继续对话建立新变更）。
      *
-     * <p>Docker 模式产物在容器内，本期一键回滚仅支持 local（需求 §4.1.3），docker 模式直接 fast fail。
-     * 破坏性操作 + baseline 缺失校验的安全兜底下沉在 {@link GitWorkspaceService#rollbackToBaseline}。</p>
+     * <p>local 与 docker 模式均支持：docker 模式产物经 bind mount（P1-3）实时落宿主机会话目录，
+     * 会话 git 仓库（{@link GitWorkspaceService#ensureRepo}）也建在同一宿主机目录，回滚即对该目录
+     * 执行 git 还原，语义与 local 一致。破坏性操作 + baseline 缺失校验的安全兜底下沉在
+     * {@link GitWorkspaceService#rollbackToBaseline}。</p>
      */
     public RollbackResult rollback(String agentCode, String sessionId) {
         requireVibeCodingCapable(agentCode);
-        if (sandboxProperties.isDockerMode()) {
-            throw new BizException(ResultCode.ROLLBACK_NOT_SUPPORTED_IN_DOCKER);
-        }
         String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
         Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, safeSession);
         // 审计（需求 §5.2/§5.3）：回滚是同步操作，操作人取自 Sa-Token ThreadLocal，begin/finish 同线程；
@@ -424,102 +394,6 @@ public class VibeCodingService {
     }
 
     /**
-     * docker 模式专用：对话结束后把容器内 {@code /workspace/sessions/{sessionId}/} 的产物
-     * {@code docker cp} 回宿主机会话目录，让产物文件树/file_change/Git 助手能读到（容器隔离期间
-     * 宿主机碰不到容器，只有此刻用完主动搬回，隔离性不受影响）。
-     *
-     * <p>不精确关联容器名——用我们注入的唯一 {@code sessionId} 在容器内的路径反查：哪个活着的
-     * {@code agentscope-sandbox-*} 容器里存在 {@code sessions/{sessionId}} 目录，就从它拷。best-effort：
-     * 容器已被回收 / docker 不可用 / 拷贝失败都只记日志，不打断主流程（local 模式直接跳过）。</p>
-     */
-    private void syncDockerArtifactsIfNeeded(String agentCode, String safeSession, Path sessionWorkspace) {
-        if (!sandboxProperties.isDockerMode()) {
-            return;
-        }
-        try {
-            String containerPath = CONTAINER_WORKSPACE_ROOT + "/sessions/" + safeSession;
-            for (String container : listSandboxContainers()) {
-                if (!containerHasDir(container, containerPath)) {
-                    continue;
-                }
-                Files.createDirectories(sessionWorkspace);
-                // docker cp 容器:/workspace/sessions/{id}/. 宿主机会话目录/ —— 末尾 /. 表示拷目录内容而非目录本身
-                boolean ok = runDocker("cp", container + ":" + containerPath + "/.", sessionWorkspace.toString());
-                if (ok) {
-                    log.info("[workspace] docker artifacts synced to host, agentCode={}, sessionId={}, container={}",
-                        agentCode, safeSession, container);
-                } else {
-                    log.error("[workspace] docker cp failed, code={}, sessionId={}, container={}",
-                        "DOCKER_ARTIFACT_CP_FAIL", safeSession, container);
-                }
-                return;
-            }
-            log.info("[workspace] no live sandbox container holds session, skip artifact sync, sessionId={}", safeSession);
-        } catch (Exception e) {
-            log.error("[workspace] docker artifact sync error, code={}, sessionId={}", "DOCKER_ARTIFACT_SYNC_ERROR", safeSession, e);
-        }
-    }
-
-    /** 列出当前活着的沙箱容器名（{@code docker ps --filter name=agentscope-sandbox}）。 */
-    private List<String> listSandboxContainers() {
-        List<String> names = new ArrayList<>();
-        try {
-            Process p = new ProcessBuilder(DOCKER_EXECUTABLE, "ps",
-                "--filter", "name=" + SANDBOX_CONTAINER_PREFIX, "--format", "{{.Names}}")
-                .redirectErrorStream(true).start();
-            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            if (!p.waitFor(DOCKER_CMD_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                return names;
-            }
-            for (String line : out.split("\n")) {
-                if (StringUtils.hasText(line)) {
-                    names.add(line.trim());
-                }
-            }
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            log.error("[workspace] docker ps failed, code={}", "DOCKER_PS_FAIL", e);
-        }
-        return names;
-    }
-
-    /** 容器内是否存在指定目录（{@code docker exec {c} test -d {path}} 退出码 0）。 */
-    private boolean containerHasDir(String container, String path) {
-        return runDocker("exec", container, "test", "-d", path);
-    }
-
-    /** 执行一条 docker 命令，退出码 0 返回 true；超时/异常返回 false，失败时把命令和输出打进日志方便排查。 */
-    private boolean runDocker(String... args) {
-        List<String> cmd = new ArrayList<>();
-        cmd.add(DOCKER_EXECUTABLE);
-        cmd.addAll(Arrays.asList(args));
-        try {
-            Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            if (!p.waitFor(DOCKER_CMD_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                log.error("[workspace] docker command timeout, code={}, cmd={}", "DOCKER_CMD_TIMEOUT", cmd);
-                return false;
-            }
-            boolean success = p.exitValue() == 0;
-            if (!success) {
-                log.error("[workspace] docker command failed, code={}, cmd={}, exitValue={}, output={}",
-                    "DOCKER_CMD_FAIL", cmd, p.exitValue(), output);
-            }
-            return success;
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            log.error("[workspace] docker command exec error, code={}, cmd={}", "DOCKER_CMD_EXEC_ERROR", cmd, e);
-            return false;
-        }
-    }
-
-    /**
      * 对比 {@code lastSnapshotRef} 持有的快照与当前实时快照，把差异转成 {@link ChatNodeKind#FILE_CHANGE}
      * 节点列表，并把 {@code lastSnapshotRef} 原地推进到最新快照（下次调用只看"这次调用之后新发生"的变化，
      * 不会重复上报同一处变更）。目录不存在（尚无任何文件写入）时直接返回空列表。
@@ -571,18 +445,15 @@ public class VibeCodingService {
     /**
      * 从一条 {@code TOOL_RESULT} 展示文本解析出结构化 {@code test_report} 事件（0 或 1 条）。
      *
-     * <p><b>仅 local 沙箱模式启用</b>（需求 P0-3 §4.3.3）：docker 模式下产物/命令输出留在容器内，
-     * 结构化解析与产物同步随后续批次 <b>P1-3</b> 一并落地，本期遇到 docker 模式降级为"仅 prompt
-     * 引导"——命令输出照常走普通 {@code TOOL_RESULT} 文本节点，不额外产出 test_report。</p>
+     * <p>local 与 docker 模式均启用：解析对象是命令执行的 {@code TOOL_RESULT} 输出文本，两种模式下
+     * 该文本都会随流回传；docker 模式产物又经 bind mount（<b>P1-3</b>）实时落宿主机，报告引用的文件
+     * 与宿主机文件树一致，不再降级。</p>
      *
      * <p>失败驱动的自动修复由 Agent 侧 prompt 约束（最多 3 轮），本方法只按执行序累计轮次：
      * {@code round} 为本轮对话第几次编译/测试执行；累计失败达 {@link #MAX_FIX_ROUNDS} 且当前仍失败时
      * 标注 {@code exhausted=true}，让前端明确"已达最大修复轮次"。</p>
      */
     private List<ChatStreamChunk> detectTestReport(ChatStreamChunk toolResult, AtomicInteger testRun, AtomicInteger failedRuns) {
-        if (sandboxProperties.isDockerMode()) {
-            return List.of();
-        }
         Optional<TestReport> parsed = TestReportParser.parse(toolResult.text());
         if (parsed.isEmpty()) {
             return List.of();

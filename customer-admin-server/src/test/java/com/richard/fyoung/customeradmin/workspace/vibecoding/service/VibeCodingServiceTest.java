@@ -61,7 +61,8 @@ class VibeCodingServiceTest {
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         agentMapper = mock(AiAgentMapper.class);
         gitWorkspaceService = mock(GitWorkspaceService.class);
-        // 默认 local 模式（isDockerMode()=false），docker 产物同步逻辑在单测里天然跳过；
+        // 默认 local 模式（isDockerMode()=false）；docker 模式的容器↔宿主机 bind mount 产物同步（P1-3）
+        // 需真起容器，由门控式 DockerSandboxIntegrationTest 覆盖，本单测聚焦模式无关的流式/快照/审计逻辑。
         // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
         service = new VibeCodingService(chatService, agentInstanceFactory, agentMapper, gitWorkspaceService,
             new AdminSandboxProperties(), mock(AiCodingAuditService.class), new PlanConfirmationService());

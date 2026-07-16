@@ -48,6 +48,7 @@ import io.agentscope.harness.agent.IsolationScope;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
 import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
+import io.agentscope.harness.agent.sandbox.WorkspaceSpec;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
 import io.agentscope.harness.agent.skill.curator.SkillCuratorConfig;
 import org.slf4j.Logger;
@@ -57,6 +58,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -64,8 +66,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -106,6 +110,20 @@ public class AdminAgentInstanceFactory {
     private static final long BYTES_PER_MB = 1024L * 1024L;
     private static final String WORKSPACE_ROOT = "./data/admin-workspace";
     private static final String SKILL_ROOT = "./data/admin-skills";
+    /** 会话产物目录名（{@code {agentCode}/sessions/}），docker 模式下 bind mount 前置预建的子目录之一。 */
+    private static final String SESSIONS_DIR_NAME = "sessions";
+    /** 容器工作区根（框架 {@code DockerSandboxClientOptions} 默认值，勿改——bind mount 目标路径依赖它）。 */
+    static final String CONTAINER_WORKSPACE_ROOT = "/workspace";
+    /** 探测宿主机 uid/gid 的 {@code id} 命令超时秒数。 */
+    private static final long ID_CMD_TIMEOUT_SECONDS = 5;
+    /**
+     * 宿主机 JVM 进程的 {@code uid:gid}（类加载时经 {@code id -u}/{@code id -g} 探测一次，失败为 null）。
+     * docker 模式下注入 {@code docker run --user uid:gid}：原生 Linux Docker 上容器默认以 root 运行，
+     * bind mount 写出的文件在宿主机归 root:root，后续宿主机侧回滚（git checkout/clean）、文件保存会因
+     * 属主不可写而失败；令容器进程 uid 与宿主机 JVM 一致后产物属主天然对齐。macOS Docker Desktop 本有
+     * 属主映射，注入同样无害。探测失败（如 Windows）时不注入并记日志，回退行为见部署手册"Docker 模式产物同步"。
+     */
+    private static final String HOST_UID_GID = resolveHostUidGid();
     private static final String DEFAULT_SYSTEM_PROMPT = "你是一个乐于助人的智能助手。不清楚的问题说不知道，需要人工确认，不要瞎编或者胡说八道。";
 
     private final AiAgentMapper agentMapper;
@@ -320,7 +338,7 @@ public class AdminAgentInstanceFactory {
 
         if (vibecoding) {
             if (sandboxProperties.isDockerMode()) {
-                harnessBuilder.filesystem(buildDockerFilesystemSpec());
+                harnessBuilder.filesystem(buildDockerFilesystemSpec(sandboxProperties, agentCode));
             } else {
                 harnessBuilder.filesystem(buildLocalFilesystemSpec());
             }
@@ -425,15 +443,96 @@ public class AdminAgentInstanceFactory {
      * {@code admin.sandbox.mode=docker}：容器级隔离，Agent 的 shell/文件工具跑在独立 Docker 容器内。
      * {@code agentscope-harness} 已内置该实现，与 {@link #buildLocalFilesystemSpec()} 是同一套
      * {@code HarnessAgent.Builder#filesystem(...)} 挂载点，本机/服务器需已安装并运行 Docker。
+     *
+     * <p><b>产物同步（P1-3，bind mount 挂 agent 工作区根）</b>：把宿主机 agent 工作区根
+     * {@code {agentCode}/} 整目录挂进容器工作区根 {@code /workspace}（经 {@code docker run -v}），
+     * 容器内 workspace-relative 的一切写入（{@code sessions/{sessionId}/} 会话产物、跨会话
+     * {@code MEMORY.md}、Plan Mode 的 {@code plans/}）都实时落宿主机同一目录——与 local 模式的
+     * 目录语义完全一致，宿主机侧文件树 / file_change / Git 助手 / 回滚 / test_report 无需改造可用。
+     * 挂根而非只挂 {@code sessions/} 的原因：框架 MEMORY.md/plans 写入走 Filesystem 抽象（docker 模式
+     * = 容器内 workspace 根），只挂子目录会让这些跨会话文件留在容器里随容器丢失；且注入 {@code --user}
+     * 后容器内 {@code /workspace} 根（dockerd 以 root 建的挂载点）非 root 不可写，挂根让 {@code /workspace}
+     * 属主即宿主机用户，两个问题一并消除。会话间越权面与 local 模式等同（LocalFilesystemSpec 的
+     * workspace 本就是 agent 根），HTTP 侧 sessionId 穿越防御（{@link #resolveSessionWorkspace}）不受影响。</p>
+     *
+     * <p>同时关闭框架默认的 workspace projection（启动时把宿主机工作区 tar 快照式拷进容器的机制）——
+     * bind mount 已实时双向可见，projection 与挂载目录重叠且冗余。{@code HOME=/workspace} 供
+     * {@code --user} 下无 passwd 条目的进程使用（mvn 等需要可写 HOME，落在挂载区内且不进 sessions/
+     * 产物树）。静态包私有便于 {@code DockerSandboxIntegrationTest} 直接消费生产装配（不必 mock 全套依赖）。</p>
      */
-    private SandboxFilesystemSpec buildDockerFilesystemSpec() {
+    static SandboxFilesystemSpec buildDockerFilesystemSpec(AdminSandboxProperties sandboxProperties, String agentCode) {
         AdminSandboxProperties.Docker docker = sandboxProperties.getDocker();
+        Path hostWorkspaceRoot = prepareHostWorkspaceRoot(agentCode);
+        List<String> runArgs = new ArrayList<>();
+        // P1-3 核心：宿主机 agent 工作区根 ↔ 容器 /workspace 双向实时可见
+        runArgs.add("-v");
+        runArgs.add(hostWorkspaceRoot + ":" + CONTAINER_WORKSPACE_ROOT + ":rw");
+        if (HOST_UID_GID != null) {
+            // 容器进程 uid/gid 对齐宿主机 JVM，bind mount 写出的产物属主即宿主机用户（Linux 属主问题的根治）
+            runArgs.add("--user");
+            runArgs.add(HOST_UID_GID);
+        } else {
+            log.info("[workspace] host uid/gid unresolved, docker sandbox runs as image default user, agentCode={}", agentCode);
+        }
+        WorkspaceSpec workspaceSpec = new WorkspaceSpec();
+        workspaceSpec.setEnvironment(Map.of("HOME", CONTAINER_WORKSPACE_ROOT));
         return new DockerFilesystemSpec()
             .image(docker.getImage())
             .memorySizeBytes(docker.getMemoryMb() * BYTES_PER_MB)
             .cpuCount(docker.getCpuCount())
             .network(docker.getNetwork())
+            .additionalRunArgs(runArgs)
+            .workspaceSpec(workspaceSpec)
+            .workspaceProjectionEnabled(false)
             .isolationScope(IsolationScope.AGENT);
+    }
+
+    /**
+     * bind mount 前置：预建宿主机 agent 工作区根及 {@code sessions/} 子目录并 fast fail——若交给
+     * {@code docker -v} 自动补建，缺失目录会以 root 属主创建，后续宿主机侧 git/回滚必然撞权限，
+     * 这正是本方法要规避的场景，建不出来就不该继续挂载（沙箱装配随之失败，错误信息直达调用方）。
+     * 返回绝对 normalize 路径，与 {@link #resolveSessionWorkspace} 的解析同源（同一 {@code WORKSPACE_ROOT}
+     * 相对 JVM 工作目录），保证容器内写入与宿主机读取指向同一目录。
+     */
+    private static Path prepareHostWorkspaceRoot(String agentCode) {
+        Path hostWorkspaceRoot = Path.of(WORKSPACE_ROOT, agentCode).toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(hostWorkspaceRoot.resolve(SESSIONS_DIR_NAME));
+        } catch (Exception e) {
+            log.error("[workspace] create host workspace dir for bind mount failed, code={}, agentCode={}",
+                "SANDBOX_BIND_MOUNT_INIT_ERROR", agentCode, e);
+            throw new BizException(ResultCode.SYSTEM_ERROR, "docker 沙箱工作区目录创建失败: " + hostWorkspaceRoot);
+        }
+        return hostWorkspaceRoot;
+    }
+
+    /**
+     * 探测宿主机 JVM 进程的 {@code uid:gid}（POSIX {@code id -u}/{@code id -g}），供
+     * {@code docker run --user} 使用；任何异常（命令缺失/超时/非 POSIX 平台）返回 null 表示不注入。
+     * 类加载时执行一次，进程生命周期内 uid 不会变。
+     */
+    private static String resolveHostUidGid() {
+        try {
+            String uid = execIdCommand("-u");
+            String gid = execIdCommand("-g");
+            if (StringUtils.hasText(uid) && StringUtils.hasText(gid)) {
+                return uid + ":" + gid;
+            }
+        } catch (Exception e) {
+            log.error("[workspace] resolve host uid/gid failed, code={}", "SANDBOX_UID_RESOLVE_FAIL", e);
+        }
+        return null;
+    }
+
+    /** 执行 {@code id <flag>} 并返回 trim 后的输出；非零退出码/超时返回 null。 */
+    private static String execIdCommand(String flag) throws Exception {
+        Process process = new ProcessBuilder("id", flag).redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        if (!process.waitFor(ID_CMD_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            return null;
+        }
+        return process.exitValue() == 0 ? output : null;
     }
 
     /**

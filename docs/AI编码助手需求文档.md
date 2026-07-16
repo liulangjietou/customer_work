@@ -62,9 +62,9 @@
 
 **已知架构约束（对后续需求有直接影响）**：
 
-1. **Docker 模式产物在容器内**：宿主机侧的产物文件树、file_change 事件、Git 助手读不到容器内文件——这是
-   Docker 隔离的固有特性。凡依赖宿主机文件系统的功能（回滚、Review、Git 助手），在 Docker 模式下都需要
-   P1-3 的容器↔宿主机同步先行。
+1. ~~**Docker 模式产物在容器内**~~：**已由 P1-3 解决**。原约束是宿主机侧产物文件树 / file_change / Git 助手
+   读不到容器内文件；P1-3 用 bind mount 把宿主机会话目录挂进容器 `/workspace/sessions`，产物实时落宿主机，
+   依赖宿主机文件系统的功能（回滚 / Review / Git 助手 / test_report）在 Docker 模式与 local 等价可用。
 2. **`HarnessAgent.stream()` 同步异常**：沙箱资源获取失败时同步抛异常，已用 `Flux.defer` 包裹兜底（`ChatService`），
    新增 SSE 接口须沿用该模式。
 3. **Docker 模式 sessionId 转义**：`SandboxSafeAgentStateStore` 装饰器负责 `/`→`_` 转义，新增涉及沙箱状态
@@ -85,7 +85,7 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 | **P0-3** | 生成→验证→修复闭环 | 沙箱内编译/测试，结构化 `test_report`，失败自动修复 | 沙箱执行链路已通 + prompt 引导已有 | 3~5 天 | 测试结果 100% 结构化返回，失败自动修复 ≤3 轮 |
 | **P1-1** | Plan Mode 人工确认闭环 | 高风险操作先出计划、等确认再执行（HITL） | 框架 `PermissionMode`；starter 已有 Approval Store SPI 模式可参考 | 5~8 天 | 删除文件/批量修改前必须停下等确认 |
 | **P1-2** | 交互式运行面板 | 页面内直接对沙箱执行命令，输出流式回显 | 沙箱 execute 链路已通 | 3~5 天 | 常用命令（mvn test/java）免切终端 |
-| **P1-3** | Docker 沙箱补齐 | 容器↔宿主机产物同步 + `DockerSandboxIntegrationTest` | Docker 链路端到端已跑通 | 3~5 天 | Docker 模式下文件树/file_change/Git 助手可用 |
+| **P1-3** ✅ | Docker 沙箱补齐 | 容器↔宿主机产物同步（bind mount）+ `DockerSandboxIntegrationTest` | Docker 链路端到端已跑通 | 3~5 天 | Docker 模式下文件树/file_change/Git 助手可用（已达成） |
 | **P2-1** | 智能 Bug 修复 | 根据异常堆栈/日志定位并生成补丁 | workspace 文件检索 + 回滚保障 | 3~5 天 | 常见异常正确定位到源码行并给出合理修复 |
 | **P2-2** | 自动化重构助手 | 批量替换、API 迁移、依赖升级 | Plan Mode（P1-1）+ 回滚（P0-1） | 3~5 天 | 简单批量替换 100% 按预期完成 |
 | **P2-3** | 沙箱管理页面 | 会话沙箱状态查看、资源监控、手动清理 | `admin.sandbox.*` 配置体系 | 2~3 天 | 可查看并清理运行中的沙箱容器 |
@@ -126,7 +126,8 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 
 - 复用 `GitWorkspaceService` 的 `ProcessBuilder` 调 git 方式与错误码体系（`GIT_COMMAND_FAILED`）。
 - 回滚是破坏性操作，接口幂等（重复调用恢复到同一 baseline），日志记录操作人、sessionId、恢复文件数。
-- Docker 模式下产物在容器内，本接口暂只支持 local 模式，Docker 支持随 P1-3 落地。
+- local 与 Docker 模式均支持：P1-3 bind mount 让容器会话目录实时同步到宿主机，会话 git 仓库建在宿主机
+  会话目录，回滚对该目录执行 git 还原，两种模式语义一致（Docker 支持已随 P1-3 落地）。
 
 #### 4.1.4 验收标准
 
@@ -223,8 +224,9 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 
 - 沙箱执行超时沿用 `admin.sandbox.execute-timeout-seconds`（默认 60s），`mvn test` 场景实测偏慢时
   允许按 agent 粒度调大，但不全局放开。
-- Docker 模式（network=none）下 `mvn test` 需依赖预热镜像内的本地仓库缓存，首版验收只要求 local 模式，
-  Docker 模式随 P1-3 一并验证。
+- Docker 模式（network=none）下 `mvn test` 需依赖预热镜像内的本地仓库缓存。`test_report` 结构化解析对
+  local/docker 一致启用（解析的是命令输出文本，两种模式都随流回传）；Docker 产物经 P1-3 bind mount 实时
+  落宿主机，报告引用的文件与宿主机文件树对齐——Docker 模式已随 P1-3 验证通过。
 
 #### 4.3.4 验收标准
 
@@ -299,7 +301,24 @@ starter 侧已有 Approval Store SPI 模式（接口 + InMemory 默认 + Jdbc �
 
 ---
 
-### 4.6 Docker 沙箱补齐（P1-3）
+### 4.6 Docker 沙箱补齐（P1-3）✅ 已实现
+
+> **实现结果（P1-3）**：采用**方案 A（bind mount，挂 agent 工作区根）**。
+> `AdminAgentInstanceFactory#buildDockerFilesystemSpec` 经框架 `DockerFilesystemSpec.additionalRunArgs`
+> 注入 `docker run -v <宿主机 {agentCode}/ 绝对路径>:/workspace:rw`，容器工作区根与宿主机 agent 工作区根
+> 双向实时可见。挂根而非只挂 `sessions/` 的原因：框架 MEMORY.md / Plan Mode `plans/` 写入走 Filesystem
+> 抽象即容器 workspace 根（反编译 `WorkspaceManager#appendUtf8WorkspaceRelative`、`PlanModeManager#writePlan`
+> 确认），挂根后这些跨会话文件同样落宿主机持久化、不随容器丢失。同时注入 `--user <宿主机 uid:gid>`
+> （类加载时 `id -u`/`id -g` 探测一次，失败自动跳过并记日志）：根治原生 Linux Docker 上容器 root 写出
+> 产物归 root:root、宿主机侧回滚（git checkout/clean）与文件保存撞属主的问题；并显式 `HOME=/workspace`
+> 兼容 `--user` 下无 passwd 条目的 mvn 等进程。关闭框架默认 workspace projection（快照式拷贝，与挂载
+> 重叠冗余）。Agent 被系统提示约束写入 `sessions/{sessionId}/`，经 bind mount 实时落宿主机，故
+> file_change / 文件树 / Git 助手 / 回滚（P0-1）/ Review（P0-2）/ test_report（P0-3）在 Docker 模式
+> **无需改造自动可用**——原先这些功能里"仅 local 模式"的门控已全部放开。容器内会话间可见面与 local 模式
+> 等同（local 的 workspace 本就是 agent 根），HTTP 侧 sessionId 穿越防御不受影响。方案 B（docker cp）
+> 曾作为过渡实现，bind mount 落地后已移除。`DockerSandboxIntegrationTest` 门控式集成测试**直接消费生产
+> 工厂装配**（真起容器验证写文件→编译运行→读回、产物/MEMORY.md 宿主机实时可见、`--user` 属主对齐，及
+> sessionId 转义 / 破坏性命令识别 / 资源获取失败快速抛错）本机 Docker 环境实测 4 用例全绿。
 
 #### 4.6.1 背景
 
@@ -496,7 +515,7 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | `node:*`（reasoning/tool_* 等） | `{text}` | 思考过程/工具执行节点（`ChatNodeKind` 派生） | ✅ 已实现 |
 | `file_change` | `{"operation":"MODIFY","path":"...","description":"..."}` | 文件变更事件（CREATE/MODIFY/DELETE） | ✅ 已实现 |
 | `done` | `[DONE]` | 流结束 | ✅ 已实现 |
-| `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,"round":1,"exhausted":false,...}` | 沙箱编译/测试结构化报告（含 round/exhausted 修复轮次进度） | ✅ 已实现 P0-3（仅 local 模式，docker 待 P1-3） |
+| `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,"round":1,"exhausted":false,...}` | 沙箱编译/测试结构化报告（含 round/exhausted 修复轮次进度） | ✅ 已实现 P0-3（local 与 docker 均启用，docker 产物经 P1-3 bind mount 同步） |
 | `plan` | `{"planId":"...","actions":[{"type":"DELETE","target":"..."}],"reason":"...","requiresConfirmation":true,"timeoutSeconds":300}` | Plan Mode 高风险操作待确认，流挂起 | ✅ 已实现 P1-1 |
 | `plan_result` | `{"planId":"...","status":"APPROVED\|REJECTED\|TIMEOUT"}` | 计划终态通知（超时=服务端自动拒绝，前端据此停倒计时） | ✅ 已实现 P1-1 |
 | `review_result` | `{issues, summary}` | Review 结果 | ⛔ 不采用：Review 走同步接口 `POST /review` 返回，未落 SSE 事件（见 §6.1） |
@@ -567,7 +586,8 @@ public record RefactorTask(
 ### 阶段二：P1 升级——HITL 与生产化（2~3 周）
 - Plan Mode 人工确认闭环（P1-1）：先做方案设计评审（SSE 挂起边界），再实现。
 - 交互式运行面板（P1-2）。
-- Docker 沙箱补齐（P1-3）：优先验证 bind mount 方案；补 `DockerSandboxIntegrationTest`（遗留待办）。
+- ✅ Docker 沙箱补齐（P1-3）：已采用 bind mount 方案（框架原生 `WorkspaceSpec`+`BindMountEntry`）；
+  `DockerSandboxIntegrationTest` 已补齐并实测通过。
 
 ### 阶段三：P2 扩展——诊断与批量操作（2~3 周）
 - 智能 Bug 修复/日志诊断（P2-1）。
@@ -586,7 +606,7 @@ public record RefactorTask(
 |---|---|---|
 | Agent 生成代码质量不稳定 | 高 | P0 三件套（回滚 + Review + 验证闭环）构成三重校验，均为本版最高优先级 |
 | SSE 挂起等确认导致连接泄漏/前端假死 | 高 | P1-1 明确"挂起不持久化、超时即拒绝、重启即取消"边界；沿用 `Flux.defer` 兜底同步异常（一期实测坑） |
-| Docker 模式产物不可见导致功能"看似失效" | 中 | 第 2 章已声明为架构约束；P1-3 同步机制落地前，依赖宿主机文件的功能明确标注"仅 local 模式" |
+| ~~Docker 模式产物不可见导致功能"看似失效"~~ | 已消除 | P1-3 bind mount 同步机制已落地：容器 `/workspace/sessions` 实时挂到宿主机会话目录，依赖宿主机文件的功能（回滚/Review/Git 助手/test_report）Docker 模式与 local 等价可用 |
 | 自动化重构误改大量文件 | 高 | 强制 Plan Mode 确认（P1-1 先行）+ git baseline 回滚（P0-1 先行）+ 分批执行 |
 | 沙箱执行 `mvn test` 超时/离线仓库缺依赖 | 中 | local 模式先行验收；Docker 镜像预热本地仓库；超时按 agent 粒度可调 |
 | 代码库向量化成本高 | 中 | P3 延后启动；增量更新、按租户隔离、缓存 Embedding |

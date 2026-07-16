@@ -49,6 +49,8 @@ public enum ResultCode {
     CUSTOMER_WORK_UNAVAILABLE(40012, "客服坐席服务暂不可用，请稍后重试"),
     ORDER_NOT_FOUND(40013, "订单不存在"),
     ORDER_STATE_CONFLICT(40014, "订单当前状态不允许该操作"),
+    // 40015 已退役：P1-3 bind mount 产物同步落地后 docker 模式一键回滚与 local 等价可用，不再拦截；
+    // 保留枚举占位以稳定错误码注册表，不再抛出、也不复用该数值。
     ROLLBACK_NOT_SUPPORTED_IN_DOCKER(40015, "Docker 沙箱模式暂不支持一键回滚"),
     ROLLBACK_BASELINE_MISSING(40016, "会话基线不存在，无法回滚"),
     SCHEDULER_CRON_INVALID(40017, "cron 表达式非法"),
