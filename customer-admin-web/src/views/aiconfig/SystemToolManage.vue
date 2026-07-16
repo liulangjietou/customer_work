@@ -1,55 +1,27 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { fetchSystemTools, updateSystemTool } from '@/api/system-tool'
+import { useCrudPage } from '@/composables/useCrudPage'
 import type { PageQuery, SystemToolSaveRequest, SystemToolVO } from '@/types/api'
 
-const loading = ref(false)
-const list = ref<SystemToolVO[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
-
-const dialogVisible = ref(false)
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<SystemToolSaveRequest>({
-  toolName: '', description: '', enabled: 1, remark: '',
-})
 
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await fetchSystemTools(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
-
-function openEdit(row: SystemToolVO) {
-  editingId.value = row.id
-  Object.assign(form, {
+// 系统工具只有"编辑"能力（无新建/删除），只接 page/update 半套
+const {
+  loading, list, total, query,
+  dialogVisible, form,
+  loadList, handleSearch, openEdit, handleSubmit,
+} = useCrudPage<SystemToolVO, PageQuery, SystemToolSaveRequest>({
+  page: fetchSystemTools,
+  formRef,
+  update: updateSystemTool,
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+  initForm: () => ({ toolName: '', description: '', enabled: 1, remark: '' }),
+  toForm: (row) => ({
     toolName: row.toolName, description: row.description ?? '', enabled: row.enabled, remark: row.remark ?? '',
-  })
-  dialogVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid || !editingId.value) {
-    return
-  }
-  await updateSystemTool(editingId.value, form)
-  ElMessage.success('保存成功')
-  dialogVisible.value = false
-  await loadList()
-}
+  }),
+})
 
 // 开关直接调 PUT 局部更新：把当前行其余字段一并回传，只改 enabled。
 async function handleToggleEnabled(row: SystemToolVO) {
