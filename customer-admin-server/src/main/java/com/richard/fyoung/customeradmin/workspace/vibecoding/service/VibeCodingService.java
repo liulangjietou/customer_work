@@ -113,6 +113,7 @@ public class VibeCodingService {
     private final GitWorkspaceService gitWorkspaceService;
     private final AdminSandboxProperties sandboxProperties;
     private final AiCodingAuditService auditService;
+    private final PlanConfirmationService planConfirmationService;
 
     /** {@code agentCode:sessionId -> 对话开始前的目录快照}，进程内、重启丢失（v1 降级方案的一部分）。 */
     private final Map<String, Map<String, FileFingerprint>> beforeSnapshots = new ConcurrentHashMap<>();
@@ -120,13 +121,15 @@ public class VibeCodingService {
 
     public VibeCodingService(ChatService chatService, AdminAgentInstanceFactory agentInstanceFactory,
                               AiAgentMapper agentMapper, GitWorkspaceService gitWorkspaceService,
-                              AdminSandboxProperties sandboxProperties, AiCodingAuditService auditService) {
+                              AdminSandboxProperties sandboxProperties, AiCodingAuditService auditService,
+                              PlanConfirmationService planConfirmationService) {
         this.chatService = chatService;
         this.agentInstanceFactory = agentInstanceFactory;
         this.agentMapper = agentMapper;
         this.gitWorkspaceService = gitWorkspaceService;
         this.sandboxProperties = sandboxProperties;
         this.auditService = auditService;
+        this.planConfirmationService = planConfirmationService;
     }
 
     /** 当前 VibeCoding 沙箱模式（{@code admin.sandbox.mode} 全局配置，不随会话变化）："docker"｜"local"。 */
@@ -204,7 +207,7 @@ public class VibeCodingService {
                 : Flux.just(chunk));
         // 流结束兜底：docker 模式先把容器产物拷回宿主机会话目录（隔离期间容器碰不到宿主机，用完主动搬回），
         // 再检测一次文件变更——这样产物文件树/file_change/Git 助手在 docker 模式也能读到真实产物。
-        return chatFlux.concatWith(Flux.defer(() -> {
+        Flux<ChatStreamChunk> mainFlux = chatFlux.concatWith(Flux.defer(() -> {
             syncDockerArtifactsIfNeeded(agentCode, safeSession, sessionWorkspace);
             return Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot));
         })).doFinally(signal -> {
@@ -215,6 +218,34 @@ public class VibeCodingService {
             auditService.applyChangedFiles(audit, changedPaths(initialSnapshot, snapshot(sessionWorkspace)));
             auditService.finish(audit, signal == SignalType.ON_COMPLETE ? null : "VIBECODING_STREAM_" + signal.name());
         });
+        // Plan Mode HITL（需求 P1-1）：用会话通道承载"流中暂停等确认"。Flux.using 在订阅时（早于 Agent 产出
+        // 任何事件）打开通道，把 plan/plan_result 事件合并进 SSE 输出；主流结束时完成通道事件流让合并收束，
+        // 取消/断开时 closeChannel 拒绝残留挂起项（fast fail）。bypass 模式下无高风险命中，通道恒空、零开销。
+        return Flux.using(
+            () -> planConfirmationService.openChannel(agentCode, safeSession),
+            channel -> Flux.merge(
+                mainFlux.doFinally(signal -> planConfirmationService.completeEvents(channel)),
+                planConfirmationService.events(channel)),
+            planConfirmationService::closeChannel);
+    }
+
+    /**
+     * Plan Mode 计划确认/拒绝（需求 P1-1）：完成对应挂起项，流侧中间件据此恢复或取消该高风险操作。
+     * 会话归属校验隐含在 {@link PlanConfirmationService#confirm} 按 {@code (agentCode, sessionId)} 定位通道里——
+     * planId 不存在/已处理/超时/服务重启后失效均 fast fail（{@link ResultCode#PLAN_CONFIRM_NOT_FOUND}）。
+     */
+    public void confirmPlan(String agentCode, String sessionId, String planId, boolean approved, String note) {
+        requireVibeCodingCapable(agentCode);
+        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        AiCodingAuditLog audit = auditService.begin(AiCodingOperation.PLAN_CONFIRM, agentCode, safeSession);
+        boolean resolved = planConfirmationService.confirm(agentCode, safeSession, planId, approved);
+        if (!resolved) {
+            auditService.finish(audit, ResultCode.PLAN_CONFIRM_NOT_FOUND.name());
+            throw new BizException(ResultCode.PLAN_CONFIRM_NOT_FOUND);
+        }
+        log.info("[workspace] plan confirm handled, agentCode={}, sessionId={}, planId={}, approved={}, note={}",
+            agentCode, safeSession, planId, approved, StringUtils.hasText(note) ? note : "-");
+        auditService.finish(audit, (String) null);
     }
 
     /**

@@ -58,6 +58,7 @@ public enum ResultCode {
     RUNTIME_PUBLISH_DISABLED(40021, "运行时配置发布未启用"),
     RUNTIME_PUBLISH_FAILED(40022, "运行时配置发布失败"),
     CHANNEL_BINDING_NOT_FOUND(40023, "渠道绑定不存在"),
+    PLAN_CONFIRM_NOT_FOUND(40024, "计划确认项不存在或已失效（可能已处理、已超时，或服务重启后挂起态已丢失）"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

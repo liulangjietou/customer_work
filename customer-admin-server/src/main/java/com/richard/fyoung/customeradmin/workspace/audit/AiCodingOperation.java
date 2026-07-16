@@ -28,5 +28,8 @@ public enum AiCodingOperation {
     ROLLBACK,
 
     /** Git 助手 · AI 代码审查（只读，对本轮 diff 一次性调用模型输出结构化审查意见）。 */
-    REVIEW
+    REVIEW,
+
+    /** VibeCoding Plan Mode 计划确认/拒绝（HITL，需求 P1-1）。 */
+    PLAN_CONFIRM
 }

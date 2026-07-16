@@ -33,7 +33,13 @@ public enum ChatNodeKind {
     FILE_CHANGE,
 
     /** VibeCoding 专用：沙箱内编译/测试命令的结构化执行报告，仅由 VibeCodingService 从 {@code execute} 工具结果解析产出。 */
-    TEST_REPORT;
+    TEST_REPORT,
+
+    /** VibeCoding 专用（Plan Mode HITL）：高风险操作待人工确认的计划事件，由 PlanConfirmationService 产出。 */
+    PLAN,
+
+    /** VibeCoding 专用（Plan Mode HITL）：某个计划被确认/拒绝/超时后的终态通知。 */
+    PLAN_RESULT;
 
     /**
      * 映射成 SSE {@code event} 名：{@link #ANSWER} 走 {@code message}（向后兼容旧协议，前端正文
@@ -50,6 +56,12 @@ public enum ChatNodeKind {
         }
         if (this == TEST_REPORT) {
             return "test_report";
+        }
+        if (this == PLAN) {
+            return "plan";
+        }
+        if (this == PLAN_RESULT) {
+            return "plan_result";
         }
         return "node:" + name().toLowerCase();
     }

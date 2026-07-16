@@ -726,6 +726,7 @@ cd customer-admin-web && npm install && npm run dev
 | `GET /api/menu/version` | 菜单版本号（进程内自增），前端轻量轮询，仅版本变化才拉全量菜单 |
 | `POST /api/workspace/{agentCode}/chat/stream` | 智能体在线聊天（SSE，权限点复用 `workspace`，停用智能体报 `AGENT_DISABLED`） |
 | `POST /api/workspace/{agentCode}/vibecoding/stream` | VibeCoding 对话（SSE，仅 `capabilities` 含 `vibecoding` 的智能体可用） |
+| `POST /api/workspace/{agentCode}/vibecoding/plan/confirm` | Plan Mode 计划确认/拒绝（P1-1 HITL，`admin.sandbox.permission-mode=hitl` 时高风险操作挂起等确认） |
 | `GET /api/workspace/{agentCode}/vibecoding/artifacts?sessionId=` | VibeCoding 产物清单（对话前后对比 workspace 目录快照，降级版方案，无实时 `file_change` 事件） |
 | `/api/ticket/orders/**` | 用户订单管理（代理 8080 坐席订单 API：分页/详情/改址/取消，权限点 `user-order:view`/`user-order:edit`），见 §6.22 |
 | `/swagger-ui/index.html` | 接口文档 |
@@ -739,7 +740,10 @@ cd customer-admin-web && npm install && npm run dev
 `stdio`/`sse` 两种 `mcpType`）、查 `ai_agent_skill` 关联行把 `content`（SKILL.md 正文）落盘后复用框架
 自带的 `FileSystemSkillRepository` 加载；`capabilities` 含 `vibecoding` 时用
 `HarnessAgent.Builder.fromAgent` 在内层 `ReActAgent` 上叠加本地沙箱，workspace 目录限定到
-`./data/admin-workspace/{agentCode}`。`AgentInstanceCache`（`agentCode -> Agent`）惰性重建、不预热；
+`./data/admin-workspace/{agentCode}`；同时挂两道命令中间件——`PlanConfirmationMiddleware`（外层，
+`admin.sandbox.permission-mode=hitl` 时高风险操作 emit `plan` 事件挂起等人工确认，P1-1）+
+`SandboxGuardMiddleware`（内层最后防线，破坏性命令静默改写兜底），二者叠加、风险规则同源于
+`SandboxRiskDetector`。`AgentInstanceCache`（`agentCode -> Agent`）惰性重建、不预热；
 智能体自身的 CRUD/启停、其引用的模型/MCP/Skill 编辑，都会驱动对应 agentCode 的缓存失效。
 `AgentStateStore`/`PermissionContextState` 用进程内简单实现（`AdminAgentRuntimeConfig`），刻意不复用
 `customer-work.session.*` 那套四后端可切换的持久化能力——admin 工作区是运营调试场景，过度设计不划算。

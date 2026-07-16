@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanConfirmRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewRequest;
@@ -171,5 +172,18 @@ public class VibeCodingController {
     @PostMapping("/rollback")
     public Result<RollbackResult> rollback(@PathVariable String agentCode, @Valid @RequestBody RollbackRequest request) {
         return Result.success(vibeCodingService.rollback(agentCode, request.sessionId()));
+    }
+
+    /**
+     * Plan Mode 计划确认/拒绝（需求 P1-1）：对 {@code plan} SSE 事件里的高风险操作放行或取消。
+     * 批准 → 流恢复执行该操作；拒绝 → 该操作被取消（改写为无害占位）、Agent 调整方案，流正常继续。
+     * planId 不存在/已处理/超时/服务重启后失效均返回 {@code PLAN_CONFIRM_NOT_FOUND}。
+     */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding计划确认", target = "vibecoding_plan_confirm")
+    @PostMapping("/plan/confirm")
+    public Result<Void> confirmPlan(@PathVariable String agentCode, @Valid @RequestBody PlanConfirmRequest request) {
+        vibeCodingService.confirmPlan(agentCode, request.sessionId(), request.planId(), request.approved(), request.note());
+        return Result.success(null);
     }
 }

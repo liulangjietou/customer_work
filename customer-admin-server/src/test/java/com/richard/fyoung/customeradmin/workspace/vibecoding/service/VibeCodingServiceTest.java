@@ -64,7 +64,7 @@ class VibeCodingServiceTest {
         // 默认 local 模式（isDockerMode()=false），docker 产物同步逻辑在单测里天然跳过；
         // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
         service = new VibeCodingService(chatService, agentInstanceFactory, agentMapper, gitWorkspaceService,
-            new AdminSandboxProperties(), mock(AiCodingAuditService.class));
+            new AdminSandboxProperties(), mock(AiCodingAuditService.class), new PlanConfirmationService());
 
         // resolveWorkspace 返回 agentRoot（向后兼容，listChangedArtifacts 旧逻辑已不使用此方法）
         when(agentInstanceFactory.resolveWorkspace("coder")).thenReturn(agentRoot);

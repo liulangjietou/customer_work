@@ -481,7 +481,7 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | POST | `/pr-description` | 生成 PR description | ✅ 已实现 |
 | POST | `/rollback` | 撤销本次会话全部修改 | 🎯 P0-1 |
 | POST | `/review` | 对本轮 diff 做 Code Review | ✅ 已实现 P0-2 |
-| POST | `/plan/confirm` | Plan Mode 计划确认/拒绝 | 🎯 P1-1 |
+| POST | `/plan/confirm` | Plan Mode 计划确认/拒绝 | ✅ 已实现 P1-1 |
 | POST | `/execute` | 交互式沙箱命令执行（SSE） | 🎯 P1-2 |
 | POST | `/diagnose` | 根据堆栈/日志诊断 Bug | 🎯 P2-1 |
 | POST | `/refactor` | 执行自动化重构任务 | 🎯 P2-2 |
@@ -497,7 +497,8 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | `file_change` | `{"operation":"MODIFY","path":"...","description":"..."}` | 文件变更事件（CREATE/MODIFY/DELETE） | ✅ 已实现 |
 | `done` | `[DONE]` | 流结束 | ✅ 已实现 |
 | `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,"round":1,"exhausted":false,...}` | 沙箱编译/测试结构化报告（含 round/exhausted 修复轮次进度） | ✅ 已实现 P0-3（仅 local 模式，docker 待 P1-3） |
-| `plan` | `{"planId":"...","actions":[...],"requiresConfirmation":true}` | Plan Mode 计划确认 | 🎯 P1-1 |
+| `plan` | `{"planId":"...","actions":[{"type":"DELETE","target":"..."}],"reason":"...","requiresConfirmation":true,"timeoutSeconds":300}` | Plan Mode 高风险操作待确认，流挂起 | ✅ 已实现 P1-1 |
+| `plan_result` | `{"planId":"...","status":"APPROVED\|REJECTED\|TIMEOUT"}` | 计划终态通知（超时=服务端自动拒绝，前端据此停倒计时） | ✅ 已实现 P1-1 |
 | `review_result` | `{issues, summary}` | Review 结果 | ⛔ 不采用：Review 走同步接口 `POST /review` 返回，未落 SSE 事件（见 §6.1） |
 
 ---
@@ -617,6 +618,7 @@ admin:
   sandbox:
     mode: ${ADMIN_SANDBOX_MODE:local}            # local | docker
     execute-timeout-seconds: ${ADMIN_SANDBOX_EXECUTE_TIMEOUT_SECONDS:60}
+    permission-mode: ${ADMIN_SANDBOX_PERMISSION_MODE:bypass}  # bypass（默认，护栏静默改写兜底）| hitl（P1-1 高风险挂起等人工确认）
     docker:
       image: ${ADMIN_SANDBOX_DOCKER_IMAGE:maven:3.9-eclipse-temurin-17}
       memory-mb: ${ADMIN_SANDBOX_DOCKER_MEMORY_MB:512}
@@ -624,7 +626,19 @@ admin:
       network: ${ADMIN_SANDBOX_DOCKER_NETWORK:none}
     guard:
       enabled: ${ADMIN_SANDBOX_GUARD_ENABLED:true}
+    hitl:                                          # 仅 permission-mode=hitl 时生效（P1-1）
+      confirm-timeout-seconds: ${ADMIN_SANDBOX_HITL_CONFIRM_TIMEOUT_SECONDS:300}  # 确认超时，超时按拒绝
+      batch-modify-threshold: ${ADMIN_SANDBOX_HITL_BATCH_MODIFY_THRESHOLD:3}      # 单轮批量修改超此值需确认
 ```
+
+> **Plan Mode HITL（P1-1）**：`permission-mode=hitl` 时，vibecoding 会话中 Agent 计划执行高风险操作
+> （删除文件 / 执行非只读或破坏性命令 `rm`·`mvn clean` 等 / 修改 pom.xml 等依赖文件 / 单轮批量修改超阈值）
+> 会先 emit `plan` SSE 事件并**在流中挂起**，前端弹确认卡片，用户批准后恢复执行、拒绝或超时（默认 5min）
+> 则取消该操作让 Agent 调整方案，流正常继续。挂起态只存内存、**服务重启即失效**（重启后确认接口 fast fail）。
+> 默认 `bypass` 保持现状（不影响非 vibecoding 链路），`SandboxGuardMiddleware` 始终作为最后防线叠加兜底：
+> **catastrophic 级命令（如 `rm -rf`、触碰 `.git`、访问 `/etc` `/root`）即使 HITL 人工批准，仍会被护栏
+> 最终改写拦截——护栏是不可绕过的最后防线（设计意图，非缺陷）**；人工批准真正放行的是 HITL 独有的
+> 确认级操作（`mvn clean`、修改依赖文件、批量修改等）。
 
 新功能的配置项按同一约定扩展（如 `admin.vibecoding.review.*`、`admin.vibecoding.plan-mode.*`），
 均支持 env 覆盖，默认值保守（新功能默认关闭）。

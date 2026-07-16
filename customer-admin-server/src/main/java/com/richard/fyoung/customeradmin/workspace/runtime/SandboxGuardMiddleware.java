@@ -18,7 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 
 /**
  * VibeCoding 沙箱命令护栏：挂在 {@link MiddlewareBase#onActing}，工具真正执行前对字符串入参
@@ -39,21 +38,14 @@ public class SandboxGuardMiddleware implements MiddlewareBase {
     private static final String CODE_DESTRUCTIVE = "SANDBOX-GUARD-DESTRUCTIVE";
 
     private final boolean enabled;
-    private final List<Pattern> destructivePatterns;
+    /** 破坏性命令判定复用 {@link SandboxRiskDetector}（与 HITL 同源，规则只在一处维护）。 */
+    private final SandboxRiskDetector riskDetector;
     /** 命中破坏性入参的累计次数（可观测用途，供单测断言）。 */
     private final LongAdder destructiveHits = new LongAdder();
 
-    public SandboxGuardMiddleware(AdminSandboxProperties properties) {
-        AdminSandboxProperties.Guard guard = properties.getGuard();
-        this.enabled = guard.isEnabled();
-        this.destructivePatterns = new ArrayList<>();
-        if (guard.getDestructivePatterns() != null) {
-            for (String p : guard.getDestructivePatterns()) {
-                if (p != null && !p.isEmpty()) {
-                    this.destructivePatterns.add(Pattern.compile(p, Pattern.CASE_INSENSITIVE));
-                }
-            }
-        }
+    public SandboxGuardMiddleware(AdminSandboxProperties properties, SandboxRiskDetector riskDetector) {
+        this.enabled = properties.getGuard().isEnabled();
+        this.riskDetector = riskDetector;
     }
 
     /** 命中破坏性入参的累计次数（供单测断言）。 */
@@ -90,7 +82,7 @@ public class SandboxGuardMiddleware implements MiddlewareBase {
 
     /** 返回改写后的工具调用；无改动则返回 null。 */
     ToolUseBlock guard(ToolUseBlock use) {
-        if (use == null || destructivePatterns.isEmpty()) {
+        if (use == null) {
             return null;
         }
         Map<String, Object> in = use.getInput() == null
@@ -98,7 +90,7 @@ public class SandboxGuardMiddleware implements MiddlewareBase {
         boolean changed = false;
         for (Map.Entry<String, Object> entry : new LinkedHashMap<>(in).entrySet()) {
             Object raw = entry.getValue();
-            if (raw instanceof CharSequence && isDestructive(raw.toString())) {
+            if (raw instanceof CharSequence && riskDetector.matchesDestructive(raw.toString())) {
                 destructiveHits.increment();
                 log.error("[workspace] sandbox tool {} param {} hit destructive pattern, rewritten, code={}",
                     use.getName(), entry.getKey(), CODE_DESTRUCTIVE);
@@ -110,14 +102,5 @@ public class SandboxGuardMiddleware implements MiddlewareBase {
             return null;
         }
         return new ToolUseBlock(use.getId(), use.getName(), in, use.getMetadata());
-    }
-
-    private boolean isDestructive(String text) {
-        for (Pattern p : destructivePatterns) {
-            if (p.matcher(text).find()) {
-                return true;
-            }
-        }
-        return false;
     }
 }

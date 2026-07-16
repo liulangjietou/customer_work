@@ -126,6 +126,7 @@ public class AdminAgentInstanceFactory {
     private final AdminMcpFactory mcpFactory;
     private final AdminSandboxProperties sandboxProperties;
     private final SandboxGuardMiddleware sandboxGuardMiddleware;
+    private final PlanConfirmationMiddleware planConfirmationMiddleware;
     private final ModelCircuitBreakerRegistry circuitBreakerRegistry;
 
     /**
@@ -145,6 +146,7 @@ public class AdminAgentInstanceFactory {
                                       AgentStateStore stateStore, PermissionContextState permissionContext,
                                       AdminMcpFactory mcpFactory, AdminSandboxProperties sandboxProperties,
                                       SandboxGuardMiddleware sandboxGuardMiddleware,
+                                      PlanConfirmationMiddleware planConfirmationMiddleware,
                                       ModelCircuitBreakerRegistry circuitBreakerRegistry) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
@@ -164,6 +166,7 @@ public class AdminAgentInstanceFactory {
         this.mcpFactory = mcpFactory;
         this.sandboxProperties = sandboxProperties;
         this.sandboxGuardMiddleware = sandboxGuardMiddleware;
+        this.planConfirmationMiddleware = planConfirmationMiddleware;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
     }
 
@@ -246,6 +249,10 @@ public class AdminAgentInstanceFactory {
             .enablePendingToolRecovery(true);
         if (capabilities.contains(CAPABILITY_VIBECODING)) {
             // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载。
+            // 顺序关键（first = outermost）：HITL 计划确认在外层先看到原始命令挂起询问，护栏在内层作最后防线——
+            // 即便高风险被人工批准，catastrophic 命令仍会被护栏改写，护栏不被绕过（需求 §4.4.2.5「两者叠加」）。
+            // bypass 模式下 HITL 中间件纯透传，行为等价于改造前。
+            builder.middleware(planConfirmationMiddleware);
             builder.middleware(sandboxGuardMiddleware);
         }
         if (capabilities.contains(CAPABILITY_TASKLIST)) {

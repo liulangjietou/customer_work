@@ -36,7 +36,7 @@ class SandboxGuardMiddlewareTest {
 
     @Test
     void guard_shouldRewriteDestructiveParam_whenPatternMatched() {
-        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties);
+        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties, new SandboxRiskDetector(properties));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("command", "rm -rf sessions/abc");
 
@@ -48,7 +48,7 @@ class SandboxGuardMiddlewareTest {
 
     @Test
     void guard_shouldReturnNull_whenNoDestructivePatternMatched() {
-        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties);
+        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties, new SandboxRiskDetector(properties));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("command", "mvn test");
 
@@ -60,7 +60,7 @@ class SandboxGuardMiddlewareTest {
 
     @Test
     void guard_shouldMatch_gitDirectoryTampering() {
-        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties);
+        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties, new SandboxRiskDetector(properties));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("path", "sessions/abc/.git/config");
 
@@ -71,7 +71,7 @@ class SandboxGuardMiddlewareTest {
 
     @Test
     void guard_shouldOnlyRewriteMatchedParam_keepingOthersIntact() {
-        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties);
+        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties, new SandboxRiskDetector(properties));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("command", "rm -rf /");
         input.put("description", "clean up build output");
@@ -85,7 +85,7 @@ class SandboxGuardMiddlewareTest {
     @Test
     void onActing_shouldPassThroughUnchanged_whenGuardDisabled() {
         properties.getGuard().setEnabled(false);
-        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties);
+        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties, new SandboxRiskDetector(properties));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("command", "rm -rf /");
         ActingInput actingInput = new ActingInput(List.of(toolUse("shell_execute", input)));
@@ -103,7 +103,7 @@ class SandboxGuardMiddlewareTest {
 
     @Test
     void onActing_shouldRewriteToolCalls_whenDestructivePatternMatched() {
-        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties);
+        SandboxGuardMiddleware middleware = new SandboxGuardMiddleware(properties, new SandboxRiskDetector(properties));
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("command", "rm -rf /");
         ActingInput actingInput = new ActingInput(List.of(toolUse("shell_execute", input)));

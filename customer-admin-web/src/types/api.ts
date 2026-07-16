@@ -515,6 +515,38 @@ export interface ReviewResult {
   summary: string
 }
 
+/** plan SSE 事件里的单条高风险操作项（P1-1 HITL）。 */
+export interface PlanAction {
+  /** DELETE（删除文件）｜RUN_COMMAND（非只读/破坏性命令）｜MODIFY_DEPENDENCY（改依赖）｜BATCH_MODIFY（批量修改超阈值） */
+  type: string
+  target: string
+  reason: string
+}
+
+/** plan SSE 事件的 data 载荷：高风险操作待人工确认，流已挂起（P1-1 HITL）。 */
+export interface PlanEvent {
+  planId: string
+  actions: PlanAction[]
+  reason: string
+  requiresConfirmation: boolean
+  /** 确认超时秒数，前端据此显示倒计时；超时后服务端自动按拒绝处理。 */
+  timeoutSeconds: number
+}
+
+/** plan_result SSE 事件的 data 载荷：某个 planId 的终态（用户批准/拒绝或服务端超时）。 */
+export interface PlanResultEvent {
+  planId: string
+  status: 'APPROVED' | 'REJECTED' | 'TIMEOUT'
+}
+
+/** Plan Mode 计划确认请求体（P1-1）。 */
+export interface PlanConfirmRequest {
+  sessionId: string
+  planId: string
+  approved: boolean
+  note?: string
+}
+
 // ---------- workspace.chat ----------
 export interface ChatRequest {
   sessionId: string

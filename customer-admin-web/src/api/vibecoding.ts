@@ -5,6 +5,7 @@ import type {
   CommitMessageRequest,
   CommitMessageResponse,
   GitDiffSummary,
+  PlanConfirmRequest,
   PrDescriptionResponse,
   ReviewResult,
   RollbackResult,
@@ -116,5 +117,14 @@ export function reviewVibeCoding(agentCode: string, sessionId: string) {
     url: `/workspace/${agentCode}/vibecoding/review`,
     method: 'post',
     data: { sessionId },
+  })
+}
+
+/** Plan Mode 计划确认/拒绝（P1-1 HITL）：对 plan 事件里的高风险操作放行或取消。 */
+export function confirmVibeCodingPlan(agentCode: string, req: PlanConfirmRequest) {
+  return request<void>({
+    url: `/workspace/${agentCode}/vibecoding/plan/confirm`,
+    method: 'post',
+    data: req,
   })
 }

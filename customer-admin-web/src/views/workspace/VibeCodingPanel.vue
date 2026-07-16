@@ -2,6 +2,7 @@
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { UploadRequestOptions } from 'element-plus'
 import {
+  confirmVibeCodingPlan,
   generateCommitMessage,
   generatePrDescription,
   getGitDiffSummary,
@@ -23,6 +24,8 @@ import { generateUuid } from '@/utils/uuid'
 import type {
   FileChangeEvent,
   GitDiffSummary,
+  PlanEvent,
+  PlanResultEvent,
   ReviewIssue,
   ReviewResult,
   TestReport,
@@ -35,12 +38,24 @@ import 'highlight.js/styles/github.css'
 
 const props = defineProps<{ agentCode: string }>()
 
+/** Plan Mode 确认卡片（P1-1 HITL）：一条 plan 事件对应一张卡片，用户批准/拒绝或超时后翻成终态。 */
+interface PlanCard {
+  planId: string
+  actions: PlanEvent['actions']
+  reason: string
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'TIMEOUT'
+  remainingSeconds: number
+  submitting: boolean
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
   // 本条助手消息内累积的沙箱编译/测试报告（P0-3），按到达顺序渲染成测试报告卡片时间线
   testReports?: TestReport[]
+  // 本条助手消息内的 Plan Mode 确认卡片（P1-1），高风险操作待人工确认
+  plans?: PlanCard[]
 }
 
 interface Attachment {
@@ -74,6 +89,10 @@ const sandboxMode = ref<'local' | 'docker' | null>(null)
 const fileChanges = ref<Array<FileChangeEvent & { time: number }>>([])
 // 会话一键回滚进行中
 const rollingBack = ref(false)
+
+// Plan Mode（P1-1 HITL）：待确认计划的 planId -> 卡片，供 plan_result 快速定位；倒计时统一由一个定时器驱动
+const pendingPlans = new Map<string, PlanCard>()
+let planCountdownTimer: ReturnType<typeof setInterval> | null = null
 
 // Git 助手抽屉
 const gitDrawerVisible = ref(false)
@@ -110,8 +129,18 @@ function newSession() {
   fileNodes.value = []
   filesLoaded.value = false
   fileChanges.value = []
+  clearPendingPlans()
   // 新会话会用当前全局配置，不是上一个（可能是历史会话解析出的）沙箱模式
   loadCurrentSandboxMode()
+}
+
+/** 清空待确认计划与倒计时（切会话/新建会话/卸载时）。 */
+function clearPendingPlans() {
+  pendingPlans.clear()
+  if (planCountdownTimer) {
+    clearInterval(planCountdownTimer)
+    planCountdownTimer = null
+  }
 }
 
 async function handleAttachmentUpload(options: UploadRequestOptions) {
@@ -153,6 +182,7 @@ async function openSession(targetSessionId: string) {
     fileNodes.value = []
     filesLoaded.value = false
     fileChanges.value = []
+    clearPendingPlans()
     // 标签要反映"这条会话当时真正用的模式"，从首条用户消息里解析；更早期没有该前缀的历史记录
     // 解析不出来，此时不展示误导性的标签（不回退成当前全局配置，两者含义不同不能互相替代）
     const firstUserMessage = history.find((msg) => msg.role === 'user')
@@ -206,6 +236,15 @@ function send() {
       if (event.event === 'test_report') {
         handleTestReport(assistantMessage, event.data)
         scrollToBottom()
+        return
+      }
+      if (event.event === 'plan') {
+        handlePlanEvent(assistantMessage, event.data)
+        scrollToBottom()
+        return
+      }
+      if (event.event === 'plan_result') {
+        handlePlanResult(event.data)
         return
       }
       if (event.event.startsWith('node:')) {
@@ -281,6 +320,108 @@ function handleTestReport(assistantMessage: ChatMessage, raw: string) {
     ;(assistantMessage.testReports ??= []).push(parsed)
   } catch {
     // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/** 解析 plan SSE 事件，追加一张待确认卡片并启动倒计时（P1-1 HITL）。 */
+function handlePlanEvent(assistantMessage: ChatMessage, raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as PlanEvent
+    const card: PlanCard = {
+      planId: parsed.planId,
+      actions: parsed.actions ?? [],
+      reason: parsed.reason ?? '',
+      status: 'PENDING',
+      remainingSeconds: parsed.timeoutSeconds ?? 300,
+      submitting: false,
+    }
+    const plans = (assistantMessage.plans ??= [])
+    plans.push(card)
+    // 存入 pendingPlans 的必须是"push 进响应式数组后"的响应式代理引用，否则定时器/plan_result 修改
+    // 原始对象不会触发视图更新（Vue3 响应式经典坑：修改未经代理的原对象不触发依赖收集）
+    pendingPlans.set(card.planId, plans[plans.length - 1])
+    ensurePlanCountdown()
+  } catch {
+    // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/** 解析 plan_result SSE 事件，把对应卡片翻成终态（含服务端超时自动拒绝）。 */
+function handlePlanResult(raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as PlanResultEvent
+    const card = pendingPlans.get(parsed.planId)
+    if (card) {
+      card.status = parsed.status
+      card.submitting = false
+      pendingPlans.delete(parsed.planId)
+    }
+  } catch {
+    // 解析失败静默丢弃
+  }
+}
+
+/** 启动（若未启动）统一倒计时定时器：每秒递减所有待确认卡片，归零即本地标记超时。 */
+function ensurePlanCountdown() {
+  if (planCountdownTimer) return
+  planCountdownTimer = setInterval(() => {
+    if (pendingPlans.size === 0) {
+      clearInterval(planCountdownTimer!)
+      planCountdownTimer = null
+      return
+    }
+    for (const card of pendingPlans.values()) {
+      card.remainingSeconds -= 1
+      if (card.remainingSeconds <= 0) {
+        // 本地倒计时归零：先行标记超时（服务端也会补发 plan_result=TIMEOUT，二者幂等）
+        card.status = 'TIMEOUT'
+        card.remainingSeconds = 0
+        pendingPlans.delete(card.planId)
+      }
+    }
+  }, 1000)
+}
+
+/** 用户对某个计划卡片点批准/拒绝：调后端确认接口，成功后翻成终态。 */
+async function handlePlanDecision(card: PlanCard, approved: boolean) {
+  if (card.status !== 'PENDING' || card.submitting) return
+  card.submitting = true
+  try {
+    await confirmVibeCodingPlan(props.agentCode, {
+      sessionId: sessionId.value,
+      planId: card.planId,
+      approved,
+    })
+    card.status = approved ? 'APPROVED' : 'REJECTED'
+    pendingPlans.delete(card.planId)
+  } catch (error) {
+    // 失败常见于挂起项已失效（超时/服务重启）：提示并按拒绝态收尾，避免卡片永久停在"等待确认"
+    ElMessage.error('计划确认失败：' + (error instanceof Error ? error.message : String(error)))
+    card.status = 'TIMEOUT'
+    pendingPlans.delete(card.planId)
+  } finally {
+    card.submitting = false
+  }
+}
+
+/** 计划卡片操作类型 → 中文标签 + Element tag 着色。 */
+function planActionLabel(type: string): string {
+  switch (type) {
+    case 'DELETE': return '删除文件'
+    case 'RUN_COMMAND': return '执行命令'
+    case 'MODIFY_DEPENDENCY': return '修改依赖'
+    case 'BATCH_MODIFY': return '批量修改'
+    default: return type
+  }
+}
+
+/** 计划卡片终态 → 中文文案。 */
+function planStatusText(status: PlanCard['status']): string {
+  switch (status) {
+    case 'APPROVED': return '已批准'
+    case 'REJECTED': return '已拒绝'
+    case 'TIMEOUT': return '已超时（自动拒绝）'
+    default: return '等待确认'
   }
 }
 
@@ -541,6 +682,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   abortStream?.()
+  clearPendingPlans()
 })
 
 // newSession 供 WorkspaceView 上提后的工具栏"新建会话"按钮按激活 Tab 分发调用
@@ -590,6 +732,66 @@ defineExpose({ newSession })
                   </div>
                 </el-collapse-item>
               </el-collapse>
+            </div>
+            <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
+            <div
+              v-if="msg.role === 'assistant' && msg.plans && msg.plans.length > 0"
+              class="plan-cards"
+            >
+              <div
+                v-for="(plan, pi) in msg.plans"
+                :key="pi"
+                class="plan-card"
+                :class="`plan-card--${plan.status.toLowerCase()}`"
+              >
+                <div class="plan-card-header">
+                  <el-icon class="plan-card-icon"><Warning /></el-icon>
+                  <span class="plan-card-title">高风险操作待确认</span>
+                  <el-tag
+                    v-if="plan.status === 'PENDING'"
+                    type="warning"
+                    size="small"
+                    effect="dark"
+                    class="plan-card-countdown"
+                  >
+                    {{ plan.remainingSeconds }}s
+                  </el-tag>
+                  <el-tag
+                    v-else
+                    :type="plan.status === 'APPROVED' ? 'success' : 'info'"
+                    size="small"
+                    effect="dark"
+                  >
+                    {{ planStatusText(plan.status) }}
+                  </el-tag>
+                </div>
+                <p v-if="plan.reason" class="plan-card-reason">{{ plan.reason }}</p>
+                <ul class="plan-card-actions">
+                  <li v-for="(action, ai) in plan.actions" :key="ai" class="plan-card-action">
+                    <el-tag size="small" class="plan-action-type">{{ planActionLabel(action.type) }}</el-tag>
+                    <code class="plan-action-target" :title="action.target">{{ action.target }}</code>
+                  </li>
+                </ul>
+                <div v-if="plan.status === 'PENDING'" class="plan-card-buttons">
+                  <el-button
+                    type="primary"
+                    size="small"
+                    :loading="plan.submitting"
+                    @click="handlePlanDecision(plan, true)"
+                  >
+                    批准执行
+                  </el-button>
+                  <el-button
+                    type="danger"
+                    size="small"
+                    plain
+                    :disabled="plan.submitting"
+                    @click="handlePlanDecision(plan, false)"
+                  >
+                    拒绝
+                  </el-button>
+                </div>
+              </div>
             </div>
             <template v-if="msg.role === 'user'">{{ msg.text }}</template>
             <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && streaming && index === messages.length - 1">生成中…</span>
@@ -1119,6 +1321,95 @@ defineExpose({ newSession })
 .test-report-ok {
   font-size: 12px;
   color: var(--el-color-success);
+}
+
+/* Plan Mode 确认卡片（P1-1 HITL） */
+.plan-cards {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-card {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--el-color-warning);
+  background: var(--el-color-warning-light-9, var(--el-fill-color-light));
+}
+
+.plan-card--approved {
+  border-left-color: var(--el-color-success);
+  background: var(--el-color-success-light-9, var(--el-fill-color-light));
+}
+
+.plan-card--rejected,
+.plan-card--timeout {
+  border-left-color: var(--el-color-info);
+  background: var(--el-fill-color-light);
+  opacity: 0.85;
+}
+
+.plan-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.plan-card-icon {
+  color: var(--el-color-warning);
+}
+
+.plan-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.plan-card-countdown {
+  margin-left: auto;
+}
+
+.plan-card-header .el-tag:not(.plan-card-countdown) {
+  margin-left: auto;
+}
+
+.plan-card-reason {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 6px;
+}
+
+.plan-card-actions {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.plan-card-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.plan-action-type {
+  flex-shrink: 0;
+}
+
+.plan-action-target {
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  color: var(--el-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-card-buttons {
+  display: flex;
+  gap: 8px;
 }
 
 /* AI 代码审查 */
