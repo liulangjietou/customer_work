@@ -9,6 +9,8 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageRe
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxModeResponse;
@@ -146,6 +148,18 @@ public class VibeCodingController {
     public CompletableFuture<Result<PrDescriptionResponse>> prDescription(
             @PathVariable String agentCode, @Valid @RequestBody PrDescriptionRequest request) {
         return gitAssistantService.prDescription(agentCode, request.sessionId()).thenApply(Result::success);
+    }
+
+    /**
+     * Git 助手 · AI 代码审查（需求 P0-2）：对本轮 diff 输出结构化审查意见
+     * （CRITICAL/WARNING/SUGGESTION 逐条带文件/行号/建议）。同步返回，无变更时报 {@code NO_FILE_CHANGES}。
+     */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding代码审查", target = "vibecoding_git_assistant")
+    @PostMapping("/review")
+    public CompletableFuture<Result<ReviewResult>> review(
+            @PathVariable String agentCode, @Valid @RequestBody ReviewRequest request) {
+        return gitAssistantService.review(agentCode, request.sessionId()).thenApply(Result::success);
     }
 
     /**

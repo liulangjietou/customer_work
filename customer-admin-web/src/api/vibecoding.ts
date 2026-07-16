@@ -6,6 +6,7 @@ import type {
   CommitMessageResponse,
   GitDiffSummary,
   PrDescriptionResponse,
+  ReviewResult,
   RollbackResult,
   SandboxModeResponse,
   SaveFileContentRequest,
@@ -104,6 +105,15 @@ export function generatePrDescription(agentCode: string, sessionId: string) {
 export function rollbackVibeCoding(agentCode: string, sessionId: string) {
   return request<RollbackResult>({
     url: `/workspace/${agentCode}/vibecoding/rollback`,
+    method: 'post',
+    data: { sessionId },
+  })
+}
+
+/** AI 代码审查：对本轮 diff 输出结构化审查意见（CRITICAL/WARNING/SUGGESTION）。 */
+export function reviewVibeCoding(agentCode: string, sessionId: string) {
+  return request<ReviewResult>({
+    url: `/workspace/${agentCode}/vibecoding/review`,
     method: 'post',
     data: { sessionId },
   })

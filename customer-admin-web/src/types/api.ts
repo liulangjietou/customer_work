@@ -482,6 +482,39 @@ export interface SandboxModeResponse {
   mode: 'local' | 'docker'
 }
 
+/** test_report SSE 事件的 data 载荷：沙箱内编译/测试命令的结构化执行报告（P0-3）。 */
+export interface TestReport {
+  command: string
+  exitCode: number | null
+  success: boolean
+  passed: number
+  failed: number
+  skipped: number
+  durationMs: number | null
+  failureDetails: string[]
+  rawOutput: string | null
+  /** 本轮对话内第几次编译/测试执行（1 基）。 */
+  round: number
+  /** 是否已达失败自动修复轮数上限（仍失败）。 */
+  exhausted: boolean
+}
+
+/** AI 代码审查单条问题（P0-2）。 */
+export interface ReviewIssue {
+  severity: 'CRITICAL' | 'WARNING' | 'SUGGESTION'
+  file: string
+  line: number | null
+  category: 'SECURITY' | 'PERFORMANCE' | 'READABILITY' | 'BUG' | 'STYLE'
+  message: string
+  suggestion: string
+}
+
+/** AI 代码审查结果（P0-2）：结构化问题清单 + 总述（解析失败降级时 issues 为空、summary 为模型原文）。 */
+export interface ReviewResult {
+  issues: ReviewIssue[]
+  summary: string
+}
+
 // ---------- workspace.chat ----------
 export interface ChatRequest {
   sessionId: string

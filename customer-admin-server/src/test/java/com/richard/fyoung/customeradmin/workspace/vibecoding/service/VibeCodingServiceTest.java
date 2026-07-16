@@ -451,4 +451,67 @@ class VibeCodingServiceTest {
             }
         }
     }
+
+    // ===== 结构化 test_report 事件（P0-3）=====
+
+    @Nested
+    class TestReportEvents {
+
+        private String executeResult(int exitCode, String body) {
+            return "工具「execute」返回：Exit code: " + exitCode + "\n" + body;
+        }
+
+        @Test
+        void shouldEmitTestReport_afterMavenTestExecute() {
+            when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+            String mvnOk = executeResult(0, "[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS");
+            when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(
+                Flux.just(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, mvnOk),
+                    new ChatStreamChunk(ChatNodeKind.ANSWER, "测试通过")));
+
+            List<ChatStreamChunk> emitted = service.stream("coder", "tr-1", "写代码并测试").collectList().block();
+
+            assertNotNull(emitted);
+            ChatStreamChunk report = emitted.stream().filter(c -> c.kind() == ChatNodeKind.TEST_REPORT)
+                .findFirst().orElseThrow();
+            assertTrue(report.text().contains("\"command\":\"mvn test\""));
+            assertTrue(report.text().contains("\"passed\":8"));
+            assertTrue(report.text().contains("\"success\":true"));
+            assertTrue(report.text().contains("\"round\":1"));
+            assertTrue(report.text().contains("\"exhausted\":false"));
+        }
+
+        @Test
+        void shouldMarkExhausted_onThirdConsecutiveFailure() {
+            when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+            String fail = executeResult(1, "[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0\n[INFO] BUILD FAILURE");
+            // 同一轮对话里连续三次失败的 execute 结果（模拟 Agent 三轮修复仍失败）
+            when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(
+                Flux.just(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, fail),
+                    new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, fail),
+                    new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, fail)));
+
+            List<ChatStreamChunk> reports = service.stream("coder", "tr-2", "写代码并测试").collectList().block()
+                .stream().filter(c -> c.kind() == ChatNodeKind.TEST_REPORT).toList();
+
+            assertEquals(3, reports.size(), "三次失败应各产出一条 test_report");
+            assertTrue(reports.get(0).text().contains("\"round\":1"));
+            assertTrue(reports.get(0).text().contains("\"exhausted\":false"));
+            assertTrue(reports.get(2).text().contains("\"round\":3"));
+            assertTrue(reports.get(2).text().contains("\"exhausted\":true"), "第 3 轮仍失败应标注 exhausted");
+        }
+
+        @Test
+        void shouldNotEmitTestReport_forNonExecuteToolResult() {
+            when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+            when(chatService.chatStream(anyString(), anyString(), anyString(), any())).thenReturn(
+                Flux.just(new ChatStreamChunk(ChatNodeKind.TOOL_RESULT, "工具「write_file」返回：ok"),
+                    new ChatStreamChunk(ChatNodeKind.ANSWER, "完成")));
+
+            List<ChatStreamChunk> emitted = service.stream("coder", "tr-3", "写文件").collectList().block();
+
+            assertNotNull(emitted);
+            assertTrue(emitted.stream().noneMatch(c -> c.kind() == ChatNodeKind.TEST_REPORT));
+        }
+    }
 }

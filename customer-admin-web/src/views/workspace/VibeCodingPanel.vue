@@ -9,6 +9,7 @@ import {
   interruptVibeCoding,
   listWorkspaceFiles,
   readWorkspaceFileContent,
+  reviewVibeCoding,
   rollbackVibeCoding,
   saveWorkspaceFileContent,
   streamVibeCoding,
@@ -19,7 +20,15 @@ import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import { useThemeStore } from '@/store/theme'
 import { generateUuid } from '@/utils/uuid'
-import type { FileChangeEvent, GitDiffSummary, WorkspaceFileContent, WorkspaceFileNode } from '@/types/api'
+import type {
+  FileChangeEvent,
+  GitDiffSummary,
+  ReviewIssue,
+  ReviewResult,
+  TestReport,
+  WorkspaceFileContent,
+  WorkspaceFileNode,
+} from '@/types/api'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
@@ -30,6 +39,8 @@ interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
+  // 本条助手消息内累积的沙箱编译/测试报告（P0-3），按到达顺序渲染成测试报告卡片时间线
+  testReports?: TestReport[]
 }
 
 interface Attachment {
@@ -73,6 +84,9 @@ const commitLoading = ref(false)
 const commitMessageText = ref('')
 const prLoading = ref(false)
 const prDescriptionText = ref('')
+// AI 代码审查（P0-2）
+const reviewLoading = ref(false)
+const reviewResult = ref<ReviewResult | null>(null)
 
 // 文件预览抽屉
 const previewVisible = ref(false)
@@ -170,7 +184,7 @@ function send() {
     text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
     nodes: [],
   })
-  messages.value.push({ role: 'assistant', text: '', nodes: [] })
+  messages.value.push({ role: 'assistant', text: '', nodes: [], testReports: [] })
   const assistantMessage = messages.value[messages.value.length - 1]
   input.value = ''
   attachments.value = []
@@ -187,6 +201,11 @@ function send() {
       }
       if (event.event === 'file_change') {
         handleFileChange(event.data)
+        return
+      }
+      if (event.event === 'test_report') {
+        handleTestReport(assistantMessage, event.data)
+        scrollToBottom()
         return
       }
       if (event.event.startsWith('node:')) {
@@ -255,6 +274,24 @@ function handleFileChange(raw: string) {
   }
 }
 
+/** 解析 test_report SSE 事件，追加到该助手消息的测试报告时间线（每轮验证一张卡片）。 */
+function handleTestReport(assistantMessage: ChatMessage, raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as TestReport
+    ;(assistantMessage.testReports ??= []).push(parsed)
+  } catch {
+    // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/** 测试报告卡片标题：命令 + 轮次 + 通过/失败概览。 */
+function testReportTitle(report: TestReport): string {
+  const counts = report.command.startsWith('mvn test')
+    ? ` · 通过 ${report.passed} / 失败 ${report.failed}${report.skipped ? ` / 跳过 ${report.skipped}` : ''}`
+    : ` · 退出码 ${report.exitCode ?? '—'}`
+  return `第 ${report.round} 轮 · ${report.command}${counts}`
+}
+
 /**
  * 撤销本次会话的全部文件改动（回滚到对话前的 baseline 状态）。
  * 破坏性操作，二次确认后调用；成功后清空变更时间线、刷新文件树与 diff，并在对话流插入系统提示。
@@ -297,6 +334,7 @@ async function openGitAssistant() {
   gitDiff.value = null
   commitMessageText.value = ''
   prDescriptionText.value = ''
+  reviewResult.value = null
   await loadGitDiff()
 }
 
@@ -333,6 +371,59 @@ async function handleGeneratePrDescription() {
   } finally {
     prLoading.value = false
   }
+}
+
+/** 触发 AI 代码审查：对本轮 diff 输出结构化审查意见。 */
+async function handleReview() {
+  reviewLoading.value = true
+  try {
+    reviewResult.value = await reviewVibeCoding(props.agentCode, sessionId.value)
+  } catch (error) {
+    ElMessage.error('代码审查失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    reviewLoading.value = false
+  }
+}
+
+/** 严重级别 → Element Plus tag 类型（着色）。 */
+function severityTagType(severity: ReviewIssue['severity']): 'danger' | 'warning' | 'info' {
+  if (severity === 'CRITICAL') return 'danger'
+  if (severity === 'WARNING') return 'warning'
+  return 'info'
+}
+
+/** 按严重级别分组审查意见（CRITICAL → WARNING → SUGGESTION 顺序）。 */
+function groupedIssues(issues: ReviewIssue[]): Array<{ severity: ReviewIssue['severity']; items: ReviewIssue[] }> {
+  const order: ReviewIssue['severity'][] = ['CRITICAL', 'WARNING', 'SUGGESTION']
+  return order
+    .map((severity) => ({ severity, items: issues.filter((i) => i.severity === severity) }))
+    .filter((g) => g.items.length > 0)
+}
+
+/** 点击审查意见里的文件，定位到工作区文件查看器（复用现有文件读取/预览抽屉）。 */
+async function openIssueFile(issue: ReviewIssue) {
+  if (!issue.file) return
+  await openFilePreview({ name: issue.file, relativePath: issue.file, directory: false, children: [] })
+}
+
+/**
+ * 一键生成修复（需求 §4.2.2.4）：把 CRITICAL/WARNING 意见拼成用户消息发回 stream 对话，
+ * 由 Agent 走既有 VibeCoding 链路修复（天然带 file_change 与回滚保障）。
+ */
+function generateFixFromReview() {
+  const result = reviewResult.value
+  if (!result || result.issues.length === 0) return
+  const actionable = result.issues.filter((i) => i.severity === 'CRITICAL' || i.severity === 'WARNING')
+  if (actionable.length === 0) {
+    ElMessage.info('没有需要修复的 CRITICAL/WARNING 问题')
+    return
+  }
+  const lines = actionable.map(
+    (i) => `- [${i.severity}] ${i.file}${i.line ? `:${i.line}` : ''} ${i.message}（建议：${i.suggestion}）`,
+  )
+  input.value = `请根据以下代码审查意见修复问题，并在沙箱内重新验证：\n${lines.join('\n')}`
+  gitDrawerVisible.value = false
+  send()
 }
 
 async function copyToClipboard(text: string, label: string) {
@@ -469,7 +560,38 @@ defineExpose({ newSession })
               :active="streaming && index === messages.length - 1 && !msg.text"
             />
             <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
-            <template v-else>{{ msg.text }}</template>
+            <!-- 沙箱编译/测试报告卡片时间线（P0-3）：每轮验证一张，通过绿/失败红，可展开看失败明细 -->
+            <div
+              v-if="msg.role === 'assistant' && msg.testReports && msg.testReports.length > 0"
+              class="test-reports"
+            >
+              <el-collapse>
+                <el-collapse-item v-for="(report, ri) in msg.testReports" :key="ri" :name="ri">
+                  <template #title>
+                    <span class="test-report-title" :class="report.success ? 'is-success' : 'is-failure'">
+                      <el-icon v-if="report.success"><SuccessFilled /></el-icon>
+                      <el-icon v-else><CircleCloseFilled /></el-icon>
+                      <span class="test-report-title-text">{{ testReportTitle(report) }}</span>
+                      <el-tag v-if="report.exhausted" type="danger" size="small" effect="dark" class="exhausted-tag">
+                        已达最大修复轮次
+                      </el-tag>
+                    </span>
+                  </template>
+                  <div v-if="report.durationMs != null" class="test-report-meta">耗时 {{ report.durationMs }} ms</div>
+                  <ul v-if="report.failureDetails.length > 0" class="test-report-failures">
+                    <li v-for="(d, di) in report.failureDetails" :key="di">{{ d }}</li>
+                  </ul>
+                  <pre v-if="report.rawOutput" class="test-report-raw">{{ report.rawOutput }}</pre>
+                  <div
+                    v-if="report.success && report.failureDetails.length === 0 && !report.rawOutput"
+                    class="test-report-ok"
+                  >
+                    验证通过 ✓
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
+            <template v-if="msg.role === 'user'">{{ msg.text }}</template>
             <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && streaming && index === messages.length - 1">生成中…</span>
           </div>
         </div>
@@ -686,6 +808,59 @@ defineExpose({ newSession })
             复制
           </el-button>
         </div>
+
+        <el-divider />
+
+        <!-- AI 代码审查（P0-2）：对本轮 diff 输出结构化审查意见，按严重级别分组着色 -->
+        <div class="git-section">
+          <div class="git-section-header">
+            <span>Review 本次变更</span>
+          </div>
+          <el-button type="primary" size="small" :loading="reviewLoading" @click="handleReview">审查</el-button>
+          <template v-if="reviewResult">
+            <p v-if="reviewResult.summary" class="git-summary-text review-summary">{{ reviewResult.summary }}</p>
+            <el-empty
+              v-if="reviewResult.issues.length === 0"
+              description="未发现结构化问题"
+              :image-size="40"
+            />
+            <div v-else class="review-issues">
+              <div v-for="group in groupedIssues(reviewResult.issues)" :key="group.severity" class="review-group">
+                <div class="review-group-header">
+                  <el-tag :type="severityTagType(group.severity)" size="small" effect="dark">
+                    {{ group.severity }}
+                  </el-tag>
+                  <span class="review-group-count">{{ group.items.length }} 项</span>
+                </div>
+                <div
+                  v-for="(issue, ii) in group.items"
+                  :key="ii"
+                  class="review-issue"
+                  :class="`review-issue--${group.severity.toLowerCase()}`"
+                >
+                  <div class="review-issue-loc">
+                    <el-tag size="small" class="review-issue-category">{{ issue.category }}</el-tag>
+                    <el-link type="primary" :underline="false" @click="openIssueFile(issue)">
+                      {{ issue.file }}<template v-if="issue.line">:{{ issue.line }}</template>
+                    </el-link>
+                  </div>
+                  <div class="review-issue-message">{{ issue.message }}</div>
+                  <div v-if="issue.suggestion" class="review-issue-suggestion">建议：{{ issue.suggestion }}</div>
+                </div>
+              </div>
+            </div>
+            <el-button
+              v-if="reviewResult.issues.some((i) => i.severity === 'CRITICAL' || i.severity === 'WARNING')"
+              type="warning"
+              size="small"
+              class="review-fix-btn"
+              :disabled="streaming"
+              @click="generateFixFromReview"
+            >
+              一键生成修复
+            </el-button>
+          </template>
+        </div>
       </div>
     </el-drawer>
   </div>
@@ -884,6 +1059,134 @@ defineExpose({ newSession })
   padding: 8px 12px;
   background: var(--el-fill-color-light);
   border-radius: 6px;
+}
+
+/* 测试报告卡片（对话流内） */
+.test-reports {
+  margin-top: 8px;
+}
+
+.test-report-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.test-report-title.is-success {
+  color: var(--el-color-success);
+}
+
+.test-report-title.is-failure {
+  color: var(--el-color-danger);
+}
+
+.test-report-title-text {
+  white-space: nowrap;
+}
+
+.exhausted-tag {
+  margin-left: 4px;
+}
+
+.test-report-meta {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+
+.test-report-failures {
+  margin: 4px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--el-color-danger);
+}
+
+.test-report-raw {
+  margin: 4px 0 0;
+  padding: 8px;
+  max-height: 200px;
+  overflow: auto;
+  background: var(--el-fill-color-darker);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.test-report-ok {
+  font-size: 12px;
+  color: var(--el-color-success);
+}
+
+/* AI 代码审查 */
+.review-summary {
+  margin-top: 8px;
+}
+
+.review-group {
+  margin-bottom: 10px;
+}
+
+.review-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.review-group-count {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.review-issue {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--el-border-color);
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+}
+
+.review-issue--critical {
+  border-left-color: var(--el-color-danger);
+}
+
+.review-issue--warning {
+  border-left-color: var(--el-color-warning);
+}
+
+.review-issue--suggestion {
+  border-left-color: var(--el-color-info);
+}
+
+.review-issue-loc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.review-issue-category {
+  flex-shrink: 0;
+}
+
+.review-issue-message {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  line-height: 1.5;
+}
+
+.review-issue-suggestion {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 2px;
+}
+
+.review-fix-btn {
+  margin-top: 8px;
 }
 
 .tree-node {

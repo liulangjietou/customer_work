@@ -17,6 +17,7 @@ import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.FileChangeEvent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackResult;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.TestReport;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileNode;
 import io.agentscope.core.model.ChatUsage;
@@ -41,8 +42,10 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -76,6 +79,12 @@ public class VibeCodingService {
     private static final String SANDBOX_CONTAINER_PREFIX = "agentscope-sandbox";
     /** 单条 docker cli 命令超时秒数。 */
     private static final long DOCKER_CMD_TIMEOUT_SECONDS = 20;
+    /**
+     * 失败自动修复的轮数上限（需求 P0-3 §4.3.2）：Agent 侧由 prompt 约束"最多重试 3 轮"，
+     * 服务侧据此统计失败次数——第 3 次仍失败的 test_report 标注 {@code exhausted=true}，
+     * 供前端明确提示"已达最大修复轮次"。
+     */
+    private static final int MAX_FIX_ROUNDS = 3;
     /**
      * docker 可执行文件绝对路径：IDE/GUI 启动的 Java 进程不继承 shell 的 PATH（典型 macOS 坑，
      * 本项目 CLAUDE.local.md 已记录过同类问题），而 docker 常见是 Homebrew 装的、不在系统默认
@@ -140,8 +149,11 @@ public class VibeCodingService {
         "[VibeCoding指引-%s] 本次对话的会话目录为: sessions/%s/\n"
         + "请将本轮生成的所有文件都写入该目录下，使用 write_file 工具时路径必须以 sessions/%s/ 开头（如 sessions/%s/src/main/java/Foo.java）。\n"
         + "不要把代码只输出在对话消息里，必须调用 write_file 工具实际将文件写入到工作区。\n"
+        + "生成主代码后，请同时生成对应的 JUnit 5 / Mockito 单元测试，覆盖正常路径与异常路径。\n"
         + "生成或修改代码后，请在沙箱内执行编译或测试命令（如 javac、mvn test）验证代码能正确运行，"
-        + "并将执行结果告知用户；命令已在隔离沙箱中执行，无需额外确认。\n\n%s";
+        + "并将执行结果告知用户；命令已在隔离沙箱中执行，无需额外确认。\n"
+        + "若编译或测试失败，请分析失败原因、修复代码后重新验证，最多重试 3 轮；3 轮后仍失败则停止重试，"
+        + "并明确总结失败原因，不要无限重试。\n\n%s";
 
     /**
      * 流式对话：校验能力 → 创建会话子目录 → 拍快照 → 注入路径指引 → 委托 ChatService 流式对话，
@@ -179,9 +191,16 @@ public class VibeCodingService {
         AtomicReference<ChatUsage> usageTotal = new AtomicReference<>();
 
         AtomicReference<Map<String, FileFingerprint>> lastSnapshot = new AtomicReference<>(initialSnapshot);
+        // 失败自动修复循环的进度计数（本轮对话内累积）：testRun=第几次编译/测试执行，
+        // failedRuns=其中失败次数，用于给 test_report 事件填 round/exhausted（需求 P0-3 §4.3.2）。
+        AtomicInteger testRun = new AtomicInteger(0);
+        AtomicInteger failedRuns = new AtomicInteger(0);
         Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, usageTotal::set)
             .concatMap(chunk -> chunk.kind() == ChatNodeKind.TOOL_RESULT
-                ? Flux.concat(Flux.just(chunk), Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot)))
+                // 顺序：原始工具结果 → 结构化 test_report（若可识别为编译/测试执行）→ 实时 file_change
+                ? Flux.concat(Flux.just(chunk),
+                    Flux.fromIterable(detectTestReport(chunk, testRun, failedRuns)),
+                    Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot)))
                 : Flux.just(chunk));
         // 流结束兜底：docker 模式先把容器产物拷回宿主机会话目录（隔离期间容器碰不到宿主机，用完主动搬回），
         // 再检测一次文件变更——这样产物文件树/file_change/Git 助手在 docker 模式也能读到真实产物。
@@ -516,6 +535,44 @@ public class VibeCodingService {
             }
         }
         return changed;
+    }
+
+    /**
+     * 从一条 {@code TOOL_RESULT} 展示文本解析出结构化 {@code test_report} 事件（0 或 1 条）。
+     *
+     * <p><b>仅 local 沙箱模式启用</b>（需求 P0-3 §4.3.3）：docker 模式下产物/命令输出留在容器内，
+     * 结构化解析与产物同步随后续批次 <b>P1-3</b> 一并落地，本期遇到 docker 模式降级为"仅 prompt
+     * 引导"——命令输出照常走普通 {@code TOOL_RESULT} 文本节点，不额外产出 test_report。</p>
+     *
+     * <p>失败驱动的自动修复由 Agent 侧 prompt 约束（最多 3 轮），本方法只按执行序累计轮次：
+     * {@code round} 为本轮对话第几次编译/测试执行；累计失败达 {@link #MAX_FIX_ROUNDS} 且当前仍失败时
+     * 标注 {@code exhausted=true}，让前端明确"已达最大修复轮次"。</p>
+     */
+    private List<ChatStreamChunk> detectTestReport(ChatStreamChunk toolResult, AtomicInteger testRun, AtomicInteger failedRuns) {
+        if (sandboxProperties.isDockerMode()) {
+            return List.of();
+        }
+        Optional<TestReport> parsed = TestReportParser.parse(toolResult.text());
+        if (parsed.isEmpty()) {
+            return List.of();
+        }
+        TestReport base = parsed.get();
+        int round = testRun.incrementAndGet();
+        int fails = base.success() ? failedRuns.get() : failedRuns.incrementAndGet();
+        boolean exhausted = !base.success() && fails >= MAX_FIX_ROUNDS;
+        log.info("[workspace] sandbox test report parsed, command={}, success={}, round={}, exhausted={}",
+            base.command(), base.success(), round, exhausted);
+        return List.of(testReportChunk(base.withProgress(round, exhausted)));
+    }
+
+    private ChatStreamChunk testReportChunk(TestReport report) {
+        try {
+            return new ChatStreamChunk(ChatNodeKind.TEST_REPORT, objectMapper.writeValueAsString(report));
+        } catch (JsonProcessingException e) {
+            log.error("[workspace] test_report json serialize failed, code={}, command={}",
+                "TEST_REPORT_JSON_ERROR", report.command(), e);
+            return new ChatStreamChunk(ChatNodeKind.TEST_REPORT, "{}");
+        }
     }
 
     private ChatStreamChunk fileChangeChunk(String operation, String path, String description) {

@@ -53,6 +53,7 @@ public enum ResultCode {
     ROLLBACK_BASELINE_MISSING(40016, "会话基线不存在，无法回滚"),
     SCHEDULER_CRON_INVALID(40017, "cron 表达式非法"),
     SYSTEM_TOOL_HTTP_FORBIDDEN(40018, "目标地址不在允许访问范围内，已被安全策略拦截"),
+    AI_REVIEW_FAILED(40019, "AI 代码审查失败，请稍后重试"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

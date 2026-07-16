@@ -25,5 +25,8 @@ public enum AiCodingOperation {
     PR_DESCRIPTION,
 
     /** VibeCoding 会话一键回滚（破坏性：checkout + clean 恢复到 baseline）。 */
-    ROLLBACK
+    ROLLBACK,
+
+    /** Git 助手 · AI 代码审查（只读，对本轮 diff 一次性调用模型输出结构化审查意见）。 */
+    REVIEW
 }

@@ -176,8 +176,11 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 
 #### 4.2.3 约束
 
-- 模型输出 JSON 解析失败时降级：原文以 `summary` 返回、`issues` 为空，错误码 `GIT_ASSISTANT_AI_FAILED`（复用），
-  不让前端拿到裸异常。
+- 模型输出 JSON 解析失败时降级：原文以 `summary` 返回、`issues` 为空（HTTP 200，不报错），不让前端拿到裸异常；
+  AI 硬失败（模型空响应/调用异常/超时）统一返回专属错误码 `AI_REVIEW_FAILED(40019)`（实现时调整：不复用
+  `GIT_ASSISTANT_AI_FAILED`，同一接口的全部 AI 失败对外只有一个码）。
+- 模型输出的 `severity`/`category` 在后端统一大写归一并校验合法集合（唯一防御点）：未知 severity 兜底
+  `SUGGESTION`、未知 category 兜底 `STYLE`，避免非规范值导致意见在前端分组中静默丢失。
 - 超大 diff（如 > 100KB）截断处理并在 summary 中声明"仅审查前 N 个文件"。
 
 #### 4.2.4 验收标准
@@ -477,7 +480,7 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | POST | `/commit-message` | 生成 commit message | ✅ 已实现 |
 | POST | `/pr-description` | 生成 PR description | ✅ 已实现 |
 | POST | `/rollback` | 撤销本次会话全部修改 | 🎯 P0-1 |
-| POST | `/review` | 对本轮 diff 做 Code Review | 🎯 P0-2 |
+| POST | `/review` | 对本轮 diff 做 Code Review | ✅ 已实现 P0-2 |
 | POST | `/plan/confirm` | Plan Mode 计划确认/拒绝 | 🎯 P1-1 |
 | POST | `/execute` | 交互式沙箱命令执行（SSE） | 🎯 P1-2 |
 | POST | `/diagnose` | 根据堆栈/日志诊断 Bug | 🎯 P2-1 |
@@ -493,9 +496,9 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | `node:*`（reasoning/tool_* 等） | `{text}` | 思考过程/工具执行节点（`ChatNodeKind` 派生） | ✅ 已实现 |
 | `file_change` | `{"operation":"MODIFY","path":"...","description":"..."}` | 文件变更事件（CREATE/MODIFY/DELETE） | ✅ 已实现 |
 | `done` | `[DONE]` | 流结束 | ✅ 已实现 |
-| `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,...}` | 沙箱编译/测试结构化报告 | 🎯 P0-3 |
+| `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,"round":1,"exhausted":false,...}` | 沙箱编译/测试结构化报告（含 round/exhausted 修复轮次进度） | ✅ 已实现 P0-3（仅 local 模式，docker 待 P1-3） |
 | `plan` | `{"planId":"...","actions":[...],"requiresConfirmation":true}` | Plan Mode 计划确认 | 🎯 P1-1 |
-| `review_result` | `{issues, summary}` | Review 结果（若走 SSE 增量返回；同步接口则不需要） | 🎯 P0-2 可选 |
+| `review_result` | `{issues, summary}` | Review 结果 | ⛔ 不采用：Review 走同步接口 `POST /review` 返回，未落 SSE 事件（见 §6.1） |
 
 ---
 
@@ -509,7 +512,7 @@ public record FileChangeEvent(String operation, String path, String description)
 }
 ```
 
-### 7.2 ReviewIssue（🎯 P0-2）
+### 7.2 ReviewIssue（✅ 已实现 P0-2，以实际代码为准）
 ```java
 public record ReviewIssue(
     String severity,    // CRITICAL|WARNING|SUGGESTION
@@ -521,18 +524,24 @@ public record ReviewIssue(
 ) {}
 ```
 
-### 7.3 TestReport（🎯 P0-3）
+### 7.3 TestReport（✅ 已实现 P0-3，以实际代码为准）
 ```java
 public record TestReport(
-    String command,          // 触发的命令，如 mvn test
-    int exitCode,
-    Integer passed,          // 解析不出时为 null，rawOutput 兜底
-    Integer failed,
-    Long durationMs,
+    String command,          // 识别出的命令：mvn test | mvn | javac
+    Integer exitCode,        // 进程退出码，解析不到为 null
+    boolean success,         // 综合判定（exitCode==0 且无失败用例）
+    int passed,
+    int failed,              // Failures + Errors
+    int skipped,
+    Long durationMs,         // 解析不到为 null
     List<String> failureDetails,
-    String rawOutput         // 解析失败时的原始输出兜底
+    String rawOutput,        // 解析降级时透传的原始输出尾段（成功且完整解析时为 null）
+    int round,               // 本轮对话内第几次编译/测试执行（1 基）
+    boolean exhausted        // 是否已达失败自动修复轮数上限（仍失败）
 ) {}
 ```
+> 与初版设计相比新增 `success`/`skipped`/`round`/`exhausted` 四个字段，承载失败自动修复循环
+> 的进度可视化（P0-3 需求 2）；`passed`/`failed` 由 `Integer` 收敛为原生 `int`（缺省 0，语义更清晰）。
 
 ### 7.4 RefactorTask（🎯 P2-2）
 ```java

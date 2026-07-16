@@ -30,7 +30,10 @@ public enum ChatNodeKind {
     /** 子 Agent 完成：子 Agent 的 {@code AGENT_RESULT}（最终文本），不走父 Agent 的 {@link #ANSWER} 正文链路。 */
     SUBAGENT_RESULT,
     /** VibeCoding 专用：会话 workspace 文件发生变更（新增/修改/删除），仅由 VibeCodingService 产出。 */
-    FILE_CHANGE;
+    FILE_CHANGE,
+
+    /** VibeCoding 专用：沙箱内编译/测试命令的结构化执行报告，仅由 VibeCodingService 从 {@code execute} 工具结果解析产出。 */
+    TEST_REPORT;
 
     /**
      * 映射成 SSE {@code event} 名：{@link #ANSWER} 走 {@code message}（向后兼容旧协议，前端正文
@@ -44,6 +47,9 @@ public enum ChatNodeKind {
         }
         if (this == FILE_CHANGE) {
             return "file_change";
+        }
+        if (this == TEST_REPORT) {
+            return "test_report";
         }
         return "node:" + name().toLowerCase();
     }
