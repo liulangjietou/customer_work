@@ -446,10 +446,24 @@ public class AdminAgentInstanceFactory {
     /**
      * VibeCoding 沙箱工作区路径（会话级隔离）：{@code ./data/admin-workspace/{agentCode}/sessions/{sessionId}}。
      * HarnessAgent 的文件操作根目录，不同会话产出物物理隔离，互不污染。
+     *
+     * <p><b>安全约束（会话路径解析的全链路唯一防御点）</b>：本方法是 stream/files/file-content/rollback
+     * 等所有会话级功能解析磁盘路径的公共入口，sessionId 由前端透传（正常值是 UUID v4），在此统一做
+     * 路径穿越校验——含路径分隔符或 {@code ..} 的 sessionId 直接 fast fail，并对拼接结果 normalize 后
+     * 强校验必须仍落在该 agent 的 {@code sessions/} 根目录内。否则恶意 sessionId（如
+     * {@code ../其他会话ID} / 绝对路径）可越界访问他人会话甚至宿主机任意目录（rollback 链路会对目标
+     * 目录执行破坏性的 git checkout + clean）。</p>
      */
     public Path resolveSessionWorkspace(String agentCode, String sessionId) {
-        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
-        Path workspace = Path.of(WORKSPACE_ROOT, agentCode, "sessions", safeSession);
+        String safeSession = requireSafeSessionId(sessionId);
+        Path sessionsRoot = Path.of(WORKSPACE_ROOT, agentCode, "sessions").normalize();
+        Path workspace = sessionsRoot.resolve(safeSession).normalize();
+        // 双保险：字符黑名单之外，normalize 后必须仍是 sessions 根目录的真子路径（防未预见的编码绕过）
+        if (!workspace.startsWith(sessionsRoot) || workspace.equals(sessionsRoot)) {
+            log.error("[workspace] session workspace path traversal blocked, code={}, agentCode={}, sessionId={}",
+                "SESSION_PATH_TRAVERSAL", agentCode, safeSession);
+            throw new BizException(ResultCode.PARAM_INVALID, "非法 sessionId：解析路径越界");
+        }
         try {
             Files.createDirectories(workspace);
         } catch (Exception e) {
@@ -457,6 +471,19 @@ public class AdminAgentInstanceFactory {
                 "SESSION_WORKSPACE_INIT_ERROR", agentCode, safeSession, e);
         }
         return workspace;
+    }
+
+    /**
+     * sessionId 合法性校验：空值回退 {@code default}；含 {@code /}、{@code \}、{@code ..} 任一直接拒绝——
+     * 前端生成的 sessionId 是 UUID v4（十六进制 + 连字符，见 customer-admin-web/src/utils/uuid.ts），
+     * 正常值不可能出现这些字符，出现即恶意构造，fast fail。
+     */
+    static String requireSafeSessionId(String sessionId) {
+        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        if (safeSession.contains("/") || safeSession.contains("\\") || safeSession.contains("..")) {
+            throw new BizException(ResultCode.PARAM_INVALID, "非法 sessionId：不允许包含路径分隔符或 ..");
+        }
+        return safeSession;
     }
 
     private AiAgent requireEnabledAgent(String agentCode) {

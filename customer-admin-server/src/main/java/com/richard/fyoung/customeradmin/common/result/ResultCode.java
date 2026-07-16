@@ -49,6 +49,10 @@ public enum ResultCode {
     CUSTOMER_WORK_UNAVAILABLE(40012, "客服坐席服务暂不可用，请稍后重试"),
     ORDER_NOT_FOUND(40013, "订单不存在"),
     ORDER_STATE_CONFLICT(40014, "订单当前状态不允许该操作"),
+    ROLLBACK_NOT_SUPPORTED_IN_DOCKER(40015, "Docker 沙箱模式暂不支持一键回滚"),
+    ROLLBACK_BASELINE_MISSING(40016, "会话基线不存在，无法回滚"),
+    SCHEDULER_CRON_INVALID(40017, "cron 表达式非法"),
+    SYSTEM_TOOL_HTTP_FORBIDDEN(40018, "目标地址不在允许访问范围内，已被安全策略拦截"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

@@ -365,6 +365,9 @@ export interface AgentSaveRequest {
 }
 
 // ---------- aiconfig.scheduled-task ----------
+/** 定时任务调度模式：internal=内置动态调度器，xxl-job=外部 XXL-JOB 控制台 */
+export type ScheduleMode = 'internal' | 'xxl-job'
+
 export interface ScheduledTaskVO {
   id: number
   taskCode: string
@@ -373,8 +376,12 @@ export interface ScheduledTaskVO {
   /** 后端联查智能体名，智能体被删除等情况下可能为 null */
   agentName?: string | null
   prompt: string
+  /** cron 表达式（Spring 6 位），为空表示不参与内置周期调度 */
+  cron: string | null
   enabled: boolean
   remark: string | null
+  /** 当前全局调度模式，前端据此切换提示文案 */
+  scheduleMode: ScheduleMode
   createTime?: string
   updateTime?: string
 }
@@ -384,6 +391,8 @@ export interface ScheduledTaskSaveRequest {
   taskName: string
   agentId: number
   prompt: string
+  /** cron 表达式（Spring 6 位，可空）：internal 模式下按此周期执行 */
+  cron?: string | null
   enabled?: boolean | null
   remark?: string | null
 }
@@ -392,7 +401,7 @@ export interface ScheduledTaskRunVO {
   id: number
   taskId: number
   taskCode: string
-  triggerType: 'XXL_JOB' | 'MANUAL'
+  triggerType: 'XXL_JOB' | 'MANUAL' | 'INTERNAL'
   startTime: string
   endTime: string | null
   costMs: number | null
@@ -460,6 +469,12 @@ export interface CommitMessageResponse {
 
 export interface PrDescriptionResponse {
   description: string
+}
+
+/** 会话一键回滚结果：恢复的已跟踪文件清单 + 删除的新增文件清单。 */
+export interface RollbackResult {
+  restoredFiles: string[]
+  deletedFiles: string[]
 }
 
 /** 当前 VibeCoding 沙箱模式：local（无隔离，跑宿主机）｜docker（容器隔离）。 */

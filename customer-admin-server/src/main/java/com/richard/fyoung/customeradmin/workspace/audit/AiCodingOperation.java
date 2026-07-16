@@ -22,5 +22,8 @@ public enum AiCodingOperation {
     COMMIT_MESSAGE,
 
     /** Git 助手 · 生成 PR description（只读，模型一次性调用）。 */
-    PR_DESCRIPTION
+    PR_DESCRIPTION,
+
+    /** VibeCoding 会话一键回滚（破坏性：checkout + clean 恢复到 baseline）。 */
+    ROLLBACK
 }

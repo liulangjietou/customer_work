@@ -16,6 +16,7 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.FileChangeEvent;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileNode;
 import io.agentscope.core.model.ChatUsage;
@@ -274,6 +275,40 @@ public class VibeCodingService {
             log.error("[workspace] read file content failed, agentCode={}, sessionId={}, path={}",
                 agentCode, sessionId, relativePath, e);
             throw new BizException(ResultCode.SYSTEM_ERROR, "文件读取失败: " + relativePath);
+        }
+    }
+
+    /**
+     * 会话一键回滚：把会话 workspace 恢复到对话前的 baseline 状态（新增文件删除、修改/删除的已跟踪文件
+     * 还原），{@code .git} 保留，baseline 不被破坏（回滚后可继续对话建立新变更）。
+     *
+     * <p>Docker 模式产物在容器内，本期一键回滚仅支持 local（需求 §4.1.3），docker 模式直接 fast fail。
+     * 破坏性操作 + baseline 缺失校验的安全兜底下沉在 {@link GitWorkspaceService#rollbackToBaseline}。</p>
+     */
+    public RollbackResult rollback(String agentCode, String sessionId) {
+        requireVibeCodingCapable(agentCode);
+        if (sandboxProperties.isDockerMode()) {
+            throw new BizException(ResultCode.ROLLBACK_NOT_SUPPORTED_IN_DOCKER);
+        }
+        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, safeSession);
+        // 审计（需求 §5.2/§5.3）：回滚是同步操作，操作人取自 Sa-Token ThreadLocal，begin/finish 同线程；
+        // 业务动作自持控制流，审计只在旁路记录（含 baseline 缺失/git 失败等破坏性尝试的失败留痕）。
+        AiCodingAuditLog audit = auditService.begin(AiCodingOperation.ROLLBACK, agentCode, safeSession);
+        try {
+            RollbackResult result = gitWorkspaceService.rollbackToBaseline(sessionWorkspace);
+            // 回滚后清空本轮内存快照，下次对话据当前（已回滚）状态重新拍基准，避免误报"变更"
+            beforeSnapshots.remove(snapshotKey(agentCode, safeSession));
+            List<String> affected = new ArrayList<>(result.restoredFiles());
+            affected.addAll(result.deletedFiles());
+            auditService.applyChangedFiles(audit, affected);
+            log.info("[workspace] session rolled back, agentCode={}, sessionId={}, restored={}, deleted={}",
+                agentCode, safeSession, result.restoredFiles().size(), result.deletedFiles().size());
+            auditService.finish(audit, (String) null);
+            return result;
+        } catch (RuntimeException e) {
+            auditService.finish(audit, e);
+            throw e;
         }
     }
 

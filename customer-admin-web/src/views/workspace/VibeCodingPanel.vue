@@ -9,6 +9,7 @@ import {
   interruptVibeCoding,
   listWorkspaceFiles,
   readWorkspaceFileContent,
+  rollbackVibeCoding,
   saveWorkspaceFileContent,
   streamVibeCoding,
 } from '@/api/vibecoding'
@@ -60,6 +61,8 @@ const sandboxMode = ref<'local' | 'docker' | null>(null)
 
 // 实时文件变更时间线（本轮对话内累积，切会话/新建会话时清空）
 const fileChanges = ref<Array<FileChangeEvent & { time: number }>>([])
+// 会话一键回滚进行中
+const rollingBack = ref(false)
 
 // Git 助手抽屉
 const gitDrawerVisible = ref(false)
@@ -249,6 +252,42 @@ function handleFileChange(raw: string) {
     fileChanges.value.push({ ...parsed, time: Date.now() })
   } catch {
     // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/**
+ * 撤销本次会话的全部文件改动（回滚到对话前的 baseline 状态）。
+ * 破坏性操作，二次确认后调用；成功后清空变更时间线、刷新文件树与 diff，并在对话流插入系统提示。
+ */
+async function handleRollback() {
+  try {
+    await ElMessageBox.confirm(
+      '此操作将丢弃本次会话对工作区的全部文件改动：新增文件将被删除，修改/删除的文件将恢复到对话前的状态。操作不可撤销，是否继续？',
+      '撤销全部修改',
+      { type: 'warning', confirmButtonText: '确认撤销', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  rollingBack.value = true
+  try {
+    const res = await rollbackVibeCoding(props.agentCode, sessionId.value)
+    fileChanges.value = []
+    await loadFiles()
+    // Git 助手抽屉开着则刷新 diff（回滚后应无变更）
+    if (gitDrawerVisible.value) await loadGitDiff()
+    // 对话流插入一条系统提示（需求 §4.1.2）
+    messages.value.push({
+      role: 'assistant',
+      text: `🔄 已撤销本次会话的全部修改（恢复 ${res.restoredFiles.length} 个文件，删除 ${res.deletedFiles.length} 个新增文件）。`,
+      nodes: [],
+    })
+    scrollToBottom()
+    ElMessage.success('已撤销本次会话的全部修改')
+  } catch (error) {
+    ElMessage.error('撤销失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    rollingBack.value = false
   }
 }
 
@@ -473,7 +512,20 @@ defineExpose({ newSession })
 
       <!-- 实时文件变更时间线 -->
       <div v-if="fileChanges.length > 0" class="file-change-timeline">
-        <div class="file-change-timeline-title">本轮变更</div>
+        <div class="file-change-timeline-header">
+          <span class="file-change-timeline-title">本轮变更</span>
+          <el-button
+            link
+            type="danger"
+            size="small"
+            :loading="rollingBack"
+            :disabled="streaming"
+            title="撤销本次会话的全部文件改动，恢复到对话前状态"
+            @click="handleRollback"
+          >
+            撤销全部修改
+          </el-button>
+        </div>
         <el-scrollbar max-height="120px">
           <div v-for="(fc, idx) in fileChanges" :key="idx" class="file-change-item">
             <el-icon v-if="fc.operation === 'CREATE'" style="color:#67c23a"><CirclePlus /></el-icon>
@@ -760,11 +812,17 @@ defineExpose({ newSession })
   border-radius: 6px;
 }
 
+.file-change-timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
 .file-change-timeline-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--el-text-color-secondary);
-  margin-bottom: 4px;
 }
 
 .file-change-item {

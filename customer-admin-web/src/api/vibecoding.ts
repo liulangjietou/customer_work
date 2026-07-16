@@ -6,6 +6,7 @@ import type {
   CommitMessageResponse,
   GitDiffSummary,
   PrDescriptionResponse,
+  RollbackResult,
   SandboxModeResponse,
   SaveFileContentRequest,
   WorkspaceFileContent,
@@ -94,6 +95,15 @@ export function generateCommitMessage(agentCode: string, req: CommitMessageReque
 export function generatePrDescription(agentCode: string, sessionId: string) {
   return request<PrDescriptionResponse>({
     url: `/workspace/${agentCode}/vibecoding/pr-description`,
+    method: 'post',
+    data: { sessionId },
+  })
+}
+
+/** 会话一键回滚：撤销本次会话对 workspace 的全部文件改动，恢复到对话前的 baseline 状态（破坏性操作）。 */
+export function rollbackVibeCoding(agentCode: string, sessionId: string) {
+  return request<RollbackResult>({
+    url: `/workspace/${agentCode}/vibecoding/rollback`,
     method: 'post',
     data: { sessionId },
   })

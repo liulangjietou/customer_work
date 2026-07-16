@@ -9,6 +9,8 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageRe
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxModeResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SaveFileContentRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
@@ -144,5 +146,16 @@ public class VibeCodingController {
     public CompletableFuture<Result<PrDescriptionResponse>> prDescription(
             @PathVariable String agentCode, @Valid @RequestBody PrDescriptionRequest request) {
         return gitAssistantService.prDescription(agentCode, request.sessionId()).thenApply(Result::success);
+    }
+
+    /**
+     * 会话一键回滚（需求 P0-1）：撤销本次会话对 workspace 的全部文件改动，恢复到对话前的 baseline 状态。
+     * 破坏性操作（{@code git checkout} + {@code clean}）；仅支持 local 沙箱模式，baseline 缺失时 fast fail。
+     */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding会话回滚", target = "vibecoding_rollback")
+    @PostMapping("/rollback")
+    public Result<RollbackResult> rollback(@PathVariable String agentCode, @Valid @RequestBody RollbackRequest request) {
+        return Result.success(vibeCodingService.rollback(agentCode, request.sessionId()));
     }
 }
