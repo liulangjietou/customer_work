@@ -1,6 +1,7 @@
 # customer-admin-web Element Plus 改造方案
 
-> 状态：待评审（未动代码）。评审通过后按"实施顺序"分 PR 落地。
+> 状态：**已实施**（2026-07-16，分支 feature/admin-web-ep-revamp，A→C→B 五个提交）。
+> 实施结果与方案的偏差记录在文末"九、实施结果"，其余章节保留原方案原文。
 > 前提结论：项目**已深度基于 Element Plus 2.14.2**（39 个 .vue、约 900+ 个 el-* 组件实例），
 > 本方案不是"引入 EP"，而是三件事：**A 按需引入优化体积、B 视觉升级+暗色模式、C CRUD 模式收敛**。
 > 版本升级无收益（2.14.2 已接近最新），不在本方案范围内。
@@ -189,3 +190,44 @@ function useCrudPage<VO, Q extends PageQuery, F>(options: CrudOptions<VO, Q, F>)
 | `:deep(.el-*)` 覆盖在新视觉/暗色下错位 | 中 | 13 处清单化逐个核对 |
 | useCrudPage 抽象不贴合导致页面变难读 | 中 | 6.3 试点两页先行，不成立即止损 |
 | auto-import d.ts 未提交导致他人构建失败 | 低 | 4.4 d.ts 进仓库 |
+
+## 九、实施结果（2026-07-16，feature/admin-web-ep-revamp）
+
+### 与方案的偏差
+
+1. **Components 插件不生成 dts**（4.1 的修正）：生成 components.d.ts 会让存量模板首次启用
+   EP 组件严格类型检查，暴露 100+ 处既有类型摩擦（el-table slot 的 DefaultRow、`:value` 传
+   null 等），与"行为不变"目标无关，故 `dts: false` 保持与全量引入一致的宽松模板类型。
+   模板级严格类型留作后续独立改造（修复面：15 个文件约 100 处断言/收窄）。
+2. **CRUD 迁移 8/14 页**（6.3 计划 12 页）。跳过 6 页均为真实状态机差异，未硬套：
+   - McpManage：create/edit/copy 三态弹窗（composable 是二态）
+   - AgentManage：每次变更需联动 loadOptions + menuStore.refreshMenu（无 post-success 钩子）
+   - ScheduledTaskManage：MpPageQuery（current/size/records）分页契约
+   - ProjectManage：后端无分页（listProjects 返回数组）
+   - UserTicketManage / UserOrderManage：分页返回 `items` 非 `list`，且无标准编辑弹窗
+   如后续要覆盖，改造点：composable 加可选 onMutated 钩子（覆盖 AgentManage）、
+   PageResult 契约适配层（覆盖 ticket/order），按需再做。
+3. **formRef 由页面创建传入** composable（6.2 草图里由 composable 持有）：模板字符串
+   ref 不被 noUnusedLocals 计为使用，且模板 ref 本就归属视图层。
+
+### 构建产物
+
+- dist 3440KB → 3232KB（-6%）；更重要的是 EP 组件样式改为按路由分块懒加载，
+  入口 JS 收敛到 34KB gzip（原全量 EP JS+CSS 全在首屏）。
+
+### 已验证（2026-07-16，5176 独立预览 + Chrome）
+
+- 登录页 EP 按需样式完整（tabs/input/checkbox/button/表单校验红框），console 零错误。
+- `ElMessage.error` 弹出且样式完整（auto-import 注入；红底/图标/fixed 定位），
+  theme.css 的 `--el-border-radius-base: 6px` token 同时生效。
+- 暗色模式：html.dark 切换、EP dark 变量（--el-bg-color #141414）、primary-light-9
+  反向混黑（rgb(27,66,107) 深蓝而非浅白蓝）、--theme-page-bg 深色带主题调，全部正确；
+  修复了登录卡片硬编码白底与暗色输入框的混搭问题。
+- 亮↔暗切换往返正常。
+
+### 待人工验收（需登录态，后端 8082 当时未运行）
+
+- 19 个菜单页逐页：列表加载 / 搜索分页 / 新建-编辑-删除全流程（重点：8 个已迁移页）、
+  v-loading 转圈、消息提示样式。
+- MainLayout 暗色下的侧边栏/头部/标签栏观感；明暗切换按钮（header 右侧月亮/太阳图标）。
+- workspace 会话页的 markdown 代码高亮明暗跟随。

@@ -210,6 +210,11 @@ async function handleSubmit() {
   backdrop-filter: blur(6px);
 }
 
+/* 暗色模式下毛玻璃卡片跟随变深，与内部表单控件的暗色保持一致 */
+html.dark .login-card {
+  background: rgba(20, 20, 20, 0.88);
+}
+
 .login-title {
   text-align: center;
   font-size: 18px;
