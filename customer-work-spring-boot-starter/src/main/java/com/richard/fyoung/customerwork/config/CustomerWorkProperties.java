@@ -413,6 +413,8 @@ public class CustomerWorkProperties {
             private String url;
             /** 传输类型：sse | streamable-http。 */
             private String transport = "sse";
+            /** 附加请求头（如 Authorization: Bearer xxx），接需要鉴权的远程 MCP 服务时配置。 */
+            private java.util.Map<String, String> headers;
         }
     }
 

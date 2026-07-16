@@ -65,6 +65,10 @@ public class McpToolkitConfigurer {
         } else {
             builder.sseTransport(server.getUrl());
         }
+        // 需要鉴权的远程 MCP 服务：把配置的附加请求头（如 Authorization）透传给握手与后续调用
+        if (server.getHeaders() != null && !server.getHeaders().isEmpty()) {
+            builder.headers(server.getHeaders());
+        }
         return builder.buildAsync();
     }
 }
