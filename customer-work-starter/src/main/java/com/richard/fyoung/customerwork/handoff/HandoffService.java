@@ -41,7 +41,15 @@ public class HandoffService {
      */
     private HandoffCreatedEnricher enricher;
 
-    /** Spring 注入构造：使用自动装配的 HandoffStore Bean。 */
+    /**
+     * Spring 注入构造：使用自动装配的 {@link HandoffStore} Bean（memory 模式为 {@link InMemoryHandoffStore}，
+     * jdbc 模式为 {@link MybatisHandoffStore}，均由 {@link HandoffConfig} 提供）。
+     *
+     * <p>必须标 {@code @Autowired}：本类同时存在无参构造，Spring 对"多构造器 + 存在无参 + 无
+     * {@code @Autowired}"会回退到无参构造 → 永远用内存实现、{@code human-handoff.store-mode=jdbc} 空转。
+     * 显式标注让容器选中本构造，真正注入配置好的 Store Bean。</p>
+     */
+    @Autowired
     public HandoffService(HandoffStore store) {
         this.store = store;
     }
