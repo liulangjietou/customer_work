@@ -8,7 +8,7 @@ export type CrudDialogMode = 'create' | 'edit'
 /**
  * 标准管理页 CRUD 选项。
  *
- * 设计约束（与 docs/customer-admin-web-ElementPlus改造方案.md 6.2 对齐）：
+ * 设计约束（抽"逻辑"不抽"模板"）：
  * - 只收敛行为逻辑（分页加载/搜索/弹窗状态机/提交/删除确认），模板保持显式的
  *   el-table/el-form——列与表单是每页的本质差异，留在模板里才可读。
  * - 不包 try/catch 做错误提示：api/request.ts 拦截器已统一 ElMessage.error，
