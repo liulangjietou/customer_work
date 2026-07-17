@@ -409,8 +409,20 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 
 ### 4.10 多 Agent 协作编程（P3-1）
 
-> **前置依赖**：starter 侧 SubAgent / Pipeline 编排能力（`SubAgentProvider`、`SequentialPipeline` 等）
-> 在 admin-server 场景的显式装配验证。starter 能力就绪前本项不启动。
+> **降级版已交付 ✅**（完整形态待 starter 演进）。
+> **完整形态前置依赖**：starter 侧 SubAgent / Pipeline 编排能力（`SubAgentProvider`、`SequentialPipeline` 等）
+> 支持产品/架构/开发/测试/Review 五角色可暂停恢复、可中途介入。该依赖未就绪。
+>
+> **降级实现**：复用项目自研的顺序编排思路（参照 starter `MultiAgentOrchestrator#sequential`：各角色输出作为
+> 下一角色输入逐步细化），在 admin-server 落 `CollaborativeCodingService`。VibeCoding 面板新增"协作模式"开关
+> （默认关）；开启后一次需求输入走 **需求分析 → 方案设计 → 编码实现 → 自测审查** 顺序流水（角色数量/提示词
+> 可配 `admin.collaboration.*`，默认 4 角色）。各角色边界经 SSE `role_stage` 事件推送；**编码角色产出走既有
+> VibeCoding 沙箱/file_change/test_report 链路**（编排层不另起写入通道）；某角色失败 **fast fail 中断流水**并明确
+> 报错（错误码 40025），审计埋点 `COLLAB_STREAM`。
+>
+> **与完整形态的差异**：① 4 个内置角色（合并"测试"进编码角色的自测 + "审查"角色），非五角色独立体；
+> ② 顺序流水不支持"中途暂停/修改某步输出后继续"（无 P1-1 暂停恢复接入）；③ 角色间只传文本上下文
+> （分析/设计）与 git diff（审查），未做结构化 PRD/接口契约产物物件化。
 
 #### 4.10.1 角色设计
 
@@ -437,8 +449,19 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 
 ### 4.11 代码知识库问答（P3-2）
 
-> **前置依赖**：starter 侧真实 Embedding RAG（`SimpleKnowledge` + `core.embedding` 向量语义检索）——
-> 当前项目 RAG 为自实现关键词版，语义检索命中率无法达标。starter 能力就绪前本项不启动。
+> **降级版已交付 ✅**（完整形态待 starter 演进）。
+> **完整形态前置依赖**：starter 侧真实向量检索（接真向量数据库、增量/租户隔离的语义检索）。
+>
+> **降级实现**：用 **DashScope 真实 Embedding**（`text-embedding-v3`，走既有 `ai_model_config` 模型配置体系拿
+> Key）+ MySQL 向量存储（新表 `ai_code_knowledge_index` / `ai_code_knowledge_chunk`，Flyway V23）+ **应用层
+> 余弦相似度** 实现语义检索与检索增强问答。落 `KnowledgeService`：对指定源码目录按 **类/方法级** 切块（`CodeChunker`）
+> → Embedding → 入库；`/knowledge/search`（语义 top-k）+ `/knowledge/ask`（RAG 问答，带出处）。索引构建 **显式触发、
+> 进度可查**（索引行 status + chunk_count）；源码路径受 `admin.knowledge.allowed-roots` 白名单约束；Embedding Key
+> 缺失 **fast fail**（错误码 40027，不静默降级回关键词）。前端入口放工作区抽屉。
+>
+> **与完整形态的差异**：① 向量存 MySQL（JSON 数组）、相似度在应用层算，数据量万级以内合理，升级路径是接
+> 真向量库（Milvus/pgvector）；② 索引显式触发、不做文件变更自动监听（无增量热更）；③ 引用来源标注到
+> 文件 + 符号（类/方法名），未精确到行号范围；④ 尚未接入"对话 @知识库 / 生成前自动检索 / Review 规范 RAG 注入"。
 
 #### 4.11.1 需求
 

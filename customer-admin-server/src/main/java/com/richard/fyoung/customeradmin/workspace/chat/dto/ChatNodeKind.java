@@ -39,7 +39,13 @@ public enum ChatNodeKind {
     PLAN,
 
     /** VibeCoding 专用（Plan Mode HITL）：某个计划被确认/拒绝/超时后的终态通知。 */
-    PLAN_RESULT;
+    PLAN_RESULT,
+
+    /**
+     * VibeCoding 协作模式专用（P3-1）：多角色顺序流水中某个角色阶段的开始/完成/失败通知，
+     * 由 {@code CollaborativeCodingService} 产出，前端据此渲染"需求分析→方案设计→编码实现→自测审查"的阶段卡片。
+     */
+    ROLE_STAGE;
 
     /**
      * 映射成 SSE {@code event} 名：{@link #ANSWER} 走 {@code message}（向后兼容旧协议，前端正文
@@ -62,6 +68,9 @@ public enum ChatNodeKind {
         }
         if (this == PLAN_RESULT) {
             return "plan_result";
+        }
+        if (this == ROLE_STAGE) {
+            return "role_stage";
         }
         return "node:" + name().toLowerCase();
     }

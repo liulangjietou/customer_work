@@ -18,6 +18,7 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxModeResp
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SaveFileContentRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileNode;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.CollaborativeCodingService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.GitAssistantService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.VibeCodingService;
 import jakarta.validation.Valid;
@@ -47,16 +48,27 @@ public class VibeCodingController {
 
     private final VibeCodingService vibeCodingService;
     private final GitAssistantService gitAssistantService;
+    private final CollaborativeCodingService collaborativeCodingService;
 
-    public VibeCodingController(VibeCodingService vibeCodingService, GitAssistantService gitAssistantService) {
+    public VibeCodingController(VibeCodingService vibeCodingService, GitAssistantService gitAssistantService,
+                               CollaborativeCodingService collaborativeCodingService) {
         this.vibeCodingService = vibeCodingService;
         this.gitAssistantService = gitAssistantService;
+        this.collaborativeCodingService = collaborativeCodingService;
     }
 
+    /**
+     * VibeCoding 流式对话。{@code request.collaboration=true}（前端"协作模式"开关，默认关，P3-1）时走多角色
+     * 顺序流水（需求分析→方案设计→编码实现→自测审查），额外产出 {@code role_stage} SSE 事件；否则走单 Agent
+     * 常规流。两条路径统一映射成 SSE 事件后追加 {@code done} 收尾。
+     */
     @SaCheckPermission("workspace")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
-        return vibeCodingService.stream(agentCode, request.sessionId(), request.message())
+        Flux<com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk> source = request.collaborationEnabled()
+            ? collaborativeCodingService.stream(agentCode, request.sessionId(), request.message())
+            : vibeCodingService.stream(agentCode, request.sessionId(), request.message());
+        return source
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());

@@ -5,6 +5,7 @@ import { useMenuStore } from '@/store/menu'
 import type { MenuNode } from '@/types/api'
 import ChatPanel from './ChatPanel.vue'
 import VibeCodingPanel from './VibeCodingPanel.vue'
+import KnowledgeDrawer from './KnowledgeDrawer.vue'
 import ThemeToolbar from '@/components/ThemeToolbar.vue'
 
 const props = defineProps<{ agentCode: string }>()
@@ -42,14 +43,21 @@ function newSession() {
     chatPanelRef.value?.newSession()
   }
 }
+
+// 代码知识库抽屉（P3-2）
+const knowledgeVisible = ref(false)
 </script>
 
 <template>
   <div class="workspace-view">
     <div class="workspace-header">
       <h2 class="agent-title">{{ agentNode?.name ?? agentCode }}</h2>
-      <ThemeToolbar :on-new-session="newSession" />
+      <div class="header-actions">
+        <el-button size="small" @click="knowledgeVisible = true">代码知识库</el-button>
+        <ThemeToolbar :on-new-session="newSession" />
+      </div>
     </div>
+    <KnowledgeDrawer v-model="knowledgeVisible" />
     <el-tabs v-model="activeTab" type="border-card" class="workspace-tabs">
       <el-tab-pane label="对话" name="chat">
         <!-- workspace/:agentCode 是同一条路由，只换参数，Vue Router 默认复用组件实例——
@@ -81,6 +89,12 @@ function newSession() {
 
 .agent-title {
   margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .workspace-tabs {

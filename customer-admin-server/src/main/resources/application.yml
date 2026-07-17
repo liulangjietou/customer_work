@@ -181,6 +181,24 @@ admin:
       username: ${ADMIN_RUNTIME_PUBLISH_NACOS_USERNAME:}
       password: ${ADMIN_RUNTIME_PUBLISH_NACOS_PASSWORD:}
       timeout-ms: ${ADMIN_RUNTIME_PUBLISH_NACOS_TIMEOUT_MS:3000}
+  collaboration:
+    # 多 Agent 协作编程（P3-1 降级版）：VibeCoding「协作模式」开关（默认关，前端逐次开启）开启后一次需求
+    # 走多角色顺序流水。roles 留空则用内置默认 4 角色（需求分析→方案设计→编码实现→自测审查）；
+    # 自定义时每个角色 name/type(PLAN|CODING|REVIEW)/prompt 均可配。role-timeout-seconds 为 PLAN/REVIEW
+    # 角色单次一次性模型调用超时。
+    role-timeout-seconds: ${ADMIN_COLLAB_ROLE_TIMEOUT_SECONDS:60}
+  knowledge:
+    # 代码知识库（P3-2 降级版）：DashScope 真实 Embedding + MySQL 向量 + 应用层余弦相似度。
+    # Key 从 ai_model_config 的 dashscope 行借用（AES 解密），缺失即 fast fail。
+    embedding-model: ${ADMIN_KNOWLEDGE_EMBEDDING_MODEL:text-embedding-v3}
+    embedding-base-url: ${ADMIN_KNOWLEDGE_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com}
+    dimensions: ${ADMIN_KNOWLEDGE_DIMENSIONS:1024}
+    batch-size: ${ADMIN_KNOWLEDGE_BATCH_SIZE:10}
+    default-top-k: ${ADMIN_KNOWLEDGE_DEFAULT_TOP_K:5}
+    max-chunk-chars: ${ADMIN_KNOWLEDGE_MAX_CHUNK_CHARS:1500}
+    # 允许被索引的源码根白名单（源码路径必须落在其一之下，防越权读盘）。默认只允许 admin 工作区；
+    # 需索引外部仓库源码时追加其绝对路径根，逗号分隔（YAML 列表）。
+    allowed-roots: ${ADMIN_KNOWLEDGE_ALLOWED_ROOTS:./data/admin-workspace}
 
 springdoc:
   api-docs:

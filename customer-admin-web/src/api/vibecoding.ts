@@ -16,7 +16,13 @@ import type {
 } from '@/types/api'
 
 export function streamVibeCoding(agentCode: string, req: ChatRequest, handlers: SseHandlers) {
-  return streamSse(`/workspace/${agentCode}/vibecoding/stream`, req, handlers)
+  // 显式列出请求体字段：collaboration 为协作模式开关（P3-1），透传给后端多角色流水线。
+  const body = {
+    sessionId: req.sessionId,
+    message: req.message,
+    collaboration: req.collaboration ?? false,
+  }
+  return streamSse(`/workspace/${agentCode}/vibecoding/stream`, body, handlers)
 }
 
 /** 安全中断该会话正在执行的流式对话（协作式中断，不保证立即生效）。 */

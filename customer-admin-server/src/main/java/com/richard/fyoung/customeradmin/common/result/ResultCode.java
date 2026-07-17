@@ -61,6 +61,15 @@ public enum ResultCode {
     RUNTIME_PUBLISH_FAILED(40022, "运行时配置发布失败"),
     CHANNEL_BINDING_NOT_FOUND(40023, "渠道绑定不存在"),
     PLAN_CONFIRM_NOT_FOUND(40024, "计划确认项不存在或已失效（可能已处理、已超时，或服务重启后挂起态已丢失）"),
+    // P3-1 多 Agent 协作编程
+    COLLAB_ROLE_FAILED(40025, "协作编程某角色执行失败，流水已中断，请稍后重试"),
+    COLLAB_NO_ROLES(40026, "协作编程未配置任何角色"),
+    // P3-2 代码知识库问答
+    KNOWLEDGE_EMBEDDING_NOT_CONFIGURED(40027, "未配置可用的 DashScope Embedding 模型，无法构建/检索代码知识库"),
+    KNOWLEDGE_EMBEDDING_FAILED(40028, "Embedding 向量生成失败，请稍后重试"),
+    KNOWLEDGE_INDEX_NOT_FOUND(40029, "代码知识库索引不存在"),
+    KNOWLEDGE_PATH_NOT_ALLOWED(40030, "指定的源码路径不在允许的根目录范围内，已被安全策略拦截"),
+    KNOWLEDGE_INDEX_BUILDING(40031, "该索引正在构建中，请等待构建完成后再操作"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

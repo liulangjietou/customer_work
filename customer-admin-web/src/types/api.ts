@@ -547,10 +547,26 @@ export interface PlanConfirmRequest {
   note?: string
 }
 
+/**
+ * role_stage SSE 事件的 data 载荷（P3-1 协作模式）：多角色顺序协作的阶段进度。
+ * CODING 角色的产物仍走既有 file_change/test_report/message 事件，其 output 为 null。
+ */
+export interface RoleStageEvent {
+  role: string
+  type: 'PLAN' | 'CODING' | 'REVIEW'
+  index: number
+  total: number
+  status: 'START' | 'DONE' | 'FAILED'
+  /** DONE 时携带 PLAN/REVIEW 角色的文本产物；FAILED 时为错误信息；CODING 角色为 null。 */
+  output: string | null
+}
+
 // ---------- workspace.chat ----------
 export interface ChatRequest {
   sessionId: string
   message: string
+  /** 协作模式（P3-1）：开启后后端按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作。 */
+  collaboration?: boolean
 }
 
 export interface ChatSessionSummary {
@@ -745,4 +761,35 @@ export interface ChannelBindingSaveRequest {
   agentId: number
   /** 可空，新建默认由后端置为启用。 */
   status?: number
+}
+
+// ---------- knowledge（代码知识库）----------
+/** 代码知识库索引（P3-2）：一次构建对应一个索引，异步构建，status 反映进度。 */
+export interface KnowledgeIndex {
+  id: number
+  indexName: string
+  sourcePath: string
+  embeddingModel?: string
+  dimensions?: number
+  chunkCount: number
+  status: 'BUILDING' | 'READY' | 'FAILED'
+  message?: string
+  createTime?: string
+  updateTime?: string
+}
+
+/** 代码知识库检索命中项：一个代码切片及其相似度得分。 */
+export interface KnowledgeSearchHit {
+  sourcePath: string
+  symbol?: string
+  lang?: string
+  chunkIndex: number
+  score: number
+  snippet: string
+}
+
+/** 代码知识库问答结果：模型答案 + 引用的检索命中项。 */
+export interface KnowledgeAskResponse {
+  answer: string
+  citations: KnowledgeSearchHit[]
 }

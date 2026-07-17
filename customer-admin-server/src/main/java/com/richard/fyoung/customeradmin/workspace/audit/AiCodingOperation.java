@@ -31,5 +31,14 @@ public enum AiCodingOperation {
     REVIEW,
 
     /** VibeCoding Plan Mode 计划确认/拒绝（HITL，需求 P1-1）。 */
-    PLAN_CONFIRM
+    PLAN_CONFIRM,
+
+    /** 多 Agent 协作编程流水（P3-1，降级版：MultiAgentOrchestrator 顺序编排多角色）。 */
+    COLLAB_STREAM,
+
+    /** 代码知识库索引构建（P3-2，扫描源码→分块→Embedding→入库）。 */
+    KNOWLEDGE_INDEX,
+
+    /** 代码知识库检索增强问答（P3-2，语义检索 top-k → 一次性模型作答）。 */
+    KNOWLEDGE_ASK
 }

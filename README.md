@@ -725,13 +725,15 @@ cd customer-admin-web && npm install && npm run dev
 | `GET /api/menu/routes` | 按当前用户权限点过滤的菜单树，`workspace` 节点下挂启用中的智能体动态节点 |
 | `GET /api/menu/version` | 菜单版本号（进程内自增），前端轻量轮询，仅版本变化才拉全量菜单 |
 | `POST /api/workspace/{agentCode}/chat/stream` | 智能体在线聊天（SSE，权限点复用 `workspace`，停用智能体报 `AGENT_DISABLED`） |
-| `POST /api/workspace/{agentCode}/vibecoding/stream` | VibeCoding 对话（SSE，仅 `capabilities` 含 `vibecoding` 的智能体可用） |
+| `POST /api/workspace/{agentCode}/vibecoding/stream` | VibeCoding 对话（SSE，仅 `capabilities` 含 `vibecoding` 的智能体可用；请求带 `collaboration=true` 走 P3-1 多角色协作流水，额外发 `role_stage` 事件） |
 | `POST /api/workspace/{agentCode}/vibecoding/plan/confirm` | Plan Mode 计划确认/拒绝（P1-1 HITL，`admin.sandbox.permission-mode=hitl` 时高风险操作挂起等确认） |
+| `POST /api/knowledge/index/build`、`GET /api/knowledge/index/list`、`GET/DELETE /api/knowledge/index/{id}` | 代码知识库索引管理（P3-2 降级版：DashScope 真实 Embedding + MySQL 向量，显式触发、进度可查，权限点复用 `workspace`） |
+| `GET /api/knowledge/search`、`POST /api/knowledge/ask` | 代码知识库语义检索 top-k / 检索增强问答（应用层余弦相似度，回答带出处） |
 | `GET /api/workspace/{agentCode}/vibecoding/artifacts?sessionId=` | VibeCoding 产物清单（对话前后对比 workspace 目录快照，降级版方案，无实时 `file_change` 事件） |
 | `/api/ticket/orders/**` | 用户订单管理（代理 8080 坐席订单 API：分页/详情/改址/取消，权限点 `user-order:view`/`user-order:edit`），见 §6.22 |
 | `/swagger-ui/index.html` | 接口文档 |
 
-生产建表由 DBA 参照 **[mysql/02-customer-admin/](mysql/02-customer-admin/)**（V1~V20 有序副本）手工执行（与 `mysql/01-agent-scope-customer-work/customer-work-schema.sql`
+生产建表由 DBA 参照 **[mysql/02-customer-admin/](mysql/02-customer-admin/)**（V1~V23 有序副本）手工执行（与 `mysql/01-agent-scope-customer-work/customer-work-schema.sql`
 客服主业务库物理隔离，独立数据库 `customer_admin`），与仓库既有"生产不自动建表"约定一致。
 
 **智能体运行时架构要点**（`workspace.runtime` 包）：`AdminAgentInstanceFactory` 按 `ai_agent` 任意一行

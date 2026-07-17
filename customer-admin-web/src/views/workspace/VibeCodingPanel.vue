@@ -28,6 +28,7 @@ import type {
   PlanResultEvent,
   ReviewIssue,
   ReviewResult,
+  RoleStageEvent,
   TestReport,
   WorkspaceFileContent,
   WorkspaceFileNode,
@@ -56,6 +57,8 @@ interface ChatMessage {
   testReports?: TestReport[]
   // 本条助手消息内的 Plan Mode 确认卡片（P1-1），高风险操作待人工确认
   plans?: PlanCard[]
+  // 协作模式多角色阶段进度（P3-1），按 role_stage 事件到达顺序累积
+  stages?: RoleStageEvent[]
 }
 
 interface Attachment {
@@ -66,6 +69,8 @@ interface Attachment {
 const sessionId = ref(generateUuid())
 const messages = ref<ChatMessage[]>([])
 const input = ref('')
+// 协作模式开关（P3-1）：开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作
+const collaborationMode = ref(false)
 const streaming = ref(false)
 const interrupting = ref(false) // 已点终止，等后端真正停下来（协作式中断，不保证立即生效）
 const interrupted = ref(false) // 上一轮是被终止结束的，可以点"继续"续跑挂起的工具调用
@@ -221,7 +226,7 @@ function send() {
   streaming.value = true
   scrollToBottom()
 
-  abortStream = streamVibeCoding(props.agentCode, { sessionId: sessionId.value, message: messageToSend }, {
+  abortStream = streamVibeCoding(props.agentCode, { sessionId: sessionId.value, message: messageToSend, collaboration: collaborationMode.value }, {
     onEvent: (event) => {
       if (event.event === 'done') {
         streaming.value = false
@@ -235,6 +240,11 @@ function send() {
       }
       if (event.event === 'test_report') {
         handleTestReport(assistantMessage, event.data)
+        scrollToBottom()
+        return
+      }
+      if (event.event === 'role_stage') {
+        handleRoleStage(assistantMessage, event.data)
         scrollToBottom()
         return
       }
@@ -321,6 +331,60 @@ function handleTestReport(assistantMessage: ChatMessage, raw: string) {
   } catch {
     // 解析失败不影响主对话流程，静默丢弃
   }
+}
+
+/**
+ * 解析 role_stage SSE 事件（P3-1 协作模式）：维护该助手消息的多角色阶段进度列表。
+ * START 追加一条新阶段；DONE/FAILED 按 index 匹配已存在阶段并更新其状态与产物（找不到则补插一条）。
+ */
+function handleRoleStage(assistantMessage: ChatMessage, raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as RoleStageEvent
+    const stages = (assistantMessage.stages ??= [])
+    if (parsed.status === 'START') {
+      stages.push({ ...parsed, output: null })
+      return
+    }
+    // DONE / FAILED：按 index 更新已有阶段的状态与产物
+    const existing = stages.find((s) => s.index === parsed.index)
+    if (existing) {
+      existing.status = parsed.status
+      existing.output = parsed.output
+      existing.role = parsed.role
+      existing.type = parsed.type
+    } else {
+      stages.push({ ...parsed })
+    }
+  } catch {
+    // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/** 阶段状态标签文案。 */
+function roleStageStatusText(status: RoleStageEvent['status']): string {
+  const map: Record<RoleStageEvent['status'], string> = {
+    START: '进行中',
+    DONE: '完成',
+    FAILED: '失败',
+  }
+  return map[status]
+}
+
+/** 阶段状态标签色（el-tag type）。 */
+function roleStageStatusTag(status: RoleStageEvent['status']): 'primary' | 'success' | 'danger' {
+  if (status === 'DONE') return 'success'
+  if (status === 'FAILED') return 'danger'
+  return 'primary'
+}
+
+/** 阶段类型徽标文案。 */
+function roleStageTypeText(type: RoleStageEvent['type']): string {
+  const map: Record<RoleStageEvent['type'], string> = {
+    PLAN: '规划',
+    CODING: '编码',
+    REVIEW: '审查',
+  }
+  return map[type]
 }
 
 /** 解析 plan SSE 事件，追加一张待确认卡片并启动倒计时（P1-1 HITL）。 */
@@ -733,6 +797,35 @@ defineExpose({ newSession })
                 </el-collapse-item>
               </el-collapse>
             </div>
+            <!-- 协作模式多角色阶段进度（P3-1）：每个角色一张卡片，展示状态标签、类型徽标与文本产物 -->
+            <div
+              v-if="msg.role === 'assistant' && msg.stages && msg.stages.length > 0"
+              class="role-stages"
+            >
+              <div
+                v-for="(stage, si) in msg.stages"
+                :key="si"
+                class="role-stage-card"
+                :class="`role-stage-card--${stage.status.toLowerCase()}`"
+              >
+                <div class="role-stage-header">
+                  <span class="role-stage-name">{{ stage.role }}</span>
+                  <el-tag size="small" class="role-stage-type">{{ roleStageTypeText(stage.type) }}</el-tag>
+                  <span class="role-stage-index">{{ stage.index }}/{{ stage.total }}</span>
+                  <el-tag
+                    :type="roleStageStatusTag(stage.status)"
+                    size="small"
+                    effect="dark"
+                    class="role-stage-status"
+                  >
+                    {{ roleStageStatusText(stage.status) }}
+                  </el-tag>
+                </div>
+                <div v-if="stage.output" class="role-stage-output">
+                  <MarkdownRenderer :text="stage.output" />
+                </div>
+              </div>
+            </div>
             <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
             <div
               v-if="msg.role === 'assistant' && msg.plans && msg.plans.length > 0"
@@ -811,6 +904,17 @@ defineExpose({ newSession })
           </el-button>
         </el-upload>
         <el-input v-model="input" placeholder="描述需求，回车发送" :disabled="streaming" @keyup.enter="send" />
+        <el-tooltip
+          placement="top"
+          content="开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作"
+        >
+          <el-switch
+            v-model="collaborationMode"
+            :disabled="streaming"
+            active-text="协作模式"
+            class="collaboration-switch"
+          />
+        </el-tooltip>
         <el-button v-if="!streaming" type="primary" @click="send">发送</el-button>
         <el-button v-else type="danger" :loading="interrupting" @click="handleInterrupt">
           {{ interrupting ? '终止中…' : '终止' }}
@@ -1261,6 +1365,67 @@ defineExpose({ newSession })
   padding: 8px 12px;
   background: var(--el-fill-color-light);
   border-radius: 6px;
+}
+
+/* 协作模式开关 */
+.collaboration-switch {
+  flex-shrink: 0;
+  margin: 0 4px;
+}
+
+/* 协作模式多角色阶段卡片（对话流内，P3-1） */
+.role-stages {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.role-stage-card {
+  padding: 8px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-left: 3px solid var(--el-color-info);
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+}
+
+.role-stage-card--start {
+  border-left-color: var(--el-color-primary);
+}
+
+.role-stage-card--done {
+  border-left-color: var(--el-color-success);
+}
+
+.role-stage-card--failed {
+  border-left-color: var(--el-color-danger);
+}
+
+.role-stage-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.role-stage-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+}
+
+.role-stage-index {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.role-stage-status {
+  margin-left: auto;
+}
+
+.role-stage-output {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
 }
 
 /* 测试报告卡片（对话流内） */
