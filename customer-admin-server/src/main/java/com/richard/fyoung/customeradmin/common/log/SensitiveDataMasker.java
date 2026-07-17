@@ -12,7 +12,7 @@ import java.util.Map;
 /**
  * 操作日志参数脱敏工具：按字段名关键字掩码，供 {@link OperationLogAspect} 记录请求参数前调用。
  *
- * <p>与 {@code customer-work-spring-boot-starter} 里同名的 {@code SensitiveDataMasker}
+ * <p>与 {@code customer-work-starter} 里同名的 {@code SensitiveDataMasker}
  * （面向客服对话文本内容做手机号/身份证等正则脱敏）语义不同——本类面向"请求参数对象"按
  * <b>字段名</b>掩码，不做文本内容正则扫描，两者不复用。</p>
  * @author owlzhangfq@gmail.com

@@ -12,7 +12,7 @@ npm run dev        # 端口 5174，接口经 vite proxy 转发到 http://localho
 
 - 登录种子账号见部署文档（本地默认 admin/admin，可能已改密）。
 - 菜单是数据库驱动（`sys_permission` 表）：新增页面需要「迁移种子 + `src/router/component-map.ts` 注册组件」两步，缺一菜单点开空白。
-- 用户工单坐席聊天的 WebSocket **直连 8080**（凭证由 8082 的 `GET /api/ticket/ws-credential` 签发），本地需同时启动 customer-work-app。
+- 用户工单坐席聊天的 WebSocket **直连 8080**（凭证由 8082 的 `GET /api/ticket/ws-credential` 签发），本地需同时启动 customer-work-app-server。
 
 ## 构建
 

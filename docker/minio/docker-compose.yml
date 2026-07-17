@@ -1,0 +1,43 @@
+# =============================================================================
+# MinIO 对象存储编排（对话附件原始文件的存储后端，storage.type=minio 时启用）
+#
+# 启动：
+#   cd docker/minio && docker compose up -d              # 后台启动
+#   docker compose logs -f minio                          # 看启动日志
+#   docker compose down                                   # 停止并移除（数据卷保留）
+#
+# 端口：
+#   9000 = S3 API（应用侧对接：customer-work.attachment.storage.minio.endpoint=http://localhost:9000）
+#   9001 = Web 控制台（浏览器 http://localhost:9001 ，账号/密码同下 root 凭据）
+#
+# 凭据：minioadmin/minioadmin（本机默认，生产务必用环境变量覆盖，切勿写入仓库）。
+#   bucket 无需在此预建：应用侧 auto-create-bucket=true，首次上传附件时惰性创建
+#   （customer-work-attachments / customer-admin-attachments 两个业务桶）。
+#
+# 说明：本 compose 与用户本机已在跑的 minio-server 容器（同 endpoint/同凭据）功能等价，二选一即可，
+#   不要同时占用 9000/9001 端口。数据落命名卷 minio-data，docker compose down 不删。
+# =============================================================================
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio-server
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"                # S3 API（应用对接端口）
+      - "9001:9001"                # Web 控制台（浏览器访问）
+    volumes:
+      - minio-data:/data           # 对象数据卷，down 不删
+    healthcheck:
+      # MinIO 自带 GET /minio/health/live，起监听后即 200
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  minio-data:                      # MinIO 对象数据（命名卷，docker compose down 不删）

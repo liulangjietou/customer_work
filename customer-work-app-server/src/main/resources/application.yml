@@ -1,0 +1,443 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: customer-work-app-server
+  # 排除 Spring 的 DataSource 自动配置：业务持久层由 starter 的 CustomerWorkPersistenceConfig
+  # 显式装配独立数据源（customerWorkDataSource）。引入 MyBatis-Plus 后 spring-jdbc 进入类路径会激活
+  # DataSourceAutoConfiguration，未配 spring.datasource.url 时会启动失败，故在此关闭（本应用不使用 Spring 自动数据源）。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+  # 响应式编解码器缓冲上限：控制单次请求聚合到内存的最大字节数（默认 256KB）。
+  # 附件上传要把整份文件读进内存交给解析器，故放宽到 12MB（略大于附件 10MB 上限，留边界余量）。
+  codec:
+    max-in-memory-size: 12MB
+  webflux:
+    # WebFlux multipart（FilePart）上传限制：默认单分片仅 256KB 内存、超出即落临时盘。
+    # 这里把内存与磁盘用量都放宽到 12MB，覆盖附件 10MB 上限；真正的大小/类型防御在
+    # AttachmentParseService（customer-work.attachment.max-file-size-mb），此处只放开传输通道。
+    multipart:
+      max-in-memory-size: 12MB
+      max-disk-usage-per-part: 12MB
+      max-parts: 16
+
+customer-work:
+  model:
+    # 厂商：dashscope（百炼）| openai | anthropic | gemini | ollama
+    # 注：anthropic/gemini 需各自厂商 SDK 依赖；ollama 用于本地私有化
+    provider: dashscope
+    # 百炼 API Key：仅从环境变量注入，切勿写入仓库。本地：export DASHSCOPE_API_KEY=sk-xxx
+    api-key: ${DASHSCOPE_API_KEY:}
+    # 可切换为 qwen-plus / qwen-turbo 等；模型名对应 DashScope 通义千问系列
+    name: qwen-plus
+    # 自定义网关 / 百炼兼容地址；留空用 SDK 默认百炼地址
+    base-url: ""
+    temperature: 0.3
+    max-tokens: 1500
+    stream: true
+    # GenerateOptions 高级（跨厂商统一）
+    top-p:                  # 留空则不设置
+    reasoning-effort:       # low | medium | high
+    enable-search:          # DashScope 联网搜索（仅 dashscope）
+    enable-thinking:        # DashScope 深度思考（仅 dashscope）
+    embedding-name: text-embedding-v3
+    # 单次请求 token 用量告警阈值（0=关闭）：超过打 WARN，便于成本护栏
+    token-warn-threshold: 0
+    # 成本熔断：按分钟/小时窗口限制 token 消耗量，超限拒绝请求防刷量打爆成本
+    cost-control:
+      enabled: false
+      max-tokens-per-minute: 100000   # 每分钟最大 token 消耗；超限熔断
+      max-tokens-per-hour: 1000000     # 每小时最大 token 消耗；超限熔断
+    # 私有化兜底：主模型失败时自动切换（典型：云端主模型 + 本地 Ollama 兜底）
+    fallback:
+      enabled: false
+      provider: ollama
+      name: qwen2.5
+      api-key: ""
+      base-url: ""
+    # 模型调用重试（瞬时错误指数退避，提升高可用）
+    retry:
+      enabled: false
+      max-attempts: 2
+      backoff-ms: 500
+  session:
+    # 会话持久化模式：memory（默认，重启丢）| json（单机落盘可恢复）
+    #                | redis（分布式共享）| mysql（强一致持久化）
+    # 工单系统默认走 mysql：会话状态与工单/消息同库跨实例共享（本机库 agent_scope_customer_work）
+    mode: mysql
+    # 会话空闲超时（分钟）：超过该时间无活动的会话自动清理（移除缓存+状态+锁）；<=0 禁用
+    idle-timeout-minutes: 0
+    directory: ./data/sessions
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      key-prefix: customer-work
+    mysql:
+      host: ${MYSQL_HOST:localhost}
+      port: ${MYSQL_PORT:3306}
+      database: ${MYSQL_DATABASE:agent_scope_customer_work}
+      username: ${MYSQL_USERNAME:root}
+      password: ${MYSQL_PASSWORD:root}
+      # 留空则按 host/port/database 自动拼装（含 createDatabaseIfNotExist）
+      jdbc-url: ""
+      auto-create: true
+  agent:
+    # ReAct 最大推理-行动轮次
+    max-iters: 10
+    # Meta-Tool（元工具）：允许 Agent 运行时自主启停工具组，缓解上下文压力。默认关闭
+    meta-tool-enabled: false
+  memory:
+    # 长期记忆（跨会话、按租户隔离）
+    long-term-enabled: true
+    # 实现：memory（内置内存）| bailian（百炼长期记忆）| mem0 | reme
+    provider: memory
+    # 租户解析分隔符：sessionId 形如 tenantA:conv-1 时，分隔符前为租户，同租户跨会话共享记忆
+    tenant-delimiter: ":"
+    retrieve-top-k: 5
+    bailian:
+      api-key: ""            # 留空则复用 model.api-key
+      api-base-url: ""
+      memory-library-id: ""  # 百炼控制台创建的记忆库 ID
+      project-id: ""
+      top-k: 5
+    mem0:
+      api-key: ""
+      api-base-url: https://api.mem0.ai
+      api-type: platform     # platform | self_hosted
+      agent-name: customer-work
+    reme:
+      api-base-url: ""
+  plan:
+    # PlanNotebook 任务规划：引导 Agent 有序完成长链路任务
+    enabled: true
+    max-subtasks: 20
+  rag:
+    # RAG 知识检索
+    enabled: true
+    # 实现：memory（内存关键词）| simple（百炼Embedding+内存向量库，真实语义）
+    #     | bailian（百炼企业知识库）| dify
+    provider: memory
+    top-k: 3
+    simple:
+      dimensions: 1024      # text-embedding-v3 维度
+    bailian:
+      access-key-id: ""
+      access-key-secret: ""
+      workspace-id: ""
+      index-id: ""          # 百炼控制台创建的知识库索引 ID
+      endpoint: ""
+      enable-reranking: true
+    dify:
+      api-key: ""
+      api-base-url: ""
+      dataset-id: ""
+      enable-rerank: true
+  context:
+    # 智能上下文压缩（2.0 用 Harness Compaction 实现）：长对话上下文有界。默认关闭（开启需可用模型）
+    compression-enabled: false
+    max-token: 8000
+    msg-threshold: 40
+    last-keep: 10
+  harness:
+    # AgentScope 2.0 Harness 新能力（详见 docs/MIGRATION-2.0.md）
+    # 启用后由 HarnessAgentFactory 经 HarnessAgent.fromAgent(...) 叠加 Plan Mode / Compaction / Subagent / Workspace
+    enabled: false
+    # 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）
+    workspace-dir: ./data/workspace
+    # 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation
+    memory-enabled: false
+    # 环境级记忆（跨会话共享的环境记忆标识），留空不启用
+    environment-memory: ""
+    # 超大工具结果落盘：上下文只留占位符与预览，原文落盘到工作区
+    tool-result-eviction-enabled: false
+    # 技能自进化：SkillCurator + 技能管理/晋升工具（成功模式沉淀为可复用技能）
+    skill-curator-enabled: false
+    # 额外上下文文件（人格 / 领域知识，磁盘 Markdown 每轮注入 system prompt），留空不注入
+    additional-context-file: ""
+    # 组织维度（org）：写入 RuntimeContext KV，实现 session/user/org 多维隔离，留空不写
+    org: ""
+    permission:
+      # 权限系统：声明式工具授权（与 HumanApprovalHook 形成双层闸门）。默认关闭
+      enabled: false
+      # default | acceptEdits | explore | bypass | dontAsk
+      mode: default
+      # 命中以下工具进入"询问/人工确认"
+      ask-tools: [submitRefund, transferToHuman]
+      deny-tools: []
+    plan-mode:
+      # 只读规划期：先出 markdown 方案、获批后再写
+      enabled: false
+      allow-shell: false
+    subagent:
+      # 把订单/售后/知识库专家作为 HarnessAgent 子智能体编排
+      enabled: false
+    sandbox:
+      # 安全沙箱执行：none（不隔离）| local（本地子进程）| docker（容器隔离）
+      # Local/Docker 内置于 Harness；k8s/e2b/daytona/agentrun 远端沙箱需引入 agentscope-extensions-sandbox-*
+      mode: none
+      # 隔离粒度：session | user | agent | global
+      isolation-scope: session
+      # docker 模式镜像
+      image: python:3.11-slim
+      # local 模式工具/代码执行超时秒数
+      execute-timeout-seconds: 60
+  skill:
+    # Skill 技能库
+    enabled: true
+    # 仓库：classpath（只读内置）| filesystem（可写，支持技能自进化/写回）
+    repository: classpath
+    location: skills
+    directory: ./data/skills
+    writable: true
+    # 注册"运行时加载技能"工具，允许 Agent 按需自行加载技能
+    runtime-load-tool-enabled: false
+    # 代码执行技能（注册读写/Shell 工具）。默认关闭
+    code-execution-enabled: false
+    code-execution-work-dir: ./data/skill-workspace
+  mcp:
+    # MCP 接入：把存量 HTTP 系统零改造接成 Agent 工具。默认关闭，配置 servers 后生效
+    enabled: false
+    servers: []
+      # - name: inventory
+      #   url: http://localhost:9000/sse
+      #   transport: sse
+  observability:
+    # 全链路 trace 导出为 JSONL（数据飞轮采集）。默认关闭
+    trace-enabled: false
+    trace-file: ./data/traces/agent-trace.jsonl
+    # 框架原生链路追踪 Hook（按模型/工具/Agent 调用打 span）。默认关闭
+    tracing-enabled: false
+    # Studio 可视化调试（需外部 Studio 服务）。默认关闭
+    studio:
+      enabled: false
+      url: ""
+      project: customer-work
+      run-name: customer-work-run
+  human-approval:
+    # 工具级人工确认：高风险工具执行后暂停 Agent 待人工复核
+    enabled: true
+    guarded-tools:
+      - submitRefund
+    # 审批超时（秒）：PENDING 超过该时间未决策自动处理；<=0 禁用超时巡检
+    timeout-seconds: 0
+    # 超时动作：escalate（升级转人工）| deny（自动拒绝）
+    timeout-action: escalate
+    # 审批存储模式：memory（进程内，默认）| jdbc（数据库持久化，重启不丢）
+    store-mode: memory
+  fact-log:
+    # 三层记忆第三层：只追加事实日志（可审计、跨会话）
+    enabled: true
+    directory: ./data/facts
+    # 单文件最大大小（MB），超过则轮转到 .1 / .2 归档；<=0 禁用轮转
+    max-file-mb: 10
+    # 最多保留的归档文件数（超出最旧的自动删除）；<=0 不限制
+    max-archived-files: 5
+  security:
+    # 接入层安全：API Key 鉴权（默认关闭，生产开启并配置 api-keys）
+    auth:
+      enabled: false
+      header-name: X-API-Key
+      api-keys: []
+        # - your-production-api-key
+    # 限流：按 API Key 或客户端 IP 维度（默认关闭）
+    rate-limit:
+      enabled: false
+      requests-per-minute: 120
+      # 限流算法：fixed-window（固定窗口，默认）| sliding-window（滑动窗口，更平滑防突刺）
+      algorithm: fixed-window
+      # 滑动窗口时间窗大小（秒），仅 algorithm=sliding-window 时生效
+      window-seconds: 60
+  multi-agent:
+    # 多 Agent 编排：fanout（并行多专家聚合）| sequential（流水串行细化）
+    enabled: true
+    mode: fanout
+    max-iters: 6
+  runtime:
+    # 优雅停机：等待在途请求完成的超时（秒）
+    shutdown-timeout-seconds: 30
+    # 定时维护任务（默认关闭）；需定时驱动 Agent 跑批可接 Quartz/XXL-JOB
+    scheduler-enabled: false
+    scheduler-fixed-delay-ms: 60000
+  interrupt:
+    # 中断后无缝恢复：再次调用可恢复被打断的待执行工具调用
+    pending-tool-recovery-enabled: true
+  hooks:
+    # 可插拔 Hook（内置 4 个 + 下游自定义 Hook Bean 自动织入）
+    latency:
+      # 延迟埋点：端到端/每轮推理/每个工具耗时 + 首字时间(TTFT)，接 Micrometer Timer（P50/P95/P99）。开销极低，默认开启
+      enabled: true
+    masking:
+      # 出站脱敏：对最终回复中的手机号/身份证/银行卡/邮箱做掩码。会改写回复，默认关闭
+      enabled: false
+      replacement: "***"
+      mask-phone: true
+      mask-id-card: true
+      mask-bank-card: true
+      mask-email: true
+      extra-patterns: []
+      # 是否对工具返回结果在进入上下文前脱敏（可能影响模型可用信息）。默认关闭
+      mask-tool-results: false
+    audit:
+      # 合规审计：把工具调用与最终决策写入只追加审计轨迹（默认 logger=customer-work.audit）。默认关闭
+      enabled: false
+      # 审计中的工具入参是否复用脱敏规则
+      mask-args: true
+    self-correction:
+      # 自我纠错：纯文本最终答复承诺打款却未走工具时强制重新推理（会多一轮推理）。默认关闭
+      enabled: false
+      max-corrections: 1
+    tool-guard:
+      # 工具护栏：执行前注入公共参数 / 对数值参数做上限钳制（PreActingEvent.setToolUse）。默认关闭
+      enabled: false
+      inject-params: {}        # 例：{ channel: online }
+      numeric-caps: {}         # 例：{ amount: 1000 } 退款金额上限钳制
+    dynamic-options:
+      # 动态生成参数：命中高风险关键词切到精确档（低温+高推理强度）。默认关闭
+      enabled: false
+      precise-keywords: [投诉, 退款, 纠纷, 赔偿, 升级, 维权]
+      precise-temperature: 0.1
+      precise-reasoning-effort: high
+  nacos:
+    # Nacos 配置中心：系统提示词集中管理 + 热更新（运营侧改提示词无需重启）。
+    # 本机 Nacos 已就绪（http://localhost:8848/nacos, nacos/nacos）时，把 enabled 改为 true 即生效。
+    enabled: false
+    server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+    namespace: ${NACOS_NAMESPACE:customer-work}
+    group: DEFAULT_GROUP
+    prompt-data-id: customer-work-system-prompt
+    username: ${NACOS_USERNAME:nacos}
+    password: ${NACOS_PASSWORD:nacos}
+    timeout-ms: 3000
+    # 运行时配置热更新：接收 admin(8082) 下发的整份运行时配置（模型/兜底/重试/提示词/MCP/maxIters），
+    # 无需重启即热替换模型链并重建 Agent。默认关闭；开启后监听 runtime-config-data-id。
+    runtime-config-enabled: ${CUSTOMER_WORK_RUNTIME_CONFIG_ENABLED:false}
+    # 须与 admin 的 admin.runtime-publish.nacos.data-id 一致。
+    runtime-config-data-id: customer-work-runtime-config
+    # API Key 密文 AES 解密密钥：必须与 admin 的 ADMIN_AES_SECRET_KEY 同值，否则整份配置解密失败并保留旧配置。
+    config-aes-key: ${CUSTOMER_WORK_CONFIG_AES_KEY:}
+  protocol:
+    # AG-UI：标准 Agent-UI 事件协议（POST /api/customer/agui，SSE）
+    agui:
+      enabled: true
+      enable-reasoning: true
+      emit-tool-call-args: true
+    # TTS 语音合成（实时多模态）：需 DashScope 实时 TTS 模型与音频输出，默认关闭
+    tts:
+      enabled: false
+  higress:
+    # Higress AI 网关接入：按需工具发现 / 流量治理。默认关闭，配置 endpoint 后生效
+    enabled: false
+    name: higress
+    endpoint: ""
+    transport: sse           # sse | streamable-http
+    tool-search: ""          # 工具搜索关键词；留空则不启用按需工具发现
+    max-tools: 10
+    timeout-seconds: 30
+  ticket:
+    # 智能客服工单：存储模式 memory（进程内）| jdbc（MyBatis-Plus 实现，跨实例共享，与 session.mysql 同库）
+    store-mode: jdbc
+    # 转人工触发关键词：用户消息命中即建单转人工，不进 LLM
+    handoff-keywords: [转人工, 人工客服, 人工服务, 真人客服, 找人工]
+    # SLA 告警阈值（秒）：WAITING_AGENT 无人接单 / PROCESSING 接单未处理完，超时 error 告警
+    sla-waiting-seconds: 300
+    sla-processing-seconds: 1800
+    # WAITING_CONFIRM 超时自动确认（默认 1 天）；RESOLVED 超时自动关闭归档（默认 3 天）
+    auto-confirm-seconds: 86400
+    auto-close-seconds: 259200
+    # 进行中工单用户空闲超时自动强制结束（秒，默认 300=5 分钟，0=禁用）：
+    # now - lastUserActiveAtMs 超过该值即 forceClose 并推关闭事件给前端
+    idle-close-seconds: 300
+    # SLA 巡检总开关（关闭则告警与自动流转全部停用）
+    sla-enabled: true
+  user-auth:
+    # 终端用户账户：存储模式 memory | jdbc（MyBatis-Plus 实现，跨实例共享，与 session.mysql 同库）
+    store-mode: jdbc
+    # 登录态 JWT 签名密钥：生产必须用环境变量 CW_USER_JWT_SECRET 覆盖（默认值仅供本地开发）
+    jwt-secret: ${CW_USER_JWT_SECRET:dev-secret-change-me-in-production-0001}
+    # 登录态有效期（小时，默认 7 天）
+    jwt-expire-hours: 168
+    # 用户头像上传（无 OSS/MinIO，沿用 ./data/xxx 本地磁盘约定）
+    avatar:
+      # 落盘目录（相对启动工作目录）
+      directory: ./data/avatars
+      # 单文件大小上限（字节，默认 2MB=2097152），超限即中断上传
+      max-size-bytes: 2097152
+      # 对外访问 URL 前缀（落在 /api 下以复用前端 Vite 代理；须以 / 开头和结尾）
+      url-prefix: /api/avatars/
+  chat-log:
+    # 聊天日志（会话/工单消息留痕）：存储模式 memory | jdbc（MyBatis-Plus 实现，跨实例共享）
+    store-mode: jdbc
+  agent-access:
+    # 坐席访问凭证 HMAC 签名密钥：生产必须用环境变量 CW_AGENT_WS_SECRET 覆盖
+    secret: ${CW_AGENT_WS_SECRET:dev-agent-secret-change-me-0001}
+    # 坐席访问令牌有效期（小时，默认 12）
+    expire-hours: 12
+  tool-backend:
+    # 业务工具后端：mock（默认，starter Mock 实现）| jdbc（starter MyBatis-Plus 实现，落 cw_order/cw_product 等演示表）
+    mode: jdbc
+  attachment:
+    # 聊天附件多格式解析：落盘 + 落库（生产级可追溯），解析文本由前端拼进消息正文（消息协议不变）
+    enabled: true
+    # 存储模式：memory（进程内，重启丢）| jdbc（MyBatis-Plus 落 cw_chat_attachment，与 session.mysql 同库）
+    store-mode: jdbc
+    # 落盘根目录（storage.type=local 时生效，沿用 ./data/xxx 本地磁盘约定）
+    base-dir: ./data/attachments
+    # 原始文件存储后端：local（本地磁盘）| minio（对象存储）。本期用 MinIO。
+    # bucket 惰性确保：应用启动不连 MinIO，首次上传才检查/建桶，故 MinIO 不可达不影响启动与切片测试。
+    storage:
+      type: ${CUSTOMER_WORK_ATTACHMENT_STORAGE_TYPE:minio}
+      minio:
+        endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+        access-key: ${MINIO_ACCESS_KEY:minioadmin}
+        secret-key: ${MINIO_SECRET_KEY:minioadmin}
+        bucket: ${CUSTOMER_WORK_ATTACHMENT_BUCKET:customer-work-attachments}
+        auto-create-bucket: ${CUSTOMER_WORK_ATTACHMENT_AUTO_CREATE_BUCKET:true}
+    # 单文件大小上限（MB）：唯一防御点，超限即 400（须 ≤ spring.webflux.multipart 的传输上限）
+    max-file-size-mb: 10
+    # 解析文本最大字符数，超长截断并在文末追加提示，避免超长文本打爆模型上下文
+    max-parsed-chars: 20000
+    # 追加文本类扩展名（内置已覆盖 md/txt/csv/sql/yaml/log/主流源码等约 50 种，小众类型在此追加，无需改代码）
+    # extra-text-extensions: adoc,rst
+    # 图片 OCR（不用 tesseract）
+    ocr:
+      # OCR 引擎：model（视觉大模型）| paddleocr（自建 PaddleOCR 开源 serving，免 Key、数据不出内网）
+      engine: paddleocr
+      # ↓↓↓ engine=model 时生效（视觉大模型）↓↓↓
+      # 视觉模型厂商：dashscope | openai | anthropic | gemini | ollama
+      provider: dashscope
+      # 视觉模型名（默认通义千问 VL）
+      model-name: qwen-vl-max
+      # 视觉模型 API Key：留空则回落 customer-work.model.api-key → 环境变量 DASHSCOPE_API_KEY
+      api-key: ${DASHSCOPE_API_KEY:}
+      # 自定义端点，留空用 SDK 默认地址
+      base-url: ""
+      # OCR 调用超时（秒）
+      timeout-seconds: 60
+      # OCR 提示词（留空用 starter 内置中文提示词：逐字提取、保留排版、输出 Markdown、不加解释）
+      # ↓↓↓ engine=paddleocr 时生效（自建开源 serving，compose 见 docker/paddleocr/）↓↓↓
+      paddle:
+        # serving 根地址（对齐 compose 暴露的宿主端口 8868）
+        base-url: http://localhost:8868
+        # OCR 端点路径（官方 PaddleX OCR pipeline 固定 /ocr）
+        ocr-path: /ocr
+        # 调用超时（秒）
+        timeout-seconds: 30
+
+# 生产可观测：Actuator 健康检查 / 指标 / Prometheus
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    root: INFO
+    com.richard.fyoung.customerwork: DEBUG
+    io.agentscope: INFO

@@ -28,7 +28,7 @@ import java.util.Map;
  * 模型运行时构建：连通性测试（{@link #testConnectivity}）+ 现场构建真实 {@link Model} 实例
  * （{@link #buildModel}，供动态智能体运行时注入 {@code ReActAgent}）。
  *
- * <p>不复用 {@code customer-work-spring-boot-starter} 的 {@code ModelConfig}——那是「应用启动时读 yml
+ * <p>不复用 {@code customer-work-starter} 的 {@code ModelConfig}——那是「应用启动时读 yml
  * 建一个默认 Model Bean」的模式；这里是「按 {@code ai_model_config} 任意一行现场构建」的动态场景。</p>
  *
  * <p>四家厂商全部走 AgentScope 框架自带的原生 ChatModel 实现（OpenAI 兼容 / 百炼 DashScope 原生 /

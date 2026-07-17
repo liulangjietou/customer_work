@@ -679,17 +679,17 @@ operators 秘密配置下发、Mock 替换核对、灰度流程、回滚预案�
 上线前建议先读 **[docs/生产就绪评估.md](docs/生产就绪评估.md)**——对 agentscope-java（2.0.0-RC4 时点）120 个 open issues
 与本项目实际链路做的交叉评估结论（已实测排除的风险 / 已加固缓解 / 架构规避 / 部署侧规避 / **多实例部署注意事项** /
 仍受框架限制需等待修复的项 / 版本升级策略）。
-对应的生产配置参考见 **[application-prod.yml](customer-work-app/src/main/resources/application-prod.yml)**
+对应的生产配置参考见 **[application-prod.yml](customer-work-app-server/src/main/resources/application-prod.yml)**
 （主应用）与 **[customer-channel/application-prod.yml](customer-channel/src/main/resources/application-prod.yml)**
 （管理控制台，收敛 admin 暴露面），`SPRING_PROFILES_ACTIVE=prod` 激活，逐项配置均在注释中注明所对应缓解的 issue 编号。
-两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app`/`customer-channel` 各一份）离线校验，
+两份配置的 YAML 语法与关键配置项经 `ProdProfileConfigTest`（`customer-work-app-server`/`customer-channel` 各一份）离线校验，
 不激活 profile 真实启动（prod 依赖真实 Redis/MySQL/DashScope 凭据，无这些外部依赖时无法真实连接）。
 
 ### 6.21 智能体客服后台管理系统 `customer-admin-server` + `customer-admin-web`
 
 后端是独立的 Spring MVC 后台管理系统:面向系统管理员/运营人员统一管理用户权限(RBAC)、AI 模型、MCP、
 Skill、智能体,并支持对智能体在线聊天与 VibeCoding。技术栈按需求文档锁定:**MyBatis-Plus + Sa-Token**
-(与 `customer-work-spring-boot-starter` 业务持久层各自独立的 MyBatis-Plus 环境并存、互不冲突,原因见
+(与 `customer-work-starter` 业务持久层各自独立的 MyBatis-Plus 环境并存、互不冲突,原因见
 `CustomerWorkPersistenceConfig` Javadoc)。前端
 **[customer-admin-web](customer-admin-web)** 是独立的 Vue 3 + TypeScript + Vite SPA(非 Maven 子模块,
 与仓库根目录平级),用 Element Plus 做中后台 UI、Pinia 做状态管理、原生 `fetch` + `ReadableStream`
@@ -852,12 +852,12 @@ Key 前缀 `admin:chat:sessions:{agentCode}` / `admin:chat:messages:{agentCode}:
 AI 对话，命中转人工或按状态机流转给人工坐席处理，全程消息实时双向推送并落库。链路横跨四个部署单元：
 
 ```
-customer-user-mobile(5175 H5)  ─┐
-customer-admin-web(5174 坐席台) ─┼─ HTTP + WebSocket ─→ customer-work-app(8080, WebFlux)
+customer-work-app(5175 H5)  ─┐
+customer-admin-web(5174 坐席台) ─┼─ HTTP + WebSocket ─→ customer-work-app-server(8080, WebFlux)
 customer-admin-server(8082 代理)─┘                         └─ 数据全部落库 agent_scope_customer_work
 ```
 
-- **用户端链路**：`customer-user-mobile`（Vue3+Vant4 H5，端口 5175）或任意前端 → 8080 的
+- **用户端链路**：`customer-work-app`（Vue3+Vant4 H5，端口 5175）或任意前端 → 8080 的
   `POST /api/customer/auth/register|login`（`UserJwtService` 签发 HS256 JWT）→ `POST /api/customer/user/sessions`
   开会话拿到 `{sessionId, ticketId}`（sessionId 格式 `u<userId>:conv-<uuid>`，复用租户隔离机制）→ 连
   `/ws/user?token=<JWT>` 收发消息。`ChatDispatchService` 按工单状态路由：`AI_SERVING` 走
@@ -881,7 +881,7 @@ customer-admin-server(8082 代理)─┘                         └─ 数据�
   与旧 handoff 域（§6.11），旧域继续服务"AI 工具触发的转人工工单"，新 ticket 域服务"真实用户会话工单"。
 
 ```yaml
-# customer-work-app application.yml 相关开关（默认已切 jdbc/mysql，启动自动建表）
+# customer-work-app-server application.yml 相关开关（默认已切 jdbc/mysql，启动自动建表）
 customer-work:
   session: { mode: mysql }
   ticket:      { store-mode: jdbc, handoff-keywords: [转人工, 人工客服, 人工服务, 真人客服, 找人工] }
@@ -959,7 +959,7 @@ mvn test -Dtest=ModelConfigTest            # 单类
 
 ```
 customer_work/                                  # 父 pom（packaging=pom，聚合 4 个 Maven 模块；另有 2 个前端非 Maven 子模块）
-├── customer-work-spring-boot-starter/          # 【可复用 starter】无 main，作为依赖被引入
+├── customer-work-starter/          # 【可复用 starter】无 main，作为依赖被引入
 │   └── src/main/
 │       ├── java/com/richard/fyoung/customerwork/
 │       │   ├── autoconfigure/ CustomerWorkAutoConfiguration   # @AutoConfiguration 自动装配入口
@@ -989,7 +989,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │       │   └── dto/         ChatRequest / ChatResponse / IntentResult
 │       └── resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
 │
-├── customer-work-app/                           # 【可运行应用】依赖 starter
+├── customer-work-app-server/                           # 【可运行应用】依赖 starter
 │   └── src/main/
 │       ├── java/com/richard/fyoung/customerworkapp/    # 独立包，与 starter 基础包不重叠
 │       │   ├── CustomerWorkApplication.java     # 仅 @SpringBootApplication；能力由 starter 自动装配
@@ -998,7 +998,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 │
 ├── customer-admin-server/                       # 【智能体客服后台管理系统·后端】独立 Spring MVC 应用，见 §6.21；含用户工单代理模块，见 §6.22
 ├── customer-admin-web/                          # 【智能体客服后台管理系统·前端】Vue3+TS+Vite SPA，非 Maven 子模块，见 §6.21；含坐席工单工作台，见 §6.22
-├── customer-user-mobile/                        # 【用户端 H5】Vue3+Vite+Vant4，端口 5175，非 Maven 子模块；登录/聊天/我的工单，vite proxy /api /ws → 8080，见 §6.22
+├── customer-work-app/                        # 【用户端 H5】Vue3+Vite+Vant4，端口 5175，非 Maven 子模块；登录/聊天/我的工单，vite proxy /api /ws → 8080，见 §6.22
 │
 ├── mysql/01-agent-scope-customer-work/         # 客服主业务库建库脚本（customer-work-schema.sql）
 ├── mysql/02-customer-admin/                    # customer-admin-server 建库脚本（V1~V20 有序副本，独立库）
@@ -1020,7 +1020,7 @@ customer_work/                                  # 父 pom（packaging=pom，聚�
 ```xml
 <dependency>
   <groupId>io.github.richardfyoung</groupId>
-  <artifactId>customer-work-spring-boot-starter</artifactId>
+  <artifactId>customer-work-starter</artifactId>
   <version>1.0.0</version>
 </dependency>
 ```

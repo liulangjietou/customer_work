@@ -7,7 +7,7 @@ RUN mvn -q -B -DskipTests package
 # ---- runtime stage ----
 FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY --from=build /build/customer-work-app/target/customer-work.jar app.jar
+COPY --from=build /build/customer-work-app-server/target/customer-work.jar app.jar
 EXPOSE 8080
 # 通过环境变量注入密钥与开关（见 .env.example）
 ENTRYPOINT ["java", "-jar", "app.jar"]

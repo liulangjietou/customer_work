@@ -48,7 +48,7 @@ import java.util.stream.Collectors;
  * 多角色顺序流水。降级说明见 {@link AdminCollaborationProperties}。
  *
  * <h3>编排思路（复用项目自研顺序编排）</h3>
- * 参照 {@code customer-work-spring-boot-starter} 的 {@code MultiAgentOrchestrator#sequential}——各角色输出
+ * 参照 {@code customer-work-starter} 的 {@code MultiAgentOrchestrator#sequential}——各角色输出
  * 作为下一角色输入逐步细化。本类不引入框架 SubAgent/Pipeline，只用一次性模型调用（PLAN/REVIEW 角色）
  * 与既有 VibeCoding 沙箱流（CODING 角色）在编排层串联：
  * <ul>

@@ -582,6 +582,15 @@ export interface ChatMessageVO {
   timestamp: string
 }
 
+/** 附件上传解析结果（落盘+落库，解析失败时 content 为空、errorMessage 说明原因，由调用方决定是否拼进消息） */
+export interface ChatAttachmentResult {
+  id: string
+  fileName: string
+  content: string
+  parseStatus: 'SUCCESS' | 'FAILED'
+  errorMessage: string | null
+}
+
 // ---------- workspace.project ----------
 export interface ProjectVO {
   id: number
