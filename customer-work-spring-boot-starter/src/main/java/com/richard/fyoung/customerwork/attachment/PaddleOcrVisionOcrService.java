@@ -58,6 +58,7 @@ public class PaddleOcrVisionOcrService implements VisionOcrService {
 
     @Override
     public String recognize(byte[] imageBytes, String mimeType) {
+        long startMs = System.currentTimeMillis();
         String base64 = Base64.getEncoder().encodeToString(imageBytes);
         // 请求体：file=图片base64，fileType=1（图片）
         Map<String, Object> body = new LinkedHashMap<>();
@@ -75,7 +76,11 @@ public class PaddleOcrVisionOcrService implements VisionOcrService {
             if (response.statusCode() != 200) {
                 throw new IllegalStateException("paddleocr serving returned non-200 status: " + response.statusCode());
             }
-            return extractText(response.body());
+            String text = extractText(response.body());
+            // 成功留痕：确认本次识别走的是 paddleocr 引擎，并留识别规模/耗时供生产排查
+            log.info("paddleocr recognize ok, imageBytes={}, chars={}, costMs={}",
+                imageBytes.length, text.length(), System.currentTimeMillis() - startMs);
+            return text;
         } catch (IllegalStateException e) {
             // 已是明确业务异常，直接上抛
             log.error("paddleocr recognize failed, code={}, endpoint={}", ERR_CODE, ocrEndpoint, e);
