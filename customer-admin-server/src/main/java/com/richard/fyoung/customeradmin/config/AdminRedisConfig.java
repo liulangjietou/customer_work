@@ -11,7 +11,7 @@ import redis.clients.jedis.JedisPoolConfig;
  * {@code GET /workspace/{agentCode}/chat/sessions} 系列只读接口对 MySQL 的读压力，权威数据源
  * 始终是 {@code MysqlAgentStateStore}（见 {@link AdminAgentRuntimeConfig}）——不改写路径，不引入
  * Redis→MySQL 的刷盘/一致性问题。构造 {@link JedisPool} 本身是惰性连接（不在此处真正连 Redis），
- * 与 {@code customer-work-spring-boot-starter} 的 {@code SessionConfig#buildJedisPool} 同一手法。
+ * 与 {@code customer-work-starter} 的 {@code SessionConfig#buildJedisPool} 同一手法。
  * @author owlzhangfq@gmail.com
  */
 @Configuration

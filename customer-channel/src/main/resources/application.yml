@@ -1,5 +1,5 @@
 server:
-  port: 8081   # 与 customer-work-app 的对话 API (8080) 分开
+  port: 8081   # 与 customer-work-app-server 的对话 API (8080) 分开
 
 spring:
   application:

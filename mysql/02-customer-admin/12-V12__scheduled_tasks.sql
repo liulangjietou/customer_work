@@ -4,7 +4,7 @@
 -- 基于 AgentScope 的定时任务：ai_scheduled_task 是"任务定义"（哪个智能体、什么 prompt、
 -- 启停开关），ai_scheduled_task_run 是"每次执行的历史流水"（手动触发 / XXL-JOB 触发都落一条）。
 -- 调度周期本身不落本表——周期/启停/重试统一在 XXL-JOB 控制台管理（对齐
--- customer-work-spring-boot-starter 的 XxlJobSchedulerConfig 设计），本表 enabled 只控制
+-- customer-work-starter 的 XxlJobSchedulerConfig 设计），本表 enabled 只控制
 -- "该任务是否允许被执行"（disabled 时无论 XXL-JOB 触发还是手动触发都 fast-fail 拒绝）。
 --
 -- ai_scheduled_task_run 是只追加的执行日志，不做逻辑删除/审计人字段（跟 sys_menu_change_log

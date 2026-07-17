@@ -26,7 +26,7 @@ import java.util.Map;
 /**
  * 模型运行时构建（当前用途：连通性测试）。
  *
- * <p>不复用 {@code customer-work-spring-boot-starter} 的 {@code ModelConfig}——那是"应用启动时读 yml
+ * <p>不复用 {@code customer-work-starter} 的 {@code ModelConfig}——那是"应用启动时读 yml
  * 建一个默认 Model Bean"的模式；这里是"按 {@code ai_model_config} 任意一行现场构建"的动态场景，
  * 且需要连通性测试用的短生命周期请求。当前仅支持 OpenAI 标准接口（需求文档 3.1），用 JDK 内置
  * {@code java.net.http.HttpClient} 直连，不引入额外 HTTP 客户端依赖。</p>

@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
- * XXL-JOB 接入参数（本模块独立执行器，appname/port 与 customer-work-spring-boot-starter 的
+ * XXL-JOB 接入参数（本模块独立执行器，appname/port 与 customer-work-starter 的
  * {@code customer-work.scheduler.xxl-job.*} 相互独立，避免两个进程注册成同一个执行器实例互相抢任务）。
  *
  * <p>默认关闭，本地无 XXL-JOB 调度中心也能正常启动；手动触发路径（{@code /trigger} 接口）
@@ -29,7 +29,7 @@ public class AdminXxlJobProperties {
     private String accessToken;
     /** 执行器运行日志目录。不显式配置时 xxl-job-core 会退回内置默认值 {@code /data/applogs/...}，
      * 在容器根目录只读或无 root 权限的机器上会导致启动直接失败（FileSystemException），
-     * 故这里给一个项目内可写的相对路径兜底，对齐 customer-work-spring-boot-starter 的
+     * 故这里给一个项目内可写的相对路径兜底，对齐 customer-work-starter 的
      * {@code ./data/xxl-job/jobhandler} 约定，目录名带 admin 前缀避免与 starter 侧执行器混用同一路径。 */
     private String logPath = "./data/xxl-job-admin/jobhandler";
 }

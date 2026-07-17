@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
- * 客服工单坐席服务（customer-work-app，8080）接入配置。
+ * 客服工单坐席服务（customer-work-app-server，8080）接入配置。
  *
  * <p>admin-server 作为人工客服后台，通过 HTTP 代理调用 8080 的坐席 API，并给 admin-web 前端
  * 签发"坐席 WS 接入凭证"（客服浏览器凭凭证直连 8080 的 {@code /ws/agent}）。工单数据全部在

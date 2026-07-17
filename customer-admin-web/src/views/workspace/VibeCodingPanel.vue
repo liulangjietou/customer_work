@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { UploadRequestOptions } from 'element-plus'
 import {
   generateCommitMessage,
@@ -31,10 +31,20 @@ interface ChatMessage {
   nodes: TraceNode[]
 }
 
+/** localId 是前端本地生成的临时 key，用于 v-for/移除定位（上传过程中后端 id 还不存在）；
+ * status 驱动 tag 的 loading/失败态展示，失败附件不参与 buildMessageWithAttachments 拼接。 */
 interface Attachment {
+  localId: string
+  id?: string
   name: string
   content: string
+  status: 'uploading' | 'success' | 'failed'
+  errorMessage?: string
 }
+
+// 与 starter AttachmentParseService 的白名单/大小限制保持一致（后端 customer-work.attachment.max-file-size-mb=10）
+const ATTACHMENT_ACCEPT = '.md,.txt,.csv,.tsv,.json,.xml,.yaml,.yml,.toml,.proto,.properties,.ini,.conf,.cfg,.log,.env,.sql,.sh,.bash,.zsh,.bat,.ps1,.java,.kt,.kts,.groovy,.gradle,.scala,.py,.js,.ts,.jsx,.tsx,.vue,.css,.scss,.less,.c,.h,.cpp,.hpp,.cs,.go,.rs,.rb,.php,.swift,.lua,.r,.dart,.html,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.bmp,.webp'
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
 
 const sessionId = ref(generateUuid())
 const messages = ref<ChatMessage[]>([])
@@ -43,8 +53,8 @@ const streaming = ref(false)
 const interrupting = ref(false) // 已点终止，等后端真正停下来（协作式中断，不保证立即生效）
 const interrupted = ref(false) // 上一轮是被终止结束的，可以点"继续"续跑挂起的工具调用
 const historyLoading = ref(false)
-const uploading = ref(false)
 const attachments = ref<Attachment[]>([])
+const anyAttachmentUploading = computed(() => attachments.value.some((a) => a.status === 'uploading'))
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
 let abortStream: (() => void) | null = null
@@ -97,26 +107,54 @@ function newSession() {
   loadCurrentSandboxMode()
 }
 
+/** 前端先拦超限文件，与后端 max-file-size-mb 对齐，减少无谓上传请求。 */
+function beforeAttachmentUpload(file: File) {
+  if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
+    ElMessage.error(`附件 ${file.name} 超过 10MB，已跳过上传`)
+    return false
+  }
+  return true
+}
+
 async function handleAttachmentUpload(options: UploadRequestOptions) {
-  uploading.value = true
+  const file = options.file as File
+  const attachment: Attachment = { localId: generateUuid(), name: file.name, content: '', status: 'uploading' }
+  attachments.value.push(attachment)
   try {
-    const file = options.file as File
-    const content = await parseChatAttachment(props.agentCode, file)
-    attachments.value.push({ name: file.name, content })
+    const result = await parseChatAttachment(props.agentCode, file, 'vibecoding')
+    const target = attachments.value.find((a) => a.localId === attachment.localId)
+    if (!target) {
+      return // 结果返回前用户已手动移除该附件，迟到的结果直接丢弃
+    }
+    if (result.parseStatus === 'FAILED') {
+      target.status = 'failed'
+      target.errorMessage = result.errorMessage || '解析失败'
+      ElMessage.error(`附件解析失败：${file.name}${result.errorMessage ? '，' + result.errorMessage : ''}`)
+    } else {
+      target.id = result.id
+      target.content = result.content
+      target.status = 'success'
+    }
   } catch (error) {
-    ElMessage.error('附件解析失败：' + (error instanceof Error ? error.message : String(error)))
-  } finally {
-    uploading.value = false
+    const target = attachments.value.find((a) => a.localId === attachment.localId)
+    const message = error instanceof Error ? error.message : String(error)
+    if (target) {
+      target.status = 'failed'
+      target.errorMessage = message
+    }
+    ElMessage.error('附件解析失败：' + message)
   }
 }
 
-function removeAttachment(index: number) {
-  attachments.value.splice(index, 1)
+function removeAttachment(localId: string) {
+  attachments.value = attachments.value.filter((a) => a.localId !== localId)
 }
 
+/** 只拼成功解析的附件，上传中/失败的附件不参与（失败的已经在上传回调里提示过用户）。 */
 function buildMessageWithAttachments(text: string): string {
-  if (attachments.value.length === 0) return text
-  const attachmentText = attachments.value
+  const successful = attachments.value.filter((a) => a.status === 'success')
+  if (successful.length === 0) return text
+  const attachmentText = successful
     .map((a) => `【附件：${a.name}】\n---\n${a.content}\n---`)
     .join('\n\n')
   return `${attachmentText}\n\n${text}`
@@ -158,10 +196,10 @@ function scrollToBottom() {
 
 function send() {
   const text = input.value.trim()
-  if (!text || streaming.value) return
+  if (!text || streaming.value || anyAttachmentUploading.value) return
   interrupted.value = false
   const messageToSend = buildMessageWithAttachments(text)
-  const attachedNames = attachments.value.map((a) => a.name)
+  const attachedNames = attachments.value.filter((a) => a.status === 'success').map((a) => a.name)
   messages.value.push({
     role: 'user',
     text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
@@ -437,18 +475,26 @@ defineExpose({ newSession })
         <el-empty v-if="messages.length === 0" description="描述你想让智能体生成/修改的代码" />
       </div>
       <div v-if="attachments.length > 0" class="attachment-tags">
-        <el-tag v-for="(a, idx) in attachments" :key="idx" closable size="small" @close="removeAttachment(idx)">
+        <el-tag
+          v-for="a in attachments"
+          :key="a.localId"
+          :closable="a.status !== 'uploading'"
+          :type="a.status === 'failed' ? 'danger' : undefined"
+          size="small"
+          @close="removeAttachment(a.localId)"
+        >
+          <el-icon v-if="a.status === 'uploading'" class="is-loading"><Loading /></el-icon>
           📎 {{ a.name }}
         </el-tag>
       </div>
       <div class="input-bar">
-        <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" accept=".md,.txt">
-          <el-button :loading="uploading" :disabled="streaming" title="上传 .md/.txt 附件，随消息一起发给智能体">
+        <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" :before-upload="beforeAttachmentUpload" :accept="ATTACHMENT_ACCEPT">
+          <el-button :disabled="streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
             <el-icon><Paperclip /></el-icon>
           </el-button>
         </el-upload>
         <el-input v-model="input" placeholder="描述需求，回车发送" :disabled="streaming" @keyup.enter="send" />
-        <el-button v-if="!streaming" type="primary" @click="send">发送</el-button>
+        <el-button v-if="!streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
         <el-button v-else type="danger" :loading="interrupting" @click="handleInterrupt">
           {{ interrupting ? '终止中…' : '终止' }}
         </el-button>
