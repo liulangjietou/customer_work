@@ -98,7 +98,7 @@ public class AttachmentConfig {
                                                          AttachmentFileStorage attachmentFileStorage,
                                                          VisionOcrService visionOcrService) {
         List<AttachmentParser> parsers = List.of(
-            new TextAttachmentParser(),
+            new TextAttachmentParser(properties.getExtraTextExtensions()),
             new ExcelMarkdownParser(),
             new TikaDocumentParser(),
             new VisionOcrParser(visionOcrService));

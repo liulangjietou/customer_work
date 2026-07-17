@@ -25,7 +25,7 @@ class AttachmentParseServiceTest {
 
     private AttachmentParseService service(AttachmentProperties props) {
         List<AttachmentParser> parsers = List.of(
-            new TextAttachmentParser(),
+            new TextAttachmentParser(props.getExtraTextExtensions()),
             new ExcelMarkdownParser(),
             new TikaDocumentParser());
         return new AttachmentParseService(parsers, new InMemoryAttachmentStore(),
@@ -56,6 +56,29 @@ class AttachmentParseServiceTest {
         AttachmentParseService service = service(props());
         assertThrows(IllegalArgumentException.class, () -> service.parseAndStore(
             new byte[]{1, 2, 3}, "virus.exe", "s1", "u1", "user_chat"));
+    }
+
+    @Test
+    void parseAndStore_shouldSucceedForBuiltinBroadTextTypes() {
+        // sql / yaml 等宽泛文本类型走直读（用户实测反馈补入的内置清单）
+        AttachmentParseService service = service(props());
+        ChatAttachment sql = service.parseAndStore("SELECT 1;".getBytes(StandardCharsets.UTF_8),
+            "init.sql", "s1", "u1", "admin_chat");
+        assertEquals(AttachmentParseStatus.SUCCESS, sql.getParseStatus());
+        assertEquals("SELECT 1;", sql.getParsedText());
+    }
+
+    @Test
+    void parseAndStore_shouldAcceptConfiguredExtraTextExtension() {
+        AttachmentProperties p = props();
+        p.setExtraTextExtensions(List.of("adoc"));
+        AttachmentParseService service = service(p);
+        ChatAttachment att = service.parseAndStore("= Title".getBytes(StandardCharsets.UTF_8),
+            "doc.adoc", "s1", "u1", "admin_chat");
+        assertEquals(AttachmentParseStatus.SUCCESS, att.getParseStatus());
+        // 未配置的类型仍被唯一防御点拒绝
+        assertThrows(IllegalArgumentException.class, () -> service(props()).parseAndStore(
+            "= Title".getBytes(StandardCharsets.UTF_8), "doc.adoc", "s1", "u1", "admin_chat"));
     }
 
     @Test

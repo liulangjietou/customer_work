@@ -392,6 +392,8 @@ customer-work:
     max-file-size-mb: 10
     # 解析文本最大字符数，超长截断并在文末追加提示，避免超长文本打爆模型上下文
     max-parsed-chars: 20000
+    # 追加文本类扩展名（内置已覆盖 md/txt/csv/sql/yaml/log/主流源码等约 50 种，小众类型在此追加，无需改代码）
+    # extra-text-extensions: adoc,rst
     # 图片 OCR（不用 tesseract）
     ocr:
       # OCR 引擎：model（视觉大模型）| paddleocr（自建 PaddleOCR 开源 serving，免 Key、数据不出内网）

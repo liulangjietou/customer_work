@@ -177,6 +177,8 @@ customer-work:
     max-file-size-mb: ${ADMIN_ATTACHMENT_MAX_FILE_SIZE_MB:10}
     # 解析文本最大字符数，超长截断并在文末追加提示（避免一次性喂进超大上下文）。
     max-parsed-chars: ${ADMIN_ATTACHMENT_MAX_PARSED_CHARS:20000}
+    # 追加文本类扩展名（内置已覆盖 md/txt/csv/sql/yaml/log/主流源码等约 50 种，小众类型在此追加，无需改代码）。
+    # extra-text-extensions: adoc,rst
     ocr:
       # OCR 引擎：model（视觉大模型）| paddleocr（自建 PaddleOCR 开源 serving，免 Key、数据不出内网）。
       engine: ${ADMIN_ATTACHMENT_OCR_ENGINE:paddleocr}

@@ -23,9 +23,9 @@ public class AttachmentParseService {
 
     private static final Logger log = LoggerFactory.getLogger(AttachmentParseService.class);
 
-    /** 支持的文件扩展名白名单。 */
-    private static final Set<String> WHITELIST = Set.of(
-        "md", "txt", "csv", "json", "html",
+    /** 富文档 / 图片扩展名（文本类见 {@link TextAttachmentParser#TEXT_EXTENSIONS}，二者并集构成内置白名单）。 */
+    private static final Set<String> BINARY_WHITELIST = Set.of(
+        "html",
         "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
         "png", "jpg", "jpeg", "bmp", "webp");
 
@@ -91,7 +91,7 @@ public class AttachmentParseService {
             throw new IllegalArgumentException("missing file name");
         }
         String ext = extractExtension(fileName);
-        if (!WHITELIST.contains(ext)) {
+        if (!isAllowed(ext)) {
             throw new IllegalArgumentException("unsupported file type: " + (ext.isEmpty() ? fileName : ext));
         }
         long maxBytes = (long) properties.getMaxFileSizeMb() * BYTES_PER_MB;
@@ -151,6 +151,15 @@ public class AttachmentParseService {
             log.error("attachment persist failed, code={}, id={}", "ATTACHMENT-PERSIST-FAIL", id, e);
         }
         return attachment;
+    }
+
+    /** 白名单判定：内置（文本 + 富文档/图片）之外，还接受配置追加的文本扩展名（大小写不敏感）。 */
+    private boolean isAllowed(String ext) {
+        if (TextAttachmentParser.TEXT_EXTENSIONS.contains(ext) || BINARY_WHITELIST.contains(ext)) {
+            return true;
+        }
+        return properties.getExtraTextExtensions().stream()
+            .anyMatch(e -> e.trim().equalsIgnoreCase(ext));
     }
 
     /** 选取首个命中的解析器；理论上白名单内必有命中，未命中视为解析失败。 */

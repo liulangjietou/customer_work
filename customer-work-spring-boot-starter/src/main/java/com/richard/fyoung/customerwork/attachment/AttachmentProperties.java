@@ -3,6 +3,9 @@ package com.richard.fyoung.customerwork.attachment;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 附件解析配置（强类型绑定 {@code customer-work.attachment.*}）。
  *
@@ -25,6 +28,8 @@ public class AttachmentProperties {
     private int maxFileSizeMb = 10;
     /** 解析文本最大字符数，超长截断并在文末追加提示。 */
     private int maxParsedChars = 20000;
+    /** 追加的文本类扩展名（内置清单见 TextAttachmentParser#TEXT_EXTENSIONS，此处配置小众类型无需改代码）。 */
+    private List<String> extraTextExtensions = new ArrayList<>();
 
     /** 原始文件存储后端配置（local 本地磁盘 / minio 对象存储）。 */
     private final Storage storage = new Storage();
