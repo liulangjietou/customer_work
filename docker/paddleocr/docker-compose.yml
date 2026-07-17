@@ -6,7 +6,7 @@
 #   docker compose logs -f paddleocr                          # 看启动/模型下载日志
 #   docker compose down                                       # 停止并移除（模型缓存卷保留）
 #
-# 端口：宿主 8868 → 容器 8080（避开 customer-work-app 的 8080）。
+# 端口：宿主 8868 → 容器 8080（避开 customer-work-app-server 的 8080）。
 #   REST 契约：POST http://localhost:8868/ocr  body={"file":"<base64>","fileType":1}
 #   starter 侧对齐配置：customer-work.attachment.ocr.paddle.base-url=http://localhost:8868
 #

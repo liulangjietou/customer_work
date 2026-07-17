@@ -4,7 +4,7 @@
 
 | 顺序 | 目录 | 目标库 | 使用方 |
 |---|---|---|---|
-| 01 | `01-agent-scope-customer-work/` | `agent_scope_customer_work` | customer-work-app（8080，客服/工单/订单业务库） |
+| 01 | `01-agent-scope-customer-work/` | `agent_scope_customer_work` | customer-work-app-server（8080，客服/工单/订单业务库） |
 | 02 | `02-customer-admin/` | `customer_admin` | customer-admin-server（8082，后台管理库） |
 | 03 | `03-xxl-job/` | `xxl_job` | XXL-JOB 调度中心（可选，未部署调度中心可跳过） |
 

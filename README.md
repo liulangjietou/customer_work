@@ -43,11 +43,11 @@
 
 | 模块 | 端口 | 说明 |
 |---|---|---|
-| `customer-work-spring-boot-starter` | — | **可复用智能体基础设施**（Maven 依赖）：模型/记忆/RAG/工具 SPI/五段 Middleware/审批/工单/调度等全部能力，`@AutoConfiguration` 自动装配，下游零扫描接入 |
-| `customer-work-app` | 8080 | **可运行的客服应用**：HTTP/SSE/WebSocket 接口层 + 提示词/技能资源，能力全部来自 starter |
+| `customer-work-starter` | — | **可复用智能体基础设施**（Maven 依赖）：模型/记忆/RAG/工具 SPI/五段 Middleware/审批/工单/调度等全部能力，`@AutoConfiguration` 自动装配，下游零扫描接入 |
+| `customer-work-app-server` | 8080 | **可运行的客服应用**：HTTP/SSE/WebSocket 接口层 + 提示词/技能资源，能力全部来自 starter |
 | `customer-admin-server` | 8082 | **后台管理系统·后端**（Spring MVC + MyBatis-Plus + Sa-Token，独立库 `customer_admin`）：RBAC、模型/MCP/Skill/智能体管理、工作区聊天/VibeCoding、用户工单代理 |
 | `customer-admin-web` | 5174 | **后台管理系统·前端**（Vue3 + TS + Element Plus，非 Maven 模块）：动态路由/按钮级权限/坐席工单工作台 |
-| `customer-user-mobile` | 5175 | **终端用户 H5**（Vue3 + Vant4，非 Maven 模块）：注册登录/AI 对话/我的工单，proxy → 8080 |
+| `customer-work-app` | 5175 | **终端用户 H5**（Vue3 + Vant4，非 Maven 模块）：注册登录/AI 对话/我的工单，proxy → 8080 |
 | `customer-channel` | 8081 | **多渠道接入演示**（非主链路必需）：OpenAI 兼容 `/v1/chat/completions`、AG-UI、admin 控制台、Studio、钉钉/飞书/企业微信 IM 接入 |
 
 支撑目录：`mysql/`（三套建库脚本：主业务库/admin 库/XXL-JOB 库）、`docs/`（文档，见文末地图）、
@@ -58,7 +58,7 @@
 ```mermaid
 flowchart TB
     subgraph CH["渠道层"]
-        H5["customer-user-mobile<br/>用户 H5 (5175)"]
+        H5["customer-work-app<br/>用户 H5 (5175)"]
         ADMWEB["customer-admin-web<br/>管理台/坐席工作台 (5174)"]
         IM["customer-channel (8081)<br/>钉钉/飞书/企微 · OpenAI 兼容 · AG-UI"]
         API["任意业务系统<br/>REST / SSE / WebSocket"]
@@ -68,7 +68,7 @@ flowchart TB
         SEC["API Key 鉴权 · 限流(固定/滑动窗口)<br/>RequestId/Trace 透传 · 防注入围栏"]
     end
 
-    subgraph CORE["Agent 核心（customer-work-app 8080 + starter）"]
+    subgraph CORE["Agent 核心（customer-work-app-server 8080 + starter）"]
         SESS["会话恢复 AgentStateStore<br/>memory / json / redis / mysql"]
         AGENT["ReActAgent 意图识别与工具路由<br/>+ Harness：Permission / Plan Mode /<br/>Sandbox / Subagent / Compaction"]
         MAS["多 Agent 编排<br/>快慢车道路由 → fanout 并行 → reduce 归纳"]

@@ -1,4 +1,4 @@
-// 与 customer-work-app（8080）HTTP 契约对齐的类型定义。
+// 与 customer-work-app-server（8080）HTTP 契约对齐的类型定义。
 // 注意：8080 无统一 Result 包装，成功直接返回 JSON body，失败用 HTTP 状态码，
 // 所以这里的类型都是"裸"的业务数据结构，不包 code/message 外壳。
 

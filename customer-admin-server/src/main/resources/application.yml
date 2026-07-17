@@ -1,5 +1,5 @@
 server:
-  port: 8082   # 与 customer-work-app(8080)、customer-channel(8081) 分开
+  port: 8082   # 与 customer-work-app-server(8080)、customer-channel(8081) 分开
 
 spring:
   application:
@@ -91,7 +91,7 @@ admin:
     execute-timeout-seconds: ${ADMIN_SCHEDULED_TASK_TIMEOUT_SECONDS:300}
   xxl-job:
     # 定时任务 XXL-JOB 接入：默认关闭，本地无调度中心也能正常启动；手动触发路径不依赖本配置。
-    # appname/port 与 customer-work-spring-boot-starter 的 customer-work.scheduler.xxl-job.*
+    # appname/port 与 customer-work-starter 的 customer-work.scheduler.xxl-job.*
     # 相互独立（两个进程各自的执行器实例，避免注册成同一个执行器互相抢任务）。
     enabled: ${ADMIN_XXL_JOB_ENABLED:false}
     admin-addresses: ${ADMIN_XXL_JOB_ADMIN_ADDRESSES:http://localhost:8088/xxl-job-admin}
@@ -99,7 +99,7 @@ admin:
     port: ${ADMIN_XXL_JOB_PORT:9998}
     access-token: ${ADMIN_XXL_JOB_ACCESS_TOKEN:}
   customer-work:
-    # 客服工单坐席服务（customer-work-app，8080）接入：admin-server 作为人工客服后台，通过 HTTP
+    # 客服工单坐席服务（customer-work-app-server，8080）接入：admin-server 作为人工客服后台，通过 HTTP
     # 代理调 8080 的坐席 API，并给 admin-web 前端签发坐席 WS 接入凭证（客服浏览器凭凭证直连 8080）。
     base-url: ${CW_BASE_URL:http://localhost:8080}
     # 坐席 WebSocket 接入地址（客服浏览器直连）。

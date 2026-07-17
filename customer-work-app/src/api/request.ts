@@ -3,7 +3,7 @@ import { showToast } from 'vant'
 import router from '@/router'
 import { useAuthStore } from '@/store/auth'
 
-// customer-work-app（8080）无统一 Result 包装：成功直接返回 JSON body，失败用 HTTP 状态码
+// customer-work-app-server（8080）无统一 Result 包装：成功直接返回 JSON body，失败用 HTTP 状态码
 // （401 未登录/token 过期、403 越权、409 状态冲突、400 参数错），响应体里可能带 message 字段。
 const HTTP_UNAUTHORIZED = 401
 

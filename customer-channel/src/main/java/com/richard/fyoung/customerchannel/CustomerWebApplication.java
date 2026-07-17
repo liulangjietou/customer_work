@@ -11,7 +11,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * Spring Bean 后由 admin 自动接管，提供与 ReActAgent 协议对齐的开箱即用 Web 管理界面
  * （会话查看 / 工具与权限巡检 / 用量统计 / 子智能体任务 / 优雅 drain 等，集成 AgentEvent 与 Permission HITL）。</p>
  *
- * <p>与可运行的 WebFlux 对话 API（{@code customer-work-app}）按 Web 类型分离：对话走响应式，管理走 servlet。</p>
+ * <p>与可运行的 WebFlux 对话 API（{@code customer-work-app-server}）按 Web 类型分离：对话走响应式，管理走 servlet。</p>
  * @author owlzhangfq@gmail.com
  */
 @SpringBootApplication

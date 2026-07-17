@@ -8,7 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *
  * <p>本应用位于独立包 {@code com.richard.fyoung.customerworkapp}，自身只装配本模块的 Controller；
  * 全部可复用能力（模型 / 记忆 / RAG / 工具 / 会话 / 安全 / 可观测 / Nacos 等）由
- * customer-work-spring-boot-starter 通过 {@code @AutoConfiguration} 自动装配——
+ * customer-work-starter 通过 {@code @AutoConfiguration} 自动装配——
  * 这正是"下游引入 starter 即得完整能力、无需关心基础包、无需手动 @ComponentScan"的体现。</p>
  *
  * <p>说明：starter 引入 MyBatis-Plus 后 spring-jdbc 进入类路径，故在 application.yml 里以

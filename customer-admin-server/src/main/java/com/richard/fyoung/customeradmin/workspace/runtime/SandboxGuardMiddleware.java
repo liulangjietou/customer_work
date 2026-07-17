@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
  * 匹配破坏性命令模式，命中即改写为安全占位（{@link AdminSandboxProperties.Guard#DESTRUCTIVE_PLACEHOLDER}），
  * 不抛异常打断主链路。
  *
- * <p>与 {@code customer-work-spring-boot-starter} 的 {@code ToolGuardMiddleware} 同一手法
+ * <p>与 {@code customer-work-starter} 的 {@code ToolGuardMiddleware} 同一手法
  * （破坏性命令拦截那部分），但配置源换成本模块自己的 {@link AdminSandboxProperties}——admin-server
  * 已经排除了 starter 的自动装配（见 {@code application.yml} 的 {@code spring.autoconfigure.exclude}），
  * 不复用 starter 的 {@code CustomerWorkProperties} 配置体系。只做破坏性命令拦截这一项，starter 里

@@ -1,7 +1,7 @@
 # 智能体客服后台管理系统 —— AI 编码助手需求文档
 
 > 基于 AgentScope Java 2.0.0 GA（`main` 分支，官方文档 https://java.agentscope.io ）与现有
-> `customer-work-spring-boot-starter` 能力进行二次开发，载体为 `customer-admin-server`（后端）+ `customer-admin-web`（前端）。
+> `customer-work-starter` 能力进行二次开发，载体为 `customer-admin-server`（后端）+ `customer-admin-web`（前端）。
 > 版本：v2.0（2026-07-13 修订）
 > 目标读者：产品、后端/前端开发、测试
 > 状态：v2.0 待评审
@@ -93,7 +93,7 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 | **P3-2** | 代码知识库问答 | 基于 RAG 的代码语义检索 | 需 starter 侧真实 Embedding RAG 先行（现为关键词版） | 周级 | Top-3 命中率 ≥ 70%，回答带出处 |
 
 **P3 两项的前置依赖说明**：多 Agent 协作依赖 SubAgent/Pipeline 编排、知识库问答依赖真实 Embedding 向量检索，
-这两块是 `customer-work-spring-boot-starter` 的既定演进方向。在 starter 能力
+这两块是 `customer-work-starter` 的既定演进方向。在 starter 能力
 就绪前，admin-server 侧不启动这两项，避免在业务模块里重复造框架轮子。
 
 ---

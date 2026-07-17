@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: customer-work-app
+    name: customer-work-app-server
   # 排除 Spring 的 DataSource 自动配置：业务持久层由 starter 的 CustomerWorkPersistenceConfig
   # 显式装配独立数据源（customerWorkDataSource）。引入 MyBatis-Plus 后 spring-jdbc 进入类路径会激活
   # DataSourceAutoConfiguration，未配 spring.datasource.url 时会启动失败，故在此关闭（本应用不使用 Spring 自动数据源）。

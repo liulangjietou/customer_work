@@ -11,9 +11,9 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>customer-work-spring-boot-starter</artifactId>
+    <artifactId>customer-work-starter</artifactId>
     <packaging>jar</packaging>
-    <name>customer-work-spring-boot-starter</name>
+    <name>customer-work-starter</name>
     <description>可复用的 AgentScope 智能体能力：模型层/记忆/RAG/工具SPI/会话/可观测/安全/Nacos 等</description>
 
     <dependencies>

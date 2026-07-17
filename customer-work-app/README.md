@@ -1,6 +1,6 @@
-# customer-user-mobile · 智能客服用户端 H5
+# customer-work-app · 智能客服用户端 H5
 
-Vue3 + TypeScript + Vite + Vant4，面向终端用户的客服入口，配套后端 `customer-work-app`（8080）。
+Vue3 + TypeScript + Vite + Vant4，面向终端用户的客服入口，配套后端 `customer-work-app-server`（8080）。
 支持注册登录、机器人流式对话（打字机效果）、一键/关键词转人工、与人工客服实时聊天（WebSocket）、
 我的工单（状态时间线、确认解决/驳回/重开/关闭）、历史消息加载。
 
@@ -11,7 +11,7 @@ npm install
 npm run dev        # 端口 5175；/api 与 /ws 经 vite proxy 转发到 localhost:8080
 ```
 
-- 需先启动 customer-work-app（8080，依赖本机 MySQL，表启动自动建）。
+- 需先启动 customer-work-app-server（8080，依赖本机 MySQL，表启动自动建）。
 - 电脑浏览器直接访问即可验证（内置 @vant/touch-emulator 鼠标模拟触摸），页面为 480px 移动端壳。
 
 ## 构建与部署

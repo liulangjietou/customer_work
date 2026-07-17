@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  * customer-channel 生产 profile 配置文件（application-prod.yml）语法与关键配置项校验。
  *
  * <p>只做 YAML 语法解析 + 属性绑定校验，不激活该 profile 启动完整应用上下文——
- * 见 {@code customer-work-app} 模块同名测试的说明。</p>
+ * 见 {@code customer-work-app-server} 模块同名测试的说明。</p>
  * @author owlzhangfq@gmail.com
  */
 class ProdProfileConfigTest {

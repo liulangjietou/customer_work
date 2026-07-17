@@ -200,7 +200,7 @@ AgentScope Java 官方 Release Notes 对"2.0 系列"的描述偏总览性质，�
 
 **改动内容**（4 个文件，均为纯 import 语句调整，Builder 调用代码零改动）：
 - [`pom.xml`](../pom.xml)：`agentscope.version` 由 `2.0.0-RC4` 改为 `2.0.0`。
-- [`customer-work-spring-boot-starter/pom.xml`](../customer-work-spring-boot-starter/pom.xml)：新增 5 个
+- [`customer-work-starter/pom.xml`](../customer-work-starter/pom.xml)：新增 5 个
   `agentscope-extensions-model-*` 依赖声明（不写版本号，靠 `agentscope-bom`）。
 - `ModelConfig.java` / `ModelConfigTest.java` / `BailianIntegrationTest.java`（均在 starter 模块）、
   `AdminModelFactory.java`（`customer-admin-server` 模块）：5 个模型类的 import 语句从
@@ -217,7 +217,7 @@ AgentScope Java 官方 Release Notes 对"2.0 系列"的描述偏总览性质，�
 
 ### 9.4 验证结果
 
-- **编译**：`customer-work-spring-boot-starter`、`customer-admin-server` 均 `mvn clean compile`/`clean test-compile`
+- **编译**：`customer-work-starter`、`customer-admin-server` 均 `mvn clean compile`/`clean test-compile`
   通过。踩坑记录：不带 `clean` 的增量编译会因 Maven 增量编译器不检测 classpath/依赖版本变化而**误报成功**，
   验证依赖版本变更后必须用 `clean compile`/`clean test-compile`。
 - **单元测试**：全仓 `mvn clean test` **全绿**（starter 362 + app 13 + customer-channel 8 +

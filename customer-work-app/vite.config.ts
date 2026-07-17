@@ -12,11 +12,11 @@ export default defineConfig({
   },
   server: {
     port: 5175,
-    // 监听所有网卡，局域网内其它设备可通过本机 IP 访问；代理目标固定同机 customer-work-app(8080)，
+    // 监听所有网卡，局域网内其它设备可通过本机 IP 访问；代理目标固定同机 customer-work-app-server(8080)，
     // 与浏览器访问 Vite 用的地址无关。
     host: '0.0.0.0',
     proxy: {
-      // 开发期把 /api 代理到 customer-work-app，避免 CORS，与生产反向代理路径保持一致
+      // 开发期把 /api 代理到 customer-work-app-server，避免 CORS，与生产反向代理路径保持一致
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,

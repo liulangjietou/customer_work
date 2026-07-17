@@ -19,8 +19,8 @@
     </parent>
 
     <modules>
-        <module>customer-work-spring-boot-starter</module>
-        <module>customer-work-app</module>
+        <module>customer-work-starter</module>
+        <module>customer-work-app-server</module>
         <module>customer-channel</module>
         <module>customer-admin-server</module>
     </modules>

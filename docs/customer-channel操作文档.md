@@ -36,7 +36,7 @@
 
 ```mermaid
 flowchart LR
-    subgraph CHAT["对话 API（customer-work-app）"]
+    subgraph CHAT["对话 API（customer-work-app-server）"]
         WF["Spring WebFlux（响应式）<br/>/chat /chat/stream /intent ..."]
     end
     subgraph CONSOLE["管理控制台（customer-channel）"]
@@ -234,8 +234,8 @@ customer-channel:
 
 - **admin 必须 `enabled: true`**：其自动装配由 `@ConditionalOnProperty(agentscope.admin.enabled)` 门控，默认不激活。
 - **为什么不与对话 API 合一**：admin(MVC) 与主链路(WebFlux) Web 类型不同，合并会冲突；拆模块是有意为之。
-- **端口**：控制台 8081，与 `customer-work-app` 对话 API 8080 分开，可同机并行。
+- **端口**：控制台 8081，与 `customer-work-app-server` 对话 API 8080 分开，可同机并行。
 - **生产硬化**：收敛 Actuator 暴露面、设置 `write-token`、置于内网 / 加网关鉴权；模型密钥用 Vault/KMS/K8s Secret 注入。
 - **换真实业务后端**：在本模块声明自己的 `OrderBackend` 等 Bean 即覆盖默认 Mock（`@ConditionalOnMissingBean` 让位）。
 - **升级 HarnessAgent**：如需子智能体/Plan Mode/沙箱的完整管理面，可把 `customerServiceAgent` Bean 换成
-  `HarnessAgent`（见 `customer-work-spring-boot-starter` 的 `HarnessAgentFactory`），admin 的 subagents 端点即生效。
+  `HarnessAgent`（见 `customer-work-starter` 的 `HarnessAgentFactory`），admin 的 subagents 端点即生效。
