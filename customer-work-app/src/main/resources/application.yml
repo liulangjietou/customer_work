@@ -10,6 +10,18 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+  # 响应式编解码器缓冲上限：控制单次请求聚合到内存的最大字节数（默认 256KB）。
+  # 附件上传要把整份文件读进内存交给解析器，故放宽到 12MB（略大于附件 10MB 上限，留边界余量）。
+  codec:
+    max-in-memory-size: 12MB
+  webflux:
+    # WebFlux multipart（FilePart）上传限制：默认单分片仅 256KB 内存、超出即落临时盘。
+    # 这里把内存与磁盘用量都放宽到 12MB，覆盖附件 10MB 上限；真正的大小/类型防御在
+    # AttachmentParseService（customer-work.attachment.max-file-size-mb），此处只放开传输通道。
+    multipart:
+      max-in-memory-size: 12MB
+      max-disk-usage-per-part: 12MB
+      max-parts: 16
 
 customer-work:
   model:
@@ -359,6 +371,30 @@ customer-work:
   tool-backend:
     # 业务工具后端：mock（默认，starter Mock 实现）| jdbc（starter MyBatis-Plus 实现，落 cw_order/cw_product 等演示表）
     mode: jdbc
+  attachment:
+    # 聊天附件多格式解析：落盘 + 落库（生产级可追溯），解析文本由前端拼进消息正文（消息协议不变）
+    enabled: true
+    # 存储模式：memory（进程内，重启丢）| jdbc（MyBatis-Plus 落 cw_chat_attachment，与 session.mysql 同库）
+    store-mode: jdbc
+    # 落盘根目录（无 OSS/MinIO，沿用 ./data/xxx 本地磁盘约定）
+    base-dir: ./data/attachments
+    # 单文件大小上限（MB）：唯一防御点，超限即 400（须 ≤ spring.webflux.multipart 的传输上限）
+    max-file-size-mb: 10
+    # 解析文本最大字符数，超长截断并在文末追加提示，避免超长文本打爆模型上下文
+    max-parsed-chars: 20000
+    # 图片走视觉大模型 OCR（不用 tesseract）
+    ocr:
+      # 视觉模型厂商：dashscope | openai | anthropic | gemini | ollama
+      provider: dashscope
+      # 视觉模型名（默认通义千问 VL）
+      model-name: qwen-vl-max
+      # 视觉模型 API Key：留空则回落 customer-work.model.api-key → 环境变量 DASHSCOPE_API_KEY
+      api-key: ${DASHSCOPE_API_KEY:}
+      # 自定义端点，留空用 SDK 默认地址
+      base-url: ""
+      # OCR 调用超时（秒）
+      timeout-seconds: 60
+      # OCR 提示词（留空用 starter 内置中文提示词：逐字提取、保留排版、输出 Markdown、不加解释）
 
 # 生产可观测：Actuator 健康检查 / 指标 / Prometheus
 management:

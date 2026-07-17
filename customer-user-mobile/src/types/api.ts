@@ -145,6 +145,16 @@ export interface ReasonPayload {
   reason: string
 }
 
+/** 附件上传解析结果（与 /api/customer/attachment 契约对齐，裸 JSON，无 Result 包装）；
+ * 解析失败时 content 为空、errorMessage 说明原因，由调用方决定是否提示并跳过拼接。 */
+export interface ChatAttachmentResult {
+  id: string
+  fileName: string
+  content: string
+  parseStatus: 'SUCCESS' | 'FAILED'
+  errorMessage: string | null
+}
+
 // ------------------------- WebSocket 帧 -------------------------
 
 /** 用户 -> 服务端 */

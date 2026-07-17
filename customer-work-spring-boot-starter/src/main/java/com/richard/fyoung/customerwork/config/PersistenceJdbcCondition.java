@@ -18,7 +18,7 @@ public class PersistenceJdbcCondition implements Condition {
 
     private static final String JDBC = "jdbc";
 
-    /** 八个域的 store-mode 配置键 + 工具后端 mode 配置键（任一为 jdbc 即激活持久化环境）。 */
+    /** 各域的 store-mode 配置键 + 工具后端 mode 配置键（任一为 jdbc 即激活持久化环境）。 */
     private static final String[] STORE_MODE_KEYS = {
         "customer-work.ticket.store-mode",
         "customer-work.human-approval.store-mode",
@@ -28,6 +28,7 @@ public class PersistenceJdbcCondition implements Condition {
         "customer-work.feedback.store-mode",
         "customer-work.user-auth.store-mode",
         "customer-work.chat-log.store-mode",
+        "customer-work.attachment.store-mode",
         "customer-work.tool-backend.mode"
     };
 

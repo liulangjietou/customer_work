@@ -2,17 +2,11 @@ package com.richard.fyoung.customerwork.config;
 
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
-import io.agentscope.extensions.model.anthropic.AnthropicChatModel;
-import io.agentscope.extensions.model.dashscope.DashScopeChatModel;
-import io.agentscope.extensions.model.gemini.GeminiChatModel;
-import io.agentscope.extensions.model.ollama.OllamaChatModel;
-import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.util.StringUtils;
 
 /**
  * 模型层配置（对应「模型层 - 统一模型抽象 + 多模型 + 私有化兜底」）。
@@ -29,8 +23,6 @@ import org.springframework.util.StringUtils;
 public class ModelConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ModelConfig.class);
-
-    private static final String ENV_API_KEY = "DASHSCOPE_API_KEY";
 
     @Bean
     public Model chatModel(CustomerWorkProperties properties) {
@@ -58,7 +50,7 @@ public class ModelConfig {
 
     private Model buildPrimary(CustomerWorkProperties.Model cfg) {
         String apiKey = "dashscope".equalsIgnoreCase(cfg.getProvider())
-            ? resolveDashScopeKey(cfg.getApiKey())
+            ? ChatModelFactory.resolveDashScopeKey(cfg.getApiKey())
             : cfg.getApiKey();
         Model model = buildByProvider(cfg.getProvider(), cfg.getName(), apiKey, cfg.getBaseUrl(), cfg);
         log.info("模型层初始化完成：provider={}, model={}, stream={}",
@@ -66,86 +58,15 @@ public class ModelConfig {
         return model;
     }
 
-    /** 高级生成参数（跨厂商统一）：温度 / topP / maxTokens / 推理强度。 */
+    /** 高级生成参数（跨厂商统一）：委托 {@link ChatModelFactory#buildOptions}。 */
     GenerateOptions buildOptions(CustomerWorkProperties.Model cfg) {
-        GenerateOptions.Builder b = GenerateOptions.builder()
-            .temperature(cfg.getTemperature())
-            .maxTokens(cfg.getMaxTokens());
-        if (cfg.getTopP() != null) {
-            b.topP(cfg.getTopP());
-        }
-        if (StringUtils.hasText(cfg.getReasoningEffort())) {
-            b.reasoningEffort(cfg.getReasoningEffort());
-        }
-        return b.build();
+        return ChatModelFactory.buildOptions(cfg);
     }
 
-    /** 按厂商构建模型。stream 与高级生成参数对各厂商统一应用。 */
+    /** 按厂商构建模型：委托 {@link ChatModelFactory#build}，stream 与高级生成参数取自 {@code cfg}。 */
     Model buildByProvider(String provider, String name, String apiKey, String baseUrl,
                           CustomerWorkProperties.Model cfg) {
-        String p = provider == null ? "dashscope" : provider.toLowerCase();
-        GenerateOptions options = buildOptions(cfg);
-        switch (p) {
-            case "openai": {
-                OpenAIChatModel.Builder b = OpenAIChatModel.builder()
-                    .apiKey(apiKey).modelName(name).stream(cfg.isStream()).generateOptions(options);
-                if (StringUtils.hasText(baseUrl)) {
-                    b.baseUrl(baseUrl);
-                }
-                return b.build();
-            }
-            case "anthropic": {
-                AnthropicChatModel.Builder b = AnthropicChatModel.builder()
-                    .apiKey(apiKey).modelName(name).stream(cfg.isStream()).defaultOptions(options);
-                if (StringUtils.hasText(baseUrl)) {
-                    b.baseUrl(baseUrl);
-                }
-                return b.build();
-            }
-            case "gemini": {
-                // 注意：Gemini 需额外引入 google-genai 依赖
-                GeminiChatModel.Builder b = GeminiChatModel.builder()
-                    .apiKey(apiKey).modelName(name).streamEnabled(cfg.isStream()).defaultOptions(options);
-                if (StringUtils.hasText(baseUrl)) {
-                    b.baseUrl(baseUrl);
-                }
-                return b.build();
-            }
-            case "ollama": {
-                // Ollama 本地私有化：使用 OllamaOptions（生成参数另行配置），默认 localhost:11434
-                OllamaChatModel.Builder b = OllamaChatModel.builder().modelName(name);
-                if (StringUtils.hasText(baseUrl)) {
-                    b.baseUrl(baseUrl);
-                }
-                return b.build();
-            }
-            default: {
-                DashScopeChatModel.Builder b = DashScopeChatModel.builder()
-                    .apiKey(apiKey).modelName(name).stream(cfg.isStream()).defaultOptions(options);
-                if (StringUtils.hasText(baseUrl)) {
-                    b.baseUrl(baseUrl);
-                }
-                if (cfg.getEnableSearch() != null) {
-                    b.enableSearch(cfg.getEnableSearch());
-                }
-                if (cfg.getEnableThinking() != null) {
-                    b.enableThinking(cfg.getEnableThinking());
-                }
-                return b.build();
-            }
-        }
-    }
-
-    private String resolveDashScopeKey(String configured) {
-        if (StringUtils.hasText(configured)) {
-            return configured.trim();
-        }
-        String fromEnv = System.getenv(ENV_API_KEY);
-        if (StringUtils.hasText(fromEnv)) {
-            return fromEnv.trim();
-        }
-        throw new IllegalStateException(
-            "未找到百炼 API Key。请配置 customer-work.model.api-key，"
-          + "或设置环境变量 " + ENV_API_KEY + "=你的密钥");
+        return ChatModelFactory.build(provider, name, apiKey, baseUrl, cfg.isStream(),
+            ChatModelFactory.buildOptions(cfg), cfg.getEnableSearch(), cfg.getEnableThinking());
     }
 }

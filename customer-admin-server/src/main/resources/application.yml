@@ -9,9 +9,10 @@ spring:
     web-application-type: servlet
   servlet:
     multipart:
-      # 与 SkillService#parseUploadContent 的 5MB 校验对齐（Skill zip/md 上传），留一点余量
-      max-file-size: 6MB
-      max-request-size: 6MB
+      # 取 Skill zip/md 上传(5MB) 与对话附件解析(customer-work.attachment.max-file-size-mb 默认 10MB) 的较大者留余量：
+      # 附件走视觉 OCR/文档解析，单文件上限 10MB，容器层放到 12MB 兜底（应用层再按白名单/大小精确校验）。
+      max-file-size: 12MB
+      max-request-size: 12MB
   autoconfigure:
     # 关闭 starter 的 WebFlux 自动装配（WebFilter / 响应式 OpenApi 等），仅复用其 web 无关的 Agent 能力类
     # （与 customer-channel 同一手法：不依赖 starter 的自动装配 Bean，需要的能力在本模块的 Config 类里显式 new）
@@ -155,6 +156,25 @@ admin:
         remote-dir: ${ADMIN_SKILL_STORAGE_SFTP_REMOTE_DIR:}
         timeout-ms: ${ADMIN_SKILL_STORAGE_SFTP_TIMEOUT_MS:10000}
         strict-host-key-checking: ${ADMIN_SKILL_STORAGE_SFTP_STRICT_HOST_KEY_CHECKING:false}
+
+# 对话附件多格式解析（starter attachment 域配置，admin 经 AdminAttachmentConfig 显式装配复用这份强类型绑定）。
+# 顶层 customer-work.* 前缀（区别于上面 admin.customer-work.* 的坐席服务客户端配置），对应 AttachmentProperties。
+customer-work:
+  attachment:
+    # 落盘根目录：与头像等本地磁盘约定一致，独立 admin 专属目录，避免与 8080 侧附件目录混淆。
+    base-dir: ${ADMIN_ATTACHMENT_BASE_DIR:./data/admin-attachments}
+    # 单文件大小上限（MB）：需与容器层 spring.servlet.multipart 留出的余量匹配。
+    max-file-size-mb: ${ADMIN_ATTACHMENT_MAX_FILE_SIZE_MB:10}
+    # 解析文本最大字符数，超长截断并在文末追加提示（避免一次性喂进超大上下文）。
+    max-parsed-chars: ${ADMIN_ATTACHMENT_MAX_PARSED_CHARS:20000}
+    ocr:
+      # 图片走视觉大模型 OCR：默认百炼 qwen-vl-max；api-key 留空则由工厂回落环境变量 DASHSCOPE_API_KEY。
+      # 视觉模型惰性构建——缺 key 不影响启动，仅真正上传图片时才可能失败并落 FAILED 记录。
+      provider: ${ADMIN_ATTACHMENT_OCR_PROVIDER:dashscope}
+      model-name: ${ADMIN_ATTACHMENT_OCR_MODEL:qwen-vl-max}
+      api-key: ${ADMIN_ATTACHMENT_OCR_API_KEY:${DASHSCOPE_API_KEY:}}
+      base-url: ${ADMIN_ATTACHMENT_OCR_BASE_URL:}
+      timeout-seconds: ${ADMIN_ATTACHMENT_OCR_TIMEOUT_SECONDS:60}
 
 springdoc:
   api-docs:

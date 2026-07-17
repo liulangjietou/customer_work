@@ -3,6 +3,7 @@ import type { AxiosError } from 'axios'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
+import type { UploaderAfterRead, UploaderBeforeRead, UploaderFileListItem } from 'vant'
 import {
   closeTicket,
   createSession,
@@ -13,12 +14,17 @@ import {
   rejectTicket,
   reopenTicket,
 } from '@/api/ticket'
+import { uploadChatAttachment } from '@/api/chat'
 import { useAuthStore } from '@/store/auth'
 import { chatSocket } from '@/utils/ws'
 import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT, isTicketEnded } from '@/types/api'
 import type { ChatMessage, Ticket, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
 
 const HTTP_CONFLICT = 409
+
+// 附件：与后端 starter AttachmentParseService 白名单/大小限制保持一致（customer-work.attachment.max-file-size-mb=10）
+const ATTACHMENT_ACCEPT = '.md,.txt,.csv,.json,.html,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.bmp,.webp'
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 const route = useRoute()
 const router = useRouter()
@@ -43,6 +49,20 @@ const streamingActive = computed(() => streamingContent.value.length > 0)
  */
 const streamingSessionId = ref<string | null>(null)
 
+/** localId 是前端本地生成的临时 key，用于 chips 移除定位（上传过程中后端 id 还不存在）；
+ * status 驱动 chip 的 loading/失败态展示，失败/上传中的附件不参与 buildMessageWithAttachments 拼接。 */
+interface ChatAttachmentItem {
+  localId: string
+  id?: string
+  name: string
+  content: string
+  status: 'uploading' | 'success' | 'failed'
+  errorMessage?: string
+}
+
+const attachments = ref<ChatAttachmentItem[]>([])
+const anyAttachmentUploading = computed(() => attachments.value.some((a) => a.status === 'uploading'))
+
 const rejectVisible = ref(false)
 const rejectReason = ref('')
 const acting = ref(false)
@@ -52,7 +72,9 @@ const scrollBox = ref<HTMLElement | null>(null)
 const sessionStorageKey = computed(() => `chat-session-${auth.userId}`)
 const ticketStorageKey = computed(() => `chat-ticket-${auth.userId}`)
 
-const canSend = computed(() => wsConnected.value && !!sessionId.value && inputContent.value.trim().length > 0)
+const canSend = computed(
+  () => wsConnected.value && !!sessionId.value && inputContent.value.trim().length > 0 && !anyAttachmentUploading.value,
+)
 const canHandoff = computed(() => {
   const status = ticket.value?.status
   return status === 'AI_SERVING' || status === 'ON_HOLD'
@@ -96,10 +118,11 @@ function cacheSession(newSessionId: string, newTicketId: string) {
   localStorage.setItem(ticketStorageKey.value, newTicketId)
 }
 
-/** 切换会话前的公共收尾：清掉上一个会话遗留的流式增量状态，避免串到新会话的消息区里。 */
+/** 切换会话前的公共收尾：清掉上一个会话遗留的流式增量状态与未发送的附件 chips，避免串到新会话里。 */
 function resetStreamingState() {
   streamingContent.value = ''
   streamingSessionId.value = null
+  attachments.value = []
 }
 
 async function openNewSession() {
@@ -288,11 +311,82 @@ function onWsError(data: unknown) {
   showToast(payload.message || '连接出现异常')
 }
 
+/** 前端先拦超限文件，与后端 max-file-size-mb 对齐，减少无谓上传请求；van-uploader 超限时不会触发 afterRead。 */
+const beforeReadAttachment: UploaderBeforeRead = (file) => {
+  const target = Array.isArray(file) ? file[0] : file
+  if (target.size > MAX_ATTACHMENT_BYTES) {
+    showToast('附件大小不能超过 10MB')
+    return false
+  }
+  return true
+}
+
+/**
+ * 未绑定 v-model/file-list 给 van-uploader，其自身不渲染预览格（只有自定义触发按钮可见）——
+ * 附件 chips 由本组件自行维护并展示在输入栏上方，与后台 ChatPanel 同款交互。
+ */
+const afterReadAttachment: UploaderAfterRead = async (file) => {
+  const item = Array.isArray(file) ? file[0] : (file as UploaderFileListItem)
+  const rawFile = item.file
+  if (!rawFile) {
+    return
+  }
+  const attachment: ChatAttachmentItem = {
+    localId: `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    name: rawFile.name,
+    content: '',
+    status: 'uploading',
+  }
+  attachments.value.push(attachment)
+  try {
+    const result = await uploadChatAttachment(rawFile, sessionId.value)
+    const target = attachments.value.find((a) => a.localId === attachment.localId)
+    if (!target) {
+      return // 结果返回前用户已手动移除该附件，或已切会话清空，迟到的结果直接丢弃
+    }
+    if (result.parseStatus === 'FAILED') {
+      target.status = 'failed'
+      target.errorMessage = result.errorMessage || '解析失败'
+      showToast(`附件解析失败：${rawFile.name}`)
+    } else {
+      target.id = result.id
+      target.content = result.content
+      target.status = 'success'
+    }
+  } catch (error) {
+    // 网络异常等已由 request.ts 拦截器统一 toast，这里只落失败态，不重复提示
+    const target = attachments.value.find((a) => a.localId === attachment.localId)
+    if (target) {
+      target.status = 'failed'
+      target.errorMessage = error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+function removeAttachment(localId: string) {
+  attachments.value = attachments.value.filter((a) => a.localId !== localId)
+}
+
+/** 把附件内容拼进消息正文，格式与后台 ChatPanel 的 buildMessageWithAttachments 保持一致，方便模型统一识别。
+ * 只拼成功解析的附件，上传中/失败的附件不参与（失败的已经在上传回调里提示过用户）。 */
+function buildMessageWithAttachments(text: string): string {
+  const successful = attachments.value.filter((a) => a.status === 'success')
+  if (successful.length === 0) {
+    return text
+  }
+  const attachmentText = successful
+    .map((a) => `【附件：${a.name}】\n---\n${a.content}\n---`)
+    .join('\n\n')
+  return `${attachmentText}\n\n${text}`
+}
+
 function sendMessage() {
   if (!canSend.value) {
     return
   }
-  const content = inputContent.value.trim()
+  const text = inputContent.value.trim()
+  const messageToSend = buildMessageWithAttachments(text)
+  const attachedNames = attachments.value.filter((a) => a.status === 'success').map((a) => a.name)
   messages.value.push({
     id: Date.now(),
     messageId: `local-${Date.now()}`,
@@ -300,13 +394,15 @@ function sendMessage() {
     ticketId: ticketId.value ?? '',
     senderType: 'USER',
     senderId: auth.userId,
-    content,
+    // 用户气泡只展示原始输入 + 附件文件名提示，不把拼进正文的附件全文也显示出来（那部分只是发给模型看的）。
+    content: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
     createdAtMs: Date.now(),
   })
   // 标记本次流式回复归属的会话，供 onWsChatChunk/onWsChatDone 比对，见 streamingSessionId 定义处注释
   streamingSessionId.value = sessionId.value
-  chatSocket.send({ type: 'chat', data: { sessionId: sessionId.value, content } })
+  chatSocket.send({ type: 'chat', data: { sessionId: sessionId.value, content: messageToSend } })
   inputContent.value = ''
+  attachments.value = []
   scrollToBottom()
 }
 
@@ -407,6 +503,8 @@ async function onNewSession() {
 
 async function afterSessionClosed() {
   showToast('会话已关闭')
+  // 会话关闭后 ended 会变 true，输入区随之隐藏；顺手清掉未发出的附件 chips，避免重开同一会话时"复活"
+  attachments.value = []
   await refreshTicket()
 }
 
@@ -511,20 +609,45 @@ onUnmounted(() => {
     <div v-if="ended" class="ended-bar">
       <van-button block round type="primary" :loading="acting" @click="onReopen">重新开始对话</van-button>
     </div>
-    <div v-else class="input-bar">
-      <van-field
-        v-model="inputContent"
-        placeholder="请输入消息"
-        :disabled="!wsConnected"
-        @keyup.enter="sendMessage"
-      >
-        <template #button>
-          <van-button size="small" type="primary" :disabled="!canSend" @click="sendMessage">
-            {{ wsConnected ? '发送' : '重连中' }}
-          </van-button>
-        </template>
-      </van-field>
-    </div>
+    <template v-else>
+      <div v-if="attachments.length > 0" class="attachment-chips">
+        <van-tag
+          v-for="a in attachments"
+          :key="a.localId"
+          :closeable="a.status !== 'uploading'"
+          :type="a.status === 'failed' ? 'danger' : 'primary'"
+          plain
+          size="medium"
+          @close="removeAttachment(a.localId)"
+        >
+          <van-loading v-if="a.status === 'uploading'" size="12" class="chip-loading" />
+          📎 {{ a.name }}
+        </van-tag>
+      </div>
+      <div class="input-bar">
+        <van-field
+          v-model="inputContent"
+          placeholder="请输入消息"
+          :disabled="!wsConnected"
+          @keyup.enter="sendMessage"
+        >
+          <template #left-icon>
+            <van-uploader
+              :accept="ATTACHMENT_ACCEPT"
+              :before-read="beforeReadAttachment"
+              :after-read="afterReadAttachment"
+            >
+              <van-icon name="link-o" size="20" class="attach-icon" />
+            </van-uploader>
+          </template>
+          <template #button>
+            <van-button size="small" type="primary" :disabled="!canSend" @click="sendMessage">
+              {{ wsConnected ? '发送' : '重连中' }}
+            </van-button>
+          </template>
+        </van-field>
+      </div>
+    </template>
 
     <van-dialog v-model:show="rejectVisible" title="仍有问题" show-cancel-button @confirm="submitReject">
       <van-field v-model="rejectReason" type="textarea" rows="3" placeholder="请描述遗留问题" class="dialog-field" />
@@ -652,6 +775,25 @@ onUnmounted(() => {
 .confirm-actions {
   display: flex;
   gap: 8px;
+}
+
+.attachment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 0;
+  border-top: 1px solid var(--cw-border-color);
+  background: var(--cw-card-bg);
+}
+
+.chip-loading {
+  margin-right: 2px;
+  vertical-align: middle;
+}
+
+.attach-icon {
+  color: var(--cw-text-secondary);
+  padding: 0 4px;
 }
 
 .input-bar {

@@ -203,6 +203,19 @@
             <artifactId>agentscope-extensions-rag-bailian</artifactId>
         </dependency>
 
+        <!-- 附件文档解析：Tika（pdf/doc/docx/ppt/pptx/html 文本抽取）。虽已由 rag-simple 传递到 classpath，
+             此处显式声明并锁 3.3.0，防上游瘦身导致解析器缺失（poi-ooxml / pdfbox 亦由 rag-simple 传递，不重复声明）。 -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>3.3.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parsers-standard-package</artifactId>
+            <version>3.3.0</version>
+        </dependency>
+
         <!-- 协议 / 网关 / 观测扩展：AG-UI / Higress / Studio / Nacos 提示词 -->
         <dependency>
             <groupId>io.agentscope</groupId>

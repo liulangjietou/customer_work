@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.workspace.chat.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.richard.fyoung.customeradmin.common.result.Result;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatAttachmentDTO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatRequest;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
@@ -80,12 +81,17 @@ public class ChatController {
     }
 
     /**
-     * 对话附件解析：.md/.txt 读成纯文本返回，不持久化——前端把解析结果插进输入框，让用户发送前
-     * 能看到/编辑，随普通消息文本一起发出去，供模型理解附件内容。
+     * 对话附件解析：多格式（图片视觉 OCR / pdf/office/html / md/txt/csv/json）解析成文本，落盘 + 落库，
+     * 返回 {@link ChatAttachmentDTO}。前端把解析文本插进输入框，随普通消息一起发出供模型理解附件内容；
+     * 解析失败时 {@code parseStatus=FAILED}、{@code content} 为空，由前端标红提示并跳过拼接。
+     * {@code channel} 区分调用来源：ChatPanel 传 {@code admin_chat}、VibeCodingPanel 传 {@code vibecoding}。
      */
     @SaCheckPermission("workspace")
     @PostMapping("/attachment")
-    public Result<String> parseAttachment(@PathVariable String agentCode, @RequestParam("file") MultipartFile file) {
-        return Result.success(chatAttachmentService.parseAttachment(file));
+    public Result<ChatAttachmentDTO> parseAttachment(@PathVariable String agentCode,
+                                                     @RequestParam("file") MultipartFile file,
+                                                     @RequestParam(value = "channel", defaultValue = "admin_chat") String channel,
+                                                     @RequestParam(value = "sessionId", required = false) String sessionId) {
+        return Result.success(chatAttachmentService.parseAttachment(file, channel, sessionId, agentCode));
     }
 }
