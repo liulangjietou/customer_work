@@ -29,7 +29,7 @@ class AttachmentParseServiceTest {
             new ExcelMarkdownParser(),
             new TikaDocumentParser());
         return new AttachmentParseService(parsers, new InMemoryAttachmentStore(),
-            new AttachmentFileStorage(tempDir.toString()), props);
+            new LocalAttachmentFileStorage(tempDir.toString()), props);
     }
 
     private AttachmentProperties props() {

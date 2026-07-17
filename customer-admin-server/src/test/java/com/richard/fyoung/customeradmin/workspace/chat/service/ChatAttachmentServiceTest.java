@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.workspace.chat.entity.AiChatAttachment;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.AiChatAttachmentMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.store.AdminChatAttachmentStore;
 import com.richard.fyoung.customerwork.attachment.AttachmentFileStorage;
+import com.richard.fyoung.customerwork.attachment.LocalAttachmentFileStorage;
 import com.richard.fyoung.customerwork.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.attachment.AttachmentParser;
 import com.richard.fyoung.customerwork.attachment.AttachmentProperties;
@@ -63,7 +64,7 @@ class ChatAttachmentServiceTest {
             new ExcelMarkdownParser(),
             new TikaDocumentParser(),
             new VisionOcrParser(fakeOcr));
-        AttachmentFileStorage fileStorage = new AttachmentFileStorage(properties.getBaseDir());
+        AttachmentFileStorage fileStorage = new LocalAttachmentFileStorage(properties.getBaseDir());
         AttachmentParseService parseService = new AttachmentParseService(parsers, store, fileStorage, properties);
 
         service = new ChatAttachmentService(parseService, store);

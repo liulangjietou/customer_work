@@ -109,6 +109,14 @@
             <artifactId>okhttp</artifactId>
         </dependency>
 
+        <!-- 附件原始文件对象存储（customer-work.attachment.storage.type=minio 时启用；local 时该依赖仅在 classpath 不加载）。
+             官方 MinIO Java SDK，传递引入 okhttp（与上面 Mem0/ReMe 的 okhttp 同源，版本由 Spring Boot 依赖管理统一）。 -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>${minio.version}</version>
+        </dependency>
+
         <!-- Nacos 配置中心 -->
         <dependency>
             <groupId>com.alibaba.nacos</groupId>

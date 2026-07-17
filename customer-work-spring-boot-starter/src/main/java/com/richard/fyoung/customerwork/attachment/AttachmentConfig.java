@@ -80,11 +80,11 @@ public class AttachmentConfig {
         return VisionOcrServices.create(properties, modelSupplier);
     }
 
-    /** 附件落盘存储（本地磁盘 base-dir）。 */
+    /** 附件文件存储：按 {@code storage.type} 选后端（local 本地磁盘 / minio 对象存储），选型收敛在 {@link AttachmentFileStorages}。 */
     @Bean
     @ConditionalOnMissingBean(AttachmentFileStorage.class)
     public AttachmentFileStorage attachmentFileStorage(AttachmentProperties properties) {
-        return new AttachmentFileStorage(properties.getBaseDir());
+        return AttachmentFileStorages.create(properties);
     }
 
     /**

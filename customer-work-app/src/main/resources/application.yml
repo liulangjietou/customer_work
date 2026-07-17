@@ -376,16 +376,26 @@ customer-work:
     enabled: true
     # 存储模式：memory（进程内，重启丢）| jdbc（MyBatis-Plus 落 cw_chat_attachment，与 session.mysql 同库）
     store-mode: jdbc
-    # 落盘根目录（无 OSS/MinIO，沿用 ./data/xxx 本地磁盘约定）
+    # 落盘根目录（storage.type=local 时生效，沿用 ./data/xxx 本地磁盘约定）
     base-dir: ./data/attachments
+    # 原始文件存储后端：local（本地磁盘）| minio（对象存储）。本期用 MinIO。
+    # bucket 惰性确保：应用启动不连 MinIO，首次上传才检查/建桶，故 MinIO 不可达不影响启动与切片测试。
+    storage:
+      type: ${CUSTOMER_WORK_ATTACHMENT_STORAGE_TYPE:minio}
+      minio:
+        endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+        access-key: ${MINIO_ACCESS_KEY:minioadmin}
+        secret-key: ${MINIO_SECRET_KEY:minioadmin}
+        bucket: ${CUSTOMER_WORK_ATTACHMENT_BUCKET:customer-work-attachments}
+        auto-create-bucket: ${CUSTOMER_WORK_ATTACHMENT_AUTO_CREATE_BUCKET:true}
     # 单文件大小上限（MB）：唯一防御点，超限即 400（须 ≤ spring.webflux.multipart 的传输上限）
     max-file-size-mb: 10
     # 解析文本最大字符数，超长截断并在文末追加提示，避免超长文本打爆模型上下文
     max-parsed-chars: 20000
     # 图片 OCR（不用 tesseract）
     ocr:
-      # OCR 引擎：model（视觉大模型，默认）| paddleocr（自建 PaddleOCR 开源 serving，免 Key、数据不出内网）
-      engine: model
+      # OCR 引擎：model（视觉大模型）| paddleocr（自建 PaddleOCR 开源 serving，免 Key、数据不出内网）
+      engine: paddleocr
       # ↓↓↓ engine=model 时生效（视觉大模型）↓↓↓
       # 视觉模型厂商：dashscope | openai | anthropic | gemini | ollama
       provider: dashscope

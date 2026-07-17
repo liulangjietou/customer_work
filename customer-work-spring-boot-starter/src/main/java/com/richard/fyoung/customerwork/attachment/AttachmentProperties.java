@@ -19,15 +19,54 @@ public class AttachmentProperties {
     private boolean enabled = true;
     /** 存储模式：memory（进程内）| jdbc（数据库持久化）。默认 jdbc——业务数据一律真实库。 */
     private String storeMode = "jdbc";
-    /** 落盘根目录（项目无 OSS/MinIO，沿用本地磁盘约定）。 */
+    /** 落盘根目录（{@code storage.type=local} 时生效，形如 {@code ./data/attachments}）。 */
     private String baseDir = "./data/attachments";
     /** 单文件大小上限（MB）。 */
     private int maxFileSizeMb = 10;
     /** 解析文本最大字符数，超长截断并在文末追加提示。 */
     private int maxParsedChars = 20000;
 
+    /** 原始文件存储后端配置（local 本地磁盘 / minio 对象存储）。 */
+    private final Storage storage = new Storage();
+
     /** 视觉 OCR 配置。 */
     private final Ocr ocr = new Ocr();
+
+    /**
+     * 原始文件存储后端选型。
+     *
+     * <p>两种后端二选一（{@link #type}）：<br>
+     * - {@code local}（默认，代码级默认不改变既有行为）：本地磁盘，用顶层 {@link AttachmentProperties#baseDir}。<br>
+     * - {@code minio}：MinIO 对象存储，{@link #minio} 生效。落 DB 的 storage_path（相对 key）语义两种后端一致，
+     *   切换后端无需迁移 DB。选型逻辑收敛在 {@link AttachmentFileStorages}。</p>
+     */
+    @Data
+    public static class Storage {
+        /** 存储后端类型：{@code local}（本地磁盘，默认）| {@code minio}（对象存储）。 */
+        private String type = "local";
+        /** MinIO 配置（type=minio 生效）。 */
+        private final Minio minio = new Minio();
+    }
+
+    /**
+     * MinIO 对象存储配置（type=minio 生效）。
+     *
+     * <p>bucket 惰性确保：应用启动不连 MinIO，首次上传附件时才检查 / 按需创建 bucket，
+     * 故 MinIO 不可达不影响启动与不触发上传的测试上下文。</p>
+     */
+    @Data
+    public static class Minio {
+        /** MinIO 服务端点（默认本机 compose 暴露地址）。 */
+        private String endpoint = "http://localhost:9000";
+        /** 访问 Key（本机默认 minioadmin，生产用环境变量占位）。 */
+        private String accessKey = "minioadmin";
+        /** 秘钥（本机默认 minioadmin，生产用环境变量占位）。 */
+        private String secretKey = "minioadmin";
+        /** 存放附件的 bucket 名。 */
+        private String bucket = "customer-work-attachments";
+        /** bucket 不存在时是否自动创建（默认 true）。 */
+        private boolean autoCreateBucket = true;
+    }
 
     /**
      * 视觉 OCR 配置。

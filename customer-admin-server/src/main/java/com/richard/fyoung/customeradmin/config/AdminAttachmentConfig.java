@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.config;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.AiChatAttachmentMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.store.AdminChatAttachmentStore;
 import com.richard.fyoung.customerwork.attachment.AttachmentFileStorage;
+import com.richard.fyoung.customerwork.attachment.AttachmentFileStorages;
 import com.richard.fyoung.customerwork.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.attachment.AttachmentParser;
 import com.richard.fyoung.customerwork.attachment.AttachmentProperties;
@@ -69,10 +70,10 @@ public class AdminAttachmentConfig {
         return VisionOcrServices.create(properties, modelSupplier);
     }
 
-    /** 附件落盘存储（本地磁盘 base-dir，admin 覆写为 ./data/admin-attachments）。 */
+    /** 附件文件存储：按 {@code storage.type} 选后端（local 本地磁盘 / minio 对象存储），选型收敛在 starter 的 {@link AttachmentFileStorages}（与 8080 侧同一份）。 */
     @Bean
     public AttachmentFileStorage attachmentFileStorage(AttachmentProperties properties) {
-        return new AttachmentFileStorage(properties.getBaseDir());
+        return AttachmentFileStorages.create(properties);
     }
 
     /**

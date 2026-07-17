@@ -35,6 +35,7 @@
         <nacos.version>3.0.2</nacos.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <sa-token.version>1.39.0</sa-token.version>
+        <minio.version>8.5.17</minio.version>
     </properties>
 
     <dependencyManagement>
