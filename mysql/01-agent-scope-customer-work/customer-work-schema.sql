@@ -356,3 +356,23 @@ INSERT IGNORE INTO `cw_knowledge` (`keyword`, `title`, `content`, `source`) VALU
 ('退货,退款,七天,无理由', '七天无理由退货政策', '支持七天无理由退货，商品需保持完好、不影响二次销售；定制类、生鲜类除外。', '《售后服务政策》第 3 条'),
 ('发票,开票,报销', '发票开具规则', '支持开具电子普通发票与增值税专用发票，可在订单详情页自助申请，1-3 个工作日开具。', '《发票管理规则》第 1 条'),
 ('运费,包邮,邮费', '运费说明', '单笔订单满 99 元包邮，偏远地区除外；退货运费由责任方承担。', '《运费说明》第 2 条');
+
+-- 敏感词表（SensitiveWordFilter / cw_sensitive_word）：智能路由中控"一次拦截"词库。
+-- 种子为脱敏占位词（非真实违禁词），覆盖 BLOCK/MASK/REVIEW 三种动作与多类目。
+CREATE TABLE IF NOT EXISTS `cw_sensitive_word` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `word`           VARCHAR(128) NOT NULL COMMENT '敏感词原词面',
+    `category`       VARCHAR(32) NOT NULL COMMENT '类目: POLITICS/PORN/ABUSE/COMPETITOR/CUSTOM',
+    `action`         VARCHAR(16) NOT NULL COMMENT '处置动作: BLOCK/MASK/REVIEW',
+    `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_sensitive_word` (`word`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感词表（一次拦截词库）';
+
+INSERT IGNORE INTO `cw_sensitive_word` (`word`, `category`, `action`, `enabled`, `created_at_ms`, `updated_at_ms`) VALUES
+('测试敏感词A', 'CUSTOM', 'BLOCK', 1, 1779235200000, 1779235200000),
+('涉政占位', 'POLITICS', 'BLOCK', 1, 1779235200000, 1779235200000),
+('辱骂占位', 'ABUSE', 'BLOCK', 1, 1779235200000, 1779235200000),
+('竞品XX', 'COMPETITOR', 'MASK', 1, 1779235200000, 1779235200000),
+('复核占位', 'CUSTOM', 'REVIEW', 1, 1779235200000, 1779235200000);

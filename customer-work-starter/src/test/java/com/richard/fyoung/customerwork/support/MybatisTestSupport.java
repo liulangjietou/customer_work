@@ -13,6 +13,7 @@ import com.richard.fyoung.customerwork.dialog.mapper.DialogStageMapper;
 import com.richard.fyoung.customerwork.feedback.mapper.FeedbackMapper;
 import com.richard.fyoung.customerwork.handoff.mapper.HandoffMapper;
 import com.richard.fyoung.customerwork.observability.mapper.AuditLogMapper;
+import com.richard.fyoung.customerwork.sensitiveword.mapper.SensitiveWordMapper;
 import com.richard.fyoung.customerwork.slotfilling.mapper.SlotFillingMapper;
 import com.richard.fyoung.customerwork.ticket.mapper.TicketEventMapper;
 import com.richard.fyoung.customerwork.ticket.mapper.TicketMapper;
@@ -56,7 +57,8 @@ public final class MybatisTestSupport {
         FeedbackMapper.class, UserMapper.class, TicketMapper.class, TicketEventMapper.class,
         ChatMessageMapper.class, AuditLogMapper.class, OrderMapper.class, ProductMapper.class,
         RefundMapper.class, InvoiceRequestMapper.class, MemberMapper.class, MemberAccountLogMapper.class,
-        ComplaintMapper.class, KnowledgeMapper.class, ChatAttachmentMapper.class
+        ComplaintMapper.class, KnowledgeMapper.class, ChatAttachmentMapper.class,
+        SensitiveWordMapper.class
     };
 
     private MybatisTestSupport() {

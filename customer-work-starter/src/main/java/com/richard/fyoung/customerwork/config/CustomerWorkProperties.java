@@ -92,6 +92,9 @@ public class CustomerWorkProperties {
     /** 基于 AgentScope 的定时任务调度配置（XXL-JOB 接入）。 */
     private final Scheduler scheduler = new Scheduler();
 
+    /** 敏感词"一次拦截"过滤（入站/出站高性能词表拦截，智能路由中控第一块）。 */
+    private final SensitiveWord sensitiveWord = new SensitiveWord();
+
     /**
      * 多轮槽位收集存储配置。
      *
@@ -542,6 +545,56 @@ public class CustomerWorkProperties {
         private long idleCloseSeconds = 300;
         /** SLA 巡检总开关（关闭则告警与自动流转全部停用）。 */
         private boolean slaEnabled = true;
+    }
+
+    /**
+     * 敏感词"一次拦截"过滤配置。默认关闭。
+     *
+     * <p>入站（用户输入）与出站（AI 输出）各过一遍高性能敏感词自动机，命中即处置（BLOCK/MASK/REVIEW）。
+     * 零 LLM、微秒级、可解释。词表由 {@code store-mode} 决定持久化方式（memory 带演示种子 / jdbc 跨实例共享）。</p>
+     */
+    @Data
+    public static class SensitiveWord {
+        /** 命中 BLOCK 时的掩码字符默认值。 */
+        public static final String DEFAULT_MASK_CHAR = "*";
+        /** 入站命中 BLOCK 的统一安全话术。 */
+        public static final String DEFAULT_INBOUND_SAFE_REPLY = "您的消息包含不当内容，请调整后重试。";
+        /** 出站命中 BLOCK 的安全兜底话术（替换 AI 原始回复）。 */
+        public static final String DEFAULT_OUTBOUND_SAFE_REPLY = "抱歉，这个问题我暂时无法回答，请换个方式提问或联系人工客服。";
+
+        /** 总开关。默认关闭。 */
+        private boolean enabled = false;
+        /** 生效方向：inbound（仅入站）| outbound（仅出站）| both（默认）。 */
+        private Direction direction = Direction.BOTH;
+        /** 存储模式：memory（进程内，带演示种子，默认）| jdbc（跨实例共享）。 */
+        private String storeMode = "memory";
+        /** 词条动作缺省时的兜底动作（防御式：正常词条均带动作，仅脏数据/异常兜底用），默认 BLOCK。 */
+        private com.richard.fyoung.customerwork.sensitiveword.SensitiveWordAction defaultAction =
+            com.richard.fyoung.customerwork.sensitiveword.SensitiveWordAction.BLOCK;
+        /** 打码字符（取首字符）。 */
+        private String maskChar = DEFAULT_MASK_CHAR;
+        /** 入站 BLOCK 安全话术。 */
+        private String inboundSafeReply = DEFAULT_INBOUND_SAFE_REPLY;
+        /** 出站 BLOCK 安全兜底话术。 */
+        private String outboundSafeReply = DEFAULT_OUTBOUND_SAFE_REPLY;
+
+        /** 取打码字符（配置为空则回退默认 '*'）。 */
+        public char resolveMaskChar() {
+            return (maskChar == null || maskChar.isEmpty()) ? DEFAULT_MASK_CHAR.charAt(0) : maskChar.charAt(0);
+        }
+
+        public boolean inboundEnabled() {
+            return enabled && direction != Direction.OUTBOUND;
+        }
+
+        public boolean outboundEnabled() {
+            return enabled && direction != Direction.INBOUND;
+        }
+    }
+
+    /** 敏感词过滤生效方向。 */
+    public enum Direction {
+        INBOUND, OUTBOUND, BOTH
     }
 
     /**
