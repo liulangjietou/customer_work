@@ -6,4 +6,4 @@ ${AnsiColor.BRIGHT_CYAN}
  | (__| |_| \__ \ || (_) | | | | | |  __/ |          \ V  V / (_) | |  |   <
   \___|\__,_|___/\__\___/|_| |_| |_|\___|_|           \_/\_/ \___/|_|  |_|\_\
 ${AnsiColor.DEFAULT}
- ${AnsiColor.GREEN}:: customer-work ::${AnsiColor.DEFAULT}                                  Spring Boot ${spring-boot.version}
+ ${AnsiColor.GREEN}:: ${spring.application.name:customer-work} ::${AnsiColor.DEFAULT}                        Spring Boot ${spring-boot.version}
