@@ -838,6 +838,12 @@ public class CustomerWorkProperties {
         private long timeoutMs = 3000;
 
         /**
+         * 服务注册对外暴露的实例 IP（供网关 lb:// 路由回连本实例）。留空则自动探测本机地址
+         * （{@code InetAddress.getLocalHost()}）。多网卡 / 容器场景可用环境变量显式指定可达 IP。
+         */
+        private String instanceIp = "";
+
+        /**
          * 是否启用「运行时配置」热更新（admin 8082 下发的模型/MCP/提示词整体配置）。默认关闭，
          * 不影响任何未接入的下游；开启后启动拉取 + 监听 {@link #runtimeConfigDataId}，热应用到运行中的 8080。
          */
