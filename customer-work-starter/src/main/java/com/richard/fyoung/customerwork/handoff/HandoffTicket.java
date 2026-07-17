@@ -24,6 +24,18 @@ public class HandoffTicket {
     private volatile String resolutionNote;
     private volatile long resolvedAtMs;
 
+    // ---- 智能路由中控·工单智能分配增强字段（全部可空、建单后异步回写，向后兼容旧数据不迁移）----
+    /** 工单分类（LLM 分类，如 退款/物流/投诉）。 */
+    private volatile String category;
+    /** 所需坐席技能标签（LLM 分类，可空表示无硬性要求）。 */
+    private volatile String requiredSkill;
+    /** 优先级枚举名（LOW/MEDIUM/HIGH/URGENT）。 */
+    private volatile String priority;
+    /** 用户情绪（LLM 分类）。 */
+    private volatile String emotion;
+    /** 推荐坐席列表（JSON，{@code SeatRecommendation} 序列化；HITL 供坐席点选，非自动派单）。 */
+    private volatile String suggestedAssignees;
+
     public HandoffTicket(String id, String sessionId, String reason, long createdAtMs) {
         this.id = id;
         this.sessionId = sessionId;
@@ -52,19 +64,51 @@ public class HandoffTicket {
     }
 
     /**
+     * 智能路由中控·工单智能分配：建单后由 {@code HandoffCreatedEnricher} 异步回写分类与推荐结果。
+     *
+     * <p>纯字段赋值、不触碰状态机（分类/推荐是旁挂增强，与 PENDING→CLAIMED→RESOLVED 主流转无关），全部可空。</p>
+     */
+    public void applyRoutingSuggestion(String category, String requiredSkill, String priority,
+                                       String emotion, String suggestedAssignees) {
+        this.category = category;
+        this.requiredSkill = requiredSkill;
+        this.priority = priority;
+        this.emotion = emotion;
+        this.suggestedAssignees = suggestedAssignees;
+    }
+
+    /**
+     * 向后兼容重载（无智能分配增强字段）：路由相关列一律置空。保留给未涉及增强字段的既有调用方/测试，
+     * 避免签名变更的连锁改动。
+     */
+    static HandoffTicket reconstruct(String id, String sessionId, String reason, long createdAtMs,
+                                     HandoffStatus status, String claimedBy, long claimedAtMs,
+                                     String resolutionNote, long resolvedAtMs) {
+        return reconstruct(id, sessionId, reason, createdAtMs, status, claimedBy, claimedAtMs,
+            resolutionNote, resolvedAtMs, null, null, null, null, null);
+    }
+
+    /**
      * 供持久化存储层（如 {@link MybatisHandoffStore}）从数据源重建已有工单——跳过
      * {@link #claim}/{@link #resolve} 的业务状态机校验（这不是一次新的坐席动作，只是把已发生过的
      * 流转结果读回内存）。包级可见，仅供本包内的 {@link HandoffStore} 实现使用。
      */
     static HandoffTicket reconstruct(String id, String sessionId, String reason, long createdAtMs,
                                      HandoffStatus status, String claimedBy, long claimedAtMs,
-                                     String resolutionNote, long resolvedAtMs) {
+                                     String resolutionNote, long resolvedAtMs,
+                                     String category, String requiredSkill, String priority,
+                                     String emotion, String suggestedAssignees) {
         HandoffTicket ticket = new HandoffTicket(id, sessionId, reason, createdAtMs);
         ticket.status = status;
         ticket.claimedBy = claimedBy;
         ticket.claimedAtMs = claimedAtMs;
         ticket.resolutionNote = resolutionNote;
         ticket.resolvedAtMs = resolvedAtMs;
+        ticket.category = category;
+        ticket.requiredSkill = requiredSkill;
+        ticket.priority = priority;
+        ticket.emotion = emotion;
+        ticket.suggestedAssignees = suggestedAssignees;
         return ticket;
     }
 }

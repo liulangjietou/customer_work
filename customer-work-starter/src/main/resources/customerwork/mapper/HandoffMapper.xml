@@ -6,11 +6,15 @@
     <!-- 按主键 upsert：对应旧 JdbcHandoffStore 的 ON DUPLICATE KEY UPDATE 语义 -->
     <insert id="upsert" parameterType="com.richard.fyoung.customerwork.handoff.entity.HandoffTicketDO">
         INSERT INTO cw_handoff_ticket (id, session_id, reason, created_at_ms,
-            status, claimed_by, claimed_at_ms, resolution_note, resolved_at_ms)
+            status, claimed_by, claimed_at_ms, resolution_note, resolved_at_ms,
+            category, required_skill, priority, emotion, suggested_assignees)
         VALUES (#{id}, #{sessionId}, #{reason}, #{createdAtMs},
-            #{status}, #{claimedBy}, #{claimedAtMs}, #{resolutionNote}, #{resolvedAtMs})
+            #{status}, #{claimedBy}, #{claimedAtMs}, #{resolutionNote}, #{resolvedAtMs},
+            #{category}, #{requiredSkill}, #{priority}, #{emotion}, #{suggestedAssignees})
         ON DUPLICATE KEY UPDATE status = VALUES(status), claimed_by = VALUES(claimed_by),
             claimed_at_ms = VALUES(claimed_at_ms), resolution_note = VALUES(resolution_note),
-            resolved_at_ms = VALUES(resolved_at_ms)
+            resolved_at_ms = VALUES(resolved_at_ms), category = VALUES(category),
+            required_skill = VALUES(required_skill), priority = VALUES(priority),
+            emotion = VALUES(emotion), suggested_assignees = VALUES(suggested_assignees)
     </insert>
 </mapper>

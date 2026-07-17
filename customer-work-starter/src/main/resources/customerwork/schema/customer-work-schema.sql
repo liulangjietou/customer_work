@@ -65,9 +65,23 @@ CREATE TABLE IF NOT EXISTS `cw_handoff_ticket` (
     `claimed_at_ms`     BIGINT DEFAULT 0 COMMENT '接单时间戳（毫秒）',
     `resolution_note`   TEXT COMMENT '处理结果备注',
     `resolved_at_ms`    BIGINT DEFAULT 0 COMMENT '结案时间戳（毫秒）',
+    `category`          VARCHAR(64) COMMENT '工单分类（LLM 分类，可空）',
+    `required_skill`    VARCHAR(64) COMMENT '所需坐席技能标签（LLM 分类，可空）',
+    `priority`          VARCHAR(16) COMMENT '优先级 LOW/MEDIUM/HIGH/URGENT（LLM 分类，可空）',
+    `emotion`           VARCHAR(32) COMMENT '用户情绪（LLM 分类，可空）',
+    `suggested_assignees` TEXT COMMENT '推荐坐席列表 JSON（HITL 推荐，人工点选非自动派单，可空）',
     INDEX `idx_handoff_status` (`status`),
     INDEX `idx_handoff_created` (`created_at_ms`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='人机切换工单（AI 转人工闭环）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='人机切换工单（AI 转人工闭环 + 智能分配增强）';
+
+-- 人机切换工单智能分配增强列（cw_handoff_ticket 已在上文建表时含 category/required_skill/priority/emotion/suggested_assignees；
+-- 旧库存量表可手工执行下列 ALTER 补列，MySQL 无 ADD COLUMN IF NOT EXISTS，重复执行报 Duplicate column 可忽略）：
+-- ALTER TABLE `cw_handoff_ticket`
+--   ADD COLUMN `category` VARCHAR(64) NULL COMMENT '工单分类（LLM 分类，可空）',
+--   ADD COLUMN `required_skill` VARCHAR(64) NULL COMMENT '所需坐席技能标签（LLM 分类，可空）',
+--   ADD COLUMN `priority` VARCHAR(16) NULL COMMENT '优先级 LOW/MEDIUM/HIGH/URGENT（LLM 分类，可空）',
+--   ADD COLUMN `emotion` VARCHAR(32) NULL COMMENT '用户情绪（LLM 分类，可空）',
+--   ADD COLUMN `suggested_assignees` TEXT NULL COMMENT '推荐坐席列表 JSON（HITL 推荐，可空）';
 
 -- 消息级用户反馈表（MybatisFeedbackStore）。
 CREATE TABLE IF NOT EXISTS `cw_message_feedback` (
@@ -304,3 +318,25 @@ INSERT IGNORE INTO `cw_sensitive_word` (`word`, `category`, `action`, `enabled`,
 ('辱骂占位', 'ABUSE', 'BLOCK', 1, 1779235200000, 1779235200000),
 ('竞品XX', 'COMPETITOR', 'MASK', 1, 1779235200000, 1779235200000),
 ('复核占位', 'CUSTOM', 'REVIEW', 1, 1779235200000, 1779235200000);
+
+-- 坐席库表（MybatisSeatAgentStore / cw_seat_agent）：智能路由中控"工单智能分配"的候选坐席池。
+-- skills 为逗号分隔技能标签串；seat_group 避开 SQL 保留字 group；种子为演示坐席（多技能/负载/在离线）。
+CREATE TABLE IF NOT EXISTS `cw_seat_agent` (
+    `id`             VARCHAR(64) PRIMARY KEY COMMENT '坐席ID',
+    `name`           VARCHAR(64) NOT NULL COMMENT '坐席名',
+    `skills`         VARCHAR(512) COMMENT '技能标签（逗号分隔，如 refund,invoice）',
+    `max_load`       INT NOT NULL DEFAULT 0 COMMENT '最大并发工单数',
+    `current_load`   INT NOT NULL DEFAULT 0 COMMENT '当前在处理工单数',
+    `online`         TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否在线: 1在线/0离线',
+    `seat_group`     VARCHAR(64) COMMENT '坐席分组',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    INDEX `idx_seat_online` (`online`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='坐席库（智能分配候选坐席池）';
+
+INSERT IGNORE INTO `cw_seat_agent` (`id`, `name`, `skills`, `max_load`, `current_load`, `online`, `seat_group`, `created_at_ms`, `updated_at_ms`) VALUES
+('SEAT-1001', '退款专员-小赵', 'refund,invoice', 5, 1, 1, 'aftersales', 1779235200000, 1779235200000),
+('SEAT-1002', '物流专员-小钱', 'logistics', 5, 3, 1, 'logistics', 1779235200000, 1779235200000),
+('SEAT-1003', '投诉专员-小孙', 'complaint,refund', 4, 0, 1, 'complaint', 1779235200000, 1779235200000),
+('SEAT-1004', '综合坐席-小李', 'refund,logistics,complaint,invoice', 6, 5, 1, 'general', 1779235200000, 1779235200000),
+('SEAT-1005', '离线坐席-小周', 'refund', 5, 0, 0, 'aftersales', 1779235200000, 1779235200000);

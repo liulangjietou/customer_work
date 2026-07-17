@@ -29,4 +29,11 @@ public class HandoffTicketDO {
     private Long claimedAtMs;
     private String resolutionNote;
     private Long resolvedAtMs;
+
+    // ---- 工单智能分配增强列（可空，建单后异步回写；旧数据为 NULL，向后兼容）----
+    private String category;
+    private String requiredSkill;
+    private String priority;
+    private String emotion;
+    private String suggestedAssignees;
 }
