@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.routing.mapper.SeatAgentMapper">
+
+    <!-- 按主键 upsert：存在则更新名称/技能/负载/在线/分组/更新时间，不存在则插入（created_at_ms 仅首次生效） -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.routing.entity.SeatAgentDO">
+        INSERT INTO cw_seat_agent (id, name, skills, max_load, current_load, online, seat_group,
+            created_at_ms, updated_at_ms)
+        VALUES (#{id}, #{name}, #{skills}, #{maxLoad}, #{currentLoad}, #{online}, #{seatGroup},
+            #{createdAtMs}, #{updatedAtMs})
+        ON DUPLICATE KEY UPDATE name = VALUES(name), skills = VALUES(skills), max_load = VALUES(max_load),
+            current_load = VALUES(current_load), online = VALUES(online), seat_group = VALUES(seat_group),
+            updated_at_ms = VALUES(updated_at_ms)
+    </insert>
+</mapper>

@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.handoff.HandoffService;
 import com.richard.fyoung.customerwork.handoff.HandoffStatus;
 import com.richard.fyoung.customerwork.handoff.HandoffTicket;
 import com.richard.fyoung.customerwork.observability.AuditSink;
+import com.richard.fyoung.customerwork.routing.SeatRecommendation;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -65,6 +66,15 @@ public class HandoffController {
         return Mono.justOrEmpty(handoffService.find(id))
             .switchIfEmpty(Mono.error(new ResponseStatusException(
                 HttpStatus.NOT_FOUND, "handoff not found: " + id)));
+    }
+
+    @Operation(summary = "工单智能分配推荐", description = "返回建单时预生成的 top-N 推荐坐席（含打分与可解释理由）供坐席工作台展示；"
+        + "坐席人工点选后仍走 claim 接单（HITL，不自动派单）。未开启智能分配 / 推荐尚未生成 / 无候选时返回空列表（fail-open）。")
+    @GetMapping("/{id}/routing-suggestions")
+    public Mono<List<SeatRecommendation>> routingSuggestions(@PathVariable String id) {
+        return Mono.justOrEmpty(handoffService.find(id))
+            .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "handoff not found: " + id)))
+            .map(ticket -> SeatRecommendation.parseList(ticket.getSuggestedAssignees()));
     }
 
     @Operation(summary = "坐席接单", description = "PENDING → CLAIMED，重复接单返回 409")

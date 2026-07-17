@@ -29,6 +29,7 @@ public class PersistenceJdbcCondition implements Condition {
         "customer-work.user-auth.store-mode",
         "customer-work.chat-log.store-mode",
         "customer-work.attachment.store-mode",
+        "customer-work.sensitive-word.store-mode",
         "customer-work.tool-backend.mode"
     };
 

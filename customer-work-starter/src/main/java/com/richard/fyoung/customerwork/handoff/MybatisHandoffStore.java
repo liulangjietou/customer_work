@@ -102,7 +102,12 @@ public class MybatisHandoffStore implements HandoffStore {
             row.getClaimedBy(),
             row.getClaimedAtMs(),
             row.getResolutionNote(),
-            row.getResolvedAtMs());
+            row.getResolvedAtMs(),
+            row.getCategory(),
+            row.getRequiredSkill(),
+            row.getPriority(),
+            row.getEmotion(),
+            row.getSuggestedAssignees());
     }
 
     private HandoffTicketDO toDO(HandoffTicket ticket) {
@@ -116,6 +121,11 @@ public class MybatisHandoffStore implements HandoffStore {
         row.setClaimedAtMs(ticket.getClaimedAtMs());
         row.setResolutionNote(ticket.getResolutionNote());
         row.setResolvedAtMs(ticket.getResolvedAtMs());
+        row.setCategory(ticket.getCategory());
+        row.setRequiredSkill(ticket.getRequiredSkill());
+        row.setPriority(ticket.getPriority());
+        row.setEmotion(ticket.getEmotion());
+        row.setSuggestedAssignees(ticket.getSuggestedAssignees());
         return row;
     }
 }

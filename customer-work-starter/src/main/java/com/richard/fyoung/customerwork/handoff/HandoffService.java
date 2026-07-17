@@ -1,7 +1,9 @@
 package com.richard.fyoung.customerwork.handoff;
 
+import com.richard.fyoung.customerwork.routing.HandoffCreatedEnricher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -30,9 +32,24 @@ public class HandoffService {
 
     private final HandoffStore store;
 
+    /**
+     * 转人工增强器（智能路由中控·会话总结 + 工单智能分配）：<b>可选</b>，setter 注入。
+     *
+     * <p>用 setter 而非构造注入：一是保留既有无参/单参构造不破坏旧测试；二是打破
+     * {@code HandoffService ⇆ HandoffCreatedEnricher}（增强器构造依赖本服务做推荐回写）的循环依赖。
+     * 未装配（未开启增强 / 纯工具场景）时建单行为与此前完全一致。</p>
+     */
+    private HandoffCreatedEnricher enricher;
+
     /** Spring 注入构造：使用自动装配的 HandoffStore Bean。 */
     public HandoffService(HandoffStore store) {
         this.store = store;
+    }
+
+    /** 可选注入转人工增强器（不存在则不增强，建单行为不变）。 */
+    @Autowired(required = false)
+    public void setEnricher(HandoffCreatedEnricher enricher) {
+        this.enricher = enricher;
     }
 
     /** 无参构造（兼容旧测试与无 Spring 场景）：使用默认内存存储。 */
@@ -46,7 +63,44 @@ public class HandoffService {
         HandoffTicket ticket = new HandoffTicket(id, sessionId, reason, System.currentTimeMillis());
         store.save(ticket);
         log.info("handoff created: id={}, session={}, reason={}", id, sessionId, reason);
+        fireEnrichment(ticket);
         return ticket;
+    }
+
+    /**
+     * 触发转人工增强（会话摘要预生成 + 工单分类打分推荐），<b>异步、fail-open</b>：增强器内部把耗时工作派发到
+     * 独立线程池，此处仅同步派发。摘要/推荐是增强，挂了不能影响转人工——故即便派发本身异常也只 error 不抛。
+     */
+    private void fireEnrichment(HandoffTicket ticket) {
+        if (enricher == null) {
+            return;
+        }
+        try {
+            enricher.onHandoffCreated(ticket);
+        } catch (Exception e) {
+            log.error("[HandoffService] enrichment trigger failed, code={}, id={}",
+                "HANDOFF-ENRICH-TRIGGER-FAIL", ticket.getId(), e);
+        }
+    }
+
+    /**
+     * 回写工单智能分配的分类与推荐结果（由 {@code HandoffCreatedEnricher} 异步调用）。
+     *
+     * <p>走本服务自身的 {@link HandoffStore}，保证与坐席工作台经本服务读到的是同一份工单。工单不存在时只
+     * error 记录、不抛（fail-open：增强回写迟到于工单已被清理等边界情况不应产生异常）。</p>
+     */
+    public void applyRoutingSuggestion(String id, String category, String requiredSkill,
+                                       String priority, String emotion, String suggestedAssignees) {
+        Optional<HandoffTicket> found = store.find(id);
+        if (found.isEmpty()) {
+            log.error("[HandoffService] apply routing suggestion skipped (ticket not found), code={}, id={}",
+                "HANDOFF-ROUTING-APPLY-MISS", id);
+            return;
+        }
+        HandoffTicket ticket = found.get();
+        ticket.applyRoutingSuggestion(category, requiredSkill, priority, emotion, suggestedAssignees);
+        store.update(ticket);
+        log.info("handoff routing suggestion applied: id={}, category={}, priority={}", id, category, priority);
     }
 
     /** 全部工单（含已结案）。 */

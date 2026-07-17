@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.sensitiveword.mapper.SensitiveWordMapper">
+
+    <!-- 按唯一键 word upsert：存在则更新类目/动作/启用/更新时间，不存在则插入（created_at_ms 仅首次生效） -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordEntity">
+        INSERT INTO cw_sensitive_word (word, category, action, enabled, created_at_ms, updated_at_ms)
+        VALUES (#{word}, #{category}, #{action}, #{enabled}, #{createdAtMs}, #{updatedAtMs})
+        ON DUPLICATE KEY UPDATE category = VALUES(category), action = VALUES(action),
+            enabled = VALUES(enabled), updated_at_ms = VALUES(updated_at_ms)
+    </insert>
+</mapper>
