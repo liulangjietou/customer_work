@@ -175,13 +175,21 @@ admin:
     nacos:
       enabled: ${ADMIN_RUNTIME_PUBLISH_NACOS_ENABLED:false}
       server-addr: ${ADMIN_RUNTIME_PUBLISH_NACOS_SERVER_ADDR:localhost:8848}
-      namespace: ${ADMIN_RUNTIME_PUBLISH_NACOS_NAMESPACE:}
+      # namespace 默认对齐 customer-work：须与 app-server(customer-work.nacos.namespace) 及网关发现端一致，
+      # 否则网关发现得到 app-server 却发现不到 admin。别依赖部署时记得设 env。
+      namespace: ${ADMIN_RUNTIME_PUBLISH_NACOS_NAMESPACE:customer-work}
       group: ${ADMIN_RUNTIME_PUBLISH_NACOS_GROUP:DEFAULT_GROUP}
       # dataId 必须与 8080 的 customer-work.nacos.runtime-config-data-id 一致。
       data-id: ${ADMIN_RUNTIME_PUBLISH_NACOS_DATA_ID:customer-work-runtime-config}
       username: ${ADMIN_RUNTIME_PUBLISH_NACOS_USERNAME:}
       password: ${ADMIN_RUNTIME_PUBLISH_NACOS_PASSWORD:}
       timeout-ms: ${ADMIN_RUNTIME_PUBLISH_NACOS_TIMEOUT_MS:3000}
+      # 服务注册独立子开关：enabled=true 时默认(true)即把 admin 本实例（服务名 customer-admin-server）注册进
+      # Nacos 供网关 lb:// 路由——「启用 nacos 就自动注册」的默认行为不变；需要「只发布不注册」时置为 false。
+      # 注册与发布共用上面 runtime-publish.nacos.* 连接参数。
+      register-enabled: ${ADMIN_RUNTIME_PUBLISH_NACOS_REGISTER_ENABLED:true}
+      # instance-ip 留空自动探测本机地址；多网卡/容器场景用环境变量指定网关可达 IP。
+      instance-ip: ${ADMIN_RUNTIME_PUBLISH_NACOS_INSTANCE_IP:}
   collaboration:
     # 多 Agent 协作编程（P3-1 降级版）：VibeCoding「协作模式」开关（默认关，前端逐次开启）开启后一次需求
     # 走多角色顺序流水。roles 留空则用内置默认 4 角色（需求分析→方案设计→编码实现→自测审查）；

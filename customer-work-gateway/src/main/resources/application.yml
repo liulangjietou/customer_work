@@ -1,0 +1,65 @@
+server:
+  # 网关统一入口端口（避开 8080/8082/8081/5174/5175/8848）
+  port: 8888
+
+spring:
+  application:
+    name: customer-work-gateway
+  cloud:
+    nacos:
+      discovery:
+        # 服务发现连接：server-addr / 凭据全部 env 化，本地默认对齐本机 Nacos(nacos/nacos)
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+        # namespace / group 必须与服务端注册（app-server 的 customer-work.nacos.*、admin 的
+        # admin.runtime-publish.nacos.*）一致，否则发现不到实例——本项目已踩过的坑，务必对齐。
+        namespace: ${NACOS_NAMESPACE:customer-work}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        # 网关自身只做「发现」，不把自己注册进 Nacos
+        register-enabled: false
+    loadbalancer:
+      # 会话粘性（sticky session）：网关给响应加 sc-lb-instance-id cookie，后续请求按该 cookie
+      # 粘到同一后端实例。单实例演示下无害；多实例时保证 WS 连接与有状态会话粘在同一实例。
+      sticky-session:
+        add-service-instance-cookie: true
+    gateway:
+      # 路由规则：按路径前缀反向代理，StripPrefix=1 去掉网关前缀后转发给后端真实路径。
+      routes:
+        # 后台管理 API：/admin/api/system/user → lb://customer-admin-server 的 /api/system/user
+        - id: customer-admin-server
+          uri: lb://customer-admin-server
+          predicates:
+            - Path=/admin/**
+          filters:
+            - StripPrefix=1
+        # 客服 API：StripPrefix=1 去掉 /app 前缀后转发后端真实路径。
+        # 例：/app/api/customer/user → /api/customer/user；/app/chat/stream → /chat/stream。
+        - id: customer-work-app-server
+          uri: lb://customer-work-app-server
+          predicates:
+            - Path=/app/**
+          filters:
+            - StripPrefix=1
+        # WebSocket 透传：/ws/user、/ws/agent 直连 app-server（ws:// scheme + lb 负载均衡）；
+        # 不 StripPrefix（后端 WS 处理器直接映射 /ws/user、/ws/agent）。webflux 网关原生支持 WS 升级握手透传。
+        - id: customer-work-app-server-ws
+          uri: lb:ws://customer-work-app-server
+          predicates:
+            - Path=/ws/**
+
+# SSE/流式：webflux 网关默认不缓冲响应体，chat 流（如 /app/chat/stream → /chat/stream）天然透传，无需额外配置。
+management:
+  endpoints:
+    web:
+      exposure:
+        # gateway 端点用于查看已加载路由（/actuator/gateway/routes），排障用
+        include: health,info,gateway
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    root: INFO
+    com.richard.fyoung.customerworkgateway: INFO

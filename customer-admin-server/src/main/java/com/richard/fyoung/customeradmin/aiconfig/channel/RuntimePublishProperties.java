@@ -31,5 +31,16 @@ public class RuntimePublishProperties {
         private String username;
         private String password;
         private long timeoutMs = 3000;
+        /**
+         * 服务注册独立子开关（默认 true）：{@code enabled=true} 时是否把 admin 本实例注册进 Nacos 供网关路由。
+         * 保持「启用 nacos 即自动注册」的默认；置 false 可「只发布运行时配置、不注册服务」，与注册解耦。
+         * 注册器装配条件为 {@code enabled=true 且 registerEnabled≠false}，连接参数复用本 {@code Nacos.*}。
+         */
+        private boolean registerEnabled = true;
+        /**
+         * 服务注册对外暴露的实例 IP（供网关 lb:// 路由回连本实例）。留空则自动探测本机地址。
+         * 多网卡 / 容器场景可显式指定可达 IP。
+         */
+        private String instanceIp;
     }
 }
