@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.security;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Base64;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -38,10 +39,13 @@ class AgentAccessCredentialTest {
         long now = System.currentTimeMillis();
         String token = AgentAccessCredential.sign("agent-1", now + 60_000, SECRET);
 
-        // 翻转签名最后一个字符
-        char last = token.charAt(token.length() - 1);
-        char replacement = last == 'A' ? 'B' : 'A';
-        String tampered = token.substring(0, token.length() - 1) + replacement;
+        // 对签名解码后的首字节翻一位再重新编码：base64url 尾字符的低位落在未用填充比特上，直接翻转尾字符
+        // 可能解码出完全相同的字节（验签仍通过，测试偶发失败）；改从字节层面翻位，保证解码字节一定不同。
+        String[] parts = token.split(":");
+        byte[] signature = Base64.getUrlDecoder().decode(parts[2]);
+        signature[0] ^= 0x01;
+        String tampered = parts[0] + ":" + parts[1] + ":"
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(signature);
 
         assertTrue(AgentAccessCredential.verify(tampered, SECRET, now).isEmpty());
     }
