@@ -8,11 +8,11 @@ import com.richard.fyoung.customerwork.attachment.AttachmentParser;
 import com.richard.fyoung.customerwork.attachment.AttachmentProperties;
 import com.richard.fyoung.customerwork.attachment.AttachmentStore;
 import com.richard.fyoung.customerwork.attachment.ExcelMarkdownParser;
-import com.richard.fyoung.customerwork.attachment.ModelVisionOcrService;
 import com.richard.fyoung.customerwork.attachment.TextAttachmentParser;
 import com.richard.fyoung.customerwork.attachment.TikaDocumentParser;
 import com.richard.fyoung.customerwork.attachment.VisionOcrParser;
 import com.richard.fyoung.customerwork.attachment.VisionOcrService;
+import com.richard.fyoung.customerwork.attachment.VisionOcrServices;
 import com.richard.fyoung.customerwork.config.ChatModelFactory;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
@@ -51,8 +51,10 @@ public class AdminAttachmentConfig {
     }
 
     /**
-     * 视觉 OCR 服务：视觉模型惰性构建——首次识别才据 {@code ocr.*} 构建模型，缺 api-key 不影响应用启动。
-     * dashscope 走工厂的 Key 解析（回落 {@code DASHSCOPE_API_KEY} 环境变量），其它厂商直接用配置值。
+     * 视觉 OCR 服务：按 {@code ocr.engine} 选引擎（model 视觉大模型 / paddleocr 自建 serving），选型逻辑收敛在
+     * starter 的 {@link VisionOcrServices}（与 8080 侧同一份，避免漂移）。engine=model 时视觉模型惰性构建——
+     * 首次识别才据 {@code ocr.*} 构建，缺 api-key 不影响启动；dashscope 走工厂的 Key 解析（回落
+     * {@code DASHSCOPE_API_KEY} 环境变量），其它厂商直接用配置值。
      */
     @Bean
     public VisionOcrService visionOcrService(AttachmentProperties properties) {
@@ -64,7 +66,7 @@ public class AdminAttachmentConfig {
             return ChatModelFactory.build(ocr.getProvider(), ocr.getModelName(), apiKey, ocr.getBaseUrl(),
                 false, GenerateOptions.builder().build(), null, null);
         };
-        return new ModelVisionOcrService(modelSupplier, ocr.getPrompt(), ocr.getTimeoutSeconds());
+        return VisionOcrServices.create(properties, modelSupplier);
     }
 
     /** 附件落盘存储（本地磁盘 base-dir，admin 覆写为 ./data/admin-attachments）。 */

@@ -1,0 +1,43 @@
+# =============================================================================
+# PaddleOCR 开源 OCR serving 编排（对话附件图片 OCR 的自建引擎，替代收费视觉大模型）
+#
+# 启动：
+#   cd docker/paddleocr && docker compose up -d --build      # 首次构建 + 后台启动
+#   docker compose logs -f paddleocr                          # 看启动/模型下载日志
+#   docker compose down                                       # 停止并移除（模型缓存卷保留）
+#
+# 端口：宿主 8868 → 容器 8080（避开 customer-work-app 的 8080）。
+#   REST 契约：POST http://localhost:8868/ocr  body={"file":"<base64>","fileType":1}
+#   starter 侧对齐配置：customer-work.attachment.ocr.paddle.base-url=http://localhost:8868
+#
+# arm64（Apple Silicon M 系列）说明：
+#   PaddleOCR/paddlepaddle 官方对 arm64 Linux 支持不完善（见 PaddlePaddle/Paddle#76111），
+#   故显式 platform: linux/amd64，在 M 系列上走 Rosetta 模拟运行（能跑但偏慢，与本机 xxl-job 同法）。
+#   若在 x86_64 主机部署，可删掉 platform 行以原生运行。
+#
+# 资源要求：CPU 版约需 2C/4G 内存；模型首次请求自动下载（约数百 MB，缓存进 paddlex-models 卷，
+#   重启不重复下载）。生产若追求吞吐可改用 GPU 版官方镜像（本 compose 为 CPU 通用版）。
+# =============================================================================
+services:
+  paddleocr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: customer-work/paddleocr-serving:3.0.0-cpu
+    platform: linux/amd64          # arm64 走 Rosetta 模拟；x86_64 主机可删除此行
+    container_name: paddleocr-serving
+    restart: unless-stopped
+    ports:
+      - "8868:8080"                # 宿主 8868 → 容器 8080（避开 app 的 8080）
+    volumes:
+      - paddlex-models:/root/.paddlex   # 模型缓存卷，首次下载后复用，避免重启重下
+    healthcheck:
+      # basic serving（FastAPI）自带 GET /health，模型管线创建完成、Uvicorn 起监听后才 200（实测验证）
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s           # 首次要下模型（数百 MB），给足冷启动时间
+
+volumes:
+  paddlex-models:                  # PaddleX 模型缓存（命名卷，docker compose down 不删）

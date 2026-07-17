@@ -382,8 +382,11 @@ customer-work:
     max-file-size-mb: 10
     # 解析文本最大字符数，超长截断并在文末追加提示，避免超长文本打爆模型上下文
     max-parsed-chars: 20000
-    # 图片走视觉大模型 OCR（不用 tesseract）
+    # 图片 OCR（不用 tesseract）
     ocr:
+      # OCR 引擎：model（视觉大模型，默认）| paddleocr（自建 PaddleOCR 开源 serving，免 Key、数据不出内网）
+      engine: model
+      # ↓↓↓ engine=model 时生效（视觉大模型）↓↓↓
       # 视觉模型厂商：dashscope | openai | anthropic | gemini | ollama
       provider: dashscope
       # 视觉模型名（默认通义千问 VL）
@@ -395,6 +398,14 @@ customer-work:
       # OCR 调用超时（秒）
       timeout-seconds: 60
       # OCR 提示词（留空用 starter 内置中文提示词：逐字提取、保留排版、输出 Markdown、不加解释）
+      # ↓↓↓ engine=paddleocr 时生效（自建开源 serving，compose 见 docker/paddleocr/）↓↓↓
+      paddle:
+        # serving 根地址（对齐 compose 暴露的宿主端口 8868）
+        base-url: http://localhost:8868
+        # OCR 端点路径（官方 PaddleX OCR pipeline 固定 /ocr）
+        ocr-path: /ocr
+        # 调用超时（秒）
+        timeout-seconds: 30
 
 # 生产可观测：Actuator 健康检查 / 指标 / Prometheus
 management:

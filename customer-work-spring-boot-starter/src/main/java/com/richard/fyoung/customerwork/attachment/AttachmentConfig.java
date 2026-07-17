@@ -58,8 +58,9 @@ public class AttachmentConfig {
     }
 
     /**
-     * 视觉 OCR 服务：视觉模型惰性构建——首次识别才据 {@code ocr.*} 构建模型，缺 api-key 不影响应用启动。
-     * api-key 优先取 {@code ocr.api-key}，为空回落 {@code customer-work.model.api-key}（再由工厂回落环境变量）。
+     * 视觉 OCR 服务：按 {@code ocr.engine} 选引擎（model 视觉大模型 / paddleocr 自建 serving），选型逻辑收敛在
+     * {@link VisionOcrServices}。engine=model 时视觉模型惰性构建——首次识别才据 {@code ocr.*} 构建，缺 api-key
+     * 不影响应用启动；api-key 优先取 {@code ocr.api-key}，为空回落 {@code customer-work.model.api-key}（再由工厂回落环境变量）。
      */
     @Bean
     @ConditionalOnMissingBean(VisionOcrService.class)
@@ -76,7 +77,7 @@ public class AttachmentConfig {
             return ChatModelFactory.build(ocr.getProvider(), ocr.getModelName(), apiKey, ocr.getBaseUrl(),
                 false, GenerateOptions.builder().build(), null, null);
         };
-        return new ModelVisionOcrService(modelSupplier, ocr.getPrompt(), ocr.getTimeoutSeconds());
+        return VisionOcrServices.create(properties, modelSupplier);
     }
 
     /** 附件落盘存储（本地磁盘 base-dir）。 */
