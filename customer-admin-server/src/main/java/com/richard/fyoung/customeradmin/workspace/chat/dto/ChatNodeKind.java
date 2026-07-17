@@ -30,7 +30,22 @@ public enum ChatNodeKind {
     /** 子 Agent 完成：子 Agent 的 {@code AGENT_RESULT}（最终文本），不走父 Agent 的 {@link #ANSWER} 正文链路。 */
     SUBAGENT_RESULT,
     /** VibeCoding 专用：会话 workspace 文件发生变更（新增/修改/删除），仅由 VibeCodingService 产出。 */
-    FILE_CHANGE;
+    FILE_CHANGE,
+
+    /** VibeCoding 专用：沙箱内编译/测试命令的结构化执行报告，仅由 VibeCodingService 从 {@code execute} 工具结果解析产出。 */
+    TEST_REPORT,
+
+    /** VibeCoding 专用（Plan Mode HITL）：高风险操作待人工确认的计划事件，由 PlanConfirmationService 产出。 */
+    PLAN,
+
+    /** VibeCoding 专用（Plan Mode HITL）：某个计划被确认/拒绝/超时后的终态通知。 */
+    PLAN_RESULT,
+
+    /**
+     * VibeCoding 协作模式专用（P3-1）：多角色顺序流水中某个角色阶段的开始/完成/失败通知，
+     * 由 {@code CollaborativeCodingService} 产出，前端据此渲染"需求分析→方案设计→编码实现→自测审查"的阶段卡片。
+     */
+    ROLE_STAGE;
 
     /**
      * 映射成 SSE {@code event} 名：{@link #ANSWER} 走 {@code message}（向后兼容旧协议，前端正文
@@ -44,6 +59,18 @@ public enum ChatNodeKind {
         }
         if (this == FILE_CHANGE) {
             return "file_change";
+        }
+        if (this == TEST_REPORT) {
+            return "test_report";
+        }
+        if (this == PLAN) {
+            return "plan";
+        }
+        if (this == PLAN_RESULT) {
+            return "plan_result";
+        }
+        if (this == ROLE_STAGE) {
+            return "role_stage";
         }
         return "node:" + name().toLowerCase();
     }

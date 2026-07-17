@@ -92,9 +92,11 @@ class AgentServiceTest {
         modelConfigService = mock(ModelConfigService.class);
         menuVersionHolder = new MenuVersionHolder();
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
+        com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher runtimeConfigPublisher =
+            mock(com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher.class);
         service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, agentBackupModelMapper,
             agentSubAgentMapper, modelConfigMapper, mcpMapper, skillMapper, agentSystemToolMapper, systemToolMapper,
-            menuVersionHolder, agentInstanceCache, modelConfigService);
+            menuVersionHolder, agentInstanceCache, modelConfigService, runtimeConfigPublisher);
 
         when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
         // 默认主模型连通性门禁通过（个别用例覆写为失败）

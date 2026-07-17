@@ -365,6 +365,9 @@ export interface AgentSaveRequest {
 }
 
 // ---------- aiconfig.scheduled-task ----------
+/** 定时任务调度模式：internal=内置动态调度器，xxl-job=外部 XXL-JOB 控制台 */
+export type ScheduleMode = 'internal' | 'xxl-job'
+
 export interface ScheduledTaskVO {
   id: number
   taskCode: string
@@ -373,8 +376,12 @@ export interface ScheduledTaskVO {
   /** 后端联查智能体名，智能体被删除等情况下可能为 null */
   agentName?: string | null
   prompt: string
+  /** cron 表达式（Spring 6 位），为空表示不参与内置周期调度 */
+  cron: string | null
   enabled: boolean
   remark: string | null
+  /** 当前全局调度模式，前端据此切换提示文案 */
+  scheduleMode: ScheduleMode
   createTime?: string
   updateTime?: string
 }
@@ -384,6 +391,8 @@ export interface ScheduledTaskSaveRequest {
   taskName: string
   agentId: number
   prompt: string
+  /** cron 表达式（Spring 6 位，可空）：internal 模式下按此周期执行 */
+  cron?: string | null
   enabled?: boolean | null
   remark?: string | null
 }
@@ -392,7 +401,7 @@ export interface ScheduledTaskRunVO {
   id: number
   taskId: number
   taskCode: string
-  triggerType: 'XXL_JOB' | 'MANUAL'
+  triggerType: 'XXL_JOB' | 'MANUAL' | 'INTERNAL'
   startTime: string
   endTime: string | null
   costMs: number | null
@@ -462,15 +471,102 @@ export interface PrDescriptionResponse {
   description: string
 }
 
+/** 会话一键回滚结果：恢复的已跟踪文件清单 + 删除的新增文件清单。 */
+export interface RollbackResult {
+  restoredFiles: string[]
+  deletedFiles: string[]
+}
+
 /** 当前 VibeCoding 沙箱模式：local（无隔离，跑宿主机）｜docker（容器隔离）。 */
 export interface SandboxModeResponse {
   mode: 'local' | 'docker'
+}
+
+/** test_report SSE 事件的 data 载荷：沙箱内编译/测试命令的结构化执行报告（P0-3）。 */
+export interface TestReport {
+  command: string
+  exitCode: number | null
+  success: boolean
+  passed: number
+  failed: number
+  skipped: number
+  durationMs: number | null
+  failureDetails: string[]
+  rawOutput: string | null
+  /** 本轮对话内第几次编译/测试执行（1 基）。 */
+  round: number
+  /** 是否已达失败自动修复轮数上限（仍失败）。 */
+  exhausted: boolean
+}
+
+/** AI 代码审查单条问题（P0-2）。 */
+export interface ReviewIssue {
+  severity: 'CRITICAL' | 'WARNING' | 'SUGGESTION'
+  file: string
+  line: number | null
+  category: 'SECURITY' | 'PERFORMANCE' | 'READABILITY' | 'BUG' | 'STYLE'
+  message: string
+  suggestion: string
+}
+
+/** AI 代码审查结果（P0-2）：结构化问题清单 + 总述（解析失败降级时 issues 为空、summary 为模型原文）。 */
+export interface ReviewResult {
+  issues: ReviewIssue[]
+  summary: string
+}
+
+/** plan SSE 事件里的单条高风险操作项（P1-1 HITL）。 */
+export interface PlanAction {
+  /** DELETE（删除文件）｜RUN_COMMAND（非只读/破坏性命令）｜MODIFY_DEPENDENCY（改依赖）｜BATCH_MODIFY（批量修改超阈值） */
+  type: string
+  target: string
+  reason: string
+}
+
+/** plan SSE 事件的 data 载荷：高风险操作待人工确认，流已挂起（P1-1 HITL）。 */
+export interface PlanEvent {
+  planId: string
+  actions: PlanAction[]
+  reason: string
+  requiresConfirmation: boolean
+  /** 确认超时秒数，前端据此显示倒计时；超时后服务端自动按拒绝处理。 */
+  timeoutSeconds: number
+}
+
+/** plan_result SSE 事件的 data 载荷：某个 planId 的终态（用户批准/拒绝或服务端超时）。 */
+export interface PlanResultEvent {
+  planId: string
+  status: 'APPROVED' | 'REJECTED' | 'TIMEOUT'
+}
+
+/** Plan Mode 计划确认请求体（P1-1）。 */
+export interface PlanConfirmRequest {
+  sessionId: string
+  planId: string
+  approved: boolean
+  note?: string
+}
+
+/**
+ * role_stage SSE 事件的 data 载荷（P3-1 协作模式）：多角色顺序协作的阶段进度。
+ * CODING 角色的产物仍走既有 file_change/test_report/message 事件，其 output 为 null。
+ */
+export interface RoleStageEvent {
+  role: string
+  type: 'PLAN' | 'CODING' | 'REVIEW'
+  index: number
+  total: number
+  status: 'START' | 'DONE' | 'FAILED'
+  /** DONE 时携带 PLAN/REVIEW 角色的文本产物；FAILED 时为错误信息；CODING 角色为 null。 */
+  output: string | null
 }
 
 // ---------- workspace.chat ----------
 export interface ChatRequest {
   sessionId: string
   message: string
+  /** 协作模式（P3-1）：开启后后端按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作。 */
+  collaboration?: boolean
 }
 
 export interface ChatSessionSummary {
@@ -654,4 +750,55 @@ export interface SqlQueryResultVO {
   /** -1 表示 count_sql 未配置，无总数（前端只显示上一页/下一页）。 */
   total: number
   useMillis: number
+}
+
+// ---------- channel-binding（渠道绑定）----------
+// 与后端 ChannelBindingVO 字段一一对应：渠道编码 -> 智能体的绑定关系。
+export interface ChannelBindingVO {
+  id: number
+  channelCode: string
+  agentId: number
+  agentName: string
+  /** 0 停用 / 1 启用 */
+  status: number
+  createTime: string
+  updateTime: string
+}
+
+export interface ChannelBindingSaveRequest {
+  channelCode: string
+  agentId: number
+  /** 可空，新建默认由后端置为启用。 */
+  status?: number
+}
+
+// ---------- knowledge（代码知识库）----------
+/** 代码知识库索引（P3-2）：一次构建对应一个索引，异步构建，status 反映进度。 */
+export interface KnowledgeIndex {
+  id: number
+  indexName: string
+  sourcePath: string
+  embeddingModel?: string
+  dimensions?: number
+  chunkCount: number
+  status: 'BUILDING' | 'READY' | 'FAILED'
+  message?: string
+  createTime?: string
+  updateTime?: string
+}
+
+/** 代码知识库检索命中项：一个代码切片及其相似度得分。 */
+export interface KnowledgeSearchHit {
+  sourcePath: string
+  symbol?: string
+  lang?: string
+  chunkIndex: number
+  score: number
+  snippet: string
+}
+
+/** 代码知识库问答结果：模型答案 + 引用的检索命中项。 */
+export interface KnowledgeAskResponse {
+  answer: string
+  citations: KnowledgeSearchHit[]
 }

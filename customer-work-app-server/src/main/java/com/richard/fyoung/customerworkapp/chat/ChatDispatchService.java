@@ -110,8 +110,8 @@ public class ChatDispatchService {
         }
         String finalReason = (reason == null || reason.isBlank()) ? HANDOFF_KEYWORD_REASON : reason;
         return Mono.fromRunnable(() -> {
-                ticketService.requestHandoff(sessionId, finalReason, TicketActorType.USER, user.userId());
-                registry.pushToUser(user.userId(), WsFrame.system(NOTICE_HANDOFF));
+                Ticket ticket = ticketService.requestHandoff(sessionId, finalReason, TicketActorType.USER, user.userId());
+                registry.pushToUser(user.userId(), WsFrame.system(NOTICE_HANDOFF, sessionId, ticket.getId()));
             })
             .subscribeOn(Schedulers.boundedElastic())
             .onErrorResume(e -> {
@@ -182,14 +182,14 @@ public class ChatDispatchService {
                 registry.pushToAgent(ticket.getAssignee(), WsFrame.chat(chatData(decision.userMessage())));
                 return Mono.empty();
             case WAITING_CONFIRM_NOTICE:
-                registry.pushToUser(userId, WsFrame.system(NOTICE_WAITING_CONFIRM));
+                registry.pushToUser(userId, WsFrame.system(NOTICE_WAITING_CONFIRM, sessionId, ticket.getId()));
                 return Mono.empty();
             case HANDOFF:
-                registry.pushToUser(userId, WsFrame.system(NOTICE_HANDOFF));
+                registry.pushToUser(userId, WsFrame.system(NOTICE_HANDOFF, sessionId, ticket.getId()));
                 return Mono.empty();
             case WAITING_AGENT_NOTICE:
             default:
-                registry.pushToUser(userId, WsFrame.system(NOTICE_WAITING_AGENT));
+                registry.pushToUser(userId, WsFrame.system(NOTICE_WAITING_AGENT, sessionId, ticket.getId()));
                 return Mono.empty();
         }
     }

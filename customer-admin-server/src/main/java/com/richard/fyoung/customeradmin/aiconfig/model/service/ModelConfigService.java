@@ -13,6 +13,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
@@ -61,17 +62,20 @@ public class ModelConfigService {
     private final AesGcmCryptoUtil cryptoUtil;
     private final AdminModelFactory modelFactory;
     private final AgentInstanceCache agentInstanceCache;
+    private final CustomerWorkConfigPublisher runtimeConfigPublisher;
 
     public ModelConfigService(AiModelConfigMapper modelConfigMapper, AiAgentMapper agentMapper,
                                AiAgentBackupModelMapper agentBackupModelMapper,
                                AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
-                               AgentInstanceCache agentInstanceCache) {
+                               AgentInstanceCache agentInstanceCache,
+                               CustomerWorkConfigPublisher runtimeConfigPublisher) {
         this.modelConfigMapper = modelConfigMapper;
         this.agentMapper = agentMapper;
         this.agentBackupModelMapper = agentBackupModelMapper;
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
         this.agentInstanceCache = agentInstanceCache;
+        this.runtimeConfigPublisher = runtimeConfigPublisher;
     }
 
     public PageResult<ModelVO> page(PageQuery query) {
@@ -133,6 +137,8 @@ public class ModelConfigService {
             .stream().map(AiAgent::getAgentCode).collect(Collectors.toList()));
         agentCodes.addAll(agentCodesReferencingModelAsBackup(modelId));
         agentInstanceCache.evictAll(new ArrayList<>(agentCodes));
+        // 模型配置变更后，命中渠道绑定的智能体重新下发运行时配置到 8080（默认关闭，未启用即跳过）
+        runtimeConfigPublisher.publishForModelId(modelId);
     }
 
     /** 查以该模型为备用模型的智能体 code 列表（backup 关联表 -> agentId -> agentCode）。 */
@@ -166,7 +172,7 @@ public class ModelConfigService {
         String apiKey = cryptoUtil.decrypt(model.getApiKey());
 
         return CompletableFuture
-            .supplyAsync(() -> modelFactory.testConnectivity(model.getBaseUrl(), apiKey, model.getModel()), MODEL_TEST_EXECUTOR)
+            .supplyAsync(() -> modelFactory.testConnectivity(model.getProvider(), model.getBaseUrl(), apiKey, model.getModel()), MODEL_TEST_EXECUTOR)
             .orTimeout(TEST_FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .exceptionally(ex -> {
                 if (ex.getCause() instanceof TimeoutException || ex instanceof TimeoutException) {

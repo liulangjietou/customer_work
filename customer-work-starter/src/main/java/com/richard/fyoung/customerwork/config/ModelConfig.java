@@ -24,9 +24,25 @@ public class ModelConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ModelConfig.class);
 
+    /**
+     * 客服机器人模型 Bean：以 {@link MutableDelegatingModel} 暴露，内部包裹启动期构建的模型链。
+     *
+     * <p>返回类型声明为 {@link MutableDelegatingModel}（而非 {@link Model}）：消费方注入 {@code Model}
+     * 仍能唯一命中（本模块唯一的 Model Bean）；同时 {@code RuntimeConfigApplier} 可直接注入本具体类型
+     * 调 {@link MutableDelegatingModel#swap(Model)} 做热替换，无需 instanceof 向下转型。</p>
+     */
     @Bean
-    public Model chatModel(CustomerWorkProperties properties) {
-        CustomerWorkProperties.Model cfg = properties.getModel();
+    public MutableDelegatingModel chatModel(CustomerWorkProperties properties) {
+        return new MutableDelegatingModel(buildChain(properties.getModel()));
+    }
+
+    /**
+     * 按模型配置构建完整模型链：primary → 可选 FallbackChatModel → 可选 ResilientChatModel。
+     *
+     * <p>抽出为可复用方法：启动期 {@link #chatModel} 与运行期热替换（{@code RuntimeConfigApplier}）
+     * 共用同一构建逻辑，保证冷启动与热更新产出的链结构一致。</p>
+     */
+    Model buildChain(CustomerWorkProperties.Model cfg) {
         Model primary = buildPrimary(cfg);
 
         Model model = primary;

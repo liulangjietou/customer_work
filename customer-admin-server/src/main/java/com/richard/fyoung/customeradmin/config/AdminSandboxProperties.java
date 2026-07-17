@@ -25,12 +25,39 @@ public class AdminSandboxProperties {
     /** 单次命令执行超时（秒），local/docker 两种模式共用。 */
     private int executeTimeoutSeconds = 60;
 
+    /**
+     * 高风险操作的权限模式（需求 P1-1）：{@code bypass}（默认，保持现状——高风险命令由
+     * {@code SandboxGuardMiddleware} 静默改写兜底，不打断流）｜{@code hitl}（挂起等人工确认——
+     * Agent 计划执行高风险操作时先 emit {@code plan} 事件挂起，用户确认后再执行，拒绝/超时则取消）。
+     * 默认 {@code SandboxPermissionMode.BYPASS} 保证不影响既有非 vibecoding 链路与既有默认行为。
+     */
+    private SandboxPermissionMode permissionMode = SandboxPermissionMode.BYPASS;
+
     private Docker docker = new Docker();
 
     private Guard guard = new Guard();
 
+    private Hitl hitl = new Hitl();
+
     public boolean isDockerMode() {
         return "docker".equalsIgnoreCase(mode);
+    }
+
+    /** 是否开启 Plan Mode 人工确认闭环（{@code admin.sandbox.permission-mode=hitl}）。 */
+    public boolean isHitlMode() {
+        return permissionMode == SandboxPermissionMode.HITL;
+    }
+
+    /**
+     * 高风险操作权限模式。
+     * <ul>
+     *   <li>{@link #BYPASS}：现状——高风险命令由 {@code SandboxGuardMiddleware} 直接改写兜底，不挂起；</li>
+     *   <li>{@link #HITL}：命中高风险操作先 emit {@code plan} 事件挂起等人工确认。</li>
+     * </ul>
+     */
+    public enum SandboxPermissionMode {
+        BYPASS,
+        HITL
     }
 
     /** {@code mode=docker} 时生效的容器参数。 */
@@ -65,5 +92,43 @@ public class AdminSandboxProperties {
 
         private boolean enabled = true;
         private List<String> destructivePatterns = new ArrayList<>(DEFAULT_DESTRUCTIVE_PATTERNS);
+    }
+
+    /**
+     * Plan Mode 人工确认（HITL）配置，仅在 {@link #permissionMode} = {@code hitl} 时生效，见
+     * {@code PlanConfirmationMiddleware} / {@code SandboxRiskDetector}。
+     */
+    @Data
+    public static class Hitl {
+
+        /**
+         * 需人工确认的"非只读/破坏性命令"默认正则（不区分大小写）——比 {@link Guard} 的"直接改写"清单更宽，
+         * 覆盖需求 §4.4.2 的"执行非只读命令（mvn clean、rm 等）"。命中即挂起询问，而非静默改写。
+         */
+        public static final List<String> DEFAULT_CONFIRMABLE_COMMAND_PATTERNS = List.of(
+            "\\brm\\b",
+            "\\brmdir\\b",
+            "\\bmv\\b",
+            "mvn\\s+clean",
+            "gradle\\s+clean",
+            "git\\s+(reset|checkout|clean|revert|rebase)\\b");
+
+        /**
+         * "修改依赖版本"判定：写类工具的路径入参命中这些依赖/构建文件时视为高风险（需求 §4.4.2）。
+         */
+        public static final List<String> DEFAULT_DEPENDENCY_FILE_PATTERNS = List.of(
+            "pom\\.xml",
+            "build\\.gradle",
+            "package\\.json",
+            "build\\.gradle\\.kts");
+
+        /** 人工确认等待超时（秒），默认 5 分钟；超时视为拒绝，流正常结束（需求 §4.4.2）。 */
+        private int confirmTimeoutSeconds = 300;
+
+        /** 单轮批量修改文件数阈值，超过即视为高风险需确认（需求 §4.4.2「单轮批量修改 > 3 个文件」）。 */
+        private int batchModifyThreshold = 3;
+
+        private List<String> confirmableCommandPatterns = new ArrayList<>(DEFAULT_CONFIRMABLE_COMMAND_PATTERNS);
+        private List<String> dependencyFilePatterns = new ArrayList<>(DEFAULT_DEPENDENCY_FILE_PATTERNS);
     }
 }

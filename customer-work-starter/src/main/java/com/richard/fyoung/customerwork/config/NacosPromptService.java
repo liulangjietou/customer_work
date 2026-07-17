@@ -85,6 +85,22 @@ public class NacosPromptService {
         return Optional.ofNullable(cachedPrompt).filter(StringUtils::hasText);
     }
 
+    /**
+     * 外部热配置（运行时配置整体下发）覆盖系统提示词。
+     *
+     * <p>与本类自身监听的 prompt dataId 是两条独立来源：整体运行时配置（{@code NacosRuntimeConfigService}）
+     * 携带的 systemPrompt 经此写入统一提示词缓存，配合 {@code CustomerServiceService#flushHotAgents} 让
+     * 重建的 Agent 立即用上新提示词。传入空白值表示不覆盖（保留既有生效提示词）。</p>
+     *
+     * @param prompt 新系统提示词；空白则忽略
+     */
+    public void updatePrompt(String prompt) {
+        if (StringUtils.hasText(prompt)) {
+            cachedPrompt = prompt;
+            log.info("[Nacos] system prompt overridden by runtime config, length={}", prompt.length());
+        }
+    }
+
     private Properties buildProperties(CustomerWorkProperties.Nacos cfg) {
         Properties props = new Properties();
         props.put(PropertyKeyConst.SERVER_ADDR, cfg.getServerAddr());

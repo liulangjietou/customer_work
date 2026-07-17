@@ -7,12 +7,18 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanConfirmRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewResult;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxModeResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SaveFileContentRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileNode;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.CollaborativeCodingService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.GitAssistantService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.VibeCodingService;
 import jakarta.validation.Valid;
@@ -42,16 +48,27 @@ public class VibeCodingController {
 
     private final VibeCodingService vibeCodingService;
     private final GitAssistantService gitAssistantService;
+    private final CollaborativeCodingService collaborativeCodingService;
 
-    public VibeCodingController(VibeCodingService vibeCodingService, GitAssistantService gitAssistantService) {
+    public VibeCodingController(VibeCodingService vibeCodingService, GitAssistantService gitAssistantService,
+                               CollaborativeCodingService collaborativeCodingService) {
         this.vibeCodingService = vibeCodingService;
         this.gitAssistantService = gitAssistantService;
+        this.collaborativeCodingService = collaborativeCodingService;
     }
 
+    /**
+     * VibeCoding 流式对话。{@code request.collaboration=true}（前端"协作模式"开关，默认关，P3-1）时走多角色
+     * 顺序流水（需求分析→方案设计→编码实现→自测审查），额外产出 {@code role_stage} SSE 事件；否则走单 Agent
+     * 常规流。两条路径统一映射成 SSE 事件后追加 {@code done} 收尾。
+     */
     @SaCheckPermission("workspace")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
-        return vibeCodingService.stream(agentCode, request.sessionId(), request.message())
+        Flux<com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk> source = request.collaborationEnabled()
+            ? collaborativeCodingService.stream(agentCode, request.sessionId(), request.message())
+            : vibeCodingService.stream(agentCode, request.sessionId(), request.message());
+        return source
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
@@ -144,5 +161,41 @@ public class VibeCodingController {
     public CompletableFuture<Result<PrDescriptionResponse>> prDescription(
             @PathVariable String agentCode, @Valid @RequestBody PrDescriptionRequest request) {
         return gitAssistantService.prDescription(agentCode, request.sessionId()).thenApply(Result::success);
+    }
+
+    /**
+     * Git 助手 · AI 代码审查（需求 P0-2）：对本轮 diff 输出结构化审查意见
+     * （CRITICAL/WARNING/SUGGESTION 逐条带文件/行号/建议）。同步返回，无变更时报 {@code NO_FILE_CHANGES}。
+     */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding代码审查", target = "vibecoding_git_assistant")
+    @PostMapping("/review")
+    public CompletableFuture<Result<ReviewResult>> review(
+            @PathVariable String agentCode, @Valid @RequestBody ReviewRequest request) {
+        return gitAssistantService.review(agentCode, request.sessionId()).thenApply(Result::success);
+    }
+
+    /**
+     * 会话一键回滚（需求 P0-1）：撤销本次会话对 workspace 的全部文件改动，恢复到对话前的 baseline 状态。
+     * 破坏性操作（{@code git checkout} + {@code clean}）；仅支持 local 沙箱模式，baseline 缺失时 fast fail。
+     */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding会话回滚", target = "vibecoding_rollback")
+    @PostMapping("/rollback")
+    public Result<RollbackResult> rollback(@PathVariable String agentCode, @Valid @RequestBody RollbackRequest request) {
+        return Result.success(vibeCodingService.rollback(agentCode, request.sessionId()));
+    }
+
+    /**
+     * Plan Mode 计划确认/拒绝（需求 P1-1）：对 {@code plan} SSE 事件里的高风险操作放行或取消。
+     * 批准 → 流恢复执行该操作；拒绝 → 该操作被取消（改写为无害占位）、Agent 调整方案，流正常继续。
+     * planId 不存在/已处理/超时/服务重启后失效均返回 {@code PLAN_CONFIRM_NOT_FOUND}。
+     */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding计划确认", target = "vibecoding_plan_confirm")
+    @PostMapping("/plan/confirm")
+    public Result<Void> confirmPlan(@PathVariable String agentCode, @Valid @RequestBody PlanConfirmRequest request) {
+        vibeCodingService.confirmPlan(agentCode, request.sessionId(), request.planId(), request.approved(), request.note());
+        return Result.success(null);
     }
 }

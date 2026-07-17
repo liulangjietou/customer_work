@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
@@ -12,6 +14,8 @@ import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFact
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewIssue;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewResult;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
@@ -28,7 +32,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -55,7 +61,29 @@ public class GitAssistantService {
     private static final String CAPABILITY_DELIMITER = ",";
     /** 送入模型的 diff 文本上限，超过截断并提示，避免撑爆上下文。 */
     private static final int MAX_DIFF_CHARS_FOR_MODEL = 20_000;
+    /** Review 场景的 diff 上限（需求 §4.2.3：超大 diff 截断并在 summary 中声明）。 */
+    private static final int MAX_DIFF_CHARS_FOR_REVIEW = 100_000;
     private static final long AI_CALL_TIMEOUT_SECONDS = 30;
+    /** Review 系统提示词内置的团队规范（需求 §4.2.2，后续可由 RAG 注入团队文档替换/增强）。 */
+    private static final String REVIEW_SYSTEM_PROMPT =
+        "你是一名资深 Java 代码审查专家。请对以下 git diff 做代码审查，严格按团队规范逐条给出问题：\n"
+        + "1. 安全：SQL 注入、硬编码密钥/密码、路径穿越、SSRF、反序列化风险；\n"
+        + "2. 健壮性：NPE 防护、空集合/空字符串处理、异常处理是否恰当（禁止吞异常）；\n"
+        + "3. 日志规范：只用 info/error（不用 warn）、日志文案英文、error 带错误码占位符；\n"
+        + "4. 命名与可读性：命名清晰、无魔法值、职责单一；\n"
+        + "5. 性能：循环内远程调用/大对象、明显低效写法。\n"
+        + "只输出一个 JSON 对象，不要输出任何解释文字或 Markdown 代码块标记，结构严格为：\n"
+        + "{\"issues\":[{\"severity\":\"CRITICAL|WARNING|SUGGESTION\",\"file\":\"...\",\"line\":42,"
+        + "\"category\":\"SECURITY|PERFORMANCE|READABILITY|BUG|STYLE\",\"message\":\"...\",\"suggestion\":\"...\"}],"
+        + "\"summary\":\"一句话总述\"}\n"
+        + "line 未知时填 null；没有任何问题时 issues 返回空数组。\n\n";
+    /** Review 意见的合法严重级别/分类（与前端分组着色的匹配口径一致）。 */
+    private static final Set<String> REVIEW_SEVERITIES = Set.of("CRITICAL", "WARNING", "SUGGESTION");
+    private static final Set<String> REVIEW_CATEGORIES = Set.of("SECURITY", "PERFORMANCE", "READABILITY", "BUG", "STYLE");
+    /** 模型输出的 severity 不在合法集合内时的兜底级别（保守起见归入最低级，不制造假告警）。 */
+    private static final String DEFAULT_SEVERITY = "SUGGESTION";
+    /** 模型输出的 category 不在合法集合内时的兜底分类（STYLE 语义最中性）。 */
+    private static final String DEFAULT_CATEGORY = "STYLE";
     private static final ExecutorService GIT_ASSISTANT_EXECUTOR = Executors.newFixedThreadPool(8, r -> {
         Thread thread = new Thread(r, "git-assistant-worker");
         thread.setDaemon(true);
@@ -66,6 +94,9 @@ public class GitAssistantService {
     private final AdminAgentInstanceFactory agentInstanceFactory;
     private final GitWorkspaceService gitWorkspaceService;
     private final AiCodingAuditService auditService;
+    /** Review 结果 JSON 解析用（宽松：忽略模型多吐的未知字段），窄用途、不依赖容器注入。 */
+    private final ObjectMapper objectMapper = new ObjectMapper()
+        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public GitAssistantService(AiAgentMapper agentMapper, AdminAgentInstanceFactory agentInstanceFactory,
                                 GitWorkspaceService gitWorkspaceService, AiCodingAuditService auditService) {
@@ -94,7 +125,7 @@ public class GitAssistantService {
             auditService.applyUsage(audit, outcome.usage());
             return new GitDiffSummary(outcome.text(), changedFiles);
         }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .exceptionally(ex -> rethrow(ex, "GIT_DIFF_SUMMARY_FAIL", agentCode, sessionId))
+            .exceptionally(ex -> rethrow(ex, ResultCode.GIT_ASSISTANT_AI_FAILED, "GIT_DIFF_SUMMARY_FAIL", agentCode, sessionId))
             .whenComplete((result, error) -> auditService.finish(audit, error));
     }
 
@@ -116,7 +147,7 @@ public class GitAssistantService {
             auditService.applyUsage(audit, outcome.usage());
             return new CommitMessageResponse(outcome.text());
         }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .exceptionally(ex -> rethrow(ex, "GIT_COMMIT_MESSAGE_FAIL", agentCode, sessionId))
+            .exceptionally(ex -> rethrow(ex, ResultCode.GIT_ASSISTANT_AI_FAILED, "GIT_COMMIT_MESSAGE_FAIL", agentCode, sessionId))
             .whenComplete((result, error) -> auditService.finish(audit, error));
     }
 
@@ -137,11 +168,98 @@ public class GitAssistantService {
             auditService.applyUsage(audit, outcome.usage());
             return new PrDescriptionResponse(outcome.text());
         }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .exceptionally(ex -> rethrow(ex, "GIT_PR_DESCRIPTION_FAIL", agentCode, sessionId))
+            .exceptionally(ex -> rethrow(ex, ResultCode.GIT_ASSISTANT_AI_FAILED, "GIT_PR_DESCRIPTION_FAIL", agentCode, sessionId))
+            .whenComplete((result, error) -> auditService.finish(audit, error));
+    }
+
+    /**
+     * AI 代码审查（需求 P0-2 §4.2）：对本轮 diff 一次性调用模型，输出结构化审查意见。
+     * 无变更时直接抛 {@link ResultCode#NO_FILE_CHANGES}，不调用模型。
+     *
+     * <p>模型输出 JSON 解析失败时降级（§4.2.3）：{@code issues} 为空、模型原文放进 {@code summary}，
+     * 仍返回成功结果不抛裸异常；只有模型调用本身失败/超时才归一成 {@link ResultCode#AI_REVIEW_FAILED}
+     * 快速失败（"明确错误码，不吞掉"）。</p>
+     */
+    public CompletableFuture<ReviewResult> review(String agentCode, String sessionId) {
+        requireVibeCodingCapable(agentCode);
+        Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        AiCodingAuditLog audit = auditService.begin(AiCodingOperation.REVIEW, agentCode, sessionId);
+        return CompletableFuture.supplyAsync(() -> {
+            String diff = requireNonEmptyDiff(workspace);
+            boolean truncated = diff.length() > MAX_DIFF_CHARS_FOR_REVIEW;
+            String diffForModel = truncated ? diff.substring(0, MAX_DIFF_CHARS_FOR_REVIEW) : diff;
+            Model model = agentInstanceFactory.buildModelForAgent(agentCode);
+            ModelCallOutcome outcome = callModelOnce(model, REVIEW_SYSTEM_PROMPT + "git diff:\n" + diffForModel);
+            auditService.applyUsage(audit, outcome.usage());
+            return parseReviewResult(outcome.text(), truncated);
+        }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .exceptionally(ex -> rethrow(ex, ResultCode.AI_REVIEW_FAILED, "AI_CODE_REVIEW_FAIL", agentCode, sessionId))
             .whenComplete((result, error) -> auditService.finish(audit, error));
     }
 
     // ---------------------- private helpers ----------------------
+
+    /**
+     * 解析模型返回的审查 JSON。剥离可能包裹的 Markdown 代码块，截取首个 {@code {} 到末个 }} 之间的
+     * JSON 主体再反序列化；解析失败或结构不完整时降级（需求 §4.2.3）：原文以 {@code summary} 返回、
+     * {@code issues} 为空，不抛异常。diff 被截断时在 summary 前追加声明。
+     */
+    private ReviewResult parseReviewResult(String modelText, boolean diffTruncated) {
+        String truncateNote = diffTruncated ? "[注意] diff 过大已截断，仅审查前 " + MAX_DIFF_CHARS_FOR_REVIEW + " 字符。" : "";
+        String json = extractJsonObject(modelText);
+        if (json != null) {
+            try {
+                ReviewResult parsed = objectMapper.readValue(json, ReviewResult.class);
+                if (parsed.issues() != null) {
+                    String summary = StringUtils.hasText(truncateNote)
+                        ? truncateNote + " " + (parsed.summary() == null ? "" : parsed.summary())
+                        : parsed.summary();
+                    return new ReviewResult(normalizeIssues(parsed.issues()), summary);
+                }
+            } catch (Exception e) {
+                log.error("[workspace] review result json parse failed, code={}", "AI_REVIEW_JSON_DEGRADE", e);
+            }
+        }
+        // 降级：模型没吐合法 JSON，原文放进 summary 让前端仍可展示
+        return new ReviewResult(List.of(), (truncateNote + " " + modelText).trim());
+    }
+
+    /**
+     * 归一化 severity/category（全链路唯一防御点，前端按大写精确匹配分组着色，不再兜底）：
+     * 统一 toUpperCase 后校验合法集合，模型偶发输出 critical/Critical/blocker 等非规范值时
+     * 不能让该 issue 在前端静默消失——未知 severity 兜底 {@link #DEFAULT_SEVERITY}、
+     * 未知 category 兜底 {@link #DEFAULT_CATEGORY}，其余字段原样保留。
+     */
+    private List<ReviewIssue> normalizeIssues(List<ReviewIssue> issues) {
+        return issues.stream()
+            .map(issue -> new ReviewIssue(
+                normalizeEnumValue(issue.severity(), REVIEW_SEVERITIES, DEFAULT_SEVERITY),
+                issue.file(),
+                issue.line(),
+                normalizeEnumValue(issue.category(), REVIEW_CATEGORIES, DEFAULT_CATEGORY),
+                issue.message(),
+                issue.suggestion()))
+            .collect(Collectors.toList());
+    }
+
+    /** 大写归一后在合法集合内则用归一值，否则用兜底值（null/空白同样走兜底）。 */
+    private String normalizeEnumValue(String value, Set<String> allowed, String fallback) {
+        if (!StringUtils.hasText(value)) {
+            return fallback;
+        }
+        String upper = value.trim().toUpperCase(Locale.ROOT);
+        return allowed.contains(upper) ? upper : fallback;
+    }
+
+    /** 截取文本中第一个 {@code '{'} 到最后一个 {@code '}'} 之间的子串（容忍模型在 JSON 前后夹带说明/代码块标记）。 */
+    private String extractJsonObject(String text) {
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        int start = text.indexOf('{');
+        int end = text.lastIndexOf('}');
+        return (start >= 0 && end > start) ? text.substring(start, end + 1) : null;
+    }
 
     private String requireNonEmptyDiff(Path workspace) {
         String diff = gitWorkspaceService.diffAgainstBaseline(workspace);
@@ -210,20 +328,29 @@ public class GitAssistantService {
     /**
      * {@code exceptionally} 统一出口：如果根因本就是业务异常（比如 {@link #requireNonEmptyDiff}
      * 主动抛出的 {@code NO_FILE_CHANGES}），原样抛出、保留其 {@link ResultCode}，不能一律吞成
-     * {@link ResultCode#GIT_ASSISTANT_AI_FAILED}——那样前端会把"本轮无变更"误判成"AI 生成失败"。
-     * 只有真正意料之外的异常（模型调用失败、超时等）才归一成 {@code GIT_ASSISTANT_AI_FAILED}。
+     * AI 失败码——那样前端会把"本轮无变更"误判成"AI 生成失败"。真正的 AI 硬失败
+     * （模型空响应、调用异常、超时）统一归一成 {@code targetCode}：{@link #callModelOnce} 抛的通用
+     * {@link ResultCode#GIT_ASSISTANT_AI_FAILED} 也会被改写成调用端点自己的错误码（如 review 链路的
+     * {@link ResultCode#AI_REVIEW_FAILED}），保证同一接口的全部 AI 失败对外只有一个码。
      */
-    private <T> T rethrow(Throwable ex, String logCode, String agentCode, String sessionId) {
+    private <T> T rethrow(Throwable ex, ResultCode targetCode, String logCode, String agentCode, String sessionId) {
         Throwable cause = ex;
         while (cause.getCause() != null && !(cause instanceof BizException)) {
             cause = cause.getCause();
         }
         if (cause instanceof BizException bizException) {
+            if (bizException.getResultCode() == ResultCode.GIT_ASSISTANT_AI_FAILED
+                    && targetCode != ResultCode.GIT_ASSISTANT_AI_FAILED) {
+                // callModelOnce 的通用 AI 失败码 → 端点专属错误码（消息保留，便于排查具体失败原因）
+                log.error("[workspace] vibecoding git assistant failed, code={}, agentCode={}, sessionId={}",
+                    logCode, agentCode, sessionId, bizException);
+                throw new BizException(targetCode, bizException.getMessage());
+            }
             throw bizException;
         }
         log.error("[workspace] vibecoding git assistant failed, code={}, agentCode={}, sessionId={}",
             logCode, agentCode, sessionId, ex);
-        throw new BizException(ResultCode.GIT_ASSISTANT_AI_FAILED, describeError(ex));
+        throw new BizException(targetCode, describeError(ex));
     }
 
     /** 沿 cause 链找到根因，CompletableFuture/supplyAsync 的多层包装会掩盖真正的错误信息。 */

@@ -62,9 +62,9 @@
 
 **已知架构约束（对后续需求有直接影响）**：
 
-1. **Docker 模式产物在容器内**：宿主机侧的产物文件树、file_change 事件、Git 助手读不到容器内文件——这是
-   Docker 隔离的固有特性。凡依赖宿主机文件系统的功能（回滚、Review、Git 助手），在 Docker 模式下都需要
-   P1-3 的容器↔宿主机同步先行。
+1. ~~**Docker 模式产物在容器内**~~：**已由 P1-3 解决**。原约束是宿主机侧产物文件树 / file_change / Git 助手
+   读不到容器内文件；P1-3 用 bind mount 把宿主机会话目录挂进容器 `/workspace/sessions`，产物实时落宿主机，
+   依赖宿主机文件系统的功能（回滚 / Review / Git 助手 / test_report）在 Docker 模式与 local 等价可用。
 2. **`HarnessAgent.stream()` 同步异常**：沙箱资源获取失败时同步抛异常，已用 `Flux.defer` 包裹兜底（`ChatService`），
    新增 SSE 接口须沿用该模式。
 3. **Docker 模式 sessionId 转义**：`SandboxSafeAgentStateStore` 装饰器负责 `/`→`_` 转义，新增涉及沙箱状态
@@ -85,7 +85,7 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 | **P0-3** | 生成→验证→修复闭环 | 沙箱内编译/测试，结构化 `test_report`，失败自动修复 | 沙箱执行链路已通 + prompt 引导已有 | 3~5 天 | 测试结果 100% 结构化返回，失败自动修复 ≤3 轮 |
 | **P1-1** | Plan Mode 人工确认闭环 | 高风险操作先出计划、等确认再执行（HITL） | 框架 `PermissionMode`；starter 已有 Approval Store SPI 模式可参考 | 5~8 天 | 删除文件/批量修改前必须停下等确认 |
 | **P1-2** | 交互式运行面板 | 页面内直接对沙箱执行命令，输出流式回显 | 沙箱 execute 链路已通 | 3~5 天 | 常用命令（mvn test/java）免切终端 |
-| **P1-3** | Docker 沙箱补齐 | 容器↔宿主机产物同步 + `DockerSandboxIntegrationTest` | Docker 链路端到端已跑通 | 3~5 天 | Docker 模式下文件树/file_change/Git 助手可用 |
+| **P1-3** ✅ | Docker 沙箱补齐 | 容器↔宿主机产物同步（bind mount）+ `DockerSandboxIntegrationTest` | Docker 链路端到端已跑通 | 3~5 天 | Docker 模式下文件树/file_change/Git 助手可用（已达成） |
 | **P2-1** | 智能 Bug 修复 | 根据异常堆栈/日志定位并生成补丁 | workspace 文件检索 + 回滚保障 | 3~5 天 | 常见异常正确定位到源码行并给出合理修复 |
 | **P2-2** | 自动化重构助手 | 批量替换、API 迁移、依赖升级 | Plan Mode（P1-1）+ 回滚（P0-1） | 3~5 天 | 简单批量替换 100% 按预期完成 |
 | **P2-3** | 沙箱管理页面 | 会话沙箱状态查看、资源监控、手动清理 | `admin.sandbox.*` 配置体系 | 2~3 天 | 可查看并清理运行中的沙箱容器 |
@@ -126,7 +126,8 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 
 - 复用 `GitWorkspaceService` 的 `ProcessBuilder` 调 git 方式与错误码体系（`GIT_COMMAND_FAILED`）。
 - 回滚是破坏性操作，接口幂等（重复调用恢复到同一 baseline），日志记录操作人、sessionId、恢复文件数。
-- Docker 模式下产物在容器内，本接口暂只支持 local 模式，Docker 支持随 P1-3 落地。
+- local 与 Docker 模式均支持：P1-3 bind mount 让容器会话目录实时同步到宿主机，会话 git 仓库建在宿主机
+  会话目录，回滚对该目录执行 git 还原，两种模式语义一致（Docker 支持已随 P1-3 落地）。
 
 #### 4.1.4 验收标准
 
@@ -176,8 +177,11 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 
 #### 4.2.3 约束
 
-- 模型输出 JSON 解析失败时降级：原文以 `summary` 返回、`issues` 为空，错误码 `GIT_ASSISTANT_AI_FAILED`（复用），
-  不让前端拿到裸异常。
+- 模型输出 JSON 解析失败时降级：原文以 `summary` 返回、`issues` 为空（HTTP 200，不报错），不让前端拿到裸异常；
+  AI 硬失败（模型空响应/调用异常/超时）统一返回专属错误码 `AI_REVIEW_FAILED(40019)`（实现时调整：不复用
+  `GIT_ASSISTANT_AI_FAILED`，同一接口的全部 AI 失败对外只有一个码）。
+- 模型输出的 `severity`/`category` 在后端统一大写归一并校验合法集合（唯一防御点）：未知 severity 兜底
+  `SUGGESTION`、未知 category 兜底 `STYLE`，避免非规范值导致意见在前端分组中静默丢失。
 - 超大 diff（如 > 100KB）截断处理并在 summary 中声明"仅审查前 N 个文件"。
 
 #### 4.2.4 验收标准
@@ -220,8 +224,9 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 
 - 沙箱执行超时沿用 `admin.sandbox.execute-timeout-seconds`（默认 60s），`mvn test` 场景实测偏慢时
   允许按 agent 粒度调大，但不全局放开。
-- Docker 模式（network=none）下 `mvn test` 需依赖预热镜像内的本地仓库缓存，首版验收只要求 local 模式，
-  Docker 模式随 P1-3 一并验证。
+- Docker 模式（network=none）下 `mvn test` 需依赖预热镜像内的本地仓库缓存。`test_report` 结构化解析对
+  local/docker 一致启用（解析的是命令输出文本，两种模式都随流回传）；Docker 产物经 P1-3 bind mount 实时
+  落宿主机，报告引用的文件与宿主机文件树对齐——Docker 模式已随 P1-3 验证通过。
 
 #### 4.3.4 验收标准
 
@@ -296,7 +301,24 @@ starter 侧已有 Approval Store SPI 模式（接口 + InMemory 默认 + Jdbc �
 
 ---
 
-### 4.6 Docker 沙箱补齐（P1-3）
+### 4.6 Docker 沙箱补齐（P1-3）✅ 已实现
+
+> **实现结果（P1-3）**：采用**方案 A（bind mount，挂 agent 工作区根）**。
+> `AdminAgentInstanceFactory#buildDockerFilesystemSpec` 经框架 `DockerFilesystemSpec.additionalRunArgs`
+> 注入 `docker run -v <宿主机 {agentCode}/ 绝对路径>:/workspace:rw`，容器工作区根与宿主机 agent 工作区根
+> 双向实时可见。挂根而非只挂 `sessions/` 的原因：框架 MEMORY.md / Plan Mode `plans/` 写入走 Filesystem
+> 抽象即容器 workspace 根（反编译 `WorkspaceManager#appendUtf8WorkspaceRelative`、`PlanModeManager#writePlan`
+> 确认），挂根后这些跨会话文件同样落宿主机持久化、不随容器丢失。同时注入 `--user <宿主机 uid:gid>`
+> （类加载时 `id -u`/`id -g` 探测一次，失败自动跳过并记日志）：根治原生 Linux Docker 上容器 root 写出
+> 产物归 root:root、宿主机侧回滚（git checkout/clean）与文件保存撞属主的问题；并显式 `HOME=/workspace`
+> 兼容 `--user` 下无 passwd 条目的 mvn 等进程。关闭框架默认 workspace projection（快照式拷贝，与挂载
+> 重叠冗余）。Agent 被系统提示约束写入 `sessions/{sessionId}/`，经 bind mount 实时落宿主机，故
+> file_change / 文件树 / Git 助手 / 回滚（P0-1）/ Review（P0-2）/ test_report（P0-3）在 Docker 模式
+> **无需改造自动可用**——原先这些功能里"仅 local 模式"的门控已全部放开。容器内会话间可见面与 local 模式
+> 等同（local 的 workspace 本就是 agent 根），HTTP 侧 sessionId 穿越防御不受影响。方案 B（docker cp）
+> 曾作为过渡实现，bind mount 落地后已移除。`DockerSandboxIntegrationTest` 门控式集成测试**直接消费生产
+> 工厂装配**（真起容器验证写文件→编译运行→读回、产物/MEMORY.md 宿主机实时可见、`--user` 属主对齐，及
+> sessionId 转义 / 破坏性命令识别 / 资源获取失败快速抛错）本机 Docker 环境实测 4 用例全绿。
 
 #### 4.6.1 背景
 
@@ -387,8 +409,20 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 
 ### 4.10 多 Agent 协作编程（P3-1）
 
-> **前置依赖**：starter 侧 SubAgent / Pipeline 编排能力（`SubAgentProvider`、`SequentialPipeline` 等）
-> 在 admin-server 场景的显式装配验证。starter 能力就绪前本项不启动。
+> **降级版已交付 ✅**（完整形态待 starter 演进）。
+> **完整形态前置依赖**：starter 侧 SubAgent / Pipeline 编排能力（`SubAgentProvider`、`SequentialPipeline` 等）
+> 支持产品/架构/开发/测试/Review 五角色可暂停恢复、可中途介入。该依赖未就绪。
+>
+> **降级实现**：复用项目自研的顺序编排思路（参照 starter `MultiAgentOrchestrator#sequential`：各角色输出作为
+> 下一角色输入逐步细化），在 admin-server 落 `CollaborativeCodingService`。VibeCoding 面板新增"协作模式"开关
+> （默认关）；开启后一次需求输入走 **需求分析 → 方案设计 → 编码实现 → 自测审查** 顺序流水（角色数量/提示词
+> 可配 `admin.collaboration.*`，默认 4 角色）。各角色边界经 SSE `role_stage` 事件推送；**编码角色产出走既有
+> VibeCoding 沙箱/file_change/test_report 链路**（编排层不另起写入通道）；某角色失败 **fast fail 中断流水**并明确
+> 报错（错误码 40025），审计埋点 `COLLAB_STREAM`。
+>
+> **与完整形态的差异**：① 4 个内置角色（合并"测试"进编码角色的自测 + "审查"角色），非五角色独立体；
+> ② 顺序流水不支持"中途暂停/修改某步输出后继续"（无 P1-1 暂停恢复接入）；③ 角色间只传文本上下文
+> （分析/设计）与 git diff（审查），未做结构化 PRD/接口契约产物物件化。
 
 #### 4.10.1 角色设计
 
@@ -415,8 +449,19 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 
 ### 4.11 代码知识库问答（P3-2）
 
-> **前置依赖**：starter 侧真实 Embedding RAG（`SimpleKnowledge` + `core.embedding` 向量语义检索）——
-> 当前项目 RAG 为自实现关键词版，语义检索命中率无法达标。starter 能力就绪前本项不启动。
+> **降级版已交付 ✅**（完整形态待 starter 演进）。
+> **完整形态前置依赖**：starter 侧真实向量检索（接真向量数据库、增量/租户隔离的语义检索）。
+>
+> **降级实现**：用 **DashScope 真实 Embedding**（`text-embedding-v3`，走既有 `ai_model_config` 模型配置体系拿
+> Key）+ MySQL 向量存储（新表 `ai_code_knowledge_index` / `ai_code_knowledge_chunk`，Flyway V23）+ **应用层
+> 余弦相似度** 实现语义检索与检索增强问答。落 `KnowledgeService`：对指定源码目录按 **类/方法级** 切块（`CodeChunker`）
+> → Embedding → 入库；`/knowledge/search`（语义 top-k）+ `/knowledge/ask`（RAG 问答，带出处）。索引构建 **显式触发、
+> 进度可查**（索引行 status + chunk_count）；源码路径受 `admin.knowledge.allowed-roots` 白名单约束；Embedding Key
+> 缺失 **fast fail**（错误码 40027，不静默降级回关键词）。前端入口放工作区抽屉。
+>
+> **与完整形态的差异**：① 向量存 MySQL（JSON 数组）、相似度在应用层算，数据量万级以内合理，升级路径是接
+> 真向量库（Milvus/pgvector）；② 索引显式触发、不做文件变更自动监听（无增量热更）；③ 引用来源标注到
+> 文件 + 符号（类/方法名），未精确到行号范围；④ 尚未接入"对话 @知识库 / 生成前自动检索 / Review 规范 RAG 注入"。
 
 #### 4.11.1 需求
 
@@ -477,8 +522,8 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | POST | `/commit-message` | 生成 commit message | ✅ 已实现 |
 | POST | `/pr-description` | 生成 PR description | ✅ 已实现 |
 | POST | `/rollback` | 撤销本次会话全部修改 | 🎯 P0-1 |
-| POST | `/review` | 对本轮 diff 做 Code Review | 🎯 P0-2 |
-| POST | `/plan/confirm` | Plan Mode 计划确认/拒绝 | 🎯 P1-1 |
+| POST | `/review` | 对本轮 diff 做 Code Review | ✅ 已实现 P0-2 |
+| POST | `/plan/confirm` | Plan Mode 计划确认/拒绝 | ✅ 已实现 P1-1 |
 | POST | `/execute` | 交互式沙箱命令执行（SSE） | 🎯 P1-2 |
 | POST | `/diagnose` | 根据堆栈/日志诊断 Bug | 🎯 P2-1 |
 | POST | `/refactor` | 执行自动化重构任务 | 🎯 P2-2 |
@@ -493,9 +538,10 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | `node:*`（reasoning/tool_* 等） | `{text}` | 思考过程/工具执行节点（`ChatNodeKind` 派生） | ✅ 已实现 |
 | `file_change` | `{"operation":"MODIFY","path":"...","description":"..."}` | 文件变更事件（CREATE/MODIFY/DELETE） | ✅ 已实现 |
 | `done` | `[DONE]` | 流结束 | ✅ 已实现 |
-| `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,...}` | 沙箱编译/测试结构化报告 | 🎯 P0-3 |
-| `plan` | `{"planId":"...","actions":[...],"requiresConfirmation":true}` | Plan Mode 计划确认 | 🎯 P1-1 |
-| `review_result` | `{issues, summary}` | Review 结果（若走 SSE 增量返回；同步接口则不需要） | 🎯 P0-2 可选 |
+| `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,"round":1,"exhausted":false,...}` | 沙箱编译/测试结构化报告（含 round/exhausted 修复轮次进度） | ✅ 已实现 P0-3（local 与 docker 均启用，docker 产物经 P1-3 bind mount 同步） |
+| `plan` | `{"planId":"...","actions":[{"type":"DELETE","target":"..."}],"reason":"...","requiresConfirmation":true,"timeoutSeconds":300}` | Plan Mode 高风险操作待确认，流挂起 | ✅ 已实现 P1-1 |
+| `plan_result` | `{"planId":"...","status":"APPROVED\|REJECTED\|TIMEOUT"}` | 计划终态通知（超时=服务端自动拒绝，前端据此停倒计时） | ✅ 已实现 P1-1 |
+| `review_result` | `{issues, summary}` | Review 结果 | ⛔ 不采用：Review 走同步接口 `POST /review` 返回，未落 SSE 事件（见 §6.1） |
 
 ---
 
@@ -509,7 +555,7 @@ public record FileChangeEvent(String operation, String path, String description)
 }
 ```
 
-### 7.2 ReviewIssue（🎯 P0-2）
+### 7.2 ReviewIssue（✅ 已实现 P0-2，以实际代码为准）
 ```java
 public record ReviewIssue(
     String severity,    // CRITICAL|WARNING|SUGGESTION
@@ -521,18 +567,24 @@ public record ReviewIssue(
 ) {}
 ```
 
-### 7.3 TestReport（🎯 P0-3）
+### 7.3 TestReport（✅ 已实现 P0-3，以实际代码为准）
 ```java
 public record TestReport(
-    String command,          // 触发的命令，如 mvn test
-    int exitCode,
-    Integer passed,          // 解析不出时为 null，rawOutput 兜底
-    Integer failed,
-    Long durationMs,
+    String command,          // 识别出的命令：mvn test | mvn | javac
+    Integer exitCode,        // 进程退出码，解析不到为 null
+    boolean success,         // 综合判定（exitCode==0 且无失败用例）
+    int passed,
+    int failed,              // Failures + Errors
+    int skipped,
+    Long durationMs,         // 解析不到为 null
     List<String> failureDetails,
-    String rawOutput         // 解析失败时的原始输出兜底
+    String rawOutput,        // 解析降级时透传的原始输出尾段（成功且完整解析时为 null）
+    int round,               // 本轮对话内第几次编译/测试执行（1 基）
+    boolean exhausted        // 是否已达失败自动修复轮数上限（仍失败）
 ) {}
 ```
+> 与初版设计相比新增 `success`/`skipped`/`round`/`exhausted` 四个字段，承载失败自动修复循环
+> 的进度可视化（P0-3 需求 2）；`passed`/`failed` 由 `Integer` 收敛为原生 `int`（缺省 0，语义更清晰）。
 
 ### 7.4 RefactorTask（🎯 P2-2）
 ```java
@@ -557,7 +609,8 @@ public record RefactorTask(
 ### 阶段二：P1 升级——HITL 与生产化（2~3 周）
 - Plan Mode 人工确认闭环（P1-1）：先做方案设计评审（SSE 挂起边界），再实现。
 - 交互式运行面板（P1-2）。
-- Docker 沙箱补齐（P1-3）：优先验证 bind mount 方案；补 `DockerSandboxIntegrationTest`（遗留待办）。
+- ✅ Docker 沙箱补齐（P1-3）：已采用 bind mount 方案（框架原生 `WorkspaceSpec`+`BindMountEntry`）；
+  `DockerSandboxIntegrationTest` 已补齐并实测通过。
 
 ### 阶段三：P2 扩展——诊断与批量操作（2~3 周）
 - 智能 Bug 修复/日志诊断（P2-1）。
@@ -576,7 +629,7 @@ public record RefactorTask(
 |---|---|---|
 | Agent 生成代码质量不稳定 | 高 | P0 三件套（回滚 + Review + 验证闭环）构成三重校验，均为本版最高优先级 |
 | SSE 挂起等确认导致连接泄漏/前端假死 | 高 | P1-1 明确"挂起不持久化、超时即拒绝、重启即取消"边界；沿用 `Flux.defer` 兜底同步异常（一期实测坑） |
-| Docker 模式产物不可见导致功能"看似失效" | 中 | 第 2 章已声明为架构约束；P1-3 同步机制落地前，依赖宿主机文件的功能明确标注"仅 local 模式" |
+| ~~Docker 模式产物不可见导致功能"看似失效"~~ | 已消除 | P1-3 bind mount 同步机制已落地：容器 `/workspace/sessions` 实时挂到宿主机会话目录，依赖宿主机文件的功能（回滚/Review/Git 助手/test_report）Docker 模式与 local 等价可用 |
 | 自动化重构误改大量文件 | 高 | 强制 Plan Mode 确认（P1-1 先行）+ git baseline 回滚（P0-1 先行）+ 分批执行 |
 | 沙箱执行 `mvn test` 超时/离线仓库缺依赖 | 中 | local 模式先行验收；Docker 镜像预热本地仓库；超时按 agent 粒度可调 |
 | 代码库向量化成本高 | 中 | P3 延后启动；增量更新、按租户隔离、缓存 Embedding |
@@ -608,6 +661,7 @@ admin:
   sandbox:
     mode: ${ADMIN_SANDBOX_MODE:local}            # local | docker
     execute-timeout-seconds: ${ADMIN_SANDBOX_EXECUTE_TIMEOUT_SECONDS:60}
+    permission-mode: ${ADMIN_SANDBOX_PERMISSION_MODE:bypass}  # bypass（默认，护栏静默改写兜底）| hitl（P1-1 高风险挂起等人工确认）
     docker:
       image: ${ADMIN_SANDBOX_DOCKER_IMAGE:maven:3.9-eclipse-temurin-17}
       memory-mb: ${ADMIN_SANDBOX_DOCKER_MEMORY_MB:512}
@@ -615,7 +669,19 @@ admin:
       network: ${ADMIN_SANDBOX_DOCKER_NETWORK:none}
     guard:
       enabled: ${ADMIN_SANDBOX_GUARD_ENABLED:true}
+    hitl:                                          # 仅 permission-mode=hitl 时生效（P1-1）
+      confirm-timeout-seconds: ${ADMIN_SANDBOX_HITL_CONFIRM_TIMEOUT_SECONDS:300}  # 确认超时，超时按拒绝
+      batch-modify-threshold: ${ADMIN_SANDBOX_HITL_BATCH_MODIFY_THRESHOLD:3}      # 单轮批量修改超此值需确认
 ```
+
+> **Plan Mode HITL（P1-1）**：`permission-mode=hitl` 时，vibecoding 会话中 Agent 计划执行高风险操作
+> （删除文件 / 执行非只读或破坏性命令 `rm`·`mvn clean` 等 / 修改 pom.xml 等依赖文件 / 单轮批量修改超阈值）
+> 会先 emit `plan` SSE 事件并**在流中挂起**，前端弹确认卡片，用户批准后恢复执行、拒绝或超时（默认 5min）
+> 则取消该操作让 Agent 调整方案，流正常继续。挂起态只存内存、**服务重启即失效**（重启后确认接口 fast fail）。
+> 默认 `bypass` 保持现状（不影响非 vibecoding 链路），`SandboxGuardMiddleware` 始终作为最后防线叠加兜底：
+> **catastrophic 级命令（如 `rm -rf`、触碰 `.git`、访问 `/etc` `/root`）即使 HITL 人工批准，仍会被护栏
+> 最终改写拦截——护栏是不可绕过的最后防线（设计意图，非缺陷）**；人工批准真正放行的是 HITL 独有的
+> 确认级操作（`mvn clean`、修改依赖文件、批量修改等）。
 
 新功能的配置项按同一约定扩展（如 `admin.vibecoding.review.*`、`admin.vibecoding.plan-mode.*`），
 均支持 env 覆盖，默认值保守（新功能默认关闭）。

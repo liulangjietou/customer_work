@@ -14,11 +14,12 @@ import {
   rejectTicket,
   reopenTicket,
 } from '@/api/ticket'
+import { fetchSessionFeedback, submitFeedback } from '@/api/feedback'
 import { uploadChatAttachment } from '@/api/chat'
 import { useAuthStore } from '@/store/auth'
 import { chatSocket } from '@/utils/ws'
 import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT, isTicketEnded } from '@/types/api'
-import type { ChatMessage, Ticket, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
+import type { ChatMessage, FeedbackType, Ticket, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
 
 const HTTP_CONFLICT = 409
 
@@ -67,6 +68,10 @@ const rejectVisible = ref(false)
 const rejectReason = ref('')
 const acting = ref(false)
 
+// 消息级反馈（点赞/点踩）：messageId -> 已点类型，切会话时按 sessionId 重拉回显
+const feedbackByMessage = ref<Record<string, FeedbackType>>({})
+const feedbackSubmitting = ref(false)
+
 const scrollBox = ref<HTMLElement | null>(null)
 
 const sessionStorageKey = computed(() => `chat-session-${auth.userId}`)
@@ -102,7 +107,42 @@ async function scrollToBottom() {
 async function loadHistory() {
   const list = await fetchMessages(sessionId.value, { limit: 50 })
   messages.value = list
+  await loadFeedback()
   await scrollToBottom()
+}
+
+/** 按当前会话拉取已有反馈做回显；反馈是辅助信息，拉取失败不打断历史加载、不弹错误提示。 */
+async function loadFeedback() {
+  feedbackByMessage.value = {}
+  try {
+    const list = await fetchSessionFeedback(sessionId.value)
+    const map: Record<string, FeedbackType> = {}
+    for (const item of list) {
+      map[item.messageId] = item.type
+    }
+    feedbackByMessage.value = map
+  } catch {
+    // 静默失败：回显缺失只影响图标高亮，不影响聊天主流程
+  }
+}
+
+/** 点赞/点踩：重复点击同一类型不重复提交；点另一类型走后端 upsert 覆盖（允许改主意）。 */
+async function onFeedback(message: ChatMessage, type: FeedbackType) {
+  if (feedbackSubmitting.value || feedbackByMessage.value[message.messageId] === type) {
+    return
+  }
+  feedbackSubmitting.value = true
+  try {
+    const saved = await submitFeedback({
+      sessionId: message.sessionId || sessionId.value,
+      messageId: message.messageId,
+      type,
+    })
+    feedbackByMessage.value[saved.messageId] = saved.type
+    showToast(type === 'UP' ? '感谢您的认可' : '感谢反馈，我们会持续改进')
+  } finally {
+    feedbackSubmitting.value = false
+  }
 }
 
 async function refreshTicket() {
@@ -132,6 +172,7 @@ async function openNewSession() {
   ticketId.value = result.ticketId
   cacheSession(result.sessionId, result.ticketId)
   messages.value = []
+  feedbackByMessage.value = {}
   await refreshTicket()
 }
 
@@ -289,15 +330,21 @@ function onWsTicketEvent(data: unknown) {
   }
 }
 
-// system 帧（转人工/排队等通知）同样不带 sessionId/ticketId（WsFrame.system 只有 content/ts），
-// 无法按会话过滤，属后端已知限制；当前仍归入当前查看会话展示，跨会话误标风险留待后端补充标识字段后再收紧。
+// system 帧（转人工/排队等通知）：后端新格式已携带 sessionId/ticketId，与当前查看会话不匹配的
+// 通知直接丢弃，不再跨会话误标；不带标识的旧格式帧维持原行为归入当前会话展示（兼容旧服务端）。
 function onWsSystem(data: unknown) {
   const payload = data as WsSystemMessage
+  if (payload.sessionId && payload.sessionId !== sessionId.value) {
+    return
+  }
+  if (payload.ticketId && ticketId.value && payload.ticketId !== ticketId.value) {
+    return
+  }
   messages.value.push({
     id: Date.now(),
     messageId: `system-${payload.ts}`,
-    sessionId: sessionId.value,
-    ticketId: ticketId.value ?? '',
+    sessionId: payload.sessionId ?? sessionId.value,
+    ticketId: payload.ticketId ?? ticketId.value ?? '',
     senderType: 'SYSTEM',
     senderId: null,
     content: payload.content,
@@ -582,6 +629,19 @@ onUnmounted(() => {
             <div v-if="message.senderType === 'AGENT'" class="badge">人工客服</div>
             <div v-else-if="message.senderType === 'BOT'" class="badge">智能助手</div>
             <div class="bubble">{{ message.content }}</div>
+            <div v-if="message.senderType === 'BOT'" class="feedback-actions">
+              <van-icon
+                :name="feedbackByMessage[message.messageId] === 'UP' ? 'good-job' : 'good-job-o'"
+                :class="{ active: feedbackByMessage[message.messageId] === 'UP' }"
+                @click="onFeedback(message, 'UP')"
+              />
+              <van-icon
+                :name="feedbackByMessage[message.messageId] === 'DOWN' ? 'good-job' : 'good-job-o'"
+                class="thumb-down"
+                :class="{ active: feedbackByMessage[message.messageId] === 'DOWN' }"
+                @click="onFeedback(message, 'DOWN')"
+              />
+            </div>
           </div>
         </div>
         <div v-if="streamingActive" class="message-row row-BOT">
@@ -755,6 +815,24 @@ onUnmounted(() => {
 
 .row-USER .bubble {
   background: var(--cw-bubble-user-bg);
+}
+
+.feedback-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 4px;
+  padding-left: 2px;
+  font-size: 15px;
+  color: var(--cw-text-secondary);
+}
+
+/* Vant 无独立点踩图标，复用 good-job 旋转 180 度表达"踩" */
+.feedback-actions .thumb-down {
+  transform: rotate(180deg);
+}
+
+.feedback-actions .active {
+  color: var(--van-primary-color, #1989fa);
 }
 
 .cursor {

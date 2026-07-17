@@ -22,5 +22,23 @@ public enum AiCodingOperation {
     COMMIT_MESSAGE,
 
     /** Git 助手 · 生成 PR description（只读，模型一次性调用）。 */
-    PR_DESCRIPTION
+    PR_DESCRIPTION,
+
+    /** VibeCoding 会话一键回滚（破坏性：checkout + clean 恢复到 baseline）。 */
+    ROLLBACK,
+
+    /** Git 助手 · AI 代码审查（只读，对本轮 diff 一次性调用模型输出结构化审查意见）。 */
+    REVIEW,
+
+    /** VibeCoding Plan Mode 计划确认/拒绝（HITL，需求 P1-1）。 */
+    PLAN_CONFIRM,
+
+    /** 多 Agent 协作编程流水（P3-1，降级版：MultiAgentOrchestrator 顺序编排多角色）。 */
+    COLLAB_STREAM,
+
+    /** 代码知识库索引构建（P3-2，扫描源码→分块→Embedding→入库）。 */
+    KNOWLEDGE_INDEX,
+
+    /** 代码知识库检索增强问答（P3-2，语义检索 top-k → 一次性模型作答）。 */
+    KNOWLEDGE_ASK
 }

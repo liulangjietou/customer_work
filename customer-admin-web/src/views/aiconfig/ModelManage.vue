@@ -44,6 +44,34 @@ const testStatusMap: Record<number, { label: string; type: 'info' | 'success' | 
   2: { label: '连通失败', type: 'danger' },
 }
 
+// 厂商预设：默认 Base URL 与常用模型占位（与后端 ModelProvider 枚举默认值语义一致，用户可改）
+interface ProviderPreset {
+  value: string
+  label: string
+  defaultBaseUrl: string
+  modelPlaceholder: string
+}
+const providerPresets: ProviderPreset[] = [
+  { value: 'openai', label: 'OpenAI 兼容', defaultBaseUrl: 'https://api.openai.com/v1', modelPlaceholder: '如 gpt-4o-mini' },
+  { value: 'dashscope', label: '百炼 DashScope（通义千问）', defaultBaseUrl: 'https://dashscope.aliyuncs.com', modelPlaceholder: '如 qwen-max' },
+  { value: 'anthropic', label: 'Anthropic Claude', defaultBaseUrl: 'https://api.anthropic.com', modelPlaceholder: '如 claude-3-5-sonnet-latest' },
+  { value: 'gemini', label: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com', modelPlaceholder: '如 gemini-2.0-flash' },
+]
+
+function presetOf(provider: string | null | undefined): ProviderPreset {
+  return providerPresets.find((p) => p.value === provider) ?? providerPresets[0]
+}
+
+// 切换厂商时预填默认 Base URL：仅当当前 Base URL 为空或等于其它厂商默认值时覆盖，避免冲掉用户自定义值
+function handleProviderChange(provider: string) {
+  const preset = presetOf(provider)
+  const isDefaultOrEmpty = !form.baseUrl
+    || providerPresets.some((p) => p.defaultBaseUrl === form.baseUrl)
+  if (isDefaultOrEmpty) {
+    form.baseUrl = preset.defaultBaseUrl
+  }
+}
+
 async function handleTest(row: ModelVO) {
   testingId.value = row.id
   try {
@@ -118,15 +146,15 @@ onMounted(loadList)
           <el-input v-model="form.modelName" />
         </el-form-item>
         <el-form-item label="厂商">
-          <el-select v-model="form.provider">
-            <el-option label="OpenAI 兼容" value="openai" />
+          <el-select v-model="form.provider" @change="handleProviderChange">
+            <el-option v-for="p in providerPresets" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="模型标识" prop="model" :rules="[{ required: true, message: '请输入模型标识，如 gpt-4o-mini' }]">
-          <el-input v-model="form.model" placeholder="如 gpt-4o-mini" />
+        <el-form-item label="模型标识" prop="model" :rules="[{ required: true, message: '请输入模型标识' }]">
+          <el-input v-model="form.model" :placeholder="presetOf(form.provider).modelPlaceholder" />
         </el-form-item>
         <el-form-item label="Base URL" prop="baseUrl" :rules="[{ required: true, message: '请输入 Base URL' }]">
-          <el-input v-model="form.baseUrl" placeholder="如 https://api.openai.com/v1" />
+          <el-input v-model="form.baseUrl" :placeholder="presetOf(form.provider).defaultBaseUrl" />
         </el-form-item>
         <el-form-item label="AppKey">
           <el-input v-model="form.apiKey!" type="password" show-password :placeholder="dialogMode === 'edit' ? '留空则不修改' : '必填'" />

@@ -65,7 +65,10 @@ class ModelConfigServiceTest {
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
         // 16 字节测试密钥，满足 AES-128 长度要求
         AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil("0123456789abcdef");
-        service = new ModelConfigService(mapper, agentMapper, agentBackupModelMapper, cryptoUtil, modelFactory, agentInstanceCache);
+        com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher runtimeConfigPublisher =
+            mock(com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher.class);
+        service = new ModelConfigService(mapper, agentMapper, agentBackupModelMapper, cryptoUtil, modelFactory,
+            agentInstanceCache, runtimeConfigPublisher);
     }
 
     @Test
@@ -159,10 +162,11 @@ class ModelConfigServiceTest {
         existing.setId(1L);
         AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil("0123456789abcdef");
         existing.setApiKey(cryptoUtil.encrypt("sk-test"));
+        existing.setProvider("openai");
         existing.setBaseUrl("https://api.openai.com/v1");
         existing.setModel("gpt-4o-mini");
         when(mapper.selectById(1L)).thenReturn(existing);
-        when(modelFactory.testConnectivity(anyString(), anyString(), anyString()))
+        when(modelFactory.testConnectivity(anyString(), anyString(), anyString(), anyString()))
             .thenReturn(new ModelTestResult(ModelTestResult.STATUS_SUCCESS, LocalDateTime.now(), null));
 
         CompletableFuture<ModelTestResult> future = service.testConnectivity(1L);

@@ -13,9 +13,11 @@ import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.entity.AiSchedule
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.entity.AiScheduledTaskRun;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.mapper.AiScheduledTaskMapper;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.mapper.AiScheduledTaskRunMapper;
+import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.scheduler.ScheduledTaskChangedEvent;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminScheduledTaskProperties;
+import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
@@ -26,6 +28,8 @@ import io.agentscope.core.message.TextBlock;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Mono;
@@ -51,6 +55,7 @@ public class ScheduledTaskService {
 
     public static final String TRIGGER_TYPE_MANUAL = "MANUAL";
     public static final String TRIGGER_TYPE_XXL_JOB = "XXL_JOB";
+    public static final String TRIGGER_TYPE_INTERNAL = "INTERNAL";
 
     public static final String STATUS_SUCCESS = "SUCCESS";
     public static final String STATUS_FAILED = "FAILED";
@@ -63,15 +68,20 @@ public class ScheduledTaskService {
     private final AiAgentMapper agentMapper;
     private final AdminAgentInstanceFactory agentInstanceFactory;
     private final AdminScheduledTaskProperties properties;
+    private final AdminSchedulerProperties schedulerProperties;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ScheduledTaskService(AiScheduledTaskMapper taskMapper, AiScheduledTaskRunMapper runMapper,
                                  AiAgentMapper agentMapper, AdminAgentInstanceFactory agentInstanceFactory,
-                                 AdminScheduledTaskProperties properties) {
+                                 AdminScheduledTaskProperties properties, AdminSchedulerProperties schedulerProperties,
+                                 ApplicationEventPublisher eventPublisher) {
         this.taskMapper = taskMapper;
         this.runMapper = runMapper;
         this.agentMapper = agentMapper;
         this.agentInstanceFactory = agentInstanceFactory;
         this.properties = properties;
+        this.schedulerProperties = schedulerProperties;
+        this.eventPublisher = eventPublisher;
     }
 
     public IPage<ScheduledTaskVO> page(ScheduledTaskPageQuery query) {
@@ -93,22 +103,27 @@ public class ScheduledTaskService {
     public void create(ScheduledTaskSaveRequest request) {
         requireTaskCodeAvailable(request.taskCode(), null);
         requireEnabledAgent(request.agentId());
+        requireValidCron(request.cron());
         AiScheduledTask task = new AiScheduledTask();
         fillFromRequest(task, request);
         taskMapper.insert(task);
+        publishChanged(task.getId(), false);
     }
 
     public void update(Long id, ScheduledTaskSaveRequest request) {
         AiScheduledTask task = requireTask(id);
         requireTaskCodeAvailable(request.taskCode(), id);
         requireEnabledAgent(request.agentId());
+        requireValidCron(request.cron());
         fillFromRequest(task, request);
         taskMapper.updateById(task);
+        publishChanged(id, false);
     }
 
     public void delete(Long id) {
         requireTask(id);
         taskMapper.deleteById(id);
+        publishChanged(id, true);
     }
 
     public void enable(Long id) {
@@ -125,6 +140,22 @@ public class ScheduledTaskService {
         update.setId(id);
         update.setEnabled(enabled);
         taskMapper.updateById(update);
+        publishChanged(id, false);
+    }
+
+    /** 发布任务变更事件，驱动内置调度器动态重注册/取消（xxl-job 模式下调度器自行忽略）。 */
+    private void publishChanged(Long id, boolean removed) {
+        eventPublisher.publishEvent(new ScheduledTaskChangedEvent(id, removed));
+    }
+
+    /** cron 校验：空表示不参与内置周期调度（合法）；非空则必须是合法 Spring cron，否则 fast-fail。 */
+    private void requireValidCron(String cron) {
+        if (!StringUtils.hasText(cron)) {
+            return;
+        }
+        if (!CronExpression.isValidExpression(cron.trim())) {
+            throw new BizException(ResultCode.SCHEDULER_CRON_INVALID, "cron 表达式非法: " + cron);
+        }
     }
 
     public ScheduledTaskRunVO trigger(Long id) {
@@ -241,6 +272,7 @@ public class ScheduledTaskService {
         task.setTaskName(request.taskName());
         task.setAgentId(request.agentId());
         task.setPrompt(request.prompt());
+        task.setCron(StringUtils.hasText(request.cron()) ? request.cron().trim() : null);
         task.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : STATUS_ENABLED);
         task.setRemark(request.remark());
     }
@@ -254,8 +286,10 @@ public class ScheduledTaskService {
         AiAgent agent = agentMapper.selectById(task.getAgentId());
         vo.setAgentName(agent == null ? null : agent.getAgentName());
         vo.setPrompt(task.getPrompt());
+        vo.setCron(task.getCron());
         vo.setEnabled(Integer.valueOf(STATUS_ENABLED).equals(task.getEnabled()));
         vo.setRemark(task.getRemark());
+        vo.setScheduleMode(schedulerProperties.getMode());
         vo.setCreateTime(task.getCreateTime());
         vo.setUpdateTime(task.getUpdateTime());
         return vo;

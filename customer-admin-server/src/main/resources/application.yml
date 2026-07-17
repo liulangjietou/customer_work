@@ -86,8 +86,14 @@ admin:
       # 期间请求直接走备用模型；熔断到期自动半开（重置计数、放行一次主模型尝试）。见 ModelCircuitBreakerRegistry。
       failure-threshold: ${ADMIN_MODEL_FAILOVER_FAILURE_THRESHOLD:3}
       open-duration-seconds: ${ADMIN_MODEL_FAILOVER_OPEN_DURATION_SECONDS:60}
+  scheduler:
+    # 定时任务调度模式：internal（默认，admin-server 内置动态调度器按 cron 执行，无需外部 XXL-JOB）
+    # ｜xxl-job（周期以 XXL-JOB 控制台为准，内置调度器不注册，cron 字段仅保存展示）。两模式互斥执行避免双跑。
+    mode: ${ADMIN_SCHEDULER_MODE:internal}
+    # 内置调度器线程池大小（需 > 1，单次执行可能是分钟级同步调用）。
+    pool-size: ${ADMIN_SCHEDULER_POOL_SIZE:4}
   scheduled-task:
-    # 单次任务执行超时（秒）：Agent 同步调用的硬性超时兜底，手动触发接口 / XXL-JOB JobHandler 共用。
+    # 单次任务执行超时（秒）：Agent 同步调用的硬性超时兜底，手动触发接口 / XXL-JOB JobHandler / 内置调度器共用。
     execute-timeout-seconds: ${ADMIN_SCHEDULED_TASK_TIMEOUT_SECONDS:300}
   xxl-job:
     # 定时任务 XXL-JOB 接入：默认关闭，本地无调度中心也能正常启动；手动触发路径不依赖本配置。
@@ -115,6 +121,12 @@ admin:
     # SQL 配置管理执行防护：目标多为生产库，超时与最大行数硬性兜底，防止慢 SQL/大结果集拖垮外部库。
     query-timeout-seconds: ${ADMIN_SQL_QUERY_TIMEOUT_SECONDS:30}
     max-rows: ${ADMIN_SQL_MAX_ROWS:2000}
+  system-tool:
+    http:
+      # httpclient 系统工具 SSRF 白名单：为空=默认模式（拒环回/内网、放公网）；
+      # 非空=收紧模式（仅放行白名单内 host，支持精确域名与 *.example.com 通配后缀）。
+      # 逗号分隔多个 host，如 api.example.com,*.internal.corp
+      allowed-hosts: ${ADMIN_SYSTEM_TOOL_HTTP_ALLOWED_HOSTS:}
   sandbox:
     # VibeCoding 代码沙箱：local（默认，无隔离，直接跑宿主机）｜docker（容器隔离，需本机/服务器已装 Docker）。
     mode: ${ADMIN_SANDBOX_MODE:local}
@@ -156,6 +168,38 @@ admin:
         remote-dir: ${ADMIN_SKILL_STORAGE_SFTP_REMOTE_DIR:}
         timeout-ms: ${ADMIN_SKILL_STORAGE_SFTP_TIMEOUT_MS:10000}
         strict-host-key-checking: ${ADMIN_SKILL_STORAGE_SFTP_STRICT_HOST_KEY_CHECKING:false}
+  runtime-publish:
+    # 客服机器人运行时配置发布：命中渠道绑定的智能体/模型被改动后，把运行时配置（模型/兜底/提示词/MCP/
+    # maxIters）发布到 Nacos，8080 客服机器人监听热生效。默认关闭，不影响任何现有后台功能。
+    # 载荷里的 API Key 密文用上面 admin.aes-secret-key 加密后原样携带，8080 侧用同一密钥（CUSTOMER_WORK_CONFIG_AES_KEY）解密。
+    nacos:
+      enabled: ${ADMIN_RUNTIME_PUBLISH_NACOS_ENABLED:false}
+      server-addr: ${ADMIN_RUNTIME_PUBLISH_NACOS_SERVER_ADDR:localhost:8848}
+      namespace: ${ADMIN_RUNTIME_PUBLISH_NACOS_NAMESPACE:}
+      group: ${ADMIN_RUNTIME_PUBLISH_NACOS_GROUP:DEFAULT_GROUP}
+      # dataId 必须与 8080 的 customer-work.nacos.runtime-config-data-id 一致。
+      data-id: ${ADMIN_RUNTIME_PUBLISH_NACOS_DATA_ID:customer-work-runtime-config}
+      username: ${ADMIN_RUNTIME_PUBLISH_NACOS_USERNAME:}
+      password: ${ADMIN_RUNTIME_PUBLISH_NACOS_PASSWORD:}
+      timeout-ms: ${ADMIN_RUNTIME_PUBLISH_NACOS_TIMEOUT_MS:3000}
+  collaboration:
+    # 多 Agent 协作编程（P3-1 降级版）：VibeCoding「协作模式」开关（默认关，前端逐次开启）开启后一次需求
+    # 走多角色顺序流水。roles 留空则用内置默认 4 角色（需求分析→方案设计→编码实现→自测审查）；
+    # 自定义时每个角色 name/type(PLAN|CODING|REVIEW)/prompt 均可配。role-timeout-seconds 为 PLAN/REVIEW
+    # 角色单次一次性模型调用超时。
+    role-timeout-seconds: ${ADMIN_COLLAB_ROLE_TIMEOUT_SECONDS:60}
+  knowledge:
+    # 代码知识库（P3-2 降级版）：DashScope 真实 Embedding + MySQL 向量 + 应用层余弦相似度。
+    # Key 从 ai_model_config 的 dashscope 行借用（AES 解密），缺失即 fast fail。
+    embedding-model: ${ADMIN_KNOWLEDGE_EMBEDDING_MODEL:text-embedding-v3}
+    embedding-base-url: ${ADMIN_KNOWLEDGE_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com}
+    dimensions: ${ADMIN_KNOWLEDGE_DIMENSIONS:1024}
+    batch-size: ${ADMIN_KNOWLEDGE_BATCH_SIZE:10}
+    default-top-k: ${ADMIN_KNOWLEDGE_DEFAULT_TOP_K:5}
+    max-chunk-chars: ${ADMIN_KNOWLEDGE_MAX_CHUNK_CHARS:1500}
+    # 允许被索引的源码根白名单（源码路径必须落在其一之下，防越权读盘）。默认只允许 admin 工作区；
+    # 需索引外部仓库源码时追加其绝对路径根，逗号分隔（YAML 列表）。
+    allowed-roots: ${ADMIN_KNOWLEDGE_ALLOWED_ROOTS:./data/admin-workspace}
 
 # 对话附件多格式解析（starter attachment 域配置，admin 经 AdminAttachmentConfig 显式装配复用这份强类型绑定）。
 # 顶层 customer-work.* 前缀（区别于上面 admin.customer-work.* 的坐席服务客户端配置），对应 AttachmentProperties。

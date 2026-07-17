@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { UploadRequestOptions } from 'element-plus'
 import {
+  confirmVibeCodingPlan,
   generateCommitMessage,
   generatePrDescription,
   getGitDiffSummary,
@@ -9,6 +10,8 @@ import {
   interruptVibeCoding,
   listWorkspaceFiles,
   readWorkspaceFileContent,
+  reviewVibeCoding,
+  rollbackVibeCoding,
   saveWorkspaceFileContent,
   streamVibeCoding,
 } from '@/api/vibecoding'
@@ -18,17 +21,44 @@ import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import { useThemeStore } from '@/store/theme'
 import { generateUuid } from '@/utils/uuid'
-import type { FileChangeEvent, GitDiffSummary, WorkspaceFileContent, WorkspaceFileNode } from '@/types/api'
+import type {
+  FileChangeEvent,
+  GitDiffSummary,
+  PlanEvent,
+  PlanResultEvent,
+  ReviewIssue,
+  ReviewResult,
+  RoleStageEvent,
+  TestReport,
+  WorkspaceFileContent,
+  WorkspaceFileNode,
+} from '@/types/api'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
 
 const props = defineProps<{ agentCode: string }>()
 
+/** Plan Mode 确认卡片（P1-1 HITL）：一条 plan 事件对应一张卡片，用户批准/拒绝或超时后翻成终态。 */
+interface PlanCard {
+  planId: string
+  actions: PlanEvent['actions']
+  reason: string
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'TIMEOUT'
+  remainingSeconds: number
+  submitting: boolean
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
+  // 本条助手消息内累积的沙箱编译/测试报告（P0-3），按到达顺序渲染成测试报告卡片时间线
+  testReports?: TestReport[]
+  // 本条助手消息内的 Plan Mode 确认卡片（P1-1），高风险操作待人工确认
+  plans?: PlanCard[]
+  // 协作模式多角色阶段进度（P3-1），按 role_stage 事件到达顺序累积
+  stages?: RoleStageEvent[]
 }
 
 /** localId 是前端本地生成的临时 key，用于 v-for/移除定位（上传过程中后端 id 还不存在）；
@@ -49,6 +79,8 @@ const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
 const sessionId = ref(generateUuid())
 const messages = ref<ChatMessage[]>([])
 const input = ref('')
+// 协作模式开关（P3-1）：开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作
+const collaborationMode = ref(false)
 const streaming = ref(false)
 const interrupting = ref(false) // 已点终止，等后端真正停下来（协作式中断，不保证立即生效）
 const interrupted = ref(false) // 上一轮是被终止结束的，可以点"继续"续跑挂起的工具调用
@@ -70,6 +102,12 @@ const sandboxMode = ref<'local' | 'docker' | null>(null)
 
 // 实时文件变更时间线（本轮对话内累积，切会话/新建会话时清空）
 const fileChanges = ref<Array<FileChangeEvent & { time: number }>>([])
+// 会话一键回滚进行中
+const rollingBack = ref(false)
+
+// Plan Mode（P1-1 HITL）：待确认计划的 planId -> 卡片，供 plan_result 快速定位；倒计时统一由一个定时器驱动
+const pendingPlans = new Map<string, PlanCard>()
+let planCountdownTimer: ReturnType<typeof setInterval> | null = null
 
 // Git 助手抽屉
 const gitDrawerVisible = ref(false)
@@ -80,6 +118,9 @@ const commitLoading = ref(false)
 const commitMessageText = ref('')
 const prLoading = ref(false)
 const prDescriptionText = ref('')
+// AI 代码审查（P0-2）
+const reviewLoading = ref(false)
+const reviewResult = ref<ReviewResult | null>(null)
 
 // 文件预览抽屉
 const previewVisible = ref(false)
@@ -103,8 +144,18 @@ function newSession() {
   fileNodes.value = []
   filesLoaded.value = false
   fileChanges.value = []
+  clearPendingPlans()
   // 新会话会用当前全局配置，不是上一个（可能是历史会话解析出的）沙箱模式
   loadCurrentSandboxMode()
+}
+
+/** 清空待确认计划与倒计时（切会话/新建会话/卸载时）。 */
+function clearPendingPlans() {
+  pendingPlans.clear()
+  if (planCountdownTimer) {
+    clearInterval(planCountdownTimer)
+    planCountdownTimer = null
+  }
 }
 
 /** 前端先拦超限文件，与后端 max-file-size-mb 对齐，减少无谓上传请求。 */
@@ -174,6 +225,7 @@ async function openSession(targetSessionId: string) {
     fileNodes.value = []
     filesLoaded.value = false
     fileChanges.value = []
+    clearPendingPlans()
     // 标签要反映"这条会话当时真正用的模式"，从首条用户消息里解析；更早期没有该前缀的历史记录
     // 解析不出来，此时不展示误导性的标签（不回退成当前全局配置，两者含义不同不能互相替代）
     const firstUserMessage = history.find((msg) => msg.role === 'user')
@@ -205,14 +257,14 @@ function send() {
     text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
     nodes: [],
   })
-  messages.value.push({ role: 'assistant', text: '', nodes: [] })
+  messages.value.push({ role: 'assistant', text: '', nodes: [], testReports: [] })
   const assistantMessage = messages.value[messages.value.length - 1]
   input.value = ''
   attachments.value = []
   streaming.value = true
   scrollToBottom()
 
-  abortStream = streamVibeCoding(props.agentCode, { sessionId: sessionId.value, message: messageToSend }, {
+  abortStream = streamVibeCoding(props.agentCode, { sessionId: sessionId.value, message: messageToSend, collaboration: collaborationMode.value }, {
     onEvent: (event) => {
       if (event.event === 'done') {
         streaming.value = false
@@ -222,6 +274,25 @@ function send() {
       }
       if (event.event === 'file_change') {
         handleFileChange(event.data)
+        return
+      }
+      if (event.event === 'test_report') {
+        handleTestReport(assistantMessage, event.data)
+        scrollToBottom()
+        return
+      }
+      if (event.event === 'role_stage') {
+        handleRoleStage(assistantMessage, event.data)
+        scrollToBottom()
+        return
+      }
+      if (event.event === 'plan') {
+        handlePlanEvent(assistantMessage, event.data)
+        scrollToBottom()
+        return
+      }
+      if (event.event === 'plan_result') {
+        handlePlanResult(event.data)
         return
       }
       if (event.event.startsWith('node:')) {
@@ -290,12 +361,223 @@ function handleFileChange(raw: string) {
   }
 }
 
+/** 解析 test_report SSE 事件，追加到该助手消息的测试报告时间线（每轮验证一张卡片）。 */
+function handleTestReport(assistantMessage: ChatMessage, raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as TestReport
+    ;(assistantMessage.testReports ??= []).push(parsed)
+  } catch {
+    // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/**
+ * 解析 role_stage SSE 事件（P3-1 协作模式）：维护该助手消息的多角色阶段进度列表。
+ * START 追加一条新阶段；DONE/FAILED 按 index 匹配已存在阶段并更新其状态与产物（找不到则补插一条）。
+ */
+function handleRoleStage(assistantMessage: ChatMessage, raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as RoleStageEvent
+    const stages = (assistantMessage.stages ??= [])
+    if (parsed.status === 'START') {
+      stages.push({ ...parsed, output: null })
+      return
+    }
+    // DONE / FAILED：按 index 更新已有阶段的状态与产物
+    const existing = stages.find((s) => s.index === parsed.index)
+    if (existing) {
+      existing.status = parsed.status
+      existing.output = parsed.output
+      existing.role = parsed.role
+      existing.type = parsed.type
+    } else {
+      stages.push({ ...parsed })
+    }
+  } catch {
+    // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/** 阶段状态标签文案。 */
+function roleStageStatusText(status: RoleStageEvent['status']): string {
+  const map: Record<RoleStageEvent['status'], string> = {
+    START: '进行中',
+    DONE: '完成',
+    FAILED: '失败',
+  }
+  return map[status]
+}
+
+/** 阶段状态标签色（el-tag type）。 */
+function roleStageStatusTag(status: RoleStageEvent['status']): 'primary' | 'success' | 'danger' {
+  if (status === 'DONE') return 'success'
+  if (status === 'FAILED') return 'danger'
+  return 'primary'
+}
+
+/** 阶段类型徽标文案。 */
+function roleStageTypeText(type: RoleStageEvent['type']): string {
+  const map: Record<RoleStageEvent['type'], string> = {
+    PLAN: '规划',
+    CODING: '编码',
+    REVIEW: '审查',
+  }
+  return map[type]
+}
+
+/** 解析 plan SSE 事件，追加一张待确认卡片并启动倒计时（P1-1 HITL）。 */
+function handlePlanEvent(assistantMessage: ChatMessage, raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as PlanEvent
+    const card: PlanCard = {
+      planId: parsed.planId,
+      actions: parsed.actions ?? [],
+      reason: parsed.reason ?? '',
+      status: 'PENDING',
+      remainingSeconds: parsed.timeoutSeconds ?? 300,
+      submitting: false,
+    }
+    const plans = (assistantMessage.plans ??= [])
+    plans.push(card)
+    // 存入 pendingPlans 的必须是"push 进响应式数组后"的响应式代理引用，否则定时器/plan_result 修改
+    // 原始对象不会触发视图更新（Vue3 响应式经典坑：修改未经代理的原对象不触发依赖收集）
+    pendingPlans.set(card.planId, plans[plans.length - 1])
+    ensurePlanCountdown()
+  } catch {
+    // 解析失败不影响主对话流程，静默丢弃
+  }
+}
+
+/** 解析 plan_result SSE 事件，把对应卡片翻成终态（含服务端超时自动拒绝）。 */
+function handlePlanResult(raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as PlanResultEvent
+    const card = pendingPlans.get(parsed.planId)
+    if (card) {
+      card.status = parsed.status
+      card.submitting = false
+      pendingPlans.delete(parsed.planId)
+    }
+  } catch {
+    // 解析失败静默丢弃
+  }
+}
+
+/** 启动（若未启动）统一倒计时定时器：每秒递减所有待确认卡片，归零即本地标记超时。 */
+function ensurePlanCountdown() {
+  if (planCountdownTimer) return
+  planCountdownTimer = setInterval(() => {
+    if (pendingPlans.size === 0) {
+      clearInterval(planCountdownTimer!)
+      planCountdownTimer = null
+      return
+    }
+    for (const card of pendingPlans.values()) {
+      card.remainingSeconds -= 1
+      if (card.remainingSeconds <= 0) {
+        // 本地倒计时归零：先行标记超时（服务端也会补发 plan_result=TIMEOUT，二者幂等）
+        card.status = 'TIMEOUT'
+        card.remainingSeconds = 0
+        pendingPlans.delete(card.planId)
+      }
+    }
+  }, 1000)
+}
+
+/** 用户对某个计划卡片点批准/拒绝：调后端确认接口，成功后翻成终态。 */
+async function handlePlanDecision(card: PlanCard, approved: boolean) {
+  if (card.status !== 'PENDING' || card.submitting) return
+  card.submitting = true
+  try {
+    await confirmVibeCodingPlan(props.agentCode, {
+      sessionId: sessionId.value,
+      planId: card.planId,
+      approved,
+    })
+    card.status = approved ? 'APPROVED' : 'REJECTED'
+    pendingPlans.delete(card.planId)
+  } catch (error) {
+    // 失败常见于挂起项已失效（超时/服务重启）：提示并按拒绝态收尾，避免卡片永久停在"等待确认"
+    ElMessage.error('计划确认失败：' + (error instanceof Error ? error.message : String(error)))
+    card.status = 'TIMEOUT'
+    pendingPlans.delete(card.planId)
+  } finally {
+    card.submitting = false
+  }
+}
+
+/** 计划卡片操作类型 → 中文标签 + Element tag 着色。 */
+function planActionLabel(type: string): string {
+  switch (type) {
+    case 'DELETE': return '删除文件'
+    case 'RUN_COMMAND': return '执行命令'
+    case 'MODIFY_DEPENDENCY': return '修改依赖'
+    case 'BATCH_MODIFY': return '批量修改'
+    default: return type
+  }
+}
+
+/** 计划卡片终态 → 中文文案。 */
+function planStatusText(status: PlanCard['status']): string {
+  switch (status) {
+    case 'APPROVED': return '已批准'
+    case 'REJECTED': return '已拒绝'
+    case 'TIMEOUT': return '已超时（自动拒绝）'
+    default: return '等待确认'
+  }
+}
+
+/** 测试报告卡片标题：命令 + 轮次 + 通过/失败概览。 */
+function testReportTitle(report: TestReport): string {
+  const counts = report.command.startsWith('mvn test')
+    ? ` · 通过 ${report.passed} / 失败 ${report.failed}${report.skipped ? ` / 跳过 ${report.skipped}` : ''}`
+    : ` · 退出码 ${report.exitCode ?? '—'}`
+  return `第 ${report.round} 轮 · ${report.command}${counts}`
+}
+
+/**
+ * 撤销本次会话的全部文件改动（回滚到对话前的 baseline 状态）。
+ * 破坏性操作，二次确认后调用；成功后清空变更时间线、刷新文件树与 diff，并在对话流插入系统提示。
+ */
+async function handleRollback() {
+  try {
+    await ElMessageBox.confirm(
+      '此操作将丢弃本次会话对工作区的全部文件改动：新增文件将被删除，修改/删除的文件将恢复到对话前的状态。操作不可撤销，是否继续？',
+      '撤销全部修改',
+      { type: 'warning', confirmButtonText: '确认撤销', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  rollingBack.value = true
+  try {
+    const res = await rollbackVibeCoding(props.agentCode, sessionId.value)
+    fileChanges.value = []
+    await loadFiles()
+    // Git 助手抽屉开着则刷新 diff（回滚后应无变更）
+    if (gitDrawerVisible.value) await loadGitDiff()
+    // 对话流插入一条系统提示（需求 §4.1.2）
+    messages.value.push({
+      role: 'assistant',
+      text: `🔄 已撤销本次会话的全部修改（恢复 ${res.restoredFiles.length} 个文件，删除 ${res.deletedFiles.length} 个新增文件）。`,
+      nodes: [],
+    })
+    scrollToBottom()
+    ElMessage.success('已撤销本次会话的全部修改')
+  } catch (error) {
+    ElMessage.error('撤销失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    rollingBack.value = false
+  }
+}
+
 /** 打开 Git 助手抽屉，并立即加载一次 diff 摘要。 */
 async function openGitAssistant() {
   gitDrawerVisible.value = true
   gitDiff.value = null
   commitMessageText.value = ''
   prDescriptionText.value = ''
+  reviewResult.value = null
   await loadGitDiff()
 }
 
@@ -332,6 +614,59 @@ async function handleGeneratePrDescription() {
   } finally {
     prLoading.value = false
   }
+}
+
+/** 触发 AI 代码审查：对本轮 diff 输出结构化审查意见。 */
+async function handleReview() {
+  reviewLoading.value = true
+  try {
+    reviewResult.value = await reviewVibeCoding(props.agentCode, sessionId.value)
+  } catch (error) {
+    ElMessage.error('代码审查失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    reviewLoading.value = false
+  }
+}
+
+/** 严重级别 → Element Plus tag 类型（着色）。 */
+function severityTagType(severity: ReviewIssue['severity']): 'danger' | 'warning' | 'info' {
+  if (severity === 'CRITICAL') return 'danger'
+  if (severity === 'WARNING') return 'warning'
+  return 'info'
+}
+
+/** 按严重级别分组审查意见（CRITICAL → WARNING → SUGGESTION 顺序）。 */
+function groupedIssues(issues: ReviewIssue[]): Array<{ severity: ReviewIssue['severity']; items: ReviewIssue[] }> {
+  const order: ReviewIssue['severity'][] = ['CRITICAL', 'WARNING', 'SUGGESTION']
+  return order
+    .map((severity) => ({ severity, items: issues.filter((i) => i.severity === severity) }))
+    .filter((g) => g.items.length > 0)
+}
+
+/** 点击审查意见里的文件，定位到工作区文件查看器（复用现有文件读取/预览抽屉）。 */
+async function openIssueFile(issue: ReviewIssue) {
+  if (!issue.file) return
+  await openFilePreview({ name: issue.file, relativePath: issue.file, directory: false, children: [] })
+}
+
+/**
+ * 一键生成修复（需求 §4.2.2.4）：把 CRITICAL/WARNING 意见拼成用户消息发回 stream 对话，
+ * 由 Agent 走既有 VibeCoding 链路修复（天然带 file_change 与回滚保障）。
+ */
+function generateFixFromReview() {
+  const result = reviewResult.value
+  if (!result || result.issues.length === 0) return
+  const actionable = result.issues.filter((i) => i.severity === 'CRITICAL' || i.severity === 'WARNING')
+  if (actionable.length === 0) {
+    ElMessage.info('没有需要修复的 CRITICAL/WARNING 问题')
+    return
+  }
+  const lines = actionable.map(
+    (i) => `- [${i.severity}] ${i.file}${i.line ? `:${i.line}` : ''} ${i.message}（建议：${i.suggestion}）`,
+  )
+  input.value = `请根据以下代码审查意见修复问题，并在沙箱内重新验证：\n${lines.join('\n')}`
+  gitDrawerVisible.value = false
+  send()
 }
 
 async function copyToClipboard(text: string, label: string) {
@@ -449,6 +784,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   abortStream?.()
+  clearPendingPlans()
 })
 
 // newSession 供 WorkspaceView 上提后的工具栏"新建会话"按钮按激活 Tab 分发调用
@@ -468,7 +804,127 @@ defineExpose({ newSession })
               :active="streaming && index === messages.length - 1 && !msg.text"
             />
             <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
-            <template v-else>{{ msg.text }}</template>
+            <!-- 沙箱编译/测试报告卡片时间线（P0-3）：每轮验证一张，通过绿/失败红，可展开看失败明细 -->
+            <div
+              v-if="msg.role === 'assistant' && msg.testReports && msg.testReports.length > 0"
+              class="test-reports"
+            >
+              <el-collapse>
+                <el-collapse-item v-for="(report, ri) in msg.testReports" :key="ri" :name="ri">
+                  <template #title>
+                    <span class="test-report-title" :class="report.success ? 'is-success' : 'is-failure'">
+                      <el-icon v-if="report.success"><SuccessFilled /></el-icon>
+                      <el-icon v-else><CircleCloseFilled /></el-icon>
+                      <span class="test-report-title-text">{{ testReportTitle(report) }}</span>
+                      <el-tag v-if="report.exhausted" type="danger" size="small" effect="dark" class="exhausted-tag">
+                        已达最大修复轮次
+                      </el-tag>
+                    </span>
+                  </template>
+                  <div v-if="report.durationMs != null" class="test-report-meta">耗时 {{ report.durationMs }} ms</div>
+                  <ul v-if="report.failureDetails.length > 0" class="test-report-failures">
+                    <li v-for="(d, di) in report.failureDetails" :key="di">{{ d }}</li>
+                  </ul>
+                  <pre v-if="report.rawOutput" class="test-report-raw">{{ report.rawOutput }}</pre>
+                  <div
+                    v-if="report.success && report.failureDetails.length === 0 && !report.rawOutput"
+                    class="test-report-ok"
+                  >
+                    验证通过 ✓
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
+            <!-- 协作模式多角色阶段进度（P3-1）：每个角色一张卡片，展示状态标签、类型徽标与文本产物 -->
+            <div
+              v-if="msg.role === 'assistant' && msg.stages && msg.stages.length > 0"
+              class="role-stages"
+            >
+              <div
+                v-for="(stage, si) in msg.stages"
+                :key="si"
+                class="role-stage-card"
+                :class="`role-stage-card--${stage.status.toLowerCase()}`"
+              >
+                <div class="role-stage-header">
+                  <span class="role-stage-name">{{ stage.role }}</span>
+                  <el-tag size="small" class="role-stage-type">{{ roleStageTypeText(stage.type) }}</el-tag>
+                  <span class="role-stage-index">{{ stage.index }}/{{ stage.total }}</span>
+                  <el-tag
+                    :type="roleStageStatusTag(stage.status)"
+                    size="small"
+                    effect="dark"
+                    class="role-stage-status"
+                  >
+                    {{ roleStageStatusText(stage.status) }}
+                  </el-tag>
+                </div>
+                <div v-if="stage.output" class="role-stage-output">
+                  <MarkdownRenderer :text="stage.output" />
+                </div>
+              </div>
+            </div>
+            <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
+            <div
+              v-if="msg.role === 'assistant' && msg.plans && msg.plans.length > 0"
+              class="plan-cards"
+            >
+              <div
+                v-for="(plan, pi) in msg.plans"
+                :key="pi"
+                class="plan-card"
+                :class="`plan-card--${plan.status.toLowerCase()}`"
+              >
+                <div class="plan-card-header">
+                  <el-icon class="plan-card-icon"><Warning /></el-icon>
+                  <span class="plan-card-title">高风险操作待确认</span>
+                  <el-tag
+                    v-if="plan.status === 'PENDING'"
+                    type="warning"
+                    size="small"
+                    effect="dark"
+                    class="plan-card-countdown"
+                  >
+                    {{ plan.remainingSeconds }}s
+                  </el-tag>
+                  <el-tag
+                    v-else
+                    :type="plan.status === 'APPROVED' ? 'success' : 'info'"
+                    size="small"
+                    effect="dark"
+                  >
+                    {{ planStatusText(plan.status) }}
+                  </el-tag>
+                </div>
+                <p v-if="plan.reason" class="plan-card-reason">{{ plan.reason }}</p>
+                <ul class="plan-card-actions">
+                  <li v-for="(action, ai) in plan.actions" :key="ai" class="plan-card-action">
+                    <el-tag size="small" class="plan-action-type">{{ planActionLabel(action.type) }}</el-tag>
+                    <code class="plan-action-target" :title="action.target">{{ action.target }}</code>
+                  </li>
+                </ul>
+                <div v-if="plan.status === 'PENDING'" class="plan-card-buttons">
+                  <el-button
+                    type="primary"
+                    size="small"
+                    :loading="plan.submitting"
+                    @click="handlePlanDecision(plan, true)"
+                  >
+                    批准执行
+                  </el-button>
+                  <el-button
+                    type="danger"
+                    size="small"
+                    plain
+                    :disabled="plan.submitting"
+                    @click="handlePlanDecision(plan, false)"
+                  >
+                    拒绝
+                  </el-button>
+                </div>
+              </div>
+            </div>
+            <template v-if="msg.role === 'user'">{{ msg.text }}</template>
             <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && streaming && index === messages.length - 1">生成中…</span>
           </div>
         </div>
@@ -494,6 +950,17 @@ defineExpose({ newSession })
           </el-button>
         </el-upload>
         <el-input v-model="input" placeholder="描述需求，回车发送" :disabled="streaming" @keyup.enter="send" />
+        <el-tooltip
+          placement="top"
+          content="开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作"
+        >
+          <el-switch
+            v-model="collaborationMode"
+            :disabled="streaming"
+            active-text="协作模式"
+            class="collaboration-switch"
+          />
+        </el-tooltip>
         <el-button v-if="!streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
         <el-button v-else type="danger" :loading="interrupting" @click="handleInterrupt">
           {{ interrupting ? '终止中…' : '终止' }}
@@ -519,7 +986,20 @@ defineExpose({ newSession })
 
       <!-- 实时文件变更时间线 -->
       <div v-if="fileChanges.length > 0" class="file-change-timeline">
-        <div class="file-change-timeline-title">本轮变更</div>
+        <div class="file-change-timeline-header">
+          <span class="file-change-timeline-title">本轮变更</span>
+          <el-button
+            link
+            type="danger"
+            size="small"
+            :loading="rollingBack"
+            :disabled="streaming"
+            title="撤销本次会话的全部文件改动，恢复到对话前状态"
+            @click="handleRollback"
+          >
+            撤销全部修改
+          </el-button>
+        </div>
         <el-scrollbar max-height="120px">
           <div v-for="(fc, idx) in fileChanges" :key="idx" class="file-change-item">
             <el-icon v-if="fc.operation === 'CREATE'" style="color:#67c23a"><CirclePlus /></el-icon>
@@ -680,6 +1160,59 @@ defineExpose({ newSession })
             复制
           </el-button>
         </div>
+
+        <el-divider />
+
+        <!-- AI 代码审查（P0-2）：对本轮 diff 输出结构化审查意见，按严重级别分组着色 -->
+        <div class="git-section">
+          <div class="git-section-header">
+            <span>Review 本次变更</span>
+          </div>
+          <el-button type="primary" size="small" :loading="reviewLoading" @click="handleReview">审查</el-button>
+          <template v-if="reviewResult">
+            <p v-if="reviewResult.summary" class="git-summary-text review-summary">{{ reviewResult.summary }}</p>
+            <el-empty
+              v-if="reviewResult.issues.length === 0"
+              description="未发现结构化问题"
+              :image-size="40"
+            />
+            <div v-else class="review-issues">
+              <div v-for="group in groupedIssues(reviewResult.issues)" :key="group.severity" class="review-group">
+                <div class="review-group-header">
+                  <el-tag :type="severityTagType(group.severity)" size="small" effect="dark">
+                    {{ group.severity }}
+                  </el-tag>
+                  <span class="review-group-count">{{ group.items.length }} 项</span>
+                </div>
+                <div
+                  v-for="(issue, ii) in group.items"
+                  :key="ii"
+                  class="review-issue"
+                  :class="`review-issue--${group.severity.toLowerCase()}`"
+                >
+                  <div class="review-issue-loc">
+                    <el-tag size="small" class="review-issue-category">{{ issue.category }}</el-tag>
+                    <el-link type="primary" :underline="false" @click="openIssueFile(issue)">
+                      {{ issue.file }}<template v-if="issue.line">:{{ issue.line }}</template>
+                    </el-link>
+                  </div>
+                  <div class="review-issue-message">{{ issue.message }}</div>
+                  <div v-if="issue.suggestion" class="review-issue-suggestion">建议：{{ issue.suggestion }}</div>
+                </div>
+              </div>
+            </div>
+            <el-button
+              v-if="reviewResult.issues.some((i) => i.severity === 'CRITICAL' || i.severity === 'WARNING')"
+              type="warning"
+              size="small"
+              class="review-fix-btn"
+              :disabled="streaming"
+              @click="generateFixFromReview"
+            >
+              一键生成修复
+            </el-button>
+          </template>
+        </div>
       </div>
     </el-drawer>
   </div>
@@ -806,11 +1339,17 @@ defineExpose({ newSession })
   border-radius: 6px;
 }
 
+.file-change-timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
 .file-change-timeline-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--el-text-color-secondary);
-  margin-bottom: 4px;
 }
 
 .file-change-item {
@@ -872,6 +1411,284 @@ defineExpose({ newSession })
   padding: 8px 12px;
   background: var(--el-fill-color-light);
   border-radius: 6px;
+}
+
+/* 协作模式开关 */
+.collaboration-switch {
+  flex-shrink: 0;
+  margin: 0 4px;
+}
+
+/* 协作模式多角色阶段卡片（对话流内，P3-1） */
+.role-stages {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.role-stage-card {
+  padding: 8px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-left: 3px solid var(--el-color-info);
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+}
+
+.role-stage-card--start {
+  border-left-color: var(--el-color-primary);
+}
+
+.role-stage-card--done {
+  border-left-color: var(--el-color-success);
+}
+
+.role-stage-card--failed {
+  border-left-color: var(--el-color-danger);
+}
+
+.role-stage-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.role-stage-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+}
+
+.role-stage-index {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.role-stage-status {
+  margin-left: auto;
+}
+
+.role-stage-output {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+}
+
+/* 测试报告卡片（对话流内） */
+.test-reports {
+  margin-top: 8px;
+}
+
+.test-report-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.test-report-title.is-success {
+  color: var(--el-color-success);
+}
+
+.test-report-title.is-failure {
+  color: var(--el-color-danger);
+}
+
+.test-report-title-text {
+  white-space: nowrap;
+}
+
+.exhausted-tag {
+  margin-left: 4px;
+}
+
+.test-report-meta {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+
+.test-report-failures {
+  margin: 4px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--el-color-danger);
+}
+
+.test-report-raw {
+  margin: 4px 0 0;
+  padding: 8px;
+  max-height: 200px;
+  overflow: auto;
+  background: var(--el-fill-color-darker);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.test-report-ok {
+  font-size: 12px;
+  color: var(--el-color-success);
+}
+
+/* Plan Mode 确认卡片（P1-1 HITL） */
+.plan-cards {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-card {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--el-color-warning);
+  background: var(--el-color-warning-light-9, var(--el-fill-color-light));
+}
+
+.plan-card--approved {
+  border-left-color: var(--el-color-success);
+  background: var(--el-color-success-light-9, var(--el-fill-color-light));
+}
+
+.plan-card--rejected,
+.plan-card--timeout {
+  border-left-color: var(--el-color-info);
+  background: var(--el-fill-color-light);
+  opacity: 0.85;
+}
+
+.plan-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.plan-card-icon {
+  color: var(--el-color-warning);
+}
+
+.plan-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.plan-card-countdown {
+  margin-left: auto;
+}
+
+.plan-card-header .el-tag:not(.plan-card-countdown) {
+  margin-left: auto;
+}
+
+.plan-card-reason {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 6px;
+}
+
+.plan-card-actions {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.plan-card-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.plan-action-type {
+  flex-shrink: 0;
+}
+
+.plan-action-target {
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  color: var(--el-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-card-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+/* AI 代码审查 */
+.review-summary {
+  margin-top: 8px;
+}
+
+.review-group {
+  margin-bottom: 10px;
+}
+
+.review-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.review-group-count {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.review-issue {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--el-border-color);
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+}
+
+.review-issue--critical {
+  border-left-color: var(--el-color-danger);
+}
+
+.review-issue--warning {
+  border-left-color: var(--el-color-warning);
+}
+
+.review-issue--suggestion {
+  border-left-color: var(--el-color-info);
+}
+
+.review-issue-loc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.review-issue-category {
+  flex-shrink: 0;
+}
+
+.review-issue-message {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  line-height: 1.5;
+}
+
+.review-issue-suggestion {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 2px;
+}
+
+.review-fix-btn {
+  margin-top: 8px;
 }
 
 .tree-node {

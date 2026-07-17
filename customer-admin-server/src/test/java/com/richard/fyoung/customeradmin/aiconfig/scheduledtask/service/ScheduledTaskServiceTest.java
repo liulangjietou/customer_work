@@ -10,6 +10,7 @@ import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.mapper.AiSchedule
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminScheduledTaskProperties;
+import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -18,6 +19,7 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -53,7 +55,10 @@ class ScheduledTaskServiceTest {
         agentMapper = mock(AiAgentMapper.class);
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         AdminScheduledTaskProperties properties = new AdminScheduledTaskProperties();
-        service = new ScheduledTaskService(taskMapper, runMapper, agentMapper, agentInstanceFactory, properties);
+        AdminSchedulerProperties schedulerProperties = new AdminSchedulerProperties();
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        service = new ScheduledTaskService(taskMapper, runMapper, agentMapper, agentInstanceFactory,
+            properties, schedulerProperties, eventPublisher);
 
         runtimeAgent = mock(ReActAgent.class);
         when(agentInstanceFactory.contextFor(anyString(), anyString())).thenReturn(mock(RuntimeContext.class));
@@ -136,7 +141,7 @@ class ScheduledTaskServiceTest {
     void create_shouldRejectDuplicateTaskCode() {
         when(taskMapper.exists(any())).thenReturn(true);
         ScheduledTaskSaveRequest request = new ScheduledTaskSaveRequest(
-            "daily-report", "每日报表", 10L, "生成今日报表", true, null);
+            "daily-report", "每日报表", 10L, "生成今日报表", null, true, null);
 
         BizException ex = assertThrows(BizException.class, () -> service.create(request));
 
@@ -150,7 +155,7 @@ class ScheduledTaskServiceTest {
         disabledAgent.setStatus(0);
         when(agentMapper.selectById(10L)).thenReturn(disabledAgent);
         ScheduledTaskSaveRequest request = new ScheduledTaskSaveRequest(
-            "daily-report", "每日报表", 10L, "生成今日报表", true, null);
+            "daily-report", "每日报表", 10L, "生成今日报表", null, true, null);
 
         BizException ex = assertThrows(BizException.class, () -> service.create(request));
 
@@ -162,7 +167,7 @@ class ScheduledTaskServiceTest {
         when(taskMapper.exists(any())).thenReturn(false);
         when(agentMapper.selectById(10L)).thenReturn(enabledAgent());
         ScheduledTaskSaveRequest request = new ScheduledTaskSaveRequest(
-            "daily-report", "每日报表", 10L, "生成今日报表", true, "备注");
+            "daily-report", "每日报表", 10L, "生成今日报表", "0 0 * * * ?", true, "备注");
 
         service.create(request);
 
@@ -174,5 +179,41 @@ class ScheduledTaskServiceTest {
         when(taskMapper.selectById(999L)).thenReturn(null);
 
         assertThrows(BizException.class, () -> service.trigger(999L));
+    }
+
+    @Test
+    void create_shouldRejectInvalidCron() {
+        when(taskMapper.exists(any())).thenReturn(false);
+        when(agentMapper.selectById(10L)).thenReturn(enabledAgent());
+        ScheduledTaskSaveRequest request = new ScheduledTaskSaveRequest(
+            "daily-report", "每日报表", 10L, "生成今日报表", "not-a-cron", true, null);
+
+        BizException ex = assertThrows(BizException.class, () -> service.create(request));
+
+        assertEquals(ResultCode.SCHEDULER_CRON_INVALID, ex.getResultCode());
+    }
+
+    @Test
+    void create_shouldAcceptValidCron() {
+        when(taskMapper.exists(any())).thenReturn(false);
+        when(agentMapper.selectById(10L)).thenReturn(enabledAgent());
+        ScheduledTaskSaveRequest request = new ScheduledTaskSaveRequest(
+            "daily-report", "每日报表", 10L, "生成今日报表", "0 0/5 * * * ?", true, null);
+
+        service.create(request);
+
+        verify(taskMapper).insert(any(AiScheduledTask.class));
+    }
+
+    @Test
+    void create_shouldAcceptBlankCron_asNonPeriodic() {
+        when(taskMapper.exists(any())).thenReturn(false);
+        when(agentMapper.selectById(10L)).thenReturn(enabledAgent());
+        ScheduledTaskSaveRequest request = new ScheduledTaskSaveRequest(
+            "daily-report", "每日报表", 10L, "生成今日报表", "  ", true, null);
+
+        service.create(request);
+
+        verify(taskMapper).insert(any(AiScheduledTask.class));
     }
 }

@@ -5,7 +5,10 @@ import type {
   CommitMessageRequest,
   CommitMessageResponse,
   GitDiffSummary,
+  PlanConfirmRequest,
   PrDescriptionResponse,
+  ReviewResult,
+  RollbackResult,
   SandboxModeResponse,
   SaveFileContentRequest,
   WorkspaceFileContent,
@@ -13,7 +16,13 @@ import type {
 } from '@/types/api'
 
 export function streamVibeCoding(agentCode: string, req: ChatRequest, handlers: SseHandlers) {
-  return streamSse(`/workspace/${agentCode}/vibecoding/stream`, req, handlers)
+  // 显式列出请求体字段：collaboration 为协作模式开关（P3-1），透传给后端多角色流水线。
+  const body = {
+    sessionId: req.sessionId,
+    message: req.message,
+    collaboration: req.collaboration ?? false,
+  }
+  return streamSse(`/workspace/${agentCode}/vibecoding/stream`, body, handlers)
 }
 
 /** 安全中断该会话正在执行的流式对话（协作式中断，不保证立即生效）。 */
@@ -96,5 +105,32 @@ export function generatePrDescription(agentCode: string, sessionId: string) {
     url: `/workspace/${agentCode}/vibecoding/pr-description`,
     method: 'post',
     data: { sessionId },
+  })
+}
+
+/** 会话一键回滚：撤销本次会话对 workspace 的全部文件改动，恢复到对话前的 baseline 状态（破坏性操作）。 */
+export function rollbackVibeCoding(agentCode: string, sessionId: string) {
+  return request<RollbackResult>({
+    url: `/workspace/${agentCode}/vibecoding/rollback`,
+    method: 'post',
+    data: { sessionId },
+  })
+}
+
+/** AI 代码审查：对本轮 diff 输出结构化审查意见（CRITICAL/WARNING/SUGGESTION）。 */
+export function reviewVibeCoding(agentCode: string, sessionId: string) {
+  return request<ReviewResult>({
+    url: `/workspace/${agentCode}/vibecoding/review`,
+    method: 'post',
+    data: { sessionId },
+  })
+}
+
+/** Plan Mode 计划确认/拒绝（P1-1 HITL）：对 plan 事件里的高风险操作放行或取消。 */
+export function confirmVibeCodingPlan(agentCode: string, req: PlanConfirmRequest) {
+  return request<void>({
+    url: `/workspace/${agentCode}/vibecoding/plan/confirm`,
+    method: 'post',
+    data: req,
   })
 }

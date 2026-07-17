@@ -145,6 +145,19 @@ export interface ReasonPayload {
   reason: string
 }
 
+// ------------------------- 消息级反馈（点赞/点踩） -------------------------
+
+export type FeedbackType = 'UP' | 'DOWN'
+
+/** 后端 MessageFeedback record 的平铺 JSON（无 Result 包装） */
+export interface MessageFeedback {
+  messageId: string
+  sessionId: string
+  type: FeedbackType
+  comment: string | null
+  createdAtMs: number
+}
+
 /** 附件上传解析结果（与 /api/customer/attachment 契约对齐，裸 JSON，无 Result 包装）；
  * 解析失败时 content 为空、errorMessage 说明原因，由调用方决定是否提示并跳过拼接。 */
 export interface ChatAttachmentResult {
@@ -203,6 +216,10 @@ export interface WsTicketEvent {
 
 export interface WsSystemMessage {
   content: string
+  /** 所属会话 ID：后端新格式携带，旧格式帧无此字段（兼容） */
+  sessionId?: string
+  /** 所属工单 ID：后端新格式携带，旧格式帧无此字段（兼容） */
+  ticketId?: string
   ts: number
 }
 

@@ -19,6 +19,7 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
@@ -92,6 +93,7 @@ public class AgentService {
     private final MenuVersionHolder menuVersionHolder;
     private final AgentInstanceCache agentInstanceCache;
     private final ModelConfigService modelConfigService;
+    private final CustomerWorkConfigPublisher runtimeConfigPublisher;
 
     public AgentService(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
                          AiAgentSkillMapper agentSkillMapper, AiAgentBackupModelMapper agentBackupModelMapper,
@@ -100,7 +102,8 @@ public class AgentService {
                          AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
                          AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
                          MenuVersionHolder menuVersionHolder, AgentInstanceCache agentInstanceCache,
-                         ModelConfigService modelConfigService) {
+                         ModelConfigService modelConfigService,
+                         CustomerWorkConfigPublisher runtimeConfigPublisher) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -114,6 +117,7 @@ public class AgentService {
         this.menuVersionHolder = menuVersionHolder;
         this.agentInstanceCache = agentInstanceCache;
         this.modelConfigService = modelConfigService;
+        this.runtimeConfigPublisher = runtimeConfigPublisher;
     }
 
     public PageResult<AgentVO> page(PageQuery query) {
@@ -151,6 +155,8 @@ public class AgentService {
         replaceRelations(agent.getId(), request.backupModelIds(), request.mcpIds(), request.skillIds(),
             request.systemToolIds(), request.subAgentIds());
         menuVersionHolder.bump();
+        // 命中渠道绑定则热下发运行时配置到 8080（默认关闭，未启用即跳过）
+        runtimeConfigPublisher.publishForAgentId(agent.getId());
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -171,6 +177,8 @@ public class AgentService {
         // agentCode 理论上不应改变，但仍按新旧两个 code 双清，避免缓存键错位残留旧实例
         agentInstanceCache.evict(oldAgentCode);
         agentInstanceCache.evict(request.agentCode());
+        // 命中渠道绑定则热下发运行时配置到 8080（默认关闭，未启用即跳过）
+        runtimeConfigPublisher.publishForAgentId(id);
     }
 
     /**
@@ -214,6 +222,8 @@ public class AgentService {
         agentMapper.updateById(update);
         menuVersionHolder.bump();
         agentInstanceCache.evict(agent.getAgentCode());
+        // 启停会影响运行时配置有效性，命中绑定则重新下发（启用时下发最新配置；停用后由绑定停用侧处理）
+        runtimeConfigPublisher.publishForAgentId(id);
     }
 
     /**

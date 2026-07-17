@@ -24,7 +24,7 @@ public class AiModelConfig {
     private Long id;
 
     private String modelName;
-    /** 当前仅支持 openai（需求文档 3.1），预留扩展。 */
+    /** 模型厂商：openai / dashscope / anthropic / gemini（见 {@code ModelProvider} 枚举）。 */
     private String provider;
     @JsonIgnore
     private String apiKey;
