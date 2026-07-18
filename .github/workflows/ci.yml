@@ -66,6 +66,12 @@ jobs:
           sudo apt-get update && sudo apt-get install -y redis-tools
           redis-cli -h 127.0.0.1 -p 6379 CONFIG SET requirepass 123456
 
+      # MySQL 服务容器的 MYSQL_DATABASE 只建了 agent_scope_customer_work 一个库；
+      # customer-admin-server 使用独立库 customer_admin（Flyway 能自动建表但库必须先存在），
+      # 缺库时其门控集成测试与上下文加载报 Unknown database 'customer_admin'
+      - name: Create customer_admin database
+        run: mysql -h127.0.0.1 -P3306 -uroot -proot -e "CREATE DATABASE IF NOT EXISTS customer_admin DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
       - name: Build and test (with coverage)
         run: mvn -B test
         # 说明：
