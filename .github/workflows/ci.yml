@@ -39,6 +39,10 @@ jobs:
           MODE: standalone
         ports:
           - 8848:8848
+          # Nacos 2.x 客户端实际走 gRPC（约定 = HTTP 端口 + 1000）；不映射 9848 时
+          # 门控测试探活 8848 判定"可达"后真跑，客户端却连不上 gRPC，报
+          # "Nacos Client not connected, current status:STARTING"（CI 必挂三个集成测试）
+          - 9848:9848
         options: >-
           --health-cmd "curl -f http://localhost:8848/nacos || exit 1"
           --health-interval 10s
