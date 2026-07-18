@@ -313,9 +313,13 @@ class CustomerServiceServiceTest {
                 overlapCount.incrementAndGet();
             }
             executionOrder.incrementAndGet();
+            // 递减必须用 doOnTerminate（终止信号传播前执行）而非 doFinally（传播后执行）：
+            // 服务端 withSessionLock 的 lock.release() 也挂在 doFinally 上且位于下游，传播序决定
+            // "先 release、后递减"——两者之间的窗口里，第二个请求在慢机器上可能抢到锁先执行
+            // increment，造成串行化成立却计数误报重叠（CI 2 核环境偶发红）。
             return Mono.defer(() -> Mono.just(assistantMsg("ok")))
                 .delayElement(Duration.ofMillis(100))
-                .doFinally(s -> inFlight.decrementAndGet());
+                .doOnTerminate(inFlight::decrementAndGet);
         });
 
         // 并发发起两个同一会话的请求
