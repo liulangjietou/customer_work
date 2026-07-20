@@ -101,6 +101,9 @@ public class CustomerWorkProperties {
     /** 工单智能分配（LLM 分类 + 打分器 + HITL 推荐，智能路由中控第二块之二）。 */
     private final Routing routing = new Routing();
 
+    /** 分布式锁（跨实例互斥场景，如后台管理并发写操作互斥），基于 Redisson。 */
+    private final DistributedLock distributedLock = new DistributedLock();
+
     /**
      * 会话总结建议配置。默认关闭。
      *
@@ -137,6 +140,19 @@ public class CustomerWorkProperties {
         private int topN = 3;
         /** 单次工单分类 LLM 调用超时（秒）。 */
         private long classifyTimeoutSeconds = 30;
+    }
+
+    /** 分布式锁配置：{@code DistributedLockExecutor} 底层 RedissonClient 连接的 Redis。 */
+    @Data
+    public static class DistributedLock {
+        private final Redis redis = new Redis();
+
+        @Data
+        public static class Redis {
+            private String host = "localhost";
+            private int port = 6379;
+            private String password = "";
+        }
     }
 
     /**

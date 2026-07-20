@@ -86,7 +86,17 @@ async function handleLogout() {
       <TabsBar />
       <AppBreadcrumb />
       <el-main class="layout-main">
-        <router-view />
+        <!-- 只精确缓存 WorkspaceView：TabsBar 让"已打开的标签"在视觉上常驻，但底下的路由组件此前没配
+             keep-alive，标签切走再切回其实是整个组件重新 mount——WorkspaceView 里的对话/VibeCoding
+             面板state 全在组件本地 ref，一销毁就清空，进行中的 SSE 流也被 onUnmounted 里的 abortStream
+             打断。这里不做成全局 include（tabsStore.tabs 覆盖的其它页面，如表格/表单页，未必对"数据
+             保持不刷新重进"这件事做过设计，贸然全量 keep-alive 影响面不可控），只精确点名
+             WorkspaceView，需要时再按同样方式给其它页面加白名单。 -->
+        <router-view v-slot="{ Component }">
+          <keep-alive :include="['WorkspaceView']">
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
       </el-main>
       <el-footer class="layout-footer" height="36px">
         <FooterCopyright />

@@ -1,14 +1,63 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { listChatSessions } from '@/api/chat'
 import AddToProjectDialog from './AddToProjectDialog.vue'
-import type { ChatSessionSummary } from '@/types/api'
+import type { ChatSessionSummary, LiveSession } from '@/types/api'
 
-const props = defineProps<{ agentCode: string; activeSessionId: string }>()
+/** liveSessions：父面板内存里"活着"的会话（进行中/本次加载过的），默认空数组兼容尚未接入的调用方。 */
+const props = withDefaults(
+  defineProps<{ agentCode: string; activeSessionId: string; liveSessions?: LiveSession[] }>(),
+  { liveSessions: () => [] },
+)
 const emit = defineEmits<{ select: [sessionId: string] }>()
 
 const sessions = ref<ChatSessionSummary[]>([])
 const loading = ref(false)
+
+/** 侧边栏展示项：在后端已落库列表基础上叠加内存 streaming 标记。 */
+interface DisplaySession {
+  sessionId: string
+  preview: string
+  messageCount: number
+  lastMessageTime: string | null
+  streaming: boolean
+}
+
+/**
+ * 合并后端已落库列表与内存活跃会话：
+ * - 进行中的会话（含第一轮还没落库的新会话）后端可能拉不到，用 liveSessions 补进来，保证「找得到」；
+ * - 两边都有的同一 sessionId 以后端摘要为准（内容更完整），只把内存的 streaming 标记叠加上去；
+ * - 进行中的会话统一置顶，其余保持后端返回的时间倒序。
+ */
+const displaySessions = computed<DisplaySession[]>(() => {
+  const liveById = new Map(props.liveSessions.map((s) => [s.sessionId, s]))
+  const merged = new Map<string, DisplaySession>()
+  for (const s of sessions.value) {
+    const live = liveById.get(s.sessionId)
+    merged.set(s.sessionId, {
+      sessionId: s.sessionId,
+      preview: s.preview,
+      messageCount: s.messageCount,
+      lastMessageTime: s.lastMessageTime,
+      streaming: live?.streaming ?? false,
+    })
+  }
+  // 后端还没有的内存会话（进行中的新会话）补进列表
+  for (const live of props.liveSessions) {
+    if (!merged.has(live.sessionId)) {
+      merged.set(live.sessionId, {
+        sessionId: live.sessionId,
+        preview: live.preview,
+        messageCount: live.messageCount,
+        lastMessageTime: null,
+        streaming: live.streaming,
+      })
+    }
+  }
+  const list = Array.from(merged.values())
+  // 进行中置顶；同为进行中/同为非进行中时维持既有顺序（后端已按时间倒序，内存补充项排其后）
+  return list.sort((a, b) => Number(b.streaming) - Number(a.streaming))
+})
 
 async function refresh() {
   loading.value = true
@@ -40,11 +89,11 @@ function openAddToProject(sessionId: string) {
       <span>历史对话</span>
       <el-button link type="primary" :loading="loading" @click="refresh">刷新</el-button>
     </div>
-    <el-empty v-if="!loading && sessions.length === 0" description="暂无历史对话" :image-size="50" />
+    <el-empty v-if="!loading && displaySessions.length === 0" description="暂无历史对话" :image-size="50" />
     <el-scrollbar v-else height="100%">
       <ul class="session-list">
         <li
-          v-for="session in sessions"
+          v-for="session in displaySessions"
           :key="session.sessionId"
           class="session-item"
           :class="{ active: session.sessionId === activeSessionId }"
@@ -52,8 +101,12 @@ function openAddToProject(sessionId: string) {
         >
           <div class="session-row">
             <div class="session-main">
-              <div class="session-preview">{{ session.preview || '（空会话）' }}</div>
+              <div class="session-preview">
+                <span v-if="session.streaming" class="streaming-dot" />
+                {{ session.preview || '（空会话）' }}
+              </div>
               <div class="session-meta">
+                <el-tag v-if="session.streaming" type="warning" size="small" effect="light" class="streaming-tag">进行中</el-tag>
                 <span>{{ session.messageCount }} 条</span>
                 <span v-if="session.lastMessageTime">{{ session.lastMessageTime }}</span>
               </div>
@@ -147,9 +200,30 @@ function openAddToProject(sessionId: string) {
 
 .session-meta {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: #999;
   margin-top: 2px;
+}
+
+.streaming-tag {
+  margin-right: 2px;
+}
+
+/* 进行中会话标题前的闪烁小圆点，配合「进行中」tag 强化辨识 */
+.streaming-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--el-color-warning);
+  animation: streaming-blink 1s ease-in-out infinite;
+}
+
+@keyframes streaming-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 </style>

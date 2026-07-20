@@ -1,60 +1,44 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import type { UploadRequestOptions } from 'element-plus'
-import { getChatSessionMessages, interruptChat, parseChatAttachment, streamChat } from '@/api/chat'
+import { parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
+import TraceTimeline from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import { useThemeStore } from '@/store/theme'
+import {
+  useChatConversationsStore,
+  type ChatAttachmentItem,
+  type ChatConversation,
+} from '@/store/chatConversations'
 import { generateUuid } from '@/utils/uuid'
-import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
 
 const props = defineProps<{ agentCode: string; initialSessionId?: string }>()
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  text: string
-  nodes: TraceNode[]
-}
-
-/** localId 是前端本地生成的临时 key，用于 v-for/移除定位（上传过程中后端 id 还不存在）；
- * status 驱动 tag 的 loading/失败态展示，失败附件不参与 buildMessageWithAttachments 拼接。 */
-interface Attachment {
-  localId: string
-  id?: string
-  name: string
-  content: string
-  status: 'uploading' | 'success' | 'failed'
-  errorMessage?: string
-}
 
 // 与 starter AttachmentParseService 的白名单/大小限制保持一致（后端 customer-work.attachment.max-file-size-mb=10）
 const ATTACHMENT_ACCEPT = '.md,.txt,.csv,.tsv,.json,.xml,.yaml,.yml,.toml,.proto,.properties,.ini,.conf,.cfg,.log,.env,.sql,.sh,.bash,.zsh,.bat,.ps1,.java,.kt,.kts,.groovy,.gradle,.scala,.py,.js,.ts,.jsx,.tsx,.vue,.css,.scss,.less,.c,.h,.cpp,.hpp,.cs,.go,.rs,.rb,.php,.swift,.lua,.r,.dart,.html,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.bmp,.webp'
 const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
 
-const sessionId = ref(generateUuid())
-const messages = ref<ChatMessage[]>([])
-const input = ref('')
-const streaming = ref(false)
-const interrupting = ref(false) // 已点终止，等后端真正停下来（协作式中断，不保证立即生效）
-const interrupted = ref(false) // 上一轮是被终止结束的，可以点"继续"续跑挂起的工具调用
+/**
+ * 会话状态全部在 Pinia store（chatConversations）里，本组件只是"当前正在看哪个会话"的视图：
+ * 切页面、切智能体、组件销毁重建都不影响 store 里进行中的会话与 SSE 流——这正是"进行中的会话
+ * 换个地方回来还能找到、还在继续跑"的根本保障。组件自己只保留纯视图状态（滚动容器、loading）。
+ */
+const store = useChatConversationsStore()
+store.ensureAgent(props.agentCode)
+
+const active = computed<ChatConversation | undefined>(() => store.activeOf(props.agentCode))
+const liveSessions = computed(() => store.liveSessionsOf(props.agentCode))
+const activeSessionId = computed(() => store.activeIdOf(props.agentCode))
+const anyAttachmentUploading = computed(() => active.value?.attachments.some((a) => a.status === 'uploading') ?? false)
+
 const historyLoading = ref(false)
-const attachments = ref<Attachment[]>([])
-const anyAttachmentUploading = computed(() => attachments.value.some((a) => a.status === 'uploading'))
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
-let abortStream: (() => void) | null = null
 const themeStore = useThemeStore()
 
 function newSession() {
-  abortStream?.()
-  streaming.value = false
-  interrupting.value = false
-  interrupted.value = false
-  sessionId.value = generateUuid()
-  messages.value = []
-  input.value = ''
-  attachments.value = []
+  store.newSession(props.agentCode)
 }
 
 /** 前端先拦超限文件，与后端 max-file-size-mb 对齐，减少无谓上传请求。 */
@@ -67,12 +51,15 @@ function beforeAttachmentUpload(file: File) {
 }
 
 async function handleAttachmentUpload(options: UploadRequestOptions) {
+  // 绑定发起上传时所在的会话：上传是异步的，期间用户可能切走，结果要回填到原会话而不是当前激活会话。
+  const conv = active.value
+  if (!conv) return
   const file = options.file as File
-  const attachment: Attachment = { localId: generateUuid(), name: file.name, content: '', status: 'uploading' }
-  attachments.value.push(attachment)
+  const attachment: ChatAttachmentItem = { localId: generateUuid(), name: file.name, content: '', status: 'uploading' }
+  conv.attachments.push(attachment)
   try {
     const result = await parseChatAttachment(props.agentCode, file, 'admin_chat')
-    const target = attachments.value.find((a) => a.localId === attachment.localId)
+    const target = conv.attachments.find((a) => a.localId === attachment.localId)
     if (!target) {
       return // 结果返回前用户已手动移除该附件，迟到的结果直接丢弃
     }
@@ -86,7 +73,7 @@ async function handleAttachmentUpload(options: UploadRequestOptions) {
       target.status = 'success'
     }
   } catch (error) {
-    const target = attachments.value.find((a) => a.localId === attachment.localId)
+    const target = conv.attachments.find((a) => a.localId === attachment.localId)
     const message = error instanceof Error ? error.message : String(error)
     if (target) {
       target.status = 'failed'
@@ -97,13 +84,15 @@ async function handleAttachmentUpload(options: UploadRequestOptions) {
 }
 
 function removeAttachment(localId: string) {
-  attachments.value = attachments.value.filter((a) => a.localId !== localId)
+  const conv = active.value
+  if (!conv) return
+  conv.attachments = conv.attachments.filter((a) => a.localId !== localId)
 }
 
 /** 把附件内容拼进消息正文——用清晰的分隔符包起来，让模型分得清"附件材料"和"用户实际问题"。
  * 只拼成功解析的附件，上传中/失败的附件不参与（失败的已经在上传回调里提示过用户）。 */
-function buildMessageWithAttachments(text: string): string {
-  const successful = attachments.value.filter((a) => a.status === 'success')
+function buildMessageWithAttachments(conv: ChatConversation, text: string): string {
+  const successful = conv.attachments.filter((a) => a.status === 'success')
   if (successful.length === 0) {
     return text
   }
@@ -114,18 +103,9 @@ function buildMessageWithAttachments(text: string): string {
 }
 
 async function openSession(targetSessionId: string) {
-  if (streaming.value) {
-    return
-  }
-  abortStream?.()
-  interrupting.value = false
-  interrupted.value = false
   historyLoading.value = true
   try {
-    const history = await getChatSessionMessages(props.agentCode, targetSessionId)
-    sessionId.value = targetSessionId
-    messages.value = history.map((msg) => ({ role: msg.role, text: msg.text, nodes: [] }))
-    input.value = ''
+    await store.openSession(props.agentCode, targetSessionId)
     scrollToBottom()
   } catch (error) {
     ElMessage.error('历史会话加载失败：' + (error instanceof Error ? error.message : String(error)))
@@ -141,128 +121,79 @@ function scrollToBottom() {
 }
 
 function send() {
-  const text = input.value.trim()
-  if (!text || streaming.value || anyAttachmentUploading.value) {
-    return
-  }
-  interrupted.value = false
-  const messageToSend = buildMessageWithAttachments(text)
-  const attachedNames = attachments.value.filter((a) => a.status === 'success').map((a) => a.name)
-  // 用户气泡只展示原始输入 + 附件文件名提示，不把拼进正文的附件全文也显示出来（那部分只是发给模型看的）。
-  messages.value.push({
-    role: 'user',
-    text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
-    nodes: [],
-  })
-  messages.value.push({ role: 'assistant', text: '', nodes: [] })
-  // 坑：不能拿 push 前创建的原始对象引用去改——Vue 的响应式数组对存进去的对象是"读取时才转成响应式
-  // 代理"，闭包里这个原始对象跟模板 v-for 里读到的 msg 不是同一个代理，直接改原始对象的属性绕过了
-  // 代理的 setter，Vue 感知不到，界面不会增量刷新（只有等 streaming 这类真正的响应式变量变化触发整体
-  // 重新渲染时才会一次性显示全部内容）。push 完再从数组里取出来，这时候拿到的才是响应式代理本身。
-  const assistantMessage = messages.value[messages.value.length - 1]
-  input.value = ''
-  attachments.value = []
-  streaming.value = true
-  scrollToBottom()
-
-  abortStream = streamChat(props.agentCode, { sessionId: sessionId.value, message: messageToSend }, {
-    onEvent: (event) => {
-      if (event.event === 'done') {
-        streaming.value = false
-        return
-      }
-      if (event.event.startsWith('node:')) {
-        const kind = event.event.slice('node:'.length)
-        const payload = parseChatStreamPayload(event.data)
-        appendChatStreamNode(assistantMessage.nodes, kind, payload.text, payload.source, payload.subagentName)
-      } else if (event.event === 'message') {
-        const payload = parseChatStreamPayload(event.data)
-        if (payload.source) {
-          // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板，
-          // 不算进主回答正文（主回答正文只承载主 Agent 自己的 message 事件，source 缺省）
-          appendChatStreamNode(assistantMessage.nodes, ANSWER_KIND, payload.text, payload.source, payload.subagentName)
-        } else {
-          assistantMessage.text += payload.text
-        }
-      }
-      // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
-      scrollToBottom()
-    },
-    onError: (error) => {
-      streaming.value = false
-      interrupting.value = false
-      ElMessage.error('对话失败：' + (error instanceof Error ? error.message : String(error)))
-    },
-    onComplete: () => {
-      streaming.value = false
-      // 若这轮是用户主动点了"终止"后自然结束的，翻转成"可继续"状态，冒出继续按钮
-      if (interrupting.value) {
-        interrupting.value = false
-        interrupted.value = true
-      }
-      historySidebar.value?.refresh()
-    },
-  })
+  store.send(props.agentCode, buildMessageWithAttachments, scrollToBottom)
 }
 
-/** 点击"终止"：只通知后端安全中断（协作式，不保证立即生效），不调 abortStream() 断开前端连接——
- * 让现有的 onComplete/onError 在后端真正停止、SSE 自然结束时收尾，避免界面显示"已停止"但后端其实
- * 还在跑的假象。 */
-async function handleInterrupt() {
-  interrupting.value = true
-  try {
-    await interruptChat(props.agentCode, sessionId.value)
-  } catch (error) {
-    interrupting.value = false
-    ElMessage.error('终止失败：' + (error instanceof Error ? error.message : String(error)))
-  }
+function handleInterrupt() {
+  store.interrupt(props.agentCode)
 }
 
 /** 点击"继续"：发一句非空续接文案触发框架续跑被打断的挂起工具调用（后端 ChatRequest.message 要求非空，
  * 且续跑逻辑本就挂在正常的 chatStream 调用里，无需专门的续跑接口）。 */
 function resumeInterrupted() {
-  interrupted.value = false
-  input.value = '请继续刚才的任务。'
+  const conv = active.value
+  if (!conv) return
+  conv.interrupted = false
+  conv.input = '请继续刚才的任务。'
   send()
 }
 
 onMounted(() => {
   themeStore.apply()
-  // 从 Project 详情页跳转过来时带上目标会话 id，直接打开对应历史会话，不用用户再手动点一遍。
-  if (props.initialSessionId) {
-    openSession(props.initialSessionId)
-  }
 })
 
-onUnmounted(() => {
-  abortStream?.()
+// 每轮对话流结束（store 里自增版本号）刷新侧边栏的后端历史列表——流的 onComplete 在 store 里执行，
+// 不再直接持有组件 ref，组件通过 watch 版本号补上这层联动。
+watch(
+  () => store.historyVersion[props.agentCode],
+  () => historySidebar.value?.refresh(),
+)
+
+// 从 Project 详情页跳转过来时带上目标会话 id，直接打开对应历史会话。用 watch 而非 onMounted 一次性
+// 读取：本页处于 keep-alive 下，二次带新 sessionId 跳进来不会重新 mount。immediate 保留首挂载即打开。
+watch(
+  () => props.initialSessionId,
+  (id) => {
+    if (id) {
+      openSession(id)
+    }
+  },
+  { immediate: true },
+)
+
+// 从 keep-alive 缓存里重新激活时滚到最新内容——离开期间进行中的会话仍在后台追加增量。
+onActivated(() => {
+  scrollToBottom()
 })
+
+// 注意：这里刻意没有 onUnmounted abort——会话与 SSE 流属于全局 store，组件销毁（切智能体/关标签）
+// 不应终止后台会话；流的生命周期终点是自然完成、用户点"终止"或整页刷新。
 
 // newSession 供 WorkspaceView 上提后的工具栏"新建会话"按钮按激活 Tab 分发调用
-defineExpose({ sessionId, newSession })
+defineExpose({ newSession })
 </script>
 
 <template>
   <div class="chat-panel">
     <div class="chat-column">
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
-        <div v-for="(msg, index) in messages" :key="index" class="message-row" :class="msg.role">
+        <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
           <div class="bubble">
             <TraceTimeline
               v-if="msg.role === 'assistant' && msg.nodes.length > 0"
               :nodes="msg.nodes"
-              :active="streaming && index === messages.length - 1 && !msg.text"
+              :active="(active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1 && !msg.text"
             />
             <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
             <template v-else>{{ msg.text }}</template>
-            <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && streaming && index === messages.length - 1">思考中…</span>
+            <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && (active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1">思考中…</span>
           </div>
         </div>
-        <el-empty v-if="messages.length === 0" description="开始和智能体对话吧" />
+        <el-empty v-if="(active?.messages.length ?? 0) === 0" description="开始和智能体对话吧" />
       </div>
-      <div v-if="attachments.length > 0" class="attachment-tags">
+      <div v-if="active && active.attachments.length > 0" class="attachment-tags">
         <el-tag
-          v-for="a in attachments"
+          v-for="a in active.attachments"
           :key="a.localId"
           :closable="a.status !== 'uploading'"
           :type="a.status === 'failed' ? 'danger' : undefined"
@@ -280,25 +211,32 @@ defineExpose({ sessionId, newSession })
           :before-upload="beforeAttachmentUpload"
           :accept="ATTACHMENT_ACCEPT"
         >
-          <el-button :disabled="streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
+          <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
             <el-icon><Paperclip /></el-icon>
           </el-button>
         </el-upload>
         <el-input
-          v-model="input"
+          v-if="active"
+          v-model="active.input"
           placeholder="输入消息，回车发送"
-          :disabled="streaming"
+          :disabled="active.streaming"
           @keyup.enter="send"
         />
-        <el-button v-if="!streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
-        <el-button v-else type="danger" :loading="interrupting" @click="handleInterrupt">
-          {{ interrupting ? '终止中…' : '终止' }}
+        <el-button v-if="!active?.streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
+        <el-button v-else type="danger" :loading="active?.interrupting" @click="handleInterrupt">
+          {{ active?.interrupting ? '终止中…' : '终止' }}
         </el-button>
-        <el-button v-if="interrupted && !streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
+        <el-button v-if="active?.interrupted && !active?.streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
       </div>
     </div>
     <div class="history-column">
-      <ChatHistorySidebar ref="historySidebar" :agent-code="agentCode" :active-session-id="sessionId" @select="openSession" />
+      <ChatHistorySidebar
+        ref="historySidebar"
+        :agent-code="agentCode"
+        :active-session-id="activeSessionId"
+        :live-sessions="liveSessions"
+        @select="openSession"
+      />
     </div>
   </div>
 </template>

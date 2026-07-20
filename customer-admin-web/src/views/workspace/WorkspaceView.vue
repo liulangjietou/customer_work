@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMenuStore } from '@/store/menu'
 import type { MenuNode } from '@/types/api'
@@ -7,6 +7,11 @@ import ChatPanel from './ChatPanel.vue'
 import VibeCodingPanel from './VibeCodingPanel.vue'
 import KnowledgeDrawer from './KnowledgeDrawer.vue'
 import ThemeToolbar from '@/components/ThemeToolbar.vue'
+
+// 供 MainLayout 的 <keep-alive :include> 按组件名精确命中——离开本页（切到其它菜单）时不销毁，
+// 只是 deactivated；SSE 流不会被 onUnmounted 打断，切回来消息能接着看，见 ChatPanel/VibeCodingPanel
+// 的 onUnmounted 注释。
+defineOptions({ name: 'WorkspaceView' })
 
 const props = defineProps<{ agentCode: string }>()
 const menuStore = useMenuStore()
@@ -33,6 +38,16 @@ const supportsVibeCoding = computed(() => agentNode.value?.capabilities?.include
 
 // 主题色/新建会话工具栏上提到 Tab 上方后，"新建会话"要按当前激活的 Tab 分发到对应面板
 const activeTab = ref<'chat' | 'vibecoding'>('chat')
+
+// keep-alive 复用同一实例后，切智能体不再重建本组件，activeTab 会带着上一个智能体的值——
+// 从支持 vibecoding 的智能体的 VibeCoding tab 切到不支持的智能体时，'vibecoding' 这个 tab-pane
+// 不渲染，el-tabs 的 v-model 指向不存在的 pane，整个 tab 内容区直接空白（实测踩过）。
+// 旧代码每次切换都销毁重建、activeTab 隐式重置，keep-alive 把这个隐式重置保没了，这里补成显式的。
+watch(supportsVibeCoding, (supported) => {
+  if (!supported && activeTab.value === 'vibecoding') {
+    activeTab.value = 'chat'
+  }
+})
 const chatPanelRef = ref<InstanceType<typeof ChatPanel>>()
 const vibeCodingPanelRef = ref<InstanceType<typeof VibeCodingPanel>>()
 
@@ -53,7 +68,8 @@ const knowledgeVisible = ref(false)
     <div class="workspace-header">
       <h2 class="agent-title">{{ agentNode?.name ?? agentCode }}</h2>
       <div class="header-actions">
-        <el-button size="small" @click="knowledgeVisible = true">代码知识库</el-button>
+        <!-- 与 ThemeToolbar 里两个按钮保持同一胶囊规格（34px 高/17px 圆角/13px 字号），蓝底白字 -->
+        <button type="button" class="knowledge-btn" @click="knowledgeVisible = true">代码知识库</button>
         <ThemeToolbar :on-new-session="newSession" />
       </div>
     </div>
@@ -94,7 +110,36 @@ const knowledgeVisible = ref(false)
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+}
+
+/* 代码知识库：蓝底白字胶囊，规格与 ThemeToolbar 的主题色/新建会话按钮一致（34px 高/17px 圆角） */
+.knowledge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 17px;
+  background: #409eff;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  transition: box-shadow 0.2s, transform 0.2s, filter 0.2s;
+}
+
+.knowledge-btn:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px);
+}
+
+.knowledge-btn:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .workspace-tabs {

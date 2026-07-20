@@ -70,6 +70,7 @@ public enum ResultCode {
     KNOWLEDGE_INDEX_NOT_FOUND(40029, "代码知识库索引不存在"),
     KNOWLEDGE_PATH_NOT_ALLOWED(40030, "指定的源码路径不在允许的根目录范围内，已被安全策略拦截"),
     KNOWLEDGE_INDEX_BUILDING(40031, "该索引正在构建中，请等待构建完成后再操作"),
+    MENU_REORDER_CONFLICT(40032, "菜单排序正在被其他管理员调整，请稍后重试"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

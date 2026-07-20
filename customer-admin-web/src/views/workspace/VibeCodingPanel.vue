@@ -1,31 +1,30 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import type { UploadRequestOptions } from 'element-plus'
 import {
   confirmVibeCodingPlan,
   generateCommitMessage,
   generatePrDescription,
   getGitDiffSummary,
-  getSandboxMode,
-  interruptVibeCoding,
-  listWorkspaceFiles,
   readWorkspaceFileContent,
   reviewVibeCoding,
   rollbackVibeCoding,
   saveWorkspaceFileContent,
-  streamVibeCoding,
 } from '@/api/vibecoding'
-import { getChatSessionMessages, parseChatAttachment } from '@/api/chat'
+import { parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import TraceTimeline, { type TraceNode } from '@/components/TraceTimeline.vue'
+import TraceTimeline from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import { useThemeStore } from '@/store/theme'
+import {
+  useVibeConversationsStore,
+  type PlanCard,
+  type VibeAttachmentItem,
+  type VibeConversation,
+} from '@/store/vibeConversations'
 import { generateUuid } from '@/utils/uuid'
 import type {
-  FileChangeEvent,
   GitDiffSummary,
-  PlanEvent,
-  PlanResultEvent,
   ReviewIssue,
   ReviewResult,
   RoleStageEvent,
@@ -33,83 +32,39 @@ import type {
   WorkspaceFileContent,
   WorkspaceFileNode,
 } from '@/types/api'
-import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
 
 const props = defineProps<{ agentCode: string }>()
 
-/** Plan Mode 确认卡片（P1-1 HITL）：一条 plan 事件对应一张卡片，用户批准/拒绝或超时后翻成终态。 */
-interface PlanCard {
-  planId: string
-  actions: PlanEvent['actions']
-  reason: string
-  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'TIMEOUT'
-  remainingSeconds: number
-  submitting: boolean
-}
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  text: string
-  nodes: TraceNode[]
-  // 本条助手消息内累积的沙箱编译/测试报告（P0-3），按到达顺序渲染成测试报告卡片时间线
-  testReports?: TestReport[]
-  // 本条助手消息内的 Plan Mode 确认卡片（P1-1），高风险操作待人工确认
-  plans?: PlanCard[]
-  // 协作模式多角色阶段进度（P3-1），按 role_stage 事件到达顺序累积
-  stages?: RoleStageEvent[]
-}
-
-/** localId 是前端本地生成的临时 key，用于 v-for/移除定位（上传过程中后端 id 还不存在）；
- * status 驱动 tag 的 loading/失败态展示，失败附件不参与 buildMessageWithAttachments 拼接。 */
-interface Attachment {
-  localId: string
-  id?: string
-  name: string
-  content: string
-  status: 'uploading' | 'success' | 'failed'
-  errorMessage?: string
-}
-
 // 与 starter AttachmentParseService 的白名单/大小限制保持一致（后端 customer-work.attachment.max-file-size-mb=10）
 const ATTACHMENT_ACCEPT = '.md,.txt,.csv,.tsv,.json,.xml,.yaml,.yml,.toml,.proto,.properties,.ini,.conf,.cfg,.log,.env,.sql,.sh,.bash,.zsh,.bat,.ps1,.java,.kt,.kts,.groovy,.gradle,.scala,.py,.js,.ts,.jsx,.tsx,.vue,.css,.scss,.less,.c,.h,.cpp,.hpp,.cs,.go,.rs,.rb,.php,.swift,.lua,.r,.dart,.html,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.bmp,.webp'
 const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
 
-const sessionId = ref(generateUuid())
-const messages = ref<ChatMessage[]>([])
-const input = ref('')
-// 协作模式开关（P3-1）：开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作
+/**
+ * 会话状态全部在 Pinia store（vibeConversations）里，本组件只是视图：切页面、切智能体、组件销毁
+ * 重建都不影响 store 里进行中的会话与 SSE 流。组件保留的只有纯 UI 状态（抽屉、预览、滚动容器）。
+ */
+const store = useVibeConversationsStore()
+store.ensureAgent(props.agentCode)
+
+const active = computed<VibeConversation | undefined>(() => store.activeOf(props.agentCode))
+const liveSessions = computed(() => store.liveSessionsOf(props.agentCode))
+const activeSessionId = computed(() => store.activeIdOf(props.agentCode))
+const anyAttachmentUploading = computed(() => active.value?.attachments.some((a) => a.status === 'uploading') ?? false)
+
+const input = computed({
+  get: () => active.value?.input ?? '',
+  set: (v) => { if (active.value) active.value.input = v },
+})
+// 协作模式开关（P3-1）：发送选项，面板级
 const collaborationMode = ref(false)
-const streaming = ref(false)
-const interrupting = ref(false) // 已点终止，等后端真正停下来（协作式中断，不保证立即生效）
-const interrupted = ref(false) // 上一轮是被终止结束的，可以点"继续"续跑挂起的工具调用
 const historyLoading = ref(false)
-const attachments = ref<Attachment[]>([])
-const anyAttachmentUploading = computed(() => attachments.value.some((a) => a.status === 'uploading'))
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
-let abortStream: (() => void) | null = null
 const themeStore = useThemeStore()
 
-// 目录树相关
-const fileNodes = ref<WorkspaceFileNode[]>([])
-const filesLoading = ref(false)
-const filesLoaded = ref(false)
-
-// 沙箱模式（local/docker，全局配置，进面板时查一次即可，不随会话变化）
-const sandboxMode = ref<'local' | 'docker' | null>(null)
-
-// 实时文件变更时间线（本轮对话内累积，切会话/新建会话时清空）
-const fileChanges = ref<Array<FileChangeEvent & { time: number }>>([])
-// 会话一键回滚进行中
-const rollingBack = ref(false)
-
-// Plan Mode（P1-1 HITL）：待确认计划的 planId -> 卡片，供 plan_result 快速定位；倒计时统一由一个定时器驱动
-const pendingPlans = new Map<string, PlanCard>()
-let planCountdownTimer: ReturnType<typeof setInterval> | null = null
-
-// Git 助手抽屉
+// Git 助手抽屉（面板级，操作对象是当前激活会话）
 const gitDrawerVisible = ref(false)
 const gitDiffLoading = ref(false)
 const gitDiff = ref<GitDiffSummary | null>(null)
@@ -133,29 +88,7 @@ const editContent = ref('')
 const saving = ref(false)
 
 function newSession() {
-  abortStream?.()
-  streaming.value = false
-  interrupting.value = false
-  interrupted.value = false
-  sessionId.value = generateUuid()
-  messages.value = []
-  input.value = ''
-  attachments.value = []
-  fileNodes.value = []
-  filesLoaded.value = false
-  fileChanges.value = []
-  clearPendingPlans()
-  // 新会话会用当前全局配置，不是上一个（可能是历史会话解析出的）沙箱模式
-  loadCurrentSandboxMode()
-}
-
-/** 清空待确认计划与倒计时（切会话/新建会话/卸载时）。 */
-function clearPendingPlans() {
-  pendingPlans.clear()
-  if (planCountdownTimer) {
-    clearInterval(planCountdownTimer)
-    planCountdownTimer = null
-  }
+  store.newSession(props.agentCode)
 }
 
 /** 前端先拦超限文件，与后端 max-file-size-mb 对齐，减少无谓上传请求。 */
@@ -168,12 +101,15 @@ function beforeAttachmentUpload(file: File) {
 }
 
 async function handleAttachmentUpload(options: UploadRequestOptions) {
+  // 绑定发起上传时所在的会话：上传是异步的，期间用户可能切走，结果要回填到原会话而不是当前激活会话。
+  const conv = active.value
+  if (!conv) return
   const file = options.file as File
-  const attachment: Attachment = { localId: generateUuid(), name: file.name, content: '', status: 'uploading' }
-  attachments.value.push(attachment)
+  const attachment: VibeAttachmentItem = { localId: generateUuid(), name: file.name, content: '', status: 'uploading' }
+  conv.attachments.push(attachment)
   try {
     const result = await parseChatAttachment(props.agentCode, file, 'vibecoding')
-    const target = attachments.value.find((a) => a.localId === attachment.localId)
+    const target = conv.attachments.find((a) => a.localId === attachment.localId)
     if (!target) {
       return // 结果返回前用户已手动移除该附件，迟到的结果直接丢弃
     }
@@ -187,7 +123,7 @@ async function handleAttachmentUpload(options: UploadRequestOptions) {
       target.status = 'success'
     }
   } catch (error) {
-    const target = attachments.value.find((a) => a.localId === attachment.localId)
+    const target = conv.attachments.find((a) => a.localId === attachment.localId)
     const message = error instanceof Error ? error.message : String(error)
     if (target) {
       target.status = 'failed'
@@ -198,12 +134,14 @@ async function handleAttachmentUpload(options: UploadRequestOptions) {
 }
 
 function removeAttachment(localId: string) {
-  attachments.value = attachments.value.filter((a) => a.localId !== localId)
+  const conv = active.value
+  if (!conv) return
+  conv.attachments = conv.attachments.filter((a) => a.localId !== localId)
 }
 
 /** 只拼成功解析的附件，上传中/失败的附件不参与（失败的已经在上传回调里提示过用户）。 */
-function buildMessageWithAttachments(text: string): string {
-  const successful = attachments.value.filter((a) => a.status === 'success')
+function buildMessageWithAttachments(conv: VibeConversation, text: string): string {
+  const successful = conv.attachments.filter((a) => a.status === 'success')
   if (successful.length === 0) return text
   const attachmentText = successful
     .map((a) => `【附件：${a.name}】\n---\n${a.content}\n---`)
@@ -212,27 +150,10 @@ function buildMessageWithAttachments(text: string): string {
 }
 
 async function openSession(targetSessionId: string) {
-  if (streaming.value) return
-  abortStream?.()
-  interrupting.value = false
-  interrupted.value = false
   historyLoading.value = true
   try {
-    const history = await getChatSessionMessages(props.agentCode, targetSessionId)
-    sessionId.value = targetSessionId
-    messages.value = history.map((msg) => ({ role: msg.role, text: msg.text, nodes: [] }))
-    input.value = ''
-    fileNodes.value = []
-    filesLoaded.value = false
-    fileChanges.value = []
-    clearPendingPlans()
-    // 标签要反映"这条会话当时真正用的模式"，从首条用户消息里解析；更早期没有该前缀的历史记录
-    // 解析不出来，此时不展示误导性的标签（不回退成当前全局配置，两者含义不同不能互相替代）
-    const firstUserMessage = history.find((msg) => msg.role === 'user')
-    sandboxMode.value = firstUserMessage ? parseSandboxModeFromMessage(firstUserMessage.text) : null
+    await store.openSession(props.agentCode, targetSessionId)
     scrollToBottom()
-    // 切到历史会话时该会话可能已有产物文件，无需等用户手动点“刷新”
-    loadFiles()
   } catch (error) {
     ElMessage.error('历史会话加载失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {
@@ -247,155 +168,26 @@ function scrollToBottom() {
 }
 
 function send() {
-  const text = input.value.trim()
-  if (!text || streaming.value || anyAttachmentUploading.value) return
-  interrupted.value = false
-  const messageToSend = buildMessageWithAttachments(text)
-  const attachedNames = attachments.value.filter((a) => a.status === 'success').map((a) => a.name)
-  messages.value.push({
-    role: 'user',
-    text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
-    nodes: [],
-  })
-  messages.value.push({ role: 'assistant', text: '', nodes: [], testReports: [] })
-  const assistantMessage = messages.value[messages.value.length - 1]
-  input.value = ''
-  attachments.value = []
-  streaming.value = true
-  scrollToBottom()
-
-  abortStream = streamVibeCoding(props.agentCode, { sessionId: sessionId.value, message: messageToSend, collaboration: collaborationMode.value }, {
-    onEvent: (event) => {
-      if (event.event === 'done') {
-        streaming.value = false
-        // 对话结束后自动刷新文件目录树
-        loadFiles()
-        return
-      }
-      if (event.event === 'file_change') {
-        handleFileChange(event.data)
-        return
-      }
-      if (event.event === 'test_report') {
-        handleTestReport(assistantMessage, event.data)
-        scrollToBottom()
-        return
-      }
-      if (event.event === 'role_stage') {
-        handleRoleStage(assistantMessage, event.data)
-        scrollToBottom()
-        return
-      }
-      if (event.event === 'plan') {
-        handlePlanEvent(assistantMessage, event.data)
-        scrollToBottom()
-        return
-      }
-      if (event.event === 'plan_result') {
-        handlePlanResult(event.data)
-        return
-      }
-      if (event.event.startsWith('node:')) {
-        const kind = event.event.slice('node:'.length)
-        const payload = parseChatStreamPayload(event.data)
-        appendChatStreamNode(assistantMessage.nodes, kind, payload.text, payload.source, payload.subagentName)
-      } else if (event.event === 'message') {
-        const payload = parseChatStreamPayload(event.data)
-        if (payload.source) {
-          // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板，
-          // 不算进主回答正文（主回答正文只承载主 Agent 自己的 message 事件，source 缺省）
-          appendChatStreamNode(assistantMessage.nodes, ANSWER_KIND, payload.text, payload.source, payload.subagentName)
-        } else {
-          assistantMessage.text += payload.text
-        }
-      }
-      // 其余未知事件静默忽略：后端新增 SSE 事件类型（如 test_report/plan）时旧前端不受影响，
-      // 避免把结构化 JSON 拼进对话正文（需求 §5.5 向后兼容）
-      scrollToBottom()
-    },
-    onError: (error) => {
-      streaming.value = false
-      interrupting.value = false
-      ElMessage.error('对话失败：' + (error instanceof Error ? error.message : String(error)))
-    },
-    onComplete: () => {
-      streaming.value = false
-      // 若这轮是用户主动点了"终止"后自然结束的，翻转成"可继续"状态，冒出继续按钮
-      if (interrupting.value) {
-        interrupting.value = false
-        interrupted.value = true
-      }
-      historySidebar.value?.refresh()
-    },
-  })
+  store.send(props.agentCode, collaborationMode.value, buildMessageWithAttachments, scrollToBottom)
 }
 
-/** 点击"终止"：只通知后端安全中断（协作式，不保证立即生效），不调 abortStream() 断开前端连接——
- * 让现有的 onComplete/onError 在后端真正停止、SSE 自然结束时收尾，避免界面显示"已停止"但后端其实
- * 还在跑的假象。 */
-async function handleInterrupt() {
-  interrupting.value = true
-  try {
-    await interruptVibeCoding(props.agentCode, sessionId.value)
-  } catch (error) {
-    interrupting.value = false
-    ElMessage.error('终止失败：' + (error instanceof Error ? error.message : String(error)))
-  }
+function handleInterrupt() {
+  store.interrupt(props.agentCode)
 }
 
-/** 点击"继续"：发一句非空续接文案触发框架续跑被打断的挂起工具调用（后端 ChatRequest.message 要求非空，
- * 且续跑逻辑本就挂在正常的 stream 调用里，无需专门的续跑接口）。 */
+/** 点击"继续"：发一句非空续接文案触发框架续跑被打断的挂起工具调用。 */
 function resumeInterrupted() {
-  interrupted.value = false
-  input.value = '请继续刚才的任务。'
+  const conv = active.value
+  if (!conv) return
+  conv.interrupted = false
+  conv.input = '请继续刚才的任务。'
   send()
 }
 
-/** 解析 file_change SSE 事件，追加到变更时间线（不按路径去重，同一文件多次改动各自成一条，还原真实操作顺序）。 */
-function handleFileChange(raw: string) {
-  try {
-    const parsed = JSON.parse(raw) as FileChangeEvent
-    fileChanges.value.push({ ...parsed, time: Date.now() })
-  } catch {
-    // 解析失败不影响主对话流程，静默丢弃
-  }
-}
-
-/** 解析 test_report SSE 事件，追加到该助手消息的测试报告时间线（每轮验证一张卡片）。 */
-function handleTestReport(assistantMessage: ChatMessage, raw: string) {
-  try {
-    const parsed = JSON.parse(raw) as TestReport
-    ;(assistantMessage.testReports ??= []).push(parsed)
-  } catch {
-    // 解析失败不影响主对话流程，静默丢弃
-  }
-}
-
-/**
- * 解析 role_stage SSE 事件（P3-1 协作模式）：维护该助手消息的多角色阶段进度列表。
- * START 追加一条新阶段；DONE/FAILED 按 index 匹配已存在阶段并更新其状态与产物（找不到则补插一条）。
- */
-function handleRoleStage(assistantMessage: ChatMessage, raw: string) {
-  try {
-    const parsed = JSON.parse(raw) as RoleStageEvent
-    const stages = (assistantMessage.stages ??= [])
-    if (parsed.status === 'START') {
-      stages.push({ ...parsed, output: null })
-      return
-    }
-    // DONE / FAILED：按 index 更新已有阶段的状态与产物
-    const existing = stages.find((s) => s.index === parsed.index)
-    if (existing) {
-      existing.status = parsed.status
-      existing.output = parsed.output
-      existing.role = parsed.role
-      existing.type = parsed.type
-    } else {
-      stages.push({ ...parsed })
-    }
-  } catch {
-    // 解析失败不影响主对话流程，静默丢弃
-  }
+function refreshFiles() {
+  const conv = active.value
+  if (!conv) return
+  store.loadFiles(props.agentCode, conv.sessionId)
 }
 
 /** 阶段状态标签文案。 */
@@ -425,88 +217,30 @@ function roleStageTypeText(type: RoleStageEvent['type']): string {
   return map[type]
 }
 
-/** 解析 plan SSE 事件，追加一张待确认卡片并启动倒计时（P1-1 HITL）。 */
-function handlePlanEvent(assistantMessage: ChatMessage, raw: string) {
-  try {
-    const parsed = JSON.parse(raw) as PlanEvent
-    const card: PlanCard = {
-      planId: parsed.planId,
-      actions: parsed.actions ?? [],
-      reason: parsed.reason ?? '',
-      status: 'PENDING',
-      remainingSeconds: parsed.timeoutSeconds ?? 300,
-      submitting: false,
-    }
-    const plans = (assistantMessage.plans ??= [])
-    plans.push(card)
-    // 存入 pendingPlans 的必须是"push 进响应式数组后"的响应式代理引用，否则定时器/plan_result 修改
-    // 原始对象不会触发视图更新（Vue3 响应式经典坑：修改未经代理的原对象不触发依赖收集）
-    pendingPlans.set(card.planId, plans[plans.length - 1])
-    ensurePlanCountdown()
-  } catch {
-    // 解析失败不影响主对话流程，静默丢弃
-  }
-}
-
-/** 解析 plan_result SSE 事件，把对应卡片翻成终态（含服务端超时自动拒绝）。 */
-function handlePlanResult(raw: string) {
-  try {
-    const parsed = JSON.parse(raw) as PlanResultEvent
-    const card = pendingPlans.get(parsed.planId)
-    if (card) {
-      card.status = parsed.status
-      card.submitting = false
-      pendingPlans.delete(parsed.planId)
-    }
-  } catch {
-    // 解析失败静默丢弃
-  }
-}
-
-/** 启动（若未启动）统一倒计时定时器：每秒递减所有待确认卡片，归零即本地标记超时。 */
-function ensurePlanCountdown() {
-  if (planCountdownTimer) return
-  planCountdownTimer = setInterval(() => {
-    if (pendingPlans.size === 0) {
-      clearInterval(planCountdownTimer!)
-      planCountdownTimer = null
-      return
-    }
-    for (const card of pendingPlans.values()) {
-      card.remainingSeconds -= 1
-      if (card.remainingSeconds <= 0) {
-        // 本地倒计时归零：先行标记超时（服务端也会补发 plan_result=TIMEOUT，二者幂等）
-        card.status = 'TIMEOUT'
-        card.remainingSeconds = 0
-        pendingPlans.delete(card.planId)
-      }
-    }
-  }, 1000)
-}
-
-/** 用户对某个计划卡片点批准/拒绝：调后端确认接口，成功后翻成终态。 */
+/** 用户对某个计划卡片点批准/拒绝：调后端确认接口，成功后翻成终态。卡片属于当前激活会话（视图只渲染 active）。 */
 async function handlePlanDecision(card: PlanCard, approved: boolean) {
-  if (card.status !== 'PENDING' || card.submitting) return
+  const conv = active.value
+  if (!conv || card.status !== 'PENDING' || card.submitting) return
   card.submitting = true
   try {
     await confirmVibeCodingPlan(props.agentCode, {
-      sessionId: sessionId.value,
+      sessionId: conv.sessionId,
       planId: card.planId,
       approved,
     })
     card.status = approved ? 'APPROVED' : 'REJECTED'
-    pendingPlans.delete(card.planId)
+    conv.pendingPlans.delete(card.planId)
   } catch (error) {
     // 失败常见于挂起项已失效（超时/服务重启）：提示并按拒绝态收尾，避免卡片永久停在"等待确认"
     ElMessage.error('计划确认失败：' + (error instanceof Error ? error.message : String(error)))
     card.status = 'TIMEOUT'
-    pendingPlans.delete(card.planId)
+    conv.pendingPlans.delete(card.planId)
   } finally {
     card.submitting = false
   }
 }
 
-/** 计划卡片操作类型 → 中文标签 + Element tag 着色。 */
+/** 计划卡片操作类型 → 中文标签。 */
 function planActionLabel(type: string): string {
   switch (type) {
     case 'DELETE': return '删除文件'
@@ -540,6 +274,8 @@ function testReportTitle(report: TestReport): string {
  * 破坏性操作，二次确认后调用；成功后清空变更时间线、刷新文件树与 diff，并在对话流插入系统提示。
  */
 async function handleRollback() {
+  const conv = active.value
+  if (!conv) return
   try {
     await ElMessageBox.confirm(
       '此操作将丢弃本次会话对工作区的全部文件改动：新增文件将被删除，修改/删除的文件将恢复到对话前的状态。操作不可撤销，是否继续？',
@@ -549,15 +285,15 @@ async function handleRollback() {
   } catch {
     return // 用户取消
   }
-  rollingBack.value = true
+  conv.rollingBack = true
   try {
-    const res = await rollbackVibeCoding(props.agentCode, sessionId.value)
-    fileChanges.value = []
-    await loadFiles()
+    const res = await rollbackVibeCoding(props.agentCode, conv.sessionId)
+    conv.fileChanges = []
+    await store.loadFiles(props.agentCode, conv.sessionId)
     // Git 助手抽屉开着则刷新 diff（回滚后应无变更）
     if (gitDrawerVisible.value) await loadGitDiff()
     // 对话流插入一条系统提示（需求 §4.1.2）
-    messages.value.push({
+    conv.messages.push({
       role: 'assistant',
       text: `🔄 已撤销本次会话的全部修改（恢复 ${res.restoredFiles.length} 个文件，删除 ${res.deletedFiles.length} 个新增文件）。`,
       nodes: [],
@@ -567,7 +303,7 @@ async function handleRollback() {
   } catch (error) {
     ElMessage.error('撤销失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {
-    rollingBack.value = false
+    conv.rollingBack = false
   }
 }
 
@@ -582,9 +318,11 @@ async function openGitAssistant() {
 }
 
 async function loadGitDiff() {
+  const conv = active.value
+  if (!conv) return
   gitDiffLoading.value = true
   try {
-    gitDiff.value = await getGitDiffSummary(props.agentCode, sessionId.value)
+    gitDiff.value = await getGitDiffSummary(props.agentCode, conv.sessionId)
   } catch (error) {
     ElMessage.error('diff 摘要加载失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {
@@ -593,9 +331,11 @@ async function loadGitDiff() {
 }
 
 async function handleGenerateCommitMessage() {
+  const conv = active.value
+  if (!conv) return
   commitLoading.value = true
   try {
-    const res = await generateCommitMessage(props.agentCode, { sessionId: sessionId.value, style: commitStyle.value })
+    const res = await generateCommitMessage(props.agentCode, { sessionId: conv.sessionId, style: commitStyle.value })
     commitMessageText.value = res.message
   } catch (error) {
     ElMessage.error('commit message 生成失败：' + (error instanceof Error ? error.message : String(error)))
@@ -605,9 +345,11 @@ async function handleGenerateCommitMessage() {
 }
 
 async function handleGeneratePrDescription() {
+  const conv = active.value
+  if (!conv) return
   prLoading.value = true
   try {
-    const res = await generatePrDescription(props.agentCode, sessionId.value)
+    const res = await generatePrDescription(props.agentCode, conv.sessionId)
     prDescriptionText.value = res.description
   } catch (error) {
     ElMessage.error('PR description 生成失败：' + (error instanceof Error ? error.message : String(error)))
@@ -618,9 +360,11 @@ async function handleGeneratePrDescription() {
 
 /** 触发 AI 代码审查：对本轮 diff 输出结构化审查意见。 */
 async function handleReview() {
+  const conv = active.value
+  if (!conv) return
   reviewLoading.value = true
   try {
-    reviewResult.value = await reviewVibeCoding(props.agentCode, sessionId.value)
+    reviewResult.value = await reviewVibeCoding(props.agentCode, conv.sessionId)
   } catch (error) {
     ElMessage.error('代码审查失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {
@@ -654,6 +398,8 @@ async function openIssueFile(issue: ReviewIssue) {
  * 由 Agent 走既有 VibeCoding 链路修复（天然带 file_change 与回滚保障）。
  */
 function generateFixFromReview() {
+  const conv = active.value
+  if (!conv) return
   const result = reviewResult.value
   if (!result || result.issues.length === 0) return
   const actionable = result.issues.filter((i) => i.severity === 'CRITICAL' || i.severity === 'WARNING')
@@ -664,7 +410,7 @@ function generateFixFromReview() {
   const lines = actionable.map(
     (i) => `- [${i.severity}] ${i.file}${i.line ? `:${i.line}` : ''} ${i.message}（建议：${i.suggestion}）`,
   )
-  input.value = `请根据以下代码审查意见修复问题，并在沙箱内重新验证：\n${lines.join('\n')}`
+  conv.input = `请根据以下代码审查意见修复问题，并在沙箱内重新验证：\n${lines.join('\n')}`
   gitDrawerVisible.value = false
   send()
 }
@@ -679,29 +425,17 @@ async function copyToClipboard(text: string, label: string) {
   }
 }
 
-/** 加载（刷新）会话 workspace 目录树。 */
-async function loadFiles() {
-  filesLoading.value = true
-  try {
-    fileNodes.value = await listWorkspaceFiles(props.agentCode, sessionId.value)
-    filesLoaded.value = true
-  } catch (error) {
-    ElMessage.error('目录加载失败：' + (error instanceof Error ? error.message : String(error)))
-  } finally {
-    filesLoading.value = false
-  }
-}
-
 /** 点击文件节点，打开预览抽屉并加载内容。 */
 async function openFilePreview(node: WorkspaceFileNode) {
-  if (node.directory) return
+  const conv = active.value
+  if (!conv || node.directory) return
   previewVisible.value = true
   previewLoading.value = true
   previewFile.value = null
   editMode.value = false
   editContent.value = ''
   try {
-    previewFile.value = await readWorkspaceFileContent(props.agentCode, sessionId.value, node.relativePath)
+    previewFile.value = await readWorkspaceFileContent(props.agentCode, conv.sessionId, node.relativePath)
     // 等 DOM 更新后触发代码高亮
     await nextTick()
     highlightPreview()
@@ -730,11 +464,12 @@ async function cancelEdit() {
 
 /** 保存编辑内容到服务端文件。 */
 async function saveEdit() {
-  if (!previewFile.value) return
+  const conv = active.value
+  if (!conv || !previewFile.value) return
   saving.value = true
   try {
     await saveWorkspaceFileContent(props.agentCode, {
-      sessionId: sessionId.value,
+      sessionId: conv.sessionId,
       relativePath: previewFile.value.relativePath,
       content: editContent.value,
     })
@@ -759,33 +494,23 @@ function highlightPreview() {
   }
 }
 
-/**
- * 当前全局沙箱配置（admin.sandbox.mode），代表"新会话将会使用的模式"。
- * 仅用于 newSession/挂载时的预览——一旦切到某条历史会话，标签要改成从那条会话消息里解析出的
- * "当时真正用的模式"，不能一直显示"现在的全局配置"，否则历史记录和当前配置不一致时会互相矛盾
- * （比如切到一条 local 时期的历史记录，标题却显示当前是 docker，误导用户以为这条记录也在容器里）。
- */
-function loadCurrentSandboxMode() {
-  getSandboxMode(props.agentCode)
-    .then((res) => { sandboxMode.value = res.mode })
-    .catch(() => { sandboxMode.value = null })
-}
-
-/** 从会话首条用户消息里解析出发送时用的沙箱模式，解析不出来（更早期版本的历史记录）返回 null。 */
-function parseSandboxModeFromMessage(text: string): 'local' | 'docker' | null {
-  const match = text.match(/^\[VibeCoding指引-(docker|local)]/)
-  return match ? (match[1] as 'local' | 'docker') : null
-}
-
 onMounted(() => {
   themeStore.apply()
-  loadCurrentSandboxMode()
 })
 
-onUnmounted(() => {
-  abortStream?.()
-  clearPendingPlans()
+// 每轮对话流结束（store 里自增版本号）刷新侧边栏的后端历史列表。
+watch(
+  () => store.historyVersion[props.agentCode],
+  () => historySidebar.value?.refresh(),
+)
+
+// 从 keep-alive 缓存里重新激活时滚到最新内容——离开期间进行中的会话仍在后台追加增量。
+onActivated(() => {
+  scrollToBottom()
 })
+
+// 注意：刻意没有 onUnmounted abort/清定时器——会话、SSE 流、plan 倒计时都属于全局 store，
+// 组件销毁（切智能体/关标签）不应终止后台会话。
 
 // newSession 供 WorkspaceView 上提后的工具栏"新建会话"按钮按激活 Tab 分发调用
 defineExpose({ newSession })
@@ -796,12 +521,12 @@ defineExpose({ newSession })
     <!-- 左列：对话区 -->
     <div class="chat-column">
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
-        <div v-for="(msg, index) in messages" :key="index" class="message-row" :class="msg.role">
+        <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
           <div class="bubble">
             <TraceTimeline
               v-if="msg.role === 'assistant' && msg.nodes.length > 0"
               :nodes="msg.nodes"
-              :active="streaming && index === messages.length - 1 && !msg.text"
+              :active="(active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1 && !msg.text"
             />
             <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
             <!-- 沙箱编译/测试报告卡片时间线（P0-3）：每轮验证一张，通过绿/失败红，可展开看失败明细 -->
@@ -925,14 +650,14 @@ defineExpose({ newSession })
               </div>
             </div>
             <template v-if="msg.role === 'user'">{{ msg.text }}</template>
-            <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && streaming && index === messages.length - 1">生成中…</span>
+            <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && (active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1">生成中…</span>
           </div>
         </div>
-        <el-empty v-if="messages.length === 0" description="描述你想让智能体生成/修改的代码" />
+        <el-empty v-if="(active?.messages.length ?? 0) === 0" description="描述你想让智能体生成/修改的代码" />
       </div>
-      <div v-if="attachments.length > 0" class="attachment-tags">
+      <div v-if="active && active.attachments.length > 0" class="attachment-tags">
         <el-tag
-          v-for="a in attachments"
+          v-for="a in active.attachments"
           :key="a.localId"
           :closable="a.status !== 'uploading'"
           :type="a.status === 'failed' ? 'danger' : undefined"
@@ -945,27 +670,27 @@ defineExpose({ newSession })
       </div>
       <div class="input-bar">
         <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" :before-upload="beforeAttachmentUpload" :accept="ATTACHMENT_ACCEPT">
-          <el-button :disabled="streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
+          <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
             <el-icon><Paperclip /></el-icon>
           </el-button>
         </el-upload>
-        <el-input v-model="input" placeholder="描述需求，回车发送" :disabled="streaming" @keyup.enter="send" />
+        <el-input v-model="input" placeholder="描述需求，回车发送" :disabled="active?.streaming" @keyup.enter="send" />
         <el-tooltip
           placement="top"
           content="开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作"
         >
           <el-switch
             v-model="collaborationMode"
-            :disabled="streaming"
+            :disabled="active?.streaming"
             active-text="协作模式"
             class="collaboration-switch"
           />
         </el-tooltip>
-        <el-button v-if="!streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
-        <el-button v-else type="danger" :loading="interrupting" @click="handleInterrupt">
-          {{ interrupting ? '终止中…' : '终止' }}
+        <el-button v-if="!active?.streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
+        <el-button v-else type="danger" :loading="active?.interrupting" @click="handleInterrupt">
+          {{ active?.interrupting ? '终止中…' : '终止' }}
         </el-button>
-        <el-button v-if="interrupted && !streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
+        <el-button v-if="active?.interrupted && !active?.streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
       </div>
     </div>
 
@@ -974,26 +699,26 @@ defineExpose({ newSession })
       <div class="artifacts-header">
         <span>
           产物文件
-          <el-tag v-if="sandboxMode" size="small" :type="sandboxMode === 'docker' ? 'warning' : 'info'" class="sandbox-mode-tag">
-            {{ sandboxMode === 'docker' ? 'docker' : 'local' }}
+          <el-tag v-if="active?.sandboxMode" size="small" :type="active.sandboxMode === 'docker' ? 'warning' : 'info'" class="sandbox-mode-tag">
+            {{ active.sandboxMode === 'docker' ? 'docker' : 'local' }}
           </el-tag>
         </span>
         <div class="artifacts-header-actions">
           <el-button link type="primary" @click="openGitAssistant">Git 助手</el-button>
-          <el-button link type="primary" :loading="filesLoading" @click="loadFiles">刷新</el-button>
+          <el-button link type="primary" :loading="active?.filesLoading" @click="refreshFiles">刷新</el-button>
         </div>
       </div>
 
       <!-- 实时文件变更时间线 -->
-      <div v-if="fileChanges.length > 0" class="file-change-timeline">
+      <div v-if="active && active.fileChanges.length > 0" class="file-change-timeline">
         <div class="file-change-timeline-header">
           <span class="file-change-timeline-title">本轮变更</span>
           <el-button
             link
             type="danger"
             size="small"
-            :loading="rollingBack"
-            :disabled="streaming"
+            :loading="active?.rollingBack"
+            :disabled="active?.streaming"
             title="撤销本次会话的全部文件改动，恢复到对话前状态"
             @click="handleRollback"
           >
@@ -1001,7 +726,7 @@ defineExpose({ newSession })
           </el-button>
         </div>
         <el-scrollbar max-height="120px">
-          <div v-for="(fc, idx) in fileChanges" :key="idx" class="file-change-item">
+          <div v-for="(fc, idx) in active.fileChanges" :key="idx" class="file-change-item">
             <el-icon v-if="fc.operation === 'CREATE'" style="color:#67c23a"><CirclePlus /></el-icon>
             <el-icon v-else-if="fc.operation === 'MODIFY'" style="color:#e6a23c"><EditPen /></el-icon>
             <el-icon v-else style="color:#f56c6c"><Delete /></el-icon>
@@ -1012,12 +737,12 @@ defineExpose({ newSession })
 
       <!-- 空状态 -->
       <el-empty
-        v-if="!filesLoaded"
+        v-if="!active?.filesLoaded"
         description="对话结束后自动刷新"
         :image-size="50"
       />
       <el-empty
-        v-else-if="filesLoaded && fileNodes.length === 0"
+        v-else-if="active?.filesLoaded && active.fileNodes.length === 0"
         description="本次会话暂无产出文件"
         :image-size="50"
       />
@@ -1025,7 +750,7 @@ defineExpose({ newSession })
       <!-- 目录树 -->
       <el-scrollbar v-else height="100%">
         <el-tree
-          :data="fileNodes"
+          :data="active?.fileNodes ?? []"
           :props="{ label: 'name', children: 'children', isLeaf: (n: WorkspaceFileNode) => !n.directory }"
           node-key="relativePath"
           default-expand-all
@@ -1045,7 +770,13 @@ defineExpose({ newSession })
 
     <!-- 右列：历史会话 -->
     <div class="history-column">
-      <ChatHistorySidebar ref="historySidebar" :agent-code="agentCode" :active-session-id="sessionId" @select="openSession" />
+      <ChatHistorySidebar
+        ref="historySidebar"
+        :agent-code="agentCode"
+        :active-session-id="activeSessionId"
+        :live-sessions="liveSessions"
+        @select="openSession"
+      />
     </div>
 
     <!-- 文件内容预览抽屉 -->
@@ -1206,7 +937,7 @@ defineExpose({ newSession })
               type="warning"
               size="small"
               class="review-fix-btn"
-              :disabled="streaming"
+              :disabled="active?.streaming"
               @click="generateFixFromReview"
             >
               一键生成修复

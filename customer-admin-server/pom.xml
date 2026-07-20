@@ -123,6 +123,15 @@
             <version>3.3.2</version>
         </dependency>
 
+        <!-- 分布式锁（AdminDistributedLockConfig 手动装配 starter 的 DistributedLockExecutor）；
+             已经通过 starter 传递可用，这里显式声明便于直接引用 RedissonClient 类。agentscope-bom
+             未管理该版本（同 xxl-job-core），需与 starter 保持一致的显式版本号。 -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>3.52.0</version>
+        </dependency>
+
         <!-- SQL 查询结果导出 xlsx（SqlQueryController#export）。项目原本无 POI，EasyExcel 传递
              引入 poi/poi-ooxml 4.1.2；选本地仓库已存在的稳定版 3.3.2，避免额外下载/版本冲突。 -->
         <!-- SQL 查询结果导出 xlsx。easyexcel 必须用 4.x（基于 POI 5.x）：starter 经

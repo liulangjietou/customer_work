@@ -576,6 +576,18 @@ export interface ChatSessionSummary {
   messageCount: number
 }
 
+/**
+ * 前端内存里"活着"的会话（进行中或本次加载过的），供历史侧边栏与后端已落库列表合并展示。
+ * 进行中的新会话（尤其第一轮还没落库）后端列表拉不到，全靠这份内存登记让它在侧边栏可见并标「进行中」。
+ */
+export interface LiveSession {
+  sessionId: string
+  preview: string
+  messageCount: number
+  /** 是否正在流式生成中——决定是否置顶并打「进行中」标。 */
+  streaming: boolean
+}
+
 export interface ChatMessageVO {
   role: 'user' | 'assistant'
   text: string
