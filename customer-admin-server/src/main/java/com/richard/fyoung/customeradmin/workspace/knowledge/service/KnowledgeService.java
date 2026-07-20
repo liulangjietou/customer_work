@@ -73,6 +73,8 @@ public class KnowledgeService {
     private static final int SNIPPET_MAX_CHARS = 800;
     /** 问答一次性模型调用超时。 */
     private static final long ASK_TIMEOUT_SECONDS = 45;
+    /** 问答系统提示词：限定角色 + 抑制幻觉（检索片段里没有依据的就明说不知道，不编造）。 */
+    private static final String ASK_SYSTEM_PROMPT = "你是一个知识库检索专家和助手，不知道的就回答不知道。";
     /**
      * 构建池与查询池分离：建索引是分钟级长任务（全量扫描 + Embedding），与 search/ask 共池时并发构建
      * 会把查询请求饿死。构建池保持小（限制并发构建数与对 Embedding API 的压力），查询池独立承载
@@ -346,11 +348,13 @@ public class KnowledgeService {
             cryptoUtil.decrypt(config.getApiKey()), config.getModel());
     }
 
-    /** 一次性模型调用（与 GitAssistantService/CollaborativeCodingService 同手法）。 */
+    /** 一次性模型调用（与 GitAssistantService/CollaborativeCodingService 同手法），带知识库问答系统提示词。 */
     private String callModelOnce(Model model, String prompt) {
+        Msg systemMsg = Msg.builder().role(MsgRole.SYSTEM).name("system")
+            .content(TextBlock.builder().text(ASK_SYSTEM_PROMPT).build()).build();
         Msg userMsg = Msg.builder().role(MsgRole.USER).name("user")
             .content(TextBlock.builder().text(prompt).build()).build();
-        List<ChatResponse> responses = model.stream(List.of(userMsg), List.of(), GenerateOptions.builder().build())
+        List<ChatResponse> responses = model.stream(List.of(systemMsg, userMsg), List.of(), GenerateOptions.builder().build())
             .collectList()
             .block(Duration.ofSeconds(ASK_TIMEOUT_SECONDS));
         if (CollectionUtils.isEmpty(responses)) {
