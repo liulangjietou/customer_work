@@ -1,6 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
+// WorkspaceView 特意同步导入（其余路由仍懒加载）：MainLayout 的 <keep-alive :include="['WorkspaceView']">
+// 按组件 name 字符串匹配，而懒加载 `() => import()` 交给 router-view 的是异步组件包装，KeepAlive 取不到
+// 里面真实组件的 name，include 匹配落空、缓存失效——对话/VibeCoding 面板切菜单再回来就被销毁重建、
+// 进行中的会话随之丢失。同步导入让 include 拿到真实 name，keep-alive 才真正生效。
+import WorkspaceView from '@/views/workspace/WorkspaceView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -41,7 +46,8 @@ const router = createRouter({
           // 动态智能体工作区节点：path 形如 /workspace/{agentCode}，运行时拼进菜单，不落库、不预注册
           path: 'workspace/:agentCode',
           name: 'Workspace',
-          component: () => import('@/views/workspace/WorkspaceView.vue'),
+          // 同步导入（见文件顶部 import 注释）：keep-alive 按 name 匹配缓存此页，懒加载会导致匹配失效。
+          component: WorkspaceView,
           props: true,
         },
         {
