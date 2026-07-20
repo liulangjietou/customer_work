@@ -53,24 +53,26 @@ const showPicker = ref(false)
   position: relative;
 }
 
-/* 主题色胶囊按钮：白底细边框，悬浮时边框染上主题色并轻微上浮 */
+/* 主题色胶囊按钮：浅黄底，规格与代码知识库/新建会话一致（34px 高/17px 圆角/0 18px 内距） */
 .theme-btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   height: 34px;
-  padding: 0 14px;
+  padding: 0 18px;
   border-radius: 17px;
-  border: 1px solid var(--el-border-color);
-  background: var(--el-bg-color);
+  border: none;
+  background: #fdf0cd;
   cursor: pointer;
   font-size: 13px;
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  transition: box-shadow 0.2s, transform 0.2s, filter 0.2s;
 }
 
 .theme-btn:hover {
-  border-color: var(--theme-primary, var(--el-color-primary));
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  filter: brightness(1.03);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   transform: translateY(-1px);
 }
 
@@ -83,13 +85,14 @@ const showPicker = ref(false)
 }
 
 .color-label {
-  color: var(--el-text-color-regular);
+  /* 浅黄底上固定深棕字保证可读性，不随明暗模式切换 */
+  color: #8a6116;
   font-weight: 500;
 }
 
 .arrow {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #8a6116;
   transition: transform 0.2s;
 }
 
@@ -131,32 +134,28 @@ const showPicker = ref(false)
   box-shadow: 0 0 0 2px var(--theme-primary, var(--el-color-primary));
 }
 
-/* 新建会话：主题色渐变胶囊按钮，悬浮提亮并上浮 */
+/* 新建会话：白底细边框胶囊，规格与代码知识库/主题色按钮一致；悬浮时描主题色边 */
 .new-session-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 34px;
   padding: 0 18px;
-  border: none;
+  border: 1px solid var(--el-border-color);
   border-radius: 17px;
-  background: linear-gradient(
-    135deg,
-    var(--theme-primary, var(--el-color-primary)),
-    var(--theme-primary-light, #79bbff)
-  );
-  /* 主题色渐变底上的文字固定用白色，不随明暗模式切换 */
-  color: #fff;
+  background: var(--el-bg-color);
+  color: var(--el-text-color-regular);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  transition: box-shadow 0.2s, transform 0.2s, filter 0.2s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
 }
 
 .new-session-btn:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  border-color: var(--theme-primary, var(--el-color-primary));
+  color: var(--theme-primary, var(--el-color-primary));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   transform: translateY(-1px);
 }
 
