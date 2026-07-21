@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  会话状态表 ai_chat_session_state 的只读分页查询。
+  该表由框架 MysqlAgentStateStore 自建：主键 (session_id, state_key, item_index)，
+  session_id 存储格式为 "{agentCode}:{uuid}"，LIKE '{agentCode}:%' 走主键最左前缀。
+  前缀用 CONCAT(#{agentCode}, ':%') 参数化拼接，禁止 ${} 拼接防注入。
+-->
+<mapper namespace="com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper">
+
+    <select id="pageSessionIds" resultType="java.lang.String">
+        SELECT session_id
+        FROM ai_chat_session_state
+        WHERE session_id LIKE CONCAT(#{agentCode}, ':%')
+        GROUP BY session_id
+        ORDER BY MAX(updated_at) DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countSessions" resultType="long">
+        SELECT COUNT(DISTINCT session_id)
+        FROM ai_chat_session_state
+        WHERE session_id LIKE CONCAT(#{agentCode}, ':%')
+    </select>
+
+</mapper>

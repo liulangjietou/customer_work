@@ -11,8 +11,17 @@ const props = withDefaults(
 )
 const emit = defineEmits<{ select: [sessionId: string] }>()
 
+/** 每页条数，与后端 ChatController#sessions 的 size 默认值保持一致。 */
+const PAGE_SIZE = 20
+
 const sessions = ref<ChatSessionSummary[]>([])
-const loading = ref(false)
+const page = ref(0)
+const total = ref(0)
+const loading = ref(false) // 首页加载
+const loadingMore = ref(false) // 滚动追加下一页
+
+// 以"已消费页数"判断到底，而非累积条数——空上下文会话在后端被跳过，累积条数可能永远够不到 total。
+const noMore = computed(() => page.value > 0 && page.value * PAGE_SIZE >= total.value)
 
 /** 侧边栏展示项：在后端已落库列表基础上叠加内存 streaming 标记。 */
 interface DisplaySession {
@@ -59,14 +68,47 @@ const displaySessions = computed<DisplaySession[]>(() => {
   return list.sort((a, b) => Number(b.streaming) - Number(a.streaming))
 })
 
+/** 拉取指定页并去重合并到累积列表（同 sessionId 以已有为准，防加载间隙新会话导致的页间重复）。 */
+async function loadPage(target: number) {
+  const result = await listChatSessions(props.agentCode, target, PAGE_SIZE)
+  total.value = result.total
+  page.value = target
+  const seen = new Set(sessions.value.map((s) => s.sessionId))
+  for (const s of result.list) {
+    if (!seen.has(s.sessionId)) {
+      sessions.value.push(s)
+      seen.add(s.sessionId)
+    }
+  }
+}
+
+/** 刷新：重置分页状态后重新拉第一页（「刷新」按钮与 defineExpose 的 refresh 同一语义）。 */
 async function refresh() {
   loading.value = true
   try {
-    sessions.value = await listChatSessions(props.agentCode)
+    sessions.value = []
+    page.value = 0
+    total.value = 0
+    await loadPage(1)
   } catch (error) {
     ElMessage.error('历史会话加载失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {
     loading.value = false
+  }
+}
+
+/** 滚动到底触发：追加下一页（首页加载中 / 追加中 / 已到底时由 infinite-scroll-disabled 拦截，这里再兜一层）。 */
+async function loadMore() {
+  if (loading.value || loadingMore.value || noMore.value) {
+    return
+  }
+  loadingMore.value = true
+  try {
+    await loadPage(page.value + 1)
+  } catch (error) {
+    ElMessage.error('历史会话加载失败：' + (error instanceof Error ? error.message : String(error)))
+  } finally {
+    loadingMore.value = false
   }
 }
 
@@ -90,7 +132,14 @@ function openAddToProject(sessionId: string) {
       <el-button link type="primary" :loading="loading" @click="refresh">刷新</el-button>
     </div>
     <el-empty v-if="!loading && displaySessions.length === 0" description="暂无历史对话" :image-size="50" />
-    <el-scrollbar v-else height="100%">
+    <div
+      v-else
+      class="session-scroll"
+      v-infinite-scroll="loadMore"
+      :infinite-scroll-disabled="loading || loadingMore || noMore"
+      :infinite-scroll-immediate="false"
+      :infinite-scroll-distance="10"
+    >
       <ul class="session-list">
         <li
           v-for="session in displaySessions"
@@ -122,7 +171,9 @@ function openAddToProject(sessionId: string) {
           </div>
         </li>
       </ul>
-    </el-scrollbar>
+      <div v-if="loadingMore" class="load-status">加载中…</div>
+      <div v-else-if="noMore && displaySessions.length > 0" class="load-status">没有更多了</div>
+    </div>
 
     <AddToProjectDialog v-model="addToProjectVisible" :agent-code="agentCode" :session-id="addToProjectSessionId" />
   </div>
@@ -145,10 +196,34 @@ function openAddToProject(sessionId: string) {
   font-size: 13px;
 }
 
+/* 用普通 overflow 容器承接 v-infinite-scroll（指令监听宿主元素自身滚动，el-scrollbar 的内部滚动它监听不到） */
+.session-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.session-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.session-scroll::-webkit-scrollbar-thumb {
+  background: #dcdfe6;
+  border-radius: 3px;
+}
+
 .session-list {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.load-status {
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  padding: 8px 0;
 }
 
 .session-item {
