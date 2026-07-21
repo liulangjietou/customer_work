@@ -1,16 +1,21 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.message.service.SiteMessageService;
 import com.richard.fyoung.customeradmin.workspace.audit.service.AiCodingAuditService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewResult;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewTaskVO;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.entity.CodeReviewTask;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.mapper.CodeReviewTaskMapper;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.Model;
@@ -20,6 +25,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import reactor.core.publisher.Flux;
 
 import java.nio.file.Path;
@@ -27,11 +33,17 @@ import java.util.List;
 import java.util.concurrent.CompletionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -42,9 +54,13 @@ import static org.mockito.Mockito.when;
  */
 class GitAssistantServiceTest {
 
+    private static final ObjectMapper TEST_OBJECT_MAPPER = new ObjectMapper();
+
     private AiAgentMapper agentMapper;
     private AdminAgentInstanceFactory agentInstanceFactory;
     private GitWorkspaceService gitWorkspaceService;
+    private CodeReviewTaskMapper reviewTaskMapper;
+    private SiteMessageService siteMessageService;
     private Model model;
     private GitAssistantService service;
 
@@ -61,13 +77,23 @@ class GitAssistantServiceTest {
         agentMapper = mock(AiAgentMapper.class);
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         gitWorkspaceService = mock(GitWorkspaceService.class);
+        reviewTaskMapper = mock(CodeReviewTaskMapper.class);
+        siteMessageService = mock(SiteMessageService.class);
         model = mock(Model.class);
         // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
         service = new GitAssistantService(agentMapper, agentInstanceFactory, gitWorkspaceService,
-            mock(AiCodingAuditService.class));
+            mock(AiCodingAuditService.class), reviewTaskMapper, siteMessageService);
 
         when(agentInstanceFactory.resolveSessionWorkspace(anyString(), anyString())).thenReturn(sessionWorkspace);
         when(agentInstanceFactory.buildModelForAgent(anyString())).thenReturn(model);
+    }
+
+    /** mock 的 insert 不会回填自增 id，异步链路要用 taskId 回写，故 stub 成插入即赋 id。 */
+    private void stubReviewTaskInsertAssignsId(long taskId) {
+        when(reviewTaskMapper.insert(any(CodeReviewTask.class))).thenAnswer(invocation -> {
+            invocation.<CodeReviewTask>getArgument(0).setId(taskId);
+            return 1;
+        });
     }
 
     private AiAgent vibeCodingAgent() {
@@ -178,56 +204,92 @@ class GitAssistantServiceTest {
         assertTrue(response.description().contains("Foo.java"));
     }
 
-    // ===== code review (P0-2) =====
+    // ===== code review 异步化 (提交-轮询) =====
 
-    @Test
-    void review_shouldThrowNoFileChanges_whenDiffEmpty() {
-        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
-        when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace)).thenReturn("");
+    /** 从异步回写 updateById 捕获任务并反序列化 result_json，避免各用例重复模板。 */
+    private CodeReviewTask captureReviewTaskUpdate() {
+        ArgumentCaptor<CodeReviewTask> captor = ArgumentCaptor.forClass(CodeReviewTask.class);
+        verify(reviewTaskMapper, timeout(2000)).updateById(captor.capture());
+        return captor.getValue();
+    }
 
-        CompletionException ex = assertThrows(CompletionException.class,
-            () -> service.review("coder", "s1").join());
-        assertEquals(ResultCode.NO_FILE_CHANGES, unwrap(ex).getResultCode());
+    private ReviewResult parseResultJson(String json) throws Exception {
+        return TEST_OBJECT_MAPPER.readValue(json, ReviewResult.class);
     }
 
     @Test
-    void review_shouldParseStructuredIssues_whenModelReturnsJson() {
+    void submitReview_shouldFastFailNoFileChanges_synchronously_whenDiffEmpty() {
+        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+        when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace)).thenReturn("");
+
+        // 无变更同步快速失败：既不建任务行、也不发站内信
+        BizException ex = assertThrows(BizException.class, () -> service.submitReview("coder", "s1", 7L));
+        assertEquals(ResultCode.NO_FILE_CHANGES, ex.getResultCode());
+        verify(reviewTaskMapper, never()).insert(any(CodeReviewTask.class));
+    }
+
+    @Test
+    void submitReview_shouldReturnTaskIdImmediately_andPersistRunningRow() {
+        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+        when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace))
+            .thenReturn("diff --git a/Foo.java b/Foo.java\n+class Foo {}");
+        stubReviewTaskInsertAssignsId(42L);
+        mockModelReply("{\"issues\":[],\"summary\":\"ok\"}");
+
+        Long taskId = service.submitReview("coder", "s1", 7L);
+
+        assertEquals(42L, taskId, "同步段应立即返回插入后回填的 taskId");
+    }
+
+    @Test
+    void submitReview_shouldPersistSuccessAndSendMessage_whenModelReturnsJson() throws Exception {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
         when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace))
             .thenReturn("diff --git a/Foo.java b/Foo.java\n+String sql = \"select * where id=\"+id;");
+        stubReviewTaskInsertAssignsId(99L);
         // 模型在 JSON 外还夹了 Markdown 代码块标记，解析器应能剥离
         mockModelReply("```json\n{\"issues\":[{\"severity\":\"CRITICAL\",\"file\":\"Foo.java\",\"line\":1,"
             + "\"category\":\"SECURITY\",\"message\":\"SQL 注入\",\"suggestion\":\"用参数化查询\"}],"
             + "\"summary\":\"发现 1 个严重问题\"}\n```");
 
-        ReviewResult result = service.review("coder", "s1").join();
+        service.submitReview("coder", "s1", 7L);
 
+        CodeReviewTask updated = captureReviewTaskUpdate();
+        assertEquals(CodeReviewTask.STATUS_SUCCESS, updated.getStatus());
+        assertNotNull(updated.getFinishTime());
+        ReviewResult result = parseResultJson(updated.getResultJson());
         assertEquals(1, result.issues().size());
         assertEquals("CRITICAL", result.issues().get(0).severity());
-        assertEquals("Foo.java", result.issues().get(0).file());
-        assertEquals(1, result.issues().get(0).line());
         assertEquals("SECURITY", result.issues().get(0).category());
-        assertTrue(result.summary().contains("严重问题"));
+        // 成功站内信：接收人=提交人、bizType=CODE_REVIEW、bizId=taskId、link 携带 reviewTask=taskId
+        verify(siteMessageService, timeout(2000)).send(eq(7L), eq("AI 代码审查完成"), anyString(),
+            eq("CODE_REVIEW"), eq("99"), contains("reviewTask=99"));
     }
 
     @Test
-    void review_shouldDegradeToSummary_whenModelReturnsNonJson() {
+    void submitReview_shouldPersistDegradedSummary_whenModelReturnsNonJson() throws Exception {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
         when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace))
             .thenReturn("diff --git a/Foo.java b/Foo.java\n+class Foo {}");
+        stubReviewTaskInsertAssignsId(99L);
         mockModelReply("这段代码看起来没什么问题，整体不错。");
 
-        ReviewResult result = service.review("coder", "s1").join();
+        service.submitReview("coder", "s1", 7L);
 
+        CodeReviewTask updated = captureReviewTaskUpdate();
+        // 解析失败仍算成功（降级），不当作硬失败
+        assertEquals(CodeReviewTask.STATUS_SUCCESS, updated.getStatus());
+        ReviewResult result = parseResultJson(updated.getResultJson());
         assertTrue(result.issues().isEmpty(), "解析失败降级为空 issues");
         assertTrue(result.summary().contains("整体不错"), "模型原文进 summary");
     }
 
     @Test
-    void review_shouldNormalizeSeverityAndCategory_lowercaseMixedcaseAndUnknown() {
+    void submitReview_shouldNormalizeSeverityAndCategory_lowercaseMixedcaseAndUnknown() throws Exception {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
         when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace))
             .thenReturn("diff --git a/Foo.java b/Foo.java\n+class Foo {}");
+        stubReviewTaskInsertAssignsId(99L);
         // 三种非规范值：全小写 / 混合大小写 / 未知值（blocker、smell 不在合法集合内）
         mockModelReply("{\"issues\":["
             + "{\"severity\":\"critical\",\"file\":\"A.java\",\"line\":1,\"category\":\"security\",\"message\":\"m1\",\"suggestion\":\"s1\"},"
@@ -235,8 +297,9 @@ class GitAssistantServiceTest {
             + "{\"severity\":\"blocker\",\"file\":\"C.java\",\"line\":3,\"category\":\"smell\",\"message\":\"m3\",\"suggestion\":\"s3\"}],"
             + "\"summary\":\"3 项\"}");
 
-        ReviewResult result = service.review("coder", "s1").join();
+        service.submitReview("coder", "s1", 7L);
 
+        ReviewResult result = parseResultJson(captureReviewTaskUpdate().getResultJson());
         assertEquals(3, result.issues().size(), "非规范值不能导致 issue 丢失");
         assertEquals("CRITICAL", result.issues().get(0).severity(), "全小写应归一为大写");
         assertEquals("SECURITY", result.issues().get(0).category());
@@ -247,16 +310,73 @@ class GitAssistantServiceTest {
     }
 
     @Test
-    void review_shouldUnifyErrorCode_whenModelReturnsNothing() {
+    void submitReview_shouldPersistFailedAndSendFailureMessage_whenModelReturnsNothing() {
         when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
         when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace))
             .thenReturn("diff --git a/Foo.java b/Foo.java\n+class Foo {}");
-        // 模型空响应：callModelOnce 内部抛通用 GIT_ASSISTANT_AI_FAILED，review 链路必须统一改写成 40019
+        stubReviewTaskInsertAssignsId(99L);
+        // 模型空响应：callModelOnce 内部抛异常 → 异步链路落 FAILED 并发失败站内信（不抛给调用方）
         when(model.stream(any(), any(), any())).thenReturn(Flux.empty());
 
-        CompletionException ex = assertThrows(CompletionException.class,
-            () -> service.review("coder", "s1").join());
-        assertEquals(ResultCode.AI_REVIEW_FAILED, unwrap(ex).getResultCode(),
-            "review 链路全部 AI 硬失败对外只有 AI_REVIEW_FAILED 一个码");
+        service.submitReview("coder", "s1", 7L);
+
+        CodeReviewTask updated = captureReviewTaskUpdate();
+        assertEquals(CodeReviewTask.STATUS_FAILED, updated.getStatus());
+        assertNotNull(updated.getErrorMsg(), "失败任务应落错误原因");
+        assertNotNull(updated.getFinishTime());
+        verify(siteMessageService, timeout(2000)).send(eq(7L), eq("AI 代码审查失败"), anyString(),
+            eq("CODE_REVIEW"), eq("99"), contains("reviewTask=99"));
+    }
+
+    // ===== 审查任务轮询 (归属校验) =====
+
+    @Test
+    void getReviewTask_shouldThrowNotFound_whenTaskMissing() {
+        when(reviewTaskMapper.selectById(1L)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class, () -> service.getReviewTask(1L, 7L));
+        assertEquals(ResultCode.RESOURCE_NOT_FOUND, ex.getResultCode());
+    }
+
+    @Test
+    void getReviewTask_shouldThrowForbidden_whenNotOwner() {
+        CodeReviewTask task = new CodeReviewTask();
+        task.setId(1L);
+        task.setUserId(999L);
+        task.setStatus(CodeReviewTask.STATUS_RUNNING);
+        when(reviewTaskMapper.selectById(1L)).thenReturn(task);
+
+        BizException ex = assertThrows(BizException.class, () -> service.getReviewTask(1L, 7L));
+        assertEquals(ResultCode.FORBIDDEN, ex.getResultCode());
+    }
+
+    @Test
+    void getReviewTask_shouldReturnResult_whenSuccessAndOwned() {
+        CodeReviewTask task = new CodeReviewTask();
+        task.setId(1L);
+        task.setUserId(7L);
+        task.setStatus(CodeReviewTask.STATUS_SUCCESS);
+        task.setResultJson("{\"issues\":[],\"summary\":\"looks good\"}");
+        when(reviewTaskMapper.selectById(1L)).thenReturn(task);
+
+        ReviewTaskVO vo = service.getReviewTask(1L, 7L);
+
+        assertEquals(CodeReviewTask.STATUS_SUCCESS, vo.status());
+        assertNotNull(vo.result());
+        assertEquals("looks good", vo.result().summary());
+    }
+
+    @Test
+    void getReviewTask_shouldReturnNullResult_whenStillRunning() {
+        CodeReviewTask task = new CodeReviewTask();
+        task.setId(1L);
+        task.setUserId(7L);
+        task.setStatus(CodeReviewTask.STATUS_RUNNING);
+        when(reviewTaskMapper.selectById(1L)).thenReturn(task);
+
+        ReviewTaskVO vo = service.getReviewTask(1L, 7L);
+
+        assertEquals(CodeReviewTask.STATUS_RUNNING, vo.status());
+        assertTrue(vo.result() == null, "RUNNING 阶段无结果");
     }
 }

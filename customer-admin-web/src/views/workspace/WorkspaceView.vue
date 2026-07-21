@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useMenuStore } from '@/store/menu'
-import type { MenuNode } from '@/types/api'
+import { getReviewTask } from '@/api/vibecoding'
+import type { MenuNode, ReviewResult } from '@/types/api'
 import ChatPanel from './ChatPanel.vue'
 import VibeCodingPanel from './VibeCodingPanel.vue'
 import KnowledgeDrawer from './KnowledgeDrawer.vue'
 import ThemeToolbar from '@/components/ThemeToolbar.vue'
+import ReviewReport from '@/components/ReviewReport.vue'
 
 // 供 MainLayout 的 <keep-alive :include> 按组件名精确命中——离开本页（切到其它菜单）时不销毁，
 // 只是 deactivated；SSE 流不会被 onUnmounted 打断，切回来消息能接着看，见 ChatPanel/VibeCodingPanel
@@ -16,6 +18,7 @@ defineOptions({ name: 'WorkspaceView' })
 const props = defineProps<{ agentCode: string }>()
 const menuStore = useMenuStore()
 const route = useRoute()
+const router = useRouter()
 // 从 Project 详情页"点会话跳回工作区"带过来的目标会话 id（?sessionId=xxx），只在首次挂载时读一次，
 // ChatPanel 内部 openSession 打开后由它自己的会话状态接管，不需要响应式跟随路由变化。
 const initialSessionId = computed(() => (route.query.sessionId as string) || undefined)
@@ -61,6 +64,53 @@ function newSession() {
 
 // 代码知识库抽屉（P3-2）
 const knowledgeVisible = ref(false)
+
+// 站内信跳转承接（AI 代码审查异步化）：link 形如 /workspace/{agentCode}?reviewTask={taskId}，
+// 挂载时读一次并回查任务终态，用完整报告弹窗展示，与 VibeCodingPanel 内的 Git 助手抽屉共用
+// ReviewReport 渲染，保证两处样式一致。
+const reviewDialogVisible = ref(false)
+const reviewDialogResult = ref<ReviewResult | null>(null)
+
+/**
+ * 处理 ?reviewTask= 查询参数：无论查询成功与否都立即从 query 里摘掉，避免用户刷新页面/
+ * 前进后退时重复弹出同一份报告。
+ *
+ * 用 watch(immediate) 而不是 onMounted：WorkspaceView 是 keep-alive 精确缓存的路由组件
+ * （见 MainLayout 里的 include: ['WorkspaceView'] 注释），/workspace/:agentCode 换参数时
+ * Vue Router 默认复用同一实例、不重新 mount——站内信链接从当前已打开的工作区页跳到
+ * 另一个 reviewTask 查询参数时，onMounted 不会再触发，只有响应式的 route.query 变化能感知到。
+ */
+async function handleReviewTaskQuery(taskIdRaw: string | null) {
+  if (!taskIdRaw) return
+  const taskId = Number(taskIdRaw)
+  const restQuery = { ...route.query }
+  delete restQuery.reviewTask
+  await router.replace({ query: restQuery })
+  if (!Number.isFinite(taskId)) return
+  try {
+    const task = await getReviewTask(props.agentCode, taskId)
+    if (task.status === 'SUCCESS' && task.result) {
+      reviewDialogResult.value = task.result
+      reviewDialogVisible.value = true
+    } else if (task.status === 'RUNNING') {
+      ElMessage.info('AI 代码审查仍在进行中，请稍后再查看')
+    } else if (task.status === 'FAILED') {
+      ElMessage.error(task.errorMsg || 'AI 代码审查失败')
+    }
+  } catch (error) {
+    ElMessage.error('审查任务查询失败：' + (error instanceof Error ? error.message : String(error)))
+  }
+}
+
+watch(
+  () => route.query.reviewTask,
+  (taskIdRaw) => {
+    if (typeof taskIdRaw === 'string') {
+      handleReviewTaskQuery(taskIdRaw)
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -74,6 +124,11 @@ const knowledgeVisible = ref(false)
       </div>
     </div>
     <KnowledgeDrawer v-model="knowledgeVisible" />
+    <!-- 站内信跳转承接：AI 代码审查任务完成后的完整报告，只读展示（不出"打开文件"/"一键生成修复"，
+         弹窗打开时不一定处于该会话的 VibeCoding 面板上下文，见 ReviewReport 组件注释） -->
+    <el-dialog v-model="reviewDialogVisible" title="AI 代码审查报告" width="640px" destroy-on-close>
+      <ReviewReport v-if="reviewDialogResult" :result="reviewDialogResult" :interactive="false" />
+    </el-dialog>
     <el-tabs v-model="activeTab" type="border-card" class="workspace-tabs">
       <el-tab-pane label="对话" name="chat">
         <!-- workspace/:agentCode 是同一条路由，只换参数，Vue Router 默认复用组件实例——

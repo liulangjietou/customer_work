@@ -9,6 +9,7 @@ import MenuTree from './MenuTree.vue'
 import TabsBar from './TabsBar.vue'
 import AppBreadcrumb from './AppBreadcrumb.vue'
 import FooterCopyright from '@/components/FooterCopyright.vue'
+import NotificationBell from '@/components/NotificationBell.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -72,6 +73,7 @@ async function handleLogout() {
             :title="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
             @click="themeStore.toggleDark()"
           />
+          <NotificationBell />
           <el-dropdown>
             <span class="user-info">{{ auth.nickname }}<el-icon><ArrowDown /></el-icon></span>
           <template #dropdown>
