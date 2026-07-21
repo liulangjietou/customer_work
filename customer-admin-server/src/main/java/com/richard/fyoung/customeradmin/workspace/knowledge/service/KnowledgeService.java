@@ -71,8 +71,8 @@ public class KnowledgeService {
         ".git", "node_modules", "target", "dist", "build", ".idea", ".gradle", "out", ".mvn");
     /** 检索命中片段展示上限。 */
     private static final int SNIPPET_MAX_CHARS = 800;
-    /** 问答一次性模型调用超时。 */
-    private static final long ASK_TIMEOUT_SECONDS = 45;
+    /** 问答一次性模型调用超时：需小于前端 LLM_TIMEOUT_MS(180s)，保证超时时前端收到结构化错误而非 axios 超时。 */
+    private static final long ASK_TIMEOUT_SECONDS = 170;
     /** 问答系统提示词：限定角色 + 抑制幻觉（检索片段里没有依据的就明说不知道，不编造）。 */
     private static final String ASK_SYSTEM_PROMPT = "你是一个知识库检索专家和助手，不知道的就回答不知道。";
     /**

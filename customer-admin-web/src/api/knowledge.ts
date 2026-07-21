@@ -1,4 +1,4 @@
-import { request } from './request'
+import { LLM_TIMEOUT_MS, request } from './request'
 import type { KnowledgeAskResponse, KnowledgeIndex, KnowledgeSearchHit } from '@/types/api'
 
 /** 代码知识库索引列表（P3-2）。 */
@@ -32,5 +32,5 @@ export function searchKnowledge(indexId: number, query: string, topK?: number) {
 
 /** 基于代码知识库的问答（RAG）。 */
 export function askKnowledge(data: { indexId: number; question: string; topK?: number }) {
-  return request<KnowledgeAskResponse>({ url: '/knowledge/ask', method: 'post', data })
+  return request<KnowledgeAskResponse>({ url: '/knowledge/ask', method: 'post', data, timeout: LLM_TIMEOUT_MS })
 }

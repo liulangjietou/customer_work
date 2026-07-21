@@ -7,6 +7,9 @@ import type { Result } from '@/types/api'
 const CODE_UNAUTHORIZED = 10001
 const CODE_FORCE_CHANGE_PASSWORD = 20002
 
+/** 同步 LLM 接口专用超时：模型调用远慢于普通 CRUD，30s 全局默认不够用（对齐定时任务手动触发的 180s）。 */
+export const LLM_TIMEOUT_MS = 180000
+
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
   timeout: 30000,

@@ -1,4 +1,4 @@
-import { request } from './request'
+import { LLM_TIMEOUT_MS, request } from './request'
 import { streamSse, type SseHandlers } from '@/utils/sse'
 import type {
   ChatRequest,
@@ -87,6 +87,7 @@ export function getGitDiffSummary(agentCode: string, sessionId: string) {
     url: `/workspace/${agentCode}/vibecoding/git-diff`,
     method: 'get',
     params: { sessionId },
+    timeout: LLM_TIMEOUT_MS,
   })
 }
 
@@ -96,6 +97,7 @@ export function generateCommitMessage(agentCode: string, req: CommitMessageReque
     url: `/workspace/${agentCode}/vibecoding/commit-message`,
     method: 'post',
     data: req,
+    timeout: LLM_TIMEOUT_MS,
   })
 }
 
@@ -105,6 +107,7 @@ export function generatePrDescription(agentCode: string, sessionId: string) {
     url: `/workspace/${agentCode}/vibecoding/pr-description`,
     method: 'post',
     data: { sessionId },
+    timeout: LLM_TIMEOUT_MS,
   })
 }
 
@@ -123,6 +126,7 @@ export function reviewVibeCoding(agentCode: string, sessionId: string) {
     url: `/workspace/${agentCode}/vibecoding/review`,
     method: 'post',
     data: { sessionId },
+    timeout: LLM_TIMEOUT_MS,
   })
 }
 

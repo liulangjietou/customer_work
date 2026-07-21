@@ -63,7 +63,8 @@ public class GitAssistantService {
     private static final int MAX_DIFF_CHARS_FOR_MODEL = 20_000;
     /** Review 场景的 diff 上限（需求 §4.2.3：超大 diff 截断并在 summary 中声明）。 */
     private static final int MAX_DIFF_CHARS_FOR_REVIEW = 100_000;
-    private static final long AI_CALL_TIMEOUT_SECONDS = 30;
+    /** AI 调用超时：review 的 diff 上限 100k 字符，模型侧分钟级耗时属常态；取值需小于前端 LLM_TIMEOUT_MS(180s)，保证超时时前端收到的是本服务的结构化错误而非 axios 超时。 */
+    private static final long AI_CALL_TIMEOUT_SECONDS = 170;
     /** Review 系统提示词内置的团队规范（需求 §4.2.2，后续可由 RAG 注入团队文档替换/增强）。 */
     private static final String REVIEW_SYSTEM_PROMPT =
         "你是一名资深 Java 代码审查专家。请对以下 git diff 做代码审查，严格按团队规范逐条给出问题：\n"
