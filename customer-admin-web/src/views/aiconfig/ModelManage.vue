@@ -101,7 +101,12 @@ onMounted(loadList)
 
       <el-table v-loading="loading" :data="list" style="width: 100%">
         <el-table-column prop="modelName" label="名称" />
-        <el-table-column prop="provider" label="厂商" width="100" />
+        <!-- provider 是接入协议/SDK 通道（openai=所有 OpenAI 兼容端点，智谱/DeepSeek 等第三方模型
+             走兼容协议时同样是 openai），不是"模型出品公司"——列名叫"厂商"会让人误读成数据错了。
+             单元格复用编辑表单 providerPresets 的友好文案（如「OpenAI 兼容」），不裸显枚举 code。 -->
+        <el-table-column label="接入协议" width="200">
+          <template #default="{ row }">{{ presetOf(row.provider).label }}</template>
+        </el-table-column>
         <el-table-column prop="model" label="模型标识" />
         <el-table-column label="AppKey" width="140">
           <template #default="{ row }">{{ row.apiKeyMasked }}</template>

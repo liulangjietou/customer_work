@@ -10,9 +10,13 @@ import com.richard.fyoung.customeradmin.system.permission.dto.PermissionSaveRequ
 import com.richard.fyoung.customeradmin.system.permission.dto.PermissionVO;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
+import com.richard.fyoung.customerwork.lock.DistributedLockExecutor;
+import com.richard.fyoung.customerwork.lock.LockAcquireTimeoutException;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,16 +41,29 @@ public class PermissionService {
     private static final String ACTION_DELETE = "DELETE";
     private static final String ACTION_MOVE = "MOVE";
     private static final String DEFAULT_ICON_TYPE = "library";
+    /** 菜单树全局互斥锁：拖拽排序影响面可能跨越树上任意层级，粒度按"整棵树"而非单个节点，
+     * 避免两个管理员分别调整不相交子树时，各自基于过期的兄弟节点 sort 值算出的新序号仍然冲突。 */
+    private static final String REORDER_LOCK_KEY = "admin:menu:reorder:lock";
+    /** 不等待，立即失败（fast fail）：宁可让第二个管理员的拖拽操作直接提示"稍后重试"，
+     * 也不让请求线程排队阻塞。 */
+    private static final Duration REORDER_LOCK_WAIT = Duration.ZERO;
+    /** 持锁上限，覆盖一次拖拽排序涉及节点数的更新耗时；超时自动释放，防止持锁方异常退出后锁不释放。 */
+    private static final Duration REORDER_LOCK_LEASE = Duration.ofSeconds(10);
 
     private final SysPermissionMapper permissionMapper;
     private final MenuChangeLogService changeLogService;
     private final MenuVersionHolder menuVersionHolder;
+    private final DistributedLockExecutor lockExecutor;
+    private final PermissionService self;
 
     public PermissionService(SysPermissionMapper permissionMapper, MenuChangeLogService changeLogService,
-                             MenuVersionHolder menuVersionHolder) {
+                             MenuVersionHolder menuVersionHolder, DistributedLockExecutor lockExecutor,
+                             @Lazy PermissionService self) {
         this.permissionMapper = permissionMapper;
         this.changeLogService = changeLogService;
         this.menuVersionHolder = menuVersionHolder;
+        this.lockExecutor = lockExecutor;
+        this.self = self;
     }
 
     /** 全量权限树，按 sort 升序。 */
@@ -103,9 +120,29 @@ public class PermissionService {
         changeLogService.record(id, ACTION_DELETE, before, null);
     }
 
-    /** 拖拽排序：逐条更新受影响节点的 parentId/sort；只对 parentId 真变化的节点记 MOVE 流水（同层纯调顺序不算移动）。 */
-    @Transactional
+    /**
+     * 拖拽排序入口：先抢 {@link #REORDER_LOCK_KEY} 分布式锁再落库，串行化多个管理员的并发拖拽，
+     * 避免后提交的一批更新基于过期的兄弟节点 sort 值覆盖先提交的结果（乱序合并）。拿不到锁直接
+     * 转换为 {@link ResultCode#MENU_REORDER_CONFLICT} 业务错误，不排队等待。
+     *
+     * <p>真正落库经 {@link #self} 转一次自注入代理调用 {@link #applyReorder}——{@code @Transactional}
+     * 是 Spring AOP 代理拦截的，本类内部直接 {@code this.applyReorder(...)} 属于自调用会绕过代理导致
+     * 事务不生效；同时这个转发顺序也保证了锁释放严格发生在事务提交之后：{@link DistributedLockExecutor#execute}
+     * 的 finally 解锁在 {@code action.get()}（即 {@code self.applyReorder(...)} 这次代理调用，事务已随之
+     * 提交完毕）返回之后才执行，不会出现"锁已释放但改动还没提交"的窗口期。</p>
+     */
     public void reorder(MenuReorderRequest request) {
+        try {
+            lockExecutor.execute(REORDER_LOCK_KEY, REORDER_LOCK_WAIT, REORDER_LOCK_LEASE,
+                () -> self.applyReorder(request));
+        } catch (LockAcquireTimeoutException e) {
+            throw new BizException(ResultCode.MENU_REORDER_CONFLICT);
+        }
+    }
+
+    /** 拖拽排序落库：逐条更新受影响节点的 parentId/sort；只对 parentId 真变化的节点记 MOVE 流水（同层纯调顺序不算移动）。 */
+    @Transactional
+    public void applyReorder(MenuReorderRequest request) {
         for (MenuReorderRequest.Item item : request.items()) {
             SysPermission before = requirePermission(item.id());
             boolean parentChanged = !before.getParentId().equals(item.parentId());

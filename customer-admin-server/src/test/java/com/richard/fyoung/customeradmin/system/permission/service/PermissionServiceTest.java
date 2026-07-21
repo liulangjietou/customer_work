@@ -8,14 +8,19 @@ import com.richard.fyoung.customeradmin.system.menu.service.MenuChangeLogService
 import com.richard.fyoung.customeradmin.system.permission.dto.PermissionSaveRequest;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
+import com.richard.fyoung.customerwork.lock.DistributedLockExecutor;
+import com.richard.fyoung.customerwork.lock.LockAcquireTimeoutException;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -50,7 +55,17 @@ class PermissionServiceTest {
         mapper = mock(SysPermissionMapper.class);
         changeLogService = mock(MenuChangeLogService.class);
         menuVersionHolder = mock(MenuVersionHolder.class);
-        service = new PermissionService(mapper, changeLogService, menuVersionHolder);
+        // 直接执行 action、不真正连 Redis：单测只关心加锁失败时的分支，成功路径视为锁总能拿到。
+        DistributedLockExecutor lockExecutor = new DistributedLockExecutor() {
+            @Override
+            public <T> T execute(String lockKey, Duration waitTime, Duration leaseTime, Supplier<T> action) {
+                return action.get();
+            }
+        };
+        service = new PermissionService(mapper, changeLogService, menuVersionHolder, lockExecutor, null);
+        // self 字段生产环境靠 @Lazy 自注入拿到 Spring AOP 代理（绕开 @Transactional 自调用失效问题）；
+        // 单测不经过容器、没有真实代理，反射回填成 service 自身即可等价验证业务逻辑。
+        ReflectionTestUtils.setField(service, "self", service);
     }
 
     @Test
@@ -161,6 +176,27 @@ class PermissionServiceTest {
         verify(changeLogService, never()).record(eq(1L), eq("MOVE"), any(), any());
         verify(changeLogService).record(eq(2L), eq("MOVE"), any(), any());
         verify(mapper, times(2)).updateById(any(SysPermission.class));
+    }
+
+    @Test
+    void reorder_shouldThrowMenuReorderConflict_whenLockNotAcquired() {
+        // 另一个管理员正在拖拽排序、持有分布式锁：本次请求应立即失败（fast fail），
+        // 而不是阻塞等待或悄悄不加保护地继续落库。
+        DistributedLockExecutor contendedLockExecutor = new DistributedLockExecutor() {
+            @Override
+            public <T> T execute(String lockKey, Duration waitTime, Duration leaseTime, Supplier<T> action) {
+                throw new LockAcquireTimeoutException(lockKey);
+            }
+        };
+        PermissionService contended =
+            new PermissionService(mapper, changeLogService, menuVersionHolder, contendedLockExecutor, null);
+        ReflectionTestUtils.setField(contended, "self", contended);
+
+        BizException ex = assertThrows(BizException.class, () -> contended.reorder(
+            new MenuReorderRequest(List.of(new MenuReorderRequest.Item(1L, 2L, 1)))));
+
+        assertEquals(com.richard.fyoung.customeradmin.common.result.ResultCode.MENU_REORDER_CONFLICT, ex.getResultCode());
+        verify(mapper, never()).updateById(any(SysPermission.class));
     }
 
     @Test
