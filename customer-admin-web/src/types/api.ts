@@ -515,6 +515,20 @@ export interface ReviewResult {
   summary: string
 }
 
+/**
+ * AI 代码审查任务（异步化）：review 接口提交后不再同步返回结果，而是返回 taskId，
+ * 由前端轮询本类型或站内信跳转回查任务终态。status=SUCCESS 时 result 才有值，
+ * FAILED 时 errorMsg 有值，RUNNING 时两者都为 null。
+ */
+export interface ReviewTaskVO {
+  id: number
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED'
+  result: ReviewResult | null
+  errorMsg: string | null
+  createTime: string
+  finishTime: string | null
+}
+
 /** plan SSE 事件里的单条高风险操作项（P1-1 HITL）。 */
 export interface PlanAction {
   /** DELETE（删除文件）｜RUN_COMMAND（非只读/破坏性命令）｜MODIFY_DEPENDENCY（改依赖）｜BATCH_MODIFY（批量修改超阈值） */
@@ -813,4 +827,24 @@ export interface KnowledgeSearchHit {
 export interface KnowledgeAskResponse {
   answer: string
   citations: KnowledgeSearchHit[]
+}
+
+// ---------- 站内消息 ----------
+/** 站内消息（顶栏铃铛）：bizType/bizId 标识来源业务（如 AI 代码审查任务），link 非空时点击可跳转。 */
+export interface SiteMessageVO {
+  id: number
+  title: string
+  content: string
+  bizType: string
+  bizId: string | null
+  link: string | null
+  readFlag: 0 | 1
+  createTime: string
+}
+
+/** 站内消息分页查询：page/size 与后端 /message/page 契约一致，与 MpPageQuery 的 current/size 命名不同，单独定义。 */
+export interface SiteMessagePageQuery {
+  page: number
+  size: number
+  readFlag?: 0 | 1
 }

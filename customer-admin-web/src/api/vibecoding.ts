@@ -7,7 +7,7 @@ import type {
   GitDiffSummary,
   PlanConfirmRequest,
   PrDescriptionResponse,
-  ReviewResult,
+  ReviewTaskVO,
   RollbackResult,
   SandboxModeResponse,
   SaveFileContentRequest,
@@ -120,13 +120,24 @@ export function rollbackVibeCoding(agentCode: string, sessionId: string) {
   })
 }
 
-/** AI 代码审查：对本轮 diff 输出结构化审查意见（CRITICAL/WARNING/SUGGESTION）。 */
+/**
+ * AI 代码审查（异步化）：提交本轮 diff 审查任务，立即返回 taskId，不再同步等待模型产出结果。
+ * 提交本身是快操作（只是入队），不需要 LLM_TIMEOUT_MS 长超时，用默认 30s 即可；
+ * 真正耗时的模型调用在后端异步执行，前端通过 getReviewTask 轮询或站内信通知拿到终态。
+ */
 export function reviewVibeCoding(agentCode: string, sessionId: string) {
-  return request<ReviewResult>({
+  return request<number>({
     url: `/workspace/${agentCode}/vibecoding/review`,
     method: 'post',
     data: { sessionId },
-    timeout: LLM_TIMEOUT_MS,
+  })
+}
+
+/** 查询 AI 代码审查任务状态/结果（轮询接口，默认超时即可）。 */
+export function getReviewTask(agentCode: string, taskId: number) {
+  return request<ReviewTaskVO>({
+    url: `/workspace/${agentCode}/vibecoding/review-task/${taskId}`,
+    method: 'get',
   })
 }
 

@@ -1,12 +1,14 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.message.service.SiteMessageService;
 import com.richard.fyoung.customeradmin.workspace.audit.AiCodingOperation;
 import com.richard.fyoung.customeradmin.workspace.audit.entity.AiCodingAuditLog;
 import com.richard.fyoung.customeradmin.workspace.audit.service.AiCodingAuditService;
@@ -16,6 +18,9 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.GitDiffSummary;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewIssue;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewResult;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewTaskVO;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.entity.CodeReviewTask;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.mapper.CodeReviewTaskMapper;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
@@ -26,10 +31,12 @@ import io.agentscope.core.model.Model;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -85,6 +92,15 @@ public class GitAssistantService {
     private static final String DEFAULT_SEVERITY = "SUGGESTION";
     /** 模型输出的 category 不在合法集合内时的兜底分类（STYLE 语义最中性）。 */
     private static final String DEFAULT_CATEGORY = "STYLE";
+    /** 站内消息业务类型：AI 代码审查（前端消息中心据此分组/跳转）。 */
+    private static final String BIZ_TYPE_CODE_REVIEW = "CODE_REVIEW";
+    /** 审查完成/失败站内信标题。 */
+    private static final String REVIEW_MSG_TITLE_SUCCESS = "AI 代码审查完成";
+    private static final String REVIEW_MSG_TITLE_FAILED = "AI 代码审查失败";
+    /** 站内信正文中 summary 预览的最大长度（需求：含 summary 前 200 字）。 */
+    private static final int SUMMARY_PREVIEW_LIMIT = 200;
+    /** error_msg 列宽上限（VARCHAR(1000)），落库前截断避免超长。 */
+    private static final int ERROR_MSG_MAX_LEN = 1000;
     private static final ExecutorService GIT_ASSISTANT_EXECUTOR = Executors.newFixedThreadPool(8, r -> {
         Thread thread = new Thread(r, "git-assistant-worker");
         thread.setDaemon(true);
@@ -95,16 +111,21 @@ public class GitAssistantService {
     private final AdminAgentInstanceFactory agentInstanceFactory;
     private final GitWorkspaceService gitWorkspaceService;
     private final AiCodingAuditService auditService;
+    private final CodeReviewTaskMapper reviewTaskMapper;
+    private final SiteMessageService siteMessageService;
     /** Review 结果 JSON 解析用（宽松：忽略模型多吐的未知字段），窄用途、不依赖容器注入。 */
     private final ObjectMapper objectMapper = new ObjectMapper()
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public GitAssistantService(AiAgentMapper agentMapper, AdminAgentInstanceFactory agentInstanceFactory,
-                                GitWorkspaceService gitWorkspaceService, AiCodingAuditService auditService) {
+                                GitWorkspaceService gitWorkspaceService, AiCodingAuditService auditService,
+                                CodeReviewTaskMapper reviewTaskMapper, SiteMessageService siteMessageService) {
         this.agentMapper = agentMapper;
         this.agentInstanceFactory = agentInstanceFactory;
         this.gitWorkspaceService = gitWorkspaceService;
         this.auditService = auditService;
+        this.reviewTaskMapper = reviewTaskMapper;
+        this.siteMessageService = siteMessageService;
     }
 
     /** diff 摘要：无变更时直接返回空摘要，不额外调用模型。 */
@@ -174,31 +195,145 @@ public class GitAssistantService {
     }
 
     /**
-     * AI 代码审查（需求 P0-2 §4.2）：对本轮 diff 一次性调用模型，输出结构化审查意见。
-     * 无变更时直接抛 {@link ResultCode#NO_FILE_CHANGES}，不调用模型。
+     * 提交 AI 代码审查任务（需求 P0-2 §4.2，提交-轮询模型）：模型分钟级调用不再阻塞前端。
+     * 同步段完成校验并落 {@link CodeReviewTask#STATUS_RUNNING} 任务行、立即返回 taskId；
+     * 真正的模型审查在 {@link #GIT_ASSISTANT_EXECUTOR} 异步执行，完成后回写结果并发站内信通知。
      *
-     * <p>模型输出 JSON 解析失败时降级（§4.2.3）：{@code issues} 为空、模型原文放进 {@code summary}，
-     * 仍返回成功结果不抛裸异常；只有模型调用本身失败/超时才归一成 {@link ResultCode#AI_REVIEW_FAILED}
-     * 快速失败（"明确错误码，不吞掉"）。</p>
+     * <p>{@code userId} 必须在同步段（Web 请求线程）由调用方捕获传入——异步线程脱离 Sa-Token 上下文，
+     * 拿不到当前登录用户。</p>
+     *
+     * @return 审查任务 id（前端据此轮询 {@link #getReviewTask}）
      */
-    public CompletableFuture<ReviewResult> review(String agentCode, String sessionId) {
+    public Long submitReview(String agentCode, String sessionId, Long userId) {
         requireVibeCodingCapable(agentCode);
         Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        // 无变更在同步段快速失败（NO_FILE_CHANGES，与原同步 review 一致）：避免为"本轮无内容可审查"
+        // 创建 FAILED 任务并推送误导性的失败站内信。git diff 是子进程读取、非分钟级模型调用，同步执行可接受
+        String diff = requireNonEmptyDiff(workspace);
+        // 审计条目在请求线程同步段创建（操作人依赖 Sa-Token ThreadLocal），异步链路里只补结果
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.REVIEW, agentCode, sessionId);
-        return CompletableFuture.supplyAsync(() -> {
-            String diff = requireNonEmptyDiff(workspace);
-            boolean truncated = diff.length() > MAX_DIFF_CHARS_FOR_REVIEW;
-            String diffForModel = truncated ? diff.substring(0, MAX_DIFF_CHARS_FOR_REVIEW) : diff;
-            Model model = agentInstanceFactory.buildModelForAgent(agentCode);
-            ModelCallOutcome outcome = callModelOnce(model, REVIEW_SYSTEM_PROMPT + "git diff:\n" + diffForModel);
-            auditService.applyUsage(audit, outcome.usage());
-            return parseReviewResult(outcome.text(), truncated);
-        }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .exceptionally(ex -> rethrow(ex, ResultCode.AI_REVIEW_FAILED, "AI_CODE_REVIEW_FAIL", agentCode, sessionId))
-            .whenComplete((result, error) -> auditService.finish(audit, error));
+
+        // 同步落 RUNNING 任务行，拿到自增 id 先返回给前端
+        CodeReviewTask task = new CodeReviewTask();
+        task.setAgentCode(agentCode);
+        task.setSessionId(sessionId);
+        task.setUserId(userId);
+        task.setStatus(CodeReviewTask.STATUS_RUNNING);
+        reviewTaskMapper.insert(task);
+        Long taskId = task.getId();
+        log.info("code review task submitted, taskId={}, agentCode={}, sessionId={}", taskId, agentCode, sessionId);
+
+        CompletableFuture.supplyAsync(() -> doReview(agentCode, diff, audit), GIT_ASSISTANT_EXECUTOR)
+            .orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .whenComplete((result, error) -> {
+                auditService.finish(audit, error);
+                if (error == null) {
+                    completeReviewTask(taskId, agentCode, userId, result);
+                } else {
+                    failReviewTask(taskId, agentCode, userId, error);
+                }
+            });
+        return taskId;
+    }
+
+    /**
+     * 查询审查任务（轮询入口）：校验归属，非本人/不存在快速失败。SUCCESS 时反序列化结果一并返回。
+     */
+    public ReviewTaskVO getReviewTask(Long taskId, Long userId) {
+        CodeReviewTask task = reviewTaskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "审查任务不存在: " + taskId);
+        }
+        if (!task.getUserId().equals(userId)) {
+            throw new BizException(ResultCode.FORBIDDEN, "无权查看他人的审查任务");
+        }
+        ReviewResult result = null;
+        if (CodeReviewTask.STATUS_SUCCESS.equals(task.getStatus()) && StringUtils.hasText(task.getResultJson())) {
+            try {
+                result = objectMapper.readValue(task.getResultJson(), ReviewResult.class);
+            } catch (JsonProcessingException e) {
+                log.error("deserialize review result failed, code={}, taskId={}", "AI-REVIEW-RESULT-READ-FAIL", taskId, e);
+            }
+        }
+        return new ReviewTaskVO(task.getId(), task.getStatus(), result, task.getErrorMsg(),
+            task.getCreateTime(), task.getFinishTime());
     }
 
     // ---------------------- private helpers ----------------------
+
+    /**
+     * 审查计算主体（在异步线程执行）：diff 已在同步段校验非空。模型输出 JSON 解析失败时降级（§4.2.3）
+     * ——{@code issues} 为空、原文进 {@code summary}，不抛裸异常；只有模型调用本身失败/超时才抛异常，
+     * 由 {@link #failReviewTask} 落库为 FAILED 并发失败站内信。
+     */
+    private ReviewResult doReview(String agentCode, String diff, AiCodingAuditLog audit) {
+        boolean truncated = diff.length() > MAX_DIFF_CHARS_FOR_REVIEW;
+        String diffForModel = truncated ? diff.substring(0, MAX_DIFF_CHARS_FOR_REVIEW) : diff;
+        Model model = agentInstanceFactory.buildModelForAgent(agentCode);
+        ModelCallOutcome outcome = callModelOnce(model, REVIEW_SYSTEM_PROMPT + "git diff:\n" + diffForModel);
+        auditService.applyUsage(audit, outcome.usage());
+        return parseReviewResult(outcome.text(), truncated);
+    }
+
+    /** 审查成功：结果落库（SUCCESS + finish_time），并发站内信通知提交人。 */
+    private void completeReviewTask(Long taskId, String agentCode, Long userId, ReviewResult result) {
+        CodeReviewTask update = new CodeReviewTask();
+        update.setId(taskId);
+        update.setStatus(CodeReviewTask.STATUS_SUCCESS);
+        update.setFinishTime(LocalDateTime.now());
+        try {
+            update.setResultJson(objectMapper.writeValueAsString(result));
+        } catch (JsonProcessingException e) {
+            log.error("serialize review result failed, code={}, taskId={}", "AI-REVIEW-RESULT-JSON-FAIL", taskId, e);
+        }
+        reviewTaskMapper.updateById(update);
+        siteMessageService.send(userId, REVIEW_MSG_TITLE_SUCCESS, buildSuccessContent(result),
+            BIZ_TYPE_CODE_REVIEW, String.valueOf(taskId), reviewTaskLink(agentCode, taskId));
+        log.info("code review task succeeded, taskId={}, agentCode={}", taskId, agentCode);
+    }
+
+    /** 审查失败：错误落库（FAILED + error_msg + finish_time），并发站内信告知（带跳转，可查看错误）。 */
+    private void failReviewTask(Long taskId, String agentCode, Long userId, Throwable error) {
+        String errorMsg = describeError(error);
+        CodeReviewTask update = new CodeReviewTask();
+        update.setId(taskId);
+        update.setStatus(CodeReviewTask.STATUS_FAILED);
+        update.setErrorMsg(truncate(errorMsg, ERROR_MSG_MAX_LEN));
+        update.setFinishTime(LocalDateTime.now());
+        reviewTaskMapper.updateById(update);
+        siteMessageService.send(userId, REVIEW_MSG_TITLE_FAILED, "审查执行失败：" + errorMsg,
+            BIZ_TYPE_CODE_REVIEW, String.valueOf(taskId), reviewTaskLink(agentCode, taskId));
+        log.error("code review task failed, code={}, taskId={}, agentCode={}", "AI-CODE-REVIEW-TASK-FAIL", taskId, agentCode, error);
+    }
+
+    /** 站内信正文：summary 前 200 字 + 各级别问题数（降级无 issues 时问题数均为 0）。 */
+    private String buildSuccessContent(ReviewResult result) {
+        long critical = countBySeverity(result, "CRITICAL");
+        long warning = countBySeverity(result, "WARNING");
+        long suggestion = countBySeverity(result, "SUGGESTION");
+        String summary = result.summary() == null ? "" : result.summary();
+        String preview = summary.length() > SUMMARY_PREVIEW_LIMIT ? summary.substring(0, SUMMARY_PREVIEW_LIMIT) : summary;
+        return preview + "\n严重(CRITICAL): " + critical + "，警告(WARNING): " + warning + "，建议(SUGGESTION): " + suggestion;
+    }
+
+    private long countBySeverity(ReviewResult result, String severity) {
+        if (CollectionUtils.isEmpty(result.issues())) {
+            return 0;
+        }
+        return result.issues().stream().filter(issue -> severity.equals(issue.severity())).count();
+    }
+
+    /** 前端跳转路由：定位到该会话工作区并自动打开对应审查任务。 */
+    private String reviewTaskLink(String agentCode, Long taskId) {
+        return "/workspace/" + agentCode + "?reviewTask=" + taskId;
+    }
+
+    private String truncate(String text, int maxLen) {
+        if (text == null || text.length() <= maxLen) {
+            return text;
+        }
+        return text.substring(0, maxLen);
+    }
 
     /**
      * 解析模型返回的审查 JSON。剥离可能包裹的 Markdown 代码块，截取首个 {@code {} 到末个 }} 之间的

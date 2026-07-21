@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatRequest;
@@ -11,7 +12,7 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanConfirmRequ
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PrDescriptionResponse;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewRequest;
-import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewResult;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewTaskVO;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxModeResponse;
@@ -164,15 +165,25 @@ public class VibeCodingController {
     }
 
     /**
-     * Git 助手 · AI 代码审查（需求 P0-2）：对本轮 diff 输出结构化审查意见
-     * （CRITICAL/WARNING/SUGGESTION 逐条带文件/行号/建议）。同步返回，无变更时报 {@code NO_FILE_CHANGES}。
+     * Git 助手 · 提交 AI 代码审查（需求 P0-2，提交-轮询模型）：模型分钟级调用不再阻塞前端，
+     * 立即返回 taskId，前端凭此轮询 {@link #reviewTask}。无变更等校验失败在提交同步段即报错。
+     * 提交人取自当前登录态并透传到异步链路（异步线程拿不到 Sa-Token 上下文）。
      */
     @SaCheckPermission("workspace")
     @OperationLog(operation = "VibeCoding代码审查", target = "vibecoding_git_assistant")
     @PostMapping("/review")
-    public CompletableFuture<Result<ReviewResult>> review(
-            @PathVariable String agentCode, @Valid @RequestBody ReviewRequest request) {
-        return gitAssistantService.review(agentCode, request.sessionId()).thenApply(Result::success);
+    public Result<Long> review(@PathVariable String agentCode, @Valid @RequestBody ReviewRequest request) {
+        return Result.success(gitAssistantService.submitReview(agentCode, request.sessionId(), StpUtil.getLoginIdAsLong()));
+    }
+
+    /**
+     * Git 助手 · 轮询 AI 代码审查任务：RUNNING 表示进行中，SUCCESS 携带结构化结果，FAILED 携带错误。
+     * 校验任务归属，非本人快速失败。
+     */
+    @SaCheckPermission("workspace")
+    @GetMapping("/review-task/{taskId}")
+    public Result<ReviewTaskVO> reviewTask(@PathVariable String agentCode, @PathVariable Long taskId) {
+        return Result.success(gitAssistantService.getReviewTask(taskId, StpUtil.getLoginIdAsLong()));
     }
 
     /**

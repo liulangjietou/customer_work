@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { UploadRequestOptions } from 'element-plus'
 import {
   confirmVibeCodingPlan,
   generateCommitMessage,
   generatePrDescription,
   getGitDiffSummary,
+  getReviewTask,
   readWorkspaceFileContent,
   reviewVibeCoding,
   rollbackVibeCoding,
@@ -15,6 +16,7 @@ import { parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
+import ReviewReport from '@/components/ReviewReport.vue'
 import { useThemeStore } from '@/store/theme'
 import {
   useVibeConversationsStore,
@@ -34,6 +36,11 @@ import type {
 } from '@/types/api'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
+
+// AI 代码审查异步化（提交后轮询任务终态）：5 秒一次，最多轮询 40 次（约 200 秒）后停止，
+// 提示用户可等站内信通知——避免无限轮询在模型响应异常慢/任务卡住时占着定时器不放。
+const REVIEW_POLL_INTERVAL_MS = 5000
+const MAX_REVIEW_POLL_COUNT = 40
 
 const props = defineProps<{ agentCode: string }>()
 
@@ -73,9 +80,14 @@ const commitLoading = ref(false)
 const commitMessageText = ref('')
 const prLoading = ref(false)
 const prDescriptionText = ref('')
-// AI 代码审查（P0-2）
+// AI 代码审查（P0-2，异步化）：reviewLoading 覆盖"提交中 + 轮询中"两个阶段。
+// reviewPollTimer/reviewPollSessionId/reviewPollCount 是纯轮询控制状态，不需要响应式（不驱动模板），
+// 用普通变量即可；reviewPollSessionId 用来在轮询回调触发时判断会话是否已切换，切换了就丢弃本次结果。
 const reviewLoading = ref(false)
 const reviewResult = ref<ReviewResult | null>(null)
+let reviewPollTimer: ReturnType<typeof setTimeout> | null = null
+let reviewPollSessionId: string | null = null
+let reviewPollCount = 0
 
 // 文件预览抽屉
 const previewVisible = ref(false)
@@ -314,6 +326,8 @@ async function openGitAssistant() {
   commitMessageText.value = ''
   prDescriptionText.value = ''
   reviewResult.value = null
+  stopReviewPolling()
+  reviewLoading.value = false
   await loadGitDiff()
 }
 
@@ -358,33 +372,80 @@ async function handleGeneratePrDescription() {
   }
 }
 
-/** 触发 AI 代码审查：对本轮 diff 输出结构化审查意见。 */
+/**
+ * 触发 AI 代码审查（异步化）：提交后拿到 taskId 立即返回，不再同步等待模型产出结果——
+ * 提交成功只代表任务已入队，真正的审查结果通过下方轮询（或稍后到达的站内信）拿到。
+ */
 async function handleReview() {
   const conv = active.value
   if (!conv) return
+  stopReviewPolling()
+  reviewResult.value = null
   reviewLoading.value = true
   try {
-    reviewResult.value = await reviewVibeCoding(props.agentCode, conv.sessionId)
+    const taskId = await reviewVibeCoding(props.agentCode, conv.sessionId)
+    ElMessage.success('审查已提交，完成后会通过站内信提醒')
+    startReviewPolling(conv.sessionId, taskId)
   } catch (error) {
-    ElMessage.error('代码审查失败：' + (error instanceof Error ? error.message : String(error)))
-  } finally {
     reviewLoading.value = false
+    ElMessage.error('代码审查提交失败：' + (error instanceof Error ? error.message : String(error)))
   }
 }
 
-/** 严重级别 → Element Plus tag 类型（着色）。 */
-function severityTagType(severity: ReviewIssue['severity']): 'danger' | 'warning' | 'info' {
-  if (severity === 'CRITICAL') return 'danger'
-  if (severity === 'WARNING') return 'warning'
-  return 'info'
+/** 开始轮询审查任务终态：5 秒一次，最多 40 次，会话切走则丢弃结果并停止。 */
+function startReviewPolling(sessionId: string, taskId: number) {
+  reviewPollSessionId = sessionId
+  reviewPollCount = 0
+  const poll = async () => {
+    // 轮询期间用户切到了别的会话/新建了会话：本次审查结果不再对应当前视图，结果留给站内信承接
+    if (active.value?.sessionId !== reviewPollSessionId) {
+      stopReviewPolling()
+      return
+    }
+    reviewPollCount += 1
+    try {
+      const task = await getReviewTask(props.agentCode, taskId)
+      if (task.status === 'SUCCESS') {
+        reviewResult.value = task.result
+        reviewLoading.value = false
+        stopReviewPolling()
+        return
+      }
+      if (task.status === 'FAILED') {
+        ElMessage.error(task.errorMsg || '代码审查失败')
+        reviewLoading.value = false
+        stopReviewPolling()
+        return
+      }
+    } catch (error) {
+      // 轮询请求本身失败（网络抖动等）不等于审查失败，按剩余次数继续重试，次数耗尽再提示
+      if (reviewPollCount >= MAX_REVIEW_POLL_COUNT) {
+        reviewLoading.value = false
+        stopReviewPolling()
+        ElMessage.error('代码审查结果查询失败：' + (error instanceof Error ? error.message : String(error)))
+        return
+      }
+      reviewPollTimer = setTimeout(poll, REVIEW_POLL_INTERVAL_MS)
+      return
+    }
+    // 仍在 RUNNING：达到最大轮询次数则停止，剩余交给站内信兜底
+    if (reviewPollCount >= MAX_REVIEW_POLL_COUNT) {
+      reviewLoading.value = false
+      stopReviewPolling()
+      ElMessage.info('审查仍在进行，可稍后在站内信查看结果')
+      return
+    }
+    reviewPollTimer = setTimeout(poll, REVIEW_POLL_INTERVAL_MS)
+  }
+  reviewPollTimer = setTimeout(poll, REVIEW_POLL_INTERVAL_MS)
 }
 
-/** 按严重级别分组审查意见（CRITICAL → WARNING → SUGGESTION 顺序）。 */
-function groupedIssues(issues: ReviewIssue[]): Array<{ severity: ReviewIssue['severity']; items: ReviewIssue[] }> {
-  const order: ReviewIssue['severity'][] = ['CRITICAL', 'WARNING', 'SUGGESTION']
-  return order
-    .map((severity) => ({ severity, items: issues.filter((i) => i.severity === severity) }))
-    .filter((g) => g.items.length > 0)
+function stopReviewPolling() {
+  if (reviewPollTimer !== null) {
+    clearTimeout(reviewPollTimer)
+    reviewPollTimer = null
+  }
+  reviewPollSessionId = null
 }
 
 /** 点击审查意见里的文件，定位到工作区文件查看器（复用现有文件读取/预览抽屉）。 */
@@ -509,8 +570,12 @@ onActivated(() => {
   scrollToBottom()
 })
 
-// 注意：刻意没有 onUnmounted abort/清定时器——会话、SSE 流、plan 倒计时都属于全局 store，
-// 组件销毁（切智能体/关标签）不应终止后台会话。
+// 注意：刻意没有 onUnmounted abort/清 SSE/plan 倒计时定时器——那些都属于全局 store，
+// 组件销毁（切智能体/关标签）不应终止后台会话。但 AI 代码审查轮询定时器是本组件的纯 UI 局部状态
+// （审查任务本身在后端异步跑，不受前端轮询影响），组件销毁时必须清掉，否则定时器泄漏到已卸载组件。
+onUnmounted(() => {
+  stopReviewPolling()
+})
 
 // newSession 供 WorkspaceView 上提后的工具栏"新建会话"按钮按激活 Tab 分发调用
 defineExpose({ newSession })
@@ -899,50 +964,16 @@ defineExpose({ newSession })
           <div class="git-section-header">
             <span>Review 本次变更</span>
           </div>
-          <el-button type="primary" size="small" :loading="reviewLoading" @click="handleReview">审查</el-button>
-          <template v-if="reviewResult">
-            <p v-if="reviewResult.summary" class="git-summary-text review-summary">{{ reviewResult.summary }}</p>
-            <el-empty
-              v-if="reviewResult.issues.length === 0"
-              description="未发现结构化问题"
-              :image-size="40"
-            />
-            <div v-else class="review-issues">
-              <div v-for="group in groupedIssues(reviewResult.issues)" :key="group.severity" class="review-group">
-                <div class="review-group-header">
-                  <el-tag :type="severityTagType(group.severity)" size="small" effect="dark">
-                    {{ group.severity }}
-                  </el-tag>
-                  <span class="review-group-count">{{ group.items.length }} 项</span>
-                </div>
-                <div
-                  v-for="(issue, ii) in group.items"
-                  :key="ii"
-                  class="review-issue"
-                  :class="`review-issue--${group.severity.toLowerCase()}`"
-                >
-                  <div class="review-issue-loc">
-                    <el-tag size="small" class="review-issue-category">{{ issue.category }}</el-tag>
-                    <el-link type="primary" :underline="false" @click="openIssueFile(issue)">
-                      {{ issue.file }}<template v-if="issue.line">:{{ issue.line }}</template>
-                    </el-link>
-                  </div>
-                  <div class="review-issue-message">{{ issue.message }}</div>
-                  <div v-if="issue.suggestion" class="review-issue-suggestion">建议：{{ issue.suggestion }}</div>
-                </div>
-              </div>
-            </div>
-            <el-button
-              v-if="reviewResult.issues.some((i) => i.severity === 'CRITICAL' || i.severity === 'WARNING')"
-              type="warning"
-              size="small"
-              class="review-fix-btn"
-              :disabled="active?.streaming"
-              @click="generateFixFromReview"
-            >
-              一键生成修复
-            </el-button>
-          </template>
+          <el-button type="primary" size="small" :loading="reviewLoading" @click="handleReview">
+            {{ reviewLoading ? '审查中…' : '审查' }}
+          </el-button>
+          <ReviewReport
+            v-if="reviewResult"
+            :result="reviewResult"
+            :fix-disabled="active?.streaming"
+            @open-file="openIssueFile"
+            @generate-fix="generateFixFromReview"
+          />
         </div>
       </div>
     </el-drawer>
@@ -1354,73 +1385,7 @@ defineExpose({ newSession })
   gap: 8px;
 }
 
-/* AI 代码审查 */
-.review-summary {
-  margin-top: 8px;
-}
-
-.review-group {
-  margin-bottom: 10px;
-}
-
-.review-group-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.review-group-count {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.review-issue {
-  margin-bottom: 6px;
-  padding: 6px 8px;
-  border-left: 3px solid var(--el-border-color);
-  background: var(--el-fill-color-light);
-  border-radius: 4px;
-}
-
-.review-issue--critical {
-  border-left-color: var(--el-color-danger);
-}
-
-.review-issue--warning {
-  border-left-color: var(--el-color-warning);
-}
-
-.review-issue--suggestion {
-  border-left-color: var(--el-color-info);
-}
-
-.review-issue-loc {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 2px;
-}
-
-.review-issue-category {
-  flex-shrink: 0;
-}
-
-.review-issue-message {
-  font-size: 13px;
-  color: var(--el-text-color-primary);
-  line-height: 1.5;
-}
-
-.review-issue-suggestion {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-top: 2px;
-}
-
-.review-fix-btn {
-  margin-top: 8px;
-}
+/* AI 代码审查区块本身（分组列表等）的样式已随渲染逻辑一并抽到 ReviewReport.vue，此处不再重复定义。 */
 
 .tree-node {
   display: flex;
