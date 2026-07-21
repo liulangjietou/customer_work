@@ -1,4 +1,4 @@
-import { request } from './request'
+import { LLM_TIMEOUT_MS, request } from './request'
 import type { MpPageQuery, MpPageResult, ScheduledTaskRunVO, ScheduledTaskSaveRequest, ScheduledTaskVO } from '@/types/api'
 
 const BASE_URL = '/aiconfig/scheduled-task'
@@ -32,7 +32,7 @@ export function disableScheduledTask(id: number) {
  * 单独放宽超时时间，避免被 axios 实例的全局 30s 超时提前掐断、被前端拦截器误判为网络异常。
  */
 export function triggerScheduledTask(id: number) {
-  return request<ScheduledTaskRunVO>({ url: `${BASE_URL}/${id}/trigger`, method: 'post', timeout: 180000 })
+  return request<ScheduledTaskRunVO>({ url: `${BASE_URL}/${id}/trigger`, method: 'post', timeout: LLM_TIMEOUT_MS })
 }
 
 export function pageScheduledTaskRuns(id: number, query: MpPageQuery) {
