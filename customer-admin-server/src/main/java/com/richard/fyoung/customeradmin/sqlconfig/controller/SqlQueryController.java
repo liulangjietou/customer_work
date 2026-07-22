@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.sqlconfig.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
+import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlAdhocQueryRequest;
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryMetaVO;
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryRequest;
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryResultVO;
@@ -59,8 +60,44 @@ public class SqlQueryController {
         SqlQueryResultVO result = queryService.executeForExport(request.defineKey(), request.params());
         byte[] content = XlsxExporter.write(result);
         String fileName = request.defineKey() + "-" + LocalDateTime.now().format(FILE_TIMESTAMP) + ".xlsx";
-        String encoded = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
+        return xlsxResponse(content, fileName);
+    }
 
+    // ===== 即席（adhoc）SQL 客户端：选数据源 + 手写只读 SQL 直接执行 =====
+
+    @SaCheckPermission("sql-console:query")
+    @OperationLog(operation = "执行即席SQL查询", target = "sql_datasource")
+    @PostMapping("/adhoc")
+    public Result<SqlQueryResultVO> adhoc(@Valid @RequestBody SqlAdhocQueryRequest request) {
+        return Result.success(queryService.executeAdhoc(request.datasourceId(), request.sql()));
+    }
+
+    /** 左侧库树：数据源下所有数据库（元数据浏览，不审计）。 */
+    @SaCheckPermission("sql-console:query")
+    @GetMapping("/adhoc/databases")
+    public Result<java.util.List<String>> databases(@RequestParam Long datasourceId) {
+        return Result.success(queryService.listDatabases(datasourceId));
+    }
+
+    /** 左侧库树：点库懒加载其下所有表。 */
+    @SaCheckPermission("sql-console:query")
+    @GetMapping("/adhoc/tables")
+    public Result<java.util.List<String>> tables(@RequestParam Long datasourceId, @RequestParam String database) {
+        return Result.success(queryService.listTables(datasourceId, database));
+    }
+
+    @SaCheckPermission("sql-console:export")
+    @OperationLog(operation = "导出即席SQL查询结果", target = "sql_datasource")
+    @PostMapping("/adhoc/export")
+    public ResponseEntity<byte[]> adhocExport(@Valid @RequestBody SqlAdhocQueryRequest request) {
+        SqlQueryResultVO result = queryService.executeAdhoc(request.datasourceId(), request.sql());
+        byte[] content = XlsxExporter.write(result);
+        String fileName = "sql-console-" + LocalDateTime.now().format(FILE_TIMESTAMP) + ".xlsx";
+        return xlsxResponse(content, fileName);
+    }
+
+    private ResponseEntity<byte[]> xlsxResponse(byte[] content, String fileName) {
+        String encoded = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));

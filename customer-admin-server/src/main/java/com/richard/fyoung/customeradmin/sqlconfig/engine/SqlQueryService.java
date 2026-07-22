@@ -26,6 +26,10 @@ import org.springframework.util.StringUtils;
 
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,6 +52,11 @@ public class SqlQueryService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int ENABLED = 1;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 300;
+    // 即席查询结果的时间列格式化：MySQL DATETIME 经 JDBC 取出是 LocalDateTime，
+    // Jackson 默认按 ISO-8601 序列化会带 'T'（2026-07-20T10:00:05），统一成无 T 的常用格式
+    private static final DateTimeFormatter DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private final SqlDefineMapper defineMapper;
     private final SqlDefineParamMapper paramMapper;
@@ -90,6 +99,34 @@ public class SqlQueryService {
         return doExecute(defineKey, params, true);
     }
 
+    /**
+     * 即席（adhoc）只读查询：对指定数据源直接执行调用方传入的任意 SQL（SQL 客户端用）。
+     *
+     * <p>与 {@link #execute} 不同，SQL 文本来自调用方而非预配置 {@code SqlDefine}，故先经
+     * {@link SqlValidator#validateReadOnly} 文本层拦截（仅 SELECT/WITH、拒绝多语句），再走连接级
+     * {@code readOnly=true} 的只读模板双保险；{@code maxRows} 兜底截断，{@code total} 记实际返回行数。</p>
+     */
+    public SqlQueryResultVO executeAdhoc(Long datasourceId, String rawSql) {
+        long start = System.currentTimeMillis();
+        SqlValidator.validateReadOnly(rawSql);
+        NamedParameterJdbcTemplate template = connectionManager.getTemplate(datasourceId);
+        JdbcTemplate jdbcTemplate = (JdbcTemplate) template.getJdbcOperations();
+        jdbcTemplate.setQueryTimeout(properties.getQueryTimeoutSeconds());
+        jdbcTemplate.setMaxRows(properties.getMaxRows());
+        try {
+            SqlQueryResultVO result = jdbcTemplate.query(rawSql, (ResultSetExtractor<SqlQueryResultVO>) this::extract);
+            normalizeTemporalValues(result);
+            result.setTotal(result.getRows() == null ? 0 : result.getRows().size());
+            result.setUseMillis(System.currentTimeMillis() - start);
+            return result;
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("adhoc sql execute failed, code={}, datasourceId={}", "SQLCFG-ADHOC-FAIL", datasourceId, e);
+            throw new BizException(ResultCode.SQL_QUERY_EXECUTE_FAILED, shortMessage(e));
+        }
+    }
+
     private SqlQueryResultVO doExecute(String defineKey, Map<String, Object> input, boolean export) {
         long start = System.currentTimeMillis();
         SqlDefine define = requireEnabledDefine(defineKey);
@@ -110,6 +147,9 @@ public class SqlQueryService {
             SqlQueryResultVO result = template.query(define.getQuerySql(), paramSource,
                 (ResultSetExtractor<SqlQueryResultVO>) this::extract);
             applyTransforms(define.getId(), result);
+            // 兜底格式化放在列转换器之后：配了 DATE_FORMAT 的列已被转成用户格式（String，不再处理），
+            // 没配转换器、仍是 LocalDateTime 的时间列在此去掉 ISO 的 T
+            normalizeTemporalValues(result);
             result.setTotal(total);
             result.setUseMillis(System.currentTimeMillis() - start);
             return result;
@@ -119,6 +159,34 @@ public class SqlQueryService {
             log.error("sql execute failed, code={}, defineKey={}", "SQLCFG-EXECUTE-FAIL", defineKey, e);
             throw new BizException(ResultCode.SQL_QUERY_EXECUTE_FAILED, shortMessage(e));
         }
+    }
+
+    /**
+     * 列出数据源下所有数据库（SQL 客户端左侧库树用）。元数据浏览、高频，不走 adhoc 审计。
+     * 用 information_schema 只读查询，走连接级 readOnly 模板。
+     */
+    public List<String> listDatabases(Long datasourceId) {
+        JdbcTemplate jt = metadataJdbcTemplate(datasourceId);
+        return jt.queryForList(
+            "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name", String.class);
+    }
+
+    /** 列出指定库下所有表（点库懒加载）。database 走参数绑定，无拼接注入风险。 */
+    public List<String> listTables(Long datasourceId, String database) {
+        if (!StringUtils.hasText(database)) {
+            throw new BizException(ResultCode.PARAM_MISSING, "database 不能为空");
+        }
+        JdbcTemplate jt = metadataJdbcTemplate(datasourceId);
+        return jt.queryForList(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name",
+            String.class, database);
+    }
+
+    private JdbcTemplate metadataJdbcTemplate(Long datasourceId) {
+        NamedParameterJdbcTemplate template = connectionManager.getTemplate(datasourceId);
+        JdbcTemplate jt = (JdbcTemplate) template.getJdbcOperations();
+        jt.setQueryTimeout(properties.getQueryTimeoutSeconds());
+        return jt;
     }
 
     /** 从结果集按列序取列名（getColumnLabel 拿 AS 别名），行数据用 LinkedHashMap 保序。 */
@@ -141,6 +209,43 @@ public class SqlQueryService {
         vo.setColumns(columns);
         vo.setRows(rows);
         return vo;
+    }
+
+    /**
+     * 把结果里的时间类型值格式化成无 'T' 的常用字符串（yyyy-MM-dd HH:mm:ss 等）。
+     *
+     * <p>即席查询直接调；预配置查询在 {@code FieldTransformer} 之后调——配了 DATE_FORMAT 的列
+     * 已是用户格式 String（本方法不动 String），只兜底处理未配转换器、仍为时间类型的列。</p>
+     */
+    private void normalizeTemporalValues(SqlQueryResultVO result) {
+        if (result.getRows() == null) {
+            return;
+        }
+        for (Map<String, Object> row : result.getRows()) {
+            row.replaceAll((key, value) -> formatTemporal(value));
+        }
+    }
+
+    private Object formatTemporal(Object value) {
+        if (value instanceof LocalDateTime) {
+            return ((LocalDateTime) value).format(DATETIME_FMT);
+        }
+        if (value instanceof java.sql.Timestamp) {
+            return ((java.sql.Timestamp) value).toLocalDateTime().format(DATETIME_FMT);
+        }
+        if (value instanceof LocalDate) {
+            return ((LocalDate) value).format(DATE_FMT);
+        }
+        if (value instanceof java.sql.Date) {
+            return ((java.sql.Date) value).toLocalDate().format(DATE_FMT);
+        }
+        if (value instanceof LocalTime) {
+            return ((LocalTime) value).format(TIME_FMT);
+        }
+        if (value instanceof java.sql.Time) {
+            return ((java.sql.Time) value).toLocalTime().format(TIME_FMT);
+        }
+        return value;
     }
 
     /**

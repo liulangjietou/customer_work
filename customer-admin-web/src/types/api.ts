@@ -670,6 +670,72 @@ export interface SqlDatasourceSaveRequest {
   remark?: string | null
 }
 
+// ---------- workbench.site ----------
+export interface WorkbenchSiteVO {
+  id: number
+  name: string
+  category: string | null
+  url: string
+  account: string | null
+  passwordMasked: string
+  /** 是否配置了密码：前端据此决定"复制密码"按钮是否可用。 */
+  hasPassword: boolean
+  remark: string | null
+  enabled: boolean
+  // 自动登录高级配置（留空走脚本内启发式）
+  usernameSelector: string | null
+  passwordSelector: string | null
+  submitSelector: string | null
+  fillMode: string
+  submitMode: string
+  initDelayMs: number
+  submitDelayMs: number
+  createTime: string
+  updateTime: string
+}
+
+export interface WorkbenchSiteSaveRequest {
+  name: string
+  category?: string | null
+  url: string
+  account?: string | null
+  /** 新建时可留空（无密码站点）；编辑留空表示不修改密码，与数据源约定一致。 */
+  password?: string | null
+  remark?: string | null
+  enabled?: boolean | null
+  usernameSelector?: string | null
+  passwordSelector?: string | null
+  submitSelector?: string | null
+  fillMode?: string | null
+  submitMode?: string | null
+  initDelayMs?: number | null
+  submitDelayMs?: number | null
+}
+
+// ---------- workbench.token ----------
+export interface WorkbenchTokenVO {
+  id: number
+  name: string
+  tokenPrefix: string
+  expireTime: string | null
+  lastUsedTime: string | null
+  revoked: boolean
+  createTime: string
+}
+
+export interface WorkbenchTokenCreateRequest {
+  name: string
+  /** 有效期天数，null 表示永不过期。 */
+  expireDays?: number | null
+}
+
+/** 令牌创建的一次性响应：token 明文仅此刻返回一次。 */
+export interface WorkbenchTokenCreatedVO {
+  id: number
+  name: string
+  token: string
+}
+
 // ---------- sql.define ----------
 export interface SqlDefineVO {
   id: number
@@ -768,6 +834,12 @@ export interface SqlQueryMetaVO {
 export interface SqlQueryExecuteRequest {
   defineKey: string
   params: Record<string, unknown>
+}
+
+/** 即席（adhoc）SQL 查询请求：选已配置数据源 + 手写只读 SQL。 */
+export interface SqlAdhocQueryRequest {
+  datasourceId: number
+  sql: string
 }
 
 export interface SqlQueryResultVO {
