@@ -115,24 +115,19 @@ watch(visible, (v) => {
 
     <!-- 新建令牌子对话框 -->
     <el-dialog v-model="createFormVisible" title="新建令牌" width="520px" append-to-body>
-      <template v-if="!plaintextToken">
-        <el-form label-width="80px">
-          <el-form-item label="用途" required>
-            <el-input v-model="createName" placeholder="如：我的 Chrome ScriptCat" />
-          </el-form-item>
-          <el-form-item label="有效期">
-            <el-select v-model="createExpireDays" style="width: 100%">
-              <el-option v-for="opt in EXPIRE_OPTIONS" :key="String(opt.value)" :label="opt.label" :value="opt.value" />
-            </el-select>
-          </el-form-item>
-        </el-form>
-        <template #footer>
-          <el-button @click="createFormVisible = false">取消</el-button>
-          <el-button type="primary" :loading="creating" @click="submitCreate">生成</el-button>
-        </template>
-      </template>
+      <!-- 主体：未生成时填表单，生成后展示一次性明文 -->
+      <el-form v-if="!plaintextToken" label-width="80px">
+        <el-form-item label="用途" required>
+          <el-input v-model="createName" placeholder="如：我的 Chrome ScriptCat" />
+        </el-form-item>
+        <el-form-item label="有效期">
+          <el-select v-model="createExpireDays" style="width: 100%">
+            <el-option v-for="opt in EXPIRE_OPTIONS" :key="String(opt.value)" :label="opt.label" :value="opt.value" />
+          </el-select>
+        </el-form-item>
+      </el-form>
 
-      <template v-else>
+      <div v-else>
         <el-alert
           type="warning"
           :closable="false"
@@ -145,9 +140,15 @@ watch(visible, (v) => {
             <el-button @click="copyText(plaintextToken, '令牌')">复制</el-button>
           </template>
         </el-input>
-        <template #footer>
-          <el-button type="primary" @click="createFormVisible = false">我已保存</el-button>
+      </div>
+
+      <!-- 具名插槽必须是 el-dialog 的直接子级，v-if/v-else 收敛到插槽内部 -->
+      <template #footer>
+        <template v-if="!plaintextToken">
+          <el-button @click="createFormVisible = false">取消</el-button>
+          <el-button type="primary" :loading="creating" @click="submitCreate">生成</el-button>
         </template>
+        <el-button v-else type="primary" @click="createFormVisible = false">我已保存</el-button>
       </template>
     </el-dialog>
   </el-dialog>
