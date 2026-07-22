@@ -44,6 +44,7 @@ class SqlQueryServiceTest {
 
     private SqlDefineMapper defineMapper;
     private SqlDefineParamMapper paramMapper;
+    private SqlFieldTransformMapper transformMapper;
     private SqlDatasourceConnectionManager connectionManager;
     private SqlQueryService service;
 
@@ -57,7 +58,7 @@ class SqlQueryServiceTest {
     void setUp() {
         defineMapper = mock(SqlDefineMapper.class);
         paramMapper = mock(SqlDefineParamMapper.class);
-        SqlFieldTransformMapper transformMapper = mock(SqlFieldTransformMapper.class);
+        transformMapper = mock(SqlFieldTransformMapper.class);
         connectionManager = mock(SqlDatasourceConnectionManager.class);
         FieldTransformer fieldTransformer = new FieldTransformer();
         AdminSqlConfigProperties properties = new AdminSqlConfigProperties();
@@ -198,6 +199,35 @@ class SqlQueryServiceTest {
         assertEquals(List.of("id", "name"), result.getColumns());
         verify(jt).setMaxRows(2000);
         verify(jt).setQueryTimeout(30);
+    }
+
+    @Test
+    void execute_shouldFormatDateTime_withoutIsoT_afterTransforms() {
+        SqlDefine define = new SqlDefine();
+        define.setId(1L);
+        define.setDefineKey("k");
+        define.setEnabled(1);
+        define.setDatasourceId(9L);
+        define.setQuerySql("SELECT t FROM x");
+        when(defineMapper.selectOne(any())).thenReturn(define);
+        when(paramMapper.selectList(any())).thenReturn(List.of());
+        when(transformMapper.selectList(any())).thenReturn(List.of()); // 无列转换器
+
+        NamedParameterJdbcTemplate npt = mock(NamedParameterJdbcTemplate.class);
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        when(connectionManager.getTemplate(9L)).thenReturn(npt);
+        when(npt.getJdbcOperations()).thenReturn(jt);
+        SqlQueryResultVO fake = new SqlQueryResultVO();
+        fake.setColumns(List.of("t"));
+        java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+        row.put("t", java.time.LocalDateTime.of(2026, 7, 20, 10, 0, 5));
+        fake.setRows(new java.util.ArrayList<>(List.of(row)));
+        when(npt.query(anyString(), any(org.springframework.jdbc.core.namedparam.SqlParameterSource.class),
+            any(ResultSetExtractor.class))).thenReturn(fake);
+
+        SqlQueryResultVO result = service.execute("k", Map.of());
+
+        assertEquals("2026-07-20 10:00:05", result.getRows().get(0).get("t"));
     }
 
     @Test

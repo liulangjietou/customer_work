@@ -147,6 +147,9 @@ public class SqlQueryService {
             SqlQueryResultVO result = template.query(define.getQuerySql(), paramSource,
                 (ResultSetExtractor<SqlQueryResultVO>) this::extract);
             applyTransforms(define.getId(), result);
+            // 兜底格式化放在列转换器之后：配了 DATE_FORMAT 的列已被转成用户格式（String，不再处理），
+            // 没配转换器、仍是 LocalDateTime 的时间列在此去掉 ISO 的 T
+            normalizeTemporalValues(result);
             result.setTotal(total);
             result.setUseMillis(System.currentTimeMillis() - start);
             return result;
@@ -210,7 +213,9 @@ public class SqlQueryService {
 
     /**
      * 把结果里的时间类型值格式化成无 'T' 的常用字符串（yyyy-MM-dd HH:mm:ss 等）。
-     * 仅即席查询使用——预配置查询有可按列配置的 {@code FieldTransformer}，不在此统一处理。
+     *
+     * <p>即席查询直接调；预配置查询在 {@code FieldTransformer} 之后调——配了 DATE_FORMAT 的列
+     * 已是用户格式 String（本方法不动 String），只兜底处理未配转换器、仍为时间类型的列。</p>
      */
     private void normalizeTemporalValues(SqlQueryResultVO result) {
         if (result.getRows() == null) {
