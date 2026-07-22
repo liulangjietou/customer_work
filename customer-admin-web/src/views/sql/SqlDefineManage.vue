@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import type { FormInstance } from 'element-plus'
 import {
   createSqlDefine,
@@ -31,8 +30,6 @@ import type {
   SqlParamType,
   SqlTransformType,
 } from '@/types/api'
-
-const router = useRouter()
 
 const PARAM_TYPE_OPTIONS: { label: string; value: SqlParamType }[] = [
   { label: '字符串', value: 'STRING' },
@@ -80,12 +77,6 @@ async function handleCopy(row: SqlDefineVO) {
   await copySqlDefine(row.id)
   ElMessage.success('复制成功')
   await loadList()
-}
-
-/** 预览 = 打开一个新标签页跳到通用查询页，不影响当前编辑态。 */
-function handlePreview(row: SqlDefineVO) {
-  const url = router.resolve({ path: '/sql/query', query: { defineKey: row.defineKey } }).href
-  window.open(url, '_blank')
 }
 
 // ---------- 参数配置 ----------
@@ -274,7 +265,6 @@ onMounted(() => {
         <el-table-column prop="updateTime" label="更新时间" width="170" />
         <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }: { row: SqlDefineVO }">
-            <el-button link type="primary" @click="handlePreview(row)">预览</el-button>
             <el-button link type="primary" @click="openParams(row)">参数配置</el-button>
             <el-button link type="primary" @click="openTransforms(row)">列转换器</el-button>
             <el-button v-permission="'sql-define:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
