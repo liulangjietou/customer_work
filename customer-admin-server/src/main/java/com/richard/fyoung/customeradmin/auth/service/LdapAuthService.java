@@ -18,8 +18,8 @@ import java.util.Hashtable;
  * 由域控完成，本服务不做密码比对/不落库密码），失败通过 {@link NamingException} 子类型区分是
  * "用户名密码错误"还是"域控不可达"，避免把网络故障误报成登录失败。</p>
  *
- * <p>实现手法与既有生产项目 gmcf-operate-web 的 {@code LdapLoginAdapter} 保持一致（JNDI
- * {@code InitialDirContext} + simple 认证），仅将域控地址/UPN 后缀改为可配置项。</p>
+ * <p>实现手法为标准的企业 LDAP 登录适配（JNDI
+ * {@code InitialDirContext} + simple 认证），域控地址/UPN 后缀为可配置项。</p>
  * @author owlzhangfq@gmail.com
  */
 @Service
