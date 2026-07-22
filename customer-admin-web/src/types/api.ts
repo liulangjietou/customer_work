@@ -670,6 +670,33 @@ export interface SqlDatasourceSaveRequest {
   remark?: string | null
 }
 
+// ---------- workbench.site ----------
+export interface WorkbenchSiteVO {
+  id: number
+  name: string
+  category: string | null
+  url: string
+  account: string | null
+  passwordMasked: string
+  /** 是否配置了密码：前端据此决定"复制密码"按钮是否可用。 */
+  hasPassword: boolean
+  remark: string | null
+  enabled: boolean
+  createTime: string
+  updateTime: string
+}
+
+export interface WorkbenchSiteSaveRequest {
+  name: string
+  category?: string | null
+  url: string
+  account?: string | null
+  /** 新建时可留空（无密码站点）；编辑留空表示不修改密码，与数据源约定一致。 */
+  password?: string | null
+  remark?: string | null
+  enabled?: boolean | null
+}
+
 // ---------- sql.define ----------
 export interface SqlDefineVO {
   id: number
