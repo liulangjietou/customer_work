@@ -24,4 +24,5 @@ export const staticRouteComponents: Record<string, () => Promise<Component>> = {
   '/sql/datasource': () => import('@/views/sql/SqlDatasourceManage.vue'),
   '/sql/define': () => import('@/views/sql/SqlDefineManage.vue'),
   '/workbench/site': () => import('@/views/workbench/WorkbenchSiteManage.vue'),
+  '/workbench/sql-console': () => import('@/views/workbench/WorkbenchSqlConsole.vue'),
 }

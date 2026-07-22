@@ -2,8 +2,10 @@ package com.richard.fyoung.customeradmin.sqlconfig.engine;
 
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSqlConfigProperties;
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryMetaVO;
+import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryResultVO;
 import com.richard.fyoung.customeradmin.sqlconfig.entity.SqlDefine;
 import com.richard.fyoung.customeradmin.sqlconfig.entity.SqlDefineParam;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDefineMapper;
@@ -14,7 +16,10 @@ import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
 import java.util.List;
 import java.util.Map;
@@ -23,7 +28,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -35,6 +43,7 @@ class SqlQueryServiceTest {
 
     private SqlDefineMapper defineMapper;
     private SqlDefineParamMapper paramMapper;
+    private SqlDatasourceConnectionManager connectionManager;
     private SqlQueryService service;
 
     @BeforeAll
@@ -48,7 +57,7 @@ class SqlQueryServiceTest {
         defineMapper = mock(SqlDefineMapper.class);
         paramMapper = mock(SqlDefineParamMapper.class);
         SqlFieldTransformMapper transformMapper = mock(SqlFieldTransformMapper.class);
-        SqlDatasourceConnectionManager connectionManager = mock(SqlDatasourceConnectionManager.class);
+        connectionManager = mock(SqlDatasourceConnectionManager.class);
         FieldTransformer fieldTransformer = new FieldTransformer();
         AdminSqlConfigProperties properties = new AdminSqlConfigProperties();
         properties.setMaxRows(2000);
@@ -145,6 +154,42 @@ class SqlQueryServiceTest {
         assertEquals(19, meta.getParams().get(0).getDefaultValue().length());
         // 下拉 JSON 解析成 Map
         assertEquals("启用", meta.getParams().get(1).getDropDown().get("1"));
+    }
+
+    @Test
+    void executeAdhoc_shouldRejectNonReadOnly_beforeTouchingDatasource() {
+        // 非只读 SQL 必须在建连接前就被 SqlValidator 拦下，绝不触达数据库
+        BizException ex = assertThrows(BizException.class,
+            () -> service.executeAdhoc(1L, "DELETE FROM t_user"));
+        assertEquals(ResultCode.SQL_NOT_READONLY, ex.getResultCode());
+        verify(connectionManager, never()).getTemplate(any());
+    }
+
+    @Test
+    void executeAdhoc_shouldRejectMultiStatement() {
+        BizException ex = assertThrows(BizException.class,
+            () -> service.executeAdhoc(1L, "SELECT 1; SELECT 2"));
+        assertEquals(ResultCode.SQL_NOT_READONLY, ex.getResultCode());
+        verify(connectionManager, never()).getTemplate(any());
+    }
+
+    @Test
+    void executeAdhoc_shouldExecuteReadOnly_andSetTotalToRowCount() {
+        NamedParameterJdbcTemplate npt = mock(NamedParameterJdbcTemplate.class);
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        when(connectionManager.getTemplate(1L)).thenReturn(npt);
+        when(npt.getJdbcOperations()).thenReturn(jt);
+        SqlQueryResultVO fake = new SqlQueryResultVO();
+        fake.setColumns(List.of("id", "name"));
+        fake.setRows(List.of(Map.of("id", 1, "name", "a"), Map.of("id", 2, "name", "b")));
+        when(jt.query(eq("SELECT id, name FROM t_user"), any(ResultSetExtractor.class))).thenReturn(fake);
+
+        SqlQueryResultVO result = service.executeAdhoc(1L, "SELECT id, name FROM t_user");
+
+        assertEquals(2, result.getTotal(), "adhoc total 记实际返回行数");
+        assertEquals(List.of("id", "name"), result.getColumns());
+        verify(jt).setMaxRows(2000);
+        verify(jt).setQueryTimeout(30);
     }
 
     private SqlDefineParam param(String name, String type, boolean required, String defaultValue,

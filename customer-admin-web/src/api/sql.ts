@@ -8,6 +8,7 @@ import type {
   SqlDefineParamVO,
   SqlDefineSaveRequest,
   SqlDefineVO,
+  SqlAdhocQueryRequest,
   SqlFieldTransformSaveRequest,
   SqlFieldTransformVO,
   SqlQueryExecuteRequest,
@@ -118,4 +119,14 @@ export function executeSqlQuery(data: SqlQueryExecuteRequest) {
 export function exportSqlQuery(data: SqlQueryExecuteRequest) {
   const fallbackFilename = `${data.defineKey}_${Date.now()}.xlsx`
   return download({ url: '/sql/query/export', method: 'post', data }, fallbackFilename)
+}
+
+// ---------- 即席 SQL 客户端 ----------
+export function executeAdhocSql(data: SqlAdhocQueryRequest) {
+  return request<SqlQueryResultVO>({ url: '/sql/query/adhoc', method: 'post', data })
+}
+
+export function exportAdhocSql(data: SqlAdhocQueryRequest) {
+  const fallbackFilename = `sql-console_${Date.now()}.xlsx`
+  return download({ url: '/sql/query/adhoc/export', method: 'post', data }, fallbackFilename)
 }

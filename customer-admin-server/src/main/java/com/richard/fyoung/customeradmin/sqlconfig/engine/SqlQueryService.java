@@ -90,6 +90,33 @@ public class SqlQueryService {
         return doExecute(defineKey, params, true);
     }
 
+    /**
+     * 即席（adhoc）只读查询：对指定数据源直接执行调用方传入的任意 SQL（SQL 客户端用）。
+     *
+     * <p>与 {@link #execute} 不同，SQL 文本来自调用方而非预配置 {@code SqlDefine}，故先经
+     * {@link SqlValidator#validateReadOnly} 文本层拦截（仅 SELECT/WITH、拒绝多语句），再走连接级
+     * {@code readOnly=true} 的只读模板双保险；{@code maxRows} 兜底截断，{@code total} 记实际返回行数。</p>
+     */
+    public SqlQueryResultVO executeAdhoc(Long datasourceId, String rawSql) {
+        long start = System.currentTimeMillis();
+        SqlValidator.validateReadOnly(rawSql);
+        NamedParameterJdbcTemplate template = connectionManager.getTemplate(datasourceId);
+        JdbcTemplate jdbcTemplate = (JdbcTemplate) template.getJdbcOperations();
+        jdbcTemplate.setQueryTimeout(properties.getQueryTimeoutSeconds());
+        jdbcTemplate.setMaxRows(properties.getMaxRows());
+        try {
+            SqlQueryResultVO result = jdbcTemplate.query(rawSql, (ResultSetExtractor<SqlQueryResultVO>) this::extract);
+            result.setTotal(result.getRows() == null ? 0 : result.getRows().size());
+            result.setUseMillis(System.currentTimeMillis() - start);
+            return result;
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("adhoc sql execute failed, code={}, datasourceId={}", "SQLCFG-ADHOC-FAIL", datasourceId, e);
+            throw new BizException(ResultCode.SQL_QUERY_EXECUTE_FAILED, shortMessage(e));
+        }
+    }
+
     private SqlQueryResultVO doExecute(String defineKey, Map<String, Object> input, boolean export) {
         long start = System.currentTimeMillis();
         SqlDefine define = requireEnabledDefine(defineKey);

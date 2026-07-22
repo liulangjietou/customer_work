@@ -836,6 +836,12 @@ export interface SqlQueryExecuteRequest {
   params: Record<string, unknown>
 }
 
+/** 即席（adhoc）SQL 查询请求：选已配置数据源 + 手写只读 SQL。 */
+export interface SqlAdhocQueryRequest {
+  datasourceId: number
+  sql: string
+}
+
 export interface SqlQueryResultVO {
   columns: string[]
   rows: Record<string, unknown>[]
