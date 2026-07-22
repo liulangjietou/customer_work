@@ -182,7 +182,14 @@ class SqlQueryServiceTest {
         when(npt.getJdbcOperations()).thenReturn(jt);
         SqlQueryResultVO fake = new SqlQueryResultVO();
         fake.setColumns(List.of("id", "name"));
-        fake.setRows(List.of(Map.of("id", 1, "name", "a"), Map.of("id", 2, "name", "b")));
+        // 用可变 Map（真实的 extract 产 LinkedHashMap），因执行后会 replaceAll 做时间列格式化
+        java.util.Map<String, Object> r1 = new java.util.LinkedHashMap<>();
+        r1.put("id", 1);
+        r1.put("name", "a");
+        java.util.Map<String, Object> r2 = new java.util.LinkedHashMap<>();
+        r2.put("id", 2);
+        r2.put("name", "b");
+        fake.setRows(List.of(r1, r2));
         when(jt.query(eq("SELECT id, name FROM t_user"), any(ResultSetExtractor.class))).thenReturn(fake);
 
         SqlQueryResultVO result = service.executeAdhoc(1L, "SELECT id, name FROM t_user");
@@ -191,6 +198,25 @@ class SqlQueryServiceTest {
         assertEquals(List.of("id", "name"), result.getColumns());
         verify(jt).setMaxRows(2000);
         verify(jt).setQueryTimeout(30);
+    }
+
+    @Test
+    void executeAdhoc_shouldFormatDateTime_withoutIsoT() {
+        NamedParameterJdbcTemplate npt = mock(NamedParameterJdbcTemplate.class);
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        when(connectionManager.getTemplate(1L)).thenReturn(npt);
+        when(npt.getJdbcOperations()).thenReturn(jt);
+        SqlQueryResultVO fake = new SqlQueryResultVO();
+        fake.setColumns(List.of("t"));
+        java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+        row.put("t", java.time.LocalDateTime.of(2026, 7, 20, 10, 0, 5));
+        fake.setRows(new java.util.ArrayList<>(List.of(row)));
+        when(jt.query(anyString(), any(ResultSetExtractor.class))).thenReturn(fake);
+
+        SqlQueryResultVO result = service.executeAdhoc(1L, "SELECT t FROM x");
+
+        // LocalDateTime 被格式化成无 T 的字符串
+        assertEquals("2026-07-20 10:00:05", result.getRows().get(0).get("t"));
     }
 
     @Test

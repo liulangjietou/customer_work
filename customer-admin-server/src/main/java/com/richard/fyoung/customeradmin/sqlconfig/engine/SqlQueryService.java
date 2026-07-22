@@ -26,6 +26,10 @@ import org.springframework.util.StringUtils;
 
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,6 +52,11 @@ public class SqlQueryService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int ENABLED = 1;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 300;
+    // 即席查询结果的时间列格式化：MySQL DATETIME 经 JDBC 取出是 LocalDateTime，
+    // Jackson 默认按 ISO-8601 序列化会带 'T'（2026-07-20T10:00:05），统一成无 T 的常用格式
+    private static final DateTimeFormatter DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private final SqlDefineMapper defineMapper;
     private final SqlDefineParamMapper paramMapper;
@@ -106,6 +115,7 @@ public class SqlQueryService {
         jdbcTemplate.setMaxRows(properties.getMaxRows());
         try {
             SqlQueryResultVO result = jdbcTemplate.query(rawSql, (ResultSetExtractor<SqlQueryResultVO>) this::extract);
+            normalizeTemporalValues(result);
             result.setTotal(result.getRows() == null ? 0 : result.getRows().size());
             result.setUseMillis(System.currentTimeMillis() - start);
             return result;
@@ -196,6 +206,41 @@ public class SqlQueryService {
         vo.setColumns(columns);
         vo.setRows(rows);
         return vo;
+    }
+
+    /**
+     * 把结果里的时间类型值格式化成无 'T' 的常用字符串（yyyy-MM-dd HH:mm:ss 等）。
+     * 仅即席查询使用——预配置查询有可按列配置的 {@code FieldTransformer}，不在此统一处理。
+     */
+    private void normalizeTemporalValues(SqlQueryResultVO result) {
+        if (result.getRows() == null) {
+            return;
+        }
+        for (Map<String, Object> row : result.getRows()) {
+            row.replaceAll((key, value) -> formatTemporal(value));
+        }
+    }
+
+    private Object formatTemporal(Object value) {
+        if (value instanceof LocalDateTime) {
+            return ((LocalDateTime) value).format(DATETIME_FMT);
+        }
+        if (value instanceof java.sql.Timestamp) {
+            return ((java.sql.Timestamp) value).toLocalDateTime().format(DATETIME_FMT);
+        }
+        if (value instanceof LocalDate) {
+            return ((LocalDate) value).format(DATE_FMT);
+        }
+        if (value instanceof java.sql.Date) {
+            return ((java.sql.Date) value).toLocalDate().format(DATE_FMT);
+        }
+        if (value instanceof LocalTime) {
+            return ((LocalTime) value).format(TIME_FMT);
+        }
+        if (value instanceof java.sql.Time) {
+            return ((java.sql.Time) value).toLocalTime().format(TIME_FMT);
+        }
+        return value;
     }
 
     /**
