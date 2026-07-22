@@ -35,6 +35,22 @@ public class WorkbenchSite {
     /** 0禁用 / 1启用。 */
     private Integer enabled;
 
+    // ===== 自动登录配置（供 ScriptCat 通用脚本使用，全部可空/带默认，留空走脚本内启发式）=====
+    /** 用户名输入框 CSS 选择器，留空用启发式。 */
+    private String usernameSelector;
+    /** 密码输入框 CSS 选择器，留空用 input[type=password]。 */
+    private String passwordSelector;
+    /** 登录按钮 CSS 选择器，留空用启发式。 */
+    private String submitSelector;
+    /** 填充模式：auto=原生 setter 一次性 / typing=逐字模拟（顽固 React 如 Kibana）。 */
+    private String fillMode;
+    /** 提交方式：click=点按钮 / formSubmit=表单提交。 */
+    private String submitMode;
+    /** 进页面后开始查找元素的延迟毫秒。 */
+    private Integer initDelayMs;
+    /** 填完到点击提交的延迟毫秒。 */
+    private Integer submitDelayMs;
+
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;
     @TableField(fill = FieldFill.INSERT)

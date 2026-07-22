@@ -20,6 +20,16 @@ public class WorkbenchSiteVO {
     private Boolean hasPassword;
     private String remark;
     private Boolean enabled;
+
+    // 自动登录配置（非敏感，正常回显供前端编辑）
+    private String usernameSelector;
+    private String passwordSelector;
+    private String submitSelector;
+    private String fillMode;
+    private String submitMode;
+    private Integer initDelayMs;
+    private Integer submitDelayMs;
+
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

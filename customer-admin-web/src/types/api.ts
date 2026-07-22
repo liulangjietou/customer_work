@@ -682,6 +682,14 @@ export interface WorkbenchSiteVO {
   hasPassword: boolean
   remark: string | null
   enabled: boolean
+  // 自动登录高级配置（留空走脚本内启发式）
+  usernameSelector: string | null
+  passwordSelector: string | null
+  submitSelector: string | null
+  fillMode: string
+  submitMode: string
+  initDelayMs: number
+  submitDelayMs: number
   createTime: string
   updateTime: string
 }
@@ -695,6 +703,37 @@ export interface WorkbenchSiteSaveRequest {
   password?: string | null
   remark?: string | null
   enabled?: boolean | null
+  usernameSelector?: string | null
+  passwordSelector?: string | null
+  submitSelector?: string | null
+  fillMode?: string | null
+  submitMode?: string | null
+  initDelayMs?: number | null
+  submitDelayMs?: number | null
+}
+
+// ---------- workbench.token ----------
+export interface WorkbenchTokenVO {
+  id: number
+  name: string
+  tokenPrefix: string
+  expireTime: string | null
+  lastUsedTime: string | null
+  revoked: boolean
+  createTime: string
+}
+
+export interface WorkbenchTokenCreateRequest {
+  name: string
+  /** 有效期天数，null 表示永不过期。 */
+  expireDays?: number | null
+}
+
+/** 令牌创建的一次性响应：token 明文仅此刻返回一次。 */
+export interface WorkbenchTokenCreatedVO {
+  id: number
+  name: string
+  token: string
 }
 
 // ---------- sql.define ----------

@@ -23,6 +23,9 @@ public class SaTokenConfig implements WebMvcConfigurer {
             .excludePathPatterns(
                 "/api/auth/login",
                 "/api/auth/sso-login",
+                // 内网工作台脚本回调：ScriptCat 脚本运行在目标站点页面里，拿不到后台登录态，
+                // 改用个人访问令牌鉴权（见 WorkbenchAgentController，自行校验 X-Workbench-Token）
+                "/api/workbench/agent/**",
                 // 菜单图标图片：前端用 <img src="..."> 直接加载，浏览器不会带 axios 注入的
                 // Authorization 头，这类静态资源必须放行，鉴权收敛到"谁能上传"这一侧
                 // （见 MenuAdminController 的 @SaCheckPermission("menu:edit")）。

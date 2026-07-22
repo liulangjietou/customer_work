@@ -26,7 +26,8 @@ class WorkbenchSiteControllerTest {
     private final WorkbenchSiteController controller = new WorkbenchSiteController(service);
 
     private WorkbenchSiteSaveRequest request() {
-        return new WorkbenchSiteSaveRequest("Gitlab", "git", "https://git.internal", "admin", "pwd", "备注", true);
+        return new WorkbenchSiteSaveRequest("Gitlab", "git", "https://git.internal", "admin", "pwd", "备注", true,
+            null, null, null, null, null, null, null);
     }
 
     @Test

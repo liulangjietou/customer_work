@@ -4,12 +4,14 @@ import type { FormInstance } from 'element-plus'
 import {
   createWorkbenchSite,
   deleteWorkbenchSite,
+  generateWorkbenchScript,
   getWorkbenchSiteSecret,
   pageWorkbenchSites,
   updateWorkbenchSite,
 } from '@/api/workbench'
 import { useCrudPage } from '@/composables/useCrudPage'
 import { copyText } from '@/views/system/devtools/composables/useCopy'
+import WorkbenchTokenDialog from './WorkbenchTokenDialog.vue'
 import type { PageQuery, WorkbenchSiteSaveRequest, WorkbenchSiteVO } from '@/types/api'
 
 // url 校验正则与后端 @Pattern 保持一致
@@ -29,10 +31,17 @@ const {
   update: updateWorkbenchSite,
   remove: (row) => deleteWorkbenchSite(row.id),
   initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
-  initForm: () => ({ name: '', category: '', url: '', account: '', password: '', remark: '', enabled: true }),
+  initForm: () => ({
+    name: '', category: '', url: '', account: '', password: '', remark: '', enabled: true,
+    usernameSelector: '', passwordSelector: '', submitSelector: '',
+    fillMode: 'auto', submitMode: 'click', initDelayMs: 500, submitDelayMs: 300,
+  }),
   toForm: (row) => ({
     name: row.name, category: row.category, url: row.url, account: row.account, password: '',
     remark: row.remark, enabled: row.enabled,
+    usernameSelector: row.usernameSelector, passwordSelector: row.passwordSelector,
+    submitSelector: row.submitSelector, fillMode: row.fillMode, submitMode: row.submitMode,
+    initDelayMs: row.initDelayMs, submitDelayMs: row.submitDelayMs,
   }),
   deleteConfirm: (row) => `确认删除站点「${row.name}」？`,
 })
@@ -55,6 +64,51 @@ async function copySecret(row: WorkbenchSiteVO) {
   }
 }
 
+// ===== 令牌管理 =====
+const tokenDialogVisible = ref(false)
+
+// ===== 生成登录脚本 =====
+const scriptDialogVisible = ref(false)
+const scriptName = ref('')
+const scriptExpireDays = ref<number | null>(90)
+const generating = ref(false)
+
+const EXPIRE_OPTIONS = [
+  { label: '30 天', value: 30 },
+  { label: '90 天', value: 90 },
+  { label: '永不过期', value: null },
+]
+
+function openScriptDialog() {
+  scriptName.value = 'ScriptCat 登录脚本'
+  scriptExpireDays.value = 90
+  scriptDialogVisible.value = true
+}
+
+async function generateScript() {
+  if (!scriptName.value.trim()) {
+    ElMessage.warning('请填写令牌用途')
+    return
+  }
+  generating.value = true
+  try {
+    const script = await generateWorkbenchScript({ name: scriptName.value, expireDays: scriptExpireDays.value })
+    // Blob 触发浏览器下载 .user.js
+    const blob = new Blob([script], { type: 'text/javascript;charset=utf-8' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = 'workbench-login.user.js'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(link.href)
+    scriptDialogVisible.value = false
+    ElMessage.success('脚本已下载，请拖入 ScriptCat 安装；令牌已内嵌，请勿外传')
+  } finally {
+    generating.value = false
+  }
+}
+
 onMounted(loadList)
 </script>
 
@@ -65,6 +119,10 @@ onMounted(loadList)
         <el-input v-model="query.keyword" placeholder="按名称/分类搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
         <el-button v-permission="'workbench-site:add'" type="primary" @click="openCreate">新增站点</el-button>
+        <div class="toolbar-right">
+          <el-button @click="tokenDialogVisible = true">我的令牌</el-button>
+          <el-button type="success" @click="openScriptDialog">生成登录脚本</el-button>
+        </div>
       </div>
 
       <el-table v-loading="loading" :data="list" style="width: 100%">
@@ -120,7 +178,7 @@ onMounted(loadList)
       />
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新增站点' : '编辑站点'" width="560px">
+    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新增站点' : '编辑站点'" width="600px">
       <el-form ref="formRef" :model="form" label-width="80px">
         <el-form-item label="名称" prop="name" :rules="[{ required: true, message: '请输入名称' }]">
           <el-input v-model="form.name" />
@@ -150,10 +208,73 @@ onMounted(loadList)
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
+
+        <el-collapse>
+          <el-collapse-item name="advanced">
+            <template #title>
+              <span class="advanced-title">自动登录高级配置（可选，留空自动识别）</span>
+            </template>
+            <el-form-item label="用户名框">
+              <el-input v-model="form.usernameSelector!" placeholder='CSS 选择器，如 input[name="username"]；留空自动' />
+            </el-form-item>
+            <el-form-item label="密码框">
+              <el-input v-model="form.passwordSelector!" placeholder="留空默认 input[type=password]" />
+            </el-form-item>
+            <el-form-item label="登录按钮">
+              <el-input v-model="form.submitSelector!" placeholder='如 button[type="submit"]；留空自动' />
+            </el-form-item>
+            <el-form-item label="填充模式">
+              <el-select v-model="form.fillMode!" style="width: 100%">
+                <el-option label="auto（原生 setter 一次性，通用）" value="auto" />
+                <el-option label="typing（逐字模拟，顽固 React 如 Kibana）" value="typing" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="提交方式">
+              <el-select v-model="form.submitMode!" style="width: 100%">
+                <el-option label="click（点击登录按钮）" value="click" />
+                <el-option label="formSubmit（提交表单，如 Phabricator）" value="formSubmit" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="启动延迟">
+              <el-input-number v-model="form.initDelayMs!" :min="0" :step="100" /> <span class="unit">毫秒（进页面到开始填充）</span>
+            </el-form-item>
+            <el-form-item label="提交延迟">
+              <el-input-number v-model="form.submitDelayMs!" :min="0" :step="100" /> <span class="unit">毫秒（填完到点击登录）</span>
+            </el-form-item>
+          </el-collapse-item>
+        </el-collapse>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="handleSubmit">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 令牌管理 -->
+    <WorkbenchTokenDialog v-model:visible="tokenDialogVisible" />
+
+    <!-- 生成登录脚本 -->
+    <el-dialog v-model="scriptDialogVisible" title="生成登录脚本" width="520px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="将为你签发一个内嵌令牌的通用脚本，下载后拖入 ScriptCat 安装即可。新增站点后请重新生成覆盖安装。"
+        style="margin-bottom: 12px"
+      />
+      <el-form label-width="80px">
+        <el-form-item label="令牌用途" required>
+          <el-input v-model="scriptName" placeholder="如：我的 Chrome ScriptCat" />
+        </el-form-item>
+        <el-form-item label="有效期">
+          <el-select v-model="scriptExpireDays" style="width: 100%">
+            <el-option v-for="opt in EXPIRE_OPTIONS" :key="String(opt.value)" :label="opt.label" :value="opt.value" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="scriptDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="generating" @click="generateScript">生成并下载</el-button>
       </template>
     </el-dialog>
   </div>
@@ -164,5 +285,19 @@ onMounted(loadList)
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+}
+.toolbar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.advanced-title {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+.unit {
+  margin-left: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 </style>

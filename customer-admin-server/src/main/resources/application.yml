@@ -58,6 +58,10 @@ admin:
   aes-secret-key: ${ADMIN_AES_SECRET_KEY:0123456789abcdef0123456789abcdef}
   # 登录“记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置
   remember-me-timeout-seconds: ${ADMIN_REMEMBER_ME_TIMEOUT_SECONDS:604800}
+  workbench:
+    # 生成的 ScriptCat 登录脚本里内嵌的 admin-server 访问基址：脚本用 GM_xmlhttpRequest 回调此地址取凭证。
+    # 必须是运行脚本的浏览器可达的地址（本地默认 8082，生产由运维改成内网可达域名）。
+    public-api-base: ${ADMIN_WORKBENCH_API_BASE:http://localhost:8082}
   mysql:
     # MysqlAgentStateStore 4 参构造函数要求显式库名（其 2 参构造函数会硬编码成 "agentscope"，见
     # AdminAgentRuntimeConfig 的坑注释）；必须与上面 spring.datasource.url 里的库名保持一致，

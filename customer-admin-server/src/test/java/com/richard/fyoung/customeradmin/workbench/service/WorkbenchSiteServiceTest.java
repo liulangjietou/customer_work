@@ -58,7 +58,8 @@ class WorkbenchSiteServiceTest {
     }
 
     private WorkbenchSiteSaveRequest request(String name, String password) {
-        return new WorkbenchSiteSaveRequest(name, "git", "https://git.internal", "admin", password, "备注", true);
+        return new WorkbenchSiteSaveRequest(name, "git", "https://git.internal", "admin", password, "备注", true,
+            null, null, null, null, null, null, null);
     }
 
     @Test
@@ -183,5 +184,64 @@ class WorkbenchSiteServiceTest {
         ArgumentCaptor<WorkbenchSite> captor = ArgumentCaptor.forClass(WorkbenchSite.class);
         verify(siteMapper).insert(captor.capture());
         assertNull(captor.getValue().getPassword(), "未提供密码时不应写入任何密文");
+    }
+
+    @Test
+    void create_shouldFallbackLoginConfigDefaults_whenBlank() {
+        when(siteMapper.exists(any())).thenReturn(false);
+
+        service.create(request("Gitlab", PLAIN_PASSWORD));
+
+        ArgumentCaptor<WorkbenchSite> captor = ArgumentCaptor.forClass(WorkbenchSite.class);
+        verify(siteMapper).insert(captor.capture());
+        WorkbenchSite saved = captor.getValue();
+        assertEquals("auto", saved.getFillMode());
+        assertEquals("click", saved.getSubmitMode());
+        assertEquals(500, saved.getInitDelayMs());
+        assertEquals(300, saved.getSubmitDelayMs());
+    }
+
+    @Test
+    void findAgentSiteByHost_shouldReturnDecryptedPassword_forExactHostMatch() {
+        WorkbenchSite site = new WorkbenchSite();
+        site.setUrl("https://git.example.com/login");
+        site.setAccount("test-user");
+        site.setPassword(cryptoUtil.encrypt(PLAIN_PASSWORD));
+        site.setFillMode("auto");
+        // 同时返回一个 host 是子串但不精确的干扰项，验证 URI 精确匹配
+        WorkbenchSite noise = new WorkbenchSite();
+        noise.setUrl("https://xgit.example.com/login");
+        when(siteMapper.selectList(any())).thenReturn(List.of(noise, site));
+
+        var vo = service.findAgentSiteByHost("git.example.com");
+
+        assertEquals("test-user", vo.getAccount());
+        assertEquals(PLAIN_PASSWORD, vo.getPassword());
+    }
+
+    @Test
+    void findAgentSiteByHost_shouldThrowNotFound_whenNoExactMatch() {
+        WorkbenchSite noise = new WorkbenchSite();
+        noise.setUrl("https://xgit.example.com/login");
+        when(siteMapper.selectList(any())).thenReturn(List.of(noise));
+
+        BizException ex = assertThrows(BizException.class,
+            () -> service.findAgentSiteByHost("git.example.com"));
+        assertEquals(ResultCode.RESOURCE_NOT_FOUND, ex.getResultCode());
+    }
+
+    @Test
+    void listEnabledHosts_shouldParseAndDedupHosts() {
+        WorkbenchSite a = new WorkbenchSite();
+        a.setUrl("https://wiki.example.com/");
+        WorkbenchSite b = new WorkbenchSite();
+        b.setUrl("https://wiki.example.com/dashboard"); // 同 host 应去重
+        WorkbenchSite c = new WorkbenchSite();
+        c.setUrl("http://gitlab.example.com");
+        when(siteMapper.selectList(any())).thenReturn(List.of(a, b, c));
+
+        List<String> hosts = service.listEnabledHosts();
+
+        assertEquals(List.of("wiki.example.com", "gitlab.example.com"), hosts);
     }
 }
