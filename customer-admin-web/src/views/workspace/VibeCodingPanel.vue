@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { UploadRequestOptions } from 'element-plus'
+import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
 import {
   confirmVibeCodingPlan,
   generateCommitMessage,
@@ -12,7 +12,6 @@ import {
   rollbackVibeCoding,
   saveWorkspaceFileContent,
 } from '@/api/vibecoding'
-import { parseChatAttachment } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
@@ -21,10 +20,8 @@ import { useThemeStore } from '@/store/theme'
 import {
   useVibeConversationsStore,
   type PlanCard,
-  type VibeAttachmentItem,
   type VibeConversation,
 } from '@/store/vibeConversations'
-import { generateUuid } from '@/utils/uuid'
 import type {
   GitDiffSummary,
   ReviewIssue,
@@ -43,10 +40,6 @@ const REVIEW_POLL_INTERVAL_MS = 5000
 const MAX_REVIEW_POLL_COUNT = 40
 
 const props = defineProps<{ agentCode: string }>()
-
-// 与 starter AttachmentParseService 的白名单/大小限制保持一致（后端 customer-work.attachment.max-file-size-mb=10）
-const ATTACHMENT_ACCEPT = '.md,.txt,.csv,.tsv,.json,.xml,.yaml,.yml,.toml,.proto,.properties,.ini,.conf,.cfg,.log,.env,.sql,.sh,.bash,.zsh,.bat,.ps1,.java,.kt,.kts,.groovy,.gradle,.scala,.py,.js,.ts,.jsx,.tsx,.vue,.css,.scss,.less,.c,.h,.cpp,.hpp,.cs,.go,.rs,.rb,.php,.swift,.lua,.r,.dart,.html,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.bmp,.webp'
-const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
 
 /**
  * 会话状态全部在 Pinia store（vibeConversations）里，本组件只是视图：切页面、切智能体、组件销毁
@@ -103,53 +96,13 @@ function newSession() {
   store.newSession(props.agentCode)
 }
 
-/** 前端先拦超限文件，与后端 max-file-size-mb 对齐，减少无谓上传请求。 */
-function beforeAttachmentUpload(file: File) {
-  if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
-    ElMessage.error(`附件 ${file.name} 超过 10MB，已跳过上传`)
-    return false
-  }
-  return true
-}
-
-async function handleAttachmentUpload(options: UploadRequestOptions) {
-  // 绑定发起上传时所在的会话：上传是异步的，期间用户可能切走，结果要回填到原会话而不是当前激活会话。
-  const conv = active.value
-  if (!conv) return
-  const file = options.file as File
-  const attachment: VibeAttachmentItem = { localId: generateUuid(), name: file.name, content: '', status: 'uploading' }
-  conv.attachments.push(attachment)
-  try {
-    const result = await parseChatAttachment(props.agentCode, file, 'vibecoding')
-    const target = conv.attachments.find((a) => a.localId === attachment.localId)
-    if (!target) {
-      return // 结果返回前用户已手动移除该附件，迟到的结果直接丢弃
-    }
-    if (result.parseStatus === 'FAILED') {
-      target.status = 'failed'
-      target.errorMessage = result.errorMessage || '解析失败'
-      ElMessage.error(`附件解析失败：${file.name}${result.errorMessage ? '，' + result.errorMessage : ''}`)
-    } else {
-      target.id = result.id
-      target.content = result.content
-      target.status = 'success'
-    }
-  } catch (error) {
-    const target = conv.attachments.find((a) => a.localId === attachment.localId)
-    const message = error instanceof Error ? error.message : String(error)
-    if (target) {
-      target.status = 'failed'
-      target.errorMessage = message
-    }
-    ElMessage.error('附件解析失败：' + message)
-  }
-}
-
-function removeAttachment(localId: string) {
-  const conv = active.value
-  if (!conv) return
-  conv.attachments = conv.attachments.filter((a) => a.localId !== localId)
-}
+// 附件上传（回形针按钮 + 输入框 ⌘/Ctrl+V 粘贴）统一走组合式函数，与 ChatPanel 共用同一条链路
+const { beforeAttachmentUpload, handleAttachmentUpload, handleAttachmentPaste, removeAttachment } =
+  useChatAttachments({
+    agentCode: () => props.agentCode,
+    channel: 'vibecoding',
+    getConversation: () => active.value,
+  })
 
 /** 只拼成功解析的附件，上传中/失败的附件不参与（失败的已经在上传回调里提示过用户）。 */
 function buildMessageWithAttachments(conv: VibeConversation, text: string): string {
@@ -158,7 +111,8 @@ function buildMessageWithAttachments(conv: VibeConversation, text: string): stri
   const attachmentText = successful
     .map((a) => `【附件：${a.name}】\n---\n${a.content}\n---`)
     .join('\n\n')
-  return `${attachmentText}\n\n${text}`
+  // 只发附件不写文字时正文就是附件内容本身
+  return text ? `${attachmentText}\n\n${text}` : attachmentText
 }
 
 async function openSession(targetSessionId: string) {
@@ -739,7 +693,13 @@ defineExpose({ newSession })
             <el-icon><Paperclip /></el-icon>
           </el-button>
         </el-upload>
-        <el-input v-model="input" placeholder="描述需求，回车发送" :disabled="active?.streaming" @keyup.enter="send" />
+        <el-input
+          v-model="input"
+          placeholder="描述需求，回车发送；⌘/Ctrl+V 可粘贴截图或文件作为附件"
+          :disabled="active?.streaming"
+          @keyup.enter="send"
+          @paste="handleAttachmentPaste"
+        />
         <el-tooltip
           placement="top"
           content="开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作"

@@ -218,13 +218,16 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       const conv = agent?.conversations[agent.activeId]
       if (!conv) return
       const text = conv.input.trim()
-      if (!text || conv.streaming || conv.attachments.some((a) => a.status === 'uploading')) return
+      // 输入框内容自动去首尾空白：纯空白输入被拦下时框里的空格也一并清掉，避免"有空格但发不出去"的困惑
+      conv.input = text
+      const attachedNames = conv.attachments.filter((a) => a.status === 'success').map((a) => a.name)
+      // 有解析成功的附件时允许"只发附件不写文字"（正文即附件内容，满足后端 message 非空要求）
+      if ((!text && attachedNames.length === 0) || conv.streaming || conv.attachments.some((a) => a.status === 'uploading')) return
       conv.interrupted = false
       const messageToSend = buildMessage(conv, text)
-      const attachedNames = conv.attachments.filter((a) => a.status === 'success').map((a) => a.name)
       conv.messages.push({
         role: 'user',
-        text: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
+        text: attachedNames.length > 0 ? `${text ? text + '\n' : ''}📎 ${attachedNames.join('、')}` : text,
         nodes: [],
       })
       conv.messages.push({ role: 'assistant', text: '', nodes: [], testReports: [] })
