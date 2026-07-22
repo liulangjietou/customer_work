@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import type { FormInstance } from 'element-plus'
+import type { FormInstance, UploadFile } from 'element-plus'
 import {
   createWorkbenchSite,
   deleteWorkbenchSite,
@@ -11,6 +11,7 @@ import {
 } from '@/api/workbench'
 import { useCrudPage } from '@/composables/useCrudPage'
 import { copyText } from '@/views/system/devtools/composables/useCopy'
+import { parseUserscript } from '@/utils/scriptImport'
 import WorkbenchTokenDialog from './WorkbenchTokenDialog.vue'
 import type { PageQuery, WorkbenchSiteSaveRequest, WorkbenchSiteVO } from '@/types/api'
 
@@ -109,6 +110,43 @@ async function generateScript() {
   }
 }
 
+// ===== 从 ScriptCat 脚本导入预填（仅新增时）=====
+const importDialogVisible = ref(false)
+const importText = ref('')
+
+function openImport() {
+  importText.value = ''
+  importDialogVisible.value = true
+}
+
+/** el-upload 选中文件后读其文本填入文本框（不真正上传，纯本地解析）。 */
+async function onPickFile(file: UploadFile) {
+  if (file.raw) {
+    importText.value = await file.raw.text()
+  }
+}
+
+/** 解析脚本并把命中的字段预填进新增表单，解析不出的留空交用户核对。 */
+function applyImport() {
+  if (!importText.value.trim()) {
+    ElMessage.warning('请粘贴脚本内容或选择脚本文件')
+    return
+  }
+  const r = parseUserscript(importText.value)
+  if (r.name) form.name = r.name
+  if (r.url) form.url = r.url
+  if (r.account) form.account = r.account
+  if (r.password) form.password = r.password
+  if (r.usernameSelector) form.usernameSelector = r.usernameSelector
+  if (r.passwordSelector) form.passwordSelector = r.passwordSelector
+  if (r.submitSelector) form.submitSelector = r.submitSelector
+  form.fillMode = r.fillMode
+  form.submitMode = r.submitMode
+  importDialogVisible.value = false
+  ElMessage.success(`已解析 ${r.matchedCount} 项并预填，请核对后保存`)
+  r.warnings.forEach((w) => ElMessage.warning(w))
+}
+
 onMounted(loadList)
 </script>
 
@@ -179,6 +217,12 @@ onMounted(loadList)
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新增站点' : '编辑站点'" width="600px">
+      <el-alert v-if="dialogMode === 'create'" type="info" :closable="false" style="margin-bottom: 12px">
+        <template #title>
+          已有 ScriptCat / Tampermonkey 登录脚本？
+          <el-button link type="primary" @click="openImport">点此导入自动预填</el-button>
+        </template>
+      </el-alert>
       <el-form ref="formRef" :model="form" label-width="80px">
         <el-form-item label="名称" prop="name" :rules="[{ required: true, message: '请输入名称' }]">
           <el-input v-model="form.name" />
@@ -250,6 +294,33 @@ onMounted(loadList)
       </template>
     </el-dialog>
 
+    <!-- 从脚本导入 -->
+    <el-dialog v-model="importDialogVisible" title="从 ScriptCat 脚本导入" width="640px" append-to-body>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="脚本仅在浏览器本地解析、不会上传；解析出的地址/账号/密码/选择器会预填到新增表单，请核对后保存。"
+        style="margin-bottom: 12px"
+      />
+      <el-upload :auto-upload="false" :show-file-list="false" accept=".js" :on-change="onPickFile">
+        <el-button>选择脚本文件（.js）</el-button>
+        <template #tip><span class="import-tip">或直接把脚本内容粘贴到下方</span></template>
+      </el-upload>
+      <el-input
+        v-model="importText"
+        type="textarea"
+        :rows="12"
+        placeholder="粘贴 ScriptCat / Tampermonkey 脚本全文（含 // ==UserScript== 头）"
+        class="import-textarea"
+        style="margin-top: 12px"
+      />
+      <template #footer>
+        <el-button @click="importDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="applyImport">解析并预填</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 令牌管理 -->
     <WorkbenchTokenDialog v-model:visible="tokenDialogVisible" />
 
@@ -299,5 +370,13 @@ onMounted(loadList)
   margin-left: 8px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+.import-tip {
+  margin-left: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.import-textarea :deep(textarea) {
+  font-family: var(--el-font-family-mono, monospace);
 }
 </style>
