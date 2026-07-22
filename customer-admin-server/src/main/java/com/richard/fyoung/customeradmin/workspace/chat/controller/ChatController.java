@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.chat.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatAttachmentDTO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
@@ -59,11 +60,13 @@ public class ChatController {
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
     }
 
-    /** 历史会话列表（按最后一条消息时间倒序），供前端侧边栏展示。 */
+    /** 历史会话列表（按最后更新时间倒序、分页），供前端侧边栏滚动加载。默认每页 20 条（见 {@code ChatHistoryService#DEFAULT_PAGE_SIZE}）。 */
     @SaCheckPermission("workspace")
     @GetMapping("/sessions")
-    public Result<List<ChatSessionSummary>> sessions(@PathVariable String agentCode) {
-        return Result.success(chatHistoryService.listSessions(agentCode));
+    public Result<PageResult<ChatSessionSummary>> sessions(@PathVariable String agentCode,
+                                                           @RequestParam(defaultValue = "1") long page,
+                                                           @RequestParam(defaultValue = "20") long size) {
+        return Result.success(chatHistoryService.listSessions(agentCode, page, size));
     }
 
     /** 重新打开某次历史会话的完整消息（含 vibecoding 的会话，两者共用同一套 session 状态）。 */

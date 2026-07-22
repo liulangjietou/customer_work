@@ -1,13 +1,18 @@
 import { request as httpRequest } from './request'
 import { streamSse, type SseHandlers } from '@/utils/sse'
-import type { ChatAttachmentResult, ChatMessageVO, ChatRequest, ChatSessionSummary } from '@/types/api'
+import type { ChatAttachmentResult, ChatMessageVO, ChatRequest, ChatSessionSummary, PageResult } from '@/types/api'
 
 export function streamChat(agentCode: string, request: ChatRequest, handlers: SseHandlers) {
   return streamSse(`/workspace/${agentCode}/chat/stream`, request, handlers)
 }
 
-export function listChatSessions(agentCode: string) {
-  return httpRequest<ChatSessionSummary[]>({ url: `/workspace/${agentCode}/chat/sessions`, method: 'get' })
+/** 历史会话分页（按最后更新时间倒序），供侧边栏滚动加载。默认每页 20 条。 */
+export function listChatSessions(agentCode: string, page = 1, size = 20) {
+  return httpRequest<PageResult<ChatSessionSummary>>({
+    url: `/workspace/${agentCode}/chat/sessions`,
+    method: 'get',
+    params: { page, size },
+  })
 }
 
 export function getChatSessionMessages(agentCode: string, sessionId: string) {
