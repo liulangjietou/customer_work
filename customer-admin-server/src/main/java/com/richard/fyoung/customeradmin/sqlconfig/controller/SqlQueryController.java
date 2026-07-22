@@ -72,6 +72,20 @@ public class SqlQueryController {
         return Result.success(queryService.executeAdhoc(request.datasourceId(), request.sql()));
     }
 
+    /** 左侧库树：数据源下所有数据库（元数据浏览，不审计）。 */
+    @SaCheckPermission("sql-console:query")
+    @GetMapping("/adhoc/databases")
+    public Result<java.util.List<String>> databases(@RequestParam Long datasourceId) {
+        return Result.success(queryService.listDatabases(datasourceId));
+    }
+
+    /** 左侧库树：点库懒加载其下所有表。 */
+    @SaCheckPermission("sql-console:query")
+    @GetMapping("/adhoc/tables")
+    public Result<java.util.List<String>> tables(@RequestParam Long datasourceId, @RequestParam String database) {
+        return Result.success(queryService.listTables(datasourceId, database));
+    }
+
     @SaCheckPermission("sql-console:export")
     @OperationLog(operation = "导出即席SQL查询结果", target = "sql_datasource")
     @PostMapping("/adhoc/export")

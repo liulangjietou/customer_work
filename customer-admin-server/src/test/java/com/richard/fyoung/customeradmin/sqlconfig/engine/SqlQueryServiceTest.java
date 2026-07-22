@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -190,6 +191,35 @@ class SqlQueryServiceTest {
         assertEquals(List.of("id", "name"), result.getColumns());
         verify(jt).setMaxRows(2000);
         verify(jt).setQueryTimeout(30);
+    }
+
+    @Test
+    void listDatabases_shouldReturnSchemaNames() {
+        NamedParameterJdbcTemplate npt = mock(NamedParameterJdbcTemplate.class);
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        when(connectionManager.getTemplate(1L)).thenReturn(npt);
+        when(npt.getJdbcOperations()).thenReturn(jt);
+        when(jt.queryForList(anyString(), eq(String.class))).thenReturn(List.of("db_a", "db_b"));
+
+        assertEquals(List.of("db_a", "db_b"), service.listDatabases(1L));
+    }
+
+    @Test
+    void listTables_shouldBindDatabaseAsParam() {
+        NamedParameterJdbcTemplate npt = mock(NamedParameterJdbcTemplate.class);
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        when(connectionManager.getTemplate(1L)).thenReturn(npt);
+        when(npt.getJdbcOperations()).thenReturn(jt);
+        when(jt.queryForList(anyString(), eq(String.class), eq("db_a"))).thenReturn(List.of("t_user"));
+
+        assertEquals(List.of("t_user"), service.listTables(1L, "db_a"));
+    }
+
+    @Test
+    void listTables_shouldRejectBlankDatabase_beforeTouchingDatasource() {
+        BizException ex = assertThrows(BizException.class, () -> service.listTables(1L, "  "));
+        assertEquals(ResultCode.PARAM_MISSING, ex.getResultCode());
+        verify(connectionManager, never()).getTemplate(any());
     }
 
     private SqlDefineParam param(String name, String type, boolean required, String defaultValue,

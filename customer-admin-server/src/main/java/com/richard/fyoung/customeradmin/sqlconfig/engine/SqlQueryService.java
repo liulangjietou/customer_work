@@ -148,6 +148,34 @@ public class SqlQueryService {
         }
     }
 
+    /**
+     * 列出数据源下所有数据库（SQL 客户端左侧库树用）。元数据浏览、高频，不走 adhoc 审计。
+     * 用 information_schema 只读查询，走连接级 readOnly 模板。
+     */
+    public List<String> listDatabases(Long datasourceId) {
+        JdbcTemplate jt = metadataJdbcTemplate(datasourceId);
+        return jt.queryForList(
+            "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name", String.class);
+    }
+
+    /** 列出指定库下所有表（点库懒加载）。database 走参数绑定，无拼接注入风险。 */
+    public List<String> listTables(Long datasourceId, String database) {
+        if (!StringUtils.hasText(database)) {
+            throw new BizException(ResultCode.PARAM_MISSING, "database 不能为空");
+        }
+        JdbcTemplate jt = metadataJdbcTemplate(datasourceId);
+        return jt.queryForList(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name",
+            String.class, database);
+    }
+
+    private JdbcTemplate metadataJdbcTemplate(Long datasourceId) {
+        NamedParameterJdbcTemplate template = connectionManager.getTemplate(datasourceId);
+        JdbcTemplate jt = (JdbcTemplate) template.getJdbcOperations();
+        jt.setQueryTimeout(properties.getQueryTimeoutSeconds());
+        return jt;
+    }
+
     /** 从结果集按列序取列名（getColumnLabel 拿 AS 别名），行数据用 LinkedHashMap 保序。 */
     private SqlQueryResultVO extract(ResultSet rs) throws java.sql.SQLException {
         ResultSetMetaData meta = rs.getMetaData();
