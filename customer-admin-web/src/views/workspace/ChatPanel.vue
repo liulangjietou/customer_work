@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
+import { confirmChatPlan } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
+import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
+import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
 import { useThemeStore } from '@/store/theme'
 import {
   useChatConversationsStore,
   type ChatConversation,
 } from '@/store/chatConversations'
+import type { PlanCard } from '@/utils/planCard'
 
 const props = defineProps<{ agentCode: string; initialSessionId?: string }>()
 
@@ -92,6 +96,30 @@ function resumeInterrupted() {
   send()
 }
 
+/** 用户对某个计划卡片点批准/拒绝：调后端确认接口，成功后翻成终态。逻辑镜像 VibeCodingPanel 的
+ * handlePlanDecision（对话与 VibeCoding 的确认接口路径不同，各自面板调各自的 API）。 */
+async function handlePlanDecision(card: PlanCard, approved: boolean) {
+  const conv = active.value
+  if (!conv || card.status !== 'PENDING' || card.submitting) return
+  card.submitting = true
+  try {
+    await confirmChatPlan(props.agentCode, {
+      sessionId: conv.sessionId,
+      planId: card.planId,
+      approved,
+    })
+    card.status = approved ? 'APPROVED' : 'REJECTED'
+    conv.pendingPlans.delete(card.planId)
+  } catch (error) {
+    // 失败常见于挂起项已失效（超时/服务重启）：提示并按拒绝态收尾，避免卡片永久停在"等待确认"
+    ElMessage.error('计划确认失败：' + (error instanceof Error ? error.message : String(error)))
+    card.status = 'TIMEOUT'
+    conv.pendingPlans.delete(card.planId)
+  } finally {
+    card.submitting = false
+  }
+}
+
 onMounted(() => {
   themeStore.apply()
 })
@@ -140,6 +168,12 @@ defineExpose({ newSession })
             />
             <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
             <template v-else>{{ msg.text }}</template>
+            <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
+            <PlanConfirmCard
+              v-if="msg.role === 'assistant' && msg.plans && msg.plans.length > 0"
+              :plans="msg.plans"
+              @decision="handlePlanDecision"
+            />
             <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && (active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1">思考中…</span>
           </div>
         </div>
@@ -169,6 +203,11 @@ defineExpose({ newSession })
             <el-icon><Paperclip /></el-icon>
           </el-button>
         </el-upload>
+        <ExecutionModeSelect
+          v-if="active"
+          v-model="active.mode"
+          :disabled="active.streaming"
+        />
         <el-input
           v-if="active"
           v-model="active.input"

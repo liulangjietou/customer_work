@@ -96,6 +96,28 @@ class SandboxRiskDetectorTest {
     }
 
     @Test
+    void isMutatingTool_shouldFlagWriteDeleteAndExecTools() {
+        assertTrue(detector.isMutatingTool(tool("write_file", param("path", "a.java"))));
+        assertTrue(detector.isMutatingTool(tool("delete_file", param("path", "a.java"))));
+        assertTrue(detector.isMutatingTool(tool("shell_execute", param("command", "ls"))), "命令执行关键字命中");
+        assertTrue(detector.isMutatingTool(tool("read_file", param("command", "rm -rf x"))), "入参命中破坏性命令");
+    }
+
+    @Test
+    void isMutatingTool_shouldPassReadonlyTools() {
+        assertFalse(detector.isMutatingTool(tool("read_file", param("path", "a.java"))));
+        assertFalse(detector.isMutatingTool(tool("search_code", param("q", "foo"))));
+        assertFalse(detector.isMutatingTool(tool("list_dir", param("path", "."))));
+    }
+
+    @Test
+    void manualToolAction_shouldDescribeAsExecuteTool() {
+        PlanAction action = detector.manualToolAction(tool("read_file", param("path", "a.java")));
+        assertEquals("EXECUTE_TOOL", action.type());
+        assertTrue(action.target().contains("read_file"), "target 应含工具名");
+    }
+
+    @Test
     void neutralize_shouldRewriteRiskyCommandParam() {
         ToolUseBlock rewritten = detector.neutralize(tool("shell_execute", param("command", "rm -rf x")), "[REJECTED]");
         assertEquals("[REJECTED]", rewritten.getInput().get("command"));

@@ -1,11 +1,17 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
+import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
+import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionMode;
+import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService.PlanChannel;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.Event;
@@ -64,13 +70,34 @@ public class ChatService {
     private final AdminAgentInstanceFactory agentInstanceFactory;
     private final ChatHistoryCache historyCache;
     private final AgentMemorySyncService memorySyncService;
+    private final ExecutionModeRegistry executionModeRegistry;
+    private final PlanConfirmationService planConfirmationService;
 
     public ChatService(AgentInstanceCache agentInstanceCache, AdminAgentInstanceFactory agentInstanceFactory,
-                        ChatHistoryCache historyCache, AgentMemorySyncService memorySyncService) {
+                        ChatHistoryCache historyCache, AgentMemorySyncService memorySyncService,
+                        ExecutionModeRegistry executionModeRegistry,
+                        PlanConfirmationService planConfirmationService) {
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
         this.historyCache = historyCache;
         this.memorySyncService = memorySyncService;
+        this.executionModeRegistry = executionModeRegistry;
+        this.planConfirmationService = planConfirmationService;
+    }
+
+    /**
+     * 执行模式确认/拒绝（对话链路的 Plan 确认闭环，与 VibeCoding 共用同一套
+     * {@link PlanConfirmationService}）：完成对应挂起项，中间件据此恢复或取消该工具调用。
+     * planId 不存在/已处理/超时/服务重启后失效均 fast fail。
+     */
+    public void confirmPlan(String agentCode, String sessionId, String planId, boolean approved) {
+        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        boolean resolved = planConfirmationService.confirm(agentCode, safeSession, planId, approved);
+        if (!resolved) {
+            throw new BizException(ResultCode.PLAN_CONFIRM_NOT_FOUND);
+        }
+        log.info("[workspace] chat plan confirm handled, agentCode={}, sessionId={}, planId={}, approved={}",
+            agentCode, safeSession, planId, approved);
     }
 
     /**
@@ -112,19 +139,36 @@ public class ChatService {
      * 任何 SSE 头下发之前就能拿到结构化错误响应，而不是半开的失败流）。
      */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText) {
-        return chatStream(agentCode, sessionId, userText, usage -> { });
+        return chatStream(agentCode, sessionId, userText, null, usage -> { });
+    }
+
+    /** 流式对话（带执行模式，无用量观察者）：供对话链路（ChatController）使用。 */
+    public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText, String mode) {
+        return chatStream(agentCode, sessionId, userText, mode, usage -> { });
+    }
+
+    /** 流式对话（带用量观察者，未指定执行模式）：保留旧签名，供既有调用点/测试使用。 */
+    public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
+                                             Consumer<ChatUsage> usageTotalObserver) {
+        return chatStream(agentCode, sessionId, userText, null, usageTotalObserver);
     }
 
     /**
-     * 流式对话（带模型用量观察者）：流终止时（完成/错误/取消）把本轮全部模型调用的 token 用量
-     * 汇总后回调一次 {@code usageTotalObserver}——供 VibeCoding 审计记录 token 数（需求文档 §5.3）。
+     * 流式对话（带执行模式 + 模型用量观察者，全参核心）：流终止时（完成/错误/取消）把本轮全部模型调用的
+     * token 用量汇总后回调一次 {@code usageTotalObserver}——供 VibeCoding 审计记录 token 数（需求文档 §5.3）。
      * 本轮无任何用量信息（框架/模型未返回 usage）时回调 {@code null}。
      *
      * <p>聚合方式：框架把 usage 挂在事件消息（{@link Msg#getUsage()}）上，同一条消息的增量事件
      * 会重复携带（后到覆盖先到），不同消息各算一次——按 messageId 去重后求和，两种语义都兼容。</p>
+     *
+     * <p><b>执行模式与 Plan 确认闭环</b>：订阅时把 {@code mode}（解析为 {@link ExecutionMode}）登记进
+     * {@link ExecutionModeRegistry}（键 {@code agentCode:sessionId}），供 {@code ExecutionModeMiddleware}
+     * 运行时读取；并打开一个 {@link PlanChannel} 把 {@code plan}/{@code plan_result} 事件合并进 SSE 输出
+     * （对话与 VibeCoding 共用同一套挂起/确认闭环）。{@code doFinally} 时摘除模式登记、关闭通道。
+     * mode 未指定/非法（{@link ExecutionMode#parse} 返回 null）→ 不登记，中间件回落全局语义。</p>
      */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
-                                             Consumer<ChatUsage> usageTotalObserver) {
+                                             String mode, Consumer<ChatUsage> usageTotalObserver) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
         ToolSourceInfo toolSource = agentInstanceFactory.toolSourceFor(agentCode);
@@ -158,7 +202,7 @@ public class ChatService {
             .doOnNext(event -> collectUsage(usageByMessage, event))
             .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, stateBySource)));
 
-        return Flux.concat(Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_START, "开始思考")), body)
+        Flux<ChatStreamChunk> conversation = Flux.concat(Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_START, "开始思考")), body)
             .concatWith(Flux.defer(() -> Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"))))
             .onErrorResume(e -> {
                 log.error("[workspace] chat stream failed, code={}, agentCode={}", "WORKSPACE_CHAT_ERROR", agentCode, e);
@@ -174,6 +218,21 @@ public class ChatService {
                 memorySyncService.persistIfChanged(agentCode, agentInstanceFactory.resolveWorkspace(agentCode));
             })
             .doFinally(signal -> usageTotalObserver.accept(totalUsage(usageByMessage)));
+
+        // 执行模式登记 + Plan 确认通道：与 RuntimeContext 一致地归一 sessionId，保证中间件按同一键读到模式、
+        // 定位到同一通道。Flux.using 在订阅时（早于 Agent 产出任何事件）打开通道并把 plan/plan_result 事件
+        // 合并进输出流；主流结束/取消时完成通道事件流并关闭通道。registry 用 doFirst/doFinally 配对登记与摘除，
+        // 未指定/非法模式不登记（中间件回落全局语义）。BYPASS/无高风险时通道恒空、零开销。
+        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        ExecutionMode executionMode = ExecutionMode.parse(mode);
+        return Flux.using(
+                () -> planConfirmationService.openChannel(agentCode, safeSession),
+                channel -> Flux.merge(
+                    conversation.doFinally(signal -> planConfirmationService.completeEvents(channel)),
+                    planConfirmationService.events(channel)),
+                planConfirmationService::closeChannel)
+            .doFirst(() -> executionModeRegistry.put(agentCode, safeSession, executionMode))
+            .doFinally(signal -> executionModeRegistry.remove(agentCode, safeSession));
     }
 
     /** 收集事件消息上的模型用量：同一 messageId 后到覆盖先到（增量事件重复携带累计值的场景）。 */

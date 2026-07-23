@@ -147,7 +147,7 @@ public class AdminAgentInstanceFactory {
     private final AdminMcpFactory mcpFactory;
     private final AdminSandboxProperties sandboxProperties;
     private final SandboxGuardMiddleware sandboxGuardMiddleware;
-    private final PlanConfirmationMiddleware planConfirmationMiddleware;
+    private final ExecutionModeMiddleware executionModeMiddleware;
     private final ModelCircuitBreakerRegistry circuitBreakerRegistry;
     private final AgentMemorySyncService memorySyncService;
 
@@ -168,7 +168,7 @@ public class AdminAgentInstanceFactory {
                                       AgentStateStore stateStore, PermissionContextState permissionContext,
                                       AdminMcpFactory mcpFactory, AdminSandboxProperties sandboxProperties,
                                       SandboxGuardMiddleware sandboxGuardMiddleware,
-                                      PlanConfirmationMiddleware planConfirmationMiddleware,
+                                      ExecutionModeMiddleware executionModeMiddleware,
                                       ModelCircuitBreakerRegistry circuitBreakerRegistry,
                                       AgentMemorySyncService memorySyncService) {
         this.agentMapper = agentMapper;
@@ -189,7 +189,7 @@ public class AdminAgentInstanceFactory {
         this.mcpFactory = mcpFactory;
         this.sandboxProperties = sandboxProperties;
         this.sandboxGuardMiddleware = sandboxGuardMiddleware;
-        this.planConfirmationMiddleware = planConfirmationMiddleware;
+        this.executionModeMiddleware = executionModeMiddleware;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
         this.memorySyncService = memorySyncService;
     }
@@ -272,12 +272,13 @@ public class AdminAgentInstanceFactory {
             // 中断后无缝续跑：会话被安全中断（见 ChatService#interrupt）后再次调用，先恢复被打断的
             // 挂起工具调用，再处理新消息，与 customer-work-starter 侧的默认行为保持一致。
             .enablePendingToolRecovery(true);
+        // 执行模式闸门对所有智能体挂载（chat 也生效）：运行时按会话选定的五档模式决策，未指定模式且全局
+        // permission-mode=bypass 时纯透传，行为等价于挂载前。顺序关键（first = outermost）：模式闸门在最外层
+        // 先看到原始命令挂起/拦改，护栏在内层作最后防线（下方仅 vibecoding 挂载）。
+        builder.middleware(executionModeMiddleware);
         if (capabilities.contains(CAPABILITY_VIBECODING)) {
-            // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载。
-            // 顺序关键（first = outermost）：HITL 计划确认在外层先看到原始命令挂起询问，护栏在内层作最后防线——
-            // 即便高风险被人工批准，catastrophic 命令仍会被护栏改写，护栏不被绕过（需求 §4.4.2.5「两者叠加」）。
-            // bypass 模式下 HITL 中间件纯透传，行为等价于改造前。
-            builder.middleware(planConfirmationMiddleware);
+            // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载作最后防线——
+            // 即便高风险被人工批准/放行，catastrophic 命令仍会被护栏改写，护栏不被绕过（需求 §4.4.2.5「两者叠加」）。
             builder.middleware(sandboxGuardMiddleware);
         }
         if (capabilities.contains(CAPABILITY_TASKLIST)) {

@@ -16,6 +16,8 @@ import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ReviewReport from '@/components/ReviewReport.vue'
+import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
+import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
 import { useThemeStore } from '@/store/theme'
 import {
   useVibeConversationsStore,
@@ -203,27 +205,6 @@ async function handlePlanDecision(card: PlanCard, approved: boolean) {
     conv.pendingPlans.delete(card.planId)
   } finally {
     card.submitting = false
-  }
-}
-
-/** 计划卡片操作类型 → 中文标签。 */
-function planActionLabel(type: string): string {
-  switch (type) {
-    case 'DELETE': return '删除文件'
-    case 'RUN_COMMAND': return '执行命令'
-    case 'MODIFY_DEPENDENCY': return '修改依赖'
-    case 'BATCH_MODIFY': return '批量修改'
-    default: return type
-  }
-}
-
-/** 计划卡片终态 → 中文文案。 */
-function planStatusText(status: PlanCard['status']): string {
-  switch (status) {
-    case 'APPROVED': return '已批准'
-    case 'REJECTED': return '已拒绝'
-    case 'TIMEOUT': return '已超时（自动拒绝）'
-    default: return '等待确认'
   }
 }
 
@@ -609,65 +590,11 @@ defineExpose({ newSession })
               </div>
             </div>
             <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
-            <div
+            <PlanConfirmCard
               v-if="msg.role === 'assistant' && msg.plans && msg.plans.length > 0"
-              class="plan-cards"
-            >
-              <div
-                v-for="(plan, pi) in msg.plans"
-                :key="pi"
-                class="plan-card"
-                :class="`plan-card--${plan.status.toLowerCase()}`"
-              >
-                <div class="plan-card-header">
-                  <el-icon class="plan-card-icon"><Warning /></el-icon>
-                  <span class="plan-card-title">高风险操作待确认</span>
-                  <el-tag
-                    v-if="plan.status === 'PENDING'"
-                    type="warning"
-                    size="small"
-                    effect="dark"
-                    class="plan-card-countdown"
-                  >
-                    {{ plan.remainingSeconds }}s
-                  </el-tag>
-                  <el-tag
-                    v-else
-                    :type="plan.status === 'APPROVED' ? 'success' : 'info'"
-                    size="small"
-                    effect="dark"
-                  >
-                    {{ planStatusText(plan.status) }}
-                  </el-tag>
-                </div>
-                <p v-if="plan.reason" class="plan-card-reason">{{ plan.reason }}</p>
-                <ul class="plan-card-actions">
-                  <li v-for="(action, ai) in plan.actions" :key="ai" class="plan-card-action">
-                    <el-tag size="small" class="plan-action-type">{{ planActionLabel(action.type) }}</el-tag>
-                    <code class="plan-action-target" :title="action.target">{{ action.target }}</code>
-                  </li>
-                </ul>
-                <div v-if="plan.status === 'PENDING'" class="plan-card-buttons">
-                  <el-button
-                    type="primary"
-                    size="small"
-                    :loading="plan.submitting"
-                    @click="handlePlanDecision(plan, true)"
-                  >
-                    批准执行
-                  </el-button>
-                  <el-button
-                    type="danger"
-                    size="small"
-                    plain
-                    :disabled="plan.submitting"
-                    @click="handlePlanDecision(plan, false)"
-                  >
-                    拒绝
-                  </el-button>
-                </div>
-              </div>
-            </div>
+              :plans="msg.plans"
+              @decision="handlePlanDecision"
+            />
             <template v-if="msg.role === 'user'">{{ msg.text }}</template>
             <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && (active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1">生成中…</span>
           </div>
@@ -693,6 +620,11 @@ defineExpose({ newSession })
             <el-icon><Paperclip /></el-icon>
           </el-button>
         </el-upload>
+        <ExecutionModeSelect
+          v-if="active"
+          v-model="active.mode"
+          :disabled="active.streaming"
+        />
         <el-input
           v-model="input"
           placeholder="描述需求，回车发送；⌘/Ctrl+V 可粘贴截图或文件作为附件"
@@ -1256,94 +1188,7 @@ defineExpose({ newSession })
   color: var(--el-color-success);
 }
 
-/* Plan Mode 确认卡片（P1-1 HITL） */
-.plan-cards {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.plan-card {
-  padding: 10px 12px;
-  border-radius: 6px;
-  border-left: 3px solid var(--el-color-warning);
-  background: var(--el-color-warning-light-9, var(--el-fill-color-light));
-}
-
-.plan-card--approved {
-  border-left-color: var(--el-color-success);
-  background: var(--el-color-success-light-9, var(--el-fill-color-light));
-}
-
-.plan-card--rejected,
-.plan-card--timeout {
-  border-left-color: var(--el-color-info);
-  background: var(--el-fill-color-light);
-  opacity: 0.85;
-}
-
-.plan-card-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-.plan-card-icon {
-  color: var(--el-color-warning);
-}
-
-.plan-card-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.plan-card-countdown {
-  margin-left: auto;
-}
-
-.plan-card-header .el-tag:not(.plan-card-countdown) {
-  margin-left: auto;
-}
-
-.plan-card-reason {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin: 0 0 6px;
-}
-
-.plan-card-actions {
-  list-style: none;
-  margin: 0 0 8px;
-  padding: 0;
-}
-
-.plan-card-action {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-}
-
-.plan-action-type {
-  flex-shrink: 0;
-}
-
-.plan-action-target {
-  font-size: 12px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-  color: var(--el-text-color-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.plan-card-buttons {
-  display: flex;
-  gap: 8px;
-}
+/* Plan Mode 确认卡片（P1-1 HITL）样式已随渲染逻辑一并抽到 PlanConfirmCard.vue，此处不再重复定义。 */
 
 /* AI 代码审查区块本身（分组列表等）的样式已随渲染逻辑一并抽到 ReviewReport.vue，此处不再重复定义。 */
 

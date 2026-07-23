@@ -538,7 +538,8 @@ export interface ReviewTaskVO {
 
 /** plan SSE 事件里的单条高风险操作项（P1-1 HITL）。 */
 export interface PlanAction {
-  /** DELETE（删除文件）｜RUN_COMMAND（非只读/破坏性命令）｜MODIFY_DEPENDENCY（改依赖）｜BATCH_MODIFY（批量修改超阈值） */
+  /** DELETE（删除文件）｜RUN_COMMAND（非只读/破坏性命令）｜MODIFY_DEPENDENCY（改依赖）｜BATCH_MODIFY（批量修改超阈值）
+   * ｜EXECUTE_TOOL（Manual 模式下全量工具执行确认）；未知类型前端兜底显示原始值。 */
   type: string
   target: string
   reason: string
@@ -582,12 +583,22 @@ export interface RoleStageEvent {
   output: string | null
 }
 
+/**
+ * 执行模式（对话/VibeCoding 通用，对齐 Claude Code 的 Mode 交互）：
+ * auto（自动·默认，高风险操作才需确认）｜manual（每步工具执行都需确认）｜
+ * accept_edits（文件编辑自动放行，命令/删除仍确认）｜plan（只读研究，不执行写操作，输出方案）｜
+ * bypass（全部自动执行，危险）。会话内记忆，默认 auto。
+ */
+export type ExecutionMode = 'auto' | 'manual' | 'accept_edits' | 'plan' | 'bypass'
+
 // ---------- workspace.chat ----------
 export interface ChatRequest {
   sessionId: string
   message: string
   /** 协作模式（P3-1）：开启后后端按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作。 */
   collaboration?: boolean
+  /** 执行模式（会话内记忆，未传时后端按 auto 处理）。 */
+  mode?: ExecutionMode
 }
 
 export interface ChatSessionSummary {

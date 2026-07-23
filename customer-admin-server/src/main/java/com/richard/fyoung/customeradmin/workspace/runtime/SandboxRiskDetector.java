@@ -1,8 +1,10 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
+import com.richard.fyoung.customeradmin.config.AdminExecutionModeProperties;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanAction;
 import io.agentscope.core.message.ToolUseBlock;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
@@ -18,8 +20,10 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>{@code SandboxGuardMiddleware}（最后防线）：只用 {@link #matchesDestructive(String)} 判定
  *       {@link AdminSandboxProperties.Guard} 的破坏性命令子集，命中即静默改写（行为不变）；</li>
- *   <li>{@code PlanConfirmationMiddleware}（HITL 闭环）：用 {@link #assess(java.util.List)} 判定更宽的
- *       "需人工确认"集合（删除文件 / 非只读命令 / 改依赖 / 单轮批量修改 &gt; N），命中即挂起询问。</li>
+ *   <li>{@code ExecutionModeMiddleware}（五档模式闸门）：经 {@code ExecutionModePolicy} 复用本判定器——
+ *       {@link #assess(java.util.List)} 判定"需人工确认"集合（删除 / 非只读命令 / 改依赖 / 批量修改 &gt; N），
+ *       {@link #isMutatingTool(ToolUseBlock)} 判定 PLAN 档需拦改的 mutating 工具，
+ *       {@link #manualToolAction(ToolUseBlock)} 生成 MANUAL 档逐工具确认项。</li>
  * </ul>
  *
  * <p>破坏性命令正则来自 {@link AdminSandboxProperties.Guard#getDestructivePatterns()}（与护栏同源，不两处维护），
@@ -33,8 +37,15 @@ public class SandboxRiskDetector {
     /** 计划动作类型（{@code plan} 事件 actions[].type）。 */
     static final String ACTION_DELETE = "DELETE";
     static final String ACTION_RUN_COMMAND = "RUN_COMMAND";
-    static final String ACTION_MODIFY_DEPENDENCY = "MODIFY_DEPENDENCY";
-    static final String ACTION_BATCH_MODIFY = "BATCH_MODIFY";
+    /** public：跨包（{@code runtime.mode}）的 {@code ExecutionModePolicy} 过滤编辑类动作时引用。 */
+    public static final String ACTION_MODIFY_DEPENDENCY = "MODIFY_DEPENDENCY";
+    /** public：{@code ExecutionModePolicy}/{@code ExecutionModeMiddleware} 跨包判定批量修改聚合风险时引用。 */
+    public static final String ACTION_BATCH_MODIFY = "BATCH_MODIFY";
+    /** MANUAL 档：每个含工具调用的 acting 步都逐工具挂起确认时的动作类型。 */
+    public static final String ACTION_EXECUTE_TOOL = "EXECUTE_TOOL";
+
+    /** MANUAL 档单条工具确认项的原因文案。 */
+    private static final String MANUAL_CONFIRM_REASON = "Manual 模式：工具执行需人工确认";
 
     /** 工具名分类关键字（{@code ToolUseBlock} 不带来源标识，只能按名字启发式归类）。 */
     private static final String[] DELETE_TOOL_KEYWORDS = {"delete", "remove", "unlink"};
@@ -47,12 +58,40 @@ public class SandboxRiskDetector {
     private final List<Pattern> confirmableCommandPatterns;
     private final List<Pattern> dependencyFilePatterns;
     private final int batchModifyThreshold;
+    /** PLAN 档：命令执行类工具名关键字（可配置，见 {@link AdminExecutionModeProperties}）。 */
+    private final String[] execToolKeywords;
+    /** PLAN 档：强制视为只读的工具名正则白名单（命中放行）。 */
+    private final List<Pattern> planReadonlyToolPatterns;
+    /** PLAN 档：强制视为 mutating 的工具名正则黑名单（命中拦改，优先级最高）。 */
+    private final List<Pattern> planMutatingToolPatterns;
 
+    /**
+     * 单参构造（无执行模式配置时）：命令执行类关键字与 PLAN 白/黑名单回落默认值。供既有单测与
+     * 只依赖沙箱护栏/HITL 判定的调用方使用，行为与引入五档模式前逐字节等价。
+     */
     public SandboxRiskDetector(AdminSandboxProperties properties) {
+        this(properties, new AdminExecutionModeProperties());
+    }
+
+    @Autowired
+    public SandboxRiskDetector(AdminSandboxProperties properties, AdminExecutionModeProperties executionModeProperties) {
         this.destructivePatterns = compile(properties.getGuard().getDestructivePatterns());
         this.confirmableCommandPatterns = compile(properties.getHitl().getConfirmableCommandPatterns());
         this.dependencyFilePatterns = compile(properties.getHitl().getDependencyFilePatterns());
         this.batchModifyThreshold = properties.getHitl().getBatchModifyThreshold();
+        this.execToolKeywords = toLowerArray(executionModeProperties.getExecToolKeywords());
+        this.planReadonlyToolPatterns = compile(executionModeProperties.getPlanReadonlyToolPatterns());
+        this.planMutatingToolPatterns = compile(executionModeProperties.getPlanMutatingToolPatterns());
+    }
+
+    private static String[] toLowerArray(List<String> raw) {
+        if (CollectionUtils.isEmpty(raw)) {
+            return new String[0];
+        }
+        return raw.stream()
+            .filter(kw -> kw != null && !kw.isEmpty())
+            .map(String::toLowerCase)
+            .toArray(String[]::new);
     }
 
     private static List<Pattern> compile(List<String> raw) {
@@ -144,6 +183,52 @@ public class SandboxRiskDetector {
      */
     public boolean isWriteToolName(String toolName) {
         return isWriteTool(toolName);
+    }
+
+    /**
+     * MANUAL 档：把一个工具调用整体描述成一条待确认动作（{@link #ACTION_EXECUTE_TOOL}）——
+     * target 为"工具名 + 入参摘要"截断，reason 为固定文案。MANUAL 不区分风险高低，逐工具确认。
+     */
+    public PlanAction manualToolAction(ToolUseBlock use) {
+        String target = use == null ? "" : truncate(use.getName() + " " + summarizeInput(use.getInput()));
+        return new PlanAction(ACTION_EXECUTE_TOOL, target, MANUAL_CONFIRM_REASON);
+    }
+
+    /**
+     * PLAN 档 mutating 判定（只读研究模式下需拦改的工具）：
+     * <ol>
+     *   <li>命中强制 mutating 黑名单 → {@code true}（优先级最高）；</li>
+     *   <li>命中强制只读白名单 → {@code false}；</li>
+     *   <li>启发式：写类工具 / 删除类工具 / 命令执行类关键字工具，或任一字符串入参命中
+     *       破坏性 / 需确认命令正则 → {@code true}；</li>
+     *   <li>其余（read/search/list/get/query 及 MCP 查询类等只读工具）→ {@code false}，正常放行。</li>
+     * </ol>
+     */
+    public boolean isMutatingTool(ToolUseBlock use) {
+        if (use == null) {
+            return false;
+        }
+        String toolName = use.getName();
+        if (matchesAny(planMutatingToolPatterns, toolName)) {
+            return true;
+        }
+        if (matchesAny(planReadonlyToolPatterns, toolName)) {
+            return false;
+        }
+        if (isWriteTool(toolName) || isDeleteTool(toolName) || containsAny(toolName, execToolKeywords)) {
+            return true;
+        }
+        Map<String, Object> input = use.getInput();
+        return firstMatchingParam(input, destructivePatterns) != null
+            || firstMatchingParam(input, confirmableCommandPatterns) != null;
+    }
+
+    /** 入参摘要（供 MANUAL 确认卡展示），无入参返回空串；整体长度由 {@link #truncate} 兜底截断。 */
+    private static String summarizeInput(Map<String, Object> input) {
+        if (CollectionUtils.isEmpty(input)) {
+            return "";
+        }
+        return String.valueOf(input);
     }
 
     /**

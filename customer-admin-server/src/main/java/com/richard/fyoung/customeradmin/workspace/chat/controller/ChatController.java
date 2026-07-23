@@ -10,6 +10,7 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatAttachmentService;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatHistoryService;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanConfirmRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -54,10 +55,22 @@ public class ChatController {
     @SaCheckPermission("workspace")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
-        return chatService.chatStream(agentCode, request.sessionId(), request.message())
+        return chatService.chatStream(agentCode, request.sessionId(), request.message(), request.mode())
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
+    }
+
+    /**
+     * 执行模式计划确认/拒绝（对话链路的 Plan 确认闭环，镜像 {@code VibeCodingController#confirmPlan}）：
+     * 对 {@code plan} SSE 事件里的挂起操作放行或取消，复用 {@code PlanConfirmationService.confirm}。
+     * planId 不存在/已处理/超时/服务重启后失效均返回 {@code PLAN_CONFIRM_NOT_FOUND}。
+     */
+    @SaCheckPermission("workspace")
+    @PostMapping("/plan/confirm")
+    public Result<Void> confirmPlan(@PathVariable String agentCode, @Valid @RequestBody PlanConfirmRequest request) {
+        chatService.confirmPlan(agentCode, request.sessionId(), request.planId(), request.approved());
+        return Result.success(null);
     }
 
     /** 历史会话列表（按最后更新时间倒序、分页），供前端侧边栏滚动加载。默认每页 20 条（见 {@code ChatHistoryService#DEFAULT_PAGE_SIZE}）。 */
