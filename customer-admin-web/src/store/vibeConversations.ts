@@ -3,8 +3,10 @@ import { getSandboxMode, interruptVibeCoding, listWorkspaceFiles, streamVibeCodi
 import { getChatSessionMessages } from '@/api/chat'
 import { generateUuid } from '@/utils/uuid'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
+import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import type { TraceNode } from '@/components/TraceTimeline.vue'
 import type {
+  ExecutionMode,
   FileChangeEvent,
   LiveSession,
   PlanEvent,
@@ -15,15 +17,9 @@ import type {
 } from '@/types/api'
 import { previewOfMessages } from '@/store/chatConversations'
 
-/** Plan Mode 确认卡片（P1-1 HITL）：一条 plan 事件对应一张卡片，用户批准/拒绝或超时后翻成终态。 */
-export interface PlanCard {
-  planId: string
-  actions: PlanEvent['actions']
-  reason: string
-  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'TIMEOUT'
-  remainingSeconds: number
-  submitting: boolean
-}
+// Plan Mode 确认卡片类型（P1-1 HITL）已提到 utils/planCard.ts 与 chatConversations store 共用，
+// 此处重新导出维持既有 import 路径（`import type { PlanCard } from '@/store/vibeConversations'`）不必改动。
+export type { PlanCard }
 
 export interface VibeChatMessage {
   role: 'user' | 'assistant'
@@ -67,6 +63,8 @@ export interface VibeConversation {
   filesLoaded: boolean
   sandboxMode: 'local' | 'docker' | null
   rollingBack: boolean
+  /** 执行模式（会话内记忆，默认 auto），随每条消息一起发给后端。 */
+  mode: ExecutionMode
 }
 
 interface AgentVibeState {
@@ -91,6 +89,7 @@ export function createVibeConversation(sessionId: string, messages: VibeChatMess
     filesLoaded: false,
     sandboxMode: null,
     rollingBack: false,
+    mode: 'auto',
   }
 }
 
@@ -238,7 +237,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       conv.streaming = true
       const sid = conv.sessionId
 
-      conv.abort = streamVibeCoding(agentCode, { sessionId: sid, message: messageToSend, collaboration }, {
+      conv.abort = streamVibeCoding(agentCode, { sessionId: sid, message: messageToSend, collaboration, mode: conv.mode }, {
         onEvent: (event) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (!c) return
@@ -350,14 +349,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
     applyPlanEvent(conv: VibeConversation, assistantMessage: VibeChatMessage, raw: string) {
       try {
         const parsed = JSON.parse(raw) as PlanEvent
-        const card: PlanCard = {
-          planId: parsed.planId,
-          actions: parsed.actions ?? [],
-          reason: parsed.reason ?? '',
-          status: 'PENDING',
-          remainingSeconds: parsed.timeoutSeconds ?? 300,
-          submitting: false,
-        }
+        const card = createPlanCard(parsed)
         const plans = (assistantMessage.plans ??= [])
         plans.push(card)
         // 存响应式代理引用（push 后再取），否则定时器/plan_result 改原始对象视图不更新

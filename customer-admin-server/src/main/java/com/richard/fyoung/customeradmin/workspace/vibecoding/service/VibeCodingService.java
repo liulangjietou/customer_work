@@ -145,7 +145,12 @@ public class VibeCodingService {
      * "工具刚跑完"那一刻，优于需求文档里"500ms 轮询"的兜底方案。流结束后再兜底检测一次，防止最后一次
      * 文件写入恰好没有跟在任何 TOOL_RESULT 之后的边界情况（如异步落盘）。</p>
      */
+    /** 流式对话（未指定执行模式）：保留旧三参签名，供协作链路/既有测试使用，回落全局模式语义。 */
     public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText) {
+        return stream(agentCode, sessionId, userText, null);
+    }
+
+    public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText, String mode) {
         requireVibeCodingCapable(agentCode);
         // 创建会话子目录（幂等），并以此为基础拍快照，对话结束后 diff 出本轮变更
         Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
@@ -170,7 +175,10 @@ public class VibeCodingService {
         // failedRuns=其中失败次数，用于给 test_report 事件填 round/exhausted（需求 P0-3 §4.3.2）。
         AtomicInteger testRun = new AtomicInteger(0);
         AtomicInteger failedRuns = new AtomicInteger(0);
-        Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, usageTotal::set)
+        // 执行模式随消息透传给 ChatService：模式登记 + Plan 确认通道（plan/plan_result 合并进流）均由
+        // chatStream 统一承接（对话/VibeCoding/协作共用同一套闭环），本类只在其输出上叠加 file_change/
+        // test_report 检测与审计，plan 事件作为普通 chunk 透传给前端。
+        Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, mode, usageTotal::set)
             .concatMap(chunk -> chunk.kind() == ChatNodeKind.TOOL_RESULT
                 // 顺序：原始工具结果 → 结构化 test_report（若可识别为编译/测试执行）→ 实时 file_change
                 ? Flux.concat(Flux.just(chunk),
@@ -179,7 +187,10 @@ public class VibeCodingService {
                 : Flux.just(chunk));
         // 流结束兜底：再检测一次文件变更，防止最后一次写入恰好没有跟在任何 TOOL_RESULT 之后（如异步落盘）。
         // docker 模式产物经 bind mount（P1-3）实时落宿主机会话目录，与 local 一样直接读磁盘即可，无需事后搬运。
-        Flux<ChatStreamChunk> mainFlux = chatFlux.concatWith(Flux.defer(() ->
+        // Plan Mode 挂起/确认（plan/plan_result）由 ChatService.chatStream 内部的会话通道承接并合并进流
+        // （见上），plan 事件此处作为普通 chunk 顺流透传，不再由本类另开通道，避免同一 (agentCode, sessionId)
+        // 双开通道相互顶替。本类只在末尾兜底再检测一次文件变更并落审计。
+        return chatFlux.concatWith(Flux.defer(() ->
             Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot))
         )).doFinally(signal -> {
             // 审计（需求 §5.2/§5.3）：变更文件 = 本轮初始快照 vs 最终快照（含删除），token 为本轮
@@ -189,15 +200,6 @@ public class VibeCodingService {
             auditService.applyChangedFiles(audit, changedPaths(initialSnapshot, snapshot(sessionWorkspace)));
             auditService.finish(audit, signal == SignalType.ON_COMPLETE ? null : "VIBECODING_STREAM_" + signal.name());
         });
-        // Plan Mode HITL（需求 P1-1）：用会话通道承载"流中暂停等确认"。Flux.using 在订阅时（早于 Agent 产出
-        // 任何事件）打开通道，把 plan/plan_result 事件合并进 SSE 输出；主流结束时完成通道事件流让合并收束，
-        // 取消/断开时 closeChannel 拒绝残留挂起项（fast fail）。bypass 模式下无高风险命中，通道恒空、零开销。
-        return Flux.using(
-            () -> planConfirmationService.openChannel(agentCode, safeSession),
-            channel -> Flux.merge(
-                mainFlux.doFinally(signal -> planConfirmationService.completeEvents(channel)),
-                planConfirmationService.events(channel)),
-            planConfirmationService::closeChannel);
     }
 
     /**

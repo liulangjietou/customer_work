@@ -2,13 +2,16 @@ import { defineStore } from 'pinia'
 import { getChatSessionMessages, interruptChat, streamChat } from '@/api/chat'
 import { generateUuid } from '@/utils/uuid'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
+import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import type { TraceNode } from '@/components/TraceTimeline.vue'
-import type { LiveSession } from '@/types/api'
+import type { ExecutionMode, LiveSession, PlanEvent, PlanResultEvent } from '@/types/api'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
+  // 本条助手消息内的 Plan Mode 确认卡片（P1-1），Manual/高风险操作待人工确认
+  plans?: PlanCard[]
 }
 
 /** localId 是前端本地生成的临时 key，用于 v-for/移除定位（上传过程中后端 id 还不存在）；
@@ -36,6 +39,10 @@ export interface ChatConversation {
   interrupting: boolean // 已点终止，等后端真正停下来（协作式中断，不保证立即生效）
   interrupted: boolean // 上一轮是被终止结束的，可以点"继续"续跑挂起的工具调用
   abort: (() => void) | null
+  /** 执行模式（会话内记忆，默认 auto），随每条消息一起发给后端。 */
+  mode: ExecutionMode
+  /** 当前会话待确认的 plan 卡片（planId → 卡片），供全局倒计时定时器统一扫描递减。 */
+  pendingPlans: Map<string, PlanCard>
 }
 
 /** 某个智能体名下的全部会话 + 当前激活会话。 */
@@ -47,7 +54,18 @@ interface AgentChatState {
 const PREVIEW_MAX_LENGTH = 40
 
 export function createChatConversation(sessionId: string, messages: ChatMessage[] = []): ChatConversation {
-  return { sessionId, messages, input: '', attachments: [], streaming: false, interrupting: false, interrupted: false, abort: null }
+  return {
+    sessionId,
+    messages,
+    input: '',
+    attachments: [],
+    streaming: false,
+    interrupting: false,
+    interrupted: false,
+    abort: null,
+    mode: 'auto',
+    pendingPlans: new Map(),
+  }
 }
 
 /** 会话预览文案：取首条有内容的用户消息。 */
@@ -70,6 +88,8 @@ export const useChatConversationsStore = defineStore('chatConversations', {
     byAgent: {} as Record<string, AgentChatState>,
     /** 每轮对话流结束自增（按 agentCode），侧边栏 watch 它刷新后端历史列表。 */
     historyVersion: {} as Record<string, number>,
+    /** Plan 卡片全局单定时器（设计同 vibeConversations），跨全部智能体全部会话统一扫描递减。 */
+    planCountdownTimer: null as ReturnType<typeof setInterval> | null,
   }),
   getters: {
     /** 某智能体当前激活的会话（未初始化时 undefined，组件应先 ensureAgent）。 */
@@ -168,12 +188,30 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       conv.streaming = true
       const sid = conv.sessionId
 
-      conv.abort = streamChat(agentCode, { sessionId: sid, message: messageToSend }, {
+      conv.abort = streamChat(agentCode, { sessionId: sid, message: messageToSend, mode: conv.mode }, {
         onEvent: (event) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (!c) return
+          const isActive = () => this.byAgent[agentCode]?.activeId === sid
           if (event.event === 'done') {
             c.streaming = false
+            return
+          }
+          if (event.event === 'plan') {
+            this.applyPlanEvent(c, assistantMessage, event.data)
+            if (isActive()) onScroll?.()
+            return
+          }
+          if (event.event === 'plan_result') {
+            try {
+              const parsed = JSON.parse(event.data) as PlanResultEvent
+              const card = c.pendingPlans.get(parsed.planId)
+              if (card) {
+                card.status = parsed.status
+                card.submitting = false
+                c.pendingPlans.delete(parsed.planId)
+              }
+            } catch { /* 静默丢弃 */ }
             return
           }
           if (event.event.startsWith('node:')) {
@@ -190,7 +228,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
             }
           }
           // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
-          if (this.byAgent[agentCode]?.activeId === sid) onScroll?.()
+          if (isActive()) onScroll?.()
         },
         onError: (error) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
@@ -229,6 +267,45 @@ export const useChatConversationsStore = defineStore('chatConversations', {
         conv.interrupting = false
         ElMessage.error('终止失败：' + (error instanceof Error ? error.message : String(error)))
       }
+    },
+
+    /** plan 事件（P1-1 HITL）：追加待确认卡片并确保全局倒计时在跑。设计同 vibeConversations。 */
+    applyPlanEvent(conv: ChatConversation, assistantMessage: ChatMessage, raw: string) {
+      try {
+        const parsed = JSON.parse(raw) as PlanEvent
+        const card = createPlanCard(parsed)
+        const plans = (assistantMessage.plans ??= [])
+        plans.push(card)
+        // 存响应式代理引用（push 后再取），否则定时器/plan_result 改原始对象视图不更新
+        conv.pendingPlans.set(card.planId, plans[plans.length - 1])
+        this.ensurePlanCountdown()
+      } catch { /* 静默丢弃 */ }
+    },
+
+    /** 全局单定时器：每秒扫全部智能体全部会话的待确认卡片递减，归零本地标记超时；无剩余时自停。 */
+    ensurePlanCountdown() {
+      if (this.planCountdownTimer) return
+      this.planCountdownTimer = setInterval(() => {
+        let anyPending = false
+        for (const agent of Object.values(this.byAgent)) {
+          for (const conv of Object.values(agent.conversations)) {
+            for (const card of conv.pendingPlans.values()) {
+              anyPending = true
+              card.remainingSeconds -= 1
+              if (card.remainingSeconds <= 0) {
+                // 本地倒计时归零：先行标记超时（服务端也会补发 plan_result=TIMEOUT，二者幂等）
+                card.status = 'TIMEOUT'
+                card.remainingSeconds = 0
+                conv.pendingPlans.delete(card.planId)
+              }
+            }
+          }
+        }
+        if (!anyPending && this.planCountdownTimer) {
+          clearInterval(this.planCountdownTimer)
+          this.planCountdownTimer = null
+        }
+      }, 1000)
     },
   },
 })

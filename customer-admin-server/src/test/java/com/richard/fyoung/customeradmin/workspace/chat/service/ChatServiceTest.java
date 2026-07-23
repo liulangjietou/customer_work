@@ -6,6 +6,8 @@ import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
+import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Event;
 import io.agentscope.core.agent.EventSource;
@@ -65,7 +67,10 @@ class ChatServiceTest {
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         historyCache = mock(ChatHistoryCache.class);
         memorySyncService = mock(AgentMemorySyncService.class);
-        chatService = new ChatService(agentInstanceCache, agentInstanceFactory, historyCache, memorySyncService);
+        // ExecutionModeRegistry / PlanConfirmationService 用真实实例（进程内内存、无外部依赖）：
+        // 未指定模式 + 空通道时行为等价于改造前，不影响本测试聚焦的事件分流断言。
+        chatService = new ChatService(agentInstanceCache, agentInstanceFactory, historyCache, memorySyncService,
+            new ExecutionModeRegistry(), new PlanConfirmationService());
 
         agent = mock(ReActAgent.class);
         when(agentInstanceCache.getOrBuild("coder")).thenReturn(agent);

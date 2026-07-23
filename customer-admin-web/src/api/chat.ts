@@ -1,6 +1,13 @@
 import { request as httpRequest } from './request'
 import { streamSse, type SseHandlers } from '@/utils/sse'
-import type { ChatAttachmentResult, ChatMessageVO, ChatRequest, ChatSessionSummary, PageResult } from '@/types/api'
+import type {
+  ChatAttachmentResult,
+  ChatMessageVO,
+  ChatRequest,
+  ChatSessionSummary,
+  PageResult,
+  PlanConfirmRequest,
+} from '@/types/api'
 
 export function streamChat(agentCode: string, request: ChatRequest, handlers: SseHandlers) {
   return streamSse(`/workspace/${agentCode}/chat/stream`, request, handlers)
@@ -37,5 +44,15 @@ export function parseChatAttachment(agentCode: string, file: File, channel: stri
     method: 'post',
     data: formData,
     params: { channel },
+  })
+}
+
+/** Plan Mode 计划确认/拒绝（P1-1 HITL，对话面板）：镜像 VibeCoding 的 confirmVibeCodingPlan，
+ * 路径把 vibecoding 段换成 chat 段。 */
+export function confirmChatPlan(agentCode: string, req: PlanConfirmRequest) {
+  return httpRequest<void>({
+    url: `/workspace/${agentCode}/chat/plan/confirm`,
+    method: 'post',
+    data: req,
   })
 }

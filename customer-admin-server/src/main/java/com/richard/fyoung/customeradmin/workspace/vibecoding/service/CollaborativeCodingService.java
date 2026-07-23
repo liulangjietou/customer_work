@@ -102,7 +102,12 @@ public class CollaborativeCodingService {
      * ThreadLocal，与 {@link VibeCodingService#stream} 同一手法）。各角色的实际模型调用/沙箱执行
      * 在订阅后于 reactor 线程按序进行。</p>
      */
+    /** 协作流水（未指定执行模式）：保留三参签名，回落全局模式语义。 */
     public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText) {
+        return stream(agentCode, sessionId, userText, null);
+    }
+
+    public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText, String mode) {
         requireVibeCodingCapable(agentCode);
         List<AdminCollaborationProperties.Role> roles = properties.effectiveRoles();
         if (CollectionUtils.isEmpty(roles)) {
@@ -126,7 +131,7 @@ public class CollaborativeCodingService {
         for (int i = 0; i < total; i++) {
             AdminCollaborationProperties.Role role = roles.get(i);
             int index = i + 1;
-            stageFluxes.add(roleFlux(agentCode, safeSession, userText, role, index, total, model, context, aborted, tokens));
+            stageFluxes.add(roleFlux(agentCode, safeSession, userText, role, index, total, model, context, aborted, tokens, mode));
         }
 
         log.info("[collab] collaboration pipeline started, agentCode={}, sessionId={}, roles={}",
@@ -149,10 +154,10 @@ public class CollaborativeCodingService {
     private Flux<ChatStreamChunk> roleFlux(String agentCode, String sessionId, String userText,
                                            AdminCollaborationProperties.Role role, int index, int total,
                                            Model model, AtomicReference<String> context,
-                                           AtomicBoolean aborted, TokenSink tokens) {
+                                           AtomicBoolean aborted, TokenSink tokens, String mode) {
         String type = normalizeType(role.getType());
         if (RoleStageEvent.TYPE_CODING.equals(type)) {
-            return codingRoleFlux(agentCode, sessionId, role, index, total, context, aborted);
+            return codingRoleFlux(agentCode, sessionId, role, index, total, context, aborted, mode);
         }
         // PLAN / REVIEW 均为一次性模型调用，仅提示词构造不同
         return oneShotRoleFlux(agentCode, sessionId, userText, role, type, index, total, model, context, aborted, tokens);
@@ -204,13 +209,13 @@ public class CollaborativeCodingService {
      */
     private Flux<ChatStreamChunk> codingRoleFlux(String agentCode, String sessionId,
                                                  AdminCollaborationProperties.Role role, int index, int total,
-                                                 AtomicReference<String> context, AtomicBoolean aborted) {
+                                                 AtomicReference<String> context, AtomicBoolean aborted, String mode) {
         return Flux.defer(() -> {
             if (aborted.get()) {
                 return Flux.empty();
             }
             String codingPrompt = buildCodingPrompt(role, context.get());
-            Flux<ChatStreamChunk> coding = vibeCodingService.stream(agentCode, sessionId, codingPrompt)
+            Flux<ChatStreamChunk> coding = vibeCodingService.stream(agentCode, sessionId, codingPrompt, mode)
                 .onErrorResume(err -> {
                     aborted.set(true);
                     log.error("[collab] coding role failed, code={}, agentCode={}, role={}",
