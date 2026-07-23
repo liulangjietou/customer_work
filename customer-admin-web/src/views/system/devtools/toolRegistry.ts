@@ -9,7 +9,8 @@ export interface DevTool {
 
 /**
  * 开发者工具箱的工具清单，供左侧导航渲染与搜索过滤，以及右侧按 key 动态加载对应组件。
- * 全部本地计算，不调任何后端接口。第一项是默认工具（route query 缺失/非法时兜底展示）。
+ * 除 HTTP 请求工具经后端代理发送外，其余工具全部本地计算不调后端接口。
+ * 第一项是默认工具（route query 缺失/非法时兜底展示）。
  */
 export const devTools: DevTool[] = [
   {
@@ -41,6 +42,12 @@ export const devTools: DevTool[] = [
     label: '正则测试',
     description: '匹配高亮、捕获组列表、替换预览',
     component: () => import('./RegexTool.vue'),
+  },
+  {
+    key: 'http',
+    label: 'HTTP 请求',
+    description: 'GET/POST/PUT/DELETE/PATCH 等，后端代理发送免 CORS',
+    component: () => import('./HttpRequestTool.vue'),
   },
 ]
 

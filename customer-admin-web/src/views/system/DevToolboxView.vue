@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 开发者工具箱：左侧工具导航（带搜索）+ 右侧当前工具面板。全部本地计算，不调任何后端接口。
+// 开发者工具箱：左侧工具导航（带搜索）+ 右侧当前工具面板。除 HTTP 请求工具经后端代理发送外，
+// 其余工具全部本地计算不调后端接口。
 // 当前工具用 route query ?tool= 同步，支持浏览器收藏直达/刷新保持；query 缺失或指向不存在的工具时
 // 兜底规整成默认工具（第一个），保持 URL 与实际展示始终一致。
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
