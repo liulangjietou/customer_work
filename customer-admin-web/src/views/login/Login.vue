@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { login, ssoLogin } from '@/api/auth'
+import { fetchLoginCarouselUrls } from '@/api/login-image'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
 import FooterCopyright from '@/components/FooterCopyright.vue'
@@ -47,8 +48,22 @@ function switchMode(mode: 'local' | 'sso') {
 
 loadRememberedUsername(loginMode.value)
 
-// 登录页轮播背景图，RichardFyoung 提供，放在 public/ 根目录下
-const bgImages = ['/A1.jpg', '/A2.jpg', '/A3.jpg']
+// 登录页轮播背景图：先用 public/ 下的内置默认图兜底，挂载后实时拉取后台
+// "系统管理 › 登录页图片"上传的启用图（免鉴权接口，见后端 LoginImagePublicController）；
+// 拉取失败或列表为空时保持默认图，登录页永远有背景可展示。
+const DEFAULT_BG_IMAGES = ['/A1.jpg', '/A2.jpg', '/A3.jpg']
+const bgImages = ref<string[]>(DEFAULT_BG_IMAGES)
+
+onMounted(async () => {
+  try {
+    const urls = await fetchLoginCarouselUrls()
+    if (urls.length > 0) {
+      bgImages.value = urls
+    }
+  } catch {
+    // 后端不可用时静默保持默认图，不打扰登录
+  }
+})
 
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
@@ -82,7 +97,7 @@ async function handleSubmit() {
 <template>
   <div class="login-page">
     <div class="bg-carousel">
-      <el-carousel type="fade" height="100%" :interval="5000" arrow="never" indicator-position="none">
+      <el-carousel type="fade" height="100%" :interval="2000" arrow="never" indicator-position="none">
         <el-carousel-item v-for="img in bgImages" :key="img">
           <div class="bg-slide" :style="{ backgroundImage: `url(${img})` }" />
         </el-carousel-item>
@@ -176,21 +191,13 @@ async function handleSubmit() {
   height: 100%;
 }
 
+/* cover 铺满整屏不留空，与屏幕宽高比不一致的部分会被裁切（竖版图在横屏上会切掉上下）。
+   不做 Ken Burns 缩放动画：背景层是先光栅化再按 transform 拉伸，慢速放大必然发虚。 */
 .bg-slide {
   width: 100%;
   height: 100%;
   background-size: cover;
   background-position: center;
-  animation: kenburns 8s ease-in-out infinite alternate;
-}
-
-@keyframes kenburns {
-  from {
-    transform: scale(1);
-  }
-  to {
-    transform: scale(1.12);
-  }
 }
 
 /* 深色渐变遮罩：保证登录卡片和页脚文字在任意风景图上都有足够对比度可读 */

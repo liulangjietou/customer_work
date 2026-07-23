@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.config;
 
+import com.richard.fyoung.customeradmin.system.loginimage.service.LoginImageStorageService;
 import com.richard.fyoung.customeradmin.system.menu.service.MenuIconStorageService;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
@@ -19,5 +20,8 @@ public class StaticResourceConfig implements WebMvcConfigurer {
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         registry.addResourceHandler("/api/menu-icons/**")
             .addResourceLocations("file:" + MenuIconStorageService.ICON_ROOT + "/");
+        // 登录页轮播图：同一套本地磁盘约定，/list 走 Controller（映射优先级高于静态资源），其余按文件名取图
+        registry.addResourceHandler("/api/login-images/**")
+            .addResourceLocations("file:" + LoginImageStorageService.IMAGE_ROOT + "/");
     }
 }
