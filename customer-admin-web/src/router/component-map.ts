@@ -12,6 +12,7 @@ export const staticRouteComponents: Record<string, () => Promise<Component>> = {
   '/system/ai-audit': () => import('@/views/system/AiCodingAudit.vue'),
   '/system/menu': () => import('@/views/system/MenuManage.vue'),
   '/system/devtools': () => import('@/views/system/DevToolboxView.vue'),
+  '/system/login-image': () => import('@/views/system/LoginImageManage.vue'),
   '/aiconfig/model': () => import('@/views/aiconfig/ModelManage.vue'),
   '/aiconfig/mcp': () => import('@/views/aiconfig/McpManage.vue'),
   '/aiconfig/skill': () => import('@/views/aiconfig/SkillManage.vue'),

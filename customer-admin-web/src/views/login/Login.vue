@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { login, ssoLogin } from '@/api/auth'
+import { fetchLoginCarouselUrls } from '@/api/login-image'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
 import FooterCopyright from '@/components/FooterCopyright.vue'
@@ -47,8 +48,22 @@ function switchMode(mode: 'local' | 'sso') {
 
 loadRememberedUsername(loginMode.value)
 
-// 登录页轮播背景图，RichardFyoung 提供，放在 public/ 根目录下
-const bgImages = ['/A1.jpg', '/A2.jpg', '/A3.jpg']
+// 登录页轮播背景图：先用 public/ 下的内置默认图兜底，挂载后实时拉取后台
+// "系统管理 › 登录页图片"上传的启用图（免鉴权接口，见后端 LoginImagePublicController）；
+// 拉取失败或列表为空时保持默认图，登录页永远有背景可展示。
+const DEFAULT_BG_IMAGES = ['/A1.jpg', '/A2.jpg', '/A3.jpg']
+const bgImages = ref<string[]>(DEFAULT_BG_IMAGES)
+
+onMounted(async () => {
+  try {
+    const urls = await fetchLoginCarouselUrls()
+    if (urls.length > 0) {
+      bgImages.value = urls
+    }
+  } catch {
+    // 后端不可用时静默保持默认图，不打扰登录
+  }
+})
 
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)

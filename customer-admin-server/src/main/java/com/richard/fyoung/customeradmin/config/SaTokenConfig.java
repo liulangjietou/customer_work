@@ -30,6 +30,10 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 // Authorization 头，这类静态资源必须放行，鉴权收敛到"谁能上传"这一侧
                 // （见 MenuAdminController 的 @SaCheckPermission("menu:edit")）。
                 "/api/menu-icons/**",
+                // 登录页轮播图：登录页未登录即要实时拉取图片列表 + <img> 直接加载图片文件，
+                // 整个前缀放行（含 /list 读接口），鉴权收敛到"谁能上传/管理"一侧
+                // （见 LoginImageAdminController 的 @SaCheckPermission("login-image:*")）。
+                "/api/login-images/**",
                 "/actuator/**",
                 "/swagger-ui/**",
                 "/v3/api-docs/**",
