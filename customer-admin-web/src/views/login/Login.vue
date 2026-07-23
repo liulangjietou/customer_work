@@ -99,10 +99,7 @@ async function handleSubmit() {
     <div class="bg-carousel">
       <el-carousel type="fade" height="100%" :interval="2000" arrow="never" indicator-position="none">
         <el-carousel-item v-for="img in bgImages" :key="img">
-          <div class="bg-slide-wrap">
-            <div class="bg-slide-blur" :style="{ backgroundImage: `url(${img})` }" />
-            <div class="bg-slide" :style="{ backgroundImage: `url(${img})` }" />
-          </div>
+          <div class="bg-slide" :style="{ backgroundImage: `url(${img})` }" />
         </el-carousel-item>
       </el-carousel>
       <div class="bg-overlay" />
@@ -194,33 +191,13 @@ async function handleSubmit() {
   height: 100%;
 }
 
-.bg-slide-wrap {
-  position: relative;
+/* cover 铺满整屏不留空，与屏幕宽高比不一致的部分会被裁切（竖版图在横屏上会切掉上下）。
+   不做 Ken Burns 缩放动画：背景层是先光栅化再按 transform 拉伸，慢速放大必然发虚。 */
+.bg-slide {
   width: 100%;
   height: 100%;
-}
-
-/* 模糊填充层：主图用 contain 完整展示后，与屏幕宽高比不一致的那一维会留边，
-   用同一张图 cover 铺满并高斯模糊填补，比生硬留白自然。scale(1.1) 盖住 blur 边缘的羽化。 */
-.bg-slide-blur {
-  position: absolute;
-  inset: 0;
   background-size: cover;
   background-position: center;
-  filter: blur(28px) brightness(0.8);
-  transform: scale(1.1);
-}
-
-/* 主图层用 contain 完整展示，不裁切（cover 会按屏幕比例切掉图片边缘，导致内容看不全）。
-   不做 Ken Burns 缩放动画：背景层是先光栅化再按 transform 拉伸，慢速放大必然发虚。
-   必须 no-repeat——contain 留边处不收敛会平铺出重复图。 */
-.bg-slide {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background-size: contain;
-  background-position: center;
-  background-repeat: no-repeat;
 }
 
 /* 深色渐变遮罩：保证登录卡片和页脚文字在任意风景图上都有足够对比度可读 */
