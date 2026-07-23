@@ -64,6 +64,15 @@ customer-work:
 
 # Channel 接入：把客服 Agent 接到 IM 平台。当前支持钉钉（Stream 模式，无需公网回调）。
 customer-channel:
+  # 渠道接入层（access 包）：定时从 admin 开放 API(8082) 拉机器人列表，为每台机器人维护一条到 IM 平台的连接，
+  # 用户消息 → admin 开放 API 与指定 agentCode 的工作区智能体对话 → 回复。与下面 channel.* 的本地演示互不相关。
+  # 默认关闭；启用后 admin 需提供开放 API 且配好机器人。启用前请设置环境变量 CHANNEL_ACCESS_ADMIN_TOKEN。
+  access:
+    enabled: ${CHANNEL_ACCESS_ENABLED:false}
+    admin-base-url: ${CHANNEL_ACCESS_ADMIN_BASE_URL:http://localhost:8082}  # admin 开放 API 基地址
+    admin-token: ${CHANNEL_ACCESS_ADMIN_TOKEN:}                             # 开放 API 令牌(X-Open-Api-Token)，勿硬编码
+    refresh-interval-seconds: ${CHANNEL_ACCESS_REFRESH_SECONDS:30}          # 机器人列表刷新/diff 间隔(秒)
+    chat-timeout-seconds: ${CHANNEL_ACCESS_CHAT_TIMEOUT_SECONDS:300}        # 单轮对话聚合超时(秒)，超时回复友好错误
   channel:
     dingtalk:
       enabled: false               # 启用需在钉钉开放平台建机器人应用并配齐下面凭证

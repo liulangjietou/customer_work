@@ -1,0 +1,20 @@
+package com.richard.fyoung.customeradmin.aiconfig.channelrobot.dto;
+
+import jakarta.validation.constraints.NotBlank;
+
+/**
+ * 渠道机器人新建/编辑请求。编辑时 {@code appSecret} 留空/null=不改密文
+ * （同 {@code WorkbenchSiteSaveRequest} 手法，避免每次编辑都要重填明文）；新建时 appSecret 必填
+ * （校验在 Service 层，因编辑复用同一 DTO 不能用 {@code @NotBlank} 硬约束）。
+ * @author owlzhangfq@gmail.com
+ */
+public record ChannelRobotSaveRequest(
+    @NotBlank(message = "channelType 不能为空") String channelType,
+    @NotBlank(message = "robotName 不能为空") String robotName,
+    @NotBlank(message = "appKey 不能为空") String appKey,
+    String appSecret,
+    String robotCode,
+    @NotBlank(message = "agentCode 不能为空") String agentCode,
+    Integer status,
+    String remark) {
+}

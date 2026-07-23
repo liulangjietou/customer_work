@@ -29,7 +29,7 @@
 |---|---|---|---|
 | `customer-work-starter` | — | Maven | **可复用智能体基础设施**：模型 / 会话 / 记忆 / RAG / 工具 SPI / Middleware / 审批 / 工单 / 用户 / 聊天记录…… `@AutoConfiguration` 自动装配，可作为依赖被任意工程引入 |
 | `customer-work-app-server` | 8080 | Maven | **可运行客服应用**：HTTP + SSE + WebSocket 接口、用户工单系统、Swagger 文档 |
-| `customer-channel` | 8081 | Maven | **多渠道接入演示**：官方五套前端能力（admin 控制台 / chat-completions / AG-UI / Studio / 钉钉·飞书·企业微信），非主链路必需 |
+| `customer-channel` | 8081 | Maven | **多渠道接入**：官方五套前端能力演示（admin 控制台 / chat-completions / AG-UI / Studio / 钉钉·飞书·企业微信）+ 生产用渠道接入层（钉钉机器人 ↔ 后台工作区智能体，连接器 SPI 预留企微/微信） |
 | `customer-admin-server` | 8082 | Maven | **后台管理系统后端**：Spring MVC + MyBatis-Plus + Sa-Token，独立库 `customer_admin`，含坐席工单工作台与 AI 编码助手 |
 | `customer-admin-web` | 5174 | 前端 | **后台管理前端**：Vue3 + TS + Vite + Element Plus（非 Maven 模块） |
 | `customer-work-app` | 5175 | 前端 | **终端用户 H5**：Vue3 + TS + Vite + Vant4，登录 / 聊天 / 我的工单（非 Maven 模块） |

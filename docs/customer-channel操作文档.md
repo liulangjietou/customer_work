@@ -239,3 +239,52 @@ customer-channel:
 - **换真实业务后端**：在本模块声明自己的 `OrderBackend` 等 Bean 即覆盖默认 Mock（`@ConditionalOnMissingBean` 让位）。
 - **升级 HarnessAgent**：如需子智能体/Plan Mode/沙箱的完整管理面，可把 `customerServiceAgent` Bean 换成
   `HarnessAgent`（见 `customer-work-starter` 的 `HarnessAgentFactory`），admin 的 subagents 端点即生效。
+
+---
+
+## 8. 渠道接入层（钉钉机器人 ↔ 后台工作区智能体）
+
+与上文"官方五套前端能力演示"独立的**生产用**能力（包 `com.richard.fyoung.customerchannel.access`，
+默认关闭，不影响既有演示）：钉钉用户给机器人发消息，即可与后台「智能体工作区」里的智能体对话。
+
+### 8.1 架构
+
+```
+钉钉用户 ↔ 钉钉网关 ←Stream(WebSocket出站)→ customer-channel(8081)
+                                              │ ChannelAccessManager 定时(默认30s)拉配置 diff 启停连接器
+                                              │ ImChannelConnector SPI（钉钉已实现；企微/微信 = 新增一个实现类）
+                                              ↓ AdminOpenApiClient（X-Open-Api-Token）
+                       customer-admin-server(8082) /api/open/**
+                         ├ GET  /api/open/channel/robots            拉启用中的机器人配置（含解密凭证）
+                         ├ POST /api/open/channel/sessions/resolve|reset  外部用户↔会话映射（ai_channel_session）
+                         └ POST /api/open/agents/{agentCode}/chat   SSE 对话（复用工作区 ChatService）
+```
+
+- 机器人在后台「AI 配置 → 渠道接入」页面维护（表 `ai_channel_robot`，AppSecret AES-GCM 加密存储），
+  **一个机器人绑定一个智能体**，多机器人多智能体；改绑/启停后 ≤30s 自动生效，无需重启。
+- 会话：每个钉钉用户一个持续会话（群聊按 群+用户 隔离）；发送 `/new` 或 `新会话` 重置。
+- 仅支持文本消息；回复以 markdown 下发（经消息回调里的 sessionWebhook）。
+
+### 8.2 接入步骤
+
+1. [钉钉开放平台](https://open-dev.dingtalk.com) 创建**企业内部应用**→ 添加「机器人」能力 →
+   消息接收模式选 **Stream 模式**（无需公网回调）→ 发布版本，得到 AppKey / AppSecret / RobotCode。
+2. admin-server(8082) 配置开放 API 令牌：`ADMIN_OPEN_API_TOKEN=<随机长字符串>`（未配置则开放 API 全部拒绝）。
+3. 后台「AI 配置 → 渠道接入」新增机器人：渠道=钉钉，填 AppKey/AppSecret/RobotCode，绑定智能体，启用。
+4. customer-channel(8081) 启动前配置：
+
+| 环境变量 | 说明 |
+|---|---|
+| `CHANNEL_ACCESS_ENABLED=true` | 启用接入层（默认 false） |
+| `CHANNEL_ACCESS_ADMIN_TOKEN` | 与 `ADMIN_OPEN_API_TOKEN` 同值（必填） |
+| `CHANNEL_ACCESS_ADMIN_BASE_URL` | admin 地址，默认 `http://localhost:8082` |
+| `CHANNEL_ACCESS_REFRESH_SECONDS` | 配置刷新间隔，默认 30 |
+| `CHANNEL_ACCESS_CHAT_TIMEOUT_SECONDS` | 单轮对话聚合超时，默认 300 |
+
+5. 钉钉里给机器人发消息（单聊直接发 / 群聊 @机器人）即可对话。
+
+### 8.3 注意事项
+
+- 开放对话 API 有绑定校验：agentCode 必须存在启用中的渠道机器人绑定，未绑定的智能体外部不可调用。
+- 传输层复用 AgentScope 的 `DingTalkStreamClient`（JDK 内置 WebSocket 实现 Stream 协议，零新增钉钉 SDK 依赖）。
+- 同一用户消息按会话串行处理，不同会话并行；连接器启动失败/admin 不可达均兜底重试，不影响应用启动。
