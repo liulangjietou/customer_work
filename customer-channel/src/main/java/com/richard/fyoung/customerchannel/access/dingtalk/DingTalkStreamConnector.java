@@ -110,7 +110,7 @@ public class DingTalkStreamConnector implements ImChannelConnector {
 
         ChannelInboundMessage inbound = new ChannelInboundMessage(
             ChannelAccessConstants.CHANNEL_TYPE_DINGTALK, robot.getAppKey(), robot.getAgentCode(),
-            externalUserId, isText, content);
+            robot.getSessionMode(), externalUserId, isText, content);
         ChannelReplySender reply = replyText -> sendMarkdown(sessionWebhook, replyText);
         pipeline.submit(inbound, reply);
     }

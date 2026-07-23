@@ -87,6 +87,7 @@ public class AdminOpenApiClient {
                 n.path("appSecret").asText(null),
                 n.path("robotCode").asText(null),
                 n.path("agentCode").asText(null),
+                n.path("sessionMode").asText(null),
                 n.path("version").isMissingNode() ? null : n.path("version").asLong()));
         }
         return result;

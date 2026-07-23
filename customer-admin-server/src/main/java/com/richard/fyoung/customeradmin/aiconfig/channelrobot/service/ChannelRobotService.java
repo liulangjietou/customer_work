@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.ChannelType;
+import com.richard.fyoung.customeradmin.aiconfig.channelrobot.SessionMode;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.dto.ChannelRobotSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.dto.ChannelRobotVO;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.entity.AiChannelRobot;
@@ -125,8 +126,21 @@ public class ChannelRobotService {
         robot.setAppKey(request.appKey());
         robot.setRobotCode(request.robotCode());
         robot.setAgentCode(request.agentCode());
+        robot.setSessionMode(resolveSessionMode(request.sessionMode()));
         robot.setRemark(request.remark());
         robot.setStatus(request.status() == null ? STATUS_ENABLED : request.status());
+    }
+
+    /** 会话模式：空值取默认 continuous，非法值 fast fail。 */
+    private String resolveSessionMode(String sessionMode) {
+        if (!StringUtils.hasText(sessionMode)) {
+            return SessionMode.CONTINUOUS.getCode();
+        }
+        SessionMode mode = SessionMode.fromCode(sessionMode);
+        if (mode == null) {
+            throw new BizException(ResultCode.PARAM_INVALID, "非法的会话模式: " + sessionMode);
+        }
+        return mode.getCode();
     }
 
     private ChannelRobotVO toVo(AiChannelRobot robot) {
@@ -137,6 +151,7 @@ public class ChannelRobotService {
         vo.setAppKey(robot.getAppKey());
         vo.setRobotCode(robot.getRobotCode());
         vo.setAgentCode(robot.getAgentCode());
+        vo.setSessionMode(robot.getSessionMode());
         vo.setStatus(robot.getStatus());
         vo.setRemark(robot.getRemark());
         vo.setHasSecret(StringUtils.hasText(robot.getAppSecretCipher()));

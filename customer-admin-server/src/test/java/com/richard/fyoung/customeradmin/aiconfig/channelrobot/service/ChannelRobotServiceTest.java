@@ -63,7 +63,7 @@ class ChannelRobotServiceTest {
 
     private ChannelRobotSaveRequest request(String channelType, String appSecret) {
         return new ChannelRobotSaveRequest(channelType, "钉钉客服", "app-key-1", appSecret,
-            "robot-code-1", "agent-x", 1, "备注");
+            "robot-code-1", "agent-x", null, 1, "备注");
     }
 
     private void mockEnabledAgent() {

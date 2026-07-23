@@ -16,10 +16,13 @@ public class ChannelRobot {
     private final String appSecret;
     private final String robotCode;
     private final String agentCode;
+    /** 会话模式：continuous 持续会话 / per_message 单次问答（空值按持续会话处理）。 */
+    private final String sessionMode;
     private final Long version;
 
     public ChannelRobot(Long id, String channelType, String robotName, String appKey,
-                        String appSecret, String robotCode, String agentCode, Long version) {
+                        String appSecret, String robotCode, String agentCode,
+                        String sessionMode, Long version) {
         this.id = id;
         this.channelType = channelType;
         this.robotName = robotName;
@@ -27,6 +30,7 @@ public class ChannelRobot {
         this.appSecret = appSecret;
         this.robotCode = robotCode;
         this.agentCode = agentCode;
+        this.sessionMode = sessionMode;
         this.version = version;
     }
 
@@ -56,6 +60,10 @@ public class ChannelRobot {
 
     public String getAgentCode() {
         return agentCode;
+    }
+
+    public String getSessionMode() {
+        return sessionMode;
     }
 
     public Long getVersion() {

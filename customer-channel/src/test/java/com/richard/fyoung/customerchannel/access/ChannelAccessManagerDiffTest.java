@@ -27,7 +27,8 @@ class ChannelAccessManagerDiffTest {
     private static final String TYPE = ChannelAccessConstants.CHANNEL_TYPE_DINGTALK;
 
     private ChannelRobot robot(long id, long version) {
-        return new ChannelRobot(id, TYPE, "bot" + id, "ak" + id, "as" + id, "rc" + id, "agent" + id, version);
+        return new ChannelRobot(id, TYPE, "bot" + id, "ak" + id, "as" + id, "rc" + id, "agent" + id,
+            ChannelAccessConstants.SESSION_MODE_CONTINUOUS, version);
     }
 
     @Test

@@ -142,6 +142,7 @@ public class OpenChannelService {
         vo.setAppSecret(cryptoUtil.decrypt(robot.getAppSecretCipher()));
         vo.setRobotCode(robot.getRobotCode());
         vo.setAgentCode(robot.getAgentCode());
+        vo.setSessionMode(robot.getSessionMode());
         vo.setVersion(robot.getUpdateTime() == null ? null
             : robot.getUpdateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
         return vo;

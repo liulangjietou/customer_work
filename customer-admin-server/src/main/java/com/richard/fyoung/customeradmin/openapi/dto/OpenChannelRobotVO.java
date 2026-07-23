@@ -18,6 +18,8 @@ public class OpenChannelRobotVO {
     private String appSecret;
     private String robotCode;
     private String agentCode;
+    /** 会话模式：continuous 持续会话 / per_message 单次问答。 */
+    private String sessionMode;
     /** update_time 的毫秒时间戳，用于调用方感知变更。 */
     private Long version;
 }

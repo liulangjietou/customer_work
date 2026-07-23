@@ -32,6 +32,8 @@ public class AiChannelRobot {
     private String robotCode;
     /** 绑定的智能体编码。 */
     private String agentCode;
+    /** 会话模式：continuous 持续会话 / per_message 单次问答。 */
+    private String sessionMode;
     /** 0停用 / 1启用。 */
     private Integer status;
     private String remark;

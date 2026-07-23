@@ -15,6 +15,8 @@ public class ChannelInboundMessage {
     private final String appKey;
     /** 目标智能体编码。 */
     private final String agentCode;
+    /** 会话模式：continuous 持续会话 / per_message 单次问答（来自机器人配置，空值按持续会话处理）。 */
+    private final String sessionMode;
     /** 外部用户标识：单聊=用户 id；群聊=群 id#用户 id（按群+人隔离会话）。 */
     private final String externalUserId;
     /** 是否文本消息。 */
@@ -22,11 +24,12 @@ public class ChannelInboundMessage {
     /** 文本内容（非文本消息时为 null/空）。 */
     private final String content;
 
-    public ChannelInboundMessage(String channelType, String appKey, String agentCode,
+    public ChannelInboundMessage(String channelType, String appKey, String agentCode, String sessionMode,
                                  String externalUserId, boolean text, String content) {
         this.channelType = channelType;
         this.appKey = appKey;
         this.agentCode = agentCode;
+        this.sessionMode = sessionMode;
         this.externalUserId = externalUserId;
         this.text = text;
         this.content = content;
@@ -42,6 +45,10 @@ public class ChannelInboundMessage {
 
     public String getAgentCode() {
         return agentCode;
+    }
+
+    public String getSessionMode() {
+        return sessionMode;
     }
 
     public String getExternalUserId() {

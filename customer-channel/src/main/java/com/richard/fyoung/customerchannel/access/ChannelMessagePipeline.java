@@ -6,6 +6,8 @@ import com.richard.fyoung.customerchannel.access.support.KeyedSerialExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.UUID;
+
 /**
  * 渠道消息处理管道（与具体渠道解耦）。
  *
@@ -47,13 +49,22 @@ public class ChannelMessagePipeline implements AutoCloseable {
                 return;
             }
             String text = message.getContent() == null ? "" : message.getContent().trim();
+            boolean perMessage = isPerMessageMode(message);
             if (isNewSessionCommand(text)) {
+                // 单次问答模式本就无上下文，重置指令仅提示，不打 admin
+                if (perMessage) {
+                    reply.send(ChannelAccessConstants.HINT_PER_MESSAGE_NO_RESET);
+                    return;
+                }
                 adminClient.resetSession(message.getChannelType(), message.getAppKey(), message.getExternalUserId());
                 reply.send(ChannelAccessConstants.HINT_NEW_SESSION);
                 return;
             }
-            String sessionId = adminClient.resolveSession(
-                message.getChannelType(), message.getAppKey(), message.getExternalUserId());
+            // 单次问答：本地生成一次性 sessionId，跳过 admin 会话解析，每条消息全新上下文
+            String sessionId = perMessage
+                ? ChannelAccessConstants.ONESHOT_SESSION_PREFIX + UUID.randomUUID().toString().replace("-", "")
+                : adminClient.resolveSession(
+                    message.getChannelType(), message.getAppKey(), message.getExternalUserId());
             String answer = adminClient.chat(
                 message.getAgentCode(), sessionId, text, properties.getChatTimeoutSeconds());
             reply.send(answer);
@@ -63,6 +74,11 @@ public class ChannelMessagePipeline implements AutoCloseable {
                 message.getChannelType(), message.getExternalUserId(), e);
             replyErrorQuietly(reply);
         }
+    }
+
+    /** 会话模式判定：仅显式 per_message 走单次问答，空值/未知值一律按持续会话（兼容旧配置）。 */
+    private boolean isPerMessageMode(ChannelInboundMessage message) {
+        return ChannelAccessConstants.SESSION_MODE_PER_MESSAGE.equals(message.getSessionMode());
     }
 
     private boolean isNewSessionCommand(String text) {

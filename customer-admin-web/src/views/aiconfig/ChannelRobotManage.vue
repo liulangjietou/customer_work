@@ -85,6 +85,7 @@ function emptyForm(): ChannelRobotSaveRequest {
     appSecret: '',
     robotCode: '',
     agentCode: '',
+    sessionMode: 'continuous',
     status: 1,
     remark: '',
   }
@@ -111,6 +112,8 @@ function openEdit(row: ChannelRobotVO) {
     appSecret: '',
     robotCode: row.robotCode,
     agentCode: row.agentCode,
+    // 旧数据无 sessionMode 时按后端默认 continuous 展示
+    sessionMode: row.sessionMode ?? 'continuous',
     status: row.status,
     remark: row.remark,
   })
@@ -198,6 +201,13 @@ onMounted(() => {
             {{ agentNameOf(row.agentCode) }}
           </template>
         </el-table-column>
+        <el-table-column label="会话模式" width="100">
+          <template #default="{ row }: { row: ChannelRobotVO }">
+            <el-tag :type="row.sessionMode === 'per_message' ? 'warning' : 'success'" effect="plain">
+              {{ row.sessionMode === 'per_message' ? '单次问答' : '持续会话' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }: { row: ChannelRobotVO }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
@@ -274,6 +284,15 @@ onMounted(() => {
               <span v-if="agent.status !== 1" style="float: right; color: #c0c4cc; font-size: 12px">已停用</span>
             </el-option>
           </el-select>
+        </el-form-item>
+        <el-form-item label="会话模式">
+          <el-radio-group v-model="form.sessionMode!">
+            <el-radio value="continuous">持续会话</el-radio>
+            <el-radio value="per_message">单次问答</el-radio>
+          </el-radio-group>
+          <div class="form-tip">
+            持续会话：同一用户多轮对话携带历史上下文，发「/new」可重置；单次问答：每条消息都是全新上下文，响应更快。
+          </div>
         </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.status!" :active-value="1" :inactive-value="0" />

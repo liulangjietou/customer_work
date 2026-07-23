@@ -17,6 +17,8 @@ public class ChannelRobotVO {
     private String appKey;
     private String robotCode;
     private String agentCode;
+    /** 会话模式：continuous 持续会话 / per_message 单次问答。 */
+    private String sessionMode;
     private Integer status;
     private String remark;
     /** 是否已配置 AppSecret 密文（不回明文/密文，只回布尔）。 */

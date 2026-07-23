@@ -15,6 +15,8 @@ public record ChannelRobotSaveRequest(
     String appSecret,
     String robotCode,
     @NotBlank(message = "agentCode 不能为空") String agentCode,
+    /** 会话模式：continuous 持续会话 / per_message 单次问答（空值按 continuous）。 */
+    String sessionMode,
     Integer status,
     String remark) {
 }
