@@ -126,9 +126,9 @@ public class DingTalkStreamConnector implements ImChannelConnector {
         return senderStaffId;
     }
 
-    /** 向 sessionWebhook POST markdown 回复。 */
+    /** 向 sessionWebhook POST markdown 回复（先做钉钉 markdown 子集降级：表格转列表、剥代码围栏、补双换行）。 */
     private void sendMarkdown(String sessionWebhook, String text) {
-        String body = text == null ? "" : text;
+        String body = DingTalkMarkdownFormatter.format(text);
         Map<String, Object> markdown = new LinkedHashMap<>();
         markdown.put("title", markdownTitle(body));
         markdown.put("text", body);
