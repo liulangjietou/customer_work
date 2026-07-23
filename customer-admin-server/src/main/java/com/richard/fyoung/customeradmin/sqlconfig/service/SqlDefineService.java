@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -130,6 +131,7 @@ public class SqlDefineService {
             paramCopy.setParamName(param.getParamName());
             paramCopy.setParamDesc(param.getParamDesc());
             paramCopy.setParamType(param.getParamType());
+            paramCopy.setDateFormat(param.getDateFormat());
             paramCopy.setRequired(param.getRequired());
             paramCopy.setDefaultValue(param.getDefaultValue());
             paramCopy.setDropDown(param.getDropDown());
@@ -217,6 +219,16 @@ public class SqlDefineService {
         if (!ParamType.isValid(request.paramType())) {
             throw new BizException(ResultCode.PARAM_INVALID, "paramType 非法（仅 STRING/INTEGER/DATETIME）: " + request.paramType());
         }
+        if (StringUtils.hasText(request.dateFormat())) {
+            if (!ParamType.DATETIME.name().equalsIgnoreCase(request.paramType())) {
+                throw new BizException(ResultCode.PARAM_INVALID, "dateFormat 仅 DATETIME 类型参数可配置");
+            }
+            try {
+                DateTimeFormatter.ofPattern(request.dateFormat());
+            } catch (IllegalArgumentException e) {
+                throw new BizException(ResultCode.PARAM_INVALID, "dateFormat 非法（如 yyyy-MM-dd HH:mm:ss / yyyy-MM-dd）: " + request.dateFormat());
+            }
+        }
         if (StringUtils.hasText(request.dropDown())) {
             requireJsonObject(request.dropDown(), "dropDown");
         }
@@ -287,6 +299,7 @@ public class SqlDefineService {
         param.setParamName(request.paramName());
         param.setParamDesc(request.paramDesc());
         param.setParamType(request.paramType().toUpperCase());
+        param.setDateFormat(request.dateFormat());
         param.setRequired(Boolean.TRUE.equals(request.required()) ? ENABLED : 0);
         param.setDefaultValue(request.defaultValue());
         param.setDropDown(request.dropDown());
@@ -337,6 +350,7 @@ public class SqlDefineService {
         vo.setParamName(param.getParamName());
         vo.setParamDesc(param.getParamDesc());
         vo.setParamType(param.getParamType());
+        vo.setDateFormat(param.getDateFormat());
         vo.setRequired(param.getRequired() != null && param.getRequired() == ENABLED);
         vo.setDefaultValue(param.getDefaultValue());
         vo.setDropDown(param.getDropDown());

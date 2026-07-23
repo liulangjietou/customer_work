@@ -259,7 +259,7 @@ public class SqlQueryService {
             String name = param.getParamName();
             String raw = rawValue(safeInput, name);
             if (isBlank(raw) && StringUtils.hasText(param.getDefaultValue())) {
-                raw = DefaultValueResolver.resolve(param.getDefaultValue());
+                raw = DefaultValueResolver.resolve(param.getDefaultValue(), param.getDateFormat());
             }
             if (isFlag(param.getIsPageNum())) {
                 long offset = export ? 0L : computeOffset(parsePageNum(raw), pageSize);
@@ -323,8 +323,10 @@ public class SqlQueryService {
         vo.setParamName(param.getParamName());
         vo.setParamDesc(param.getParamDesc());
         vo.setParamType(param.getParamType());
+        vo.setDateFormat(param.getDateFormat());
         vo.setRequired(isFlag(param.getRequired()));
-        vo.setDefaultValue(DefaultValueResolver.resolve(param.getDefaultValue()));
+        // 默认值时间表达式按参数配置的日期格式解析，保证预填值能被前端日期控件按同格式回显
+        vo.setDefaultValue(DefaultValueResolver.resolve(param.getDefaultValue(), param.getDateFormat()));
         vo.setDropDown(parseDropDown(param.getDropDown()));
         vo.setIsPageNum(isFlag(param.getIsPageNum()));
         vo.setIsPageSize(isFlag(param.getIsPageSize()));

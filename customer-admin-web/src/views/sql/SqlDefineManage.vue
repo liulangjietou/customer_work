@@ -40,6 +40,8 @@ const TRANSFORM_TYPE_OPTIONS: { label: string; value: SqlTransformType }[] = [
   { label: '日期格式化', value: 'DATE_FORMAT' },
   { label: '值映射', value: 'VALUE_MAP' },
 ]
+/** DATETIME 参数常用日期格式预设（下拉可手输其他合法 Java 格式串）。 */
+const DATE_FORMAT_OPTIONS = ['yyyy-MM-dd HH:mm:ss', 'yyyy-MM-dd']
 
 const datasourceOptions = ref<SqlDatasourceVO[]>([])
 
@@ -107,13 +109,13 @@ const paramFormVisible = ref(false)
 const paramFormRef = ref<FormInstance>()
 const editingParamId = ref<number | null>(null)
 const paramForm = reactive<SqlDefineParamSaveRequest>({
-  paramName: '', paramDesc: '', paramType: 'STRING', required: false,
+  paramName: '', paramDesc: '', paramType: 'STRING', dateFormat: '', required: false,
   defaultValue: '', dropDown: '', isPageNum: false, isPageSize: false, sort: 0,
 })
 
 function resetParamForm() {
   Object.assign(paramForm, {
-    paramName: '', paramDesc: '', paramType: 'STRING', required: false,
+    paramName: '', paramDesc: '', paramType: 'STRING', dateFormat: '', required: false,
     defaultValue: '', dropDown: '', isPageNum: false, isPageSize: false, sort: 0,
   })
 }
@@ -127,7 +129,7 @@ function openParamCreate() {
 function openParamEdit(row: SqlDefineParamVO) {
   editingParamId.value = row.id
   Object.assign(paramForm, {
-    paramName: row.paramName, paramDesc: row.paramDesc, paramType: row.paramType, required: row.required,
+    paramName: row.paramName, paramDesc: row.paramDesc, paramType: row.paramType, dateFormat: row.dateFormat ?? '', required: row.required,
     defaultValue: row.defaultValue, dropDown: row.dropDown, isPageNum: row.isPageNum, isPageSize: row.isPageSize, sort: row.sort,
   })
   paramFormVisible.value = true
@@ -137,6 +139,10 @@ async function handleParamSubmit() {
   const valid = await paramFormRef.value?.validate().catch(() => false)
   if (!valid || !paramsDefineId.value) {
     return
+  }
+  // 日期格式仅 DATETIME 类型有意义，类型切走后清空，避免后端校验拒绝
+  if (paramForm.paramType !== 'DATETIME') {
+    paramForm.dateFormat = ''
   }
   if (editingParamId.value) {
     await updateSqlDefineParam(paramsDefineId.value, editingParamId.value, paramForm)
@@ -341,9 +347,10 @@ onMounted(() => {
       <el-table v-loading="paramsLoading" :data="paramsList" style="width: 100%" size="small">
         <el-table-column prop="paramName" label="参数名" width="130" />
         <el-table-column prop="paramDesc" label="描述" show-overflow-tooltip />
-        <el-table-column label="类型" width="90">
+        <el-table-column label="类型" width="150">
           <template #default="{ row }: { row: SqlDefineParamVO }">
             {{ PARAM_TYPE_OPTIONS.find((o) => o.value === row.paramType)?.label ?? row.paramType }}
+            <div v-if="row.dateFormat" class="param-date-format">{{ row.dateFormat }}</div>
           </template>
         </el-table-column>
         <el-table-column label="必填" width="70">
@@ -381,6 +388,19 @@ onMounted(() => {
         <el-form-item label="类型" prop="paramType" :rules="[{ required: true, message: '请选择类型' }]">
           <el-select v-model="paramForm.paramType" style="width: 100%">
             <el-option v-for="opt in PARAM_TYPE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="paramForm.paramType === 'DATETIME'" label="日期格式">
+          <el-select
+            v-model="paramForm.dateFormat!"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            style="width: 100%"
+            placeholder="默认 yyyy-MM-dd HH:mm:ss，可手输其他格式"
+          >
+            <el-option v-for="fmt in DATE_FORMAT_OPTIONS" :key="fmt" :label="fmt" :value="fmt" />
           </el-select>
         </el-form-item>
         <el-form-item label="必填">
@@ -466,6 +486,12 @@ onMounted(() => {
   margin-left: 12px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+.param-date-format {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.2;
 }
 
 .sql-textarea :deep(textarea) {

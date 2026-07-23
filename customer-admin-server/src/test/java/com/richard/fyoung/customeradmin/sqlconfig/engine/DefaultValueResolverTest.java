@@ -48,4 +48,17 @@ class DefaultValueResolverTest {
         assertEquals("2026-01-01", DefaultValueResolver.resolve("2026-01-01"));
         assertNull(DefaultValueResolver.resolve(null));
     }
+
+    @Test
+    void shouldResolveWithCustomDateFormat() {
+        // 指定 yyyy-MM-dd 时表达式按该格式输出（10 位日期，可被同格式解析回来）
+        String resolved = DefaultValueResolver.resolve("${now-14d}", "yyyy-MM-dd");
+        assertEquals(10, resolved.length());
+        java.time.LocalDate value = java.time.LocalDate.parse(resolved, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        assertTrue(Math.abs(java.time.temporal.ChronoUnit.DAYS.between(value, LocalDateTime.now().minusDays(14).toLocalDate())) <= 1);
+
+        // 格式为空回落默认 yyyy-MM-dd HH:mm:ss；非表达式字面量不受格式影响
+        assertEquals(19, DefaultValueResolver.resolve("${now}", " ").length());
+        assertEquals("2026-01-01", DefaultValueResolver.resolve("2026-01-01", "yyyy/MM/dd"));
+    }
 }

@@ -34,6 +34,18 @@ function fieldKind(p: SqlQueryMetaParam): 'select' | 'date' | 'number' | 'input'
   return 'input'
 }
 
+const DEFAULT_DATE_FORMAT = 'yyyy-MM-dd HH:mm:ss'
+
+/** 控件粒度：格式串含时分秒（H/m/s，区分月份大写 M）用 datetime，纯日期用 date。 */
+function datePickerType(p: SqlQueryMetaParam): 'datetime' | 'date' {
+  return /[Hms]/.test(p.dateFormat || DEFAULT_DATE_FORMAT) ? 'datetime' : 'date'
+}
+
+/** Java 日期格式串转 dayjs 格式（el-date-picker 用）：yyyy→YYYY、dd→DD，M/H/m/s 两边一致。 */
+function datePickerFormat(p: SqlQueryMetaParam): string {
+  return (p.dateFormat || DEFAULT_DATE_FORMAT).replace(/y/g, 'Y').replace(/d/g, 'D')
+}
+
 function coerceDefault(p: SqlQueryMetaParam): unknown {
   if (p.defaultValue === null || p.defaultValue === '') {
     return p.paramType === 'INTEGER' ? undefined : ''
@@ -179,8 +191,9 @@ watch(() => route.query.defineKey, load, { immediate: true })
               <el-date-picker
                 v-else-if="fieldKind(p) === 'date'"
                 :model-value="paramValues[p.paramName] as string | undefined"
-                type="datetime"
-                value-format="YYYY-MM-DD HH:mm:ss"
+                :type="datePickerType(p)"
+                :format="datePickerFormat(p)"
+                :value-format="datePickerFormat(p)"
                 :placeholder="p.required ? '必填' : '不限'"
                 @update:model-value="(v: unknown) => (paramValues[p.paramName] = v)"
               />

@@ -26,6 +26,8 @@ public class SqlDefineParam {
     private String paramDesc;
     /** STRING / INTEGER / DATETIME。 */
     private String paramType;
+    /** 日期格式（仅 DATETIME 类型生效，如 yyyy-MM-dd HH:mm:ss / yyyy-MM-dd；空默认 yyyy-MM-dd HH:mm:ss）。 */
+    private String dateFormat;
     /** 0否 / 1是。 */
     private Integer required;
     /** 默认值，支持 ${now}/${now-14d}/${now-2h} 时间表达式。 */

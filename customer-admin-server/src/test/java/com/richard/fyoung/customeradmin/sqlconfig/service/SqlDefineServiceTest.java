@@ -132,7 +132,7 @@ class SqlDefineServiceTest {
     void createParam_shouldRejectInvalidParamType() {
         when(defineMapper.selectById(1L)).thenReturn(new SqlDefine());
         SqlDefineParamSaveRequest request = new SqlDefineParamSaveRequest(
-            "p", "desc", "BOOLEAN", false, null, null, false, false, 1);
+            "p", "desc", "BOOLEAN", null, false, null, null, false, false, 1);
         BizException ex = assertThrows(BizException.class, () -> service.createParam(1L, request));
         assertEquals(ResultCode.PARAM_INVALID, ex.getResultCode());
     }
@@ -141,8 +141,39 @@ class SqlDefineServiceTest {
     void createParam_shouldRejectInvalidDropDownJson() {
         when(defineMapper.selectById(1L)).thenReturn(new SqlDefine());
         SqlDefineParamSaveRequest request = new SqlDefineParamSaveRequest(
-            "p", "desc", "STRING", false, null, "not-json", false, false, 1);
+            "p", "desc", "STRING", null, false, null, "not-json", false, false, 1);
         assertThrows(BizException.class, () -> service.createParam(1L, request));
+    }
+
+    @Test
+    void createParam_shouldRejectDateFormatOnNonDatetimeParam() {
+        when(defineMapper.selectById(1L)).thenReturn(new SqlDefine());
+        SqlDefineParamSaveRequest request = new SqlDefineParamSaveRequest(
+            "p", "desc", "STRING", "yyyy-MM-dd", false, null, null, false, false, 1);
+        BizException ex = assertThrows(BizException.class, () -> service.createParam(1L, request));
+        assertEquals(ResultCode.PARAM_INVALID, ex.getResultCode());
+    }
+
+    @Test
+    void createParam_shouldRejectIllegalDateFormatPattern() {
+        when(defineMapper.selectById(1L)).thenReturn(new SqlDefine());
+        SqlDefineParamSaveRequest request = new SqlDefineParamSaveRequest(
+            "p", "desc", "DATETIME", "yyyy-MM-dd bad{", false, null, null, false, false, 1);
+        BizException ex = assertThrows(BizException.class, () -> service.createParam(1L, request));
+        assertEquals(ResultCode.PARAM_INVALID, ex.getResultCode());
+    }
+
+    @Test
+    void createParam_shouldAcceptDateFormatOnDatetimeParam() {
+        when(defineMapper.selectById(1L)).thenReturn(new SqlDefine());
+        SqlDefineParamSaveRequest request = new SqlDefineParamSaveRequest(
+            "p", "desc", "DATETIME", "yyyy-MM-dd", false, null, null, false, false, 1);
+
+        service.createParam(1L, request);
+
+        ArgumentCaptor<SqlDefineParam> captor = ArgumentCaptor.forClass(SqlDefineParam.class);
+        verify(paramMapper).insert(captor.capture());
+        assertEquals("yyyy-MM-dd", captor.getValue().getDateFormat());
     }
 
     @Test
