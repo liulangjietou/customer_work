@@ -50,6 +50,9 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 
 ## 项目编码规范（全局规范之外的项目特有约定）
 
+- **通用功能/基础组件优先下沉 `customer-work-starter`**：开发前先判断归属——只服务当前业务模块的留在
+  业务模块；可复用的通用能力放 starter，走既有 SPI + `@ConditionalOnMissingBean` 自动装配模式。
+  拿不准归属时先问，不要默认放业务模块。starter 改完给下游用要先 `mvn install`（下游解析本地仓库 jar）。
 - 日志只用 info/error（不用 warn），日志文本英文，error 带错误码占位符：
   `log.error("xxx failed, code={}, id={}", "MODULE-ACTION-FAIL", id, e)`
 - 持久化扩展走 Store SPI 模式（接口 + InMemory 默认 + MyBatis-Plus 实现 + `@ConditionalOnMissingBean`，
