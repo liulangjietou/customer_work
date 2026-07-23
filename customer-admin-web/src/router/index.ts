@@ -96,11 +96,14 @@ router.beforeEach(async (to) => {
       return { name: 'Login', query: { redirect: to.fullPath } }
     }
     // 动态路由刚注册完，重新触发一次导航解析，命中新加入的路由记录。
-    // 坑：不能 `{ ...to, replace: true }`——bootstrap() 之前 to 还没匹配到任何动态路由，
+    // 坑一：不能 `{ ...to, replace: true }`——bootstrap() 之前 to 还没匹配到任何动态路由，
     // 已经被解析成了 name: 'NotFound'；Vue Router 对返回的重定向目标只要带 name 字段就按
     // 具名路由解析（优先级高于 path），会原样跳回 NotFound，前端表现就是刷新页面必现 404。
-    // 只传 path（用 fullPath 保留 query/hash），强制按路径重新匹配，才能命中刚注册的路由。
-    return { path: to.fullPath, replace: true }
+    // 坑二：也不能 `{ path: to.fullPath }`——location 对象里的 path 字段只取路径部分，
+    // 拼在里面的 ?query 会被静默丢弃（query 只认对象里独立的 query 字段），
+    // 表现是 /sql/query?defineKey=xxx 刷新后 defineKey 丢失、落到裸 /sql/query 空态页。
+    // 所以 path/query/hash 三段拆开传：按路径强制重新匹配，同时保住参数。
+    return { path: to.path, query: to.query, hash: to.hash, replace: true }
   }
   return true
 })
