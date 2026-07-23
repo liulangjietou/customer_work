@@ -48,4 +48,10 @@ class SftpSkillPublisherTest {
     void cumulativePaths_shouldSkipEmptySegments() {
         assertEquals(List.of("/a", "/a/b"), SftpSkillPublisher.cumulativePaths("/a//b/"));
     }
+
+    @Test
+    void parentDir_shouldStripLastSegment() {
+        assertEquals("/data/skills/code-1/references",
+            SftpSkillPublisher.parentDir("/data/skills/code-1/references/doc.md"));
+    }
 }

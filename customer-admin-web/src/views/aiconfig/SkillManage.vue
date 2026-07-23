@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { FormInstance, UploadRequestOptions } from 'element-plus'
 import { createSkill, deleteSkill, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
 import { useCrudPage } from '@/composables/useCrudPage'
 import type { PageQuery, SkillSaveRequest, SkillVO } from '@/types/api'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+
+/** 文件大小人性化展示（附属文件清单用）。 */
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
 
 const formRef = ref<FormInstance>()
 
@@ -26,10 +33,11 @@ const {
   update: updateSkill,
   remove: (row) => deleteSkill(row.id),
   initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
-  initForm: () => ({ skillName: '', skillCode: '', content: '', description: '', status: 1, storageTargets: ['local'] }),
+  // files: null = 保持后端现有附属文件不变；上传 zip 解析成功后被替换为解析出的完整文件列表
+  initForm: () => ({ skillName: '', skillCode: '', content: '', description: '', status: 1, storageTargets: ['local'], files: null }),
   toForm: (row) => ({
     skillName: row.skillName, skillCode: row.skillCode, content: row.content, description: row.description, status: row.status,
-    storageTargets: [...(row.storageTargets ?? [])],
+    storageTargets: [...(row.storageTargets ?? [])], files: null,
   }),
   deleteConfirm: (row) => `确认删除 Skill「${row.skillName}」？`,
 })
@@ -42,14 +50,36 @@ function openPreview(row: SkillVO) {
   previewVisible.value = true
 }
 
+/** 编辑弹窗里正在编辑的行（展示后端现有附属文件清单用）。 */
+const editingRow = ref<SkillVO | null>(null)
+
 const uploading = ref(false)
+
+/** 表单当前生效的附属文件清单：本次上传解析出的优先，否则显示后端现有的。 */
+const formFileList = computed(() => {
+  if (form.files != null) return form.files.map((f) => ({ filePath: f.filePath, fileSize: f.fileSize }))
+  return editingRow.value?.files ?? []
+})
+
+function openCreateWithReset() {
+  editingRow.value = null
+  openCreate()
+}
+
+function openEditWithRow(row: SkillVO) {
+  editingRow.value = row
+  openEdit(row)
+}
 
 async function handleUpload(options: UploadRequestOptions) {
   uploading.value = true
   try {
-    const content = await parseSkillUpload(options.file as File)
-    form.content = content
-    ElMessage.success('解析成功，已回填 SKILL.md 正文，确认无误后点“确定”保存')
+    const result = await parseSkillUpload(options.file as File)
+    form.content = result.content
+    // zip 解析出的附属文件随保存全量替换；.md 直传 files 为空数组，同样按"清空附属文件"处理
+    form.files = result.files
+    const fileTip = result.files.length > 0 ? `，含 ${result.files.length} 个附属文件` : ''
+    ElMessage.success(`解析成功，已回填 SKILL.md 正文${fileTip}，确认无误后点“确定”保存`)
   } finally {
     uploading.value = false
   }
@@ -64,7 +94,7 @@ onMounted(loadList)
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'skill:add'" type="primary" @click="openCreate">新建 Skill</el-button>
+        <el-button v-permission="'skill:add'" type="primary" @click="openCreateWithReset">新建 Skill</el-button>
       </div>
 
       <el-table v-loading="loading" :data="list" style="width: 100%">
@@ -77,6 +107,11 @@ onMounted(loadList)
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="附属文件" width="100">
+          <template #default="{ row }">
+            <span>{{ row.files?.length ?? 0 }} 个</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
@@ -87,7 +122,7 @@ onMounted(loadList)
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openPreview(row)">查看</el-button>
-            <el-button v-permission="'skill:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-permission="'skill:edit'" link type="primary" @click="openEditWithRow(row)">编辑</el-button>
             <el-button v-permission="'skill:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -120,10 +155,20 @@ onMounted(loadList)
               style="margin-bottom: 8px"
             >
               <el-button :loading="uploading" size="small">
-                上传 .md 或 .zip 文件回填正文
+                上传 .md 或 .zip 技能包
               </el-button>
             </el-upload>
-            <el-input v-model="form.content" type="textarea" :rows="10" placeholder="含 YAML frontmatter 的 SKILL.md 正文，可直接编辑或用上方按钮上传文件回填" />
+            <el-input v-model="form.content" type="textarea" :rows="10" placeholder="含 YAML frontmatter 的 SKILL.md 正文，可直接编辑或用上方按钮上传文件回填；zip 包内 references/scripts 等附属文件将一并保存" />
+          </div>
+        </el-form-item>
+        <el-form-item v-if="formFileList.length > 0" label="附属文件">
+          <div class="file-list">
+            <el-tag v-for="f in formFileList" :key="f.filePath" type="info" class="file-tag">
+              {{ f.filePath }}（{{ formatSize(f.fileSize) }}）
+            </el-tag>
+            <div class="file-tip">
+              {{ form.files != null ? '本次上传解析出的文件，保存后将全量替换原有附属文件' : '当前已保存的附属文件，重新上传 zip 可整体替换' }}
+            </div>
           </div>
         </el-form-item>
         <el-form-item
@@ -149,18 +194,26 @@ onMounted(loadList)
     </el-dialog>
 
     <el-dialog v-model="previewVisible" :title="previewSkill ? `查看 · ${previewSkill.skillName}` : '查看'" width="1000px" top="5vh">
-      <div v-if="previewSkill" class="preview-split">
-        <div class="preview-pane">
-          <div class="preview-pane-title">SKILL.md 原文</div>
-          <el-scrollbar class="preview-pane-body">
-            <pre class="preview-raw">{{ previewSkill.content }}</pre>
-          </el-scrollbar>
+      <div v-if="previewSkill">
+        <div class="preview-split">
+          <div class="preview-pane">
+            <div class="preview-pane-title">SKILL.md 原文</div>
+            <el-scrollbar class="preview-pane-body">
+              <pre class="preview-raw">{{ previewSkill.content }}</pre>
+            </el-scrollbar>
+          </div>
+          <div class="preview-pane">
+            <div class="preview-pane-title">预览</div>
+            <el-scrollbar class="preview-pane-body">
+              <MarkdownRenderer :text="previewSkill.content" />
+            </el-scrollbar>
+          </div>
         </div>
-        <div class="preview-pane">
-          <div class="preview-pane-title">预览</div>
-          <el-scrollbar class="preview-pane-body">
-            <MarkdownRenderer :text="previewSkill.content" />
-          </el-scrollbar>
+        <div v-if="(previewSkill.files?.length ?? 0) > 0" class="preview-files">
+          <div class="preview-pane-title">附属文件（{{ previewSkill.files.length }} 个）</div>
+          <el-tag v-for="f in previewSkill.files" :key="f.filePath" type="info" class="file-tag">
+            {{ f.filePath }}（{{ formatSize(f.fileSize) }}）
+          </el-tag>
         </div>
       </div>
       <template #footer>
@@ -180,7 +233,37 @@ onMounted(loadList)
 .preview-split {
   display: flex;
   gap: 16px;
-  height: 65vh;
+  height: 60vh;
+}
+
+.file-list {
+  width: 100%;
+}
+
+.file-tag {
+  margin: 0 6px 6px 0;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
+
+.file-tip {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+
+.preview-files {
+  margin-top: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.preview-files .preview-pane-title {
+  margin-bottom: 8px;
+}
+
+.preview-files .file-tag {
+  margin: 0 6px 8px 12px;
 }
 
 .preview-pane {

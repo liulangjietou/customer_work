@@ -15,5 +15,10 @@ public record SkillSaveRequest(
     String description,
     Integer status,
     /** 存储目标：local/nacos/sftp 多选，空/null 时默认 ["local"]。 */
-    List<String> storageTargets) {
+    List<String> storageTargets,
+    /**
+     * 附属文件（zip 上传解析所得，见 {@link SkillUploadParseResult}）：
+     * null = 保持现有文件不变（编辑但未重新上传）；非 null（含空列表）= 全量替换。
+     */
+    List<SkillUploadFile> files) {
 }

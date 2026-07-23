@@ -13,7 +13,8 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * SFTP 存储：把 SKILL.md 上传到 {remote-dir}/{skillCode}/SKILL.md，远端目录逐级创建。
+ * SFTP 存储：把 SKILL.md 上传到 {remote-dir}/{skillCode}/SKILL.md，附属文件上传到
+ * {remote-dir}/{skillCode}/{filePath}，远端目录逐级创建；remove 递归删除整个 skill 目录。
  *
  * <p>JSch（mwiede 维护版）密码认证；低频操作，每次建连用完即断，不做连接池。
  * 仅 {@code admin.skill.storage.sftp.enabled=true} 时注册。</p>
@@ -57,6 +58,30 @@ public class SftpSkillPublisher implements SkillContentPublisher {
     }
 
     @Override
+    public void publishFiles(String skillCode, List<SkillFileContent> files) {
+        if (files.isEmpty()) {
+            return;
+        }
+        Session session = null;
+        ChannelSftp channel = null;
+        try {
+            session = openSession();
+            channel = openChannel(session);
+            String skillDir = remoteSkillDir(config.getRemoteDir(), skillCode);
+            for (SkillFileContent file : files) {
+                String remotePath = skillDir + PATH_SEPARATOR + file.filePath();
+                ensureRemoteDir(channel, parentDir(remotePath));
+                channel.put(new ByteArrayInputStream(file.content()), remotePath);
+            }
+            log.info("sftp skill files published, skillCode={}, count={}", skillCode, files.size());
+        } catch (Exception e) {
+            throw new IllegalStateException("publish files to sftp failed: " + e.getMessage(), e);
+        } finally {
+            disconnect(session, channel);
+        }
+    }
+
+    @Override
     public void remove(String skillCode) {
         Session session = null;
         ChannelSftp channel = null;
@@ -64,8 +89,8 @@ public class SftpSkillPublisher implements SkillContentPublisher {
             session = openSession();
             channel = openChannel(session);
             String dir = remoteSkillDir(config.getRemoteDir(), skillCode);
-            silentRm(channel, remoteSkillFile(config.getRemoteDir(), skillCode));
-            silentRmDir(channel, dir);
+            // 附属文件带子目录，需递归清理（历史上只 rm SKILL.md + rmdir，目录非空即残留）
+            silentRmRecursively(channel, dir);
             log.info("sftp skill removed, skillCode={}, dir={}", skillCode, dir);
         } catch (Exception e) {
             throw new IllegalStateException("remove from sftp failed: " + e.getMessage(), e);
@@ -104,19 +129,24 @@ public class SftpSkillPublisher implements SkillContentPublisher {
         }
     }
 
-    private void silentRm(ChannelSftp channel, String remoteFile) {
+    /** 递归删除远端目录（先删文件再删子目录最后删自身）；目录不存在等异常吞掉，删除是尽力而为。 */
+    private void silentRmRecursively(ChannelSftp channel, String remoteDir) {
         try {
-            channel.rm(remoteFile);
-        } catch (Exception ignore) {
-            // 文件可能本就不存在，删除是尽力而为
-        }
-    }
-
-    private void silentRmDir(ChannelSftp channel, String remoteDir) {
-        try {
+            for (ChannelSftp.LsEntry entry : channel.ls(remoteDir)) {
+                String name = entry.getFilename();
+                if (".".equals(name) || "..".equals(name)) {
+                    continue;
+                }
+                String childPath = remoteDir + PATH_SEPARATOR + name;
+                if (entry.getAttrs().isDir()) {
+                    silentRmRecursively(channel, childPath);
+                } else {
+                    channel.rm(childPath);
+                }
+            }
             channel.rmdir(remoteDir);
         } catch (Exception ignore) {
-            // 目录可能非空或不存在，尽力而为
+            // 目录可能本就不存在，删除是尽力而为
         }
     }
 
@@ -139,6 +169,11 @@ public class SftpSkillPublisher implements SkillContentPublisher {
     /** {remote-dir}/{skillCode}/SKILL.md。 */
     static String remoteSkillFile(String remoteDir, String skillCode) {
         return remoteSkillDir(remoteDir, skillCode) + PATH_SEPARATOR + SKILL_FILE_NAME;
+    }
+
+    /** 远端文件路径的父目录（附属文件路径必含 skillCode 层级，必有 {@code /}）。 */
+    static String parentDir(String remotePath) {
+        return remotePath.substring(0, remotePath.lastIndexOf(PATH_SEPARATOR));
     }
 
     /** 把目录路径拆成逐级累加的路径列表，用于逐级创建；保留绝对路径前导 {@code /}。 */

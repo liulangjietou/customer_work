@@ -19,5 +19,7 @@ public class SkillVO {
     private Integer status;
     /** 存储目标：local/nacos/sftp。 */
     private List<String> storageTargets;
+    /** 附属文件清单（不含内容），zip 上传的 references/scripts 等。 */
+    private List<SkillFileVO> files;
     private LocalDateTime createTime;
 }

@@ -46,9 +46,26 @@ class LocalWorkspaceSkillPublisherTest {
     }
 
     @Test
-    void remove_shouldDeleteSkillDir() {
+    void publishFiles_shouldWriteFilesWithSubDirs() throws IOException {
         LocalWorkspaceSkillPublisher publisher = newPublisher();
         publisher.publish("demo-skill", "content");
+        byte[] binary = {0x00, (byte) 0xFF, 0x10};
+
+        publisher.publishFiles("demo-skill", java.util.List.of(
+            new SkillFileContent("references/doc.md", "参考".getBytes(StandardCharsets.UTF_8)),
+            new SkillFileContent("assets/logo.bin", binary)));
+
+        assertEquals("参考", Files.readString(baseDir.resolve("demo-skill/references/doc.md"), StandardCharsets.UTF_8));
+        org.junit.jupiter.api.Assertions.assertArrayEquals(binary,
+            Files.readAllBytes(baseDir.resolve("demo-skill/assets/logo.bin")));
+    }
+
+    @Test
+    void remove_shouldDeleteSkillDir_includingNestedFiles() {
+        LocalWorkspaceSkillPublisher publisher = newPublisher();
+        publisher.publish("demo-skill", "content");
+        publisher.publishFiles("demo-skill", java.util.List.of(
+            new SkillFileContent("references/doc.md", "参考".getBytes(StandardCharsets.UTF_8))));
 
         publisher.remove("demo-skill");
 

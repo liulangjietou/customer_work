@@ -271,6 +271,25 @@ export interface McpDebugCallResult {
 }
 
 // ---------- aiconfig.skill ----------
+/** Skill 附属文件展示项（不含内容）。 */
+export interface SkillFileVO {
+  filePath: string
+  fileSize: number
+}
+
+/** Skill 附属文件传输载体（parse-upload 响应与保存请求共用，内容 base64）。 */
+export interface SkillUploadFile {
+  filePath: string
+  fileSize: number
+  contentBase64: string
+}
+
+/** parse-upload 解析结果：SKILL.md 正文 + zip 内全部附属文件（.md 直传时 files 为空）。 */
+export interface SkillUploadParseResult {
+  content: string
+  files: SkillUploadFile[]
+}
+
 export interface SkillVO {
   id: number
   skillName: string
@@ -281,6 +300,8 @@ export interface SkillVO {
   createTime: string
   /** 上传目标：local(本地Workspace) / nacos / sftp，见 SkillStorageTarget。 */
   storageTargets: string[]
+  /** 附属文件清单（zip 上传的 references/scripts 等，不含内容）。 */
+  files: SkillFileVO[]
 }
 
 export interface SkillSaveRequest {
@@ -290,6 +311,8 @@ export interface SkillSaveRequest {
   description?: string | null
   status?: number | null
   storageTargets: string[]
+  /** 附属文件：null/undefined = 保持现有不变（编辑未重新上传）；数组（含空）= 全量替换。 */
+  files?: SkillUploadFile[] | null
 }
 
 // ---------- aiconfig.system-tool ----------
