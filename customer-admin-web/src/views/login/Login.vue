@@ -97,7 +97,7 @@ async function handleSubmit() {
 <template>
   <div class="login-page">
     <div class="bg-carousel">
-      <el-carousel type="fade" height="100%" :interval="5000" arrow="never" indicator-position="none">
+      <el-carousel type="fade" height="100%" :interval="1000" arrow="never" indicator-position="none">
         <el-carousel-item v-for="img in bgImages" :key="img">
           <div class="bg-slide" :style="{ backgroundImage: `url(${img})` }" />
         </el-carousel-item>
