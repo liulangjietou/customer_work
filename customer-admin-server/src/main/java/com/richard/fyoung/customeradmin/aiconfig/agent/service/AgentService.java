@@ -60,7 +60,7 @@ public class AgentService {
 
     private static final Pattern AGENT_CODE_PATTERN = Pattern.compile("^[a-z0-9-]+$");
     private static final Set<String> VALID_CAPABILITIES =
-        Set.of("chat", "vibecoding", "subagent", "plan", "tasklist", "skill-learning", "dynamic-subagent");
+        Set.of("chat", "vibecoding", "subagent", "plan", "tasklist", "skill-learning", "dynamic-subagent", "memory");
     private static final String CAPABILITY_DELIMITER = ",";
     /** 保存门禁的连通性测试等待上限（秒）：给 ModelConfigService 内部 10s 硬超时留余量。 */
     private static final long MODEL_TEST_GATE_TIMEOUT_SECONDS = 12;
@@ -255,7 +255,7 @@ public class AgentService {
         if (!CollectionUtils.isEmpty(request.capabilities())
             && !VALID_CAPABILITIES.containsAll(request.capabilities())) {
             throw new BizException(ResultCode.PARAM_INVALID,
-                "capabilities 仅支持 chat/vibecoding/subagent/plan/tasklist/skill-learning/dynamic-subagent");
+                "capabilities 仅支持 chat/vibecoding/subagent/plan/tasklist/skill-learning/dynamic-subagent/memory");
         }
         validateAdvancedParams(request);
         validateSubAgentIds(request, selfId);
@@ -444,7 +444,8 @@ public class AgentService {
         vo.setBackupModelNames(backupIds.stream().map(nameById::get).collect(Collectors.toList()));
     }
 
-    private AiAgent requireAgent(Long id) {
+    /** 智能体存在性校验（全链路唯一防御点，包内 {@link AgentMemoryService} 复用）。 */
+    AiAgent requireAgent(Long id) {
         AiAgent agent = agentMapper.selectById(id);
         if (agent == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "智能体不存在: " + id);

@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { AgentSaveRequest, AgentVO, PageQuery, PageResult } from '@/types/api'
+import type { AgentMemoryVO, AgentSaveRequest, AgentVO, PageQuery, PageResult } from '@/types/api'
 
 export function pageAgents(query: PageQuery) {
   return request<PageResult<AgentVO>>({ url: '/aiconfig/agent', method: 'get', params: query })
@@ -27,4 +27,12 @@ export function enableAgent(id: number) {
 
 export function disableAgent(id: number) {
   return request<void>({ url: `/aiconfig/agent/${id}/disable`, method: 'put' })
+}
+
+export function getAgentMemory(id: number) {
+  return request<AgentMemoryVO>({ url: `/aiconfig/agent/${id}/memory`, method: 'get' })
+}
+
+export function clearAgentMemory(id: number) {
+  return request<void>({ url: `/aiconfig/agent/${id}/memory`, method: 'delete' })
 }

@@ -27,7 +27,7 @@ class AdminAgentInstanceFactoryTest {
     /** 构造器纯字段赋值，路径解析只依赖常量，传 null 依赖即可单测 resolveSessionWorkspace 的防御逻辑。 */
     private AdminAgentInstanceFactory newFactoryForPathTest() {
         return new AdminAgentInstanceFactory(null, null, null, null, null, null, null, null, null, null,
-            null, null, null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -49,6 +49,8 @@ class AdminAgentInstanceFactoryTest {
         assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "subagent"), null));
         assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "skill-learning"), null));
         assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "dynamic-subagent"), null));
+        // 长期记忆挂在 HarnessAgent 上（MemoryConfig），仅勾 memory 也需要升级
+        assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "memory"), null));
     }
 
     @Test
