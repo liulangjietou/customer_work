@@ -1,5 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.skill.storage;
 
+import java.util.List;
+
 /**
  * Skill 内容发布 SPI：把 SKILL.md 正文发布到某个存储目标，供 Skill 保存/删除时调用。
  *
@@ -19,6 +21,16 @@ public interface SkillContentPublisher {
      * @param content   SKILL.md 正文
      */
     void publish(String skillCode, String content);
+
+    /**
+     * 发布该 skill 的附属文件（zip 里除 SKILL.md 外的 references/scripts 等）；失败抛异常，
+     * 由上层转业务异常并回滚事务。默认空实现——不适合承载任意文件的目标（如 Nacos 配置中心
+     * 面向文本配置）保持只发 SKILL.md 的行为即可。
+     * @param skillCode 技能编码
+     * @param files     附属文件列表（可能为空）
+     */
+    default void publishFiles(String skillCode, List<SkillFileContent> files) {
+    }
 
     /**
      * 移除指定 skill 在本目标上的产物（删除 / 取消勾选时调用）。尽力而为，失败由调用方按场景处理。

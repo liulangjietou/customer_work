@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.skill.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.annotation.SaMode;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillSaveRequest;
+import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillUploadParseResult;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillVO;
 import com.richard.fyoung.customeradmin.aiconfig.skill.service.SkillService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
@@ -71,10 +72,10 @@ public class SkillController {
         return Result.success();
     }
 
-    /** 解析上传的 .md/.zip 文件为 SKILL.md 正文，不落库——前端拿到内容回填表单，仍走 create/update 保存。 */
+    /** 解析上传的 .md/.zip 文件为技能包（SKILL.md 正文 + 附属文件），不落库——前端回填表单后仍走 create/update 保存。 */
     @SaCheckPermission(value = {"skill:add", "skill:edit"}, mode = SaMode.OR)
     @PostMapping("/parse-upload")
-    public Result<String> parseUpload(@RequestParam("file") MultipartFile file) {
+    public Result<SkillUploadParseResult> parseUpload(@RequestParam("file") MultipartFile file) {
         return Result.success(skillService.parseUploadContent(file));
     }
 }

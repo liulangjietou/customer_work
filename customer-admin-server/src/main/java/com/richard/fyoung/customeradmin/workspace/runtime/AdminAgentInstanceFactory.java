@@ -20,6 +20,8 @@ import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.FailoverModel;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.ModelCircuitBreakerRegistry;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
+import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillFile;
+import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillFileMapper;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiSystemTool;
@@ -60,12 +62,14 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +77,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * 动态智能体运行时工厂：按 {@code ai_agent} 任意一行现场组装 {@link Agent}
@@ -137,6 +142,7 @@ public class AdminAgentInstanceFactory {
     private final AiModelConfigMapper modelConfigMapper;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
+    private final AiSkillFileMapper skillFileMapper;
     private final AiAgentSystemToolMapper agentSystemToolMapper;
     private final AiSystemToolMapper systemToolMapper;
     private final ApplicationContext applicationContext;
@@ -161,7 +167,7 @@ public class AdminAgentInstanceFactory {
                                       AiAgentSkillMapper agentSkillMapper, AiAgentBackupModelMapper agentBackupModelMapper,
                                       AiAgentSubAgentMapper agentSubAgentMapper,
                                       AiModelConfigMapper modelConfigMapper,
-                                      AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
+                                      AiMcpMapper mcpMapper, AiSkillMapper skillMapper, AiSkillFileMapper skillFileMapper,
                                       AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
                                       ApplicationContext applicationContext,
                                       AdminModelFactory modelFactory, AesGcmCryptoUtil cryptoUtil,
@@ -179,6 +185,7 @@ public class AdminAgentInstanceFactory {
         this.modelConfigMapper = modelConfigMapper;
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
+        this.skillFileMapper = skillFileMapper;
         this.agentSystemToolMapper = agentSystemToolMapper;
         this.systemToolMapper = systemToolMapper;
         this.applicationContext = applicationContext;
@@ -725,7 +732,9 @@ public class AdminAgentInstanceFactory {
     }
 
     /**
-     * 读 {@code ai_agent_skill} 关联行，把 content（SKILL.md 正文）落盘后复用 FileSystemSkillRepository 加载。
+     * 读 {@code ai_agent_skill} 关联行，把完整技能包（SKILL.md 正文 + ai_skill_file 附属文件）落盘后
+     * 复用 FileSystemSkillRepository 加载——附属文件不落盘的话，SKILL.md 里引用的 references/scripts
+     * 在运行时不存在，技能功能不完整。落盘前先清空该 skill 目录，避免上一版残留文件混入。
      * {@code skillToolNames} 收集本次注册进来的工具名，同 {@link #buildToolkit} 的差集手法。
      */
     private SkillBox buildSkillBox(AiAgent agent, Toolkit toolkit, Set<String> skillToolNames) {
@@ -740,8 +749,16 @@ public class AdminAgentInstanceFactory {
             Files.createDirectories(skillDir);
             for (AiSkill skill : skillMapper.selectBatchIds(skillIds)) {
                 Path skillSubDir = skillDir.resolve(skill.getSkillCode());
+                deleteRecursively(skillSubDir);
                 Files.createDirectories(skillSubDir);
                 Files.writeString(skillSubDir.resolve("SKILL.md"), skill.getContent());
+                // 附属文件路径合法性在 SkillService 保存时已统一校验，此处直接落盘
+                for (AiSkillFile skillFile : skillFileMapper.selectList(
+                        new LambdaQueryWrapper<AiSkillFile>().eq(AiSkillFile::getSkillId, skill.getId()))) {
+                    Path target = skillSubDir.resolve(skillFile.getFilePath());
+                    Files.createDirectories(target.getParent());
+                    Files.write(target, skillFile.getContent());
+                }
             }
             List<AgentSkill> skills = new FileSystemSkillRepository(skillDir, false).getAllSkills();
             SkillBox skillBox = new SkillBox(toolkit);
@@ -758,6 +775,19 @@ public class AdminAgentInstanceFactory {
             log.error("[workspace] skill loading failed (skip skill wiring), code={}, agentCode={}",
                 "SKILL_LOAD_ERROR", agent.getAgentCode(), e);
             return null;
+        }
+    }
+
+    /** 递归删除目录（不存在则跳过），用于技能落盘前清理旧产物。 */
+    private void deleteRecursively(Path dir) throws IOException {
+        if (!Files.exists(dir)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(dir)) {
+            List<Path> ordered = paths.sorted(Comparator.reverseOrder()).collect(Collectors.toList());
+            for (Path p : ordered) {
+                Files.delete(p);
+            }
         }
     }
 

@@ -9,10 +9,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * 本地 workspace 存储：把 SKILL.md 写到 {base-dir}/{skillCode}/SKILL.md。
+ * 本地 workspace 存储：把 SKILL.md 写到 {base-dir}/{skillCode}/SKILL.md，
+ * 附属文件写到 {base-dir}/{skillCode}/{filePath}（自动建父目录）。
  *
  * <p>默认且始终启用的目标，无外部依赖；remove 递归删除该 skill 目录。</p>
  * @author owlzhangfq@gmail.com
@@ -43,6 +45,23 @@ public class LocalWorkspaceSkillPublisher implements SkillContentPublisher {
             log.info("local skill published, skillCode={}, path={}", skillCode, skillFile);
         } catch (IOException e) {
             throw new UncheckedIOException("write local SKILL.md failed: " + skillFile, e);
+        }
+    }
+
+    @Override
+    public void publishFiles(String skillCode, List<SkillFileContent> files) {
+        Path skillDir = baseDir.resolve(skillCode);
+        try {
+            for (SkillFileContent file : files) {
+                Path target = skillDir.resolve(file.filePath());
+                Files.createDirectories(target.getParent());
+                Files.write(target, file.content());
+            }
+            if (!files.isEmpty()) {
+                log.info("local skill files published, skillCode={}, count={}", skillCode, files.size());
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("write local skill files failed: " + skillDir, e);
         }
     }
 
