@@ -5,6 +5,7 @@ import com.richard.fyoung.customerchannel.access.ChannelMessagePipeline;
 import com.richard.fyoung.customerchannel.access.model.ChannelRobot;
 import com.richard.fyoung.customerchannel.access.spi.ImChannelConnector;
 import com.richard.fyoung.customerchannel.access.spi.ImChannelConnectorFactory;
+import com.richard.fyoung.customerchannel.access.support.WebClients;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /**
@@ -20,7 +21,7 @@ public class DingTalkStreamConnectorFactory implements ImChannelConnectorFactory
 
     public DingTalkStreamConnectorFactory(ChannelMessagePipeline pipeline) {
         this.pipeline = pipeline;
-        this.replyWebClient = WebClient.builder().build();
+        this.replyWebClient = WebClients.builder().build();
     }
 
     @Override

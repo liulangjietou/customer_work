@@ -2,6 +2,7 @@ package com.richard.fyoung.customerchannel.access;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.richard.fyoung.customerchannel.access.model.ChannelRobot;
+import com.richard.fyoung.customerchannel.access.support.WebClients;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -39,7 +40,7 @@ public class AdminOpenApiClient {
     private final WebClient webClient;
 
     public AdminOpenApiClient(String baseUrl, String token) {
-        this.webClient = WebClient.builder()
+        this.webClient = WebClients.builder()
             .baseUrl(baseUrl)
             .defaultHeader(ChannelAccessConstants.OPEN_API_TOKEN_HEADER, token == null ? "" : token)
             // SSE 单条 event 上限放宽，防止长回复被 buffer 上限截断
