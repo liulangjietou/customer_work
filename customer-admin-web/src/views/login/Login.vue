@@ -191,21 +191,13 @@ async function handleSubmit() {
   height: 100%;
 }
 
+/* 不做 Ken Burns 缩放动画：浏览器对背景层是先光栅化再按 transform 拉伸，慢速放大过程中
+   图片必然发虚；保持 1:1 的 cover 展示才是最清晰的状态（图片清晰度要求见管理页提示）。 */
 .bg-slide {
   width: 100%;
   height: 100%;
   background-size: cover;
   background-position: center;
-  animation: kenburns 8s ease-in-out infinite alternate;
-}
-
-@keyframes kenburns {
-  from {
-    transform: scale(1);
-  }
-  to {
-    transform: scale(1.12);
-  }
 }
 
 /* 深色渐变遮罩：保证登录卡片和页脚文字在任意风景图上都有足够对比度可读 */

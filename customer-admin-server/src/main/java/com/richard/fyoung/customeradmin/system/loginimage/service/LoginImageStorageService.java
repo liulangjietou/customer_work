@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,6 +36,13 @@ public class LoginImageStorageService {
     private static final long MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("png", "jpg", "jpeg", "webp");
 
+    /**
+     * 最低分辨率门槛：背景图以 cover 铺满整屏，低于主流视口（1280×720，高分屏还要再乘 DPR）
+     * 会被放大导致模糊，上传时直接 fast fail，比事后在登录页发虚好排查得多。
+     */
+    private static final int MIN_WIDTH = 1280;
+    private static final int MIN_HEIGHT = 720;
+
     /** @return 落盘后的可访问 URL（相对路径，前端拼自身 origin 即可直接展示）。 */
     public String store(MultipartFile file) {
         if (file == null || file.isEmpty()) {
@@ -46,6 +55,7 @@ public class LoginImageStorageService {
         if (!ALLOWED_EXTENSIONS.contains(extension)) {
             throw new BizException(ResultCode.PARAM_INVALID, "仅支持 png/jpg/jpeg/webp 格式图片");
         }
+        checkMinResolution(file);
 
         String filename = UUID.randomUUID() + "." + extension;
         try {
@@ -75,6 +85,28 @@ public class LoginImageStorageService {
             Files.deleteIfExists(Paths.get(IMAGE_ROOT).resolve(filename));
         } catch (IOException e) {
             log.error("delete login image file failed, code={}, url={}", "LOGIN-IMAGE-FILE-DELETE-FAIL", imageUrl, e);
+        }
+    }
+
+    /**
+     * 校验图片实际像素不低于 {@link #MIN_WIDTH}×{@link #MIN_HEIGHT}。JDK 自带 ImageIO
+     * 不认 webp（decode 返回 null），解不出来的按"无法校验"放行，不误杀合法 webp；
+     * 读流失败按无效图片 fast fail。
+     */
+    private void checkMinResolution(MultipartFile file) {
+        BufferedImage image;
+        try {
+            image = ImageIO.read(file.getInputStream());
+        } catch (IOException e) {
+            throw new BizException(ResultCode.PARAM_INVALID, "图片读取失败: " + e.getMessage());
+        }
+        if (image == null) {
+            return;
+        }
+        if (image.getWidth() < MIN_WIDTH || image.getHeight() < MIN_HEIGHT) {
+            throw new BizException(ResultCode.PARAM_INVALID,
+                "图片分辨率过低（" + image.getWidth() + "×" + image.getHeight() + "），"
+                    + "背景图会铺满整屏，低于 " + MIN_WIDTH + "×" + MIN_HEIGHT + " 会被拉伸模糊，请换高清图");
         }
     }
 

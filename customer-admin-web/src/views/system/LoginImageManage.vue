@@ -128,7 +128,10 @@ async function handleDelete(row: LoginCarouselImageVO) {
         </el-card>
       </div>
 
-      <div class="page-tip">支持 png/jpg/jpeg/webp，单张不超过 5MB，最多 10 张；轮播按序号顺序播放。</div>
+      <div class="page-tip">
+      支持 png/jpg/jpeg/webp，单张不超过 5MB，最多 10 张；轮播按序号顺序播放。
+      背景图会铺满整屏，建议上传不低于 1920×1080 的图片，分辨率过低会被拉伸放大导致模糊。
+    </div>
     </el-card>
   </div>
 </template>
