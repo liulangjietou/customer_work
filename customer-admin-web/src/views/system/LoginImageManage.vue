@@ -13,10 +13,40 @@ import {
 const loading = ref(false)
 const images = ref<LoginCarouselImageVO[]>([])
 
+/** 与后端 LoginImageStorageService 的最低分辨率门槛保持一致，改这里要同步改那边 */
+const MIN_WIDTH = 1280
+const MIN_HEIGHT = 720
+
+/** imageUrl -> "宽×高"，纯前端用 Image 对象读实际像素，不占后端接口 */
+const resolutions = ref<Record<string, { width: number; height: number }>>({})
+
+function isLowResolution(url: string) {
+  const size = resolutions.value[url]
+  return !!size && (size.width < MIN_WIDTH || size.height < MIN_HEIGHT)
+}
+
+/**
+ * 读取每张图的真实像素并缓存。校验门槛上线前存量的小图不会被拦，这里标出来方便识别替换；
+ * 单张读失败不影响其他图（不写入即不展示尺寸）。
+ */
+function loadResolutions(list: LoginCarouselImageVO[]) {
+  list.forEach((row) => {
+    const img = new Image()
+    img.onload = () => {
+      resolutions.value = {
+        ...resolutions.value,
+        [row.imageUrl]: { width: img.naturalWidth, height: img.naturalHeight },
+      }
+    }
+    img.src = row.imageUrl
+  })
+}
+
 async function loadImages() {
   loading.value = true
   try {
     images.value = await fetchLoginImages()
+    loadResolutions(images.value)
   } finally {
     loading.value = false
   }
@@ -100,6 +130,12 @@ async function handleDelete(row: LoginCarouselImageVO) {
           <div class="image-meta">
             <span class="image-name" :title="row.imageName">{{ index + 1 }}. {{ row.imageName }}</span>
             <el-tag v-if="!row.enabled" type="info" size="small">已禁用</el-tag>
+          </div>
+          <div v-if="resolutions[row.imageUrl]" class="image-resolution">
+            <span>{{ resolutions[row.imageUrl].width }} × {{ resolutions[row.imageUrl].height }}</span>
+            <el-tag v-if="isLowResolution(row.imageUrl)" type="danger" size="small">
+              分辨率偏低，登录页会拉伸模糊
+            </el-tag>
           </div>
           <div class="image-actions">
             <el-switch
@@ -188,6 +224,16 @@ async function handleDelete(row: LoginCarouselImageVO) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.image-resolution {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .image-actions {
