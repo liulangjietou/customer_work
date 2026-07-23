@@ -344,6 +344,13 @@ export interface AgentVO {
   compressKeepMsgs?: number | null
 }
 
+/** 智能体长期记忆查看结果：exists=false 表示 MEMORY.md 尚未生成（刚开启记忆能力或已清空）。 */
+export interface AgentMemoryVO {
+  exists: boolean
+  content: string
+  updateTime: string | null
+}
+
 export interface AgentSaveRequest {
   agentName: string
   agentCode: string

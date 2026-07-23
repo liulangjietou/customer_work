@@ -1,8 +1,10 @@
 package com.richard.fyoung.customeradmin.aiconfig.agent.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentMemoryVO;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentVO;
+import com.richard.fyoung.customeradmin.aiconfig.agent.service.AgentMemoryService;
 import com.richard.fyoung.customeradmin.aiconfig.agent.service.AgentService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
@@ -27,9 +29,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AgentController {
 
     private final AgentService agentService;
+    private final AgentMemoryService agentMemoryService;
 
-    public AgentController(AgentService agentService) {
+    public AgentController(AgentService agentService, AgentMemoryService agentMemoryService) {
         this.agentService = agentService;
+        this.agentMemoryService = agentMemoryService;
     }
 
     @SaCheckPermission("agent:view")
@@ -81,6 +85,20 @@ public class AgentController {
     @PutMapping("/{id}/disable")
     public Result<Void> disable(@PathVariable Long id) {
         agentService.updateStatus(id, 0);
+        return Result.success();
+    }
+
+    @SaCheckPermission("agent:view")
+    @GetMapping("/{id}/memory")
+    public Result<AgentMemoryVO> memory(@PathVariable Long id) {
+        return Result.success(agentMemoryService.getMemory(id));
+    }
+
+    @SaCheckPermission("agent:edit")
+    @OperationLog(operation = "清空智能体记忆", target = "ai_agent")
+    @DeleteMapping("/{id}/memory")
+    public Result<Void> clearMemory(@PathVariable Long id) {
+        agentMemoryService.clearMemory(id);
         return Result.success();
     }
 }

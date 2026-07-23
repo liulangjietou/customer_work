@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
-import { createAgent, deleteAgent, disableAgent, enableAgent, pageAgents, updateAgent } from '@/api/agent'
+import { clearAgentMemory, createAgent, deleteAgent, disableAgent, enableAgent, getAgentMemory, pageAgents, updateAgent } from '@/api/agent'
 import { pageModels, testModelConnectivity } from '@/api/model'
 import { pageMcps } from '@/api/mcp'
 import { pageSkills } from '@/api/skill'
@@ -32,6 +32,7 @@ const agentOptions = ref<AgentVO[]>([])
 
 // 能力编码：value 与后端 capabilities 字段一一对应，tip 为勾选提示
 const CAPABILITY_SUBAGENT = 'subagent'
+const CAPABILITY_MEMORY = 'memory'
 const CAPABILITY_OPTIONS: { value: string; label: string; tip?: string }[] = [
   { value: 'chat', label: 'chat（对话）' },
   { value: 'vibecoding', label: 'vibecoding（代码生成）' },
@@ -40,6 +41,7 @@ const CAPABILITY_OPTIONS: { value: string; label: string; tip?: string }[] = [
   { value: 'tasklist', label: '任务列表', tip: '跟踪和维护任务列表' },
   { value: 'skill-learning', label: '学习新技能', tip: '与用户互动学习并沉淀新技能' },
   { value: 'dynamic-subagent', label: '动态子Agent', tip: '运行时按任务临时创建子 Agent，无需预先配置' },
+  { value: CAPABILITY_MEMORY, label: '长期记忆', tip: '跨会话记住对话中的关键事实，自动沉淀与归并' },
 ]
 
 function capabilityLabel(code: string) {
@@ -251,6 +253,44 @@ async function handleDelete(row: AgentVO) {
   await menuStore.refreshMenu()
 }
 
+// ---------- 长期记忆查看/清空 ----------
+const memoryDialogVisible = ref(false)
+const memoryLoading = ref(false)
+const memoryAgent = ref<AgentVO | null>(null)
+const memoryExists = ref(false)
+const memoryContent = ref('')
+const memoryUpdateTime = ref<string | null>(null)
+
+async function openMemory(row: AgentVO) {
+  memoryAgent.value = row
+  memoryDialogVisible.value = true
+  memoryLoading.value = true
+  try {
+    const result = await getAgentMemory(row.id)
+    memoryExists.value = result.exists
+    memoryContent.value = result.content
+    memoryUpdateTime.value = result.updateTime
+  } finally {
+    memoryLoading.value = false
+  }
+}
+
+async function handleClearMemory() {
+  if (!memoryAgent.value) {
+    return
+  }
+  await ElMessageBox.confirm(
+    `确认清空智能体「${memoryAgent.value.agentName}」的全部长期记忆？清空后不可恢复`,
+    '提示',
+    { type: 'warning' },
+  )
+  await clearAgentMemory(memoryAgent.value.id)
+  ElMessage.success('记忆已清空')
+  memoryExists.value = false
+  memoryContent.value = ''
+  memoryUpdateTime.value = null
+}
+
 async function handleToggleStatus(row: AgentVO) {
   if (row.status === 1) {
     await disableAgent(row.id)
@@ -307,12 +347,21 @@ onMounted(() => {
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button v-permission="'agent:edit'" link type="primary" @click="handleToggleStatus(row)">
               {{ row.status === 1 ? '停用' : '启用' }}
             </el-button>
             <el-button v-permission="'agent:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button
+              v-if="row.capabilities?.includes(CAPABILITY_MEMORY)"
+              v-permission="'agent:view'"
+              link
+              type="primary"
+              @click="openMemory(row)"
+            >
+              记忆
+            </el-button>
             <el-button v-permission="'agent:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -474,6 +523,31 @@ onMounted(() => {
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="memoryDialogVisible"
+      :title="`长期记忆 - ${memoryAgent?.agentName ?? ''}`"
+      width="640px"
+    >
+      <div v-loading="memoryLoading">
+        <template v-if="memoryExists">
+          <div class="memory-meta">最近更新：{{ memoryUpdateTime ?? '-' }}</div>
+          <pre class="memory-content">{{ memoryContent }}</pre>
+        </template>
+        <el-empty v-else description="暂无记忆，与该智能体对话后会自动沉淀" :image-size="80" />
+      </div>
+      <template #footer>
+        <el-button
+          v-permission="'agent:edit'"
+          type="danger"
+          :disabled="!memoryExists"
+          @click="handleClearMemory"
+        >
+          清空记忆
+        </el-button>
+        <el-button @click="memoryDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <ChannelBindingDrawer v-model="channelBindingVisible" />
   </div>
 </template>
@@ -496,5 +570,24 @@ onMounted(() => {
   margin-top: 4px;
   font-size: 12px;
   color: #f56c6c;
+}
+
+.memory-meta {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.memory-content {
+  max-height: 420px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
 }
 </style>

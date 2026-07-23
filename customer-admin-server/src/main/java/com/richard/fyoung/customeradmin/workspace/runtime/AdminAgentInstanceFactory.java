@@ -29,6 +29,7 @@ import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -47,6 +48,7 @@ import io.agentscope.harness.agent.HarnessAgent;
 import io.agentscope.harness.agent.IsolationScope;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
+import io.agentscope.harness.agent.memory.MemoryConfig;
 import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
 import io.agentscope.harness.agent.sandbox.WorkspaceSpec;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
@@ -100,6 +102,7 @@ public class AdminAgentInstanceFactory {
     private static final String CAPABILITY_TASKLIST = "tasklist";
     private static final String CAPABILITY_SKILL_LEARNING = "skill-learning";
     private static final String CAPABILITY_DYNAMIC_SUBAGENT = "dynamic-subagent";
+    private static final String CAPABILITY_MEMORY = "memory";
     private static final String CAPABILITY_DELIMITER = ",";
     private static final int STATUS_ENABLED = 1;
     private static final int DEFAULT_MAX_ITERS = 10;
@@ -146,6 +149,7 @@ public class AdminAgentInstanceFactory {
     private final SandboxGuardMiddleware sandboxGuardMiddleware;
     private final PlanConfirmationMiddleware planConfirmationMiddleware;
     private final ModelCircuitBreakerRegistry circuitBreakerRegistry;
+    private final AgentMemorySyncService memorySyncService;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -165,7 +169,8 @@ public class AdminAgentInstanceFactory {
                                       AdminMcpFactory mcpFactory, AdminSandboxProperties sandboxProperties,
                                       SandboxGuardMiddleware sandboxGuardMiddleware,
                                       PlanConfirmationMiddleware planConfirmationMiddleware,
-                                      ModelCircuitBreakerRegistry circuitBreakerRegistry) {
+                                      ModelCircuitBreakerRegistry circuitBreakerRegistry,
+                                      AgentMemorySyncService memorySyncService) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -186,6 +191,7 @@ public class AdminAgentInstanceFactory {
         this.sandboxGuardMiddleware = sandboxGuardMiddleware;
         this.planConfirmationMiddleware = planConfirmationMiddleware;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
+        this.memorySyncService = memorySyncService;
     }
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
@@ -230,7 +236,7 @@ public class AdminAgentInstanceFactory {
 
     /**
      * 是否需要用 {@link HarnessAgent.Builder#fromAgent} 把内层 ReActAgent 升级为 HarnessAgent：
-     * capabilities 含 vibecoding/plan/subagent/skill-learning/dynamic-subagent 任一，或配置了上下文压缩触发阈值。
+     * capabilities 含 vibecoding/plan/subagent/skill-learning/dynamic-subagent/memory 任一，或配置了上下文压缩触发阈值。
      * tasklist 是 {@link ReActAgent.Builder#enableTaskList(boolean)} 的内层能力，单独勾选不触发升级。
      * 抽成纯函数便于单测（不依赖任何注入的协作对象）。
      */
@@ -240,6 +246,7 @@ public class AdminAgentInstanceFactory {
             || capabilities.contains(CAPABILITY_SUBAGENT)
             || capabilities.contains(CAPABILITY_SKILL_LEARNING)
             || capabilities.contains(CAPABILITY_DYNAMIC_SUBAGENT)
+            || capabilities.contains(CAPABILITY_MEMORY)
             || compressTriggerMsgs != null;
     }
 
@@ -353,6 +360,15 @@ public class AdminAgentInstanceFactory {
             // 互动学习新技能（Harness 半边）：技能管理工具 + SkillCurator 自动沉淀成功模式
             harnessBuilder.enableSkillManageTool(true)
                 .enableSkillCurator(SkillCuratorConfig.defaults());
+        }
+        if (capabilities.contains(CAPABILITY_MEMORY)) {
+            // 跨会话长期记忆（分层记忆）：对话事实自动 flush 到 workspace/MEMORY.md 并定期 consolidation，
+            // 按 agentCode 隔离（一个智能体一份记忆，全部会话共享）。workspace 文件只是框架的工作副本，
+            // 权威存储在 AgentMemoryStore（默认落库）：构建时水合到 workspace，对话轮次结束后由
+            // ChatService 回写（见 AgentMemorySyncService）
+            memorySyncService.hydrate(agentCode, workspace);
+            harnessBuilder.memory(MemoryConfig.builder().model(model).build());
+            log.info("[workspace] layered memory enabled: agentCode={}", agentCode);
         }
         if (agent.getCompressTriggerMsgs() != null) {
             int keepMsgs = agent.getCompressKeepMsgs() != null

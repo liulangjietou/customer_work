@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.workspace.chat.service;
 
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
@@ -54,6 +55,7 @@ class ChatServiceTest {
     private AgentInstanceCache agentInstanceCache;
     private AdminAgentInstanceFactory agentInstanceFactory;
     private ChatHistoryCache historyCache;
+    private AgentMemorySyncService memorySyncService;
     private ChatService chatService;
     private ReActAgent agent;
 
@@ -62,7 +64,8 @@ class ChatServiceTest {
         agentInstanceCache = mock(AgentInstanceCache.class);
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         historyCache = mock(ChatHistoryCache.class);
-        chatService = new ChatService(agentInstanceCache, agentInstanceFactory, historyCache);
+        memorySyncService = mock(AgentMemorySyncService.class);
+        chatService = new ChatService(agentInstanceCache, agentInstanceFactory, historyCache, memorySyncService);
 
         agent = mock(ReActAgent.class);
         when(agentInstanceCache.getOrBuild("coder")).thenReturn(agent);

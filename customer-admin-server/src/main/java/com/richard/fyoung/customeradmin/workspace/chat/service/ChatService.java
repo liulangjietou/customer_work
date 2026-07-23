@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.workspace.chat.service;
 
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
@@ -62,12 +63,14 @@ public class ChatService {
     private final AgentInstanceCache agentInstanceCache;
     private final AdminAgentInstanceFactory agentInstanceFactory;
     private final ChatHistoryCache historyCache;
+    private final AgentMemorySyncService memorySyncService;
 
     public ChatService(AgentInstanceCache agentInstanceCache, AdminAgentInstanceFactory agentInstanceFactory,
-                        ChatHistoryCache historyCache) {
+                        ChatHistoryCache historyCache, AgentMemorySyncService memorySyncService) {
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
         this.historyCache = historyCache;
+        this.memorySyncService = memorySyncService;
     }
 
     /**
@@ -163,7 +166,13 @@ public class ChatService {
                     new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"),
                     new ChatStreamChunk(ChatNodeKind.ANSWER, FALLBACK_REPLY));
             })
-            .doOnComplete(() -> historyCache.evict(agentCode, sessionId))
+            .doOnComplete(() -> {
+                historyCache.evict(agentCode, sessionId);
+                // 长期记忆回写：框架的记忆 flush 只落 workspace/MEMORY.md 工作副本，这里把变更同步回
+                // 权威存储（默认库表）。非记忆智能体没有 MEMORY.md，方法内直接短路，无额外开销；
+                // 同步失败只记日志不打断流（见 AgentMemorySyncService 的兜底约定）
+                memorySyncService.persistIfChanged(agentCode, agentInstanceFactory.resolveWorkspace(agentCode));
+            })
             .doFinally(signal -> usageTotalObserver.accept(totalUsage(usageByMessage)));
     }
 
