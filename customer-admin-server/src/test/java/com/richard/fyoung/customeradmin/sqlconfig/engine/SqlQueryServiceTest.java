@@ -159,6 +159,35 @@ class SqlQueryServiceTest {
     }
 
     @Test
+    void meta_shouldResolveDefaultByConfiguredDateFormat_andExposeDateFormat() {
+        SqlDefine define = new SqlDefine();
+        define.setId(1L);
+        define.setDefineKey("user_list");
+        define.setEnabled(1);
+        when(defineMapper.selectOne(any())).thenReturn(define);
+
+        SqlDefineParam startDate = param("startDate", "DATETIME", false, "${now-7d}", false, false, 1);
+        startDate.setDateFormat("yyyy-MM-dd");
+        when(paramMapper.selectList(any())).thenReturn(List.of(startDate));
+
+        SqlQueryMetaVO meta = service.meta("user_list");
+
+        assertEquals("yyyy-MM-dd", meta.getParams().get(0).getDateFormat());
+        // 默认值表达式按参数配置格式输出（10 位日期），前端日期控件才能按同格式回显
+        assertEquals(10, meta.getParams().get(0).getDefaultValue().length());
+    }
+
+    @Test
+    void bindParams_shouldResolveDefaultExpressionByDateFormat() {
+        SqlDefineParam startDate = param("startDate", "DATETIME", false, "${now-7d}", false, false, 1);
+        startDate.setDateFormat("yyyy-MM-dd");
+
+        MapSqlParameterSource source = service.bindParams(List.of(startDate), Map.of(), false);
+
+        assertEquals(10, String.valueOf(source.getValue("startDate")).length());
+    }
+
+    @Test
     void executeAdhoc_shouldRejectNonReadOnly_beforeTouchingDatasource() {
         // 非只读 SQL 必须在建连接前就被 SqlValidator 拦下，绝不触达数据库
         BizException ex = assertThrows(BizException.class,

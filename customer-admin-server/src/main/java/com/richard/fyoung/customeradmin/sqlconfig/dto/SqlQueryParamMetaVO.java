@@ -14,6 +14,8 @@ public class SqlQueryParamMetaVO {
     private String paramName;
     private String paramDesc;
     private String paramType;
+    /** 日期格式（仅 DATETIME 类型生效，空表示默认 yyyy-MM-dd HH:mm:ss），驱动前端日期控件粒度与提交格式。 */
+    private String dateFormat;
     private Boolean required;
     private String defaultValue;
     private Map<String, String> dropDown;

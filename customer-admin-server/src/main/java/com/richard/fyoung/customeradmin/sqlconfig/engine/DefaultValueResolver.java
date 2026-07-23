@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 /**
  * 参数默认值表达式解析：
  * <ul>
- *   <li>{@code ${now}} → 当前时间 {@code yyyy-MM-dd HH:mm:ss}</li>
+ *   <li>{@code ${now}} → 当前时间（默认 {@code yyyy-MM-dd HH:mm:ss}，可传自定义日期格式）</li>
  *   <li>{@code ${now-14d}} / {@code ${now+2h}} / {@code ${now-30m}} → 当前时间按 d/h/m 加减</li>
  *   <li>非 {@code ${...}} 表达式 → 原样返回（含 null）</li>
  * </ul>
@@ -25,12 +25,20 @@ public final class DefaultValueResolver {
     }
 
     public static String resolve(String expression) {
+        return resolve(expression, null);
+    }
+
+    /**
+     * 按指定日期格式解析时间表达式；{@code dateFormat} 为空时用默认 yyyy-MM-dd HH:mm:ss。
+     * 格式合法性在参数保存时已校验（fast fail 单点防御），此处不再兜底。
+     */
+    public static String resolve(String expression, String dateFormat) {
         if (expression == null) {
             return null;
         }
         String trimmed = expression.trim();
         if (NOW_PLAIN.matcher(trimmed).matches()) {
-            return LocalDateTime.now().format(FORMATTER);
+            return LocalDateTime.now().format(formatter(dateFormat));
         }
         Matcher matcher = NOW_EXPR.matcher(trimmed);
         if (matcher.matches()) {
@@ -43,8 +51,13 @@ public final class DefaultValueResolver {
                 case "m" -> base.plusMinutes(amount);
                 default -> base;
             };
-            return result.format(FORMATTER);
+            return result.format(formatter(dateFormat));
         }
         return expression;
+    }
+
+    private static DateTimeFormatter formatter(String dateFormat) {
+        return dateFormat == null || dateFormat.trim().isEmpty()
+            ? FORMATTER : DateTimeFormatter.ofPattern(dateFormat);
     }
 }

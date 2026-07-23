@@ -13,6 +13,8 @@ public class SqlDefineParamVO {
     private String paramName;
     private String paramDesc;
     private String paramType;
+    /** 日期格式（仅 DATETIME 类型生效，空表示默认 yyyy-MM-dd HH:mm:ss）。 */
+    private String dateFormat;
     private Boolean required;
     private String defaultValue;
     private String dropDown;

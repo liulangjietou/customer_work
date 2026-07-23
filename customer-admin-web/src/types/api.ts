@@ -812,6 +812,8 @@ export interface SqlDefineParamVO {
   paramName: string
   paramDesc: string | null
   paramType: SqlParamType
+  /** 日期格式（仅 DATETIME 类型生效，如 yyyy-MM-dd HH:mm:ss / yyyy-MM-dd），空表示默认 yyyy-MM-dd HH:mm:ss。 */
+  dateFormat: string | null
   required: boolean
   defaultValue: string | null
   /** 下拉选项，后端存 JSON 字符串（如 {"1":"启用","0":"禁用"}），可空表示不是下拉参数。 */
@@ -825,6 +827,8 @@ export interface SqlDefineParamSaveRequest {
   paramName: string
   paramDesc?: string | null
   paramType: SqlParamType
+  /** 日期格式，仅 paramType 为 DATETIME 时可传（后端校验）。 */
+  dateFormat?: string | null
   required?: boolean | null
   defaultValue?: string | null
   dropDown?: string | null
@@ -854,6 +858,8 @@ export interface SqlQueryMetaParam {
   paramName: string
   paramDesc: string | null
   paramType: SqlParamType
+  /** 日期格式（仅 DATETIME 生效），驱动日期控件粒度与提交格式；空默认 yyyy-MM-dd HH:mm:ss。 */
+  dateFormat: string | null
   required: boolean
   /** 已解析为实际值的字符串（如 ${now-14d} 表达式已在后端算成具体日期），前端直接预填。 */
   defaultValue: string | null
