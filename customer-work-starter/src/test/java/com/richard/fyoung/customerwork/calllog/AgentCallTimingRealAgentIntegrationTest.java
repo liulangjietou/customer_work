@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -173,6 +174,18 @@ class AgentCallTimingRealAgentIntegrationTest {
             .filter(s -> s.kind() == AgentCallKind.TOOL).findFirst().orElseThrow().name()),
             "TOOL 分段名取工具名");
         assertTrue(record.success(), "整次调用成功");
+        // ③ token：stub Model 每次调用返回 ChatUsage(1,1)，两次模型调用 → 请求级 input=2/output=2/total=4，
+        //    每个 MODEL 段各 input=1/output=1；工具段无 token
+        record.segments().stream().filter(s -> s.kind() == AgentCallKind.MODEL).forEach(s -> {
+            assertEquals(1L, s.inputTokens(), "MODEL 段输入 token 取自 stub usage");
+            assertEquals(1L, s.outputTokens(), "MODEL 段输出 token 取自 stub usage");
+        });
+        assertNull(record.segments().stream().filter(s -> s.kind() == AgentCallKind.TOOL)
+            .findFirst().orElseThrow().inputTokens(), "工具段无 token");
+        long modelSegCount = record.segments().stream().filter(s -> s.kind() == AgentCallKind.MODEL).count();
+        assertEquals(Long.valueOf(modelSegCount), record.inputTokens(), "请求级输入 token = 各 MODEL 段之和");
+        assertEquals(Long.valueOf(modelSegCount), record.outputTokens(), "请求级输出 token = 各 MODEL 段之和");
+        assertEquals(Long.valueOf(modelSegCount * 2), record.totalTokens(), "请求级总 token");
     }
 
     /**

@@ -18,4 +18,6 @@ public class AgentCallSummaryDO {
     private BigDecimal avgToolMs;
     private BigDecimal avgMcpMs;
     private BigDecimal avgSkillMs;
+    private Long totalTokens;
+    private BigDecimal avgTotalTokens;
 }

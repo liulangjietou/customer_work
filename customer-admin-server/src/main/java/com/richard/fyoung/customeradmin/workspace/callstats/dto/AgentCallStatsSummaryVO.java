@@ -16,4 +16,8 @@ public class AgentCallStatsSummaryVO {
     private Double avgToolMs;
     private Double avgMcpMs;
     private Double avgSkillMs;
+    /** 总 token 消耗（符合条件记录 total_tokens 求和）。 */
+    private Long totalTokens;
+    /** 平均每次 token 消耗。 */
+    private Double avgTotalTokens;
 }

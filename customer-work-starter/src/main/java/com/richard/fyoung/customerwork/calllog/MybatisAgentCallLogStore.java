@@ -114,7 +114,9 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
                 toDouble(do1.getAvgModelMs()),
                 toDouble(do1.getAvgToolMs()),
                 toDouble(do1.getAvgMcpMs()),
-                toDouble(do1.getAvgSkillMs()));
+                toDouble(do1.getAvgSkillMs()),
+                do1.getTotalTokens() == null ? 0L : do1.getTotalTokens(),
+                toDouble(do1.getAvgTotalTokens()));
         } catch (Exception e) {
             log.error("agent call log summary failed, code={}", "CALLLOG-SUMMARY-FAIL", e);
             return AgentCallLogSummary.empty();
@@ -126,7 +128,8 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         try {
             return callLogMapper.trend(toParam(query), granularity.mysqlFormat()).stream()
                 .map(d -> new AgentCallTrendPoint(d.getBucket(),
-                    d.getCnt() == null ? 0L : d.getCnt(), toDouble(d.getAvgDurationMs())))
+                    d.getCnt() == null ? 0L : d.getCnt(), toDouble(d.getAvgDurationMs()),
+                    d.getTotalTokens() == null ? 0L : d.getTotalTokens()))
                 .collect(Collectors.toList());
         } catch (Exception e) {
             log.error("agent call log trend failed, code={}", "CALLLOG-TREND-FAIL", e);
@@ -166,6 +169,9 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         d.setMcpMs(r.mcpMs());
         d.setSkillMs(r.skillMs());
         d.setSegmentCount(r.segmentCount());
+        d.setInputTokens(r.inputTokens());
+        d.setOutputTokens(r.outputTokens());
+        d.setTotalTokens(r.totalTokens());
         d.setSuccess(r.success());
         d.setErrorMsg(r.errorMsg());
         return d;
@@ -179,6 +185,8 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         d.setName(s.name());
         d.setStartTime(s.startTimeMs());
         d.setDurationMs(s.durationMs());
+        d.setInputTokens(s.inputTokens());
+        d.setOutputTokens(s.outputTokens());
         d.setSuccess(s.success());
         d.setErrorMsg(s.errorMsg());
         return d;
@@ -199,6 +207,7 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
             d.getMcpMs() == null ? 0L : d.getMcpMs(),
             d.getSkillMs() == null ? 0L : d.getSkillMs(),
             d.getSegmentCount() == null ? 0 : d.getSegmentCount(),
+            d.getInputTokens(), d.getOutputTokens(), d.getTotalTokens(),
             d.getSuccess() != null && d.getSuccess(), d.getErrorMsg(), List.of());
     }
 
@@ -210,7 +219,8 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
             d.getStartTime() == null ? 0L : d.getStartTime(),
             d.getDurationMs() == null ? 0L : d.getDurationMs(),
             d.getSuccess() != null && d.getSuccess(),
-            d.getErrorMsg());
+            d.getErrorMsg(),
+            d.getInputTokens(), d.getOutputTokens());
     }
 
     private double toDouble(BigDecimal value) {

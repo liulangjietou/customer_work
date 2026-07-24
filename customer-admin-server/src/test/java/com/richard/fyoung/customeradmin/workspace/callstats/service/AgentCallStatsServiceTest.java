@@ -97,6 +97,9 @@ class AgentCallStatsServiceTest {
         d.setToolMs(200L);
         d.setMcpMs(30L);
         d.setSkillMs(4L);
+        d.setInputTokens(800L);
+        d.setOutputTokens(200L);
+        d.setTotalTokens(1000L);
 
         when(adminExtMapper.countBy(any())).thenReturn(1L);
         when(adminExtMapper.findPage(any())).thenReturn(List.of(d));
@@ -113,6 +116,9 @@ class AgentCallStatsServiceTest {
         assertEquals(expectFormat(start), vo.getRows().get(0).getStartTime());
         assertEquals(expectFormat(end), vo.getRows().get(0).getEndTime());
         assertEquals(1000L, vo.getRows().get(0).getModelMs());
+        assertEquals(800L, vo.getRows().get(0).getInputTokens(), "行透出输入 token");
+        assertEquals(200L, vo.getRows().get(0).getOutputTokens(), "行透出输出 token");
+        assertEquals(1000L, vo.getRows().get(0).getTotalTokens(), "行透出总 token");
 
         // 分页偏移：pageNum=2, pageSize=10 → offset=10, limit=10
         ArgumentCaptor<AgentCallStatsQueryParam> captor = ArgumentCaptor.forClass(AgentCallStatsQueryParam.class);
@@ -144,15 +150,23 @@ class AgentCallStatsServiceTest {
         seg.setName("qwen");
         seg.setStartTime(1_700_000_000_000L);
         seg.setDurationMs(800L);
+        seg.setInputTokens(640L);
+        seg.setOutputTokens(160L);
         seg.setSuccess(true);
         when(adminSegmentMapper.findByCallLogId(5L)).thenReturn(List.of(seg));
+        d.setInputTokens(640L);
+        d.setOutputTokens(160L);
+        d.setTotalTokens(800L);
 
         AgentCallStatsDetailVO vo = service.detail(5L, "ADMIN");
 
         assertEquals(250, vo.getAnswer().length(), "详情回答应为全文，不截断");
+        assertEquals(800L, vo.getTotalTokens(), "详情头部透出总 token");
         assertEquals(1, vo.getSegments().size());
         assertEquals("MODEL", vo.getSegments().get(0).getKind());
         assertEquals(800L, vo.getSegments().get(0).getDurationMs());
+        assertEquals(640L, vo.getSegments().get(0).getInputTokens(), "MODEL 段透出输入 token");
+        assertEquals(160L, vo.getSegments().get(0).getOutputTokens(), "MODEL 段透出输出 token");
     }
 
     @Test
@@ -183,6 +197,8 @@ class AgentCallStatsServiceTest {
         d.setAvgToolMs(new BigDecimal("150"));
         d.setAvgMcpMs(new BigDecimal("40"));
         d.setAvgSkillMs(new BigDecimal("10"));
+        d.setTotalTokens(3000L);
+        d.setAvgTotalTokens(new BigDecimal("1000"));
         when(adminExtMapper.summary(any())).thenReturn(d);
 
         AgentCallStatsSummaryVO vo = service.summary(new AgentCallStatsQuery());
@@ -190,6 +206,8 @@ class AgentCallStatsServiceTest {
         assertEquals(1200.5d, vo.getAvgDurationMs());
         assertEquals(3000L, vo.getMaxDurationMs());
         assertEquals(1000d, vo.getAvgModelMs());
+        assertEquals(3000L, vo.getTotalTokens(), "汇总总 token");
+        assertEquals(1000d, vo.getAvgTotalTokens(), "汇总平均 token");
     }
 
     // ===== 趋势 =====
@@ -204,6 +222,7 @@ class AgentCallStatsServiceTest {
         row.setAvgToolMs(new BigDecimal("80"));
         row.setAvgMcpMs(new BigDecimal("15"));
         row.setAvgSkillMs(new BigDecimal("5"));
+        row.setTotalTokens(2400L);
         when(adminExtMapper.trend(any(), eq("%Y-%m-%d %H"))).thenReturn(List.of(row));
 
         AgentCallStatsQuery query = new AgentCallStatsQuery();
@@ -214,6 +233,7 @@ class AgentCallStatsServiceTest {
         assertEquals("2026-07-24 10", vos.get(0).getBucket());
         assertEquals(2L, vos.get(0).getCount());
         assertEquals(400d, vos.get(0).getAvgModelMs());
+        assertEquals(2400L, vos.get(0).getTotalTokens(), "趋势桶 token 合计");
         verify(adminExtMapper).trend(any(), eq("%Y-%m-%d %H"));
     }
 

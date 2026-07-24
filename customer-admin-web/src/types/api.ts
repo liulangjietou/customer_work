@@ -232,6 +232,10 @@ export interface AgentCallStatsRow {
   toolMs: number
   mcpMs: number
   skillMs: number
+  /** 请求级 token 消耗（缺失为 null）。 */
+  inputTokens: number | null
+  outputTokens: number | null
+  totalTokens: number | null
 }
 
 // 契约固定 { total, rows }，与通用 PageResult 的 pageNum/pageSize/list 命名不同（同 MpPageResult
@@ -248,6 +252,9 @@ export interface AgentCallStatsSegment {
   name: string
   startTime: string
   durationMs: number
+  /** token 消耗（仅 MODEL 段有值，缺失为 null）。 */
+  inputTokens: number | null
+  outputTokens: number | null
   success: boolean
   errorMsg: string | null
 }
@@ -267,6 +274,9 @@ export interface AgentCallStatsSummary {
   avgToolMs: number
   avgMcpMs: number
   avgSkillMs: number
+  /** 总 token 消耗 / 平均每次 token 消耗。 */
+  totalTokens: number
+  avgTotalTokens: number
 }
 
 /** 趋势图单个时间桶。 */
@@ -278,6 +288,8 @@ export interface AgentCallStatsTrendPoint {
   avgToolMs: number
   avgMcpMs: number
   avgSkillMs: number
+  /** 该桶内 token 消耗合计。 */
+  totalTokens: number
 }
 
 // ---------- aiconfig.model ----------

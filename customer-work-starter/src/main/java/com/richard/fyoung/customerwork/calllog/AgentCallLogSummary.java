@@ -10,14 +10,16 @@ package com.richard.fyoung.customerwork.calllog;
  * @param avgToolMs     平均 TOOL 段耗时（毫秒）
  * @param avgMcpMs      平均 MCP 段耗时（毫秒）
  * @param avgSkillMs    平均 SKILL 段耗时（毫秒）
+ * @param totalTokens   总 token 消耗（符合条件的记录 total_tokens 求和）
+ * @param avgTotalTokens 平均每次 token 消耗
  * @author owlzhangfq@gmail.com
  */
 public record AgentCallLogSummary(long totalCount, double avgDurationMs, long maxDurationMs,
                                   double avgModelMs, double avgToolMs, double avgMcpMs,
-                                  double avgSkillMs) {
+                                  double avgSkillMs, long totalTokens, double avgTotalTokens) {
 
     /** 空结果（无数据时返回，避免 null）。 */
     public static AgentCallLogSummary empty() {
-        return new AgentCallLogSummary(0L, 0d, 0L, 0d, 0d, 0d, 0d);
+        return new AgentCallLogSummary(0L, 0d, 0L, 0d, 0d, 0d, 0d, 0L, 0d);
     }
 }

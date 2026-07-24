@@ -37,6 +37,9 @@ public class AgentCallLogDO {
     private Long mcpMs;
     private Long skillMs;
     private Integer segmentCount;
+    private Long inputTokens;
+    private Long outputTokens;
+    private Long totalTokens;
     private Boolean success;
     private String errorMsg;
 }

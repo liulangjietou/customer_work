@@ -29,5 +29,9 @@ public class AgentCallStatsDetailVO {
     private Long toolMs;
     private Long mcpMs;
     private Long skillMs;
+    /** 请求级 token 消耗（缺失为 null）。 */
+    private Long inputTokens;
+    private Long outputTokens;
+    private Long totalTokens;
     private List<AgentCallSegmentVO> segments;
 }

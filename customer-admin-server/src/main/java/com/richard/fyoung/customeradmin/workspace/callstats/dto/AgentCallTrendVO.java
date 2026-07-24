@@ -17,4 +17,6 @@ public class AgentCallTrendVO {
     private Double avgToolMs;
     private Double avgMcpMs;
     private Double avgSkillMs;
+    /** 该桶内 token 消耗合计。 */
+    private Long totalTokens;
 }

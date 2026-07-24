@@ -7,8 +7,10 @@ import io.agentscope.core.agent.AgentBase;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
+import io.agentscope.core.event.ModelCallEndEvent;
 import io.agentscope.core.event.ToolResultEndEvent;
 import io.agentscope.core.message.Msg;
+import io.agentscope.core.model.ChatUsage;
 import io.agentscope.core.message.ToolResultState;
 import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.middleware.ActingInput;
@@ -134,7 +136,16 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         }
         String modelName = input.model() != null && input.model().getModelName() != null
             ? input.model().getModelName() : UNKNOWN;
-        return timeSegment(next.apply(input), collector, AgentCallKind.MODEL, modelName, null);
+        // token 采集：模型调用结束时框架回放一个带 ChatUsage 的 ModelCallEndEvent（与 admin 审计模块
+        // 的 usage 同源），流内捕获后挂到本 MODEL 分段；usage 缺失（如离线/未上报）时保持 null
+        AtomicReference<ChatUsage> usageRef = new AtomicReference<>(null);
+        Flux<AgentEvent> upstream = next.apply(input)
+            .doOnNext(event -> {
+                if (event instanceof ModelCallEndEvent mce && mce.getUsage() != null) {
+                    usageRef.set(mce.getUsage());
+                }
+            });
+        return timeSegment(upstream, collector, AgentCallKind.MODEL, modelName, null, usageRef);
     }
 
     @Override
@@ -157,16 +168,19 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
                     lastState.set(tre.getState());
                 }
             });
-        return timeSegment(upstream, collector, kind, toolName, lastState);
+        // 工具段无 token 概念，usageRef 传 null
+        return timeSegment(upstream, collector, kind, toolName, lastState, null);
     }
 
     /**
      * 通用分段计时：doOnSubscribe 记开始，三态终止（complete/error/cancel）各结算一次。
      * {@code stateRef} 非空时（onActing）complete 分支据 {@link ToolResultState} 判成败，否则视为成功。
+     * {@code usageRef} 非空时（onModelCall）结算时读取 token 挂到该分段，工具段传 null。
      */
     private Flux<AgentEvent> timeSegment(Flux<AgentEvent> upstream, AgentCallCollector collector,
                                          AgentCallKind kind, String name,
-                                         AtomicReference<ToolResultState> stateRef) {
+                                         AtomicReference<ToolResultState> stateRef,
+                                         AtomicReference<ChatUsage> usageRef) {
         long[] startMs = new long[1];
         long[] startNano = new long[1];
         AtomicBoolean ended = new AtomicBoolean(false);
@@ -179,17 +193,17 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
                 if (ended.compareAndSet(false, true)) {
                     boolean success = isSuccess(stateRef);
                     String err = success ? null : "tool result state=" + (stateRef == null ? null : stateRef.get());
-                    addSegment(collector, kind, name, startMs[0], startNano[0], success, err);
+                    addSegment(collector, kind, name, startMs[0], startNano[0], success, err, usageRef);
                 }
             })
             .doOnError(e -> {
                 if (ended.compareAndSet(false, true)) {
-                    addSegment(collector, kind, name, startMs[0], startNano[0], false, safeMsg(e));
+                    addSegment(collector, kind, name, startMs[0], startNano[0], false, safeMsg(e), usageRef);
                 }
             })
             .doOnCancel(() -> {
                 if (ended.compareAndSet(false, true)) {
-                    addSegment(collector, kind, name, startMs[0], startNano[0], false, CANCELLED);
+                    addSegment(collector, kind, name, startMs[0], startNano[0], false, CANCELLED, usageRef);
                 }
             });
     }
@@ -203,11 +217,19 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         return state == null || state == ToolResultState.SUCCESS || state == ToolResultState.RUNNING;
     }
 
-    /** 追加分段（异常安全：采集失败不影响主链路）。 */
+    /** 追加分段（异常安全：采集失败不影响主链路）。{@code usageRef} 携带 MODEL 段 token，工具段/缺失为 null。 */
     private void addSegment(AgentCallCollector collector, AgentCallKind kind, String name,
-                            long startMs, long startNano, boolean success, String errorMsg) {
+                            long startMs, long startNano, boolean success, String errorMsg,
+                            AtomicReference<ChatUsage> usageRef) {
+        Long inputTokens = null;
+        Long outputTokens = null;
+        ChatUsage usage = usageRef == null ? null : usageRef.get();
+        if (usage != null) {
+            inputTokens = (long) usage.getInputTokens();
+            outputTokens = (long) usage.getOutputTokens();
+        }
         try {
-            collector.addSegment(kind, name, startMs, startNano, success, errorMsg);
+            collector.addSegment(kind, name, startMs, startNano, success, errorMsg, inputTokens, outputTokens);
         } catch (Exception e) {
             log.error("agent call segment collect failed, code={}, kind={}, name={}",
                 "CALLLOG-SEGMENT-FAIL", kind, name, e);

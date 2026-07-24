@@ -33,12 +33,14 @@ public class AgentCallCollector {
      * @param segStartNano 分段开始的 {@code System.nanoTime()}（用于高精度算耗时）
      * @param success      是否成功
      * @param errorMsg     失败原因
+     * @param inputTokens  输入 token（仅 MODEL 段有值，缺失传 null）
+     * @param outputTokens 输出 token（仅 MODEL 段有值，缺失传 null）
      */
     public void addSegment(AgentCallKind kind, String name, long segStartMs, long segStartNano,
-                           boolean success, String errorMsg) {
+                           boolean success, String errorMsg, Long inputTokens, Long outputTokens) {
         long durationMs = Math.max(0L, (System.nanoTime() - segStartNano) / 1_000_000L);
         segments.add(new AgentCallSegment(seq.incrementAndGet(), kind, name, segStartMs, durationMs,
-            success, errorMsg));
+            success, errorMsg, inputTokens, outputTokens));
     }
 
     /** 设置最终回答（可被后续 AGENT_RESULT 覆盖为最新全文）。 */
@@ -75,6 +77,10 @@ public class AgentCallCollector {
         long toolMs = 0L;
         long mcpMs = 0L;
         long skillMs = 0L;
+        // 请求级 token 汇总：各段 usage 求和；一段都没采到（全 null）则整体置 null（区分"未采到"与"0 token"，
+        // 与 admin 审计模块 totalUsage 的空判语义一致）
+        Long inputTokens = null;
+        Long outputTokens = null;
         for (AgentCallSegment s : snapshot) {
             switch (s.kind()) {
                 case MODEL -> modelMs += s.durationMs();
@@ -82,10 +88,19 @@ public class AgentCallCollector {
                 case MCP -> mcpMs += s.durationMs();
                 case SKILL -> skillMs += s.durationMs();
             }
+            if (s.inputTokens() != null) {
+                inputTokens = (inputTokens == null ? 0L : inputTokens) + s.inputTokens();
+            }
+            if (s.outputTokens() != null) {
+                outputTokens = (outputTokens == null ? 0L : outputTokens) + s.outputTokens();
+            }
         }
+        Long totalTokens = (inputTokens == null && outputTokens == null) ? null
+            : (inputTokens == null ? 0L : inputTokens) + (outputTokens == null ? 0L : outputTokens);
         long durationMs = Math.max(0L, endTimeMs - startTimeMs);
         return new AgentCallRecord(0L, requestId, userId, username, agentCode, agentName, sessionId,
             sessionType, question, answer, startTimeMs, endTimeMs, durationMs,
-            modelMs, toolMs, mcpMs, skillMs, snapshot.size(), success, errorMsg, snapshot);
+            modelMs, toolMs, mcpMs, skillMs, snapshot.size(), inputTokens, outputTokens, totalTokens,
+            success, errorMsg, snapshot);
     }
 }

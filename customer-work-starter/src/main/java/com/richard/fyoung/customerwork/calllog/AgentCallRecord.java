@@ -9,6 +9,9 @@ import java.util.List;
  * 分段耗时汇总，{@code segmentCount} 为分段总数，均在 {@link AgentCallCollector#toRecord} 组装时按
  * {@link #segments} 计算，落库时冗余存储以便报表免关联明细即可出各段汇总。</p>
  *
+ * <p>{@code inputTokens/outputTokens/totalTokens} 为请求级 token 消耗汇总（各 MODEL 段 usage 求和，
+ * 与 admin 审计模块同源同口径）；本次调用无任何 usage 时三者均为 {@code null}（区分"未采到"与"用了 0 token"）。</p>
+ *
  * @param id           存储层自增主键（保存前为 0）
  * @param requestId    请求 ID
  * @param userId       用户 ID（ctx.getUserId()）
@@ -27,6 +30,9 @@ import java.util.List;
  * @param mcpMs        MCP 段耗时合计（毫秒）
  * @param skillMs      SKILL 段耗时合计（毫秒）
  * @param segmentCount 分段总数
+ * @param inputTokens  请求级输入 token 合计（缺失为 null）
+ * @param outputTokens 请求级输出 token 合计（缺失为 null）
+ * @param totalTokens  请求级总 token 合计（缺失为 null）
  * @param success      整次调用是否成功
  * @param errorMsg     失败原因（成功时为 null）
  * @param segments     分段明细（按 seq 升序）
@@ -37,13 +43,15 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
                               AgentCallSessionType sessionType, String question, String answer,
                               long startTimeMs, long endTimeMs, long durationMs,
                               long modelMs, long toolMs, long mcpMs, long skillMs,
-                              int segmentCount, boolean success, String errorMsg,
+                              int segmentCount, Long inputTokens, Long outputTokens, Long totalTokens,
+                              boolean success, String errorMsg,
                               List<AgentCallSegment> segments) {
 
     /** 回填自增主键后的副本。 */
     public AgentCallRecord withId(long assignedId) {
         return new AgentCallRecord(assignedId, requestId, userId, username, agentCode, agentName,
             sessionId, sessionType, question, answer, startTimeMs, endTimeMs, durationMs,
-            modelMs, toolMs, mcpMs, skillMs, segmentCount, success, errorMsg, segments);
+            modelMs, toolMs, mcpMs, skillMs, segmentCount, inputTokens, outputTokens, totalTokens,
+            success, errorMsg, segments);
     }
 }

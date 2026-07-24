@@ -5,8 +5,10 @@ import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
+import io.agentscope.core.event.ModelCallEndEvent;
 import io.agentscope.core.event.ToolResultEndEvent;
 import io.agentscope.core.message.Msg;
+import io.agentscope.core.model.ChatUsage;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ToolResultState;
@@ -100,6 +102,40 @@ class AgentCallTimingMiddlewareTest {
         assertEquals(1, mcp);
         assertEquals("qwen-max", record.segments().stream()
             .filter(s -> s.kind() == AgentCallKind.MODEL).findFirst().orElseThrow().name());
+    }
+
+    /** onModelCall 采集 ModelCallEndEvent 携带的 ChatUsage：MODEL 段挂 token，请求级汇总求和。 */
+    @Test
+    void onModelCall_shouldCaptureTokensFromModelCallEndEvent() {
+        when(agent.getName()).thenReturn("客服Agent");
+        when(model.getModelName()).thenReturn("qwen-max");
+
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), captured::set);
+
+        RuntimeContext ctx = ctx();
+        Function<AgentInput, Flux<AgentEvent>> inner = ai -> {
+            // 模型调用流末尾回放带 usage 的 ModelCallEndEvent（与框架真实行为一致）
+            Flux<AgentEvent> modelFlux = mw.onModelCall(agent, ctx,
+                new ModelCallInput(List.of(), List.of(), null, model),
+                mi -> Flux.just(
+                    new AgentResultEvent(msg(MsgRole.ASSISTANT, "thinking")),
+                    new ModelCallEndEvent("reply-1", new ChatUsage(128, 32, 0.0))));
+            return Flux.concat(modelFlux,
+                Flux.just(new AgentResultEvent(msg(MsgRole.ASSISTANT, "最终回答"))));
+        };
+
+        mw.onAgent(agent, ctx, new AgentInput(List.of(msg(MsgRole.USER, "你好"))), inner).blockLast();
+
+        AgentCallRecord record = captured.get();
+        assertNotNull(record);
+        AgentCallSegment modelSeg = record.segments().stream()
+            .filter(s -> s.kind() == AgentCallKind.MODEL).findFirst().orElseThrow();
+        assertEquals(128L, modelSeg.inputTokens(), "MODEL 段输入 token 取自 ChatUsage");
+        assertEquals(32L, modelSeg.outputTokens(), "MODEL 段输出 token 取自 ChatUsage");
+        assertEquals(128L, record.inputTokens(), "请求级输入 token 汇总");
+        assertEquals(32L, record.outputTokens(), "请求级输出 token 汇总");
+        assertEquals(160L, record.totalTokens(), "请求级总 token = 输入 + 输出");
     }
 
     /** onActing 工具结果为 ERROR 时段判失败并记错误信息。 */

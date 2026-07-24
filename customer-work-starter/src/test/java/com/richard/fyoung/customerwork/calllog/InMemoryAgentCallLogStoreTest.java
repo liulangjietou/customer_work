@@ -7,6 +7,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -22,12 +23,13 @@ class InMemoryAgentCallLogStoreTest {
         store = new InMemoryAgentCallLogStore();
     }
 
+    /** 每条固定 input=10/output=5/total=15，供 token 汇总/趋势断言确定性。 */
     private AgentCallRecord record(String username, String agentCode, long startMs, long durationMs,
                                    long modelMs, long toolMs, List<AgentCallSegment> segments) {
         return new AgentCallRecord(0L, "req-" + startMs, "u-" + username, username, agentCode,
             "客服Agent", "sess-1", AgentCallSessionType.CHAT, "问题", "回答",
             startMs, startMs + durationMs, durationMs, modelMs, toolMs, 0L, 0L,
-            segments.size(), true, null, segments);
+            segments.size(), 10L, 5L, 15L, true, null, segments);
     }
 
     @Test
@@ -68,13 +70,15 @@ class InMemoryAgentCallLogStoreTest {
     @Test
     void findSegmentsAndDelete_shouldWork() {
         List<AgentCallSegment> segs = List.of(
-            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", 1000L, 30L, true, null),
-            new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", 1030L, 20L, true, null));
+            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", 1000L, 30L, true, null, 100L, 20L),
+            new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", 1030L, 20L, true, null, null, null));
         AgentCallRecord saved = store.save(record("alice", "A", 1000L, 50L, 30L, 20L, segs));
 
         List<AgentCallSegment> loaded = store.findSegments(saved.id());
         assertEquals(2, loaded.size());
         assertEquals(1, loaded.get(0).seq());
+        assertEquals(100L, loaded.get(0).inputTokens(), "MODEL 段输入 token");
+        assertNull(loaded.get(1).inputTokens(), "工具段无 token");
 
         assertTrue(store.delete(saved.id()));
         assertFalse(store.delete(saved.id()), "重复删除返回 false");
@@ -93,6 +97,9 @@ class InMemoryAgentCallLogStoreTest {
         assertEquals(200L, s.maxDurationMs());
         assertEquals(90d, s.avgModelMs(), 0.001);
         assertEquals(60d, s.avgToolMs(), 0.001);
+        // 每条 total=15，两条求和 30，均值 15
+        assertEquals(30L, s.totalTokens());
+        assertEquals(15d, s.avgTotalTokens(), 0.001);
     }
 
     @Test
@@ -115,6 +122,8 @@ class InMemoryAgentCallLogStoreTest {
         assertTrue(trend.size() >= 1, "应至少产出一个时间桶");
         long total = trend.stream().mapToLong(AgentCallTrendPoint::count).sum();
         assertEquals(3, total, "全部三条计入趋势");
+        // 每条 total=15，三条求和 45（跨桶合计）
+        assertEquals(45L, trend.stream().mapToLong(AgentCallTrendPoint::totalTokens).sum());
         // 桶标签升序
         for (int i = 1; i < trend.size(); i++) {
             assertTrue(trend.get(i - 1).bucket().compareTo(trend.get(i).bucket()) <= 0);

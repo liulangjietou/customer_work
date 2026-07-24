@@ -16,6 +16,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -62,12 +63,12 @@ class MybatisAgentCallLogStoreTest {
 
     private AgentCallRecord newRecord(String username, String agentCode, long startMs) {
         List<AgentCallSegment> segs = List.of(
-            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", startMs, 30L, true, null),
-            new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", startMs + 30, 20L, true, null),
-            new AgentCallSegment(3, AgentCallKind.MCP, "mcp_weather", startMs + 50, 10L, false, "boom"));
+            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", startMs, 30L, true, null, 100L, 20L),
+            new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", startMs + 30, 20L, true, null, null, null),
+            new AgentCallSegment(3, AgentCallKind.MCP, "mcp_weather", startMs + 50, 10L, false, "boom", null, null));
         return new AgentCallRecord(0L, "req-" + UUID.randomUUID(), "u-" + username, username, agentCode,
             "客服Agent", "sess-" + UUID.randomUUID(), AgentCallSessionType.CHAT, "问题", "回答",
-            startMs, startMs + 60, 60L, 30L, 20L, 10L, 0L, segs.size(), true, null, segs);
+            startMs, startMs + 60, 60L, 30L, 20L, 10L, 0L, segs.size(), 100L, 20L, 120L, true, null, segs);
     }
 
     @Test
@@ -81,6 +82,10 @@ class MybatisAgentCallLogStoreTest {
         assertEquals("qwen-max", segs.get(0).name());
         assertFalse(segs.get(2).success(), "MCP 段失败状态往返");
         assertEquals("boom", segs.get(2).errorMsg());
+        // token 往返：MODEL 段有值，工具段为 null
+        assertEquals(100L, segs.get(0).inputTokens(), "MODEL 段输入 token 往返");
+        assertEquals(20L, segs.get(0).outputTokens(), "MODEL 段输出 token 往返");
+        assertNull(segs.get(1).inputTokens(), "工具段无 token");
     }
 
     @Test
@@ -100,6 +105,9 @@ class MybatisAgentCallLogStoreTest {
         assertEquals(60d, summary.avgDurationMs(), 0.001);
         assertEquals(60L, summary.maxDurationMs());
         assertEquals(30d, summary.avgModelMs(), 0.001);
+        // 每条 total_tokens=120，两条求和 240，均值 120
+        assertEquals(240L, summary.totalTokens());
+        assertEquals(120d, summary.avgTotalTokens(), 0.001);
     }
 
     @Test

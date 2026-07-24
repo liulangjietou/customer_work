@@ -25,6 +25,8 @@ public class AgentCallSegmentDO {
     private String name;
     private Long startTime;
     private Long durationMs;
+    private Long inputTokens;
+    private Long outputTokens;
     private Boolean success;
     private String errorMsg;
 }

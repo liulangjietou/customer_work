@@ -182,6 +182,9 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
     `mcp_ms`         BIGINT NOT NULL DEFAULT 0 COMMENT 'MCP段耗时合计（毫秒）',
     `skill_ms`       BIGINT NOT NULL DEFAULT 0 COMMENT 'SKILL段耗时合计（毫秒）',
     `segment_count`  INT NOT NULL DEFAULT 0 COMMENT '分段总数',
+    `input_tokens`   BIGINT DEFAULT NULL COMMENT '请求级输入token合计（缺失为NULL）',
+    `output_tokens`  BIGINT DEFAULT NULL COMMENT '请求级输出token合计（缺失为NULL）',
+    `total_tokens`   BIGINT DEFAULT NULL COMMENT '请求级总token合计（缺失为NULL）',
     `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '整次调用是否成功',
     `error_msg`      VARCHAR(1024) COMMENT '失败原因',
     `created_at`     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '落库时间',
@@ -201,6 +204,8 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
     `name`           VARCHAR(255) NOT NULL DEFAULT '' COMMENT '分段名称（模型名/工具名）',
     `start_time`     BIGINT NOT NULL COMMENT '分段开始时间戳（毫秒）',
     `duration_ms`    BIGINT NOT NULL DEFAULT 0 COMMENT '分段耗时（毫秒）',
+    `input_tokens`   BIGINT DEFAULT NULL COMMENT '输入token（仅MODEL段，缺失为NULL）',
+    `output_tokens`  BIGINT DEFAULT NULL COMMENT '输出token（仅MODEL段，缺失为NULL）',
     `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '分段是否成功',
     `error_msg`      VARCHAR(1024) COMMENT '失败原因',
     INDEX `idx_segment_call_log` (`call_log_id`, `seq`)

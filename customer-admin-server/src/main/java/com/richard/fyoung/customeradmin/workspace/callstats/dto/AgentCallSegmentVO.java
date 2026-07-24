@@ -14,6 +14,9 @@ public class AgentCallSegmentVO {
     private String name;
     private String startTime;
     private Long durationMs;
+    /** token 消耗（仅 MODEL 段有值，缺失为 null）。 */
+    private Long inputTokens;
+    private Long outputTokens;
     private Boolean success;
     private String errorMsg;
 }

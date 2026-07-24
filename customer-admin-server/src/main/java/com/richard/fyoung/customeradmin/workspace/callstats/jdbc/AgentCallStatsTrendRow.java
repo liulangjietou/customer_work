@@ -19,4 +19,6 @@ public class AgentCallStatsTrendRow {
     private BigDecimal avgToolMs;
     private BigDecimal avgMcpMs;
     private BigDecimal avgSkillMs;
+    /** 该桶内 token 消耗合计（SUM(total_tokens)，缺失记 0）。 */
+    private Long totalTokens;
 }

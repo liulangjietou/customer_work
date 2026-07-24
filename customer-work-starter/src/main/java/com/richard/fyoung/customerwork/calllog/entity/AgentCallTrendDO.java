@@ -14,4 +14,5 @@ public class AgentCallTrendDO {
     private String bucket;
     private Long cnt;
     private BigDecimal avgDurationMs;
+    private Long totalTokens;
 }

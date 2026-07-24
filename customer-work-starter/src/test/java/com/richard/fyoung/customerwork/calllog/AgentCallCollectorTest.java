@@ -18,10 +18,10 @@ class AgentCallCollectorTest {
         AgentCallCollector collector = new AgentCallCollector();
         long now = System.currentTimeMillis();
         long nano = System.nanoTime();
-        collector.addSegment(AgentCallKind.MODEL, "qwen-max", now, nano, true, null);
-        collector.addSegment(AgentCallKind.TOOL, "queryOrder", now, nano, true, null);
-        collector.addSegment(AgentCallKind.MCP, "mcp_weather", now, nano, true, null);
-        collector.addSegment(AgentCallKind.SKILL, "skill_pdf", now, nano, false, "boom");
+        collector.addSegment(AgentCallKind.MODEL, "qwen-max", now, nano, true, null, 120L, 30L);
+        collector.addSegment(AgentCallKind.TOOL, "queryOrder", now, nano, true, null, null, null);
+        collector.addSegment(AgentCallKind.MCP, "mcp_weather", now, nano, true, null, null, null);
+        collector.addSegment(AgentCallKind.SKILL, "skill_pdf", now, nano, false, "boom", null, null);
         collector.setAnswer("最终回答");
 
         AgentCallRecord record = collector.toRecord("req-1", "tenantA", "userA", "agentA",
@@ -33,6 +33,13 @@ class AgentCallCollectorTest {
         assertEquals("req-1", record.requestId());
         assertEquals(AgentCallSessionType.CHAT, record.sessionType());
         assertTrue(record.success());
+        // token 汇总：仅 MODEL 段有 usage（120/30），其余段 null 不计入
+        assertEquals(120L, record.inputTokens(), "请求级输入 token = MODEL 段之和");
+        assertEquals(30L, record.outputTokens(), "请求级输出 token = MODEL 段之和");
+        assertEquals(150L, record.totalTokens(), "请求级总 token = 输入 + 输出");
+        assertEquals(120L, record.segments().get(0).inputTokens(), "MODEL 段输入 token");
+        assertEquals(30L, record.segments().get(0).outputTokens(), "MODEL 段输出 token");
+        assertNull(record.segments().get(1).inputTokens(), "工具段无 token");
         // 每类各一段，各段耗时 >=0，四类互不串味
         assertTrue(record.modelMs() >= 0 && record.toolMs() >= 0
             && record.mcpMs() >= 0 && record.skillMs() >= 0);
@@ -55,6 +62,10 @@ class AgentCallCollectorTest {
         assertEquals(0L, record.toolMs());
         assertEquals(0L, record.mcpMs());
         assertEquals(0L, record.skillMs());
+        // 无分段 → 无 usage：三个 token 字段均 null（区分"未采到"与"用了 0 token"）
+        assertNull(record.inputTokens());
+        assertNull(record.outputTokens());
+        assertNull(record.totalTokens());
         assertNull(record.answer());
         assertFalse(record.success());
         assertEquals("failed", record.errorMsg());

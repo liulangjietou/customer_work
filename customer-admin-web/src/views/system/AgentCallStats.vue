@@ -146,6 +146,8 @@ async function loadSummary() {
 
 const SUMMARY_CARDS = [
   { key: 'totalCalls', label: '总调用数', unit: '次' },
+  { key: 'totalTokens', label: '总 Token 消耗', unit: 'token' },
+  { key: 'avgTotalTokens', label: '平均 Token/次', unit: 'token' },
   { key: 'avgDurationMs', label: '平均耗时', unit: 'ms' },
   { key: 'maxDurationMs', label: '最大耗时', unit: 'ms' },
   { key: 'avgModelMs', label: '大模型平均耗时', unit: 'ms' },
@@ -156,6 +158,14 @@ const SUMMARY_CARDS = [
 
 function summaryValue(key: (typeof SUMMARY_CARDS)[number]['key']): number {
   return summary.value?.[key] ?? 0
+}
+
+/** 卡片取值格式化：ms 走人性化耗时，token 走千分位（均值四舍五入取整），其余原样。 */
+function summaryDisplay(card: (typeof SUMMARY_CARDS)[number]): string {
+  const value = summaryValue(card.key)
+  if (card.unit === 'ms') return formatDuration(value)
+  if (card.unit === 'token') return formatTokens(Math.round(value))
+  return String(value)
 }
 
 // ---------- 趋势图 ----------
@@ -219,6 +229,12 @@ function formatDuration(ms: number | null | undefined): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return seconds === 0 ? `${minutes}分` : `${minutes}分${seconds}秒`
+}
+
+/** token 数千分位展示；null/undefined 显示 —（区分"未采集到用量"与 0）。 */
+function formatTokens(tokens: number | null | undefined): string {
+  if (tokens == null) return '—'
+  return tokens.toLocaleString('en-US')
 }
 
 function sessionTypeLabel(type: string): string {
@@ -331,9 +347,7 @@ onMounted(() => {
     <div class="summary-row">
       <div v-for="card in SUMMARY_CARDS" :key="card.key" class="stat-card" v-loading="summaryLoading">
         <div class="stat-label">{{ card.label }}</div>
-        <div class="stat-value">
-          {{ card.unit === 'ms' ? formatDuration(summaryValue(card.key)) : summaryValue(card.key) }}
-        </div>
+        <div class="stat-value">{{ summaryDisplay(card) }}</div>
       </div>
     </div>
 
@@ -375,6 +389,18 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="总耗时" width="100" align="right">
           <template #default="{ row }: { row: AgentCallStatsRow }">{{ formatDuration(row.durationMs) }}</template>
+        </el-table-column>
+        <el-table-column label="Token" width="110" align="right">
+          <template #default="{ row }: { row: AgentCallStatsRow }">
+            <el-tooltip v-if="row.totalTokens != null" placement="top">
+              <template #content>
+                <div>输入：{{ formatTokens(row.inputTokens) }}</div>
+                <div>输出：{{ formatTokens(row.outputTokens) }}</div>
+              </template>
+              <span>{{ formatTokens(row.totalTokens) }}</span>
+            </el-tooltip>
+            <span v-else class="muted">—</span>
+          </template>
         </el-table-column>
         <el-table-column label="分段耗时" width="140">
           <template #default="{ row }: { row: AgentCallStatsRow }">
@@ -430,6 +456,9 @@ onMounted(() => {
             <el-descriptions-item label="开始时间">{{ detail.startTime }}</el-descriptions-item>
             <el-descriptions-item label="结束时间">{{ detail.endTime }}</el-descriptions-item>
             <el-descriptions-item label="总耗时" :span="2">{{ formatDuration(detail.durationMs) }}</el-descriptions-item>
+            <el-descriptions-item label="输入 Token">{{ formatTokens(detail.inputTokens) }}</el-descriptions-item>
+            <el-descriptions-item label="输出 Token">{{ formatTokens(detail.outputTokens) }}</el-descriptions-item>
+            <el-descriptions-item label="总 Token" :span="2">{{ formatTokens(detail.totalTokens) }}</el-descriptions-item>
           </el-descriptions>
 
           <div class="detail-block">
@@ -477,6 +506,12 @@ onMounted(() => {
               <el-table-column prop="startTime" label="开始时间" width="150" />
               <el-table-column label="耗时" width="90" align="right">
                 <template #default="{ row }: { row: AgentCallStatsSegment }">{{ formatDuration(row.durationMs) }}</template>
+              </el-table-column>
+              <el-table-column label="输入Token" width="90" align="right">
+                <template #default="{ row }: { row: AgentCallStatsSegment }">{{ formatTokens(row.inputTokens) }}</template>
+              </el-table-column>
+              <el-table-column label="输出Token" width="90" align="right">
+                <template #default="{ row }: { row: AgentCallStatsSegment }">{{ formatTokens(row.outputTokens) }}</template>
               </el-table-column>
               <el-table-column label="成败" width="70">
                 <template #default="{ row }: { row: AgentCallStatsSegment }">

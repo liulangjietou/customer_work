@@ -69,6 +69,9 @@ public class InMemoryAgentCallLogStore implements AgentCallLogStore {
             return AgentCallLogSummary.empty();
         }
         long total = list.size();
+        // token 汇总：null 视为 0（与 SQL SUM/AVG 忽略 NULL 的口径略有差异——内存实现仅测试/演示用，
+        // 生产走 MybatisAgentCallLogStore，此处保持简单一致即可）
+        long totalTokens = list.stream().mapToLong(r -> r.totalTokens() == null ? 0L : r.totalTokens()).sum();
         return new AgentCallLogSummary(
             total,
             list.stream().mapToLong(AgentCallRecord::durationMs).average().orElse(0d),
@@ -76,7 +79,9 @@ public class InMemoryAgentCallLogStore implements AgentCallLogStore {
             list.stream().mapToLong(AgentCallRecord::modelMs).average().orElse(0d),
             list.stream().mapToLong(AgentCallRecord::toolMs).average().orElse(0d),
             list.stream().mapToLong(AgentCallRecord::mcpMs).average().orElse(0d),
-            list.stream().mapToLong(AgentCallRecord::skillMs).average().orElse(0d));
+            list.stream().mapToLong(AgentCallRecord::skillMs).average().orElse(0d),
+            totalTokens,
+            (double) totalTokens / total);
     }
 
     @Override
@@ -89,7 +94,8 @@ public class InMemoryAgentCallLogStore implements AgentCallLogStore {
         return grouped.entrySet().stream()
             .sorted(Map.Entry.comparingByKey())
             .map(e -> new AgentCallTrendPoint(e.getKey(), e.getValue().size(),
-                e.getValue().stream().mapToLong(AgentCallRecord::durationMs).average().orElse(0d)))
+                e.getValue().stream().mapToLong(AgentCallRecord::durationMs).average().orElse(0d),
+                e.getValue().stream().mapToLong(r -> r.totalTokens() == null ? 0L : r.totalTokens()).sum()))
             .collect(Collectors.toList());
     }
 

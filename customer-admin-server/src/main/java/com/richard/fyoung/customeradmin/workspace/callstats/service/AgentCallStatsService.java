@@ -162,6 +162,9 @@ public class AgentCallStatsService {
         vo.setToolMs(d.getToolMs());
         vo.setMcpMs(d.getMcpMs());
         vo.setSkillMs(d.getSkillMs());
+        vo.setInputTokens(d.getInputTokens());
+        vo.setOutputTokens(d.getOutputTokens());
+        vo.setTotalTokens(d.getTotalTokens());
         return vo;
     }
 
@@ -184,6 +187,9 @@ public class AgentCallStatsService {
         vo.setToolMs(d.getToolMs());
         vo.setMcpMs(d.getMcpMs());
         vo.setSkillMs(d.getSkillMs());
+        vo.setInputTokens(d.getInputTokens());
+        vo.setOutputTokens(d.getOutputTokens());
+        vo.setTotalTokens(d.getTotalTokens());
         List<AgentCallSegmentVO> segmentVOs = new ArrayList<>();
         if (!CollectionUtils.isEmpty(segments)) {
             for (AgentCallSegmentDO segment : segments) {
@@ -201,6 +207,8 @@ public class AgentCallStatsService {
         vo.setName(d.getName());
         vo.setStartTime(formatTime(d.getStartTime()));
         vo.setDurationMs(d.getDurationMs());
+        vo.setInputTokens(d.getInputTokens());
+        vo.setOutputTokens(d.getOutputTokens());
         vo.setSuccess(d.getSuccess());
         vo.setErrorMsg(d.getErrorMsg());
         return vo;
@@ -216,6 +224,8 @@ public class AgentCallStatsService {
             vo.setAvgToolMs(0d);
             vo.setAvgMcpMs(0d);
             vo.setAvgSkillMs(0d);
+            vo.setTotalTokens(0L);
+            vo.setAvgTotalTokens(0d);
             return vo;
         }
         vo.setTotalCalls(d.getTotalCount());
@@ -225,6 +235,8 @@ public class AgentCallStatsService {
         vo.setAvgToolMs(toDouble(d.getAvgToolMs()));
         vo.setAvgMcpMs(toDouble(d.getAvgMcpMs()));
         vo.setAvgSkillMs(toDouble(d.getAvgSkillMs()));
+        vo.setTotalTokens(d.getTotalTokens() == null ? 0L : d.getTotalTokens());
+        vo.setAvgTotalTokens(toDouble(d.getAvgTotalTokens()));
         return vo;
     }
 
@@ -237,6 +249,7 @@ public class AgentCallStatsService {
         vo.setAvgToolMs(toDouble(d.getAvgToolMs()));
         vo.setAvgMcpMs(toDouble(d.getAvgMcpMs()));
         vo.setAvgSkillMs(toDouble(d.getAvgSkillMs()));
+        vo.setTotalTokens(d.getTotalTokens() == null ? 0L : d.getTotalTokens());
         return vo;
     }
 
