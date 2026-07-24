@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.calllog;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
 import io.agentscope.core.agent.Agent;
+import io.agentscope.core.agent.AgentBase;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
@@ -71,13 +72,25 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         if (!enabled) {
             return next.apply(input);
         }
+        // ctx 归一（关键坑，见方法级 Javadoc）：onAgent 的 ctx 入参在框架废弃的 stream(msgs,options,ctx)
+        // 路径上恒为 null——框架只把调用方 ctx 挂到 Reactor Context 的 RUNTIME_CONTEXT_KEY 上，而
+        // onModelCall/onActing 用的却是从该 key 解析出的真实 rc。故这里也从 Reactor Context 兜底取同一实例，
+        // 保证三个 hook 读写同一个 ctx（collector 互通、meta 可读、sessionId 非空）。deferContextual 在订阅期
+        // 拿到承载 RUNTIME_CONTEXT_KEY 的上下文视图。
+        return Flux.deferContextual(cv -> onAgentWithContext(agent, resolveEffectiveCtx(ctx, cv), input, next));
+    }
+
+    /** 用归一后的 {@code ctx} 执行采集主逻辑（供 {@link #onAgent} 在 deferContextual 内调用）。 */
+    private Flux<AgentEvent> onAgentWithContext(Agent agent, RuntimeContext ctx, AgentInput input,
+                                                Function<AgentInput, Flux<AgentEvent>> next) {
         // 嵌套调用防护：子 agent 若复用同一 RuntimeContext（同链路再次进入 onAgent），不覆盖父采集器、
         // 不另发记录——子 agent 的模型/工具分段经 ctx 里既有采集器自然归入父请求，父级统一结算
         if (collectorOf(ctx) != null) {
             return next.apply(input);
         }
         AgentCallCollector collector = new AgentCallCollector();
-        // 放进 ctx 供 onModelCall/onActing 追加分段；ctx 缺失（如单测直传 null）则仅本 hook 记录，不报错
+        // 放进 ctx 供 onModelCall/onActing 追加分段；ctx 缺失（如单测直传 null 且无 Reactor 上下文）
+        // 则仅本 hook 记录，不报错
         putCollector(ctx, collector);
 
         AgentCallMeta meta = safeMeta(ctx);
@@ -89,6 +102,24 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             .doOnComplete(() -> settleRecord(ended, collector, agent, ctx, meta, question, true, null))
             .doOnError(e -> settleRecord(ended, collector, agent, ctx, meta, question, false, safeMsg(e)))
             .doOnCancel(() -> settleRecord(ended, collector, agent, ctx, meta, question, false, CANCELLED));
+    }
+
+    /**
+     * ctx 归一：优先用框架直接传入的 ctx 入参（call/streamEvents 路径非空）；入参为 null 时（废弃
+     * stream(msgs,options,ctx) 路径）从 Reactor Context 的 {@link AgentBase#RUNTIME_CONTEXT_KEY} 兜底取，
+     * 这正是 onModelCall/onActing 拿到的同一个调用方 ctx 实例，从而三个 hook 共享同一 ctx。取不到则返回
+     * null（本 hook 仍可独立记录，只是无 meta/分段互通）。
+     */
+    private RuntimeContext resolveEffectiveCtx(RuntimeContext paramCtx, reactor.util.context.ContextView cv) {
+        if (paramCtx != null) {
+            return paramCtx;
+        }
+        try {
+            Object v = cv.getOrDefault(AgentBase.RUNTIME_CONTEXT_KEY, null);
+            return v instanceof RuntimeContext rc ? rc : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @Override

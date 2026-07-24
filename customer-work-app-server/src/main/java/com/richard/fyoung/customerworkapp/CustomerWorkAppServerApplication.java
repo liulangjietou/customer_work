@@ -18,9 +18,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * @author owlzhangfq@gmail.com
  */
 @SpringBootApplication
-public class CustomerWorkApplication {
+public class CustomerWorkAppServerApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(CustomerWorkApplication.class, args);
+        SpringApplication.run(CustomerWorkAppServerApplication.class, args);
     }
 }
