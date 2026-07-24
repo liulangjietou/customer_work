@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerchannel.access;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerchannel.access.model.ChannelRobot;
 import com.richard.fyoung.customerchannel.access.support.WebClients;
 import org.slf4j.Logger;
@@ -36,6 +37,9 @@ public class AdminOpenApiClient {
     private static final ParameterizedTypeReference<ServerSentEvent<String>> SSE_TYPE =
         new ParameterizedTypeReference<ServerSentEvent<String>>() {
         };
+
+    /** SSE data 的 JSON 字符串解码器（与 admin 侧 message/error 事件的 JSON 字面量编码配对）。 */
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final WebClient webClient;
 
@@ -163,10 +167,25 @@ public class AdminOpenApiClient {
     private void aggregate(ServerSentEvent<String> event, StringBuilder answer) {
         String type = event.event();
         if (ChannelAccessConstants.SSE_EVENT_ERROR.equals(type)) {
-            throw new IllegalStateException("open api chat error event: " + event.data());
+            throw new IllegalStateException("open api chat error event: " + decode(event.data()));
         }
         if (ChannelAccessConstants.SSE_EVENT_MESSAGE.equals(type) && event.data() != null) {
-            answer.append(event.data());
+            answer.append(decode(event.data()));
+        }
+    }
+
+    /**
+     * 解码 admin 下发的 SSE data（JSON 字符串字面量）还原原始文本（含换行）。
+     * 兼容性兜底：非 JSON 字面量（如旧版 admin 直发纯文本）时原样返回，不中断聚合。
+     */
+    private String decode(String data) {
+        if (data == null) {
+            return "";
+        }
+        try {
+            return JSON.readValue(data, String.class);
+        } catch (Exception e) {
+            return data;
         }
     }
 }

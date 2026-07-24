@@ -5,8 +5,8 @@ import lombok.Getter;
 import java.util.Arrays;
 
 /**
- * 渠道类型枚举。当前仅 {@link #DINGTALK} 可用（{@code supported=true}），
- * {@link #WECOM}/{@link #WECHAT} 为预留占位（后续接入前不允许创建），避免魔法字符串散落。
+ * 渠道类型枚举。当前 {@link #DINGTALK}（Stream 模式）与 {@link #WECHAT}（公众号回调 + 客服消息）
+ * 可用（{@code supported=true}）；{@link #WECOM} 为预留占位（后续接入前不允许创建），避免魔法字符串散落。
  * @author owlzhangfq@gmail.com
  */
 @Getter
@@ -14,7 +14,7 @@ public enum ChannelType {
 
     DINGTALK("dingtalk", true),
     WECOM("wecom", false),
-    WECHAT("wechat", false);
+    WECHAT("wechat", true);
 
     private final String code;
     /** 是否已支持接入（预留渠道为 false，暂不允许创建机器人）。 */

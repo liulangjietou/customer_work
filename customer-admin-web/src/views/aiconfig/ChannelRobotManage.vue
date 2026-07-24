@@ -26,8 +26,8 @@ interface ChannelTypeMeta {
 }
 const channelTypes: ChannelTypeMeta[] = [
   { value: 'dingtalk', label: '钉钉', tagType: 'success', selectable: true },
+  { value: 'wechat', label: '微信', tagType: 'warning', selectable: true },
   { value: 'wecom', label: '企业微信', tagType: 'info', selectable: false },
-  { value: 'wechat', label: '微信', tagType: 'warning', selectable: false },
 ]
 function channelMetaOf(type: ChannelType): ChannelTypeMeta {
   return channelTypes.find((c) => c.value === type) ?? channelTypes[0]
@@ -92,6 +92,9 @@ function emptyForm(): ChannelRobotSaveRequest {
 }
 const form = reactive<ChannelRobotSaveRequest>(emptyForm())
 
+// 当前表单选中的是否为微信：微信下 RobotCode 语义为「回调 Token」，必填且不自动回填 AppKey。
+const isWechat = computed(() => form.channelType === 'wechat')
+
 function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
@@ -129,11 +132,13 @@ async function handleSubmit() {
     ElMessage.warning('新建渠道机器人必须填写 AppSecret')
     return
   }
-  // RobotCode 留空时按契约默认与 AppKey 一致，前端提交前回填。
-  const payload: ChannelRobotSaveRequest = {
-    ...form,
-    robotCode: form.robotCode?.trim() ? form.robotCode.trim() : form.appKey.trim(),
-  }
+  // 微信下 RobotCode = 回调 Token，必填且不回填 AppKey；钉钉留空时按契约默认与 AppKey 一致。
+  const robotCode = isWechat.value
+    ? (form.robotCode?.trim() ?? '')
+    : form.robotCode?.trim()
+      ? form.robotCode.trim()
+      : form.appKey.trim()
+  const payload: ChannelRobotSaveRequest = { ...form, robotCode }
   if (dialogMode.value === 'edit' && editingId.value) {
     await updateChannelRobot(editingId.value, payload)
     ElMessage.success('保存成功')
@@ -168,6 +173,23 @@ onMounted(() => {
         <div>2. 为应用添加「机器人」能力。</div>
         <div>3. 消息接收模式选择 <strong>Stream 模式</strong>（无需公网回调地址）。</div>
         <div>4. 把应用的 AppKey / AppSecret / RobotCode 填入本页并绑定要对话的智能体即可。</div>
+      </template>
+    </el-alert>
+
+    <el-alert type="warning" :closable="false" show-icon title="微信公众号接入指引" style="margin-bottom: 16px">
+      <template #default>
+        <div>
+          1. 申请
+          <a href="https://mp.weixin.qq.com/debug/cgi-bin/sandbox?t=sandbox/login" target="_blank" rel="noreferrer"
+            >微信公众平台测试号</a
+          >（或使用已认证服务号），拿到 AppID / AppSecret。
+        </div>
+        <div>
+          2. 在「接口配置信息」填写 URL 与 Token：URL =
+          <code>https://&lt;公网域名&gt;/api/channels/wechat/&lt;AppID&gt;/callback</code>，Token 自定义。
+        </div>
+        <div>3. 本页新建机器人：渠道选「微信」，AppKey=AppID、AppSecret=AppSecret、<strong>回调 Token</strong> 与上面 Token 完全一致。</div>
+        <div>4. 回调需公网可达，本地开发请用内网穿透（如 ngrok / natapp）把 8081 暴露出去。</div>
       </template>
     </el-alert>
 
@@ -252,8 +274,12 @@ onMounted(() => {
         <el-form-item label="机器人名称" prop="robotName" :rules="[{ required: true, message: '请输入机器人名称' }]">
           <el-input v-model="form.robotName" placeholder="用于识别，如「客服钉钉机器人」" />
         </el-form-item>
-        <el-form-item label="AppKey" prop="appKey" :rules="[{ required: true, message: '请输入 AppKey' }]">
-          <el-input v-model="form.appKey" placeholder="钉钉应用 AppKey / ClientId" />
+        <el-form-item
+          :label="isWechat ? 'AppID' : 'AppKey'"
+          prop="appKey"
+          :rules="[{ required: true, message: isWechat ? '请输入 AppID' : '请输入 AppKey' }]"
+        >
+          <el-input v-model="form.appKey" :placeholder="isWechat ? '公众号 AppID' : '钉钉应用 AppKey / ClientId'" />
         </el-form-item>
         <el-form-item label="AppSecret">
           <el-input
@@ -267,9 +293,22 @@ onMounted(() => {
             <span>已保存 AppSecret，留空则沿用现有值</span>
           </div>
         </el-form-item>
-        <el-form-item label="RobotCode">
-          <el-input v-model="form.robotCode!" placeholder="留空则与 AppKey 一致" />
-          <div class="form-tip">钉钉 Stream 模式下 RobotCode 通常与 AppKey 相同，留空提交时自动填为 AppKey。</div>
+        <el-form-item
+          :label="isWechat ? '回调 Token' : 'RobotCode'"
+          prop="robotCode"
+          :rules="isWechat ? [{ required: true, message: '请输入回调 Token' }] : []"
+        >
+          <el-input
+            v-model="form.robotCode!"
+            :placeholder="isWechat ? '与公众平台「接口配置信息」里的 Token 完全一致' : '留空则与 AppKey 一致'"
+          />
+          <div class="form-tip">
+            {{
+              isWechat
+                ? '微信语义下即公众平台「接口配置信息」里的 Token，必填且需与其完全一致（参与回调签名校验）。'
+                : '钉钉 Stream 模式下 RobotCode 通常与 AppKey 相同，留空提交时自动填为 AppKey。'
+            }}
+          </div>
         </el-form-item>
         <el-form-item label="绑定智能体" prop="agentCode" :rules="[{ required: true, message: '请选择要绑定的智能体' }]">
           <el-select v-model="form.agentCode" placeholder="请选择智能体" style="width: 100%">

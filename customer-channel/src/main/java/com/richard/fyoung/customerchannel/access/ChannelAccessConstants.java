@@ -16,6 +16,8 @@ public final class ChannelAccessConstants {
 
     /** 渠道类型：钉钉。 */
     public static final String CHANNEL_TYPE_DINGTALK = "dingtalk";
+    /** 渠道类型：微信公众号。 */
+    public static final String CHANNEL_TYPE_WECHAT = "wechat";
 
     // ===== 开放 API 路径 =====
     public static final String PATH_ROBOTS = "/api/open/channel/robots";
@@ -47,6 +49,28 @@ public final class ChannelAccessConstants {
     public static final String SSE_EVENT_ERROR = "error";
     public static final String SSE_DONE_MARKER = "[DONE]";
 
+    // ===== 微信公众号（入站回调 + 客服消息主动推送）=====
+    /** 微信 API 基地址。 */
+    public static final String WECHAT_API_BASE_URL = "https://api.weixin.qq.com";
+    /** 换取 access_token 路径（GET，grant_type=client_credential）。 */
+    public static final String WECHAT_PATH_ACCESS_TOKEN = "/cgi-bin/token";
+    /** 客服消息发送路径（POST，access_token 拼到 query）。 */
+    public static final String WECHAT_PATH_CUSTOM_SEND = "/cgi-bin/message/custom/send";
+    /** 回调必须在 5 秒内应答的固定成功串（返回它微信才认为投递成功、不再重试）。 */
+    public static final String WECHAT_CALLBACK_SUCCESS = "success";
+    /** 客服消息单条文本长度上限（保守取 1000 字符，超长分段多条发送）。 */
+    public static final int WECHAT_SEGMENT_MAX_CHARS = 1000;
+    /** access_token 提前刷新的时间窗（秒）：过期前 5 分钟即视为需要刷新。 */
+    public static final int WECHAT_TOKEN_REFRESH_AHEAD_SECONDS = 300;
+    /** 业务错误码：access_token 无效（触发强刷一次重试）。 */
+    public static final int WECHAT_ERRCODE_INVALID_TOKEN = 40001;
+    /** 业务错误码：access_token 过期（触发强刷一次重试）。 */
+    public static final int WECHAT_ERRCODE_EXPIRED_TOKEN = 42001;
+    /** MsgId 去重环形容量（有界 LRU，防微信重试重复触发管道）。 */
+    public static final int WECHAT_MSGID_DEDUP_CAPACITY = 4096;
+    /** 微信文本消息类型。 */
+    public static final String WECHAT_MSG_TYPE_TEXT = "text";
+
     // ===== 错误码（error 日志占位符）=====
     public static final String CODE_ROBOTS_FETCH_FAIL = "CHANNEL-ACCESS-ROBOTS-FETCH-FAIL";
     public static final String CODE_REFRESH_FAIL = "CHANNEL-ACCESS-REFRESH-FAIL";
@@ -55,4 +79,8 @@ public final class ChannelAccessConstants {
     public static final String CODE_CHAT_FAIL = "CHANNEL-ACCESS-CHAT-FAIL";
     public static final String CODE_REPLY_FAIL = "CHANNEL-ACCESS-REPLY-FAIL";
     public static final String CODE_HANDLE_FAIL = "CHANNEL-ACCESS-HANDLE-FAIL";
+    public static final String CODE_WECHAT_TOKEN_FAIL = "CHANNEL-ACCESS-WECHAT-TOKEN-FAIL";
+    public static final String CODE_WECHAT_SEND_FAIL = "CHANNEL-ACCESS-WECHAT-SEND-FAIL";
+    public static final String CODE_WECHAT_CALLBACK_FAIL = "CHANNEL-ACCESS-WECHAT-CALLBACK-FAIL";
+    public static final String CODE_WECHAT_UNKNOWN_APPID = "CHANNEL-ACCESS-WECHAT-UNKNOWN-APPID";
 }
