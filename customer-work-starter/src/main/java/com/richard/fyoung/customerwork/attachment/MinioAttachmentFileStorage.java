@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.attachment;
 
 import io.minio.BucketExistsArgs;
+import io.minio.GetObjectArgs;
+import io.minio.GetObjectResponse;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
@@ -67,6 +69,20 @@ public class MinioAttachmentFileStorage implements AttachmentFileStorage {
         }
         log.info("attachment stored to minio, id={}, bucket={}, key={}, size={}", id, bucket, objectKey, data.length);
         return objectKey;
+    }
+
+    @Override
+    public byte[] read(String storagePath) throws IOException {
+        // 读路径不做 ensureBucket：读不到对象（桶/对象不存在）本身即"不存在"，getObject 抛异常包成 IOException。
+        try (GetObjectResponse resp = client.getObject(GetObjectArgs.builder()
+            .bucket(bucket)
+            .object(storagePath)
+            .build())) {
+            return resp.readAllBytes();
+        } catch (Exception e) {
+            // 与 store 失败同语义：包成 IOException 抛出，交上层翻译成业务错误
+            throw new IOException("failed to get object from minio, bucket=" + bucket + ", key=" + storagePath, e);
+        }
     }
 
     /** 惰性确保 bucket 存在：首次调用检查 / 按需创建，之后凭 volatile 标志短路，不再触网。 */

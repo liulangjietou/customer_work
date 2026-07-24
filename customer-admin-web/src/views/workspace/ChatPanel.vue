@@ -7,6 +7,8 @@ import TraceTimeline from '@/components/TraceTimeline.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
 import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
+import AttachmentPendingList from '@/components/attachment/AttachmentPendingList.vue'
+import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
 import { useThemeStore } from '@/store/theme'
 import {
   useChatConversationsStore,
@@ -168,6 +170,12 @@ defineExpose({ newSession })
             />
             <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
             <template v-else>{{ msg.text }}</template>
+            <!-- 用户消息携带的附件：图片缩略图/文本芯片，历史消息与刚发送的消息共用同一组件 -->
+            <MessageAttachments
+              v-if="msg.role === 'user' && msg.attachments && msg.attachments.length > 0"
+              :agent-code="agentCode"
+              :attachments="msg.attachments"
+            />
             <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
             <PlanConfirmCard
               v-if="msg.role === 'assistant' && msg.plans && msg.plans.length > 0"
@@ -179,19 +187,12 @@ defineExpose({ newSession })
         </div>
         <el-empty v-if="(active?.messages.length ?? 0) === 0" description="开始和智能体对话吧" />
       </div>
-      <div v-if="active && active.attachments.length > 0" class="attachment-tags">
-        <el-tag
-          v-for="a in active.attachments"
-          :key="a.localId"
-          :closable="a.status !== 'uploading'"
-          :type="a.status === 'failed' ? 'danger' : undefined"
-          size="small"
-          @close="removeAttachment(a.localId)"
-        >
-          <el-icon v-if="a.status === 'uploading'" class="is-loading"><Loading /></el-icon>
-          📎 {{ a.name }}
-        </el-tag>
-      </div>
+      <AttachmentPendingList
+        v-if="active && active.attachments.length > 0"
+        class="attachment-tags"
+        :attachments="active.attachments"
+        @remove="removeAttachment"
+      />
       <div class="input-bar">
         <el-upload
           :show-file-list="false"

@@ -26,6 +26,8 @@ public class AiChatAttachment {
 
     /** 会话 ID。 */
     private String sessionId;
+    /** 绑定的用户消息 ID（框架 {@code Msg.id}，空=未绑定；随消息发送时由 admin 私有链路回填）。 */
+    private String messageId;
     /** 智能体编码（一次上传归属的智能体，starter 领域对象不承载，admin 侧补写）。 */
     private String agentCode;
     /** 上传者标识（当前登录管理员 ID）。 */

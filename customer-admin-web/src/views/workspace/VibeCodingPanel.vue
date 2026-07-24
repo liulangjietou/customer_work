@@ -18,6 +18,8 @@ import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ReviewReport from '@/components/ReviewReport.vue'
 import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
 import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
+import AttachmentPendingList from '@/components/attachment/AttachmentPendingList.vue'
+import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
 import { useThemeStore } from '@/store/theme'
 import {
   useVibeConversationsStore,
@@ -609,24 +611,23 @@ defineExpose({ newSession })
               @decision="handlePlanDecision"
             />
             <template v-if="msg.role === 'user'">{{ msg.text }}</template>
+            <!-- 用户消息携带的附件：图片缩略图/文本芯片，历史消息与刚发送的消息共用同一组件 -->
+            <MessageAttachments
+              v-if="msg.role === 'user' && msg.attachments && msg.attachments.length > 0"
+              :agent-code="agentCode"
+              :attachments="msg.attachments"
+            />
             <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && (active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1">生成中…</span>
           </div>
         </div>
         <el-empty v-if="(active?.messages.length ?? 0) === 0" description="描述你想让智能体生成/修改的代码" />
       </div>
-      <div v-if="active && active.attachments.length > 0" class="attachment-tags">
-        <el-tag
-          v-for="a in active.attachments"
-          :key="a.localId"
-          :closable="a.status !== 'uploading'"
-          :type="a.status === 'failed' ? 'danger' : undefined"
-          size="small"
-          @close="removeAttachment(a.localId)"
-        >
-          <el-icon v-if="a.status === 'uploading'" class="is-loading"><Loading /></el-icon>
-          📎 {{ a.name }}
-        </el-tag>
-      </div>
+      <AttachmentPendingList
+        v-if="active && active.attachments.length > 0"
+        class="attachment-tags"
+        :attachments="active.attachments"
+        @remove="removeAttachment"
+      />
       <div class="input-bar">
         <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" :before-upload="beforeAttachmentUpload" :accept="ATTACHMENT_ACCEPT">
           <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">

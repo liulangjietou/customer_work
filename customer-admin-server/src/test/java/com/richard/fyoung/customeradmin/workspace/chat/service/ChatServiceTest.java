@@ -35,7 +35,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -58,6 +61,7 @@ class ChatServiceTest {
     private AdminAgentInstanceFactory agentInstanceFactory;
     private ChatHistoryCache historyCache;
     private AgentMemorySyncService memorySyncService;
+    private ChatAttachmentService chatAttachmentService;
     private ChatService chatService;
     private ReActAgent agent;
 
@@ -67,10 +71,11 @@ class ChatServiceTest {
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         historyCache = mock(ChatHistoryCache.class);
         memorySyncService = mock(AgentMemorySyncService.class);
+        chatAttachmentService = mock(ChatAttachmentService.class);
         // ExecutionModeRegistry / PlanConfirmationService 用真实实例（进程内内存、无外部依赖）：
         // 未指定模式 + 空通道时行为等价于改造前，不影响本测试聚焦的事件分流断言。
         chatService = new ChatService(agentInstanceCache, agentInstanceFactory, historyCache, memorySyncService,
-            new ExecutionModeRegistry(), new PlanConfirmationService());
+            new ExecutionModeRegistry(), new PlanConfirmationService(), chatAttachmentService);
 
         agent = mock(ReActAgent.class);
         when(agentInstanceCache.getOrBuild("coder")).thenReturn(agent);
@@ -323,6 +328,45 @@ class ChatServiceTest {
         List<ChatStreamChunk> chunks = stream("写一个 Fibonacci.java");
 
         assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.THINKING_END, ChatNodeKind.ANSWER);
+    }
+
+    // ===== 附件绑定（对话附件预览：随消息发送把附件绑定到本条用户消息 Msg.id）=====
+
+    @Test
+    void chatStream_withAttachmentIds_shouldBindToMessage_inRequestThread() {
+        // attachmentIds 非空 → 请求线程同步段（订阅前）调 bindToMessage：sessionId 用归一值，messageId 为本条用户消息 id。
+        Msg finalMsg = Msg.builder().role(MsgRole.ASSISTANT).textContent("已收到附件").build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, finalMsg, true)));
+        List<String> ids = List.of("att-1", "att-2");
+
+        chatService.chatStreamWithAttachments("coder", "s1", "看下这个附件", null, null, ids).collectList().block();
+
+        verify(chatAttachmentService).bindToMessage(eq("coder"), eq("s1"), anyString(), eq(ids));
+    }
+
+    @Test
+    void chatStream_emptySession_shouldBindWithDefaultSession() {
+        // sessionId 空 → 归一成 "default"，与历史读取/Plan 通道口径一致。
+        Msg finalMsg = Msg.builder().role(MsgRole.ASSISTANT).textContent("ok").build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, finalMsg, true)));
+        List<String> ids = List.of("att-1");
+
+        chatService.chatStreamWithAttachments("coder", "", "看下这个附件", null, null, ids).collectList().block();
+
+        verify(chatAttachmentService).bindToMessage(eq("coder"), eq("default"), anyString(), eq(ids));
+    }
+
+    @Test
+    void chatStream_withoutAttachmentIds_shouldNotBind() {
+        Msg finalMsg = Msg.builder().role(MsgRole.ASSISTANT).textContent("你好").build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, finalMsg, true)));
+
+        stream("你好");
+
+        verify(chatAttachmentService, never()).bindToMessage(anyString(), anyString(), anyString(), any());
     }
 
     // ===== 子 Agent 事件流透传（harness spawn 出的子 Agent 经 SubagentEventBus 直推父 sink）=====

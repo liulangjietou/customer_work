@@ -58,7 +58,7 @@ class MybatisAttachmentStoreTest {
 
     private ChatAttachment sample(String id, String session, AttachmentParseStatus status) {
         return ChatAttachment.builder()
-            .id(id).sessionId(session).uploader("u-" + id).channel("user_chat")
+            .id(id).sessionId(session).messageId("msg-" + id).uploader("u-" + id).channel("user_chat")
             .fileName("f-" + id + ".pdf").extension("pdf").mimeType("application/pdf")
             .fileSize(1024).storagePath("202607/" + id + ".pdf")
             .parseStatus(status).parsedText(status == AttachmentParseStatus.SUCCESS ? "解析文本" : null)
@@ -73,6 +73,7 @@ class MybatisAttachmentStoreTest {
 
         ChatAttachment found = store.findById(id).orElseThrow();
         assertEquals("application/pdf", found.getMimeType());
+        assertEquals("msg-" + id, found.getMessageId());
         assertEquals(AttachmentParseStatus.SUCCESS, found.getParseStatus());
         assertEquals("解析文本", found.getParsedText());
         assertEquals(1024, found.getFileSize());

@@ -5,14 +5,18 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatAttachmentDTO;
 import com.richard.fyoung.customeradmin.workspace.chat.store.AdminChatAttachmentStore;
+import com.richard.fyoung.customerwork.attachment.AttachmentFileStorage;
 import com.richard.fyoung.customerwork.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.attachment.ChatAttachment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * 对话附件解析：委托 starter 的 {@link AttachmentParseService} 完成多格式解析（图片视觉大模型 OCR、
@@ -32,13 +36,19 @@ public class ChatAttachmentService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatAttachmentService.class);
 
+    /** MIME 兜底：库中 mime 为空时按二进制流下发，交由前端/浏览器不做类型嗅探（配合 nosniff）。 */
+    private static final String DEFAULT_MIME = "application/octet-stream";
+
     private final AttachmentParseService attachmentParseService;
     private final AdminChatAttachmentStore attachmentStore;
+    private final AttachmentFileStorage attachmentFileStorage;
 
     public ChatAttachmentService(AttachmentParseService attachmentParseService,
-                                 AdminChatAttachmentStore attachmentStore) {
+                                 AdminChatAttachmentStore attachmentStore,
+                                 AttachmentFileStorage attachmentFileStorage) {
         this.attachmentParseService = attachmentParseService;
         this.attachmentStore = attachmentStore;
+        this.attachmentFileStorage = attachmentFileStorage;
     }
 
     /**
@@ -72,6 +82,68 @@ public class ChatAttachmentService {
         } finally {
             attachmentStore.clearAgentCode();
         }
+    }
+
+    /**
+     * 把一批附件绑定到某条用户消息（随消息发送时回填 session_id + message_id）。
+     *
+     * <p>旁路动作，绝不打断对话主流程：空列表短路；数量不符只 info（部分 id 不存在 / 不属该 agent 属正常，
+     * 前端可能带上历史/他人附件）；持久化异常 {@code catch(Exception)} 只 error 记录（带错误码）。</p>
+     *
+     * @param agentCode     智能体编码（agent 归属兜底，只绑该智能体名下的附件）
+     * @param sessionId     会话 ID（归一后的值，与历史查询口径一致）
+     * @param messageId     绑定的用户消息 ID（框架 Msg.id）
+     * @param attachmentIds 本条消息携带的附件 ID 列表
+     */
+    public void bindToMessage(String agentCode, String sessionId, String messageId, List<String> attachmentIds) {
+        if (CollectionUtils.isEmpty(attachmentIds)) {
+            return;
+        }
+        try {
+            int updated = attachmentStore.bindToMessage(agentCode, sessionId, messageId, attachmentIds);
+            if (updated != attachmentIds.size()) {
+                log.info("chat attachment bind count mismatch, agentCode={}, messageId={}, expected={}, updated={}",
+                    agentCode, messageId, attachmentIds.size(), updated);
+            }
+        } catch (Exception e) {
+            log.error("chat attachment bind failed, code={}, agentCode={}, messageId={}",
+                "ADMIN-ATTACHMENT-BIND-FAIL", agentCode, messageId, e);
+        }
+    }
+
+    /**
+     * 附件详情：校验存在性 + agent 归属后返回前端契约 DTO（{@code content}=解析文本，供文本类附件内联预览）。
+     * 附件不存在或跨 agent 访问统一 fast-fail 成 {@link ResultCode#RESOURCE_NOT_FOUND}（不泄露"是否存在"）。
+     */
+    public ChatAttachmentDTO getDetail(String agentCode, String attachmentId) {
+        return ChatAttachmentDTO.from(requireOwned(agentCode, attachmentId));
+    }
+
+    /**
+     * 读原文件字节：校验存在性 + agent 归属 → 经 {@link AttachmentFileStorage#read} 读回字节，
+     * 返回含 bytes/mimeType/fileName 的小结果对象供 Controller 组装下载响应。mime 为空按二进制流兜底。
+     * 读盘/读对象失败翻译成友好业务异常（不把 IO 细节暴露给前端）。
+     */
+    public LoadedFile loadFile(String agentCode, String attachmentId) {
+        ChatAttachment attachment = requireOwned(agentCode, attachmentId);
+        try {
+            byte[] bytes = attachmentFileStorage.read(attachment.getStoragePath());
+            String mime = StringUtils.hasText(attachment.getMimeType()) ? attachment.getMimeType() : DEFAULT_MIME;
+            return new LoadedFile(bytes, mime, attachment.getFileName());
+        } catch (IOException e) {
+            log.error("chat attachment read file failed, code={}, id={}", "ADMIN-ATTACHMENT-READ-FILE-FAIL", attachmentId, e);
+            throw new BizException(ResultCode.SYSTEM_ERROR, "附件文件读取失败，请稍后重试");
+        }
+    }
+
+    /** 存在性 + agent 归属校验合一：查不到（不存在 / 跨 agent）即 fast-fail 成 NOT_FOUND。 */
+    private ChatAttachment requireOwned(String agentCode, String attachmentId) {
+        return attachmentStore.findByIdAndAgentCode(attachmentId, agentCode)
+            .orElseThrow(() -> new BizException(ResultCode.RESOURCE_NOT_FOUND, "附件不存在"));
+    }
+
+    /** 原文件读取结果：字节 + MIME + 原始文件名（Controller 据此组装 {@code ResponseEntity<byte[]>}）。 */
+    public record LoadedFile(byte[] bytes, String mimeType, String fileName) {
     }
 
     /** 取当前登录管理员 ID 作上传者标识；无 Sa-Token 上下文（如单测）时留空，不阻断上传。 */

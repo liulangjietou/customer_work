@@ -15,7 +15,9 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanConfirmRequ
 import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,6 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Flux;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -62,7 +66,7 @@ public class ChatController {
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
         // 采集元数据必须在请求线程同步段构建（用户名取自 Sa-Token 的 ThreadLocal）；渠道=admin_chat → CHAT
         AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.CHAT, request.message());
-        return chatService.chatStream(agentCode, request.sessionId(), request.message(), request.mode(), callMeta)
+        return chatService.chatStreamWithAttachments(agentCode, request.sessionId(), request.message(), request.mode(), callMeta, request.attachmentIds())
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
@@ -116,5 +120,36 @@ public class ChatController {
                                                      @RequestParam(value = "channel", defaultValue = "admin_chat") String channel,
                                                      @RequestParam(value = "sessionId", required = false) String sessionId) {
         return Result.success(chatAttachmentService.parseAttachment(file, channel, sessionId, agentCode));
+    }
+
+    /**
+     * 附件详情：返回 {@link ChatAttachmentDTO}（{@code content}=解析文本，供文本类附件内联预览）。
+     * 校验附件存在 + agent_code 归属，跨 agent 访问统一 fast-fail 成资源不存在。
+     */
+    @SaCheckPermission("workspace")
+    @GetMapping("/attachment/{attachmentId}")
+    public Result<ChatAttachmentDTO> attachmentDetail(@PathVariable String agentCode,
+                                                      @PathVariable String attachmentId) {
+        return Result.success(chatAttachmentService.getDetail(agentCode, attachmentId));
+    }
+
+    /**
+     * 附件原文件下载：返回原始字节。Content-Type 取库中 mimeType（空则 application/octet-stream）；
+     * 统一 {@code Content-Disposition: attachment}（一律作附件下载，不内联），文件名按 RFC 5987
+     * {@code filename*=UTF-8''<url编码>} 支持中文名；加 {@code X-Content-Type-Options: nosniff} 防
+     * html/svg 类附件被浏览器嗅探成可执行内容 inline 执行。校验附件存在 + agent_code 归属。
+     */
+    @SaCheckPermission("workspace")
+    @GetMapping("/attachment/{attachmentId}/file")
+    public ResponseEntity<byte[]> attachmentFile(@PathVariable String agentCode,
+                                                  @PathVariable String attachmentId) {
+        ChatAttachmentService.LoadedFile file = chatAttachmentService.loadFile(agentCode, attachmentId);
+        String encodedName = URLEncoder.encode(file.fileName() == null ? "" : file.fileName(), StandardCharsets.UTF_8)
+            .replace("+", "%20");
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_TYPE, file.mimeType())
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedName)
+            .header("X-Content-Type-Options", "nosniff")
+            .body(file.bytes());
     }
 }

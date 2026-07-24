@@ -67,8 +67,8 @@ public class VibeCodingController {
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
         Flux<com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk> source = request.collaborationEnabled()
-            ? collaborativeCodingService.stream(agentCode, request.sessionId(), request.message(), request.mode())
-            : vibeCodingService.stream(agentCode, request.sessionId(), request.message(), request.mode());
+            ? collaborativeCodingService.stream(agentCode, request.sessionId(), request.message(), request.mode(), request.attachmentIds())
+            : vibeCodingService.stream(agentCode, request.sessionId(), request.message(), request.mode(), request.attachmentIds());
         return source
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())

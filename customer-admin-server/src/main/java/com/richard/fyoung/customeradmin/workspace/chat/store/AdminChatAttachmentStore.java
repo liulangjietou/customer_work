@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.chat.store;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.richard.fyoung.customeradmin.workspace.chat.entity.AiChatAttachment;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.AiChatAttachmentMapper;
 import com.richard.fyoung.customerwork.attachment.AttachmentParseStatus;
@@ -73,6 +74,42 @@ public class AdminChatAttachmentStore implements AttachmentStore {
         }
     }
 
+    /**
+     * 按附件 ID + 智能体编码精确查一条（admin 私有：附件详情/下载链路的存在性 + 归属校验合一）。
+     *
+     * <p>把"附件不存在"与"跨 agent 访问"两种非法情形统一收敛成"查不到"（返回空），交由 Service 层
+     * fast-fail 成同一个业务异常——领域对象 {@link ChatAttachment} 不承载 agent_code，故归属校验必须在
+     * 持久层按列过滤完成，不回填领域对象。</p>
+     */
+    public Optional<ChatAttachment> findByIdAndAgentCode(String attachmentId, String agentCode) {
+        try {
+            QueryWrapper<AiChatAttachment> wrapper = new QueryWrapper<AiChatAttachment>()
+                .eq("id", attachmentId).eq("agent_code", agentCode);
+            AiChatAttachment record = attachmentMapper.selectOne(wrapper);
+            return record == null ? Optional.empty() : Optional.of(toDomain(record));
+        } catch (Exception e) {
+            log.error("attachment findByIdAndAgentCode failed, code={}, id={}",
+                "ADMIN-ATTACHMENT-FIND-FAIL", attachmentId, e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * 把一批附件绑定到某条用户消息（admin 私有：随消息发送时回填 session_id + message_id）。
+     *
+     * <p>只更新 {@code id IN (attachmentIds)} 且 {@code agent_code=agentCode} 的行（agent 归属兜底，
+     * 防跨智能体误绑），返回实际更新行数供上层校验数量是否相符。持久化异常不在此吞——交上层
+     * {@code catch(Exception)} 统一记录，不打断对话主流程。</p>
+     */
+    public int bindToMessage(String agentCode, String sessionId, String messageId, List<String> attachmentIds) {
+        UpdateWrapper<AiChatAttachment> wrapper = new UpdateWrapper<AiChatAttachment>()
+            .set("session_id", sessionId)
+            .set("message_id", messageId)
+            .eq("agent_code", agentCode)
+            .in("id", attachmentIds);
+        return attachmentMapper.update(null, wrapper);
+    }
+
     @Override
     public List<ChatAttachment> listBySession(String sessionId) {
         try {
@@ -91,6 +128,7 @@ public class AdminChatAttachmentStore implements AttachmentStore {
         AiChatAttachment record = new AiChatAttachment();
         record.setId(a.getId());
         record.setSessionId(a.getSessionId());
+        record.setMessageId(a.getMessageId());
         record.setAgentCode(AGENT_CODE.get() == null ? "" : AGENT_CODE.get());
         record.setUploader(a.getUploader());
         record.setChannel(a.getChannel());
@@ -111,6 +149,7 @@ public class AdminChatAttachmentStore implements AttachmentStore {
         return ChatAttachment.builder()
             .id(record.getId())
             .sessionId(record.getSessionId())
+            .messageId(record.getMessageId())
             .uploader(record.getUploader())
             .channel(record.getChannel())
             .fileName(record.getFileName())

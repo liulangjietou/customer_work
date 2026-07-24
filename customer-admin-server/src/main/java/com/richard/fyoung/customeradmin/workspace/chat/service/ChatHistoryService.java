@@ -1,11 +1,14 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
 import com.richard.fyoung.customeradmin.common.page.PageResult;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageAttachmentVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentStateAccessor;
+import com.richard.fyoung.customerwork.attachment.AttachmentStore;
+import com.richard.fyoung.customerwork.attachment.ChatAttachment;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -17,7 +20,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * 历史会话查询：会话列表（SQL 级分页）+ 重新打开某次历史会话的完整消息。
@@ -47,15 +52,19 @@ public class ChatHistoryService {
     private final AgentStateAccessor agentStateAccessor;
     private final ChatHistoryCache historyCache;
     private final ChatSessionStateQueryMapper sessionStateQueryMapper;
+    /** 容器里注入的是 admin 自有的 {@code AdminChatAttachmentStore}（落 ai_chat_attachment），见 AdminAttachmentConfig。 */
+    private final AttachmentStore attachmentStore;
 
     public ChatHistoryService(AgentInstanceCache agentInstanceCache, AgentStateStore agentStateStore,
                                AgentStateAccessor agentStateAccessor, ChatHistoryCache historyCache,
-                               ChatSessionStateQueryMapper sessionStateQueryMapper) {
+                               ChatSessionStateQueryMapper sessionStateQueryMapper,
+                               AttachmentStore attachmentStore) {
         this.agentInstanceCache = agentInstanceCache;
         this.agentStateStore = agentStateStore;
         this.agentStateAccessor = agentStateAccessor;
         this.historyCache = historyCache;
         this.sessionStateQueryMapper = sessionStateQueryMapper;
+        this.attachmentStore = attachmentStore;
     }
 
     /**
@@ -110,6 +119,13 @@ public class ChatHistoryService {
 
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         AgentState state = agentStateAccessor.resolve(agent, agentCode, sessionId);
+        // 该会话的附件按绑定的 message_id 分组（未绑定的跳过）：查询失败 listBySession 已内置兜底返回空列表，
+        // 不影响历史返回。附件通常按用户消息挂载，一条消息可带多个附件。
+        Map<String, List<ChatMessageAttachmentVO>> attachmentsByMessage = attachmentStore.listBySession(sessionId).stream()
+            .filter(a -> StringUtils.hasText(a.getMessageId()))
+            .collect(Collectors.groupingBy(ChatAttachment::getMessageId,
+                Collectors.mapping(this::toAttachmentVO, Collectors.toList())));
+
         List<ChatMessageVO> messages = new ArrayList<>();
         for (Msg msg : state.getContext()) {
             if (msg.getRole() != MsgRole.USER && msg.getRole() != MsgRole.ASSISTANT) {
@@ -119,10 +135,19 @@ public class ChatHistoryService {
             if (!StringUtils.hasText(text)) {
                 continue;
             }
-            messages.add(new ChatMessageVO(msg.getRole() == MsgRole.USER ? "user" : "assistant", text, msg.getTimestamp()));
+            // id=框架 Msg.id：附件按 message_id 挂回对应消息；无附件时给空列表（契约要求非 null）
+            List<ChatMessageAttachmentVO> msgAttachments = attachmentsByMessage.getOrDefault(msg.getId(), List.of());
+            messages.add(new ChatMessageVO(msg.getId(),
+                msg.getRole() == MsgRole.USER ? "user" : "assistant", text, msg.getTimestamp(), msgAttachments));
         }
         historyCache.putMessages(agentCode, sessionId, messages);
         return messages;
+    }
+
+    /** 领域附件 → 历史消息附件摘要 VO（解析状态取枚举名，不内联解析文本）。 */
+    private ChatMessageAttachmentVO toAttachmentVO(ChatAttachment a) {
+        return new ChatMessageAttachmentVO(a.getId(), a.getFileName(), a.getMimeType(), a.getFileSize(),
+            a.getParseStatus() == null ? null : a.getParseStatus().name());
     }
 
     /**

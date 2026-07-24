@@ -727,6 +727,8 @@ export interface ChatRequest {
   collaboration?: boolean
   /** 执行模式（会话内记忆，未传时后端按 auto 处理）。 */
   mode?: ExecutionMode
+  /** 本次消息携带的解析成功附件 id 列表（对话附件预览，未携带附件时省略）。 */
+  attachmentIds?: string[]
 }
 
 export interface ChatSessionSummary {
@@ -748,10 +750,22 @@ export interface LiveSession {
   streaming: boolean
 }
 
+/** 历史消息里挂的附件摘要（不含正文 content，需要文本预览时另调详情接口）。 */
+export interface ChatMessageAttachment {
+  id: string
+  fileName: string
+  mimeType: string
+  fileSize: number
+  parseStatus: 'SUCCESS' | 'FAILED'
+}
+
 export interface ChatMessageVO {
+  id: string
   role: 'user' | 'assistant'
   text: string
   timestamp: string
+  /** 该条消息携带的附件，恒为数组（可能为空数组）。 */
+  attachments: ChatMessageAttachment[]
 }
 
 /** 附件上传解析结果（落盘+落库，解析失败时 content 为空、errorMessage 说明原因，由调用方决定是否拼进消息） */
@@ -761,6 +775,8 @@ export interface ChatAttachmentResult {
   content: string
   parseStatus: 'SUCCESS' | 'FAILED'
   errorMessage: string | null
+  mimeType: string
+  fileSize: number
 }
 
 // ---------- workspace.project ----------

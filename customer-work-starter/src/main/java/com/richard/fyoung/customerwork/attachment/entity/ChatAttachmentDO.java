@@ -24,6 +24,7 @@ public class ChatAttachmentDO {
     private String id;
 
     private String sessionId;
+    private String messageId;
     private String uploader;
     private String channel;
     private String fileName;

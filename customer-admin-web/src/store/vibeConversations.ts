@@ -4,6 +4,7 @@ import { getChatSessionMessages } from '@/api/chat'
 import { generateUuid } from '@/utils/uuid'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
 import { createPlanCard, type PlanCard } from '@/utils/planCard'
+import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
 import type { TraceNode } from '@/components/TraceTimeline.vue'
 import type {
   ExecutionMode,
@@ -31,6 +32,8 @@ export interface VibeChatMessage {
   plans?: PlanCard[]
   // 协作模式多角色阶段进度（P3-1），按 role_stage 事件到达顺序累积
   stages?: RoleStageEvent[]
+  // 该条消息携带的附件（用户消息才有）；历史消息来自后端，新发送消息由 send() 本地拼装并转移 previewUrl 所有权
+  attachments?: MessageAttachmentVM[]
 }
 
 /** localId 是前端本地生成的临时 key；status 驱动 loading/失败态展示，失败附件不参与拼接。 */
@@ -41,6 +44,10 @@ export interface VibeAttachmentItem {
   content: string
   status: 'uploading' | 'success' | 'failed'
   errorMessage?: string
+  mimeType?: string
+  fileSize?: number
+  /** 图片附件本地 objectURL（零后端请求的即时缩略图）；发送时所有权转移给消息对象，移除/放弃时需 revoke。 */
+  previewUrl?: string
 }
 
 /**
@@ -144,6 +151,8 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       const cur = agent.conversations[agent.activeId]
       if (cur && cur.messages.length === 0 && !cur.streaming) {
         cur.input = ''
+        // 复用空白会话相当于放弃这些待发送附件（不会再被发送），立即 revoke 图片本地 objectURL 防泄漏
+        revokeAttachmentPreviews(cur.attachments)
         cur.attachments = []
         cur.fileChanges = []
         cur.fileNodes = []
@@ -181,7 +190,13 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       const history = await getChatSessionMessages(agentCode, targetSessionId)
       const conv = createVibeConversation(
         targetSessionId,
-        history.map((msg) => ({ role: msg.role, text: msg.text, nodes: [] })),
+        history.map((msg) => ({
+          role: msg.role,
+          text: msg.text,
+          nodes: [],
+          // 历史附件没有本地 previewUrl，图片缩略图交给 MessageAttachments 组件按需拉后端 blob
+          attachments: msg.attachments.length > 0 ? msg.attachments : undefined,
+        })),
       )
       const firstUserMessage = history.find((msg) => msg.role === 'user')
       conv.sandboxMode = firstUserMessage ? parseSandboxModeFromMessage(firstUserMessage.text) : null
@@ -219,15 +234,27 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       const text = conv.input.trim()
       // 输入框内容自动去首尾空白：纯空白输入被拦下时框里的空格也一并清掉，避免"有空格但发不出去"的困惑
       conv.input = text
-      const attachedNames = conv.attachments.filter((a) => a.status === 'success').map((a) => a.name)
+      const successfulAttachments = conv.attachments.filter((a) => a.status === 'success' && a.id)
       // 有解析成功的附件时允许"只发附件不写文字"（正文即附件内容，满足后端 message 非空要求）
-      if ((!text && attachedNames.length === 0) || conv.streaming || conv.attachments.some((a) => a.status === 'uploading')) return
+      if ((!text && successfulAttachments.length === 0) || conv.streaming || conv.attachments.some((a) => a.status === 'uploading')) return
       conv.interrupted = false
       const messageToSend = buildMessage(conv, text)
+      const attachmentIds = successfulAttachments.length > 0 ? successfulAttachments.map((a) => a.id as string) : undefined
+      // previewUrl 所有权从待发送区转移给消息对象（不 revoke）——见下方 conv.attachments 清空前的说明
       conv.messages.push({
         role: 'user',
-        text: attachedNames.length > 0 ? `${text ? text + '\n' : ''}📎 ${attachedNames.join('、')}` : text,
+        text,
         nodes: [],
+        attachments: successfulAttachments.length > 0
+          ? successfulAttachments.map((a) => ({
+              id: a.id as string,
+              fileName: a.name,
+              mimeType: a.mimeType ?? '',
+              fileSize: a.fileSize ?? 0,
+              parseStatus: 'SUCCESS',
+              previewUrl: a.previewUrl,
+            }))
+          : undefined,
       })
       conv.messages.push({ role: 'assistant', text: '', nodes: [], testReports: [] })
       // 同 chat store：push 完再取，拿响应式代理而不是原始对象
@@ -237,7 +264,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       conv.streaming = true
       const sid = conv.sessionId
 
-      conv.abort = streamVibeCoding(agentCode, { sessionId: sid, message: messageToSend, collaboration, mode: conv.mode }, {
+      conv.abort = streamVibeCoding(agentCode, { sessionId: sid, message: messageToSend, collaboration, mode: conv.mode, attachmentIds }, {
         onEvent: (event) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (!c) return

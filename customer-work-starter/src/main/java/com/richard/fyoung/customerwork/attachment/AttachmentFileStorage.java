@@ -23,4 +23,13 @@ public interface AttachmentFileStorage {
      * @throws IOException 存储失败（本地落盘或对象上传失败，语义与原本地盘一致）
      */
     String store(byte[] data, String id, String ext) throws IOException;
+
+    /**
+     * 按相对 key 读回原始文件字节（供附件预览 / 下载链路）。
+     *
+     * @param storagePath {@link #store} 返回并落 DB 的相对 key（形如 {@code 202607/{id}.{ext}}）
+     * @return 文件全量字节
+     * @throws IOException 文件不存在或读取失败（本地盘读不到 / 对象不存在，语义与 store 失败一致，交上层翻译）
+     */
+    byte[] read(String storagePath) throws IOException;
 }

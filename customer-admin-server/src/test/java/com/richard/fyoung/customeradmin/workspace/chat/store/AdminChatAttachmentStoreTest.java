@@ -1,5 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.chat.store;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.richard.fyoung.customeradmin.workspace.chat.entity.AiChatAttachment;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.AiChatAttachmentMapper;
 import com.richard.fyoung.customerwork.attachment.AttachmentParseStatus;
@@ -9,10 +11,14 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -68,6 +74,7 @@ class AdminChatAttachmentStoreTest {
         AiChatAttachment entity = new AiChatAttachment();
         entity.setId("a3");
         entity.setSessionId("s3");
+        entity.setMessageId("m3");
         entity.setChannel("admin_chat");
         entity.setFileName("doc.txt");
         entity.setExtension("txt");
@@ -82,16 +89,64 @@ class AdminChatAttachmentStoreTest {
         assertTrue(found.isPresent());
         ChatAttachment domain = found.get();
         assertEquals("a3", domain.getId());
+        assertEquals("m3", domain.getMessageId());
         assertEquals("doc.txt", domain.getFileName());
         assertEquals(AttachmentParseStatus.FAILED, domain.getParseStatus());
         assertEquals("boom", domain.getErrorMessage());
         assertEquals(12L, domain.getFileSize());
     }
 
+    @Test
+    void save_shouldPersistMessageId() {
+        store.save(sample("a4"));
+
+        ArgumentCaptor<AiChatAttachment> captor = ArgumentCaptor.forClass(AiChatAttachment.class);
+        verify(mapper).insert(captor.capture());
+        assertEquals("msg-a4", captor.getValue().getMessageId());
+    }
+
+    @Test
+    void bindToMessage_shouldUpdateSessionAndMessageId_andReturnCount() {
+        when(mapper.update(isNull(), any(UpdateWrapper.class))).thenReturn(2);
+
+        int updated = store.bindToMessage("agent-x", "sess-1", "msg-1", List.of("a1", "a2"));
+
+        assertEquals(2, updated);
+        verify(mapper).update(isNull(), any(UpdateWrapper.class));
+    }
+
+    @Test
+    void findByIdAndAgentCode_shouldReturnDomain_whenMatched() {
+        AiChatAttachment entity = new AiChatAttachment();
+        entity.setId("a5");
+        entity.setAgentCode("agent-x");
+        entity.setFileName("f.pdf");
+        entity.setMimeType("application/pdf");
+        entity.setStoragePath("202607/a5.pdf");
+        entity.setFileSize(9L);
+        entity.setParseStatus("SUCCESS");
+        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(entity);
+
+        Optional<ChatAttachment> found = store.findByIdAndAgentCode("a5", "agent-x");
+
+        assertTrue(found.isPresent());
+        assertEquals("202607/a5.pdf", found.get().getStoragePath());
+        assertEquals("application/pdf", found.get().getMimeType());
+    }
+
+    @Test
+    void findByIdAndAgentCode_shouldBeEmpty_whenNoMatch() {
+        // agent_code 不匹配 / 附件不存在：SQL 查不到 → 空（Service 层据此 fast-fail 成 NOT_FOUND）
+        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(null);
+
+        assertFalse(store.findByIdAndAgentCode("a6", "other-agent").isPresent());
+    }
+
     private ChatAttachment sample(String id) {
         return ChatAttachment.builder()
             .id(id)
             .sessionId("s")
+            .messageId("msg-" + id)
             .uploader("u")
             .channel("admin_chat")
             .fileName("f.txt")

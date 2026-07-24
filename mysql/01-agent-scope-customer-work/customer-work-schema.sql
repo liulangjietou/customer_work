@@ -278,6 +278,7 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
 CREATE TABLE IF NOT EXISTS `cw_chat_attachment` (
     `id`             VARCHAR(64) NOT NULL COMMENT '附件ID(UUID)',
     `session_id`     VARCHAR(128) NOT NULL DEFAULT '' COMMENT '会话ID',
+    `message_id`     VARCHAR(64) NOT NULL DEFAULT '' COMMENT '绑定的用户消息ID（框架Msg.id，空=未绑定）',
     `uploader`       VARCHAR(128) NOT NULL DEFAULT '' COMMENT '上传者标识',
     `channel`        VARCHAR(32) NOT NULL DEFAULT '' COMMENT '来源渠道:user_chat/admin_chat/vibecoding',
     `file_name`      VARCHAR(255) NOT NULL COMMENT '原始文件名',

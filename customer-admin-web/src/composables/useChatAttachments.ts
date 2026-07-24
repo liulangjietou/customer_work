@@ -2,6 +2,7 @@ import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import { parseChatAttachment } from '@/api/chat'
 import { generateUuid } from '@/utils/uuid'
+import { isImageMimeType, revokeAttachmentPreviews } from '@/utils/attachment'
 
 // 与 starter AttachmentParseService 的白名单/大小限制保持一致（后端 customer-work.attachment.max-file-size-mb=10）
 export const ATTACHMENT_ACCEPT =
@@ -17,9 +18,16 @@ export interface AttachmentItem {
   content: string
   status: 'uploading' | 'success' | 'failed'
   errorMessage?: string
+  /** 文件 MIME 类型：选中/粘贴时就地取自 File.type，上传成功后用后端返回值校正。 */
+  mimeType?: string
+  fileSize?: number
+  /** 图片附件的本地 objectURL（零后端请求的即时缩略图），非图片恒为 undefined。
+   * 所有权随消息发送转移给消息对象；移除/放弃时由调用方负责 revoke，见 revokeAttachmentPreviews。 */
+  previewUrl?: string
 }
 
 interface AttachmentConversation {
+  sessionId: string
   attachments: AttachmentItem[]
 }
 
@@ -56,10 +64,21 @@ export function useChatAttachments(options: {
   async function uploadFile(file: File) {
     const conv = options.getConversation()
     if (!conv) return
-    const attachment: AttachmentItem = { localId: generateUuid(), name: file.name, content: '', status: 'uploading' }
+    // 图片附件立即用本地 File 生成 objectURL 做缩略图——零后端请求，不等上传结果；
+    // 非图片该字段留空，待发送区走既有芯片样式。
+    const previewUrl = isImageMimeType(file.type) ? URL.createObjectURL(file) : undefined
+    const attachment: AttachmentItem = {
+      localId: generateUuid(),
+      name: file.name,
+      content: '',
+      status: 'uploading',
+      mimeType: file.type,
+      fileSize: file.size,
+      previewUrl,
+    }
     conv.attachments.push(attachment)
     try {
-      const result = await parseChatAttachment(options.agentCode(), file, options.channel)
+      const result = await parseChatAttachment(options.agentCode(), file, options.channel, conv.sessionId)
       const target = conv.attachments.find((a) => a.localId === attachment.localId)
       if (!target) {
         return // 结果返回前用户已手动移除该附件，迟到的结果直接丢弃
@@ -73,6 +92,9 @@ export function useChatAttachments(options: {
         target.content = result.content
         target.status = 'success'
       }
+      // 以后端落库的 mimeType/fileSize 为准做一次校正（一般与本地 File 值一致，兜底服务端归一化差异）
+      target.mimeType = result.mimeType || target.mimeType
+      target.fileSize = result.fileSize ?? target.fileSize
     } catch (error) {
       const target = conv.attachments.find((a) => a.localId === attachment.localId)
       const message = error instanceof Error ? error.message : String(error)
@@ -112,9 +134,14 @@ export function useChatAttachments(options: {
     }
   }
 
+  /** 移除待发送区某个附件：图片附件的本地 objectURL 尚未转移给任何消息，立即 revoke 防泄漏。 */
   function removeAttachment(localId: string) {
     const conv = options.getConversation()
     if (!conv) return
+    const target = conv.attachments.find((a) => a.localId === localId)
+    if (target) {
+      revokeAttachmentPreviews([target])
+    }
     conv.attachments = conv.attachments.filter((a) => a.localId !== localId)
   }
 

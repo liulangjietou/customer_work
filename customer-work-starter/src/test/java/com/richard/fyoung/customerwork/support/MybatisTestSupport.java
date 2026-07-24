@@ -132,6 +132,9 @@ public final class MybatisTestSupport {
         populator.setCommentPrefixes("--");
         populator.execute(dataSource);
         ensureHandoffRoutingColumns(dataSource);
+        // 对话附件·消息绑定：存量 cw_chat_attachment 幂等补齐 message_id 列（CREATE TABLE IF NOT EXISTS 不追加新列）
+        ensureColumn(dataSource, "cw_chat_attachment", "message_id",
+            "VARCHAR(64) NOT NULL DEFAULT '' COMMENT '绑定的用户消息ID（框架Msg.id，空=未绑定）'");
     }
 
     /** 智能路由中控·工单智能分配：为存量 cw_handoff_ticket 幂等补齐增强列（列已存在则跳过）。 */
