@@ -49,11 +49,24 @@
         </dependency>
 
         <!-- AgentScope 2.0 Channel · 钉钉：把客服 Agent 接入钉钉机器人（Stream 模式，无需公网回调）。
-             用户在钉钉群 @ 机器人即可与 agent 对话。需钉钉应用凭证 appKey/appSecret/robotCode。 -->
+             用户在钉钉群 @ 机器人即可与 agent 对话。需钉钉应用凭证 appKey/appSecret/robotCode。
+
+             说明（渠道接入层 access 复用）：本 jar 的钉钉 Stream 协议实现 io.agentscope.extensions.channel.
+             dingtalk.DingTalkStreamClient 基于 JDK java.net.http.WebSocket（注册 topic /v1.0/im/bot/messages/get），
+             并未传递引入任何官方 com.dingtalk stream SDK（其 pom 仅 provided 声明 webflux/reactor/jackson）。
+             因此渠道接入层直接复用该 StreamClient 作为 Stream 传输，无需额外声明 stream SDK 坐标，天然无版本漂移。 -->
         <dependency>
             <groupId>io.agentscope</groupId>
             <artifactId>agentscope-extensions-channel-dingtalk</artifactId>
             <version>${agentscope.version}</version>
+        </dependency>
+
+        <!-- 渠道接入层（access 包）用 WebClient 调 admin 开放 API 并消费 SSE。webflux/reactor-netty 本已随
+             customer-work-starter 传递入类路径（本模块 web-application-type=servlet，webflux 仅作 HTTP 客户端）；
+             此处显式声明，令 WebClient 成为一等编译依赖而非隐式传递依赖。版本由 spring-boot 3.2.5 统一管理。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
         <!-- AgentScope 2.0 Channel · 飞书：把客服 Agent 接入飞书机器人（应用 + 事件回调）。

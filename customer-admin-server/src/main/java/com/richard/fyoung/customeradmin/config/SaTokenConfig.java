@@ -34,6 +34,10 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 // 整个前缀放行（含 /list 读接口），鉴权收敛到"谁能上传/管理"一侧
                 // （见 LoginImageAdminController 的 @SaCheckPermission("login-image:*")）。
                 "/api/login-images/**",
+                // 开放 API：供 customer-channel 等外部模块调用（钉钉/企微机器人接入），走 X-Open-Api-Token
+                // 令牌鉴权而非后台登录态，整个前缀放行，鉴权收敛到 OpenApiAuthInterceptor 一侧
+                // （见 OpenApiWebConfig / OpenApiAuthInterceptor）。
+                "/api/open/**",
                 "/actuator/**",
                 "/swagger-ui/**",
                 "/v3/api-docs/**",

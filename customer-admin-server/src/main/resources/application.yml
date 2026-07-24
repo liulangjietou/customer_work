@@ -58,6 +58,10 @@ admin:
   aes-secret-key: ${ADMIN_AES_SECRET_KEY:0123456789abcdef0123456789abcdef}
   # 登录“记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置
   remember-me-timeout-seconds: ${ADMIN_REMEMBER_ME_TIMEOUT_SECONDS:604800}
+  open-api:
+    # 开放 API（/api/open/**）访问令牌，供 customer-channel 等外部模块通过请求头 X-Open-Api-Token 调用。
+    # 无默认值：未配置时所有开放 API 一律 401（见 OpenApiAuthInterceptor），不留“空 token 放行”后门。
+    token: ${ADMIN_OPEN_API_TOKEN:}
   agent-memory:
     # 智能体长期记忆权威存储：留空（默认）= 落库 ai_agent_memory 表；
     # 需要存磁盘时在此显式指定根目录，记忆改存 {disk-root}/{agentCode}/MEMORY.md（不再读写库表）

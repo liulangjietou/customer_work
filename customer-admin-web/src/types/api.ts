@@ -917,6 +917,51 @@ export interface ChannelBindingSaveRequest {
   status?: number
 }
 
+// ---------- channel-robot（渠道机器人接入）----------
+// 渠道类型枚举 code（与后端约定：当前仅钉钉可接入，企业微信/微信占位待支持）。
+export type ChannelType = 'dingtalk' | 'wecom' | 'wechat'
+
+/** 会话模式：continuous 持续会话（多轮携带上下文）/ per_message 单次问答（每条消息全新上下文）。 */
+export type ChannelSessionMode = 'continuous' | 'per_message'
+
+// 分页列表行：后端出于安全不回传 appSecret，仅用 hasSecret 标识是否已配置。
+export interface ChannelRobotVO {
+  id: number
+  channelType: ChannelType
+  robotName: string
+  appKey: string
+  robotCode: string
+  agentCode: string
+  sessionMode: ChannelSessionMode
+  /** 0 停用 / 1 启用 */
+  status: number
+  remark: string | null
+  /** 是否已配置 appSecret：编辑时据此显示「已配置」标识、决定 placeholder 文案。 */
+  hasSecret: boolean
+  createTime: string
+  updateTime: string
+}
+
+export interface ChannelRobotSaveRequest {
+  channelType: ChannelType
+  robotName: string
+  appKey: string
+  /** 新建必填；编辑留空表示不修改，与 ModelManage 的 apiKey / 数据源密码约定一致。 */
+  appSecret?: string | null
+  /** 留空后端与 appKey 一致，前端提交时也默认回填 appKey。 */
+  robotCode?: string | null
+  agentCode: string
+  /** 留空后端取默认 continuous。 */
+  sessionMode?: ChannelSessionMode | null
+  status?: number | null
+  remark?: string | null
+}
+
+/** 渠道机器人分页查询：MP 分页（current/size）之上追加渠道类型过滤。 */
+export interface ChannelRobotPageQuery extends MpPageQuery {
+  channelType?: string
+}
+
 // ---------- knowledge（代码知识库）----------
 /** 代码知识库索引（P3-2）：一次构建对应一个索引，异步构建，status 反映进度。 */
 export interface KnowledgeIndex {

@@ -239,3 +239,100 @@ customer-channel:
 - **换真实业务后端**：在本模块声明自己的 `OrderBackend` 等 Bean 即覆盖默认 Mock（`@ConditionalOnMissingBean` 让位）。
 - **升级 HarnessAgent**：如需子智能体/Plan Mode/沙箱的完整管理面，可把 `customerServiceAgent` Bean 换成
   `HarnessAgent`（见 `customer-work-starter` 的 `HarnessAgentFactory`），admin 的 subagents 端点即生效。
+
+---
+
+## 8. 渠道接入层（钉钉机器人 ↔ 后台工作区智能体）
+
+与上文"官方五套前端能力演示"独立的**生产用**能力（包 `com.richard.fyoung.customerchannel.access`，
+默认关闭，不影响既有演示）：钉钉用户给机器人发消息，即可与后台「智能体工作区」里的智能体对话。
+
+### 8.1 架构
+
+```
+钉钉用户 ↔ 钉钉网关 ←Stream(WebSocket出站)→ customer-channel(8081)
+                                              │ ChannelAccessManager 定时(默认30s)拉配置 diff 启停连接器
+                                              │ ImChannelConnector SPI（钉钉已实现；企微/微信 = 新增一个实现类）
+                                              ↓ AdminOpenApiClient（X-Open-Api-Token）
+                       customer-admin-server(8082) /api/open/**
+                         ├ GET  /api/open/channel/robots            拉启用中的机器人配置（含解密凭证）
+                         ├ POST /api/open/channel/sessions/resolve|reset  外部用户↔会话映射（ai_channel_session）
+                         └ POST /api/open/agents/{agentCode}/chat   SSE 对话（复用工作区 ChatService）
+```
+
+- 机器人在后台「AI 配置 → 渠道接入」页面维护（表 `ai_channel_robot`，AppSecret AES-GCM 加密存储），
+  **一个机器人绑定一个智能体**，多机器人多智能体；改绑/启停后 ≤30s 自动生效，无需重启。
+- 会话：每个钉钉用户一个持续会话（群聊按 群+用户 隔离）；发送 `/new` 或 `新会话` 重置。
+- 仅支持文本消息；回复以 markdown 下发（经消息回调里的 sessionWebhook）。
+
+### 8.2 接入步骤
+
+1. [钉钉开放平台](https://open-dev.dingtalk.com) 创建**企业内部应用**→ 添加「机器人」能力 →
+   消息接收模式选 **Stream 模式**（无需公网回调）→ 发布版本，得到 AppKey / AppSecret / RobotCode。
+2. admin-server(8082) 配置开放 API 令牌：`ADMIN_OPEN_API_TOKEN=<随机长字符串>`（未配置则开放 API 全部拒绝）。
+3. 后台「AI 配置 → 渠道接入」新增机器人：渠道=钉钉，填 AppKey/AppSecret/RobotCode，绑定智能体，启用。
+4. customer-channel(8081) 启动前配置：
+
+| 环境变量 | 说明 |
+|---|---|
+| `CHANNEL_ACCESS_ENABLED=true` | 启用接入层（默认 false） |
+| `CHANNEL_ACCESS_ADMIN_TOKEN` | 与 `ADMIN_OPEN_API_TOKEN` 同值（必填） |
+| `CHANNEL_ACCESS_ADMIN_BASE_URL` | admin 地址，默认 `http://localhost:8082` |
+| `CHANNEL_ACCESS_REFRESH_SECONDS` | 配置刷新间隔，默认 30 |
+| `CHANNEL_ACCESS_CHAT_TIMEOUT_SECONDS` | 单轮对话聚合超时，默认 300 |
+
+5. 钉钉里给机器人发消息（单聊直接发 / 群聊 @机器人）即可对话。
+
+### 8.3 注意事项
+
+- 开放对话 API 有绑定校验：agentCode 必须存在启用中的渠道机器人绑定，未绑定的智能体外部不可调用。
+- 传输层复用 AgentScope 的 `DingTalkStreamClient`（JDK 内置 WebSocket 实现 Stream 协议，零新增钉钉 SDK 依赖）。
+- 同一用户消息按会话串行处理，不同会话并行；连接器启动失败/admin 不可达均兜底重试，不影响应用启动。
+- **SSE 换行安全契约**：admin 开放对话 API 的 `event:message`/`event:error` data 为 **JSON 字符串字面量**
+  （`writeValueAsString`，换行转义进字面量，不裸露在 SSE 帧里，避免协议剥掉 data 行末换行导致表格首尾行相接），
+  channel 侧 `readValue(String.class)` 解码还原；`done` 仍为固定 `[DONE]`。旧版纯文本 data 客户端兼容兜底。
+
+### 8.4 微信公众号接入
+
+与钉钉「Stream 出站长连接」不同，微信是**入站回调 + 客服消息主动推送**模型：
+
+```
+微信用户 → 微信服务器 --POST--> customer-channel(8081) /api/channels/wechat/{AppID}/callback
+                                     │ 验签(sha1(sort(Token,timestamp,nonce)))→解析XML→立即回 "success"(5秒内)
+                                     │ 文本走统一 ChannelMessagePipeline（与钉钉共用）
+                                     ↓ AdminOpenApiClient（X-Open-Api-Token）
+              customer-admin-server(8082) /api/open/agents/{agentCode}/chat  SSE 对话
+                                     ↑ 回复不走回调响应，而是异步经客服消息 API 主动下发：
+                       customer-channel → https://api.weixin.qq.com/cgi-bin/message/custom/send（access_token）
+```
+
+**架构差异要点**：
+
+- 回调必须 **5 秒内应答 "success"**，否则微信重试最多 3 次；故消息处理与回复全部异步，回调只做验签+解析+登记。
+- 回复经**客服消息 API**（48 小时内可主动下发），单条文本上限保守取 1000 字符，超长自动分段多条发送。
+- 微信客服消息是**纯文本**（不渲染 markdown）：表格降级为「表头: 值」列表、剥加粗/行内码/标题符、链接改写为
+  `文本(url)`、剥代码围栏保留内容、换行原样保留。
+- `access_token` 按 AppID 缓存、提前 5 分钟刷新；客服消息遇 `errcode` 40001/42001（token 失效）强刷一次重试。
+- MsgId 做有界 LRU 去重，防微信重试重复触发对话。
+
+**接入步骤**：
+
+1. 申请[微信公众平台测试号](https://mp.weixin.qq.com/debug/cgi-bin/sandbox?t=sandbox/login)（或已认证服务号），拿到 **AppID / AppSecret**。
+2. 「接口配置信息」填写：
+   - URL = `https://<公网域名>/api/channels/wechat/<AppID>/callback`
+   - Token = 自定义字符串（下一步后台「回调 Token」需与此**完全一致**）
+   - 回调需**公网可达**；本地开发用内网穿透（ngrok / natapp 等）把 8081 暴露到公网。
+3. 后台「AI 配置 → 渠道接入」新增机器人，渠道选**微信**，字段映射：
+
+   | 后台字段 | 微信含义 |
+   |---|---|
+   | AppKey | 公众号 **AppID** |
+   | AppSecret | 公众号 **AppSecret** |
+   | RobotCode / 回调 Token | 「接口配置信息」里的 **Token**（必填，参与验签，不自动回填 AppKey） |
+
+4. customer-channel(8081) 环境变量同 8.2（`CHANNEL_ACCESS_ENABLED=true` 等）；启用后 ≤30s 自动拉起微信连接器。
+5. 在公众平台保存「接口配置信息」（触发一次 GET 验证，验签通过回显 echostr 即成功），之后给公众号发文本消息即可对话。
+
+**注意**：测试号无需认证即可收发客服消息，但仅对关注者、且受 48 小时客服窗口限制；正式服务号需通过微信认证并具备客服消息权限。
+
+**内网穿透避坑（实测踩过）**：**ngrok 免费版对浏览器类 User-Agent 会强插一个 HTML 警告页**，而微信服务器回调的 UA 是 `Mozilla/4.0` 开头会被判为浏览器，导致微信拿到的是警告页而非 `echostr`，「接口配置信息」提交报 `{"errcode":-106,"errmsg":"token check fail"}`（此时代码/Token 都没问题）。判别方法：`curl` 默认 UA 能通、加 `-A "Mozilla/4.0"` 返回 HTML 即中招。解决：换**无插页**的穿透工具——`cloudflared tunnel --url http://localhost:8081`（免注册）或 cpolar（国内节点）。另注意后台改了机器人 Token 后需等 ≤30s 让 8081 刷新配置再提交验证。
