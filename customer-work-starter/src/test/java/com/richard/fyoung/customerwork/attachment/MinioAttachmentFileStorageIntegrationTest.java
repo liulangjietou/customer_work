@@ -76,4 +76,39 @@ class MinioAttachmentFileStorageIntegrationTest {
             client.removeObject(RemoveObjectArgs.builder().bucket(IT_BUCKET).object(key).build());
         }
     }
+
+    @Test
+    void read_shouldReturnStoredBytes_fromRealMinio() throws Exception {
+        String endpoint = endpoint();
+        assumeTrue(reachable(endpoint), "MinIO 不可达（" + endpoint + "），跳过该集成测试");
+
+        MinioAttachmentFileStorage storage = new MinioAttachmentFileStorage(
+            endpoint, ACCESS_KEY, SECRET_KEY, IT_BUCKET, true);
+
+        String id = UUID.randomUUID().toString().replace("-", "");
+        byte[] payload = ("read-minio-" + id).getBytes(StandardCharsets.UTF_8);
+        String key = storage.store(payload, id, "txt");
+
+        try {
+            // 走 storage.read 读回（附件预览/下载链路），断言字节完全一致
+            byte[] readBack = storage.read(key);
+            assertArrayEquals(payload, readBack, "storage.read 读回字节应与写入一致");
+        } finally {
+            MinioClient client = MinioClient.builder()
+                .endpoint(endpoint).credentials(ACCESS_KEY, SECRET_KEY).build();
+            client.removeObject(RemoveObjectArgs.builder().bucket(IT_BUCKET).object(key).build());
+        }
+    }
+
+    @Test
+    void read_shouldThrowIOException_whenObjectMissing() {
+        String endpoint = endpoint();
+        assumeTrue(reachable(endpoint), "MinIO 不可达（" + endpoint + "），跳过该集成测试");
+
+        MinioAttachmentFileStorage storage = new MinioAttachmentFileStorage(
+            endpoint, ACCESS_KEY, SECRET_KEY, IT_BUCKET, true);
+
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+            () -> storage.read("202607/not-exist-" + UUID.randomUUID() + ".txt"));
+    }
 }

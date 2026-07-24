@@ -15,23 +15,31 @@ import com.richard.fyoung.customerwork.attachment.TextAttachmentParser;
 import com.richard.fyoung.customerwork.attachment.TikaDocumentParser;
 import com.richard.fyoung.customerwork.attachment.VisionOcrParser;
 import com.richard.fyoung.customerwork.attachment.VisionOcrService;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * {@link ChatAttachmentService} 单测：委托 starter {@link AttachmentParseService} 的多格式解析落库链路。
@@ -47,6 +55,7 @@ class ChatAttachmentServiceTest {
     private static final String CHANNEL = "admin_chat";
 
     private AiChatAttachmentMapper mapper;
+    private AttachmentFileStorage fileStorage;
     private ChatAttachmentService service;
 
     @BeforeEach
@@ -64,10 +73,10 @@ class ChatAttachmentServiceTest {
             new ExcelMarkdownParser(),
             new TikaDocumentParser(),
             new VisionOcrParser(fakeOcr));
-        AttachmentFileStorage fileStorage = new LocalAttachmentFileStorage(properties.getBaseDir());
+        fileStorage = new LocalAttachmentFileStorage(properties.getBaseDir());
         AttachmentParseService parseService = new AttachmentParseService(parsers, store, fileStorage, properties);
 
-        service = new ChatAttachmentService(parseService, store);
+        service = new ChatAttachmentService(parseService, store, fileStorage);
     }
 
     @Test
@@ -134,5 +143,119 @@ class ChatAttachmentServiceTest {
         assertEquals(AGENT_CODE, saved.getAgentCode());
         assertTrue(saved.getParsedText() == null || saved.getParsedText().isEmpty());
         assertNotNull(saved.getErrorMessage());
+    }
+
+    @Test
+    void parseAttachment_shouldExposeMimeTypeAndFileSize() {
+        byte[] bytes = "纯文本内容".getBytes(StandardCharsets.UTF_8);
+        MockMultipartFile file = new MockMultipartFile("file", "notes.txt", "text/plain", bytes);
+
+        ChatAttachmentDTO dto = service.parseAttachment(file, CHANNEL, "session-1", AGENT_CODE);
+
+        // 前端契约新增字段：mimeType 按扩展名推断、fileSize 为真实字节数
+        assertEquals("text/plain", dto.mimeType());
+        assertEquals(bytes.length, dto.fileSize());
+    }
+
+    // ===== 附件详情 / 原文件读取 / 消息绑定 =====
+
+    @Test
+    void getDetail_shouldReturnDto_whenOwnedByAgent() {
+        AiChatAttachment entity = new AiChatAttachment();
+        entity.setId("att-1");
+        entity.setAgentCode(AGENT_CODE);
+        entity.setFileName("spec.pdf");
+        entity.setMimeType("application/pdf");
+        entity.setFileSize(2048L);
+        entity.setParseStatus("SUCCESS");
+        entity.setParsedText("解析文本");
+        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(entity);
+
+        ChatAttachmentDTO dto = service.getDetail(AGENT_CODE, "att-1");
+
+        assertEquals("att-1", dto.id());
+        assertEquals("spec.pdf", dto.fileName());
+        assertEquals("解析文本", dto.content());
+        assertEquals("application/pdf", dto.mimeType());
+        assertEquals(2048L, dto.fileSize());
+    }
+
+    @Test
+    void getDetail_shouldThrow_whenNotFoundOrCrossAgent() {
+        // 附件不存在 / agent_code 不匹配：findByIdAndAgentCode 查不到 → 业务异常
+        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(null);
+
+        assertThrows(BizException.class, () -> service.getDetail("other-agent", "att-x"));
+    }
+
+    @Test
+    void loadFile_shouldReadOriginalBytes_whenOwnedByAgent() throws IOException {
+        byte[] payload = "原始文件字节".getBytes(StandardCharsets.UTF_8);
+        String key = fileStorage.store(payload, "att-2", "txt");
+
+        AiChatAttachment entity = new AiChatAttachment();
+        entity.setId("att-2");
+        entity.setAgentCode(AGENT_CODE);
+        entity.setFileName("原始 文件.txt");
+        entity.setMimeType("text/plain");
+        entity.setStoragePath(key);
+        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(entity);
+
+        ChatAttachmentService.LoadedFile loaded = service.loadFile(AGENT_CODE, "att-2");
+
+        assertArrayEquals(payload, loaded.bytes());
+        assertEquals("text/plain", loaded.mimeType());
+        assertEquals("原始 文件.txt", loaded.fileName());
+    }
+
+    @Test
+    void loadFile_shouldDefaultMime_whenMimeBlank() throws IOException {
+        byte[] payload = "x".getBytes(StandardCharsets.UTF_8);
+        String key = fileStorage.store(payload, "att-3", "bin");
+        AiChatAttachment entity = new AiChatAttachment();
+        entity.setId("att-3");
+        entity.setAgentCode(AGENT_CODE);
+        entity.setFileName("blob.bin");
+        entity.setMimeType("");
+        entity.setStoragePath(key);
+        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(entity);
+
+        ChatAttachmentService.LoadedFile loaded = service.loadFile(AGENT_CODE, "att-3");
+
+        assertEquals("application/octet-stream", loaded.mimeType());
+    }
+
+    @Test
+    void loadFile_shouldThrow_whenNotFound() {
+        when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(null);
+
+        assertThrows(BizException.class, () -> service.loadFile(AGENT_CODE, "missing"));
+    }
+
+    @Test
+    void bindToMessage_shouldShortCircuit_whenIdsEmpty() {
+        service.bindToMessage(AGENT_CODE, "s1", "m1", List.of());
+
+        // 空列表短路：不触发任何 UPDATE
+        verify(mapper, never()).update(isNull(), any(UpdateWrapper.class));
+    }
+
+    @Test
+    void bindToMessage_shouldDelegateUpdate_whenIdsPresent() {
+        when(mapper.update(isNull(), any(UpdateWrapper.class))).thenReturn(2);
+
+        service.bindToMessage(AGENT_CODE, "s1", "m1", List.of("a1", "a2"));
+
+        verify(mapper).update(isNull(), any(UpdateWrapper.class));
+    }
+
+    @Test
+    void bindToMessage_shouldNotThrow_whenPersistenceFails() {
+        // 持久化异常被吞（只 log），绝不打断对话主流程
+        when(mapper.update(isNull(), any(UpdateWrapper.class)))
+            .thenThrow(new RuntimeException("db down"));
+
+        service.bindToMessage(AGENT_CODE, "s1", "m1", List.of("a1"));
+        // 无异常抛出即通过
     }
 }

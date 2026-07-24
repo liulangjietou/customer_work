@@ -31,6 +31,7 @@ import io.agentscope.harness.agent.HarnessAgent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
@@ -73,17 +74,20 @@ public class ChatService {
     private final AgentMemorySyncService memorySyncService;
     private final ExecutionModeRegistry executionModeRegistry;
     private final PlanConfirmationService planConfirmationService;
+    private final ChatAttachmentService chatAttachmentService;
 
     public ChatService(AgentInstanceCache agentInstanceCache, AdminAgentInstanceFactory agentInstanceFactory,
                         ChatHistoryCache historyCache, AgentMemorySyncService memorySyncService,
                         ExecutionModeRegistry executionModeRegistry,
-                        PlanConfirmationService planConfirmationService) {
+                        PlanConfirmationService planConfirmationService,
+                        ChatAttachmentService chatAttachmentService) {
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
         this.historyCache = historyCache;
         this.memorySyncService = memorySyncService;
         this.executionModeRegistry = executionModeRegistry;
         this.planConfirmationService = planConfirmationService;
+        this.chatAttachmentService = chatAttachmentService;
     }
 
     /**
@@ -151,7 +155,20 @@ public class ChatService {
     /** 流式对话（带执行模式 + 调用元数据，无用量观察者）：供对话链路（ChatController）使用，采集耗时统计。 */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText, String mode,
                                              AgentCallMeta callMeta) {
-        return chatStream(agentCode, sessionId, userText, mode, callMeta, usage -> { });
+        return chatStream(agentCode, sessionId, userText, mode, callMeta, (List<String>) null, usage -> { });
+    }
+
+    /**
+     * 流式对话（带执行模式 + 调用元数据 + 附件绑定，无用量观察者）：供对话链路（ChatController）使用。
+     * {@code attachmentIds} 非空时在请求线程同步段把这些附件绑定到本条用户消息（框架 Msg.id）。
+     *
+     * <p>方法名末位加 {@code WithAttachments} 而非再重载六参：六参 {@code (…, callMeta, List)} 会与既有
+     * {@code (…, callMeta, Consumer)} 在实参传 {@code null} 时产生调用歧义，故用具名方法规避。</p>
+     */
+    public Flux<ChatStreamChunk> chatStreamWithAttachments(String agentCode, String sessionId, String userText,
+                                                            String mode, AgentCallMeta callMeta,
+                                                            List<String> attachmentIds) {
+        return chatStream(agentCode, sessionId, userText, mode, callMeta, attachmentIds, usage -> { });
     }
 
     /** 流式对话（带用量观察者，未指定执行模式）：保留旧签名，供既有调用点/测试使用。 */
@@ -163,7 +180,14 @@ public class ChatService {
     /** 流式对话（带执行模式 + 用量观察者，未带调用元数据）：保留旧签名，供既有调用点/测试使用。 */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
                                              String mode, Consumer<ChatUsage> usageTotalObserver) {
-        return chatStream(agentCode, sessionId, userText, mode, null, usageTotalObserver);
+        return chatStream(agentCode, sessionId, userText, mode, null, (List<String>) null, usageTotalObserver);
+    }
+
+    /** 流式对话（带执行模式 + 调用元数据 + 用量观察者，无附件）：保留旧签名，供 VibeCoding 既有调用点/测试使用。 */
+    public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
+                                             String mode, AgentCallMeta callMeta,
+                                             Consumer<ChatUsage> usageTotalObserver) {
+        return chatStream(agentCode, sessionId, userText, mode, callMeta, (List<String>) null, usageTotalObserver);
     }
 
     /**
@@ -179,9 +203,14 @@ public class ChatService {
      * 运行时读取；并打开一个 {@link PlanChannel} 把 {@code plan}/{@code plan_result} 事件合并进 SSE 输出
      * （对话与 VibeCoding 共用同一套挂起/确认闭环）。{@code doFinally} 时摘除模式登记、关闭通道。
      * mode 未指定/非法（{@link ExecutionMode#parse} 返回 null）→ 不登记，中间件回落全局语义。</p>
+     *
+     * <p><b>附件绑定</b>：{@code attachmentIds} 非空时，在<b>请求线程同步段</b>（构建 Flux 前、订阅前）把这些
+     * 附件绑定到本条用户消息（框架 {@code Msg.id}）——用与 Plan/历史一致的归一 {@code safeSession} 落 session_id，
+     * 保证历史接口按同一口径查回。绑定是旁路动作，任何失败只记录、不打断对话主流程（见
+     * {@link ChatAttachmentService#bindToMessage}）。</p>
      */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
-                                             String mode, AgentCallMeta callMeta,
+                                             String mode, AgentCallMeta callMeta, List<String> attachmentIds,
                                              Consumer<ChatUsage> usageTotalObserver) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
@@ -189,6 +218,14 @@ public class ChatService {
         // 缺省（旧调用点/测试）不绑，中间件按 ctx.userId/MDC 降级，不影响主链路。
         if (callMeta != null) {
             ctx.put(AgentCallMeta.class, callMeta);
+        }
+        // 归一 sessionId：与下方 Plan 通道/执行模式登记、以及历史接口读取口径完全一致（hasText ? 原值 : default）。
+        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        // 本条用户消息提前构建，供附件绑定拿到稳定的 Msg.id（框架 Msg.Builder 构造即生成随机 UUID）。
+        Msg userMsg = toUserMsg(userText);
+        // 附件绑定：请求线程同步段完成（订阅前），把本条消息 id 与其携带的附件关联，供历史回显。
+        if (!CollectionUtils.isEmpty(attachmentIds)) {
+            chatAttachmentService.bindToMessage(agentCode, safeSession, userMsg.getId(), attachmentIds);
         }
         ToolSourceInfo toolSource = agentInstanceFactory.toolSourceFor(agentCode);
 
@@ -217,7 +254,7 @@ public class ChatService {
         // 也不关闭，前端永远卡在"生成中..."。defer 把方法调用推迟到订阅时执行，任何同步异常都会被
         // Reactor 自动转成 Flux.error(...)，从而能被 onErrorResume 正常捕获、优雅降级成兜底话术。
         Map<String, ChatUsage> usageByMessage = new ConcurrentHashMap<>();
-        Flux<ChatStreamChunk> body = Flux.defer(() -> streamEvents(agent, List.of(toUserMsg(userText)), options, ctx))
+        Flux<ChatStreamChunk> body = Flux.defer(() -> streamEvents(agent, List.of(userMsg), options, ctx))
             .doOnNext(event -> collectUsage(usageByMessage, event))
             .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, stateBySource)));
 
@@ -242,7 +279,6 @@ public class ChatService {
         // 定位到同一通道。Flux.using 在订阅时（早于 Agent 产出任何事件）打开通道并把 plan/plan_result 事件
         // 合并进输出流；主流结束/取消时完成通道事件流并关闭通道。registry 用 doFirst/doFinally 配对登记与摘除，
         // 未指定/非法模式不登记（中间件回落全局语义）。BYPASS/无高风险时通道恒空、零开销。
-        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
         ExecutionMode executionMode = ExecutionMode.parse(mode);
         return Flux.using(
                 () -> planConfirmationService.openChannel(agentCode, safeSession),

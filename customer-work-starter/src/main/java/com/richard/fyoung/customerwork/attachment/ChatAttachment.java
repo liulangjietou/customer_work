@@ -25,6 +25,8 @@ public class ChatAttachment {
     private String id;
     /** 会话 ID。 */
     private String sessionId;
+    /** 绑定的用户消息 ID（框架 {@code Msg.id}，空=未绑定；上传时未知，随对话发送时由 admin 私有链路回填）。 */
+    private String messageId;
     /** 上传者标识。 */
     private String uploader;
     /** 来源渠道：user_chat / admin_chat / vibecoding。 */

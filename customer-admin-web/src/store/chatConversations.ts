@@ -3,6 +3,7 @@ import { getChatSessionMessages, interruptChat, streamChat } from '@/api/chat'
 import { generateUuid } from '@/utils/uuid'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
 import { createPlanCard, type PlanCard } from '@/utils/planCard'
+import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
 import type { TraceNode } from '@/components/TraceTimeline.vue'
 import type { ExecutionMode, LiveSession, PlanEvent, PlanResultEvent } from '@/types/api'
 
@@ -12,6 +13,8 @@ export interface ChatMessage {
   nodes: TraceNode[]
   // 本条助手消息内的 Plan Mode 确认卡片（P1-1），Manual/高风险操作待人工确认
   plans?: PlanCard[]
+  // 该条消息携带的附件（用户消息才有）；历史消息来自后端，新发送消息由 send() 本地拼装并转移 previewUrl 所有权
+  attachments?: MessageAttachmentVM[]
 }
 
 /** localId 是前端本地生成的临时 key，用于 v-for/移除定位（上传过程中后端 id 还不存在）；
@@ -23,6 +26,10 @@ export interface ChatAttachmentItem {
   content: string
   status: 'uploading' | 'success' | 'failed'
   errorMessage?: string
+  mimeType?: string
+  fileSize?: number
+  /** 图片附件本地 objectURL（零后端请求的即时缩略图）；发送时所有权转移给消息对象，移除/放弃时需 revoke。 */
+  previewUrl?: string
 }
 
 /**
@@ -68,11 +75,19 @@ export function createChatConversation(sessionId: string, messages: ChatMessage[
   }
 }
 
-/** 会话预览文案：取首条有内容的用户消息。 */
+/**
+ * 会话预览文案：取首条有内容的用户消息。文字为空但带了附件（只发附件不写字）时，
+ * 回退成附件文件名列表——附件现在挂在结构化的 attachments 字段而不是拼进 text，
+ * 不这样兜底的话纯附件消息在侧边栏会显示空白预览。
+ */
 export function previewOfMessages(messages: ChatMessage[]): string {
-  const firstUser = messages.find((m) => m.role === 'user' && m.text.trim().length > 0)
+  const firstUser = messages.find((m) => m.role === 'user' && (m.text.trim().length > 0 || (m.attachments?.length ?? 0) > 0))
   if (!firstUser) return ''
-  const text = firstUser.text
+  const text = firstUser.text.trim()
+  if (!text) {
+    const names = (firstUser.attachments ?? []).map((a) => a.fileName).join('、')
+    return names ? `📎 ${names}` : ''
+  }
   return text.length > PREVIEW_MAX_LENGTH ? text.slice(0, PREVIEW_MAX_LENGTH) + '...' : text
 }
 
@@ -130,6 +145,8 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       const cur = agent.conversations[agent.activeId]
       if (cur && cur.messages.length === 0 && !cur.streaming) {
         cur.input = ''
+        // 复用空白会话相当于放弃这些待发送附件（不会再被发送），立即 revoke 图片本地 objectURL 防泄漏
+        revokeAttachmentPreviews(cur.attachments)
         cur.attachments = []
         return
       }
@@ -152,7 +169,13 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       const history = await getChatSessionMessages(agentCode, targetSessionId)
       agent.conversations[targetSessionId] = createChatConversation(
         targetSessionId,
-        history.map((msg) => ({ role: msg.role, text: msg.text, nodes: [] })),
+        history.map((msg) => ({
+          role: msg.role,
+          text: msg.text,
+          nodes: [],
+          // 历史附件没有本地 previewUrl，图片缩略图交给 MessageAttachments 组件按需拉后端 blob
+          attachments: msg.attachments.length > 0 ? msg.attachments : undefined,
+        })),
       )
       agent.activeId = targetSessionId
     },
@@ -168,16 +191,29 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       const text = conv.input.trim()
       // 输入框内容自动去首尾空白：纯空白输入被拦下时框里的空格也一并清掉，避免"有空格但发不出去"的困惑
       conv.input = text
-      const attachedNames = conv.attachments.filter((a) => a.status === 'success').map((a) => a.name)
+      const successfulAttachments = conv.attachments.filter((a) => a.status === 'success' && a.id)
       // 有解析成功的附件时允许"只发附件不写文字"（正文即附件内容，满足后端 message 非空要求）
-      if ((!text && attachedNames.length === 0) || conv.streaming || conv.attachments.some((a) => a.status === 'uploading')) return
+      if ((!text && successfulAttachments.length === 0) || conv.streaming || conv.attachments.some((a) => a.status === 'uploading')) return
       conv.interrupted = false
       const messageToSend = buildMessage(conv, text)
-      // 用户气泡只展示原始输入 + 附件文件名提示，不把拼进正文的附件全文也显示出来（那部分只是发给模型看的）。
+      const attachmentIds = successfulAttachments.length > 0 ? successfulAttachments.map((a) => a.id as string) : undefined
+      // 用户气泡展示原始输入 + 独立的附件区（图片缩略图/文件芯片），不把拼进正文的附件全文也显示出来
+      // （那部分只是发给模型看的）。previewUrl 所有权从待发送区转移给消息对象——发送后立即清空
+      // conv.attachments（见下方），这里转移完就不再由待发送区持有，也不 revoke，气泡还要接着用它。
       conv.messages.push({
         role: 'user',
-        text: attachedNames.length > 0 ? `${text ? text + '\n' : ''}📎 ${attachedNames.join('、')}` : text,
+        text,
         nodes: [],
+        attachments: successfulAttachments.length > 0
+          ? successfulAttachments.map((a) => ({
+              id: a.id as string,
+              fileName: a.name,
+              mimeType: a.mimeType ?? '',
+              fileSize: a.fileSize ?? 0,
+              parseStatus: 'SUCCESS',
+              previewUrl: a.previewUrl,
+            }))
+          : undefined,
       })
       conv.messages.push({ role: 'assistant', text: '', nodes: [] })
       // 坑：不能拿 push 前创建的原始对象引用去改——响应式数组对存进去的对象是"读取时才转代理"，
@@ -188,7 +224,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       conv.streaming = true
       const sid = conv.sessionId
 
-      conv.abort = streamChat(agentCode, { sessionId: sid, message: messageToSend, mode: conv.mode }, {
+      conv.abort = streamChat(agentCode, { sessionId: sid, message: messageToSend, mode: conv.mode, attachmentIds }, {
         onEvent: (event) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (!c) return

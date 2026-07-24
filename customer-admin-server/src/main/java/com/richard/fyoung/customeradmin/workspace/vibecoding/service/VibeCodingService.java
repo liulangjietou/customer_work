@@ -153,10 +153,20 @@ public class VibeCodingService {
      */
     /** 流式对话（未指定执行模式）：保留旧三参签名，供协作链路/既有测试使用，回落全局模式语义。 */
     public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText) {
-        return stream(agentCode, sessionId, userText, null);
+        return stream(agentCode, sessionId, userText, null, null);
     }
 
+    /** 流式对话（带执行模式，无附件）：保留旧四参签名，供既有调用点/测试使用。 */
     public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText, String mode) {
+        return stream(agentCode, sessionId, userText, mode, null);
+    }
+
+    /**
+     * 流式对话（带执行模式 + 附件绑定）：{@code attachmentIds} 透传给 {@link ChatService#chatStream}，
+     * 在请求线程同步段把附件绑定到本条用户消息（框架 Msg.id）。VibeCoding 面板上传的附件走此链路。
+     */
+    public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText, String mode,
+                                         List<String> attachmentIds) {
         requireVibeCodingCapable(agentCode);
         // 创建会话子目录（幂等），并以此为基础拍快照，对话结束后 diff 出本轮变更
         Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
@@ -187,7 +197,7 @@ public class VibeCodingService {
         // 执行模式随消息透传给 ChatService：模式登记 + Plan 确认通道（plan/plan_result 合并进流）均由
         // chatStream 统一承接（对话/VibeCoding/协作共用同一套闭环），本类只在其输出上叠加 file_change/
         // test_report 检测与审计，plan 事件作为普通 chunk 透传给前端。
-        Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, mode, callMeta, usageTotal::set)
+        Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, mode, callMeta, attachmentIds, usageTotal::set)
             .concatMap(chunk -> chunk.kind() == ChatNodeKind.TOOL_RESULT
                 // 顺序：原始工具结果 → 结构化 test_report（若可识别为编译/测试执行）→ 实时 file_change
                 ? Flux.concat(Flux.just(chunk),

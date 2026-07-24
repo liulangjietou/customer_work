@@ -78,6 +78,16 @@ function parseFilename(disposition: string | undefined): string | null {
 }
 
 /**
+ * 二进制内容获取（如对话附件原文件，用于图片内联预览的 objectURL）：与 download() 同样以
+ * responseType: 'blob' 请求（带 Authorization header，绕过 Result 拆箱拦截），但只返回 Blob，
+ * 不触发浏览器保存——调用方自己决定拿这个 Blob 做 <img> 预览还是别的用途。
+ */
+export async function requestBlob(config: AxiosRequestConfig): Promise<Blob> {
+  const response = await http.request<Blob, AxiosResponse<Blob>>({ ...config, responseType: 'blob' })
+  return response.data
+}
+
+/**
  * 二进制文件下载（如 SQL 查询结果导出 xlsx）：以 responseType: 'blob' 请求，跳过上面拦截器的
  * Result 拆箱，直接拿原始 AxiosResponse<Blob> 触发浏览器保存。文件名优先取响应头
  * Content-Disposition，取不到则用调用方传入的兜底名。

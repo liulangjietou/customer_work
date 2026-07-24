@@ -45,7 +45,8 @@ class ChatHistoryCacheTest {
 
     @Test
     void putMessages_thenGetMessages_shouldRoundTrip() {
-        List<ChatMessageVO> messages = List.of(new ChatMessageVO("user", "你好", "2026-07-08 12:00:00"));
+        List<ChatMessageVO> messages = List.of(
+            new ChatMessageVO("m1", "user", "你好", "2026-07-08 12:00:00", List.of()));
         String[] stored = new String[1];
         when(jedis.setex(eq("admin:chat:messages:agent-1:s1"), anyLong(), anyString()))
             .thenAnswer(invocation -> {

@@ -70,6 +70,7 @@ public class MybatisAttachmentStore implements AttachmentStore {
         ChatAttachmentDO record = new ChatAttachmentDO();
         record.setId(a.getId());
         record.setSessionId(a.getSessionId());
+        record.setMessageId(a.getMessageId());
         record.setUploader(a.getUploader());
         record.setChannel(a.getChannel());
         record.setFileName(a.getFileName());
@@ -89,6 +90,7 @@ public class MybatisAttachmentStore implements AttachmentStore {
         return ChatAttachment.builder()
             .id(record.getId())
             .sessionId(record.getSessionId())
+            .messageId(record.getMessageId())
             .uploader(record.getUploader())
             .channel(record.getChannel())
             .fileName(record.getFileName())

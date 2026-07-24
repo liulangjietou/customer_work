@@ -1,10 +1,14 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
 import com.richard.fyoung.customeradmin.common.page.PageResult;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentStateAccessor;
+import com.richard.fyoung.customerwork.attachment.AttachmentParseStatus;
+import com.richard.fyoung.customerwork.attachment.AttachmentStore;
+import com.richard.fyoung.customerwork.attachment.ChatAttachment;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -14,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,6 +45,7 @@ class ChatHistoryServiceTest {
     private AgentStateAccessor agentStateAccessor;
     private ChatHistoryCache historyCache;
     private ChatSessionStateQueryMapper sessionStateQueryMapper;
+    private AttachmentStore attachmentStore;
     private ChatHistoryService service;
     private ReActAgent agent;
 
@@ -50,8 +56,9 @@ class ChatHistoryServiceTest {
         agentStateAccessor = mock(AgentStateAccessor.class);
         historyCache = mock(ChatHistoryCache.class);
         sessionStateQueryMapper = mock(ChatSessionStateQueryMapper.class);
+        attachmentStore = mock(AttachmentStore.class);
         service = new ChatHistoryService(agentInstanceCache, agentStateStore, agentStateAccessor,
-            historyCache, sessionStateQueryMapper);
+            historyCache, sessionStateQueryMapper, attachmentStore);
 
         agent = mock(ReActAgent.class);
         when(agentInstanceCache.getOrBuild(AGENT_CODE)).thenReturn(agent);
@@ -123,6 +130,58 @@ class ChatHistoryServiceTest {
         assertEquals(2, result.getTotal());
         assertEquals(1, result.getList().size());
         assertEquals("s2", result.getList().get(0).sessionId());
+    }
+
+    @Test
+    void getMessages_shouldAttachAttachments_groupedByMessageId() {
+        // 缓存未命中 → 回源 state；附件按 message_id 挂回对应用户消息，无附件的消息给空列表（契约要求非 null）。
+        String sessionId = "sess-1";
+        when(historyCache.getMessages(AGENT_CODE, sessionId)).thenReturn(Optional.empty());
+
+        Msg userMsg = Msg.builder().id("m1").role(MsgRole.USER).textContent("看下这个附件").build();
+        Msg assistantMsg = Msg.builder().id("m2").role(MsgRole.ASSISTANT).textContent("好的").build();
+        AgentState state = mock(AgentState.class);
+        when(state.getContext()).thenReturn(List.of(userMsg, assistantMsg));
+        when(agentStateAccessor.resolve(agent, AGENT_CODE, sessionId)).thenReturn(state);
+
+        ChatAttachment attachment = ChatAttachment.builder()
+            .id("att-1").messageId("m1").fileName("spec.pdf").mimeType("application/pdf")
+            .fileSize(2048L).parseStatus(AttachmentParseStatus.SUCCESS).build();
+        when(attachmentStore.listBySession(sessionId)).thenReturn(List.of(attachment));
+
+        List<ChatMessageVO> messages = service.getMessages(AGENT_CODE, sessionId);
+
+        assertEquals(2, messages.size());
+        // 用户消息带附件（id=框架 Msg.id）
+        assertEquals("m1", messages.get(0).id());
+        assertEquals(1, messages.get(0).attachments().size());
+        assertEquals("att-1", messages.get(0).attachments().get(0).id());
+        assertEquals("spec.pdf", messages.get(0).attachments().get(0).fileName());
+        assertEquals("SUCCESS", messages.get(0).attachments().get(0).parseStatus());
+        assertEquals(2048L, messages.get(0).attachments().get(0).fileSize());
+        // 助手消息无附件 → 空列表而非 null
+        assertEquals("m2", messages.get(1).id());
+        assertTrue(messages.get(1).attachments().isEmpty());
+    }
+
+    @Test
+    void getMessages_shouldReturnEmptyAttachments_whenAttachmentUnbound() {
+        // message_id 为空（仅上传未发送）的附件不应挂到任何消息上。
+        String sessionId = "sess-2";
+        when(historyCache.getMessages(AGENT_CODE, sessionId)).thenReturn(Optional.empty());
+        Msg userMsg = Msg.builder().id("m1").role(MsgRole.USER).textContent("hi").build();
+        AgentState state = mock(AgentState.class);
+        when(state.getContext()).thenReturn(List.of(userMsg));
+        when(agentStateAccessor.resolve(agent, AGENT_CODE, sessionId)).thenReturn(state);
+        ChatAttachment unbound = ChatAttachment.builder()
+            .id("att-x").messageId("").fileName("x.txt").mimeType("text/plain")
+            .fileSize(1L).parseStatus(AttachmentParseStatus.SUCCESS).build();
+        when(attachmentStore.listBySession(sessionId)).thenReturn(List.of(unbound));
+
+        List<ChatMessageVO> messages = service.getMessages(AGENT_CODE, sessionId);
+
+        assertEquals(1, messages.size());
+        assertTrue(messages.get(0).attachments().isEmpty());
     }
 
     @Test
