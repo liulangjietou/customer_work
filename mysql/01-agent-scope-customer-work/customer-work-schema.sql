@@ -225,6 +225,55 @@ CREATE TABLE IF NOT EXISTS `cw_chat_message` (
     INDEX `idx_chat_ticket` (`ticket_id`, `id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
+-- 智能体调用主记录表（cw_agent_call_log）：每次调用一行，含分段耗时冗余汇总（MybatisAgentCallLogStore）。
+CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `request_id`     VARCHAR(64) NOT NULL DEFAULT '' COMMENT '请求ID（全链路关联）',
+    `user_id`        VARCHAR(128) NOT NULL DEFAULT '' COMMENT '用户ID（ctx.userId）',
+    `username`       VARCHAR(128) NOT NULL DEFAULT '' COMMENT '用户名',
+    `agent_code`     VARCHAR(128) NOT NULL DEFAULT '' COMMENT '智能体编码',
+    `agent_name`     VARCHAR(255) NOT NULL DEFAULT '' COMMENT '智能体名称',
+    `session_id`     VARCHAR(128) NOT NULL DEFAULT '' COMMENT '会话ID',
+    `session_type`   VARCHAR(32) NOT NULL DEFAULT 'CHAT' COMMENT '会话类型 CHAT/VIBE_CODING',
+    `question`       MEDIUMTEXT COMMENT '用户问题',
+    `answer`         MEDIUMTEXT COMMENT '智能体回答',
+    `start_time`     BIGINT NOT NULL COMMENT '调用开始时间戳（毫秒）',
+    `end_time`       BIGINT NOT NULL COMMENT '调用结束时间戳（毫秒）',
+    `duration_ms`    BIGINT NOT NULL DEFAULT 0 COMMENT '总耗时（毫秒）',
+    `model_ms`       BIGINT NOT NULL DEFAULT 0 COMMENT 'MODEL段耗时合计（毫秒）',
+    `tool_ms`        BIGINT NOT NULL DEFAULT 0 COMMENT 'TOOL段耗时合计（毫秒）',
+    `mcp_ms`         BIGINT NOT NULL DEFAULT 0 COMMENT 'MCP段耗时合计（毫秒）',
+    `skill_ms`       BIGINT NOT NULL DEFAULT 0 COMMENT 'SKILL段耗时合计（毫秒）',
+    `segment_count`  INT NOT NULL DEFAULT 0 COMMENT '分段总数',
+    `input_tokens`   BIGINT DEFAULT NULL COMMENT '请求级输入token合计（缺失为NULL）',
+    `output_tokens`  BIGINT DEFAULT NULL COMMENT '请求级输出token合计（缺失为NULL）',
+    `total_tokens`   BIGINT DEFAULT NULL COMMENT '请求级总token合计（缺失为NULL）',
+    `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '整次调用是否成功',
+    `error_msg`      VARCHAR(1024) COMMENT '失败原因',
+    `created_at`     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '落库时间',
+    INDEX `idx_call_request` (`request_id`),
+    INDEX `idx_call_username` (`username`),
+    INDEX `idx_call_agent_code` (`agent_code`),
+    INDEX `idx_call_session` (`session_id`),
+    INDEX `idx_call_start` (`start_time`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- 智能体调用分段明细表（cw_agent_call_segment）：一次调用的每段耗时一行（MybatisAgentCallLogStore）。
+CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `call_log_id`    BIGINT NOT NULL COMMENT '所属主记录ID',
+    `seq`            INT NOT NULL COMMENT '调用内分段序号（从1起）',
+    `kind`           VARCHAR(16) NOT NULL COMMENT '分段类别 MODEL/TOOL/MCP/SKILL',
+    `name`           VARCHAR(255) NOT NULL DEFAULT '' COMMENT '分段名称（模型名/工具名）',
+    `start_time`     BIGINT NOT NULL COMMENT '分段开始时间戳（毫秒）',
+    `duration_ms`    BIGINT NOT NULL DEFAULT 0 COMMENT '分段耗时（毫秒）',
+    `input_tokens`   BIGINT DEFAULT NULL COMMENT '输入token（仅MODEL段，缺失为NULL）',
+    `output_tokens`  BIGINT DEFAULT NULL COMMENT '输出token（仅MODEL段，缺失为NULL）',
+    `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '分段是否成功',
+    `error_msg`      VARCHAR(1024) COMMENT '失败原因',
+    INDEX `idx_segment_call_log` (`call_log_id`, `seq`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 -- 对话附件表（cw_chat_attachment）：上传附件落盘 + 落库，解析文本可追溯（MybatisAttachmentStore）。
 CREATE TABLE IF NOT EXISTS `cw_chat_attachment` (
     `id`             VARCHAR(64) NOT NULL COMMENT '附件ID(UUID)',

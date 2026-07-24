@@ -560,6 +560,9 @@ public class CustomerWorkProperties {
     /** 聊天日志（会话/工单消息留痕）存储配置。 */
     private final ChatLog chatLog = new ChatLog();
 
+    /** 智能体调用分段耗时统计（采集开关 + 存储模式）。 */
+    private final CallLog callLog = new CallLog();
+
     /** 业务工具后端存储配置（订单/商品/售后/会员/投诉/知识库六域）。 */
     private final ToolBackend toolBackend = new ToolBackend();
 
@@ -699,6 +702,21 @@ public class CustomerWorkProperties {
      */
     @Data
     public static class ChatLog {
+        /** 存储模式：memory（进程内，默认）| jdbc（跨实例共享）。 */
+        private String storeMode = "memory";
+    }
+
+    /**
+     * 智能体调用分段耗时统计配置。
+     *
+     * <p>{@code enabled} 控制 {@code AgentCallTimingMiddleware} 是否采集（默认开，开销极低：仅
+     * nanoTime 计时 + 异步落库，不阻塞响应流）；{@code store-mode} 决定 {@code AgentCallLogStore} 的
+     * 持久化方式（memory 仅单实例 / jdbc 跨实例，落 cw_agent_call_log + cw_agent_call_segment 两表）。</p>
+     */
+    @Data
+    public static class CallLog {
+        /** 是否启用调用分段耗时采集（默认开启）。 */
+        private boolean enabled = true;
         /** 存储模式：memory（进程内，默认）| jdbc（跨实例共享）。 */
         private String storeMode = "memory";
     }

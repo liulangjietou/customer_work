@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.tool;
 
+import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
@@ -9,6 +10,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * MCP 接入装配器（对应特性「MCP 接入」）。
@@ -25,9 +28,12 @@ public class McpToolkitConfigurer {
     private static final Logger log = LoggerFactory.getLogger(McpToolkitConfigurer.class);
 
     private final CustomerWorkProperties properties;
+    /** 工具归类登记表：MCP 工具在此登记名称，供分段耗时统计按类归段。 */
+    private final ToolKindRegistry toolKindRegistry;
 
-    public McpToolkitConfigurer(CustomerWorkProperties properties) {
+    public McpToolkitConfigurer(CustomerWorkProperties properties, ToolKindRegistry toolKindRegistry) {
         this.properties = properties;
+        this.toolKindRegistry = toolKindRegistry;
     }
 
     /** 是否启用 MCP（且配置了至少一个服务）。 */
@@ -45,8 +51,14 @@ public class McpToolkitConfigurer {
             try {
                 McpClientWrapper wrapper = buildClient(server).block();
                 if (wrapper != null) {
+                    // 快照注册前工具名，注册后取增量即为本 MCP 服务贡献的工具，登记为 MCP 类别
+                    // （直接用 toolkit 实际工具名做键，与 onActing 的 ToolUseBlock.getName() 一致，最可靠）
+                    Set<String> before = new HashSet<>(toolkit.getToolNames());
                     toolkit.registerMcpClient(wrapper).block();
-                    log.info("[MCP] 已接入服务 name={} url={}", server.getName(), server.getUrl());
+                    Set<String> added = new HashSet<>(toolkit.getToolNames());
+                    added.removeAll(before);
+                    toolKindRegistry.registerMcpTools(added);
+                    log.info("[MCP] 已接入服务 name={} url={} tools={}", server.getName(), server.getUrl(), added);
                 }
             } catch (Exception e) {
                 // 单个 MCP 服务不可用不应阻断整个应用启动

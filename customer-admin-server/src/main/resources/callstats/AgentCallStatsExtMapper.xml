@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsExtMapper">
+
+    <!-- 公共动态过滤条件（用户 / agentCode / sessionType / requestId / sessionId / 时间范围）。
+         相比 starter 的 whereClause 多一个 session_type 维度。 -->
+    <sql id="whereClause">
+        <where>
+            <if test="q.username != null">AND username = #{q.username}</if>
+            <if test="q.agentCode != null">AND agent_code = #{q.agentCode}</if>
+            <if test="q.sessionType != null">AND session_type = #{q.sessionType}</if>
+            <if test="q.requestId != null">AND request_id = #{q.requestId}</if>
+            <if test="q.sessionId != null">AND session_id = #{q.sessionId}</if>
+            <if test="q.startFromMs != null">AND start_time &gt;= #{q.startFromMs}</if>
+            <if test="q.startToMs != null">AND start_time &lt;= #{q.startToMs}</if>
+        </where>
+    </sql>
+
+    <!-- 分页条件查询：id 倒序取一页（最新在前）。列与 starter AgentCallLogDO 完全一致。 -->
+    <select id="findPage" resultType="com.richard.fyoung.customerwork.calllog.entity.AgentCallLogDO">
+        SELECT id, request_id, user_id, username, agent_code, agent_name, session_id, session_type,
+               question, answer, start_time, end_time, duration_ms, model_ms, tool_ms, mcp_ms,
+               skill_ms, segment_count, input_tokens, output_tokens, total_tokens, success, error_msg
+        FROM cw_agent_call_log
+        <include refid="whereClause"/>
+        ORDER BY id DESC
+        LIMIT #{q.limit} OFFSET #{q.offset}
+    </select>
+
+    <!-- 符合条件总数。 -->
+    <select id="countBy" resultType="long">
+        SELECT COUNT(*) FROM cw_agent_call_log
+        <include refid="whereClause"/>
+    </select>
+
+    <!-- 汇总统计：总数 / 平均总耗时 / 最大总耗时 / 各段平均耗时。复用 starter AgentCallSummaryDO。 -->
+    <select id="summary" resultType="com.richard.fyoung.customerwork.calllog.entity.AgentCallSummaryDO">
+        SELECT COUNT(*)            AS total_count,
+               AVG(duration_ms)    AS avg_duration_ms,
+               MAX(duration_ms)    AS max_duration_ms,
+               AVG(model_ms)       AS avg_model_ms,
+               AVG(tool_ms)        AS avg_tool_ms,
+               AVG(mcp_ms)         AS avg_mcp_ms,
+               AVG(skill_ms)       AS avg_skill_ms,
+               COALESCE(SUM(total_tokens), 0) AS total_tokens,
+               AVG(total_tokens)   AS avg_total_tokens
+        FROM cw_agent_call_log
+        <include refid="whereClause"/>
+    </select>
+
+    <!-- 趋势聚合：按 dateFormat（天/小时）分桶，每桶调用数 + 平均总耗时 + 各段平均耗时，桶标签升序。
+         start_time 为毫秒时间戳，FROM_UNIXTIME 除以 1000 转秒后按本地时区格式化。 -->
+    <select id="trend" resultType="com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsTrendRow">
+        SELECT DATE_FORMAT(FROM_UNIXTIME(start_time / 1000), #{dateFormat}) AS bucket,
+               COUNT(*)         AS cnt,
+               AVG(duration_ms) AS avg_duration_ms,
+               AVG(model_ms)    AS avg_model_ms,
+               AVG(tool_ms)     AS avg_tool_ms,
+               AVG(mcp_ms)      AS avg_mcp_ms,
+               AVG(skill_ms)    AS avg_skill_ms,
+               COALESCE(SUM(total_tokens), 0) AS total_tokens
+        FROM cw_agent_call_log
+        <include refid="whereClause"/>
+        GROUP BY bucket
+        ORDER BY bucket ASC
+    </select>
+
+</mapper>

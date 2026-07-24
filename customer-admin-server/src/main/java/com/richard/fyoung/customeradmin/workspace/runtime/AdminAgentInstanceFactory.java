@@ -32,6 +32,8 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
+import com.richard.fyoung.customerwork.calllog.AgentCallTimingMiddleware;
+import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -156,6 +158,10 @@ public class AdminAgentInstanceFactory {
     private final ExecutionModeMiddleware executionModeMiddleware;
     private final ModelCircuitBreakerRegistry circuitBreakerRegistry;
     private final AgentMemorySyncService memorySyncService;
+    /** 分段耗时采集中间件（starter 提供，admin 显式装配），挂在内层 ReActAgent 上采集每次调用的分段耗时。 */
+    private final AgentCallTimingMiddleware agentCallTimingMiddleware;
+    /** 工具名→类别登记表：装配 MCP/Skill 时把工具名登记进来，采集时 onActing 据此归 MCP/SKILL（否则默认 TOOL）。 */
+    private final ToolKindRegistry agentCallToolKindRegistry;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -176,7 +182,9 @@ public class AdminAgentInstanceFactory {
                                       SandboxGuardMiddleware sandboxGuardMiddleware,
                                       ExecutionModeMiddleware executionModeMiddleware,
                                       ModelCircuitBreakerRegistry circuitBreakerRegistry,
-                                      AgentMemorySyncService memorySyncService) {
+                                      AgentMemorySyncService memorySyncService,
+                                      AgentCallTimingMiddleware agentCallTimingMiddleware,
+                                      ToolKindRegistry agentCallToolKindRegistry) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -199,6 +207,8 @@ public class AdminAgentInstanceFactory {
         this.executionModeMiddleware = executionModeMiddleware;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
         this.memorySyncService = memorySyncService;
+        this.agentCallTimingMiddleware = agentCallTimingMiddleware;
+        this.agentCallToolKindRegistry = agentCallToolKindRegistry;
     }
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
@@ -279,6 +289,10 @@ public class AdminAgentInstanceFactory {
             // 中断后无缝续跑：会话被安全中断（见 ChatService#interrupt）后再次调用，先恢复被打断的
             // 挂起工具调用，再处理新消息，与 customer-work-starter 侧的默认行为保持一致。
             .enablePendingToolRecovery(true);
+        // 分段耗时采集中间件挂最外层（first = outermost）：onAgent 包裹整次调用统计总耗时，onModelCall/
+        // onActing 逐段计时，只读透传不改事件、不打断主链路（异常安全收敛在中间件内）。放在模式闸门之外，
+        // 统计口径覆盖完整链路。chat 与 vibecoding 走同一内层 ReActAgent，均被采集。
+        builder.middleware(agentCallTimingMiddleware);
         // 执行模式闸门对所有智能体挂载（chat 也生效）：运行时按会话选定的五档模式决策，未指定模式且全局
         // permission-mode=bypass 时纯透传，行为等价于挂载前。顺序关键（first = outermost）：模式闸门在最外层
         // 先看到原始命令挂起/拦改，护栏在内层作最后防线（下方仅 vibecoding 挂载）。
@@ -304,6 +318,9 @@ public class AdminAgentInstanceFactory {
             builder.skillBox(skillBox);
         }
         toolSourceCache.put(agentCode, new ToolSourceInfo(skillToolNames, mcpToolNames));
+        // 登记本智能体的 MCP/Skill 工具名，供采集中间件把 onActing 分段归为 MCP/SKILL（未登记者默认 TOOL）
+        agentCallToolKindRegistry.registerMcpTools(mcpToolNames);
+        agentCallToolKindRegistry.registerSkillTools(skillToolNames);
         return builder.build();
     }
 

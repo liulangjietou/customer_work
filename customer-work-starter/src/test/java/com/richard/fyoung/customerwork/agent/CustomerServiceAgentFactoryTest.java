@@ -34,7 +34,7 @@ class CustomerServiceAgentFactoryTest {
             model, props,
             new LongTermMemoryProvider(props, store, factLog),
             new KnowledgeProvider(props),
-            new McpToolkitConfigurer(props),
+            new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()),
             new HigressToolkitConfigurer(props),
             new com.richard.fyoung.customerwork.tool.ToolRegistrar(
                 new com.richard.fyoung.customerwork.tool.backend.MockOrderBackend(),
@@ -50,6 +50,7 @@ class CustomerServiceAgentFactoryTest {
             new com.richard.fyoung.customerwork.config.PermissionConfig().permissionContextState(props),
             new com.richard.fyoung.customerwork.config.NacosPromptService(props),
             new com.richard.fyoung.customerwork.support.TenantResolver(props),
+            new com.richard.fyoung.customerwork.calllog.ToolKindRegistry(),
             null,    // 无可插拔 Hook
             null);   // 无 MeterRegistry（观测降级为仅日志）
     }

@@ -41,7 +41,7 @@ import 'highlight.js/styles/github.css'
 const REVIEW_POLL_INTERVAL_MS = 5000
 const MAX_REVIEW_POLL_COUNT = 40
 
-const props = defineProps<{ agentCode: string }>()
+const props = defineProps<{ agentCode: string; initialSessionId?: string }>()
 
 /**
  * 会话状态全部在 Pinia store（vibeConversations）里，本组件只是视图：切页面、切智能体、组件销毁
@@ -498,6 +498,19 @@ onMounted(() => {
 watch(
   () => store.historyVersion[props.agentCode],
   () => historySidebar.value?.refresh(),
+)
+
+// 从「智能体耗时统计」页「打开会话」跳转过来时带上目标会话 id，直接打开对应历史会话。
+// 用 watch 而非 onMounted 一次性读取：本页处于 keep-alive 下，二次带新 sessionId 跳进来不会重新
+// mount。immediate 保留首挂载即打开，逻辑镜像 ChatPanel 里同名 watch。
+watch(
+  () => props.initialSessionId,
+  (id) => {
+    if (id) {
+      openSession(id)
+    }
+  },
+  { immediate: true },
 )
 
 // 从 keep-alive 缓存里重新激活时滚到最新内容——离开期间进行中的会话仍在后台追加增量。

@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.service;
 
 import com.richard.fyoung.customerwork.agent.CustomerServiceAgentFactory;
+import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.dto.IntentResult;
 import io.agentscope.core.ReActAgent;
@@ -130,6 +132,7 @@ public class CustomerServiceService {
         touchSession(sessionId);
         ReActAgent agent = resolveAgent(sessionId);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
+        bindCallMeta(ctx, agent, userText);
 
         return withSessionLock(sessionId, () ->
             agent.call(userText, ctx)
@@ -155,6 +158,7 @@ public class CustomerServiceService {
         touchSession(sessionId);
         ReActAgent agent = resolveAgent(sessionId);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
+        bindCallMeta(ctx, agent, userText);
 
         StreamOptions options = StreamOptions.builder()
             .eventTypes(EventType.REASONING, EventType.AGENT_RESULT)
@@ -344,6 +348,23 @@ public class CustomerServiceService {
     /** 获取热 Agent；未命中时新建（首次 call 自动从 StateStore 恢复历史，无需手工 load）。 */
     private ReActAgent resolveAgent(String sessionId) {
         return sessionAgents.computeIfAbsent(sessionId, agentFactory::createAgent);
+    }
+
+    /**
+     * 绑定本次调用的元数据到 RuntimeContext，供 {@code AgentCallTimingMiddleware} 采集分段耗时。
+     *
+     * <p>8080 客服链路：username 取会话解析出的租户（{@code ctx.getUserId()}），agentCode/agentName 取
+     * Agent 名称，会话类型固定 CHAT，question 为本轮用户输入；requestId 缺省交由中间件回退 MDC。绑定异常
+     * 不影响主对话链路（采集为旁路，防御式兜底最终收敛在中间件）。</p>
+     */
+    private void bindCallMeta(RuntimeContext ctx, ReActAgent agent, String userText) {
+        try {
+            String agentName = agent == null ? null : agent.getName();
+            ctx.put(AgentCallMeta.class, new AgentCallMeta(
+                null, ctx.getUserId(), agentName, agentName, AgentCallSessionType.CHAT, userText));
+        } catch (Exception e) {
+            log.error("bind agent call meta failed, code={}", "CALLLOG-META-BIND-FAIL", e);
+        }
     }
 
     /**
