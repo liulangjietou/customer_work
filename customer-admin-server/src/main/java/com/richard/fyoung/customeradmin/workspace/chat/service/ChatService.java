@@ -12,6 +12,7 @@ import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionMode;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService.PlanChannel;
+import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.Event;
@@ -139,18 +140,30 @@ public class ChatService {
      * 任何 SSE 头下发之前就能拿到结构化错误响应，而不是半开的失败流）。
      */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText) {
-        return chatStream(agentCode, sessionId, userText, null, usage -> { });
+        return chatStream(agentCode, sessionId, userText, null, null, usage -> { });
     }
 
-    /** 流式对话（带执行模式，无用量观察者）：供对话链路（ChatController）使用。 */
+    /** 流式对话（带执行模式，无用量观察者）：保留旧签名，供既有调用点/测试使用。 */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText, String mode) {
-        return chatStream(agentCode, sessionId, userText, mode, usage -> { });
+        return chatStream(agentCode, sessionId, userText, mode, null, usage -> { });
+    }
+
+    /** 流式对话（带执行模式 + 调用元数据，无用量观察者）：供对话链路（ChatController）使用，采集耗时统计。 */
+    public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText, String mode,
+                                             AgentCallMeta callMeta) {
+        return chatStream(agentCode, sessionId, userText, mode, callMeta, usage -> { });
     }
 
     /** 流式对话（带用量观察者，未指定执行模式）：保留旧签名，供既有调用点/测试使用。 */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
                                              Consumer<ChatUsage> usageTotalObserver) {
-        return chatStream(agentCode, sessionId, userText, null, usageTotalObserver);
+        return chatStream(agentCode, sessionId, userText, null, null, usageTotalObserver);
+    }
+
+    /** 流式对话（带执行模式 + 用量观察者，未带调用元数据）：保留旧签名，供既有调用点/测试使用。 */
+    public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
+                                             String mode, Consumer<ChatUsage> usageTotalObserver) {
+        return chatStream(agentCode, sessionId, userText, mode, null, usageTotalObserver);
     }
 
     /**
@@ -168,9 +181,15 @@ public class ChatService {
      * mode 未指定/非法（{@link ExecutionMode#parse} 返回 null）→ 不登记，中间件回落全局语义。</p>
      */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
-                                             String mode, Consumer<ChatUsage> usageTotalObserver) {
+                                             String mode, AgentCallMeta callMeta,
+                                             Consumer<ChatUsage> usageTotalObserver) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
+        // 绑定调用元数据供 AgentCallTimingMiddleware 采集（requestId/username/agentName/sessionType/question）；
+        // 缺省（旧调用点/测试）不绑，中间件按 ctx.userId/MDC 降级，不影响主链路。
+        if (callMeta != null) {
+            ctx.put(AgentCallMeta.class, callMeta);
+        }
         ToolSourceInfo toolSource = agentInstanceFactory.toolSourceFor(agentCode);
 
         // 除了 REASONING/AGENT_RESULT，还订阅 TOOL_RESULT——不然模型调用 MCP 工具等待结果的这段时间

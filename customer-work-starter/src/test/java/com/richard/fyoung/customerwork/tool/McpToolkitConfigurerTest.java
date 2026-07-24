@@ -22,7 +22,7 @@ class McpToolkitConfigurerTest {
 
     @Test
     void isEnabled_shouldBeFalse_byDefault() {
-        McpToolkitConfigurer configurer = new McpToolkitConfigurer(new CustomerWorkProperties());
+        McpToolkitConfigurer configurer = new McpToolkitConfigurer(new CustomerWorkProperties(), new com.richard.fyoung.customerwork.calllog.ToolKindRegistry());
         assertFalse(configurer.isEnabled(), "默认不启用 MCP");
     }
 
@@ -30,7 +30,7 @@ class McpToolkitConfigurerTest {
     void isEnabled_shouldBeFalse_whenEnabledButNoServers() {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getMcp().setEnabled(true);
-        assertFalse(new McpToolkitConfigurer(props).isEnabled(), "未配置服务时视为未启用");
+        assertFalse(new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()).isEnabled(), "未配置服务时视为未启用");
     }
 
     @Test
@@ -42,7 +42,7 @@ class McpToolkitConfigurerTest {
         server.setUrl("http://localhost:9000/sse");
         props.getMcp().getServers().add(server);
 
-        assertTrue(new McpToolkitConfigurer(props).isEnabled());
+        assertTrue(new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()).isEnabled());
     }
 
     @Test
@@ -50,7 +50,7 @@ class McpToolkitConfigurerTest {
         Toolkit toolkit = new Toolkit();
         int before = toolkit.getToolNames().size();
 
-        new McpToolkitConfigurer(new CustomerWorkProperties()).configure(toolkit);
+        new McpToolkitConfigurer(new CustomerWorkProperties(), new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()).configure(toolkit);
 
         assertEquals(before, toolkit.getToolNames().size(), "未启用时不应改动 toolkit");
     }
@@ -80,7 +80,7 @@ class McpToolkitConfigurerTest {
             server.setHeaders(Map.of("Authorization", "Bearer starter-token"));
             props.getMcp().getServers().add(server);
 
-            new McpToolkitConfigurer(props).configure(new Toolkit());
+            new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()).configure(new Toolkit());
 
             assertEquals("Bearer starter-token", receivedAuth.get(), "配置的 Authorization 头应随请求发出");
         } finally {

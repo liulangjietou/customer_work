@@ -13,8 +13,11 @@ import com.richard.fyoung.customeradmin.workspace.audit.entity.AiCodingAuditLog;
 import com.richard.fyoung.customeradmin.workspace.audit.service.AiCodingAuditService;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
+import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentCallMetaFactory;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
+import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.FileChangeEvent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RollbackResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.TestReport;
@@ -86,6 +89,7 @@ public class VibeCodingService {
     private final AdminSandboxProperties sandboxProperties;
     private final AiCodingAuditService auditService;
     private final PlanConfirmationService planConfirmationService;
+    private final AgentCallMetaFactory agentCallMetaFactory;
 
     /** {@code agentCode:sessionId -> 对话开始前的目录快照}，进程内、重启丢失（v1 降级方案的一部分）。 */
     private final Map<String, Map<String, FileFingerprint>> beforeSnapshots = new ConcurrentHashMap<>();
@@ -94,7 +98,8 @@ public class VibeCodingService {
     public VibeCodingService(ChatService chatService, AdminAgentInstanceFactory agentInstanceFactory,
                               AiAgentMapper agentMapper, GitWorkspaceService gitWorkspaceService,
                               AdminSandboxProperties sandboxProperties, AiCodingAuditService auditService,
-                              PlanConfirmationService planConfirmationService) {
+                              PlanConfirmationService planConfirmationService,
+                              AgentCallMetaFactory agentCallMetaFactory) {
         this.chatService = chatService;
         this.agentInstanceFactory = agentInstanceFactory;
         this.agentMapper = agentMapper;
@@ -102,6 +107,7 @@ public class VibeCodingService {
         this.sandboxProperties = sandboxProperties;
         this.auditService = auditService;
         this.planConfirmationService = planConfirmationService;
+        this.agentCallMetaFactory = agentCallMetaFactory;
     }
 
     /** 当前 VibeCoding 沙箱模式（{@code admin.sandbox.mode} 全局配置，不随会话变化）："docker"｜"local"。 */
@@ -168,6 +174,9 @@ public class VibeCodingService {
         // 审计条目必须在请求线程的同步段创建（操作人取自 Sa-Token 的 ThreadLocal），
         // doFinally 跑在 reactor 线程，届时已拿不到登录上下文。
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.CHAT_STREAM, agentCode, safeSession);
+        // 采集元数据同样在请求线程同步段构建：渠道=vibecoding → VIBE_CODING，question 用用户原始输入
+        // （而非注入路径指引后的 enrichedText，报表展示的是用户真实提问）。
+        AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.VIBE_CODING, userText);
         AtomicReference<ChatUsage> usageTotal = new AtomicReference<>();
 
         AtomicReference<Map<String, FileFingerprint>> lastSnapshot = new AtomicReference<>(initialSnapshot);
@@ -178,7 +187,7 @@ public class VibeCodingService {
         // 执行模式随消息透传给 ChatService：模式登记 + Plan 确认通道（plan/plan_result 合并进流）均由
         // chatStream 统一承接（对话/VibeCoding/协作共用同一套闭环），本类只在其输出上叠加 file_change/
         // test_report 检测与审计，plan 事件作为普通 chunk 透传给前端。
-        Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, mode, usageTotal::set)
+        Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, mode, callMeta, usageTotal::set)
             .concatMap(chunk -> chunk.kind() == ChatNodeKind.TOOL_RESULT
                 // 顺序：原始工具结果 → 结构化 test_report（若可识别为编译/测试执行）→ 实时 file_change
                 ? Flux.concat(Flux.just(chunk),

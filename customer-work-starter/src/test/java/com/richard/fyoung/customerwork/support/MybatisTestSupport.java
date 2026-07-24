@@ -8,6 +8,8 @@ import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.approval.mapper.ApprovalMapper;
 import com.richard.fyoung.customerwork.attachment.mapper.ChatAttachmentMapper;
+import com.richard.fyoung.customerwork.calllog.mapper.AgentCallLogMapper;
+import com.richard.fyoung.customerwork.calllog.mapper.AgentCallSegmentMapper;
 import com.richard.fyoung.customerwork.chatlog.mapper.ChatMessageMapper;
 import com.richard.fyoung.customerwork.dialog.mapper.DialogStageMapper;
 import com.richard.fyoung.customerwork.feedback.mapper.FeedbackMapper;
@@ -59,7 +61,8 @@ public final class MybatisTestSupport {
         ChatMessageMapper.class, AuditLogMapper.class, OrderMapper.class, ProductMapper.class,
         RefundMapper.class, InvoiceRequestMapper.class, MemberMapper.class, MemberAccountLogMapper.class,
         ComplaintMapper.class, KnowledgeMapper.class, ChatAttachmentMapper.class,
-        SensitiveWordMapper.class, SeatAgentMapper.class
+        SensitiveWordMapper.class, SeatAgentMapper.class,
+        AgentCallLogMapper.class, AgentCallSegmentMapper.class
     };
 
     private MybatisTestSupport() {

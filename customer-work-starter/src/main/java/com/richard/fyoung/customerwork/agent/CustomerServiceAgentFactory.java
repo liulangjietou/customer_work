@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.agent;
 
+import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.support.TenantResolver;
 import com.richard.fyoung.customerwork.config.NacosPromptService;
@@ -89,6 +90,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     private final NacosPromptService nacosPromptService;
     /** 租户解析（单一职责，与质检/诊断链路共用同一实现）。 */
     private final TenantResolver tenantResolver;
+    /** 工具归类登记表：skill 工具在此登记名称，供分段耗时统计按类归段。 */
+    private final ToolKindRegistry toolKindRegistry;
     /** 可插拔 Middleware：本库内置（延迟/脱敏/审计/自我纠错/护栏/动态参数/租户）+ 下游自定义的所有 {@link MiddlewareBase} Bean。 */
     private final ObjectProvider<MiddlewareBase> pluggableMiddlewares;
 
@@ -106,6 +109,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        PermissionContextState permissionContext,
                                        NacosPromptService nacosPromptService,
                                        TenantResolver tenantResolver,
+                                       ToolKindRegistry toolKindRegistry,
                                        ObjectProvider<MiddlewareBase> pluggableMiddlewares,
                                        ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.model = model;
@@ -119,6 +123,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.permissionContext = permissionContext;
         this.nacosPromptService = nacosPromptService;
         this.tenantResolver = tenantResolver;
+        this.toolKindRegistry = toolKindRegistry;
         this.pluggableMiddlewares = pluggableMiddlewares;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
@@ -270,10 +275,23 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             } else {
                 skills = new ClasspathSkillRepository(cfg.getLocation()).getAllSkills();
             }
+            // 快照注册前工具名，注册 skill 后取增量即为 skill 贡献的工具，登记为 SKILL 类别
+            // （用 toolkit 实际工具名做键，与 onActing 的 ToolUseBlock.getName() 一致）
+            java.util.Set<String> beforeSkill = new java.util.HashSet<>(toolkit.getToolNames());
             SkillBox skillBox = new SkillBox(toolkit);
             for (AgentSkill skill : skills) {
                 skillBox.registerSkill(skill);
             }
+            java.util.Set<String> skillTools = new java.util.HashSet<>(toolkit.getToolNames());
+            skillTools.removeAll(beforeSkill);
+            // 兜底：skill 可能以懒激活形式尚未落 toolkit，同时登记 skillId / skillName，覆盖 onActing 可能出现的两种名
+            skillTools.addAll(skillBox.getAllSkillIds());
+            for (AgentSkill skill : skills) {
+                if (skill.getName() != null) {
+                    skillTools.add(skill.getName());
+                }
+            }
+            toolKindRegistry.registerSkillTools(skillTools);
             // 运行时加载技能工具：允许 Agent 按需自行加载技能（技能自进化）
             if (cfg.isRuntimeLoadToolEnabled()) {
                 skillBox.registerSkillLoadTool();

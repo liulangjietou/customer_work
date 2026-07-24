@@ -19,9 +19,12 @@ const props = defineProps<{ agentCode: string }>()
 const menuStore = useMenuStore()
 const route = useRoute()
 const router = useRouter()
-// 从 Project 详情页"点会话跳回工作区"带过来的目标会话 id（?sessionId=xxx），只在首次挂载时读一次，
-// ChatPanel 内部 openSession 打开后由它自己的会话状态接管，不需要响应式跟随路由变化。
+// 从 Project 详情页"点会话跳回工作区"、或「智能体耗时统计」页"打开会话"带过来的目标会话 id
+// （?sessionId=xxx），ChatPanel/VibeCodingPanel 各自用 watch(immediate) 响应式跟随，
+// 支持同一实例二次带新 sessionId 跳入（keep-alive 下不会重新 mount，见两个面板内部注释）。
 const initialSessionId = computed(() => (route.query.sessionId as string) || undefined)
+// 与 sessionId 配套的目标 Tab：VibeCoding 会话跳 VibeCoding 面板，其余（含缺省）落对话面板。
+const initialMode = computed(() => (route.query.mode as string) || undefined)
 
 function findNode(nodes: MenuNode[], agentCode: string): MenuNode | null {
   for (const node of nodes) {
@@ -51,6 +54,21 @@ watch(supportsVibeCoding, (supported) => {
     activeTab.value = 'chat'
   }
 })
+
+// 带 ?mode= 跳入时按目标 Tab 切换（「智能体耗时统计」页"打开会话"的入口）。supportsVibeCoding
+// 依赖 menuStore 异步拉到的智能体能力树，跟 initialMode 一起 watch，防止菜单树晚到位时错过一次切换。
+watch(
+  [initialMode, supportsVibeCoding],
+  ([mode, supported]) => {
+    if (mode === 'vibecoding' && supported) {
+      activeTab.value = 'vibecoding'
+    } else if (mode === 'chat') {
+      activeTab.value = 'chat'
+    }
+  },
+  { immediate: true },
+)
+
 const chatPanelRef = ref<InstanceType<typeof ChatPanel>>()
 const vibeCodingPanelRef = ref<InstanceType<typeof VibeCodingPanel>>()
 
@@ -138,7 +156,7 @@ watch(
         <ChatPanel ref="chatPanelRef" :key="agentCode" :agent-code="agentCode" :initial-session-id="initialSessionId" />
       </el-tab-pane>
       <el-tab-pane v-if="supportsVibeCoding" label="VibeCoding" name="vibecoding">
-        <VibeCodingPanel ref="vibeCodingPanelRef" :key="agentCode" :agent-code="agentCode" />
+        <VibeCodingPanel ref="vibeCodingPanelRef" :key="agentCode" :agent-code="agentCode" :initial-session-id="initialSessionId" />
       </el-tab-pane>
     </el-tabs>
   </div>

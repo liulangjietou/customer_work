@@ -10,6 +10,7 @@ export const staticRouteComponents: Record<string, () => Promise<Component>> = {
   '/system/role': () => import('@/views/system/RoleManage.vue'),
   '/system/log': () => import('@/views/system/OperationLog.vue'),
   '/system/ai-audit': () => import('@/views/system/AiCodingAudit.vue'),
+  '/system/agent-call-stats': () => import('@/views/system/AgentCallStats.vue'),
   '/system/menu': () => import('@/views/system/MenuManage.vue'),
   '/system/devtools': () => import('@/views/system/DevToolboxView.vue'),
   '/system/login-image': () => import('@/views/system/LoginImageManage.vue'),

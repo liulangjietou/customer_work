@@ -187,6 +187,99 @@ export interface AiCodingAuditQuery extends PageQuery {
   operation?: string
 }
 
+// ---------- system.agent-call-stats ----------
+// 契约由后端并行开发分支约定死（/api/agent-call-stats/*），字段命名与下方一一对应，不自行发明。
+
+/** 调用来源：ADMIN=后台工作台（客服坐席/内部使用），APP=客服端 H5（面向终端用户）。 */
+export type AgentCallSource = 'ADMIN' | 'APP'
+/** 会话类型：CHAT=普通对话，VIBE_CODING=编码协作。APP 来源恒为 CHAT。 */
+export type AgentCallSessionType = 'CHAT' | 'VIBE_CODING'
+/** 单次调用内的分段耗时类型：大模型/工具/MCP/技能。 */
+export type AgentCallSegmentKind = 'MODEL' | 'TOOL' | 'MCP' | 'SKILL'
+/** 趋势图统计粒度。 */
+export type AgentCallTrendGranularity = 'day' | 'hour'
+
+/** 智能体调用耗时统计查询条件：分页/汇总/趋势三个接口共用同一套筛选参数。 */
+export interface AgentCallStatsQuery extends PageQuery {
+  source?: AgentCallSource
+  username?: string
+  agentCode?: string
+  sessionType?: AgentCallSessionType
+  requestId?: string
+  sessionId?: string
+  /** 格式 yyyy-MM-dd HH:mm:ss，与后端 SQL 通用日期参数约定一致（见 SqlQueryView 同类用法）。 */
+  startTime?: string
+  endTime?: string
+}
+
+/** 分页明细行（不含 answer 全文与分段明细，详情走单条接口）。 */
+export interface AgentCallStatsRow {
+  id: number
+  requestId: string
+  /** 注意：后端此字段为字符串（admin 链路实际取 agentCode 作状态隔离键），非数字用户 id。 */
+  userId: string | null
+  username: string | null
+  agentCode: string
+  agentName: string | null
+  sessionId: string
+  sessionType: AgentCallSessionType
+  question: string
+  answerPreview: string
+  startTime: string
+  endTime: string
+  durationMs: number
+  modelMs: number
+  toolMs: number
+  mcpMs: number
+  skillMs: number
+}
+
+// 契约固定 { total, rows }，与通用 PageResult 的 pageNum/pageSize/list 命名不同（同 MpPageResult
+// 的先例：不同后端模块按各自契约透出，不强行套通用形状）。
+export interface AgentCallStatsPageResult {
+  total: number
+  rows: AgentCallStatsRow[]
+}
+
+/** 单次调用内的一段耗时（一次模型调用/一次工具调用/一次 MCP 调用/一次技能调用）。 */
+export interface AgentCallStatsSegment {
+  seq: number
+  kind: AgentCallSegmentKind
+  name: string
+  startTime: string
+  durationMs: number
+  success: boolean
+  errorMsg: string | null
+}
+
+/** 单条调用详情：分页行字段 + 回答全文 + 分段耗时明细。 */
+export interface AgentCallStatsDetail extends AgentCallStatsRow {
+  answer: string
+  segments: AgentCallStatsSegment[]
+}
+
+/** 汇总卡片：总调用数/耗时均值峰值/各分段耗时均值。 */
+export interface AgentCallStatsSummary {
+  totalCalls: number
+  avgDurationMs: number
+  maxDurationMs: number
+  avgModelMs: number
+  avgToolMs: number
+  avgMcpMs: number
+  avgSkillMs: number
+}
+
+/** 趋势图单个时间桶。 */
+export interface AgentCallStatsTrendPoint {
+  bucket: string
+  count: number
+  avgDurationMs: number
+  avgModelMs: number
+  avgToolMs: number
+  avgMcpMs: number
+  avgSkillMs: number
+}
+
 // ---------- aiconfig.model ----------
 export interface ModelVO {
   id: number

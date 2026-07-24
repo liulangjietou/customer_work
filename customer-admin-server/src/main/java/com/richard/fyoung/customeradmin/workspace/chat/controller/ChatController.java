@@ -10,7 +10,10 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatAttachmentService;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatHistoryService;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
+import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentCallMetaFactory;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanConfirmRequest;
+import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -44,18 +47,22 @@ public class ChatController {
     private final ChatService chatService;
     private final ChatHistoryService chatHistoryService;
     private final ChatAttachmentService chatAttachmentService;
+    private final AgentCallMetaFactory agentCallMetaFactory;
 
     public ChatController(ChatService chatService, ChatHistoryService chatHistoryService,
-                           ChatAttachmentService chatAttachmentService) {
+                           ChatAttachmentService chatAttachmentService, AgentCallMetaFactory agentCallMetaFactory) {
         this.chatService = chatService;
         this.chatHistoryService = chatHistoryService;
         this.chatAttachmentService = chatAttachmentService;
+        this.agentCallMetaFactory = agentCallMetaFactory;
     }
 
     @SaCheckPermission("workspace")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
-        return chatService.chatStream(agentCode, request.sessionId(), request.message(), request.mode())
+        // 采集元数据必须在请求线程同步段构建（用户名取自 Sa-Token 的 ThreadLocal）；渠道=admin_chat → CHAT
+        AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.CHAT, request.message());
+        return chatService.chatStream(agentCode, request.sessionId(), request.message(), request.mode(), callMeta)
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
