@@ -47,6 +47,50 @@ class KnowledgeSearchClientTest {
         return new KnowledgeNode(kbName, content, new BigDecimal(score), "doc-1", "chunk-1");
     }
 
+    // ---- HTTP 协议版本与错误诊断 ----
+
+    /**
+     * 必须固定 HTTP/1.1：默认的 HTTP_2 会对 http:// 发 h2c upgrade 协商，
+     * 实测自建 Node RAG 服务不响应该协商导致请求挂起到超时（HTTP_2 超时 8s vs HTTP_1_1 正常 928ms）。
+     */
+    @Test
+    void httpClient_shouldPinHttp11_toAvoidH2cUpgradeHang() {
+        assertEquals(java.net.http.HttpClient.Version.HTTP_1_1, client.httpClientVersion(),
+            "HTTP 版本必须固定为 1.1，否则对不支持 h2c 协商的服务会挂起到超时");
+    }
+
+    /** 连接类异常的 message 常为 null，必须翻译成可排查的提示（含 IPv6 only 的排查方向）。 */
+    @Test
+    void diagnose_shouldGiveActionableHint_forConnectException() {
+        KnowledgeBaseEndpoint ep = endpoint(1L, "kb", 5, "0");
+
+        String msg = client.diagnose(new java.net.ConnectException(), ep);
+
+        assertTrue(msg.contains("无法建立连接"), "应说明是连接失败");
+        assertTrue(msg.contains("http://localhost:20002"), "应带上实际地址便于核对");
+        assertTrue(msg.contains("[::1]"), "应提示 IPv6 only 的排查方向");
+    }
+
+    /** 超时提示要给出当前超时值与可调配置项，并点出 HTTP/2 协商这个隐蔽成因。 */
+    @Test
+    void diagnose_shouldGiveActionableHint_forTimeout() {
+        KnowledgeBaseEndpoint ep = endpoint(1L, "kb", 5, "0");
+
+        String msg = client.diagnose(new java.net.http.HttpTimeoutException("request timed out"), ep);
+
+        assertTrue(msg.contains("请求超时"), "应说明是超时");
+        assertTrue(msg.contains("admin.rag.request-timeout-seconds"), "应给出可调的配置项");
+    }
+
+    /** 其余异常保留原始 message；message 为空时退回类名，不能出现 "null"。 */
+    @Test
+    void diagnose_shouldFallbackToClassName_whenMessageBlank() {
+        KnowledgeBaseEndpoint ep = endpoint(1L, "kb", 5, "0");
+
+        assertEquals("boom", client.diagnose(new IllegalStateException("boom"), ep));
+        assertEquals("IllegalStateException", client.diagnose(new IllegalStateException(), ep));
+    }
+
     // ---- 响应解析 ----
 
     @Test

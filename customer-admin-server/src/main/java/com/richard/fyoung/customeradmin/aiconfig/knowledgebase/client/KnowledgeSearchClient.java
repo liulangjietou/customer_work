@@ -12,10 +12,14 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.net.ConnectException;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -89,9 +93,18 @@ public class KnowledgeSearchClient {
     public KnowledgeSearchClient(KnowledgeBaseHttpGuard httpGuard, AdminRagProperties properties) {
         this.httpGuard = httpGuard;
         this.properties = properties;
+        // 强制 HTTP/1.1：JDK HttpClient 默认 HTTP_2，对 http:// 会先发 h2c upgrade 协商；
+        // 实测部分自建 RAG 服务（如 Node 实现）既不支持该协商也不回错误，导致请求挂起到超时。
+        // RAG 检索是小报文短连接，用不上 HTTP/2 多路复用，固定 1.1 最稳。
         this.httpClient = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(properties.getConnectTimeoutSeconds()))
             .build();
+    }
+
+    /** 当前使用的 HTTP 协议版本（同包测试用于守住"必须固定 HTTP/1.1"这条约束）。 */
+    HttpClient.Version httpClientVersion() {
+        return httpClient.version();
     }
 
     /**
@@ -125,8 +138,29 @@ public class KnowledgeSearchClient {
         } catch (Exception e) {
             log.error("rag search failed, code={}, kbId={}, kbName={}", CODE_SEARCH_FAIL,
                 endpoint.id(), endpoint.kbName(), e);
-            throw new BizException(ResultCode.KNOWLEDGE_BASE_SEARCH_FAILED, e.getMessage());
+            throw new BizException(ResultCode.KNOWLEDGE_BASE_SEARCH_FAILED, diagnose(e, endpoint));
         }
+    }
+
+    /**
+     * 把底层网络异常翻译成能直接定位问题的提示。
+     *
+     * <p>JDK 的连接类异常 message 常为 null（如 {@code ConnectException: null}），直接透出等于没有信息，
+     * 使用者无从下手；这里按异常类型给出具体排查方向。</p>
+     */
+    String diagnose(Exception e, KnowledgeBaseEndpoint endpoint) {
+        if (e instanceof ConnectException || e instanceof HttpConnectTimeoutException) {
+            return "无法建立连接（" + endpoint.baseUrl() + "）：请确认服务已启动、地址与端口正确；"
+                + "若地址用的是 localhost 而服务只监听 IPv6，可改填 http://[::1]:端口";
+        }
+        if (e instanceof UnknownHostException) {
+            return "域名无法解析（" + endpoint.baseUrl() + "）：请检查服务地址拼写与 DNS";
+        }
+        if (e instanceof HttpTimeoutException) {
+            return "请求超时（超过 " + properties.getRequestTimeoutSeconds() + " 秒未返回）：知识库服务响应过慢，"
+                + "或该服务不支持 HTTP/2 协商导致挂起；可调大 admin.rag.request-timeout-seconds 后重试";
+        }
+        return StringUtils.hasText(e.getMessage()) ? e.getMessage() : e.getClass().getSimpleName();
     }
 
     /**
