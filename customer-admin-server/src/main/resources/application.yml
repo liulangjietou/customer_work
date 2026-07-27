@@ -139,6 +139,17 @@ admin:
       # 非空=收紧模式（仅放行白名单内 host，支持精确域名与 *.example.com 通配后缀）。
       # 逗号分隔多个 host，如 api.example.com,*.internal.corp
       allowed-hosts: ${ADMIN_SYSTEM_TOOL_HTTP_ALLOWED_HOSTS:}
+  rag:
+    # 外部 RAG 知识库检索。白名单与上面 system-tool 的<刻意分开>：系统工具的目标地址由大模型决定，
+    # 必须默认拒内网；RAG 地址由管理员在后台显式配置且通常就在内网（本机 localhost:20002），
+    # 故默认放行内网、仅拦链路本地（169.254/16 等云元数据地址）。生产建议显式配置收紧。
+    allowed-hosts: ${ADMIN_RAG_ALLOWED_HOSTS:}
+    connect-timeout-seconds: ${ADMIN_RAG_CONNECT_TIMEOUT_SECONDS:5}
+    # 单次检索请求的请求级超时；保存门禁的实测就靠它兜死等待时间
+    request-timeout-seconds: ${ADMIN_RAG_REQUEST_TIMEOUT_SECONDS:8}
+    # 对话链路多库并发检索的整体等待上限，超时按空召回降级，绝不拖死对话
+    retrieval-timeout-seconds: ${ADMIN_RAG_RETRIEVAL_TIMEOUT_SECONDS:10}
+    test-query: ${ADMIN_RAG_TEST_QUERY:连通性测试}
   sandbox:
     # VibeCoding 代码沙箱：local（默认，无隔离，直接跑宿主机）｜docker（容器隔离，需本机/服务器已装 Docker）。
     mode: ${ADMIN_SANDBOX_MODE:local}

@@ -221,6 +221,11 @@ public class ChatService {
         }
         // 归一 sessionId：与下方 Plan 通道/执行模式登记、以及历史接口读取口径完全一致（hasText ? 原值 : default）。
         String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        // 知识库自动检索<b>不在这里做</b>：请求线程同步段做 HTTP 检索会最长占住一个 Tomcat 请求线程 10s
+        // （返回 Flux 不等于方法体异步，方法体跑完才返回），RAG 后端变慢会连累登录等无关接口；而且拼进
+        // 用户消息文本会让召回块随消息进 AgentState 被持久化，用户在历史里看到 <retrieved_knowledge> 原文、
+        // 且每轮重发累积 token。现改由 KnowledgeRetrievalMiddleware 在推理阶段做瞬态注入（挂载点见
+        // AdminAgentInstanceFactory#buildInnerReActAgent），本方法只管把用户原文送进去。
         // 本条用户消息提前构建，供附件绑定拿到稳定的 Msg.id（框架 Msg.Builder 构造即生成随机 UUID）。
         Msg userMsg = toUserMsg(userText);
         // 附件绑定：请求线程同步段完成（订阅前），把本条消息 id 与其携带的附件关联，供历史回显。

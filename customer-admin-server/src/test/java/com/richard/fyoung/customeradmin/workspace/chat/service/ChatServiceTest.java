@@ -20,9 +20,12 @@ import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ThinkingBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
+import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
 import io.agentscope.core.model.ChatUsage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -31,6 +34,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -524,5 +528,51 @@ class ChatServiceTest {
         chatService.chatStream("coder", "s1", "你好", observed::set).collectList().block();
 
         assertNull(observed.get(), "无任何用量信息时应回调 null，区分“没有用量”与“用了 0 token”");
+    }
+
+    // ---- 知识库自动检索注入 ----
+
+    /** 捕获真正送进 Agent 的用户消息文本。 */
+    @SuppressWarnings("unchecked")
+    private String capturedUserText() {
+        ArgumentCaptor<List<Msg>> captor = ArgumentCaptor.forClass(List.class);
+        verify(agent).stream(captor.capture(), any(StreamOptions.class), any(RuntimeContext.class));
+        return captor.getValue().get(0).getTextContent();
+    }
+
+    private void stubEmptyStream() {
+        Msg finalMsg = Msg.builder().role(MsgRole.ASSISTANT).textContent("好的").build();
+        when(agent.stream(any(List.class), any(StreamOptions.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, finalMsg, true)));
+    }
+
+    /**
+     * 送进 Agent（→ 进 AgentState → 进用户可见历史）的用户消息必须是<b>原文</b>：知识库召回内容
+     * 已改由 {@code KnowledgeRetrievalMiddleware} 在推理阶段挂成瞬态消息，不再拼进这条消息文本。
+     * 这条断言就是"用户历史里绝不出现 &lt;retrieved_knowledge&gt;"的守门测试。
+     */
+    @Test
+    void chatStream_shouldSendRawUserTextToAgent_withoutAnyInjection() {
+        stubEmptyStream();
+
+        chatService.chatStream("coder", "s1", "公积金怎么提取").collectList().block();
+
+        String sent = capturedUserText();
+        assertEquals("公积金怎么提取", sent);
+        assertFalse(sent.contains("<retrieved_knowledge>"),
+            "召回内容绝不能拼进用户消息——那会随 AgentState 持久化并回显给用户，且每轮重发累积 token");
+    }
+
+    /** VibeCoding 链路同理：送进 Agent 的仍是"路径指引 + 提问"原文，不得被检索结果污染。 */
+    @Test
+    void chatStream_shouldNotAlterVibeCodingDirectiveText() {
+        stubEmptyStream();
+        String directivePrefixed = "[VibeCoding指引-local] 本次对话的会话目录为: sessions/s1/\n\n写一个冒泡排序";
+        AgentCallMeta callMeta = new AgentCallMeta("req-1", "admin", "coder", "编码助手",
+            AgentCallSessionType.VIBE_CODING, "写一个冒泡排序");
+
+        chatService.chatStream("coder", "s1", directivePrefixed, null, callMeta).collectList().block();
+
+        assertEquals(directivePrefixed, capturedUserText());
     }
 }

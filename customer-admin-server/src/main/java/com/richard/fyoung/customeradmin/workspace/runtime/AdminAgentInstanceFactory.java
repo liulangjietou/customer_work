@@ -11,6 +11,8 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime.KnowledgeRetrievalMiddleware;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime.KnowledgeRetrievalService;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
@@ -162,6 +164,8 @@ public class AdminAgentInstanceFactory {
     private final AgentCallTimingMiddleware agentCallTimingMiddleware;
     /** 工具名→类别登记表：装配 MCP/Skill 时把工具名登记进来，采集时 onActing 据此归 MCP/SKILL（否则默认 TOOL）。 */
     private final ToolKindRegistry agentCallToolKindRegistry;
+    /** 知识库检索服务：供每个智能体各挂一份 {@link KnowledgeRetrievalMiddleware} 做每轮召回注入。 */
+    private final KnowledgeRetrievalService knowledgeRetrievalService;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -184,7 +188,8 @@ public class AdminAgentInstanceFactory {
                                       ModelCircuitBreakerRegistry circuitBreakerRegistry,
                                       AgentMemorySyncService memorySyncService,
                                       AgentCallTimingMiddleware agentCallTimingMiddleware,
-                                      ToolKindRegistry agentCallToolKindRegistry) {
+                                      ToolKindRegistry agentCallToolKindRegistry,
+                                      KnowledgeRetrievalService knowledgeRetrievalService) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -209,6 +214,7 @@ public class AdminAgentInstanceFactory {
         this.memorySyncService = memorySyncService;
         this.agentCallTimingMiddleware = agentCallTimingMiddleware;
         this.agentCallToolKindRegistry = agentCallToolKindRegistry;
+        this.knowledgeRetrievalService = knowledgeRetrievalService;
     }
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
@@ -297,6 +303,11 @@ public class AdminAgentInstanceFactory {
         // permission-mode=bypass 时纯透传，行为等价于挂载前。顺序关键（first = outermost）：模式闸门在最外层
         // 先看到原始命令挂起/拦改，护栏在内层作最后防线（下方仅 vibecoding 挂载）。
         builder.middleware(executionModeMiddleware);
+        // 知识库检索注入：按 agentCode 现建一份（中间件需要知道"本智能体绑了哪些知识库"，构建期绑定
+        // 比运行时反推更直接）。挂在这里=注入只影响每次模型调用的输入消息，不进持久化 AgentState，
+        // 且 HTTP 检索发生在 reactive 线程（boundedElastic）而非 Tomcat 请求线程——两点都是刻意的，
+        // 详见 KnowledgeRetrievalMiddleware 类注释。未绑知识库的智能体在中间件内一次关联表查询即返回。
+        builder.middleware(new KnowledgeRetrievalMiddleware(knowledgeRetrievalService, agentCode));
         if (capabilities.contains(CAPABILITY_VIBECODING)) {
             // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载作最后防线——
             // 即便高风险被人工批准/放行，catastrophic 命令仍会被护栏改写，护栏不被绕过（需求 §4.4.2.5「两者叠加」）。

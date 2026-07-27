@@ -13,6 +13,11 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseTestResult;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKnowledgeBase;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
@@ -63,6 +68,8 @@ class AgentServiceTest {
     private AiSkillMapper skillMapper;
     private AiAgentSystemToolMapper agentSystemToolMapper;
     private AiSystemToolMapper systemToolMapper;
+    private AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper;
+    private AiKnowledgeBaseMapper knowledgeBaseMapper;
     private ModelConfigService modelConfigService;
     private MenuVersionHolder menuVersionHolder;
     private AgentService service;
@@ -75,6 +82,7 @@ class AgentServiceTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentSubAgent.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentSystemTool.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentBackupModel.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentKnowledgeBase.class);
     }
 
     @BeforeEach
@@ -89,6 +97,8 @@ class AgentServiceTest {
         skillMapper = mock(AiSkillMapper.class);
         agentSystemToolMapper = mock(AiAgentSystemToolMapper.class);
         systemToolMapper = mock(AiSystemToolMapper.class);
+        agentKnowledgeBaseMapper = mock(AiAgentKnowledgeBaseMapper.class);
+        knowledgeBaseMapper = mock(AiKnowledgeBaseMapper.class);
         modelConfigService = mock(ModelConfigService.class);
         menuVersionHolder = new MenuVersionHolder();
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
@@ -96,6 +106,7 @@ class AgentServiceTest {
             mock(com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher.class);
         service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, agentBackupModelMapper,
             agentSubAgentMapper, modelConfigMapper, mcpMapper, skillMapper, agentSystemToolMapper, systemToolMapper,
+            agentKnowledgeBaseMapper, knowledgeBaseMapper,
             menuVersionHolder, agentInstanceCache, modelConfigService, runtimeConfigPublisher);
 
         when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
@@ -107,7 +118,7 @@ class AgentServiceTest {
     private AgentSaveRequest validRequest() {
         return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, List.of(10L), List.of(20L), List.of(30L),
             "你是客服助手", List.of("chat", "vibecoding"), "robot", 1,
-            null, null, null, null, null, null);
+            null, null, null, null, null, null, null);
     }
 
     /** 只带 5 个高级参数的请求（能力固定 chat），供取值范围校验用例复用。 */
@@ -115,20 +126,20 @@ class AgentServiceTest {
                                                Integer compressTriggerMsgs, Integer compressKeepMsgs) {
         return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, List.of("chat"), null, 1,
-            null, maxIters, toolTimeoutSeconds, toolMaxAttempts, compressTriggerMsgs, compressKeepMsgs);
+            null, maxIters, toolTimeoutSeconds, toolMaxAttempts, compressTriggerMsgs, compressKeepMsgs, null);
     }
 
     /** 只带 capabilities + subAgentIds 的请求，供子智能体校验用例复用。 */
     private AgentSaveRequest requestWithSubAgents(List<String> capabilities, List<Long> subAgentIds) {
         return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, capabilities, null, 1,
-            subAgentIds, null, null, null, null, null);
+            subAgentIds, null, null, null, null, null, null);
     }
 
     @Test
     void create_shouldRejectInvalidAgentCode() {
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "Customer_Helper", 1L, null, null, null, null,
-            null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, 1, null, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -137,7 +148,7 @@ class AgentServiceTest {
     void create_shouldRejectUnknownModelId() {
         when(modelConfigMapper.selectById(999L)).thenReturn(null);
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 999L, null, null, null, null,
-            null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, 1, null, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -146,7 +157,7 @@ class AgentServiceTest {
     void create_shouldRejectInvalidMcpIds() {
         when(mcpMapper.selectBatchIds(List.of(10L))).thenReturn(List.of()); // 只有 0 条命中，说明 10L 不存在
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, List.of(10L), null, null,
-            null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, 1, null, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -155,7 +166,7 @@ class AgentServiceTest {
     void create_shouldRejectInvalidSystemToolIds() {
         when(systemToolMapper.selectBatchIds(List.of(30L))).thenReturn(List.of()); // 0 条命中，说明 30L 不存在
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, List.of(30L),
-            null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, 1, null, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -163,7 +174,7 @@ class AgentServiceTest {
     @Test
     void create_shouldRejectInvalidCapability() {
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
-            null, List.of("not-a-real-capability"), null, 1, null, null, null, null, null, null);
+            null, List.of("not-a-real-capability"), null, 1, null, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -272,7 +283,7 @@ class AgentServiceTest {
     @Test
     void create_shouldRejectBackupContainingPrimaryModel() {
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(1L), null, null, null,
-            null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, 1, null, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -282,7 +293,7 @@ class AgentServiceTest {
         when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
         when(modelConfigMapper.selectBatchIds(List.of(2L))).thenReturn(List.of()); // 0 条命中，2L 不存在
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(2L), null, null, null,
-            null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, 1, null, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
     }
@@ -293,7 +304,7 @@ class AgentServiceTest {
         // 去重后为 [2L, 3L]，两个都存在
         when(modelConfigMapper.selectBatchIds(List.of(2L, 3L))).thenReturn(List.of(new AiModelConfig(), new AiModelConfig()));
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(2L, 3L, 2L),
-            null, null, null, null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, null, null, null, 1, null, null, null, null, null, null, null);
 
         service.create(request);
 
@@ -311,7 +322,7 @@ class AgentServiceTest {
         when(modelConfigService.testConnectivity(any())).thenReturn(CompletableFuture.completedFuture(
             new ModelTestResult(ModelTestResult.STATUS_FAILED, LocalDateTime.now(), "HTTP 401")));
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
-            null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, 1, null, null, null, null, null, null, null);
 
         assertThrows(BizException.class, () -> service.create(request));
         verify(agentMapper, never()).insert(any(AiAgent.class));
@@ -340,7 +351,7 @@ class AgentServiceTest {
         when(agentMapper.selectById(1L)).thenReturn(existing);
         when(modelConfigMapper.selectById(2L)).thenReturn(new AiModelConfig());
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 2L, null, null, null, null,
-            null, null, null, 1, null, null, null, null, null, null);
+            null, null, null, 1, null, null, null, null, null, null, null);
 
         service.update(1L, request);
 
@@ -354,7 +365,7 @@ class AgentServiceTest {
         // subagent 能力单独用例覆盖（勾选后必须选子智能体），此处覆盖其余新能力编码
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, List.of("chat", "plan", "tasklist", "skill-learning", "dynamic-subagent"), null, 1,
-            null, null, null, null, null, null);
+            null, null, null, null, null, null, null);
 
         service.create(request);
 
@@ -502,5 +513,110 @@ class AgentServiceTest {
         assertEquals(100, vo.getCompressTriggerMsgs());
         assertEquals(10, vo.getCompressKeepMsgs());
         assertEquals(List.of("chat", "subagent"), vo.getCapabilities());
+    }
+
+    // ---- 知识库多选关联（validate / replaceRelations / toVo 三处对称扩展） ----
+
+    /** 构造一条"可用"的知识库行（启用 + 连通性测试成功）。 */
+    private AiKnowledgeBase usableKnowledgeBase(Long id, String name) {
+        AiKnowledgeBase kb = new AiKnowledgeBase();
+        kb.setId(id);
+        kb.setKbName(name);
+        kb.setStatus(1);
+        kb.setTestStatus(KnowledgeBaseTestResult.STATUS_SUCCESS);
+        return kb;
+    }
+
+    private AgentSaveRequest requestWithKnowledgeBases(List<Long> knowledgeBaseIds) {
+        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
+            null, List.of("chat"), null, 1,
+            null, null, null, null, null, null, knowledgeBaseIds);
+    }
+
+    @Test
+    void create_shouldInsertKnowledgeBaseRelations() {
+        when(knowledgeBaseMapper.selectBatchIds(List.of(40L)))
+            .thenReturn(List.of(usableKnowledgeBase(40L, "产品知识库")));
+
+        service.create(requestWithKnowledgeBases(List.of(40L)));
+
+        verify(agentKnowledgeBaseMapper).insert(any(AiAgentKnowledgeBase.class));
+    }
+
+    @Test
+    void create_shouldRejectInvalidKnowledgeBaseIds() {
+        when(knowledgeBaseMapper.selectBatchIds(List.of(40L))).thenReturn(List.of()); // 0 条命中 = 40L 不存在
+
+        assertThrows(BizException.class, () -> service.create(requestWithKnowledgeBases(List.of(40L))));
+    }
+
+    @Test
+    void create_shouldRejectDisabledKnowledgeBase() {
+        AiKnowledgeBase disabled = usableKnowledgeBase(40L, "已停用知识库");
+        disabled.setStatus(0);
+        when(knowledgeBaseMapper.selectBatchIds(List.of(40L))).thenReturn(List.of(disabled));
+
+        assertThrows(BizException.class, () -> service.create(requestWithKnowledgeBases(List.of(40L))));
+    }
+
+    @Test
+    void create_shouldRejectUntestedKnowledgeBase() {
+        AiKnowledgeBase untested = usableKnowledgeBase(40L, "未测试知识库");
+        untested.setTestStatus(KnowledgeBaseTestResult.STATUS_FAILED);
+        when(knowledgeBaseMapper.selectBatchIds(List.of(40L))).thenReturn(List.of(untested));
+
+        assertThrows(BizException.class, () -> service.create(requestWithKnowledgeBases(List.of(40L))));
+    }
+
+    @Test
+    void create_shouldNotTouchKnowledgeBaseRelations_whenIdsEmpty() {
+        service.create(requestWithKnowledgeBases(null));
+
+        verify(agentKnowledgeBaseMapper, never()).insert(any(AiAgentKnowledgeBase.class));
+    }
+
+    @Test
+    void update_shouldReplaceKnowledgeBaseRelations_deleteThenInsert() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+        when(knowledgeBaseMapper.selectBatchIds(List.of(40L)))
+            .thenReturn(List.of(usableKnowledgeBase(40L, "产品知识库")));
+
+        service.update(1L, requestWithKnowledgeBases(List.of(40L)));
+
+        verify(agentKnowledgeBaseMapper).delete(any());
+        verify(agentKnowledgeBaseMapper).insert(any(AiAgentKnowledgeBase.class));
+    }
+
+    @Test
+    void get_shouldReturnKnowledgeBaseIdsAndNames() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        existing.setCapabilities("chat");
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+        AiAgentKnowledgeBase relation = new AiAgentKnowledgeBase();
+        relation.setAgentId(1L);
+        relation.setKnowledgeBaseId(40L);
+        when(agentKnowledgeBaseMapper.selectList(any())).thenReturn(List.of(relation));
+        when(knowledgeBaseMapper.selectBatchIds(List.of(40L)))
+            .thenReturn(List.of(usableKnowledgeBase(40L, "产品知识库")));
+
+        AgentVO vo = service.get(1L);
+
+        assertEquals(List.of(40L), vo.getKnowledgeBaseIds());
+        assertEquals(List.of("产品知识库"), vo.getKnowledgeBaseNames());
+    }
+
+    @Test
+    void delete_shouldClearKnowledgeBaseRelations() {
+        AiAgent existing = new AiAgent();
+        existing.setId(1L);
+        existing.setAgentCode("customer-helper");
+        when(agentMapper.selectById(1L)).thenReturn(existing);
+
+        service.delete(1L);
+
+        verify(agentKnowledgeBaseMapper).delete(any());
     }
 }

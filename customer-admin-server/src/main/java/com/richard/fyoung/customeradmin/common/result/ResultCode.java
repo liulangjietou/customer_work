@@ -72,6 +72,10 @@ public enum ResultCode {
     KNOWLEDGE_INDEX_BUILDING(40031, "该索引正在构建中，请等待构建完成后再操作"),
     MENU_REORDER_CONFLICT(40032, "菜单排序正在被其他管理员调整，请稍后重试"),
     AGENT_MEMORY_OPERATION_FAILED(40033, "智能体记忆操作失败，请稍后重试"),
+    // 外部 RAG 知识库检索（40032/40033 已占用，故从 40034 起）
+    KNOWLEDGE_BASE_TEST_FAILED(40034, "知识库连通性测试失败"),
+    KNOWLEDGE_BASE_HTTP_FORBIDDEN(40035, "知识库服务地址不在允许访问范围内，已被安全策略拦截"),
+    KNOWLEDGE_BASE_SEARCH_FAILED(40036, "知识库检索失败"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");
