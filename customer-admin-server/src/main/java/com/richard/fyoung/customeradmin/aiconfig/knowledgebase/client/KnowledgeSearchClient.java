@@ -65,6 +65,8 @@ public class KnowledgeSearchClient {
     private static final String HEADER_CONTENT_TYPE = "Content-Type";
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String CODE_SEARCH_FAIL = "RAG-SEARCH-FAIL";
+    /** 非 JSON 错误响应体透出的最大字符数（避免把网关 HTML 错误页整页塞进提示）。 */
+    private static final int ERROR_BODY_MAX_CHARS = 200;
     private static final String CODE_HEADER_INVALID = "RAG-HEADER-INVALID";
 
     /**
@@ -129,8 +131,10 @@ public class KnowledgeSearchClient {
 
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
+                // 错误详情只在响应体里（如 code=APP_ACCESS_DENIED / message=该 API Key 未被授权调用应用 xxx），
+                // 只报状态码等于把唯一有用的线索丢掉，使用者无从判断是密钥错、应用未授权还是服务内部故障
                 throw new BizException(ResultCode.KNOWLEDGE_BASE_SEARCH_FAILED,
-                    "知识库服务返回 HTTP " + response.statusCode());
+                    "知识库服务返回 HTTP " + response.statusCode() + describeErrorBody(response.body()));
             }
             return parseNodes(objectMapper, endpoint.kbName(), response.body());
         } catch (BizException e) {
@@ -140,6 +144,30 @@ public class KnowledgeSearchClient {
                 endpoint.id(), endpoint.kbName(), e);
             throw new BizException(ResultCode.KNOWLEDGE_BASE_SEARCH_FAILED, diagnose(e, endpoint));
         }
+    }
+
+    /**
+     * 提取非 200 响应体里的错误详情：优先取约定的 {@code code}/{@code message} 字段，
+     * 结构不符则退回原文截断（{@value #ERROR_BODY_MAX_CHARS} 字符）。响应体为空时返回空串。
+     */
+    static String describeErrorBody(String body) {
+        if (!StringUtils.hasText(body)) {
+            return "";
+        }
+        try {
+            JsonNode root = new ObjectMapper().readTree(body);
+            String code = root.path("code").asText("");
+            String message = root.path("message").asText("");
+            if (StringUtils.hasText(code) || StringUtils.hasText(message)) {
+                return "（" + (StringUtils.hasText(code) ? code : "-")
+                    + (StringUtils.hasText(message) ? ": " + message : "") + "）";
+            }
+        } catch (Exception ignored) {
+            // 非 JSON 响应体（如网关 HTML 错误页），退回原文截断
+        }
+        String trimmed = body.strip();
+        return "（" + (trimmed.length() > ERROR_BODY_MAX_CHARS
+            ? trimmed.substring(0, ERROR_BODY_MAX_CHARS) + "..." : trimmed) + "）";
     }
 
     /**

@@ -59,6 +59,31 @@ class KnowledgeSearchClientTest {
             "HTTP 版本必须固定为 1.1，否则对不支持 h2c 协商的服务会挂起到超时");
     }
 
+    /**
+     * 非 200 时必须透出响应体里的 code/message——实测该服务把真正原因放在响应体
+     * （401 INVALID_API_KEY、403 APP_ACCESS_DENIED），只报状态码等于丢掉唯一线索。
+     */
+    @Test
+    void describeErrorBody_shouldSurfaceCodeAndMessage() {
+        String desc = KnowledgeSearchClient.describeErrorBody(
+            "{\"code\":\"APP_ACCESS_DENIED\",\"message\":\"该 API Key 未被授权调用应用 app_x\"}");
+
+        assertTrue(desc.contains("APP_ACCESS_DENIED"), "应带上错误码");
+        assertTrue(desc.contains("该 API Key 未被授权调用应用 app_x"), "应带上服务端 message");
+    }
+
+    /** 非 JSON 响应体（网关 HTML 错误页）截断透出，不能整页塞进提示，也不能吞掉。 */
+    @Test
+    void describeErrorBody_shouldTruncateNonJsonBody() {
+        assertEquals("", KnowledgeSearchClient.describeErrorBody(null));
+        assertEquals("", KnowledgeSearchClient.describeErrorBody("  "));
+
+        String html = "<html>" + "x".repeat(500) + "</html>";
+        String desc = KnowledgeSearchClient.describeErrorBody(html);
+        assertTrue(desc.endsWith("...）"), "超长非 JSON 响应体应截断");
+        assertTrue(desc.length() < 230, "截断后长度应受控，实际=" + desc.length());
+    }
+
     /** 连接类异常的 message 常为 null，必须翻译成可排查的提示（含 IPv6 only 的排查方向）。 */
     @Test
     void diagnose_shouldGiveActionableHint_forConnectException() {
