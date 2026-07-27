@@ -323,6 +323,56 @@ export interface ModelTestResult {
   message: string | null
 }
 
+// ---------- aiconfig.knowledge-base ----------
+// RAG 知识库检索：一条记录 = 一个外部 RAG 服务，保存时后端会同步强制实测连通性
+// （耗时可达数秒，前端调用需用更长 timeout）。智能体只能挂载测试通过的知识库。
+export interface KnowledgeBaseVO {
+  id: number
+  kbName: string
+  baseUrl: string
+  appId: string | null
+  apiKeyMasked: string
+  contentType: string
+  /** 自定义请求头，JSON 字符串，如 {"X-Tenant":"abc"}，可为空 */
+  extraHeaders: string | null
+  topN: number
+  /** 召回分数阈值，该 RAG 服务 score 尺度很小（0.13~0.19 量级），低于此分数的召回结果不注入 */
+  scoreThreshold: number
+  status: number
+  testStatus: number
+  testTime: string | null
+  remark: string | null
+  createTime: string
+  updateTime: string
+}
+
+export interface KnowledgeBaseSaveRequest {
+  kbName: string
+  baseUrl: string
+  appId?: string | null
+  /** 编辑时留空 = 不修改，与模型配置 apiKey 语义一致 */
+  apiKey?: string | null
+  contentType?: string | null
+  extraHeaders?: string | null
+  topN?: number | null
+  scoreThreshold?: number | null
+  status?: number | null
+  remark?: string | null
+}
+
+export interface KnowledgeBaseTestResult {
+  testStatus: number
+  testTime: string | null
+  message: string | null
+  hitCount: number | null
+}
+
+/** 智能体表单知识库多选下拉项：仅启用且测试通过的知识库 */
+export interface KnowledgeBaseOption {
+  id: number
+  kbName: string
+}
+
 // ---------- aiconfig.mcp ----------
 export interface McpVO {
   id: number
@@ -453,6 +503,9 @@ export interface AgentVO {
   mcpIds: number[]
   skillIds: number[]
   systemToolIds: number[]
+  /** 挂载的 RAG 知识库 ID 列表，检索由后端在对话时自动执行 */
+  knowledgeBaseIds: number[]
+  knowledgeBaseNames: string[]
   systemPrompt: string | null
   capabilities: string[]
   icon: string | null
@@ -487,6 +540,7 @@ export interface AgentSaveRequest {
   mcpIds?: number[] | null
   skillIds?: number[] | null
   systemToolIds?: number[] | null
+  knowledgeBaseIds?: number[] | null
   systemPrompt?: string | null
   capabilities?: string[] | null
   icon?: string | null

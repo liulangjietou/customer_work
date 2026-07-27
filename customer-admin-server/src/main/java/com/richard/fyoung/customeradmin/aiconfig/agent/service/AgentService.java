@@ -15,6 +15,11 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseTestResult;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKnowledgeBase;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
@@ -67,6 +72,8 @@ public class AgentService {
     /** 主模型连通性门禁失败的日志错误码。 */
     private static final String CODE_MODEL_TEST_FAIL = "AGENT-MODEL-TEST-FAIL";
     private static final String CAPABILITY_SUBAGENT = "subagent";
+    /** 启用态（知识库/资源通用）。 */
+    private static final int STATUS_ENABLED = 1;
 
     // ---- 高级参数取值范围（选填，null 不校验） ----
     private static final int MAX_ITERS_MIN = 1;
@@ -90,6 +97,8 @@ public class AgentService {
     private final AiSkillMapper skillMapper;
     private final AiAgentSystemToolMapper agentSystemToolMapper;
     private final AiSystemToolMapper systemToolMapper;
+    private final AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper;
+    private final AiKnowledgeBaseMapper knowledgeBaseMapper;
     private final MenuVersionHolder menuVersionHolder;
     private final AgentInstanceCache agentInstanceCache;
     private final ModelConfigService modelConfigService;
@@ -101,6 +110,8 @@ public class AgentService {
                          AiModelConfigMapper modelConfigMapper,
                          AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
                          AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
+                         AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper,
+                         AiKnowledgeBaseMapper knowledgeBaseMapper,
                          MenuVersionHolder menuVersionHolder, AgentInstanceCache agentInstanceCache,
                          ModelConfigService modelConfigService,
                          CustomerWorkConfigPublisher runtimeConfigPublisher) {
@@ -114,6 +125,8 @@ public class AgentService {
         this.skillMapper = skillMapper;
         this.agentSystemToolMapper = agentSystemToolMapper;
         this.systemToolMapper = systemToolMapper;
+        this.agentKnowledgeBaseMapper = agentKnowledgeBaseMapper;
+        this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.menuVersionHolder = menuVersionHolder;
         this.agentInstanceCache = agentInstanceCache;
         this.modelConfigService = modelConfigService;
@@ -153,7 +166,7 @@ public class AgentService {
         fillFromRequest(agent, request);
         agentMapper.insert(agent);
         replaceRelations(agent.getId(), request.backupModelIds(), request.mcpIds(), request.skillIds(),
-            request.systemToolIds(), request.subAgentIds());
+            request.systemToolIds(), request.subAgentIds(), request.knowledgeBaseIds());
         menuVersionHolder.bump();
         // 命中渠道绑定则热下发运行时配置到 8080（默认关闭，未启用即跳过）
         runtimeConfigPublisher.publishForAgentId(agent.getId());
@@ -172,7 +185,7 @@ public class AgentService {
         fillFromRequest(agent, request);
         agentMapper.updateById(agent);
         replaceRelations(id, request.backupModelIds(), request.mcpIds(), request.skillIds(),
-            request.systemToolIds(), request.subAgentIds());
+            request.systemToolIds(), request.subAgentIds(), request.knowledgeBaseIds());
         menuVersionHolder.bump();
         // agentCode 理论上不应改变，但仍按新旧两个 code 双清，避免缓存键错位残留旧实例
         agentInstanceCache.evict(oldAgentCode);
@@ -209,6 +222,8 @@ public class AgentService {
         agentSystemToolMapper.delete(new LambdaQueryWrapper<AiAgentSystemTool>().eq(AiAgentSystemTool::getAgentId, id));
         agentBackupModelMapper.delete(new LambdaQueryWrapper<AiAgentBackupModel>().eq(AiAgentBackupModel::getAgentId, id));
         agentSubAgentMapper.delete(new LambdaQueryWrapper<AiAgentSubAgent>().eq(AiAgentSubAgent::getAgentId, id));
+        agentKnowledgeBaseMapper.delete(
+            new LambdaQueryWrapper<AiAgentKnowledgeBase>().eq(AiAgentKnowledgeBase::getAgentId, id));
         menuVersionHolder.bump();
         agentInstanceCache.evict(agent.getAgentCode());
     }
@@ -257,8 +272,31 @@ public class AgentService {
             throw new BizException(ResultCode.PARAM_INVALID,
                 "capabilities 仅支持 chat/vibecoding/subagent/plan/tasklist/skill-learning/dynamic-subagent/memory");
         }
+        validateKnowledgeBaseIds(request);
         validateAdvancedParams(request);
         validateSubAgentIds(request, selfId);
+    }
+
+    /**
+     * 知识库多选校验：每个 id 必须真实存在，且当前<b>启用</b>并且<b>连通性测试成功</b>——
+     * 绑一个连不上的知识库，运行时每轮对话都要白白等一次超时，配置期就该 fast fail 拦住。
+     * （下拉选项接口 {@code /options} 本就只返回可用项，这里是后端侧的兜底校验。）
+     */
+    private void validateKnowledgeBaseIds(AgentSaveRequest request) {
+        if (CollectionUtils.isEmpty(request.knowledgeBaseIds())) {
+            return;
+        }
+        List<AiKnowledgeBase> knowledgeBases = knowledgeBaseMapper.selectBatchIds(request.knowledgeBaseIds());
+        if (knowledgeBases.size() != request.knowledgeBaseIds().size()) {
+            throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 knowledgeBaseIds");
+        }
+        for (AiKnowledgeBase knowledgeBase : knowledgeBases) {
+            if (!Integer.valueOf(STATUS_ENABLED).equals(knowledgeBase.getStatus())
+                || !Integer.valueOf(KnowledgeBaseTestResult.STATUS_SUCCESS).equals(knowledgeBase.getTestStatus())) {
+                throw new BizException(ResultCode.PARAM_INVALID,
+                    "仅可绑定已启用且连通性测试成功的知识库: " + knowledgeBase.getKbName());
+            }
+        }
     }
 
     /** 高级参数取值范围校验（全部选填，null 表示用默认值不校验）。 */
@@ -328,7 +366,7 @@ public class AgentService {
 
     /** 关联表整体替换：先清空该智能体现有关联行，再按本次提交的 ids 批量插入（比对差异做增量删改无必要，行数很少）。 */
     private void replaceRelations(Long agentId, List<Long> backupModelIds, List<Long> mcpIds, List<Long> skillIds,
-                                  List<Long> systemToolIds, List<Long> subAgentIds) {
+                                  List<Long> systemToolIds, List<Long> subAgentIds, List<Long> knowledgeBaseIds) {
         agentBackupModelMapper.delete(new LambdaQueryWrapper<AiAgentBackupModel>().eq(AiAgentBackupModel::getAgentId, agentId));
         List<Long> orderedBackupIds = distinctBackupIds(backupModelIds);
         for (int i = 0; i < orderedBackupIds.size(); i++) {
@@ -372,6 +410,16 @@ public class AgentService {
                 relation.setAgentId(agentId);
                 relation.setSubAgentId(subAgentId);
                 agentSubAgentMapper.insert(relation);
+            }
+        }
+        agentKnowledgeBaseMapper.delete(
+            new LambdaQueryWrapper<AiAgentKnowledgeBase>().eq(AiAgentKnowledgeBase::getAgentId, agentId));
+        if (!CollectionUtils.isEmpty(knowledgeBaseIds)) {
+            for (Long knowledgeBaseId : knowledgeBaseIds) {
+                AiAgentKnowledgeBase relation = new AiAgentKnowledgeBase();
+                relation.setAgentId(agentId);
+                relation.setKnowledgeBaseId(knowledgeBaseId);
+                agentKnowledgeBaseMapper.insert(relation);
             }
         }
     }
@@ -422,7 +470,23 @@ public class AgentService {
         vo.setToolMaxAttempts(agent.getToolMaxAttempts());
         vo.setCompressTriggerMsgs(agent.getCompressTriggerMsgs());
         vo.setCompressKeepMsgs(agent.getCompressKeepMsgs());
+        fillKnowledgeBases(vo, agent.getId());
         return vo;
+    }
+
+    /** 回填绑定的知识库 id 与名称：名称走一次批量查询（避免 N+1 单查），与 {@link #fillBackupModels} 同款手法。 */
+    private void fillKnowledgeBases(AgentVO vo, Long agentId) {
+        List<Long> knowledgeBaseIds = agentKnowledgeBaseMapper.selectList(
+                new LambdaQueryWrapper<AiAgentKnowledgeBase>().eq(AiAgentKnowledgeBase::getAgentId, agentId))
+            .stream().map(AiAgentKnowledgeBase::getKnowledgeBaseId).collect(Collectors.toList());
+        vo.setKnowledgeBaseIds(knowledgeBaseIds);
+        if (CollectionUtils.isEmpty(knowledgeBaseIds)) {
+            vo.setKnowledgeBaseNames(List.of());
+            return;
+        }
+        Map<Long, String> nameById = knowledgeBaseMapper.selectBatchIds(knowledgeBaseIds).stream()
+            .collect(Collectors.toMap(AiKnowledgeBase::getId, AiKnowledgeBase::getKbName));
+        vo.setKnowledgeBaseNames(knowledgeBaseIds.stream().map(nameById::get).collect(Collectors.toList()));
     }
 
     /**

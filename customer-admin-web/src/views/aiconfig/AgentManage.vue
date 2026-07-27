@@ -7,10 +7,11 @@ import { pageModels, testModelConnectivity } from '@/api/model'
 import { pageMcps } from '@/api/mcp'
 import { pageSkills } from '@/api/skill'
 import { fetchSystemTools } from '@/api/system-tool'
+import { fetchKnowledgeBaseOptions } from '@/api/knowledgeBase'
 import { useMenuStore } from '@/store/menu'
 import IconPicker from '@/components/IconPicker.vue'
 import ChannelBindingDrawer from '@/views/aiconfig/ChannelBindingDrawer.vue'
-import type { AgentSaveRequest, AgentVO, McpVO, ModelVO, PageQuery, SkillVO, SystemToolVO } from '@/types/api'
+import type { AgentSaveRequest, AgentVO, KnowledgeBaseOption, McpVO, ModelVO, PageQuery, SkillVO, SystemToolVO } from '@/types/api'
 
 const menuStore = useMenuStore()
 
@@ -26,6 +27,8 @@ const modelOptions = ref<ModelVO[]>([])
 const mcpOptions = ref<McpVO[]>([])
 const skillOptions = ref<SkillVO[]>([])
 const systemToolOptions = ref<SystemToolVO[]>([])
+// 知识库选项：/options 接口已过滤"启用且测试通过"，无需前端二次筛选
+const knowledgeBaseOptions = ref<KnowledgeBaseOption[]>([])
 // 智能体选项复用于「子Agent协作」多选，无独立全量接口，拉大页分页兜底
 const AGENT_OPTION_PAGE_SIZE = 200
 const agentOptions = ref<AgentVO[]>([])
@@ -61,6 +64,7 @@ const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 const form = reactive<AgentSaveRequest>({
   agentName: '', agentCode: '', modelId: undefined as unknown as number, backupModelIds: [], mcpIds: [], skillIds: [], systemToolIds: [],
+  knowledgeBaseIds: [],
   systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
   subAgentIds: [], maxIters: null, toolTimeoutSeconds: null, toolMaxAttempts: null,
   compressTriggerMsgs: null, compressKeepMsgs: null,
@@ -147,12 +151,13 @@ async function loadList() {
 }
 
 async function loadOptions() {
-  const [models, mcps, skills, systemTools, agents] = await Promise.all([
+  const [models, mcps, skills, systemTools, agents, knowledgeBases] = await Promise.all([
     pageModels({ pageNum: 1, pageSize: 100 }),
     pageMcps({ pageNum: 1, pageSize: 100 }),
     pageSkills({ pageNum: 1, pageSize: 100 }),
     fetchSystemTools({ pageNum: 1, pageSize: 100 }),
     pageAgents({ pageNum: 1, pageSize: AGENT_OPTION_PAGE_SIZE }),
+    fetchKnowledgeBaseOptions(),
   ])
   modelOptions.value = models.list
   mcpOptions.value = mcps.list
@@ -160,6 +165,7 @@ async function loadOptions() {
   // 只展示已启用的系统工具供挂载（停用的不出现在下拉里）。
   systemToolOptions.value = systemTools.list.filter((t) => t.enabled === 1)
   agentOptions.value = agents.list
+  knowledgeBaseOptions.value = knowledgeBases
 }
 
 function handleSearch() {
@@ -172,6 +178,7 @@ function openCreate() {
   editingId.value = null
   Object.assign(form, {
     agentName: '', agentCode: '', modelId: undefined, backupModelIds: [], mcpIds: [], skillIds: [], systemToolIds: [],
+    knowledgeBaseIds: [],
     systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
     subAgentIds: [], maxIters: null, toolTimeoutSeconds: null, toolMaxAttempts: null,
     compressTriggerMsgs: null, compressKeepMsgs: null,
@@ -187,7 +194,9 @@ function openEdit(row: AgentVO) {
   editingId.value = row.id
   Object.assign(form, {
     agentName: row.agentName, agentCode: row.agentCode, modelId: row.modelId, backupModelIds: [...(row.backupModelIds ?? [])],
-    mcpIds: row.mcpIds, skillIds: row.skillIds, systemToolIds: row.systemToolIds, systemPrompt: row.systemPrompt,
+    mcpIds: row.mcpIds, skillIds: row.skillIds, systemToolIds: row.systemToolIds,
+    knowledgeBaseIds: [...(row.knowledgeBaseIds ?? [])],
+    systemPrompt: row.systemPrompt,
     capabilities: row.capabilities, icon: row.icon, status: row.status,
     subAgentIds: row.subAgentIds ?? [], maxIters: row.maxIters ?? null,
     toolTimeoutSeconds: row.toolTimeoutSeconds ?? null, toolMaxAttempts: row.toolMaxAttempts ?? null,
@@ -433,6 +442,11 @@ onMounted(() => {
         <el-form-item label="系统工具">
           <el-select v-model="form.systemToolIds" multiple style="width: 100%" placeholder="可选">
             <el-option v-for="t in systemToolOptions" :key="t.id" :label="t.toolName" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="知识库">
+          <el-select v-model="form.knowledgeBaseIds" multiple style="width: 100%" placeholder="可选，仅展示连通性测试通过的知识库">
+            <el-option v-for="k in knowledgeBaseOptions" :key="k.id" :label="k.kbName" :value="k.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="能力">
