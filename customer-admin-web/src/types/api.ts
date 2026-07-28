@@ -1187,3 +1187,103 @@ export interface SiteMessagePageQuery {
   size: number
   readFlag?: 0 | 1
 }
+
+// ---------- 内容风控（敏感词词库 / 限流规则 / 命中看板）----------
+// 三张表都在客服端库 agent_scope_customer_work，后台是它们的维护端；改动经 starter 侧
+// 轮询版本指纹自动生效（默认 60 秒内），后台不需要知道任何客服实例地址。
+
+/** 敏感词类目。 */
+export type SensitiveWordCategory = 'POLITICS' | 'PORN' | 'ABUSE' | 'COMPETITOR' | 'CUSTOM'
+
+/** 命中处置动作：拦截 / 打码 / 放行标记。 */
+export type SensitiveWordAction = 'BLOCK' | 'MASK' | 'REVIEW'
+
+export interface SensitiveWordVO {
+  id: number
+  word: string
+  category: string
+  action: string
+  enabled: boolean
+  createdAtMs: number | null
+  updatedAtMs: number | null
+}
+
+export interface SensitiveWordSaveRequest {
+  word: string
+  category: string
+  action: string
+  enabled?: boolean
+}
+
+export interface SensitiveWordPageQuery extends PageQuery {
+  category?: string
+  action?: string
+}
+
+/** 限流计数维度：按 Key / 按 IP / 整条路径共享一份配额。 */
+export type RateLimitDimension = 'API_KEY' | 'IP' | 'GLOBAL'
+
+export type RateLimitAlgorithm = 'FIXED_WINDOW' | 'SLIDING_WINDOW'
+
+export interface RateLimitRuleVO {
+  id: number
+  ruleName: string
+  pathPrefix: string
+  dimension: string
+  limitCount: number
+  algorithm: string
+  windowSeconds: number
+  priority: number
+  enabled: boolean
+  createdAtMs: number | null
+  updatedAtMs: number | null
+}
+
+export interface RateLimitRuleSaveRequest {
+  ruleName: string
+  pathPrefix: string
+  dimension: string
+  limitCount: number
+  algorithm: string
+  windowSeconds: number
+  priority: number
+  enabled?: boolean
+}
+
+export interface SensitiveWordHitLogVO {
+  id: number
+  direction: string
+  action: string
+  words: string[]
+  categories: string[]
+  hitCount: number | null
+  agentName: string | null
+  sessionId: string | null
+  userId: string | null
+  snippet: string | null
+  createdAtMs: number | null
+}
+
+export interface SensitiveWordHitLogPageQuery extends PageQuery {
+  direction?: string
+  action?: string
+  sessionId?: string
+  startMs?: number
+  endMs?: number
+}
+
+/** 看板通用计数项：分组键 + 条数。 */
+export interface ContentGuardCountVO {
+  label: string
+  total: number
+}
+
+/** 命中看板统计；trendGranularity 由后端按查询区间跨度自动决定（day / hour），前端不传。 */
+export interface SensitiveWordHitStatsVO {
+  total: number
+  byAction: ContentGuardCountVO[]
+  byDirection: ContentGuardCountVO[]
+  topWords: ContentGuardCountVO[]
+  trend: ContentGuardCountVO[]
+  trendGranularity: string
+}

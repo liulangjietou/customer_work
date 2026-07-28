@@ -5,6 +5,8 @@ import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.dto.IntentResult;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStreamGuard;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.RuntimeContext;
@@ -67,6 +69,16 @@ public class CustomerServiceService {
     private MeterRegistry meterRegistry;
 
     /**
+     * 出站敏感词过滤器；敏感词功能关闭时容器里没有该 Bean，此处为 null，流式链路不做任何过滤。
+     *
+     * <p><b>为什么流式过滤在这里而不在中间件</b>：{@code agent.stream(...)} 内部走 {@code StreamingHook}
+     * 旁路直接把模型输出推给 sink，绕开了中间件链；中间件产出的 {@code AgentEvent} 是另一条流，
+     * 两者只在最后的 {@code AGENT_RESULT} 汇合，而那条事件恰恰在下面被当作"整段回放"丢弃。
+     * 只改中间件的话，出站过滤在流式链路上完全落空——详见 {@link SensitiveWordStreamGuard} 类注释。</p>
+     */
+    private SensitiveWordFilter sensitiveWordFilter;
+
+    /**
      * 进程内热 Agent 缓存：sessionId -> Agent，有界 LRU（访问序）。
      * 仅为摊薄装配开销；会话状态由 StateStore 持久化，淘汰不丢数据。
      */
@@ -88,9 +100,11 @@ public class CustomerServiceService {
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
                                   SessionStateManager sessionStateManager,
                                   CustomerWorkProperties properties,
-                                  ObjectProvider<MeterRegistry> meterRegistryProvider) {
+                                  ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                  ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider) {
         this(agentFactory, sessionStateManager, properties);
         this.meterRegistry = meterRegistryProvider.getIfAvailable();
+        this.sensitiveWordFilter = sensitiveWordFilterProvider.getIfAvailable();
     }
 
     /** 无指标构造（单测 / 未接入 Micrometer 场景）；properties 为空时使用默认配置。 */
@@ -113,6 +127,43 @@ public class CustomerServiceService {
                     return size() > MAX_HOT_AGENTS;
                 }
             });
+    }
+
+    /** 测试可注入出站敏感词过滤器（生产走构造注入）。 */
+    void setSensitiveWordFilter(SensitiveWordFilter sensitiveWordFilter) {
+        this.sensitiveWordFilter = sensitiveWordFilter;
+    }
+
+    /**
+     * 为一次流式输出建一个 guard；敏感词关闭、或只配了入站方向时返回 null（调用方跳过过滤）。
+     * 每次订阅都要新建——guard 有缓冲状态，跨流复用会把上一条会话的尾巴接到下一条开头。
+     */
+    private SensitiveWordStreamGuard newOutboundGuard() {
+        if (sensitiveWordFilter == null || !properties.getSensitiveWord().outboundEnabled()) {
+            return null;
+        }
+        return new SensitiveWordStreamGuard(sensitiveWordFilter,
+            properties.getSensitiveWord().getOutboundSafeReply());
+    }
+
+    /**
+     * 把 guard 挂到文本流上：逐片过滤（可能整片被缓冲而不发），流末尾 flush 出留住的尾巴。
+     *
+     * <p>不 flush 会吞掉正文最后几个字——尾部那 {@code 最长词长-1} 个字符正是被刻意留住等下一片的。</p>
+     */
+    private Flux<String> applyOutboundGuard(Flux<String> source, SensitiveWordStreamGuard guard) {
+        if (guard == null) {
+            return source;
+        }
+        return source
+            .mapNotNull(text -> {
+                String emit = guard.accept(text);
+                return emit.isEmpty() ? null : emit;
+            })
+            .concatWith(Flux.defer(() -> {
+                String tail = guard.flush();
+                return tail.isEmpty() ? Flux.empty() : Flux.just(tail);
+            }));
     }
 
     /** 测试可注入指标注册表（避免暴露 setter 给生产链路误用）。 */
@@ -171,7 +222,9 @@ public class CustomerServiceService {
             // AGENT_RESULT 全文"——不过滤会导致用户看到同一段话重复 2-3 遍
             AtomicBoolean chunkSeen = new AtomicBoolean(false);
             AtomicReference<String> lastReplay = new AtomicReference<>("");
-            return agent.stream(List.of(toUserMsg(userText)), options, ctx)
+            // 出站敏感词过滤：每次订阅一个独立 guard（有状态，跨流复用会串内容）
+            SensitiveWordStreamGuard guard = newOutboundGuard();
+            return applyOutboundGuard(agent.stream(List.of(toUserMsg(userText)), options, ctx)
                 .mapNotNull(event -> {
                     String text = event.getMessage() == null ? null : event.getMessage().getTextContent();
                     if (text == null || text.isEmpty()) {
@@ -188,7 +241,7 @@ public class CustomerServiceService {
                     }
                     lastReplay.set(text);
                     return text;
-                });
+                }), guard);
         }));
 
         // SSE 空闲超时（框架 #1741 缓解）：相邻元素间隔超过阈值即超时收尾，避免连接泄漏。<=0 禁用。

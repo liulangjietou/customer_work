@@ -2,13 +2,19 @@
 # 打开 Flyway 自动迁移，方便本地联调无需手工建表；生产禁止使用本 profile。
 spring:
   flyway:
-    enabled: false
+    enabled: true
     clean-disabled: true   # 禁止误跑 flyway:clean 清空开发库
 
 # 本地/测试联调默认打开 OA 域账号登录入口；生产默认关闭，需运维显式设置 ADMIN_LDAP_ENABLED=true 开通。
 admin:
   ldap:
     enabled: true
+  # 内容风控：本地联调默认开，方便验证拦截/打码与命中看板。
+  # 两项在 application.yml 里默认都是关的——尤其命中日志会把用户原文片段落库（敏感数据），
+  # 生产是否留存必须由运维按合规要求显式开，不能靠本地方便就带到线上。
+  content-guard:
+    agent-filter-enabled: true
+    hit-log-enabled: true
 
 logging:
   level:

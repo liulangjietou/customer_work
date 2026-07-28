@@ -58,8 +58,13 @@ public class SensitiveWordFilter {
         reload();
     }
 
-    /** 从存储重新拉取启用词表并重建自动机（词表变更后调用；线程安全，含 fail-closed 三分支）。 */
-    public void reload() {
+    /**
+     * 从存储重新拉取启用词表并重建自动机（词表变更后调用；线程安全，含 fail-closed 三分支）。
+     *
+     * @return 是否加载成功——{@code false} 表示读存储失败（分支②/③）。{@link SensitiveWordRefresher}
+     *         据此决定是否推进已记录的版本指纹：加载失败就不推进，下一轮继续重试。
+     */
+    public boolean reload() {
         Optional<List<SensitiveWord>> loaded = store.findEnabled();
         if (loaded.isPresent()) {
             // 分支①：读成功——构建新 matcher 原子替换，解除任何哨兵态
@@ -68,30 +73,46 @@ public class SensitiveWordFilter {
             for (SensitiveWord raw : enabled) {
                 String normWord = TextNormalizer.normalize(raw.getWord());
                 if (!normWord.isEmpty()) {
-                    normalized.add(new SensitiveWord(raw.getId(), normWord, raw.getCategory(), raw.getAction(), true));
+                    // 只挂归一化匹配词面，原词面保留——命中日志/审计要呈现运营维护的那个词，不是归一化产物
+                    normalized.add(raw.withMatchWord(normWord));
                 }
             }
             this.matcher = AhoCorasickMatcher.build(normalized);
             this.failClosed = false;
             this.everLoadedGood = true;
             log.info("[SENSITIVE] matcher rebuilt, patterns={}", matcher.patternCount());
-            return;
+            return true;
         }
         if (everLoadedGood) {
             // 分支②：读失败但已有好词表——保留旧 matcher，绝不用空覆盖好状态
             log.error("[SENSITIVE] word table reload failed, keep last good table (patterns={}), code={}",
                 matcher.patternCount(), CODE_RELOAD_FAIL);
-            return;
+            return false;
         }
         // 分支③：读失败且从未成功加载——fail-closed 拦截一切，告警促运营修 DB
         this.failClosed = true;
         log.error("[SENSITIVE] initial word table load failed, engage fail-closed block-all sentinel, code={}",
             CODE_RELOAD_FAIL);
+        return false;
     }
 
     /** 当前词表规模（观测 / 单测）。 */
     public int patternCount() {
         return matcher.patternCount();
+    }
+
+    /**
+     * 流式过滤的安全保留长度：{@code 最长词长 - 1}。
+     *
+     * <p>流式输出下一个词会被拆进相邻增量片段（"阿根廷" 可能来自三次推送），必须留住这么多字符
+     * 等下一片拼上来再匹配，否则跨片段的词永远命中不了。fail-closed 哨兵态返回 0——那时任何文本
+     * 都会被整体拦下，不存在"放行一部分"的问题。</p>
+     */
+    public int streamRetainLength() {
+        if (failClosed) {
+            return 0;
+        }
+        return Math.max(0, matcher.maxPatternLength() - 1);
     }
 
     /** 是否处于 fail-closed 哨兵态（观测 / 单测）。 */

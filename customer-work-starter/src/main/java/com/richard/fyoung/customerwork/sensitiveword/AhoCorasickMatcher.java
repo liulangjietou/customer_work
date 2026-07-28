@@ -52,7 +52,7 @@ public final class AhoCorasickMatcher {
         }
         List<SensitiveWord> valid = new ArrayList<>(words.size());
         for (SensitiveWord w : words) {
-            if (w != null && w.getWord() != null && !w.getWord().isEmpty()) {
+            if (w != null && w.getMatchWord() != null && !w.getMatchWord().isEmpty()) {
                 valid.add(w);
             }
         }
@@ -62,6 +62,20 @@ public final class AhoCorasickMatcher {
     /** 词表规模（供观测 / 单测）。 */
     public int patternCount() {
         return patterns.size();
+    }
+
+    /**
+     * 最长模式串长度（归一化后）。
+     *
+     * <p>流式过滤要用它决定"尾部留多少字符不放行"：一个词可能被拆进相邻两个增量片段，
+     * 只有留住 {@code maxPatternLength - 1} 个字符等下一片拼上来再匹配，才不会漏。</p>
+     */
+    public int maxPatternLength() {
+        int max = 0;
+        for (SensitiveWord word : patterns) {
+            max = Math.max(max, word.getMatchWord().length());
+        }
+        return max;
     }
 
     /**
@@ -82,7 +96,7 @@ public final class AhoCorasickMatcher {
             for (int patternIdx : output.get(node)) {
                 SensitiveWord word = patterns.get(patternIdx);
                 int end = i + 1;
-                int start = end - word.getWord().length();
+                int start = end - word.getMatchWord().length();
                 hits.add(new SensitiveWordHit(word, start, end));
             }
         }
@@ -101,7 +115,7 @@ public final class AhoCorasickMatcher {
 
     private void buildGoto() {
         for (int p = 0; p < patterns.size(); p++) {
-            String word = patterns.get(p).getWord();
+            String word = patterns.get(p).getMatchWord();
             int node = 0;
             for (int i = 0; i < word.length(); i++) {
                 char c = word.charAt(i);

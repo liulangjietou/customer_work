@@ -38,6 +38,31 @@ class CustomerWorkPersistenceConfigTest {
             });
     }
 
+    /**
+     * 命中日志与词表是两个独立开关，允许"词表用内存种子、只把命中记录落库"这种组合——
+     * 该键若没登记进 {@link PersistenceJdbcCondition}，这个组合会因为 Mapper 取不到而启动失败。
+     */
+    @Test
+    void whenOnlyHitLogJdbc_shouldStillWirePersistenceBeans() {
+        runner.withPropertyValues("customer-work.sensitive-word.hit-log.store-mode=jdbc")
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasBean("customerWorkSqlSessionTemplate");
+                assertThat(context).hasBean("sensitiveWordHitLogMapper");
+            });
+    }
+
+    /** 限流规则层同理：只开规则层、其余域全 memory 时也必须能激活持久化环境。 */
+    @Test
+    void whenOnlyRateLimitRuleJdbc_shouldStillWirePersistenceBeans() {
+        runner.withPropertyValues("customer-work.security.rate-limit.store-mode=jdbc")
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasBean("customerWorkSqlSessionTemplate");
+                assertThat(context).hasBean("rateLimitRuleMapper");
+            });
+    }
+
     @Test
     void whenAllMemory_shouldNotWireAnyPersistenceBean() {
         runner.run(context -> {

@@ -640,6 +640,30 @@ public class CustomerWorkProperties {
         private String inboundSafeReply = DEFAULT_INBOUND_SAFE_REPLY;
         /** 出站 BLOCK 安全兜底话术。 */
         private String outboundSafeReply = DEFAULT_OUTBOUND_SAFE_REPLY;
+        /** 是否开启词表定时刷新（后台改词后自动生效）。默认开启。 */
+        private boolean refreshEnabled = true;
+        /** 词表刷新轮询间隔（毫秒，默认 60s）；每轮只查一次版本指纹，指纹变了才重建自动机。 */
+        private long refreshIntervalMs = 60_000L;
+        /** 命中日志落库配置（供后台"命中看板"查询）。 */
+        private final HitLog hitLog = new HitLog();
+
+        /**
+         * 敏感词命中日志落库配置。
+         *
+         * <p>默认关闭：命中日志会记录用户原文片段，属于敏感数据，是否留存由使用方按合规要求显式开启。
+         * 开启后命中记录经有界队列异步落 {@code cw_sensitive_word_hit_log}，不阻塞对话主链路。</p>
+         */
+        @Data
+        public static class HitLog {
+            /** 是否记录命中日志。默认关闭。 */
+            private boolean enabled = false;
+            /** 存储模式：memory（进程内环形缓冲，默认）| jdbc（落库，后台看板用）。 */
+            private String storeMode = "memory";
+            /** 异步落库队列容量；队列满时丢弃新记录并计数，绝不阻塞对话链路。 */
+            private int queueCapacity = 2048;
+            /** 留存的原文片段最大长度（字符），超出截断，避免整段用户输入落库。 */
+            private int snippetMaxLength = 64;
+        }
 
         /** 取打码字符（配置为空则回退默认 '*'）。 */
         public char resolveMaskChar() {
@@ -776,17 +800,30 @@ public class CustomerWorkProperties {
             private List<String> apiKeys = new ArrayList<>();
         }
 
-        /** 限流（固定时间窗，按 API Key 或客户端 IP 维度）。 */
+        /**
+         * 限流配置：本节参数是<b>全局兜底层</b>（无规则命中时生效），规则层见 {@code rule-enabled}。
+         *
+         * <p>两层的关系：{@code cw_rate_limit_rule} 里的规则按路径前缀优先匹配，都不命中才落到本节参数。
+         * 不开规则层时行为与规则化之前完全一致。</p>
+         */
         @Data
         public static class RateLimit {
-            /** 是否启用限流。 */
+            /** 是否启用全局兜底限流。 */
             private boolean enabled = false;
-            /** 每分钟允许的最大请求数。 */
+            /** 每分钟允许的最大请求数（全局兜底层）。 */
             private int requestsPerMinute = 120;
             /** 限流算法：fixed-window（固定窗口，默认）| sliding-window（滑动窗口，更平滑防突刺）。 */
             private String algorithm = "fixed-window";
             /** 滑动窗口时间窗大小（秒），仅 algorithm=sliding-window 时生效。 */
             private int windowSeconds = 60;
+            /** 是否启用规则层（按路径前缀匹配后台维护的限流规则）。默认关闭。 */
+            private boolean ruleEnabled = false;
+            /** 规则存储模式：memory（进程内空规则，默认）| jdbc（读 cw_rate_limit_rule，后台可维护）。 */
+            private String storeMode = "memory";
+            /** 是否开启规则定时刷新（后台改规则后自动生效）。默认开启。 */
+            private boolean refreshEnabled = true;
+            /** 规则刷新轮询间隔（毫秒，默认 60s）；每轮只查一次版本指纹，指纹变了才换快照。 */
+            private long refreshIntervalMs = 60_000L;
         }
 
         /**

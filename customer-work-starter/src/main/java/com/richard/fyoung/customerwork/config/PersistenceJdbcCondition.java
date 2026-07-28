@@ -31,6 +31,11 @@ public class PersistenceJdbcCondition implements Condition {
         "customer-work.call-log.store-mode",
         "customer-work.attachment.store-mode",
         "customer-work.sensitive-word.store-mode",
+        // 命中日志与词表是两个独立开关：允许"词表用内存种子、只把命中记录落库"这种组合，
+        // 不登记这个键的话该组合会因为持久化环境没激活、Mapper 取不到而启动失败
+        "customer-work.sensitive-word.hit-log.store-mode",
+        // 限流规则层同理：只开规则层、其余域全是 memory 时，也必须能激活持久化环境
+        "customer-work.security.rate-limit.store-mode",
         "customer-work.tool-backend.mode"
     };
 

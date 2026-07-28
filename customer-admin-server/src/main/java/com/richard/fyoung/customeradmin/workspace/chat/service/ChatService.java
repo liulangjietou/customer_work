@@ -32,6 +32,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
+import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
+import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStreamGuard;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
@@ -75,12 +80,18 @@ public class ChatService {
     private final ExecutionModeRegistry executionModeRegistry;
     private final PlanConfirmationService planConfirmationService;
     private final ChatAttachmentService chatAttachmentService;
+    /** 出站敏感词过滤器；未开启 {@code admin.content-guard.agent-filter-enabled} 时为 null，跳过过滤。 */
+    private final SensitiveWordFilter sensitiveWordFilter;
+    /** 出站命中 BLOCK 时替换用的安全话术。 */
+    private final String outboundSafeReply;
 
     public ChatService(AgentInstanceCache agentInstanceCache, AdminAgentInstanceFactory agentInstanceFactory,
                         ChatHistoryCache historyCache, AgentMemorySyncService memorySyncService,
                         ExecutionModeRegistry executionModeRegistry,
                         PlanConfirmationService planConfirmationService,
-                        ChatAttachmentService chatAttachmentService) {
+                        ChatAttachmentService chatAttachmentService,
+                        ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
+                        ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider) {
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
         this.historyCache = historyCache;
@@ -88,6 +99,14 @@ public class ChatService {
         this.executionModeRegistry = executionModeRegistry;
         this.planConfirmationService = planConfirmationService;
         this.chatAttachmentService = chatAttachmentService;
+        // 敏感词关闭时容器里没有该 Bean，此处为 null，出站过滤整体跳过
+        this.sensitiveWordFilter = sensitiveWordFilterProvider == null
+            ? null : sensitiveWordFilterProvider.getIfAvailable();
+        ContentGuardProperties guardProperties = contentGuardPropertiesProvider == null
+            ? null : contentGuardPropertiesProvider.getIfAvailable();
+        this.outboundSafeReply = guardProperties == null || !StringUtils.hasText(guardProperties.getSafeReply())
+            ? CustomerWorkProperties.SensitiveWord.DEFAULT_OUTBOUND_SAFE_REPLY
+            : guardProperties.getSafeReply();
     }
 
     /**
@@ -259,9 +278,16 @@ public class ChatService {
         // 也不关闭，前端永远卡在"生成中..."。defer 把方法调用推迟到订阅时执行，任何同步异常都会被
         // Reactor 自动转成 Flux.error(...)，从而能被 onErrorResume 正常捕获、优雅降级成兜底话术。
         Map<String, ChatUsage> usageByMessage = new ConcurrentHashMap<>();
+        // 出站敏感词过滤：每次请求一份独立的 guard 集合（有状态，跨请求复用会串内容）。
+        // 挂在这里而不是中间件里——agent.stream(...) 走 StreamingHook 旁路绕开了中间件链，
+        // 中间件只看得到最后那条 AGENT_RESULT，而它在 toMainChunks 里因"已流式过"被丢弃，
+        // 只改中间件的话出站过滤在流式链路上完全落空。详见 SensitiveWordStreamGuard 类注释。
+        Map<String, SensitiveWordStreamGuard> outboundGuards = new ConcurrentHashMap<>();
         Flux<ChatStreamChunk> body = Flux.defer(() -> streamEvents(agent, List.of(userMsg), options, ctx))
             .doOnNext(event -> collectUsage(usageByMessage, event))
-            .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, stateBySource)));
+            .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, stateBySource)))
+            .concatMap(chunk -> guardChunk(chunk, outboundGuards))
+            .concatWith(Flux.defer(() -> flushGuards(outboundGuards)));
 
         Flux<ChatStreamChunk> conversation = Flux.concat(Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_START, "开始思考")), body)
             .concatWith(Flux.defer(() -> Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"))))
@@ -357,6 +383,53 @@ public class ChatService {
      * {@code toolSource} 用于把 {@code ToolUseBlock} 按来源分类成
      * {@link ChatNodeKind#TOOL_SKILL}/{@link ChatNodeKind#TOOL_MCP}/{@link ChatNodeKind#TOOL_BUILTIN}。</p>
      */
+    /**
+     * 对 ANSWER 片段做出站敏感词过滤；其余节点（思考、工具调用等）原样透传。
+     *
+     * <p>按 {@code source} 分别持有 guard：主 Agent 与各子 Agent 的正文是并行的两股文本，
+     * 共用一个缓冲会把 A 的半个词接到 B 的开头。只过 ANSWER 是因为只有它会直接呈现给用户，
+     * 思考过程与工具参数不进对话气泡。</p>
+     */
+    private Flux<ChatStreamChunk> guardChunk(ChatStreamChunk chunk,
+                                             Map<String, SensitiveWordStreamGuard> guards) {
+        if (sensitiveWordFilter == null || chunk.kind() != ChatNodeKind.ANSWER
+            || !StringUtils.hasText(chunk.text())) {
+            return Flux.just(chunk);
+        }
+        String key = chunk.source() == null ? MAIN_AGENT_SOURCE_KEY : chunk.source();
+        SensitiveWordStreamGuard guard = guards.computeIfAbsent(key, k -> newOutboundGuard());
+        String emit = guard.accept(chunk.text());
+        return emit.isEmpty()
+            ? Flux.empty()
+            : Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, emit, chunk.source(), chunk.subagentName()));
+    }
+
+    /**
+     * 流末尾把各 guard 缓冲区里留住的尾巴吐出来。
+     *
+     * <p>不 flush 会吞掉正文最后几个字——那几个字符正是被刻意留住等下一片拼接的。</p>
+     */
+    private Flux<ChatStreamChunk> flushGuards(Map<String, SensitiveWordStreamGuard> guards) {
+        if (guards.isEmpty()) {
+            return Flux.empty();
+        }
+        List<ChatStreamChunk> tails = new ArrayList<>();
+        guards.forEach((key, guard) -> {
+            String tail = guard.flush();
+            if (StringUtils.hasText(tail)) {
+                tails.add(MAIN_AGENT_SOURCE_KEY.equals(key)
+                    ? new ChatStreamChunk(ChatNodeKind.ANSWER, tail)
+                    : new ChatStreamChunk(ChatNodeKind.ANSWER, tail, key, null));
+            }
+        });
+        return Flux.fromIterable(tails);
+    }
+
+    /** 为一股输出流建一个 guard（有状态，每股流各一个）。 */
+    private SensitiveWordStreamGuard newOutboundGuard() {
+        return new SensitiveWordStreamGuard(sensitiveWordFilter, outboundSafeReply);
+    }
+
     private List<ChatStreamChunk> toChunks(Event event, ToolSourceInfo toolSource,
                                              Map<String, StreamState> stateBySource) {
         Msg msg = event.getMessage();
