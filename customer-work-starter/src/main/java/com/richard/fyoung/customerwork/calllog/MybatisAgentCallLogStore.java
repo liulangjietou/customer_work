@@ -116,7 +116,9 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
                 toDouble(do1.getAvgMcpMs()),
                 toDouble(do1.getAvgSkillMs()),
                 do1.getTotalTokens() == null ? 0L : do1.getTotalTokens(),
-                toDouble(do1.getAvgTotalTokens()));
+                toDouble(do1.getAvgTotalTokens()),
+                do1.getInputTokens() == null ? 0L : do1.getInputTokens(),
+                do1.getCachedTokens() == null ? 0L : do1.getCachedTokens());
         } catch (Exception e) {
             log.error("agent call log summary failed, code={}", "CALLLOG-SUMMARY-FAIL", e);
             return AgentCallLogSummary.empty();
@@ -172,6 +174,8 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         d.setInputTokens(r.inputTokens());
         d.setOutputTokens(r.outputTokens());
         d.setTotalTokens(r.totalTokens());
+        d.setCachedTokens(r.cachedTokens());
+        d.setModelReportedMs(r.modelReportedMs());
         d.setSuccess(r.success());
         d.setErrorMsg(r.errorMsg());
         return d;
@@ -187,6 +191,8 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         d.setDurationMs(s.durationMs());
         d.setInputTokens(s.inputTokens());
         d.setOutputTokens(s.outputTokens());
+        d.setCachedTokens(s.cachedTokens());
+        d.setModelReportedMs(s.modelReportedMs());
         d.setSuccess(s.success());
         d.setErrorMsg(s.errorMsg());
         return d;
@@ -208,6 +214,7 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
             d.getSkillMs() == null ? 0L : d.getSkillMs(),
             d.getSegmentCount() == null ? 0 : d.getSegmentCount(),
             d.getInputTokens(), d.getOutputTokens(), d.getTotalTokens(),
+            d.getCachedTokens(), d.getModelReportedMs(),
             d.getSuccess() != null && d.getSuccess(), d.getErrorMsg(), List.of());
     }
 
@@ -220,7 +227,8 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
             d.getDurationMs() == null ? 0L : d.getDurationMs(),
             d.getSuccess() != null && d.getSuccess(),
             d.getErrorMsg(),
-            d.getInputTokens(), d.getOutputTokens());
+            d.getInputTokens(), d.getOutputTokens(),
+            d.getCachedTokens(), d.getModelReportedMs());
     }
 
     private double toDouble(BigDecimal value) {

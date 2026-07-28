@@ -20,4 +20,13 @@ public class AgentCallStatsSummaryVO {
     private Long totalTokens;
     /** 平均每次 token 消耗。 */
     private Double avgTotalTokens;
+
+    /** 总输入 token（缓存命中率的分母）。 */
+    private Long inputTokens;
+
+    /** 总命中缓存的输入 token（inputTokens 的子集，各家通常按 1/10 计价）。 */
+    private Long cachedTokens;
+
+    /** 缓存命中率 = cachedTokens / inputTokens；判断 prompt 缓存有没有真生效的唯一直接信号。 */
+    private Double cacheHitRate;
 }

@@ -223,13 +223,20 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
                             AtomicReference<ChatUsage> usageRef) {
         Long inputTokens = null;
         Long outputTokens = null;
+        Long cachedTokens = null;
+        Long modelReportedMs = null;
         ChatUsage usage = usageRef == null ? null : usageRef.get();
         if (usage != null) {
             inputTokens = (long) usage.getInputTokens();
             outputTokens = (long) usage.getOutputTokens();
+            // 缓存量与模型自报耗时：框架早就给了，此前一直丢弃——前者是成本核算的前提（缓存读通常按
+            // 1/10 计价），后者与本段实测耗时相减即网络/排队开销，能把"模型慢"和"链路慢"分开
+            cachedTokens = (long) usage.getCachedTokens();
+            modelReportedMs = Math.round(usage.getTime() * 1000d);
         }
         try {
-            collector.addSegment(kind, name, startMs, startNano, success, errorMsg, inputTokens, outputTokens);
+            collector.addSegment(kind, name, startMs, startNano, success, errorMsg,
+                inputTokens, outputTokens, cachedTokens, modelReportedMs);
         } catch (Exception e) {
             log.error("agent call segment collect failed, code={}, kind={}, name={}",
                 "CALLLOG-SEGMENT-FAIL", kind, name, e);

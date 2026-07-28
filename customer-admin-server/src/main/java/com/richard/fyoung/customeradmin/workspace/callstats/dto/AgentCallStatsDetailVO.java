@@ -33,5 +33,9 @@ public class AgentCallStatsDetailVO {
     private Long inputTokens;
     private Long outputTokens;
     private Long totalTokens;
+    /** 命中缓存的输入 token（inputTokens 的子集，不计入 totalTokens）。 */
+    private Long cachedTokens;
+    /** 模型自报耗时合计（毫秒），与 modelMs 之差即网络/排队开销。 */
+    private Long modelReportedMs;
     private List<AgentCallSegmentVO> segments;
 }

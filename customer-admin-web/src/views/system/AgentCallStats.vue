@@ -148,6 +148,9 @@ const SUMMARY_CARDS = [
   { key: 'totalCalls', label: '总调用数', unit: '次' },
   { key: 'totalTokens', label: '总 Token 消耗', unit: 'token' },
   { key: 'avgTotalTokens', label: '平均 Token/次', unit: 'token' },
+  // 缓存命中率单列一张卡：它是判断 prompt 缓存有没有真生效的唯一直接信号，
+  // 长期为 0 说明系统提示词/历史每次都在变，那笔本可省下的钱一直在白花
+  { key: 'cacheHitRate', label: '缓存命中率', unit: 'percent' },
   { key: 'avgDurationMs', label: '平均耗时', unit: 'ms' },
   { key: 'maxDurationMs', label: '最大耗时', unit: 'ms' },
   { key: 'avgModelMs', label: '大模型平均耗时', unit: 'ms' },
@@ -165,6 +168,7 @@ function summaryDisplay(card: (typeof SUMMARY_CARDS)[number]): string {
   const value = summaryValue(card.key)
   if (card.unit === 'ms') return formatDuration(value)
   if (card.unit === 'token') return formatTokens(Math.round(value))
+  if (card.unit === 'percent') return `${(value * 100).toFixed(1)}%`
   return String(value)
 }
 
@@ -396,6 +400,7 @@ onMounted(() => {
               <template #content>
                 <div>输入：{{ formatTokens(row.inputTokens) }}</div>
                 <div>输出：{{ formatTokens(row.outputTokens) }}</div>
+                <div>其中命中缓存：{{ formatTokens(row.cachedTokens) }}</div>
               </template>
               <span>{{ formatTokens(row.totalTokens) }}</span>
             </el-tooltip>
@@ -458,7 +463,19 @@ onMounted(() => {
             <el-descriptions-item label="总耗时" :span="2">{{ formatDuration(detail.durationMs) }}</el-descriptions-item>
             <el-descriptions-item label="输入 Token">{{ formatTokens(detail.inputTokens) }}</el-descriptions-item>
             <el-descriptions-item label="输出 Token">{{ formatTokens(detail.outputTokens) }}</el-descriptions-item>
-            <el-descriptions-item label="总 Token" :span="2">{{ formatTokens(detail.totalTokens) }}</el-descriptions-item>
+            <el-descriptions-item label="总 Token">{{ formatTokens(detail.totalTokens) }}</el-descriptions-item>
+            <el-descriptions-item label="命中缓存 Token">
+              {{ formatTokens(detail.cachedTokens) }}
+              <span v-if="detail.cachedTokens != null && detail.inputTokens" class="muted">
+                （占输入 {{ ((detail.cachedTokens / detail.inputTokens) * 100).toFixed(1) }}%）
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="模型自报耗时" :span="2">
+              {{ detail.modelReportedMs == null ? '—' : formatDuration(detail.modelReportedMs) }}
+              <span v-if="detail.modelReportedMs != null" class="muted">
+                （与实测大模型耗时之差 {{ formatDuration(Math.max(0, detail.modelMs - detail.modelReportedMs)) }} = 网络/排队开销）
+              </span>
+            </el-descriptions-item>
           </el-descriptions>
 
           <div class="detail-block">

@@ -20,4 +20,8 @@ public class AgentCallSummaryDO {
     private BigDecimal avgSkillMs;
     private Long totalTokens;
     private BigDecimal avgTotalTokens;
+    /** 命中缓存的输入 token 合计（inputTokens 的子集）。 */
+    private Long cachedTokens;
+    /** 输入 token 合计——与 cachedTokens 配对才能算缓存命中率，单独给缓存量没有意义。 */
+    private Long inputTokens;
 }

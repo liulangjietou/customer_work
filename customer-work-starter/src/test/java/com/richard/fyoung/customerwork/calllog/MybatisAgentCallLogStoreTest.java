@@ -63,12 +63,12 @@ class MybatisAgentCallLogStoreTest {
 
     private AgentCallRecord newRecord(String username, String agentCode, long startMs) {
         List<AgentCallSegment> segs = List.of(
-            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", startMs, 30L, true, null, 100L, 20L),
-            new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", startMs + 30, 20L, true, null, null, null),
-            new AgentCallSegment(3, AgentCallKind.MCP, "mcp_weather", startMs + 50, 10L, false, "boom", null, null));
+            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", startMs, 30L, true, null, 100L, 20L, 60L, 18L),
+            new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", startMs + 30, 20L, true, null, null, null, null, null),
+            new AgentCallSegment(3, AgentCallKind.MCP, "mcp_weather", startMs + 50, 10L, false, "boom", null, null, null, null));
         return new AgentCallRecord(0L, "req-" + UUID.randomUUID(), "u-" + username, username, agentCode,
             "客服Agent", "sess-" + UUID.randomUUID(), AgentCallSessionType.CHAT, "问题", "回答",
-            startMs, startMs + 60, 60L, 30L, 20L, 10L, 0L, segs.size(), 100L, 20L, 120L, true, null, segs);
+            startMs, startMs + 60, 60L, 30L, 20L, 10L, 0L, segs.size(), 100L, 20L, 120L, 60L, 18L, true, null, segs);
     }
 
     @Test

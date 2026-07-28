@@ -33,6 +33,8 @@ import java.util.List;
  * @param inputTokens  请求级输入 token 合计（缺失为 null）
  * @param outputTokens 请求级输出 token 合计（缺失为 null）
  * @param totalTokens  请求级总 token 合计（缺失为 null）
+ * @param cachedTokens 请求级命中缓存的输入 token 合计（<b>inputTokens 的子集，不计入 totalTokens</b>，缺失为 null）
+ * @param modelReportedMs 各 MODEL 段模型自报耗时之和（毫秒，缺失为 null）
  * @param success      整次调用是否成功
  * @param errorMsg     失败原因（成功时为 null）
  * @param segments     分段明细（按 seq 升序）
@@ -44,6 +46,7 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
                               long startTimeMs, long endTimeMs, long durationMs,
                               long modelMs, long toolMs, long mcpMs, long skillMs,
                               int segmentCount, Long inputTokens, Long outputTokens, Long totalTokens,
+                              Long cachedTokens, Long modelReportedMs,
                               boolean success, String errorMsg,
                               List<AgentCallSegment> segments) {
 
@@ -52,6 +55,19 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
         return new AgentCallRecord(assignedId, requestId, userId, username, agentCode, agentName,
             sessionId, sessionType, question, answer, startTimeMs, endTimeMs, durationMs,
             modelMs, toolMs, mcpMs, skillMs, segmentCount, inputTokens, outputTokens, totalTokens,
-            success, errorMsg, segments);
+            cachedTokens, modelReportedMs, success, errorMsg, segments);
+    }
+
+    /**
+     * 缓存命中率（{@code cachedTokens / inputTokens}）；无输入 token 或未采到缓存量时返回 null。
+     *
+     * <p>放在领域对象上而不是让每个展示端各算一遍：命中率是"缓存有没有真生效"的唯一直接信号，
+     * 分子分母的口径（缓存量是输入的子集）一旦在某处理解错，算出来的数就会误导决策。</p>
+     */
+    public Double cacheHitRate() {
+        if (cachedTokens == null || inputTokens == null || inputTokens == 0L) {
+            return null;
+        }
+        return (double) cachedTokens / (double) inputTokens;
     }
 }

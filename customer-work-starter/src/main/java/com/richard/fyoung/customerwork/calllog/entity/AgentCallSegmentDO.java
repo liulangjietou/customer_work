@@ -27,6 +27,10 @@ public class AgentCallSegmentDO {
     private Long durationMs;
     private Long inputTokens;
     private Long outputTokens;
+    /** 命中缓存的输入 token（inputTokens 的子集，仅 MODEL 段）。 */
+    private Long cachedTokens;
+    /** 模型自报耗时（毫秒，仅 MODEL 段）。 */
+    private Long modelReportedMs;
     private Boolean success;
     private String errorMsg;
 }
