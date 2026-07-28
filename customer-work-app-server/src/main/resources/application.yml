@@ -250,6 +250,8 @@ customer-work:
       algorithm: fixed-window
       # 滑动窗口时间窗大小（秒），仅 algorithm=sliding-window 时生效
       window-seconds: 60
+      rule-enabled: true
+      store-mode: jdbc
   multi-agent:
     # 多 Agent 编排：fanout（并行多专家聚合）| sequential（流水串行细化）
     enabled: true
@@ -428,6 +430,11 @@ customer-work:
         ocr-path: /ocr
         # 调用超时（秒）
         timeout-seconds: 30
+  sensitive-word:
+    enabled: true
+    store-mode: jdbc
+    hit-log: { enabled: true, store-mode: jdbc }   # 不开这个，命中看板永远是空的
+
 
 # 生产可观测：Actuator 健康检查 / 指标 / Prometheus
 management:

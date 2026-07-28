@@ -231,6 +231,16 @@ admin:
     # 允许被索引的源码根白名单（源码路径必须落在其一之下，防越权读盘）。默认只允许 admin 工作区；
     # 需索引外部仓库源码时追加其绝对路径根，逗号分隔（YAML 列表）。
     allowed-roots: ${ADMIN_KNOWLEDGE_ALLOWED_ROOTS:./data/admin-workspace}
+  content-guard:
+    # 给后台工作区智能体（对话/VibeCoding）挂敏感词过滤；词库与 8080 客服链路共用客服端库那一份。
+    agent-filter-enabled: ${ADMIN_CONTENT_GUARD_ENABLED:false}
+    # 生效方向：INBOUND（只管用户输入）| OUTBOUND（只管模型输出）| BOTH（默认，两端都过）。
+    # 注意 BOTH + MASK 的语义：用户原话在送进模型前就被打码，模型只看得到打码后的文本，
+    # 会出现"答非所问"——那不是故障。只想让模型的回答里不出现该词，就设 OUTBOUND。
+    direction: ${ADMIN_CONTENT_GUARD_DIRECTION:BOTH}
+    # 命中日志：开了才有「命中看板」的数据。默认关是因为它会把用户原文片段落库（属敏感数据），
+    # 是否留存需按合规要求显式决定；片段长度由 hit-log-snippet-max-length 控制，置 0 则只记命中词不留原文。
+    hit-log-enabled: ${ADMIN_CONTENT_GUARD_HIT_LOG_ENABLED:false}
 
 # 对话附件多格式解析（starter attachment 域配置，admin 经 AdminAttachmentConfig 显式装配复用这份强类型绑定）。
 # 顶层 customer-work.* 前缀（区别于上面 admin.customer-work.* 的坐席服务客户端配置），对应 AttachmentProperties。

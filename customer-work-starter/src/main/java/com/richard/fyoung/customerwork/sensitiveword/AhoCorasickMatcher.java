@@ -65,6 +65,20 @@ public final class AhoCorasickMatcher {
     }
 
     /**
+     * 最长模式串长度（归一化后）。
+     *
+     * <p>流式过滤要用它决定"尾部留多少字符不放行"：一个词可能被拆进相邻两个增量片段，
+     * 只有留住 {@code maxPatternLength - 1} 个字符等下一片拼上来再匹配，才不会漏。</p>
+     */
+    public int maxPatternLength() {
+        int max = 0;
+        for (SensitiveWord word : patterns) {
+            max = Math.max(max, word.getMatchWord().length());
+        }
+        return max;
+    }
+
+    /**
      * 单趟扫描，返回全部命中（含重叠命中）。
      *
      * @param normalizedText 已归一化文本

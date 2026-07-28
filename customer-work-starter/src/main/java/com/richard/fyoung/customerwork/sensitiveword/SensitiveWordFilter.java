@@ -101,6 +101,20 @@ public class SensitiveWordFilter {
         return matcher.patternCount();
     }
 
+    /**
+     * 流式过滤的安全保留长度：{@code 最长词长 - 1}。
+     *
+     * <p>流式输出下一个词会被拆进相邻增量片段（"阿根廷" 可能来自三次推送），必须留住这么多字符
+     * 等下一片拼上来再匹配，否则跨片段的词永远命中不了。fail-closed 哨兵态返回 0——那时任何文本
+     * 都会被整体拦下，不存在"放行一部分"的问题。</p>
+     */
+    public int streamRetainLength() {
+        if (failClosed) {
+            return 0;
+        }
+        return Math.max(0, matcher.maxPatternLength() - 1);
+    }
+
     /** 是否处于 fail-closed 哨兵态（观测 / 单测）。 */
     public boolean isFailClosed() {
         return failClosed;

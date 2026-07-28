@@ -17,6 +17,8 @@ import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.event.TextBlockDeltaEvent;
+import io.agentscope.core.event.TextBlockEndEvent;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.middleware.AgentInput;
 import io.agentscope.core.middleware.MiddlewareBase;
@@ -140,7 +142,11 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
 
         Flux<AgentEvent> downstream = next.apply(effectiveInput);
         if (outboundEnabled) {
-            downstream = downstream.map(event -> filterOutbound(agent, ctx, event));
+            // 每次调用一份独立的流式状态（缓冲区/拦截标志）：中间件是单例，状态放字段会让并发会话串味。
+            // 用 concatMap 而非 map：一个增量事件可能产出 0 个（尾部还不能放行）或 2 个（flush + 原事件），
+            // 且必须保序——乱序会让打过码的片段跑到未打码片段后面。
+            OutboundStreamState streamState = new OutboundStreamState();
+            downstream = downstream.concatMap(event -> filterOutboundEvent(agent, ctx, event, streamState));
         }
         return downstream;
     }
@@ -180,6 +186,119 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
     }
 
     // ---------------- 出站 ----------------
+
+    /**
+     * 出站事件分流：流式正文增量走滑动缓冲，块结束时 flush，其余事件（含最终结果）走整段过滤。
+     *
+     * <p><b>为什么必须拦增量事件</b>：接入层（admin ChatService / 8080 SSE）把
+     * {@link TextBlockDeltaEvent} 逐片推给前端，正文流完之后最终的 {@link AgentResultEvent}
+     * 会被直接丢弃。只改最终结果等于改了个没人看的事件——过滤"记录了命中、也算出了打码文本"，
+     * 但用户屏幕上是未过滤的原文。这种假性生效比不做更危险，所以增量必须过。</p>
+     */
+    private Flux<AgentEvent> filterOutboundEvent(Agent agent, RuntimeContext ctx, AgentEvent event,
+                                                 OutboundStreamState state) {
+        try {
+            if (event instanceof TextBlockDeltaEvent delta) {
+                return filterDelta(agent, ctx, delta, state);
+            }
+            if (event instanceof TextBlockEndEvent end) {
+                return flushBlock(agent, ctx, end, state);
+            }
+            return Flux.just(filterOutbound(agent, ctx, event));
+        } catch (Exception e) {
+            // fail-closed：流式过滤自身故障时不放行未过滤内容，丢弃该片段并记录
+            log.error("[SENSITIVE] outbound stream filter failed (fail-closed, dropping chunk), code={}, agent={}",
+                CODE_FILTER_FAIL, agentName(agent), e);
+            return Flux.empty();
+        }
+    }
+
+    /**
+     * 流式正文增量的滑动缓冲过滤。
+     *
+     * <p>每片到达后与缓冲区拼接整体过滤，只放行"确定不可能再是某个词前缀"的前半段，
+     * 尾部留 {@link SensitiveWordFilter#streamRetainLength()} 个字符等下一片——
+     * 否则 {@code 阿根廷} 被拆成三片推送时永远匹配不上。</p>
+     *
+     * <p><b>BLOCK 在流式下的固有限制</b>：命中时前面的片段已经在用户屏幕上，收不回来。
+     * 这里的处置是"立即停止后续输出 + 补一条安全话术"，把伤害面收敛到命中点之后。
+     * 要做到一个字都不漏，只能整段缓冲后再发（那就没有流式了）——需要那种强度的场景，
+     * 应当在接入层关闭流式，而不是让中间件替所有人做这个取舍。</p>
+     */
+    private Flux<AgentEvent> filterDelta(Agent agent, RuntimeContext ctx, TextBlockDeltaEvent delta,
+                                         OutboundStreamState state) {
+        if (state.blocked) {
+            // 已经拦下过：后续片段一律丢弃，不再往下发
+            return Flux.empty();
+        }
+        String text = delta.getDelta();
+        if (text == null || text.isEmpty()) {
+            return Flux.just(delta);
+        }
+        StringBuilder buffer = state.buffers.computeIfAbsent(delta.getBlockId(), k -> new StringBuilder());
+        buffer.append(text);
+
+        SensitiveWordFilterResult result = filter.check(buffer.toString());
+        if (result.decision() == SensitiveWordAction.BLOCK) {
+            state.blocked = true;
+            state.buffers.clear();
+            metric(M_OUTBOUND_BLOCKED);
+            log.info("[SENSITIVE] outbound stream blocked, agent={}", agentName(agent));
+            reportStreamHit("sensitive-outbound-block", agent, ctx, result);
+            return Flux.just(new TextBlockDeltaEvent(delta.getReplyId(), delta.getBlockId(), outboundSafeReply));
+        }
+
+        String masked = result.maskedText();
+        int retain = Math.min(filter.streamRetainLength(), masked.length());
+        String emit = masked.substring(0, masked.length() - retain);
+        buffer.setLength(0);
+        buffer.append(masked, masked.length() - retain, masked.length());
+
+        if (result.decision() == SensitiveWordAction.MASK) {
+            metric(M_OUTBOUND_MASKED);
+            reportStreamHit("sensitive-outbound-mask", agent, ctx, result);
+        } else if (result.decision() == SensitiveWordAction.REVIEW) {
+            reportStreamHit("sensitive-outbound-review", agent, ctx, result);
+        }
+        return emit.isEmpty()
+            ? Flux.empty()
+            : Flux.just(new TextBlockDeltaEvent(delta.getReplyId(), delta.getBlockId(), emit));
+    }
+
+    /** 块结束：把缓冲区里留的尾巴过滤后补发，再放行结束事件——不 flush 就会吞掉正文末尾几个字。 */
+    private Flux<AgentEvent> flushBlock(Agent agent, RuntimeContext ctx, TextBlockEndEvent end,
+                                        OutboundStreamState state) {
+        StringBuilder buffer = state.buffers.remove(end.getBlockId());
+        if (state.blocked || buffer == null || buffer.length() == 0) {
+            return Flux.just(end);
+        }
+        SensitiveWordFilterResult result = filter.check(buffer.toString());
+        if (result.decision() == SensitiveWordAction.BLOCK) {
+            state.blocked = true;
+            metric(M_OUTBOUND_BLOCKED);
+            reportStreamHit("sensitive-outbound-block", agent, ctx, result);
+            return Flux.just(new TextBlockDeltaEvent(end.getReplyId(), end.getBlockId(), outboundSafeReply), end);
+        }
+        if (result.decision() == SensitiveWordAction.MASK) {
+            metric(M_OUTBOUND_MASKED);
+            reportStreamHit("sensitive-outbound-mask", agent, ctx, result);
+        }
+        return Flux.just(new TextBlockDeltaEvent(end.getReplyId(), end.getBlockId(), result.maskedText()), end);
+    }
+
+    /** 流式命中的上报（审计 + 命中日志），与整段路径共用同一个出口语义。 */
+    private void reportStreamHit(String type, Agent agent, RuntimeContext ctx, SensitiveWordFilterResult result) {
+        audit(type, agent, strongestWord(result));
+        if (hitSink == null) {
+            return;
+        }
+        try {
+            hitSink.emit(SensitiveWordHitRecord.of(SensitiveWordHitDirection.OUTBOUND, result, agentName(agent),
+                ctx == null ? null : ctx.getSessionId(), ctx == null ? null : ctx.getUserId(), snippetMaxLength));
+        } catch (Exception e) {
+            log.error("[SENSITIVE] stream hit log emit failed, code={}", CODE_FILTER_FAIL, e);
+        }
+    }
 
     private AgentEvent filterOutbound(Agent agent, RuntimeContext ctx, AgentEvent event) {
         if (!(event instanceof AgentResultEvent result)) {
@@ -359,6 +478,19 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
         static InboundOutcome pass(AgentInput input) {
             return new InboundOutcome(false, input);
         }
+    }
+
+    /**
+     * 一次调用的流式出站状态（每次 onAgent 新建一份，绝不放中间件字段——单例 Bean 上放可变状态，
+     * 并发会话会互相串内容）。
+     *
+     * <p>{@code buffers} 按 blockId 分别缓冲：同一次回复可能有多个文本块（正文被工具调用打断后续写），
+     * 各块的尾巴必须独立保留，混在一起会把 A 块的半个词接到 B 块开头。</p>
+     */
+    private static final class OutboundStreamState {
+        private final Map<String, StringBuilder> buffers = new LinkedHashMap<>();
+        /** BLOCK 已触发：后续增量一律丢弃，避免"拦了一半还在继续吐"。 */
+        private boolean blocked;
     }
 
     /**
