@@ -33,14 +33,17 @@ public class AgentCallCollector {
      * @param segStartNano 分段开始的 {@code System.nanoTime()}（用于高精度算耗时）
      * @param success      是否成功
      * @param errorMsg     失败原因
-     * @param inputTokens  输入 token（仅 MODEL 段有值，缺失传 null）
-     * @param outputTokens 输出 token（仅 MODEL 段有值，缺失传 null）
+     * @param inputTokens     输入 token（仅 MODEL 段有值，缺失传 null）
+     * @param outputTokens    输出 token（仅 MODEL 段有值，缺失传 null）
+     * @param cachedTokens    命中缓存的输入 token（inputTokens 的子集，缺失传 null）
+     * @param modelReportedMs 模型自报耗时（毫秒，缺失传 null）
      */
     public void addSegment(AgentCallKind kind, String name, long segStartMs, long segStartNano,
-                           boolean success, String errorMsg, Long inputTokens, Long outputTokens) {
+                           boolean success, String errorMsg, Long inputTokens, Long outputTokens,
+                           Long cachedTokens, Long modelReportedMs) {
         long durationMs = Math.max(0L, (System.nanoTime() - segStartNano) / 1_000_000L);
         segments.add(new AgentCallSegment(seq.incrementAndGet(), kind, name, segStartMs, durationMs,
-            success, errorMsg, inputTokens, outputTokens));
+            success, errorMsg, inputTokens, outputTokens, cachedTokens, modelReportedMs));
     }
 
     /** 设置最终回答（可被后续 AGENT_RESULT 覆盖为最新全文）。 */
@@ -81,6 +84,10 @@ public class AgentCallCollector {
         // 与 admin 审计模块 totalUsage 的空判语义一致）
         Long inputTokens = null;
         Long outputTokens = null;
+        // cachedTokens 是 inputTokens 的子集（命中 prompt 缓存的那部分），不参与 totalTokens 计算，
+        // 否则会把缓存量重复计一遍；它单独留存是为了成本核算（缓存读通常只按 1/10 计价）与命中率观测
+        Long cachedTokens = null;
+        Long modelReportedMs = null;
         for (AgentCallSegment s : snapshot) {
             switch (s.kind()) {
                 case MODEL -> modelMs += s.durationMs();
@@ -94,6 +101,12 @@ public class AgentCallCollector {
             if (s.outputTokens() != null) {
                 outputTokens = (outputTokens == null ? 0L : outputTokens) + s.outputTokens();
             }
+            if (s.cachedTokens() != null) {
+                cachedTokens = (cachedTokens == null ? 0L : cachedTokens) + s.cachedTokens();
+            }
+            if (s.modelReportedMs() != null) {
+                modelReportedMs = (modelReportedMs == null ? 0L : modelReportedMs) + s.modelReportedMs();
+            }
         }
         Long totalTokens = (inputTokens == null && outputTokens == null) ? null
             : (inputTokens == null ? 0L : inputTokens) + (outputTokens == null ? 0L : outputTokens);
@@ -101,6 +114,6 @@ public class AgentCallCollector {
         return new AgentCallRecord(0L, requestId, userId, username, agentCode, agentName, sessionId,
             sessionType, question, answer, startTimeMs, endTimeMs, durationMs,
             modelMs, toolMs, mcpMs, skillMs, snapshot.size(), inputTokens, outputTokens, totalTokens,
-            success, errorMsg, snapshot);
+            cachedTokens, modelReportedMs, success, errorMsg, snapshot);
     }
 }

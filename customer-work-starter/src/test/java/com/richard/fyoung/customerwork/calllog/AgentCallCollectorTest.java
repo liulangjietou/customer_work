@@ -18,10 +18,10 @@ class AgentCallCollectorTest {
         AgentCallCollector collector = new AgentCallCollector();
         long now = System.currentTimeMillis();
         long nano = System.nanoTime();
-        collector.addSegment(AgentCallKind.MODEL, "qwen-max", now, nano, true, null, 120L, 30L);
-        collector.addSegment(AgentCallKind.TOOL, "queryOrder", now, nano, true, null, null, null);
-        collector.addSegment(AgentCallKind.MCP, "mcp_weather", now, nano, true, null, null, null);
-        collector.addSegment(AgentCallKind.SKILL, "skill_pdf", now, nano, false, "boom", null, null);
+        collector.addSegment(AgentCallKind.MODEL, "qwen-max", now, nano, true, null, 120L, 30L, 80L, 25L);
+        collector.addSegment(AgentCallKind.TOOL, "queryOrder", now, nano, true, null, null, null, null, null);
+        collector.addSegment(AgentCallKind.MCP, "mcp_weather", now, nano, true, null, null, null, null, null);
+        collector.addSegment(AgentCallKind.SKILL, "skill_pdf", now, nano, false, "boom", null, null, null, null);
         collector.setAnswer("最终回答");
 
         AgentCallRecord record = collector.toRecord("req-1", "tenantA", "userA", "agentA",
@@ -37,9 +37,13 @@ class AgentCallCollectorTest {
         assertEquals(120L, record.inputTokens(), "请求级输入 token = MODEL 段之和");
         assertEquals(30L, record.outputTokens(), "请求级输出 token = MODEL 段之和");
         assertEquals(150L, record.totalTokens(), "请求级总 token = 输入 + 输出");
+        assertEquals(80L, record.cachedTokens(), "请求级缓存 token = MODEL 段之和");
+        assertEquals(25L, record.modelReportedMs(), "模型自报耗时 = MODEL 段之和");
         assertEquals(120L, record.segments().get(0).inputTokens(), "MODEL 段输入 token");
         assertEquals(30L, record.segments().get(0).outputTokens(), "MODEL 段输出 token");
+        assertEquals(80L, record.segments().get(0).cachedTokens(), "MODEL 段缓存 token");
         assertNull(record.segments().get(1).inputTokens(), "工具段无 token");
+        assertNull(record.segments().get(1).cachedTokens(), "工具段无缓存 token");
         // 每类各一段，各段耗时 >=0，四类互不串味
         assertTrue(record.modelMs() >= 0 && record.toolMs() >= 0
             && record.mcpMs() >= 0 && record.skillMs() >= 0);

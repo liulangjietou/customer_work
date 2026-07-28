@@ -17,6 +17,10 @@ public class AgentCallSegmentVO {
     /** token 消耗（仅 MODEL 段有值，缺失为 null）。 */
     private Long inputTokens;
     private Long outputTokens;
+    /** 命中缓存的输入 token（仅 MODEL 段）。 */
+    private Long cachedTokens;
+    /** 模型自报耗时（毫秒，仅 MODEL 段）。 */
+    private Long modelReportedMs;
     private Boolean success;
     private String errorMsg;
 }

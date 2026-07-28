@@ -174,6 +174,8 @@ export interface AiCodingAuditLog {
   inputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null
+  /** 命中缓存的输入 token（inputTokens 的子集，不计入 totalTokens）。 */
+  cachedTokens: number | null
   durationMs: number | null
   result: number
   errorCode: string | null
@@ -236,6 +238,10 @@ export interface AgentCallStatsRow {
   inputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null
+  /** 命中缓存的输入 token：是 inputTokens 的**子集**，不是额外量，也不计入 totalTokens。 */
+  cachedTokens: number | null
+  /** 模型自报耗时（毫秒）；与 modelMs 之差即网络/排队开销。 */
+  modelReportedMs: number | null
 }
 
 // 契约固定 { total, rows }，与通用 PageResult 的 pageNum/pageSize/list 命名不同（同 MpPageResult
@@ -255,6 +261,10 @@ export interface AgentCallStatsSegment {
   /** token 消耗（仅 MODEL 段有值，缺失为 null）。 */
   inputTokens: number | null
   outputTokens: number | null
+  /** 命中缓存的输入 token（inputTokens 的子集，仅 MODEL 段）。 */
+  cachedTokens: number | null
+  /** 模型自报耗时（毫秒，仅 MODEL 段）。 */
+  modelReportedMs: number | null
   success: boolean
   errorMsg: string | null
 }
@@ -277,6 +287,12 @@ export interface AgentCallStatsSummary {
   /** 总 token 消耗 / 平均每次 token 消耗。 */
   totalTokens: number
   avgTotalTokens: number
+  /** 总输入 token（缓存命中率的分母）。 */
+  inputTokens: number
+  /** 总命中缓存的输入 token（inputTokens 的子集，各家通常按 1/10 计价）。 */
+  cachedTokens: number
+  /** 缓存命中率 = cachedTokens / inputTokens，后端算好下发，前端不重复推导口径。 */
+  cacheHitRate: number
 }
 
 /** 趋势图单个时间桶。 */

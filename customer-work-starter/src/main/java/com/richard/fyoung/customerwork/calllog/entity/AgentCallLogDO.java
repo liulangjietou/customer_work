@@ -40,6 +40,10 @@ public class AgentCallLogDO {
     private Long inputTokens;
     private Long outputTokens;
     private Long totalTokens;
+    /** 命中缓存的输入 token（inputTokens 的子集，不计入 totalTokens）。 */
+    private Long cachedTokens;
+    /** 各 MODEL 段模型自报耗时之和（毫秒），与实测 modelMs 之差即网络/排队开销。 */
+    private Long modelReportedMs;
     private Boolean success;
     private String errorMsg;
 }

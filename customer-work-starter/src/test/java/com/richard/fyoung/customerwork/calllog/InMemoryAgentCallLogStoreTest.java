@@ -29,7 +29,7 @@ class InMemoryAgentCallLogStoreTest {
         return new AgentCallRecord(0L, "req-" + startMs, "u-" + username, username, agentCode,
             "客服Agent", "sess-1", AgentCallSessionType.CHAT, "问题", "回答",
             startMs, startMs + durationMs, durationMs, modelMs, toolMs, 0L, 0L,
-            segments.size(), 10L, 5L, 15L, true, null, segments);
+            segments.size(), 10L, 5L, 15L, 4L, 8L, true, null, segments);
     }
 
     @Test
@@ -70,8 +70,8 @@ class InMemoryAgentCallLogStoreTest {
     @Test
     void findSegmentsAndDelete_shouldWork() {
         List<AgentCallSegment> segs = List.of(
-            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", 1000L, 30L, true, null, 100L, 20L),
-            new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", 1030L, 20L, true, null, null, null));
+            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", 1000L, 30L, true, null, 100L, 20L, 60L, 18L),
+            new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", 1030L, 20L, true, null, null, null, null, null));
         AgentCallRecord saved = store.save(record("alice", "A", 1000L, 50L, 30L, 20L, segs));
 
         List<AgentCallSegment> loaded = store.findSegments(saved.id());

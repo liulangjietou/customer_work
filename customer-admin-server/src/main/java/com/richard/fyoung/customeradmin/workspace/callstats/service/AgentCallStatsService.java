@@ -165,6 +165,8 @@ public class AgentCallStatsService {
         vo.setInputTokens(d.getInputTokens());
         vo.setOutputTokens(d.getOutputTokens());
         vo.setTotalTokens(d.getTotalTokens());
+        vo.setCachedTokens(d.getCachedTokens());
+        vo.setModelReportedMs(d.getModelReportedMs());
         return vo;
     }
 
@@ -190,6 +192,8 @@ public class AgentCallStatsService {
         vo.setInputTokens(d.getInputTokens());
         vo.setOutputTokens(d.getOutputTokens());
         vo.setTotalTokens(d.getTotalTokens());
+        vo.setCachedTokens(d.getCachedTokens());
+        vo.setModelReportedMs(d.getModelReportedMs());
         List<AgentCallSegmentVO> segmentVOs = new ArrayList<>();
         if (!CollectionUtils.isEmpty(segments)) {
             for (AgentCallSegmentDO segment : segments) {
@@ -209,6 +213,8 @@ public class AgentCallStatsService {
         vo.setDurationMs(d.getDurationMs());
         vo.setInputTokens(d.getInputTokens());
         vo.setOutputTokens(d.getOutputTokens());
+        vo.setCachedTokens(d.getCachedTokens());
+        vo.setModelReportedMs(d.getModelReportedMs());
         vo.setSuccess(d.getSuccess());
         vo.setErrorMsg(d.getErrorMsg());
         return vo;
@@ -226,6 +232,9 @@ public class AgentCallStatsService {
             vo.setAvgSkillMs(0d);
             vo.setTotalTokens(0L);
             vo.setAvgTotalTokens(0d);
+            vo.setInputTokens(0L);
+            vo.setCachedTokens(0L);
+            vo.setCacheHitRate(0d);
             return vo;
         }
         vo.setTotalCalls(d.getTotalCount());
@@ -237,6 +246,12 @@ public class AgentCallStatsService {
         vo.setAvgSkillMs(toDouble(d.getAvgSkillMs()));
         vo.setTotalTokens(d.getTotalTokens() == null ? 0L : d.getTotalTokens());
         vo.setAvgTotalTokens(toDouble(d.getAvgTotalTokens()));
+        long inputTokens = d.getInputTokens() == null ? 0L : d.getInputTokens();
+        long cachedTokens = d.getCachedTokens() == null ? 0L : d.getCachedTokens();
+        vo.setInputTokens(inputTokens);
+        vo.setCachedTokens(cachedTokens);
+        // 命中率在后端算：分母是输入总量（缓存量是它的子集），这个口径一旦让各展示端各理解一遍就会错
+        vo.setCacheHitRate(inputTokens == 0L ? 0d : (double) cachedTokens / (double) inputTokens);
         return vo;
     }
 

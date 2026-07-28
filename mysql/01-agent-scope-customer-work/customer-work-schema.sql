@@ -248,6 +248,8 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
     `input_tokens`   BIGINT DEFAULT NULL COMMENT '请求级输入token合计（缺失为NULL）',
     `output_tokens`  BIGINT DEFAULT NULL COMMENT '请求级输出token合计（缺失为NULL）',
     `total_tokens`   BIGINT DEFAULT NULL COMMENT '请求级总token合计（缺失为NULL）',
+    `cached_tokens`  BIGINT DEFAULT NULL COMMENT '命中缓存的输入token（input_tokens的子集，不计入total）',
+    `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时合计（毫秒），与model_ms之差=网络/排队开销',
     `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '整次调用是否成功',
     `error_msg`      VARCHAR(1024) COMMENT '失败原因',
     `created_at`     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '落库时间',
@@ -269,10 +271,21 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
     `duration_ms`    BIGINT NOT NULL DEFAULT 0 COMMENT '分段耗时（毫秒）',
     `input_tokens`   BIGINT DEFAULT NULL COMMENT '输入token（仅MODEL段，缺失为NULL）',
     `output_tokens`  BIGINT DEFAULT NULL COMMENT '输出token（仅MODEL段，缺失为NULL）',
+    `cached_tokens`  BIGINT DEFAULT NULL COMMENT '命中缓存的输入token（仅MODEL段）',
+    `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时（毫秒，仅MODEL段）',
     `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '分段是否成功',
     `error_msg`      VARCHAR(1024) COMMENT '失败原因',
     INDEX `idx_segment_call_log` (`call_log_id`, `seq`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- token 统计补列（2026-07-28）：CREATE TABLE IF NOT EXISTS 对已存在的表不加列，
+-- 旧库存量表需手工执行下列 ALTER 补列（MySQL 无 ADD COLUMN IF NOT EXISTS，重复执行报 Duplicate column 可忽略）：
+-- ALTER TABLE `cw_agent_call_log`
+--   ADD COLUMN `cached_tokens` BIGINT DEFAULT NULL COMMENT '命中缓存的输入token（input_tokens的子集，不计入total）' AFTER `total_tokens`,
+--   ADD COLUMN `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时合计（毫秒），与model_ms之差=网络/排队开销' AFTER `cached_tokens`;
+-- ALTER TABLE `cw_agent_call_segment`
+--   ADD COLUMN `cached_tokens` BIGINT DEFAULT NULL COMMENT '命中缓存的输入token（仅MODEL段）' AFTER `output_tokens`,
+--   ADD COLUMN `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时（毫秒，仅MODEL段）' AFTER `cached_tokens`;
 
 -- 对话附件表（cw_chat_attachment）：上传附件落盘 + 落库，解析文本可追溯（MybatisAttachmentStore）。
 CREATE TABLE IF NOT EXISTS `cw_chat_attachment` (

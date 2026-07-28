@@ -45,6 +45,8 @@ public class AiCodingAuditLog {
     private Integer inputTokens;
     private Integer outputTokens;
     private Integer totalTokens;
+    /** 命中 prompt 缓存的输入 token（<b>inputTokens 的子集，不计入 totalTokens</b>）；缓存读通常按 1/10 计价。 */
+    private Integer cachedTokens;
 
     /** 操作耗时（毫秒）。 */
     private Long durationMs;

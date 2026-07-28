@@ -92,6 +92,9 @@ public class AiCodingAuditService {
         entry.setInputTokens(usage.getInputTokens());
         entry.setOutputTokens(usage.getOutputTokens());
         entry.setTotalTokens(usage.getTotalTokens());
+        // 缓存量此前一直被丢弃：它是 input 的子集、按 1/10 计价，不留就没法准确核算成本，
+        // 也看不出 prompt 缓存有没有生效
+        entry.setCachedTokens(usage.getCachedTokens());
     }
 
     /** 把变更文件清单序列化进审计条目（空清单存空值，省存储且查询语义明确）。 */
