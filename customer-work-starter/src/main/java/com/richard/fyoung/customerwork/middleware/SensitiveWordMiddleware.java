@@ -10,6 +10,7 @@ import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHit;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitDirection;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitRecord;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitSink;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStreamGuard;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -227,38 +228,16 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
      */
     private Flux<AgentEvent> filterDelta(Agent agent, RuntimeContext ctx, TextBlockDeltaEvent delta,
                                          OutboundStreamState state) {
-        if (state.blocked) {
+        SensitiveWordStreamGuard guard = state.guards.computeIfAbsent(delta.getBlockId(),
+            k -> newGuard(agent, ctx));
+        if (guard.isBlocked()) {
             // 已经拦下过：后续片段一律丢弃，不再往下发
             return Flux.empty();
         }
-        String text = delta.getDelta();
-        if (text == null || text.isEmpty()) {
-            return Flux.just(delta);
-        }
-        StringBuilder buffer = state.buffers.computeIfAbsent(delta.getBlockId(), k -> new StringBuilder());
-        buffer.append(text);
-
-        SensitiveWordFilterResult result = filter.check(buffer.toString());
-        if (result.decision() == SensitiveWordAction.BLOCK) {
-            state.blocked = true;
-            state.buffers.clear();
+        String emit = guard.accept(delta.getDelta());
+        if (guard.isBlocked()) {
             metric(M_OUTBOUND_BLOCKED);
             log.info("[SENSITIVE] outbound stream blocked, agent={}", agentName(agent));
-            reportStreamHit("sensitive-outbound-block", agent, ctx, result);
-            return Flux.just(new TextBlockDeltaEvent(delta.getReplyId(), delta.getBlockId(), outboundSafeReply));
-        }
-
-        String masked = result.maskedText();
-        int retain = Math.min(filter.streamRetainLength(), masked.length());
-        String emit = masked.substring(0, masked.length() - retain);
-        buffer.setLength(0);
-        buffer.append(masked, masked.length() - retain, masked.length());
-
-        if (result.decision() == SensitiveWordAction.MASK) {
-            metric(M_OUTBOUND_MASKED);
-            reportStreamHit("sensitive-outbound-mask", agent, ctx, result);
-        } else if (result.decision() == SensitiveWordAction.REVIEW) {
-            reportStreamHit("sensitive-outbound-review", agent, ctx, result);
         }
         return emit.isEmpty()
             ? Flux.empty()
@@ -268,22 +247,30 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
     /** 块结束：把缓冲区里留的尾巴过滤后补发，再放行结束事件——不 flush 就会吞掉正文末尾几个字。 */
     private Flux<AgentEvent> flushBlock(Agent agent, RuntimeContext ctx, TextBlockEndEvent end,
                                         OutboundStreamState state) {
-        StringBuilder buffer = state.buffers.remove(end.getBlockId());
-        if (state.blocked || buffer == null || buffer.length() == 0) {
+        SensitiveWordStreamGuard guard = state.guards.remove(end.getBlockId());
+        if (guard == null) {
             return Flux.just(end);
         }
-        SensitiveWordFilterResult result = filter.check(buffer.toString());
-        if (result.decision() == SensitiveWordAction.BLOCK) {
-            state.blocked = true;
-            metric(M_OUTBOUND_BLOCKED);
-            reportStreamHit("sensitive-outbound-block", agent, ctx, result);
-            return Flux.just(new TextBlockDeltaEvent(end.getReplyId(), end.getBlockId(), outboundSafeReply), end);
-        }
-        if (result.decision() == SensitiveWordAction.MASK) {
+        String tail = guard.flush();
+        if (guard.isMasked()) {
             metric(M_OUTBOUND_MASKED);
-            reportStreamHit("sensitive-outbound-mask", agent, ctx, result);
         }
-        return Flux.just(new TextBlockDeltaEvent(end.getReplyId(), end.getBlockId(), result.maskedText()), end);
+        return tail.isEmpty()
+            ? Flux.just(end)
+            : Flux.just(new TextBlockDeltaEvent(end.getReplyId(), end.getBlockId(), tail), end);
+    }
+
+    /**
+     * 为一个文本块建 guard，命中回调接到既有的审计 + 命中日志出口上。
+     *
+     * <p>滑动缓冲的实现收敛在 {@link SensitiveWordStreamGuard} 一处——接入层（admin ChatService /
+     * 8080 CustomerServiceService）用的是同一个类。两份实现迟早漂移，而这段逻辑一旦漂移就是"某条链路
+     * 悄悄漏词"，属于最难发现的那类故障。</p>
+     */
+    private SensitiveWordStreamGuard newGuard(Agent agent, RuntimeContext ctx) {
+        return new SensitiveWordStreamGuard(filter, outboundSafeReply,
+            result -> reportStreamHit(result.decision() == SensitiveWordAction.BLOCK
+                ? "sensitive-outbound-block" : "sensitive-outbound-mask", agent, ctx, result));
     }
 
     /** 流式命中的上报（审计 + 命中日志），与整段路径共用同一个出口语义。 */
@@ -488,9 +475,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
      * 各块的尾巴必须独立保留，混在一起会把 A 块的半个词接到 B 块开头。</p>
      */
     private static final class OutboundStreamState {
-        private final Map<String, StringBuilder> buffers = new LinkedHashMap<>();
-        /** BLOCK 已触发：后续增量一律丢弃，避免"拦了一半还在继续吐"。 */
-        private boolean blocked;
+        private final Map<String, SensitiveWordStreamGuard> guards = new LinkedHashMap<>();
     }
 
     /**

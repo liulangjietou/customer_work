@@ -433,7 +433,9 @@ customer-work:
   sensitive-word:
     enabled: true
     store-mode: jdbc
-    hit-log: { enabled: true, store-mode: jdbc }   # 不开这个，命中看板永远是空的
+    hit-log:
+      enabled: true
+      store-mode: jdbc   # 不开这个，命中看板永远是空的
 
 
 # 生产可观测：Actuator 健康检查 / 指标 / Prometheus

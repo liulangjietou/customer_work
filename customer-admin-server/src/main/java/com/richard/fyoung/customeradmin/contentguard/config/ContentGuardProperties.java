@@ -56,6 +56,14 @@ public class ContentGuardProperties {
     /** 命中日志留存的原文片段长度上限（字符）。 */
     private int hitLogSnippetMaxLength = 64;
 
+    /**
+     * 出站命中 BLOCK 时替换用的安全话术；留空则用 starter 的默认话术。
+     *
+     * <p>流式输出下这条话术是"从命中点开始接管"——之前已经推给前端的片段收不回来，
+     * 详见 {@code SensitiveWordStreamGuard} 关于 BLOCK 固有限制的说明。</p>
+     */
+    private String safeReply = "";
+
     /** 拼装 JDBC URL（与 admin 主库同款连接参数）。 */
     public String jdbcUrl() {
         return "jdbc:mysql://" + host + ":" + port + "/" + database
