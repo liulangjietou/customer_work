@@ -7,6 +7,9 @@ import com.richard.fyoung.customerwork.sensitiveword.InMemorySensitiveWordStore;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordAction;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilterResult;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitDirection;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitRecord;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitSink;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.message.Msg;
@@ -56,8 +59,22 @@ class SensitiveWordMiddlewareTest {
     }
 
     private SensitiveWordMiddleware middleware(CustomerWorkProperties props, SensitiveWordFilter filter) {
+        return middleware(props, filter, null);
+    }
+
+    /** 带命中日志出口的中间件（hitSink 传 null 表示命中日志关闭，等价于容器里没有该 Bean）。 */
+    private SensitiveWordMiddleware middleware(CustomerWorkProperties props, SensitiveWordFilter filter,
+                                               SensitiveWordHitSink hitSink) {
         AuditSink sink = new LoggingAuditSink();
-        return new SensitiveWordMiddleware(props, filter, sink, provider(new SimpleMeterRegistry()));
+        return new SensitiveWordMiddleware(props, filter, sink,
+            provider(new SimpleMeterRegistry()), hitSinkProvider(hitSink));
+    }
+
+    @SuppressWarnings("unchecked")
+    private ObjectProvider<SensitiveWordHitSink> hitSinkProvider(SensitiveWordHitSink hitSink) {
+        ObjectProvider<SensitiveWordHitSink> p = mock(ObjectProvider.class);
+        when(p.getIfAvailable()).thenReturn(hitSink);
+        return p;
     }
 
     private SensitiveWordFilter realFilter() {

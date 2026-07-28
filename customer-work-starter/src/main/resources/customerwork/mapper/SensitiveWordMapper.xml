@@ -10,4 +10,9 @@
         ON DUPLICATE KEY UPDATE category = VALUES(category), action = VALUES(action),
             enabled = VALUES(enabled), updated_at_ms = VALUES(updated_at_ms)
     </insert>
+
+    <!-- 词表版本指纹：行数:最大更新时间戳。单行聚合，比每轮拉全表轻得多 -->
+    <select id="selectFingerprint" resultType="java.lang.String">
+        SELECT CONCAT(COUNT(*), ':', COALESCE(MAX(updated_at_ms), 0)) FROM cw_sensitive_word
+    </select>
 </mapper>

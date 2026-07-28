@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.contentguard.jdbc.SensitiveWordExtMapper">
+
+    <sql id="whereClause">
+        <where>
+            <if test="q.keyword != null and q.keyword != ''">
+                AND word LIKE CONCAT('%', #{q.keyword}, '%')
+            </if>
+            <if test="q.category != null and q.category != ''">
+                AND category = #{q.category}
+            </if>
+            <if test="q.action != null and q.action != ''">
+                AND action = #{q.action}
+            </if>
+            <if test="q.enabled != null">
+                AND enabled = #{q.enabled}
+            </if>
+        </where>
+    </sql>
+
+    <select id="findPage" resultType="com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordEntity">
+        SELECT id, word, category, action, enabled, created_at_ms, updated_at_ms
+        FROM cw_sensitive_word
+        <include refid="whereClause"/>
+        ORDER BY id DESC
+        LIMIT #{q.limit} OFFSET #{q.offset}
+    </select>
+
+    <select id="countBy" resultType="long">
+        SELECT COUNT(*) FROM cw_sensitive_word
+        <include refid="whereClause"/>
+    </select>
+
+    <select id="findByWord" resultType="com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordEntity">
+        SELECT id, word, category, action, enabled, created_at_ms, updated_at_ms
+        FROM cw_sensitive_word WHERE word = #{word}
+    </select>
+</mapper>

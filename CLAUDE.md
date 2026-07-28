@@ -31,9 +31,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：全仓 **1308 个**（starter 549 + app 77 + customer-channel 65 + admin-server 617，2026-07-24 微信渠道接入分支实测）。
-  门控集成测试新增两处依赖：PaddleOCR serving(localhost:8868)、MinIO(localhost:9000)，不可达自动跳过。
+- 测试基线：全仓 **1664 个**（starter 744 + app 78 + customer-channel 65 + admin-server 776 + gateway 1，
+  2026-07-28 内容风控分支实测）。
+  门控集成测试依赖：PaddleOCR serving(localhost:8868)、MinIO(localhost:9000)，不可达自动跳过。
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
+- **本机跑全量要排除 2 个环境门控测试**（当前 MinIO 的 9000 被 kb-rag 栈占、Redis 无密码，共 4 个用例必挂；
+  starter 一挂会让下游模块整体 skip，`-fae` 也救不回来）：
+  `-Dtest='!MinioAttachmentFileStorageIntegrationTest,!RedisSessionPersistenceTest' -DfailIfNoSpecifiedTests=false`
 - 模块 A 改完给模块 B 用时，先 `mvn install -Dmaven.test.skip=true -Djacoco.skip=true`（B 解析的是本地仓库的 jar，
   不是 A 的工作树）；根 pom 变更后父 POM 也要 `mvn -N install`，否则 B 读到旧版本号。
 

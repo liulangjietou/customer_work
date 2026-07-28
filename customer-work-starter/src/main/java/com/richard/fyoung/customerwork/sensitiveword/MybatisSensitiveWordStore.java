@@ -68,6 +68,20 @@ public class MybatisSensitiveWordStore implements SensitiveWordStore {
         }
     }
 
+    /**
+     * 覆写为单行聚合 SQL：刷新器每轮只需判断"变没变"，不必把整张词表拉回进程再算 hash。
+     * 读失败返回 {@code Optional.empty()}，刷新器据此跳过本轮重建、保留已加载的好词表。
+     */
+    @Override
+    public Optional<String> fingerprint() {
+        try {
+            return Optional.of(String.valueOf(mapper.selectFingerprint()));
+        } catch (Exception e) {
+            log.error("[MybatisSensitiveWordStore] fingerprint failed, code={}", "SENSITIVE-STORE-FINGERPRINT-FAIL", e);
+            return Optional.empty();
+        }
+    }
+
     private List<SensitiveWord> toDomainList(List<SensitiveWordEntity> rows) {
         List<SensitiveWord> result = new ArrayList<>(rows.size());
         for (SensitiveWordEntity row : rows) {

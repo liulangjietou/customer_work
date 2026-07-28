@@ -52,7 +52,7 @@ public final class AhoCorasickMatcher {
         }
         List<SensitiveWord> valid = new ArrayList<>(words.size());
         for (SensitiveWord w : words) {
-            if (w != null && w.getWord() != null && !w.getWord().isEmpty()) {
+            if (w != null && w.getMatchWord() != null && !w.getMatchWord().isEmpty()) {
                 valid.add(w);
             }
         }
@@ -82,7 +82,7 @@ public final class AhoCorasickMatcher {
             for (int patternIdx : output.get(node)) {
                 SensitiveWord word = patterns.get(patternIdx);
                 int end = i + 1;
-                int start = end - word.getWord().length();
+                int start = end - word.getMatchWord().length();
                 hits.add(new SensitiveWordHit(word, start, end));
             }
         }
@@ -101,7 +101,7 @@ public final class AhoCorasickMatcher {
 
     private void buildGoto() {
         for (int p = 0; p < patterns.size(); p++) {
-            String word = patterns.get(p).getWord();
+            String word = patterns.get(p).getMatchWord();
             int node = 0;
             for (int i = 0; i < word.length(); i++) {
                 char c = word.charAt(i);

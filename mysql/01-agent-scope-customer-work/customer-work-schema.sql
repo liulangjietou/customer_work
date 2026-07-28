@@ -432,6 +432,44 @@ INSERT IGNORE INTO `cw_sensitive_word` (`word`, `category`, `action`, `enabled`,
 ('竞品XX', 'COMPETITOR', 'MASK', 1, 1779235200000, 1779235200000),
 ('复核占位', 'CUSTOM', 'REVIEW', 1, 1779235200000, 1779235200000);
 
+-- 敏感词命中日志表（AsyncSensitiveWordHitSink / cw_sensitive_word_hit_log）：后台"命中看板"的数据源。
+-- 仅当 customer-work.sensitive-word.hit-log.enabled=true 且 store-mode=jdbc 时写入。
+-- snippet 存用户/模型原文片段（已截断），属敏感数据，是否留存由使用方按合规要求决定，故整块默认关闭。
+CREATE TABLE IF NOT EXISTS `cw_sensitive_word_hit_log` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `direction`      VARCHAR(16) NOT NULL COMMENT '命中方向: INBOUND用户输入/OUTBOUND模型输出',
+    `action`         VARCHAR(16) NOT NULL COMMENT '整体决策: BLOCK/MASK/REVIEW',
+    `words`          VARCHAR(512) COMMENT '命中词面，逗号分隔',
+    `categories`     VARCHAR(128) COMMENT '命中类目，逗号分隔已去重',
+    `hit_count`      INT NOT NULL DEFAULT 0 COMMENT '命中词个数',
+    `agent_name`     VARCHAR(128) COMMENT '智能体名',
+    `session_id`     VARCHAR(128) COMMENT '会话ID',
+    `user_id`        VARCHAR(128) COMMENT '用户ID',
+    `snippet`        VARCHAR(512) COMMENT '原文片段（已按配置截断）',
+    `created_at_ms`  BIGINT COMMENT '命中时间戳（毫秒）',
+    KEY `idx_hit_created` (`created_at_ms`),
+    KEY `idx_hit_action` (`action`),
+    KEY `idx_hit_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感词命中日志（后台看板数据源）';
+
+-- 限流规则表（RateLimitRuleProvider / cw_rate_limit_rule）：接入层限流的规则层，后台运营维护。
+-- 刻意不给种子：空表 = 无规则命中 = 回退 yml 全局兜底参数，与规则化之前行为完全一致。
+CREATE TABLE IF NOT EXISTS `cw_rate_limit_rule` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `rule_name`      VARCHAR(64) NOT NULL COMMENT '规则名（运营可读）',
+    `path_prefix`    VARCHAR(128) NOT NULL COMMENT '匹配的请求路径前缀',
+    `dimension`      VARCHAR(16) NOT NULL COMMENT '计数维度: API_KEY/IP/GLOBAL',
+    `limit_count`    INT NOT NULL COMMENT '窗口内允许的最大请求数',
+    `algorithm`      VARCHAR(32) NOT NULL COMMENT '算法: FIXED_WINDOW/SLIDING_WINDOW',
+    `window_seconds` INT NOT NULL DEFAULT 60 COMMENT '时间窗（秒）',
+    `priority`       INT NOT NULL DEFAULT 0 COMMENT '优先级，越小越先匹配（首匹配即止）',
+    `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_rate_limit_rule_name` (`rule_name`),
+    KEY `idx_rate_limit_priority` (`priority`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='限流规则表（接入层限流规则层）';
+
 -- 坐席库表（MybatisSeatAgentStore / cw_seat_agent）：智能路由中控"工单智能分配"的候选坐席池。
 -- skills 为逗号分隔技能标签串；seat_group 避开 SQL 保留字 group；种子为演示坐席（多技能/负载/在离线）。
 CREATE TABLE IF NOT EXISTS `cw_seat_agent` (

@@ -27,7 +27,7 @@ class AdminAgentInstanceFactoryTest {
     /** 构造器纯字段赋值，路径解析只依赖常量，传 null 依赖即可单测 resolveSessionWorkspace 的防御逻辑。 */
     private AdminAgentInstanceFactory newFactoryForPathTest() {
         return new AdminAgentInstanceFactory(null, null, null, null, null, null, null, null, null, null, null,
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test

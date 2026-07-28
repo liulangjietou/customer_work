@@ -35,6 +35,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customerwork.calllog.AgentCallTimingMiddleware;
+import com.richard.fyoung.customerwork.middleware.SensitiveWordMiddleware;
 import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
@@ -61,6 +62,7 @@ import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
 import io.agentscope.harness.agent.skill.curator.SkillCuratorConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
@@ -166,6 +168,11 @@ public class AdminAgentInstanceFactory {
     private final ToolKindRegistry agentCallToolKindRegistry;
     /** 知识库检索服务：供每个智能体各挂一份 {@link KnowledgeRetrievalMiddleware} 做每轮召回注入。 */
     private final KnowledgeRetrievalService knowledgeRetrievalService;
+    /**
+     * 敏感词过滤中间件；仅 {@code admin.content-guard.agent-filter-enabled=true} 时容器里才有，
+     * 否则为 null，本工厂跳过挂载（后台仍可管理词库，只是 admin 自身对话不参与拦截）。
+     */
+    private final SensitiveWordMiddleware sensitiveWordMiddleware;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -189,7 +196,8 @@ public class AdminAgentInstanceFactory {
                                       AgentMemorySyncService memorySyncService,
                                       AgentCallTimingMiddleware agentCallTimingMiddleware,
                                       ToolKindRegistry agentCallToolKindRegistry,
-                                      KnowledgeRetrievalService knowledgeRetrievalService) {
+                                      KnowledgeRetrievalService knowledgeRetrievalService,
+                                      ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -215,6 +223,9 @@ public class AdminAgentInstanceFactory {
         this.agentCallTimingMiddleware = agentCallTimingMiddleware;
         this.agentCallToolKindRegistry = agentCallToolKindRegistry;
         this.knowledgeRetrievalService = knowledgeRetrievalService;
+        // provider 可为 null：路径解析类单测直接 new 本工厂并传 null 依赖，容器里则恒有 provider
+        this.sensitiveWordMiddleware = sensitiveWordMiddlewareProvider == null
+            ? null : sensitiveWordMiddlewareProvider.getIfAvailable();
     }
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
@@ -299,6 +310,12 @@ public class AdminAgentInstanceFactory {
         // onActing 逐段计时，只读透传不改事件、不打断主链路（异常安全收敛在中间件内）。放在模式闸门之外，
         // 统计口径覆盖完整链路。chat 与 vibecoding 走同一内层 ReActAgent，均被采集。
         builder.middleware(agentCallTimingMiddleware);
+        // 敏感词过滤紧随耗时统计之后、其余中间件之前：入站命中 BLOCK 会直接短路返回安全话术，
+        // 越早拦下越好——后面的模式闸门、知识库召回都不必为一条注定要被拦的消息做功。
+        // 未开启 admin.content-guard.agent-filter-enabled 时该 Bean 不存在，此处跳过。
+        if (sensitiveWordMiddleware != null) {
+            builder.middleware(sensitiveWordMiddleware);
+        }
         // 执行模式闸门对所有智能体挂载（chat 也生效）：运行时按会话选定的五档模式决策，未指定模式且全局
         // permission-mode=bypass 时纯透传，行为等价于挂载前。顺序关键（first = outermost）：模式闸门在最外层
         // 先看到原始命令挂起/拦改，护栏在内层作最后防线（下方仅 vibecoding 挂载）。

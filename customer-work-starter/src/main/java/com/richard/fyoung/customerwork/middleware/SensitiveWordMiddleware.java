@@ -7,6 +7,9 @@ import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordAction;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilterResult;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHit;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitDirection;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitRecord;
+import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitSink;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -78,6 +81,10 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
     private final SensitiveWordFilter filter;
     private final AuditSink auditSink;
     private final MeterRegistry meterRegistry;
+    /** 命中日志投递出口；命中日志关闭时容器里没有该 Bean，此处为 null，直接跳过记录。 */
+    private final SensitiveWordHitSink hitSink;
+    /** 命中日志留存的原文片段长度上限。 */
+    private final int snippetMaxLength;
 
     /** 入站命中 BLOCK 的累计次数（供单测断言 / 监控采样）。 */
     private final LongAdder inboundBlockedHits = new LongAdder();
@@ -85,7 +92,8 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
     public SensitiveWordMiddleware(CustomerWorkProperties properties,
                                    SensitiveWordFilter filter,
                                    AuditSink auditSink,
-                                   ObjectProvider<MeterRegistry> meterRegistryProvider) {
+                                   ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                   ObjectProvider<SensitiveWordHitSink> hitSinkProvider) {
         CustomerWorkProperties.SensitiveWord cfg = properties.getSensitiveWord();
         this.enabled = cfg.isEnabled();
         this.inboundEnabled = cfg.inboundEnabled();
@@ -95,6 +103,8 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
         this.filter = filter;
         this.auditSink = auditSink;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+        this.hitSink = hitSinkProvider == null ? null : hitSinkProvider.getIfAvailable();
+        this.snippetMaxLength = cfg.getHitLog().getSnippetMaxLength();
     }
 
     /** 入站命中 BLOCK 的累计次数（供单测断言）。 */
@@ -112,7 +122,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
         AgentInput effectiveInput = input;
         if (inboundEnabled) {
             try {
-                InboundOutcome outcome = filterInbound(agent, input);
+                InboundOutcome outcome = filterInbound(agent, ctx, input);
                 if (outcome.blocked) {
                     return Flux.just(new AgentResultEvent(safeMsg(inboundSafeReply)));
                 }
@@ -130,14 +140,14 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
 
         Flux<AgentEvent> downstream = next.apply(effectiveInput);
         if (outboundEnabled) {
-            downstream = downstream.map(event -> filterOutbound(agent, event));
+            downstream = downstream.map(event -> filterOutbound(agent, ctx, event));
         }
         return downstream;
     }
 
     // ---------------- 入站 ----------------
 
-    private InboundOutcome filterInbound(Agent agent, AgentInput input) {
+    private InboundOutcome filterInbound(Agent agent, RuntimeContext ctx, AgentInput input) {
         if (input == null || CollectionUtils.isEmpty(input.msgs())) {
             return InboundOutcome.pass(input);
         }
@@ -151,17 +161,17 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
                 metric(M_INBOUND_BLOCKED);
                 log.info("[SENSITIVE] inbound blocked, category={}, word={}, agent={}",
                     categoryOf(scan.topWord), wordOf(scan.topWord), agentName(agent));
-                audit("sensitive-inbound-block", agent, scan.topWord);
+                report("sensitive-inbound-block", SensitiveWordHitDirection.INBOUND, agent, ctx, scan);
                 return InboundOutcome.blocked();
             }
             if (scan.decision == SensitiveWordAction.MASK && scan.maskedMsg != null) {
                 metric(M_INBOUND_MASKED);
-                audit("sensitive-inbound-mask", agent, scan.topWord);
+                report("sensitive-inbound-mask", SensitiveWordHitDirection.INBOUND, agent, ctx, scan);
                 rebuilt.add(scan.maskedMsg);
                 changed = true;
             } else {
                 if (scan.decision == SensitiveWordAction.REVIEW) {
-                    audit("sensitive-inbound-review", agent, scan.topWord);
+                    report("sensitive-inbound-review", SensitiveWordHitDirection.INBOUND, agent, ctx, scan);
                 }
                 rebuilt.add(msg);
             }
@@ -171,7 +181,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
 
     // ---------------- 出站 ----------------
 
-    private AgentEvent filterOutbound(Agent agent, AgentEvent event) {
+    private AgentEvent filterOutbound(Agent agent, RuntimeContext ctx, AgentEvent event) {
         if (!(event instanceof AgentResultEvent result)) {
             return event;
         }
@@ -181,16 +191,16 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
                 metric(M_OUTBOUND_BLOCKED);
                 log.info("[SENSITIVE] outbound blocked, category={}, word={}, agent={}",
                     categoryOf(scan.topWord), wordOf(scan.topWord), agentName(agent));
-                audit("sensitive-outbound-block", agent, scan.topWord);
+                report("sensitive-outbound-block", SensitiveWordHitDirection.OUTBOUND, agent, ctx, scan);
                 return new AgentResultEvent(safeMsg(outboundSafeReply));
             }
             if (scan.decision == SensitiveWordAction.MASK && scan.maskedMsg != null) {
                 metric(M_OUTBOUND_MASKED);
-                audit("sensitive-outbound-mask", agent, scan.topWord);
+                report("sensitive-outbound-mask", SensitiveWordHitDirection.OUTBOUND, agent, ctx, scan);
                 return new AgentResultEvent(scan.maskedMsg);
             }
             if (scan.decision == SensitiveWordAction.REVIEW) {
-                audit("sensitive-outbound-review", agent, scan.topWord);
+                report("sensitive-outbound-review", SensitiveWordHitDirection.OUTBOUND, agent, ctx, scan);
             }
             return event;
         } catch (Exception e) {
@@ -217,6 +227,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
         }
         SensitiveWordAction topDecision = null;
         SensitiveWord topWord = null;
+        SensitiveWordFilterResult topResult = null;
         List<ContentBlock> rebuilt = new ArrayList<>(blocks.size());
         boolean maskedAny = false;
         for (ContentBlock block : blocks) {
@@ -226,6 +237,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
                     if (topDecision == null || res.decision().severity() > topDecision.severity()) {
                         topDecision = res.decision();
                         topWord = strongestWord(res);
+                        topResult = res;
                     }
                     if (res.masked()) {
                         rebuilt.add(TextBlock.builder().text(res.maskedText()).build());
@@ -240,7 +252,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
             return MsgScan.pass();
         }
         Msg maskedMsg = maskedAny ? rebuildMsg(msg, rebuilt) : null;
-        return new MsgScan(topDecision, maskedMsg, topWord);
+        return new MsgScan(topDecision, maskedMsg, topWord, topResult);
     }
 
     /** 取与整体决策同档的首个命中词（用于审计/日志展示）。 */
@@ -264,6 +276,28 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
     }
 
     // ---------------- 辅助 ----------------
+
+    /**
+     * 命中的统一上报出口：审计事件 + 命中日志两件事一起做。
+     *
+     * <p>合在一个方法里是刻意的——每个命中分支都要同时上报这两处，拆开写迟早会有分支只报一半。
+     * 审计走 {@link AuditSink}（实时事件流），命中日志走 {@link SensitiveWordHitSink}（异步落库供后台看板），
+     * 两者定位不同：前者面向运行时告警，后者面向事后运营分析。</p>
+     */
+    private void report(String type, SensitiveWordHitDirection direction, Agent agent,
+                        RuntimeContext ctx, MsgScan scan) {
+        audit(type, agent, scan.topWord);
+        if (hitSink == null || scan.topResult == null) {
+            return;
+        }
+        try {
+            hitSink.emit(SensitiveWordHitRecord.of(direction, scan.topResult, agentName(agent),
+                ctx == null ? null : ctx.getSessionId(), ctx == null ? null : ctx.getUserId(), snippetMaxLength));
+        } catch (Exception e) {
+            // 命中日志是旁路观测，任何异常都不能影响已经做出的拦截/打码处置
+            log.error("[SENSITIVE] hit log emit failed, code={}, direction={}", CODE_FILTER_FAIL, direction, e);
+        }
+    }
 
     private void audit(String type, Agent agent, SensitiveWord word) {
         if (auditSink == null) {
@@ -327,20 +361,28 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
         }
     }
 
-    /** 单条消息扫描结果：整体决策 + 打码后消息（仅 MASK）+ 最高档命中词。 */
+    /**
+     * 单条消息扫描结果：整体决策 + 打码后消息（仅 MASK）+ 最高档命中词 + 最高档命中所在文本块的过滤结果。
+     *
+     * <p>{@code topResult} 留着给命中日志用：一条消息可能有多个文本块，各自一份过滤结果，
+     * 落日志只取决策最高的那块——它就是本次实际处置的依据，其原文片段与命中词才对得上运营看到的处置。</p>
+     */
     private static final class MsgScan {
         private final SensitiveWordAction decision;
         private final Msg maskedMsg;
         private final SensitiveWord topWord;
+        private final SensitiveWordFilterResult topResult;
 
-        private MsgScan(SensitiveWordAction decision, Msg maskedMsg, SensitiveWord topWord) {
+        private MsgScan(SensitiveWordAction decision, Msg maskedMsg, SensitiveWord topWord,
+                        SensitiveWordFilterResult topResult) {
             this.decision = decision;
             this.maskedMsg = maskedMsg;
             this.topWord = topWord;
+            this.topResult = topResult;
         }
 
         static MsgScan pass() {
-            return new MsgScan(null, null, null);
+            return new MsgScan(null, null, null, null);
         }
     }
 }

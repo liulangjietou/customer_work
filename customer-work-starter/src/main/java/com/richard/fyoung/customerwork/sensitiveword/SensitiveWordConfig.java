@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.sensitiveword;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.sensitiveword.mapper.SensitiveWordHitLogMapper;
 import com.richard.fyoung.customerwork.sensitiveword.mapper.SensitiveWordMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,5 +50,52 @@ public class SensitiveWordConfig {
     public SensitiveWordFilter sensitiveWordFilter(CustomerWorkProperties properties, SensitiveWordStore store) {
         CustomerWorkProperties.SensitiveWord cfg = properties.getSensitiveWord();
         return new SensitiveWordFilter(store, cfg.resolveMaskChar(), cfg.getDefaultAction());
+    }
+
+    /**
+     * 词表定时刷新器：后台改词后无需重启客服进程即可生效（轮询指纹，变了才重建）。
+     *
+     * <p>Bean 恒装配、由 {@code refresh-enabled} 控制运行时是否真的刷新——这样关掉刷新时
+     * {@link SensitiveWordRefresher#refreshOnce()} 仍可被显式调用（后台"立即生效"按钮场景）。</p>
+     */
+    @Bean
+    @ConditionalOnMissingBean(SensitiveWordRefresher.class)
+    public SensitiveWordRefresher sensitiveWordRefresher(CustomerWorkProperties properties,
+                                                         SensitiveWordStore store,
+                                                         SensitiveWordFilter filter) {
+        CustomerWorkProperties.SensitiveWord cfg = properties.getSensitiveWord();
+        log.info("sensitive-word refresher: enabled={}, intervalMs={}",
+            cfg.isRefreshEnabled(), cfg.getRefreshIntervalMs());
+        return new SensitiveWordRefresher(store, filter, cfg.isRefreshEnabled());
+    }
+
+    /**
+     * 命中日志存储：仅 {@code hit-log.enabled=true} 时装配。
+     *
+     * <p>与词表存储分开配 {@code store-mode}：词表要不要落库看是否多实例共享，命中日志要不要落库看
+     * 合规上允不允许留存用户原文——两件事不该被一个开关绑死。</p>
+     */
+    @Bean
+    @ConditionalOnMissingBean(SensitiveWordHitLogStore.class)
+    @ConditionalOnProperty(prefix = "customer-work.sensitive-word.hit-log", name = "enabled", havingValue = "true")
+    public SensitiveWordHitLogStore sensitiveWordHitLogStore(
+            CustomerWorkProperties properties,
+            ObjectProvider<SensitiveWordHitLogMapper> mapperProvider) {
+        String mode = properties.getSensitiveWord().getHitLog().getStoreMode();
+        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+            log.info("sensitive-word hit-log store: jdbc (table=cw_sensitive_word_hit_log)");
+            return new MybatisSensitiveWordHitLogStore(mapperProvider.getObject());
+        }
+        log.info("sensitive-word hit-log store: memory (bounded ring buffer, use store-mode=jdbc for console)");
+        return new InMemorySensitiveWordHitLogStore();
+    }
+
+    /** 命中投递出口：仅 {@code hit-log.enabled=true} 时装配，关闭时中间件按 null 跳过记录。 */
+    @Bean
+    @ConditionalOnMissingBean(SensitiveWordHitSink.class)
+    @ConditionalOnProperty(prefix = "customer-work.sensitive-word.hit-log", name = "enabled", havingValue = "true")
+    public SensitiveWordHitSink sensitiveWordHitSink(CustomerWorkProperties properties,
+                                                     SensitiveWordHitLogStore hitLogStore) {
+        return new AsyncSensitiveWordHitSink(hitLogStore, properties.getSensitiveWord().getHitLog().getQueueCapacity());
     }
 }
