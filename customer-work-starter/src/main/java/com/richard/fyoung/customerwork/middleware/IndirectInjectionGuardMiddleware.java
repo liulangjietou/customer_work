@@ -17,6 +17,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -83,7 +84,14 @@ public class IndirectInjectionGuardMiddleware implements MiddlewareBase {
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
 
-    /** Spring 装配构造：客服端（starter 自动装配生效）走这条。 */
+    /**
+     * Spring 装配构造：客服端（starter 自动装配生效）走这条。
+     *
+     * <p>必须标 {@code @Autowired}：本类同时存在下面那个直接参数构造，Spring 对「多 public 构造器 +
+     * 无 {@code @Autowired}」无法判定候选，会回退去找无参构造 → 直接 {@code NoSuchMethodException}
+     * 让整个上下文起不来。显式标注让容器选中本构造。</p>
+     */
+    @Autowired
     public IndirectInjectionGuardMiddleware(CustomerWorkProperties properties,
                                             ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this(properties.getHooks().getIndirectInjectionGuard().isEnabled(),

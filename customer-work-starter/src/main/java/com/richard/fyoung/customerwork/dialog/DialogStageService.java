@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.dialog;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -22,7 +23,13 @@ public class DialogStageService {
 
     private final DialogStageStore store;
 
-    /** Spring 注入构造：使用自动装配的 DialogStageStore Bean。 */
+    /**
+     * Spring 注入构造：使用自动装配的 DialogStageStore Bean。
+     *
+     * <p>必须标 {@code @Autowired}：本类同时存在无参构造，Spring 对「多构造器 + 存在无参 + 无
+     * {@code @Autowired}」会回退到无参构造 → 永远用内存实现、配置的落库 Store 空转。</p>
+     */
+    @Autowired
     public DialogStageService(DialogStageStore store) {
         this.store = store;
     }
