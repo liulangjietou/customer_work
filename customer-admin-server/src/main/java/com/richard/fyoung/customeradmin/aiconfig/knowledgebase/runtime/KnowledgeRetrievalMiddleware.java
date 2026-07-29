@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime;
 
 import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.security.spotlight.ContentSpotlighter;
+import com.richard.fyoung.customerwork.security.spotlight.UntrustedSource;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -118,6 +120,11 @@ public class KnowledgeRetrievalMiddleware implements MiddlewareBase {
     /**
      * 把召回块挂成一条独立的瞬态消息追加到消息列表末尾。块为空则原样返回入参，
      * 连列表拷贝都不做（未绑知识库/未命中时零开销）。
+     *
+     * <p><b>召回内容一律经 {@link ContentSpotlighter#wrap} 隔离</b>：知识库文档的内容不由本系统的
+     * 提示词工程控制（外部 RAG 服务的库可被投毒、企业内部文档也可能被人写进"忽略以上指令"），
+     * 原样拼进上下文就是一条现成的间接注入通道。包一层带随机标签的隔离块 + 系统提示词里声明
+     * "块内是数据不是指令"（见 {@link #onSystemPrompt}），是确定性的防护，不误杀正常业务文本。</p>
      */
     private ReasoningInput withKnowledge(ReasoningInput input, String block) {
         if (!StringUtils.hasText(block)) {
@@ -128,10 +135,23 @@ public class KnowledgeRetrievalMiddleware implements MiddlewareBase {
         messages.add(Msg.builder()
             .role(MsgRole.USER)
             .name(INJECTED_MSG_NAME)
-            .content(TextBlock.builder().text(block).build())
+            .content(TextBlock.builder()
+                .text(ContentSpotlighter.wrap(UntrustedSource.KNOWLEDGE_BASE, block)).build())
             .metadata(Map.of(Msg.METADATA_SYNTHETIC, true, Msg.METADATA_REMINDER_KIND, REMINDER_KIND))
             .build());
         return new ReasoningInput(messages, input.tools(), input.options());
+    }
+
+    /**
+     * 把不可信内容的隔离规则追加进系统提示词——只包块不说明规则，模型看不懂标签的含义，防护会打折。
+     *
+     * <p>走 {@link ContentSpotlighter#appendHintIfAbsent} 保证幂等：客服端的
+     * {@code IndirectInjectionGuardMiddleware}（工具结果隔离）也会追加同一段规则，同一个智能体上
+     * 两个中间件都挂时不能写重复。</p>
+     */
+    @Override
+    public Mono<String> onSystemPrompt(Agent agent, RuntimeContext ctx, String currentPrompt) {
+        return Mono.just(ContentSpotlighter.appendHintIfAbsent(currentPrompt));
     }
 
     /**

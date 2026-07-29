@@ -31,8 +31,9 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：全仓 **1664 个**（starter 744 + app 78 + customer-channel 65 + admin-server 776 + gateway 1，
-  2026-07-28 内容风控分支实测）。
+- 测试基线：starter **778** + admin-server **786**（2026-07-29 feature/agent-hardening-batch 实测，
+  starter 已按下方规则排除 2 个环境门控测试）；app 78 + customer-channel 65 + gateway 1
+  （沿用 2026-07-28 内容风控分支实测值，本次未重跑）。
   门控集成测试依赖：PaddleOCR serving(localhost:8868)、MinIO(localhost:9000)，不可达自动跳过。
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
 - **本机跑全量要排除 2 个环境门控测试**（当前 MinIO 的 9000 被 kb-rag 栈占、Redis 无密码，共 4 个用例必挂；

@@ -1,9 +1,12 @@
 package com.richard.fyoung.customeradmin.config;
 
+import com.richard.fyoung.customerwork.middleware.IndirectInjectionGuardMiddleware;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.permission.PermissionMode;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.extensions.mysql.state.MysqlAgentStateStore;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -55,5 +58,20 @@ public class AdminAgentRuntimeConfig {
     @Bean
     public PermissionContextState permissionContextState() {
         return PermissionContextState.builder().mode(PermissionMode.BYPASS).build();
+    }
+
+    /**
+     * 间接注入防护中间件（工具/MCP 结果隔离）。starter 的自动装配在本模块被排除，这里按
+     * {@code admin.injection-guard.*} 显式构建。
+     *
+     * <p>做成共享单例而非每个智能体一份：中间件本身无状态（只有两个用于观测的累加计数器），
+     * 与需要按 {@code agentCode} 构建的 {@code KnowledgeRetrievalMiddleware} 不同——那个要知道
+     * "本智能体绑了哪些知识库"，这个对所有智能体的处理逻辑完全一致。</p>
+     */
+    @Bean
+    public IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware(
+            AdminInjectionGuardProperties properties, ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new IndirectInjectionGuardMiddleware(properties.isEnabled(), properties.isDetectionEnabled(),
+            properties.getInjectionPatterns(), meterRegistryProvider.getIfAvailable());
     }
 }

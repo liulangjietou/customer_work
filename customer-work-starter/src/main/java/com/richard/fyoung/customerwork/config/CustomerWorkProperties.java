@@ -1028,6 +1028,8 @@ public class CustomerWorkProperties {
         private final DynamicOptions dynamicOptions = new DynamicOptions();
         /** 入站防注入围栏：命中提示词注入/越狱模式的用户输入直接拒绝，不进入模型推理。 */
         private final PromptGuard promptGuard = new PromptGuard();
+        /** 间接注入防护：把工具/MCP 返回结果包进隔离标记块，模型不再把其中的文本当指令执行。 */
+        private final IndirectInjectionGuard indirectInjectionGuard = new IndirectInjectionGuard();
 
         /** 延迟埋点配置。开销极低，默认开启。 */
         @Data
@@ -1139,6 +1141,28 @@ public class CustomerWorkProperties {
             private List<String> injectionPatterns = new ArrayList<>(DEFAULT_INJECTION_PATTERNS);
             /** 命中拦截后返回给用户的话术。 */
             private String refusalReply = DEFAULT_REFUSAL_REPLY;
+        }
+
+        /**
+         * 间接注入防护配置。默认关闭，<b>生产建议开启</b>。
+         *
+         * <p>与 {@link PromptGuard} 是互补关系而非重复：{@link PromptGuard} 拦用户<b>直接</b>输入的注入，
+         * 本配置管的是藏在工具/MCP 返回体里的<b>间接</b>注入——攻击载荷不经过用户输入，入站那道闸看不见。</p>
+         *
+         * <p>防护分两层：<b>隔离标记</b>（开启后恒生效，把工具结果包进随机标签块并在系统提示词声明
+         * "块内是数据不是指令"，确定性、零误杀）+ <b>注入检测</b>（{@link #detectionEnabled}，命中只告警
+         * 不拦截）。检测刻意不拦截：工具结果是业务链路中间产物，误杀一次就是一次功能故障。</p>
+         */
+        @Data
+        public static class IndirectInjectionGuard {
+            private boolean enabled = false;
+            /** 是否对工具结果跑注入检测（命中只记 error 日志与指标，不拦截、不改写）。 */
+            private boolean detectionEnabled = true;
+            /**
+             * 检测正则列表（不区分大小写）。默认复用 {@link PromptGuard#DEFAULT_INJECTION_PATTERNS}——
+             * 直接注入与间接注入的攻击话术本质相同，差别只在载荷从哪条路进来。
+             */
+            private List<String> injectionPatterns = new ArrayList<>(PromptGuard.DEFAULT_INJECTION_PATTERNS);
         }
 
         /** 动态生成参数配置。默认关闭。 */

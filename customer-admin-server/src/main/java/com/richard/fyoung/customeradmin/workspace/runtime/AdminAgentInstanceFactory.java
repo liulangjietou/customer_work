@@ -35,6 +35,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customerwork.calllog.AgentCallTimingMiddleware;
+import com.richard.fyoung.customerwork.middleware.IndirectInjectionGuardMiddleware;
 import com.richard.fyoung.customerwork.middleware.SensitiveWordMiddleware;
 import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
 import io.agentscope.core.ReActAgent;
@@ -52,6 +53,7 @@ import io.agentscope.core.tool.Toolkit;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
 import io.agentscope.harness.agent.HarnessAgent;
+import io.agentscope.harness.agent.subagent.task.TaskRepository;
 import io.agentscope.harness.agent.IsolationScope;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
@@ -173,6 +175,10 @@ public class AdminAgentInstanceFactory {
      * 否则为 null，本工厂跳过挂载（后台仍可管理词库，只是 admin 自身对话不参与拦截）。
      */
     private final SensitiveWordMiddleware sensitiveWordMiddleware;
+    /** 间接注入防护中间件（工具/MCP 结果隔离标记 + 检测告警），共享单例，见 {@code AdminAgentRuntimeConfig}。 */
+    private final IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware;
+    /** 后台委派任务仓储（落 MySQL），挂到每个 HarnessAgent 上接管 {@code agent_spawn} 的异步任务。 */
+    private final TaskRepository taskRepository;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -197,7 +203,11 @@ public class AdminAgentInstanceFactory {
                                       AgentCallTimingMiddleware agentCallTimingMiddleware,
                                       ToolKindRegistry agentCallToolKindRegistry,
                                       KnowledgeRetrievalService knowledgeRetrievalService,
-                                      ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider) {
+                                      ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider,
+                                      IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware,
+                                      TaskRepository taskRepository) {
+        this.indirectInjectionGuardMiddleware = indirectInjectionGuardMiddleware;
+        this.taskRepository = taskRepository;
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -325,6 +335,11 @@ public class AdminAgentInstanceFactory {
         // 且 HTTP 检索发生在 reactive 线程（boundedElastic）而非 Tomcat 请求线程——两点都是刻意的，
         // 详见 KnowledgeRetrievalMiddleware 类注释。未绑知识库的智能体在中间件内一次关联表查询即返回。
         builder.middleware(new KnowledgeRetrievalMiddleware(knowledgeRetrievalService, agentCode));
+        // 间接注入防护挂在知识库中间件之内层（离模型最近的最后一道隔离）：把工具/MCP 返回结果包进
+        // 随机标签隔离块，模型不再把返回体里的文字当指令执行。与上面那条的分工是"谁产出谁负责隔离"——
+        // 召回内容由 KnowledgeRetrievalMiddleware 自己包，工具结果由框架产出、只能在这里拦。
+        // 两者的系统提示词规则走同一个幂等追加方法，不会写重复。
+        builder.middleware(indirectInjectionGuardMiddleware);
         if (capabilities.contains(CAPABILITY_VIBECODING)) {
             // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载作最后防线——
             // 即便高风险被人工批准/放行，catastrophic 命令仍会被护栏改写，护栏不被绕过（需求 §4.4.2.5「两者叠加」）。
@@ -394,6 +409,9 @@ public class AdminAgentInstanceFactory {
             // 框架 #1644 缓解：HarnessAgent 未显式设置 generateOptions 时 streamEvents() 会 NPE，
             // 这里保证非空即可，实际推理参数仍由内层 ReActAgent 的模型配置决定
             .generateOptions(GenerateOptions.builder().build())
+            // 后台委派任务改落 MySQL：框架默认的 WorkspaceTaskRepository 把状态写在工作区文件里，
+            // 只够父智能体自己回头查，管理台没法跨会话列出/取消，工作区被清理时记录还会一起没。
+            .taskRepository(taskRepository)
             .workspace(workspace);
 
         if (vibecoding) {
