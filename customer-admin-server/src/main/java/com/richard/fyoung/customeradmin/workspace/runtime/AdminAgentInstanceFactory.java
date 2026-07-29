@@ -53,6 +53,7 @@ import io.agentscope.core.tool.Toolkit;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
 import io.agentscope.harness.agent.HarnessAgent;
+import io.agentscope.harness.agent.subagent.task.TaskRepository;
 import io.agentscope.harness.agent.IsolationScope;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
@@ -176,6 +177,8 @@ public class AdminAgentInstanceFactory {
     private final SensitiveWordMiddleware sensitiveWordMiddleware;
     /** 间接注入防护中间件（工具/MCP 结果隔离标记 + 检测告警），共享单例，见 {@code AdminAgentRuntimeConfig}。 */
     private final IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware;
+    /** 后台委派任务仓储（落 MySQL），挂到每个 HarnessAgent 上接管 {@code agent_spawn} 的异步任务。 */
+    private final TaskRepository taskRepository;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -201,8 +204,10 @@ public class AdminAgentInstanceFactory {
                                       ToolKindRegistry agentCallToolKindRegistry,
                                       KnowledgeRetrievalService knowledgeRetrievalService,
                                       ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider,
-                                      IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware) {
+                                      IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware,
+                                      TaskRepository taskRepository) {
         this.indirectInjectionGuardMiddleware = indirectInjectionGuardMiddleware;
+        this.taskRepository = taskRepository;
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -404,6 +409,9 @@ public class AdminAgentInstanceFactory {
             // 框架 #1644 缓解：HarnessAgent 未显式设置 generateOptions 时 streamEvents() 会 NPE，
             // 这里保证非空即可，实际推理参数仍由内层 ReActAgent 的模型配置决定
             .generateOptions(GenerateOptions.builder().build())
+            // 后台委派任务改落 MySQL：框架默认的 WorkspaceTaskRepository 把状态写在工作区文件里，
+            // 只够父智能体自己回头查，管理台没法跨会话列出/取消，工作区被清理时记录还会一起没。
+            .taskRepository(taskRepository)
             .workspace(workspace);
 
         if (vibecoding) {

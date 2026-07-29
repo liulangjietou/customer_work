@@ -1303,3 +1303,32 @@ export interface SensitiveWordHitStatsVO {
   trend: ContentGuardCountVO[]
   trendGranularity: string
 }
+
+// ---------- 智能体后台委派任务（agent_spawn 异步模式）----------
+
+/** 任务状态；与后端 io.agentscope.harness TaskStatus 枚举一一对应。 */
+export type AgentTaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+
+export interface AgentTaskVO {
+  id: number
+  taskId: string
+  parentAgentCode?: string
+  subAgentId?: string
+  parentSessionId?: string
+  status: AgentTaskStatus
+  /** 列表接口是预览（配合 resultTruncated 判断），详情接口是全文。 */
+  result?: string
+  resultTruncated?: boolean
+  errorMessage?: string
+  cancelRequested?: boolean
+  createdAt?: string
+  startedAt?: string
+  finishedAt?: string
+  /** 执行耗时（毫秒）；排队中/执行中为空。 */
+  costMs?: number
+}
+
+export interface AgentTaskPageQuery extends MpPageQuery {
+  status?: string
+  agentCode?: string
+}
