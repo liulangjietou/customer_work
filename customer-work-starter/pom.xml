@@ -260,6 +260,13 @@
             <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
+        <!-- 证书解析（devtoolbox 系统工具的 cert_parse/cert_match）：CSR 与 PKCS#1/SEC1 私钥
+             JDK 原生不认，靠 BouncyCastle；Provider 以实例方式使用，不注册进全局 Security。 -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

@@ -13,7 +13,11 @@ import java.util.concurrent.Callable;
 /**
  * 开发者工具箱系统工具（system tool {@code devtoolbox}）。给挂载本工具的智能体提供一组开发者常用的
  * 本地计算能力：JSON 格式化/压缩/校验、时间戳转换、Base64/URL 编解码、哈希(HMAC)、UUID 生成、
- * AES 加解密、正则测试，均为纯本地计算，不访问外部资源。
+ * AES 加解密、正则测试、证书解析与私钥匹配校验，均为纯本地计算，不访问外部资源。
+ *
+ * <p><b>{@code cert_match} 的授权取舍</b>：该工具需要私钥明文作为参数，意味着私钥会进入模型上下文
+ * 并落进对话历史。这是产品上明确接受的代价（用户拍板全开），故在工具描述里写死了使用约束
+ * （仅在用户明确要求时调用、不主动索取、不复述）——给智能体挂载本工具前应知悉这一点。</p>
  *
  * <p>本类是暴露给 LLM 的工具 Schema 壳（纯 POJO，不加 {@code @Component}——Spring 装配由 admin-server 侧
  * 的 {@code DevToolboxConfig} 显式 new）。Bean 名须精确等于 tool_code "devtoolbox"，运行时
@@ -48,6 +52,7 @@ public class DevToolboxTools {
     private final TimestampDevToolOps timestampOps = new TimestampDevToolOps();
     private final CodecDevToolOps codecOps = new CodecDevToolOps();
     private final RegexDevToolOps regexOps = new RegexDevToolOps();
+    private final CertDevToolOps certOps = new CertDevToolOps();
 
     // =====================================================================
     // JSON
@@ -173,6 +178,36 @@ public class DevToolboxTools {
         @ToolParam(name = "text", description = "待匹配文本") String text,
         @ToolParam(name = "flags", required = false, description = "标志位组合 i/m/s") String flags) {
         return respond("regex_test", () -> regexOps.test(pattern, text, flags));
+    }
+
+    // =====================================================================
+    // 证书
+    // =====================================================================
+
+    @Tool(name = "cert_parse", description = "解析X.509证书、证书链或CSR(证书签名请求)。参数 pemContent："
+        + "PEM文本，即 -----BEGIN CERTIFICATE----- 或 -----BEGIN CERTIFICATE REQUEST----- 包裹的内容，"
+        + "可一次传入多段(证书链按输入顺序返回，第一张通常是叶子证书)。"
+        + "返回 certificates 数组，每项含 subject(使用者)、issuer(颁发者)、serialNumberHex(序列号)、"
+        + "notBeforeMs/notAfterMs(有效期毫秒时间戳)、expired(是否已过期或未生效)、daysRemaining(距过期天数，负数表示已过期)、"
+        + "sigAlgName(签名算法)、publicKeyAlgorithm/publicKeyBits(公钥算法与长度)、ca(是否CA证书)、"
+        + "subjectAlternativeNames(SAN，形如 DNS:a.com)、keyUsages(密钥用法)、sha1Fingerprint/sha256Fingerprint(指纹)；"
+        + "以及 csrs 数组，每项含 subject、publicKeyAlgorithm/publicKeyBits、sigAlgName、subjectAlternativeNames。"
+        + "判断证书是否过期看 expired 与 daysRemaining，不要自行比较时间戳。")
+    public Mono<String> certParse(
+        @ToolParam(name = "pemContent", description = "PEM格式的证书/证书链/CSR文本") String pemContent) {
+        return respond("cert_parse", () -> certOps.parse(pemContent));
+    }
+
+    @Tool(name = "cert_match", description = "校验私钥与证书是否配对(私钥对固定负载签名、证书公钥验签)。"
+        + "参数 certPem：证书PEM；privateKeyPem：私钥PEM，支持 PKCS#8(-----BEGIN PRIVATE KEY-----)、"
+        + "PKCS#1(-----BEGIN RSA PRIVATE KEY-----)、SEC1(-----BEGIN EC PRIVATE KEY-----)，不支持加密私钥。"
+        + "返回 matched(是否配对)、publicKeyAlgorithm(证书公钥算法)、reason(结论说明)。"
+        + "【安全提醒】调用本工具意味着私钥明文会进入模型上下文并被写入对话历史，仅在用户明确要求校验配对时使用；"
+        + "不要主动索取私钥，也不要在回复里复述私钥内容。")
+    public Mono<String> certMatch(
+        @ToolParam(name = "certPem", description = "证书PEM文本") String certPem,
+        @ToolParam(name = "privateKeyPem", description = "私钥PEM文本(不支持加密私钥)") String privateKeyPem) {
+        return respond("cert_match", () -> certOps.match(certPem, privateKeyPem));
     }
 
     // =====================================================================
