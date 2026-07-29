@@ -66,19 +66,52 @@ jobs:
           sudo apt-get update && sudo apt-get install -y redis-tools
           redis-cli -h 127.0.0.1 -p 6379 CONFIG SET requirepass 123456
 
+      # 防复发：mysql/02-customer-admin/ 是 Flyway 迁移的镜像副本（供生产手工初始化）。漏同步在本地
+      # 不显形（本地走 Flyway），却会让手工部署建出残缺的库——曾漏 7 个迁移。下面的 mirror 构建验证
+      # 也能发现这类问题，但报错要从 SQL 异常反推是哪个迁移；这一步纯文件名比对，缺谁直接点名。
+      - name: Verify admin schema mirror is in sync
+        run: |
+          missing=""
+          for f in customer-admin-server/src/main/resources/db/migration/V*.sql; do
+            base=$(basename "$f")
+            version=$(echo "$base" | sed -E 's/^V([0-9]+)__.*/\1/')
+            # 前缀是零填充两位（V1 → 01-V1__…，V47 → 47-V47__…），printf 对两者都正确
+            prefix=$(printf '%02d' "$version")
+            if [ ! -f "mysql/02-customer-admin/${prefix}-${base}" ]; then
+              missing="${missing}\n  缺少 mysql/02-customer-admin/${prefix}-${base}"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::admin 库迁移未同步到 mysql/02-customer-admin/（见 CLAUDE.md 约定）：$(printf "$missing")"
+            exit 1
+          fi
+          echo "admin schema mirror in sync"
+
       # MySQL 服务容器的 MYSQL_DATABASE 只建了 agent_scope_customer_work 一个库；
-      # customer-admin-server 使用独立库 customer_admin，且 Flyway 在所有 profile 均关闭
-      # （schema 走手工执行约定），空库会导致 agentStateStore 探表失败、上下文加载报错。
-      # 这里按生产同款约定灌入 mysql/02-customer-admin/ 的全量建表脚本（01-~26- 数字前缀
-      # 保证执行顺序）。用 -e "source" 而非 stdin 管道 + 显式 utf8mb4，规避 stdin 下客户端
-      # 字符集回退 latin1 把中文 COMMENT 字节级写坏的已知坑。
-      - name: Create and initialize customer_admin database
+      # customer-admin-server 用独立库 customer_admin。这里只建**空库**，建表交给 Flyway——
+      # 测试跑在 dev profile 下，spring.flyway.enabled=true 会从 V1 一路迁移到最新。
+      #
+      # 刻意不再手工灌 mysql/02-customer-admin/ 的脚本：那样库里已有全量数据，而 Flyway 的
+      # baseline-on-migrate=true + 默认 baseline-version=1 会把非空库 baseline 到 V1、
+      # 然后从 V2 重跑，V2 是种子数据，必然 Duplicate entry '1' for key 'sys_user.PRIMARY'。
+      # 让 Flyway 独占初始化，顺带把"迁移能否从零建库"变成 CI 的真实保障。
+      - name: Create empty customer_admin database (Flyway migrates it)
         run: |
           mysql -h127.0.0.1 -P3306 -uroot -proot -e "CREATE DATABASE IF NOT EXISTS customer_admin DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+      # mysql/02-customer-admin/ 是生产手工部署用的镜像副本，上面的流程已经不执行它了，
+      # 光比对文件名不足以发现内容错误。这里灌进一个一次性库验证其真能建起完整 schema，
+      # 坏了就是生产事故，值得多花这几秒。
+      # 用 -e "source" 而非 stdin 管道 + 显式 utf8mb4，规避 stdin 下客户端字符集回退 latin1
+      # 把中文 COMMENT 字节级写坏的已知坑。
+      - name: Verify admin schema mirror actually builds
+        run: |
+          mysql -h127.0.0.1 -P3306 -uroot -proot -e "CREATE DATABASE customer_admin_mirror_check DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
           for f in mysql/02-customer-admin/*.sql; do
             echo "applying $f"
-            mysql --default-character-set=utf8mb4 -h127.0.0.1 -P3306 -uroot -proot customer_admin -e "source $f"
+            mysql --default-character-set=utf8mb4 -h127.0.0.1 -P3306 -uroot -proot customer_admin_mirror_check -e "source $f"
           done
+          mysql -h127.0.0.1 -P3306 -uroot -proot -e "DROP DATABASE customer_admin_mirror_check;"
 
       - name: Build and test (with coverage)
         run: mvn -B test

@@ -31,6 +31,11 @@ spring:
     enabled: false   # 生产默认关闭，走 DBA 手工执行 mysql/admin-schema.sql；本地/测试环境见 application-dev.yml
     locations: classpath:db/migration
     baseline-on-migrate: true
+    # 必须关：V14 的种子数据含 ${now-14d}（sql_define_param.default_value 的动态日期语法，
+    # 由 SqlParamValueResolver 在查询时解释），Flyway 默认会把 ${...} 当自己的占位符，
+    # 报 "No value provided for placeholder: ${now}" 直接中断迁移。本项目迁移脚本不使用
+    # Flyway 占位符功能，全局关闭即可。
+    placeholder-replacement: false
 
 
 mybatis-plus:
