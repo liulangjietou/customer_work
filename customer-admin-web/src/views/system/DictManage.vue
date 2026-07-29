@@ -225,7 +225,7 @@ onMounted(loadTypes)
           v-loading="typeLoading"
           :data="filteredTypes()"
           highlight-current-row
-          :row-class-name="({ row }) => (row.id === activeType?.id ? 'active-row' : '')"
+          :row-class-name="({ row }: { row: DictTypeVO }) => (row.id === activeType?.id ? 'active-row' : '')"
           @row-click="selectType"
         >
           <el-table-column label="类型" min-width="140">

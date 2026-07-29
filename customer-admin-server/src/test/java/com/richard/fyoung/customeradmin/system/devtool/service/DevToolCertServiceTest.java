@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCertInfo;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCertMatchResponse;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCertParseResponse;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolKeystoreParseResponse;
+import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolPrivateKeyExportResponse;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -19,6 +20,7 @@ import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -137,5 +139,37 @@ class DevToolCertServiceTest {
     private byte[] derOf(String pem) {
         String body = pem.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
         return Base64.getDecoder().decode(body);
+    }
+
+    @Test
+    void parse_shouldIncludePem_forPageSide() {
+        // 页面侧固定回显 PEM（智能体侧才省略），拆证书链依赖这个字段
+        String pem = service.parse(CERT_PEM).getCertificates().get(0).getPem();
+        assertNotNull(pem);
+        assertTrue(pem.startsWith("-----BEGIN CERTIFICATE-----"));
+    }
+
+    @Test
+    void parseKeystore_shouldIncludeChainPem() throws Exception {
+        DevToolKeystoreParseResponse response = service.parseKeystore(pkcs12Bytes(), "changeit");
+        assertNotNull(response.getEntries().get(0).getChain().get(0).getPem());
+    }
+
+    @Test
+    void exportPrivateKey_shouldMapAliasAlgorithmAndPem() throws Exception {
+        DevToolPrivateKeyExportResponse response =
+            service.exportPrivateKey(pkcs12Bytes(), "changeit", "k", "");
+
+        assertEquals("k", response.getAlias());
+        assertEquals("RSA", response.getAlgorithm());
+        assertTrue(response.getPrivateKeyPem().startsWith("-----BEGIN PRIVATE KEY-----"));
+    }
+
+    @Test
+    void exportPrivateKey_shouldConvertIllegalArgument_toParamInvalidBizException() throws Exception {
+        byte[] data = pkcs12Bytes();
+        BizException e = assertThrows(BizException.class,
+            () -> service.exportPrivateKey(data, "changeit", "missing-alias", ""));
+        assertEquals(ResultCode.PARAM_INVALID, e.getResultCode());
     }
 }

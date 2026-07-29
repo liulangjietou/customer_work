@@ -27,9 +27,13 @@ import java.security.KeyStore;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.Date;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -260,5 +264,85 @@ class CertDevToolOpsTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         keyStore.store(out, "changeit".toCharArray());
         return out.toByteArray();
+    }
+
+    // ---------- PEM 回显与私钥导出 ----------
+
+    @Test
+    void parse_shouldOmitPem_byDefault() throws Exception {
+        // LLM 走的默认重载：输入本来就是 PEM，回显纯属浪费上下文
+        assertNull(ops.parse(toPem(rsaCert)).getCertificates().get(0).getPem());
+    }
+
+    @Test
+    void parse_shouldReturnRoundTrippablePem_whenRequested() throws Exception {
+        CertDevToolOps.CertInfo info = ops.parse(toPem(rsaCert), true).getCertificates().get(0);
+
+        assertNotNull(info.getPem());
+        assertTrue(info.getPem().startsWith("-----BEGIN CERTIFICATE-----"));
+        // 回显的 PEM 必须能被重新解析回同一张证书（指纹相同），否则复制出去就是废的
+        CertDevToolOps.CertInfo reparsed = ops.parse(info.getPem(), true).getCertificates().get(0);
+        assertEquals(info.getSha256Fingerprint(), reparsed.getSha256Fingerprint());
+    }
+
+    @Test
+    void parse_shouldGiveEachChainMemberItsOwnPem() throws Exception {
+        List<CertDevToolOps.CertInfo> certs =
+            ops.parse(toPem(rsaCert) + "\n" + toPem(ecCert), true).getCertificates();
+
+        // 拆证书链是这个字段的主要用途：两张证书各自的 PEM 不能相同，且各自能单独解析
+        assertNotEquals(certs.get(0).getPem(), certs.get(1).getPem());
+        assertEquals("EC", ops.parse(certs.get(1).getPem(), true).getCertificates().get(0).getPublicKeyAlgorithm());
+    }
+
+    @Test
+    void parseKeystore_shouldAlwaysIncludePem() throws Exception {
+        CertDevToolOps.CertInfo info =
+            ops.parseKeystore(pkcs12Bytes(), "changeit").getEntries().get(0).getChain().get(0);
+        assertNotNull(info.getPem(), "密钥库是页面专属入口，证书 PEM 固定回显");
+    }
+
+    @Test
+    void exportPrivateKeyPem_shouldReturnPkcs8_matchingTheEntryCertificate() throws Exception {
+        CertDevToolOps.PrivateKeyExport export =
+            ops.exportPrivateKeyPem(pkcs12Bytes(), "changeit", "unit-test-key", null);
+
+        assertEquals("RSA", export.getAlgorithm());
+        assertTrue(export.getPem().startsWith("-----BEGIN PRIVATE KEY-----"), "应为 PKCS#8 未加密格式");
+        // 导出的私钥必须与该条目的证书配对，否则拆出来的 crt+key 是对不上的
+        assertTrue(ops.match(toPem(rsaCert), export.getPem()).isMatched());
+    }
+
+    @Test
+    void exportPrivateKeyPem_shouldFallBackToStorePassword_whenKeyPasswordBlank() throws Exception {
+        // PKCS12 惯例：条目密码与库密码相同，前端因此传空串
+        assertNotNull(ops.exportPrivateKeyPem(pkcs12Bytes(), "changeit", "unit-test-key", "").getPem());
+    }
+
+    @Test
+    void exportPrivateKeyPem_shouldFastFail_onUnknownAlias() throws Exception {
+        byte[] data = pkcs12Bytes();
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> ops.exportPrivateKeyPem(data, "changeit", "nope", null));
+        assertTrue(e.getMessage().contains("别名不存在"));
+    }
+
+    @Test
+    void exportPrivateKeyPem_shouldFastFail_onTrustedCertEntry() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        keyStore.load(null, null);
+        keyStore.setCertificateEntry("trusted", rsaCert);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        keyStore.store(out, "changeit".toCharArray());
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> ops.exportPrivateKeyPem(out.toByteArray(), "changeit", "trusted", null));
+        assertTrue(e.getMessage().contains("不是私钥条目"));
+    }
+
+    @Test
+    void exportPrivateKeyPem_shouldFastFail_onBlankAlias() throws Exception {
+        byte[] data = pkcs12Bytes();
+        assertThrows(IllegalArgumentException.class, () -> ops.exportPrivateKeyPem(data, "changeit", " ", null));
     }
 }

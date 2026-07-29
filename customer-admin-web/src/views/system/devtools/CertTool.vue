@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import {
+  exportKeystorePrivateKey,
   matchCertKey,
   parseCertPem,
   parseKeystore,
   type CertMatchResponse,
   type CertParseResponse,
   type KeystoreParseResponse,
+  type PrivateKeyExportResponse,
 } from '@/api/devtools'
 import { usePersistedRef } from './composables/useToolStorage'
+import { downloadText, safeFileBase } from './composables/useDownload'
 import CertInfoCard from './CertInfoCard.vue'
+import CopyButton from './CopyButton.vue'
 
 type CertMode = 'parse' | 'match' | 'keystore'
 
@@ -73,10 +77,13 @@ const keystorePassword = ref('')
 const keystoreFileName = ref('')
 const keystoreLoading = ref(false)
 const keystoreResult = ref<KeystoreParseResponse | null>(null)
+// 留住文件对象供"导出私钥"二次上传（私钥不随条目列举返回，需要显式再发一次请求）
+const keystoreFile = ref<File | null>(null)
 
 async function handleKeystoreUpload(options: { file: File }) {
   keystoreLoading.value = true
   keystoreFileName.value = options.file.name
+  keystoreFile.value = options.file
   try {
     keystoreResult.value = await parseKeystore(options.file, keystorePassword.value)
   } finally {
@@ -88,6 +95,51 @@ function clearKeystore() {
   keystorePassword.value = ''
   keystoreFileName.value = ''
   keystoreResult.value = null
+  keystoreFile.value = null
+  closeKeyDialog()
+}
+
+// ---------- 私钥导出 ----------
+// 私钥只在对话框打开期间存在于内存，关闭即丢弃，不持久化、不写回列表数据
+
+const keyDialogVisible = ref(false)
+const keyExporting = ref(false)
+const keyResult = ref<PrivateKeyExportResponse | null>(null)
+
+async function handleExportPrivateKey(alias: string) {
+  if (!keystoreFile.value) {
+    ElMessage.warning('请先上传密钥库文件')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '私钥将以未加密的 PKCS#8 PEM 明文返回并显示在页面上，请确认当前环境适合展示私钥。',
+      `导出私钥：${alias}`,
+      { type: 'warning', confirmButtonText: '确认导出', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  keyExporting.value = true
+  try {
+    // 条目私钥密码留空，后端回落库密码（PKCS12 惯例两者相同）
+    keyResult.value = await exportKeystorePrivateKey(keystoreFile.value, keystorePassword.value, alias, '')
+    keyDialogVisible.value = true
+  } finally {
+    keyExporting.value = false
+  }
+}
+
+function handleDownloadKey() {
+  if (!keyResult.value) {
+    return
+  }
+  downloadText(keyResult.value.privateKeyPem, `${safeFileBase(keyResult.value.alias, 'private')}.key`)
+}
+
+function closeKeyDialog() {
+  keyDialogVisible.value = false
+  keyResult.value = null
 }
 </script>
 
@@ -204,6 +256,19 @@ function clearKeystore() {
                 <span class="muted">证书链 {{ entry.chain.length }} 张</span>
               </span>
             </template>
+            <div v-if="entry.entryType === 'PRIVATE_KEY'" class="entry-actions">
+              <el-button
+                link
+                type="primary"
+                size="small"
+                :loading="keyExporting"
+                @click="handleExportPrivateKey(entry.alias)"
+              >
+                <el-icon><Key /></el-icon>
+                导出私钥 PEM
+              </el-button>
+              <span class="muted">配合下方证书 PEM 即可得到部署用的 crt + key</span>
+            </div>
             <CertInfoCard
               v-for="(cert, i) in entry.chain"
               :key="cert.sha256Fingerprint + i"
@@ -214,12 +279,74 @@ function clearKeystore() {
         </el-collapse>
       </template>
     </div>
+
+    <!-- 私钥只在本对话框存续期间留在内存，关闭即丢弃 -->
+    <el-dialog
+      v-model="keyDialogVisible"
+      title="私钥导出"
+      width="640px"
+      @closed="closeKeyDialog"
+    >
+      <template v-if="keyResult">
+        <el-alert type="warning" :closable="false" show-icon class="notice">
+          未加密的 PKCS#8 私钥明文。关闭本窗口后页面不再保留，请妥善保存并注意不要留在剪贴板里。
+        </el-alert>
+        <div class="key-meta">
+          <span>别名：<b>{{ keyResult.alias }}</b></span>
+          <span>算法：<b>{{ keyResult.algorithm }}</b></span>
+        </div>
+        <div class="pem-actions">
+          <CopyButton :text="keyResult.privateKeyPem" label="私钥 PEM" />
+          <el-button link type="primary" size="small" @click="handleDownloadKey">
+            <el-icon><Download /></el-icon>
+            下载 .key
+          </el-button>
+        </div>
+        <pre class="pem-block">{{ keyResult.privateKeyPem }}</pre>
+      </template>
+      <template #footer>
+        <el-button type="primary" @click="closeKeyDialog">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .notice {
   margin-bottom: 12px;
+}
+
+.entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.key-meta {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.pem-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.pem-block {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow: auto;
 }
 
 .mode-switch {

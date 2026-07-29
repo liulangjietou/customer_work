@@ -1,11 +1,24 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { CertInfo } from '@/api/devtools'
+import CopyButton from './CopyButton.vue'
+import { downloadText, safeFileBase } from './composables/useDownload'
 
 // 单张证书的展示卡片：证书解析、密钥库条目链、匹配校验三处复用同一渲染
-defineProps<{ cert: CertInfo; index?: number }>()
+const props = defineProps<{ cert: CertInfo; index?: number }>()
 
 function formatTime(ms: number): string {
   return new Date(ms).toLocaleString('zh-CN')
+}
+
+/** 下载文件名取 Subject 的 CN，取不到时回落 certificate。 */
+const fileBase = computed(() => {
+  const cn = /CN=([^,]+)/.exec(props.cert.subject)?.[1]
+  return safeFileBase(cn ?? 'certificate')
+})
+
+function handleDownload() {
+  downloadText(props.cert.pem ?? '', `${fileBase.value}.crt`)
 }
 </script>
 
@@ -55,6 +68,23 @@ function formatTime(ms: number): string {
         <code class="fingerprint">{{ cert.sha256Fingerprint }}</code>
       </el-descriptions-item>
     </el-descriptions>
+
+    <!-- PEM 默认折叠：看信息的人占多数，取 PEM 的是少数，展开才占版面 -->
+    <el-collapse v-if="cert.pem" class="pem-collapse">
+      <el-collapse-item name="pem">
+        <template #title>
+          <span class="pem-title">证书 PEM</span>
+        </template>
+        <div class="pem-actions">
+          <CopyButton :text="cert.pem" label="证书 PEM" />
+          <el-button link type="primary" size="small" @click="handleDownload">
+            <el-icon><Download /></el-icon>
+            下载 .crt
+          </el-button>
+        </div>
+        <pre class="pem-block">{{ cert.pem }}</pre>
+      </el-collapse-item>
+    </el-collapse>
   </el-card>
 </template>
 
@@ -93,5 +123,33 @@ function formatTime(ms: number): string {
 
 .muted {
   color: var(--el-text-color-secondary);
+}
+
+.pem-collapse {
+  margin-top: 8px;
+  border-top: none;
+}
+
+.pem-title {
+  font-size: 13px;
+}
+
+.pem-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.pem-block {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow: auto;
 }
 </style>

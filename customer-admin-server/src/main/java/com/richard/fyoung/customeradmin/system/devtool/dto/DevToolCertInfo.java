@@ -11,6 +11,9 @@ import java.util.List;
 @Data
 public class DevToolCertInfo {
 
+    /** 该证书自身的 PEM，供复制/下载（贴 fullchain 时可据此把叶子证书与中间 CA 拆开取用）。 */
+    private String pem;
+
     /** 使用者（Subject DN）。 */
     private String subject;
 

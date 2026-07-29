@@ -68,6 +68,11 @@ public final class CertDevToolOps {
     /** 签名-验签探测的固定负载（内容无意义，只求两侧一致）。 */
     private static final byte[] PROBE_PAYLOAD = "customer-work-cert-match-probe".getBytes(StandardCharsets.UTF_8);
 
+    /** PEM 正文折行宽度（openssl 惯例 64 列）。 */
+    private static final int PEM_LINE_LENGTH = 64;
+
+    private static final byte[] PEM_LINE_SEPARATOR = "\n".getBytes(StandardCharsets.US_ASCII);
+
     /** KeyUsage 位序固定（RFC 5280）。 */
     private static final String[] KEY_USAGE_NAMES = {"digitalSignature", "nonRepudiation", "keyEncipherment",
         "dataEncipherment", "keyAgreement", "keyCertSign", "cRLSign", "encipherOnly", "decipherOnly"};
@@ -79,13 +84,28 @@ public final class CertDevToolOps {
     // =====================================================================
 
     /**
-     * 解析 PEM 文本中的全部证书与 CSR 块（按输入顺序，证书链场景第一张通常是叶子证书）。
+     * 解析 PEM 文本中的全部证书与 CSR 块，<b>不回显证书 PEM</b>。
+     *
+     * <p>这是给 LLM 用的默认重载：输入本来就是 PEM，再原样回显纯属浪费上下文。</p>
      *
      * @param pemContent PEM 文本，可同时含多段证书与 CSR；私钥等其它块类型被忽略
      * @return 解析结果
      * @throws IllegalArgumentException 入参空白，或一个可识别块都没有
      */
     public CertParseResult parse(String pemContent) {
+        return parse(pemContent, false);
+    }
+
+    /**
+     * 解析 PEM 文本中的全部证书与 CSR 块（按输入顺序，证书链场景第一张通常是叶子证书）。
+     *
+     * @param pemContent PEM 文本，可同时含多段证书与 CSR；私钥等其它块类型被忽略
+     * @param includePem 是否在结果里回显每张证书自身的 PEM。页面传 true——贴一整个 fullchain 时
+     *                   要把叶子证书与中间 CA 拆开分别取用；LLM 传 false 省上下文
+     * @return 解析结果
+     * @throws IllegalArgumentException 入参空白，或一个可识别块都没有
+     */
+    public CertParseResult parse(String pemContent, boolean includePem) {
         DevToolArgs.requireNonBlank(pemContent, "pemContent");
         List<CertInfo> certs = new ArrayList<>();
         List<CsrInfo> csrs = new ArrayList<>();
@@ -94,11 +114,11 @@ public final class CertDevToolOps {
             String label = matcher.group(1);
             byte[] der = decodeBase64Body(matcher.group(2));
             if (BLOCK_CERT.equals(label)) {
-                certs.add(describeCertificate(parseX509(der)));
+                certs.add(describeCertificate(parseX509(der), includePem));
             } else if (BLOCK_CSR.equals(label) || BLOCK_NEW_CSR.equals(label)) {
                 csrs.add(describeCsr(der));
             }
-            // 其余块类型（私钥等）刻意忽略：私钥只该出现在 match 入口
+            // 其余块类型（私钥等）刻意忽略：私钥只该出现在 match / exportPrivateKeyPem 入口
         }
         if (certs.isEmpty() && csrs.isEmpty()) {
             throw new IllegalArgumentException(
@@ -175,28 +195,8 @@ public final class CertDevToolOps {
      * @throws IllegalArgumentException 数据为空、密码错误或文件损坏
      */
     public KeystoreParseResult parseKeystore(byte[] data, String password) {
-        if (data == null || data.length == 0) {
-            throw new IllegalArgumentException("密钥库内容不能为空");
-        }
-        char[] pwd = password == null ? new char[0] : password.toCharArray();
-        KeyStore keyStore = null;
-        String loadedType = null;
-        Exception lastError = null;
-        for (String type : new String[] {"PKCS12", "JKS"}) {
-            try {
-                KeyStore candidate = KeyStore.getInstance(type);
-                candidate.load(new ByteArrayInputStream(data), pwd);
-                keyStore = candidate;
-                loadedType = type;
-                break;
-            } catch (Exception e) {
-                lastError = e;
-            }
-        }
-        if (keyStore == null) {
-            throw new IllegalArgumentException("密钥库无法打开（已尝试 PKCS12/JKS）：密码错误或文件损坏"
-                + (lastError == null ? "" : "（" + lastError.getMessage() + "）"));
-        }
+        LoadedKeystore loaded = loadKeystore(data, password);
+        KeyStore keyStore = loaded.getKeyStore();
         try {
             List<KeystoreEntry> entries = new ArrayList<>();
             Enumeration<String> aliases = keyStore.aliases();
@@ -210,7 +210,7 @@ public final class CertDevToolOps {
                     if (certs != null) {
                         for (Certificate cert : certs) {
                             if (cert instanceof X509Certificate x509) {
-                                chain.add(describeCertificate(x509));
+                                chain.add(describeCertificate(x509, true));
                             }
                         }
                     }
@@ -218,20 +218,102 @@ public final class CertDevToolOps {
                     entryType = "TRUSTED_CERT";
                     Certificate cert = keyStore.getCertificate(alias);
                     if (cert instanceof X509Certificate x509) {
-                        chain.add(describeCertificate(x509));
+                        chain.add(describeCertificate(x509, true));
                     }
                 }
                 entries.add(KeystoreEntry.builder().alias(alias).entryType(entryType).chain(chain).build());
             }
-            return KeystoreParseResult.builder().keystoreType(loadedType).entries(entries).build();
+            return KeystoreParseResult.builder().keystoreType(loaded.getType()).entries(entries).build();
         } catch (Exception e) {
             throw new IllegalArgumentException("密钥库条目读取失败：" + e.getMessage());
+        }
+    }
+
+    /** 打开密钥库：按 PKCS12 → JKS 顺序尝试，两个入口（列举条目 / 导出私钥）共用同一套加载与报错。 */
+    private LoadedKeystore loadKeystore(byte[] data, String password) {
+        if (data == null || data.length == 0) {
+            throw new IllegalArgumentException("密钥库内容不能为空");
+        }
+        char[] pwd = nullToEmpty(password).toCharArray();
+        Exception lastError = null;
+        for (String type : new String[] {"PKCS12", "JKS"}) {
+            try {
+                KeyStore candidate = KeyStore.getInstance(type);
+                candidate.load(new ByteArrayInputStream(data), pwd);
+                return LoadedKeystore.builder().keyStore(candidate).type(type).build();
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+        throw new IllegalArgumentException("密钥库无法打开（已尝试 PKCS12/JKS）：密码错误或文件损坏"
+            + (lastError == null ? "" : "（" + lastError.getMessage() + "）"));
+    }
+
+    /**
+     * 从密钥库导出指定条目的私钥 PEM（PKCS#8，未加密），配合 {@link #parseKeystore} 的证书 PEM
+     * 即可把一个 pfx 拆成 nginx 要的 crt + key。
+     *
+     * <p><b>刻意做成独立方法而非 {@code parseKeystore} 的一个字段</b>：列举条目是浏览即触发的操作，
+     * 私钥不该在用户只想看看有什么条目时就被吐出来。调用方应做成显式动作（点击导出）。</p>
+     *
+     * @param data        密钥库字节
+     * @param password    库密码，null 视作空密码
+     * @param alias       条目别名，须是私钥条目
+     * @param keyPassword 条目私钥密码；PKCS12 通常与库密码相同，留空即回落库密码（JKS 常见两者不同）
+     * @return 私钥算法与 PKCS#8 PEM
+     * @throws IllegalArgumentException 别名不存在/非私钥条目/密码错误
+     */
+    public PrivateKeyExport exportPrivateKeyPem(byte[] data, String password, String alias, String keyPassword) {
+        DevToolArgs.requireNonBlank(alias, "alias");
+        KeyStore keyStore = loadKeystore(data, password).getKeyStore();
+        char[] pwd = (keyPassword == null || keyPassword.isEmpty() ? nullToEmpty(password) : keyPassword)
+            .toCharArray();
+        try {
+            if (!keyStore.containsAlias(alias)) {
+                throw new IllegalArgumentException("别名不存在：" + alias);
+            }
+            if (!keyStore.isKeyEntry(alias)) {
+                throw new IllegalArgumentException("该别名不是私钥条目（仅含证书，无私钥可导出）：" + alias);
+            }
+            java.security.Key key = keyStore.getKey(alias, pwd);
+            if (!(key instanceof PrivateKey privateKey)) {
+                throw new IllegalArgumentException("该条目不是非对称私钥：" + alias);
+            }
+            return PrivateKeyExport.builder()
+                .algorithm(privateKey.getAlgorithm())
+                .pem(encodePem("PRIVATE KEY", privateKey.getEncoded()))
+                .build();
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (java.security.UnrecoverableKeyException e) {
+            throw new IllegalArgumentException("私钥密码错误（PKCS12 通常与库密码相同，JKS 可能不同）");
+        } catch (Exception e) {
+            throw new IllegalArgumentException("私钥导出失败：" + e.getMessage());
         }
     }
 
     // =====================================================================
     // 内部
     // =====================================================================
+
+    /** 证书 PEM 编码（DER base64 + 64 列折行，与 openssl 输出一致）。 */
+    private String encodeCertPem(X509Certificate cert) {
+        try {
+            return encodePem(BLOCK_CERT, cert.getEncoded());
+        } catch (Exception e) {
+            throw new IllegalArgumentException("证书 PEM 编码失败：" + e.getMessage());
+        }
+    }
+
+    /** 通用 PEM 封装。 */
+    private String encodePem(String label, byte[] der) {
+        String body = Base64.getMimeEncoder(PEM_LINE_LENGTH, PEM_LINE_SEPARATOR).encodeToString(der);
+        return "-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n";
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value;
+    }
 
     private byte[] decodeBase64Body(String body) {
         try {
@@ -308,9 +390,10 @@ public final class CertDevToolOps {
     }
 
     /** 汇总单张证书的展示信息。 */
-    private CertInfo describeCertificate(X509Certificate cert) {
+    private CertInfo describeCertificate(X509Certificate cert, boolean includePem) {
         Instant now = Instant.now();
         return CertInfo.builder()
+            .pem(includePem ? encodeCertPem(cert) : null)
             .subject(cert.getSubjectX500Principal().getName())
             .issuer(cert.getIssuerX500Principal().getName())
             .serialNumberHex(cert.getSerialNumber().toString(16).toUpperCase())
@@ -450,6 +533,8 @@ public final class CertDevToolOps {
     @Getter
     @Builder
     public static final class CertInfo {
+        /** 该证书自身的 PEM；仅在调用方要求回显时填充（LLM 侧为 null，省上下文）。 */
+        private final String pem;
         private final String subject;
         private final String issuer;
         private final String serialNumberHex;
@@ -488,12 +573,28 @@ public final class CertDevToolOps {
         private final String reason;
     }
 
+    /** 私钥导出结果（PKCS#8 未加密 PEM）。 */
+    @Getter
+    @Builder
+    public static final class PrivateKeyExport {
+        private final String algorithm;
+        private final String pem;
+    }
+
     /** 密钥库解析结果。 */
     @Getter
     @Builder
     public static final class KeystoreParseResult {
         private final String keystoreType;
         private final List<KeystoreEntry> entries;
+    }
+
+    /** 已打开的密钥库（内部流转，不外泄）。 */
+    @Getter
+    @Builder
+    private static final class LoadedKeystore {
+        private final KeyStore keyStore;
+        private final String type;
     }
 
     /** 密钥库条目。 */

@@ -1,0 +1,29 @@
+/**
+ * 工具箱内的纯前端文本下载。
+ *
+ * 与 `@/api/request` 的 `download` 不是一回事：那个是向后端请求二进制流，这里是把已经在内存里的
+ * 文本（证书 PEM、私钥 PEM 等）存成本地文件，不产生任何网络请求——私钥尤其不该为了下载再走一趟接口。
+ */
+
+/** 把文本存成文件下载。 */
+export function downloadText(text: string, filename: string): void {
+  const blob = new Blob([text], { type: 'application/x-pem-file;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  // 立即回收，否则 blob 会一直占着内存直到页面卸载（私钥内容更不该长留）
+  URL.revokeObjectURL(url)
+}
+
+/** 把任意文本清洗成安全的文件名主体（去掉路径分隔符与控制字符，限长）。 */
+export function safeFileBase(raw: string, fallback = 'download'): string {
+  const cleaned = raw
+    .trim()
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 64)
+  return cleaned.length > 0 ? cleaned : fallback
+}
