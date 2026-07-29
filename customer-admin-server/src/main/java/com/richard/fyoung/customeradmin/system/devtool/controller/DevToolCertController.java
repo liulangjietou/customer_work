@@ -9,6 +9,7 @@ import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCertMatchRespo
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCertParseRequest;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCertParseResponse;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolKeystoreParseResponse;
+import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolPrivateKeyExportResponse;
 import com.richard.fyoung.customeradmin.system.devtool.service.DevToolCertService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -67,5 +68,30 @@ public class DevToolCertController {
             throw new BizException(ResultCode.PARAM_INVALID, "密钥库文件过大（上限 1MB）");
         }
         return Result.success(devToolCertService.parseKeystore(file.getBytes(), password));
+    }
+
+    /**
+     * 导出密钥库中指定条目的私钥 PEM（PKCS#8，未加密），配合 {@code /keystore} 返回的证书 PEM
+     * 即可把一个 pfx 拆成部署用的 crt + key。
+     *
+     * <p><b>刻意与 {@code /keystore} 分开</b>：列举条目是浏览即触发的操作，私钥不该在用户只想看看
+     * 有什么条目时就出现在响应体里。前端做成显式动作（点击导出 + 二次确认），文件重新上传一次。</p>
+     */
+    @SaCheckPermission("devtools:view")
+    @PostMapping("/keystore/private-key")
+    public Result<DevToolPrivateKeyExportResponse> exportPrivateKey(
+        @RequestParam("file") MultipartFile file,
+        @RequestParam(value = "password", required = false, defaultValue = "") String password,
+        @RequestParam("alias") String alias,
+        @RequestParam(value = "keyPassword", required = false, defaultValue = "") String keyPassword)
+        throws IOException {
+        if (file.isEmpty()) {
+            throw new BizException(ResultCode.PARAM_MISSING, "请上传密钥库文件（.pfx/.p12/.jks）");
+        }
+        if (file.getSize() > MAX_KEYSTORE_BYTES) {
+            throw new BizException(ResultCode.PARAM_INVALID, "密钥库文件过大（上限 1MB）");
+        }
+        return Result.success(
+            devToolCertService.exportPrivateKey(file.getBytes(), password, alias, keyPassword));
     }
 }
