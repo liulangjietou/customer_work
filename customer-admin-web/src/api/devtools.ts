@@ -35,6 +35,8 @@ export function sendHttpRequest(data: HttpSendRequest) {
 // ---------- 证书解析 ----------
 
 export interface CertInfo {
+  /** 该证书自身的 PEM，供复制/下载；智能体侧不返回，页面侧必有 */
+  pem?: string
   subject: string
   issuer: string
   serialNumberHex: string
@@ -51,6 +53,12 @@ export interface CertInfo {
   keyUsages: string[]
   sha1Fingerprint: string
   sha256Fingerprint: string
+}
+
+export interface PrivateKeyExportResponse {
+  alias: string
+  algorithm: string
+  privateKeyPem: string
 }
 
 export interface CsrInfo {
@@ -91,6 +99,25 @@ export function parseCertPem(pemContent: string) {
 /** 私钥与证书匹配校验（私钥仅在后端内存中参与一次签名-验签探测）。 */
 export function matchCertKey(certPem: string, privateKeyPem: string) {
   return request<CertMatchResponse>({ url: '/devtools/cert/match', method: 'post', data: { certPem, privateKeyPem } })
+}
+
+/**
+ * 导出密钥库指定条目的私钥 PEM。
+ *
+ * 与 parseKeystore 分开两次请求是刻意的：列举条目时私钥不该出现在响应体里，
+ * 只有用户显式点"导出私钥"才把私钥取回来。
+ */
+export function exportKeystorePrivateKey(file: File, password: string, alias: string, keyPassword: string) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('password', password)
+  formData.append('alias', alias)
+  formData.append('keyPassword', keyPassword)
+  return request<PrivateKeyExportResponse>({
+    url: '/devtools/cert/keystore/private-key',
+    method: 'post',
+    data: formData,
+  })
 }
 
 /** 解析 PFX/PKCS12 或 JKS 密钥库，列出条目与证书链。 */

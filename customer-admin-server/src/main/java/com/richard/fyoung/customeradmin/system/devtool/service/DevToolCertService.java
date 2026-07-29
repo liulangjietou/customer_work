@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCertMatchRespo
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCertParseResponse;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolCsrInfo;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolKeystoreParseResponse;
+import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolPrivateKeyExportResponse;
 import com.richard.fyoung.customerwork.tool.devtool.CertDevToolOps;
 import org.springframework.stereotype.Service;
 
@@ -30,9 +31,9 @@ public class DevToolCertService {
 
     private final CertDevToolOps certOps = new CertDevToolOps();
 
-    /** 解析 PEM 文本中的全部证书与 CSR 块。 */
+    /** 解析 PEM 文本中的全部证书与 CSR 块（页面侧回显每张证书的 PEM，便于把证书链拆开取用）。 */
     public DevToolCertParseResponse parse(String pemContent) {
-        CertDevToolOps.CertParseResult result = call(() -> certOps.parse(pemContent));
+        CertDevToolOps.CertParseResult result = call(() -> certOps.parse(pemContent, true));
 
         List<DevToolCertInfo> certs = new ArrayList<>(result.getCertificates().size());
         for (CertDevToolOps.CertInfo info : result.getCertificates()) {
@@ -82,6 +83,14 @@ public class DevToolCertService {
         return response;
     }
 
+    /** 导出密钥库指定条目的私钥 PEM（由页面显式动作触发，不随条目列举一起返回）。 */
+    public DevToolPrivateKeyExportResponse exportPrivateKey(byte[] data, String password, String alias,
+                                                            String keyPassword) {
+        CertDevToolOps.PrivateKeyExport export =
+            call(() -> certOps.exportPrivateKeyPem(data, password, alias, keyPassword));
+        return new DevToolPrivateKeyExportResponse(alias, export.getAlgorithm(), export.getPem());
+    }
+
     /**
      * 异常转换单一收口：Ops 的入参/格式问题一律是 {@link IllegalArgumentException}，
      * 这里统一转成 {@link ResultCode#PARAM_INVALID}，各方法内不再重复 try-catch。
@@ -96,6 +105,7 @@ public class DevToolCertService {
 
     private DevToolCertInfo toCertVO(CertDevToolOps.CertInfo info) {
         DevToolCertInfo vo = new DevToolCertInfo();
+        vo.setPem(info.getPem());
         vo.setSubject(info.getSubject());
         vo.setIssuer(info.getIssuer());
         vo.setSerialNumberHex(info.getSerialNumberHex());
