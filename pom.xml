@@ -37,6 +37,8 @@
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <sa-token.version>1.39.0</sa-token.version>
         <minio.version>8.5.17</minio.version>
+        <!-- 证书解析（devtoolbox cert_parse/cert_match）：CSR 与 PKCS#1/SEC1 私钥 JDK 原生不认 -->
+        <bouncycastle.version>1.81</bouncycastle.version>
     </properties>
 
     <dependencyManagement>
@@ -48,6 +50,19 @@
                 <version>${agentscope.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <!-- BouncyCastle 三件套统一锁版本：某个传递依赖会把 bcprov 拉回 1.78.1，与直接依赖的
+                 bcpkix 1.81 不同代，运行时报 NoSuchFieldError: id_ml_dsa_44（1.81 才加的后量子算法 OID）。
+                 bcpkix/bcprov 必须同版本，bcutil 由 bcpkix 带同代修订版即可。 -->
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcpkix-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
