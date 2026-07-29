@@ -12,6 +12,8 @@ import com.richard.fyoung.customerwork.calllog.mapper.AgentCallLogMapper;
 import com.richard.fyoung.customerwork.calllog.mapper.AgentCallSegmentMapper;
 import com.richard.fyoung.customerwork.chatlog.mapper.ChatMessageMapper;
 import com.richard.fyoung.customerwork.dialog.mapper.DialogStageMapper;
+import com.richard.fyoung.customerwork.dict.mapper.DictItemMapper;
+import com.richard.fyoung.customerwork.dict.mapper.DictTypeMapper;
 import com.richard.fyoung.customerwork.feedback.mapper.FeedbackMapper;
 import com.richard.fyoung.customerwork.handoff.mapper.HandoffMapper;
 import com.richard.fyoung.customerwork.observability.mapper.AuditLogMapper;
@@ -62,7 +64,8 @@ public final class MybatisTestSupport {
         RefundMapper.class, InvoiceRequestMapper.class, MemberMapper.class, MemberAccountLogMapper.class,
         ComplaintMapper.class, KnowledgeMapper.class, ChatAttachmentMapper.class,
         SensitiveWordMapper.class, SeatAgentMapper.class,
-        AgentCallLogMapper.class, AgentCallSegmentMapper.class
+        AgentCallLogMapper.class, AgentCallSegmentMapper.class,
+        DictTypeMapper.class, DictItemMapper.class
     };
 
     private MybatisTestSupport() {

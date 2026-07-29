@@ -551,6 +551,9 @@ public class CustomerWorkProperties {
     /** 用户反馈（消息级点赞/点踩）存储配置。 */
     private final Feedback feedback = new Feedback();
 
+    /** 数据字典（少量枚举型键值数据，免建表）存储配置。 */
+    private final Dict dict = new Dict();
+
     /** 智能客服工单配置（存储 + 转人工关键词 + SLA 阈值与自动流转）。 */
     private final Ticket ticket = new Ticket();
 
@@ -767,6 +770,18 @@ public class CustomerWorkProperties {
     @Data
     public static class Feedback {
         /** 存储模式：memory（进程内，默认，仅单实例场景适用）| jdbc（跨实例共享）。 */
+        private String storeMode = "memory";
+    }
+
+    /**
+     * 数据字典存储配置。
+     *
+     * <p>决定 {@code DictStore} 的实现：memory 模式仅进程内演示种子；jdbc 模式读客服端库
+     * {@code cw_dict_type} / {@code cw_dict_item}（后台字典管理页维护的即这两张表）。</p>
+     */
+    @Data
+    public static class Dict {
+        /** 存储模式：memory（进程内种子，默认）| jdbc（读客服端库字典表）。 */
         private String storeMode = "memory";
     }
 

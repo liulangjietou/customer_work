@@ -26,6 +26,7 @@ public class PersistenceJdbcCondition implements Condition {
         "customer-work.dialog.store-mode",
         "customer-work.human-handoff.store-mode",
         "customer-work.feedback.store-mode",
+        "customer-work.dict.store-mode",
         "customer-work.user-auth.store-mode",
         "customer-work.chat-log.store-mode",
         "customer-work.call-log.store-mode",
