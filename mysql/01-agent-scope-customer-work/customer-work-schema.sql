@@ -513,3 +513,43 @@ INSERT IGNORE INTO `cw_seat_agent` (`id`, `name`, `skills`, `max_load`, `current
 --   ADD COLUMN `priority` VARCHAR(16) NULL COMMENT '优先级 LOW/MEDIUM/HIGH/URGENT（LLM 分类，可空）',
 --   ADD COLUMN `emotion` VARCHAR(32) NULL COMMENT '用户情绪（LLM 分类，可空）',
 --   ADD COLUMN `suggested_assignees` TEXT NULL COMMENT '推荐坐席列表 JSON（HITL 推荐，可空）';
+
+-- 数据字典（DictStore / cw_dict_type + cw_dict_item）：少量枚举型键值数据的统一落点，免于逐个建表。
+-- 后台管理系统"字典管理"页直连维护这两张表（单一数据真源，照内容风控先例不做双写同步）。
+CREATE TABLE IF NOT EXISTS `cw_dict_type` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `dict_type`      VARCHAR(64) NOT NULL COMMENT '字典类型编码（如 order_status）',
+    `type_name`      VARCHAR(64) NOT NULL COMMENT '类型名称（展示用）',
+    `remark`         VARCHAR(255) COMMENT '备注说明',
+    `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_dict_type` (`dict_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='字典类型表';
+
+CREATE TABLE IF NOT EXISTS `cw_dict_item` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `dict_type`      VARCHAR(64) NOT NULL COMMENT '所属字典类型编码',
+    `item_key`       VARCHAR(128) NOT NULL COMMENT '字典项键（业务值）',
+    `item_label`     VARCHAR(128) NOT NULL COMMENT '字典项标签（展示文案）',
+    `sort`           INT NOT NULL DEFAULT 0 COMMENT '排序号，越小越靠前',
+    `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
+    `remark`         VARCHAR(255) COMMENT '备注说明',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_dict_item` (`dict_type`, `item_key`),
+    KEY `idx_dict_item_type` (`dict_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='字典项表';
+
+-- 演示种子：订单状态（与 InMemoryDictStore 种子、后台订单页硬编码文案一致）。
+INSERT IGNORE INTO `cw_dict_type` (`dict_type`, `type_name`, `remark`, `enabled`, `created_at_ms`, `updated_at_ms`) VALUES
+('order_status', '订单状态', '用户订单状态筛选项（与后端返回的中文文案一致）', 1, 1779235200000, 1779235200000);
+
+INSERT IGNORE INTO `cw_dict_item` (`dict_type`, `item_key`, `item_label`, `sort`, `enabled`, `remark`, `created_at_ms`, `updated_at_ms`) VALUES
+('order_status', '待支付', '待支付', 1, 1, NULL, 1779235200000, 1779235200000),
+('order_status', '已支付', '已支付', 2, 1, NULL, 1779235200000, 1779235200000),
+('order_status', '待发货', '待发货', 3, 1, NULL, 1779235200000, 1779235200000),
+('order_status', '已发货', '已发货', 4, 1, NULL, 1779235200000, 1779235200000),
+('order_status', '已签收', '已签收', 5, 1, NULL, 1779235200000, 1779235200000),
+('order_status', '已取消', '已取消', 6, 1, NULL, 1779235200000, 1779235200000),
+('order_status', '已退款', '已退款', 7, 1, NULL, 1779235200000, 1779235200000);

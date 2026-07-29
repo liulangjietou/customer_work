@@ -3,6 +3,14 @@ import { reactive, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { cancelOrder, getOrderDetail, modifyOrderAddress, pageOrders } from '@/api/user-order'
 import { ORDER_STATUS_OPTIONS, ORDER_STATUS_TAG_TYPE, type OrderDetailVO, type OrderPageQuery, type OrderVO } from '@/types/order'
+import { useDict } from '@/composables/useDict'
+
+// 状态筛选项走字典（类型编码 order_status，后台"系统管理→字典管理"维护）；
+// 字典未配置或接口失败时回落到本地硬编码 ORDER_STATUS_OPTIONS，页面不受影响。
+const { options: orderStatusOptions } = useDict(
+  'order_status',
+  ORDER_STATUS_OPTIONS.map((s) => ({ value: s, label: s })),
+)
 
 const loading = ref(false)
 const list = ref<OrderVO[]>([])
@@ -117,7 +125,7 @@ async function handleCancelSubmit() {
         <el-input v-model="query.username" placeholder="用户名" clearable style="width: 140px" @keyup.enter="handleSearch" />
         <el-input v-model="query.orderId" placeholder="订单号" clearable style="width: 160px" @keyup.enter="handleSearch" />
         <el-select v-model="query.status" placeholder="状态" clearable style="width: 140px" @change="handleSearch">
-          <el-option v-for="status in ORDER_STATUS_OPTIONS" :key="status" :value="status" :label="status" />
+          <el-option v-for="opt in orderStatusOptions" :key="opt.value" :value="opt.value" :label="opt.label" />
         </el-select>
         <el-button v-permission="'user-order:view'" type="primary" @click="handleSearch">查询</el-button>
       </div>
