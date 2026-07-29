@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.approval;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -41,7 +42,13 @@ public class PendingApprovalService {
     private final AtomicReference<Consumer<ApprovalRequest>> onApprove = new AtomicReference<>(r -> { });
     private final AtomicReference<Consumer<ApprovalRequest>> onDeny = new AtomicReference<>(r -> { });
 
-    /** Spring 注入构造：使用自动装配的 ApprovalStore Bean。 */
+    /**
+     * Spring 注入构造：使用自动装配的 ApprovalStore Bean。
+     *
+     * <p>必须标 {@code @Autowired}：本类同时存在无参构造，Spring 对「多构造器 + 存在无参 + 无
+     * {@code @Autowired}」会回退到无参构造 → 永远用内存实现、审批单重启即丢。</p>
+     */
+    @Autowired
     public PendingApprovalService(ApprovalStore store) {
         this.store = store;
     }

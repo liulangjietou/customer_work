@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.observability;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -41,6 +42,14 @@ public class ModelCostCircuitBreaker {
     private final AtomicLong currentHourTokens = new AtomicLong(0);
     private volatile long currentHourTimestamp = currentHour();
 
+    /**
+     * Spring 注入构造：读取 {@code model.cost-control.*} 配置。
+     *
+     * <p>必须标 {@code @Autowired}：本类同时存在无参构造，Spring 对「多构造器 + 存在无参 + 无
+     * {@code @Autowired}」会回退到无参构造 → 熔断器永远处于禁用态、
+     * {@code model.cost-control.enabled=true} 空转。</p>
+     */
+    @Autowired
     public ModelCostCircuitBreaker(CustomerWorkProperties properties) {
         this.enabled = properties.getModel().getCostControl().isEnabled();
         this.maxTokensPerMinute = properties.getModel().getCostControl().getMaxTokensPerMinute();
