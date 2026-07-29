@@ -72,6 +72,27 @@ jobs:
       # 这里按生产同款约定灌入 mysql/02-customer-admin/ 的全量建表脚本（01-~26- 数字前缀
       # 保证执行顺序）。用 -e "source" 而非 stdin 管道 + 显式 utf8mb4，规避 stdin 下客户端
       # 字符集回退 latin1 把中文 COMMENT 字节级写坏的已知坑。
+      # 防复发：mysql/02-customer-admin/ 是 Flyway 迁移的镜像副本，供手工初始化与本 CI 建库使用。
+      # 漏同步在本地不显形（本地走 Flyway），却会让 CI 在依赖该表的后续脚本上炸掉——曾漏 7 个迁移
+      # 导致 main 的 CI 连红 6 次。这里先做一次纯文件名比对，缺谁直接点名，不必再从 SQL 报错反推。
+      - name: Verify admin schema mirror is in sync
+        run: |
+          missing=""
+          for f in customer-admin-server/src/main/resources/db/migration/V*.sql; do
+            base=$(basename "$f")
+            version=$(echo "$base" | sed -E 's/^V([0-9]+)__.*/\1/')
+            # 前缀是零填充两位（V1 → 01-V1__…，V47 → 47-V47__…），printf 对两者都正确
+            prefix=$(printf '%02d' "$version")
+            if [ ! -f "mysql/02-customer-admin/${prefix}-${base}" ]; then
+              missing="${missing}\n  缺少 mysql/02-customer-admin/${prefix}-${base}"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::admin 库迁移未同步到 mysql/02-customer-admin/（见 CLAUDE.md 约定）：$(printf "$missing")"
+            exit 1
+          fi
+          echo "admin schema mirror in sync"
+
       - name: Create and initialize customer_admin database
         run: |
           mysql -h127.0.0.1 -P3306 -uroot -proot -e "CREATE DATABASE IF NOT EXISTS customer_admin DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
