@@ -49,6 +49,12 @@ export const devTools: DevTool[] = [
     description: 'GET/POST/PUT/DELETE/PATCH 等，后端代理发送免 CORS',
     component: () => import('./HttpRequestTool.vue'),
   },
+  {
+    key: 'cert',
+    label: '证书解析',
+    description: 'X.509 证书/证书链、CSR、私钥匹配校验、PFX/JKS 密钥库',
+    component: () => import('./CertTool.vue'),
+  },
 ]
 
 export const defaultToolKey = devTools[0].key

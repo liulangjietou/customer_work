@@ -31,3 +31,72 @@ const HTTP_TOOL_TIMEOUT_MS = 45000
 export function sendHttpRequest(data: HttpSendRequest) {
   return request<HttpSendResponse>({ url: '/devtools/http/send', method: 'post', data, timeout: HTTP_TOOL_TIMEOUT_MS })
 }
+
+// ---------- 证书解析 ----------
+
+export interface CertInfo {
+  subject: string
+  issuer: string
+  serialNumberHex: string
+  version: number
+  notBeforeMs: number
+  notAfterMs: number
+  expired: boolean
+  daysRemaining: number
+  sigAlgName: string
+  publicKeyAlgorithm: string
+  publicKeyBits: number
+  ca: boolean
+  subjectAlternativeNames: string[]
+  keyUsages: string[]
+  sha1Fingerprint: string
+  sha256Fingerprint: string
+}
+
+export interface CsrInfo {
+  subject: string
+  publicKeyAlgorithm: string
+  publicKeyBits: number
+  sigAlgName: string
+  subjectAlternativeNames: string[]
+}
+
+export interface CertParseResponse {
+  certificates: CertInfo[]
+  csrs: CsrInfo[]
+}
+
+export interface CertMatchResponse {
+  matched: boolean
+  publicKeyAlgorithm: string
+  reason: string
+}
+
+export interface KeystoreEntry {
+  alias: string
+  entryType: string
+  chain: CertInfo[]
+}
+
+export interface KeystoreParseResponse {
+  keystoreType: string
+  entries: KeystoreEntry[]
+}
+
+/** 解析 PEM 文本中的证书/证书链/CSR（后端 Java 解析，内容不落库）。 */
+export function parseCertPem(pemContent: string) {
+  return request<CertParseResponse>({ url: '/devtools/cert/parse', method: 'post', data: { pemContent } })
+}
+
+/** 私钥与证书匹配校验（私钥仅在后端内存中参与一次签名-验签探测）。 */
+export function matchCertKey(certPem: string, privateKeyPem: string) {
+  return request<CertMatchResponse>({ url: '/devtools/cert/match', method: 'post', data: { certPem, privateKeyPem } })
+}
+
+/** 解析 PFX/PKCS12 或 JKS 密钥库，列出条目与证书链。 */
+export function parseKeystore(file: File, password: string) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('password', password)
+  return request<KeystoreParseResponse>({ url: '/devtools/cert/keystore', method: 'post', data: formData })
+}

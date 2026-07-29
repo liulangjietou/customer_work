@@ -21,6 +21,9 @@
         <!-- SFTP 客户端：JSch 官方已停更，改用社区维护版 mwiede/jsch（同 com.jcraft.jsch 包 API）；
              版本只在本模块声明，不动根 pom。 -->
         <jsch.version>0.2.23</jsch.version>
+        <!-- 证书解析工具：CSR/PEM 私钥解析靠 BouncyCastle（JDK 原生只认 X.509 证书与 PKCS8 未加密私钥）；
+             版本只在本模块声明，不动根 pom。 -->
+        <bouncycastle.version>1.81</bouncycastle.version>
     </properties>
 
     <dependencies>
@@ -34,6 +37,12 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
             <version>3.18.0</version>
+        </dependency>
+        <!-- 证书解析工具（开发者工具箱）：bcpkix 提供 PKCS10 CSR 与 PEMParser，传递引入 bcprov/bcutil -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>${bouncycastle.version}</version>
         </dependency>
         <!-- Spring MVC（非 WebFlux）：与 customer-channel 同一手法接入 starter -->
         <dependency>
