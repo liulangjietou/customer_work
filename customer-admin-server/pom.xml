@@ -163,6 +163,22 @@
             <version>${nacos.version}</version>
         </dependency>
 
+        <!-- A2A 协议导出：把后台智能体发布成标准 A2A Agent，供外部系统按协议调用。
+             a2a-server 把 core 与 a2a-client 都声明成 provided+optional，必须显式补 a2a-client——
+             它是运行期依赖（消息/事件转换走 core.a2a.agent.utils.MessageConvertUtil），编译期不报错，
+             漏了要到真实请求进来才 NoClassDefFoundError。
+             默认关闭（admin.a2a.enabled=false），见 AdminA2aProperties。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-a2a-server</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-a2a-client</artifactId>
+            <version>${agentscope.version}</version>
+        </dependency>
+
         <!-- Skill 多存储目标：发布 SKILL.md 到 SFTP 目录（SftpSkillPublisher）。mwiede/jsch 是 JSch 的
              社区维护版，保持 com.jcraft.jsch 包 API 兼容。 -->
         <dependency>
