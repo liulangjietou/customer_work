@@ -111,7 +111,10 @@ class KnowledgeRetrievalMiddlewareTest {
         assertEquals(1, input.messages().size(), "不得就地修改传入的消息列表");
 
         Msg injected = sent.get(1);
-        assertEquals(BLOCK, injected.getTextContent());
+        // 召回内容经 ContentSpotlighter 包进随机标签隔离块（间接注入防护）：原文完整保留，外面多一层标记
+        assertTrue(injected.getTextContent().contains(BLOCK), "召回原文应完整保留");
+        assertTrue(injected.getTextContent().startsWith("<untrusted_"), "召回内容应被隔离标记包裹");
+        assertTrue(injected.getTextContent().contains("source=\"knowledge_base\""), "应标出来源是知识库");
         assertEquals(MsgRole.USER, injected.getRole());
         assertEquals(Boolean.TRUE, injected.getMetadata().get(Msg.METADATA_SYNTHETIC),
             "注入消息必须打 synthetic 标记，任何观察到它的消费方都能识别并跳过");
