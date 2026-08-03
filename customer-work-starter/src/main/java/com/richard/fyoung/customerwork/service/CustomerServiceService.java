@@ -70,12 +70,12 @@ public class CustomerServiceService {
     /**
      * 出站敏感词过滤器；敏感词功能关闭时容器里没有该 Bean，此处为 null，流式链路不做任何过滤。
      *
-     * <p><b>为什么流式过滤在这里而不在中间件</b>：本服务已迁到 {@code streamEvents(...)}，下发的就是经过
-     * {@code onAgent} 链的那条事件流本身，中间件的改写直接生效（旧的 {@code stream(...)} 下中间件虽也执行，
-     * 但文本由 {@code StreamingHook} 旁路捕获、改写落不到用户屏幕上，那个"技术上做不到"的理由已不成立）。
-     * 仍留在这里是因为 guard 有跨片缓冲状态、必须一次订阅一个实例，而中间件是 Agent 级共享 Bean；且 admin
-     * 侧同款过滤还挂在旧路径上，两边统一下沉应作为独立重构，不夹带在本次迁移里——
-     * 详见 {@link SensitiveWordStreamGuard} 类注释。</p>
+     * <p><b>为什么流式过滤在这里而不在中间件</b>：本服务与 admin 侧的 {@code ChatService} 都已迁到
+     * {@code streamEvents(...)}，下发的就是经过 {@code onAgent} 链的那条事件流本身，中间件的改写直接生效
+     * （旧的 {@code stream(...)} 下中间件虽也执行，但文本由 {@code StreamingHook} 旁路捕获、改写落不到
+     * 用户屏幕上，那个"技术上做不到"的理由已不成立）。下沉到中间件现在可行，拦住它的是改造量——事件对象
+     * 不可变、子 Agent 事件同流、BLOCK 要改成插事件，属于独立重构，详见 {@link SensitiveWordStreamGuard}
+     * 类注释。</p>
      */
     private SensitiveWordFilter sensitiveWordFilter;
 
