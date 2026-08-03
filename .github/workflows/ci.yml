@@ -115,6 +115,11 @@ jobs:
 
       - name: Build and test (with coverage)
         run: mvn -B test
+        env:
+          # 上面给 CI 的 Redis 设了 requirepass 123456，而 admin 侧的 Redis 密码走
+          # ADMIN_REDIS_PASSWORD（默认空）。不注入这一项，登录态持久化的门控集成测试
+          # （SaTokenRedisPersistenceIntegrationTest）会因鉴权失败自动跳过——不红，但也就白跑了。
+          ADMIN_REDIS_PASSWORD: "123456"
         # 说明：
         # - Redis/MySQL/Nacos 服务容器在线，相关集成测试真实执行（探测可达性后运行）
         # - 百炼集成测试默认跳过（未设置 RUN_BAILIAN_IT）
