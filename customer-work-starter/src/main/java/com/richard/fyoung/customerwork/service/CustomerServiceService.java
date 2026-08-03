@@ -8,9 +8,9 @@ import com.richard.fyoung.customerwork.dto.IntentResult;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStreamGuard;
 import io.agentscope.core.ReActAgent;
-import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.RuntimeContext;
-import io.agentscope.core.agent.StreamOptions;
+import io.agentscope.core.event.AgentResultEvent;
+import io.agentscope.core.event.TextBlockDeltaEvent;
 import io.agentscope.core.message.Msg;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -19,7 +19,6 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -71,10 +70,12 @@ public class CustomerServiceService {
     /**
      * 出站敏感词过滤器；敏感词功能关闭时容器里没有该 Bean，此处为 null，流式链路不做任何过滤。
      *
-     * <p><b>为什么流式过滤在这里而不在中间件</b>：{@code agent.stream(...)} 内部走 {@code StreamingHook}
-     * 旁路直接把模型输出推给 sink，绕开了中间件链；中间件产出的 {@code AgentEvent} 是另一条流，
-     * 两者只在最后的 {@code AGENT_RESULT} 汇合，而那条事件恰恰在下面被当作"整段回放"丢弃。
-     * 只改中间件的话，出站过滤在流式链路上完全落空——详见 {@link SensitiveWordStreamGuard} 类注释。</p>
+     * <p><b>为什么流式过滤在这里而不在中间件</b>：本服务已迁到 {@code streamEvents(...)}，下发的就是经过
+     * {@code onAgent} 链的那条事件流本身，中间件的改写直接生效（旧的 {@code stream(...)} 下中间件虽也执行，
+     * 但文本由 {@code StreamingHook} 旁路捕获、改写落不到用户屏幕上，那个"技术上做不到"的理由已不成立）。
+     * 仍留在这里是因为 guard 有跨片缓冲状态、必须一次订阅一个实例，而中间件是 Agent 级共享 Bean；且 admin
+     * 侧同款过滤还挂在旧路径上，两边统一下沉应作为独立重构，不夹带在本次迁移里——
+     * 详见 {@link SensitiveWordStreamGuard} 类注释。</p>
      */
     private SensitiveWordFilter sensitiveWordFilter;
 
@@ -200,7 +201,12 @@ public class CustomerServiceService {
     /**
      * 处理一条用户消息，流式返回增量文本（对应⑤ 逐 token 渲染）。
      *
-     * <p>订阅 Agent 的类型化事件流，提取推理增量片段下发。会话状态由框架在流结束后自动持久化。</p>
+     * <p>订阅框架的细粒度事件流 {@code streamEvents(...)}，只取正文增量 {@code TEXT_BLOCK_DELTA} 下发。
+     * 会话状态由框架在流结束后自动持久化。</p>
+     *
+     * <p><b>为什么不用 {@code stream(msgs, options, ctx)}</b>：那组重载已标记 {@code forRemoval}，且它按
+     * {@code isLast=true} 回放"每轮推理整段 + 最终 AGENT_RESULT 全文"，消费侧必须自己做两级去重才不会让
+     * 用户看到同一段话重复 2-3 遍。细粒度事件把"增量"和"汇总"拆成了不同事件类型，去重逻辑随之消失。</p>
      *
      * @return 增量文本片段流（Flux，非阻塞）
      */
@@ -211,36 +217,32 @@ public class CustomerServiceService {
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
 
-        StreamOptions options = StreamOptions.builder()
-            .eventTypes(EventType.REASONING, EventType.AGENT_RESULT)
-            .incremental(true)
-            .includeReasoningChunk(true)
-            .build();
-
         Flux<String> flux = withSessionLockFlux(sessionId, Flux.defer(() -> {
-            // 去重状态（每次订阅独立）：框架在增量块之外，还会按 isLast=true 回放"每轮推理整段 + 最终
-            // AGENT_RESULT 全文"——不过滤会导致用户看到同一段话重复 2-3 遍
-            AtomicBoolean chunkSeen = new AtomicBoolean(false);
-            AtomicReference<String> lastReplay = new AtomicReference<>("");
+            // 兜底标记（每次订阅独立）：正常流式下模型逐块吐 TEXT_BLOCK_DELTA，最终的 AGENT_RESULT
+            // 只是同一段文本的汇总，不再下发；仅当一个增量都没出现时（非流式 provider）才用它补全文
+            AtomicBoolean deltaSeen = new AtomicBoolean(false);
             // 出站敏感词过滤：每次订阅一个独立 guard（有状态，跨流复用会串内容）
             SensitiveWordStreamGuard guard = newOutboundGuard();
-            return applyOutboundGuard(agent.stream(List.of(toUserMsg(userText)), options, ctx)
+            return applyOutboundGuard(agent.streamEvents(List.of(toUserMsg(userText)), ctx)
+                // 旧的 stream(...) 在末尾自带 publishOn(boundedElastic)，streamEvents 没有：不切走
+                // 就会在模型 IO 线程上跑下游的敏感词过滤与 SSE 写出，拖慢模型侧的 chunk 读取
+                .publishOn(reactor.core.scheduler.Schedulers.boundedElastic())
                 .mapNotNull(event -> {
-                    String text = event.getMessage() == null ? null : event.getMessage().getTextContent();
-                    if (text == null || text.isEmpty()) {
-                        return null;
-                    }
-                    if (!event.isLast()) {
-                        chunkSeen.set(true);
+                    // 正文增量：只认 TextBlock，思考过程（THINKING_BLOCK_DELTA）不下发给用户
+                    if (event instanceof TextBlockDeltaEvent delta) {
+                        String text = delta.getDelta();
+                        if (text == null || text.isEmpty()) {
+                            return null;
+                        }
+                        deltaSeen.set(true);
                         return text;
                     }
-                    // 整段回放事件：已流式过增量块则一律丢弃；未流式（非流式模型兜底）时
-                    // 只放行与上一段不同的内容，避免 AGENT_RESULT 重复最后一轮推理文本
-                    if (chunkSeen.get() || text.equals(lastReplay.get())) {
-                        return null;
+                    // 非流式模型兜底：一个增量都没出过时，用最终结果补一次全文，避免空回复
+                    if (event instanceof AgentResultEvent result && !deltaSeen.get()) {
+                        String text = result.getResult() == null ? null : result.getResult().getTextContent();
+                        return text == null || text.isEmpty() ? null : text;
                     }
-                    lastReplay.set(text);
-                    return text;
+                    return null;
                 }), guard);
         }));
 

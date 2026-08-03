@@ -9,8 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 流式滑动缓冲过滤单测——出站过滤真正生效的地方。
  *
- * <p>接入层用的 {@code agent.stream(...)} 走 StreamingHook 旁路绕开中间件，中间件只看得到最后那条
- * AGENT_RESULT，而它会被接入层当作"整段回放"丢弃。所以出站能不能拦住，全看这个 guard。</p>
+ * <p>出站能不能拦住全看这个 guard：admin 侧用的 {@code agent.stream(...)} 由 StreamingHook 旁路捕获文本，
+ * 中间件的改写落不到这条流上，能汇合的只有最后那条 AGENT_RESULT 而它会被接入层丢弃；8080 侧虽已迁到
+ * {@code streamEvents(...)}（下发的就是中间件链上的事件流），但 guard 有每流一份的缓冲状态，仍挂在接入层。</p>
  * @author owlzhangfq@gmail.com
  */
 class SensitiveWordStreamGuardTest {

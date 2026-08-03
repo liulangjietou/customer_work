@@ -3,10 +3,10 @@ package com.richard.fyoung.customerwork.service;
 import com.richard.fyoung.customerwork.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.dto.IntentResult;
 import io.agentscope.core.ReActAgent;
-import io.agentscope.core.agent.Event;
-import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.RuntimeContext;
-import io.agentscope.core.agent.StreamOptions;
+import io.agentscope.core.event.AgentResultEvent;
+import io.agentscope.core.event.TextBlockDeltaEvent;
+import io.agentscope.core.event.ThinkingBlockDeltaEvent;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -93,15 +93,15 @@ class CustomerServiceServiceTest {
     }
 
     @Test
-    void chatStream_shouldEmitIncrementalChunks_andDropReplayEvents() {
-        // 真实框架语义：增量块 isLast=false；每轮推理结束回放整段（isLast=true）；
-        // 最终 AGENT_RESULT 再回放全文——两类回放都不应二次下发，否则用户看到重复文本
-        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+    void chatStream_shouldEmitTextDeltas_andDropAggregatedResult() {
+        // streamEvents 语义：正文逐块走 TEXT_BLOCK_DELTA，末尾的 AGENT_RESULT 只是同一段文本的汇总。
+        // 汇总事件不得二次下发，否则用户看到重复文本；思考增量（THINKING_BLOCK_DELTA）也不下发。
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
             .thenReturn(Flux.just(
-                new Event(EventType.REASONING, assistantMsg("您"), false),
-                new Event(EventType.REASONING, assistantMsg("好"), false),
-                new Event(EventType.REASONING, assistantMsg("您好"), true),
-                new Event(EventType.AGENT_RESULT, assistantMsg("您好"), true)));
+                new TextBlockDeltaEvent("r1", "b1", "您"),
+                new ThinkingBlockDeltaEvent("r1", "t1", "让我想想"),
+                new TextBlockDeltaEvent("r1", "b1", "好"),
+                new AgentResultEvent(assistantMsg("您好"))));
 
         StepVerifier.create(service.chatStream("u3", "你好"))
             .expectNext("您")
@@ -110,12 +110,10 @@ class CustomerServiceServiceTest {
     }
 
     @Test
-    void chatStream_nonStreamingFallback_shouldEmitReplayOnce() {
-        // 非流式模型兜底：没有增量块，只有整段回放事件——应放行一次、去掉 AGENT_RESULT 的重复全文
-        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
-            .thenReturn(Flux.just(
-                new Event(EventType.REASONING, assistantMsg("您好"), true),
-                new Event(EventType.AGENT_RESULT, assistantMsg("您好"), true)));
+    void chatStream_nonStreamingFallback_shouldEmitAggregatedResultOnce() {
+        // 非流式模型兜底：一个 TEXT_BLOCK_DELTA 都没有时，用 AGENT_RESULT 的全文补一次，避免空回复
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new AgentResultEvent(assistantMsg("您好"))));
 
         StepVerifier.create(service.chatStream("u3b", "你好"))
             .expectNext("您好")
@@ -124,7 +122,7 @@ class CustomerServiceServiceTest {
 
     @Test
     void chatStream_shouldFallback_whenStreamFails() {
-        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
             .thenReturn(Flux.error(new RuntimeException("stream down")));
 
         StepVerifier.create(service.chatStream("u4", "你好"))
@@ -272,7 +270,7 @@ class CustomerServiceServiceTest {
         CustomerServiceService timedService =
             new CustomerServiceService(factory, sessionStateManager, props);
         // 永不产元素、也不完成的流
-        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
             .thenReturn(Flux.never());
 
         StepVerifier.create(timedService.chatStream("s1", "你好"))
@@ -288,8 +286,8 @@ class CustomerServiceServiceTest {
         props.getStream().setIdleTimeoutSeconds(0);
         CustomerServiceService noTimeoutService =
             new CustomerServiceService(factory, sessionStateManager, props);
-        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
-            .thenReturn(Flux.just(new Event(EventType.AGENT_RESULT, assistantMsg("好"), true)));
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(new AgentResultEvent(assistantMsg("好"))));
 
         StepVerifier.create(noTimeoutService.chatStream("s2", "你好"))
             .expectNext("好")
