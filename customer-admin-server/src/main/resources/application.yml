@@ -18,6 +18,10 @@ spring:
     # （与 customer-channel 同一手法：不依赖 starter 的自动装配 Bean，需要的能力在本模块的 Config 类里显式 new）
     exclude:
       - com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
+      # Sa-Token 的 Redis DAO 插件自带自动装配（无条件生效、无开关）。这里排除掉，改由
+      # AdminSaTokenDaoConfig 按 admin.sa-token.redis-persistent 开关显式装配：Redis 故障时
+      # 运维可关成内存态先把后台救回来（代价是重启需重登），不必改代码重新发版。
+      - cn.dev33.satoken.dao.SaTokenDaoRedisJackson
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: ${ADMIN_MYSQL_URL:jdbc:mysql://localhost:3306/customer_admin?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
@@ -36,6 +40,15 @@ spring:
     # 报 "No value provided for placeholder: ${now}" 直接中断迁移。本项目迁移脚本不使用
     # Flyway 占位符功能，全局关闭即可。
     placeholder-replacement: false
+  data:
+    redis:
+      # Sa-Token 登录态存储用（AdminSaTokenDaoConfig 注入这里自动装配出的 RedisConnectionFactory）。
+      # 与下面 admin.redis.* 是同一个 Redis 实例、同一批环境变量——两套配置项是因为一边由
+      # Spring Boot 自动装配（Lettuce）、一边是本模块手写的 Jedis/Redisson，改地址只需改环境变量。
+      host: ${ADMIN_REDIS_HOST:localhost}
+      port: ${ADMIN_REDIS_PORT:6379}
+      password: ${ADMIN_REDIS_PASSWORD:}
+      timeout: 3000ms
 
 
 mybatis-plus:
@@ -51,7 +64,9 @@ mybatis-plus:
 # Sa-Token 认证配置
 sa-token:
   token-name: Authorization      # 请求头 / 参数名
-  timeout: 7200                  # 登录态有效期（秒），2 小时
+  # 登录态有效期（秒），默认 24 小时。登录态存在 Redis（见 admin.sa-token.redis-persistent），
+  # 服务重启不丢，这个 24 小时是"从登录那一刻算起的绝对时长"，与进程生命周期无关。
+  timeout: ${ADMIN_SATOKEN_TIMEOUT_SECONDS:86400}
   activity-timeout: -1           # 按最后活跃时间续期：-1 表示不限（依赖 timeout 硬过期）
   is-concurrent: true            # 允许同一账号多端登录
   is-share: true                 # 多端共用一个 token
@@ -61,8 +76,13 @@ sa-token:
 # AES 加密密钥：AES-256 需 32 字节明文密钥（不入库不硬编码，本地开发用固定测试值，生产由运维走 Secret 管理下发）
 admin:
   aes-secret-key: ${ADMIN_AES_SECRET_KEY:0123456789abcdef0123456789abcdef}
-  # 登录“记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置
+  # 登录“记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（24 小时）全局配置
   remember-me-timeout-seconds: ${ADMIN_REMEMBER_ME_TIMEOUT_SECONDS:604800}
+  sa-token:
+    # 登录态是否持久化到 Redis（见 AdminSaTokenDaoConfig）。默认 true：token 存 Redis，
+    # 服务重启/多实例部署都不掉线。设为 false 回退 Sa-Token 内置的 JVM 内存 DAO——
+    # 仅在 Redis 故障需要临时把后台救回来时用，代价是重启即全员掉线、多实例互不认 token。
+    redis-persistent: ${ADMIN_SATOKEN_REDIS_PERSISTENT:true}
   open-api:
     # 开放 API（/api/open/**）访问令牌，供 customer-channel 等外部模块通过请求头 X-Open-Api-Token 调用。
     # 无默认值：未配置时所有开放 API 一律 401（见 OpenApiAuthInterceptor），不留“空 token 放行”后门。

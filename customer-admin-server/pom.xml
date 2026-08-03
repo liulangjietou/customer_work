@@ -132,6 +132,21 @@
             <version>3.52.0</version>
         </dependency>
 
+        <!-- 登录态持久化：Sa-Token 默认 DAO 把 token 存 JVM 内存，服务一重启全部用户被踢下线。
+             换成官方 Redis 插件（SaTokenDaoRedisJackson，由 AdminSaTokenDaoConfig 显式装配），
+             传递引入 spring-boot-starter-data-redis 提供 RedisConnectionFactory（Lettuce，惰性连接，
+             连接参数见 application.yml 的 spring.data.redis.*，与 admin.redis.* 取同一批环境变量）。
+
+             没有选同系列的 sa-token-redisson-jackson（本可复用已有的 RedissonClient）：它的
+             init() 里 new spring-data-redis 的 GenericJackson2JsonRedisSerializer 再反射偷其私有
+             mapper 字段，照样离不开 spring-data-redis，还额外多一层依赖 spring-data-redis 私有
+             字段名的隐式耦合——同样的传递依赖代价，不如走官方主线这条被验证最多的路。 -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-redis-jackson</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
+
         <!-- SQL 查询结果导出 xlsx（SqlQueryController#export）。项目原本无 POI，EasyExcel 传递
              引入 poi/poi-ooxml 4.1.2；选本地仓库已存在的稳定版 3.3.2，避免额外下载/版本冲突。 -->
         <!-- SQL 查询结果导出 xlsx。easyexcel 必须用 4.x（基于 POI 5.x）：starter 经
