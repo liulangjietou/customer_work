@@ -10,16 +10,16 @@ import org.slf4j.LoggerFactory;
  * 代码块渲染），其余类型走 {@code node:<kind小写>} 事件，前端据此把执行轨迹渲染成
  * 开始思考 → 调用大模型/调用 Skill/调用 MCP → 结束思考 这样的时间线，而不是一整段纯文本。
  *
- * <p><b>子 Agent 归属标识</b>：当片段来自 harness spawn 出来的子 Agent（其全量事件经
- * {@code SubagentEventBus} 直推父 sink）时，{@code source}/{@code subagentName} 非空，前端据此把
- * 子 Agent 的执行轨迹渲染进独立的可折叠卡片/分组，而不是和父 Agent 主流程混在一起；来自父 Agent
- * 自身的片段两者均为 {@code null}（{@code io.agentscope.core.agent.EventSource == null}）。</p>
+ * <p><b>子 Agent 归属标识</b>：当片段来自 harness spawn 出来的子 Agent（其细粒度事件由框架的
+ * {@code AgentEventEmitter} 转发进父流并打上来源标记）时，{@code source}/{@code subagentName} 非空，
+ * 前端据此把子 Agent 的执行轨迹渲染进独立的可折叠卡片/分组，而不是和父 Agent 主流程混在一起；
+ * 来自父 Agent 自身的片段两者均为 {@code null}（{@code AgentEvent#getSource() == null}）。</p>
  *
  * @param kind         节点类型
  * @param text         该节点携带的文本（增量思考内容/工具名提示/工具返回结果/正文增量/子 Agent 名称）
- * @param source       子 Agent 的调用链路径（{@code EventSource.getPath()}，如 {@code "main/doc-writer"}），
+ * @param source       子 Agent 的调用链路径（{@code AgentEvent#getSource()}，如 {@code "main/doc-writer"}），
  *                     {@code null} 表示来自父 Agent 自身
- * @param subagentName 子 Agent 展示名（{@code EventSource.getAgentName()}，为空回退 {@code getAgentId()}），
+ * @param subagentName 子 Agent 展示名（取 {@code source} 路径末段，即子 Agent 的 agentId），
  *                     {@code null} 表示来自父 Agent 自身
  * @author owlzhangfq@gmail.com
  */

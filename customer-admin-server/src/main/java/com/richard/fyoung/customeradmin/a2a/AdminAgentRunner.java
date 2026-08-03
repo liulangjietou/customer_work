@@ -91,7 +91,16 @@ public class AdminAgentRunner implements AgentRunner {
 
     /**
      * {@code stream(List, StreamOptions, RuntimeContext)} 只声明在 {@link ReActAgent}/{@link HarnessAgent}
-     * 上而不在 {@code Agent} 接口上，因此这里按运行时类型分派——与 {@code ChatService#streamEvents} 同款处理。
+     * 上而不在 {@code Agent} 接口上，因此这里按运行时类型分派。
+     *
+     * <p><b>为什么这里还在用已标记 {@code forRemoval} 的 {@code stream(...)}</b>（对话链路的
+     * {@code ChatService} 已迁到 {@code streamEvents(...)}，本处刻意没跟）：{@link AgentRunner#stream}
+     * 的返回类型被框架写死为 {@code Flux<}{@link Event}{@code >}，就是那个废弃类型本身；框架自带的参考
+     * 实现 {@code BaseReActAgentRunner} 也仍在调 {@code agent.stream(msgs)}——A2A 这一层框架自己都没迁。
+     * 若本方法改用 {@code streamEvents(...)}，拿到 {@code AgentEvent} 后还得手工 {@code new Event(...)}
+     * 喂回接口，废弃 API 的暴露面一点没减少，反而要自行复刻 {@code AgentScopeAgentExecutor} 依赖的
+     * {@code isLast}/{@code messageId} 去重语义（它靠这两个字段判重与拼装回包），平白引入一层易错的
+     * 翻译。等框架把 A2A 层迁到细粒度事件后再跟进。</p>
      */
     private Flux<Event> streamEvents(Agent agent, List<Msg> msgs, RuntimeContext ctx) {
         StreamOptions options = StreamOptions.builder()

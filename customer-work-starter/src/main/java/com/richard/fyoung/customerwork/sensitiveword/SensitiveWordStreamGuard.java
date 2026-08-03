@@ -5,18 +5,22 @@ import java.util.function.Consumer;
 /**
  * 流式输出的敏感词滑动缓冲过滤器：**每个输出流一个实例**，喂增量、吐可放行的文本。
  *
- * <p><b>为什么需要它、为什么不在中间件里做</b>：框架的 {@code AgentBase.stream(msgs, options)}（旧 API）
- * 实为 {@code createEventStream(options, () -> call(msgs))}——中间件链<b>照常执行</b>，但它额外注册的
+ * <p><b>历史成因</b>：框架的 {@code AgentBase.stream(msgs, options)}（旧 API）实为
+ * {@code createEventStream(options, () -> call(msgs))}——中间件链<b>照常执行</b>，但它额外注册的
  * {@code StreamingHook} 是<b>直接从模型输出旁路捕获文本</b>推给 sink 的，中间件对事件流做的任何改写都
  * 落不到这条文本上；两条流只在最后的 {@code AGENT_RESULT} 汇合，而那条事件恰恰被接入层丢弃（避免与
  * 增量重复渲染）。于是"只改中间件"的出站过滤在流式链路上完全落空——命中日志记着"已打码"，用户屏幕上
- * 却是原文。</p>
+ * 却是原文。本类当初就是为绕开这一点而生的。</p>
  *
- * <p>8080 侧（{@code CustomerServiceService}）现已迁到 {@code streamEvents(...)}，用户拿到的就是经过
- * {@code onAgent} 链的那条事件流本身，中间件的改写直接生效，上面这条"技术上做不到"的理由对它已不成立；
- * 但 admin 侧仍在旧 {@code stream(...)} 上，且 guard 的滑动缓冲是<b>每流一份</b>的有状态对象，与 Agent
- * 级共享的中间件 Bean 生命周期不符。因此两侧的流式出口各挂一道 guard 仍是当前做法；等 admin 也迁完，
- * 可再评估统一下沉到中间件。</p>
+ * <p><b>为什么现在仍留在接入层</b>：8080 侧（{@code CustomerServiceService}）与 admin 侧
+ * （{@code ChatService}）<b>都已迁到 {@code streamEvents(...)}</b>，拿到的就是经过 {@code onAgent}
+ * 链的那条事件流本身，上面那条"技术上做不到"的理由已不再成立——下沉到中间件是可行的，而且
+ * {@code MiddlewareBase#onAgent} 每次调用各执行一次并返回一条新 Flux，在方法体里 {@code Flux.defer}
+ * 现建一个本类实例即可，"有状态对象装不进共享 Bean"也不再是障碍。真正拦住下沉的是改造量与风险：
+ * ① 中间件要过滤的是 {@code TextBlockDeltaEvent} 这类<b>不可变事件对象</b>，改文本得逐条重建并搬运
+ * {@code id/createdAt/source/metadata}；② 子 Agent 事件经转发也进同一条流，per-source 分缓冲要在中间件
+ * 里重做一遍；③ BLOCK 的"截断 + 补安全话术"要改成往事件流里插事件。这是一次独立重构（收益是顺带覆盖
+ * 非流式 {@code call()} 路径），不该夹带进迁移里，故两侧的流式出口各挂一道 guard 仍是当前做法。</p>
  *
  * <p><b>滑动缓冲</b>：一个词会被拆进相邻增量（"阿根廷" 可能来自三次推送），逐片匹配必漏。
  * 每片与缓冲区拼接后整体过滤，只放行"确定不再是任何词前缀"的前半段，尾部留
