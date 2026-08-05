@@ -346,6 +346,13 @@ onMounted(() => {
             <span v-if="!row.backupModelNames?.length" style="color: #909399">-</span>
           </template>
         </el-table-column>
+        <!-- 知识库名称由后端 AgentVO.knowledgeBaseNames 直接回填，前端不再二次查询 -->
+        <el-table-column label="知识库" width="200">
+          <template #default="{ row }">
+            <el-tag v-for="k in row.knowledgeBaseNames" :key="k" type="success" style="margin: 2px">{{ k }}</el-tag>
+            <span v-if="!row.knowledgeBaseNames?.length" style="color: #909399">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="能力" width="260">
           <template #default="{ row }">
             <el-tag v-for="c in row.capabilities" :key="c" style="margin: 2px">{{ capabilityLabel(c) }}</el-tag>
