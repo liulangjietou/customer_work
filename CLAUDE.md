@@ -31,10 +31,11 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **813** + admin-server **807** + app 78 + customer-channel 65 + gateway 1
-  （admin-server 2026-08-03 feature/admin-session-redis 实测 807；其余为 2026-07-29
-  feature/cert-pem-export 全量实测，starter 已按下方规则排除 2 个环境门控测试；
-  PR #68 修掉多构造器缺 @Autowired 后 `ApplicationContextTest` 已恢复，不再需要额外排除）。
+- 测试基线：starter **1039** + admin-server **701** + app 78 + customer-channel 65 + gateway 1
+  （2026-08-05 feature/sink-common-to-starter 全量实测，starter 已按下方规则排除 2 个环境门控测试。
+  该分支把 admin 十项通用能力下沉 starter：核心逻辑测试随迁，故 starter +226 / admin −106，
+  admin 侧只保留薄壳职责测试；PR #68 修掉多构造器缺 @Autowired 后 `ApplicationContextTest`
+  已恢复，不再需要额外排除）。
   门控集成测试依赖：PaddleOCR serving(localhost:8868)、MinIO(localhost:9000)，不可达自动跳过。
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
 - **本机跑全量要排除 2 个环境门控测试**（当前 MinIO 的 9000 被 kb-rag 栈占、Redis 无密码，共 4 个用例必挂；

@@ -10,38 +10,34 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 /**
- * {@link FailoverModel} 单测：主成功不碰备 / 主失败切备 / 熔断跳过主 / 全熔断兜底 / 全失败抛错。
- * {@link Model} 用简单 stub 实现，{@code stream} 订阅计数用于观测实际尝试了哪些候选。
+ * admin 薄壳职责单测：候选类型继承自下沉版、构造签名保持不变（{@code AdminAgentInstanceFactory} 零改动），
+ * 且沿用父类默认的"流中途失败也切下一候选"语义。降级/熔断的完整语义由 starter 的同名测试覆盖。
  * @author owlzhangfq@gmail.com
  */
 class FailoverModelTest {
 
-    /** 每次订阅计数 + 可选失败的桩模型；{@code getModelName}/响应 id 均为构造名，便于区分来源。 */
+    /** 可选"先吐一个分片再失败"的桩模型。 */
     private static final class StubModel implements Model {
         private final String name;
-        private final boolean fail;
-        private final AtomicInteger subscribeCount = new AtomicInteger();
+        private final boolean failAfterFirstChunk;
 
-        StubModel(String name, boolean fail) {
+        StubModel(String name, boolean failAfterFirstChunk) {
             this.name = name;
-            this.fail = fail;
+            this.failAfterFirstChunk = failAfterFirstChunk;
         }
 
         @Override
         public Flux<ChatResponse> stream(List<Msg> messages, List<ToolSchema> tools, GenerateOptions options) {
-            return Flux.defer(() -> {
-                subscribeCount.incrementAndGet();
-                if (fail) {
-                    return Flux.error(new RuntimeException("boom-" + name));
-                }
-                return Flux.just(new ChatResponse(name, List.of(), null, null, "stop"));
-            });
+            ChatResponse response = new ChatResponse(name, List.of(), null, null, "stop");
+            if (failAfterFirstChunk) {
+                return Flux.concat(Flux.just(response), Flux.error(new RuntimeException("mid-stream-" + name)));
+            }
+            return Flux.just(response);
         }
 
         @Override
@@ -50,101 +46,35 @@ class FailoverModelTest {
         }
     }
 
-    private ModelCircuitBreakerRegistry newRegistry(int threshold, int openSeconds) {
+    private ModelCircuitBreakerRegistry newRegistry() {
         AdminModelFailoverProperties props = new AdminModelFailoverProperties();
-        props.setFailureThreshold(threshold);
-        props.setOpenDurationSeconds(openSeconds);
+        props.setFailureThreshold(3);
+        props.setOpenDurationSeconds(60);
         return new ModelCircuitBreakerRegistry(props);
     }
 
-    private List<ChatResponse> run(FailoverModel model) {
-        return model.stream(List.<Msg>of(), null, null).collectList().block();
-    }
-
     @Test
-    void primarySuccess_shouldNotTouchBackup() {
-        StubModel primary = new StubModel("p", false);
-        StubModel backup = new StubModel("b", false);
+    void shouldExtendSharedFailoverModel() {
         FailoverModel model = new FailoverModel(
-            List.of(new FailoverModel.Candidate(1L, primary), new FailoverModel.Candidate(2L, backup)),
-            newRegistry(3, 60));
+            List.of(new FailoverModel.Candidate(1L, new StubModel("p", false))), newRegistry());
 
-        List<ChatResponse> out = run(model);
-
-        assertEquals("p", out.get(0).getId());
-        assertEquals(1, primary.subscribeCount.get());
-        assertEquals(0, backup.subscribeCount.get());
+        assertInstanceOf(com.richard.fyoung.customerwork.model.failover.FailoverModel.class, model);
+        assertEquals("p", model.getModelName());
     }
 
     @Test
-    void primaryFailure_shouldSwitchToBackup() {
+    void shouldKeepMidStreamFailover_forDynamicAgentRuntime() {
         StubModel primary = new StubModel("p", true);
         StubModel backup = new StubModel("b", false);
         FailoverModel model = new FailoverModel(
             List.of(new FailoverModel.Candidate(1L, primary), new FailoverModel.Candidate(2L, backup)),
-            newRegistry(3, 60));
+            newRegistry());
 
-        List<ChatResponse> out = run(model);
+        List<ChatResponse> out = model.stream(List.<Msg>of(), null, null).collectList().block();
 
-        assertEquals("b", out.get(0).getId());
-        assertEquals(1, primary.subscribeCount.get());
-        assertEquals(1, backup.subscribeCount.get());
-    }
-
-    @Test
-    void openBreaker_shouldSkipPrimary() {
-        ModelCircuitBreakerRegistry registry = newRegistry(1, 60);
-        registry.recordFailure(1L); // 阈值 1，主模型立即熔断
-        StubModel primary = new StubModel("p", false);
-        StubModel backup = new StubModel("b", false);
-        FailoverModel model = new FailoverModel(
-            List.of(new FailoverModel.Candidate(1L, primary), new FailoverModel.Candidate(2L, backup)), registry);
-
-        List<ChatResponse> out = run(model);
-
-        assertEquals("b", out.get(0).getId());
-        assertEquals(0, primary.subscribeCount.get()); // 主被熔断跳过，未订阅
-        assertEquals(1, backup.subscribeCount.get());
-    }
-
-    @Test
-    void allBreakersOpen_shouldFallbackToFullList() {
-        ModelCircuitBreakerRegistry registry = newRegistry(1, 60);
-        registry.recordFailure(1L);
-        registry.recordFailure(2L); // 主备全部熔断
-        StubModel primary = new StubModel("p", false);
-        StubModel backup = new StubModel("b", false);
-        FailoverModel model = new FailoverModel(
-            List.of(new FailoverModel.Candidate(1L, primary), new FailoverModel.Candidate(2L, backup)), registry);
-
-        List<ChatResponse> out = run(model);
-
-        // 全熔断退化为全量候选，仍从主开始尝试，不拒绝服务
+        // 主已吐分片后失败仍切备：智能体运行时宁可重复也要拿到完整回答
+        assertEquals(2, out.size());
         assertEquals("p", out.get(0).getId());
-        assertEquals(1, primary.subscribeCount.get());
-    }
-
-    @Test
-    void allCandidatesFail_shouldPropagateLastError() {
-        StubModel primary = new StubModel("p", true);
-        StubModel backup = new StubModel("b", true);
-        FailoverModel model = new FailoverModel(
-            List.of(new FailoverModel.Candidate(1L, primary), new FailoverModel.Candidate(2L, backup)),
-            newRegistry(3, 60));
-
-        assertThrows(RuntimeException.class, () -> run(model));
-        assertEquals(1, primary.subscribeCount.get());
-        assertEquals(1, backup.subscribeCount.get());
-    }
-
-    @Test
-    void getModelName_shouldDelegateToPrimary() {
-        StubModel primary = new StubModel("primary-model", false);
-        StubModel backup = new StubModel("backup-model", false);
-        FailoverModel model = new FailoverModel(
-            List.of(new FailoverModel.Candidate(1L, primary), new FailoverModel.Candidate(2L, backup)),
-            newRegistry(3, 60));
-
-        assertEquals("primary-model", model.getModelName());
+        assertEquals("b", out.get(1).getId());
     }
 }

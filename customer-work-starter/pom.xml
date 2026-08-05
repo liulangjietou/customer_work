@@ -16,6 +16,12 @@
     <name>customer-work-starter</name>
     <description>可复用的 AgentScope 智能体能力：模型层/记忆/RAG/工具SPI/会话/可观测/安全/Nacos 等</description>
 
+    <properties>
+        <!-- SFTP 客户端：JSch 官方已停更，改用社区维护版 mwiede/jsch（同 com.jcraft.jsch 包 API）；
+             版本只在本模块声明，不动根 pom。 -->
+        <jsch.version>0.2.23</jsch.version>
+    </properties>
+
     <dependencies>
         <!-- WebFlux + 校验：Filter/Reactor 能力（接入层安全过滤器在本模块） -->
         <dependency>
@@ -122,6 +128,14 @@
             <groupId>com.alibaba.nacos</groupId>
             <artifactId>nacos-client</artifactId>
             <version>${nacos.version}</version>
+        </dependency>
+
+        <!-- Skill 多存储目标：发布 SKILL.md 到 SFTP 目录（SftpSkillPublisher）。mwiede/jsch 是 JSch 的
+             社区维护版，保持 com.jcraft.jsch 包 API 兼容；下游模块（admin）通过 starter 传递获得。 -->
+        <dependency>
+            <groupId>com.github.mwiede</groupId>
+            <artifactId>jsch</artifactId>
+            <version>${jsch.version}</version>
         </dependency>
 
         <!-- AgentScope Java 2.0 Harness（含 agentscope-core：Agent/Model/Tool/Middleware/State/Skill/RAG/Memory/Permission/Sandbox/Subagent/PlanMode/Compaction） -->
@@ -234,6 +248,26 @@
             <version>3.3.0</version>
         </dependency>
 
+        <!-- 动态列结果导出 xlsx（sqlkit 的 XlsxExporter）。easyexcel 必须用 4.x（基于 POI 5.x）：
+             上面的 agentscope-extensions-rag-simple 传递 poi-ooxml 5.5.1，若用 easyexcel 3.x（声明 poi 4.1.2），
+             Maven nearest-wins 会裁出 poi 4.1.2 + poi-ooxml 5.5.1 的分裂 classpath，SXSSFWorkbook
+             静态初始化直接 NoClassDefFoundError（实测踩过）。下面显式钉 poi/poi-ooxml 5.5.1 对齐两侧。 -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>easyexcel</artifactId>
+            <version>4.0.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+
         <!-- 协议 / 网关 / 观测扩展：AG-UI / Higress / Studio / Nacos 提示词 -->
         <dependency>
             <groupId>io.agentscope</groupId>
@@ -283,6 +317,12 @@
         <dependency>
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- 跨库门面（CrossDbGateways）单测用的内存库，仅测试期存在，不进运行时依赖 -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

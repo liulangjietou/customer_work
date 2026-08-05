@@ -1,33 +1,24 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
-import com.baomidou.mybatisplus.core.MybatisConfiguration;
-import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsExtMapper;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
 import com.richard.fyoung.customerwork.calllog.AgentCallLogStore;
 import com.richard.fyoung.customerwork.calllog.MybatisAgentCallLogStore;
 import com.richard.fyoung.customerwork.calllog.mapper.AgentCallLogMapper;
 import com.richard.fyoung.customerwork.calllog.mapper.AgentCallSegmentMapper;
-import org.apache.ibatis.session.SqlSessionFactory;
-import org.mybatis.spring.SqlSessionTemplate;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import com.richard.fyoung.customerwork.gateway.CrossDbGateway;
+import com.richard.fyoung.customerwork.gateway.CrossDbGateways;
 
 import javax.sql.DataSource;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
- * 为某个数据源装配一套独立的调用统计门面（{@link AgentCallStatsGateway}）。
+ * 把某个数据源的 Mapper 环境装配成调用统计门面（{@link AgentCallStatsGateway}）。
  *
- * <p>关键点：用 MyBatis-Plus 的 {@link MybatisSqlSessionFactoryBean} 现场构建一个<b>专用</b>
- * {@link SqlSessionFactory}（不作为 Spring Bean 暴露，避免让 MP 自动装配的主
- * {@code SqlSessionFactory}/{@code SqlSessionTemplate} 因 {@code @ConditionalOnMissingBean} 退避而
- * 破坏主 Mapper 扫描）。工厂加载 starter jar 内的两张 Mapper XML（{@code customerwork/mapper/*.xml}）
- * 与 admin 自带的 ext XML（{@code callstats/*.xml}）——XML 的 namespace 绑定即完成 Mapper 接口注册与
- * MP BaseMapper CRUD 注入，无需 {@code @MapperScan}。Mapper 代理由 {@link SqlSessionTemplate} 提供，
- * 其在非 Spring 事务下每次操作自动提交（写入/查询均在本源独立提交，与主库事务完全隔离）。</p>
+ * <p>两条装配路径：ADMIN 侧借用宿主主数据源（{@code attach}，池归容器管），APP 侧是客服端库的独立跨库池
+ * （{@code create}，见 {@link AppAgentCallStatsGatewayProvider}）。建池/探测/专用 SqlSessionFactory 这套
+ * 通用手法在 starter 的 {@code CrossDbGateways}，这里只声明"本域加载哪些 Mapper XML"：三张 Mapper 全部
+ * 有 XML，靠 namespace 绑定完成接口注册与 MP BaseMapper CRUD 注入，无需再登记接口。</p>
  * @author owlzhangfq@gmail.com
  */
 final class AgentCallStatsGatewayFactory {
@@ -39,43 +30,34 @@ final class AgentCallStatsGatewayFactory {
     /** admin 自带的读侧扩展 Mapper XML（放 /callstats 下，避开主 MP 默认的 /mapper 扫描）。 */
     private static final String EXT_XML = "classpath*:callstats/AgentCallStatsExtMapper.xml";
 
+    /** 三张 Mapper 均由 XML namespace 绑定注册，无需接口登记。 */
+    static final List<Class<?>> MAPPER_CLASSES = List.of();
+
+    /** 需加载的 Mapper XML 位置。 */
+    static final List<String> MAPPER_XML_LOCATIONS = List.of(STARTER_LOG_XML, STARTER_SEGMENT_XML, EXT_XML);
+
+    /** ADMIN 主数据源上的门面标识（借用宿主数据源，不自建池）。 */
+    private static final String ADMIN_GATEWAY_NAME = "agent-call-stats-admin";
+
     private AgentCallStatsGatewayFactory() {
     }
 
-    /** 按数据源装配一套门面。XML 解析/工厂构建阶段不连库，首次查询时才真正取连接。 */
+    /**
+     * 在宿主已有数据源（ADMIN 主库）上装配一套门面：连接池是宿主的，这里只另配一套 Mapper 环境。
+     *
+     * <p>启动期只解析 XML/建工厂，不连库。</p>
+     */
     static AgentCallStatsGateway build(DataSource dataSource) {
-        try {
-            SqlSessionFactory factory = buildSqlSessionFactory(dataSource);
-            SqlSessionTemplate template = new SqlSessionTemplate(factory);
-            AgentCallLogMapper logMapper = template.getMapper(AgentCallLogMapper.class);
-            AgentCallSegmentMapper segmentMapper = template.getMapper(AgentCallSegmentMapper.class);
-            AgentCallStatsExtMapper extMapper = template.getMapper(AgentCallStatsExtMapper.class);
-            AgentCallLogStore store = new MybatisAgentCallLogStore(logMapper, segmentMapper);
-            return new AgentCallStatsGateway(extMapper, logMapper, segmentMapper, store);
-        } catch (Exception e) {
-            throw new IllegalStateException("failed to build agent call stats gateway", e);
-        }
+        return build(CrossDbGateways.attach(dataSource, ADMIN_GATEWAY_NAME,
+            MAPPER_CLASSES, MAPPER_XML_LOCATIONS));
     }
 
-    private static SqlSessionFactory buildSqlSessionFactory(DataSource dataSource) throws Exception {
-        MybatisConfiguration configuration = new MybatisConfiguration();
-        // starter/ext XML 均用列别名下划线命名（request_id 等），需开启驼峰映射到 DO 的驼峰字段
-        configuration.setMapUnderscoreToCamelCase(true);
-
-        MybatisSqlSessionFactoryBean factoryBean = new MybatisSqlSessionFactoryBean();
-        factoryBean.setDataSource(dataSource);
-        factoryBean.setConfiguration(configuration);
-        factoryBean.setMapperLocations(resolveMapperXml());
-        factoryBean.afterPropertiesSet();
-        return factoryBean.getObject();
-    }
-
-    private static Resource[] resolveMapperXml() throws Exception {
-        PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-        List<Resource> resources = new ArrayList<>();
-        resources.addAll(Arrays.asList(resolver.getResources(STARTER_LOG_XML)));
-        resources.addAll(Arrays.asList(resolver.getResources(STARTER_SEGMENT_XML)));
-        resources.addAll(Arrays.asList(resolver.getResources(EXT_XML)));
-        return resources.toArray(new Resource[0]);
+    /** 按跨库环境装配一套门面。 */
+    static AgentCallStatsGateway build(CrossDbGateway gateway) {
+        AgentCallLogMapper logMapper = gateway.getMapper(AgentCallLogMapper.class);
+        AgentCallSegmentMapper segmentMapper = gateway.getMapper(AgentCallSegmentMapper.class);
+        AgentCallStatsExtMapper extMapper = gateway.getMapper(AgentCallStatsExtMapper.class);
+        AgentCallLogStore store = new MybatisAgentCallLogStore(logMapper, segmentMapper);
+        return new AgentCallStatsGateway(extMapper, logMapper, segmentMapper, store);
     }
 }

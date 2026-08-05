@@ -1,48 +1,34 @@
 package com.richard.fyoung.customeradmin.dict.config;
 
-import com.baomidou.mybatisplus.core.MybatisConfiguration;
-import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.richard.fyoung.customeradmin.dict.jdbc.DictGateway;
 import com.richard.fyoung.customerwork.dict.mapper.DictItemMapper;
 import com.richard.fyoung.customerwork.dict.mapper.DictTypeMapper;
-import org.apache.ibatis.session.SqlSessionFactory;
-import org.mybatis.spring.SqlSessionTemplate;
+import com.richard.fyoung.customerwork.gateway.CrossDbGateway;
 
-import javax.sql.DataSource;
+import java.util.List;
 
 /**
- * 为客服端库数据源装配一套字典门面（{@link DictGateway}）。
+ * 把客服端库的跨库环境装配成字典门面（{@link DictGateway}）。
  *
- * <p>手法与 {@code ContentGuardGatewayFactory} 一致：现场构建<b>专用</b> {@link SqlSessionFactory}
- * （不暴露为 Spring Bean，免得 MP 自动装配的主 {@code SqlSessionFactory} 退避）。两个 Mapper 都是
- * 无 XML 的纯 {@code BaseMapper}，直接 {@code addMapper} 注册接口即可，无需加载任何 Mapper XML。</p>
+ * <p>建池/探测/专用 SqlSessionFactory 这套通用手法在 starter 的 {@code CrossDbGateways}，这里只声明
+ * "本域要哪些 Mapper"。两个 Mapper 都是无 XML 的纯 {@code BaseMapper}，走接口注册即可，不加载任何 XML。</p>
  * @author owlzhangfq@gmail.com
  */
 final class DictGatewayFactory {
 
+    /** 无 XML、只用 BaseMapper CRUD 的 Mapper 接口。 */
+    static final List<Class<?>> MAPPER_CLASSES = List.of(DictTypeMapper.class, DictItemMapper.class);
+
+    /** 本域不需要任何 Mapper XML。 */
+    static final List<String> MAPPER_XML_LOCATIONS = List.of();
+
     private DictGatewayFactory() {
     }
 
-    /** 按数据源装配一套门面。工厂构建阶段不连库，首次查询时才真正取连接。 */
-    static DictGateway build(DataSource dataSource) {
-        try {
-            MybatisConfiguration configuration = new MybatisConfiguration();
-            // 列名下划线、DO 字段驼峰，必须开启映射（created_at_ms -> createdAtMs）
-            configuration.setMapUnderscoreToCamelCase(true);
-            configuration.addMapper(DictTypeMapper.class);
-            configuration.addMapper(DictItemMapper.class);
-
-            MybatisSqlSessionFactoryBean factoryBean = new MybatisSqlSessionFactoryBean();
-            factoryBean.setDataSource(dataSource);
-            factoryBean.setConfiguration(configuration);
-            factoryBean.afterPropertiesSet();
-            SqlSessionFactory factory = factoryBean.getObject();
-            SqlSessionTemplate template = new SqlSessionTemplate(factory);
-            return new DictGateway(
-                template.getMapper(DictTypeMapper.class),
-                template.getMapper(DictItemMapper.class));
-        } catch (Exception e) {
-            throw new IllegalStateException("failed to build dict gateway", e);
-        }
+    /** 按跨库环境装配一套门面。 */
+    static DictGateway build(CrossDbGateway gateway) {
+        return new DictGateway(
+            gateway.getMapper(DictTypeMapper.class),
+            gateway.getMapper(DictItemMapper.class));
     }
 }

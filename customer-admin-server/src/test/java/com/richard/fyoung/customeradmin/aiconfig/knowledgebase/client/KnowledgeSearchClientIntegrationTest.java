@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.client;
 
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
+import com.richard.fyoung.customerwork.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.rag.search.KnowledgeNode;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
