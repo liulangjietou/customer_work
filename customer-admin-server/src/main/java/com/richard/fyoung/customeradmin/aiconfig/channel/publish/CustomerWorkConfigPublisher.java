@@ -59,6 +59,7 @@ public class CustomerWorkConfigPublisher {
     private static final String MCP_TYPE_HTTP = "http";
     private static final String MCP_TYPE_SSE = "sse";
     private static final String TRANSPORT_STREAMABLE_HTTP = "streamable-http";
+    private static final String MCP_SERVERS_WRAPPER_KEY = "mcpServers";
 
     private final AiChannelBindingMapper channelBindingMapper;
     private final AiAgentMapper agentMapper;
@@ -315,13 +316,20 @@ public class CustomerWorkConfigPublisher {
         return null;
     }
 
-    /** 解析 ai_mcp.config JSON 的 url 与 headers（与 AdminMcpFactory 的取值方式一致）。 */
+    /**
+     * 解析 ai_mcp.config JSON 的 url 与 headers（与 AdminMcpFactory 的取值方式一致）：
+     * 同样兼容 Claude Desktop / Cursor 风格的 {@code {"mcpServers": {...}}} 包装格式——调试面板与真实
+     * 注册路径都认这层包装，发布链路不解包会导致 url 取空、该 MCP 被静默跳过。
+     *
+     * <p>TODO(sink-common-to-starter 合入后)：改为复用 starter 的
+     * {@code com.richard.fyoung.customerwork.tool.mcp.McpClientFactory#parseSpec}，删除本地解包实现。</p>
+     */
     private void fillUrlAndHeaders(CustomerWorkRuntimeConfig.McpServer server, String config) {
         if (!StringUtils.hasText(config)) {
             return;
         }
         try {
-            JsonNode node = objectMapper.readTree(config);
+            JsonNode node = unwrapMcpServers(objectMapper.readTree(config));
             server.setUrl(node.path("url").asText(null));
             JsonNode headersNode = node.path("headers");
             if (headersNode.isObject() && !headersNode.isEmpty()) {
@@ -330,6 +338,19 @@ public class CustomerWorkConfigPublisher {
         } catch (Exception e) {
             log.error("parse mcp config failed, code={}, mcpName={}", "RUNTIME-PUBLISH-MCP-PARSE-FAIL", server.getName(), e);
         }
+    }
+
+    /**
+     * 与 {@code AdminMcpFactory#unwrapMcpServers} 同语义：外层带 {@code mcpServers} 包装时取里面唯一
+     * 一个 server 条目的配置对象（服务名以 {@code ai_mcp.mcp_name} 为准，不读 wrapper 里的 key）；
+     * 没有包装时按原样返回，两种格式都认。
+     */
+    private JsonNode unwrapMcpServers(JsonNode node) {
+        JsonNode servers = node.path(MCP_SERVERS_WRAPPER_KEY);
+        if (servers.isObject() && servers.size() > 0) {
+            return servers.elements().next();
+        }
+        return node;
     }
 
     private String serialize(CustomerWorkRuntimeConfig payload) {
