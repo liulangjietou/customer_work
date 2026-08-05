@@ -2,8 +2,9 @@ package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
+import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import io.agentscope.core.tool.Toolkit;
-import io.agentscope.core.tool.mcp.McpClientBuilder;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,9 +28,16 @@ public class McpToolkitConfigurer {
 
     private static final Logger log = LoggerFactory.getLogger(McpToolkitConfigurer.class);
 
+    /** yml 里表示 streamable http 传输的取值（其余取值一律按 sse 处理）。 */
+    private static final String TRANSPORT_STREAMABLE_HTTP = "streamable-http";
+    /** 启动期注册的连接超时。 */
+    private static final Duration CLIENT_TIMEOUT = Duration.ofSeconds(30);
+
     private final CustomerWorkProperties properties;
     /** 工具归类登记表：MCP 工具在此登记名称，供分段耗时统计按类归段。 */
     private final ToolKindRegistry toolKindRegistry;
+    /** 「规格 -> 客户端」的构建核心，与后台管理侧（库里配置的 MCP）共用同一份实现。 */
+    private final McpClientFactory mcpClientFactory = new McpClientFactory();
 
     public McpToolkitConfigurer(CustomerWorkProperties properties, ToolKindRegistry toolKindRegistry) {
         this.properties = properties;
@@ -68,19 +76,21 @@ public class McpToolkitConfigurer {
         }
     }
 
+    /**
+     * yml 配置项 -&gt; 中立的 {@link McpServerSpec} -&gt; 客户端。传输取值的映射刻意留在这里：
+     * yml 用的是 {@code streamable-http}（历史配置项文案），与库配置侧的 {@code http} 不是同一套字面量，
+     * 归一动作属于本配置源自己的语义，不下沉到共用构建核心里去。
+     *
+     * <p>需要鉴权的远程 MCP 服务，配置的附加请求头（如 Authorization）由构建核心统一透传给握手与后续调用。</p>
+     */
     private reactor.core.publisher.Mono<McpClientWrapper> buildClient(
             CustomerWorkProperties.Mcp.Server server) {
-        McpClientBuilder builder = McpClientBuilder.create(server.getName())
-            .timeout(Duration.ofSeconds(30));
-        if ("streamable-http".equalsIgnoreCase(server.getTransport())) {
-            builder.streamableHttpTransport(server.getUrl());
-        } else {
-            builder.sseTransport(server.getUrl());
-        }
-        // 需要鉴权的远程 MCP 服务：把配置的附加请求头（如 Authorization）透传给握手与后续调用
-        if (server.getHeaders() != null && !server.getHeaders().isEmpty()) {
-            builder.headers(server.getHeaders());
-        }
-        return builder.buildAsync();
+        String type = TRANSPORT_STREAMABLE_HTTP.equalsIgnoreCase(server.getTransport())
+            ? McpServerSpec.TYPE_HTTP
+            : McpServerSpec.TYPE_SSE;
+        return mcpClientFactory
+            .buildClientBuilder(McpServerSpec.remote(server.getName(), type, server.getUrl(), server.getHeaders()))
+            .timeout(CLIENT_TIMEOUT)
+            .buildAsync();
     }
 }

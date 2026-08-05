@@ -30,6 +30,9 @@ import java.util.regex.Pattern;
  *       命中则改写为安全占位并告警，缓解框架 #1898/#1896（沙箱可删 workspace / 跨用户写）。</li>
  * </ul>
  *
+ * <p>onActing 骨架与破坏性入参改写委托给 {@link ToolCallRewriteCore}（各模块护栏共用同一实现），
+ * 本类只保留客服业务特有的参数注入与数值钳制，以及自己的配置源 {@link CustomerWorkProperties}。</p>
+ *
  * <p>默认关闭。异常不打断主链路（原样放行）。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -38,63 +41,50 @@ public class ToolGuardMiddleware implements MiddlewareBase {
 
     private static final Logger log = LoggerFactory.getLogger(ToolGuardMiddleware.class);
 
+    /** 日志前缀（告警关键字，勿改）。 */
+    private static final String LOG_SCOPE = "[GUARD]";
     /** 破坏性命令拦截错误码。 */
     private static final String CODE_DESTRUCTIVE = "TOOL-GUARD-DESTRUCTIVE";
+    /** 护栏自身异常（原样放行）错误码。 */
+    private static final String CODE_GUARD_FAIL = "TOOL_GUARD_ERROR";
 
     private final boolean enabled;
     private final Map<String, String> injectParams;
     private final Map<String, Double> numericCaps;
-    /** 破坏性入参正则（预编译，不区分大小写）。 */
-    private final List<Pattern> destructivePatterns;
-    /** 命中破坏性入参的累计次数（可观测用途，供告警指标 / 单测断言）。 */
-    private final java.util.concurrent.atomic.LongAdder destructiveHits =
-        new java.util.concurrent.atomic.LongAdder();
+    /** 破坏性入参改写与 onActing 骨架（规则源是本模块自己的配置）。 */
+    private final ToolCallRewriteCore rewriteCore;
 
     public ToolGuardMiddleware(CustomerWorkProperties properties) {
         CustomerWorkProperties.Hooks.ToolGuard cfg = properties.getHooks().getToolGuard();
         this.enabled = cfg.isEnabled();
         this.injectParams = cfg.getInjectParams();
         this.numericCaps = cfg.getNumericCaps();
-        this.destructivePatterns = new ArrayList<>();
+        // 破坏性入参正则（预编译，不区分大小写）
+        List<Pattern> destructivePatterns = new ArrayList<>();
         if (cfg.getDestructivePatterns() != null) {
             for (String p : cfg.getDestructivePatterns()) {
                 if (p != null && !p.isEmpty()) {
-                    this.destructivePatterns.add(Pattern.compile(p, Pattern.CASE_INSENSITIVE));
+                    destructivePatterns.add(Pattern.compile(p, Pattern.CASE_INSENSITIVE));
                 }
             }
         }
+        this.rewriteCore = new ToolCallRewriteCore(text -> matchesAny(destructivePatterns, text),
+            CustomerWorkProperties.Hooks.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
+            LOG_SCOPE, CODE_DESTRUCTIVE, CODE_GUARD_FAIL);
     }
 
     /** 命中破坏性入参的累计次数（供单测断言 / 监控采样）。 */
     long destructiveHitCount() {
-        return destructiveHits.sum();
+        return rewriteCore.destructiveHitCount();
     }
 
     @Override
     public Flux<AgentEvent> onActing(Agent agent, RuntimeContext ctx, ActingInput input,
                                      Function<ActingInput, Flux<AgentEvent>> next) {
-        if (!enabled || input.toolCalls() == null || input.toolCalls().isEmpty()) {
+        if (!enabled) {
             return next.apply(input);
         }
-        try {
-            List<ToolUseBlock> rewritten = new ArrayList<>(input.toolCalls().size());
-            boolean anyChanged = false;
-            for (ToolUseBlock use : input.toolCalls()) {
-                ToolUseBlock guarded = guard(use);
-                if (guarded != null) {
-                    rewritten.add(guarded);
-                    anyChanged = true;
-                } else {
-                    rewritten.add(use);
-                }
-            }
-            if (anyChanged) {
-                return next.apply(new ActingInput(rewritten));
-            }
-        } catch (Exception e) {
-            log.error("[GUARD] tool input guard failed (pass through), code={}", "TOOL_GUARD_ERROR", e);
-        }
-        return next.apply(input);
+        return rewriteCore.guardActing(input, next, this::guard);
     }
 
     /** 返回改写后的工具调用；无改动则返回 null。 */
@@ -121,20 +111,8 @@ public class ToolGuardMiddleware implements MiddlewareBase {
                 changed = true;
             }
         }
-        // 破坏性命令拦截：对字符串入参匹配危险模式，命中即改写为安全占位并计数告警。
-        if (!destructivePatterns.isEmpty()) {
-            for (Map.Entry<String, Object> entry : new LinkedHashMap<>(in).entrySet()) {
-                Object raw = entry.getValue();
-                if (raw instanceof CharSequence && isDestructive(raw.toString())) {
-                    destructiveHits.increment();
-                    log.error("[GUARD] tool {} param {} hit destructive pattern, rewritten to placeholder, code={}",
-                        use.getName(), entry.getKey(), CODE_DESTRUCTIVE);
-                    in.put(entry.getKey(),
-                        CustomerWorkProperties.Hooks.ToolGuard.DESTRUCTIVE_PLACEHOLDER);
-                    changed = true;
-                }
-            }
-        }
+        // 破坏性命令拦截：命中即改写为安全占位并计数告警（注入后的参数一并纳入扫描范围）
+        changed |= rewriteCore.rewriteDestructiveParams(use.getName(), in);
         if (!changed) {
             return null;
         }
@@ -142,8 +120,8 @@ public class ToolGuardMiddleware implements MiddlewareBase {
     }
 
     /** 字符串是否命中任一破坏性模式。 */
-    private boolean isDestructive(String text) {
-        for (Pattern p : destructivePatterns) {
+    private static boolean matchesAny(List<Pattern> patterns, String text) {
+        for (Pattern p : patterns) {
             if (p.matcher(text).find()) {
                 return true;
             }

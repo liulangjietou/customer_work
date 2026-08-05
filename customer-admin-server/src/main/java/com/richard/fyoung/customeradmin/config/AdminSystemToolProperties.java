@@ -15,7 +15,8 @@ import java.util.List;
  *   <li>默认（白名单为空）：拒绝环回/内网/链路本地地址，公网放行——保持工具开箱可用但堵住打内网；</li>
  *   <li>白名单非空（收紧模式）：仅放行白名单内的 host（精确域名或 {@code *.example.com} 通配后缀）。</li>
  * </ul>
- * 判定逻辑见 {@code SystemToolHttpGuard}，它是该链路唯一的防御点。</p>
+ * 策略由 {@code SystemToolHttpGuard} 绑定（该链路唯一的防御点），判定算法在 starter 的
+ * {@code HttpTargetGuard}（与 RAG 地址校验同一份实现，差异只在内网放行策略枚举）。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data

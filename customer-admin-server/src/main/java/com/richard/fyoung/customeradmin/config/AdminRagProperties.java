@@ -16,7 +16,8 @@ import java.util.List;
  * （用户本机就是 {@code localhost:20002}），默认拒内网等于功能不可用。两套白名单各自独立，
  * 互不污染——把 RAG 的内网地址加进系统工具白名单，会顺带把模型可控的 HTTP 工具也放进内网。</p>
  *
- * <p>判定逻辑见 {@code KnowledgeBaseHttpGuard}，它是本链路唯一的地址防御点。</p>
+ * <p>策略由 {@code KnowledgeBaseHttpGuard} 绑定（本链路唯一的地址防御点），判定算法在 starter 的
+ * {@code HttpTargetGuard}（与系统工具地址校验同一份实现，差异只在内网放行策略枚举）。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data

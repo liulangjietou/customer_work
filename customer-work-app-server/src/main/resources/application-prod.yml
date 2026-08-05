@@ -114,9 +114,9 @@ customer-work:
     store-mode: jdbc
 
   # ------------------------------------------------------------------
-  # 模型私有化兜底：生产开启，使用自研 FallbackChatModel
+  # 模型私有化兜底：生产开启，使用自研 FailoverModel（starter 下沉版，主备有序候选 + 熔断记忆）
   # 框架内置的 ReActAgent.Builder.fallbackModel(...) 存在已知缺陷（#1850），生产不采用；
-  # 本项目 FallbackChatModel 是自研装饰器（主模型失败时切换兜底模型），行为已被单测覆盖。
+  # 本项目 FailoverModel 是自研装饰器（主模型失败时按序切兜底模型），行为已被单测覆盖。
   # ------------------------------------------------------------------
   model:
     provider: dashscope

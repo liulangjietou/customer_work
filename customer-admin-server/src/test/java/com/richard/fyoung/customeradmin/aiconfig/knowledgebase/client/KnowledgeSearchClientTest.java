@@ -2,8 +2,11 @@ package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
-import org.junit.jupiter.api.BeforeEach;
+import com.richard.fyoung.customerwork.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.rag.search.KnowledgeNode;
+import com.richard.fyoung.customerwork.rag.search.KnowledgeSearchSettings;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -14,244 +17,88 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
 
 /**
- * {@link KnowledgeSearchClient} 单测（全部离线，不依赖真实 RAG 服务）：
- * 响应解析、自定义头解析、阈值过滤、多库合并排序取 top-n、单库失败降级为空而不抛异常。
+ * {@link KnowledgeSearchClient} 单测：本类是 starter {@code KnowledgeSearchOps} 的调用壳，故这里只验证
+ * <b>属于薄壳的三件事</b>——异常转译（地址拦截 / 检索失败各自的业务错误码）、
+ * {@code admin.rag.*} 到 starter 配置 POJO 的映射（超时诊断文案里必须出现本模块的真实配置键）、
+ * 静态解析方法的委派。检索/解析/合并/降级等算法本身在 starter 的 {@code KnowledgeSearchOpsTest}
+ * 覆盖，不在此重复。
  * @author owlzhangfq@gmail.com
  */
 class KnowledgeSearchClientTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** 保证连接被拒的地址：1 号端口不可能有服务在监听，且是环回地址（默认策略放行内网）。 */
+    private static final String UNREACHABLE_BASE_URL = "http://127.0.0.1:1";
 
-    private KnowledgeSearchClient client;
-
-    @BeforeEach
-    void setUp() {
-        client = new KnowledgeSearchClient(mock(KnowledgeBaseHttpGuard.class), new AdminRagProperties());
+    private KnowledgeSearchClient client(String... allowedHosts) {
+        AdminRagProperties properties = new AdminRagProperties();
+        properties.setAllowedHosts(List.of(allowedHosts));
+        return new KnowledgeSearchClient(new KnowledgeBaseHttpGuard(properties), properties);
     }
 
-    private KnowledgeBaseEndpoint endpoint(Long id, String name, int topN, String threshold) {
-        return new KnowledgeBaseEndpoint(id, name, "http://localhost:20002", "app_" + id, "sk-test",
-            "application/json", "", topN, new BigDecimal(threshold));
+    private KnowledgeBaseEndpoint endpoint(String baseUrl) {
+        return new KnowledgeBaseEndpoint(1L, "kb", baseUrl, "app_1", "sk-test",
+            "application/json", "", 5, BigDecimal.ZERO);
     }
 
-    private KnowledgeNode node(String kbName, String content, String score) {
-        return new KnowledgeNode(kbName, content, new BigDecimal(score), "doc-1", "chunk-1");
-    }
-
-    // ---- HTTP 协议版本与错误诊断 ----
-
-    /**
-     * 必须固定 HTTP/1.1：默认的 HTTP_2 会对 http:// 发 h2c upgrade 协商，
-     * 实测自建 Node RAG 服务不响应该协商导致请求挂起到超时（HTTP_2 超时 8s vs HTTP_1_1 正常 928ms）。
-     */
+    /** 地址被安全策略拦截：必须是 KNOWLEDGE_BASE_HTTP_FORBIDDEN，不能被当成"检索失败"混过去。 */
     @Test
-    void httpClient_shouldPinHttp11_toAvoidH2cUpgradeHang() {
-        assertEquals(java.net.http.HttpClient.Version.HTTP_1_1, client.httpClientVersion(),
-            "HTTP 版本必须固定为 1.1，否则对不支持 h2c 协商的服务会挂起到超时");
-    }
-
-    /**
-     * 非 200 时必须透出响应体里的 code/message——实测该服务把真正原因放在响应体
-     * （401 INVALID_API_KEY、403 APP_ACCESS_DENIED），只报状态码等于丢掉唯一线索。
-     */
-    @Test
-    void describeErrorBody_shouldSurfaceCodeAndMessage() {
-        String desc = KnowledgeSearchClient.describeErrorBody(
-            "{\"code\":\"APP_ACCESS_DENIED\",\"message\":\"该 API Key 未被授权调用应用 app_x\"}");
-
-        assertTrue(desc.contains("APP_ACCESS_DENIED"), "应带上错误码");
-        assertTrue(desc.contains("该 API Key 未被授权调用应用 app_x"), "应带上服务端 message");
-    }
-
-    /** 非 JSON 响应体（网关 HTML 错误页）截断透出，不能整页塞进提示，也不能吞掉。 */
-    @Test
-    void describeErrorBody_shouldTruncateNonJsonBody() {
-        assertEquals("", KnowledgeSearchClient.describeErrorBody(null));
-        assertEquals("", KnowledgeSearchClient.describeErrorBody("  "));
-
-        String html = "<html>" + "x".repeat(500) + "</html>";
-        String desc = KnowledgeSearchClient.describeErrorBody(html);
-        assertTrue(desc.endsWith("...）"), "超长非 JSON 响应体应截断");
-        assertTrue(desc.length() < 230, "截断后长度应受控，实际=" + desc.length());
-    }
-
-    /** 连接类异常的 message 常为 null，必须翻译成可排查的提示（含 IPv6 only 的排查方向）。 */
-    @Test
-    void diagnose_shouldGiveActionableHint_forConnectException() {
-        KnowledgeBaseEndpoint ep = endpoint(1L, "kb", 5, "0");
-
-        String msg = client.diagnose(new java.net.ConnectException(), ep);
-
-        assertTrue(msg.contains("无法建立连接"), "应说明是连接失败");
-        assertTrue(msg.contains("http://localhost:20002"), "应带上实际地址便于核对");
-        assertTrue(msg.contains("[::1]"), "应提示 IPv6 only 的排查方向");
-    }
-
-    /** 超时提示要给出当前超时值与可调配置项，并点出 HTTP/2 协商这个隐蔽成因。 */
-    @Test
-    void diagnose_shouldGiveActionableHint_forTimeout() {
-        KnowledgeBaseEndpoint ep = endpoint(1L, "kb", 5, "0");
-
-        String msg = client.diagnose(new java.net.http.HttpTimeoutException("request timed out"), ep);
-
-        assertTrue(msg.contains("请求超时"), "应说明是超时");
-        assertTrue(msg.contains("admin.rag.request-timeout-seconds"), "应给出可调的配置项");
-    }
-
-    /** 其余异常保留原始 message；message 为空时退回类名，不能出现 "null"。 */
-    @Test
-    void diagnose_shouldFallbackToClassName_whenMessageBlank() {
-        KnowledgeBaseEndpoint ep = endpoint(1L, "kb", 5, "0");
-
-        assertEquals("boom", client.diagnose(new IllegalStateException("boom"), ep));
-        assertEquals("IllegalStateException", client.diagnose(new IllegalStateException(), ep));
-    }
-
-    // ---- 响应解析 ----
-
-    @Test
-    void parseNodes_shouldExtractContentScoreAndIds() throws Exception {
-        String body = """
-            {"code":"OK","message":"success","data":{"nodes":[
-              {"content":"公积金提取流程","score":0.183,"doc_id":"d1","chunk_id":"c1","metadata":{}},
-              {"content":"公积金缴存比例","score":0.131,"doc_id":"d2","chunk_id":"c2"}
-            ],"request_id":"r1"},"request_id":"r1"}
-            """;
-
-        List<KnowledgeNode> nodes = KnowledgeSearchClient.parseNodes(MAPPER, "产品知识库", body);
-
-        assertEquals(2, nodes.size());
-        assertEquals("公积金提取流程", nodes.get(0).content());
-        assertEquals("产品知识库", nodes.get(0).kbName());
-        assertEquals("d1", nodes.get(0).docId());
-        assertEquals("c1", nodes.get(0).chunkId());
-        assertEquals(0, nodes.get(0).score().compareTo(new BigDecimal("0.183")));
-    }
-
-    @Test
-    void parseNodes_shouldThrow_whenCodeIsNotOk() {
-        String body = "{\"code\":\"UNAUTHORIZED\",\"message\":\"invalid appkey\"}";
-
+    void searchOne_shouldTranslateForbiddenTarget_toHttpForbiddenCode() {
         BizException e = assertThrows(BizException.class,
-            () -> KnowledgeSearchClient.parseNodes(MAPPER, "kb", body));
-        assertTrue(e.getMessage().contains("UNAUTHORIZED"));
+            () -> client("rag.internal.corp").searchOne(endpoint(UNREACHABLE_BASE_URL), "问题"));
+
+        assertEquals(ResultCode.KNOWLEDGE_BASE_HTTP_FORBIDDEN, e.getResultCode());
     }
 
+    /** 检索链路失败（这里是连接被拒）：转 KNOWLEDGE_BASE_SEARCH_FAILED，并保留 starter 翻译好的排查提示。 */
     @Test
-    void parseNodes_shouldReturnEmpty_whenNodesMissingOrContentBlank() throws Exception {
-        assertTrue(KnowledgeSearchClient.parseNodes(MAPPER, "kb", "{\"code\":\"OK\",\"data\":{}}").isEmpty());
-        assertTrue(KnowledgeSearchClient.parseNodes(MAPPER, "kb",
-            "{\"code\":\"OK\",\"data\":{\"nodes\":[{\"content\":\"\",\"score\":0.5}]}}").isEmpty());
+    void searchOne_shouldTranslateSearchFailure_toSearchFailedCode() {
+        BizException e = assertThrows(BizException.class,
+            () -> client().searchOne(endpoint(UNREACHABLE_BASE_URL), "问题"));
+
+        assertEquals(ResultCode.KNOWLEDGE_BASE_SEARCH_FAILED, e.getResultCode());
+        assertTrue(e.getMessage().contains("无法建立连接"), "应保留 starter 的可排查提示，实际=" + e.getMessage());
+        assertTrue(e.getMessage().contains(UNREACHABLE_BASE_URL), "提示里应带上实际地址便于核对");
     }
 
-    // ---- 自定义请求头 ----
-
+    /**
+     * 三个超时必须逐项映射到 starter（漏一项就会悄悄用回 starter 默认值），
+     * 且超时诊断文案里的配置项名必须是<b>本模块的</b>真实配置键——starter 侧只是个中立占位，
+     * 映射漏了会让排查的人拿到一个根本不存在的配置项。
+     */
     @Test
-    void parseExtraHeaders_shouldParseJsonObject() {
-        Map<String, String> headers = KnowledgeSearchClient.parseExtraHeaders(MAPPER, "{\"X-Tenant\":\"acme\"}");
+    void toSettings_shouldMapAllTimeouts_andAdminRagConfigKey() {
+        AdminRagProperties properties = new AdminRagProperties();
+        properties.setConnectTimeoutSeconds(1);
+        properties.setRequestTimeoutSeconds(3);
+        properties.setRetrievalTimeoutSeconds(7);
 
-        assertEquals(Map.of("X-Tenant", "acme"), headers);
+        KnowledgeSearchSettings settings = KnowledgeSearchClient.toSettings(properties);
+
+        assertEquals(1, settings.getConnectTimeoutSeconds());
+        assertEquals(3, settings.getRequestTimeoutSeconds());
+        assertEquals(7, settings.getRetrievalTimeoutSeconds());
+        assertEquals("admin.rag.request-timeout-seconds", settings.getRequestTimeoutConfigKey());
     }
 
+    /** 检索降级路径不抛异常，故无需转译：全部失败也只是空召回。 */
     @Test
-    void parseExtraHeaders_shouldReturnEmpty_whenBlank() {
-        assertTrue(KnowledgeSearchClient.parseExtraHeaders(MAPPER, null).isEmpty());
-        assertTrue(KnowledgeSearchClient.parseExtraHeaders(MAPPER, "  ").isEmpty());
-    }
-
-    @Test
-    void parseExtraHeaders_shouldRejectMalformedOrNonObjectJson() {
-        assertThrows(IllegalArgumentException.class, () -> KnowledgeSearchClient.parseExtraHeaders(MAPPER, "{not-json"));
-        assertThrows(IllegalArgumentException.class, () -> KnowledgeSearchClient.parseExtraHeaders(MAPPER, "[1,2]"));
-    }
-
-    @Test
-    void parseExtraHeaders_shouldIgnoreReservedHeaders() {
-        // Authorization / Content-Type 由客户端按知识库配置统一设置，JDK HttpRequest 的 header() 是追加而非覆盖
-        Map<String, String> headers = KnowledgeSearchClient.parseExtraHeaders(MAPPER,
-            "{\"authorization\":\"Bearer hack\",\"Content-Type\":\"text/plain\",\"X-Ok\":\"1\"}");
-
-        assertEquals(Map.of("X-Ok", "1"), headers);
-    }
-
-    // ---- 多库并发检索：过滤 / 合并 / 降级 ----
-
-    @Test
-    void searchAll_shouldReturnEmpty_whenNoEndpointsOrBlankQuery() {
-        assertTrue(client.searchAll(List.of(), "问题").isEmpty());
-        assertTrue(client.searchAll(List.of(endpoint(1L, "kb1", 5, "0")), "  ").isEmpty());
-    }
-
-    @Test
-    void searchAll_shouldDropNodesBelowThreshold() {
-        KnowledgeSearchClient spyClient = spy(client);
-        KnowledgeBaseEndpoint ep = endpoint(1L, "kb1", 5, "0.15");
-        doReturn(List.of(node("kb1", "高分", "0.183"), node("kb1", "低分", "0.131")))
-            .when(spyClient).searchOne(eq(ep), anyString());
-
-        List<KnowledgeNode> nodes = spyClient.searchAll(List.of(ep), "问题");
-
-        assertEquals(1, nodes.size());
-        assertEquals("高分", nodes.get(0).content());
-    }
-
-    @Test
-    void searchAll_shouldKeepAll_whenThresholdIsZero() {
-        // rerank 分数量级只有 0.1x，默认阈值必须是 0（不过滤），否则常见的 0.5 会把全部召回丢光
-        KnowledgeSearchClient spyClient = spy(client);
-        KnowledgeBaseEndpoint ep = endpoint(1L, "kb1", 5, "0");
-        doReturn(List.of(node("kb1", "a", "0.183"), node("kb1", "b", "0.131")))
-            .when(spyClient).searchOne(eq(ep), anyString());
-
-        assertEquals(2, spyClient.searchAll(List.of(ep), "问题").size());
-    }
-
-    @Test
-    void searchAll_shouldMergeMultipleKnowledgeBases_sortedByScoreDescAndLimited() {
-        KnowledgeSearchClient spyClient = spy(client);
-        KnowledgeBaseEndpoint first = endpoint(1L, "kb1", 2, "0");
-        KnowledgeBaseEndpoint second = endpoint(2L, "kb2", 3, "0");
-        doReturn(List.of(node("kb1", "a", "0.11"), node("kb1", "c", "0.19"))).when(spyClient).searchOne(eq(first), anyString());
-        doReturn(List.of(node("kb2", "b", "0.15"), node("kb2", "d", "0.13"))).when(spyClient).searchOne(eq(second), anyString());
-
-        List<KnowledgeNode> nodes = spyClient.searchAll(List.of(first, second), "问题");
-
-        // 合并上限取各库 topN 的最大值（3），按 score 倒排：0.19 / 0.15 / 0.13
-        assertEquals(3, nodes.size());
-        assertEquals(List.of("c", "b", "d"), nodes.stream().map(KnowledgeNode::content).toList());
-    }
-
-    @Test
-    void searchAll_shouldDegradeToPartialResult_whenOneKnowledgeBaseFails() {
-        KnowledgeSearchClient spyClient = spy(client);
-        KnowledgeBaseEndpoint healthy = endpoint(1L, "kb1", 5, "0");
-        KnowledgeBaseEndpoint broken = endpoint(2L, "kb2", 5, "0");
-        doReturn(List.of(node("kb1", "ok", "0.18"))).when(spyClient).searchOne(eq(healthy), anyString());
-        doThrow(new IllegalStateException("connection refused")).when(spyClient).searchOne(eq(broken), anyString());
-
-        List<KnowledgeNode> nodes = assertDoesNotThrow(() -> spyClient.searchAll(List.of(healthy, broken), "问题"));
-
-        assertEquals(1, nodes.size(), "单库失败只能损失该库的召回，不得打断整体检索");
-        assertEquals("ok", nodes.get(0).content());
-    }
-
-    @Test
-    void searchAll_shouldReturnEmptyAndNotThrow_whenAllKnowledgeBasesFail() {
-        KnowledgeSearchClient spyClient = spy(client);
-        doThrow(new IllegalStateException("boom")).when(spyClient).searchOne(any(KnowledgeBaseEndpoint.class), anyString());
-
+    void searchAll_shouldNeverThrow_evenWhenAllKnowledgeBasesFail() {
         List<KnowledgeNode> nodes = assertDoesNotThrow(
-            () -> spyClient.searchAll(List.of(endpoint(1L, "kb1", 5, "0")), "问题"));
+            () -> client().searchAll(List.of(endpoint(UNREACHABLE_BASE_URL)), "问题"));
 
         assertTrue(nodes.isEmpty(), "检索失败绝不抛异常打断对话");
+    }
+
+    /** 静态解析委派给 starter：保存时校验与运行时解析共用同一份规则，不得在薄壳里另写一套。 */
+    @Test
+    void parseExtraHeaders_shouldDelegateToStarterImplementation() {
+        Map<String, String> headers = KnowledgeSearchClient.parseExtraHeaders(MAPPER,
+            "{\"authorization\":\"Bearer hack\",\"X-Ok\":\"1\"}");
+
+        assertEquals(Map.of("X-Ok", "1"), headers);
+        assertThrows(IllegalArgumentException.class, () -> KnowledgeSearchClient.parseExtraHeaders(MAPPER, "[1,2]"));
     }
 }

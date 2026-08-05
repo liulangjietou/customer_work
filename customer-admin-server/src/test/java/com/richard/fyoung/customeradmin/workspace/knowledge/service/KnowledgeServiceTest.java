@@ -8,7 +8,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminKnowledgeProperties;
 import com.richard.fyoung.customeradmin.workspace.audit.service.AiCodingAuditService;
 import com.richard.fyoung.customeradmin.workspace.knowledge.dto.KnowledgeSearchHit;
-import com.richard.fyoung.customeradmin.workspace.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.knowledge.embedding.EmbeddingClient;
 import com.richard.fyoung.customeradmin.workspace.knowledge.entity.AiCodeKnowledgeChunk;
 import com.richard.fyoung.customeradmin.workspace.knowledge.entity.AiCodeKnowledgeIndex;
 import com.richard.fyoung.customeradmin.workspace.knowledge.mapper.AiCodeKnowledgeChunkMapper;

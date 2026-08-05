@@ -8,7 +8,7 @@ import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryMetaVO;
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryRequest;
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryResultVO;
 import com.richard.fyoung.customeradmin.sqlconfig.engine.SqlQueryService;
-import com.richard.fyoung.customeradmin.sqlconfig.engine.XlsxExporter;
+import com.richard.fyoung.customerwork.sqlkit.XlsxExporter;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -58,7 +58,7 @@ public class SqlQueryController {
     @PostMapping("/export")
     public ResponseEntity<byte[]> export(@Valid @RequestBody SqlQueryRequest request) {
         SqlQueryResultVO result = queryService.executeForExport(request.defineKey(), request.params());
-        byte[] content = XlsxExporter.write(result);
+        byte[] content = XlsxExporter.write(result.getColumns(), result.getRows());
         String fileName = request.defineKey() + "-" + LocalDateTime.now().format(FILE_TIMESTAMP) + ".xlsx";
         return xlsxResponse(content, fileName);
     }
@@ -91,7 +91,7 @@ public class SqlQueryController {
     @PostMapping("/adhoc/export")
     public ResponseEntity<byte[]> adhocExport(@Valid @RequestBody SqlAdhocQueryRequest request) {
         SqlQueryResultVO result = queryService.executeAdhoc(request.datasourceId(), request.sql());
-        byte[] content = XlsxExporter.write(result);
+        byte[] content = XlsxExporter.write(result.getColumns(), result.getRows());
         String fileName = "sql-console-" + LocalDateTime.now().format(FILE_TIMESTAMP) + ".xlsx";
         return xlsxResponse(content, fileName);
     }

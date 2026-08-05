@@ -18,8 +18,8 @@ import java.util.Locale;
  * 带重试的模型包装（对应「生产健壮性 · 重试/退避」）。
  *
  * <p>实现统一 {@link Model} 抽象，对底层模型调用按指数退避重试，缓解瞬时网络抖动 / 限流，
- * 提升高可用。基于 Reactor 的 {@code retryWhen}，无需额外依赖。可与 {@link FallbackChatModel}
- * 叠加（先重试，仍失败再兜底）。</p>
+ * 提升高可用。基于 Reactor 的 {@code retryWhen}，无需额外依赖。可与
+ * {@link com.richard.fyoung.customerwork.model.failover.FailoverModel} 叠加（先重试，仍失败再切备）。</p>
  * @author owlzhangfq@gmail.com
  */
 public class ResilientChatModel implements Model {
