@@ -129,6 +129,35 @@ class CustomerWorkConfigPublisherTest {
     }
 
     @Test
+    void assembleUnwrapsMcpServersWrapperConfig() {
+        CustomerWorkConfigPublisher publisher = publisher(true);
+        AiModelConfig primary = model(100L, "openai", "gpt-4o", "CIPHER_PRIMARY");
+        when(backupModelMapper.selectList(any())).thenReturn(List.of());
+
+        // Claude Desktop / Cursor 风格：外层包一层 mcpServers（调试面板可用，发布链路曾解不出 url 被静默跳过）
+        AiAgentMcp rel = new AiAgentMcp();
+        rel.setAgentId(1L);
+        rel.setMcpId(11L);
+        when(agentMcpMapper.selectList(any())).thenReturn(List.of(rel));
+        AiMcp mcp = new AiMcp();
+        mcp.setId(11L);
+        mcp.setMcpName("amap");
+        mcp.setMcpType("http");
+        mcp.setStatus(1);
+        mcp.setConfig("{\"mcpServers\":{\"amap-maps\":{\"url\":\"https://mcp.amap.com/mcp\","
+            + "\"headers\":{\"Authorization\":\"Bearer y\"}}}}");
+        when(mcpMapper.selectBatchIds(any())).thenReturn(List.of(mcp));
+
+        CustomerWorkRuntimeConfig cfg = publisher.assemble(agent(), primary);
+
+        assertEquals(1, cfg.getMcpServers().size(), "包装格式的 MCP 不应被静默跳过");
+        assertEquals("amap", cfg.getMcpServers().get(0).getName(), "名称以 ai_mcp.mcp_name 为准，不读 wrapper 的 key");
+        assertEquals("https://mcp.amap.com/mcp", cfg.getMcpServers().get(0).getUrl());
+        assertEquals("streamable-http", cfg.getMcpServers().get(0).getTransport());
+        assertEquals("Bearer y", cfg.getMcpServers().get(0).getHeaders().get("Authorization"));
+    }
+
+    @Test
     void republishBlockedWhenConnectivityProbeFails() {
         CustomerWorkConfigPublisher publisher = publisher(true);
         AiChannelBinding binding = new AiChannelBinding();
