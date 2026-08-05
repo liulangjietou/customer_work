@@ -1,0 +1,23 @@
+# =============================================================================
+# prometheus-webhook-dingtalk 配置模板。
+#
+# 注意：这是模板文件（挂载为只读，供 docker-compose.yml 里的 dingtalk-config-init 一次性
+# 容器读取），下面 targets.webhook1.url 那行的占位符会在 `docker compose up` 时被自动
+# 替换成 .env 里的 DINGTALK_WEBHOOK_URL 真实值，写入 dingtalk-config 数据卷供
+# dingtalk-webhook 服务实际使用——本文件本身不会被直接挂给 dingtalk-webhook 服务，
+# 改了占位符写法后记得同步检查 docker-compose.yml 里的 sed 替换命令（两边必须完全一致，
+# 且注意：sed 是全文替换，若在本文件的说明性注释里也照抄一遍占位符字面量，会被一并替换掉，
+# 反而让生成结果的注释显得混乱——本文件的写法特意避免了这一点，改动时请保持同样习惯）。
+#
+# 手工验证 / 不想用自动替换时的备选方案：
+#   1. cp dingtalk/config.yml dingtalk/config.local.yml
+#   2. 把 url 那行的占位符替换成真实 webhook 地址
+#   3. docker-compose.yml 的 dingtalk-webhook 服务改挂 ./dingtalk/config.local.yml
+#      （config.local.yml 建议加进 .gitignore，避免真实 webhook 提交进仓库）
+# =============================================================================
+targets:
+  webhook1:
+    url: __DINGTALK_WEBHOOK_URL__
+    # 如果钉钉机器人安全设置选的是"加签"（而非关键词/IP白名单），把签名密钥填在这里
+    # （钉钉后台复制的以 SEC 开头的字符串），否则删掉/留空即可：
+    # secret: SEC_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX

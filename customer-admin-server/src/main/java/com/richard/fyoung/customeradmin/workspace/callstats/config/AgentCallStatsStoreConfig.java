@@ -6,8 +6,10 @@ import com.richard.fyoung.customerwork.calllog.AgentCallTimingMiddleware;
 import com.richard.fyoung.customerwork.calllog.StoreAgentCallRecordSink;
 import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -58,9 +60,12 @@ public class AgentCallStatsStoreConfig {
     public AgentCallTimingMiddleware agentCallTimingMiddleware(
             @Value("${customer-work.call-log.enabled:true}") boolean callLogEnabled,
             ToolKindRegistry agentCallToolKindRegistry,
-            AgentCallRecordSink agentCallRecordSink) {
+            AgentCallRecordSink agentCallRecordSink,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         properties.getCallLog().setEnabled(callLogEnabled);
-        return new AgentCallTimingMiddleware(properties, agentCallToolKindRegistry, agentCallRecordSink);
+        // meterRegistry 可选注入：容器里没有 Micrometer 时中间件降级为只落库、不出 token 指标
+        return new AgentCallTimingMiddleware(properties, agentCallToolKindRegistry,
+            agentCallRecordSink, meterRegistryProvider);
     }
 }

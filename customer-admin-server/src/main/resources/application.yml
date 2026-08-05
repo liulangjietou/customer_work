@@ -256,6 +256,18 @@ admin:
     # 允许被索引的源码根白名单（源码路径必须落在其一之下，防越权读盘）。默认只允许 admin 工作区；
     # 需索引外部仓库源码时追加其绝对路径根，逗号分隔（YAML 列表）。
     allowed-roots: ${ADMIN_KNOWLEDGE_ALLOWED_ROOTS:./data/admin-workspace}
+  observability:
+    otel:
+      # OpenTelemetry 链路追踪（见 AdminOtelTracingConfig）：默认关闭，本地无 Collector 也能正常启动。
+      # 开启后给后台工作区智能体挂框架的 OtelTracingMiddleware，按 agent/model/tool 三段出 span，
+      # 经 OTLP gRPC 异步导出（后端不可达只在 OTel 内部丢弃，不阻塞也不影响业务链路）。
+      # admin 是 Spring MVC，本期不出 HTTP 入口 span，span 树以 agent 为根。
+      enabled: ${ADMIN_OTEL_ENABLED:false}
+      endpoint: ${ADMIN_OTEL_ENDPOINT:http://localhost:4317}
+      # 链路后台按 service.name 区分服务，与 8080 侧的 customer-work 分开。
+      service-name: ${ADMIN_OTEL_SERVICE_NAME:customer-admin}
+      # 采样比例 [0,1]：1.0 全采，生产高流量建议下调；父级已采样的链路始终跟随父级，不会截成两截。
+      sampler-ratio: ${ADMIN_OTEL_SAMPLER_RATIO:1.0}
   content-guard:
     # 给后台工作区智能体（对话/VibeCoding）挂敏感词过滤；词库与 8080 客服链路共用客服端库那一份。
     agent-filter-enabled: ${ADMIN_CONTENT_GUARD_ENABLED:false}
@@ -304,6 +316,16 @@ customer-work:
         base-url: ${ADMIN_ATTACHMENT_OCR_PADDLE_BASE_URL:http://localhost:8868}
         ocr-path: ${ADMIN_ATTACHMENT_OCR_PADDLE_PATH:/ocr}
         timeout-seconds: ${ADMIN_ATTACHMENT_OCR_PADDLE_TIMEOUT_SECONDS:30}
+
+# Actuator 端点暴露：与 application-prod.yml 保持一致，本地 IDE 启动也能被 Prometheus 抓
+# /actuator/prometheus（抓取端配置见 docker/observability/prometheus/prometheus.yml）。
+# 指标注册表由 customer-work-starter 传递进来的 micrometer-registry-prometheus 提供。
+# /actuator/** 已在 SaTokenConfig 的拦截器白名单里，抓取无需带登录态。
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
 
 springdoc:
   api-docs:

@@ -52,6 +52,7 @@ import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
+import io.agentscope.core.tracing.OtelTracingMiddleware;
 import io.agentscope.harness.agent.HarnessAgent;
 import io.agentscope.harness.agent.subagent.task.TaskRepository;
 import io.agentscope.harness.agent.IsolationScope;
@@ -168,6 +169,11 @@ public class AdminAgentInstanceFactory {
     private final AgentCallTimingMiddleware agentCallTimingMiddleware;
     /** 工具名→类别登记表：装配 MCP/Skill 时把工具名登记进来，采集时 onActing 据此归 MCP/SKILL（否则默认 TOOL）。 */
     private final ToolKindRegistry agentCallToolKindRegistry;
+    /**
+     * OTel 链路追踪中间件（框架自带，admin 侧由 {@code AdminOtelTracingConfig} 显式装配）：
+     * 仅 {@code admin.observability.otel.enabled=true} 时容器里才有，否则为 null，本工厂跳过挂载。
+     */
+    private final OtelTracingMiddleware otelTracingMiddleware;
     /** 知识库检索服务：供每个智能体各挂一份 {@link KnowledgeRetrievalMiddleware} 做每轮召回注入。 */
     private final KnowledgeRetrievalService knowledgeRetrievalService;
     /**
@@ -202,6 +208,7 @@ public class AdminAgentInstanceFactory {
                                       AgentMemorySyncService memorySyncService,
                                       AgentCallTimingMiddleware agentCallTimingMiddleware,
                                       ToolKindRegistry agentCallToolKindRegistry,
+                                      ObjectProvider<OtelTracingMiddleware> otelTracingMiddlewareProvider,
                                       KnowledgeRetrievalService knowledgeRetrievalService,
                                       ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider,
                                       IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware,
@@ -236,6 +243,8 @@ public class AdminAgentInstanceFactory {
         // provider 可为 null：路径解析类单测直接 new 本工厂并传 null 依赖，容器里则恒有 provider
         this.sensitiveWordMiddleware = sensitiveWordMiddlewareProvider == null
             ? null : sensitiveWordMiddlewareProvider.getIfAvailable();
+        this.otelTracingMiddleware = otelTracingMiddlewareProvider == null
+            ? null : otelTracingMiddlewareProvider.getIfAvailable();
     }
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
@@ -320,6 +329,14 @@ public class AdminAgentInstanceFactory {
         // onActing 逐段计时，只读透传不改事件、不打断主链路（异常安全收敛在中间件内）。放在模式闸门之外，
         // 统计口径覆盖完整链路。chat 与 vibecoding 走同一内层 ReActAgent，均被采集。
         builder.middleware(agentCallTimingMiddleware);
+        // OTel 追踪紧挨耗时统计（观测类中间件聚在一起，都是只读透传、不改事件）：放在耗时统计之内层，
+        // 是因为耗时统计要覆盖"完整链路含 OTel 自身开销"，而 OTel 的 agent span 只需覆盖真正的业务执行；
+        // 两者顺序对彼此的数值影响都是微秒级，聚在最外层的意义是——后面所有会短路/改写的中间件
+        // （敏感词 BLOCK、模式闸门挂起）发生的事都落在这两个观测中间件的统计与 span 之内，不会被漏采。
+        // 未开启 admin.observability.otel.enabled 时该 Bean 不存在，此处跳过。
+        if (otelTracingMiddleware != null) {
+            builder.middleware(otelTracingMiddleware);
+        }
         // 敏感词过滤紧随耗时统计之后、其余中间件之前：入站命中 BLOCK 会直接短路返回安全话术，
         // 越早拦下越好——后面的模式闸门、知识库召回都不必为一条注定要被拦的消息做功。
         // 未开启 admin.content-guard.agent-filter-enabled 时该 Bean 不存在，此处跳过。

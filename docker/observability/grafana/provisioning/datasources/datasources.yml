@@ -1,0 +1,42 @@
+# =============================================================================
+# Grafana 数据源自动装配：Prometheus（默认）+ Tempo（链路）+ MySQL（业务库只读报表）。
+#
+# ${VAR} 占位符由 Grafana provisioning 原生支持的环境变量展开机制处理（Grafana 8+），
+# 无需额外 sed/envsubst——对应环境变量在 docker-compose.yml 的 grafana 服务里注入。
+# uid 固定写死，供 dashboards/ 下的仪表盘 JSON 按 uid 引用数据源，避免 provisioning
+# 每次重建都生成新 uid 导致仪表盘面板"数据源丢失"。
+# =============================================================================
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: customerwork-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Tempo
+    uid: customerwork-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+
+  - name: MySQL
+    uid: customerwork-mysql
+    type: mysql
+    access: proxy
+    # host:port 拼一个字符串是 Grafana MySQL 数据源的约定格式
+    url: ${GRAFANA_MYSQL_HOST}:${GRAFANA_MYSQL_PORT}
+    database: ${GRAFANA_MYSQL_DATABASE}
+    user: ${GRAFANA_MYSQL_USER}
+    secureJsonData:
+      password: ${GRAFANA_MYSQL_PASSWORD}
+    jsonData:
+      # 仅用于报表查询，不需要长连接维持
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 60
+    editable: false

@@ -1,0 +1,132 @@
+{
+  "id": null,
+  "uid": "customerwork-jvm-system",
+  "title": "JVM 与系统",
+  "description": "标准 Spring Boot Actuator / Micrometer 指标：堆内存、GC 停顿、线程数、CPU、进程打开文件数。",
+  "tags": ["customer-work", "jvm"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "editable": true,
+  "graphTooltip": 1,
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "堆内存使用 / 上限",
+      "description": "jvm_memory_used_bytes{area=\"heap\"} vs jvm_memory_max_bytes{area=\"heap\"}，按 job 聚合",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(jvm_memory_used_bytes{area=\"heap\"}) by (job)",
+          "legendFormat": "used {{job}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(jvm_memory_max_bytes{area=\"heap\"}) by (job)",
+          "legendFormat": "max {{job}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "GC 停顿",
+      "description": "rate(jvm_gc_pause_seconds_sum[5m])：单位时间内 GC 累计耗时占比（越接近 1 越危险）；右轴同时看次数速率",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(jvm_gc_pause_seconds_sum[5m])) by (job)",
+          "legendFormat": "GC耗时占比 {{job}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(jvm_gc_pause_seconds_count[5m])) by (job)",
+          "legendFormat": "GC次数/s {{job}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "线程数",
+      "description": "jvm_threads_live_threads{job=...}：存活线程数",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(jvm_threads_live_threads) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "CPU 使用率",
+      "description": "process_cpu_usage（进程）与 system_cpu_usage（整机），均为 0~1 比例",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "custom": { "drawStyle": "line", "fillOpacity": 10 }, "max": 1, "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "avg(process_cpu_usage) by (job)",
+          "legendFormat": "进程 {{job}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "avg(system_cpu_usage) by (job)",
+          "legendFormat": "整机 {{job}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "进程打开文件数",
+      "description": "process_files_open_files vs process_files_max_files：接近上限提示需要调 ulimit 或排查连接/文件句柄泄漏",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(process_files_open_files) by (job)",
+          "legendFormat": "打开数 {{job}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(process_files_max_files) by (job)",
+          "legendFormat": "上限 {{job}}"
+        }
+      ]
+    }
+  ]
+}

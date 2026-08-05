@@ -17,8 +17,10 @@ import io.agentscope.core.middleware.ActingInput;
 import io.agentscope.core.middleware.AgentInput;
 import io.agentscope.core.middleware.MiddlewareBase;
 import io.agentscope.core.middleware.ModelCallInput;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
@@ -56,16 +58,27 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
     private static final String UNKNOWN = "unknown";
     private static final String CANCELLED = "cancelled";
 
+    /** token 消耗计数器名（与 Grafana 面板约定，不可改名）。 */
+    private static final String M_TOKENS = "customerwork.agent.tokens";
+    /** token 计数器的类型 tag 与取值。 */
+    private static final String TAG_TYPE = "type";
+    private static final String TYPE_INPUT = "input";
+    private static final String TYPE_OUTPUT = "output";
+
     private final boolean enabled;
     private final ToolKindRegistry toolKindRegistry;
     private final AgentCallRecordSink sink;
+    /** 可为 null：未接入 Micrometer 时降级为只落库、不出指标（与 ObservabilityMiddleware 同款可选注入）。 */
+    private final MeterRegistry meterRegistry;
 
     public AgentCallTimingMiddleware(CustomerWorkProperties properties,
                                      ToolKindRegistry toolKindRegistry,
-                                     AgentCallRecordSink sink) {
+                                     AgentCallRecordSink sink,
+                                     ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.enabled = properties.getCallLog().isEnabled();
         this.toolKindRegistry = toolKindRegistry;
         this.sink = sink;
+        this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
 
     @Override
@@ -237,9 +250,25 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         try {
             collector.addSegment(kind, name, startMs, startNano, success, errorMsg,
                 inputTokens, outputTokens, cachedTokens, modelReportedMs);
+            // 分段结算是 token 的唯一落点（三态终止各只走一次，CAS 保证不重复），指标在此同步累加，
+            // 与落库口径天然一致；工具段 usage 恒为 null，不产生指标
+            recordTokens(inputTokens, outputTokens);
         } catch (Exception e) {
             log.error("agent call segment collect failed, code={}, kind={}, name={}",
                 "CALLLOG-SEGMENT-FAIL", kind, name, e);
+        }
+    }
+
+    /** token 消耗计数：按 input/output 两个 tag 累加，未接入 Micrometer 时静默跳过。 */
+    private void recordTokens(Long inputTokens, Long outputTokens) {
+        if (meterRegistry == null) {
+            return;
+        }
+        if (inputTokens != null && inputTokens > 0) {
+            meterRegistry.counter(M_TOKENS, TAG_TYPE, TYPE_INPUT).increment(inputTokens);
+        }
+        if (outputTokens != null && outputTokens > 0) {
+            meterRegistry.counter(M_TOKENS, TAG_TYPE, TYPE_OUTPUT).increment(outputTokens);
         }
     }
 

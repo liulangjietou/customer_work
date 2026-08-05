@@ -1,0 +1,33 @@
+# =============================================================================
+# Grafana Tempo 单二进制最简配置：接收 OTLP（gRPC 4317 / HTTP 4318），本地磁盘存储，
+# 7 天留存后 compactor 清理。对接本项目框架原生链路追踪 Hook
+# （customer-work.observability.tracing-enabled=true，配置 OTLP 导出地址指向本服务）。
+# =============================================================================
+server:
+  http_listen_port: 3200   # Tempo 查询 API，供 Grafana Tempo 数据源对接
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  # 内存中的 block 在此时长后强制切盘，避免长时间不落盘丢数据
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # trace 留存 7 天（168h），超期数据由 compactor 周期性清理
+    block_retention: 168h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal

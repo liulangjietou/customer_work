@@ -1,0 +1,16 @@
+# =============================================================================
+# Grafana 仪表盘自动装配：从容器内 /var/lib/grafana/dashboards（挂载自 ../../dashboards）
+# 扫描 JSON 文件自动导入，新增/修改 JSON 后无需重启容器，updateIntervalSeconds 后自动生效。
+# =============================================================================
+apiVersion: 1
+
+providers:
+  - name: customerwork
+    orgId: 1
+    folder: "客服系统"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

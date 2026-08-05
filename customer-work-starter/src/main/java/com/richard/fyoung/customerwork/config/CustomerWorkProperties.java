@@ -502,6 +502,8 @@ public class CustomerWorkProperties {
         private boolean traceCorrelationEnabled = true;
         /** Studio 可视化调试对接。 */
         private final Studio studio = new Studio();
+        /** OpenTelemetry SDK 接入（真正采集并导出 span 到 Collector/Tempo）。 */
+        private final Otel otel = new Otel();
 
         @Data
         public static class Studio {
@@ -509,6 +511,25 @@ public class CustomerWorkProperties {
             private String url = "";
             private String project = "customer-work";
             private String runName = "customer-work-run";
+        }
+
+        /**
+         * OpenTelemetry SDK 配置（{@code customer-work.observability.otel.*}）。
+         *
+         * <p>与上面的 {@code tracingEnabled}（框架 TracerRegistry + LoggingTracer，只打日志）、
+         * {@code traceCorrelationEnabled}（只解析 traceparent 做日志关联，零外部依赖）是三个不同层次：
+         * 本组开启后才真正在进程内采集 span 并经 OTLP 导出，是"最后一公里"。</p>
+         */
+        @Data
+        public static class Otel {
+            /** 是否接入 OTel SDK（注册 GlobalOpenTelemetry + 挂 OtelTracingMiddleware + HTTP server span）。 */
+            private boolean enabled = false;
+            /** OTLP gRPC 接收端地址（Collector / Tempo）。 */
+            private String endpoint = "http://localhost:4317";
+            /** 资源属性 service.name，链路后台按之区分服务。 */
+            private String serviceName = "customer-work";
+            /** 采样比例 [0,1]：1.0 全采，生产高流量建议下调（父级已采样的链路始终跟随父级）。 */
+            private double samplerRatio = 1.0d;
         }
     }
 
