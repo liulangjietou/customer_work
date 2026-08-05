@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.config;
 
+import com.richard.fyoung.customerwork.model.failover.FailoverModel;
+import com.richard.fyoung.customerwork.model.failover.ModelCircuitBreakerRegistry;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import org.slf4j.Logger;
@@ -8,12 +10,14 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.List;
+
 /**
  * 模型层配置（对应「模型层 - 统一模型抽象 + 多模型 + 私有化兜底」）。
  *
  * <p>按 {@code customer-work.model.provider} 接入 dashscope（百炼）/ openai / anthropic / gemini /
- * ollama 任一厂商；开启 {@code model.fallback} 后用 {@link FallbackChatModel} 包一层私有化兜底。
- * 所有差异被 {@link Model} 抽象屏蔽，业务代码零改动。</p>
+ * ollama 任一厂商；开启 {@code model.fallback} 后用 {@link FailoverModel} 包一层私有化兜底
+ * （主备有序候选 + 熔断记忆）。所有差异被 {@link Model} 抽象屏蔽，业务代码零改动。</p>
  *
  * <p>API Key 来源（按优先级）：配置项 {@code customer-work.model.api-key} → 环境变量 {@code DASHSCOPE_API_KEY}。</p>
  * @author owlzhangfq@gmail.com
@@ -23,6 +27,15 @@ import org.springframework.context.annotation.Configuration;
 public class ModelConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ModelConfig.class);
+
+    /** 主模型在 {@link FailoverModel} 候选表里的固定标识（yml 建链无数据库模型 id，用序号占位）。 */
+    private static final Long PRIMARY_CANDIDATE_ID = 0L;
+    /** 私有化兜底模型在候选表里的固定标识。 */
+    private static final Long FALLBACK_CANDIDATE_ID = 1L;
+    /** 主备熔断阈值：连续失败该次数后跳过该候选（与 admin 侧默认值一致，yml 不额外暴露配置项）。 */
+    private static final int BREAKER_FAILURE_THRESHOLD = 3;
+    /** 主备熔断打开时长（秒）。 */
+    private static final int BREAKER_OPEN_DURATION_SECONDS = 60;
 
     /**
      * 客服机器人模型 Bean：以 {@link MutableDelegatingModel} 暴露，内部包裹启动期构建的模型链。
@@ -37,10 +50,13 @@ public class ModelConfig {
     }
 
     /**
-     * 按模型配置构建完整模型链：primary → 可选 FallbackChatModel → 可选 ResilientChatModel。
+     * 按模型配置构建完整模型链：primary → 可选 {@link FailoverModel}（主备容错）→ 可选 {@link ResilientChatModel}。
      *
      * <p>抽出为可复用方法：启动期 {@link #chatModel} 与运行期热替换（{@code RuntimeConfigApplier}）
      * 共用同一构建逻辑，保证冷启动与热更新产出的链结构一致。</p>
+     *
+     * <p>{@code midStreamFailoverEnabled=false}：客服主链路是逐字上屏的流式输出，主模型已经吐过分片
+     * 再切兜底会把两段输出拼在一起，用户看到重复错乱的文字——此时宁可让错误透传给上层做截断/兜底文案。</p>
      */
     Model buildChain(CustomerWorkProperties.Model cfg) {
         Model primary = buildPrimary(cfg);
@@ -52,7 +68,11 @@ public class ModelConfig {
                 fb.getApiKey(), fb.getBaseUrl(), cfg);
             log.info("已启用私有化兜底：主 {} -> 兜底 {}({})",
                 primary.getModelName(), fb.getProvider(), fb.getName());
-            model = new FallbackChatModel(primary, fallback);
+            model = new FailoverModel(
+                List.of(new FailoverModel.Candidate(PRIMARY_CANDIDATE_ID, primary),
+                    new FailoverModel.Candidate(FALLBACK_CANDIDATE_ID, fallback)),
+                new ModelCircuitBreakerRegistry(BREAKER_FAILURE_THRESHOLD, BREAKER_OPEN_DURATION_SECONDS),
+                false);
         }
 
         CustomerWorkProperties.Model.Retry retry = cfg.getRetry();

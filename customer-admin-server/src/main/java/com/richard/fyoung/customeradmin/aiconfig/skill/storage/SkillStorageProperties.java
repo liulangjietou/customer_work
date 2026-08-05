@@ -8,8 +8,12 @@ import org.springframework.stereotype.Component;
  * Skill 多存储目标配置：{@code admin.skill.storage.*}。
  *
  * <p>{@link Local} 本地 workspace 始终启用；{@link Nacos}/{@link Sftp} 默认关闭，
- * 仅 {@code enabled=true} 时由 {@code SkillStorageConfig} 注册对应 Publisher。
+ * 仅 {@code enabled=true} 时由 {@link SkillStorageConfig} 注册对应 Publisher。
  * 连接密码走环境变量注入，不入库、不硬编码。</p>
+ *
+ * <p>发布器实现已下沉 starter，本类只留在 admin 侧承接 {@code admin.*} 配置前缀（保持配置兼容），
+ * 由 {@link SkillStorageConfig} 映射成 starter 的
+ * {@code com.richard.fyoung.customerwork.skill.storage.SkillStorageSettings} 后建实例。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data

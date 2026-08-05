@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.system.devtool.service;
 
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.tool.SystemToolHttpGuard;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSystemToolProperties;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolHttpSendRequest;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolHttpSendResponse;
@@ -12,7 +13,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -24,15 +24,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link DevToolHttpService} 单测：起本地临时 {@link HttpServer}（JDK 内置，不引入 WireMock）验证
- * 常用方法的请求组装、响应解析、大响应截断、重定向不跟随，以及目标不可达返回 error 字段而非抛异常；
- * 另验证 SSRF 收口（默认拒环回）与协议校验的 fast fail 行为。
+ * {@link DevToolHttpService} 单测：本类是 starter {@code HttpProxyDevToolOps} 的薄壳，故这里只验证
+ * <b>属于薄壳的两件事</b>——请求头 DTO ↔ starter 入参的转换与结果对象 → VO 的字段映射（起本地临时
+ * {@link HttpServer} 走一遍真实调用核对），以及异常转译（安全拦截 → {@code SYSTEM_TOOL_HTTP_FORBIDDEN}）。
+ * 受限头跳过、响应截断、重定向不跟随、异常翻译等执行核心行为在 starter 的
+ * {@code HttpProxyDevToolOpsTest} 覆盖。
  * @author owlzhangfq@gmail.com
  */
 class DevToolHttpServiceTest {
 
     // 本地临时 server 监听 127.0.0.1（环回），默认模式会被 SSRF 收口拦截；
-    // 用白名单模式显式放行 127.0.0.1，让请求组装/响应解析用例照常验证。
+    // 用白名单模式显式放行 127.0.0.1，让转换用例照常验证。
     private final DevToolHttpService service = new DevToolHttpService(loopbackAllowedGuard());
 
     private static SystemToolHttpGuard loopbackAllowedGuard() {
@@ -47,7 +49,7 @@ class DevToolHttpServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        // 回显 handler：把"收到的方法 + 指定请求头 + 请求体"写回响应体，供断言核对请求组装是否正确。
+        // 回显 handler：把"收到的方法 + 指定请求头 + 请求体"写回响应体，供断言核对入参转换是否正确。
         server.createContext("/echo", exchange -> {
             String method = exchange.getRequestMethod();
             String customHeader = exchange.getRequestHeaders().getFirst("X-Devtool-Test");
@@ -60,20 +62,6 @@ class DevToolHttpServiceTest {
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(resp);
             }
-        });
-        // 大响应 handler：回 1MB + 1 字节，验证截断
-        server.createContext("/large", exchange -> {
-            byte[] resp = new byte[1_048_577];
-            exchange.sendResponseHeaders(200, resp.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(resp);
-            }
-        });
-        // 重定向 handler：302 指向 /echo，验证不自动跟随
-        server.createContext("/redirect", exchange -> {
-            exchange.getResponseHeaders().add("Location", "/echo");
-            exchange.sendResponseHeaders(302, -1);
-            exchange.close();
         });
         server.start();
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
@@ -99,20 +87,21 @@ class DevToolHttpServiceTest {
     }
 
     @Test
-    void get_shouldReturn200WithBodyAndHeaders() {
+    void get_shouldMapAllResultFieldsIntoVO() {
         DevToolHttpSendResponse resp = service.send(request("GET", baseUrl + "/echo"));
 
         assertEquals(200, resp.getStatusCode());
         assertTrue(resp.getBody().contains("method=GET"));
         assertNotNull(resp.getHeaders());
         assertEquals(List.of("yes"), resp.getHeaders().get("x-echo-resp"));
+        assertTrue(resp.getBodyBytes() > 0);
         assertTrue(resp.getDurationMs() >= 0);
-        assertNull(resp.getError());
         assertFalse(resp.isBodyTruncated());
+        assertNull(resp.getError());
     }
 
     @Test
-    void post_shouldSendBodyAndCustomHeader() {
+    void post_shouldConvertHeaderItemsAndBody() {
         DevToolHttpSendRequest req = request("POST", baseUrl + "/echo");
         req.setHeaders(List.of(header("X-Devtool-Test", "hello"), header("Content-Type", "application/json")));
         req.setBody("{\"a\":1}");
@@ -126,89 +115,21 @@ class DevToolHttpServiceTest {
     }
 
     @Test
-    void patch_shouldBeSupported() {
-        DevToolHttpSendRequest req = request("PATCH", baseUrl + "/echo");
-        req.setBody("patched");
-
-        DevToolHttpSendResponse resp = service.send(req);
-
-        assertEquals(200, resp.getStatusCode());
-        assertTrue(resp.getBody().contains("method=PATCH"));
-        assertTrue(resp.getBody().contains("body=patched"));
-    }
-
-    @Test
-    void get_shouldIgnoreBodyEvenIfProvided() {
-        DevToolHttpSendRequest req = request("GET", baseUrl + "/echo");
-        req.setBody("should-not-send");
-
-        DevToolHttpSendResponse resp = service.send(req);
-
-        assertTrue(resp.getBody().contains("body=;") || resp.getBody().endsWith("body="));
-    }
-
-    @Test
-    void head_shouldReturnStatusWithoutBody() {
-        DevToolHttpSendResponse resp = service.send(request("HEAD", baseUrl + "/echo"));
-
-        assertEquals(200, resp.getStatusCode());
-        assertEquals("", resp.getBody());
-        assertNull(resp.getError());
-    }
-
-    @Test
-    void largeResponse_shouldBeTruncatedWithRealSizeReported() {
-        DevToolHttpSendResponse resp = service.send(request("GET", baseUrl + "/large"));
-
-        assertEquals(200, resp.getStatusCode());
-        assertTrue(resp.isBodyTruncated());
-        assertEquals(1_048_577L, resp.getBodyBytes());
-        assertEquals(1_048_576, resp.getBody().getBytes(StandardCharsets.UTF_8).length);
-    }
-
-    @Test
-    void redirect_shouldNotFollowAndReturnLocation() {
-        DevToolHttpSendResponse resp = service.send(request("GET", baseUrl + "/redirect"));
-
-        assertEquals(302, resp.getStatusCode());
-        assertEquals("/echo", resp.getRedirectLocation());
-    }
-
-    @Test
-    void restrictedHeader_shouldBeSkippedSilently() {
-        DevToolHttpSendRequest req = request("GET", baseUrl + "/echo");
-        req.setHeaders(List.of(header("Host", "evil.example.com"), header("X-Devtool-Test", "kept")));
-
-        DevToolHttpSendResponse resp = service.send(req);
-
-        assertEquals(200, resp.getStatusCode());
-        assertTrue(resp.getBody().contains("header=kept"));
-    }
-
-    @Test
-    void unreachableTarget_shouldReturnErrorFieldInsteadOfThrowing() throws Exception {
-        int freePort;
-        try (ServerSocket socket = new ServerSocket(0)) {
-            freePort = socket.getLocalPort();
-        }
-
-        DevToolHttpSendResponse resp = service.send(request("GET", "http://127.0.0.1:" + freePort + "/x"));
-
-        assertNull(resp.getStatusCode());
-        assertNotNull(resp.getError());
-    }
-
-    @Test
-    void loopbackTarget_shouldBeBlockedByDefaultGuard() {
+    void blockedTarget_shouldBeTranslatedToBizException() {
         // 默认模式（空白名单）：环回地址被 SSRF 收口拦截，fast fail 抛业务异常
         DevToolHttpService defaultService =
             new DevToolHttpService(new SystemToolHttpGuard(new AdminSystemToolProperties()));
 
-        assertThrows(BizException.class, () -> defaultService.send(request("GET", baseUrl + "/echo")));
+        BizException ex = assertThrows(BizException.class,
+            () -> defaultService.send(request("GET", baseUrl + "/echo")));
+        assertEquals(ResultCode.SYSTEM_TOOL_HTTP_FORBIDDEN, ex.getResultCode());
     }
 
     @Test
     void nonHttpScheme_shouldFastFail() {
-        assertThrows(BizException.class, () -> service.send(request("GET", "ftp://127.0.0.1/file")));
+        // 协议校验已并入地址防御点，故错误码与 SSRF 拦截同码（此前是 PARAM_INVALID）
+        BizException ex = assertThrows(BizException.class,
+            () -> service.send(request("GET", "ftp://127.0.0.1/file")));
+        assertEquals(ResultCode.SYSTEM_TOOL_HTTP_FORBIDDEN, ex.getResultCode());
     }
 }

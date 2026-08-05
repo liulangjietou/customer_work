@@ -1,8 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service;
 
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
-import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.client.KnowledgeBaseEndpoint;
-import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.client.KnowledgeNode;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.client.KnowledgeSearchClient;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseOptionVO;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseSaveRequest;
@@ -16,6 +14,8 @@ import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
+import com.richard.fyoung.customerwork.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.rag.search.KnowledgeNode;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;

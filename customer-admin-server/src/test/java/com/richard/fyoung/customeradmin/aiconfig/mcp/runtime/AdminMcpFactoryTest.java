@@ -1,37 +1,39 @@
 package com.richard.fyoung.customeradmin.aiconfig.mcp.runtime;
 
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallResult;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugToolVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
-import com.sun.net.httpserver.HttpServer;
+import com.richard.fyoung.customerwork.tool.mcp.McpConnectivityResult;
+import com.richard.fyoung.customerwork.tool.mcp.McpImageContent;
+import com.richard.fyoung.customerwork.tool.mcp.McpToolCallResult;
+import com.richard.fyoung.customerwork.tool.mcp.McpToolDescriptor;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
-import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Method;
-import java.net.InetSocketAddress;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link AdminMcpFactory} 单测：三种 mcpType 都能正确解析出对应的传输方式（不发起真实连接——
- * MCP 协议握手需要真实服务端，留给联调阶段；这里只验证 config JSON -> McpClientBuilder 的
- * 解析分支没有写错）。真实不可达地址的 {@code testConnectivity} 应判定失败，不抛异常。
+ * {@link AdminMcpFactory} 单测。解析构建/连通性/调试调用的行为已下沉 starter，由
+ * {@code McpClientFactoryTest} 覆盖；这里只验证 admin 侧薄壳自己的职责——
+ * starter 中立返回类型 -&gt; admin 接口 VO 的转换（前端契约），以及委托链路确实接通。
  * @author owlzhangfq@gmail.com
  */
 class AdminMcpFactoryTest {
 
     private final AdminMcpFactory factory = new AdminMcpFactory();
 
+    /** 委托链路接通即可（三种类型的解析分支由 starter 单测覆盖，这里不重复）。 */
     @Test
-    void buildClientBuilder_shouldSucceed_forSseType() {
+    void buildClientBuilder_shouldDelegateToStarter() {
         McpClientBuilder builder = assertDoesNotThrow(() ->
             factory.buildClientBuilder("test", "sse", "{\"url\": \"https://mcp.example.com/sse\"}"));
 
@@ -39,199 +41,63 @@ class AdminMcpFactoryTest {
     }
 
     @Test
-    void buildClientBuilder_shouldSucceed_forHttpType() {
-        McpClientBuilder builder = assertDoesNotThrow(() ->
-            factory.buildClientBuilder("test", "http", "{\"url\": \"https://mcp.example.com/mcp\"}"));
+    void toVo_shouldMapConnectivitySuccessToStatusSuccess() {
+        LocalDateTime testedAt = LocalDateTime.now();
 
-        assertNotNull(builder);
+        McpTestResult vo = AdminMcpFactory.toVo(new McpConnectivityResult(true, testedAt, null));
+
+        assertEquals(McpTestResult.STATUS_SUCCESS, vo.testStatus());
+        assertEquals(testedAt, vo.testTime());
+        assertNull(vo.message());
     }
 
     @Test
-    void buildClientBuilder_shouldSucceed_forStdioType() {
-        McpClientBuilder builder = assertDoesNotThrow(() ->
-            factory.buildClientBuilder("test", "stdio", "{\"command\": \"python\", \"args\": [\"-m\", \"mcp_server\"]}"));
+    void toVo_shouldMapConnectivityFailureToStatusFailed() {
+        McpTestResult vo = AdminMcpFactory.toVo(new McpConnectivityResult(false, LocalDateTime.now(), "connect timed out"));
 
-        assertNotNull(builder);
+        assertEquals(McpTestResult.STATUS_FAILED, vo.testStatus());
+        assertEquals("connect timed out", vo.message());
     }
 
     @Test
-    void testConnectivity_shouldFail_whenUrlUnreachable() {
-        McpTestResult result = factory.testConnectivity("test", "sse", "{\"url\": \"http://127.0.0.1:1\"}");
+    void toVo_shouldMapToolDescriptorToDebugToolVo() {
+        McpToolDescriptor descriptor = new McpToolDescriptor("queryOrder", "查订单", "object",
+            Map.<String, Object>of("orderId", Map.of("type", "string")), List.of("orderId"));
 
-        assertEquals(McpTestResult.STATUS_FAILED, result.testStatus());
-        assertNotNull(result.message());
+        McpDebugToolVO vo = AdminMcpFactory.toVo(descriptor);
+
+        assertEquals("queryOrder", vo.name());
+        assertEquals("查订单", vo.description());
+        assertEquals("object", vo.schemaType());
+        assertEquals(Map.of("orderId", Map.of("type", "string")), vo.properties());
+        assertEquals(List.of("orderId"), vo.required());
     }
 
-    /**
-     * Claude Desktop / Cursor 等主流客户端的标准配置格式外层带一层 {@code mcpServers} 包装——
-     * 用户直接照抄 MCP 服务文档大概率带这层，必须能自动解开，否则内层 url 读不到会变成空字符串
-     * 悄悄发往空地址（真实联调时踩过的坑）。
-     */
+    /** 图片内容块要逐个转成前端渲染用的 VO，不能在转换中丢失（调试面板展示图片依赖这一步）。 */
     @Test
-    void buildClientBuilder_shouldUnwrapMcpServersWrapper_forHttpType() {
-        String wrapped = "{\"mcpServers\": {\"oa-server\": {\"url\": \"http://localhost:3002/mcp\"}}}";
+    void toVo_shouldMapCallResultIncludingImages() {
+        McpToolCallResult result = new McpToolCallResult(true, "已生成图表", null,
+            List.of(new McpImageContent("image/png", "aGVsbG8=")), false);
 
-        McpClientBuilder builder = assertDoesNotThrow(() ->
-            factory.buildClientBuilder("test", "http", wrapped));
+        McpDebugCallResult vo = AdminMcpFactory.toVo(result);
 
-        assertNotNull(builder);
-    }
-
-    @Test
-    void testConnectivity_shouldFail_notNotInitialized_whenMcpServersWrapperUrlUnreachable() {
-        String wrapped = "{\"mcpServers\": {\"oa-server\": {\"url\": \"http://127.0.0.1:1/mcp\"}}}";
-
-        McpTestResult result = factory.testConnectivity("test", "http", wrapped);
-
-        assertEquals(McpTestResult.STATUS_FAILED, result.testStatus());
-        assertNotNull(result.message());
+        assertTrue(vo.success());
+        assertEquals("已生成图表", vo.output());
+        assertEquals(1, vo.images().size());
+        assertEquals("image/png", vo.images().get(0).mimeType());
+        assertEquals("aGVsbG8=", vo.images().get(0).data());
+        assertFalse(vo.outputLooksBinary());
     }
 
     @Test
-    void buildClientBuilder_shouldSucceed_withHeaders_forSseType() {
-        McpClientBuilder builder = assertDoesNotThrow(() -> factory.buildClientBuilder("test", "sse",
-            "{\"url\": \"https://mcp.example.com/sse\", \"headers\": {\"Authorization\": \"Bearer t\"}}"));
+    void toVo_shouldKeepFailureAndBinaryFlag() {
+        McpToolCallResult result = new McpToolCallResult(false, null, "工具执行失败", List.of(), true);
 
-        assertNotNull(builder);
-    }
+        McpDebugCallResult vo = AdminMcpFactory.toVo(result);
 
-    /**
-     * 回归用例（修复"config 里配置的 headers 被丢弃、鉴权型 MCP 服务 401"）：起本地 HTTP server
-     * 捕获真实请求头，断言 Authorization 确实随连接请求发出。不模拟完整 MCP 握手（server 直接
-     * 回 500，连通性结果必然 FAILED，与本用例无关），只验证 headers 透传这一环。
-     */
-    @Test
-    void testConnectivity_shouldSendConfiguredHeaders() throws Exception {
-        AtomicReference<String> receivedAuth = new AtomicReference<>();
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/mcp", exchange -> {
-            receivedAuth.set(exchange.getRequestHeaders().getFirst("Authorization"));
-            exchange.sendResponseHeaders(500, -1);
-            exchange.close();
-        });
-        server.start();
-        try {
-            String config = "{\"url\": \"http://127.0.0.1:" + server.getAddress().getPort()
-                + "/mcp\", \"headers\": {\"Authorization\": \"Bearer test-token\"}}";
-
-            factory.testConnectivity("test", "http", config);
-
-            assertEquals("Bearer test-token", receivedAuth.get(), "配置的 Authorization 头应随请求发出");
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    /** 用户实际场景：Claude Desktop 标准格式（mcpServers 包装）里带 headers，解包后同样要透传。 */
-    @Test
-    void testConnectivity_shouldSendConfiguredHeaders_withMcpServersWrapper() throws Exception {
-        AtomicReference<String> receivedAuth = new AtomicReference<>();
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/mcp", exchange -> {
-            receivedAuth.set(exchange.getRequestHeaders().getFirst("Authorization"));
-            exchange.sendResponseHeaders(500, -1);
-            exchange.close();
-        });
-        server.start();
-        try {
-            String config = "{\"mcpServers\": {\"nebula-sql\": {\"type\": \"http\", \"url\": \"http://127.0.0.1:"
-                + server.getAddress().getPort()
-                + "/mcp\", \"headers\": {\"Authorization\": \"Bearer wrapped-token\"}}}}";
-
-            factory.testConnectivity("test", "http", config);
-
-            assertEquals("Bearer wrapped-token", receivedAuth.get());
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    /**
-     * 调试面板的 listDebugTools/callDebugTool 跟 testConnectivity 不一样，不在方法内部兜底成失败结果，
-     * 而是直接把连接异常往外抛——交给 McpService 层统一包成 BizException/McpDebugCallResult，
-     * 这里只验证"连不上会抛异常"这个边界，不吞掉。
-     */
-    @Test
-    void listDebugTools_shouldThrow_whenUrlUnreachable() {
-        assertThrows(Exception.class, () ->
-            factory.listDebugTools("test", "sse", "{\"url\": \"http://127.0.0.1:1\"}"));
-    }
-
-    @Test
-    void callDebugTool_shouldThrow_whenUrlUnreachable() {
-        assertThrows(Exception.class, () ->
-            factory.callDebugTool("test", "sse", "{\"url\": \"http://127.0.0.1:1\"}", "any-tool", Map.of()));
-    }
-
-    /**
-     * 回归用例：修复"调试面板返回图片时乱码/空白"的 bug 前，{@code toCallResult} 只提取
-     * {@code TextContent}，{@code ImageContent} 被静默丢弃。这里用反射直接调私有方法验证
-     * 混合内容（文本+图片）时两类内容块各自正确提取，互不覆盖。
-     */
-    @Test
-    void toCallResult_shouldExtractBothTextAndImageContent() throws Exception {
-        McpSchema.TextContent text = new McpSchema.TextContent("已生成图表");
-        McpSchema.ImageContent image = new McpSchema.ImageContent(null, "aGVsbG8=", "image/png");
-        McpSchema.CallToolResult result = new McpSchema.CallToolResult(List.of(text, image), false);
-
-        McpDebugCallResult callResult = invokeToCallResult(result);
-
-        assertTrue(callResult.success());
-        assertEquals("已生成图表", callResult.output());
-        assertEquals(1, callResult.images().size());
-        assertEquals("image/png", callResult.images().get(0).mimeType());
-        assertEquals("aGVsbG8=", callResult.images().get(0).data());
-        assertFalse(callResult.outputLooksBinary());
-    }
-
-    /** 纯图片结果（无文本块）：output 应为空字符串而不是 null，images 不应为空列表。 */
-    @Test
-    void toCallResult_shouldReturnEmptyOutput_whenOnlyImageContent() throws Exception {
-        McpSchema.ImageContent image = new McpSchema.ImageContent(null, "aGVsbG8=", "image/jpeg");
-        McpSchema.CallToolResult result = new McpSchema.CallToolResult(List.of(image), false);
-
-        McpDebugCallResult callResult = invokeToCallResult(result);
-
-        assertTrue(callResult.success());
-        assertEquals("", callResult.output());
-        assertFalse(callResult.images().isEmpty());
-        assertFalse(callResult.outputLooksBinary());
-    }
-
-    /**
-     * 回归用例：真实场景复现——通用文件系统 MCP 工具（如 {@code read_file}）不区分文件是否为二进制，
-     * 把图片文件按文本读出后通过 TextContent 返回，二进制字节已在服务端损毁、无法还原，但应识别出
-     * 这个模式并标记 {@code outputLooksBinary=true}，而不是让前端原样展示一坨乱码。
-     */
-    @Test
-    void toCallResult_shouldFlagOutputLooksBinary_whenTextContentIsCorruptedBinary() throws Exception {
-        // 模拟 PNG 文件头字节被当 Latin-1/UTF-8 误解码后混入大量控制字符/替换字符的典型乱码模式
-        String corrupted = "�PNG\r\n\n   \rIHDR   P���DeXIfMM* ";
-        McpSchema.TextContent text = new McpSchema.TextContent(corrupted);
-        McpSchema.CallToolResult result = new McpSchema.CallToolResult(List.of(text), false);
-
-        McpDebugCallResult callResult = invokeToCallResult(result);
-
-        assertTrue(callResult.success());
-        assertEquals(corrupted, callResult.output(), "已损毁的原始文本仍应原样透出，不隐藏数据");
-        assertTrue(callResult.outputLooksBinary());
-    }
-
-    /** 正常的、包含少量转义换行的多行文本/JSON 不应被误判为二进制。 */
-    @Test
-    void toCallResult_shouldNotFlagOutputLooksBinary_forNormalMultilineText() throws Exception {
-        String normal = "{\n  \"orderId\": \"20260613001\",\n  \"status\": \"SHIPPED\"\n}";
-        McpSchema.TextContent text = new McpSchema.TextContent(normal);
-        McpSchema.CallToolResult result = new McpSchema.CallToolResult(List.of(text), false);
-
-        McpDebugCallResult callResult = invokeToCallResult(result);
-
-        assertFalse(callResult.outputLooksBinary());
-    }
-
-    private McpDebugCallResult invokeToCallResult(McpSchema.CallToolResult result) throws Exception {
-        Method method = AdminMcpFactory.class.getDeclaredMethod("toCallResult", McpSchema.CallToolResult.class);
-        method.setAccessible(true);
-        return (McpDebugCallResult) method.invoke(factory, result);
+        assertFalse(vo.success());
+        assertEquals("工具执行失败", vo.errorMessage());
+        assertTrue(vo.images().isEmpty());
+        assertTrue(vo.outputLooksBinary());
     }
 }

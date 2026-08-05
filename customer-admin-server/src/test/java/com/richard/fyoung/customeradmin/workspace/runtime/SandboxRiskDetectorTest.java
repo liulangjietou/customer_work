@@ -15,7 +15,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link SandboxRiskDetector} 单测：高风险动作判定（删除/命令/依赖/批量）、破坏性判定与护栏同源、拒绝改写。
+ * {@link SandboxRiskDetector} 薄壳单测：验证 admin 配置默认值绑进 starter 规则后判定结论不变，
+ * 以及 starter 风险类型 → {@code plan} 事件 {@link PlanAction} 的映射。
+ *
+ * <p>规则算法的分支矩阵在 starter 的 {@code ToolCallRiskDetectorTest}，此处不重复。</p>
  * @author owlzhangfq@gmail.com
  */
 class SandboxRiskDetectorTest {
@@ -40,92 +43,66 @@ class SandboxRiskDetectorTest {
     }
 
     @Test
-    void assess_shouldFlagDeleteTool() {
+    void assess_shouldMapDeleteRiskToPlanAction() {
         Optional<PlanAction> action = detector.assess(tool("delete_file", param("path", "sessions/x/Foo.java")));
         assertTrue(action.isPresent());
         assertEquals("DELETE", action.get().type());
         assertEquals("sessions/x/Foo.java", action.get().target());
+        assertEquals("删除文件", action.get().reason());
     }
 
     @Test
-    void assess_shouldFlagNonReadonlyCommand_mvnClean() {
-        Optional<PlanAction> action = detector.assess(tool("shell_execute", param("command", "mvn clean install")));
-        assertTrue(action.isPresent());
-        assertEquals("RUN_COMMAND", action.get().type());
+    void assess_shouldMapCommandRiskToPlanAction() {
+        Optional<PlanAction> destructive = detector.assess(tool("shell_execute", param("command", "rm -rf /tmp/x")));
+        assertTrue(destructive.isPresent());
+        assertEquals("RUN_COMMAND", destructive.get().type());
+        assertEquals("执行破坏性命令", destructive.get().reason());
+
+        Optional<PlanAction> nonReadonly = detector.assess(tool("shell_execute", param("command", "mvn clean install")));
+        assertTrue(nonReadonly.isPresent());
+        assertEquals("RUN_COMMAND", nonReadonly.get().type());
     }
 
     @Test
-    void assess_shouldFlagDestructiveCommand_asRunCommand() {
-        Optional<PlanAction> action = detector.assess(tool("shell_execute", param("command", "rm -rf /tmp/x")));
-        assertTrue(action.isPresent());
-        assertEquals("RUN_COMMAND", action.get().type());
-        assertEquals("执行破坏性命令", action.get().reason());
-    }
-
-    @Test
-    void assess_shouldFlagDependencyFileEdit() {
+    void assess_shouldMapDependencyRiskToPlanAction() {
         Optional<PlanAction> action = detector.assess(tool("write_file", param("path", "sessions/x/pom.xml")));
         assertTrue(action.isPresent());
-        assertEquals("MODIFY_DEPENDENCY", action.get().type());
+        assertEquals(SandboxRiskDetector.ACTION_MODIFY_DEPENDENCY, action.get().type());
     }
 
     @Test
-    void assess_shouldNotFlagOrdinaryWrite() {
-        assertTrue(detector.assess(tool("write_file", param("path", "sessions/x/Foo.java"))).isEmpty());
-        assertTrue(detector.assess(tool("shell_execute", param("command", "mvn test"))).isEmpty());
-    }
-
-    @Test
-    void assess_batch_shouldFlagWhenWriteToolsExceedThreshold() {
-        // 4 个 write 工具 > 阈值 3 → 追加一条 BATCH_MODIFY
+    void assess_batch_shouldMapBatchModifyRiskToPlanAction() {
+        // 4 个 write 工具 > 默认阈值 3 → 追加一条 BATCH_MODIFY
         List<ToolUseBlock> calls = List.of(
             tool("write_file", param("path", "a.java")),
             tool("write_file", param("path", "b.java")),
             tool("edit_file", param("path", "c.java")),
             tool("create_file", param("path", "d.java")));
         List<PlanAction> actions = detector.assess(calls);
-        assertTrue(actions.stream().anyMatch(a -> a.type().equals("BATCH_MODIFY")));
-    }
+        assertTrue(actions.stream().anyMatch(a -> SandboxRiskDetector.ACTION_BATCH_MODIFY.equals(a.type())));
 
-    @Test
-    void assess_batch_shouldNotFlagWhenWithinThreshold() {
-        List<ToolUseBlock> calls = List.of(
-            tool("write_file", param("path", "a.java")),
-            tool("write_file", param("path", "b.java")));
-        assertTrue(detector.assess(calls).isEmpty());
-    }
-
-    @Test
-    void isMutatingTool_shouldFlagWriteDeleteAndExecTools() {
-        assertTrue(detector.isMutatingTool(tool("write_file", param("path", "a.java"))));
-        assertTrue(detector.isMutatingTool(tool("delete_file", param("path", "a.java"))));
-        assertTrue(detector.isMutatingTool(tool("shell_execute", param("command", "ls"))), "命令执行关键字命中");
-        assertTrue(detector.isMutatingTool(tool("read_file", param("command", "rm -rf x"))), "入参命中破坏性命令");
-    }
-
-    @Test
-    void isMutatingTool_shouldPassReadonlyTools() {
-        assertFalse(detector.isMutatingTool(tool("read_file", param("path", "a.java"))));
-        assertFalse(detector.isMutatingTool(tool("search_code", param("q", "foo"))));
-        assertFalse(detector.isMutatingTool(tool("list_dir", param("path", "."))));
+        assertTrue(detector.assess(List.of(tool("write_file", param("path", "a.java")))).isEmpty(),
+            "阈值内的普通写入不产生动作");
     }
 
     @Test
     void manualToolAction_shouldDescribeAsExecuteTool() {
         PlanAction action = detector.manualToolAction(tool("read_file", param("path", "a.java")));
-        assertEquals("EXECUTE_TOOL", action.type());
+        assertEquals(SandboxRiskDetector.ACTION_EXECUTE_TOOL, action.type());
         assertTrue(action.target().contains("read_file"), "target 应含工具名");
     }
 
     @Test
-    void neutralize_shouldRewriteRiskyCommandParam() {
+    void delegation_shouldKeepRiskAndRewriteBehaviour() {
+        assertTrue(detector.isHighRisk(tool("delete_file", param("path", "a.java"))));
+        assertTrue(detector.isWriteToolName("edit_file"));
+        assertTrue(detector.isMutatingTool(tool("shell_execute", param("command", "ls"))));
+        assertFalse(detector.isMutatingTool(tool("read_file", param("path", "a.java"))));
+
         ToolUseBlock rewritten = detector.neutralize(tool("shell_execute", param("command", "rm -rf x")), "[REJECTED]");
         assertEquals("[REJECTED]", rewritten.getInput().get("command"));
-    }
 
-    @Test
-    void neutralize_shouldRewriteDeleteToolParam() {
-        ToolUseBlock rewritten = detector.neutralize(tool("delete_file", param("path", "sessions/x/Foo.java")), "[REJECTED]");
-        assertEquals("[REJECTED]", rewritten.getInput().get("path"));
+        ToolUseBlock cancelled = detector.neutralizeAllStringParams(tool("write_file", param("path", "a.java")), "[REJECTED]");
+        assertEquals("[REJECTED]", cancelled.getInput().get("path"));
     }
 }

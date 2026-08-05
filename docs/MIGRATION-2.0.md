@@ -212,8 +212,8 @@ AgentScope Java 官方 Release Notes 对"2.0 系列"的描述偏总览性质，�
 
 `fallbackModel` 内置装饰器的已知 bug（[#1850](https://github.com/agentscope-ai/agentscope-java/issues/1850)，
 "实际不工作"）已由 [#1851](https://github.com/agentscope-ai/agentscope-java/pull/1851) 于 2026-07-06 修复并
-合入 GA（早于 2026-07-10 GA 发布）。本项目仍保留自研 `FallbackChatModel`，原因是要与 `ResilientChatModel`
-（退避重试）组合叠加，而非规避该缺陷；见 [功能与配置全量参考 §6.13b](功能与配置全量参考.md)。
+合入 GA（早于 2026-07-10 GA 发布）。本项目仍保留自研 `FallbackChatModel`（2.2 起由 `FailoverModel` 替代），
+原因是要与 `ResilientChatModel`（退避重试）组合叠加，而非规避该缺陷；见 [功能与配置全量参考 §6.13b](功能与配置全量参考.md)。
 
 ### 9.4 验证结果
 

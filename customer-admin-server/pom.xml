@@ -17,12 +17,6 @@
     <description>智能体客服后台管理系统：用户权限（RBAC）/ AI 模型 / MCP / Skill / 智能体管理，
         支持在线聊天与 VibeCoding（Spring MVC）</description>
 
-    <properties>
-        <!-- SFTP 客户端：JSch 官方已停更，改用社区维护版 mwiede/jsch（同 com.jcraft.jsch 包 API）；
-             版本只在本模块声明，不动根 pom。 -->
-        <jsch.version>0.2.23</jsch.version>
-    </properties>
-
     <dependencies>
         <!-- 显式覆盖父 POM 继承下来的 commons-lang3:3.13.0（dependency:tree -Dverbose 证实来自某个
              上游 BOM 的仲裁结果）——agentscope-harness 的 Docker 沙箱工作区投影（WorkspaceProjectionApplier
@@ -132,18 +126,29 @@
             <version>3.52.0</version>
         </dependency>
 
-        <!-- SQL 查询结果导出 xlsx（SqlQueryController#export）。项目原本无 POI，EasyExcel 传递
-             引入 poi/poi-ooxml 4.1.2；选本地仓库已存在的稳定版 3.3.2，避免额外下载/版本冲突。 -->
-        <!-- SQL 查询结果导出 xlsx。easyexcel 必须用 4.x（基于 POI 5.x）：starter 经
-             agentscope-extensions-rag-simple 传递 poi-ooxml 5.5.1，若用 easyexcel 3.x（声明 poi 4.1.2），
-             Maven nearest-wins 会裁出 poi 4.1.2 + poi-ooxml 5.5.1 的分裂 classpath，SXSSFWorkbook
-             静态初始化直接 NoClassDefFoundError（实测踩过）。下面显式钉 poi/poi-ooxml 5.5.1，
-             与 starter 侧完全对齐——同 commons-lang3 的覆盖手法，只在本模块生效。 -->
+        <!-- 登录态持久化：Sa-Token 默认 DAO 把 token 存 JVM 内存，服务一重启全部用户被踢下线。
+             换成官方 Redis 插件（SaTokenDaoRedisJackson，由 AdminSaTokenDaoConfig 显式装配），
+             传递引入 spring-boot-starter-data-redis 提供 RedisConnectionFactory（Lettuce，惰性连接，
+             连接参数见 application.yml 的 spring.data.redis.*，与 admin.redis.* 取同一批环境变量）。
+
+             没有选同系列的 sa-token-redisson-jackson（本可复用已有的 RedissonClient）：它的
+             init() 里 new spring-data-redis 的 GenericJackson2JsonRedisSerializer 再反射偷其私有
+             mapper 字段，照样离不开 spring-data-redis，还额外多一层依赖 spring-data-redis 私有
+             字段名的隐式耦合——同样的传递依赖代价，不如走官方主线这条被验证最多的路。 -->
         <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>easyexcel</artifactId>
-            <version>4.0.3</version>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-redis-jackson</artifactId>
+            <version>${sa-token.version}</version>
         </dependency>
+
+        <!-- SQL 查询结果导出 xlsx（SqlQueryController#export）：导出实现已下沉 starter
+             （com.richard.fyoung.customerwork.sqlkit.XlsxExporter），easyexcel 随之改由 starter 声明并
+             传递进来，本模块不再重复声明。仍保留 poi/poi-ooxml 5.5.1 的显式钉版，原因有二：
+             ①XlsxExporterTest 直接用 XSSFWorkbook 回读校验导出结果，需要 poi-ooxml 在本模块可编译引用；
+             ②真正加载 EasyExcel/POI 的是本模块的运行期 classpath（Controller 调 starter 导出），
+             钉版把 poi 4.1.2 与 poi-ooxml 5.5.1 混搭导致 SXSSFWorkbook 静态初始化
+             NoClassDefFoundError 的风险（实测踩过）挡在本模块——同 commons-lang3 的覆盖手法，
+             只在本模块生效，版本与 starter 侧完全对齐。 -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi</artifactId>
@@ -177,14 +182,6 @@
             <groupId>io.agentscope</groupId>
             <artifactId>agentscope-extensions-a2a-client</artifactId>
             <version>${agentscope.version}</version>
-        </dependency>
-
-        <!-- Skill 多存储目标：发布 SKILL.md 到 SFTP 目录（SftpSkillPublisher）。mwiede/jsch 是 JSch 的
-             社区维护版，保持 com.jcraft.jsch 包 API 兼容。 -->
-        <dependency>
-            <groupId>com.github.mwiede</groupId>
-            <artifactId>jsch</artifactId>
-            <version>${jsch.version}</version>
         </dependency>
 
         <!-- Lombok -->
