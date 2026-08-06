@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.config;
 
 import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.config.GlobalConfig;
+import com.baomidou.mybatisplus.core.toolkit.GlobalConfigUtils;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
@@ -85,6 +87,12 @@ public class CustomerWorkPersistenceConfig {
         MybatisConfiguration configuration = new MybatisConfiguration();
         configuration.setMapUnderscoreToCamelCase(true);
         factoryBean.setConfiguration(configuration);
+
+        // 不打 mybatis-plus 启动横幅：宿主若自带 MyBatis-Plus 环境已打过，本环境再打就是重复噪音
+        //（与 CrossDbGateways 的处理一致）。defaults() 与不设置时框架内部的兜底同源，仅关 banner。
+        GlobalConfig globalConfig = GlobalConfigUtils.defaults();
+        globalConfig.setBanner(false);
+        factoryBean.setGlobalConfig(globalConfig);
 
         factoryBean.setPlugins(paginationInterceptor());
         return factoryBean.getObject();
