@@ -18,6 +18,7 @@
     "highlight.js": "^11.11.1",
     "markdown-it": "^14.3.0",
     "pinia": "^2.3.1",
+    "sql-formatter": "^15.8.2",
     "vue": "^3.5.39",
     "vue-router": "^4.6.4"
   },

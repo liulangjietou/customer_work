@@ -31,8 +31,10 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1054** + admin-server **711** + app 78 + customer-channel 65 + gateway 1
-  （2026-08-05 feature/observability-last-mile 实测；admin-server 此前实际基线已是 707，CLAUDE.md 曾记的
+- 测试基线：starter **1136** + admin-server **722** + app 78 + customer-channel 65 + gateway 1
+  （2026-08-06 feature/devtoolbox-expansion 实测，该分支给开发者工具箱补了 cron/JWT/diff/格式互转四项
+  与 AES 两端对齐，starter +82 / admin +11。上一版基线是 2026-08-05 的 starter 1054 + admin 711；
+  admin-server 更早的实际基线已是 707，CLAUDE.md 曾记的
   701 系陈旧数字。starter 已按下方规则排除 2 个环境门控测试。此前 feature/sink-common-to-starter 把 admin
   十项通用能力下沉 starter：核心逻辑测试随迁，故 starter +226 / admin −106，admin 侧只保留薄壳职责测试；
   PR #68 修掉多构造器缺 @Autowired 后 `ApplicationContextTest` 已恢复，不再需要额外排除）。

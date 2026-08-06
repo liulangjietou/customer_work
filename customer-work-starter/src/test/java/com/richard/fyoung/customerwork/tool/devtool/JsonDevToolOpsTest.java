@@ -77,4 +77,58 @@ class JsonDevToolOpsTest {
         assertThrows(IllegalArgumentException.class, () -> ops.minify(null));
         assertThrows(IllegalArgumentException.class, () -> ops.validate(""));
     }
+
+    // -------- 转义 / 去转义 / Unicode 解码（与页面版同语义） --------
+
+    @Test
+    void escape_shouldWrapWithQuotesAndEscapeSpecialChars() {
+        assertEquals("\"{\\\"a\\\":1}\"", ops.escape("{\"a\":1}"));
+        assertEquals("\"line1\\nline2\"", ops.escape("line1\nline2"));
+    }
+
+    /** 与页面版 JSON.stringify 一致：中文保持原样，不转成 Unicode 转义序列。 */
+    @Test
+    void escape_shouldKeepNonAsciiAsIs() {
+        assertEquals("\"中文\"", ops.escape("中文"));
+    }
+
+    @Test
+    void unescape_shouldAcceptWithOrWithoutOuterQuotes() {
+        assertEquals("{\"a\":1}", ops.unescape("\"{\\\"a\\\":1}\""));
+        assertEquals("{\"a\":1}", ops.unescape("{\\\"a\\\":1}"));
+    }
+
+    @Test
+    void escapeUnescape_shouldRoundTrip() {
+        String origin = "含\"引号\"、反斜杠\\ 与换行\n的原文";
+        assertEquals(origin, ops.unescape(ops.escape(origin)));
+    }
+
+    /** 传入的是对象而非字符串字面量时应报错，而不是悄悄返回对象的文本形式。 */
+    @Test
+    void unescape_shouldRejectNonStringJson() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> ops.unescape("{\"a\":1}"));
+        assertTrue(ex.getMessage().contains("不是"));
+    }
+
+    @Test
+    void unescape_shouldRejectBrokenEscape() {
+        assertThrows(IllegalArgumentException.class, () -> ops.unescape("\"unclosed\\\""));
+    }
+
+    @Test
+    void decodeUnicode_shouldRestoreChineseAndKeepOtherText() {
+        assertEquals("中文 abc", ops.decodeUnicode("\\u4e2d\\u6587 abc"));
+    }
+
+    @Test
+    void decodeUnicode_shouldRestoreSurrogatePair() {
+        assertEquals("😀", ops.decodeUnicode("\\ud83d\\ude00"));
+    }
+
+    @Test
+    void decodeUnicode_shouldLeaveTextWithoutEscapesUntouched() {
+        assertEquals("plain text 中文", ops.decodeUnicode("plain text 中文"));
+        assertEquals("", ops.decodeUnicode(""));
+    }
 }

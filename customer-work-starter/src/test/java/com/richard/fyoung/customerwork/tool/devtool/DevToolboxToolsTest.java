@@ -76,14 +76,26 @@ class DevToolboxToolsTest {
     @Test
     void aes_shouldRoundTripThroughShell() throws Exception {
         String key = "1234567890123456";
-        JsonNode enc = call(tools.aesEncrypt("hi-明文", key, "CBC", null));
-        JsonNode dec = call(tools.aesDecrypt(enc.get("ciphertext").asText(), key, "CBC", enc.get("iv").asText()));
+        JsonNode enc = call(tools.aesEncrypt("hi-明文", key, null, "CBC", null, null, null, null));
+        JsonNode dec = call(tools.aesDecrypt(enc.get("ciphertext").asText(), key, null, "CBC",
+            null, enc.get("iv").asText(), null, null));
         assertEquals("hi-明文", dec.get("result").asText());
+    }
+
+    /** 页面版常用的 hex 组合也要能透过工具壳走通（参数多，壳层漏传某项会直接暴露）。 */
+    @Test
+    void aes_shouldRoundTripThroughShell_withHexEncodings() throws Exception {
+        String key = "000102030405060708090a0b0c0d0e0f";
+        String iv = "0f0e0d0c0b0a09080706050403020100";
+        JsonNode enc = call(tools.aesEncrypt("ctr-明文", key, "hex", "CTR", null, iv, "hex", "hex"));
+        assertEquals("hex", enc.get("outputFormat").asText());
+        JsonNode dec = call(tools.aesDecrypt(enc.get("ciphertext").asText(), key, "hex", "CTR", null, iv, "hex", "hex"));
+        assertEquals("ctr-明文", dec.get("result").asText());
     }
 
     @Test
     void aes_shouldConvergeError_onBadKey() throws Exception {
-        JsonNode node = call(tools.aesEncrypt("x", "short", "CBC", null));
+        JsonNode node = call(tools.aesEncrypt("x", "short", null, "CBC", null, null, null, null));
         assertTrue(node.has("error"));
         assertFalse(node.has("ciphertext"));
     }
@@ -137,5 +149,84 @@ class DevToolboxToolsTest {
     void certMatch_shouldConvergeError_onBadPrivateKey() throws Exception {
         JsonNode node = call(tools.certMatch(SELF_SIGNED_CERT_PEM, "garbage"));
         assertTrue(node.has("error"));
+    }
+
+    // ---------- hex / JSON 转义 ----------
+
+    @Test
+    void hex_shouldRoundTripThroughShell() throws Exception {
+        JsonNode enc = call(tools.hexEncode("你好"));
+        assertEquals("e4bda0e5a5bd", enc.get("result").asText());
+        assertEquals("你好", call(tools.hexDecode("e4bda0e5a5bd")).get("result").asText());
+    }
+
+    @Test
+    void hexDecode_shouldConvergeError_onOddLength() throws Exception {
+        assertTrue(call(tools.hexDecode("abc")).has("error"));
+    }
+
+    @Test
+    void jsonEscapeUnescape_shouldRoundTripThroughShell() throws Exception {
+        String escaped = call(tools.jsonEscape("{\"a\":1}")).get("result").asText();
+        assertEquals("{\"a\":1}", call(tools.jsonUnescape(escaped)).get("result").asText());
+    }
+
+    @Test
+    void jsonUnicodeDecode_shouldRestoreChinese() throws Exception {
+        assertEquals("中文", call(tools.jsonUnicodeDecode("\\u4e2d\\u6587")).get("result").asText());
+    }
+
+    // ---------- cron / JWT / diff / 格式互转 ----------
+
+    @Test
+    void cronExplain_shouldReturnFieldsAndNextTimes() throws Exception {
+        JsonNode node = call(tools.cronExplain("0 0 2 * * ?", 2, null));
+        assertEquals(6, node.get("fields").size());
+        assertEquals(2, node.get("nextTimes").size());
+        assertEquals("Asia/Shanghai", node.get("timezone").asText());
+    }
+
+    @Test
+    void cronExplain_shouldConvergeError_onFiveFieldExpression() throws Exception {
+        JsonNode node = call(tools.cronExplain("0 2 * * *", null, null));
+        assertTrue(node.has("error"));
+        assertTrue(node.get("error").asText().contains("5 段"), "error 应指出段数问题便于自我纠正");
+    }
+
+    @Test
+    void jwtDecode_shouldExposeClaimsAndVerifyStatus() throws Exception {
+        String token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+            + ".eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ"
+            + ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        JsonNode node = call(tools.jwtDecode(token, "your-256-bit-secret", null));
+        assertEquals("HS256", node.get("algorithm").asText());
+        assertEquals("1234567890", node.get("subject").asText());
+        assertEquals("VALID", node.get("signatureStatus").asText());
+        assertFalse(node.get("expired").asBoolean());
+    }
+
+    @Test
+    void jwtDecode_shouldConvergeError_onMalformedToken() throws Exception {
+        assertTrue(call(tools.jwtDecode("not-a-jwt", null, null)).has("error"));
+    }
+
+    @Test
+    void textDiff_shouldReportAddedAndDeleted() throws Exception {
+        JsonNode node = call(tools.textDiff("a\nb", "a\nc", null, null));
+        assertFalse(node.get("identical").asBoolean());
+        assertEquals(1, node.get("addedLines").asInt());
+        assertEquals(1, node.get("deletedLines").asInt());
+    }
+
+    @Test
+    void dataConvert_shouldConvertJsonToYaml() throws Exception {
+        JsonNode node = call(tools.dataConvert("{\"a\":1}", "json", "yaml", null));
+        assertEquals("yaml", node.get("targetFormat").asText());
+        assertTrue(node.get("result").asText().contains("a: 1"));
+    }
+
+    @Test
+    void dataConvert_shouldConvergeError_onUnsupportedFormat() throws Exception {
+        assertTrue(call(tools.dataConvert("{\"a\":1}", "json", "toml", null)).has("error"));
     }
 }

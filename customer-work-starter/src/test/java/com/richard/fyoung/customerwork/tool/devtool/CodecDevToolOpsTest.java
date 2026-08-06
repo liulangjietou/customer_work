@@ -84,56 +84,164 @@ class CodecDevToolOpsTest {
         assertThrows(IllegalArgumentException.class, () -> ops.uuid(21));
     }
 
-    // -------- AES --------
+    // -------- Hex --------
 
     @Test
-    void aes_cbc_shouldRoundTrip_withGeneratedIv() {
-        String key = "1234567890123456"; // 16 字节
-        CodecDevToolOps.AesResult enc = ops.aesEncrypt("secret-明文", key, "CBC", null);
-        assertNotNull(enc.getIv(), "CBC 应返回随机 IV");
-        assertEquals("secret-明文", ops.aesDecrypt(enc.getCiphertext(), key, "CBC", enc.getIv()));
+    void hex_shouldRoundTrip() {
+        assertEquals("e4bda0e5a5bd68690a", ops.hexEncode("你好hi\n"));
+        assertEquals("你好hi\n", ops.hexDecode("e4bda0e5a5bd68690a"));
     }
 
     @Test
-    void aes_cbc_shouldDefaultMode_whenModeBlank() {
-        String key = "1234567890123456";
-        CodecDevToolOps.AesResult enc = ops.aesEncrypt("hello", key, null, null);
+    void hexDecode_shouldIgnoreWhitespaceAndAcceptUpperCase() {
+        assertEquals("abc", ops.hexDecode("61 62\n63"));
+        assertEquals("abc", ops.hexDecode("616263".toUpperCase(java.util.Locale.ROOT)));
+    }
+
+    @Test
+    void hexDecode_shouldRejectOddLengthAndNonHex() {
+        assertThrows(IllegalArgumentException.class, () -> ops.hexDecode("abc"));
+        assertThrows(IllegalArgumentException.class, () -> ops.hexDecode("zz"));
+    }
+
+    // -------- AES：回环与参数校验 --------
+
+    /** 只给密钥、其余全默认，验证默认值仍是历史行为（CBC + PKCS7 + IV/密文 base64）。 */
+    @Test
+    void aes_shouldKeepLegacyDefaults_whenOnlyKeyGiven() {
+        CodecDevToolOps.AesParams params = params(b -> b.key("1234567890123456"));
+        CodecDevToolOps.AesResult enc = ops.aesEncrypt("hello", params);
         assertEquals("CBC", enc.getMode());
-        assertEquals("hello", ops.aesDecrypt(enc.getCiphertext(), key, null, enc.getIv()));
+        assertEquals("PKCS7", enc.getPadding());
+        assertEquals("base64", enc.getOutputFormat());
+        assertNotNull(enc.getIv(), "CBC 应返回随机 IV");
+        assertEquals("hello", ops.aesDecrypt(enc.getCiphertext(),
+            params(b -> b.key("1234567890123456").iv(enc.getIv()))));
     }
 
     @Test
     void aes_ecb_shouldRoundTrip_withoutIv() {
-        String key = "123456789012345678901234"; // 24 字节
-        CodecDevToolOps.AesResult enc = ops.aesEncrypt("ecb-明文", key, "ECB", null);
+        CodecDevToolOps.AesParams params = params(b -> b.key("123456789012345678901234").mode("ECB"));
+        CodecDevToolOps.AesResult enc = ops.aesEncrypt("ecb-明文", params);
         assertNull(enc.getIv(), "ECB 不应有 IV");
-        assertEquals("ecb-明文", ops.aesDecrypt(enc.getCiphertext(), key, "ECB", null));
+        assertEquals("ecb-明文", ops.aesDecrypt(enc.getCiphertext(), params));
     }
 
     @Test
     void aes_gcm_shouldRoundTrip() {
-        String key = "12345678901234567890123456789012"; // 32 字节
-        CodecDevToolOps.AesResult enc = ops.aesEncrypt("gcm-明文", key, "GCM", null);
+        CodecDevToolOps.AesParams params = params(b -> b.key("12345678901234567890123456789012").mode("GCM"));
+        CodecDevToolOps.AesResult enc = ops.aesEncrypt("gcm-明文", params);
         assertNotNull(enc.getIv());
-        assertEquals("gcm-明文", ops.aesDecrypt(enc.getCiphertext(), key, "GCM", enc.getIv()));
+        assertEquals("gcm-明文", ops.aesDecrypt(enc.getCiphertext(),
+            params(b -> b.key("12345678901234567890123456789012").mode("GCM").iv(enc.getIv()))));
+    }
+
+    @Test
+    void aes_ctr_shouldRoundTrip_withHexEncodings() {
+        CodecDevToolOps.AesParams params = params(b -> b
+            .key("000102030405060708090a0b0c0d0e0f").keyEncoding("hex")
+            .mode("CTR").iv("0f0e0d0c0b0a09080706050403020100").ivEncoding("hex").outputFormat("hex"));
+        CodecDevToolOps.AesResult enc = ops.aesEncrypt("ctr-明文", params);
+        assertEquals("NONE", enc.getPadding(), "CTR 不使用块填充");
+        assertEquals("ctr-明文", ops.aesDecrypt(enc.getCiphertext(), params));
     }
 
     @Test
     void aes_shouldRejectIllegalKeyLength() {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-            () -> ops.aesEncrypt("x", "short-key", "CBC", null));
+            () -> ops.aesEncrypt("x", params(b -> b.key("short-key"))));
         assertTrue(ex.getMessage().contains("16/24/32"));
     }
 
     @Test
     void aesDecrypt_shouldRejectMissingIv_forCbc() {
         assertThrows(IllegalArgumentException.class,
-            () -> ops.aesDecrypt("YWJj", "1234567890123456", "CBC", null));
+            () -> ops.aesDecrypt("YWJj", params(b -> b.key("1234567890123456"))));
     }
 
     @Test
     void aes_shouldRejectIllegalMode() {
         assertThrows(IllegalArgumentException.class,
-            () -> ops.aesEncrypt("x", "1234567890123456", "XTS", null));
+            () -> ops.aesEncrypt("x", params(b -> b.key("1234567890123456").mode("XTS"))));
+    }
+
+    /** CTR/GCM 显式指定块填充属于配置错误，必须报错而不是静默忽略。 */
+    @Test
+    void aes_shouldRejectBlockPadding_forStreamModes() {
+        assertThrows(IllegalArgumentException.class,
+            () -> ops.aesEncrypt("x", params(b -> b.key("1234567890123456").mode("CTR").padding("PKCS7"))));
+        assertThrows(IllegalArgumentException.class,
+            () -> ops.aesEncrypt("x", params(b -> b.key("1234567890123456").mode("GCM").padding("PKCS7"))));
+    }
+
+    /** NoPadding 下明文长度不是块长整数倍时，给出明确提示而非底层的 IllegalBlockSizeException。 */
+    @Test
+    void aes_noPadding_shouldRejectUnalignedPlainText() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+            () -> ops.aesEncrypt("not-16-bytes", params(b -> b
+                .key("1234567890123456").mode("CBC").padding("NONE").iv("abcdef9876543210").ivEncoding("utf8"))));
+        assertTrue(ex.getMessage().contains("整数倍"));
+    }
+
+    // -------- AES：与管理台页面版(crypto-js)的互通性 --------
+
+    /**
+     * 下列密文全部由页面版实际使用的 crypto-js 生成（脚本逻辑逐行对应 aesCrypto.ts），
+     * 断言后端能原样解出、且相同参数下加密结果逐字节一致。这是"页面加密的密文智能体一定能解"
+     * 这条承诺的回归防线：任何一侧参数语义漂移都会让这些用例先挂。
+     */
+    @Test
+    void aes_shouldInteropWithBrowserCryptoJs_cbcPkcs7Utf8IvHexOutput() {
+        // 页面上的默认组合：CBC + PKCS7 + 密钥/IV 按 UTF-8 输入 + 密文 hex
+        assertInterop("你好 hello 123", "7245506b0a54591da06e2d4e4f03721956ee0d78037759a433af7d0f0055c2ca",
+            b -> b.key("0123456789abcdef").mode("CBC").iv("abcdef9876543210").ivEncoding("utf8").outputFormat("hex"));
+    }
+
+    @Test
+    void aes_shouldInteropWithBrowserCryptoJs_cbcPkcs7Base64IvBase64Output() {
+        assertInterop("你好 hello 123", "ckVQawpUWR2gbi1OTwNyGVbuDXgDd1mkM699DwBVwso=",
+            b -> b.key("0123456789abcdef").mode("CBC").iv("YWJjZGVmOTg3NjU0MzIxMA==").ivEncoding("base64"));
+    }
+
+    @Test
+    void aes_shouldInteropWithBrowserCryptoJs_ecb() {
+        assertInterop("plain-ecb-测试", "37ee00d8416737fdcbde64ef7eb274e5377222e061a924c591cd9c27ea163ed4",
+            b -> b.key("0123456789abcdef").mode("ECB").outputFormat("hex"));
+    }
+
+    @Test
+    void aes_shouldInteropWithBrowserCryptoJs_ctr() {
+        assertInterop("counter mode 中文", "43c68cfcc02929c8697098b94c4a21c7a13023",
+            b -> b.key("000102030405060708090a0b0c0d0e0f").keyEncoding("hex").mode("CTR")
+                .iv("0f0e0d0c0b0a09080706050403020100").ivEncoding("hex").outputFormat("hex"));
+    }
+
+    @Test
+    void aes_shouldInteropWithBrowserCryptoJs_cbcNoPadding() {
+        assertInterop("sixteen-bytes!!!", "7F42+jctB0RlgVrIBBHxIA==",
+            b -> b.key("0123456789abcdef").mode("CBC").padding("NONE")
+                .iv("abcdef9876543210").ivEncoding("utf8").outputFormat("base64"));
+    }
+
+    @Test
+    void aes_shouldInteropWithBrowserCryptoJs_base64Key256() {
+        assertInterop("aes-256 key from base64", "950a4ccdb215265262ad6b085e2d38b038a8ef42a032a545309abda8a37df883",
+            b -> b.key("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=").keyEncoding("base64").mode("CBC")
+                .iv("000102030405060708090a0b0c0d0e0f").ivEncoding("hex").outputFormat("hex"));
+    }
+
+    /** 双向断言：后端加密结果与浏览器密文逐字节相同，且后端能解开浏览器密文。 */
+    private void assertInterop(String plainText, String browserCipher,
+                               java.util.function.UnaryOperator<CodecDevToolOps.AesParams.AesParamsBuilder> customizer) {
+        CodecDevToolOps.AesParams params = params(customizer);
+        assertEquals(browserCipher, ops.aesEncrypt(plainText, params).getCiphertext(),
+            "后端加密结果应与浏览器 crypto-js 逐字节一致");
+        assertEquals(plainText, ops.aesDecrypt(browserCipher, params),
+            "后端应能解开浏览器 crypto-js 产出的密文");
+    }
+
+    private CodecDevToolOps.AesParams params(
+        java.util.function.UnaryOperator<CodecDevToolOps.AesParams.AesParamsBuilder> customizer) {
+        return customizer.apply(CodecDevToolOps.AesParams.builder()).build();
     }
 }
