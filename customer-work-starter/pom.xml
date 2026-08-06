@@ -235,6 +235,13 @@
             <artifactId>agentscope-extensions-rag-bailian</artifactId>
         </dependency>
 
+        <!-- 开发者工具箱的 JSON⇄YAML⇄XML 互转（DataFormatDevToolOps）。yaml 版已由 spring-boot 传递进来，
+             xml 版没有，此处显式声明；版本交由 spring-boot-dependencies 管理，避免与 jackson-core 错版。 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-xml</artifactId>
+        </dependency>
+
         <!-- 附件文档解析：Tika（pdf/doc/docx/ppt/pptx/html 文本抽取）。虽已由 rag-simple 传递到 classpath，
              此处显式声明并锁 3.3.0，防上游瘦身导致解析器缺失（poi-ooxml / pdfbox 亦由 rag-simple 传递，不重复声明）。 -->
         <dependency>
