@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.gateway;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.config.GlobalConfig;
+import com.baomidou.mybatisplus.core.toolkit.GlobalConfigUtils;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -168,6 +170,12 @@ public final class CrossDbGateways {
         MybatisSqlSessionFactoryBean factoryBean = new MybatisSqlSessionFactoryBean();
         factoryBean.setDataSource(dataSource);
         factoryBean.setConfiguration(configuration);
+        // 基建工厂不打 mybatis-plus 启动横幅：宿主的主 SqlSessionFactory 已打过一次，这里每建一个
+        // 跨库网关就再打一个（admin 启动曾连打三个）。defaults() 与不设置时框架内部的兜底同源，
+        // 除 banner 开关外行为零变化。
+        GlobalConfig globalConfig = GlobalConfigUtils.defaults();
+        globalConfig.setBanner(false);
+        factoryBean.setGlobalConfig(globalConfig);
         if (mapperXmlLocations != null && !mapperXmlLocations.isEmpty()) {
             factoryBean.setMapperLocations(resolveMapperXml(mapperXmlLocations));
         }
