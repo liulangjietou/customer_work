@@ -127,3 +127,108 @@ export function parseKeystore(file: File, password: string) {
   formData.append('password', password)
   return request<KeystoreParseResponse>({ url: '/devtools/cert/keystore', method: 'post', data: formData })
 }
+
+// ---------- cron / JWT / 文本比对 / 格式互转 ----------
+//
+// 这四项都走后端：算法只在 starter 的 Ops 里实现一份，页面与智能体（devtoolbox 系统工具）共用，
+// 从根上杜绝两端语义分叉。cron 尤其不能放前端算——表达式最终由 XXL-JOB 按 Quartz 6 段语义触发，
+// 浏览器端 cron 库多按 Unix 5 段解析，算出的"下次执行时间"可能与实际调度不符，那样反而误导排查。
+
+export interface CronFieldDesc {
+  name: string
+  value: string
+  range: string
+  description: string
+}
+
+export interface CronExplainResponse {
+  expression: string
+  timezone: string
+  fields: CronFieldDesc[]
+  nextTimes: string[]
+}
+
+/** 解析 cron 表达式：校验、逐字段释义、推算后续执行时间。 */
+export function explainCron(expression: string, count?: number, timezone?: string) {
+  return request<CronExplainResponse>({
+    url: '/devtools/cron/explain',
+    method: 'post',
+    data: { expression, count, timezone },
+  })
+}
+
+export interface JwtDecodeResponse {
+  algorithm: string | null
+  type: string | null
+  header: string
+  payload: string
+  issuer: string | null
+  subject: string | null
+  audience: string | null
+  jwtId: string | null
+  issuedAt: string | null
+  notBefore: string | null
+  expiresAt: string | null
+  expired: boolean
+  notYetValid: boolean
+  secondsRemaining: number | null
+  unsigned: boolean
+  /** VALID / INVALID / NOT_CHECKED(未提供密钥) / UNSUPPORTED_ALG(非 HS* 不验签) */
+  signatureStatus: string
+}
+
+/** 解析 JWT，可选校验 HS* 签名。令牌与密钥仅在后端内存中解析，不落库不写日志。 */
+export function decodeJwt(token: string, secret?: string, secretEncoding?: string) {
+  return request<JwtDecodeResponse>({
+    url: '/devtools/jwt/decode',
+    method: 'post',
+    data: { token, secret, secretEncoding },
+  })
+}
+
+export interface TextDiffLine {
+  /** EQUAL / INSERT / DELETE */
+  type: string
+  /** 原文本行号，新增行为 -1 */
+  oldLineNo: number
+  /** 新文本行号，删除行为 -1 */
+  newLineNo: number
+  content: string
+}
+
+export interface TextDiffResponse {
+  identical: boolean
+  addedLines: number
+  deletedLines: number
+  totalLines: number
+  truncated: boolean
+  lines: TextDiffLine[]
+}
+
+/** 行级比对两段文本。 */
+export function diffText(data: {
+  oldText: string
+  newText: string
+  ignoreWhitespace?: boolean
+  ignoreCase?: boolean
+}) {
+  return request<TextDiffResponse>({ url: '/devtools/diff/text', method: 'post', data })
+}
+
+export type DataFormat = 'json' | 'yaml' | 'xml'
+
+export interface FormatConvertResponse {
+  sourceFormat: string
+  targetFormat: string
+  result: string
+}
+
+/** JSON / YAML / XML 互转。 */
+export function convertFormat(data: {
+  content: string
+  sourceFormat: DataFormat
+  targetFormat: DataFormat
+  rootName?: string
+}) {
+  return request<FormatConvertResponse>({ url: '/devtools/format/convert', method: 'post', data })
+}

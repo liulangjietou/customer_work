@@ -8,6 +8,7 @@ import {
   listAllSqlDatasources,
 } from '@/api/sql'
 import type { SqlDatasourceVO, SqlQueryResultVO } from '@/types/api'
+import { format, type SqlLanguage } from 'sql-formatter'
 
 const datasources = ref<SqlDatasourceVO[]>([])
 const datasourceId = ref<number>()
@@ -84,6 +85,45 @@ function insertAtCursor(text: string) {
     const pos = start + text.length
     ta.setSelectionRange(pos, pos)
   })
+}
+
+// ===== SQL 格式化 =====
+// 纯前端做（sql-formatter）：这条能力只此一处、没有智能体版本，不存在两端实现漂移的风险；
+// 而 Java 侧没有质量相当的格式化库，硬写一个只会做得更差。
+
+/** jdbcUrl 里的驱动名 → sql-formatter 方言。取不到时回退 MySQL（本项目数据源以 MySQL 为主）。 */
+const SQL_DIALECTS: Record<string, SqlLanguage> = {
+  mysql: 'mysql',
+  mariadb: 'mariadb',
+  postgresql: 'postgresql',
+  sqlite: 'sqlite',
+  sqlserver: 'transactsql',
+  oracle: 'plsql',
+}
+
+const currentDialect = computed<SqlLanguage>(() => {
+  const url = datasources.value.find((item) => item.id === datasourceId.value)?.jdbcUrl ?? ''
+  // jdbc:mysql://host:3306/db → 取 jdbc: 与下一个冒号之间的驱动名
+  const driver = /^jdbc:([a-z0-9]+):/i.exec(url)?.[1]?.toLowerCase()
+  return (driver && SQL_DIALECTS[driver]) || 'mysql'
+})
+
+function formatSql() {
+  if (!sql.value.trim()) {
+    ElMessage.warning('请先输入 SQL')
+    return
+  }
+  try {
+    sql.value = format(sql.value, {
+      language: currentDialect.value,
+      tabWidth: 2,
+      keywordCase: 'upper',
+      linesBetweenQueries: 1,
+    })
+  } catch (e) {
+    // 语法不完整时 sql-formatter 会抛错，保持原文不动并提示，避免把用户写了一半的 SQL 弄乱
+    ElMessage.warning(`SQL 无法解析，未做格式化：${e instanceof Error ? e.message : String(e)}`)
+  }
 }
 
 // ===== 查询 / 导出 =====
@@ -203,6 +243,7 @@ onMounted(loadDatasources)
 
           <div class="toolbar">
             <el-button type="primary" :loading="executing" @click="runQuery">执行（Ctrl+Enter）</el-button>
+            <el-button :disabled="!sql.trim()" @click="formatSql">格式化 SQL</el-button>
             <el-button
               v-permission="'sql-console:export'"
               :loading="exporting"
