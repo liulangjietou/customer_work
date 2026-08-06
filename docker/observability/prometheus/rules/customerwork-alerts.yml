@@ -1,0 +1,151 @@
+# =============================================================================
+# 客服系统告警规则（9 条）。写规则前逐个核对了埋点源码里的指标类型与 tag，避免猜后缀：
+#
+#   customerwork.agent.requests / .errors / .reasoning        Counter，无 tag
+#     -> customerwork_agent_requests_total / _errors_total / _reasoning_total
+#     （ObservabilityMiddleware）
+#   customerwork.agent.tool.calls                              Counter，tag=tool
+#     -> customerwork_agent_tool_calls_total{tool="..."}       （ObservabilityMiddleware）
+#   customerwork.agent.latency.e2e/.reasoning/.tool             Timer（已开
+#     publishPercentileHistogram，可用 _bucket 做 histogram_quantile）
+#     -> customerwork_agent_latency_e2e_seconds_bucket/_count/_sum （LatencyMiddleware）
+#   customerwork.agent.slow.requests                            Counter，tag=outcome(SLOW/ERROR)
+#     -> customerwork_agent_slow_requests_total{outcome="..."} （LatencyMiddleware）
+#   customerwork.synthetic.probe                                 Counter，tag=result(UP/DEGRADED/DOWN)
+#     -> customerwork_synthetic_probe_total{result="..."}      （SyntheticMonitor，默认关闭，需
+#        customer-work.synthetic-monitor.enabled=true 才有数据）
+#   customerwork.handoff.sla.breach                               Counter，tag=stage(pending/claimed)
+#     -> customerwork_handoff_sla_breach_total{stage="..."}    （HandoffSlaScheduler）
+#   customerwork.prompt.guard.blocked                              Counter，无 tag
+#     -> customerwork_prompt_guard_blocked_total               （PromptInjectionGuardMiddleware）
+#   customerwork.indirect.guard.spotlighted / .detected              Counter，无 tag
+#     -> customerwork_indirect_guard_spotlighted_total / _detected_total
+#     （IndirectInjectionGuardMiddleware）
+#   customerwork.sensitive.inbound.blocked/.masked/.outbound.blocked/.masked  Counter，无 tag
+#     -> customerwork_sensitive_{inbound,outbound}_{blocked,masked}_total
+#     （SensitiveWordMiddleware，需 customer-work.sensitive-word.enabled=true 才有数据）
+#   customerwork.chat.fallback / .intent.classify.errors             Counter，无 tag
+#     -> customerwork_chat_fallback_total / customerwork_intent_classify_errors_total
+#     （CustomerServiceService）
+#
+# 未采用的指标：customerwork.agent.tokens（tag=type，input/output）——本次核对时代码里尚不存在，
+#   是另一个并行任务正在加的 Counter，名字已约定为 customerwork_agent_tokens_total，仅用于
+#   Grafana 仪表盘展示（见 grafana/dashboards/agent-overview.json），未纳入告警规则（避免告警依赖
+#   一个还没落地的指标导致规则常年不触发也发现不了）。
+#
+# 阈值均可调，已在表达式旁注明。
+# =============================================================================
+groups:
+  - name: customerwork-alerts
+    rules:
+
+      # 1. 服务不可达：Prometheus 抓不到目标（进程挂了/端口不通/actuator 未暴露）
+      - alert: CustomerWorkServiceDown
+        expr: up{job=~"customer-work-app-server|customer-admin-server"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "[{{ $labels.job }}] 服务不可达"
+          description: "Prometheus 连续 5 分钟抓取不到 {{ $labels.job }}（实例 {{ $labels.instance }}）的 /actuator/prometheus，服务可能已宕机或端口不通。"
+
+      # 2. 错误率 > 5% 持续 5m（阈值 0.05 可调）
+      - alert: CustomerWorkAgentErrorRateHigh
+        expr: |
+          (
+            sum(rate(customerwork_agent_errors_total[5m])) by (job)
+            /
+            sum(rate(customerwork_agent_requests_total[5m])) by (job)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "[{{ $labels.job }}] Agent 调用错误率过高"
+          description: "{{ $labels.job }} 近 5 分钟 Agent 调用错误率 {{ $value | humanizePercentage }}，超过 5% 阈值并持续 5 分钟，请检查模型/工具/下游依赖是否异常。"
+
+      # 3. P95 端到端延迟 > 10s 持续 5m（阈值 10 可调，单位秒；Timer 已开 histogram，用 _bucket 求分位）
+      - alert: CustomerWorkAgentLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(customerwork_agent_latency_e2e_seconds_bucket[5m])) by (le, job)
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "[{{ $labels.job }}] 端到端 P95 延迟过高"
+          description: "{{ $labels.job }} 近 5 分钟端到端调用 P95 延迟 {{ $value | humanizeDuration }}，超过 10s 阈值并持续 5 分钟，用户侧可能已感知到卡顿。"
+
+      # 4. chat.fallback 速率突增（5 分钟窗口内新增次数阈值 5 可调）
+      - alert: CustomerWorkChatFallbackSurge
+        expr: increase(customerwork_chat_fallback_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "[{{ $labels.job }}] 对话兜底回复次数突增"
+          description: "{{ $labels.job }} 近 5 分钟兜底回复（FALLBACK_REPLY）新增 {{ $value }} 次，超过阈值 5，说明 chat 主链路调用持续失败，用户拿到的是「系统繁忙」话术。"
+
+      # 5. intent.classify.errors 突增（5 分钟窗口内新增次数阈值 5 可调；缓解框架结构化输出静默失效问题）
+      - alert: CustomerWorkIntentClassifyErrorsSurge
+        expr: increase(customerwork_intent_classify_errors_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "[{{ $labels.job }}] 意图分类失败次数突增"
+          description: "{{ $labels.job }} 近 5 分钟意图分类失败新增 {{ $value }} 次，超过阈值 5，可能是模型结构化输出异常（框架 #1852/#1699 已知问题）或模型服务不稳定。"
+
+      # 6. handoff.sla.breach 有新增（阈值 0，即"只要出现就报"；如需降噪可调大）
+      - alert: CustomerWorkHandoffSlaBreach
+        expr: increase(customerwork_handoff_sla_breach_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "[{{ $labels.job }}] 人机切换工单 SLA 超标（stage={{ $labels.stage }}）"
+          description: "{{ $labels.job }} 近 5 分钟出现 {{ $value }} 次 {{ $labels.stage }} 阶段 SLA 超标（pending=未接单超时/claimed=接单未结案超时），坐席队列可能积压或有工单卡住，需人工介入。"
+
+      # 7. synthetic.probe 连续失败：探针默认每 5 分钟一次，10 分钟窗口内 DOWN 次数 >= 2 且无 UP 视为连续失败
+      #    （前提：customer-work.synthetic-monitor.enabled=true 才会产生该指标）
+      - alert: CustomerWorkSyntheticProbeConsecutiveFailure
+        expr: |
+          increase(customerwork_synthetic_probe_total{result="DOWN"}[10m]) >= 2
+          and
+          increase(customerwork_synthetic_probe_total{result="UP"}[10m]) == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "[{{ $labels.job }}] 合成监控连续探测失败"
+          description: "{{ $labels.job }} 的合成监控（主动探活）近 10 分钟内连续判定 DOWN 且无一次 UP，客服主链路很可能已经不可用，请立即介入，不要等用户投诉。"
+
+      # 8. 安全事件突增：prompt 直接注入拦截 + 敏感词出/入站拦截合并计数（5 分钟窗口阈值 20 可调）
+      - alert: CustomerWorkSecurityEventSurge
+        expr: |
+          (
+            sum(increase(customerwork_prompt_guard_blocked_total[5m]))
+            + sum(increase(customerwork_sensitive_inbound_blocked_total[5m]))
+            + sum(increase(customerwork_sensitive_outbound_blocked_total[5m]))
+          ) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "安全护栏拦截次数突增"
+          description: "近 5 分钟提示词注入拦截 + 敏感词入站拦截 + 敏感词出站拦截合计新增 {{ $value }} 次，超过阈值 20，可能正在遭受批量攻击探测或存在误拦截配置问题，建议查看审计日志定位来源。"
+
+      # 9. JVM 堆使用率 > 85% 持续 10m（阈值 0.85 可调）
+      - alert: CustomerWorkJvmHeapUsageHigh
+        expr: |
+          sum(jvm_memory_used_bytes{area="heap", job=~"customer-work-app-server|customer-admin-server"}) by (job)
+          /
+          sum(jvm_memory_max_bytes{area="heap", job=~"customer-work-app-server|customer-admin-server"}) by (job)
+          > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "[{{ $labels.job }}] JVM 堆内存使用率过高"
+          description: "{{ $labels.job }} 堆内存使用率 {{ $value | humanizePercentage }}，超过 85% 阈值并持续 10 分钟，存在 OOM / 频繁 Full GC 风险，请检查是否有内存泄漏或需要调大堆。"

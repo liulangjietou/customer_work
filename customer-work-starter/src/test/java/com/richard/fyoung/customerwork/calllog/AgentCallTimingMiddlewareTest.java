@@ -17,7 +17,10 @@ import io.agentscope.core.middleware.ActingInput;
 import io.agentscope.core.middleware.AgentInput;
 import io.agentscope.core.middleware.ModelCallInput;
 import io.agentscope.core.model.Model;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -66,7 +69,7 @@ class AgentCallTimingMiddlewareTest {
         ToolKindRegistry registry = new ToolKindRegistry();
         registry.registerMcpTools(List.of("mcp_weather"));
         AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
-        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), registry, captured::set);
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), registry, captured::set, null);
 
         RuntimeContext ctx = ctx();
         Function<AgentInput, Flux<AgentEvent>> inner = ai -> {
@@ -111,7 +114,7 @@ class AgentCallTimingMiddlewareTest {
         when(model.getModelName()).thenReturn("qwen-max");
 
         AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
-        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), captured::set);
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), captured::set, null);
 
         RuntimeContext ctx = ctx();
         Function<AgentInput, Flux<AgentEvent>> inner = ai -> {
@@ -142,7 +145,7 @@ class AgentCallTimingMiddlewareTest {
     @Test
     void onActing_toolResultError_shouldMarkSegmentFailed() {
         ToolKindRegistry registry = new ToolKindRegistry();
-        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), registry, r -> { });
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), registry, r -> { }, null);
 
         RuntimeContext ctx = ctx();
         AgentCallCollector collector = new AgentCallCollector();
@@ -161,7 +164,7 @@ class AgentCallTimingMiddlewareTest {
     /** onActing 上游抛异常走 onError 分支，段判失败且异常不外泄（本 hook 只读透传）。 */
     @Test
     void onActing_upstreamError_shouldRecordFailureAndNotSwallowMainError() {
-        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), r -> { });
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), r -> { }, null);
         RuntimeContext ctx = ctx();
         AgentCallCollector collector = new AgentCallCollector();
         ctx.put(AgentCallCollector.class, collector);
@@ -187,7 +190,7 @@ class AgentCallTimingMiddlewareTest {
         AgentCallRecordSink throwing = r -> {
             throw new RuntimeException("sink boom");
         };
-        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), throwing);
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), throwing, null);
 
         AgentEvent last = mw.onAgent(agent, ctx(), new AgentInput(List.of(msg(MsgRole.USER, "hi"))),
             ai -> Flux.just(new AgentResultEvent(msg(MsgRole.ASSISTANT, "ok")))).blockLast();
@@ -202,7 +205,7 @@ class AgentCallTimingMiddlewareTest {
         when(model.getModelName()).thenReturn("qwen-max");
 
         List<AgentCallRecord> emitted = new java.util.concurrent.CopyOnWriteArrayList<>();
-        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), emitted::add);
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), emitted::add, null);
 
         RuntimeContext ctx = ctx();
         // 内层：模拟子 agent 在同一 ctx 上再次进入 onAgent，并在其中发生一次模型调用
@@ -223,13 +226,70 @@ class AgentCallTimingMiddlewareTest {
             "子 agent 的模型分段归入父请求采集器");
     }
 
+    /** 接入 Micrometer 时，MODEL 段结算把 token 累加进 customerwork.agent.tokens（tag type=input/output）。 */
+    @Test
+    void onModelCall_shouldCountTokensIntoMeterRegistry() {
+        when(agent.getName()).thenReturn("客服Agent");
+        when(model.getModelName()).thenReturn("qwen-max");
+
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(),
+            new ToolKindRegistry(), r -> { }, providerOf(meterRegistry));
+
+        RuntimeContext ctx = ctx();
+        Function<AgentInput, Flux<AgentEvent>> inner = ai -> Flux.concat(
+            mw.onModelCall(agent, ctx, new ModelCallInput(List.of(), List.of(), null, model),
+                mi -> Flux.just(new ModelCallEndEvent("reply-1", new ChatUsage(128, 32, 0.0)))),
+            // 第二次模型调用：验证计数器是累加而非覆盖
+            mw.onModelCall(agent, ctx, new ModelCallInput(List.of(), List.of(), null, model),
+                mi -> Flux.just(new ModelCallEndEvent("reply-2", new ChatUsage(70, 8, 0.0)))),
+            Flux.just(new AgentResultEvent(msg(MsgRole.ASSISTANT, "最终回答"))));
+
+        mw.onAgent(agent, ctx, new AgentInput(List.of(msg(MsgRole.USER, "你好"))), inner).blockLast();
+
+        assertEquals(198.0d, meterRegistry.counter("customerwork.agent.tokens", "type", "input").count(),
+            0.001d, "输入 token 按 type=input 累加");
+        assertEquals(40.0d, meterRegistry.counter("customerwork.agent.tokens", "type", "output").count(),
+            0.001d, "输出 token 按 type=output 累加");
+    }
+
+    /** 未接入 Micrometer（provider 为 null / 取不到 Bean）时静默跳过计数，采集与落库照常。 */
+    @Test
+    void nullMeterRegistry_shouldSkipCountingWithoutError() {
+        when(agent.getName()).thenReturn("客服Agent");
+        when(model.getModelName()).thenReturn("qwen-max");
+
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(),
+            new ToolKindRegistry(), captured::set, providerOf(null));
+
+        RuntimeContext ctx = ctx();
+        Function<AgentInput, Flux<AgentEvent>> inner = ai -> Flux.concat(
+            mw.onModelCall(agent, ctx, new ModelCallInput(List.of(), List.of(), null, model),
+                mi -> Flux.just(new ModelCallEndEvent("reply-1", new ChatUsage(128, 32, 0.0)))),
+            Flux.just(new AgentResultEvent(msg(MsgRole.ASSISTANT, "最终回答"))));
+
+        mw.onAgent(agent, ctx, new AgentInput(List.of(msg(MsgRole.USER, "你好"))), inner).blockLast();
+
+        assertNotNull(captured.get(), "无 MeterRegistry 时记录照常下沉");
+        assertEquals(128L, captured.get().inputTokens(), "token 仍正常落库");
+    }
+
+    /** 构造 ObjectProvider 桩：{@code null} 表示容器里没有 MeterRegistry。 */
+    @SuppressWarnings("unchecked")
+    private ObjectProvider<MeterRegistry> providerOf(MeterRegistry registry) {
+        ObjectProvider<MeterRegistry> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(registry);
+        return provider;
+    }
+
     /** 开关关闭时全部 hook 直通，不采集、不下沉。 */
     @Test
     void disabled_shouldPassThroughAndNotEmit() {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getCallLog().setEnabled(false);
         AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
-        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(props, new ToolKindRegistry(), captured::set);
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(props, new ToolKindRegistry(), captured::set, null);
 
         Long count = mw.onAgent(agent, ctx(), new AgentInput(List.of(msg(MsgRole.USER, "hi"))),
             ai -> Flux.just(new AgentResultEvent(msg(MsgRole.ASSISTANT, "ok")))).count().block();

@@ -34,9 +34,17 @@
 | `customer-admin-web` | 5174 | 前端 | **后台管理前端**：Vue3 + TS + Vite + Element Plus（非 Maven 模块） |
 | `customer-work-app` | 5175 | 前端 | **终端用户 H5**：Vue3 + TS + Vite + Vant4，登录 / 聊天 / 我的工单（非 Maven 模块） |
 
-> 附属目录：`mysql/` 建库脚本（业务库 / admin 库 / XXL-JOB 库）、`docker/` 中间件编排（MinIO / PaddleOCR）、
+> 附属目录：`mysql/` 建库脚本（业务库 / admin 库 / XXL-JOB 库）、`docker/` 中间件编排（MinIO / PaddleOCR /
+> [observability](docker/observability/README.md) 一键监控栈：Prometheus + Grafana + Alertmanager + Tempo + 钉钉告警）、
 > `Dockerfile` + `docker-compose.yml` 一键起应用与依赖、`.github/workflows/ci.yml` CI。
 > starter 的代码分层与"作为依赖引入"的方式见 [全量参考 §九](docs/功能与配置全量参考.md)。
+
+**可观测性**：应用侧默认暴露 Prometheus 指标；开启 `customer-work.observability.otel.enabled`（starter）/
+`admin.observability.otel.enabled`（admin）后接入 OpenTelemetry，按 agent/model/tool（starter 另加 HTTP 入口）
+三段出 span 并经 OTLP 导出。配套的一键监控栈见 [docker/observability/README.md](docker/observability/README.md)，
+预置 Prometheus + Grafana（3 张仪表盘）+ Alertmanager（9 条告警规则 + 钉钉转发）+ Tempo 链路追踪后端；
+详细配置项见 [全量参考 §6.13c](docs/功能与配置全量参考.md#613c-otel-链路追踪最后一公里)，
+生产部署步骤见 [部署手册 §九](docs/部署手册.md#九可观测性与告警)。
 
 ## 三、全景架构流程图
 
@@ -131,7 +139,7 @@ flowchart TB
 | 用户工单系统 | 终端用户 JWT 认证、7 态工单状态机、用户/坐席 WebSocket 双通道、聊天消息落库、附件解析（OCR + 文档） | §6.21~6.23 |
 | 模型层 | 多厂商（百炼/OpenAI/Anthropic/Gemini/Ollama）、私有化兜底、重试、成本熔断、token 告警 | §6.12~6.13b |
 | 安全与治理 | API Key 鉴权、限流（全局兜底 + 后台可维护的路径规则层）、敏感词内容风控（一次拦截/打码/复核 + 命中看板）、入站防注入围栏、敏感信息脱敏、Permission 三态权限、沙箱 | §6.14~6.14.2、§6.18 |
-| 可观测与运维 | Prometheus 业务指标、Tracing、MDC 全链路日志、慢请求留证、合成监控、优雅停机、Grafana 仪表盘 | §6.13 |
+| 可观测与运维 | Prometheus 业务指标、原生 Tracing、OTel 链路追踪（真出 span + OTLP 导出）、MDC 全链路日志、慢请求留证、合成监控、优雅停机、一键 Grafana/Tempo/Alertmanager 监控栈 | §6.13~6.13c |
 | 配置面 | Nacos 提示词/运行时配置热更新（后台 8082 改 → 客服 8080 免重启生效）、MCP / Higress / Studio 接入 | §6.15~6.17 |
 | 数据飞轮 | 会话质检、坐席辅助、消息级点赞点踩、意图自动化评测（CI 可跑） | §6.11 末、§6.20 |
 | 后台管理系统 | 模型/提示词/渠道/定时任务(XXL-JOB)/工单工作台/AI 编码助手（Code Review / 沙箱验证闭环） | §6.21 |
@@ -153,8 +161,8 @@ curl -X POST http://localhost:8080/api/customer/chat \
 ```
 
 - 启动后打开 **http://localhost:8080/swagger-ui.html** 在线调试全部接口。
-- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **1308 个**（starter 549 + app 77 +
-  customer-channel 65 + admin-server 617），外部依赖（Redis/MySQL/Nacos/百炼/OCR/MinIO）不可达的用例自动跳过。
+- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **1909 个**（starter 1054 + admin-server 711 +
+  app 78 + customer-channel 65 + gateway 1），外部依赖（Redis/MySQL/Nacos/百炼/OCR/MinIO）不可达的用例自动跳过。
 - 环境要求、前端启动、构建坑位速查见 [新人必读](docs/新人必读.md)。
 
 ## 六、Roadmap

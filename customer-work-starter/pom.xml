@@ -301,6 +301,21 @@
             <artifactId>bcpkix-jdk18on</artifactId>
         </dependency>
 
+        <!-- OpenTelemetry SDK + OTLP 导出器：把框架自带的 OtelTracingMiddleware（只依赖 otel-api，
+             无 SDK 时全链路 no-op）真正接上 Collector/Tempo。opentelemetry-api 与
+             opentelemetry-instrumentation:opentelemetry-reactor-3.1 已由 agentscope-core 传递引入，
+             此处只补 SDK 侧。版本由根 pom 的 ${opentelemetry.version}(1.61.0) 统一管理，不写版本号。
+             刻意不引 micrometer-tracing / opentelemetry-spring-boot-starter：前者要再引一层 bridge，
+             后者自带一整套自动装配、与 Boot 托管版本互相打架。 -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -323,6 +338,12 @@
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- OTel 单测：InMemorySpanExporter 断言 span 结构与父子关系，不需要真起 Collector -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

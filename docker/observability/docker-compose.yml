@@ -1,0 +1,177 @@
+# =============================================================================
+# AgentScope 智能客服可观测性"最后一公里"编排：指标(Prometheus)+看板(Grafana)+
+# 告警(Alertmanager+钉钉)+链路追踪(Tempo) 一键起停，对接已在跑的
+# customer-work-app-server(8080) / customer-admin-server(8082)。
+#
+# 启动：
+#   cd docker/observability && cp .env.example .env   # 首次使用，按需改密码/钉钉webhook
+#   docker compose up -d                                # 后台启动
+#   docker compose logs -f prometheus                   # 看抓取日志
+#   docker compose down                                 # 停止并移除（数据卷保留）
+#
+# 端口一览见 README.md；均为本机监控栈专用端口，不与业务/中间件端口冲突（已核对）。
+#
+# 数据持久化：全部 named volume，docker compose down 不删；彻底清空用
+#   docker compose down -v。
+#
+# 与业务服务的关系：本栈只读抓取，不修改业务代码/配置——两个业务服务需自行开启
+#   management.endpoints.web.exposure.include 包含 prometheus（app-server 已默认开启；
+#   admin-server 见 application-prod.yml，本地 dev 若要接入需自行在启动环境追加该配置，
+#   本编排不代管业务侧配置）。
+# =============================================================================
+services:
+  # ------------------------------------------------------------------------
+  # Prometheus：抓取 app-server(8080)/admin-server(8082) 的 /actuator/prometheus，
+  # 按 prometheus/rules/*.yml 跑告警规则，命中后推给 Alertmanager。
+  # ------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cw-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"                                     # Web UI / HTTP API
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus                      # TSDB 数据卷（30 天留存）
+    extra_hosts:
+      # host.docker.internal 在 Linux 上默认不可解析，需显式映射；macOS/Windows Docker Desktop 原生支持，此行无副作用
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ------------------------------------------------------------------------
+  # Grafana：看板 + 数据源（Prometheus/Tempo/MySQL），仪表盘 JSON 随容器自动 provisioning。
+  # ------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cw-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # 以下四个变量仅供 provisioning/datasources/datasources.yml 里的 ${VAR} 占位展开用
+      # （Grafana provisioning 原生支持环境变量展开，无需额外 sed/envsubst）
+      GRAFANA_MYSQL_HOST: ${GRAFANA_MYSQL_HOST:-host.docker.internal}
+      GRAFANA_MYSQL_PORT: ${GRAFANA_MYSQL_PORT:-3306}
+      GRAFANA_MYSQL_DATABASE: ${GRAFANA_MYSQL_DATABASE:-agent_scope_customer_work}
+      GRAFANA_MYSQL_USER: ${GRAFANA_MYSQL_USER:-root}
+      GRAFANA_MYSQL_PASSWORD: ${GRAFANA_MYSQL_PASSWORD:-root}
+    ports:
+      - "3000:3000"                                      # Web UI（首次登录 admin/上面的密码）
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana                     # 用户/星标/会话等数据卷
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - prometheus
+      - tempo
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ------------------------------------------------------------------------
+  # Alertmanager：接收 Prometheus 告警，按 alertname/severity 分组后路由到钉钉 webhook 服务。
+  # ------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: cw-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "9093:9093"                                       # Web UI（查看当前告警/静默规则）
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager                    # 静默规则/通知状态数据卷
+    depends_on:
+      - dingtalk-webhook
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ------------------------------------------------------------------------
+  # Tempo：单二进制模式，接收 OTLP 链路追踪数据（本项目框架原生 tracing hook 打开后可对接），
+  # 本地磁盘存储，Grafana 侧按 Tempo 数据源查询。
+  # ------------------------------------------------------------------------
+  tempo:
+    # 固定 2.6.1（而非 :latest）：实测 :latest 已是 3.0.0，config 顶层 schema 大改
+    # （ingester/compactor 等字段整体挪位），本文件按 2.x 单二进制文档写的 tempo.yml
+    # 在 3.0.0 下会直接解析失败退出重启；2.6.1 是文档与本配置对得上的稳定版本。
+    image: grafana/tempo:2.6.1
+    container_name: cw-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    ports:
+      - "4317:4317"                                        # OTLP gRPC 接收
+      - "4318:4318"                                         # OTLP HTTP 接收
+      - "3200:3200"                                          # Tempo 查询 API（Grafana 数据源对接）
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo                                 # trace 数据卷（7 天留存，见 compactor 配置）
+
+  # ------------------------------------------------------------------------
+  # 钉钉 webhook 配置初始化：一次性任务，把 URL 占位符替换成 .env 里的真实 webhook 地址后
+  # 写入共享数据卷，供下面 dingtalk-webhook 服务读取。
+  #
+  # 为什么需要这一步：官方 timonwong/prometheus-webhook-dingtalk 镜像的 config.yml
+  # 不支持 ${ENV_VAR} 展开（不像 Grafana provisioning 原生支持），直接挂载带占位符的
+  # 模板文件会导致 webhook 地址是字面量 "__DINGTALK_WEBHOOK_URL__" 发不出消息。
+  # 这里用一次性 alpine 容器做 sed 替换，比手工维护两份 config.yml（模板+真实）更不容易漏改。
+  # ------------------------------------------------------------------------
+  dingtalk-config-init:
+    image: alpine:3.19
+    container_name: cw-dingtalk-config-init
+    restart: "no"
+    environment:
+      DINGTALK_WEBHOOK_URL: ${DINGTALK_WEBHOOK_URL:?请先 cp .env.example .env 并配置 DINGTALK_WEBHOOK_URL}
+    volumes:
+      - ./dingtalk/config.yml:/template/config.yml:ro
+      - dingtalk-config:/config
+    entrypoint: ["sh", "-c"]
+    # $$ 是 compose 的转义写法：让 $DINGTALK_WEBHOOK_URL 由容器内 shell 在运行时展开（读上面的环境变量），
+    # 而不是被 docker compose 在解析本文件时提前替换掉。
+    command:
+      - >
+        sed "s|__DINGTALK_WEBHOOK_URL__|$$DINGTALK_WEBHOOK_URL|" /template/config.yml > /config/config.yml &&
+        echo "[dingtalk-config-init] config.yml generated" &&
+        cat /config/config.yml
+
+  # ------------------------------------------------------------------------
+  # 钉钉 webhook 转发服务：把 Alertmanager 的标准 webhook 请求转成钉钉群机器人消息格式。
+  # ------------------------------------------------------------------------
+  dingtalk-webhook:
+    image: timonwong/prometheus-webhook-dingtalk:latest
+    container_name: cw-dingtalk-webhook
+    restart: unless-stopped
+    ports:
+      - "8060:8060"
+    volumes:
+      - dingtalk-config:/etc/prometheus-webhook-dingtalk    # 读取 dingtalk-config-init 生成的真实配置
+    depends_on:
+      dingtalk-config-init:
+        condition: service_completed_successfully
+
+volumes:
+  prometheus-data:          # Prometheus TSDB（命名卷，30 天留存，down 不删）
+  grafana-data:              # Grafana 用户/会话/星标（命名卷，down 不删）
+  alertmanager-data:          # Alertmanager 静默规则/通知状态（命名卷，down 不删）
+  tempo-data:                  # Tempo trace 数据（命名卷，7 天留存，down 不删）
+  dingtalk-config:              # 钉钉 webhook 真实配置（由 dingtalk-config-init 生成，down 不删）

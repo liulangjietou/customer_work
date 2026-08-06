@@ -1,0 +1,175 @@
+{
+  "id": null,
+  "uid": "customerwork-security-guard",
+  "title": "风控与安全",
+  "description": "提示词注入拦截、间接注入检测/隔离、敏感词出入站拦截打码、对话兜底、意图分类失败、人机切换SLA、合成监控探活。",
+  "tags": ["customer-work", "security"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "editable": true,
+  "graphTooltip": 1,
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "提示词直接注入拦截（prompt.guard.blocked）",
+      "description": "sum(rate(customerwork_prompt_guard_blocked_total[5m])) by (job)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "bars", "fillOpacity": 30 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_prompt_guard_blocked_total[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "间接注入：隔离标记 / 检测命中（indirect.guard）",
+      "description": "spotlighted=每次工具结果隔离标记（恒开，零误杀）；detected=启发式注入检测命中（默认只告警不拦截）",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_indirect_guard_spotlighted_total[5m])) by (job)",
+          "legendFormat": "spotlighted {{job}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_indirect_guard_detected_total[5m])) by (job)",
+          "legendFormat": "detected {{job}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "敏感词出/入站 拦截与打码",
+      "description": "customerwork.sensitive.{inbound,outbound}.{blocked,masked}（需 customer-work.sensitive-word.enabled=true 才有数据；入站 fail-closed、出站同样 fail-closed，故障时按拦截计）",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_sensitive_inbound_blocked_total[5m])) by (job)",
+          "legendFormat": "入站拦截 {{job}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_sensitive_inbound_masked_total[5m])) by (job)",
+          "legendFormat": "入站打码 {{job}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_sensitive_outbound_blocked_total[5m])) by (job)",
+          "legendFormat": "出站拦截 {{job}}"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_sensitive_outbound_masked_total[5m])) by (job)",
+          "legendFormat": "出站打码 {{job}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "对话兜底回复（chat.fallback）",
+      "description": "sum(rate(customerwork_chat_fallback_total[5m])) by (job)：chat 调用失败走 FALLBACK_REPLY 的速率，突增意味着主链路持续失败",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "bars", "fillOpacity": 30 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_chat_fallback_total[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "意图分类失败（intent.classify.errors）",
+      "description": "sum(rate(customerwork_intent_classify_errors_total[5m])) by (job)：缓解框架 #1852/#1699 结构化输出静默失效问题的观测点",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "bars", "fillOpacity": 30 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_intent_classify_errors_total[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "人机切换 SLA 超标（handoff.sla.breach）",
+      "description": "sum(rate(customerwork_handoff_sla_breach_total[5m])) by (stage)：pending=未接单超时，claimed=接单未结案超时",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "bars", "fillOpacity": 30, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_handoff_sla_breach_total[5m])) by (stage)",
+          "legendFormat": "{{stage}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "合成监控探活（synthetic.probe）",
+      "description": "sum(rate(customerwork_synthetic_probe_total[5m])) by (result)：UP/DEGRADED/DOWN（需 customer-work.synthetic-monitor.enabled=true 才有数据）",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "DOWN" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byRegexp", "options": "DEGRADED" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byRegexp", "options": "UP" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_synthetic_probe_total[5m])) by (result)",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    }
+  ]
+}

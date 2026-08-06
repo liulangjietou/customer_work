@@ -1,0 +1,179 @@
+{
+  "id": null,
+  "uid": "customerwork-agent-overview",
+  "title": "Agent 概览",
+  "description": "请求速率/错误率/端到端延迟分位数/工具调用/慢请求/Token 消耗，含 MySQL 侧近24h按智能体聚合的 Token 消耗 Top10。",
+  "tags": ["customer-work", "agent"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "editable": true,
+  "graphTooltip": 1,
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "请求速率",
+      "description": "sum(rate(customerwork_agent_requests_total[5m])) by (job)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_agent_requests_total[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "错误率",
+      "description": "sum(rate(customerwork_agent_errors_total[5m])) by (job) / sum(rate(customerwork_agent_requests_total[5m])) by (job)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_agent_errors_total[5m])) by (job) / sum(rate(customerwork_agent_requests_total[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "端到端延迟 P95/P99",
+      "description": "histogram_quantile(0.95/0.99, sum(rate(customerwork_agent_latency_e2e_seconds_bucket[5m])) by (le, job))",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(customerwork_agent_latency_e2e_seconds_bucket[5m])) by (le, job))",
+          "legendFormat": "P95 {{job}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "histogram_quantile(0.99, sum(rate(customerwork_agent_latency_e2e_seconds_bucket[5m])) by (le, job))",
+          "legendFormat": "P99 {{job}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "按工具的调用速率",
+      "description": "sum(rate(customerwork_agent_tool_calls_total[5m])) by (tool)",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_agent_tool_calls_total[5m])) by (tool)",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "慢请求 / 异常请求留证",
+      "description": "sum(rate(customerwork_agent_slow_requests_total[5m])) by (outcome)：outcome=SLOW 超阈值慢请求，outcome=ERROR 出错请求（LatencyMiddleware 留证计数）",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "drawStyle": "bars", "fillOpacity": 30 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_agent_slow_requests_total[5m])) by (outcome)",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Token 消耗速率",
+      "description": "sum(rate(customerwork_agent_tokens_total[5m])) by (type)。注意：customerwork_agent_tokens_total 由并行任务新增（tag=type，input/output），核对本仪表盘时若面板无数据，先确认该 Counter 是否已随对应分支落地。",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "customerwork-prometheus" },
+          "expr": "sum(rate(customerwork_agent_tokens_total[5m])) by (type)",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Token 消耗 Top10（按智能体，近24h，MySQL cw_agent_call_log）",
+      "description": "SELECT agent_name, SUM(total_tokens) FROM cw_agent_call_log WHERE created_at >= NOW() - INTERVAL 1 DAY GROUP BY agent_name ORDER BY tokens DESC LIMIT 10",
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 },
+      "datasource": { "type": "mysql", "uid": "customerwork-mysql" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "mysql", "uid": "customerwork-mysql" },
+          "format": "table",
+          "rawSql": "SELECT agent_code AS `智能体编码`, agent_name AS `智能体名称`, COUNT(*) AS `调用次数`, SUM(input_tokens) AS `输入token`, SUM(output_tokens) AS `输出token`, SUM(total_tokens) AS `总token` FROM cw_agent_call_log WHERE created_at >= NOW() - INTERVAL 1 DAY GROUP BY agent_code, agent_name ORDER BY `总token` DESC LIMIT 10",
+          "rawQuery": true
+        }
+      ]
+    }
+  ]
+}

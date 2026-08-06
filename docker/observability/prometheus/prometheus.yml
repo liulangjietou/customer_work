@@ -1,0 +1,45 @@
+# =============================================================================
+# Prometheus 抓取配置：客服端(8080) + 后台管理端(8082) 的 Micrometer 指标 + 自身指标。
+# 两个业务服务都走 Spring Boot Actuator 的 /actuator/prometheus，抓取端不区分厂商，
+# 纯拉模式，业务侧零改造（前提：management.endpoints.web.exposure.include 含 prometheus，
+# app-server 默认已开；admin-server 见其 application-prod.yml，dev 环境需自行确认已开启）。
+# =============================================================================
+global:
+  scrape_interval: 15s       # 全局抓取周期
+  evaluation_interval: 15s   # 告警规则评估周期
+
+# 告警规则文件（本目录下 rules/*.yml，见 customerwork-alerts.yml）
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+# 告警推送目标：Alertmanager（同一 compose 网络内按服务名互通）
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # 智能客服示例服务（customer-work-app-server，端口 8080）
+  - job_name: customer-work-app-server
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:8080
+        labels:
+          service: customer-work-app-server
+
+  # 后台管理系统后端（customer-admin-server，端口 8082）
+  - job_name: customer-admin-server
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:8082
+        labels:
+          service: customer-admin-server
+
+  # Prometheus 自身指标（用于监控监控栈本身，如规则评估耗时/抓取失败数）
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

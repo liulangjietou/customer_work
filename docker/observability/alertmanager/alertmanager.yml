@@ -1,0 +1,24 @@
+# =============================================================================
+# Alertmanager 配置：接收 Prometheus 推来的告警，按 alertname+severity 分组去重后
+# 统一路由到钉钉 webhook 转发服务（见 ../dingtalk/）。
+# =============================================================================
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: dingtalk
+  group_by: ["alertname", "severity"]
+  # 同一分组内首次告警等 30s 攒批（避免同一故障瞬间炸出多条告警刷屏）
+  group_wait: 30s
+  # 同一分组后续新增告警的最小推送间隔
+  group_interval: 5m
+  # 同一告警未恢复时的重复提醒间隔（4h：既不会被刷屏骚扰，也不会长时间忘记未恢复的问题）
+  repeat_interval: 4h
+
+receivers:
+  - name: dingtalk
+    webhook_configs:
+      # webhook1 对应 dingtalk/config.yml 里 targets 下的 key，
+      # dingtalk-webhook 服务把这个统一格式的 POST 转成钉钉群机器人消息
+      - url: http://dingtalk-webhook:8060/dingtalk/webhook1/send
+        send_resolved: true

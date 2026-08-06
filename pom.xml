@@ -39,6 +39,14 @@
         <minio.version>8.5.17</minio.version>
         <!-- 证书解析（devtoolbox cert_parse/cert_match）：CSR 与 PKCS#1/SEC1 私钥 JDK 原生不认 -->
         <bouncycastle.version>1.81</bouncycastle.version>
+        <!-- OpenTelemetry：覆盖 spring-boot-dependencies(3.2.5) 托管的 1.31.0，对齐 agentscope-core 2.0.0
+             的编译版本（其 OtelTracingMiddleware 与随之传递进来的 opentelemetry-instrumentation 2.27
+             都按 1.61 的 API 编译，instrumentation 还带进不受 Boot 管理的
+             opentelemetry-api-incubator:1.61.0-alpha —— 不覆盖就是 api 1.31 + incubator 1.61 的分裂
+             classpath）。用属性覆盖而非在某个模块 import BOM：dependencyManagement 不跨兄弟模块传播，
+             只钉 starter 会让 app-server / admin-server 运行期把 otel 解析回 1.31.0，与 starter 的
+             编译版本对不上。 -->
+        <opentelemetry.version>1.61.0</opentelemetry.version>
     </properties>
 
     <dependencyManagement>

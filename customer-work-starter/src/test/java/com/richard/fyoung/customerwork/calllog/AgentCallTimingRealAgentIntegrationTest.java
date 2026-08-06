@@ -140,7 +140,7 @@ class AgentCallTimingRealAgentIntegrationTest {
     void deprecatedStreamPath_shouldBindMetaAndCollectSegments() {
         AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
         AgentCallTimingMiddleware middleware =
-            new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), captured::set);
+            new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), captured::set, null);
         ReActAgent agent = buildAgent(middleware);
 
         RuntimeContext ctx = RuntimeContext.builder().userId("oa-assistant").sessionId("sess-oa-1").build();
@@ -196,7 +196,7 @@ class AgentCallTimingRealAgentIntegrationTest {
     void streamEventsPath_shouldBindMetaAndCollectSegments() {
         AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
         AgentCallTimingMiddleware middleware =
-            new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), captured::set);
+            new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), captured::set, null);
         ReActAgent agent = buildAgent(middleware);
 
         RuntimeContext ctx = RuntimeContext.builder().userId("oa-assistant").sessionId("sess-oa-2").build();
