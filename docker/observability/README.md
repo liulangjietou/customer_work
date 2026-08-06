@@ -69,12 +69,13 @@ docker compose down -v      # 连数据卷一起清空（彻底重来）
 
 - `customer-work-app-server` 的 `application.yml` 已默认开启
   `management.endpoints.web.exposure.include: health,info,metrics,prometheus`，开箱即被抓取。
-- `customer-admin-server` 的 `application-prod.yml` 已开启 `health,prometheus`；本地 `dev`
-  profile 若要接入，需要在启动环境自行追加该配置（本编排不代管业务侧配置，符合"只创建
-  `docker/observability/` 目录下文件、不改 Java/文档"的边界）。
-- 两个服务若未来打开 `customer-work.observability.tracing-enabled=true` 并配置 OTLP 导出地址
-  指向 `http://localhost:4318`（HTTP）或 `4317`（gRPC），即可把链路追踪数据写入 Tempo，
-  在 Grafana 的 Tempo 数据源里查询。
+- `customer-admin-server` 的默认 `application.yml` 与 `application-prod.yml` 均已开启
+  `health,prometheus`，本地 IDE 启动同样开箱即被抓取（`/actuator/**` 在 Sa-Token 白名单里，
+  抓取不需要登录态）。
+- 链路追踪写入 Tempo 需打开 OTel 开关：starter 侧 `customer-work.observability.otel.enabled=true`、
+  admin 侧 `ADMIN_OTEL_ENABLED=true`，导出地址默认已指向 `http://localhost:4317`（gRPC）。
+  注意 `observability.tracing-enabled` 是另一回事——那个只注册打日志的 `LoggingTracer`，不出 span、
+  不导出，两者不需要同时开（详见 `docs/功能与配置全量参考.md` §6.13c）。
 
 ## 生产注意事项
 
@@ -94,3 +95,26 @@ docker compose down -v      # 连数据卷一起清空（彻底重来）
   `customerwork.sensitive.*`（敏感词护栏）默认关闭，需要业务侧分别打开
   `customer-work.synthetic-monitor.enabled=true` 与 `customer-work.sensitive-word.enabled=true`
   才会产生对应指标，否则相关告警规则永远不会触发（不是没生效，是没数据）。
+
+## 面板显示 No data 怎么排查
+
+先分清三种成因，绝大多数"没数据"属于前两种，不是栈坏了：
+
+1. **该能力默认关着** —— 护栏类中间件默认关闭，没开就不会有任何计数。对应关系见
+   `docs/功能与配置全量参考.md` §七配置项总表。
+2. **该事件本来就没发生** —— 安全类指标（注入拦截、敏感词命中）是"攻击发生才计数"，
+   空面板恰恰是正常状态。要验证生效，得主动造数，见下条。
+3. **抓取周期没到** —— Prometheus 每 15s 拉一次，刚发生的事件等一个周期再看。
+
+**主动造数验证**：注入防护（直接 / 间接）两块面板的完整自测步骤——含配置开关、可直接复制的
+curl 与 SQL、以及每步的预期结果——见 `docs/功能与配置全量参考.md` **§6.14.3 注入防护自测**。
+其中两个易踩的点先在这里点明：
+
+- 直接注入拦截（`prompt.guard.blocked`）**只装配在 8080 客服链路**，admin(8082) 侧没有这道闸，
+  在后台工作台发注入话术这个面板不会动。
+- 间接注入的两个计数器（`spotlighted` / `detected`）都计"工具结果流进下一轮推理"，
+  **会话里没有工具调用就恒为 0**；且 `detected` 刻意只告警不拦截，验证要看指标与 error 日志，
+  不要看对话回复有没有变化。
+
+排查顺序：Grafana 面板 → Prometheus 直查该 `_total` 指标（http://localhost:9090 输入表达式）→
+业务服务 `/actuator/prometheus` 原始输出里 grep 指标名。哪一层开始有数，问题就在它的下一层。
