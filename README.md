@@ -31,8 +31,25 @@
 | `customer-work-app-server` | 8080 | Maven | **可运行客服应用**：HTTP + SSE + WebSocket 接口、用户工单系统、Swagger 文档 |
 | `customer-channel` | 8081 | Maven | **多渠道接入**：官方五套前端能力演示（admin 控制台 / chat-completions / AG-UI / Studio / 钉钉·飞书·企业微信）+ 生产用渠道接入层（**钉钉 + 微信公众号**机器人 ↔ 后台工作区智能体，连接器 SPI 预留企业微信） |
 | `customer-admin-server` | 8082 | Maven | **后台管理系统后端**：Spring MVC + MyBatis-Plus + Sa-Token，独立库 `customer_admin`，含坐席工单工作台与 AI 编码助手 |
+| `customer-work-gateway` | 8888 | Maven | **统一入口网关（可选）**：Spring Cloud Gateway + Nacos 服务发现，把 8080 / 8082 聚合到同一入口 |
 | `customer-admin-web` | 5174 | 前端 | **后台管理前端**：Vue3 + TS + Vite + Element Plus（非 Maven 模块） |
 | `customer-work-app` | 5175 | 前端 | **终端用户 H5**：Vue3 + TS + Vite + Vant4，登录 / 聊天 / 我的工单（非 Maven 模块） |
+
+模块间的依赖与数据边界（三个后端服务都只依赖 starter，两个库彻底分离）：
+
+```mermaid
+flowchart LR
+    APPFE["customer-work-app · 5175<br/>用户 H5"] --> APPSRV
+    ADMINFE["customer-admin-web · 5174<br/>后台前端"] --> ADMSRV
+    GW["customer-work-gateway · 8888<br/>SCG 统一入口（可选）"] -.->|Nacos 服务发现| APPSRV & ADMSRV
+    APPSRV["customer-work-app-server · 8080<br/>客服应用"] --> ST
+    CH["customer-channel · 8081<br/>多渠道接入（钉钉 / 微信公众号）"] --> ST
+    ADMSRV["customer-admin-server · 8082<br/>后台管理"] --> ST
+    ST["customer-work-starter<br/>可复用智能体基础设施"]
+    APPSRV --- DBA[("agent_scope_customer_work<br/>cw_* 业务表")]
+    ADMSRV --- DBB[("customer_admin<br/>Flyway 管理")]
+    ADMSRV -.->|"Nacos 配置热更新：改模型 / 提示词，8080 免重启生效"| APPSRV
+```
 
 > 附属目录：`mysql/` 建库脚本（业务库 / admin 库 / XXL-JOB 库）、`docker/` 中间件编排（MinIO / PaddleOCR /
 > [observability](docker/observability/README.md) 一键监控栈：Prometheus + Grafana + Alertmanager + Tempo + 钉钉告警）、
@@ -46,7 +63,9 @@
 详细配置项见 [全量参考 §6.13c](docs/功能与配置全量参考.md#613c-otel-链路追踪最后一公里)，
 生产部署步骤见 [部署手册 §九](docs/部署手册.md#九可观测性与告警)。
 
-## 三、全景架构流程图
+## 三、架构图与核心流程
+
+### 3.1 全景架构
 
 一次用户消息从渠道进来，到 AI 回复 / 人工接管 / 数据沉淀的完整链路（①~⑥ 对应客服业务流程图的六个阶段）：
 
@@ -125,7 +144,58 @@ flowchart TB
     OPS -.-> CORE
 ```
 
-## 四、核心能力速览
+### 3.2 退款人工审批闭环（挂起 → 人工决策 → 生效）
+
+高风险工具不直接生效：`submitRefund` 只登记待审单，人工放行后才执行退款回调（详见 [全量参考 §6.11](docs/功能与配置全量参考.md)）：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 用户
+    participant A as ReActAgent
+    participant P as ApprovalStore（SPI：内存 / JDBC）
+    participant S as 坐席 / 管理员
+
+    U->>A: 我要退款 500 元
+    A->>P: submitRefund 不直接打款，登记待审单（挂起）
+    A-->>U: 已提交人工审批（返回审批单号）
+    S->>P: 查看待审列表 GET /api/customer/approvals
+    alt 放行 approve
+        P->>P: 执行退款回调，终态 APPROVED
+    else 拒绝 deny
+        P->>P: 终态 DENIED（决策幂等，重复决策返回 409）
+    else 审批超时
+        P->>P: 超时巡检按配置处置：升级转人工 / 自动拒绝
+    end
+```
+
+### 3.3 用户工单 7 态状态机（AI 自助 ↔ 人工坐席全生命周期）
+
+状态名与代码 `TicketStatus` 枚举一一对应，非法流转 fast-fail：
+
+```mermaid
+stateDiagram-v2
+    [*] --> AI_SERVING : 创建工单
+    AI_SERVING --> WAITING_AGENT : transferToHuman 转人工排队
+    WAITING_AGENT --> AI_SERVING : 取消转人工
+    WAITING_AGENT --> PROCESSING : 坐席接单 claim
+    PROCESSING --> ON_HOLD : 挂起（等用户补材料）
+    ON_HOLD --> PROCESSING : 恢复处理
+    PROCESSING --> WAITING_AGENT : 转回工单池
+    PROCESSING --> WAITING_CONFIRM : 处理完毕待确认
+    WAITING_CONFIRM --> RESOLVED : 用户确认解决
+    WAITING_CONFIRM --> PROCESSING : 用户不认可，退回
+    RESOLVED --> CLOSED : 结案
+    AI_SERVING --> CLOSED : AI 已解决，直接关闭
+    CLOSED --> WAITING_AGENT : reopen 重开回流
+    CLOSED --> [*]
+
+    note right of CLOSED
+        RESOLVED / CLOSED 均可 reopen，
+        回人工队列或回 AI 自助；
+        forceClose 可从任意非终态强制关闭
+    end note
+```
 
 细节（配置项、curl 示例、对应测试类）全部在 [功能与配置全量参考](docs/功能与配置全量参考.md)，此处只给地图：
 
@@ -142,14 +212,14 @@ flowchart TB
 | 可观测与运维 | Prometheus 业务指标、原生 Tracing、OTel 链路追踪（真出 span + OTLP 导出）、MDC 全链路日志、慢请求留证、合成监控、优雅停机、一键 Grafana/Tempo/Alertmanager 监控栈 | §6.13~6.13c |
 | 配置面 | Nacos 提示词/运行时配置热更新（后台 8082 改 → 客服 8080 免重启生效）、MCP / Higress / Studio 接入 | §6.15~6.17 |
 | 数据飞轮 | 会话质检、坐席辅助、消息级点赞点踩、意图自动化评测（CI 可跑） | §6.11 末、§6.20 |
-| 后台管理系统 | 模型/提示词/渠道/定时任务(XXL-JOB)/工单工作台/AI 编码助手（Code Review / 沙箱验证闭环） | §6.21 |
+| 后台管理系统 | RBAC 权限、模型/MCP/Skill/智能体配置、工作区聊天 + VibeCoding、渠道、定时任务(XXL-JOB)、工单工作台、内容风控、数据字典、开发者工具箱（HTTP/证书/cron/JWT/diff/格式互转/SQL 客户端等）、调用统计（token + 缓存命中率）、AI 编码助手 | §6.21 |
 
 ## 五、快速开始
 
 ```bash
 # 方式一：本地运行（默认内存模式，除 API Key 外零依赖）
 export DASHSCOPE_API_KEY=你的百炼密钥      # 必填，密钥仅从环境变量读取
-mvn spring-boot:run
+mvn -pl customer-work-app-server -am spring-boot:run
 
 # 方式二：Docker Compose 一键起（app + Redis + MySQL + Nacos）
 docker compose up -d
@@ -161,7 +231,7 @@ curl -X POST http://localhost:8080/api/customer/chat \
 ```
 
 - 启动后打开 **http://localhost:8080/swagger-ui.html** 在线调试全部接口。
-- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **1909 个**（starter 1054 + admin-server 711 +
+- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **2002 个**（starter 1136 + admin-server 722 +
   app 78 + customer-channel 65 + gateway 1），外部依赖（Redis/MySQL/Nacos/百炼/OCR/MinIO）不可达的用例自动跳过。
 - 环境要求、前端启动、构建坑位速查见 [新人必读](docs/新人必读.md)。
 
@@ -173,6 +243,7 @@ timeline
     已完成 · 1.x 基线 : AgentScope 1.0.12 核心客服链路 : 存档于 legacy-main-1.0.12 标签
     已完成 · 2.0 迁移 : RC4 首轮迁移（rc2.0 分支存档） : 2.0.0 GA 全量迁移 + Harness 新能力补齐
     已完成 · 生产化 : HITL 审批闭环 + 人机切换工单 : 用户工单系统（JWT + WS 双通道 + 7 态状态机） : 后台管理系统 + Nacos 配置热更新 : 真实业务后端 jdbc + 附件解析 OCR : Nacos 注册发现 + SCG 网关 + XXL-JOB
+    已完成 · 平台化 : 内容风控（敏感词 + 限流）+ 数据字典 + 开发者工具箱 : 十项通用能力薄壳化下沉 starter : OTel 链路追踪 + 一键 Grafana / Tempo 监控栈 : 登录态 Redis 持久化 + streamEvents 流式重构
     规划中 · 扩展点 : A2A Agent Card 注册发现 : RocketMQ 异步消息 : Training 数据飞轮（RM Gallery / Trinity-RFT） : 后台 AI 编码助手 P1~P3 演进
 ```
 
