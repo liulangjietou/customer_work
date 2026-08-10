@@ -93,6 +93,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   `CustomerServiceService` 入口（能打断），记账搭 `AgentCallTimingMiddleware` 里 token 的唯一落点。
   配额表 `cw_tenant_quota` 落**客服端库**（运行时要读），admin 经跨库门面维护——照内容风控三表先例。
   **实时只拦 token，金额走 T+1 账单**（`cw_tenant_usage_daily`，金额按归集时单价落库，调价不改历史账）。
+- **多租户（B1 起）**：隔离靠 MyBatis-Plus `TenantLineInnerInterceptor` 全局改写，租户值取自
+  `TenantContext`（starter 的 ThreadLocal），默认关闭（`customer-work.tenant.enabled` / `admin.tenant.enabled`）。
+  设计与逐表归属见 `docs/多租户架构设计.md`。三条硬约定：
+  ① **新增业务表一律带 `tenant_id`**，不要往忽略清单里加——清单越短越安全，加表等于放弃该表的自动隔离；
+  ② **有意的跨租户查询必须走 `CrossTenantOperations`**（可 grep 的白名单），不要靠"给上下文塞特殊值"；
+  ③ **权限查询用用户归属租户，数据查询用当前视角租户**（`AdminStpInterfaceImpl` 已按此实现），
+  混用会让运营方切视角后当场失去全部权限。缺上下文时持久层 fail-closed 抛错，这是刻意的。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。

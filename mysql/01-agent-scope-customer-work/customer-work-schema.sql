@@ -607,7 +607,6 @@ INSERT IGNORE INTO `cw_dict_item` (`tenant_id`, `dict_type`, `item_key`, `item_l
 ('default', 'order_status', '已签收', '已签收', 5, 1, NULL, 1779235200000, 1779235200000),
 ('default', 'order_status', '已取消', '已取消', 6, 1, NULL, 1779235200000, 1779235200000),
 ('default', 'order_status', '已退款', '已退款', 7, 1, NULL, 1779235200000, 1779235200000);
-
 -- 租户配额表（MybatisTenantQuotaStore / cw_tenant_quota）：B3 成本治理的硬上限。
 -- 落在客服端库而非 admin 库：它要被运行时读取（拦在模型调用之前），照内容风控三表的先例
 -- 由 starter 定义 Mapper、admin 复用同一套 Mapper 管理，避免跨库反查或两处各存一份。
