@@ -63,12 +63,35 @@ public class NacosRuntimeConfigService {
         }
     }
 
-    /** 绑定到给定 ConfigService：拉取初始配置并注册热更新监听器（抽出以便单测）。 */
+    /**
+     * 绑定到给定 ConfigService：拉取初始配置并注册热更新监听器（抽出以便单测）。
+     *
+     * <p><b>灰度优先</b>：配了 {@code nacos.tenant-code} 时先看租户专属 dataId
+     * （{@code <主dataId>-tenant-<租户码>}），有内容就用它，没有才回落主 dataId。
+     * 灰度因此对本端是透明的——本端并不理解"灰度"，只是多试了一个更具体的 dataId；
+     * 运营方把灰度版本写进那个 dataId，名单外的实例自然继续用主 dataId 上的全量版本。</p>
+     *
+     * <p>两个 dataId 都要挂监听：灰度期间运营方可能改灰度版本，灰度结束后又会删掉它——
+     * 只听一个的话，要么灰度更新收不到，要么灰度撤销后回不到全量版本。</p>
+     */
     void bind(ConfigService configService) throws NacosException {
         CustomerWorkProperties.Nacos cfg = properties.getNacos();
-        String initial = configService.getConfig(cfg.getRuntimeConfigDataId(), cfg.getGroup(), cfg.getTimeoutMs());
+        String mainDataId = cfg.getRuntimeConfigDataId();
+        String tenantDataId = tenantDataId(cfg);
+
+        String initial = null;
+        if (tenantDataId != null) {
+            initial = configService.getConfig(tenantDataId, cfg.getGroup(), cfg.getTimeoutMs());
+            if (StringUtils.hasText(initial)) {
+                log.info("[Nacos] gray config applied, dataId={}", tenantDataId);
+            }
+        }
+        if (!StringUtils.hasText(initial)) {
+            initial = configService.getConfig(mainDataId, cfg.getGroup(), cfg.getTimeoutMs());
+        }
         applyConfig(initial);
-        configService.addListener(cfg.getRuntimeConfigDataId(), cfg.getGroup(), new Listener() {
+
+        configService.addListener(mainDataId, cfg.getGroup(), new Listener() {
             @Override
             public Executor getExecutor() {
                 return Runnable::run;   // 同步回调，简单可控
@@ -79,6 +102,49 @@ public class NacosRuntimeConfigService {
                 applyConfig(configInfo);
             }
         });
+
+        if (tenantDataId != null) {
+            configService.addListener(tenantDataId, cfg.getGroup(), new Listener() {
+                @Override
+                public Executor getExecutor() {
+                    return Runnable::run;
+                }
+
+                @Override
+                public void receiveConfigInfo(String configInfo) {
+                    // 灰度被撤销时 Nacos 回调的是空串：此时不 applyConfig（那会被当成"无配置"跳过），
+                    // 而是主动回读主 dataId 恢复全量版本，否则实例会一直停在灰度版本上
+                    if (StringUtils.hasText(configInfo)) {
+                        applyConfig(configInfo);
+                        return;
+                    }
+                    restoreFromMainDataId(configService, cfg);
+                }
+            });
+        }
+    }
+
+    /** 灰度撤销后回到全量版本。读取失败只记日志——保持当前配置总比清空好。 */
+    private void restoreFromMainDataId(ConfigService configService, CustomerWorkProperties.Nacos cfg) {
+        try {
+            String main = configService.getConfig(cfg.getRuntimeConfigDataId(), cfg.getGroup(), cfg.getTimeoutMs());
+            if (StringUtils.hasText(main)) {
+                applyConfig(main);
+                log.info("[Nacos] gray config removed, restored from main dataId={}", cfg.getRuntimeConfigDataId());
+            }
+        } catch (Exception e) {
+            log.error("restore runtime config from main dataId failed, code={}",
+                "RUNTIME-CONFIG-RESTORE-FAIL", e);
+        }
+    }
+
+    /** 租户专属 dataId；未配租户码时返回 null（单租户部署不受灰度机制影响）。 */
+    private String tenantDataId(CustomerWorkProperties.Nacos cfg) {
+        String tenantCode = cfg.getTenantCode();
+        if (tenantCode == null || tenantCode.isBlank()) {
+            return null;
+        }
+        return cfg.getRuntimeConfigDataId() + "-tenant-" + tenantCode.trim();
     }
 
     /**

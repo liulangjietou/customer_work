@@ -1096,6 +1096,15 @@ public class CustomerWorkProperties {
          * 否则密文解不开、整份配置被判失败并保留旧配置。
          */
         private String configAesKey = "";
+
+        /**
+         * 本实例所属租户编码，用于接收<b>按租户灰度</b>的运行时配置。
+         *
+         * <p>配了就先读 {@code <runtime-config-data-id>-tenant-<租户码>}，读不到才回落主 dataId。
+         * 本端并不理解"灰度"，只是多试了一个更具体的 dataId；运营方把灰度版本写进那个 dataId，
+         * 名单外的实例自然继续用主 dataId 上的全量版本。留空即不参与灰度（单租户部署无需配置）。</p>
+         */
+        private String tenantCode = "";
     }
 
     /** 交互协议配置（AG-UI / TTS）。 */
