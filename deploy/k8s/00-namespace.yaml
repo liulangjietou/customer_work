@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: customer-work
+  labels:
+    app.kubernetes.io/part-of: customer-work

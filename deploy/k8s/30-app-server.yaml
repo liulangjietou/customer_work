@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-work-app
+  namespace: customer-work
+  labels:
+    app: customer-work-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: customer-work-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: customer-work-app
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8080"
+    spec:
+      # 必须大于应用自身的 shutdown-timeout-seconds（ConfigMap 里是 30），
+      # 否则正在处理的对话会在优雅停机走完之前被 SIGKILL 打断
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: app
+          image: customer-work/app-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: customer-work-config
+            - secretRef:
+                name: customer-work-secret
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          # 启动探针单独设，给 JVM + Spring 上下文足够的启动时间；
+          # 没有它就得把 liveness 的 initialDelay 调得很大，那会让运行期的故障检测跟着变迟钝
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                # 先让 Service 摘掉本 Pod 的 endpoint，再开始停机，避免摘流量与停机竞争
+                # 导致的少量 502（K8s 的 endpoint 更新与 SIGTERM 是并行发生的）
+                command: ["sh", "-c", "sleep 5"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-work-app
+  namespace: customer-work
+  labels:
+    app: customer-work-app
+spec:
+  type: ClusterIP
+  selector:
+    app: customer-work-app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# 滚动发布/节点驱逐时至少保留一个可用副本
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: customer-work-app
+  namespace: customer-work
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: customer-work-app

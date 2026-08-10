@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: customer-work-config
+  namespace: customer-work
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+
+  # ---- 外部依赖地址（按实际部署填写）----
+  MYSQL_HOST: "mysql.customer-work.svc.cluster.local"
+  MYSQL_PORT: "3306"
+  REDIS_HOST: "redis.customer-work.svc.cluster.local"
+  REDIS_PORT: "6379"
+  NACOS_SERVER_ADDR: "nacos.customer-work.svc.cluster.local:8848"
+
+  # ---- 多副本必须项 ----
+  # 三个进程内实现切成 Redis 共享：不切就等于每个副本各有一份配额、各锁各的会话。
+  # 详见 deploy/k8s/README.md「多副本的前提」。
+  CUSTOMER_WORK_DISTRIBUTED_COUNTERMODE: "redis"
+  CUSTOMER_WORK_DISTRIBUTED_SESSIONLOCKMODE: "redis"
+  # 会话锁的持有超时要显著大于单次对话的最长处理时间，否则长响应会在处理中途失去互斥保护
+  CUSTOMER_WORK_DISTRIBUTED_SESSIONLOCKLEASESECONDS: "120"
+  CUSTOMER_WORK_DISTRIBUTED_SESSIONLOCKWAITSECONDS: "10"
+
+  # ---- 健康探针 ----
+  # liveness/readiness 分离端点默认关闭，K8s 探针要用就得显式开
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,metrics,prometheus"
+
+  # ---- 优雅停机 ----
+  # 必须小于 Deployment 的 terminationGracePeriodSeconds，否则处理中的对话会被 SIGKILL 打断
+  CUSTOMER_WORK_RUNTIME_SHUTDOWNTIMEOUTSECONDS: "30"

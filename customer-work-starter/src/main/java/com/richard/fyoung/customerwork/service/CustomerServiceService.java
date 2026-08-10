@@ -5,6 +5,8 @@ import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.dto.IntentResult;
+import com.richard.fyoung.customerwork.lock.InMemorySessionLock;
+import com.richard.fyoung.customerwork.lock.SessionLock;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStreamGuard;
 import io.agentscope.core.ReActAgent;
@@ -87,9 +89,11 @@ public class CustomerServiceService {
 
     /**
      * 会话级并发锁：同一 sessionId 的请求串行执行，防止并发写状态导致状态冲突 / 覆盖。
-     * 锁对象在 sessionId 首次使用时懒创建，进程内有效。
+     *
+     * <p>默认进程内（要求网关按会话 sticky 路由）；多副本部署把
+     * {@code customer-work.distributed.session-lock-mode} 切成 {@code redis} 即跨实例互斥。</p>
      */
-    private final ConcurrentHashMap<String, java.util.concurrent.Semaphore> sessionLocks = new ConcurrentHashMap<>();
+    private SessionLock sessionLock = new InMemorySessionLock(0);
 
     /**
      * 会话最后活跃时间戳（用于超时清理）：sessionId -> lastActivityMs。
@@ -102,10 +106,15 @@ public class CustomerServiceService {
                                   SessionStateManager sessionStateManager,
                                   CustomerWorkProperties properties,
                                   ObjectProvider<MeterRegistry> meterRegistryProvider,
-                                  ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider) {
+                                  ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
+                                  ObjectProvider<SessionLock> sessionLockProvider) {
         this(agentFactory, sessionStateManager, properties);
         this.meterRegistry = meterRegistryProvider.getIfAvailable();
         this.sensitiveWordFilter = sensitiveWordFilterProvider.getIfAvailable();
+        SessionLock provided = sessionLockProvider == null ? null : sessionLockProvider.getIfAvailable();
+        if (provided != null) {
+            this.sessionLock = provided;
+        }
     }
 
     /** 无指标构造（单测 / 未接入 Micrometer 场景）；properties 为空时使用默认配置。 */
@@ -333,10 +342,15 @@ public class CustomerServiceService {
         return true;
     }
 
-    /** 主动结束并清理会话：移除热缓存、删除持久化状态、清理会话锁。 */
+    /**
+     * 主动结束并清理会话：移除热缓存、删除持久化状态。
+     *
+     * <p>不再显式清理会话锁——锁对象由 {@link SessionLock} 实现自行回收
+     * （进程内实现按使用者计数摘除，分布式实现靠 lease 过期），
+     * 这里若强行清理反而可能把正在使用中的锁摘掉。</p>
+     */
     public void endSession(String sessionId) {
         sessionAgents.remove(sessionId);
-        sessionLocks.remove(sessionId);
         sessionActivity.remove(sessionId);
         try {
             RuntimeContext ctx = agentFactory.contextFor(sessionId);
@@ -351,7 +365,7 @@ public class CustomerServiceService {
     /**
      * 热配置刷新：清空进程内热 Agent 缓存，使下一次会话请求按最新配置（提示词/MCP/maxIters）重建 Agent。
      *
-     * <p>只清热缓存，<b>不动</b> {@code AgentStateStore}（会话短期状态）与 {@code sessionLocks}（会话锁）：
+     * <p>只清热缓存，<b>不动</b> {@code AgentStateStore}（会话短期状态）与 {@code SessionLock}（会话锁）：
      * "淘汰即重建、状态从 StateStore 恢复"是既有 LRU 淘汰路径已验证的行为，热更新复用同一路径即可，不会
      * 丢失任何进行中会话的上下文。模型链的热替换走 {@code MutableDelegatingModel#swap}，与本方法互补
      * （模型链是共享单例，无需重建 Agent 即生效；提示词/MCP/maxIters 绑定在 Agent 上，需重建）。</p>
@@ -427,28 +441,20 @@ public class CustomerServiceService {
      * 在 boundedElastic 上获取锁并执行，不阻塞 Netty 事件循环线程。
      */
     private <T> Mono<T> withSessionLock(String sessionId, Supplier<Mono<T>> supplier) {
-        java.util.concurrent.Semaphore lock = sessionLocks.computeIfAbsent(sessionId, k -> new java.util.concurrent.Semaphore(1));
-        return Mono.fromCallable(() -> {
-                lock.acquire();
-                return true;
-            })
+        return Mono.fromCallable(() -> sessionLock.acquire(sessionId))
             .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-            .flatMap(ignored -> supplier.get())
-            .doFinally(signal -> lock.release());
+            .flatMap(releasable -> supplier.get()
+                // 释放挂在内层：doFinally 只有拿到锁之后才注册，避免获取失败时误释放别人的锁
+                .doFinally(signal -> releasable.release()));
     }
 
     /**
      * 会话级锁包装（Flux）：同 {@link #withSessionLock}，用于流式输出。
      */
     private <T> Flux<T> withSessionLockFlux(String sessionId, Flux<T> flux) {
-        java.util.concurrent.Semaphore lock = sessionLocks.computeIfAbsent(sessionId, k -> new java.util.concurrent.Semaphore(1));
-        return Mono.fromCallable(() -> {
-                lock.acquire();
-                return true;
-            })
+        return Mono.fromCallable(() -> sessionLock.acquire(sessionId))
             .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-            .flatMapMany(ignored -> flux)
-            .doFinally(signal -> lock.release());
+            .flatMapMany(releasable -> flux.doFinally(signal -> releasable.release()));
     }
 
     private Msg toUserMsg(String userText) {

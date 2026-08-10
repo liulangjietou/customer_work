@@ -31,9 +31,9 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1150** + admin-server **732** + app 78 + customer-channel 65 + gateway 1
-  （2026-08-10 feature/tenant-foundation 实测，B1 租户地基：starter +14（租户上下文/过滤策略）、
-  admin +11（租户生命周期）。MySQL 不可达时 admin 会少跑 1 个门控用例，显示 721 属正常。
+- 测试基线：starter **1151** + admin-server **722** + app 78 + customer-channel 65 + gateway 1
+  （2026-08-10 feature/distributed-scaling 实测，B2 水平扩展：starter +15（窗口计数/会话锁）。
+  MySQL 不可达时 admin 会少跑 1 个门控用例，显示 721 属正常。
   上一版基线是 2026-08-06 的 starter 1136 + admin 722；更早是 2026-08-05 的 starter 1054 + admin 711；
   admin-server 更早的实际基线已是 707，CLAUDE.md 曾记的
   701 系陈旧数字。starter 已按下方规则排除 2 个环境门控测试。此前 feature/sink-common-to-starter 把 admin
@@ -77,6 +77,11 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   让 main 的 CI 从 PR #65 起连红 6 次（表现为 `Table 'customer_admin.cw_agent_call_log' doesn't exist`）。
 - **迁移脚本里不要写库名前缀**（`INSERT INTO \`customer_admin\`.\`xxx\``）：脚本执行时已经 USE 到目标库，
   写死库名会让脚本换库不可用，验证/多环境时甚至串库写到别的库去。V14 踩过。
+- **水平扩展（B2 起）**：限流与成本熔断共用 `WindowCounter` SPI、会话串行锁走 `SessionLock` SPI，
+  默认进程内，多副本部署切 `customer-work.distributed.{counter-mode,session-lock-mode}=redis`。
+  两条约定：① Redis 实现失败一律**降级进程内**而非放行（保护性能力不能因基础设施故障消失）；
+  ② 会话锁必须用 `RPermitExpirableSemaphore` 而非 `RLock`——加锁在 Reactor 链、释放在 `doFinally`，
+  不保证同线程，RLock 会抛 `IllegalMonitorStateException`。K8s 清单见 `deploy/k8s/`。
 - **多租户（B1 起）**：隔离靠 MyBatis-Plus `TenantLineInnerInterceptor` 全局改写，租户值取自
   `TenantContext`（starter 的 ThreadLocal），默认关闭（`customer-work.tenant.enabled` / `admin.tenant.enabled`）。
   设计与逐表归属见 `docs/多租户架构设计.md`。三条硬约定：

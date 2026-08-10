@@ -1,0 +1,79 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: customer-work-app
+  namespace: customer-work
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: customer-work-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      # 缩容放慢：对话是长连接型负载，缩太快会把正在处理的会话连带打断，
+      # 而扩容代价远低于误伤用户请求
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: customer-admin-server
+  namespace: customer-work
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: customer-admin-server
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+
+# ---------------------------------------------------------------------------
+# 更贴合负载的伸缩依据（需先装 Prometheus Adapter）
+#
+# 对话服务的瓶颈通常是"等模型响应"而不是 CPU：一个副本可能 CPU 只有 20% 却已经把
+# 可用连接吃满。CPU 指标在这种负载下会明显滞后，真正该看的是在途请求数。
+# 装了 adapter 后把下面这段加进上面的 metrics 列表即可：
+#
+#   - type: Pods
+#     pods:
+#       metric:
+#         name: http_server_requests_active   # 由 Micrometer 暴露，经 adapter 转成自定义指标
+#       target:
+#         type: AverageValue
+#         averageValue: "20"
+# ---------------------------------------------------------------------------

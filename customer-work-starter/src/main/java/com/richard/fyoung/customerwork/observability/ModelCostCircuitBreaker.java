@@ -1,12 +1,13 @@
 package com.richard.fyoung.customerwork.observability;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.counter.InMemoryWindowCounter;
+import com.richard.fyoung.customerwork.counter.WindowCounter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 模型成本熔断器（P2：防止 token 消耗超预算打爆成本）。
@@ -23,6 +24,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * 不可用则返回 false，由调用方决定降级策略（如返回兜底回复、降级到更便宜的模型）。</p>
  *
  * <p>仅在 {@code model.cost-control.enabled=true} 时生效；默认关闭。</p>
+ *
+ * <p>计数走 {@link WindowCounter}：默认进程内，多副本部署把
+ * {@code customer-work.distributed.counter-mode} 切成 {@code redis} 才是真正的成本上限——
+ * 否则每个实例各有一份配额，实际花销是配置值的实例数倍，"熔断"形同虚设。</p>
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -30,17 +35,15 @@ public class ModelCostCircuitBreaker {
 
     private static final Logger log = LoggerFactory.getLogger(ModelCostCircuitBreaker.class);
 
+    private static final String MINUTE_KEY = "modelcost:minute";
+    private static final String HOUR_KEY = "modelcost:hour";
+    private static final int MINUTE_WINDOW_SECONDS = 60;
+    private static final int HOUR_WINDOW_SECONDS = 3600;
+
     private final boolean enabled;
     private final int maxTokensPerMinute;
     private final int maxTokensPerHour;
-
-    /** 当前分钟窗口的 token 消耗（分钟时间戳 -> 累计 token）。 */
-    private final AtomicLong currentMinuteTokens = new AtomicLong(0);
-    private volatile long currentMinuteTimestamp = currentMinute();
-
-    /** 当前小时窗口的 token 消耗（小时时间戳 -> 累计 token）。 */
-    private final AtomicLong currentHourTokens = new AtomicLong(0);
-    private volatile long currentHourTimestamp = currentHour();
+    private final WindowCounter counter;
 
     /**
      * Spring 注入构造：读取 {@code model.cost-control.*} 配置。
@@ -50,10 +53,18 @@ public class ModelCostCircuitBreaker {
      * {@code model.cost-control.enabled=true} 空转。</p>
      */
     @Autowired
-    public ModelCostCircuitBreaker(CustomerWorkProperties properties) {
+    public ModelCostCircuitBreaker(CustomerWorkProperties properties,
+                                   ObjectProvider<WindowCounter> counterProvider) {
         this.enabled = properties.getModel().getCostControl().isEnabled();
         this.maxTokensPerMinute = properties.getModel().getCostControl().getMaxTokensPerMinute();
         this.maxTokensPerHour = properties.getModel().getCostControl().getMaxTokensPerHour();
+        WindowCounter provided = counterProvider == null ? null : counterProvider.getIfAvailable();
+        this.counter = provided == null ? new InMemoryWindowCounter() : provided;
+    }
+
+    /** 便捷构造：进程内计数。单实例部署与测试用这个即可，多副本请走带 {@link WindowCounter} 的构造。 */
+    public ModelCostCircuitBreaker(CustomerWorkProperties properties) {
+        this(properties, (ObjectProvider<WindowCounter>) null);
     }
 
     /** 无参构造（禁用状态，兼容测试）。 */
@@ -61,6 +72,7 @@ public class ModelCostCircuitBreaker {
         this.enabled = false;
         this.maxTokensPerMinute = 0;
         this.maxTokensPerHour = 0;
+        this.counter = new InMemoryWindowCounter();
     }
 
     /**
@@ -74,36 +86,22 @@ public class ModelCostCircuitBreaker {
             return true;
         }
 
-        // 滚动分钟窗口
-        long nowMin = currentMinute();
-        if (nowMin != currentMinuteTimestamp) {
-            currentMinuteTimestamp = nowMin;
-            currentMinuteTokens.set(0);
-        }
-
-        // 滚动小时窗口
-        long nowHour = currentHour();
-        if (nowHour != currentHourTimestamp) {
-            currentHourTimestamp = nowHour;
-            currentHourTokens.set(0);
-        }
-
-        // 检查分钟限额
-        long minuteAfter = currentMinuteTokens.addAndGet(tokenCount);
+        // 窗口滚动由计数器实现负责：键自带窗口序号，跨窗口自然归零，不需要在这里比对时间戳
+        long minuteAfter = counter.increment(MINUTE_KEY, tokenCount, MINUTE_WINDOW_SECONDS);
         if (minuteAfter > maxTokensPerMinute) {
-            log.warn("[CostCircuit] minute limit exceeded: consumed={}, limit={}",
-                minuteAfter, maxTokensPerMinute);
-            currentMinuteTokens.addAndGet(-tokenCount); // 回滚
+            log.error("model cost minute limit exceeded, code={}, consumed={}, limit={}",
+                "MODEL-COST-MINUTE-LIMIT", minuteAfter, maxTokensPerMinute);
+            counter.decrement(MINUTE_KEY, tokenCount, MINUTE_WINDOW_SECONDS);
             return false;
         }
 
-        // 检查小时限额
-        long hourAfter = currentHourTokens.addAndGet(tokenCount);
+        long hourAfter = counter.increment(HOUR_KEY, tokenCount, HOUR_WINDOW_SECONDS);
         if (hourAfter > maxTokensPerHour) {
-            log.warn("[CostCircuit] hour limit exceeded: consumed={}, limit={}",
-                hourAfter, maxTokensPerHour);
-            currentHourTokens.addAndGet(-tokenCount); // 回滚
-            currentMinuteTokens.addAndGet(-tokenCount); // 回滚分钟窗口
+            log.error("model cost hour limit exceeded, code={}, consumed={}, limit={}",
+                "MODEL-COST-HOUR-LIMIT", hourAfter, maxTokensPerHour);
+            counter.decrement(HOUR_KEY, tokenCount, HOUR_WINDOW_SECONDS);
+            // 分钟窗口的增量也要退回：这次请求整体被拒，不该占用任何一个窗口的额度
+            counter.decrement(MINUTE_KEY, tokenCount, MINUTE_WINDOW_SECONDS);
             return false;
         }
 
@@ -115,25 +113,16 @@ public class ModelCostCircuitBreaker {
         if (!enabled) {
             return false;
         }
-        return currentMinuteTokens.get() >= maxTokensPerMinute
-            || currentHourTokens.get() >= maxTokensPerHour;
+        return getMinuteTokens() >= maxTokensPerMinute || getHourTokens() >= maxTokensPerHour;
     }
 
     /** 当前分钟已消耗 token 数（测试用）。 */
     long getMinuteTokens() {
-        return currentMinuteTokens.get();
+        return counter.current(MINUTE_KEY, MINUTE_WINDOW_SECONDS);
     }
 
     /** 当前小时已消耗 token 数（测试用）。 */
     long getHourTokens() {
-        return currentHourTokens.get();
-    }
-
-    private long currentMinute() {
-        return System.currentTimeMillis() / 60_000L;
-    }
-
-    private long currentHour() {
-        return System.currentTimeMillis() / 3_600_000L;
+        return counter.current(HOUR_KEY, HOUR_WINDOW_SECONDS);
     }
 }
