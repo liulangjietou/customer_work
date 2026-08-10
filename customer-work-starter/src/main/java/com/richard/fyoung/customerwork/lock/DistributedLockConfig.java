@@ -5,6 +5,8 @@ import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 import org.redisson.config.SingleServerConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,6 +23,10 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class DistributedLockConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(DistributedLockConfig.class);
+
+    private static final String MODE_REDIS = "redis";
+
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean
     public RedissonClient redissonClient(CustomerWorkProperties properties) {
@@ -31,6 +37,26 @@ public class DistributedLockConfig {
     @ConditionalOnMissingBean
     public DistributedLockExecutor distributedLockExecutor(RedissonClient redissonClient) {
         return new RedissonDistributedLockExecutor(redissonClient);
+    }
+
+    /**
+     * 会话串行锁：按 {@code customer-work.distributed.session-lock-mode} 选实现。
+     *
+     * <p>默认进程内——它只在网关按会话 sticky 路由时才正确，但那正是当前部署形态；
+     * 切 redis 后即使同一会话落到不同实例也能互斥。</p>
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public SessionLock sessionLock(CustomerWorkProperties properties, RedissonClient redissonClient) {
+        CustomerWorkProperties.Distributed cfg = properties.getDistributed();
+        InMemorySessionLock inMemory = new InMemorySessionLock(cfg.getSessionLockWaitSeconds());
+        if (!MODE_REDIS.equalsIgnoreCase(cfg.getSessionLockMode())) {
+            return inMemory;
+        }
+        log.info("distributed session lock enabled, waitSeconds={}, leaseSeconds={}",
+            cfg.getSessionLockWaitSeconds(), cfg.getSessionLockLeaseSeconds());
+        return new RedissonSessionLock(redissonClient, "cw:sessionlock:",
+            cfg.getSessionLockWaitSeconds(), cfg.getSessionLockLeaseSeconds(), inMemory);
     }
 
     /**
