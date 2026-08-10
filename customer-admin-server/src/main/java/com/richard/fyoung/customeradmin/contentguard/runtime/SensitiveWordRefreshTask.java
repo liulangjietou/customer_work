@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.contentguard.runtime;
 
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordRefreshDriver;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordRefresher;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordRefreshDriver;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordRefresher;
 import jakarta.annotation.PreDestroy;
 
 /**

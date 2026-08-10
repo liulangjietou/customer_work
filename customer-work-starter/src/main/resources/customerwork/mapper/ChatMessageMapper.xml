@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.richard.fyoung.customerwork.chatlog.mapper.ChatMessageMapper">
+<mapper namespace="com.richard.fyoung.customerwork.data.chatlog.mapper.ChatMessageMapper">
 
     <!-- 会话维度游标翻页：id 倒序取最新 limit 条，beforeId 非空时只取更早消息。返回结果由 Store 翻转成升序。 -->
-    <select id="findBySessionPage" resultType="com.richard.fyoung.customerwork.chatlog.entity.ChatMessageDO">
+    <select id="findBySessionPage" resultType="com.richard.fyoung.customerwork.data.chatlog.entity.ChatMessageDO">
         SELECT id, message_id, session_id, ticket_id, sender_type, sender_id, content, created_at_ms
         FROM cw_chat_message
         WHERE session_id = #{sessionId}
@@ -16,7 +16,7 @@
     </select>
 
     <!-- 工单维度游标翻页：语义同上。 -->
-    <select id="findByTicketPage" resultType="com.richard.fyoung.customerwork.chatlog.entity.ChatMessageDO">
+    <select id="findByTicketPage" resultType="com.richard.fyoung.customerwork.data.chatlog.entity.ChatMessageDO">
         SELECT id, message_id, session_id, ticket_id, sender_type, sender_id, content, created_at_ms
         FROM cw_chat_message
         WHERE ticket_id = #{ticketId}

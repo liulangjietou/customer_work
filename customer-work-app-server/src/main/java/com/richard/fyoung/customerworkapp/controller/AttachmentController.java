@@ -1,9 +1,9 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.attachment.AttachmentParseService;
-import com.richard.fyoung.customerwork.attachment.ChatAttachment;
-import com.richard.fyoung.customerwork.security.UserJwtService;
-import com.richard.fyoung.customerwork.security.UserPrincipal;
+import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
+import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
+import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.core.io.buffer.DataBuffer;

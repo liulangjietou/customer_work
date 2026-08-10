@@ -1,8 +1,8 @@
 package com.richard.fyoung.customeradmin.contentguard.jdbc;
 
-import com.richard.fyoung.customerwork.security.ratelimit.mapper.RateLimitRuleMapper;
-import com.richard.fyoung.customerwork.sensitiveword.mapper.SensitiveWordHitLogMapper;
-import com.richard.fyoung.customerwork.sensitiveword.mapper.SensitiveWordMapper;
+import com.richard.fyoung.customerwork.safety.security.ratelimit.mapper.RateLimitRuleMapper;
+import com.richard.fyoung.customerwork.safety.sensitiveword.mapper.SensitiveWordHitLogMapper;
+import com.richard.fyoung.customerwork.safety.sensitiveword.mapper.SensitiveWordMapper;
 
 /**
  * 内容风控数据门面：把客服端库上的三套 Mapper 打包成一个对象传递。

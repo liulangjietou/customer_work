@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerworkapp;
 
-import com.richard.fyoung.customerwork.agent.CustomerServiceAgentFactory;
-import com.richard.fyoung.customerwork.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
+import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;

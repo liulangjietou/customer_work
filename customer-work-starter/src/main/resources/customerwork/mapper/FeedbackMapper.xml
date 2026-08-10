@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.richard.fyoung.customerwork.feedback.mapper.FeedbackMapper">
+<mapper namespace="com.richard.fyoung.customerwork.capability.feedback.mapper.FeedbackMapper">
 
     <!-- 按主键 upsert：对应旧 JdbcFeedbackStore 的 ON DUPLICATE KEY UPDATE 语义
          type / comment 加反引号以规避 MySQL 关键字歧义 -->
-    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.feedback.entity.MessageFeedbackDO">
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.capability.feedback.entity.MessageFeedbackDO">
         INSERT INTO cw_message_feedback (message_id, session_id, `type`, `comment`, created_at_ms)
         VALUES (#{messageId}, #{sessionId}, #{type}, #{comment}, #{createdAtMs})
         ON DUPLICATE KEY UPDATE session_id = VALUES(session_id), `type` = VALUES(`type`),

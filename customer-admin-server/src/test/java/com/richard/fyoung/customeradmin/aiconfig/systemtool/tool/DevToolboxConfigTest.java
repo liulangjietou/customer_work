@@ -2,7 +2,7 @@ package com.richard.fyoung.customeradmin.aiconfig.systemtool.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.richard.fyoung.customerwork.tool.devtool.DevToolboxTools;
+import com.richard.fyoung.customerwork.devtool.DevToolboxTools;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;

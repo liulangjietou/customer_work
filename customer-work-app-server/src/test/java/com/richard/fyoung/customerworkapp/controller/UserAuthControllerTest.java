@@ -1,9 +1,9 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.user.UserAccount;
-import com.richard.fyoung.customerwork.user.UserAccountService;
-import com.richard.fyoung.customerwork.security.UserJwtService;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.data.user.UserAccount;
+import com.richard.fyoung.customerwork.data.user.UserAccountService;
+import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerworkapp.service.AvatarStorageService;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import org.junit.jupiter.api.Test;

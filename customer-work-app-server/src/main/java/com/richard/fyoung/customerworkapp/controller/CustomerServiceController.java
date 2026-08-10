@@ -1,12 +1,12 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.agent.AguiService;
-import com.richard.fyoung.customerwork.agent.MultiAgentOrchestrator;
-import com.richard.fyoung.customerwork.dto.ChatRequest;
-import com.richard.fyoung.customerwork.dto.ChatResponse;
-import com.richard.fyoung.customerwork.dto.IntentResult;
+import com.richard.fyoung.customerwork.core.agent.AguiService;
+import com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator;
+import com.richard.fyoung.customerwork.core.dto.ChatRequest;
+import com.richard.fyoung.customerwork.core.dto.ChatResponse;
+import com.richard.fyoung.customerwork.core.dto.IntentResult;
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
-import com.richard.fyoung.customerwork.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;

@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerworkapp.chat;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 

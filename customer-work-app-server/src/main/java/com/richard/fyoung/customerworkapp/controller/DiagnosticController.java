@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.diagnostics.DiagnosticService;
-import com.richard.fyoung.customerwork.diagnostics.SessionDiagnostic;
+import com.richard.fyoung.customerwork.infra.diagnostics.DiagnosticService;
+import com.richard.fyoung.customerwork.infra.diagnostics.SessionDiagnostic;
 import com.richard.fyoung.customerwork.observability.AuditRecord;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

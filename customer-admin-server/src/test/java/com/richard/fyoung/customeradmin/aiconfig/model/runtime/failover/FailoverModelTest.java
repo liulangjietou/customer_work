@@ -58,7 +58,7 @@ class FailoverModelTest {
         FailoverModel model = new FailoverModel(
             List.of(new FailoverModel.Candidate(1L, new StubModel("p", false))), newRegistry());
 
-        assertInstanceOf(com.richard.fyoung.customerwork.model.failover.FailoverModel.class, model);
+        assertInstanceOf(com.richard.fyoung.customerwork.core.model.failover.FailoverModel.class, model);
         assertEquals("p", model.getModelName());
     }
 

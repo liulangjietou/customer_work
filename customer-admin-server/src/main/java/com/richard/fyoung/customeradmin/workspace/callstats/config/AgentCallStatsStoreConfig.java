@@ -1,11 +1,11 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
-import com.richard.fyoung.customerwork.calllog.AgentCallRecordSink;
-import com.richard.fyoung.customerwork.calllog.AgentCallTimingMiddleware;
-import com.richard.fyoung.customerwork.calllog.StoreAgentCallRecordSink;
-import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.data.calllog.AgentCallRecordSink;
+import com.richard.fyoung.customerwork.data.calllog.AgentCallTimingMiddleware;
+import com.richard.fyoung.customerwork.data.calllog.StoreAgentCallRecordSink;
+import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

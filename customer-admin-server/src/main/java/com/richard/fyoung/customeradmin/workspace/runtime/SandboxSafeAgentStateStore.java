@@ -4,7 +4,7 @@ import io.agentscope.core.state.AgentStateStore;
 
 /**
  * {@link AgentStateStore} 装饰器的 admin 侧薄壳，实现在 starter 的
- * {@link com.richard.fyoung.customerwork.runtime.SandboxSafeAgentStateStore}（两侧唯一实现）。
+ * {@link com.richard.fyoung.customerwork.core.runtime.SandboxSafeAgentStateStore}（两侧唯一实现）。
  *
  * <p>装饰目的：规避 {@code agentscope-harness}（2.0.0 GA）与 {@code agentscope-extensions-mysql}
  * （2.0.0 GA）组合使用时的官方框架 bug——{@code HarnessAgent} 的 {@code SessionSandboxStateStore}
@@ -20,7 +20,7 @@ import io.agentscope.core.state.AgentStateStore;
  * {@link AdminAgentInstanceFactory#build}），local 模式不受影响。</p>
  * @author owlzhangfq@gmail.com
  */
-public class SandboxSafeAgentStateStore extends com.richard.fyoung.customerwork.runtime.SandboxSafeAgentStateStore {
+public class SandboxSafeAgentStateStore extends com.richard.fyoung.customerwork.core.runtime.SandboxSafeAgentStateStore {
 
     public SandboxSafeAgentStateStore(AgentStateStore delegate) {
         super(delegate);

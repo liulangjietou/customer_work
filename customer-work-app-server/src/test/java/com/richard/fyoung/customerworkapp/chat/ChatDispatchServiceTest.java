@@ -1,16 +1,16 @@
 package com.richard.fyoung.customerworkapp.chat;
 
-import com.richard.fyoung.customerwork.chatlog.ChatLogService;
-import com.richard.fyoung.customerwork.chatlog.ChatMessage;
-import com.richard.fyoung.customerwork.service.CustomerServiceService;
-import com.richard.fyoung.customerwork.tenant.TenantContext;
-import com.richard.fyoung.customerwork.ticket.Ticket;
-import com.richard.fyoung.customerwork.ticket.TicketActorType;
-import com.richard.fyoung.customerwork.ticket.TicketCategory;
-import com.richard.fyoung.customerwork.ticket.TicketService;
-import com.richard.fyoung.customerwork.security.UserPrincipal;
-import com.richard.fyoung.customerwork.ws.WsFrame;
-import com.richard.fyoung.customerwork.ws.WsSessionRegistry;
+import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
+import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
+import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.data.ticket.Ticket;
+import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
+import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
+import com.richard.fyoung.customerwork.data.ticket.TicketService;
+import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerwork.infra.ws.WsFrame;
+import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;

@@ -20,7 +20,7 @@
         </where>
     </sql>
 
-    <select id="findPage" resultType="com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordEntity">
+    <select id="findPage" resultType="com.richard.fyoung.customerwork.safety.sensitiveword.entity.SensitiveWordEntity">
         SELECT id, word, category, action, enabled, created_at_ms, updated_at_ms
         FROM cw_sensitive_word
         <include refid="whereClause"/>
@@ -33,7 +33,7 @@
         <include refid="whereClause"/>
     </select>
 
-    <select id="findByWord" resultType="com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordEntity">
+    <select id="findByWord" resultType="com.richard.fyoung.customerwork.safety.sensitiveword.entity.SensitiveWordEntity">
         SELECT id, word, category, action, enabled, created_at_ms, updated_at_ms
         FROM cw_sensitive_word WHERE word = #{word}
     </select>

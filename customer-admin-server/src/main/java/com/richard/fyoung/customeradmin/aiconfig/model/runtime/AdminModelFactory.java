@@ -1,8 +1,8 @@
 package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
-import com.richard.fyoung.customerwork.config.ChatModelFactory;
-import com.richard.fyoung.customerwork.model.ChatModelProber;
+import com.richard.fyoung.customerwork.infra.config.ChatModelFactory;
+import com.richard.fyoung.customerwork.core.model.ChatModelProber;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import org.springframework.stereotype.Component;

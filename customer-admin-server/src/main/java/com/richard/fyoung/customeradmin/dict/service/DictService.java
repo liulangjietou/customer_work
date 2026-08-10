@@ -10,8 +10,8 @@ import com.richard.fyoung.customeradmin.dict.dto.DictOptionVO;
 import com.richard.fyoung.customeradmin.dict.dto.DictTypeSaveRequest;
 import com.richard.fyoung.customeradmin.dict.dto.DictTypeVO;
 import com.richard.fyoung.customeradmin.dict.jdbc.DictGateway;
-import com.richard.fyoung.customerwork.dict.entity.DictItemEntity;
-import com.richard.fyoung.customerwork.dict.entity.DictTypeEntity;
+import com.richard.fyoung.customerwork.data.dict.entity.DictItemEntity;
+import com.richard.fyoung.customerwork.data.dict.entity.DictTypeEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 

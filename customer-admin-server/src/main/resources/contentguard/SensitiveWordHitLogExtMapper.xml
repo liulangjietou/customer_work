@@ -26,7 +26,7 @@
         </where>
     </sql>
 
-    <select id="findPage" resultType="com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordHitLogEntity">
+    <select id="findPage" resultType="com.richard.fyoung.customerwork.safety.sensitiveword.entity.SensitiveWordHitLogEntity">
         SELECT id, direction, action, words, categories, hit_count, agent_name,
                session_id, user_id, snippet, created_at_ms
         FROM cw_sensitive_word_hit_log

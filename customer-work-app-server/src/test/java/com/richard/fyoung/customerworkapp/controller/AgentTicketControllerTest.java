@@ -1,15 +1,15 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.chatlog.ChatLogService;
-import com.richard.fyoung.customerwork.chatlog.ChatMessage;
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.security.AgentAccessCredential;
-import com.richard.fyoung.customerwork.ticket.Ticket;
-import com.richard.fyoung.customerwork.ticket.TicketActorType;
-import com.richard.fyoung.customerwork.ticket.TicketCategory;
-import com.richard.fyoung.customerwork.ticket.TicketService;
-import com.richard.fyoung.customerwork.security.AgentAuthWebFilter;
-import com.richard.fyoung.customerwork.ws.WsSessionRegistry;
+import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
+import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.data.ticket.Ticket;
+import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
+import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
+import com.richard.fyoung.customerwork.data.ticket.TicketService;
+import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
+import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;

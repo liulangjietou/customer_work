@@ -4,9 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.richard.fyoung.customeradmin.workspace.chat.entity.AiChatAttachment;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.AiChatAttachmentMapper;
-import com.richard.fyoung.customerwork.attachment.AttachmentParseStatus;
-import com.richard.fyoung.customerwork.attachment.AttachmentStore;
-import com.richard.fyoung.customerwork.attachment.ChatAttachment;
+import com.richard.fyoung.customerwork.data.attachment.AttachmentParseStatus;
+import com.richard.fyoung.customerwork.data.attachment.AttachmentStore;
+import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

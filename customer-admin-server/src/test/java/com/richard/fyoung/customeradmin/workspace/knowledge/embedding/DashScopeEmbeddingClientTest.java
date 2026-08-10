@@ -20,7 +20,7 @@ import static org.mockito.Mockito.when;
  * admin 侧薄壳单测：只覆盖本层职责——API Key 来源解析（默认行优先、缺失 fast fail）与配置透传。
  *
  * <p>HTTP 调用与响应解析已下沉 starter
- * （{@code com.richard.fyoung.customerwork.knowledge.embedding.DashScopeEmbeddingClientTest} 覆盖），
+ * （{@code com.richard.fyoung.customerwork.data.knowledge.embedding.DashScopeEmbeddingClientTest} 覆盖），
  * 此处不重复。</p>
  * @author owlzhangfq@gmail.com
  */

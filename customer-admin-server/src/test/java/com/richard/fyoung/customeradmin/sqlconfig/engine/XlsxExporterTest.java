@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.sqlconfig.engine;
 
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryResultVO;
-import com.richard.fyoung.customerwork.sqlkit.XlsxExporter;
+import com.richard.fyoung.customerwork.infra.sqlkit.XlsxExporter;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;

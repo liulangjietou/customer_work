@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.analytics.BusinessAnalyticsReport;
-import com.richard.fyoung.customerwork.analytics.BusinessAnalyticsService;
+import com.richard.fyoung.customerwork.observability.analytics.BusinessAnalyticsReport;
+import com.richard.fyoung.customerwork.observability.analytics.BusinessAnalyticsService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;

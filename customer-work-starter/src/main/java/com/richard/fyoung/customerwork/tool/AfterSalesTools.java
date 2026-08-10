@@ -1,8 +1,8 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.approval.ApprovalRequest;
-import com.richard.fyoung.customerwork.approval.ApprovalType;
-import com.richard.fyoung.customerwork.approval.PendingApprovalService;
+import com.richard.fyoung.customerwork.capability.approval.ApprovalRequest;
+import com.richard.fyoung.customerwork.capability.approval.ApprovalType;
+import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;

@@ -2,12 +2,12 @@ package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsExtMapper;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
-import com.richard.fyoung.customerwork.calllog.AgentCallLogStore;
-import com.richard.fyoung.customerwork.calllog.MybatisAgentCallLogStore;
-import com.richard.fyoung.customerwork.calllog.mapper.AgentCallLogMapper;
-import com.richard.fyoung.customerwork.calllog.mapper.AgentCallSegmentMapper;
-import com.richard.fyoung.customerwork.gateway.CrossDbGateway;
-import com.richard.fyoung.customerwork.gateway.CrossDbGateways;
+import com.richard.fyoung.customerwork.data.calllog.AgentCallLogStore;
+import com.richard.fyoung.customerwork.data.calllog.MybatisAgentCallLogStore;
+import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallLogMapper;
+import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallSegmentMapper;
+import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
+import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
 
 import javax.sql.DataSource;
 import java.util.List;

@@ -10,8 +10,8 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledg
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeBaseEndpoint;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeNode;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

@@ -1,11 +1,11 @@
 package com.richard.fyoung.customerworkapp.chat;
 
-import com.richard.fyoung.customerwork.ticket.Ticket;
-import com.richard.fyoung.customerwork.ticket.TicketEvent;
-import com.richard.fyoung.customerwork.ticket.TicketEventListener;
-import com.richard.fyoung.customerwork.ticket.TicketEventType;
-import com.richard.fyoung.customerwork.ws.WsFrame;
-import com.richard.fyoung.customerwork.ws.WsSessionRegistry;
+import com.richard.fyoung.customerwork.data.ticket.Ticket;
+import com.richard.fyoung.customerwork.data.ticket.TicketEvent;
+import com.richard.fyoung.customerwork.data.ticket.TicketEventListener;
+import com.richard.fyoung.customerwork.data.ticket.TicketEventType;
+import com.richard.fyoung.customerwork.infra.ws.WsFrame;
+import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;

@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.tenant;
 
 import cn.dev33.satoken.stp.StpUtil;
-import com.richard.fyoung.customerwork.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 
 /**
  * 登录态里的租户信息读写（Sa-Token Session 为载体）。

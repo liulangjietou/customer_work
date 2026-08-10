@@ -11,7 +11,7 @@ import com.richard.fyoung.customeradmin.tenant.dto.TenantVO;
 import com.richard.fyoung.customeradmin.tenant.entity.SysTenant;
 import com.richard.fyoung.customeradmin.tenant.entity.TenantStatus;
 import com.richard.fyoung.customeradmin.tenant.mapper.SysTenantMapper;
-import com.richard.fyoung.customerwork.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;

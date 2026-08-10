@@ -1,10 +1,10 @@
 package com.richard.fyoung.customerchannel;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.config.ModelConfig;
-import com.richard.fyoung.customerwork.config.PermissionConfig;
-import com.richard.fyoung.customerwork.config.SessionConfig;
-import com.richard.fyoung.customerwork.middleware.ObservabilityMiddleware;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.ModelConfig;
+import com.richard.fyoung.customerwork.infra.config.PermissionConfig;
+import com.richard.fyoung.customerwork.infra.config.SessionConfig;
+import com.richard.fyoung.customerwork.core.middleware.ObservabilityMiddleware;
 import com.richard.fyoung.customerwork.observability.StudioConfigurer;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
@@ -105,8 +105,8 @@ public class CustomerWebAgentConfig {
             new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockMemberBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockComplaintBackend(),
-            new com.richard.fyoung.customerwork.approval.PendingApprovalService(),
-            new com.richard.fyoung.customerwork.handoff.HandoffService(),
+            new com.richard.fyoung.customerwork.capability.approval.PendingApprovalService(),
+            new com.richard.fyoung.customerwork.capability.handoff.HandoffService(),
             null)
             .registerBusinessTools(toolkit);
         return toolkit;

@@ -142,7 +142,7 @@
         </dependency>
 
         <!-- SQL 查询结果导出 xlsx（SqlQueryController#export）：导出实现已下沉 starter
-             （com.richard.fyoung.customerwork.sqlkit.XlsxExporter），easyexcel 随之改由 starter 声明并
+             （com.richard.fyoung.customerwork.infra.sqlkit.XlsxExporter），easyexcel 随之改由 starter 声明并
              传递进来，本模块不再重复声明。仍保留 poi/poi-ooxml 5.5.1 的显式钉版，原因有二：
              ①XlsxExporterTest 直接用 XSSFWorkbook 回读校验导出结果，需要 poi-ooxml 在本模块可编译引用；
              ②真正加载 EasyExcel/POI 的是本模块的运行期 classpath（Controller 调 starter 导出），

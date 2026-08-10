@@ -2,8 +2,8 @@ package com.richard.fyoung.customeradmin.aiconfig.systemtool.tool;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
-import com.richard.fyoung.customerwork.security.HttpTargetForbiddenException;
-import com.richard.fyoung.customerwork.tool.devtool.HttpClientDevToolOps;
+import com.richard.fyoung.customerwork.safety.security.HttpTargetForbiddenException;
+import com.richard.fyoung.customerwork.devtool.HttpClientDevToolOps;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.springframework.stereotype.Component;

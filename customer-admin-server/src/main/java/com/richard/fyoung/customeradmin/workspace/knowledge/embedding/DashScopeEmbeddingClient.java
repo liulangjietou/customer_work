@@ -7,7 +7,7 @@ import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminKnowledgeProperties;
-import com.richard.fyoung.customerwork.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * DashScope Embedding 客户端的 admin 侧薄壳：HTTP 调用与响应解析在 starter 的
- * {@link com.richard.fyoung.customerwork.knowledge.embedding.DashScopeEmbeddingClient}（两侧唯一实现），
+ * {@link com.richard.fyoung.customerwork.data.knowledge.embedding.DashScopeEmbeddingClient}（两侧唯一实现），
  * 本类只负责 admin 侧的装配契约：
  * <ul>
  *   <li>作为 Spring Bean 暴露，配置取 {@link AdminKnowledgeProperties}；</li>
@@ -36,13 +36,13 @@ public class DashScopeEmbeddingClient implements EmbeddingClient {
 
     private final AiModelConfigMapper modelConfigMapper;
     private final AesGcmCryptoUtil cryptoUtil;
-    private final com.richard.fyoung.customerwork.knowledge.embedding.DashScopeEmbeddingClient delegate;
+    private final com.richard.fyoung.customerwork.data.knowledge.embedding.DashScopeEmbeddingClient delegate;
 
     public DashScopeEmbeddingClient(AiModelConfigMapper modelConfigMapper, AesGcmCryptoUtil cryptoUtil,
                                     AdminKnowledgeProperties properties) {
         this.modelConfigMapper = modelConfigMapper;
         this.cryptoUtil = cryptoUtil;
-        this.delegate = new com.richard.fyoung.customerwork.knowledge.embedding.DashScopeEmbeddingClient(
+        this.delegate = new com.richard.fyoung.customerwork.data.knowledge.embedding.DashScopeEmbeddingClient(
             this::resolveApiKey, properties.getEmbeddingBaseUrl(), properties.getEmbeddingModel(),
             properties.getDimensions(), properties.getBatchSize());
     }

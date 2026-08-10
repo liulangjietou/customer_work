@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>发布器实现已下沉 starter，本类只留在 admin 侧承接 {@code admin.*} 配置前缀（保持配置兼容），
  * 由 {@link SkillStorageConfig} 映射成 starter 的
- * {@code com.richard.fyoung.customerwork.skill.storage.SkillStorageSettings} 后建实例。</p>
+ * {@code com.richard.fyoung.customerwork.data.skill.storage.SkillStorageSettings} 后建实例。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data

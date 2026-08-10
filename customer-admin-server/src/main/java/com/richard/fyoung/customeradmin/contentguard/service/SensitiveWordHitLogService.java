@@ -10,7 +10,7 @@ import com.richard.fyoung.customeradmin.contentguard.jdbc.ContentGuardCountRow;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.ContentGuardGateway;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.SensitiveWordHitLogExtMapper;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.SensitiveWordHitLogQueryParam;
-import com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordHitLogEntity;
+import com.richard.fyoung.customerwork.safety.sensitiveword.entity.SensitiveWordHitLogEntity;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;

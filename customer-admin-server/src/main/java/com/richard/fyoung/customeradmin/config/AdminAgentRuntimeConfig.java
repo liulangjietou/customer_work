@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.config;
 
-import com.richard.fyoung.customerwork.middleware.IndirectInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.permission.PermissionMode;
 import io.agentscope.core.state.AgentStateStore;

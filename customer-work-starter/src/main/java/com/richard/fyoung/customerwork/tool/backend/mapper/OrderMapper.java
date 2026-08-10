@@ -3,7 +3,7 @@ package com.richard.fyoung.customerwork.tool.backend.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.richard.fyoung.customerwork.order.OrderDirectoryRow;
+import com.richard.fyoung.customerwork.data.order.OrderDirectoryRow;
 import com.richard.fyoung.customerwork.tool.backend.entity.OrderDO;
 import org.apache.ibatis.annotations.Param;
 

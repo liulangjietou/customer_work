@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.chat.dto;
 
-import com.richard.fyoung.customerwork.attachment.AttachmentParseStatus;
-import com.richard.fyoung.customerwork.attachment.ChatAttachment;
+import com.richard.fyoung.customerwork.data.attachment.AttachmentParseStatus;
+import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
 
 /**
  * 附件上传解析结果（前端契约）：{@code {id, fileName, content, parseStatus, errorMessage, mimeType, fileSize}}。

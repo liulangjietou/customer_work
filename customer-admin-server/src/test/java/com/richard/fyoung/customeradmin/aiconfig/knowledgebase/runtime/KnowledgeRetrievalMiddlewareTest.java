@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime;
 
-import com.richard.fyoung.customerwork.rag.search.KnowledgeInjectionMiddleware;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeInjectionMiddleware;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.message.Msg;

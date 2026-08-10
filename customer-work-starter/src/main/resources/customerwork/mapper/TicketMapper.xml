@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.richard.fyoung.customerwork.ticket.mapper.TicketMapper">
+<mapper namespace="com.richard.fyoung.customerwork.data.ticket.mapper.TicketMapper">
 
     <!-- 全字段 upsert：ON DUPLICATE KEY UPDATE 除 id/session_id/user_id/created_at_ms 外全部字段。 -->
-    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.ticket.entity.TicketDO">
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
         INSERT INTO cw_ticket
             (id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
              resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
@@ -31,7 +31,7 @@
     </insert>
 
     <!-- 该会话的活跃工单：状态字面量 'CLOSED'/'RESOLVED' 对应 TicketStatus.CLOSED/RESOLVED 枚举名。 -->
-    <select id="findActiveBySession" resultType="com.richard.fyoung.customerwork.ticket.entity.TicketDO">
+    <select id="findActiveBySession" resultType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
         SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
                resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
                resolved_at_ms, closed_at_ms, last_user_active_at_ms
@@ -43,7 +43,7 @@
     </select>
 
     <!-- 该用户的活跃工单：状态字面量 'CLOSED'/'RESOLVED' 对应 TicketStatus.CLOSED/RESOLVED 枚举名。 -->
-    <select id="findActiveByUser" resultType="com.richard.fyoung.customerwork.ticket.entity.TicketDO">
+    <select id="findActiveByUser" resultType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
         SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
                resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
                resolved_at_ms, closed_at_ms, last_user_active_at_ms

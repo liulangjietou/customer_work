@@ -10,8 +10,8 @@ import com.richard.fyoung.customeradmin.system.permission.dto.PermissionSaveRequ
 import com.richard.fyoung.customeradmin.system.permission.dto.PermissionVO;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
-import com.richard.fyoung.customerwork.lock.DistributedLockExecutor;
-import com.richard.fyoung.customerwork.lock.LockAcquireTimeoutException;
+import com.richard.fyoung.customerwork.infra.lock.DistributedLockExecutor;
+import com.richard.fyoung.customerwork.infra.lock.LockAcquireTimeoutException;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

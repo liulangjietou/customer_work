@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.extensions.higress.HigressMcpClientBuilder;
 import io.agentscope.extensions.higress.HigressMcpClientWrapper;

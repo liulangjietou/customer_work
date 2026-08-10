@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
-import com.richard.fyoung.customerwork.tenant.TenantInterceptors;
+import com.richard.fyoung.customerwork.safety.tenant.TenantInterceptors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

@@ -1,10 +1,10 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.approval.ApprovalRequest;
-import com.richard.fyoung.customerwork.approval.ApprovalStatus;
-import com.richard.fyoung.customerwork.approval.PendingApprovalService;
+import com.richard.fyoung.customerwork.capability.approval.ApprovalRequest;
+import com.richard.fyoung.customerwork.capability.approval.ApprovalStatus;
+import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.observability.AuditSink;
-import com.richard.fyoung.customerwork.security.ApprovalAuthWebFilter;
+import com.richard.fyoung.customerwork.safety.security.ApprovalAuthWebFilter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;

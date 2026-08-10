@@ -4,7 +4,7 @@ import com.richard.fyoung.customeradmin.ticket.client.CustomerWorkTicketClient;
 import com.richard.fyoung.customeradmin.ticket.config.CustomerWorkClientProperties;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.WsCredentialVO;
-import com.richard.fyoung.customerwork.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

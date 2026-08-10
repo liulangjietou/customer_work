@@ -18,9 +18,9 @@ import com.richard.fyoung.customeradmin.workspace.knowledge.entity.AiCodeKnowled
 import com.richard.fyoung.customeradmin.workspace.knowledge.entity.AiCodeKnowledgeIndex;
 import com.richard.fyoung.customeradmin.workspace.knowledge.mapper.AiCodeKnowledgeChunkMapper;
 import com.richard.fyoung.customeradmin.workspace.knowledge.mapper.AiCodeKnowledgeIndexMapper;
-import com.richard.fyoung.customerwork.knowledge.CodeChunker;
-import com.richard.fyoung.customerwork.knowledge.VectorMath;
-import com.richard.fyoung.customerwork.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.data.knowledge.CodeChunker;
+import com.richard.fyoung.customerwork.data.knowledge.VectorMath;
+import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;

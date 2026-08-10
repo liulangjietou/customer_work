@@ -1,8 +1,8 @@
 package com.richard.fyoung.customerwork.autoconfigure;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.notification.LoggingNotificationChannel;
-import com.richard.fyoung.customerwork.notification.NotificationChannel;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.notification.LoggingNotificationChannel;
+import com.richard.fyoung.customerwork.infra.notification.NotificationChannel;
 import com.richard.fyoung.customerwork.observability.AuditSink;
 import com.richard.fyoung.customerwork.observability.LoggingAuditSink;
 import org.springframework.boot.autoconfigure.AutoConfiguration;

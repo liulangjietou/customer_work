@@ -1,8 +1,8 @@
 package com.richard.fyoung.customeradmin.billing.config;
 
 import com.richard.fyoung.customeradmin.billing.jdbc.QuotaGateway;
-import com.richard.fyoung.customerwork.gateway.CrossDbGateway;
-import com.richard.fyoung.customerwork.quota.mapper.TenantQuotaMapper;
+import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
+import com.richard.fyoung.customerwork.safety.quota.mapper.TenantQuotaMapper;
 
 import java.util.List;
 

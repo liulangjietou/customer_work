@@ -1,11 +1,11 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.assist.AgentAssistService;
-import com.richard.fyoung.customerwork.assist.AssistSuggestion;
-import com.richard.fyoung.customerwork.assist.ConversationSummary;
-import com.richard.fyoung.customerwork.assist.ConversationSummaryService;
-import com.richard.fyoung.customerwork.quality.QualityFeedbackRecorder;
-import com.richard.fyoung.customerwork.quality.QualityReport;
+import com.richard.fyoung.customerwork.capability.assist.AgentAssistService;
+import com.richard.fyoung.customerwork.capability.assist.AssistSuggestion;
+import com.richard.fyoung.customerwork.capability.assist.ConversationSummary;
+import com.richard.fyoung.customerwork.capability.assist.ConversationSummaryService;
+import com.richard.fyoung.customerwork.capability.quality.QualityFeedbackRecorder;
+import com.richard.fyoung.customerwork.capability.quality.QualityReport;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.util.StringUtils;

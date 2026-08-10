@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.config;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.observability.OtelTracingConfig;
 import io.agentscope.core.tracing.OtelTracingMiddleware;
 import io.opentelemetry.sdk.OpenTelemetrySdk;

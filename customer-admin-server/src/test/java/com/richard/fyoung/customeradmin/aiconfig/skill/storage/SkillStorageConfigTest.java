@@ -1,9 +1,9 @@
 package com.richard.fyoung.customeradmin.aiconfig.skill.storage;
 
-import com.richard.fyoung.customerwork.skill.storage.LocalWorkspaceSkillPublisher;
-import com.richard.fyoung.customerwork.skill.storage.SkillContentPublisher;
-import com.richard.fyoung.customerwork.skill.storage.SkillStorageSettings;
-import com.richard.fyoung.customerwork.skill.storage.SkillStorageTarget;
+import com.richard.fyoung.customerwork.data.skill.storage.LocalWorkspaceSkillPublisher;
+import com.richard.fyoung.customerwork.data.skill.storage.SkillContentPublisher;
+import com.richard.fyoung.customerwork.data.skill.storage.SkillStorageSettings;
+import com.richard.fyoung.customerwork.data.skill.storage.SkillStorageTarget;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;

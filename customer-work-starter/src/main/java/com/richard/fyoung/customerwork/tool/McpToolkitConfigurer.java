@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
 import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import io.agentscope.core.tool.Toolkit;

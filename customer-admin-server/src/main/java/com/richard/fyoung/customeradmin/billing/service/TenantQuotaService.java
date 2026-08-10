@@ -3,11 +3,11 @@ package com.richard.fyoung.customeradmin.billing.service;
 import com.richard.fyoung.customeradmin.billing.config.QuotaGatewayProvider;
 import com.richard.fyoung.customeradmin.billing.dto.TenantQuotaSaveRequest;
 import com.richard.fyoung.customeradmin.billing.dto.TenantQuotaVO;
-import com.richard.fyoung.customerwork.quota.MybatisTenantQuotaStore;
-import com.richard.fyoung.customerwork.quota.QuotaExceedAction;
-import com.richard.fyoung.customerwork.quota.QuotaPeriod;
-import com.richard.fyoung.customerwork.quota.TenantQuota;
-import com.richard.fyoung.customerwork.quota.TenantQuotaStore;
+import com.richard.fyoung.customerwork.safety.quota.MybatisTenantQuotaStore;
+import com.richard.fyoung.customerwork.safety.quota.QuotaExceedAction;
+import com.richard.fyoung.customerwork.safety.quota.QuotaPeriod;
+import com.richard.fyoung.customerwork.safety.quota.TenantQuota;
+import com.richard.fyoung.customerwork.safety.quota.TenantQuotaStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 

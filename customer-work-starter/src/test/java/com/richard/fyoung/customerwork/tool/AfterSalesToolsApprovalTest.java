@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.approval.ApprovalStatus;
-import com.richard.fyoung.customerwork.approval.PendingApprovalService;
+import com.richard.fyoung.customerwork.capability.approval.ApprovalStatus;
+import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
 import org.junit.jupiter.api.Test;
 

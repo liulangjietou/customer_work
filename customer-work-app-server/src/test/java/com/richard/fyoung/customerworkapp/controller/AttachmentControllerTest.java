@@ -1,10 +1,10 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.attachment.AttachmentParseService;
-import com.richard.fyoung.customerwork.attachment.AttachmentParseStatus;
-import com.richard.fyoung.customerwork.attachment.ChatAttachment;
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.security.UserJwtService;
+import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
+import com.richard.fyoung.customerwork.data.attachment.AttachmentParseStatus;
+import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;

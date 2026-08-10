@@ -2,11 +2,11 @@ package com.richard.fyoung.customeradmin.contentguard.runtime;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardGatewayProvider;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWord;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordAction;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordCategory;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStore;
-import com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordEntity;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWord;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordAction;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordCategory;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStore;
+import com.richard.fyoung.customerwork.safety.sensitiveword.entity.SensitiveWordEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

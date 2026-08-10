@@ -9,10 +9,10 @@ import com.richard.fyoung.customeradmin.contentguard.dto.RateLimitRuleSaveReques
 import com.richard.fyoung.customeradmin.contentguard.dto.RateLimitRuleVO;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.ContentGuardGateway;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.SensitiveWordExtMapper;
-import com.richard.fyoung.customerwork.security.ratelimit.entity.RateLimitRuleEntity;
-import com.richard.fyoung.customerwork.security.ratelimit.mapper.RateLimitRuleMapper;
-import com.richard.fyoung.customerwork.sensitiveword.mapper.SensitiveWordHitLogMapper;
-import com.richard.fyoung.customerwork.sensitiveword.mapper.SensitiveWordMapper;
+import com.richard.fyoung.customerwork.safety.security.ratelimit.entity.RateLimitRuleEntity;
+import com.richard.fyoung.customerwork.safety.security.ratelimit.mapper.RateLimitRuleMapper;
+import com.richard.fyoung.customerwork.safety.sensitiveword.mapper.SensitiveWordHitLogMapper;
+import com.richard.fyoung.customerwork.safety.sensitiveword.mapper.SensitiveWordMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

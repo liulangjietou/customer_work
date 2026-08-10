@@ -1,8 +1,8 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.approval.PendingApprovalService;
-import com.richard.fyoung.customerwork.handoff.HandoffService;
-import com.richard.fyoung.customerwork.ticket.TicketService;
+import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.ComplaintBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;

@@ -1,9 +1,9 @@
 package com.richard.fyoung.customeradmin.aiconfig.skill.storage;
 
-import com.richard.fyoung.customerwork.skill.storage.SkillContentPublisher;
-import com.richard.fyoung.customerwork.skill.storage.SkillContentPublishers;
-import com.richard.fyoung.customerwork.skill.storage.SkillStorageSettings;
-import com.richard.fyoung.customerwork.skill.storage.SkillStorageTarget;
+import com.richard.fyoung.customerwork.data.skill.storage.SkillContentPublisher;
+import com.richard.fyoung.customerwork.data.skill.storage.SkillContentPublishers;
+import com.richard.fyoung.customerwork.data.skill.storage.SkillStorageSettings;
+import com.richard.fyoung.customerwork.data.skill.storage.SkillStorageTarget;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Skill 存储目标装配：local 无条件注册；nacos/sftp 仅 {@code enabled=true} 时注册。
  *
- * <p>发布器实现已下沉 starter（{@code com.richard.fyoung.customerwork.skill.storage}），本类只负责
+ * <p>发布器实现已下沉 starter（{@code com.richard.fyoung.customerwork.data.skill.storage}），本类只负责
  * 把 admin 的 {@link SkillStorageProperties}（{@code admin.*} 前缀，配置保持兼容）映射成 starter 的
  * {@link SkillStorageSettings} 并调静态工厂建实例——admin-server 排除了 starter 的自动装配，
  * starter 也刻意不为发布器注册 Bean，故在本模块显式注册。{@code SkillService} 注入全部

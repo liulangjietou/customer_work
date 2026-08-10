@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.systemtool.tool;
 
-import com.richard.fyoung.customerwork.tool.devtool.DevToolboxTools;
+import com.richard.fyoung.customerwork.devtool.DevToolboxTools;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

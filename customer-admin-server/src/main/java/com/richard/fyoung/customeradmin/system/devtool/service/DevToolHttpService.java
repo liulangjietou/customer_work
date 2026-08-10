@@ -5,8 +5,8 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolHttpSendRequest;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolHttpSendResponse;
-import com.richard.fyoung.customerwork.security.HttpTargetForbiddenException;
-import com.richard.fyoung.customerwork.tool.devtool.HttpProxyDevToolOps;
+import com.richard.fyoung.customerwork.safety.security.HttpTargetForbiddenException;
+import com.richard.fyoung.customerwork.devtool.HttpProxyDevToolOps;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 

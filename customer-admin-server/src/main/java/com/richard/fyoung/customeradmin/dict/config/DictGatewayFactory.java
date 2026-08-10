@@ -1,9 +1,9 @@
 package com.richard.fyoung.customeradmin.dict.config;
 
 import com.richard.fyoung.customeradmin.dict.jdbc.DictGateway;
-import com.richard.fyoung.customerwork.dict.mapper.DictItemMapper;
-import com.richard.fyoung.customerwork.dict.mapper.DictTypeMapper;
-import com.richard.fyoung.customerwork.gateway.CrossDbGateway;
+import com.richard.fyoung.customerwork.data.dict.mapper.DictItemMapper;
+import com.richard.fyoung.customerwork.data.dict.mapper.DictTypeMapper;
+import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
 
 import java.util.List;
 
