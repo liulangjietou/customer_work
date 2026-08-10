@@ -69,6 +69,17 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
+        <!-- 多租户上下文跨线程传播：TenantContext 是 ThreadLocal（MyBatis 拦截器只能同步读），
+             而 WebFlux 主链路会切到 boundedElastic 执行阻塞 JDBC。context-propagation 提供
+             ThreadLocalAccessor SPI，配合 Hooks.enableAutomaticContextPropagation() 在线程边界还原。
+             虽由 micrometer-observation 传递可得，仍显式声明——它是租户隔离正确性的直接依赖，
+             不能寄望于传递链上游哪天不再引它。Boot 不托管该坐标，版本钉在根 pom。 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>context-propagation</artifactId>
+            <version>${context-propagation.version}</version>
+        </dependency>
+
         <!-- 会话持久化：HikariCP 连接池 + MySQL 驱动。
              用 HikariCP 而非 spring-boot-starter-jdbc，避免引入 spring-jdbc 触发
              DataSourceAutoConfiguration（否则下游需配 spring.datasource.url 或排除它）。 -->

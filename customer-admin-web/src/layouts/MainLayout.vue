@@ -10,6 +10,7 @@ import TabsBar from './TabsBar.vue'
 import AppBreadcrumb from './AppBreadcrumb.vue'
 import FooterCopyright from '@/components/FooterCopyright.vue'
 import NotificationBell from '@/components/NotificationBell.vue'
+import TenantSwitcher from '@/components/TenantSwitcher.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -66,6 +67,7 @@ async function handleLogout() {
           />
         </div>
         <div class="header-right">
+          <TenantSwitcher />
           <el-button
             class="collapse-btn"
             text

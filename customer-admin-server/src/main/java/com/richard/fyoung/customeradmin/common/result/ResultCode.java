@@ -77,6 +77,14 @@ public enum ResultCode {
     KNOWLEDGE_BASE_HTTP_FORBIDDEN(40035, "知识库服务地址不在允许访问范围内，已被安全策略拦截"),
     KNOWLEDGE_BASE_SEARCH_FAILED(40036, "知识库检索失败"),
 
+    // 多租户（B1 租户地基）
+    TENANT_NOT_FOUND(40037, "租户不存在"),
+    TENANT_CODE_DUPLICATE(40038, "租户编码已存在"),
+    TENANT_CODE_IMMUTABLE(40039, "租户编码创建后不可修改"),
+    TENANT_RESERVED_PROTECTED(40040, "系统保留租户不允许该操作"),
+    TENANT_SUSPENDED(40041, "租户已被冻结或已退租，请联系运营方"),
+    TENANT_VIEW_FORBIDDEN(40042, "只有平台运营方可以切换租户视角"),
+
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");
 

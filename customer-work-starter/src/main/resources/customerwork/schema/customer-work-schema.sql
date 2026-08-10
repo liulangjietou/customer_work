@@ -11,6 +11,7 @@
 
 -- 合规审计日志表（MybatisAuditSink）。
 CREATE TABLE IF NOT EXISTS `cw_audit_log` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`          BIGINT AUTO_INCREMENT PRIMARY KEY,
     `event_type`  VARCHAR(64) NOT NULL COMMENT '事件类型: tool-call / final-answer / error',
     `agent_name`  VARCHAR(128) DEFAULT '' COMMENT 'Agent 名称',
@@ -18,11 +19,13 @@ CREATE TABLE IF NOT EXISTS `cw_audit_log` (
     `created_at`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '记录时间',
     INDEX `idx_audit_type` (`event_type`),
     INDEX `idx_audit_created` (`created_at`),
-    INDEX `idx_audit_agent` (`agent_name`)
+    INDEX `idx_audit_agent` (`agent_name`),
+    INDEX `idx_audit_log_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='合规审计轨迹（结构化存储）';
 
 -- 人工审批工单表（MybatisApprovalStore）。
 CREATE TABLE IF NOT EXISTS `cw_approval` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`                        VARCHAR(64) PRIMARY KEY COMMENT '审批单号',
     `type`                      VARCHAR(32) NOT NULL COMMENT '审批类型：REFUND 等',
     `session_id`                VARCHAR(128) COMMENT '关联会话',
@@ -38,24 +41,30 @@ CREATE TABLE IF NOT EXISTS `cw_approval` (
     `execution_failure_reason`  TEXT COMMENT '下游执行失败原因',
     `execution_attempts`        INT DEFAULT 0 COMMENT '下游执行尝试次数',
     INDEX `idx_approval_status` (`status`),
-    INDEX `idx_approval_created` (`created_at_ms`)
+    INDEX `idx_approval_created` (`created_at_ms`),
+    INDEX `idx_approval_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='人工审批工单（退款放行等资金动作）';
 
 -- 多轮槽位收集进度表（MybatisSlotFillingStore）。
 CREATE TABLE IF NOT EXISTS `cw_slot_filling_progress` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `progress_key`    VARCHAR(191) PRIMARY KEY COMMENT '收集进度键：sessionId:formName',
     `asking`          VARCHAR(64) COMMENT '当前追问的槽位名',
-    `collected_json`  TEXT COMMENT '已收集槽位值（JSON）'
+    `collected_json`  TEXT COMMENT '已收集槽位值（JSON）',
+    INDEX `idx_slot_filling_progress_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多轮槽位收集进度（如退款表单信息采集）';
 
 -- 对话阶段状态机表（MybatisDialogStageStore）。
 CREATE TABLE IF NOT EXISTS `cw_dialog_stage` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `session_id`  VARCHAR(191) PRIMARY KEY COMMENT '会话 ID',
-    `stage`       VARCHAR(24) NOT NULL COMMENT '当前对话阶段：GREETING/COLLECTING/PROCESSING/CONFIRMING/ESCALATED'
+    `stage`       VARCHAR(24) NOT NULL COMMENT '当前对话阶段：GREETING/COLLECTING/PROCESSING/CONFIRMING/ESCALATED',
+    INDEX `idx_dialog_stage_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对话阶段状态机（多实例共享）';
 
 -- 人机切换工单表（MybatisHandoffStore）。
 CREATE TABLE IF NOT EXISTS `cw_handoff_ticket` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`                VARCHAR(64) PRIMARY KEY COMMENT '工单号',
     `session_id`        VARCHAR(128) COMMENT '关联会话',
     `reason`            TEXT COMMENT '转人工原因',
@@ -71,7 +80,8 @@ CREATE TABLE IF NOT EXISTS `cw_handoff_ticket` (
     `emotion`           VARCHAR(32) COMMENT '用户情绪（LLM 分类，可空）',
     `suggested_assignees` TEXT COMMENT '推荐坐席列表 JSON（HITL 推荐，人工点选非自动派单，可空）',
     INDEX `idx_handoff_status` (`status`),
-    INDEX `idx_handoff_created` (`created_at_ms`)
+    INDEX `idx_handoff_created` (`created_at_ms`),
+    INDEX `idx_handoff_ticket_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='人机切换工单（AI 转人工闭环 + 智能分配增强）';
 
 -- 人机切换工单智能分配增强列（cw_handoff_ticket 已在上文建表时含 category/required_skill/priority/emotion/suggested_assignees；
@@ -85,17 +95,20 @@ CREATE TABLE IF NOT EXISTS `cw_handoff_ticket` (
 
 -- 消息级用户反馈表（MybatisFeedbackStore）。
 CREATE TABLE IF NOT EXISTS `cw_message_feedback` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `message_id`     VARCHAR(64) PRIMARY KEY COMMENT '被反馈的消息ID',
     `session_id`     VARCHAR(128) COMMENT '所属会话',
     `type`           VARCHAR(8) NOT NULL COMMENT 'UP/DOWN',
     `comment`        TEXT COMMENT '文字说明',
     `created_at_ms`  BIGINT NOT NULL COMMENT '提交时间戳（毫秒，重复提交取最新）',
     INDEX `idx_feedback_session` (`session_id`),
-    INDEX `idx_feedback_type` (`type`)
+    INDEX `idx_feedback_type` (`type`),
+    INDEX `idx_message_feedback_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息级用户反馈（点赞/点踩）';
 
 -- 终端用户账户表（MybatisUserAccountStore）。
 CREATE TABLE IF NOT EXISTS `cw_user` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             VARCHAR(64) PRIMARY KEY COMMENT '用户ID',
     `username`       VARCHAR(64) NOT NULL COMMENT '用户名',
     `password_hash`  VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码哈希',
@@ -104,11 +117,13 @@ CREATE TABLE IF NOT EXISTS `cw_user` (
     `status`         VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE/DISABLED',
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
     `avatar_url`     VARCHAR(255) COMMENT '头像访问URL（相对路径，可为空）',
-    UNIQUE KEY `uk_user_username` (`username`)
+    UNIQUE KEY `uk_user_username` (`tenant_id`, `username`),
+    INDEX `idx_user_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='客服系统终端用户账户';
 
 -- 客服工单主表（MybatisTicketStore）。
 CREATE TABLE IF NOT EXISTS `cw_ticket` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`              VARCHAR(64) PRIMARY KEY COMMENT '工单号',
     `session_id`      VARCHAR(128) NOT NULL COMMENT '关联会话',
     `user_id`         VARCHAR(64) NOT NULL COMMENT '发起用户',
@@ -130,11 +145,13 @@ CREATE TABLE IF NOT EXISTS `cw_ticket` (
     INDEX `idx_ticket_session` (`session_id`),
     INDEX `idx_ticket_user` (`user_id`, `created_at_ms`),
     INDEX `idx_ticket_status` (`status`, `updated_at_ms`),
-    INDEX `idx_ticket_assignee` (`assignee`, `status`)
+    INDEX `idx_ticket_assignee` (`assignee`, `status`),
+    INDEX `idx_ticket_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='客服工单（完整生命周期状态机）';
 
 -- 工单事件轨迹表（MybatisTicketStore）。
 CREATE TABLE IF NOT EXISTS `cw_ticket_event` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '事件自增主键',
     `ticket_id`      VARCHAR(64) NOT NULL COMMENT '所属工单号',
     `event_type`     VARCHAR(32) NOT NULL COMMENT '事件类型',
@@ -144,11 +161,13 @@ CREATE TABLE IF NOT EXISTS `cw_ticket_event` (
     `actor_id`       VARCHAR(64) COMMENT '动作发起方标识',
     `note`           VARCHAR(500) COMMENT '备注',
     `created_at_ms`  BIGINT NOT NULL COMMENT '事件时间戳（毫秒）',
-    INDEX `idx_ticket_event` (`ticket_id`, `id`)
+    INDEX `idx_ticket_event` (`ticket_id`, `id`),
+    INDEX `idx_ticket_event_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工单事件轨迹（不可变审计）';
 
 -- 聊天消息留痕表（MybatisChatMessageStore）。
 CREATE TABLE IF NOT EXISTS `cw_chat_message` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键（游标翻页）',
     `message_id`     VARCHAR(64) NOT NULL COMMENT '业务消息号 MSG-<uuid>',
     `session_id`     VARCHAR(128) NOT NULL COMMENT '所属会话',
@@ -159,11 +178,13 @@ CREATE TABLE IF NOT EXISTS `cw_chat_message` (
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
     UNIQUE KEY `uk_chat_message_id` (`message_id`),
     INDEX `idx_chat_session` (`session_id`, `id`),
-    INDEX `idx_chat_ticket` (`ticket_id`, `id`)
+    INDEX `idx_chat_ticket` (`ticket_id`, `id`),
+    INDEX `idx_chat_message_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话/工单聊天消息留痕';
 
 -- 智能体调用主记录表（MybatisAgentCallLogStore）：每次调用一行，含分段耗时冗余汇总。
 CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
     `request_id`     VARCHAR(64) NOT NULL DEFAULT '' COMMENT '请求ID（全链路关联）',
     `user_id`        VARCHAR(128) NOT NULL DEFAULT '' COMMENT '用户ID（ctx.userId）',
@@ -194,11 +215,13 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
     INDEX `idx_call_username` (`username`),
     INDEX `idx_call_agent_code` (`agent_code`),
     INDEX `idx_call_session` (`session_id`),
-    INDEX `idx_call_start` (`start_time`)
+    INDEX `idx_call_start` (`start_time`),
+    INDEX `idx_agent_call_log_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体调用主记录（分段耗时统计）';
 
 -- 智能体调用分段明细表（MybatisAgentCallLogStore）：一次调用的每段耗时一行。
 CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
     `call_log_id`    BIGINT NOT NULL COMMENT '所属主记录ID',
     `seq`            INT NOT NULL COMMENT '调用内分段序号（从1起）',
@@ -212,7 +235,8 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
     `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时（毫秒，仅MODEL段）',
     `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '分段是否成功',
     `error_msg`      VARCHAR(1024) COMMENT '失败原因',
-    INDEX `idx_segment_call_log` (`call_log_id`, `seq`)
+    INDEX `idx_segment_call_log` (`call_log_id`, `seq`),
+    INDEX `idx_agent_call_segment_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体调用分段明细';
 
 -- token 统计补列（2026-07-28）：CREATE TABLE IF NOT EXISTS 对已存在的表不加列，
@@ -226,6 +250,7 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
 
 -- 对话附件表（MybatisAttachmentStore）：上传附件落盘 + 落库，解析文本可追溯。
 CREATE TABLE IF NOT EXISTS `cw_chat_attachment` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             VARCHAR(64) NOT NULL COMMENT '附件ID(UUID)',
     `session_id`     VARCHAR(128) NOT NULL DEFAULT '' COMMENT '会话ID',
     `message_id`     VARCHAR(64) NOT NULL DEFAULT '' COMMENT '绑定的用户消息ID（框架Msg.id，空=未绑定）',
@@ -242,11 +267,13 @@ CREATE TABLE IF NOT EXISTS `cw_chat_attachment` (
     `created_at`     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),
     INDEX `idx_cw_attachment_session` (`session_id`),
-    INDEX `idx_cw_attachment_created` (`created_at`)
+    INDEX `idx_cw_attachment_created` (`created_at`),
+    INDEX `idx_chat_attachment_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对话附件';
 
 -- 商品表（MybatisProductBackend 演示表）。
 CREATE TABLE IF NOT EXISTS `cw_product` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `product_id`   VARCHAR(32) PRIMARY KEY COMMENT '商品ID',
     `name`         VARCHAR(128) NOT NULL COMMENT '商品名称',
     `category`     VARCHAR(64) COMMENT '品类',
@@ -255,16 +282,18 @@ CREATE TABLE IF NOT EXISTS `cw_product` (
     `description`  VARCHAR(500) COMMENT '商品描述',
     `promotion`    VARCHAR(255) COMMENT '优惠活动',
     `status`       VARCHAR(16) NOT NULL DEFAULT 'ON_SALE' COMMENT 'ON_SALE/OFF_SALE',
-    INDEX `idx_product_category` (`category`)
+    INDEX `idx_product_category` (`category`),
+    INDEX `idx_product_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品（JDBC 后端演示表）';
 
-INSERT IGNORE INTO `cw_product` (`product_id`, `name`, `category`, `price`, `stock`, `description`, `promotion`, `status`) VALUES
-('P001', '旗舰款无线降噪耳机', '耳机', 299.00, 100, '旗舰款无线降噪耳机，蓝牙 5.3，续航 30 小时，支持多点连接，颜色 黑/白，质保 1 年', '满 300 减 50；可叠加新人券 20 元；下单送收纳包', 'ON_SALE'),
-('P002', '运动防汗蓝牙耳机', '耳机', 199.00, 50, '运动防汗蓝牙耳机，IPX5 级防水，佩戴稳固，适合健身运动', '限时直降 30 元，晒单再返 10 元', 'ON_SALE'),
-('P003', '商务降噪头戴耳机', '耳机', 599.00, 0, '商务降噪头戴耳机，主动降噪，麦克风通话清晰，续航 40 小时', '', 'ON_SALE');
+INSERT IGNORE INTO `cw_product` (`tenant_id`, `product_id`, `name`, `category`, `price`, `stock`, `description`, `promotion`, `status`) VALUES
+('default', 'P001', '旗舰款无线降噪耳机', '耳机', 299.00, 100, '旗舰款无线降噪耳机，蓝牙 5.3，续航 30 小时，支持多点连接，颜色 黑/白，质保 1 年', '满 300 减 50；可叠加新人券 20 元；下单送收纳包', 'ON_SALE'),
+('default', 'P002', '运动防汗蓝牙耳机', '耳机', 199.00, 50, '运动防汗蓝牙耳机，IPX5 级防水，佩戴稳固，适合健身运动', '限时直降 30 元，晒单再返 10 元', 'ON_SALE'),
+('default', 'P003', '商务降噪头戴耳机', '耳机', 599.00, 0, '商务降噪头戴耳机，主动降噪，麦克风通话清晰，续航 40 小时', '', 'ON_SALE');
 
 -- 订单表（MybatisOrderBackend 演示表）。
 CREATE TABLE IF NOT EXISTS `cw_order` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `order_id`         VARCHAR(32) PRIMARY KEY COMMENT '订单号',
     `user_id`          VARCHAR(64) NOT NULL COMMENT '下单用户',
     `product_id`       VARCHAR(32) NOT NULL COMMENT '商品ID',
@@ -274,17 +303,19 @@ CREATE TABLE IF NOT EXISTS `cw_order` (
     `receiver_addr`    VARCHAR(255) COMMENT '收货地址',
     `logistics_trace`  TEXT COMMENT '物流轨迹',
     `created_at_ms`    BIGINT NOT NULL COMMENT '下单时间戳（毫秒）',
-    INDEX `idx_order_user` (`user_id`, `created_at_ms`)
+    INDEX `idx_order_user` (`user_id`, `created_at_ms`),
+    INDEX `idx_order_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单（JDBC 后端演示表）';
 
-INSERT IGNORE INTO `cw_order` (`order_id`, `user_id`, `product_id`, `product_name`, `amount`, `status`, `receiver_addr`, `logistics_trace`, `created_at_ms`) VALUES
-('20260613001', 'U-demo-1', 'P001', '旗舰款无线降噪耳机', 299.00, '已发货', '北京市朝阳区建国路 88 号', '[6-11 已揽收]→[6-12 到达分拨中心]→[6-13 派送中]。', 1781049600000),
-('20260613002', 'U-demo-1', 'P003', '商务降噪头戴耳机', 1599.00, '已签收', '上海市浦东新区世纪大道 100 号', '[5-18 已揽收]→[5-19 运输中]→[5-20 已签收]。', 1779235200000),
-('20260613003', 'U-demo-2', 'P002', '运动防汗蓝牙耳机', 199.00, '待发货', '广州市天河区体育西路 1 号', '[6-13 已下单，仓库备货中]', 1781308800000),
-('20260613004', 'U-demo-2', 'P001', '旗舰款无线降噪耳机', 299.00, '已退款', '深圳市南山区科技园路 5 号', '[6-08 已揽收]→[6-09 用户取消]→[6-10 已退款]', 1780876800000);
+INSERT IGNORE INTO `cw_order` (`tenant_id`, `order_id`, `user_id`, `product_id`, `product_name`, `amount`, `status`, `receiver_addr`, `logistics_trace`, `created_at_ms`) VALUES
+('default', '20260613001', 'U-demo-1', 'P001', '旗舰款无线降噪耳机', 299.00, '已发货', '北京市朝阳区建国路 88 号', '[6-11 已揽收]→[6-12 到达分拨中心]→[6-13 派送中]。', 1781049600000),
+('default', '20260613002', 'U-demo-1', 'P003', '商务降噪头戴耳机', 1599.00, '已签收', '上海市浦东新区世纪大道 100 号', '[5-18 已揽收]→[5-19 运输中]→[5-20 已签收]。', 1779235200000),
+('default', '20260613003', 'U-demo-2', 'P002', '运动防汗蓝牙耳机', 199.00, '待发货', '广州市天河区体育西路 1 号', '[6-13 已下单，仓库备货中]', 1781308800000),
+('default', '20260613004', 'U-demo-2', 'P001', '旗舰款无线降噪耳机', 299.00, '已退款', '深圳市南山区科技园路 5 号', '[6-08 已揽收]→[6-09 用户取消]→[6-10 已退款]', 1780876800000);
 
 -- 售后工单表（MybatisAfterSalesBackend 演示表）。
 CREATE TABLE IF NOT EXISTS `cw_refund` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `refund_no`      VARCHAR(64) PRIMARY KEY COMMENT '售后工单号',
     `order_id`       VARCHAR(32) NOT NULL COMMENT '关联订单号',
     `type`           VARCHAR(16) NOT NULL COMMENT '类型：REFUND/RETURN/EXCHANGE',
@@ -293,24 +324,28 @@ CREATE TABLE IF NOT EXISTS `cw_refund` (
     `reason`         VARCHAR(500) COMMENT '诉求原因',
     `new_spec`       VARCHAR(128) COMMENT '换货目标规格',
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
-    INDEX `idx_refund_order` (`order_id`, `created_at_ms`)
+    INDEX `idx_refund_order` (`order_id`, `created_at_ms`),
+    INDEX `idx_refund_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='售后工单（JDBC 后端演示表）';
 
-INSERT IGNORE INTO `cw_refund` (`refund_no`, `order_id`, `type`, `status`, `amount`, `reason`, `new_spec`, `created_at_ms`) VALUES
-('RF-seed-20260613004', '20260613004', 'REFUND', 'APPROVED', 299.00, '七天无理由退款', NULL, 1781049600000);
+INSERT IGNORE INTO `cw_refund` (`tenant_id`, `refund_no`, `order_id`, `type`, `status`, `amount`, `reason`, `new_spec`, `created_at_ms`) VALUES
+('default', 'RF-seed-20260613004', '20260613004', 'REFUND', 'APPROVED', 299.00, '七天无理由退款', NULL, 1781049600000);
 
 -- 发票申请表（MybatisAfterSalesBackend 演示表）。
 CREATE TABLE IF NOT EXISTS `cw_invoice_request` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '发票申请自增主键',
     `order_id`       VARCHAR(32) NOT NULL COMMENT '关联订单号',
     `invoice_title`  VARCHAR(255) NOT NULL COMMENT '发票抬头',
     `status`         VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING/ISSUED',
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
-    INDEX `idx_invoice_order` (`order_id`, `created_at_ms`)
+    INDEX `idx_invoice_order` (`order_id`, `created_at_ms`),
+    INDEX `idx_invoice_request_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='发票申请（JDBC 后端演示表）';
 
 -- 会员表（MybatisMemberBackend 演示表）。
 CREATE TABLE IF NOT EXISTS `cw_member` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `member_id`        VARCHAR(64) PRIMARY KEY COMMENT '会员ID（对应用户ID）',
     `level`            VARCHAR(32) NOT NULL COMMENT '会员等级',
     `points`           INT NOT NULL DEFAULT 0 COMMENT '当前积分',
@@ -318,53 +353,61 @@ CREATE TABLE IF NOT EXISTS `cw_member` (
     `benefits`         VARCHAR(255) COMMENT '等级权益',
     `next_level`       VARCHAR(32) COMMENT '下一等级',
     `upgrade_gap`      DECIMAL(10,2) DEFAULT 0 COMMENT '升级所需再消费金额',
-    `phone`            VARCHAR(32) COMMENT '注册手机号'
+    `phone`            VARCHAR(32) COMMENT '注册手机号',
+    INDEX `idx_member_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会员（JDBC 后端演示表）';
 
-INSERT IGNORE INTO `cw_member` (`member_id`, `level`, `points`, `points_expiring`, `benefits`, `next_level`, `upgrade_gap`, `phone`) VALUES
-('U-demo-1', '黄金会员', 1280, 200, '免运费、专属客服、生日双倍积分', '铂金', 500.00, '138****0001'),
-('U-demo-2', '白银会员', 320, 0, '满额包邮、积分商城兑换', '黄金', 800.00, '139****0002');
+INSERT IGNORE INTO `cw_member` (`tenant_id`, `member_id`, `level`, `points`, `points_expiring`, `benefits`, `next_level`, `upgrade_gap`, `phone`) VALUES
+('default', 'U-demo-1', '黄金会员', 1280, 200, '免运费、专属客服、生日双倍积分', '铂金', 500.00, '138****0001'),
+('default', 'U-demo-2', '白银会员', 320, 0, '满额包邮、积分商城兑换', '黄金', 800.00, '139****0002');
 
 -- 会员账户问题处理日志表（MybatisMemberBackend 演示表）。
 CREATE TABLE IF NOT EXISTS `cw_member_account_log` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '处理日志自增主键',
     `issue`          VARCHAR(255) NOT NULL COMMENT '账户问题描述',
     `handling`       VARCHAR(500) COMMENT '处置话术',
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
-    INDEX `idx_account_log_created` (`created_at_ms`)
+    INDEX `idx_account_log_created` (`created_at_ms`),
+    INDEX `idx_member_account_log_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会员账户问题处理日志（JDBC 后端演示表）';
 
 -- 投诉工单表（MybatisComplaintBackend 演示表）。
 CREATE TABLE IF NOT EXISTS `cw_complaint` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `complaint_no`   VARCHAR(64) PRIMARY KEY COMMENT '投诉工单号',
     `order_id`       VARCHAR(32) COMMENT '关联订单号（可空）',
     `content`        TEXT COMMENT '投诉内容',
     `status`         VARCHAR(16) NOT NULL COMMENT '状态：PROCESSING/RESOLVED',
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
-    INDEX `idx_complaint_order` (`order_id`, `created_at_ms`)
+    INDEX `idx_complaint_order` (`order_id`, `created_at_ms`),
+    INDEX `idx_complaint_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='投诉工单（JDBC 后端演示表）';
 
-INSERT IGNORE INTO `cw_complaint` (`complaint_no`, `order_id`, `content`, `status`, `created_at_ms`) VALUES
-('CP-seed-0001', '20260613002', '物流配送太慢，希望加快处理', 'PROCESSING', 1779235200000);
+INSERT IGNORE INTO `cw_complaint` (`tenant_id`, `complaint_no`, `order_id`, `content`, `status`, `created_at_ms`) VALUES
+('default', 'CP-seed-0001', '20260613002', '物流配送太慢，希望加快处理', 'PROCESSING', 1779235200000);
 
 -- 知识库 FAQ 表（MybatisKnowledgeBackend 演示表）。
 CREATE TABLE IF NOT EXISTS `cw_knowledge` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`         BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '知识条目自增主键',
     `keyword`    VARCHAR(255) NOT NULL COMMENT '命中关键词（逗号分隔）',
     `title`      VARCHAR(255) NOT NULL COMMENT '条目标题',
     `content`    TEXT NOT NULL COMMENT '条目内容',
     `source`     VARCHAR(255) COMMENT '来源标注',
-    UNIQUE KEY `uk_knowledge_title` (`title`)
+    UNIQUE KEY `uk_knowledge_title` (`tenant_id`, `title`),
+    INDEX `idx_knowledge_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库 FAQ（JDBC 后端演示表）';
 
-INSERT IGNORE INTO `cw_knowledge` (`keyword`, `title`, `content`, `source`) VALUES
-('退货,退款,七天,无理由', '七天无理由退货政策', '支持七天无理由退货，商品需保持完好、不影响二次销售；定制类、生鲜类除外。', '《售后服务政策》第 3 条'),
-('发票,开票,报销', '发票开具规则', '支持开具电子普通发票与增值税专用发票，可在订单详情页自助申请，1-3 个工作日开具。', '《发票管理规则》第 1 条'),
-('运费,包邮,邮费', '运费说明', '单笔订单满 99 元包邮，偏远地区除外；退货运费由责任方承担。', '《运费说明》第 2 条');
+INSERT IGNORE INTO `cw_knowledge` (`tenant_id`, `keyword`, `title`, `content`, `source`) VALUES
+('default', '退货,退款,七天,无理由', '七天无理由退货政策', '支持七天无理由退货，商品需保持完好、不影响二次销售；定制类、生鲜类除外。', '《售后服务政策》第 3 条'),
+('default', '发票,开票,报销', '发票开具规则', '支持开具电子普通发票与增值税专用发票，可在订单详情页自助申请，1-3 个工作日开具。', '《发票管理规则》第 1 条'),
+('default', '运费,包邮,邮费', '运费说明', '单笔订单满 99 元包邮，偏远地区除外；退货运费由责任方承担。', '《运费说明》第 2 条');
 
 -- 敏感词表（SensitiveWordFilter / cw_sensitive_word）：智能路由中控"一次拦截"词库。
 -- 种子为脱敏占位词（非真实违禁词），覆盖 BLOCK/MASK/REVIEW 三种动作与多类目。
 CREATE TABLE IF NOT EXISTS `cw_sensitive_word` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
     `word`           VARCHAR(128) NOT NULL COMMENT '敏感词原词面',
     `category`       VARCHAR(32) NOT NULL COMMENT '类目: POLITICS/PORN/ABUSE/COMPETITOR/CUSTOM',
@@ -372,20 +415,22 @@ CREATE TABLE IF NOT EXISTS `cw_sensitive_word` (
     `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
     `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
     `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
-    UNIQUE KEY `uk_sensitive_word` (`word`)
+    UNIQUE KEY `uk_sensitive_word` (`tenant_id`, `word`),
+    INDEX `idx_sensitive_word_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感词表（一次拦截词库）';
 
-INSERT IGNORE INTO `cw_sensitive_word` (`word`, `category`, `action`, `enabled`, `created_at_ms`, `updated_at_ms`) VALUES
-('测试敏感词A', 'CUSTOM', 'BLOCK', 1, 1779235200000, 1779235200000),
-('涉政占位', 'POLITICS', 'BLOCK', 1, 1779235200000, 1779235200000),
-('辱骂占位', 'ABUSE', 'BLOCK', 1, 1779235200000, 1779235200000),
-('竞品XX', 'COMPETITOR', 'MASK', 1, 1779235200000, 1779235200000),
-('复核占位', 'CUSTOM', 'REVIEW', 1, 1779235200000, 1779235200000);
+INSERT IGNORE INTO `cw_sensitive_word` (`tenant_id`, `word`, `category`, `action`, `enabled`, `created_at_ms`, `updated_at_ms`) VALUES
+('default', '测试敏感词A', 'CUSTOM', 'BLOCK', 1, 1779235200000, 1779235200000),
+('default', '涉政占位', 'POLITICS', 'BLOCK', 1, 1779235200000, 1779235200000),
+('default', '辱骂占位', 'ABUSE', 'BLOCK', 1, 1779235200000, 1779235200000),
+('default', '竞品XX', 'COMPETITOR', 'MASK', 1, 1779235200000, 1779235200000),
+('default', '复核占位', 'CUSTOM', 'REVIEW', 1, 1779235200000, 1779235200000);
 
 -- 敏感词命中日志表（AsyncSensitiveWordHitSink / cw_sensitive_word_hit_log）：后台"命中看板"的数据源。
 -- 仅当 customer-work.sensitive-word.hit-log.enabled=true 且 store-mode=jdbc 时写入。
 -- snippet 存用户/模型原文片段（已截断），属敏感数据，是否留存由使用方按合规要求决定，故整块默认关闭。
 CREATE TABLE IF NOT EXISTS `cw_sensitive_word_hit_log` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
     `direction`      VARCHAR(16) NOT NULL COMMENT '命中方向: INBOUND用户输入/OUTBOUND模型输出',
     `action`         VARCHAR(16) NOT NULL COMMENT '整体决策: BLOCK/MASK/REVIEW',
@@ -399,12 +444,14 @@ CREATE TABLE IF NOT EXISTS `cw_sensitive_word_hit_log` (
     `created_at_ms`  BIGINT COMMENT '命中时间戳（毫秒）',
     KEY `idx_hit_created` (`created_at_ms`),
     KEY `idx_hit_action` (`action`),
-    KEY `idx_hit_session` (`session_id`)
+    KEY `idx_hit_session` (`session_id`),
+    INDEX `idx_sensitive_word_hit_log_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感词命中日志（后台看板数据源）';
 
 -- 限流规则表（RateLimitRuleProvider / cw_rate_limit_rule）：接入层限流的规则层，后台运营维护。
 -- 刻意不给种子：空表 = 无规则命中 = 回退 yml 全局兜底参数，与规则化之前行为完全一致。
 CREATE TABLE IF NOT EXISTS `cw_rate_limit_rule` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
     `rule_name`      VARCHAR(64) NOT NULL COMMENT '规则名（运营可读）',
     `path_prefix`    VARCHAR(128) NOT NULL COMMENT '匹配的请求路径前缀',
@@ -416,13 +463,15 @@ CREATE TABLE IF NOT EXISTS `cw_rate_limit_rule` (
     `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
     `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
     `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
-    UNIQUE KEY `uk_rate_limit_rule_name` (`rule_name`),
-    KEY `idx_rate_limit_priority` (`priority`)
+    UNIQUE KEY `uk_rate_limit_rule_name` (`tenant_id`, `rule_name`),
+    KEY `idx_rate_limit_priority` (`priority`),
+    INDEX `idx_rate_limit_rule_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='限流规则表（接入层限流规则层）';
 
 -- 坐席库表（MybatisSeatAgentStore / cw_seat_agent）：智能路由中控"工单智能分配"的候选坐席池。
 -- skills 为逗号分隔技能标签串；seat_group 避开 SQL 保留字 group；种子为演示坐席（多技能/负载/在离线）。
 CREATE TABLE IF NOT EXISTS `cw_seat_agent` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             VARCHAR(64) PRIMARY KEY COMMENT '坐席ID',
     `name`           VARCHAR(64) NOT NULL COMMENT '坐席名',
     `skills`         VARCHAR(512) COMMENT '技能标签（逗号分隔，如 refund,invoice）',
@@ -432,19 +481,21 @@ CREATE TABLE IF NOT EXISTS `cw_seat_agent` (
     `seat_group`     VARCHAR(64) COMMENT '坐席分组',
     `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
     `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
-    INDEX `idx_seat_online` (`online`)
+    INDEX `idx_seat_online` (`online`),
+    INDEX `idx_seat_agent_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='坐席库（智能分配候选坐席池）';
 
-INSERT IGNORE INTO `cw_seat_agent` (`id`, `name`, `skills`, `max_load`, `current_load`, `online`, `seat_group`, `created_at_ms`, `updated_at_ms`) VALUES
-('SEAT-1001', '退款专员-小赵', 'refund,invoice', 5, 1, 1, 'aftersales', 1779235200000, 1779235200000),
-('SEAT-1002', '物流专员-小钱', 'logistics', 5, 3, 1, 'logistics', 1779235200000, 1779235200000),
-('SEAT-1003', '投诉专员-小孙', 'complaint,refund', 4, 0, 1, 'complaint', 1779235200000, 1779235200000),
-('SEAT-1004', '综合坐席-小李', 'refund,logistics,complaint,invoice', 6, 5, 1, 'general', 1779235200000, 1779235200000),
-('SEAT-1005', '离线坐席-小周', 'refund', 5, 0, 0, 'aftersales', 1779235200000, 1779235200000);
+INSERT IGNORE INTO `cw_seat_agent` (`tenant_id`, `id`, `name`, `skills`, `max_load`, `current_load`, `online`, `seat_group`, `created_at_ms`, `updated_at_ms`) VALUES
+('default', 'SEAT-1001', '退款专员-小赵', 'refund,invoice', 5, 1, 1, 'aftersales', 1779235200000, 1779235200000),
+('default', 'SEAT-1002', '物流专员-小钱', 'logistics', 5, 3, 1, 'logistics', 1779235200000, 1779235200000),
+('default', 'SEAT-1003', '投诉专员-小孙', 'complaint,refund', 4, 0, 1, 'complaint', 1779235200000, 1779235200000),
+('default', 'SEAT-1004', '综合坐席-小李', 'refund,logistics,complaint,invoice', 6, 5, 1, 'general', 1779235200000, 1779235200000),
+('default', 'SEAT-1005', '离线坐席-小周', 'refund', 5, 0, 0, 'aftersales', 1779235200000, 1779235200000);
 
 -- 数据字典（DictStore / cw_dict_type + cw_dict_item）：少量枚举型键值数据的统一落点，免于逐个建表。
 -- 后台管理系统"字典管理"页直连维护这两张表（单一数据真源，照内容风控先例不做双写同步）。
 CREATE TABLE IF NOT EXISTS `cw_dict_type` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
     `dict_type`      VARCHAR(64) NOT NULL COMMENT '字典类型编码（如 order_status）',
     `type_name`      VARCHAR(64) NOT NULL COMMENT '类型名称（展示用）',
@@ -452,10 +503,12 @@ CREATE TABLE IF NOT EXISTS `cw_dict_type` (
     `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
     `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
     `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
-    UNIQUE KEY `uk_dict_type` (`dict_type`)
+    UNIQUE KEY `uk_dict_type` (`tenant_id`, `dict_type`),
+    INDEX `idx_dict_type_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='字典类型表';
 
 CREATE TABLE IF NOT EXISTS `cw_dict_item` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
     `dict_type`      VARCHAR(64) NOT NULL COMMENT '所属字典类型编码',
     `item_key`       VARCHAR(128) NOT NULL COMMENT '字典项键（业务值）',
@@ -465,19 +518,20 @@ CREATE TABLE IF NOT EXISTS `cw_dict_item` (
     `remark`         VARCHAR(255) COMMENT '备注说明',
     `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
     `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
-    UNIQUE KEY `uk_dict_item` (`dict_type`, `item_key`),
-    KEY `idx_dict_item_type` (`dict_type`)
+    UNIQUE KEY `uk_dict_item` (`tenant_id`, `dict_type`, `item_key`),
+    KEY `idx_dict_item_type` (`dict_type`),
+    INDEX `idx_dict_item_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='字典项表';
 
 -- 演示种子：订单状态（与 InMemoryDictStore 种子、后台订单页硬编码文案一致）。
-INSERT IGNORE INTO `cw_dict_type` (`dict_type`, `type_name`, `remark`, `enabled`, `created_at_ms`, `updated_at_ms`) VALUES
-('order_status', '订单状态', '用户订单状态筛选项（与后端返回的中文文案一致）', 1, 1779235200000, 1779235200000);
+INSERT IGNORE INTO `cw_dict_type` (`tenant_id`, `dict_type`, `type_name`, `remark`, `enabled`, `created_at_ms`, `updated_at_ms`) VALUES
+('default', 'order_status', '订单状态', '用户订单状态筛选项（与后端返回的中文文案一致）', 1, 1779235200000, 1779235200000);
 
-INSERT IGNORE INTO `cw_dict_item` (`dict_type`, `item_key`, `item_label`, `sort`, `enabled`, `remark`, `created_at_ms`, `updated_at_ms`) VALUES
-('order_status', '待支付', '待支付', 1, 1, NULL, 1779235200000, 1779235200000),
-('order_status', '已支付', '已支付', 2, 1, NULL, 1779235200000, 1779235200000),
-('order_status', '待发货', '待发货', 3, 1, NULL, 1779235200000, 1779235200000),
-('order_status', '已发货', '已发货', 4, 1, NULL, 1779235200000, 1779235200000),
-('order_status', '已签收', '已签收', 5, 1, NULL, 1779235200000, 1779235200000),
-('order_status', '已取消', '已取消', 6, 1, NULL, 1779235200000, 1779235200000),
-('order_status', '已退款', '已退款', 7, 1, NULL, 1779235200000, 1779235200000);
+INSERT IGNORE INTO `cw_dict_item` (`tenant_id`, `dict_type`, `item_key`, `item_label`, `sort`, `enabled`, `remark`, `created_at_ms`, `updated_at_ms`) VALUES
+('default', 'order_status', '待支付', '待支付', 1, 1, NULL, 1779235200000, 1779235200000),
+('default', 'order_status', '已支付', '已支付', 2, 1, NULL, 1779235200000, 1779235200000),
+('default', 'order_status', '待发货', '待发货', 3, 1, NULL, 1779235200000, 1779235200000),
+('default', 'order_status', '已发货', '已发货', 4, 1, NULL, 1779235200000, 1779235200000),
+('default', 'order_status', '已签收', '已签收', 5, 1, NULL, 1779235200000, 1779235200000),
+('default', 'order_status', '已取消', '已取消', 6, 1, NULL, 1779235200000, 1779235200000),
+('default', 'order_status', '已退款', '已退款', 7, 1, NULL, 1779235200000, 1779235200000);

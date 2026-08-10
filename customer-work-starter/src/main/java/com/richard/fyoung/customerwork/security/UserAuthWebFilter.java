@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.security;
 
+import com.richard.fyoung.customerwork.tenant.TenantContext;
+import com.richard.fyoung.customerwork.tenant.TenantContextThreadLocalAccessor;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
@@ -54,6 +56,25 @@ public class UserAuthWebFilter implements WebFilter {
             return AuthResponses.unauthorized(exchange, "invalid or expired token");
         }
         exchange.getAttributes().put(PRINCIPAL_ATTR, principal.get());
-        return chain.filter(exchange);
+        return chainWithTenant(exchange, chain, principal.get().tenantId());
+    }
+
+    /**
+     * 把令牌里的租户写入下游上下文。
+     *
+     * <p>不覆盖已有值：{@code ApiKeyAuthWebFilter} 先于本过滤器执行，若接入方走的是 API Key，
+     * 租户已由那把 Key 决定；同一请求两个身份来源打架时，以更靠前的基础设施闸门为准。</p>
+     *
+     * <p>Reactor Context 与 ThreadLocal 都写，理由同 {@code ApiKeyAuthWebFilter}：
+     * 前者跨线程边界还原，后者供未发生线程切换时的同步持久层读取。</p>
+     */
+    private Mono<Void> chainWithTenant(ServerWebExchange exchange, WebFilterChain chain, String tenantId) {
+        if (tenantId == null || tenantId.isBlank() || TenantContext.isPresent()) {
+            return chain.filter(exchange);
+        }
+        TenantContext.set(tenantId);
+        return chain.filter(exchange)
+            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId))
+            .doFinally(signal -> TenantContext.clear());
     }
 }
