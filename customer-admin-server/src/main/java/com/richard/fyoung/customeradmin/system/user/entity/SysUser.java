@@ -24,6 +24,14 @@ public class SysUser {
 
     private String username;
 
+    /**
+     * 归属租户；运营方为 {@code __platform__}。
+     *
+     * <p>其它业务实体都不需要这个字段（写入由租户拦截器自动补、查询自动过滤），
+     * 唯独它要显式持有：登录时正是靠它决定这个用户该进哪个租户的上下文。</p>
+     */
+    private String tenantId;
+
     /** BCrypt 哈希，永不通过接口返回给前端。 */
     @JsonIgnore
     private String password;

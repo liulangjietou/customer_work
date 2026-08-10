@@ -18,6 +18,10 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
+import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customeradmin.tenant.service.TenantService;
+import com.richard.fyoung.customerwork.tenant.CrossTenantOperations;
+import com.richard.fyoung.customerwork.tenant.TenantContext;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +61,7 @@ public class AuthService {
     private final AdminLdapProperties ldapProperties;
     private final SysRoleMapper roleMapper;
     private final SysUserRoleMapper userRoleMapper;
+    private final TenantService tenantService;
 
     /** “记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置。 */
     @Value("${admin.remember-me-timeout-seconds:604800}")
@@ -65,7 +70,7 @@ public class AuthService {
     public AuthService(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
                        OperationLogMapper operationLogMapper, LdapAuthService ldapAuthService,
                        AdminLdapProperties ldapProperties, SysRoleMapper roleMapper,
-                       SysUserRoleMapper userRoleMapper) {
+                       SysUserRoleMapper userRoleMapper, TenantService tenantService) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.operationLogMapper = operationLogMapper;
@@ -73,17 +78,20 @@ public class AuthService {
         this.ldapProperties = ldapProperties;
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
+        this.tenantService = tenantService;
     }
 
     public LoginResponse login(LoginRequest request) {
-        SysUser user = userMapper.selectOne(
-            new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, request.username()));
+        // 跨租户查：此刻还不知道这个用户名属于哪个租户，租户上下文正是登录要产出的结果。
+        // sys_user.username 全局唯一（见 docs/多租户架构设计.md §2.3），故按用户名足以唯一定位。
+        SysUser user = CrossTenantOperations.execute(() -> userMapper.selectOne(
+            new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, request.username())));
 
         boolean success = user != null
             && user.getStatus() != null && user.getStatus() == 1
             && passwordEncoder.matches(request.password(), user.getPassword());
 
-        recordLoginLog(request.username(), user == null ? null : user.getId(), success,
+        recordLoginLog(loginLogTenant(user), request.username(), user == null ? null : user.getId(), success,
             success ? null : "用户名或密码错误，或账号已禁用",
             success ? "登录" : "登录失败", "AuthController#login");
 
@@ -116,24 +124,24 @@ public class AuthService {
 
         LdapBindResult bindResult = ldapAuthService.bind(username, request.password());
         if (bindResult == LdapBindResult.SERVICE_UNAVAILABLE) {
-            recordLoginLog(username, null, false, "OA域服务不可用",
+            recordLoginLog(TenantContext.PLATFORM, username, null, false, "OA域服务不可用",
                 "OA登录失败", "AuthController#ssoLogin");
             throw new BizException(ResultCode.SSO_SERVICE_UNAVAILABLE);
         }
         if (bindResult == LdapBindResult.INVALID_CREDENTIALS) {
-            recordLoginLog(username, null, false, "OA账号或密码错误",
+            recordLoginLog(TenantContext.PLATFORM, username, null, false, "OA账号或密码错误",
                 "OA登录失败", "AuthController#ssoLogin");
             throw new BizException(ResultCode.SSO_LOGIN_FAILED);
         }
 
         SysUser user = findOrCreateLdapUser(username);
         if (user.getStatus() == null || user.getStatus() != 1) {
-            recordLoginLog(username, user.getId(), false, "账号已禁用",
+            recordLoginLog(loginLogTenant(user), username, user.getId(), false, "账号已禁用",
                 "OA登录失败", "AuthController#ssoLogin");
             throw new BizException(ResultCode.SSO_LOGIN_FAILED, "账号已被禁用，请联系管理员");
         }
 
-        recordLoginLog(username, user.getId(), true, null, "OA登录", "AuthController#ssoLogin");
+        recordLoginLog(loginLogTenant(user), username, user.getId(), true, null, "OA登录", "AuthController#ssoLogin");
 
         doLogin(user, request.rememberMe());
 
@@ -149,14 +157,31 @@ public class AuthService {
         StpUtil.logout();
     }
 
-    /** 勾选“记住我”时用 {@code rememberMeTimeoutSeconds} 覆盖登录态有效期，否则沿用 sa-token.timeout 全局配置。 */
+    /**
+     * 勾选“记住我”时用 {@code rememberMeTimeoutSeconds} 覆盖登录态有效期，否则沿用 sa-token.timeout 全局配置。
+     *
+     * <p>登录成功即把租户焊进会话与当前线程：会话供后续请求的 {@code TenantContextInterceptor} 读取，
+     * 线程上下文供本次请求剩余的写操作（更新登录时间等）使用——那些操作发生在拦截器 preHandle 之后，
+     * 当时还没有登录态，没有这一步就会因缺租户上下文而 fail-closed。</p>
+     */
     private void doLogin(SysUser user, Boolean rememberMe) {
+        String tenantId = resolveTenantId(user);
+        tenantService.assertAccessible(tenantId);
+
         if (Boolean.TRUE.equals(rememberMe)) {
             StpUtil.login(user.getId(), SaLoginModel.create().setTimeout(rememberMeTimeoutSeconds));
         } else {
             StpUtil.login(user.getId());
         }
         StpUtil.getTokenSession().set("username", user.getUsername());
+        TenantSession.bindTenant(tenantId);
+        TenantContext.set(tenantId);
+    }
+
+    /** 存量用户可能没有租户列值（升级前建的行），一律按平台运营方处理，与 V49 的存量归属口径一致。 */
+    private String resolveTenantId(SysUser user) {
+        String tenantId = user.getTenantId();
+        return tenantId == null || tenantId.isBlank() ? TenantContext.PLATFORM : tenantId;
     }
 
     public void changePassword(ChangePasswordRequest request) {
@@ -173,7 +198,14 @@ public class AuthService {
         log.info("password changed, userId={}", userId);
     }
 
-    private void recordLoginLog(String username, Long userId, boolean success, String errorMsg,
+    /**
+     * 记录登录日志。
+     *
+     * <p>{@code tenantId} 必须显式传入：本方法在 {@code doLogin} 之前调用（登录失败也要留痕），
+     * 那时线程上还没有租户上下文，靠 {@link TenantContext} 推断只会把所有登录日志都算到平台头上，
+     * 租户管理员就看不到自己用户的登录记录了。用户名不存在时归平台——那是平台级安全事件。</p>
+     */
+    private void recordLoginLog(String tenantId, String username, Long userId, boolean success, String errorMsg,
                                  String operation, String method) {
         try {
             SysOperationLog entity = new SysOperationLog();
@@ -186,10 +218,15 @@ public class AuthService {
             entity.setErrorMsg(errorMsg);
             entity.setIp(resolveClientIp());
             entity.setCreateTime(LocalDateTime.now());
-            operationLogMapper.insert(entity);
+            TenantContext.runWith(tenantId, () -> operationLogMapper.insert(entity));
         } catch (Exception e) {
             log.error("record login log failed, code={}", "LOGIN-LOG-RECORD-FAIL", e);
         }
+    }
+
+    /** 登录留痕用的租户归属：用户不存在时算平台级安全事件。 */
+    private String loginLogTenant(SysUser user) {
+        return user == null ? TenantContext.PLATFORM : resolveTenantId(user);
     }
 
     /** 用户可直接输入 RichardFyoung 或 RichardFyoung@xxx，统一取 @ 前半部分再拼接配置的域名后缀发起 Bind。 */
@@ -199,9 +236,21 @@ public class AuthService {
         return at > 0 ? trimmed.substring(0, at) : trimmed;
     }
 
+    /**
+     * LDAP 影子账号的查找与自动创建。
+     *
+     * <p>整段跑在平台租户上下文里：LDAP 是企业内部域，通过它进来的都是运营方员工，
+     * 影子账号与默认角色都归 {@code __platform__}。若将来要支持"租户自带 AD 域"，
+     * 这里换成按域名映射租户即可，其余链路不用动。</p>
+     */
     private SysUser findOrCreateLdapUser(String username) {
-        SysUser user = userMapper.selectOne(
-            new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username));
+        return TenantContext.callWith(TenantContext.PLATFORM, () -> doFindOrCreateLdapUser(username));
+    }
+
+    private SysUser doFindOrCreateLdapUser(String username) {
+        // 跨租户查：与本地登录同理，此刻还不知道该用户名归属哪个租户
+        SysUser user = CrossTenantOperations.execute(() -> userMapper.selectOne(
+            new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username)));
         if (user != null) {
             return user;
         }
@@ -211,7 +260,8 @@ public class AuthService {
         // MyBatis-Plus 自动拼接的 deleted=0 过滤而查不到，但直接 INSERT 会因用户名被旧行占住而报
         // DuplicateKeyException（已实测复现）。这里先查有没有被软删除过的旧行，有就“复活”它而不是插新行；
         // 即使确实无旧行（纯并发竞争），下面 insert 仍包 catch DuplicateKeyException 兼底。
-        SysUser deletedUser = userMapper.selectByUsernameIgnoreLogicDelete(username);
+        SysUser deletedUser = CrossTenantOperations.execute(
+            () -> userMapper.selectByUsernameIgnoreLogicDelete(username));
         if (deletedUser != null) {
             userMapper.reviveDeletedUser(deletedUser.getId(), username);
             userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, deletedUser.getId()));
@@ -227,13 +277,15 @@ public class AuthService {
         created.setNickname(username);
         created.setLoginType("LDAP");
         created.setStatus(1);
+        // 显式写租户而非依赖拦截器补值：多租户关闭时拦截器根本没挂，落到 DDL 默认的 default 就错了
+        created.setTenantId(TenantContext.PLATFORM);
         try {
             userMapper.insert(created);
         } catch (DuplicateKeyException e) {
             // 坑：高并发下两个请求同时到这里，上面的查询都没命中另一个已提交的 INSERT，先插那个提交了、
             // 后插的就会撞唯一约束；这时其实对方已经建好了号，重新查一次拿那个已存在的行即可，不需要重试插入。
-            SysUser existing = userMapper.selectOne(
-                new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username));
+            SysUser existing = CrossTenantOperations.execute(() -> userMapper.selectOne(
+                new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username)));
             if (existing != null) {
                 return existing;
             }

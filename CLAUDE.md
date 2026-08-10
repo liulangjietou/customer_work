@@ -31,9 +31,10 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1136** + admin-server **722** + app 78 + customer-channel 65 + gateway 1
-  （2026-08-06 feature/devtoolbox-expansion 实测，该分支给开发者工具箱补了 cron/JWT/diff/格式互转四项
-  与 AES 两端对齐，starter +82 / admin +11。上一版基线是 2026-08-05 的 starter 1054 + admin 711；
+- 测试基线：starter **1150** + admin-server **732** + app 78 + customer-channel 65 + gateway 1
+  （2026-08-10 feature/tenant-foundation 实测，B1 租户地基：starter +14（租户上下文/过滤策略）、
+  admin +11（租户生命周期）。MySQL 不可达时 admin 会少跑 1 个门控用例，显示 721 属正常。
+  上一版基线是 2026-08-06 的 starter 1136 + admin 722；更早是 2026-08-05 的 starter 1054 + admin 711；
   admin-server 更早的实际基线已是 707，CLAUDE.md 曾记的
   701 系陈旧数字。starter 已按下方规则排除 2 个环境门控测试。此前 feature/sink-common-to-starter 把 admin
   十项通用能力下沉 starter：核心逻辑测试随迁，故 starter +226 / admin −106，admin 侧只保留薄壳职责测试；
@@ -49,6 +50,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 ## 文档地图（哪个问题去读哪个文档）
 
 - 项目概览/模块说明/全景架构图 → `README.md`
+- 多租户隔离模型/逐表归属/身份链路 → `docs/多租户架构设计.md`
 - 功能总表/配置项/接口速查/各功能用法 → `docs/功能与配置全量参考.md`
 - 1.x→2.0 API 映射、RC4→GA 变更、issue 重新核对 → `docs/MIGRATION-2.0.md`
 - 框架 open issues 与本项目链路的交叉评估 → `docs/生产就绪评估.md`
@@ -75,6 +77,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   让 main 的 CI 从 PR #65 起连红 6 次（表现为 `Table 'customer_admin.cw_agent_call_log' doesn't exist`）。
 - **迁移脚本里不要写库名前缀**（`INSERT INTO \`customer_admin\`.\`xxx\``）：脚本执行时已经 USE 到目标库，
   写死库名会让脚本换库不可用，验证/多环境时甚至串库写到别的库去。V14 踩过。
+- **多租户（B1 起）**：隔离靠 MyBatis-Plus `TenantLineInnerInterceptor` 全局改写，租户值取自
+  `TenantContext`（starter 的 ThreadLocal），默认关闭（`customer-work.tenant.enabled` / `admin.tenant.enabled`）。
+  设计与逐表归属见 `docs/多租户架构设计.md`。三条硬约定：
+  ① **新增业务表一律带 `tenant_id`**，不要往忽略清单里加——清单越短越安全，加表等于放弃该表的自动隔离；
+  ② **有意的跨租户查询必须走 `CrossTenantOperations`**（可 grep 的白名单），不要靠"给上下文塞特殊值"；
+  ③ **权限查询用用户归属租户，数据查询用当前视角租户**（`AdminStpInterfaceImpl` 已按此实现），
+  混用会让运营方切视角后当场失去全部权限。缺上下文时持久层 fail-closed 抛错，这是刻意的。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。
