@@ -16,6 +16,7 @@ export const staticRouteComponents: Record<string, () => Promise<Component>> = {
   '/system/login-image': () => import('@/views/system/LoginImageManage.vue'),
   '/system/dict': () => import('@/views/system/DictManage.vue'),
   '/system/tenant': () => import('@/views/system/TenantManage.vue'),
+  '/system/billing': () => import('@/views/system/BillingManage.vue'),
   '/aiconfig/model': () => import('@/views/aiconfig/ModelManage.vue'),
   '/aiconfig/mcp': () => import('@/views/aiconfig/McpManage.vue'),
   '/aiconfig/skill': () => import('@/views/aiconfig/SkillManage.vue'),

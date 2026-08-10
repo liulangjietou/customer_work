@@ -5,8 +5,12 @@ import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.dto.IntentResult;
+import com.richard.fyoung.customerwork.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.lock.InMemorySessionLock;
 import com.richard.fyoung.customerwork.lock.SessionLock;
+import com.richard.fyoung.customerwork.quota.InMemoryTenantQuotaStore;
+import com.richard.fyoung.customerwork.quota.QuotaDecision;
+import com.richard.fyoung.customerwork.quota.TenantQuotaGuard;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
 import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStreamGuard;
 import io.agentscope.core.ReActAgent;
@@ -55,6 +59,15 @@ public class CustomerServiceService {
     public static final String FALLBACK_REPLY =
         "抱歉，系统繁忙，已为您记录问题，建议稍后再试或转人工坐席。";
 
+    /**
+     * 配额超限时的回复文本。
+     *
+     * <p>与 {@link #FALLBACK_REPLY} 分开：前者是"系统故障"，用户重试有意义；
+     * 配额超限重试无用，措辞必须让人知道该去找谁。</p>
+     */
+    public static final String QUOTA_EXCEEDED_REPLY =
+        "本期服务额度已用尽，请联系管理员提升额度后再试。";
+
     /** 进程内热 Agent 缓存上限：超过则按 LRU 淘汰最久未用的会话，避免无界缓存导致 OOM。 */
     private static final int MAX_HOT_AGENTS = 1000;
 
@@ -96,6 +109,15 @@ public class CustomerServiceService {
     private SessionLock sessionLock = new InMemorySessionLock(0);
 
     /**
+     * 租户配额判定；未装配时是一个恒放行的实例（配额默认关闭，行为与引入配额前一致）。
+     *
+     * <p>判定放在入口而不是 token 采集中间件里：那个中间件的既定原则是"只读透传、绝不打断主链路"，
+     * 而配额拦截恰恰要打断。记账则复用中间件里 token 的唯一落点，两边各就各位。</p>
+     */
+    private TenantQuotaGuard quotaGuard =
+        new TenantQuotaGuard(new InMemoryTenantQuotaStore(), new InMemoryWindowCounter(), false);
+
+    /**
      * 会话最后活跃时间戳（用于超时清理）：sessionId -> lastActivityMs。
      */
     private final ConcurrentHashMap<String, Long> sessionActivity = new ConcurrentHashMap<>();
@@ -107,13 +129,18 @@ public class CustomerServiceService {
                                   CustomerWorkProperties properties,
                                   ObjectProvider<MeterRegistry> meterRegistryProvider,
                                   ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
-                                  ObjectProvider<SessionLock> sessionLockProvider) {
+                                  ObjectProvider<SessionLock> sessionLockProvider,
+                                  ObjectProvider<TenantQuotaGuard> quotaGuardProvider) {
         this(agentFactory, sessionStateManager, properties);
         this.meterRegistry = meterRegistryProvider.getIfAvailable();
         this.sensitiveWordFilter = sensitiveWordFilterProvider.getIfAvailable();
         SessionLock provided = sessionLockProvider == null ? null : sessionLockProvider.getIfAvailable();
         if (provided != null) {
             this.sessionLock = provided;
+        }
+        TenantQuotaGuard guard = quotaGuardProvider == null ? null : quotaGuardProvider.getIfAvailable();
+        if (guard != null) {
+            this.quotaGuard = guard;
         }
     }
 
@@ -190,6 +217,10 @@ public class CustomerServiceService {
      */
     public Mono<String> chat(String sessionId, String userText) {
         log.info("[session {}] received user message: {}", sessionId, userText);
+        QuotaDecision quota = quotaGuard.check(null);
+        if (quota.shouldBlock()) {
+            return Mono.just(QUOTA_EXCEEDED_REPLY);
+        }
         touchSession(sessionId);
         ReActAgent agent = resolveAgent(sessionId);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
@@ -221,6 +252,10 @@ public class CustomerServiceService {
      */
     public Flux<String> chatStream(String sessionId, String userText) {
         log.info("[session {}] received user message (stream): {}", sessionId, userText);
+        QuotaDecision quota = quotaGuard.check(null);
+        if (quota.shouldBlock()) {
+            return Flux.just(QUOTA_EXCEEDED_REPLY);
+        }
         touchSession(sessionId);
         ReActAgent agent = resolveAgent(sessionId);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);

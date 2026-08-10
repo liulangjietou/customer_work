@@ -31,8 +31,8 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1165** + admin-server **732** + app 78 + customer-channel 65 + gateway 1
-  （2026-08-10 B1+B2 合并后：B1 租户地基 starter +14 / admin +11，B2 水平扩展 starter +15。
+- 测试基线：starter **1177** + admin-server **732** + app 78 + customer-channel 65 + gateway 1
+  （2026-08-10 B1+B2+B3：B1 租户地基 starter +14 / admin +11，B2 水平扩展 starter +15，B3 配额计费 starter +12。
   MySQL 不可达时 admin 会少跑 1 个门控用例，显示 721 属正常。
   上一版基线是 2026-08-06 的 starter 1136 + admin 722；更早是 2026-08-05 的 starter 1054 + admin 711；
   admin-server 更早的实际基线已是 707，CLAUDE.md 曾记的
@@ -89,6 +89,10 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   两条约定：① Redis 实现失败一律**降级进程内**而非放行（保护性能力不能因基础设施故障消失）；
   ② 会话锁必须用 `RPermitExpirableSemaphore` 而非 `RLock`——加锁在 Reactor 链、释放在 `doFinally`，
   不保证同线程，RLock 会抛 `IllegalMonitorStateException`。K8s 清单见 `deploy/k8s/`。
+- **配额与计费（B3 起）**：租户 token 配额走 `TenantQuotaGuard`（starter），判定在
+  `CustomerServiceService` 入口（能打断），记账搭 `AgentCallTimingMiddleware` 里 token 的唯一落点。
+  配额表 `cw_tenant_quota` 落**客服端库**（运行时要读），admin 经跨库门面维护——照内容风控三表先例。
+  **实时只拦 token，金额走 T+1 账单**（`cw_tenant_usage_daily`，金额按归集时单价落库，调价不改历史账）。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。

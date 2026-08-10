@@ -607,3 +607,23 @@ INSERT IGNORE INTO `cw_dict_item` (`tenant_id`, `dict_type`, `item_key`, `item_l
 ('default', 'order_status', '已签收', '已签收', 5, 1, NULL, 1779235200000, 1779235200000),
 ('default', 'order_status', '已取消', '已取消', 6, 1, NULL, 1779235200000, 1779235200000),
 ('default', 'order_status', '已退款', '已退款', 7, 1, NULL, 1779235200000, 1779235200000);
+
+-- 租户配额表（MybatisTenantQuotaStore / cw_tenant_quota）：B3 成本治理的硬上限。
+-- 落在客服端库而非 admin 库：它要被运行时读取（拦在模型调用之前），照内容风控三表的先例
+-- 由 starter 定义 Mapper、admin 复用同一套 Mapper 管理，避免跨库反查或两处各存一份。
+-- 刻意不给种子：空表 = 无配额 = 不拦，与引入配额之前行为完全一致。
+CREATE TABLE IF NOT EXISTS `cw_tenant_quota` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `period`         VARCHAR(16) NOT NULL COMMENT '周期: DAILY 日 / MONTHLY 月',
+    `token_limit`    BIGINT NOT NULL DEFAULT 0 COMMENT 'token 上限，0=不限',
+    `amount_limit`   DECIMAL(16,4) NOT NULL DEFAULT 0 COMMENT '金额上限（元），0=不限；实时链路只拦 token，金额走 T+1 账单告警',
+    `exceed_action`  VARCHAR(16) NOT NULL DEFAULT 'BLOCK' COMMENT '超额处置: BLOCK 拦截 / DEGRADE 降级备用模型 / WARN 仅告警',
+    `warn_percent`   INT NOT NULL DEFAULT 80 COMMENT '预警阈值（用量百分比），达到即告警但不拦',
+    `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
+    `remark`         VARCHAR(255) COMMENT '备注',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_tenant_quota` (`tenant_id`, `period`),
+    INDEX `idx_tenant_quota_tenant` (`tenant_id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='租户配额（每租户每周期一条）';
