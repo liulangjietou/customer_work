@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-admin-server
+  namespace: customer-work
+  labels:
+    app: customer-admin-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: customer-admin-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: customer-admin-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8082"
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: admin
+          image: customer-work/admin-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: customer-work-config
+            - secretRef:
+                name: customer-work-secret
+          env:
+            # 后台登录态存 Redis，多副本才不会因为落到别的实例而被要求重新登录；
+            # Redis 不可达时后台登录 fail-closed（见 AdminSaTokenDaoConfig），这是刻意的
+            - name: ADMIN_REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: customer-work-config
+                  key: REDIS_HOST
+            - name: ADMIN_REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: customer-work-config
+                  key: REDIS_PORT
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-admin-server
+  namespace: customer-work
+  labels:
+    app: customer-admin-server
+spec:
+  type: ClusterIP
+  selector:
+    app: customer-admin-server
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: customer-admin-server
+  namespace: customer-work
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: customer-admin-server
