@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.calllog;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
+import com.richard.fyoung.customerwork.quota.TenantQuotaGuard;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.AgentBase;
 import io.agentscope.core.agent.RuntimeContext;
@@ -21,6 +22,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
@@ -71,14 +73,33 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
     /** 可为 null：未接入 Micrometer 时降级为只落库、不出指标（与 ObservabilityMiddleware 同款可选注入）。 */
     private final MeterRegistry meterRegistry;
 
+    /** 可为 null：配额未装配时不记账（配额默认关闭）。 */
+    private final TenantQuotaGuard quotaGuard;
+
     public AgentCallTimingMiddleware(CustomerWorkProperties properties,
                                      ToolKindRegistry toolKindRegistry,
                                      AgentCallRecordSink sink,
                                      ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        this(properties, toolKindRegistry, sink, meterRegistryProvider, null);
+    }
+
+    /**
+     * Spring 注入构造。
+     *
+     * <p><b>必须标 {@code @Autowired}</b>：本类有多个构造器，不指明的话 Spring 会去找无参构造并因此启动失败。
+     * 这个坑在本项目已经踩过一轮（PR #68 一次修了 5 处），加构造器时务必同步标注。</p>
+     */
+    @Autowired
+    public AgentCallTimingMiddleware(CustomerWorkProperties properties,
+                                     ToolKindRegistry toolKindRegistry,
+                                     AgentCallRecordSink sink,
+                                     ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                     ObjectProvider<TenantQuotaGuard> quotaGuardProvider) {
         this.enabled = properties.getCallLog().isEnabled();
         this.toolKindRegistry = toolKindRegistry;
         this.sink = sink;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+        this.quotaGuard = quotaGuardProvider == null ? null : quotaGuardProvider.getIfAvailable();
     }
 
     @Override
@@ -253,9 +274,32 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             // 分段结算是 token 的唯一落点（三态终止各只走一次，CAS 保证不重复），指标在此同步累加，
             // 与落库口径天然一致；工具段 usage 恒为 null，不产生指标
             recordTokens(inputTokens, outputTokens);
+            // 配额记账搭同一趟车：token 的落点只此一处，记在别处迟早与落库口径漂移
+            recordQuotaUsage(inputTokens, outputTokens);
         } catch (Exception e) {
             log.error("agent call segment collect failed, code={}, kind={}, name={}",
                 "CALLLOG-SEGMENT-FAIL", kind, name, e);
+        }
+    }
+
+    /**
+     * 把本段 token 计入当前租户的配额用量。
+     *
+     * <p>配额未装配或未开启时是空操作。异常吞掉不上抛：记账失败不该让一次成功的对话变成失败——
+     * 少记一段的代价远小于误伤用户请求，且超限判定下一次调用就会补上。</p>
+     */
+    private void recordQuotaUsage(Long inputTokens, Long outputTokens) {
+        if (quotaGuard == null) {
+            return;
+        }
+        long total = (inputTokens == null ? 0L : inputTokens) + (outputTokens == null ? 0L : outputTokens);
+        if (total <= 0) {
+            return;
+        }
+        try {
+            quotaGuard.record(null, total);
+        } catch (Exception e) {
+            log.error("quota usage record failed, code={}", "QUOTA-RECORD-FAIL", e);
         }
     }
 

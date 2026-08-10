@@ -32,6 +32,11 @@ public final class TenantInterceptors {
         "ai_system_tool",
         "ai_chat_session_state",
         "ai_model_config",
+        // 单价由平台统一定义，租户不该也不能自己定价，故无 tenant_id 列
+        "ai_model_price",
+        // 配额带 tenant_id 但刻意不自动过滤：运营方要跨租户配额度，而租户管理员
+        // 本就不该看到自己的额度设置。访问控制由 Controller 的运营方校验负责
+        "sys_tenant_quota",
         "flyway_schema_history");
 
     private TenantInterceptors() {

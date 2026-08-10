@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  租户用量归集与账单聚合。
+
+  模型名取自 cw_agent_call_segment.name（kind='MODEL' 的分段名就是模型名）——
+  cw_agent_call_log 本身只记 agent_code/agent_name，不含模型信息，token 也是分段级更准。
+  provider 日志里没有，归集时留空，单价按 model_name 匹配。
+
+  注意：这几条 SQL 都会被租户拦截器改写。归集任务与运营方总览是刻意跨租户的，
+  调用方必须包 CrossTenantOperations，否则只会汇总到当前上下文那一个租户。
+-->
+<mapper namespace="com.richard.fyoung.customeradmin.billing.mapper.CwTenantUsageDailyMapper">
+
+    <select id="aggregateFromCallLog" resultType="com.richard.fyoung.customeradmin.billing.dto.UsageAggregate">
+        SELECT
+            l.tenant_id                              AS tenantId,
+            s.name                                   AS modelName,
+            COUNT(DISTINCT l.id)                     AS callCount,
+            COALESCE(SUM(s.input_tokens), 0)         AS inputTokens,
+            COALESCE(SUM(s.output_tokens), 0)        AS outputTokens,
+            COALESCE(SUM(s.cached_tokens), 0)        AS cachedTokens,
+            COALESCE(SUM(s.input_tokens), 0) + COALESCE(SUM(s.output_tokens), 0) AS totalTokens
+        FROM cw_agent_call_log l
+        INNER JOIN cw_agent_call_segment s ON s.call_log_id = l.id AND s.kind = 'MODEL'
+        WHERE l.created_at &gt;= #{statDate}
+          AND l.created_at &lt; DATE_ADD(#{statDate}, INTERVAL 1 DAY)
+        GROUP BY l.tenant_id, s.name
+    </select>
+
+    <select id="sumByTenantAndRange" resultType="com.richard.fyoung.customeradmin.billing.dto.UsageAggregate">
+        SELECT
+            tenant_id                 AS tenantId,
+            provider                  AS provider,
+            model_name                AS modelName,
+            COALESCE(SUM(call_count), 0)    AS callCount,
+            COALESCE(SUM(input_tokens), 0)  AS inputTokens,
+            COALESCE(SUM(output_tokens), 0) AS outputTokens,
+            COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
+            COALESCE(SUM(total_tokens), 0)  AS totalTokens,
+            COALESCE(SUM(amount), 0)        AS amount
+        FROM cw_tenant_usage_daily
+        WHERE tenant_id = #{tenantId}
+          AND stat_date BETWEEN #{from} AND #{to}
+        GROUP BY tenant_id, provider, model_name
+        ORDER BY amount DESC
+    </select>
+
+    <select id="sumGroupByTenant" resultType="com.richard.fyoung.customeradmin.billing.dto.UsageAggregate">
+        SELECT
+            tenant_id                 AS tenantId,
+            COALESCE(SUM(call_count), 0)    AS callCount,
+            COALESCE(SUM(input_tokens), 0)  AS inputTokens,
+            COALESCE(SUM(output_tokens), 0) AS outputTokens,
+            COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
+            COALESCE(SUM(total_tokens), 0)  AS totalTokens,
+            COALESCE(SUM(amount), 0)        AS amount
+        FROM cw_tenant_usage_daily
+        WHERE stat_date BETWEEN #{from} AND #{to}
+        GROUP BY tenant_id
+        ORDER BY amount DESC
+    </select>
+
+</mapper>

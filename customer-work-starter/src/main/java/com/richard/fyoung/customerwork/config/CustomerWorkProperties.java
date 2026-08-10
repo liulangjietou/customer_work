@@ -104,8 +104,63 @@ public class CustomerWorkProperties {
     /** 分布式锁（跨实例互斥场景，如后台管理并发写操作互斥），基于 Redisson。 */
     private final DistributedLock distributedLock = new DistributedLock();
 
+    /** 多租户隔离（tenant_id 行级过滤），SaaS 部署开启。 */
+    private final Tenant tenant = new Tenant();
+
+    /**
+     * 多租户配置。默认关闭——单租户部署（升级前的既有形态）行为完全不变。
+     *
+     * <p>开启后 {@code TenantLineInnerInterceptor} 接管本 starter 独立 MyBatis 环境下的全部
+     * SELECT/UPDATE/DELETE 改写与 INSERT 补列，且缺失租户上下文时 fail-closed 直接报错，
+     * 而不是放行成全量查询——静默返回跨租户数据比报错危险得多。</p>
+     */
+    @Data
+    public static class Tenant {
+
+        /** 是否开启多租户行级隔离。 */
+        private boolean enabled = false;
+
+        /** 租户列名（全部业务表统一）。 */
+        private String columnName = "tenant_id";
+
+        /**
+         * 不参与租户过滤的表（平台级数据 + 框架自建表）。
+         *
+         * <p>清单语义见 {@code docs/多租户架构设计.md}：这里的表要么内容由平台定义租户只读，
+         * 要么根本没有 {@code tenant_id} 列（框架自建），漏配会让 SQL 拼出不存在的列而报错。</p>
+         */
+        private List<String> ignoredTables = new ArrayList<>();
+
+        /**
+         * 是否在 starter 内开启 Reactor 自动上下文传播（{@code Hooks.enableAutomaticContextPropagation()}）。
+         *
+         * <p>WebFlux 主链路会切到 boundedElastic 执行阻塞 JDBC，而 MyBatis 拦截器读的是 ThreadLocal——
+         * 不传播就必然在跨线程边界丢租户。该 Hook 是 JVM 全局的，故只在多租户开启时才装。</p>
+         */
+        private boolean autoContextPropagation = true;
+    }
+
     /** 水平扩展：把进程内的计数与串行锁换成跨实例共享实现。 */
     private final Distributed distributed = new Distributed();
+
+    /** 租户 token 配额（成本治理的硬上限）。 */
+    private final Quota quota = new Quota();
+
+    /**
+     * 租户配额配置。默认关闭——没配配额时行为与引入配额之前完全一致。
+     *
+     * <p>只判 token 不判金额：金额需要单价表（在 admin 库），让客服端跨库反查只为算一个
+     * 实时金额并不划算；token 本就是成本的直接驱动。金额维度走 T+1 账单与预警。</p>
+     */
+    @Data
+    public static class Quota {
+
+        /** 是否开启配额判定。关闭时 Guard 一律放行，也不记账。 */
+        private boolean enabled = false;
+
+        /** 配额存储：{@code memory} 进程内 / {@code jdbc} 落 {@code cw_tenant_quota}。 */
+        private String storeMode = "memory";
+    }
 
     /**
      * 水平扩展配置。默认全 memory——单实例部署下进程内实现更快也更简单，
