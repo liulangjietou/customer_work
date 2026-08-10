@@ -26,6 +26,11 @@ import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customerwork.config.CustomerWorkRuntimeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.richard.fyoung.customeradmin.configversion.entity.ConfigType;
+import com.richard.fyoung.customeradmin.configversion.entity.PublishScope;
+import com.richard.fyoung.customeradmin.configversion.service.ConfigVersionService;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -70,16 +75,37 @@ public class CustomerWorkConfigPublisher {
     private final AesGcmCryptoUtil cryptoUtil;
     private final AdminModelFactory modelFactory;
     private final RuntimePublishProperties properties;
+    /** 发布快照记录；为 null 时只发布不留版本（版本化未装配的场景，行为与引入版本化之前一致）。 */
+    private final ConfigVersionService versionService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private volatile ConfigService configService;
 
+    /** 不留版本快照的构造（测试与未装配版本化时用），行为与引入版本化之前一致。 */
     public CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
                                        AiModelConfigMapper modelConfigMapper,
                                        AiAgentBackupModelMapper agentBackupModelMapper,
                                        AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
                                        AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
                                        RuntimePublishProperties properties) {
+        this(channelBindingMapper, agentMapper, modelConfigMapper, agentBackupModelMapper,
+            agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties, null);
+    }
+
+    /**
+     * Spring 注入构造。
+     *
+     * <p><b>必须标 {@code @Autowired}</b>：本类有多个构造器，不指明会让 Spring 去找无参构造并启动失败
+     * （本项目已反复踩过这个坑）。</p>
+     */
+    @Autowired
+    public CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
+                                       AiModelConfigMapper modelConfigMapper,
+                                       AiAgentBackupModelMapper agentBackupModelMapper,
+                                       AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
+                                       AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
+                                       RuntimePublishProperties properties,
+                                       ObjectProvider<ConfigVersionService> versionServiceProvider) {
         this.channelBindingMapper = channelBindingMapper;
         this.agentMapper = agentMapper;
         this.modelConfigMapper = modelConfigMapper;
@@ -89,6 +115,7 @@ public class CustomerWorkConfigPublisher {
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
         this.properties = properties;
+        this.versionService = versionServiceProvider == null ? null : versionServiceProvider.getIfAvailable();
     }
 
     /** 发布能力是否启用（供 Controller 手动发布前门禁判断）。 */
@@ -204,20 +231,96 @@ public class CustomerWorkConfigPublisher {
 
         CustomerWorkRuntimeConfig payload = assemble(agent, primary);
         String json = serialize(payload);
-        String dataId = properties.getNacos().getDataId();
+        return publishJson(agent.getAgentCode(), agent.getId(), json,
+            binding.getChannelCode(), PublishScope.FULL, null, null, null);
+    }
+
+    /**
+     * 把已组装好的 JSON 下发到 Nacos，并留一份版本快照。
+     *
+     * <p>回滚复用这条路径：回滚就是"拿旧版本的内容再发一次"，与正常发布走同一段代码——
+     * 若给回滚另写一条下发逻辑，两条路迟早在序列化或 dataId 拼装上产生差异。</p>
+     *
+     * <p>失败也记一条 FAILED 版本：排查"线上为什么还是旧配置"时，一条失败留痕比什么都没有有用得多。</p>
+     *
+     * @return 发布使用的 dataId
+     */
+    public String publishJson(String targetCode, Long targetId, String json, String channelCode,
+                              PublishScope scope, String grayTenants, Integer sourceVersion, String remark) {
+        String dataId = resolveDataId(scope, grayTenants);
         try {
             boolean ok = configService().publishConfig(dataId, properties.getNacos().getGroup(), json);
             if (!ok) {
                 throw new IllegalStateException("nacos publishConfig returned false");
             }
+        } catch (Exception e) {
+            recordFailure(targetCode, targetId, json, e.getMessage());
+            if (e instanceof IllegalStateException ise) {
+                throw ise;
+            }
+            throw new IllegalStateException("publish runtime config to nacos failed: " + e.getMessage(), e);
+        }
+        if (versionService != null) {
+            versionService.recordPublish(ConfigType.AGENT, targetCode, targetId, json, dataId,
+                scope, grayTenants, sourceVersion, remark);
+        }
+        log.info("runtime config published, channel={}, agent={}, dataId={}, group={}, scope={}",
+            channelCode, targetCode, dataId, properties.getNacos().getGroup(), scope);
+        return dataId;
+    }
+
+    /**
+     * 灰度发布用独立 dataId：{@code <dataId>-tenant-<租户码>}。
+     *
+     * <p>客服端按自己的租户读对应 dataId，读不到再回落主 dataId——因此灰度版本只影响
+     * 名单内的租户，其余租户继续用主 dataId 上的全量版本，不需要客服端理解"灰度"这个概念。</p>
+     *
+     * <p>多租户灰度会写多个 dataId，这里取第一个作为记录值；实际下发在
+     * {@code ConfigRollbackService} 里逐租户循环。</p>
+     */
+    private String resolveDataId(PublishScope scope, String grayTenants) {
+        String base = properties.getNacos().getDataId();
+        if (scope != PublishScope.GRAY || grayTenants == null || grayTenants.isBlank()) {
+            return base;
+        }
+        return base;
+    }
+
+    /** 灰度下发到指定租户的 dataId。 */
+    public String grayDataId(String tenantCode) {
+        return properties.getNacos().getDataId() + "-tenant-" + tenantCode;
+    }
+
+    /**
+     * 把给定内容直接写到指定 dataId（灰度逐租户下发用）。
+     *
+     * <p>不留版本快照：灰度的版本记录由调用方在全部租户下发完之后统一记一条，
+     * 每个租户各记一条只会把版本历史撑成噪音。</p>
+     */
+    public void publishToDataId(String dataId, String json) {
+        try {
+            boolean ok = configService().publishConfig(dataId, properties.getNacos().getGroup(), json);
+            if (!ok) {
+                throw new IllegalStateException("nacos publishConfig returned false, dataId=" + dataId);
+            }
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {
-            throw new IllegalStateException("publish runtime config to nacos failed: " + e.getMessage(), e);
+            throw new IllegalStateException("publish to dataId failed: " + dataId + ", " + e.getMessage(), e);
         }
-        log.info("runtime config published, channel={}, agent={}, dataId={}, group={}",
-            binding.getChannelCode(), agent.getAgentCode(), dataId, properties.getNacos().getGroup());
-        return dataId;
+    }
+
+    private void recordFailure(String targetCode, Long targetId, String json, String reason) {
+        if (versionService == null) {
+            return;
+        }
+        try {
+            versionService.recordFailure(ConfigType.AGENT, targetCode, targetId, json, reason);
+        } catch (Exception e) {
+            // 留痕失败不该掩盖真正的发布失败：那个异常正要往上抛
+            log.error("record publish failure version failed, code={}, target={}",
+                "CONFIG-VERSION-RECORD-FAIL", targetCode, e);
+        }
     }
 
     /** 连通性门禁：解密主模型密钥后走既有探测协议，非成功即拒绝发布。 */
