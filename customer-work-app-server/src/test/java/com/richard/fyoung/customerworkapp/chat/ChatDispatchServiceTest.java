@@ -3,6 +3,7 @@ package com.richard.fyoung.customerworkapp.chat;
 import com.richard.fyoung.customerwork.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.chatlog.ChatMessage;
 import com.richard.fyoung.customerwork.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.tenant.TenantContext;
 import com.richard.fyoung.customerwork.ticket.Ticket;
 import com.richard.fyoung.customerwork.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.ticket.TicketCategory;
@@ -46,7 +47,7 @@ class ChatDispatchServiceTest {
     private WsSessionRegistry registry;
     private ChatDispatchService dispatch;
 
-    private final UserPrincipal user = new UserPrincipal(USER_ID, "alice", "Alice");
+    private final UserPrincipal user = new UserPrincipal(USER_ID, "alice", "Alice", TenantContext.DEFAULT);
 
     @BeforeEach
     void setUp() {

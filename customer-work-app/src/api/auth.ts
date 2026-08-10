@@ -1,13 +1,25 @@
 import { request } from '@/api/request'
 import type { LoginRequest, LoginResponse, RegisterRequest, RegisterResponse, UserInfo } from '@/types/api'
+import { currentTenantCode } from '@/utils/tenant'
 
 // baseURL 已配置为 /api（见 request.ts + .env.development），此处 url 不再重复 /api 前缀
+
+// 租户编码在这里统一注入，调用方（登录页/注册页）无需感知多租户；
+// 单租户部署下 currentTenantCode() 返回 undefined，请求体与改造前完全一致。
 export function register(payload: RegisterRequest): Promise<RegisterResponse> {
-  return request({ url: '/customer/auth/register', method: 'post', data: payload })
+  return request({
+    url: '/customer/auth/register',
+    method: 'post',
+    data: { ...payload, tenantCode: currentTenantCode() },
+  })
 }
 
 export function login(payload: LoginRequest): Promise<LoginResponse> {
-  return request({ url: '/customer/auth/login', method: 'post', data: payload })
+  return request({
+    url: '/customer/auth/login',
+    method: 'post',
+    data: { ...payload, tenantCode: currentTenantCode() },
+  })
 }
 
 export function fetchMe(): Promise<UserInfo> {

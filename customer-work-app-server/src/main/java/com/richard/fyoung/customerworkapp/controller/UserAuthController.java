@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.user.UserAccount;
 import com.richard.fyoung.customerwork.user.UserAccountService;
 import com.richard.fyoung.customerwork.security.UserJwtService;
 import com.richard.fyoung.customerwork.security.UserPrincipal;
+import com.richard.fyoung.customerwork.tenant.TenantContext;
 import com.richard.fyoung.customerworkapp.service.AvatarStorageService;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import io.swagger.v3.oas.annotations.Operation;
@@ -57,24 +58,32 @@ public class UserAuthController {
         this.avatarStorageService = avatarStorageService;
     }
 
-    /** 注册请求体。 */
+    /**
+     * 注册请求体。
+     *
+     * <p>{@code tenantCode} 由前端按接入方部署注入（URL 参数或构建期配置），留空归默认租户。
+     * 注册与登录是仅有的两个必须由客户端提供租户线索的接口——此时还没有登录态可依据。</p>
+     */
     public record RegisterRequest(
         @NotBlank @Size(min = 3, max = 64) String username,
         @NotBlank @Size(min = 6, max = 64) String password,
         String nickname,
-        String phone) {
+        String phone,
+        String tenantCode) {
     }
 
-    /** 登录请求体。 */
+    /** 登录请求体，{@code tenantCode} 语义同注册。 */
     public record LoginRequest(
         @NotBlank String username,
-        @NotBlank String password) {
+        @NotBlank String password,
+        String tenantCode) {
     }
 
     @Operation(summary = "注册", description = "用户名 3-64、密码 6-64；用户名重复返回 409")
     @PostMapping("/register")
     public Mono<Map<String, Object>> register(@Valid @RequestBody RegisterRequest request) {
-        return Mono.fromCallable(() -> {
+        String tenantId = resolveTenant(request.tenantCode());
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> {
                 UserAccount account = userAccountService.register(
                     request.username(), request.password(), request.nickname(), request.phone());
                 // 演示订单播种：失败已在 seeder 内部 catch 并 error 日志，不影响注册主流程
@@ -82,7 +91,7 @@ public class UserAuthController {
                 Map<String, Object> body = new LinkedHashMap<>();
                 body.put("userId", account.getId());
                 return body;
-            })
+            }))
             .subscribeOn(Schedulers.boundedElastic())
             .onErrorMap(IllegalStateException.class,
                 e -> new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage()));
@@ -91,19 +100,28 @@ public class UserAuthController {
     @Operation(summary = "登录", description = "校验失败返回 401；成功返回 JWT 登录态令牌")
     @PostMapping("/login")
     public Mono<Map<String, Object>> login(@Valid @RequestBody LoginRequest request) {
-        return Mono.fromCallable(() -> userAccountService.verifyLogin(request.username(), request.password()))
+        String tenantId = resolveTenant(request.tenantCode());
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId,
+                () -> userAccountService.verifyLogin(request.username(), request.password())))
             .subscribeOn(Schedulers.boundedElastic())
             .flatMap(Mono::justOrEmpty)
             .switchIfEmpty(Mono.error(new ResponseStatusException(
                 HttpStatus.UNAUTHORIZED, "用户名或密码错误")))
             .map(account -> {
                 Map<String, Object> body = new LinkedHashMap<>();
-                body.put("token", jwtService.issue(account.getId(), account.getUsername(), account.getNickname()));
+                // 租户焊进令牌：后续请求一律以令牌里的为准，不再看客户端传什么
+                body.put("token", jwtService.issue(
+                    account.getId(), account.getUsername(), account.getNickname(), tenantId));
                 body.put("userId", account.getId());
                 body.put("nickname", account.getNickname());
                 body.put("expiresAtMs", jwtService.expiresAtMs());
                 return body;
             });
+    }
+
+    /** 客户端未提供租户线索时归默认租户，保证单租户部署的既有前端不改一行也能继续用。 */
+    private String resolveTenant(String tenantCode) {
+        return tenantCode == null || tenantCode.isBlank() ? TenantContext.DEFAULT : tenantCode;
     }
 
     @Operation(summary = "当前登录信息", description = "需 Bearer 令牌；令牌无效返回 401")

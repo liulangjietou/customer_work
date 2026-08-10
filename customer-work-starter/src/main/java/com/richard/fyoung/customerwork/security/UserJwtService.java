@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.security;
 
 import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.tenant.TenantContext;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -37,6 +38,7 @@ public class UserJwtService {
 
     private static final String CLAIM_USERNAME = "username";
     private static final String CLAIM_NICKNAME = "nickname";
+    private static final String CLAIM_TENANT = "tenant";
     private static final long HOUR_MS = 3600_000L;
 
     private final SecretKey signingKey;
@@ -55,16 +57,27 @@ public class UserJwtService {
     }
 
     /**
-     * 签发登录态令牌：subject=userId，附带 username / nickname，过期时间为签发时刻 + 有效期。
+     * 签发默认租户的登录态令牌。
+     *
+     * <p>保留三参重载是为了不破坏已接入的下游（本类是 starter 的公开 API）。
+     * 多租户部署必须用四参版本显式传租户，否则所有用户都会落到默认租户。</p>
+     */
+    public String issue(String userId, String username, String nickname) {
+        return issue(userId, username, nickname, TenantContext.DEFAULT);
+    }
+
+    /**
+     * 签发登录态令牌：subject=userId，附带 username / nickname / tenant，过期时间为签发时刻 + 有效期。
      *
      * @return 已签名的紧凑 JWT 字符串
      */
-    public String issue(String userId, String username, String nickname) {
+    public String issue(String userId, String username, String nickname, String tenantId) {
         long now = System.currentTimeMillis();
         return Jwts.builder()
             .subject(userId)
             .claim(CLAIM_USERNAME, username)
             .claim(CLAIM_NICKNAME, nickname)
+            .claim(CLAIM_TENANT, normalizeTenant(tenantId))
             .issuedAt(new Date(now))
             .expiration(new Date(now + expireMs))
             .signWith(signingKey)
@@ -94,11 +107,17 @@ public class UserJwtService {
             return Optional.of(new UserPrincipal(
                 claims.getSubject(),
                 claims.get(CLAIM_USERNAME, String.class),
-                claims.get(CLAIM_NICKNAME, String.class)));
+                claims.get(CLAIM_NICKNAME, String.class),
+                // 多租户上线前签发的令牌没有这个 claim，回落默认租户，避免存量用户被强制登出
+                normalizeTenant(claims.get(CLAIM_TENANT, String.class))));
         } catch (Exception e) {
             // 验签失败 / 过期 / 格式非法：统一按未认证处理，不打堆栈（正常的攻击面噪声）
             return Optional.empty();
         }
+    }
+
+    private static String normalizeTenant(String tenantId) {
+        return tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT : tenantId;
     }
 
     /** 把任意长度密钥摘要成 256bit 定长密钥，满足 HS256 强度且不约束配置密钥长度。 */

@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.toolkit.GlobalConfigUtils;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+import com.richard.fyoung.customerwork.tenant.TenantInterceptors;
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.mybatis.spring.SqlSessionTemplate;
@@ -79,7 +80,8 @@ public class CustomerWorkPersistenceConfig {
      */
     @Bean("customerWorkSqlSessionFactory")
     @ConditionalOnMissingBean(name = "customerWorkSqlSessionFactory")
-    public SqlSessionFactory customerWorkSqlSessionFactory(DataSource customerWorkDataSource) throws Exception {
+    public SqlSessionFactory customerWorkSqlSessionFactory(DataSource customerWorkDataSource,
+                                                           CustomerWorkProperties properties) throws Exception {
         MybatisSqlSessionFactoryBean factoryBean = new MybatisSqlSessionFactoryBean();
         factoryBean.setDataSource(customerWorkDataSource);
         factoryBean.setMapperLocations(resolveMapperLocations());
@@ -94,7 +96,7 @@ public class CustomerWorkPersistenceConfig {
         globalConfig.setBanner(false);
         factoryBean.setGlobalConfig(globalConfig);
 
-        factoryBean.setPlugins(paginationInterceptor());
+        factoryBean.setPlugins(buildInterceptor(properties));
         return factoryBean.getObject();
     }
 
@@ -113,9 +115,20 @@ public class CustomerWorkPersistenceConfig {
         return new SchemaInitializer(customerWorkDataSource, properties);
     }
 
-    /** 分页插件（MySQL 方言）：工单 findPage 用 {@code Page} 服务端分页。 */
-    private MybatisPlusInterceptor paginationInterceptor() {
+    /**
+     * 插件链：租户过滤 + 分页（MySQL 方言，工单 findPage 用 {@code Page} 服务端分页）。
+     *
+     * <p><b>租户拦截器必须排在分页之前</b>：MyBatis-Plus 按注册顺序执行内部拦截器，
+     * 分页插件会先执行 count 查询，若租户条件尚未拼上，count 与实际数据页的口径就会不一致。</p>
+     */
+    private MybatisPlusInterceptor buildInterceptor(CustomerWorkProperties properties) {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        CustomerWorkProperties.Tenant tenant = properties.getTenant();
+        if (tenant.isEnabled()) {
+            interceptor.addInnerInterceptor(
+                TenantInterceptors.build(tenant.getColumnName(), tenant.getIgnoredTables()));
+            log.info("customer-work tenant line filter enabled, column={}", tenant.getColumnName());
+        }
         interceptor.addInnerInterceptor(new PaginationInnerInterceptor(DbType.MYSQL));
         return interceptor;
     }
