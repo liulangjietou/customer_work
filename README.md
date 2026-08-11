@@ -22,6 +22,9 @@
   无需改框架代码（用法见 [全量参考 §6.9](docs/功能与配置全量参考.md)）。
 - **两套完整系统**：智能客服系统（AI 对话 + 用户工单 + 坐席协作）+ 后台管理系统（模型 / 提示词 / MCP / 渠道 /
   定时任务 / 工单工作台，改配置经 Nacos 热更新到运行中的客服应用，免重启）。
+- **多租户 SaaS 就绪（默认关闭）**：共享库 + `tenant_id` 行级隔离（MyBatis-Plus 拦截器全局改写，缺上下文 fail-closed），
+  配套租户配额与 T+1 计费账单、配置版本化与按租户灰度发布、多副本水平扩展（Redis 窗口计数 / 会话锁 + `deploy/k8s/` 清单）。
+  不开启时单租户部署行为与升级前完全一致，设计见 [多租户架构设计](docs/多租户架构设计.md)。
 
 ## 二、模块结构
 
@@ -53,6 +56,7 @@ flowchart LR
 
 > 附属目录：`mysql/` 建库脚本（业务库 / admin 库 / XXL-JOB 库）、`docker/` 中间件编排（MinIO / PaddleOCR /
 > [observability](docker/observability/README.md) 一键监控栈：Prometheus + Grafana + Alertmanager + Tempo + 钉钉告警）、
+> [deploy/k8s/](deploy/k8s/README.md) 多副本 K8s 清单（Deployment / HPA / PDB / 探针 / 优雅停机）、
 > `Dockerfile` + `docker-compose.yml` 一键起应用与依赖、`.github/workflows/ci.yml` CI。
 > starter 的代码分层与"作为依赖引入"的方式见 [全量参考 §九](docs/功能与配置全量参考.md)。
 
@@ -197,6 +201,8 @@ stateDiagram-v2
     end note
 ```
 
+## 四、能力地图
+
 细节（配置项、curl 示例、对应测试类）全部在 [功能与配置全量参考](docs/功能与配置全量参考.md)，此处只给地图：
 
 | 能力域 | 内容 | 全量参考 |
@@ -210,7 +216,8 @@ stateDiagram-v2
 | 模型层 | 多厂商（百炼/OpenAI/Anthropic/Gemini/Ollama）、私有化兜底、重试、成本熔断、token 告警 | §6.12~6.13b |
 | 安全与治理 | API Key 鉴权、限流（全局兜底 + 后台可维护的路径规则层）、敏感词内容风控（一次拦截/打码/复核 + 命中看板）、入站防注入围栏、敏感信息脱敏、Permission 三态权限、沙箱 | §6.14~6.14.2、§6.18 |
 | 可观测与运维 | Prometheus 业务指标、原生 Tracing、OTel 链路追踪（真出 span + OTLP 导出）、MDC 全链路日志、慢请求留证、合成监控、优雅停机、一键 Grafana/Tempo/Alertmanager 监控栈 | §6.13~6.13c |
-| 配置面 | Nacos 提示词/运行时配置热更新（后台 8082 改 → 客服 8080 免重启生效）、MCP / Higress / Studio 接入 | §6.15~6.17 |
+| 配置面 | Nacos 提示词/运行时配置热更新（后台 8082 改 → 客服 8080 免重启生效）、配置版本化快照 + 一键回滚 + 按租户灰度发布、MCP / Higress / Studio 接入 | §6.15~6.17、§6.30 |
+| 多租户 SaaS | 租户行级隔离（拦截器全局改写 + fail-closed）、租户管理与双视角权限、水平扩展（Redis 窗口计数 / 会话锁 + K8s 清单）、租户 token 配额 + T+1 计费账单 | §6.27~6.29 |
 | 数据飞轮 | 会话质检、坐席辅助、消息级点赞点踩、意图自动化评测（CI 可跑） | §6.11 末、§6.20 |
 | 后台管理系统 | RBAC 权限、模型/MCP/Skill/智能体配置、工作区聊天 + VibeCoding、渠道、定时任务(XXL-JOB)、工单工作台、内容风控、数据字典、开发者工具箱（HTTP/证书/cron/JWT/diff/格式互转/SQL 客户端等）、调用统计（token + 缓存命中率）、AI 编码助手 | §6.21 |
 
@@ -231,7 +238,7 @@ curl -X POST http://localhost:8080/api/customer/chat \
 ```
 
 - 启动后打开 **http://localhost:8080/swagger-ui.html** 在线调试全部接口。
-- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **2002 个**（starter 1136 + admin-server 722 +
+- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **2065 个**（starter 1180 + admin-server 741 +
   app 78 + customer-channel 65 + gateway 1），外部依赖（Redis/MySQL/Nacos/百炼/OCR/MinIO）不可达的用例自动跳过。
 - 环境要求、前端启动、构建坑位速查见 [新人必读](docs/新人必读.md)。
 
@@ -244,7 +251,8 @@ timeline
     已完成 · 2.0 迁移 : RC4 首轮迁移（rc2.0 分支存档） : 2.0.0 GA 全量迁移 + Harness 新能力补齐
     已完成 · 生产化 : HITL 审批闭环 + 人机切换工单 : 用户工单系统（JWT + WS 双通道 + 7 态状态机） : 后台管理系统 + Nacos 配置热更新 : 真实业务后端 jdbc + 附件解析 OCR : Nacos 注册发现 + SCG 网关 + XXL-JOB
     已完成 · 平台化 : 内容风控（敏感词 + 限流）+ 数据字典 + 开发者工具箱 : 十项通用能力薄壳化下沉 starter : OTel 链路追踪 + 一键 Grafana / Tempo 监控栈 : 登录态 Redis 持久化 + streamEvents 流式重构
-    规划中 · 扩展点 : A2A Agent Card 注册发现 : RocketMQ 异步消息 : Training 数据飞轮（RM Gallery / Trinity-RFT） : 后台 AI 编码助手 P1~P3 演进
+    已完成 · SaaS 化 : 多租户行级隔离 + 租户管理双视角 : 水平扩展（Redis 计数 / 会话锁 + K8s 清单） : 租户配额 + T+1 计费账单 : 配置版本化 + 按租户灰度 : starter 按域拆分治理
+    规划中 · 扩展点 : 租户安全合规（审计归档 / 退租数据导出） : A2A Agent Card 注册发现 : RocketMQ 异步消息 : Training 数据飞轮（RM Gallery / Trinity-RFT） : 后台 AI 编码助手 P1~P3 演进
 ```
 
 规划中的能力框架均已提供扩展点（保留为"配置即用"，不硬编入以保证开箱即用）：
@@ -266,6 +274,7 @@ timeline
 | 15 分钟跑起来、看懂结构、知道改哪里 | [docs/新人必读.md](docs/新人必读.md) |
 | 功能总表、配置项、接口速查、各功能用法与测试 | [docs/功能与配置全量参考.md](docs/功能与配置全量参考.md) |
 | 架构原理、时序图、UML 类图、扩展点 | [docs/详细技术文档.md](docs/详细技术文档.md) |
+| 多租户隔离模型、逐表归属、身份链路 | [docs/多租户架构设计.md](docs/多租户架构设计.md) |
 | 全部接口的请求 / 响应示例（生产调用方视角） | [docs/生产接口使用手册.md](docs/生产接口使用手册.md) |
 | 生产部署步骤、环境变量、建表、灰度回滚 | [docs/部署手册.md](docs/部署手册.md) |
 | 1.x→2.0 API 映射、RC4→GA 变更、issue 核对 | [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md) |
