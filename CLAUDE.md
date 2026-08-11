@@ -31,8 +31,9 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1177** + admin-server **741** + app 78 + customer-channel 65 + gateway 1
-  （2026-08-10 B1+B2+B3+B4：B1 租户地基 starter +14 / admin +11，B2 水平扩展 starter +15，B3 配额计费 starter +12，B4 配置版本化 admin +9。
+- 测试基线：starter **1180** + admin-server **741** + app 78 + customer-channel 65 + gateway 1
+  （2026-08-11 PR #90 starter 治理：包域化 + 按域装配拆分 + 配置类拆分，starter +3 装配门控测试；
+  上一版基线 2026-08-10 B1+B2+B3+B4：B1 租户地基 starter +14 / admin +11，B2 水平扩展 starter +15，B3 配额计费 starter +12，B4 配置版本化 admin +9。
   MySQL 不可达时 admin 会少跑 1 个门控用例，显示 721 属正常。
   上一版基线是 2026-08-06 的 starter 1136 + admin 722；更早是 2026-08-05 的 starter 1054 + admin 711；
   admin-server 更早的实际基线已是 707，CLAUDE.md 曾记的
