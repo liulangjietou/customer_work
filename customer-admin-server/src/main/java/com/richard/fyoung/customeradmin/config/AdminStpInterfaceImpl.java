@@ -11,7 +11,7 @@ import com.richard.fyoung.customeradmin.system.role.mapper.SysRolePermissionMapp
 import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
-import com.richard.fyoung.customerwork.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 

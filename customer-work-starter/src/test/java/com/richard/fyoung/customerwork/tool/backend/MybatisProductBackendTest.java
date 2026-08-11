@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
-import com.richard.fyoung.customerwork.support.MybatisTestSupport;
+import com.richard.fyoung.customerwork.core.support.MybatisTestSupport;
 import com.richard.fyoung.customerwork.tool.backend.mapper.ProductMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterEach;

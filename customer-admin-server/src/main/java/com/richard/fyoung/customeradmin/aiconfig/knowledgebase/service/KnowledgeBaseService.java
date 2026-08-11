@@ -19,7 +19,7 @@ import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;

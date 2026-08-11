@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.sun.net.httpserver.HttpServer;
 import io.agentscope.core.tool.Toolkit;
 import org.junit.jupiter.api.Test;
@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.McpProperties;
 
 /**
  * MCP 接入装配器单测（特性「MCP 接入」）：开关与配置判定逻辑。
@@ -22,7 +23,7 @@ class McpToolkitConfigurerTest {
 
     @Test
     void isEnabled_shouldBeFalse_byDefault() {
-        McpToolkitConfigurer configurer = new McpToolkitConfigurer(new CustomerWorkProperties(), new com.richard.fyoung.customerwork.calllog.ToolKindRegistry());
+        McpToolkitConfigurer configurer = new McpToolkitConfigurer(new CustomerWorkProperties(), new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry());
         assertFalse(configurer.isEnabled(), "默认不启用 MCP");
     }
 
@@ -30,19 +31,19 @@ class McpToolkitConfigurerTest {
     void isEnabled_shouldBeFalse_whenEnabledButNoServers() {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getMcp().setEnabled(true);
-        assertFalse(new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()).isEnabled(), "未配置服务时视为未启用");
+        assertFalse(new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry()).isEnabled(), "未配置服务时视为未启用");
     }
 
     @Test
     void isEnabled_shouldBeTrue_whenEnabledWithServers() {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getMcp().setEnabled(true);
-        CustomerWorkProperties.Mcp.Server server = new CustomerWorkProperties.Mcp.Server();
+        McpProperties.Server server = new McpProperties.Server();
         server.setName("inventory");
         server.setUrl("http://localhost:9000/sse");
         props.getMcp().getServers().add(server);
 
-        assertTrue(new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()).isEnabled());
+        assertTrue(new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry()).isEnabled());
     }
 
     @Test
@@ -50,7 +51,7 @@ class McpToolkitConfigurerTest {
         Toolkit toolkit = new Toolkit();
         int before = toolkit.getToolNames().size();
 
-        new McpToolkitConfigurer(new CustomerWorkProperties(), new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()).configure(toolkit);
+        new McpToolkitConfigurer(new CustomerWorkProperties(), new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry()).configure(toolkit);
 
         assertEquals(before, toolkit.getToolNames().size(), "未启用时不应改动 toolkit");
     }
@@ -73,14 +74,14 @@ class McpToolkitConfigurerTest {
         try {
             CustomerWorkProperties props = new CustomerWorkProperties();
             props.getMcp().setEnabled(true);
-            CustomerWorkProperties.Mcp.Server server = new CustomerWorkProperties.Mcp.Server();
+            McpProperties.Server server = new McpProperties.Server();
             server.setName("secured");
             server.setTransport("streamable-http");
             server.setUrl("http://127.0.0.1:" + httpServer.getAddress().getPort() + "/mcp");
             server.setHeaders(Map.of("Authorization", "Bearer starter-token"));
             props.getMcp().getServers().add(server);
 
-            new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.calllog.ToolKindRegistry()).configure(new Toolkit());
+            new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry()).configure(new Toolkit());
 
             assertEquals("Bearer starter-token", receivedAuth.get(), "配置的 Authorization 头应随请求发出");
         } finally {

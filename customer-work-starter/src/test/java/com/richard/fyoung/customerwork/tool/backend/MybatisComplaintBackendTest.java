@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.richard.fyoung.customerwork.support.MybatisTestSupport;
+import com.richard.fyoung.customerwork.core.support.MybatisTestSupport;
 import com.richard.fyoung.customerwork.tool.backend.entity.ComplaintDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.ComplaintMapper;
 import com.zaxxer.hikari.HikariDataSource;

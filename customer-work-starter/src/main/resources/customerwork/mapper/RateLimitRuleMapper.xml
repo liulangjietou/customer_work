@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.richard.fyoung.customerwork.security.ratelimit.mapper.RateLimitRuleMapper">
+<mapper namespace="com.richard.fyoung.customerwork.safety.security.ratelimit.mapper.RateLimitRuleMapper">
 
     <!-- 规则表版本指纹：行数:最大更新时间戳。刷新器每轮只跑这一条，不拉全表 -->
     <select id="selectFingerprint" resultType="java.lang.String">

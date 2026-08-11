@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.richard.fyoung.customerwork.calllog.mapper.AgentCallLogMapper">
+<mapper namespace="com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallLogMapper">
 
     <!-- 公共动态过滤条件（用户 / agentCode / requestId / sessionId / 时间范围）。 -->
     <sql id="whereClause">
@@ -16,7 +16,7 @@
     </sql>
 
     <!-- 分页条件查询：id 倒序取一页（最新在前）。 -->
-    <select id="findPage" resultType="com.richard.fyoung.customerwork.calllog.entity.AgentCallLogDO">
+    <select id="findPage" resultType="com.richard.fyoung.customerwork.data.calllog.entity.AgentCallLogDO">
         SELECT id, request_id, user_id, username, agent_code, agent_name, session_id, session_type,
                question, answer, start_time, end_time, duration_ms, model_ms, tool_ms, mcp_ms,
                skill_ms, segment_count, input_tokens, output_tokens, total_tokens,
@@ -34,7 +34,7 @@
     </select>
 
     <!-- 汇总统计：总数 / 平均总耗时 / 最大总耗时 / 各段平均耗时。 -->
-    <select id="summary" resultType="com.richard.fyoung.customerwork.calllog.entity.AgentCallSummaryDO">
+    <select id="summary" resultType="com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSummaryDO">
         SELECT COUNT(*)            AS total_count,
                AVG(duration_ms)    AS avg_duration_ms,
                MAX(duration_ms)    AS max_duration_ms,
@@ -50,7 +50,7 @@
 
     <!-- 趋势聚合：按 dateFormat（天/小时）分桶，每桶调用数 + 平均总耗时，桶标签升序。
          start_time 为毫秒时间戳，FROM_UNIXTIME 除以 1000 转秒后按本地时区格式化。 -->
-    <select id="trend" resultType="com.richard.fyoung.customerwork.calllog.entity.AgentCallTrendDO">
+    <select id="trend" resultType="com.richard.fyoung.customerwork.data.calllog.entity.AgentCallTrendDO">
         SELECT DATE_FORMAT(FROM_UNIXTIME(start_time / 1000), #{dateFormat}) AS bucket,
                COUNT(*)         AS cnt,
                AVG(duration_ms) AS avg_duration_ms,

@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerworkapp.config;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.FileSystemResource;
@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import static org.springframework.web.reactive.function.server.RequestPredicates.GET;
+import com.richard.fyoung.customerwork.infra.config.properties.UserAuthProperties;
 
 /**
  * 头像静态访问：把 {@code {urlPrefix}{filename}} 映射到落盘目录的文件资源（WebFlux RouterFunction）。
@@ -34,7 +35,7 @@ public class AvatarResourceConfig {
 
     @Bean
     public RouterFunction<ServerResponse> avatarResourceRouter(CustomerWorkProperties properties) {
-        CustomerWorkProperties.UserAuth.Avatar avatar = properties.getUserAuth().getAvatar();
+        UserAuthProperties.Avatar avatar = properties.getUserAuth().getAvatar();
         Path baseDir = Paths.get(avatar.getDirectory()).toAbsolutePath().normalize();
         String pattern = avatar.getUrlPrefix() + "{filename}";
         return RouterFunctions.route(GET(pattern),

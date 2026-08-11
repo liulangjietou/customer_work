@@ -1,8 +1,8 @@
 package com.richard.fyoung.customerwork.observability;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.counter.InMemoryWindowCounter;
-import com.richard.fyoung.customerwork.counter.WindowCounter;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
+import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;

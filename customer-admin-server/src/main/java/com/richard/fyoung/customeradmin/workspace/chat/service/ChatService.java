@@ -12,7 +12,7 @@ import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionMode;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService.PlanChannel;
-import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -36,9 +36,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStreamGuard;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordFilter;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStreamGuard;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
@@ -50,6 +50,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
 
 /**
  * 工作区对话服务：从 {@link AgentInstanceCache} 取（或惰性构建）智能体实例，流式对话。
@@ -109,7 +110,7 @@ public class ChatService {
         ContentGuardProperties guardProperties = contentGuardPropertiesProvider == null
             ? null : contentGuardPropertiesProvider.getIfAvailable();
         this.outboundSafeReply = guardProperties == null || !StringUtils.hasText(guardProperties.getSafeReply())
-            ? CustomerWorkProperties.SensitiveWord.DEFAULT_OUTBOUND_SAFE_REPLY
+            ? SensitiveWordProperties.DEFAULT_OUTBOUND_SAFE_REPLY
             : guardProperties.getSafeReply();
     }
 

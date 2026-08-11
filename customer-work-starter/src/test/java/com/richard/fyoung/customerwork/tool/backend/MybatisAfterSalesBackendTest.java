@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.richard.fyoung.customerwork.support.MybatisTestSupport;
+import com.richard.fyoung.customerwork.core.support.MybatisTestSupport;
 import com.richard.fyoung.customerwork.tool.backend.entity.InvoiceRequestDO;
 import com.richard.fyoung.customerwork.tool.backend.entity.RefundDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.InvoiceRequestMapper;

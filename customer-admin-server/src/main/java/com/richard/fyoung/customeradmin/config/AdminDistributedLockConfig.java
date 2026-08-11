@@ -1,13 +1,14 @@
 package com.richard.fyoung.customeradmin.config;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.lock.DistributedLockConfig;
-import com.richard.fyoung.customerwork.lock.DistributedLockExecutor;
-import com.richard.fyoung.customerwork.lock.RedissonDistributedLockExecutor;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.lock.DistributedLockConfig;
+import com.richard.fyoung.customerwork.infra.lock.DistributedLockExecutor;
+import com.richard.fyoung.customerwork.infra.lock.RedissonDistributedLockExecutor;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.DistributedLockProperties;
 
 /**
  * 分布式锁装配（仿 {@link AdminRedisConfig}/{@link AdminAgentRuntimeConfig} 手法）：本模块已
@@ -31,7 +32,7 @@ public class AdminDistributedLockConfig {
 
     @Bean(destroyMethod = "shutdown")
     public RedissonClient redissonClient() {
-        CustomerWorkProperties.DistributedLock.Redis r = new CustomerWorkProperties.DistributedLock.Redis();
+        DistributedLockProperties.Redis r = new DistributedLockProperties.Redis();
         r.setHost(host);
         r.setPort(port);
         r.setPassword(password);

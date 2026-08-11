@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.billing.jdbc;
 
-import com.richard.fyoung.customerwork.quota.mapper.TenantQuotaMapper;
+import com.richard.fyoung.customerwork.safety.quota.mapper.TenantQuotaMapper;
 
 /**
  * 客服端库上的配额数据门面。

@@ -1,8 +1,8 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.dto.FeedbackRequest;
-import com.richard.fyoung.customerwork.feedback.FeedbackService;
-import com.richard.fyoung.customerwork.feedback.MessageFeedback;
+import com.richard.fyoung.customerwork.core.dto.FeedbackRequest;
+import com.richard.fyoung.customerwork.capability.feedback.FeedbackService;
+import com.richard.fyoung.customerwork.capability.feedback.MessageFeedback;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;

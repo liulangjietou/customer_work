@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.richard.fyoung.customerwork.handoff.mapper.HandoffMapper">
+<mapper namespace="com.richard.fyoung.customerwork.capability.handoff.mapper.HandoffMapper">
 
     <!-- 按主键 upsert：对应旧 JdbcHandoffStore 的 ON DUPLICATE KEY UPDATE 语义 -->
-    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.handoff.entity.HandoffTicketDO">
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.capability.handoff.entity.HandoffTicketDO">
         INSERT INTO cw_handoff_ticket (id, session_id, reason, created_at_ms,
             status, claimed_by, claimed_at_ms, resolution_note, resolved_at_ms,
             category, required_skill, priority, emotion, suggested_assignees)

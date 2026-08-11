@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.calllog.ToolKindRegistry;
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
 import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import io.agentscope.core.tool.Toolkit;
@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
+import com.richard.fyoung.customerwork.infra.config.properties.McpProperties;
 
 /**
  * MCP 接入装配器（对应特性「MCP 接入」）。
@@ -46,7 +47,7 @@ public class McpToolkitConfigurer {
 
     /** 是否启用 MCP（且配置了至少一个服务）。 */
     public boolean isEnabled() {
-        CustomerWorkProperties.Mcp mcp = properties.getMcp();
+        McpProperties mcp = properties.getMcp();
         return mcp.isEnabled() && mcp.getServers() != null && !mcp.getServers().isEmpty();
     }
 
@@ -55,7 +56,7 @@ public class McpToolkitConfigurer {
         if (!isEnabled()) {
             return;
         }
-        for (CustomerWorkProperties.Mcp.Server server : properties.getMcp().getServers()) {
+        for (McpProperties.Server server : properties.getMcp().getServers()) {
             try {
                 McpClientWrapper wrapper = buildClient(server).block();
                 if (wrapper != null) {
@@ -84,7 +85,7 @@ public class McpToolkitConfigurer {
      * <p>需要鉴权的远程 MCP 服务，配置的附加请求头（如 Authorization）由构建核心统一透传给握手与后续调用。</p>
      */
     private reactor.core.publisher.Mono<McpClientWrapper> buildClient(
-            CustomerWorkProperties.Mcp.Server server) {
+            McpProperties.Server server) {
         String type = TRANSPORT_STREAMABLE_HTTP.equalsIgnoreCase(server.getTransport())
             ? McpServerSpec.TYPE_HTTP
             : McpServerSpec.TYPE_SSE;

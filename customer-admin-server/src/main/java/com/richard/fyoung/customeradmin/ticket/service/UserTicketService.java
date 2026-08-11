@@ -7,7 +7,7 @@ import com.richard.fyoung.customeradmin.ticket.dto.TicketMessageVO;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageResult;
 import com.richard.fyoung.customeradmin.ticket.dto.WsCredentialVO;
-import com.richard.fyoung.customerwork.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;

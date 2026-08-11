@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerchannel;
 
-import com.richard.fyoung.customerwork.notification.NotificationChannel;
+import com.richard.fyoung.customerwork.infra.notification.NotificationChannel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Primary;

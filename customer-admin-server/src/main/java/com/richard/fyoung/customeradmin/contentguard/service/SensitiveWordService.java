@@ -9,9 +9,9 @@ import com.richard.fyoung.customeradmin.contentguard.dto.SensitiveWordSaveReques
 import com.richard.fyoung.customeradmin.contentguard.dto.SensitiveWordVO;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.ContentGuardGateway;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.SensitiveWordQueryParam;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordAction;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordCategory;
-import com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordEntity;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordAction;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordCategory;
+import com.richard.fyoung.customerwork.safety.sensitiveword.entity.SensitiveWordEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

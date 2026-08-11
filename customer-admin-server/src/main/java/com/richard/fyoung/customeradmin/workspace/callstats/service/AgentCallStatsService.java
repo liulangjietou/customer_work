@@ -14,10 +14,10 @@ import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallTrendVO
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsQueryParam;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsTrendRow;
-import com.richard.fyoung.customerwork.calllog.TrendGranularity;
-import com.richard.fyoung.customerwork.calllog.entity.AgentCallLogDO;
-import com.richard.fyoung.customerwork.calllog.entity.AgentCallSegmentDO;
-import com.richard.fyoung.customerwork.calllog.entity.AgentCallSummaryDO;
+import com.richard.fyoung.customerwork.data.calllog.TrendGranularity;
+import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallLogDO;
+import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSegmentDO;
+import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSummaryDO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

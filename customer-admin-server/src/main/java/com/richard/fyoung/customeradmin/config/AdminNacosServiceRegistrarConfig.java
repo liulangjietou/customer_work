@@ -1,8 +1,8 @@
 package com.richard.fyoung.customeradmin.config;
 
 import com.richard.fyoung.customeradmin.aiconfig.channel.RuntimePublishProperties;
-import com.richard.fyoung.customerwork.config.NacosRegistration;
-import com.richard.fyoung.customerwork.config.NacosServiceRegistrar;
+import com.richard.fyoung.customerwork.infra.config.NacosRegistration;
+import com.richard.fyoung.customerwork.infra.config.NacosServiceRegistrar;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;

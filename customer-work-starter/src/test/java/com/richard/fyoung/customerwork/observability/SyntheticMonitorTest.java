@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.observability;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;

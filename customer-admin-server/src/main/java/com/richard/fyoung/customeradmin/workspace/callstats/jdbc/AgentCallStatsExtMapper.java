@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.jdbc;
 
-import com.richard.fyoung.customerwork.calllog.entity.AgentCallLogDO;
-import com.richard.fyoung.customerwork.calllog.entity.AgentCallSummaryDO;
+import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallLogDO;
+import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSummaryDO;
 import org.apache.ibatis.annotations.Param;
 
 import java.util.List;

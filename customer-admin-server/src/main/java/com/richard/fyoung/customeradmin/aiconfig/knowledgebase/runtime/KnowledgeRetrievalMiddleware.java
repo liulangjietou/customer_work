@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime;
 
-import com.richard.fyoung.customerwork.rag.search.KnowledgeInjectionMiddleware;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeRetrievalProvider;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeInjectionMiddleware;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalProvider;
 
 /**
  * 知识库召回内容的瞬态注入中间件（admin 侧调用壳）：把 admin 的 {@link KnowledgeRetrievalService}

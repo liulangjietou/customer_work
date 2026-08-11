@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.contentguard.jdbc;
 
-import com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordHitLogEntity;
+import com.richard.fyoung.customerwork.safety.sensitiveword.entity.SensitiveWordHitLogEntity;
 import org.apache.ibatis.annotations.Param;
 
 import java.util.List;

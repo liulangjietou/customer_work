@@ -1,9 +1,9 @@
 package com.richard.fyoung.customerworkapp.config;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.security.AgentAuthWebFilter;
-import com.richard.fyoung.customerwork.security.UserAuthWebFilter;
-import com.richard.fyoung.customerwork.security.UserJwtService;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
+import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
+import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

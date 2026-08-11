@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.config;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.observability.OtelTracingConfig;
 import io.agentscope.core.tracing.OtelTracingMiddleware;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.ObservabilityProperties;
 
 /**
  * admin 侧 OpenTelemetry 接入装配（admin 排除了 starter 自动装配，这里显式装配，
@@ -53,7 +54,7 @@ public class AdminOtelTracingConfig {
             @Value("${admin.observability.otel.service-name:customer-admin}") String serviceName,
             @Value("${admin.observability.otel.sampler-ratio:1.0}") double samplerRatio) {
         CustomerWorkProperties runtime = new CustomerWorkProperties();
-        CustomerWorkProperties.Observability.Otel cfg = runtime.getObservability().getOtel();
+        ObservabilityProperties.Otel cfg = runtime.getObservability().getOtel();
         cfg.setEnabled(true);
         cfg.setEndpoint(endpoint);
         cfg.setServiceName(serviceName);

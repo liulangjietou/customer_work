@@ -10,7 +10,7 @@
     </update>
 
     <!-- 坐席侧订单分页：JOIN cw_user 带出用户名；LIMIT 由分页插件注入，此处不写 -->
-    <select id="pageForAgent" resultType="com.richard.fyoung.customerwork.order.OrderDirectoryRow">
+    <select id="pageForAgent" resultType="com.richard.fyoung.customerwork.data.order.OrderDirectoryRow">
         SELECT o.order_id, o.user_id, u.username, o.product_id, o.product_name,
                o.amount, o.status, o.receiver_addr, o.created_at_ms
         FROM cw_order o
@@ -27,7 +27,7 @@
     </select>
 
     <!-- 坐席侧订单详情：含物流轨迹与用户名 -->
-    <select id="detailForAgent" resultType="com.richard.fyoung.customerwork.order.OrderDirectoryRow">
+    <select id="detailForAgent" resultType="com.richard.fyoung.customerwork.data.order.OrderDirectoryRow">
         SELECT o.order_id, o.user_id, u.username, o.product_id, o.product_name,
                o.amount, o.status, o.receiver_addr, o.logistics_trace, o.created_at_ms
         FROM cw_order o

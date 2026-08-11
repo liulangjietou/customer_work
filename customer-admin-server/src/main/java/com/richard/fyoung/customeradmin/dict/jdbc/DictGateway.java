@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.dict.jdbc;
 
-import com.richard.fyoung.customerwork.dict.mapper.DictItemMapper;
-import com.richard.fyoung.customerwork.dict.mapper.DictTypeMapper;
+import com.richard.fyoung.customerwork.data.dict.mapper.DictItemMapper;
+import com.richard.fyoung.customerwork.data.dict.mapper.DictTypeMapper;
 
 /**
  * 字典数据门面：把客服端库上的两套 Mapper 打包成一个对象传递。

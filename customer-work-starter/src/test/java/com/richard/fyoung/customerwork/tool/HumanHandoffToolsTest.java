@@ -1,11 +1,11 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.handoff.HandoffService;
-import com.richard.fyoung.customerwork.handoff.HandoffStatus;
-import com.richard.fyoung.customerwork.ticket.InMemoryTicketStore;
-import com.richard.fyoung.customerwork.ticket.TicketCategory;
-import com.richard.fyoung.customerwork.ticket.TicketService;
-import com.richard.fyoung.customerwork.ticket.TicketStatus;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffStatus;
+import com.richard.fyoung.customerwork.data.ticket.InMemoryTicketStore;
+import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
+import com.richard.fyoung.customerwork.data.ticket.TicketService;
+import com.richard.fyoung.customerwork.data.ticket.TicketStatus;
 import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 

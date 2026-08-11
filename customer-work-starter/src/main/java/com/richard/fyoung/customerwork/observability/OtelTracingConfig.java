@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerwork.observability;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.agentscope.core.tracing.OtelTracingMiddleware;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
@@ -22,6 +22,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
+import com.richard.fyoung.customerwork.infra.config.properties.ObservabilityProperties;
 
 /**
  * OpenTelemetry SDK 接入装配（可观测「最后一公里」：span 真正采集并导出到 Collector/Tempo）。
@@ -57,7 +58,7 @@ public class OtelTracingConfig {
     /** 容器关闭时等待 batch flush 的上限，超时即放弃，不拖慢停机。 */
     private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
 
-    private final CustomerWorkProperties.Observability.Otel otelProperties;
+    private final ObservabilityProperties.Otel otelProperties;
 
     /** 持有 SDK 引用供 {@link #shutdown()} 优雅关闭（flush 未导出的 batch）。 */
     private OpenTelemetrySdk sdk;

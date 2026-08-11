@@ -3,17 +3,17 @@ package com.richard.fyoung.customeradmin.contentguard.config;
 import com.richard.fyoung.customeradmin.contentguard.runtime.GatewaySensitiveWordHitLogStore;
 import com.richard.fyoung.customeradmin.contentguard.runtime.GatewaySensitiveWordStore;
 import com.richard.fyoung.customeradmin.contentguard.runtime.SensitiveWordRefreshTask;
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.middleware.SensitiveWordMiddleware;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.core.middleware.SensitiveWordMiddleware;
 import com.richard.fyoung.customerwork.observability.AuditSink;
 import com.richard.fyoung.customerwork.observability.LoggingAuditSink;
-import com.richard.fyoung.customerwork.sensitiveword.AsyncSensitiveWordHitSink;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordAction;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordFilter;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitLogStore;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitSink;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordRefresher;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordStore;
+import com.richard.fyoung.customerwork.safety.sensitiveword.AsyncSensitiveWordHitSink;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordAction;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordFilter;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordHitLogStore;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordHitSink;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordRefresher;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStore;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +21,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.Direction;
+import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
 
 /**
  * admin workspace 智能体的敏感词过滤装配（admin 排除了 starter 自动装配，这里显式 new 全部组件，
@@ -51,7 +53,7 @@ public class AdminSensitiveWordFilterConfig {
     @Bean
     public SensitiveWordFilter adminSensitiveWordFilter(SensitiveWordStore adminSensitiveWordStore,
                                                         CustomerWorkProperties adminContentGuardRuntimeProperties) {
-        CustomerWorkProperties.SensitiveWord cfg = adminContentGuardRuntimeProperties.getSensitiveWord();
+        SensitiveWordProperties cfg = adminContentGuardRuntimeProperties.getSensitiveWord();
         return new SensitiveWordFilter(adminSensitiveWordStore, cfg.resolveMaskChar(), cfg.getDefaultAction());
     }
 
@@ -84,7 +86,7 @@ public class AdminSensitiveWordFilterConfig {
     @Bean
     public CustomerWorkProperties adminContentGuardRuntimeProperties(ContentGuardProperties properties) {
         CustomerWorkProperties runtime = new CustomerWorkProperties();
-        CustomerWorkProperties.SensitiveWord cfg = runtime.getSensitiveWord();
+        SensitiveWordProperties cfg = runtime.getSensitiveWord();
         cfg.setEnabled(true);
         cfg.setDirection(parseDirection(properties.getDirection()));
         cfg.setDefaultAction(SensitiveWordAction.BLOCK);
@@ -107,16 +109,16 @@ public class AdminSensitiveWordFilterConfig {
     }
 
     /** 方向解析：非法值回落 BOTH（两端都过一遍），风控配置写错时宁可多过滤也不少过滤。 */
-    private CustomerWorkProperties.Direction parseDirection(String raw) {
+    private Direction parseDirection(String raw) {
         if (raw == null || raw.isBlank()) {
-            return CustomerWorkProperties.Direction.BOTH;
+            return Direction.BOTH;
         }
         try {
-            return CustomerWorkProperties.Direction.valueOf(raw.trim().toUpperCase());
+            return Direction.valueOf(raw.trim().toUpperCase());
         } catch (IllegalArgumentException e) {
             log.error("invalid content guard direction, fallback to BOTH, code={}, raw={}",
                 "CONTENTGUARD-DIRECTION-INVALID", raw);
-            return CustomerWorkProperties.Direction.BOTH;
+            return Direction.BOTH;
         }
     }
 }

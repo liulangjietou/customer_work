@@ -8,8 +8,8 @@ import com.richard.fyoung.customeradmin.system.menu.service.MenuChangeLogService
 import com.richard.fyoung.customeradmin.system.permission.dto.PermissionSaveRequest;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
-import com.richard.fyoung.customerwork.lock.DistributedLockExecutor;
-import com.richard.fyoung.customerwork.lock.LockAcquireTimeoutException;
+import com.richard.fyoung.customerwork.infra.lock.DistributedLockExecutor;
+import com.richard.fyoung.customerwork.infra.lock.LockAcquireTimeoutException;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;

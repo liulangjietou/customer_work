@@ -4,9 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeBaseEndpoint;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeNode;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeSearchSettings;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchSettings;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

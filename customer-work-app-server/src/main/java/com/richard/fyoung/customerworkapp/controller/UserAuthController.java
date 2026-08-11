@@ -1,10 +1,10 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.user.UserAccount;
-import com.richard.fyoung.customerwork.user.UserAccountService;
-import com.richard.fyoung.customerwork.security.UserJwtService;
-import com.richard.fyoung.customerwork.security.UserPrincipal;
-import com.richard.fyoung.customerwork.tenant.TenantContext;
+import com.richard.fyoung.customerwork.data.user.UserAccount;
+import com.richard.fyoung.customerwork.data.user.UserAccountService;
+import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerworkapp.service.AvatarStorageService;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import io.swagger.v3.oas.annotations.Operation;

@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.notification.ProactiveNotificationService;
+import com.richard.fyoung.customerwork.infra.notification.ProactiveNotificationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.PostMapping;

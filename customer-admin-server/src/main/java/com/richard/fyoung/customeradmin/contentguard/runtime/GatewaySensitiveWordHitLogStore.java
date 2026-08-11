@@ -1,11 +1,11 @@
 package com.richard.fyoung.customeradmin.contentguard.runtime;
 
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardGatewayProvider;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordAction;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitDirection;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitLogStore;
-import com.richard.fyoung.customerwork.sensitiveword.SensitiveWordHitRecord;
-import com.richard.fyoung.customerwork.sensitiveword.entity.SensitiveWordHitLogEntity;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordAction;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordHitDirection;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordHitLogStore;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordHitRecord;
+import com.richard.fyoung.customerwork.safety.sensitiveword.entity.SensitiveWordHitLogEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.CollectionUtils;

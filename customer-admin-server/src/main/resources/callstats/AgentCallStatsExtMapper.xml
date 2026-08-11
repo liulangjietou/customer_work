@@ -18,7 +18,7 @@
     </sql>
 
     <!-- 分页条件查询：id 倒序取一页（最新在前）。列与 starter AgentCallLogDO 完全一致。 -->
-    <select id="findPage" resultType="com.richard.fyoung.customerwork.calllog.entity.AgentCallLogDO">
+    <select id="findPage" resultType="com.richard.fyoung.customerwork.data.calllog.entity.AgentCallLogDO">
         SELECT id, request_id, user_id, username, agent_code, agent_name, session_id, session_type,
                question, answer, start_time, end_time, duration_ms, model_ms, tool_ms, mcp_ms,
                skill_ms, segment_count, input_tokens, output_tokens, total_tokens,
@@ -36,7 +36,7 @@
     </select>
 
     <!-- 汇总统计：总数 / 平均总耗时 / 最大总耗时 / 各段平均耗时。复用 starter AgentCallSummaryDO。 -->
-    <select id="summary" resultType="com.richard.fyoung.customerwork.calllog.entity.AgentCallSummaryDO">
+    <select id="summary" resultType="com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSummaryDO">
         SELECT COUNT(*)            AS total_count,
                AVG(duration_ms)    AS avg_duration_ms,
                MAX(duration_ms)    AS max_duration_ms,

@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.tenant;
 
-import com.richard.fyoung.customerwork.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.servlet.HandlerInterceptor;

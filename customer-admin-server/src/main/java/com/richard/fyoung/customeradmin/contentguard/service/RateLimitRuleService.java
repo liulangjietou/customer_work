@@ -9,9 +9,9 @@ import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardGatewayP
 import com.richard.fyoung.customeradmin.contentguard.dto.RateLimitRuleSaveRequest;
 import com.richard.fyoung.customeradmin.contentguard.dto.RateLimitRuleVO;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.ContentGuardGateway;
-import com.richard.fyoung.customerwork.security.ratelimit.RateLimitAlgorithm;
-import com.richard.fyoung.customerwork.security.ratelimit.RateLimitDimension;
-import com.richard.fyoung.customerwork.security.ratelimit.entity.RateLimitRuleEntity;
+import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitAlgorithm;
+import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitDimension;
+import com.richard.fyoung.customerwork.safety.security.ratelimit.entity.RateLimitRuleEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

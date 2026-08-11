@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.richard.fyoung.customerwork.calllog.mapper.AgentCallSegmentMapper">
+<mapper namespace="com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallSegmentMapper">
 
     <!-- 按主记录 id 查全部分段，seq 升序。 -->
-    <select id="findByCallLogId" resultType="com.richard.fyoung.customerwork.calllog.entity.AgentCallSegmentDO">
+    <select id="findByCallLogId" resultType="com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSegmentDO">
         SELECT id, call_log_id, seq, kind, name, start_time, duration_ms, input_tokens, output_tokens,
                cached_tokens, model_reported_ms,
                success, error_msg

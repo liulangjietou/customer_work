@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.ticket.config;
 
-import com.richard.fyoung.customerwork.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.ClientHttpRequestInterceptor;

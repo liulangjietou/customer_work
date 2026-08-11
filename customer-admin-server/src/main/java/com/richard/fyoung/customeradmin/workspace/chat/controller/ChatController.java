@@ -12,8 +12,8 @@ import com.richard.fyoung.customeradmin.workspace.chat.service.ChatHistoryServic
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentCallMetaFactory;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanConfirmRequest;
-import com.richard.fyoung.customerwork.calllog.AgentCallMeta;
-import com.richard.fyoung.customerwork.calllog.AgentCallSessionType;
+import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.data.calllog.AgentCallSessionType;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;

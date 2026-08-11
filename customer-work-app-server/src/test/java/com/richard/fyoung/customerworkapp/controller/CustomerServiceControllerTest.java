@@ -1,9 +1,9 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.dto.ChatRequest;
-import com.richard.fyoung.customerwork.dto.IntentResult;
-import com.richard.fyoung.customerwork.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.core.dto.ChatRequest;
+import com.richard.fyoung.customerwork.core.dto.IntentResult;
+import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
@@ -35,10 +35,10 @@ class CustomerServiceControllerTest {
     private CustomerServiceService service;
 
     @MockBean
-    private com.richard.fyoung.customerwork.agent.MultiAgentOrchestrator multiAgentOrchestrator;
+    private com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator multiAgentOrchestrator;
 
     @MockBean
-    private com.richard.fyoung.customerwork.agent.AguiService aguiService;
+    private com.richard.fyoung.customerwork.core.agent.AguiService aguiService;
 
     @Test
     void chat_shouldReturnReply() {

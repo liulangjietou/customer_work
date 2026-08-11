@@ -1,6 +1,6 @@
 package com.richard.fyoung.customerwork.observability;
 
-import com.richard.fyoung.customerwork.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.agentscope.core.hook.Hook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

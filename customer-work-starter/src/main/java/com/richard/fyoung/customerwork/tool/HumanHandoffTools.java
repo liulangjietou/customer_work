@@ -1,9 +1,9 @@
 package com.richard.fyoung.customerwork.tool;
 
-import com.richard.fyoung.customerwork.handoff.HandoffService;
-import com.richard.fyoung.customerwork.handoff.HandoffTicket;
-import com.richard.fyoung.customerwork.ticket.TicketActorType;
-import com.richard.fyoung.customerwork.ticket.TicketService;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
+import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
+import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;

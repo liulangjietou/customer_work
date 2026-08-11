@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.observability;
 
 import com.richard.fyoung.customerwork.observability.mapper.AuditLogMapper;
-import com.richard.fyoung.customerwork.support.MybatisTestSupport;
+import com.richard.fyoung.customerwork.core.support.MybatisTestSupport;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

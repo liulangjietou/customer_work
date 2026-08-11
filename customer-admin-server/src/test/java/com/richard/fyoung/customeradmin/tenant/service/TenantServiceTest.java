@@ -7,7 +7,7 @@ import com.richard.fyoung.customeradmin.tenant.dto.TenantSaveRequest;
 import com.richard.fyoung.customeradmin.tenant.entity.SysTenant;
 import com.richard.fyoung.customeradmin.tenant.entity.TenantStatus;
 import com.richard.fyoung.customeradmin.tenant.mapper.SysTenantMapper;
-import com.richard.fyoung.customerwork.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

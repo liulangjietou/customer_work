@@ -95,7 +95,7 @@ mvn -s settings-central-direct.xml clean test
 
 ### 7.1 Middleware 取代松散 Hook（底层框架升级）
 8 个业务 Hook 全部从 deprecated `core.hook.Hook` 迁移到 2.0 五段 `MiddlewareBase`
-（`com.richard.fyoung.customerwork.middleware`），并经 `.middleware()` 织入：
+（`com.richard.fyoung.customerwork.core.middleware`），并经 `.middleware()` 织入：
 
 | 中间件 | 段 | 承接的 1.x Hook |
 | --- | --- | --- |

@@ -1,8 +1,8 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.jdbc;
 
-import com.richard.fyoung.customerwork.calllog.AgentCallLogStore;
-import com.richard.fyoung.customerwork.calllog.mapper.AgentCallLogMapper;
-import com.richard.fyoung.customerwork.calllog.mapper.AgentCallSegmentMapper;
+import com.richard.fyoung.customerwork.data.calllog.AgentCallLogStore;
+import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallLogMapper;
+import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallSegmentMapper;
 
 /**
  * 单个数据源（ADMIN 本库 / APP 客服端库）的调用统计读写门面：把该源的一套 Mapper 与 Store 收拢在一起。

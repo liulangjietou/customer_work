@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
-import com.richard.fyoung.customerwork.middleware.ToolCallRewriteCore;
+import com.richard.fyoung.customerwork.core.middleware.ToolCallRewriteCore;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;

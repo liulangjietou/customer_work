@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.common.crypto;
 
-import com.richard.fyoung.customerwork.common.crypto.AesGcmCrypto;
+import com.richard.fyoung.customerwork.core.common.crypto.AesGcmCrypto;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 

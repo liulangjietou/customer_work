@@ -1,10 +1,10 @@
 package com.richard.fyoung.customerworkapp.controller;
 
-import com.richard.fyoung.customerwork.handoff.HandoffService;
-import com.richard.fyoung.customerwork.handoff.HandoffStatus;
-import com.richard.fyoung.customerwork.handoff.HandoffTicket;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffStatus;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
 import com.richard.fyoung.customerwork.observability.AuditSink;
-import com.richard.fyoung.customerwork.routing.SeatRecommendation;
+import com.richard.fyoung.customerwork.capability.routing.SeatRecommendation;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;

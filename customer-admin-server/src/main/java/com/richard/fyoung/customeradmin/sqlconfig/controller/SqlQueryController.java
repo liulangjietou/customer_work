@@ -8,7 +8,7 @@ import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryMetaVO;
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryRequest;
 import com.richard.fyoung.customeradmin.sqlconfig.dto.SqlQueryResultVO;
 import com.richard.fyoung.customeradmin.sqlconfig.engine.SqlQueryService;
-import com.richard.fyoung.customerwork.sqlkit.XlsxExporter;
+import com.richard.fyoung.customerwork.infra.sqlkit.XlsxExporter;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;

@@ -3,7 +3,7 @@ package com.richard.fyoung.customeradmin.billing.service;
 import com.richard.fyoung.customeradmin.billing.dto.UsageAggregate;
 import com.richard.fyoung.customeradmin.billing.mapper.CwTenantUsageDailyMapper;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
-import com.richard.fyoung.customerwork.tenant.CrossTenantOperations;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 

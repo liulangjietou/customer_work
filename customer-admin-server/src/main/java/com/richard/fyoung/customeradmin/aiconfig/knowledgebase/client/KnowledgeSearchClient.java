@@ -4,12 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeBaseEndpoint;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeNode;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeSearchException;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeSearchOps;
-import com.richard.fyoung.customerwork.rag.search.KnowledgeSearchSettings;
-import com.richard.fyoung.customerwork.security.HttpTargetForbiddenException;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchException;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchOps;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchSettings;
+import com.richard.fyoung.customerwork.safety.security.HttpTargetForbiddenException;
 import org.springframework.stereotype.Component;
 
 import java.util.List;

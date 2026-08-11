@@ -10,10 +10,10 @@ import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolJwtDecodeReque
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolJwtDecodeResponse;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolTextDiffRequest;
 import com.richard.fyoung.customeradmin.system.devtool.dto.DevToolTextDiffResponse;
-import com.richard.fyoung.customerwork.tool.devtool.CronDevToolOps;
-import com.richard.fyoung.customerwork.tool.devtool.DataFormatDevToolOps;
-import com.richard.fyoung.customerwork.tool.devtool.DiffDevToolOps;
-import com.richard.fyoung.customerwork.tool.devtool.JwtDevToolOps;
+import com.richard.fyoung.customerwork.devtool.CronDevToolOps;
+import com.richard.fyoung.customerwork.devtool.DataFormatDevToolOps;
+import com.richard.fyoung.customerwork.devtool.DiffDevToolOps;
+import com.richard.fyoung.customerwork.devtool.JwtDevToolOps;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;

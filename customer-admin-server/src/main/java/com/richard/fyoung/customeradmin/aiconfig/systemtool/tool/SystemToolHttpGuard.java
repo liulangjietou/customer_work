@@ -3,10 +3,10 @@ package com.richard.fyoung.customeradmin.aiconfig.systemtool.tool;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSystemToolProperties;
-import com.richard.fyoung.customerwork.security.HttpTargetForbiddenException;
-import com.richard.fyoung.customerwork.security.HttpTargetGuard;
-import com.richard.fyoung.customerwork.security.HttpTargetPolicy;
-import com.richard.fyoung.customerwork.security.InternalAddressPolicy;
+import com.richard.fyoung.customerwork.safety.security.HttpTargetForbiddenException;
+import com.richard.fyoung.customerwork.safety.security.HttpTargetGuard;
+import com.richard.fyoung.customerwork.safety.security.HttpTargetPolicy;
+import com.richard.fyoung.customerwork.safety.security.InternalAddressPolicy;
 import org.springframework.stereotype.Component;
 
 /**

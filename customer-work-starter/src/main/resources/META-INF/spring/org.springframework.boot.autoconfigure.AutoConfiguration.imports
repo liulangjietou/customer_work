@@ -1,1 +1,8 @@
 com.richard.fyoung.customerwork.autoconfigure.CustomerWorkAutoConfiguration
+com.richard.fyoung.customerwork.autoconfigure.CustomerWorkCoreAutoConfiguration
+com.richard.fyoung.customerwork.autoconfigure.CustomerWorkCapabilityAutoConfiguration
+com.richard.fyoung.customerwork.autoconfigure.CustomerWorkDataAutoConfiguration
+com.richard.fyoung.customerwork.autoconfigure.CustomerWorkSafetyAutoConfiguration
+com.richard.fyoung.customerwork.autoconfigure.CustomerWorkInfraAutoConfiguration
+com.richard.fyoung.customerwork.autoconfigure.CustomerWorkObservabilityAutoConfiguration
+com.richard.fyoung.customerwork.autoconfigure.CustomerWorkToolAutoConfiguration

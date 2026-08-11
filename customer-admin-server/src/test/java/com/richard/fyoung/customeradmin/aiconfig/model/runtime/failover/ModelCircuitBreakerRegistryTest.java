@@ -25,7 +25,7 @@ class ModelCircuitBreakerRegistryTest {
 
     @Test
     void shouldExtendSharedRegistry() {
-        assertInstanceOf(com.richard.fyoung.customerwork.model.failover.ModelCircuitBreakerRegistry.class,
+        assertInstanceOf(com.richard.fyoung.customerwork.core.model.failover.ModelCircuitBreakerRegistry.class,
             newRegistry(3, 60));
     }
 

@@ -23,7 +23,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
-import com.richard.fyoung.customerwork.config.CustomerWorkRuntimeConfig;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.richard.fyoung.customeradmin.configversion.entity.ConfigType;
