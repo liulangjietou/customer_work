@@ -36,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+import com.richard.fyoung.customerwork.infra.config.properties.MultiAgentProperties;
 
 /**
  * 多 Agent 编排器（对应「多 Agent 与分布式协作」：智能路由 + 并行 / 串行 + reduce 归纳，AgentScope 2.0 迁移版）。
@@ -199,7 +200,7 @@ public class MultiAgentOrchestrator {
     public Mono<String> consult(String userText) {
         List<ReActAgent> all = buildSpecialists();
         Msg msg = userMsg(userText);
-        CustomerWorkProperties.MultiAgent cfg = properties.getMultiAgent();
+        MultiAgentProperties cfg = properties.getMultiAgent();
 
         if (MODE_SEQUENTIAL.equalsIgnoreCase(cfg.getMode())) {
             log.info("multi-agent orchestration: sequential, {} specialists", all.size());
@@ -223,7 +224,7 @@ public class MultiAgentOrchestrator {
      * <p>包级可见，便于单测以关闭路径离线断言退化为全部专家。</p>
      */
     Mono<List<ReActAgent>> selectExperts(String userText, List<ReActAgent> all) {
-        CustomerWorkProperties.MultiAgent cfg = properties.getMultiAgent();
+        MultiAgentProperties cfg = properties.getMultiAgent();
         if (!cfg.isRoutingEnabled()) {
             recordRoute("disabled", all.size());
             return Mono.just(all);

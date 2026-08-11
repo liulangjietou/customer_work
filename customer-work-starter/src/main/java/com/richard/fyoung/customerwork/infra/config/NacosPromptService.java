@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.Executor;
+import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
 
 /**
  * Nacos 配置中心驱动的系统提示词服务（对应「接入 Nacos」）。
@@ -40,7 +41,7 @@ public class NacosPromptService {
 
     @PostConstruct
     public void start() {
-        CustomerWorkProperties.Nacos cfg = properties.getNacos();
+        NacosProperties cfg = properties.getNacos();
         if (!cfg.isEnabled()) {
             return;
         }
@@ -59,7 +60,7 @@ public class NacosPromptService {
      * 绑定到给定 ConfigService：拉取初始提示词并注册热更新监听器（抽出以便单测）。
      */
     void bind(ConfigService configService) throws NacosException {
-        CustomerWorkProperties.Nacos cfg = properties.getNacos();
+        NacosProperties cfg = properties.getNacos();
         String initial = configService.getConfig(cfg.getPromptDataId(), cfg.getGroup(), cfg.getTimeoutMs());
         if (StringUtils.hasText(initial)) {
             cachedPrompt = initial;
@@ -101,7 +102,7 @@ public class NacosPromptService {
         }
     }
 
-    private Properties buildProperties(CustomerWorkProperties.Nacos cfg) {
+    private Properties buildProperties(NacosProperties cfg) {
         Properties props = new Properties();
         props.put(PropertyKeyConst.SERVER_ADDR, cfg.getServerAddr());
         if (StringUtils.hasText(cfg.getNamespace())) {

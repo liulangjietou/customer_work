@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 动态生成参数中间件单测（onModelCall 按意图自适应）：关键词命中与精确档参数合并。
@@ -16,7 +17,7 @@ class DynamicOptionsMiddlewareTest {
 
     private DynamicOptionsMiddleware enabledMiddleware() {
         CustomerWorkProperties props = new CustomerWorkProperties();
-        CustomerWorkProperties.Hooks.DynamicOptions cfg = props.getHooks().getDynamicOptions();
+        HooksProperties.DynamicOptions cfg = props.getHooks().getDynamicOptions();
         cfg.setEnabled(true);
         cfg.setPreciseTemperature(0.1);
         cfg.setPreciseReasoningEffort("high");

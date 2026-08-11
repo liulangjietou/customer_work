@@ -6,6 +6,7 @@ import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import com.richard.fyoung.customerwork.infra.config.properties.ContextProperties;
 
 /**
  * 上下文压缩配置工厂（对应特性「智能上下文压缩」，AgentScope 2.0 迁移版）。
@@ -36,7 +37,7 @@ public class ContextMemoryFactory {
      * 构建上下文压缩配置；未开启压缩时返回 {@code null}。
      */
     public CompactionConfig createCompaction() {
-        CustomerWorkProperties.Context cfg = properties.getContext();
+        ContextProperties cfg = properties.getContext();
         if (!cfg.isCompressionEnabled()) {
             return null;
         }

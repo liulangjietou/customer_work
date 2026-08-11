@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
 
 /**
  * 流式出站过滤单测：这是整个出站链路真正生效的地方——接入层把 {@link TextBlockDeltaEvent} 逐片推给前端后，
@@ -111,7 +112,7 @@ class SensitiveWordStreamFilterTest {
         SensitiveWordMiddleware mw = middleware(SensitiveWordAction.BLOCK, "违禁词");
         String text = streamThrough(mw, "前半段正常", "这里有违禁词", "后面还有很多内容");
 
-        String safeReply = CustomerWorkProperties.SensitiveWord.DEFAULT_OUTBOUND_SAFE_REPLY;
+        String safeReply = SensitiveWordProperties.DEFAULT_OUTBOUND_SAFE_REPLY;
         assertTrue(text.contains(safeReply), "命中 BLOCK 应补一条安全话术");
         assertFalse(text.contains("违禁词"), "命中词本身绝不能出现在输出里");
         assertFalse(text.contains("后面还有很多内容"), "拦下后必须停止后续输出，不能继续吐");

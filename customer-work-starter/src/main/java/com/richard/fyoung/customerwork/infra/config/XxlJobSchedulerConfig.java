@@ -13,6 +13,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.util.CollectionUtils;
+import com.richard.fyoung.customerwork.infra.config.properties.SchedulerProperties;
 
 /**
  * 基于 AgentScope 的定时任务调度接入（对应特性「定时任务」，XXL-JOB 实现）。
@@ -47,7 +48,7 @@ public class XxlJobSchedulerConfig {
     /** XXL-JOB 执行器：随 Spring 容器生命周期 start/destroy，向调度中心注册/注销自身。 */
     @Bean(initMethod = "start", destroyMethod = "destroy")
     public XxlJobExecutor xxlJobExecutor() {
-        CustomerWorkProperties.Scheduler.XxlJob cfg = properties.getScheduler().getXxlJob();
+        SchedulerProperties.XxlJob cfg = properties.getScheduler().getXxlJob();
         XxlJobExecutor executor = new XxlJobExecutor();
         executor.setAdminAddresses(cfg.getAdminAddresses());
         executor.setAppname(cfg.getAppname());
@@ -76,7 +77,7 @@ public class XxlJobSchedulerConfig {
             return;
         }
         ModelConfig modelConfig = wrapModel(chatModel);
-        for (CustomerWorkProperties.Scheduler.Task task : tasks) {
+        for (SchedulerProperties.Task task : tasks) {
             RuntimeAgentConfig agentConfig = RuntimeAgentConfig.builder()
                 .name(task.getName())
                 .sysPrompt(task.getSysPrompt())

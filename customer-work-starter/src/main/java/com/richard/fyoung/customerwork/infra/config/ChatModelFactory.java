@@ -8,6 +8,7 @@ import io.agentscope.extensions.model.gemini.GeminiChatModel;
 import io.agentscope.extensions.model.ollama.OllamaChatModel;
 import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import org.springframework.util.StringUtils;
+import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 
 /**
  * 模型构建工厂（从 {@link ModelConfig} 抽取的公共能力，纯静态、无 Spring 依赖）。
@@ -101,7 +102,7 @@ public final class ChatModelFactory {
     }
 
     /** 高级生成参数（跨厂商统一）：温度 / topP / maxTokens / 推理强度。 */
-    public static GenerateOptions buildOptions(CustomerWorkProperties.Model cfg) {
+    public static GenerateOptions buildOptions(ModelProperties cfg) {
         GenerateOptions.Builder b = GenerateOptions.builder()
             .temperature(cfg.getTemperature())
             .maxTokens(cfg.getMaxTokens());

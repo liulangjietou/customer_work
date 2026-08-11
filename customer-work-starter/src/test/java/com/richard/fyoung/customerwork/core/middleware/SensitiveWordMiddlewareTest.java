@@ -31,6 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import com.richard.fyoung.customerwork.infra.config.properties.Direction;
+import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
 
 /**
  * 敏感词中间件单测：入站拦截 / 入站打码 / 出站拦截 / fail-closed / disabled 放行 / direction。
@@ -39,9 +41,9 @@ import static org.mockito.Mockito.when;
 class SensitiveWordMiddlewareTest {
 
     private static final String INBOUND_SAFE =
-        CustomerWorkProperties.SensitiveWord.DEFAULT_INBOUND_SAFE_REPLY;
+        SensitiveWordProperties.DEFAULT_INBOUND_SAFE_REPLY;
     private static final String OUTBOUND_SAFE =
-        CustomerWorkProperties.SensitiveWord.DEFAULT_OUTBOUND_SAFE_REPLY;
+        SensitiveWordProperties.DEFAULT_OUTBOUND_SAFE_REPLY;
 
     private Msg userMsg(String text) {
         return Msg.builder().role(MsgRole.USER).name("user").textContent(text).build();
@@ -180,7 +182,7 @@ class SensitiveWordMiddlewareTest {
     @Test
     void directionOutboundOnly_shouldNotFilterInbound() {
         CustomerWorkProperties props = enabledProps();
-        props.getSensitiveWord().setDirection(CustomerWorkProperties.Direction.OUTBOUND);
+        props.getSensitiveWord().setDirection(Direction.OUTBOUND);
         SensitiveWordMiddleware mw = middleware(props, realFilter());
         AtomicBoolean nextCalled = new AtomicBoolean(false);
 

@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import com.richard.fyoung.customerwork.infra.config.properties.UserAuthProperties;
 
 /**
  * 用户头像存储：校验（扩展名白名单 + 大小上限）、以 UUID 命名落盘、返回可访问 URL（响应式）。
@@ -38,7 +39,7 @@ public class AvatarStorageService {
 
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("png", "jpg", "jpeg", "gif");
 
-    private final CustomerWorkProperties.UserAuth.Avatar config;
+    private final UserAuthProperties.Avatar config;
 
     public AvatarStorageService(CustomerWorkProperties properties) {
         this.config = properties.getUserAuth().getAvatar();

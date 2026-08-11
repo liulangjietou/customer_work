@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 
 /**
  * 模型层配置（对应「模型层 - 统一模型抽象 + 多模型 + 私有化兜底」）。
@@ -58,11 +59,11 @@ public class ModelConfig {
      * <p>{@code midStreamFailoverEnabled=false}：客服主链路是逐字上屏的流式输出，主模型已经吐过分片
      * 再切兜底会把两段输出拼在一起，用户看到重复错乱的文字——此时宁可让错误透传给上层做截断/兜底文案。</p>
      */
-    Model buildChain(CustomerWorkProperties.Model cfg) {
+    Model buildChain(ModelProperties cfg) {
         Model primary = buildPrimary(cfg);
 
         Model model = primary;
-        CustomerWorkProperties.Model.Fallback fb = cfg.getFallback();
+        ModelProperties.Fallback fb = cfg.getFallback();
         if (fb.isEnabled()) {
             Model fallback = buildByProvider(fb.getProvider(), fb.getName(),
                 fb.getApiKey(), fb.getBaseUrl(), cfg);
@@ -75,7 +76,7 @@ public class ModelConfig {
                 false);
         }
 
-        CustomerWorkProperties.Model.Retry retry = cfg.getRetry();
+        ModelProperties.Retry retry = cfg.getRetry();
         if (retry.isEnabled()) {
             log.info("已启用模型调用重试：maxAttempts={}, backoffMs={}",
                 retry.getMaxAttempts(), retry.getBackoffMs());
@@ -84,7 +85,7 @@ public class ModelConfig {
         return model;
     }
 
-    private Model buildPrimary(CustomerWorkProperties.Model cfg) {
+    private Model buildPrimary(ModelProperties cfg) {
         String apiKey = "dashscope".equalsIgnoreCase(cfg.getProvider())
             ? ChatModelFactory.resolveDashScopeKey(cfg.getApiKey())
             : cfg.getApiKey();
@@ -95,13 +96,13 @@ public class ModelConfig {
     }
 
     /** 高级生成参数（跨厂商统一）：委托 {@link ChatModelFactory#buildOptions}。 */
-    GenerateOptions buildOptions(CustomerWorkProperties.Model cfg) {
+    GenerateOptions buildOptions(ModelProperties cfg) {
         return ChatModelFactory.buildOptions(cfg);
     }
 
     /** 按厂商构建模型：委托 {@link ChatModelFactory#build}，stream 与高级生成参数取自 {@code cfg}。 */
     Model buildByProvider(String provider, String name, String apiKey, String baseUrl,
-                          CustomerWorkProperties.Model cfg) {
+                          ModelProperties cfg) {
         return ChatModelFactory.build(provider, name, apiKey, baseUrl, cfg.isStream(),
             ChatModelFactory.buildOptions(cfg), cfg.getEnableSearch(), cfg.getEnableThinking());
     }

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 
 /**
  * MySQL 会话持久化测试（对接本机 MySQL：localhost:3306，root/root，库 agent_scope_customer_work）。
@@ -28,7 +29,7 @@ class MysqlSessionPersistenceTest {
         assumeTrue(SessionPersistenceTestSupport.reachable(HOST, PORT),
             "MySQL 不可达（" + HOST + ":" + PORT + "），跳过该测试");
 
-        CustomerWorkProperties.Session cfg = new CustomerWorkProperties().getSession();
+        SessionProperties cfg = new CustomerWorkProperties().getSession();
         cfg.setMode("mysql");
         cfg.getMysql().setHost(HOST);
         cfg.getMysql().setPort(PORT);

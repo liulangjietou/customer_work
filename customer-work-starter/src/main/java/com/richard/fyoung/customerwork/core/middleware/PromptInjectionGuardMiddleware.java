@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 入站防注入围栏中间件（2.0 Middleware，「安全 · 提示词注入 / 越狱防护」）。
@@ -56,7 +57,7 @@ public class PromptInjectionGuardMiddleware implements MiddlewareBase {
 
     public PromptInjectionGuardMiddleware(CustomerWorkProperties properties,
                                           ObjectProvider<MeterRegistry> meterRegistryProvider) {
-        CustomerWorkProperties.Hooks.PromptGuard cfg = properties.getHooks().getPromptGuard();
+        HooksProperties.PromptGuard cfg = properties.getHooks().getPromptGuard();
         this.enabled = cfg.isEnabled();
         this.refusalReply = cfg.getRefusalReply();
         this.injectionPatterns = new ArrayList<>();

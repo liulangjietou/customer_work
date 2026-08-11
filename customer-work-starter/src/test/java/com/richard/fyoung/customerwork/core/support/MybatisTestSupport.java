@@ -40,6 +40,7 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 import javax.sql.DataSource;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 
 /**
  * MyBatis 持久层测试支撑：脱离 Spring 容器，用与 {@code CustomerWorkPersistenceConfig} 一致的方式
@@ -73,7 +74,7 @@ public final class MybatisTestSupport {
 
     /** 用本机 MySQL（root/root，库 agent_scope_customer_work）构建 Hikari 数据源。 */
     public static HikariDataSource mysqlDataSource(String poolName) {
-        CustomerWorkProperties.Session.Mysql cfg = new CustomerWorkProperties().getSession().getMysql();
+        SessionProperties.Mysql cfg = new CustomerWorkProperties().getSession().getMysql();
         cfg.setDatabase("agent_scope_customer_work");
         cfg.setUsername("root");
         cfg.setPassword("root");

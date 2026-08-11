@@ -15,6 +15,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.RagProperties;
 
 /**
  * RAG 知识库提供方（对应特性「RAG」，支持实现热切换）。
@@ -96,7 +98,7 @@ public class KnowledgeProvider {
 
     /** 真实 Embedding 向量 RAG：百炼 Embedding + 内存向量库（语义检索）。 */
     private Knowledge buildSimple() {
-        CustomerWorkProperties.Model m = properties.getModel();
+        ModelProperties m = properties.getModel();
         DashScopeTextEmbedding embedding = DashScopeTextEmbedding.builder()
             .apiKey(m.getApiKey())
             .modelName(m.getEmbeddingName())
@@ -113,7 +115,7 @@ public class KnowledgeProvider {
     }
 
     private Knowledge buildBailian() {
-        CustomerWorkProperties.Rag.Bailian b = properties.getRag().getBailian();
+        RagProperties.Bailian b = properties.getRag().getBailian();
         BailianConfig.Builder cfg = BailianConfig.builder()
             .accessKeyId(b.getAccessKeyId())
             .accessKeySecret(b.getAccessKeySecret())
@@ -129,7 +131,7 @@ public class KnowledgeProvider {
 
     /** Dify 知识库（外部 Dify 服务）。 */
     private Knowledge buildDify() {
-        CustomerWorkProperties.Rag.Dify d = properties.getRag().getDify();
+        RagProperties.Dify d = properties.getRag().getDify();
         DifyRAGConfig cfg = DifyRAGConfig.builder()
             .apiKey(d.getApiKey())
             .apiBaseUrl(d.getApiBaseUrl())

@@ -9,6 +9,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 
 /**
  * 限流规则层装配：按 {@code security.rate-limit.store-mode} 选择规则存储，并构建可热刷新的
@@ -45,7 +46,7 @@ public class RateLimitRuleConfig {
     @ConditionalOnMissingBean(RateLimitRuleProvider.class)
     public RateLimitRuleProvider rateLimitRuleProvider(CustomerWorkProperties properties,
                                                        RateLimitRuleStore store) {
-        CustomerWorkProperties.Security.RateLimit cfg = properties.getSecurity().getRateLimit();
+        SecurityProperties.RateLimit cfg = properties.getSecurity().getRateLimit();
         log.info("rate-limit rule provider: refreshEnabled={}, intervalMs={}",
             cfg.isRefreshEnabled(), cfg.getRefreshIntervalMs());
         return new RateLimitRuleProvider(store, cfg.isRefreshEnabled());

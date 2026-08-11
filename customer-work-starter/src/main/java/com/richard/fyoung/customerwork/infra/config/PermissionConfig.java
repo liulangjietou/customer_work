@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.HarnessProperties;
 
 /**
  * 权限系统配置（AgentScope 2.0 新增能力「Permission System」）。
@@ -33,7 +34,7 @@ public class PermissionConfig {
 
     @Bean
     public PermissionContextState permissionContextState(CustomerWorkProperties properties) {
-        CustomerWorkProperties.Harness.Permission cfg = properties.getHarness().getPermission();
+        HarnessProperties.Permission cfg = properties.getHarness().getPermission();
         if (!cfg.isEnabled()) {
             // 未启用：返回 trivial（DEFAULT 且无规则），对 Agent 行为无影响，便于无条件注入
             return PermissionContextState.builder().mode(PermissionMode.DEFAULT).build();

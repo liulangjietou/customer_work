@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 敏感信息脱敏器（手机号 / 身份证 / 银行卡 / 邮箱 + 自定义正则）。
@@ -28,7 +29,7 @@ public class SensitiveDataMasker {
     private final String replacement;
 
     public SensitiveDataMasker(CustomerWorkProperties properties) {
-        CustomerWorkProperties.Hooks.Masking cfg = properties.getHooks().getMasking();
+        HooksProperties.Masking cfg = properties.getHooks().getMasking();
         this.replacement = cfg.getReplacement();
         // 先长后短，避免身份证/银行卡被手机号规则部分吃掉
         if (cfg.isMaskIdCard()) {

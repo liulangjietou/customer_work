@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
+import com.richard.fyoung.customerwork.infra.config.properties.HigressProperties;
 
 /**
  * Higress AI 网关接入装配器（对应「接入 Higress」）。
@@ -35,7 +36,7 @@ public class HigressToolkitConfigurer {
 
     /** 是否启用 Higress（开关开启且配置了 endpoint）。 */
     public boolean isEnabled() {
-        CustomerWorkProperties.Higress h = properties.getHigress();
+        HigressProperties h = properties.getHigress();
         return h.isEnabled() && StringUtils.hasText(h.getEndpoint());
     }
 
@@ -44,7 +45,7 @@ public class HigressToolkitConfigurer {
         if (!isEnabled()) {
             return;
         }
-        CustomerWorkProperties.Higress h = properties.getHigress();
+        HigressProperties h = properties.getHigress();
         try {
             HigressMcpClientWrapper wrapper = buildClient(h).block();
             if (wrapper != null) {
@@ -59,7 +60,7 @@ public class HigressToolkitConfigurer {
     }
 
     private reactor.core.publisher.Mono<HigressMcpClientWrapper> buildClient(
-            CustomerWorkProperties.Higress h) {
+            HigressProperties h) {
         HigressMcpClientBuilder builder = HigressMcpClientBuilder.create(h.getName())
             .timeout(Duration.ofSeconds(h.getTimeoutSeconds()));
         if ("streamable-http".equalsIgnoreCase(h.getTransport())) {

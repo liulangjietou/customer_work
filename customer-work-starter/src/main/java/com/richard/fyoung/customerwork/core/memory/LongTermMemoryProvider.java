@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+import com.richard.fyoung.customerwork.infra.config.properties.MemoryProperties;
 
 /**
  * 长期记忆提供方（对应特性「长期记忆」，支持实现热切换）。
@@ -41,7 +42,7 @@ public class LongTermMemoryProvider {
 
     /** 为指定租户创建长期记忆实例。 */
     public LongTermMemory create(String tenantId) {
-        CustomerWorkProperties.Memory cfg = properties.getMemory();
+        MemoryProperties cfg = properties.getMemory();
         switch (cfg.getProvider() == null ? "memory" : cfg.getProvider().toLowerCase()) {
             case "bailian":
                 return buildBailian(tenantId, cfg);
@@ -54,8 +55,8 @@ public class LongTermMemoryProvider {
         }
     }
 
-    private LongTermMemory buildMem0(String tenantId, CustomerWorkProperties.Memory cfg) {
-        CustomerWorkProperties.Memory.Mem0 m = cfg.getMem0();
+    private LongTermMemory buildMem0(String tenantId, MemoryProperties cfg) {
+        MemoryProperties.Mem0 m = cfg.getMem0();
         Mem0LongTermMemory.Builder builder = Mem0LongTermMemory.builder()
             .userId(tenantId)
             .agentName(m.getAgentName())
@@ -69,8 +70,8 @@ public class LongTermMemoryProvider {
         return builder.build();
     }
 
-    private LongTermMemory buildReMe(String tenantId, CustomerWorkProperties.Memory cfg) {
-        CustomerWorkProperties.Memory.ReMe r = cfg.getReme();
+    private LongTermMemory buildReMe(String tenantId, MemoryProperties cfg) {
+        MemoryProperties.ReMe r = cfg.getReme();
         ReMeLongTermMemory.Builder builder = ReMeLongTermMemory.builder().userId(tenantId);
         if (StringUtils.hasText(r.getApiBaseUrl())) {
             builder.apiBaseUrl(r.getApiBaseUrl());
@@ -79,8 +80,8 @@ public class LongTermMemoryProvider {
         return builder.build();
     }
 
-    private LongTermMemory buildBailian(String tenantId, CustomerWorkProperties.Memory cfg) {
-        CustomerWorkProperties.Memory.Bailian b = cfg.getBailian();
+    private LongTermMemory buildBailian(String tenantId, MemoryProperties cfg) {
+        MemoryProperties.Bailian b = cfg.getBailian();
         // API Key 优先用专配，否则复用模型层的百炼 Key
         String apiKey = StringUtils.hasText(b.getApiKey())
             ? b.getApiKey() : properties.getModel().getApiKey();

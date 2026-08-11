@@ -8,6 +8,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 脱敏器单测：覆盖手机号/身份证/银行卡/邮箱及自定义正则，确保只替换命中片段。
@@ -15,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class SensitiveDataMaskerTest {
 
-    private SensitiveDataMasker masker(java.util.function.Consumer<CustomerWorkProperties.Hooks.Masking> cfg) {
+    private SensitiveDataMasker masker(java.util.function.Consumer<HooksProperties.Masking> cfg) {
         CustomerWorkProperties props = new CustomerWorkProperties();
         cfg.accept(props.getHooks().getMasking());
         return new SensitiveDataMasker(props);

@@ -10,6 +10,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
 
 /**
  * 敏感词过滤装配：按 {@code sensitive-word.store-mode} 选择词表存储实现，并构建可热重建的 {@link SensitiveWordFilter}。
@@ -48,7 +49,7 @@ public class SensitiveWordConfig {
     @Bean
     @ConditionalOnMissingBean(SensitiveWordFilter.class)
     public SensitiveWordFilter sensitiveWordFilter(CustomerWorkProperties properties, SensitiveWordStore store) {
-        CustomerWorkProperties.SensitiveWord cfg = properties.getSensitiveWord();
+        SensitiveWordProperties cfg = properties.getSensitiveWord();
         return new SensitiveWordFilter(store, cfg.resolveMaskChar(), cfg.getDefaultAction());
     }
 
@@ -63,7 +64,7 @@ public class SensitiveWordConfig {
     public SensitiveWordRefresher sensitiveWordRefresher(CustomerWorkProperties properties,
                                                          SensitiveWordStore store,
                                                          SensitiveWordFilter filter) {
-        CustomerWorkProperties.SensitiveWord cfg = properties.getSensitiveWord();
+        SensitiveWordProperties cfg = properties.getSensitiveWord();
         log.info("sensitive-word refresher: enabled={}, intervalMs={}",
             cfg.isRefreshEnabled(), cfg.getRefreshIntervalMs());
         return new SensitiveWordRefresher(store, filter, cfg.isRefreshEnabled());

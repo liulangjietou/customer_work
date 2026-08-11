@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import com.richard.fyoung.customerwork.infra.config.properties.HarnessProperties;
 
 /**
  * Harness Agent 工厂单测（2.0 新增能力统一装配）：验证 {@code HarnessAgent.fromAgent(...)} 包装
@@ -73,7 +74,7 @@ class HarnessAgentFactoryTest {
     @Test
     void createHarnessAgent_shouldBuild_withHarnessDepthCapabilities() {
         CustomerWorkProperties props = new CustomerWorkProperties();
-        CustomerWorkProperties.Harness h = props.getHarness();
+        HarnessProperties h = props.getHarness();
         h.setWorkspaceDir("target/test-workspace");
         h.setMemoryEnabled(true);              // 分层记忆 MEMORY.md
         h.setToolResultEvictionEnabled(true);  // 超大工具结果落盘

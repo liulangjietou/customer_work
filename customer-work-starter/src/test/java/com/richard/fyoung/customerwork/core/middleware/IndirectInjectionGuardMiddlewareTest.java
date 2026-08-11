@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 间接注入防护单测：工具结果被隔离标记、非文本块不动、检测只告警不改写、禁用直通、
@@ -29,7 +30,7 @@ class IndirectInjectionGuardMiddlewareTest {
 
     private IndirectInjectionGuardMiddleware middleware(boolean enabled, boolean detection) {
         return new IndirectInjectionGuardMiddleware(enabled, detection,
-            CustomerWorkProperties.Hooks.PromptGuard.DEFAULT_INJECTION_PATTERNS, new SimpleMeterRegistry());
+            HooksProperties.PromptGuard.DEFAULT_INJECTION_PATTERNS, new SimpleMeterRegistry());
     }
 
     /**

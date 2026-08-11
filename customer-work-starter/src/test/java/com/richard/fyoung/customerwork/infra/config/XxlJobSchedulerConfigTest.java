@@ -6,6 +6,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.SchedulerProperties;
 
 /**
  * XXL-JOB 定时任务调度装配单测（离线，不连接真实调度中心，特性「定时任务」）。
@@ -21,7 +22,7 @@ class XxlJobSchedulerConfigTest {
 
     @Test
     void xxlJobConfig_shouldHaveSaneDefaults() {
-        CustomerWorkProperties.Scheduler.XxlJob cfg = new CustomerWorkProperties().getScheduler().getXxlJob();
+        SchedulerProperties.XxlJob cfg = new CustomerWorkProperties().getScheduler().getXxlJob();
         assertFalse(cfg.isEnabled(), "默认不启用 XXL-JOB");
         assertEquals("customer-work-executor", cfg.getAppname());
         assertEquals(9999, cfg.getPort());

@@ -17,6 +17,7 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 
 /**
  * 限流过滤器（接入层安全，支持固定窗口与滑动窗口算法）。
@@ -94,7 +95,7 @@ public class RateLimitWebFilter implements WebFilter {
 
     /** 全局兜底层：无规则命中时的原有行为（关闭即全放行）。 */
     private boolean allowByGlobalConfig(ServerWebExchange exchange) {
-        CustomerWorkProperties.Security.RateLimit cfg = properties.getSecurity().getRateLimit();
+        SecurityProperties.RateLimit cfg = properties.getSecurity().getRateLimit();
         if (!cfg.isEnabled()) {
             return true;
         }

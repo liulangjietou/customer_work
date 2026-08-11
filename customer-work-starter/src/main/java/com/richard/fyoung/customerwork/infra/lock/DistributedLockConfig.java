@@ -10,9 +10,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.DistributedLockProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.DistributedProperties;
 
 /**
- * 分布式锁自动装配：随 {@code CustomerWorkAutoConfiguration} 的组件扫描一并生效，下游应用引入
+ * 分布式锁自动装配：随 {@code CustomerWorkInfraAutoConfiguration} 的组件扫描一并生效，下游应用引入
  * starter 依赖即可直接注入 {@link DistributedLockExecutor} 使用，无需关心 Redisson 接线细节。
  *
  * <p>{@code customer-admin-server} 关闭了 starter 自动装配（见其 {@code spring.autoconfigure.exclude}），
@@ -48,7 +50,7 @@ public class DistributedLockConfig {
     @Bean
     @ConditionalOnMissingBean
     public SessionLock sessionLock(CustomerWorkProperties properties, RedissonClient redissonClient) {
-        CustomerWorkProperties.Distributed cfg = properties.getDistributed();
+        DistributedProperties cfg = properties.getDistributed();
         InMemorySessionLock inMemory = new InMemorySessionLock(cfg.getSessionLockWaitSeconds());
         if (!MODE_REDIS.equalsIgnoreCase(cfg.getSessionLockMode())) {
             return inMemory;
@@ -66,7 +68,7 @@ public class DistributedLockConfig {
      * 换成 {@code config.useSentinelServers()...} / {@code config.useClusterServers()...}，调用方
      * （{@code PermissionService} 等业务代码、admin-server 的手动装配）完全无感知，不用改。</p>
      */
-    public static RedissonClient buildRedissonClient(CustomerWorkProperties.DistributedLock.Redis r) {
+    public static RedissonClient buildRedissonClient(DistributedLockProperties.Redis r) {
         Config config = new Config();
         // 惰性连接：与本项目 JedisPool 的既有约定一致（构造本身不真正连 Redis），Redisson 默认在
         // create() 时就同步建连、连不上直接抛异常，会导致 Redis 不可达时整个应用直接启动失败——

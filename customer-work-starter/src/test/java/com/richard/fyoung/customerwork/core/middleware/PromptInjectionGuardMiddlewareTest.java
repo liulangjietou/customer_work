@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 入站防注入围栏单测：命中拦截不调用 next、未命中放行、禁用时直通、常见注入模式覆盖。
@@ -62,7 +63,7 @@ class PromptInjectionGuardMiddlewareTest {
         assertFalse(nextCalled.get(), "命中注入模式不应调用 next（不产生模型调用）");
         assertEquals(1, events.size());
         AgentResultEvent result = (AgentResultEvent) events.get(0);
-        assertEquals(CustomerWorkProperties.Hooks.PromptGuard.DEFAULT_REFUSAL_REPLY,
+        assertEquals(HooksProperties.PromptGuard.DEFAULT_REFUSAL_REPLY,
             result.getResult().getTextContent());
         assertEquals(1, mw.blockedHitCount());
         assertEquals(1.0, registry.get("customerwork.prompt.guard.blocked").counter().count());

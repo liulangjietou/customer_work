@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 
 /**
  * 状态持久化配置单测（离线，不连接任何外部服务）：
@@ -23,8 +24,8 @@ class SessionConfigTest {
 
     private final SessionConfig config = new SessionConfig();
 
-    private CustomerWorkProperties.Session sessionCfg(String mode) {
-        CustomerWorkProperties.Session cfg = new CustomerWorkProperties().getSession();
+    private SessionProperties sessionCfg(String mode) {
+        SessionProperties cfg = new CustomerWorkProperties().getSession();
         cfg.setMode(mode);
         return cfg;
     }
@@ -41,7 +42,7 @@ class SessionConfigTest {
 
     @Test
     void buildStateStore_json_shouldReturnJsonFileStore() {
-        CustomerWorkProperties.Session cfg = sessionCfg("json");
+        SessionProperties cfg = sessionCfg("json");
         cfg.setDirectory("target/test-sessions");
         AgentStateStore store = config.buildStateStore(cfg);
         assertInstanceOf(JsonFileAgentStateStore.class, store);
@@ -57,7 +58,7 @@ class SessionConfigTest {
 
     @Test
     void buildDataSource_shouldBuildHikariWithResolvedUrl() {
-        CustomerWorkProperties.Session.Mysql m = new CustomerWorkProperties().getSession().getMysql();
+        SessionProperties.Mysql m = new CustomerWorkProperties().getSession().getMysql();
         DataSource ds = config.buildDataSource(m);
         assertInstanceOf(HikariDataSource.class, ds);
         HikariDataSource hikari = (HikariDataSource) ds;
@@ -71,7 +72,7 @@ class SessionConfigTest {
 
     @Test
     void resolveJdbcUrl_shouldHonorExplicitOverride() {
-        CustomerWorkProperties.Session.Mysql m = new CustomerWorkProperties().getSession().getMysql();
+        SessionProperties.Mysql m = new CustomerWorkProperties().getSession().getMysql();
         m.setJdbcUrl("jdbc:mysql://db.internal:3307/custom_db");
         assertEquals("jdbc:mysql://db.internal:3307/custom_db", m.resolveJdbcUrl());
     }

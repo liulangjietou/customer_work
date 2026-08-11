@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.ObservabilityProperties;
 
 /**
  * OTel SDK 装配单测（离线，不连接真实 Collector：BatchSpanProcessor 异步导出失败不影响装配）。
@@ -35,7 +36,7 @@ class OtelTracingConfigTest {
 
     @Test
     void otelProperties_shouldHaveSaneDefaults() {
-        CustomerWorkProperties.Observability.Otel cfg =
+        ObservabilityProperties.Otel cfg =
             new CustomerWorkProperties().getObservability().getOtel();
         assertFalse(cfg.isEnabled(), "默认不启用 OTel SDK");
         assertEquals("http://localhost:4317", cfg.getEndpoint());

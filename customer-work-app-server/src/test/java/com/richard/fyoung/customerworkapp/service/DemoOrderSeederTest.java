@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 
 /**
  * 演示订单播种测试（对接本机 MySQL；不可达自动跳过）：真实往返插入 2 笔订单，测试后删除自建数据。
@@ -138,7 +139,7 @@ class DemoOrderSeederTest {
     }
 
     private static HikariDataSource buildDataSource() {
-        CustomerWorkProperties.Session.Mysql cfg = new CustomerWorkProperties().getSession().getMysql();
+        SessionProperties.Mysql cfg = new CustomerWorkProperties().getSession().getMysql();
         cfg.setDatabase("agent_scope_customer_work");
         cfg.setUsername("root");
         cfg.setPassword("root");

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.HarnessProperties;
 
 /**
  * 权限系统配置单测（2.0 新增能力「Permission System」）：模式映射、ask/deny 规则装配、关闭时 trivial。
@@ -39,7 +40,7 @@ class PermissionConfigTest {
     @Test
     void permissionContextState_shouldApplyRules_whenEnabled() {
         CustomerWorkProperties props = new CustomerWorkProperties();
-        CustomerWorkProperties.Harness.Permission p = props.getHarness().getPermission();
+        HarnessProperties.Permission p = props.getHarness().getPermission();
         p.setEnabled(true);
         p.setMode("explore");
 

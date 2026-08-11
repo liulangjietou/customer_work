@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Function;
+import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
 
 /**
  * 敏感词"一次拦截"中间件（2.0 Middleware，「安全合规 · 内容风控」，智能路由中控第一块）。
@@ -97,7 +98,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
                                    AuditSink auditSink,
                                    ObjectProvider<MeterRegistry> meterRegistryProvider,
                                    ObjectProvider<SensitiveWordHitSink> hitSinkProvider) {
-        CustomerWorkProperties.SensitiveWord cfg = properties.getSensitiveWord();
+        SensitiveWordProperties cfg = properties.getSensitiveWord();
         this.enabled = cfg.isEnabled();
         this.inboundEnabled = cfg.inboundEnabled();
         this.outboundEnabled = cfg.outboundEnabled();

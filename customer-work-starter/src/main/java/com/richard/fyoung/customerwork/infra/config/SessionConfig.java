@@ -16,6 +16,7 @@ import redis.clients.jedis.JedisPoolConfig;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 
 /**
  * 会话 / 状态持久化配置（对应「多轮会话 &amp; 会话持久化」，AgentScope 2.0 迁移版）。
@@ -45,7 +46,7 @@ public class SessionConfig {
     }
 
     /** 按配置构建 AgentStateStore（抽出以便单测）。 */
-    AgentStateStore buildStateStore(CustomerWorkProperties.Session cfg) {
+    AgentStateStore buildStateStore(SessionProperties cfg) {
         String mode = cfg.getMode() == null ? "memory" : cfg.getMode().trim().toLowerCase();
         switch (mode) {
             case "json": {
@@ -54,7 +55,7 @@ public class SessionConfig {
                 return new JsonFileAgentStateStore(dir);
             }
             case "redis": {
-                CustomerWorkProperties.Session.Redis r = cfg.getRedis();
+                SessionProperties.Redis r = cfg.getRedis();
                 log.info("State persistence: JedisAgentStateStore, {}:{} keyPrefix={}",
                     r.getHost(), r.getPort(), r.getKeyPrefix());
                 return JedisAgentStateStore.builder()
@@ -63,7 +64,7 @@ public class SessionConfig {
                     .build();
             }
             case "mysql": {
-                CustomerWorkProperties.Session.Mysql m = cfg.getMysql();
+                SessionProperties.Mysql m = cfg.getMysql();
                 log.info("State persistence: MysqlAgentStateStore, {}", m.resolveJdbcUrl());
                 return new MysqlAgentStateStore(buildDataSource(m), m.isAutoCreate());
             }
@@ -75,7 +76,7 @@ public class SessionConfig {
     }
 
     /** 构建 Jedis 连接池（惰性连接，构造本身不连接 Redis）。 */
-    JedisPool buildJedisPool(CustomerWorkProperties.Session.Redis r) {
+    JedisPool buildJedisPool(SessionProperties.Redis r) {
         HostAndPort hostAndPort = new HostAndPort(r.getHost(), r.getPort());
         JedisPoolConfig poolConfig = new JedisPoolConfig();
         if (r.getPassword() != null && !r.getPassword().isBlank()) {
@@ -86,7 +87,7 @@ public class SessionConfig {
     }
 
     /** 构建 MySQL DataSource（HikariCP）。无参构造，连接池在首次取连接时才建立（惰性）。 */
-    DataSource buildDataSource(CustomerWorkProperties.Session.Mysql m) {
+    DataSource buildDataSource(SessionProperties.Mysql m) {
         HikariDataSource ds = new HikariDataSource();
         ds.setJdbcUrl(m.resolveJdbcUrl());
         ds.setUsername(m.getUsername());

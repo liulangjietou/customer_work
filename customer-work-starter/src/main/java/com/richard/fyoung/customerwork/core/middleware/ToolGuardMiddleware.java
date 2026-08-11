@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 工具调用护栏中间件（2.0 Middleware，承接 1.x ToolGuardHook，对应「安全 · 工具入参治理」）。
@@ -55,7 +56,7 @@ public class ToolGuardMiddleware implements MiddlewareBase {
     private final ToolCallRewriteCore rewriteCore;
 
     public ToolGuardMiddleware(CustomerWorkProperties properties) {
-        CustomerWorkProperties.Hooks.ToolGuard cfg = properties.getHooks().getToolGuard();
+        HooksProperties.ToolGuard cfg = properties.getHooks().getToolGuard();
         this.enabled = cfg.isEnabled();
         this.injectParams = cfg.getInjectParams();
         this.numericCaps = cfg.getNumericCaps();
@@ -69,7 +70,7 @@ public class ToolGuardMiddleware implements MiddlewareBase {
             }
         }
         this.rewriteCore = new ToolCallRewriteCore(text -> matchesAny(destructivePatterns, text),
-            CustomerWorkProperties.Hooks.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
+            HooksProperties.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
             LOG_SCOPE, CODE_DESTRUCTIVE, CODE_GUARD_FAIL);
     }
 

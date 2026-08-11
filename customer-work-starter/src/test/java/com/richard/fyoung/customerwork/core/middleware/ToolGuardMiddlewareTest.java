@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 工具护栏中间件单测（onActing 入参治理）：公共参数注入 + 数值上限钳制。
@@ -23,7 +24,7 @@ class ToolGuardMiddlewareTest {
 
     private CustomerWorkProperties propsWith(Map<String, String> inject, Map<String, Double> caps) {
         CustomerWorkProperties props = new CustomerWorkProperties();
-        CustomerWorkProperties.Hooks.ToolGuard cfg = props.getHooks().getToolGuard();
+        HooksProperties.ToolGuard cfg = props.getHooks().getToolGuard();
         cfg.setEnabled(true);
         cfg.getInjectParams().putAll(inject);
         cfg.getNumericCaps().putAll(caps);
@@ -58,7 +59,7 @@ class ToolGuardMiddlewareTest {
             Map.of("command", "rm -rf /data/workspace"), null);
         ToolUseBlock guarded = mw.guard(use);
 
-        assertEquals(CustomerWorkProperties.Hooks.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
+        assertEquals(HooksProperties.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
             guarded.getInput().get("command"), "命中破坏性模式的入参应被改写为安全占位");
         assertEquals(1L, mw.destructiveHitCount(), "命中应被计数");
     }
@@ -86,7 +87,7 @@ class ToolGuardMiddlewareTest {
         // 自定义模式命中
         ToolUseBlock guarded = mw.guard(new ToolUseBlock("t6", "shellExec",
             Map.of("command", "run danger op"), null));
-        assertEquals(CustomerWorkProperties.Hooks.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
+        assertEquals(HooksProperties.ToolGuard.DESTRUCTIVE_PLACEHOLDER,
             guarded.getInput().get("command"), "自定义破坏性模式应命中改写");
     }
 

@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.McpProperties;
 
 /**
  * MCP 接入装配器单测（特性「MCP 接入」）：开关与配置判定逻辑。
@@ -37,7 +38,7 @@ class McpToolkitConfigurerTest {
     void isEnabled_shouldBeTrue_whenEnabledWithServers() {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getMcp().setEnabled(true);
-        CustomerWorkProperties.Mcp.Server server = new CustomerWorkProperties.Mcp.Server();
+        McpProperties.Server server = new McpProperties.Server();
         server.setName("inventory");
         server.setUrl("http://localhost:9000/sse");
         props.getMcp().getServers().add(server);
@@ -73,7 +74,7 @@ class McpToolkitConfigurerTest {
         try {
             CustomerWorkProperties props = new CustomerWorkProperties();
             props.getMcp().setEnabled(true);
-            CustomerWorkProperties.Mcp.Server server = new CustomerWorkProperties.Mcp.Server();
+            McpProperties.Server server = new McpProperties.Server();
             server.setName("secured");
             server.setTransport("streamable-http");
             server.setUrl("http://127.0.0.1:" + httpServer.getAddress().getPort() + "/mcp");

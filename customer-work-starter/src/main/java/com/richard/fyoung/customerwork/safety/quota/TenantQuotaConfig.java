@@ -10,6 +10,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.QuotaProperties;
 
 /**
  * 租户配额装配：Store 按 {@code store-mode} 选实现，Guard 按 {@code enabled} 决定是否真的拦。
@@ -26,7 +27,7 @@ public class TenantQuotaConfig {
     @ConditionalOnMissingBean
     public TenantQuotaStore tenantQuotaStore(CustomerWorkProperties properties,
                                              ObjectProvider<TenantQuotaMapper> mapperProvider) {
-        CustomerWorkProperties.Quota cfg = properties.getQuota();
+        QuotaProperties cfg = properties.getQuota();
         if (!MODE_JDBC.equalsIgnoreCase(cfg.getStoreMode())) {
             return new InMemoryTenantQuotaStore();
         }

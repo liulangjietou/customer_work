@@ -10,6 +10,8 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.richard.fyoung.customerwork.infra.config.properties.McpProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 
 /**
  * 运行时配置热应用器（消费端热更新的落地单元）。
@@ -64,7 +66,7 @@ public class RuntimeConfigApplier {
         try {
             validate(dto);
             // 先在临时配置上构建新链（可能抛错：厂商不支持 / 密钥缺失等），成功后才提交
-            CustomerWorkProperties.Model staged = stageModelCfg(dto, primaryApiKey, fallbackApiKey);
+            ModelProperties staged = stageModelCfg(dto, primaryApiKey, fallbackApiKey);
             Model newChain = modelConfig.buildChain(staged);
 
             // ---- 提交阶段：以下步骤均为不抛错的赋值/替换，保证全有或全无 ----
@@ -100,10 +102,10 @@ public class RuntimeConfigApplier {
     }
 
     /** 用当前配置打底、以 DTO 覆盖，产出一份用于构建新链的临时模型配置（不改动 properties）。 */
-    private CustomerWorkProperties.Model stageModelCfg(CustomerWorkRuntimeConfig dto,
+    private ModelProperties stageModelCfg(CustomerWorkRuntimeConfig dto,
                                                        String primaryApiKey, String fallbackApiKey) {
-        CustomerWorkProperties.Model base = properties.getModel();
-        CustomerWorkProperties.Model staged = new CustomerWorkProperties.Model();
+        ModelProperties base = properties.getModel();
+        ModelProperties staged = new ModelProperties();
         // 打底：先复制当前生效值，DTO 未提供的字段沿用现状
         copyModelCfg(base, staged);
 
@@ -129,7 +131,7 @@ public class RuntimeConfigApplier {
 
         // 兜底模型
         CustomerWorkRuntimeConfig.Fallback fb = dto.getFallback();
-        CustomerWorkProperties.Model.Fallback target = staged.getFallback();
+        ModelProperties.Fallback target = staged.getFallback();
         if (fb != null && fb.isEnabled()) {
             target.setEnabled(true);
             target.setProvider(fb.getProvider());
@@ -142,7 +144,7 @@ public class RuntimeConfigApplier {
 
         // 重试
         CustomerWorkRuntimeConfig.Retry rt = dto.getRetry();
-        CustomerWorkProperties.Model.Retry retry = staged.getRetry();
+        ModelProperties.Retry retry = staged.getRetry();
         if (rt != null && rt.isEnabled()) {
             retry.setEnabled(true);
             retry.setMaxAttempts(rt.getMaxAttempts());
@@ -154,7 +156,7 @@ public class RuntimeConfigApplier {
     }
 
     /** 复制模型链构建相关字段（scalar + fallback/retry 内部字段），不复制 costControl 等无关项。 */
-    private void copyModelCfg(CustomerWorkProperties.Model from, CustomerWorkProperties.Model to) {
+    private void copyModelCfg(ModelProperties from, ModelProperties to) {
         to.setProvider(from.getProvider());
         to.setApiKey(from.getApiKey());
         to.setName(from.getName());
@@ -179,15 +181,15 @@ public class RuntimeConfigApplier {
     /** 回写 MCP 服务列表：空列表表示清空接入（enabled=false）。 */
     private void applyMcp(CustomerWorkRuntimeConfig dto) {
         List<CustomerWorkRuntimeConfig.McpServer> servers = dto.getMcpServers();
-        CustomerWorkProperties.Mcp mcp = properties.getMcp();
+        McpProperties mcp = properties.getMcp();
         if (CollectionUtils.isEmpty(servers)) {
             mcp.setEnabled(false);
             mcp.setServers(new ArrayList<>());
             return;
         }
-        List<CustomerWorkProperties.Mcp.Server> mapped = new ArrayList<>();
+        List<McpProperties.Server> mapped = new ArrayList<>();
         for (CustomerWorkRuntimeConfig.McpServer s : servers) {
-            CustomerWorkProperties.Mcp.Server server = new CustomerWorkProperties.Mcp.Server();
+            McpProperties.Server server = new McpProperties.Server();
             server.setName(s.getName());
             server.setUrl(s.getUrl());
             server.setTransport(StringUtils.hasText(s.getTransport()) ? s.getTransport() : "sse");

@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.util.StringUtils;
+import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
 
 /**
  * app-server 侧 Nacos 服务注册装配（挂在 Nacos 总开关上）。
@@ -28,7 +29,7 @@ public class NacosServiceRegistrarConfig {
             CustomerWorkProperties properties,
             @Value("${spring.application.name:}") String applicationName,
             @Value("${server.port:8080}") int serverPort) {
-        CustomerWorkProperties.Nacos cfg = properties.getNacos();
+        NacosProperties cfg = properties.getNacos();
         NacosRegistration registration = NacosRegistration.builder()
             .serverAddr(cfg.getServerAddr())
             .namespace(cfg.getNamespace())

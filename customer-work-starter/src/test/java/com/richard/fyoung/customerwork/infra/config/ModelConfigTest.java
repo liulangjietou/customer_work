@@ -21,6 +21,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 
 /**
  * 模型层进阶单测：多厂商模型构建（离线）+ {@code buildChain} 组装出的模型链语义
@@ -34,7 +35,7 @@ class ModelConfigTest {
 
     private final ModelConfig modelConfig = new ModelConfig();
 
-    private CustomerWorkProperties.Model modelCfg(String provider) {
+    private ModelProperties modelCfg(String provider) {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getModel().setProvider(provider);
         props.getModel().setApiKey("sk-test");
@@ -53,7 +54,7 @@ class ModelConfigTest {
 
         @Override
         Model buildByProvider(String provider, String name, String apiKey, String baseUrl,
-                              CustomerWorkProperties.Model cfg) {
+                              ModelProperties cfg) {
             return "ollama".equals(provider) ? fallback : primary;
         }
     }
@@ -66,7 +67,7 @@ class ModelConfigTest {
     void buildByProvider_shouldBuildBundledVendors() {
         // DashScope 与 OpenAI 的依赖随聚合包提供，可离线构建；
         // anthropic/gemini/ollama 需各自厂商 SDK（运行时按需引入），此处不实例化。
-        CustomerWorkProperties.Model cfg = modelCfg("dashscope");
+        ModelProperties cfg = modelCfg("dashscope");
         assertInstanceOf(DashScopeChatModel.class,
             modelConfig.buildByProvider("dashscope", "qwen-max", "sk", "", cfg));
         assertInstanceOf(OpenAIChatModel.class,
@@ -77,7 +78,7 @@ class ModelConfigTest {
     void buildChain_shouldReturnPrimaryOnly_whenFallbackAndRetryDisabled() {
         Model primary = mock(Model.class);
         when(primary.getModelName()).thenReturn("primary");
-        CustomerWorkProperties.Model cfg = modelCfg("dashscope");
+        ModelProperties cfg = modelCfg("dashscope");
 
         Model chain = new StubbingModelConfig(primary, mock(Model.class)).buildChain(cfg);
 
@@ -96,7 +97,7 @@ class ModelConfigTest {
         ChatResponse resp = mock(ChatResponse.class);
         when(secondary.stream(any(), any(), any())).thenReturn(Flux.just(resp));
 
-        CustomerWorkProperties.Model cfg = modelCfg("dashscope");
+        ModelProperties cfg = modelCfg("dashscope");
         cfg.getFallback().setEnabled(true);
         Model chain = new StubbingModelConfig(primary, secondary).buildChain(cfg);
 
@@ -117,7 +118,7 @@ class ModelConfigTest {
         when(secondary.stream(any(), any(), any()))
             .thenReturn(Flux.error(new RuntimeException("fallback down")));
 
-        CustomerWorkProperties.Model cfg = modelCfg("dashscope");
+        ModelProperties cfg = modelCfg("dashscope");
         cfg.getFallback().setEnabled(true);
         Model chain = new StubbingModelConfig(primary, secondary).buildChain(cfg);
 
@@ -136,7 +137,7 @@ class ModelConfigTest {
         when(primary.stream(any(), any(), any()))
             .thenReturn(Flux.concat(Flux.just(first), Flux.error(new RuntimeException("mid-stream failure"))));
 
-        CustomerWorkProperties.Model cfg = modelCfg("dashscope");
+        ModelProperties cfg = modelCfg("dashscope");
         cfg.getFallback().setEnabled(true);
         Model chain = new StubbingModelConfig(primary, secondary).buildChain(cfg);
 
@@ -154,7 +155,7 @@ class ModelConfigTest {
         Model primary = mock(Model.class);
         when(primary.getModelName()).thenReturn("primary");
 
-        CustomerWorkProperties.Model cfg = modelCfg("dashscope");
+        ModelProperties cfg = modelCfg("dashscope");
         cfg.getRetry().setEnabled(true);
         Model chain = new StubbingModelConfig(primary, mock(Model.class)).buildChain(cfg);
 

@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import com.richard.fyoung.customerwork.infra.config.properties.UserAuthProperties;
 
 /**
  * 头像存储服务单测：扩展名/大小校验、成功落盘、超限中断清理半成品。
@@ -32,7 +33,7 @@ class AvatarStorageServiceTest {
 
     private AvatarStorageService service(Path dir, long maxBytes) {
         CustomerWorkProperties properties = new CustomerWorkProperties();
-        CustomerWorkProperties.UserAuth.Avatar avatar = properties.getUserAuth().getAvatar();
+        UserAuthProperties.Avatar avatar = properties.getUserAuth().getAvatar();
         avatar.setDirectory(dir.toString());
         avatar.setMaxSizeBytes(maxBytes);
         avatar.setUrlPrefix("/api/avatars/");

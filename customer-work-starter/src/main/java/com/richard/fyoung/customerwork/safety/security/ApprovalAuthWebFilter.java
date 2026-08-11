@@ -12,6 +12,7 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 import java.util.regex.Pattern;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 
 /**
  * 审批操作员身份鉴权过滤器（把关退款审批 approve/deny 的身份来源）。
@@ -44,7 +45,7 @@ public class ApprovalAuthWebFilter implements WebFilter {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        CustomerWorkProperties.Security.ApprovalAuth cfg = properties.getSecurity().getApprovalAuth();
+        SecurityProperties.ApprovalAuth cfg = properties.getSecurity().getApprovalAuth();
         if (!cfg.isEnabled() || !isGuarded(exchange)) {
             return chain.filter(exchange);
         }

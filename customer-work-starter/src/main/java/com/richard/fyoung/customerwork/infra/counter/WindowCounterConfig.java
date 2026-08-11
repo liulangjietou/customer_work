@@ -8,6 +8,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.richard.fyoung.customerwork.infra.config.properties.DistributedProperties;
 
 /**
  * 窗口计数器装配：按 {@code customer-work.distributed.counter-mode} 选实现。
@@ -26,7 +27,7 @@ public class WindowCounterConfig {
     @ConditionalOnMissingBean
     public WindowCounter windowCounter(CustomerWorkProperties properties,
                                        ObjectProvider<RedissonClient> redissonProvider) {
-        CustomerWorkProperties.Distributed cfg = properties.getDistributed();
+        DistributedProperties cfg = properties.getDistributed();
         InMemoryWindowCounter inMemory = new InMemoryWindowCounter();
         if (!MODE_REDIS.equalsIgnoreCase(cfg.getCounterMode())) {
             return inMemory;

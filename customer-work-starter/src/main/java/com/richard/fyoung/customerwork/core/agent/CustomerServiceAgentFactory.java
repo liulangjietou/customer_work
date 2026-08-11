@@ -36,6 +36,7 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import com.richard.fyoung.customerwork.infra.config.properties.SkillProperties;
 
 /**
  * 客服 Agent 工厂（对应 ③主 Agent 与 ④子 Agent 执行层）。
@@ -250,7 +251,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             if (skillBox != null) {
                 builder.skillBox(skillBox);
                 // 代码执行技能：2.0 由 Builder 内置开关承接（替代 1.x 的 skillBox.codeExecution() 流式构建）
-                CustomerWorkProperties.Skill skillCfg = properties.getSkill();
+                SkillProperties skillCfg = properties.getSkill();
                 if (skillCfg.isCodeExecutionEnabled()) {
                     builder.skillCodeExecutionEnabled(true)
                         .skillWorkDir(Path.of(skillCfg.getCodeExecutionWorkDir()));
@@ -264,7 +265,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
     /** 加载技能并注册进 SkillBox（支持 classpath 只读 / filesystem 可写自进化）。 */
     private SkillBox buildSkillBox(Toolkit toolkit) {
-        CustomerWorkProperties.Skill cfg = properties.getSkill();
+        SkillProperties cfg = properties.getSkill();
         try {
             List<AgentSkill> skills;
             if ("filesystem".equalsIgnoreCase(cfg.getRepository())) {

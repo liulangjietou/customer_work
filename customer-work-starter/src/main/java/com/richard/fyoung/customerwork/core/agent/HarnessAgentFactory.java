@@ -23,6 +23,7 @@ import org.springframework.util.StringUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import com.richard.fyoung.customerwork.infra.config.properties.HarnessProperties;
 
 /**
  * Harness Agent 工厂（AgentScope 2.0 新增能力的统一装配入口）。
@@ -77,7 +78,7 @@ public class HarnessAgentFactory {
      * @param sessionId 会话标识（可含租户前缀如 tenantA:conv-1）
      */
     public HarnessAgent createHarnessAgent(String sessionId) {
-        CustomerWorkProperties.Harness cfg = properties.getHarness();
+        HarnessProperties cfg = properties.getHarness();
         ReActAgent inner = agentFactory.createAgent(sessionId);
 
         HarnessAgent.Builder builder = HarnessAgent.Builder.fromAgent(inner)
@@ -161,7 +162,7 @@ public class HarnessAgentFactory {
     }
 
     /** 按配置选择并应用沙箱文件系统（none 时不隔离）。 */
-    private void applySandbox(HarnessAgent.Builder builder, CustomerWorkProperties.Harness.Sandbox cfg) {
+    private void applySandbox(HarnessAgent.Builder builder, HarnessProperties.Sandbox cfg) {
         String mode = cfg.getMode() == null ? "none" : cfg.getMode().trim().toLowerCase();
         IsolationScope scope = resolveIsolation(cfg.getIsolationScope());
         switch (mode) {

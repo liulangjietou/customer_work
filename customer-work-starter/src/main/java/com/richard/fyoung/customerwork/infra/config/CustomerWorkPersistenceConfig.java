@@ -22,6 +22,8 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
 import javax.sql.DataSource;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.TenantProperties;
 
 /**
  * customer-work 业务持久层的独立 MyBatis-Plus 环境（全部显式命名 + Ref 绑定，不依赖 MyBatis 自动装配）。
@@ -63,7 +65,7 @@ public class CustomerWorkPersistenceConfig {
     @Bean(DATA_SOURCE_BEAN)
     @ConditionalOnMissingBean(name = DATA_SOURCE_BEAN)
     public DataSource customerWorkDataSource(CustomerWorkProperties properties) {
-        CustomerWorkProperties.Session.Mysql m = properties.getSession().getMysql();
+        SessionProperties.Mysql m = properties.getSession().getMysql();
         HikariDataSource ds = new HikariDataSource();
         ds.setJdbcUrl(m.resolveJdbcUrl());
         ds.setUsername(m.getUsername());
@@ -123,7 +125,7 @@ public class CustomerWorkPersistenceConfig {
      */
     private MybatisPlusInterceptor buildInterceptor(CustomerWorkProperties properties) {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
-        CustomerWorkProperties.Tenant tenant = properties.getTenant();
+        TenantProperties tenant = properties.getTenant();
         if (tenant.isEnabled()) {
             interceptor.addInnerInterceptor(
                 TenantInterceptors.build(tenant.getColumnName(), tenant.getIgnoredTables()));

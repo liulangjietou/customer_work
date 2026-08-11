@@ -18,6 +18,7 @@ import reactor.core.publisher.Flux;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.richard.fyoung.customerwork.infra.config.properties.ProtocolProperties;
 
 /**
  * AG-UI 协议服务（对应「交互协议 · AG-UI」）。
@@ -67,7 +68,7 @@ public class AguiService {
     }
 
     private AguiAdapterConfig adapterConfig() {
-        CustomerWorkProperties.Protocol.Agui cfg = properties.getProtocol().getAgui();
+        ProtocolProperties.Agui cfg = properties.getProtocol().getAgui();
         return AguiAdapterConfig.builder()
             .enableReasoning(cfg.isEnableReasoning())
             .emitToolCallArgs(cfg.isEmitToolCallArgs())

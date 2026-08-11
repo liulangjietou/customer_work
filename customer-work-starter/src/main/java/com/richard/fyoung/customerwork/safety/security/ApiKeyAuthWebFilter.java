@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 
 /**
  * API Key 鉴权过滤器（接入层安全 + 服务端接入方的租户身份来源）。
@@ -40,7 +41,7 @@ public class ApiKeyAuthWebFilter implements WebFilter {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        CustomerWorkProperties.Security.Auth auth = properties.getSecurity().getAuth();
+        SecurityProperties.Auth auth = properties.getSecurity().getAuth();
         if (!auth.isEnabled() || isExempt(exchange.getRequest().getPath().value())) {
             return chain.filter(exchange);
         }
@@ -60,7 +61,7 @@ public class ApiKeyAuthWebFilter implements WebFilter {
      * 避免按"命中位置 / 前缀匹配长度"产生可被测量的耗时差异（时序侧信道）。
      * 加入租户映射后同样逐条走完——命中后仅记录结果，不提前结束循环。</p>
      */
-    private String resolveTenant(String provided, CustomerWorkProperties.Security.Auth auth) {
+    private String resolveTenant(String provided, SecurityProperties.Auth auth) {
         if (provided == null) {
             return null;
         }

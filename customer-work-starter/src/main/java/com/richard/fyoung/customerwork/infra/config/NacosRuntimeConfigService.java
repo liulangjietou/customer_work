@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.Properties;
 import java.util.concurrent.Executor;
+import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
 
 /**
  * Nacos 配置中心驱动的「运行时配置」热更新服务（消费端，对应 admin 8082 下发链路）。
@@ -47,7 +48,7 @@ public class NacosRuntimeConfigService {
 
     @PostConstruct
     public void start() {
-        CustomerWorkProperties.Nacos cfg = properties.getNacos();
+        NacosProperties cfg = properties.getNacos();
         if (!cfg.isRuntimeConfigEnabled()) {
             return;
         }
@@ -75,7 +76,7 @@ public class NacosRuntimeConfigService {
      * 只听一个的话，要么灰度更新收不到，要么灰度撤销后回不到全量版本。</p>
      */
     void bind(ConfigService configService) throws NacosException {
-        CustomerWorkProperties.Nacos cfg = properties.getNacos();
+        NacosProperties cfg = properties.getNacos();
         String mainDataId = cfg.getRuntimeConfigDataId();
         String tenantDataId = tenantDataId(cfg);
 
@@ -125,7 +126,7 @@ public class NacosRuntimeConfigService {
     }
 
     /** 灰度撤销后回到全量版本。读取失败只记日志——保持当前配置总比清空好。 */
-    private void restoreFromMainDataId(ConfigService configService, CustomerWorkProperties.Nacos cfg) {
+    private void restoreFromMainDataId(ConfigService configService, NacosProperties cfg) {
         try {
             String main = configService.getConfig(cfg.getRuntimeConfigDataId(), cfg.getGroup(), cfg.getTimeoutMs());
             if (StringUtils.hasText(main)) {
@@ -139,7 +140,7 @@ public class NacosRuntimeConfigService {
     }
 
     /** 租户专属 dataId；未配租户码时返回 null（单租户部署不受灰度机制影响）。 */
-    private String tenantDataId(CustomerWorkProperties.Nacos cfg) {
+    private String tenantDataId(NacosProperties cfg) {
         String tenantCode = cfg.getTenantCode();
         if (tenantCode == null || tenantCode.isBlank()) {
             return null;
@@ -197,7 +198,7 @@ public class NacosRuntimeConfigService {
         return local;
     }
 
-    private Properties buildProperties(CustomerWorkProperties.Nacos cfg) {
+    private Properties buildProperties(NacosProperties cfg) {
         Properties props = new Properties();
         props.put(PropertyKeyConst.SERVER_ADDR, cfg.getServerAddr());
         if (StringUtils.hasText(cfg.getNamespace())) {

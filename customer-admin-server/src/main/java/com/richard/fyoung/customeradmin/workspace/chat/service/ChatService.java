@@ -50,6 +50,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
 
 /**
  * 工作区对话服务：从 {@link AgentInstanceCache} 取（或惰性构建）智能体实例，流式对话。
@@ -109,7 +110,7 @@ public class ChatService {
         ContentGuardProperties guardProperties = contentGuardPropertiesProvider == null
             ? null : contentGuardPropertiesProvider.getIfAvailable();
         this.outboundSafeReply = guardProperties == null || !StringUtils.hasText(guardProperties.getSafeReply())
-            ? CustomerWorkProperties.SensitiveWord.DEFAULT_OUTBOUND_SAFE_REPLY
+            ? SensitiveWordProperties.DEFAULT_OUTBOUND_SAFE_REPLY
             : guardProperties.getSafeReply();
     }
 

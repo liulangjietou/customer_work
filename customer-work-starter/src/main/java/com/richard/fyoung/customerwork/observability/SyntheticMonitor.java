@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
+import com.richard.fyoung.customerwork.infra.config.properties.SyntheticMonitorProperties;
 
 /**
  * 合成监控 / 主动探活（在用户上报前发现故障）。
@@ -33,7 +34,7 @@ public class SyntheticMonitor {
     private static final String M_PROBE = "customerwork.synthetic.probe";
 
     private final CustomerServiceService customerService;
-    private final CustomerWorkProperties.SyntheticMonitor cfg;
+    private final SyntheticMonitorProperties cfg;
     /** 可为 null：未接入 Micrometer 时仅日志。 */
     private final MeterRegistry meterRegistry;
 

@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+import com.richard.fyoung.customerwork.infra.config.properties.ObservabilityProperties;
 
 /**
  * Studio 可视化调试装配（对应「可观测 · Studio」）。
@@ -28,7 +29,7 @@ public class StudioConfigurer {
     }
 
     public boolean isEnabled() {
-        CustomerWorkProperties.Observability.Studio s = properties.getObservability().getStudio();
+        ObservabilityProperties.Studio s = properties.getObservability().getStudio();
         return s.isEnabled() && StringUtils.hasText(s.getUrl());
     }
 
@@ -37,7 +38,7 @@ public class StudioConfigurer {
         if (!isEnabled()) {
             return;
         }
-        CustomerWorkProperties.Observability.Studio s = properties.getObservability().getStudio();
+        ObservabilityProperties.Studio s = properties.getObservability().getStudio();
         try {
             StudioManager.init()
                 .studioUrl(s.getUrl())

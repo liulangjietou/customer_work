@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 
 /**
  * Redis 会话持久化测试（对接本机 Redis：localhost:6379，密码 123456）。
@@ -29,7 +30,7 @@ class RedisSessionPersistenceTest {
         assumeTrue(SessionPersistenceTestSupport.reachable(HOST, PORT),
             "Redis 不可达（" + HOST + ":" + PORT + "），跳过该测试");
 
-        CustomerWorkProperties.Session cfg = new CustomerWorkProperties().getSession();
+        SessionProperties cfg = new CustomerWorkProperties().getSession();
         cfg.setMode("redis");
         cfg.getRedis().setHost(HOST);
         cfg.getRedis().setPort(PORT);

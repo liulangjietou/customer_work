@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 间接提示词注入防护参数：{@code admin.injection-guard.*}。
@@ -35,9 +36,9 @@ public class AdminInjectionGuardProperties {
 
     /**
      * 检测正则列表（不区分大小写）。默认复用 starter 的
-     * {@link CustomerWorkProperties.Hooks.PromptGuard#DEFAULT_INJECTION_PATTERNS}——
+     * {@link HooksProperties.PromptGuard#DEFAULT_INJECTION_PATTERNS}——
      * 直接注入与间接注入的攻击话术本质相同，差别只在载荷从哪条路进来，没有必要维护两套词表。
      */
     private List<String> injectionPatterns =
-        new ArrayList<>(CustomerWorkProperties.Hooks.PromptGuard.DEFAULT_INJECTION_PATTERNS);
+        new ArrayList<>(HooksProperties.PromptGuard.DEFAULT_INJECTION_PATTERNS);
 }

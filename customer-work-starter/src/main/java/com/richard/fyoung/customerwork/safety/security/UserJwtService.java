@@ -15,6 +15,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Date;
 import java.util.Optional;
+import com.richard.fyoung.customerwork.infra.config.properties.UserAuthProperties;
 
 /**
  * 用户登录态 JWT 签发与校验（HS256，自签自验，无状态）。
@@ -45,7 +46,7 @@ public class UserJwtService {
     private final long expireMs;
 
     public UserJwtService(CustomerWorkProperties properties) {
-        CustomerWorkProperties.UserAuth userAuth = properties.getUserAuth();
+        UserAuthProperties userAuth = properties.getUserAuth();
         String secret = userAuth.getJwtSecret();
         if (secret == null || secret.isBlank()) {
             secret = DEV_DEFAULT_SECRET;

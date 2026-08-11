@@ -15,6 +15,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.function.Function;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 自我纠错中间件（2.0 Middleware，承接 1.x SelfCorrectionHook，「可靠性 · 业务约束兜底」）。
@@ -36,7 +37,7 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
     private final List<String> paymentKeywords;
 
     public SelfCorrectionMiddleware(CustomerWorkProperties properties) {
-        CustomerWorkProperties.Hooks.SelfCorrection cfg = properties.getHooks().getSelfCorrection();
+        HooksProperties.SelfCorrection cfg = properties.getHooks().getSelfCorrection();
         this.enabled = cfg.isEnabled();
         this.paymentKeywords = cfg.getPaymentKeywords();
     }

@@ -16,6 +16,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.function.Function;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 动态生成参数中间件（2.0 Middleware，承接 1.x DynamicGenerateOptionsHook，「按意图自适应推理」）。
@@ -38,7 +39,7 @@ public class DynamicOptionsMiddleware implements MiddlewareBase {
     private final String preciseReasoningEffort;
 
     public DynamicOptionsMiddleware(CustomerWorkProperties properties) {
-        CustomerWorkProperties.Hooks.DynamicOptions cfg = properties.getHooks().getDynamicOptions();
+        HooksProperties.DynamicOptions cfg = properties.getHooks().getDynamicOptions();
         this.enabled = cfg.isEnabled();
         this.preciseKeywords = cfg.getPreciseKeywords();
         this.preciseTemperature = cfg.getPreciseTemperature();
