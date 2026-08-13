@@ -34,7 +34,8 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1198** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
+- 测试基线：starter **1201** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
+  （MinIO 未起时 starter 显示 1198——3 个 MinIO 门控用例会跳过）
   （2026-08-13 B5 存储落库批次：三层记忆 L2/L3 与 Harness 分层记忆默认落 MySQL、技能库支持
   `skill.repository=mysql`、文件一律走 MinIO。末尾"彻底去掉本地盘"那一步删实现连带删了它们的专属
   用例，故条数比中途峰值（starter 1217 / admin 754 / app 83）低，属预期。
