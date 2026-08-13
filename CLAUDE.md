@@ -52,9 +52,11 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   PR #68 修掉多构造器缺 @Autowired 后 `ApplicationContextTest` 已恢复，不再需要额外排除）。
   门控集成测试依赖：PaddleOCR serving(localhost:8868)、MinIO(localhost:9000)，不可达自动跳过。
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
-- **本机跑全量要排除 2 个环境门控测试**（当前 MinIO 的 9000 被 kb-rag 栈占、Redis 无密码，共 4 个用例必挂；
-  starter 一挂会让下游模块整体 skip，`-fae` 也救不回来）：
-  `-Dtest='!MinioAttachmentFileStorageIntegrationTest,!RedisSessionPersistenceTest' -DfailIfNoSpecifiedTests=false`
+- **本机跑全量的环境门控**：Redis 无密码时 `RedisSessionPersistenceTest` 必挂，需排除
+  （starter 一挂会让下游模块整体 skip，`-fae` 也救不回来）：
+  `-Dtest='!RedisSessionPersistenceTest' -DfailIfNoSpecifiedTests=false`
+  MinIO 起在 9000 时 `MinioAttachmentFileStorageIntegrationTest` 可以正常跑，不必再排除；
+  9000 被别的栈（如 kb-rag）占用时才需要连它一起排除。
 - 模块 A 改完给模块 B 用时，先 `mvn install -Dmaven.test.skip=true -Djacoco.skip=true`（B 解析的是本地仓库的 jar，
   不是 A 的工作树）；根 pom 变更后父 POM 也要 `mvn -N install`，否则 B 读到旧版本号。
 
@@ -109,7 +111,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   灰度以租户为单元：写 `<主dataId>-tenant-<租户码>`，客服端配 `nacos.tenant-code` 后先读它、读不到回落主 dataId——
   客服端不理解"灰度"，只是多试一个更具体的 dataId。灰度撤销时 Nacos 回调空串，**必须主动回读主 dataId**，
   否则实例会一直停在灰度版本上。
-- **存储落库（B5 起）**：默认不落盘——结构化信息进 MySQL、二进制进 MinIO，磁盘只作降级兜底。
+- **存储落库（B5 起）**：项目内**不落盘**——结构化信息进 MySQL、文件进 MinIO，本地盘实现已全部删除。
   四条约定：
   ① **三层记忆全部落库**：L2 `cw_long_term_memory`、L3 `cw_fact_log`、Harness 分层记忆 `cw_harness_memory`，
   三处 `store-mode` 默认 `jdbc`；改这些默认值必须同步改 `PersistenceJdbcCondition.JDBC_BY_DEFAULT_KEYS`——
