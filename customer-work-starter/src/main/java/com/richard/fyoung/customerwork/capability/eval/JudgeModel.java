@@ -9,13 +9,10 @@ import io.agentscope.core.message.Msg;
  * 使 {@link QualityEvalRunner} 不直接依赖框架 {@code Model} 的流式 API，
  * 便于离线 mock 与适配不同模型实现。</p>
  *
- * <pre>{@code
- * // 生产适配示例：把 Model 适配为 JudgeModel
- * JudgeModel judge = msg -> model.stream(List.of(msg), List.of(), null)
- *     .reduce(ChatResponse::merge)
- *     .map(resp -> resp.toMsg())
- *     .block();
- * }</pre>
+ * <p>默认实现由 {@link EvalConfig#judgeModel} 提供（复用主对话模型）；
+ * 要换用更强的模型做严格评测，声明自己的 {@code JudgeModel} Bean 覆盖即可。
+ * 适配写法见该方法——按 2.0 GA 的 {@code Model} 契约收集流式分片再拼接文本，
+ * 与项目内其他同步调模型处（{@code TicketClassifier} 等）保持同一手法。</p>
  * @author owlzhangfq@gmail.com
  */
 @FunctionalInterface

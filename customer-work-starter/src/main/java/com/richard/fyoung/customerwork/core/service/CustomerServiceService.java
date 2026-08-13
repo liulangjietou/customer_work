@@ -8,6 +8,8 @@ import com.richard.fyoung.customerwork.core.dto.IntentResult;
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.infra.lock.InMemorySessionLock;
 import com.richard.fyoung.customerwork.infra.lock.SessionLock;
+import com.richard.fyoung.customerwork.capability.csat.CsatService;
+import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheService;
 import com.richard.fyoung.customerwork.safety.quota.InMemoryTenantQuotaStore;
 import com.richard.fyoung.customerwork.safety.quota.QuotaDecision;
 import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
@@ -27,6 +29,7 @@ import org.springframework.stereotype.Service;
 import java.util.concurrent.atomic.AtomicBoolean;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.Collections;
@@ -75,6 +78,8 @@ public class CustomerServiceService {
     private static final String M_INTENT_CLASSIFY_ERRORS = "customerwork.intent.classify.errors";
     /** 对话兜底计数指标名（chat 调用失败走 FALLBACK_REPLY）。 */
     private static final String M_CHAT_FALLBACK = "customerwork.chat.fallback";
+    /** 语义缓存命中计数指标名：省下的每一次模型调用都记在这里，用来算这个功能到底值不值。 */
+    private static final String M_CACHE_HIT = "customerwork.chat.cache.hit";
 
     private final CustomerServiceAgentFactory agentFactory;
     private final SessionStateManager sessionStateManager;
@@ -122,6 +127,17 @@ public class CustomerServiceService {
      */
     private final ConcurrentHashMap<String, Long> sessionActivity = new ConcurrentHashMap<>();
 
+    /**
+     * 语义缓存；未装配（或未开启）时为 {@code null}，主链路走原路径、零额外开销。
+     *
+     * <p>命中时省掉的是整条链路——Agent 装配、知识检索、模型调用全都不用发生，
+     * 这也是它比任何别的省钱手段都直接的原因。</p>
+     */
+    private SemanticCacheService semanticCache;
+
+    /** 会话级满意度；未装配时为 {@code null}，会话结束不发邀请。 */
+    private CsatService csatService;
+
     /** Spring 注入构造：MeterRegistry 经 ObjectProvider 可选注入（actuator 缺席时降级为无指标）。 */
     @Autowired
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
@@ -130,10 +146,14 @@ public class CustomerServiceService {
                                   ObjectProvider<MeterRegistry> meterRegistryProvider,
                                   ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
                                   ObjectProvider<SessionLock> sessionLockProvider,
-                                  ObjectProvider<TenantQuotaGuard> quotaGuardProvider) {
+                                  ObjectProvider<TenantQuotaGuard> quotaGuardProvider,
+                                  ObjectProvider<SemanticCacheService> semanticCacheProvider,
+                                  ObjectProvider<CsatService> csatServiceProvider) {
         this(agentFactory, sessionStateManager, properties);
         this.meterRegistry = meterRegistryProvider.getIfAvailable();
         this.sensitiveWordFilter = sensitiveWordFilterProvider.getIfAvailable();
+        this.semanticCache = semanticCacheProvider == null ? null : semanticCacheProvider.getIfAvailable();
+        this.csatService = csatServiceProvider == null ? null : csatServiceProvider.getIfAvailable();
         SessionLock provided = sessionLockProvider == null ? null : sessionLockProvider.getIfAvailable();
         if (provided != null) {
             this.sessionLock = provided;
@@ -222,6 +242,23 @@ public class CustomerServiceService {
             return Mono.just(QUOTA_EXCEEDED_REPLY);
         }
         touchSession(sessionId);
+        if (semanticCache == null) {
+            return invokeAgent(sessionId, userText);
+        }
+        // 查缓存要调 Embedding（阻塞 HTTP），必须挪到弹性线程池，不能占用调用线程
+        return Mono.fromCallable(() -> semanticCache.lookup(sessionId, userText))
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMap(cached -> cached
+                .map(answer -> {
+                    incr(M_CACHE_HIT);
+                    return Mono.just(answer);
+                })
+                .orElseGet(() -> invokeAgent(sessionId, userText)
+                    .doOnNext(reply -> cacheReply(sessionId, userText, reply))));
+    }
+
+    /** 真正走一遍 Agent（装配 + 知识检索 + 模型调用）——缓存未命中时才发生。 */
+    private Mono<String> invokeAgent(String sessionId, String userText) {
         ReActAgent agent = resolveAgent(sessionId);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
@@ -236,6 +273,21 @@ public class CustomerServiceService {
                     return Mono.just(FALLBACK_REPLY);
                 })
         );
+    }
+
+    /**
+     * 异步写缓存。
+     *
+     * <p>写入同样要调 Embedding，放在响应链里会把这次的延迟凭空加上去——而用户此刻已经拿到答案了。
+     * 兜底回复不写缓存：把"服务开小差"缓存起来，后面每个问到同类问题的人都会收到它。</p>
+     */
+    private void cacheReply(String sessionId, String userText, String reply) {
+        if (FALLBACK_REPLY.equals(reply) || QUOTA_EXCEEDED_REPLY.equals(reply)) {
+            return;
+        }
+        Mono.fromRunnable(() -> semanticCache.put(sessionId, userText, reply))
+            .subscribeOn(Schedulers.boundedElastic())
+            .subscribe();
     }
 
     /**
@@ -394,7 +446,29 @@ public class CustomerServiceService {
             log.error("[session {}] delete persisted state failed (ignored), code={}", sessionId,
                 "SESSION_DELETE_ERROR", e);
         }
+        inviteCsat(sessionId);
         log.info("[session {}] ended and cleaned", sessionId);
+    }
+
+    /**
+     * 会话结束时发出满意度邀请。
+     *
+     * <p>邀请必须在这里发而不是等用户想起来评：不记邀请就<b>算不出回收率</b>，
+     * 而回收率低时那个漂亮的 CSAT 只代表愿意评价的一小撮人。{@code invite} 自身幂等，
+     * 会话被多次结束（超时清理 + 用户主动关闭）不会把分母灌水。</p>
+     *
+     * <p>失败只记日志：满意度是旁路指标，不该让会话清理因此中断。</p>
+     */
+    private void inviteCsat(String sessionId) {
+        if (csatService == null || !properties.getCsat().isInviteOnSessionEnd()) {
+            return;
+        }
+        try {
+            csatService.invite(sessionId);
+        } catch (Exception e) {
+            log.error("[session {}] csat invite failed (ignored), code={}", sessionId,
+                "CSAT_INVITE_ERROR", e);
+        }
     }
 
     /**

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.capability.csat.mapper.CsatSurveyMapper">
+
+    <!-- 公共列。tenant_id 由 TenantLineInnerInterceptor 自动补，此处不列；
+         comment 是 MySQL 关键字，加反引号。 -->
+    <sql id="columns">
+        session_id, scope_id, score, `comment`, invited_at_ms, submitted_at_ms
+    </sql>
+
+    <!-- 邀请与评分共用一个写入口。invited_at_ms 不更新：那是"什么时候请人家评的"，
+         重复邀请不该刷新它，否则回收率的时间窗会漂。 -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.capability.csat.entity.CsatSurveyDO">
+        INSERT INTO cw_csat_survey (session_id, scope_id, score, `comment`, invited_at_ms, submitted_at_ms)
+        VALUES (#{sessionId}, #{scopeId}, #{score}, #{comment}, #{invitedAtMs}, #{submittedAtMs})
+        ON DUPLICATE KEY UPDATE
+            score = VALUES(score),
+            `comment` = VALUES(`comment`),
+            submitted_at_ms = VALUES(submitted_at_ms)
+    </insert>
+
+    <!-- 窗口以邀请时间为准：分母（邀请数）和分子（回收数）必须落在同一个口径里，
+         按提交时间筛会把"这周邀请、下周才评"的那批算进下周，两头都不对。 -->
+    <select id="selectByWindow" resultType="com.richard.fyoung.customerwork.capability.csat.entity.CsatSurveyDO">
+        SELECT <include refid="columns"/> FROM cw_csat_survey
+        WHERE scope_id = #{scopeId}
+          AND invited_at_ms &gt;= #{startMs}
+          AND invited_at_ms &lt; #{endMs}
+    </select>
+</mapper>

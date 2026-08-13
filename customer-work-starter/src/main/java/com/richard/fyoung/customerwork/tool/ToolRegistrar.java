@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapService;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.ComplaintBackend;
@@ -41,6 +43,14 @@ public class ToolRegistrar {
     /** 可空：未装配工单域时退化为仅 handoff 旧链路（HumanHandoffTools 二参构造）。 */
     private final TicketService ticketService;
 
+    /**
+     * 知识盲区分析；可空，未装配时知识工具行为与从前完全一致。
+     *
+     * <p>用 setter 而非构造参数：本类构造器已有 9 个参数，再塞一个可选依赖只会让下游手工装配更难写；
+     * 而它是纯旁路统计，缺席不影响任何工具的行为。</p>
+     */
+    private KnowledgeGapService knowledgeGapService;
+
     public ToolRegistrar(OrderBackend orderBackend,
                          AfterSalesBackend afterSalesBackend,
                          KnowledgeBackend knowledgeBackend,
@@ -59,6 +69,12 @@ public class ToolRegistrar {
         this.approvalService = approvalService;
         this.handoffService = handoffService;
         this.ticketService = ticketService;
+    }
+
+    /** 注入知识盲区分析（可选，Spring 装配时自动调用；未装配则保持 null）。 */
+    @Autowired(required = false)
+    public void setKnowledgeGapService(KnowledgeGapService knowledgeGapService) {
+        this.knowledgeGapService = knowledgeGapService;
     }
 
     /** 创建各业务域工具组并注册对应工具（无会话上下文：转人工工具不驱动工单域）。 */
@@ -80,7 +96,8 @@ public class ToolRegistrar {
         toolkit.createToolGroup(GROUP_COMPLAINT, "投诉工单：建单/查单", true);
         toolkit.createToolGroup(GROUP_HUMAN, "人工坐席转接与风险熔断", true);
 
-        toolkit.registration().tool(new KnowledgeBaseTools(knowledgeBackend)).group(GROUP_KNOWLEDGE).apply();
+        toolkit.registration().tool(new KnowledgeBaseTools(knowledgeBackend, knowledgeGapService))
+            .group(GROUP_KNOWLEDGE).apply();
         toolkit.registration().tool(new OrderTools(orderBackend)).group(GROUP_ORDER).apply();
         toolkit.registration().tool(new AfterSalesTools(afterSalesBackend, approvalService)).group(GROUP_AFTER_SALES).apply();
         toolkit.registration().tool(new ProductTools(productBackend)).group(GROUP_PRESALE).apply();

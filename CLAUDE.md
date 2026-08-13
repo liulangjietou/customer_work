@@ -34,14 +34,19 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1201** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
-  （MinIO 未起时 starter 显示 1198——3 个 MinIO 门控用例会跳过）
-  （2026-08-13 B5 存储落库批次：三层记忆 L2/L3 与 Harness 分层记忆默认落 MySQL、技能库支持
+- 测试基线：starter **1314** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
+  （B6 那次实测：starter 1314 / 5 skip、admin 747 / 1 skip，MinIO 当时未起；
+  MinIO 起着时那 3 个门控用例会跑起来，总数不变、skip 相应减少）
+  （2026-08-13 B6 运营闭环批次：评测链路打通 + badcase 回流 + 语义缓存 + 模型分级路由 +
+  提示词版本归因 + CSAT + 知识盲区 + 死信队列，starter +113，admin 侧只加薄壳与跨库门面故不变。
+  **改本批次内尚未合并的 V52/V53 会让本机 Flyway 校验失败**（checksum 变了），
+  清掉 `flyway_schema_history` 里对应版本记录与它插入的菜单行即可重跑，不是代码问题。
+  上一版基线 2026-08-13 B5 存储落库批次：三层记忆 L2/L3 与 Harness 分层记忆默认落 MySQL、技能库支持
   `skill.repository=mysql`、文件一律走 MinIO。末尾"彻底去掉本地盘"那一步删实现连带删了它们的专属
   用例，故条数比中途峰值（starter 1217 / admin 754 / app 83）低，属预期。
   上一版基线 2026-08-11 PR #90 starter 治理：包域化 + 按域装配拆分 + 配置类拆分，starter +3 装配门控测试；
   更早基线 2026-08-10 B1+B2+B3+B4：B1 租户地基 starter +14 / admin +11，B2 水平扩展 starter +15，B3 配额计费 starter +12，B4 配置版本化 admin +9。
-  **上面的基线数是本机起了 MySQL 跑出来的**（starter 仅 6 skip / admin 仅 3 skip）；MySQL 不可达时
+  **上面的基线数是本机起了 MySQL 跑出来的**（B6 实测 starter 5 skip / admin 1 skip）；MySQL 不可达时
   starter 会跳到 113 skip、admin 少跑门控用例显示 721，属正常。本机没有 MySQL 时可用
   `docker run -d --name cw-mysql-test -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=agent_scope_customer_work -p 3306:3306 mysql:8.0`
   起一个，再 `CREATE DATABASE customer_admin`（admin 的 Flyway 只建表不建库，缺库会让 2 个用例
@@ -128,6 +133,26 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   代码执行沙箱、XXL-JOB 执行器日志、VibeCoding workspace）统一走 `RuntimeWorkDir` 落
   `${java.io.tmpdir}/customer-work/`——里面全是可随时重建的派生物，放项目目录会让人误以为要备份。
   新增这类目录时用 `RuntimeWorkDir.of(...)`，不要再写字面量路径。
+- **运营闭环（B6 起）**：把"造好没接线"的能力接上入口，八条链路的关键约定：
+  ① **评测跑在客服端、后台只做触发与展示**：评的必须是线上真实那一套（同一 orchestrator/提示词/模型链），
+  admin 侧实现一遍等价逻辑等于评了个副本。admin 经跨库门面**直接复用 starter 的 Store 与领域对象**
+  （`MybatisEvalRunStore`/`BadcaseService`），不重写解析与判定——两边对同一行数据算出不同结果是最难查的 bug；
+  ② **取"上一次"一律按写入顺序（自增 `seq`）而非 `created_at_ms`**：评测是纯内存计算，
+  连跑两次会落在同一毫秒，按时间戳取基线会让第二次找不到上一版，CI 里必踩（`cw_fact_log` 早有此约定）；
+  ③ **语义缓存默认关闭且只缓存通用问答**：无差别缓存会把 A 用户的订单信息返回给 B。三道闸门收口在
+  `SemanticCacheService#cacheable` 一处——意图白名单（默认仅 `consult`）+ 个人标识过滤（6 位以上连续数字）
+  + 双层隔离。放宽前先回答"两个不同用户问同一句话，答案是否必然相同"；
+  ④ **分级路由能力取交集**：`TieredRoutingModel` 的结构化输出支持性与上下文窗口按两档中较弱的报，
+  路由是动态的，按主模型报会让走经济档那次当场崩；判定保守（只有单轮且简短才降级），
+  判错的代价因此是"没省到钱"而非"答得差"；
+  ⑤ **提示词版本用内容指纹而非外部版本号**：Nacos 下发的是内容、没有随行版本号。指纹让
+  `EvalComparison#promptChanged` 成为归因支点——指标掉了先看这一位，没变就别再对着提示词逐字看；
+  ⑥ **CSAT 必须邀请与回收分开记**：只记评分算不出回收率，而回收率低时那个漂亮的分数只代表
+  愿意评价的一小撮人。满意按 4 分及以上算（行业口径），不是平均分；
+  ⑦ **知识未命中文案是接口契约**（`KnowledgeBackend.NO_HIT_REPLY` + `isMiss`）：盲区埋点据此判定，
+  此前两个实现各自硬编码同一句话，改文案会让统计静默失效；
+  ⑧ **死信重试耗尽转 ABANDONED 而不删**，退避必须指数（下游多半在重启，密集重试是自制雪崩）；
+  没注册 handler 的类型跳过且**不累计次数**——累计会让它悄悄耗尽，掩盖"这类压根没人处理"。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。

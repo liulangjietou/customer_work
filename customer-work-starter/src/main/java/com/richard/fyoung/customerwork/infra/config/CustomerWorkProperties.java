@@ -126,6 +126,27 @@ public class CustomerWorkProperties {
     /** 用户反馈（消息级点赞/点踩）存储配置。 */
     private final FeedbackProperties feedback = new FeedbackProperties();
 
+    /** 评测（意图/回复质量）运行记录与 Judge 配置。 */
+    private final EvalProperties eval = new EvalProperties();
+
+    /** badcase 回流（负反馈/质检失败 → 人工筛选 → 知识库/评测用例）配置。 */
+    private final BadcaseProperties badcase = new BadcaseProperties();
+
+    /** 语义缓存（问题向量相似即复用上次答案）配置；默认关闭，开启前先读其类注释的安全约束。 */
+    private final SemanticCacheProperties semanticCache = new SemanticCacheProperties();
+
+    /** 提示词版本追踪配置（效果归因的底座：指标掉了是不是提示词改的）。 */
+    private final PromptVersionProperties promptVersion = new PromptVersionProperties();
+
+    /** 会话级满意度（CSAT）配置：客服行业最标准的运营指标，与消息级点赞/点踩互补。 */
+    private final CsatProperties csat = new CsatProperties();
+
+    /** 知识盲区分析配置：统计"哪些问题反复查不到知识"，直接告诉运营该补什么。 */
+    private final KnowledgeGapProperties knowledgeGap = new KnowledgeGapProperties();
+
+    /** 死信队列配置：工具调用/通知发送失败后的兜底重投，量上来之后决定会不会丢单。 */
+    private final DeadLetterProperties deadLetter = new DeadLetterProperties();
+
     /** 数据字典（少量枚举型键值数据，免建表）存储配置。 */
     private final DictProperties dict = new DictProperties();
 

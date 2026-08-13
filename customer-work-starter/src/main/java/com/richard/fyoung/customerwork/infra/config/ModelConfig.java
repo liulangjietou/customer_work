@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.infra.config;
 
 import com.richard.fyoung.customerwork.core.model.failover.FailoverModel;
 import com.richard.fyoung.customerwork.core.model.failover.ModelCircuitBreakerRegistry;
+import com.richard.fyoung.customerwork.core.model.tiered.ModelTierPolicy;
+import com.richard.fyoung.customerwork.core.model.tiered.TieredRoutingModel;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import org.slf4j.Logger;
@@ -82,7 +84,28 @@ public class ModelConfig {
                 retry.getMaxAttempts(), retry.getBackoffMs());
             model = new ResilientChatModel(model, retry.getMaxAttempts(), retry.getBackoffMs());
         }
+
+        // 分级路由包在最外层：此时 model 已是"主备容错 + 重试"的完整链，直接作为标准档，
+        // 因此走标准档的请求行为与开启本功能之前完全一致；经济档只是单个模型，
+        // 它的容错由 TieredRoutingModel 自己的"首分片前失败即回退标准档"承担
+        ModelProperties.TieredRouting tiered = cfg.getTieredRouting();
+        if (tiered.isEnabled()) {
+            Model economy = buildByProvider(tiered.getProvider(), tiered.getName(),
+                resolveKey(tiered.getProvider(), tiered.getApiKey()), tiered.getBaseUrl(), cfg);
+            log.info("已启用模型分级路由：经济档 {}({}) / 标准档 {}",
+                tiered.getProvider(), tiered.getName(), model.getModelName());
+            model = new TieredRoutingModel(economy, model,
+                new ModelTierPolicy(tiered.getMaxMessagesForEconomy(),
+                    tiered.getMaxUserTextLengthForEconomy()));
+        }
         return model;
+    }
+
+    /** DashScope 的 Key 支持环境变量兜底，其余厂商按配置原样取（与 {@link #buildPrimary} 同一口径）。 */
+    private String resolveKey(String provider, String configuredKey) {
+        return "dashscope".equalsIgnoreCase(provider)
+            ? ChatModelFactory.resolveDashScopeKey(configuredKey)
+            : configuredKey;
     }
 
     private Model buildPrimary(ModelProperties cfg) {

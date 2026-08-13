@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.capability.eval.mapper.EvalRunMapper">
+
+    <!-- 公共列。tenant_id 由 TenantLineInnerInterceptor 自动补进 WHERE，此处不列。 -->
+    <sql id="columns">
+        run_id, `seq`, eval_type, `total`, `passed`, primary_metric, secondary_metric,
+        failed_case_ids_json, failures_json, metrics_json,
+        trigger_source, dataset_size, prompt_fingerprint, remark, created_at_ms
+    </sql>
+
+    <!-- 某类型最近 limit 次运行，按写入顺序倒序（最新在前）。
+         不按 created_at_ms 排：评测跑得很快，同毫秒内的多次运行用时间戳分不出先后。 -->
+    <select id="selectRecent" resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalRunDO">
+        SELECT <include refid="columns"/> FROM cw_eval_run
+        WHERE eval_type = #{evalType}
+        ORDER BY `seq` DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 对比基线：本次运行之前最近的一次同类型运行。
+         以自增 seq 定位而非时间戳——同毫秒下 created_at_ms < now 不成立，
+         会让"连着跑两次"的第二次找不到基线（CI 里必踩）。 -->
+    <select id="selectBaseline" resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalRunDO">
+        SELECT <include refid="columns"/> FROM cw_eval_run
+        WHERE eval_type = #{evalType}
+          AND `seq` &lt; (SELECT `seq` FROM cw_eval_run WHERE run_id = #{runId})
+        ORDER BY `seq` DESC
+        LIMIT 1
+    </select>
+</mapper>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapMapper">
+
+    <sql id="columns">
+        id, question_hash, question, scope_id, miss_count, first_seen_at_ms, last_seen_at_ms
+    </sql>
+
+    <!-- 计数 upsert：这是计数表不是流水表——未命中的绝对量很大，逐条落库既贵又淹没重点。
+         first_seen_at_ms 不更新（那是"这个问题什么时候开始查不到的"），
+         miss_count 用 miss_count+1 而非 VALUES(miss_count)，否则并发下会互相覆盖成 1。 -->
+    <insert id="upsertMiss" parameterType="com.richard.fyoung.customerwork.capability.knowledgegap.entity.KnowledgeGapDO">
+        INSERT INTO cw_knowledge_gap (question_hash, question, scope_id, miss_count,
+            first_seen_at_ms, last_seen_at_ms)
+        VALUES (#{questionHash}, #{question}, #{scopeId}, 1, #{firstSeenAtMs}, #{lastSeenAtMs})
+        ON DUPLICATE KEY UPDATE
+            miss_count = miss_count + 1,
+            last_seen_at_ms = VALUES(last_seen_at_ms)
+    </insert>
+
+    <!-- 同次数按最近出现时间降序：一样常问的，先补最近还在问的 -->
+    <select id="selectTopGaps" resultType="com.richard.fyoung.customerwork.capability.knowledgegap.entity.KnowledgeGapDO">
+        SELECT <include refid="columns"/> FROM cw_knowledge_gap
+        WHERE scope_id = #{scopeId}
+        ORDER BY miss_count DESC, last_seen_at_ms DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectByScope" resultType="com.richard.fyoung.customerwork.capability.knowledgegap.entity.KnowledgeGapDO">
+        SELECT <include refid="columns"/> FROM cw_knowledge_gap
+        WHERE scope_id = #{scopeId}
+    </select>
+</mapper>
