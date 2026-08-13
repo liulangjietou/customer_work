@@ -73,6 +73,22 @@ public class MinioAttachmentFileStorage implements AttachmentFileStorage {
     }
 
     @Override
+    public void storeAt(String storagePath, byte[] data) throws IOException {
+        try {
+            ensureBucket();
+            client.putObject(PutObjectArgs.builder()
+                .bucket(bucket)
+                .object(storagePath)
+                .contentType(OBJECT_CONTENT_TYPE)
+                .stream(new ByteArrayInputStream(data), data.length, -1)
+                .build());
+        } catch (Exception e) {
+            throw new IOException("failed to put object to minio, bucket=" + bucket + ", key=" + storagePath, e);
+        }
+        log.info("object stored to minio, bucket={}, key={}, size={}", bucket, storagePath, data.length);
+    }
+
+    @Override
     public byte[] read(String storagePath) throws IOException {
         // 读路径不做 ensureBucket：读不到对象（桶/对象不存在）本身即"不存在"，getObject 抛异常包成 IOException。
         try (GetObjectResponse resp = client.getObject(GetObjectArgs.builder()

@@ -29,6 +29,11 @@ public class InMemoryTestFileStorage implements AttachmentFileStorage {
     }
 
     @Override
+    public void storeAt(String storagePath, byte[] data) {
+        objects.put(storagePath, data);
+    }
+
+    @Override
     public byte[] read(String storagePath) throws IOException {
         byte[] data = objects.get(storagePath);
         if (data == null) {

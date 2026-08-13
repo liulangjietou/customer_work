@@ -14,9 +14,12 @@ import java.nio.file.Paths;
  *   <li>XXL-JOB 执行器日志：调度中心 SDK 要求一个本地日志目录。</li>
  * </ul>
  *
- * <p>这些目录里的内容<b>都是可随时重建的派生物</b>（技能包每次启动全量重建、沙箱产出物随会话销毁、
- * 执行器日志本就是日志），没有权威数据，因此放系统临时目录而不是项目目录——项目目录里出现
- * {@code ./data/} 会让人误以为那是需要备份的数据。</p>
+ * <p>放系统临时目录而不是项目目录：项目目录里出现 {@code ./data/} 会让人误以为那是需要备份的数据。</p>
+ *
+ * <p><b>注意：这里的内容不全是可丢弃的。</b>技能物化目录（每次启动从 MySQL 全量重建）与执行器日志确实
+ * 可随时重建；但 <b>VibeCoding 会话工作区里是用户生成的代码</b>，磁盘上只有一份。那部分的权威副本由
+ * {@code SessionWorkspaceStorage} 存进 MinIO（整树 tar.gz，含 {@code .git}），本目录只是它的工作副本。
+ * 今后往这里放新目录时，先判断内容是不是真的可重建——不可重建的必须自带权威存储。</p>
  * @author owlzhangfq@gmail.com
  */
 public final class RuntimeWorkDir {
