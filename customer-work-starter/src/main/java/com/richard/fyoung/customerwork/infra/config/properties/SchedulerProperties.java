@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.config.properties;
 
 import lombok.Data;
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -36,7 +37,7 @@ public class SchedulerProperties {
         /** 执行器通信 Token（需与调度中心一致；留空表示不校验）。 */
         private String accessToken;
         /** 执行器运行日志存储路径。 */
-        private String logPath = "./data/xxl-job/jobhandler";
+        private String logPath = RuntimeWorkDir.of("xxl-job/jobhandler");
     }
 
     /** 固定任务定义：任务名即 XXL-JOB JobHandler 名，需与控制台"任务管理"里的 JobHandler 一致。 */

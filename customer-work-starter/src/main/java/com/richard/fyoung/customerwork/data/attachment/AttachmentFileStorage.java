@@ -32,4 +32,15 @@ public interface AttachmentFileStorage {
      * @throws IOException 文件不存在或读取失败（本地盘读不到 / 对象不存在，语义与 store 失败一致，交上层翻译）
      */
     byte[] read(String storagePath) throws IOException;
+
+    /**
+     * 按相对 key 删除文件。
+     *
+     * <p>对象/文件不存在时<b>静默返回</b>（幂等）——调用方多为"删记录顺带清文件"的清理链路，
+     * 文件早已不在不该算失败。真实的删除失败（权限、网络）仍抛异常交调用方决定是否兜底。</p>
+     *
+     * @param storagePath {@link #store} 返回并落 DB 的相对 key
+     * @throws IOException 删除失败（不含"本就不存在"）
+     */
+    void delete(String storagePath) throws IOException;
 }

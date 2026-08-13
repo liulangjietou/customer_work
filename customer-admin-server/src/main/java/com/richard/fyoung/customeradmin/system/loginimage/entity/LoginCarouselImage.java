@@ -11,7 +11,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 登录页轮播背景图。原图落盘 {@code ./data/login-images}（沿用菜单图标同一套本地磁盘约定），
+ * 登录页轮播背景图。原图存 MinIO（走 AttachmentFileStorage SPI，项目内不落盘），
  * {@code imageUrl} 存对外访问的相对 URL（{@code /api/login-images/xxx.jpg}），
  * 登录页免鉴权实时拉取启用中的图片列表。
  * @author owlzhangfq@gmail.com

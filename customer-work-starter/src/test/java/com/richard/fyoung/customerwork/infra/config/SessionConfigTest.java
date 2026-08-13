@@ -3,7 +3,6 @@ package com.richard.fyoung.customerwork.infra.config;
 import com.zaxxer.hikari.HikariDataSource;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.state.InMemoryAgentStateStore;
-import io.agentscope.core.state.JsonFileAgentStateStore;
 import org.junit.jupiter.api.Test;
 import redis.clients.jedis.JedisPool;
 
@@ -40,12 +39,10 @@ class SessionConfigTest {
         assertInstanceOf(InMemoryAgentStateStore.class, config.buildStateStore(sessionCfg("unknown-mode")));
     }
 
+    /** 文件落盘形态已下线（会话状态是真实数据，不该只存在于某一台机器的磁盘上）。 */
     @Test
-    void buildStateStore_json_shouldReturnJsonFileStore() {
-        SessionProperties cfg = sessionCfg("json");
-        cfg.setDirectory("target/test-sessions");
-        AgentStateStore store = config.buildStateStore(cfg);
-        assertInstanceOf(JsonFileAgentStateStore.class, store);
+    void buildStateStore_json_shouldFallbackToInMemory_sinceFileModeRemoved() {
+        assertInstanceOf(InMemoryAgentStateStore.class, config.buildStateStore(sessionCfg("json")));
     }
 
     @Test

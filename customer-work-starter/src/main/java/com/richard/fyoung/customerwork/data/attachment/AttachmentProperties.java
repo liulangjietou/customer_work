@@ -22,8 +22,6 @@ public class AttachmentProperties {
     private boolean enabled = true;
     /** 存储模式：memory（进程内）| jdbc（数据库持久化）。默认 jdbc——业务数据一律真实库。 */
     private String storeMode = "jdbc";
-    /** 落盘根目录（{@code storage.type=local} 时生效，形如 {@code ./data/attachments}）。 */
-    private String baseDir = "./data/attachments";
     /** 单文件大小上限（MB）。 */
     private int maxFileSizeMb = 10;
     /** 解析文本最大字符数，超长截断并在文末追加提示。 */
@@ -31,30 +29,27 @@ public class AttachmentProperties {
     /** 追加的文本类扩展名（内置清单见 TextAttachmentParser#TEXT_EXTENSIONS，此处配置小众类型无需改代码）。 */
     private List<String> extraTextExtensions = new ArrayList<>();
 
-    /** 原始文件存储后端配置（local 本地磁盘 / minio 对象存储）。 */
+    /** 原始文件存储配置（MinIO 对象存储，唯一后端）。 */
     private final Storage storage = new Storage();
 
     /** 视觉 OCR 配置。 */
     private final Ocr ocr = new Ocr();
 
     /**
-     * 原始文件存储后端选型。
+     * 原始文件存储配置。
      *
-     * <p>两种后端二选一（{@link #type}）：<br>
-     * - {@code local}（默认，代码级默认不改变既有行为）：本地磁盘，用顶层 {@link AttachmentProperties#baseDir}。<br>
-     * - {@code minio}：MinIO 对象存储，{@link #minio} 生效。落 DB 的 storage_path（相对 key）语义两种后端一致，
-     *   切换后端无需迁移 DB。选型逻辑收敛在 {@link AttachmentFileStorages}。</p>
+     * <p>只有 MinIO 一种后端——文件落本地盘在多副本部署下必然出错（A 机上传的文件 B 机读不到、
+     * 容器销毁即丢），故不提供"本地盘"选项，避免有人在不知情时踩进去。落 DB 的 storage_path
+     * 仍是相对 key，语义不变。构建逻辑收敛在 {@link AttachmentFileStorages}。</p>
      */
     @Data
     public static class Storage {
-        /** 存储后端类型：{@code local}（本地磁盘，默认）| {@code minio}（对象存储）。 */
-        private String type = "local";
-        /** MinIO 配置（type=minio 生效）。 */
+        /** MinIO 配置。 */
         private final Minio minio = new Minio();
     }
 
     /**
-     * MinIO 对象存储配置（type=minio 生效）。
+     * MinIO 对象存储配置。
      *
      * <p>bucket 惰性确保：应用启动不连 MinIO，首次上传附件时才检查 / 按需创建 bucket，
      * 故 MinIO 不可达不影响启动与不触发上传的测试上下文。</p>

@@ -14,11 +14,11 @@ class SkillContentPublishersTest {
     private final SkillStorageSettings settings = new SkillStorageSettings();
 
     @Test
-    void create_shouldReturnLocalPublisher_forLocalTarget() {
-        SkillContentPublisher publisher = SkillContentPublishers.create(SkillStorageTarget.LOCAL, settings);
+    void create_shouldReturnMinioPublisher_forMinioTarget() {
+        SkillContentPublisher publisher = SkillContentPublishers.create(SkillStorageTarget.MINIO, settings);
 
-        assertInstanceOf(LocalWorkspaceSkillPublisher.class, publisher);
-        assertEquals(SkillStorageTarget.LOCAL, publisher.target());
+        assertInstanceOf(MinioSkillPublisher.class, publisher);
+        assertEquals(SkillStorageTarget.MINIO, publisher.target());
     }
 
     @Test

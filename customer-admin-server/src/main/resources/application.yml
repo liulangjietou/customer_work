@@ -190,11 +190,17 @@ admin:
       # shell 命令，风险面更大，默认开更保守）。
       enabled: ${ADMIN_SANDBOX_GUARD_ENABLED:true}
   skill:
-    # Skill 保存/上传时把 SKILL.md 正文发布到勾选的存储目标（local/nacos/sftp）；运行时消费仍从数据库读。
+    # Skill 保存/上传时把 SKILL.md 正文发布到勾选的存储目标（minio/nacos/sftp）；运行时消费仍从数据库读。
     storage:
-      local:
-        # 本地 workspace 目标（默认且始终启用），实际写入 {base-dir}/{skillCode}/SKILL.md。
-        base-dir: ${ADMIN_SKILL_STORAGE_LOCAL_BASE_DIR:./data/admin-workspace/skills}
+      minio:
+        # MinIO 对象存储目标（默认且始终启用），实际 key = {prefix}{skillCode}/SKILL.md。
+        # 取代已下线的本地 workspace 目标：技能包写单机磁盘在多副本下各副本内容不一致。
+        endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+        access-key: ${MINIO_ACCESS_KEY:minioadmin}
+        secret-key: ${MINIO_SECRET_KEY:minioadmin}
+        bucket: ${ADMIN_SKILL_BUCKET:customer-admin-skills}
+        prefix: ${ADMIN_SKILL_PREFIX:skills/}
+        auto-create-bucket: ${ADMIN_SKILL_AUTO_CREATE_BUCKET:true}
       nacos:
         # Nacos 配置中心目标：默认关闭，enabled=true 才注册 Publisher。dataId={data-id-prefix}{skillCode}.md。
         enabled: ${ADMIN_SKILL_STORAGE_NACOS_ENABLED:false}
@@ -255,7 +261,6 @@ admin:
     max-chunk-chars: ${ADMIN_KNOWLEDGE_MAX_CHUNK_CHARS:1500}
     # 允许被索引的源码根白名单（源码路径必须落在其一之下，防越权读盘）。默认只允许 admin 工作区；
     # 需索引外部仓库源码时追加其绝对路径根，逗号分隔（YAML 列表）。
-    allowed-roots: ${ADMIN_KNOWLEDGE_ALLOWED_ROOTS:./data/admin-workspace}
   observability:
     otel:
       # OpenTelemetry 链路追踪（见 AdminOtelTracingConfig）：默认关闭，本地无 Collector 也能正常启动。
@@ -283,12 +288,9 @@ admin:
 # 顶层 customer-work.* 前缀（区别于上面 admin.customer-work.* 的坐席服务客户端配置），对应 AttachmentProperties。
 customer-work:
   attachment:
-    # 落盘根目录（storage.type=local 时生效）：独立 admin 专属目录，避免与 8080 侧附件目录混淆。
-    base-dir: ${ADMIN_ATTACHMENT_BASE_DIR:./data/admin-attachments}
-    # 原始文件存储后端：local（本地磁盘）| minio（对象存储）。本期用 MinIO，admin 独立 bucket。
+    # 原始文件存储：MinIO 对象存储（唯一后端，项目内不落盘），admin 独立 bucket。
     # bucket 惰性确保：应用启动不连 MinIO，首次上传才检查/建桶，故 @SpringBootTest 全上下文启动不触网。
     storage:
-      type: ${ADMIN_ATTACHMENT_STORAGE_TYPE:minio}
       minio:
         endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
         access-key: ${MINIO_ACCESS_KEY:minioadmin}

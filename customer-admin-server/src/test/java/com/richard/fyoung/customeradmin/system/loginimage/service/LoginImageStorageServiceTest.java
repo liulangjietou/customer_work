@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.system.loginimage.service;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
@@ -12,19 +14,32 @@ import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
- * {@link LoginImageStorageService} 校验单测：空文件/超大/非法扩展名/低分辨率全部在落盘前
- * fast fail（只测拒绝路径，不写磁盘）。低分辨率用例用内存生成的真实 PNG 验证 ImageIO 解码链路。
+ * {@link LoginImageStorageService} 校验单测：空文件/超大/非法扩展名/低分辨率全部在写入存储前
+ * fast fail（只测拒绝路径，存储用 mock，一个字节都不该写出去）。低分辨率用例用内存生成的真实 PNG
+ * 验证 ImageIO 解码链路。
  * @author owlzhangfq@gmail.com
  */
 class LoginImageStorageServiceTest {
 
+    private AttachmentFileStorage fileStorage;
     private LoginImageStorageService storageService;
 
     @BeforeEach
     void setUp() {
-        storageService = new LoginImageStorageService();
+        fileStorage = mock(AttachmentFileStorage.class);
+        storageService = new LoginImageStorageService(fileStorage);
+    }
+
+    /** 校验不通过时不该触达存储层——写出去再报错会留下永不被引用的垃圾对象。 */
+    @AfterEach
+    void tearDown() throws IOException {
+        verify(fileStorage, never()).store(any(), any(), any());
     }
 
     private byte[] pngBytes(int width, int height) throws IOException {

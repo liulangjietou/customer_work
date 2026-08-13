@@ -10,6 +10,7 @@ import com.richard.fyoung.customerwork.capability.handoff.HandoffStore;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
 import com.richard.fyoung.customerwork.capability.handoff.InMemoryHandoffStore;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
+import com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,7 +48,7 @@ class BusinessAnalyticsServiceTest {
         store.save(pendingOutsideWindow);
 
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(store), new HandoffService(), new FactLog(true, tempDir));
+            new PendingApprovalService(store), new HandoffService(), new InMemoryTestFactLog());
 
         BusinessAnalyticsReport report = svc.report(0L, 10_000L, null);
         ApprovalStats stats = report.approval();
@@ -67,7 +68,7 @@ class BusinessAnalyticsServiceTest {
         store.save(new ApprovalRequest("AP-1", ApprovalType.REFUND, "s1", "O1", "100", "r", 1000L));
 
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(store), new HandoffService(), new FactLog(true, tempDir));
+            new PendingApprovalService(store), new HandoffService(), new InMemoryTestFactLog());
 
         ApprovalStats stats = svc.report(0L, 10_000L, null).approval();
         assertEquals(0.0, stats.approvalRate(), 1e-9, "无已决策单时放行率应为 0.0（非 NaN）");
@@ -94,7 +95,7 @@ class BusinessAnalyticsServiceTest {
         store.save(pendingOutsideWindow);
 
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(), new HandoffService(store), new FactLog(true, tempDir));
+            new PendingApprovalService(), new HandoffService(store), new InMemoryTestFactLog());
 
         HandoffStats stats = svc.report(0L, 10_000L, null).handoff();
 
@@ -111,7 +112,7 @@ class BusinessAnalyticsServiceTest {
     @Test
     void qualityStats_withoutTenantId_shouldReturnEmptyPlaceholder(@TempDir Path tempDir) {
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(), new HandoffService(), new FactLog(true, tempDir));
+            new PendingApprovalService(), new HandoffService(), new InMemoryTestFactLog());
 
         QualityStats stats = svc.report(0L, 10_000L, null).quality();
         assertNull(stats.tenantId());
@@ -121,19 +122,16 @@ class BusinessAnalyticsServiceTest {
 
     @Test
     void qualityStats_shouldAggregateScoreAndSkipNonQualityFacts(@TempDir Path tempDir) throws Exception {
-        Path file = tempDir.resolve("tenantA.jsonl");
-        // 手工构造 JSONL：两条窗口内质检失败事实(score 60/80)、一条窗口外(应被过滤)、
+        // 两条窗口内质检失败事实(score 60/80)、一条窗口外(应被过滤)、
         // 一条非 JSON 的长期记忆纯文本事实(应被安全跳过，不影响聚合)
-        String lines = String.join(System.lineSeparator(),
-            "{\"ts\":1000,\"tenant\":\"tenantA\",\"fact\":\"{\\\"type\\\":\\\"quality-failure\\\",\\\"score\\\":60}\"}",
-            "{\"ts\":2000,\"tenant\":\"tenantA\",\"fact\":\"{\\\"type\\\":\\\"quality-failure\\\",\\\"score\\\":80}\"}",
-            "{\"ts\":100000,\"tenant\":\"tenantA\",\"fact\":\"{\\\"type\\\":\\\"quality-failure\\\",\\\"score\\\":40}\"}",
-            "{\"ts\":1500,\"tenant\":\"tenantA\",\"fact\":\"用户偏好深色主题（长期记忆纯文本事实，非 JSON）\"}"
-        ) + System.lineSeparator();
-        Files.writeString(file, lines, StandardCharsets.UTF_8, StandardOpenOption.CREATE);
+        InMemoryTestFactLog factLog = new InMemoryTestFactLog();
+        factLog.seed(1000L, "tenantA", "{\"type\":\"quality-failure\",\"score\":60}");
+        factLog.seed(2000L, "tenantA", "{\"type\":\"quality-failure\",\"score\":80}");
+        factLog.seed(100000L, "tenantA", "{\"type\":\"quality-failure\",\"score\":40}");
+        factLog.seed(1500L, "tenantA", "用户偏好深色主题（长期记忆纯文本事实，非 JSON）");
 
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(), new HandoffService(), new FactLog(true, tempDir));
+            new PendingApprovalService(), new HandoffService(), factLog);
 
         QualityStats stats = svc.report(0L, 10_000L, "tenantA").quality();
         assertEquals("tenantA", stats.tenantId());

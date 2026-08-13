@@ -36,8 +36,10 @@ import com.richard.fyoung.customerwork.infra.config.properties.TenantProperties;
  * 与宿主自己的 SqlSessionFactory / MapperScan 互不影响。</p>
  *
  * <p><b>激活条件（{@link PersistenceJdbcCondition}）：</b>任一业务域 {@code store-mode=jdbc} 或
- * {@code tool-backend.mode=jdbc} 时才装配；全 memory/mock 时本类整体不加载，宿主无需 MySQL 即可启动。
- * 数据源用 HikariCP 惰性连接（构造不建连），故装配本环境不等于启动即连库。</p>
+ * {@code tool-backend.mode=jdbc} 时才装配。三层记忆的 L2/L3（{@code memory.store-mode} /
+ * {@code fact-log.store-mode}）默认即 jdbc，故本环境默认装配；把这两个键连同其余域一起显式配成
+ * 非 jdbc，本类才整体不加载。数据源用 HikariCP 惰性连接（构造不建连），故装配本环境不等于启动即连库，
+ * 建表失败也只记 error（见 {@link SchemaInitializer}），MySQL 缺席不阻断宿主启动。</p>
  *
  * <p>{@code customerWorkDataSource} 用 {@code @ConditionalOnMissingBean(name)} 允许宿主以同名 Bean 覆盖
  * （复用宿主已有连接池）。建表与种子由 {@link SchemaInitializer} 统一负责，Mapper 只表达读写 SQL。</p>

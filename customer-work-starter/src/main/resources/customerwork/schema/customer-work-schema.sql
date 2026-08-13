@@ -555,3 +555,77 @@ CREATE TABLE IF NOT EXISTS `cw_tenant_quota` (
     UNIQUE KEY `uk_tenant_quota` (`tenant_id`, `period`),
     INDEX `idx_tenant_quota_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户配额（每租户每周期一条）';
+
+-- 长期记忆事实表（MybatisLongTermMemoryStore / cw_long_term_memory）：三层记忆体系的 L2，跨会话语义召回底座。
+-- 两个维度刻意分列：`tenant_id` 是 SaaS 租户（拦截器自动填充与过滤，见 TenantContext），
+-- `scope_id` 是记忆分区键（由 sessionId 前缀解析，见 TenantResolver），二者不是一回事，合并会串记忆。
+-- TEXT 列无法直接建唯一索引，去重靠 `scope_hash`（scope_id + fact 的 SHA-256）。
+CREATE TABLE IF NOT EXISTS `cw_long_term_memory` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `scope_id`       VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '记忆分区键（TenantResolver 由 sessionId 解析）',
+    `fact`           TEXT NOT NULL COMMENT '事实内容',
+    `scope_hash`     VARCHAR(64) NOT NULL COMMENT 'scope_id + fact 的 SHA-256（去重键，TEXT 无法建唯一索引）',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '写入时间戳（毫秒）',
+    UNIQUE KEY `uk_ltm_scope_fact` (`tenant_id`, `scope_hash`),
+    INDEX `idx_ltm_scope` (`tenant_id`, `scope_id`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='长期记忆事实（L2，跨会话语义召回）';
+
+-- 事实日志表（MybatisFactLog / cw_fact_log）：三层记忆体系的 L3，只追加、不可变、可审计的事实流水。
+-- 取代按租户分文件的 JSONL 落盘（FileFactLog）；append-only 语义靠"只 INSERT 不 UPDATE/DELETE"保证，
+-- 自增 `id` 即写入顺序（同毫秒内 ts 相同也不丢序）。
+CREATE TABLE IF NOT EXISTS `cw_fact_log` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键（即写入顺序）',
+    `scope_id`       VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '记忆分区键（TenantResolver 由 sessionId 解析）',
+    `fact`           TEXT NOT NULL COMMENT '事实内容',
+    `ts`             BIGINT NOT NULL COMMENT '事实时间戳（毫秒）',
+    INDEX `idx_fact_log_scope` (`tenant_id`, `scope_id`, `id`),
+    INDEX `idx_fact_log_ts` (`tenant_id`, `scope_id`, `ts`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='事实日志（L3，append-only 审计流水，永不改写）';
+
+-- Harness 分层记忆表（MybatisHarnessMemoryStore / cw_harness_memory）：HarnessAgent 的 MEMORY.md 权威副本。
+-- 框架只认 {workspace}/MEMORY.md 这个文件，故落盘不可避免；本表让"权威副本"落在 MySQL，
+-- workspace 里的那份退化为构建实例时水合出来、可随时重建的工作副本（同 admin 侧 ai_agent_memory 的手法）。
+-- scope_id 取 workspace 目录路径：starter 的 HarnessAgent 共用一个 workspace，记忆因而是 workspace 级；
+-- 配成按租户分目录时同一套代码自然按租户分行，无需改动。
+CREATE TABLE IF NOT EXISTS `cw_harness_memory` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `scope_id`       VARCHAR(512) NOT NULL COMMENT '记忆归属（workspace 目录路径）',
+    `scope_hash`     VARCHAR(64) NOT NULL COMMENT 'scope_id 的 SHA-256（唯一键用，规避 512 字节索引长度限制）',
+    `content`        MEDIUMTEXT NOT NULL COMMENT 'MEMORY.md 全文',
+    `updated_at_ms`  BIGINT NOT NULL COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_harness_memory_scope` (`tenant_id`, `scope_hash`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Harness 分层记忆（MEMORY.md 权威副本）';
+
+-- 技能库表（MysqlSkillRepository / cw_skill + cw_skill_file）：客服端从 MySQL 读技能包。
+-- 与 admin 库的 ai_skill / ai_skill_file 结构对齐但各自独立：admin 管的是后台配置的智能体技能，
+-- 这两张表是客服端运行时自己的技能库（跨库同步不在本批次范围内，由运维按需灌数据）。
+-- 读出来后仍要物化成磁盘目录再交 FileSystemSkillRepository——框架只认文件，这是框架约束不是选型。
+CREATE TABLE IF NOT EXISTS `cw_skill` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `skill_code`     VARCHAR(64) NOT NULL COMMENT '技能编码（= 落盘目录名）',
+    `skill_name`     VARCHAR(64) NOT NULL COMMENT '技能名称',
+    `content`        MEDIUMTEXT NOT NULL COMMENT 'SKILL.md 正文',
+    `description`    VARCHAR(255) COMMENT '技能描述',
+    `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_cw_skill_code` (`tenant_id`, `skill_code`),
+    INDEX `idx_cw_skill_tenant` (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='技能库（SKILL.md 正文）';
+
+-- 技能附属文件表：SKILL.md 里引用的 references/scripts/examples 等，不落盘技能就是残的。
+CREATE TABLE IF NOT EXISTS `cw_skill_file` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `skill_id`       BIGINT NOT NULL COMMENT '所属技能（cw_skill.id）',
+    `file_path`      VARCHAR(512) NOT NULL COMMENT '相对 SKILL.md 所在目录的路径，如 references/api.md',
+    `file_size`      BIGINT NOT NULL DEFAULT 0 COMMENT '文件字节数',
+    `content`        LONGBLOB COMMENT '文件内容（文本/二进制统一按字节存）',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    INDEX `idx_cw_skill_file_skill` (`skill_id`),
+    INDEX `idx_cw_skill_file_tenant` (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='技能附属文件';

@@ -28,13 +28,24 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 
 - **`-gs` 与 `-s` 必须同传**同一 settings 文件：Maven 会合并全局+用户两处 `activeProfiles`，只传 `-s` 时
   全局镜像 profile 仍生效，会挂死在内网 Nexus 上（无报错、0% CPU，极难判断）。
+- `scripts/settings-central-direct.xml` 里写死了 `<localRepository>/Users/zhangfuqiang/mavenjar</localRepository>`，
+  **换台机器会直接报 `Could not create local repository`**；此时改用仓库根的 `settings-central-direct.xml`
+  （同名但不指定 localRepository，走默认 `~/.m2/repository`）。
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1180** + admin-server **741** + app 78 + customer-channel 65 + gateway 1
-  （2026-08-11 PR #90 starter 治理：包域化 + 按域装配拆分 + 配置类拆分，starter +3 装配门控测试；
-  上一版基线 2026-08-10 B1+B2+B3+B4：B1 租户地基 starter +14 / admin +11，B2 水平扩展 starter +15，B3 配额计费 starter +12，B4 配置版本化 admin +9。
-  MySQL 不可达时 admin 会少跑 1 个门控用例，显示 721 属正常。
+- 测试基线：starter **1201** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
+  （MinIO 未起时 starter 显示 1198——3 个 MinIO 门控用例会跳过）
+  （2026-08-13 B5 存储落库批次：三层记忆 L2/L3 与 Harness 分层记忆默认落 MySQL、技能库支持
+  `skill.repository=mysql`、文件一律走 MinIO。末尾"彻底去掉本地盘"那一步删实现连带删了它们的专属
+  用例，故条数比中途峰值（starter 1217 / admin 754 / app 83）低，属预期。
+  上一版基线 2026-08-11 PR #90 starter 治理：包域化 + 按域装配拆分 + 配置类拆分，starter +3 装配门控测试；
+  更早基线 2026-08-10 B1+B2+B3+B4：B1 租户地基 starter +14 / admin +11，B2 水平扩展 starter +15，B3 配额计费 starter +12，B4 配置版本化 admin +9。
+  **上面的基线数是本机起了 MySQL 跑出来的**（starter 仅 6 skip / admin 仅 3 skip）；MySQL 不可达时
+  starter 会跳到 113 skip、admin 少跑门控用例显示 721，属正常。本机没有 MySQL 时可用
+  `docker run -d --name cw-mysql-test -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=agent_scope_customer_work -p 3306:3306 mysql:8.0`
+  起一个，再 `CREATE DATABASE customer_admin`（admin 的 Flyway 只建表不建库，缺库会让 2 个用例
+  直接报错而不是跳过——比 MySQL 完全不可达更难判断）。
   上一版基线是 2026-08-06 的 starter 1136 + admin 722；更早是 2026-08-05 的 starter 1054 + admin 711；
   admin-server 更早的实际基线已是 707，CLAUDE.md 曾记的
   701 系陈旧数字。starter 已按下方规则排除 2 个环境门控测试。此前 feature/sink-common-to-starter 把 admin
@@ -42,9 +53,11 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   PR #68 修掉多构造器缺 @Autowired 后 `ApplicationContextTest` 已恢复，不再需要额外排除）。
   门控集成测试依赖：PaddleOCR serving(localhost:8868)、MinIO(localhost:9000)，不可达自动跳过。
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
-- **本机跑全量要排除 2 个环境门控测试**（当前 MinIO 的 9000 被 kb-rag 栈占、Redis 无密码，共 4 个用例必挂；
-  starter 一挂会让下游模块整体 skip，`-fae` 也救不回来）：
-  `-Dtest='!MinioAttachmentFileStorageIntegrationTest,!RedisSessionPersistenceTest' -DfailIfNoSpecifiedTests=false`
+- **本机跑全量的环境门控**：Redis 无密码时 `RedisSessionPersistenceTest` 必挂，需排除
+  （starter 一挂会让下游模块整体 skip，`-fae` 也救不回来）：
+  `-Dtest='!RedisSessionPersistenceTest' -DfailIfNoSpecifiedTests=false`
+  MinIO 起在 9000 时 `MinioAttachmentFileStorageIntegrationTest` 可以正常跑，不必再排除；
+  9000 被别的栈（如 kb-rag）占用时才需要连它一起排除。
 - 模块 A 改完给模块 B 用时，先 `mvn install -Dmaven.test.skip=true -Djacoco.skip=true`（B 解析的是本地仓库的 jar，
   不是 A 的工作树）；根 pom 变更后父 POM 也要 `mvn -N install`，否则 B 读到旧版本号。
 
@@ -99,6 +112,22 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   灰度以租户为单元：写 `<主dataId>-tenant-<租户码>`，客服端配 `nacos.tenant-code` 后先读它、读不到回落主 dataId——
   客服端不理解"灰度"，只是多试一个更具体的 dataId。灰度撤销时 Nacos 回调空串，**必须主动回读主 dataId**，
   否则实例会一直停在灰度版本上。
+- **存储落库（B5 起）**：项目内**不落盘**——结构化信息进 MySQL、文件进 MinIO，本地盘实现已全部删除。
+  四条约定：
+  ① **三层记忆全部落库**：L2 `cw_long_term_memory`、L3 `cw_fact_log`、Harness 分层记忆 `cw_harness_memory`，
+  三处 `store-mode` 默认 `jdbc`；改这些默认值必须同步改 `PersistenceJdbcCondition.JDBC_BY_DEFAULT_KEYS`——
+  该条件读原始 `Environment`，**看不见 properties 类里的 Java 默认值**，漏登记会出现"Store 想用 jdbc
+  但持久化环境没激活、Mapper 取不到"的错配；
+  ② **框架只认文件的地方，MySQL 当权威、磁盘当可重建缓存**：`FileSystemSkillRepository` 与 Harness
+  的 `MEMORY.md` 都只读文件系统，故技能物化目录每次启动全量重建（先清空再写）、MEMORY.md 由
+  `HarnessMemorySyncService` 水合/回写。别把落盘本身当成"没改成 MySQL"；
+  ③ **文件一律走 `AttachmentFileStorage` SPI（只有 MinIO 一种实现）**，别再 `Files.write`；
+  本地盘实现已整个删除而非留作降级——留着只会让人在不知情时踩进去。MinIO 不可达时上传直接失败，
+  这是刻意的；
+  ④ **项目内不出现 `./data/`**：框架硬约束的工作目录（Harness workspace、技能物化目录、
+  代码执行沙箱、XXL-JOB 执行器日志、VibeCoding workspace）统一走 `RuntimeWorkDir` 落
+  `${java.io.tmpdir}/customer-work/`——里面全是可随时重建的派生物，放项目目录会让人误以为要备份。
+  新增这类目录时用 `RuntimeWorkDir.of(...)`，不要再写字面量路径。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。

@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.skill.storage;
 
-import com.richard.fyoung.customerwork.data.skill.storage.LocalWorkspaceSkillPublisher;
+import com.richard.fyoung.customerwork.data.skill.storage.MinioSkillPublisher;
 import com.richard.fyoung.customerwork.data.skill.storage.SkillContentPublisher;
 import com.richard.fyoung.customerwork.data.skill.storage.SkillStorageSettings;
 import com.richard.fyoung.customerwork.data.skill.storage.SkillStorageTarget;
@@ -20,7 +20,12 @@ class SkillStorageConfigTest {
     @Test
     void toSettings_shouldMapAllConnectionFields() {
         SkillStorageProperties properties = new SkillStorageProperties();
-        properties.getLocal().setBaseDir("/tmp/skills");
+        SkillStorageProperties.Minio minio = properties.getMinio();
+        minio.setEndpoint("http://minio-host:9000");
+        minio.setAccessKey("ak");
+        minio.setSecretKey("sk");
+        minio.setBucket("bkt");
+        minio.setPrefix("p/");
         SkillStorageProperties.Nacos nacos = properties.getNacos();
         nacos.setServerAddr("nacos-host:8848");
         nacos.setNamespace("ns-1");
@@ -40,7 +45,11 @@ class SkillStorageConfigTest {
 
         SkillStorageSettings settings = SkillStorageConfig.toSettings(properties);
 
-        assertEquals("/tmp/skills", settings.getLocal().getBaseDir());
+        assertEquals("http://minio-host:9000", settings.getMinio().getEndpoint());
+        assertEquals("ak", settings.getMinio().getAccessKey());
+        assertEquals("sk", settings.getMinio().getSecretKey());
+        assertEquals("bkt", settings.getMinio().getBucket());
+        assertEquals("p/", settings.getMinio().getPrefix());
         assertEquals("nacos-host:8848", settings.getNacos().getServerAddr());
         assertEquals("ns-1", settings.getNacos().getNamespace());
         assertEquals("G1", settings.getNacos().getGroup());
@@ -58,11 +67,11 @@ class SkillStorageConfigTest {
     }
 
     @Test
-    void localWorkspaceSkillPublisher_shouldBeLocalImplementation() {
+    void minioSkillPublisher_shouldBeMinioImplementation() {
         SkillContentPublisher publisher =
-            new SkillStorageConfig().localWorkspaceSkillPublisher(new SkillStorageProperties());
+            new SkillStorageConfig().minioSkillPublisher(new SkillStorageProperties());
 
-        assertInstanceOf(LocalWorkspaceSkillPublisher.class, publisher);
-        assertEquals(SkillStorageTarget.LOCAL, publisher.target());
+        assertInstanceOf(MinioSkillPublisher.class, publisher);
+        assertEquals(SkillStorageTarget.MINIO, publisher.target());
     }
 }

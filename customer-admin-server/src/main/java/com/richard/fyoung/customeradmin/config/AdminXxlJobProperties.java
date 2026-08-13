@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.config;
 
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -30,6 +31,6 @@ public class AdminXxlJobProperties {
     /** 执行器运行日志目录。不显式配置时 xxl-job-core 会退回内置默认值 {@code /data/applogs/...}，
      * 在容器根目录只读或无 root 权限的机器上会导致启动直接失败（FileSystemException），
      * 故这里给一个项目内可写的相对路径兜底，对齐 customer-work-starter 的
-     * {@code ./data/xxl-job/jobhandler} 约定，目录名带 admin 前缀避免与 starter 侧执行器混用同一路径。 */
-    private String logPath = "./data/xxl-job-admin/jobhandler";
+     * starter 侧同一套临时目录约定，目录名带 admin 前缀避免与 starter 侧执行器混用同一路径。 */
+    private String logPath = RuntimeWorkDir.of("xxl-job-admin/jobhandler");
 }

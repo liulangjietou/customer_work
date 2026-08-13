@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.capability.feedback;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
+import com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -18,17 +19,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class FeedbackServiceTest {
 
-    private FeedbackService newService(Path tempDir) {
+    /** 事实日志实例必须与服务共用一份——此前用落盘实现时靠同一个 tempDir 隐式共享，换内存替身后要显式传入。 */
+    private FeedbackService newService(FactLog factLog) {
         InMemoryFeedbackStore store = new InMemoryFeedbackStore();
-        FactLog factLog = new FactLog(true, tempDir);
         TenantResolver resolver = new TenantResolver(new CustomerWorkProperties());
         return new FeedbackService(store, factLog, resolver);
     }
 
     @Test
     void submitUp_shouldNotRecordFact(@TempDir Path tempDir) {
-        FeedbackService svc = newService(tempDir);
-        FactLog factLog = new FactLog(true, tempDir);
+        FactLog factLog = new InMemoryTestFactLog();
+        FeedbackService svc = newService(factLog);
 
         svc.submit("tenantA:sess-1", "MSG-1", FeedbackType.UP, null);
 
@@ -37,8 +38,8 @@ class FeedbackServiceTest {
 
     @Test
     void submitDown_shouldRecordFactForFlywheel(@TempDir Path tempDir) {
-        FeedbackService svc = newService(tempDir);
-        FactLog factLog = new FactLog(true, tempDir);
+        FactLog factLog = new InMemoryTestFactLog();
+        FeedbackService svc = newService(factLog);
 
         svc.submit("tenantA:sess-1", "MSG-1", FeedbackType.DOWN, "答非所问");
 
@@ -50,7 +51,7 @@ class FeedbackServiceTest {
 
     @Test
     void submit_shouldReturnAndPersistFeedback(@TempDir Path tempDir) {
-        FeedbackService svc = newService(tempDir);
+        FeedbackService svc = newService(new InMemoryTestFactLog());
 
         MessageFeedback fb = svc.submit("s1", "MSG-1", FeedbackType.UP, null);
         assertEquals(FeedbackType.UP, fb.type());
@@ -59,8 +60,8 @@ class FeedbackServiceTest {
 
     @Test
     void submit_repeatedly_shouldOverwriteAndOnlyRecordLatestDown(@TempDir Path tempDir) {
-        FeedbackService svc = newService(tempDir);
-        FactLog factLog = new FactLog(true, tempDir);
+        FactLog factLog = new InMemoryTestFactLog();
+        FeedbackService svc = newService(factLog);
 
         svc.submit("tenantA:sess-1", "MSG-1", FeedbackType.DOWN, "第一次");
         svc.submit("tenantA:sess-1", "MSG-1", FeedbackType.UP, null);   // 用户改主意了
@@ -71,7 +72,7 @@ class FeedbackServiceTest {
 
     @Test
     void findBySession_shouldDelegateToStore(@TempDir Path tempDir) {
-        FeedbackService svc = newService(tempDir);
+        FeedbackService svc = newService(new InMemoryTestFactLog());
         svc.submit("s1", "MSG-1", FeedbackType.UP, null);
         svc.submit("s1", "MSG-2", FeedbackType.DOWN, "x");
         svc.submit("s2", "MSG-3", FeedbackType.UP, null);

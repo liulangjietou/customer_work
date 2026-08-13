@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.core.memory.mapper.FactLogMapper">
+
+    <!-- 最近 limit 条，id 倒序（最新在前）；调用方反转后即写入顺序。
+         tenant_id 由 TenantLineInnerInterceptor 自动补进 WHERE，此处不列。 -->
+    <select id="selectRecent" resultType="com.richard.fyoung.customerwork.core.memory.entity.FactLogDO">
+        SELECT id, scope_id, fact, ts FROM cw_fact_log
+        WHERE scope_id = #{scopeId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

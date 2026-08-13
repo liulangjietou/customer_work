@@ -9,7 +9,10 @@ target/
 .DS_Store
 *.env
 .env
-data/
+# 必须锚定到仓库根：不写斜杠的 data/ 会匹配任意层级的 data 目录，
+# 把 Java 源码包 com/richard/fyoung/customerwork/data/** 下的新文件静默吞掉
+# （已跟踪的老文件不受影响，所以这个坑能潜伏很久才暴露）。
+/data/
 
 # 本地手绘配图（仅用于文章配图，按需本地生成，不入库）
 handdrawn/

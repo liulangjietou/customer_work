@@ -26,7 +26,9 @@ class XxlJobSchedulerConfigTest {
         assertFalse(cfg.isEnabled(), "默认不启用 XXL-JOB");
         assertEquals("customer-work-executor", cfg.getAppname());
         assertEquals(9999, cfg.getPort());
-        assertEquals("./data/xxl-job/jobhandler", cfg.getLogPath());
+        // 执行器日志目录默认落系统临时目录（项目内不产生 ./data）
+        assertTrue(cfg.getLogPath().endsWith("customer-work/xxl-job/jobhandler"),
+            "执行器日志目录应在系统临时根下: " + cfg.getLogPath());
     }
 
     @Test

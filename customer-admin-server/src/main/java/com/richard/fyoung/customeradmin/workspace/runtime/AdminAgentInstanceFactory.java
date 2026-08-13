@@ -34,6 +34,7 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallTimingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.SensitiveWordMiddleware;
@@ -100,7 +101,7 @@ import java.util.stream.Stream;
  * （tasklist/metatool/maxIters/工具超时重试等内层能力与参数一并接线）→ ⑥ 若命中 {@link #requiresHarness}
  * （capabilities 含 vibecoding/plan/subagent/skill-learning/dynamic-subagent 任一，或配置了上下文压缩），用
  * {@link HarnessAgent.Builder#fromAgent} 在内层 ReActAgent 上按能力叠加沙箱/计划模式/技能自进化/
- * 上下文压缩/子智能体编排（workspace 限定到 {@code ./data/admin-workspace/{agentCode}}）。</p>
+ * 上下文压缩/子智能体编排（workspace 限定到系统临时目录下的 {@code admin-workspace/{agentCode}}）。</p>
  *
  * <p>本类只负责"从零构建一次"，不做缓存——缓存由 {@link AgentInstanceCache} 负责。</p>
  * @author owlzhangfq@gmail.com
@@ -125,8 +126,8 @@ public class AdminAgentInstanceFactory {
     /** Plan Mode 计划文件目录名（workspace 下的子目录）。 */
     private static final String PLAN_DIR_NAME = "plans";
     private static final long BYTES_PER_MB = 1024L * 1024L;
-    private static final String WORKSPACE_ROOT = "./data/admin-workspace";
-    private static final String SKILL_ROOT = "./data/admin-skills";
+    private static final String WORKSPACE_ROOT = RuntimeWorkDir.of("admin-workspace");
+    private static final String SKILL_ROOT = RuntimeWorkDir.of("admin-skills");
     /** 会话产物目录名（{@code {agentCode}/sessions/}），docker 模式下 bind mount 前置预建的子目录之一。 */
     private static final String SESSIONS_DIR_NAME = "sessions";
     /** 容器工作区根（框架 {@code DockerSandboxClientOptions} 默认值，勿改——bind mount 目标路径依赖它）。 */
@@ -640,7 +641,7 @@ public class AdminAgentInstanceFactory {
     }
 
     /**
-     * VibeCoding 沙箱工作区路径（智能体根目录）：{@code ./data/admin-workspace/{agentCode}}。
+     * VibeCoding 沙箱工作区路径（智能体根目录）：{@code {临时根}/admin-workspace/{agentCode}}。
      * 仅供快照根路径使用，Agent 运行时请使用 {@link #resolveSessionWorkspace(String, String)} 按会话隔离。
      */
     public Path resolveWorkspace(String agentCode) {
@@ -654,7 +655,7 @@ public class AdminAgentInstanceFactory {
     }
 
     /**
-     * VibeCoding 沙箱工作区路径（会话级隔离）：{@code ./data/admin-workspace/{agentCode}/sessions/{sessionId}}。
+     * VibeCoding 沙箱工作区路径（会话级隔离）：{@code {临时根}/admin-workspace/{agentCode}/sessions/{sessionId}}。
      * HarnessAgent 的文件操作根目录，不同会话产出物物理隔离，互不污染。
      *
      * <p><b>安全约束（会话路径解析的全链路唯一防御点）</b>：本方法是 stream/files/file-content/rollback

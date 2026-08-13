@@ -20,7 +20,7 @@ public final class SkillContentPublishers {
     }
 
     /**
-     * 按存储目标创建发布器；构造不建连（Nacos 懒初始化 ConfigService、SFTP 每次操作现连），
+     * 按存储目标创建发布器；构造不建连（MinIO 只建客户端、Nacos 懒初始化 ConfigService、SFTP 每次操作现连），
      * 外部服务不可达不影响宿主启动。
      *
      * @param target   存储目标
@@ -29,10 +29,12 @@ public final class SkillContentPublishers {
      */
     public static SkillContentPublisher create(SkillStorageTarget target, SkillStorageSettings settings) {
         return switch (target) {
-            case LOCAL -> {
-                SkillStorageSettings.Local local = settings.getLocal();
-                log.info("skill content publisher: local (base-dir={})", local.getBaseDir());
-                yield new LocalWorkspaceSkillPublisher(local.getBaseDir());
+            case MINIO -> {
+                SkillStorageSettings.Minio minio = settings.getMinio();
+                log.info("skill content publisher: minio (endpoint={}, bucket={}, prefix={})",
+                    minio.getEndpoint(), minio.getBucket(), minio.getPrefix());
+                yield new MinioSkillPublisher(minio.getEndpoint(), minio.getAccessKey(),
+                    minio.getSecretKey(), minio.getBucket(), minio.getPrefix(), minio.isAutoCreateBucket());
             }
             case NACOS -> {
                 SkillStorageSettings.Nacos nacos = settings.getNacos();

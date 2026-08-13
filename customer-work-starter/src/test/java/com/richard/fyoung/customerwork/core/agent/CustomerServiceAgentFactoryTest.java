@@ -2,7 +2,9 @@ package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
+import com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
+import com.richard.fyoung.customerwork.core.memory.InMemoryLongTermMemoryStore;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryStore;
 import com.richard.fyoung.customerwork.data.rag.KnowledgeProvider;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
@@ -26,10 +28,10 @@ import static org.mockito.Mockito.mock;
 class CustomerServiceAgentFactoryTest {
 
     private final Model model = mock(Model.class);
-    private final LongTermMemoryStore store = new LongTermMemoryStore();
+    private final LongTermMemoryStore store = new InMemoryLongTermMemoryStore();
 
     private CustomerServiceAgentFactory factory(CustomerWorkProperties props) {
-        FactLog factLog = new FactLog(false, Path.of("target/test-facts"));
+        FactLog factLog = new InMemoryTestFactLog(false);
         return new CustomerServiceAgentFactory(
             model, props,
             new LongTermMemoryProvider(props, store, factLog),
@@ -52,7 +54,8 @@ class CustomerServiceAgentFactoryTest {
             new com.richard.fyoung.customerwork.core.support.TenantResolver(props),
             new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry(),
             null,    // 无可插拔 Hook
-            null);   // 无 MeterRegistry（观测降级为仅日志）
+            null,    // 无 MeterRegistry（观测降级为仅日志）
+            null);   // 无 MySQL 技能物化器（本类只覆盖 classpath / filesystem 仓库）
     }
 
     @Test

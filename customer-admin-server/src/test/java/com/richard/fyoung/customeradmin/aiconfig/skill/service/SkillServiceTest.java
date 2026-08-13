@@ -189,7 +189,7 @@ class SkillServiceTest {
 
     @Test
     void create_shouldPersistFiles_andPublishThem() {
-        SkillContentPublisher local = publisher(SkillStorageTarget.LOCAL);
+        SkillContentPublisher local = publisher(SkillStorageTarget.MINIO);
         SkillService service = serviceWith(local);
         SkillUploadFile refDoc = new SkillUploadFile("references/doc.md", 6L,
             Base64.getEncoder().encodeToString("参考".getBytes(StandardCharsets.UTF_8)));
@@ -211,7 +211,7 @@ class SkillServiceTest {
 
     @Test
     void create_shouldRejectTraversalFilePath() {
-        SkillService service = serviceWith(publisher(SkillStorageTarget.LOCAL));
+        SkillService service = serviceWith(publisher(SkillStorageTarget.MINIO));
         SkillUploadFile evil = new SkillUploadFile("../../etc/passwd", 1L,
             Base64.getEncoder().encodeToString("x".getBytes(StandardCharsets.UTF_8)));
 
@@ -221,7 +221,7 @@ class SkillServiceTest {
 
     @Test
     void create_shouldRejectInvalidBase64() {
-        SkillService service = serviceWith(publisher(SkillStorageTarget.LOCAL));
+        SkillService service = serviceWith(publisher(SkillStorageTarget.MINIO));
         SkillUploadFile bad = new SkillUploadFile("references/doc.md", 1L, "!!not-base64!!");
 
         assertThrows(BizException.class, () ->
@@ -235,7 +235,7 @@ class SkillServiceTest {
         existing.setSkillCode("code-9");
         existing.setStorageTargets("local");
         when(skillMapper.selectById(9L)).thenReturn(existing);
-        SkillContentPublisher local = publisher(SkillStorageTarget.LOCAL);
+        SkillContentPublisher local = publisher(SkillStorageTarget.MINIO);
         SkillService service = serviceWith(local);
 
         service.update(9L, saveRequest("s9", "code-9", "新正文", List.of("local"), null));
@@ -254,7 +254,7 @@ class SkillServiceTest {
         existing.setSkillCode("code-9");
         existing.setStorageTargets("local");
         when(skillMapper.selectById(9L)).thenReturn(existing);
-        SkillService service = serviceWith(publisher(SkillStorageTarget.LOCAL));
+        SkillService service = serviceWith(publisher(SkillStorageTarget.MINIO));
         SkillUploadFile newFile = new SkillUploadFile("scripts/run.sh", 2L,
             Base64.getEncoder().encodeToString("ls".getBytes(StandardCharsets.UTF_8)));
 
@@ -272,7 +272,7 @@ class SkillServiceTest {
         existing.setStorageTargets("local");
         when(skillMapper.selectById(5L)).thenReturn(existing);
         when(agentSkillMapper.exists(any())).thenReturn(false);
-        SkillService service = serviceWith(publisher(SkillStorageTarget.LOCAL));
+        SkillService service = serviceWith(publisher(SkillStorageTarget.MINIO));
 
         service.delete(5L);
 
@@ -284,7 +284,7 @@ class SkillServiceTest {
 
     @Test
     void create_shouldDefaultToLocal_whenTargetsEmpty() {
-        SkillContentPublisher local = publisher(SkillStorageTarget.LOCAL);
+        SkillContentPublisher local = publisher(SkillStorageTarget.MINIO);
         SkillService service = serviceWith(local);
 
         service.create(saveRequest("s1", "code-1", "正文", null, null));
@@ -294,7 +294,7 @@ class SkillServiceTest {
 
     @Test
     void create_shouldRejectInvalidTarget() {
-        SkillService service = serviceWith(publisher(SkillStorageTarget.LOCAL));
+        SkillService service = serviceWith(publisher(SkillStorageTarget.MINIO));
 
         assertThrows(BizException.class, () ->
             service.create(saveRequest("s1", "code-1", "正文", List.of("ftp"), null)));
@@ -303,7 +303,7 @@ class SkillServiceTest {
     @Test
     void create_shouldFail_whenSelectedTargetNotEnabled() {
         // 只有 local 发布器，勾选 nacos 应报"目标未启用"
-        SkillService service = serviceWith(publisher(SkillStorageTarget.LOCAL));
+        SkillService service = serviceWith(publisher(SkillStorageTarget.MINIO));
 
         assertThrows(BizException.class, () ->
             service.create(saveRequest("s1", "code-1", "正文", List.of("local", "nacos"), null)));
@@ -311,7 +311,7 @@ class SkillServiceTest {
 
     @Test
     void create_shouldThrow_whenPublishFails() {
-        SkillContentPublisher local = publisher(SkillStorageTarget.LOCAL);
+        SkillContentPublisher local = publisher(SkillStorageTarget.MINIO);
         doThrow(new RuntimeException("disk full")).when(local).publish(any(), any());
         SkillService service = serviceWith(local);
 
@@ -329,7 +329,7 @@ class SkillServiceTest {
         existing.setStorageTargets("local,nacos");
         when(skillMapper.selectById(9L)).thenReturn(existing);
 
-        SkillContentPublisher local = publisher(SkillStorageTarget.LOCAL);
+        SkillContentPublisher local = publisher(SkillStorageTarget.MINIO);
         SkillContentPublisher nacos = publisher(SkillStorageTarget.NACOS);
         SkillService service = serviceWith(local, nacos);
 
@@ -348,7 +348,7 @@ class SkillServiceTest {
         existing.setStorageTargets("local,nacos");
         when(skillMapper.selectById(9L)).thenReturn(existing);
 
-        SkillContentPublisher local = publisher(SkillStorageTarget.LOCAL);
+        SkillContentPublisher local = publisher(SkillStorageTarget.MINIO);
         SkillContentPublisher nacos = publisher(SkillStorageTarget.NACOS);
         doThrow(new RuntimeException("nacos down")).when(nacos).remove(any());
         SkillService service = serviceWith(local, nacos);
@@ -369,7 +369,7 @@ class SkillServiceTest {
         when(skillMapper.selectById(5L)).thenReturn(existing);
         when(agentSkillMapper.exists(any())).thenReturn(false);
 
-        SkillContentPublisher local = publisher(SkillStorageTarget.LOCAL);
+        SkillContentPublisher local = publisher(SkillStorageTarget.MINIO);
         doThrow(new RuntimeException("io error")).when(local).remove(any());
         SkillService service = serviceWith(local);
 

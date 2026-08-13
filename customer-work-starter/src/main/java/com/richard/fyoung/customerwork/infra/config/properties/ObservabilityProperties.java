@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.config.properties;
 
 import lombok.Data;
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -12,7 +13,7 @@ import java.util.Map;
 public class ObservabilityProperties {
     /** 是否把全链路 trace 导出为 JSONL 文件（数据飞轮采集）。 */
     private boolean traceEnabled = false;
-    private String traceFile = "./data/traces/agent-trace.jsonl";
+    private String traceFile = RuntimeWorkDir.of("traces/agent-trace.jsonl");
     /** 是否启用框架原生链路追踪 Hook（TracerRegistry），按模型/工具/Agent 调用打 span。 */
     private boolean tracingEnabled = false;
     /**
