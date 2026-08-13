@@ -186,6 +186,8 @@ public class AdminAgentInstanceFactory {
     private final IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware;
     /** 后台委派任务仓储（落 MySQL），挂到每个 HarnessAgent 上接管 {@code agent_spawn} 的异步任务。 */
     private final TaskRepository taskRepository;
+    /** VibeCoding 会话工作区持久化；未启用时为 null（产出物仅存本地临时目录）。 */
+    private final SessionWorkspaceStorage sessionWorkspaceStorage;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -213,9 +215,13 @@ public class AdminAgentInstanceFactory {
                                       KnowledgeRetrievalService knowledgeRetrievalService,
                                       ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider,
                                       IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware,
-                                      TaskRepository taskRepository) {
+                                      TaskRepository taskRepository,
+                                      ObjectProvider<SessionWorkspaceStorage> sessionWorkspaceStorageProvider) {
         this.indirectInjectionGuardMiddleware = indirectInjectionGuardMiddleware;
         this.taskRepository = taskRepository;
+        // 容错 null provider：单测直传 null 依赖构造本类验证路径防御逻辑（同 CustomerServiceAgentFactory 的 meterRegistry 手法）
+        this.sessionWorkspaceStorage = sessionWorkspaceStorageProvider == null
+            ? null : sessionWorkspaceStorageProvider.getIfAvailable();
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -681,7 +687,29 @@ public class AdminAgentInstanceFactory {
             log.error("[workspace] create session workspace dir failed, code={}, agentCode={}, sessionId={}",
                 "SESSION_WORKSPACE_INIT_ERROR", agentCode, safeSession, e);
         }
+        // 恢复权威副本：工作区落在系统临时目录（会被 OS 清理）、容器化部署更是一销毁就没了，
+        // 而会话产出物是用户生成的代码、不是可重建的派生物。本方法是所有会话级功能解析路径的公共入口，
+        // 挂在这里能覆盖 stream / files / file-content / rollback 全部链路。
+        // 仅在本地目录为空时真正拉取（见 SessionWorkspaceStorage#hydrate），故重复调用无额外开销。
+        if (sessionWorkspaceStorage != null) {
+            sessionWorkspaceStorage.hydrate(agentCode, safeSession, workspace);
+        }
         return workspace;
+    }
+
+    /**
+     * 把会话工作区保存回权威存储（对象存储）。产出物写入之后必须调用一次，否则本地临时目录一被清理就丢。
+     *
+     * <p>调用点覆盖三条会造成写入的链路：对话轮次结束、手工保存文件、一键回滚。
+     * 未启用持久化时静默跳过；失败只记 error，不打断主链路（见 {@link SessionWorkspaceStorage#persist}）。</p>
+     */
+    public void persistSessionWorkspace(String agentCode, String sessionId) {
+        if (sessionWorkspaceStorage == null) {
+            return;
+        }
+        String safeSession = requireSafeSessionId(sessionId);
+        sessionWorkspaceStorage.persist(agentCode, safeSession,
+            Path.of(WORKSPACE_ROOT, agentCode, "sessions", safeSession).normalize());
     }
 
     /**

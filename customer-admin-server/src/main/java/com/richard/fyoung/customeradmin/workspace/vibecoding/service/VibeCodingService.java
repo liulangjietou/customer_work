@@ -218,6 +218,9 @@ public class VibeCodingService {
             auditService.applyUsage(audit, usageTotal.get());
             auditService.applyChangedFiles(audit, changedPaths(initialSnapshot, snapshot(sessionWorkspace)));
             auditService.finish(audit, signal == SignalType.ON_COMPLETE ? null : "VIBECODING_STREAM_" + signal.name());
+            // 产出物落权威存储：工作区在系统临时目录，不保存的话 OS 一清理 / 容器一销毁本轮生成的代码就没了。
+            // 放在 doFinally 而非 onComplete——用户中途取消时本轮已写出的文件同样要保住。
+            agentInstanceFactory.persistSessionWorkspace(agentCode, safeSession);
         });
     }
 
@@ -345,6 +348,8 @@ public class VibeCodingService {
             auditService.applyChangedFiles(audit, affected);
             log.info("[workspace] session rolled back, agentCode={}, sessionId={}, restored={}, deleted={}",
                 agentCode, safeSession, result.restoredFiles().size(), result.deletedFiles().size());
+            // 回滚同样是写操作：不保存的话权威副本仍是回滚前的状态，下次恢复会把已撤销的改动又拉回来
+            agentInstanceFactory.persistSessionWorkspace(agentCode, safeSession);
             auditService.finish(audit, (String) null);
             return result;
         } catch (RuntimeException e) {
@@ -389,6 +394,7 @@ public class VibeCodingService {
                 log.error("[workspace] save file content failed, agentCode={}, sessionId={}, path={}", agentCode, sessionId, relativePath, e);
                 throw new BizException(ResultCode.SYSTEM_ERROR, "文件保存失败: " + relativePath);
             }
+            agentInstanceFactory.persistSessionWorkspace(agentCode, sessionId);
             auditService.finish(audit, (String) null);
         } catch (RuntimeException e) {
             auditService.finish(audit, e);

@@ -25,6 +25,19 @@ public interface AttachmentFileStorage {
     String store(byte[] data, String id, String ext) throws IOException;
 
     /**
+     * 按<b>调用方指定的 key</b> 覆盖写入。
+     *
+     * <p>与 {@link #store} 的区别：那个由本 SPI 生成 {@code {yyyyMM}/{uuid}.{ext}} 形式的 key，
+     * 适合"每次上传都是一个新对象"的附件语义；本方法适合"一个业务实体固定对应一个对象、每次覆盖"的
+     * 场景（如 VibeCoding 会话工作区归档），key 由调用方按业务维度拼出且需要稳定可寻址。</p>
+     *
+     * @param storagePath 对象 key（调用方保证稳定与合法）
+     * @param data        文件字节
+     * @throws IOException 存储失败
+     */
+    void storeAt(String storagePath, byte[] data) throws IOException;
+
+    /**
      * 按相对 key 读回原始文件字节（供附件预览 / 下载链路）。
      *
      * @param storagePath {@link #store} 返回并落 DB 的相对 key（形如 {@code 202607/{id}.{ext}}）

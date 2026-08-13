@@ -250,6 +250,20 @@ admin:
     # 自定义时每个角色 name/type(PLAN|CODING|REVIEW)/prompt 均可配。role-timeout-seconds 为 PLAN/REVIEW
     # 角色单次一次性模型调用超时。
     role-timeout-seconds: ${ADMIN_COLLAB_ROLE_TIMEOUT_SECONDS:60}
+  vibecoding:
+    workspace:
+      # 会话工作区（VibeCoding 产出物）持久化到 MinIO：工作区本身落在系统临时目录、会被 OS 清理，
+      # 而产出物是用户在会话里生成的代码、不是可重建的派生物，必须有权威副本。
+      # 整棵目录树（含 .git，回滚与变更 diff 依赖它）打成 tar.gz，一个会话一个对象。
+      enabled: ${ADMIN_VIBECODING_WORKSPACE_PERSIST:true}
+      endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+      access-key: ${MINIO_ACCESS_KEY:minioadmin}
+      secret-key: ${MINIO_SECRET_KEY:minioadmin}
+      bucket: ${ADMIN_VIBECODING_BUCKET:customer-admin-vibecoding}
+      prefix: ${ADMIN_VIBECODING_PREFIX:workspaces/}
+      auto-create-bucket: ${ADMIN_VIBECODING_AUTO_CREATE_BUCKET:true}
+      # 归档在内存里构建，超过上限跳过保存并记 error
+      max-archive-mb: ${ADMIN_VIBECODING_MAX_ARCHIVE_MB:100}
   knowledge:
     # 代码知识库（P3-2 降级版）：DashScope 真实 Embedding + MySQL 向量 + 应用层余弦相似度。
     # Key 从 ai_model_config 的 dashscope 行借用（AES 解密），缺失即 fast fail。
