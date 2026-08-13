@@ -6,6 +6,7 @@ import io.minio.GetObjectResponse;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -82,6 +83,19 @@ public class MinioAttachmentFileStorage implements AttachmentFileStorage {
         } catch (Exception e) {
             // 与 store 失败同语义：包成 IOException 抛出，交上层翻译成业务错误
             throw new IOException("failed to get object from minio, bucket=" + bucket + ", key=" + storagePath, e);
+        }
+    }
+
+    @Override
+    public void delete(String storagePath) throws IOException {
+        // 同 read：不做 ensureBucket。MinIO 的 removeObject 对不存在的对象本就不报错，天然满足幂等语义
+        try {
+            client.removeObject(RemoveObjectArgs.builder()
+                .bucket(bucket)
+                .object(storagePath)
+                .build());
+        } catch (Exception e) {
+            throw new IOException("failed to remove object from minio, bucket=" + bucket + ", key=" + storagePath, e);
         }
     }
 

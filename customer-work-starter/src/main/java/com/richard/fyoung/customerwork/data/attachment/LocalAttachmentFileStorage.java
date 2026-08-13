@@ -44,16 +44,28 @@ public class LocalAttachmentFileStorage implements AttachmentFileStorage {
 
     @Override
     public byte[] read(String storagePath) throws IOException {
-        // 路径穿越唯一防御点：storagePath 来自 DB，规范化后必须仍落在 baseDir 之内，否则 fast-fail。
-        // 非法路径（如 ../../etc/passwd）直接 IllegalArgumentException，不做静默兜底。
+        Path target = resolveWithinBase(storagePath);
+        if (!Files.exists(target) || Files.isDirectory(target)) {
+            throw new IOException("attachment file not found: " + storagePath);
+        }
+        return Files.readAllBytes(target);
+    }
+
+    @Override
+    public void delete(String storagePath) throws IOException {
+        Files.deleteIfExists(resolveWithinBase(storagePath));
+    }
+
+    /**
+     * 路径穿越唯一防御点：storagePath 来自 DB / URL，规范化后必须仍落在 baseDir 之内，否则 fast-fail。
+     * 非法路径（如 {@code ../../etc/passwd}）直接 IllegalArgumentException，不做静默兜底。
+     */
+    private Path resolveWithinBase(String storagePath) {
         Path base = Paths.get(baseDir).normalize().toAbsolutePath();
         Path target = base.resolve(storagePath).normalize().toAbsolutePath();
         if (!target.startsWith(base)) {
             throw new IllegalArgumentException("illegal storage path escapes base dir: " + storagePath);
         }
-        if (!Files.exists(target) || Files.isDirectory(target)) {
-            throw new IOException("attachment file not found: " + storagePath);
-        }
-        return Files.readAllBytes(target);
+        return target;
     }
 }

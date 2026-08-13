@@ -48,7 +48,14 @@ public class AttachmentProperties {
     @Data
     public static class Storage {
         /** 存储后端类型：{@code local}（本地磁盘，默认）| {@code minio}（对象存储）。 */
-        private String type = "local";
+        /**
+         * 存储后端：minio（默认，对象存储）| local（本地磁盘）。
+         *
+         * <p>默认 minio：二进制落本地盘在多副本部署下是坏的——A 机上传的文件 B 机读不到，
+         * 容器销毁即丢。构造不连网、bucket 惰性确保，故 MinIO 不可达不影响启动，
+         * 只在真正上传时失败（刻意不静默回落本地盘：那正是要消除的不一致）。</p>
+         */
+        private String type = "minio";
         /** MinIO 配置（type=minio 生效）。 */
         private final Minio minio = new Minio();
     }

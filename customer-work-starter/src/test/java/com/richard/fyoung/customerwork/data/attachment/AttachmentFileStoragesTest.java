@@ -14,9 +14,17 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 class AttachmentFileStoragesTest {
 
     @Test
-    void create_shouldReturnLocalByDefault() {
+    void create_shouldReturnMinioByDefault() {
         AttachmentProperties props = new AttachmentProperties();
-        // 默认 storage.type=local
+        // 默认 storage.type=minio：二进制落本地盘在多副本下是坏的（A 机上传 B 机读不到）
+        AttachmentFileStorage storage = AttachmentFileStorages.create(props);
+        assertInstanceOf(MinioAttachmentFileStorage.class, storage);
+    }
+
+    @Test
+    void create_shouldReturnLocalWhenTypeIsLocal() {
+        AttachmentProperties props = new AttachmentProperties();
+        props.getStorage().setType("local");
         AttachmentFileStorage storage = AttachmentFileStorages.create(props);
         assertInstanceOf(LocalAttachmentFileStorage.class, storage);
     }

@@ -2,6 +2,8 @@ package com.richard.fyoung.customeradmin.system.loginimage.service;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.common.storage.ImageStorageSupport;
+import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -9,28 +11,32 @@ import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * 登录页轮播图文件存储：落盘到本地磁盘 {@code ./data/login-images}（沿用
- * {@link com.richard.fyoung.customeradmin.system.menu.service.MenuIconStorageService}
- * 同一套本地磁盘约定），通过 {@link com.richard.fyoung.customeradmin.config.StaticResourceConfig}
+ * 登录页轮播图文件存储：写入对象存储（starter 的 {@link AttachmentFileStorage} SPI，
+ * {@code customer-work.attachment.storage.type=minio} 时即 MinIO），通过
+ * {@link com.richard.fyoung.customeradmin.system.loginimage.controller.LoginImagePublicController}
  * 映射的 {@code /api/login-images/**} 对外提供访问 URL。
+ *
+ * <p>URL 契约与改造前完全一致（{@code /api/login-images/{key}}），故 {@code sys_login_carousel_image.image_url}
+ * 里已存的地址无需迁移——读取时对象存储未命中会回落旧目录 {@link #LEGACY_IMAGE_ROOT}，见
+ * {@link ImageStorageSupport}。</p>
  * @author owlzhangfq@gmail.com
  */
 @Slf4j
 @Service
 public class LoginImageStorageService {
 
-    /** 与 {@code StaticResourceConfig} 里的资源映射保持一致，改这里要同步改那边。 */
-    public static final String IMAGE_ROOT = "./data/login-images";
-    private static final String URL_PREFIX = "/api/login-images/";
+    /** 改造前的落盘目录，现仅用于读存量图片的兜底。 */
+    public static final String LEGACY_IMAGE_ROOT = "./data/login-images";
+
+    /** 与 {@code LoginImagePublicController} 的映射保持一致，改这里要同步改那边。 */
+    public static final String URL_PREFIX = "/api/login-images/";
 
     /** 登录页背景是全屏大图，比菜单图标放宽到 5MB。 */
     private static final long MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -43,7 +49,13 @@ public class LoginImageStorageService {
     private static final int MIN_WIDTH = 1280;
     private static final int MIN_HEIGHT = 720;
 
-    /** @return 落盘后的可访问 URL（相对路径，前端拼自身 origin 即可直接展示）。 */
+    private final ImageStorageSupport storage;
+
+    public LoginImageStorageService(AttachmentFileStorage fileStorage) {
+        this.storage = new ImageStorageSupport(fileStorage, LEGACY_IMAGE_ROOT);
+    }
+
+    /** @return 可访问 URL（相对路径，前端拼自身 origin 即可直接展示）。 */
     public String store(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BizException(ResultCode.PARAM_MISSING, "请选择要上传的图片");
@@ -55,37 +67,38 @@ public class LoginImageStorageService {
         if (!ALLOWED_EXTENSIONS.contains(extension)) {
             throw new BizException(ResultCode.PARAM_INVALID, "仅支持 png/jpg/jpeg/webp 格式图片");
         }
-        checkMinResolution(file);
-
-        String filename = UUID.randomUUID() + "." + extension;
+        byte[] data;
         try {
-            Path dir = Paths.get(IMAGE_ROOT);
-            Files.createDirectories(dir);
-            file.transferTo(dir.resolve(filename));
+            data = file.getBytes();
+        } catch (IOException e) {
+            throw new BizException(ResultCode.PARAM_INVALID, "图片读取失败: " + e.getMessage());
+        }
+        checkMinResolution(data);
+        try {
+            return URL_PREFIX + storage.store(data, UUID.randomUUID().toString(), extension);
         } catch (IOException e) {
             throw new BizException(ResultCode.PARAM_INVALID, "图片保存失败: " + e.getMessage());
         }
-        return URL_PREFIX + filename;
     }
 
     /**
-     * 按访问 URL 删除磁盘文件。删除记录的主链路在 DB 侧，文件清理失败只记 error 不中断
-     * （残留文件不影响功能，可运维期清理）。
+     * 按相对 key 读图片字节（供 {@code LoginImagePublicController} 出图）。
+     *
+     * @throws IOException 对象存储与旧目录都没有该图
+     */
+    public byte[] read(String key) throws IOException {
+        return storage.read(key);
+    }
+
+    /**
+     * 按访问 URL 删除图片文件。删除记录的主链路在 DB 侧，文件清理失败只记 error 不中断
+     * （残留文件不影响功能，可运维期清理，兜底在 {@link ImageStorageSupport#delete}）。
      */
     public void delete(String imageUrl) {
         if (!StringUtils.hasText(imageUrl) || !imageUrl.startsWith(URL_PREFIX)) {
             return;
         }
-        String filename = imageUrl.substring(URL_PREFIX.length());
-        // URL 由本服务生成（uuid.ext），这里防一手路径穿越，杜绝删到目录外的文件
-        if (filename.contains("/") || filename.contains("..")) {
-            return;
-        }
-        try {
-            Files.deleteIfExists(Paths.get(IMAGE_ROOT).resolve(filename));
-        } catch (IOException e) {
-            log.error("delete login image file failed, code={}, url={}", "LOGIN-IMAGE-FILE-DELETE-FAIL", imageUrl, e);
-        }
+        storage.delete(imageUrl.substring(URL_PREFIX.length()));
     }
 
     /**
@@ -93,10 +106,10 @@ public class LoginImageStorageService {
      * 不认 webp（decode 返回 null），解不出来的按"无法校验"放行，不误杀合法 webp；
      * 读流失败按无效图片 fast fail。
      */
-    private void checkMinResolution(MultipartFile file) {
+    private void checkMinResolution(byte[] data) {
         BufferedImage image;
         try {
-            image = ImageIO.read(file.getInputStream());
+            image = ImageIO.read(new ByteArrayInputStream(data));
         } catch (IOException e) {
             throw new BizException(ResultCode.PARAM_INVALID, "图片读取失败: " + e.getMessage());
         }
