@@ -16,6 +16,9 @@ import com.richard.fyoung.customerwork.data.dict.mapper.DictItemMapper;
 import com.richard.fyoung.customerwork.data.dict.mapper.DictTypeMapper;
 import com.richard.fyoung.customerwork.capability.feedback.mapper.FeedbackMapper;
 import com.richard.fyoung.customerwork.capability.handoff.mapper.HandoffMapper;
+import com.richard.fyoung.customerwork.core.memory.mapper.FactLogMapper;
+import com.richard.fyoung.customerwork.core.memory.mapper.HarnessMemoryMapper;
+import com.richard.fyoung.customerwork.core.memory.mapper.LongTermMemoryMapper;
 import com.richard.fyoung.customerwork.observability.mapper.AuditLogMapper;
 import com.richard.fyoung.customerwork.capability.routing.mapper.SeatAgentMapper;
 import com.richard.fyoung.customerwork.safety.sensitiveword.mapper.SensitiveWordMapper;
@@ -66,7 +69,8 @@ public final class MybatisTestSupport {
         ComplaintMapper.class, KnowledgeMapper.class, ChatAttachmentMapper.class,
         SensitiveWordMapper.class, SeatAgentMapper.class,
         AgentCallLogMapper.class, AgentCallSegmentMapper.class,
-        DictTypeMapper.class, DictItemMapper.class
+        DictTypeMapper.class, DictItemMapper.class,
+        LongTermMemoryMapper.class, FactLogMapper.class, HarnessMemoryMapper.class
     };
 
     private MybatisTestSupport() {

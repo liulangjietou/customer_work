@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.capability.feedback;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
+import com.richard.fyoung.customerwork.core.memory.FileFactLog;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,7 +21,7 @@ class FeedbackServiceTest {
 
     private FeedbackService newService(Path tempDir) {
         InMemoryFeedbackStore store = new InMemoryFeedbackStore();
-        FactLog factLog = new FactLog(true, tempDir);
+        FactLog factLog = new FileFactLog(true, tempDir);
         TenantResolver resolver = new TenantResolver(new CustomerWorkProperties());
         return new FeedbackService(store, factLog, resolver);
     }
@@ -28,7 +29,7 @@ class FeedbackServiceTest {
     @Test
     void submitUp_shouldNotRecordFact(@TempDir Path tempDir) {
         FeedbackService svc = newService(tempDir);
-        FactLog factLog = new FactLog(true, tempDir);
+        FactLog factLog = new FileFactLog(true, tempDir);
 
         svc.submit("tenantA:sess-1", "MSG-1", FeedbackType.UP, null);
 
@@ -38,7 +39,7 @@ class FeedbackServiceTest {
     @Test
     void submitDown_shouldRecordFactForFlywheel(@TempDir Path tempDir) {
         FeedbackService svc = newService(tempDir);
-        FactLog factLog = new FactLog(true, tempDir);
+        FactLog factLog = new FileFactLog(true, tempDir);
 
         svc.submit("tenantA:sess-1", "MSG-1", FeedbackType.DOWN, "答非所问");
 
@@ -60,7 +61,7 @@ class FeedbackServiceTest {
     @Test
     void submit_repeatedly_shouldOverwriteAndOnlyRecordLatestDown(@TempDir Path tempDir) {
         FeedbackService svc = newService(tempDir);
-        FactLog factLog = new FactLog(true, tempDir);
+        FactLog factLog = new FileFactLog(true, tempDir);
 
         svc.submit("tenantA:sess-1", "MSG-1", FeedbackType.DOWN, "第一次");
         svc.submit("tenantA:sess-1", "MSG-1", FeedbackType.UP, null);   // 用户改主意了

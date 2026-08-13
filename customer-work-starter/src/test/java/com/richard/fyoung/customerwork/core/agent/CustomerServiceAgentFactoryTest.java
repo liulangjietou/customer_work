@@ -2,7 +2,9 @@ package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
+import com.richard.fyoung.customerwork.core.memory.FileFactLog;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
+import com.richard.fyoung.customerwork.core.memory.InMemoryLongTermMemoryStore;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryStore;
 import com.richard.fyoung.customerwork.data.rag.KnowledgeProvider;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
@@ -26,10 +28,10 @@ import static org.mockito.Mockito.mock;
 class CustomerServiceAgentFactoryTest {
 
     private final Model model = mock(Model.class);
-    private final LongTermMemoryStore store = new LongTermMemoryStore();
+    private final LongTermMemoryStore store = new InMemoryLongTermMemoryStore();
 
     private CustomerServiceAgentFactory factory(CustomerWorkProperties props) {
-        FactLog factLog = new FactLog(false, Path.of("target/test-facts"));
+        FactLog factLog = new FileFactLog(false, Path.of("target/test-facts"));
         return new CustomerServiceAgentFactory(
             model, props,
             new LongTermMemoryProvider(props, store, factLog),

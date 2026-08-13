@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.memory.ContextMemoryFactory;
+import com.richard.fyoung.customerwork.core.memory.HarnessMemorySyncService;
+import com.richard.fyoung.customerwork.core.memory.InMemoryHarnessMemoryStore;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
@@ -42,8 +44,11 @@ class HarnessAgentFactoryTest {
         PermissionContextState permission = PermissionContextState.builder()
             .mode(PermissionMode.DEFAULT).build();
 
+        // 记忆同步走进程内存储：单测不连 MySQL，也不该在 target/ 下留记忆残留
+        HarnessMemorySyncService memorySync = new HarnessMemorySyncService(new InMemoryHarnessMemoryStore());
+
         return new HarnessAgentFactory(agentFactory, contextMemoryFactory, orchestrator,
-            new InMemoryAgentStateStore(), permission, mock(Model.class), props);
+            new InMemoryAgentStateStore(), permission, mock(Model.class), props, memorySync);
     }
 
     @Test

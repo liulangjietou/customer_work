@@ -10,6 +10,7 @@ import com.richard.fyoung.customerwork.capability.handoff.HandoffStore;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
 import com.richard.fyoung.customerwork.capability.handoff.InMemoryHandoffStore;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
+import com.richard.fyoung.customerwork.core.memory.FileFactLog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,7 +48,7 @@ class BusinessAnalyticsServiceTest {
         store.save(pendingOutsideWindow);
 
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(store), new HandoffService(), new FactLog(true, tempDir));
+            new PendingApprovalService(store), new HandoffService(), new FileFactLog(true, tempDir));
 
         BusinessAnalyticsReport report = svc.report(0L, 10_000L, null);
         ApprovalStats stats = report.approval();
@@ -67,7 +68,7 @@ class BusinessAnalyticsServiceTest {
         store.save(new ApprovalRequest("AP-1", ApprovalType.REFUND, "s1", "O1", "100", "r", 1000L));
 
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(store), new HandoffService(), new FactLog(true, tempDir));
+            new PendingApprovalService(store), new HandoffService(), new FileFactLog(true, tempDir));
 
         ApprovalStats stats = svc.report(0L, 10_000L, null).approval();
         assertEquals(0.0, stats.approvalRate(), 1e-9, "无已决策单时放行率应为 0.0（非 NaN）");
@@ -94,7 +95,7 @@ class BusinessAnalyticsServiceTest {
         store.save(pendingOutsideWindow);
 
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(), new HandoffService(store), new FactLog(true, tempDir));
+            new PendingApprovalService(), new HandoffService(store), new FileFactLog(true, tempDir));
 
         HandoffStats stats = svc.report(0L, 10_000L, null).handoff();
 
@@ -111,7 +112,7 @@ class BusinessAnalyticsServiceTest {
     @Test
     void qualityStats_withoutTenantId_shouldReturnEmptyPlaceholder(@TempDir Path tempDir) {
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(), new HandoffService(), new FactLog(true, tempDir));
+            new PendingApprovalService(), new HandoffService(), new FileFactLog(true, tempDir));
 
         QualityStats stats = svc.report(0L, 10_000L, null).quality();
         assertNull(stats.tenantId());
@@ -133,7 +134,7 @@ class BusinessAnalyticsServiceTest {
         Files.writeString(file, lines, StandardCharsets.UTF_8, StandardOpenOption.CREATE);
 
         BusinessAnalyticsService svc = new BusinessAnalyticsService(
-            new PendingApprovalService(), new HandoffService(), new FactLog(true, tempDir));
+            new PendingApprovalService(), new HandoffService(), new FileFactLog(true, tempDir));
 
         QualityStats stats = svc.report(0L, 10_000L, "tenantA").quality();
         assertEquals("tenantA", stats.tenantId());

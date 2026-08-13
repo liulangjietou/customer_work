@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.core.memory.mapper.LongTermMemoryMapper">
+
+    <!-- 去重写入：唯一键 uk_ltm_scope_fact (tenant_id, scope_hash) 命中时执行无副作用的自赋值，
+         等价于"存在即跳过"。不用 INSERT IGNORE 是因为它会连同类型错误等真实异常一起吞掉。
+         tenant_id 由 TenantLineInnerInterceptor 自动补齐，此处不列。 -->
+    <insert id="insertIfAbsent" parameterType="com.richard.fyoung.customerwork.core.memory.entity.LongTermMemoryDO">
+        INSERT INTO cw_long_term_memory (scope_id, fact, scope_hash, created_at_ms)
+        VALUES (#{scopeId}, #{fact}, #{scopeHash}, #{createdAtMs})
+        ON DUPLICATE KEY UPDATE scope_hash = scope_hash
+    </insert>
+
+    <!-- 召回候选集：按写入顺序倒序取最近 limit 条，打分在 Java 侧（FactRelevanceScorer）完成 -->
+    <select id="selectRecentFacts" resultType="java.lang.String">
+        SELECT fact FROM cw_long_term_memory
+        WHERE scope_id = #{scopeId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

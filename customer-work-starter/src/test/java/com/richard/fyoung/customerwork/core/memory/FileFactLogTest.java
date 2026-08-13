@@ -11,14 +11,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 事实日志单测（三层记忆第三层）：只追加持久化、跨租户隔离、可禁用、文件轮转。
+ * 事实日志落盘实现单测（三层记忆第三层）：只追加持久化、跨租户隔离、可禁用、文件轮转。
  * @author owlzhangfq@gmail.com
  */
-class FactLogTest {
+class FileFactLogTest {
 
     @Test
     void appendThenRead_shouldPersistInOrder(@TempDir Path dir) {
-        FactLog log = new FactLog(true, dir);
+        FactLog log = new FileFactLog(true, dir);
         log.append("tenantA", "用户偏好顺丰快递");
         log.append("tenantA", "用户常用收货地址杭州");
 
@@ -30,7 +30,7 @@ class FactLogTest {
 
     @Test
     void read_shouldIsolateBetweenTenants(@TempDir Path dir) {
-        FactLog log = new FactLog(true, dir);
+        FactLog log = new FileFactLog(true, dir);
         log.append("tenantA", "A 的事实");
 
         assertTrue(log.read("tenantB").isEmpty(), "租户隔离：B 不应看到 A 的事实日志");
@@ -38,14 +38,14 @@ class FactLogTest {
 
     @Test
     void append_shouldBeNoOp_whenDisabled(@TempDir Path dir) {
-        FactLog log = new FactLog(false, dir);
+        FactLog log = new FileFactLog(false, dir);
         log.append("tenantA", "不应写入");
         assertTrue(log.read("tenantA").isEmpty(), "禁用时不应写入");
     }
 
     @Test
     void append_shouldIgnoreBlank(@TempDir Path dir) {
-        FactLog log = new FactLog(true, dir);
+        FactLog log = new FileFactLog(true, dir);
         log.append("t", "  ");
         log.append("t", null);
         assertTrue(log.read("t").isEmpty());
@@ -56,7 +56,7 @@ class FactLogTest {
     @Test
     void shouldRotateFile_whenExceedingMaxSize(@TempDir Path dir) throws Exception {
         // maxFileMb=1 即 1MB，写入超过后应轮转
-        FactLog log = new FactLog(true, dir, 1, 3);
+        FactLog log = new FileFactLog(true, dir, 1, 3);
         Path dataFile = dir.resolve("tenantA.jsonl");
 
         // 写入大量事实直到超过 1MB（每条约 120 字节，需 10000+ 条）
@@ -73,7 +73,7 @@ class FactLogTest {
 
     @Test
     void shouldNotRotate_whenMaxFileMbIsZero(@TempDir Path dir) {
-        FactLog log = new FactLog(true, dir, 0, 3);
+        FactLog log = new FileFactLog(true, dir, 0, 3);
 
         // maxFileMb=0 = 禁用轮转，写入大量事实不应产生归档文件
         for (int i = 0; i < 1000; i++) {
@@ -87,7 +87,7 @@ class FactLogTest {
     @Test
     void shouldDeleteOldestArchive_whenExceedingMaxArchivedFiles(@TempDir Path dir) throws Exception {
         // maxFileMb=1, maxArchivedFiles=2 → 最多保留 .1 和 .2
-        FactLog log = new FactLog(true, dir, 1, 2);
+        FactLog log = new FileFactLog(true, dir, 1, 2);
 
         // 多次填充触发多轮轮转（每轮 12000 条约 1.4MB，确保触发轮转）
         for (int round = 0; round < 5; round++) {

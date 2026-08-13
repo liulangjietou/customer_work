@@ -63,14 +63,38 @@ class CustomerWorkPersistenceConfigTest {
             });
     }
 
+    /**
+     * 零配置即装配持久化环境：三层记忆的 L2/L3 与 Harness 分层记忆默认落库
+     * （见 {@link PersistenceJdbcCondition} 的 jdbc-by-default 清单），故什么都不配也要有 SqlSessionTemplate。
+     * HikariCP 惰性建连，装配不等于连库，本用例照样离线跑得过。
+     */
     @Test
-    void whenAllMemory_shouldNotWireAnyPersistenceBean() {
+    void whenNothingConfigured_shouldWirePersistenceBeans_becauseMemoryDefaultsToJdbc() {
         runner.run(context -> {
             assertThat(context).hasNotFailed();
-            assertThat(context).doesNotHaveBean("customerWorkSqlSessionFactory");
-            assertThat(context).doesNotHaveBean("customerWorkSqlSessionTemplate");
-            assertThat(context).doesNotHaveBean("ticketMapper");
+            assertThat(context).hasBean("customerWorkSqlSessionTemplate");
+            assertThat(context).hasBean("longTermMemoryMapper");
+            assertThat(context).hasBean("factLogMapper");
+            assertThat(context).hasBean("harnessMemoryMapper");
         });
+    }
+
+    /**
+     * 退回全内存形态：除既有各域外，还必须把默认为 jdbc 的三个键一并显式配成非 jdbc——
+     * 少配任何一个，持久化环境都会被那个键单独激活。
+     */
+    @Test
+    void whenAllMemory_shouldNotWireAnyPersistenceBean() {
+        runner.withPropertyValues(
+                "customer-work.memory.store-mode=memory",
+                "customer-work.fact-log.store-mode=file",
+                "customer-work.harness.memory-store-mode=memory")
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).doesNotHaveBean("customerWorkSqlSessionFactory");
+                assertThat(context).doesNotHaveBean("customerWorkSqlSessionTemplate");
+                assertThat(context).doesNotHaveBean("ticketMapper");
+            });
     }
 
     @Test

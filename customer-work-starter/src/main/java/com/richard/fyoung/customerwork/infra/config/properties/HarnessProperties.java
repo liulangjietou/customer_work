@@ -22,6 +22,13 @@ public class HarnessProperties {
     private String workspaceDir = "./data/workspace";
     /** 分层记忆：启用 MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation（MemoryConfig）。 */
     private boolean memoryEnabled = false;
+    /**
+     * 分层记忆的权威存储后端：jdbc（默认，落 cw_harness_memory 表）| memory（进程内）。
+     *
+     * <p>框架只认 {@code {workspace}/MEMORY.md} 文件，故落盘不可避免；本项决定"权威副本"存哪儿——
+     * 默认 MySQL，workspace 里那份退化为可随时重建的工作副本（见 {@code HarnessMemorySyncService}）。</p>
+     */
+    private String memoryStoreMode = "jdbc";
     /** 环境级记忆（environmentMemory）：跨会话共享的环境记忆标识/文件，留空则不启用。 */
     private String environmentMemory = "";
     /** 超大工具结果落盘（ToolResultEviction）：把超长工具结果落盘、上下文只留占位符与预览。 */

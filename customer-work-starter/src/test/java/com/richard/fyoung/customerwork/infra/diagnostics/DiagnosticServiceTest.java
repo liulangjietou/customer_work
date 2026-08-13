@@ -6,6 +6,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.capability.dialog.DialogStage;
 import com.richard.fyoung.customerwork.capability.dialog.DialogStageService;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
+import com.richard.fyoung.customerwork.core.memory.FileFactLog;
 import com.richard.fyoung.customerwork.observability.AuditQuery;
 import com.richard.fyoung.customerwork.observability.AuditRecord;
 import com.richard.fyoung.customerwork.core.service.SessionStateManager;
@@ -59,7 +60,7 @@ class DiagnosticServiceTest {
         approvals.submit(ApprovalType.REFUND, sessionId, "order-1", null, "质量问题");
         approvals.submit(ApprovalType.REFUND, "other:conv-9", "order-2", null, "无关会话");
 
-        FactLog factLog = new FactLog(true, tempDir);
+        FactLog factLog = new FileFactLog(true, tempDir);
         factLog.append("tenantA", "{\"type\":\"quality-failure\",\"sessionId\":\"tenantA:conv-1\"}");
         factLog.append("tenantA", "{\"type\":\"quality-failure\",\"sessionId\":\"tenantA:conv-2\"}");
 
@@ -89,7 +90,7 @@ class DiagnosticServiceTest {
         SessionStateManager stateManager = mock(SessionStateManager.class);
         DiagnosticService service = new DiagnosticService(
             stateManager, new DialogStageService(), new SlotFillingService(),
-            new PendingApprovalService(), new FactLog(true, tempDir), tenantResolver,
+            new PendingApprovalService(), new FileFactLog(true, tempDir), tenantResolver,
             auditProvider(null));  // 无可查询审计后端（如仅 LoggingAuditSink）
 
         SessionDiagnostic d = service.diagnose("conv-x");
@@ -105,7 +106,7 @@ class DiagnosticServiceTest {
 
         DiagnosticService service = new DiagnosticService(
             stateManager, new DialogStageService(), new SlotFillingService(),
-            new PendingApprovalService(), new FactLog(true, tempDir), tenantResolver,
+            new PendingApprovalService(), new FileFactLog(true, tempDir), tenantResolver,
             auditProvider(null));
 
         SessionDiagnostic d = service.diagnose("conv-x");

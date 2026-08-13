@@ -626,3 +626,46 @@ CREATE TABLE IF NOT EXISTS `cw_tenant_quota` (
     UNIQUE KEY `uk_tenant_quota` (`tenant_id`, `period`),
     INDEX `idx_tenant_quota_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='租户配额（每租户每周期一条）';
+
+-- 长期记忆事实表（cw_long_term_memory）：三层记忆体系的 L2，跨会话语义召回底座（MybatisLongTermMemoryStore）。
+-- 两个维度刻意分列：`tenant_id` 是 SaaS 租户（拦截器自动填充与过滤，见 TenantContext），
+-- `scope_id` 是记忆分区键（由 sessionId 前缀解析，见 TenantResolver），二者不是一回事，合并会串记忆。
+-- TEXT 列无法直接建唯一索引，去重靠 `scope_hash`（scope_id + fact 的 SHA-256）。
+CREATE TABLE IF NOT EXISTS `cw_long_term_memory` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `scope_id`       VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '记忆分区键（TenantResolver 由 sessionId 解析）',
+    `fact`           TEXT NOT NULL COMMENT '事实内容',
+    `scope_hash`     VARCHAR(64) NOT NULL COMMENT 'scope_id + fact 的 SHA-256（去重键，TEXT 无法建唯一索引）',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '写入时间戳（毫秒）',
+    UNIQUE KEY `uk_ltm_scope_fact` (`tenant_id`, `scope_hash`),
+    INDEX `idx_ltm_scope` (`tenant_id`, `scope_id`, `id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='长期记忆事实（L2，跨会话语义召回）';
+
+-- 事实日志表（cw_fact_log）：三层记忆体系的 L3，只追加、不可变、可审计的事实流水（MybatisFactLog）。
+-- 取代按租户分文件的 JSONL 落盘（FileFactLog）；append-only 语义靠"只 INSERT 不 UPDATE/DELETE"保证，
+-- 自增 `id` 即写入顺序（同毫秒内 ts 相同也不丢序）。
+CREATE TABLE IF NOT EXISTS `cw_fact_log` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键（即写入顺序）',
+    `scope_id`       VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '记忆分区键（TenantResolver 由 sessionId 解析）',
+    `fact`           TEXT NOT NULL COMMENT '事实内容',
+    `ts`             BIGINT NOT NULL COMMENT '事实时间戳（毫秒）',
+    INDEX `idx_fact_log_scope` (`tenant_id`, `scope_id`, `id`),
+    INDEX `idx_fact_log_ts` (`tenant_id`, `scope_id`, `ts`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='事实日志（L3，append-only 审计流水，永不改写）';
+
+-- Harness 分层记忆表（cw_harness_memory）：HarnessAgent 的 MEMORY.md 权威副本（MybatisHarnessMemoryStore）。
+-- 框架只认 {workspace}/MEMORY.md 这个文件，故落盘不可避免；本表让"权威副本"落在 MySQL，
+-- workspace 里的那份退化为构建实例时水合出来、可随时重建的工作副本（同 admin 侧 ai_agent_memory 的手法）。
+-- scope_id 取 workspace 目录路径：starter 的 HarnessAgent 共用一个 workspace，记忆因而是 workspace 级；
+-- 配成按租户分目录时同一套代码自然按租户分行，无需改动。
+CREATE TABLE IF NOT EXISTS `cw_harness_memory` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `scope_id`       VARCHAR(512) NOT NULL COMMENT '记忆归属（workspace 目录路径）',
+    `scope_hash`     VARCHAR(64) NOT NULL COMMENT 'scope_id 的 SHA-256（唯一键用，规避 512 字节索引长度限制）',
+    `content`        MEDIUMTEXT NOT NULL COMMENT 'MEMORY.md 全文',
+    `updated_at_ms`  BIGINT NOT NULL COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_harness_memory_scope` (`tenant_id`, `scope_hash`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Harness 分层记忆（MEMORY.md 权威副本）';

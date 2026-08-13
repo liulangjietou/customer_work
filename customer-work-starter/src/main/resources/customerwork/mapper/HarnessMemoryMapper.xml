@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.core.memory.mapper.HarnessMemoryMapper">
+
+    <!-- 按 uk_harness_memory_scope (tenant_id, scope_hash) upsert：同一 workspace 恒定一行。
+         tenant_id 由 TenantLineInnerInterceptor 自动补齐，此处不列。 -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.core.memory.entity.HarnessMemoryDO">
+        INSERT INTO cw_harness_memory (scope_id, scope_hash, content, updated_at_ms)
+        VALUES (#{scopeId}, #{scopeHash}, #{content}, #{updatedAtMs})
+        ON DUPLICATE KEY UPDATE content = VALUES(content), updated_at_ms = VALUES(updated_at_ms)
+    </insert>
+</mapper>
