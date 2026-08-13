@@ -598,3 +598,34 @@ CREATE TABLE IF NOT EXISTS `cw_harness_memory` (
     `updated_at_ms`  BIGINT NOT NULL COMMENT '更新时间戳（毫秒）',
     UNIQUE KEY `uk_harness_memory_scope` (`tenant_id`, `scope_hash`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Harness 分层记忆（MEMORY.md 权威副本）';
+
+-- 技能库表（MysqlSkillRepository / cw_skill + cw_skill_file）：客服端从 MySQL 读技能包。
+-- 与 admin 库的 ai_skill / ai_skill_file 结构对齐但各自独立：admin 管的是后台配置的智能体技能，
+-- 这两张表是客服端运行时自己的技能库（跨库同步不在本批次范围内，由运维按需灌数据）。
+-- 读出来后仍要物化成磁盘目录再交 FileSystemSkillRepository——框架只认文件，这是框架约束不是选型。
+CREATE TABLE IF NOT EXISTS `cw_skill` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `skill_code`     VARCHAR(64) NOT NULL COMMENT '技能编码（= 落盘目录名）',
+    `skill_name`     VARCHAR(64) NOT NULL COMMENT '技能名称',
+    `content`        MEDIUMTEXT NOT NULL COMMENT 'SKILL.md 正文',
+    `description`    VARCHAR(255) COMMENT '技能描述',
+    `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_cw_skill_code` (`tenant_id`, `skill_code`),
+    INDEX `idx_cw_skill_tenant` (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='技能库（SKILL.md 正文）';
+
+-- 技能附属文件表：SKILL.md 里引用的 references/scripts/examples 等，不落盘技能就是残的。
+CREATE TABLE IF NOT EXISTS `cw_skill_file` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `skill_id`       BIGINT NOT NULL COMMENT '所属技能（cw_skill.id）',
+    `file_path`      VARCHAR(512) NOT NULL COMMENT '相对 SKILL.md 所在目录的路径，如 references/api.md',
+    `file_size`      BIGINT NOT NULL DEFAULT 0 COMMENT '文件字节数',
+    `content`        LONGBLOB COMMENT '文件内容（文本/二进制统一按字节存）',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    INDEX `idx_cw_skill_file_skill` (`skill_id`),
+    INDEX `idx_cw_skill_file_tenant` (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='技能附属文件';

@@ -54,7 +54,8 @@ class CustomerServiceAgentFactoryTest {
             new com.richard.fyoung.customerwork.core.support.TenantResolver(props),
             new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry(),
             null,    // 无可插拔 Hook
-            null);   // 无 MeterRegistry（观测降级为仅日志）
+            null,    // 无 MeterRegistry（观测降级为仅日志）
+            null);   // 无 MySQL 技能物化器（本类只覆盖 classpath / filesystem 仓库）
     }
 
     @Test

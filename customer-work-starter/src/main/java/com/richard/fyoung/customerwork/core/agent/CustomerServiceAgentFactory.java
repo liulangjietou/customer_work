@@ -6,6 +6,7 @@ import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.infra.config.NacosPromptService;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.data.rag.KnowledgeProvider;
+import com.richard.fyoung.customerwork.data.skill.MysqlSkillMaterializer;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
@@ -95,6 +96,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     private final ToolKindRegistry toolKindRegistry;
     /** 可插拔 Middleware：本库内置（延迟/脱敏/审计/自我纠错/护栏/动态参数/租户）+ 下游自定义的所有 {@link MiddlewareBase} Bean。 */
     private final ObjectProvider<MiddlewareBase> pluggableMiddlewares;
+    /** MySQL 技能物化器：{@code skill.repository=mysql} 时才取用，持久化环境未激活时取不到。 */
+    private final ObjectProvider<MysqlSkillMaterializer> skillMaterializerProvider;
 
     /** 共享的 trace 导出器（AutoCloseable，进程级单例）。 */
     private volatile JsonlTraceExporter traceExporter;
@@ -112,7 +115,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        TenantResolver tenantResolver,
                                        ToolKindRegistry toolKindRegistry,
                                        ObjectProvider<MiddlewareBase> pluggableMiddlewares,
-                                       ObjectProvider<MeterRegistry> meterRegistryProvider) {
+                                       ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                       ObjectProvider<MysqlSkillMaterializer> skillMaterializerProvider) {
         this.model = model;
         this.properties = properties;
         this.longTermMemoryProvider = longTermMemoryProvider;
@@ -127,6 +131,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.toolKindRegistry = toolKindRegistry;
         this.pluggableMiddlewares = pluggableMiddlewares;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+        this.skillMaterializerProvider = skillMaterializerProvider;
     }
 
     /**
@@ -263,12 +268,45 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         return builder.build();
     }
 
-    /** 加载技能并注册进 SkillBox（支持 classpath 只读 / filesystem 可写自进化）。 */
+    /**
+     * 从 MySQL 加载技能：先把 {@code cw_skill} / {@code cw_skill_file} 物化到 {@code skill.directory}，
+     * 再交框架的 {@link FileSystemSkillRepository} 读——框架只认文件系统，落盘是框架约束而非存储选型，
+     * 那个目录因此是每次启动重建的缓存，不是权威来源。
+     *
+     * <p>物化器取不到（持久化环境未激活）或物化失败时，<b>降级</b>读该目录里已有的内容：上一次物化的产物
+     * 还在的话技能仍可用，好过整个技能能力消失。物化器缺席属于配置错配，记 error 便于排查。</p>
+     */
+    private List<AgentSkill> loadSkillsFromMysql(SkillProperties cfg) throws java.io.IOException {
+        java.nio.file.Path dir = Path.of(cfg.getDirectory());
+        MysqlSkillMaterializer materializer =
+            skillMaterializerProvider == null ? null : skillMaterializerProvider.getIfAvailable();
+        if (materializer == null) {
+            log.error("[Skill] mysql 仓库但物化器不可用（持久化环境未激活），改读磁盘存量, code={}, dir={}",
+                "SKILL-MATERIALIZER-MISSING", dir.toAbsolutePath());
+        } else {
+            try {
+                materializer.materializeTo(dir);
+            } catch (Exception e) {
+                log.error("[Skill] 技能物化失败，改读磁盘存量, code={}, dir={}",
+                    "SKILL-MATERIALIZE-FAIL", dir.toAbsolutePath(), e);
+            }
+        }
+        java.nio.file.Files.createDirectories(dir);
+        // 物化目录是 MySQL 的投影，写回它没有意义（下次启动即被覆盖），故一律只读挂载
+        List<AgentSkill> skills = new FileSystemSkillRepository(dir, false).getAllSkills();
+        log.info("[Skill] mysql 仓库（物化目录 {}，只读），技能数={}", dir.toAbsolutePath(), skills.size());
+        return skills;
+    }
+
+    /** 加载技能并注册进 SkillBox（支持 mysql 权威 / classpath 只读 / filesystem 可写自进化）。 */
     private SkillBox buildSkillBox(Toolkit toolkit) {
         SkillProperties cfg = properties.getSkill();
         try {
             List<AgentSkill> skills;
-            if ("filesystem".equalsIgnoreCase(cfg.getRepository())) {
+            String repository = cfg.getRepository();
+            if ("mysql".equalsIgnoreCase(repository)) {
+                skills = loadSkillsFromMysql(cfg);
+            } else if ("filesystem".equalsIgnoreCase(repository)) {
                 java.nio.file.Path dir = Path.of(cfg.getDirectory());
                 java.nio.file.Files.createDirectories(dir);
                 skills = new FileSystemSkillRepository(dir, cfg.isWritable()).getAllSkills();

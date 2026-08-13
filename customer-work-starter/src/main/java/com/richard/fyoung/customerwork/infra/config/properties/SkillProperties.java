@@ -12,11 +12,17 @@ import java.util.Map;
 public class SkillProperties {
     /** 是否启用 Skill。 */
     private boolean enabled = true;
-    /** 仓库类型：classpath（只读内置）| filesystem（可读写，支持技能自进化/写回）。 */
+    /**
+     * 仓库类型：classpath（只读内置）| filesystem（可读写，支持技能自进化/写回）| mysql（权威落库）。
+     *
+     * <p>{@code mysql} 时技能存 {@code cw_skill} / {@code cw_skill_file}，启动时物化到 {@link #directory}
+     * 再交框架的 FileSystemSkillRepository 读——框架只认文件系统，那个目录是每次启动重建的缓存而非权威来源，
+     * 因而也一律只读挂载（写回它下次启动即被覆盖）。</p>
+     */
     private String repository = "classpath";
     /** classpath 仓库的资源目录。 */
     private String location = "skills";
-    /** filesystem 仓库的磁盘目录。 */
+    /** filesystem 仓库的磁盘目录；mysql 仓库的物化目录。 */
     private String directory = "./data/skills";
     /** filesystem 仓库是否可写（支持 Agent 沉淀 / 上传新技能）。 */
     private boolean writable = true;
