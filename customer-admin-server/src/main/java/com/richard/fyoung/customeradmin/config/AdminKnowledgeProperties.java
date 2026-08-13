@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.config;
 
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -48,7 +49,7 @@ public class AdminKnowledgeProperties {
      * 允许被索引的源码根目录白名单（源码路径必须落在其一之下，防路径穿越/越权读取宿主机任意目录）。
      * 默认只允许 admin 工作区（会话产物）；需索引外部仓库源码时在配置里追加其绝对路径根。
      */
-    private List<String> allowedRoots = new ArrayList<>(List.of("./data/admin-workspace"));
+    private List<String> allowedRoots = new ArrayList<>(List.of(RuntimeWorkDir.of("admin-workspace")));
 
     /**
      * 可被索引的文件扩展名白名单（其余一律跳过，避免把二进制/依赖产物灌进向量库）。

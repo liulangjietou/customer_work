@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.config.properties;
 
 import lombok.Data;
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -19,7 +20,7 @@ public class HarnessProperties {
     /** 是否启用 HarnessAgent 包装（叠加 Plan Mode / Compaction / Subagent / Workspace）。默认关闭。 */
     private boolean enabled = false;
     /** 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）。 */
-    private String workspaceDir = "./data/workspace";
+    private String workspaceDir = RuntimeWorkDir.of("workspace");
     /** 分层记忆：启用 MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation（MemoryConfig）。 */
     private boolean memoryEnabled = false;
     /**

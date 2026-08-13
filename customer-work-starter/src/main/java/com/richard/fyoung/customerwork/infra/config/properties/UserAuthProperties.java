@@ -27,14 +27,12 @@ public class UserAuthProperties {
     /**
      * 用户头像上传配置。
      *
-     * <p>{@code directory} 为本地磁盘落盘目录（项目无 OSS/MinIO，沿用 {@code ./data/xxx} 本地磁盘约定）；
+     * <p>头像本体存 MinIO（走 {@code AttachmentFileStorage} SPI，项目内不落盘），故这里没有目录配置。
      * {@code maxSizeBytes} 为单文件大小上限（超过即中断，默认 2MB）；{@code urlPrefix} 为对外访问 URL 前缀，
      * 落在 {@code /api} 下以复用前端 Vite 代理规则。</p>
      */
     @Data
     public static class Avatar {
-        /** 头像落盘目录。 */
-        private String directory = "./data/avatars";
         /** 单文件大小上限（字节，默认 2MB）。 */
         private long maxSizeBytes = 2L * 1024 * 1024;
         /** 对外访问 URL 前缀（须以 / 开头和结尾）。 */

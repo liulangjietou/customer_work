@@ -2,7 +2,7 @@ package com.richard.fyoung.customerwork.capability.quality;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
-import com.richard.fyoung.customerwork.core.memory.FileFactLog;
+import com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,16 +19,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class QualityFeedbackRecorderTest {
 
-    private QualityFeedbackRecorder newRecorder(Path tempDir) {
-        FactLog factLog = new FileFactLog(true, tempDir);
+    /** 事实日志实例必须与被测对象共用一份——此前用落盘实现时靠同一个 tempDir 隐式共享。 */
+    private QualityFeedbackRecorder newRecorder(FactLog factLog) {
         return new QualityFeedbackRecorder(new QualityInspectionService(), factLog,
             new TenantResolver(new CustomerWorkProperties()));
     }
 
     @Test
     void inspectAndRecord_shouldRecordFact_whenNotPassed(@TempDir Path tempDir) {
-        QualityFeedbackRecorder recorder = newRecorder(tempDir);
-        FactLog factLog = new FileFactLog(true, tempDir);
+        FactLog factLog = new InMemoryTestFactLog();
+        QualityFeedbackRecorder recorder = newRecorder(factLog);
 
         QualityReport report = recorder.inspectAndRecord("tenantA:sess-1",
             List.of("您放心，钱已打款马上到账。"));
@@ -43,8 +43,8 @@ class QualityFeedbackRecorderTest {
 
     @Test
     void inspectAndRecord_shouldNotRecord_whenPassed(@TempDir Path tempDir) {
-        QualityFeedbackRecorder recorder = newRecorder(tempDir);
-        FactLog factLog = new FileFactLog(true, tempDir);
+        FactLog factLog = new InMemoryTestFactLog();
+        QualityFeedbackRecorder recorder = newRecorder(factLog);
 
         QualityReport report = recorder.inspectAndRecord("tenantA:sess-2",
             List.of("已为您查询订单，预计 1-3 个工作日到账。"));
@@ -55,8 +55,8 @@ class QualityFeedbackRecorderTest {
 
     @Test
     void inspectAndRecord_shouldDefaultTenant_whenSessionIdHasNoDelimiter(@TempDir Path tempDir) {
-        QualityFeedbackRecorder recorder = newRecorder(tempDir);
-        FactLog factLog = new FileFactLog(true, tempDir);
+        FactLog factLog = new InMemoryTestFactLog();
+        QualityFeedbackRecorder recorder = newRecorder(factLog);
 
         recorder.inspectAndRecord("no-delimiter-session", List.of("这个我也不知道，绝对没问题，你放心钱已打款。"));
 

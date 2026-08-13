@@ -16,10 +16,6 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -29,10 +25,9 @@ import com.richard.fyoung.customerwork.infra.config.properties.UserAuthPropertie
 /**
  * 用户头像存储：校验（扩展名白名单 + 大小上限）、以 UUID 命名写入对象存储、返回可访问 URL（响应式）。
  *
- * <p>存储后端走 starter 的 {@link AttachmentFileStorage} SPI（{@code customer-work.attachment.storage.type}
- * 决定 minio / local），不再各自落本地盘——多副本部署时 A 机上传的头像 B 机读不到，正是这次要解决的问题。
- * 大小上限 / URL 前缀仍取 {@code customer-work.user-auth.avatar.*}；{@code directory} 降级为
- * 存量头像的读兜底目录（见 {@link #read}）。</p>
+ * <p>存储后端走 starter 的 {@link AttachmentFileStorage} SPI（MinIO），项目内<b>不落任何文件</b>。
+ * 大小上限 / URL 前缀仍取 {@code customer-work.user-auth.avatar.*}。改造前落在旧本地目录的存量头像
+ * 需要重新上传，或由运维把旧文件按同名 key 灌进 MinIO。</p>
  *
  * <p>大小校验仍是边收边计数、超限即中断（{@code sink.error}），故聚合进内存的字节量被上限封住，
  * 不会被一个超大文件打爆。扩展名校验为链路唯一防御点（fast-fail），非法即 400。</p>
@@ -96,34 +91,12 @@ public class AvatarStorageService {
     }
 
     /**
-     * 按 key 读头像字节：先查对象存储，未命中回落改造前的本地盘目录。
+     * 按 key 读头像字节。
      *
-     * <p>存量头像落在 {@code {directory}/{uuid}.{ext}}，DB 里 {@code cw_user.avatar_url} 存的是
-     * 那个无 {@code yyyyMM} 前缀的 URL；有这层兜底，存量头像不用迁移即可继续访问。</p>
-     *
-     * @throws IOException 两处都没有
+     * @throws IOException 对象不存在或读取失败
      */
     public byte[] read(String key) throws IOException {
-        try {
-            return fileStorage.read(key);
-        } catch (Exception e) {
-            Path legacy = resolveLegacy(key);
-            if (legacy != null && Files.isRegularFile(legacy)) {
-                return Files.readAllBytes(legacy);
-            }
-            throw new IOException("avatar not found in storage or legacy dir: " + key, e);
-        }
-    }
-
-    /** 旧目录路径解析，附带路径穿越校验（key 来自 URL）；越界返回 null。 */
-    private Path resolveLegacy(String key) {
-        Path base = Paths.get(config.getDirectory()).toAbsolutePath().normalize();
-        Path target = base.resolve(key).normalize();
-        if (!target.startsWith(base)) {
-            log.error("legacy avatar path escapes base dir, code={}, key={}", "AVATAR-PATH-TRAVERSAL", key);
-            return null;
-        }
-        return target;
+        return fileStorage.read(key);
     }
 
     /** 把聚合后的 DataBuffer 读成字节数组并释放，避免堆外内存泄漏。 */

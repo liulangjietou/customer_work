@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * MyBatis-Plus 事实日志测试（对接本机 MySQL：localhost:3306，root/root，
  * 库 agent_scope_customer_work，表 cw_fact_log 由 {@link MybatisTestSupport#ensureSchema} 建好）。
  *
- * <p>MySQL 不可达时自动跳过（assumeTrue）。覆盖落盘实现（{@link FileFactLogTest}）同名的行为契约——
+ * <p>MySQL 不可达时自动跳过（assumeTrue）。覆盖 FactLog 的行为契约——
  * 顺序、分区隔离、可禁用——外加只有 jdbc 分支才有的读取上限。</p>
  * @author owlzhangfq@gmail.com
  */

@@ -33,7 +33,7 @@ class LongTermMemoryTest {
 
     private InMemoryLongTermMemory memoryFor(String tenant) {
         // 事实日志关闭，单测只聚焦语义召回与租户隔离（FactLog 另有专测）
-        FactLog factLog = new FileFactLog(false, Path.of("target/test-facts"));
+        FactLog factLog = new com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog(false);
         return new InMemoryLongTermMemory(store, factLog, tenant, 5);
     }
 

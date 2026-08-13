@@ -3,7 +3,6 @@ package com.richard.fyoung.customerwork.infra.config;
 import com.zaxxer.hikari.HikariDataSource;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.state.InMemoryAgentStateStore;
-import io.agentscope.core.state.JsonFileAgentStateStore;
 import io.agentscope.extensions.mysql.state.MysqlAgentStateStore;
 import io.agentscope.extensions.redis.state.jedis.JedisAgentStateStore;
 import org.slf4j.Logger;
@@ -15,7 +14,6 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 
 import javax.sql.DataSource;
-import java.nio.file.Path;
 import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 
 /**
@@ -27,7 +25,6 @@ import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties
  * 支持四种后端：</p>
  * <ul>
  *   <li><b>memory</b>：{@link InMemoryAgentStateStore}，进程内、重启丢失，适合本地联调；</li>
- *   <li><b>json</b>：{@link JsonFileAgentStateStore}，文件落盘，单机重启可恢复；</li>
  *   <li><b>redis</b>：{@link JedisAgentStateStore}（基于 Jedis），分布式共享、多实例横向扩容；</li>
  *   <li><b>mysql</b>：{@link MysqlAgentStateStore}（JDBC + HikariCP），强一致、可审计。</li>
  * </ul>
@@ -49,11 +46,6 @@ public class SessionConfig {
     AgentStateStore buildStateStore(SessionProperties cfg) {
         String mode = cfg.getMode() == null ? "memory" : cfg.getMode().trim().toLowerCase();
         switch (mode) {
-            case "json": {
-                Path dir = Path.of(cfg.getDirectory());
-                log.info("State persistence: JsonFileAgentStateStore, directory={}", dir.toAbsolutePath());
-                return new JsonFileAgentStateStore(dir);
-            }
             case "redis": {
                 SessionProperties.Redis r = cfg.getRedis();
                 log.info("State persistence: JedisAgentStateStore, {}:{} keyPrefix={}",

@@ -28,14 +28,13 @@ class AttachmentParseServiceTest {
             new TextAttachmentParser(props.getExtraTextExtensions()),
             new ExcelMarkdownParser(),
             new TikaDocumentParser());
+        // 文件存储只剩 MinIO 一种实现，单测用内存替身：本类验证的是解析编排，不是对象存储往返
         return new AttachmentParseService(parsers, new InMemoryAttachmentStore(),
-            new LocalAttachmentFileStorage(tempDir.toString()), props);
+            new InMemoryTestFileStorage(), props);
     }
 
     private AttachmentProperties props() {
-        AttachmentProperties p = new AttachmentProperties();
-        p.setBaseDir(tempDir.toString());
-        return p;
+        return new AttachmentProperties();
     }
 
     @Test

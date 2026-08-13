@@ -6,7 +6,6 @@ import com.richard.fyoung.customeradmin.workspace.chat.entity.AiChatAttachment;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.AiChatAttachmentMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.store.AdminChatAttachmentStore;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
-import com.richard.fyoung.customerwork.data.attachment.LocalAttachmentFileStorage;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParser;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentProperties;
@@ -64,7 +63,6 @@ class ChatAttachmentServiceTest {
         AdminChatAttachmentStore store = new AdminChatAttachmentStore(mapper);
 
         AttachmentProperties properties = new AttachmentProperties();
-        properties.setBaseDir(tempDir.toString());
 
         // 图片 OCR 用假实现，避免依赖真实视觉模型/网络（本用例不覆盖图片路径，仅保证解析器齐全）
         VisionOcrService fakeOcr = (bytes, mime) -> "fake-ocr-text";
@@ -73,7 +71,8 @@ class ChatAttachmentServiceTest {
             new ExcelMarkdownParser(),
             new TikaDocumentParser(),
             new VisionOcrParser(fakeOcr));
-        fileStorage = new LocalAttachmentFileStorage(properties.getBaseDir());
+        // 文件存储只剩 MinIO 一种实现，单测用内存替身（本类验证的是附件编排，不是对象存储往返）
+        fileStorage = new InMemoryTestFileStorage();
         AttachmentParseService parseService = new AttachmentParseService(parsers, store, fileStorage, properties);
 
         service = new ChatAttachmentService(parseService, store, fileStorage);
@@ -257,5 +256,36 @@ class ChatAttachmentServiceTest {
 
         service.bindToMessage(AGENT_CODE, "s1", "m1", List.of("a1"));
         // 无异常抛出即通过
+    }
+
+    /**
+     * 进程内附件文件存储替身：key 规则与 MinIO 实现一致（{@code {yyyyMM}/{id}.{ext}}）。
+     * starter 的同名替身在其 test 源集里，admin 取不到，故此处内联一份。
+     */
+    private static class InMemoryTestFileStorage implements AttachmentFileStorage {
+        private final java.util.Map<String, byte[]> objects = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public String store(byte[] data, String id, String ext) {
+            String fileName = (ext == null || ext.isEmpty()) ? id : id + "." + ext;
+            String key = java.time.LocalDate.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMM")) + "/" + fileName;
+            objects.put(key, data);
+            return key;
+        }
+
+        @Override
+        public byte[] read(String storagePath) throws java.io.IOException {
+            byte[] data = objects.get(storagePath);
+            if (data == null) {
+                throw new java.io.IOException("attachment object not found: " + storagePath);
+            }
+            return data;
+        }
+
+        @Override
+        public void delete(String storagePath) {
+            objects.remove(storagePath);
+        }
     }
 }

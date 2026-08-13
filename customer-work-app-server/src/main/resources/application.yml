@@ -69,7 +69,6 @@ customer-work:
     mode: mysql
     # 会话空闲超时（分钟）：超过该时间无活动的会话自动清理（移除缓存+状态+锁）；<=0 禁用
     idle-timeout-minutes: 0
-    directory: ./data/sessions
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
@@ -146,7 +145,6 @@ customer-work:
     # 启用后由 HarnessAgentFactory 经 HarnessAgent.fromAgent(...) 叠加 Plan Mode / Compaction / Subagent / Workspace
     enabled: false
     # 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）
-    workspace-dir: ./data/workspace
     # 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation
     memory-enabled: false
     # 环境级记忆（跨会话共享的环境记忆标识），留空不启用
@@ -190,13 +188,11 @@ customer-work:
     # 仓库：classpath（只读内置）| filesystem（可写，支持技能自进化/写回）
     repository: classpath
     location: skills
-    directory: ./data/skills
     writable: true
     # 注册"运行时加载技能"工具，允许 Agent 按需自行加载技能
     runtime-load-tool-enabled: false
     # 代码执行技能（注册读写/Shell 工具）。默认关闭
     code-execution-enabled: false
-    code-execution-work-dir: ./data/skill-workspace
   mcp:
     # MCP 接入：把存量 HTTP 系统零改造接成 Agent 工具。默认关闭，配置 servers 后生效
     enabled: false
@@ -207,7 +203,6 @@ customer-work:
   observability:
     # 全链路 trace 导出为 JSONL（数据飞轮采集）。默认关闭
     trace-enabled: false
-    trace-file: ./data/traces/agent-trace.jsonl
     # 框架原生链路追踪 Hook（按模型/工具/Agent 调用打 span）。默认关闭
     tracing-enabled: false
     # Studio 可视化调试（需外部 Studio 服务）。默认关闭
@@ -230,7 +225,6 @@ customer-work:
   fact-log:
     # 三层记忆第三层：只追加事实日志（可审计、跨会话）
     enabled: true
-    directory: ./data/facts
     # 单文件最大大小（MB），超过则轮转到 .1 / .2 归档；<=0 禁用轮转
     max-file-mb: 10
     # 最多保留的归档文件数（超出最旧的自动删除）；<=0 不限制
@@ -364,10 +358,9 @@ customer-work:
     jwt-secret: ${CW_USER_JWT_SECRET:dev-secret-change-me-in-production-0001}
     # 登录态有效期（小时，默认 7 天）
     jwt-expire-hours: 168
-    # 用户头像上传（无 OSS/MinIO，沿用 ./data/xxx 本地磁盘约定）
+    # 用户头像上传（本体存 MinIO，项目内不落盘）
     avatar:
       # 落盘目录（相对启动工作目录）
-      directory: ./data/avatars
       # 单文件大小上限（字节，默认 2MB=2097152），超限即中断上传
       max-size-bytes: 2097152
       # 对外访问 URL 前缀（落在 /api 下以复用前端 Vite 代理；须以 / 开头和结尾）
@@ -388,12 +381,9 @@ customer-work:
     enabled: true
     # 存储模式：memory（进程内，重启丢）| jdbc（MyBatis-Plus 落 cw_chat_attachment，与 session.mysql 同库）
     store-mode: jdbc
-    # 落盘根目录（storage.type=local 时生效，沿用 ./data/xxx 本地磁盘约定）
-    base-dir: ./data/attachments
-    # 原始文件存储后端：local（本地磁盘）| minio（对象存储）。本期用 MinIO。
+    # 原始文件存储：MinIO 对象存储（唯一后端，项目内不落盘）。
     # bucket 惰性确保：应用启动不连 MinIO，首次上传才检查/建桶，故 MinIO 不可达不影响启动与切片测试。
     storage:
-      type: ${CUSTOMER_WORK_ATTACHMENT_STORAGE_TYPE:minio}
       minio:
         endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
         access-key: ${MINIO_ACCESS_KEY:minioadmin}

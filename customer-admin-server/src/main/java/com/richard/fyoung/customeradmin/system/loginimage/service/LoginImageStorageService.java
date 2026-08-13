@@ -2,7 +2,6 @@ package com.richard.fyoung.customeradmin.system.loginimage.service;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
-import com.richard.fyoung.customeradmin.common.storage.ImageStorageSupport;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,17 +22,14 @@ import java.util.UUID;
  * {@link com.richard.fyoung.customeradmin.system.loginimage.controller.LoginImagePublicController}
  * 映射的 {@code /api/login-images/**} 对外提供访问 URL。
  *
- * <p>URL 契约与改造前完全一致（{@code /api/login-images/{key}}），故 {@code sys_login_carousel_image.image_url}
- * 里已存的地址无需迁移——读取时对象存储未命中会回落旧目录 {@link #LEGACY_IMAGE_ROOT}，见
- * {@link ImageStorageSupport}。</p>
+ * <p>URL 契约与改造前一致（{@code /api/login-images/{key}}），但<b>不再有本地盘</b>：
+ * 项目内不落任何文件，{@code sys_login_carousel_image.image_url} 里改造前写入的地址
+ * （对应旧 {@code ./data/login-images} 下的文件）需要重新上传，或由运维把旧文件按同名 key 灌进 MinIO。</p>
  * @author owlzhangfq@gmail.com
  */
 @Slf4j
 @Service
 public class LoginImageStorageService {
-
-    /** 改造前的落盘目录，现仅用于读存量图片的兜底。 */
-    public static final String LEGACY_IMAGE_ROOT = "./data/login-images";
 
     /** 与 {@code LoginImagePublicController} 的映射保持一致，改这里要同步改那边。 */
     public static final String URL_PREFIX = "/api/login-images/";
@@ -49,10 +45,10 @@ public class LoginImageStorageService {
     private static final int MIN_WIDTH = 1280;
     private static final int MIN_HEIGHT = 720;
 
-    private final ImageStorageSupport storage;
+    private final AttachmentFileStorage fileStorage;
 
     public LoginImageStorageService(AttachmentFileStorage fileStorage) {
-        this.storage = new ImageStorageSupport(fileStorage, LEGACY_IMAGE_ROOT);
+        this.fileStorage = fileStorage;
     }
 
     /** @return 可访问 URL（相对路径，前端拼自身 origin 即可直接展示）。 */
@@ -75,7 +71,7 @@ public class LoginImageStorageService {
         }
         checkMinResolution(data);
         try {
-            return URL_PREFIX + storage.store(data, UUID.randomUUID().toString(), extension);
+            return URL_PREFIX + fileStorage.store(data, UUID.randomUUID().toString(), extension);
         } catch (IOException e) {
             throw new BizException(ResultCode.PARAM_INVALID, "图片保存失败: " + e.getMessage());
         }
@@ -84,21 +80,26 @@ public class LoginImageStorageService {
     /**
      * 按相对 key 读图片字节（供 {@code LoginImagePublicController} 出图）。
      *
-     * @throws IOException 对象存储与旧目录都没有该图
+     * @throws IOException 对象不存在或读取失败
      */
     public byte[] read(String key) throws IOException {
-        return storage.read(key);
+        return fileStorage.read(key);
     }
 
     /**
-     * 按访问 URL 删除图片文件。删除记录的主链路在 DB 侧，文件清理失败只记 error 不中断
-     * （残留文件不影响功能，可运维期清理，兜底在 {@link ImageStorageSupport#delete}）。
+     * 按访问 URL 删除图片对象。删除记录的主链路在 DB 侧，对象清理失败只记 error 不中断
+     * （残留对象不影响功能，可运维期清理）。
      */
     public void delete(String imageUrl) {
         if (!StringUtils.hasText(imageUrl) || !imageUrl.startsWith(URL_PREFIX)) {
             return;
         }
-        storage.delete(imageUrl.substring(URL_PREFIX.length()));
+        String key = imageUrl.substring(URL_PREFIX.length());
+        try {
+            fileStorage.delete(key);
+        } catch (Exception e) {
+            log.error("delete login image object failed, code={}, key={}", "LOGIN-IMAGE-DELETE-FAIL", key, e);
+        }
     }
 
     /**

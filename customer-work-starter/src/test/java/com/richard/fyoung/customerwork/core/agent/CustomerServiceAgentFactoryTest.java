@@ -2,7 +2,7 @@ package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
-import com.richard.fyoung.customerwork.core.memory.FileFactLog;
+import com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.core.memory.InMemoryLongTermMemoryStore;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryStore;
@@ -31,7 +31,7 @@ class CustomerServiceAgentFactoryTest {
     private final LongTermMemoryStore store = new InMemoryLongTermMemoryStore();
 
     private CustomerServiceAgentFactory factory(CustomerWorkProperties props) {
-        FactLog factLog = new FileFactLog(false, Path.of("target/test-facts"));
+        FactLog factLog = new InMemoryTestFactLog(false);
         return new CustomerServiceAgentFactory(
             model, props,
             new LongTermMemoryProvider(props, store, factLog),

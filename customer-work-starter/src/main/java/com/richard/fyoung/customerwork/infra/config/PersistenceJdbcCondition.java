@@ -14,10 +14,11 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  * Java 默认值在这里是<b>看不见</b>的，默认为 jdbc 的域必须登记进 {@link #JDBC_BY_DEFAULT_KEYS}，
  * 否则会出现"Store 想用 jdbc、但持久化环境没激活因而 Mapper 取不到"的错配。</p>
  *
- * <p><b>记忆链路默认落库（B5 起）</b>：{@code memory.store-mode} 与 {@code fact-log.store-mode} 的默认值
- * 是 {@code jdbc}，故本条件默认为真、持久化环境默认装配。数据源是 HikariCP 惰性建连（构造不建连），
+ * <p><b>记忆链路默认落库（B5 起）</b>：{@code memory.store-mode} 与 {@code harness.memory-store-mode}
+ * 的默认值是 {@code jdbc}，故本条件默认为真、持久化环境默认装配。数据源是 HikariCP 惰性建连（构造不建连），
  * 建表失败也只记 error 不阻断启动（见 {@code SchemaInitializer}），所以"默认装配"不等于"没有 MySQL 就起不来"；
- * 确实不想要持久层的宿主把这两个键显式配成 {@code memory} / {@code file} 即可退回全内存形态。</p>
+ * 确实不想要持久层的宿主把这两个键显式配成 {@code memory} 即可退回全内存形态（事实日志随之降为
+ * {@code NoOpFactLog}——本项目不再提供文件形态的事实日志）。</p>
  * @author owlzhangfq@gmail.com
  */
 public class PersistenceJdbcCondition implements Condition {
@@ -55,9 +56,8 @@ public class PersistenceJdbcCondition implements Condition {
      */
     private static final String[] JDBC_BY_DEFAULT_KEYS = {
         "customer-work.memory.store-mode",
-        "customer-work.fact-log.store-mode",
         // Harness 分层记忆（MEMORY.md 的权威副本）。harness 默认关闭，本键此时无实际影响，
-        // 但仍要登记：否则把上面两个键配成非 jdbc 之后，开着 harness 的宿主会静默降级进程内
+        // 但仍要登记：否则把上面那个键配成非 jdbc 之后，开着 harness 的宿主会静默降级进程内
         "customer-work.harness.memory-store-mode"
     };
 

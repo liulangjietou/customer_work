@@ -13,11 +13,9 @@ import java.util.List;
  *       永不被压缩或改写。</li>
  * </ol>
  *
- * <p>两种实现，由 {@link FactLogConfig} 按 {@code customer-work.fact-log.store-mode} 选型：</p>
- * <ul>
- *   <li>{@code jdbc}（默认）：{@link MybatisFactLog}，落 {@code cw_fact_log} 表，多副本共享同一份流水；</li>
- *   <li>{@code file}：{@link FileFactLog}，按分区落盘为 JSONL（含大小轮转），适合不便建表的部署场景。</li>
- * </ul>
+ * <p>唯一实现是 {@link MybatisFactLog}（落 {@code cw_fact_log} 表，多副本共享同一份流水），由
+ * {@link FactLogConfig} 装配；持久化环境不可用时兜底 {@link NoOpFactLog}。刻意不提供文件形态——
+ * 落在单机磁盘上的事实日志多副本各看各的、容器销毁即丢，没有审计价值。</p>
  *
  * <p>三个方法都不抛异常：事实日志是旁路能力，写失败退化为"这条没记上"，不该打断对话主链路。</p>
  * @author owlzhangfq@gmail.com

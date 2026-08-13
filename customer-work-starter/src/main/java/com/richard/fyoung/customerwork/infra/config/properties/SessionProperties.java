@@ -7,11 +7,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 会话持久化配置：memory | json | redis | mysql。 */
+/** 会话持久化配置：memory | redis | mysql（不提供文件落盘形态）。 */
 @Data
 public class SessionProperties {
     private String mode = "memory";
-    private String directory = "./data/sessions";
     /** 会话空闲超时（分钟）：超过该时间无活动的会话自动清理；<=0 禁用。 */
     private int idleTimeoutMinutes = 0;
     /** Redis 连接配置（mode=redis 时生效）。 */

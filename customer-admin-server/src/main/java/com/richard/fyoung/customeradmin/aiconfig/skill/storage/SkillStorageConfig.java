@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Skill 存储目标装配：local 无条件注册；nacos/sftp 仅 {@code enabled=true} 时注册。
+ * Skill 存储目标装配：minio 无条件注册；nacos/sftp 仅 {@code enabled=true} 时注册。
  *
  * <p>发布器实现已下沉 starter（{@code com.richard.fyoung.customerwork.data.skill.storage}），本类只负责
  * 把 admin 的 {@link SkillStorageProperties}（{@code admin.*} 前缀，配置保持兼容）映射成 starter 的
@@ -22,8 +22,8 @@ import org.springframework.context.annotation.Configuration;
 public class SkillStorageConfig {
 
     @Bean
-    public SkillContentPublisher localWorkspaceSkillPublisher(SkillStorageProperties properties) {
-        return SkillContentPublishers.create(SkillStorageTarget.LOCAL, toSettings(properties));
+    public SkillContentPublisher minioSkillPublisher(SkillStorageProperties properties) {
+        return SkillContentPublishers.create(SkillStorageTarget.MINIO, toSettings(properties));
     }
 
     @Bean
@@ -41,7 +41,14 @@ public class SkillStorageConfig {
     /** admin 配置 → starter 入参映射（{@code enabled} 是本模块的装配开关，不属于连接参数，不映射）。 */
     static SkillStorageSettings toSettings(SkillStorageProperties properties) {
         SkillStorageSettings settings = new SkillStorageSettings();
-        settings.getLocal().setBaseDir(properties.getLocal().getBaseDir());
+        SkillStorageProperties.Minio minio = properties.getMinio();
+        SkillStorageSettings.Minio minioSettings = settings.getMinio();
+        minioSettings.setEndpoint(minio.getEndpoint());
+        minioSettings.setAccessKey(minio.getAccessKey());
+        minioSettings.setSecretKey(minio.getSecretKey());
+        minioSettings.setBucket(minio.getBucket());
+        minioSettings.setPrefix(minio.getPrefix());
+        minioSettings.setAutoCreateBucket(minio.isAutoCreateBucket());
 
         SkillStorageProperties.Nacos nacos = properties.getNacos();
         SkillStorageSettings.Nacos nacosSettings = settings.getNacos();

@@ -241,10 +241,10 @@ public class SkillService {
 
     // ---- 存储目标发布/清理 ----
 
-    /** 校验并规整请求的存储目标；空/null 默认 {@code [LOCAL]}，非法值 fast fail。 */
+    /** 校验并规整请求的存储目标；空/null 默认 {@code [MINIO]}，非法值 fast fail。 */
     private List<SkillStorageTarget> resolveTargets(List<String> raw) {
         if (CollectionUtils.isEmpty(raw)) {
-            return List.of(SkillStorageTarget.LOCAL);
+            return List.of(SkillStorageTarget.MINIO);
         }
         Set<SkillStorageTarget> targets = new LinkedHashSet<>();
         for (String code : raw) {

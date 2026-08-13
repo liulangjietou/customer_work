@@ -21,15 +21,22 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "admin.skill.storage")
 public class SkillStorageProperties {
 
-    private Local local = new Local();
+    private Minio minio = new Minio();
     private Nacos nacos = new Nacos();
     private Sftp sftp = new Sftp();
 
-    /** 本地 workspace 目标（默认且始终可用）。 */
+    /** MinIO 对象存储目标（默认且始终可用；取代已下线的本地 workspace 目标）。 */
     @Data
-    public static class Local {
-        /** SKILL.md 落盘根目录，实际写入 {base-dir}/{skillCode}/SKILL.md。 */
-        private String baseDir = "./data/admin-workspace/skills";
+    public static class Minio {
+        private String endpoint = "http://localhost:9000";
+        private String accessKey = "minioadmin";
+        private String secretKey = "minioadmin";
+        /** 存放技能包的 bucket 名。 */
+        private String bucket = "customer-admin-skills";
+        /** 对象 key 前缀，实际 key = {prefix}{skillCode}/SKILL.md。 */
+        private String prefix = "skills/";
+        /** bucket 不存在时是否自动创建。 */
+        private boolean autoCreateBucket = true;
     }
 
     /** Nacos 配置中心目标。 */

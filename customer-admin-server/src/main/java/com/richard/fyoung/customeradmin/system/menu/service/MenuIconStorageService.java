@@ -2,7 +2,6 @@ package com.richard.fyoung.customeradmin.system.menu.service;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
-import com.richard.fyoung.customeradmin.common.storage.ImageStorageSupport;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -14,21 +13,17 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 菜单图标图片上传：写入对象存储（starter 的 {@link AttachmentFileStorage} SPI，
- * {@code customer-work.attachment.storage.type=minio} 时即 MinIO），通过
+ * 菜单图标图片上传：写入对象存储（starter 的 {@link AttachmentFileStorage} SPI，MinIO），通过
  * {@link com.richard.fyoung.customeradmin.system.menu.controller.MenuIconController}
  * 映射的 {@code /api/menu-icons/**} 对外提供访问 URL。
  *
- * <p>URL 契约与改造前完全一致（{@code /api/menu-icons/{key}}），故 {@code sys_menu.icon} 里
- * 已存的地址无需迁移——读取时对象存储未命中会回落旧目录 {@link #LEGACY_ICON_ROOT}，见
- * {@link ImageStorageSupport}。</p>
+ * <p>URL 契约与改造前一致（{@code /api/menu-icons/{key}}），但<b>不再有本地盘</b>：
+ * 项目内不落任何文件，{@code sys_menu.icon} 里改造前写入的地址（对应旧 {@code ./data/menu} 下的文件）
+ * 需要重新上传图标，或由运维把旧文件按同名 key 灌进 MinIO。</p>
  * @author owlzhangfq@gmail.com
  */
 @Service
 public class MenuIconStorageService {
-
-    /** 改造前的落盘目录，现仅用于读存量图片的兜底。 */
-    public static final String LEGACY_ICON_ROOT = "./data/menu";
 
     /** 与 {@code MenuIconController} 的映射保持一致，改这里要同步改那边。 */
     public static final String URL_PREFIX = "/api/menu-icons/";
@@ -36,10 +31,10 @@ public class MenuIconStorageService {
     private static final long MAX_UPLOAD_BYTES = 1024 * 1024; // 1MB，图标没必要更大
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("png", "jpg", "jpeg", "gif", "svg");
 
-    private final ImageStorageSupport storage;
+    private final AttachmentFileStorage fileStorage;
 
     public MenuIconStorageService(AttachmentFileStorage fileStorage) {
-        this.storage = new ImageStorageSupport(fileStorage, LEGACY_ICON_ROOT);
+        this.fileStorage = fileStorage;
     }
 
     /** @return 可访问 URL（相对路径，前端拼自身 origin 即可直接 <img> 展示）。 */
@@ -55,7 +50,7 @@ public class MenuIconStorageService {
             throw new BizException(ResultCode.PARAM_INVALID, "仅支持 png/jpg/jpeg/gif/svg 格式图标");
         }
         try {
-            return URL_PREFIX + storage.store(file.getBytes(), UUID.randomUUID().toString(), extension);
+            return URL_PREFIX + fileStorage.store(file.getBytes(), UUID.randomUUID().toString(), extension);
         } catch (IOException e) {
             throw new BizException(ResultCode.PARAM_INVALID, "图标图片保存失败: " + e.getMessage());
         }
@@ -64,10 +59,10 @@ public class MenuIconStorageService {
     /**
      * 按相对 key 读图标字节（供 {@code MenuIconController} 出图）。
      *
-     * @throws IOException 对象存储与旧目录都没有该图
+     * @throws IOException 对象不存在或读取失败
      */
     public byte[] read(String key) throws IOException {
-        return storage.read(key);
+        return fileStorage.read(key);
     }
 
     private String extractExtension(String originalFilename) {

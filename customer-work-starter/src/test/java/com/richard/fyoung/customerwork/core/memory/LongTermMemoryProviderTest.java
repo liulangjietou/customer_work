@@ -20,7 +20,7 @@ class LongTermMemoryProviderTest {
     private LongTermMemoryProvider provider(CustomerWorkProperties props) {
         return new LongTermMemoryProvider(props,
             new InMemoryLongTermMemoryStore(),
-            new FileFactLog(false, Path.of("target/test-facts")));
+            new com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog(false));
     }
 
     @Test

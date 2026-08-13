@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 import com.richard.fyoung.customerwork.core.memory.ContextMemoryFactory;
 import com.richard.fyoung.customerwork.core.memory.HarnessMemorySyncService;
 import io.agentscope.core.ReActAgent;
@@ -230,7 +231,7 @@ public class HarnessAgentFactory {
 
     /** 解析并创建工作区目录（沙箱 / 文件工具的隔离根）。 */
     private Path resolveWorkspace(String dir) {
-        Path workspace = Path.of(dir == null || dir.isBlank() ? "./data/workspace" : dir);
+        Path workspace = Path.of(dir == null || dir.isBlank() ? RuntimeWorkDir.of("workspace") : dir);
         try {
             Files.createDirectories(workspace);
         } catch (Exception e) {

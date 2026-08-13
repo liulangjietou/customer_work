@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.config.properties;
 
 import lombok.Data;
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,8 +23,8 @@ public class SkillProperties {
     private String repository = "classpath";
     /** classpath 仓库的资源目录。 */
     private String location = "skills";
-    /** filesystem 仓库的磁盘目录；mysql 仓库的物化目录。 */
-    private String directory = "./data/skills";
+    /** filesystem 仓库的磁盘目录；mysql 仓库的物化目录（可随时重建，故放系统临时目录）。 */
+    private String directory = RuntimeWorkDir.of("skills");
     /** filesystem 仓库是否可写（支持 Agent 沉淀 / 上传新技能）。 */
     private boolean writable = true;
     /** 是否注册"运行时加载技能"工具，允许 Agent 按需自行加载技能。 */
@@ -31,5 +32,5 @@ public class SkillProperties {
     /** 是否启用代码执行技能（注册读写/Shell 工具，使技能可执行代码）。默认关闭。 */
     private boolean codeExecutionEnabled = false;
     /** 代码执行工作目录。 */
-    private String codeExecutionWorkDir = "./data/skill-workspace";
+    private String codeExecutionWorkDir = RuntimeWorkDir.of("skill-workspace");
 }

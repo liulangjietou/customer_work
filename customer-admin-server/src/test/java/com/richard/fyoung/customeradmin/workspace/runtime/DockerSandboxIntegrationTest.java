@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
+import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
@@ -57,7 +58,7 @@ class DockerSandboxIntegrationTest {
         String agentCode = "it-docker-" + System.currentTimeMillis();
         // 与工厂 prepareHostWorkspaceRoot 同源的宿主机路径（CWD=模块目录，落在 /Users 之下，
         // macOS Docker Desktop 默认共享白名单内）
-        Path hostAgentRoot = Path.of("./data/admin-workspace", agentCode).toAbsolutePath().normalize();
+        Path hostAgentRoot = RuntimeWorkDir.resolve("admin-workspace").resolve(agentCode).toAbsolutePath().normalize();
 
         // ① 生产工厂装配沙箱规格（内部完成宿主机目录预建 + run 参数组装）
         SandboxFilesystemSpec spec = AdminAgentInstanceFactory.buildDockerFilesystemSpec(props, agentCode);
@@ -130,7 +131,7 @@ class DockerSandboxIntegrationTest {
     void sandboxAcquireFailure_throwsPromptly_doesNotHang() {
         assumeTrue(dockerAvailable(), "Docker 守护进程不可达，跳过该集成测试");
         String agentCode = "it-docker-fail-" + System.currentTimeMillis();
-        Path hostAgentRoot = Path.of("./data/admin-workspace", agentCode).toAbsolutePath().normalize();
+        Path hostAgentRoot = RuntimeWorkDir.resolve("admin-workspace").resolve(agentCode).toAbsolutePath().normalize();
 
         // 同样走生产工厂，仅镜像换成不存在的引用：docker run 找不到镜像会有界地失败（拉取失败/not found），
         // 而不是无限挂起——回归第 2 章约束 2「沙箱资源获取失败要能正常报错」的坑。

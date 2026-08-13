@@ -4,7 +4,6 @@ import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
 import org.springframework.http.HttpStatus;
@@ -15,8 +14,6 @@ import reactor.test.StepVerifier;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -40,10 +37,9 @@ class AvatarStorageServiceTest {
 
     private AttachmentFileStorage fileStorage;
 
-    private AvatarStorageService service(Path legacyDir, long maxBytes) {
+    private AvatarStorageService service(long maxBytes) {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         UserAuthProperties.Avatar avatar = properties.getUserAuth().getAvatar();
-        avatar.setDirectory(legacyDir.toString());
         avatar.setMaxSizeBytes(maxBytes);
         avatar.setUrlPrefix("/api/avatars/");
         fileStorage = mock(AttachmentFileStorage.class);
@@ -60,8 +56,8 @@ class AvatarStorageServiceTest {
     }
 
     @Test
-    void store_validPng_shouldWriteToStorageAndReturnUrl(@TempDir Path dir) throws Exception {
-        AvatarStorageService service = service(dir, 1024);
+    void store_validPng_shouldWriteToStorageAndReturnUrl() throws Exception {
+        AvatarStorageService service = service(1024);
         when(fileStorage.store(any(), anyString(), anyString())).thenReturn("202608/uuid.png");
 
         String url = service.store(filePart("photo.png", "hello-", "image")).block();
@@ -76,8 +72,8 @@ class AvatarStorageServiceTest {
     }
 
     @Test
-    void store_disallowedExtension_shouldReject(@TempDir Path dir) throws IOException {
-        AvatarStorageService service = service(dir, 1024);
+    void store_disallowedExtension_shouldReject() throws IOException {
+        AvatarStorageService service = service(1024);
 
         StepVerifier.create(service.store(filePart("evil.txt", "x")))
             .expectErrorSatisfies(e -> assertEquals(HttpStatus.BAD_REQUEST,
@@ -87,8 +83,8 @@ class AvatarStorageServiceTest {
     }
 
     @Test
-    void store_missingExtension_shouldReject(@TempDir Path dir) throws IOException {
-        AvatarStorageService service = service(dir, 1024);
+    void store_missingExtension_shouldReject() throws IOException {
+        AvatarStorageService service = service(1024);
 
         StepVerifier.create(service.store(filePart("noext", "x")))
             .expectErrorSatisfies(e -> assertEquals(HttpStatus.BAD_REQUEST,
@@ -98,9 +94,9 @@ class AvatarStorageServiceTest {
     }
 
     @Test
-    void store_oversize_shouldAbortBeforeTouchingStorage(@TempDir Path dir) throws IOException {
+    void store_oversize_shouldAbortBeforeTouchingStorage() throws IOException {
         // 上限 4 字节，分两块共 10 字节 → 第二块触发超限中断
-        AvatarStorageService service = service(dir, 4);
+        AvatarStorageService service = service(4);
 
         StepVerifier.create(service.store(filePart("big.jpg", "abcd", "efghij")))
             .expectErrorSatisfies(e -> assertEquals(HttpStatus.PAYLOAD_TOO_LARGE,
@@ -111,39 +107,19 @@ class AvatarStorageServiceTest {
     }
 
     @Test
-    void read_shouldPreferObjectStorage(@TempDir Path dir) throws Exception {
-        AvatarStorageService service = service(dir, 1024);
+    void read_shouldPreferObjectStorage() throws Exception {
+        AvatarStorageService service = service(1024);
         when(fileStorage.read("202608/uuid.png")).thenReturn(new byte[] {1, 2});
 
         assertArrayEquals(new byte[] {1, 2}, service.read("202608/uuid.png"));
     }
 
     @Test
-    void read_shouldFallBackToLegacyDir(@TempDir Path dir) throws Exception {
-        AvatarStorageService service = service(dir, 1024);
-        when(fileStorage.read(anyString())).thenThrow(new IOException("object not found"));
-        Files.write(dir.resolve("legacy.png"), new byte[] {7});
-
-        assertArrayEquals(new byte[] {7}, service.read("legacy.png"),
-            "存量头像只在旧目录里，不兜底的话老用户头像全 404");
-    }
-
-    @Test
-    void read_shouldThrowWhenMissingEverywhere(@TempDir Path dir) throws Exception {
-        AvatarStorageService service = service(dir, 1024);
+    void read_shouldThrowWhenMissingEverywhere() throws Exception {
+        AvatarStorageService service = service(1024);
         when(fileStorage.read(anyString())).thenThrow(new IOException("object not found"));
 
         assertThrows(IOException.class, () -> service.read("none.png"));
-    }
-
-    @Test
-    void read_shouldRejectKeyEscapingBaseDir(@TempDir Path dir) throws Exception {
-        AvatarStorageService service = service(dir, 1024);
-        when(fileStorage.read(anyString())).thenThrow(new IOException("object not found"));
-        Files.writeString(dir.getParent().resolve("outside.png"), "secret");
-
-        assertThrows(IOException.class, () -> service.read("../outside.png"),
-            "key 来自 URL，越界读必须被拦成'找不到'");
     }
 
 }
