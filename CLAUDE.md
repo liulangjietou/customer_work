@@ -34,9 +34,10 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1217** + admin-server **754** + app 83 + customer-channel 65 + gateway 1
-  （2026-08-13 存储落库批次：B5 三层记忆 L2/L3 与 Harness 分层记忆默认落 MySQL（starter +31）、
-  技能库支持 `skill.repository=mysql`（starter +5）、图片与附件统一走对象存储（starter +1 / app +5 / admin +13）。
+- 测试基线：starter **1198** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
+  （2026-08-13 B5 存储落库批次：三层记忆 L2/L3 与 Harness 分层记忆默认落 MySQL、技能库支持
+  `skill.repository=mysql`、文件一律走 MinIO。末尾"彻底去掉本地盘"那一步删实现连带删了它们的专属
+  用例，故条数比中途峰值（starter 1217 / admin 754 / app 83）低，属预期。
   上一版基线 2026-08-11 PR #90 starter 治理：包域化 + 按域装配拆分 + 配置类拆分，starter +3 装配门控测试；
   更早基线 2026-08-10 B1+B2+B3+B4：B1 租户地基 starter +14 / admin +11，B2 水平扩展 starter +15，B3 配额计费 starter +12，B4 配置版本化 admin +9。
   **上面的基线数是本机起了 MySQL 跑出来的**（starter 仅 6 skip / admin 仅 3 skip）；MySQL 不可达时
@@ -117,10 +118,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   ② **框架只认文件的地方，MySQL 当权威、磁盘当可重建缓存**：`FileSystemSkillRepository` 与 Harness
   的 `MEMORY.md` 都只读文件系统，故技能物化目录每次启动全量重建（先清空再写）、MEMORY.md 由
   `HarnessMemorySyncService` 水合/回写。别把落盘本身当成"没改成 MySQL"；
-  ③ **二进制一律走 `AttachmentFileStorage` SPI**（`attachment.storage.type` 默认 `minio`），
-  别再各自 `Files.write`；MinIO 不可达时**刻意不回落本地盘**——多副本下写本地盘正是要消除的不一致；
-  ④ **URL 契约不许变**：图片改走对象存储后仍是 `/api/menu-icons/{key}` 等原路径，读不到对象时
-  回落改造前的目录，存量数据因此不用迁移。key 现在来自 URL，凡是拿它拼磁盘路径的地方都要做穿越校验。
+  ③ **文件一律走 `AttachmentFileStorage` SPI（只有 MinIO 一种实现）**，别再 `Files.write`；
+  本地盘实现已整个删除而非留作降级——留着只会让人在不知情时踩进去。MinIO 不可达时上传直接失败，
+  这是刻意的；
+  ④ **项目内不出现 `./data/`**：框架硬约束的工作目录（Harness workspace、技能物化目录、
+  代码执行沙箱、XXL-JOB 执行器日志、VibeCoding workspace）统一走 `RuntimeWorkDir` 落
+  `${java.io.tmpdir}/customer-work/`——里面全是可随时重建的派生物，放项目目录会让人误以为要备份。
+  新增这类目录时用 `RuntimeWorkDir.of(...)`，不要再写字面量路径。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。
