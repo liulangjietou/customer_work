@@ -1,0 +1,50 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Outbox 队列深度",
+      "description": "pending 持续增长表示 Handler 或下游异常；abandoned 必须人工补偿。",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(customerwork_outbox_depth) by (status)", "legendFormat": "{{status}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "死信队列深度",
+      "description": "每条死信都代表已发生过业务失败；abandoned 需运营介入。",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(customerwork_deadletter_depth) by (status)", "legendFormat": "{{status}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox 投递速率",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(customerwork_outbox_deliveries_total[5m])) by (result)", "legendFormat": "{{result}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "死信重投速率",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(customerwork_deadletter_retries_total[5m])) by (result)", "legendFormat": "{{result}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["customer-work", "outbox", "deadletter"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "Customer Work - 可靠投递",
+  "uid": "customerwork-reliable-delivery",
+  "version": 1
+}

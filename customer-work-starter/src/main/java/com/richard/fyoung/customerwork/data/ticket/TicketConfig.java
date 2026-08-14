@@ -1,6 +1,10 @@
 package com.richard.fyoung.customerwork.data.ticket;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.data.outbox.OutboxHandler;
+import com.richard.fyoung.customerwork.data.outbox.OutboxService;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.transaction.CustomerWorkTransactionExecutor;
 import com.richard.fyoung.customerwork.data.ticket.mapper.TicketEventMapper;
 import com.richard.fyoung.customerwork.data.ticket.mapper.TicketMapper;
 import org.slf4j.Logger;
@@ -41,10 +45,35 @@ public class TicketConfig {
     }
 
     @Bean
+    @ConditionalOnMissingBean(TicketEventPublisher.class)
+    public TicketEventPublisher ticketEventPublisher(CustomerWorkProperties properties,
+                                                      ObjectProvider<TicketEventListener> listenerProvider,
+                                                      OutboxService outboxService,
+                                                      ObjectProvider<ObjectMapper> objectMapperProvider) {
+        if (STORE_MODE_JDBC.equalsIgnoreCase(properties.getTicket().getStoreMode())) {
+            log.info("ticket event publisher: database outbox");
+            return new OutboxTicketEventPublisher(outboxService,
+                objectMapperProvider.getIfAvailable(ObjectMapper::new));
+        }
+        log.info("ticket event publisher: immediate listeners");
+        return new ImmediateTicketEventPublisher(listenerProvider);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(name = "ticketEventOutboxHandler")
+    public OutboxHandler ticketEventOutboxHandler(ObjectProvider<ObjectMapper> objectMapperProvider,
+                                                  ObjectProvider<TicketEventListener> listenerProvider) {
+        return new TicketEventOutboxHandler(objectMapperProvider.getIfAvailable(ObjectMapper::new),
+            listenerProvider);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(TicketService.class)
     public TicketService ticketService(TicketStore ticketStore,
-                                       ObjectProvider<TicketEventListener> listenerProvider) {
-        return new TicketService(ticketStore, listenerProvider);
+                                       TicketEventPublisher eventPublisher,
+                                       ObjectProvider<CustomerWorkTransactionExecutor> transactionProvider) {
+        return new TicketService(ticketStore, eventPublisher,
+            transactionProvider.getIfAvailable(() -> CustomerWorkTransactionExecutor.DIRECT));
     }
 
     @Bean

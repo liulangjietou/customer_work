@@ -25,6 +25,7 @@ public class InMemoryDeadLetterStore implements DeadLetterStore {
         Comparator.comparingLong(DeadLetter::getCreatedAtMs).reversed();
 
     private final Map<String, DeadLetter> letters = new ConcurrentHashMap<>();
+    private final Map<String, String> leaseOwners = new ConcurrentHashMap<>();
 
     @Override
     public void save(DeadLetter letter) {
@@ -40,7 +41,7 @@ public class InMemoryDeadLetterStore implements DeadLetterStore {
     }
 
     @Override
-    public List<DeadLetter> findDue(long nowMs, int limit) {
+    public synchronized List<DeadLetter> claimDue(String owner, long nowMs, long leaseUntilMs, int limit) {
         List<DeadLetter> due = new ArrayList<>();
         for (DeadLetter letter : letters.values()) {
             if (letter.dueAt(nowMs)) {
@@ -48,7 +49,22 @@ public class InMemoryDeadLetterStore implements DeadLetterStore {
             }
         }
         due.sort(EARLIEST_DUE_FIRST);
-        return List.copyOf(due.subList(0, Math.min(Math.max(limit, 0), due.size())));
+        List<DeadLetter> claimed = due.subList(0, Math.min(Math.max(limit, 0), due.size()));
+        for (DeadLetter letter : claimed) {
+            letter.claim(owner, leaseUntilMs);
+            leaseOwners.put(letter.getId(), owner);
+        }
+        return List.copyOf(claimed);
+    }
+
+    @Override
+    public synchronized boolean complete(DeadLetter letter, String owner) {
+        if (!owner.equals(leaseOwners.get(letter.getId()))) {
+            return false;
+        }
+        leaseOwners.remove(letter.getId());
+        letters.put(letter.getId(), letter);
+        return true;
     }
 
     @Override

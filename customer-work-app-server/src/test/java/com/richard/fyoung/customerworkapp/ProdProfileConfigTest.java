@@ -45,7 +45,14 @@ class ProdProfileConfigTest {
         assertEquals("jdbc", prop(sources, "customer-work.slot-filling.store-mode"));
         assertEquals("jdbc", prop(sources, "customer-work.dialog.store-mode"));
         assertEquals("true", String.valueOf(prop(sources, "customer-work.security.approval-auth.enabled")));
+        assertEquals("mysql", prop(sources, "customer-work.skill.repository"));
+        assertEquals("redis", prop(sources, "customer-work.distributed.counter-mode"));
+        assertEquals("redis", prop(sources, "customer-work.distributed.session-lock-mode"));
+        assertEquals("true", String.valueOf(prop(sources,
+            "customer-work.session.mysql.migration-enabled")));
         assertEquals("health,prometheus", prop(sources, "management.endpoints.web.exposure.include"));
         assertEquals("when-authorized", prop(sources, "management.endpoint.health.show-details"));
+        assertEquals("${SPRINGDOC_ENABLED:false}", prop(sources, "springdoc.api-docs.enabled"));
+        assertEquals("${SPRINGDOC_ENABLED:false}", prop(sources, "springdoc.swagger-ui.enabled"));
     }
 }

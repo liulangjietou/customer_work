@@ -11,7 +11,8 @@ import reactor.core.publisher.Mono;
 import java.util.Optional;
 
 /**
- * 坐席鉴权过滤器：只覆盖 {@code /api/customer/agent/**}。
+ * 坐席鉴权过滤器：覆盖 {@code /api/customer/agent/**} 与旧人机切换端点
+ * {@code /api/customer/handoffs/**}。
  *
  * <p>从 {@code X-Agent-Token} 头解析 HMAC 令牌，经 {@link AgentAccessCredential#verify} 校验签名与有效期，
  * 失败 401 JSON；成功把 agentId 放入 exchange 属性（键 {@link #AGENT_ID_ATTR}）供控制器取用——坐席身份
@@ -28,6 +29,7 @@ public class AgentAuthWebFilter implements WebFilter {
     public static final String AGENT_ID_ATTR = "cw.agent.id";
 
     private static final String PATH_PREFIX = "/api/customer/agent/";
+    private static final String HANDOFF_PATH_PREFIX = "/api/customer/handoffs";
     private static final String TOKEN_HEADER = "X-Agent-Token";
 
     private final CustomerWorkProperties properties;
@@ -39,7 +41,7 @@ public class AgentAuthWebFilter implements WebFilter {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
-        if (!path.startsWith(PATH_PREFIX)) {
+        if (!requiresAgentAuth(path)) {
             return chain.filter(exchange);
         }
         String token = exchange.getRequest().getHeaders().getFirst(TOKEN_HEADER);
@@ -50,5 +52,11 @@ public class AgentAuthWebFilter implements WebFilter {
         }
         exchange.getAttributes().put(AGENT_ID_ATTR, agentId.get());
         return chain.filter(exchange);
+    }
+
+    private boolean requiresAgentAuth(String path) {
+        return path.startsWith(PATH_PREFIX)
+            || path.equals(HANDOFF_PATH_PREFIX)
+            || path.startsWith(HANDOFF_PATH_PREFIX + "/");
     }
 }

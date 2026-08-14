@@ -14,7 +14,7 @@ import java.util.Optional;
  * 仍能读到同一份阶段状态——解决进程内存储"阶段归零回 GREETING"的问题。</p>
  *
  * <p>由 {@link DialogStageConfig} 按 {@code dialog.store-mode=jdbc} 装配；建表由
- * {@code SchemaInitializer} 统一负责。</p>
+ * Flyway 统一负责。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisDialogStageStore implements DialogStageStore {

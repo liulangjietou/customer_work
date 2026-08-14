@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.deadletter;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import lombok.Getter;
 
 /**
@@ -17,6 +18,7 @@ import lombok.Getter;
 public class DeadLetter {
 
     private final String id;
+    private final String tenantId;
 
     /** 死信类型：决定由哪个 {@link DeadLetterHandler} 重投。 */
     private final String type;
@@ -33,17 +35,29 @@ public class DeadLetter {
     private volatile int attempts;
     private volatile String lastError;
     private volatile long nextRetryAtMs;
+    private volatile String leaseOwner;
+    private volatile long leaseUntilMs;
     private volatile long finishedAtMs;
 
     public DeadLetter(String id, String type, String payload, String bizKey,
                       String lastError, long createdAtMs) {
+        this(id, currentTenant(), type, payload, bizKey, lastError, createdAtMs);
+    }
+
+    public DeadLetter(String id, String tenantId, String type, String payload, String bizKey,
+                      String lastError, long createdAtMs) {
         this.id = id;
+        this.tenantId = tenantId;
         this.type = type;
         this.payload = payload;
         this.bizKey = bizKey;
         this.lastError = lastError;
         this.createdAtMs = createdAtMs;
         this.nextRetryAtMs = createdAtMs;
+    }
+
+    private static String currentTenant() {
+        return TenantContext.isPresent() ? TenantContext.get() : TenantContext.DEFAULT;
     }
 
     /**
@@ -58,15 +72,19 @@ public class DeadLetter {
         if (attempts >= maxAttempts) {
             this.status = DeadLetterStatus.ABANDONED;
             this.finishedAtMs = nowMs;
+            clearLease();
             return;
         }
+        this.status = DeadLetterStatus.PENDING;
         this.nextRetryAtMs = nowMs + backoffMs(baseBackoffMs);
+        clearLease();
     }
 
     /** 重投成功。 */
     public void succeed(long nowMs) {
         this.status = DeadLetterStatus.SUCCEEDED;
         this.finishedAtMs = nowMs;
+        clearLease();
     }
 
     /**
@@ -79,11 +97,27 @@ public class DeadLetter {
         this.attempts = 0;
         this.nextRetryAtMs = nowMs;
         this.finishedAtMs = 0L;
+        clearLease();
     }
 
     /** 是否到了可以重投的时刻。 */
     public boolean dueAt(long nowMs) {
-        return status == DeadLetterStatus.PENDING && nextRetryAtMs <= nowMs;
+        return (status == DeadLetterStatus.PENDING && nextRetryAtMs <= nowMs)
+            || (status == DeadLetterStatus.PROCESSING && leaseUntilMs <= nowMs);
+    }
+
+    /** 被某个巡检实例认领租约。 */
+    public void claim(String owner, long leaseUntilMs) {
+        this.status = DeadLetterStatus.PROCESSING;
+        this.leaseOwner = owner;
+        this.leaseUntilMs = leaseUntilMs;
+    }
+
+    /** 没有处理器时释放租约，不消耗业务重试次数。 */
+    public void releaseWithoutAttempt(long nextRetryAtMs) {
+        this.status = DeadLetterStatus.PENDING;
+        this.nextRetryAtMs = nextRetryAtMs;
+        clearLease();
     }
 
     /**
@@ -101,11 +135,19 @@ public class DeadLetter {
 
     /** 从存储还原时重建流转字段（仅供 Store 层使用，不表达业务动作）。 */
     public void restoreState(DeadLetterStatus status, int attempts, String lastError,
-                             long nextRetryAtMs, long finishedAtMs) {
+                             long nextRetryAtMs, long finishedAtMs,
+                             String leaseOwner, long leaseUntilMs) {
         this.status = status;
         this.attempts = attempts;
         this.lastError = lastError;
         this.nextRetryAtMs = nextRetryAtMs;
         this.finishedAtMs = finishedAtMs;
+        this.leaseOwner = leaseOwner;
+        this.leaseUntilMs = leaseUntilMs;
+    }
+
+    private void clearLease() {
+        this.leaseOwner = null;
+        this.leaseUntilMs = 0L;
     }
 }

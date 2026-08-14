@@ -17,7 +17,7 @@ import java.util.Optional;
  * 这对涉及资金的退款审批至关重要（进程内 {@link InMemoryApprovalStore} 重启即清空）。</p>
  *
  * <p>由 {@link ApprovalConfig} 按 {@code human-approval.store-mode=jdbc} 装配；建表与种子由
- * {@code SchemaInitializer} 统一负责。领域对象 {@link ApprovalRequest} 与持久化对象
+ * Flyway 统一负责。领域对象 {@link ApprovalRequest} 与持久化对象
  * {@link ApprovalRequestDO} 的转换在本类内完成（读回走 {@code reconstruct}，跳过状态机校验）。</p>
  * @author owlzhangfq@gmail.com
  */

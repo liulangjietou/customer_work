@@ -15,7 +15,7 @@ import java.util.List;
  * MyBatis-Plus 命中日志存储（{@code sensitive-word.hit-log.store-mode=jdbc} 时装配）。
  *
  * <p>落 {@code cw_sensitive_word_hit_log} 表，供后台命中看板跨实例查询。建表由统一
- * {@code SchemaInitializer} 负责。异常一律 {@code catch(Exception)} 并<b>吞掉不抛</b>——
+ * Flyway 负责。异常一律 {@code catch(Exception)} 并<b>吞掉不抛</b>——
  * 调用方是后台异步线程，抛出去只会打日志，而命中日志写失败不该有任何主链路后果。</p>
  * @author owlzhangfq@gmail.com
  */

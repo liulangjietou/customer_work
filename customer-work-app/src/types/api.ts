@@ -205,6 +205,8 @@ export interface WsChatDone {
 /** 服务端 -> 用户：工单状态变更事件 */
 export interface WsTicketEvent {
   ticketId: string
+  /** 至少一次投递的稳定去重键；兼容旧服务端时可能缺失 */
+  eventId?: number
   eventType: string
   fromStatus: TicketStatus | null
   toStatus: TicketStatus | null

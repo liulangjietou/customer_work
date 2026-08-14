@@ -95,6 +95,9 @@ docker compose down -v      # 连数据卷一起清空（彻底重来）
   `customerwork.sensitive.*`（敏感词护栏）默认关闭，需要业务侧分别打开
   `customer-work.synthetic-monitor.enabled=true` 与 `customer-work.sensitive-word.enabled=true`
   才会产生对应指标，否则相关告警规则永远不会触发（不是没生效，是没数据）。
+- **可靠投递队列**：`customerwork_outbox_depth{status=...}` 与
+  `customerwork_deadletter_depth{status=...}` 始终暴露 pending/processing/abandoned 三态；
+  abandoned 大于 0 表示自动补偿已耗尽，不能只重启服务，必须按消息 ID 做人工核对与补偿。
 
 ## 面板显示 No data 怎么排查
 

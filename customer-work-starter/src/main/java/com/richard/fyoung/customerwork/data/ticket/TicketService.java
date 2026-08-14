@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.ticket;
 
 import com.richard.fyoung.customerwork.core.common.PageResult;
+import com.richard.fyoung.customerwork.infra.transaction.CustomerWorkTransactionExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -13,11 +14,10 @@ import java.util.function.Consumer;
 
 /**
  * 工单业务服务（应用层入口）：把 {@link Ticket} 充血实体的状态机流转编排成"校验→流转→持久化→
- * 追加事件→广播监听器"的统一闭环。
+ * 追加事件→发布事件"的统一闭环。
  *
- * <p>每次成功流转都追加一条 {@link TicketEvent} 审计事件并广播给所有 {@link TicketEventListener}
- * （监听器异常只 error 日志、不中断主流程，也不影响其余监听器）。存储委托 {@link TicketStore} SPI：
- * 默认内存、生产切 JDBC。抢单走存储层 {@code claimAtomically} 条件更新，避免并发重复接单。</p>
+ * <p>每次成功流转都追加一条 {@link TicketEvent} 审计事件。JDBC 模式在同一事务内写入数据库 Outbox，
+ * 提交后异步投递监听器；内存模式保持同步通知。抢单走存储层 {@code claimAtomically} 条件更新。</p>
  * @author owlzhangfq@gmail.com
  */
 public class TicketService {
@@ -27,12 +27,19 @@ public class TicketService {
     private static final String ID_PREFIX = "TK-";
 
     private final TicketStore store;
-    /** 工单事件监听器集合（可为空）：每次流转后广播。 */
-    private final ObjectProvider<TicketEventListener> listenerProvider;
+    private final TicketEventPublisher eventPublisher;
+    private final CustomerWorkTransactionExecutor transactionExecutor;
 
+    /** 向后兼容的内存/测试构造器。 */
     public TicketService(TicketStore store, ObjectProvider<TicketEventListener> listenerProvider) {
+        this(store, new ImmediateTicketEventPublisher(listenerProvider), CustomerWorkTransactionExecutor.DIRECT);
+    }
+
+    public TicketService(TicketStore store, TicketEventPublisher eventPublisher,
+                         CustomerWorkTransactionExecutor transactionExecutor) {
         this.store = store;
-        this.listenerProvider = listenerProvider;
+        this.eventPublisher = eventPublisher;
+        this.transactionExecutor = transactionExecutor;
     }
 
     /**
@@ -40,18 +47,20 @@ public class TicketService {
      * 新单初始 AI_SERVING，工单号 {@code TK-<uuid>}。
      */
     public Ticket createForSession(String sessionId, String userId, String title, TicketCategory category) {
-        Optional<Ticket> active = store.findActiveBySession(sessionId);
-        if (active.isPresent()) {
-            return active.get();
-        }
-        String id = ID_PREFIX + UUID.randomUUID();
-        Ticket ticket = Ticket.create(id, sessionId, userId, title, category);
-        store.save(ticket);
-        TicketEvent event = store.appendEvent(TicketEvent.of(id, TicketEventType.CREATE,
-            null, ticket.getStatus(), TicketActorType.SYSTEM, userId, title));
-        broadcast(ticket, event);
-        log.info("ticket created: id={}, session={}, user={}", id, sessionId, userId);
-        return ticket;
+        return transactionExecutor.execute(() -> {
+            Optional<Ticket> active = store.findActiveBySession(sessionId);
+            if (active.isPresent()) {
+                return active.get();
+            }
+            String id = ID_PREFIX + UUID.randomUUID();
+            Ticket ticket = Ticket.create(id, sessionId, userId, title, category);
+            store.save(ticket);
+            TicketEvent event = store.appendEvent(TicketEvent.of(id, TicketEventType.CREATE,
+                null, ticket.getStatus(), TicketActorType.SYSTEM, userId, title));
+            eventPublisher.publish(ticket, event);
+            log.info("ticket created: id={}, session={}, user={}", id, sessionId, userId);
+            return ticket;
+        });
     }
 
     /**
@@ -59,18 +68,20 @@ public class TicketService {
      * 仅当发生真实流转（实体返回 true）时才追加事件并广播——已在人工链路的幂等空转不重复发事件。
      */
     public Ticket requestHandoff(String sessionId, String reason, TicketActorType actorType, String actorId) {
-        Ticket ticket = store.findActiveBySession(sessionId)
-            .orElseThrow(() -> new IllegalStateException("no active ticket for session: " + sessionId));
-        TicketStatus from = ticket.getStatus();
-        boolean flowed = ticket.requestHandoff(reason);
-        if (flowed) {
-            store.update(ticket);
-            TicketEvent event = store.appendEvent(TicketEvent.of(ticket.getId(),
-                TicketEventType.REQUEST_HANDOFF, from, ticket.getStatus(), actorType, actorId, reason));
-            broadcast(ticket, event);
-            log.info("ticket handoff requested: id={}, reason={}", ticket.getId(), reason);
-        }
-        return ticket;
+        return transactionExecutor.execute(() -> {
+            Ticket ticket = store.findActiveBySession(sessionId)
+                .orElseThrow(() -> new IllegalStateException("no active ticket for session: " + sessionId));
+            TicketStatus from = ticket.getStatus();
+            boolean flowed = ticket.requestHandoff(reason);
+            if (flowed) {
+                store.update(ticket);
+                TicketEvent event = store.appendEvent(TicketEvent.of(ticket.getId(),
+                    TicketEventType.REQUEST_HANDOFF, from, ticket.getStatus(), actorType, actorId, reason));
+                eventPublisher.publish(ticket, event);
+                log.info("ticket handoff requested: id={}, reason={}", ticket.getId(), reason);
+            }
+            return ticket;
+        });
     }
 
     /**
@@ -78,16 +89,18 @@ public class TicketService {
      * 语义等价 HTTP 409 Conflict。成功后追加 CLAIM 事件并广播。
      */
     public Ticket claim(String ticketId, String agentId) {
-        boolean claimed = store.claimAtomically(ticketId, agentId, System.currentTimeMillis());
-        if (!claimed) {
-            throw new IllegalStateException("ticket already claimed or not waiting: " + ticketId);
-        }
-        Ticket ticket = require(ticketId);
-        TicketEvent event = store.appendEvent(TicketEvent.of(ticketId, TicketEventType.CLAIM,
-            TicketStatus.WAITING_AGENT, TicketStatus.PROCESSING, TicketActorType.AGENT, agentId, null));
-        broadcast(ticket, event);
-        log.info("ticket claimed: id={}, agent={}", ticketId, agentId);
-        return ticket;
+        return transactionExecutor.execute(() -> {
+            boolean claimed = store.claimAtomically(ticketId, agentId, System.currentTimeMillis());
+            if (!claimed) {
+                throw new IllegalStateException("ticket already claimed or not waiting: " + ticketId);
+            }
+            Ticket ticket = require(ticketId);
+            TicketEvent event = store.appendEvent(TicketEvent.of(ticketId, TicketEventType.CLAIM,
+                TicketStatus.WAITING_AGENT, TicketStatus.PROCESSING, TicketActorType.AGENT, agentId, null));
+            eventPublisher.publish(ticket, event);
+            log.info("ticket claimed: id={}, agent={}", ticketId, agentId);
+            return ticket;
+        });
     }
 
     /** 撤销转人工：WAITING_AGENT → AI_SERVING。 */
@@ -181,13 +194,15 @@ public class TicketService {
      * @return true 表示发生了回填并已持久化；false 表示工单已有标题或给定标题为空白
      */
     public boolean fillTitle(String ticketId, String title) {
-        Ticket ticket = require(ticketId);
-        boolean filled = ticket.fillTitleIfBlank(title);
-        if (filled) {
-            store.update(ticket);
-            log.info("ticket title filled: id={}", ticketId);
-        }
-        return filled;
+        return transactionExecutor.execute(() -> {
+            Ticket ticket = require(ticketId);
+            boolean filled = ticket.fillTitleIfBlank(title);
+            if (filled) {
+                store.update(ticket);
+                log.info("ticket title filled: id={}", ticketId);
+            }
+            return filled;
+        });
     }
 
     /**
@@ -197,14 +212,16 @@ public class TicketService {
      * @return true 表示命中活跃工单并已刷新；false 表示会话无活跃工单（无需刷新）
      */
     public boolean touchUserActive(String sessionId) {
-        Optional<Ticket> active = store.findActiveBySession(sessionId);
-        if (active.isEmpty()) {
-            return false;
-        }
-        Ticket ticket = active.get();
-        ticket.markUserActive();
-        store.update(ticket);
-        return true;
+        return transactionExecutor.execute(() -> {
+            Optional<Ticket> active = store.findActiveBySession(sessionId);
+            if (active.isEmpty()) {
+                return false;
+            }
+            Ticket ticket = active.get();
+            ticket.markUserActive();
+            store.update(ticket);
+            return true;
+        });
     }
 
     // ---- 查询透传 ----
@@ -238,15 +255,18 @@ public class TicketService {
     /** 统一流转闭环：定位工单 → 执行实体状态机方法 → 持久化 → 追加事件 → 广播。 */
     private Ticket applyTransition(String ticketId, Consumer<Ticket> op, TicketEventType type,
                                   TicketActorType actorType, String actorId, String note) {
-        Ticket ticket = require(ticketId);
-        TicketStatus from = ticket.getStatus();
-        op.accept(ticket);
-        store.update(ticket);
-        TicketEvent event = store.appendEvent(TicketEvent.of(ticketId, type, from, ticket.getStatus(),
-            actorType, actorId, note));
-        broadcast(ticket, event);
-        log.info("ticket transition: id={}, type={}, from={}, to={}", ticketId, type, from, ticket.getStatus());
-        return ticket;
+        return transactionExecutor.execute(() -> {
+            Ticket ticket = require(ticketId);
+            TicketStatus from = ticket.getStatus();
+            op.accept(ticket);
+            store.update(ticket);
+            TicketEvent event = store.appendEvent(TicketEvent.of(ticketId, type, from, ticket.getStatus(),
+                actorType, actorId, note));
+            eventPublisher.publish(ticket, event);
+            log.info("ticket transition: id={}, type={}, from={}, to={}",
+                ticketId, type, from, ticket.getStatus());
+            return ticket;
+        });
     }
 
     /** 单一防御点：工单必须存在，否则 fast-fail。 */
@@ -255,18 +275,4 @@ public class TicketService {
             .orElseThrow(() -> new NoSuchElementException("ticket not found: " + ticketId));
     }
 
-    /** 广播事件给全部监听器；单个监听器异常只 error 日志，不中断主流程与其余监听器。 */
-    private void broadcast(Ticket ticket, TicketEvent event) {
-        if (listenerProvider == null) {
-            return;
-        }
-        listenerProvider.forEach(listener -> {
-            try {
-                listener.onTicketEvent(ticket, event);
-            } catch (Exception e) {
-                log.error("ticket listener failed, code={}, id={}, listener={}",
-                    "TICKET-LISTENER-FAIL", ticket.getId(), listener.getClass().getSimpleName(), e);
-            }
-        });
-    }
 }

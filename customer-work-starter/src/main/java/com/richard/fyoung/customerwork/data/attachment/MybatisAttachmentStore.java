@@ -15,7 +15,7 @@ import java.util.stream.Collectors;
  *
  * <p>把附件记录结构化落 {@code cw_chat_attachment}，保证重启 / 多实例部署下附件可追溯。持久层异常统一
  * {@code catch(Exception)} 兜底（HikariPool / MyBatis 初始化异常均为 RuntimeException）：查询失败返回空、
- * 保存失败抛 {@link IllegalStateException} 交编排层记录。建表由统一 SchemaInitializer 负责，本类不建表。</p>
+ * 保存失败抛 {@link IllegalStateException} 交编排层记录。建表由统一 Flyway 迁移负责，本类不建表。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisAttachmentStore implements AttachmentStore {

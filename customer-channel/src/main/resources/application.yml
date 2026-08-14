@@ -14,6 +14,7 @@ spring:
       # starter 引入 MyBatis-Plus 后 spring-jdbc 进入类路径，未配 spring.datasource 时
       # DataSourceAutoConfiguration 会启动失败；本模块不用 Spring 自动数据源，显式关闭
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
 
 # AgentScope Admin 控制台 + Chat Completions Web（OpenAI 兼容对话 API）
 agentscope:

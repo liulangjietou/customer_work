@@ -33,7 +33,8 @@ class MysqlSessionPersistenceTest {
         cfg.setMode("mysql");
         cfg.getMysql().setHost(HOST);
         cfg.getMysql().setPort(PORT);
-        cfg.getMysql().setDatabase("agent_scope_customer_work");
+        cfg.getMysql().setDatabase(System.getenv().getOrDefault(
+            "CUSTOMER_WORK_TEST_DATABASE", "agent_scope_customer_work"));
         cfg.getMysql().setUsername("root");
         cfg.getMysql().setPassword("root");
         cfg.getMysql().setAutoCreate(true);

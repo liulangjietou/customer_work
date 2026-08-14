@@ -7,23 +7,29 @@ import com.baomidou.mybatisplus.core.toolkit.GlobalConfigUtils;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.TenantProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantInterceptors;
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.ibatis.session.SqlSessionFactory;
-import org.mybatis.spring.SqlSessionTemplate;
 import org.mybatis.spring.annotation.MapperScan;
+import org.mybatis.spring.SqlSessionTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import com.richard.fyoung.customerwork.infra.transaction.CustomerWorkTransactionExecutor;
 
 import javax.sql.DataSource;
-import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
-import com.richard.fyoung.customerwork.infra.config.properties.TenantProperties;
 
 /**
  * customer-work 业务持久层的独立 MyBatis-Plus 环境（全部显式命名 + Ref 绑定，不依赖 MyBatis 自动装配）。
@@ -39,10 +45,10 @@ import com.richard.fyoung.customerwork.infra.config.properties.TenantProperties;
  * {@code tool-backend.mode=jdbc} 时才装配。三层记忆的 L2/L3（{@code memory.store-mode} /
  * {@code fact-log.store-mode}）默认即 jdbc，故本环境默认装配；把这两个键连同其余域一起显式配成
  * 非 jdbc，本类才整体不加载。数据源用 HikariCP 惰性连接（构造不建连），故装配本环境不等于启动即连库，
- * 建表失败也只记 error（见 {@link SchemaInitializer}），MySQL 缺席不阻断宿主启动。</p>
+ * 结构迁移由 {@link CustomerWorkSchemaMigrator} 在 MyBatis 环境建立前执行，失败时阻断启动。</p>
  *
  * <p>{@code customerWorkDataSource} 用 {@code @ConditionalOnMissingBean(name)} 允许宿主以同名 Bean 覆盖
- * （复用宿主已有连接池）。建表与种子由 {@link SchemaInitializer} 统一负责，Mapper 只表达读写 SQL。</p>
+ * （复用宿主已有连接池）。建表与增量变更由 Flyway 统一负责，Mapper 只表达读写 SQL。</p>
  * @author owlzhangfq@gmail.com
  */
 @Configuration
@@ -84,7 +90,9 @@ public class CustomerWorkPersistenceConfig {
      */
     @Bean("customerWorkSqlSessionFactory")
     @ConditionalOnMissingBean(name = "customerWorkSqlSessionFactory")
-    public SqlSessionFactory customerWorkSqlSessionFactory(DataSource customerWorkDataSource,
+    @DependsOn("customerWorkSchemaMigrator")
+    public SqlSessionFactory customerWorkSqlSessionFactory(
+                                                           @Qualifier(DATA_SOURCE_BEAN) DataSource customerWorkDataSource,
                                                            CustomerWorkProperties properties) throws Exception {
         MybatisSqlSessionFactoryBean factoryBean = new MybatisSqlSessionFactoryBean();
         factoryBean.setDataSource(customerWorkDataSource);
@@ -111,12 +119,30 @@ public class CustomerWorkPersistenceConfig {
         return new SqlSessionTemplate(customerWorkSqlSessionFactory);
     }
 
-    /** 统一建表 + 种子初始化器（随本持久化环境装配，按 session.mysql.auto-create 决定是否执行）。 */
+    /** 独立数据源事务管理器：只管理 customer-work 业务库，不污染宿主事务环境。 */
+    @Bean("customerWorkTransactionManager")
+    @ConditionalOnMissingBean(name = "customerWorkTransactionManager")
+    public PlatformTransactionManager customerWorkTransactionManager(
+        @Qualifier(DATA_SOURCE_BEAN) DataSource customerWorkDataSource) {
+        return new DataSourceTransactionManager(customerWorkDataSource);
+    }
+
+    /** 领域服务使用的无框架事务执行 SPI。 */
     @Bean
-    @ConditionalOnMissingBean(SchemaInitializer.class)
-    public SchemaInitializer customerWorkSchemaInitializer(DataSource customerWorkDataSource,
-                                                           CustomerWorkProperties properties) {
-        return new SchemaInitializer(customerWorkDataSource, properties);
+    @ConditionalOnMissingBean(CustomerWorkTransactionExecutor.class)
+    public CustomerWorkTransactionExecutor customerWorkTransactionExecutor(
+        @Qualifier("customerWorkTransactionManager") PlatformTransactionManager transactionManager) {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        return action -> template.execute(status -> action.get());
+    }
+
+    /** 版本化迁移执行器；迁移完成后才允许 MyBatis SqlSessionFactory 初始化。 */
+    @Bean("customerWorkSchemaMigrator")
+    @ConditionalOnMissingBean(CustomerWorkSchemaMigrator.class)
+    public CustomerWorkSchemaMigrator customerWorkSchemaMigrator(
+                                                                  @Qualifier(DATA_SOURCE_BEAN) DataSource customerWorkDataSource,
+                                                                  CustomerWorkProperties properties) {
+        return new CustomerWorkSchemaMigrator(customerWorkDataSource, properties);
     }
 
     /**

@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
  * <p>把工单主表 {@code cw_ticket} 与事件轨迹表 {@code cw_ticket_event} 结构化落库，保证重启 / 多实例
  * 部署下工单与操作轨迹不丢失。{@link #claimAtomically} 用条件 UPDATE 的影响行数判定并发抢单——
  * 只有一名坐席能把 WAITING_AGENT 置为 PROCESSING，跨实例并发安全（进程内 {@link InMemoryTicketStore}
- * 靠单机 synchronized，多实例无此保证）。建表与种子由统一的 SchemaInitializer 负责，本类不建表。</p>
+ * 靠单机 synchronized，多实例无此保证）。建表与增量变更由 Flyway 负责，本类不建表。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisTicketStore implements TicketStore {
@@ -60,7 +60,7 @@ public class MybatisTicketStore implements TicketStore {
             return record == null ? Optional.empty() : Optional.of(toTicket(record));
         } catch (Exception e) {
             log.error("ticket find failed, code={}, id={}", "TICKET-STORE-FIND-FAIL", id, e);
-            return Optional.empty();
+            throw new IllegalStateException("failed to find ticket: " + id, e);
         }
     }
 
@@ -72,7 +72,7 @@ public class MybatisTicketStore implements TicketStore {
         } catch (Exception e) {
             log.error("ticket findActiveBySession failed, code={}, session={}",
                 "TICKET-STORE-FINDACTIVE-FAIL", sessionId, e);
-            return Optional.empty();
+            throw new IllegalStateException("failed to find active ticket by session: " + sessionId, e);
         }
     }
 
@@ -84,7 +84,7 @@ public class MybatisTicketStore implements TicketStore {
         } catch (Exception e) {
             log.error("ticket findActiveByUser failed, code={}, user={}",
                 "TICKET-STORE-FINDACTIVEUSER-FAIL", userId, e);
-            return Optional.empty();
+            throw new IllegalStateException("failed to find active ticket by user: " + userId, e);
         }
     }
 
@@ -114,7 +114,7 @@ public class MybatisTicketStore implements TicketStore {
             return new PageResult<>(page.getTotal(), list);
         } catch (Exception e) {
             log.error("ticket findPage failed, code={}", "TICKET-STORE-FINDPAGE-FAIL", e);
-            return new PageResult<>(0, List.of());
+            throw new IllegalStateException("failed to find ticket page", e);
         }
     }
 
@@ -126,7 +126,7 @@ public class MybatisTicketStore implements TicketStore {
         } catch (Exception e) {
             log.error("ticket findByStatus failed, code={}, status={}",
                 "TICKET-STORE-FINDBYSTATUS-FAIL", status, e);
-            return List.of();
+            throw new IllegalStateException("failed to find tickets by status: " + status, e);
         }
     }
 
@@ -152,7 +152,7 @@ public class MybatisTicketStore implements TicketStore {
         } catch (Exception e) {
             log.error("ticket findEvents failed, code={}, ticketId={}",
                 "TICKET-STORE-FINDEVENTS-FAIL", ticketId, e);
-            return List.of();
+            throw new IllegalStateException("failed to find ticket events: " + ticketId, e);
         }
     }
 
@@ -162,7 +162,7 @@ public class MybatisTicketStore implements TicketStore {
             return ticketMapper.claimAtomically(id, agentId, nowMs) > 0;
         } catch (Exception e) {
             log.error("ticket claimAtomically failed, code={}, id={}", "TICKET-CLAIM-FAIL", id, e);
-            return false;
+            throw new IllegalStateException("failed to claim ticket: " + id, e);
         }
     }
 

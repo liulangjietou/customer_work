@@ -147,6 +147,9 @@ public class CustomerWorkProperties {
     /** 死信队列配置：工具调用/通知发送失败后的兜底重投，量上来之后决定会不会丢单。 */
     private final DeadLetterProperties deadLetter = new DeadLetterProperties();
 
+    /** 同库事务 Outbox：可靠投递工单事件等跨边界副作用。 */
+    private final OutboxProperties outbox = new OutboxProperties();
+
     /** 数据字典（少量枚举型键值数据，免建表）存储配置。 */
     private final DictProperties dict = new DictProperties();
 

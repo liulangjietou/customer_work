@@ -48,6 +48,7 @@ const detailLoading = ref(false)
 const detail = ref<TicketDetailVO | null>(null)
 const messages = ref<TicketMessageVO[]>([])
 const messagesLoading = ref(false)
+const processedTicketEvents = new Set<string>()
 const hasMoreHistory = ref(true)
 const scrollRef = ref<HTMLElement>()
 const input = ref('')
@@ -150,6 +151,13 @@ function subscribeWs() {
     if (frame.ticketId !== props.ticketId || !detail.value) {
       return
     }
+    const eventKey = frame.eventId == null ? null : `${frame.ticketId}:${frame.eventId}`
+    if (eventKey && processedTicketEvents.has(eventKey)) {
+      return
+    }
+    if (eventKey) {
+      processedTicketEvents.add(eventKey)
+    }
     // 状态被其他坐席/系统动作改变时（如超时自动关闭），同步刷新详情兜底，事件时间线一起重拉，
     // 比本地拼接单条事件更可靠（events 列表字段较多，本地拼接容易漏字段）。
     loadDetail()
@@ -167,6 +175,7 @@ watch(
   () => props.visible,
   (visible) => {
     if (visible && props.ticketId) {
+      processedTicketEvents.clear()
       loadDetail()
       loadInitialMessages()
       subscribeWs()

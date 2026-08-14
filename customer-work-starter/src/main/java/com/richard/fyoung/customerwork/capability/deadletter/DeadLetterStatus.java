@@ -9,6 +9,9 @@ public enum DeadLetterStatus {
     /** 待重投：还在重试窗口内。 */
     PENDING,
 
+    /** 已被某个实例租约认领；租约过期后可由其他实例接管。 */
+    PROCESSING,
+
     /** 重投成功：留档不删，用来回答"这单最后到底成没成"。 */
     SUCCEEDED,
 

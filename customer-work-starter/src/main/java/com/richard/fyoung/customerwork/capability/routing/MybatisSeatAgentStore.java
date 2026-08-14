@@ -14,7 +14,7 @@ import java.util.Set;
 /**
  * MyBatis-Plus 坐席库存储（生产实现：{@code customer-work.routing.seat-store-mode=jdbc} 时装配）。
  *
- * <p>坐席落 {@code cw_seat_agent} 表，多实例共享、支持后台运营维护。建表与种子由统一 SchemaInitializer 负责，
+ * <p>坐席落 {@code cw_seat_agent} 表，多实例共享、支持后台运营维护。建表与种子由统一 Flyway 迁移负责，
  * 本类只表达读写；DO ↔ 领域对象转换收敛在本层（{@code skills} 逗号串 ↔ Set）。异常一律 {@code catch(Exception)}
  * （HikariPool 初始化异常是 RuntimeException，非 SQLException 子类）；{@link #findAll} 读失败降级空集合
  * （fail-open：无候选 → 无推荐，坐席照常手动接单）。</p>

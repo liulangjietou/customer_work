@@ -17,8 +17,8 @@ import java.util.Map;
  * <p>每次工单流转：向工单归属用户与当前坐席各推一帧 {@code ticket_event}（前端据此实时刷新工单卡片）；
  * 其中"请求转人工 / 重新打开"意味着一张单进入排队待抢，额外向全部在线坐席广播 {@code ticket_new} 唤起抢单。</p>
  *
- * <p>本监听器在 {@code TicketService.broadcast} 内被同步回调，推送走非阻塞 Sink（{@code tryEmitNext}），
- * 不阻塞触发流转的线程；监听器自身异常由 {@code TicketService} 兜住，不影响主流转。</p>
+ * <p>JDBC 模式由事务 Outbox 在提交后按至少一次语义调用；内存模式同步调用。推送走非阻塞 Sink
+ *（{@code tryEmitNext}），帧携带稳定 eventId，客户端据此去重。</p>
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -31,6 +31,7 @@ public class WsTicketEventListener implements TicketEventListener {
     private static final String KEY_CATEGORY = "category";
     private static final String KEY_STATUS = "status";
     private static final String KEY_EVENT_TYPE = "eventType";
+    private static final String KEY_EVENT_ID = "eventId";
     private static final String KEY_FROM_STATUS = "fromStatus";
     private static final String KEY_TO_STATUS = "toStatus";
     private static final String KEY_ACTOR_TYPE = "actorType";
@@ -53,13 +54,14 @@ public class WsTicketEventListener implements TicketEventListener {
         // 进入排队待抢单：唤起全部在线坐席
         if (event.eventType() == TicketEventType.REQUEST_HANDOFF
             || event.eventType() == TicketEventType.REOPEN) {
-            registry.broadcastToAgents(WsFrame.ticketNew(newTicketData(ticket)));
+            registry.broadcastToAgents(WsFrame.ticketNew(newTicketData(ticket, event)));
         }
     }
 
     private Map<String, Object> eventData(Ticket ticket, TicketEvent event) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put(KEY_TICKET_ID, ticket.getId());
+        data.put(KEY_EVENT_ID, event.id());
         data.put(KEY_EVENT_TYPE, event.eventType().name());
         data.put(KEY_FROM_STATUS, event.fromStatus() == null ? null : event.fromStatus().name());
         data.put(KEY_TO_STATUS, event.toStatus() == null ? null : event.toStatus().name());
@@ -70,9 +72,10 @@ public class WsTicketEventListener implements TicketEventListener {
         return data;
     }
 
-    private Map<String, Object> newTicketData(Ticket ticket) {
+    private Map<String, Object> newTicketData(Ticket ticket, TicketEvent event) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put(KEY_TICKET_ID, ticket.getId());
+        data.put(KEY_EVENT_ID, event.id());
         data.put(KEY_USER_ID, ticket.getUserId());
         data.put(KEY_TITLE, ticket.getTitle());
         data.put(KEY_PRIORITY, ticket.getPriority().name());

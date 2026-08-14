@@ -26,6 +26,26 @@ const query = reactive<TicketPageQuery>({ status: '', category: '', priority: ''
 const statusOptions = Object.entries(STATUS_LABELS) as [TicketStatus, string][]
 const priorityOptions = Object.entries(PRIORITY_LABELS) as [TicketPriority, string][]
 const categoryOptions = Object.entries(CATEGORY_LABELS) as [TicketCategory, string][]
+const MAX_PROCESSED_WS_EVENTS = 2048
+const processedWsEvents = new Set<string>()
+
+function duplicated(kind: string, ticketId: string, eventId?: number): boolean {
+  if (eventId == null) {
+    return false
+  }
+  const key = `${kind}:${ticketId}:${eventId}`
+  if (processedWsEvents.has(key)) {
+    return true
+  }
+  if (processedWsEvents.size >= MAX_PROCESSED_WS_EVENTS) {
+    const oldest = processedWsEvents.values().next().value
+    if (oldest) {
+      processedWsEvents.delete(oldest)
+    }
+  }
+  processedWsEvents.add(key)
+  return false
+}
 
 async function loadList() {
   loading.value = true
@@ -62,6 +82,9 @@ async function setupWs() {
   }
   ws.on('ticket_new', (data) => {
     const frame = data as WsTicketNewFrameData
+    if (duplicated('new', frame.ticketId, frame.eventId)) {
+      return
+    }
     ElNotification({
       title: '新工单进入接单池',
       message: `${frame.title}（${CATEGORY_LABELS[frame.category]} · ${PRIORITY_LABELS[frame.priority]}）`,
@@ -75,6 +98,9 @@ async function setupWs() {
   })
   ws.on('ticket_event', (data) => {
     const frame = data as WsTicketEventFrameData
+    if (duplicated('event', frame.ticketId, frame.eventId)) {
+      return
+    }
     const row = list.value.find((t) => t.id === frame.ticketId)
     if (row && frame.toStatus) {
       row.status = frame.toStatus

@@ -27,7 +27,7 @@ kubectl apply -f deploy/k8s/50-hpa.yaml
 
 ## 依赖的外部服务
 
-清单只覆盖应用本身。MySQL / Redis / Nacos / XXL-JOB 按各自的运维方式部署（云托管或独立 StatefulSet），
+清单只覆盖应用本身。MySQL / Redis / MinIO / Nacos / XXL-JOB 按各自的运维方式部署（云托管或独立 StatefulSet），
 在 `10-configmap.yaml` 与 `20-secret.example.yaml` 里填地址与凭据。
 
 ## 密钥
@@ -40,9 +40,18 @@ kubectl create secret generic customer-work-secret -n customer-work \
   --from-literal=DASHSCOPE_API_KEY='真实值' \
   --from-literal=MYSQL_PASSWORD='真实值' \
   --from-literal=REDIS_PASSWORD='真实值' \
+  --from-literal=AUTH_API_KEYS='至少一个随机 API Key' \
   --from-literal=CW_USER_JWT_SECRET='真实值' \
+  --from-literal=CW_AGENT_WS_SECRET='真实值' \
+  --from-literal=MINIO_ACCESS_KEY='真实值' \
+  --from-literal=MINIO_SECRET_KEY='真实值' \
+  --from-literal=SPRING_APPLICATION_JSON='{"customer-work":{"security":{"approval-auth":{"operators":{"审批token":"操作员姓名"}}}}}' \
   --from-literal=ADMIN_AES_SECRET_KEY='真实值'
 ```
+
+`prod` profile 会在启动时执行硬门禁：上面的 API Key、JWT、坐席密钥、审批操作员映射、MinIO 凭据，
+以及 MySQL/Redis/Flyway/技能库配置任一缺失，Pod 都不会进入 Ready。模板中的 `REPLACE_ME` 只是占位符，
+不能用于真实环境。
 
 ## HPA 的伸缩依据
 

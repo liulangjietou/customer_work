@@ -889,9 +889,32 @@ CREATE TABLE IF NOT EXISTS `cw_dead_letter` (
     -- 指数退避 base*2^attempts：下游多半是被打挂了或正在重启，
     -- 固定短间隔的密集重试只会把它按在地上，变成自己给自己制造的雪崩
     `next_retry_at_ms` BIGINT NOT NULL COMMENT '下次重投时刻（毫秒）',
+    `lease_owner`      VARCHAR(128) COMMENT '当前租约持有实例',
+    `lease_until_ms`   BIGINT NOT NULL DEFAULT 0 COMMENT '租约到期时间',
     `created_at_ms`    BIGINT NOT NULL COMMENT '失败发生时刻（毫秒）',
     `finished_at_ms`   BIGINT NOT NULL DEFAULT 0 COMMENT '终态时刻（成功或放弃）；未终结为 0',
     -- 巡检取的是 (status=PENDING, next_retry_at_ms <= now) 的限额扫描
     INDEX `idx_dead_letter_due` (`tenant_id`, `status`, `next_retry_at_ms`),
+    INDEX `idx_dead_letter_lease` (`tenant_id`, `status`, `lease_until_ms`),
     INDEX `idx_dead_letter_biz` (`tenant_id`, `biz_key`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='死信队列（失败操作的兜底重投）';
+
+-- 同库事务 Outbox：业务状态、审计事件与待投递消息原子提交。
+CREATE TABLE IF NOT EXISTS `cw_outbox_message` (
+    `tenant_id`          VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`                 VARCHAR(64) PRIMARY KEY COMMENT '消息ID，也是下游幂等键',
+    `type`               VARCHAR(64) NOT NULL COMMENT 'Handler 类型',
+    `aggregate_id`       VARCHAR(128) NOT NULL COMMENT '聚合根业务标识',
+    `payload`            MEDIUMTEXT NOT NULL COMMENT '自包含 JSON 载荷',
+    `status`             VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PROCESSING/SUCCEEDED/ABANDONED',
+    `attempts`           INT NOT NULL DEFAULT 0 COMMENT '投递失败次数',
+    `next_attempt_at_ms` BIGINT NOT NULL COMMENT '下次投递时间',
+    `lease_owner`        VARCHAR(128) COMMENT '当前租约持有实例',
+    `lease_until_ms`     BIGINT NOT NULL DEFAULT 0 COMMENT '租约到期时间',
+    `last_error`         TEXT COMMENT '最近一次投递错误',
+    `created_at_ms`      BIGINT NOT NULL COMMENT '创建时间',
+    `finished_at_ms`     BIGINT NOT NULL DEFAULT 0 COMMENT '终态时间',
+    INDEX `idx_outbox_due` (`tenant_id`, `status`, `next_attempt_at_ms`),
+    INDEX `idx_outbox_lease` (`tenant_id`, `status`, `lease_until_ms`),
+    INDEX `idx_outbox_aggregate` (`tenant_id`, `aggregate_id`, `created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='同库事务 Outbox';
