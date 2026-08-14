@@ -35,6 +35,8 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -526,7 +528,7 @@ class ChatServiceTest {
     }
 
     @Test
-    void chatStream_usageObserver_shouldFireBeforeDownstreamTerminalCallback() {
+    void chatStream_usageObserver_shouldFireBeforeDownstreamTerminalCallback() throws InterruptedException {
         // VibeCodingService 在本流的<b>下游</b>用 doFinally 读 usageTotal 落审计。Reactor 的 doFinally
         // 语义是"先把终止信号传给下游、回调最后才跑"，用量回调若也挂 doFinally，下游必然读到 null；
         // 迁移加的 publishOn 还会把这个顺序问题跨线程放大（连 block() 都可能先返回）。
@@ -535,10 +537,16 @@ class ChatServiceTest {
 
         AtomicReference<ChatUsage> usageTotal = new AtomicReference<>();
         AtomicReference<ChatUsage> seenByDownstream = new AtomicReference<>();
+        CountDownLatch downstreamTerminalCallback = new CountDownLatch(1);
         chatService.chatStream("coder", "s1", "你好", usageTotal::set)
-            .doFinally(signal -> seenByDownstream.set(usageTotal.get()))
+            .doFinally(signal -> {
+                seenByDownstream.set(usageTotal.get());
+                downstreamTerminalCallback.countDown();
+            })
             .collectList().block();
 
+        // block() 只等待终止信号到达，不等待 doFinally 的回调体执行完成；显式同步后再验证回调看到的值。
+        assertTrue(downstreamTerminalCallback.await(1, TimeUnit.SECONDS), "下游终止回调必须执行");
         assertNotNull(seenByDownstream.get(), "下游的终止回调必须已经能读到本轮用量汇总");
         assertEquals(10, seenByDownstream.get().getInputTokens());
     }
