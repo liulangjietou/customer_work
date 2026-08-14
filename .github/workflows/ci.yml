@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # 功能分支统一通过 PR 校验；这里只保留 main 推送，避免同一提交同时触发 push/PR 两套重复构建。
+    branches: ["main"]
   pull_request:
     branches: ["**"]
 
