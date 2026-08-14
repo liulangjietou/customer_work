@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # 功能分支统一通过 PR 校验；这里只保留 main 推送，避免同一提交同时触发 push/PR 两套重复构建。
+    branches: ["main"]
   pull_request:
     branches: ["**"]
 
@@ -52,6 +53,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Reject committed cloud credentials
+        run: bash scripts/verify-no-committed-secrets.sh
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -113,8 +117,10 @@ jobs:
           done
           mysql -h127.0.0.1 -P3306 -uroot -proot -e "DROP DATABASE customer_admin_mirror_check;"
 
-      - name: Build and test (with coverage)
-        run: mvn -B test
+      - name: Build, test and generate coverage
+        # 当前 starter 分支覆盖率基线约 26%，历史 verify 门禁仍配置为 40%，不能伪称已达标。
+        # CI 先生成报告供持续补测；达到阈值后再把 test 切回 verify。clean 避免 classpath 增量误判。
+        run: mvn -B -gs settings-central-direct.xml -s settings-central-direct.xml clean test
         env:
           # 上面给 CI 的 Redis 设了 requirepass 123456，而 admin 侧的 Redis 密码走
           # ADMIN_REDIS_PASSWORD（默认空）。不注入这一项，登录态持久化的门控集成测试
@@ -129,7 +135,46 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jacoco-report
-          path: target/site/jacoco
+          path: "**/target/site/jacoco"
 
-      - name: Package
-        run: mvn -B -DskipTests package
+  frontend-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [customer-admin-web, customer-work-app]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: ${{ matrix.project }}/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: ${{ matrix.project }}
+        run: npm ci
+
+      - name: Type-check and build
+        working-directory: ${{ matrix.project }}
+        run: npm run build
+
+  deployment-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Compose model and bind mounts
+        run: |
+          docker compose config --quiet
+          test -f mysql/03-xxl-job/xxl-job-schema.sql
+
+      - name: Build production image
+        run: docker build --tag customer-work-ci .
+
+      - name: Verify runtime image
+        run: docker run --rm --entrypoint java customer-work-ci -version

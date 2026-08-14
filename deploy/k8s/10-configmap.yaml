@@ -12,6 +12,7 @@ data:
   REDIS_HOST: "redis.customer-work.svc.cluster.local"
   REDIS_PORT: "6379"
   NACOS_SERVER_ADDR: "nacos.customer-work.svc.cluster.local:8848"
+  MINIO_ENDPOINT: "http://minio.customer-work.svc.cluster.local:9000"
 
   # ---- 多副本必须项 ----
   # 三个进程内实现切成 Redis 共享：不切就等于每个副本各有一份配额、各锁各的会话。

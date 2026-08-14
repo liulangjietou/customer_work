@@ -15,8 +15,15 @@ public interface DeadLetterMapper extends BaseMapper<DeadLetterDO> {
     /** 按主键 upsert：新建与每次重投后的回写共用。 */
     int upsert(DeadLetterDO record);
 
-    /** 取到期可重投的（PENDING 且 next_retry_at_ms <= now），按到期时间正序。 */
-    List<DeadLetterDO> selectDue(@Param("nowMs") long nowMs, @Param("limit") int limit);
+    List<String> selectClaimCandidates(@Param("nowMs") long nowMs, @Param("limit") int limit);
+
+    int claim(@Param("id") String id, @Param("owner") String owner,
+              @Param("nowMs") long nowMs, @Param("leaseUntilMs") long leaseUntilMs);
+
+    List<DeadLetterDO> selectClaimed(@Param("owner") String owner,
+                                     @Param("leaseUntilMs") long leaseUntilMs);
+
+    int complete(@Param("record") DeadLetterDO record, @Param("owner") String owner);
 
     /** 按状态查询，创建时间倒序。 */
     List<DeadLetterDO> selectByStatus(@Param("status") String status, @Param("limit") int limit);

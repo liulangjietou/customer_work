@@ -18,6 +18,13 @@ management:
     health:
       show-details: when-authorized
 
+# 生产默认关闭 Swagger；确需开启时必须由内网网关或零信任代理限制访问。
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_ENABLED:false}
+  swagger-ui:
+    enabled: ${SPRINGDOC_ENABLED:false}
+
 logging:
   level:
     root: INFO

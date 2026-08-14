@@ -35,8 +35,18 @@ public class SessionProperties {
         private String password = "root";
         /** 完整 JDBC URL（留空则按 host/port/database 自动拼装）。 */
         private String jdbcUrl = "";
-        /** 是否自动建库建表。 */
+        /**
+         * 是否自动执行数据库初始化。兼容旧配置；新部署请使用 {@link #migrationEnabled}。
+         * 当 migration-enabled 未显式配置时，本字段仍作为 Flyway 迁移开关。
+         */
         private boolean autoCreate = true;
+        /** 是否执行 Flyway 版本化迁移；null 表示沿用 auto-create，避免旧部署升级后语义突变。 */
+        private Boolean migrationEnabled;
+
+        /** 返回兼容新旧配置后的最终迁移开关。 */
+        public boolean isSchemaMigrationEnabled() {
+            return migrationEnabled != null ? migrationEnabled : autoCreate;
+        }
 
         /** 解析最终使用的 JDBC URL。 */
         public String resolveJdbcUrl() {

@@ -15,7 +15,7 @@ import java.util.Optional;
  *
  * <p>把工单结构化写入 {@code cw_handoff_ticket} 表，保证应用重启 / 多实例部署下工单不丢失——
  * 坐席在实例 A 接单、坐席工作台轮询落到实例 B 也应看到最新状态（进程内 {@link InMemoryHandoffStore}
- * 无此保证）。建表与种子由统一的 SchemaInitializer 负责，本类只表达读写。</p>
+ * 无此保证）。建表与种子由统一 Flyway 迁移负责，本类只表达读写。</p>
  *
  * <p>DO ↔ 领域对象转换收敛在本层：写入前 {@link #toDO} 拆解充血实体为贫血 DO，读出后
  * {@link #toDomain} 经 {@link HandoffTicket#reconstruct} 跳过状态机校验重建。异常一律

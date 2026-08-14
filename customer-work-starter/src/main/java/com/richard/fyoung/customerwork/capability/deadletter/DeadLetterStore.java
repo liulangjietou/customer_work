@@ -21,8 +21,11 @@ public interface DeadLetterStore {
     /** 按 ID 查找。 */
     Optional<DeadLetter> find(String id);
 
-    /** 取到期可重投的死信（PENDING 且 nextRetryAt <= now），最多 limit 条。 */
-    List<DeadLetter> findDue(long nowMs, int limit);
+    /** 以租约认领到期死信；同一时刻只有一个实例能认领同一行。 */
+    List<DeadLetter> claimDue(String owner, long nowMs, long leaseUntilMs, int limit);
+
+    /** 持有租约的实例回写处理结果；租约已丢失则返回 false。 */
+    boolean complete(DeadLetter letter, String owner);
 
     /** 按状态查询（运营列表用），时间倒序。 */
     List<DeadLetter> findByStatus(DeadLetterStatus status, int limit);

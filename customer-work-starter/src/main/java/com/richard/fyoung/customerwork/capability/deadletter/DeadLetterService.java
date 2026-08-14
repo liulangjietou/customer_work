@@ -1,9 +1,15 @@
 package com.richard.fyoung.customerwork.capability.deadletter;
 
 import com.richard.fyoung.customerwork.infra.config.properties.DeadLetterProperties;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.management.ManagementFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,14 +34,27 @@ public class DeadLetterService {
     private final DeadLetterStore store;
     private final DeadLetterProperties properties;
     private final Map<String, DeadLetterHandler> handlers = new HashMap<>();
+    private final String instanceId;
+    private final MeterRegistry meterRegistry;
 
     public DeadLetterService(DeadLetterStore store, DeadLetterProperties properties,
                              List<DeadLetterHandler> handlerList) {
+        this(store, properties, handlerList, null);
+    }
+
+    public DeadLetterService(DeadLetterStore store, DeadLetterProperties properties,
+                             List<DeadLetterHandler> handlerList, MeterRegistry meterRegistry) {
         this.store = store;
         this.properties = properties;
+        this.meterRegistry = meterRegistry;
         for (DeadLetterHandler handler : handlerList) {
-            handlers.put(handler.type(), handler);
+            DeadLetterHandler existing = handlers.putIfAbsent(handler.type(), handler);
+            if (existing != null) {
+                throw new IllegalStateException("duplicate dead letter handler type: " + handler.type());
+            }
         }
+        this.instanceId = ManagementFactory.getRuntimeMXBean().getName() + "-" + UUID.randomUUID();
+        registerDepthGauges();
         log.info("dead letter handlers registered: {}", handlers.keySet());
     }
 
@@ -56,6 +75,7 @@ public class DeadLetterService {
             DeadLetter letter = new DeadLetter(UUID.randomUUID().toString(), type, payload, bizKey,
                 error, System.currentTimeMillis());
             store.save(letter);
+            increment("customerwork.deadletter.recorded", "type", type);
             log.info("dead letter recorded: id={}, type={}, bizKey={}", letter.getId(), type, bizKey);
             if (!handlers.containsKey(type)) {
                 log.error("dead letter has no handler, it will never be retried, errorCode={}, type={}",
@@ -79,7 +99,8 @@ public class DeadLetterService {
             return 0;
         }
         long now = System.currentTimeMillis();
-        List<DeadLetter> due = store.findDue(now, properties.getBatchSize());
+        List<DeadLetter> due = CrossTenantOperations.execute(() ->
+            store.claimDue(instanceId, now, now + properties.getLeaseMs(), properties.getBatchSize()));
         int succeeded = 0;
         for (DeadLetter letter : due) {
             if (retryOne(letter, now)) {
@@ -124,23 +145,71 @@ public class DeadLetterService {
             // 掩盖掉"这个类型压根没人处理"这个真正的问题
             log.error("skip dead letter without handler, errorCode={}, id={}, type={}",
                 "DEADLETTER-NO-HANDLER", letter.getId(), letter.getType());
+            letter.releaseWithoutAttempt(nowMs + properties.getScanIntervalMs());
+            ensureLeaseCompletion(letter);
+            increment("customerwork.deadletter.retries", "result", "no_handler");
             return false;
         }
         try {
-            handler.retry(letter);
-            letter.succeed(nowMs);
-            store.save(letter);
-            log.info("dead letter retry succeeded: id={}, type={}, attempts={}",
-                letter.getId(), letter.getType(), letter.getAttempts());
-            return true;
+            retryInTenant(handler, letter);
         } catch (Exception e) {
             letter.failAttempt(e.getMessage(), properties.getMaxAttempts(),
                 properties.getBaseBackoffMs(), nowMs);
-            store.save(letter);
+            ensureLeaseCompletion(letter);
+            increment("customerwork.deadletter.retries", "result", "failure");
             log.error("dead letter retry failed, errorCode={}, id={}, type={}, attempts={}, status={}",
                 "DEADLETTER-RETRY-FAIL", letter.getId(), letter.getType(),
                 letter.getAttempts(), letter.getStatus(), e);
             return false;
+        }
+        letter.succeed(nowMs);
+        ensureLeaseCompletion(letter);
+        increment("customerwork.deadletter.retries", "result", "success");
+        log.info("dead letter retry succeeded: id={}, type={}, attempts={}",
+            letter.getId(), letter.getType(), letter.getAttempts());
+        return true;
+    }
+
+    private void ensureLeaseCompletion(DeadLetter letter) {
+        if (!CrossTenantOperations.execute(() -> store.complete(letter, instanceId))) {
+            throw new IllegalStateException("dead letter lease lost: " + letter.getId());
+        }
+    }
+
+    private void retryInTenant(DeadLetterHandler handler, DeadLetter letter) throws Exception {
+        String previous = TenantContext.get();
+        TenantContext.set(letter.getTenantId());
+        try {
+            handler.retry(letter);
+        } finally {
+            TenantContext.set(previous);
+        }
+    }
+
+    private void registerDepthGauges() {
+        if (meterRegistry == null) {
+            return;
+        }
+        for (DeadLetterStatus status : List.of(DeadLetterStatus.PENDING, DeadLetterStatus.PROCESSING,
+            DeadLetterStatus.ABANDONED)) {
+            Gauge.builder("customerwork.deadletter.depth", store,
+                    target -> safeCount(target, status))
+                .tag("status", status.name().toLowerCase())
+                .register(meterRegistry);
+        }
+    }
+
+    private double safeCount(DeadLetterStore target, DeadLetterStatus status) {
+        try {
+            return CrossTenantOperations.execute(() -> target.count(status));
+        } catch (Exception e) {
+            return Double.NaN;
+        }
+    }
+
+    private void increment(String name, String tagName, String tagValue) {
+        if (meterRegistry != null) {
+            Counter.builder(name).tag(tagName, tagValue).register(meterRegistry).increment();
         }
     }
 }

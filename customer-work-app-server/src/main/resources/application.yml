@@ -10,6 +10,8 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      # Flyway 由 starter 显式绑定 customerWorkDataSource；禁止 Boot 把该数据源当成默认库重复迁移。
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
   # 响应式编解码器缓冲上限：控制单次请求聚合到内存的最大字节数（默认 256KB）。
   # 附件上传要把整份文件读进内存交给解析器，故放宽到 12MB（略大于附件 10MB 上限，留边界余量）。
   codec:
@@ -381,7 +383,7 @@ customer-work:
       url-prefix: /api/avatars/
   # ===================== B6 运营闭环 =====================
   # 下面八项的存储默认都是 memory（进程内、重启即丢），而后台是**跨库读客服端库**的——
-  # 不切 jdbc，后台的运营闭环页面永远是空的。建表由 SchemaInitializer 统一负责。
+  # 不切 jdbc，后台的运营闭环页面永远是空的。建表与增量变更由客服库 Flyway 统一负责。
 
   # 评测：跑标准集 → 出报告 → 与上一版对比。意图评测纯离线（不调模型、零 token 成本）
   eval:

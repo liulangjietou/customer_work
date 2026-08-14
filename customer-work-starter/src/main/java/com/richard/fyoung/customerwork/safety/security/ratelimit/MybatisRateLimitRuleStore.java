@@ -13,7 +13,7 @@ import java.util.Optional;
 /**
  * MyBatis-Plus 限流规则存储（生产实现：{@code security.rate-limit.store-mode=jdbc} 时装配）。
  *
- * <p>规则落 {@code cw_rate_limit_rule} 表，多实例共享、后台可维护。建表由统一 {@code SchemaInitializer}
+ * <p>规则落 {@code cw_rate_limit_rule} 表，多实例共享、后台可维护。建表由统一 Flyway
  * 负责，本类只表达读写；DO ↔ 领域对象转换收敛在本层。异常一律 {@code catch(Exception)}
  * （HikariPool/MyBatis 初始化异常是 RuntimeException，不是 SQLException 子类）。</p>
  * @author owlzhangfq@gmail.com

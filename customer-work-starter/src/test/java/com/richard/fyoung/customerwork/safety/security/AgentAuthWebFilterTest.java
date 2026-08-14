@@ -90,4 +90,17 @@ class AgentAuthWebFilterTest {
         assertFalse(invoked.get());
         assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
     }
+
+    @Test
+    void legacyHandoffPath_shouldAlsoRequireAgentToken() {
+        AgentAuthWebFilter filter = new AgentAuthWebFilter(props());
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/handoffs"));
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        filter.filter(exchange, recordingChain(invoked)).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+    }
 }

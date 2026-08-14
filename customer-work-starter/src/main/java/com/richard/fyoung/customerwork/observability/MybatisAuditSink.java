@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
  *
  * <p>把审计事件结构化写入表 {@code cw_audit_log}，支持按会话（{@code agent_name} 后缀 LIKE）回溯审计轨迹，
  * 便于合规审计追溯与故障诊断。默认审计落地仍是 {@link LoggingAuditSink}（写日志），本实现供下游声明
- * 同类型 Bean 覆盖，或直接构造使用。建表由统一的 SchemaInitializer 负责，本类不建表。</p>
+ * 同类型 Bean 覆盖，或直接构造使用。建表由统一 Flyway 迁移负责，本类不建表。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisAuditSink implements AuditSink, AuditQuery {

@@ -1,5 +1,5 @@
 # =============================================================================
-# 客服系统告警规则（9 条）。写规则前逐个核对了埋点源码里的指标类型与 tag，避免猜后缀：
+# 客服系统告警规则（13 条）。写规则前逐个核对了埋点源码里的指标类型与 tag，避免猜后缀：
 #
 #   customerwork.agent.requests / .errors / .reasoning        Counter，无 tag
 #     -> customerwork_agent_requests_total / _errors_total / _reasoning_total
@@ -27,6 +27,9 @@
 #   customerwork.chat.fallback / .intent.classify.errors             Counter，无 tag
 #     -> customerwork_chat_fallback_total / customerwork_intent_classify_errors_total
 #     （CustomerServiceService）
+#   customerwork.outbox.depth / customerwork.deadletter.depth        Gauge，tag=status
+#     -> customerwork_outbox_depth / customerwork_deadletter_depth
+#     （OutboxService / DeadLetterService，pending/processing/abandoned）
 #
 # 未采用的指标：customerwork.agent.tokens（tag=type，input/output）——本次核对时代码里尚不存在，
 #   是另一个并行任务正在加的 Counter，名字已约定为 customerwork_agent_tokens_total，仅用于
@@ -149,3 +152,43 @@ groups:
         annotations:
           summary: "[{{ $labels.job }}] JVM 堆内存使用率过高"
           description: "{{ $labels.job }} 堆内存使用率 {{ $value | humanizePercentage }}，超过 85% 阈值并持续 10 分钟，存在 OOM / 频繁 Full GC 风险，请检查是否有内存泄漏或需要调大堆。"
+
+      # 10. Outbox 已放弃消息必须人工处理；只要出现就告警。
+      - alert: CustomerWorkOutboxAbandoned
+        expr: customerwork_outbox_depth{status="abandoned"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "[{{ $labels.job }}] Outbox 存在已放弃消息"
+          description: "可靠事件投递已耗尽重试，当前已放弃 {{ $value }} 条。业务状态已提交但下游副作用可能未完成，需按消息 ID 人工补偿。"
+
+      # 11. Outbox 积压持续增长通常意味着 Handler 异常或下游不可用。
+      - alert: CustomerWorkOutboxBacklogHigh
+        expr: customerwork_outbox_depth{status="pending"} > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "[{{ $labels.job }}] Outbox 待投递积压"
+          description: "Outbox 待投递消息 {{ $value }} 条，超过 100 且持续 10 分钟，请检查 Handler、数据库租约与下游服务。"
+
+      # 12. 死信耗尽保留而不删除，出现后需要运营介入。
+      - alert: CustomerWorkDeadLetterAbandoned
+        expr: customerwork_deadletter_depth{status="abandoned"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "[{{ $labels.job }}] 死信存在已放弃记录"
+          description: "死信重投已耗尽，当前已放弃 {{ $value }} 条。请确认下游恢复后在后台重开或人工补单。"
+
+      # 13. 死信积压阈值比 Outbox 更低：每一条都代表已经发生过业务失败。
+      - alert: CustomerWorkDeadLetterBacklogHigh
+        expr: customerwork_deadletter_depth{status="pending"} > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "[{{ $labels.job }}] 死信待重投积压"
+          description: "待重投死信 {{ $value }} 条，超过 50 且持续 10 分钟，请检查下游恢复情况与租约消费者。"

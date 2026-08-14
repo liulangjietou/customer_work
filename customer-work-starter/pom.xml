@@ -119,6 +119,12 @@
             <groupId>org.springframework</groupId>
             <artifactId>spring-jdbc</artifactId>
         </dependency>
+        <!-- 客服端独立业务库的版本化迁移。只复用 Flyway 引擎，不启用 Spring Boot 默认数据源自动装配；
+             CustomerWorkPersistenceConfig 将其显式绑定到 customerWorkDataSource。 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
 
         <!-- 长期记忆 Mem0/ReMe 客户端依赖 -->
         <dependency>

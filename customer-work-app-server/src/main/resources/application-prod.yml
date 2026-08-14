@@ -7,17 +7,15 @@
 
 customer-work:
   # ------------------------------------------------------------------
-  # Skill 技能库：生产切换为 filesystem 仓库
+  # Skill 技能库：MySQL 为权威副本，文件系统只保留框架读取所需的可重建物化缓存
   # 规避 #1979 / #1985—— ClasspathSkillRepository 在 fat-jar（Spring Boot 可执行 jar）中
   # 用 classpath 资源枚举/读取技能目录会失败（jar 内路径不是普通文件系统路径）。
-  # filesystem 仓库直接读磁盘目录，天然绕开该问题；同时天然支持技能自进化/写回（SkillCurator）。
+  # mysql 仓库启动时把内容物化到系统临时目录，绕开 fat-jar 资源枚举问题且不依赖本地持久盘。
   # ------------------------------------------------------------------
   skill:
     enabled: true
-    repository: filesystem
-    # 生产建议外置到独立数据盘/共享存储路径，用环境变量注入，避免和应用部署目录耦合
-    directory: ${SKILL_DIRECTORY:/data/customer-work/skills}
-    writable: true
+    repository: mysql
+    writable: false
     runtime-load-tool-enabled: false
     code-execution-enabled: false
 
@@ -44,7 +42,12 @@ customer-work:
       database: ${MYSQL_DATABASE:agent_scope_customer_work}
       username: ${MYSQL_USERNAME:root}
       password: ${MYSQL_PASSWORD:}
-      auto-create: false   # 生产建议关闭自动建表，由 DBA 按 mysql/schema.sql 走变更流程建库建表
+      migration-enabled: true   # Flyway 失败即阻断启动；存量非空库会以版本 0 安全接管
+
+  # 多副本下限流/成本计数与会话串行锁必须跨实例共享，Redis 故障时实现会保护性降级进程内。
+  distributed:
+    counter-mode: redis
+    session-lock-mode: redis
 
   memory:
     provider: ${MEMORY_PROVIDER:memory}
@@ -149,6 +152,19 @@ customer-work:
     approval-auth:
       enabled: true
 
+  user-auth:
+    jwt-secret: ${CW_USER_JWT_SECRET:}
+
+  agent-access:
+    secret: ${CW_AGENT_WS_SECRET:}
+
+  attachment:
+    storage:
+      minio:
+        endpoint: ${MINIO_ENDPOINT:}
+        access-key: ${MINIO_ACCESS_KEY:}
+        secret-key: ${MINIO_SECRET_KEY:}
+
   observability:
     tracing-enabled: ${TRACING_ENABLED:true}
     # 全链路日志关联：MDC 贯穿(requestId/sessionId 自动进日志)与 W3C traceparent 关联，默认已开，
@@ -173,20 +189,15 @@ management:
     health:
       show-details: when-authorized
 
-# ------------------------------------------------------------------
-# 多实例部署注意事项（诚实声明：以下能力当前实现是进程内统计/存储，横向扩容时需知悉）
-# ------------------------------------------------------------------
-# 1. 限流（security.rate-limit）与模型成本熔断（model.cost-control，本文件未开启，默认关闭）
-#    均是进程内计数器，N 个实例横向扩容 = 实际总配额被放大为 N 倍，而非全局共享配额。
-#    需要全局精确限流/熔断时，应在 Higress/网关层做全局限流，或改造为 Redis 计数实现。
-# 2. CustomerServiceService 的会话级串行锁（同一 sessionId 并发请求排队执行，避免状态覆盖）
-#    是进程内 Semaphore，只在同一实例内生效；若同一 sessionId 的并发请求被负载均衡到不同实例，
-#    该锁不能跨实例互斥。生产建议在网关层为同一 sessionId 配置会话粘性路由（sticky session），
-#    避免依赖跨实例分布式锁。
-# 3. MockComplaintBackend（投诉工单默认实现）是进程内 Map 存储，多实例下建单与查单落在不同
-#    实例会导致查不到。生产必须提供真实的 ComplaintBackend Bean（对接自有工单系统），
-#    不能依赖默认 Mock 实现跨实例工作。
-# 完整评估结论见 docs/生产就绪评估.md。
+# 生产默认关闭 API 文档，避免接口结构与调试入口公开暴露；确需内网查看时显式开启并由网关鉴权。
+springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_ENABLED:false}
+  swagger-ui:
+    enabled: ${SPRINGDOC_ENABLED:false}
+
+# 生产门禁由 ProductionReadinessValidator 执行：密钥、API 鉴权、审批身份、Flyway、Redis 分布式模式、
+# MySQL 技能库与 MinIO 任一不合规都会阻断 prod profile 启动，不允许带开发默认值进入流量池。
 
 logging:
   level:

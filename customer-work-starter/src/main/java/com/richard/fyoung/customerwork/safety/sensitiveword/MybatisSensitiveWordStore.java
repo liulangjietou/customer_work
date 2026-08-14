@@ -14,7 +14,7 @@ import java.util.Optional;
  * MyBatis-Plus 敏感词表存储（生产实现：{@code sensitive-word.store-mode=jdbc} 时装配）。
  *
  * <p>词表落 {@code cw_sensitive_word} 表，多实例共享、支持后台运营维护。建表与种子由统一
- * {@code SchemaInitializer} 负责，本类只表达读写；DO ↔ 领域对象转换收敛在本层。异常一律
+ * Flyway 负责，本类只表达读写；DO ↔ 领域对象转换收敛在本层。异常一律
  * {@code catch(Exception)}（HikariPool 初始化异常是 RuntimeException，非 SQLException 子类）。</p>
  *
  * <p><b>读成败必须可区分</b>：{@link #findEnabled()} 读失败返回 {@code Optional.empty()}（而非空集合），

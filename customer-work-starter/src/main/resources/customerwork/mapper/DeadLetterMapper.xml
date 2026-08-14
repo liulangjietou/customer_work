@@ -3,35 +3,57 @@
     "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.richard.fyoung.customerwork.capability.deadletter.mapper.DeadLetterMapper">
 
-    <!-- 公共列。tenant_id 由 TenantLineInnerInterceptor 自动补，此处不列；
-         type / status 加反引号规避关键字歧义。 -->
+    <!-- 公共列。tenant_id 显式持久化，租户拦截器负责读写隔离；type / status 加反引号规避关键字歧义。 -->
     <sql id="columns">
-        id, `type`, payload, biz_key, `status`, attempts, last_error,
-        next_retry_at_ms, created_at_ms, finished_at_ms
+        tenant_id, id, `type`, payload, biz_key, `status`, attempts, last_error,
+        next_retry_at_ms, lease_owner, lease_until_ms, created_at_ms, finished_at_ms
     </sql>
 
     <!-- 新建与每次重投后的回写共用。created_at_ms 不更新：那是这笔失败发生的时刻。 -->
     <insert id="upsert" parameterType="com.richard.fyoung.customerwork.capability.deadletter.entity.DeadLetterDO">
-        INSERT INTO cw_dead_letter (id, `type`, payload, biz_key, `status`, attempts, last_error,
-            next_retry_at_ms, created_at_ms, finished_at_ms)
-        VALUES (#{id}, #{type}, #{payload}, #{bizKey}, #{status}, #{attempts}, #{lastError},
-            #{nextRetryAtMs}, #{createdAtMs}, #{finishedAtMs})
+        INSERT INTO cw_dead_letter (tenant_id, id, `type`, payload, biz_key, `status`, attempts, last_error,
+            next_retry_at_ms, lease_owner, lease_until_ms, created_at_ms, finished_at_ms)
+        VALUES (#{tenantId}, #{id}, #{type}, #{payload}, #{bizKey}, #{status}, #{attempts}, #{lastError},
+            #{nextRetryAtMs}, #{leaseOwner}, #{leaseUntilMs}, #{createdAtMs}, #{finishedAtMs})
         ON DUPLICATE KEY UPDATE
             `status` = VALUES(`status`),
             attempts = VALUES(attempts),
             last_error = VALUES(last_error),
             next_retry_at_ms = VALUES(next_retry_at_ms),
+            lease_owner = VALUES(lease_owner),
+            lease_until_ms = VALUES(lease_until_ms),
             finished_at_ms = VALUES(finished_at_ms)
     </insert>
 
-    <!-- 到期优先：越早该重投的越先拿，避免积压时新失败挤掉老失败 -->
-    <select id="selectDue" resultType="com.richard.fyoung.customerwork.capability.deadletter.entity.DeadLetterDO">
-        SELECT <include refid="columns"/> FROM cw_dead_letter
-        WHERE `status` = 'PENDING'
-          AND next_retry_at_ms &lt;= #{nowMs}
+    <select id="selectClaimCandidates" resultType="string">
+        SELECT id FROM cw_dead_letter
+        WHERE (`status` = 'PENDING' AND next_retry_at_ms &lt;= #{nowMs})
+           OR (`status` = 'PROCESSING' AND lease_until_ms &lt;= #{nowMs})
         ORDER BY next_retry_at_ms
         LIMIT #{limit}
     </select>
+
+    <update id="claim">
+        UPDATE cw_dead_letter
+        SET `status` = 'PROCESSING', lease_owner = #{owner}, lease_until_ms = #{leaseUntilMs}
+        WHERE id = #{id}
+          AND ((`status` = 'PENDING' AND next_retry_at_ms &lt;= #{nowMs})
+            OR (`status` = 'PROCESSING' AND lease_until_ms &lt;= #{nowMs}))
+    </update>
+
+    <select id="selectClaimed" resultType="com.richard.fyoung.customerwork.capability.deadletter.entity.DeadLetterDO">
+        SELECT <include refid="columns"/> FROM cw_dead_letter
+        WHERE `status` = 'PROCESSING' AND lease_owner = #{owner} AND lease_until_ms = #{leaseUntilMs}
+        ORDER BY next_retry_at_ms
+    </select>
+
+    <update id="complete">
+        UPDATE cw_dead_letter
+        SET `status` = #{record.status}, attempts = #{record.attempts}, last_error = #{record.lastError},
+            next_retry_at_ms = #{record.nextRetryAtMs}, lease_owner = #{record.leaseOwner},
+            lease_until_ms = #{record.leaseUntilMs}, finished_at_ms = #{record.finishedAtMs}
+        WHERE id = #{record.id} AND `status` = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
 
     <select id="selectByStatus" resultType="com.richard.fyoung.customerwork.capability.deadletter.entity.DeadLetterDO">
         SELECT <include refid="columns"/> FROM cw_dead_letter

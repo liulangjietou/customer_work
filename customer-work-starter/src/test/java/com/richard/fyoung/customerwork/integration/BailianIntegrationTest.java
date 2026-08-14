@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <pre>
  *   export RUN_BAILIAN_IT=true
- *   export DASHSCOPE_API_KEY=你的百炼密钥   # 不设则用项目默认 key
+ *   export DASHSCOPE_API_KEY=你的百炼密钥
  *   mvn test -Dtest=BailianIntegrationTest
  * </pre>
  *
@@ -36,12 +36,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @EnabledIfEnvironmentVariable(named = "RUN_BAILIAN_IT", matches = "true")
 class BailianIntegrationTest {
 
-    /** 项目默认 key（仅用于联调；生产请用环境变量注入）。 */
-    private static final String DEFAULT_API_KEY = "sk-9de889ef6db7405281412384110ed033";
-
     private String apiKey() {
         String env = System.getenv("DASHSCOPE_API_KEY");
-        return (env != null && !env.isBlank()) ? env.trim() : DEFAULT_API_KEY;
+        if (env == null || env.isBlank()) {
+            throw new IllegalStateException("DASHSCOPE_API_KEY is required when RUN_BAILIAN_IT=true");
+        }
+        return env.trim();
     }
 
     private Model bailianModel() {

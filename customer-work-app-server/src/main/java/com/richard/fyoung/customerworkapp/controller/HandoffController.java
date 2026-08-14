@@ -5,6 +5,7 @@ import com.richard.fyoung.customerwork.capability.handoff.HandoffStatus;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
 import com.richard.fyoung.customerwork.observability.AuditSink;
 import com.richard.fyoung.customerwork.capability.routing.SeatRecommendation;
+import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
+import org.springframework.web.server.ServerWebExchange;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,9 +32,8 @@ import java.util.NoSuchElementException;
  * {@link #list}/{@link #get} 查询待接单队列，{@link #claim} 接单开始处理，处理完毕
  * {@link #resolve} 结案（会话可回收给 AI 续接）——取代此前"转人工只生成一句话术"的空闭环。</p>
  *
- * <p>与 {@code ApprovalController} 的资金放行端点不同：接单/结案不直接产生资金动作，
- * 未接入 {@code ApprovalAuthWebFilter} 同等强度的操作员令牌鉴权，仅信任请求参数 {@code operator}
- * （与鉴权未开启时的审批端点同等安全水位）；仍记录审计留痕供追溯。</p>
+ * <p>全部端点由 {@link AgentAuthWebFilter} 校验坐席 HMAC 令牌；操作员身份只取服务端验签结果，
+ * 不信任客户端请求参数，避免冒充其他坐席接单或结案。</p>
  * @author owlzhangfq@gmail.com
  */
 @RestController
@@ -40,7 +41,6 @@ import java.util.NoSuchElementException;
 @Tag(name = "人机切换", description = "AI 转人工工单查询 / 接单 / 结案回收")
 public class HandoffController {
 
-    private static final String DEFAULT_OPERATOR = "agent-console";
     private static final String AUDIT_TYPE_HANDOFF_DECISION = "handoff-decision";
 
     private final HandoffService handoffService;
@@ -80,7 +80,8 @@ public class HandoffController {
     @Operation(summary = "坐席接单", description = "PENDING → CLAIMED，重复接单返回 409")
     @PostMapping("/{id}/claim")
     public Mono<HandoffTicket> claim(@PathVariable String id,
-                                     @RequestParam(defaultValue = DEFAULT_OPERATOR) String operator) {
+                                     ServerWebExchange exchange) {
+        String operator = requireAgent(exchange);
         return Mono.fromCallable(() -> handoffService.claim(id, operator))
             .doOnNext(t -> audit(t, "claim", operator, null))
             .onErrorMap(this::translate);
@@ -89,9 +90,11 @@ public class HandoffController {
     @Operation(summary = "结案回收给 AI", description = "CLAIMED → RESOLVED，未接单先结案返回 409")
     @PostMapping("/{id}/resolve")
     public Mono<HandoffTicket> resolve(@PathVariable String id,
-                                       @RequestParam(required = false) String note) {
+                                       @RequestParam(required = false) String note,
+                                       ServerWebExchange exchange) {
+        String operator = requireAgent(exchange);
         return Mono.fromCallable(() -> handoffService.resolve(id, note))
-            .doOnNext(t -> audit(t, "resolve", null, note))
+            .doOnNext(t -> audit(t, "resolve", operator, note))
             .onErrorMap(this::translate);
     }
 
@@ -127,5 +130,13 @@ public class HandoffController {
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid status: " + status);
         }
+    }
+
+    private String requireAgent(ServerWebExchange exchange) {
+        String agentId = exchange.getAttribute(AgentAuthWebFilter.AGENT_ID_ATTR);
+        if (!StringUtils.hasText(agentId)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "agent principal missing");
+        }
+        return agentId;
     }
 }

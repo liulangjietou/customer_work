@@ -18,6 +18,7 @@ public class DeadLetterDO {
 
     @TableId(value = "id", type = IdType.INPUT)
     private String id;
+    private String tenantId;
 
     /** 死信类型：决定由哪个 DeadLetterHandler 重投。 */
     private String type;
@@ -32,6 +33,8 @@ public class DeadLetterDO {
     private Integer attempts;
     private String lastError;
     private Long nextRetryAtMs;
+    private String leaseOwner;
+    private Long leaseUntilMs;
     private Long createdAtMs;
     private Long finishedAtMs;
 }

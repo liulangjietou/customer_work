@@ -63,7 +63,7 @@ flowchart LR
 **可观测性**：应用侧默认暴露 Prometheus 指标；开启 `customer-work.observability.otel.enabled`（starter）/
 `admin.observability.otel.enabled`（admin）后接入 OpenTelemetry，按 agent/model/tool（starter 另加 HTTP 入口）
 三段出 span 并经 OTLP 导出。配套的一键监控栈见 [docker/observability/README.md](docker/observability/README.md)，
-预置 Prometheus + Grafana（3 张仪表盘）+ Alertmanager（9 条告警规则 + 钉钉转发）+ Tempo 链路追踪后端；
+预置 Prometheus + Grafana（4 张仪表盘）+ Alertmanager（13 条告警规则 + 钉钉转发）+ Tempo 链路追踪后端；
 详细配置项见 [全量参考 §6.13c](docs/功能与配置全量参考.md#613c-otel-链路追踪最后一公里)，
 生产部署步骤见 [部署手册 §九](docs/部署手册.md#九可观测性与告警)。
 
@@ -212,10 +212,10 @@ stateDiagram-v2
 | 知识与技能 | RAG 四后端（内存/向量/百炼/Dify）、Skill 技能库 + 自进化 + 代码执行 | §6.8、§6.10 |
 | 业务工具 | 七域工具组覆盖售前→售中→售后全旅程，`tool.backend.*` SPI 一键换成你的真实系统（jdbc 实现内置） | §6.9 |
 | 人机协作 | 退款人工审批闭环（挂起→放行）、转人工工单、多轮槽位收集、审批/工单持久化 SPI + 超时/SLA 巡检 | §6.11 |
-| 用户工单系统 | 终端用户 JWT 认证、7 态工单状态机、用户/坐席 WebSocket 双通道、聊天消息落库、附件解析（OCR + 文档） | §6.21~6.23 |
+| 用户工单系统 | 终端用户 JWT 认证、7 态工单状态机、用户/坐席 WebSocket 双通道、事务化工单写入 + 数据库 Outbox 可靠事件、聊天消息落库、附件解析（OCR + 文档） | §6.21~6.23 |
 | 模型层 | 多厂商（百炼/OpenAI/Anthropic/Gemini/Ollama）、私有化兜底、重试、成本熔断、token 告警 | §6.12~6.13b |
 | 安全与治理 | API Key 鉴权、限流（全局兜底 + 后台可维护的路径规则层）、敏感词内容风控（一次拦截/打码/复核 + 命中看板）、入站防注入围栏、敏感信息脱敏、Permission 三态权限、沙箱 | §6.14~6.14.2、§6.18 |
-| 可观测与运维 | Prometheus 业务指标、原生 Tracing、OTel 链路追踪（真出 span + OTLP 导出）、MDC 全链路日志、慢请求留证、合成监控、优雅停机、一键 Grafana/Tempo/Alertmanager 监控栈 | §6.13~6.13c |
+| 可观测与运维 | Prometheus 业务指标、Outbox/死信队列健康与积压告警、原生 Tracing、OTel 链路追踪（真出 span + OTLP 导出）、MDC 全链路日志、慢请求留证、合成监控、优雅停机、一键 Grafana/Tempo/Alertmanager 监控栈 | §6.13~6.13c |
 | 配置面 | Nacos 提示词/运行时配置热更新（后台 8082 改 → 客服 8080 免重启生效）、配置版本化快照 + 一键回滚 + 按租户灰度发布、MCP / Higress / Studio 接入 | §6.15~6.17、§6.30 |
 | 多租户 SaaS | 租户行级隔离（拦截器全局改写 + fail-closed）、租户管理与双视角权限、水平扩展（Redis 窗口计数 / 会话锁 + K8s 清单）、租户 token 配额 + T+1 计费账单 | §6.27~6.29 |
 | 数据飞轮 | 会话质检、坐席辅助、消息级点赞点踩、意图自动化评测（CI 可跑） | §6.11 末、§6.20 |
@@ -225,7 +225,7 @@ stateDiagram-v2
 ## 五、快速开始
 
 ```bash
-# 方式一：本地运行（默认内存模式，除 API Key 外零依赖）
+# 方式一：本地运行（示例应用默认使用本机 MySQL；纯内存宿主可按需关闭 JDBC 域与迁移）
 export DASHSCOPE_API_KEY=你的百炼密钥      # 必填，密钥仅从环境变量读取
 mvn -pl customer-work-app-server -am spring-boot:run
 
@@ -291,6 +291,9 @@ timeline
 - 基于官方 GA 坐标 `io.agentscope:agentscope-harness:2.0.0`（`agentscope-bom` 统一管理版本）；框架高速迭代，
   升级遇 API 不匹配请对照该版本源码微调。
 - API Key 支持配置项与环境变量两种来源，**生产请用环境变量注入**，勿把密钥留在仓库。
+- 客服业务库由 starter 的 Flyway 管理；存量非空库以版本 `0` 接管后顺序执行增量迁移，迁移失败会阻断启动。
+- 工单状态、事件轨迹和 Outbox 在同一本地事务中提交；消费语义为至少一次，处理器必须按稳定事件 ID 幂等。
+- CI 会扫描当前提交中的常见密钥格式。若密钥曾进入 Git 历史，删除文件内容不足以止损，仍须立即吊销并轮换。
 - 业务链路全异步（`Mono`/`Flux`，无 `.block()`）；所有外部后端均为配置开关，默认实现保证离线开箱即用与单测全绿。
 - 包名按模块划分，根均为 `com.richard.fyoung`：starter `…customerwork`、app-server `…customerworkapp`、
   channel `…customerchannel`、admin-server `…customeradmin`、gateway `…customerworkgateway`。

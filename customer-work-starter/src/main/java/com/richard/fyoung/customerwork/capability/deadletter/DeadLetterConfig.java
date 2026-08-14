@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * 死信队列装配。
@@ -42,9 +43,11 @@ public class DeadLetterConfig {
     @ConditionalOnMissingBean(DeadLetterService.class)
     public DeadLetterService deadLetterService(DeadLetterStore store,
                                                CustomerWorkProperties properties,
-                                               ObjectProvider<DeadLetterHandler> handlerProvider) {
+                                               ObjectProvider<DeadLetterHandler> handlerProvider,
+                                               ObjectProvider<MeterRegistry> meterRegistryProvider) {
         List<DeadLetterHandler> handlers = handlerProvider.orderedStream().toList();
-        return new DeadLetterService(store, properties.getDeadLetter(), handlers);
+        return new DeadLetterService(store, properties.getDeadLetter(), handlers,
+            meterRegistryProvider.getIfAvailable());
     }
 
     @Bean

@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
  * MyBatis-Plus 聊天消息存储（{@code customer-work.chat-log.store-mode=jdbc} 时启用）。
  *
  * <p>写入 {@code cw_chat_message} 表，自增主键由 MyBatis 回填。历史查询用 {@code ORDER BY id DESC LIMIT}
- * 取最新一页后在内存翻转为升序（游标翻页）。建表由统一的 SchemaInitializer 负责，本类不建表。</p>
+ * 取最新一页后在内存翻转为升序（游标翻页）。建表由统一 Flyway 迁移负责，本类不建表。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisChatMessageStore implements ChatMessageStore {

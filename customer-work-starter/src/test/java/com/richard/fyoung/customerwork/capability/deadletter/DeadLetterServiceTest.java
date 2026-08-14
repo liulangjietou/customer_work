@@ -1,14 +1,17 @@
 package com.richard.fyoung.customerwork.capability.deadletter;
 
 import com.richard.fyoung.customerwork.infra.config.properties.DeadLetterProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -170,6 +173,35 @@ class DeadLetterServiceTest {
         DeadLetterService service = serviceWith(new RecordingHandler(false));
 
         assertThrows(IllegalStateException.class, () -> service.reopen("not-exists"));
+    }
+
+    @Test
+    void duplicateHandlerType_shouldFailFast() {
+        assertThrows(IllegalStateException.class, () ->
+            serviceWith(new RecordingHandler(false), new RecordingHandler(false)));
+    }
+
+    @Test
+    void retryShouldRestoreMessageTenantContext() {
+        AtomicReference<String> handledTenant = new AtomicReference<>();
+        DeadLetterHandler handler = new DeadLetterHandler() {
+            @Override
+            public String type() {
+                return TYPE;
+            }
+
+            @Override
+            public void retry(DeadLetter letter) {
+                handledTenant.set(TenantContext.require());
+            }
+        };
+        DeadLetterService service = serviceWith(handler);
+        TenantContext.runWith("tenant-a", () -> service.record(TYPE, "{}", "A1", "timeout"));
+
+        service.retryDue();
+
+        assertEquals("tenant-a", handledTenant.get());
+        assertNull(TenantContext.get());
     }
 
     @Test

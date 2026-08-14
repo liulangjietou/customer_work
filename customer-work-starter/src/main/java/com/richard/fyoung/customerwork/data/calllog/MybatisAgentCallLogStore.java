@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
  * MyBatis-Plus 智能体调用日志存储（{@code customer-work.call-log.store-mode=jdbc} 时启用）。
  *
  * <p>{@link #save} 先落主表回填自增主键，再逐段落明细表（一次调用的分段量级很小，逐条 insert 足够）；
- * 查询/汇总/趋势委托 Mapper 的手写 SQL。建表由统一的 SchemaInitializer 负责，本类不建表。读侧异常一律
+ * 查询/汇总/趋势委托 Mapper 的手写 SQL。建表由统一 Flyway 迁移负责，本类不建表。读侧异常一律
  * 降级为空结果 + error 日志，不上抛（报表查询失败不该拖垮页面）；写侧异常上抛（由异步 Sink 侧兜底日志）。</p>
  * @author owlzhangfq@gmail.com
  */

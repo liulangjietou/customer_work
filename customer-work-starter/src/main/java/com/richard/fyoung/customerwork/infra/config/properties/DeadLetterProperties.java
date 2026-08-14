@@ -31,6 +31,12 @@ public class DeadLetterProperties {
     /** 单轮重投的最大条数：避免积压时一轮跑太久，宁可多跑几轮。 */
     private int batchSize = 50;
 
+    /** 单条重投租约时长；处理实例崩溃后到期可被其他副本接管。 */
+    private long leaseMs = 60_000L;
+
     /** 重投巡检间隔（毫秒）。 */
     private long scanIntervalMs = 60_000L;
+
+    /** 健康检查进入 DEGRADED 的待重投积压阈值。 */
+    private long degradedPendingThreshold = 100L;
 }

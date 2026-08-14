@@ -23,6 +23,8 @@ import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT, isTicketEnded } from '@/typ
 import type { ChatMessage, FeedbackType, Ticket, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
 
 const HTTP_CONFLICT = 409
+/** Outbox 是至少一次投递；按工单事件主键去重，避免重试帧重复弹提示。 */
+const processedTicketEvents = new Set<string>()
 
 // 附件：与后端 starter AttachmentParseService 白名单/大小限制保持一致（customer-work.attachment.max-file-size-mb=10）
 const ATTACHMENT_ACCEPT = '.md,.txt,.csv,.tsv,.json,.xml,.yaml,.yml,.toml,.proto,.properties,.ini,.conf,.cfg,.log,.env,.sql,.sh,.bash,.zsh,.bat,.ps1,.java,.kt,.kts,.groovy,.gradle,.scala,.py,.js,.ts,.jsx,.tsx,.vue,.css,.scss,.less,.c,.h,.cpp,.hpp,.cs,.go,.rs,.rb,.php,.swift,.lua,.r,.dart,.html,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.bmp,.webp'
@@ -317,6 +319,13 @@ function onWsTicketEvent(data: unknown) {
   const payload = data as WsTicketEvent
   if (payload.ticketId !== ticketId.value) {
     return
+  }
+  const eventKey = payload.eventId == null ? null : `${payload.ticketId}:${payload.eventId}`
+  if (eventKey && processedTicketEvents.has(eventKey)) {
+    return
+  }
+  if (eventKey) {
+    processedTicketEvents.add(eventKey)
   }
   const previousStatus = ticket.value?.status
   if (ticket.value && payload.toStatus) {

@@ -7,6 +7,7 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
 
 customer-work:
   model:
@@ -15,6 +16,12 @@ customer-work:
     enabled: false
   session:
     mode: memory
+    mysql:
+      migration-enabled: false
+  memory:
+    store-mode: memory
+  harness:
+    memory-store-mode: memory
   ticket:
     store-mode: memory
   user-auth:

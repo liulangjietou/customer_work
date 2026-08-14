@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.data.outbox.mapper.OutboxMessageMapper">
+
+    <sql id="columns">
+        tenant_id, id, `type`, aggregate_id, payload, `status`, attempts, next_attempt_at_ms,
+        lease_owner, lease_until_ms, last_error, created_at_ms, finished_at_ms
+    </sql>
+
+    <insert id="insertMessage" parameterType="com.richard.fyoung.customerwork.data.outbox.entity.OutboxMessageDO">
+        INSERT INTO cw_outbox_message
+            (tenant_id, id, `type`, aggregate_id, payload, `status`, attempts, next_attempt_at_ms,
+             lease_owner, lease_until_ms, last_error, created_at_ms, finished_at_ms)
+        VALUES
+            (#{tenantId}, #{id}, #{type}, #{aggregateId}, #{payload}, #{status}, #{attempts}, #{nextAttemptAtMs},
+             #{leaseOwner}, #{leaseUntilMs}, #{lastError}, #{createdAtMs}, #{finishedAtMs})
+    </insert>
+
+    <select id="selectClaimCandidates" resultType="string">
+        SELECT id FROM cw_outbox_message
+        WHERE (`status` = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
+           OR (`status` = 'PROCESSING' AND lease_until_ms &lt;= #{nowMs})
+        ORDER BY next_attempt_at_ms, created_at_ms
+        LIMIT #{limit}
+    </select>
+
+    <!-- 先查候选、再逐行 CAS 抢租约；多实例看到同一候选也只有一个 UPDATE 能成功。 -->
+    <update id="claim">
+        UPDATE cw_outbox_message
+        SET `status` = 'PROCESSING', lease_owner = #{owner}, lease_until_ms = #{leaseUntilMs}
+        WHERE id = #{id}
+          AND ((`status` = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
+            OR (`status` = 'PROCESSING' AND lease_until_ms &lt;= #{nowMs}))
+    </update>
+
+    <select id="selectClaimed" resultType="com.richard.fyoung.customerwork.data.outbox.entity.OutboxMessageDO">
+        SELECT <include refid="columns"/> FROM cw_outbox_message
+        WHERE `status` = 'PROCESSING' AND lease_owner = #{owner} AND lease_until_ms = #{leaseUntilMs}
+        ORDER BY next_attempt_at_ms, created_at_ms
+    </select>
+
+    <update id="complete">
+        UPDATE cw_outbox_message
+        SET `status` = #{record.status}, attempts = #{record.attempts},
+            next_attempt_at_ms = #{record.nextAttemptAtMs}, lease_owner = #{record.leaseOwner},
+            lease_until_ms = #{record.leaseUntilMs}, last_error = #{record.lastError},
+            finished_at_ms = #{record.finishedAtMs}
+        WHERE id = #{record.id} AND `status` = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
+
+    <select id="countByStatus" resultType="long">
+        SELECT COUNT(*) FROM cw_outbox_message WHERE `status` = #{status}
+    </select>
+</mapper>

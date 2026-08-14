@@ -16,8 +16,8 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  *
  * <p><b>记忆链路默认落库（B5 起）</b>：{@code memory.store-mode} 与 {@code harness.memory-store-mode}
  * 的默认值是 {@code jdbc}，故本条件默认为真、持久化环境默认装配。数据源是 HikariCP 惰性建连（构造不建连），
- * 建表失败也只记 error 不阻断启动（见 {@code SchemaInitializer}），所以"默认装配"不等于"没有 MySQL 就起不来"；
- * 确实不想要持久层的宿主把这两个键显式配成 {@code memory} 即可退回全内存形态（事实日志随之降为
+ * 但 Flyway 迁移启用时会主动连接并在失败时阻断启动；所以默认配置仍要求 MySQL 可用。确实需要
+ * 纯内存形态的宿主可把这两个键显式配成 {@code memory} 并关闭迁移（事实日志随之降为
  * {@code NoOpFactLog}——本项目不再提供文件形态的事实日志）。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -37,6 +37,7 @@ public class PersistenceJdbcCondition implements Condition {
         "customer-work.user-auth.store-mode",
         "customer-work.chat-log.store-mode",
         "customer-work.call-log.store-mode",
+        "customer-work.outbox.store-mode",
         "customer-work.attachment.store-mode",
         "customer-work.sensitive-word.store-mode",
         // 命中日志与词表是两个独立开关：允许"词表用内存种子、只把命中记录落库"这种组合，

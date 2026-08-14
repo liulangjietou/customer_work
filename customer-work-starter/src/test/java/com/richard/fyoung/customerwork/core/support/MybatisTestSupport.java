@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkSchemaMigrator;
+import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 import com.richard.fyoung.customerwork.capability.approval.mapper.ApprovalMapper;
 import com.richard.fyoung.customerwork.data.attachment.mapper.ChatAttachmentMapper;
 import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallLogMapper;
@@ -27,6 +29,8 @@ import com.richard.fyoung.customerwork.data.skill.mapper.SkillFileMapper;
 import com.richard.fyoung.customerwork.data.skill.mapper.SkillMapper;
 import com.richard.fyoung.customerwork.data.ticket.mapper.TicketEventMapper;
 import com.richard.fyoung.customerwork.data.ticket.mapper.TicketMapper;
+import com.richard.fyoung.customerwork.data.outbox.mapper.OutboxMessageMapper;
+import com.richard.fyoung.customerwork.capability.deadletter.mapper.DeadLetterMapper;
 import com.richard.fyoung.customerwork.tool.backend.mapper.ComplaintMapper;
 import com.richard.fyoung.customerwork.tool.backend.mapper.InvoiceRequestMapper;
 import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
@@ -40,12 +44,9 @@ import com.zaxxer.hikari.HikariDataSource;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.mybatis.spring.SqlSessionTemplate;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 import javax.sql.DataSource;
-import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties;
 
 /**
  * MyBatis 持久层测试支撑：脱离 Spring 容器，用与 {@code CustomerWorkPersistenceConfig} 一致的方式
@@ -58,6 +59,7 @@ import com.richard.fyoung.customerwork.infra.config.properties.SessionProperties
 public final class MybatisTestSupport {
 
     private static final String MAPPER_LOCATIONS = "classpath*:customerwork/mapper/*.xml";
+    private static final String TEST_DATABASE_ENV = "CUSTOMER_WORK_TEST_DATABASE";
 
     /**
      * 全部 Mapper 接口清单：脱离 Spring 容器时手工注册（生产由 @MapperScan 逐个 addMapper）。
@@ -73,16 +75,17 @@ public final class MybatisTestSupport {
         AgentCallLogMapper.class, AgentCallSegmentMapper.class,
         DictTypeMapper.class, DictItemMapper.class,
         LongTermMemoryMapper.class, FactLogMapper.class, HarnessMemoryMapper.class,
-        SkillMapper.class, SkillFileMapper.class
+        SkillMapper.class, SkillFileMapper.class,
+        DeadLetterMapper.class, OutboxMessageMapper.class
     };
 
     private MybatisTestSupport() {
     }
 
-    /** 用本机 MySQL（root/root，库 agent_scope_customer_work）构建 Hikari 数据源。 */
+    /** 用本机 MySQL 构建测试数据源；可通过 CUSTOMER_WORK_TEST_DATABASE 隔离个人业务库。 */
     public static HikariDataSource mysqlDataSource(String poolName) {
         SessionProperties.Mysql cfg = new CustomerWorkProperties().getSession().getMysql();
-        cfg.setDatabase("agent_scope_customer_work");
+        cfg.setDatabase(System.getenv().getOrDefault(TEST_DATABASE_ENV, "agent_scope_customer_work"));
         cfg.setUsername("root");
         cfg.setPassword("root");
         HikariDataSource ds = new HikariDataSource();
@@ -128,55 +131,10 @@ public final class MybatisTestSupport {
         return template(dataSource).getMapper(mapperType);
     }
 
-    /**
-     * 确保业务表结构与种子已就绪（幂等）：执行与生产 {@code SchemaInitializer} 相同的建表脚本。
-     * 替代旧 {@code JdbcXxxStore} 构造里的 ensureTable/seed。
-     *
-     * <p>额外对存量表做<b>增量补列</b>（{@link #ensureColumns}）：{@code CREATE TABLE IF NOT EXISTS} 对已存在的表
-     * 不会追加新列，而 MySQL 无 {@code ADD COLUMN IF NOT EXISTS}，故对本地已存在的 {@code cw_handoff_ticket}
-     * 用 information_schema 探测后按需补齐智能分配增强列，保证已跑过旧 schema 的开发库仍能通过新字段的读写测试。</p>
-     */
+    /** 确保业务表结构与种子已就绪：测试与生产使用同一套 Flyway 迁移，不维护第二套补列逻辑。 */
     public static void ensureSchema(DataSource dataSource) {
-        ResourceDatabasePopulator populator = new ResourceDatabasePopulator();
-        populator.addScript(new ClassPathResource("customerwork/schema/customer-work-schema.sql"));
-        populator.setSeparator(";");
-        populator.setCommentPrefixes("--");
-        populator.execute(dataSource);
-        ensureHandoffRoutingColumns(dataSource);
-        // 对话附件·消息绑定：存量 cw_chat_attachment 幂等补齐 message_id 列（CREATE TABLE IF NOT EXISTS 不追加新列）
-        ensureColumn(dataSource, "cw_chat_attachment", "message_id",
-            "VARCHAR(64) NOT NULL DEFAULT '' COMMENT '绑定的用户消息ID（框架Msg.id，空=未绑定）'");
-    }
-
-    /** 智能路由中控·工单智能分配：为存量 cw_handoff_ticket 幂等补齐增强列（列已存在则跳过）。 */
-    private static void ensureHandoffRoutingColumns(DataSource dataSource) {
-        ensureColumn(dataSource, "cw_handoff_ticket", "category", "VARCHAR(64) NULL");
-        ensureColumn(dataSource, "cw_handoff_ticket", "required_skill", "VARCHAR(64) NULL");
-        ensureColumn(dataSource, "cw_handoff_ticket", "priority", "VARCHAR(16) NULL");
-        ensureColumn(dataSource, "cw_handoff_ticket", "emotion", "VARCHAR(32) NULL");
-        ensureColumn(dataSource, "cw_handoff_ticket", "suggested_assignees", "TEXT NULL");
-    }
-
-    /** 若指定列不存在则 ALTER 追加（information_schema 探测，避开 MySQL 无 ADD COLUMN IF NOT EXISTS 的限制）。 */
-    private static void ensureColumn(DataSource dataSource, String table, String column, String ddlType) {
-        try (java.sql.Connection conn = dataSource.getConnection()) {
-            boolean exists;
-            try (java.sql.PreparedStatement ps = conn.prepareStatement(
-                "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() "
-                    + "AND table_name = ? AND column_name = ?")) {
-                ps.setString(1, table);
-                ps.setString(2, column);
-                try (java.sql.ResultSet rs = ps.executeQuery()) {
-                    exists = rs.next();
-                }
-            }
-            if (!exists) {
-                try (java.sql.Statement st = conn.createStatement()) {
-                    st.executeUpdate("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + ddlType);
-                }
-            }
-        } catch (Exception e) {
-            throw new IllegalStateException("failed to ensure column " + table + "." + column, e);
-        }
+        CustomerWorkProperties properties = new CustomerWorkProperties();
+        properties.getSession().getMysql().setMigrationEnabled(true);
+        new CustomerWorkSchemaMigrator(dataSource, properties).afterPropertiesSet();
     }
 }

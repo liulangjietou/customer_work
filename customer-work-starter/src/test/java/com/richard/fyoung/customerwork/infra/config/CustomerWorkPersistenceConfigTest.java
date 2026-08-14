@@ -22,7 +22,12 @@ class CustomerWorkPersistenceConfigTest {
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
         .withUserConfiguration(CustomerWorkPersistenceConfig.class)
-        .withBean(CustomerWorkProperties.class);
+        // 本测试手工注册 properties Bean，不经过 @ConfigurationProperties 绑定，故必须在 Supplier 中显式关闭迁移。
+        .withBean(CustomerWorkProperties.class, () -> {
+            CustomerWorkProperties properties = new CustomerWorkProperties();
+            properties.getSession().getMysql().setMigrationEnabled(false);
+            return properties;
+        });
 
     @Test
     void whenAnyJdbc_shouldWireIndependentPersistenceBeans() {
@@ -30,8 +35,11 @@ class CustomerWorkPersistenceConfigTest {
             .run(context -> {
                 assertThat(context).hasNotFailed();
                 assertThat(context).hasBean("customerWorkDataSource");
+                assertThat(context).hasBean("customerWorkSchemaMigrator");
                 assertThat(context).hasBean("customerWorkSqlSessionFactory");
                 assertThat(context).hasBean("customerWorkSqlSessionTemplate");
+                assertThat(context).hasBean("customerWorkTransactionManager");
+                assertThat(context).hasSingleBean(com.richard.fyoung.customerwork.infra.transaction.CustomerWorkTransactionExecutor.class);
                 // Mapper 被 @MapperScan 扫描并绑定到本环境 template（bean 名为接口名首字母小写）
                 assertThat(context).hasBean("ticketMapper");
                 assertThat(context).hasBean("orderMapper");
@@ -93,6 +101,7 @@ class CustomerWorkPersistenceConfigTest {
                 assertThat(context).hasNotFailed();
                 assertThat(context).doesNotHaveBean("customerWorkSqlSessionFactory");
                 assertThat(context).doesNotHaveBean("customerWorkSqlSessionTemplate");
+                assertThat(context).doesNotHaveBean("customerWorkTransactionManager");
                 assertThat(context).doesNotHaveBean("ticketMapper");
             });
     }

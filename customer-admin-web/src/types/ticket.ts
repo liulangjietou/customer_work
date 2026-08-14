@@ -172,6 +172,7 @@ export interface WsChatFrameData {
 
 export interface WsTicketEventFrameData {
   ticketId: string
+  eventId?: number
   eventType: string
   fromStatus: TicketStatus | null
   toStatus: TicketStatus | null
@@ -181,6 +182,7 @@ export interface WsTicketEventFrameData {
 
 export interface WsTicketNewFrameData {
   ticketId: string
+  eventId?: number
   userId: string
   title: string
   priority: TicketPriority

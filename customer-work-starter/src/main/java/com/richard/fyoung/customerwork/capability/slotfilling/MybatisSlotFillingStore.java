@@ -17,7 +17,7 @@ import java.util.Optional;
  * 正在进行的多轮信息收集（如退款表单：订单号→原因）不丢失、用户无需从头重答。</p>
  *
  * <p>由 {@link SlotFillingConfig} 按 {@code slot-filling.store-mode=jdbc} 装配；建表由
- * {@code SchemaInitializer} 统一负责。已收集槽位值以 JSON 与 {@code collected_json} 列互转。</p>
+ * Flyway 统一负责。已收集槽位值以 JSON 与 {@code collected_json} 列互转。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisSlotFillingStore implements SlotFillingStore {
