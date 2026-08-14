@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.capability.eval.mapper.EvalCaseMapper">
+
+    <!-- 公共列。tenant_id 由 TenantLineInnerInterceptor 自动补，此处不列。 -->
+    <sql id="columns">
+        id, eval_type, case_id, `input`, expected, category, `source`, `enabled`,
+        origin_ref, created_at_ms
+    </sql>
+
+    <!-- 按业务唯一键 (tenant_id, eval_type, case_id) upsert。
+         不更新 created_at_ms：那是"这条用例什么时候进来的"，覆盖内容不改变它的出生时间。 -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.capability.eval.entity.EvalCaseDO">
+        INSERT INTO cw_eval_case (eval_type, case_id, `input`, expected, category, `source`,
+            `enabled`, origin_ref, created_at_ms)
+        VALUES (#{evalType}, #{caseId}, #{input}, #{expected}, #{category}, #{source},
+            #{enabled}, #{originRef}, #{createdAtMs})
+        ON DUPLICATE KEY UPDATE
+            `input` = VALUES(`input`),
+            expected = VALUES(expected),
+            category = VALUES(category),
+            `source` = VALUES(`source`),
+            `enabled` = VALUES(`enabled`),
+            origin_ref = VALUES(origin_ref)
+    </insert>
+
+    <select id="selectByType" resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalCaseDO">
+        SELECT <include refid="columns"/> FROM cw_eval_case
+        WHERE eval_type = #{evalType}
+        ORDER BY case_id
+    </select>
+
+    <select id="selectByCaseId" resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalCaseDO">
+        SELECT <include refid="columns"/> FROM cw_eval_case
+        WHERE eval_type = #{evalType} AND case_id = #{caseId}
+    </select>
+
+    <delete id="deleteByCaseId">
+        DELETE FROM cw_eval_case
+        WHERE eval_type = #{evalType} AND case_id = #{caseId}
+    </delete>
+</mapper>

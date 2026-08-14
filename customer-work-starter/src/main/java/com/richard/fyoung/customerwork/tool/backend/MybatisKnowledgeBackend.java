@@ -41,7 +41,7 @@ public class MybatisKnowledgeBackend implements KnowledgeBackend {
                 hits.add("· " + entry.getContent() + "（来源：" + entry.getSource() + "）");
             }
             if (hits.isEmpty()) {
-                return "未在知识库中检索到直接相关条目，建议结合上下文回答或转人工。";
+                return NO_HIT_REPLY;
             }
             return "知识库召回如下：\n" + String.join("\n", hits);
         } catch (Exception e) {

@@ -36,6 +36,34 @@ public class ModelProperties {
     private final Fallback fallback = new Fallback();
     /** 模型调用重试（瞬时错误指数退避，提升高可用）。 */
     private final Retry retry = new Retry();
+    /** 按难度分级路由：简单问题走便宜模型。 */
+    private final TieredRouting tieredRouting = new TieredRouting();
+
+    /**
+     * 分级路由：一句"运费怎么算"和一场多轮投诉处理不该花同样的钱。
+     *
+     * <p>与 {@link Fallback} 是两件事：那个回答"主模型挂了用谁"，这个回答"这问题值得用多贵的模型"。
+     * 默认关闭；判定策略见 {@code ModelTierPolicy}，只有"单轮且简短"才降级，刻意保守。</p>
+     */
+    @Data
+    public static class TieredRouting {
+        private boolean enabled = false;
+        /** 经济档厂商；与主模型同厂商时可只改 name。 */
+        private String provider = "dashscope";
+        /** 经济档模型名，默认 qwen-turbo（比 qwen-max 便宜一个量级）。 */
+        private String name = "qwen-turbo";
+        private String apiKey = "";
+        private String baseUrl = "";
+        /**
+         * 走经济档允许的最大消息条数（含系统提示与历史）。
+         *
+         * <p>默认 4：系统提示 + 一问一答再留一条余量，基本等于"单轮"。
+         * 轮数一多说明问题在推进、上下文在累积，便宜模型容易接不住。</p>
+         */
+        private int maxMessagesForEconomy = 4;
+        /** 走经济档允许的最长用户输入字数。长问题信息量大、约束多，便宜模型容易漏掉一半要求。 */
+        private int maxUserTextLengthForEconomy = 60;
+    }
 
     @Data
     public static class Retry {

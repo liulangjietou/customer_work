@@ -23,11 +23,26 @@ public class QualityEvalReport {
     private final int passCount;
     private final List<String> failures;
 
-    public QualityEvalReport(int total, double avgScore, int passCount, List<String> failures) {
+    /**
+     * 失败用例 ID 列表（得分低于通过阈值的用例）。
+     *
+     * <p>与 {@link EvalReport#getFailedCaseIds()} 同一用途：给版本间回归识别一份稳定的 ID 集合，
+     * 不必从人读明细里反解格式。</p>
+     */
+    private final List<String> failedCaseIds;
+
+    public QualityEvalReport(int total, double avgScore, int passCount,
+                             List<String> failures, List<String> failedCaseIds) {
         this.total = total;
         this.avgScore = avgScore;
         this.passCount = passCount;
         this.failures = failures;
+        this.failedCaseIds = failedCaseIds == null ? List.of() : List.copyOf(failedCaseIds);
+    }
+
+    /** 兼容重载：不带失败 ID（无法参与回归识别，仅适合一次性查看）。 */
+    public QualityEvalReport(int total, double avgScore, int passCount, List<String> failures) {
+        this(total, avgScore, passCount, failures, List.of());
     }
 
     public double passRate() {

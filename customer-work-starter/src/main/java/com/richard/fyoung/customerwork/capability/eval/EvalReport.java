@@ -23,12 +23,27 @@ public class EvalReport {
     private final int explicitCases;
     private final List<String> failures;
 
-    public EvalReport(int total, int correct, int fastLaneHits, int explicitCases, List<String> failures) {
+    /**
+     * 失败用例 ID 列表。
+     *
+     * <p>{@link #failures} 是给人看的格式化明细，机器要从里面反解 ID 既脆弱又依赖格式；
+     * 版本间比对"哪些用例从通过变成了失败"（回归）必须有稳定的 ID 集合，故单独一份。</p>
+     */
+    private final List<String> failedCaseIds;
+
+    public EvalReport(int total, int correct, int fastLaneHits, int explicitCases,
+                      List<String> failures, List<String> failedCaseIds) {
         this.total = total;
         this.correct = correct;
         this.fastLaneHits = fastLaneHits;
         this.explicitCases = explicitCases;
         this.failures = failures;
+        this.failedCaseIds = failedCaseIds == null ? List.of() : List.copyOf(failedCaseIds);
+    }
+
+    /** 兼容重载：不带失败 ID（无法参与回归识别，仅适合一次性查看）。 */
+    public EvalReport(int total, int correct, int fastLaneHits, int explicitCases, List<String> failures) {
+        this(total, correct, fastLaneHits, explicitCases, failures, List.of());
     }
 
     public double accuracy() {

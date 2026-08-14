@@ -29,6 +29,16 @@ public class CustomerWorkClientProperties {
     /** 坐席令牌签名密钥：必须与 8080 侧共享同一值。 */
     private String agentSecret = "dev-agent-secret-change-me-0001";
 
+    /**
+     * 运营侧 API Key：调 8080 的运营类端点（如评测触发）时带在 {@code X-API-Key} 头上。
+     *
+     * <p>与 {@link #agentSecret} 是两条不同的身份线：坐席令牌代表"某个客服在操作工单"，
+     * 而评测这类动作是运营方对整套系统的操作、与具体坐席无关，硬塞一个坐席身份进去会让
+     * 8080 侧的审计把运营行为记成某个客服干的。对应 8080 的
+     * {@code customer-work.security.auth.api-keys}；未开启鉴权时留空即可。</p>
+     */
+    private String apiKey = "";
+
     /** WS 接入凭证有效期（小时）：签发给前端的长有效期凭证，比单次 HTTP 请求令牌长。 */
     private long credentialExpireHours = 12;
 

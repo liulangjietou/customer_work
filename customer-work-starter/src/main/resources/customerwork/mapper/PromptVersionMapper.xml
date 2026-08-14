@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.capability.prompt.mapper.PromptVersionMapper">
+
+    <!-- 幂等插入：同一版提示词会被反复观测到（重启、多副本），
+         但 captured_at_ms 要保留最早那次——那才是"这版什么时候上线的"。
+         故用 INSERT IGNORE 而非 ON DUPLICATE KEY UPDATE。 -->
+    <insert id="insertIgnore" parameterType="com.richard.fyoung.customerwork.capability.prompt.entity.PromptVersionDO">
+        INSERT IGNORE INTO cw_prompt_version (fingerprint, content, `length`, captured_at_ms)
+        VALUES (#{fingerprint}, #{content}, #{length}, #{capturedAtMs})
+    </insert>
+
+    <select id="selectRecent" resultType="com.richard.fyoung.customerwork.capability.prompt.entity.PromptVersionDO">
+        SELECT fingerprint, content, `length`, captured_at_ms FROM cw_prompt_version
+        ORDER BY captured_at_ms DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

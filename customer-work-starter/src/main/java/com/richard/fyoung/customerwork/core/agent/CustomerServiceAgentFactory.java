@@ -152,8 +152,14 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         return b.build();
     }
 
-    /** 生效的系统提示词：优先 Nacos 配置中心下发，缺省回退内置提示词；统一追加运行期事实注入。 */
-    String systemPrompt() {
+    /**
+     * 生效的系统提示词：优先 Nacos 配置中心下发，缺省回退内置提示词；统一追加运行期事实注入。
+     *
+     * <p>public 而非包级可见：{@code PromptVersionTracker} 要拿它算内容指纹做效果归因。
+     * "运行时实际生效的提示词"本就该对外可见——配置中心里那份记的是"发布了什么"，
+     * 灰度未覆盖或推送未到达时两者会不一致，而能对上评测指标的只有前者。</p>
+     */
+    public String systemPrompt() {
         return nacosPromptService.currentPrompt().orElse(SYSTEM_PROMPT) + runtimeFacts();
     }
 

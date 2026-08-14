@@ -45,7 +45,7 @@ public class MockKnowledgeBackend implements KnowledgeBackend {
                     .map(doc -> "· " + doc.get("content") + "（来源：" + doc.get("source") + "）")
                     .collect(Collectors.joining("\n"));
                 return hits.isBlank()
-                    ? "未在知识库中检索到直接相关条目，建议结合上下文回答或转人工。"
+                    ? NO_HIT_REPLY
                     : "知识库召回如下：\n" + hits;
             })
             .delayElement(Duration.ofMillis(110))

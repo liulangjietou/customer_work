@@ -1,11 +1,14 @@
 package com.richard.fyoung.customerwork.capability.eval;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ClassPathResource;
 
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -34,10 +37,53 @@ public class QualityEvalRunner {
     private static final Pattern SCORE_PATTERN = Pattern.compile("SCORE:\\s*(\\d)", Pattern.CASE_INSENSITIVE);
     private static final int PASS_THRESHOLD = 3;
 
-    private final JudgeModel judgeModel;
+    private static final String DATASET_PATH = "eval/quality-eval-cases.json";
+    private static final String ERR_LOAD = "EVAL-LOAD-FAIL";
 
-    public QualityEvalRunner(JudgeModel judgeModel) {
+    private final JudgeModel judgeModel;
+    private final EvalCaseStore caseStore;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    public QualityEvalRunner(JudgeModel judgeModel, EvalCaseStore caseStore) {
         this.judgeModel = judgeModel;
+        this.caseStore = caseStore;
+    }
+
+    /** 便捷重载：只用 classpath 种子（单测与离线试跑用）。 */
+    public QualityEvalRunner(JudgeModel judgeModel) {
+        this(judgeModel, new InMemoryEvalCaseStore());
+    }
+
+    /**
+     * 加载质量评测集（与 {@link IntentEvalRunner#loadDataset()} 对称）：
+     * classpath 种子 + 库中增量，同 ID 以库为准，停用的剔除。
+     *
+     * <p>种子加载不到直接抛错而不是返回空集——空集会算出一份 0 用例的"满分"报告，比报错更难发现。</p>
+     */
+    public List<QualityEvalCase> loadDataset() {
+        List<PersistedEvalCase> merged =
+            EvalDatasetMerger.merge(loadSeeds(), caseStore.findByType(EvalType.QUALITY));
+        List<QualityEvalCase> cases = new ArrayList<>(merged.size());
+        for (PersistedEvalCase evalCase : merged) {
+            cases.add(evalCase.toQualityCase());
+        }
+        return List.copyOf(cases);
+    }
+
+    /** 读 classpath 种子并统一成存储形状，便于与库中用例合并。 */
+    private List<PersistedEvalCase> loadSeeds() {
+        try (InputStream in = new ClassPathResource(DATASET_PATH).getInputStream()) {
+            QualityEvalCase[] seeds = objectMapper.readValue(in, QualityEvalCase[].class);
+            List<PersistedEvalCase> result = new ArrayList<>(seeds.length);
+            for (QualityEvalCase seed : seeds) {
+                result.add(new PersistedEvalCase(seed.id(), EvalType.QUALITY, seed.input(),
+                    seed.expected(), seed.category(), EvalCaseSource.SEED, true, null, 0L));
+            }
+            return result;
+        } catch (Exception e) {
+            log.error("load quality eval dataset failed, errorCode={}, path={}", ERR_LOAD, DATASET_PATH, e);
+            throw new IllegalStateException("quality eval dataset not loadable: " + DATASET_PATH, e);
+        }
     }
 
     /**
@@ -55,6 +101,7 @@ public class QualityEvalRunner {
         double totalScore = 0;
         int passCount = 0;
         List<String> failures = new ArrayList<>();
+        List<String> failedCaseIds = new ArrayList<>();
 
         for (int i = 0; i < total; i++) {
             QualityEvalCase c = cases.get(i);
@@ -66,11 +113,12 @@ public class QualityEvalRunner {
                 passCount++;
             } else {
                 failures.add(String.format("%s: score=%d input='%s'", c.id(), score, c.input()));
+                failedCaseIds.add(c.id());
             }
         }
 
         double avgScore = total == 0 ? 0 : totalScore / total;
-        QualityEvalReport report = new QualityEvalReport(total, avgScore, passCount, failures);
+        QualityEvalReport report = new QualityEvalReport(total, avgScore, passCount, failures, failedCaseIds);
         log.info("quality eval done: total={}, avgScore={}, passRate={}%",
             total, String.format("%.2f", avgScore), String.format("%.1f", report.passRate() * 100));
         return report;
@@ -94,7 +142,8 @@ public class QualityEvalRunner {
             String text = response == null ? "" : response.getTextContent();
             return parseScore(text);
         } catch (Exception e) {
-            log.warn("[QualityEval] judge failed for case {}: {}", testCase.id(), e.getMessage());
+            log.error("[QualityEval] judge failed, errorCode={}, caseId={}",
+                "EVAL-JUDGE-FAIL", testCase.id(), e);
             return PASS_THRESHOLD; // 中性分数，不影响整体趋势
         }
     }

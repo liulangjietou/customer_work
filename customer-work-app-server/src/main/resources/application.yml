@@ -62,6 +62,20 @@ customer-work:
       enabled: false
       max-attempts: 2
       backoff-ms: 500
+    # 按难度分级路由：简单问题走便宜模型。与 fallback 是两件事——那个回答"主模型挂了用谁"，
+    # 这个回答"这问题值得用多贵的模型"。判定刻意保守（只有单轮且简短才降级），
+    # 判错的代价因此是"没省到钱"而不是"答得差"。默认关闭。
+    tiered-routing:
+      enabled: true
+      provider: dashscope
+      name: qwen-turbo
+      # 与主模型同厂商时留空即可，会走同一个 DASHSCOPE_API_KEY
+      api-key: ${DASHSCOPE_API_KEY:}
+      base-url: ""
+      # 走经济档允许的最大消息条数（含系统提示与历史）：默认 4 约等于"单轮"
+      max-messages-for-economy: 4
+      # 走经济档允许的最长用户输入字数：长问题约束多，便宜模型容易漏掉一半要求
+      max-user-text-length-for-economy: 60
   session:
     # 会话持久化模式：memory（默认，重启丢）| json（单机落盘可恢复）
     #                | redis（分布式共享）| mysql（强一致持久化）
@@ -365,8 +379,89 @@ customer-work:
       max-size-bytes: 2097152
       # 对外访问 URL 前缀（落在 /api 下以复用前端 Vite 代理；须以 / 开头和结尾）
       url-prefix: /api/avatars/
+  # ===================== B6 运营闭环 =====================
+  # 下面八项的存储默认都是 memory（进程内、重启即丢），而后台是**跨库读客服端库**的——
+  # 不切 jdbc，后台的运营闭环页面永远是空的。建表由 SchemaInitializer 统一负责。
+
+  # 评测：跑标准集 → 出报告 → 与上一版对比。意图评测纯离线（不调模型、零 token 成本）
+  eval:
+    store-mode: jdbc
+    # 定时基线：每天自动跑一遍意图评测攒趋势线。默认关——开发环境每天跑只会往历史里塞
+    # 大量无意义的基线，反而稀释了真正有对比价值的那几次
+    baseline-enabled: false
+    baseline-cron: "0 0 3 * * ?"
+    # Judge 单次打分超时（秒）：要读完"输入+期望+回复"三段才给结论，比常规对话宽松
+    judge-timeout-seconds: 60
+
+  # badcase 回流：负反馈 / 质检失败 → 待筛队列 → 转知识库条目或评测用例
+  badcase:
+    store-mode: jdbc
+    # 关掉它不影响事实流水的记录（那是审计，永远要留），只是不再进人工筛选队列
+    auto-collect: true
+
+  # 提示词版本：记「运行时实际生效」的那份（配置中心记的是「发布了什么」，两者会不一致）。
+  # 版本号取内容指纹，是效果归因的底座：指标掉了先看这一位变没变
+  prompt-version:
+    store-mode: jdbc
+
+  # 会话级满意度（CSAT）：与消息级点赞/点踩衡量的是不同的东西
+  csat:
+    store-mode: jdbc
+    # 会话结束自动发邀请（幂等）。关掉后用户仍可主动评分，只是回收率的分母不完整、失去意义
+    invite-on-session-end: true
+
+  # 知识盲区：检索未命中时记一笔，统计「哪些问题反复查不到」，直接告诉运营该补什么
+  knowledge-gap:
+    enabled: true
+    store-mode: jdbc
+    # 太短的（"嗯""在吗"）本就不该指望知识库命中，计进去只会淹没真正的盲区
+    min-question-length: 4
+
+  # 死信队列：工具调用 / 主动通知发送失败后的兜底重投。此前失败只记一行 error，量上来会丢单
+  dead-letter:
+    enabled: true
+    store-mode: jdbc
+    # 耗尽后转 ABANDONED 而不删除——静默丢弃正是要解决的问题，留档才能让运营捞出来手工补
+    max-attempts: 5
+    # 实际间隔为 base * 2^attempts。下游多半被打挂了或正在重启，
+    # 固定短间隔的密集重试只会把它按在地上
+    base-backoff-ms: 30000
+    batch-size: 50
+    scan-interval-ms: 60000
+
+  # 语义缓存：问题向量相似度超阈值就直接复用上次答案，命中即省掉整条模型链。
+  #
+  # **开启前必读**：在客服场景无差别缓存会造成数据泄露——两个用户都问"我的订单到哪了"，
+  # 语义高度相似但正确答案完全不同。三道闸门收口在 SemanticCacheService#cacheable 一处：
+  # 意图白名单 + 个人标识过滤（问题或答案含 6 位以上连续数字即跳过）+ 双层隔离。
+  # 往 cacheable-intents 里加意图前，请先回答："两个不同用户问同一句话，答案是否必然相同？"
+  semantic-cache:
+    enabled: true
+    store-mode: jdbc
+    # 只放行政策咨询类（运费/发票/退换货规则——对所有人答案相同）。
+    # order/refund 天然依赖个人数据，complaint 需要个性化安抚，都不该缓存
+    cacheable-intents:
+      - consult
+    # 余弦相似度阈值。0.95 偏保守："怎么退货"与"怎么换货"的相似度能到 0.9 上下，
+    # 定低了会把换货答成退货——宁可少命中，不可答错
+    similarity-threshold: 0.95
+    # 政策会变，缓存不该永久有效（秒）
+    ttl-seconds: 604800
+    # MySQL 8.0 无原生向量索引、相似度在应用层逐条算，无上限增长会让查缓存比调模型还慢
+    max-size: 2000
+    max-candidates: 200
+    min-question-length: 4
+    max-question-length: 200
+    # Embedding 端点：与对话模型的 base-url 分开配——DashScope 的 embeddings 走原生路径，
+    # 对话那边常填 OpenAI 兼容端点，拿来发 embedding 请求路径对不上
+    embedding-base-url: https://dashscope.aliyuncs.com
+    embedding-dimensions: 1024
+    embedding-batch-size: 10
+  # =================== B6 运营闭环 结束 ===================
+
   chat-log:
     # 聊天日志（会话/工单消息留痕）：存储模式 memory | jdbc（MyBatis-Plus 实现，跨实例共享）
+    # badcase 登记时靠它回查「用户问了什么、AI 答了什么」，不开则筛选界面没有上下文
     store-mode: jdbc
   agent-access:
     # 坐席访问凭证 HMAC 签名密钥：生产必须用环境变量 CW_AGENT_WS_SECRET 覆盖

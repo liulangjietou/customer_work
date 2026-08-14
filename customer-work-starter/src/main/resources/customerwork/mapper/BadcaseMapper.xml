@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.capability.badcase.mapper.BadcaseMapper">
+
+    <!-- 公共列。tenant_id 由 TenantLineInnerInterceptor 自动补，此处不列。 -->
+    <sql id="columns">
+        id, `source`, session_id, message_id, user_input, agent_reply, detail, `status`,
+        adopted_knowledge_id, adopted_eval_case_id, handled_by, handled_at_ms,
+        ignore_reason, created_at_ms
+    </sql>
+
+    <!-- 条件片段：参数为空即不限，与 InMemoryBadcaseStore 的 null 语义保持一致 -->
+    <sql id="conditions">
+        <where>
+            <if test="status != null and status != ''">AND `status` = #{status}</if>
+            <if test="source != null and source != ''">AND `source` = #{source}</if>
+        </where>
+    </sql>
+
+    <!-- 新建与状态流转回写共用；created_at_ms 不更新，那是这条 badcase 的出生时间 -->
+    <insert id="upsert" parameterType="com.richard.fyoung.customerwork.capability.badcase.entity.BadcaseDO">
+        INSERT INTO cw_badcase (id, `source`, session_id, message_id, user_input, agent_reply, detail,
+            `status`, adopted_knowledge_id, adopted_eval_case_id, handled_by, handled_at_ms,
+            ignore_reason, created_at_ms)
+        VALUES (#{id}, #{source}, #{sessionId}, #{messageId}, #{userInput}, #{agentReply}, #{detail},
+            #{status}, #{adoptedKnowledgeId}, #{adoptedEvalCaseId}, #{handledBy}, #{handledAtMs},
+            #{ignoreReason}, #{createdAtMs})
+        ON DUPLICATE KEY UPDATE
+            user_input = VALUES(user_input),
+            agent_reply = VALUES(agent_reply),
+            detail = VALUES(detail),
+            `status` = VALUES(`status`),
+            adopted_knowledge_id = VALUES(adopted_knowledge_id),
+            adopted_eval_case_id = VALUES(adopted_eval_case_id),
+            handled_by = VALUES(handled_by),
+            handled_at_ms = VALUES(handled_at_ms),
+            ignore_reason = VALUES(ignore_reason)
+    </insert>
+
+    <select id="selectByCondition" resultType="com.richard.fyoung.customerwork.capability.badcase.entity.BadcaseDO">
+        SELECT <include refid="columns"/> FROM cw_badcase
+        <include refid="conditions"/>
+        ORDER BY created_at_ms DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*) FROM cw_badcase
+        <include refid="conditions"/>
+    </select>
+</mapper>

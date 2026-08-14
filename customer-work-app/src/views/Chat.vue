@@ -4,6 +4,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { UploaderAfterRead, UploaderBeforeRead, UploaderFileListItem } from 'vant'
+import CsatSurveyCard from '@/components/CsatSurveyCard.vue'
 import {
   closeTicket,
   createSession,
@@ -720,6 +721,10 @@ onUnmounted(() => {
       close-on-click-action
       @select="onSelectSessionAction"
     />
+
+    <!-- 会话结束后弹满意度评分：组件内部会先查"有没有待评价的邀请"，
+         没被邀请或已评过都不会弹，不会重复打扰 -->
+    <CsatSurveyCard :session-id="sessionId" :session-ended="ended" />
   </div>
 </template>
 

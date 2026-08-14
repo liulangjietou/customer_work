@@ -1,0 +1,55 @@
+package com.richard.fyoung.customerwork.capability.semanticcache;
+
+import java.util.List;
+
+/**
+ * 语义缓存存储 SPI（持久化扩展点）。
+ *
+ * <p>默认 {@link InMemorySemanticCacheStore}；{@code semantic-cache.store-mode=jdbc}
+ * 落 {@code cw_semantic_cache} 表，多实例共享同一份缓存——进程内缓存在多副本部署下
+ * 命中率会被实例数直接除掉。</p>
+ *
+ * <p><b>候选集必须有上限</b>：MySQL 8.0 没有原生向量索引，相似度是在应用层逐条算的
+ * （与 admin 侧知识检索同一手法）。缓存条目会随时间持续增长，不限候选数的话，
+ * 查缓存本身会比调模型还慢——那就本末倒置了。</p>
+ *
+ * <p>方法签名里的 {@code scopeId} 是缓存分区键，不是租户隔离键；后者由拦截器自动处理，
+ * 见 {@link SemanticCacheEntry} 的类注释。</p>
+ * @author owlzhangfq@gmail.com
+ */
+public interface SemanticCacheStore {
+
+    /** 写入一条缓存。 */
+    void save(SemanticCacheEntry entry);
+
+    /**
+     * 取候选集：同分区同意图、未过期的条目，按最近命中时间倒序，最多 {@code limit} 条。
+     *
+     * <p>按意图先缩一轮是关键剪枝：全表捞出来算余弦，条目一多就退化成线性扫描。</p>
+     */
+    List<SemanticCacheEntry> findCandidates(String scopeId, String intent, long notBeforeMs, int limit);
+
+    /** 命中后回写计数与最近命中时间（用于容量淘汰时保留高频条目）。 */
+    void recordHit(Long id, long hitAtMs);
+
+    /** 当前分区的条目总数（容量控制用）。 */
+    long count(String scopeId);
+
+    /** 淘汰：只保留最近命中的 {@code keepSize} 条，其余删除，返回实际删除数。 */
+    int evictLeastRecentlyUsed(String scopeId, int keepSize);
+
+    /** 清空某分区的缓存（知识库或提示词更新后，旧答案不再可信）。 */
+    int clear(String scopeId);
+
+    /**
+     * 运营视角列出缓存条目，按命中次数降序。
+     *
+     * <p>与 {@link #findCandidates} 的区别：那个是命中判定用的、按意图剪枝且按最近命中排序；
+     * 这个是给人看的——运营要回答的是"到底缓存了些什么、哪些真的在被复用"，
+     * 按命中次数排才能一眼看出缓存有没有价值。</p>
+     */
+    List<SemanticCacheEntry> listByHits(String scopeId, int limit);
+
+    /** 删除单条缓存（运营发现某条答得不对时定点清除，不必清空整个分区）。 */
+    boolean remove(Long id);
+}

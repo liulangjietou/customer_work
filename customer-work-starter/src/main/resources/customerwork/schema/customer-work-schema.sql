@@ -629,3 +629,198 @@ CREATE TABLE IF NOT EXISTS `cw_skill_file` (
     INDEX `idx_cw_skill_file_skill` (`skill_id`),
     INDEX `idx_cw_skill_file_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='技能附属文件';
+
+-- 评测运行记录表（MybatisEvalRunStore / cw_eval_run）：每跑一次标准集落一条。
+-- 评测的价值全在纵向对比上——"这版比上版好还是坏"；没有历史，每次运行都退化成孤立的一次性体检。
+-- 只追加不更新：一次运行的结果是既成事实，改写它等于篡改后续所有对比的基线。
+CREATE TABLE IF NOT EXISTS `cw_eval_run` (
+    `tenant_id`            VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `run_id`               VARCHAR(64) PRIMARY KEY COMMENT '运行ID（应用赋值的UUID）',
+    -- 写入顺序号：取基线("上一次运行")一律按它排，不按 created_at_ms。
+    -- 意图评测是纯内存计算，连续两次能落在同一毫秒里，按毫秒时间戳定序会出现
+    -- "第二次运行找不到基线"——同毫秒下 created_at_ms < now 不成立。CI 连跑必踩。
+    `seq`                  BIGINT NOT NULL AUTO_INCREMENT UNIQUE COMMENT '写入顺序号（同毫秒也不丢序）',
+    `eval_type`            VARCHAR(16) NOT NULL COMMENT '评测类型：INTENT 意图路由 / QUALITY 回复质量',
+    `total`                INT NOT NULL DEFAULT 0 COMMENT '用例总数',
+    `passed`               INT NOT NULL DEFAULT 0 COMMENT '通过数',
+    -- 主/次指标一律归一化到 0-1：两类评测原始口径不同（准确率 vs 1-5 分），
+    -- 不归一就没法共用同一段对比逻辑，每加一类评测都要再写一遍比较代码
+    `primary_metric`       DOUBLE NOT NULL DEFAULT 0 COMMENT '主指标(0-1)：INTENT=准确率 / QUALITY=平均分/5',
+    `secondary_metric`     DOUBLE NOT NULL DEFAULT 0 COMMENT '次指标(0-1)：INTENT=快车道覆盖率 / QUALITY=通过率',
+    `failed_case_ids_json` TEXT COMMENT '失败用例ID的JSON数组（版本间回归识别的依据，不从明细里反解）',
+    `failures_json`        TEXT COMMENT '失败明细的JSON数组（人读）',
+    `metrics_json`         TEXT COMMENT '该类型完整原始指标的JSON字典（归一化不丢信息）',
+    `trigger_source`       VARCHAR(16) NOT NULL DEFAULT 'MANUAL' COMMENT '触发来源：MANUAL/SCHEDULED/API',
+    `dataset_size`         INT NOT NULL DEFAULT 0 COMMENT '评测集规模（用例增删后两次指标不可直接比）',
+    -- 效果归因的支点：指标掉了先看这一位变没变。变了就去比那两版提示词全文，
+    -- 没变就别再对着提示词逐字找原因，该去查模型或数据
+    `prompt_fingerprint`   VARCHAR(32) COMMENT '本次运行时生效的提示词指纹（cw_prompt_version.fingerprint）',
+    `remark`               VARCHAR(500) COMMENT '备注（如"换 qwen-max 后重跑"）',
+    `created_at_ms`        BIGINT NOT NULL COMMENT '运行时间戳（毫秒）',
+    -- 取基线是 (eval_type, created_at_ms DESC) 上的取最值查询，联合索引直接命中
+    INDEX `idx_eval_run_type_time` (`tenant_id`, `eval_type`, `created_at_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评测运行记录（只追加，供版本对比）';
+
+-- 评测用例表（MybatisEvalCaseStore / cw_eval_case）：让评测集能随 badcase 增长。
+-- 此前两类用例只存在 jar 内的 JSON 里、运行时只读，"把 badcase 转成评测用例"这个动作无处落地——
+-- 数据飞轮缺的正是这一环。classpath 种子仍保留（随代码走、经 code review，是基准线），
+-- 本表只承载增量与修正：同 case_id 的记录会盖掉种子，enabled=0 等于屏蔽掉那条种子用例，
+-- 两者都不需要改代码发版。
+CREATE TABLE IF NOT EXISTS `cw_eval_case` (
+    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`            BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `eval_type`     VARCHAR(16) NOT NULL COMMENT '评测类型：INTENT 意图路由 / QUALITY 回复质量',
+    `case_id`       VARCHAR(64) NOT NULL COMMENT '用例编号（同类型内唯一；与种子同号即覆盖种子）',
+    `input`         VARCHAR(1024) NOT NULL COMMENT '用户输入',
+    `expected`      VARCHAR(1024) COMMENT 'INTENT=期望意图（空=期望快车道不命中，交LLM）；QUALITY=期望要点',
+    `category`      VARCHAR(64) COMMENT '归类标签',
+    `source`        VARCHAR(16) NOT NULL DEFAULT 'MANUAL' COMMENT '来源：SEED 种子/BADCASE 回流/MANUAL 手工',
+    `enabled`       TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否参与评测：0 可屏蔽同号种子用例',
+    `origin_ref`    VARCHAR(64) COMMENT '溯源引用：来自 badcase 时记 badcase ID，便于回看原始会话',
+    `created_at_ms` BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    -- 用例编号是人给的、可能被改，故主键用自增 id，业务唯一性靠这个联合唯一键
+    UNIQUE KEY `uk_eval_case` (`tenant_id`, `eval_type`, `case_id`),
+    INDEX `idx_eval_case_tenant` (`tenant_id`, `eval_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评测用例（种子之外的增量与修正）';
+
+-- badcase 待筛队列（MybatisBadcaseStore / cw_badcase）：数据飞轮缺的那一环。
+-- 负反馈与质检失败早就写进 cw_fact_log 了，但那是 L3 审计流水——只追加、不可变、永不改写。
+-- "这条处理了没有、转成了什么"是有状态的运营工作流，塞进审计流水会破坏它的根本约定。
+-- 故两张表并存、各司其职：事实流水回答"当时发生了什么"，本表回答"我们拿它做了什么"。
+--
+-- user_input / agent_reply 在登记时从 cw_chat_message 回查补齐：只给运营一个 messageId，
+-- 筛选界面就没法用——没人能凭一串 ID 判断该不该回流。
+CREATE TABLE IF NOT EXISTS `cw_badcase` (
+    `tenant_id`            VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`                   VARCHAR(64) PRIMARY KEY COMMENT 'badcase ID（应用赋值的UUID）',
+    `source`               VARCHAR(24) NOT NULL COMMENT '来源：NEGATIVE_FEEDBACK 用户点踩 / QUALITY_FAILURE 质检不过',
+    `session_id`           VARCHAR(128) COMMENT '所属会话',
+    `message_id`           VARCHAR(64) COMMENT '被反馈的消息ID（质检来源为空，质检针对一批回复）',
+    `user_input`           TEXT COMMENT '用户问了什么（从聊天留痕回查）',
+    `agent_reply`          TEXT COMMENT 'AI答了什么（从聊天留痕回查）',
+    `detail`               TEXT COMMENT '原始信号明细：点踩存用户留言，质检存得分与扣分项',
+    `status`               VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING 待筛/RESOLVED 已处理/IGNORED 已忽略',
+    -- 补知识是治本、加评测用例是防复发，两件事不互斥，故分两个字段而非做成互斥状态
+    `adopted_knowledge_id` BIGINT COMMENT '已回流成的知识条目ID（cw_knowledge.id）',
+    `adopted_eval_case_id` VARCHAR(64) COMMENT '已回流成的评测用例编号（cw_eval_case.case_id）',
+    `handled_by`           VARCHAR(64) COMMENT '处理人',
+    `handled_at_ms`        BIGINT COMMENT '处理时间戳（毫秒）',
+    `ignore_reason`        VARCHAR(500) COMMENT '忽略原因（仅 IGNORED 时有值）',
+    `created_at_ms`        BIGINT NOT NULL COMMENT '登记时间戳（毫秒）',
+    -- 待筛队列按 (status, 时间倒序) 翻页，联合索引直接命中
+    INDEX `idx_badcase_status` (`tenant_id`, `status`, `created_at_ms`),
+    INDEX `idx_badcase_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='badcase 待筛队列（回流知识库/评测用例）';
+
+-- 语义缓存表（MybatisSemanticCacheStore / cw_semantic_cache）：问题向量相似即复用上次答案。
+-- 客服问题重复率极高（"怎么退货"一天可能被问几百次），此前每次都完整打一遍模型。
+--
+-- **开启前必读**：无差别缓存客服回答会造成数据泄露——两个用户都问"我的订单到哪了"，
+-- 语义高度相似但正确答案完全不同。故只缓存与个人上下文无关的通用问答，
+-- 判定收口在 SemanticCacheService#cacheable：意图白名单（默认仅 consult）+ 个人标识过滤
+-- （问题或答案含 6 位以上连续数字即跳过）+ 双层隔离。默认整体关闭。
+--
+-- MySQL 8.0 无原生向量索引，相似度在应用层逐条算（与 admin 侧知识检索同一手法），
+-- 因此必须有容量上限与候选数上限，否则查缓存会比调模型还慢。
+CREATE TABLE IF NOT EXISTS `cw_semantic_cache` (
+    `tenant_id`       VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离，拦截器自动改写）',
+    `id`              BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    -- 与 tenant_id 是两回事：这是缓存分区键（TenantResolver 由 sessionId 前缀解析），
+    -- 同 cw_fact_log 的 scope_id；容量淘汰与失效清空都按它进行
+    `scope_id`        VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '缓存分区键',
+    `intent`          VARCHAR(32) NOT NULL COMMENT '意图分类，命中时先按它缩小候选集（关键剪枝）',
+    `question`        VARCHAR(512) NOT NULL COMMENT '原始问题（人读，排查"为什么这条命中了"要看）',
+    `question_vector` MEDIUMTEXT NOT NULL COMMENT '问题向量，逗号分隔浮点数',
+    `answer`          TEXT NOT NULL COMMENT '当时的回答',
+    `hit_count`       BIGINT NOT NULL DEFAULT 0 COMMENT '命中次数（容量淘汰时保留高频条目）',
+    `created_at_ms`   BIGINT NOT NULL COMMENT '写入时间戳（毫秒），TTL 以此为准',
+    `last_hit_at_ms`  BIGINT NOT NULL COMMENT '最近命中时间戳（毫秒），LRU 淘汰以此为准',
+    -- 候选集查询是 (scope_id, intent, last_hit_at_ms DESC) 上的限额扫描，联合索引直接命中
+    INDEX `idx_semcache_lookup` (`tenant_id`, `scope_id`, `intent`, `last_hit_at_ms`),
+    INDEX `idx_semcache_created` (`tenant_id`, `scope_id`, `created_at_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语义缓存（仅通用问答，默认关闭）';
+
+-- 提示词版本表（MybatisPromptVersionStore / cw_prompt_version）：效果归因的底座。
+-- B4 的 ai_config_version 记的是"这次发布下发了什么"，本表记的是"运行时实际生效的是什么"——
+-- 灰度只发给部分租户、实例还没收到推送、有人直接改了 Nacos 没走发布流程，都会让两者不一致，
+-- 而能跟评测指标对上号的只有后者。
+--
+-- 主键取内容指纹而非外部版本号：提示词下发的是内容、没有随行版本号，要求发布方额外传一个，
+-- 等于把"版本对不对得上"寄托在每次都记得传且传得对。内容变了指纹必变，跨环境也稳定。
+CREATE TABLE IF NOT EXISTS `cw_prompt_version` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `fingerprint`    VARCHAR(32) PRIMARY KEY COMMENT '内容指纹（SHA-256 十六进制前16位）',
+    `content`        MEDIUMTEXT NOT NULL COMMENT '提示词全文（归因时比对两版差异）',
+    `length`         INT NOT NULL DEFAULT 0 COMMENT '全文字符数（列表页展示，避免每行拖全文）',
+    -- 同一版会被反复观测到（重启、多副本），写入用 INSERT IGNORE 保留最早那次，
+    -- 那才是"这版什么时候上线的"
+    `captured_at_ms` BIGINT NOT NULL COMMENT '首次观测到该版本的时间戳（毫秒）',
+    INDEX `idx_prompt_version_time` (`tenant_id`, `captured_at_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提示词版本（运行时实际生效的那份）';
+
+-- 会话级满意度表（MybatisCsatStore / cw_csat_survey）：客服行业最标准的运营指标，此前完全拿不到。
+-- 与消息级点赞/点踩（cw_message_feedback）是两个不同指标、不能互相替代：
+-- 点踩衡量"某一句答得好不好"，CSAT 衡量"这次服务整体解决了没有"。
+-- 一次会话可能每句都答得像样但问题始终没解决——那会拿到一堆 UP 和一个 2 分。
+--
+-- 邀请与评分分两个时间戳记：只记评分就算不出回收率，而回收率低时那个漂亮的 CSAT
+-- 其实只代表愿意评价的一小撮人（特别满意与特别不满的两头），沉默的大多数不在样本里。
+CREATE TABLE IF NOT EXISTS `cw_csat_survey` (
+    `tenant_id`       VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `session_id`      VARCHAR(128) PRIMARY KEY COMMENT '会话ID（自然主键：一次会话只该有一次整体评价）',
+    `scope_id`        VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '统计分区键（TenantResolver 由 sessionId 解析）',
+    `score`           TINYINT COMMENT '评分 1-5；NULL 表示已邀请未评价（回收率的分母靠它区分）',
+    `comment`         TEXT COMMENT '文字说明',
+    `invited_at_ms`   BIGINT NOT NULL COMMENT '发出邀请时间戳（毫秒）——统计窗口以它为准',
+    `submitted_at_ms` BIGINT NOT NULL DEFAULT 0 COMMENT '提交评分时间戳（毫秒）；未评价为 0',
+    -- 统计按 (scope_id, invited_at_ms) 的窗口扫描：分子分母必须同一口径，
+    -- 按提交时间筛会把"这周邀请、下周才评"的算进下周，两头都不对
+    INDEX `idx_csat_window` (`tenant_id`, `scope_id`, `invited_at_ms`),
+    INDEX `idx_csat_score` (`tenant_id`, `score`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话级满意度调查（CSAT）';
+
+-- 知识盲区表（MybatisKnowledgeGapStore / cw_knowledge_gap）：哪些问题反复查不到知识。
+-- 这份数据本来唾手可得——检索未命中时记一笔就行——但此前没人记，于是"该补哪些知识"全靠拍脑袋，
+-- 而拍出来的往往是运营自己关心的，不是用户实际在问的。
+--
+-- 这是**计数表而非流水表**：用户要的是"哪些问题反复查不到"，只出现过一次的问法没有补知识的价值，
+-- 而未命中的绝对量在客服场景很大，逐条落库既贵又淹没重点。
+CREATE TABLE IF NOT EXISTS `cw_knowledge_gap` (
+    `tenant_id`         VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`                BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    -- 问题可能很长，直接做唯一键会撞上索引长度限制，故用哈希（同 cw_harness_memory 的 scope_hash 手法）
+    `question_hash`     VARCHAR(64) NOT NULL COMMENT '问题原文的 SHA-256',
+    `question`          VARCHAR(512) NOT NULL COMMENT '问题原文（截断保存）——运营要看的就是这个',
+    `scope_id`          VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '分区键（TenantResolver 由 sessionId 解析）',
+    `miss_count`        BIGINT NOT NULL DEFAULT 1 COMMENT '累计未命中次数：排行依据，越大越该优先补',
+    `first_seen_at_ms`  BIGINT NOT NULL COMMENT '首次出现时间戳（毫秒）——这个问题何时开始查不到',
+    `last_seen_at_ms`   BIGINT NOT NULL COMMENT '最近出现时间戳（毫秒）',
+    UNIQUE KEY `uk_knowledge_gap` (`tenant_id`, `scope_id`, `question_hash`),
+    -- 排行查询是 (scope_id, miss_count DESC) 的限额扫描
+    INDEX `idx_knowledge_gap_rank` (`tenant_id`, `scope_id`, `miss_count`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识盲区（反复检索不到的问题，计数表）';
+
+-- 死信队列表（MybatisDeadLetterStore / cw_dead_letter）：让"失败了就记条 error"变成"失败了会自己补回来"。
+-- 此前工具调用失败、主动通知发送失败都只落一行日志，业务量小时看不出来，量一上来就是实打实的丢单——
+-- 用户以为退款申请提交了，下游其实根本没收到，而没有任何机制会发现这件事。
+--
+-- 重试次数耗尽后转 ABANDONED 而**不删除**：静默丢弃正是现在的问题所在，留档才能让运营捞出来手工补。
+CREATE TABLE IF NOT EXISTS `cw_dead_letter` (
+    `tenant_id`        VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`               VARCHAR(64) PRIMARY KEY COMMENT '死信ID（应用赋值的UUID）',
+    `type`             VARCHAR(64) NOT NULL COMMENT '死信类型：决定由哪个 DeadLetterHandler 重投',
+    -- 载荷必须自包含：重投发生在几分钟甚至几小时后，原始调用栈早就不在了
+    `payload`          TEXT NOT NULL COMMENT '重投所需的完整载荷（JSON）',
+    `biz_key`          VARCHAR(128) COMMENT '关联业务标识（订单号/会话号），供运营检索',
+    `status`           VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING 待重投/SUCCEEDED 已成功/ABANDONED 已放弃',
+    `attempts`         INT NOT NULL DEFAULT 0 COMMENT '已重试次数',
+    `last_error`       TEXT COMMENT '最近一次失败原因',
+    -- 指数退避 base*2^attempts：下游多半是被打挂了或正在重启，
+    -- 固定短间隔的密集重试只会把它按在地上，变成自己给自己制造的雪崩
+    `next_retry_at_ms` BIGINT NOT NULL COMMENT '下次重投时刻（毫秒）',
+    `created_at_ms`    BIGINT NOT NULL COMMENT '失败发生时刻（毫秒）',
+    `finished_at_ms`   BIGINT NOT NULL DEFAULT 0 COMMENT '终态时刻（成功或放弃）；未终结为 0',
+    -- 巡检取的是 (status=PENDING, next_retry_at_ms <= now) 的限额扫描
+    INDEX `idx_dead_letter_due` (`tenant_id`, `status`, `next_retry_at_ms`),
+    INDEX `idx_dead_letter_biz` (`tenant_id`, `biz_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='死信队列（失败操作的兜底重投）';
