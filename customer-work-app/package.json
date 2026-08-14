@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@vant/touch-emulator": "^1.4.0",
-    "axios": "^1.18.1",
+    "axios": "^1.19.0",
     "pinia": "^2.3.1",
     "vant": "^4.9.15",
     "vue": "^3.5.39",
