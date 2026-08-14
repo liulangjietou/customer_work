@@ -219,6 +219,7 @@ stateDiagram-v2
 | 配置面 | Nacos 提示词/运行时配置热更新（后台 8082 改 → 客服 8080 免重启生效）、配置版本化快照 + 一键回滚 + 按租户灰度发布、MCP / Higress / Studio 接入 | §6.15~6.17、§6.30 |
 | 多租户 SaaS | 租户行级隔离（拦截器全局改写 + fail-closed）、租户管理与双视角权限、水平扩展（Redis 窗口计数 / 会话锁 + K8s 清单）、租户 token 配额 + T+1 计费账单 | §6.27~6.29 |
 | 数据飞轮 | 会话质检、坐席辅助、消息级点赞点踩、意图自动化评测（CI 可跑） | §6.11 末、§6.20 |
+| 运营闭环 | 评测中心（触发/报告/与上一版对比归因）、badcase 回流（负反馈→采纳为知识条目或评测用例）、语义缓存（白名单意图，命中即省整条模型链）、提示词版本（内容指纹归因）、CSAT 满意度（邀请与回收分开记）、知识盲区 TopN、死信队列（指数退避重投，耗尽转 ABANDONED 不删） | §6.31 |
 | 后台管理系统 | RBAC 权限、模型/MCP/Skill/智能体配置、工作区聊天 + VibeCoding、渠道、定时任务(XXL-JOB)、工单工作台、内容风控、数据字典、开发者工具箱（HTTP/证书/cron/JWT/diff/格式互转/SQL 客户端等）、调用统计（token + 缓存命中率）、AI 编码助手 | §6.21 |
 
 ## 五、快速开始
@@ -238,8 +239,8 @@ curl -X POST http://localhost:8080/api/customer/chat \
 ```
 
 - 启动后打开 **http://localhost:8080/swagger-ui.html** 在线调试全部接口。
-- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **2065 个**（starter 1180 + admin-server 741 +
-  app 78 + customer-channel 65 + gateway 1），外部依赖（Redis/MySQL/Nacos/百炼/OCR/MinIO）不可达的用例自动跳过。
+- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **2222 个**（starter 1323 + admin-server 753 +
+  app 80 + customer-channel 65 + gateway 1），外部依赖（Redis/MySQL/Nacos/百炼/OCR/MinIO）不可达的用例自动跳过。
 - 环境要求、前端启动、构建坑位速查见 [新人必读](docs/新人必读.md)。
 
 ## 六、Roadmap
@@ -252,6 +253,7 @@ timeline
     已完成 · 生产化 : HITL 审批闭环 + 人机切换工单 : 用户工单系统（JWT + WS 双通道 + 7 态状态机） : 后台管理系统 + Nacos 配置热更新 : 真实业务后端 jdbc + 附件解析 OCR : Nacos 注册发现 + SCG 网关 + XXL-JOB
     已完成 · 平台化 : 内容风控（敏感词 + 限流）+ 数据字典 + 开发者工具箱 : 十项通用能力薄壳化下沉 starter : OTel 链路追踪 + 一键 Grafana / Tempo 监控栈 : 登录态 Redis 持久化 + streamEvents 流式重构
     已完成 · SaaS 化 : 多租户行级隔离 + 租户管理双视角 : 水平扩展（Redis 计数 / 会话锁 + K8s 清单） : 租户配额 + T+1 计费账单 : 配置版本化 + 按租户灰度 : starter 按域拆分治理
+    已完成 · 运营闭环 : 评测中心 + badcase 回流 : 语义缓存 + 模型分级路由 : 提示词版本归因 + CSAT : 知识盲区 + 死信队列
     规划中 · 扩展点 : 租户安全合规（审计归档 / 退租数据导出） : A2A Agent Card 注册发现 : RocketMQ 异步消息 : Training 数据飞轮（RM Gallery / Trinity-RFT） : 后台 AI 编码助手 P1~P3 演进
 ```
 
@@ -290,7 +292,8 @@ timeline
   升级遇 API 不匹配请对照该版本源码微调。
 - API Key 支持配置项与环境变量两种来源，**生产请用环境变量注入**，勿把密钥留在仓库。
 - 业务链路全异步（`Mono`/`Flux`，无 `.block()`）；所有外部后端均为配置开关，默认实现保证离线开箱即用与单测全绿。
-- 包名：`com.richard.fyoung.customerwork`。
+- 包名按模块划分，根均为 `com.richard.fyoung`：starter `…customerwork`、app-server `…customerworkapp`、
+  channel `…customerchannel`、admin-server `…customeradmin`、gateway `…customerworkgateway`。
 
 ## 关注作者
 
