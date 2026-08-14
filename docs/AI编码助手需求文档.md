@@ -453,7 +453,7 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 > **完整形态前置依赖**：starter 侧真实向量检索（接真向量数据库、增量/租户隔离的语义检索）。
 >
 > **降级实现**：用 **DashScope 真实 Embedding**（`text-embedding-v3`，走既有 `ai_model_config` 模型配置体系拿
-> Key）+ MySQL 向量存储（新表 `ai_code_knowledge_index` / `ai_code_knowledge_chunk`，Flyway V23）+ **应用层
+> Key）+ MySQL 向量存储（新表 `ai_code_knowledge_index` / `ai_code_knowledge_chunk`，Flyway V26）+ **应用层
 > 余弦相似度** 实现语义检索与检索增强问答。落 `KnowledgeService`：对指定源码目录按 **类/方法级** 切块（`CodeChunker`）
 > → Embedding → 入库；`/knowledge/search`（语义 top-k）+ `/knowledge/ask`（RAG 问答，带出处）。索引构建 **显式触发、
 > 进度可查**（索引行 status + chunk_count）；源码路径受 `admin.knowledge.allowed-roots` 白名单约束；Embedding Key

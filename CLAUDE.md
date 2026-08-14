@@ -34,8 +34,9 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1319** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
-  （B6 那次实测：starter 1319 / 5 skip、admin 747 / 1 skip，MinIO 当时未起；
+- 测试基线：starter **1323** + admin-server **753** + app 80 + customer-channel 65 + gateway 1（合计 **2222**）
+  （2026-08-14 实测：starter 1323 / 5 skip、admin 753 / 1 skip，BUILD SUCCESS；
+  排除了 `RedisSessionPersistenceTest`（本机 Redis 无密码）。上一版 B6 实测为 starter 1319 / admin 747，MinIO 当时未起；
   MinIO 起着时那 3 个门控用例会跑起来，总数不变、skip 相应减少）
   （2026-08-13 B6 运营闭环批次：评测链路打通 + badcase 回流 + 语义缓存 + 模型分级路由 +
   提示词版本归因 + CSAT + 知识盲区 + 死信队列，starter +118，admin 侧只加薄壳与跨库门面故不变。

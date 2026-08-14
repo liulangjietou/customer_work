@@ -1,6 +1,6 @@
 # customer-channel 操作文档（AgentScope 2.0 配套前端 · 客服 Agent 控制台 + 对话入口）
 
-> 模块：`customer-channel` ｜ 依赖：`agentscope-admin` + `agentscope-chat-completions-web` + `agentscope-agui`（均 2.0.0 GA starter，`ga2.0` 分支）｜ Web 栈：Spring **MVC** ｜ JDK 17
+> 模块：`customer-channel` ｜ 依赖：`agentscope-admin` + `agentscope-chat-completions-web` + `agentscope-agui`（均 2.0.0 GA starter）｜ 分支：`main` ｜ Web 栈：Spring **MVC** ｜ JDK 17
 >
 > **模块定位**：多渠道接入演示模块（官方五套前端能力接入），非主链路必需。
 
@@ -86,7 +86,7 @@ mvn -s settings-central-direct.xml -pl customer-channel -am -DskipTests install
 # 启动控制台（默认端口 8081）
 mvn -s settings-central-direct.xml -pl customer-channel spring-boot:run
 # 或打包后运行
-java -jar customer-channel/target/customer-channel-1.0.0.jar
+java -jar customer-channel/target/customer-channel-2.2.0.jar   # 版本号随父 POM
 ```
 
 ### 3.3 访问入口（已实测，端口 8081）
