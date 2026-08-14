@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.capability.csat;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * 会话级满意度调查（CSAT）。
  *
@@ -60,12 +62,20 @@ public record CsatSurvey(
         return new CsatSurvey(sessionId, scopeId, newScore, newComment, invitedAtMs, nowMs);
     }
 
-    /** 用户是否已评价。 */
+    /**
+     * 用户是否已评价。
+     *
+     * <p>与 {@link #satisfied()} 都必须标 {@code @JsonProperty}：Jackson 序列化 record 只认组件，
+     * 普通方法不进 JSON。漏标时前端按 {@code answered} 过滤会全部落空——列表永远显示"暂无数据"，
+     * 而接口其实返回得好好的，这种"没报错但也没数据"最难查。</p>
+     */
+    @JsonProperty("answered")
     public boolean answered() {
         return score != null;
     }
 
     /** 是否算作"满意"（4 分及以上）。 */
+    @JsonProperty("satisfied")
     public boolean satisfied() {
         return score != null && score >= SATISFIED_THRESHOLD;
     }

@@ -34,8 +34,16 @@ async function loadData() {
   }
 }
 
-function formatPercent(value: number | undefined): string {
-  return value === undefined ? '-' : `${(value * 100).toFixed(1)}%`
+// 两个 formatter 都容忍 undefined：后端漏个字段不该让整张页面白掉。
+// 这不是假想——CsatSummary 的派生指标一度没标 @JsonProperty，JSON 里压根没有这几个键，
+// 模板里直接 .toFixed() 就在 undefined 上抛错，Vue 渲染中断、loading 停在原地转圈，
+// 表面看像"接口没返回"，实际接口早就 200 了。
+function formatPercent(value: number | undefined | null): string {
+  return typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : '-'
+}
+
+function formatScore(value: number | undefined | null): string {
+  return typeof value === 'number' ? value.toFixed(2) : '-'
 }
 
 function formatTime(ms: number): string {
@@ -88,7 +96,7 @@ onMounted(loadData)
           <div class="stat-label">回收率（{{ summary?.answered ?? 0 }} / {{ summary?.invited ?? 0 }}）</div>
         </div>
         <div class="stat">
-          <div class="stat-value">{{ summary?.averageScore.toFixed(2) ?? '-' }}</div>
+          <div class="stat-value">{{ formatScore(summary?.averageScore) }}</div>
           <div class="stat-label">平均分（辅助看，主指标是 CSAT）</div>
         </div>
       </div>
