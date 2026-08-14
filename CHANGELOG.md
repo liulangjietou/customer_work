@@ -49,8 +49,13 @@
   用户端（Vant4）补会话结束后的满意度评分卡：低于 4 分才追问原因，满意的用户不该被额外打扰。
 - **分级路由刻意没有页面**：它的效果数据是进程内计数（档位命中数），多副本各算各的、重启归零，
   做成看板会让人误以为那是全局口径。真要看它省了多少钱，该看 B3 已有的 `cw_tenant_usage_daily` 成本账单。
+- **补装 `EmbeddingClient`**：starter 此前从未把 `DashScopeEmbeddingClient` 装配成 Bean（只有单测直接 new 过），
+  导致语义缓存开了也整体静默失效——`ObjectProvider.getIfAvailable()` 恒为 null，只在启动时留一行 error。
+  Service 层单测全程注入 mock，21 条用例全绿也照不出这个洞，故一并补上装配门控测试
+  （断言"容器里到底有没有那个 Bean"，而非业务行为）。
+- 客服端 `application.yml` 补齐本批全部配置项并带上取舍注释；`chat-log`/`tool-backend` 本就已是 `jdbc`，未重复声明。
 - 新增 8 张表（均带 `tenant_id`）与 Flyway `V52`/`V53`/`V54`（含 `mysql/02-customer-admin/` 镜像同步）；
-  starter 测试 +113（1201 → **1314**），admin 747 / app 80 与基线一致。
+  starter 测试 +118（1201 → **1319**），admin 747 / app 80 与基线一致。
 
 ### 持久层 MyBatis-Plus 化 + 通用能力下沉 + 坐席订单管理（2026-07-15，分支 `feature/user-ticket-system`）
 

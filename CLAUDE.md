@@ -34,11 +34,14 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1314** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
-  （B6 那次实测：starter 1314 / 5 skip、admin 747 / 1 skip，MinIO 当时未起；
+- 测试基线：starter **1319** + admin-server **747** + app 80 + customer-channel 65 + gateway 1
+  （B6 那次实测：starter 1319 / 5 skip、admin 747 / 1 skip，MinIO 当时未起；
   MinIO 起着时那 3 个门控用例会跑起来，总数不变、skip 相应减少）
   （2026-08-13 B6 运营闭环批次：评测链路打通 + badcase 回流 + 语义缓存 + 模型分级路由 +
-  提示词版本归因 + CSAT + 知识盲区 + 死信队列，starter +113，admin 侧只加薄壳与跨库门面故不变。
+  提示词版本归因 + CSAT + 知识盲区 + 死信队列，starter +118，admin 侧只加薄壳与跨库门面故不变。
+  **新增可选依赖的 Bean 时必须配一个装配门控测试**：语义缓存一度因 starter 从未装配过
+  `EmbeddingClient` 而整体静默失效（`ObjectProvider.getIfAvailable()` 恒为 null），
+  而 Service 层单测全程注入 mock，21 条用例照样全绿——只测逻辑照不出"Bean 根本不存在"。
   **改本批次内尚未合并的 V52/V53 会让本机 Flyway 校验失败**（checksum 变了），
   清掉 `flyway_schema_history` 里对应版本记录与它插入的菜单行即可重跑，不是代码问题。
   上一版基线 2026-08-13 B5 存储落库批次：三层记忆 L2/L3 与 Harness 分层记忆默认落 MySQL、技能库支持

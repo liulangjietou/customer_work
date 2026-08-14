@@ -54,4 +54,19 @@ public class SemanticCacheProperties {
 
     /** 问题最长长度：长问题几乎不会重复，缓存它只是白占容量。 */
     private int maxQuestionLength = 200;
+
+    /**
+     * Embedding 端点 base-url。
+     *
+     * <p>与对话模型的 {@code model.base-url} 分开配：DashScope 的 embeddings 是原生路径，
+     * 对话那边常填 OpenAI 兼容端点（{@code /compatible-mode/v1}），拿来发 embedding 请求路径对不上。
+     * 与 admin 侧知识库的取值口径一致。</p>
+     */
+    private String embeddingBaseUrl = "https://dashscope.aliyuncs.com";
+
+    /** 向量维度（text-embedding-v3 支持 1024/768/512 等）。 */
+    private int embeddingDimensions = 1024;
+
+    /** 单次 embedding 请求的最大文本条数。语义缓存每次只算一条问题，此值仅为接口契约所需。 */
+    private int embeddingBatchSize = 10;
 }
