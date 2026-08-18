@@ -97,7 +97,8 @@ class ChatServiceTest {
         // 未指定模式 + 空通道时行为等价于改造前，不影响本测试聚焦的事件分流断言。
         // 敏感词过滤与内容风控配置传 null provider：本测试聚焦事件分流，出站过滤整体跳过
         chatService = new ChatService(agentInstanceCache, agentInstanceFactory, historyCache, memorySyncService,
-            new ExecutionModeRegistry(), new PlanConfirmationService(), chatAttachmentService, null, null);
+            new ExecutionModeRegistry(), new PlanConfirmationService(), chatAttachmentService,
+            mock(ChatSessionOwnerService.class), null, null);
 
         agent = mock(ReActAgent.class);
         when(agentInstanceCache.getOrBuild("coder")).thenReturn(agent);

@@ -2,6 +2,8 @@ package com.richard.fyoung.customeradmin.workspace.chat.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -52,4 +54,14 @@ public class AiChatAttachment {
     private String errorMessage;
     /** 创建时间。 */
     private LocalDateTime createdAt;
+
+    /**
+     * 上传人（后台用户ID），由 {@code MyMetaObjectHandler} 在插入时填充。
+     *
+     * <p>附件正文会被解析成文本一并落库，泄露面等同于对话内容本身，故它是少数几张
+     * 参与用户维度过滤的表之一（见 {@code DataScopeTables}）。脱离 Web 上下文时填充器不写值，
+     * 留 NULL 表示"租户内共享"。</p>
+     */
+    @TableField(fill = FieldFill.INSERT)
+    private Long createBy;
 }

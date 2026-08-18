@@ -31,6 +31,10 @@ public final class TenantInterceptors {
         "sys_menu_change_log",
         "ai_system_tool",
         "ai_chat_session_state",
+        // 登录页是平台统一入口（sys_user.username 全局唯一，全系统只有一个登录页），
+        // /api/login-images/** 在登录前匿名访问，此刻没有任何租户上下文——加列参与过滤
+        // 只会让登录页 fail-closed 打不开。与 sys_permission 同属"平台定义、租户只读"
+        "login_carousel_image",
         "ai_model_config",
         // 单价由平台统一定义，租户不该也不能自己定价，故无 tenant_id 列
         "ai_model_price",

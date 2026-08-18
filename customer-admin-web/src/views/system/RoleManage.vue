@@ -1,10 +1,29 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { FormInstance, TreeInstance } from 'element-plus'
 import { createRole, deleteRole, pageRoles, updateRole } from '@/api/role'
 import { permissionTree } from '@/api/permission'
+import { fetchCurrentView } from '@/api/tenant'
 import { useCrudPage } from '@/composables/useCrudPage'
-import type { PageQuery, PermissionVO, RoleSaveRequest, RoleVO } from '@/types/api'
+import type { DataScope, PageQuery, PermissionVO, RoleSaveRequest, RoleVO } from '@/types/api'
+
+// 数据范围选项。ALL 只对平台运营方开放——租户管理员能在自己租户里建角色，
+// 若让他选 ALL 就等于自己给自己开跨租户的口子（后端 RoleService 另有校验，这里只是不误导）。
+const DATA_SCOPE_OPTIONS: Array<{ value: DataScope; label: string; hint: string; platformOnly?: boolean }> = [
+  { value: 'ALL', label: '全部数据', hint: '可查看全部租户的数据，平台运营方专用', platformOnly: true },
+  { value: 'TENANT', label: '本租户全部', hint: '本租户内所有成员的数据都可见' },
+  { value: 'SELF', label: '仅本人', hint: '只能看到自己创建的项目、会话、附件、工作台账号等个人数据' },
+]
+
+const DATA_SCOPE_LABELS: Record<DataScope, string> = {
+  ALL: '全部数据',
+  TENANT: '本租户全部',
+  SELF: '仅本人',
+}
+
+const platformOperator = ref(false)
+const scopeOptions = computed(() =>
+  DATA_SCOPE_OPTIONS.filter((option) => !option.platformOnly || platformOperator.value))
 
 const tree = ref<PermissionVO[]>([])
 const formRef = ref<FormInstance>()
@@ -25,8 +44,8 @@ const {
   update: updateRole,
   remove: (row) => deleteRole(row.id),
   initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
-  initForm: () => ({ roleName: '', roleCode: '', remark: '', status: 1, permissionIds: [] }),
-  toForm: (row) => ({ roleName: row.roleName, roleCode: row.roleCode, remark: row.remark, status: row.status, permissionIds: row.permissionIds }),
+  initForm: () => ({ roleName: '', roleCode: '', remark: '', status: 1, dataScope: 'SELF' as DataScope, permissionIds: [] }),
+  toForm: (row) => ({ roleName: row.roleName, roleCode: row.roleCode, remark: row.remark, status: row.status, dataScope: row.dataScope ?? 'SELF', permissionIds: row.permissionIds }),
   // 提交前把权限树的选中态（含半选的父节点）收集进表单，与原 handleSubmit 里的顺序一致
   beforeSubmit: (_mode, f) => {
     const checkedKeys = (treeRef.value?.getCheckedKeys() ?? []) as number[]
@@ -51,6 +70,10 @@ function openEdit(row: RoleVO) {
 onMounted(async () => {
   loadList()
   tree.value = await permissionTree().catch(() => [])
+  // 拿不到就当作非平台运营方：多显示一个越权选项的代价，比少显示一个大得多
+  platformOperator.value = await fetchCurrentView()
+    .then((view) => view.platformOperator === true)
+    .catch(() => false)
 })
 </script>
 
@@ -67,6 +90,13 @@ onMounted(async () => {
         <el-table-column prop="roleName" label="角色名称" />
         <el-table-column prop="roleCode" label="角色编码" />
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
+        <el-table-column label="数据范围" width="130">
+          <template #default="{ row }">
+            <el-tag :type="row.dataScope === 'SELF' ? 'info' : row.dataScope === 'ALL' ? 'danger' : 'warning'" disable-transitions>
+              {{ DATA_SCOPE_LABELS[row.dataScope as DataScope] ?? row.dataScope }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
@@ -105,6 +135,15 @@ onMounted(async () => {
         <el-form-item label="状态">
           <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
         </el-form-item>
+        <el-form-item label="数据范围">
+          <el-select v-model="form.dataScope" style="width: 100%">
+            <el-option v-for="option in scopeOptions" :key="option.value" :label="option.label" :value="option.value">
+              <span>{{ option.label }}</span>
+              <span style="float: right; color: var(--el-text-color-secondary); font-size: 12px">{{ option.hint }}</span>
+            </el-option>
+          </el-select>
+          <div class="form-tip">范围在每次请求时实时判定，保存后对该角色下的用户立即生效，无需重新登录。</div>
+        </el-form-item>
         <el-form-item label="权限">
           <el-tree
             ref="treeRef"
@@ -129,5 +168,12 @@ onMounted(async () => {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.form-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
 }
 </style>

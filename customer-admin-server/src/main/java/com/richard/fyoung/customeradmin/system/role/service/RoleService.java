@@ -9,12 +9,14 @@ import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
+import com.richard.fyoung.customeradmin.datascope.DataScope;
 import com.richard.fyoung.customeradmin.system.role.dto.RoleSaveRequest;
 import com.richard.fyoung.customeradmin.system.role.dto.RoleVO;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRolePermission;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRolePermissionMapper;
+import com.richard.fyoung.customeradmin.tenant.TenantSession;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -78,6 +80,7 @@ public class RoleService {
         role.setRoleCode(request.roleCode());
         role.setRemark(request.remark());
         role.setStatus(request.status() == null ? 1 : request.status());
+        role.setDataScope(resolveDataScope(request.dataScope()).name());
         roleMapper.insert(role);
         replacePermissions(role.getId(), request.permissionIds());
     }
@@ -90,6 +93,7 @@ public class RoleService {
             role.setStatus(request.status());
         }
         role.setRemark(request.remark());
+        role.setDataScope(resolveDataScope(request.dataScope()).name());
         roleMapper.updateById(role);
         replacePermissions(id, request.permissionIds());
     }
@@ -99,6 +103,20 @@ public class RoleService {
         guardSuperAdmin(role, "删除");
         roleMapper.deleteById(id);
         rolePermissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>().eq(SysRolePermission::getRoleId, id));
+    }
+
+    /**
+     * 校验并归一化数据范围：只有平台运营方能把角色设成 ALL。
+     *
+     * <p>租户管理员可以在自己租户里建角色，若不拦这一下，任意租户建一个 ALL 角色就能越出本租户。
+     * 前端已按登录方隐藏该选项，但那只是体验——越权判定必须收在服务端。</p>
+     */
+    private DataScope resolveDataScope(String raw) {
+        DataScope scope = DataScope.parse(raw);
+        if (scope == DataScope.ALL && !TenantSession.isPlatformOperator()) {
+            throw new BizException(ResultCode.FORBIDDEN, "只有平台运营方可以设置「全部数据」范围");
+        }
+        return scope;
     }
 
     private void guardSuperAdmin(SysRole role, String action) {
@@ -149,6 +167,7 @@ public class RoleService {
         vo.setRoleCode(role.getRoleCode());
         vo.setRemark(role.getRemark());
         vo.setStatus(role.getStatus());
+        vo.setDataScope(DataScope.parse(role.getDataScope()).name());
         vo.setCreateTime(role.getCreateTime());
         vo.setPermissionIds(List.of());
         return vo;

@@ -5,7 +5,9 @@ import com.richard.fyoung.customeradmin.system.log.entity.SysOperationLog;
 import com.richard.fyoung.customeradmin.system.log.mapper.OperationLogMapper;
 import com.richard.fyoung.customeradmin.workbench.dto.WorkbenchAgentSiteVO;
 import com.richard.fyoung.customeradmin.workbench.service.WorkbenchSiteService;
+import com.richard.fyoung.customeradmin.datascope.DataScopeContext;
 import com.richard.fyoung.customeradmin.workbench.service.WorkbenchTokenService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -44,10 +46,22 @@ public class WorkbenchAgentController {
     public Result<WorkbenchAgentSiteVO> site(@RequestParam String host,
                                              @RequestHeader("X-Workbench-Token") String token,
                                              HttpServletRequest request) {
-        Long userId = tokenService.validate(token);
-        WorkbenchAgentSiteVO vo = siteService.findAgentSiteByHost(host);
-        audit(userId, host, request);
-        return Result.success(vo);
+        WorkbenchTokenService.Principal principal = tokenService.validate(token);
+        // 令牌背后是一个确切的人，因此这条链路不能按"无登录态即不过滤"处理：
+        // 站点行里存着目标系统的账号密码，不还原身份就等于让 A 的脚本读到 B 录的密码。
+        // 审计日志的写入也必须在同一上下文内，否则 tenant_id 补不出来。
+        return TenantContext.callWith(tenantOf(principal), () ->
+            DataScopeContext.callAs(principal.userId(), () -> {
+                WorkbenchAgentSiteVO vo = siteService.findAgentSiteByHost(host);
+                audit(principal.userId(), host, request);
+                return Result.success(vo);
+            }));
+    }
+
+    /** 令牌行的租户；存量数据理论上不会为空（列 NOT NULL DEFAULT 'default'），仍按默认租户兜底。 */
+    private String tenantOf(WorkbenchTokenService.Principal principal) {
+        String tenantId = principal.tenantId();
+        return tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT : tenantId;
     }
 
     /** 记录脚本读取密码的审计日志（只记 host 与令牌所属用户，不记密码）。 */

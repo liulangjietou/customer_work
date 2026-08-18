@@ -89,7 +89,7 @@ public class ScheduledTaskJobHandler {
                 XxlJobHelper.handleFail("任务参数 task_code 不能为空");
                 return;
             }
-            AiScheduledTaskRun run = scheduledTaskService.execute(taskCode.trim(), ScheduledTaskService.TRIGGER_TYPE_XXL_JOB);
+            AiScheduledTaskRun run = scheduledTaskService.executeFromScheduler(taskCode.trim(), ScheduledTaskService.TRIGGER_TYPE_XXL_JOB);
             if (ScheduledTaskService.STATUS_SUCCESS.equals(run.getStatus())) {
                 XxlJobHelper.handleSuccess();
             } else {

@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.scheduledtask.scheduler;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.entity.AiScheduledTask;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.mapper.AiScheduledTaskMapper;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.service.ScheduledTaskService;
 import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import org.slf4j.Logger;
@@ -82,8 +83,10 @@ public class ScheduledTaskScheduler implements DisposableBean {
             // 幂等防护：ContextRefreshedEvent 在存在子上下文/上下文重启时可能二次触发，
             // 先取消全部已注册句柄再全量重载，避免旧 ScheduledFuture 悬挂导致同一任务双跑
             futures.keySet().forEach(this::cancel);
-            List<AiScheduledTask> tasks = taskMapper.selectList(
-                new LambdaQueryWrapper<AiScheduledTask>().eq(AiScheduledTask::getEnabled, ENABLED));
+            // 启动时把所有租户的任务都注册进来：这是明确的跨租户运维扫描，不是某个租户的查询。
+            // 具体执行时再按任务所属租户还原上下文（见 ScheduledTaskService#executeFromScheduler）
+            List<AiScheduledTask> tasks = CrossTenantOperations.execute(() -> taskMapper.selectList(
+                new LambdaQueryWrapper<AiScheduledTask>().eq(AiScheduledTask::getEnabled, ENABLED)));
             if (CollectionUtils.isEmpty(tasks)) {
                 log.info("internal scheduler started with no schedulable task");
                 return;
@@ -115,7 +118,8 @@ public class ScheduledTaskScheduler implements DisposableBean {
         if (removed) {
             return;
         }
-        AiScheduledTask task = taskMapper.selectById(taskId);
+        // 变更事件可能来自任意租户（含后台线程投递），按 ID 直取，不受当前上下文约束
+        AiScheduledTask task = CrossTenantOperations.execute(() -> taskMapper.selectById(taskId));
         if (task == null) {
             return;
         }
@@ -168,7 +172,7 @@ public class ScheduledTaskScheduler implements DisposableBean {
             return;
         }
         try {
-            scheduledTaskService.execute(taskCode, ScheduledTaskService.TRIGGER_TYPE_INTERNAL);
+            scheduledTaskService.executeFromScheduler(taskCode, ScheduledTaskService.TRIGGER_TYPE_INTERNAL);
         } catch (Exception e) {
             log.error("internal scheduler run failed, code={}, taskId={}, taskCode={}",
                 "SCHED-TASK-INTERNAL-RUN-FAIL", taskId, taskCode, e);

@@ -9,6 +9,7 @@ import com.richard.fyoung.customeradmin.workbench.dto.WorkbenchTokenCreatedVO;
 import com.richard.fyoung.customeradmin.workbench.dto.WorkbenchTokenVO;
 import com.richard.fyoung.customeradmin.workbench.entity.WorkbenchToken;
 import com.richard.fyoung.customeradmin.workbench.mapper.WorkbenchTokenMapper;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -87,26 +88,35 @@ public class WorkbenchTokenService {
         tokenMapper.updateById(token);
     }
 
+    /** 令牌背后的身份：谁的令牌、属于哪个租户。脚本回调没有登录态，全靠这两个值还原上下文。 */
+    public record Principal(Long userId, String tenantId) {
+    }
+
     /**
-     * 校验令牌明文，返回所属 userId；无效（不存在/已吊销/已过期）抛 {@link BizException}。
+     * 校验令牌明文，返回令牌背后的身份；无效（不存在/已吊销/已过期）抛 {@link BizException}。
      * 命中则刷新 last_used_time。
+     *
+     * <p>整段跨租户执行：拿着一串 token 找它属于谁，和登录时按用户名找用户是同一类问题——
+     * 此刻还不知道租户，无从设置上下文。定位到行之后，租户就从行里读出来交给调用方还原。</p>
      */
-    public Long validate(String rawToken) {
+    public Principal validate(String rawToken) {
         if (!StringUtils.hasText(rawToken)) {
             throw new BizException(ResultCode.UNAUTHORIZED, "缺少访问令牌");
         }
-        LambdaQueryWrapper<WorkbenchToken> wrapper = new LambdaQueryWrapper<WorkbenchToken>()
-            .eq(WorkbenchToken::getTokenHash, sha256Hex(rawToken));
-        WorkbenchToken token = tokenMapper.selectOne(wrapper);
-        if (token == null || Integer.valueOf(REVOKED).equals(token.getRevoked())) {
-            throw new BizException(ResultCode.UNAUTHORIZED, "令牌无效或已吊销");
-        }
-        if (token.getExpireTime() != null && token.getExpireTime().isBefore(LocalDateTime.now())) {
-            throw new BizException(ResultCode.TOKEN_EXPIRED, "令牌已过期");
-        }
-        token.setLastUsedTime(LocalDateTime.now());
-        tokenMapper.updateById(token);
-        return token.getUserId();
+        return CrossTenantOperations.execute(() -> {
+            LambdaQueryWrapper<WorkbenchToken> wrapper = new LambdaQueryWrapper<WorkbenchToken>()
+                .eq(WorkbenchToken::getTokenHash, sha256Hex(rawToken));
+            WorkbenchToken token = tokenMapper.selectOne(wrapper);
+            if (token == null || Integer.valueOf(REVOKED).equals(token.getRevoked())) {
+                throw new BizException(ResultCode.UNAUTHORIZED, "令牌无效或已吊销");
+            }
+            if (token.getExpireTime() != null && token.getExpireTime().isBefore(LocalDateTime.now())) {
+                throw new BizException(ResultCode.TOKEN_EXPIRED, "令牌已过期");
+            }
+            token.setLastUsedTime(LocalDateTime.now());
+            tokenMapper.updateById(token);
+            return new Principal(token.getUserId(), token.getTenantId());
+        });
     }
 
     private WorkbenchTokenVO toVo(WorkbenchToken token) {

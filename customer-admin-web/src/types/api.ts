@@ -86,12 +86,16 @@ export interface UserSaveRequest {
 }
 
 // ---------- system.role ----------
+/** 角色数据范围：ALL 全部租户 / TENANT 本租户全部 / SELF 仅本人创建。 */
+export type DataScope = 'ALL' | 'TENANT' | 'SELF'
+
 export interface RoleVO {
   id: number
   roleName: string
   roleCode: string
   remark: string | null
   status: number
+  dataScope: DataScope
   createTime: string
   permissionIds: number[]
 }
@@ -101,6 +105,7 @@ export interface RoleSaveRequest {
   roleCode: string
   remark?: string | null
   status?: number | null
+  dataScope?: DataScope | null
   permissionIds?: number[] | null
 }
 
