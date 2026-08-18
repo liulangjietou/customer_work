@@ -87,7 +87,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         try (HikariDataSource dataSource = dataSource(database, "flyway-empty-test")) {
             migrate(dataSource, database);
             assertEquals(44, countBusinessTables(dataSource));
-            assertEquals(4, countHistoryRows(dataSource));
+            // V5 只插 ADMIN_USER 档种子、不建表，故迁移记录 +1 而表数不变
+            assertEquals(5, countHistoryRows(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertEquals(0, countHistoryVersion(dataSource, "0"), "空库不应写 baseline 记录");
         }
@@ -108,7 +109,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             // V4 给存量 cw_user 加的配额等级列：这张表是 V1 就建好的，加列只能靠迁移补
             assertTrue(columnExists(dataSource, "cw_user", "level_code"));
             assertEquals(44, countBusinessTables(dataSource));
-            assertEquals(5, countHistoryRows(dataSource));
+            assertEquals(6, countHistoryRows(dataSource));
             assertEquals(1, countHistoryVersion(dataSource, "0"), "非空存量库必须先登记 baseline 0");
         }
     }

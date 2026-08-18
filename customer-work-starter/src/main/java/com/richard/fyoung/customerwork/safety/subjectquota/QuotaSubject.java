@@ -31,6 +31,11 @@ public record QuotaSubject(QuotaSubjectType type, String id) {
         return new QuotaSubject(QuotaSubjectType.USER, blankToUnknown(userId));
     }
 
+    /** 后台管理系统的登录用户（Sa-Token 登录 ID）。 */
+    public static QuotaSubject adminUser(String adminUserId) {
+        return new QuotaSubject(QuotaSubjectType.ADMIN_USER, blankToUnknown(adminUserId));
+    }
+
     public static QuotaSubject ip(String ip) {
         return new QuotaSubject(QuotaSubjectType.IP, blankToUnknown(ip));
     }

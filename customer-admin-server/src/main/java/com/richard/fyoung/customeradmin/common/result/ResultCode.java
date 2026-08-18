@@ -89,6 +89,10 @@ public enum ResultCode {
     SANDBOX_COMMAND_RUNNING(40045, "该会话已有命令正在执行"),
     SANDBOX_RUNTIME_FAILED(40046, "沙箱运行失败，请检查运行时配置"),
 
+    // 主体级速率配额（B7）：额度用尽不是权限问题也不是参数问题，单独发码，
+    // 前端据此给"稍后再试"而不是"联系管理员开权限"
+    QUOTA_EXCEEDED(40043, "本时段的 AI 用量额度已用尽，请稍后再试"),
+
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");
 

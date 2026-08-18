@@ -25,13 +25,34 @@ public class SubjectQuotaLevelProvider {
     private final SubjectQuotaLevelStore store;
     private final boolean refreshEnabled;
 
+    /**
+     * 惰性刷新间隔（毫秒），0 = 关闭。
+     *
+     * <p>给<b>没有定时调度</b>的宿主用：admin-server 刻意不开 {@code @EnableScheduling}
+     * （开了会把容器里所有 {@code @Scheduled} 一并激活），那边的快照靠 {@link #scheduledRefresh}
+     * 永远不会更新。惰性刷新把"该不该重载"的判断挪到读路径上，不需要任何调度设施。</p>
+     */
+    private final long lazyRefreshIntervalMs;
+
+    private volatile long lastRefreshAtMs;
+
     /** 当前快照：key = tenantId + '\n' + levelCode。 */
     private volatile Map<String, SubjectQuotaLevel> snapshot = Map.of();
     private volatile String lastFingerprint;
 
     public SubjectQuotaLevelProvider(SubjectQuotaLevelStore store, boolean refreshEnabled) {
+        this(store, refreshEnabled, 0L);
+    }
+
+    /**
+     * @param lazyRefreshIntervalMs 惰性刷新间隔（毫秒），0 = 只靠定时刷新。
+     *                              两种刷新方式不该同时开——那只是把同一件事做两遍。
+     */
+    public SubjectQuotaLevelProvider(SubjectQuotaLevelStore store, boolean refreshEnabled,
+                                     long lazyRefreshIntervalMs) {
         this.store = store;
         this.refreshEnabled = refreshEnabled;
+        this.lazyRefreshIntervalMs = lazyRefreshIntervalMs;
         reload();
     }
 
@@ -73,6 +94,7 @@ public class SubjectQuotaLevelProvider {
         }
         this.snapshot = Map.copyOf(next);
         this.lastFingerprint = store.fingerprint().orElse(null);
+        this.lastRefreshAtMs = System.currentTimeMillis();
         return true;
     }
 
@@ -81,7 +103,26 @@ public class SubjectQuotaLevelProvider {
         if (tenantId == null || levelCode == null) {
             return null;
         }
+        refreshLazilyIfDue();
         return snapshot.get(key(tenantId, levelCode));
+    }
+
+    /**
+     * 读路径上的惰性刷新：距上次重载超过间隔就重载一次。
+     *
+     * <p>不加锁：并发下最多是几个线程同时重载同一份数据，代价只是多几次查询；
+     * 而为此上锁会让每个请求都经过一次同步块——限流判定本就在热路径上。</p>
+     */
+    private void refreshLazilyIfDue() {
+        if (lazyRefreshIntervalMs <= 0) {
+            return;
+        }
+        if (System.currentTimeMillis() - lastRefreshAtMs < lazyRefreshIntervalMs) {
+            return;
+        }
+        // 先推进时间戳再重载：重载失败时也不会让每个请求都去重试一次已知不可用的库
+        lastRefreshAtMs = System.currentTimeMillis();
+        reload();
     }
 
     /** 当前快照大小（观测 / 单测）。 */

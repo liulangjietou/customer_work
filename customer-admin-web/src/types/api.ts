@@ -1473,3 +1473,21 @@ export interface SubjectQuotaHitRank {
   hitCount: number
   lastHitAtMs: number
 }
+
+/** 后台用户分档视图（sys_user，与终端用户的主键类型/状态取值都不同，故单列一个类型）。 */
+export interface AdminQuotaUserVO {
+  userId: number
+  username: string
+  nickname?: string
+  /** 空表示走配置里的 default-admin-level */
+  levelCode?: string
+  /** 0 禁用 / 1 启用 */
+  status: number
+  createTime?: string
+}
+
+export interface AdminUserLevelSaveRequest {
+  userId: number
+  /** 传空表示回到默认档 */
+  levelCode?: string
+}

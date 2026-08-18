@@ -63,7 +63,10 @@ public class SubjectLevelResolver {
     /** 主体对应的等级编码（用户查绑定，其余按类型取配置档）。 */
     private String levelCodeOf(QuotaSubject subject) {
         return switch (subject.type()) {
+            // 两类登录用户共用一套绑定查询：实现方按部署侧决定查哪张用户表
+            // （客服端查 cw_user、后台查 sys_user），解析逻辑本身不需要知道这个区别
             case USER -> boundLevelOf(subject.id()).orElse(properties.getDefaultUserLevel());
+            case ADMIN_USER -> boundLevelOf(subject.id()).orElse(properties.getDefaultAdminLevel());
             case IP -> properties.getAnonymousLevel();
             case API_KEY -> properties.getApiKeyLevel();
         };
