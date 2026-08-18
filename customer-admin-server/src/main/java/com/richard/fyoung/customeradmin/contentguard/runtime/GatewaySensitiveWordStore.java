@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.contentguard.runtime;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardGatewayProvider;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWord;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordAction;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordCategory;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStore;
@@ -23,6 +24,13 @@ import java.util.Optional;
  *
  * <p>读失败一律返回 {@code Optional.empty()}，把 fail-closed 的判断权交回
  * {@code SensitiveWordFilter}——别在这一层擅自"降级成空词表"，那等于静默放行。</p>
+ *
+ * <p><b>读取跨租户，且这是刻意的</b>。两个原因：一是刷新跑在守护线程里（{@code SensitiveWordRefreshDriver}），
+ * 没有租户上下文，不显式跨租户会被拦截器 fail-closed——而这里读失败会让过滤器进入"拦截一切"，
+ * 后台对话全部被拦，比漏拦更早暴露但影响面更大；二是 {@code SensitiveWordFilter} 是进程级单例、
+ * 内存里只有一份自动机，本就没有租户维度，加载全量词库等于取所有租户词表的并集。
+ * 后果是可能误拦（A 租户的词拦到 B 租户的内容），方向上安全优先，与敏感词的既定语义一致。
+ * 要做到按租户精确过滤，需要把过滤器改成按租户分片，那是独立的一件事。</p>
  * @author owlzhangfq@gmail.com
  */
 public class GatewaySensitiveWordStore implements SensitiveWordStore {
@@ -38,7 +46,8 @@ public class GatewaySensitiveWordStore implements SensitiveWordStore {
     @Override
     public List<SensitiveWord> findAll() {
         try {
-            return toDomainList(gatewayProvider.get().wordMapper().selectList(null));
+            return CrossTenantOperations.execute(() ->
+                toDomainList(gatewayProvider.get().wordMapper().selectList(null)));
         } catch (Exception e) {
             log.error("[CONTENT-GUARD] admin word findAll failed, code={}", "CONTENTGUARD-WORD-FINDALL-FAIL", e);
             return List.of();
@@ -49,7 +58,8 @@ public class GatewaySensitiveWordStore implements SensitiveWordStore {
     public Optional<List<SensitiveWord>> findEnabled() {
         try {
             QueryWrapper<SensitiveWordEntity> wrapper = new QueryWrapper<SensitiveWordEntity>().eq("enabled", true);
-            return Optional.of(toDomainList(gatewayProvider.get().wordMapper().selectList(wrapper)));
+            return Optional.of(CrossTenantOperations.execute(() ->
+                toDomainList(gatewayProvider.get().wordMapper().selectList(wrapper))));
         } catch (Exception e) {
             log.error("[CONTENT-GUARD] admin word findEnabled failed, code={}",
                 "CONTENTGUARD-WORD-FINDENABLED-FAIL", e);
@@ -66,7 +76,8 @@ public class GatewaySensitiveWordStore implements SensitiveWordStore {
     @Override
     public Optional<String> fingerprint() {
         try {
-            return Optional.of(String.valueOf(gatewayProvider.get().wordMapper().selectFingerprint()));
+            return Optional.of(String.valueOf(CrossTenantOperations.execute(() ->
+                gatewayProvider.get().wordMapper().selectFingerprint())));
         } catch (Exception e) {
             log.error("[CONTENT-GUARD] admin word fingerprint failed, code={}",
                 "CONTENTGUARD-WORD-FINGERPRINT-FAIL", e);
