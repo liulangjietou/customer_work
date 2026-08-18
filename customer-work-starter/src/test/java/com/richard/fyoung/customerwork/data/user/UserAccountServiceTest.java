@@ -102,4 +102,37 @@ class UserAccountServiceTest {
         init();
         assertThrows(IllegalStateException.class, () -> service.updateAvatar("U-ghost", "/api/avatars/x.png"));
     }
+
+    @Test
+    void register_shouldApplyDefaultLevel() {
+        UserAccountService withLevel = new UserAccountService(new InMemoryUserAccountStore(), "free");
+        UserAccount account = withLevel.register("levon", "pwd12345", "利文", null);
+        assertEquals("free", account.getLevelCode(), "注册即落默认档，运营才能在后台看到这个人现在是哪一档");
+    }
+
+    @Test
+    void updateLevel_shouldChangeAndPersist() {
+        InMemoryUserAccountStore store = new InMemoryUserAccountStore();
+        UserAccountService svc = new UserAccountService(store, "free");
+        UserAccount created = svc.register("mia", "pwd12345", "米娅", null);
+
+        svc.updateLevel(created.getId(), "vip");
+        assertEquals("vip", store.findById(created.getId()).orElseThrow().getLevelCode());
+
+        svc.updateLevel(created.getId(), null);
+        assertNull(store.findById(created.getId()).orElseThrow().getLevelCode(),
+            "传 null 表示取消特批、回到默认档，必须真的写空");
+    }
+
+    @Test
+    void updateLevel_shouldNotifyListener() {
+        InMemoryUserAccountStore store = new InMemoryUserAccountStore();
+        java.util.List<String> notified = new java.util.ArrayList<>();
+        UserAccountService svc = new UserAccountService(store, "free", notified::add);
+        UserAccount created = svc.register("nate", "pwd12345", "内特", null);
+
+        svc.updateLevel(created.getId(), "vip");
+        // 不广播的话，同进程改完档也要等绑定缓存过期——而那层缓存本是为跨进程场景设的
+        assertEquals(java.util.List.of(created.getId()), notified, "改档必须广播给配额侧失效缓存");
+    }
 }

@@ -34,8 +34,14 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1323** + admin-server **753** + app 80 + customer-channel 65 + gateway 1（合计 **2222**）
-  （2026-08-14 实测：starter 1323 / 5 skip、admin 753 / 1 skip，BUILD SUCCESS；
+- 测试基线：starter **1388** + admin-server **754** + app 86 + customer-channel 65 + gateway 1（合计 **2294**）
+  （2026-08-18 B7 主体配额批次实测：starter 1388 / 5 skip、admin 754 / 1 skip、app 86，BUILD SUCCESS，
+  排除 `RedisSessionPersistenceTest`。**本批次自身只加了 starter +46**
+  （主体配额 39 + 滑动求和 4 + 用户等级 3），其余差额来自 2026-08-14 之后合入 main 的批次；
+  admin 侧只加薄壳与跨库门面故未加用例。
+  **改客服端库 schema 时记得同步改 `CustomerWorkSchemaMigrationIntegrationTest` 的表数断言**——
+  它硬编码了"空库迁移后应有 N 张表"，加表必挂，这是预期内的断言更新而不是 bug。
+  上一版基线 2026-08-14：starter 1323 / admin 753 / app 80，合计 2222；
   排除了 `RedisSessionPersistenceTest`（本机 Redis 无密码）。上一版 B6 实测为 starter 1319 / admin 747，MinIO 当时未起；
   MinIO 起着时那 3 个门控用例会跑起来，总数不变、skip 相应减少）
   （2026-08-13 B6 运营闭环批次：评测链路打通 + badcase 回流 + 语义缓存 + 模型分级路由 +
@@ -163,6 +169,34 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   此前两个实现各自硬编码同一句话，改文案会让统计静默失效；
   ⑧ **死信重试耗尽转 ABANDONED 而不删**，退避必须指数（下游多半在重启，密集重试是自制雪崩）；
   没注册 handler 的类型跳过且**不累计次数**——累计会让它悄悄耗尽，掩盖"这类压根没人处理"。
+- **主体级速率配额（B7 起）**：按**调用者**限流（每登录用户 / 每匿名 IP / 每把 API Key），
+  滚动窗口内的 token 量与请求次数双上限，默认关闭（`customer-work.subject-quota.enabled`）。
+  与 B3 租户配额并存互不替代：那边是"这个客户这个月能花多少钱"（自然日/月对齐，要跟账单对得上），
+  这边是"这个调用者这半小时能用多少"（滚动窗口，防滥用）。九条约定：
+  ① **判定只读、放行后才记账**：`check` 不写计数，通过后 `recordRequest`、模型调用后由
+  `AgentCallTimingMiddleware`（token 唯一落点）补 `recordTokens`。因此被拒的请求不占额度，
+  持续打压不会把窗口越推越远；代价是并发下允许少量超额，这是刻意取舍；
+  ② **主体身份必须走 `QuotaSubjectContext`**（ThreadLocal + Reactor 自动传播，机制同 `TenantContext`）：
+  token 用量要到模型调用后才知道，那时已隔了几次线程切换，方法签名里没有"用户"参数。
+  写入方必须**同时**写 ThreadLocal 与 Reactor Context，只写一个会在某类链路上拿不到主体；
+  ③ **`SubjectQuotaWebFilter` 的 Order 必须排在两个鉴权过滤器之后**（`+30` > ApiKey `+10` > UserAuth `+20`），
+  抢在前面会把登录用户全按匿名 IP 限。它还会自己验一次 Bearer——`UserAuthWebFilter` 只覆盖
+  `/api/customer/user/**`，不自己验的话换条路径就能从"按人限"退化成"按 IP 限"；
+  ④ **WS 入口必须单独判**：H5 用户真正的发消息入口是 `/ws/user`，WebFilter 管不到，
+  只做 HTTP 侧等于对主战场不生效。判定与记账都要包在 `TenantContext.callWith(用户租户)` 里——
+  等级表按租户隔离，拿错租户会查到别人那一档；
+  ⑤ **token 是"量"不是"次"**：`WindowCounter#incrementSlidingSum` 用 30 桶近似滑动窗口
+  （逐条记时间戳在高 QPS 下会吃光内存/Redis），统计范围刻意**不短于**名义窗口（多留一桶），
+  误差方向必须 fail-closed；口径计算在 `SlidingSumBuckets`，两个实现共用（降级时要能对得上）；
+  ⑥ **API Key 只留 SHA-256 指纹**：主体标识会进 Redis 键、命中表与日志，明文落任何一处都是凭据泄露；
+  ⑦ **额度自查接口 `/api/customer/user/quota` 必须豁免判定**：不豁免则查一次扣一次，
+  且额度耗尽后连"还剩多少"都看不到——偏偏那正是最需要它的时刻；
+  ⑧ **超限落"命中记录"而不是实时余额**：余额在计数器里（跨进程读不到），而运营要回答的是
+  "谁在刷、哪档配紧了"。只在触顶那一刻写一条，正常流量零写入；
+  ⑨ **生效延迟 60 秒是设计的一部分**（等级快照指纹轮询 + 绑定本地缓存）：不缓存的话每个请求
+  都要查一次用户表，限流本身会成为最重的一段。后台页面必须把这件事写给运营看。
+  新增的 `subject-quota.store-mode` 已登记进 `PersistenceJdbcCondition`（漏登记会出现
+  "Store 想用 jdbc 但持久化环境没激活"的错配）。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。

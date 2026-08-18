@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.safety.subjectquota.mapper.SubjectQuotaLevelMapper">
+
+    <!--
+      等级表版本指纹：行数 : 最大更新时间 : 关键额度求和。
+      三者合一是因为单看任何一个都会漏：只看行数漏改额度，只看最大更新时间漏"删一条又加一条"，
+      只看求和漏"一档 +100、另一档 -100"。含停用行——停用本身就是一次需要生效的变更。
+    -->
+    <select id="selectFingerprint" resultType="java.lang.String">
+        SELECT CONCAT(COUNT(*), ':', COALESCE(MAX(updated_at_ms), 0), ':',
+                      COALESCE(SUM(token_limit + request_limit + window_seconds), 0))
+        FROM cw_subject_quota_level
+    </select>
+</mapper>

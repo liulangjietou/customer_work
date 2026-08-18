@@ -17,10 +17,11 @@ import {
 } from '@/api/ticket'
 import { fetchSessionFeedback, submitFeedback } from '@/api/feedback'
 import { uploadChatAttachment } from '@/api/chat'
+import { fetchMyQuota } from '@/api/quota'
 import { useAuthStore } from '@/store/auth'
 import { chatSocket } from '@/utils/ws'
 import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT, isTicketEnded } from '@/types/api'
-import type { ChatMessage, FeedbackType, Ticket, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
+import type { ChatMessage, FeedbackType, Ticket, UserQuota, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
 
 const HTTP_CONFLICT = 409
 /** Outbox 是至少一次投递；按工单事件主键去重，避免重试帧重复弹提示。 */
@@ -74,6 +75,48 @@ const acting = ref(false)
 // 消息级反馈（点赞/点踩）：messageId -> 已点类型，切会话时按 sessionId 重拉回显
 const feedbackByMessage = ref<Record<string, FeedbackType>>({})
 const feedbackSubmitting = ref(false)
+
+/**
+ * 我的额度：只在快用完时才提示。
+ *
+ * 常驻显示一个剩余次数对绝大多数正常用户是纯噪音，还会让人盯着数字聊天；
+ * 而完全不显示的话，用户只能在被拦的那一刻才知道有额度这回事——那是最糟的知情方式。
+ */
+const quota = ref<UserQuota | null>(null)
+
+/** 触发提示的剩余比例：低于两成才出现。 */
+const QUOTA_WARN_RATIO = 0.2
+
+const quotaHint = computed(() => {
+  const q = quota.value
+  if (!q || !q.limited) {
+    return ''
+  }
+  const minutes = Math.max(1, Math.round(q.windowSeconds / 60))
+  // 两个维度各算剩余比例，谁更紧张报谁——token 对用户是不可理解的概念，故换算成百分比说
+  const requestRatio = q.requestLimit > 0 ? q.requestRemaining / q.requestLimit : 1
+  const tokenRatio = q.tokenLimit > 0 ? q.tokenRemaining / q.tokenLimit : 1
+  if (requestRatio > QUOTA_WARN_RATIO && tokenRatio > QUOTA_WARN_RATIO) {
+    return ''
+  }
+  if (requestRatio <= tokenRatio) {
+    return q.requestRemaining <= 0
+      ? `${minutes} 分钟内的提问次数已用完，稍等片刻即可继续`
+      : `${minutes} 分钟内还可提问 ${q.requestRemaining} 次`
+  }
+  return q.tokenRemaining <= 0
+    ? `${minutes} 分钟内的用量额度已用完，稍等片刻即可继续`
+    : `${minutes} 分钟内的用量额度剩余 ${Math.round(tokenRatio * 100)}%`
+})
+
+/** 拉额度。失败静默：额度是锦上添花的信息，查不到就不显示。 */
+async function refreshQuota() {
+  try {
+    quota.value = await fetchMyQuota()
+  } catch {
+    quota.value = null
+  }
+}
 
 const scrollBox = ref<HTMLElement | null>(null)
 
@@ -313,6 +356,8 @@ function onWsChatDone(data: unknown) {
   streamingContent.value = ''
   streamingSessionId.value = null
   scrollToBottom()
+  // 回复定稿后才刷额度：token 记在模型调用之后，回复过程中查到的还是上一轮的数
+  refreshQuota()
 }
 
 function onWsTicketEvent(data: unknown) {
@@ -604,6 +649,8 @@ onMounted(async () => {
     inputContent.value = `我想咨询订单 ${orderId} 的情况`
   }
   connectWs()
+  // 进页面先看一眼：已经快用完的话，第一条消息发出去之前就该知道
+  refreshQuota()
 })
 
 onUnmounted(() => {
@@ -693,6 +740,10 @@ onUnmounted(() => {
           <van-loading v-if="a.status === 'uploading'" size="12" class="chip-loading" />
           📎 {{ a.name }}
         </van-tag>
+      </div>
+      <div v-if="quotaHint" class="quota-hint">
+        <van-icon name="info-o" class="quota-hint-icon" />
+        {{ quotaHint }}
       </div>
       <div class="input-bar">
         <van-field
@@ -886,6 +937,20 @@ onUnmounted(() => {
 .attach-icon {
   color: var(--cw-text-secondary);
   padding: 0 4px;
+}
+
+.quota-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--van-orange, #ff976a);
+  background: #fff7e8;
+}
+
+.quota-hint-icon {
+  font-size: 13px;
 }
 
 .input-bar {

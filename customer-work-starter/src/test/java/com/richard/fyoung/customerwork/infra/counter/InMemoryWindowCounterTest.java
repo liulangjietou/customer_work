@@ -69,4 +69,30 @@ class InMemoryWindowCounterTest {
         Thread.sleep(1100);
         assertTrue(counter.tryAcquireSliding("s", 1, 1), "窗口滑过后应恢复放行");
     }
+
+    @Test
+    void slidingSum_shouldAccumulateAmounts() {
+        assertEquals(300L, counter.incrementSlidingSum("tok", 300L, 1800));
+        assertEquals(500L, counter.incrementSlidingSum("tok", 200L, 1800), "同窗口内累加的是量不是次数");
+        assertEquals(500L, counter.currentSlidingSum("tok", 1800), "只读不产生副作用");
+    }
+
+    @Test
+    void slidingSum_shouldSeparateKeys() {
+        counter.incrementSlidingSum("a", 100L, 1800);
+        assertEquals(0L, counter.currentSlidingSum("b", 1800), "不同计数键互不干扰");
+    }
+
+    @Test
+    void slidingSum_shouldResetWhenWindowLengthChanges() {
+        counter.incrementSlidingSum("tok", 100L, 1800);
+        // 窗口长度变了，旧桶是按另一种口径切的，混着算出来的数没有意义
+        assertEquals(0L, counter.currentSlidingSum("tok", 3600), "口径变更后按 0 计");
+        assertEquals(50L, counter.incrementSlidingSum("tok", 50L, 3600), "下一次写入用新口径重开");
+    }
+
+    @Test
+    void slidingSum_shouldReturnZero_forUnknownKey() {
+        assertEquals(0L, counter.currentSlidingSum("never-written", 1800));
+    }
 }

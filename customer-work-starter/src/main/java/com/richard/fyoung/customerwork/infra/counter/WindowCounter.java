@@ -42,4 +42,25 @@ public interface WindowCounter {
      * @return true=放行（已记录本次），false=超限（未记录）
      */
     boolean tryAcquireSliding(String key, int limit, int windowSeconds);
+
+    /**
+     * 滑动窗口累加"量"并返回窗口内累计量。
+     *
+     * <p>与 {@link #tryAcquireSliding} 的区别是"量"与"次"：那个方法一次只能取 1 个额度，
+     * 而 token 消耗是一次几百上千的变量。逐条记时间戳对 token 不可行（高 QPS 下内存/Redis 直接爆），
+     * 故实现采用<b>分桶近似</b>：窗口切成固定份数的小桶，只按桶累加、按桶过期。</p>
+     *
+     * <p>实现须保证统计范围<b>不短于</b> {@code windowSeconds}（多留一个桶即可）：宁可把
+     * 刚出窗的一小段仍算进来（限得偏严），也不能提前把窗内用量丢掉（限得偏松）——
+     * 配额的误差方向必须是 fail-closed。</p>
+     *
+     * @param key           计数键
+     * @param delta         本次增量（如实际消耗的 token 数）
+     * @param windowSeconds 滑动窗口长度（秒）
+     * @return 窗口内累计量（含本次）
+     */
+    long incrementSlidingSum(String key, long delta, int windowSeconds);
+
+    /** 只读滑动窗口累计量，不产生任何计数副作用（含清理）。 */
+    long currentSlidingSum(String key, int windowSeconds);
 }

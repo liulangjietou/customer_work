@@ -3,6 +3,9 @@ package com.richard.fyoung.customerwork.data.calllog;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
 import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.AgentBase;
 import io.agentscope.core.agent.RuntimeContext;
@@ -76,11 +79,23 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
     /** 可为 null：配额未装配时不记账（配额默认关闭）。 */
     private final TenantQuotaGuard quotaGuard;
 
+    /** 可为 null：主体配额未装配时不记账。与租户配额并列而非二选一——两者是不同维度的上限。 */
+    private final SubjectQuotaGuard subjectQuotaGuard;
+
     public AgentCallTimingMiddleware(CustomerWorkProperties properties,
                                      ToolKindRegistry toolKindRegistry,
                                      AgentCallRecordSink sink,
                                      ObjectProvider<MeterRegistry> meterRegistryProvider) {
-        this(properties, toolKindRegistry, sink, meterRegistryProvider, null);
+        this(properties, toolKindRegistry, sink, meterRegistryProvider, null, null);
+    }
+
+    /** 兼容既有五参调用（只接租户配额）：主体配额缺省不记账。 */
+    public AgentCallTimingMiddleware(CustomerWorkProperties properties,
+                                     ToolKindRegistry toolKindRegistry,
+                                     AgentCallRecordSink sink,
+                                     ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                     ObjectProvider<TenantQuotaGuard> quotaGuardProvider) {
+        this(properties, toolKindRegistry, sink, meterRegistryProvider, quotaGuardProvider, null);
     }
 
     /**
@@ -94,12 +109,15 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
                                      ToolKindRegistry toolKindRegistry,
                                      AgentCallRecordSink sink,
                                      ObjectProvider<MeterRegistry> meterRegistryProvider,
-                                     ObjectProvider<TenantQuotaGuard> quotaGuardProvider) {
+                                     ObjectProvider<TenantQuotaGuard> quotaGuardProvider,
+                                     ObjectProvider<SubjectQuotaGuard> subjectQuotaGuardProvider) {
         this.enabled = properties.getCallLog().isEnabled();
         this.toolKindRegistry = toolKindRegistry;
         this.sink = sink;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
         this.quotaGuard = quotaGuardProvider == null ? null : quotaGuardProvider.getIfAvailable();
+        this.subjectQuotaGuard = subjectQuotaGuardProvider == null
+            ? null : subjectQuotaGuardProvider.getIfAvailable();
     }
 
     @Override
@@ -276,6 +294,7 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             recordTokens(inputTokens, outputTokens);
             // 配额记账搭同一趟车：token 的落点只此一处，记在别处迟早与落库口径漂移
             recordQuotaUsage(inputTokens, outputTokens);
+            recordSubjectQuotaUsage(inputTokens, outputTokens);
         } catch (Exception e) {
             log.error("agent call segment collect failed, code={}, kind={}, name={}",
                 "CALLLOG-SEGMENT-FAIL", kind, name, e);
@@ -300,6 +319,34 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             quotaGuard.record(null, total);
         } catch (Exception e) {
             log.error("quota usage record failed, code={}", "QUOTA-RECORD-FAIL", e);
+        }
+    }
+
+    /**
+     * 把本段 token 计入当前主体（用户 / 匿名 IP / 接入方）的滚动窗口用量。
+     *
+     * <p>与租户记账共用同一个 token 数、分别记两笔：租户额度是这个客户的月度总量，
+     * 主体额度是这个调用者的半小时用量，任一维度都可能先触顶。</p>
+     *
+     * <p>主体来自 {@link QuotaSubjectContext}——接入层写入、Reactor 自动传播还原。取不到就不记：
+     * 那多半是内部任务或定时链路，本就没有"调用者"可言，硬记只会算到某个上一次请求残留的身份上。</p>
+     */
+    private void recordSubjectQuotaUsage(Long inputTokens, Long outputTokens) {
+        if (subjectQuotaGuard == null) {
+            return;
+        }
+        QuotaSubject subject = QuotaSubjectContext.get();
+        if (subject == null) {
+            return;
+        }
+        long total = (inputTokens == null ? 0L : inputTokens) + (outputTokens == null ? 0L : outputTokens);
+        if (total <= 0) {
+            return;
+        }
+        try {
+            subjectQuotaGuard.recordTokens(subject, total);
+        } catch (Exception e) {
+            log.error("subject quota usage record failed, code={}", "SQUOTA-RECORD-FAIL", e);
         }
     }
 

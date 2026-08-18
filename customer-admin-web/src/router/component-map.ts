@@ -37,6 +37,7 @@ export const staticRouteComponents: Record<string, () => Promise<Component>> = {
   '/contentguard/sensitive-word': () => import('@/views/contentguard/SensitiveWordManage.vue'),
   '/contentguard/rate-limit': () => import('@/views/contentguard/RateLimitRuleManage.vue'),
   '/contentguard/hit-log': () => import('@/views/contentguard/SensitiveHitLogBoard.vue'),
+  '/contentguard/subject-quota': () => import('@/views/contentguard/SubjectQuotaManage.vue'),
   '/aiconfig/channel-robot': () => import('@/views/aiconfig/ChannelRobotManage.vue'),
   '/ticket/user-ticket': () => import('@/views/ticket/UserTicketManage.vue'),
   '/ticket/user-order': () => import('@/views/ticket/UserOrderManage.vue'),
