@@ -229,3 +229,28 @@ export interface WsErrorMessage {
   code: string
   message: string
 }
+
+/**
+ * 我的额度（主体级速率配额）。
+ *
+ * 窗口是滚动的（最近 windowSeconds 秒），不在整点归零；额度连续释放，
+ * 因此服务端刻意不返回"何时恢复"——任何一个恢复时刻都只对某一笔用量成立。
+ */
+export interface UserQuota {
+  /** 生效等级；未受限时为 null */
+  levelCode: string | null
+  /** 滚动窗口长度（秒），1800 = 30 分钟 */
+  windowSeconds: number
+  tokenUsed: number
+  /** 0 = 不限 */
+  tokenLimit: number
+  /** -1 = 不限 */
+  tokenRemaining: number
+  requestUsed: number
+  /** 0 = 不限 */
+  requestLimit: number
+  /** -1 = 不限 */
+  requestRemaining: number
+  /** 是否真的受限（levelCode 为空时为 false） */
+  limited: boolean
+}

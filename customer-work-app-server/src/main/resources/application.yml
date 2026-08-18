@@ -258,6 +258,26 @@ customer-work:
       window-seconds: 60
       rule-enabled: true
       store-mode: jdbc
+  # 主体级速率配额：按调用者限（每登录用户 / 每匿名 IP / 每把 API Key），
+  # 滚动窗口内的 token 量与请求次数双上限。与上面按路径限的 rate-limit 正交，两者都判。
+  subject-quota:
+    enabled: true
+    # jdbc：等级读 cw_subject_quota_level（后台「内容风控 → 用户额度」可维护）。
+    # 配成 memory 则只认 SubjectQuotaProperties 里的内置档，后台改了不会生效。
+    store-mode: jdbc
+    # 新注册用户落这一档；匿名与接入方各走一档，见 cw_subject_quota_level 的出厂种子
+    default-user-level: free
+    anonymous-level: anonymous
+    api-key-level: api-key
+    # 参与判定的路径前缀。次数口径是「HTTP 请求数 + WS 对话数」，因为覆盖了整个
+    # /api/customer/user/ 面，翻历史消息也会占额度——只想限对话就把最后一行去掉。
+    # 真正卡成本的是 token 那一维，它只在模型调用后累加。
+    paths:
+      - /api/customer/chat
+      - /api/customer/intent
+      - /api/customer/consult
+      - /api/customer/agui
+      - /api/customer/user/
   multi-agent:
     # 多 Agent 编排：fanout（并行多专家聚合）| sequential（流水串行细化）
     enabled: true
