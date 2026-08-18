@@ -1332,3 +1332,76 @@ export interface AgentTaskPageQuery extends MpPageQuery {
   status?: string
   agentCode?: string
 }
+
+// ---------- 主体级速率配额（用户额度） ----------
+
+/** 一档额度定义。窗口是滚动的（最近 N 秒），与租户配额的自然日/月对齐不同。 */
+export interface SubjectQuotaLevelVO {
+  tenantId: string
+  levelCode: string
+  levelName: string
+  /** USER 登录用户 / IP 匿名 / API_KEY 接入方 */
+  subjectType: string
+  windowSeconds: number
+  /** 0 = 不限 */
+  tokenLimit: number
+  /** 0 = 不限 */
+  requestLimit: number
+  /** BLOCK 拦截 / WARN 仅记录 */
+  exceedAction: string
+  enabled: boolean
+  remark?: string
+}
+
+export interface SubjectQuotaLevelSaveRequest {
+  levelCode: string
+  levelName: string
+  subjectType: string
+  windowSeconds: number
+  tokenLimit: number
+  requestLimit: number
+  exceedAction: string
+  enabled: boolean
+  remark?: string
+}
+
+/** 用户分档视图（只含分配等级所需字段，不含账户敏感信息）。 */
+export interface SubjectQuotaUserVO {
+  userId: string
+  username: string
+  nickname?: string
+  /** 空表示走配置里的默认档 */
+  levelCode?: string
+  status: string
+  createdAtMs?: number
+}
+
+export interface UserLevelSaveRequest {
+  userId: string
+  /** 传空表示回到默认档 */
+  levelCode?: string
+}
+
+/** 超限命中明细。 */
+export interface SubjectQuotaHitVO {
+  subjectType: string
+  subjectId: string
+  levelCode?: string
+  /** TOKEN / REQUEST */
+  limitKind: string
+  used: number
+  limitValue: number
+  windowSeconds: number
+  action: string
+  resource?: string
+  createdAtMs: number
+}
+
+/** 超限命中排行（谁在刷）。 */
+export interface SubjectQuotaHitRank {
+  subjectType: string
+  subjectId: string
+  levelCode?: string
+  hitCount: number
+  lastHitAtMs: number
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.safety.subjectquota.mapper.SubjectQuotaHitMapper">
+
+    <!--
+      命中排行："谁在刷"看板的数据源。按 (主体类型, 主体标识) 分组，
+      等级取 MAX 而非分组维度：同一主体在统计区间内可能被改过等级，
+      把它拆成两行只会让运营以为是两个不同的人。
+    -->
+    <select id="selectRank" resultType="com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaHitRank">
+        SELECT subject_type    AS subjectType,
+               subject_id      AS subjectId,
+               MAX(level_code) AS levelCode,
+               COUNT(*)        AS hitCount,
+               MAX(created_at_ms) AS lastHitAtMs
+        FROM cw_subject_quota_hit
+        WHERE tenant_id = #{tenantId}
+          AND created_at_ms &gt;= #{sinceMs}
+        GROUP BY subject_type, subject_id
+        ORDER BY hitCount DESC, lastHitAtMs DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

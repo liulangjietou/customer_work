@@ -9,6 +9,8 @@ import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
 import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaDecision;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +47,7 @@ class ChatDispatchServiceTest {
     private CustomerServiceService customerServiceService;
     private HandoffKeywordDetector keywordDetector;
     private WsSessionRegistry registry;
+    private SubjectQuotaGuard subjectQuotaGuard;
     private ChatDispatchService dispatch;
 
     private final UserPrincipal user = new UserPrincipal(USER_ID, "alice", "Alice", TenantContext.DEFAULT);
@@ -56,8 +59,11 @@ class ChatDispatchServiceTest {
         customerServiceService = mock(CustomerServiceService.class);
         keywordDetector = mock(HandoffKeywordDetector.class);
         registry = mock(WsSessionRegistry.class);
+        // 默认放行：本类测的是分发路由，配额行为另有专门用例
+        subjectQuotaGuard = mock(SubjectQuotaGuard.class);
+        lenient().when(subjectQuotaGuard.check(any(), any())).thenReturn(SubjectQuotaDecision.allow());
         dispatch = new ChatDispatchService(ticketService, chatLogService, customerServiceService,
-            keywordDetector, registry);
+            keywordDetector, registry, subjectQuotaGuard);
         // 落库统一返回一条带 messageId 的消息（AI 流式收尾需要读 messageId）
         lenient().when(chatLogService.append(any(), any(), any(), any(), any()))
             .thenReturn(ChatMessage.of("MSG-9", SESSION_ID, "TK-1", TicketActorType.BOT, null, "txt"));

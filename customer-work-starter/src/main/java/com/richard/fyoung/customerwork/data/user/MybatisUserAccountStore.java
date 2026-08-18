@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.user;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.richard.fyoung.customerwork.data.user.entity.UserDO;
 import com.richard.fyoung.customerwork.data.user.mapper.UserMapper;
 import org.slf4j.Logger;
@@ -78,6 +79,23 @@ public class MybatisUserAccountStore implements UserAccountStore {
         }
     }
 
+    @Override
+    public void updateLevel(String id, String levelCode) {
+        if (id == null) {
+            return;
+        }
+        try {
+            // 必须走 UpdateWrapper 显式 set：updateById 只更新非空字段，用它把等级置空会静默失败，
+            // 表现为"后台取消了特批额度、线上却一直按特批放行"
+            mapper.update(null, new LambdaUpdateWrapper<UserDO>()
+                .set(UserDO::getLevelCode, levelCode)
+                .eq(UserDO::getId, id));
+        } catch (Exception e) {
+            log.error("user level update failed, code={}, id={}", "USER-STORE-UPDATE-LEVEL-FAIL", id, e);
+            throw new IllegalStateException("failed to update user level: " + id, e);
+        }
+    }
+
     private UserAccount toDomain(UserDO row) {
         return UserAccount.reconstruct(
             row.getId(),
@@ -87,7 +105,8 @@ public class MybatisUserAccountStore implements UserAccountStore {
             row.getPhone(),
             UserAccount.Status.valueOf(row.getStatus()),
             row.getCreatedAtMs(),
-            row.getAvatarUrl());
+            row.getAvatarUrl(),
+            row.getLevelCode());
     }
 
     private UserDO toDO(UserAccount account) {
@@ -100,6 +119,7 @@ public class MybatisUserAccountStore implements UserAccountStore {
         row.setStatus(account.getStatus().name());
         row.setCreatedAtMs(account.getCreatedAtMs());
         row.setAvatarUrl(account.getAvatarUrl());
+        row.setLevelCode(account.getLevelCode());
         return row;
     }
 }

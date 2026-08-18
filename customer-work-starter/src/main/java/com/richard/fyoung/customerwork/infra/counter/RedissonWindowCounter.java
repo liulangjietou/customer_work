@@ -45,6 +45,42 @@ public class RedissonWindowCounter implements WindowCounter {
             + "redis.call('PEXPIRE', KEYS[1], ARGV[5]) "
             + "return 1";
 
+    /**
+     * 滑动求和累加：累加当前桶 → 清理出窗的桶 → 返回窗口内各桶之和。
+     *
+     * <p><b>清理必须在同一次脚本里做</b>：Hash 的 TTL 每次写入都被刷新，活跃键永远不会整体过期，
+     * 不删旧 field 就是一条无限增长的 Hash。</p>
+     *
+     * <p><b>为什么按索引范围删而不是遍历 HKEYS</b>：桶索引是连续整数，客户端算得出该删哪些；
+     * 而 {@code HKEYS}/{@code HGETALL} 返回顺序不确定，Redis 4.x 会拒绝在它们之后执行写命令
+     * （{@code write commands not allowed after non deterministic commands}）。全用确定性命令，
+     * 这个脚本在任何版本上都成立。删的范围取一个完整窗口的桶数，够覆盖低频写入跨过的空档；
+     * 更久不写的键由 TTL 整体回收。</p>
+     */
+    private static final String SLIDING_SUM_INCR_SCRIPT =
+        "redis.call('HINCRBY', KEYS[1], ARGV[2], ARGV[3]) "
+            + "redis.call('PEXPIRE', KEYS[1], ARGV[4]) "
+            + "local oldest = tonumber(ARGV[1]) "
+            + "for bucket = oldest - 1, oldest - tonumber(ARGV[5]), -1 do "
+            + "  redis.call('HDEL', KEYS[1], tostring(bucket)) "
+            + "end "
+            + "local data = redis.call('HGETALL', KEYS[1]) "
+            + "local sum = 0 "
+            + "for i = 1, #data, 2 do "
+            + "  if tonumber(data[i]) >= oldest then sum = sum + tonumber(data[i + 1]) end "
+            + "end "
+            + "return sum";
+
+    /** 滑动求和只读：过滤出窗桶后求和，刻意不删任何 field（只读路径不产生写副作用）。 */
+    private static final String SLIDING_SUM_READ_SCRIPT =
+        "local oldest = tonumber(ARGV[1]) "
+            + "local data = redis.call('HGETALL', KEYS[1]) "
+            + "local sum = 0 "
+            + "for i = 1, #data, 2 do "
+            + "  if tonumber(data[i]) >= oldest then sum = sum + tonumber(data[i + 1]) end "
+            + "end "
+            + "return sum";
+
     private final RedissonClient redisson;
     private final String keyPrefix;
 
@@ -111,6 +147,46 @@ public class RedissonWindowCounter implements WindowCounter {
             logDegraded(e);
             return fallback.tryAcquireSliding(key, limit, windowSeconds);
         }
+    }
+
+    @Override
+    public long incrementSlidingSum(String key, long delta, int windowSeconds) {
+        long bucketMs = SlidingSumBuckets.bucketMs(windowSeconds);
+        long currentBucket = SlidingSumBuckets.currentBucket(bucketMs);
+        long oldest = SlidingSumBuckets.oldestBucket(currentBucket, windowSeconds, bucketMs);
+        try {
+            Long sum = eval(SLIDING_SUM_INCR_SCRIPT, RScript.ReturnType.INTEGER, List.of(sumKey(key, bucketMs)),
+                String.valueOf(oldest), String.valueOf(currentBucket), String.valueOf(delta),
+                String.valueOf(SlidingSumBuckets.retentionMs(windowSeconds)),
+                String.valueOf(SlidingSumBuckets.BUCKETS));
+            return sum == null ? delta : sum;
+        } catch (Exception e) {
+            logDegraded(e);
+            return fallback.incrementSlidingSum(key, delta, windowSeconds);
+        }
+    }
+
+    @Override
+    public long currentSlidingSum(String key, int windowSeconds) {
+        long bucketMs = SlidingSumBuckets.bucketMs(windowSeconds);
+        long oldest = SlidingSumBuckets.oldestBucket(
+            SlidingSumBuckets.currentBucket(bucketMs), windowSeconds, bucketMs);
+        try {
+            Long sum = eval(SLIDING_SUM_READ_SCRIPT, RScript.ReturnType.INTEGER, List.of(sumKey(key, bucketMs)),
+                String.valueOf(oldest));
+            return sum == null ? 0L : sum;
+        } catch (Exception e) {
+            logDegraded(e);
+            return fallback.currentSlidingSum(key, windowSeconds);
+        }
+    }
+
+    /**
+     * 滑动求和的键带桶时长：窗口长度改了就换一把键，避免新旧口径的桶索引混在同一个 Hash 里。
+     * 旧键无人再写，靠 TTL 自行回收。
+     */
+    private String sumKey(String key, long bucketMs) {
+        return keyPrefix + "sum:" + key + ":" + bucketMs;
     }
 
     /** 固定窗口的键带窗口序号：窗口滚动即换键，天然避免跨窗口累加，过期由 TTL 兜底回收。 */

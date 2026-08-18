@@ -114,6 +114,9 @@ public class CustomerWorkProperties {
     /** 租户 token 配额（成本治理的硬上限）。 */
     private final QuotaProperties quota = new QuotaProperties();
 
+    /** 主体级速率配额（每用户 / 每 IP / 每 Key 的滚动窗口限流），与租户配额并存互不替代。 */
+    private final SubjectQuotaProperties subjectQuota = new SubjectQuotaProperties();
+
     /** 对话阶段状态机存储配置。 */
     private final DialogProperties dialog = new DialogProperties();
 

@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS `cw_user` (
     `status`         VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE/DISABLED',
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
     `avatar_url`     VARCHAR(255) COMMENT '头像访问URL（相对路径，可为空）',
+    `level_code`     VARCHAR(64) DEFAULT NULL COMMENT '配额等级编码（空=默认档），见 cw_subject_quota_level',
     UNIQUE KEY `uk_user_username` (`tenant_id`, `username`),
     INDEX `idx_user_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -918,3 +919,56 @@ CREATE TABLE IF NOT EXISTS `cw_outbox_message` (
     INDEX `idx_outbox_lease` (`tenant_id`, `status`, `lease_until_ms`),
     INDEX `idx_outbox_aggregate` (`tenant_id`, `aggregate_id`, `created_at_ms`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='同库事务 Outbox';
+
+-- 主体配额等级表（cw_subject_quota_level）：每个用户/匿名IP/API Key 在滚动窗口内的额度定义。
+-- 与 cw_tenant_quota 刻意分表：那张是自然日/月对齐、要跟账单对得上的计费上限，
+-- 这张是最近 N 秒滚动、与账单无关的防滥用闸门。周期语义与判定时机都不同，合表只会互相牵制。
+CREATE TABLE IF NOT EXISTS `cw_subject_quota_level` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `level_code`     VARCHAR(64) NOT NULL COMMENT '等级编码，如 free/vip/anonymous',
+    `level_name`     VARCHAR(128) NOT NULL COMMENT '等级名称（运营可读）',
+    `subject_type`   VARCHAR(32) NOT NULL DEFAULT 'USER' COMMENT '适用主体: USER 登录用户 / IP 匿名 / API_KEY 接入方',
+    `window_seconds` INT NOT NULL DEFAULT 1800 COMMENT '滚动窗口长度（秒），1800=30分钟',
+    `token_limit`    BIGINT NOT NULL DEFAULT 0 COMMENT '窗口内 token 上限，0=不限',
+    `request_limit`  INT NOT NULL DEFAULT 0 COMMENT '窗口内请求次数上限，0=不限',
+    `exceed_action`  VARCHAR(16) NOT NULL DEFAULT 'BLOCK' COMMENT '超限处置: BLOCK 拦截 / WARN 仅记录',
+    `enabled`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
+    `remark`         VARCHAR(255) COMMENT '备注',
+    `created_at_ms`  BIGINT COMMENT '创建时间戳（毫秒）',
+    `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
+    UNIQUE KEY `uk_squota_level` (`tenant_id`, `level_code`),
+    INDEX `idx_squota_level_tenant` (`tenant_id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='主体配额等级（每租户每档一条）';
+
+-- 主体配额超限命中记录（cw_subject_quota_hit）：只在真的触顶那一刻写一条，正常流量零写入。
+-- 后台"谁在刷"看板的数据源；实时余额刻意不落库（那在计数器里，跨进程读不到也没必要读）。
+CREATE TABLE IF NOT EXISTS `cw_subject_quota_hit` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `subject_type`   VARCHAR(32) NOT NULL COMMENT '主体类型: USER/IP/API_KEY',
+    `subject_id`     VARCHAR(128) NOT NULL COMMENT '主体标识（API Key 已做 SHA-256 指纹，不含明文）',
+    `level_code`     VARCHAR(64) COMMENT '判定所依据的等级',
+    `limit_kind`     VARCHAR(16) NOT NULL COMMENT '触顶维度: TOKEN/REQUEST',
+    `used`           BIGINT NOT NULL DEFAULT 0 COMMENT '触顶时已用量',
+    `limit_value`    BIGINT NOT NULL DEFAULT 0 COMMENT '触顶时的上限',
+    `window_seconds` INT NOT NULL DEFAULT 0 COMMENT '滚动窗口长度（秒）',
+    `action`         VARCHAR(16) NOT NULL DEFAULT 'BLOCK' COMMENT '当时处置: BLOCK 真拦了 / WARN 只记录',
+    `resource`       VARCHAR(255) COMMENT '触发位置（HTTP 路径或 ws:chat）',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '命中时刻（毫秒）',
+    INDEX `idx_squota_hit_tenant_time` (`tenant_id`, `created_at_ms`),
+    INDEX `idx_squota_hit_subject` (`tenant_id`, `subject_type`, `subject_id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='主体配额超限命中记录';
+
+-- 出厂五档种子（仅默认租户）。功能默认关闭，种子不改变任何现有行为。
+-- free/anonymous/api-key 三档必须与 SubjectQuotaProperties 的内置档数值一致，两处不能漂移。
+INSERT INTO `cw_subject_quota_level`
+    (`tenant_id`, `level_code`, `level_name`, `subject_type`, `window_seconds`,
+     `token_limit`, `request_limit`, `exceed_action`, `enabled`, `remark`,
+     `created_at_ms`, `updated_at_ms`)
+VALUES
+    ('default', 'free',      '免费用户', 'USER',    1800,   50000,  100, 'BLOCK', 1, '注册用户默认档', UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000),
+    ('default', 'vip',       'VIP用户',  'USER',    1800,  200000,  300, 'BLOCK', 1, '付费用户',       UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000),
+    ('default', 'svip',      'SVIP用户', 'USER',    1800, 1000000, 1000, 'BLOCK', 1, '高级付费用户',   UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000),
+    ('default', 'anonymous', '匿名访客', 'IP',      1800,   10000,   20, 'BLOCK', 1, '未登录，按来源IP计', UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000),
+    ('default', 'api-key',   '接入方',   'API_KEY', 3600, 1000000, 2000, 'BLOCK', 1, '服务端接入，按Key指纹计', UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000);

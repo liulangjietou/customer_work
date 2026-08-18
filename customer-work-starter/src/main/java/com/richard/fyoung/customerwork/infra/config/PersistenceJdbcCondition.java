@@ -45,6 +45,8 @@ public class PersistenceJdbcCondition implements Condition {
         "customer-work.sensitive-word.hit-log.store-mode",
         // 限流规则层同理：只开规则层、其余域全是 memory 时，也必须能激活持久化环境
         "customer-work.security.rate-limit.store-mode",
+        // 主体级速率配额（等级表 + 命中记录）同理：它可能是宿主唯一想落库的东西
+        "customer-work.subject-quota.store-mode",
         "customer-work.tool-backend.mode"
     };
 

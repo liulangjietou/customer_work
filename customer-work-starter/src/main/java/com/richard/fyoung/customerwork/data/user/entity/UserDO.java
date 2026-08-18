@@ -28,4 +28,6 @@ public class UserDO {
     private Long createdAtMs;
     /** 头像访问 URL（相对路径，可为空）。 */
     private String avatarUrl;
+    /** 配额等级编码（可为空 = 走配置默认档），见 cw_subject_quota_level.level_code。 */
+    private String levelCode;
 }

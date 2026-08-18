@@ -76,6 +76,53 @@ public class InMemoryWindowCounter implements WindowCounter {
         }
     }
 
+    @Override
+    public long incrementSlidingSum(String key, long delta, int windowSeconds) {
+        long bucketMs = SlidingSumBuckets.bucketMs(windowSeconds);
+        long currentBucket = SlidingSumBuckets.currentBucket(bucketMs);
+        SumWindow window = (SumWindow) windows.compute(key, (k, existing) ->
+            // 窗口长度变了就重开一份：旧桶是按另一种口径切的，混着算出来的数没有意义
+            existing instanceof SumWindow s && s.bucketMs == bucketMs ? s : new SumWindow(bucketMs));
+        window.buckets.computeIfAbsent(currentBucket, b -> new AtomicLong()).addAndGet(delta);
+
+        long oldest = SlidingSumBuckets.oldestBucket(currentBucket, windowSeconds, bucketMs);
+        window.buckets.keySet().removeIf(bucket -> bucket < oldest);
+        if (windows.size() > MAX_TRACKED_KEYS) {
+            evictEmptySumWindows();
+        }
+        return sum(window, oldest);
+    }
+
+    @Override
+    public long currentSlidingSum(String key, int windowSeconds) {
+        Object existing = windows.get(key);
+        if (!(existing instanceof SumWindow window)) {
+            return 0L;
+        }
+        long bucketMs = SlidingSumBuckets.bucketMs(windowSeconds);
+        if (window.bucketMs != bucketMs) {
+            // 口径不符（窗口长度已改）：按 0 计，下一次写入会用新口径重开
+            return 0L;
+        }
+        long currentBucket = SlidingSumBuckets.currentBucket(bucketMs);
+        // 只读路径不清理过期桶：读操作产生写副作用会让并发行为难以推理
+        return sum(window, SlidingSumBuckets.oldestBucket(currentBucket, windowSeconds, bucketMs));
+    }
+
+    private static long sum(SumWindow window, long oldest) {
+        long total = 0L;
+        for (Map.Entry<Long, AtomicLong> entry : window.buckets.entrySet()) {
+            if (entry.getKey() >= oldest) {
+                total += entry.getValue().get();
+            }
+        }
+        return total;
+    }
+
+    private void evictEmptySumWindows() {
+        windows.entrySet().removeIf(e -> e.getValue() instanceof SumWindow sw && sw.buckets.isEmpty());
+    }
+
     private FixedWindow fixedWindow(String key, int windowSeconds) {
         long windowMs = windowSeconds * 1000L;
         long currentWindow = System.currentTimeMillis() / windowMs;
@@ -112,6 +159,20 @@ public class InMemoryWindowCounter implements WindowCounter {
         FixedWindow(long window, long expireAtMs) {
             this.window = window;
             this.expireAtMs = expireAtMs;
+        }
+    }
+
+    /**
+     * 滑动求和窗：按桶索引累加的量，桶索引 = 时刻 / 桶时长。
+     *
+     * <p>自带 {@code bucketMs} 是为了识别"窗口长度被改了"——不同口径的桶索引不可比。</p>
+     */
+    private static final class SumWindow {
+        private final Map<Long, AtomicLong> buckets = new ConcurrentHashMap<>();
+        private final long bucketMs;
+
+        SumWindow(long bucketMs) {
+            this.bucketMs = bucketMs;
         }
     }
 

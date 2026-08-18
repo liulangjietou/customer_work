@@ -8,6 +8,12 @@ import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
 import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaDecision;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.slf4j.Logger;
@@ -44,6 +50,9 @@ public class ChatDispatchService {
     private static final String NOTICE_WAITING_CONFIRM = "本次问题坐席已处理，请在工单中确认是否解决";
     private static final String ERR_SESSION_OWNERSHIP = "会话不属于当前用户";
 
+    /** 主体配额的触发位置标识：与 HTTP 侧的路径同位，用于在命中记录里区分是哪条链路被限。 */
+    private static final String QUOTA_RESOURCE_WS_CHAT = "ws:chat";
+
     private static final String KEY_MESSAGE_ID = "messageId";
     private static final String KEY_SESSION_ID = "sessionId";
     private static final String KEY_TICKET_ID = "ticketId";
@@ -58,16 +67,26 @@ public class ChatDispatchService {
     private final HandoffKeywordDetector keywordDetector;
     private final WsSessionRegistry registry;
 
+    /**
+     * 主体配额守卫：WS 是终端用户真正的发消息入口，HTTP 过滤器管不到这里。
+     *
+     * <p>不判的话，用户只要改走 WS 就完全绕开了限流——而 H5 前端本来就走 WS，
+     * 等于这个功能对主战场不生效。</p>
+     */
+    private final SubjectQuotaGuard subjectQuotaGuard;
+
     public ChatDispatchService(TicketService ticketService,
                                ChatLogService chatLogService,
                                CustomerServiceService customerServiceService,
                                HandoffKeywordDetector keywordDetector,
-                               WsSessionRegistry registry) {
+                               WsSessionRegistry registry,
+                               SubjectQuotaGuard subjectQuotaGuard) {
         this.ticketService = ticketService;
         this.chatLogService = chatLogService;
         this.customerServiceService = customerServiceService;
         this.keywordDetector = keywordDetector;
         this.registry = registry;
+        this.subjectQuotaGuard = subjectQuotaGuard;
     }
 
     /** 分发动作：由工单状态与关键词共同决定。 */
@@ -89,6 +108,17 @@ public class ChatDispatchService {
             registry.pushToUser(user.userId(), WsFrame.error("CHAT-SESSION-DENIED", ERR_SESSION_OWNERSHIP));
             return Mono.empty();
         }
+        QuotaSubject subject = QuotaSubject.user(user.userId());
+        // 判定与记账都要在用户归属租户下进行：等级表按租户隔离，拿错租户就会查到别人那一档
+        SubjectQuotaDecision quota = TenantContext.callWith(tenantOf(user),
+            () -> subjectQuotaGuard.check(subject, QUOTA_RESOURCE_WS_CHAT));
+        if (quota.shouldBlock()) {
+            // 用 system 帧而非 error 帧：这不是故障，是额度用完了，前端应当把它当成一条正常的系统提示展示
+            registry.pushToUser(user.userId(), WsFrame.system(quota.message(), sessionId, null));
+            return Mono.empty();
+        }
+        TenantContext.runWith(tenantOf(user), () -> subjectQuotaGuard.recordRequest(subject));
+
         return Mono.fromCallable(() -> prepare(user, sessionId, content))
             .subscribeOn(Schedulers.boundedElastic())
             .flatMap(decision -> act(user.userId(), sessionId, content, decision))
@@ -97,7 +127,18 @@ public class ChatDispatchService {
                     "CHAT-USER-DISPATCH-FAIL", e);
                 registry.pushToUser(user.userId(), WsFrame.error("CHAT-USER-DISPATCH-FAIL", "消息处理失败，请稍后再试"));
                 return Mono.empty();
-            });
+            })
+            // 主体与租户随流下传：token 记账发生在模型调用之后、好几次线程切换之外，
+            // 只有写进 Reactor Context 才能在那里还原出"这次是谁在用"
+            .contextWrite(ctx -> ctx
+                .put(QuotaSubjectContextThreadLocalAccessor.KEY, subject)
+                .put(TenantContextThreadLocalAccessor.KEY, tenantOf(user)));
+    }
+
+    /** 用户归属租户；令牌里没有（旧令牌）时按默认租户算，与 {@code UserJwtService} 的签发默认一致。 */
+    private static String tenantOf(UserPrincipal user) {
+        String tenantId = user.tenantId();
+        return tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT : tenantId;
     }
 
     /**

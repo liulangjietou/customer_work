@@ -32,8 +32,16 @@ public class UserAccount {
     /** 头像访问 URL（相对路径，可为空——注册时无头像，上传后回填）。 */
     private volatile String avatarUrl;
 
+    /**
+     * 配额等级编码（可为空——空表示走配置里的默认档）。
+     *
+     * <p>放在账户实体上而不是另建一张绑定表：等级是"这个账户能用多少"的属性，
+     * 与启停、头像同属账户自身状态，拆出去只会让每次限流判定多一次跨表查询。</p>
+     */
+    private volatile String levelCode;
+
     private UserAccount(String id, String username, String passwordHash, String nickname,
-                        String phone, Status status, long createdAtMs, String avatarUrl) {
+                        String phone, Status status, long createdAtMs, String avatarUrl, String levelCode) {
         this.id = id;
         this.username = username;
         this.passwordHash = passwordHash;
@@ -42,12 +50,19 @@ public class UserAccount {
         this.status = status;
         this.createdAtMs = createdAtMs;
         this.avatarUrl = avatarUrl;
+        this.levelCode = levelCode;
     }
 
-    /** 注册静态工厂：初始 ACTIVE，无头像。 */
+    /** 注册静态工厂：初始 ACTIVE，无头像，等级留空（= 走配置默认档）。 */
     public static UserAccount create(String id, String username, String passwordHash, String nickname, String phone) {
+        return create(id, username, passwordHash, nickname, phone, null);
+    }
+
+    /** 注册静态工厂（指定配额等级）：注册链路按配置的默认等级建号，见 {@link UserAccountService#register}。 */
+    public static UserAccount create(String id, String username, String passwordHash, String nickname,
+                                     String phone, String levelCode) {
         return new UserAccount(id, username, passwordHash, nickname, phone, Status.ACTIVE,
-            System.currentTimeMillis(), null);
+            System.currentTimeMillis(), null, levelCode);
     }
 
     /** 停用账户（禁止后续登录）。 */
@@ -65,9 +80,16 @@ public class UserAccount {
         this.avatarUrl = avatarUrl;
     }
 
+    /** 调整配额等级（后台改档）；传 null 视为回到默认档。 */
+    public void changeLevel(String levelCode) {
+        this.levelCode = levelCode;
+    }
+
     /** 供持久化层从数据源重建（跳过业务语义，仅回填字段）。包级可见。 */
     static UserAccount reconstruct(String id, String username, String passwordHash, String nickname,
-                                   String phone, Status status, long createdAtMs, String avatarUrl) {
-        return new UserAccount(id, username, passwordHash, nickname, phone, status, createdAtMs, avatarUrl);
+                                   String phone, Status status, long createdAtMs, String avatarUrl,
+                                   String levelCode) {
+        return new UserAccount(id, username, passwordHash, nickname, phone, status, createdAtMs,
+            avatarUrl, levelCode);
     }
 }

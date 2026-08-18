@@ -53,8 +53,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private void verifyEmptyDatabaseMigration(String database) throws Exception {
         try (HikariDataSource dataSource = dataSource(database, "flyway-empty-test")) {
             migrate(dataSource, database);
-            assertEquals(42, countBusinessTables(dataSource));
-            assertEquals(3, countHistoryRows(dataSource));
+            assertEquals(44, countBusinessTables(dataSource));
+            assertEquals(4, countHistoryRows(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertEquals(0, countHistoryVersion(dataSource, "0"), "空库不应写 baseline 记录");
         }
@@ -72,8 +72,10 @@ class CustomerWorkSchemaMigrationIntegrationTest {
 
             assertTrue(columnExists(dataSource, "cw_user", "avatar_url"));
             assertTrue(columnExists(dataSource, "cw_chat_attachment", "message_id"));
-            assertEquals(42, countBusinessTables(dataSource));
-            assertEquals(4, countHistoryRows(dataSource));
+            // V4 给存量 cw_user 加的配额等级列：这张表是 V1 就建好的，加列只能靠迁移补
+            assertTrue(columnExists(dataSource, "cw_user", "level_code"));
+            assertEquals(44, countBusinessTables(dataSource));
+            assertEquals(5, countHistoryRows(dataSource));
             assertEquals(1, countHistoryVersion(dataSource, "0"), "非空存量库必须先登记 baseline 0");
         }
     }

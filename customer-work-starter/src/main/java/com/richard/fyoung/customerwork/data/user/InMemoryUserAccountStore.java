@@ -41,4 +41,12 @@ public class InMemoryUserAccountStore implements UserAccountStore {
             account.changeAvatar(avatarUrl);
         }
     }
+
+    @Override
+    public void updateLevel(String id, String levelCode) {
+        UserAccount account = byId.get(id);
+        if (account != null) {
+            account.changeLevel(levelCode);
+        }
+    }
 }

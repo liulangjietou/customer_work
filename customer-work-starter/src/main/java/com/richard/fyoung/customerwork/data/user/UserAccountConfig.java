@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.data.user;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.data.user.mapper.UserMapper;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectLevelBinding;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectLevelResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -38,7 +40,24 @@ public class UserAccountConfig {
 
     @Bean
     @ConditionalOnMissingBean(UserAccountService.class)
-    public UserAccountService userAccountService(UserAccountStore userAccountStore) {
-        return new UserAccountService(userAccountStore);
+    public UserAccountService userAccountService(UserAccountStore userAccountStore,
+                                                 CustomerWorkProperties properties,
+                                                 ObjectProvider<SubjectLevelResolver> resolverProvider) {
+        SubjectLevelResolver resolver = resolverProvider.getIfAvailable();
+        return new UserAccountService(userAccountStore,
+            properties.getSubjectQuota().getDefaultUserLevel(),
+            resolver == null ? null : resolver::evictBinding);
+    }
+
+    /**
+     * 用户 → 配额等级 的绑定查询实现。
+     *
+     * <p>无条件装配（不看配额开关）：Bean 存在本身没有开销，而按开关装配会让运行期
+     * 打开配额时缺一个 Bean——那种"配置生效了但功能没生效"的状态最难查。</p>
+     */
+    @Bean
+    @ConditionalOnMissingBean(SubjectLevelBinding.class)
+    public SubjectLevelBinding userAccountLevelBinding(UserAccountStore userAccountStore) {
+        return new UserAccountLevelBinding(userAccountStore);
     }
 }
