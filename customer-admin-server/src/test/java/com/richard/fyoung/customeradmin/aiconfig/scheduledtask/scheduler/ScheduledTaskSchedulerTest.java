@@ -156,7 +156,7 @@ class ScheduledTaskSchedulerTest {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch proceed = new CountDownLatch(1);
         AtomicInteger invocations = new AtomicInteger();
-        when(service.execute(anyString(), eq(ScheduledTaskService.TRIGGER_TYPE_INTERNAL)))
+        when(service.executeFromScheduler(anyString(), eq(ScheduledTaskService.TRIGGER_TYPE_INTERNAL)))
             .thenAnswer(inv -> {
                 invocations.incrementAndGet();
                 started.countDown();
@@ -180,7 +180,7 @@ class ScheduledTaskSchedulerTest {
     @Test
     void runOnce_shouldReleaseRunningFlagAfterFailure() {
         scheduler = newScheduler(AdminSchedulerProperties.MODE_INTERNAL);
-        when(service.execute(anyString(), eq(ScheduledTaskService.TRIGGER_TYPE_INTERNAL)))
+        when(service.executeFromScheduler(anyString(), eq(ScheduledTaskService.TRIGGER_TYPE_INTERNAL)))
             .thenThrow(new RuntimeException("boom"))
             .thenReturn(null);
 
