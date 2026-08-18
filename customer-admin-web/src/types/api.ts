@@ -687,6 +687,65 @@ export interface SandboxModeResponse {
   mode: 'local' | 'docker'
 }
 
+/** 交互式命令的实时输出事件。 */
+export interface CommandOutputEvent {
+  stream: 'combined'
+  text: string
+  timestamp: number
+}
+
+/** 交互式命令唯一终态。 */
+export interface CommandResultEvent {
+  exitCode: number
+  success: boolean
+  durationMs: number
+  timedOut: boolean
+  containerId: string | null
+}
+
+export interface RefactorTaskRequest {
+  sessionId: string
+  taskType: 'REPLACE' | 'API_MIGRATION' | 'DEPENDENCY_UPGRADE' | 'STYLE'
+  description: string
+  targetFiles: string[]
+}
+
+/** 当前用户可见的会话沙箱运行态。 */
+export interface ManagedSandboxView {
+  sessionId: string
+  mode: 'local' | 'docker'
+  containerId: string | null
+  status: 'STARTING' | 'RUNNING' | 'IDLE' | 'FAILED' | 'STOPPING' | 'STOPPED'
+  createdAt: string
+  lastActiveAt: string
+  command: string | null
+  cpuUsage: string | null
+  memoryUsage: string | null
+  memoryLimitMb: number | null
+  cpuLimit: number | null
+}
+
+/** admin.sandbox.* 的安全只读生效配置。 */
+export interface SandboxConfigView {
+  mode: 'local' | 'docker' | 'disabled'
+  executeTimeoutSeconds: number
+  permissionMode: 'BYPASS' | 'HITL'
+  docker: {
+    image: string
+    memoryMb: number
+    cpuCount: number
+    network: string
+  }
+  guard: { enabled: boolean }
+  features: {
+    commandExecutionEnabled: boolean
+    diagnosisEnabled: boolean
+    refactorEnabled: boolean
+    managementEnabled: boolean
+    idleTimeoutMinutes: number
+  }
+}
+
 /** test_report SSE 事件的 data 载荷：沙箱内编译/测试命令的结构化执行报告（P0-3）。 */
 export interface TestReport {
   command: string

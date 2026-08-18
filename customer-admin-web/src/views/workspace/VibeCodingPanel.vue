@@ -18,6 +18,7 @@ import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ReviewReport from '@/components/ReviewReport.vue'
 import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
 import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
+import VibeCodingToolsDrawer from '@/components/VibeCodingToolsDrawer.vue'
 import AttachmentPendingList from '@/components/attachment/AttachmentPendingList.vue'
 import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
 import { useThemeStore } from '@/store/theme'
@@ -34,6 +35,7 @@ import type {
   TestReport,
   WorkspaceFileContent,
   WorkspaceFileNode,
+  RefactorTaskRequest,
 } from '@/types/api'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
@@ -67,6 +69,7 @@ const historyLoading = ref(false)
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
 const themeStore = useThemeStore()
+const toolsDrawer = ref<InstanceType<typeof VibeCodingToolsDrawer>>()
 
 // Git 助手抽屉（面板级，操作对象是当前激活会话）
 const gitDrawerVisible = ref(false)
@@ -143,6 +146,14 @@ function send() {
 
 function handleInterrupt() {
   store.interrupt(props.agentCode)
+}
+
+function handleDiagnosis(log: string) {
+  store.sendDiagnosis(props.agentCode, log, scrollToBottom)
+}
+
+function handleRefactor(request: Omit<RefactorTaskRequest, 'sessionId'>) {
+  store.sendRefactor(props.agentCode, request, scrollToBottom)
 }
 
 /** 点击"继续"：发一句非空续接文案触发框架续跑被打断的挂起工具调用。 */
@@ -629,6 +640,10 @@ defineExpose({ newSession })
         @remove="removeAttachment"
       />
       <div class="input-bar">
+        <el-button title="运行命令、诊断日志、自动化重构与沙箱管理" @click="toolsDrawer?.open('run')">
+          <el-icon><Tools /></el-icon>
+          开发工具
+        </el-button>
         <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" :before-upload="beforeAttachmentUpload" :accept="ATTACHMENT_ACCEPT">
           <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
             <el-icon><Paperclip /></el-icon>
@@ -883,6 +898,14 @@ defineExpose({ newSession })
         </div>
       </div>
     </el-drawer>
+
+    <VibeCodingToolsDrawer
+      ref="toolsDrawer"
+      :agent-code="agentCode"
+      :conversation="active"
+      @diagnose="handleDiagnosis"
+      @refactor="handleRefactor"
+    />
   </div>
 </template>
 

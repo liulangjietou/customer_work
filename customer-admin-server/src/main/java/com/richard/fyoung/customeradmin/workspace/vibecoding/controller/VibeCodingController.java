@@ -3,7 +3,11 @@ package com.richard.fyoung.customeradmin.workspace.vibecoding.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
+import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.Result;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommitMessageResponse;
@@ -19,6 +23,14 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxModeResp
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SaveFileContentRequest;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileContent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileNode;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommandExecuteRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.DiagnoseRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ManagedSandboxView;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.RefactorTask;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxConfigView;
+import com.richard.fyoung.customeradmin.workspace.runtime.SandboxCommandEvent;
+import com.richard.fyoung.customeradmin.workspace.runtime.SandboxCommandService;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.AiCodingTaskService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.CollaborativeCodingService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.GitAssistantService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.VibeCodingService;
@@ -29,6 +41,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -39,6 +52,7 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -54,14 +68,21 @@ public class VibeCodingController {
     private final GitAssistantService gitAssistantService;
     private final CollaborativeCodingService collaborativeCodingService;
     private final WorkspaceSessionGuard sessionGuard;
+    private final SandboxCommandService sandboxCommandService;
+    private final AiCodingTaskService aiCodingTaskService;
+    private final ObjectMapper objectMapper;
 
     public VibeCodingController(VibeCodingService vibeCodingService, GitAssistantService gitAssistantService,
                                CollaborativeCodingService collaborativeCodingService,
-                               WorkspaceSessionGuard sessionGuard) {
+                               WorkspaceSessionGuard sessionGuard, SandboxCommandService sandboxCommandService,
+                               AiCodingTaskService aiCodingTaskService, ObjectMapper objectMapper) {
         this.vibeCodingService = vibeCodingService;
         this.gitAssistantService = gitAssistantService;
         this.collaborativeCodingService = collaborativeCodingService;
         this.sessionGuard = sessionGuard;
+        this.sandboxCommandService = sandboxCommandService;
+        this.aiCodingTaskService = aiCodingTaskService;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -90,6 +111,71 @@ public class VibeCodingController {
     @GetMapping("/sandbox-mode")
     public Result<SandboxModeResponse> sandboxMode(@PathVariable String agentCode) {
         return Result.success(new SandboxModeResponse(vibeCodingService.sandboxMode()));
+    }
+
+    /** 交互式命令执行：实时输出、结构化测试报告与唯一终态均通过 SSE 返回。 */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding执行命令", target = "vibecoding_command")
+    @PostMapping(value = "/execute", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> execute(@PathVariable String agentCode,
+                                                  @Valid @RequestBody CommandExecuteRequest request) {
+        long userId = StpUtil.getLoginIdAsLong();
+        sessionGuard.claimOrRequire(agentCode, request.sessionId(), userId);
+        String tenantId = TenantContext.get();
+        Flux<ServerSentEvent<String>> result;
+        try {
+            result = sandboxCommandService.execute(agentCode, request.sessionId(), userId, request.command())
+                .map(this::toCommandSse)
+                .onErrorResume(error -> Flux.just(commandError(error)))
+                .concatWithValues(doneEvent());
+        } catch (RuntimeException error) {
+            result = Flux.just(commandError(error), doneEvent());
+        }
+        return tenantId == null ? result
+            : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));
+    }
+
+    /** 根据粘贴的异常堆栈/日志定位、修复并验证，事件协议与常规 VibeCoding 完全一致。 */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding日志诊断", target = "vibecoding_diagnose")
+    @PostMapping(value = "/diagnose", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> diagnose(@PathVariable String agentCode,
+                                                   @Valid @RequestBody DiagnoseRequest request) {
+        sessionGuard.claimOrRequire(agentCode, request.sessionId(), StpUtil.getLoginIdAsLong());
+        return codingTaskStream(aiCodingTaskService.diagnose(agentCode, request.sessionId(), request.log()));
+    }
+
+    /** 自动化重构：接口先发任务级 plan，确认后才进入文件修改与测试链路。 */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding自动化重构", target = "vibecoding_refactor")
+    @PostMapping(value = "/refactor", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> refactor(@PathVariable String agentCode,
+                                                   @Valid @RequestBody RefactorTask task) {
+        sessionGuard.claimOrRequire(agentCode, task.sessionId(), StpUtil.getLoginIdAsLong());
+        return codingTaskStream(aiCodingTaskService.refactor(agentCode, task));
+    }
+
+    /** 当前生效的 {@code admin.sandbox.*} 安全只读视图。 */
+    @SaCheckPermission("workspace")
+    @GetMapping("/sandbox/config")
+    public Result<SandboxConfigView> sandboxConfig(@PathVariable String agentCode) {
+        return Result.success(sandboxCommandService.config());
+    }
+
+    /** 当前用户在该智能体下创建的会话沙箱运行态。 */
+    @SaCheckPermission("workspace")
+    @GetMapping("/sandbox/sessions")
+    public Result<List<ManagedSandboxView>> sandboxes(@PathVariable String agentCode) {
+        return Result.success(sandboxCommandService.list(agentCode, StpUtil.getLoginIdAsLong()));
+    }
+
+    /** 停止并删除一个归属于当前用户的会话沙箱；清理接口幂等。 */
+    @SaCheckPermission("workspace")
+    @OperationLog(operation = "VibeCoding清理沙箱", target = "vibecoding_sandbox")
+    @DeleteMapping("/sandbox/sessions/{sessionId}")
+    public Result<Boolean> cleanupSandbox(@PathVariable String agentCode, @PathVariable String sessionId) {
+        requireOwned(agentCode, sessionId);
+        return Result.success(sandboxCommandService.cleanup(agentCode, sessionId, StpUtil.getLoginIdAsLong()));
     }
 
     /** 安全中断该会话正在执行的流式对话，保留上下文以便后续续跑。 */
@@ -233,5 +319,40 @@ public class VibeCodingController {
 
     private void requireOwned(String agentCode, String sessionId) {
         sessionGuard.requireOwned(agentCode, sessionId, StpUtil.getLoginIdAsLong());
+    }
+
+    private Flux<ServerSentEvent<String>> codingTaskStream(
+            Flux<com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk> source) {
+        String tenantId = TenantContext.get();
+        Flux<ServerSentEvent<String>> result = source
+            .map(chunk -> ServerSentEvent.<String>builder()
+                .event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
+            .concatWithValues(doneEvent());
+        return tenantId == null ? result
+            : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));
+    }
+
+    private ServerSentEvent<String> toCommandSse(SandboxCommandEvent event) {
+        return ServerSentEvent.<String>builder().event(event.event()).data(toJson(event.payload())).build();
+    }
+
+    private ServerSentEvent<String> commandError(Throwable error) {
+        ResultCode code = error instanceof BizException bizException
+            ? bizException.getResultCode() : ResultCode.SANDBOX_RUNTIME_FAILED;
+        return ServerSentEvent.<String>builder().event("command_error")
+            .data(toJson(Map.of("code", code.getCode(), "message", error.getMessage() == null
+                ? code.getMessage() : error.getMessage()))).build();
+    }
+
+    private ServerSentEvent<String> doneEvent() {
+        return ServerSentEvent.<String>builder().event("done").data("[DONE]").build();
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new BizException(ResultCode.SYSTEM_ERROR, "SSE事件序列化失败");
+        }
     }
 }

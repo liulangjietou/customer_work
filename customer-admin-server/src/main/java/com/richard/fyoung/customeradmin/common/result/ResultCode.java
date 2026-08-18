@@ -84,6 +84,10 @@ public enum ResultCode {
     TENANT_RESERVED_PROTECTED(40040, "系统保留租户不允许该操作"),
     TENANT_SUSPENDED(40041, "租户已被冻结或已退租，请联系运营方"),
     TENANT_VIEW_FORBIDDEN(40042, "只有平台运营方可以切换租户视角"),
+    AI_CODING_FEATURE_DISABLED(40043, "该 AI 编码能力未开启"),
+    SANDBOX_COMMAND_BLOCKED(40044, "命令命中沙箱安全规则，已拒绝执行"),
+    SANDBOX_COMMAND_RUNNING(40045, "该会话已有命令正在执行"),
+    SANDBOX_RUNTIME_FAILED(40046, "沙箱运行失败，请检查运行时配置"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

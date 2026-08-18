@@ -184,6 +184,7 @@ admin:
     # VibeCoding 代码沙箱：local（仅开发）｜docker（容器隔离）｜disabled（生产未提供隔离运行时时关闭执行）。
     mode: ${ADMIN_SANDBOX_MODE:local}
     execute-timeout-seconds: ${ADMIN_SANDBOX_EXECUTE_TIMEOUT_SECONDS:60}
+    permission-mode: ${ADMIN_SANDBOX_PERMISSION_MODE:bypass}
     docker:
       image: ${ADMIN_SANDBOX_DOCKER_IMAGE:maven:3.9-eclipse-temurin-17}
       memory-mb: ${ADMIN_SANDBOX_DOCKER_MEMORY_MB:512}
@@ -194,6 +195,16 @@ admin:
       # ToolGuardMiddleware 默认关闭——那里客服业务场景默认信任内部工具，这里 Agent 会执行任意
       # shell 命令，风险面更大，默认开更保守）。
       enabled: ${ADMIN_SANDBOX_GUARD_ENABLED:true}
+    hitl:
+      confirm-timeout-seconds: ${ADMIN_SANDBOX_HITL_CONFIRM_TIMEOUT_SECONDS:300}
+      batch-modify-threshold: ${ADMIN_SANDBOX_HITL_BATCH_MODIFY_THRESHOLD:3}
+    features:
+      # P1/P2 增量能力全部默认关闭，生产环境按功能逐项灰度开启。
+      command-execution-enabled: ${ADMIN_SANDBOX_COMMAND_EXECUTION_ENABLED:false}
+      diagnosis-enabled: ${ADMIN_SANDBOX_DIAGNOSIS_ENABLED:false}
+      refactor-enabled: ${ADMIN_SANDBOX_REFACTOR_ENABLED:false}
+      management-enabled: ${ADMIN_SANDBOX_MANAGEMENT_ENABLED:false}
+      idle-timeout-minutes: ${ADMIN_SANDBOX_IDLE_TIMEOUT_MINUTES:30}
   skill:
     # Skill 保存/上传时把 SKILL.md 正文发布到勾选的存储目标（minio/nacos/sftp）；运行时消费仍从数据库读。
     storage:
