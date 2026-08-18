@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.a2a;
 
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import cn.dev33.satoken.fun.strategy.SaCheckRequestPathFunction;
@@ -84,8 +85,11 @@ public class AdminA2aServerConfig {
         if (!StringUtils.hasText(agentCode)) {
             throw new IllegalStateException("admin.a2a.enabled=true requires admin.a2a.agent-code");
         }
-        AiAgent agent = agentMapper.selectOne(new LambdaQueryWrapper<AiAgent>()
-            .eq(AiAgent::getAgentCode, agentCode).last("LIMIT 1"));
+        // 启动期没有请求、也就没有租户上下文，直连查询会被租户拦截器 fail-closed 打断，整个应用起不来。
+        // A2A 暴露的是运维在配置里点名的那一个智能体，与"谁在访问"无关，因此这是明确的跨租户定位；
+        // agent_code 全局唯一（uk_ai_agent_code），定位结果不会有歧义。
+        AiAgent agent = CrossTenantOperations.execute(() -> agentMapper.selectOne(
+            new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getAgentCode, agentCode).last("LIMIT 1")));
         if (agent == null) {
             // fast fail：配了一个不存在的智能体却让服务照常起来，只会在第一个外部请求进来时才暴露
             throw new IllegalStateException("admin.a2a.agent-code not found: " + agentCode);

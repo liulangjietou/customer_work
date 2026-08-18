@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.workspace.task.runtime;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.richard.fyoung.customeradmin.workspace.task.entity.AiAgentTask;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customeradmin.workspace.task.mapper.AiAgentTaskMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
@@ -126,7 +127,10 @@ public class MybatisTaskRepository implements TaskRepository {
                 .set(AiAgentTask::getErrorMessage, RESTART_ERROR)
                 .set(AiAgentTask::getFinishedAt, now)
                 .set(AiAgentTask::getUpdatedAt, now);
-            int affected = taskMapper.update(null, update);
+            // 重启清理是明确的跨租户运维扫描：僵尸任务属于所有租户，而启动期没有租户上下文。
+            // 不显式跨租户的话会被拦截器 fail-closed，异常又被下面的 catch 吞掉——
+            // 表现为"清理静默不生效"，比报错更难发现
+            int affected = CrossTenantOperations.execute(() -> taskMapper.update(null, update));
             if (affected > 0) {
                 log.info("[agent-task] marked {} orphan tasks as failed after restart", affected);
             }
