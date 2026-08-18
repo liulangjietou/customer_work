@@ -3,6 +3,8 @@ package com.richard.fyoung.customeradmin.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -46,6 +48,24 @@ class AdminProductionReadinessValidatorTest {
             () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
 
         assertTrue(error.getMessage().contains("admin.sandbox.docker.network"));
+    }
+
+    @Test
+    void aiCodingFeatures_shouldBeForbiddenInProduction() {
+        List<String> featureKeys = List.of(
+            "admin.sandbox.features.command-execution-enabled",
+            "admin.sandbox.features.diagnosis-enabled",
+            "admin.sandbox.features.refactor-enabled",
+            "admin.sandbox.features.management-enabled");
+
+        for (String featureKey : featureKeys) {
+            MockEnvironment environment = validEnvironment().withProperty(featureKey, "true");
+
+            IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+            assertTrue(error.getMessage().contains(featureKey));
+        }
     }
 
     @Test

@@ -20,6 +20,11 @@ public class AdminProductionReadinessValidator implements InitializingBean {
     private static final String DEV_AES_KEY = "0123456789abcdef0123456789abcdef";
     private static final String DEV_AGENT_SECRET = "dev-agent-secret-change-me-0001";
     private static final String DEV_MINIO_CREDENTIAL = "minioadmin";
+    private static final List<String> FORBIDDEN_PRODUCTION_AI_CODING_FEATURES = List.of(
+        "admin.sandbox.features.command-execution-enabled",
+        "admin.sandbox.features.diagnosis-enabled",
+        "admin.sandbox.features.refactor-enabled",
+        "admin.sandbox.features.management-enabled");
 
     private final Environment environment;
 
@@ -58,6 +63,8 @@ public class AdminProductionReadinessValidator implements InitializingBean {
             require(violations, "admin.sandbox.docker.network",
                 "none".equalsIgnoreCase(value("admin.sandbox.docker.network")));
         }
+        FORBIDDEN_PRODUCTION_AI_CODING_FEATURES.forEach(key ->
+            require(violations, key, !environment.getProperty(key, Boolean.class, false)));
 
         requireRemote(violations, "customer-work.attachment.storage.minio.endpoint");
         requireNonDefaultSecret(violations, "customer-work.attachment.storage.minio.access-key",
