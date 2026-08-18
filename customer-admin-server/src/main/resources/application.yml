@@ -87,6 +87,9 @@ admin:
     # 开放 API（/api/open/**）访问令牌，供 customer-channel 等外部模块通过请求头 X-Open-Api-Token 调用。
     # 无默认值：未配置时所有开放 API 一律 401（见 OpenApiAuthInterceptor），不留“空 token 放行”后门。
     token: ${ADMIN_OPEN_API_TOKEN:}
+    # 多租户开启时必须配置 token -> tenantId 映射，旧的全局 token 会被拒绝。
+    # 推荐通过外部 Secret YAML 注入 admin.open-api.tenant-tokens，避免把令牌提交进仓库。
+    tenant-tokens: {}
   agent-memory:
     # 智能体长期记忆权威存储：留空（默认）= 落库 ai_agent_memory 表；
     # 需要存磁盘时在此显式指定根目录，记忆改存 {disk-root}/{agentCode}/MEMORY.md（不再读写库表）
@@ -147,6 +150,8 @@ admin:
     base-url: ${CW_BASE_URL:http://localhost:8080}
     # 坐席 WebSocket 接入地址（客服浏览器直连）。
     ws-url: ${CW_WS_URL:ws://localhost:8080/ws/agent}
+    # 运营接口（评测等）调用 8080 时使用的 API Key，须属于 8080 的 auth.api-keys/tenant-keys。
+    api-key: ${ADMIN_CUSTOMER_WORK_API_KEY:}
     # 坐席令牌签名密钥：必须与 8080 侧共享同一 env（CW_AGENT_WS_SECRET），否则签发的令牌 8080 校验不过。
     agent-secret: ${CW_AGENT_WS_SECRET:dev-agent-secret-change-me-0001}
     # WS 接入凭证有效期（小时）：签发给前端的长有效期凭证。
@@ -176,9 +181,10 @@ admin:
     retrieval-timeout-seconds: ${ADMIN_RAG_RETRIEVAL_TIMEOUT_SECONDS:10}
     test-query: ${ADMIN_RAG_TEST_QUERY:连通性测试}
   sandbox:
-    # VibeCoding 代码沙箱：local（默认，无隔离，直接跑宿主机）｜docker（容器隔离，需本机/服务器已装 Docker）。
+    # VibeCoding 代码沙箱：local（仅开发）｜docker（容器隔离）｜disabled（生产未提供隔离运行时时关闭执行）。
     mode: ${ADMIN_SANDBOX_MODE:local}
     execute-timeout-seconds: ${ADMIN_SANDBOX_EXECUTE_TIMEOUT_SECONDS:60}
+    permission-mode: ${ADMIN_SANDBOX_PERMISSION_MODE:bypass}
     docker:
       image: ${ADMIN_SANDBOX_DOCKER_IMAGE:maven:3.9-eclipse-temurin-17}
       memory-mb: ${ADMIN_SANDBOX_DOCKER_MEMORY_MB:512}
@@ -189,6 +195,16 @@ admin:
       # ToolGuardMiddleware 默认关闭——那里客服业务场景默认信任内部工具，这里 Agent 会执行任意
       # shell 命令，风险面更大，默认开更保守）。
       enabled: ${ADMIN_SANDBOX_GUARD_ENABLED:true}
+    hitl:
+      confirm-timeout-seconds: ${ADMIN_SANDBOX_HITL_CONFIRM_TIMEOUT_SECONDS:300}
+      batch-modify-threshold: ${ADMIN_SANDBOX_HITL_BATCH_MODIFY_THRESHOLD:3}
+    features:
+      # P1/P2 增量能力全部默认关闭，生产环境按功能逐项灰度开启。
+      command-execution-enabled: ${ADMIN_SANDBOX_COMMAND_EXECUTION_ENABLED:false}
+      diagnosis-enabled: ${ADMIN_SANDBOX_DIAGNOSIS_ENABLED:false}
+      refactor-enabled: ${ADMIN_SANDBOX_REFACTOR_ENABLED:false}
+      management-enabled: ${ADMIN_SANDBOX_MANAGEMENT_ENABLED:false}
+      idle-timeout-minutes: ${ADMIN_SANDBOX_IDLE_TIMEOUT_MINUTES:30}
   skill:
     # Skill 保存/上传时把 SKILL.md 正文发布到勾选的存储目标（minio/nacos/sftp）；运行时消费仍从数据库读。
     storage:
@@ -226,6 +242,12 @@ admin:
     # 客服机器人运行时配置发布：命中渠道绑定的智能体/模型被改动后，把运行时配置（模型/兜底/提示词/MCP/
     # maxIters）发布到 Nacos，8080 客服机器人监听热生效。默认关闭，不影响任何现有后台功能。
     # 载荷里的 API Key 密文用上面 admin.aes-secret-key 加密后原样携带，8080 侧用同一密钥（CUSTOMER_WORK_CONFIG_AES_KEY）解密。
+    scan-interval-ms: ${ADMIN_RUNTIME_PUBLISH_SCAN_INTERVAL_MS:5000}
+    lease-ms: ${ADMIN_RUNTIME_PUBLISH_LEASE_MS:60000}
+    batch-size: ${ADMIN_RUNTIME_PUBLISH_BATCH_SIZE:20}
+    max-attempts: ${ADMIN_RUNTIME_PUBLISH_MAX_ATTEMPTS:8}
+    base-backoff-ms: ${ADMIN_RUNTIME_PUBLISH_BASE_BACKOFF_MS:5000}
+    minimum-ack-count: ${ADMIN_RUNTIME_PUBLISH_MINIMUM_ACK_COUNT:1}
     nacos:
       enabled: ${ADMIN_RUNTIME_PUBLISH_NACOS_ENABLED:false}
       server-addr: ${ADMIN_RUNTIME_PUBLISH_NACOS_SERVER_ADDR:localhost:8848}

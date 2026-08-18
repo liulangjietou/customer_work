@@ -7,6 +7,9 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentStateAccessor;
+import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
+import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentStore;
 import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
 import io.agentscope.core.agent.Agent;
@@ -54,17 +57,19 @@ public class ChatHistoryService {
     private final ChatSessionStateQueryMapper sessionStateQueryMapper;
     /** 容器里注入的是 admin 自有的 {@code AdminChatAttachmentStore}（落 ai_chat_attachment），见 AdminAttachmentConfig。 */
     private final AttachmentStore attachmentStore;
+    private final AdminTenantProperties tenantProperties;
 
     public ChatHistoryService(AgentInstanceCache agentInstanceCache, AgentStateStore agentStateStore,
                                AgentStateAccessor agentStateAccessor, ChatHistoryCache historyCache,
                                ChatSessionStateQueryMapper sessionStateQueryMapper,
-                               AttachmentStore attachmentStore) {
+                               AttachmentStore attachmentStore, AdminTenantProperties tenantProperties) {
         this.agentInstanceCache = agentInstanceCache;
         this.agentStateStore = agentStateStore;
         this.agentStateAccessor = agentStateAccessor;
         this.historyCache = historyCache;
         this.sessionStateQueryMapper = sessionStateQueryMapper;
         this.attachmentStore = attachmentStore;
+        this.tenantProperties = tenantProperties;
     }
 
     /**
@@ -75,8 +80,10 @@ public class ChatHistoryService {
      * @param page 页码（从 1 起）
      * @param size 每页条数
      */
-    public PageResult<ChatSessionSummary> listSessions(String agentCode, long page, long size) {
-        long total = sessionStateQueryMapper.countSessions(agentCode);
+    public PageResult<ChatSessionSummary> listSessions(String agentCode, Long ownerUserId, long page, long size) {
+        String tenantId = tenantProperties.isEnabled() ? TenantContext.require() : TenantContext.DEFAULT;
+        String stateUserId = WorkspaceRuntimeScope.agent(agentCode);
+        long total = sessionStateQueryMapper.countSessions(tenantId, stateUserId, agentCode, ownerUserId);
         List<ChatSessionSummary> summaries = new ArrayList<>();
 
         PageResult<ChatSessionSummary> result = new PageResult<>();
@@ -89,18 +96,19 @@ public class ChatHistoryService {
         }
 
         long offset = (page - 1) * size;
-        List<String> prefixedSessionIds = sessionStateQueryMapper.pageSessionIds(agentCode, offset, size);
+        List<String> prefixedSessionIds = sessionStateQueryMapper.pageSessionIds(
+            tenantId, stateUserId, agentCode, ownerUserId, offset, size);
         if (CollectionUtils.isEmpty(prefixedSessionIds)) {
             return result;
         }
 
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
-        String prefix = agentCode + ":";
+        String prefix = stateUserId + ":";
         for (String prefixedSessionId : prefixedSessionIds) {
             // mapper 查出的是完整带前缀 id，resolve 用的是去前缀的裸 sessionId（与写入侧 listSessionIds 语义对齐）
             String sessionId = prefixedSessionId.startsWith(prefix)
                 ? prefixedSessionId.substring(prefix.length()) : prefixedSessionId;
-            List<Msg> context = agentStateAccessor.resolve(agent, agentCode, sessionId).getContext();
+            List<Msg> context = agentStateAccessor.resolve(agent, stateUserId, sessionId).getContext();
             if (context.isEmpty()) {
                 continue;
             }
@@ -118,7 +126,7 @@ public class ChatHistoryService {
         }
 
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
-        AgentState state = agentStateAccessor.resolve(agent, agentCode, sessionId);
+        AgentState state = agentStateAccessor.resolve(agent, WorkspaceRuntimeScope.agent(agentCode), sessionId);
         // 该会话的附件按绑定的 message_id 分组（未绑定的跳过）：查询失败 listBySession 已内置兜底返回空列表，
         // 不影响历史返回。附件通常按用户消息挂载，一条消息可带多个附件。
         Map<String, List<ChatMessageAttachmentVO>> attachmentsByMessage = attachmentStore.listBySession(sessionId).stream()
@@ -157,7 +165,8 @@ public class ChatHistoryService {
      */
     public Optional<ChatSessionSummary> getSessionSummary(String agentCode, String sessionId) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
-        List<Msg> context = agentStateAccessor.resolve(agent, agentCode, sessionId).getContext();
+        List<Msg> context = agentStateAccessor.resolve(
+            agent, WorkspaceRuntimeScope.agent(agentCode), sessionId).getContext();
         if (context.isEmpty()) {
             return Optional.empty();
         }

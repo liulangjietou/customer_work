@@ -40,5 +40,17 @@ public enum AiCodingOperation {
     KNOWLEDGE_INDEX,
 
     /** 代码知识库检索增强问答（P3-2，语义检索 top-k → 一次性模型作答）。 */
-    KNOWLEDGE_ASK
+    KNOWLEDGE_ASK,
+
+    /** 用户在会话沙箱内交互式执行命令（P1-2）。 */
+    COMMAND_EXECUTE,
+
+    /** 根据异常堆栈或日志诊断并修复问题（P2-1）。 */
+    DIAGNOSE,
+
+    /** 经过显式计划确认的自动化重构（P2-2）。 */
+    REFACTOR,
+
+    /** 手动停止并清理会话沙箱（P2-3）。 */
+    SANDBOX_CLEANUP
 }

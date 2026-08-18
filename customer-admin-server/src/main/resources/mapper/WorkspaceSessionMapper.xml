@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.workspace.session.mapper.WorkspaceSessionMapper">
+
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO ai_workspace_session
+            (tenant_id, agent_code, session_id, owner_user_id, created_at_ms, updated_at_ms)
+        VALUES
+            (#{tenantId}, #{agentCode}, #{sessionId}, #{ownerUserId}, #{nowMs}, #{nowMs})
+    </insert>
+
+    <select id="findByResource"
+            resultType="com.richard.fyoung.customeradmin.workspace.session.entity.WorkspaceSession">
+        SELECT id, tenant_id, agent_code, session_id, owner_user_id, created_at_ms, updated_at_ms
+        FROM ai_workspace_session
+        WHERE tenant_id = #{tenantId}
+          AND agent_code = #{agentCode}
+          AND session_id = #{sessionId}
+        LIMIT 1
+    </select>
+
+    <select id="countState" resultType="int">
+        SELECT COUNT(1)
+        FROM ai_chat_session_state
+        WHERE session_id = CONCAT(#{stateUserId}, ':', #{sessionId})
+    </select>
+</mapper>

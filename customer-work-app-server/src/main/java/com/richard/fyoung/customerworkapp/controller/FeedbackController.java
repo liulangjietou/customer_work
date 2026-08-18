@@ -3,6 +3,11 @@ package com.richard.fyoung.customerworkapp.controller;
 import com.richard.fyoung.customerwork.core.dto.FeedbackRequest;
 import com.richard.fyoung.customerwork.capability.feedback.FeedbackService;
 import com.richard.fyoung.customerwork.capability.feedback.MessageFeedback;
+import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
+import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
+import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
+import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerworkapp.service.UserSessionGuard;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -15,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -33,29 +39,68 @@ import java.util.List;
 public class FeedbackController {
 
     private final FeedbackService feedbackService;
+    private final ChatLogService chatLogService;
+    private final UserSessionGuard sessionGuard;
 
-    public FeedbackController(FeedbackService feedbackService) {
+    public FeedbackController(FeedbackService feedbackService, ChatLogService chatLogService,
+                              UserSessionGuard sessionGuard) {
         this.feedbackService = feedbackService;
+        this.chatLogService = chatLogService;
+        this.sessionGuard = sessionGuard;
     }
 
     @Operation(summary = "提交消息反馈", description = "同一 messageId 重复提交按最新一次覆盖")
     @PostMapping
-    public Mono<MessageFeedback> submit(@Valid @RequestBody FeedbackRequest request) {
-        return Mono.fromCallable(() -> feedbackService.submit(
-            request.sessionId(), request.messageId(), request.type(), request.comment()));
+    public Mono<MessageFeedback> submit(@Valid @RequestBody FeedbackRequest request, ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+            sessionGuard.requireOwned(request.sessionId(), principal(exchange).userId());
+            requireMessageInSession(request.messageId(), request.sessionId());
+            return feedbackService.submit(
+                request.sessionId(), request.messageId(), request.type(), request.comment());
+        });
     }
 
     @Operation(summary = "查询单条消息反馈")
     @GetMapping("/{messageId}")
-    public Mono<MessageFeedback> get(@PathVariable String messageId) {
-        return Mono.justOrEmpty(feedbackService.find(messageId))
-            .switchIfEmpty(Mono.error(new ResponseStatusException(
-                HttpStatus.NOT_FOUND, "feedback not found: " + messageId)));
+    public Mono<MessageFeedback> get(@PathVariable String messageId, ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+            MessageFeedback feedback = feedbackService.find(messageId)
+                .orElseThrow(() -> new ResponseStatusException(
+                    HttpStatus.NOT_FOUND, "feedback not found: " + messageId));
+            sessionGuard.requireOwned(feedback.sessionId(), principal(exchange).userId());
+            return feedback;
+        });
     }
 
     @Operation(summary = "查询某会话全部反馈")
     @GetMapping
-    public Mono<List<MessageFeedback>> listBySession(@RequestParam String sessionId) {
-        return Mono.fromCallable(() -> feedbackService.findBySession(sessionId));
+    public Mono<List<MessageFeedback>> listBySession(@RequestParam String sessionId,
+                                                     ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+            sessionGuard.requireOwned(sessionId, principal(exchange).userId());
+            return feedbackService.findBySession(sessionId);
+        });
+    }
+
+    private UserPrincipal principal(ServerWebExchange exchange) {
+        UserPrincipal principal = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
+        }
+        return principal;
+    }
+
+    /** 消息不存在或不属于当前会话统一 404，不能让可伪造的 messageId 覆盖他人反馈。 */
+    private ChatMessage requireMessageInSession(String messageId, String sessionId) {
+        ChatMessage message = chatLogService.findByMessageId(messageId)
+            .orElseThrow(FeedbackController::messageNotFound);
+        if (!sessionId.equals(message.sessionId())) {
+            throw messageNotFound();
+        }
+        return message;
+    }
+
+    private static ResponseStatusException messageNotFound() {
+        return new ResponseStatusException(HttpStatus.NOT_FOUND, "message not found");
     }
 }

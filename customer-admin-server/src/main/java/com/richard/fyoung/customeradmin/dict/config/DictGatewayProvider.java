@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 
 /**
  * 客服端库字典门面的惰性提供者。
@@ -35,11 +36,12 @@ public class DictGatewayProvider {
     private final DictProperties properties;
     private final CrossDbGatewayProvider<DictGateway> delegate;
 
-    public DictGatewayProvider(DictProperties properties) {
+    public DictGatewayProvider(DictProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
         this.delegate = CrossDbGateways.lazy(this::connectionSettings,
             DictGatewayFactory.MAPPER_CLASSES,
             DictGatewayFactory.MAPPER_XML_LOCATIONS,
+            tenantPlugins::create,
             DictGatewayFactory::build);
     }
 

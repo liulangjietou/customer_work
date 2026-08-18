@@ -18,6 +18,15 @@ import org.springframework.stereotype.Component;
 public class RuntimePublishProperties {
 
     private Nacos nacos = new Nacos();
+    /** 发布 worker 扫描周期。 */
+    private long scanIntervalMs = 5000;
+    /** 单次租约时长，必须覆盖模型探测 + Nacos 往返。 */
+    private long leaseMs = 60000;
+    private int batchSize = 20;
+    private int maxAttempts = 8;
+    private long baseBackoffMs = 5000;
+    /** 至少多少个实例 APPLIED 才算整体已应用。 */
+    private int minimumAckCount = 1;
 
     /** Nacos 配置中心发布目标（与 starter 消费端 {@code customer-work.nacos.*} 对齐）。 */
     @Data

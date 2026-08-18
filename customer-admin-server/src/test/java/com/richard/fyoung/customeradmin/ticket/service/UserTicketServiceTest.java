@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.ticket.config.CustomerWorkClientProperti
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.WsCredentialVO;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -101,5 +102,17 @@ class UserTicketServiceTest {
         long expectedMin = before + EXPIRE_HOURS * 3600_000L;
         long expectedMax = after + EXPIRE_HOURS * 3600_000L;
         assertTrue(credential.expiresAtMs() >= expectedMin && credential.expiresAtMs() <= expectedMax);
+    }
+
+    @Test
+    void issueWsCredential_shouldBindCurrentTenantWhenTenantContextExists() {
+        WsCredentialVO credential = TenantContext.callWith(
+            "tenant-a", () -> service.issueWsCredential("alice"));
+
+        AgentAccessCredential.AgentIdentity identity = AgentAccessCredential
+            .verifyIdentity(credential.token(), SECRET, System.currentTimeMillis())
+            .orElseThrow();
+        assertEquals("alice", identity.agentId());
+        assertEquals("tenant-a", identity.tenantId());
     }
 }

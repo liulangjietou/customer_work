@@ -660,7 +660,7 @@ Plus + Pinia + Vue Router + Axios。至此《客服项目后台管理系统需�
   到 `/actuator/prometheus`（无 Micrometer 时 no-op）；新增指标记录单测。
 - **人工审批闭环（Human-in-the-Loop）**：新增 `approval` 包（`PendingApprovalService` + `ApprovalRequest` 充血状态机
   + `ApprovalType`/`ApprovalStatus`）与 `ApprovalController`（`GET /approvals`、`POST /approvals/{id}/approve|deny`）；
-  退款工具 `submitRefund` 登记待审单（附审批单号），人工放行后经回调执行打款——**挂起 → 人工决策 → 生效** 闭环。
+  退款工具 `submitRefund` 登记待审单（附审批单号），人工放行后由资金执行器完成动作——**挂起 → 人工决策 → 生效** 闭环。
   与框架 Permission ASK（工具调用层闸门）互补；之所以落应用层而非绑定 `ReActAgent.CONFIRM_SINK_KEY`，因后者
   在 RC4 未暴露 Web 友好的公共回填 API。状态机终态不可变、重复决策 409、not-found 404。新增 7 个单测。
 - **多 Agent 规则快车道（借鉴阿里商旅 AliGo 快慢车道）**：`MultiAgentOrchestrator` 路由前置规则层

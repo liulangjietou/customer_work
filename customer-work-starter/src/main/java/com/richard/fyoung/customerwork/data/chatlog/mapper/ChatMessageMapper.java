@@ -13,6 +13,9 @@ import java.util.List;
  */
 public interface ChatMessageMapper extends BaseMapper<ChatMessageDO> {
 
+    /** 按业务消息号精确查询。 */
+    ChatMessageDO findByMessageId(@Param("messageId") String messageId);
+
     /** 会话维度游标翻页：取 id 小于 beforeId（为空则不限）的最新 limit 条，id 倒序。 */
     List<ChatMessageDO> findBySessionPage(@Param("sessionId") String sessionId,
                                           @Param("beforeId") Long beforeId,

@@ -98,6 +98,7 @@ class MybatisTicketStoreTest {
         t.close("done");
         store.update(t);
         assertTrue(store.findActiveBySession(session).isEmpty(), "已关闭后不应再算活跃");
+        assertTrue(store.findBySession(session).isPresent(), "归属校验必须仍能定位终态工单");
     }
 
     @Test

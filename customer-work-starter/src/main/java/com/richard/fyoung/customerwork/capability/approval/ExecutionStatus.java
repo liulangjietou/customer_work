@@ -12,6 +12,9 @@ public enum ExecutionStatus {
     /** 不适用（工单尚未被批准，或已被拒绝）。 */
     NOT_APPLICABLE,
 
+    /** 某一实例已取得带 fencing token 的执行租约。 */
+    EXECUTING,
+
     /** 已批准且下游回调（如实际打款）执行成功。 */
     EXECUTED,
 

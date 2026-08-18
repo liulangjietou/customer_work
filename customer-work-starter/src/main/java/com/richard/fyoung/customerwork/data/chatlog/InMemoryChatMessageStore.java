@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.data.chatlog;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
@@ -26,6 +27,13 @@ public class InMemoryChatMessageStore implements ChatMessageStore {
         ChatMessage persisted = message.withId(idSeq.incrementAndGet());
         messages.add(persisted);
         return persisted;
+    }
+
+    @Override
+    public Optional<ChatMessage> findByMessageId(String messageId) {
+        return messages.stream()
+            .filter(message -> messageId != null && messageId.equals(message.messageId()))
+            .findFirst();
     }
 
     @Override

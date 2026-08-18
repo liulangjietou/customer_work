@@ -16,6 +16,8 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.channel.RuntimePublishProperties;
 import com.richard.fyoung.customeradmin.aiconfig.channel.entity.AiChannelBinding;
 import com.richard.fyoung.customeradmin.aiconfig.channel.mapper.AiChannelBindingMapper;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.service.RuntimePublishTaskService;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
@@ -23,12 +25,13 @@ import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
-import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.richard.fyoung.customeradmin.configversion.entity.ConfigType;
 import com.richard.fyoung.customeradmin.configversion.entity.PublishScope;
 import com.richard.fyoung.customeradmin.configversion.service.ConfigVersionService;
+import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -37,11 +40,19 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 
 /**
  * 客服机器人运行时配置发布器（仿 {@code NacosSkillPublisher}）。
@@ -50,7 +61,8 @@ import java.util.Properties;
  * 发布前<b>强制连通性探测</b>（不通过则拒绝发布，防坏配置下发）→ publishConfig 到 Nacos，8080 监听热生效。</p>
  *
  * <p>默认关闭（{@code admin.runtime-publish.nacos.enabled=false}）：关闭时所有发布方法直接跳过，不影响
- * 任何现有后台链路。自动触发（智能体/模型保存后）发布失败仅 {@code log.error}，可在渠道绑定页手动重发。</p>
+ * 任何现有后台链路。开启后，智能体/模型保存会在同一事务登记持久化发布任务；独立 worker 以租约抢占、
+ * 指数退避重试，避免 Nacos 短时不可用导致配置永久漏发。</p>
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -77,6 +89,8 @@ public class CustomerWorkConfigPublisher {
     private final RuntimePublishProperties properties;
     /** 发布快照记录；为 null 时只发布不留版本（版本化未装配的场景，行为与引入版本化之前一致）。 */
     private final ConfigVersionService versionService;
+    private final RuntimePublishTaskService taskService;
+    private final boolean tenantEnabled;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private volatile ConfigService configService;
@@ -89,7 +103,19 @@ public class CustomerWorkConfigPublisher {
                                        AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
                                        RuntimePublishProperties properties) {
         this(channelBindingMapper, agentMapper, modelConfigMapper, agentBackupModelMapper,
-            agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties, null);
+            agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
+            (ConfigVersionService) null, (RuntimePublishTaskService) null, false);
+    }
+
+    CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
+                                AiModelConfigMapper modelConfigMapper,
+                                AiAgentBackupModelMapper agentBackupModelMapper,
+                                AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
+                                AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
+                                RuntimePublishProperties properties, boolean tenantEnabled) {
+        this(channelBindingMapper, agentMapper, modelConfigMapper, agentBackupModelMapper,
+            agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
+            (ConfigVersionService) null, (RuntimePublishTaskService) null, tenantEnabled);
     }
 
     /**
@@ -105,7 +131,23 @@ public class CustomerWorkConfigPublisher {
                                        AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
                                        AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
                                        RuntimePublishProperties properties,
-                                       ObjectProvider<ConfigVersionService> versionServiceProvider) {
+                                       AdminTenantProperties tenantProperties,
+                                       ObjectProvider<ConfigVersionService> versionServiceProvider,
+                                       ObjectProvider<RuntimePublishTaskService> taskServiceProvider) {
+        this(channelBindingMapper, agentMapper, modelConfigMapper, agentBackupModelMapper,
+            agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
+            versionServiceProvider == null ? null : versionServiceProvider.getIfAvailable(),
+            taskServiceProvider == null ? null : taskServiceProvider.getIfAvailable(),
+            tenantProperties.isEnabled());
+    }
+
+    private CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
+                                        AiModelConfigMapper modelConfigMapper,
+                                        AiAgentBackupModelMapper agentBackupModelMapper,
+                                        AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
+                                        AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
+                                        RuntimePublishProperties properties, ConfigVersionService versionService,
+                                        RuntimePublishTaskService taskService, boolean tenantEnabled) {
         this.channelBindingMapper = channelBindingMapper;
         this.agentMapper = agentMapper;
         this.modelConfigMapper = modelConfigMapper;
@@ -115,7 +157,9 @@ public class CustomerWorkConfigPublisher {
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
         this.properties = properties;
-        this.versionService = versionServiceProvider == null ? null : versionServiceProvider.getIfAvailable();
+        this.versionService = versionService;
+        this.taskService = taskService;
+        this.tenantEnabled = tenantEnabled;
     }
 
     /** 发布能力是否启用（供 Controller 手动发布前门禁判断）。 */
@@ -125,13 +169,20 @@ public class CustomerWorkConfigPublisher {
 
     /**
      * 自动触发发布：某智能体被改动后，若它命中启用中的渠道绑定则重新下发运行时配置。
-     * 失败仅记 error（不抛，不阻断保存链路），可在渠道绑定页手动重发。
+     * 可靠任务与业务修改同事务提交，发布失败由 worker 自动退避重试。
      *
-     * <p>调用点多在 {@code @Transactional} 写方法内：实际发布（含秒级连通性探测 + Nacos 往返）注册到
-     * <b>事务提交后</b>执行（{@link #runAfterCommitOrNow}），避免长事务占连接，且事务回滚时不下发已回滚的配置。</p>
+     * <p>正常容器中先把任务与业务修改同事务落库；仅在未装配任务服务的兼容场景，才由
+     * {@link #runAfterCommitOrNow} 在提交后直接发布。</p>
      */
     public void publishForAgentId(Long agentId) {
         if (!isEnabled() || agentId == null) {
+            return;
+        }
+        if (taskService != null) {
+            if (!hasEnabledBinding(agentId)) {
+                return;
+            }
+            taskService.enqueueAgent(agentId);
             return;
         }
         runAfterCommitOrNow(() -> doPublishForAgentId(agentId));
@@ -139,11 +190,15 @@ public class CustomerWorkConfigPublisher {
 
     /**
      * 自动触发发布：某模型配置被改动后，重新下发所有「以该模型为主模型或备用模型」且命中绑定的智能体配置。
-     * 与 {@code ModelConfigService#evictAgentsReferencingModel} 的失效范围对齐。失败仅记 error。
-     * 事务语义同 {@link #publishForAgentId}（提交后执行）。
+     * 与 {@code ModelConfigService#evictAgentsReferencingModel} 的失效范围对齐。
+     * 事务语义同 {@link #publishForAgentId}。
      */
     public void publishForModelId(Long modelId) {
         if (!isEnabled() || modelId == null) {
+            return;
+        }
+        if (taskService != null) {
+            referencingAgentIds(modelId).forEach(this::publishForAgentId);
             return;
         }
         runAfterCommitOrNow(() -> doPublishForModelId(modelId));
@@ -184,6 +239,12 @@ public class CustomerWorkConfigPublisher {
 
     /** 实际按模型发布（已在事务外/提交后执行）。 */
     private void doPublishForModelId(Long modelId) {
+        for (Long agentId : referencingAgentIds(modelId)) {
+            doPublishForAgentId(agentId);
+        }
+    }
+
+    private List<Long> referencingAgentIds(Long modelId) {
         List<Long> agentIds = new ArrayList<>(agentMapper.selectList(
                 new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getModelId, modelId))
             .stream().map(AiAgent::getId).toList());
@@ -194,21 +255,28 @@ public class CustomerWorkConfigPublisher {
                     agentIds.add(id);
                 }
             });
-        for (Long agentId : agentIds) {
-            doPublishForAgentId(agentId);
-        }
+        return agentIds;
+    }
+
+    private boolean hasEnabledBinding(Long agentId) {
+        return channelBindingMapper.selectCount(new LambdaQueryWrapper<AiChannelBinding>()
+            .eq(AiChannelBinding::getAgentId, agentId)
+            .eq(AiChannelBinding::getStatus, STATUS_ENABLED)) > 0;
     }
 
     /**
-     * 手动重发（渠道绑定页「重新发布」按钮）：探测不过或发布失败时抛异常，由 Controller 转成业务错误码。
+     * 手动重发（渠道绑定页「重新发布」按钮）：正常容器先可靠入队，探测与投递结果由任务状态呈现。
      *
-     * @return 发布使用的 dataId（便于前端提示）
+     * @return 正常容器返回可靠任务 ID；兼容测试/未装配任务服务时返回发布使用的 dataId
      */
     public String republishByChannel(String channelCode) {
         AiChannelBinding binding = channelBindingMapper.selectOne(
             new LambdaQueryWrapper<AiChannelBinding>().eq(AiChannelBinding::getChannelCode, channelCode));
         if (binding == null) {
             throw new IllegalArgumentException("channel binding not found: " + channelCode);
+        }
+        if (taskService != null) {
+            return taskService.enqueueAgent(binding.getAgentId());
         }
         return doPublish(binding);
     }
@@ -230,6 +298,7 @@ public class CustomerWorkConfigPublisher {
         assertConnectivity(primary);
 
         CustomerWorkRuntimeConfig payload = assemble(agent, primary);
+        enrichMetadata(payload, UUID.randomUUID().toString());
         String json = serialize(payload);
         return publishJson(agent.getAgentCode(), agent.getId(), json,
             binding.getChannelCode(), PublishScope.FULL, null, null, null);
@@ -248,6 +317,13 @@ public class CustomerWorkConfigPublisher {
     public String publishJson(String targetCode, Long targetId, String json, String channelCode,
                               PublishScope scope, String grayTenants, Integer sourceVersion, String remark) {
         String dataId = resolveDataId(scope, grayTenants);
+        return publishJsonToDataId(targetCode, targetId, json, channelCode, scope,
+            grayTenants, sourceVersion, remark, dataId);
+    }
+
+    private String publishJsonToDataId(String targetCode, Long targetId, String json, String channelCode,
+                                       PublishScope scope, String grayTenants, Integer sourceVersion,
+                                       String remark, String dataId) {
         try {
             boolean ok = configService().publishConfig(dataId, properties.getNacos().getGroup(), json);
             if (!ok) {
@@ -310,6 +386,59 @@ public class CustomerWorkConfigPublisher {
         }
     }
 
+    /** 为可靠任务组装当前快照。快照只存于 worker 内存，任务表不复制密钥密文。 */
+    public PreparedRuntimeConfig prepareTask(RuntimePublishTask task) {
+        List<AiChannelBinding> bindings = channelBindingMapper.selectList(
+            new LambdaQueryWrapper<AiChannelBinding>()
+                .eq(AiChannelBinding::getAgentId, task.getTargetId())
+                .eq(AiChannelBinding::getStatus, STATUS_ENABLED));
+        if (CollectionUtils.isEmpty(bindings)) {
+            throw new IllegalStateException("enabled channel binding not found for agent: " + task.getTargetId());
+        }
+        AiChannelBinding binding = bindings.get(0);
+        AiAgent agent = agentMapper.selectById(task.getTargetId());
+        if (agent == null) {
+            throw new IllegalStateException("bound agent not found: " + task.getTargetId());
+        }
+        AiModelConfig primary = modelConfigMapper.selectById(agent.getModelId());
+        if (primary == null) {
+            throw new IllegalStateException("primary model not found for agent: " + agent.getAgentCode());
+        }
+        assertConnectivity(primary);
+        String revision = StringUtils.hasText(task.getRevision())
+            ? task.getRevision() : UUID.randomUUID().toString();
+        CustomerWorkRuntimeConfig payload = assemble(agent, primary);
+        String publishedAt = LocalDateTime.ofInstant(
+            Instant.ofEpochMilli(task.getCreatedAtMs()), ZoneOffset.UTC).toString();
+        enrichMetadata(payload, revision, publishedAt);
+        return new PreparedRuntimeConfig(agent.getAgentCode(), binding.getChannelCode(),
+            resolveTaskDataId(task.getTenantId()), properties.getNacos().getGroup(), revision,
+            payload.getContentHash(), serialize(payload));
+    }
+
+    /** 任务 worker 复用既有 Nacos 发布入口，失败交给任务退避重试。 */
+    public void publishPrepared(RuntimePublishTask task, PreparedRuntimeConfig prepared) {
+        publishJsonToDataId(prepared.targetCode(), task.getTargetId(), prepared.json(), prepared.channelCode(),
+            PublishScope.valueOf(task.getPublishScope()), task.getGrayTenants(),
+            task.getSourceVersion(), task.getRemark(), prepared.dataId());
+    }
+
+    /** 多租户任务必须写租户专属 dataId，禁止不同租户互相覆盖模型密文。 */
+    private String resolveTaskDataId(String tenantId) {
+        if (!tenantEnabled) {
+            return properties.getNacos().getDataId();
+        }
+        if (!StringUtils.hasText(tenantId)) {
+            throw new IllegalStateException("runtime publish task tenant is missing");
+        }
+        return grayDataId(tenantId.trim());
+    }
+
+    public record PreparedRuntimeConfig(String targetCode, String channelCode, String dataId,
+                                        String groupName, String revision, String contentHash,
+                                        String json) {
+    }
+
     private void recordFailure(String targetCode, Long targetId, String json, String reason) {
         if (versionService == null) {
             return;
@@ -356,6 +485,30 @@ public class CustomerWorkConfigPublisher {
         return cfg;
     }
 
+    /** 内容摘要排除发布时间和 revision，用于崩溃重试时核对快照未漂移。 */
+    private void enrichMetadata(CustomerWorkRuntimeConfig payload, String revision) {
+        enrichMetadata(payload, revision, LocalDateTime.now().toString());
+    }
+
+    private void enrichMetadata(CustomerWorkRuntimeConfig payload, String revision, String publishedAt) {
+        payload.setPublishedAt(null);
+        payload.setRevision(null);
+        payload.setContentHash(null);
+        payload.setContentHash(sha256(serialize(payload)));
+        payload.setPublishedAt(publishedAt);
+        payload.setRevision(revision);
+    }
+
+    private String sha256(String content) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(content.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
     /** 兜底模型 = 智能体备用模型列表第一个（按 sort_order 升序）；无备用则不启用兜底。 */
     private CustomerWorkRuntimeConfig.Fallback assembleFallback(Long agentId, Long primaryModelId) {
         List<AiAgentBackupModel> backups = agentBackupModelMapper.selectList(
@@ -390,7 +543,10 @@ public class CustomerWorkConfigPublisher {
             return new ArrayList<>();
         }
         List<CustomerWorkRuntimeConfig.McpServer> servers = new ArrayList<>();
-        for (AiMcp mcp : mcpMapper.selectBatchIds(mcpIds)) {
+        List<AiMcp> mcpConfigs = mcpMapper.selectBatchIds(mcpIds).stream()
+            .sorted(Comparator.comparing(AiMcp::getId))
+            .toList();
+        for (AiMcp mcp : mcpConfigs) {
             if (mcp.getStatus() != null && mcp.getStatus() != STATUS_ENABLED) {
                 continue;
             }

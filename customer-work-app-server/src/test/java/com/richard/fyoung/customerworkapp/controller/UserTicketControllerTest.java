@@ -8,6 +8,7 @@ import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
 import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerworkapp.service.UserSessionGuard;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
@@ -26,7 +27,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 
 /**
- * 用户工单端点切片测试：越权 403、非法流转 409、正常建会话/确认链路。
+ * 用户工单端点切片测试：越权隐藏为 404、非法流转 409、正常建会话/确认链路。
  * @author owlzhangfq@gmail.com
  */
 @WebFluxTest(UserTicketController.class)
@@ -47,6 +48,9 @@ class UserTicketControllerTest {
     @MockBean
     private ChatLogService chatLogService;
 
+    @MockBean
+    private UserSessionGuard userSessionGuard;
+
     private String bearer() {
         return "Bearer " + jwtService.issue(USER_ID, "alice", "Alice");
     }
@@ -56,14 +60,14 @@ class UserTicketControllerTest {
     }
 
     @Test
-    void getTicket_notOwner_shouldReturn403() {
+    void getTicket_notOwner_shouldReturn404() {
         Ticket foreign = Ticket.create("TK-9", "uOTHER:conv", "OTHER", "t", TicketCategory.CONSULT);
         when(ticketService.find("TK-9")).thenReturn(Optional.of(foreign));
 
         webTestClient.get().uri("/api/customer/user/tickets/TK-9")
             .header(HttpHeaders.AUTHORIZATION, bearer())
             .exchange()
-            .expectStatus().isForbidden();
+            .expectStatus().isNotFound();
     }
 
     @Test

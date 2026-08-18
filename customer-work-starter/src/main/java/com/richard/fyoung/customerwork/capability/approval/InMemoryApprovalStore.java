@@ -50,6 +50,76 @@ public class InMemoryApprovalStore implements ApprovalStore {
     }
 
     @Override
+    public synchronized boolean decide(String id, ApprovalStatus target, String operator,
+                                       String note, long decidedAtMs) {
+        ApprovalRequest request = store.get(id);
+        if (request == null || request.getStatus() != ApprovalStatus.PENDING) {
+            return false;
+        }
+        if (target == ApprovalStatus.APPROVED) {
+            request.approve(operator, note, decidedAtMs);
+        } else if (target == ApprovalStatus.DENIED) {
+            request.deny(operator, note, decidedAtMs);
+        } else {
+            throw new IllegalArgumentException("unsupported approval decision: " + target);
+        }
+        return true;
+    }
+
+    @Override
+    public synchronized boolean claimExecution(String id, int maxAttempts,
+                                               long startedAtMs, String fencingToken) {
+        ApprovalRequest request = store.get(id);
+        if (request == null || request.getStatus() != ApprovalStatus.APPROVED
+            || request.getExecutionAttempts() >= maxAttempts
+            || (request.getExecutionStatus() != ExecutionStatus.NOT_APPLICABLE
+                && request.getExecutionStatus() != ExecutionStatus.EXECUTE_FAILED)) {
+            return false;
+        }
+        request.markExecuting(startedAtMs, fencingToken);
+        return true;
+    }
+
+    @Override
+    public synchronized boolean completeExecution(String id, String fencingToken,
+                                                  boolean success, String failureReason) {
+        ApprovalRequest request = store.get(id);
+        if (request == null || request.getExecutionStatus() != ExecutionStatus.EXECUTING
+            || request.getExecutionFailureReason() == null
+            || !request.getExecutionFailureReason().endsWith(":" + fencingToken)) {
+            return false;
+        }
+        if (success) {
+            request.markExecuted();
+        } else {
+            request.markExecutionFailed(failureReason);
+        }
+        return true;
+    }
+
+    @Override
+    public synchronized int recoverStuckExecutions(long startedBeforeMs) {
+        int recovered = 0;
+        for (ApprovalRequest request : store.values()) {
+            if (request.getExecutionStatus() == ExecutionStatus.EXECUTING
+                && executionStartedAt(request) < startedBeforeMs) {
+                request.markExecutionFailed("execution lease expired");
+                recovered++;
+            }
+        }
+        return recovered;
+    }
+
+    private long executionStartedAt(ApprovalRequest request) {
+        try {
+            String[] marker = request.getExecutionFailureReason().split(":", 3);
+            return Long.parseLong(marker[1]);
+        } catch (Exception ignored) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    @Override
     public void delete(String id) {
         store.remove(id);
     }

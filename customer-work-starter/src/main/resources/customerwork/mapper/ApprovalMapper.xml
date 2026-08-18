@@ -19,4 +19,39 @@
             execution_failure_reason = VALUES(execution_failure_reason),
             execution_attempts = VALUES(execution_attempts)
     </insert>
+
+    <update id="decide">
+        UPDATE cw_approval
+        SET status = #{target}, operator = #{operator}, decision_note = #{note}, decided_at_ms = #{decidedAtMs}
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+
+    <update id="claimExecution">
+        UPDATE cw_approval
+        SET execution_status = 'EXECUTING', execution_failure_reason = #{marker},
+            execution_attempts = execution_attempts + 1
+        WHERE id = #{id}
+          AND status = 'APPROVED'
+          AND execution_status IN ('NOT_APPLICABLE', 'EXECUTE_FAILED')
+          AND execution_attempts &lt; #{maxAttempts}
+    </update>
+
+    <update id="completeExecution">
+        UPDATE cw_approval
+        SET execution_status = #{target}, execution_failure_reason = #{failureReason}
+        WHERE id = #{id}
+          AND status = 'APPROVED'
+          AND execution_status = 'EXECUTING'
+          AND execution_failure_reason = #{expectedMarker}
+    </update>
+
+    <update id="recoverStuckExecutions">
+        UPDATE cw_approval
+        SET execution_status = 'EXECUTE_FAILED', execution_failure_reason = 'execution lease expired'
+        WHERE status = 'APPROVED'
+          AND execution_status = 'EXECUTING'
+          AND execution_failure_reason LIKE 'EXECUTING:%'
+          AND CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(execution_failure_reason, ':', 2), ':', -1)
+              AS UNSIGNED) &lt; #{startedBeforeMs}
+    </update>
 </mapper>

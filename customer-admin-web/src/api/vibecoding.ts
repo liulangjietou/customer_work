@@ -2,6 +2,9 @@ import { LLM_TIMEOUT_MS, request } from './request'
 import { streamSse, type SseHandlers } from '@/utils/sse'
 import type {
   ChatRequest,
+  ManagedSandboxView,
+  RefactorTaskRequest,
+  SandboxConfigView,
   CommitMessageRequest,
   CommitMessageResponse,
   GitDiffSummary,
@@ -26,6 +29,45 @@ export function streamVibeCoding(agentCode: string, req: ChatRequest, handlers: 
     attachmentIds: req.attachmentIds,
   }
   return streamSse(`/workspace/${agentCode}/vibecoding/stream`, body, handlers)
+}
+
+/** P1-2：在当前会话沙箱内执行命令并实时回显。 */
+export function streamSandboxCommand(agentCode: string, sessionId: string, command: string, handlers: SseHandlers) {
+  return streamSse(`/workspace/${agentCode}/vibecoding/execute`, { sessionId, command }, handlers)
+}
+
+/** P2-1：根据不可信日志数据定位、修复并验证。 */
+export function streamDiagnosis(agentCode: string, sessionId: string, log: string, handlers: SseHandlers) {
+  return streamSse(`/workspace/${agentCode}/vibecoding/diagnose`, { sessionId, log }, handlers)
+}
+
+/** P2-2：服务端先发 plan 并挂起，批准后执行自动化重构。 */
+export function streamRefactor(agentCode: string, req: RefactorTaskRequest, handlers: SseHandlers) {
+  return streamSse(`/workspace/${agentCode}/vibecoding/refactor`, req, handlers)
+}
+
+/** P2-3：当前生效的沙箱配置（只读安全视图）。 */
+export function getSandboxConfig(agentCode: string) {
+  return request<SandboxConfigView>({
+    url: `/workspace/${agentCode}/vibecoding/sandbox/config`,
+    method: 'get',
+  })
+}
+
+/** P2-3：当前用户在该智能体下的会话沙箱。 */
+export function listManagedSandboxes(agentCode: string) {
+  return request<ManagedSandboxView[]>({
+    url: `/workspace/${agentCode}/vibecoding/sandbox/sessions`,
+    method: 'get',
+  })
+}
+
+/** P2-3：幂等停止并删除会话沙箱。 */
+export function cleanupManagedSandbox(agentCode: string, sessionId: string) {
+  return request<boolean>({
+    url: `/workspace/${agentCode}/vibecoding/sandbox/sessions/${sessionId}`,
+    method: 'delete',
+  })
 }
 
 /** 安全中断该会话正在执行的流式对话（协作式中断，不保证立即生效）。 */

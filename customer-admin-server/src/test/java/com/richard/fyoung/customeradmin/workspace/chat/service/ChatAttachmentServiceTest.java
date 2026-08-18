@@ -52,6 +52,7 @@ class ChatAttachmentServiceTest {
 
     private static final String AGENT_CODE = "demo-agent";
     private static final String CHANNEL = "admin_chat";
+    private static final Long OWNER_USER_ID = 7L;
 
     private AiChatAttachmentMapper mapper;
     private AttachmentFileStorage fileStorage;
@@ -168,9 +169,10 @@ class ChatAttachmentServiceTest {
         entity.setFileSize(2048L);
         entity.setParseStatus("SUCCESS");
         entity.setParsedText("解析文本");
+        entity.setUploader(String.valueOf(OWNER_USER_ID));
         when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(entity);
 
-        ChatAttachmentDTO dto = service.getDetail(AGENT_CODE, "att-1");
+        ChatAttachmentDTO dto = service.getDetail(AGENT_CODE, "att-1", OWNER_USER_ID);
 
         assertEquals("att-1", dto.id());
         assertEquals("spec.pdf", dto.fileName());
@@ -184,7 +186,7 @@ class ChatAttachmentServiceTest {
         // 附件不存在 / agent_code 不匹配：findByIdAndAgentCode 查不到 → 业务异常
         when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(null);
 
-        assertThrows(BizException.class, () -> service.getDetail("other-agent", "att-x"));
+        assertThrows(BizException.class, () -> service.getDetail("other-agent", "att-x", OWNER_USER_ID));
     }
 
     @Test
@@ -198,9 +200,10 @@ class ChatAttachmentServiceTest {
         entity.setFileName("原始 文件.txt");
         entity.setMimeType("text/plain");
         entity.setStoragePath(key);
+        entity.setUploader(String.valueOf(OWNER_USER_ID));
         when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(entity);
 
-        ChatAttachmentService.LoadedFile loaded = service.loadFile(AGENT_CODE, "att-2");
+        ChatAttachmentService.LoadedFile loaded = service.loadFile(AGENT_CODE, "att-2", OWNER_USER_ID);
 
         assertArrayEquals(payload, loaded.bytes());
         assertEquals("text/plain", loaded.mimeType());
@@ -217,9 +220,10 @@ class ChatAttachmentServiceTest {
         entity.setFileName("blob.bin");
         entity.setMimeType("");
         entity.setStoragePath(key);
+        entity.setUploader(String.valueOf(OWNER_USER_ID));
         when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(entity);
 
-        ChatAttachmentService.LoadedFile loaded = service.loadFile(AGENT_CODE, "att-3");
+        ChatAttachmentService.LoadedFile loaded = service.loadFile(AGENT_CODE, "att-3", OWNER_USER_ID);
 
         assertEquals("application/octet-stream", loaded.mimeType());
     }
@@ -228,7 +232,7 @@ class ChatAttachmentServiceTest {
     void loadFile_shouldThrow_whenNotFound() {
         when(mapper.selectOne(any(QueryWrapper.class))).thenReturn(null);
 
-        assertThrows(BizException.class, () -> service.loadFile(AGENT_CODE, "missing"));
+        assertThrows(BizException.class, () -> service.loadFile(AGENT_CODE, "missing", OWNER_USER_ID));
     }
 
     @Test

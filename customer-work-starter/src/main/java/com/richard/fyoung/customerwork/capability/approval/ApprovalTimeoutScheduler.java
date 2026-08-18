@@ -64,14 +64,15 @@ public class ApprovalTimeoutScheduler {
             try {
                 approvalService.deny(req.getId(), "system-timeout",
                     "审批超时自动拒绝（timeout=" + properties.getHumanApproval().getTimeoutSeconds() + "s）");
-                log.warn("approval auto-denied due to timeout: id={}, type={}, createdAt={}",
+                log.info("approval auto-denied due to timeout: id={}, type={}, createdAt={}",
                     req.getId(), req.getType(), req.getCreatedAtMs());
             } catch (Exception e) {
-                log.error("auto-deny failed for approval {}: {}", req.getId(), e.getMessage());
+                log.error("approval auto-deny failed, code={}, id={}",
+                    "APPROVAL-TIMEOUT-DENY-FAIL", req.getId(), e);
             }
         } else {
             // escalate：记录告警，保持 PENDING 等待人工升级
-            log.warn("approval TIMEOUT ESCALATION: id={}, type={}, order={}, session={}, createdAt={}, age={}s",
+            log.info("approval timeout escalation: id={}, type={}, order={}, session={}, createdAt={}, age={}s",
                 req.getId(), req.getType(), req.getOrderId(), req.getSessionId(),
                 req.getCreatedAtMs(), (System.currentTimeMillis() - req.getCreatedAtMs()) / 1000);
         }

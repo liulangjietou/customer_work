@@ -11,6 +11,7 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 
 /**
  * APP 数据源（客服端库 {@code agent_scope_customer_work}）调用统计门面的惰性提供者。
@@ -33,11 +34,13 @@ public class AppAgentCallStatsGatewayProvider {
     private final AgentCallStatsAppProperties properties;
     private final CrossDbGatewayProvider<AgentCallStatsGateway> delegate;
 
-    public AppAgentCallStatsGatewayProvider(AgentCallStatsAppProperties properties) {
+    public AppAgentCallStatsGatewayProvider(AgentCallStatsAppProperties properties,
+                                            AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
         this.delegate = CrossDbGateways.lazy(this::connectionSettings,
             AgentCallStatsGatewayFactory.MAPPER_CLASSES,
             AgentCallStatsGatewayFactory.MAPPER_XML_LOCATIONS,
+            tenantPlugins::create,
             AgentCallStatsGatewayFactory::build);
     }
 

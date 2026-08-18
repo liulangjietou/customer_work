@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
 import io.agentscope.core.agent.Agent;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +34,11 @@ class AgentInstanceCacheTest {
             buildCount.incrementAndGet();
             return mock(Agent.class);
         });
+    }
+
+    @AfterEach
+    void clearTenant() {
+        TenantContext.clear();
     }
 
     @Test
@@ -70,5 +77,18 @@ class AgentInstanceCacheTest {
     void evict_unknownAgentCode_shouldBeNoOp() {
         cache.evict("never-built");
         // no exception
+    }
+
+    @Test
+    void getOrBuild_shouldIsolateSameAgentCode_betweenTenants() {
+        TenantContext.set("tenant-a");
+        Agent tenantA = cache.getOrBuild("agent-a");
+        TenantContext.set("tenant-b");
+        Agent tenantB = cache.getOrBuild("agent-a");
+        TenantContext.set("tenant-a");
+
+        assertNotSame(tenantA, tenantB);
+        assertSame(tenantA, cache.getOrBuild("agent-a"));
+        assertEquals(2, buildCount.get());
     }
 }

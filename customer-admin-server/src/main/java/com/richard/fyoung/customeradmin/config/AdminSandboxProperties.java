@@ -39,8 +39,15 @@ public class AdminSandboxProperties {
 
     private Hitl hitl = new Hitl();
 
+    /** AI 编码助手增量能力开关。全部默认关闭，按需灰度开启，不影响既有 VibeCoding 主链路。 */
+    private Features features = new Features();
+
     public boolean isDockerMode() {
         return "docker".equalsIgnoreCase(mode);
+    }
+
+    public boolean isDisabledMode() {
+        return "disabled".equalsIgnoreCase(mode);
     }
 
     /** 是否开启 Plan Mode 人工确认闭环（{@code admin.sandbox.permission-mode=hitl}）。 */
@@ -130,5 +137,20 @@ public class AdminSandboxProperties {
 
         private List<String> confirmableCommandPatterns = new ArrayList<>(DEFAULT_CONFIRMABLE_COMMAND_PATTERNS);
         private List<String> dependencyFilePatterns = new ArrayList<>(DEFAULT_DEPENDENCY_FILE_PATTERNS);
+    }
+
+    /**
+     * AI 编码助手 P1/P2 能力开关与会话沙箱回收参数。
+     *
+     * <p>命令执行、诊断、重构、沙箱管理均是新增攻击面，Java 默认值必须保持关闭；只有显式配置后才开放。
+     * {@code idleTimeoutMinutes} 只针对本模块管理的交互式命令沙箱，空闲超过阈值后在下一次查询/执行时回收。</p>
+     */
+    @Data
+    public static class Features {
+        private boolean commandExecutionEnabled = false;
+        private boolean diagnosisEnabled = false;
+        private boolean refactorEnabled = false;
+        private boolean managementEnabled = false;
+        private int idleTimeoutMinutes = 30;
     }
 }

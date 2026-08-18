@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.ticket.config;
 
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
@@ -35,7 +36,10 @@ public class CustomerWorkClientConfig {
         ClientHttpRequestInterceptor tokenInterceptor = (request, body, execution) -> {
             String agentId = currentAgentResolver.currentAgentId();
             long expiresAtMs = System.currentTimeMillis() + REQUEST_TOKEN_TTL_MS;
-            String token = AgentAccessCredential.sign(agentId, expiresAtMs, properties.getAgentSecret());
+            String tenantId = TenantContext.get();
+            String token = tenantId == null
+                ? AgentAccessCredential.sign(agentId, expiresAtMs, properties.getAgentSecret())
+                : AgentAccessCredential.sign(agentId, tenantId, expiresAtMs, properties.getAgentSecret());
             request.getHeaders().set(AGENT_TOKEN_HEADER, token);
             return execution.execute(request, body);
         };

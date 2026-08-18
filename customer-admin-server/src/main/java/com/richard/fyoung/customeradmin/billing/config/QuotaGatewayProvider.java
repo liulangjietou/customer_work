@@ -4,6 +4,7 @@ import com.richard.fyoung.customeradmin.billing.jdbc.QuotaGateway;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
@@ -34,11 +35,12 @@ public class QuotaGatewayProvider {
     private final ContentGuardProperties properties;
     private final CrossDbGatewayProvider<QuotaGateway> delegate;
 
-    public QuotaGatewayProvider(ContentGuardProperties properties) {
+    public QuotaGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
         this.delegate = CrossDbGateways.lazy(this::connectionSettings,
             QuotaGatewayFactory.MAPPER_CLASSES,
             QuotaGatewayFactory.MAPPER_XML_LOCATIONS,
+            tenantPlugins::create,
             QuotaGatewayFactory::build);
     }
 

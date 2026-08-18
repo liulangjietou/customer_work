@@ -1,12 +1,8 @@
 package com.richard.fyoung.customerwork.autoconfigure;
 
-import com.richard.fyoung.customerwork.infra.notification.LoggingNotificationChannel;
-import com.richard.fyoung.customerwork.infra.notification.NotificationChannel;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.context.annotation.Conditional;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 
 /**
@@ -23,14 +19,4 @@ import org.springframework.context.annotation.ComponentScan;
 @ConditionalOnProperty(prefix = "customer-work.modules.infra", name = "enabled", havingValue = "true", matchIfMissing = true)
 @ComponentScan("com.richard.fyoung.customerwork.infra")
 public class CustomerWorkInfraAutoConfiguration {
-
-    /**
-     * 默认主动通知通道(仅日志)。下游声明自己的 {@link NotificationChannel} Bean 即可覆盖,
-     * 复用飞书 / 钉钉等 Channel 推送把订单状态通知 / 满意度回访推达用户。
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    public NotificationChannel notificationChannel() {
-        return new LoggingNotificationChannel();
-    }
 }

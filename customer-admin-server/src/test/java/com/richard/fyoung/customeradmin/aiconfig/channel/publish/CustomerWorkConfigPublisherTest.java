@@ -9,6 +9,7 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.channel.RuntimePublishProperties;
 import com.richard.fyoung.customeradmin.aiconfig.channel.entity.AiChannelBinding;
 import com.richard.fyoung.customeradmin.aiconfig.channel.mapper.AiChannelBindingMapper;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
@@ -155,6 +156,36 @@ class CustomerWorkConfigPublisherTest {
         assertEquals("https://mcp.amap.com/mcp", cfg.getMcpServers().get(0).getUrl());
         assertEquals("streamable-http", cfg.getMcpServers().get(0).getTransport());
         assertEquals("Bearer y", cfg.getMcpServers().get(0).getHeaders().get("Authorization"));
+    }
+
+    @Test
+    void multiTenantTaskUsesTenantScopedDataId() {
+        RuntimePublishProperties properties = new RuntimePublishProperties();
+        properties.getNacos().setEnabled(true);
+        CustomerWorkConfigPublisher publisher = new CustomerWorkConfigPublisher(
+            bindingMapper, agentMapper, modelConfigMapper, backupModelMapper, agentMcpMapper,
+            mcpMapper, cryptoUtil, modelFactory, properties, true);
+        AiChannelBinding binding = new AiChannelBinding();
+        binding.setAgentId(1L);
+        binding.setChannelCode("webchat");
+        binding.setStatus(1);
+        when(bindingMapper.selectList(any())).thenReturn(List.of(binding));
+        when(agentMapper.selectById(1L)).thenReturn(agent());
+        AiModelConfig primary = model(100L, "openai", "gpt-4o", "CIPHER");
+        when(modelConfigMapper.selectById(100L)).thenReturn(primary);
+        when(cryptoUtil.decrypt("CIPHER")).thenReturn("sk-plain");
+        when(modelFactory.testConnectivity(anyString(), anyString(), anyString(), anyString()))
+            .thenReturn(new ModelTestResult(ModelTestResult.STATUS_SUCCESS, LocalDateTime.now(), "ok"));
+        when(backupModelMapper.selectList(any())).thenReturn(List.of());
+        when(agentMcpMapper.selectList(any())).thenReturn(List.of());
+        RuntimePublishTask task = new RuntimePublishTask();
+        task.setTargetId(1L);
+        task.setTenantId("tenant-a");
+        task.setCreatedAtMs(1L);
+
+        CustomerWorkConfigPublisher.PreparedRuntimeConfig prepared = publisher.prepareTask(task);
+
+        assertEquals("customer-work-runtime-config-tenant-tenant-a", prepared.dataId());
     }
 
     @Test

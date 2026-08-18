@@ -5,8 +5,8 @@ import reactor.core.publisher.Mono;
 /**
  * 主动通知出站通道（扩展点）：把主动服务消息推达用户。
  *
- * <p>默认 {@link LoggingNotificationChannel}（仅日志）；接入真实推送时声明自定义 Bean 即可覆盖——
- * 例如 customer-channel 提供基于飞书 webhook 的实现，<b>复用已有 Channel 推送能力</b>。</p>
+ * <p>开发环境默认 {@link LoggingNotificationChannel}（仅日志）；生产配置通用 Webhook，或声明自定义 Bean
+ * 覆盖，例如 customer-channel 提供的飞书实现。</p>
  * @author owlzhangfq@gmail.com
  */
 public interface NotificationChannel {
@@ -18,4 +18,12 @@ public interface NotificationChannel {
      * @param message 消息正文
      */
     Mono<Void> push(String target, String message);
+
+    /**
+     * 带稳定操作号的投递。需要可靠重投的生产通道应覆盖本方法，并把 operationId 传给下游作为幂等键；
+     * 旧通道默认回落两参方法，保持二进制兼容但只具备至少一次语义。
+     */
+    default Mono<Void> push(String operationId, String target, String message) {
+        return push(target, message);
+    }
 }

@@ -7,7 +7,7 @@ import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 智能体实例缓存：{@code agentCode -> Agent}，惰性重建、不预热。
+ * 智能体实例缓存：{@code tenantId + agentCode -> Agent}，惰性重建、不预热。
  *
  * <p>{@code ai_agent}/{@code ai_agent_mcp}/{@code ai_agent_skill}/{@code ai_model_config} 任一写操作
  * 成功后，对应 Service 会调用 {@link #evict}/{@link #evictAll} 清掉受影响的 agentCode；下次调用
@@ -25,14 +25,14 @@ public class AgentInstanceCache {
     }
 
     public Agent getOrBuild(String agentCode) {
-        return cache.computeIfAbsent(agentCode, factory::build);
+        return cache.computeIfAbsent(WorkspaceRuntimeScope.agent(agentCode), ignored -> factory.build(agentCode));
     }
 
     public void evict(String agentCode) {
-        cache.remove(agentCode);
+        cache.remove(WorkspaceRuntimeScope.agent(agentCode));
     }
 
     public void evictAll(Collection<String> agentCodes) {
-        agentCodes.forEach(cache::remove);
+        agentCodes.forEach(this::evict);
     }
 }

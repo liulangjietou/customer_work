@@ -111,6 +111,53 @@ public final class TestReportParser {
             durationMs, failureDetails, rawOutput, 1, false));
     }
 
+    /**
+     * 解析交互式运行面板的真实命令与输出。与 {@link #parse(String)} 共用计数/失败明细规则，但不再靠
+     * 输出特征反推原始命令，因此成功且无输出的 {@code javac}、{@code mvn compile} 也能稳定产出报告。
+     */
+    public static Optional<TestReport> parseCommand(String rawCommand, String output, int exitCode, long durationMs) {
+        if (!StringUtils.hasText(rawCommand)) {
+            return Optional.empty();
+        }
+        String commandText = rawCommand.trim().toLowerCase();
+        boolean isMavenTest = Pattern.compile("(^|[;&|\\s])(?:\\./)?mvnw?\\s+[^\\n]*\\btest\\b")
+            .matcher(commandText).find();
+        boolean isMavenBuild = isMavenTest || Pattern.compile("(^|[;&|\\s])(?:\\./)?mvnw?\\s+")
+            .matcher(commandText).find();
+        boolean isJavac = Pattern.compile("(^|[;&|\\s])javac\\s+").matcher(commandText).find();
+        if (!isMavenBuild && !isJavac) {
+            return Optional.empty();
+        }
+
+        String safeOutput = output == null ? "" : output;
+        int passed = 0;
+        int failed = 0;
+        int skipped = 0;
+        List<String> failureDetails = new ArrayList<>();
+        String command;
+        if (isMavenTest) {
+            command = COMMAND_MVN_TEST;
+            int[] counts = parseTestCounts(safeOutput);
+            int run = counts[0];
+            failed = counts[1] + counts[2];
+            skipped = counts[3];
+            passed = Math.max(0, run - failed - skipped);
+            failureDetails = collectFailureDetails(safeOutput, SUREFIRE_FAILURE_PATTERN);
+        } else if (isMavenBuild) {
+            command = commandText.contains(" compile") ? "mvn compile" : COMMAND_MVN;
+            failureDetails = collectFailureDetails(safeOutput, JAVAC_ERROR_PATTERN);
+        } else {
+            command = COMMAND_JAVAC;
+            failureDetails = collectFailureDetails(safeOutput, JAVAC_ERROR_PATTERN);
+        }
+        if (exitCode != 0 && !isMavenTest) {
+            failed = Math.max(1, failed);
+        }
+        boolean success = exitCode == 0 && failed == 0;
+        return Optional.of(new TestReport(command, exitCode, success, passed, failed, skipped,
+            durationMs, failureDetails, success ? null : truncateTail(safeOutput), 1, false));
+    }
+
     private static Integer parseExitCode(String output) {
         Matcher m = EXIT_CODE_PATTERN.matcher(output);
         return m.find() ? Integer.parseInt(m.group(1)) : null;

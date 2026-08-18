@@ -25,6 +25,9 @@ public class NacosProperties {
     private String password = "";
     private long timeoutMs = 3000;
 
+    /** 运行时配置首次订阅失败后的重试间隔；Nacos 恢复后无需重启实例。 */
+    private long runtimeConfigSubscribeRetryMs = 10000;
+
     /**
      * 服务注册对外暴露的实例 IP（供网关 lb:// 路由回连本实例）。留空则自动探测本机地址
      * （{@code InetAddress.getLocalHost()}）。多网卡 / 容器场景可用环境变量显式指定可达 IP。
@@ -44,6 +47,15 @@ public class NacosProperties {
      * 否则密文解不开、整份配置被判失败并保留旧配置。
      */
     private String configAesKey = "";
+
+    /** 运行时配置应用结果回传地址（admin 的 /api/open/runtime-config/acks）。 */
+    private String runtimeConfigAckUrl = "";
+
+    /** ACK 服务鉴权令牌，使用 admin 开放 API token。 */
+    private String runtimeConfigAckToken = "";
+
+    /** 实例稳定标识；留空时优先取 HOSTNAME，再回落 JVM 运行实例名。 */
+    private String runtimeConfigInstanceId = "";
 
     /**
      * 本实例所属租户编码，用于接收<b>按租户灰度</b>的运行时配置。

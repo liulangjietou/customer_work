@@ -1,15 +1,18 @@
 package com.richard.fyoung.customeradmin.openapi;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.util.StringUtils;
-import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.AsyncHandlerInterceptor;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -21,7 +24,7 @@ import java.util.Map;
  * 参考内网工作台 {@code WorkbenchAgentController} 的 X-Workbench-Token 自校验范式，做成拦截器复用。</p>
  * @author owlzhangfq@gmail.com
  */
-public class OpenApiAuthInterceptor implements HandlerInterceptor {
+public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
 
     /** 开放 API 令牌请求头名。 */
     public static final String HEADER_TOKEN = "X-Open-Api-Token";
@@ -31,21 +34,59 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final OpenApiProperties properties;
+    private final AdminTenantProperties tenantProperties;
 
-    public OpenApiAuthInterceptor(OpenApiProperties properties) {
+    public OpenApiAuthInterceptor(OpenApiProperties properties, AdminTenantProperties tenantProperties) {
         this.properties = properties;
+        this.tenantProperties = tenantProperties;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        String expected = properties.getToken();
         String actual = request.getHeader(HEADER_TOKEN);
-        if (!StringUtils.hasText(expected) || !expected.equals(actual)) {
+        String tenantId = authenticate(actual);
+        if (tenantId == null) {
             log.error("open api auth failed, code={}, uri={}", ERROR_CODE, request.getRequestURI());
             writeUnauthorized(response);
             return false;
         }
+        if (tenantProperties.isEnabled()) {
+            TenantContext.set(tenantId);
+        }
         return true;
+    }
+
+    @Override
+    public void afterConcurrentHandlingStarted(HttpServletRequest request, HttpServletResponse response,
+                                               Object handler) {
+        TenantContext.clear();
+    }
+
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+                                Object handler, Exception ex) {
+        TenantContext.clear();
+    }
+
+    private String authenticate(String actual) {
+        if (!StringUtils.hasText(actual)) {
+            return null;
+        }
+        if (!tenantProperties.isEnabled()) {
+            return constantTimeEquals(actual, properties.getToken()) ? TenantContext.DEFAULT : null;
+        }
+        String matchedTenant = null;
+        for (Map.Entry<String, String> entry : properties.getTenantTokens().entrySet()) {
+            if (constantTimeEquals(actual, entry.getKey()) && StringUtils.hasText(entry.getValue())) {
+                matchedTenant = entry.getValue();
+            }
+        }
+        return matchedTenant;
+    }
+
+    private boolean constantTimeEquals(String actual, String expected) {
+        return StringUtils.hasText(expected) && MessageDigest.isEqual(
+            actual.getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8));
     }
 
     private void writeUnauthorized(HttpServletResponse response) throws Exception {

@@ -150,6 +150,9 @@ public class CustomerWorkProperties {
     /** 死信队列配置：工具调用/通知发送失败后的兜底重投，量上来之后决定会不会丢单。 */
     private final DeadLetterProperties deadLetter = new DeadLetterProperties();
 
+    /** 主动通知出站：生产通过通用 Webhook 接入短信/IM 网关。 */
+    private final NotificationProperties notification = new NotificationProperties();
+
     /** 同库事务 Outbox：可靠投递工单事件等跨边界副作用。 */
     private final OutboxProperties outbox = new OutboxProperties();
 

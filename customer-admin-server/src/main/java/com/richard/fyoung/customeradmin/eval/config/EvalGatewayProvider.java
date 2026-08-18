@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.eval.config;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.capability.eval.EvalRunStore;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
@@ -21,8 +22,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>惰性建连，<b>绝不在 admin 启动期触碰客服端库</b>：后台不该因为客服端库没起来就启动不了。</p>
  *
- * <p><b>跨租户是刻意的</b>：跨库环境不挂租户拦截器，运营方要看的正是全部租户的评测表现。
- * 访问控制由 Controller 的权限点负责（照配额表先例）。</p>
+ * <p>跨库 SqlSessionFactory 与 admin 主库挂同一租户插件，默认只读当前有效租户；平台确需全租户汇总时
+ * 必须在已校验运营权限后显式进入 {@code CrossTenantOperations}，避免跨库门面成为隔离旁路。</p>
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -36,11 +37,12 @@ public class EvalGatewayProvider {
     private final ContentGuardProperties properties;
     private final CrossDbGatewayProvider<EvalRunStore> delegate;
 
-    public EvalGatewayProvider(ContentGuardProperties properties) {
+    public EvalGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
         this.delegate = CrossDbGateways.lazy(this::connectionSettings,
             EvalGatewayFactory.MAPPER_CLASSES,
             EvalGatewayFactory.MAPPER_XML_LOCATIONS,
+            tenantPlugins::create,
             EvalGatewayFactory::build);
     }
 

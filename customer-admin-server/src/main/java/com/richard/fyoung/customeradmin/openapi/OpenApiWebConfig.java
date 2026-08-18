@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.openapi;
 
+import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -15,14 +16,16 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class OpenApiWebConfig implements WebMvcConfigurer {
 
     private final OpenApiProperties properties;
+    private final AdminTenantProperties tenantProperties;
 
-    public OpenApiWebConfig(OpenApiProperties properties) {
+    public OpenApiWebConfig(OpenApiProperties properties, AdminTenantProperties tenantProperties) {
         this.properties = properties;
+        this.tenantProperties = tenantProperties;
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new OpenApiAuthInterceptor(properties))
+        registry.addInterceptor(new OpenApiAuthInterceptor(properties, tenantProperties))
             .addPathPatterns("/api/open/**");
     }
 }

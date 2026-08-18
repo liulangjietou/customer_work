@@ -29,6 +29,9 @@ public interface TicketStore {
     /** 查该会话的活跃工单（非 CLOSED 且非 RESOLVED 的最新一张，用于建单幂等与转人工定位）。 */
     Optional<Ticket> findActiveBySession(String sessionId);
 
+    /** 查该会话最新一张工单（包含终态，用于会话资源归属校验）。 */
+    Optional<Ticket> findBySession(String sessionId);
+
     /** 查该用户的活跃工单（非 CLOSED 且非 RESOLVED 的最新一张，用于用户级唯一活跃会话去重）。 */
     Optional<Ticket> findActiveByUser(String userId);
 

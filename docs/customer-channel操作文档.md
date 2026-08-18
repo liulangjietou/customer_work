@@ -109,7 +109,7 @@ java -jar customer-channel/target/customer-channel-2.2.0.jar   # 版本号随父
 | **Channel · 钉钉（IM 平台）** | 钉钉客户端（群 @ 机器人） | 开 `customer-channel.channel.dingtalk.enabled` 并配 `app-key/app-secret/robot-code` 后，本应用 Stream 模式连钉钉；在群里 @ 机器人即可对话 |
 | **Channel · 飞书 inbound（事件回调）** | `POST /api/channels/feishu/{channelId}/callback` | 开 `customer-channel.channel.feishu.enabled` 并配 `app-id/app-secret(+verification-token)` 后映射；飞书事件订阅填**公网**此地址，url_verification 握手通过即接收用户消息 |
 | **Channel · 飞书 outbound（推送）** | `POST /push/feishu?text=...` | 配 `customer-channel.channel.feishu.webhook-url`（+机器人关键词 `webhook-keyword`）后，主动把文本推送到飞书群 |
-| **主动服务（复用飞书推送）** | starter `POST /api/customer/notify/order-status\|survey` | customer-channel 的 `FeishuNotificationChannel`（`@Primary`）覆盖 starter 默认 `LoggingNotificationChannel`，把订单状态通知/满意度回访经飞书 webhook 推达；webhook 未配置时优雅降级为日志。即 starter 的主动服务（`ProactiveNotificationService`）在 customer-channel 中自动走飞书通道 |
+| **主动服务（复用飞书推送）** | starter `POST /api/customer/notify/order-status\|survey` | customer-channel 的 `FeishuNotificationChannel`（`@Primary`）覆盖 starter 默认通道，把订单状态通知/满意度回访经飞书 webhook 推达；webhook 未配置时返回失败，由 starter 死信闭环接管，不再以日志冒充送达 |
 | **Channel · 企业微信 inbound（回调）** | `GET/POST /api/channels/wecom/{channelId}/callback` | 开 `customer-channel.channel.wecom.enabled` 并配 `corp-id/agent-id/secret/token/encoding-aes-key` 后映射；企业微信自建应用回调地址填**公网**此地址，GET 验证通过即接收用户消息 |
 
 > 实测：10 个 `agentscope-*` actuator 端点均 200；`/actuator/agentscope-agents` 返回

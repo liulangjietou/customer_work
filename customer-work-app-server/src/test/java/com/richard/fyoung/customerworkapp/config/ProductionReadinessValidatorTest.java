@@ -52,11 +52,29 @@ class ProductionReadinessValidatorTest {
         assertFalse(error.getMessage().contains("REPLACE_ME"));
     }
 
+    @Test
+    void runtimeConfigWithoutDurableAck_shouldFail() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getNacos().setRuntimeConfigEnabled(true);
+        properties.getNacos().setConfigAesKey("1234567890abcdef");
+        properties.getNacos().setRuntimeConfigSubscribeRetryMs(0L);
+        properties.getOutbox().setStoreMode("memory");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-ack-url"));
+        assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-ack-token"));
+        assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-subscribe-retry-ms"));
+        assertTrue(error.getMessage().contains("customer-work.outbox.store-mode"));
+    }
+
     private CustomerWorkProperties validProperties() {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         properties.getModel().setApiKey("model-secret");
         properties.getSession().getMysql().setPassword("database-secret");
         properties.getSession().getMysql().setMigrationEnabled(true);
+        properties.getHumanApproval().setStoreMode("jdbc");
         properties.getSecurity().getAuth().setEnabled(true);
         properties.getSecurity().getAuth().setApiKeys(List.of("api-secret"));
         properties.getSecurity().getApprovalAuth().setEnabled(true);
@@ -66,6 +84,8 @@ class ProductionReadinessValidatorTest {
         properties.getDistributed().setCounterMode("redis");
         properties.getDistributed().setSessionLockMode("redis");
         properties.getSkill().setRepository("mysql");
+        properties.getNotification().setWebhookUrl("https://notify.internal.example/messages");
+        properties.getNotification().setAuthToken("notification-secret");
         return properties;
     }
 

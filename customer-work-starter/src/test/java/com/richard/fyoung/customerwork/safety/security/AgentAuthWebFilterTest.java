@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
@@ -10,6 +10,7 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -74,6 +75,45 @@ class AgentAuthWebFilterTest {
 
         assertTrue(invoked.get());
         assertEquals("agent-7", exchange.getAttribute(AgentAuthWebFilter.AGENT_ID_ATTR));
+    }
+
+    @Test
+    void tenantMode_tenantToken_shouldPropagateTrustedTenant() {
+        CustomerWorkProperties properties = props();
+        properties.getTenant().setEnabled(true);
+        AgentAuthWebFilter filter = new AgentAuthWebFilter(properties);
+        String token = AgentAccessCredential.sign(
+            "agent-7", "tenant-a", System.currentTimeMillis() + 60_000, SECRET);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/agent/tickets")
+                .header("X-Agent-Token", token));
+        AtomicReference<String> observedTenant = new AtomicReference<>();
+
+        filter.filter(exchange, current -> {
+            observedTenant.set(TenantContext.get());
+            return Mono.empty();
+        }).block();
+
+        assertEquals("tenant-a", observedTenant.get());
+        assertEquals("agent-7", exchange.getAttribute(AgentAuthWebFilter.AGENT_ID_ATTR));
+        assertFalse(TenantContext.isPresent());
+    }
+
+    @Test
+    void tenantMode_legacyTokenWithoutTenant_shouldReturn401() {
+        CustomerWorkProperties properties = props();
+        properties.getTenant().setEnabled(true);
+        AgentAuthWebFilter filter = new AgentAuthWebFilter(properties);
+        String token = AgentAccessCredential.sign("agent-7", System.currentTimeMillis() + 60_000, SECRET);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/agent/tickets")
+                .header("X-Agent-Token", token));
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        filter.filter(exchange, recordingChain(invoked)).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
     }
 
     @Test

@@ -27,10 +27,16 @@ public interface ChatSessionStateQueryMapper {
      * @param offset    偏移量（{@code (page-1)*size}）
      * @param limit     每页条数
      */
-    List<String> pageSessionIds(@Param("agentCode") String agentCode,
+    List<String> pageSessionIds(@Param("tenantId") String tenantId,
+                                @Param("stateUserId") String stateUserId,
+                                @Param("agentCode") String agentCode,
+                                @Param("ownerUserId") Long ownerUserId,
                                 @Param("offset") long offset,
                                 @Param("limit") long limit);
 
     /** 某智能体的去重会话总数（{@code COUNT(DISTINCT session_id)}），供分页总数。 */
-    long countSessions(@Param("agentCode") String agentCode);
+    long countSessions(@Param("tenantId") String tenantId,
+                       @Param("stateUserId") String stateUserId,
+                       @Param("agentCode") String agentCode,
+                       @Param("ownerUserId") Long ownerUserId);
 }

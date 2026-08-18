@@ -11,7 +11,7 @@ import reactor.core.scheduler.Schedulers;
 /**
  * 飞书主动通知通道：用已有飞书自定义机器人 webhook（{@link FeishuWebhookNotifier}）把主动服务消息推达，
  * <b>复用 Channel 推送能力</b>。覆盖 starter 的默认 {@code LoggingNotificationChannel}；
- * webhook 未配置时优雅降级为日志。
+ * webhook 未配置时 fast fail，由 starter 死信链路可靠留存，不伪装成功。
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -29,8 +29,7 @@ public class FeishuNotificationChannel implements NotificationChannel {
     @Override
     public Mono<Void> push(String target, String message) {
         if (!notifier.isConfigured()) {
-            log.info("[notify-feishu] webhook not configured, fallback log. target={}, message={}", target, message);
-            return Mono.empty();
+            return Mono.error(new IllegalStateException("feishu notification webhook is not configured"));
         }
         String text = target == null ? message : "@" + target + " " + message;
         return Mono.fromCallable(() -> notifier.push(text))

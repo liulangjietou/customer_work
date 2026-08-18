@@ -267,7 +267,7 @@ timeline
 | Anthropic / Gemini 模型 | 各厂商 SDK 依赖 | 代码已就绪，补依赖即可 |
 | RAGFlow / Haystack 知识库 | 对应 client | 同 Dify 模式扩展 `KnowledgeProvider` |
 | 远端云沙箱（k8s / e2b 等） | `agentscope-extensions-sandbox-*` | local / docker 沙箱已内置 |
-| 后台 AI 编码助手 P1~P3 | — | 交互式运行面板 / 智能 Bug 修复 / 多 Agent 协作编程，见[需求文档 §8](docs/AI编码助手需求文档.md) |
+| 后台 AI 编码助手 P1~P3 | P1-2 / P2-1~P2-3 已完成 | 交互式运行、Bug/日志诊断、自动化重构、沙箱管理与多 Agent 协作编程，见[需求文档 §8](docs/AI编码助手需求文档.md) |
 
 ## 七、文档地图
 

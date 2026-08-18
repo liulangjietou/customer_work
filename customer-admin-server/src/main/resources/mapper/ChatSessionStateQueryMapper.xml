@@ -9,18 +9,28 @@
 <mapper namespace="com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper">
 
     <select id="pageSessionIds" resultType="java.lang.String">
-        SELECT session_id
-        FROM ai_chat_session_state
-        WHERE session_id LIKE CONCAT(#{agentCode}, ':%')
-        GROUP BY session_id
-        ORDER BY MAX(updated_at) DESC
+        SELECT state.session_id
+        FROM ai_chat_session_state state
+        INNER JOIN ai_workspace_session owner
+               ON owner.tenant_id = #{tenantId}
+               AND owner.agent_code = #{agentCode}
+               AND owner.session_id = SUBSTRING(state.session_id, CHAR_LENGTH(#{stateUserId}) + 2)
+               AND owner.owner_user_id = #{ownerUserId}
+        WHERE state.session_id LIKE CONCAT(#{stateUserId}, ':%')
+        GROUP BY state.session_id
+        ORDER BY MAX(state.updated_at) DESC
         LIMIT #{offset}, #{limit}
     </select>
 
     <select id="countSessions" resultType="long">
-        SELECT COUNT(DISTINCT session_id)
-        FROM ai_chat_session_state
-        WHERE session_id LIKE CONCAT(#{agentCode}, ':%')
+        SELECT COUNT(DISTINCT state.session_id)
+        FROM ai_chat_session_state state
+        INNER JOIN ai_workspace_session owner
+               ON owner.tenant_id = #{tenantId}
+               AND owner.agent_code = #{agentCode}
+               AND owner.session_id = SUBSTRING(state.session_id, CHAR_LENGTH(#{stateUserId}) + 2)
+               AND owner.owner_user_id = #{ownerUserId}
+        WHERE state.session_id LIKE CONCAT(#{stateUserId}, ':%')
     </select>
 
 </mapper>

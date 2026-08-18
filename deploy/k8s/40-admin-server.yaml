@@ -50,6 +50,10 @@ spec:
                 configMapKeyRef:
                   name: customer-work-config
                   key: REDIS_PORT
+            # 多副本下禁止启动时全局清理非终态任务，否则滚动发布的新 Pod
+            # 会把旧 Pod 仍在执行的任务误标为失败。
+            - name: ADMIN_AGENT_TASK_CLEANUP_ORPHANS_ON_STARTUP
+              value: "false"
           resources:
             requests:
               cpu: "500m"

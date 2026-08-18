@@ -8,8 +8,18 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.entity.CodeReviewTa
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.CollaborativeCodingService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.GitAssistantService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.VibeCodingService;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.AiCodingTaskService;
+import com.richard.fyoung.customeradmin.workspace.runtime.SandboxCommandService;
+import com.richard.fyoung.customeradmin.workspace.runtime.SandboxCommandEvent;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customeradmin.workspace.session.service.WorkspaceSessionGuard;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommandExecuteRequest;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.CommandOutputEvent;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
+import reactor.core.publisher.Flux;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.eq;
@@ -27,8 +37,11 @@ class VibeCodingControllerReviewTest {
     private static final long CURRENT_USER = 7L;
 
     private final GitAssistantService gitAssistantService = mock(GitAssistantService.class);
+    private final WorkspaceSessionGuard sessionGuard = mock(WorkspaceSessionGuard.class);
+    private final SandboxCommandService sandboxCommandService = mock(SandboxCommandService.class);
     private final VibeCodingController controller = new VibeCodingController(
-        mock(VibeCodingService.class), gitAssistantService, mock(CollaborativeCodingService.class));
+        mock(VibeCodingService.class), gitAssistantService, mock(CollaborativeCodingService.class), sessionGuard,
+        sandboxCommandService, mock(AiCodingTaskService.class), new ObjectMapper());
 
     @Test
     void review_shouldSubmitWithCurrentUser_andReturnTaskId() {
@@ -54,6 +67,23 @@ class VibeCodingControllerReviewTest {
 
             assertEquals(vo, result.getData());
             verify(gitAssistantService).getReviewTask(eq(88L), eq(CURRENT_USER));
+        }
+    }
+
+    @Test
+    void execute_shouldClaimSessionAndMapCommandEventsToSse() {
+        when(sandboxCommandService.execute("coder", "s1", CURRENT_USER, "mvn test"))
+            .thenReturn(Flux.just(new SandboxCommandEvent("command_output",
+                new CommandOutputEvent("combined", "running", 1L))));
+        try (MockedStatic<StpUtil> stpUtil = mockStatic(StpUtil.class)) {
+            stpUtil.when(StpUtil::getLoginIdAsLong).thenReturn(CURRENT_USER);
+
+            List<org.springframework.http.codec.ServerSentEvent<String>> events = controller
+                .execute("coder", new CommandExecuteRequest("s1", "mvn test"))
+                .collectList().block();
+
+            assertEquals(List.of("command_output", "done"), events.stream().map(e -> e.event()).toList());
+            verify(sessionGuard).claimOrRequire("coder", "s1", CURRENT_USER);
         }
     }
 }

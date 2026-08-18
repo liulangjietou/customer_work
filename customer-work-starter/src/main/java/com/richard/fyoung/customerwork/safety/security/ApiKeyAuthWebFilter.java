@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import org.springframework.core.Ordered;
@@ -16,7 +17,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
-import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 
 /**
  * API Key 鉴权过滤器（接入层安全 + 服务端接入方的租户身份来源）。
@@ -42,7 +42,8 @@ public class ApiKeyAuthWebFilter implements WebFilter {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         SecurityProperties.Auth auth = properties.getSecurity().getAuth();
-        if (!auth.isEnabled() || isExempt(exchange.getRequest().getPath().value())) {
+        if (!auth.isEnabled()
+            || CustomerSecurityPaths.bypassesApiKey(exchange.getRequest().getPath().value())) {
             return chain.filter(exchange);
         }
         String provided = exchange.getRequest().getHeaders().getFirst(auth.getHeaderName());
@@ -104,18 +105,8 @@ public class ApiKeyAuthWebFilter implements WebFilter {
      * 而同步的 MyBatis 拦截器只认 ThreadLocal，若下游恰好没发生线程切换，就靠这里直接设的这一份。</p>
      */
     private Mono<Void> chainWithTenant(ServerWebExchange exchange, WebFilterChain chain, String tenantId) {
-        TenantContext.set(tenantId);
-        return chain.filter(exchange)
-            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId))
-            .doFinally(signal -> TenantContext.clear());
+        return Mono.defer(() -> TenantContext.callWith(tenantId, () -> chain.filter(exchange)))
+            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId));
     }
 
-    /** 健康检查、可观测端点、Swagger 文档免鉴权（便于探针 / 监控抓取 / 查看 API 文档）。 */
-    private boolean isExempt(String path) {
-        return path.startsWith("/actuator")
-            || path.equals("/api/customer/health")
-            || path.startsWith("/swagger-ui")
-            || path.startsWith("/v3/api-docs")
-            || path.startsWith("/webjars");
-    }
 }

@@ -1,5 +1,8 @@
 package com.richard.fyoung.customeradmin.openapi;
 
+import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -8,16 +11,32 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Map;
+
 /**
  * {@link OpenApiAuthInterceptor} 单测：token 未配置 / 缺失 / 不匹配一律 401，匹配放行。
  * @author owlzhangfq@gmail.com
  */
 class OpenApiAuthInterceptorTest {
 
+    @AfterEach
+    void clearTenant() {
+        TenantContext.clear();
+    }
+
     private OpenApiAuthInterceptor interceptor(String configuredToken) {
         OpenApiProperties props = new OpenApiProperties();
         props.setToken(configuredToken);
-        return new OpenApiAuthInterceptor(props);
+        return new OpenApiAuthInterceptor(props, new AdminTenantProperties());
+    }
+
+    private OpenApiAuthInterceptor tenantInterceptor(Map<String, String> tenantTokens) {
+        OpenApiProperties props = new OpenApiProperties();
+        props.setToken("legacy-token");
+        props.setTenantTokens(tenantTokens);
+        AdminTenantProperties tenant = new AdminTenantProperties();
+        tenant.setEnabled(true);
+        return new OpenApiAuthInterceptor(props, tenant);
     }
 
     private MockHttpServletRequest requestWithToken(String token) {
@@ -67,5 +86,33 @@ class OpenApiAuthInterceptorTest {
 
         assertTrue(pass);
         assertEquals(200, resp.getStatus());
+    }
+
+    @Test
+    void tenantModeShouldResolveTenantFromCredentialAndRejectLegacyToken() throws Exception {
+        OpenApiAuthInterceptor interceptor = tenantInterceptor(Map.of(
+            "tenant-a-token", "tenant-a",
+            "tenant-b-token", "tenant-b"));
+
+        assertTrue(interceptor.preHandle(requestWithToken("tenant-a-token"),
+            new MockHttpServletResponse(), new Object()));
+        assertEquals("tenant-a", TenantContext.get());
+
+        TenantContext.clear();
+        MockHttpServletResponse legacyResponse = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(requestWithToken("legacy-token"), legacyResponse, new Object()));
+        assertEquals(401, legacyResponse.getStatus());
+    }
+
+    @Test
+    void shouldClearTenantAfterRequestCompletion() throws Exception {
+        OpenApiAuthInterceptor interceptor = tenantInterceptor(Map.of("tenant-token", "tenant-a"));
+        MockHttpServletRequest request = requestWithToken("tenant-token");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        interceptor.preHandle(request, response, new Object());
+
+        interceptor.afterCompletion(request, response, new Object(), null);
+
+        assertFalse(TenantContext.isPresent());
     }
 }

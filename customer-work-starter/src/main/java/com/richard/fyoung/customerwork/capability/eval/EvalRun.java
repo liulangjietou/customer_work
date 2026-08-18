@@ -1,5 +1,8 @@
 package com.richard.fyoung.customerwork.capability.eval;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -85,6 +88,14 @@ public record EvalRun(
         metrics.put("avgScore", report.getAvgScore());
         metrics.put("passRate", report.passRate());
         metrics.put("passCount", report.getPassCount());
+        metrics.put("judgedCount", report.getJudgedCount());
+        metrics.put("errorCount", report.getErrorCount());
+        metrics.put("status", report.getStatus().name());
+        metrics.put("judgeErrors", report.getErrors());
+        List<String> failedIds = new ArrayList<>(report.getFailedCaseIds());
+        failedIds.addAll(report.getErrorCaseIds());
+        List<String> failureDetails = new ArrayList<>(report.getFailures());
+        failureDetails.addAll(report.getErrors());
         return new EvalRun(
             UUID.randomUUID().toString(),
             EvalType.QUALITY,
@@ -92,13 +103,26 @@ public record EvalRun(
             report.getPassCount(),
             report.getAvgScore() / QUALITY_MAX_SCORE,
             report.passRate(),
-            report.getFailedCaseIds(),
-            report.getFailures(),
+            List.copyOf(failedIds),
+            List.copyOf(failureDetails),
             metrics,
             trigger,
             report.getTotal(),
             promptFingerprint,
             remark,
             System.currentTimeMillis());
+    }
+
+    /** 质量评测的 Judge 异常会把整轮标成 ERROR；意图评测始终是完整运行。 */
+    @JsonProperty("status")
+    public QualityEvalStatus status() {
+        Object value = metrics == null ? null : metrics.get("status");
+        return "ERROR".equals(String.valueOf(value)) ? QualityEvalStatus.ERROR : QualityEvalStatus.COMPLETED;
+    }
+
+    /** 发布门禁只接受完整运行，不能把 Judge 宕机当成一轮通过。 */
+    @JsonProperty("gatePassed")
+    public boolean gatePassed() {
+        return status() == QualityEvalStatus.COMPLETED;
     }
 }

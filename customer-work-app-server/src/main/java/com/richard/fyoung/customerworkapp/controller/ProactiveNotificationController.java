@@ -12,7 +12,8 @@ import reactor.core.publisher.Mono;
 /**
  * 主动服务端点：订单状态主动通知 / 满意度回访（由订单事件、定时任务或运营后台触发）。
  *
- * <p>推送复用 {@code NotificationChannel}（customer-channel 默认绑定飞书 webhook；未配置则降级日志）。</p>
+ * <p>推送复用 {@code NotificationChannel}。首次投递失败会可靠写入死信队列，因此接口只表达“已受理”，
+ * 不把等待重投误报成已经送达。</p>
  * @author owlzhangfq@gmail.com
  */
 @RestController
@@ -32,7 +33,7 @@ public class ProactiveNotificationController {
                                           @RequestParam String status,
                                           @RequestParam String target) {
         return notificationService.notifyOrderStatus(orderId, status, target)
-            .thenReturn("已推送订单 " + orderId + " 状态通知");
+            .thenReturn("已受理订单 " + orderId + " 状态通知");
     }
 
     @Operation(summary = "满意度回访")
@@ -40,6 +41,6 @@ public class ProactiveNotificationController {
     public Mono<String> sendSurvey(@RequestParam String orderId,
                                    @RequestParam String target) {
         return notificationService.sendSatisfactionSurvey(orderId, target)
-            .thenReturn("已推送订单 " + orderId + " 满意度回访");
+            .thenReturn("已受理订单 " + orderId + " 满意度回访");
     }
 }

@@ -1,0 +1,13 @@
+# ---- build stage（只构建 admin 及其上游模块）----
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /build
+COPY . .
+RUN mvn -q -B -pl customer-admin-server -am -DskipTests package \
+    && cp customer-admin-server/target/customer-admin-server-*.jar /build/admin.jar
+
+# ---- runtime stage ----
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY --from=build /build/admin.jar app.jar
+EXPOSE 8082
+ENTRYPOINT ["java", "-jar", "app.jar"]

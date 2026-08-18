@@ -5,6 +5,8 @@ import com.richard.fyoung.customeradmin.openapi.dto.OpenChatRequest;
 import com.richard.fyoung.customeradmin.openapi.service.OpenChannelService;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +62,8 @@ public class OpenAgentChatController {
     @PostMapping(value = "/{agentCode}/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chat(@PathVariable String agentCode,
                                               @Valid @RequestBody OpenChatRequest request) {
+        // MVC 拦截器在线程释放前先捕获可信凭据解析出的租户，订阅和异步模型链路再从 Reactor Context 恢复。
+        String tenantId = TenantContext.get();
         // defer 到订阅时执行：授权校验的同步异常也能被 onErrorResume 兜成 error 事件（而非直接抛 JSON 错误体）
         Flux<ServerSentEvent<String>> body = Flux.defer(() -> {
                 openChannelService.requireAgentBound(agentCode);
@@ -68,13 +72,15 @@ public class OpenAgentChatController {
             .filter(chunk -> chunk.kind() == ChatNodeKind.ANSWER)
             .map(chunk -> ServerSentEvent.<String>builder().event(EVENT_MESSAGE).data(jsonString(chunk.text())).build());
 
-        return body
+        Flux<ServerSentEvent<String>> result = body
             .concatWithValues(ServerSentEvent.<String>builder().event(EVENT_DONE).data(DONE_PAYLOAD).build())
             .onErrorResume(e -> {
                 log.error("open api agent chat failed, code={}, agentCode={}", "OPEN-API-CHAT-FAIL", agentCode, e);
                 return Flux.just(ServerSentEvent.<String>builder()
                     .event(EVENT_ERROR).data(jsonString(errorMessage(e))).build());
             });
+        return tenantId == null ? result
+            : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));
     }
 
     private String errorMessage(Throwable e) {

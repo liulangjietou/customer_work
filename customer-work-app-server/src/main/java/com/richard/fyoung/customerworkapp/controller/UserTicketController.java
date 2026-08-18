@@ -11,6 +11,7 @@ import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import com.richard.fyoung.customerwork.data.ticket.TicketStatus;
 import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerworkapp.service.UserSessionGuard;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -40,8 +41,8 @@ import java.util.concurrent.Callable;
  * 用户侧工单端点（{@code /api/customer/user}，JWT 鉴权）。
  *
  * <p>当前用户主体由 {@code UserAuthWebFilter} 放入 exchange 属性，本控制器不信任任何客户端自报的 userId；
- * <b>所有按工单 id 的操作先校验工单归属</b>（userId 不一致返回 403），会话消息按 {@code u<userId>:} 前缀
- * 校验归属。非法状态流转（IllegalStateException）本地翻译为 409。</p>
+ * <b>所有按工单 id 的操作先校验工单归属</b>（不存在与非本人统一返回 404，避免枚举），会话下级资源
+ * 通过 {@link UserSessionGuard} 回溯工单根资源。非法状态流转（IllegalStateException）本地翻译为 409。</p>
  * @author owlzhangfq@gmail.com
  */
 @RestController
@@ -62,10 +63,13 @@ public class UserTicketController {
 
     private final TicketService ticketService;
     private final ChatLogService chatLogService;
+    private final UserSessionGuard sessionGuard;
 
-    public UserTicketController(TicketService ticketService, ChatLogService chatLogService) {
+    public UserTicketController(TicketService ticketService, ChatLogService chatLogService,
+                                UserSessionGuard sessionGuard) {
         this.ticketService = ticketService;
         this.chatLogService = chatLogService;
+        this.sessionGuard = sessionGuard;
     }
 
     /** 带原因的请求体（转人工 / 驳回 / 重开复用）。 */
@@ -114,7 +118,7 @@ public class UserTicketController {
         });
     }
 
-    @Operation(summary = "工单详情", description = "含事件轨迹；非本人工单返回 403")
+    @Operation(summary = "工单详情", description = "含事件轨迹；非本人和不存在统一返回 404")
     @GetMapping("/tickets/{id}")
     public Mono<Map<String, Object>> getTicket(@PathVariable String id, ServerWebExchange exchange) {
         UserPrincipal user = principal(exchange);
@@ -133,10 +137,10 @@ public class UserTicketController {
                                             @RequestParam(required = false) Long beforeId,
                                             @RequestParam(defaultValue = "" + DEFAULT_MESSAGE_LIMIT) int limit) {
         UserPrincipal user = principal(exchange);
-        if (!sessionId.startsWith(SESSION_PREFIX + user.userId() + SESSION_DELIMITER)) {
-            return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "not your session"));
-        }
-        return blocking(() -> chatLogService.historyBySession(sessionId, beforeId, limit));
+        return blocking(() -> {
+            sessionGuard.requireOwned(sessionId, user.userId());
+            return chatLogService.historyBySession(sessionId, beforeId, limit);
+        });
     }
 
     @Operation(summary = "请求转人工", description = "非法状态返回 409")
@@ -224,12 +228,12 @@ public class UserTicketController {
         return user;
     }
 
-    /** 加载工单并校验归属：不存在 404、非本人 403。 */
+    /** 加载工单并校验归属：不存在与非本人统一 404。 */
     private Ticket ownedTicket(String id, UserPrincipal user) {
         Ticket ticket = ticketService.find(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "ticket not found: " + id));
         if (!user.userId().equals(ticket.getUserId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "not your ticket");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "ticket not found: " + id);
         }
         return ticket;
     }

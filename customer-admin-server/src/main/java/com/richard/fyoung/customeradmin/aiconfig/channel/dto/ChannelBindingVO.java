@@ -16,6 +16,11 @@ public class ChannelBindingVO {
     /** 冗余回显智能体名称（免前端二次查询）。 */
     private String agentName;
     private Integer status;
+    /** 最近一次可靠发布状态：PENDING/PROCESSING/PUBLISHED/PARTIAL/APPLIED/FAILED。 */
+    private String publishStatus;
+    private String publishRevision;
+    private String publishLastError;
+    private Long publishUpdatedAtMs;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

@@ -256,14 +256,14 @@ public class AdminAgentInstanceFactory {
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
     public ToolSourceInfo toolSourceFor(String agentCode) {
-        return toolSourceCache.getOrDefault(agentCode, ToolSourceInfo.EMPTY);
+        return toolSourceCache.getOrDefault(WorkspaceRuntimeScope.agent(agentCode), ToolSourceInfo.EMPTY);
     }
 
-    /** 单次调用的运行时上下文：{@code userId=agentCode} 天然隔离不同智能体共享同一 StateStore 时的状态。 */
+    /** 单次调用上下文：userId 同时包含租户与智能体作用域，避免框架状态表跨租户碰撞。 */
     public RuntimeContext contextFor(String agentCode, String sessionId) {
         return RuntimeContext.builder()
-            .userId(agentCode)
-            .sessionId(StringUtils.hasText(sessionId) ? sessionId : "default")
+            .userId(WorkspaceRuntimeScope.agent(agentCode))
+            .sessionId(WorkspaceRuntimeScope.safeSession(sessionId))
             .build();
     }
 
@@ -326,7 +326,7 @@ public class AdminAgentInstanceFactory {
             .model(model)
             .toolkit(toolkit)
             .stateStore(stateStore)
-            .defaultSessionId(agentCode)
+            .defaultSessionId(WorkspaceRuntimeScope.agent(agentCode))
             .permissionContext(permissionContext)
             .maxIters(agent.getMaxIters() != null ? agent.getMaxIters() : DEFAULT_MAX_ITERS)
             // 中断后无缝续跑：会话被安全中断（见 ChatService#interrupt）后再次调用，先恢复被打断的
@@ -384,7 +384,8 @@ public class AdminAgentInstanceFactory {
         if (skillBox != null) {
             builder.skillBox(skillBox);
         }
-        toolSourceCache.put(agentCode, new ToolSourceInfo(skillToolNames, mcpToolNames));
+        toolSourceCache.put(WorkspaceRuntimeScope.agent(agentCode),
+            new ToolSourceInfo(skillToolNames, mcpToolNames));
         // 登记本智能体的 MCP/Skill 工具名，供采集中间件把 onActing 分段归为 MCP/SKILL（未登记者默认 TOOL）
         agentCallToolKindRegistry.registerMcpTools(mcpToolNames);
         agentCallToolKindRegistry.registerSkillTools(skillToolNames);
@@ -428,7 +429,7 @@ public class AdminAgentInstanceFactory {
         Path workspace = resolveWorkspace(agentCode);
         HarnessAgent.Builder harnessBuilder = HarnessAgent.Builder.fromAgent(inner)
             .stateStore(harnessStateStore)
-            .defaultSessionId(agentCode)
+            .defaultSessionId(WorkspaceRuntimeScope.agent(agentCode))
             .permissionContext(permissionContext)
             // 框架 #1644 缓解：HarnessAgent 未显式设置 generateOptions 时 streamEvents() 会 NPE，
             // 这里保证非空即可，实际推理参数仍由内层 ReActAgent 的模型配置决定
@@ -606,7 +607,8 @@ public class AdminAgentInstanceFactory {
      * 相对 JVM 工作目录），保证容器内写入与宿主机读取指向同一目录。
      */
     private static Path prepareHostWorkspaceRoot(String agentCode) {
-        Path hostWorkspaceRoot = Path.of(WORKSPACE_ROOT, agentCode).toAbsolutePath().normalize();
+        Path hostWorkspaceRoot = Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(agentCode))
+            .toAbsolutePath().normalize();
         try {
             Files.createDirectories(hostWorkspaceRoot.resolve(SESSIONS_DIR_NAME));
         } catch (Exception e) {
@@ -651,7 +653,7 @@ public class AdminAgentInstanceFactory {
      * 仅供快照根路径使用，Agent 运行时请使用 {@link #resolveSessionWorkspace(String, String)} 按会话隔离。
      */
     public Path resolveWorkspace(String agentCode) {
-        Path workspace = Path.of(WORKSPACE_ROOT, agentCode);
+        Path workspace = Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(agentCode));
         try {
             Files.createDirectories(workspace);
         } catch (Exception e) {
@@ -673,7 +675,7 @@ public class AdminAgentInstanceFactory {
      */
     public Path resolveSessionWorkspace(String agentCode, String sessionId) {
         String safeSession = requireSafeSessionId(sessionId);
-        Path sessionsRoot = Path.of(WORKSPACE_ROOT, agentCode, "sessions").normalize();
+        Path sessionsRoot = Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(agentCode), "sessions").normalize();
         Path workspace = sessionsRoot.resolve(safeSession).normalize();
         // 双保险：字符黑名单之外，normalize 后必须仍是 sessions 根目录的真子路径（防未预见的编码绕过）
         if (!workspace.startsWith(sessionsRoot) || workspace.equals(sessionsRoot)) {
@@ -709,7 +711,7 @@ public class AdminAgentInstanceFactory {
         }
         String safeSession = requireSafeSessionId(sessionId);
         sessionWorkspaceStorage.persist(agentCode, safeSession,
-            Path.of(WORKSPACE_ROOT, agentCode, "sessions", safeSession).normalize());
+            Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(agentCode), "sessions", safeSession).normalize());
     }
 
     /**

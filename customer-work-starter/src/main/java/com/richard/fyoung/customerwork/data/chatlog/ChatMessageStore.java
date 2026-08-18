@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.chatlog;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 聊天消息存储 SPI（持久化扩展点）。
@@ -13,6 +14,9 @@ public interface ChatMessageStore {
 
     /** 追加一条消息，返回回填了自增主键的副本。 */
     ChatMessage append(ChatMessage message);
+
+    /** 按业务消息号精确查询，供下级资源归属校验。 */
+    Optional<ChatMessage> findByMessageId(String messageId);
 
     /**
      * 查会话历史（游标翻页）。

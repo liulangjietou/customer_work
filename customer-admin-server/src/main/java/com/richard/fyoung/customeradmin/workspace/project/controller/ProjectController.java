@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.project.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.workspace.project.dto.AddSessionRequest;
@@ -38,7 +39,7 @@ public class ProjectController {
     @SaCheckPermission("workspace")
     @GetMapping
     public Result<List<ProjectVO>> list(@RequestParam(required = false) String keyword) {
-        return Result.success(projectService.list(keyword));
+        return Result.success(projectService.list(keyword, StpUtil.getLoginIdAsLong()));
     }
 
     @SaCheckPermission("workspace")
@@ -68,14 +69,14 @@ public class ProjectController {
     @SaCheckPermission("workspace")
     @GetMapping("/{id}/sessions")
     public Result<List<ProjectSessionVO>> listSessions(@PathVariable Long id) {
-        return Result.success(projectService.listSessions(id));
+        return Result.success(projectService.listSessions(id, StpUtil.getLoginIdAsLong()));
     }
 
     @SaCheckPermission("workspace")
     @OperationLog(operation = "会话加入项目", target = "ai_project_session")
     @PostMapping("/{id}/sessions")
     public Result<Void> addSession(@PathVariable Long id, @Valid @RequestBody AddSessionRequest request) {
-        projectService.addSession(id, request);
+        projectService.addSession(id, request, StpUtil.getLoginIdAsLong());
         return Result.success();
     }
 
@@ -83,7 +84,7 @@ public class ProjectController {
     @OperationLog(operation = "会话移出项目", target = "ai_project_session")
     @DeleteMapping("/{id}/sessions/{agentCode}/{sessionId}")
     public Result<Void> removeSession(@PathVariable Long id, @PathVariable String agentCode, @PathVariable String sessionId) {
-        projectService.removeSession(id, agentCode, sessionId);
+        projectService.removeSession(id, agentCode, sessionId, StpUtil.getLoginIdAsLong());
         return Result.success();
     }
 }

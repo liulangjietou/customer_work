@@ -53,7 +53,9 @@ public record EvalComparison(
         /** 主指标下降。 */
         REGRESSED,
         /** 主指标持平（容差内）。 */
-        UNCHANGED
+        UNCHANGED,
+        /** 本轮评测不完整（如 Judge 不可用），禁止作为发布依据。 */
+        ERROR
     }
 
     /** 按两次运行算出回归与修复。{@code baseline} 为空表示首次运行。 */
@@ -115,6 +117,9 @@ public record EvalComparison(
     /** 总分方向的结论。逐用例的进出另见 {@link #regressions()}，两者要一起看。 */
     @JsonProperty("verdict")
     public Verdict verdict() {
+        if (!current.gatePassed()) {
+            return Verdict.ERROR;
+        }
         if (baseline == null) {
             return Verdict.FIRST_RUN;
         }

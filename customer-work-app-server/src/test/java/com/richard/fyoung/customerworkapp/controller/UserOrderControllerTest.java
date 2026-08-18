@@ -20,7 +20,7 @@ import java.util.Optional;
 import static org.mockito.Mockito.when;
 
 /**
- * 用户订单端点切片测试：列表、详情、越权 403、不存在 404、数据源未启用 503。
+ * 用户订单端点切片测试：列表、详情、越权隐藏为 404、数据源未启用 503。
  * @author owlzhangfq@gmail.com
  */
 @WebFluxTest(UserOrderController.class)
@@ -77,14 +77,14 @@ class UserOrderControllerTest {
     }
 
     @Test
-    void detail_notOwner_shouldReturn403() {
+    void detail_notOwner_shouldReturn404() {
         when(orderDao.isEnabled()).thenReturn(true);
         when(orderDao.findById("2026071500001")).thenReturn(Optional.of(new OwnedOrder("OTHER", sampleView())));
 
         webTestClient.get().uri("/api/customer/user/orders/2026071500001")
             .header(HttpHeaders.AUTHORIZATION, bearer())
             .exchange()
-            .expectStatus().isForbidden();
+            .expectStatus().isNotFound();
     }
 
     @Test

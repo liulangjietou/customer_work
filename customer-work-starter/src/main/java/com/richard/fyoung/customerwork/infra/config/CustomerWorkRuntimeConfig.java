@@ -30,6 +30,12 @@ public class CustomerWorkRuntimeConfig {
     /** 发布时间戳（ISO-8601 文本，仅审计/展示用，不参与业务逻辑）。 */
     private String publishedAt;
 
+    /** 每次发布唯一修订号：贯穿 admin 发布任务、Nacos 载荷与实例 ACK。 */
+    private String revision;
+
+    /** 业务配置内容摘要，用于实例 ACK 与运营侧核对实际应用的是哪份内容。 */
+    private String contentHash;
+
     /** 模型主配置。 */
     private Model model = new Model();
 

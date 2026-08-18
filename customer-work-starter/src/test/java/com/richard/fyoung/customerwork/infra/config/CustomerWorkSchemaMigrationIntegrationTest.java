@@ -2,11 +2,15 @@ package com.richard.fyoung.customerwork.infra.config;
 
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -39,14 +43,43 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         String emptyDatabase = "cw_flyway_empty_" + suffix;
         String legacyDatabase = "cw_flyway_legacy_" + suffix;
-        assumeTrue(canCreateDatabases(emptyDatabase, legacyDatabase), "MySQL 测试账号无建库权限，跳过");
+        String mirrorDatabase = "cw_flyway_mirror_" + suffix;
+        assumeTrue(canCreateDatabases(emptyDatabase, legacyDatabase, mirrorDatabase),
+            "MySQL 测试账号无建库权限，跳过");
 
         try {
             verifyEmptyDatabaseMigration(emptyDatabase);
             verifyLegacyDatabaseMigration(legacyDatabase);
+            verifyCompleteMirrorAdoption(mirrorDatabase);
         } finally {
             dropDatabase(emptyDatabase);
             dropDatabase(legacyDatabase);
+            dropDatabase(mirrorDatabase);
+        }
+    }
+
+    private void verifyCompleteMirrorAdoption(String database) throws Exception {
+        try (HikariDataSource dataSource = dataSource(database, "flyway-mirror-test")) {
+            Path workingDirectory = Path.of("").toAbsolutePath();
+            Path repositoryRoot = Files.isDirectory(workingDirectory.resolve("mysql"))
+                ? workingDirectory : workingDirectory.getParent();
+            Path mirrorPath = repositoryRoot.resolve(
+                "mysql/01-agent-scope-customer-work/customer-work-schema.sql");
+            String mirrorSql = Files.readString(mirrorPath, StandardCharsets.UTF_8)
+                .replaceFirst("(?is)CREATE DATABASE IF NOT EXISTS .*?;", "")
+                .replaceFirst("(?is)USE\\s+`[^`]+`\\s*;", "");
+            ResourceDatabasePopulator populator = new ResourceDatabasePopulator(
+                new ByteArrayResource(mirrorSql.getBytes(StandardCharsets.UTF_8)));
+            populator.execute(dataSource);
+
+            migrate(dataSource, database);
+            migrate(dataSource, database);
+
+            assertEquals(44, countBusinessTables(dataSource));
+            assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
+            assertTrue(columnExists(dataSource, "cw_outbox_message", "lease_owner"));
+            assertEquals(1, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
+            assertEquals(1, countHistoryVersion(dataSource, "4"), "完整镜像应从当前版本接管");
         }
     }
 

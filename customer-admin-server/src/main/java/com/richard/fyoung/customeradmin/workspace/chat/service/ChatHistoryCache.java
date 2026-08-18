@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.workspace.chat.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
+import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -83,6 +84,6 @@ public class ChatHistoryCache {
     }
 
     private String messagesKey(String agentCode, String sessionId) {
-        return KEY_PREFIX + "messages:" + agentCode + ":" + sessionId;
+        return KEY_PREFIX + "messages:" + WorkspaceRuntimeScope.session(agentCode, sessionId);
     }
 }

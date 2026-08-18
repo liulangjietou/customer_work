@@ -84,11 +84,11 @@ P0 三项共同特征：地基已在二期打好（git baseline / diff 能力 / 
 | **P0-2** | AI Code Review | 对本轮 diff 自动审查，输出结构化意见 | diff 能力 + `GitAssistantService` 一次性调用模式 | 2~3 天 | 典型问题 CRITICAL 检出率 ≥ 90% |
 | **P0-3** | 生成→验证→修复闭环 | 沙箱内编译/测试，结构化 `test_report`，失败自动修复 | 沙箱执行链路已通 + prompt 引导已有 | 3~5 天 | 测试结果 100% 结构化返回，失败自动修复 ≤3 轮 |
 | **P1-1** | Plan Mode 人工确认闭环 | 高风险操作先出计划、等确认再执行（HITL） | 框架 `PermissionMode`；starter 已有 Approval Store SPI 模式可参考 | 5~8 天 | 删除文件/批量修改前必须停下等确认 |
-| **P1-2** | 交互式运行面板 | 页面内直接对沙箱执行命令，输出流式回显 | 沙箱 execute 链路已通 | 3~5 天 | 常用命令（mvn test/java）免切终端 |
+| **P1-2** | 交互式运行面板 ✅ | 页面内直接对沙箱执行命令，输出流式回显 | 沙箱 execute 链路已通 | 已实现 | 常用命令（mvn test/java）免切终端 |
 | **P1-3** ✅ | Docker 沙箱补齐 | 容器↔宿主机产物同步（bind mount）+ `DockerSandboxIntegrationTest` | Docker 链路端到端已跑通 | 3~5 天 | Docker 模式下文件树/file_change/Git 助手可用（已达成） |
-| **P2-1** | 智能 Bug 修复 | 根据异常堆栈/日志定位并生成补丁 | workspace 文件检索 + 回滚保障 | 3~5 天 | 常见异常正确定位到源码行并给出合理修复 |
-| **P2-2** | 自动化重构助手 | 批量替换、API 迁移、依赖升级 | Plan Mode（P1-1）+ 回滚（P0-1） | 3~5 天 | 简单批量替换 100% 按预期完成 |
-| **P2-3** | 沙箱管理页面 | 会话沙箱状态查看、资源监控、手动清理 | `admin.sandbox.*` 配置体系 | 2~3 天 | 可查看并清理运行中的沙箱容器 |
+| **P2-1** | 智能 Bug 修复 ✅ | 根据异常堆栈/日志定位并生成补丁 | workspace 文件检索 + 回滚保障 | 已实现 | 常见异常正确定位到源码行并给出合理修复 |
+| **P2-2** | 自动化重构助手 ✅ | 批量替换、API 迁移、依赖升级 | Plan Mode（P1-1）+ 回滚（P0-1） | 已实现 | 简单批量替换 100% 按预期完成 |
+| **P2-3** | 沙箱管理页面 ✅ | 会话沙箱状态查看、资源监控、手动清理 | `admin.sandbox.*` 配置体系 | 已实现 | 可查看并清理运行中的沙箱容器 |
 | **P3-1** | 多 Agent 协作编程 | 产品/架构/开发/测试/Review Agent 协同 | 需 starter 侧 SubAgent/Pipeline 编排能力先行 | 周级 | 简单需求走完全流程产出可编译代码 |
 | **P3-2** | 代码知识库问答 | 基于 RAG 的代码语义检索 | 需 starter 侧真实 Embedding RAG 先行（现为关键词版） | 周级 | Top-3 命中率 ≥ 70%，回答带出处 |
 
@@ -278,6 +278,11 @@ starter 侧已有 Approval Store SPI 模式（接口 + InMemory 默认 + Jdbc �
 
 ### 4.5 交互式运行面板（P1-2）
 
+> **实现结果**：`SandboxCommandService` 维护会话级交互式运行时。local 固定工作目录为会话 workspace；
+> docker 直接复用生产 `DockerFilesystemSpec` 的镜像、资源、网络和 bind mount，再通过受控
+> `docker exec` 逐块转发输出，规避框架 `Sandbox#exec` 完成后才返回的限制。用户命令在创建进程前复用
+> `SandboxRiskDetector`，危险命令 fail-closed；命令历史由前端按会话保留最近 20 条。
+
 #### 4.5.1 目标
 
 让开发者在 VibeCoding 页面内直接对会话沙箱执行命令（编译、跑测试、运行程序），输出流式回显，
@@ -347,6 +352,10 @@ Docker 模式对话+执行链路已跑通，但产物文件在容器内，宿主
 
 ### 4.7 智能 Bug 修复 / 日志诊断（P2-1）
 
+> **实现结果**：新增 `/diagnose` SSE。日志按不可信数据定界，专用任务提示词要求先解析业务堆栈帧、
+> 再检索源码和上下游；实际文件修改仍委托 `VibeCodingService`，因此自动获得 git baseline、
+> `file_change`、`test_report`、回滚与 Review 能力，并追加 `DIAGNOSE` 专项审计。
+
 #### 4.7.1 目标
 
 Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁。
@@ -367,6 +376,10 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 ---
 
 ### 4.8 自动化重构助手（P2-2）
+
+> **实现结果**：新增 `/refactor` SSE 与四种 `RefactorTask.TaskType`。服务端在调用 Agent 前先创建任务级
+> `plan` 并真实挂起；批准后用 `accept_edits` 模式执行普通编辑，命令、删除、依赖修改仍保留细粒度二次确认。
+> 拒绝/超时不调用修改流，全部任务落 `REFACTOR` 专项审计并复用统一回滚基线。
 
 #### 4.8.1 目标
 
@@ -390,6 +403,10 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 ---
 
 ### 4.9 沙箱管理页面（P2-3）
+
+> **实现结果**：开发工具抽屉内提供沙箱管理页，展示当前用户/智能体下的交互式会话沙箱、容器 ID、
+> 状态、CPU/内存实测值和生效配置，支持幂等停止/删除。Docker 容器空闲到期后在下一次执行或查询时回收；
+> local 模式只管理活跃宿主进程，不伪造容器指标。
 
 #### 4.9.1 目标
 
@@ -524,10 +541,11 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | POST | `/rollback` | 撤销本次会话全部修改 | 🎯 P0-1 |
 | POST | `/review` | 对本轮 diff 做 Code Review | ✅ 已实现 P0-2 |
 | POST | `/plan/confirm` | Plan Mode 计划确认/拒绝 | ✅ 已实现 P1-1 |
-| POST | `/execute` | 交互式沙箱命令执行（SSE） | 🎯 P1-2 |
-| POST | `/diagnose` | 根据堆栈/日志诊断 Bug | 🎯 P2-1 |
-| POST | `/refactor` | 执行自动化重构任务 | 🎯 P2-2 |
-| GET/DELETE | `/sandbox/**`（管理侧另定前缀） | 沙箱列表/清理 | 🎯 P2-3 |
+| POST | `/execute` | 交互式沙箱命令执行（SSE） | ✅ 已实现 P1-2 |
+| POST | `/diagnose` | 根据堆栈/日志诊断 Bug | ✅ 已实现 P2-1 |
+| POST | `/refactor` | 执行自动化重构任务 | ✅ 已实现 P2-2 |
+| GET | `/sandbox/config`、`/sandbox/sessions` | 生效配置/沙箱列表 | ✅ 已实现 P2-3 |
+| DELETE | `/sandbox/sessions/{sessionId}` | 停止并清理会话沙箱 | ✅ 已实现 P2-3 |
 | POST | `/knowledge/ingest`、`/knowledge/query` | 代码库向量化/问答 | 🎯 P3-2 |
 
 ### 6.2 SSE 事件类型
@@ -541,6 +559,9 @@ Agent 根据异常堆栈、应用日志自动定位问题并生成修复补丁�
 | `test_report` | `{"command":"mvn test","exitCode":0,"passed":12,"failed":0,"round":1,"exhausted":false,...}` | 沙箱编译/测试结构化报告（含 round/exhausted 修复轮次进度） | ✅ 已实现 P0-3（local 与 docker 均启用，docker 产物经 P1-3 bind mount 同步） |
 | `plan` | `{"planId":"...","actions":[{"type":"DELETE","target":"..."}],"reason":"...","requiresConfirmation":true,"timeoutSeconds":300}` | Plan Mode 高风险操作待确认，流挂起 | ✅ 已实现 P1-1 |
 | `plan_result` | `{"planId":"...","status":"APPROVED\|REJECTED\|TIMEOUT"}` | 计划终态通知（超时=服务端自动拒绝，前端据此停倒计时） | ✅ 已实现 P1-1 |
+| `command_output` | `{"stream":"combined","text":"...","timestamp":...}` | 交互式命令实时输出块 | ✅ 已实现 P1-2 |
+| `command_result` | `{"exitCode":0,"success":true,"durationMs":1200,...}` | 交互式命令唯一终态 | ✅ 已实现 P1-2 |
+| `command_error` | `{"code":40044,"message":"..."}` | 命令门禁/运行时失败的可展示错误 | ✅ 已实现 P1-2 |
 | `review_result` | `{issues, summary}` | Review 结果 | ⛔ 不采用：Review 走同步接口 `POST /review` 返回，未落 SSE 事件（见 §6.1） |
 
 ---
@@ -672,6 +693,12 @@ admin:
     hitl:                                          # 仅 permission-mode=hitl 时生效（P1-1）
       confirm-timeout-seconds: ${ADMIN_SANDBOX_HITL_CONFIRM_TIMEOUT_SECONDS:300}  # 确认超时，超时按拒绝
       batch-modify-threshold: ${ADMIN_SANDBOX_HITL_BATCH_MODIFY_THRESHOLD:3}      # 单轮批量修改超此值需确认
+    features:                                      # P1/P2 增量能力默认全部关闭，按项灰度
+      command-execution-enabled: ${ADMIN_SANDBOX_COMMAND_EXECUTION_ENABLED:false}
+      diagnosis-enabled: ${ADMIN_SANDBOX_DIAGNOSIS_ENABLED:false}
+      refactor-enabled: ${ADMIN_SANDBOX_REFACTOR_ENABLED:false}
+      management-enabled: ${ADMIN_SANDBOX_MANAGEMENT_ENABLED:false}
+      idle-timeout-minutes: ${ADMIN_SANDBOX_IDLE_TIMEOUT_MINUTES:30}
 ```
 
 > **Plan Mode HITL（P1-1）**：`permission-mode=hitl` 时，vibecoding 会话中 Agent 计划执行高风险操作

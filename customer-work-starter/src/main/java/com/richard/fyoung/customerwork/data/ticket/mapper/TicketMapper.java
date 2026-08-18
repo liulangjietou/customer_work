@@ -17,6 +17,9 @@ public interface TicketMapper extends BaseMapper<TicketDO> {
     /** 查该会话下"非 CLOSED 且非 RESOLVED"的最新一张工单（按创建时间倒序取第一条）。 */
     TicketDO findActiveBySession(@Param("sessionId") String sessionId);
 
+    /** 查该会话最新一张工单，包含 CLOSED/RESOLVED 终态。 */
+    TicketDO findBySession(@Param("sessionId") String sessionId);
+
     /** 查该用户下"非 CLOSED 且非 RESOLVED"的最新一张工单（按创建时间倒序取第一条，用户级唯一活跃会话去重用）。 */
     TicketDO findActiveByUser(@Param("userId") String userId);
 

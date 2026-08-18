@@ -124,4 +124,25 @@ class TestReportParserTest {
         assertEquals(Optional.empty(), TestReportParser.parse(null));
         assertEquals(Optional.empty(), TestReportParser.parse(""));
     }
+
+    @Test
+    void parseCommand_shouldReportSuccessfulSilentJavac() {
+        TestReport report = TestReportParser.parseCommand("javac Hello.java", "", 0, 120L).orElseThrow();
+
+        assertEquals("javac", report.command());
+        assertTrue(report.success());
+        assertEquals(0, report.failed());
+        assertEquals(120L, report.durationMs());
+    }
+
+    @Test
+    void parseCommand_shouldUseRealMavenCommand_withoutDependingOnBuildBanner() {
+        TestReport report = TestReportParser.parseCommand("./mvnw test -q",
+            "Tests run: 3, Failures: 1, Errors: 0, Skipped: 0", 1, 2000L).orElseThrow();
+
+        assertEquals("mvn test", report.command());
+        assertFalse(report.success());
+        assertEquals(2, report.passed());
+        assertEquals(1, report.failed());
+    }
 }
