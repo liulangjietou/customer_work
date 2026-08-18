@@ -27,6 +27,10 @@ public interface ChatSessionStateQueryMapper {
      * @param offset    偏移量（{@code (page-1)*size}）
      * @param limit     每页条数
      */
+    /*
+     * ownerUserId 传 null 表示当前数据范围放宽到本租户及以上，不按人过滤；
+     * 两个方法必须传同一个值，否则总数与数据页口径不一致会翻出空页。
+     */
     List<String> pageSessionIds(@Param("tenantId") String tenantId,
                                 @Param("stateUserId") String stateUserId,
                                 @Param("agentCode") String agentCode,

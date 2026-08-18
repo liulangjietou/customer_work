@@ -28,13 +28,19 @@ class DataScopeInterceptorAssemblyTest {
 
     private final MybatisPlusConfig config = new MybatisPlusConfig();
 
-    /** 两道过滤默认都开；关掉任何一个都要靠显式配置，不能因为某次重构悄悄消失。 */
+    /** 开启后两道过滤都要进链；任何一道悄悄消失都不会报错，只会静默失去隔离。 */
     @Test
-    void bothFiltersShouldBeEnabledByDefault() {
-        List<InnerInterceptor> chain = chainOf(new AdminTenantProperties(), new DataScopeProperties());
+    void bothFiltersShouldBeInChainWhenEnabled() {
+        List<InnerInterceptor> chain = chainOf(tenantEnabled(), new DataScopeProperties());
 
-        assertTrue(chain.stream().anyMatch(i -> i instanceof TenantLineInnerInterceptor), "租户过滤应默认装配");
-        assertTrue(chain.stream().anyMatch(i -> i instanceof DataScopeInnerInterceptor), "数据范围过滤应默认装配");
+        assertTrue(chain.stream().anyMatch(i -> i instanceof TenantLineInnerInterceptor), "租户过滤应装配");
+        assertTrue(chain.stream().anyMatch(i -> i instanceof DataScopeInnerInterceptor), "数据范围过滤应装配");
+    }
+
+    /** 数据范围默认开（它不依赖额外上下文，缺省开更安全）。 */
+    @Test
+    void dataScopeFilterShouldBeEnabledByDefault() {
+        assertTrue(new DataScopeProperties().isEnabled());
     }
 
     /**
@@ -43,7 +49,7 @@ class DataScopeInterceptorAssemblyTest {
      */
     @Test
     void rowFiltersShouldComeBeforePagination() {
-        List<InnerInterceptor> chain = chainOf(new AdminTenantProperties(), new DataScopeProperties());
+        List<InnerInterceptor> chain = chainOf(tenantEnabled(), new DataScopeProperties());
 
         int pagination = indexOf(chain, PaginationInnerInterceptor.class);
         assertTrue(indexOf(chain, TenantLineInnerInterceptor.class) < pagination, "租户过滤须在分页之前");
@@ -55,7 +61,7 @@ class DataScopeInterceptorAssemblyTest {
         DataScopeProperties disabled = new DataScopeProperties();
         disabled.setEnabled(false);
 
-        List<InnerInterceptor> chain = chainOf(new AdminTenantProperties(), disabled);
+        List<InnerInterceptor> chain = chainOf(tenantEnabled(), disabled);
 
         assertFalse(chain.stream().anyMatch(i -> i instanceof DataScopeInnerInterceptor));
         assertTrue(chain.stream().anyMatch(i -> i instanceof TenantLineInnerInterceptor), "关数据范围不应连带关掉租户过滤");
@@ -97,6 +103,13 @@ class DataScopeInterceptorAssemblyTest {
         ConditionalOnProperty annotation = configClass.getAnnotation(ConditionalOnProperty.class);
         assertNotNull(annotation, configClass.getSimpleName() + " 应带 @ConditionalOnProperty");
         return annotation.matchIfMissing();
+    }
+
+    /** 租户开关的"默认开启"写在 application.yml 里，Java 默认值刻意是 false，测试需显式打开。 */
+    private AdminTenantProperties tenantEnabled() {
+        AdminTenantProperties properties = new AdminTenantProperties();
+        properties.setEnabled(true);
+        return properties;
     }
 
     private List<InnerInterceptor> chainOf(AdminTenantProperties tenant, DataScopeProperties dataScope) {

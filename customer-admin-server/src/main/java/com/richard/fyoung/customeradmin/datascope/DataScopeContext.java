@@ -49,6 +49,20 @@ public final class DataScopeContext {
     }
 
     /**
+     * 当前是否<b>明确</b>处于"本租户及以上"的范围（{@link DataScope#TENANT} / {@link DataScope#ALL}）。
+     *
+     * <p>与 {@link #restrictedUserId()} 的空值判断不是一回事，两者不能互相替代：
+     * 那个方法返回 {@code null} 既可能是范围放宽了，也可能是压根没有上下文。
+     * 对"要不要额外加一道限制"（拦截器）来说，两种情形都按不加处理是安全的；
+     * 但对"要不要放宽一道既有的限制"（会话归属校验）来说，缺上下文绝不能等同于放行——
+     * 放宽必须有明确依据，否则任何脱离登录态的调用都能读到别人的会话。</p>
+     */
+    public static boolean relaxedBeyondSelf() {
+        Holder holder = HOLDER.get();
+        return holder != null && holder.scope() != null && holder.scope() != DataScope.SELF;
+    }
+
+    /**
      * 以指定用户的身份执行一段查询，结束后还原原上下文。
      *
      * <p>用于凭令牌而非登录态进入的链路：脚本回调拿着个人访问令牌，令牌背后是一个确切的人，

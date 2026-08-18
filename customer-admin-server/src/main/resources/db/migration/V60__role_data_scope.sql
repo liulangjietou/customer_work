@@ -35,26 +35,3 @@ UPDATE `sys_role` SET `data_scope` = 'TENANT' WHERE `role_code` = 'tenant_admin'
 ALTER TABLE `ai_chat_attachment`
     ADD COLUMN `create_by` BIGINT NULL COMMENT '上传人（后台用户ID）；NULL=存量数据，租户内共享',
     ADD INDEX `idx_ai_chat_attachment_create_by` (`create_by`);
-
--- ============================================================================
--- 对话会话归属表
---
--- ai_chat_session_state 由框架 MysqlAgentStateStore 直接持 DataSource 读写、绕过 MyBatis，
--- 既加不了列（框架不会填）也拦不住 SQL——拦截器对它无能为力（V49 已因此把它列入忽略清单）。
--- 而"别人的对话内容"恰恰是最敏感的页面数据，不能因为框架限制就放弃隔离。
---
--- 因此在 admin 侧单独记一份会话归属：发起对话时写入，会话列表与消息详情按它过滤。
--- 只记归属不记内容，与框架表解耦，框架换实现也不受影响。
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS `ai_chat_session_owner` (
-    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY,
-    `session_id`  VARCHAR(128) NOT NULL COMMENT '会话ID（框架格式 {agentCode}:{uuid}）',
-    `agent_code`  VARCHAR(64)  NOT NULL COMMENT '智能体编码',
-    `create_by`   BIGINT       NULL COMMENT '会话发起人（后台用户ID）；NULL=存量会话，租户内共享',
-    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '首次发起时间',
-    `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
-    UNIQUE KEY `uk_chat_session_owner_session` (`session_id`),
-    KEY `idx_chat_session_owner_agent` (`agent_code`, `create_by`),
-    KEY `idx_chat_session_owner_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='对话会话归属（框架会话表无法加列的补充）';

@@ -85,7 +85,6 @@ public class ChatService {
     private final ExecutionModeRegistry executionModeRegistry;
     private final PlanConfirmationService planConfirmationService;
     private final ChatAttachmentService chatAttachmentService;
-    private final ChatSessionOwnerService sessionOwnerService;
     /** 出站敏感词过滤器；未开启 {@code admin.content-guard.agent-filter-enabled} 时为 null，跳过过滤。 */
     private final SensitiveWordFilter sensitiveWordFilter;
     /** 出站命中 BLOCK 时替换用的安全话术。 */
@@ -96,7 +95,6 @@ public class ChatService {
                         ExecutionModeRegistry executionModeRegistry,
                         PlanConfirmationService planConfirmationService,
                         ChatAttachmentService chatAttachmentService,
-                        ChatSessionOwnerService sessionOwnerService,
                         ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
                         ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider) {
         this.agentInstanceCache = agentInstanceCache;
@@ -106,7 +104,6 @@ public class ChatService {
         this.executionModeRegistry = executionModeRegistry;
         this.planConfirmationService = planConfirmationService;
         this.chatAttachmentService = chatAttachmentService;
-        this.sessionOwnerService = sessionOwnerService;
         // 敏感词关闭时容器里没有该 Bean，此处为 null，出站过滤整体跳过
         this.sensitiveWordFilter = sensitiveWordFilterProvider == null
             ? null : sensitiveWordFilterProvider.getIfAvailable();
@@ -250,9 +247,6 @@ public class ChatService {
         }
         // 归一 sessionId：与下方 Plan 通道/执行模式登记、以及历史接口读取口径完全一致（hasText ? 原值 : default）。
         String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
-        // 登记会话归属：必须在这段同步代码里做——返回 Flux 后订阅发生在别的线程，那里拿不到登录态。
-        // 非 Web 线程调用（定时任务等）登记不到人，会话落入共享档，不影响主流程。
-        sessionOwnerService.markOwner(agentCode, safeSession);
         // 知识库自动检索<b>不在这里做</b>：请求线程同步段做 HTTP 检索会最长占住一个 Tomcat 请求线程 10s
         // （返回 Flux 不等于方法体异步，方法体跑完才返回），RAG 后端变慢会连累登录等无关接口；而且拼进
         // 用户消息文本会让召回块随消息进 AgentState 被持久化，用户在历史里看到 <retrieved_knowledge> 原文、

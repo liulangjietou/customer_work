@@ -19,10 +19,10 @@ import java.util.Map;
  *   <li><b>租户内共享的配置资产</b>：{@code ai_agent}、{@code ai_knowledge_base}、{@code ai_skill}、
  *       {@code ai_mcp}、{@code ai_channel_robot}、{@code ai_model_config}、{@code sql_*}、
  *       字典/敏感词/限流规则。它们虽有 {@code create_by}，但语义是"谁录的"而非"谁的"。</li>
- *   <li><b>归属映射表本身</b>：{@code ai_chat_session_owner} 只是"谁发起了哪个会话"的索引，
- *       它要与框架的会话状态表联查来排除他人会话（见 {@code ChatSessionOwnerService}）。
- *       那条 SQL 用的是"排除明确属于别人的"这一反向条件，若拦截器再自动加一遍正向条件，
- *       两者 AND 起来恒假，排除条件会整个失效——比不过滤更糟，因为它看起来是生效的。</li>
+ *   <li><b>归属映射表本身</b>：{@code ai_workspace_session} 只是"谁认领了哪个会话"的索引，
+ *       它要与框架的会话状态表联查（见 {@code WorkspaceSessionGuard} 与
+ *       {@code ChatSessionStateQueryMapper.xml}），归属条件已在那条 SQL 里显式表达；
+ *       拦截器再自动加一遍会与之重复，且它的归属列叫 {@code owner_user_id}，不在本类的两种列名之内。</li>
  *   <li><b>子表</b>：{@code ai_code_knowledge_chunk}、{@code ai_scheduled_task_run}、
  *       {@code ai_agent_*} 关联表。可见性跟随主表，查询一律带主表 ID，
  *       在子表上再挂一份归属列等于维护两套事实。</li>

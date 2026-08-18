@@ -24,7 +24,7 @@ class DataScopeTablesTest {
 
     /** 框架自建或无归属人可填的表：加进来只会让链路报错或恒空。 */
     private static final List<String> MUST_NOT_BE_FILTERED = List.of(
-        "ai_chat_session_state", "ai_agent_task", "ai_chat_session_owner", "cw_agent_call_log");
+        "ai_chat_session_state", "ai_agent_task", "ai_workspace_session", "cw_agent_call_log");
 
     @Test
     void whitelist_shouldCoverPersonalArtifacts() {

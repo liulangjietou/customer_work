@@ -34,11 +34,12 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1388** + admin-server **797** + app 86 + customer-channel 65 + gateway 1（合计 **2337**）
-  （2026-08-18 数据权限批次实测：starter 1388 / 5 skip、admin 797 / 1 skip、app 86，BUILD SUCCESS，
-  排除 `RedisSessionPersistenceTest`。本批次自身加了 admin **+43**（数据范围 35 + 对话归属 2 + 装配门控 6），
-  starter 只改忽略清单常量故条数不变。**跑 admin 全量前先确认本机 Flyway 版本号**——
-  本机开发库被并行分支占到 V58，见下方"项目编码规范"里的 Flyway 版本号约定。）
+- 测试基线：starter **1388** + admin-server **834** + app 86 + customer-channel 65 + gateway 1（合计 **2374**）
+  （2026-08-18 数据权限批次实测：starter 1388 / 5 skip、admin 834 / 1 skip、app 86，BUILD SUCCESS，
+  排除 `RedisSessionPersistenceTest`。本批次自身加了 admin **+45**（数据范围枚举/上下文/白名单/SQL 改写/
+  范围解析 30 + 角色范围校验 5 + 装配门控 7 + 会话归属放行边界 3），starter 只改忽略清单常量故条数不变；
+  其余差额来自同日合入 main 的 PR #113/#114/#115。**跑 admin 全量前先确认本机 Flyway 版本号**——
+  本机开发库常被并行分支占号，见下方"项目编码规范"里的 Flyway 版本号约定。）
   （2026-08-18 B7 主体配额批次实测：starter 1388 / 5 skip、admin 754 / 1 skip、app 86，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。**本批次自身只加了 starter +46**
   （主体配额 39 + 滑动求和 4 + 用户等级 3），其余差额来自 2026-08-14 之后合入 main 的批次；
@@ -217,12 +218,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   只按主键定位），这是实打实的越权；INSERT 反而不管，归属列由 `MyMetaObjectHandler` 一处写入；
   ⑤ **`ALL` 必须同时校验用户归属平台租户**：租户管理员能建角色，只认字段值等于让任意租户
   自己给自己开跨租户的口子（同 `AdminStpInterfaceImpl` 对超管的平台归属校验）；
-  ⑥ **`ai_chat_session_owner` 刻意不进白名单**：它要与框架会话表联查、用的是"排除明确属于别人的"
-  反向条件，拦截器再自动加一遍正向条件会让两者 AND 恒假，排除条件整个失效——比不过滤更糟，
-  因为它看起来是生效的。
+  ⑥ **对话会话复用既有的 `ai_workspace_session`，不另建归属表**：框架状态表加不了列，归属由
+  `WorkspaceSessionGuard` 维护。本批次只给它接上范围——`SELF` 只放行自己认领的会话，
+  `TENANT`/`ALL` 只校验会话存在于当前租户（超管要能看全量）。该表不进白名单：归属条件已在
+  那条 JOIN 里显式表达，且它的归属列叫 `owner_user_id`，不在白名单支持的两种列名之内。
 - **`admin.tenant.enabled` 从本批次起默认 `true`**（此前默认关闭 = 跨租户完全打通）。开关一开，
   几条**没有登录态**的链路会因缺租户上下文 fail-closed，改动它们时别把这几处退回去：开放 API 走
-  `admin.open-api.tenant-code`（过渡方案，令牌不带租户）、工作台脚本回调从令牌行读租户、
+  `admin.open-api.tenant-tokens` 的令牌→租户映射、工作台脚本回调从令牌行读租户、
   内置调度器/XXL-JOB 走 `executeFromScheduler`（跨租户定位 + 按任务租户还原上下文）、
   登录页轮播图归入平台级忽略清单（登录前无上下文可用）。
 - **本机开发库是所有分支共用的，Flyway 版本号常年被并行分支占走**：新增迁移前先查
