@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
 import com.richard.fyoung.customeradmin.common.page.PageResult;
+import com.richard.fyoung.customeradmin.datascope.DataScopeContext;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageAttachmentVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
@@ -81,6 +82,10 @@ public class ChatHistoryService {
      * @param size 每页条数
      */
     public PageResult<ChatSessionSummary> listSessions(String agentCode, Long ownerUserId, long page, long size) {
+        // 只有明确处于本租户及以上范围时才不按人过滤，列出本租户内已认领的全部会话；
+        // 缺上下文时保持按人过滤（放宽必须有明确依据）。归一在这一处完成，
+        // 总数与数据页因此必然用同一个值，不会出现翻页空页
+        ownerUserId = DataScopeContext.relaxedBeyondSelf() ? null : ownerUserId;
         String tenantId = tenantProperties.isEnabled() ? TenantContext.require() : TenantContext.DEFAULT;
         String stateUserId = WorkspaceRuntimeScope.agent(agentCode);
         long total = sessionStateQueryMapper.countSessions(tenantId, stateUserId, agentCode, ownerUserId);

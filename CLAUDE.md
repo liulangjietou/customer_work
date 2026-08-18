@@ -34,7 +34,12 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1388** + admin-server **754** + app 86 + customer-channel 65 + gateway 1（合计 **2294**）
+- 测试基线：starter **1413** + admin-server **834** + app 86 + customer-channel 65 + gateway 1（合计 **2399**）
+  （2026-08-18 数据权限批次实测：starter 1413 / 5 skip、admin 834 / 1 skip、app 86，BUILD SUCCESS，
+  排除 `RedisSessionPersistenceTest`。本批次自身加了 admin **+45**（数据范围枚举/上下文/白名单/SQL 改写/
+  范围解析 30 + 角色范围校验 5 + 装配门控 7 + 会话归属放行边界 3），starter 只改忽略清单常量故条数不变；
+  其余差额来自同日合入 main 的 PR #113/#114/#115。**跑 admin 全量前先确认本机 Flyway 版本号**——
+  本机开发库常被并行分支占号，见下方"项目编码规范"里的 Flyway 版本号约定。）
   （2026-08-18 B7 主体配额批次实测：starter 1388 / 5 skip、admin 754 / 1 skip、app 86，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。**本批次自身只加了 starter +46**
   （主体配额 39 + 滑动求和 4 + 用户等级 3），其余差额来自 2026-08-14 之后合入 main 的批次；
@@ -80,6 +85,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 
 - 项目概览/模块说明/全景架构图 → `README.md`
 - 多租户隔离模型/逐表归属/身份链路 → `docs/多租户架构设计.md`
+- 数据权限（角色数据范围/仅本人过滤/白名单逐表判定）→ `docs/数据权限设计.md`
 - 功能总表/配置项/接口速查/各功能用法 → `docs/功能与配置全量参考.md`
 - 1.x→2.0 API 映射、RC4→GA 变更、issue 重新核对 → `docs/MIGRATION-2.0.md`
 - 框架 open issues 与本项目链路的交叉评估 → `docs/生产就绪评估.md`
@@ -197,6 +203,36 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   都要查一次用户表，限流本身会成为最重的一段。后台页面必须把这件事写给运营看。
   新增的 `subject-quota.store-mode` 已登记进 `PersistenceJdbcCondition`（漏登记会出现
   "Store 想用 jdbc 但持久化环境没激活"的错配）。
+- **数据权限（用户维度隔离）**：叠加在 B1 租户过滤之上的第二道行级过滤，回答"这个租户里，谁的数据"。
+  范围挂在角色上（`sys_role.data_scope` = ALL/TENANT/SELF），强制点是 `DataScopeInnerInterceptor`。
+  设计全文见 `docs/数据权限设计.md`，六条硬约定：
+  ① **白名单，方向与租户维度相反**：租户维度"能加列的全加"，漏一张就串数据；用户维度绝大多数表是
+  租户内共享的配置资产，误加一张会让同租户成员协作断掉（A 建的智能体 B 用不了），且**不报错**，
+  只表现为"数据莫名其妙少了"。新表默认不进 `DataScopeTables`，除非它确实是"某个人的产出物"；
+  ② **没有上下文时不过滤，与租户维度的 fail-closed 刻意相反**：数据范围缺失只出现在压根没有"人"的
+  链路上（调度线程、异步回调、开放 API），fail-closed 只会把后台任务整体打挂，而跨租户那道防线还在。
+  例外是凭令牌进入的链路——令牌背后是确切的人，必须 `DataScopeContext.callAs` 显式还原身份，
+  否则 A 的 ScriptCat 脚本能读到 B 录的站点密码；
+  ③ **`归属列 IS NULL` 视为租户内共享**：存量数据没有归属人，一并挡掉会让升级当天历史记录全部消失；
+  ④ **UPDATE/DELETE 也要过滤**：只管列表页的话，用户看不到别人的行却能凭 ID 改删（`updateById`
+  只按主键定位），这是实打实的越权；INSERT 反而不管，归属列由 `MyMetaObjectHandler` 一处写入；
+  ⑤ **`ALL` 必须同时校验用户归属平台租户**：租户管理员能建角色，只认字段值等于让任意租户
+  自己给自己开跨租户的口子（同 `AdminStpInterfaceImpl` 对超管的平台归属校验）；
+  ⑥ **对话会话复用既有的 `ai_workspace_session`，不另建归属表**：框架状态表加不了列，归属由
+  `WorkspaceSessionGuard` 维护。本批次只给它接上范围——`SELF` 只放行自己认领的会话，
+  `TENANT`/`ALL` 只校验会话存在于当前租户（超管要能看全量）。该表不进白名单：归属条件已在
+  那条 JOIN 里显式表达，且它的归属列叫 `owner_user_id`，不在白名单支持的两种列名之内。
+- **`admin.tenant.enabled` 从本批次起默认 `true`**（此前默认关闭 = 跨租户完全打通）。开关一开，
+  几条**没有登录态**的链路会因缺租户上下文 fail-closed，改动它们时别把这几处退回去：开放 API 走
+  `admin.open-api.tenant-tokens` 的令牌→租户映射、工作台脚本回调从令牌行读租户、
+  内置调度器/XXL-JOB 走 `executeFromScheduler`（跨租户定位 + 按任务租户还原上下文）、
+  登录页轮播图归入平台级忽略清单（登录前无上下文可用）。
+- **本机开发库是所有分支共用的，Flyway 版本号常年被并行分支占走**：新增迁移前先查
+  `SELECT MAX(version) FROM customer_admin.flyway_schema_history`，而不是只看当前分支的文件名——
+  本批次就先后被 V55（已合入 main）、V56~V58（未合并的并行分支）挤到 V59/V60。
+  另注意 Flyway 默认忽略"版本号高于本地最高版本"的库内记录，所以**本地号一旦超过它们，
+  那些记录会从 future 突变成 missing 直接拒绝启动**；dev profile 已配
+  `ignore-migration-patterns: "*:missing"` 容忍这种切分支场景，生产 profile 刻意不配。
 - 业务工具后端走 `tool.backend.*` 接口 + `@ConditionalOnMissingBean` Mock，下游声明同类型 Bean 覆盖。
 - 持久层异常兜底必须 `catch(Exception)`（HikariPool/MyBatis 初始化异常是 RuntimeException）。
 - 给 `ToolRegistrar` 加构造参数前先 `grep -rn "new ToolRegistrar("`（多处调用点要同步）。

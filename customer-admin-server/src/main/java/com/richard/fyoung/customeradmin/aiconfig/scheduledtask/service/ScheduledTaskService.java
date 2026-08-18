@@ -19,6 +19,8 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminScheduledTaskProperties;
 import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -179,6 +181,29 @@ public class ScheduledTaskService {
      * <p>disabled 任务 fast-fail 拒绝（不落执行历史——从未真正尝试执行，跟"执行失败"语义不同）；
      * 一旦进入执行阶段，无论成功失败都落一条历史记录，失败也要留证方便运营排查。</p>
      */
+    /**
+     * 调度侧的执行入口：先跨租户按 {@code task_code} 定位任务，再切到它所属的租户上下文执行。
+     *
+     * <p>调度线程（内置调度器 / XXL-JOB 执行器）不是 Web 请求，没有登录态可推导租户，
+     * 而 {@link #execute} 全程要读写带 {@code tenant_id} 的表，缺上下文会 fail-closed 直接抛错。
+     * 定位这一步是明确的跨租户运维扫描，因此走 {@code CrossTenantOperations} 白名单；
+     * {@code task_code} 全局唯一（uk_ai_scheduled_task_code），定位结果不会有歧义。</p>
+     *
+     * <p>手动触发不走这里——那是 Web 请求，上下文已经由拦截器设好，直接调 {@link #execute}
+     * 才能保证"只能触发自己租户的任务"。</p>
+     */
+    public AiScheduledTaskRun executeFromScheduler(String taskCode, String triggerType) {
+        String tenantId = CrossTenantOperations.execute(() -> {
+            AiScheduledTask task = taskMapper.selectOne(
+                new LambdaQueryWrapper<AiScheduledTask>().eq(AiScheduledTask::getTaskCode, taskCode));
+            return task == null ? null : task.getTenantId();
+        });
+        if (tenantId == null || tenantId.isBlank()) {
+            return TenantContext.callWith(TenantContext.DEFAULT, () -> execute(taskCode, triggerType));
+        }
+        return TenantContext.callWith(tenantId, () -> execute(taskCode, triggerType));
+    }
+
     public AiScheduledTaskRun execute(String taskCode, String triggerType) {
         AiScheduledTask task = requireEnabledTaskByCode(taskCode);
         LocalDateTime startTime = LocalDateTime.now();

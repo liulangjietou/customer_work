@@ -4,6 +4,14 @@ spring:
   flyway:
     enabled: true
     clean-disabled: true   # 禁止误跑 flyway:clean 清空开发库
+    # 容忍"库里有、本地分支没有"的迁移记录（仅 dev/test）。
+    # 本机开发库是所有分支共用的，谁先启动过谁的迁移就先落进 flyway_schema_history；
+    # 切回一个还没合并那些迁移的分支时，Flyway 会把它们判成 missing 直接拒绝启动——
+    # 而这与当前分支的正确性毫无关系。注意它只对"版本号高于本地最高版本"之外的情况有影响：
+    # 未来版本 Flyway 本就默认忽略，一旦本分支的新迁移号超过它们才会暴露成 missing。
+    # 生产 profile 刻意不配：那里出现 missing 就是真的漏发布了迁移脚本，必须拦下来。
+    ignore-migration-patterns: "*:missing"
+
 
 # 本地/测试联调默认打开 OA 域账号登录入口；生产默认关闭，需运维显式设置 ADMIN_LDAP_ENABLED=true 开通。
 admin:

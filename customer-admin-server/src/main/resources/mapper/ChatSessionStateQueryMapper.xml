@@ -5,6 +5,11 @@
   该表由框架 MysqlAgentStateStore 自建：主键 (session_id, state_key, item_index)，
   session_id 存储格式为 "{agentCode}:{uuid}"，LIKE '{agentCode}:%' 走主键最左前缀。
   前缀用 CONCAT(#{agentCode}, ':%') 参数化拼接，禁止 ${} 拼接防注入。
+
+  归属另记在 ai_workspace_session（框架状态表没有 tenant/user 列，见 WorkspaceSessionGuard）。
+  INNER JOIN 始终保留：它同时承担"只列出本租户已认领的会话"这一层。
+  ownerUserId 为空表示当前数据范围放宽到本租户及以上（超管/运营/租户管理员），
+  此时只去掉按人那一条，租户与智能体的限定不变。
 -->
 <mapper namespace="com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper">
 
@@ -15,7 +20,7 @@
                ON owner.tenant_id = #{tenantId}
                AND owner.agent_code = #{agentCode}
                AND owner.session_id = SUBSTRING(state.session_id, CHAR_LENGTH(#{stateUserId}) + 2)
-               AND owner.owner_user_id = #{ownerUserId}
+               <if test="ownerUserId != null">AND owner.owner_user_id = #{ownerUserId}</if>
         WHERE state.session_id LIKE CONCAT(#{stateUserId}, ':%')
         GROUP BY state.session_id
         ORDER BY MAX(state.updated_at) DESC
@@ -29,7 +34,7 @@
                ON owner.tenant_id = #{tenantId}
                AND owner.agent_code = #{agentCode}
                AND owner.session_id = SUBSTRING(state.session_id, CHAR_LENGTH(#{stateUserId}) + 2)
-               AND owner.owner_user_id = #{ownerUserId}
+               <if test="ownerUserId != null">AND owner.owner_user_id = #{ownerUserId}</if>
         WHERE state.session_id LIKE CONCAT(#{stateUserId}, ':%')
     </select>
 

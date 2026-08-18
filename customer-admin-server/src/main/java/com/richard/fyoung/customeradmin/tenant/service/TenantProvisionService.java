@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.tenant.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.richard.fyoung.customeradmin.datascope.DataScope;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
@@ -78,6 +79,9 @@ public class TenantProvisionService {
             role.setRoleCode(TENANT_ADMIN_ROLE_CODE);
             role.setRemark("租户开通时自动创建，拥有本租户内全部管理权限");
             role.setStatus(1);
+            // 本租户内全部数据：租户管理员要能管理本租户成员的产出物，落 SELF 会让他连自己租户都管不了；
+            // 落 ALL 则越出租户边界（DataScopeResolver 另有平台归属校验会把它降回 TENANT，此处不依赖那道兜底）
+            role.setDataScope(DataScope.TENANT.name());
             roleMapper.insert(role);
 
             if (CollectionUtils.isEmpty(grantablePermissionIds)) {

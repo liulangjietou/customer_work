@@ -6,14 +6,10 @@ import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRolePermission;
-import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRolePermissionMapper;
-import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
-import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
+import com.richard.fyoung.customeradmin.system.role.service.UserRoleResolver;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
-import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
 
 import java.util.List;
 
@@ -37,16 +33,14 @@ public class AdminStpInterfaceImpl implements StpInterface {
 
     private static final String SUPER_ADMIN_ROLE_CODE = "super_admin";
 
-    private final SysUserRoleMapper userRoleMapper;
-    private final SysRoleMapper roleMapper;
+    private final UserRoleResolver userRoleResolver;
     private final SysRolePermissionMapper rolePermissionMapper;
     private final SysPermissionMapper permissionMapper;
 
-    public AdminStpInterfaceImpl(SysUserRoleMapper userRoleMapper, SysRoleMapper roleMapper,
+    public AdminStpInterfaceImpl(UserRoleResolver userRoleResolver,
                                  SysRolePermissionMapper rolePermissionMapper,
                                  SysPermissionMapper permissionMapper) {
-        this.userRoleMapper = userRoleMapper;
-        this.roleMapper = roleMapper;
+        this.userRoleResolver = userRoleResolver;
         this.rolePermissionMapper = rolePermissionMapper;
         this.permissionMapper = permissionMapper;
     }
@@ -82,30 +76,8 @@ public class AdminStpInterfaceImpl implements StpInterface {
         return rolesOf(loginId).stream().map(SysRole::getRoleCode).toList();
     }
 
-    /**
-     * 查用户的启用角色。
-     *
-     * <p>固定在用户归属租户下查询：权限属于"用户是谁"，与"当前在看哪个租户的数据"是两件事。
-     * 未登录（如 Sa-Token 在解析阶段回调）时归属租户为空，此时不切上下文，沿用调用方的现状。</p>
-     */
+    /** 委托 {@link UserRoleResolver}：角色集合是鉴权与数据权限共用的事实，不在此另写一份。 */
     private List<SysRole> rolesOf(Object loginId) {
-        String userTenant = TenantSession.currentUserTenant();
-        if (userTenant == null) {
-            return doRolesOf(loginId);
-        }
-        return TenantContext.callWith(userTenant, () -> doRolesOf(loginId));
-    }
-
-    private List<SysRole> doRolesOf(Object loginId) {
-        Long userId = Long.valueOf(loginId.toString());
-        List<Long> roleIds = userRoleMapper.selectList(
-                new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId))
-            .stream().map(SysUserRole::getRoleId).toList();
-        if (CollectionUtils.isEmpty(roleIds)) {
-            return List.of();
-        }
-        return roleMapper.selectBatchIds(roleIds).stream()
-            .filter(r -> r.getStatus() != null && r.getStatus() == 1)
-            .toList();
+        return userRoleResolver.enabledRolesOf(loginId);
     }
 }

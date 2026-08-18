@@ -27,6 +27,11 @@ public class SysRole {
     private String remark;
     /** 0禁用 / 1启用。 */
     private Integer status;
+    /**
+     * 数据范围：ALL 全部租户 / TENANT 本租户全部 / SELF 仅本人创建。取值见
+     * {@link com.richard.fyoung.customeradmin.datascope.DataScope}，为空按 SELF 处理。
+     */
+    private String dataScope;
 
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;

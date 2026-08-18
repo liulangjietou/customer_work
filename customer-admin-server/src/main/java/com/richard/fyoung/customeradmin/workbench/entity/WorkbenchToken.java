@@ -42,6 +42,12 @@ public class WorkbenchToken {
 
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;
+    /**
+     * 归属租户。其余表靠拦截器自动补写、实体不需要这个字段，此处是例外：
+     * 脚本回调没有登录态，必须先跨租户按 token 定位到这一行，再从行里读出租户去还原上下文。
+     */
+    private String tenantId;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
     @TableField(fill = FieldFill.INSERT_UPDATE)

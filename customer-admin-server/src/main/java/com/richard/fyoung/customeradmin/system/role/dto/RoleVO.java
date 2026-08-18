@@ -16,6 +16,8 @@ public class RoleVO {
     private String roleCode;
     private String remark;
     private Integer status;
+    /** 数据范围：ALL / TENANT / SELF。 */
+    private String dataScope;
     private LocalDateTime createTime;
     private List<Long> permissionIds;
 }

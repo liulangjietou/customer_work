@@ -27,6 +27,12 @@ public class AiScheduledTask {
 
     /** 任务编码：= XXL-JOB 触发时执行器参数里携带的业务标识，全局唯一。 */
     private String taskCode;
+
+    /**
+     * 归属租户。其余表靠拦截器自动补写、实体不需要这个字段，此处是例外：
+     * 调度线程不是 Web 请求，没有登录态可推导租户，只能先跨租户定位到任务行，再从行里读出来还原上下文。
+     */
+    private String tenantId;
     private String taskName;
     /** 关联智能体ID（逻辑关联 ai_agent.id）。 */
     private Long agentId;

@@ -77,7 +77,7 @@ class WorkbenchTokenServiceTest {
     }
 
     @Test
-    void validate_shouldReturnUserId_andRefreshLastUsed_whenValid() {
+    void validate_shouldReturnPrincipal_andRefreshLastUsed_whenValid() {
         // 先造一个令牌拿到明文，再用其哈希构造 selectOne 返回
         WorkbenchTokenCreatedVO created = createAndCapture();
         String rawToken = created.getToken();
@@ -85,9 +85,9 @@ class WorkbenchTokenServiceTest {
         stored.setRevoked(0);
         when(tokenMapper.selectOne(any())).thenReturn(stored);
 
-        Long userId = service.validate(rawToken);
+        WorkbenchTokenService.Principal principal = service.validate(rawToken);
 
-        assertEquals(USER_ID, userId);
+        assertEquals(USER_ID, principal.userId());
         verify(tokenMapper).updateById(any(WorkbenchToken.class)); // 刷新 last_used
     }
 
