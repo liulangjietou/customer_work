@@ -34,8 +34,8 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1388** + admin-server **834** + app 86 + customer-channel 65 + gateway 1（合计 **2374**）
-  （2026-08-18 数据权限批次实测：starter 1388 / 5 skip、admin 834 / 1 skip、app 86，BUILD SUCCESS，
+- 测试基线：starter **1413** + admin-server **834** + app 86 + customer-channel 65 + gateway 1（合计 **2399**）
+  （2026-08-18 数据权限批次实测：starter 1413 / 5 skip、admin 834 / 1 skip、app 86，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加了 admin **+45**（数据范围枚举/上下文/白名单/SQL 改写/
   范围解析 30 + 角色范围校验 5 + 装配门控 7 + 会话归属放行边界 3），starter 只改忽略清单常量故条数不变；
   其余差额来自同日合入 main 的 PR #113/#114/#115。**跑 admin 全量前先确认本机 Flyway 版本号**——
