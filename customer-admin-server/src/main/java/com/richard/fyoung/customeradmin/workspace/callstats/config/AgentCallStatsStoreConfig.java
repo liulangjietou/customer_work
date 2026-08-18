@@ -4,6 +4,8 @@ import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsG
 import com.richard.fyoung.customerwork.data.calllog.AgentCallRecordSink;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallTimingMiddleware;
 import com.richard.fyoung.customerwork.data.calllog.StoreAgentCallRecordSink;
+import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -61,11 +63,16 @@ public class AgentCallStatsStoreConfig {
             @Value("${customer-work.call-log.enabled:true}") boolean callLogEnabled,
             ToolKindRegistry agentCallToolKindRegistry,
             AgentCallRecordSink agentCallRecordSink,
-            ObjectProvider<MeterRegistry> meterRegistryProvider) {
+            ObjectProvider<MeterRegistry> meterRegistryProvider,
+            ObjectProvider<SubjectQuotaGuard> subjectQuotaGuardProvider) {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         properties.getCallLog().setEnabled(callLogEnabled);
-        // meterRegistry 可选注入：容器里没有 Micrometer 时中间件降级为只落库、不出 token 指标
+        // meterRegistry 可选注入：容器里没有 Micrometer 时中间件降级为只落库、不出 token 指标。
+        // subjectQuotaGuard 同样可选：它是后台用量记账的落点——token 的唯一落点就在这个中间件里，
+        // 不接进来的话后台用户的额度只有次数在动、token 永远是 0。
+        // 租户配额（TenantQuotaGuard）在 admin 侧没有装配，故传 null：那是客服端链路的成本上限。
         return new AgentCallTimingMiddleware(properties, agentCallToolKindRegistry,
-            agentCallRecordSink, meterRegistryProvider);
+            agentCallRecordSink, meterRegistryProvider, (ObjectProvider<TenantQuotaGuard>) null,
+            subjectQuotaGuardProvider);
     }
 }

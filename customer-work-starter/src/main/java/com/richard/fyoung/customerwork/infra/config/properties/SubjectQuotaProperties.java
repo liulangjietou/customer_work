@@ -29,6 +29,14 @@ public class SubjectQuotaProperties {
     /** 注册用户的默认等级编码：新用户落这一档，后台可单独改人。 */
     private String defaultUserLevel = "free";
 
+    /**
+     * 后台管理系统登录用户的默认等级编码。
+     *
+     * <p>与终端用户分开配：后台用户是内部员工，跑的是调试、VibeCoding 这类重负载，
+     * 按 C 端的档位限会让他们干不了活；但完全不限又挡不住"某个脚本挂在后台狂刷"这种真实事故。</p>
+     */
+    private String defaultAdminLevel = "admin-default";
+
     /** 匿名调用方（无登录态，按 IP 计）的等级编码。 */
     private String anonymousLevel = "anonymous";
 
@@ -99,7 +107,8 @@ public class SubjectQuotaProperties {
      * 出厂默认三档。
      *
      * <p>数值取向：匿名最紧（谁都能打，且同一 NAT 后共享一份额度）、注册用户居中、
-     * 接入方最宽（一把 Key 背后是一个系统而非一个人）。</p>
+     * 后台用户放宽（内部员工，调试与 VibeCoding 单次就很重）、接入方最宽
+     * （一把 Key 背后是一个系统而非一个人）。</p>
      *
      * <p>次数看起来偏宽是因为口径含查询请求（见 {@link #paths}）：一次对话往往伴随
      * 若干次工单/消息查询，按"纯提问数"配会让用户在正常使用中就被拦。token 上限才是
@@ -108,6 +117,7 @@ public class SubjectQuotaProperties {
     private static Map<String, Level> defaultLevels() {
         Map<String, Level> levels = new LinkedHashMap<>();
         levels.put("free", level("USER", "免费用户", 1800, 50000L, 100));
+        levels.put("admin-default", level("ADMIN_USER", "后台用户", 3600, 2000000L, 200));
         levels.put("anonymous", level("IP", "匿名访客", 1800, 10000L, 20));
         levels.put("api-key", level("API_KEY", "接入方", 3600, 1000000L, 2000));
         return levels;
