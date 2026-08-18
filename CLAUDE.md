@@ -34,7 +34,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1413** + admin-server **837** + app 86 + customer-channel 65 + gateway 1（合计 **2402**）
+- 测试基线：starter **1413** + admin-server **840** + app 86 + customer-channel 65 + gateway 1（合计 **2405**）
   （2026-08-18 数据权限批次实测：starter 1413 / 5 skip、admin 834 / 1 skip、app 86，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加了 admin **+45**（数据范围枚举/上下文/白名单/SQL 改写/
   范围解析 30 + 角色范围校验 5 + 装配门控 7 + 会话归属放行边界 3），starter 只改忽略清单常量故条数不变；
@@ -226,7 +226,11 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   凡是**不在 Web 请求里**的查库都会因缺租户上下文 fail-closed。四类都要显式处理，改动时别退回去：
   ① **无登录态的 HTTP 链路**：开放 API 走 `admin.open-api.tenant-tokens` 的令牌→租户映射、
   工作台脚本回调从令牌行读租户、登录页轮播图归入平台级忽略清单（登录前无上下文可用）；
-  ② **调度线程**：内置调度器/XXL-JOB 走 `executeFromScheduler`（跨租户定位 + 按任务租户还原上下文）；
+  ② **调度线程与轮询守护线程**：内置调度器/XXL-JOB 走 `executeFromScheduler`（跨租户定位 + 按任务租户
+  还原上下文）；内容风控词库刷新（`SensitiveWordRefreshDriver` 的守护线程）走 `CrossTenantOperations`
+  加载全量词库——**它读失败会让过滤器 fail-closed"拦截一切"，后台对话全被拦**，而异常被 Store 的
+  catch 吞成一行日志，很难联想到租户开关。代价是进程级单例过滤器用所有租户词表的并集，可能误拦，
+  方向上安全优先；要按租户精确过滤得把过滤器改成分片，那是独立的一件事；
   ③ **启动期装配**：`@Bean` 工厂方法、`@PostConstruct`、`ContextRefreshedEvent` 里的查库。
   **这一类最容易漏且后果最重——A2A 的 `@Bean` 里查 `ai_agent` 直接让应用起不来**（实测踩过）；
   `contextLoads` 照不出来，因为那条装配路径默认关着。判断依据：这类查询要么是平台级定位
