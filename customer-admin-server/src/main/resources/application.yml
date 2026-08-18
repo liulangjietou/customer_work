@@ -199,11 +199,12 @@ admin:
       confirm-timeout-seconds: ${ADMIN_SANDBOX_HITL_CONFIRM_TIMEOUT_SECONDS:300}
       batch-modify-threshold: ${ADMIN_SANDBOX_HITL_BATCH_MODIFY_THRESHOLD:3}
     features:
-      # P1/P2 增量能力全部默认关闭，生产环境按功能逐项灰度开启。
-      command-execution-enabled: ${ADMIN_SANDBOX_COMMAND_EXECUTION_ENABLED:false}
-      diagnosis-enabled: ${ADMIN_SANDBOX_DIAGNOSIS_ENABLED:false}
-      refactor-enabled: ${ADMIN_SANDBOX_REFACTOR_ENABLED:false}
-      management-enabled: ${ADMIN_SANDBOX_MANAGEMENT_ENABLED:false}
+      # P1/P2 能力在非生产环境默认开放，可通过环境变量逐项关闭；prod profile 强制关闭，
+      # ProductionReadinessValidator 会拒绝任何试图在生产开启这些能力的配置。
+      command-execution-enabled: ${ADMIN_SANDBOX_COMMAND_EXECUTION_ENABLED:true}
+      diagnosis-enabled: ${ADMIN_SANDBOX_DIAGNOSIS_ENABLED:true}
+      refactor-enabled: ${ADMIN_SANDBOX_REFACTOR_ENABLED:true}
+      management-enabled: ${ADMIN_SANDBOX_MANAGEMENT_ENABLED:true}
       idle-timeout-minutes: ${ADMIN_SANDBOX_IDLE_TIMEOUT_MINUTES:30}
   skill:
     # Skill 保存/上传时把 SKILL.md 正文发布到勾选的存储目标（minio/nacos/sftp）；运行时消费仍从数据库读。

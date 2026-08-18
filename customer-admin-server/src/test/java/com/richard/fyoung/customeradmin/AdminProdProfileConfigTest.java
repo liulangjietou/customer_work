@@ -14,6 +14,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 class AdminProdProfileConfigTest {
 
     @Test
+    void shouldEnableAiCodingFeaturesByDefaultOutsideProduction() throws Exception {
+        List<PropertySource<?>> sources = new YamlPropertySourceLoader().load(
+            "application", new ClassPathResource("application.yml"));
+
+        assertEquals("${ADMIN_SANDBOX_COMMAND_EXECUTION_ENABLED:true}", property(sources,
+            "admin.sandbox.features.command-execution-enabled"));
+        assertEquals("${ADMIN_SANDBOX_DIAGNOSIS_ENABLED:true}", property(sources,
+            "admin.sandbox.features.diagnosis-enabled"));
+        assertEquals("${ADMIN_SANDBOX_REFACTOR_ENABLED:true}", property(sources,
+            "admin.sandbox.features.refactor-enabled"));
+        assertEquals("${ADMIN_SANDBOX_MANAGEMENT_ENABLED:true}", property(sources,
+            "admin.sandbox.features.management-enabled"));
+    }
+
+    @Test
     void shouldDisableSwaggerAndLimitActuatorByDefault() throws Exception {
         List<PropertySource<?>> sources = new YamlPropertySourceLoader().load(
             "application-prod", new ClassPathResource("application-prod.yml"));
@@ -25,6 +40,14 @@ class AdminProdProfileConfigTest {
             "springdoc.api-docs.enabled"));
         assertEquals("${SPRINGDOC_ENABLED:false}", property(sources,
             "springdoc.swagger-ui.enabled"));
+        assertEquals(Boolean.FALSE, property(sources,
+            "admin.sandbox.features.command-execution-enabled"));
+        assertEquals(Boolean.FALSE, property(sources,
+            "admin.sandbox.features.diagnosis-enabled"));
+        assertEquals(Boolean.FALSE, property(sources,
+            "admin.sandbox.features.refactor-enabled"));
+        assertEquals(Boolean.FALSE, property(sources,
+            "admin.sandbox.features.management-enabled"));
     }
 
     private Object property(List<PropertySource<?>> sources, String key) {

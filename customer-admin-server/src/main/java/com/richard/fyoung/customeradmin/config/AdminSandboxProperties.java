@@ -142,7 +142,8 @@ public class AdminSandboxProperties {
     /**
      * AI 编码助手 P1/P2 能力开关与会话沙箱回收参数。
      *
-     * <p>命令执行、诊断、重构、沙箱管理均是新增攻击面，Java 默认值必须保持关闭；只有显式配置后才开放。
+     * <p>命令执行、诊断、重构、沙箱管理均是新增攻击面，Java fallback 保持关闭；非生产环境由
+     * {@code application.yml} 默认开放，生产环境由 prod profile 与启动门禁强制关闭。
      * {@code idleTimeoutMinutes} 只针对本模块管理的交互式命令沙箱，空闲超过阈值后在下一次查询/执行时回收。</p>
      */
     @Data

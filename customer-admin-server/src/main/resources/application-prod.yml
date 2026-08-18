@@ -25,6 +25,16 @@ springdoc:
   swagger-ui:
     enabled: ${SPRINGDOC_ENABLED:false}
 
+# AI 编码命令、诊断、重构与沙箱管理属于高风险开发能力，生产环境禁止开放。
+# 即使环境变量试图覆盖这些值，AdminProductionReadinessValidator 也会拒绝启动。
+admin:
+  sandbox:
+    features:
+      command-execution-enabled: false
+      diagnosis-enabled: false
+      refactor-enabled: false
+      management-enabled: false
+
 logging:
   level:
     root: INFO

@@ -693,13 +693,16 @@ admin:
     hitl:                                          # 仅 permission-mode=hitl 时生效（P1-1）
       confirm-timeout-seconds: ${ADMIN_SANDBOX_HITL_CONFIRM_TIMEOUT_SECONDS:300}  # 确认超时，超时按拒绝
       batch-modify-threshold: ${ADMIN_SANDBOX_HITL_BATCH_MODIFY_THRESHOLD:3}      # 单轮批量修改超此值需确认
-    features:                                      # P1/P2 增量能力默认全部关闭，按项灰度
-      command-execution-enabled: ${ADMIN_SANDBOX_COMMAND_EXECUTION_ENABLED:false}
-      diagnosis-enabled: ${ADMIN_SANDBOX_DIAGNOSIS_ENABLED:false}
-      refactor-enabled: ${ADMIN_SANDBOX_REFACTOR_ENABLED:false}
-      management-enabled: ${ADMIN_SANDBOX_MANAGEMENT_ENABLED:false}
+    features:                                      # 非生产环境默认开放；prod 强制全部关闭
+      command-execution-enabled: ${ADMIN_SANDBOX_COMMAND_EXECUTION_ENABLED:true}
+      diagnosis-enabled: ${ADMIN_SANDBOX_DIAGNOSIS_ENABLED:true}
+      refactor-enabled: ${ADMIN_SANDBOX_REFACTOR_ENABLED:true}
+      management-enabled: ${ADMIN_SANDBOX_MANAGEMENT_ENABLED:true}
       idle-timeout-minutes: ${ADMIN_SANDBOX_IDLE_TIMEOUT_MINUTES:30}
 ```
+
+> 以上四项属于开发期高风险能力。生产环境禁止启用：`application-prod.yml` 固定关闭，且
+> `AdminProductionReadinessValidator` 会在任一最终生效值为 `true` 时拒绝启动。
 
 > **Plan Mode HITL（P1-1）**：`permission-mode=hitl` 时，vibecoding 会话中 Agent 计划执行高风险操作
 > （删除文件 / 执行非只读或破坏性命令 `rm`·`mvn clean` 等 / 修改 pom.xml 等依赖文件 / 单轮批量修改超阈值）
