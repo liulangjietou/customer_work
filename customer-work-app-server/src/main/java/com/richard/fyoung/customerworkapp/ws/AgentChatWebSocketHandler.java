@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential.AgentIdentity;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import com.richard.fyoung.customerworkapp.chat.ChatDispatchService;
@@ -56,29 +59,46 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
 
     @Override
     public Mono<Void> handle(WebSocketSession session) {
-        Optional<String> agentId = tokenOf(session).flatMap(token ->
-            AgentAccessCredential.verify(token, properties.getAgentAccess().getSecret(), System.currentTimeMillis()));
-        if (agentId.isEmpty()) {
+        Optional<AgentIdentity> identity = tokenOf(session).flatMap(token ->
+            AgentAccessCredential.verifyIdentity(
+                token, properties.getAgentAccess().getSecret(), System.currentTimeMillis()));
+        if (identity.isEmpty()) {
             log.info("ws agent handshake rejected: invalid token");
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
-        String agent = agentId.get();
-        Sinks.Many<String> sink = registry.registerAgent(agent);
+        AgentIdentity authenticated = identity.get();
+        String tenantId = authenticated.tenantId();
+        if (properties.getTenant().isEnabled() && (tenantId == null || tenantId.isBlank())) {
+            log.info("ws agent handshake rejected: token tenant missing");
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
+        String effectiveTenant = properties.getTenant().isEnabled() ? tenantId : TenantContext.DEFAULT;
+        return handleAuthenticated(session, authenticated.agentId(), effectiveTenant)
+            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, effectiveTenant));
+    }
 
-        Flux<WebSocketMessage> outbound = sink.asFlux().map(session::textMessage);
-        Mono<Void> receive = session.receive()
-            .map(WebSocketMessage::getPayloadAsText)
-            .concatMap(payload -> handleInbound(agent, payload)
-                .onErrorResume(e -> {
-                    log.error("ws agent inbound failed, code={}, agent={}", "WS-AGENT-INBOUND-FAIL", agent, e);
-                    registry.pushToAgent(agent, WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
-                    return Mono.empty();
-                }))
-            .then();
+    private Mono<Void> handleAuthenticated(WebSocketSession session, String agent, String tenantId) {
+        return Mono.defer(() -> TenantContext.callWith(tenantId, () -> {
+            Sinks.Many<String> sink = registry.registerAgent(agent);
 
-        return session.send(outbound)
-            .and(receive)
-            .doFinally(signal -> registry.unregisterAgent(agent, sink));
+            Flux<WebSocketMessage> outbound = sink.asFlux().map(session::textMessage);
+            Mono<Void> receive = session.receive()
+                .map(WebSocketMessage::getPayloadAsText)
+                .concatMap(payload -> handleInbound(agent, payload)
+                    .onErrorResume(e -> {
+                        log.error("ws agent inbound failed, code={}, agent={}",
+                            "WS-AGENT-INBOUND-FAIL", agent, e);
+                        registry.pushToAgent(agent,
+                            WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
+                        return Mono.empty();
+                    }))
+                .then();
+
+            return session.send(outbound)
+                .and(receive)
+                .doFinally(signal -> TenantContext.runWith(tenantId,
+                    () -> registry.unregisterAgent(agent, sink)));
+        }));
     }
 
     private Mono<Void> handleInbound(String agent, String payload) {

@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.ibatis.plugin.Interceptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
@@ -56,9 +57,18 @@ public final class CrossDbGateways {
     public static CrossDbGateway create(CrossDbConnectionSettings settings,
                                         List<Class<?>> mapperClasses,
                                         List<String> mapperXmlLocations) {
+        return create(settings, mapperClasses, mapperXmlLocations, List.of());
+    }
+
+    /** 构建携带宿主安全插件链的跨库门面。 */
+    public static CrossDbGateway create(CrossDbConnectionSettings settings,
+                                        List<Class<?>> mapperClasses,
+                                        List<String> mapperXmlLocations,
+                                        List<Interceptor> plugins) {
         HikariDataSource dataSource = buildAndProbeDataSource(settings);
         try {
-            SqlSessionFactory factory = buildSqlSessionFactory(dataSource, mapperClasses, mapperXmlLocations);
+            SqlSessionFactory factory = buildSqlSessionFactory(
+                dataSource, mapperClasses, mapperXmlLocations, plugins);
             CrossDbGateway gateway = new CrossDbGateway(settings.poolName(), settings.jdbcUrl(),
                 dataSource, dataSource, factory);
             log.info("cross-db gateway ready, pool={}, url={}", settings.poolName(), settings.jdbcUrl());
@@ -83,8 +93,17 @@ public final class CrossDbGateways {
     public static CrossDbGateway attach(DataSource dataSource, String name,
                                         List<Class<?>> mapperClasses,
                                         List<String> mapperXmlLocations) {
+        return attach(dataSource, name, mapperClasses, mapperXmlLocations, List.of());
+    }
+
+    /** 在宿主数据源上装配携带安全插件的独立 Mapper 环境。 */
+    public static CrossDbGateway attach(DataSource dataSource, String name,
+                                        List<Class<?>> mapperClasses,
+                                        List<String> mapperXmlLocations,
+                                        List<Interceptor> plugins) {
         try {
-            SqlSessionFactory factory = buildSqlSessionFactory(dataSource, mapperClasses, mapperXmlLocations);
+            SqlSessionFactory factory = buildSqlSessionFactory(
+                dataSource, mapperClasses, mapperXmlLocations, plugins);
             log.info("cross-db gateway attached to host datasource, name={}", name);
             return new CrossDbGateway(name, HOST_MANAGED_URL, dataSource, null, factory);
         } catch (Exception e) {
@@ -109,6 +128,16 @@ public final class CrossDbGateways {
                                                      List<String> mapperXmlLocations,
                                                      Function<CrossDbGateway, T> assembler) {
         return new CrossDbGatewayProvider<>(settingsSupplier, mapperClasses, mapperXmlLocations, assembler);
+    }
+
+    /** 惰性门面的安全插件重载；插件在首次建连时创建。 */
+    public static <T> CrossDbGatewayProvider<T> lazy(Supplier<CrossDbConnectionSettings> settingsSupplier,
+                                                     List<Class<?>> mapperClasses,
+                                                     List<String> mapperXmlLocations,
+                                                     Supplier<List<Interceptor>> pluginsSupplier,
+                                                     Function<CrossDbGateway, T> assembler) {
+        return new CrossDbGatewayProvider<>(settingsSupplier, mapperClasses, mapperXmlLocations,
+            pluginsSupplier, assembler);
     }
 
     /**
@@ -156,7 +185,8 @@ public final class CrossDbGateways {
 
     private static SqlSessionFactory buildSqlSessionFactory(DataSource dataSource,
                                                             List<Class<?>> mapperClasses,
-                                                            List<String> mapperXmlLocations) throws Exception {
+                                                            List<String> mapperXmlLocations,
+                                                            List<Interceptor> plugins) throws Exception {
         MybatisConfiguration configuration = new MybatisConfiguration();
         // 列名下划线、DO 字段驼峰，必须开启映射（created_at_ms -> createdAtMs）
         configuration.setMapUnderscoreToCamelCase(true);
@@ -170,6 +200,9 @@ public final class CrossDbGateways {
         MybatisSqlSessionFactoryBean factoryBean = new MybatisSqlSessionFactoryBean();
         factoryBean.setDataSource(dataSource);
         factoryBean.setConfiguration(configuration);
+        if (plugins != null && !plugins.isEmpty()) {
+            factoryBean.setPlugins(plugins.toArray(new Interceptor[0]));
+        }
         // 基建工厂不打 mybatis-plus 启动横幅：宿主的主 SqlSessionFactory 已打过一次，这里每建一个
         // 跨库网关就再打一个（admin 启动曾连打三个）。defaults() 与不设置时框架内部的兜底同源，
         // 除 banner 开关外行为零变化。

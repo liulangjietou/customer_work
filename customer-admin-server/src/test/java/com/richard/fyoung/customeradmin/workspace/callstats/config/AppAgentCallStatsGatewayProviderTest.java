@@ -2,6 +2,8 @@ package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
+import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,7 +25,8 @@ class AppAgentCallStatsGatewayProviderTest {
         props.setDatabase("agent_scope_customer_work");
         props.setUsername("root");
         props.setPassword("root");
-        return new AppAgentCallStatsGatewayProvider(props);
+        return new AppAgentCallStatsGatewayProvider(
+            props, new AdminCrossDbTenantPlugins(new AdminTenantProperties()));
     }
 
     @Test

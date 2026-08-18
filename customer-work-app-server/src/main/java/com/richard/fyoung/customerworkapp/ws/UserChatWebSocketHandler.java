@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerworkapp.chat.ChatDispatchService;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.slf4j.Logger;
@@ -65,22 +67,36 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
         UserPrincipal user = principal.get();
-        Sinks.Many<String> sink = registry.registerUser(user.userId());
+        if (user.tenantId() == null || user.tenantId().isBlank()) {
+            log.info("ws user handshake rejected: token tenant missing");
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
+        return handleAuthenticated(session, user)
+            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, user.tenantId()));
+    }
 
-        Flux<WebSocketMessage> outbound = sink.asFlux().map(session::textMessage);
-        Mono<Void> receive = session.receive()
-            .map(WebSocketMessage::getPayloadAsText)
-            .concatMap(payload -> handleInbound(user, payload)
-                .onErrorResume(e -> {
-                    log.error("ws user inbound failed, code={}, user={}", "WS-USER-INBOUND-FAIL", user.userId(), e);
-                    registry.pushToUser(user.userId(), WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
-                    return Mono.empty();
-                }))
-            .then();
+    private Mono<Void> handleAuthenticated(WebSocketSession session, UserPrincipal user) {
+        return Mono.defer(() -> TenantContext.callWith(user.tenantId(), () -> {
+            Sinks.Many<String> sink = registry.registerUser(user.userId());
 
-        return session.send(outbound)
-            .and(receive)
-            .doFinally(signal -> registry.unregisterUser(user.userId(), sink));
+            Flux<WebSocketMessage> outbound = sink.asFlux().map(session::textMessage);
+            Mono<Void> receive = session.receive()
+                .map(WebSocketMessage::getPayloadAsText)
+                .concatMap(payload -> handleInbound(user, payload)
+                    .onErrorResume(e -> {
+                        log.error("ws user inbound failed, code={}, user={}",
+                            "WS-USER-INBOUND-FAIL", user.userId(), e);
+                        registry.pushToUser(user.userId(),
+                            WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
+                        return Mono.empty();
+                    }))
+                .then();
+
+            return session.send(outbound)
+                .and(receive)
+                .doFinally(signal -> TenantContext.runWith(user.tenantId(),
+                    () -> registry.unregisterUser(user.userId(), sink)));
+        }));
     }
 
     /** 解析并分发单条入站帧。解析异常抛出交由上层 onErrorResume 兜底。 */

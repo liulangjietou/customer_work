@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
+import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanEvent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanResultEvent;
 import org.slf4j.Logger;
@@ -156,7 +157,7 @@ public class PlanConfirmationService {
     }
 
     private String channelKey(String agentCode, String sessionId) {
-        return agentCode + ":" + (StringUtils.hasText(sessionId) ? sessionId : "default");
+        return WorkspaceRuntimeScope.session(agentCode, sessionId);
     }
 
     /**

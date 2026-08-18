@@ -339,6 +339,8 @@ customer-work:
     username: ${NACOS_USERNAME:nacos}
     password: ${NACOS_PASSWORD:nacos}
     timeout-ms: 3000
+    # 首次订阅失败会保留旧配置并自动重试，Nacos 恢复后无需重启实例。
+    runtime-config-subscribe-retry-ms: ${CW_RUNTIME_CONFIG_SUBSCRIBE_RETRY_MS:10000}
     # 服务注册对外 IP：enabled=true 时把本实例注册进 Nacos 供网关 lb:// 路由，服务名=spring.application.name。
     # 留空自动探测本机地址；多网卡/容器场景用环境变量指定网关可达 IP。
     instance-ip: ${NACOS_INSTANCE_IP:}
@@ -349,6 +351,16 @@ customer-work:
     runtime-config-data-id: customer-work-runtime-config
     # API Key 密文 AES 解密密钥：必须与 admin 的 ADMIN_AES_SECRET_KEY 同值，否则整份配置解密失败并保留旧配置。
     config-aes-key: ${CUSTOMER_WORK_CONFIG_AES_KEY:}
+    # 实例应用结果经 DB Outbox 可靠回传 admin；开启运行时配置时生产环必须配置。
+    runtime-config-ack-url: ${CW_RUNTIME_CONFIG_ACK_URL:}
+    runtime-config-ack-token: ${CW_RUNTIME_CONFIG_ACK_TOKEN:}
+    # Pod 下默认使用 HOSTNAME；非容器部署可显式给出稳定实例 ID。
+    runtime-config-instance-id: ${CW_RUNTIME_CONFIG_INSTANCE_ID:}
+  notification:
+    # 主动通知网关：POST JSON {operationId,target,message}，Idempotency-Key 同 operationId。
+    webhook-url: ${CW_NOTIFICATION_WEBHOOK_URL:}
+    auth-token: ${CW_NOTIFICATION_AUTH_TOKEN:}
+    timeout-seconds: ${CW_NOTIFICATION_TIMEOUT_SECONDS:10}
   protocol:
     # AG-UI：标准 Agent-UI 事件协议（POST /api/customer/agui，SSE）
     agui:

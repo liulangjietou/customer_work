@@ -22,6 +22,8 @@ public class QualityEvalReport {
     private final double avgScore;
     private final int passCount;
     private final List<String> failures;
+    private final int judgedCount;
+    private final List<String> errors;
 
     /**
      * 失败用例 ID 列表（得分低于通过阈值的用例）。
@@ -30,14 +32,31 @@ public class QualityEvalReport {
      * 不必从人读明细里反解格式。</p>
      */
     private final List<String> failedCaseIds;
+    private final List<String> errorCaseIds;
+
+    public QualityEvalReport(int total, double avgScore, int passCount,
+                             List<String> failures, List<String> failedCaseIds,
+                             int judgedCount, List<String> errors, List<String> errorCaseIds) {
+        this.total = total;
+        this.avgScore = avgScore;
+        this.passCount = passCount;
+        this.failures = failures == null ? List.of() : List.copyOf(failures);
+        this.failedCaseIds = failedCaseIds == null ? List.of() : List.copyOf(failedCaseIds);
+        this.judgedCount = judgedCount;
+        this.errors = errors == null ? List.of() : List.copyOf(errors);
+        this.errorCaseIds = errorCaseIds == null ? List.of() : List.copyOf(errorCaseIds);
+    }
 
     public QualityEvalReport(int total, double avgScore, int passCount,
                              List<String> failures, List<String> failedCaseIds) {
         this.total = total;
         this.avgScore = avgScore;
         this.passCount = passCount;
-        this.failures = failures;
+        this.failures = failures == null ? List.of() : List.copyOf(failures);
         this.failedCaseIds = failedCaseIds == null ? List.of() : List.copyOf(failedCaseIds);
+        this.judgedCount = total;
+        this.errors = List.of();
+        this.errorCaseIds = List.of();
     }
 
     /** 兼容重载：不带失败 ID（无法参与回归识别，仅适合一次性查看）。 */
@@ -49,15 +68,33 @@ public class QualityEvalReport {
         return total == 0 ? 0.0 : (double) passCount / total;
     }
 
+    public int getErrorCount() {
+        return errors.size();
+    }
+
+    public QualityEvalStatus getStatus() {
+        return errors.isEmpty() ? QualityEvalStatus.COMPLETED : QualityEvalStatus.ERROR;
+    }
+
+    public boolean isGatePassed() {
+        return getStatus() == QualityEvalStatus.COMPLETED;
+    }
+
     public String format() {
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("=== Quality Eval Report (LLM-as-Judge) ===%n"));
-        sb.append(String.format("total=%d, avgScore=%.2f, passRate=%.1f%%%n",
-            total, avgScore, passRate() * 100));
+        sb.append(String.format("status=%s, total=%d, judged=%d, errors=%d, avgScore=%.2f, passRate=%.1f%%%n",
+            getStatus(), total, judgedCount, getErrorCount(), avgScore, passRate() * 100));
         if (!failures.isEmpty()) {
             sb.append("failures:").append(System.lineSeparator());
             for (String f : failures) {
                 sb.append("  - ").append(f).append(System.lineSeparator());
+            }
+        }
+        if (!errors.isEmpty()) {
+            sb.append("judge errors:").append(System.lineSeparator());
+            for (String error : errors) {
+                sb.append("  - ").append(error).append(System.lineSeparator());
             }
         }
         return sb.toString();

@@ -3,6 +3,9 @@ package com.richard.fyoung.customerworkapp.controller;
 import com.richard.fyoung.customerwork.capability.csat.CsatService;
 import com.richard.fyoung.customerwork.capability.csat.CsatSummary;
 import com.richard.fyoung.customerwork.capability.csat.CsatSurvey;
+import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
+import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerworkapp.service.UserSessionGuard;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +15,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.server.ServerWebExchange;
+import org.springframework.http.HttpStatus;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -34,18 +40,24 @@ public class CsatController {
     private static final long DEFAULT_WINDOW_MS = Duration.ofDays(7).toMillis();
 
     private final CsatService csatService;
+    private final UserSessionGuard sessionGuard;
 
-    public CsatController(CsatService csatService) {
+    public CsatController(CsatService csatService, UserSessionGuard sessionGuard) {
         this.csatService = csatService;
+        this.sessionGuard = sessionGuard;
     }
 
     @Operation(summary = "查询调查状态",
         description = "用户端据此决定要不要弹评分卡：无记录=没被邀请，有记录且 score 为空=待评价")
     @GetMapping("/{sessionId}")
-    public Mono<ResponseEntity<CsatSurvey>> status(@PathVariable String sessionId) {
-        return Mono.fromCallable(() -> csatService.find(sessionId)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build()))
+    public Mono<ResponseEntity<CsatSurvey>> status(@PathVariable String sessionId,
+                                                   ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+                sessionGuard.requireOwned(sessionId, principal(exchange).userId());
+                return csatService.find(sessionId)
+                    .map(ResponseEntity::ok)
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+            })
             .subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -54,8 +66,12 @@ public class CsatController {
     @PostMapping("/{sessionId}")
     public Mono<CsatSurvey> submit(@PathVariable String sessionId,
                                    @RequestParam int score,
-                                   @RequestParam(required = false) String comment) {
-        return Mono.fromCallable(() -> csatService.submit(sessionId, score, comment))
+                                   @RequestParam(required = false) String comment,
+                                   ServerWebExchange exchange) {
+        return Mono.fromCallable(() -> {
+                sessionGuard.requireOwned(sessionId, principal(exchange).userId());
+                return csatService.submit(sessionId, score, comment);
+            })
             .subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -71,5 +87,13 @@ public class CsatController {
                 return csatService.summary(scopeId, start, end);
             })
             .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private UserPrincipal principal(ServerWebExchange exchange) {
+        UserPrincipal principal = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
+        }
+        return principal;
     }
 }

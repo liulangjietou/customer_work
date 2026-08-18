@@ -77,6 +77,18 @@ public class MybatisTicketStore implements TicketStore {
     }
 
     @Override
+    public Optional<Ticket> findBySession(String sessionId) {
+        try {
+            TicketDO record = ticketMapper.findBySession(sessionId);
+            return record == null ? Optional.empty() : Optional.of(toTicket(record));
+        } catch (Exception e) {
+            log.error("ticket findBySession failed, code={}, session={}",
+                "TICKET-STORE-FINDSESSION-FAIL", sessionId, e);
+            throw new IllegalStateException("failed to find ticket by session: " + sessionId, e);
+        }
+    }
+
+    @Override
     public Optional<Ticket> findActiveByUser(String userId) {
         try {
             TicketDO record = ticketMapper.findActiveByUser(userId);

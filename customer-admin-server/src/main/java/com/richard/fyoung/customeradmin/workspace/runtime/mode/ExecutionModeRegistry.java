@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.runtime.mode;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,8 +18,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Component
 public class ExecutionModeRegistry {
-
-    private static final String DEFAULT_SESSION = "default";
 
     /** {@code agentCode:sessionId -> 会话选定的执行模式}。 */
     private final Map<String, ExecutionMode> modes = new ConcurrentHashMap<>();
@@ -45,6 +43,6 @@ public class ExecutionModeRegistry {
     }
 
     private String key(String agentCode, String sessionId) {
-        return agentCode + ":" + (StringUtils.hasText(sessionId) ? sessionId : DEFAULT_SESSION);
+        return WorkspaceRuntimeScope.session(agentCode, sessionId);
     }
 }

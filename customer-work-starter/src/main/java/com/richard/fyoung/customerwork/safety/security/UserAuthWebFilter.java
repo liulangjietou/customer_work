@@ -13,13 +13,13 @@ import reactor.core.publisher.Mono;
 import java.util.Optional;
 
 /**
- * 终端用户 JWT 鉴权过滤器：只覆盖 {@code /api/customer/user/**}。
+ * 终端用户 JWT 鉴权过滤器：覆盖所有浏览器用户 HTTP 端点。
  *
  * <p>从 {@code Authorization: Bearer <token>} 解析登录态令牌，验签失败直接 401 JSON（不进业务链路）；
  * 成功则把 {@link UserPrincipal} 放入 exchange 属性（键 {@link #PRINCIPAL_ATTR}）供控制器取用。</p>
  *
- * <p>Order 排在 {@code ApiKeyAuthWebFilter}（{@code HIGHEST_PRECEDENCE + 10}）之后：API Key 是接入层
- * 基础设施闸门（默认关闭），用户登录态鉴权是其后的业务身份闸门，两者正交共存。</p>
+ * <p>浏览器路径由本过滤器独占鉴权，不再要求浏览器携带服务端 API Key。若上游组件已经建立租户上下文，
+ * 则必须与 JWT 中的租户严格一致，不能按过滤器顺序静默覆盖。</p>
  *
  * <p>本类为纯 {@link WebFilter}（不加 {@code @Component}）：由接入方以 {@code @Bean} 显式注册——避免被
  * {@code @WebFluxTest} 切片按 WebFilter 类型自动纳入、却因切片未提供其依赖（{@link UserJwtService}）而加载失败。
@@ -32,7 +32,6 @@ public class UserAuthWebFilter implements WebFilter {
     /** 用户主体在 exchange 属性中的键。 */
     public static final String PRINCIPAL_ATTR = "cw.user.principal";
 
-    private static final String PATH_PREFIX = "/api/customer/user/";
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final UserJwtService jwtService;
@@ -44,7 +43,7 @@ public class UserAuthWebFilter implements WebFilter {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
-        if (!path.startsWith(PATH_PREFIX)) {
+        if (!CustomerSecurityPaths.requiresUserJwt(path)) {
             return chain.filter(exchange);
         }
         String header = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
@@ -55,26 +54,25 @@ public class UserAuthWebFilter implements WebFilter {
         if (principal.isEmpty()) {
             return AuthResponses.unauthorized(exchange, "invalid or expired token");
         }
+        String tenantId = principal.get().tenantId();
+        if (tenantId == null || tenantId.isBlank()) {
+            return AuthResponses.unauthorized(exchange, "token tenant is missing");
+        }
+        if (TenantContext.isPresent() && !tenantId.equals(TenantContext.get())) {
+            return AuthResponses.forbidden(exchange, "credential tenant mismatch");
+        }
         exchange.getAttributes().put(PRINCIPAL_ATTR, principal.get());
-        return chainWithTenant(exchange, chain, principal.get().tenantId());
+        return chainWithTenant(exchange, chain, tenantId);
     }
 
     /**
      * 把令牌里的租户写入下游上下文。
      *
-     * <p>不覆盖已有值：{@code ApiKeyAuthWebFilter} 先于本过滤器执行，若接入方走的是 API Key，
-     * 租户已由那把 Key 决定；同一请求两个身份来源打架时，以更靠前的基础设施闸门为准。</p>
-     *
      * <p>Reactor Context 与 ThreadLocal 都写，理由同 {@code ApiKeyAuthWebFilter}：
      * 前者跨线程边界还原，后者供未发生线程切换时的同步持久层读取。</p>
      */
     private Mono<Void> chainWithTenant(ServerWebExchange exchange, WebFilterChain chain, String tenantId) {
-        if (tenantId == null || tenantId.isBlank() || TenantContext.isPresent()) {
-            return chain.filter(exchange);
-        }
-        TenantContext.set(tenantId);
-        return chain.filter(exchange)
-            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId))
-            .doFinally(signal -> TenantContext.clear());
+        return Mono.defer(() -> TenantContext.callWith(tenantId, () -> chain.filter(exchange)))
+            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId));
     }
 }

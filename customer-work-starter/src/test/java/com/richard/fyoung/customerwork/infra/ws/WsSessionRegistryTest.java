@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
@@ -72,5 +73,27 @@ class WsSessionRegistryTest {
         registry.unregisterAgent("agent-1", sink);
         assertEquals(0, registry.onlineAgents());
         assertFalse(registry.pushToAgent("agent-1", WsFrame.system("x")));
+    }
+
+    @Test
+    void sameUserIdInDifferentTenants_shouldUseIndependentSinks() {
+        WsSessionRegistry registry = registry();
+        Sinks.Many<String> tenantA = TenantContext.callWith(
+            "tenant-a", () -> registry.registerUser("U1"));
+        Sinks.Many<String> tenantB = TenantContext.callWith(
+            "tenant-b", () -> registry.registerUser("U1"));
+
+        TenantContext.runWith("tenant-a", () ->
+            assertTrue(registry.pushToUser("U1", WsFrame.system("only-a"))));
+        TenantContext.runWith("tenant-b", () ->
+            assertTrue(registry.pushToUser("U1", WsFrame.system("only-b"))));
+
+        StepVerifier.create(tenantA.asFlux())
+            .assertNext(json -> assertTrue(json.contains("only-a")))
+            .thenCancel().verify();
+        StepVerifier.create(tenantB.asFlux())
+            .assertNext(json -> assertTrue(json.contains("only-b")))
+            .thenCancel().verify();
+        assertEquals(2, registry.onlineUsers());
     }
 }

@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 
 /**
  * 客服端库内容风控门面的惰性提供者。
@@ -36,11 +37,13 @@ public class ContentGuardGatewayProvider {
     private final ContentGuardProperties properties;
     private final CrossDbGatewayProvider<ContentGuardGateway> delegate;
 
-    public ContentGuardGatewayProvider(ContentGuardProperties properties) {
+    public ContentGuardGatewayProvider(ContentGuardProperties properties,
+                                       AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
         this.delegate = CrossDbGateways.lazy(this::connectionSettings,
             ContentGuardGatewayFactory.MAPPER_CLASSES,
             ContentGuardGatewayFactory.MAPPER_XML_LOCATIONS,
+            tenantPlugins::create,
             ContentGuardGatewayFactory::build);
     }
 

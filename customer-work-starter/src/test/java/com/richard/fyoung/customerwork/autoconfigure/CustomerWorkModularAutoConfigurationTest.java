@@ -1,6 +1,9 @@
 package com.richard.fyoung.customerwork.autoconfigure;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.notification.LoggingNotificationChannel;
+import com.richard.fyoung.customerwork.infra.notification.NotificationChannel;
+import com.richard.fyoung.customerwork.infra.notification.WebhookNotificationChannel;
 import com.richard.fyoung.customerwork.observability.AuditSink;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -67,4 +70,38 @@ class CustomerWorkModularAutoConfigurationTest {
                     "域开关关闭后该域装配整体让位");
             });
     }
+
+    @Test
+    void infraConfig_shouldAssembleWebhookNotificationChannel_whenWebhookConfigured() {
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(
+                CustomerWorkAutoConfiguration.class,
+                CustomerWorkNotificationAutoConfiguration.class))
+            .withPropertyValues("customer-work.notification.webhook-url=https://notify.example.test/push")
+            .run(context -> {
+                assertTrue(context.getStartupFailure() == null,
+                    "配置 Webhook 后 infra 域应正常启动");
+                assertEquals(1, context.getBeanNamesForType(NotificationChannel.class).length,
+                    "真实通知通道与日志回退不能同时装配");
+                assertTrue(context.getBean(NotificationChannel.class) instanceof WebhookNotificationChannel,
+                    "配置 Webhook 后必须装配真实通知通道");
+            });
+    }
+
+    @Test
+    void infraConfig_shouldKeepLoggingFallback_whenWebhookMissing() {
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(
+                CustomerWorkAutoConfiguration.class,
+                CustomerWorkNotificationAutoConfiguration.class))
+            .run(context -> {
+                assertTrue(context.getStartupFailure() == null,
+                    "未配置 Webhook 时 infra 域应正常启动");
+                assertEquals(1, context.getBeanNamesForType(NotificationChannel.class).length,
+                    "未配置 Webhook 时只应保留日志回退通道");
+                assertTrue(context.getBean(NotificationChannel.class) instanceof LoggingNotificationChannel,
+                    "非生产默认配置应保留日志回退能力");
+            });
+    }
+
 }

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.workspace.task.entity.AiAgentTask;
 import com.richard.fyoung.customeradmin.workspace.task.mapper.AiAgentTaskMapper;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.harness.agent.subagent.task.BackgroundTask;
 import io.agentscope.harness.agent.subagent.task.TaskRunSpec;
@@ -22,6 +23,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -132,6 +134,32 @@ class MybatisTaskRepositoryTest {
         List<Object> setValues = capturedSetValues();
         assertTrue(setValues.contains(TaskStatus.FAILED.name()), "应落 FAILED");
         assertTrue(setValues.contains("模型调用超时"), "错误信息应落库");
+    }
+
+    @Test
+    void putTask_shouldPropagateTenantContextAndPersistRawAgentCode() throws Exception {
+        AtomicReference<String> workerTenant = new AtomicReference<>();
+        RuntimeContext context = RuntimeContext.builder()
+            .userId("tenant-a::review-agent")
+            .sessionId(SESSION_ID)
+            .build();
+        BackgroundTask task;
+        TenantContext.set("tenant-a");
+        try {
+            task = repository.putTask(context, TASK_ID, SUB_AGENT, SESSION_ID,
+                localSpec(() -> {
+                    workerTenant.set(TenantContext.get());
+                    return "done";
+                }));
+        } finally {
+            TenantContext.clear();
+        }
+
+        assertTrue(task.waitForCompletion(WAIT_MS));
+        assertEquals("tenant-a", workerTenant.get(), "线程池内必须恢复提交请求的租户上下文");
+        ArgumentCaptor<AiAgentTask> inserted = ArgumentCaptor.forClass(AiAgentTask.class);
+        verify(mapper).insert(inserted.capture());
+        assertEquals("review-agent", inserted.getValue().getParentAgentCode(), "业务列不能持久化内部作用域前缀");
     }
 
     @Test

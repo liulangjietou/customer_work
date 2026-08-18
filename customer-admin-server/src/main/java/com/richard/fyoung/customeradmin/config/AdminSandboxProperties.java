@@ -43,6 +43,10 @@ public class AdminSandboxProperties {
         return "docker".equalsIgnoreCase(mode);
     }
 
+    public boolean isDisabledMode() {
+        return "disabled".equalsIgnoreCase(mode);
+    }
+
     /** 是否开启 Plan Mode 人工确认闭环（{@code admin.sandbox.permission-mode=hitl}）。 */
     public boolean isHitlMode() {
         return permissionMode == SandboxPermissionMode.HITL;

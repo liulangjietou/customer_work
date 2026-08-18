@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.richard.fyoung.customeradmin.workspace.task.entity.AiAgentTask;
 import com.richard.fyoung.customeradmin.workspace.task.mapper.AiAgentTaskMapper;
+import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.harness.agent.subagent.task.BackgroundTask;
 import io.agentscope.harness.agent.subagent.task.TaskRepository;
@@ -76,7 +78,7 @@ public class MybatisTaskRepository implements TaskRepository {
     private final AgentTaskExecutorProperties properties;
 
     /**
-     * 本进程内活跃任务：{@code sessionId::taskId -> BackgroundTask}。
+     * 本进程内活跃任务：{@code tenantAgent::sessionId::taskId -> BackgroundTask}。
      *
      * <p>库里存的是状态快照，而框架要的 {@link BackgroundTask} 带着可等待、可中断的
      * {@link CompletableFuture}——那个 future 只存在于创建它的这个进程里，没法持久化，
@@ -138,20 +140,24 @@ public class MybatisTaskRepository implements TaskRepository {
     public BackgroundTask putTask(RuntimeContext rc, String taskId, String subAgentId,
                                   String sessionId, TaskRunSpec spec) {
         insertRecord(taskId, subAgentId, sessionId, agentCodeOf(rc));
+        String tenantId = TenantContext.get();
 
         CompletableFuture<String> future;
         if (spec instanceof TaskRunSpec.LocalTaskRunSpec local) {
-            future = CompletableFuture.supplyAsync(() -> runLocal(sessionId, taskId, local.execution()), executor);
+            future = CompletableFuture.supplyAsync(
+                () -> TenantContext.callWith(tenantId, () -> runLocal(sessionId, taskId, local.execution())), executor);
         } else if (spec instanceof TaskRunSpec.AdoptedTaskRunSpec adopted) {
             // 同步调用超时后被提升为后台任务：future 已经在跑，只补挂状态回写，绝不能重复提交执行
             future = adopted.future();
             updateStatus(taskId, TaskStatus.RUNNING, null, null);
             future.whenComplete((result, err) -> {
-                if (err == null) {
-                    updateStatus(taskId, TaskStatus.COMPLETED, result, null);
-                } else {
-                    updateStatus(taskId, TaskStatus.FAILED, null, rootMessage(err));
-                }
+                TenantContext.runWith(tenantId, () -> {
+                    if (err == null) {
+                        updateStatus(taskId, TaskStatus.COMPLETED, result, null);
+                    } else {
+                        updateStatus(taskId, TaskStatus.FAILED, null, rootMessage(err));
+                    }
+                });
             });
         } else {
             log.error("[agent-task] remote task spec is not supported, code={}, taskId={}, subAgentId={}",
@@ -161,7 +167,7 @@ public class MybatisTaskRepository implements TaskRepository {
         }
 
         BackgroundTask task = new BackgroundTask(taskId, subAgentId, future);
-        activeTasks.put(key(sessionId, taskId), task);
+        activeTasks.put(key(rc, sessionId, taskId), task);
         log.info("[agent-task] task submitted: taskId={} subAgentId={} sessionId={}", taskId, subAgentId, sessionId);
         return task;
     }
@@ -198,7 +204,7 @@ public class MybatisTaskRepository implements TaskRepository {
 
     @Override
     public BackgroundTask getTask(RuntimeContext rc, String sessionId, String taskId) {
-        BackgroundTask active = activeTasks.get(key(sessionId, taskId));
+        BackgroundTask active = activeTasks.get(key(rc, sessionId, taskId));
         if (active != null) {
             active.updateLastCheckedAt();
             return active;
@@ -224,7 +230,7 @@ public class MybatisTaskRepository implements TaskRepository {
         List<BackgroundTask> tasks = new ArrayList<>(records.size());
         for (AiAgentTask record : records) {
             // 活跃任务优先返回内存实例：它带着真正可等待的 future，重建出来的只是终态快照
-            BackgroundTask active = activeTasks.get(key(sessionId, record.getTaskId()));
+            BackgroundTask active = activeTasks.get(key(rc, sessionId, record.getTaskId()));
             tasks.add(active != null ? active : toBackgroundTask(record));
         }
         return tasks;
@@ -248,7 +254,7 @@ public class MybatisTaskRepository implements TaskRepository {
         }
         taskMapper.update(null, update);
 
-        BackgroundTask active = activeTasks.get(key(sessionId, taskId));
+        BackgroundTask active = activeTasks.get(key(rc, sessionId, taskId));
         if (active != null) {
             active.cancel(true);
         }
@@ -260,7 +266,7 @@ public class MybatisTaskRepository implements TaskRepository {
     @Override
     public void removeTask(RuntimeContext rc, String sessionId, String taskId) {
         // 只摘内存引用，不删库：库里那条是管理台要看的历史，删了就查不到"这个任务当时跑成什么样"
-        activeTasks.remove(key(sessionId, taskId));
+        activeTasks.remove(key(rc, sessionId, taskId));
     }
 
     @Override
@@ -357,9 +363,9 @@ public class MybatisTaskRepository implements TaskRepository {
         return text.length() <= MAX_TEXT_LENGTH ? text : text.substring(0, MAX_TEXT_LENGTH);
     }
 
-    /** {@code AdminAgentInstanceFactory#contextFor} 把 agentCode 放在 userId 上，这里按同一约定取回。 */
+    /** {@code AdminAgentInstanceFactory#contextFor} 把租户作用域 Agent 编码放在 userId 上，这里还原业务编码。 */
     private String agentCodeOf(RuntimeContext rc) {
-        return rc == null ? null : rc.getUserId();
+        return rc == null ? null : WorkspaceRuntimeScope.rawAgent(rc.getUserId());
     }
 
     private String rootMessage(Throwable error) {
@@ -368,8 +374,9 @@ public class MybatisTaskRepository implements TaskRepository {
         return StringUtils.hasText(cause.getMessage()) ? cause.getMessage() : cause.getClass().getSimpleName();
     }
 
-    private String key(String sessionId, String taskId) {
-        return sessionId + "::" + taskId;
+    private String key(RuntimeContext rc, String sessionId, String taskId) {
+        String scopedAgent = rc == null || !StringUtils.hasText(rc.getUserId()) ? "anonymous" : rc.getUserId();
+        return scopedAgent + "::" + sessionId + "::" + taskId;
     }
 
     private ThreadFactory namedThreadFactory() {

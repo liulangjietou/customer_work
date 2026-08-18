@@ -1,15 +1,19 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.WebFilterChain;
+import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,6 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * @author owlzhangfq@gmail.com
  */
 class ApiKeyAuthWebFilterTest {
+
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
+    }
 
     private CustomerWorkProperties propsWithAuth(boolean enabled, String... keys) {
         CustomerWorkProperties props = new CustomerWorkProperties();
@@ -77,6 +86,38 @@ class ApiKeyAuthWebFilterTest {
             "Actuator 应免鉴权");
     }
 
+    @Test
+    void shouldBypassApiKeyForBrowserJwtAndWebSocketRoutes() {
+        CustomerWorkProperties props = propsWithAuth(true, "service-key");
+
+        assertTrue(runFilter(props, MockServerHttpRequest.post("/api/customer/auth/login").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/api/customer/auth/me").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/api/customer/user/tickets").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.post("/api/customer/attachment").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.post("/api/customer/feedback").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/api/customer/csat/session-1").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/ws/user?token=jwt").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/ws/agent?token=agent").build()));
+    }
+
+    @Test
+    void shouldBypassApiKeyForAgentCredentialRoutes() {
+        CustomerWorkProperties props = propsWithAuth(true, "service-key");
+
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/api/customer/agent/tickets").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.post("/api/customer/handoffs/claim").build()));
+    }
+
+    @Test
+    void shouldStillRequireApiKeyForOperationsAndPartnerRoutes() {
+        CustomerWorkProperties props = propsWithAuth(true, "service-key");
+
+        assertFalse(runFilter(props, MockServerHttpRequest.get("/api/customer/csat/summary").build()));
+        assertFalse(runFilter(props, MockServerHttpRequest.post("/api/customer/chat").build()));
+        assertTrue(runFilter(props, MockServerHttpRequest.get("/api/customer/csat/summary")
+            .header("X-API-Key", "service-key").build()));
+    }
+
     /** P11 修复（常量时间比较）后，配置多个 Key 时命中其中任意一个仍应放行。 */
     @Test
     void shouldPass_whenMatchesOneOfMultipleKeys() {
@@ -92,5 +133,27 @@ class ApiKeyAuthWebFilterTest {
         boolean passed = runFilter(props,
             MockServerHttpRequest.post("/api/customer/chat").header("X-API-Key", "secret-keX").build());
         assertFalse(passed, "等长错误 Key 不应放行");
+    }
+
+    @Test
+    void tenantKeyShouldPropagateTenantWithoutLeakingLongRequestThread() {
+        CustomerWorkProperties properties = propsWithAuth(true);
+        properties.getSecurity().getAuth().getTenantKeys().put("tenant-key", "tenant-a");
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/chat")
+                .header("X-API-Key", "tenant-key").build());
+        AtomicReference<String> observedTenant = new AtomicReference<>();
+        Mono<Void> result = new ApiKeyAuthWebFilter(properties).filter(exchange, current -> {
+            observedTenant.set(TenantContext.get());
+            return Mono.never();
+        });
+
+        Disposable subscription = result.subscribe();
+        try {
+            assertEquals("tenant-a", observedTenant.get());
+            assertFalse(TenantContext.isPresent(), "长请求不能把租户 ThreadLocal 留在 EventLoop 上");
+        } finally {
+            subscription.dispose();
+        }
     }
 }

@@ -2,22 +2,22 @@ package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
-import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerworkapp.service.UserSessionGuard;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -27,7 +27,7 @@ import reactor.core.scheduler.Schedulers;
  * <p>接收 multipart 文件（字段名 {@code file}，可选 {@code sessionId}），委托 starter 的
  * {@link AttachmentParseService} 落盘 + 解析（图片走视觉 OCR、pdf/office/html 走 Tika/POI、md/txt/csv/json 直读）+ 落库，
  * 返回裸 JSON {@code {id, fileName, content, parseStatus, errorMessage}}（app 无统一 Result 包装，与前端契约一致）。
- * 上传者取当前登录用户（照 {@code UserAuthController} 手动验签，本路径不在 {@code /user/**} 之下不经 UserAuthWebFilter），
+ * 上传者取 {@link UserAuthWebFilter} 已验证的当前登录用户，
  * 未登录 401；{@code channel} 固定 {@code user_chat}。文件类型 / 大小的唯一防御在 AttachmentParseService，
  * 非法即抛 {@link IllegalArgumentException}，此处翻译为 400。</p>
  * @author owlzhangfq@gmail.com
@@ -37,8 +37,6 @@ import reactor.core.scheduler.Schedulers;
 @Tag(name = "聊天附件", description = "上传并解析聊天附件（多格式）")
 public class AttachmentController {
 
-    private static final String BEARER_PREFIX = "Bearer ";
-
     /** 用户端渠道标识（固定）。 */
     private static final String CHANNEL_USER_CHAT = "user_chat";
 
@@ -46,11 +44,12 @@ public class AttachmentController {
     private static final byte[] EMPTY_BYTES = new byte[0];
 
     private final AttachmentParseService attachmentParseService;
-    private final UserJwtService jwtService;
+    private final UserSessionGuard sessionGuard;
 
-    public AttachmentController(AttachmentParseService attachmentParseService, UserJwtService jwtService) {
+    public AttachmentController(AttachmentParseService attachmentParseService,
+                                UserSessionGuard sessionGuard) {
         this.attachmentParseService = attachmentParseService;
-        this.jwtService = jwtService;
+        this.sessionGuard = sessionGuard;
     }
 
     /**
@@ -70,10 +69,13 @@ public class AttachmentController {
         + "支持 md/txt/csv/json/html/pdf/doc(x)/xls(x)/ppt(x)/图片；返回解析文本，解析失败返回 parseStatus=FAILED")
     @PostMapping(value = "/attachment", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<AttachmentResponse> upload(
-        @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
         @RequestPart("file") FilePart file,
-        @RequestPart(value = "sessionId", required = false) String sessionId) {
-        UserPrincipal principal = requirePrincipal(authorization);
+        @RequestPart(value = "sessionId", required = false) String sessionId,
+        ServerWebExchange exchange) {
+        UserPrincipal principal = principal(exchange);
+        if (sessionId != null && !sessionId.isBlank()) {
+            sessionGuard.requireOwned(sessionId, principal.userId());
+        }
         // 先把响应式分片汇聚为完整字节，再切到 boundedElastic 执行阻塞式落盘 / 解析 / 落库
         return DataBufferUtils.join(file.content())
             .map(AttachmentController::toBytes)
@@ -110,12 +112,11 @@ public class AttachmentController {
             attachment.getErrorMessage());
     }
 
-    /** 手动验签取登录态主体（本控制器不在 {@code /user/**} 之下，令牌无效即 401）。 */
-    private UserPrincipal requirePrincipal(String authorization) {
-        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "missing bearer token");
+    private UserPrincipal principal(ServerWebExchange exchange) {
+        UserPrincipal principal = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
         }
-        return jwtService.verify(authorization.substring(BEARER_PREFIX.length()))
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid or expired token"));
+        return principal;
     }
 }

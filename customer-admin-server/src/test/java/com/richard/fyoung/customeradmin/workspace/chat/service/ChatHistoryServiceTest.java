@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentStateAccessor;
+import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParseStatus;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentStore;
 import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
@@ -39,6 +40,8 @@ import static org.mockito.Mockito.when;
 class ChatHistoryServiceTest {
 
     private static final String AGENT_CODE = "coder";
+    private static final String TENANT_ID = "default";
+    private static final Long OWNER_USER_ID = 7L;
 
     private AgentInstanceCache agentInstanceCache;
     private AgentStateStore agentStateStore;
@@ -57,8 +60,9 @@ class ChatHistoryServiceTest {
         historyCache = mock(ChatHistoryCache.class);
         sessionStateQueryMapper = mock(ChatSessionStateQueryMapper.class);
         attachmentStore = mock(AttachmentStore.class);
+        AdminTenantProperties tenantProperties = new AdminTenantProperties();
         service = new ChatHistoryService(agentInstanceCache, agentStateStore, agentStateAccessor,
-            historyCache, sessionStateQueryMapper, attachmentStore);
+            historyCache, sessionStateQueryMapper, attachmentStore, tenantProperties);
 
         agent = mock(ReActAgent.class);
         when(agentInstanceCache.getOrBuild(AGENT_CODE)).thenReturn(agent);
@@ -81,13 +85,14 @@ class ChatHistoryServiceTest {
 
     @Test
     void listSessions_shouldPageInSqlOrder_stripPrefix_andBuildSummaries() {
-        when(sessionStateQueryMapper.countSessions(AGENT_CODE)).thenReturn(5L);
-        when(sessionStateQueryMapper.pageSessionIds(eq(AGENT_CODE), eq(0L), eq(20L)))
+        when(sessionStateQueryMapper.countSessions(TENANT_ID, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(5L);
+        when(sessionStateQueryMapper.pageSessionIds(
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID), eq(0L), eq(20L)))
             .thenReturn(List.of("coder:s1", "coder:s2"));
         stubContext("s1", userMsg("你好"), assistantMsg("在的"));
         stubContext("s2", userMsg("在吗"));
 
-        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, 1, 20);
+        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, OWNER_USER_ID, 1, 20);
 
         assertEquals(1, result.getPageNum());
         assertEquals(20, result.getPageSize());
@@ -103,28 +108,31 @@ class ChatHistoryServiceTest {
 
     @Test
     void listSessions_shouldComputeOffset_fromPageAndSize() {
-        when(sessionStateQueryMapper.countSessions(AGENT_CODE)).thenReturn(50L);
-        when(sessionStateQueryMapper.pageSessionIds(eq(AGENT_CODE), eq(20L), eq(20L)))
+        when(sessionStateQueryMapper.countSessions(TENANT_ID, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(50L);
+        when(sessionStateQueryMapper.pageSessionIds(
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID), eq(20L), eq(20L)))
             .thenReturn(List.of("coder:s3"));
         stubContext("s3", userMsg("第三页第一条"));
 
-        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, 2, 20);
+        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, OWNER_USER_ID, 2, 20);
 
         // offset = (2-1)*20 = 20
-        verify(sessionStateQueryMapper).pageSessionIds(eq(AGENT_CODE), eq(20L), eq(20L));
+        verify(sessionStateQueryMapper).pageSessionIds(
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID), eq(20L), eq(20L));
         assertEquals(1, result.getList().size());
         assertEquals("s3", result.getList().get(0).sessionId());
     }
 
     @Test
     void listSessions_shouldSkipEmptyContextSessions_soPageMayBeShorterThanSize() {
-        when(sessionStateQueryMapper.countSessions(AGENT_CODE)).thenReturn(2L);
-        when(sessionStateQueryMapper.pageSessionIds(eq(AGENT_CODE), eq(0L), eq(20L)))
+        when(sessionStateQueryMapper.countSessions(TENANT_ID, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(2L);
+        when(sessionStateQueryMapper.pageSessionIds(
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID), eq(0L), eq(20L)))
             .thenReturn(List.of("coder:empty", "coder:s2"));
         stubContext("empty"); // 空上下文
         stubContext("s2", userMsg("在吗"));
 
-        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, 1, 20);
+        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, OWNER_USER_ID, 1, 20);
 
         // 空会话被跳过，本页只剩 1 条，但 total 仍是去重会话总数 2
         assertEquals(2, result.getTotal());
@@ -186,14 +194,15 @@ class ChatHistoryServiceTest {
 
     @Test
     void listSessions_shouldShortCircuit_whenTotalIsZero() {
-        when(sessionStateQueryMapper.countSessions(AGENT_CODE)).thenReturn(0L);
+        when(sessionStateQueryMapper.countSessions(TENANT_ID, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(0L);
 
-        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, 1, 20);
+        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, OWNER_USER_ID, 1, 20);
 
         assertEquals(0, result.getTotal());
         assertTrue(result.getList().isEmpty());
         // 总数为 0 时不再查页数据
-        verify(sessionStateQueryMapper, never()).pageSessionIds(eq(AGENT_CODE), org.mockito.ArgumentMatchers.anyLong(),
-            org.mockito.ArgumentMatchers.anyLong());
+        verify(sessionStateQueryMapper, never()).pageSessionIds(
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID),
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
     }
 }

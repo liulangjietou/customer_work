@@ -234,6 +234,11 @@ public class TicketService {
         return store.findActiveBySession(sessionId);
     }
 
+    /** 查会话最新工单（包含终态，供会话下级资源做根归属校验）。 */
+    public Optional<Ticket> findBySession(String sessionId) {
+        return store.findBySession(sessionId);
+    }
+
     /** 查该用户的活跃工单（非 CLOSED/RESOLVED 的最新一张，用于用户级唯一活跃会话去重）。 */
     public Optional<Ticket> findActiveByUser(String userId) {
         return store.findActiveByUser(userId);

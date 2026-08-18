@@ -65,7 +65,7 @@ public class ChannelBindingController {
         return Result.success();
     }
 
-    /** 重新发布：把该渠道绑定的智能体运行时配置重新下发到 8080（强制连通性探测）。 */
+    /** 重新发布：登记可靠发布任务；worker 执行连通性探测、Nacos 投递与实例 ACK 聚合。 */
     @SaCheckPermission("agent:edit")
     @OperationLog(operation = "重新发布运行时配置", target = "ai_channel_binding")
     @PostMapping("/{channelCode}/republish")

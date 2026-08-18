@@ -8,11 +8,14 @@ import com.richard.fyoung.customeradmin.aiconfig.channel.dto.ChannelBindingVO;
 import com.richard.fyoung.customeradmin.aiconfig.channel.entity.AiChannelBinding;
 import com.richard.fyoung.customeradmin.aiconfig.channel.mapper.AiChannelBindingMapper;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.mapper.RuntimePublishTaskMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
 import java.util.List;
@@ -37,12 +40,15 @@ public class ChannelBindingService {
     private final AiChannelBindingMapper bindingMapper;
     private final AiAgentMapper agentMapper;
     private final CustomerWorkConfigPublisher publisher;
+    private final RuntimePublishTaskMapper publishTaskMapper;
 
     public ChannelBindingService(AiChannelBindingMapper bindingMapper, AiAgentMapper agentMapper,
-                                 CustomerWorkConfigPublisher publisher) {
+                                 CustomerWorkConfigPublisher publisher,
+                                 RuntimePublishTaskMapper publishTaskMapper) {
         this.bindingMapper = bindingMapper;
         this.agentMapper = agentMapper;
         this.publisher = publisher;
+        this.publishTaskMapper = publishTaskMapper;
     }
 
     /** 全量列表（行数很少，不分页）：按创建时间倒序，回填智能体名称。 */
@@ -55,13 +61,23 @@ public class ChannelBindingService {
         Map<Long, String> agentNames = agentMapper.selectBatchIds(
                 bindings.stream().map(AiChannelBinding::getAgentId).collect(Collectors.toSet()))
             .stream().collect(Collectors.toMap(AiAgent::getId, AiAgent::getAgentName, (a, b) -> a));
-        return bindings.stream().map(b -> toVo(b, agentNames::get)).collect(Collectors.toList());
+        List<Long> agentIds = bindings.stream().map(AiChannelBinding::getAgentId).distinct().toList();
+        Map<Long, RuntimePublishTask> latestTaskByAgent = new java.util.LinkedHashMap<>();
+        publishTaskMapper.selectList(new LambdaQueryWrapper<RuntimePublishTask>()
+                .in(RuntimePublishTask::getTargetId, agentIds)
+                .orderByDesc(RuntimePublishTask::getSeq))
+            .forEach(task -> latestTaskByAgent.putIfAbsent(task.getTargetId(), task));
+        return bindings.stream()
+            .map(binding -> toVo(binding, agentNames::get, latestTaskByAgent.get(binding.getAgentId())))
+            .collect(Collectors.toList());
     }
 
     /** 新建绑定：channelCode 唯一、agentId 必须存在；成功后触发一次发布。 */
+    @Transactional(rollbackFor = Exception.class)
     public void create(ChannelBindingSaveRequest request) {
         requireAgent(request.agentId());
         assertChannelCodeUnique(request.channelCode(), null);
+        assertSingleActiveRuntimeAgent(request.agentId(), request.status(), null);
         AiChannelBinding binding = new AiChannelBinding();
         binding.setChannelCode(request.channelCode());
         binding.setAgentId(request.agentId());
@@ -71,10 +87,12 @@ public class ChannelBindingService {
     }
 
     /** 编辑绑定：改 channelCode / agentId / 状态（channelCode 排除自身查重）；成功后触发一次发布。 */
+    @Transactional(rollbackFor = Exception.class)
     public void update(Long id, ChannelBindingSaveRequest request) {
         AiChannelBinding binding = requireBinding(id);
         requireAgent(request.agentId());
         assertChannelCodeUnique(request.channelCode(), id);
+        assertSingleActiveRuntimeAgent(request.agentId(), request.status(), id);
         binding.setChannelCode(request.channelCode());
         binding.setAgentId(request.agentId());
         binding.setStatus(request.status() == null ? STATUS_ENABLED : request.status());
@@ -87,7 +105,7 @@ public class ChannelBindingService {
         bindingMapper.deleteById(id);
     }
 
-    /** 手动重新发布：发布能力未启用直接拒绝；探测不过/发布失败抛业务错误码。 */
+    /** 手动重新发布：发布能力未启用直接拒绝；正常容器写入可靠任务并返回任务 ID。 */
     public String republish(String channelCode) {
         if (!publisher.isEnabled()) {
             throw new BizException(ResultCode.RUNTIME_PUBLISH_DISABLED);
@@ -102,13 +120,20 @@ public class ChannelBindingService {
         }
     }
 
-    private ChannelBindingVO toVo(AiChannelBinding binding, Function<Long, String> agentNameResolver) {
+    private ChannelBindingVO toVo(AiChannelBinding binding, Function<Long, String> agentNameResolver,
+                                  RuntimePublishTask publishTask) {
         ChannelBindingVO vo = new ChannelBindingVO();
         vo.setId(binding.getId());
         vo.setChannelCode(binding.getChannelCode());
         vo.setAgentId(binding.getAgentId());
         vo.setAgentName(agentNameResolver.apply(binding.getAgentId()));
         vo.setStatus(binding.getStatus());
+        if (publishTask != null) {
+            vo.setPublishStatus(publishTask.getStatus());
+            vo.setPublishRevision(publishTask.getRevision());
+            vo.setPublishLastError(publishTask.getLastError());
+            vo.setPublishUpdatedAtMs(publishTask.getUpdatedAtMs());
+        }
         vo.setCreateTime(binding.getCreateTime());
         vo.setUpdateTime(binding.getUpdateTime());
         return vo;
@@ -127,6 +152,27 @@ public class ChannelBindingService {
         }
         if (bindingMapper.exists(wrapper)) {
             throw new BizException(ResultCode.RESOURCE_DUPLICATE, "渠道编码已存在: " + channelCode);
+        }
+    }
+
+    /**
+     * 一个 Nacos dataId 对应一份全局运行时配置，不能让不同智能体互相覆盖最后写入者。
+     * 多个渠道编码可以绑定同一个智能体；不同智能体必须使用独立 admin/dataId 部署。
+     */
+    private void assertSingleActiveRuntimeAgent(Long agentId, Integer status, Long excludeId) {
+        int effectiveStatus = status == null ? STATUS_ENABLED : status;
+        if (effectiveStatus != STATUS_ENABLED) {
+            return;
+        }
+        LambdaQueryWrapper<AiChannelBinding> wrapper = new LambdaQueryWrapper<AiChannelBinding>()
+            .eq(AiChannelBinding::getStatus, STATUS_ENABLED)
+            .ne(AiChannelBinding::getAgentId, agentId);
+        if (excludeId != null) {
+            wrapper.ne(AiChannelBinding::getId, excludeId);
+        }
+        if (bindingMapper.exists(wrapper)) {
+            throw new BizException(ResultCode.PARAM_INVALID,
+                "同一运行时 dataId 只能启用一个智能体；请使用独立 admin/dataId 部署不同智能体");
         }
     }
 

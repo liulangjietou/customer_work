@@ -20,7 +20,7 @@ export function deleteChannelBinding(id: number) {
 }
 
 /**
- * 重新发布：把指定渠道编码的绑定关系推到配置中心，返回发布用的 dataId。
+ * 重新发布：写入可靠发布队列，返回任务 ID；实际投递与实例 ACK 可在列表状态列观察。
  * 失败时后端返回业务错误码（40021/40022/40023），由 request 拦截器统一弹出错误提示。
  */
 export function republishChannelBinding(channelCode: string) {

@@ -229,6 +229,7 @@ public class AgentService {
     }
 
     /** 启用/停用（生命周期），不改动其余字段。 */
+    @Transactional(rollbackFor = Exception.class)
     public void updateStatus(Long id, int status) {
         AiAgent agent = requireAgent(id);
         AiAgent update = new AiAgent();

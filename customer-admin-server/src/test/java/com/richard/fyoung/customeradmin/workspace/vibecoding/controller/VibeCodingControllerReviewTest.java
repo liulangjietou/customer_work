@@ -8,6 +8,7 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.entity.CodeReviewTa
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.CollaborativeCodingService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.GitAssistantService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.VibeCodingService;
+import com.richard.fyoung.customeradmin.workspace.session.service.WorkspaceSessionGuard;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
@@ -27,8 +28,9 @@ class VibeCodingControllerReviewTest {
     private static final long CURRENT_USER = 7L;
 
     private final GitAssistantService gitAssistantService = mock(GitAssistantService.class);
+    private final WorkspaceSessionGuard sessionGuard = mock(WorkspaceSessionGuard.class);
     private final VibeCodingController controller = new VibeCodingController(
-        mock(VibeCodingService.class), gitAssistantService, mock(CollaborativeCodingService.class));
+        mock(VibeCodingService.class), gitAssistantService, mock(CollaborativeCodingService.class), sessionGuard);
 
     @Test
     void review_shouldSubmitWithCurrentUser_andReturnTaskId() {

@@ -115,8 +115,8 @@ public class ChatAttachmentService {
      * 附件详情：校验存在性 + agent 归属后返回前端契约 DTO（{@code content}=解析文本，供文本类附件内联预览）。
      * 附件不存在或跨 agent 访问统一 fast-fail 成 {@link ResultCode#RESOURCE_NOT_FOUND}（不泄露"是否存在"）。
      */
-    public ChatAttachmentDTO getDetail(String agentCode, String attachmentId) {
-        return ChatAttachmentDTO.from(requireOwned(agentCode, attachmentId));
+    public ChatAttachmentDTO getDetail(String agentCode, String attachmentId, Long ownerUserId) {
+        return ChatAttachmentDTO.from(requireOwned(agentCode, attachmentId, ownerUserId));
     }
 
     /**
@@ -124,8 +124,8 @@ public class ChatAttachmentService {
      * 返回含 bytes/mimeType/fileName 的小结果对象供 Controller 组装下载响应。mime 为空按二进制流兜底。
      * 读盘/读对象失败翻译成友好业务异常（不把 IO 细节暴露给前端）。
      */
-    public LoadedFile loadFile(String agentCode, String attachmentId) {
-        ChatAttachment attachment = requireOwned(agentCode, attachmentId);
+    public LoadedFile loadFile(String agentCode, String attachmentId, Long ownerUserId) {
+        ChatAttachment attachment = requireOwned(agentCode, attachmentId, ownerUserId);
         try {
             byte[] bytes = attachmentFileStorage.read(attachment.getStoragePath());
             String mime = StringUtils.hasText(attachment.getMimeType()) ? attachment.getMimeType() : DEFAULT_MIME;
@@ -137,9 +137,13 @@ public class ChatAttachmentService {
     }
 
     /** 存在性 + agent 归属校验合一：查不到（不存在 / 跨 agent）即 fast-fail 成 NOT_FOUND。 */
-    private ChatAttachment requireOwned(String agentCode, String attachmentId) {
-        return attachmentStore.findByIdAndAgentCode(attachmentId, agentCode)
+    private ChatAttachment requireOwned(String agentCode, String attachmentId, Long ownerUserId) {
+        ChatAttachment attachment = attachmentStore.findByIdAndAgentCode(attachmentId, agentCode)
             .orElseThrow(() -> new BizException(ResultCode.RESOURCE_NOT_FOUND, "附件不存在"));
+        if (!String.valueOf(ownerUserId).equals(attachment.getUploader())) {
+            throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "附件不存在");
+        }
+        return attachment;
     }
 
     /** 原文件读取结果：字节 + MIME + 原始文件名（Controller 据此组装 {@code ResponseEntity<byte[]>}）。 */

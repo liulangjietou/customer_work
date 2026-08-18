@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.ops.config;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.ops.jdbc.OpsGateway;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
@@ -35,11 +36,12 @@ public class OpsGatewayProvider {
     private final ContentGuardProperties properties;
     private final CrossDbGatewayProvider<OpsGateway> delegate;
 
-    public OpsGatewayProvider(ContentGuardProperties properties) {
+    public OpsGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
         this.delegate = CrossDbGateways.lazy(this::connectionSettings,
             OpsGatewayFactory.MAPPER_CLASSES,
             OpsGatewayFactory.MAPPER_XML_LOCATIONS,
+            tenantPlugins::create,
             OpsGatewayFactory::build);
     }
 

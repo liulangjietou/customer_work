@@ -53,13 +53,44 @@ public class MybatisApprovalStore implements ApprovalStore {
     }
 
     @Override
+    public boolean decide(String id, ApprovalStatus target, String operator, String note, long decidedAtMs) {
+        return mapper.decide(id, target.name(), operator, note, decidedAtMs) == 1;
+    }
+
+    @Override
+    public boolean claimExecution(String id, int maxAttempts, long startedAtMs, String fencingToken) {
+        return mapper.claimExecution(id, maxAttempts,
+            ApprovalRequest.executionMarker(startedAtMs, fencingToken)) == 1;
+    }
+
+    @Override
+    public boolean completeExecution(String id, String fencingToken,
+                                     boolean success, String failureReason) {
+        ApprovalRequest request = find(id).orElse(null);
+        if (request == null || request.getExecutionStatus() != ExecutionStatus.EXECUTING
+            || request.getExecutionFailureReason() == null
+            || !request.getExecutionFailureReason().endsWith(":" + fencingToken)) {
+            return false;
+        }
+        String marker = request.getExecutionFailureReason();
+        return mapper.completeExecution(id, marker,
+            success ? ExecutionStatus.EXECUTED.name() : ExecutionStatus.EXECUTE_FAILED.name(),
+            success ? null : failureReason) == 1;
+    }
+
+    @Override
+    public int recoverStuckExecutions(long startedBeforeMs) {
+        return mapper.recoverStuckExecutions(startedBeforeMs);
+    }
+
+    @Override
     public Optional<ApprovalRequest> find(String id) {
         try {
             ApprovalRequestDO entity = mapper.selectById(id);
             return entity == null ? Optional.empty() : Optional.of(toDomain(entity));
         } catch (Exception e) {
             log.error("[MybatisApprovalStore] find failed, errorCode={}, id={}", "APPROVAL-STORE-FIND-FAIL", id, e);
-            return Optional.empty();
+            throw new IllegalStateException("failed to find approval: " + id, e);
         }
     }
 
@@ -69,7 +100,7 @@ public class MybatisApprovalStore implements ApprovalStore {
             return toDomainList(mapper.selectList(null));
         } catch (Exception e) {
             log.error("[MybatisApprovalStore] findAll failed, errorCode={}", "APPROVAL-STORE-FINDALL-FAIL", e);
-            return List.of();
+            throw new IllegalStateException("failed to list approvals", e);
         }
     }
 
@@ -82,7 +113,7 @@ public class MybatisApprovalStore implements ApprovalStore {
         } catch (Exception e) {
             log.error("[MybatisApprovalStore] findByStatus failed, errorCode={}, status={}",
                 "APPROVAL-STORE-FINDBYSTATUS-FAIL", status, e);
-            return List.of();
+            throw new IllegalStateException("failed to list approvals by status: " + status, e);
         }
     }
 
@@ -92,6 +123,7 @@ public class MybatisApprovalStore implements ApprovalStore {
             mapper.deleteById(id);
         } catch (Exception e) {
             log.error("[MybatisApprovalStore] delete failed, errorCode={}, id={}", "APPROVAL-STORE-DELETE-FAIL", id, e);
+            throw new IllegalStateException("failed to delete approval: " + id, e);
         }
     }
 

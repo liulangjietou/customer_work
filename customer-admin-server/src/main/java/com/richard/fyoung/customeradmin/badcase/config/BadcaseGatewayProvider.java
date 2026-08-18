@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.badcase.config;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.capability.badcase.BadcaseService;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
@@ -33,11 +34,12 @@ public class BadcaseGatewayProvider {
     private final ContentGuardProperties properties;
     private final CrossDbGatewayProvider<BadcaseService> delegate;
 
-    public BadcaseGatewayProvider(ContentGuardProperties properties) {
+    public BadcaseGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
         this.delegate = CrossDbGateways.lazy(this::connectionSettings,
             BadcaseGatewayFactory.MAPPER_CLASSES,
             BadcaseGatewayFactory.MAPPER_XML_LOCATIONS,
+            tenantPlugins::create,
             BadcaseGatewayFactory::build);
     }
 

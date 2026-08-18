@@ -42,6 +42,17 @@
         LIMIT 1
     </select>
 
+    <!-- 会话资源归属校验必须覆盖终态工单，不能因关单后查不到而绕过。 -->
+    <select id="findBySession" resultType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
+        SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
+               resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
+               resolved_at_ms, closed_at_ms, last_user_active_at_ms
+        FROM cw_ticket
+        WHERE session_id = #{sessionId}
+        ORDER BY created_at_ms DESC
+        LIMIT 1
+    </select>
+
     <!-- 该用户的活跃工单：状态字面量 'CLOSED'/'RESOLVED' 对应 TicketStatus.CLOSED/RESOLVED 枚举名。 -->
     <select id="findActiveByUser" resultType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
         SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,

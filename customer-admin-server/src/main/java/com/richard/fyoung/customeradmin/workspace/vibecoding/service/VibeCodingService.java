@@ -16,6 +16,7 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentCallMetaFactory;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
+import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallSessionType;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.FileChangeEvent;
@@ -112,6 +113,9 @@ public class VibeCodingService {
 
     /** 当前 VibeCoding 沙箱模式（{@code admin.sandbox.mode} 全局配置，不随会话变化）："docker"｜"local"。 */
     public String sandboxMode() {
+        if (sandboxProperties.isDisabledMode()) {
+            return "disabled";
+        }
         return sandboxProperties.isDockerMode() ? "docker" : "local";
     }
 
@@ -167,6 +171,10 @@ public class VibeCodingService {
      */
     public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText, String mode,
                                          List<String> attachmentIds) {
+        if (sandboxProperties.isDisabledMode()) {
+            return Flux.error(new IllegalStateException(
+                "VibeCoding disabled: isolated sandbox runtime is not configured"));
+        }
         requireVibeCodingCapable(agentCode);
         // 创建会话子目录（幂等），并以此为基础拍快照，对话结束后 diff 出本轮变更
         Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
@@ -417,7 +425,7 @@ public class VibeCodingService {
     }
 
     private String snapshotKey(String agentCode, String sessionId) {
-        return agentCode + ":" + (StringUtils.hasText(sessionId) ? sessionId : "default");
+        return WorkspaceRuntimeScope.session(agentCode, sessionId);
     }
 
     /**

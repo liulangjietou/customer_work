@@ -66,18 +66,33 @@ public class ApprovalRequest {
         this.decidedAtMs = whenMs;
     }
 
-    /** 下游执行（如实际打款）成功：清除失败原因，累计执行次数。 */
-    public void markExecuted() {
+    /** 取得执行租约：累计尝试次数，并把开始时间与 fencing token 写入现有原因字段。 */
+    public void markExecuting(long startedAtMs, String fencingToken) {
         this.executionAttempts++;
+        this.executionStatus = ExecutionStatus.EXECUTING;
+        this.executionFailureReason = executionMarker(startedAtMs, fencingToken);
+    }
+
+    /** 下游执行（如实际打款）成功：清除失败原因。 */
+    public void markExecuted() {
+        if (this.executionStatus != ExecutionStatus.EXECUTING) {
+            this.executionAttempts++;
+        }
         this.executionStatus = ExecutionStatus.EXECUTED;
         this.executionFailureReason = null;
     }
 
-    /** 下游执行失败：记录失败原因，累计执行次数，供巡检重试与告警。 */
+    /** 下游执行失败：记录失败原因，供巡检重试与告警。 */
     public void markExecutionFailed(String reason) {
-        this.executionAttempts++;
+        if (this.executionStatus != ExecutionStatus.EXECUTING) {
+            this.executionAttempts++;
+        }
         this.executionStatus = ExecutionStatus.EXECUTE_FAILED;
         this.executionFailureReason = reason;
+    }
+
+    static String executionMarker(long startedAtMs, String fencingToken) {
+        return "EXECUTING:" + startedAtMs + ":" + fencingToken;
     }
 
     /**

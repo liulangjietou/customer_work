@@ -28,6 +28,26 @@ class AgentAccessCredentialTest {
     }
 
     @Test
+    void tenantToken_shouldBindAgentAndTenant() {
+        long now = System.currentTimeMillis();
+        String token = AgentAccessCredential.sign("agent-1", "tenant-a", now + 60_000, SECRET);
+
+        AgentAccessCredential.AgentIdentity identity = AgentAccessCredential
+            .verifyIdentity(token, SECRET, now).orElseThrow();
+        assertEquals("agent-1", identity.agentId());
+        assertEquals("tenant-a", identity.tenantId());
+    }
+
+    @Test
+    void tenantToken_tamperedTenant_shouldReject() {
+        long now = System.currentTimeMillis();
+        String token = AgentAccessCredential.sign("agent-1", "tenant-a", now + 60_000, SECRET);
+        String tampered = token.replaceFirst("tenant-a", "tenant-b");
+
+        assertTrue(AgentAccessCredential.verifyIdentity(tampered, SECRET, now).isEmpty());
+    }
+
+    @Test
     void verify_expiredToken_shouldReject() {
         long now = System.currentTimeMillis();
         String token = AgentAccessCredential.sign("agent-1", now - 1_000, SECRET);
@@ -80,5 +100,12 @@ class AgentAccessCredentialTest {
     void sign_agentIdWithColon_shouldFastFail() {
         assertThrows(IllegalArgumentException.class,
             () -> AgentAccessCredential.sign("agent:1", System.currentTimeMillis() + 1000, SECRET));
+    }
+
+    @Test
+    void sign_blankTenant_shouldFastFail() {
+        assertThrows(IllegalArgumentException.class,
+            () -> AgentAccessCredential.sign(
+                "agent-1", " ", System.currentTimeMillis() + 1000, SECRET));
     }
 }

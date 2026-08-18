@@ -8,6 +8,7 @@ import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageResult;
 import com.richard.fyoung.customeradmin.ticket.dto.WsCredentialVO;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -86,7 +87,10 @@ public class UserTicketService {
     public WsCredentialVO issueWsCredential(String agentId) {
         long expiresAtMs = System.currentTimeMillis()
             + Duration.ofHours(properties.getCredentialExpireHours()).toMillis();
-        String token = AgentAccessCredential.sign(agentId, expiresAtMs, properties.getAgentSecret());
+        String tenantId = TenantContext.get();
+        String token = tenantId == null
+            ? AgentAccessCredential.sign(agentId, expiresAtMs, properties.getAgentSecret())
+            : AgentAccessCredential.sign(agentId, tenantId, expiresAtMs, properties.getAgentSecret());
         return new WsCredentialVO(token, properties.getWsUrl(), expiresAtMs, agentId);
     }
 }

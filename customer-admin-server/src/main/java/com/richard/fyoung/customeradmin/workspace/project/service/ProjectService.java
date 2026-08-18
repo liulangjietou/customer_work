@@ -15,6 +15,7 @@ import com.richard.fyoung.customeradmin.workspace.project.entity.AiProject;
 import com.richard.fyoung.customeradmin.workspace.project.entity.AiProjectSession;
 import com.richard.fyoung.customeradmin.workspace.project.mapper.AiProjectMapper;
 import com.richard.fyoung.customeradmin.workspace.project.mapper.AiProjectSessionMapper;
+import com.richard.fyoung.customeradmin.workspace.session.service.WorkspaceSessionGuard;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,17 +41,20 @@ public class ProjectService {
     private final AiProjectSessionMapper projectSessionMapper;
     private final AiAgentMapper agentMapper;
     private final ChatHistoryService chatHistoryService;
+    private final WorkspaceSessionGuard sessionGuard;
 
     public ProjectService(AiProjectMapper projectMapper, AiProjectSessionMapper projectSessionMapper,
-                           AiAgentMapper agentMapper, ChatHistoryService chatHistoryService) {
+                           AiAgentMapper agentMapper, ChatHistoryService chatHistoryService,
+                           WorkspaceSessionGuard sessionGuard) {
         this.projectMapper = projectMapper;
         this.projectSessionMapper = projectSessionMapper;
         this.agentMapper = agentMapper;
         this.chatHistoryService = chatHistoryService;
+        this.sessionGuard = sessionGuard;
     }
 
     /** 项目数量通常不大（跟角色/智能体一个量级），列表 + 挑选器共用同一个不分页接口，简单直接。 */
-    public List<ProjectVO> list(String keyword) {
+    public List<ProjectVO> list(String keyword, Long userId) {
         LambdaQueryWrapper<AiProject> wrapper = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(keyword)) {
             wrapper.like(AiProject::getProjectName, keyword);
@@ -64,7 +68,9 @@ public class ProjectService {
         List<Long> projectIds = projects.stream().map(AiProject::getId).collect(Collectors.toList());
         Map<Long, Long> countByProject = projectSessionMapper.selectList(
                 new LambdaQueryWrapper<AiProjectSession>().in(AiProjectSession::getProjectId, projectIds))
-            .stream().collect(Collectors.groupingBy(AiProjectSession::getProjectId, Collectors.counting()));
+            .stream()
+            .filter(link -> sessionGuard.isOwned(link.getAgentCode(), link.getSessionId(), userId))
+            .collect(Collectors.groupingBy(AiProjectSession::getProjectId, Collectors.counting()));
 
         return projects.stream().map(p -> toVo(p, countByProject.getOrDefault(p.getId(), 0L))).collect(Collectors.toList());
     }
@@ -92,11 +98,14 @@ public class ProjectService {
     }
 
     /** 项目详情：逐条把关联会话解析成"预览+所属智能体+时间"，会话已经查不到内容的标 stale，不抛错、不中断整个列表。 */
-    public List<ProjectSessionVO> listSessions(Long id) {
+    public List<ProjectSessionVO> listSessions(Long id, Long userId) {
         requireProject(id);
         List<AiProjectSession> links = projectSessionMapper.selectList(
             new LambdaQueryWrapper<AiProjectSession>().eq(AiProjectSession::getProjectId, id)
                 .orderByDesc(AiProjectSession::getCreateTime));
+        links = links.stream()
+            .filter(link -> sessionGuard.isOwned(link.getAgentCode(), link.getSessionId(), userId))
+            .collect(Collectors.toList());
         if (links.isEmpty()) {
             return List.of();
         }
@@ -106,8 +115,9 @@ public class ProjectService {
     }
 
     /** 幂等：同一会话重复加入同一项目不报错，直接当已经在项目里处理（前端不用先查一遍再决定按钮态）。 */
-    public void addSession(Long id, AddSessionRequest request) {
+    public void addSession(Long id, AddSessionRequest request, Long userId) {
         requireProject(id);
+        sessionGuard.requireOwned(request.agentCode(), request.sessionId(), userId);
         AiProjectSession link = new AiProjectSession();
         link.setProjectId(id);
         link.setAgentCode(request.agentCode());
@@ -119,7 +129,8 @@ public class ProjectService {
         }
     }
 
-    public void removeSession(Long id, String agentCode, String sessionId) {
+    public void removeSession(Long id, String agentCode, String sessionId, Long userId) {
+        sessionGuard.requireOwned(agentCode, sessionId, userId);
         projectSessionMapper.delete(new LambdaQueryWrapper<AiProjectSession>()
             .eq(AiProjectSession::getProjectId, id)
             .eq(AiProjectSession::getAgentCode, agentCode)

@@ -1,6 +1,9 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential.AgentIdentity;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.web.server.ServerWebExchange;
@@ -28,8 +31,6 @@ public class AgentAuthWebFilter implements WebFilter {
     /** 坐席 ID 在 exchange 属性中的键。 */
     public static final String AGENT_ID_ATTR = "cw.agent.id";
 
-    private static final String PATH_PREFIX = "/api/customer/agent/";
-    private static final String HANDOFF_PATH_PREFIX = "/api/customer/handoffs";
     private static final String TOKEN_HEADER = "X-Agent-Token";
 
     private final CustomerWorkProperties properties;
@@ -41,22 +42,31 @@ public class AgentAuthWebFilter implements WebFilter {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
-        if (!requiresAgentAuth(path)) {
+        if (!CustomerSecurityPaths.requiresAgentToken(path)) {
             return chain.filter(exchange);
         }
         String token = exchange.getRequest().getHeaders().getFirst(TOKEN_HEADER);
-        Optional<String> agentId = AgentAccessCredential.verify(
+        Optional<AgentIdentity> identity = AgentAccessCredential.verifyIdentity(
             token, properties.getAgentAccess().getSecret(), System.currentTimeMillis());
-        if (agentId.isEmpty()) {
+        if (identity.isEmpty()) {
             return AuthResponses.unauthorized(exchange, "invalid or expired agent token");
         }
-        exchange.getAttributes().put(AGENT_ID_ATTR, agentId.get());
-        return chain.filter(exchange);
+        AgentIdentity authenticated = identity.get();
+        exchange.getAttributes().put(AGENT_ID_ATTR, authenticated.agentId());
+        if (!properties.getTenant().isEnabled()) {
+            return chain.filter(exchange);
+        }
+        if (authenticated.tenantId() == null || authenticated.tenantId().isBlank()) {
+            return AuthResponses.unauthorized(exchange, "agent token tenant is missing");
+        }
+        if (TenantContext.isPresent() && !authenticated.tenantId().equals(TenantContext.get())) {
+            return AuthResponses.forbidden(exchange, "credential tenant mismatch");
+        }
+        return chainWithTenant(exchange, chain, authenticated.tenantId());
     }
 
-    private boolean requiresAgentAuth(String path) {
-        return path.startsWith(PATH_PREFIX)
-            || path.equals(HANDOFF_PATH_PREFIX)
-            || path.startsWith(HANDOFF_PATH_PREFIX + "/");
+    private Mono<Void> chainWithTenant(ServerWebExchange exchange, WebFilterChain chain, String tenantId) {
+        return Mono.defer(() -> TenantContext.callWith(tenantId, () -> chain.filter(exchange)))
+            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId));
     }
 }

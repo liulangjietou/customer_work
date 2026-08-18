@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.infra.gateway;
 
+import org.apache.ibatis.plugin.Interceptor;
+
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -23,6 +25,7 @@ public final class CrossDbGatewayProvider<T> implements AutoCloseable {
     private final List<Class<?>> mapperClasses;
     private final List<String> mapperXmlLocations;
     private final Function<CrossDbGateway, T> assembler;
+    private final Supplier<List<Interceptor>> pluginsSupplier;
 
     private volatile T cachedFacade;
     private volatile CrossDbGateway gateway;
@@ -31,9 +34,18 @@ public final class CrossDbGatewayProvider<T> implements AutoCloseable {
                            List<Class<?>> mapperClasses,
                            List<String> mapperXmlLocations,
                            Function<CrossDbGateway, T> assembler) {
+        this(settingsSupplier, mapperClasses, mapperXmlLocations, List::of, assembler);
+    }
+
+    CrossDbGatewayProvider(Supplier<CrossDbConnectionSettings> settingsSupplier,
+                           List<Class<?>> mapperClasses,
+                           List<String> mapperXmlLocations,
+                           Supplier<List<Interceptor>> pluginsSupplier,
+                           Function<CrossDbGateway, T> assembler) {
         this.settingsSupplier = settingsSupplier;
         this.mapperClasses = mapperClasses;
         this.mapperXmlLocations = mapperXmlLocations;
+        this.pluginsSupplier = pluginsSupplier;
         this.assembler = assembler;
     }
 
@@ -52,7 +64,7 @@ public final class CrossDbGatewayProvider<T> implements AutoCloseable {
                 return cachedFacade;
             }
             CrossDbGateway built = CrossDbGateways.create(settingsSupplier.get(),
-                mapperClasses, mapperXmlLocations);
+                mapperClasses, mapperXmlLocations, pluginsSupplier.get());
             T assembled;
             try {
                 assembled = assembler.apply(built);

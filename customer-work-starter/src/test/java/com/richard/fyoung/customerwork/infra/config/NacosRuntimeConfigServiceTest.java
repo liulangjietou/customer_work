@@ -1,7 +1,9 @@
 package com.richard.fyoung.customerwork.infra.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.data.outbox.OutboxService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -9,10 +11,13 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -93,5 +98,57 @@ class NacosRuntimeConfigServiceTest {
         NacosRuntimeConfigService service = new NacosRuntimeConfigService(props(), applier);
         assertFalse(service.applyConfig("   "));
         verify(applier, never()).apply(any(), any(), any());
+    }
+
+    @Test
+    void appliedConfigEnqueuesDurableAck() throws Exception {
+        CustomerWorkProperties properties = props();
+        properties.getNacos().setRuntimeConfigAckUrl("http://admin.internal/api/open/runtime-config/acks");
+        properties.getNacos().setRuntimeConfigInstanceId("pod-1");
+        RuntimeConfigApplier applier = mock(RuntimeConfigApplier.class);
+        when(applier.apply(any(), any(), any())).thenReturn(true);
+        OutboxService outbox = mock(OutboxService.class);
+        NacosRuntimeConfigService service = new NacosRuntimeConfigService(properties, applier, outbox);
+
+        CustomerWorkRuntimeConfig dto = new CustomerWorkRuntimeConfig();
+        dto.setRevision("rev-1");
+        dto.setContentHash("hash-1");
+        String json = mapper.writeValueAsString(dto);
+
+        assertTrue(service.applyConfig(json));
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(outbox).publish(eq(RuntimeConfigAckOutboxHandler.TYPE), eq("rev-1"), payload.capture());
+        RuntimeConfigAck ack = mapper.readValue(payload.getValue(), RuntimeConfigAck.class);
+        assertEquals("APPLIED", ack.status());
+        assertEquals("pod-1", ack.instanceId());
+        assertEquals("hash-1", ack.contentHash());
+    }
+
+    @Test
+    void failedInitialSubscriptionCanRecoverWithoutRestart() throws Exception {
+        CustomerWorkProperties properties = props();
+        RuntimeConfigApplier applier = mock(RuntimeConfigApplier.class);
+        com.alibaba.nacos.api.config.ConfigService failedConfigService =
+            mock(com.alibaba.nacos.api.config.ConfigService.class);
+        when(failedConfigService.getConfig(any(), any(), anyLong()))
+            .thenThrow(new IllegalStateException("nacos unavailable"));
+        com.alibaba.nacos.api.config.ConfigService configService =
+            mock(com.alibaba.nacos.api.config.ConfigService.class);
+        when(configService.getConfig(any(), any(), anyLong())).thenReturn(null);
+        AtomicInteger attempts = new AtomicInteger();
+        NacosRuntimeConfigService service = new NacosRuntimeConfigService(
+            properties, applier, null, ignored -> {
+                if (attempts.incrementAndGet() == 1) {
+                    return failedConfigService;
+                }
+                return configService;
+            });
+
+        assertFalse(service.attemptSubscription());
+        assertTrue(service.attemptSubscription());
+        assertEquals(2, attempts.get());
+        verify(failedConfigService).shutDown();
+        verify(configService).addListener(eq(properties.getNacos().getRuntimeConfigDataId()),
+            eq(properties.getNacos().getGroup()), any());
     }
 }

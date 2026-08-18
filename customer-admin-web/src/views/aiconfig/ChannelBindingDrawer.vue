@@ -22,6 +22,14 @@ const list = ref<ChannelBindingVO[]>([])
 const agentOptions = ref<AgentVO[]>([])
 // 记录正在重新发布的渠道编码，逐行控制按钮 loading。
 const republishingCode = ref<string | null>(null)
+const publishStatusMeta: Record<string, { text: string; type: 'info' | 'warning' | 'success' | 'danger' }> = {
+  PENDING: { text: '待发布', type: 'info' },
+  PROCESSING: { text: '发布中', type: 'warning' },
+  PUBLISHED: { text: '待回执', type: 'warning' },
+  PARTIAL: { text: '部分生效', type: 'warning' },
+  APPLIED: { text: '已生效', type: 'success' },
+  FAILED: { text: '失败', type: 'danger' },
+}
 
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
@@ -96,8 +104,9 @@ async function handleDelete(row: ChannelBindingVO) {
 async function handleRepublish(row: ChannelBindingVO) {
   republishingCode.value = row.channelCode
   try {
-    const dataId = await republishChannelBinding(row.channelCode)
-    ElMessage.success(`重新发布成功，dataId：${dataId}`)
+    const taskId = await republishChannelBinding(row.channelCode)
+    ElMessage.success(`已进入可靠发布队列，任务：${taskId}`)
+    await loadList()
   } finally {
     // 失败时业务错误码由 request 拦截器统一弹提示，这里只负责收尾 loading。
     republishingCode.value = null
@@ -117,6 +126,18 @@ async function handleRepublish(row: ChannelBindingVO) {
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="配置发布" min-width="130">
+        <template #default="{ row }">
+          <el-tooltip v-if="row.publishLastError" :content="row.publishLastError" placement="top">
+            <el-tag :type="publishStatusMeta[row.publishStatus]?.type || 'info'">
+              {{ publishStatusMeta[row.publishStatus]?.text || '未发布' }}
+            </el-tag>
+          </el-tooltip>
+          <el-tag v-else :type="publishStatusMeta[row.publishStatus]?.type || 'info'">
+            {{ publishStatusMeta[row.publishStatus]?.text || '未发布' }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="240" fixed="right">

@@ -51,6 +51,13 @@ public class InMemoryTicketStore implements TicketStore {
     }
 
     @Override
+    public Optional<Ticket> findBySession(String sessionId) {
+        return tickets.values().stream()
+            .filter(t -> t.getSessionId() != null && t.getSessionId().equals(sessionId))
+            .max(Comparator.comparingLong(Ticket::getCreatedAtMs));
+    }
+
+    @Override
     public Optional<Ticket> findActiveByUser(String userId) {
         return tickets.values().stream()
             .filter(t -> t.getUserId() != null && t.getUserId().equals(userId))

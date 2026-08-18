@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.aiconfig.channel.publish.mapper.RuntimeConfigAckMapper">
+
+    <insert id="upsert">
+        INSERT INTO ai_runtime_config_ack
+            (tenant_id, revision, content_hash, instance_id, status, reason,
+             applied_at_ms, created_at_ms, updated_at_ms)
+        VALUES
+            (#{ack.tenantId}, #{ack.revision}, #{ack.contentHash}, #{ack.instanceId}, #{ack.status}, #{ack.reason},
+             #{ack.appliedAtMs}, #{ack.createdAtMs}, #{ack.updatedAtMs})
+        ON DUPLICATE KEY UPDATE
+            content_hash = VALUES(content_hash), status = VALUES(status), reason = VALUES(reason),
+            applied_at_ms = VALUES(applied_at_ms), updated_at_ms = VALUES(updated_at_ms)
+    </insert>
+
+    <select id="countByStatus" resultType="int">
+        SELECT COUNT(*) FROM ai_runtime_config_ack
+        WHERE tenant_id = #{tenantId} AND revision = #{revision} AND status = #{status}
+    </select>
+</mapper>

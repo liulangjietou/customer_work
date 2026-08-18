@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class WsSessionRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(WsSessionRegistry.class);
+    private static final String SCOPE_DELIMITER = "\u001f";
 
     private final Map<String, Sinks.Many<String>> userSinks = new ConcurrentHashMap<>();
     private final Map<String, Sinks.Many<String>> agentSinks = new ConcurrentHashMap<>();
@@ -37,32 +39,32 @@ public class WsSessionRegistry {
 
     /** 登记用户连接（顶号旧连接），返回该连接下行帧 Sink（处理器用其 asFlux() 作出站流）。 */
     public Sinks.Many<String> registerUser(String userId) {
-        return register(userSinks, userId, "user");
+        return register(userSinks, scoped(userId), "user");
     }
 
     /** 登记坐席连接（顶号旧连接），返回该连接下行帧 Sink。 */
     public Sinks.Many<String> registerAgent(String agentId) {
-        return register(agentSinks, agentId, "agent");
+        return register(agentSinks, scoped(agentId), "agent");
     }
 
     /** 注销用户连接（仅当当前登记的正是本 Sink 时移除，避免误删顶号后的新连接）。 */
     public void unregisterUser(String userId, Sinks.Many<String> sink) {
-        unregister(userSinks, userId, sink);
+        unregister(userSinks, scoped(userId), sink);
     }
 
     /** 注销坐席连接。 */
     public void unregisterAgent(String agentId, Sinks.Many<String> sink) {
-        unregister(agentSinks, agentId, sink);
+        unregister(agentSinks, scoped(agentId), sink);
     }
 
     /** 向用户推送一帧；不在线返回 false（仅 info 日志，不报错——离线是常态）。 */
     public boolean pushToUser(String userId, WsFrame frame) {
-        return push(userSinks, userId, frame, "user");
+        return push(userSinks, scoped(userId), frame, "user");
     }
 
     /** 向坐席推送一帧；不在线返回 false。 */
     public boolean pushToAgent(String agentId, WsFrame frame) {
-        return push(agentSinks, agentId, frame, "agent");
+        return push(agentSinks, scoped(agentId), frame, "agent");
     }
 
     /** 向全部在线坐席广播一帧（新工单进队列时唤起抢单）。 */
@@ -71,9 +73,12 @@ public class WsSessionRegistry {
         if (json == null) {
             return;
         }
-        for (Sinks.Many<String> sink : agentSinks.values()) {
-            sink.tryEmitNext(json);
-        }
+        String prefix = tenantId() + SCOPE_DELIMITER;
+        agentSinks.forEach((key, sink) -> {
+            if (key.startsWith(prefix)) {
+                sink.tryEmitNext(json);
+            }
+        });
     }
 
     /** 当前在线用户数（测试/可观测用）。 */
@@ -118,6 +123,16 @@ public class WsSessionRegistry {
             return false;
         }
         return sink.tryEmitNext(json).isSuccess();
+    }
+
+    /** 同名用户/坐席在不同租户下必须落入不同连接槽位。 */
+    private String scoped(String id) {
+        return tenantId() + SCOPE_DELIMITER + id;
+    }
+
+    private String tenantId() {
+        String tenantId = TenantContext.get();
+        return tenantId == null ? TenantContext.DEFAULT : tenantId;
     }
 
     private String serialize(WsFrame frame) {

@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -37,6 +38,18 @@ public class MybatisChatMessageStore implements ChatMessageStore {
             log.error("chat message append failed, code={}, messageId={}",
                 "CHATLOG-APPEND-FAIL", message.messageId(), e);
             throw new IllegalStateException("failed to append chat message: " + message.messageId(), e);
+        }
+    }
+
+    @Override
+    public Optional<ChatMessage> findByMessageId(String messageId) {
+        try {
+            ChatMessageDO record = chatMessageMapper.findByMessageId(messageId);
+            return record == null ? Optional.empty() : Optional.of(toMessage(record));
+        } catch (Exception e) {
+            log.error("chat message query failed, code={}, dim={}, value={}",
+                "CHATLOG-FINDBYMESSAGE-FAIL", "message_id", messageId, e);
+            throw new IllegalStateException("failed to find chat message: " + messageId, e);
         }
     }
 

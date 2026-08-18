@@ -6,14 +6,23 @@ import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.config.listener.Listener;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.data.outbox.OutboxService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.util.Properties;
 import java.util.concurrent.Executor;
+import java.lang.management.ManagementFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
 
 /**
@@ -29,7 +38,7 @@ import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
  * @author owlzhangfq@gmail.com
  */
 @Component
-public class NacosRuntimeConfigService {
+public class NacosRuntimeConfigService implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(NacosRuntimeConfigService.class);
 
@@ -37,13 +46,37 @@ public class NacosRuntimeConfigService {
 
     private final CustomerWorkProperties properties;
     private final RuntimeConfigApplier applier;
+    private final OutboxService outboxService;
+    private final ConfigServiceFactory configServiceFactory;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AtomicBoolean subscribed = new AtomicBoolean(false);
 
     private volatile AesGcmDecryptor decryptor;
+    private volatile ConfigService boundConfigService;
+    private ThreadPoolTaskScheduler retryScheduler;
 
     public NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier) {
+        this(properties, applier, (OutboxService) null);
+    }
+
+    @Autowired
+    public NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier,
+                                     ObjectProvider<OutboxService> outboxProvider) {
+        this(properties, applier, outboxProvider == null ? null : outboxProvider.getIfAvailable());
+    }
+
+    NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier,
+                              OutboxService outboxService) {
+        this(properties, applier, outboxService,
+            nacosProperties -> NacosFactory.createConfigService(nacosProperties));
+    }
+
+    NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier,
+                              OutboxService outboxService, ConfigServiceFactory configServiceFactory) {
         this.properties = properties;
         this.applier = applier;
+        this.outboxService = outboxService;
+        this.configServiceFactory = configServiceFactory;
     }
 
     @PostConstruct
@@ -52,15 +85,37 @@ public class NacosRuntimeConfigService {
         if (!cfg.isRuntimeConfigEnabled()) {
             return;
         }
+        retryScheduler = new ThreadPoolTaskScheduler();
+        retryScheduler.setPoolSize(1);
+        retryScheduler.setThreadNamePrefix("runtime-config-subscribe-");
+        retryScheduler.initialize();
+        attemptSubscription();
+        retryScheduler.scheduleWithFixedDelay(this::attemptSubscription,
+            Duration.ofMillis(cfg.getRuntimeConfigSubscribeRetryMs()));
+    }
+
+    /** 首次连接或后续重试共用的单点；成功后定时任务变为轻量 no-op。 */
+    boolean attemptSubscription() {
+        if (subscribed.get()) {
+            return true;
+        }
+        NacosProperties cfg = properties.getNacos();
+        ConfigService candidate = null;
         try {
             this.decryptor = new AesGcmDecryptor(cfg.getConfigAesKey());
-            ConfigService configService = NacosFactory.createConfigService(buildProperties(cfg));
-            bind(configService);
+            candidate = configServiceFactory.create(buildProperties(cfg));
+            bind(candidate);
+            boundConfigService = candidate;
+            subscribed.set(true);
             log.info("[Nacos] runtime config hot-update enabled, dataId={}, group={}",
                 cfg.getRuntimeConfigDataId(), cfg.getGroup());
+            return true;
         } catch (Exception e) {
-            // Nacos 不可用 / 密钥非法不应阻断启动，保持 yml 行为
-            log.error("runtime config subscribe failed, keep yml behavior, code={}", "RUNTIME-CONFIG-SUBSCRIBE-FAIL", e);
+            shutdownQuietly(candidate);
+            // 保持旧配置继续服务，Nacos 恢复后由 retryScheduler 自动重新建立订阅。
+            log.error("runtime config subscribe failed, keep old config and retry, code={}",
+                "RUNTIME-CONFIG-SUBSCRIBE-FAIL", e);
+            return false;
         }
     }
 
@@ -165,6 +220,8 @@ public class NacosRuntimeConfigService {
             dto = objectMapper.readValue(json, CustomerWorkRuntimeConfig.class);
         } catch (Exception e) {
             log.error("runtime config json parse failed, keep old config, code={}", CODE_PARSE_FAIL, e);
+            enqueueAck(extractRevision(json), extractContentHash(json), "REJECTED",
+                "runtime config JSON parse failed");
             return false;
         }
         String primaryKey;
@@ -175,9 +232,58 @@ public class NacosRuntimeConfigService {
         } catch (Exception e) {
             log.error("runtime config api key decrypt failed, keep old config, code={}",
                 "RUNTIME-CONFIG-DECRYPT-FAIL", e);
+            enqueueAck(dto.getRevision(), dto.getContentHash(), "REJECTED",
+                "runtime config API key decrypt failed");
             return false;
         }
-        return applier.apply(dto, primaryKey, fallbackKey);
+        boolean applied = applier.apply(dto, primaryKey, fallbackKey);
+        enqueueAck(dto.getRevision(), dto.getContentHash(), applied ? "APPLIED" : "REJECTED",
+            applied ? null : "runtime config applier rejected configuration");
+        return applied;
+    }
+
+    private void enqueueAck(String revision, String contentHash, String status, String reason) {
+        NacosProperties nacos = properties.getNacos();
+        if (!StringUtils.hasText(revision) || !StringUtils.hasText(nacos.getRuntimeConfigAckUrl())
+            || outboxService == null) {
+            return;
+        }
+        try {
+            RuntimeConfigAck ack = new RuntimeConfigAck(revision, contentHash, resolveInstanceId(nacos),
+                status, reason, System.currentTimeMillis());
+            String payload = objectMapper.writeValueAsString(ack);
+            String tenant = StringUtils.hasText(nacos.getTenantCode())
+                ? nacos.getTenantCode().trim() : TenantContext.DEFAULT;
+            TenantContext.runWith(tenant, () ->
+                outboxService.publish(RuntimeConfigAckOutboxHandler.TYPE, revision, payload));
+        } catch (Exception e) {
+            log.error("enqueue runtime config ACK failed, code={}, revision={}",
+                "RUNTIME-CONFIG-ACK-ENQUEUE-FAIL", revision, e);
+        }
+    }
+
+    private String resolveInstanceId(NacosProperties nacos) {
+        if (StringUtils.hasText(nacos.getRuntimeConfigInstanceId())) {
+            return nacos.getRuntimeConfigInstanceId().trim();
+        }
+        String hostname = System.getenv("HOSTNAME");
+        return StringUtils.hasText(hostname) ? hostname : ManagementFactory.getRuntimeMXBean().getName();
+    }
+
+    private String extractRevision(String json) {
+        return extractText(json, "revision");
+    }
+
+    private String extractContentHash(String json) {
+        return extractText(json, "contentHash");
+    }
+
+    private String extractText(String json, String field) {
+        try {
+            return objectMapper.readTree(json).path(field).asText(null);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     /** 密文非空则解密，空则返回 null（表示不改动现有密钥）。 */
@@ -209,5 +315,30 @@ public class NacosRuntimeConfigService {
             props.put(PropertyKeyConst.PASSWORD, cfg.getPassword());
         }
         return props;
+    }
+
+    @Override
+    public void destroy() {
+        if (retryScheduler != null) {
+            retryScheduler.shutdown();
+        }
+        shutdownQuietly(boundConfigService);
+    }
+
+    private void shutdownQuietly(ConfigService configService) {
+        if (configService == null) {
+            return;
+        }
+        try {
+            configService.shutDown();
+        } catch (Exception e) {
+            log.error("runtime config Nacos client shutdown failed, code={}",
+                "RUNTIME-CONFIG-NACOS-SHUTDOWN-FAIL", e);
+        }
+    }
+
+    @FunctionalInterface
+    interface ConfigServiceFactory {
+        ConfigService create(Properties properties) throws Exception;
     }
 }

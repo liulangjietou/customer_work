@@ -1097,6 +1097,10 @@ export interface ChannelBindingVO {
   agentName: string
   /** 0 停用 / 1 启用 */
   status: number
+  publishStatus?: 'PENDING' | 'PROCESSING' | 'PUBLISHED' | 'PARTIAL' | 'APPLIED' | 'FAILED'
+  publishRevision?: string
+  publishLastError?: string
+  publishUpdatedAtMs?: number
   createTime: string
   updateTime: string
 }

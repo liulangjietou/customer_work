@@ -34,7 +34,8 @@ public class QualityEvalRunner {
 
     private static final Logger log = LoggerFactory.getLogger(QualityEvalRunner.class);
 
-    private static final Pattern SCORE_PATTERN = Pattern.compile("SCORE:\\s*(\\d)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SCORE_PATTERN = Pattern.compile(
+        "SCORE:\\s*([1-5])(?!\\d)", Pattern.CASE_INSENSITIVE);
     private static final int PASS_THRESHOLD = 3;
 
     private static final String DATASET_PATH = "eval/quality-eval-cases.json";
@@ -102,25 +103,37 @@ public class QualityEvalRunner {
         int passCount = 0;
         List<String> failures = new ArrayList<>();
         List<String> failedCaseIds = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        List<String> errorCaseIds = new ArrayList<>();
+        int judgedCount = 0;
 
         for (int i = 0; i < total; i++) {
             QualityEvalCase c = cases.get(i);
             String reply = replies.get(i);
 
-            int score = judge(c, reply);
-            totalScore += score;
-            if (score >= PASS_THRESHOLD) {
-                passCount++;
-            } else {
-                failures.add(String.format("%s: score=%d input='%s'", c.id(), score, c.input()));
-                failedCaseIds.add(c.id());
+            try {
+                int score = judge(c, reply);
+                judgedCount++;
+                totalScore += score;
+                if (score >= PASS_THRESHOLD) {
+                    passCount++;
+                } else {
+                    failures.add(String.format("%s: score=%d input='%s'", c.id(), score, c.input()));
+                    failedCaseIds.add(c.id());
+                }
+            } catch (Exception e) {
+                String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                errors.add(String.format("%s: status=ERROR input='%s' reason='%s'", c.id(), c.input(), reason));
+                errorCaseIds.add(c.id());
             }
         }
 
-        double avgScore = total == 0 ? 0 : totalScore / total;
-        QualityEvalReport report = new QualityEvalReport(total, avgScore, passCount, failures, failedCaseIds);
-        log.info("quality eval done: total={}, avgScore={}, passRate={}%",
-            total, String.format("%.2f", avgScore), String.format("%.1f", report.passRate() * 100));
+        double avgScore = judgedCount == 0 ? 0 : totalScore / judgedCount;
+        QualityEvalReport report = new QualityEvalReport(total, avgScore, passCount, failures, failedCaseIds,
+            judgedCount, errors, errorCaseIds);
+        log.info("quality eval done: status={}, total={}, judged={}, errors={}, avgScore={}, passRate={}%",
+            report.getStatus(), total, judgedCount, report.getErrorCount(), String.format("%.2f", avgScore),
+            String.format("%.1f", report.passRate() * 100));
         return report;
     }
 
@@ -129,7 +142,7 @@ public class QualityEvalRunner {
      *
      * @param testCase 评测用例
      * @param reply    Agent 的回复
-     * @return 分数 1-5；解析失败返回 3（中性）
+     * @return 分数 1-5；模型或格式异常直接抛出，由整轮报告记录为 ERROR
      */
     int judge(QualityEvalCase testCase, String reply) {
         String prompt = buildJudgePrompt(testCase, reply);
@@ -144,7 +157,7 @@ public class QualityEvalRunner {
         } catch (Exception e) {
             log.error("[QualityEval] judge failed, errorCode={}, caseId={}",
                 "EVAL-JUDGE-FAIL", testCase.id(), e);
-            return PASS_THRESHOLD; // 中性分数，不影响整体趋势
+            throw new IllegalStateException("judge unavailable: " + errorMessage(e), e);
         }
     }
 
@@ -166,17 +179,16 @@ public class QualityEvalRunner {
 
     int parseScore(String text) {
         if (text == null || text.isBlank()) {
-            return PASS_THRESHOLD;
+            throw new IllegalArgumentException("judge returned empty response");
         }
         Matcher m = SCORE_PATTERN.matcher(text);
         if (m.find()) {
-            try {
-                int score = Integer.parseInt(m.group(1));
-                return Math.max(1, Math.min(5, score));
-            } catch (NumberFormatException e) {
-                return PASS_THRESHOLD;
-            }
+            return Integer.parseInt(m.group(1));
         }
-        return PASS_THRESHOLD;
+        throw new IllegalArgumentException("judge response missing SCORE: <1-5>");
+    }
+
+    private String errorMessage(Exception e) {
+        return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
     }
 }

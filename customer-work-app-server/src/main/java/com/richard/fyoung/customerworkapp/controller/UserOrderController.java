@@ -24,7 +24,7 @@ import java.util.concurrent.Callable;
  * 用户侧订单端点（{@code /api/customer/user/orders}，JWT 鉴权）。
  *
  * <p>当前用户主体由 {@code UserAuthWebFilter} 放入 exchange 属性，本控制器不信任任何客户端自报的 userId：
- * 列表仅返回当前用户订单，详情按订单归属校验（非本人 403、不存在 404）。订单数据源未启用（mode!=jdbc）时
+ * 列表仅返回当前用户订单，详情按订单归属校验（非本人和不存在统一 404，避免枚举）。订单数据源未启用（mode!=jdbc）时
  * 返回 503 语义化提示。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -49,7 +49,7 @@ public class UserOrderController {
         });
     }
 
-    @Operation(summary = "订单详情", description = "含物流轨迹；非本人订单 403、不存在 404")
+    @Operation(summary = "订单详情", description = "含物流轨迹；非本人和不存在统一返回 404")
     @GetMapping("/{orderId}")
     public Mono<OrderView> detail(@PathVariable String orderId, ServerWebExchange exchange) {
         UserPrincipal user = principal(exchange);
@@ -58,7 +58,7 @@ public class UserOrderController {
             OwnedOrder owned = orderDao.findById(orderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "order not found: " + orderId));
             if (!user.userId().equals(owned.userId())) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "not your order");
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "order not found: " + orderId);
             }
             return owned.view();
         });

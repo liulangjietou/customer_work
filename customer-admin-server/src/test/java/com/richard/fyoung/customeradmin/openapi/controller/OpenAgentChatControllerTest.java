@@ -5,10 +5,13 @@ import com.richard.fyoung.customeradmin.openapi.service.OpenChannelService;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.codec.ServerSentEvent;
 import reactor.core.publisher.Flux;
+import reactor.util.context.ContextView;
 
 import java.util.List;
 
@@ -65,5 +68,23 @@ class OpenAgentChatControllerTest {
         assertEquals(1, events.size());
         assertEquals("error", events.get(0).event());
         assertEquals("\"boom\"", events.get(0).data());
+    }
+
+    @Test
+    void shouldCarryCapturedTenantIntoDeferredChatSubscription() {
+        TenantContext.set("tenant-a");
+        when(chatService.chatStream(eq(AGENT), any(), any()))
+            .thenReturn(Flux.deferContextual(context -> Flux.just(
+                new ChatStreamChunk(ChatNodeKind.ANSWER, tenantFrom(context)))));
+
+        Flux<ServerSentEvent<String>> result = controller.chat(AGENT, new OpenChatRequest("s1", "hi"));
+        TenantContext.clear();
+        List<ServerSentEvent<String>> events = result.collectList().block();
+
+        assertEquals("\"tenant-a\"", events.get(0).data());
+    }
+
+    private String tenantFrom(ContextView context) {
+        return context.get(TenantContextThreadLocalAccessor.KEY);
     }
 }

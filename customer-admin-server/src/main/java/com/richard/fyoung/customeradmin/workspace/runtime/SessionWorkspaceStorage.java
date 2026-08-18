@@ -108,7 +108,7 @@ public class SessionWorkspaceStorage {
 
     /** 对象 key：{@code {prefix}{agentCode}/{sessionId}.tar.gz}，一个会话恒定一个对象。 */
     String objectKey(String agentCode, String sessionId) {
-        return keyPrefix + agentCode + "/" + sessionId + ".tar.gz";
+        return keyPrefix + WorkspaceRuntimeScope.agent(agentCode) + "/" + sessionId + ".tar.gz";
     }
 
     /** 目录不存在或没有任何条目时视为空。 */

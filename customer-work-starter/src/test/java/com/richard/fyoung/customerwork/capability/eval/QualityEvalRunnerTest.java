@@ -41,18 +41,19 @@ class QualityEvalRunnerTest {
     }
 
     @Test
-    void parseScore_shouldClampToValidRange() {
+    void parseScore_shouldRejectOutOfRange() {
         QualityEvalRunner runner = new QualityEvalRunner(null);
-        assertEquals(5, runner.parseScore("SCORE: 9"));  // clamp to 5
-        assertEquals(1, runner.parseScore("SCORE: 0"));  // clamp to 1
+        assertThrows(IllegalArgumentException.class, () -> runner.parseScore("SCORE: 9"));
+        assertThrows(IllegalArgumentException.class, () -> runner.parseScore("SCORE: 0"));
+        assertThrows(IllegalArgumentException.class, () -> runner.parseScore("SCORE: 10"));
     }
 
     @Test
-    void parseScore_shouldReturnDefault_whenNoScoreFound() {
+    void parseScore_shouldRejectMissingScore() {
         QualityEvalRunner runner = new QualityEvalRunner(null);
-        assertEquals(3, runner.parseScore("没有分数信息"));
-        assertEquals(3, runner.parseScore(""));
-        assertEquals(3, runner.parseScore(null));
+        assertThrows(IllegalArgumentException.class, () -> runner.parseScore("没有分数信息"));
+        assertThrows(IllegalArgumentException.class, () -> runner.parseScore(""));
+        assertThrows(IllegalArgumentException.class, () -> runner.parseScore(null));
     }
 
     @Test
@@ -91,8 +92,12 @@ class QualityEvalRunnerTest {
         QualityEvalReport report = runner.run(cases, replies);
 
         assertEquals(1, report.getTotal());
-        assertEquals(3, report.getAvgScore(), 0.01);  // 降级为中性分 3
-        assertEquals(1, report.getPassCount());  // 3 >= 3，通过
+        assertEquals(0, report.getAvgScore(), 0.01);
+        assertEquals(0, report.getPassCount());
+        assertEquals(0, report.getJudgedCount());
+        assertEquals(1, report.getErrorCount());
+        assertEquals(QualityEvalStatus.ERROR, report.getStatus());
+        assertFalse(report.isGatePassed());
     }
 
     @Test

@@ -35,6 +35,18 @@ public interface ApprovalStore {
     /** 更新审批单（状态变更后调用）。 */
     void update(ApprovalRequest request);
 
+    /** PENDING 到最终人工决策的原子条件更新；只有一个并发决策者能成功。 */
+    boolean decide(String id, ApprovalStatus target, String operator, String note, long decidedAtMs);
+
+    /** 原子取得带 fencing token 的执行租约并累计尝试次数。 */
+    boolean claimExecution(String id, int maxAttempts, long startedAtMs, String fencingToken);
+
+    /** 仅当前 fencing token 持有者可写入执行结果。 */
+    boolean completeExecution(String id, String fencingToken, boolean success, String failureReason);
+
+    /** 把崩溃遗留且已超时的执行租约转为可重试失败态。 */
+    int recoverStuckExecutions(long startedBeforeMs);
+
     /** 删除审批单（仅用于管理/清理，不改变业务状态机）。 */
     void delete(String id);
 }

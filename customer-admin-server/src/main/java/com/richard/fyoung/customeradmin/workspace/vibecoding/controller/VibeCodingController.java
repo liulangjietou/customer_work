@@ -22,6 +22,9 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.WorkspaceFileNo
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.CollaborativeCodingService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.GitAssistantService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.VibeCodingService;
+import com.richard.fyoung.customeradmin.workspace.session.service.WorkspaceSessionGuard;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -50,12 +53,15 @@ public class VibeCodingController {
     private final VibeCodingService vibeCodingService;
     private final GitAssistantService gitAssistantService;
     private final CollaborativeCodingService collaborativeCodingService;
+    private final WorkspaceSessionGuard sessionGuard;
 
     public VibeCodingController(VibeCodingService vibeCodingService, GitAssistantService gitAssistantService,
-                               CollaborativeCodingService collaborativeCodingService) {
+                               CollaborativeCodingService collaborativeCodingService,
+                               WorkspaceSessionGuard sessionGuard) {
         this.vibeCodingService = vibeCodingService;
         this.gitAssistantService = gitAssistantService;
         this.collaborativeCodingService = collaborativeCodingService;
+        this.sessionGuard = sessionGuard;
     }
 
     /**
@@ -66,13 +72,17 @@ public class VibeCodingController {
     @SaCheckPermission("workspace")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
+        sessionGuard.claimOrRequire(agentCode, request.sessionId(), StpUtil.getLoginIdAsLong());
+        String tenantId = TenantContext.get();
         Flux<com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk> source = request.collaborationEnabled()
             ? collaborativeCodingService.stream(agentCode, request.sessionId(), request.message(), request.mode(), request.attachmentIds())
             : vibeCodingService.stream(agentCode, request.sessionId(), request.message(), request.mode(), request.attachmentIds());
-        return source
+        Flux<ServerSentEvent<String>> result = source
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
+        return tenantId == null ? result
+            : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));
     }
 
     /** 当前 VibeCoding 沙箱模式（local/docker），全局配置，供前端在产物文件标题旁标注来源。 */
@@ -86,6 +96,7 @@ public class VibeCodingController {
     @SaCheckPermission("workspace")
     @PostMapping("/sessions/{sessionId}/interrupt")
     public Result<Boolean> interrupt(@PathVariable String agentCode, @PathVariable String sessionId) {
+        requireOwned(agentCode, sessionId);
         return Result.success(vibeCodingService.interrupt(agentCode, sessionId));
     }
 
@@ -93,6 +104,7 @@ public class VibeCodingController {
     @SaCheckPermission("workspace")
     @GetMapping("/artifacts")
     public Result<List<String>> artifacts(@PathVariable String agentCode, @RequestParam String sessionId) {
+        requireOwned(agentCode, sessionId);
         return Result.success(vibeCodingService.listChangedArtifacts(agentCode, sessionId));
     }
 
@@ -103,6 +115,7 @@ public class VibeCodingController {
     @SaCheckPermission("workspace")
     @GetMapping("/files")
     public Result<List<WorkspaceFileNode>> files(@PathVariable String agentCode, @RequestParam String sessionId) {
+        requireOwned(agentCode, sessionId);
         return Result.success(vibeCodingService.listWorkspaceFiles(agentCode, sessionId));
     }
 
@@ -118,6 +131,7 @@ public class VibeCodingController {
             @PathVariable String agentCode,
             @RequestParam String sessionId,
             @RequestParam String path) {
+        requireOwned(agentCode, sessionId);
         return Result.success(vibeCodingService.readFileContent(agentCode, sessionId, path));
     }
 
@@ -130,6 +144,7 @@ public class VibeCodingController {
     public Result<Void> saveFileContent(
             @PathVariable String agentCode,
             @Valid @RequestBody SaveFileContentRequest request) {
+        requireOwned(agentCode, request.sessionId());
         vibeCodingService.saveFileContent(agentCode, request.sessionId(), request.relativePath(), request.content());
         return Result.success(null);
     }
@@ -142,6 +157,7 @@ public class VibeCodingController {
     @SaCheckPermission("workspace")
     @GetMapping("/git-diff")
     public CompletableFuture<Result<GitDiffSummary>> gitDiff(@PathVariable String agentCode, @RequestParam String sessionId) {
+        requireOwned(agentCode, sessionId);
         return gitAssistantService.diffSummary(agentCode, sessionId).thenApply(Result::success);
     }
 
@@ -151,6 +167,7 @@ public class VibeCodingController {
     @PostMapping("/commit-message")
     public CompletableFuture<Result<CommitMessageResponse>> commitMessage(
             @PathVariable String agentCode, @Valid @RequestBody CommitMessageRequest request) {
+        requireOwned(agentCode, request.sessionId());
         return gitAssistantService.commitMessage(agentCode, request.sessionId(), request.styleOrDefault())
             .thenApply(Result::success);
     }
@@ -161,6 +178,7 @@ public class VibeCodingController {
     @PostMapping("/pr-description")
     public CompletableFuture<Result<PrDescriptionResponse>> prDescription(
             @PathVariable String agentCode, @Valid @RequestBody PrDescriptionRequest request) {
+        requireOwned(agentCode, request.sessionId());
         return gitAssistantService.prDescription(agentCode, request.sessionId()).thenApply(Result::success);
     }
 
@@ -173,6 +191,7 @@ public class VibeCodingController {
     @OperationLog(operation = "VibeCoding代码审查", target = "vibecoding_git_assistant")
     @PostMapping("/review")
     public Result<Long> review(@PathVariable String agentCode, @Valid @RequestBody ReviewRequest request) {
+        requireOwned(agentCode, request.sessionId());
         return Result.success(gitAssistantService.submitReview(agentCode, request.sessionId(), StpUtil.getLoginIdAsLong()));
     }
 
@@ -194,6 +213,7 @@ public class VibeCodingController {
     @OperationLog(operation = "VibeCoding会话回滚", target = "vibecoding_rollback")
     @PostMapping("/rollback")
     public Result<RollbackResult> rollback(@PathVariable String agentCode, @Valid @RequestBody RollbackRequest request) {
+        requireOwned(agentCode, request.sessionId());
         return Result.success(vibeCodingService.rollback(agentCode, request.sessionId()));
     }
 
@@ -206,7 +226,12 @@ public class VibeCodingController {
     @OperationLog(operation = "VibeCoding计划确认", target = "vibecoding_plan_confirm")
     @PostMapping("/plan/confirm")
     public Result<Void> confirmPlan(@PathVariable String agentCode, @Valid @RequestBody PlanConfirmRequest request) {
+        requireOwned(agentCode, request.sessionId());
         vibeCodingService.confirmPlan(agentCode, request.sessionId(), request.planId(), request.approved(), request.note());
         return Result.success(null);
+    }
+
+    private void requireOwned(String agentCode, String sessionId) {
+        sessionGuard.requireOwned(agentCode, sessionId, StpUtil.getLoginIdAsLong());
     }
 }

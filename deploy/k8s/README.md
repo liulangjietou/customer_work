@@ -12,6 +12,16 @@ kubectl apply -f deploy/k8s/40-admin-server.yaml
 kubectl apply -f deploy/k8s/50-hpa.yaml
 ```
 
+构建两套镜像（admin 不是 app 镜像改端口，两者主类和依赖都不同）：
+
+```bash
+docker build -f Dockerfile -t customer-work/app-server:latest .
+docker build -f Dockerfile.admin -t customer-work/admin-server:latest .
+```
+
+应用清单前必须把 `10-configmap.yaml` 中的 `CW_WS_URL=wss://REPLACE_ME/ws/agent` 换成浏览器可达的
+网关地址。集群内 Service DNS 只能给 admin 后端访问，不能下发给集群外浏览器。
+
 ## 多副本的前提（不做就等于没扩容）
 
 单副本能跑不代表多副本正确。以下三项默认是进程内实现，`10-configmap.yaml` 里已全部切成 Redis，
@@ -40,17 +50,26 @@ kubectl create secret generic customer-work-secret -n customer-work \
   --from-literal=DASHSCOPE_API_KEY='真实值' \
   --from-literal=MYSQL_PASSWORD='真实值' \
   --from-literal=REDIS_PASSWORD='真实值' \
+  --from-literal=NACOS_PASSWORD='真实值' \
   --from-literal=AUTH_API_KEYS='至少一个随机 API Key' \
   --from-literal=CW_USER_JWT_SECRET='真实值' \
   --from-literal=CW_AGENT_WS_SECRET='真实值' \
   --from-literal=MINIO_ACCESS_KEY='真实值' \
   --from-literal=MINIO_SECRET_KEY='真实值' \
   --from-literal=SPRING_APPLICATION_JSON='{"customer-work":{"security":{"approval-auth":{"operators":{"审批token":"操作员姓名"}}}}}' \
-  --from-literal=ADMIN_AES_SECRET_KEY='真实值'
+  --from-literal=ADMIN_AES_SECRET_KEY='真实值' \
+  --from-literal=ADMIN_MYSQL_PASSWORD='真实值' \
+  --from-literal=ADMIN_REDIS_PASSWORD='真实值' \
+  --from-literal=ADMIN_CUSTOMER_WORK_API_KEY='与 8080 鉴权配置一致的真实值' \
+  --from-literal=CW_RUNTIME_CONFIG_ACK_TOKEN='ACK 专用高强度令牌' \
+  --from-literal=ADMIN_OPEN_API_TOKEN='与 ACK token 相同' \
+  --from-literal=ADMIN_RUNTIME_PUBLISH_NACOS_PASSWORD='与 Nacos 密码相同' \
+  --from-literal=CUSTOMER_WORK_CONFIG_AES_KEY='与 ADMIN_AES_SECRET_KEY 相同' \
+  --from-literal=CW_NOTIFICATION_AUTH_TOKEN='通知网关 Bearer 令牌'
 ```
 
 `prod` profile 会在启动时执行硬门禁：上面的 API Key、JWT、坐席密钥、审批操作员映射、MinIO 凭据，
-以及 MySQL/Redis/Flyway/技能库配置任一缺失，Pod 都不会进入 Ready。模板中的 `REPLACE_ME` 只是占位符，
+运行时配置 ACK、通知 Webhook，以及 MySQL/Redis/Flyway/技能库配置任一缺失，Pod 都不会进入 Ready。模板中的 `REPLACE_ME` 只是占位符，
 不能用于真实环境。
 
 ## HPA 的伸缩依据

@@ -14,6 +14,7 @@ import com.richard.fyoung.customeradmin.workspace.project.entity.AiProject;
 import com.richard.fyoung.customeradmin.workspace.project.entity.AiProjectSession;
 import com.richard.fyoung.customeradmin.workspace.project.mapper.AiProjectMapper;
 import com.richard.fyoung.customeradmin.workspace.project.mapper.AiProjectSessionMapper;
+import com.richard.fyoung.customeradmin.workspace.session.service.WorkspaceSessionGuard;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -48,7 +49,9 @@ class ProjectServiceTest {
     private AiProjectSessionMapper projectSessionMapper;
     private AiAgentMapper agentMapper;
     private ChatHistoryService chatHistoryService;
+    private WorkspaceSessionGuard sessionGuard;
     private ProjectService service;
+    private static final Long CURRENT_USER = 7L;
 
     @BeforeAll
     static void initMybatisPlusLambdaCache() {
@@ -63,7 +66,9 @@ class ProjectServiceTest {
         projectSessionMapper = mock(AiProjectSessionMapper.class);
         agentMapper = mock(AiAgentMapper.class);
         chatHistoryService = mock(ChatHistoryService.class);
-        service = new ProjectService(projectMapper, projectSessionMapper, agentMapper, chatHistoryService);
+        sessionGuard = mock(WorkspaceSessionGuard.class);
+        when(sessionGuard.isOwned(anyString(), anyString(), any())).thenReturn(true);
+        service = new ProjectService(projectMapper, projectSessionMapper, agentMapper, chatHistoryService, sessionGuard);
     }
 
     private AiProject project(long id, String name) {
@@ -78,11 +83,15 @@ class ProjectServiceTest {
         when(projectMapper.selectList(any())).thenReturn(List.of(project(1L, "退款专项"), project(2L, "空项目")));
         AiProjectSession s1 = new AiProjectSession();
         s1.setProjectId(1L);
+        s1.setAgentCode("oa-assistant");
+        s1.setSessionId("s1");
         AiProjectSession s2 = new AiProjectSession();
         s2.setProjectId(1L);
+        s2.setAgentCode("oa-assistant");
+        s2.setSessionId("s2");
         when(projectSessionMapper.selectList(any())).thenReturn(List.of(s1, s2));
 
-        List<ProjectVO> result = service.list(null);
+        List<ProjectVO> result = service.list(null, CURRENT_USER);
 
         assertEquals(2, result.size());
         assertEquals(2, result.get(0).getSessionCount());
@@ -121,20 +130,21 @@ class ProjectServiceTest {
         when(projectSessionMapper.insert(any(AiProjectSession.class))).thenThrow(new DuplicateKeyException("dup"));
 
         // 不抛异常即视为通过——重复加入同一项目应该是幂等的，不是错误
-        service.addSession(1L, new AddSessionRequest("oa-assistant", "s1"));
+        service.addSession(1L, new AddSessionRequest("oa-assistant", "s1"), CURRENT_USER);
     }
 
     @Test
     void addSession_shouldRejectUnknownProject() {
         when(projectMapper.selectById(999L)).thenReturn(null);
 
-        assertThrows(BizException.class, () -> service.addSession(999L, new AddSessionRequest("oa-assistant", "s1")));
+        assertThrows(BizException.class,
+            () -> service.addSession(999L, new AddSessionRequest("oa-assistant", "s1"), CURRENT_USER));
         verify(projectSessionMapper, never()).insert(any(AiProjectSession.class));
     }
 
     @Test
     void removeSession_shouldDeleteMatchingLink() {
-        service.removeSession(1L, "oa-assistant", "s1");
+        service.removeSession(1L, "oa-assistant", "s1", CURRENT_USER);
 
         verify(projectSessionMapper, times(1)).delete(any());
     }
@@ -154,7 +164,7 @@ class ProjectServiceTest {
         when(chatHistoryService.getSessionSummary("oa-assistant", "s1"))
             .thenReturn(Optional.of(new ChatSessionSummary("s1", "查一下我的考勤", "2026-07-10 10:00:00", 4)));
 
-        List<ProjectSessionVO> result = service.listSessions(1L);
+        List<ProjectSessionVO> result = service.listSessions(1L, CURRENT_USER);
 
         assertEquals(1, result.size());
         ProjectSessionVO vo = result.get(0);
@@ -175,7 +185,7 @@ class ProjectServiceTest {
         when(agentMapper.selectList(any())).thenReturn(List.of());
         when(chatHistoryService.getSessionSummary(anyString(), anyString())).thenReturn(Optional.empty());
 
-        List<ProjectSessionVO> result = service.listSessions(1L);
+        List<ProjectSessionVO> result = service.listSessions(1L, CURRENT_USER);
 
         assertEquals(1, result.size());
         assertTrue(result.get(0).isStale());

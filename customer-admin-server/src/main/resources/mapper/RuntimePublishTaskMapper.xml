@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.aiconfig.channel.publish.mapper.RuntimePublishTaskMapper">
+
+    <select id="findDueCandidates"
+            resultType="com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask">
+        SELECT *
+        FROM ai_runtime_publish_task
+        WHERE (status = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
+           OR (status = 'PROCESSING' AND lease_until_ms &lt; #{nowMs})
+        ORDER BY seq ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="claim">
+        UPDATE ai_runtime_publish_task
+        SET status = 'PROCESSING', lease_owner = #{owner}, lease_until_ms = #{leaseUntilMs},
+            updated_at_ms = #{nowMs}
+        WHERE id = #{id}
+          AND ((status = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
+            OR (status = 'PROCESSING' AND lease_until_ms &lt; #{nowMs}))
+    </update>
+
+    <update id="attachMetadata">
+        UPDATE ai_runtime_publish_task
+        SET target_code = #{task.targetCode}, channel_code = #{task.channelCode}, data_id = #{task.dataId},
+            group_name = #{task.groupName}, revision = #{task.revision}, content_hash = #{task.contentHash},
+            updated_at_ms = #{nowMs}
+        WHERE id = #{task.id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
+
+    <update id="markPublished">
+        UPDATE ai_runtime_publish_task
+        SET status = 'PUBLISHED', lease_owner = NULL, lease_until_ms = 0,
+            last_error = NULL, updated_at_ms = #{nowMs}
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
+
+    <update id="markDeliveryFailed">
+        UPDATE ai_runtime_publish_task
+        SET status = #{status}, attempts = #{attempts}, next_attempt_at_ms = #{nextAttemptAtMs},
+            lease_owner = NULL, lease_until_ms = 0, last_error = #{error}, updated_at_ms = #{nowMs}
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
+
+    <select id="findByRevision"
+            resultType="com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask">
+        SELECT * FROM ai_runtime_publish_task
+        WHERE tenant_id = #{tenantId} AND revision = #{revision}
+        LIMIT 1
+    </select>
+
+    <update id="updateAckStatus">
+        UPDATE ai_runtime_publish_task
+        SET status = #{status}, updated_at_ms = #{nowMs}
+        WHERE tenant_id = #{tenantId} AND revision = #{revision}
+          AND status IN ('PUBLISHED', 'PARTIAL', 'APPLIED', 'FAILED')
+    </update>
+</mapper>

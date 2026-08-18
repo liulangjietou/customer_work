@@ -1,8 +1,13 @@
 package com.richard.fyoung.customerwork.capability.approval;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
+import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -11,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 人工审批服务单测（Human-in-the-Loop 闭环）：状态机 + 决策回调 + fast-fail 边界。
@@ -60,6 +67,96 @@ class PendingApprovalServiceTest {
         assertEquals(ExecutionStatus.EXECUTE_FAILED, out.getExecutionStatus());
         assertEquals("downstream payout failed", out.getExecutionFailureReason());
         assertEquals(1, out.getExecutionAttempts());
+    }
+
+    @Test
+    void approve_shouldNeverReportExecuted_whenProductionHandlerIsMissing() {
+        PendingApprovalService svc = new PendingApprovalService(new InMemoryApprovalStore());
+        ApprovalRequest req = svc.submit(ApprovalType.REFUND, "s1", "O1", "299.00", "测试");
+
+        ApprovalRequest out = svc.approve(req.getId(), "alice");
+
+        assertEquals(ApprovalStatus.APPROVED, out.getStatus());
+        assertEquals(ExecutionStatus.EXECUTE_FAILED, out.getExecutionStatus());
+        assertEquals("approval execution handler not configured", out.getExecutionFailureReason());
+    }
+
+    @Test
+    void approve_shouldExecuteExactlyOnce_whenTwoOperatorsDecideConcurrently() throws Exception {
+        InMemoryApprovalStore store = new InMemoryApprovalStore();
+        AtomicInteger executions = new AtomicInteger();
+        @SuppressWarnings("unchecked")
+        ObjectProvider<ApprovalExecutionHandler> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(context -> executions.incrementAndGet());
+        PendingApprovalService svc = new PendingApprovalService(store, provider);
+        ApprovalRequest req = svc.submit(ApprovalType.REFUND, "s1", "O1", "299.00", "测试");
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger decisions = new AtomicInteger();
+
+        List<CompletableFuture<Void>> futures = List.of("alice", "bob").stream()
+            .map(operator -> CompletableFuture.runAsync(() -> {
+                try {
+                    start.await(3, TimeUnit.SECONDS);
+                    svc.approve(req.getId(), operator);
+                    decisions.incrementAndGet();
+                } catch (IllegalStateException ignored) {
+                    // 另一位操作者已完成 PENDING -> APPROVED CAS。
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }))
+            .toList();
+        start.countDown();
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get(5, TimeUnit.SECONDS);
+
+        assertEquals(1, decisions.get());
+        assertEquals(1, executions.get());
+        assertEquals(ExecutionStatus.EXECUTED, svc.find(req.getId()).orElseThrow().getExecutionStatus());
+    }
+
+    @Test
+    void executionLease_shouldFenceStaleWorker_afterCrashRecovery() {
+        InMemoryApprovalStore store = new InMemoryApprovalStore();
+        ApprovalRequest req = new ApprovalRequest("AP-1", ApprovalType.REFUND, "s1", "O1",
+            "299.00", "测试", 1L);
+        store.save(req);
+        assertTrue(store.decide(req.getId(), ApprovalStatus.APPROVED, "alice", null, 2L));
+        assertTrue(store.claimExecution(req.getId(), 3, 100L, "worker-1"));
+
+        assertEquals(1, store.recoverStuckExecutions(101L));
+        assertTrue(store.claimExecution(req.getId(), 3, 200L, "worker-2"));
+
+        assertFalse(store.completeExecution(req.getId(), "worker-1", true, null));
+        assertTrue(store.completeExecution(req.getId(), "worker-2", true, null));
+        assertEquals(ExecutionStatus.EXECUTED, store.find(req.getId()).orElseThrow().getExecutionStatus());
+    }
+
+    @Test
+    void retry_shouldKeepStableIdempotencyKey_andRotateFencingToken() {
+        InMemoryApprovalStore store = new InMemoryApprovalStore();
+        AtomicReference<ApprovalExecutionContext> first = new AtomicReference<>();
+        AtomicReference<ApprovalExecutionContext> second = new AtomicReference<>();
+        AtomicInteger attempts = new AtomicInteger();
+        ApprovalExecutionHandler handler = context -> {
+            if (attempts.incrementAndGet() == 1) {
+                first.set(context);
+                throw new IllegalStateException("temporary failure");
+            }
+            second.set(context);
+        };
+        @SuppressWarnings("unchecked")
+        ObjectProvider<ApprovalExecutionHandler> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(handler);
+        PendingApprovalService svc = new PendingApprovalService(store, provider);
+        ApprovalRequest req = svc.submit(ApprovalType.REFUND, "s1", "O1", "299.00", "测试");
+
+        svc.approve(req.getId(), "alice");
+        svc.retryExecutionFailures(3);
+
+        assertEquals(req.getId(), first.get().idempotencyKey());
+        assertEquals(first.get().idempotencyKey(), second.get().idempotencyKey());
+        assertFalse(first.get().fencingToken().equals(second.get().fencingToken()));
     }
 
     @Test
@@ -116,6 +213,20 @@ class PendingApprovalServiceTest {
 
         assertEquals(0, svc.retryExecutionFailures(1), "maxAttempts<=1 时应直接不重试");
         assertEquals(0, svc.retryExecutionFailures(0));
+    }
+
+    @Test
+    void retryDisabled_shouldStillRecoverExpiredExecutingState() {
+        InMemoryApprovalStore store = new InMemoryApprovalStore();
+        PendingApprovalService svc = new PendingApprovalService(store);
+        ApprovalRequest req = svc.submit(ApprovalType.REFUND, "s1", "O1", "299.00", "测试");
+        assertTrue(store.decide(req.getId(), ApprovalStatus.APPROVED, "alice", null, 1L));
+        assertTrue(store.claimExecution(req.getId(), 1, 1L, "crashed-worker"));
+
+        assertEquals(0, svc.retryExecutionFailures(1));
+
+        assertEquals(ExecutionStatus.EXECUTE_FAILED,
+            svc.find(req.getId()).orElseThrow().getExecutionStatus());
     }
 
     @Test

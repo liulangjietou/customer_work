@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.chat.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatAttachmentDTO;
@@ -11,9 +12,12 @@ import com.richard.fyoung.customeradmin.workspace.chat.service.ChatAttachmentSer
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatHistoryService;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentCallMetaFactory;
+import com.richard.fyoung.customeradmin.workspace.session.service.WorkspaceSessionGuard;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanConfirmRequest;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallSessionType;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -52,24 +56,32 @@ public class ChatController {
     private final ChatHistoryService chatHistoryService;
     private final ChatAttachmentService chatAttachmentService;
     private final AgentCallMetaFactory agentCallMetaFactory;
+    private final WorkspaceSessionGuard sessionGuard;
 
     public ChatController(ChatService chatService, ChatHistoryService chatHistoryService,
-                           ChatAttachmentService chatAttachmentService, AgentCallMetaFactory agentCallMetaFactory) {
+                           ChatAttachmentService chatAttachmentService, AgentCallMetaFactory agentCallMetaFactory,
+                           WorkspaceSessionGuard sessionGuard) {
         this.chatService = chatService;
         this.chatHistoryService = chatHistoryService;
         this.chatAttachmentService = chatAttachmentService;
         this.agentCallMetaFactory = agentCallMetaFactory;
+        this.sessionGuard = sessionGuard;
     }
 
     @SaCheckPermission("workspace")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
+        Long userId = StpUtil.getLoginIdAsLong();
+        sessionGuard.claimOrRequire(agentCode, request.sessionId(), userId);
+        String tenantId = TenantContext.get();
         // 采集元数据必须在请求线程同步段构建（用户名取自 Sa-Token 的 ThreadLocal）；渠道=admin_chat → CHAT
         AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.CHAT, request.message());
-        return chatService.chatStreamWithAttachments(agentCode, request.sessionId(), request.message(), request.mode(), callMeta, request.attachmentIds())
+        Flux<ServerSentEvent<String>> result = chatService.chatStreamWithAttachments(agentCode, request.sessionId(), request.message(), request.mode(), callMeta, request.attachmentIds())
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
+        return tenantId == null ? result
+            : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));
     }
 
     /**
@@ -80,6 +92,7 @@ public class ChatController {
     @SaCheckPermission("workspace")
     @PostMapping("/plan/confirm")
     public Result<Void> confirmPlan(@PathVariable String agentCode, @Valid @RequestBody PlanConfirmRequest request) {
+        sessionGuard.requireOwned(agentCode, request.sessionId(), StpUtil.getLoginIdAsLong());
         chatService.confirmPlan(agentCode, request.sessionId(), request.planId(), request.approved());
         return Result.success(null);
     }
@@ -90,13 +103,14 @@ public class ChatController {
     public Result<PageResult<ChatSessionSummary>> sessions(@PathVariable String agentCode,
                                                            @RequestParam(defaultValue = "1") long page,
                                                            @RequestParam(defaultValue = "20") long size) {
-        return Result.success(chatHistoryService.listSessions(agentCode, page, size));
+        return Result.success(chatHistoryService.listSessions(agentCode, StpUtil.getLoginIdAsLong(), page, size));
     }
 
     /** 重新打开某次历史会话的完整消息（含 vibecoding 的会话，两者共用同一套 session 状态）。 */
     @SaCheckPermission("workspace")
     @GetMapping("/sessions/{sessionId}/messages")
     public Result<List<ChatMessageVO>> messages(@PathVariable String agentCode, @PathVariable String sessionId) {
+        sessionGuard.requireOwned(agentCode, sessionId, StpUtil.getLoginIdAsLong());
         return Result.success(chatHistoryService.getMessages(agentCode, sessionId));
     }
 
@@ -104,6 +118,7 @@ public class ChatController {
     @SaCheckPermission("workspace")
     @PostMapping("/sessions/{sessionId}/interrupt")
     public Result<Boolean> interrupt(@PathVariable String agentCode, @PathVariable String sessionId) {
+        sessionGuard.requireOwned(agentCode, sessionId, StpUtil.getLoginIdAsLong());
         return Result.success(chatService.interrupt(agentCode, sessionId));
     }
 
@@ -118,7 +133,8 @@ public class ChatController {
     public Result<ChatAttachmentDTO> parseAttachment(@PathVariable String agentCode,
                                                      @RequestParam("file") MultipartFile file,
                                                      @RequestParam(value = "channel", defaultValue = "admin_chat") String channel,
-                                                     @RequestParam(value = "sessionId", required = false) String sessionId) {
+                                                     @RequestParam("sessionId") String sessionId) {
+        sessionGuard.claimOrRequire(agentCode, sessionId, StpUtil.getLoginIdAsLong());
         return Result.success(chatAttachmentService.parseAttachment(file, channel, sessionId, agentCode));
     }
 
@@ -130,7 +146,8 @@ public class ChatController {
     @GetMapping("/attachment/{attachmentId}")
     public Result<ChatAttachmentDTO> attachmentDetail(@PathVariable String agentCode,
                                                       @PathVariable String attachmentId) {
-        return Result.success(chatAttachmentService.getDetail(agentCode, attachmentId));
+        return Result.success(chatAttachmentService.getDetail(
+            agentCode, attachmentId, StpUtil.getLoginIdAsLong()));
     }
 
     /**
@@ -143,7 +160,8 @@ public class ChatController {
     @GetMapping("/attachment/{attachmentId}/file")
     public ResponseEntity<byte[]> attachmentFile(@PathVariable String agentCode,
                                                   @PathVariable String attachmentId) {
-        ChatAttachmentService.LoadedFile file = chatAttachmentService.loadFile(agentCode, attachmentId);
+        ChatAttachmentService.LoadedFile file = chatAttachmentService.loadFile(
+            agentCode, attachmentId, StpUtil.getLoginIdAsLong());
         String encodedName = URLEncoder.encode(file.fileName() == null ? "" : file.fileName(), StandardCharsets.UTF_8)
             .replace("+", "%20");
         return ResponseEntity.ok()

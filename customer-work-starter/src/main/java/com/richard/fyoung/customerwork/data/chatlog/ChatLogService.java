@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.data.chatlog;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -28,6 +29,11 @@ public class ChatLogService {
         String messageId = MESSAGE_ID_PREFIX + UUID.randomUUID();
         ChatMessage message = ChatMessage.of(messageId, sessionId, ticketId, senderType, senderId, content);
         return store.append(message);
+    }
+
+    /** 按业务消息号精确查询。 */
+    public Optional<ChatMessage> findByMessageId(String messageId) {
+        return store.findByMessageId(messageId);
     }
 
     /** 会话历史（游标翻页，按 id 升序）。 */

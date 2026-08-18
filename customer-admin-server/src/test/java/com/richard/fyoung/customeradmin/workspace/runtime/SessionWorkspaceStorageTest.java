@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -32,6 +34,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SessionWorkspaceStorageTest {
 
     private static final long BIG_ENOUGH = 100L * 1024 * 1024;
+
+    @AfterEach
+    void clearTenant() {
+        TenantContext.clear();
+    }
+
+    @Test
+    void objectKey_shouldIsolateSameSession_betweenTenants() {
+        SessionWorkspaceStorage storage =
+            new SessionWorkspaceStorage(new InMemoryObjectStore(), "workspaces/", BIG_ENOUGH);
+        TenantContext.set("tenant-a");
+        String tenantA = storage.objectKey("coder", "s1");
+        TenantContext.set("tenant-b");
+        String tenantB = storage.objectKey("coder", "s1");
+
+        assertEquals("workspaces/tenant-a::coder/s1.tar.gz", tenantA);
+        assertEquals("workspaces/tenant-b::coder/s1.tar.gz", tenantB);
+    }
 
     @Test
     void persistThenHydrate_shouldRoundTripWholeTree(@TempDir Path tmp) throws Exception {
