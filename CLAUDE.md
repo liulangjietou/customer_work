@@ -34,7 +34,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1413** + admin-server **834** + app 86 + customer-channel 65 + gateway 1（合计 **2399**）
+- 测试基线：starter **1413** + admin-server **837** + app 86 + customer-channel 65 + gateway 1（合计 **2402**）
   （2026-08-18 数据权限批次实测：starter 1413 / 5 skip、admin 834 / 1 skip、app 86，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加了 admin **+45**（数据范围枚举/上下文/白名单/SQL 改写/
   范围解析 30 + 角色范围校验 5 + 装配门控 7 + 会话归属放行边界 3），starter 只改忽略清单常量故条数不变；
@@ -223,10 +223,19 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   `TENANT`/`ALL` 只校验会话存在于当前租户（超管要能看全量）。该表不进白名单：归属条件已在
   那条 JOIN 里显式表达，且它的归属列叫 `owner_user_id`，不在白名单支持的两种列名之内。
 - **`admin.tenant.enabled` 从本批次起默认 `true`**（此前默认关闭 = 跨租户完全打通）。开关一开，
-  几条**没有登录态**的链路会因缺租户上下文 fail-closed，改动它们时别把这几处退回去：开放 API 走
-  `admin.open-api.tenant-tokens` 的令牌→租户映射、工作台脚本回调从令牌行读租户、
-  内置调度器/XXL-JOB 走 `executeFromScheduler`（跨租户定位 + 按任务租户还原上下文）、
-  登录页轮播图归入平台级忽略清单（登录前无上下文可用）。
+  凡是**不在 Web 请求里**的查库都会因缺租户上下文 fail-closed。四类都要显式处理，改动时别退回去：
+  ① **无登录态的 HTTP 链路**：开放 API 走 `admin.open-api.tenant-tokens` 的令牌→租户映射、
+  工作台脚本回调从令牌行读租户、登录页轮播图归入平台级忽略清单（登录前无上下文可用）；
+  ② **调度线程**：内置调度器/XXL-JOB 走 `executeFromScheduler`（跨租户定位 + 按任务租户还原上下文）；
+  ③ **启动期装配**：`@Bean` 工厂方法、`@PostConstruct`、`ContextRefreshedEvent` 里的查库。
+  **这一类最容易漏且后果最重——A2A 的 `@Bean` 里查 `ai_agent` 直接让应用起不来**（实测踩过）；
+  `contextLoads` 照不出来，因为那条装配路径默认关着。判断依据：这类查询要么是平台级定位
+  （靠全局唯一的 `agent_code`/`task_code` 跨租户找一条），要么是跨租户运维扫描
+  （重启清理孤儿任务），两者都走 `CrossTenantOperations`；
+  ④ **异步回调**：模型连通性测试等跑在独立线程池里的落库。
+  写这类测试时**别断言"没抛异常"**——单测里本就没挂拦截器，怎么写都不会抛，那种断言恒真；
+  要断言 `InterceptorIgnoreHelper.willIgnoreTenantLine(...)` 在查询发生的那一刻为真
+  （见 `AdminA2aServerConfigTenantTest`），并且退出作用域后为假。
 - **本机开发库是所有分支共用的，Flyway 版本号常年被并行分支占走**：新增迁移前先查
   `SELECT MAX(version) FROM customer_admin.flyway_schema_history`，而不是只看当前分支的文件名——
   本批次就先后被 V55（已合入 main）、V56~V58（未合并的并行分支）挤到 V59/V60。
