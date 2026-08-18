@@ -1,5 +1,7 @@
 import { request } from './request'
 import type {
+  AdminQuotaUserVO,
+  AdminUserLevelSaveRequest,
   PageQuery,
   PageResult,
   SubjectQuotaHitRank,
@@ -50,4 +52,16 @@ export function fetchSubjectQuotaHitRank(hours: number, limit: number) {
   return request<SubjectQuotaHitRank[]>({
     url: '/subject-quota/hits/rank', method: 'get', params: { hours, limit },
   })
+}
+
+// ---------- 后台用户分档 ----------
+
+export function pageAdminQuotaUsers(query: PageQuery) {
+  return request<PageResult<AdminQuotaUserVO>>({
+    url: '/subject-quota/admin-users', method: 'get', params: query,
+  })
+}
+
+export function assignAdminUserLevel(data: AdminUserLevelSaveRequest) {
+  return request<void>({ url: '/subject-quota/admin-users/level', method: 'post', data })
 }

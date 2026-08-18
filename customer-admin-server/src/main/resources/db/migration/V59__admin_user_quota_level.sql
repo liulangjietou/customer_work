@@ -1,0 +1,11 @@
+-- 后台登录用户的配额等级绑定。
+--
+-- 等级定义本身在**客服端库**的 cw_subject_quota_level（与终端用户共用一张表、靠 subject_type 区分），
+-- 这里只加"这个后台账号属于哪一档"的绑定列——绑定必须跟着用户表走，
+-- 另建映射表会让每次限流判定多一次跨表查询，而 sys_user 本就要查。
+--
+-- 空值 = 走配置里的 default-admin-level（admin-default）。
+--
+-- 版本号取 V59 而不是紧挨着上一版：V56/V57/V58 已被并行开发的分支占用（本机库里 V56 甚至已经 apply），
+-- 撞号会让 Flyway 在 checksum 校验上直接拒绝启动。加迁移前先扫一遍各 worktree 的最大版本号。
+ALTER TABLE `sys_user` ADD COLUMN `level_code` VARCHAR(64) DEFAULT NULL COMMENT '配额等级编码（空=默认档），见客服端库 cw_subject_quota_level';

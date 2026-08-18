@@ -2,16 +2,19 @@
 import { onMounted, reactive, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
+  assignAdminUserLevel,
   assignUserLevel,
   deleteSubjectQuotaLevel,
   fetchSubjectQuotaHitRank,
   fetchSubjectQuotaHits,
   fetchSubjectQuotaLevels,
+  pageAdminQuotaUsers,
   pageSubjectQuotaUsers,
   saveSubjectQuotaLevel,
 } from '@/api/subjectQuota'
 import { useAuthStore } from '@/store/auth'
 import type {
+  AdminQuotaUserVO,
   PageQuery,
   SubjectQuotaHitRank,
   SubjectQuotaHitVO,
@@ -117,6 +120,34 @@ async function changeUserLevel(row: SubjectQuotaUserVO, levelCode: string | unde
   await loadUsers()
 }
 
+// ---------- 后台用户分档 ----------
+const adminUserLoading = ref(false)
+const adminUsers = ref<AdminQuotaUserVO[]>([])
+const adminUserTotal = ref(0)
+const adminUserQuery = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
+
+async function loadAdminUsers() {
+  adminUserLoading.value = true
+  try {
+    const page = await pageAdminQuotaUsers(adminUserQuery)
+    adminUsers.value = page.list
+    adminUserTotal.value = page.total
+  } finally {
+    adminUserLoading.value = false
+  }
+}
+
+function searchAdminUsers() {
+  adminUserQuery.pageNum = 1
+  return loadAdminUsers()
+}
+
+async function changeAdminUserLevel(row: AdminQuotaUserVO, levelCode: string | undefined) {
+  await assignAdminUserLevel({ userId: row.userId, levelCode: levelCode || undefined })
+  ElMessage.success('已调整，最长 60 秒后生效')
+  await loadAdminUsers()
+}
+
 // ---------- 超限命中 ----------
 const hitLoading = ref(false)
 const hitHours = ref(24)
@@ -139,7 +170,7 @@ async function loadHits() {
 
 // ---------- 公共 ----------
 const subjectTypeLabels: Record<string, string> = {
-  USER: '登录用户', IP: '匿名 IP', API_KEY: '接入方',
+  USER: '登录用户', ADMIN_USER: '后台用户', IP: '匿名 IP', API_KEY: '接入方',
 }
 
 const actionLabels: Record<string, string> = {
@@ -164,7 +195,7 @@ function formatTime(ms?: number): string {
 }
 
 onMounted(async () => {
-  await Promise.all([loadLevels(), loadUsers()])
+  await Promise.all([loadLevels(), loadUsers(), loadAdminUsers()])
 })
 </script>
 
@@ -173,7 +204,8 @@ onMounted(async () => {
     <el-alert type="warning" :closable="false" show-icon class="notice">
       按<b>调用者</b>限流：每个登录用户 / 每个匿名 IP / 每把 API Key 在最近一段时间内的 token 量与请求次数上限。
       与同级的<b>限流规则</b>（按路径限）、<b>配额与计费</b>（按租户限月度花费）三者并存，任一触顶都会被拦。
-      需客服端开启 <code>customer-work.subject-quota.enabled=true</code> 才真正生效——这里能配，不等于一定在跑。
+      客服端需开 <code>customer-work.subject-quota.enabled=true</code>、后台需开
+      <code>admin.subject-quota.enabled=true</code> 才真正生效——这里能配，不等于一定在跑。
       改动经指纹轮询与本地缓存下发，<b>最长 60 秒生效</b>。
     </el-alert>
 
@@ -292,6 +324,71 @@ onMounted(async () => {
         </el-card>
       </el-tab-pane>
 
+      <!-- 后台用户分档 -->
+      <el-tab-pane label="后台用户" name="admin-users">
+        <el-card>
+          <el-alert type="info" :closable="false" show-icon class="notice">
+            后台账号跑的是智能体调试、VibeCoding 这类单次很重、频次很低的任务，
+            所以默认档（<code>admin-default</code>）的窗口是 1 小时、额度比 C 端宽得多。
+            只统计真正调模型的入口，翻列表、看详情不占额度。
+          </el-alert>
+          <div class="toolbar">
+            <el-input
+              v-model="adminUserQuery.keyword"
+              placeholder="按用户名或昵称搜索"
+              style="width: 220px"
+              clearable
+              @keyup.enter="searchAdminUsers"
+            />
+            <el-button type="primary" @click="searchAdminUsers">搜索</el-button>
+          </div>
+
+          <el-table v-loading="adminUserLoading" :data="adminUsers" style="width: 100%">
+            <el-table-column prop="username" label="用户名" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="nickname" label="昵称" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="userId" label="用户 ID" width="100" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 1 ? 'success' : 'info'">
+                  {{ row.status === 1 ? '启用' : '禁用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createTime" label="创建时间" width="180" />
+            <el-table-column label="额度等级" width="200" fixed="right">
+              <template #default="{ row }">
+                <el-select
+                  :model-value="row.levelCode ?? ''"
+                  placeholder="默认档"
+                  clearable
+                  style="width: 100%"
+                  :disabled="!auth.hasPermission('subject-quota:user-edit')"
+                  @change="(value: string) => changeAdminUserLevel(row, value)"
+                >
+                  <el-option
+                    v-for="level in levels.filter((l) => l.subjectType === 'ADMIN_USER')"
+                    :key="level.levelCode"
+                    :label="`${level.levelName}（${level.levelCode}）`"
+                    :value="level.levelCode"
+                  />
+                </el-select>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <el-pagination
+            v-model:current-page="adminUserQuery.pageNum"
+            v-model:page-size="adminUserQuery.pageSize"
+            :total="adminUserTotal"
+            :page-sizes="[10, 20, 50]"
+            layout="total, sizes, prev, pager, next"
+            class="pager"
+            @current-change="loadAdminUsers"
+            @size-change="searchAdminUsers"
+          />
+        </el-card>
+      </el-tab-pane>
+
       <!-- 超限记录 -->
       <el-tab-pane label="超限记录" name="hits">
         <el-card>
@@ -368,6 +465,7 @@ onMounted(async () => {
         <el-form-item label="适用主体">
           <el-select v-model="levelForm.subjectType" style="width: 100%">
             <el-option label="登录用户（按 userId 计）" value="USER" />
+            <el-option label="后台用户（按 sys_user 登录 ID 计）" value="ADMIN_USER" />
             <el-option label="匿名访客（按来源 IP 计）" value="IP" />
             <el-option label="接入方（按 API Key 指纹计）" value="API_KEY" />
           </el-select>

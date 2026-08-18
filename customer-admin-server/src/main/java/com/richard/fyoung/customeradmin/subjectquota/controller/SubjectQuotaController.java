@@ -5,6 +5,8 @@ import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
+import com.richard.fyoung.customeradmin.subjectquota.dto.AdminQuotaUserVO;
+import com.richard.fyoung.customeradmin.subjectquota.dto.AdminUserLevelSaveRequest;
 import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaHitVO;
 import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaLevelSaveRequest;
 import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaLevelVO;
@@ -82,6 +84,23 @@ public class SubjectQuotaController {
     @PostMapping("/users/level")
     public Result<Void> assignUserLevel(@Valid @RequestBody UserLevelSaveRequest request) {
         service.assignUserLevel(TenantSession.effectiveTenant(), request.getUserId(), request.getLevelCode());
+        return Result.success();
+    }
+
+    // ---------- 后台用户分档 ----------
+
+    @SaCheckPermission("subject-quota:view")
+    @GetMapping("/admin-users")
+    public Result<PageResult<AdminQuotaUserVO>> pageAdminUsers(PageQuery query) {
+        return Result.success(service.pageAdminUsers(query));
+    }
+
+    @SaCheckPermission("subject-quota:user-edit")
+    @OperationLog(operation = "分配后台用户配额等级", target = "sys_user")
+    @PostMapping("/admin-users/level")
+    public Result<Void> assignAdminUserLevel(@Valid @RequestBody AdminUserLevelSaveRequest request) {
+        service.assignAdminUserLevel(TenantSession.effectiveTenant(),
+            request.getUserId(), request.getLevelCode());
         return Result.success();
     }
 

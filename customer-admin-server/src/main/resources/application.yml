@@ -87,6 +87,23 @@ admin:
     # 开放 API（/api/open/**）访问令牌，供 customer-channel 等外部模块通过请求头 X-Open-Api-Token 调用。
     # 无默认值：未配置时所有开放 API 一律 401（见 OpenApiAuthInterceptor），不留“空 token 放行”后门。
     token: ${ADMIN_OPEN_API_TOKEN:}
+  # 后台登录用户的 AI 用量额度：按 sys_user 登录 ID 计，与客服端的
+  # customer-work.subject-quota（按终端用户/IP/API Key 计）是同一套机制的两个部署侧。
+  # 等级定义共用客服端库的 cw_subject_quota_level（靠 subject_type=ADMIN_USER 区分），
+  # 绑定落 sys_user.level_code；后台在「内容风控 → 用户额度 → 后台用户」维护。
+  subject-quota:
+    enabled: true
+    # 未单独分档的后台账号走这一档（出厂种子：1 小时 / 200 万 token / 200 次）
+    default-level: admin-default
+    # 等级快照的惰性刷新间隔：admin 刻意不开 @EnableScheduling，客服端那套定时轮询在这边不会跑，
+    # 只能在读路径上判断"距上次重载是否超过间隔"
+    lazy-refresh-ms: 60000
+    # 只覆盖真正调模型的入口（Ant 模式）。刻意比客服端窄：后台用户是内部员工，
+    # 防的是"调用失控"而不是"有人刷接口"，把翻列表也算进去只会让人干不了活。
+    path-patterns:
+      - /api/workspace/*/chat/stream
+      - /api/workspace/*/vibecoding/**
+      - /api/aiconfig/agent-task/**
   agent-memory:
     # 智能体长期记忆权威存储：留空（默认）= 落库 ai_agent_memory 表；
     # 需要存磁盘时在此显式指定根目录，记忆改存 {disk-root}/{agentCode}/MEMORY.md（不再读写库表）

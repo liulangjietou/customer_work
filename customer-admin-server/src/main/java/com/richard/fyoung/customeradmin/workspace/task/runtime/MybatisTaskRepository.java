@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.richard.fyoung.customeradmin.workspace.task.entity.AiAgentTask;
 import com.richard.fyoung.customeradmin.workspace.task.mapper.AiAgentTaskMapper;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.harness.agent.subagent.task.BackgroundTask;
 import io.agentscope.harness.agent.subagent.task.TaskRepository;
@@ -141,7 +143,13 @@ public class MybatisTaskRepository implements TaskRepository {
 
         CompletableFuture<String> future;
         if (spec instanceof TaskRunSpec.LocalTaskRunSpec local) {
-            future = CompletableFuture.supplyAsync(() -> runLocal(sessionId, taskId, local.execution()), executor);
+            // 提交任务的这一刻还在 Tomcat 线程上，主体上下文尚在；任务体跑在自建线程池里，
+            // ThreadLocal 到不了那边（Reactor 的自动传播只覆盖 Reactor 的线程边界）。
+            // 不带过去的话，委派任务烧掉的 token 就没有主人——额度里只有"提交次数"在动。
+            QuotaSubject quotaSubject = QuotaSubjectContext.get();
+            future = CompletableFuture.supplyAsync(
+                () -> QuotaSubjectContext.callWith(quotaSubject,
+                    () -> runLocal(sessionId, taskId, local.execution())), executor);
         } else if (spec instanceof TaskRunSpec.AdoptedTaskRunSpec adopted) {
             // 同步调用超时后被提升为后台任务：future 已经在跑，只补挂状态回写，绝不能重复提交执行
             future = adopted.future();

@@ -13,6 +13,9 @@ import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegi
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService.PlanChannel;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -240,6 +243,10 @@ public class ChatService {
                                              Consumer<ChatUsage> usageTotalObserver) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
+        // 在 Tomcat 线程上把限流主体取下来：下面整条链会切到 Reactor 线程，ThreadLocal 到不了那边，
+        // 而 token 记账（AgentCallTimingMiddleware）恰恰发生在那里。主体由 AdminQuotaInterceptor 写入，
+        // 功能关闭或非 AI 入口时为 null，此时不写 Context。
+        QuotaSubject quotaSubject = QuotaSubjectContext.get();
         // 绑定调用元数据供 AgentCallTimingMiddleware 采集（requestId/username/agentName/sessionType/question）；
         // 缺省（旧调用点/测试）不绑，中间件按 ctx.userId/MDC 降级，不影响主链路。
         if (callMeta != null) {
@@ -330,7 +337,10 @@ public class ChatService {
                     planConfirmationService.events(channel)),
                 planConfirmationService::closeChannel)
             .doFirst(() -> executionModeRegistry.put(agentCode, safeSession, executionMode))
-            .doFinally(signal -> executionModeRegistry.remove(agentCode, safeSession));
+            .doFinally(signal -> executionModeRegistry.remove(agentCode, safeSession))
+            // Reactor Context 不接受 null 值，故主体为空时原样返回
+            .contextWrite(context -> quotaSubject == null ? context
+                : context.put(QuotaSubjectContextThreadLocalAccessor.KEY, quotaSubject));
     }
 
     /** 收集单次模型调用的用量：按 {@code replyId} 存一份（同一 replyId 只会来一条 MODEL_CALL_END）。 */

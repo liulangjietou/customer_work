@@ -85,6 +85,10 @@ public enum ResultCode {
     TENANT_SUSPENDED(40041, "租户已被冻结或已退租，请联系运营方"),
     TENANT_VIEW_FORBIDDEN(40042, "只有平台运营方可以切换租户视角"),
 
+    // 主体级速率配额（B7）：额度用尽不是权限问题也不是参数问题，单独发码，
+    // 前端据此给"稍后再试"而不是"联系管理员开权限"
+    QUOTA_EXCEEDED(40043, "本时段的 AI 用量额度已用尽，请稍后再试"),
+
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");
 
