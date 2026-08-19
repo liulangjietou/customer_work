@@ -38,6 +38,8 @@ export interface VibeChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
+  /** 这条助手消息是一次失败的结果（额度用尽、后端异常等），UI 渲染成提示样式而不是正常回答。 */
+  failed?: boolean
   // 本条助手消息内累积的沙箱编译/测试报告（P0-3），按到达顺序渲染成测试报告卡片时间线
   testReports?: TestReport[]
   // 本条助手消息内的 Plan Mode 确认卡片（P1-1），高风险操作待人工确认
@@ -420,7 +422,10 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
             c.streaming = false
             c.interrupting = false
           }
-          ElMessage.error('对话失败：' + (error instanceof Error ? error.message : String(error)))
+          // 与对话面板同理：失败信息要落在对话流里，紧跟用户刚发出的那句话
+          const text = error instanceof Error ? error.message : String(error)
+          assistantMessage.text = text
+          assistantMessage.failed = true
         },
         onComplete: () => {
           const c = this.byAgent[agentCode]?.conversations[sid]
