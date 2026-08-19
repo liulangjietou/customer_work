@@ -79,7 +79,9 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertTrue(columnExists(dataSource, "cw_outbox_message", "lease_owner"));
             assertEquals(1, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
-            assertEquals(1, countHistoryVersion(dataSource, "4"), "完整镜像应从当前版本接管");
+            // V5 是纯种子迁移，镜像里已带那两档，故接管版本要跟到 5——
+            // 停在 4 的话 Flyway 会重跑 V5，撞唯一键直接失败（判定见 resolveBaselineVersion）
+            assertEquals(1, countHistoryVersion(dataSource, "5"), "完整镜像应从当前版本接管");
         }
     }
 
@@ -87,7 +89,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         try (HikariDataSource dataSource = dataSource(database, "flyway-empty-test")) {
             migrate(dataSource, database);
             assertEquals(44, countBusinessTables(dataSource));
-            assertEquals(4, countHistoryRows(dataSource));
+            // V5 只插 ADMIN_USER 档种子、不建表，故迁移记录 +1 而表数不变
+            assertEquals(5, countHistoryRows(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertEquals(0, countHistoryVersion(dataSource, "0"), "空库不应写 baseline 记录");
         }
@@ -108,7 +111,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             // V4 给存量 cw_user 加的配额等级列：这张表是 V1 就建好的，加列只能靠迁移补
             assertTrue(columnExists(dataSource, "cw_user", "level_code"));
             assertEquals(44, countBusinessTables(dataSource));
-            assertEquals(5, countHistoryRows(dataSource));
+            assertEquals(6, countHistoryRows(dataSource));
             assertEquals(1, countHistoryVersion(dataSource, "0"), "非空存量库必须先登记 baseline 0");
         }
     }

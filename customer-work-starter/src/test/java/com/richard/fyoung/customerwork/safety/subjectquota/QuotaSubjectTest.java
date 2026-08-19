@@ -39,4 +39,12 @@ class QuotaSubjectTest {
             "解析不出身份也要有一份额度可算，否则等于放行");
         assertTrue(QuotaSubject.ip(null).counterKey().endsWith(QuotaSubject.UNKNOWN_ID));
     }
+
+    @Test
+    void adminUser_shouldNotShareQuotaWithEndUser() {
+        // sys_user 与 cw_user 是两套 ID 空间，同一个 ID 值指的是不同的人；
+        // 共用一个类型就会让一个后台管理员和一个终端用户莫名其妙共享额度
+        assertNotEquals(QuotaSubject.adminUser("1").counterKey(), QuotaSubject.user("1").counterKey());
+        assertEquals(QuotaSubjectType.ADMIN_USER, QuotaSubject.adminUser("1").type());
+    }
 }

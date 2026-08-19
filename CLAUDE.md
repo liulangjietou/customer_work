@@ -34,7 +34,12 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1413** + admin-server **840** + app 86 + customer-channel 65 + gateway 1（合计 **2405**）
+- 测试基线：starter **1421** + admin-server **851** + app 93 + customer-channel 65 + gateway 1（合计 **2431**）
+  （2026-08-19 后台用户配额批次实测：starter 1421 / 5 skip、admin 851 / 1 skip，BUILD SUCCESS，
+  排除 `RedisSessionPersistenceTest`。本批次自身加 starter +8、admin +11。
+  **纯种子迁移（只 INSERT、不改结构）要在 `CustomerWorkSchemaMigrator#resolveBaselineVersion`
+  里补一条数据判定**——那套"完整镜像接管"只认结构，判不出来就会重跑迁移撞唯一键。
+  上一版基线 2026-08-18 数据权限批次：starter 1413 + admin 840，合计 2405）
   （2026-08-18 数据权限批次实测：starter 1413 / 5 skip、admin 834 / 1 skip、app 86，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加了 admin **+45**（数据范围枚举/上下文/白名单/SQL 改写/
   范围解析 30 + 角色范围校验 5 + 装配门控 7 + 会话归属放行边界 3），starter 只改忽略清单常量故条数不变；
@@ -203,6 +208,30 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   都要查一次用户表，限流本身会成为最重的一段。后台页面必须把这件事写给运营看。
   新增的 `subject-quota.store-mode` 已登记进 `PersistenceJdbcCondition`（漏登记会出现
   "Store 想用 jdbc 但持久化环境没激活"的错配）。
+  **后台登录用户同样纳入（`admin.subject-quota.enabled`，默认关闭）**，六条补充约定：
+  ① **主体类型单列 `ADMIN_USER`**：`sys_user` 与 `cw_user` 是两套 ID 空间，同一个 ID 值指的是
+  不同的人，混用 `USER` 会让计数键碰撞（管理员与终端用户共用一份额度，且查不出原因）；
+  等级定义共用 `cw_subject_quota_level`（靠 `subject_type` 区分），绑定落 `sys_user.level_code`；
+  ② **判定用 MVC `HandlerInterceptor`**：admin 是 Servlet 不是 WebFlux，没有 `WebFilter`。
+  超限返回 429 + `Retry-After`，错误码单列 `QUOTA_EXCEEDED(40043)`——额度用尽既不是没权限也不是参数错，
+  混进既有码会让前端提示"联系管理员开权限"；
+  ③ **等级快照走惰性刷新**（`SubjectQuotaLevelProvider` 的三参构造）：admin 刻意不开
+  `@EnableScheduling`，客服端那套 `@Scheduled` 轮询在这边根本不会跑，不改成读路径刷新的话
+  后台改完等级永远不生效；
+  ④ **上下文传播只接主体、不搭车改租户**：admin 此前完全没有 Reactor 上下文传播（starter 自动装配被
+  exclude）。补租户会让多租户开启后 AI 链路的持久层操作开始真正带过滤，那是独立的行为变更，
+  该单独评估。自动传播是全局静态开关，故只在 `enabled=true` 时打开——代价是开配置要重启；
+  ⑤ **路径清单刻意比 C 端窄**（只覆盖 `chat/stream`、`vibecoding`、`agent-task` 三条真正调模型的入口）：
+  后台用户是内部员工，防的是"调用失控"而不是"有人刷接口"，把翻列表也算进去只会让人干不了活；
+  ⑥ **委派任务要在提交那一刻捕获主体**（`MybatisTaskRepository#putTask`）：它跑在自建线程池上，
+  Reactor 的自动传播覆盖不到，不用 `QuotaSubjectContext.callWith` 带进去的话，
+  那条链路烧的 token 就没有主人（额度里只有"提交次数"在动）；
+  ⑦ **admin 侧写 SQL 条件不要用 MyBatis-Plus 的 lambda wrapper**：lambda 解析依赖 `TableInfo` 缓存，
+  不启动容器的单测里拿不到，会直接抛 `MybatisPlusException`；跨库门面场景同样没有拦截器，
+  一律用字符串列名（`new QueryWrapper<>().eq("id", x)`）；
+  ⑧ **加 Flyway 迁移前先扫一遍各 worktree 的最大版本号**：并行开发时版本号极易撞车
+  （本批次的 V56 就撞上了另一个分支已 apply 到本机库的 V56，表现为 checksum mismatch 启动失败）。
+  本机库被别的分支迁移污染时，用一个临时库验证自己的迁移与上下文加载，别去动共享库的 history。
 - **数据权限（用户维度隔离）**：叠加在 B1 租户过滤之上的第二道行级过滤，回答"这个租户里，谁的数据"。
   范围挂在角色上（`sys_role.data_scope` = ALL/TENANT/SELF），强制点是 `DataScopeInnerInterceptor`。
   设计全文见 `docs/数据权限设计.md`，六条硬约定：

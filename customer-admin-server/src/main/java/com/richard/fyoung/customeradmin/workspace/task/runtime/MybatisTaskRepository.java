@@ -6,6 +6,8 @@ import com.richard.fyoung.customeradmin.workspace.task.entity.AiAgentTask;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customeradmin.workspace.task.mapper.AiAgentTaskMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.harness.agent.subagent.task.BackgroundTask;
@@ -148,8 +150,14 @@ public class MybatisTaskRepository implements TaskRepository {
 
         CompletableFuture<String> future;
         if (spec instanceof TaskRunSpec.LocalTaskRunSpec local) {
+            // 租户与限流主体都要带进任务体：任务跑在自建线程池里，ThreadLocal 到不了那边
+            // （Reactor 的自动传播只覆盖 Reactor 的线程边界）。租户缺了会让查库 fail-closed，
+            // 主体缺了会让这条链路烧的 token 没有主人——额度里只剩"提交次数"在动。
+            QuotaSubject quotaSubject = QuotaSubjectContext.get();
             future = CompletableFuture.supplyAsync(
-                () -> TenantContext.callWith(tenantId, () -> runLocal(sessionId, taskId, local.execution())), executor);
+                () -> TenantContext.callWith(tenantId,
+                    () -> QuotaSubjectContext.callWith(quotaSubject,
+                        () -> runLocal(sessionId, taskId, local.execution()))), executor);
         } else if (spec instanceof TaskRunSpec.AdoptedTaskRunSpec adopted) {
             // 同步调用超时后被提升为后台任务：future 已经在跑，只补挂状态回写，绝不能重复提交执行
             future = adopted.future();

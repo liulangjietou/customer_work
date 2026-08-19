@@ -55,7 +55,11 @@ http.interceptors.response.use(((response: { data: Result<unknown> | Blob; confi
   ElMessage.error(body.message || '请求失败')
   return Promise.reject(body)
 }) as never, (error) => {
-  ElMessage.error(error.message || '网络异常')
+  // 非 2xx 的响应体同样是 Result 包装（如额度用尽返回 429 + code 40043），优先显示后端文案：
+  // 只读 error.message 的话用户看到的是 "Request failed with status code 429"，
+  // 而真正该看的"最近 60 分钟内已达 N 次上限"就被吞掉了
+  const body = error.response?.data as Result<unknown> | undefined
+  ElMessage.error(body?.message || error.message || '网络异常')
   return Promise.reject(error)
 })
 

@@ -7,11 +7,14 @@ import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.subjectquota.config.SubjectQuotaGatewayProvider;
+import com.richard.fyoung.customeradmin.subjectquota.dto.AdminQuotaUserVO;
 import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaHitVO;
 import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaLevelSaveRequest;
 import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaLevelVO;
 import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaUserVO;
 import com.richard.fyoung.customeradmin.subjectquota.jdbc.SubjectQuotaGateway;
+import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
+import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customerwork.data.user.entity.UserDO;
 import com.richard.fyoung.customerwork.data.user.mapper.UserMapper;
 import com.richard.fyoung.customerwork.safety.subjectquota.MybatisSubjectQuotaHitStore;
@@ -52,8 +55,13 @@ public class SubjectQuotaAdminService {
 
     private final SubjectQuotaGatewayProvider gatewayProvider;
 
-    public SubjectQuotaAdminService(SubjectQuotaGatewayProvider gatewayProvider) {
+    /** 后台用户表在 admin 主库，不走跨库门面——它跟等级定义不在一个库里。 */
+    private final SysUserMapper sysUserMapper;
+
+    public SubjectQuotaAdminService(SubjectQuotaGatewayProvider gatewayProvider,
+                                    SysUserMapper sysUserMapper) {
         this.gatewayProvider = gatewayProvider;
+        this.sysUserMapper = sysUserMapper;
     }
 
     // ---------- 等级 ----------
@@ -165,6 +173,67 @@ public class SubjectQuotaAdminService {
     private boolean hasLevel(String tenantId, String levelCode) {
         return levelStore().findByTenant(tenantId).stream()
             .anyMatch(level -> level.levelCode().equals(levelCode));
+    }
+
+    // ---------- 后台用户分档 ----------
+
+    /**
+     * 后台用户列表（带当前等级）。
+     *
+     * <p>走 admin 主数据源，租户过滤由 MyBatis-Plus 拦截器按当前视角自动完成，不必显式加条件——
+     * 这与上面的终端用户列表刻意不同：那边是跨库门面，那里没有拦截器。</p>
+     */
+    public PageResult<AdminQuotaUserVO> pageAdminUsers(PageQuery query) {
+        long size = Math.max(1, query.getPageSize());
+        long offset = Math.max(0, (query.getPageNum() - 1) * size);
+
+        long total = sysUserMapper.selectCount(adminUserWrapper(query.getKeyword()));
+        List<AdminQuotaUserVO> list = new ArrayList<>();
+        if (total > 0) {
+            List<SysUser> rows = sysUserMapper.selectList(adminUserWrapper(query.getKeyword())
+                .orderByDesc("create_time")
+                .last("LIMIT " + size + " OFFSET " + offset));
+            for (SysUser row : rows) {
+                list.add(toVO(row));
+            }
+        }
+        PageResult<AdminQuotaUserVO> result = new PageResult<>();
+        result.setPageNum(query.getPageNum());
+        result.setPageSize(size);
+        result.setTotal(total);
+        result.setList(list);
+        return result;
+    }
+
+    /** 分配后台用户等级；传空表示回到默认档。 */
+    public void assignAdminUserLevel(String tenantId, Long userId, String levelCode) {
+        String normalized = levelCode == null || levelCode.isBlank() ? null : levelCode.trim();
+        assertLevelExists(tenantId, normalized);
+        int updated = sysUserMapper.update(null, new UpdateWrapper<SysUser>()
+            .set("level_code", normalized)
+            .eq("id", userId));
+        log.info("admin user quota level assigned, user={}, level={}, updated={}",
+            userId, normalized, updated);
+    }
+
+    private static QueryWrapper<SysUser> adminUserWrapper(String keyword) {
+        QueryWrapper<SysUser> wrapper = new QueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            String like = keyword.trim();
+            wrapper.and(w -> w.like("username", like).or().like("nickname", like));
+        }
+        return wrapper;
+    }
+
+    private static AdminQuotaUserVO toVO(SysUser row) {
+        AdminQuotaUserVO vo = new AdminQuotaUserVO();
+        vo.setUserId(row.getId());
+        vo.setUsername(row.getUsername());
+        vo.setNickname(row.getNickname());
+        vo.setLevelCode(row.getLevelCode());
+        vo.setStatus(row.getStatus());
+        vo.setCreateTime(row.getCreateTime());
+        return vo;
     }
 
     // ---------- 命中记录 ----------

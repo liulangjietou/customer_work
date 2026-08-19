@@ -32,7 +32,13 @@ export function streamSse(path: string, body: unknown, handlers: SseHandlers): (
   })
     .then(async (response) => {
       if (!response.ok || !response.body) {
-        throw new Error(`SSE 请求失败: HTTP ${response.status}`)
+        // 非 2xx 的响应体同样是 Result 包装（如额度用尽返回 429 + code 40043），先把后端文案取出来：
+        // 只抛 HTTP 状态码的话，对话框里显示的是"SSE 请求失败: HTTP 429"，
+        // 而真正该让用户看到的"额度已用完，请稍后再试"就丢了
+        const message = await response.json()
+          .then((body: { message?: string }) => body?.message)
+          .catch(() => null)
+        throw new Error(message || `SSE 请求失败: HTTP ${response.status}`)
       }
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
