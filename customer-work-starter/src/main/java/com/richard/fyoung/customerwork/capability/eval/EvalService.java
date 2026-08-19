@@ -152,7 +152,8 @@ public class EvalService {
                     "EVAL-REPLY-FAIL", evalCase.id(), e);
                 replies.add("");
             } finally {
-                chatService.endSession(sessionId);
+                // 评测会话背后没有真人，用 discard 清理：计进 CSAT 只会用空邀请稀释回收率
+                chatService.discardSession(sessionId);
             }
         }
         return replies;

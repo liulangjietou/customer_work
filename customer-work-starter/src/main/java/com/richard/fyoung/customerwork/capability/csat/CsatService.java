@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.capability.csat;
 
-import com.richard.fyoung.customerwork.core.support.TenantResolver;
+import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
@@ -15,6 +16,11 @@ import java.util.Optional;
  * 最标准的运营指标。两者不能互相替代：每句话都答得像样但问题始终没解决的会话，
  * 会拿到一堆 UP 和一个 2 分。</p>
  *
+ * <p><b>分区取租户而非 sessionId 前缀</b>：CSAT 是运营指标，要回答的是"这条业务线整体怎么样"。
+ * 早期误用 {@code TenantResolver}（那是数据分区，从 sessionId 前缀解析），而用户端 sessionId 形如
+ * {@code u{userId}:conv-xxx}，于是每个用户各成一个分区——看板按任何一个口径都查不到数据。
+ * 见 {@link OpsScopeResolver}。</p>
+ *
  * <p><b>邀请与评分分开记</b>：只记评分就算不出回收率，而回收率低的时候，那个漂亮的 CSAT 分数
  * 其实只代表愿意评价的一小撮人——特别满意和特别不满的两头，中间的沉默大多数不在样本里。
  * 没有回收率，CSAT 就是个会骗人的数字。</p>
@@ -25,11 +31,11 @@ public class CsatService {
     private static final Logger log = LoggerFactory.getLogger(CsatService.class);
 
     private final CsatStore store;
-    private final TenantResolver tenantResolver;
+    private final OpsScopeResolver opsScopeResolver;
 
-    public CsatService(CsatStore store, TenantResolver tenantResolver) {
+    public CsatService(CsatStore store, OpsScopeResolver opsScopeResolver) {
         this.store = store;
-        this.tenantResolver = tenantResolver;
+        this.opsScopeResolver = opsScopeResolver;
     }
 
     /**
@@ -43,7 +49,7 @@ public class CsatService {
         if (existing.isPresent()) {
             return existing.get();
         }
-        CsatSurvey survey = CsatSurvey.invited(sessionId, tenantResolver.resolve(sessionId),
+        CsatSurvey survey = CsatSurvey.invited(sessionId, opsScopeResolver.resolve(),
             System.currentTimeMillis());
         store.save(survey);
         log.info("csat invited: sessionId={}", sessionId);
@@ -57,7 +63,7 @@ public class CsatService {
      */
     public CsatSurvey submit(String sessionId, int score, String comment) {
         CsatSurvey survey = store.find(sessionId)
-            .orElseGet(() -> CsatSurvey.invited(sessionId, tenantResolver.resolve(sessionId),
+            .orElseGet(() -> CsatSurvey.invited(sessionId, opsScopeResolver.resolve(),
                 System.currentTimeMillis()));
         CsatSurvey answered = survey.withScore(score, comment, System.currentTimeMillis());
         store.save(answered);
@@ -77,7 +83,7 @@ public class CsatService {
      * @param scopeId 分区键；空白则按 {@code default}
      */
     public CsatSummary summary(String scopeId, long startMs, long endMs) {
-        String scope = StringUtils.hasText(scopeId) ? scopeId : TenantResolver.DEFAULT_TENANT;
+        String scope = StringUtils.hasText(scopeId) ? scopeId : TenantContext.DEFAULT;
         List<CsatSurvey> surveys = store.findByWindow(scope, startMs, endMs);
         return CsatSummary.of(surveys);
     }

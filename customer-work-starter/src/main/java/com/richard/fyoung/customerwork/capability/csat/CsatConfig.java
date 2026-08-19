@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.capability.csat;
 
 import com.richard.fyoung.customerwork.capability.csat.mapper.CsatSurveyMapper;
-import com.richard.fyoung.customerwork.core.support.TenantResolver;
+import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +38,19 @@ public class CsatConfig {
 
     @Bean
     @ConditionalOnMissingBean(CsatService.class)
-    public CsatService csatService(CsatStore store, TenantResolver tenantResolver) {
-        return new CsatService(store, tenantResolver);
+    public CsatService csatService(CsatStore store, OpsScopeResolver opsScopeResolver) {
+        return new CsatService(store, opsScopeResolver);
+    }
+
+    /**
+     * 工单终态 → 满意度邀请。
+     *
+     * <p>没有它，邀请只会在会话空闲超时清理时发出（用户早已离开），回收率的分母近乎恒为 0，
+     * 看板三个指标全是 0.0%——而链路本身不报任何错。</p>
+     */
+    @Bean
+    @ConditionalOnMissingBean(CsatTicketInviteListener.class)
+    public CsatTicketInviteListener csatTicketInviteListener(CsatService csatService) {
+        return new CsatTicketInviteListener(csatService);
     }
 }

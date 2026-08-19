@@ -840,7 +840,7 @@ CREATE TABLE IF NOT EXISTS `cw_prompt_version` (
 CREATE TABLE IF NOT EXISTS `cw_csat_survey` (
     `tenant_id`       VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `session_id`      VARCHAR(128) PRIMARY KEY COMMENT '会话ID（自然主键：一次会话只该有一次整体评价）',
-    `scope_id`        VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '统计分区键（TenantResolver 由 sessionId 解析）',
+    `scope_id`        VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '运营统计分区键 = 租户码（OpsScopeResolver 取当前租户上下文）',
     `score`           TINYINT COMMENT '评分 1-5；NULL 表示已邀请未评价（回收率的分母靠它区分）',
     `comment`         TEXT COMMENT '文字说明',
     `invited_at_ms`   BIGINT NOT NULL COMMENT '发出邀请时间戳（毫秒）——统计窗口以它为准',
@@ -863,7 +863,7 @@ CREATE TABLE IF NOT EXISTS `cw_knowledge_gap` (
     -- 问题可能很长，直接做唯一键会撞上索引长度限制，故用哈希（同 cw_harness_memory 的 scope_hash 手法）
     `question_hash`     VARCHAR(64) NOT NULL COMMENT '问题原文的 SHA-256',
     `question`          VARCHAR(512) NOT NULL COMMENT '问题原文（截断保存）——运营要看的就是这个',
-    `scope_id`          VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '分区键（TenantResolver 由 sessionId 解析）',
+    `scope_id`          VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '运营统计分区键 = 租户码（OpsScopeResolver 取当前租户上下文）',
     `miss_count`        BIGINT NOT NULL DEFAULT 1 COMMENT '累计未命中次数：排行依据，越大越该优先补',
     `first_seen_at_ms`  BIGINT NOT NULL COMMENT '首次出现时间戳（毫秒）——这个问题何时开始查不到',
     `last_seen_at_ms`   BIGINT NOT NULL COMMENT '最近出现时间戳（毫秒）',

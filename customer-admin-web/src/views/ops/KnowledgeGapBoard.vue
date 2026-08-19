@@ -16,6 +16,7 @@ import {
 
 const loading = ref(false)
 const list = ref<KnowledgeGap[]>([])
+// 分区键 = 租户码（未开多租户时统一落 default），与 CSAT 看板同一口径
 const scopeId = ref('default')
 
 async function loadList() {
@@ -98,7 +99,7 @@ onMounted(loadList)
 
     <el-card shadow="never">
       <div class="toolbar">
-        <el-input v-model="scopeId" placeholder="分区键" style="width: 180px" />
+        <el-input v-model="scopeId" placeholder="租户码" style="width: 180px" />
         <el-button type="primary" :loading="loading" @click="loadList">查询</el-button>
       </div>
 

@@ -34,7 +34,15 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1421** + admin-server **851** + app 93 + customer-channel 65 + gateway 1（合计 **2431**）
+- 测试基线：starter **1432** + admin-server **851** + app 93 + customer-channel 65 + gateway 1（合计 **2442**）
+  （2026-08-19 CSAT 看板修复批次实测：starter 1432 / 5 skip、admin 851 / 1 skip，BUILD SUCCESS，
+  排除 `RedisSessionPersistenceTest`。本批次自身加 starter +11。
+  **加纯数据迁移前先想清楚它幂等不幂等**：幂等的（如 V6 归一）可以不给 `resolveBaselineVersion` 补判定，
+  让完整镜像库重跑一次即可，代价只是多一行历史；不幂等的必须补判定，否则重跑撞唯一键直接失败。
+  相应地，`CustomerWorkSchemaMigrationIntegrationTest` 里空库/legacy/镜像三处历史行数断言都要跟着加。
+  **改已应用过的迁移文件（含只改注释）会让 Flyway checksum 校验失败拒绝启动**——要改列注释就在新迁移里
+  `ALTER TABLE ... MODIFY COLUMN`，别回头动 V1。
+  上一版基线 2026-08-19 后台用户配额批次：starter 1421 + admin 851，合计 2431）
   （2026-08-19 后台用户配额批次实测：starter 1421 / 5 skip、admin 851 / 1 skip，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加 starter +8、admin +11。
   **纯种子迁移（只 INSERT、不改结构）要在 `CustomerWorkSchemaMigrator#resolveBaselineVersion`
@@ -174,7 +182,15 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   判错的代价因此是"没省到钱"而非"答得差"；
   ⑤ **提示词版本用内容指纹而非外部版本号**：Nacos 下发的是内容、没有随行版本号。指纹让
   `EvalComparison#promptChanged` 成为归因支点——指标掉了先看这一位，没变就别再对着提示词逐字看；
-  ⑥ **CSAT 必须邀请与回收分开记**：只记评分算不出回收率，而回收率低时那个漂亮的分数只代表
+  ⑥ **CSAT 邀请挂在工单终态、分区取租户**（2026-08-19 修）：用户端真正的结束动作走工单状态机
+  （关单/确认解决），不经过 `CustomerServiceService#endSession`——只挂后者时邀请仅在空闲超时清理时发出，
+  用户早已离开，分母近乎恒为 0，看板三指标全 0.0% 而链路不报错。改由 `CsatTicketInviteListener` 接
+  工单事件（Outbox 投递有 1~2 秒延迟，用户端评分卡补拉一次）。另两条同源约定：
+  评测/合成监控走 `discardSession` 而非 `endSession`（背后没真人，计进去等于用空邀请稀释回收率）；
+  **运营分区走 `OpsScopeResolver`（取租户）而不是 `TenantResolver`（取 sessionId 前缀）**——
+  后者在用户端解析出的是用户（`u{userId}:conv-xxx`），隔离类数据要的正是这个，
+  但运营指标按用户分区等于每人一张报表。CSAT 与知识盲区两个看板长期空白就是这么来的。
+  ⑥.1 **CSAT 必须邀请与回收分开记**：只记评分算不出回收率，而回收率低时那个漂亮的分数只代表
   愿意评价的一小撮人。满意按 4 分及以上算（行业口径），不是平均分；
   ⑦ **知识未命中文案是接口契约**（`KnowledgeBackend.NO_HIT_REPLY` + `isMiss`）：盲区埋点据此判定，
   此前两个实现各自硬编码同一句话，改文案会让统计静默失效；

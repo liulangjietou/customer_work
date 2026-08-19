@@ -22,13 +22,22 @@ const SCORE_LABELS = ['', '很不满意', '不太满意', '一般', '比较满�
 /** 低于这个分数才追问原因——满意的用户不该被额外打扰。 */
 const COMMENT_PROMPT_THRESHOLD = 4
 
+/** 拉取邀请状态的补拉次数与间隔：覆盖后端异步发邀请的 1~2 秒空窗。 */
+const INVITE_FETCH_RETRIES = 2
+const INVITE_FETCH_RETRY_DELAY_MS = 1500
+
 const visible = ref(false)
 const score = ref(0)
 const comment = ref('')
 const submitting = ref(false)
 
-/** 只在"已邀请且未评价"时弹卡：没被邀请过说明会话还没结束，已评过就别再打扰。 */
-async function checkPending() {
+/**
+ * 只在"已邀请且未评价"时弹卡：没被邀请过说明会话还没结束，已评过就别再打扰。
+ *
+ * 首次查不到就重试一次：邀请由后端在工单进入终态时经 Outbox 异步发出（扫描间隔 1s），
+ * 而这里的查询紧跟着关单请求的响应，正常会跑在邀请落库之前——不重试的话评分卡几乎永远不弹。
+ */
+async function checkPending(retryLeft = INVITE_FETCH_RETRIES) {
   if (!props.sessionId) return
   try {
     const survey = await fetchCsatStatus(props.sessionId)
@@ -36,6 +45,15 @@ async function checkPending() {
   } catch {
     // 查不到状态（404 或网络问题）就不弹，静默处理——评分是锦上添花，不该给用户报错
     visible.value = false
+    if (retryLeft > 0) {
+      const sessionAtSchedule = props.sessionId
+      window.setTimeout(() => {
+        // 期间用户可能已新开会话，别把上一次的评分卡弹到新会话上
+        if (props.sessionId === sessionAtSchedule) {
+          void checkPending(retryLeft - 1)
+        }
+      }, INVITE_FETCH_RETRY_DELAY_MS)
+    }
   }
 }
 

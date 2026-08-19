@@ -437,6 +437,19 @@ public class CustomerServiceService {
      * 这里若强行清理反而可能把正在使用中的锁摘掉。</p>
      */
     public void endSession(String sessionId) {
+        discardSession(sessionId);
+        inviteCsat(sessionId);
+        log.info("[session {}] ended and cleaned", sessionId);
+    }
+
+    /**
+     * 清理会话但<b>不</b>发满意度邀请：给评测、合成监控这类"背后没有真人"的会话用。
+     *
+     * <p>它们同样需要清理会话资源，但计进 CSAT 就是在污染指标——机器人自问自答永远不会有人评分，
+     * 每跑一轮评测就往回收率的分母里灌一批空邀请，把真实用户的满意度稀释成一个越来越难看的数字。
+     * 实测本机库里 10 条 CSAT 记录全部来自评测，没有一条来自真实会话。</p>
+     */
+    public void discardSession(String sessionId) {
         sessionAgents.remove(sessionId);
         sessionActivity.remove(sessionId);
         try {
@@ -446,12 +459,13 @@ public class CustomerServiceService {
             log.error("[session {}] delete persisted state failed (ignored), code={}", sessionId,
                 "SESSION_DELETE_ERROR", e);
         }
-        inviteCsat(sessionId);
-        log.info("[session {}] ended and cleaned", sessionId);
     }
 
     /**
      * 会话结束时发出满意度邀请。
+     *
+     * <p>用户端真正的结束动作走工单状态机（关单 / 确认解决），那条链路的邀请由
+     * {@code CsatTicketInviteListener} 负责；这里覆盖的是"用户默默离开、会话空闲超时"那一类。</p>
      *
      * <p>邀请必须在这里发而不是等用户想起来评：不记邀请就<b>算不出回收率</b>，
      * 而回收率低时那个漂亮的 CSAT 只代表愿意评价的一小撮人。{@code invite} 自身幂等，
