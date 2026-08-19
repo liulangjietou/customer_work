@@ -89,7 +89,7 @@ async function handleLogout() {
       </el-header>
       <TabsBar />
       <AppBreadcrumb />
-      <el-main class="layout-main">
+      <el-main class="layout-main" :class="{ 'layout-main--home': route.name === 'Home' }">
         <!-- 只精确缓存 WorkspaceView：TabsBar 让"已打开的标签"在视觉上常驻，但底下的路由组件此前没配
              keep-alive，标签切走再切回其实是整个组件重新 mount——WorkspaceView 里的对话/VibeCoding
              面板state 全在组件本地 ref，一销毁就清空，进行中的 SSE 流也被 onUnmounted 里的 abortStream
@@ -209,6 +209,11 @@ async function handleLogout() {
 
 .layout-main {
   background: var(--el-bg-color-page);
+}
+
+.layout-main--home {
+  padding: 0;
+  overflow: hidden;
 }
 
 .layout-footer {
