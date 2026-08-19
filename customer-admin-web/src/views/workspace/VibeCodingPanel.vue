@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { WarningFilled } from '@element-plus/icons-vue'
 import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
 import {
@@ -548,7 +549,12 @@ defineExpose({ newSession })
     <div class="chat-column">
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
-          <div class="bubble">
+          <div class="bubble" :class="{ failed: msg.failed }">
+            <!-- 失败提示（额度用尽/后端异常）：与正常回答区分开 -->
+            <div v-if="msg.failed" class="failed-title">
+              <el-icon><WarningFilled /></el-icon>
+              <span>本轮未完成</span>
+            </div>
             <TraceTimeline
               v-if="msg.role === 'assistant' && msg.nodes.length > 0"
               :nodes="msg.nodes"
@@ -948,6 +954,21 @@ defineExpose({ newSession })
 
 .message-row.user {
   justify-content: flex-end;
+}
+
+.bubble.failed {
+  background: var(--el-color-danger-light-9);
+  border: 1px solid var(--el-color-danger-light-5);
+  color: var(--el-color-danger);
+}
+
+.failed-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .bubble {

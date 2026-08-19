@@ -25,6 +25,8 @@ import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaHit;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaHitRank;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaHitStore;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaLevel;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectLevelResolver;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaLevelProvider;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaLevelStore;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import lombok.extern.slf4j.Slf4j;
@@ -58,10 +60,26 @@ public class SubjectQuotaAdminService {
     /** 后台用户表在 admin 主库，不走跨库门面——它跟等级定义不在一个库里。 */
     private final SysUserMapper sysUserMapper;
 
+    /**
+     * 本进程的等级快照与绑定缓存，写库后立刻失效掉。
+     *
+     * <p>不主动失效的话，运营改完档位要等最长 60 秒才看得到效果——而他多半会在这 60 秒里
+     * 反复试、以为没保存上。缓存是为了扛住热路径的查询压力，不该让运营为它买单。</p>
+     *
+     * <p><b>只对本进程有效</b>：多副本部署时，其它实例仍要等各自的惰性刷新。
+     * 后台通常单实例，这个代价可以接受；真要跨实例即时生效得引入广播，那是另一件事。</p>
+     */
+    private final SubjectQuotaLevelProvider levelProvider;
+    private final SubjectLevelResolver levelResolver;
+
     public SubjectQuotaAdminService(SubjectQuotaGatewayProvider gatewayProvider,
-                                    SysUserMapper sysUserMapper) {
+                                    SysUserMapper sysUserMapper,
+                                    SubjectQuotaLevelProvider adminSubjectQuotaLevelProvider,
+                                    SubjectLevelResolver adminSubjectLevelResolver) {
         this.gatewayProvider = gatewayProvider;
         this.sysUserMapper = sysUserMapper;
+        this.levelProvider = adminSubjectQuotaLevelProvider;
+        this.levelResolver = adminSubjectLevelResolver;
     }
 
     // ---------- 等级 ----------
@@ -87,6 +105,7 @@ public class SubjectQuotaAdminService {
             request.getEnabled() == null || request.getEnabled(),
             request.getRemark());
         levelStore().save(level);
+        levelProvider.reload();
         log.info("subject quota level saved, tenant={}, level={}, window={}s, token={}, request={}, action={}",
             tenantId, level.levelCode(), level.effectiveWindowSeconds(), level.tokenLimit(),
             level.requestLimit(), level.exceedAction());
@@ -94,6 +113,7 @@ public class SubjectQuotaAdminService {
 
     public void deleteLevel(String tenantId, String levelCode) {
         levelStore().delete(tenantId, levelCode);
+        levelProvider.reload();
         log.info("subject quota level deleted, tenant={}, level={}", tenantId, levelCode);
     }
 
@@ -144,6 +164,7 @@ public class SubjectQuotaAdminService {
                 .set("level_code", normalized)
                 .eq("tenant_id", tenantId)
                 .eq("id", userId));
+        levelResolver.evictBinding(userId);
         log.info("subject quota user level assigned, tenant={}, user={}, level={}, updated={}",
             tenantId, userId, normalized, updated);
     }
@@ -212,6 +233,8 @@ public class SubjectQuotaAdminService {
         int updated = sysUserMapper.update(null, new UpdateWrapper<SysUser>()
             .set("level_code", normalized)
             .eq("id", userId));
+        // 后台用户的主体标识是 sys_user.id 的字符串形态，与 AdminQuotaInterceptor 写入的一致
+        levelResolver.evictBinding(String.valueOf(userId));
         log.info("admin user quota level assigned, user={}, level={}, updated={}",
             userId, normalized, updated);
     }

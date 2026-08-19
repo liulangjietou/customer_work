@@ -205,7 +205,9 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   ⑧ **超限落"命中记录"而不是实时余额**：余额在计数器里（跨进程读不到），而运营要回答的是
   "谁在刷、哪档配紧了"。只在触顶那一刻写一条，正常流量零写入；
   ⑨ **生效延迟 60 秒是设计的一部分**（等级快照指纹轮询 + 绑定本地缓存）：不缓存的话每个请求
-  都要查一次用户表，限流本身会成为最重的一段。后台页面必须把这件事写给运营看。
+  都要查一次用户表，限流本身会成为最重的一段。**但写侧要主动失效**——后台保存等级/分配档位后
+  直接 `reload()` + `evictBinding()`，让本进程立即生效；跨进程（客服端）与多副本仍走轮询。
+  后台页面必须把"哪些立即生效、哪些要等"写给运营看。
   新增的 `subject-quota.store-mode` 已登记进 `PersistenceJdbcCondition`（漏登记会出现
   "Store 想用 jdbc 但持久化环境没激活"的错配）。
   **后台登录用户同样纳入（`admin.subject-quota.enabled`，默认关闭）**，六条补充约定：
