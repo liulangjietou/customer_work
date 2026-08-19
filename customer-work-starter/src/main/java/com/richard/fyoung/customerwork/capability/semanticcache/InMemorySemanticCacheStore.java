@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.capability.semanticcache;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -98,6 +99,20 @@ public class InMemorySemanticCacheStore implements SemanticCacheStore {
     @Override
     public boolean remove(Long id) {
         return entries.remove(id) != null;
+    }
+
+    @Override
+    public List<SemanticCacheScope> listScopes(int limit) {
+        Map<String, Long> counts = new HashMap<>();
+        for (SemanticCacheEntry entry : entries.values()) {
+            counts.merge(entry.scopeId(), 1L, Long::sum);
+        }
+        List<SemanticCacheScope> scopes = new ArrayList<>(counts.size());
+        counts.forEach((scopeId, count) -> scopes.add(new SemanticCacheScope(scopeId, count)));
+        // 与 jdbc 实现同序：条目多的在前，同数按分区键字典序，保证两种模式看板顺序一致
+        scopes.sort(Comparator.comparingLong(SemanticCacheScope::entries).reversed()
+            .thenComparing(SemanticCacheScope::scopeId));
+        return List.copyOf(scopes.subList(0, Math.min(Math.max(limit, 0), scopes.size())));
     }
 
     @Override

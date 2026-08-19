@@ -10,6 +10,7 @@ import com.richard.fyoung.customerwork.capability.deadletter.DeadLetterStatus;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGap;
 import com.richard.fyoung.customerwork.capability.prompt.PromptVersion;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheEntry;
+import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheScope;
 import com.richard.fyoung.customerwork.tool.backend.entity.KnowledgeDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
 import org.slf4j.Logger;
@@ -45,6 +46,17 @@ public class OpsAdminService {
     /** 缓存条目（按命中次数降序）：看清楚缓存了什么、哪些真的在被复用。 */
     public List<SemanticCacheEntry> listCache(String scopeId, int limit) {
         return gatewayProvider.get().semanticCache().listByHits(scopeId, limit);
+    }
+
+    /**
+     * 列出实际存在的缓存分区（按条目数降序）。
+     *
+     * <p>缓存分区键是用户级隔离键，运营在看板上猜不到该填什么——这个接口就是为了把
+     * "手填一个猜不到的 ID"换成"从实际有数据的分区里选"。跨库门面挂了租户拦截器，
+     * 只看得到本租户的分区。</p>
+     */
+    public List<SemanticCacheScope> listCacheScopes(int limit) {
+        return gatewayProvider.get().semanticCache().listScopes(limit);
     }
 
     /** 定点删除单条缓存（某条答得不对时不必清空整个分区）。 */

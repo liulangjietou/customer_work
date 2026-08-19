@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.capability.semanticcache.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.richard.fyoung.customerwork.capability.semanticcache.entity.SemanticCacheDO;
+import com.richard.fyoung.customerwork.capability.semanticcache.entity.SemanticCacheScopeDO;
 import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
@@ -44,4 +45,7 @@ public interface SemanticCacheMapper extends BaseMapper<SemanticCacheDO> {
 
     /** 运营视角列出条目，按命中次数降序（"哪些缓存真的在被复用"）。 */
     List<SemanticCacheDO> selectByHits(@Param("scopeId") String scopeId, @Param("limit") int limit);
+
+    /** 列出分区及条目数，按条目数降序限额（看板的分区选择器）。 */
+    List<SemanticCacheScopeDO> selectScopes(@Param("limit") int limit);
 }

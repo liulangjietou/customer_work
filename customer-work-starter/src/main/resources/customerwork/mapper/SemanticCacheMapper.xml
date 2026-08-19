@@ -57,4 +57,15 @@
         ORDER BY hit_count DESC, last_hit_at_ms DESC
         LIMIT #{limit}
     </select>
+
+    <!-- 分区选择器：分区键是用户级隔离键，运营猜不到该填什么，只能把实际存在的列出来让他选。
+         tenant_id 由拦截器补进 WHERE，故这里天然只看得到本租户的分区。
+         必须限额——分区数随活跃用户数增长。 -->
+    <select id="selectScopes" resultType="com.richard.fyoung.customerwork.capability.semanticcache.entity.SemanticCacheScopeDO">
+        SELECT scope_id AS scopeId, COUNT(*) AS entries
+        FROM cw_semantic_cache
+        GROUP BY scope_id
+        ORDER BY entries DESC, scope_id ASC
+        LIMIT #{limit}
+    </select>
 </mapper>

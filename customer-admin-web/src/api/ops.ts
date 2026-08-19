@@ -19,6 +19,26 @@ export interface SemanticCacheEntry {
   lastHitAtMs: number
 }
 
+/** 一个缓存分区及其条目数（分区选择器用）。 */
+export interface SemanticCacheScope {
+  scopeId: string
+  entries: number
+}
+
+/**
+ * 实际存在的缓存分区，按条目数降序。
+ *
+ * 分区键是用户级隔离键（两个用户问同一句话答案未必相同，按用户隔离是安全底线），
+ * 运营既猜不到有哪些分区、也不知道哪个里面有东西——列出来让他选，而不是让他手填。
+ */
+export function listCacheScopes(limit = 100) {
+  return request<SemanticCacheScope[]>({
+    url: '/ops/semantic-cache/scopes',
+    method: 'get',
+    params: { limit },
+  })
+}
+
 /** 缓存条目，按命中次数降序。 */
 export function listCacheEntries(scopeId = 'default', limit = 50) {
   return request<SemanticCacheEntry[]>({

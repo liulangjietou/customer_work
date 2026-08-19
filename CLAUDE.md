@@ -34,7 +34,15 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1432** + admin-server **851** + app 93 + customer-channel 65 + gateway 1（合计 **2442**）
+- 测试基线：starter **1441** + admin-server **851** + app 93 + customer-channel 65 + gateway 1（合计 **2451**）
+  （2026-08-19 语义缓存流式接入批次实测：starter 1441 / 5 skip、admin 851 / 1 skip，BUILD SUCCESS，
+  排除 `RedisSessionPersistenceTest`。本批次自身加 starter +9。
+  **Mapper 的 `resultType` 不要直接指向 record**：record 没有 setter，MyBatis 自动映射落不进去，
+  得靠构造器映射（依赖编译期 `-parameters`）。项目一律"贫血 DO 接结果、Store 转领域对象"，
+  聚合查询也照此办（`SemanticCacheScopeDO`）。
+  **新加的 Mapper XML 若没有门控测试覆盖，手工在临时库跑一遍**——语义缓存没有 Mybatis 门控测试，
+  `selectScopes` 的聚合与租户改写是手工验的。
+  上一版基线 2026-08-19 CSAT 看板修复批次：starter 1432 + admin 851，合计 2442）
   （2026-08-19 CSAT 看板修复批次实测：starter 1432 / 5 skip、admin 851 / 1 skip，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加 starter +11。
   **加纯数据迁移前先想清楚它幂等不幂等**：幂等的（如 V6 归一）可以不给 `resolveBaselineVersion` 补判定，
@@ -176,7 +184,17 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   连跑两次会落在同一毫秒，按时间戳取基线会让第二次找不到上一版，CI 里必踩（`cw_fact_log` 早有此约定）；
   ③ **语义缓存默认关闭且只缓存通用问答**：无差别缓存会把 A 用户的订单信息返回给 B。三道闸门收口在
   `SemanticCacheService#cacheable` 一处——意图白名单（默认仅 `consult`）+ 个人标识过滤（6 位以上连续数字）
-  + 双层隔离。放宽前先回答"两个不同用户问同一句话，答案是否必然相同"；
+  + 双层隔离。放宽前先回答"两个不同用户问同一句话，答案是否必然相同"。
+  ③.1 **查缓存/写缓存必须两条路径都接**（2026-08-19 修）：此前只做在非流式 `chat()` 上，而用户端 H5 走的是
+  WS 流式（`ChatDispatchService` → `chatStream`）——真实流量一条缓存都产生不了、一次都命中不了，
+  开着开关配着 jdbc 表却永远是空的。同 CSAT 那批的病根：**能力接在了用户不走的那条路上**。
+  流式侧三条约定：缓存的必须是**出站敏感词过滤之后**的文本（否则下次命中会把未过滤内容直吐）；
+  命中后仍要再过一遍过滤器（写入时合规不代表现在合规，词库会变）；写缓存用 `doOnComplete` 而非
+  `doFinally`，且要靠降级标志排除"半截回答 + 兜底文案"——`doFinally` 在错误路径也会跑，
+  把那段缓存下来，之后每个问到同类问题的人都会收到残缺回复。
+  ③.2 **语义缓存的分区键刻意保持用户级，不要跟着 CSAT 改成租户级**：那是隔离底线。
+  运营看板的可用性靠 `listScopes` 把实际分区列出来给人选（`GET /api/ops/semantic-cache/scopes`），
+  而不是让人手填一个猜不到的用户 ID；
   ④ **分级路由能力取交集**：`TieredRoutingModel` 的结构化输出支持性与上下文窗口按两档中较弱的报，
   路由是动态的，按主模型报会让走经济档那次当场崩；判定保守（只有单轮且简短才降级），
   判错的代价因此是"没省到钱"而非"答得差"；

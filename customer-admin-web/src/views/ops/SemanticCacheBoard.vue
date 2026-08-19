@@ -5,7 +5,9 @@ import {
   clearCacheScope,
   evictCacheEntry,
   listCacheEntries,
+  listCacheScopes,
   type SemanticCacheEntry,
+  type SemanticCacheScope,
 } from '@/api/ops'
 
 // 语义缓存看板：看清楚缓存了什么、哪些真的在被复用、清掉答得不对的。
@@ -14,16 +16,44 @@ import {
 // 相似度是在应用层逐条算的，容量越大查缓存越慢。
 
 const loading = ref(false)
+const scopesLoading = ref(false)
 const list = ref<SemanticCacheEntry[]>([])
-const scopeId = ref('default')
+const scopes = ref<SemanticCacheScope[]>([])
+// 分区键是用户级隔离键（形如 u42），运营手填是猜不出来的，故进页面先把实际存在的分区拉回来。
+// 留空而不是预填 'default'：预填一个多半查不到东西的值，只会让人以为"缓存没在工作"。
+const scopeId = ref('')
+
+/** 拉分区列表并默认选中条目最多的那个——运营多半就是想看它。 */
+async function loadScopes() {
+  scopesLoading.value = true
+  try {
+    scopes.value = await listCacheScopes()
+    if (!scopeId.value && scopes.value.length > 0) {
+      scopeId.value = scopes.value[0].scopeId
+    }
+  } finally {
+    scopesLoading.value = false
+  }
+}
 
 async function loadList() {
+  // 没有任何分区时不必空跑一次查询
+  if (!scopeId.value) {
+    list.value = []
+    return
+  }
   loading.value = true
   try {
     list.value = await listCacheEntries(scopeId.value)
   } finally {
     loading.value = false
   }
+}
+
+/** 清空/删除之后分区可能整个消失，得连选择器一起刷新。 */
+async function reload() {
+  await loadScopes()
+  await loadList()
 }
 
 function formatTime(ms: number): string {
@@ -48,7 +78,7 @@ async function handleEvict(row: SemanticCacheEntry) {
     )
     await evictCacheEntry(row.id)
     ElMessage.success('已删除')
-    await loadList()
+    await reload()
   } catch (error) {
     if (error !== 'cancel') throw error
   }
@@ -63,13 +93,15 @@ async function handleClear() {
     )
     const removed = await clearCacheScope(scopeId.value)
     ElMessage.success(`已清空 ${removed} 条`)
-    await loadList()
+    // 分区已空，选择器里那一项会消失，得重新挑一个
+    scopeId.value = ''
+    await reload()
   } catch (error) {
     if (error !== 'cancel') throw error
   }
 }
 
-onMounted(loadList)
+onMounted(reload)
 </script>
 
 <template>
@@ -104,10 +136,38 @@ onMounted(loadList)
 
     <el-card shadow="never">
       <div class="toolbar">
-        <el-input v-model="scopeId" placeholder="分区键" style="width: 180px" />
-        <el-button type="primary" @click="loadList">查询</el-button>
+        <!-- filterable + allow-create：分区多时能搜，也允许手填一个列表外的分区
+             （列表有 100 条上限，长尾分区不在里面） -->
+        <el-select
+          v-model="scopeId"
+          :loading="scopesLoading"
+          filterable
+          allow-create
+          default-first-option
+          placeholder="选择分区"
+          style="width: 240px"
+          @change="loadList"
+        >
+          <el-option
+            v-for="scope in scopes"
+            :key="scope.scopeId"
+            :label="`${scope.scopeId}（${scope.entries} 条）`"
+            :value="scope.scopeId"
+          />
+        </el-select>
+        <el-button type="primary" :loading="loading" @click="loadList">查询</el-button>
+        <el-button :loading="scopesLoading" @click="loadScopes">刷新分区</el-button>
+        <span v-if="!scopesLoading && scopes.length === 0" class="hint">
+          当前还没有任何缓存分区
+        </span>
         <div class="spacer" />
-        <el-button v-permission="'semantic-cache:evict'" type="danger" plain @click="handleClear">
+        <el-button
+          v-permission="'semantic-cache:evict'"
+          type="danger"
+          plain
+          :disabled="!scopeId"
+          @click="handleClear"
+        >
           清空该分区
         </el-button>
       </div>
@@ -167,6 +227,11 @@ onMounted(loadList)
 
 .stat-warn {
   color: var(--el-color-warning);
+}
+
+.hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .stat-label {
