@@ -52,4 +52,12 @@ public interface SemanticCacheStore {
 
     /** 删除单条缓存（运营发现某条答得不对时定点清除，不必清空整个分区）。 */
     boolean remove(Long id);
+
+    /**
+     * 列出当前存在的分区及条目数，按条目数降序，最多 {@code limit} 个。
+     *
+     * <p><b>必须限额</b>：分区键是用户级隔离键（见 {@link SemanticCacheScope}），
+     * 分区数量随活跃用户数增长，无上限地全量返回会在用户一多时把看板拖垮。</p>
+     */
+    List<SemanticCacheScope> listScopes(int limit);
 }

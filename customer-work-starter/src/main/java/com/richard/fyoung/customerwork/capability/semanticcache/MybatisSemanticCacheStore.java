@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.capability.semanticcache;
 
 import com.richard.fyoung.customerwork.capability.semanticcache.entity.SemanticCacheDO;
+import com.richard.fyoung.customerwork.capability.semanticcache.entity.SemanticCacheScopeDO;
 import com.richard.fyoung.customerwork.capability.semanticcache.mapper.SemanticCacheMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -122,6 +123,22 @@ public class MybatisSemanticCacheStore implements SemanticCacheStore {
         } catch (Exception e) {
             log.error("[MybatisSemanticCacheStore] listByHits failed, errorCode={}, scopeId={}",
                 "SEMCACHE-STORE-LIST-FAIL", scopeId, e);
+            return List.of();
+        }
+    }
+
+    @Override
+    public List<SemanticCacheScope> listScopes(int limit) {
+        try {
+            List<SemanticCacheScopeDO> rows = mapper.selectScopes(limit);
+            List<SemanticCacheScope> result = new ArrayList<>(rows.size());
+            for (SemanticCacheScopeDO row : rows) {
+                result.add(new SemanticCacheScope(row.getScopeId(), row.getEntries()));
+            }
+            return result;
+        } catch (Exception e) {
+            log.error("[MybatisSemanticCacheStore] listScopes failed, errorCode={}, limit={}",
+                "SEMCACHE-STORE-SCOPES-FAIL", limit, e);
             return List.of();
         }
     }

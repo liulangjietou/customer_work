@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.ops.service.OpsAdminService;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheEntry;
+import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheScope;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,10 +29,26 @@ public class SemanticCacheController {
     private static final int DEFAULT_LIMIT = 50;
     private static final String DEFAULT_SCOPE = "default";
 
+    /** 分区选择器一次最多列多少个：分区数随活跃用户数增长，不能全量拉。 */
+    private static final int DEFAULT_SCOPE_LIMIT = 100;
+
     private final OpsAdminService opsAdminService;
 
     public SemanticCacheController(OpsAdminService opsAdminService) {
         this.opsAdminService = opsAdminService;
+    }
+
+    /**
+     * 实际存在的缓存分区（按条目数降序），供看板做分区选择。
+     *
+     * <p>分区键是用户级隔离键（两个用户问同一句话答案未必相同，按用户隔离是安全底线），
+     * 运营既猜不到有哪些分区，也不知道哪个里面有东西——列出来让他选，而不是让他手填。</p>
+     */
+    @SaCheckPermission("semantic-cache:view")
+    @GetMapping("/scopes")
+    public Result<List<SemanticCacheScope>> scopes(
+            @RequestParam(defaultValue = "" + DEFAULT_SCOPE_LIMIT) int limit) {
+        return Result.success(opsAdminService.listCacheScopes(limit));
     }
 
     /** 缓存条目，按命中次数降序——一眼看出哪些真在被复用、哪些只是白占容量。 */

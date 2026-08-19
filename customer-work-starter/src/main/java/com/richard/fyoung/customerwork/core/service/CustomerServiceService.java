@@ -32,6 +32,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -80,6 +81,14 @@ public class CustomerServiceService {
     private static final String M_CHAT_FALLBACK = "customerwork.chat.fallback";
     /** 语义缓存命中计数指标名：省下的每一次模型调用都记在这里，用来算这个功能到底值不值。 */
     private static final String M_CACHE_HIT = "customerwork.chat.cache.hit";
+
+    /**
+     * 命中缓存后下发的切片长度（字符）。
+     *
+     * <p>只为让前端行为与真实流式一致，不掺人为延迟——取值大小只影响气泡撑开的观感，
+     * 不影响任何正确性。</p>
+     */
+    private static final int CACHED_ANSWER_CHUNK_SIZE = 24;
 
     private final CustomerServiceAgentFactory agentFactory;
     private final SessionStateManager sessionStateManager;
@@ -309,6 +318,63 @@ public class CustomerServiceService {
             return Flux.just(QUOTA_EXCEEDED_REPLY);
         }
         touchSession(sessionId);
+        if (semanticCache == null) {
+            return streamFromAgent(sessionId, userText, new AtomicBoolean(false));
+        }
+        // 查缓存要调 Embedding（阻塞 HTTP），必须挪到弹性线程池，理由同非流式路径
+        return Mono.fromCallable(() -> semanticCache.lookup(sessionId, userText))
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMapMany(cached -> cached
+                .map(this::streamCachedAnswer)
+                .orElseGet(() -> streamFromAgentAndCache(sessionId, userText)));
+    }
+
+    /**
+     * 命中缓存后的下发：切片推出，<b>不</b>人为加延迟。
+     *
+     * <p>切片是为了让前端行为与真实流式一致（一个超长 chunk 会让消息气泡突然撑开），
+     * 而不是为了模拟打字效果——缓存的价值就是快，把省下来的时间再睡回去是自欺。</p>
+     *
+     * <p><b>命中的内容仍要过一遍出站敏感词过滤</b>：写入时合规不代表现在合规，词库是会变的。
+     * 过滤器对已经干净的文本是幂等的，这一遍纯内存操作，成本可以忽略。</p>
+     */
+    private Flux<String> streamCachedAnswer(String answer) {
+        incr(M_CACHE_HIT);
+        List<String> chunks = new ArrayList<>();
+        for (int i = 0; i < answer.length(); i += CACHED_ANSWER_CHUNK_SIZE) {
+            chunks.add(answer.substring(i, Math.min(i + CACHED_ANSWER_CHUNK_SIZE, answer.length())));
+        }
+        return applyOutboundGuard(Flux.fromIterable(chunks), newOutboundGuard());
+    }
+
+    /**
+     * 走 Agent 并在流正常结束后异步写缓存。
+     *
+     * <p>累积的是<b>过滤后</b>的文本——缓存的必须是真正发给用户的那一份，
+     * 否则下次命中会把未过滤内容直接吐出去。</p>
+     *
+     * <p>用 {@code doOnComplete} 而不是 {@code doFinally}：后者在错误路径上也会跑，
+     * 而中途失败的流里累积的是"半截回答 + 兜底文案"，把它缓存下来，之后每个问到同类问题的人
+     * 都会收到这段残缺的回复。降级标志由 {@link #streamFromAgent} 在兜底时置位。</p>
+     */
+    private Flux<String> streamFromAgentAndCache(String sessionId, String userText) {
+        StringBuilder accumulated = new StringBuilder();
+        AtomicBoolean degraded = new AtomicBoolean(false);
+        return streamFromAgent(sessionId, userText, degraded)
+            .doOnNext(accumulated::append)
+            .doOnComplete(() -> {
+                if (!degraded.get()) {
+                    cacheReply(sessionId, userText, accumulated.toString());
+                }
+            });
+    }
+
+    /**
+     * 真正走一遍 Agent 的流式链路——缓存未命中时才发生。
+     *
+     * @param degraded 出参：走了兜底（超时 / 调用失败）时置位，调用方据此决定不写缓存
+     */
+    private Flux<String> streamFromAgent(String sessionId, String userText, AtomicBoolean degraded) {
         ReActAgent agent = resolveAgent(sessionId);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
@@ -349,6 +415,7 @@ public class CustomerServiceService {
         }
 
         return flux.onErrorResume(e -> {
+            degraded.set(true);
             if (e instanceof TimeoutException) {
                 log.error("[session {}] stream idle timeout after {}s, closing, code={}",
                     sessionId, idle, "STREAM_IDLE_TIMEOUT");
