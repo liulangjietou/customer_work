@@ -66,7 +66,8 @@ public class GracefulShutdownService implements SmartLifecycle {
             boolean drained = manager.awaitTermination(timeout);
             log.info("优雅停机完成，在途请求是否全部完成={}", drained);
         } catch (Exception e) {
-            log.warn("优雅停机异常（继续关闭）: {}", e.getMessage());
+            log.error("graceful shutdown failed but continuing close, code={}, timeoutSeconds={}", "GRACEFUL_SHUTDOWN_FAIL",
+                properties.getRuntime().getShutdownTimeoutSeconds(), e);
         }
     }
 

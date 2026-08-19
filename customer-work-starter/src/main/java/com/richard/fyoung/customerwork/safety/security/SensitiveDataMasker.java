@@ -48,7 +48,7 @@ public class SensitiveDataMasker {
             try {
                 patterns.add(Pattern.compile(extra));
             } catch (Exception e) {
-                log.warn("[MASK] 忽略非法自定义脱敏正则: {} ({})", extra, e.getMessage());
+                log.error("[MASK] invalid custom regex ignored, code={}, regex={}", "MASKING_PATTERN_INVALID", extra, e);
             }
         }
     }

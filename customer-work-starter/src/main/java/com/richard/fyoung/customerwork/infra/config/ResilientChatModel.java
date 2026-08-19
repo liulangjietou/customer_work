@@ -44,8 +44,8 @@ public class ResilientChatModel implements Model {
                 .maxBackoff(MAX_BACKOFF)        // 退避封顶，避免长尾等待
                 .jitter(0.3)                    // 抖动，避免重试惊群
                 .filter(ResilientChatModel::isRetryable)   // 只重试瞬时/服务端类错误
-                .doBeforeRetry(rs -> log.warn("[Model] 调用失败重试 #{}：{}",
-                    rs.totalRetries() + 1,
+                .doBeforeRetry(rs -> log.info("[Model] retrying call after failure, code={}, attempt={}",
+                    "MODEL_RETRY", rs.totalRetries() + 1,
                     rs.failure() == null ? "?" : rs.failure().getMessage())));
     }
 
