@@ -76,7 +76,7 @@ async function submitLevel() {
   if (!levelFormRef.value) return
   await levelFormRef.value.validate()
   await saveSubjectQuotaLevel({ ...levelForm })
-  ElMessage.success('已保存，客服端最长 60 秒后生效')
+  ElMessage.success('已保存。后台档位立即生效，客服端档位最长 60 秒')
   levelDialogVisible.value = false
   await loadLevels()
 }
@@ -144,7 +144,7 @@ function searchAdminUsers() {
 
 async function changeAdminUserLevel(row: AdminQuotaUserVO, levelCode: string | undefined) {
   await assignAdminUserLevel({ userId: row.userId, levelCode: levelCode || undefined })
-  ElMessage.success('已调整，最长 60 秒后生效')
+  ElMessage.success('已调整，立即生效')
   await loadAdminUsers()
 }
 
@@ -206,7 +206,8 @@ onMounted(async () => {
       与同级的<b>限流规则</b>（按路径限）、<b>配额与计费</b>（按租户限月度花费）三者并存，任一触顶都会被拦。
       客服端需开 <code>customer-work.subject-quota.enabled=true</code>、后台需开
       <code>admin.subject-quota.enabled=true</code> 才真正生效——这里能配，不等于一定在跑。
-      改动经指纹轮询与本地缓存下发，<b>最长 60 秒生效</b>。
+      <b>后台侧（ADMIN_USER 档）改完立即生效</b>；客服端是另一个进程，它的档位改动要等它自己的
+      快照轮询，<b>最长 60 秒</b>。
     </el-alert>
 
     <el-tabs v-model="activeTab">
@@ -330,7 +331,7 @@ onMounted(async () => {
           <el-alert type="info" :closable="false" show-icon class="notice">
             后台账号跑的是智能体调试、VibeCoding 这类单次很重、频次很低的任务，
             所以默认档（<code>admin-default</code>）的窗口是 1 小时、额度比 C 端宽得多。
-            只统计真正调模型的入口，翻列表、看详情不占额度。
+            只统计真正调模型的入口，翻列表、看详情不占额度。<b>在这里改档位立即生效</b>，不必等缓存过期。
           </el-alert>
           <div class="toolbar">
             <el-input

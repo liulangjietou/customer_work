@@ -16,6 +16,31 @@ export interface SseHandlers {
  * 端点是 POST + 需要携带 Authorization 头传 token，原生 EventSource 只支持 GET 且不能自定义头。
  * 返回一个 abort() 函数，供调用方中途取消。
  */
+/**
+ * 带业务码的流式请求错误。
+ *
+ * <p>调用方据此区分"这一轮为什么失败"：额度用尽（{@link #QUOTA_EXCEEDED}）该作为一条消息
+ * 留在对话流里，让用户看到它紧跟在自己那句话后面；而网络中断之类的才适合一闪而过的顶部提示。</p>
+ */
+export class SseHttpError extends Error {
+  /** 额度用尽（后端 ResultCode.QUOTA_EXCEEDED）。 */
+  static readonly QUOTA_EXCEEDED = 40043
+
+  readonly status: number
+  readonly code?: number
+
+  constructor(message: string, status: number, code?: number) {
+    super(message)
+    this.name = 'SseHttpError'
+    this.status = status
+    this.code = code
+  }
+
+  get quotaExceeded(): boolean {
+    return this.code === SseHttpError.QUOTA_EXCEEDED
+  }
+}
+
 export function streamSse(path: string, body: unknown, handlers: SseHandlers): () => void {
   const controller = new AbortController()
   const auth = useAuthStore()
@@ -35,10 +60,11 @@ export function streamSse(path: string, body: unknown, handlers: SseHandlers): (
         // 非 2xx 的响应体同样是 Result 包装（如额度用尽返回 429 + code 40043），先把后端文案取出来：
         // 只抛 HTTP 状态码的话，对话框里显示的是"SSE 请求失败: HTTP 429"，
         // 而真正该让用户看到的"额度已用完，请稍后再试"就丢了
-        const message = await response.json()
-          .then((body: { message?: string }) => body?.message)
+        const body = await response.json()
+          .then((parsed: { code?: number; message?: string }) => parsed)
           .catch(() => null)
-        throw new Error(message || `SSE 请求失败: HTTP ${response.status}`)
+        throw new SseHttpError(body?.message || `SSE 请求失败: HTTP ${response.status}`,
+          response.status, body?.code)
       }
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')

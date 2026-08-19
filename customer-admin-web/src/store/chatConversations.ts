@@ -11,6 +11,13 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
+  /**
+   * 这条助手消息是一次失败的结果（额度用尽、后端异常等）。
+   *
+   * UI 据此渲染成提示样式而不是正常回答——同样一段文字，看起来像"AI 说的话"
+   * 还是"系统告诉你这轮没成"，差别很大。
+   */
+  failed?: boolean
   // 本条助手消息内的 Plan Mode 确认卡片（P1-1），Manual/高风险操作待人工确认
   plans?: PlanCard[]
   // 该条消息携带的附件（用户消息才有）；历史消息来自后端，新发送消息由 send() 本地拼装并转移 previewUrl 所有权
@@ -272,7 +279,11 @@ export const useChatConversationsStore = defineStore('chatConversations', {
             c.streaming = false
             c.interrupting = false
           }
-          ElMessage.error('对话失败：' + (error instanceof Error ? error.message : String(error)))
+          // 失败信息落在对话流里，紧跟用户刚发出的那句话——飘在页面顶部的提示与它无从对应，
+          // 用户看到的是自己的消息孤零零挂在那儿、没有任何回应
+          const text = error instanceof Error ? error.message : String(error)
+          assistantMessage.text = text
+          assistantMessage.failed = true
         },
         onComplete: () => {
           const c = this.byAgent[agentCode]?.conversations[sid]
