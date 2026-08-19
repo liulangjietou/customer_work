@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { FormInstance, UploadRequestOptions } from 'element-plus'
-import { createSkill, deleteSkill, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
+import { createSkill, deleteSkill, downloadSkill, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
 import { useCrudPage } from '@/composables/useCrudPage'
 import type { PageQuery, SkillSaveRequest, SkillVO } from '@/types/api'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -44,6 +44,24 @@ const {
 
 const previewVisible = ref(false)
 const previewSkill = ref<SkillVO | null>(null)
+
+/** 正在下载的行 id：同一行的按钮转 loading，避免大包重复点。 */
+const downloadingId = ref<number | null>(null)
+
+/**
+ * 下载技能包 zip。
+ *
+ * 下载下来的包能直接从「新建 Skill」的上传入口导回——后端导出结构与上传解析是对称的，
+ * 所以这个按钮也是「复制一个 skill 到别的环境」的路径。
+ */
+async function handleDownload(row: SkillVO) {
+  downloadingId.value = row.id
+  try {
+    await downloadSkill(row.id, row.skillCode)
+  } finally {
+    downloadingId.value = null
+  }
+}
 
 function openPreview(row: SkillVO) {
   previewSkill.value = row
@@ -119,9 +137,18 @@ onMounted(loadList)
           </template>
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="180" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openPreview(row)">查看</el-button>
+            <el-button
+              v-permission="'skill:export'"
+              link
+              type="primary"
+              :loading="downloadingId === row.id"
+              @click="handleDownload(row)"
+            >
+              下载
+            </el-button>
             <el-button v-permission="'skill:edit'" link type="primary" @click="openEditWithRow(row)">编辑</el-button>
             <el-button v-permission="'skill:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>

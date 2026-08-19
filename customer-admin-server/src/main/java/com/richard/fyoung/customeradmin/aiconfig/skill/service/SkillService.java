@@ -10,6 +10,7 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillFileVO;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillUploadFile;
+import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillExportPackage;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillUploadParseResult;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillVO;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
@@ -48,6 +49,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 /**
  * Skill 管理。
@@ -71,6 +73,7 @@ public class SkillService {
     private static final String ERR_TARGET_INVALID = "SKILL-STORAGE-TARGET-INVALID";
     private static final String ERR_TARGET_DISABLED = "SKILL-STORAGE-TARGET-DISABLED";
     private static final String ERR_PUBLISH_FAIL = "SKILL-STORAGE-PUBLISH-FAIL";
+    private static final String ERR_EXPORT_FAIL = "SKILL-EXPORT-FAIL";
 
     private static final String TARGET_DELIMITER = ",";
 
@@ -305,6 +308,68 @@ public class SkillService {
             SkillStorageTarget.fromCode(code).ifPresent(targets::add);
         }
         return targets;
+    }
+
+    // ---- 导出 ----
+
+    /**
+     * 导出为技能包 zip。
+     *
+     * <p><b>结构与上传解析严格对称</b>：zip 内包一层以 skillCode 命名的目录，目录里放
+     * {@code SKILL.md}（取 {@code ai_skill.content}）与全部附属文件（按各自的相对路径还原）。
+     * 这样下载下来的包能<b>原样重新上传</b>——{@link #parseSkillZip} 正是以最浅层 SKILL.md
+     * 所在目录为技能根。改这里的结构前先想清楚往返还成不成立。</p>
+     *
+     * <p>包一层目录而不是把文件铺在 zip 根：解压时不会把一堆文件散进当前目录，
+     * 也与技能包本身"一个目录就是一个技能"的形态一致。</p>
+     *
+     * <p>内容全部来自库（{@code ai_skill} + {@code ai_skill_file}），<b>不读存储目标</b>：
+     * {@code storage_targets} 是"发布到哪里去"，库才是权威副本。从 MinIO 回读既慢又可能
+     * 读到被外部改过的版本，导出的就不是后台这一份了。</p>
+     */
+    public SkillExportPackage exportZip(Long id) {
+        AiSkill skill = requireSkill(id);
+        String rootDir = sanitizeFileName(skill.getSkillCode());
+        List<SkillFileContent> files = loadFileContents(id);
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        try (ZipOutputStream zipOut = new ZipOutputStream(bos, StandardCharsets.UTF_8)) {
+            String content = skill.getContent() == null ? "" : skill.getContent();
+            writeZipEntry(zipOut, rootDir + "/" + SKILL_FILE_NAME, content.getBytes(StandardCharsets.UTF_8));
+            for (SkillFileContent file : files) {
+                // content 允许为空（历史数据/空文件），补空字节而不是跳过——
+                // 跳过会让重新上传后文件清单凭空少几项，导出就不是"这个 skill 的全部"了
+                byte[] bytes = file.content() == null ? new byte[0] : file.content();
+                writeZipEntry(zipOut, rootDir + "/" + file.filePath(), bytes);
+            }
+        } catch (IOException e) {
+            log.error("skill export failed, code={}, skillId={}", ERR_EXPORT_FAIL, id, e);
+            throw new BizException(ResultCode.SYSTEM_ERROR, "技能包打包失败: " + e.getMessage());
+        }
+        log.info("skill exported: skillCode={}, files={}", skill.getSkillCode(), files.size());
+        return new SkillExportPackage(rootDir + ".zip", bos.toByteArray());
+    }
+
+    private void writeZipEntry(ZipOutputStream zipOut, String entryName, byte[] bytes) throws IOException {
+        zipOut.putNextEntry(new ZipEntry(entryName));
+        zipOut.write(bytes);
+        zipOut.closeEntry();
+    }
+
+    /**
+     * 把 skillCode 净化成合法文件名。
+     *
+     * <p>skillCode 是用户填的（现网就有"Apollo查值"这种），直接拿来当 zip 内的目录名与下载文件名，
+     * 遇到 {@code /} 或 {@code ..} 会写出目录穿越的条目——那是压缩包里的经典问题，
+     * 解压方按路径还原就落到目标目录之外去了。中文本身没问题（zip 与 Content-Disposition 都按 UTF-8 处理），
+     * 只净化路径分隔符与各系统的文件名保留字符。</p>
+     */
+    private String sanitizeFileName(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return "skill";
+        }
+        String cleaned = raw.trim().replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+        // 全是分隔符时上面会净化成一串下划线，仍给个兜底名，避免出现 ".zip" 这种无名文件
+        return StringUtils.hasText(cleaned.replace("_", "")) ? cleaned : "skill";
     }
 
     // ---- 上传解析 ----

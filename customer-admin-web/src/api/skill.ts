@@ -1,4 +1,4 @@
-import { request } from './request'
+import { download, request } from './request'
 import type { PageQuery, PageResult, SkillSaveRequest, SkillUploadParseResult, SkillVO } from '@/types/api'
 
 export function pageSkills(query: PageQuery) {
@@ -19,6 +19,16 @@ export function updateSkill(id: number, data: SkillSaveRequest) {
 
 export function deleteSkill(id: number) {
   return request<void>({ url: `/aiconfig/skill/${id}`, method: 'delete' })
+}
+
+/**
+ * 下载技能包 zip（SKILL.md + 全部附属文件，zip 内包一层以 skillCode 命名的目录）。
+ *
+ * 下载下来的包可以直接用「新建 Skill」的上传入口原样导回——后端导出结构与上传解析是对称的。
+ * 文件名以响应头 Content-Disposition 为准，这里的兜底只在响应头缺失时生效。
+ */
+export function downloadSkill(id: number, skillCode: string) {
+  return download({ url: `/aiconfig/skill/${id}/download`, method: 'get' }, `${skillCode}.zip`)
 }
 
 /** 解析上传的 .md/.zip 文件为技能包（SKILL.md 正文 + 附属文件）；不落库，由调用方回填表单后仍走 create/update 保存。 */
