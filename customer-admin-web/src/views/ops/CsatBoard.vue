@@ -15,6 +15,9 @@ const RESPONSE_RATE_WARN = 0.3
 const loading = ref(false)
 const summary = ref<CsatSummary | null>(null)
 const surveys = ref<CsatSurvey[]>([])
+// 分区键 = 租户码（客服端按当前租户上下文记录，未开多租户时统一落 default）。
+// 它一度取自 sessionId 前缀，而用户端 sessionId 形如 u{userId}:conv-xxx，
+// 于是每个用户各成一个分区，这个看板按任何口径都查不出数据。
 const query = reactive({ scopeId: 'default', days: 7 })
 
 async function loadData() {
@@ -74,7 +77,7 @@ onMounted(loadData)
   <div class="csat-board">
     <el-card shadow="never">
       <div class="toolbar">
-        <el-input v-model="query.scopeId" placeholder="分区键" style="width: 160px" />
+        <el-input v-model="query.scopeId" placeholder="租户码" style="width: 160px" />
         <el-select v-model="query.days" style="width: 130px">
           <el-option label="最近 7 天" :value="7" />
           <el-option label="最近 30 天" :value="30" />

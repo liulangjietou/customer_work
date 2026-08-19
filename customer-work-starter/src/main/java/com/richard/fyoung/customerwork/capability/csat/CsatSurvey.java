@@ -14,7 +14,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * （用户改主意允许更正）。</p>
  *
  * @param sessionId     会话 ID
- * @param scopeId       分区键（TenantResolver 由 sessionId 解析）
+ * @param scopeId       运营统计分区键（OpsScopeResolver 取当前租户，无上下文回落 default）
  * @param score         评分 1-5；{@code null} 表示已邀请但用户还没评
  * @param comment       可选的文字说明
  * @param invitedAtMs   发出邀请的时间戳（毫秒）

@@ -1,10 +1,11 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap;
 
-import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.core.support.TenantResolver;
+import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.infra.config.properties.KnowledgeGapProperties;
 import com.richard.fyoung.customerwork.tool.KnowledgeBaseTools;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
@@ -32,7 +33,14 @@ class KnowledgeGapServiceTest {
     void setUp() {
         store = new InMemoryKnowledgeGapStore();
         properties = new KnowledgeGapProperties();
-        service = new KnowledgeGapService(store, new TenantResolver(new CustomerWorkProperties()), properties);
+        service = new KnowledgeGapService(store, new OpsScopeResolver(), properties);
+        // 分区取自租户上下文（运营口径）："该补哪些知识"是业务线级别的问题，不是某个用户的私事
+        TenantContext.set("tenantA");
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
     }
 
     @Test
@@ -88,10 +96,12 @@ class KnowledgeGapServiceTest {
     @Test
     void differentScopes_shouldNotMix() {
         service.recordMiss("tenantA:s1", "你们支持货到付款吗");
-        service.recordMiss("tenantB:s1", "你们支持货到付款吗");
+        TenantContext.runWith("tenantB", () -> service.recordMiss("tenantB:s1", "你们支持货到付款吗"));
 
         assertEquals(1, service.topGaps("tenantA", 10).size());
-        assertEquals(1L, service.topGaps("tenantA", 10).get(0).missCount());
+        assertEquals(1L, service.topGaps("tenantA", 10).get(0).missCount(),
+            "分区隔离靠租户上下文，不再靠 sessionId 前缀");
+        assertEquals(1L, service.topGaps("tenantB", 10).get(0).missCount());
     }
 
     @Test
@@ -115,9 +125,20 @@ class KnowledgeGapServiceTest {
         new KnowledgeBaseTools(missBackend, service).searchKnowledge("你们支持货到付款吗").block();
         new KnowledgeBaseTools(hitBackend, service).searchKnowledge("七天无理由怎么算").block();
 
-        List<KnowledgeGap> gaps = service.topGaps(TenantResolver.DEFAULT_TENANT, 10);
+        List<KnowledgeGap> gaps = service.topGaps("tenantA", 10);
         assertEquals(1, gaps.size(), "只有未命中才该被记为盲区");
         assertEquals("你们支持货到付款吗", gaps.get(0).question());
+    }
+
+    @Test
+    void scope_shouldFallBackToDefaultWithoutTenantContext() {
+        // 未开多租户时全部盲区落 default 分区，看板默认值即可直接看到
+        TenantContext.clear();
+
+        service.recordMiss("u42:conv-abc", "你们支持货到付款吗");
+
+        assertEquals(1, service.topGaps(TenantContext.DEFAULT, 10).size());
+        assertTrue(service.topGaps("u42", 10).isEmpty(), "分区与 sessionId 前缀无关");
     }
 
     @Test

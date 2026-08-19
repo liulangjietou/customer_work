@@ -16,7 +16,7 @@ import java.security.NoSuchAlgorithmException;
  *
  * @param questionHash  问题原文的 SHA-256（主键；问题可能很长，不适合直接做键）
  * @param question      问题原文（截断保存，运营要看的是这个）
- * @param scopeId       分区键（TenantResolver 由 sessionId 解析）
+ * @param scopeId       运营统计分区键（OpsScopeResolver 取当前租户，无上下文回落 default）
  * @param missCount     累计未命中次数——排序依据，越大越该优先补
  * @param firstSeenAtMs 首次出现时间戳（毫秒）
  * @param lastSeenAtMs  最近一次出现时间戳（毫秒）

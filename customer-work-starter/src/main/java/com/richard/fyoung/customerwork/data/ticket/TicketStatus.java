@@ -29,5 +29,19 @@ public enum TicketStatus {
     RESOLVED,
 
     /** 工单已关闭（终态，可 reopen 回流）。 */
-    CLOSED
+    CLOSED;
+
+    /**
+     * 是否已结束（用户视角的"这次服务到此为止"）。
+     *
+     * <p>{@code RESOLVED} 与 {@code CLOSED} 都算：前者是用户确认解决、后者是关单，
+     * 二者都意味着本次服务已给出结论，只是收尾方式不同。用户端据此转只读态、
+     * 满意度邀请据此发出——判定收敛在这里一处，不要在各处再写
+     * {@code == CLOSED || == RESOLVED}（前端 {@code isTicketEnded} 是同一份定义）。</p>
+     *
+     * <p>两者都可 reopen 回流，所以"终态"是就本次服务而言，不代表工单不可再动。</p>
+     */
+    public boolean isEnded() {
+        return this == RESOLVED || this == CLOSED;
+    }
 }

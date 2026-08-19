@@ -78,10 +78,13 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertEquals(44, countBusinessTables(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertTrue(columnExists(dataSource, "cw_outbox_message", "lease_owner"));
-            assertEquals(1, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
+            // 接管基线 1 行 + 重跑的 V6 1 行。V6 是幂等迁移（空镜像库上影响 0 行），
+            // 故刻意不给它加镜像判定——为省这一行历史去写"注释里有没有某几个字"的判定太脆
+            assertEquals(2, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
             // V5 是纯种子迁移，镜像里已带那两档，故接管版本要跟到 5——
             // 停在 4 的话 Flyway 会重跑 V5，撞唯一键直接失败（判定见 resolveBaselineVersion）
             assertEquals(1, countHistoryVersion(dataSource, "5"), "完整镜像应从当前版本接管");
+            assertEquals(1, countHistoryVersion(dataSource, "6"), "幂等迁移重跑一次，两次 migrate 也只记一条");
         }
     }
 
@@ -89,8 +92,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         try (HikariDataSource dataSource = dataSource(database, "flyway-empty-test")) {
             migrate(dataSource, database);
             assertEquals(44, countBusinessTables(dataSource));
-            // V5 只插 ADMIN_USER 档种子、不建表，故迁移记录 +1 而表数不变
-            assertEquals(5, countHistoryRows(dataSource));
+            // V5（ADMIN_USER 档种子）与 V6（运营分区归一）都不建表，故迁移记录增加而表数不变
+            assertEquals(6, countHistoryRows(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertEquals(0, countHistoryVersion(dataSource, "0"), "空库不应写 baseline 记录");
         }
@@ -111,7 +114,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             // V4 给存量 cw_user 加的配额等级列：这张表是 V1 就建好的，加列只能靠迁移补
             assertTrue(columnExists(dataSource, "cw_user", "level_code"));
             assertEquals(44, countBusinessTables(dataSource));
-            assertEquals(6, countHistoryRows(dataSource));
+            // baseline 0 + V1~V6
+            assertEquals(7, countHistoryRows(dataSource));
             assertEquals(1, countHistoryVersion(dataSource, "0"), "非空存量库必须先登记 baseline 0");
         }
     }

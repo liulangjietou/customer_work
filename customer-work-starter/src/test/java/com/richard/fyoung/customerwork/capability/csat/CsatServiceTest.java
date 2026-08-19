@@ -1,7 +1,8 @@
 package com.richard.fyoung.customerwork.capability.csat;
 
-import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.core.support.TenantResolver;
+import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -25,7 +26,14 @@ class CsatServiceTest {
     @BeforeEach
     void setUp() {
         store = new InMemoryCsatStore();
-        service = new CsatService(store, new TenantResolver(new CustomerWorkProperties()));
+        service = new CsatService(store, new OpsScopeResolver());
+        // 分区取自租户上下文（运营口径），不再由 sessionId 前缀解析
+        TenantContext.set("tenantA");
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
     }
 
     @Test
@@ -33,7 +41,7 @@ class CsatServiceTest {
         CsatSurvey survey = service.invite("tenantA:sess-1");
 
         assertFalse(survey.answered(), "刚邀请时还没有评分");
-        assertEquals("tenantA", survey.scopeId());
+        assertEquals("tenantA", survey.scopeId(), "分区取当前租户");
         assertTrue(survey.invitedAtMs() > 0);
     }
 
@@ -92,6 +100,26 @@ class CsatServiceTest {
     }
 
     @Test
+    void scope_shouldFallBackToDefaultWithoutTenantContext() {
+        // 未开多租户时全部数据落 default 分区——看板默认值即可直接看到，
+        // 这也是"单租户系统"下唯一说得通的口径
+        TenantContext.clear();
+
+        CsatSurvey survey = service.invite("u42:conv-abc");
+
+        assertEquals(TenantContext.DEFAULT, survey.scopeId());
+    }
+
+    @Test
+    void scope_shouldIgnoreSessionIdPrefix() {
+        // 早期按 sessionId 前缀分区，而用户端 sessionId 形如 u{userId}:conv-xxx，
+        // 于是每个用户各成一个分区，运营看板按任何口径都查不出数据
+        CsatSurvey survey = service.invite("u42:conv-abc");
+
+        assertEquals("tenantA", survey.scopeId(), "分区由租户决定，与 sessionId 前缀无关");
+    }
+
+    @Test
     void summary_shouldUseIndustryCsatFormula() {
         service.submit("tenantA:s1", 5, null);
         service.submit("tenantA:s2", 4, null);
@@ -126,7 +154,7 @@ class CsatServiceTest {
     @Test
     void summary_shouldIsolateScopes() {
         service.submit("tenantA:s1", 5, null);
-        service.submit("tenantB:s1", 1, null);
+        TenantContext.runWith("tenantB", () -> service.submit("tenantB:s1", 1, null));
 
         assertEquals(1, service.summary("tenantA", 0L, Long.MAX_VALUE).answered());
         assertEquals(1.0d, service.summary("tenantA", 0L, Long.MAX_VALUE).csat(), 1e-9);

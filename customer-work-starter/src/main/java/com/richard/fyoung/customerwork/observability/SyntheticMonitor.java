@@ -69,9 +69,10 @@ public class SyntheticMonitor {
             result = "DOWN";
             log.error("[SYNTH] probe failed, code={}", "SYNTHETIC_PROBE_DOWN", e);
         } finally {
-            // 清理探针会话状态，避免与真实会话共用命名空间时堆积
+            // 清理探针会话状态，避免与真实会话共用命名空间时堆积。
+            // 用 discard 而非 end：探针背后没有真人，计进 CSAT 会稀释回收率
             try {
-                customerService.endSession(cfg.getSessionId());
+                customerService.discardSession(cfg.getSessionId());
             } catch (Exception e) {
                 log.error("[SYNTH] cleanup probe session failed, code={}", "SYNTHETIC_CLEANUP_ERROR", e);
             }

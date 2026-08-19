@@ -46,7 +46,8 @@ class SyntheticMonitorTest {
         monitor(service, registry).probe();
 
         assertEquals(1.0, probeCount(registry, "UP"));
-        verify(service, times(1)).endSession(eq(PROBE_SESSION));   // 探测后清理探针会话
+        // 用 discard 而非 end：探针背后没有真人，计进 CSAT 会用空邀请稀释回收率
+        verify(service, times(1)).discardSession(eq(PROBE_SESSION));
     }
 
     @Test
@@ -81,6 +82,6 @@ class SyntheticMonitorTest {
         monitor(service, registry).probe();
 
         assertEquals(1.0, probeCount(registry, "DOWN"));
-        verify(service, times(1)).endSession(anyString());   // 出错也要清理
+        verify(service, times(1)).discardSession(anyString());   // 出错也要清理
     }
 }

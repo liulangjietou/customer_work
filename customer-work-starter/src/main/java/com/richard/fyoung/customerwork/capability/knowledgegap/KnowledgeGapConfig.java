@@ -1,7 +1,7 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap;
 
 import com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapMapper;
-import com.richard.fyoung.customerwork.core.support.TenantResolver;
+import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,8 +37,8 @@ public class KnowledgeGapConfig {
     @Bean
     @ConditionalOnMissingBean(KnowledgeGapService.class)
     public KnowledgeGapService knowledgeGapService(KnowledgeGapStore store,
-                                                   TenantResolver tenantResolver,
+                                                   OpsScopeResolver opsScopeResolver,
                                                    CustomerWorkProperties properties) {
-        return new KnowledgeGapService(store, tenantResolver, properties.getKnowledgeGap());
+        return new KnowledgeGapService(store, opsScopeResolver, properties.getKnowledgeGap());
     }
 }
