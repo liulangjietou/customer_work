@@ -17,6 +17,9 @@ import com.richard.fyoung.customeradmin.system.role.entity.SysRolePermission;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRolePermissionMapper;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -35,6 +38,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class RoleService {
+
+    private static final Logger log = LoggerFactory.getLogger(RoleService.class);
 
     private static final String SUPER_ADMIN_ROLE_CODE = "super_admin";
 
@@ -81,7 +86,29 @@ public class RoleService {
         role.setRemark(request.remark());
         role.setStatus(request.status() == null ? 1 : request.status());
         role.setDataScope(resolveDataScope(request.dataScope()).name());
-        roleMapper.insert(role);
+
+        // 坑：sys_role.uk_sys_role_code 是不含 deleted 列的纯数据库唯一约束，delete() 走逻辑删除，
+        // 被删过的编码仍占着唯一索引。上面的 exists() 会被自动追加 deleted=0 判定“可用”，但直接
+        // insert 会撞唯一键抛 DuplicateKeyException（与 AuthService/KnowledgeBaseService 同款坑）。
+        // 先查有没有被软删除过的旧行，有就“复活”它再整体覆盖字段，而不是插新行——若只把异常兜成
+        // 友好提示，一个编码被删过一次就永久不能再用，那是功能缺陷而不只是错误信息不友好。
+        SysRole softDeleted = roleMapper.selectDeletedByRoleCode(request.roleCode());
+        if (softDeleted != null) {
+            roleMapper.reviveDeleted(softDeleted.getId());
+            role.setId(softDeleted.getId());
+            roleMapper.updateById(role);
+            replacePermissions(softDeleted.getId(), request.permissionIds());
+            log.info("revived soft-deleted role for re-create, roleCode={}, roleId={}",
+                request.roleCode(), softDeleted.getId());
+            return;
+        }
+        // 纯并发竞争（两个请求同时创建同编码角色，都没查到对方尚未提交的行）仍可能撞唯一键：兜成
+        // 友好的业务异常，不让 DuplicateKeyException 裸奔到 GlobalExceptionHandler 变成 SYSTEM_ERROR。
+        try {
+            roleMapper.insert(role);
+        } catch (DuplicateKeyException e) {
+            throw new BizException(ResultCode.RESOURCE_DUPLICATE, "角色编码已存在");
+        }
         replacePermissions(role.getId(), request.permissionIds());
     }
 
