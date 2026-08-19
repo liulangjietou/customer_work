@@ -388,7 +388,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                 traceExporter.close();
                 log.info("[OTEL] trace 导出器已关闭");
             } catch (Exception e) {
-                log.warn("[OTEL] 关闭 trace 导出器失败: {}", e.getMessage());
+                log.error("[OTEL] trace exporter close failed, code={}, path={}",
+                    "OTEL_TRACER_CLOSE_FAIL", properties.getObservability().getTraceFile(), e);
             }
         }
     }

@@ -52,7 +52,8 @@ public class NacosPromptService {
                 cfg.getPromptDataId(), cfg.getGroup());
         } catch (Exception e) {
             // Nacos 不可用不应阻断启动，回退内置提示词
-            log.warn("[Nacos] 接入失败，回退内置提示词: {}", e.getMessage());
+            log.error("[Nacos] prompt service fallback to builtin, code={}, dataId={}", "NACOS_PROMPT_FALLBACK",
+                cfg.getPromptDataId(), e);
         }
     }
 

@@ -46,10 +46,10 @@ public class StudioConfigurer {
                 .runName(s.getRunName())
                 .initialize()
                 .subscribe(
-                    v -> log.info("[Studio] 已连接 {}", s.getUrl()),
-                    e -> log.warn("[Studio] 连接失败（忽略）: {}", e.getMessage()));
+                    v -> log.info("[Studio] connected {}", s.getUrl()),
+                    e -> log.info("[Studio] connect skipped on failure, code={}, url={}", "STUDIO_CONNECT_SKIPPED", s.getUrl()));
         } catch (Exception e) {
-            log.warn("[Studio] 初始化失败（忽略）: {}", e.getMessage());
+            log.info("[Studio] init skipped on failure, code={}, url={}", "STUDIO_INIT_SKIPPED", s.getUrl());
         }
     }
 }

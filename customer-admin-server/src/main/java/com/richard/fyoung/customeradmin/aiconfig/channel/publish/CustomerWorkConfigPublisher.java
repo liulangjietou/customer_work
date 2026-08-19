@@ -4,9 +4,9 @@ import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.PropertyKeyConst;
 import com.alibaba.nacos.api.config.ConfigService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
+import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentBackupModel;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentMcp;
@@ -76,7 +76,6 @@ public class CustomerWorkConfigPublisher {
     private static final String MCP_TYPE_HTTP = "http";
     private static final String MCP_TYPE_SSE = "sse";
     private static final String TRANSPORT_STREAMABLE_HTTP = "streamable-http";
-    private static final String MCP_SERVERS_WRAPPER_KEY = "mcpServers";
 
     private final AiChannelBindingMapper channelBindingMapper;
     private final AiAgentMapper agentMapper;
@@ -92,6 +91,7 @@ public class CustomerWorkConfigPublisher {
     private final RuntimePublishTaskService taskService;
     private final boolean tenantEnabled;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final McpClientFactory mcpClientFactory = new McpClientFactory();
 
     private volatile ConfigService configService;
 
@@ -557,7 +557,7 @@ public class CustomerWorkConfigPublisher {
             CustomerWorkRuntimeConfig.McpServer server = new CustomerWorkRuntimeConfig.McpServer();
             server.setName(mcp.getMcpName());
             server.setTransport(transport);
-            fillUrlAndHeaders(server, mcp.getConfig());
+            fillUrlAndHeaders(server, mcp.getMcpType(), mcp.getConfig());
             if (StringUtils.hasText(server.getUrl())) {
                 servers.add(server);
             }
@@ -575,41 +575,18 @@ public class CustomerWorkConfigPublisher {
         return null;
     }
 
-    /**
-     * 解析 ai_mcp.config JSON 的 url 与 headers（与 AdminMcpFactory 的取值方式一致）：
-     * 同样兼容 Claude Desktop / Cursor 风格的 {@code {"mcpServers": {...}}} 包装格式——调试面板与真实
-     * 注册路径都认这层包装，发布链路不解包会导致 url 取空、该 MCP 被静默跳过。
-     *
-     * <p>TODO(sink-common-to-starter 合入后)：改为复用 starter 的
-     * {@code com.richard.fyoung.customerwork.tool.mcp.McpClientFactory#parseSpec}，删除本地解包实现。</p>
-     */
-    private void fillUrlAndHeaders(CustomerWorkRuntimeConfig.McpServer server, String config) {
+    /** 解析 ai_mcp.config JSON 的 url 与 headers（复用 starter 的 MCP parser）。 */
+    private void fillUrlAndHeaders(CustomerWorkRuntimeConfig.McpServer server, String mcpType, String config) {
         if (!StringUtils.hasText(config)) {
             return;
         }
         try {
-            JsonNode node = unwrapMcpServers(objectMapper.readTree(config));
-            server.setUrl(node.path("url").asText(null));
-            JsonNode headersNode = node.path("headers");
-            if (headersNode.isObject() && !headersNode.isEmpty()) {
-                server.setHeaders(objectMapper.convertValue(headersNode, new TypeReference<Map<String, String>>() {}));
-            }
+            McpServerSpec spec = mcpClientFactory.parseSpec(server.getName(), mcpType, config);
+            server.setUrl(spec.url());
+            server.setHeaders(spec.headers());
         } catch (Exception e) {
             log.error("parse mcp config failed, code={}, mcpName={}", "RUNTIME-PUBLISH-MCP-PARSE-FAIL", server.getName(), e);
         }
-    }
-
-    /**
-     * 与 {@code AdminMcpFactory#unwrapMcpServers} 同语义：外层带 {@code mcpServers} 包装时取里面唯一
-     * 一个 server 条目的配置对象（服务名以 {@code ai_mcp.mcp_name} 为准，不读 wrapper 里的 key）；
-     * 没有包装时按原样返回，两种格式都认。
-     */
-    private JsonNode unwrapMcpServers(JsonNode node) {
-        JsonNode servers = node.path(MCP_SERVERS_WRAPPER_KEY);
-        if (servers.isObject() && servers.size() > 0) {
-            return servers.elements().next();
-        }
-        return node;
     }
 
     private String serialize(CustomerWorkRuntimeConfig payload) {
