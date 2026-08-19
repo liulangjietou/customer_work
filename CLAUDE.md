@@ -34,7 +34,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1441** + admin-server **851** + app 93 + customer-channel 65 + gateway 1（合计 **2451**）
+- 测试基线：starter **1441** + admin-server **858** + app 93 + customer-channel 65 + gateway 1（合计 **2458**）
+  （2026-08-19 Skill 技能包下载批次实测：starter 1441 / 5 skip、admin 858 / 1 skip，BUILD SUCCESS，
+  排除 `RedisSessionPersistenceTest`。本批次自身加 admin +7。
+  **导入/导出这类成对功能，测试要真的做一次往返**（导出的包再喂给解析器比对），
+  只断言"zip 里有哪几个条目"照不出结构漂移。
+  sys_permission 下次从 **248** 起、admin Flyway 下次 **V63**。
+  上一版基线 2026-08-19 语义缓存流式接入批次：starter 1441 + admin 851，合计 2451）
   （2026-08-19 语义缓存流式接入批次实测：starter 1441 / 5 skip、admin 851 / 1 skip，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加 starter +9。
   **Mapper 的 `resultType` 不要直接指向 record**：record 没有 setter，MyBatis 自动映射落不进去，
