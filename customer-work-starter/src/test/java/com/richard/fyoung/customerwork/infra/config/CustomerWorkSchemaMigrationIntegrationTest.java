@@ -79,7 +79,9 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertTrue(columnExists(dataSource, "cw_outbox_message", "lease_owner"));
             assertEquals(1, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
-            assertEquals(1, countHistoryVersion(dataSource, "4"), "完整镜像应从当前版本接管");
+            // V5 是纯种子迁移，镜像里已带那两档，故接管版本要跟到 5——
+            // 停在 4 的话 Flyway 会重跑 V5，撞唯一键直接失败（判定见 resolveBaselineVersion）
+            assertEquals(1, countHistoryVersion(dataSource, "5"), "完整镜像应从当前版本接管");
         }
     }
 

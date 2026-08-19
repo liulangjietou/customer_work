@@ -29,6 +29,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String LEGACY_BASELINE_VERSION = "0";
     private static final String OUTBOX_MIRROR_VERSION = "3";
     private static final String SUBJECT_QUOTA_MIRROR_VERSION = "4";
+    private static final String ADMIN_QUOTA_MIRROR_VERSION = "5";
 
     private final DataSource dataSource;
     private final boolean enabled;
@@ -70,6 +71,11 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
      * <p>完整镜像会持续同步最新迁移，因此接管版本不能写死。先核对 V1-V3 的完整结构，再用 V4
      * 的表与列判断镜像是否已经包含主体配额；旧的 V3 镜像仍从版本 3 接管并补跑 V4，当前镜像则
      * 从版本 4 接管。普通旧库仍从 0 开始执行全部修复。</p>
+     *
+     * <p><b>V5 只能靠数据判断</b>：它是纯种子迁移（给 {@code cw_subject_quota_level} 加后台档），
+     * 没有任何结构变化，用 {@code tableExists}/{@code columnExists} 是看不出来的。只按结构判定的话，
+     * 完整镜像会被当成"停在 V4"而重新执行 V5，撞上唯一键直接迁移失败。往后再加纯数据迁移，
+     * 同样要在这里补一条对应的数据判定。</p>
      */
     private String resolveBaselineVersion() throws Exception {
         try (Connection connection = dataSource.getConnection()) {
@@ -94,8 +100,20 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             boolean subjectQuotaMirror = tableExists(connection, "cw_subject_quota_level")
                 && tableExists(connection, "cw_subject_quota_hit")
                 && columnExists(connection, "cw_user", "level_code");
-            return subjectQuotaMirror
-                ? SUBJECT_QUOTA_MIRROR_VERSION : OUTBOX_MIRROR_VERSION;
+            if (!subjectQuotaMirror) {
+                return OUTBOX_MIRROR_VERSION;
+            }
+            boolean adminQuotaMirror = rowExists(connection,
+                "SELECT 1 FROM `cw_subject_quota_level` WHERE `level_code` = 'admin-default' LIMIT 1");
+            return adminQuotaMirror ? ADMIN_QUOTA_MIRROR_VERSION : SUBJECT_QUOTA_MIRROR_VERSION;
+        }
+    }
+
+    /** 数据维度的镜像判定：纯种子迁移没有结构痕迹，只能问"那行数据在不在"。 */
+    private boolean rowExists(Connection connection, String sql) throws Exception {
+        try (java.sql.Statement statement = connection.createStatement();
+             java.sql.ResultSet rs = statement.executeQuery(sql)) {
+            return rs.next();
         }
     }
 
