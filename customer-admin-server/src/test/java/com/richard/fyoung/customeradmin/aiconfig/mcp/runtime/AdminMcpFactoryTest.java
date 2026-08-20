@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.mcp.runtime;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallResult;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugToolVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customerwork.tool.mcp.McpConnectivityResult;
 import com.richard.fyoung.customerwork.tool.mcp.McpImageContent;
 import com.richard.fyoung.customerwork.tool.mcp.McpToolCallResult;
@@ -46,7 +47,7 @@ class AdminMcpFactoryTest {
 
         McpTestResult vo = AdminMcpFactory.toVo(new McpConnectivityResult(true, testedAt, null));
 
-        assertEquals(McpTestResult.STATUS_SUCCESS, vo.testStatus());
+        assertEquals(ConnectivityTestStatus.SUCCESS, vo.testStatus());
         assertEquals(testedAt, vo.testTime());
         assertNull(vo.message());
     }
@@ -55,7 +56,7 @@ class AdminMcpFactoryTest {
     void toVo_shouldMapConnectivityFailureToStatusFailed() {
         McpTestResult vo = AdminMcpFactory.toVo(new McpConnectivityResult(false, LocalDateTime.now(), "connect timed out"));
 
-        assertEquals(McpTestResult.STATUS_FAILED, vo.testStatus());
+        assertEquals(ConnectivityTestStatus.FAILED, vo.testStatus());
         assertEquals("connect timed out", vo.message());
     }
 

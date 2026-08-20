@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.sqlconfig.entity.SqlDatasource;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDatasourceMapper;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -26,13 +27,12 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class SqlDatasourceConnectionManager {
 
+
     private static final Logger log = LoggerFactory.getLogger(SqlDatasourceConnectionManager.class);
 
     private static final int MAX_POOL_SIZE = 5;
     private static final int MIN_IDLE = 0;
     private static final long CONNECTION_TIMEOUT_MS = 5000;
-    private static final int ENABLED = 1;
-
     private final ConcurrentHashMap<Long, HikariDataSource> pools = new ConcurrentHashMap<>();
 
     private final SqlDatasourceMapper datasourceMapper;
@@ -63,7 +63,7 @@ public class SqlDatasourceConnectionManager {
         if (datasource == null) {
             throw new BizException(ResultCode.SQL_DATASOURCE_UNAVAILABLE, "数据源不存在: " + datasourceId);
         }
-        if (datasource.getEnabled() == null || datasource.getEnabled() != ENABLED) {
+        if (datasource.getEnabled() == null || datasource.getEnabled() != StatusFlags.ENABLED) {
             throw new BizException(ResultCode.SQL_DATASOURCE_UNAVAILABLE, "数据源已禁用: " + datasource.getName());
         }
         HikariDataSource dataSource = new HikariDataSource();

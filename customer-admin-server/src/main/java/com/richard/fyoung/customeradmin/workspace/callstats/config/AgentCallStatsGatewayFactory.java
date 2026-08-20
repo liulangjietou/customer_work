@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
+import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsExtMapper;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallLogStore;
@@ -23,10 +24,9 @@ import java.util.List;
  */
 final class AgentCallStatsGatewayFactory {
 
+
     /** starter jar 内的调用日志主表 Mapper XML（classpath*: 才能命中 jar 内资源）。 */
-    private static final String STARTER_LOG_XML = "classpath*:customerwork/mapper/AgentCallLogMapper.xml";
     /** starter jar 内的调用分段 Mapper XML。 */
-    private static final String STARTER_SEGMENT_XML = "classpath*:customerwork/mapper/AgentCallSegmentMapper.xml";
     /** admin 自带的读侧扩展 Mapper XML（放 /callstats 下，避开主 MP 默认的 /mapper 扫描）。 */
     private static final String EXT_XML = "classpath*:callstats/AgentCallStatsExtMapper.xml";
 
@@ -34,7 +34,8 @@ final class AgentCallStatsGatewayFactory {
     static final List<Class<?>> MAPPER_CLASSES = List.of();
 
     /** 需加载的 Mapper XML 位置。 */
-    static final List<String> MAPPER_XML_LOCATIONS = List.of(STARTER_LOG_XML, STARTER_SEGMENT_XML, EXT_XML);
+    static final List<String> MAPPER_XML_LOCATIONS =
+        List.of(StarterMapperXml.AGENT_CALL_LOG, StarterMapperXml.AGENT_CALL_SEGMENT, EXT_XML);
 
     /** ADMIN 主数据源上的门面标识（借用宿主数据源，不自建池）。 */
     private static final String ADMIN_GATEWAY_NAME = "agent-call-stats-admin";

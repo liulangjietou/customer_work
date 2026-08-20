@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.sun.net.httpserver.HttpServer;
 import io.agentscope.core.model.Model;
@@ -51,7 +52,7 @@ class AdminModelFactoryTest {
         AdminModelFactory factory = new AdminModelFactory(Duration.ofSeconds(5));
         ModelTestResult result = factory.testConnectivity("openai", baseUrl(), "sk-test", "gpt-4o-mini");
 
-        assertEquals(ModelTestResult.STATUS_SUCCESS, result.testStatus());
+        assertEquals(ConnectivityTestStatus.SUCCESS, result.testStatus());
         assertNotNull(result.testTime());
         assertNull(result.message());
     }
@@ -63,7 +64,7 @@ class AdminModelFactoryTest {
         AdminModelFactory factory = new AdminModelFactory(Duration.ofSeconds(5));
         ModelTestResult result = factory.testConnectivity("anthropic", baseUrl(), "sk-test", "claude");
 
-        assertEquals(ModelTestResult.STATUS_FAILED, result.testStatus());
+        assertEquals(ConnectivityTestStatus.FAILED, result.testStatus());
         assertNotNull(result.testTime());
         assertTrue(result.message().contains("401"));
     }

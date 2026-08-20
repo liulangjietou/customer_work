@@ -26,7 +26,6 @@ import java.util.List;
 public final class CronDevToolOps {
 
     /** 默认时区：与调度中心、业务库时间口径一致。 */
-    private static final String DEFAULT_ZONE = "Asia/Shanghai";
 
     /** 推算执行时间的条数：默认与上限。 */
     private static final int DEFAULT_NEXT_COUNT = 5;
@@ -179,7 +178,7 @@ public final class CronDevToolOps {
     /** 时区取值：null/空取默认，非法 ID fast-fail。 */
     private ZoneId resolveZone(String timezone) {
         if (timezone == null || timezone.trim().isEmpty()) {
-            return ZoneId.of(DEFAULT_ZONE);
+            return ZoneId.of(DevToolConstants.DEFAULT_ZONE);
         }
         try {
             return ZoneId.of(timezone.trim());

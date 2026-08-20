@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.capability.semanticcache;
 
 import com.richard.fyoung.customerwork.capability.semanticcache.mapper.SemanticCacheMapper;
 import com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator;
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.DashScopeEmbeddingClient;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
@@ -33,14 +34,12 @@ public class SemanticCacheConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SemanticCacheConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(SemanticCacheStore.class)
     public SemanticCacheStore semanticCacheStore(CustomerWorkProperties properties,
                                                  ObjectProvider<SemanticCacheMapper> mapperProvider) {
         String mode = properties.getSemanticCache().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("semantic cache store: jdbc (MyBatis-Plus 实现, table=cw_semantic_cache)");
             return new MybatisSemanticCacheStore(mapperProvider.getObject());
         }

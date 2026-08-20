@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.system.loginimage.dto.LoginCarouselImage
 import com.richard.fyoung.customeradmin.system.loginimage.dto.LoginImageReorderRequest;
 import com.richard.fyoung.customeradmin.system.loginimage.entity.LoginCarouselImage;
 import com.richard.fyoung.customeradmin.system.loginimage.mapper.LoginCarouselImageMapper;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -27,7 +28,6 @@ import java.util.stream.Collectors;
 @Service
 public class LoginCarouselImageService {
 
-    private static final int ENABLED = 1;
     /** 轮播图数量上限：登录页轮播超过这个数没有展示价值，也防目录被无限制堆积。 */
     private static final int MAX_IMAGE_COUNT = 10;
 
@@ -47,7 +47,7 @@ public class LoginCarouselImageService {
     /** 登录页免鉴权实时拉取：仅启用图的访问 URL，按 sortOrder 升序。 */
     public List<String> listEnabledUrls() {
         return listOrdered().stream()
-            .filter(image -> image.getEnabled() != null && image.getEnabled() == ENABLED)
+            .filter(image -> image.getEnabled() != null && image.getEnabled() == StatusFlags.ENABLED)
             .map(LoginCarouselImage::getImageUrl)
             .collect(Collectors.toList());
     }
@@ -64,14 +64,14 @@ public class LoginCarouselImageService {
         image.setImageName(file.getOriginalFilename());
         image.setImageUrl(imageUrl);
         image.setSortOrder(existing.isEmpty() ? 1 : existing.get(existing.size() - 1).getSortOrder() + 1);
-        image.setEnabled(ENABLED);
+        image.setEnabled(StatusFlags.ENABLED);
         imageMapper.insert(image);
         return toVo(image);
     }
 
     public void updateEnabled(Long id, boolean enabled) {
         LoginCarouselImage image = requireImage(id);
-        image.setEnabled(enabled ? ENABLED : 0);
+        image.setEnabled(enabled ? StatusFlags.ENABLED : 0);
         imageMapper.updateById(image);
     }
 
@@ -121,7 +121,7 @@ public class LoginCarouselImageService {
         vo.setImageName(image.getImageName());
         vo.setImageUrl(image.getImageUrl());
         vo.setSortOrder(image.getSortOrder());
-        vo.setEnabled(image.getEnabled() != null && image.getEnabled() == ENABLED);
+        vo.setEnabled(image.getEnabled() != null && image.getEnabled() == StatusFlags.ENABLED);
         vo.setCreateTime(image.getCreateTime());
         vo.setUpdateTime(image.getUpdateTime());
         return vo;

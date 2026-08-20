@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap;
 
 import com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapMapper;
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.slf4j.Logger;
@@ -19,14 +20,12 @@ public class KnowledgeGapConfig {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeGapConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(KnowledgeGapStore.class)
     public KnowledgeGapStore knowledgeGapStore(CustomerWorkProperties properties,
                                                ObjectProvider<KnowledgeGapMapper> mapperProvider) {
         String mode = properties.getKnowledgeGap().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("knowledge gap store: jdbc (MyBatis-Plus 实现, table=cw_knowledge_gap)");
             return new MybatisKnowledgeGapStore(mapperProvider.getObject());
         }

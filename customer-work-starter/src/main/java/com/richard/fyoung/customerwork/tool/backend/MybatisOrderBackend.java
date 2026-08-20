@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.richard.fyoung.customerwork.data.order.OrderStatuses;
 import com.richard.fyoung.customerwork.tool.backend.entity.OrderDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.OrderMapper;
 import org.slf4j.Logger;
@@ -26,7 +27,6 @@ public class MybatisOrderBackend implements OrderBackend {
     private static final Logger log = LoggerFactory.getLogger(MybatisOrderBackend.class);
 
     /** 订单取消终态。 */
-    private static final String STATUS_CANCELLED = "已取消";
 
     private final OrderMapper orderMapper;
 
@@ -105,7 +105,7 @@ public class MybatisOrderBackend implements OrderBackend {
     private String doCancelOrder(String orderId, String reason) {
         int affected = runUpdate(() -> orderMapper.update(null,
             new LambdaUpdateWrapper<OrderDO>()
-                .set(OrderDO::getStatus, STATUS_CANCELLED)
+                .set(OrderDO::getStatus, OrderStatuses.CANCELLED)
                 .eq(OrderDO::getOrderId, orderId)),
             "ORDER-BACKEND-CANCEL-FAIL", orderId);
         return affected > 0

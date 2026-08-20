@@ -36,12 +36,6 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(AgentChatWebSocketHandler.class);
 
-    private static final String QUERY_TOKEN = "token";
-    private static final String FIELD_TYPE = "type";
-    private static final String FIELD_DATA = "data";
-    private static final String FIELD_TICKET_ID = "ticketId";
-    private static final String FIELD_CONTENT = "content";
-
     private final CustomerWorkProperties properties;
     private final ChatDispatchService dispatch;
     private final WsSessionRegistry registry;
@@ -108,11 +102,11 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
         } catch (Exception e) {
             return Mono.error(e);
         }
-        String type = root.path(FIELD_TYPE).asText("");
-        JsonNode data = root.path(FIELD_DATA);
+        String type = root.path(WsFrame.KEY_TYPE).asText("");
+        JsonNode data = root.path(WsFrame.KEY_DATA);
         switch (type) {
             case WsFrame.TYPE_CHAT:
-                return dispatch.onAgentMessage(agent, text(data, FIELD_TICKET_ID), text(data, FIELD_CONTENT));
+                return dispatch.onAgentMessage(agent, text(data, WsFrame.KEY_TICKET_ID), text(data, WsFrame.KEY_CONTENT));
             case WsFrame.TYPE_PING:
                 registry.pushToAgent(agent, WsFrame.pong());
                 return Mono.empty();
@@ -129,6 +123,6 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
 
     private Optional<String> tokenOf(WebSocketSession session) {
         return Optional.ofNullable(UriComponentsBuilder.fromUri(session.getHandshakeInfo().getUri())
-            .build().getQueryParams().getFirst(QUERY_TOKEN));
+            .build().getQueryParams().getFirst(WsConstants.QUERY_TOKEN));
     }
 }

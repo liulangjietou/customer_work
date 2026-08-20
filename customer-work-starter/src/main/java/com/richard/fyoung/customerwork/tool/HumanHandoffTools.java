@@ -36,7 +36,6 @@ public class HumanHandoffTools {
     private static final Logger log = LoggerFactory.getLogger(HumanHandoffTools.class);
 
     /** 无真实会话上下文时的占位会话（沿用历史语义，保证纯工具可用）。 */
-    private static final String TOOL_SESSION = "agent-tool";
 
     /** 可空：未注入时不登记 handoff 工单，保持纯工具可用。 */
     private final HandoffService handoffService;
@@ -69,7 +68,8 @@ public class HumanHandoffTools {
                     String fallbackId = "HO" + System.currentTimeMillis();
                     return replyText(fallbackId, reason);
                 }
-                String session = (sessionId != null && !sessionId.isBlank()) ? sessionId : TOOL_SESSION;
+                String session = (sessionId != null && !sessionId.isBlank())
+                    ? sessionId : ToolConstants.AGENT_TOOL_SESSION;
                 HandoffTicket ticket = handoffService.create(session, reason);
                 return replyText(ticket.getId(), reason);
             })

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.ops.config;
 
+import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customeradmin.ops.jdbc.OpsGateway;
 import com.richard.fyoung.customerwork.capability.csat.MybatisCsatStore;
 import com.richard.fyoung.customerwork.capability.csat.mapper.CsatSurveyMapper;
@@ -25,18 +26,12 @@ import java.util.List;
  */
 final class OpsGatewayFactory {
 
-    private static final String XML_SEMANTIC_CACHE = "classpath*:customerwork/mapper/SemanticCacheMapper.xml";
-    private static final String XML_PROMPT_VERSION = "classpath*:customerwork/mapper/PromptVersionMapper.xml";
-    private static final String XML_CSAT = "classpath*:customerwork/mapper/CsatSurveyMapper.xml";
-    private static final String XML_KNOWLEDGE_GAP = "classpath*:customerwork/mapper/KnowledgeGapMapper.xml";
-    private static final String XML_DEAD_LETTER = "classpath*:customerwork/mapper/DeadLetterMapper.xml";
-    /** 知识库 FAQ：盲区"一键补知识"的落点。 */
-    private static final String XML_KNOWLEDGE = "classpath*:customerwork/mapper/KnowledgeMapper.xml";
-
     static final List<Class<?>> MAPPER_CLASSES = List.of();
 
+    /** 末位的知识库 FAQ 是盲区"一键补知识"的落点，其余是运营看板自身的表。 */
     static final List<String> MAPPER_XML_LOCATIONS = List.of(
-        XML_SEMANTIC_CACHE, XML_PROMPT_VERSION, XML_CSAT, XML_KNOWLEDGE_GAP, XML_DEAD_LETTER, XML_KNOWLEDGE);
+        StarterMapperXml.SEMANTIC_CACHE, StarterMapperXml.PROMPT_VERSION, StarterMapperXml.CSAT_SURVEY,
+        StarterMapperXml.KNOWLEDGE_GAP, StarterMapperXml.DEAD_LETTER, StarterMapperXml.KNOWLEDGE);
 
     private OpsGatewayFactory() {
     }

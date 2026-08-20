@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.openapi;
 
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
+import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -42,7 +43,7 @@ class OpenApiAuthInterceptorTest {
     private MockHttpServletRequest requestWithToken(String token) {
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/open/channel/robots");
         if (token != null) {
-            req.addHeader(OpenApiAuthInterceptor.HEADER_TOKEN, token);
+            req.addHeader(OpenApiProtocol.TOKEN_HEADER, token);
         }
         return req;
     }

@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.data.skill;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.data.skill.entity.SkillDO;
 import com.richard.fyoung.customerwork.data.skill.entity.SkillFileDO;
 import com.richard.fyoung.customerwork.data.skill.mapper.SkillFileMapper;
@@ -33,15 +35,11 @@ import java.util.stream.Stream;
  */
 public class MysqlSkillMaterializer {
 
-    private static final Logger log = LoggerFactory.getLogger(MysqlSkillMaterializer.class);
 
-    private static final String SKILL_FILE_NAME = "SKILL.md";
+    private static final Logger log = LoggerFactory.getLogger(MysqlSkillMaterializer.class);
 
     /** skillCode 白名单：它直接作为目录名，只允许字母/数字/连字符/下划线。 */
     private static final Pattern SAFE_SKILL_CODE = Pattern.compile("[A-Za-z0-9_-]+");
-
-    private static final int ENABLED = 1;
-
     private final SkillMapper skillMapper;
     private final SkillFileMapper skillFileMapper;
 
@@ -59,7 +57,7 @@ public class MysqlSkillMaterializer {
      */
     public int materializeTo(Path targetDir) throws IOException {
         List<SkillDO> skills = skillMapper.selectList(
-            new LambdaQueryWrapper<SkillDO>().eq(SkillDO::getEnabled, ENABLED));
+            new LambdaQueryWrapper<SkillDO>().eq(SkillDO::getEnabled, StatusFlags.ENABLED));
 
         // 全量重建：先清空再写，避免上一版残留（已删除的技能、改名的附属文件）混进技能包
         deleteRecursively(targetDir);
@@ -74,7 +72,7 @@ public class MysqlSkillMaterializer {
             }
             Path skillDir = targetDir.resolve(skill.getSkillCode());
             Files.createDirectories(skillDir);
-            Files.writeString(skillDir.resolve(SKILL_FILE_NAME),
+            Files.writeString(skillDir.resolve(AgentFileNames.SKILL_MD),
                 skill.getContent() == null ? "" : skill.getContent(), StandardCharsets.UTF_8);
             materializeFiles(skill, skillDir);
             materialized++;

@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.data.skill.storage;
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +25,6 @@ public class SftpSkillPublisher implements SkillContentPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(SftpSkillPublisher.class);
 
-    private static final String SKILL_FILE_NAME = "SKILL.md";
     private static final String PATH_SEPARATOR = "/";
 
     private final SkillStorageSettings.Sftp config;
@@ -168,7 +168,7 @@ public class SftpSkillPublisher implements SkillContentPublisher {
 
     /** {remote-dir}/{skillCode}/SKILL.md。 */
     static String remoteSkillFile(String remoteDir, String skillCode) {
-        return remoteSkillDir(remoteDir, skillCode) + PATH_SEPARATOR + SKILL_FILE_NAME;
+        return remoteSkillDir(remoteDir, skillCode) + PATH_SEPARATOR + AgentFileNames.SKILL_MD;
     }
 
     /** 远端文件路径的父目录（附属文件路径必含 skillCode 层级，必有 {@code /}）。 */

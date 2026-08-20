@@ -14,6 +14,7 @@ import com.richard.fyoung.customeradmin.aiconfig.channelrobot.mapper.AiChannelRo
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -26,8 +27,6 @@ import org.springframework.util.StringUtils;
  */
 @Service
 public class ChannelRobotService {
-
-    private static final int STATUS_ENABLED = 1;
 
     private final AiChannelRobotMapper robotMapper;
     private final AiAgentMapper agentMapper;
@@ -102,7 +101,7 @@ public class ChannelRobotService {
         if (agent == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "绑定的智能体不存在: " + agentCode);
         }
-        if (agent.getStatus() == null || agent.getStatus() != STATUS_ENABLED) {
+        if (agent.getStatus() == null || agent.getStatus() != StatusFlags.ENABLED) {
             throw new BizException(ResultCode.AGENT_DISABLED, "绑定的智能体未启用: " + agentCode);
         }
     }
@@ -128,7 +127,7 @@ public class ChannelRobotService {
         robot.setAgentCode(request.agentCode());
         robot.setSessionMode(resolveSessionMode(request.sessionMode()));
         robot.setRemark(request.remark());
-        robot.setStatus(request.status() == null ? STATUS_ENABLED : request.status());
+        robot.setStatus(request.status() == null ? StatusFlags.ENABLED : request.status());
     }
 
     /** 会话模式：空值取默认 continuous，非法值 fast fail。 */

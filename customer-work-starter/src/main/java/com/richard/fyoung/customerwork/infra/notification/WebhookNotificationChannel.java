@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.notification;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.infra.config.properties.NotificationProperties;
 import org.springframework.http.HttpHeaders;
 import org.springframework.util.StringUtils;
@@ -55,7 +56,7 @@ public class WebhookNotificationChannel implements NotificationChannel {
                     .header(IDEMPOTENCY_KEY, operationId)
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)));
                 if (StringUtils.hasText(properties.getAuthToken())) {
-                    builder.header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getAuthToken());
+                    builder.header(HttpHeaders.AUTHORIZATION, HttpAuthConstants.BEARER_PREFIX + properties.getAuthToken());
                 }
                 HttpResponse<Void> response = httpClient.send(
                     builder.build(), HttpResponse.BodyHandlers.discarding());

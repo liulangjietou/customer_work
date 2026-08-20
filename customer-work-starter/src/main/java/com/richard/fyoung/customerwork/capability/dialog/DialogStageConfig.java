@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.dialog;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.capability.dialog.mapper.DialogStageMapper;
 import org.slf4j.Logger;
@@ -23,14 +24,12 @@ public class DialogStageConfig {
 
     private static final Logger log = LoggerFactory.getLogger(DialogStageConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(DialogStageStore.class)
     public DialogStageStore dialogStageStore(CustomerWorkProperties properties,
                                              ObjectProvider<DialogStageMapper> mapperProvider) {
         String mode = properties.getDialog().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("dialog stage store: jdbc (MyBatis-Plus 实现, table=cw_dialog_stage)");
             return new MybatisDialogStageStore(mapperProvider.getObject());
         }

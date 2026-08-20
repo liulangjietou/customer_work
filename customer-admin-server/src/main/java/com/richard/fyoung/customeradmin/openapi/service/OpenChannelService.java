@@ -9,6 +9,7 @@ import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.openapi.dto.OpenChannelRobotVO;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -30,7 +31,6 @@ import java.util.UUID;
 @Service
 public class OpenChannelService {
 
-    private static final int STATUS_ENABLED = 1;
     private static final String SESSION_PREFIX = "ch-";
 
     private final AiChannelRobotMapper robotMapper;
@@ -47,7 +47,7 @@ public class OpenChannelService {
     /** 返回启用状态的渠道机器人（可选按 channelType 过滤），携带解密明文 appSecret 与版本号。 */
     public List<OpenChannelRobotVO> listRobots(String channelType) {
         LambdaQueryWrapper<AiChannelRobot> wrapper = new LambdaQueryWrapper<AiChannelRobot>()
-            .eq(AiChannelRobot::getStatus, STATUS_ENABLED);
+            .eq(AiChannelRobot::getStatus, StatusFlags.ENABLED);
         if (StringUtils.hasText(channelType)) {
             wrapper.eq(AiChannelRobot::getChannelType, channelType);
         }
@@ -106,7 +106,7 @@ public class OpenChannelService {
     public void requireAgentBound(String agentCode) {
         boolean bound = robotMapper.exists(new LambdaQueryWrapper<AiChannelRobot>()
             .eq(AiChannelRobot::getAgentCode, agentCode)
-            .eq(AiChannelRobot::getStatus, STATUS_ENABLED));
+            .eq(AiChannelRobot::getStatus, StatusFlags.ENABLED));
         if (!bound) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND,
                 "no enabled channel robot bound to agent: " + agentCode);

@@ -15,6 +15,11 @@ import java.time.LocalDateTime;
 @TableName("sys_operation_log")
 public class SysOperationLog {
 
+    /** 结果：操作成功。 */
+    public static final int RESULT_SUCCESS = 1;
+    /** 结果：操作失败（错误信息落 {@code errorMsg}）。 */
+    public static final int RESULT_FAILURE = 0;
+
     @TableId(type = IdType.AUTO)
     private Long id;
 
@@ -24,7 +29,7 @@ public class SysOperationLog {
     private String method;
     private String target;
     private String params;
-    /** 1成功 / 0失败。 */
+    /** {@link #RESULT_SUCCESS} / {@link #RESULT_FAILURE}。 */
     private Integer result;
     private String errorMsg;
     private String ip;

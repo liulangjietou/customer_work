@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.ticket.config;
 
+import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -27,7 +28,7 @@ public class CustomerWorkClientProperties {
     private String wsUrl = "ws://localhost:8080/ws/agent";
 
     /** 坐席令牌签名密钥：必须与 8080 侧共享同一值。 */
-    private String agentSecret = "dev-agent-secret-change-me-0001";
+    private String agentSecret = DevDefaultCredentials.AGENT_ACCESS_SECRET;
 
     /**
      * 运营侧 API Key：调 8080 的运营类端点（如评测触发）时带在 {@code X-API-Key} 头上。

@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.system.permission.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.richard.fyoung.customeradmin.common.constant.TreeConstants;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.menu.service.MenuVersionHolder;
@@ -34,8 +35,6 @@ import java.util.Map;
  */
 @Service
 public class PermissionService {
-
-    private static final long ROOT_PARENT_ID = 0L;
     private static final String ACTION_CREATE = "CREATE";
     private static final String ACTION_UPDATE = "UPDATE";
     private static final String ACTION_DELETE = "DELETE";
@@ -76,7 +75,7 @@ public class PermissionService {
         List<PermissionVO> roots = new java.util.ArrayList<>();
         for (SysPermission p : all) {
             PermissionVO node = nodeById.get(p.getId());
-            if (p.getParentId() == null || p.getParentId() == ROOT_PARENT_ID) {
+            if (p.getParentId() == null || p.getParentId() == TreeConstants.ROOT_PARENT_ID) {
                 roots.add(node);
             } else {
                 PermissionVO parent = nodeById.get(p.getParentId());
@@ -162,7 +161,7 @@ public class PermissionService {
     }
 
     private void fillFromRequest(SysPermission p, PermissionSaveRequest request) {
-        p.setParentId(request.parentId() == null ? ROOT_PARENT_ID : request.parentId());
+        p.setParentId(request.parentId() == null ? TreeConstants.ROOT_PARENT_ID : request.parentId());
         p.setPermName(request.permName());
         p.setPermCode(request.permCode());
         p.setType(request.type());

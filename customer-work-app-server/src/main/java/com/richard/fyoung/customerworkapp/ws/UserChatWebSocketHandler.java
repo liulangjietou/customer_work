@@ -37,11 +37,6 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(UserChatWebSocketHandler.class);
 
-    private static final String QUERY_TOKEN = "token";
-    private static final String FIELD_TYPE = "type";
-    private static final String FIELD_DATA = "data";
-    private static final String FIELD_SESSION_ID = "sessionId";
-    private static final String FIELD_CONTENT = "content";
     private static final String FIELD_REASON = "reason";
 
     private final UserJwtService jwtService;
@@ -107,13 +102,13 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
         } catch (Exception e) {
             return Mono.error(e);
         }
-        String type = root.path(FIELD_TYPE).asText("");
-        JsonNode data = root.path(FIELD_DATA);
+        String type = root.path(WsFrame.KEY_TYPE).asText("");
+        JsonNode data = root.path(WsFrame.KEY_DATA);
         switch (type) {
             case WsFrame.TYPE_CHAT:
-                return dispatch.onUserMessage(user, text(data, FIELD_SESSION_ID), text(data, FIELD_CONTENT));
+                return dispatch.onUserMessage(user, text(data, WsFrame.KEY_SESSION_ID), text(data, WsFrame.KEY_CONTENT));
             case "handoff":
-                return dispatch.requestHandoff(user, text(data, FIELD_SESSION_ID), text(data, FIELD_REASON));
+                return dispatch.requestHandoff(user, text(data, WsFrame.KEY_SESSION_ID), text(data, FIELD_REASON));
             case WsFrame.TYPE_PING:
                 registry.pushToUser(user.userId(), WsFrame.pong());
                 return Mono.empty();
@@ -130,6 +125,6 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
 
     private Optional<String> tokenOf(WebSocketSession session) {
         return Optional.ofNullable(UriComponentsBuilder.fromUri(session.getHandshakeInfo().getUri())
-            .build().getQueryParams().getFirst(QUERY_TOKEN));
+            .build().getQueryParams().getFirst(WsConstants.QUERY_TOKEN));
     }
 }

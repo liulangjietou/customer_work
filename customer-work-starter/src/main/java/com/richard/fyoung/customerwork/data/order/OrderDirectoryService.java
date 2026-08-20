@@ -28,10 +28,9 @@ import java.util.Optional;
 public class OrderDirectoryService {
 
     /** 取消终态（与 {@code MybatisOrderBackend} 保持一致）。 */
-    private static final String STATUS_CANCELLED = "已取消";
 
     /** 可取消的状态集合（未发货阶段）。 */
-    private static final List<String> CANCELLABLE_STATUSES = List.of("待支付", "已支付", "待发货");
+    private static final List<String> CANCELLABLE_STATUSES = OrderStatuses.CANCELLABLE;
 
     private final OrderMapper orderMapper;
 
@@ -79,7 +78,7 @@ public class OrderDirectoryService {
             return OrderMutationResult.STATE_CONFLICT;
         }
         orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>()
-            .set(OrderDO::getStatus, STATUS_CANCELLED)
+            .set(OrderDO::getStatus, OrderStatuses.CANCELLED)
             .eq(OrderDO::getOrderId, orderId));
         return OrderMutationResult.OK;
     }

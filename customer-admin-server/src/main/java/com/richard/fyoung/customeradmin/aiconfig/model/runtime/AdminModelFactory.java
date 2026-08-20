@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customerwork.infra.config.ChatModelFactory;
 import com.richard.fyoung.customerwork.core.model.ChatModelProber;
 import io.agentscope.core.model.GenerateOptions;
@@ -45,7 +46,7 @@ public class AdminModelFactory {
         ModelProvider p = ModelProvider.of(provider);
         LocalDateTime now = LocalDateTime.now();
         ChatModelProber.ProbeResult result = prober.probe(p.getCode(), baseUrl, apiKey, modelName);
-        int status = result.success() ? ModelTestResult.STATUS_SUCCESS : ModelTestResult.STATUS_FAILED;
+        int status = result.success() ? ConnectivityTestStatus.SUCCESS : ConnectivityTestStatus.FAILED;
         return new ModelTestResult(status, now, result.message());
     }
 

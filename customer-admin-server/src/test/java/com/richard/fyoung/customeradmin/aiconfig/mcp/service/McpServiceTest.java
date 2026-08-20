@@ -11,6 +11,7 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,13 +82,13 @@ class McpServiceTest {
         mcp.setMcpName("测试MCP");
         mcp.setMcpType("sse");
         mcp.setConfig("{\"url\": \"https://mcp.example.com/sse\"}");
-        mcp.setTestStatus(McpTestResult.STATUS_SUCCESS);
+        mcp.setTestStatus(ConnectivityTestStatus.SUCCESS);
         mcp.setTestTime(LocalDateTime.now());
         when(mcpMapper.selectById(1L)).thenReturn(mcp);
 
         McpVO vo = service.get(1L);
 
-        assertEquals(McpTestResult.STATUS_SUCCESS, vo.getTestStatus());
+        assertEquals(ConnectivityTestStatus.SUCCESS, vo.getTestStatus());
     }
 
     @Test
@@ -99,12 +100,12 @@ class McpServiceTest {
         mcp.setConfig("{\"url\": \"https://mcp.example.com/mcp\"}");
         when(mcpMapper.selectById(1L)).thenReturn(mcp);
         when(mcpFactory.testConnectivity(anyString(), anyString(), anyString()))
-            .thenReturn(new McpTestResult(McpTestResult.STATUS_SUCCESS, LocalDateTime.now(), null));
+            .thenReturn(new McpTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), null));
 
         CompletableFuture<McpTestResult> future = service.testConnectivity(1L);
         McpTestResult result = future.get();
 
-        assertEquals(McpTestResult.STATUS_SUCCESS, result.testStatus());
+        assertEquals(ConnectivityTestStatus.SUCCESS, result.testStatus());
         verify(mcpMapper).updateById(org.mockito.ArgumentMatchers.any(AiMcp.class));
     }
 

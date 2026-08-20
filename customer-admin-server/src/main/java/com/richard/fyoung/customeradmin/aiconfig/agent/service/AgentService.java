@@ -30,12 +30,15 @@ import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystemToolMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiSystemToolMapper;
+import com.richard.fyoung.customeradmin.common.constant.AgentCapabilities;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.menu.service.MenuVersionHolder;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -61,20 +64,19 @@ import java.util.stream.Collectors;
 @Service
 public class AgentService {
 
+
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
 
     private static final Pattern AGENT_CODE_PATTERN = Pattern.compile("^[a-z0-9-]+$");
     private static final Set<String> VALID_CAPABILITIES =
-        Set.of("chat", "vibecoding", "subagent", "plan", "tasklist", "skill-learning", "dynamic-subagent", "memory");
-    private static final String CAPABILITY_DELIMITER = ",";
+        Set.of(AgentCapabilities.CHAT, AgentCapabilities.VIBECODING, AgentCapabilities.SUBAGENT,
+            AgentCapabilities.PLAN, AgentCapabilities.TASKLIST, AgentCapabilities.SKILL_LEARNING,
+            AgentCapabilities.DYNAMIC_SUBAGENT, AgentCapabilities.MEMORY);
     /** 保存门禁的连通性测试等待上限（秒）：给 ModelConfigService 内部 10s 硬超时留余量。 */
     private static final long MODEL_TEST_GATE_TIMEOUT_SECONDS = 12;
     /** 主模型连通性门禁失败的日志错误码。 */
     private static final String CODE_MODEL_TEST_FAIL = "AGENT-MODEL-TEST-FAIL";
-    private static final String CAPABILITY_SUBAGENT = "subagent";
     /** 启用态（知识库/资源通用）。 */
-    private static final int STATUS_ENABLED = 1;
-
     // ---- 高级参数取值范围（选填，null 不校验） ----
     private static final int MAX_ITERS_MIN = 1;
     private static final int MAX_ITERS_MAX = 100;
@@ -202,7 +204,7 @@ public class AgentService {
         try {
             ModelTestResult result = modelConfigService.testConnectivity(modelId)
                 .get(MODEL_TEST_GATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (result.testStatus() != ModelTestResult.STATUS_SUCCESS) {
+            if (result.testStatus() != ConnectivityTestStatus.SUCCESS) {
                 throw new BizException(ResultCode.MODEL_TEST_FAILED, "主模型连通性测试未通过: " + result.message());
             }
         } catch (BizException e) {
@@ -292,8 +294,8 @@ public class AgentService {
             throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 knowledgeBaseIds");
         }
         for (AiKnowledgeBase knowledgeBase : knowledgeBases) {
-            if (!Integer.valueOf(STATUS_ENABLED).equals(knowledgeBase.getStatus())
-                || !Integer.valueOf(KnowledgeBaseTestResult.STATUS_SUCCESS).equals(knowledgeBase.getTestStatus())) {
+            if (!Integer.valueOf(StatusFlags.ENABLED).equals(knowledgeBase.getStatus())
+                || !Integer.valueOf(ConnectivityTestStatus.SUCCESS).equals(knowledgeBase.getTestStatus())) {
                 throw new BizException(ResultCode.PARAM_INVALID,
                     "仅可绑定已启用且连通性测试成功的知识库: " + knowledgeBase.getKbName());
             }
@@ -316,7 +318,7 @@ public class AgentService {
     /** 子智能体多选校验：勾选 subagent 能力后必须至少选一个（避免空转配置）；反之选了子智能体也必须勾能力；每个 id 真实存在且不含自身（update 场景）。 */
     private void validateSubAgentIds(AgentSaveRequest request, Long selfId) {
         boolean subagentChecked = !CollectionUtils.isEmpty(request.capabilities())
-            && request.capabilities().contains(CAPABILITY_SUBAGENT);
+            && request.capabilities().contains(AgentCapabilities.SUBAGENT);
         if (CollectionUtils.isEmpty(request.subAgentIds())) {
             if (subagentChecked) {
                 throw new BizException(ResultCode.PARAM_INVALID, "勾选 subagent 能力后需至少选择一个子智能体");
@@ -431,7 +433,7 @@ public class AgentService {
         agent.setModelId(request.modelId());
         agent.setSystemPrompt(request.systemPrompt());
         agent.setCapabilities(CollectionUtils.isEmpty(request.capabilities())
-            ? "chat" : String.join(CAPABILITY_DELIMITER, request.capabilities()));
+            ? AgentCapabilities.CHAT : String.join(AgentCapabilities.DELIMITER, request.capabilities()));
         agent.setIcon(request.icon());
         agent.setStatus(request.status() == null ? 1 : request.status());
         // 高级参数：null 直接落库（列可空，运行时工厂按 null=默认解释；实体上 updateStrategy=ALWAYS 保证可清空）
@@ -459,7 +461,7 @@ public class AgentService {
             .stream().map(AiAgentSystemTool::getSystemToolId).collect(Collectors.toList()));
         vo.setSystemPrompt(agent.getSystemPrompt());
         vo.setCapabilities(StringUtils.hasText(agent.getCapabilities())
-            ? Arrays.asList(agent.getCapabilities().split(CAPABILITY_DELIMITER)) : List.of());
+            ? Arrays.asList(agent.getCapabilities().split(AgentCapabilities.DELIMITER)) : List.of());
         vo.setIcon(agent.getIcon());
         vo.setStatus(agent.getStatus());
         vo.setCreateTime(agent.getCreateTime());

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerchannel;
 
+import com.richard.fyoung.customerchannel.access.ChannelAccessConstants;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.extensions.channel.dingtalk.DingTalkChannel;
@@ -29,7 +30,6 @@ import java.util.Map;
 public class DingTalkChannelConfigurer {
 
     private static final Logger log = LoggerFactory.getLogger(DingTalkChannelConfigurer.class);
-    private static final String CHANNEL_ID = "dingtalk";
 
     private final ReActAgent customerServiceAgent;
     private final AgentStateStore agentStateStore;
@@ -63,7 +63,7 @@ public class DingTalkChannelConfigurer {
             // 客服 ReActAgent 包成 HarnessAgent（Channel 经 HarnessAgent 的 gateway 路由）
             harnessAgent = HarnessAgent.Builder.fromAgent(customerServiceAgent)
                 .stateStore(agentStateStore)
-                .defaultSessionId(CHANNEL_ID)
+                .defaultSessionId(ChannelAccessConstants.CHANNEL_TYPE_DINGTALK)
                 .build();
 
             Map<String, Object> raw = new LinkedHashMap<>();
@@ -71,7 +71,7 @@ public class DingTalkChannelConfigurer {
             raw.put("appSecret", properties.getAppSecret());
             raw.put("robotCode", properties.getRobotCode());
 
-            channel = DingTalkChannel.fromProperties(CHANNEL_ID, ChannelConfig.of(CHANNEL_ID), raw);
+            channel = DingTalkChannel.fromProperties(ChannelAccessConstants.CHANNEL_TYPE_DINGTALK, ChannelConfig.of(ChannelAccessConstants.CHANNEL_TYPE_DINGTALK), raw);
             harnessAgent.channel(channel);   // 挂到 HarnessAgent gateway
             channel.start();                 // Stream 模式：出站连接钉钉网关
             log.info("[DingTalk] channel started (stream mode), robotCode={}", properties.getRobotCode());

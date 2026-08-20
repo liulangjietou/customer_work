@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.badcase.config;
 
+import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customerwork.capability.badcase.BadcaseService;
 import com.richard.fyoung.customerwork.capability.badcase.MybatisBadcaseStore;
 import com.richard.fyoung.customerwork.capability.badcase.mapper.BadcaseMapper;
@@ -26,15 +27,11 @@ import java.util.List;
  */
 final class BadcaseGatewayFactory {
 
-    private static final String STARTER_BADCASE_XML = "classpath*:customerwork/mapper/BadcaseMapper.xml";
-    private static final String STARTER_EVAL_CASE_XML = "classpath*:customerwork/mapper/EvalCaseMapper.xml";
-    private static final String STARTER_KNOWLEDGE_XML = "classpath*:customerwork/mapper/KnowledgeMapper.xml";
-
     /** 三张表的 Mapper 都有 XML，靠 namespace 自动绑定，不能再登记进接口列表（同名语句会冲突）。 */
     static final List<Class<?>> MAPPER_CLASSES = List.of();
 
     static final List<String> MAPPER_XML_LOCATIONS =
-        List.of(STARTER_BADCASE_XML, STARTER_EVAL_CASE_XML, STARTER_KNOWLEDGE_XML);
+        List.of(StarterMapperXml.BADCASE, StarterMapperXml.EVAL_CASE, StarterMapperXml.KNOWLEDGE);
 
     private BadcaseGatewayFactory() {
     }

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.config;
 
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import io.agentscope.extensions.model.anthropic.AnthropicChatModel;
@@ -25,12 +26,6 @@ public final class ChatModelFactory {
     /** 百炼 API Key 的兜底环境变量名。 */
     private static final String ENV_DASHSCOPE_API_KEY = "DASHSCOPE_API_KEY";
 
-    private static final String PROVIDER_DASHSCOPE = "dashscope";
-    private static final String PROVIDER_OPENAI = "openai";
-    private static final String PROVIDER_ANTHROPIC = "anthropic";
-    private static final String PROVIDER_GEMINI = "gemini";
-    private static final String PROVIDER_OLLAMA = "ollama";
-
     private ChatModelFactory() {
     }
 
@@ -49,9 +44,9 @@ public final class ChatModelFactory {
     public static Model build(String provider, String modelName, String apiKey, String baseUrl,
                               boolean stream, GenerateOptions options,
                               Boolean enableSearch, Boolean enableThinking) {
-        String p = provider == null ? PROVIDER_DASHSCOPE : provider.toLowerCase();
+        String p = provider == null ? ModelProviders.DASHSCOPE : provider.toLowerCase();
         switch (p) {
-            case PROVIDER_OPENAI: {
+            case ModelProviders.OPENAI: {
                 OpenAIChatModel.Builder b = OpenAIChatModel.builder()
                     .apiKey(apiKey).modelName(modelName).stream(stream).generateOptions(options);
                 if (StringUtils.hasText(baseUrl)) {
@@ -59,7 +54,7 @@ public final class ChatModelFactory {
                 }
                 return b.build();
             }
-            case PROVIDER_ANTHROPIC: {
+            case ModelProviders.ANTHROPIC: {
                 AnthropicChatModel.Builder b = AnthropicChatModel.builder()
                     .apiKey(apiKey).modelName(modelName).stream(stream).defaultOptions(options);
                 if (StringUtils.hasText(baseUrl)) {
@@ -67,7 +62,7 @@ public final class ChatModelFactory {
                 }
                 return b.build();
             }
-            case PROVIDER_GEMINI: {
+            case ModelProviders.GEMINI: {
                 // 注意：Gemini 需额外引入 google-genai 依赖
                 GeminiChatModel.Builder b = GeminiChatModel.builder()
                     .apiKey(apiKey).modelName(modelName).streamEnabled(stream).defaultOptions(options);
@@ -76,7 +71,7 @@ public final class ChatModelFactory {
                 }
                 return b.build();
             }
-            case PROVIDER_OLLAMA: {
+            case ModelProviders.OLLAMA: {
                 // Ollama 本地私有化：使用 OllamaOptions（生成参数另行配置），默认 localhost:11434
                 OllamaChatModel.Builder b = OllamaChatModel.builder().modelName(modelName);
                 if (StringUtils.hasText(baseUrl)) {

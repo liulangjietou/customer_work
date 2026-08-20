@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.security.ratelimit;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.mapper.RateLimitRuleMapper;
 import org.slf4j.Logger;
@@ -27,14 +28,12 @@ public class RateLimitRuleConfig {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitRuleConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(RateLimitRuleStore.class)
     public RateLimitRuleStore rateLimitRuleStore(CustomerWorkProperties properties,
                                                  ObjectProvider<RateLimitRuleMapper> mapperProvider) {
         String mode = properties.getSecurity().getRateLimit().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("rate-limit rule store: jdbc (MyBatis-Plus, table=cw_rate_limit_rule)");
             return new MybatisRateLimitRuleStore(mapperProvider.getObject());
         }

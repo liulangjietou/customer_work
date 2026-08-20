@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.security;
 
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential.AgentIdentity;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
@@ -31,8 +32,6 @@ public class AgentAuthWebFilter implements WebFilter {
     /** 坐席 ID 在 exchange 属性中的键。 */
     public static final String AGENT_ID_ATTR = "cw.agent.id";
 
-    private static final String TOKEN_HEADER = "X-Agent-Token";
-
     private final CustomerWorkProperties properties;
 
     public AgentAuthWebFilter(CustomerWorkProperties properties) {
@@ -45,7 +44,7 @@ public class AgentAuthWebFilter implements WebFilter {
         if (!CustomerSecurityPaths.requiresAgentToken(path)) {
             return chain.filter(exchange);
         }
-        String token = exchange.getRequest().getHeaders().getFirst(TOKEN_HEADER);
+        String token = exchange.getRequest().getHeaders().getFirst(HttpAuthConstants.AGENT_TOKEN_HEADER);
         Optional<AgentIdentity> identity = AgentAccessCredential.verifyIdentity(
             token, properties.getAgentAccess().getSecret(), System.currentTimeMillis());
         if (identity.isEmpty()) {

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.config;
 
+import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -18,8 +19,6 @@ import java.util.Map;
 public class AdminProductionReadinessValidator implements InitializingBean {
 
     private static final String DEV_AES_KEY = "0123456789abcdef0123456789abcdef";
-    private static final String DEV_AGENT_SECRET = "dev-agent-secret-change-me-0001";
-    private static final String DEV_MINIO_CREDENTIAL = "minioadmin";
     private static final List<String> FORBIDDEN_PRODUCTION_AI_CODING_FEATURES = List.of(
         "admin.sandbox.features.command-execution-enabled",
         "admin.sandbox.features.diagnosis-enabled",
@@ -52,7 +51,7 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         requireSecret(violations, "admin.customer-work.api-key");
         String agentSecret = value("admin.customer-work.agent-secret");
         require(violations, "admin.customer-work.agent-secret",
-            isProductionSecret(agentSecret) && !DEV_AGENT_SECRET.equals(agentSecret)
+            isProductionSecret(agentSecret) && !DevDefaultCredentials.AGENT_ACCESS_SECRET.equals(agentSecret)
                 && agentSecret.length() >= 32);
 
         String sandboxMode = value("admin.sandbox.mode");
@@ -68,9 +67,9 @@ public class AdminProductionReadinessValidator implements InitializingBean {
 
         requireRemote(violations, "customer-work.attachment.storage.minio.endpoint");
         requireNonDefaultSecret(violations, "customer-work.attachment.storage.minio.access-key",
-            DEV_MINIO_CREDENTIAL);
+            DevDefaultCredentials.MINIO_CREDENTIAL);
         requireNonDefaultSecret(violations, "customer-work.attachment.storage.minio.secret-key",
-            DEV_MINIO_CREDENTIAL);
+            DevDefaultCredentials.MINIO_CREDENTIAL);
         validateOpenApi(violations);
         validateRuntimePublish(violations);
 

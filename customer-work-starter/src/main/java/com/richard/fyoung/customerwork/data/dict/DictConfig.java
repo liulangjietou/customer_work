@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.dict;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.data.dict.mapper.DictItemMapper;
 import com.richard.fyoung.customerwork.data.dict.mapper.DictTypeMapper;
@@ -24,15 +25,13 @@ public class DictConfig {
 
     private static final Logger log = LoggerFactory.getLogger(DictConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(DictStore.class)
     public DictStore dictStore(CustomerWorkProperties properties,
                                ObjectProvider<DictTypeMapper> typeMapperProvider,
                                ObjectProvider<DictItemMapper> itemMapperProvider) {
         String mode = properties.getDict().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("dict store: jdbc (MyBatis-Plus 实现, tables=cw_dict_type/cw_dict_item)");
             return new MybatisDictStore(typeMapperProvider.getObject(), itemMapperProvider.getObject());
         }

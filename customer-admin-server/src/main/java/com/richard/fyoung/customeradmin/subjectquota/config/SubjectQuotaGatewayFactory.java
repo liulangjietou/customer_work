@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.subjectquota.config;
 
+import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customeradmin.subjectquota.jdbc.SubjectQuotaGateway;
 import com.richard.fyoung.customerwork.data.user.mapper.UserMapper;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
@@ -18,15 +19,14 @@ import java.util.List;
  */
 final class SubjectQuotaGatewayFactory {
 
-    /** starter jar 内的等级 Mapper XML（classpath*: 才能命中 jar 内资源）。 */
-    private static final String STARTER_LEVEL_XML = "classpath*:customerwork/mapper/SubjectQuotaLevelMapper.xml";
-    /** starter jar 内的命中记录 Mapper XML。 */
-    private static final String STARTER_HIT_XML = "classpath*:customerwork/mapper/SubjectQuotaHitMapper.xml";
 
+    /** starter jar 内的等级 Mapper XML（classpath*: 才能命中 jar 内资源）。 */
+    /** starter jar 内的命中记录 Mapper XML。 */
     /** 无 XML、只用 BaseMapper CRUD 的 Mapper 接口。 */
     static final List<Class<?>> MAPPER_CLASSES = List.of(UserMapper.class);
 
-    static final List<String> MAPPER_XML_LOCATIONS = List.of(STARTER_LEVEL_XML, STARTER_HIT_XML);
+    static final List<String> MAPPER_XML_LOCATIONS =
+        List.of(StarterMapperXml.SUBJECT_QUOTA_LEVEL, StarterMapperXml.SUBJECT_QUOTA_HIT);
 
     private SubjectQuotaGatewayFactory() {
     }

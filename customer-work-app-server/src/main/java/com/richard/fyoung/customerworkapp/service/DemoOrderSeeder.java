@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.service;
 
+import com.richard.fyoung.customerwork.data.order.OrderStatuses;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -39,8 +40,6 @@ public class DemoOrderSeeder {
 
     private static final String PRODUCT_SHIPPED = "P001";
     private static final String PRODUCT_PENDING = "P002";
-    private static final String STATUS_SHIPPED = "已发货";
-    private static final String STATUS_PENDING = "待发货";
     private static final String DEMO_ADDR = "北京市海淀区中关村大街 1 号（演示地址）";
     private static final String SHIPPED_TRACE = "[已揽收]→[到达分拨中心]→[派送中]";
     private static final BigDecimal FALLBACK_PRICE = new BigDecimal("0.00");
@@ -68,8 +67,8 @@ public class DemoOrderSeeder {
         }
         try (Connection conn = dataSource.getConnection()) {
             long now = System.currentTimeMillis();
-            insertOrder(conn, userId, PRODUCT_SHIPPED, STATUS_SHIPPED, SHIPPED_TRACE, now - 2 * ONE_DAY_MS);
-            insertOrder(conn, userId, PRODUCT_PENDING, STATUS_PENDING, null, now);
+            insertOrder(conn, userId, PRODUCT_SHIPPED, OrderStatuses.SHIPPED, SHIPPED_TRACE, now - 2 * ONE_DAY_MS);
+            insertOrder(conn, userId, PRODUCT_PENDING, OrderStatuses.PENDING_SHIPMENT, null, now);
             log.info("demo orders seeded for new user, userId={}", userId);
         } catch (Exception e) {
             log.error("demo order seeding failed, code={}, userId={}", SEED_ERROR_CODE, userId, e);

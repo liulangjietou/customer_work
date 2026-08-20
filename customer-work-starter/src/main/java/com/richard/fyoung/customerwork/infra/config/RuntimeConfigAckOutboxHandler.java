@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.config;
 
+import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import com.richard.fyoung.customerwork.data.outbox.OutboxHandler;
 import com.richard.fyoung.customerwork.data.outbox.OutboxMessage;
 import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
@@ -40,7 +41,7 @@ public class RuntimeConfigAckOutboxHandler implements OutboxHandler {
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(message.getPayload()));
         if (StringUtils.hasText(nacos.getRuntimeConfigAckToken())) {
-            builder.header("X-Open-Api-Token", nacos.getRuntimeConfigAckToken());
+            builder.header(OpenApiProtocol.TOKEN_HEADER, nacos.getRuntimeConfigAckToken());
         }
         HttpResponse<Void> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {

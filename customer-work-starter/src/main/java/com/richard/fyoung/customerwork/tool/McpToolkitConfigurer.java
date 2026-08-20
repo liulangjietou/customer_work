@@ -30,7 +30,6 @@ public class McpToolkitConfigurer {
     private static final Logger log = LoggerFactory.getLogger(McpToolkitConfigurer.class);
 
     /** yml 里表示 streamable http 传输的取值（其余取值一律按 sse 处理）。 */
-    private static final String TRANSPORT_STREAMABLE_HTTP = "streamable-http";
     /** 启动期注册的连接超时。 */
     private static final Duration CLIENT_TIMEOUT = Duration.ofSeconds(30);
 
@@ -86,7 +85,7 @@ public class McpToolkitConfigurer {
      */
     private reactor.core.publisher.Mono<McpClientWrapper> buildClient(
             McpProperties.Server server) {
-        String type = TRANSPORT_STREAMABLE_HTTP.equalsIgnoreCase(server.getTransport())
+        String type = McpServerSpec.TRANSPORT_STREAMABLE_HTTP.equalsIgnoreCase(server.getTransport())
             ? McpServerSpec.TYPE_HTTP
             : McpServerSpec.TYPE_SSE;
         return mcpClientFactory

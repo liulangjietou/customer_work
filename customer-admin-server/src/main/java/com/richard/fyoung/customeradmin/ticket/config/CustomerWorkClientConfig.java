@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.ticket.config;
 
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.context.annotation.Bean;
@@ -21,7 +22,6 @@ import org.springframework.web.client.RestClient;
 public class CustomerWorkClientConfig {
 
     /** 坐席令牌请求头名（与 8080 契约一致）。 */
-    private static final String AGENT_TOKEN_HEADER = "X-Agent-Token";
 
     /** 单次请求令牌有效期（毫秒）：只需覆盖一次 HTTP 往返，短有效期收紧被截获后的可用窗口。 */
     private static final long REQUEST_TOKEN_TTL_MS = 120_000L;
@@ -40,7 +40,7 @@ public class CustomerWorkClientConfig {
             String token = tenantId == null
                 ? AgentAccessCredential.sign(agentId, expiresAtMs, properties.getAgentSecret())
                 : AgentAccessCredential.sign(agentId, tenantId, expiresAtMs, properties.getAgentSecret());
-            request.getHeaders().set(AGENT_TOKEN_HEADER, token);
+            request.getHeaders().set(HttpAuthConstants.AGENT_TOKEN_HEADER, token);
             return execution.execute(request, body);
         };
 

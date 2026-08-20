@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.data.attachment;
 import org.apache.tika.Tika;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
@@ -188,7 +189,7 @@ public class AttachmentParseService {
         try {
             return tika.detect(data, fileName);
         } catch (Exception e) {
-            return "application/octet-stream";
+            return MediaType.APPLICATION_OCTET_STREAM_VALUE;
         }
     }
 

@@ -9,6 +9,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -172,12 +173,12 @@ class ModelConfigServiceTest {
         existing.setModel("gpt-4o-mini");
         when(mapper.selectById(1L)).thenReturn(existing);
         when(modelFactory.testConnectivity(anyString(), anyString(), anyString(), anyString()))
-            .thenReturn(new ModelTestResult(ModelTestResult.STATUS_SUCCESS, LocalDateTime.now(), null));
+            .thenReturn(new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), null));
 
         CompletableFuture<ModelTestResult> future = service.testConnectivity(1L);
         ModelTestResult result = future.get();
 
-        assertEquals(ModelTestResult.STATUS_SUCCESS, result.testStatus());
+        assertEquals(ConnectivityTestStatus.SUCCESS, result.testStatus());
         verify(mapper).updateById(any(AiModelConfig.class));
     }
 

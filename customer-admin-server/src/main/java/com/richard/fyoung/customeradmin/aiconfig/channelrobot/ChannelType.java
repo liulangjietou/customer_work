@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.channelrobot;
 
+import com.richard.fyoung.customerwork.core.constant.ChannelTypes;
 import lombok.Getter;
 
 import java.util.Arrays;
@@ -12,9 +13,9 @@ import java.util.Arrays;
 @Getter
 public enum ChannelType {
 
-    DINGTALK("dingtalk", true),
+    DINGTALK(ChannelTypes.DINGTALK, true),
     WECOM("wecom", false),
-    WECHAT("wechat", true);
+    WECHAT(ChannelTypes.WECHAT, true);
 
     private final String code;
     /** 是否已支持接入（预留渠道为 false，暂不允许创建机器人）。 */

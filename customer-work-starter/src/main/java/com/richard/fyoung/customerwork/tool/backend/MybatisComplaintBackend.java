@@ -18,8 +18,6 @@ public class MybatisComplaintBackend implements ComplaintBackend {
 
     private static final Logger log = LoggerFactory.getLogger(MybatisComplaintBackend.class);
 
-    private static final String ID_PREFIX = "CP";
-
     /** 工单状态：处理中 / 已回复。 */
     private static final String STATUS_PROCESSING = "PROCESSING";
     private static final String STATUS_RESOLVED = "RESOLVED";
@@ -41,7 +39,7 @@ public class MybatisComplaintBackend implements ComplaintBackend {
     }
 
     private String doFileComplaint(String orderId, String content) {
-        String complaintNo = ID_PREFIX + System.currentTimeMillis();
+        String complaintNo = ComplaintBackend.ID_PREFIX + System.currentTimeMillis();
         try {
             ComplaintDO record = new ComplaintDO();
             record.setComplaintNo(complaintNo);

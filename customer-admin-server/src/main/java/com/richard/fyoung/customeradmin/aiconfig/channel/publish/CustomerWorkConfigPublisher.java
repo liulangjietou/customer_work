@@ -5,6 +5,8 @@ import com.alibaba.nacos.api.PropertyKeyConst;
 import com.alibaba.nacos.api.config.ConfigService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
 import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
@@ -68,15 +70,11 @@ import java.util.UUID;
 @Component
 public class CustomerWorkConfigPublisher {
 
+
     private static final Logger log = LoggerFactory.getLogger(CustomerWorkConfigPublisher.class);
 
     private static final String CODE_PUBLISH_FAIL = "RUNTIME-PUBLISH-FAIL";
     private static final String CODE_PROBE_BLOCK = "RUNTIME-PUBLISH-PROBE-BLOCK";
-    private static final int STATUS_ENABLED = 1;
-    private static final String MCP_TYPE_HTTP = "http";
-    private static final String MCP_TYPE_SSE = "sse";
-    private static final String TRANSPORT_STREAMABLE_HTTP = "streamable-http";
-
     private final AiChannelBindingMapper channelBindingMapper;
     private final AiAgentMapper agentMapper;
     private final AiModelConfigMapper modelConfigMapper;
@@ -226,7 +224,7 @@ public class CustomerWorkConfigPublisher {
         List<AiChannelBinding> bindings = channelBindingMapper.selectList(
             new LambdaQueryWrapper<AiChannelBinding>()
                 .eq(AiChannelBinding::getAgentId, agentId)
-                .eq(AiChannelBinding::getStatus, STATUS_ENABLED));
+                .eq(AiChannelBinding::getStatus, StatusFlags.ENABLED));
         for (AiChannelBinding binding : bindings) {
             try {
                 doPublish(binding);
@@ -261,7 +259,7 @@ public class CustomerWorkConfigPublisher {
     private boolean hasEnabledBinding(Long agentId) {
         return channelBindingMapper.selectCount(new LambdaQueryWrapper<AiChannelBinding>()
             .eq(AiChannelBinding::getAgentId, agentId)
-            .eq(AiChannelBinding::getStatus, STATUS_ENABLED)) > 0;
+            .eq(AiChannelBinding::getStatus, StatusFlags.ENABLED)) > 0;
     }
 
     /**
@@ -391,7 +389,7 @@ public class CustomerWorkConfigPublisher {
         List<AiChannelBinding> bindings = channelBindingMapper.selectList(
             new LambdaQueryWrapper<AiChannelBinding>()
                 .eq(AiChannelBinding::getAgentId, task.getTargetId())
-                .eq(AiChannelBinding::getStatus, STATUS_ENABLED));
+                .eq(AiChannelBinding::getStatus, StatusFlags.ENABLED));
         if (CollectionUtils.isEmpty(bindings)) {
             throw new IllegalStateException("enabled channel binding not found for agent: " + task.getTargetId());
         }
@@ -457,7 +455,7 @@ public class CustomerWorkConfigPublisher {
         String apiKey = cryptoUtil.decrypt(primary.getApiKey());
         ModelTestResult result = modelFactory.testConnectivity(
             primary.getProvider(), primary.getBaseUrl(), apiKey, primary.getModel());
-        if (result.testStatus() != ModelTestResult.STATUS_SUCCESS) {
+        if (result.testStatus() != ConnectivityTestStatus.SUCCESS) {
             log.error("runtime config publish blocked by connectivity probe, code={}, model={}, msg={}",
                 CODE_PROBE_BLOCK, primary.getModelName(), result.message());
             throw new IllegalStateException("primary model connectivity probe failed: " + result.message());
@@ -547,7 +545,7 @@ public class CustomerWorkConfigPublisher {
             .sorted(Comparator.comparing(AiMcp::getId))
             .toList();
         for (AiMcp mcp : mcpConfigs) {
-            if (mcp.getStatus() != null && mcp.getStatus() != STATUS_ENABLED) {
+            if (mcp.getStatus() != null && mcp.getStatus() != StatusFlags.ENABLED) {
                 continue;
             }
             String transport = resolveTransport(mcp.getMcpType());
@@ -566,11 +564,11 @@ public class CustomerWorkConfigPublisher {
     }
 
     private String resolveTransport(String mcpType) {
-        if (MCP_TYPE_HTTP.equalsIgnoreCase(mcpType)) {
-            return TRANSPORT_STREAMABLE_HTTP;
+        if (McpServerSpec.TYPE_HTTP.equalsIgnoreCase(mcpType)) {
+            return McpServerSpec.TRANSPORT_STREAMABLE_HTTP;
         }
-        if (MCP_TYPE_SSE.equalsIgnoreCase(mcpType)) {
-            return MCP_TYPE_SSE;
+        if (McpServerSpec.TYPE_SSE.equalsIgnoreCase(mcpType)) {
+            return McpServerSpec.TYPE_SSE;
         }
         return null;
     }

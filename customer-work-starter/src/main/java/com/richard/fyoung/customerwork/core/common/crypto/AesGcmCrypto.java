@@ -27,7 +27,8 @@ import java.util.Base64;
 public class AesGcmCrypto {
 
     private static final String ALGORITHM = "AES/GCM/NoPadding";
-    private static final int GCM_IV_LENGTH = 12;
+    /** GCM 推荐 IV 长度（字节）：RFC 5116 定的 96 位，改这个值会让历史密文全部解不开。 */
+    public static final int GCM_IV_LENGTH = 12;
     private static final int GCM_TAG_LENGTH_BITS = 128;
     /** 掩码保留的末尾明文位数。 */
     private static final int MASK_KEEP_LENGTH = 4;

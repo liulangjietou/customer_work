@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.openapi;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
+import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -27,7 +28,6 @@ import java.util.Map;
 public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
 
     /** 开放 API 令牌请求头名。 */
-    public static final String HEADER_TOKEN = "X-Open-Api-Token";
 
     private static final String ERROR_CODE = "OPEN-API-AUTH-FAIL";
     private static final Logger log = LoggerFactory.getLogger(OpenApiAuthInterceptor.class);
@@ -43,7 +43,7 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        String actual = request.getHeader(HEADER_TOKEN);
+        String actual = request.getHeader(OpenApiProtocol.TOKEN_HEADER);
         String tenantId = authenticate(actual);
         if (tenantId == null) {
             log.error("open api auth failed, code={}, uri={}", ERROR_CODE, request.getRequestURI());

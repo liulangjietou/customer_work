@@ -3,6 +3,8 @@ package com.richard.fyoung.customeradmin.menu.service;
 import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.service.AgentService;
+import com.richard.fyoung.customeradmin.common.constant.AgentCapabilities;
+import com.richard.fyoung.customeradmin.common.constant.TreeConstants;
 import com.richard.fyoung.customeradmin.menu.dto.MenuNode;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
@@ -26,9 +28,7 @@ import java.util.Set;
 public class MenuAggregationService {
 
     private static final int TYPE_MENU = 1;
-    private static final long ROOT_PARENT_ID = 0L;
     private static final String WORKSPACE_PERM_CODE = "workspace";
-    private static final String CAPABILITY_DELIMITER = ",";
 
     private final SysPermissionMapper permissionMapper;
     private final AgentService agentService;
@@ -50,7 +50,7 @@ public class MenuAggregationService {
         Map<Long, String> permCodeById = new LinkedHashMap<>();
         for (SysPermission p : menus) {
             nodeById.put(p.getId(), toNode(p));
-            parentById.put(p.getId(), p.getParentId() == null ? ROOT_PARENT_ID : p.getParentId());
+            parentById.put(p.getId(), p.getParentId() == null ? TreeConstants.ROOT_PARENT_ID : p.getParentId());
             permCodeById.put(p.getId(), p.getPermCode());
         }
 
@@ -72,7 +72,7 @@ public class MenuAggregationService {
             }
             MenuNode node = nodeById.get(p.getId());
             Long parentId = parentById.get(p.getId());
-            if (parentId == null || parentId == ROOT_PARENT_ID) {
+            if (parentId == null || parentId == TreeConstants.ROOT_PARENT_ID) {
                 roots.add(node);
             } else if (keep.contains(parentId)) {
                 nodeById.get(parentId).getChildren().add(node);
@@ -116,7 +116,7 @@ public class MenuAggregationService {
         node.setPath("/workspace/" + agent.getAgentCode());
         node.setIcon(agent.getIcon());
         node.setAgentCode(agent.getAgentCode());
-        node.setCapabilities(Arrays.asList(agent.getCapabilities().split(CAPABILITY_DELIMITER)));
+        node.setCapabilities(Arrays.asList(agent.getCapabilities().split(AgentCapabilities.DELIMITER)));
         node.setDynamic(true);
         return node;
     }

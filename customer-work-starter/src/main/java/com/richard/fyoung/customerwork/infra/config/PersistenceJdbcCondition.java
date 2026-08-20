@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.config;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import org.springframework.context.annotation.Condition;
 import org.springframework.context.annotation.ConditionContext;
 import org.springframework.core.env.Environment;
@@ -22,8 +23,6 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  * @author owlzhangfq@gmail.com
  */
 public class PersistenceJdbcCondition implements Condition {
-
-    private static final String JDBC = "jdbc";
 
     /** 各域的 store-mode 配置键 + 工具后端 mode 配置键（任一为 jdbc 即激活持久化环境）。 */
     private static final String[] STORE_MODE_KEYS = {
@@ -68,12 +67,12 @@ public class PersistenceJdbcCondition implements Condition {
     public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
         Environment env = context.getEnvironment();
         for (String key : STORE_MODE_KEYS) {
-            if (JDBC.equalsIgnoreCase(env.getProperty(key))) {
+            if (StoreModes.isJdbc(env.getProperty(key))) {
                 return true;
             }
         }
         for (String key : JDBC_BY_DEFAULT_KEYS) {
-            if (JDBC.equalsIgnoreCase(env.getProperty(key, JDBC))) {
+            if (StoreModes.isJdbc(env.getProperty(key, StoreModes.JDBC))) {
                 return true;
             }
         }

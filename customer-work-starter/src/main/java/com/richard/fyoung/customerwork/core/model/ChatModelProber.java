@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.core.model;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,6 +16,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 
 /**
  * 模型连通性探活器：按厂商各自的<b>最小探活协议</b>直连一次，验证 baseUrl / apiKey / modelName 是否可用。
@@ -42,24 +46,15 @@ public class ChatModelProber {
     private static final int TEST_MAX_TOKENS = 8;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 500;
 
-    // ---- 厂商协议标识（与 admin 的 ModelProvider 编码一致）----
-    private static final String PROVIDER_DASHSCOPE = "dashscope";
-    private static final String PROVIDER_ANTHROPIC = "anthropic";
-    private static final String PROVIDER_GEMINI = "gemini";
-
-    // ---- 各厂商探活端点路径 / 鉴权头常量（避免魔法值）----
+    // ---- 各厂商探活端点路径 / 专有鉴权头（通用头名走 Spring HttpHeaders）----
     private static final String OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions";
     private static final String DASHSCOPE_TEXT_GENERATION_PATH = "/api/v1/services/aigc/text-generation/generation";
     private static final String ANTHROPIC_MESSAGES_PATH = "/v1/messages";
     private static final String GEMINI_GENERATE_CONTENT_PATH_TEMPLATE = "/v1beta/models/%s:generateContent";
 
-    private static final String HEADER_CONTENT_TYPE = "Content-Type";
-    private static final String HEADER_AUTHORIZATION = "Authorization";
     private static final String HEADER_ANTHROPIC_API_KEY = "x-api-key";
     private static final String HEADER_ANTHROPIC_VERSION = "anthropic-version";
     private static final String HEADER_GEMINI_API_KEY = "x-goog-api-key";
-    private static final String CONTENT_TYPE_JSON = "application/json";
-    private static final String BEARER_PREFIX = "Bearer ";
     /** Anthropic Messages API 版本（原生协议必填头）。 */
     private static final String ANTHROPIC_VERSION = "2023-06-01";
 
@@ -106,11 +101,11 @@ public class ChatModelProber {
     private HttpRequest buildProbeRequest(String provider, String baseUrl, String apiKey, String modelName)
             throws Exception {
         switch (provider) {
-            case PROVIDER_DASHSCOPE:
+            case ModelProviders.DASHSCOPE:
                 return dashScopeProbe(baseUrl, apiKey, modelName);
-            case PROVIDER_ANTHROPIC:
+            case ModelProviders.ANTHROPIC:
                 return anthropicProbe(baseUrl, apiKey, modelName);
-            case PROVIDER_GEMINI:
+            case ModelProviders.GEMINI:
                 return geminiProbe(baseUrl, apiKey, modelName);
             default:
                 return openAiProbe(baseUrl, apiKey, modelName);
@@ -124,7 +119,7 @@ public class ChatModelProber {
             "messages", List.of(Map.of("role", "user", "content", TEST_PROMPT)),
             "max_tokens", TEST_MAX_TOKENS));
         return baseRequest(appendPath(baseUrl, OPENAI_CHAT_COMPLETIONS_PATH), body)
-            .header(HEADER_AUTHORIZATION, BEARER_PREFIX + apiKey)
+            .header(HttpHeaders.AUTHORIZATION, HttpAuthConstants.BEARER_PREFIX + apiKey)
             .build();
     }
 
@@ -135,7 +130,7 @@ public class ChatModelProber {
             "input", Map.of("messages", List.of(Map.of("role", "user", "content", TEST_PROMPT))),
             "parameters", Map.of("max_tokens", TEST_MAX_TOKENS, "result_format", "message")));
         return baseRequest(appendPath(baseUrl, DASHSCOPE_TEXT_GENERATION_PATH), body)
-            .header(HEADER_AUTHORIZATION, BEARER_PREFIX + apiKey)
+            .header(HttpHeaders.AUTHORIZATION, HttpAuthConstants.BEARER_PREFIX + apiKey)
             .build();
     }
 
@@ -170,7 +165,7 @@ public class ChatModelProber {
         return HttpRequest.newBuilder()
             .uri(URI.create(url))
             .timeout(testTimeout)
-            .header(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON)
+            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .POST(HttpRequest.BodyPublishers.ofString(body));
     }
 
@@ -180,13 +175,13 @@ public class ChatModelProber {
         try {
             JsonNode node = mapper.readTree(responseBody);
             switch (provider) {
-                case PROVIDER_DASHSCOPE:
+                case ModelProviders.DASHSCOPE:
                     // 原生响应体形如 {"output":{...},"usage":{...}}
                     return node.has("output") && node.get("output").isObject();
-                case PROVIDER_ANTHROPIC:
+                case ModelProviders.ANTHROPIC:
                     // 原生响应体形如 {"content":[...],"role":"assistant"}
                     return node.has("content") && node.get("content").isArray();
-                case PROVIDER_GEMINI:
+                case ModelProviders.GEMINI:
                     // 原生响应体形如 {"candidates":[...]}
                     return node.has("candidates") && node.get("candidates").isArray();
                 default:

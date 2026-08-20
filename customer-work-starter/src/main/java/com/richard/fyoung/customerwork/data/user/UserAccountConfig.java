@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.user;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.data.user.mapper.UserMapper;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectLevelBinding;
@@ -24,13 +25,11 @@ public class UserAccountConfig {
 
     private static final Logger log = LoggerFactory.getLogger(UserAccountConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(UserAccountStore.class)
     public UserAccountStore userAccountStore(CustomerWorkProperties properties, ObjectProvider<UserMapper> mapperProvider) {
         String mode = properties.getUserAuth().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("user store: jdbc (MyBatis-Plus 实现, table=cw_user)");
             return new MybatisUserAccountStore(mapperProvider.getObject());
         }

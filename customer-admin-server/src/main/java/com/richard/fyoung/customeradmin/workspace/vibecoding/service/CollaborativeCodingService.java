@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
+import com.richard.fyoung.customeradmin.common.constant.AgentCapabilities;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminCollaborationProperties;
@@ -68,8 +69,6 @@ import java.util.stream.Collectors;
 public class CollaborativeCodingService {
 
     private static final Logger log = LoggerFactory.getLogger(CollaborativeCodingService.class);
-    private static final String CAPABILITY_VIBECODING = "vibecoding";
-    private static final String CAPABILITY_DELIMITER = ",";
     private static final String ERR_ROLE_FAILED = "COLLAB-ROLE-FAILED";
     /** 送入审查角色的 diff 上限，超过截断，避免撑爆上下文。 */
     private static final int MAX_DIFF_CHARS_FOR_REVIEW = 60_000;
@@ -348,8 +347,8 @@ public class CollaborativeCodingService {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "智能体不存在: " + agentCode);
         }
         List<String> capabilities = StringUtils.hasText(agent.getCapabilities())
-            ? Arrays.asList(agent.getCapabilities().split(CAPABILITY_DELIMITER)) : List.of();
-        if (!capabilities.contains(CAPABILITY_VIBECODING)) {
+            ? Arrays.asList(agent.getCapabilities().split(AgentCapabilities.DELIMITER)) : List.of();
+        if (!capabilities.contains(AgentCapabilities.VIBECODING)) {
             throw new BizException(ResultCode.AGENT_CAPABILITY_NOT_SUPPORTED, "智能体未开启 vibecoding 能力: " + agentCode);
         }
     }

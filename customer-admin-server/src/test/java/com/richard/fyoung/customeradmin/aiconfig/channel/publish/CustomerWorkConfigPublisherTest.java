@@ -16,6 +16,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
 import org.junit.jupiter.api.Test;
@@ -175,7 +176,7 @@ class CustomerWorkConfigPublisherTest {
         when(modelConfigMapper.selectById(100L)).thenReturn(primary);
         when(cryptoUtil.decrypt("CIPHER")).thenReturn("sk-plain");
         when(modelFactory.testConnectivity(anyString(), anyString(), anyString(), anyString()))
-            .thenReturn(new ModelTestResult(ModelTestResult.STATUS_SUCCESS, LocalDateTime.now(), "ok"));
+            .thenReturn(new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), "ok"));
         when(backupModelMapper.selectList(any())).thenReturn(List.of());
         when(agentMcpMapper.selectList(any())).thenReturn(List.of());
         RuntimePublishTask task = new RuntimePublishTask();
@@ -200,7 +201,7 @@ class CustomerWorkConfigPublisherTest {
         when(modelConfigMapper.selectById(100L)).thenReturn(model(100L, "openai", "gpt-4o", "CIPHER"));
         when(cryptoUtil.decrypt("CIPHER")).thenReturn("sk-plain");
         when(modelFactory.testConnectivity(eq("openai"), anyString(), eq("sk-plain"), eq("gpt-4o")))
-            .thenReturn(new ModelTestResult(ModelTestResult.STATUS_FAILED, LocalDateTime.now(), "401 unauthorized"));
+            .thenReturn(new ModelTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(), "401 unauthorized"));
 
         // 探测不过：抛异常，绝不进入 publishConfig（不触达 Nacos）
         assertThrows(IllegalStateException.class, () -> publisher.republishByChannel("default"));

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.config;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.zaxxer.hikari.HikariDataSource;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.state.InMemoryAgentStateStore;
@@ -44,9 +45,9 @@ public class SessionConfig {
 
     /** 按配置构建 AgentStateStore（抽出以便单测）。 */
     AgentStateStore buildStateStore(SessionProperties cfg) {
-        String mode = cfg.getMode() == null ? "memory" : cfg.getMode().trim().toLowerCase();
+        String mode = cfg.getMode() == null ? StoreModes.MEMORY : cfg.getMode().trim().toLowerCase();
         switch (mode) {
-            case "redis": {
+            case StoreModes.REDIS: {
                 SessionProperties.Redis r = cfg.getRedis();
                 log.info("State persistence: JedisAgentStateStore, {}:{} keyPrefix={}",
                     r.getHost(), r.getPort(), r.getKeyPrefix());

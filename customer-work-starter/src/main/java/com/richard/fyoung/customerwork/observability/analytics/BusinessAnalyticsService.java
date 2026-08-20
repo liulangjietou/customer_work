@@ -8,6 +8,7 @@ import com.richard.fyoung.customerwork.capability.approval.PendingApprovalServic
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffStatus;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
+import com.richard.fyoung.customerwork.core.constant.FactTypes;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
 import com.richard.fyoung.customerwork.core.memory.FactRecord;
 import org.slf4j.Logger;
@@ -36,8 +37,6 @@ import java.util.stream.Collectors;
 public class BusinessAnalyticsService {
 
     private static final Logger log = LoggerFactory.getLogger(BusinessAnalyticsService.class);
-
-    private static final String QUALITY_FAILURE_TYPE = "quality-failure";
 
     private final PendingApprovalService approvalService;
     private final HandoffService handoffService;
@@ -139,7 +138,7 @@ public class BusinessAnalyticsService {
     private Integer parseQualityFailureScore(FactRecord record) {
         try {
             JsonNode node = mapper.readTree(record.fact());
-            if (!QUALITY_FAILURE_TYPE.equals(node.path("type").asText())) {
+            if (!FactTypes.QUALITY_FAILURE.equals(node.path("type").asText())) {
                 return null;
             }
             return node.path("score").asInt();

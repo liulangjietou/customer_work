@@ -16,6 +16,7 @@ import com.richard.fyoung.customeradmin.sqlconfig.entity.SqlDatasource;
 import com.richard.fyoung.customeradmin.sqlconfig.entity.SqlDefine;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDatasourceMapper;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDefineMapper;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -44,6 +45,7 @@ import java.util.stream.Collectors;
 @Service
 public class SqlDatasourceService {
 
+
     private static final Logger log = LoggerFactory.getLogger(SqlDatasourceService.class);
 
     /** 连通性测试专用线程池：与 Tomcat 请求线程隔离（同 ModelConfigService 手法）。 */
@@ -54,8 +56,6 @@ public class SqlDatasourceService {
     });
     private static final long TEST_FUTURE_TIMEOUT_SECONDS = 8;
     private static final int TEST_LOGIN_TIMEOUT_SECONDS = 5;
-    private static final int ENABLED = 1;
-
     private final SqlDatasourceMapper datasourceMapper;
     private final SqlDefineMapper defineMapper;
     private final AesGcmCryptoUtil cryptoUtil;
@@ -86,7 +86,7 @@ public class SqlDatasourceService {
     /** 仅启用数据源（供 SQL 定义表单下拉选择）。 */
     public List<SqlDatasourceVO> listEnabled() {
         return datasourceMapper.selectList(new LambdaQueryWrapper<SqlDatasource>()
-                .eq(SqlDatasource::getEnabled, ENABLED)
+                .eq(SqlDatasource::getEnabled, StatusFlags.ENABLED)
                 .orderByDesc(SqlDatasource::getCreateTime))
             .stream().map(this::toVo).collect(Collectors.toList());
     }
@@ -176,7 +176,7 @@ public class SqlDatasourceService {
         datasource.setName(request.name());
         datasource.setJdbcUrl(request.jdbcUrl());
         datasource.setUsername(request.username());
-        datasource.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : ENABLED);
+        datasource.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : StatusFlags.ENABLED);
         datasource.setRemark(request.remark());
     }
 
@@ -187,7 +187,7 @@ public class SqlDatasourceService {
         vo.setJdbcUrl(datasource.getJdbcUrl());
         vo.setUsername(datasource.getUsername());
         vo.setPasswordMasked(AesGcmCryptoUtil.mask(cryptoUtil.decrypt(datasource.getPassword())));
-        vo.setEnabled(datasource.getEnabled() != null && datasource.getEnabled() == ENABLED);
+        vo.setEnabled(datasource.getEnabled() != null && datasource.getEnabled() == StatusFlags.ENABLED);
         vo.setRemark(datasource.getRemark());
         vo.setCreateTime(datasource.getCreateTime());
         vo.setUpdateTime(datasource.getUpdateTime());

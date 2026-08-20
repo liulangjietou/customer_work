@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.security;
 
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import org.springframework.core.Ordered;
@@ -32,8 +33,6 @@ public class UserAuthWebFilter implements WebFilter {
     /** 用户主体在 exchange 属性中的键。 */
     public static final String PRINCIPAL_ATTR = "cw.user.principal";
 
-    private static final String BEARER_PREFIX = "Bearer ";
-
     private final UserJwtService jwtService;
 
     public UserAuthWebFilter(UserJwtService jwtService) {
@@ -47,10 +46,10 @@ public class UserAuthWebFilter implements WebFilter {
             return chain.filter(exchange);
         }
         String header = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-        if (header == null || !header.startsWith(BEARER_PREFIX)) {
+        if (header == null || !header.startsWith(HttpAuthConstants.BEARER_PREFIX)) {
             return AuthResponses.unauthorized(exchange, "missing bearer token");
         }
-        Optional<UserPrincipal> principal = jwtService.verify(header.substring(BEARER_PREFIX.length()));
+        Optional<UserPrincipal> principal = jwtService.verify(header.substring(HttpAuthConstants.BEARER_PREFIX.length()));
         if (principal.isEmpty()) {
             return AuthResponses.unauthorized(exchange, "invalid or expired token");
         }

@@ -30,7 +30,6 @@ public class IntentEvalRunner {
     private static final Logger log = LoggerFactory.getLogger(IntentEvalRunner.class);
 
     private static final String DATASET_PATH = "eval/intent-eval-cases.json";
-    private static final String ERR_LOAD = "EVAL-LOAD-FAIL";
 
     private final MultiAgentOrchestrator orchestrator;
     private final EvalCaseStore caseStore;
@@ -69,7 +68,7 @@ public class IntentEvalRunner {
             }
             return result;
         } catch (Exception e) {
-            log.error("load eval dataset failed, errorCode={}, path={}", ERR_LOAD, DATASET_PATH, e);
+            log.error("load eval dataset failed, errorCode={}, path={}", EvalErrorCodes.LOAD_FAIL, DATASET_PATH, e);
             throw new IllegalStateException("eval dataset not loadable: " + DATASET_PATH, e);
         }
     }

@@ -15,15 +15,13 @@ public class MockComplaintBackend implements ComplaintBackend {
 
     private static final Logger log = LoggerFactory.getLogger(MockComplaintBackend.class);
 
-    private static final String ID_PREFIX = "CP";
-
     /** ticketId -> 工单内容（演示用内存存储）。 */
     private final ConcurrentHashMap<String, String> tickets = new ConcurrentHashMap<>();
 
     @Override
     public Mono<String> fileComplaint(String orderId, String content) {
         return Mono.fromSupplier(() -> {
-            String ticketId = ID_PREFIX + System.currentTimeMillis();
+            String ticketId = ComplaintBackend.ID_PREFIX + System.currentTimeMillis();
             tickets.put(ticketId, "订单=" + orderId + "，内容=" + content);
             log.info("[MockComplaintBackend] file complaint: ticket={}, order={}", ticketId, orderId);
             return "已为您创建投诉工单 " + ticketId + "（订单 " + orderId + "），"

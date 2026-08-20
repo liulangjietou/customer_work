@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.config;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.ComplaintBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
@@ -48,26 +49,25 @@ import org.springframework.context.annotation.Configuration;
 public class ToolBackendConfig {
 
     private static final String MODE_KEY = "customer-work.tool-backend.mode";
-    private static final String MODE_JDBC = "jdbc";
 
     // ==================== jdbc 模式：MyBatis-Plus 后端（tool-backend.mode=jdbc 时装配） ====================
 
     @Bean
-    @ConditionalOnProperty(name = MODE_KEY, havingValue = MODE_JDBC)
+    @ConditionalOnProperty(name = MODE_KEY, havingValue = StoreModes.JDBC)
     @ConditionalOnMissingBean(OrderBackend.class)
     public OrderBackend jdbcOrderBackend(OrderMapper orderMapper) {
         return new MybatisOrderBackend(orderMapper);
     }
 
     @Bean
-    @ConditionalOnProperty(name = MODE_KEY, havingValue = MODE_JDBC)
+    @ConditionalOnProperty(name = MODE_KEY, havingValue = StoreModes.JDBC)
     @ConditionalOnMissingBean(ProductBackend.class)
     public ProductBackend jdbcProductBackend(ProductMapper productMapper) {
         return new MybatisProductBackend(productMapper);
     }
 
     @Bean
-    @ConditionalOnProperty(name = MODE_KEY, havingValue = MODE_JDBC)
+    @ConditionalOnProperty(name = MODE_KEY, havingValue = StoreModes.JDBC)
     @ConditionalOnMissingBean(AfterSalesBackend.class)
     public AfterSalesBackend jdbcAfterSalesBackend(RefundMapper refundMapper,
                                                    InvoiceRequestMapper invoiceRequestMapper,
@@ -76,7 +76,7 @@ public class ToolBackendConfig {
     }
 
     @Bean
-    @ConditionalOnProperty(name = MODE_KEY, havingValue = MODE_JDBC)
+    @ConditionalOnProperty(name = MODE_KEY, havingValue = StoreModes.JDBC)
     @ConditionalOnMissingBean(MemberBackend.class)
     public MemberBackend jdbcMemberBackend(MemberMapper memberMapper,
                                            MemberAccountLogMapper memberAccountLogMapper) {
@@ -84,14 +84,14 @@ public class ToolBackendConfig {
     }
 
     @Bean
-    @ConditionalOnProperty(name = MODE_KEY, havingValue = MODE_JDBC)
+    @ConditionalOnProperty(name = MODE_KEY, havingValue = StoreModes.JDBC)
     @ConditionalOnMissingBean(ComplaintBackend.class)
     public ComplaintBackend jdbcComplaintBackend(ComplaintMapper complaintMapper) {
         return new MybatisComplaintBackend(complaintMapper);
     }
 
     @Bean
-    @ConditionalOnProperty(name = MODE_KEY, havingValue = MODE_JDBC)
+    @ConditionalOnProperty(name = MODE_KEY, havingValue = StoreModes.JDBC)
     @ConditionalOnMissingBean(KnowledgeBackend.class)
     public KnowledgeBackend jdbcKnowledgeBackend(KnowledgeMapper knowledgeMapper) {
         return new MybatisKnowledgeBackend(knowledgeMapper);

@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.config;
 
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.AiChatAttachmentMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.store.AdminChatAttachmentStore;
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorages;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
@@ -39,8 +40,6 @@ import java.util.function.Supplier;
 @EnableConfigurationProperties(AttachmentProperties.class)
 public class AdminAttachmentConfig {
 
-    private static final String PROVIDER_DASHSCOPE = "dashscope";
-
     /**
      * 附件存储：admin 自有 {@code ai_chat_attachment} 表实现（覆盖 starter 默认 store）。
      * 返回具体类型 {@link AdminChatAttachmentStore}，既满足 {@link AttachmentParseService} 的
@@ -61,7 +60,7 @@ public class AdminAttachmentConfig {
     public VisionOcrService visionOcrService(AttachmentProperties properties) {
         AttachmentProperties.Ocr ocr = properties.getOcr();
         Supplier<Model> modelSupplier = () -> {
-            String apiKey = PROVIDER_DASHSCOPE.equalsIgnoreCase(ocr.getProvider())
+            String apiKey = ModelProviders.DASHSCOPE.equalsIgnoreCase(ocr.getProvider())
                 ? ChatModelFactory.resolveDashScopeKey(ocr.getApiKey())
                 : ocr.getApiKey();
             return ChatModelFactory.build(ocr.getProvider(), ocr.getModelName(), apiKey, ocr.getBaseUrl(),

@@ -53,14 +53,6 @@ public class ChatDispatchService {
     /** 主体配额的触发位置标识：与 HTTP 侧的路径同位，用于在命中记录里区分是哪条链路被限。 */
     private static final String QUOTA_RESOURCE_WS_CHAT = "ws:chat";
 
-    private static final String KEY_MESSAGE_ID = "messageId";
-    private static final String KEY_SESSION_ID = "sessionId";
-    private static final String KEY_TICKET_ID = "ticketId";
-    private static final String KEY_SENDER_TYPE = "senderType";
-    private static final String KEY_SENDER_ID = "senderId";
-    private static final String KEY_CONTENT = "content";
-    private static final String KEY_TS = "ts";
-
     private final TicketService ticketService;
     private final ChatLogService chatLogService;
     private final CustomerServiceService customerServiceService;
@@ -274,13 +266,13 @@ public class ChatDispatchService {
     /** 由已落库消息构造 chat 帧载荷（与前端契约字段一致：messageId/sessionId/ticketId/senderType/senderId/content/ts）。 */
     private Map<String, Object> chatData(ChatMessage message) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put(KEY_MESSAGE_ID, message.messageId());
-        data.put(KEY_SESSION_ID, message.sessionId());
-        data.put(KEY_TICKET_ID, message.ticketId());
-        data.put(KEY_SENDER_TYPE, message.senderType().name());
-        data.put(KEY_SENDER_ID, message.senderId());
-        data.put(KEY_CONTENT, message.content());
-        data.put(KEY_TS, message.createdAtMs());
+        data.put(WsFrame.KEY_MESSAGE_ID, message.messageId());
+        data.put(WsFrame.KEY_SESSION_ID, message.sessionId());
+        data.put(WsFrame.KEY_TICKET_ID, message.ticketId());
+        data.put(WsFrame.KEY_SENDER_TYPE, message.senderType().name());
+        data.put(WsFrame.KEY_SENDER_ID, message.senderId());
+        data.put(WsFrame.KEY_CONTENT, message.content());
+        data.put(WsFrame.KEY_TS, message.createdAtMs());
         return data;
     }
 }

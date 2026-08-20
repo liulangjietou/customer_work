@@ -26,7 +26,6 @@ import java.util.Locale;
 public final class TimestampDevToolOps {
 
     /** 默认时区。 */
-    private static final String DEFAULT_TIMEZONE = "Asia/Shanghai";
 
     /** 纯数字按秒解析的位数。 */
     private static final int EPOCH_SECONDS_DIGITS = 10;
@@ -65,7 +64,7 @@ public final class TimestampDevToolOps {
 
     /** 解析时区，非法直接抛出。 */
     private ZoneId resolveZone(String timezone) {
-        String tz = StringUtils.hasText(timezone) ? timezone.trim() : DEFAULT_TIMEZONE;
+        String tz = StringUtils.hasText(timezone) ? timezone.trim() : DevToolConstants.DEFAULT_ZONE;
         try {
             return ZoneId.of(tz);
         } catch (Exception e) {

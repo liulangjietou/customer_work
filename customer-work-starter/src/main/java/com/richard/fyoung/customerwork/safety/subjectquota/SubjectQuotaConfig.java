@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.subjectquota;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SubjectQuotaProperties;
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
@@ -30,8 +31,6 @@ public class SubjectQuotaConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SubjectQuotaConfig.class);
 
-    private static final String MODE_JDBC = "jdbc";
-
     @PostConstruct
     public void registerContextAccessor() {
         ContextRegistry.getInstance().registerThreadLocalAccessor(new QuotaSubjectContextThreadLocalAccessor());
@@ -42,7 +41,7 @@ public class SubjectQuotaConfig {
     public SubjectQuotaLevelStore subjectQuotaLevelStore(CustomerWorkProperties properties,
                                                          ObjectProvider<SubjectQuotaLevelMapper> mapperProvider) {
         SubjectQuotaProperties cfg = properties.getSubjectQuota();
-        if (!MODE_JDBC.equalsIgnoreCase(cfg.getStoreMode())) {
+        if (!StoreModes.isJdbc(cfg.getStoreMode())) {
             return new InMemorySubjectQuotaLevelStore();
         }
         SubjectQuotaLevelMapper mapper = mapperProvider.getIfAvailable();
@@ -62,7 +61,7 @@ public class SubjectQuotaConfig {
     public SubjectQuotaHitStore subjectQuotaHitStore(CustomerWorkProperties properties,
                                                      ObjectProvider<SubjectQuotaHitMapper> mapperProvider) {
         SubjectQuotaProperties cfg = properties.getSubjectQuota();
-        if (!MODE_JDBC.equalsIgnoreCase(cfg.getStoreMode())) {
+        if (!StoreModes.isJdbc(cfg.getStoreMode())) {
             return new InMemorySubjectQuotaHitStore();
         }
         SubjectQuotaHitMapper mapper = mapperProvider.getIfAvailable();
@@ -80,7 +79,7 @@ public class SubjectQuotaConfig {
                                                                SubjectQuotaLevelStore store) {
         SubjectQuotaProperties cfg = properties.getSubjectQuota();
         // 只有 jdbc 模式才需要轮询：内存 Store 的变更是同进程的，写入即生效，轮询纯属空转
-        boolean refreshEnabled = cfg.isEnabled() && MODE_JDBC.equalsIgnoreCase(cfg.getStoreMode());
+        boolean refreshEnabled = cfg.isEnabled() && StoreModes.isJdbc(cfg.getStoreMode());
         return new SubjectQuotaLevelProvider(store, refreshEnabled);
     }
 

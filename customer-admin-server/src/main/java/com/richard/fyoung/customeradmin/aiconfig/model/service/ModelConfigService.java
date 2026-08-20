@@ -15,6 +15,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
@@ -22,6 +23,7 @@ import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.slf4j.Logger;
@@ -157,7 +159,7 @@ public class ModelConfigService {
         AiModelConfig model = new AiModelConfig();
         fillFromRequest(model, request);
         model.setApiKey(cryptoUtil.encrypt(request.apiKey()));
-        model.setTestStatus(ModelTestResult.STATUS_UNTESTED);
+        model.setTestStatus(ConnectivityTestStatus.UNTESTED);
         // 本表在租户忽略清单里，拦截器不会自动补租户列，必须显式落归属
         if (tenantProperties.isEnabled()) {
             model.setTenantId(requireTenant());
@@ -237,7 +239,7 @@ public class ModelConfigService {
                 } else {
                     log.error("model connectivity test unexpected error, code={}, modelId={}", "MODEL-TEST-UNEXPECTED", id, ex);
                 }
-                return new ModelTestResult(ModelTestResult.STATUS_FAILED, LocalDateTime.now(), "连通性测试超时或执行异常");
+                return new ModelTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(), "连通性测试超时或执行异常");
             })
             .thenApply(result -> {
                 persistTestResult(id, result);
@@ -272,7 +274,7 @@ public class ModelConfigService {
 
     private void fillFromRequest(AiModelConfig model, ModelSaveRequest request) {
         model.setModelName(request.modelName());
-        model.setProvider(StringUtils.hasText(request.provider()) ? request.provider() : "openai");
+        model.setProvider(StringUtils.hasText(request.provider()) ? request.provider() : ModelProviders.OPENAI);
         model.setBaseUrl(request.baseUrl());
         model.setModel(request.model());
         model.setIsDefault(Boolean.TRUE.equals(request.isDefault()) ? 1 : 0);

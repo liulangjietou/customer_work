@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.rag.search;
 
 import java.math.BigDecimal;
+import org.springframework.http.MediaType;
 
 /**
  * 一次检索所需的知识库连接参数（apiKey 已解密）。刻意与任何持久化实体解耦：
@@ -24,7 +25,7 @@ public record KnowledgeBaseEndpoint(Long id, String kbName, String baseUrl, Stri
     /** 默认返回条数（配置留空时用）。 */
     public static final int DEFAULT_TOP_N = 5;
     /** 默认 Content-Type（配置留空时用）。 */
-    public static final String DEFAULT_CONTENT_TYPE = "application/json";
+    public static final String DEFAULT_CONTENT_TYPE = MediaType.APPLICATION_JSON_VALUE;
 
     public int effectiveTopN() {
         return topN == null || topN <= 0 ? DEFAULT_TOP_N : topN;

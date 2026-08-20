@@ -10,6 +10,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKno
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -91,7 +92,7 @@ class KnowledgeBaseServiceTest {
         kb.setTopN(5);
         kb.setScoreThreshold(BigDecimal.ZERO);
         kb.setStatus(1);
-        kb.setTestStatus(KnowledgeBaseTestResult.STATUS_SUCCESS);
+        kb.setTestStatus(ConnectivityTestStatus.SUCCESS);
         return kb;
     }
 
@@ -171,7 +172,7 @@ class KnowledgeBaseServiceTest {
         service.create(request("产品知识库", "sk-1"));
 
         verify(knowledgeBaseMapper).insert(captor.capture());
-        assertEquals(KnowledgeBaseTestResult.STATUS_SUCCESS, captor.getValue().getTestStatus());
+        assertEquals(ConnectivityTestStatus.SUCCESS, captor.getValue().getTestStatus());
     }
 
     @Test
@@ -270,7 +271,7 @@ class KnowledgeBaseServiceTest {
 
         KnowledgeBaseTestResult result = service.testConnectivity(1L).get();
 
-        assertEquals(KnowledgeBaseTestResult.STATUS_SUCCESS, result.testStatus());
+        assertEquals(ConnectivityTestStatus.SUCCESS, result.testStatus());
         assertEquals(1, result.hitCount());
         verify(knowledgeBaseMapper).updateById(any(AiKnowledgeBase.class));
     }
@@ -283,7 +284,7 @@ class KnowledgeBaseServiceTest {
 
         KnowledgeBaseTestResult result = service.testConnectivity(1L).get();
 
-        assertEquals(KnowledgeBaseTestResult.STATUS_FAILED, result.testStatus());
+        assertEquals(ConnectivityTestStatus.FAILED, result.testStatus());
         verify(knowledgeBaseMapper).updateById(any(AiKnowledgeBase.class));
     }
 

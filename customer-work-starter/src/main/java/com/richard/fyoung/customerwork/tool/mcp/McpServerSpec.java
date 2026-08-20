@@ -32,6 +32,14 @@ public record McpServerSpec(
     /** SSE 传输（默认）。 */
     public static final String TYPE_SSE = "sse";
 
+    /**
+     * 配置侧的 transport 取值，映射到 {@link #TYPE_HTTP}。
+     *
+     * <p>放在 type 旁边是为了让"配置写什么 → spec 里是什么"一眼可见：客服端按它选传输，
+     * 后台发布配置时按它输出，两处此前各写一份字面量。</p>
+     */
+    public static final String TRANSPORT_STREAMABLE_HTTP = "streamable-http";
+
     /** 构造一个 http/sse 传输的规格（无 stdio 相关字段）。 */
     public static McpServerSpec remote(String name, String type, String url, Map<String, String> headers) {
         return new McpServerSpec(name, type, url, null, List.of(), headers);

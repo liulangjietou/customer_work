@@ -8,6 +8,7 @@ import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySnapshot;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryStore;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -36,7 +37,6 @@ public class AgentMemoryService {
     private static final Logger log = LoggerFactory.getLogger(AgentMemoryService.class);
 
     /** 框架分层记忆的工作副本文件名（workspace 根下，路径约定来自 Harness WorkspaceManager）。 */
-    private static final String MEMORY_FILE_NAME = "MEMORY.md";
     /** 框架分层记忆的原料目录名（workspace 根下，存放按日/按会话沉淀的记忆文件）。 */
     private static final String MEMORY_DIR_NAME = "memory";
     private static final DateTimeFormatter UPDATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -80,7 +80,7 @@ public class AgentMemoryService {
         Path workspace = instanceFactory.resolveWorkspace(agentCode);
         try {
             memoryStore.delete(agentCode);
-            boolean removed = Files.deleteIfExists(workspace.resolve(MEMORY_FILE_NAME));
+            boolean removed = Files.deleteIfExists(workspace.resolve(AgentFileNames.MEMORY_MD));
             deleteRecursively(workspace.resolve(MEMORY_DIR_NAME));
             log.info("agent memory cleared: agentCode={} workspaceCopyRemoved={}", agentCode, removed);
         } catch (Exception e) {

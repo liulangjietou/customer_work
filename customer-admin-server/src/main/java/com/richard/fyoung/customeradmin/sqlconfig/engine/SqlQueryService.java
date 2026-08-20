@@ -15,6 +15,7 @@ import com.richard.fyoung.customeradmin.sqlconfig.entity.SqlFieldTransform;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDefineMapper;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDefineParamMapper;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlFieldTransformMapper;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.infra.sqlkit.DefaultValueResolver;
 import com.richard.fyoung.customerwork.infra.sqlkit.ParamType;
 import org.slf4j.Logger;
@@ -50,9 +51,9 @@ import java.util.stream.Collectors;
 @Service
 public class SqlQueryService {
 
+
     private static final Logger log = LoggerFactory.getLogger(SqlQueryService.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final int ENABLED = 1;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 300;
     // 即席查询结果的时间列格式化：MySQL DATETIME 经 JDBC 取出是 LocalDateTime，
     // Jackson 默认按 ISO-8601 序列化会带 'T'（2026-07-20T10:00:05），统一成无 T 的常用格式
@@ -357,7 +358,7 @@ public class SqlQueryService {
     private SqlDefine requireEnabledDefine(String defineKey) {
         SqlDefine define = defineMapper.selectOne(
             new LambdaQueryWrapper<SqlDefine>().eq(SqlDefine::getDefineKey, defineKey));
-        if (define == null || define.getEnabled() == null || define.getEnabled() != ENABLED) {
+        if (define == null || define.getEnabled() == null || define.getEnabled() != StatusFlags.ENABLED) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "SQL 定义不存在或未启用: " + defineKey);
         }
         return define;
@@ -379,7 +380,7 @@ public class SqlQueryService {
     }
 
     private boolean isFlag(Integer value) {
-        return value != null && value == ENABLED;
+        return value != null && value == StatusFlags.ENABLED;
     }
 
     private boolean isFlag(Boolean value) {

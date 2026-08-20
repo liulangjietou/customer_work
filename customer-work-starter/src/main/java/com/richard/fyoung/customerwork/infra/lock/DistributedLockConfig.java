@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.lock;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
@@ -27,8 +28,6 @@ public class DistributedLockConfig {
 
     private static final Logger log = LoggerFactory.getLogger(DistributedLockConfig.class);
 
-    private static final String MODE_REDIS = "redis";
-
     @Bean(destroyMethod = "shutdown")
     @ConditionalOnMissingBean
     public RedissonClient redissonClient(CustomerWorkProperties properties) {
@@ -52,7 +51,7 @@ public class DistributedLockConfig {
     public SessionLock sessionLock(CustomerWorkProperties properties, RedissonClient redissonClient) {
         DistributedProperties cfg = properties.getDistributed();
         InMemorySessionLock inMemory = new InMemorySessionLock(cfg.getSessionLockWaitSeconds());
-        if (!MODE_REDIS.equalsIgnoreCase(cfg.getSessionLockMode())) {
+        if (!StoreModes.isRedis(cfg.getSessionLockMode())) {
             return inMemory;
         }
         log.info("distributed session lock enabled, waitSeconds={}, leaseSeconds={}",

@@ -2,10 +2,12 @@ package com.richard.fyoung.customerwork.data.rag.search;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.safety.security.HttpTargetForbiddenException;
 import com.richard.fyoung.customerwork.safety.security.HttpTargetGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
@@ -67,9 +69,6 @@ public class KnowledgeSearchOps {
 
     private static final String SEARCH_PATH = "/api/v1/knowledge/search";
     private static final String RESPONSE_CODE_OK = "OK";
-    private static final String HEADER_AUTHORIZATION = "Authorization";
-    private static final String HEADER_CONTENT_TYPE = "Content-Type";
-    private static final String BEARER_PREFIX = "Bearer ";
     private static final String CODE_SEARCH_FAIL = "RAG-SEARCH-FAIL";
     /** 非 JSON 错误响应体透出的最大字符数（避免把网关 HTML 错误页整页塞进提示）。 */
     private static final int ERROR_BODY_MAX_CHARS = 200;
@@ -80,7 +79,7 @@ public class KnowledgeSearchOps {
      * JDK HttpRequest 的 {@code header()} 是追加而非覆盖，重复设置会产生两个同名头，行为不可控。
      */
     private static final Set<String> RESERVED_HEADERS =
-        Set.of(HEADER_AUTHORIZATION.toLowerCase(Locale.ROOT), HEADER_CONTENT_TYPE.toLowerCase(Locale.ROOT));
+        Set.of(HttpHeaders.AUTHORIZATION.toLowerCase(Locale.ROOT), HttpHeaders.CONTENT_TYPE.toLowerCase(Locale.ROOT));
 
     /**
      * 多库并发检索专用线程池：与 Tomcat 请求线程、以及 ForkJoin common pool 都隔离——
@@ -131,8 +130,8 @@ public class KnowledgeSearchOps {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(trimTrailingSlash(endpoint.baseUrl()) + SEARCH_PATH))
                 .timeout(Duration.ofSeconds(settings.getRequestTimeoutSeconds()))
-                .header(HEADER_CONTENT_TYPE, endpoint.effectiveContentType())
-                .header(HEADER_AUTHORIZATION, BEARER_PREFIX + endpoint.apiKey())
+                .header(HttpHeaders.CONTENT_TYPE, endpoint.effectiveContentType())
+                .header(HttpHeaders.AUTHORIZATION, HttpAuthConstants.BEARER_PREFIX + endpoint.apiKey())
                 .POST(HttpRequest.BodyPublishers.ofString(body));
             parseExtraHeaders(objectMapper, endpoint.extraHeaders()).forEach(builder::header);
 

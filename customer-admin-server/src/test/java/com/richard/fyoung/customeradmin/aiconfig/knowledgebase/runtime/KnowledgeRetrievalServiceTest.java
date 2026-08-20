@@ -9,6 +9,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKno
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
@@ -93,7 +94,7 @@ class KnowledgeRetrievalServiceTest {
         kb.setTopN(5);
         kb.setScoreThreshold(BigDecimal.ZERO);
         kb.setStatus(1);
-        kb.setTestStatus(KnowledgeBaseTestResult.STATUS_SUCCESS);
+        kb.setTestStatus(ConnectivityTestStatus.SUCCESS);
         return kb;
     }
 
@@ -162,7 +163,7 @@ class KnowledgeRetrievalServiceTest {
     @Test
     void retrieve_shouldSkipUntestedKnowledgeBase() {
         AiKnowledgeBase untested = usableKnowledgeBase();
-        untested.setTestStatus(KnowledgeBaseTestResult.STATUS_FAILED);
+        untested.setTestStatus(ConnectivityTestStatus.FAILED);
         bindKnowledgeBase(untested);
 
         assertNull(service.retrieve(AGENT_CODE, "问题"));

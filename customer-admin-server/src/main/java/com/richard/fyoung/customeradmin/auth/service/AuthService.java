@@ -214,7 +214,7 @@ public class AuthService {
             entity.setOperation(operation);
             entity.setMethod(method);
             entity.setTarget("sys_user");
-            entity.setResult(success ? 1 : 0);
+            entity.setResult(success ? SysOperationLog.RESULT_SUCCESS : SysOperationLog.RESULT_FAILURE);
             entity.setErrorMsg(errorMsg);
             entity.setIp(resolveClientIp());
             entity.setCreateTime(LocalDateTime.now());

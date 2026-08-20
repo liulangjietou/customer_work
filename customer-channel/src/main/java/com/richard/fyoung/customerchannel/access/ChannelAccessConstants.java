@@ -1,9 +1,15 @@
 package com.richard.fyoung.customerchannel.access;
 
+import com.richard.fyoung.customerwork.core.constant.ChannelTypes;
+import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
+
 /**
  * 渠道接入层常量（避免魔法值）。
  *
- * <p>集中定义：开放 API 头/路径、指令关键字、回复话术、SSE 事件名、错误码。</p>
+ * <p>集中定义：开放 API 路径、指令关键字、回复话术、错误码。</p>
+ *
+ * <p>鉴权头与 SSE 事件名<b>不在这里</b>：那是与后台服务端共用的协议，定义在 starter 的
+ * {@link OpenApiProtocol}，两侧引用同一处，避免改了服务端忘了客户端。</p>
  * @author owlzhangfq@gmail.com
  */
 public final class ChannelAccessConstants {
@@ -11,13 +17,10 @@ public final class ChannelAccessConstants {
     private ChannelAccessConstants() {
     }
 
-    /** 开放 API 鉴权头。 */
-    public static final String OPEN_API_TOKEN_HEADER = "X-Open-Api-Token";
-
-    /** 渠道类型：钉钉。 */
-    public static final String CHANNEL_TYPE_DINGTALK = "dingtalk";
+    /** 渠道类型：钉钉（编码与后台 {@code ChannelType} 共用 {@link ChannelTypes} 一处定义）。 */
+    public static final String CHANNEL_TYPE_DINGTALK = ChannelTypes.DINGTALK;
     /** 渠道类型：微信公众号。 */
-    public static final String CHANNEL_TYPE_WECHAT = "wechat";
+    public static final String CHANNEL_TYPE_WECHAT = ChannelTypes.WECHAT;
 
     // ===== 开放 API 路径 =====
     public static final String PATH_ROBOTS = "/api/open/channel/robots";
@@ -42,12 +45,6 @@ public final class ChannelAccessConstants {
     public static final String HINT_PER_MESSAGE_NO_RESET = "当前为单次问答模式，每条消息都是全新上下文，无需重置";
     public static final String HINT_NON_TEXT = "目前只支持文本消息";
     public static final String HINT_ERROR = "抱歉，服务暂时不可用，请稍后再试";
-
-    // ===== SSE 事件名 =====
-    public static final String SSE_EVENT_MESSAGE = "message";
-    public static final String SSE_EVENT_DONE = "done";
-    public static final String SSE_EVENT_ERROR = "error";
-    public static final String SSE_DONE_MARKER = "[DONE]";
 
     // ===== 微信公众号（入站回调 + 客服消息主动推送）=====
     /** 微信 API 基地址。 */
