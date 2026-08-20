@@ -9,6 +9,7 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.propagation.TextMapGetter;
 import io.opentelemetry.context.propagation.TextMapPropagator;
 import io.opentelemetry.instrumentation.reactor.v3_1.ContextPropagationOperator;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -45,6 +46,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>仅当 {@code customer-work.observability.otel.enabled=true} 时装配（随 {@link OtelTracingConfig}）。</p>
  * @author owlzhangfq@gmail.com
  */
+// 仅响应式栈装配：本类是 WebFlux 的 WebFilter，在 Servlet 栈（customer-admin-server）下
+// 既不会生效也不该存在。没有这个条件时，下游 Servlet 模块只能整体 exclude starter 的入口
+// 自动装配来躲开它，代价是全部域装配一并让位、几十个 Bean 要手工重装。
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
 @Component
 @ConditionalOnProperty(prefix = "customer-work.observability.otel", name = "enabled", havingValue = "true")
 @Order(Ordered.HIGHEST_PRECEDENCE + 2)   // 紧随 TraceContextWebFilter(+1) 之后

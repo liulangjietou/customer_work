@@ -14,7 +14,15 @@ public class ModelProperties {
     private String provider = "dashscope";
     private String apiKey;
     private String name = "qwen-max";
-    private String baseUrl;
+    /**
+     * 自定义端点；空串表示用厂商默认端点。
+     *
+     * <p>默认值是空串而非 {@code null}，与下面 {@code Fallback.baseUrl} /
+     * {@code TieredRouting.baseUrl} 保持一致——同一语义的三个字段此前一个是 null、两个是空串，
+     * 消费侧统一用 {@code StringUtils.hasText} 判空，两种取值行为等价，但不一致会让
+     * "yml 里写不写这一项"产生看得见的差异（绑定结果不同）。</p>
+     */
+    private String baseUrl = "";
     private Double temperature = 0.3;
     private Integer maxTokens = 1500;
     private boolean stream = true;

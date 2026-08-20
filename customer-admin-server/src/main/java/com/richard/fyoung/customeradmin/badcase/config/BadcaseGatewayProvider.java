@@ -1,17 +1,10 @@
 package com.richard.fyoung.customeradmin.badcase.config;
 
-import com.richard.fyoung.customeradmin.common.exception.BizException;
-import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.capability.badcase.BadcaseService;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbUnavailableException;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -26,44 +19,23 @@ import org.springframework.stereotype.Component;
 @Component
 public class BadcaseGatewayProvider {
 
-    private static final Logger log = LoggerFactory.getLogger(BadcaseGatewayProvider.class);
-
-    private static final String POOL_NAME = "badcase-pool";
-    private static final int MAX_POOL_SIZE = 3;
-
-    private final ContentGuardProperties properties;
-    private final CrossDbGatewayProvider<BadcaseService> delegate;
+    private final CustomerWorkFacade<BadcaseService> facade;
 
     public BadcaseGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
-        this.properties = properties;
-        this.delegate = CrossDbGateways.lazy(this::connectionSettings,
-            BadcaseGatewayFactory.MAPPER_CLASSES,
-            BadcaseGatewayFactory.MAPPER_XML_LOCATIONS,
-            tenantPlugins::create,
-            BadcaseGatewayFactory::build);
+        this.facade = CustomerWorkFacade.builder("badcase-pool", properties, tenantPlugins)
+            .mapperClasses(BadcaseGatewayFactory.MAPPER_CLASSES)
+            .mapperXml(BadcaseGatewayFactory.MAPPER_XML_LOCATIONS)
+            .error("BADCASE-DS-UNAVAILABLE", "客服端库不可达（badcase 与回流目标存放于此）")
+            .build(BadcaseGatewayFactory::build);
     }
 
-    /** 取门面（惰性构建 + 探测 + 缓存）；库不可达抛明确业务异常。 */
+    /** 取门面（惰性建连 + 探测 + 缓存）；库不可达抛带业务语义的异常。 */
     public BadcaseService get() {
-        try {
-            return delegate.get();
-        } catch (CrossDbUnavailableException e) {
-            log.error("badcase datasource unavailable, code={}, url={}",
-                "BADCASE-DS-UNAVAILABLE", properties.jdbcUrl(), e);
-            throw new BizException(ResultCode.CUSTOMER_WORK_UNAVAILABLE,
-                "客服端库不可达（badcase 与回流目标存放于此）：" + e.rootMessage());
-        }
-    }
-
-    private CrossDbConnectionSettings connectionSettings() {
-        return CrossDbConnectionSettings.builder(POOL_NAME, properties.jdbcUrl())
-            .credentials(properties.getUsername(), properties.getPassword())
-            .maximumPoolSize(MAX_POOL_SIZE)
-            .build();
+        return facade.get();
     }
 
     @PreDestroy
     public void close() {
-        delegate.close();
+        facade.close();
     }
 }

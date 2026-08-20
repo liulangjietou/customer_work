@@ -1,17 +1,10 @@
 package com.richard.fyoung.customeradmin.eval.config;
 
-import com.richard.fyoung.customeradmin.common.exception.BizException;
-import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.capability.eval.EvalRunStore;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbUnavailableException;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,44 +22,23 @@ import org.springframework.stereotype.Component;
 @Component
 public class EvalGatewayProvider {
 
-    private static final Logger log = LoggerFactory.getLogger(EvalGatewayProvider.class);
-
-    private static final String POOL_NAME = "eval-run-pool";
-    private static final int MAX_POOL_SIZE = 3;
-
-    private final ContentGuardProperties properties;
-    private final CrossDbGatewayProvider<EvalRunStore> delegate;
+    private final CustomerWorkFacade<EvalRunStore> facade;
 
     public EvalGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
-        this.properties = properties;
-        this.delegate = CrossDbGateways.lazy(this::connectionSettings,
-            EvalGatewayFactory.MAPPER_CLASSES,
-            EvalGatewayFactory.MAPPER_XML_LOCATIONS,
-            tenantPlugins::create,
-            EvalGatewayFactory::build);
+        this.facade = CustomerWorkFacade.builder("eval-run-pool", properties, tenantPlugins)
+            .mapperClasses(EvalGatewayFactory.MAPPER_CLASSES)
+            .mapperXml(EvalGatewayFactory.MAPPER_XML_LOCATIONS)
+            .error("EVAL-DS-UNAVAILABLE", "客服端库不可达（评测记录存放于此）")
+            .build(EvalGatewayFactory::build);
     }
 
-    /** 取门面（惰性构建 + 探测 + 缓存）；库不可达抛明确业务异常。 */
+    /** 取门面（惰性建连 + 探测 + 缓存）；库不可达抛带业务语义的异常。 */
     public EvalRunStore get() {
-        try {
-            return delegate.get();
-        } catch (CrossDbUnavailableException e) {
-            log.error("eval datasource unavailable, code={}, url={}",
-                "EVAL-DS-UNAVAILABLE", properties.jdbcUrl(), e);
-            throw new BizException(ResultCode.CUSTOMER_WORK_UNAVAILABLE,
-                "客服端库不可达（评测记录存放于此）：" + e.rootMessage());
-        }
-    }
-
-    private CrossDbConnectionSettings connectionSettings() {
-        return CrossDbConnectionSettings.builder(POOL_NAME, properties.jdbcUrl())
-            .credentials(properties.getUsername(), properties.getPassword())
-            .maximumPoolSize(MAX_POOL_SIZE)
-            .build();
+        return facade.get();
     }
 
     @PreDestroy
     public void close() {
-        delegate.close();
+        facade.close();
     }
 }

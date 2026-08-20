@@ -4,7 +4,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -21,7 +21,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class SubjectQuotaAssemblyTest {
 
-    private final ApplicationContextRunner runner = new ApplicationContextRunner()
+    /**
+     * 用响应式 Web 上下文而非普通上下文：{@code SubjectQuotaWebFilter} 带
+     * {@code @ConditionalOnWebApplication(type = REACTIVE)}——它是 WebFlux 的过滤器，
+     * 在 Servlet 栈（admin）下既不生效也不该装配。客服端 app-server 正是 WebFlux，
+     * 测试上下文必须与真实运行环境同类型，否则这里断言的"装配完整"与线上不是一回事。
+     */
+    private final ReactiveWebApplicationContextRunner runner = new ReactiveWebApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(PropertiesHolder.class, SubjectQuotaConfig.class));
 
     @Test

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbConnection;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -12,7 +13,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @Data
 @ConfigurationProperties(prefix = "admin.agent-call-stats.app")
-public class AgentCallStatsAppProperties {
+public class AgentCallStatsAppProperties implements CustomerWorkDbConnection {
 
     /** 数据库主机。 */
     private String host = "localhost";

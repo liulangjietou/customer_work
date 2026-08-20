@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,10 @@ import java.util.UUID;
  * 使 logback pattern 的 {@code %X{requestId}} 生效——两者共用键名 {@code requestId}。</p>
  * @author owlzhangfq@gmail.com
  */
+// 仅响应式栈装配：本类是 WebFlux 的 WebFilter，在 Servlet 栈（customer-admin-server）下
+// 既不会生效也不该存在。没有这个条件时，下游 Servlet 模块只能整体 exclude starter 的入口
+// 自动装配来躲开它，代价是全部域装配一并让位、几十个 Bean 要手工重装。
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class RequestIdWebFilter implements WebFilter {

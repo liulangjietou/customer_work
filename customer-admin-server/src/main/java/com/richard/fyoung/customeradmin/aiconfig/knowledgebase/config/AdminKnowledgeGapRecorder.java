@@ -1,12 +1,10 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapService;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapRecorder;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,41 +33,33 @@ public class AdminKnowledgeGapRecorder implements KnowledgeGapRecorder {
 
     private static final Logger log = LoggerFactory.getLogger(AdminKnowledgeGapRecorder.class);
 
-    private static final String POOL_NAME = "knowledge-gap-pool";
-    private static final int MAX_POOL_SIZE = 2;
     private static final String CODE_RECORD_FAIL = "GAP-RECORD-FAIL";
 
     private final ContentGuardProperties properties;
-    private final CrossDbGatewayProvider<KnowledgeGapService> delegate;
+    private final CustomerWorkFacade<KnowledgeGapService> facade;
 
     public AdminKnowledgeGapRecorder(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
-        this.delegate = CrossDbGateways.lazy(this::connectionSettings,
-            KnowledgeGapGatewayFactory.MAPPER_CLASSES,
-            KnowledgeGapGatewayFactory.MAPPER_XML_LOCATIONS,
-            tenantPlugins::create,
-            KnowledgeGapGatewayFactory::build);
+        this.facade = CustomerWorkFacade.builder("knowledge-gap-pool", properties, tenantPlugins)
+            .mapperClasses(KnowledgeGapGatewayFactory.MAPPER_CLASSES)
+            .mapperXml(KnowledgeGapGatewayFactory.MAPPER_XML_LOCATIONS)
+            .maxPoolSize(2)
+            .error("GAP-DS-UNAVAILABLE", "客服端库不可达（知识盲区计数存放于此）")
+            .build(KnowledgeGapGatewayFactory::build);
     }
 
     @Override
     public void recordMiss(String sessionId, String question) {
         try {
-            delegate.get().recordMiss(sessionId, question);
+            facade.get().recordMiss(sessionId, question);
         } catch (Exception e) {
             // 旁路埋点：库不可达 / 建连失败都只记日志，绝不冒泡打断这一轮对话
             log.error("knowledge gap record failed, code={}, url={}", CODE_RECORD_FAIL, properties.jdbcUrl(), e);
         }
     }
 
-    private CrossDbConnectionSettings connectionSettings() {
-        return CrossDbConnectionSettings.builder(POOL_NAME, properties.jdbcUrl())
-            .credentials(properties.getUsername(), properties.getPassword())
-            .maximumPoolSize(MAX_POOL_SIZE)
-            .build();
-    }
-
     @PreDestroy
     public void close() {
-        delegate.close();
+        facade.close();
     }
 }

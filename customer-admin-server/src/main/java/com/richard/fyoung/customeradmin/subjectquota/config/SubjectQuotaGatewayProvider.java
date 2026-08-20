@@ -1,16 +1,10 @@
 package com.richard.fyoung.customeradmin.subjectquota.config;
 
-import com.richard.fyoung.customeradmin.common.exception.BizException;
-import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.subjectquota.jdbc.SubjectQuotaGateway;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbUnavailableException;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -25,43 +19,23 @@ import org.springframework.stereotype.Component;
 @Component
 public class SubjectQuotaGatewayProvider {
 
-    private static final Logger log = LoggerFactory.getLogger(SubjectQuotaGatewayProvider.class);
+    private final CustomerWorkFacade<SubjectQuotaGateway> facade;
 
-    private static final String POOL_NAME = "subject-quota-pool";
-    private static final int MAX_POOL_SIZE = 3;
-
-    private final ContentGuardProperties properties;
-    private final CrossDbGatewayProvider<SubjectQuotaGateway> delegate;
-
-    public SubjectQuotaGatewayProvider(ContentGuardProperties properties) {
-        this.properties = properties;
-        this.delegate = CrossDbGateways.lazy(this::connectionSettings,
-            SubjectQuotaGatewayFactory.MAPPER_CLASSES,
-            SubjectQuotaGatewayFactory.MAPPER_XML_LOCATIONS,
-            SubjectQuotaGatewayFactory::build);
+    public SubjectQuotaGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
+        this.facade = CustomerWorkFacade.builder("subject-quota-pool", properties, tenantPlugins)
+            .mapperClasses(SubjectQuotaGatewayFactory.MAPPER_CLASSES)
+            .mapperXml(SubjectQuotaGatewayFactory.MAPPER_XML_LOCATIONS)
+            .error("SQUOTA-DS-UNAVAILABLE", "客服端库不可达（主体配额等级存放于此）")
+            .build(SubjectQuotaGatewayFactory::build);
     }
 
-    /** 取门面（惰性构建 + 探测 + 缓存）；库不可达抛明确业务异常。 */
+    /** 取门面（惰性建连 + 探测 + 缓存）；库不可达抛带业务语义的异常。 */
     public SubjectQuotaGateway get() {
-        try {
-            return delegate.get();
-        } catch (CrossDbUnavailableException e) {
-            log.error("subject quota datasource unavailable, code={}, url={}",
-                "SQUOTA-DS-UNAVAILABLE", properties.jdbcUrl(), e);
-            throw new BizException(ResultCode.CUSTOMER_WORK_UNAVAILABLE,
-                "客服端库不可达（主体配额等级存放于此）：" + e.rootMessage());
-        }
-    }
-
-    private CrossDbConnectionSettings connectionSettings() {
-        return CrossDbConnectionSettings.builder(POOL_NAME, properties.jdbcUrl())
-            .credentials(properties.getUsername(), properties.getPassword())
-            .maximumPoolSize(MAX_POOL_SIZE)
-            .build();
+        return facade.get();
     }
 
     @PreDestroy
     public void close() {
-        delegate.close();
+        facade.close();
     }
 }

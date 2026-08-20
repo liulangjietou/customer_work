@@ -38,28 +38,17 @@ agentscope:
 # 复用 customer-work 的客服 Agent 配置（仅取所需子集）
 customer-work:
   model:
-    provider: dashscope
     name: qwen3.7-plus
     # 生产用环境变量 DASHSCOPE_API_KEY 注入；缺省启动会报错并提示
     api-key: ${DASHSCOPE_API_KEY:}
-    stream: true
-  session:
-    mode: memory          # 控制台默认进程内；生产可切 redis/mysql
-  agent:
-    max-iters: 10
-  interrupt:
-    pending-tool-recovery-enabled: true
   # 权限系统：控制台演示开启 ask 规则（退款/转人工需人工确认）
   harness:
     permission:
       enabled: true
-      mode: default
   # Studio 观测台：把 agent 运行轨迹推送到外部 AgentScope Studio 应用做可视化调试/回放。
   # 默认关闭；启用需先单独运行一个 Studio 实例并把 url 指向它（连接失败不影响应用启动）。
   observability:
     studio:
-      enabled: false
-      url: ""                       # 例如 ws://localhost:8501 （以你的 Studio 实例为准）
       project: customer-channel
       run-name: customer-channel-run
 

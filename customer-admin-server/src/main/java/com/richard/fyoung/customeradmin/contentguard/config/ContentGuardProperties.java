@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.contentguard.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbConnection;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -15,7 +16,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @Data
 @ConfigurationProperties(prefix = "admin.content-guard")
-public class ContentGuardProperties {
+public class ContentGuardProperties implements CustomerWorkDbConnection {
 
     /** 数据库主机。 */
     private String host = "localhost";

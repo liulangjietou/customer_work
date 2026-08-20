@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -115,7 +116,10 @@ public class SubjectQuotaConfig {
      * 自动纳入所有 {@code WebFilter} Bean，切片里却没有 {@link UserJwtService}，那样每个控制器
      * 切片测试都会因为一个与它无关的过滤器加载失败（{@code UserAuthWebFilter} 同样的理由）。</p>
      */
+    // 仅响应式栈装配：WebFilter 在 Servlet 栈（admin）下不生效也不该存在。
+    // admin 侧的主体配额判定走 MVC 的 AdminQuotaInterceptor，是另一条实现。
     @Bean
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
     @ConditionalOnMissingBean
     public SubjectQuotaWebFilter subjectQuotaWebFilter(CustomerWorkProperties properties,
                                                        SubjectQuotaGuard guard,
