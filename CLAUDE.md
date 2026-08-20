@@ -34,7 +34,17 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1441** + admin-server **858** + app 93 + customer-channel 65 + gateway 1（合计 **2458**）
+- 测试基线：starter **1464** + admin-server **858** + app 93 + customer-channel 65 + gateway 1（合计 **2481**）
+  （2026-08-20 M1-M4 系统性修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  排除 `RedisSessionPersistenceTest`；MySQL/Redis/MinIO 在线、Nacos 不可达故其门控测试跳过。
+  本批次自身加 starter **+23**（装配对齐门禁 3 + 会话隔离 3 + 附件隔离 6 + 上下文预算 7 + 知识盲区双路径 4）。
+  **本批次起：任何 `ReActAgent.builder()` 必须调 `governanceAssembler.applyTo(builder)`**，
+  见下方「项目编码规范」第一条；`AgentAssemblyAlignmentTest` 会对此下断言。
+  **两个不走 starter 自动装配的模块要特别注意**：customer-channel 用 `@SpringBootApplication`
+  只扫自己的包（starter 的 `@Component` 拿不到，须显式 `@Bean`）；admin 有自己的
+  `common.log.SensitiveDataMasker`，声明同名 Bean 会抛 `BeanDefinitionOverrideException`。
+  这两个坑都是全量测试跑出来的，单模块测试照不出来。
+  上一版基线 2026-08-19 Skill 技能包下载批次：starter 1441 + admin 858，合计 2458）
   （2026-08-19 Skill 技能包下载批次实测：starter 1441 / 5 skip、admin 858 / 1 skip，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加 admin +7。
   **导入/导出这类成对功能，测试要真的做一次往返**（导出的包再喂给解析器比对），
