@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.system.role.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.richard.fyoung.customeradmin.common.constant.SystemRoles;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
@@ -40,8 +41,6 @@ import java.util.stream.Collectors;
 public class RoleService {
 
     private static final Logger log = LoggerFactory.getLogger(RoleService.class);
-
-    private static final String SUPER_ADMIN_ROLE_CODE = "super_admin";
 
     private final SysRoleMapper roleMapper;
     private final SysRolePermissionMapper rolePermissionMapper;
@@ -147,7 +146,7 @@ public class RoleService {
     }
 
     private void guardSuperAdmin(SysRole role, String action) {
-        if (SUPER_ADMIN_ROLE_CODE.equals(role.getRoleCode())) {
+        if (SystemRoles.SUPER_ADMIN.equals(role.getRoleCode())) {
             throw new BizException(ResultCode.FORBIDDEN, "超级管理员角色不可" + action);
         }
     }
@@ -179,7 +178,7 @@ public class RoleService {
                 Collectors.mapping(SysRolePermission::getPermissionId, Collectors.toList())));
 
         for (RoleVO vo : roles) {
-            if (SUPER_ADMIN_ROLE_CODE.equals(vo.getRoleCode())) {
+            if (SystemRoles.SUPER_ADMIN.equals(vo.getRoleCode())) {
                 vo.setPermissionIds(superAdminAllIds);
             } else {
                 vo.setPermissionIds(permissionIdsByRole.getOrDefault(vo.getId(), List.of()));

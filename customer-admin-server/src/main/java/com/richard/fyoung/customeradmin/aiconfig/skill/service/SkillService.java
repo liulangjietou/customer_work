@@ -22,6 +22,7 @@ import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import com.richard.fyoung.customerwork.data.skill.storage.SkillContentPublisher;
 import com.richard.fyoung.customerwork.data.skill.storage.SkillFileContent;
 import com.richard.fyoung.customerwork.data.skill.storage.SkillStorageTarget;
@@ -334,7 +335,7 @@ public class SkillService {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (ZipOutputStream zipOut = new ZipOutputStream(bos, StandardCharsets.UTF_8)) {
             String content = skill.getContent() == null ? "" : skill.getContent();
-            writeZipEntry(zipOut, rootDir + "/" + SKILL_FILE_NAME, content.getBytes(StandardCharsets.UTF_8));
+            writeZipEntry(zipOut, rootDir + "/" + AgentFileNames.SKILL_MD, content.getBytes(StandardCharsets.UTF_8));
             for (SkillFileContent file : files) {
                 // content 允许为空（历史数据/空文件），补空字节而不是跳过——
                 // 跳过会让重新上传后文件清单凭空少几项，导出就不是"这个 skill 的全部"了
@@ -374,7 +375,6 @@ public class SkillService {
 
     // ---- 上传解析 ----
 
-    private static final String SKILL_FILE_NAME = "SKILL.md";
     private static final long BYTES_PER_MB = 1024L * 1024L;
     private static final long MAX_UPLOAD_BYTES = 5 * BYTES_PER_MB;
     /** zip 解压后（以及保存请求里附属文件解码后）的总字节上限，防 zip bomb。 */
@@ -486,7 +486,7 @@ public class SkillService {
         int foundDepth = Integer.MAX_VALUE;
         for (String name : entryNames) {
             String fileName = name.substring(name.lastIndexOf('/') + 1);
-            if (!SKILL_FILE_NAME.equalsIgnoreCase(fileName)) {
+            if (!AgentFileNames.SKILL_MD.equalsIgnoreCase(fileName)) {
                 continue;
             }
             int depth = (int) name.chars().filter(c -> c == '/').count();

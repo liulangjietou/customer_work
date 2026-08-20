@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.skill.storage;
 
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import io.minio.BucketExistsArgs;
 import io.minio.ListObjectsArgs;
 import io.minio.MakeBucketArgs;
@@ -16,6 +17,7 @@ import java.io.UncheckedIOException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import org.springframework.http.MediaType;
 
 /**
  * MinIO 对象存储目标：把 SKILL.md 发布为对象 {@code {prefix}{skillCode}/SKILL.md}，
@@ -31,9 +33,6 @@ import java.util.List;
 public class MinioSkillPublisher implements SkillContentPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(MinioSkillPublisher.class);
-
-    private static final String SKILL_FILE_NAME = "SKILL.md";
-    private static final String OBJECT_CONTENT_TYPE = "application/octet-stream";
 
     private final MinioClient client;
     private final String bucket;
@@ -59,7 +58,7 @@ public class MinioSkillPublisher implements SkillContentPublisher {
 
     @Override
     public void publish(String skillCode, String content) {
-        putObject(objectKey(skillCode, SKILL_FILE_NAME), content.getBytes(StandardCharsets.UTF_8));
+        putObject(objectKey(skillCode, AgentFileNames.SKILL_MD), content.getBytes(StandardCharsets.UTF_8));
         log.info("minio skill published, skillCode={}, bucket={}", skillCode, bucket);
     }
 
@@ -98,7 +97,7 @@ public class MinioSkillPublisher implements SkillContentPublisher {
             client.putObject(PutObjectArgs.builder()
                 .bucket(bucket)
                 .object(objectKey)
-                .contentType(OBJECT_CONTENT_TYPE)
+                .contentType(MediaType.APPLICATION_OCTET_STREAM_VALUE)
                 .stream(new ByteArrayInputStream(data), data.length, -1)
                 .build());
         } catch (Exception e) {

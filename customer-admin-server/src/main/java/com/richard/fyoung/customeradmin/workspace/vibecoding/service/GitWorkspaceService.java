@@ -32,7 +32,8 @@ public class GitWorkspaceService {
     private static final long GIT_TIMEOUT_SECONDS = 15;
     private static final String BASELINE_COMMIT_MESSAGE = "vibecoding-session-baseline";
     /** 会话现场建立的 git 仓库目录名，回滚前据此校验 workspace 拥有自己的仓库（防越界删父级仓库文件）。 */
-    private static final String GIT_DIR_NAME = ".git";
+    /** git 仓库目录名（同包的 {@code VibeCodingService} 遍历工作区时要跳过它）。 */
+    static final String GIT_DIR_NAME = ".git";
     /** baseline 是会话内唯一提交，故 HEAD 恒等于 baseline，回滚以 HEAD 为恢复基准。 */
     private static final String HEAD_REF = "HEAD";
 

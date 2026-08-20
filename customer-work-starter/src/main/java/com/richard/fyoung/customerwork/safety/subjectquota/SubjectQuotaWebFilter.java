@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.subjectquota;
 
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SubjectQuotaProperties;
 import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
@@ -49,7 +50,6 @@ public class SubjectQuotaWebFilter implements WebFilter {
      * 偏偏那正是用户最需要看到它的时刻。</p>
      */
     private static final String PATH_MY_QUOTA = "/api/customer/user/quota";
-    private static final String BEARER_PREFIX = "Bearer ";
 
     private final CustomerWorkProperties properties;
     private final SubjectQuotaGuard guard;
@@ -112,11 +112,11 @@ public class SubjectQuotaWebFilter implements WebFilter {
             return null;
         }
         String header = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-        if (header == null || !header.startsWith(BEARER_PREFIX)) {
+        if (header == null || !header.startsWith(HttpAuthConstants.BEARER_PREFIX)) {
             return null;
         }
         // 验签失败不报错：这里只是想认出"他是谁"，令牌无效自有鉴权过滤器去拒，本类只管退回按 IP 限
-        return jwtService.verify(header.substring(BEARER_PREFIX.length())).orElse(null);
+        return jwtService.verify(header.substring(HttpAuthConstants.BEARER_PREFIX.length())).orElse(null);
     }
 
     private static String remoteAddress(ServerWebExchange exchange) {

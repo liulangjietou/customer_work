@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.extensions.higress.HigressMcpClientBuilder;
 import io.agentscope.extensions.higress.HigressMcpClientWrapper;
@@ -63,7 +64,7 @@ public class HigressToolkitConfigurer {
             HigressProperties h) {
         HigressMcpClientBuilder builder = HigressMcpClientBuilder.create(h.getName())
             .timeout(Duration.ofSeconds(h.getTimeoutSeconds()));
-        if ("streamable-http".equalsIgnoreCase(h.getTransport())) {
+        if (McpServerSpec.TRANSPORT_STREAMABLE_HTTP.equalsIgnoreCase(h.getTransport())) {
             builder.streamableHttpEndpoint(h.getEndpoint());
         } else {
             builder.sseEndpoint(h.getEndpoint());

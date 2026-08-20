@@ -51,8 +51,6 @@ public final class CustomerWorkFacade<T> {
     private static final Logger log = LoggerFactory.getLogger(CustomerWorkFacade.class);
 
     /** 跨库连接池默认大小：门面都是低频运维查询，池子不需要大。 */
-    private static final int DEFAULT_MAX_POOL_SIZE = 3;
-
     private final CustomerWorkDbConnection properties;
     private final CrossDbGatewayProvider<T> delegate;
     private final String errorCode;
@@ -99,7 +97,7 @@ public final class CustomerWorkFacade<T> {
         private final AdminCrossDbTenantPlugins tenantPlugins;
         private List<Class<?>> mapperClasses = List.of();
         private List<String> mapperXmlLocations = List.of();
-        private int maxPoolSize = DEFAULT_MAX_POOL_SIZE;
+        private int maxPoolSize = CrossDbConnectionSettings.DEFAULT_MAX_POOL_SIZE;
         private String errorCode = "CUSTOMER-WORK-DS-UNAVAILABLE";
         private String errorHint = "客服端库不可达";
 

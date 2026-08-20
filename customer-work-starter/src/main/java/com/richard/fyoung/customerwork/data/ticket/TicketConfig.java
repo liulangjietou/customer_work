@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.ticket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.data.outbox.OutboxHandler;
 import com.richard.fyoung.customerwork.data.outbox.OutboxService;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -28,15 +29,13 @@ public class TicketConfig {
 
     private static final Logger log = LoggerFactory.getLogger(TicketConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(TicketStore.class)
     public TicketStore ticketStore(CustomerWorkProperties properties,
                                    ObjectProvider<TicketMapper> ticketMapperProvider,
                                    ObjectProvider<TicketEventMapper> ticketEventMapperProvider) {
         String mode = properties.getTicket().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("ticket store: jdbc (MyBatis-Plus 实现, table=cw_ticket/cw_ticket_event)");
             return new MybatisTicketStore(ticketMapperProvider.getObject(), ticketEventMapperProvider.getObject());
         }
@@ -50,7 +49,7 @@ public class TicketConfig {
                                                       ObjectProvider<TicketEventListener> listenerProvider,
                                                       OutboxService outboxService,
                                                       ObjectProvider<ObjectMapper> objectMapperProvider) {
-        if (STORE_MODE_JDBC.equalsIgnoreCase(properties.getTicket().getStoreMode())) {
+        if (StoreModes.isJdbc(properties.getTicket().getStoreMode())) {
             log.info("ticket event publisher: database outbox");
             return new OutboxTicketEventPublisher(outboxService,
                 objectMapperProvider.getIfAvailable(ObjectMapper::new));

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.memory;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.core.memory.mapper.LongTermMemoryMapper;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.MemoryProperties;
@@ -28,14 +29,12 @@ public class LongTermMemoryStoreConfig {
 
     private static final Logger log = LoggerFactory.getLogger(LongTermMemoryStoreConfig.class);
 
-    private static final String STORE_MODE_MEMORY = "memory";
-
     @Bean
     @ConditionalOnMissingBean(LongTermMemoryStore.class)
     public LongTermMemoryStore longTermMemoryStore(CustomerWorkProperties properties,
                                                    ObjectProvider<LongTermMemoryMapper> mapperProvider) {
         MemoryProperties cfg = properties.getMemory();
-        if (STORE_MODE_MEMORY.equalsIgnoreCase(cfg.getStoreMode())) {
+        if (StoreModes.isMemory(cfg.getStoreMode())) {
             log.info("long-term memory store: memory (进程内，重启不保留，生产建议 store-mode=jdbc)");
             return new InMemoryLongTermMemoryStore();
         }

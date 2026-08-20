@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.service;
 
+import com.richard.fyoung.customeradmin.common.constant.StatsGranularity;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.callstats.config.AppAgentCallStatsGatewayProvider;
@@ -50,7 +51,6 @@ public class AgentCallStatsService {
     private static final int PREVIEW_MAX_LENGTH = 200;
     private static final int DEFAULT_PAGE_NUM = 1;
     private static final int DEFAULT_PAGE_SIZE = 10;
-    private static final String GRANULARITY_HOUR = "hour";
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final ZoneId ZONE = ZoneId.systemDefault();
 
@@ -98,7 +98,7 @@ public class AgentCallStatsService {
     /** 趋势聚合（按天/小时，含各段平均耗时）。 */
     public List<AgentCallTrendVO> trend(AgentCallStatsQuery query) {
         AgentCallStatsGateway gateway = gatewayOf(query.getSource());
-        TrendGranularity granularity = GRANULARITY_HOUR.equalsIgnoreCase(query.getGranularity())
+        TrendGranularity granularity = StatsGranularity.HOUR.equalsIgnoreCase(query.getGranularity())
             ? TrendGranularity.HOUR : TrendGranularity.DAY;
         List<AgentCallStatsTrendRow> rows = gateway.extMapper().trend(toParam(query, false), granularity.mysqlFormat());
         List<AgentCallTrendVO> result = new ArrayList<>();

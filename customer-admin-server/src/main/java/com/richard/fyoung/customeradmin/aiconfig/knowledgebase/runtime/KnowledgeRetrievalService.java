@@ -9,7 +9,9 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKno
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
 import org.slf4j.Logger;
@@ -44,11 +46,10 @@ import java.util.stream.Collectors;
 @Component
 public class KnowledgeRetrievalService {
 
+
     private static final Logger log = LoggerFactory.getLogger(KnowledgeRetrievalService.class);
 
     private static final String CODE_RETRIEVAL_FAIL = "RAG-RETRIEVAL-FAIL";
-    private static final int STATUS_ENABLED = 1;
-
     private static final String BLOCK_OPEN = "<retrieved_knowledge>";
     private static final String BLOCK_CLOSE = "</retrieved_knowledge>";
     private static final String BLOCK_HINT =
@@ -126,8 +127,8 @@ public class KnowledgeRetrievalService {
             return List.of();
         }
         return knowledgeBaseMapper.selectBatchIds(kbIds).stream()
-            .filter(kb -> Integer.valueOf(STATUS_ENABLED).equals(kb.getStatus()))
-            .filter(kb -> Integer.valueOf(KnowledgeBaseTestResult.STATUS_SUCCESS).equals(kb.getTestStatus()))
+            .filter(kb -> Integer.valueOf(StatusFlags.ENABLED).equals(kb.getStatus()))
+            .filter(kb -> Integer.valueOf(ConnectivityTestStatus.SUCCESS).equals(kb.getTestStatus()))
             .map(this::toEndpoint)
             .collect(Collectors.toList());
     }

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
+import com.richard.fyoung.customerwork.data.order.OrderStatuses;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -17,7 +18,7 @@ public class MockOrderBackend implements OrderBackend {
     private static final Logger log = LoggerFactory.getLogger(MockOrderBackend.class);
 
     private static final Map<String, Map<String, String>> MOCK_ORDERS = Map.of(
-        "20260613001", Map.of("status", "已发货", "amount", "299.00", "createTime", "2026-06-10"),
+        "20260613001", Map.of("status", OrderStatuses.SHIPPED, "amount", "299.00", "createTime", "2026-06-10"),
         "20260613002", Map.of("status", "已签收", "amount", "1599.00", "createTime", "2026-05-20")
     );
 

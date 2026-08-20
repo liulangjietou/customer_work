@@ -34,7 +34,12 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1464** + admin-server **858** + app **95** + customer-channel 65 + gateway 1（合计 **2483**）
+- 测试基线：starter **1466** + admin-server **858** + app **95** + customer-channel 65 + gateway 1（合计 **2485**）
+  （2026-08-20 公共常量收敛批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，6 skip。
+  本批次自身加 starter **+2**（`SharedConstantAlignmentTest`：已收敛值不得重新声明 + 同值不得多处定义）。
+  **同值不同概念别硬合**：本批次差点把 `sys_operation_log.result` 与 `ai_coding_audit_log.result`
+  合成一个常量（都是 `1=成功`），编译报错才发现是两张表——判定标准写在下方「项目编码规范」。
+  上一版基线 2026-08-20 yml 瘦身 + 装配收敛批次：合计 2483。）
   （2026-08-20 yml 瘦身 + 装配收敛批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，6 skip。
   本批次自身加 app-server **+2**（`YmlTrimEquivalenceTest`：yml 瘦身等价性 + 规模不回弹）。
   上一版基线 2026-08-20 M1-M4 系统性修复批次：合计 2481。）
@@ -146,6 +151,30 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   ③ `AgentAssemblyAlignmentTest` 扫描源码对此下断言——**新增一条建 Agent 的路径而不装配就会红**；
   ④ admin 不走装配器（它 exclude 了 starter 自动装配），完整性由该测试的第二个用例单独盯。
   改动前先跑这个测试，它是这类缺陷唯一的机器防线。
+- **同一个字面量只允许有一个定义处**：这是「多个真相来源」的另一种形态，成因和上一条同源。
+  `private static final String STORE_MODE_JDBC = "jdbc"` 曾在 21 个装配类里各写一遍，
+  连同 `MODE_JDBC` / `JDBC` / 裸字面量共 28 处表达同一个 "jdbc" 语义。收敛后的落点：
+  ① 跨域公共值放 `customerwork.core.constant`（`StoreModes` / `ModelProviders` / `AgentFileNames` /
+  `HttpAuthConstants` / `OpenApiProtocol` / `FactTypes` / `DevDefaultCredentials`），
+  admin 侧放 `customeradmin.common.constant`（`AgentCapabilities` / `SystemRoles` /
+  `StatsGranularity` / `StarterMapperXml`）；② 只在一个域里用的放该域内（`OrderStatuses` /
+  `DevToolConstants` / `ToolConstants` / `EvalErrorCodes`）；③ **标准库/Spring 已有的不要自己造**
+  （`Authorization`、`Content-Type` 用 `HttpHeaders`，`application/json`、`application/octet-stream`
+  用 `MediaType`）；④ 跨模块共享的值定义在双方的公共依赖 starter 上，不要靠"两边各写一份、口头保持一致"
+  （`ChatModelProber` 曾在注释里写"与 admin 的 ModelProvider 编码一致"，而没有任何机制保证）。
+  **判定标准是概念而不是值**：两处如果其中一处改了值而另一处没改会出错，才是同一个概念；
+  否则是巧合（`FAILED` 分属五个状态机、`http` 既是 URL scheme 又是 MCP 传输类型），
+  合并反而把不相干的东西绑死。`SharedConstantAlignmentTest` 扫描四个模块源码对此下断言——
+  已收敛的值在别处重新声明、或任何新值出现在两个以上文件，都会红；确属巧合的加进
+  `DISTINCT_CONCEPTS` 并写明理由。
+  **数值常量同理但归属不同**：库表列值归它自己的实体或域常量类，别往公共包塞——
+  `sys_operation_log.result` 与 `ai_coding_audit_log.result` 都是 `1=成功`，却是两张表两套语义
+  （本批次差点合并，编译期才发现 `log` 变量根本不是同一个实体）。通用的只有
+  `StatusFlags.ENABLED`（18 处曾各写一遍的 `status=1`）与 `TreeConstants.ROOT_PARENT_ID`。
+  相反，**独立参数碰巧同值的不要合**：三处 `MAX_BACKOFF_SHIFT=10`、两处 `SHUTDOWN_WAIT_SECONDS=5`
+  是各自组件的调优参数，合了会让"改 outbox 退避"意外改到死信队列。
+  **`@ConfigurationProperties` 的字段默认值刻意保持字面量**：`spring-boot-configuration-processor`
+  只从字面量初始化表达式提取 `defaultValue`，改成常量引用会让那 336 项默认值元数据静默消失。
 - **改动"某条链路的能力"时，先列出全部同类链路再动手**。当前共 7 条：
   `chat()` / `chatStream()` / WS `/ws/user` / `/consult` 多 Agent / admin 工作台 / customer-channel / Harness。
   只在一条上验证通过 ≠ 修好了——前六次复发都是这么来的。

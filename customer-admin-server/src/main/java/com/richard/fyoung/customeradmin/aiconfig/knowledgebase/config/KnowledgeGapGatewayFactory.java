@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.config;
 
+import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapService;
 import com.richard.fyoung.customerwork.capability.knowledgegap.MybatisKnowledgeGapStore;
 import com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapMapper;
@@ -24,12 +25,10 @@ import java.util.List;
  */
 final class KnowledgeGapGatewayFactory {
 
-    private static final String STARTER_KNOWLEDGE_GAP_XML = "classpath*:customerwork/mapper/KnowledgeGapMapper.xml";
-
     /** 该 Mapper 有 XML，靠 namespace 自动绑定，不能再登记进接口列表（同名语句会冲突）。 */
     static final List<Class<?>> MAPPER_CLASSES = List.of();
 
-    static final List<String> MAPPER_XML_LOCATIONS = List.of(STARTER_KNOWLEDGE_GAP_XML);
+    static final List<String> MAPPER_XML_LOCATIONS = List.of(StarterMapperXml.KNOWLEDGE_GAP);
 
     private KnowledgeGapGatewayFactory() {
     }

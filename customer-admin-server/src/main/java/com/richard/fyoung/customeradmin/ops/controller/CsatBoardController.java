@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.ops.service.OpsAdminService;
 import com.richard.fyoung.customerwork.capability.csat.CsatSummary;
 import com.richard.fyoung.customerwork.capability.csat.CsatSurvey;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,8 +28,6 @@ public class CsatBoardController {
     /** 默认窗口最近 7 天：CSAT 是按周看的指标，按天看噪声太大。 */
     private static final long DEFAULT_WINDOW_MS = Duration.ofDays(7).toMillis();
 
-    private static final String DEFAULT_SCOPE = "default";
-
     private final OpsAdminService opsAdminService;
 
     public CsatBoardController(OpsAdminService opsAdminService) {
@@ -43,7 +42,7 @@ public class CsatBoardController {
      */
     @SaCheckPermission("csat:view")
     @GetMapping("/summary")
-    public Result<CsatSummary> summary(@RequestParam(defaultValue = DEFAULT_SCOPE) String scopeId,
+    public Result<CsatSummary> summary(@RequestParam(defaultValue = TenantContext.DEFAULT) String scopeId,
                                        @RequestParam(required = false) Long windowStartMs,
                                        @RequestParam(required = false) Long windowEndMs) {
         long end = windowEndMs != null ? windowEndMs : System.currentTimeMillis();
@@ -54,7 +53,7 @@ public class CsatBoardController {
     /** 窗口内的原始评价（含低分留言——那才是能拿来改进的东西）。 */
     @SaCheckPermission("csat:view")
     @GetMapping("/list")
-    public Result<List<CsatSurvey>> list(@RequestParam(defaultValue = DEFAULT_SCOPE) String scopeId,
+    public Result<List<CsatSurvey>> list(@RequestParam(defaultValue = TenantContext.DEFAULT) String scopeId,
                                          @RequestParam(required = false) Long windowStartMs,
                                          @RequestParam(required = false) Long windowEndMs) {
         long end = windowEndMs != null ? windowEndMs : System.currentTimeMillis();

@@ -1,6 +1,9 @@
 package com.richard.fyoung.customerworkapp.config;
 
 import com.richard.fyoung.customerwork.capability.approval.ApprovalExecutionHandler;
+import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
@@ -28,10 +31,6 @@ import java.util.Map;
 @Component
 @Profile("prod")
 public class ProductionReadinessValidator implements InitializingBean {
-
-    static final String DEV_USER_JWT_SECRET = "dev-secret-change-me-in-production-0001";
-    static final String DEV_AGENT_ACCESS_SECRET = "dev-agent-secret-change-me-0001";
-    static final String DEV_MINIO_CREDENTIAL = "minioadmin";
 
     private final CustomerWorkProperties properties;
     private final AttachmentProperties attachmentProperties;
@@ -76,7 +75,7 @@ public class ProductionReadinessValidator implements InitializingBean {
     }
 
     private void validateModel(List<String> violations) {
-        if (!"ollama".equalsIgnoreCase(properties.getModel().getProvider())) {
+        if (!ModelProviders.OLLAMA.equalsIgnoreCase(properties.getModel().getProvider())) {
             requireSecret(violations, "customer-work.model.api-key", properties.getModel().getApiKey());
         }
     }
@@ -88,7 +87,7 @@ public class ProductionReadinessValidator implements InitializingBean {
             properties.getSession().getMysql().getPassword());
         require(violations, "customer-work.human-approval.store-mode",
             !properties.getHumanApproval().isEnabled()
-                || "jdbc".equalsIgnoreCase(properties.getHumanApproval().getStoreMode()));
+                || StoreModes.isJdbc(properties.getHumanApproval().getStoreMode()));
     }
 
     private void validateAuthentication(List<String> violations) {
@@ -105,18 +104,18 @@ public class ProductionReadinessValidator implements InitializingBean {
 
         String jwtSecret = properties.getUserAuth().getJwtSecret();
         require(violations, "customer-work.user-auth.jwt-secret",
-            isProductionSecret(jwtSecret) && !DEV_USER_JWT_SECRET.equals(jwtSecret) && jwtSecret.length() >= 32);
+            isProductionSecret(jwtSecret) && !DevDefaultCredentials.USER_JWT_SECRET.equals(jwtSecret) && jwtSecret.length() >= 32);
         String agentSecret = properties.getAgentAccess().getSecret();
         require(violations, "customer-work.agent-access.secret",
-            isProductionSecret(agentSecret) && !DEV_AGENT_ACCESS_SECRET.equals(agentSecret)
+            isProductionSecret(agentSecret) && !DevDefaultCredentials.AGENT_ACCESS_SECRET.equals(agentSecret)
                 && agentSecret.length() >= 32);
     }
 
     private void validateDistributedRuntime(List<String> violations) {
         require(violations, "customer-work.distributed.counter-mode",
-            "redis".equalsIgnoreCase(properties.getDistributed().getCounterMode()));
+            StoreModes.isRedis(properties.getDistributed().getCounterMode()));
         require(violations, "customer-work.distributed.session-lock-mode",
-            "redis".equalsIgnoreCase(properties.getDistributed().getSessionLockMode()));
+            StoreModes.isRedis(properties.getDistributed().getSessionLockMode()));
     }
 
     private void validateStorage(List<String> violations) {
@@ -128,9 +127,9 @@ public class ProductionReadinessValidator implements InitializingBean {
         AttachmentProperties.Minio minio = attachmentProperties.getStorage().getMinio();
         requireText(violations, "customer-work.attachment.storage.minio.endpoint", minio.getEndpoint());
         require(violations, "customer-work.attachment.storage.minio.access-key",
-            isProductionSecret(minio.getAccessKey()) && !DEV_MINIO_CREDENTIAL.equals(minio.getAccessKey()));
+            isProductionSecret(minio.getAccessKey()) && !DevDefaultCredentials.MINIO_CREDENTIAL.equals(minio.getAccessKey()));
         require(violations, "customer-work.attachment.storage.minio.secret-key",
-            isProductionSecret(minio.getSecretKey()) && !DEV_MINIO_CREDENTIAL.equals(minio.getSecretKey()));
+            isProductionSecret(minio.getSecretKey()) && !DevDefaultCredentials.MINIO_CREDENTIAL.equals(minio.getSecretKey()));
     }
 
     private void validateRuntimeConfig(List<String> violations) {

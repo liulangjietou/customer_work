@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.capability.feedback;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.capability.badcase.BadcaseService;
 import com.richard.fyoung.customerwork.capability.badcase.BadcaseSource;
+import com.richard.fyoung.customerwork.core.constant.FactTypes;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -38,8 +39,6 @@ import java.util.Optional;
 public class FeedbackService {
 
     private static final Logger log = LoggerFactory.getLogger(FeedbackService.class);
-
-    private static final String FACT_TYPE = "negative-feedback";
 
     private final FeedbackStore store;
     private final FactLog factLog;
@@ -82,7 +81,7 @@ public class FeedbackService {
     private void recordNegativeFeedback(MessageFeedback feedback) {
         try {
             Map<String, Object> fact = new LinkedHashMap<>();
-            fact.put("type", FACT_TYPE);
+            fact.put("type", FactTypes.NEGATIVE_FEEDBACK);
             fact.put("sessionId", feedback.sessionId());
             fact.put("messageId", feedback.messageId());
             fact.put("comment", feedback.comment());

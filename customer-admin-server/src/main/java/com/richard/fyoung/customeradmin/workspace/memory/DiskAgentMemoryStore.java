@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.memory;
 
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -16,8 +17,6 @@ import java.util.Optional;
  * @author owlzhangfq@gmail.com
  */
 public class DiskAgentMemoryStore implements AgentMemoryStore {
-
-    private static final String MEMORY_FILE_NAME = "MEMORY.md";
 
     private final Path root;
 
@@ -63,6 +62,6 @@ public class DiskAgentMemoryStore implements AgentMemoryStore {
     }
 
     private Path memoryFile(String agentCode) {
-        return root.resolve(agentCode).resolve(MEMORY_FILE_NAME);
+        return root.resolve(agentCode).resolve(AgentFileNames.MEMORY_MD);
     }
 }

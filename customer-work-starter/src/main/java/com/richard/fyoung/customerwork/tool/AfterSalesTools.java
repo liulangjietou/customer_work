@@ -18,8 +18,6 @@ import reactor.core.publisher.Mono;
  */
 public class AfterSalesTools {
 
-    private static final String TOOL_SESSION = "agent-tool";
-
     private final AfterSalesBackend backend;
     /** 可空：未注入时不登记审批单，保持纯工具可用。 */
     private final PendingApprovalService approvalService;
@@ -56,7 +54,7 @@ public class AfterSalesTools {
                     return result;
                 }
                 ApprovalRequest req = approvalService.submit(
-                    ApprovalType.REFUND, TOOL_SESSION, orderId, amount, reason);
+                    ApprovalType.REFUND, ToolConstants.AGENT_TOOL_SESSION, orderId, amount, reason);
                 return result + "（审批单号 " + req.getId() + "，需人工坐席放行后执行打款）";
             });
     }

@@ -12,6 +12,9 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.config.AdminKnowledgeGapRecorder;
+import com.richard.fyoung.customeradmin.common.constant.AgentCapabilities;
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime.KnowledgeRetrievalMiddleware;
@@ -112,17 +115,8 @@ import java.util.stream.Stream;
 @Component
 public class AdminAgentInstanceFactory {
 
-    private static final Logger log = LoggerFactory.getLogger(AdminAgentInstanceFactory.class);
 
-    private static final String CAPABILITY_VIBECODING = "vibecoding";
-    private static final String CAPABILITY_PLAN = "plan";
-    private static final String CAPABILITY_SUBAGENT = "subagent";
-    private static final String CAPABILITY_TASKLIST = "tasklist";
-    private static final String CAPABILITY_SKILL_LEARNING = "skill-learning";
-    private static final String CAPABILITY_DYNAMIC_SUBAGENT = "dynamic-subagent";
-    private static final String CAPABILITY_MEMORY = "memory";
-    private static final String CAPABILITY_DELIMITER = ",";
-    private static final int STATUS_ENABLED = 1;
+    private static final Logger log = LoggerFactory.getLogger(AdminAgentInstanceFactory.class);
     private static final int DEFAULT_MAX_ITERS = 10;
     /** compress_trigger_msgs 已填但 compress_keep_msgs 未填时的保留消息数默认值。 */
     private static final int DEFAULT_COMPRESS_KEEP_MSGS = 10;
@@ -316,12 +310,12 @@ public class AdminAgentInstanceFactory {
      * 抽成纯函数便于单测（不依赖任何注入的协作对象）。
      */
     static boolean requiresHarness(List<String> capabilities, Integer compressTriggerMsgs) {
-        return capabilities.contains(CAPABILITY_VIBECODING)
-            || capabilities.contains(CAPABILITY_PLAN)
-            || capabilities.contains(CAPABILITY_SUBAGENT)
-            || capabilities.contains(CAPABILITY_SKILL_LEARNING)
-            || capabilities.contains(CAPABILITY_DYNAMIC_SUBAGENT)
-            || capabilities.contains(CAPABILITY_MEMORY)
+        return capabilities.contains(AgentCapabilities.VIBECODING)
+            || capabilities.contains(AgentCapabilities.PLAN)
+            || capabilities.contains(AgentCapabilities.SUBAGENT)
+            || capabilities.contains(AgentCapabilities.SKILL_LEARNING)
+            || capabilities.contains(AgentCapabilities.DYNAMIC_SUBAGENT)
+            || capabilities.contains(AgentCapabilities.MEMORY)
             || compressTriggerMsgs != null;
     }
 
@@ -383,16 +377,16 @@ public class AdminAgentInstanceFactory {
         // 召回内容由 KnowledgeRetrievalMiddleware 自己包，工具结果由框架产出、只能在这里拦。
         // 两者的系统提示词规则走同一个幂等追加方法，不会写重复。
         builder.middleware(indirectInjectionGuardMiddleware);
-        if (capabilities.contains(CAPABILITY_VIBECODING)) {
+        if (capabilities.contains(AgentCapabilities.VIBECODING)) {
             // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载作最后防线——
             // 即便高风险被人工批准/放行，catastrophic 命令仍会被护栏改写，护栏不被绕过（需求 §4.4.2.5「两者叠加」）。
             builder.middleware(sandboxGuardMiddleware);
         }
-        if (capabilities.contains(CAPABILITY_TASKLIST)) {
+        if (capabilities.contains(AgentCapabilities.TASKLIST)) {
             // 任务列表：内层 ReActAgent 自带能力，不依赖 Harness
             builder.enableTaskList(true);
         }
-        if (capabilities.contains(CAPABILITY_SKILL_LEARNING)) {
+        if (capabilities.contains(AgentCapabilities.SKILL_LEARNING)) {
             // 互动学习新技能（内层半边）：MetaTool 允许 Agent 自主编排技能；Harness 半边见 buildHarnessAgent
             builder.enableMetaTool(true);
         }
@@ -437,7 +431,7 @@ public class AdminAgentInstanceFactory {
     private HarnessAgent buildHarnessAgent(AiAgent agent, List<String> capabilities, ReActAgent inner,
                                            Model model, Set<String> visited) {
         String agentCode = agent.getAgentCode();
-        boolean vibecoding = capabilities.contains(CAPABILITY_VIBECODING);
+        boolean vibecoding = capabilities.contains(AgentCapabilities.VIBECODING);
 
         // Docker 模式下 HarnessAgent 内部的 SessionSandboxStateStore 会给沙箱状态槽位拼出带 "/"
         // 的 sessionId（IsolationScope 四种取值全部如此，框架侧硬编码），而 MysqlAgentStateStore
@@ -465,18 +459,18 @@ public class AdminAgentInstanceFactory {
                 harnessBuilder.filesystem(buildLocalFilesystemSpec());
             }
         }
-        if (capabilities.contains(CAPABILITY_PLAN)) {
+        if (capabilities.contains(AgentCapabilities.PLAN)) {
             // 计划模式：只读规划期禁 shell，计划文件持久化到 workspace/plans
             harnessBuilder.enablePlanMode()
                 .allowShellInPlanMode(false)
                 .planFileDirectory(workspace.resolve(PLAN_DIR_NAME).toString());
         }
-        if (capabilities.contains(CAPABILITY_SKILL_LEARNING)) {
+        if (capabilities.contains(AgentCapabilities.SKILL_LEARNING)) {
             // 互动学习新技能（Harness 半边）：技能管理工具 + SkillCurator 自动沉淀成功模式
             harnessBuilder.enableSkillManageTool(true)
                 .enableSkillCurator(SkillCuratorConfig.defaults());
         }
-        if (capabilities.contains(CAPABILITY_MEMORY)) {
+        if (capabilities.contains(AgentCapabilities.MEMORY)) {
             // 跨会话长期记忆（分层记忆）：对话事实自动 flush 到 workspace/MEMORY.md 并定期 consolidation，
             // 按 agentCode 隔离（一个智能体一份记忆，全部会话共享）。workspace 文件只是框架的工作副本，
             // 权威存储在 AgentMemoryStore（默认落库）：构建时水合到 workspace，对话轮次结束后由
@@ -494,10 +488,10 @@ public class AdminAgentInstanceFactory {
                 .model(model)
                 .build());
         }
-        if (capabilities.contains(CAPABILITY_SUBAGENT)) {
+        if (capabilities.contains(AgentCapabilities.SUBAGENT)) {
             registerSubagents(harnessBuilder, agent, visited);
         }
-        if (capabilities.contains(CAPABILITY_DYNAMIC_SUBAGENT)) {
+        if (capabilities.contains(AgentCapabilities.DYNAMIC_SUBAGENT)) {
             // 动态子Agent：框架在 HarnessAgent 上默认开启（DynamicSubagentsMiddleware），勾选时保留默认，
             // 主 Agent 可在运行时按任务临时声明子 Agent（SubagentSpecGenerator 现场生成规格，无需预注册）
             log.info("[workspace] dynamic subagents enabled: agentCode={}", agentCode);
@@ -527,7 +521,7 @@ public class AdminAgentInstanceFactory {
         }
         for (Long subAgentId : subAgentIds) {
             AiAgent sub = agentMapper.selectById(subAgentId);
-            if (sub == null || sub.getStatus() == null || sub.getStatus() != STATUS_ENABLED) {
+            if (sub == null || sub.getStatus() == null || sub.getStatus() != StatusFlags.ENABLED) {
                 // 子智能体已删除/已停用：跳过注册，不阻断父智能体装配
                 log.error("[workspace] subagent unavailable (skip registration), code={}, parentAgentCode={}, subAgentId={}",
                     "SUBAGENT_UNAVAILABLE", agent.getAgentCode(), subAgentId);
@@ -751,7 +745,7 @@ public class AdminAgentInstanceFactory {
         if (agent == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "智能体不存在: " + agentCode);
         }
-        if (agent.getStatus() == null || agent.getStatus() != STATUS_ENABLED) {
+        if (agent.getStatus() == null || agent.getStatus() != StatusFlags.ENABLED) {
             throw new BizException(ResultCode.AGENT_DISABLED, "智能体未启用: " + agentCode);
         }
         return agent;
@@ -849,7 +843,7 @@ public class AdminAgentInstanceFactory {
             return;
         }
         for (AiSystemTool tool : systemToolMapper.selectBatchIds(toolIds)) {
-            if (tool.getEnabled() == null || tool.getEnabled() != STATUS_ENABLED) {
+            if (tool.getEnabled() == null || tool.getEnabled() != StatusFlags.ENABLED) {
                 continue;
             }
             try {
@@ -882,7 +876,7 @@ public class AdminAgentInstanceFactory {
                 Path skillSubDir = skillDir.resolve(skill.getSkillCode());
                 deleteRecursively(skillSubDir);
                 Files.createDirectories(skillSubDir);
-                Files.writeString(skillSubDir.resolve("SKILL.md"), skill.getContent());
+                Files.writeString(skillSubDir.resolve(AgentFileNames.SKILL_MD), skill.getContent());
                 // 附属文件路径合法性在 SkillService 保存时已统一校验，此处直接落盘
                 for (AiSkillFile skillFile : skillFileMapper.selectList(
                         new LambdaQueryWrapper<AiSkillFile>().eq(AiSkillFile::getSkillId, skill.getId()))) {
@@ -924,6 +918,6 @@ public class AdminAgentInstanceFactory {
 
     private List<String> parseCapabilities(String capabilities) {
         return StringUtils.hasText(capabilities)
-            ? Arrays.asList(capabilities.split(CAPABILITY_DELIMITER)) : List.of();
+            ? Arrays.asList(capabilities.split(AgentCapabilities.DELIMITER)) : List.of();
     }
 }

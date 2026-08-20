@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.ops.dto.FillKnowledgeGapRequest;
 import com.richard.fyoung.customeradmin.ops.service.OpsAdminService;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGap;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,7 +29,6 @@ import java.util.List;
 public class KnowledgeGapController {
 
     private static final int DEFAULT_LIMIT = 50;
-    private static final String DEFAULT_SCOPE = "default";
 
     private final OpsAdminService opsAdminService;
 
@@ -39,7 +39,7 @@ public class KnowledgeGapController {
     /** 盲区排行：未命中次数降序，越靠前越该优先补。 */
     @SaCheckPermission("knowledge-gap:view")
     @GetMapping("/top")
-    public Result<List<KnowledgeGap>> top(@RequestParam(defaultValue = DEFAULT_SCOPE) String scopeId,
+    public Result<List<KnowledgeGap>> top(@RequestParam(defaultValue = TenantContext.DEFAULT) String scopeId,
                                           @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit) {
         return Result.success(opsAdminService.topKnowledgeGaps(scopeId, limit));
     }

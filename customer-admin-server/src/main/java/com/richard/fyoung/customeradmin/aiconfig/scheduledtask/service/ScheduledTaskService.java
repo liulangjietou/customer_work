@@ -19,6 +19,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminScheduledTaskProperties;
 import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
@@ -53,6 +54,7 @@ import java.util.List;
 @Service
 public class ScheduledTaskService {
 
+
     private static final Logger log = LoggerFactory.getLogger(ScheduledTaskService.class);
 
     public static final String TRIGGER_TYPE_MANUAL = "MANUAL";
@@ -61,7 +63,6 @@ public class ScheduledTaskService {
 
     public static final String STATUS_SUCCESS = "SUCCESS";
     public static final String STATUS_FAILED = "FAILED";
-    private static final int STATUS_ENABLED = 1;
     private static final int OUTPUT_MAX_LENGTH = 8000;
     private static final int ERROR_MESSAGE_MAX_LENGTH = 1000;
 
@@ -129,7 +130,7 @@ public class ScheduledTaskService {
     }
 
     public void enable(Long id) {
-        setEnabled(id, STATUS_ENABLED);
+        setEnabled(id, StatusFlags.ENABLED);
     }
 
     public void disable(Long id) {
@@ -287,7 +288,7 @@ public class ScheduledTaskService {
         if (agent == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "智能体不存在: " + agentId);
         }
-        if (agent.getStatus() == null || agent.getStatus() != STATUS_ENABLED) {
+        if (agent.getStatus() == null || agent.getStatus() != StatusFlags.ENABLED) {
             throw new BizException(ResultCode.AGENT_DISABLED, "智能体未启用: " + agent.getAgentCode());
         }
     }
@@ -298,7 +299,7 @@ public class ScheduledTaskService {
         task.setAgentId(request.agentId());
         task.setPrompt(request.prompt());
         task.setCron(StringUtils.hasText(request.cron()) ? request.cron().trim() : null);
-        task.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : STATUS_ENABLED);
+        task.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : StatusFlags.ENABLED);
         task.setRemark(request.remark());
     }
 
@@ -312,7 +313,7 @@ public class ScheduledTaskService {
         vo.setAgentName(agent == null ? null : agent.getAgentName());
         vo.setPrompt(task.getPrompt());
         vo.setCron(task.getCron());
-        vo.setEnabled(Integer.valueOf(STATUS_ENABLED).equals(task.getEnabled()));
+        vo.setEnabled(Integer.valueOf(StatusFlags.ENABLED).equals(task.getEnabled()));
         vo.setRemark(task.getRemark());
         vo.setScheduleMode(schedulerProperties.getMode());
         vo.setCreateTime(task.getCreateTime());
@@ -349,7 +350,7 @@ public class ScheduledTaskService {
         if (task == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "定时任务不存在: " + taskCode);
         }
-        if (task.getEnabled() == null || task.getEnabled() != STATUS_ENABLED) {
+        if (task.getEnabled() == null || task.getEnabled() != StatusFlags.ENABLED) {
             throw new BizException(ResultCode.SCHEDULED_TASK_DISABLED, "定时任务未启用: " + taskCode);
         }
         return task;

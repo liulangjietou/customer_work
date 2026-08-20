@@ -17,6 +17,7 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
@@ -93,7 +94,7 @@ public class McpService {
         validate(request);
         AiMcp mcp = new AiMcp();
         fillFromRequest(mcp, request);
-        mcp.setTestStatus(McpTestResult.STATUS_UNTESTED);
+        mcp.setTestStatus(ConnectivityTestStatus.UNTESTED);
         mcpMapper.insert(mcp);
     }
 
@@ -140,7 +141,7 @@ public class McpService {
                 } else {
                     log.error("mcp connectivity test unexpected error, code={}, mcpId={}", "MCP-TEST-UNEXPECTED", id, ex);
                 }
-                return new McpTestResult(McpTestResult.STATUS_FAILED, LocalDateTime.now(), "连通性测试超时或执行异常");
+                return new McpTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(), "连通性测试超时或执行异常");
             })
             .thenApply(result -> {
                 persistTestResult(id, result);

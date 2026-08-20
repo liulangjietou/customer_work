@@ -24,6 +24,7 @@ import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDatasourceMapper;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDefineMapper;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlDefineParamMapper;
 import com.richard.fyoung.customeradmin.sqlconfig.mapper.SqlFieldTransformMapper;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.infra.sqlkit.ParamType;
 import com.richard.fyoung.customerwork.infra.sqlkit.TransformType;
 import org.springframework.stereotype.Service;
@@ -44,8 +45,8 @@ import java.util.stream.Collectors;
 @Service
 public class SqlDefineService {
 
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final int ENABLED = 1;
     private static final String COPY_SUFFIX = "-copy";
 
     private final SqlDefineMapper defineMapper;
@@ -290,8 +291,8 @@ public class SqlDefineService {
         define.setSqlDescribe(request.sqlDescribe());
         define.setQuerySql(request.querySql());
         define.setCountSql(request.countSql());
-        define.setAutoLoad(Boolean.TRUE.equals(request.autoLoad()) ? ENABLED : 0);
-        define.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : ENABLED);
+        define.setAutoLoad(Boolean.TRUE.equals(request.autoLoad()) ? StatusFlags.ENABLED : 0);
+        define.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : StatusFlags.ENABLED);
         define.setRemark(request.remark());
     }
 
@@ -300,11 +301,11 @@ public class SqlDefineService {
         param.setParamDesc(request.paramDesc());
         param.setParamType(request.paramType().toUpperCase());
         param.setDateFormat(request.dateFormat());
-        param.setRequired(Boolean.TRUE.equals(request.required()) ? ENABLED : 0);
+        param.setRequired(Boolean.TRUE.equals(request.required()) ? StatusFlags.ENABLED : 0);
         param.setDefaultValue(request.defaultValue());
         param.setDropDown(request.dropDown());
-        param.setIsPageNum(Boolean.TRUE.equals(request.isPageNum()) ? ENABLED : 0);
-        param.setIsPageSize(Boolean.TRUE.equals(request.isPageSize()) ? ENABLED : 0);
+        param.setIsPageNum(Boolean.TRUE.equals(request.isPageNum()) ? StatusFlags.ENABLED : 0);
+        param.setIsPageSize(Boolean.TRUE.equals(request.isPageSize()) ? StatusFlags.ENABLED : 0);
         param.setSort(request.sort() == null ? 0 : request.sort());
     }
 
@@ -335,8 +336,8 @@ public class SqlDefineService {
         vo.setSqlDescribe(define.getSqlDescribe());
         vo.setQuerySql(define.getQuerySql());
         vo.setCountSql(define.getCountSql());
-        vo.setAutoLoad(define.getAutoLoad() != null && define.getAutoLoad() == ENABLED);
-        vo.setEnabled(define.getEnabled() != null && define.getEnabled() == ENABLED);
+        vo.setAutoLoad(define.getAutoLoad() != null && define.getAutoLoad() == StatusFlags.ENABLED);
+        vo.setEnabled(define.getEnabled() != null && define.getEnabled() == StatusFlags.ENABLED);
         vo.setRemark(define.getRemark());
         vo.setCreateTime(define.getCreateTime());
         vo.setUpdateTime(define.getUpdateTime());
@@ -351,11 +352,11 @@ public class SqlDefineService {
         vo.setParamDesc(param.getParamDesc());
         vo.setParamType(param.getParamType());
         vo.setDateFormat(param.getDateFormat());
-        vo.setRequired(param.getRequired() != null && param.getRequired() == ENABLED);
+        vo.setRequired(param.getRequired() != null && param.getRequired() == StatusFlags.ENABLED);
         vo.setDefaultValue(param.getDefaultValue());
         vo.setDropDown(param.getDropDown());
-        vo.setIsPageNum(param.getIsPageNum() != null && param.getIsPageNum() == ENABLED);
-        vo.setIsPageSize(param.getIsPageSize() != null && param.getIsPageSize() == ENABLED);
+        vo.setIsPageNum(param.getIsPageNum() != null && param.getIsPageNum() == StatusFlags.ENABLED);
+        vo.setIsPageSize(param.getIsPageSize() != null && param.getIsPageSize() == StatusFlags.ENABLED);
         vo.setSort(param.getSort());
         return vo;
     }

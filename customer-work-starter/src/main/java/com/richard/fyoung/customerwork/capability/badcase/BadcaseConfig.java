@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.capability.badcase;
 
 import com.richard.fyoung.customerwork.capability.badcase.mapper.BadcaseMapper;
 import com.richard.fyoung.customerwork.capability.eval.EvalCaseStore;
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessageStore;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
@@ -24,14 +25,12 @@ public class BadcaseConfig {
 
     private static final Logger log = LoggerFactory.getLogger(BadcaseConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(BadcaseStore.class)
     public BadcaseStore badcaseStore(CustomerWorkProperties properties,
                                      ObjectProvider<BadcaseMapper> mapperProvider) {
         String mode = properties.getBadcase().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("badcase store: jdbc (MyBatis-Plus 实现, table=cw_badcase)");
             return new MybatisBadcaseStore(mapperProvider.getObject());
         }

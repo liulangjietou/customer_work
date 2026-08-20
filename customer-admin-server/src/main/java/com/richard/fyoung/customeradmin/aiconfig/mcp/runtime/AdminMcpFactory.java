@@ -4,6 +4,7 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallResult;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugImageVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugToolVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
 import com.richard.fyoung.customerwork.tool.mcp.McpConnectivityResult;
 import com.richard.fyoung.customerwork.tool.mcp.McpToolCallResult;
@@ -57,7 +58,7 @@ public class AdminMcpFactory {
 
     /** 连通性结果 -&gt; 库里持久化的测试状态（0未测试/1成功/2失败）。包级可见：同包单测直接校验转换。 */
     static McpTestResult toVo(McpConnectivityResult result) {
-        return new McpTestResult(result.success() ? McpTestResult.STATUS_SUCCESS : McpTestResult.STATUS_FAILED,
+        return new McpTestResult(result.success() ? ConnectivityTestStatus.SUCCESS : ConnectivityTestStatus.FAILED,
             result.testedAt(), result.errorMessage());
     }
 

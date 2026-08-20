@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerchannel.access.model.ChannelRobot;
 import com.richard.fyoung.customerchannel.access.support.WebClients;
+import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -46,7 +47,7 @@ public class AdminOpenApiClient {
     public AdminOpenApiClient(String baseUrl, String token) {
         this.webClient = WebClients.builder()
             .baseUrl(baseUrl)
-            .defaultHeader(ChannelAccessConstants.OPEN_API_TOKEN_HEADER, token == null ? "" : token)
+            .defaultHeader(OpenApiProtocol.TOKEN_HEADER, token == null ? "" : token)
             // SSE 单条 event 上限放宽，防止长回复被 buffer 上限截断
             .codecs(c -> c.defaultCodecs().maxInMemorySize(4 * 1024 * 1024))
             .build();
@@ -160,16 +161,16 @@ public class AdminOpenApiClient {
     }
 
     private boolean isTerminal(ServerSentEvent<String> event) {
-        return ChannelAccessConstants.SSE_EVENT_DONE.equals(event.event())
-            || ChannelAccessConstants.SSE_DONE_MARKER.equals(event.data());
+        return OpenApiProtocol.SSE_EVENT_DONE.equals(event.event())
+            || OpenApiProtocol.SSE_DONE_MARKER.equals(event.data());
     }
 
     private void aggregate(ServerSentEvent<String> event, StringBuilder answer) {
         String type = event.event();
-        if (ChannelAccessConstants.SSE_EVENT_ERROR.equals(type)) {
+        if (OpenApiProtocol.SSE_EVENT_ERROR.equals(type)) {
             throw new IllegalStateException("open api chat error event: " + decode(event.data()));
         }
-        if (ChannelAccessConstants.SSE_EVENT_MESSAGE.equals(type) && event.data() != null) {
+        if (OpenApiProtocol.SSE_EVENT_MESSAGE.equals(type) && event.data() != null) {
             answer.append(decode(event.data()));
         }
     }

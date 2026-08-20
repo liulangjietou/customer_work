@@ -27,9 +27,6 @@ import java.time.LocalDateTime;
 @RestController
 @RequestMapping("/api/workbench/agent")
 public class WorkbenchAgentController {
-
-    private static final int RESULT_SUCCESS = 1;
-
     private final WorkbenchTokenService tokenService;
     private final WorkbenchSiteService siteService;
     private final OperationLogMapper operationLogMapper;
@@ -71,7 +68,7 @@ public class WorkbenchAgentController {
         log.setOperation("脚本读取站点密码 host=" + host);
         log.setMethod("GET /api/workbench/agent/site");
         log.setTarget("workbench_site");
-        log.setResult(RESULT_SUCCESS);
+        log.setResult(SysOperationLog.RESULT_SUCCESS);
         log.setIp(request.getRemoteAddr());
         log.setCreateTime(LocalDateTime.now());
         operationLogMapper.insert(log);

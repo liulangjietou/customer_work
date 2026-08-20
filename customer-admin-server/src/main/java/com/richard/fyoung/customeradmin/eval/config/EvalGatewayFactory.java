@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.eval.config;
 
+import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customerwork.capability.eval.EvalRunStore;
 import com.richard.fyoung.customerwork.capability.eval.MybatisEvalRunStore;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalRunMapper;
@@ -21,13 +22,12 @@ import java.util.List;
  */
 final class EvalGatewayFactory {
 
-    /** starter jar 内的评测 Mapper XML（classpath*: 才能命中 jar 内资源）。 */
-    private static final String STARTER_EVAL_XML = "classpath*:customerwork/mapper/EvalRunMapper.xml";
 
+    /** starter jar 内的评测 Mapper XML（classpath*: 才能命中 jar 内资源）。 */
     /** 无需额外接口注册：EvalRunMapper 由 XML namespace 自动绑定。 */
     static final List<Class<?>> MAPPER_CLASSES = List.of();
 
-    static final List<String> MAPPER_XML_LOCATIONS = List.of(STARTER_EVAL_XML);
+    static final List<String> MAPPER_XML_LOCATIONS = List.of(StarterMapperXml.EVAL_RUN);
 
     private EvalGatewayFactory() {
     }

@@ -24,7 +24,8 @@ public record CrossDbConnectionSettings(String poolName,
     public static final String DEFAULT_DRIVER_CLASS = "com.mysql.cj.jdbc.Driver";
 
     /** 默认池上限（跨库访问是旁路读写，不该跟主库抢连接）。 */
-    private static final int DEFAULT_MAX_POOL_SIZE = 3;
+    /** 跨库门面的连接池默认上限：门面只做低频运维查询，池子开大反而占着客服端库的连接配额。 */
+    public static final int DEFAULT_MAX_POOL_SIZE = 3;
 
     /** 默认连接超时：库不可达时 5s 内失败返回。 */
     private static final long DEFAULT_CONNECTION_TIMEOUT_MS = 5000L;

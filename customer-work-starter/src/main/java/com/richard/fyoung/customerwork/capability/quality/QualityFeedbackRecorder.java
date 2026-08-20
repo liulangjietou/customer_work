@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.capability.quality;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.capability.badcase.BadcaseService;
 import com.richard.fyoung.customerwork.capability.badcase.BadcaseSource;
+import com.richard.fyoung.customerwork.core.constant.FactTypes;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -35,8 +36,6 @@ public class QualityFeedbackRecorder {
 
     private static final Logger log = LoggerFactory.getLogger(QualityFeedbackRecorder.class);
 
-    private static final String FACT_TYPE = "quality-failure";
-
     private final QualityInspectionService qualityService;
     private final FactLog factLog;
     private final TenantResolver tenantResolver;
@@ -67,7 +66,7 @@ public class QualityFeedbackRecorder {
     private void recordFailure(String sessionId, List<String> replies, QualityReport report) {
         try {
             Map<String, Object> fact = new LinkedHashMap<>();
-            fact.put("type", FACT_TYPE);
+            fact.put("type", FactTypes.QUALITY_FAILURE);
             fact.put("sessionId", sessionId);
             fact.put("score", report.getScore());
             fact.put("issues", report.getIssues());

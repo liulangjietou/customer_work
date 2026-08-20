@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.config;
 
+import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.junit.jupiter.api.Test;
@@ -25,8 +26,8 @@ class ProductionReadinessValidatorTest {
     @Test
     void developmentDefaults_shouldFailWithoutLeakingSecretValues() {
         CustomerWorkProperties properties = new CustomerWorkProperties();
-        properties.getUserAuth().setJwtSecret(ProductionReadinessValidator.DEV_USER_JWT_SECRET);
-        properties.getAgentAccess().setSecret(ProductionReadinessValidator.DEV_AGENT_ACCESS_SECRET);
+        properties.getUserAuth().setJwtSecret(DevDefaultCredentials.USER_JWT_SECRET);
+        properties.getAgentAccess().setSecret(DevDefaultCredentials.AGENT_ACCESS_SECRET);
         AttachmentProperties attachment = new AttachmentProperties();
 
         IllegalStateException error = assertThrows(IllegalStateException.class,
@@ -35,8 +36,8 @@ class ProductionReadinessValidatorTest {
         assertTrue(error.getMessage().contains("customer-work.security.auth.enabled"));
         assertTrue(error.getMessage().contains("customer-work.user-auth.jwt-secret"));
         assertTrue(error.getMessage().contains("customer-work.attachment.storage.minio.secret-key"));
-        assertFalse(error.getMessage().contains(ProductionReadinessValidator.DEV_USER_JWT_SECRET));
-        assertFalse(error.getMessage().contains(ProductionReadinessValidator.DEV_MINIO_CREDENTIAL));
+        assertFalse(error.getMessage().contains(DevDefaultCredentials.USER_JWT_SECRET));
+        assertFalse(error.getMessage().contains(DevDefaultCredentials.MINIO_CREDENTIAL));
     }
 
     @Test

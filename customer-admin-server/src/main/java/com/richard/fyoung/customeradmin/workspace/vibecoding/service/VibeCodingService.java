@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
+import com.richard.fyoung.customeradmin.common.constant.AgentCapabilities;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
@@ -70,12 +71,9 @@ import java.util.concurrent.atomic.AtomicReference;
 public class VibeCodingService {
 
     private static final Logger log = LoggerFactory.getLogger(VibeCodingService.class);
-    private static final String CAPABILITY_VIBECODING = "vibecoding";
-    private static final String CAPABILITY_DELIMITER = ",";
     /** 文件内容读取的最大字节数（4MB），超过此限制返回截断提示，防止超大文件撑爆内存。 */
     private static final long MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024;
     /** {@link GitWorkspaceService} 在会话目录里现场建的 git 仓库目录名，产物文件树/快照均需跳过。 */
-    private static final String GIT_DIR_NAME = ".git";
     /**
      * 失败自动修复的轮数上限（需求 P0-3 §4.3.2）：Agent 侧由 prompt 约束"最多重试 3 轮"，
      * 服务侧据此统计失败次数——第 3 次仍失败的 test_report 标注 {@code exhausted=true}，
@@ -418,8 +416,8 @@ public class VibeCodingService {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "智能体不存在: " + agentCode);
         }
         List<String> capabilities = StringUtils.hasText(agent.getCapabilities())
-            ? Arrays.asList(agent.getCapabilities().split(CAPABILITY_DELIMITER)) : List.of();
-        if (!capabilities.contains(CAPABILITY_VIBECODING)) {
+            ? Arrays.asList(agent.getCapabilities().split(AgentCapabilities.DELIMITER)) : List.of();
+        if (!capabilities.contains(AgentCapabilities.VIBECODING)) {
             throw new BizException(ResultCode.AGENT_CAPABILITY_NOT_SUPPORTED, "智能体未开启 vibecoding 能力: " + agentCode);
         }
     }
@@ -537,7 +535,7 @@ public class VibeCodingService {
             Files.walkFileTree(workspace, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    return GIT_DIR_NAME.equals(dir.getFileName().toString())
+                    return GitWorkspaceService.GIT_DIR_NAME.equals(dir.getFileName().toString())
                         ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
                 }
 
@@ -563,7 +561,7 @@ public class VibeCodingService {
     private List<WorkspaceFileNode> buildFileTree(Path root, Path current) {
         List<WorkspaceFileNode> nodes = new ArrayList<>();
         try (var stream = Files.list(current)) {
-            stream.filter(path -> !GIT_DIR_NAME.equals(path.getFileName().toString()))
+            stream.filter(path -> !GitWorkspaceService.GIT_DIR_NAME.equals(path.getFileName().toString()))
                 .sorted(Comparator
                     .comparing((Path p) -> Files.isDirectory(p) ? 0 : 1)  // 目录优先
                     .thenComparing(p -> p.getFileName().toString()))

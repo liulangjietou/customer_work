@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.counter;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
@@ -21,15 +22,13 @@ public class WindowCounterConfig {
 
     private static final Logger log = LoggerFactory.getLogger(WindowCounterConfig.class);
 
-    private static final String MODE_REDIS = "redis";
-
     @Bean
     @ConditionalOnMissingBean
     public WindowCounter windowCounter(CustomerWorkProperties properties,
                                        ObjectProvider<RedissonClient> redissonProvider) {
         DistributedProperties cfg = properties.getDistributed();
         InMemoryWindowCounter inMemory = new InMemoryWindowCounter();
-        if (!MODE_REDIS.equalsIgnoreCase(cfg.getCounterMode())) {
+        if (!StoreModes.isRedis(cfg.getCounterMode())) {
             return inMemory;
         }
         RedissonClient redisson = redissonProvider.getIfAvailable();

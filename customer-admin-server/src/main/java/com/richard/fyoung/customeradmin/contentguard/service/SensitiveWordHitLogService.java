@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.contentguard.service;
 
+import com.richard.fyoung.customeradmin.common.constant.StatsGranularity;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardGatewayProvider;
 import com.richard.fyoung.customeradmin.contentguard.dto.ContentGuardCountVO;
@@ -34,8 +35,6 @@ public class SensitiveWordHitLogService {
 
     private static final String FORMAT_HOUR = "%Y-%m-%d %H:00";
     private static final String FORMAT_DAY = "%Y-%m-%d";
-    private static final String GRANULARITY_HOUR = "hour";
-    private static final String GRANULARITY_DAY = "day";
 
     private static final String SEPARATOR = ",";
 
@@ -76,7 +75,7 @@ public class SensitiveWordHitLogService {
         stats.setByDirection(toCountVOList(mapper.countByDirection(param)));
         stats.setTopWords(toCountVOList(mapper.topWords(param, TOP_WORDS)));
         stats.setTrend(toCountVOList(mapper.trend(param, hourly ? FORMAT_HOUR : FORMAT_DAY)));
-        stats.setTrendGranularity(hourly ? GRANULARITY_HOUR : GRANULARITY_DAY);
+        stats.setTrendGranularity(hourly ? StatsGranularity.HOUR : StatsGranularity.DAY);
         return stats;
     }
 

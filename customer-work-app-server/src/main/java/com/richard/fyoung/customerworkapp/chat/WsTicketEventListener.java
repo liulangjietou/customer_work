@@ -24,7 +24,6 @@ import java.util.Map;
 @Component
 public class WsTicketEventListener implements TicketEventListener {
 
-    private static final String KEY_TICKET_ID = "ticketId";
     private static final String KEY_USER_ID = "userId";
     private static final String KEY_TITLE = "title";
     private static final String KEY_PRIORITY = "priority";
@@ -36,7 +35,6 @@ public class WsTicketEventListener implements TicketEventListener {
     private static final String KEY_TO_STATUS = "toStatus";
     private static final String KEY_ACTOR_TYPE = "actorType";
     private static final String KEY_ASSIGNEE = "assignee";
-    private static final String KEY_TS = "ts";
 
     private final WsSessionRegistry registry;
 
@@ -60,7 +58,7 @@ public class WsTicketEventListener implements TicketEventListener {
 
     private Map<String, Object> eventData(Ticket ticket, TicketEvent event) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put(KEY_TICKET_ID, ticket.getId());
+        data.put(WsFrame.KEY_TICKET_ID, ticket.getId());
         data.put(KEY_EVENT_ID, event.id());
         data.put(KEY_EVENT_TYPE, event.eventType().name());
         data.put(KEY_FROM_STATUS, event.fromStatus() == null ? null : event.fromStatus().name());
@@ -68,19 +66,19 @@ public class WsTicketEventListener implements TicketEventListener {
         data.put(KEY_ACTOR_TYPE, event.actorType() == null ? null : event.actorType().name());
         data.put(KEY_STATUS, ticket.getStatus().name());
         data.put(KEY_ASSIGNEE, ticket.getAssignee());
-        data.put(KEY_TS, event.createdAtMs());
+        data.put(WsFrame.KEY_TS, event.createdAtMs());
         return data;
     }
 
     private Map<String, Object> newTicketData(Ticket ticket, TicketEvent event) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put(KEY_TICKET_ID, ticket.getId());
+        data.put(WsFrame.KEY_TICKET_ID, ticket.getId());
         data.put(KEY_EVENT_ID, event.id());
         data.put(KEY_USER_ID, ticket.getUserId());
         data.put(KEY_TITLE, ticket.getTitle());
         data.put(KEY_PRIORITY, ticket.getPriority().name());
         data.put(KEY_CATEGORY, ticket.getCategory().name());
-        data.put(KEY_TS, System.currentTimeMillis());
+        data.put(WsFrame.KEY_TS, System.currentTimeMillis());
         return data;
     }
 }

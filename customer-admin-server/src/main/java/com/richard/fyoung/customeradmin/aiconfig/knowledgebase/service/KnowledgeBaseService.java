@@ -13,12 +13,14 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKno
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +51,7 @@ import java.util.stream.Collectors;
 @Service
 public class KnowledgeBaseService {
 
+
     private static final Logger log = LoggerFactory.getLogger(KnowledgeBaseService.class);
 
     /** 连通性测试专用线程池：与 Tomcat 请求线程隔离，低频操作，池子不需要大（同 ModelConfigService）。 */
@@ -59,8 +62,6 @@ public class KnowledgeBaseService {
     });
     private static final long TEST_FUTURE_TIMEOUT_SECONDS = 10;
     private static final String CODE_TEST_FAIL = "KB-TEST-FAIL";
-    private static final int STATUS_ENABLED = 1;
-
     private final AiKnowledgeBaseMapper knowledgeBaseMapper;
     private final AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper;
     private final AesGcmCryptoUtil cryptoUtil;
@@ -101,8 +102,8 @@ public class KnowledgeBaseService {
     /** 智能体表单下拉：只给可用的知识库（启用 + 连通性测试成功），不可用的不允许被绑定。 */
     public List<KnowledgeBaseOptionVO> options() {
         return knowledgeBaseMapper.selectList(new LambdaQueryWrapper<AiKnowledgeBase>()
-                .eq(AiKnowledgeBase::getStatus, STATUS_ENABLED)
-                .eq(AiKnowledgeBase::getTestStatus, KnowledgeBaseTestResult.STATUS_SUCCESS)
+                .eq(AiKnowledgeBase::getStatus, StatusFlags.ENABLED)
+                .eq(AiKnowledgeBase::getTestStatus, ConnectivityTestStatus.SUCCESS)
                 .orderByAsc(AiKnowledgeBase::getId))
             .stream()
             .map(kb -> new KnowledgeBaseOptionVO(kb.getId(), kb.getKbName()))
@@ -243,7 +244,7 @@ public class KnowledgeBaseService {
      */
     private KnowledgeBaseTestResult assertConnectivity(KnowledgeBaseEndpoint endpoint) {
         KnowledgeBaseTestResult result = probe(endpoint);
-        if (result.testStatus() != KnowledgeBaseTestResult.STATUS_SUCCESS) {
+        if (result.testStatus() != ConnectivityTestStatus.SUCCESS) {
             throw new BizException(ResultCode.KNOWLEDGE_BASE_TEST_FAILED,
                 "知识库连通性测试未通过: " + result.message());
         }
@@ -299,7 +300,7 @@ public class KnowledgeBaseService {
         entity.setTopN(request.topN() == null || request.topN() <= 0
             ? KnowledgeBaseEndpoint.DEFAULT_TOP_N : request.topN());
         entity.setScoreThreshold(request.scoreThreshold() == null ? BigDecimal.ZERO : request.scoreThreshold());
-        entity.setStatus(request.status() == null ? STATUS_ENABLED : request.status());
+        entity.setStatus(request.status() == null ? StatusFlags.ENABLED : request.status());
         entity.setRemark(request.remark());
     }
 

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.memory;
 
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -31,7 +32,6 @@ public class HarnessMemorySyncService {
     private static final Logger log = LoggerFactory.getLogger(HarnessMemorySyncService.class);
 
     /** 框架分层记忆的工作副本文件名（workspace 根下，路径约定来自 Harness WorkspaceManager）。 */
-    private static final String MEMORY_FILE_NAME = "MEMORY.md";
 
     private final HarnessMemoryStore memoryStore;
 
@@ -43,7 +43,7 @@ public class HarnessMemorySyncService {
     public void hydrate(Path workspace) {
         String scopeId = scopeOf(workspace);
         try {
-            Path memoryFile = workspace.resolve(MEMORY_FILE_NAME);
+            Path memoryFile = workspace.resolve(AgentFileNames.MEMORY_MD);
             Optional<String> stored = memoryStore.load(scopeId);
             if (stored.isPresent()) {
                 Files.createDirectories(workspace);
@@ -66,7 +66,7 @@ public class HarnessMemorySyncService {
     public void persistIfChanged(Path workspace) {
         String scopeId = scopeOf(workspace);
         try {
-            Path memoryFile = workspace.resolve(MEMORY_FILE_NAME);
+            Path memoryFile = workspace.resolve(AgentFileNames.MEMORY_MD);
             if (!Files.exists(memoryFile)) {
                 return;
             }

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.routing;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.capability.routing.mapper.SeatAgentMapper;
 import org.slf4j.Logger;
@@ -27,14 +28,12 @@ public class SeatAgentConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SeatAgentConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(SeatAgentStore.class)
     public SeatAgentStore seatAgentStore(CustomerWorkProperties properties,
                                          ObjectProvider<SeatAgentMapper> mapperProvider) {
         String mode = properties.getRouting().getSeatStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("seat-agent store: jdbc (MyBatis-Plus, table=cw_seat_agent)");
             return new MybatisSeatAgentStore(mapperProvider.getObject());
         }

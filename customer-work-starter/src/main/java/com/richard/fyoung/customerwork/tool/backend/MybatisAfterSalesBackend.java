@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
+import com.richard.fyoung.customerwork.data.order.OrderStatuses;
 import com.richard.fyoung.customerwork.tool.backend.entity.InvoiceRequestDO;
 import com.richard.fyoung.customerwork.tool.backend.entity.OrderDO;
 import com.richard.fyoung.customerwork.tool.backend.entity.RefundDO;
@@ -36,8 +37,6 @@ public class MybatisAfterSalesBackend implements AfterSalesBackend {
     private static final String STATUS_APPROVED = "APPROVED";
 
     /** 不可再退款的订单终态。 */
-    private static final String ORDER_STATUS_REFUNDED = "已退款";
-    private static final String ORDER_STATUS_CANCELLED = "已取消";
 
     private static final String TRUE_FLAG = "true";
 
@@ -95,7 +94,7 @@ public class MybatisAfterSalesBackend implements AfterSalesBackend {
                 return "未查询到订单 " + orderId + "，无法校验退款资格，请核对订单号。";
             }
             String status = order.getStatus();
-            if (ORDER_STATUS_REFUNDED.equals(status) || ORDER_STATUS_CANCELLED.equals(status)) {
+            if (OrderStatuses.REFUNDED.equals(status) || OrderStatuses.CANCELLED.equals(status)) {
                 return "订单 " + orderId + " 当前状态为" + status + "，不可重复退款。";
             }
             if (!TRUE_FLAG.equalsIgnoreCase(withinSevenDays)) {

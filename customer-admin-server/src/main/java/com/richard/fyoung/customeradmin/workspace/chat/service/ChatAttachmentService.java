@@ -10,6 +10,7 @@ import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -37,7 +38,6 @@ public class ChatAttachmentService {
     private static final Logger log = LoggerFactory.getLogger(ChatAttachmentService.class);
 
     /** MIME 兜底：库中 mime 为空时按二进制流下发，交由前端/浏览器不做类型嗅探（配合 nosniff）。 */
-    private static final String DEFAULT_MIME = "application/octet-stream";
 
     private final AttachmentParseService attachmentParseService;
     private final AdminChatAttachmentStore attachmentStore;
@@ -128,7 +128,7 @@ public class ChatAttachmentService {
         ChatAttachment attachment = requireOwned(agentCode, attachmentId, ownerUserId);
         try {
             byte[] bytes = attachmentFileStorage.read(attachment.getStoragePath());
-            String mime = StringUtils.hasText(attachment.getMimeType()) ? attachment.getMimeType() : DEFAULT_MIME;
+            String mime = StringUtils.hasText(attachment.getMimeType()) ? attachment.getMimeType() : MediaType.APPLICATION_OCTET_STREAM_VALUE;
             return new LoadedFile(bytes, mime, attachment.getFileName());
         } catch (IOException e) {
             log.error("chat attachment read file failed, code={}, id={}", "ADMIN-ATTACHMENT-READ-FILE-FAIL", attachmentId, e);

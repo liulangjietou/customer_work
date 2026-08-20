@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.quota;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
@@ -21,14 +22,12 @@ public class TenantQuotaConfig {
 
     private static final Logger log = LoggerFactory.getLogger(TenantQuotaConfig.class);
 
-    private static final String MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean
     public TenantQuotaStore tenantQuotaStore(CustomerWorkProperties properties,
                                              ObjectProvider<TenantQuotaMapper> mapperProvider) {
         QuotaProperties cfg = properties.getQuota();
-        if (!MODE_JDBC.equalsIgnoreCase(cfg.getStoreMode())) {
+        if (!StoreModes.isJdbc(cfg.getStoreMode())) {
             return new InMemoryTenantQuotaStore();
         }
         TenantQuotaMapper mapper = mapperProvider.getIfAvailable();

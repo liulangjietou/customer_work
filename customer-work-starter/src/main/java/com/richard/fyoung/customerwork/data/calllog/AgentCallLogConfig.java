@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallLogMapper;
 import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallSegmentMapper;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -24,15 +25,13 @@ public class AgentCallLogConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AgentCallLogConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(AgentCallLogStore.class)
     public AgentCallLogStore agentCallLogStore(CustomerWorkProperties properties,
                                                ObjectProvider<AgentCallLogMapper> callLogMapperProvider,
                                                ObjectProvider<AgentCallSegmentMapper> segmentMapperProvider) {
         String mode = properties.getCallLog().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("agent call log store: jdbc (MyBatis-Plus, tables=cw_agent_call_log/cw_agent_call_segment)");
             return new MybatisAgentCallLogStore(callLogMapperProvider.getObject(), segmentMapperProvider.getObject());
         }

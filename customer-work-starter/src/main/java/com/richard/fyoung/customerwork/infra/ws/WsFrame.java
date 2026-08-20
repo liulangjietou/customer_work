@@ -32,13 +32,22 @@ public record WsFrame(String type, Object data) {
     /** 心跳响应。 */
     public static final String TYPE_PONG = "pong";
 
-    private static final String KEY_CONTENT = "content";
-    private static final String KEY_MESSAGE_ID = "messageId";
-    private static final String KEY_SESSION_ID = "sessionId";
-    private static final String KEY_TICKET_ID = "ticketId";
-    private static final String KEY_TS = "ts";
-    private static final String KEY_CODE = "code";
-    private static final String KEY_MESSAGE = "message";
+    // ---- 帧字段名：与 TYPE_* 同为前端契约的一部分，接入方拼 data 时一律引用这里，不要各自写字面量 ----
+
+    /** 信封字段：帧类型。 */
+    public static final String KEY_TYPE = "type";
+    /** 信封字段：帧负载。 */
+    public static final String KEY_DATA = "data";
+
+    public static final String KEY_CONTENT = "content";
+    public static final String KEY_MESSAGE_ID = "messageId";
+    public static final String KEY_SESSION_ID = "sessionId";
+    public static final String KEY_TICKET_ID = "ticketId";
+    public static final String KEY_SENDER_TYPE = "senderType";
+    public static final String KEY_SENDER_ID = "senderId";
+    public static final String KEY_TS = "ts";
+    public static final String KEY_CODE = "code";
+    public static final String KEY_MESSAGE = "message";
 
     /** 对话转发帧（data 结构与前端契约对齐：messageId/sessionId/ticketId/senderType/senderId/content/ts）。 */
     public static WsFrame chat(Object data) {

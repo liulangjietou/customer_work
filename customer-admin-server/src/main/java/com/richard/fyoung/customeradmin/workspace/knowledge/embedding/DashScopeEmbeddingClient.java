@@ -7,6 +7,8 @@ import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminKnowledgeProperties;
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
@@ -30,8 +32,6 @@ import java.util.List;
 @Component
 public class DashScopeEmbeddingClient implements EmbeddingClient {
 
-    private static final String PROVIDER_DASHSCOPE = "dashscope";
-    private static final int STATUS_ENABLED = 1;
     private static final int IS_DEFAULT = 1;
 
     private final AiModelConfigMapper modelConfigMapper;
@@ -86,8 +86,8 @@ public class DashScopeEmbeddingClient implements EmbeddingClient {
      */
     String resolveApiKey() {
         List<AiModelConfig> candidates = modelConfigMapper.selectList(new LambdaQueryWrapper<AiModelConfig>()
-            .eq(AiModelConfig::getProvider, PROVIDER_DASHSCOPE)
-            .eq(AiModelConfig::getStatus, STATUS_ENABLED)
+            .eq(AiModelConfig::getProvider, ModelProviders.DASHSCOPE)
+            .eq(AiModelConfig::getStatus, StatusFlags.ENABLED)
             .orderByDesc(AiModelConfig::getIsDefault)
             .orderByAsc(AiModelConfig::getId));
         if (CollectionUtils.isEmpty(candidates)) {

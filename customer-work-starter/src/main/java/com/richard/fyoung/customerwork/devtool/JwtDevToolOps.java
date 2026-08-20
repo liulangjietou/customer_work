@@ -37,7 +37,6 @@ public final class JwtDevToolOps {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** 展示时间用的时区与格式（与工具箱其它工具一致）。 */
-    private static final String DEFAULT_ZONE = "Asia/Shanghai";
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     /** JWT 的三段结构。 */
@@ -53,9 +52,6 @@ public final class JwtDevToolOps {
     private static final String ALG_NONE = "none";
 
     /** 密钥文本编码。 */
-    private static final String ENCODING_UTF8 = "UTF8";
-    private static final String ENCODING_HEX = "HEX";
-    private static final String ENCODING_BASE64 = "BASE64";
 
     /** 时间戳换算。 */
     private static final long MILLIS_PER_SECOND = 1000L;
@@ -80,7 +76,7 @@ public final class JwtDevToolOps {
         JsonNode header = parseSegment(parts[0], "header");
         JsonNode payload = parseSegment(parts[1], "payload");
         String algorithm = header.path("alg").asText(null);
-        ZoneId zoneId = ZoneId.of(DEFAULT_ZONE);
+        ZoneId zoneId = ZoneId.of(DevToolConstants.DEFAULT_ZONE);
 
         Long expSeconds = readNumericDate(payload, "exp");
         Long nbfSeconds = readNumericDate(payload, "nbf");
@@ -192,10 +188,10 @@ public final class JwtDevToolOps {
     /** 规范化密钥编码。 */
     private String normalizeEncoding(String encoding) {
         if (encoding == null || encoding.trim().isEmpty()) {
-            return ENCODING_UTF8;
+            return DevToolConstants.ENCODING_UTF8;
         }
         String upper = encoding.trim().toUpperCase(Locale.ROOT).replace("-", "").replace("_", "");
-        if (!ENCODING_UTF8.equals(upper) && !ENCODING_HEX.equals(upper) && !ENCODING_BASE64.equals(upper)) {
+        if (!DevToolConstants.ENCODING_UTF8.equals(upper) && !DevToolConstants.ENCODING_HEX.equals(upper) && !DevToolConstants.ENCODING_BASE64.equals(upper)) {
             throw new IllegalArgumentException("secretEncoding 仅支持 utf8/hex/base64，当前 " + encoding);
         }
         return upper;
@@ -204,7 +200,7 @@ public final class JwtDevToolOps {
     /** 按编码解出密钥字节。 */
     private byte[] decodeSecret(String secret, String encoding) {
         switch (encoding) {
-            case ENCODING_HEX:
+            case DevToolConstants.ENCODING_HEX:
                 String cleaned = secret.replaceAll("\\s", "");
                 if (!cleaned.matches("[0-9a-fA-F]+") || cleaned.length() % 2 != 0) {
                     throw new IllegalArgumentException("secret 不是合法的 hex（只允许 0-9、a-f，且长度为偶数）");
@@ -214,13 +210,13 @@ public final class JwtDevToolOps {
                     bytes[i] = (byte) Integer.parseInt(cleaned.substring(i * 2, i * 2 + 2), 16);
                 }
                 return bytes;
-            case ENCODING_BASE64:
+            case DevToolConstants.ENCODING_BASE64:
                 try {
                     return Base64.getDecoder().decode(secret.trim());
                 } catch (IllegalArgumentException e) {
                     throw new IllegalArgumentException("secret 不是合法的 Base64：" + e.getMessage(), e);
                 }
-            case ENCODING_UTF8:
+            case DevToolConstants.ENCODING_UTF8:
             default:
                 return secret.getBytes(StandardCharsets.UTF_8);
         }

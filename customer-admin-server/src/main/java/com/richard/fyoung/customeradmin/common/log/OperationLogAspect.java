@@ -52,10 +52,11 @@ public class OperationLogAspect {
 
         try {
             Object result = joinPoint.proceed();
-            recordAsync(operationLog.operation(), method, target, params, 1, null, ip);
+            recordAsync(operationLog.operation(), method, target, params, SysOperationLog.RESULT_SUCCESS, null, ip);
             return result;
         } catch (Throwable t) {
-            recordAsync(operationLog.operation(), method, target, params, 0, t.getMessage(), ip);
+            recordAsync(operationLog.operation(), method, target, params,
+                SysOperationLog.RESULT_FAILURE, t.getMessage(), ip);
             throw t;
         }
     }

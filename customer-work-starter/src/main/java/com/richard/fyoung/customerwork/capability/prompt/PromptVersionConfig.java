@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.capability.prompt;
 
 import com.richard.fyoung.customerwork.capability.prompt.mapper.PromptVersionMapper;
 import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,14 +22,12 @@ public class PromptVersionConfig {
 
     private static final Logger log = LoggerFactory.getLogger(PromptVersionConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(PromptVersionStore.class)
     public PromptVersionStore promptVersionStore(CustomerWorkProperties properties,
                                                  ObjectProvider<PromptVersionMapper> mapperProvider) {
         String mode = properties.getPromptVersion().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("prompt version store: jdbc (MyBatis-Plus 实现, table=cw_prompt_version)");
             return new MybatisPromptVersionStore(mapperProvider.getObject());
         }

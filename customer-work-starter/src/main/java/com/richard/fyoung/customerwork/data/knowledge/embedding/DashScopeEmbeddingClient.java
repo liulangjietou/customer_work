@@ -2,8 +2,10 @@ package com.richard.fyoung.customerwork.data.knowledge.embedding;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
@@ -116,7 +118,7 @@ public class DashScopeEmbeddingClient implements EmbeddingClient {
                 .uri(URI.create(url))
                 .timeout(CALL_TIMEOUT)
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
+                .header(HttpHeaders.AUTHORIZATION, HttpAuthConstants.BEARER_PREFIX + apiKey)
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());

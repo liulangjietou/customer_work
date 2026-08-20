@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.memory;
 
+import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -29,8 +30,6 @@ public class AgentMemorySyncService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMemorySyncService.class);
 
-    private static final String MEMORY_FILE_NAME = "MEMORY.md";
-
     private final AgentMemoryStore memoryStore;
 
     public AgentMemorySyncService(AgentMemoryStore memoryStore) {
@@ -40,7 +39,7 @@ public class AgentMemorySyncService {
     /** 水合：权威存储 → workspace/MEMORY.md（构建实例时调用）；权威侧为空且 workspace 有存量文件时反向入库。 */
     public void hydrate(String agentCode, Path workspace) {
         try {
-            Path memoryFile = workspace.resolve(MEMORY_FILE_NAME);
+            Path memoryFile = workspace.resolve(AgentFileNames.MEMORY_MD);
             Optional<AgentMemorySnapshot> snapshot = memoryStore.load(agentCode);
             if (snapshot.isPresent()) {
                 Files.writeString(memoryFile, snapshot.get().content(), StandardCharsets.UTF_8);
@@ -60,7 +59,7 @@ public class AgentMemorySyncService {
     /** 回写：workspace/MEMORY.md → 权威存储（对话轮次结束后调用）；文件不存在或内容未变化时跳过。 */
     public void persistIfChanged(String agentCode, Path workspace) {
         try {
-            Path memoryFile = workspace.resolve(MEMORY_FILE_NAME);
+            Path memoryFile = workspace.resolve(AgentFileNames.MEMORY_MD);
             if (!Files.exists(memoryFile)) {
                 return;
             }

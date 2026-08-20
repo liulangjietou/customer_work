@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.contentguard.config;
 
+import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.ContentGuardGateway;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.SensitiveWordExtMapper;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.SensitiveWordHitLogExtMapper;
@@ -22,10 +23,9 @@ import java.util.List;
  */
 final class ContentGuardGatewayFactory {
 
+
     /** starter jar 内的敏感词 Mapper XML（classpath*: 才能命中 jar 内资源）。 */
-    private static final String STARTER_WORD_XML = "classpath*:customerwork/mapper/SensitiveWordMapper.xml";
     /** starter jar 内的限流规则 Mapper XML。 */
-    private static final String STARTER_RULE_XML = "classpath*:customerwork/mapper/RateLimitRuleMapper.xml";
     /** admin 自带的读侧扩展 XML（放 /contentguard 下，避开主 MP 默认的 /mapper 扫描）。 */
     private static final String EXT_XML = "classpath*:contentguard/*.xml";
 
@@ -33,7 +33,8 @@ final class ContentGuardGatewayFactory {
     static final List<Class<?>> MAPPER_CLASSES = List.of(SensitiveWordHitLogMapper.class);
 
     /** 需加载的 Mapper XML 位置。 */
-    static final List<String> MAPPER_XML_LOCATIONS = List.of(STARTER_WORD_XML, STARTER_RULE_XML, EXT_XML);
+    static final List<String> MAPPER_XML_LOCATIONS =
+        List.of(StarterMapperXml.SENSITIVE_WORD, StarterMapperXml.RATE_LIMIT_RULE, EXT_XML);
 
     private ContentGuardGatewayFactory() {
     }

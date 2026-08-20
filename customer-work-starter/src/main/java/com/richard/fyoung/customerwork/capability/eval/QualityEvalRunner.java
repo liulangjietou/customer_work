@@ -39,7 +39,6 @@ public class QualityEvalRunner {
     private static final int PASS_THRESHOLD = 3;
 
     private static final String DATASET_PATH = "eval/quality-eval-cases.json";
-    private static final String ERR_LOAD = "EVAL-LOAD-FAIL";
 
     private final JudgeModel judgeModel;
     private final EvalCaseStore caseStore;
@@ -82,7 +81,7 @@ public class QualityEvalRunner {
             }
             return result;
         } catch (Exception e) {
-            log.error("load quality eval dataset failed, errorCode={}, path={}", ERR_LOAD, DATASET_PATH, e);
+            log.error("load quality eval dataset failed, errorCode={}, path={}", EvalErrorCodes.LOAD_FAIL, DATASET_PATH, e);
             throw new IllegalStateException("quality eval dataset not loadable: " + DATASET_PATH, e);
         }
     }

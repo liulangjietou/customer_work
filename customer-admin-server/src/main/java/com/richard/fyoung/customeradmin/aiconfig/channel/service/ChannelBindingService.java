@@ -12,6 +12,7 @@ import com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimeP
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.mapper.RuntimePublishTaskMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -33,10 +34,8 @@ import java.util.stream.Collectors;
 @Service
 public class ChannelBindingService {
 
+
     private static final Logger log = LoggerFactory.getLogger(ChannelBindingService.class);
-
-    private static final int STATUS_ENABLED = 1;
-
     private final AiChannelBindingMapper bindingMapper;
     private final AiAgentMapper agentMapper;
     private final CustomerWorkConfigPublisher publisher;
@@ -81,7 +80,7 @@ public class ChannelBindingService {
         AiChannelBinding binding = new AiChannelBinding();
         binding.setChannelCode(request.channelCode());
         binding.setAgentId(request.agentId());
-        binding.setStatus(request.status() == null ? STATUS_ENABLED : request.status());
+        binding.setStatus(request.status() == null ? StatusFlags.ENABLED : request.status());
         bindingMapper.insert(binding);
         publisher.publishForAgentId(binding.getAgentId());
     }
@@ -95,7 +94,7 @@ public class ChannelBindingService {
         assertSingleActiveRuntimeAgent(request.agentId(), request.status(), id);
         binding.setChannelCode(request.channelCode());
         binding.setAgentId(request.agentId());
-        binding.setStatus(request.status() == null ? STATUS_ENABLED : request.status());
+        binding.setStatus(request.status() == null ? StatusFlags.ENABLED : request.status());
         bindingMapper.updateById(binding);
         publisher.publishForAgentId(binding.getAgentId());
     }
@@ -160,12 +159,12 @@ public class ChannelBindingService {
      * 多个渠道编码可以绑定同一个智能体；不同智能体必须使用独立 admin/dataId 部署。
      */
     private void assertSingleActiveRuntimeAgent(Long agentId, Integer status, Long excludeId) {
-        int effectiveStatus = status == null ? STATUS_ENABLED : status;
-        if (effectiveStatus != STATUS_ENABLED) {
+        int effectiveStatus = status == null ? StatusFlags.ENABLED : status;
+        if (effectiveStatus != StatusFlags.ENABLED) {
             return;
         }
         LambdaQueryWrapper<AiChannelBinding> wrapper = new LambdaQueryWrapper<AiChannelBinding>()
-            .eq(AiChannelBinding::getStatus, STATUS_ENABLED)
+            .eq(AiChannelBinding::getStatus, StatusFlags.ENABLED)
             .ne(AiChannelBinding::getAgentId, agentId);
         if (excludeId != null) {
             wrapper.ne(AiChannelBinding::getId, excludeId);

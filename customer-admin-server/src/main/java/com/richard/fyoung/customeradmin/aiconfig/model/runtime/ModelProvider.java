@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import java.util.Arrays;
 
 /**
@@ -16,13 +17,13 @@ import java.util.Arrays;
 public enum ModelProvider {
 
     /** OpenAI 及所有 OpenAI 兼容端点（默认厂商）。 */
-    OPENAI("openai"),
+    OPENAI(ModelProviders.OPENAI),
     /** 阿里云百炼 DashScope 原生协议（通义千问）。 */
-    DASHSCOPE("dashscope"),
+    DASHSCOPE(ModelProviders.DASHSCOPE),
     /** Anthropic Claude 原生协议。 */
-    ANTHROPIC("anthropic"),
+    ANTHROPIC(ModelProviders.ANTHROPIC),
     /** Google Gemini（Gemini Developer API，非 Vertex）。 */
-    GEMINI("gemini");
+    GEMINI(ModelProviders.GEMINI);
 
     private final String code;
 

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.sensitiveword;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.sensitiveword.mapper.SensitiveWordHitLogMapper;
 import com.richard.fyoung.customerwork.safety.sensitiveword.mapper.SensitiveWordMapper;
@@ -31,14 +32,12 @@ public class SensitiveWordConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SensitiveWordConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(SensitiveWordStore.class)
     public SensitiveWordStore sensitiveWordStore(CustomerWorkProperties properties,
                                                  ObjectProvider<SensitiveWordMapper> mapperProvider) {
         String mode = properties.getSensitiveWord().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("sensitive-word store: jdbc (MyBatis-Plus, table=cw_sensitive_word)");
             return new MybatisSensitiveWordStore(mapperProvider.getObject());
         }
@@ -83,7 +82,7 @@ public class SensitiveWordConfig {
             CustomerWorkProperties properties,
             ObjectProvider<SensitiveWordHitLogMapper> mapperProvider) {
         String mode = properties.getSensitiveWord().getHitLog().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("sensitive-word hit-log store: jdbc (table=cw_sensitive_word_hit_log)");
             return new MybatisSensitiveWordHitLogStore(mapperProvider.getObject());
         }

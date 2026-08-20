@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.attachment;
 
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.data.attachment.mapper.ChatAttachmentMapper;
 import com.richard.fyoung.customerwork.infra.config.ChatModelFactory;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -33,8 +35,6 @@ public class AttachmentConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AttachmentConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     /**
      * 附件存储：默认 jdbc（业务数据一律真实库）。jdbc 需持久化环境（{@code CustomerWorkPersistenceConfig}）已激活
      * 提供 Mapper；若声明 jdbc 但持久化环境未激活（无其它域触发），惰性取不到 Mapper 则降级内存并告警，避免启动失败。
@@ -43,7 +43,7 @@ public class AttachmentConfig {
     @ConditionalOnMissingBean(AttachmentStore.class)
     public AttachmentStore attachmentStore(AttachmentProperties properties,
                                            ObjectProvider<ChatAttachmentMapper> mapperProvider) {
-        if (STORE_MODE_JDBC.equalsIgnoreCase(properties.getStoreMode())) {
+        if (StoreModes.isJdbc(properties.getStoreMode())) {
             ChatAttachmentMapper mapper = mapperProvider.getIfAvailable();
             if (mapper != null) {
                 log.info("attachment store: jdbc (MyBatis-Plus 实现, table=cw_chat_attachment)");
@@ -71,7 +71,7 @@ public class AttachmentConfig {
         Supplier<Model> modelSupplier = () -> {
             String configured = StringUtils.hasText(ocr.getApiKey()) ? ocr.getApiKey() : modelApiKey;
             // dashscope 走工厂的 Key 解析（回落 DASHSCOPE_API_KEY 环境变量）；其它厂商直接用配置值
-            String apiKey = "dashscope".equalsIgnoreCase(ocr.getProvider())
+            String apiKey = ModelProviders.DASHSCOPE.equalsIgnoreCase(ocr.getProvider())
                 ? ChatModelFactory.resolveDashScopeKey(configured)
                 : configured;
             return ChatModelFactory.build(ocr.getProvider(), ocr.getModelName(), apiKey, ocr.getBaseUrl(),

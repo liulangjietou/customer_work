@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.devtool;
 
+import com.richard.fyoung.customerwork.core.common.crypto.AesGcmCrypto;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -65,15 +66,11 @@ public final class CodecDevToolOps {
     private static final int KEY_LEN_256 = 32;
     /** 分组模式的 IV 长度即 AES 块长；GCM 用推荐的 12 字节 nonce。 */
     private static final int BLOCK_IV_LENGTH = 16;
-    private static final int GCM_IV_LENGTH = 12;
     private static final int GCM_TAG_BITS = 128;
     /** AES 块长，NoPadding 时明文长度须为其整数倍。 */
     private static final int AES_BLOCK_SIZE = 16;
 
     /** 二进制内容的文本编码（用于密钥/IV 的解析与密文的输出）。 */
-    private static final String ENCODING_UTF8 = "UTF8";
-    private static final String ENCODING_HEX = "HEX";
-    private static final String ENCODING_BASE64 = "BASE64";
 
     private static final char[] HEX = "0123456789abcdef".toCharArray();
 
@@ -276,10 +273,10 @@ public final class CodecDevToolOps {
         resolved.mode = normalizeMode(params.getMode());
         resolved.jcePadding = resolvePadding(params.getPadding(), resolved.mode);
         resolved.transform = AES + "/" + resolved.mode + "/" + resolved.jcePadding;
-        resolved.ivEncoding = normalizeEncoding(params.getIvEncoding(), ENCODING_BASE64, "ivEncoding");
+        resolved.ivEncoding = normalizeEncoding(params.getIvEncoding(), DevToolConstants.ENCODING_BASE64, "ivEncoding");
         resolved.outputFormat = normalizeOutputFormat(params.getOutputFormat());
         resolved.keyBytes = validateKey(params.getKey(),
-            normalizeEncoding(params.getKeyEncoding(), ENCODING_UTF8, "keyEncoding"));
+            normalizeEncoding(params.getKeyEncoding(), DevToolConstants.ENCODING_UTF8, "keyEncoding"));
         return resolved;
     }
 
@@ -344,7 +341,7 @@ public final class CodecDevToolOps {
 
     /** 各模式的 IV 字节长度（ECB 不使用 IV，不会走到这里）。 */
     private int ivLengthOf(String mode) {
-        return MODE_GCM.equals(mode) ? GCM_IV_LENGTH : BLOCK_IV_LENGTH;
+        return MODE_GCM.equals(mode) ? AesGcmCrypto.GCM_IV_LENGTH : BLOCK_IV_LENGTH;
     }
 
     /** 规范化二进制文本编码，为空取默认值。 */
@@ -353,7 +350,7 @@ public final class CodecDevToolOps {
             return defaultEncoding;
         }
         String upper = encoding.trim().toUpperCase(Locale.ROOT).replace("-", "").replace("_", "");
-        if (!ENCODING_UTF8.equals(upper) && !ENCODING_HEX.equals(upper) && !ENCODING_BASE64.equals(upper)) {
+        if (!DevToolConstants.ENCODING_UTF8.equals(upper) && !DevToolConstants.ENCODING_HEX.equals(upper) && !DevToolConstants.ENCODING_BASE64.equals(upper)) {
             throw new IllegalArgumentException(fieldName + " 仅支持 utf8/hex/base64，当前 " + encoding);
         }
         return upper;
@@ -362,10 +359,10 @@ public final class CodecDevToolOps {
     /** 规范化密文输入输出格式，为空默认 base64（密文是二进制，不能按 utf8 呈现）。 */
     private String normalizeOutputFormat(String outputFormat) {
         if (outputFormat == null || outputFormat.trim().isEmpty()) {
-            return ENCODING_BASE64;
+            return DevToolConstants.ENCODING_BASE64;
         }
         String upper = outputFormat.trim().toUpperCase(Locale.ROOT);
-        if (!ENCODING_HEX.equals(upper) && !ENCODING_BASE64.equals(upper)) {
+        if (!DevToolConstants.ENCODING_HEX.equals(upper) && !DevToolConstants.ENCODING_BASE64.equals(upper)) {
             throw new IllegalArgumentException("outputFormat 仅支持 hex/base64，当前 " + outputFormat);
         }
         return upper;
@@ -374,11 +371,11 @@ public final class CodecDevToolOps {
     /** 按指定编码把文本解析成字节。 */
     private byte[] decodeBinary(String raw, String encoding, String fieldName) {
         switch (encoding) {
-            case ENCODING_UTF8:
+            case DevToolConstants.ENCODING_UTF8:
                 return raw.getBytes(UTF_8);
-            case ENCODING_HEX:
+            case DevToolConstants.ENCODING_HEX:
                 return decodeHex(raw, fieldName);
-            case ENCODING_BASE64:
+            case DevToolConstants.ENCODING_BASE64:
             default:
                 try {
                     return Base64.getDecoder().decode(raw.trim());
@@ -390,7 +387,7 @@ public final class CodecDevToolOps {
 
     /** 按指定编码把字节输出成文本（仅 hex/base64；utf8 用于密钥输入，不用于输出）。 */
     private String encodeBinary(byte[] bytes, String encoding) {
-        return ENCODING_HEX.equals(encoding) ? toHexLower(bytes) : Base64.getEncoder().encodeToString(bytes);
+        return DevToolConstants.ENCODING_HEX.equals(encoding) ? toHexLower(bytes) : Base64.getEncoder().encodeToString(bytes);
     }
 
     /** hex 文本转字节：忽略空白，校验字符集与偶数长度。 */

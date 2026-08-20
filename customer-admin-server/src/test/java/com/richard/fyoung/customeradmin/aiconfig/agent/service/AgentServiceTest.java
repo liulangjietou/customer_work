@@ -30,6 +30,7 @@ import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystem
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiSystemTool;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystemToolMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiSystemToolMapper;
+import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.menu.service.MenuVersionHolder;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
@@ -112,7 +113,7 @@ class AgentServiceTest {
         when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
         // 默认主模型连通性门禁通过（个别用例覆写为失败）
         when(modelConfigService.testConnectivity(any())).thenReturn(
-            CompletableFuture.completedFuture(new ModelTestResult(ModelTestResult.STATUS_SUCCESS, LocalDateTime.now(), null)));
+            CompletableFuture.completedFuture(new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), null)));
     }
 
     private AgentSaveRequest validRequest() {
@@ -320,7 +321,7 @@ class AgentServiceTest {
     @Test
     void create_shouldRejectWhenPrimaryModelConnectivityFails() {
         when(modelConfigService.testConnectivity(any())).thenReturn(CompletableFuture.completedFuture(
-            new ModelTestResult(ModelTestResult.STATUS_FAILED, LocalDateTime.now(), "HTTP 401")));
+            new ModelTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(), "HTTP 401")));
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, null, null, 1, null, null, null, null, null, null, null);
 
@@ -523,7 +524,7 @@ class AgentServiceTest {
         kb.setId(id);
         kb.setKbName(name);
         kb.setStatus(1);
-        kb.setTestStatus(KnowledgeBaseTestResult.STATUS_SUCCESS);
+        kb.setTestStatus(ConnectivityTestStatus.SUCCESS);
         return kb;
     }
 
@@ -562,7 +563,7 @@ class AgentServiceTest {
     @Test
     void create_shouldRejectUntestedKnowledgeBase() {
         AiKnowledgeBase untested = usableKnowledgeBase(40L, "未测试知识库");
-        untested.setTestStatus(KnowledgeBaseTestResult.STATUS_FAILED);
+        untested.setTestStatus(ConnectivityTestStatus.FAILED);
         when(knowledgeBaseMapper.selectBatchIds(List.of(40L))).thenReturn(List.of(untested));
 
         assertThrows(BizException.class, () -> service.create(requestWithKnowledgeBases(List.of(40L))));

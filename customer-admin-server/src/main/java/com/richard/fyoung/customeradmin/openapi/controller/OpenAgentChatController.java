@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.openapi.dto.OpenChatRequest;
 import com.richard.fyoung.customeradmin.openapi.service.OpenChannelService;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
+import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import jakarta.validation.Valid;
@@ -41,11 +42,6 @@ import reactor.core.publisher.Flux;
 @RequestMapping("/api/open/agents")
 public class OpenAgentChatController {
 
-    private static final String EVENT_MESSAGE = "message";
-    private static final String EVENT_DONE = "done";
-    private static final String EVENT_ERROR = "error";
-    private static final String DONE_PAYLOAD = "[DONE]";
-
     private static final Logger log = LoggerFactory.getLogger(OpenAgentChatController.class);
 
     /** SSE data 的 JSON 字符串编码器（窄用途，不依赖容器注入）。 */
@@ -70,14 +66,14 @@ public class OpenAgentChatController {
                 return chatService.chatStream(agentCode, request.sessionId(), request.message());
             })
             .filter(chunk -> chunk.kind() == ChatNodeKind.ANSWER)
-            .map(chunk -> ServerSentEvent.<String>builder().event(EVENT_MESSAGE).data(jsonString(chunk.text())).build());
+            .map(chunk -> ServerSentEvent.<String>builder().event(OpenApiProtocol.SSE_EVENT_MESSAGE).data(jsonString(chunk.text())).build());
 
         Flux<ServerSentEvent<String>> result = body
-            .concatWithValues(ServerSentEvent.<String>builder().event(EVENT_DONE).data(DONE_PAYLOAD).build())
+            .concatWithValues(ServerSentEvent.<String>builder().event(OpenApiProtocol.SSE_EVENT_DONE).data(OpenApiProtocol.SSE_DONE_MARKER).build())
             .onErrorResume(e -> {
                 log.error("open api agent chat failed, code={}, agentCode={}", "OPEN-API-CHAT-FAIL", agentCode, e);
                 return Flux.just(ServerSentEvent.<String>builder()
-                    .event(EVENT_ERROR).data(jsonString(errorMessage(e))).build());
+                    .event(OpenApiProtocol.SSE_EVENT_ERROR).data(jsonString(errorMessage(e))).build());
             });
         return tenantId == null ? result
             : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));

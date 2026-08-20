@@ -14,6 +14,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import org.springframework.http.MediaType;
 
 /**
  * 附件 MinIO 对象存储：把上传字节以对象 key {@code {yyyyMM}/{uuid}.{ext}} 上传到指定 bucket，返回该 key。
@@ -31,7 +32,6 @@ public class MinioAttachmentFileStorage implements AttachmentFileStorage {
     private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyyMM");
 
     /** 上传对象的 content-type（统一按二进制流，解析侧凭扩展名 / Tika 识别，不依赖对象元数据）。 */
-    private static final String OBJECT_CONTENT_TYPE = "application/octet-stream";
 
     private final MinioClient client;
     private final String bucket;
@@ -61,7 +61,7 @@ public class MinioAttachmentFileStorage implements AttachmentFileStorage {
             client.putObject(PutObjectArgs.builder()
                 .bucket(bucket)
                 .object(objectKey)
-                .contentType(OBJECT_CONTENT_TYPE)
+                .contentType(MediaType.APPLICATION_OCTET_STREAM_VALUE)
                 .stream(new ByteArrayInputStream(data), data.length, -1)
                 .build());
         } catch (Exception e) {
@@ -79,7 +79,7 @@ public class MinioAttachmentFileStorage implements AttachmentFileStorage {
             client.putObject(PutObjectArgs.builder()
                 .bucket(bucket)
                 .object(storagePath)
-                .contentType(OBJECT_CONTENT_TYPE)
+                .contentType(MediaType.APPLICATION_OCTET_STREAM_VALUE)
                 .stream(new ByteArrayInputStream(data), data.length, -1)
                 .build());
         } catch (Exception e) {

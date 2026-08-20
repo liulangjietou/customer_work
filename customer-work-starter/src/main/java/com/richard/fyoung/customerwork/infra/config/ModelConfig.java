@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.config;
 
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import com.richard.fyoung.customerwork.core.model.failover.FailoverModel;
 import com.richard.fyoung.customerwork.core.model.failover.ModelCircuitBreakerRegistry;
 import com.richard.fyoung.customerwork.core.model.tiered.ModelTierPolicy;
@@ -103,13 +104,13 @@ public class ModelConfig {
 
     /** DashScope 的 Key 支持环境变量兜底，其余厂商按配置原样取（与 {@link #buildPrimary} 同一口径）。 */
     private String resolveKey(String provider, String configuredKey) {
-        return "dashscope".equalsIgnoreCase(provider)
+        return ModelProviders.DASHSCOPE.equalsIgnoreCase(provider)
             ? ChatModelFactory.resolveDashScopeKey(configuredKey)
             : configuredKey;
     }
 
     private Model buildPrimary(ModelProperties cfg) {
-        String apiKey = "dashscope".equalsIgnoreCase(cfg.getProvider())
+        String apiKey = ModelProviders.DASHSCOPE.equalsIgnoreCase(cfg.getProvider())
             ? ChatModelFactory.resolveDashScopeKey(cfg.getApiKey())
             : cfg.getApiKey();
         Model model = buildByProvider(cfg.getProvider(), cfg.getName(), apiKey, cfg.getBaseUrl(), cfg);

@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.scheduledtask.scheduler;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.entity.AiScheduledTask;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.mapper.AiScheduledTaskMapper;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customeradmin.aiconfig.scheduledtask.service.ScheduledTaskService;
 import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
@@ -43,10 +44,8 @@ import java.util.concurrent.ScheduledFuture;
 @Component
 public class ScheduledTaskScheduler implements DisposableBean {
 
+
     private static final Logger log = LoggerFactory.getLogger(ScheduledTaskScheduler.class);
-
-    private static final int ENABLED = 1;
-
     private final AiScheduledTaskMapper taskMapper;
     private final ScheduledTaskService scheduledTaskService;
     private final AdminSchedulerProperties properties;
@@ -86,7 +85,7 @@ public class ScheduledTaskScheduler implements DisposableBean {
             // 启动时把所有租户的任务都注册进来：这是明确的跨租户运维扫描，不是某个租户的查询。
             // 具体执行时再按任务所属租户还原上下文（见 ScheduledTaskService#executeFromScheduler）
             List<AiScheduledTask> tasks = CrossTenantOperations.execute(() -> taskMapper.selectList(
-                new LambdaQueryWrapper<AiScheduledTask>().eq(AiScheduledTask::getEnabled, ENABLED)));
+                new LambdaQueryWrapper<AiScheduledTask>().eq(AiScheduledTask::getEnabled, StatusFlags.ENABLED)));
             if (CollectionUtils.isEmpty(tasks)) {
                 log.info("internal scheduler started with no schedulable task");
                 return;
@@ -131,7 +130,7 @@ public class ScheduledTaskScheduler implements DisposableBean {
         if (!properties.isInternalMode()) {
             return false;
         }
-        if (task.getEnabled() == null || task.getEnabled() != ENABLED) {
+        if (task.getEnabled() == null || task.getEnabled() != StatusFlags.ENABLED) {
             return false;
         }
         if (!StringUtils.hasText(task.getCron())) {

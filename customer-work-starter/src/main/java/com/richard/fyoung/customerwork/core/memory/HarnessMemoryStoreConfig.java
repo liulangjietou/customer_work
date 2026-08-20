@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.memory;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.core.memory.mapper.HarnessMemoryMapper;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.slf4j.Logger;
@@ -22,13 +23,11 @@ public class HarnessMemoryStoreConfig {
 
     private static final Logger log = LoggerFactory.getLogger(HarnessMemoryStoreConfig.class);
 
-    private static final String STORE_MODE_MEMORY = "memory";
-
     @Bean
     @ConditionalOnMissingBean(HarnessMemoryStore.class)
     public HarnessMemoryStore harnessMemoryStore(CustomerWorkProperties properties,
                                                   ObjectProvider<HarnessMemoryMapper> mapperProvider) {
-        if (STORE_MODE_MEMORY.equalsIgnoreCase(properties.getHarness().getMemoryStoreMode())) {
+        if (StoreModes.isMemory(properties.getHarness().getMemoryStoreMode())) {
             log.info("harness memory store: memory (进程内，重启不保留，生产建议 memory-store-mode=jdbc)");
             return new InMemoryHarnessMemoryStore();
         }

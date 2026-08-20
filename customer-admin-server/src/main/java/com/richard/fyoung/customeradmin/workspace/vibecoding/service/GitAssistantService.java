@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
+import com.richard.fyoung.customeradmin.common.constant.AgentCapabilities;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.message.service.SiteMessageService;
@@ -64,8 +65,6 @@ import java.util.stream.Collectors;
 public class GitAssistantService {
 
     private static final Logger log = LoggerFactory.getLogger(GitAssistantService.class);
-    private static final String CAPABILITY_VIBECODING = "vibecoding";
-    private static final String CAPABILITY_DELIMITER = ",";
     /** 送入模型的 diff 文本上限，超过截断并提示，避免撑爆上下文。 */
     private static final int MAX_DIFF_CHARS_FOR_MODEL = 20_000;
     /** Review 场景的 diff 上限（需求 §4.2.3：超大 diff 截断并在 summary 中声明）。 */
@@ -455,8 +454,8 @@ public class GitAssistantService {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "智能体不存在: " + agentCode);
         }
         List<String> capabilities = StringUtils.hasText(agent.getCapabilities())
-            ? Arrays.asList(agent.getCapabilities().split(CAPABILITY_DELIMITER)) : List.of();
-        if (!capabilities.contains(CAPABILITY_VIBECODING)) {
+            ? Arrays.asList(agent.getCapabilities().split(AgentCapabilities.DELIMITER)) : List.of();
+        if (!capabilities.contains(AgentCapabilities.VIBECODING)) {
             throw new BizException(ResultCode.AGENT_CAPABILITY_NOT_SUPPORTED, "智能体未开启 vibecoding 能力: " + agentCode);
         }
     }

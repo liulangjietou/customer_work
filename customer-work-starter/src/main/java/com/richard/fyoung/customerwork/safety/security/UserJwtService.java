@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.security;
 
+import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.jsonwebtoken.Claims;
@@ -35,7 +36,6 @@ public class UserJwtService {
     private static final Logger log = LoggerFactory.getLogger(UserJwtService.class);
 
     /** 开发用默认密钥（生产必须用 env CW_USER_JWT_SECRET 覆盖，见 application.yml）。 */
-    private static final String DEV_DEFAULT_SECRET = "dev-secret-change-me-in-production-0001";
 
     private static final String CLAIM_USERNAME = "username";
     private static final String CLAIM_NICKNAME = "nickname";
@@ -49,7 +49,7 @@ public class UserJwtService {
         UserAuthProperties userAuth = properties.getUserAuth();
         String secret = userAuth.getJwtSecret();
         if (secret == null || secret.isBlank()) {
-            secret = DEV_DEFAULT_SECRET;
+            secret = DevDefaultCredentials.USER_JWT_SECRET;
             log.info("user jwt secret not configured, using dev default (override via CW_USER_JWT_SECRET in prod)");
         }
         this.signingKey = Keys.hmacShaKeyFor(sha256(secret));

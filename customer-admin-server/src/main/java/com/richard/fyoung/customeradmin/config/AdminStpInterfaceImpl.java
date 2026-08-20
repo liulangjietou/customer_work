@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.config;
 
 import cn.dev33.satoken.stp.StpInterface;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.richard.fyoung.customeradmin.common.constant.SystemRoles;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
@@ -31,8 +32,6 @@ import java.util.List;
 @Component
 public class AdminStpInterfaceImpl implements StpInterface {
 
-    private static final String SUPER_ADMIN_ROLE_CODE = "super_admin";
-
     private final UserRoleResolver userRoleResolver;
     private final SysRolePermissionMapper rolePermissionMapper;
     private final SysPermissionMapper permissionMapper;
@@ -52,7 +51,7 @@ public class AdminStpInterfaceImpl implements StpInterface {
             return List.of();
         }
         boolean isSuperAdmin = TenantSession.isPlatformOperator()
-            && roles.stream().anyMatch(r -> SUPER_ADMIN_ROLE_CODE.equals(r.getRoleCode()));
+            && roles.stream().anyMatch(r -> SystemRoles.SUPER_ADMIN.equals(r.getRoleCode()));
         if (isSuperAdmin) {
             return permissionMapper.selectList(null).stream()
                 .map(SysPermission::getPermCode)

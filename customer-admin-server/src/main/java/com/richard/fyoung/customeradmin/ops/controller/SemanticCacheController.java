@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.ops.service.OpsAdminService;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheEntry;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheScope;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,7 +28,6 @@ import java.util.List;
 public class SemanticCacheController {
 
     private static final int DEFAULT_LIMIT = 50;
-    private static final String DEFAULT_SCOPE = "default";
 
     /** 分区选择器一次最多列多少个：分区数随活跃用户数增长，不能全量拉。 */
     private static final int DEFAULT_SCOPE_LIMIT = 100;
@@ -55,7 +55,7 @@ public class SemanticCacheController {
     @SaCheckPermission("semantic-cache:view")
     @GetMapping("/list")
     public Result<List<SemanticCacheEntry>> list(
-            @RequestParam(defaultValue = DEFAULT_SCOPE) String scopeId,
+            @RequestParam(defaultValue = TenantContext.DEFAULT) String scopeId,
             @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit) {
         return Result.success(opsAdminService.listCache(scopeId, limit));
     }

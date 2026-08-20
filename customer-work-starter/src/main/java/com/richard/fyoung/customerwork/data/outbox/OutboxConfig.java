@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.outbox;
 
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.data.outbox.mapper.OutboxMessageMapper;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.capability.deadletter.DeadLetterStore;
@@ -24,8 +25,8 @@ public class OutboxConfig {
     public OutboxStore outboxStore(CustomerWorkProperties properties,
                                    ObjectProvider<OutboxMessageMapper> mapperProvider) {
         String configured = properties.getOutbox().getStoreMode();
-        boolean ticketJdbc = "jdbc".equalsIgnoreCase(properties.getTicket().getStoreMode());
-        boolean jdbc = "jdbc".equalsIgnoreCase(configured)
+        boolean ticketJdbc = StoreModes.isJdbc(properties.getTicket().getStoreMode());
+        boolean jdbc = StoreModes.isJdbc(configured)
             || ("auto".equalsIgnoreCase(configured) && ticketJdbc);
         if (ticketJdbc && !jdbc) {
             throw new IllegalStateException(

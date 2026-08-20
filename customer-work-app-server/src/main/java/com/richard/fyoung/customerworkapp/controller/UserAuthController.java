@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.data.user.UserAccount;
 import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
@@ -42,8 +43,6 @@ import java.util.Map;
 @RequestMapping("/api/customer/auth")
 @Tag(name = "用户账户", description = "注册 / 登录 / 当前登录信息")
 public class UserAuthController {
-
-    private static final String BEARER_PREFIX = "Bearer ";
 
     private final UserAccountService userAccountService;
     private final UserJwtService jwtService;
@@ -165,10 +164,10 @@ public class UserAuthController {
 
     /** 手动验签取登录态主体（本控制器不在 {@code /user/**} 之下，故不经 UserAuthWebFilter，令牌无效即 401）。 */
     private UserPrincipal requirePrincipal(String authorization) {
-        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
+        if (authorization == null || !authorization.startsWith(HttpAuthConstants.BEARER_PREFIX)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "missing bearer token");
         }
-        return jwtService.verify(authorization.substring(BEARER_PREFIX.length()))
+        return jwtService.verify(authorization.substring(HttpAuthConstants.BEARER_PREFIX.length()))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid or expired token"));
     }
 }

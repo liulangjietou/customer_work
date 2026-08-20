@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.capability.eval;
 
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalCaseMapper;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalRunMapper;
+import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -36,14 +37,12 @@ public class EvalConfig {
 
     private static final Logger log = LoggerFactory.getLogger(EvalConfig.class);
 
-    private static final String STORE_MODE_JDBC = "jdbc";
-
     @Bean
     @ConditionalOnMissingBean(EvalRunStore.class)
     public EvalRunStore evalRunStore(CustomerWorkProperties properties,
                                      ObjectProvider<EvalRunMapper> mapperProvider) {
         String mode = properties.getEval().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("eval run store: jdbc (MyBatis-Plus 实现, table=cw_eval_run)");
             return new MybatisEvalRunStore(mapperProvider.getObject());
         }
@@ -62,7 +61,7 @@ public class EvalConfig {
     public EvalCaseStore evalCaseStore(CustomerWorkProperties properties,
                                        ObjectProvider<EvalCaseMapper> mapperProvider) {
         String mode = properties.getEval().getStoreMode();
-        if (STORE_MODE_JDBC.equalsIgnoreCase(mode)) {
+        if (StoreModes.isJdbc(mode)) {
             log.info("eval case store: jdbc (MyBatis-Plus 实现, table=cw_eval_case)");
             return new MybatisEvalCaseStore(mapperProvider.getObject());
         }

@@ -14,6 +14,7 @@ import com.richard.fyoung.customeradmin.workbench.dto.WorkbenchSiteSaveRequest;
 import com.richard.fyoung.customeradmin.workbench.dto.WorkbenchSiteVO;
 import com.richard.fyoung.customeradmin.workbench.entity.WorkbenchSite;
 import com.richard.fyoung.customeradmin.workbench.mapper.WorkbenchSiteMapper;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -33,8 +34,6 @@ import java.util.Set;
  */
 @Service
 public class WorkbenchSiteService {
-
-    private static final int ENABLED = 1;
 
     private final WorkbenchSiteMapper siteMapper;
     private final AesGcmCryptoUtil cryptoUtil;
@@ -105,7 +104,7 @@ public class WorkbenchSiteService {
             throw new BizException(ResultCode.PARAM_MISSING, "host 不能为空");
         }
         LambdaQueryWrapper<WorkbenchSite> wrapper = new LambdaQueryWrapper<WorkbenchSite>()
-            .eq(WorkbenchSite::getEnabled, ENABLED)
+            .eq(WorkbenchSite::getEnabled, StatusFlags.ENABLED)
             .like(WorkbenchSite::getUrl, host);
         List<WorkbenchSite> candidates = siteMapper.selectList(wrapper);
         WorkbenchSite matched = candidates.stream()
@@ -118,7 +117,7 @@ public class WorkbenchSiteService {
     /** 所有启用站点的 host 去重列表，供脚本生成 @match。 */
     public List<String> listEnabledHosts() {
         LambdaQueryWrapper<WorkbenchSite> wrapper = new LambdaQueryWrapper<WorkbenchSite>()
-            .eq(WorkbenchSite::getEnabled, ENABLED);
+            .eq(WorkbenchSite::getEnabled, StatusFlags.ENABLED);
         List<WorkbenchSite> sites = siteMapper.selectList(wrapper);
         if (CollectionUtils.isEmpty(sites)) {
             return new ArrayList<>();
@@ -176,7 +175,7 @@ public class WorkbenchSiteService {
         site.setUrl(request.url());
         site.setAccount(request.account());
         site.setRemark(request.remark());
-        site.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : ENABLED);
+        site.setEnabled(Boolean.FALSE.equals(request.enabled()) ? 0 : StatusFlags.ENABLED);
 
         // 自动登录配置：选择器留空即存 null（脚本走启发式）；模式/时序留空落默认值
         site.setUsernameSelector(request.usernameSelector());
@@ -203,7 +202,7 @@ public class WorkbenchSiteService {
         vo.setHasPassword(hasPassword);
         vo.setPasswordMasked(hasPassword ? AesGcmCryptoUtil.mask(cryptoUtil.decrypt(site.getPassword())) : "");
         vo.setRemark(site.getRemark());
-        vo.setEnabled(site.getEnabled() != null && site.getEnabled() == ENABLED);
+        vo.setEnabled(site.getEnabled() != null && site.getEnabled() == StatusFlags.ENABLED);
         vo.setUsernameSelector(site.getUsernameSelector());
         vo.setPasswordSelector(site.getPasswordSelector());
         vo.setSubmitSelector(site.getSubmitSelector());
