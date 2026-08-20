@@ -18,12 +18,26 @@ import java.util.Set;
 public final class TenantInterceptors {
 
     /**
-     * 内置忽略表：平台级数据 + 框架自建表。判定依据与新增规则见 {@code docs/多租户架构设计.md}。
+     * 内置忽略表：平台级数据 + 框架自建表。判定依据与新增规则见 {@code docs/多租户架构设计.md} §2.2。
      *
-     * <p>加表进这份清单等于放弃该表的自动隔离，务必确认它属于下面三类之一：
-     * 内容由平台定义租户只读（{@code sys_permission} 权限点定义、{@code ai_system_tool} 代码级工具目录）、
-     * 框架自建无法加列（{@code ai_chat_session_state} 由 MysqlAgentStateStore 直接持 DataSource 读写）、
-     * 需要两级可见性因而由 Service 层手工过滤（{@code ai_model_config} 承载模型凭据）。</p>
+     * <p><b>加表进这份清单等于放弃该表的自动隔离</b>，务必确认它属于下面<b>四类</b>之一：</p>
+     * <ol>
+     *   <li><b>内容由平台定义、租户只读</b>：{@code sys_permission} 权限点定义、
+     *       {@code ai_system_tool} 代码级工具目录、{@code ai_model_price} 平台统一定价、
+     *       {@code login_carousel_image}（登录前匿名访问，此刻没有任何租户上下文）；</li>
+     *   <li><b>框架自建、无法加列</b>：{@code ai_chat_session_state} 由 MysqlAgentStateStore
+     *       直接持 DataSource 读写；归属另记在 {@code ai_workspace_session}，靠 JOIN 补回隔离；</li>
+     *   <li><b>需要两级可见性，由 Service 层手工过滤</b>：{@code ai_model_config} 承载模型凭据，
+     *       读取时 {@code tenant_id IN (当前租户, '__platform__')}、平台记录对租户视角不回显凭据、
+     *       写入/删除强制校验归属。<b>补偿实现在 {@code ModelConfigService}，
+     *       且那是这张表唯一的一道防线</b>（它也刻意不在 {@code DataScopeTables} 白名单里）；</li>
+     *   <li><b>带 tenant_id 但刻意不自动过滤，访问控制在 Controller</b>：{@code sys_tenant_quota}——
+     *       运营方要跨租户配额度，而租户管理员本就不该看到自己的额度设置。
+     *       <b>给这张表新写任何查询接口都必须显式加运营方校验</b>，别处不设防。</li>
+     * </ol>
+     *
+     * <p>第 3、4 类的补偿控制在别处，删掉那边的实现不会让本文件报错——
+     * 因此它们各自都有专门的回归测试盯着，改动前先看测试。</p>
      */
     public static final List<String> PLATFORM_LEVEL_TABLES = List.of(
         "sys_tenant",

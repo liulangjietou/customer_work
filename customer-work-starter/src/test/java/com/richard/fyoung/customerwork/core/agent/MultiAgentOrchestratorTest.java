@@ -160,7 +160,7 @@ class MultiAgentOrchestratorTest {
         List<ReActAgent> all = orch.buildSpecialists();
 
         // "退款" 命中快车道 → 直接售后专家，全程不触发 routerAgent（mock model 也不会被调用）
-        List<ReActAgent> picked = orch.selectExperts("我要退款", all).block(Duration.ofSeconds(2));
+        List<ReActAgent> picked = orch.selectExperts("s-1", "我要退款", all).block(Duration.ofSeconds(2));
         assertEquals(List.of("AfterSalesExpert"), names(picked));
     }
 
@@ -172,7 +172,7 @@ class MultiAgentOrchestratorTest {
         MultiAgentOrchestrator orch = newOrchestrator(props);
         List<ReActAgent> all = orch.buildSpecialists();
 
-        List<ReActAgent> picked = orch.selectExperts("随便问问", all).block(Duration.ofSeconds(2));
+        List<ReActAgent> picked = orch.selectExperts("s-1", "随便问问", all).block(Duration.ofSeconds(2));
         assertEquals(3, picked.size());
     }
 
@@ -183,7 +183,7 @@ class MultiAgentOrchestratorTest {
         props.getMultiAgent().setReduceEnabled(false);
         MultiAgentOrchestrator orch = newOrchestrator(props);
 
-        String out = orch.reduce("退款吗", List.of(reply("OrderExpert", "已发货"),
+        String out = orch.reduce("s-1", "退款吗", List.of(reply("OrderExpert", "已发货"),
             reply("KnowledgeExpert", "支持七天无理由"))).block(Duration.ofSeconds(2));
         assertTrue(out.contains("【OrderExpert】已发货"));
         assertTrue(out.contains("【KnowledgeExpert】支持七天无理由"));
@@ -193,7 +193,7 @@ class MultiAgentOrchestratorTest {
     @Test
     void reduce_shouldSkipForSingleReply() {
         MultiAgentOrchestrator orch = newOrchestrator(new CustomerWorkProperties());
-        String out = orch.reduce("订单状态", List.of(reply("OrderExpert", "已发货")))
+        String out = orch.reduce("s-1", "订单状态", List.of(reply("OrderExpert", "已发货")))
             .block(Duration.ofSeconds(2));
         assertEquals("【OrderExpert】已发货", out);
     }

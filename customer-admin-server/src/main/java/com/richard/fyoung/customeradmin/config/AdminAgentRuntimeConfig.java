@@ -1,6 +1,9 @@
 package com.richard.fyoung.customeradmin.config;
 
 import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.safety.security.SensitiveDataMasker;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.permission.PermissionMode;
 import io.agentscope.core.state.AgentStateStore;
@@ -72,6 +75,38 @@ public class AdminAgentRuntimeConfig {
     public IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware(
             AdminInjectionGuardProperties properties, ObjectProvider<MeterRegistry> meterRegistryProvider) {
         return new IndirectInjectionGuardMiddleware(properties.isEnabled(), properties.isDetectionEnabled(),
+            properties.getInjectionPatterns(), meterRegistryProvider.getIfAvailable());
+    }
+
+    /**
+     * 出站脱敏中间件（{@code admin.masking.*}）与下面的直接注入防护，都是 starter 侧的
+     * {@code @Component}，本模块排除了自动装配后必须显式建。
+     *
+     * <p><b>补上之前，后台对话链路两者皆无、且连一个能打开它们的配置项都没有</b>，
+     * 而客服端两者都有——运维在客服端验证过脱敏生效后，会理所当然地以为全局都保护上了。
+     * 这正是"能力只接在一条路径上"的典型：能力本身造好了，另一条路径没接。</p>
+     */
+    /**
+     * Bean 名刻意不叫 {@code sensitiveDataMasker}：admin 自己有一个同名的
+     * {@code common.log.SensitiveDataMasker}（操作日志脱敏用，@Component 扫描注册），
+     * 重名会直接抛 {@code BeanDefinitionOverrideException} 让上下文起不来。
+     * 两者类型不同、职责不同——那个脱的是审计日志，这个脱的是发给用户的回复。
+     */
+    @Bean
+    public SensitiveDataMasker agentOutboundMasker(AdminMaskingProperties properties) {
+        return new SensitiveDataMasker(properties);
+    }
+
+    @Bean
+    public MaskingMiddleware maskingMiddleware(AdminMaskingProperties properties, SensitiveDataMasker masker) {
+        return new MaskingMiddleware(properties.isEnabled(), masker);
+    }
+
+    /** 直接提示词注入防护（{@code admin.prompt-guard.*}）：拦用户自己在输入框里打的越狱话术。 */
+    @Bean
+    public PromptInjectionGuardMiddleware promptInjectionGuardMiddleware(
+            AdminPromptGuardProperties properties, ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new PromptInjectionGuardMiddleware(properties.isEnabled(), properties.getRefusalReply(),
             properties.getInjectionPatterns(), meterRegistryProvider.getIfAvailable());
     }
 }

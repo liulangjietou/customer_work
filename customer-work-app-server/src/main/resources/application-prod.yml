@@ -13,9 +13,11 @@ customer-work:
   # mysql 仓库启动时把内容物化到系统临时目录，绕开 fat-jar 资源枚举问题且不依赖本地持久盘。
   # ------------------------------------------------------------------
   skill:
-    enabled: true
     repository: mysql
     writable: false
+    # 下面两项与 Java 默认值相同，仍**刻意显式声明**：这是生产安全基线，
+    # 表达的是"生产环境明确要求这两个能力是关的"，而不是"跟随默认值"。
+    # 有人改了 @ConfigurationProperties 的默认值时，这里仍然守得住。
     runtime-load-tool-enabled: false
     code-execution-enabled: false
 
@@ -63,6 +65,7 @@ customer-work:
   # （真并发 fanout + 路由 + reduce 归纳，已有确定性单测覆盖），不依赖框架原生 subagent。
   # ------------------------------------------------------------------
   harness:
+    # 本段多项与 Java 默认值相同，同样是刻意显式声明的生产安全基线（理由同上）。
     subagent:
       enabled: false
     # 权限系统：生产建议开启，ask-tools 保持默认（退款/转人工需人工确认），与应用层审批闭环双保险
@@ -106,7 +109,6 @@ customer-work:
   # ------------------------------------------------------------------
   human-approval:
     store-mode: jdbc
-    max-execution-retry-attempts: 3   # 审批放行后下游执行（如打款）失败的最大重试次数
   slot-filling:
     store-mode: jdbc
   dialog:
@@ -122,7 +124,6 @@ customer-work:
   # 本项目 FailoverModel 是自研装饰器（主模型失败时按序切兜底模型），行为已被单测覆盖。
   # ------------------------------------------------------------------
   model:
-    provider: dashscope
     api-key: ${DASHSCOPE_API_KEY:}
     fallback:
       enabled: true
@@ -132,8 +133,6 @@ customer-work:
       base-url: ${MODEL_FALLBACK_BASE_URL:}
     retry:
       enabled: true
-      max-attempts: 2
-      backoff-ms: 500
 
   security:
     auth:

@@ -1,17 +1,10 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
-import com.richard.fyoung.customeradmin.common.exception.BizException;
-import com.richard.fyoung.customeradmin.common.result.ResultCode;
-import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbUnavailableException;
-import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
+import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
+import jakarta.annotation.PreDestroy;
+import org.springframework.stereotype.Component;
 
 /**
  * APP 数据源（客服端库 {@code agent_scope_customer_work}）调用统计门面的惰性提供者。
@@ -26,46 +19,24 @@ import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 @Component
 public class AppAgentCallStatsGatewayProvider {
 
-    private static final Logger log = LoggerFactory.getLogger(AppAgentCallStatsGatewayProvider.class);
-
-    private static final String POOL_NAME = "agent-call-stats-app-pool";
-    private static final int MAX_POOL_SIZE = 3;
-
-    private final AgentCallStatsAppProperties properties;
-    private final CrossDbGatewayProvider<AgentCallStatsGateway> delegate;
+    private final CustomerWorkFacade<AgentCallStatsGateway> facade;
 
     public AppAgentCallStatsGatewayProvider(AgentCallStatsAppProperties properties,
                                             AdminCrossDbTenantPlugins tenantPlugins) {
-        this.properties = properties;
-        this.delegate = CrossDbGateways.lazy(this::connectionSettings,
-            AgentCallStatsGatewayFactory.MAPPER_CLASSES,
-            AgentCallStatsGatewayFactory.MAPPER_XML_LOCATIONS,
-            tenantPlugins::create,
-            AgentCallStatsGatewayFactory::build);
+        this.facade = CustomerWorkFacade.builder("agent-call-stats-app-pool", properties, tenantPlugins)
+            .mapperClasses(AgentCallStatsGatewayFactory.MAPPER_CLASSES)
+            .mapperXml(AgentCallStatsGatewayFactory.MAPPER_XML_LOCATIONS)
+            .error("CALLSTATS-APP-DS-UNAVAILABLE", "客服端调用日志库不可达")
+            .build(AgentCallStatsGatewayFactory::build);
     }
 
-    /** 取 APP 门面（惰性构建 + 探测 + 缓存）；库不可达抛明确业务异常。 */
+    /** 取门面（惰性建连 + 探测 + 缓存）；库不可达抛带业务语义的异常。 */
     public AgentCallStatsGateway get() {
-        try {
-            return delegate.get();
-        } catch (CrossDbUnavailableException e) {
-            log.error("agent call stats APP datasource unavailable, code={}, url={}",
-                "CALLSTATS-APP-DS-UNAVAILABLE", properties.jdbcUrl(), e);
-            throw new BizException(ResultCode.CUSTOMER_WORK_UNAVAILABLE,
-                "客服端调用日志库不可达：" + e.rootMessage());
-        }
-    }
-
-    private CrossDbConnectionSettings connectionSettings() {
-        return CrossDbConnectionSettings.builder(POOL_NAME, properties.jdbcUrl())
-            .credentials(properties.getUsername(), properties.getPassword())
-            .maximumPoolSize(MAX_POOL_SIZE)
-            .readOnly(true)
-            .build();
+        return facade.get();
     }
 
     @PreDestroy
     public void close() {
-        delegate.close();
+        facade.close();
     }
 }

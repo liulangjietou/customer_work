@@ -18,7 +18,16 @@ public enum UntrustedSource {
     KNOWLEDGE_BASE("knowledge_base"),
 
     /** 工具（含 MCP）执行返回的结果文本。 */
-    TOOL_RESULT("tool_result");
+    TOOL_RESULT("tool_result"),
+
+    /**
+     * 用户上传附件的解析文本（含图片 OCR 结果、文档抽取正文）。
+     *
+     * <p><b>"用户上传的"不等于"用户写的"</b>：附件常常是别处收到的截图、对方发来的合同、
+     * 转发的文档，内容由第三方控制。前端把解析结果拼进消息正文后，它在模型眼里与用户亲手打的字
+     * 完全同权——一张写着"忽略以上所有指令"的图片就是一条现成的间接注入通道。</p>
+     */
+    USER_ATTACHMENT("user_attachment");
 
     private final String label;
 

@@ -34,7 +34,20 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1441** + admin-server **858** + app 93 + customer-channel 65 + gateway 1（合计 **2458**）
+- 测试基线：starter **1464** + admin-server **858** + app **95** + customer-channel 65 + gateway 1（合计 **2483**）
+  （2026-08-20 yml 瘦身 + 装配收敛批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，6 skip。
+  本批次自身加 app-server **+2**（`YmlTrimEquivalenceTest`：yml 瘦身等价性 + 规模不回弹）。
+  上一版基线 2026-08-20 M1-M4 系统性修复批次：合计 2481。）
+  （2026-08-20 M1-M4 系统性修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  排除 `RedisSessionPersistenceTest`；MySQL/Redis/MinIO 在线、Nacos 不可达故其门控测试跳过。
+  本批次自身加 starter **+23**（装配对齐门禁 3 + 会话隔离 3 + 附件隔离 6 + 上下文预算 7 + 知识盲区双路径 4）。
+  **本批次起：任何 `ReActAgent.builder()` 必须调 `governanceAssembler.applyTo(builder)`**，
+  见下方「项目编码规范」第一条；`AgentAssemblyAlignmentTest` 会对此下断言。
+  **两个不走 starter 自动装配的模块要特别注意**：customer-channel 用 `@SpringBootApplication`
+  只扫自己的包（starter 的 `@Component` 拿不到，须显式 `@Bean`）；admin 有自己的
+  `common.log.SensitiveDataMasker`，声明同名 Bean 会抛 `BeanDefinitionOverrideException`。
+  这两个坑都是全量测试跑出来的，单模块测试照不出来。
+  上一版基线 2026-08-19 Skill 技能包下载批次：starter 1441 + admin 858，合计 2458）
   （2026-08-19 Skill 技能包下载批次实测：starter 1441 / 5 skip、admin 858 / 1 skip，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加 admin +7。
   **导入/导出这类成对功能，测试要真的做一次往返**（导出的包再喂给解析器比对），
@@ -123,6 +136,46 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 
 ## 项目编码规范（全局规范之外的项目特有约定）
 
+- **【最高优先级】构建 Agent 一律走 `AgentGovernanceAssembler`**：本项目最顽固的缺陷形状是
+  「能力只接在用户不走的那条路上」，已复发六次（语义缓存只接非流式、CSAT 挂错生命周期钩子、
+  缓存命中的出站过滤只在流式落实、知识盲区埋点只覆盖工具路径、附件 OCR 绕开 Spotlighter、
+  `/consult` 整条链路无中间件）。根因是「装配」这件事散落在多个入口各写一遍，改了这处忘了那处，
+  **而两边都不会报错**。现在收敛为唯一入口：
+  ① 任何 `ReActAgent.builder()` 在 `build()` 前必须调 `governanceAssembler.applyTo(builder)`；
+  ② 新增治理中间件只改 `AgentGovernanceAssembler` 一处，所有路径自动获得；
+  ③ `AgentAssemblyAlignmentTest` 扫描源码对此下断言——**新增一条建 Agent 的路径而不装配就会红**；
+  ④ admin 不走装配器（它 exclude 了 starter 自动装配），完整性由该测试的第二个用例单独盯。
+  改动前先跑这个测试，它是这类缺陷唯一的机器防线。
+- **改动"某条链路的能力"时，先列出全部同类链路再动手**。当前共 7 条：
+  `chat()` / `chatStream()` / WS `/ws/user` / `/consult` 多 Agent / admin 工作台 / customer-channel / Harness。
+  只在一条上验证通过 ≠ 修好了——前六次复发都是这么来的。
+- **yml 只写三类东西，默认值一律只写 Java**：① `${ENV:}` 环境变量占位；
+  ② 与 Java 默认值<b>刻意不同</b>的覆盖（写注释说明为什么）；③ Spring 自身配置（`server.port` 等无属性类可依托的）。
+  把 `@ConfigurationProperties` 的默认值在 yml 里再抄一遍 = 默认值有两个真相来源，改 Java 时 yml 不跟，
+  **而实际生效的是 yml**（曾出现 `security.rate-limit.rule-enabled` yml=true / Java=false）。
+  app-server 的 yml 据此从 571 行降到 193 行、264 个配置项降到 67 个。
+  "有哪些项可配、默认多少"由 `spring-boot-configuration-processor` 生成的元数据回答（IDE 自动补全 + 中文 javadoc + 默认值，
+  当前收录 371 项）——给 `CustomerWorkProperties` 的域字段加 `@NestedConfigurationProperty` 才会被收录，新增域别忘了加。
+  `YmlTrimEquivalenceTest` 用 Spring 的 `Binder` 比对瘦身前后的绑定结果，误删会立刻红。
+  例外：prod profile 里的**生产安全基线**（如 `skill.code-execution-enabled: false`）即使与默认值相同也显式声明，
+  那表达的是"生产明确要求它是关的"，有人改了 Java 默认值时仍守得住——这类项旁边都写了理由。
+- **admin 访问客服端库一律走 `CustomerWorkFacade`**：惰性建池、探测、库不可达转业务异常、销毁关池
+  这套固定套路此前 8 个能力域各抄一份（~560 行），改池参数或异常口径要记得改 8 处，
+  新增时最容易"照着抄但漏了 `@PreDestroy`"——漏了不报错，只在反复重启时慢慢泄漏连接池。
+  现在全 admin 只有 `CustomerWorkFacade` 一处调 `CrossDbGateways.lazy`，新增门面只需填 5 个参数。
+  连接信息走 `CustomerWorkDbConnection` 接口而非某个具体属性类——**9 个门面里有 6 个复用
+  `admin.content-guard.*`，字典用 `admin.dict.*`、调用统计用 `admin.agent-call-stats.app.*`**。
+  **批量模板化重构这批文件时踩了两个坑（都只在全量测试才暴露）**：
+  ① 想当然地把属性类统一成 `ContentGuardProperties`，用自有属性类的那两个编译不过；
+  ② 模板只保留了 javadoc，丢掉了个别文件才有的 `@EnableConfigurationProperties(XxxProperties.class)`——
+  那是这些属性类**唯一**的注册入口（它们只有 `@ConfigurationProperties`、没有 `@Component`），
+  丢了之后编译照常通过，直到启动时报 `NoSuchBeanDefinitionException`。
+  改这类文件前先 `git show HEAD:<file> | grep -E "^@[A-Z]"` 把类级注解列出来逐个对。
+- **starter 里的 `WebFilter` 必须带 `@ConditionalOnWebApplication(type = REACTIVE)`**：
+  admin 是 Servlet 栈，没有这个条件它就只能整体 `exclude` starter 入口自动装配来躲开这些 Bean，
+  而 `OnCustomerWorkEntryCondition` 会让 8 个域装配一并让位。
+  相应地，starter 里断言 WebFilter 装配的测试要用 `ReactiveWebApplicationContextRunner`
+  而非 `ApplicationContextRunner`——测试上下文类型必须与真实运行环境一致，否则断言的"装配完整"与线上不是一回事。
 - **通用功能/基础组件优先下沉 `customer-work-starter`**：开发前先判断归属——只服务当前业务模块的留在
   业务模块；可复用的通用能力放 starter，走既有 SPI + `@ConditionalOnMissingBean` 自动装配模式。
   拿不准归属时先问，不要默认放业务模块。starter 改完给下游用要先 `mvn install`（下游解析本地仓库 jar）。

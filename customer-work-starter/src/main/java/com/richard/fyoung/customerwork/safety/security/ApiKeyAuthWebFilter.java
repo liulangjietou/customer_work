@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -29,6 +30,10 @@ import java.util.Map;
  * 因此也是唯一可信的租户线索——请求头里带的租户参数一概不采信。</p>
  * @author owlzhangfq@gmail.com
  */
+// 仅响应式栈装配：本类是 WebFlux 的 WebFilter，在 Servlet 栈（customer-admin-server）下
+// 既不会生效也不该存在。没有这个条件时，下游 Servlet 模块只能整体 exclude starter 的入口
+// 自动装配来躲开它，代价是全部域装配一并让位、几十个 Bean 要手工重装。
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class ApiKeyAuthWebFilter implements WebFilter {

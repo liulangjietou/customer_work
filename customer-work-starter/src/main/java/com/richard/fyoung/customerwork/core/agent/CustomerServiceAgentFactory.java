@@ -13,10 +13,7 @@ import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
-import com.richard.fyoung.customerwork.core.middleware.HumanApprovalMiddleware;
-import com.richard.fyoung.customerwork.core.middleware.ObservabilityMiddleware;
 import io.agentscope.core.hook.recorder.JsonlTraceExporter;
-import io.agentscope.core.middleware.MiddlewareBase;
 import io.agentscope.core.memory.LongTermMemoryMode;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
@@ -27,7 +24,6 @@ import io.agentscope.core.skill.repository.ClasspathSkillRepository;
 import io.agentscope.core.skill.repository.FileSystemSkillRepository;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
-import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -87,15 +83,16 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     private final AgentStateStore stateStore;
     /** 权限上下文（2.0 Permission System）：声明式控制工具授权，对主 Agent 原生生效。 */
     private final PermissionContextState permissionContext;
-    /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
-    private final MeterRegistry meterRegistry;
     private final NacosPromptService nacosPromptService;
     /** 租户解析（单一职责，与质检/诊断链路共用同一实现）。 */
     private final TenantResolver tenantResolver;
     /** 工具归类登记表：skill 工具在此登记名称，供分段耗时统计按类归段。 */
     private final ToolKindRegistry toolKindRegistry;
-    /** 可插拔 Middleware：本库内置（延迟/脱敏/审计/自我纠错/护栏/动态参数/租户）+ 下游自定义的所有 {@link MiddlewareBase} Bean。 */
-    private final ObjectProvider<MiddlewareBase> pluggableMiddlewares;
+    /**
+     * 治理中间件装配器：全链路<b>唯一</b>装配入口，本工厂与 {@code MultiAgentOrchestrator} 共用同一份。
+     * 新增治理能力只改 {@link AgentGovernanceAssembler} 一处，所有对话路径自动获得。
+     */
+    private final AgentGovernanceAssembler governanceAssembler;
     /** MySQL 技能物化器：{@code skill.repository=mysql} 时才取用，持久化环境未激活时取不到。 */
     private final ObjectProvider<MysqlSkillMaterializer> skillMaterializerProvider;
 
@@ -114,8 +111,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        NacosPromptService nacosPromptService,
                                        TenantResolver tenantResolver,
                                        ToolKindRegistry toolKindRegistry,
-                                       ObjectProvider<MiddlewareBase> pluggableMiddlewares,
-                                       ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                       AgentGovernanceAssembler governanceAssembler,
                                        ObjectProvider<MysqlSkillMaterializer> skillMaterializerProvider) {
         this.model = model;
         this.properties = properties;
@@ -129,27 +125,19 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.nacosPromptService = nacosPromptService;
         this.tenantResolver = tenantResolver;
         this.toolKindRegistry = toolKindRegistry;
-        this.pluggableMiddlewares = pluggableMiddlewares;
-        this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+        this.governanceAssembler = governanceAssembler;
         this.skillMaterializerProvider = skillMaterializerProvider;
     }
 
     /**
      * 构造一次 Agent 调用的运行时上下文：把"会话 ID"映射为 2.0 的 {@code (userId, sessionId)}。
      *
-     * <p>会话 ID 形如 {@code tenantA:conv-1} 时，租户作为 {@code userId}（多租户隔离），
-     * 整个会话 ID 作为 {@code sessionId}，与状态存储 / 长期记忆的租户维度保持一致。</p>
+     * <p>实现收敛在 {@link AgentGovernanceAssembler#contextFor(String)}，本方法只做转发——
+     * 多 Agent 编排器走的是同一份实现，两条路径的 {@code (userId, sessionId)} 口径必须一致，
+     * 否则同一个会话在不同路径上会落到框架的不同状态槽位。</p>
      */
     public RuntimeContext contextFor(String sessionId) {
-        RuntimeContext.Builder b = RuntimeContext.builder()
-            .userId(resolveTenant(sessionId))
-            .sessionId(sessionId == null || sessionId.isBlank() ? "default" : sessionId);
-        // org 维度：写入 KV 命名空间，实现 session/user/org 多维隔离
-        String org = properties.getHarness().getOrg();
-        if (org != null && !org.isBlank()) {
-            b.put("org", org);
-        }
-        return b.build();
+        return governanceAssembler.contextFor(sessionId);
     }
 
     /**
@@ -222,22 +210,13 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             .defaultSessionId(sessionId)
             // 2.0 权限系统：声明式工具授权（与 HumanApprovalMiddleware 形成双层闸门）
             .permissionContext(permissionContext)
-            // 2.0 Middleware：可观测中间件（请求/工具/错误打点）
-            .middleware(new ObservabilityMiddleware(meterRegistry))
             .maxIters(properties.getAgent().getMaxIters())
             // 中断后无缝恢复：保留并恢复被打断的待执行工具调用
             .enablePendingToolRecovery(properties.getInterrupt().isPendingToolRecoveryEnabled());
 
-        // Human-in-the-Loop：工具级人工确认（观测层，实际闸门由 Permission ask 规则承担）
-        if (properties.getHumanApproval().isEnabled()) {
-            builder.middleware(new HumanApprovalMiddleware(
-                Set.copyOf(properties.getHumanApproval().getGuardedTools())));
-        }
-
-        // 可插拔 Middleware：内置（延迟/脱敏/审计/自我纠错/护栏/动态参数/租户）+ 下游自定义 MiddlewareBase Bean
-        if (pluggableMiddlewares != null) {
-            pluggableMiddlewares.orderedStream().forEach(builder::middleware);
-        }
+        // 治理中间件（可观测 / 人工确认 / 脱敏 / 审计 / 护栏 / 租户 / 分段耗时与 token 计量）：
+        // 统一走装配器，与多 Agent 编排器共用同一份装配，杜绝"能力只接在一条路径上"
+        governanceAssembler.applyTo(builder);
 
         // 可观测：JSONL trace 导出（框架 Hook，数据飞轮采集）
         if (properties.getObservability().isTraceEnabled()) {

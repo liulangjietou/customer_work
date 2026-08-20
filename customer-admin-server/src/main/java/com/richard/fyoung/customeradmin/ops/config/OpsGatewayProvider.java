@@ -1,17 +1,10 @@
 package com.richard.fyoung.customeradmin.ops.config;
 
-import com.richard.fyoung.customeradmin.common.exception.BizException;
-import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.ops.jdbc.OpsGateway;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
-import com.richard.fyoung.customerwork.infra.gateway.CrossDbUnavailableException;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -26,46 +19,24 @@ import org.springframework.stereotype.Component;
 @Component
 public class OpsGatewayProvider {
 
-    private static final Logger log = LoggerFactory.getLogger(OpsGatewayProvider.class);
-
-    private static final String POOL_NAME = "ops-closed-loop-pool";
-
-    /** 五个域共用：都是运营低频查询，比单域门面略放宽一点即可。 */
-    private static final int MAX_POOL_SIZE = 4;
-
-    private final ContentGuardProperties properties;
-    private final CrossDbGatewayProvider<OpsGateway> delegate;
+    private final CustomerWorkFacade<OpsGateway> facade;
 
     public OpsGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
-        this.properties = properties;
-        this.delegate = CrossDbGateways.lazy(this::connectionSettings,
-            OpsGatewayFactory.MAPPER_CLASSES,
-            OpsGatewayFactory.MAPPER_XML_LOCATIONS,
-            tenantPlugins::create,
-            OpsGatewayFactory::build);
+        this.facade = CustomerWorkFacade.builder("ops-closed-loop-pool", properties, tenantPlugins)
+            .mapperClasses(OpsGatewayFactory.MAPPER_CLASSES)
+            .mapperXml(OpsGatewayFactory.MAPPER_XML_LOCATIONS)
+            .maxPoolSize(4)
+            .error("OPS-DS-UNAVAILABLE", "客服端库不可达（运营闭环数据存放于此）")
+            .build(OpsGatewayFactory::build);
     }
 
-    /** 取门面（惰性构建 + 探测 + 缓存）；库不可达抛明确业务异常。 */
+    /** 取门面（惰性建连 + 探测 + 缓存）；库不可达抛带业务语义的异常。 */
     public OpsGateway get() {
-        try {
-            return delegate.get();
-        } catch (CrossDbUnavailableException e) {
-            log.error("ops datasource unavailable, code={}, url={}",
-                "OPS-DS-UNAVAILABLE", properties.jdbcUrl(), e);
-            throw new BizException(ResultCode.CUSTOMER_WORK_UNAVAILABLE,
-                "客服端库不可达（运营闭环数据存放于此）：" + e.rootMessage());
-        }
-    }
-
-    private CrossDbConnectionSettings connectionSettings() {
-        return CrossDbConnectionSettings.builder(POOL_NAME, properties.jdbcUrl())
-            .credentials(properties.getUsername(), properties.getPassword())
-            .maximumPoolSize(MAX_POOL_SIZE)
-            .build();
+        return facade.get();
     }
 
     @PreDestroy
     public void close() {
-        delegate.close();
+        facade.close();
     }
 }

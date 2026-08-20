@@ -107,11 +107,16 @@ public class CustomerServiceController {
     /**
      * 多 Agent 协作咨询：把问题分发给订单 / 售后 / 知识库多个专家 Agent 并聚合结论
      * （fanout 模式）或流水细化（sequential 模式）。
+     *
+     * <p>会话 ID 与其余对话入口同口径解析：它决定框架按 {@code (userId, sessionId)}
+     * 缓存的对话状态落在哪个槽位，缺省时按匿名会话隔离，绝不可让多个用户共用一个值。</p>
      */
     @Operation(summary = "多 Agent 协作咨询", description = "订单/售后/知识库专家并行或串行协作")
     @PostMapping("/consult")
     public Mono<String> consult(@Valid @RequestBody ChatRequest request) {
-        return multiAgentOrchestrator.consult(request.message());
+        String sessionId = resolveSessionId(request.sessionId());
+        return multiAgentOrchestrator.consult(sessionId, request.message())
+            .contextWrite(ctx -> ctx.put(MdcContextLifter.SESSION_ID_KEY, sessionId));
     }
 
     /**

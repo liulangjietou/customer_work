@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.github.richardfyoung</groupId>
         <artifactId>customer-work-parent</artifactId>
-        <version>2.2.0</version>
+        <version>2.4.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -23,6 +23,21 @@
     </properties>
 
     <dependencies>
+        <!--
+          配置元数据生成器：编译期扫描 @ConfigurationProperties，产出
+          META-INF/spring-configuration-metadata.json。作用是让 IDE 对 application.yml
+          自动补全配置项、显示字段 javadoc 与**默认值**。
+
+          这是 yml 瘦身的前提：删掉与 Java 默认值相同的配置项后，"有哪些项可配、默认是多少"
+          由这份元数据回答，而不再靠把默认值在 yml 里抄一遍——那样默认值就有了两个真相来源，
+          改 Java 时 yml 不跟，且实际生效的是 yml。
+          optional=true：只在编译期生效，不传递给下游模块。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
         <!-- WebFlux + 校验：Filter/Reactor 能力（接入层安全过滤器在本模块） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

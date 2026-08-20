@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.infra.config;
 import com.richard.fyoung.customerwork.infra.config.properties.*;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,158 +23,210 @@ import java.util.Map;
 public class CustomerWorkProperties {
 
     /** 模型层配置（对接百炼 / DashScope 通义千问）。 */
+    @NestedConfigurationProperty
     private final ModelProperties model = new ModelProperties();
 
     /** 会话持久化配置。 */
+    @NestedConfigurationProperty
     private final SessionProperties session = new SessionProperties();
 
     /** Agent 运行时配置。 */
+    @NestedConfigurationProperty
     private final AgentProperties agent = new AgentProperties();
 
     /** 长期记忆配置（跨会话、多租户隔离）。 */
+    @NestedConfigurationProperty
     private final MemoryProperties memory = new MemoryProperties();
 
     /** 任务规划配置（PlanNotebook）。 */
+    @NestedConfigurationProperty
     private final PlanProperties plan = new PlanProperties();
 
     /** RAG 知识检索配置。 */
+    @NestedConfigurationProperty
     private final RagProperties rag = new RagProperties();
 
     /** 智能上下文压缩配置（AutoContext）。 */
+    @NestedConfigurationProperty
     private final ContextProperties context = new ContextProperties();
 
     /** Skill 技能库配置。 */
+    @NestedConfigurationProperty
     private final SkillProperties skill = new SkillProperties();
 
     /** MCP 接入配置。 */
+    @NestedConfigurationProperty
     private final McpProperties mcp = new McpProperties();
 
     /** 可观测性配置。 */
+    @NestedConfigurationProperty
     private final ObservabilityProperties observability = new ObservabilityProperties();
 
     /** Human-in-the-Loop 人工确认配置。 */
+    @NestedConfigurationProperty
     private final HumanApprovalProperties humanApproval = new HumanApprovalProperties();
 
     /** 三层记忆体系第三层：事实日志（只追加、可审计）。 */
+    @NestedConfigurationProperty
     private final FactLogProperties factLog = new FactLogProperties();
 
     /** 接入层安全：API Key 鉴权 + 限流。 */
+    @NestedConfigurationProperty
     private final SecurityProperties security = new SecurityProperties();
 
     /** Higress AI 网关接入。 */
+    @NestedConfigurationProperty
     private final HigressProperties higress = new HigressProperties();
 
     /** 多 Agent 编排。 */
+    @NestedConfigurationProperty
     private final MultiAgentProperties multiAgent = new MultiAgentProperties();
 
     /** 运行时与调度（优雅停机、定时维护）。 */
+    @NestedConfigurationProperty
     private final RuntimeProperties runtime = new RuntimeProperties();
 
     /** 中断恢复。 */
+    @NestedConfigurationProperty
     private final InterruptProperties interrupt = new InterruptProperties();
 
     /** 交互协议（AG-UI / TTS）。 */
+    @NestedConfigurationProperty
     private final ProtocolProperties protocol = new ProtocolProperties();
 
     /** Nacos 接入（配置中心：系统提示词集中管理 + 热更新）。 */
+    @NestedConfigurationProperty
     private final NacosProperties nacos = new NacosProperties();
 
     /** Hook 扩展能力（延迟埋点 / 出站脱敏 / 合规审计 / 自我纠错）。 */
+    @NestedConfigurationProperty
     private final HooksProperties hooks = new HooksProperties();
 
     /** AgentScope 2.0 Harness 能力（权限系统 / Plan Mode / 上下文压缩 / 工作区沙箱 / 子智能体）。 */
+    @NestedConfigurationProperty
     private final HarnessProperties harness = new HarnessProperties();
 
     /** 流式（SSE）传输配置：空闲超时等连接治理。 */
+    @NestedConfigurationProperty
     private final StreamProperties stream = new StreamProperties();
 
     /** 多轮槽位收集（表单信息采集）存储配置。 */
+    @NestedConfigurationProperty
     private final SlotFillingProperties slotFilling = new SlotFillingProperties();
 
     /** 基于 AgentScope 的定时任务调度配置（XXL-JOB 接入）。 */
+    @NestedConfigurationProperty
     private final SchedulerProperties scheduler = new SchedulerProperties();
 
     /** 敏感词"一次拦截"过滤（入站/出站高性能词表拦截，智能路由中控第一块）。 */
+    @NestedConfigurationProperty
     private final SensitiveWordProperties sensitiveWord = new SensitiveWordProperties();
 
     /** 会话总结建议（转人工时给接手坐席的结构化摘要，智能路由中控第二块之一）。 */
+    @NestedConfigurationProperty
     private final AssistProperties assist = new AssistProperties();
 
     /** 工单智能分配（LLM 分类 + 打分器 + HITL 推荐，智能路由中控第二块之二）。 */
+    @NestedConfigurationProperty
     private final RoutingProperties routing = new RoutingProperties();
 
     /** 分布式锁（跨实例互斥场景，如后台管理并发写操作互斥），基于 Redisson。 */
+    @NestedConfigurationProperty
     private final DistributedLockProperties distributedLock = new DistributedLockProperties();
 
     /** 多租户隔离（tenant_id 行级过滤），SaaS 部署开启。 */
+    @NestedConfigurationProperty
     private final TenantProperties tenant = new TenantProperties();
 
     /** 水平扩展：把进程内的计数与串行锁换成跨实例共享实现。 */
+    @NestedConfigurationProperty
     private final DistributedProperties distributed = new DistributedProperties();
 
     /** 租户 token 配额（成本治理的硬上限）。 */
+    @NestedConfigurationProperty
     private final QuotaProperties quota = new QuotaProperties();
 
     /** 主体级速率配额（每用户 / 每 IP / 每 Key 的滚动窗口限流），与租户配额并存互不替代。 */
+    @NestedConfigurationProperty
     private final SubjectQuotaProperties subjectQuota = new SubjectQuotaProperties();
 
     /** 对话阶段状态机存储配置。 */
+    @NestedConfigurationProperty
     private final DialogProperties dialog = new DialogProperties();
 
     /** 合成监控（主动探活）配置。 */
+    @NestedConfigurationProperty
     private final SyntheticMonitorProperties syntheticMonitor = new SyntheticMonitorProperties();
 
     /** 人机切换工单配置。 */
+    @NestedConfigurationProperty
     private final HumanHandoffProperties humanHandoff = new HumanHandoffProperties();
 
     /** 用户反馈（消息级点赞/点踩）存储配置。 */
+    @NestedConfigurationProperty
     private final FeedbackProperties feedback = new FeedbackProperties();
 
     /** 评测（意图/回复质量）运行记录与 Judge 配置。 */
+    @NestedConfigurationProperty
     private final EvalProperties eval = new EvalProperties();
 
     /** badcase 回流（负反馈/质检失败 → 人工筛选 → 知识库/评测用例）配置。 */
+    @NestedConfigurationProperty
     private final BadcaseProperties badcase = new BadcaseProperties();
 
     /** 语义缓存（问题向量相似即复用上次答案）配置；默认关闭，开启前先读其类注释的安全约束。 */
+    @NestedConfigurationProperty
     private final SemanticCacheProperties semanticCache = new SemanticCacheProperties();
 
     /** 提示词版本追踪配置（效果归因的底座：指标掉了是不是提示词改的）。 */
+    @NestedConfigurationProperty
     private final PromptVersionProperties promptVersion = new PromptVersionProperties();
 
     /** 会话级满意度（CSAT）配置：客服行业最标准的运营指标，与消息级点赞/点踩互补。 */
+    @NestedConfigurationProperty
     private final CsatProperties csat = new CsatProperties();
 
     /** 知识盲区分析配置：统计"哪些问题反复查不到知识"，直接告诉运营该补什么。 */
+    @NestedConfigurationProperty
     private final KnowledgeGapProperties knowledgeGap = new KnowledgeGapProperties();
 
     /** 死信队列配置：工具调用/通知发送失败后的兜底重投，量上来之后决定会不会丢单。 */
+    @NestedConfigurationProperty
     private final DeadLetterProperties deadLetter = new DeadLetterProperties();
 
     /** 主动通知出站：生产通过通用 Webhook 接入短信/IM 网关。 */
+    @NestedConfigurationProperty
     private final NotificationProperties notification = new NotificationProperties();
 
     /** 同库事务 Outbox：可靠投递工单事件等跨边界副作用。 */
+    @NestedConfigurationProperty
     private final OutboxProperties outbox = new OutboxProperties();
 
     /** 数据字典（少量枚举型键值数据，免建表）存储配置。 */
+    @NestedConfigurationProperty
     private final DictProperties dict = new DictProperties();
 
     /** 智能客服工单配置（存储 + 转人工关键词 + SLA 阈值与自动流转）。 */
+    @NestedConfigurationProperty
     private final TicketProperties ticket = new TicketProperties();
 
     /** 终端用户账户鉴权配置（存储 + JWT 参数）。 */
+    @NestedConfigurationProperty
     private final UserAuthProperties userAuth = new UserAuthProperties();
 
     /** 聊天日志（会话/工单消息留痕）存储配置。 */
+    @NestedConfigurationProperty
     private final ChatLogProperties chatLog = new ChatLogProperties();
 
     /** 智能体调用分段耗时统计（采集开关 + 存储模式）。 */
+    @NestedConfigurationProperty
     private final CallLogProperties callLog = new CallLogProperties();
 
     /** 业务工具后端存储配置（订单/商品/售后/会员/投诉/知识库六域）。 */
+    @NestedConfigurationProperty
     private final ToolBackendProperties toolBackend = new ToolBackendProperties();
 
     /** 坐席访问凭证（HMAC 令牌）配置。 */
+    @NestedConfigurationProperty
     private final AgentAccessProperties agentAccess = new AgentAccessProperties();
 }

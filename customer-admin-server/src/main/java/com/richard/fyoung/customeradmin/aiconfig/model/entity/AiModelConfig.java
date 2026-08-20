@@ -23,6 +23,15 @@ public class AiModelConfig {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    /**
+     * 归属租户；{@code __platform__} 表示平台级共享配置。
+     *
+     * <p>本表在 {@code TenantInterceptors.PLATFORM_LEVEL_TABLES} 忽略清单里，SQL 拦截器<b>不会</b>
+     * 自动改写租户条件，因此这一列必须由 {@code ModelConfigService} 显式读写——
+     * 那里实现了 {@code docs/多租户架构设计.md} §2.4 承诺的两级可见性。</p>
+     */
+    private String tenantId;
+
     private String modelName;
     /** 模型厂商：openai / dashscope / anthropic / gemini（见 {@code ModelProvider} 枚举）。 */
     private String provider;

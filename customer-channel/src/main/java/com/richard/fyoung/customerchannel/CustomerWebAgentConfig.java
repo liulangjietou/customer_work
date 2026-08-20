@@ -4,7 +4,11 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.ModelConfig;
 import com.richard.fyoung.customerwork.infra.config.PermissionConfig;
 import com.richard.fyoung.customerwork.infra.config.SessionConfig;
-import com.richard.fyoung.customerwork.core.middleware.ObservabilityMiddleware;
+import com.richard.fyoung.customerwork.core.agent.AgentGovernanceAssembler;
+import com.richard.fyoung.customerwork.core.support.TenantResolver;
+import io.agentscope.core.middleware.MiddlewareBase;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.ObjectProvider;
 import com.richard.fyoung.customerwork.observability.StudioConfigurer;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
@@ -51,6 +55,25 @@ public class CustomerWebAgentConfig {
     @Bean
     public Model chatModel(CustomerWorkProperties properties) {
         return new ModelConfig().chatModel(properties);
+    }
+
+    /**
+     * 治理中间件装配器：与客服端主链路共用同一份装配实现。
+     *
+     * <p>本模块用 {@code @SpringBootApplication} 只扫自己的包，starter 里带 {@code @Component} 的类
+     * （含 {@link AgentGovernanceAssembler} 与它依赖的 {@code TenantResolver}）不会被注册，
+     * 因此这里与 {@code chatModel}/{@code agentStateStore} 一样显式声明——这是本模块复用 starter 能力的既定方式。</p>
+     *
+     * <p>装到的可插拔中间件取决于本容器里实际存在多少 {@code MiddlewareBase} Bean；
+     * 走统一装配器的意义在于：日后主链路新增治理能力时，这条渠道链路不会再被落下。</p>
+     */
+    @Bean
+    public AgentGovernanceAssembler agentGovernanceAssembler(
+            CustomerWorkProperties properties,
+            ObjectProvider<MiddlewareBase> pluggableMiddlewares,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new AgentGovernanceAssembler(properties, new TenantResolver(properties),
+            pluggableMiddlewares, meterRegistryProvider);
     }
 
     /** 状态外置存储（复用 SessionConfig：memory/json/redis/mysql AgentStateStore）。 */
@@ -126,8 +149,9 @@ public class CustomerWebAgentConfig {
                                            Toolkit customerToolkit,
                                            AgentStateStore agentStateStore,
                                            PermissionContextState permissionContextState,
-                                           CustomerWorkProperties properties) {
-        ReActAgent agent = ReActAgent.builder()
+                                           CustomerWorkProperties properties,
+                                           AgentGovernanceAssembler governanceAssembler) {
+        ReActAgent.Builder builder = ReActAgent.builder()
             .name("CustomerServiceAgent")
             .sysPrompt(SYSTEM_PROMPT)
             .model(chatModel)
@@ -135,10 +159,12 @@ public class CustomerWebAgentConfig {
             .stateStore(agentStateStore)
             .defaultSessionId("console")
             .permissionContext(permissionContextState)
-            .middleware(new ObservabilityMiddleware())
             .maxIters(properties.getAgent().getMaxIters())
-            .enablePendingToolRecovery(properties.getInterrupt().isPendingToolRecoveryEnabled())
-            .build();
+            .enablePendingToolRecovery(properties.getInterrupt().isPendingToolRecoveryEnabled());
+        // 治理中间件走与主链路同一个装配器：此前这里只挂了 ObservabilityMiddleware，
+        // token 计量、敏感词过滤、脱敏、注入防护全都没有——又一条"能力没接上"的路径。
+        governanceAssembler.applyTo(builder);
+        ReActAgent agent = builder.build();
         log.info("[customer-channel] customer-service agent registered to admin console: name={}",
             agent.getName());
         return agent;
