@@ -123,6 +123,19 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 
 ## 项目编码规范（全局规范之外的项目特有约定）
 
+- **【最高优先级】构建 Agent 一律走 `AgentGovernanceAssembler`**：本项目最顽固的缺陷形状是
+  「能力只接在用户不走的那条路上」，已复发六次（语义缓存只接非流式、CSAT 挂错生命周期钩子、
+  缓存命中的出站过滤只在流式落实、知识盲区埋点只覆盖工具路径、附件 OCR 绕开 Spotlighter、
+  `/consult` 整条链路无中间件）。根因是「装配」这件事散落在多个入口各写一遍，改了这处忘了那处，
+  **而两边都不会报错**。现在收敛为唯一入口：
+  ① 任何 `ReActAgent.builder()` 在 `build()` 前必须调 `governanceAssembler.applyTo(builder)`；
+  ② 新增治理中间件只改 `AgentGovernanceAssembler` 一处，所有路径自动获得；
+  ③ `AgentAssemblyAlignmentTest` 扫描源码对此下断言——**新增一条建 Agent 的路径而不装配就会红**；
+  ④ admin 不走装配器（它 exclude 了 starter 自动装配），完整性由该测试的第二个用例单独盯。
+  改动前先跑这个测试，它是这类缺陷唯一的机器防线。
+- **改动"某条链路的能力"时，先列出全部同类链路再动手**。当前共 7 条：
+  `chat()` / `chatStream()` / WS `/ws/user` / `/consult` 多 Agent / admin 工作台 / customer-channel / Harness。
+  只在一条上验证通过 ≠ 修好了——前六次复发都是这么来的。
 - **通用功能/基础组件优先下沉 `customer-work-starter`**：开发前先判断归属——只服务当前业务模块的留在
   业务模块；可复用的通用能力放 starter，走既有 SPI + `@ConditionalOnMissingBean` 自动装配模式。
   拿不准归属时先问，不要默认放业务模块。starter 改完给下游用要先 `mvn install`（下游解析本地仓库 jar）。

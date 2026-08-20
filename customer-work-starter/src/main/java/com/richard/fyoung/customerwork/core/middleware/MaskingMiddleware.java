@@ -13,6 +13,7 @@ import io.agentscope.core.middleware.AgentInput;
 import io.agentscope.core.middleware.MiddlewareBase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
@@ -37,8 +38,20 @@ public class MaskingMiddleware implements MiddlewareBase {
     private final boolean enabled;
     private final SensitiveDataMasker masker;
 
+    @Autowired
     public MaskingMiddleware(CustomerWorkProperties properties, SensitiveDataMasker masker) {
-        this.enabled = properties.getHooks().getMasking().isEnabled();
+        this(properties.getHooks().getMasking().isEnabled(), masker);
+    }
+
+    /**
+     * 参数化构造：供已排除 starter 自动装配的模块（如 customer-admin-server）显式装配。
+     *
+     * <p>没有这个构造时，admin 侧无法挂载本中间件——后台链路因此长期缺失出站脱敏，
+     * 而运维在客服端验证过脱敏生效后会理所当然以为全局都保护上了。
+     * 与 {@code IndirectInjectionGuardMiddleware} 的参数化构造同一用途。</p>
+     */
+    public MaskingMiddleware(boolean enabled, SensitiveDataMasker masker) {
+        this.enabled = enabled;
         this.masker = masker;
     }
 

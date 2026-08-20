@@ -7,6 +7,13 @@
 spring:
   flyway:
     enabled: false
+  # 凭据类默认值一律清空：application.yml 里为本地开发留的 root/root 在生产是实打实的风险，
+  # 而部署手册漏写一项就会静默沿用它（曾经就漏写了整个 admin 段）。
+  # 清空后漏配的后果从"用弱口令连上某个库"变成"起不来"——后者一眼可见、五分钟修好。
+  datasource:
+    url: ${ADMIN_MYSQL_URL:}
+    username: ${ADMIN_MYSQL_USERNAME:}
+    password: ${ADMIN_MYSQL_PASSWORD:}
 
 # Actuator：收敛暴露面，避免内部诊断信息对外泄漏
 management:
@@ -34,6 +41,28 @@ admin:
       diagnosis-enabled: false
       refactor-enabled: false
       management-enabled: false
+  # MinIO 凭据同样清空默认值（三处共用 MINIO_* 这一组环境变量）。
+  # 不清空的话，漏配会让附件、技能包、VibeCoding 归档一起指向 localhost:9000 且用 minioadmin/minioadmin——
+  # 生产机上若恰好有一个默认凭据的 MinIO，含对话正文解析结果的附件会被静默写进去。
+  skill:
+    storage:
+      minio:
+        endpoint: ${MINIO_ENDPOINT:}
+        access-key: ${MINIO_ACCESS_KEY:}
+        secret-key: ${MINIO_SECRET_KEY:}
+  vibecoding:
+    workspace:
+      endpoint: ${MINIO_ENDPOINT:}
+      access-key: ${MINIO_ACCESS_KEY:}
+      secret-key: ${MINIO_SECRET_KEY:}
+
+customer-work:
+  attachment:
+    storage:
+      minio:
+        endpoint: ${MINIO_ENDPOINT:}
+        access-key: ${MINIO_ACCESS_KEY:}
+        secret-key: ${MINIO_SECRET_KEY:}
 
 logging:
   level:

@@ -102,12 +102,13 @@ public class MultiAgentOrchestrator {
     private final KnowledgeBackend knowledgeBackend;
     /** 可为 null：未接入 Micrometer 时降级为无指标（仅日志）。 */
     private MeterRegistry meterRegistry;
-
     /**
-     * 专家 Agent 缓存（P3：避免每次 consult 都重建 Agent）。
-     * Agent 无状态（状态由 StateStore 按 sessionId 持久化），可安全复用。
+     * 治理中间件装配器：与 {@code CustomerServiceAgentFactory} 共用同一份装配。
+     *
+     * <p>可为 null——仅出现在不经 Spring 的单元测试里（见下方无装配器构造）。
+     * 生产链路一律由 Spring 注入，{@code AgentAssemblyAlignmentTest} 会断言这一点。</p>
      */
-    private volatile List<ReActAgent> cachedSpecialists;
+    private final AgentGovernanceAssembler governanceAssembler;
 
     /** Spring 注入构造：MeterRegistry 经 ObjectProvider 可选注入（actuator 缺席时降级）。 */
     @Autowired
@@ -116,22 +117,38 @@ public class MultiAgentOrchestrator {
                                   OrderBackend orderBackend,
                                   AfterSalesBackend afterSalesBackend,
                                   KnowledgeBackend knowledgeBackend,
+                                  AgentGovernanceAssembler governanceAssembler,
                                   ObjectProvider<MeterRegistry> meterRegistryProvider) {
-        this(model, properties, orderBackend, afterSalesBackend, knowledgeBackend);
+        this(model, properties, orderBackend, afterSalesBackend, knowledgeBackend, governanceAssembler);
         this.meterRegistry = meterRegistryProvider.getIfAvailable();
     }
 
-    /** 无指标构造（单测 / 未接入 Micrometer 场景）。 */
+    /**
+     * 无指标 / 无装配器构造（<b>仅单测使用</b>）。
+     *
+     * <p>装配器为 null 时专家 Agent 不挂治理中间件——这在生产上等于 token 不计配额、
+     * 敏感词与工具审批全部失效，因此该构造绝不能出现在生产装配路径上。</p>
+     */
     public MultiAgentOrchestrator(Model model,
                                   CustomerWorkProperties properties,
                                   OrderBackend orderBackend,
                                   AfterSalesBackend afterSalesBackend,
                                   KnowledgeBackend knowledgeBackend) {
+        this(model, properties, orderBackend, afterSalesBackend, knowledgeBackend, null);
+    }
+
+    public MultiAgentOrchestrator(Model model,
+                                  CustomerWorkProperties properties,
+                                  OrderBackend orderBackend,
+                                  AfterSalesBackend afterSalesBackend,
+                                  KnowledgeBackend knowledgeBackend,
+                                  AgentGovernanceAssembler governanceAssembler) {
         this.model = model;
         this.properties = properties;
         this.orderBackend = orderBackend;
         this.afterSalesBackend = afterSalesBackend;
         this.knowledgeBackend = knowledgeBackend;
+        this.governanceAssembler = governanceAssembler;
     }
 
     /** 测试可注入指标注册表（避免暴露 setter 给生产链路误用）。 */
@@ -139,83 +156,84 @@ public class MultiAgentOrchestrator {
         this.meterRegistry = meterRegistry;
     }
 
-    private static final RuntimeContext CONSULT_CTX = RuntimeContext.builder()
-        .userId("multi-agent").sessionId("consult").build();
-    private static final RuntimeContext ROUTER_CTX = RuntimeContext.builder()
-        .userId("multi-agent").sessionId("router").build();
-    private static final RuntimeContext REDUCER_CTX = RuntimeContext.builder()
-        .userId("multi-agent").sessionId("reducer").build();
-
     /**
-     * 构建三个专职专家 Agent（带缓存：首次构建后复用，避免每次 consult 重建 Agent）。
-     * Agent 无状态（状态由 StateStore 按 sessionId 持久化），可安全复用。
+     * 构造本次编排各阶段的运行时上下文。
+     *
+     * <p><b>绝不能用静态常量</b>：框架 {@code ReActAgent} 内部按 {@code slotKey(userId, sessionId)}
+     * 在实例字段 {@code stateCache} 里缓存 {@code AgentState}（含 {@code memory_messages} 对话历史），
+     * 把这两个值写成常量会让<b>所有用户命中同一个槽位、共用一份对话历史</b>。
+     * 各阶段用不同后缀是为了让路由/归纳的中间轮次不污染专家会诊的历史。</p>
      */
-    public List<ReActAgent> buildSpecialists() {
-        if (cachedSpecialists != null) {
-            return cachedSpecialists;
-        }
-        synchronized (this) {
-            if (cachedSpecialists != null) {
-                return cachedSpecialists;
-            }
-            List<ReActAgent> specialists = List.of(
-                specialist(EXPERT_ORDER,
-                    "你是订单与物流专家。只就订单状态、物流轨迹、金额等问题作答，调用订单工具查询后回答；与你无关的问题简要说明并建议转交对应专家。",
-                    new OrderTools(orderBackend)),
-                specialist(EXPERT_AFTERSALES,
-                    "你是售后与退款专家。处理退款资格校验与退款工单；涉及资金只生成待人工确认工单，绝不承诺已打款。",
-                    new AfterSalesTools(afterSalesBackend)),
-                specialist(EXPERT_KNOWLEDGE,
-                    "你是政策咨询专家。依据知识库回答退换货、发票、运费等政策问题，并保留来源标注。",
-                    new KnowledgeBaseTools(knowledgeBackend)));
-            cachedSpecialists = specialists;
-            log.info("[MultiAgent] specialists cached: {} experts", specialists.size());
-            return specialists;
-        }
+    private RuntimeContext contextFor(String sessionId, String stage) {
+        String scoped = (sessionId == null || sessionId.isBlank() ? "default" : sessionId) + "#mas-" + stage;
+        return governanceAssembler != null
+            ? governanceAssembler.contextFor(scoped)
+            : RuntimeContext.builder().userId("multi-agent").sessionId(scoped).build();
     }
 
-    /** 清除专家缓存（测试 / 热更新场景使用）。 */
-    public void clearSpecialistCache() {
-        cachedSpecialists = null;
-        log.info("[MultiAgent] specialist cache cleared");
+    /**
+     * 构建三个专职专家 Agent。
+     *
+     * <p><b>刻意不缓存实例</b>：框架 Agent 在实例字段里按 slot 累积会话状态，
+     * 进程级复用同一批实例会让状态跨会话累积（内存只增不减，且历史串号）。
+     * 这里每次新建——纯对象组装、不含 IO，成本远低于一次模型调用。</p>
+     */
+    public List<ReActAgent> buildSpecialists() {
+        return List.of(
+            specialist(EXPERT_ORDER,
+                "你是订单与物流专家。只就订单状态、物流轨迹、金额等问题作答，调用订单工具查询后回答；与你无关的问题简要说明并建议转交对应专家。",
+                new OrderTools(orderBackend)),
+            specialist(EXPERT_AFTERSALES,
+                "你是售后与退款专家。处理退款资格校验与退款工单；涉及资金只生成待人工确认工单，绝不承诺已打款。",
+                new AfterSalesTools(afterSalesBackend)),
+            specialist(EXPERT_KNOWLEDGE,
+                "你是政策咨询专家。依据知识库回答退换货、发票、运费等政策问题，并保留来源标注。",
+                new KnowledgeBaseTools(knowledgeBackend)));
     }
 
     private ReActAgent specialist(String name, String prompt, Object tool) {
         Toolkit toolkit = new DefaultActiveGroupsToolkit();
         toolkit.registerTool(tool);
-        return ReActAgent.builder()
+        ReActAgent.Builder builder = ReActAgent.builder()
             .name(name)
             .sysPrompt(prompt)
             .model(model)
             .toolkit(toolkit)
-            .maxIters(properties.getMultiAgent().getMaxIters())
-            .build();
+            .maxIters(properties.getMultiAgent().getMaxIters());
+        // 治理中间件与主链路共用同一份装配：token 计量、敏感词过滤、工具审批、脱敏、审计
+        if (governanceAssembler != null) {
+            governanceAssembler.applyTo(builder);
+        }
+        return builder.build();
     }
 
     /**
      * 多专家协作处理一个问题。
      *
+     * @param sessionId 会话标识——决定框架状态槽位，<b>必须按会话传入</b>，不可省略
+     * @param userText  用户问题
      * @return 聚合后的回复（fanout 模式经路由 + 并行 + 归纳；sequential 模式取最终结论）
      */
-    public Mono<String> consult(String userText) {
+    public Mono<String> consult(String sessionId, String userText) {
         List<ReActAgent> all = buildSpecialists();
         Msg msg = userMsg(userText);
         MultiAgentProperties cfg = properties.getMultiAgent();
+        RuntimeContext consultCtx = contextFor(sessionId, "consult");
 
         if (MODE_SEQUENTIAL.equalsIgnoreCase(cfg.getMode())) {
             log.info("multi-agent orchestration: sequential, {} specialists", all.size());
-            return sequential(all, msg).map(Msg::getTextContent);
+            return sequential(all, msg, consultCtx).map(Msg::getTextContent);
         }
-        return selectExperts(userText, all)
+        return selectExperts(sessionId, userText, all)
             .flatMap(experts -> {
                 log.info("multi-agent orchestration: parallel fanout, {} experts (routed), maxConcurrency={}, timeout={}s",
                     experts.size(), cfg.getMaxConcurrency(), cfg.getTimeoutSeconds());
                 List<Mono<Msg>> tasks = experts.stream()
-                    .map(agent -> callExpert(agent, msg))
+                    .map(agent -> callExpert(agent, msg, consultCtx))
                     .collect(Collectors.toList());
                 return fanout(tasks, cfg.getMaxConcurrency());
             })
-            .flatMap(replies -> reduce(userText, replies));
+            .flatMap(replies -> reduce(sessionId, userText, replies));
     }
 
     /**
@@ -223,7 +241,7 @@ public class MultiAgentOrchestrator {
      *
      * <p>包级可见，便于单测以关闭路径离线断言退化为全部专家。</p>
      */
-    Mono<List<ReActAgent>> selectExperts(String userText, List<ReActAgent> all) {
+    Mono<List<ReActAgent>> selectExperts(String sessionId, String userText, List<ReActAgent> all) {
         MultiAgentProperties cfg = properties.getMultiAgent();
         if (!cfg.isRoutingEnabled()) {
             recordRoute("disabled", all.size());
@@ -241,7 +259,8 @@ public class MultiAgentOrchestrator {
             }
         }
         // 慢车道：交 LLM 分诊
-        return routerAgent().call("判断用户意图并结构化输出：" + userText, IntentResult.class, ROUTER_CTX)
+        return routerAgent().call("判断用户意图并结构化输出：" + userText, IntentResult.class,
+                contextFor(sessionId, "router"))
             .map(m -> m.getStructuredData(IntentResult.class))
             .map(intent -> {
                 List<ReActAgent> picked = expertsForIntent(intent.intent(), all);
@@ -325,7 +344,7 @@ public class MultiAgentOrchestrator {
      *
      * <p>包级可见，便于单测以关闭 / 单专家路径离线断言退化为拼接。</p>
      */
-    Mono<String> reduce(String userText, List<Msg> replies) {
+    Mono<String> reduce(String sessionId, String userText, List<Msg> replies) {
         String joined = aggregate(replies);
         if (!properties.getMultiAgent().isReduceEnabled() || replies.size() <= 1) {
             recordReduce(false);
@@ -334,7 +353,7 @@ public class MultiAgentOrchestrator {
         recordReduce(true);
         String prompt = "用户问题：" + userText + "\n\n以下是各专家的结论，请综合成一段面向用户的、统一口径的简洁回复，"
             + "去重并消解冲突，不要罗列专家名：\n\n" + joined;
-        return reducerAgent().call(prompt, REDUCER_CTX)
+        return reducerAgent().call(prompt, contextFor(sessionId, "reducer"))
             .map(Msg::getTextContent)
             .onErrorResume(err -> {
                 log.error("multi-agent reduce failed, fallback to aggregated replies, errorCode={}", ERR_REDUCE_FAIL, err);
@@ -343,10 +362,10 @@ public class MultiAgentOrchestrator {
     }
 
     /** 单专家调用：加超时与错误隔离，并按 expert/outcome 维度记录耗时指标，失败/超时降级为占位。 */
-    private Mono<Msg> callExpert(ReActAgent agent, Msg msg) {
+    private Mono<Msg> callExpert(ReActAgent agent, Msg msg, RuntimeContext ctx) {
         String name = agent.getName();
         AtomicLong start = new AtomicLong();
-        return agent.call(List.of(msg), CONSULT_CTX)
+        return agent.call(List.of(msg), ctx)
             .doOnSubscribe(s -> start.set(System.nanoTime()))
             .timeout(Duration.ofSeconds(properties.getMultiAgent().getTimeoutSeconds()))
             .doOnNext(r -> recordExpert(name, "success", System.nanoTime() - start.get()))
@@ -359,10 +378,10 @@ public class MultiAgentOrchestrator {
     }
 
     /** 串行编排：问题依次流过各专家，后一个以前一个的回复为输入逐步细化，取最终结论。 */
-    private Mono<Msg> sequential(List<ReActAgent> specialists, Msg input) {
+    private Mono<Msg> sequential(List<ReActAgent> specialists, Msg input, RuntimeContext ctx) {
         Mono<Msg> chain = Mono.just(input);
         for (ReActAgent agent : specialists) {
-            chain = chain.flatMap(prev -> agent.call(List.of(prev), CONSULT_CTX));
+            chain = chain.flatMap(prev -> agent.call(List.of(prev), ctx));
         }
         return chain;
     }
@@ -374,28 +393,44 @@ public class MultiAgentOrchestrator {
             .collect(Collectors.joining("\n\n"));
     }
 
-    /** 轻量分诊器：无业务工具、结构化输出意图，单轮即可。 */
+    /**
+     * 轻量分诊器：无业务工具、结构化输出意图，单轮即可。
+     *
+     * <p>同样要挂治理中间件：它是一次真实的模型调用，token 该计进配额，
+     * 用户原文也会进它的上下文（分诊提示词里直接拼了 userText）。</p>
+     */
     private ReActAgent routerAgent() {
-        return ReActAgent.builder()
+        ReActAgent.Builder builder = ReActAgent.builder()
             .name("RouterAgent")
             .sysPrompt("你是客服分诊器。判断用户消息意图并归类为：order（订单/物流）、refund（退款/售后）、"
                 + "complaint（投诉）、consult（政策咨询）、other。只输出结构化结果，不要调用工具。")
             .model(model)
             .toolkit(new Toolkit())
-            .maxIters(1)
-            .build();
+            .maxIters(1);
+        if (governanceAssembler != null) {
+            governanceAssembler.applyTo(builder);
+        }
+        return builder.build();
     }
 
-    /** 归纳器：无业务工具，把多专家结论合成统一口径回复。 */
+    /**
+     * 归纳器：无业务工具，把多专家结论合成统一口径回复。
+     *
+     * <p>治理中间件同样必挂——归纳器产出的就是<b>最终发给用户的那段文本</b>，
+     * 出站敏感词过滤与脱敏若不在这里生效，等于整条 fanout 链路的最后一公里没有防护。</p>
+     */
     private ReActAgent reducerAgent() {
-        return ReActAgent.builder()
+        ReActAgent.Builder builder = ReActAgent.builder()
             .name("ReducerAgent")
             .sysPrompt("你是客服回复归纳器。把多位专家的结论综合成一段面向用户的、统一口径的简洁中文回复："
                 + "去重、消解冲突、保留关键事实与来源，不要罗列专家名，不要调用工具。")
             .model(model)
             .toolkit(new Toolkit())
-            .maxIters(1)
-            .build();
+            .maxIters(1);
+        if (governanceAssembler != null) {
+            governanceAssembler.applyTo(builder);
+        }
+        return builder.build();
     }
 
     /** 记录路由结果：意图分布 + 本次 fanout 实际投递的专家数。 */

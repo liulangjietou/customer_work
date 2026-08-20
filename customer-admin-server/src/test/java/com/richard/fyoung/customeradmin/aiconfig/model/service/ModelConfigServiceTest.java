@@ -67,8 +67,13 @@ class ModelConfigServiceTest {
         AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil("0123456789abcdef");
         com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher runtimeConfigPublisher =
             mock(com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher.class);
+        // 多租户默认关闭：本类既有用例覆盖的是加解密与默认模型互斥，与租户可见性无关，
+        // 关闭后行为与引入两级可见性之前完全一致
+        com.richard.fyoung.customeradmin.tenant.AdminTenantProperties tenantProperties =
+            new com.richard.fyoung.customeradmin.tenant.AdminTenantProperties();
+        tenantProperties.setEnabled(false);
         service = new ModelConfigService(mapper, agentMapper, agentBackupModelMapper, cryptoUtil, modelFactory,
-            agentInstanceCache, runtimeConfigPublisher);
+            agentInstanceCache, runtimeConfigPublisher, tenantProperties);
     }
 
     @Test

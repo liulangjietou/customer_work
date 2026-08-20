@@ -53,8 +53,9 @@ class CustomerServiceAgentFactoryTest {
             new com.richard.fyoung.customerwork.infra.config.NacosPromptService(props),
             new com.richard.fyoung.customerwork.core.support.TenantResolver(props),
             new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry(),
-            null,    // 无可插拔 Hook
-            null,    // 无 MeterRegistry（观测降级为仅日志）
+            // 治理装配器：中间件装配已收敛到这一处，工厂不再各自持有 Hook 列表与 MeterRegistry
+            new AgentGovernanceAssembler(props,
+                new com.richard.fyoung.customerwork.core.support.TenantResolver(props), null, null),
             null);   // 无 MySQL 技能物化器（本类只覆盖 classpath / filesystem 仓库）
     }
 

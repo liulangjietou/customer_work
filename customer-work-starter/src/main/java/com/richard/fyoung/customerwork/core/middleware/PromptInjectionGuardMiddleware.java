@@ -14,6 +14,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
@@ -55,20 +56,34 @@ public class PromptInjectionGuardMiddleware implements MiddlewareBase {
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
 
+    @Autowired
     public PromptInjectionGuardMiddleware(CustomerWorkProperties properties,
                                           ObjectProvider<MeterRegistry> meterRegistryProvider) {
-        HooksProperties.PromptGuard cfg = properties.getHooks().getPromptGuard();
-        this.enabled = cfg.isEnabled();
-        this.refusalReply = cfg.getRefusalReply();
+        this(properties.getHooks().getPromptGuard().isEnabled(),
+            properties.getHooks().getPromptGuard().getRefusalReply(),
+            properties.getHooks().getPromptGuard().getInjectionPatterns(),
+            meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable());
+    }
+
+    /**
+     * 参数化构造：供已排除 starter 自动装配的模块（如 customer-admin-server）显式装配。
+     *
+     * <p>没有这个构造时，admin 侧无法挂载本中间件——后台链路因此长期缺失入站注入防护，
+     * 且连一个可开的配置项都没有。与 {@code IndirectInjectionGuardMiddleware} 的参数化构造同一用途。</p>
+     */
+    public PromptInjectionGuardMiddleware(boolean enabled, String refusalReply,
+                                          List<String> patterns, MeterRegistry meterRegistry) {
+        this.enabled = enabled;
+        this.refusalReply = refusalReply;
         this.injectionPatterns = new ArrayList<>();
-        if (cfg.getInjectionPatterns() != null) {
-            for (String p : cfg.getInjectionPatterns()) {
+        if (patterns != null) {
+            for (String p : patterns) {
                 if (p != null && !p.isEmpty()) {
                     this.injectionPatterns.add(Pattern.compile(p, Pattern.CASE_INSENSITIVE));
                 }
             }
         }
-        this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+        this.meterRegistry = meterRegistry;
     }
 
     /** 命中拦截的累计次数（供单测断言 / 监控采样）。 */

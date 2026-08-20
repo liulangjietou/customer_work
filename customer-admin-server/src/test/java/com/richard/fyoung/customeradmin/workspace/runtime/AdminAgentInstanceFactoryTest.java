@@ -28,7 +28,7 @@ class AdminAgentInstanceFactoryTest {
     private AdminAgentInstanceFactory newFactoryForPathTest() {
         return new AdminAgentInstanceFactory(null, null, null, null, null, null, null, null, null, null, null,
             null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, null);
+            null, null, null, null, null);
     }
 
     @Test

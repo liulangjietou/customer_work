@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.safety.security;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -28,8 +29,18 @@ public class SensitiveDataMasker {
     private final List<Pattern> patterns = new ArrayList<>();
     private final String replacement;
 
+    @Autowired
     public SensitiveDataMasker(CustomerWorkProperties properties) {
-        HooksProperties.Masking cfg = properties.getHooks().getMasking();
+        this(properties.getHooks().getMasking());
+    }
+
+    /**
+     * 参数化构造：供已排除 starter 自动装配的模块（如 customer-admin-server）显式装配。
+     *
+     * <p>只收脱敏配置段而非整个 {@code CustomerWorkProperties}——脱敏规则本身与宿主模块无关，
+     * 两边共用同一份实现才能保证"客服端脱掉的字段后台也脱得掉"。</p>
+     */
+    public SensitiveDataMasker(HooksProperties.Masking cfg) {
         this.replacement = cfg.getReplacement();
         // 先长后短，避免身份证/银行卡被手机号规则部分吃掉
         if (cfg.isMaskIdCard()) {

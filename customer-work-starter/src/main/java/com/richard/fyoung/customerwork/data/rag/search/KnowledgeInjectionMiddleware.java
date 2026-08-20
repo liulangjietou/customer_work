@@ -20,6 +20,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -81,10 +82,25 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
 
     private final KnowledgeRetrievalProvider retrievalProvider;
     private final String agentCode;
+    /**
+     * 知识盲区埋点；可为 null（未启用该能力时降级为不埋点）。
+     *
+     * <p><b>为什么中间件这条路也要埋</b>：RAG 有两条互不相通的路径——模型主动调
+     * {@code KnowledgeBaseTools}（工具路径）与本中间件自动注入（后台工作台智能体走这条）。
+     * 盲区埋点原先只做在工具路径上，判定依据是 {@code KnowledgeBackend.isMiss} 的文案契约，
+     * 而本路径根本不经过 {@code KnowledgeBackend}，于是这半条路的未命中一条都统计不到。</p>
+     */
+    private final KnowledgeGapRecorder gapRecorder;
 
     public KnowledgeInjectionMiddleware(KnowledgeRetrievalProvider retrievalProvider, String agentCode) {
+        this(retrievalProvider, agentCode, null);
+    }
+
+    public KnowledgeInjectionMiddleware(KnowledgeRetrievalProvider retrievalProvider, String agentCode,
+                                        KnowledgeGapRecorder gapRecorder) {
         this.retrievalProvider = retrievalProvider;
         this.agentCode = agentCode;
+        this.gapRecorder = gapRecorder;
     }
 
     @Override
@@ -100,6 +116,9 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
         if (!StringUtils.hasText(query)) {
             return next.apply(input);
         }
+        // 检索故障标志：故障与"检索正常但没查到"都表现为空串，但只有后者是知识盲区。
+        // 把故障也计进盲区会让运营看到一批根本不存在的"用户在问但答不上来的问题"。
+        AtomicBoolean retrievalFailed = new AtomicBoolean(false);
         // 阻塞式 HTTP 检索强制丢到 boundedElastic：不管本流被谁订阅（Spring MVC 的 SSE 适配器可能在
         // 请求线程上订阅），都保证不会占住 Tomcat 请求线程。
         return Mono.fromCallable(() -> retrievalProvider.retrieve(agentCode, query))
@@ -107,6 +126,7 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
             // retrieve 返回 null 时 fromCallable 发出的是空信号，统一归一成空串走同一条注入分支
             .defaultIfEmpty("")
             .onErrorResume(e -> {
+                retrievalFailed.set(true);
                 log.error("[rag] retrieval dispatch failed, code={}, agentCode={}", CODE_INJECT_FAIL, agentCode, e);
                 return Mono.just("");
             })
@@ -114,8 +134,23 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
                 if (ctx != null) {
                     ctx.put(cacheKey, RetrievedBlock.class, new RetrievedBlock(block));
                 }
+                recordGapIfMiss(query, block, retrievalFailed.get());
                 return next.apply(withKnowledge(input, block));
             });
+    }
+
+    /**
+     * 检索正常返回但没有任何召回内容 = 一次知识盲区，记一笔。
+     *
+     * <p>检索故障不计：那是外部服务的可用性问题，混进盲区排行会污染运营判断。
+     * 分区键传 null 走默认分区，与工具路径 {@code KnowledgeBaseTools#recordGapIfMiss} 同口径——
+     * 盲区排行是全局视角的运营数据（"这批用户在问什么我们答不上来"），不按会话细分。</p>
+     */
+    private void recordGapIfMiss(String query, String block, boolean retrievalFailed) {
+        if (gapRecorder == null || retrievalFailed || StringUtils.hasText(block)) {
+            return;
+        }
+        gapRecorder.recordMiss(null, query);
     }
 
     /**

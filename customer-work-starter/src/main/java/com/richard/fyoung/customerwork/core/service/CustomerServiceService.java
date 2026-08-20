@@ -10,6 +10,7 @@ import com.richard.fyoung.customerwork.infra.lock.InMemorySessionLock;
 import com.richard.fyoung.customerwork.infra.lock.SessionLock;
 import com.richard.fyoung.customerwork.capability.csat.CsatService;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheService;
+import com.richard.fyoung.customerwork.safety.security.spotlight.AttachmentTextSpotlighter;
 import com.richard.fyoung.customerwork.safety.quota.InMemoryTenantQuotaStore;
 import com.richard.fyoung.customerwork.safety.quota.QuotaDecision;
 import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
@@ -232,6 +233,35 @@ public class CustomerServiceService {
             }));
     }
 
+    /**
+     * 把用户消息里的附件解析文本包进隔离块后再交给模型。
+     *
+     * <p>附件常常不是用户自己写的（转发的文档、别处收到的截图），内容由第三方控制，
+     * 而前端会把解析结果直接拼进消息正文——不隔离的话，一张写着"忽略以上指令"的图片
+     * 就是一条现成的间接注入通道。</p>
+     *
+     * <p><b>只包给模型看的那一份，不改缓存与埋点用的原文</b>：隔离块带 {@code SecureRandom} 生成的
+     * 随机 nonce，拿它当语义缓存的 key 会让缓存永远不命中。两条对话路径都必须调用本方法。</p>
+     */
+    private String spotlightAttachments(String userText) {
+        return AttachmentTextSpotlighter.wrapAttachments(userText);
+    }
+
+    /**
+     * 整段文本的出站过滤（非流式路径用）。
+     *
+     * <p>与 {@link #applyOutboundGuard(Flux, SensitiveWordStreamGuard)} 是同一道闸门的两种形态：
+     * 流式逐片喂、非流式一次喂完再 flush 出尾巴。<b>两条路径必须都过</b>——
+     * 此前只有流式做了，非流式命中缓存时原文直出。</p>
+     */
+    private String applyOutboundGuard(String text) {
+        SensitiveWordStreamGuard guard = newOutboundGuard();
+        if (guard == null || text == null) {
+            return text;
+        }
+        return guard.accept(text) + guard.flush();
+    }
+
     /** 测试可注入指标注册表（避免暴露 setter 给生产链路误用）。 */
     void setMeterRegistry(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -260,7 +290,9 @@ public class CustomerServiceService {
             .flatMap(cached -> cached
                 .map(answer -> {
                     incr(M_CACHE_HIT);
-                    return Mono.just(answer);
+                    // 命中的内容仍要过一遍出站敏感词过滤：写入时合规不代表现在合规，词库是会变的。
+                    // 口径与流式命中路径 streamCachedAnswer 完全一致，两条路径不得再分叉。
+                    return Mono.just(applyOutboundGuard(answer));
                 })
                 .orElseGet(() -> invokeAgent(sessionId, userText)
                     .doOnNext(reply -> cacheReply(sessionId, userText, reply))));
@@ -273,7 +305,7 @@ public class CustomerServiceService {
         bindCallMeta(ctx, agent, userText);
 
         return withSessionLock(sessionId, () ->
-            agent.call(userText, ctx)
+            agent.call(spotlightAttachments(userText), ctx)
                 .map(Msg::getTextContent)
                 .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
                 .onErrorResume(e -> {
@@ -385,7 +417,7 @@ public class CustomerServiceService {
             AtomicBoolean deltaSeen = new AtomicBoolean(false);
             // 出站敏感词过滤：每次订阅一个独立 guard（有状态，跨流复用会串内容）
             SensitiveWordStreamGuard guard = newOutboundGuard();
-            return applyOutboundGuard(agent.streamEvents(List.of(toUserMsg(userText)), ctx)
+            return applyOutboundGuard(agent.streamEvents(List.of(toUserMsg(spotlightAttachments(userText))), ctx)
                 // 旧的 stream(...) 在末尾自带 publishOn(boundedElastic)，streamEvents 没有：不切走
                 // 就会在模型 IO 线程上跑下游的敏感词过滤与 SSE 写出，拖慢模型侧的 chunk 读取
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic())

@@ -4,7 +4,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.ModelConfig;
 import com.richard.fyoung.customerwork.infra.config.PermissionConfig;
 import com.richard.fyoung.customerwork.infra.config.SessionConfig;
-import com.richard.fyoung.customerwork.core.middleware.ObservabilityMiddleware;
+import com.richard.fyoung.customerwork.core.agent.AgentGovernanceAssembler;
 import com.richard.fyoung.customerwork.observability.StudioConfigurer;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
@@ -126,8 +126,9 @@ public class CustomerWebAgentConfig {
                                            Toolkit customerToolkit,
                                            AgentStateStore agentStateStore,
                                            PermissionContextState permissionContextState,
-                                           CustomerWorkProperties properties) {
-        ReActAgent agent = ReActAgent.builder()
+                                           CustomerWorkProperties properties,
+                                           AgentGovernanceAssembler governanceAssembler) {
+        ReActAgent.Builder builder = ReActAgent.builder()
             .name("CustomerServiceAgent")
             .sysPrompt(SYSTEM_PROMPT)
             .model(chatModel)
@@ -135,10 +136,12 @@ public class CustomerWebAgentConfig {
             .stateStore(agentStateStore)
             .defaultSessionId("console")
             .permissionContext(permissionContextState)
-            .middleware(new ObservabilityMiddleware())
             .maxIters(properties.getAgent().getMaxIters())
-            .enablePendingToolRecovery(properties.getInterrupt().isPendingToolRecoveryEnabled())
-            .build();
+            .enablePendingToolRecovery(properties.getInterrupt().isPendingToolRecoveryEnabled());
+        // 治理中间件走与主链路同一个装配器：此前这里只挂了 ObservabilityMiddleware，
+        // token 计量、敏感词过滤、脱敏、注入防护全都没有——又一条"能力没接上"的路径。
+        governanceAssembler.applyTo(builder);
+        ReActAgent agent = builder.build();
         log.info("[customer-channel] customer-service agent registered to admin console: name={}",
             agent.getName());
         return agent;

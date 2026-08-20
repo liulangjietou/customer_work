@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap;
 
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapRecorder;
 import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.infra.config.properties.KnowledgeGapProperties;
@@ -26,7 +27,7 @@ import java.util.List;
  * 绝不该让用户的问题因此答不出来。</p>
  * @author owlzhangfq@gmail.com
  */
-public class KnowledgeGapService {
+public class KnowledgeGapService implements KnowledgeGapRecorder {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeGapService.class);
 
@@ -47,6 +48,7 @@ public class KnowledgeGapService {
      * @param sessionId 会话 ID，仅用于失败日志定位；分区取当前租户，不再由它解析
      * @param question  用户的原始问题
      */
+    @Override
     public void recordMiss(String sessionId, String question) {
         if (!properties.isEnabled() || !StringUtils.hasText(question)) {
             return;

@@ -11,6 +11,9 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSubAgentMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.config.AdminKnowledgeGapRecorder;
+import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime.KnowledgeRetrievalMiddleware;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime.KnowledgeRetrievalService;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
@@ -177,6 +180,12 @@ public class AdminAgentInstanceFactory {
     private final OtelTracingMiddleware otelTracingMiddleware;
     /** 知识库检索服务：供每个智能体各挂一份 {@link KnowledgeRetrievalMiddleware} 做每轮召回注入。 */
     private final KnowledgeRetrievalService knowledgeRetrievalService;
+    /** 知识盲区埋点：中间件路径的未命中记进客服端库，与工具路径落同一张表。 */
+    private final AdminKnowledgeGapRecorder knowledgeGapRecorder;
+    /** 出站脱敏：与客服端同一实现、同一套规则。 */
+    private final MaskingMiddleware maskingMiddleware;
+    /** 直接提示词注入防护：拦用户输入里的越狱话术（间接注入由 indirectInjectionGuardMiddleware 负责）。 */
+    private final PromptInjectionGuardMiddleware promptInjectionGuardMiddleware;
     /**
      * 敏感词过滤中间件；仅 {@code admin.content-guard.agent-filter-enabled=true} 时容器里才有，
      * 否则为 null，本工厂跳过挂载（后台仍可管理词库，只是 admin 自身对话不参与拦截）。
@@ -213,6 +222,9 @@ public class AdminAgentInstanceFactory {
                                       ToolKindRegistry agentCallToolKindRegistry,
                                       ObjectProvider<OtelTracingMiddleware> otelTracingMiddlewareProvider,
                                       KnowledgeRetrievalService knowledgeRetrievalService,
+                                      AdminKnowledgeGapRecorder knowledgeGapRecorder,
+                                      MaskingMiddleware maskingMiddleware,
+                                      PromptInjectionGuardMiddleware promptInjectionGuardMiddleware,
                                       ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider,
                                       IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware,
                                       TaskRepository taskRepository,
@@ -247,6 +259,9 @@ public class AdminAgentInstanceFactory {
         this.agentCallTimingMiddleware = agentCallTimingMiddleware;
         this.agentCallToolKindRegistry = agentCallToolKindRegistry;
         this.knowledgeRetrievalService = knowledgeRetrievalService;
+        this.knowledgeGapRecorder = knowledgeGapRecorder;
+        this.maskingMiddleware = maskingMiddleware;
+        this.promptInjectionGuardMiddleware = promptInjectionGuardMiddleware;
         // provider 可为 null：路径解析类单测直接 new 本工厂并传 null 依赖，容器里则恒有 provider
         this.sensitiveWordMiddleware = sensitiveWordMiddlewareProvider == null
             ? null : sensitiveWordMiddlewareProvider.getIfAvailable();
@@ -353,12 +368,16 @@ public class AdminAgentInstanceFactory {
         // 执行模式闸门对所有智能体挂载（chat 也生效）：运行时按会话选定的五档模式决策，未指定模式且全局
         // permission-mode=bypass 时纯透传，行为等价于挂载前。顺序关键（first = outermost）：模式闸门在最外层
         // 先看到原始命令挂起/拦改，护栏在内层作最后防线（下方仅 vibecoding 挂载）。
+        // 直接注入防护：拦用户输入里的越狱话术，放在靠外层（越早拦住越好，省掉后面整条链路）
+        builder.middleware(promptInjectionGuardMiddleware);
+        // 出站脱敏：对最终回复里的手机号/身份证/银行卡/邮箱做掩码，与敏感词过滤各管一段
+        builder.middleware(maskingMiddleware);
         builder.middleware(executionModeMiddleware);
         // 知识库检索注入：按 agentCode 现建一份（中间件需要知道"本智能体绑了哪些知识库"，构建期绑定
         // 比运行时反推更直接）。挂在这里=注入只影响每次模型调用的输入消息，不进持久化 AgentState，
         // 且 HTTP 检索发生在 reactive 线程（boundedElastic）而非 Tomcat 请求线程——两点都是刻意的，
         // 详见 KnowledgeRetrievalMiddleware 类注释。未绑知识库的智能体在中间件内一次关联表查询即返回。
-        builder.middleware(new KnowledgeRetrievalMiddleware(knowledgeRetrievalService, agentCode));
+        builder.middleware(new KnowledgeRetrievalMiddleware(knowledgeRetrievalService, agentCode, knowledgeGapRecorder));
         // 间接注入防护挂在知识库中间件之内层（离模型最近的最后一道隔离）：把工具/MCP 返回结果包进
         // 随机标签隔离块，模型不再把返回体里的文字当指令执行。与上面那条的分工是"谁产出谁负责隔离"——
         // 召回内容由 KnowledgeRetrievalMiddleware 自己包，工具结果由框架产出、只能在这里拦。

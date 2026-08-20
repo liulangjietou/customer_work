@@ -41,7 +41,9 @@ class KnowledgeRetrievalMiddlewareTest {
     @BeforeEach
     void setUp() {
         retrievalService = mock(KnowledgeRetrievalService.class);
-        middleware = new KnowledgeRetrievalMiddleware(retrievalService, AGENT_CODE);
+        // 埋点器传 null：本类只覆盖注入时机与形态，盲区埋点由
+        // KnowledgeInjectionGapRecordingTest 专门覆盖
+        middleware = new KnowledgeRetrievalMiddleware(retrievalService, AGENT_CODE, null);
     }
 
     private ReasoningInput inputOf(String text) {
