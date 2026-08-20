@@ -86,8 +86,14 @@ public class AdminAgentRuntimeConfig {
      * 而客服端两者都有——运维在客服端验证过脱敏生效后，会理所当然地以为全局都保护上了。
      * 这正是"能力只接在一条路径上"的典型：能力本身造好了，另一条路径没接。</p>
      */
+    /**
+     * Bean 名刻意不叫 {@code sensitiveDataMasker}：admin 自己有一个同名的
+     * {@code common.log.SensitiveDataMasker}（操作日志脱敏用，@Component 扫描注册），
+     * 重名会直接抛 {@code BeanDefinitionOverrideException} 让上下文起不来。
+     * 两者类型不同、职责不同——那个脱的是审计日志，这个脱的是发给用户的回复。
+     */
     @Bean
-    public SensitiveDataMasker sensitiveDataMasker(AdminMaskingProperties properties) {
+    public SensitiveDataMasker agentOutboundMasker(AdminMaskingProperties properties) {
         return new SensitiveDataMasker(properties);
     }
 
