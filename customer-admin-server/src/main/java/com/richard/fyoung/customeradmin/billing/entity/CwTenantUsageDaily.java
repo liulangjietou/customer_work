@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
  * <p>金额在归集时按当日单价算好落库，而不是查询时实时算——单价会变，
  * 实时算会让历史账单随调价而变动，对不上已经出过的账。</p>
  *
- * <p>本表参与租户自动过滤：租户管理员看自己的用量，运营方跨租户查询走
+ * <p>本表参与租户自动过滤：租户管理员看自己的用量，控制面跨租户查询走
  * {@code CrossTenantOperations}。</p>
  * @author owlzhangfq@gmail.com
  */

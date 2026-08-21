@@ -74,7 +74,7 @@ public class ModelConfigController {
         return Result.success();
     }
 
-    /** 不修改配置，仅探测可达性，复用 model:view 权限点即可，不额外新增权限点。 */
+    /** 仅探测可达性；只读 default 共享配置的探测结果不会回写共享记录。 */
     @SaCheckPermission("model:view")
     @OperationLog(operation = "模型连通性测试", target = "ai_model_config")
     @PostMapping("/{id}/test-connectivity")

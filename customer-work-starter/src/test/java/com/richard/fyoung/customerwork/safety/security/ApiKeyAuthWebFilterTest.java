@@ -156,4 +156,22 @@ class ApiKeyAuthWebFilterTest {
             subscription.dispose();
         }
     }
+
+    @Test
+    void tenantKeyWithInvalidTenant_shouldReturn401() {
+        CustomerWorkProperties properties = propsWithAuth(true);
+        properties.getSecurity().getAuth().getTenantKeys().put("legacy-key", "_legacy");
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/chat")
+                .header("X-API-Key", "legacy-key").build());
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        new ApiKeyAuthWebFilter(properties).filter(exchange, current -> {
+            invoked.set(true);
+            return Mono.empty();
+        }).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+    }
 }

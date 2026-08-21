@@ -22,7 +22,7 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
-import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
@@ -64,7 +64,7 @@ class AgentServiceTest {
     private AiAgentSkillMapper agentSkillMapper;
     private AiAgentBackupModelMapper agentBackupModelMapper;
     private AiAgentSubAgentMapper agentSubAgentMapper;
-    private AiModelConfigMapper modelConfigMapper;
+    private ModelConfigAccess modelConfigAccess;
     private AiMcpMapper mcpMapper;
     private AiSkillMapper skillMapper;
     private AiAgentSystemToolMapper agentSystemToolMapper;
@@ -93,7 +93,7 @@ class AgentServiceTest {
         agentSkillMapper = mock(AiAgentSkillMapper.class);
         agentBackupModelMapper = mock(AiAgentBackupModelMapper.class);
         agentSubAgentMapper = mock(AiAgentSubAgentMapper.class);
-        modelConfigMapper = mock(AiModelConfigMapper.class);
+        modelConfigAccess = mock(ModelConfigAccess.class);
         mcpMapper = mock(AiMcpMapper.class);
         skillMapper = mock(AiSkillMapper.class);
         agentSystemToolMapper = mock(AiAgentSystemToolMapper.class);
@@ -106,11 +106,11 @@ class AgentServiceTest {
         com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher runtimeConfigPublisher =
             mock(com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher.class);
         service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, agentBackupModelMapper,
-            agentSubAgentMapper, modelConfigMapper, mcpMapper, skillMapper, agentSystemToolMapper, systemToolMapper,
+            agentSubAgentMapper, modelConfigAccess, mcpMapper, skillMapper, agentSystemToolMapper, systemToolMapper,
             agentKnowledgeBaseMapper, knowledgeBaseMapper,
             menuVersionHolder, agentInstanceCache, modelConfigService, runtimeConfigPublisher);
 
-        when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
+        when(modelConfigAccess.findVisibleById(1L)).thenReturn(new AiModelConfig());
         // 默认主模型连通性门禁通过（个别用例覆写为失败）
         when(modelConfigService.testConnectivity(any())).thenReturn(
             CompletableFuture.completedFuture(new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), null)));
@@ -147,7 +147,7 @@ class AgentServiceTest {
 
     @Test
     void create_shouldRejectUnknownModelId() {
-        when(modelConfigMapper.selectById(999L)).thenReturn(null);
+        when(modelConfigAccess.findVisibleById(999L)).thenReturn(null);
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 999L, null, null, null, null,
             null, null, null, 1, null, null, null, null, null, null, null);
 
@@ -256,7 +256,7 @@ class AgentServiceTest {
         when(agentMapper.selectById(1L)).thenReturn(existing);
         AiModelConfig model = new AiModelConfig();
         model.setModelName("gpt-4o");
-        when(modelConfigMapper.selectById(1L)).thenReturn(model);
+        when(modelConfigAccess.findVisibleById(1L)).thenReturn(model);
         AiAgentMcp relation = new AiAgentMcp();
         relation.setMcpId(10L);
         when(agentMcpMapper.selectList(any())).thenReturn(List.of(relation));
@@ -291,8 +291,8 @@ class AgentServiceTest {
 
     @Test
     void create_shouldRejectInvalidBackupModelIds() {
-        when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
-        when(modelConfigMapper.selectBatchIds(List.of(2L))).thenReturn(List.of()); // 0 条命中，2L 不存在
+        when(modelConfigAccess.findVisibleById(1L)).thenReturn(new AiModelConfig());
+        when(modelConfigAccess.listVisibleByIds(List.of(2L))).thenReturn(List.of()); // 0 条命中，2L 不存在
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(2L), null, null, null,
             null, null, null, 1, null, null, null, null, null, null, null);
 
@@ -301,9 +301,10 @@ class AgentServiceTest {
 
     @Test
     void create_shouldInsertBackupRelations_deduplicatedAndOrdered() {
-        when(modelConfigMapper.selectById(1L)).thenReturn(new AiModelConfig());
+        when(modelConfigAccess.findVisibleById(1L)).thenReturn(new AiModelConfig());
         // 去重后为 [2L, 3L]，两个都存在
-        when(modelConfigMapper.selectBatchIds(List.of(2L, 3L))).thenReturn(List.of(new AiModelConfig(), new AiModelConfig()));
+        when(modelConfigAccess.listVisibleByIds(List.of(2L, 3L)))
+            .thenReturn(List.of(new AiModelConfig(), new AiModelConfig()));
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, List.of(2L, 3L, 2L),
             null, null, null, null, null, null, 1, null, null, null, null, null, null, null);
 
@@ -350,7 +351,7 @@ class AgentServiceTest {
         existing.setId(1L);
         existing.setModelId(1L);
         when(agentMapper.selectById(1L)).thenReturn(existing);
-        when(modelConfigMapper.selectById(2L)).thenReturn(new AiModelConfig());
+        when(modelConfigAccess.findVisibleById(2L)).thenReturn(new AiModelConfig());
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 2L, null, null, null, null,
             null, null, null, 1, null, null, null, null, null, null, null);
 

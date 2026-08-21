@@ -15,6 +15,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class OpenApiWebConfig implements WebMvcConfigurer {
 
+    /** 开放 API 使用独立机器凭据，不得再被后台 Sa-Token 上下文覆盖。 */
+    public static final String PATH_PATTERN = "/api/open/**";
+
     private final OpenApiProperties properties;
     private final AdminTenantProperties tenantProperties;
 
@@ -26,6 +29,6 @@ public class OpenApiWebConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new OpenApiAuthInterceptor(properties, tenantProperties))
-            .addPathPatterns("/api/open/**");
+            .addPathPatterns(PATH_PATTERN);
     }
 }

@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.system.loginimage.dto.LoginCarouselImage
 import com.richard.fyoung.customeradmin.system.loginimage.dto.LoginImageEnabledRequest;
 import com.richard.fyoung.customeradmin.system.loginimage.dto.LoginImageReorderRequest;
 import com.richard.fyoung.customeradmin.system.loginimage.service.LoginCarouselImageService;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,9 +32,12 @@ import java.util.List;
 public class LoginImageAdminController {
 
     private final LoginCarouselImageService imageService;
+    private final CrossTenantAuthority crossTenantAuthority;
 
-    public LoginImageAdminController(LoginCarouselImageService imageService) {
+    public LoginImageAdminController(LoginCarouselImageService imageService,
+                                     CrossTenantAuthority crossTenantAuthority) {
         this.imageService = imageService;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     @SaCheckPermission("login-image:view")
@@ -46,6 +50,7 @@ public class LoginImageAdminController {
     @OperationLog(operation = "上传登录页轮播图", target = "login_carousel_image")
     @PostMapping
     public Result<LoginCarouselImageVO> upload(@RequestPart("file") MultipartFile file) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         return Result.success(imageService.upload(file));
     }
 
@@ -53,6 +58,7 @@ public class LoginImageAdminController {
     @OperationLog(operation = "启停登录页轮播图", target = "login_carousel_image")
     @PutMapping("/{id}/enabled")
     public Result<Void> updateEnabled(@PathVariable Long id, @Valid @RequestBody LoginImageEnabledRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         imageService.updateEnabled(id, request.enabled());
         return Result.success();
     }
@@ -61,6 +67,7 @@ public class LoginImageAdminController {
     @OperationLog(operation = "调整登录页轮播图顺序", target = "login_carousel_image")
     @PutMapping("/reorder")
     public Result<Void> reorder(@Valid @RequestBody LoginImageReorderRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         imageService.reorder(request);
         return Result.success();
     }
@@ -69,6 +76,7 @@ public class LoginImageAdminController {
     @OperationLog(operation = "删除登录页轮播图", target = "login_carousel_image")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         imageService.delete(id);
         return Result.success();
     }

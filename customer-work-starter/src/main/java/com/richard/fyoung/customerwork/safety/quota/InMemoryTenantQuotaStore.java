@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.safety.quota;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +41,6 @@ public class InMemoryTenantQuotaStore implements TenantQuotaStore {
     }
 
     private String key(String tenantId, QuotaPeriod period) {
-        return tenantId + ":" + period.name();
+        return TenantContext.normalizedTenantKey(tenantId) + ":" + period.name();
     }
 }

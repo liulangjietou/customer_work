@@ -14,8 +14,8 @@ import java.time.LocalDateTime;
  * 租户主数据。
  *
  * <p>本表自身不带 {@code tenant_id}——它是租户的定义方，参与不了自己的过滤，
- * 因此在 {@code TenantInterceptors.PLATFORM_LEVEL_TABLES} 忽略清单里，
- * 访问控制由 Controller 层的运营方权限校验负责。</p>
+ * 因此在 {@code TenantInterceptors.TENANT_IGNORED_TABLES} 忽略清单里，
+ * 访问控制由 Controller 层的控制面角色与权限点双重校验负责。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data

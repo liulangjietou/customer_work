@@ -1,11 +1,13 @@
 package com.richard.fyoung.customerwork.safety.quota;
 
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
+import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -54,7 +56,7 @@ class TenantQuotaGuardTest {
 
     @Test
     void check_shouldBlock_whenTokenLimitReached() {
-        store.save(quota("acme", QuotaPeriod.DAILY, 100, QuotaExceedAction.BLOCK));
+        store.save(quota("AcMe", QuotaPeriod.DAILY, 100, QuotaExceedAction.BLOCK));
         TenantQuotaGuard g = guard(true);
         g.record("acme", 100);
 
@@ -99,6 +101,34 @@ class TenantQuotaGuardTest {
         assertFalse(g.check("acme").allowed(), "月配额触顶就该拦，哪怕日配额还很富余");
         assertEquals(100L, g.currentUsage("acme", QuotaPeriod.DAILY), "日用量应独立计数");
         assertEquals(100L, g.currentUsage("acme", QuotaPeriod.MONTHLY), "月用量应独立计数");
+    }
+
+    @Test
+    void record_shouldPreserveBusinessTenantCaseInPersistentCounterKey() {
+        WindowCounter persistentCounter = org.mockito.Mockito.mock(WindowCounter.class);
+        TenantQuotaGuard guard = new TenantQuotaGuard(store, persistentCounter, true);
+
+        guard.record("AcMe", 1L);
+
+        org.mockito.Mockito.verify(persistentCounter).increment(
+            org.mockito.ArgumentMatchers.startsWith("quota:AcMe:DAILY:"),
+            org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.anyInt());
+        org.mockito.Mockito.verify(persistentCounter).increment(
+            org.mockito.ArgumentMatchers.startsWith("quota:AcMe:MONTHLY:"),
+            org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void defaultUsage_shouldIncludeLegacyPlatformRedisWindow() {
+        store.save(quota(TenantContext.DEFAULT, QuotaPeriod.DAILY, 150, QuotaExceedAction.BLOCK));
+        counter.increment("quota:__platform__:DAILY:" + QuotaPeriod.DAILY.periodKey(LocalDate.now()),
+            60L, QuotaPeriod.DAILY.retentionSeconds());
+        TenantQuotaGuard guard = guard(true);
+        guard.record(TenantContext.DEFAULT, 100L);
+
+        assertFalse(guard.check(TenantContext.DEFAULT).allowed(),
+            "平台归并后必须把历史平台窗口与 default 新用量合并，不能重置当期额度");
+        assertEquals(160L, guard.currentUsage(TenantContext.DEFAULT, QuotaPeriod.DAILY));
     }
 
     @Test

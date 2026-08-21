@@ -3,7 +3,7 @@ package com.richard.fyoung.customeradmin.workspace.knowledge.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
-import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
@@ -21,6 +21,7 @@ import com.richard.fyoung.customeradmin.workspace.knowledge.mapper.AiCodeKnowled
 import com.richard.fyoung.customerwork.data.knowledge.CodeChunker;
 import com.richard.fyoung.customerwork.data.knowledge.VectorMath;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
@@ -96,21 +97,21 @@ public class KnowledgeService {
     private final EmbeddingClient embeddingClient;
     private final AdminKnowledgeProperties properties;
     private final AdminModelFactory modelFactory;
-    private final AiModelConfigMapper modelConfigMapper;
+    private final ModelConfigAccess modelConfigAccess;
     private final AesGcmCryptoUtil cryptoUtil;
     private final AiCodingAuditService auditService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public KnowledgeService(AiCodeKnowledgeIndexMapper indexMapper, AiCodeKnowledgeChunkMapper chunkMapper,
                             EmbeddingClient embeddingClient, AdminKnowledgeProperties properties,
-                            AdminModelFactory modelFactory, AiModelConfigMapper modelConfigMapper,
+                            AdminModelFactory modelFactory, ModelConfigAccess modelConfigAccess,
                             AesGcmCryptoUtil cryptoUtil, AiCodingAuditService auditService) {
         this.indexMapper = indexMapper;
         this.chunkMapper = chunkMapper;
         this.embeddingClient = embeddingClient;
         this.properties = properties;
         this.modelFactory = modelFactory;
-        this.modelConfigMapper = modelConfigMapper;
+        this.modelConfigAccess = modelConfigAccess;
         this.cryptoUtil = cryptoUtil;
         this.auditService = auditService;
     }
@@ -126,19 +127,21 @@ public class KnowledgeService {
         AiCodeKnowledgeIndex index = upsertBuildingIndex(indexName, sourcePath);
         Long indexId = index.getId();
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.KNOWLEDGE_INDEX, "-", indexName);
-        KNOWLEDGE_BUILD_EXECUTOR.submit(() -> {
-            try {
-                int count = doBuild(indexId, root);
-                markReady(indexId, count);
-                auditService.finish(audit, (String) null);
-                log.info("[knowledge] index built, indexId={}, name={}, chunks={}", indexId, indexName, count);
-            } catch (Exception e) {
-                markFailed(indexId, e);
-                auditService.finish(audit, e instanceof BizException be ? be.getResultCode().name() : "KNOWLEDGE_INDEX_FAILED");
-                log.error("[knowledge] index build failed, code={}, indexId={}, name={}",
-                    "KNOWLEDGE-INDEX-FAIL", indexId, indexName, e);
-            }
-        });
+        String tenantId = TenantContext.get();
+        KNOWLEDGE_BUILD_EXECUTOR.submit(() -> TenantContext.runWith(tenantId, () -> {
+                try {
+                    int count = doBuild(indexId, root);
+                    markReady(indexId, count);
+                    auditService.finish(audit, (String) null);
+                    log.info("[knowledge] index built, indexId={}, name={}, chunks={}", indexId, indexName, count);
+                } catch (Exception e) {
+                    markFailed(indexId, e);
+                    auditService.finish(audit,
+                        e instanceof BizException be ? be.getResultCode().name() : "KNOWLEDGE_INDEX_FAILED");
+                    log.error("[knowledge] index build failed, code={}, indexId={}, name={}",
+                        "KNOWLEDGE-INDEX-FAIL", indexId, indexName, e);
+                }
+            }));
         return indexId;
     }
 
@@ -170,23 +173,29 @@ public class KnowledgeService {
     /** 语义检索 top-k（应用层余弦相似度）。异步执行，Embedding/相似度不占 Tomcat 线程。 */
     public CompletableFuture<List<KnowledgeSearchHit>> search(Long indexId, String query, Integer topK) {
         requireReadyIndex(indexId);
-        return CompletableFuture.supplyAsync(() -> searchInternal(indexId, query, topK), KNOWLEDGE_QUERY_EXECUTOR);
+        String tenantId = TenantContext.get();
+        return CompletableFuture.supplyAsync(
+            () -> TenantContext.callWith(tenantId, () -> searchInternal(indexId, query, topK)),
+            KNOWLEDGE_QUERY_EXECUTOR);
     }
 
     /** 检索增强问答：检索 top-k → 拼上下文 → 一次性模型作答，回答带出处。 */
     public CompletableFuture<KnowledgeAskResponse> ask(Long indexId, String question, Integer topK) {
         requireReadyIndex(indexId);
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.KNOWLEDGE_ASK, "-", String.valueOf(indexId));
-        return CompletableFuture.supplyAsync(() -> {
-            List<KnowledgeSearchHit> hits = searchInternal(indexId, question, topK);
-            if (CollectionUtils.isEmpty(hits)) {
-                return new KnowledgeAskResponse("知识库中未检索到与问题相关的代码片段，请先构建/更新索引或调整提问。", List.of());
-            }
-            Model model = resolveDefaultChatModel();
-            String answer = callModelOnce(model, buildAskPrompt(question, hits));
-            return new KnowledgeAskResponse(answer, hits);
-        }, KNOWLEDGE_QUERY_EXECUTOR)
-            .whenComplete((result, error) -> auditService.finish(audit, error));
+        String tenantId = TenantContext.get();
+        return CompletableFuture.supplyAsync(() -> TenantContext.callWith(tenantId, () -> {
+                List<KnowledgeSearchHit> hits = searchInternal(indexId, question, topK);
+                if (CollectionUtils.isEmpty(hits)) {
+                    return new KnowledgeAskResponse(
+                        "知识库中未检索到与问题相关的代码片段，请先构建/更新索引或调整提问。", List.of());
+                }
+                Model model = resolveDefaultChatModel();
+                String answer = callModelOnce(model, buildAskPrompt(question, hits));
+                return new KnowledgeAskResponse(answer, hits);
+            }), KNOWLEDGE_QUERY_EXECUTOR)
+            .whenComplete((result, error) ->
+                TenantContext.runWith(tenantId, () -> auditService.finish(audit, error)));
     }
 
     /**
@@ -336,10 +345,7 @@ public class KnowledgeService {
 
     /** 解析可用的默认对话模型（isDefault 优先，否则首个启用行）构建 chat Model。 */
     private Model resolveDefaultChatModel() {
-        List<AiModelConfig> candidates = modelConfigMapper.selectList(new LambdaQueryWrapper<AiModelConfig>()
-            .eq(AiModelConfig::getStatus, 1)
-            .orderByDesc(AiModelConfig::getIsDefault)
-            .orderByAsc(AiModelConfig::getId));
+        List<AiModelConfig> candidates = modelConfigAccess.listPreferredEnabled(null);
         if (CollectionUtils.isEmpty(candidates)) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "未配置可用的对话模型用于知识库问答");
         }

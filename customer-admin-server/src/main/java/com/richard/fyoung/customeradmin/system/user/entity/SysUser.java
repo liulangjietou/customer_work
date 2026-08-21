@@ -25,7 +25,7 @@ public class SysUser {
     private String username;
 
     /**
-     * 归属租户；运营方为 {@code __platform__}。
+     * 归属租户；缺省归入系统唯一保留的 {@code default}。
      *
      * <p>其它业务实体都不需要这个字段（写入由租户拦截器自动补、查询自动过滤），
      * 唯独它要显式持有：登录时正是靠它决定这个用户该进哪个租户的上下文。</p>

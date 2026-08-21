@@ -12,6 +12,7 @@ import com.richard.fyoung.customeradmin.system.menu.service.MenuIconStorageServi
 import com.richard.fyoung.customeradmin.system.permission.dto.PermissionSaveRequest;
 import com.richard.fyoung.customeradmin.system.permission.dto.PermissionVO;
 import com.richard.fyoung.customeradmin.system.permission.service.PermissionService;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,12 +45,15 @@ public class MenuAdminController {
     private final PermissionService permissionService;
     private final MenuChangeLogService changeLogService;
     private final MenuIconStorageService iconStorageService;
+    private final CrossTenantAuthority crossTenantAuthority;
 
     public MenuAdminController(PermissionService permissionService, MenuChangeLogService changeLogService,
-                               MenuIconStorageService iconStorageService) {
+                               MenuIconStorageService iconStorageService,
+                               CrossTenantAuthority crossTenantAuthority) {
         this.permissionService = permissionService;
         this.changeLogService = changeLogService;
         this.iconStorageService = iconStorageService;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     @SaCheckPermission("menu:view")
@@ -62,6 +66,7 @@ public class MenuAdminController {
     @OperationLog(operation = "新建菜单节点", target = "sys_permission")
     @PostMapping
     public Result<Void> create(@Valid @RequestBody PermissionSaveRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         permissionService.create(request);
         return Result.success();
     }
@@ -70,6 +75,7 @@ public class MenuAdminController {
     @OperationLog(operation = "编辑菜单节点", target = "sys_permission")
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody PermissionSaveRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         permissionService.update(id, request);
         return Result.success();
     }
@@ -78,6 +84,7 @@ public class MenuAdminController {
     @OperationLog(operation = "删除菜单节点", target = "sys_permission")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         permissionService.delete(id);
         return Result.success();
     }
@@ -86,6 +93,7 @@ public class MenuAdminController {
     @OperationLog(operation = "拖拽调整菜单顺序", target = "sys_permission")
     @PutMapping("/reorder")
     public Result<Void> reorder(@Valid @RequestBody MenuReorderRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         permissionService.reorder(request);
         return Result.success();
     }
@@ -94,6 +102,7 @@ public class MenuAdminController {
     @OperationLog(operation = "发布菜单变更", target = "sys_permission")
     @PostMapping("/publish")
     public Result<Void> publish() {
+        crossTenantAuthority.requireCurrentUserAuthority();
         permissionService.publish();
         return Result.success();
     }
@@ -101,6 +110,7 @@ public class MenuAdminController {
     @SaCheckPermission("menu:edit")
     @PostMapping("/icon")
     public Result<String> uploadIcon(@RequestPart("file") MultipartFile file) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         return Result.success(iconStorageService.upload(file));
     }
 

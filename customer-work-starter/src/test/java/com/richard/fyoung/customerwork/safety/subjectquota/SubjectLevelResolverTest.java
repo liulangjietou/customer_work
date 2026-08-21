@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
- * 等级解析单测：绑定优先、按主体类型取配置档、租户覆盖平台档、回落内置档、绑定缓存与失效。
+ * 等级解析单测：绑定优先、按主体类型取配置档、租户覆盖 default 基线、回落内置档、绑定缓存与失效。
  * @author owlzhangfq@gmail.com
  */
 class SubjectLevelResolverTest {
@@ -42,7 +42,7 @@ class SubjectLevelResolverTest {
     @Test
     void resolve_shouldPreferBoundLevel_forUser() {
         TenantContext.set(TENANT);
-        saveLevel(TENANT, "vip", 999);
+        saveLevel("ACME", "vip", 999);
         SubjectQuotaLevel level = resolver(userId -> Optional.of("vip")).resolve(QuotaSubject.user("U-1"));
         assertEquals("vip", level.levelCode(), "用户绑定的等级优先于默认档");
     }
@@ -70,20 +70,20 @@ class SubjectLevelResolverTest {
     }
 
     @Test
-    void resolve_shouldPreferTenantLevel_overPlatformLevel() {
+    void resolve_shouldPreferTenantLevel_overDefaultBaseline() {
         TenantContext.set(TENANT);
         saveLevel(TenantContext.DEFAULT, "free", 100);
         saveLevel(TENANT, "free", 500);
         SubjectQuotaLevel level = resolver(userId -> Optional.empty()).resolve(QuotaSubject.user("U-1"));
-        assertEquals(500L, level.tokenLimit(), "租户自己配的那一档优先于平台默认租户的同名档");
+        assertEquals(500L, level.tokenLimit(), "租户自己配的那一档优先于 default 共享基线的同名档");
     }
 
     @Test
-    void resolve_shouldFallBackToPlatformLevel_whenTenantHasNone() {
+    void resolve_shouldFallBackToDefaultBaseline_whenTenantHasNone() {
         TenantContext.set(TENANT);
         saveLevel(TenantContext.DEFAULT, "free", 100);
         SubjectQuotaLevel level = resolver(userId -> Optional.empty()).resolve(QuotaSubject.user("U-1"));
-        assertEquals(100L, level.tokenLimit(), "租户没配时回落平台默认租户，免去每个租户重复配一遍");
+        assertEquals(100L, level.tokenLimit(), "租户没配时回落 default 共享基线，免去每个租户重复配一遍");
     }
 
     @Test
@@ -93,6 +93,20 @@ class SubjectLevelResolverTest {
         assertNotNull(level, "库里没有任何等级时必须回落内置档，否则开关一开却什么都不限");
         assertEquals("free", level.levelCode());
         assertEquals(50000L, level.tokenLimit(), "内置档数值须与出厂种子一致");
+    }
+
+    @Test
+    void resolve_shouldMatchBuiltinLevelCaseInsensitively() {
+        TenantContext.set(TENANT);
+        SubjectQuotaProperties.Level free = properties.getBuiltinLevels().get("free");
+        properties.setBuiltinLevels(Map.of("FrEe", free));
+        properties.setDefaultUserLevel("FREE");
+
+        SubjectQuotaLevel level = resolver(userId -> Optional.empty()).resolve(QuotaSubject.user("U-1"));
+
+        assertNotNull(level, "数据库等价的大小写别名不能绕过内置配额");
+        assertEquals("free", level.levelCode());
+        assertEquals(50000L, level.tokenLimit());
     }
 
     @Test

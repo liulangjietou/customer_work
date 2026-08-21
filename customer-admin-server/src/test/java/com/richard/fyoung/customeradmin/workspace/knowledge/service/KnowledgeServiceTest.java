@@ -1,6 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.knowledge.service;
 
-import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
@@ -13,6 +13,8 @@ import com.richard.fyoung.customeradmin.workspace.knowledge.entity.AiCodeKnowled
 import com.richard.fyoung.customeradmin.workspace.knowledge.entity.AiCodeKnowledgeIndex;
 import com.richard.fyoung.customeradmin.workspace.knowledge.mapper.AiCodeKnowledgeChunkMapper;
 import com.richard.fyoung.customeradmin.workspace.knowledge.mapper.AiCodeKnowledgeIndexMapper;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -20,12 +22,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -37,7 +43,7 @@ class KnowledgeServiceTest {
 
     private final AiCodeKnowledgeIndexMapper indexMapper = mock(AiCodeKnowledgeIndexMapper.class);
     private final AiCodeKnowledgeChunkMapper chunkMapper = mock(AiCodeKnowledgeChunkMapper.class);
-    private final AiModelConfigMapper modelConfigMapper = mock(AiModelConfigMapper.class);
+    private final ModelConfigAccess modelConfigAccess = mock(ModelConfigAccess.class);
     private final AdminModelFactory modelFactory = mock(AdminModelFactory.class);
     private final AesGcmCryptoUtil cryptoUtil = mock(AesGcmCryptoUtil.class);
     private final AiCodingAuditService auditService = mock(AiCodingAuditService.class);
@@ -66,8 +72,17 @@ class KnowledgeServiceTest {
     };
 
     private KnowledgeService newService(AdminKnowledgeProperties properties) {
-        return new KnowledgeService(indexMapper, chunkMapper, embeddingStub, properties,
-            modelFactory, modelConfigMapper, cryptoUtil, auditService);
+        return newService(properties, embeddingStub);
+    }
+
+    private KnowledgeService newService(AdminKnowledgeProperties properties, EmbeddingClient embeddingClient) {
+        return new KnowledgeService(indexMapper, chunkMapper, embeddingClient, properties,
+            modelFactory, modelConfigAccess, cryptoUtil, auditService);
+    }
+
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
     }
 
     @Test
@@ -94,6 +109,47 @@ class KnowledgeServiceTest {
         assertEquals("C.java", hits.get(1).sourcePath());
         assertTrue(hits.get(0).score() > hits.get(1).score(), "应按相似度降序");
         assertEquals(1.0d, hits.get(0).score(), 1e-4);
+    }
+
+    @Test
+    void searchAndAsk_shouldPropagateTenantContextToQueryWorker() throws Exception {
+        AtomicReference<String> searchTenant = new AtomicReference<>();
+        EmbeddingClient tenantAwareEmbedding = embeddingCapturingQueryTenant(searchTenant);
+        KnowledgeService service = newService(new AdminKnowledgeProperties(), tenantAwareEmbedding);
+        AiCodeKnowledgeIndex index = new AiCodeKnowledgeIndex();
+        index.setId(1L);
+        index.setStatus(AiCodeKnowledgeIndex.STATUS_READY);
+        when(indexMapper.selectById(1L)).thenReturn(index);
+        when(chunkMapper.selectList(any())).thenReturn(List.of());
+        TenantContext.set("tenant-a");
+
+        service.search(1L, "search", 1).get();
+        assertEquals("tenant-a", searchTenant.get());
+
+        searchTenant.set(null);
+        service.ask(1L, "ask", 1).get();
+        assertEquals("tenant-a", searchTenant.get());
+    }
+
+    @Test
+    void buildIndex_shouldPropagateTenantContextToBuildWorker(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("Demo.java"), "public class Demo { }\n");
+        AdminKnowledgeProperties properties = new AdminKnowledgeProperties();
+        properties.setAllowedRoots(new ArrayList<>(List.of(tempDir.toString())));
+        AtomicReference<String> buildTenant = new AtomicReference<>();
+        EmbeddingClient tenantAwareEmbedding = embeddingCapturingDocumentTenant(buildTenant);
+        KnowledgeService service = newService(properties, tenantAwareEmbedding);
+        doAnswer(invocation -> {
+            AiCodeKnowledgeIndex index = invocation.getArgument(0);
+            index.setId(9L);
+            return 1;
+        }).when(indexMapper).insert(any(AiCodeKnowledgeIndex.class));
+        TenantContext.set("tenant-a");
+
+        assertEquals(9L, service.buildIndex("demo", tempDir.toString()));
+
+        verify(indexMapper, timeout(5000).atLeastOnce()).updateById(any(AiCodeKnowledgeIndex.class));
+        assertEquals("tenant-a", buildTenant.get());
     }
 
     @Test
@@ -166,5 +222,55 @@ class KnowledgeServiceTest {
         chunk.setEmbedding(embeddingJson);
         chunk.setDimensions(2);
         return chunk;
+    }
+
+    private EmbeddingClient embeddingCapturingQueryTenant(AtomicReference<String> seenTenant) {
+        return new EmbeddingClient() {
+            @Override
+            public List<float[]> embedDocuments(List<String> texts) {
+                return List.of();
+            }
+
+            @Override
+            public float[] embedQuery(String text) {
+                seenTenant.set(TenantContext.get());
+                return new float[]{1f, 0f};
+            }
+
+            @Override
+            public int dimensions() {
+                return 2;
+            }
+
+            @Override
+            public String modelName() {
+                return "tenant-aware-test";
+            }
+        };
+    }
+
+    private EmbeddingClient embeddingCapturingDocumentTenant(AtomicReference<String> seenTenant) {
+        return new EmbeddingClient() {
+            @Override
+            public List<float[]> embedDocuments(List<String> texts) {
+                seenTenant.set(TenantContext.get());
+                return texts.stream().map(text -> new float[]{1f, 0f}).toList();
+            }
+
+            @Override
+            public float[] embedQuery(String text) {
+                return new float[]{1f, 0f};
+            }
+
+            @Override
+            public int dimensions() {
+                return 2;
+            }
+
+            @Override
+            public String modelName() {
+                return "tenant-aware-test";
+            }
+        };
     }
 }

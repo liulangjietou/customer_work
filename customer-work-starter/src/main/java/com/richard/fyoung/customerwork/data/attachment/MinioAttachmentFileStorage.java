@@ -7,6 +7,7 @@ import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.errors.ErrorResponseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,6 +15,8 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Map;
+import java.util.Optional;
 import org.springframework.http.MediaType;
 
 /**
@@ -103,6 +106,47 @@ public class MinioAttachmentFileStorage implements AttachmentFileStorage {
     }
 
     @Override
+    public Optional<byte[]> readIfExists(String storagePath) throws IOException {
+        try (GetObjectResponse resp = client.getObject(GetObjectArgs.builder()
+            .bucket(bucket)
+            .object(storagePath)
+            .build())) {
+            return Optional.of(resp.readAllBytes());
+        } catch (ErrorResponseException e) {
+            if (isObjectMissing(e)) {
+                return Optional.empty();
+            }
+            throw new IOException("failed to get object from minio, bucket=" + bucket + ", key=" + storagePath, e);
+        } catch (Exception e) {
+            throw new IOException("failed to get object from minio, bucket=" + bucket + ", key=" + storagePath, e);
+        }
+    }
+
+    @Override
+    public boolean storeAtIfAbsent(String storagePath, byte[] data) throws IOException {
+        try {
+            ensureBucket();
+            client.putObject(PutObjectArgs.builder()
+                .bucket(bucket)
+                .object(storagePath)
+                .headers(Map.of("If-None-Match", "*"))
+                .contentType(MediaType.APPLICATION_OCTET_STREAM_VALUE)
+                .stream(new ByteArrayInputStream(data), data.length, -1)
+                .build());
+            log.info("object stored to minio if absent, bucket={}, key={}, size={}",
+                bucket, storagePath, data.length);
+            return true;
+        } catch (ErrorResponseException e) {
+            if ("PreconditionFailed".equals(e.errorResponse().code())) {
+                return false;
+            }
+            throw new IOException("failed to put object to minio, bucket=" + bucket + ", key=" + storagePath, e);
+        } catch (Exception e) {
+            throw new IOException("failed to put object to minio, bucket=" + bucket + ", key=" + storagePath, e);
+        }
+    }
+
+    @Override
     public void delete(String storagePath) throws IOException {
         // 同 read：不做 ensureBucket。MinIO 的 removeObject 对不存在的对象本就不报错，天然满足幂等语义
         try {
@@ -135,5 +179,10 @@ public class MinioAttachmentFileStorage implements AttachmentFileStorage {
             }
             bucketEnsured = true;
         }
+    }
+
+    private boolean isObjectMissing(ErrorResponseException exception) {
+        String code = exception.errorResponse() == null ? null : exception.errorResponse().code();
+        return "NoSuchKey".equals(code) || "NoSuchObject".equals(code);
     }
 }

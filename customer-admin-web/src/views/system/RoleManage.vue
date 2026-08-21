@@ -7,10 +7,10 @@ import { fetchCurrentView } from '@/api/tenant'
 import { useCrudPage } from '@/composables/useCrudPage'
 import type { DataScope, PageQuery, PermissionVO, RoleSaveRequest, RoleVO } from '@/types/api'
 
-// 数据范围选项。ALL 只对平台运营方开放——租户管理员能在自己租户里建角色，
+// 数据范围选项。ALL 只对控制面角色开放——普通租户管理员能在自己租户里建角色，
 // 若让他选 ALL 就等于自己给自己开跨租户的口子（后端 RoleService 另有校验，这里只是不误导）。
-const DATA_SCOPE_OPTIONS: Array<{ value: DataScope; label: string; hint: string; platformOnly?: boolean }> = [
-  { value: 'ALL', label: '全部数据', hint: '可查看全部租户的数据，平台运营方专用', platformOnly: true },
+const DATA_SCOPE_OPTIONS: Array<{ value: DataScope; label: string; hint: string; controlPlaneOnly?: boolean }> = [
+  { value: 'ALL', label: '全部数据', hint: '可查看当前租户视角内的全部数据，仅控制面角色可授予', controlPlaneOnly: true },
   { value: 'TENANT', label: '本租户全部', hint: '本租户内所有成员的数据都可见' },
   { value: 'SELF', label: '仅本人', hint: '只能看到自己创建的项目、会话、附件、工作台账号等个人数据' },
 ]
@@ -21,9 +21,9 @@ const DATA_SCOPE_LABELS: Record<DataScope, string> = {
   SELF: '仅本人',
 }
 
-const platformOperator = ref(false)
+const crossTenantAuthority = ref(false)
 const scopeOptions = computed(() =>
-  DATA_SCOPE_OPTIONS.filter((option) => !option.platformOnly || platformOperator.value))
+  DATA_SCOPE_OPTIONS.filter((option) => !option.controlPlaneOnly || crossTenantAuthority.value))
 
 const tree = ref<PermissionVO[]>([])
 const formRef = ref<FormInstance>()
@@ -63,6 +63,7 @@ function openCreate() {
 }
 
 function openEdit(row: RoleVO) {
+  if (row.controlPlane && !crossTenantAuthority.value) return
   openEditBase(row)
   requestAnimationFrame(() => treeRef.value?.setCheckedKeys(row.permissionIds))
 }
@@ -70,9 +71,9 @@ function openEdit(row: RoleVO) {
 onMounted(async () => {
   loadList()
   tree.value = await permissionTree().catch(() => [])
-  // 拿不到就当作非平台运营方：多显示一个越权选项的代价，比少显示一个大得多
-  platformOperator.value = await fetchCurrentView()
-    .then((view) => view.platformOperator === true)
+  // 拿不到就当作不具备跨租户能力：多显示一个越权选项的代价，比少显示一个大得多
+  crossTenantAuthority.value = await fetchCurrentView()
+    .then((view) => view.crossTenantAuthority === true)
     .catch(() => false)
 })
 </script>
@@ -105,8 +106,24 @@ onMounted(async () => {
         <el-table-column prop="createTime" label="创建时间" width="180" />
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'role:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'role:delete'" link type="danger" :disabled="row.roleCode === 'super_admin'" @click="handleDelete(row)">删除</el-button>
+            <el-button
+              v-permission="'role:edit'"
+              link
+              type="primary"
+              :disabled="row.controlPlane && !crossTenantAuthority"
+              @click="openEdit(row)"
+            >
+              编辑
+            </el-button>
+            <el-button
+              v-permission="'role:delete'"
+              link
+              type="danger"
+              :disabled="row.roleCode === 'super_admin' || (row.controlPlane && !crossTenantAuthority)"
+              @click="handleDelete(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>

@@ -175,8 +175,8 @@ public class SubjectQuotaAdminService {
      * <p>不校验的话，配错一个字母的等级码会让这个人静默落回默认档——页面上显示着"已设为 vip"，
      * 线上按 free 拦，且没有任何地方会报错。</p>
      *
-     * <p>本租户与平台默认租户都算数：运行时的 {@code SubjectLevelResolver} 就是这么回落的
-     * （租户没配某档时用平台的同名档）。这里只认本租户，会把一个运行时完全合法的等级判成不存在。</p>
+     * <p>本租户与 default 共享基线都算数：运行时的 {@code SubjectLevelResolver} 就是这么回落的
+     * （租户没配某档时用 default 的同名档）。这里只认本租户，会把一个运行时完全合法的等级判成不存在。</p>
      */
     private void assertLevelExists(String tenantId, String levelCode) {
         if (levelCode == null) {
@@ -185,7 +185,7 @@ public class SubjectQuotaAdminService {
         if (hasLevel(tenantId, levelCode)) {
             return;
         }
-        if (!TenantContext.DEFAULT.equals(tenantId) && hasLevel(TenantContext.DEFAULT, levelCode)) {
+        if (!TenantContext.isDefaultTenant(tenantId) && hasLevel(TenantContext.DEFAULT, levelCode)) {
             return;
         }
         throw new BizException(ResultCode.PARAM_INVALID, "等级不存在：" + levelCode);
@@ -193,7 +193,7 @@ public class SubjectQuotaAdminService {
 
     private boolean hasLevel(String tenantId, String levelCode) {
         return levelStore().findByTenant(tenantId).stream()
-            .anyMatch(level -> level.levelCode().equals(levelCode));
+            .anyMatch(level -> level.levelCode().equalsIgnoreCase(levelCode));
     }
 
     // ---------- 后台用户分档 ----------

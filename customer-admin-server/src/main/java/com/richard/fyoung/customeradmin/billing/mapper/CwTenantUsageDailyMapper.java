@@ -27,6 +27,6 @@ public interface CwTenantUsageDailyMapper extends BaseMapper<CwTenantUsageDaily>
                                              @Param("from") LocalDate from,
                                              @Param("to") LocalDate to);
 
-    /** 跨租户汇总（运营方账单总览）。 */
+    /** 跨租户汇总（控制面账单总览）。 */
     List<UsageAggregate> sumGroupByTenant(@Param("from") LocalDate from, @Param("to") LocalDate to);
 }

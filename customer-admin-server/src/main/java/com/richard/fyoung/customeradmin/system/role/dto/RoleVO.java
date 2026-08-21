@@ -18,6 +18,8 @@ public class RoleVO {
     private Integer status;
     /** 数据范围：ALL / TENANT / SELF。 */
     private String dataScope;
+    /** 是否为控制面角色；只读返回，创建/编辑接口不接受客户端修改。 */
+    private Boolean controlPlane;
     private LocalDateTime createTime;
     private List<Long> permissionIds;
 }

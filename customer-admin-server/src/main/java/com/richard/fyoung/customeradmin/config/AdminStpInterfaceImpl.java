@@ -9,7 +9,7 @@ import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRolePermission;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRolePermissionMapper;
 import com.richard.fyoung.customeradmin.system.role.service.UserRoleResolver;
-import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -22,9 +22,9 @@ import java.util.List;
  *
  * <p><b>多租户下的两个要点</b>：</p>
  * <ul>
- *   <li>角色查询一律在<b>用户归属租户</b>下进行，而不是当前视角租户。运营方切到租户 X 的视角后，
- *       自己的角色仍在 {@code __platform__} 里，若按视角租户查会一条都查不到，当场失去全部权限。</li>
- *   <li>超管特判额外要求用户属于平台租户。租户可以自建角色，若只比 {@code role_code}，
+ *   <li>角色查询一律在<b>用户归属租户</b>下进行，而不是当前视角租户。控制面用户切到租户 X 的视角后，
+ *       自己的角色仍在原归属租户里，若按视角租户查会一条都查不到，当场失去全部权限。</li>
+ *   <li>超管特判额外要求同一个角色显式启用 {@code control_plane}。租户可以自建角色，若只比 {@code role_code}，
  *       任何租户建一个叫 {@code super_admin} 的角色就能拿到含 {@code tenant:*} 在内的全部权限点。</li>
  * </ul>
  * @author owlzhangfq@gmail.com
@@ -35,13 +35,16 @@ public class AdminStpInterfaceImpl implements StpInterface {
     private final UserRoleResolver userRoleResolver;
     private final SysRolePermissionMapper rolePermissionMapper;
     private final SysPermissionMapper permissionMapper;
+    private final CrossTenantAuthority crossTenantAuthority;
 
     public AdminStpInterfaceImpl(UserRoleResolver userRoleResolver,
                                  SysRolePermissionMapper rolePermissionMapper,
-                                 SysPermissionMapper permissionMapper) {
+                                 SysPermissionMapper permissionMapper,
+                                 CrossTenantAuthority crossTenantAuthority) {
         this.userRoleResolver = userRoleResolver;
         this.rolePermissionMapper = rolePermissionMapper;
         this.permissionMapper = permissionMapper;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     @Override
@@ -50,8 +53,9 @@ public class AdminStpInterfaceImpl implements StpInterface {
         if (roles.isEmpty()) {
             return List.of();
         }
-        boolean isSuperAdmin = TenantSession.isPlatformOperator()
-            && roles.stream().anyMatch(r -> SystemRoles.SUPER_ADMIN.equals(r.getRoleCode()));
+        boolean isSuperAdmin = roles.stream().anyMatch(role ->
+            SystemRoles.SUPER_ADMIN.equals(role.getRoleCode())
+                && crossTenantAuthority.isControlPlaneRole(role));
         if (isSuperAdmin) {
             return permissionMapper.selectList(null).stream()
                 .map(SysPermission::getPermCode)

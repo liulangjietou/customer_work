@@ -57,7 +57,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   排除 `RedisSessionPersistenceTest`。本批次自身加 admin +7。
   **导入/导出这类成对功能，测试要真的做一次往返**（导出的包再喂给解析器比对），
   只断言"zip 里有哪几个条目"照不出结构漂移。
-  sys_permission 下次从 **248** 起、admin Flyway 下次 **V63**。
+  sys_permission 下次从 **248** 起、admin Flyway 下次 **V64**、customer-work Flyway 下次 **V9**。
   上一版基线 2026-08-19 语义缓存流式接入批次：starter 1441 + admin 851，合计 2451）
   （2026-08-19 语义缓存流式接入批次实测：starter 1441 / 5 skip、admin 851 / 1 skip，BUILD SUCCESS，
   排除 `RedisSessionPersistenceTest`。本批次自身加 starter +9。
@@ -233,7 +233,10 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   ① **新增业务表一律带 `tenant_id`**，不要往忽略清单里加——清单越短越安全，加表等于放弃该表的自动隔离；
   ② **有意的跨租户查询必须走 `CrossTenantOperations`**（可 grep 的白名单），不要靠"给上下文塞特殊值"；
   ③ **权限查询用用户归属租户，数据查询用当前视角租户**（`AdminStpInterfaceImpl` 已按此实现），
-  混用会让运营方切视角后当场失去全部权限。缺上下文时持久层 fail-closed 抛错，这是刻意的。
+  混用会让控制面用户切视角后当场失去全部权限。缺上下文时持久层 fail-closed 抛错，这是刻意的。
+  `ai_model_config` 是例外的租户忽略表：管理面统一走 `ModelConfigService`，运行时统一走
+  `ModelConfigAccess`，禁止业务代码直接注入 `AiModelConfigMapper`；异步消费前还必须显式传播
+  `TenantContext`，否则运行时访问器会 fail-closed。
 - **水平扩展（B2 起）**：限流与成本熔断共用 `WindowCounter` SPI、会话串行锁走 `SessionLock` SPI，
   默认进程内，多副本部署切 `customer-work.distributed.{counter-mode,session-lock-mode}=redis`。
   两条约定：① Redis 实现失败一律**降级进程内**而非放行（保护性能力不能因基础设施故障消失）；
@@ -369,8 +372,12 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   ③ **`归属列 IS NULL` 视为租户内共享**：存量数据没有归属人，一并挡掉会让升级当天历史记录全部消失；
   ④ **UPDATE/DELETE 也要过滤**：只管列表页的话，用户看不到别人的行却能凭 ID 改删（`updateById`
   只按主键定位），这是实打实的越权；INSERT 反而不管，归属列由 `MyMetaObjectHandler` 一处写入；
-  ⑤ **`ALL` 必须同时校验用户归属平台租户**：租户管理员能建角色，只认字段值等于让任意租户
-  自己给自己开跨租户的口子（同 `AdminStpInterfaceImpl` 对超管的平台归属校验）；
+  ⑤ **`ALL` 必须同时校验当前用户的控制面角色**：租户管理员能建角色，只认字段值等于让任意租户
+  自己给自己开跨租户的口子；跨租户操作还必须叠加原有权限点，统一走 `CrossTenantAuthority`。
+  `control_plane` 不开放给普通角色编辑接口，控制面角色的分配、移除、恢复、编辑或删除也只允许已有控制面用户；
+  控制面专属权限统一由 `ControlPlanePermissions` 定义，同时约束租户开通、权限树与角色保存；
+  Controller 仍须叠加 `CrossTenantAuthority`，不能把角色权限关系当成唯一安全边界。敏感词过滤器完成按租户分片前，
+  其五个写入口同样按控制面能力收口，避免任一租户的高频词影响全局；
   ⑥ **对话会话复用既有的 `ai_workspace_session`，不另建归属表**：框架状态表加不了列，归属由
   `WorkspaceSessionGuard` 维护。本批次只给它接上范围——`SELF` 只放行自己认领的会话，
   `TENANT`/`ALL` 只校验会话存在于当前租户（超管要能看全量）。该表不进白名单：归属条件已在
@@ -378,7 +385,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **`admin.tenant.enabled` 从本批次起默认 `true`**（此前默认关闭 = 跨租户完全打通）。开关一开，
   凡是**不在 Web 请求里**的查库都会因缺租户上下文 fail-closed。四类都要显式处理，改动时别退回去：
   ① **无登录态的 HTTP 链路**：开放 API 走 `admin.open-api.tenant-tokens` 的令牌→租户映射、
-  工作台脚本回调从令牌行读租户、登录页轮播图归入平台级忽略清单（登录前无上下文可用）；
+  工作台脚本回调从令牌行读租户、登录页轮播图归入全局级忽略清单（登录前无上下文可用）；
   ② **调度线程与轮询守护线程**：内置调度器/XXL-JOB 走 `executeFromScheduler`（跨租户定位 + 按任务租户
   还原上下文）；内容风控词库刷新（`SensitiveWordRefreshDriver` 的守护线程）走 `CrossTenantOperations`
   加载全量词库——**它读失败会让过滤器 fail-closed"拦截一切"，后台对话全被拦**，而异常被 Store 的
@@ -386,7 +393,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   方向上安全优先；要按租户精确过滤得把过滤器改成分片，那是独立的一件事；
   ③ **启动期装配**：`@Bean` 工厂方法、`@PostConstruct`、`ContextRefreshedEvent` 里的查库。
   **这一类最容易漏且后果最重——A2A 的 `@Bean` 里查 `ai_agent` 直接让应用起不来**（实测踩过）；
-  `contextLoads` 照不出来，因为那条装配路径默认关着。判断依据：这类查询要么是平台级定位
+  `contextLoads` 照不出来，因为那条装配路径默认关着。判断依据：这类查询要么是全局唯一键定位
   （靠全局唯一的 `agent_code`/`task_code` 跨租户找一条），要么是跨租户运维扫描
   （重启清理孤儿任务），两者都走 `CrossTenantOperations`；
   ④ **异步回调**：模型连通性测试等跑在独立线程池里的落库。
@@ -414,4 +421,3 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 ## 本机环境
 
 本机专属信息（容器、凭据、IDE 坑）见 `CLAUDE.local.md`（gitignored，不进仓库）。
-

@@ -38,7 +38,7 @@ class WorkbenchAgentControllerTest {
         HttpServletRequest req = mock(HttpServletRequest.class);
         when(req.getRemoteAddr()).thenReturn("10.0.0.9");
         when(tokenService.validate("wbt_ok"))
-            .thenReturn(new WorkbenchTokenService.Principal(100L, "__platform__"));
+            .thenReturn(new WorkbenchTokenService.Principal(100L, "default"));
         WorkbenchAgentSiteVO vo = new WorkbenchAgentSiteVO();
         vo.setAccount("test-user");
         vo.setPassword("test-pass");

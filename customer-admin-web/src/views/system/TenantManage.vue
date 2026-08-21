@@ -12,7 +12,7 @@ import {
   type TenantVO,
 } from '@/api/tenant'
 
-// 租户管理：平台运营方专属。保留租户（default / __platform__）在后端受保护，
+// 租户管理：仅具备控制面角色及相应权限点的用户可用。保留租户 default 在后端受保护，
 // 前端同步禁用相应按钮，避免用户点了才收到报错。
 
 const STATUS_LABELS: Record<string, { text: string; type: 'success' | 'warning' | 'info' }> = {

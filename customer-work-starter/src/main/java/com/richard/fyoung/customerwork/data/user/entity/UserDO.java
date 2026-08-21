@@ -20,6 +20,9 @@ public class UserDO {
     @TableId(value = "id", type = IdType.INPUT)
     private String id;
 
+    /** 租户行归属；读取时回填权威编码，写入仍由 TenantLineInterceptor 统一约束。 */
+    private String tenantId;
+
     private String username;
     private String passwordHash;
     private String nickname;

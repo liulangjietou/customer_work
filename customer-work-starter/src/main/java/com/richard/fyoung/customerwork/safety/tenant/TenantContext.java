@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.safety.tenant;
 
+import java.util.Locale;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 /**
  * 当前请求的租户上下文（全链路唯一真源）。
@@ -17,12 +19,13 @@ import java.util.function.Supplier;
  */
 public final class TenantContext {
 
-    /** 平台运营方自身的租户 ID（运营方后台用户、平台共享模型配置挂在此租户下）。 */
-    public static final String PLATFORM = "__platform__";
-
-    /** 升级前存量数据归属的默认租户，等价于"原来那个单租户系统"。 */
+    /** 系统唯一保留租户：承接升级前存量数据，并作为共享配置的默认基线。 */
     public static final String DEFAULT = "default";
 
+    /** 与管理端租户编码入参共用：首字符必须是字母或数字，总长度不超过 64。 */
+    public static final String TENANT_ID_REGEX = "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$";
+
+    private static final Pattern TENANT_ID_PATTERN = Pattern.compile(TENANT_ID_REGEX);
     private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
 
     private TenantContext() {
@@ -34,7 +37,35 @@ public final class TenantContext {
             CURRENT.remove();
             return;
         }
-        CURRENT.set(tenantId);
+        if (!isValidTenantId(tenantId)) {
+            throw new IllegalArgumentException("tenantId format is invalid");
+        }
+        CURRENT.set(canonicalizeTenantId(tenantId));
+    }
+
+    /** 统一校验所有会话、JWT、API Key 与后台请求带入的租户编码。 */
+    public static boolean isValidTenantId(String tenantId) {
+        return tenantId != null && TENANT_ID_PATTERN.matcher(tenantId).matches();
+    }
+
+    /** 只归一系统保留租户；业务租户保留原大小写，避免改变已有外部资源命名空间。 */
+    public static String canonicalizeTenantId(String tenantId) {
+        return isDefaultTenant(tenantId) ? DEFAULT : tenantId;
+    }
+
+    /** 数据库大小写不敏感且可重建的内部键使用此规范形；不得用于对象存储、Nacos、工作区等外部命名空间。 */
+    public static String normalizedTenantKey(String tenantId) {
+        return tenantId == null ? null : tenantId.toLowerCase(Locale.ROOT);
+    }
+
+    /** 两个租户编码是否指向数据库里的同一租户。 */
+    public static boolean sameTenant(String left, String right) {
+        return left != null && right != null && left.equalsIgnoreCase(right);
+    }
+
+    /** default 在数据库大小写不敏感排序规则下只有一份，Java 边界必须采用相同判定语义。 */
+    public static boolean isDefaultTenant(String tenantId) {
+        return sameTenant(DEFAULT, tenantId);
     }
 
     /** 读取当前租户，未设置返回 {@code null}（判空由调用方按场景决定 fail-open 还是 fail-closed）。 */
@@ -63,8 +94,8 @@ public final class TenantContext {
     /**
      * 在指定租户下执行一段逻辑，结束后恢复原值。
      *
-     * <p>给三类没有请求上下文的场景用：定时任务、启动期初始化、运营方切换目标租户后的跨租户操作。
-     * 恢复而非清理，是因为调用可能嵌套（运营方在自己上下文里临时进入某租户）。</p>
+     * <p>给三类没有请求上下文的场景用：定时任务、启动期初始化、控制面用户切换目标租户后的跨租户操作。
+     * 恢复而非清理，是因为调用可能嵌套（控制面用户在原上下文里临时进入某租户）。</p>
      */
     public static <T> T callWith(String tenantId, Supplier<T> action) {
         String previous = CURRENT.get();

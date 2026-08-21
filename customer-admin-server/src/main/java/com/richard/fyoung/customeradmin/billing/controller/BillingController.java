@@ -13,7 +13,9 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -32,7 +34,7 @@ import java.util.List;
  * 配额与计费：租户配额维护、模型单价维护、账单报表、手工归集。
  *
  * <p>权限分层：账单明细（{@code billing:view}）租户管理员也能看自己那份；
- * 配额与单价的编辑、以及全平台总览是运营方专属，额外校验一次身份——
+ * 配额与单价的编辑、以及跨租户总览要求控制面角色，额外校验一次身份——
  * 全租户消费明细泄露的是全体客户名单与用量，不能只靠权限点配置正确。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -44,15 +46,18 @@ public class BillingController {
     private final ModelPriceAdminService priceService;
     private final BillingReportService reportService;
     private final UsageAggregationService aggregationService;
+    private final CrossTenantAuthority crossTenantAuthority;
 
     public BillingController(TenantQuotaService quotaService,
                              ModelPriceAdminService priceService,
                              BillingReportService reportService,
-                             UsageAggregationService aggregationService) {
+                             UsageAggregationService aggregationService,
+                             CrossTenantAuthority crossTenantAuthority) {
         this.quotaService = quotaService;
         this.priceService = priceService;
         this.reportService = reportService;
         this.aggregationService = aggregationService;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     // ---------- 租户配额 ----------
@@ -60,7 +65,7 @@ public class BillingController {
     @SaCheckPermission("billing:view")
     @GetMapping("/quota")
     public Result<List<TenantQuotaVO>> listQuota(@RequestParam String tenantId) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(quotaService.listByTenant(tenantId));
     }
 
@@ -68,7 +73,7 @@ public class BillingController {
     @OperationLog(operation = "保存租户配额", target = "cw_tenant_quota")
     @PostMapping("/quota")
     public Result<Void> saveQuota(@Valid @RequestBody TenantQuotaSaveRequest request) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         quotaService.save(request);
         return Result.success();
     }
@@ -77,7 +82,7 @@ public class BillingController {
     @OperationLog(operation = "删除租户配额", target = "cw_tenant_quota")
     @DeleteMapping("/quota")
     public Result<Void> deleteQuota(@RequestParam String tenantId, @RequestParam String period) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         quotaService.delete(tenantId, period);
         return Result.success();
     }
@@ -87,7 +92,7 @@ public class BillingController {
     @SaCheckPermission("billing:view")
     @GetMapping("/price")
     public Result<List<AiModelPrice>> listPrice() {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(priceService.list());
     }
 
@@ -95,7 +100,7 @@ public class BillingController {
     @OperationLog(operation = "新增模型单价", target = "ai_model_price")
     @PostMapping("/price")
     public Result<Long> createPrice(@Valid @RequestBody AiModelPrice request) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(priceService.create(request));
     }
 
@@ -103,7 +108,7 @@ public class BillingController {
     @OperationLog(operation = "删除模型单价", target = "ai_model_price")
     @DeleteMapping("/price/{id}")
     public Result<Void> deletePrice(@PathVariable Long id) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         priceService.delete(id);
         return Result.success();
     }
@@ -117,20 +122,21 @@ public class BillingController {
         @RequestParam(required = false) String tenantId,
         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        // 指定别的租户属于跨租户读，必须是运营方
-        if (tenantId != null && !tenantId.isBlank() && !tenantId.equals(TenantSession.effectiveTenant())) {
-            assertPlatformOperator();
+        // 指定别的租户属于跨租户读，必须具备控制面角色；接口权限点由注解继续校验
+        if (tenantId != null && !tenantId.isBlank()
+            && !TenantContext.sameTenant(tenantId, TenantSession.effectiveTenant())) {
+            assertCrossTenantAuthority();
         }
         return Result.success(reportService.tenantBill(tenantId, from, to));
     }
 
-    /** 全平台账单总览（运营方专属）。 */
+    /** 跨租户账单总览（控制面专属）。 */
     @SaCheckPermission("billing:view")
     @GetMapping("/overview")
     public Result<List<UsageAggregate>> platformOverview(
         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(reportService.platformOverview(from, to));
     }
 
@@ -144,12 +150,12 @@ public class BillingController {
     @PostMapping("/aggregate")
     public Result<Integer> aggregate(
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(aggregationService.aggregate(date));
     }
 
-    private void assertPlatformOperator() {
-        if (!TenantSession.isPlatformOperator()) {
+    private void assertCrossTenantAuthority() {
+        if (!crossTenantAuthority.hasCurrentUserAuthority()) {
             throw new BizException(ResultCode.TENANT_VIEW_FORBIDDEN);
         }
     }

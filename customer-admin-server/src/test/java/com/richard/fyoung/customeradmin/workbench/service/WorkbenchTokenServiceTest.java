@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.workbench.dto.WorkbenchTokenCreateReques
 import com.richard.fyoung.customeradmin.workbench.dto.WorkbenchTokenCreatedVO;
 import com.richard.fyoung.customeradmin.workbench.entity.WorkbenchToken;
 import com.richard.fyoung.customeradmin.workbench.mapper.WorkbenchTokenMapper;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -83,6 +84,7 @@ class WorkbenchTokenServiceTest {
         String rawToken = created.getToken();
         WorkbenchToken stored = capturedToken();
         stored.setRevoked(0);
+        stored.setTenantId(TenantContext.DEFAULT);
         when(tokenMapper.selectOne(any())).thenReturn(stored);
 
         WorkbenchTokenService.Principal principal = service.validate(rawToken);
@@ -126,6 +128,20 @@ class WorkbenchTokenServiceTest {
     void validate_shouldThrowUnauthorized_whenTokenBlank() {
         BizException ex = assertThrows(BizException.class, () -> service.validate("  "));
         assertEquals(ResultCode.UNAUTHORIZED, ex.getResultCode());
+    }
+
+    @Test
+    void validate_shouldRejectPersistedTokenWithInvalidTenant() {
+        WorkbenchToken token = new WorkbenchToken();
+        token.setUserId(USER_ID);
+        token.setRevoked(0);
+        token.setTenantId("_legacy");
+        when(tokenMapper.selectOne(any())).thenReturn(token);
+
+        BizException ex = assertThrows(BizException.class, () -> service.validate("wbt_legacy"));
+
+        assertEquals(ResultCode.UNAUTHORIZED, ex.getResultCode());
+        verify(tokenMapper, never()).updateById(token);
     }
 
     @Test

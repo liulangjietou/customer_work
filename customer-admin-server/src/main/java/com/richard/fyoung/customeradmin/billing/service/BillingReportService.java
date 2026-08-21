@@ -30,7 +30,7 @@ public class BillingReportService {
     /**
      * 单租户账单明细（按模型分组）。
      *
-     * <p>不传租户时取当前视角租户：运营方切到某租户就看那个租户的账，
+     * <p>不传租户时取当前视角租户：控制面用户切到某租户就看那个租户的账，
      * 租户管理员则恒等于自己——一套接口两种身份都成立。</p>
      */
     public List<UsageAggregate> tenantBill(String tenantId, LocalDate from, LocalDate to) {
@@ -38,15 +38,15 @@ public class BillingReportService {
         if (target == null) {
             return List.of();
         }
-        // 显式按 tenantId 查，跨租户豁免：运营方查别的租户时，当前上下文并不是目标租户
+        // 显式按 tenantId 查，跨租户豁免：控制面用户查别的租户时，当前上下文并不是目标租户
         return CrossTenantOperations.execute(
             () -> usageMapper.sumByTenantAndRange(target, from, to));
     }
 
     /**
-     * 全租户账单总览（运营方专属）。
+     * 全租户账单总览（控制面专属）。
      *
-     * <p>调用方必须先校验运营方身份——这是跨租户读，一旦被租户管理员调到就是全体客户的消费明细泄露。</p>
+     * <p>调用方必须先校验控制面角色与权限点——这是跨租户读，一旦被租户管理员调到就是全体客户的消费明细泄露。</p>
      */
     public List<UsageAggregate> platformOverview(LocalDate from, LocalDate to) {
         return CrossTenantOperations.execute(() -> usageMapper.sumGroupByTenant(from, to));

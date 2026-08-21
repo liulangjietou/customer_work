@@ -14,11 +14,16 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
-import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
+import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.configversion.entity.PublishScope;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -48,17 +53,22 @@ class CustomerWorkConfigPublisherTest {
 
     private final AiChannelBindingMapper bindingMapper = mock(AiChannelBindingMapper.class);
     private final AiAgentMapper agentMapper = mock(AiAgentMapper.class);
-    private final AiModelConfigMapper modelConfigMapper = mock(AiModelConfigMapper.class);
+    private final ModelConfigAccess modelConfigAccess = mock(ModelConfigAccess.class);
     private final AiAgentBackupModelMapper backupModelMapper = mock(AiAgentBackupModelMapper.class);
     private final AiAgentMcpMapper agentMcpMapper = mock(AiAgentMcpMapper.class);
     private final AiMcpMapper mcpMapper = mock(AiMcpMapper.class);
     private final AesGcmCryptoUtil cryptoUtil = mock(AesGcmCryptoUtil.class);
     private final AdminModelFactory modelFactory = mock(AdminModelFactory.class);
 
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
+    }
+
     private CustomerWorkConfigPublisher publisher(boolean enabled) {
         RuntimePublishProperties props = new RuntimePublishProperties();
         props.getNacos().setEnabled(enabled);
-        return new CustomerWorkConfigPublisher(bindingMapper, agentMapper, modelConfigMapper,
+        return new CustomerWorkConfigPublisher(bindingMapper, agentMapper, modelConfigAccess,
             backupModelMapper, agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, props);
     }
 
@@ -94,7 +104,8 @@ class CustomerWorkConfigPublisherTest {
         backup.setModelId(200L);
         backup.setSortOrder(0);
         when(backupModelMapper.selectList(any())).thenReturn(List.of(backup));
-        when(modelConfigMapper.selectById(200L)).thenReturn(model(200L, "dashscope", "qwen-max", "CIPHER_FB"));
+        when(modelConfigAccess.findVisibleById(200L))
+            .thenReturn(model(200L, "dashscope", "qwen-max", "CIPHER_FB"));
 
         // 绑定的 MCP：sse 型，config 带 url
         AiAgentMcp rel = new AiAgentMcp();
@@ -164,7 +175,7 @@ class CustomerWorkConfigPublisherTest {
         RuntimePublishProperties properties = new RuntimePublishProperties();
         properties.getNacos().setEnabled(true);
         CustomerWorkConfigPublisher publisher = new CustomerWorkConfigPublisher(
-            bindingMapper, agentMapper, modelConfigMapper, backupModelMapper, agentMcpMapper,
+            bindingMapper, agentMapper, modelConfigAccess, backupModelMapper, agentMcpMapper,
             mcpMapper, cryptoUtil, modelFactory, properties, true);
         AiChannelBinding binding = new AiChannelBinding();
         binding.setAgentId(1L);
@@ -173,7 +184,7 @@ class CustomerWorkConfigPublisherTest {
         when(bindingMapper.selectList(any())).thenReturn(List.of(binding));
         when(agentMapper.selectById(1L)).thenReturn(agent());
         AiModelConfig primary = model(100L, "openai", "gpt-4o", "CIPHER");
-        when(modelConfigMapper.selectById(100L)).thenReturn(primary);
+        when(modelConfigAccess.findVisibleById(100L)).thenReturn(primary);
         when(cryptoUtil.decrypt("CIPHER")).thenReturn("sk-plain");
         when(modelFactory.testConnectivity(anyString(), anyString(), anyString(), anyString()))
             .thenReturn(new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), "ok"));
@@ -190,6 +201,59 @@ class CustomerWorkConfigPublisherTest {
     }
 
     @Test
+    void grayDataId_shouldCanonicalizeDefaultAliasOnly() {
+        CustomerWorkConfigPublisher publisher = publisher(true);
+
+        assertEquals("customer-work-runtime-config-tenant-default", publisher.grayDataId(" DEFAULT "));
+        assertEquals("customer-work-runtime-config-tenant-AcMe", publisher.grayDataId("AcMe"),
+            "业务租户外部 dataId 必须保留存量编码大小写");
+        assertThrows(IllegalArgumentException.class, () -> publisher.grayDataId("__platform__"));
+    }
+
+    @Test
+    void rollback_shouldMigrateLegacyBaseSnapshotToCurrentTenantDataId() {
+        RuntimePublishProperties properties = new RuntimePublishProperties();
+        CustomerWorkConfigPublisher publisher = new CustomerWorkConfigPublisher(
+            bindingMapper, agentMapper, modelConfigAccess, backupModelMapper, agentMcpMapper,
+            mcpMapper, cryptoUtil, modelFactory, properties, true);
+        TenantContext.set("tenant-a");
+
+        String dataId = publisher.resolveRollbackDataId(
+            "customer-work-runtime-config", PublishScope.FULL, List.of());
+
+        assertEquals("customer-work-runtime-config-tenant-tenant-a", dataId,
+            "旧全局快照只能迁入当前租户专属 dataId，不能继续覆盖全局 base");
+    }
+
+    @Test
+    void rollback_shouldRejectSnapshotDataIdOwnedByAnotherTenant() {
+        RuntimePublishProperties properties = new RuntimePublishProperties();
+        CustomerWorkConfigPublisher publisher = new CustomerWorkConfigPublisher(
+            bindingMapper, agentMapper, modelConfigAccess, backupModelMapper, agentMcpMapper,
+            mcpMapper, cryptoUtil, modelFactory, properties, true);
+        TenantContext.set("tenant-a");
+
+        BizException exception = assertThrows(BizException.class, () -> publisher.resolveRollbackDataId(
+            "customer-work-runtime-config-tenant-tenant-b", PublishScope.FULL, List.of()));
+
+        assertEquals(ResultCode.PARAM_INVALID, exception.getResultCode());
+    }
+
+    @Test
+    void rollback_shouldRequireGraySnapshotToContainCurrentTenant() {
+        RuntimePublishProperties properties = new RuntimePublishProperties();
+        CustomerWorkConfigPublisher publisher = new CustomerWorkConfigPublisher(
+            bindingMapper, agentMapper, modelConfigAccess, backupModelMapper, agentMcpMapper,
+            mcpMapper, cryptoUtil, modelFactory, properties, true);
+        TenantContext.set("tenant-a");
+
+        BizException exception = assertThrows(BizException.class, () -> publisher.resolveRollbackDataId(
+            "customer-work-runtime-config-tenant-tenant-a", PublishScope.GRAY, List.of("tenant-b")));
+
+        assertEquals(ResultCode.PARAM_INVALID, exception.getResultCode());
+    }
+
+    @Test
     void republishBlockedWhenConnectivityProbeFails() {
         CustomerWorkConfigPublisher publisher = publisher(true);
         AiChannelBinding binding = new AiChannelBinding();
@@ -198,7 +262,8 @@ class CustomerWorkConfigPublisherTest {
         binding.setStatus(1);
         when(bindingMapper.selectOne(any())).thenReturn(binding);
         when(agentMapper.selectById(1L)).thenReturn(agent());
-        when(modelConfigMapper.selectById(100L)).thenReturn(model(100L, "openai", "gpt-4o", "CIPHER"));
+        when(modelConfigAccess.findVisibleById(100L))
+            .thenReturn(model(100L, "openai", "gpt-4o", "CIPHER"));
         when(cryptoUtil.decrypt("CIPHER")).thenReturn("sk-plain");
         when(modelFactory.testConnectivity(eq("openai"), anyString(), eq("sk-plain"), eq("gpt-4o")))
             .thenReturn(new ModelTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(), "401 unauthorized"));
@@ -212,9 +277,8 @@ class CustomerWorkConfigPublisherTest {
     void disabledPublisherIsNoOp() {
         CustomerWorkConfigPublisher publisher = publisher(false);
         publisher.publishForAgentId(1L);
-        publisher.publishForModelId(100L);
         assertTrue(!publisher.isEnabled());
-        verifyNoInteractions(bindingMapper, agentMapper, modelConfigMapper);
+        verifyNoInteractions(bindingMapper, agentMapper, modelConfigAccess);
         verify(agentMcpMapper, never()).selectList(any());
     }
 
@@ -234,6 +298,34 @@ class CustomerWorkConfigPublisherTest {
             // 模拟事务提交：触发 afterCommit → 恰好发布一次
             TransactionSynchronizationManager.getSynchronizations()
                 .forEach(TransactionSynchronization::afterCommit);
+            verify(bindingMapper).selectList(any());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void deferredPublish_shouldRestoreCapturedOwningTenant() {
+        RuntimePublishProperties properties = new RuntimePublishProperties();
+        properties.getNacos().setEnabled(true);
+        CustomerWorkConfigPublisher publisher = new CustomerWorkConfigPublisher(
+            bindingMapper, agentMapper, modelConfigAccess, backupModelMapper, agentMcpMapper,
+            mcpMapper, cryptoUtil, modelFactory, properties, true);
+        when(bindingMapper.selectList(any())).thenAnswer(invocation -> {
+            assertEquals("tenant-a", TenantContext.get());
+            return List.of();
+        });
+
+        TenantContext.set("tenant-a");
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            publisher.publishForAgentId(1L);
+            TenantContext.set("tenant-b");
+
+            TransactionSynchronizationManager.getSynchronizations()
+                .forEach(TransactionSynchronization::afterCommit);
+
+            assertEquals("tenant-b", TenantContext.get(), "回调结束后必须恢复触发线程原租户");
             verify(bindingMapper).selectList(any());
         } finally {
             TransactionSynchronizationManager.clearSynchronization();

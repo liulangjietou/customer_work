@@ -28,11 +28,29 @@ class TenantContextTest {
     }
 
     @Test
+    void set_shouldCanonicalizeOnlyDefaultCaseAlias() {
+        TenantContext.set("DEFAULT");
+
+        assertEquals(TenantContext.DEFAULT, TenantContext.get());
+        assertTrue(TenantContext.isDefaultTenant("Default"));
+        assertTrue(TenantContext.sameTenant("Tenant-A", "tenant-a"));
+        assertEquals("tenant-a", TenantContext.normalizedTenantKey("Tenant-A"));
+        assertFalse(TenantContext.isDefaultTenant("default-tenant"));
+    }
+
+    @Test
     void set_shouldTreatBlankAsClear() {
         TenantContext.set("acme");
         TenantContext.set("  ");
         assertNull(TenantContext.get(), "空白值应视为清理，不能留下半初始化状态");
         assertFalse(TenantContext.isPresent(), "清理后应判定为未设置");
+    }
+
+    @Test
+    void set_shouldRejectTenantIdOutsideCreationContract() {
+        assertThrows(IllegalArgumentException.class, () -> TenantContext.set("_legacy"));
+        assertThrows(IllegalArgumentException.class, () -> TenantContext.set("tenant/escape"));
+        assertFalse(TenantContext.isPresent(), "非法租户不能污染线程上下文");
     }
 
     @Test

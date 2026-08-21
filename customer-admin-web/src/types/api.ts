@@ -86,7 +86,7 @@ export interface UserSaveRequest {
 }
 
 // ---------- system.role ----------
-/** 角色数据范围：ALL 全部租户 / TENANT 本租户全部 / SELF 仅本人创建。 */
+/** 角色数据范围：ALL 当前租户视角内全部 / TENANT 本租户全部 / SELF 仅本人创建。 */
 export type DataScope = 'ALL' | 'TENANT' | 'SELF'
 
 export interface RoleVO {
@@ -96,6 +96,8 @@ export interface RoleVO {
   remark: string | null
   status: number
   dataScope: DataScope
+  /** 是否为控制面角色；只读字段，不能由角色编辑接口修改。 */
+  controlPlane: boolean
   createTime: string
   permissionIds: number[]
 }

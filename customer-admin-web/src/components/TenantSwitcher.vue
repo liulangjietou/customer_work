@@ -3,37 +3,37 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchCurrentView, listTenantOptions, switchTenantView, type TenantVO } from '@/api/tenant'
 
-// 顶栏租户切换器：只有平台运营方看得到。租户管理员的视角恒等于自己所属租户，
-// 给他渲染一个只有一项的下拉毫无意义，故直接不渲染。
-
-const PLATFORM = '__platform__'
-
-const platformOperator = ref(false)
+// 顶栏租户切换器：只有具备控制面跨租户能力的用户看得到。
+// 普通租户管理员的视角恒等于自己所属租户，无需渲染只有一项的下拉。
+const crossTenantAuthority = ref(false)
+const userTenant = ref<string | null>(null)
 const effectiveTenant = ref<string | null>(null)
 const options = ref<TenantVO[]>([])
 const switching = ref(false)
 
-/** 平台视角在下拉里是一个显式选项，而不是"空值"——空值看起来像没选，容易误以为出了问题。 */
 const selected = computed({
-  get: () => effectiveTenant.value ?? PLATFORM,
+  get: () => effectiveTenant.value ?? userTenant.value ?? '',
   set: (value: string) => void handleSwitch(value),
 })
 
 async function load() {
   const view = await fetchCurrentView()
-  platformOperator.value = view.platformOperator === true
+  crossTenantAuthority.value = view.crossTenantAuthority === true
+  userTenant.value = view.userTenantId
   effectiveTenant.value = view.effectiveTenantId
-  if (platformOperator.value) {
-    options.value = await listTenantOptions()
+  if (crossTenantAuthority.value) {
+    options.value = (await listTenantOptions())
+      .filter((tenant) => tenant.tenantCode !== userTenant.value)
   }
 }
 
 async function handleSwitch(tenantCode: string) {
-  if (switching.value || tenantCode === (effectiveTenant.value ?? PLATFORM)) return
+  if (switching.value || tenantCode === (effectiveTenant.value ?? userTenant.value)) return
   switching.value = true
   try {
-    await switchTenantView(tenantCode === PLATFORM ? undefined : tenantCode)
-    ElMessage.success(tenantCode === PLATFORM ? '已回到平台视角' : `已切换到租户 ${tenantCode}`)
+    const returnToOwnTenant = tenantCode === userTenant.value
+    await switchTenantView(returnToOwnTenant ? undefined : tenantCode)
+    ElMessage.success(returnToOwnTenant ? '已回到自身租户视角' : `已切换到租户 ${tenantCode}`)
     // 整页重载：当前页面上的列表、详情、缓存都属于上一个租户，逐个刷新既繁琐又容易漏掉一处
     window.location.reload()
   } finally {
@@ -46,7 +46,7 @@ onMounted(load)
 
 <template>
   <el-select
-    v-if="platformOperator"
+    v-if="crossTenantAuthority"
     v-model="selected"
     class="tenant-switcher"
     size="default"
@@ -56,7 +56,11 @@ onMounted(load)
     <template #prefix>
       <el-icon><OfficeBuilding /></el-icon>
     </template>
-    <el-option label="平台视角（全部）" :value="PLATFORM" />
+    <el-option
+      v-if="userTenant"
+      :label="`自身租户（${userTenant}）`"
+      :value="userTenant"
+    />
     <el-option
       v-for="item in options"
       :key="item.tenantCode"

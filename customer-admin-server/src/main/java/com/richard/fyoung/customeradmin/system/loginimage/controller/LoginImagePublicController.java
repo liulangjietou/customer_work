@@ -50,6 +50,10 @@ public class LoginImagePublicController {
     @GetMapping("/**")
     public ResponseEntity<byte[]> image(HttpServletRequest request) {
         String key = ImageMediaTypes.extractKey(request, LoginImageStorageService.URL_PREFIX);
+        String imageUrl = LoginImageStorageService.URL_PREFIX + key;
+        if (!storageService.ownsKey(key) && !imageService.isReferencedImageUrl(imageUrl)) {
+            return ResponseEntity.notFound().build();
+        }
         try {
             byte[] data = storageService.read(key);
             return ResponseEntity.ok()

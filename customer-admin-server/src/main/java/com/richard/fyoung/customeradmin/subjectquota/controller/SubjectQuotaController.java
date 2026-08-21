@@ -13,8 +13,10 @@ import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaLevelVO;
 import com.richard.fyoung.customeradmin.subjectquota.dto.SubjectQuotaUserVO;
 import com.richard.fyoung.customeradmin.subjectquota.dto.UserLevelSaveRequest;
 import com.richard.fyoung.customeradmin.subjectquota.service.SubjectQuotaAdminService;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaHitRank;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,7 +33,7 @@ import java.util.List;
  *
  * <p><b>租户取当前视角</b>（{@link TenantSession#effectiveTenant()}）而不是让前端传：
  * 等级与用户名单都是租户内数据，让参数决定读哪个租户，等于把越权做成了一个查询参数。
- * 运营方要看别的租户，走已有的"切换视角"，权限校验在那一步完成。</p>
+ * 控制面用户要看别的租户，走已有的"切换视角"，角色与权限点校验在那一步完成。</p>
  *
  * <p>与租户配额（{@code /api/billing/quota}）的分工见 {@code SubjectQuotaGuard} 类注释：
  * 那边是计费上限，这边是防滥用闸门，两者同时生效。</p>
@@ -42,9 +44,12 @@ import java.util.List;
 public class SubjectQuotaController {
 
     private final SubjectQuotaAdminService service;
+    private final CrossTenantAuthority crossTenantAuthority;
 
-    public SubjectQuotaController(SubjectQuotaAdminService service) {
+    public SubjectQuotaController(SubjectQuotaAdminService service,
+                                  CrossTenantAuthority crossTenantAuthority) {
         this.service = service;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     // ---------- 等级 ----------
@@ -59,7 +64,9 @@ public class SubjectQuotaController {
     @OperationLog(operation = "保存配额等级", target = "cw_subject_quota_level")
     @PostMapping("/levels")
     public Result<Void> saveLevel(@Valid @RequestBody SubjectQuotaLevelSaveRequest request) {
-        service.saveLevel(TenantSession.effectiveTenant(), request);
+        String tenantId = TenantSession.effectiveTenant();
+        requireDefaultBaselineAuthority(tenantId);
+        service.saveLevel(tenantId, request);
         return Result.success();
     }
 
@@ -67,7 +74,9 @@ public class SubjectQuotaController {
     @OperationLog(operation = "删除配额等级", target = "cw_subject_quota_level")
     @DeleteMapping("/levels")
     public Result<Void> deleteLevel(@RequestParam String levelCode) {
-        service.deleteLevel(TenantSession.effectiveTenant(), levelCode);
+        String tenantId = TenantSession.effectiveTenant();
+        requireDefaultBaselineAuthority(tenantId);
+        service.deleteLevel(tenantId, levelCode);
         return Result.success();
     }
 
@@ -120,5 +129,12 @@ public class SubjectQuotaController {
     public Result<List<SubjectQuotaHitRank>> rankHits(@RequestParam(defaultValue = "24") int hours,
                                                       @RequestParam(defaultValue = "20") int limit) {
         return Result.success(service.rankHits(TenantSession.effectiveTenant(), hours, limit));
+    }
+
+    /** default 档位是所有业务租户的共享回退基线，写它必须额外具备控制面身份。 */
+    private void requireDefaultBaselineAuthority(String tenantId) {
+        if (TenantContext.isDefaultTenant(tenantId)) {
+            crossTenantAuthority.requireCurrentUserAuthority();
+        }
     }
 }

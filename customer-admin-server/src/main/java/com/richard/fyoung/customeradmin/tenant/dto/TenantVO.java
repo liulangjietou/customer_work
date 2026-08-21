@@ -22,6 +22,6 @@ public class TenantVO {
     private LocalDateTime expireTime;
     private LocalDateTime createTime;
 
-    /** 是否为保留租户（default / __platform__）：保留租户不允许改编码、不允许冻结或退租。 */
+    /** 是否为保留租户（仅 default）：保留租户不允许改编码、不允许冻结或退租。 */
     private Boolean reserved;
 }

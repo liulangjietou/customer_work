@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.GZIPOutputStream;
 
@@ -98,6 +99,57 @@ class SessionWorkspaceStorageTest {
     }
 
     @Test
+    void hydrateDefault_shouldCopyLegacyPlatformArchiveOnRead(@TempDir Path tmp) throws Exception {
+        InMemoryObjectStore store = new InMemoryObjectStore();
+        SessionWorkspaceStorage storage = new SessionWorkspaceStorage(store, "workspaces/", BIG_ENOUGH);
+        Path legacy = Files.createDirectories(tmp.resolve("legacy"));
+        Files.writeString(legacy.resolve("result.txt"), "kept", StandardCharsets.UTF_8);
+        store.objects.put("workspaces/__platform__::coder/sess-legacy.tar.gz", storage.archive(legacy));
+        TenantContext.set(TenantContext.DEFAULT);
+
+        Path restored = tmp.resolve("restored");
+        storage.hydrate("coder", "sess-legacy", restored);
+
+        assertEquals("kept", Files.readString(restored.resolve("result.txt"), StandardCharsets.UTF_8));
+        assertTrue(store.objects.containsKey("workspaces/default::coder/sess-legacy.tar.gz"),
+            "成功恢复后应复制到 default key，后续不再依赖历史命名空间");
+        assertTrue(store.objects.containsKey("workspaces/__platform__::coder/sess-legacy.tar.gz"),
+            "兼容读取不能删除旧对象，便于回滚与人工校验");
+    }
+
+    @Test
+    void hydrateDefault_shouldPreferConcurrentDefaultArchive(@TempDir Path tmp) throws Exception {
+        InMemoryObjectStore store = new InMemoryObjectStore();
+        SessionWorkspaceStorage storage = new SessionWorkspaceStorage(store, "workspaces/", BIG_ENOUGH);
+        Path legacy = Files.createDirectories(tmp.resolve("legacy"));
+        Files.writeString(legacy.resolve("result.txt"), "legacy", StandardCharsets.UTF_8);
+        Path current = Files.createDirectories(tmp.resolve("current"));
+        Files.writeString(current.resolve("result.txt"), "current", StandardCharsets.UTF_8);
+        store.objects.put("workspaces/__platform__::coder/sess-race.tar.gz", storage.archive(legacy));
+        store.concurrentWriteOnStoreIfAbsent = storage.archive(current);
+        TenantContext.set(TenantContext.DEFAULT);
+
+        Path restored = tmp.resolve("restored-race");
+        storage.hydrate("coder", "sess-race", restored);
+
+        assertEquals("current", Files.readString(restored.resolve("result.txt"), StandardCharsets.UTF_8),
+            "迁移期间出现 default 新对象时必须重读新对象，不能展示或覆盖历史副本");
+    }
+
+    @Test
+    void hydrateDefault_shouldNotCopyCorruptedLegacyArchive(@TempDir Path tmp) {
+        InMemoryObjectStore store = new InMemoryObjectStore();
+        SessionWorkspaceStorage storage = new SessionWorkspaceStorage(store, "workspaces/", BIG_ENOUGH);
+        store.objects.put("workspaces/__platform__::coder/sess-bad.tar.gz", new byte[] {1, 2, 3});
+        TenantContext.set(TenantContext.DEFAULT);
+
+        storage.hydrate("coder", "sess-bad", tmp.resolve("restored-bad"));
+
+        assertFalse(store.objects.containsKey("workspaces/default::coder/sess-bad.tar.gz"),
+            "历史归档必须先成功解包验证，损坏内容不能固化到 default key");
+    }
+
+    @Test
     void hydrate_shouldSkip_whenLocalWorkspaceNotEmpty(@TempDir Path tmp) throws Exception {
         InMemoryObjectStore store = new InMemoryObjectStore();
         SessionWorkspaceStorage storage = new SessionWorkspaceStorage(store, "workspaces/", BIG_ENOUGH);
@@ -180,6 +232,7 @@ class SessionWorkspaceStorageTest {
     /** 进程内对象存储替身：只用到 storeAt / read。 */
     private static class InMemoryObjectStore implements AttachmentFileStorage {
         private final Map<String, byte[]> objects = new ConcurrentHashMap<>();
+        private byte[] concurrentWriteOnStoreIfAbsent;
 
         @Override
         public String store(byte[] data, String id, String ext) {
@@ -200,6 +253,21 @@ class SessionWorkspaceStorageTest {
                 throw new IOException("object not found: " + storagePath);
             }
             return data;
+        }
+
+        @Override
+        public Optional<byte[]> readIfExists(String storagePath) {
+            return Optional.ofNullable(objects.get(storagePath));
+        }
+
+        @Override
+        public boolean storeAtIfAbsent(String storagePath, byte[] data) {
+            if (concurrentWriteOnStoreIfAbsent != null) {
+                objects.put(storagePath, concurrentWriteOnStoreIfAbsent);
+                concurrentWriteOnStoreIfAbsent = null;
+                return false;
+            }
+            return objects.putIfAbsent(storagePath, data) == null;
         }
 
         @Override

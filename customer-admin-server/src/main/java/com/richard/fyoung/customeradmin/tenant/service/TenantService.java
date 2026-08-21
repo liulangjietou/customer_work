@@ -19,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
-import java.util.Set;
 
 /**
  * 租户主数据与生命周期。
@@ -31,9 +30,6 @@ import java.util.Set;
 @Slf4j
 @Service
 public class TenantService {
-
-    /** 系统保留租户：不允许改编码、不允许冻结/退租/删除，否则存量数据会失去归属或平台自身被锁死。 */
-    private static final Set<String> RESERVED_TENANTS = Set.of(TenantContext.DEFAULT, TenantContext.PLATFORM);
 
     private final SysTenantMapper tenantMapper;
     private final TenantProvisionService provisionService;
@@ -65,7 +61,7 @@ public class TenantService {
         return result;
     }
 
-    /** 全部可用租户（运营方切换视角的下拉数据源）。 */
+    /** 全部可用租户（控制面用户切换视角的下拉数据源）。 */
     public List<TenantVO> listActive() {
         return tenantMapper.selectList(new LambdaQueryWrapper<SysTenant>()
                 .eq(SysTenant::getStatus, TenantStatus.ACTIVE.name())
@@ -85,6 +81,7 @@ public class TenantService {
         SysTenant entity = new SysTenant();
         BeanUtils.copyProperties(request, entity);
         entity.setId(null);
+        entity.setTenantCode(TenantContext.normalizedTenantKey(request.getTenantCode()));
         entity.setStatus(TenantStatus.ACTIVE.name());
         tenantMapper.insert(entity);
 
@@ -97,11 +94,12 @@ public class TenantService {
     public void update(TenantSaveRequest request) {
         SysTenant existing = requireById(request.getId());
         // 编码是各业务表 tenant_id 的取值来源，改它等于让该租户的存量数据集体失去归属
-        if (!existing.getTenantCode().equals(request.getTenantCode())) {
+        if (!TenantContext.sameTenant(existing.getTenantCode(), request.getTenantCode())) {
             throw new BizException(ResultCode.TENANT_CODE_IMMUTABLE);
         }
         SysTenant entity = new SysTenant();
         BeanUtils.copyProperties(request, entity);
+        entity.setTenantCode(existing.getTenantCode());
         entity.setStatus(existing.getStatus());
         tenantMapper.updateById(entity);
         log.info("tenant updated, code={}", entity.getTenantCode());
@@ -132,11 +130,11 @@ public class TenantService {
     /**
      * 登录与接口调用前的租户可用性校验：不存在、已冻结、已退租、已过期一律拒绝。
      *
-     * <p>这是"租户级熔断"的唯一落点——运营方冻结一个租户后，该租户的所有登录立刻失效。</p>
+     * <p>这是"租户级熔断"的唯一落点——控制面冻结一个租户后，该租户的所有登录立刻失效。</p>
      */
     public void assertAccessible(String tenantCode) {
-        // 平台自身不受租户生命周期约束，否则运营方会把自己锁在门外
-        if (TenantContext.PLATFORM.equals(tenantCode)) {
+        // default 承担系统保留数据与控制面入口，不受租户生命周期约束，避免系统被整体锁死
+        if (TenantContext.isDefaultTenant(tenantCode)) {
             return;
         }
         SysTenant tenant = findByCode(tenantCode);
@@ -147,17 +145,31 @@ public class TenantService {
             throw new BizException(ResultCode.TENANT_SUSPENDED);
         }
         if (tenant.getExpireTime() != null && tenant.getExpireTime().isBefore(java.time.LocalDateTime.now())) {
-            throw new BizException(ResultCode.TENANT_SUSPENDED, "租户已到期，请联系运营方续约");
+            throw new BizException(ResultCode.TENANT_SUSPENDED, "租户已到期，请联系管理员续约");
         }
     }
 
-    /** 租户编码是否存在且可用（运营方切换视角时校验目标租户）。 */
+    /** 租户编码是否存在且可用（控制面用户切换视角时校验目标租户）。 */
     public boolean existsAccessible(String tenantCode) {
-        if (TenantContext.PLATFORM.equals(tenantCode)) {
-            return true;
+        return resolveAccessibleCode(tenantCode) != null;
+    }
+
+    /**
+     * 返回数据库保存的权威租户编码；不存在、不可用或已过期时返回 {@code null}。
+     * 外部资源命名空间依赖租户编码原始大小写，不能把请求里的数据库等价别名直接写进会话。
+     */
+    public String resolveAccessibleCode(String tenantCode) {
+        if (TenantContext.isDefaultTenant(tenantCode)) {
+            return TenantContext.DEFAULT;
         }
         SysTenant tenant = findByCode(tenantCode);
-        return tenant != null && TenantStatus.parse(tenant.getStatus()).allowsAccess();
+        if (tenant == null || !TenantStatus.parse(tenant.getStatus()).allowsAccess()) {
+            return null;
+        }
+        if (tenant.getExpireTime() != null && tenant.getExpireTime().isBefore(java.time.LocalDateTime.now())) {
+            return null;
+        }
+        return tenant.getTenantCode();
     }
 
     public SysTenant findByCode(String tenantCode) {
@@ -177,7 +189,7 @@ public class TenantService {
     }
 
     private void assertNotReserved(String tenantCode) {
-        if (RESERVED_TENANTS.contains(tenantCode)) {
+        if (TenantContext.isDefaultTenant(tenantCode)) {
             throw new BizException(ResultCode.TENANT_RESERVED_PROTECTED);
         }
     }
@@ -185,7 +197,7 @@ public class TenantService {
     private TenantVO toVO(SysTenant entity) {
         TenantVO vo = new TenantVO();
         BeanUtils.copyProperties(entity, vo);
-        vo.setReserved(RESERVED_TENANTS.contains(entity.getTenantCode()));
+        vo.setReserved(TenantContext.isDefaultTenant(entity.getTenantCode()));
         return vo;
     }
 }

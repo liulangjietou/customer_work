@@ -55,7 +55,7 @@ class TenantLineHandlerTest {
         assertNotNull(interceptor, "应构建出可用拦截器");
 
         CustomerWorkTenantLineHandler built =
-            new CustomerWorkTenantLineHandler("tenant_id", TenantInterceptors.PLATFORM_LEVEL_TABLES);
+            new CustomerWorkTenantLineHandler("tenant_id", TenantInterceptors.TENANT_IGNORED_TABLES);
         assertTrue(built.ignoreTable("ai_chat_session_state"), "框架自建表必须在忽略清单里，否则会拼出不存在的列");
         assertTrue(built.ignoreTable("ai_model_config"), "两级可见的模型配置由 Service 层过滤，不走自动改写");
         assertTrue(built.ignoreTable("flyway_schema_history"), "迁移元数据表不属于任何租户");

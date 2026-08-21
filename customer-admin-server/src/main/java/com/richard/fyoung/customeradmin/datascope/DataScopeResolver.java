@@ -4,7 +4,7 @@ import cn.dev33.satoken.exception.SaTokenException;
 import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.service.UserRoleResolver;
-import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -17,17 +17,19 @@ import java.util.List;
 public class DataScopeResolver {
 
     private final UserRoleResolver userRoleResolver;
+    private final CrossTenantAuthority crossTenantAuthority;
 
-    public DataScopeResolver(UserRoleResolver userRoleResolver) {
+    public DataScopeResolver(UserRoleResolver userRoleResolver, CrossTenantAuthority crossTenantAuthority) {
         this.userRoleResolver = userRoleResolver;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     /**
      * 当前用户的生效范围；未登录或不在 Web 上下文时返回 {@code null}（调用方据此不做限制）。
      *
-     * <p><b>ALL 额外要求用户归属平台租户</b>。租户管理员可以在自己租户里建角色，
+     * <p><b>ALL 额外要求用户具备显式控制面角色</b>。租户管理员可以在自己租户里建角色，
      * 若不加这道校验，任意租户建一个数据范围为 ALL 的角色就能越出自己的租户——
-     * 这与 {@code AdminStpInterfaceImpl} 对超管角色额外校验平台归属是同一个道理：
+     * 这与 {@code AdminStpInterfaceImpl} 对超管角色额外校验控制面字段是同一个道理：
      * 凡是"能越出本租户"的判定，都不能只看租户自己能改的字段。</p>
      */
     public DataScope resolve() {
@@ -44,7 +46,7 @@ public class DataScopeResolver {
         for (SysRole role : roles) {
             widest = DataScope.widest(widest, DataScope.parse(role.getDataScope()));
         }
-        if (widest == DataScope.ALL && !TenantSession.isPlatformOperator()) {
+        if (widest == DataScope.ALL && !crossTenantAuthority.hasAuthority(roles)) {
             return DataScope.TENANT;
         }
         return widest;

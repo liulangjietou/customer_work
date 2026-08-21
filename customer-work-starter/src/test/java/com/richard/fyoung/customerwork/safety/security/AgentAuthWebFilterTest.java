@@ -117,6 +117,24 @@ class AgentAuthWebFilterTest {
     }
 
     @Test
+    void tenantMode_signedTokenWithInvalidTenant_shouldReturn401() {
+        CustomerWorkProperties properties = props();
+        properties.getTenant().setEnabled(true);
+        AgentAuthWebFilter filter = new AgentAuthWebFilter(properties);
+        String token = AgentAccessCredential.sign(
+            "agent-7", "_legacy", System.currentTimeMillis() + 60_000, SECRET);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/agent/tickets")
+                .header("X-Agent-Token", token));
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        filter.filter(exchange, recordingChain(invoked)).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+    }
+
+    @Test
     void agentPath_expiredToken_shouldReturn401() {
         AgentAuthWebFilter filter = new AgentAuthWebFilter(props());
         String token = AgentAccessCredential.sign("agent-7", System.currentTimeMillis() - 1000, SECRET);

@@ -76,12 +76,13 @@ public class DiagnosticService {
     public SessionDiagnostic diagnose(String sessionId, int auditLimit, int factLimit) {
         SessionDiagnostic d = new SessionDiagnostic();
         d.setSessionId(sessionId);
-        String tenant = tenantResolver.resolve(sessionId);
-        d.setTenantId(tenant);
+        String stateTenant = tenantResolver.resolve(sessionId);
+        String dataTenant = tenantResolver.resolveDataScope(sessionId);
+        d.setTenantId(dataTenant);
 
         // 1) 持久化短期状态是否存在
         try {
-            d.setStateExists(sessionStateManager.exists(tenant, sessionId));
+            d.setStateExists(sessionStateManager.exists(stateTenant, sessionId));
         } catch (Exception e) {
             degrade(d, "state", e);
         }
@@ -126,7 +127,7 @@ public class DiagnosticService {
 
         // 6) 质检失败事实（按 sessionId 过滤租户事实流水，取最近 factLimit 条）
         try {
-            List<String> matched = factLog.read(tenant).stream()
+            List<String> matched = factLog.read(dataTenant).stream()
                 .filter(fact -> fact != null && fact.contains(sessionId))
                 .collect(Collectors.toList());
             if (matched.size() > factLimit) {
@@ -138,7 +139,7 @@ public class DiagnosticService {
         }
 
         log.info("session diagnosed, sessionId={} tenant={} stateExists={} approvals={} auditEvents={} degraded={}",
-            sessionId, tenant, d.isStateExists(), d.getApprovals().size(),
+            sessionId, dataTenant, d.isStateExists(), d.getApprovals().size(),
             d.getRecentAudit().size(), d.getDegradedSources());
         return d;
     }

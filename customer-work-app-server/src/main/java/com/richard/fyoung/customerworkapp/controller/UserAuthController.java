@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.util.StringUtils;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -109,8 +110,10 @@ public class UserAuthController {
             .map(account -> {
                 Map<String, Object> body = new LinkedHashMap<>();
                 // 租户焊进令牌：后续请求一律以令牌里的为准，不再看客户端传什么
+                String authoritativeTenant = StringUtils.hasText(account.getTenantId())
+                    ? account.getTenantId() : tenantId;
                 body.put("token", jwtService.issue(
-                    account.getId(), account.getUsername(), account.getNickname(), tenantId));
+                    account.getId(), account.getUsername(), account.getNickname(), authoritativeTenant));
                 body.put("userId", account.getId());
                 body.put("nickname", account.getNickname());
                 body.put("expiresAtMs", jwtService.expiresAtMs());
@@ -120,7 +123,13 @@ public class UserAuthController {
 
     /** 客户端未提供租户线索时归默认租户，保证单租户部署的既有前端不改一行也能继续用。 */
     private String resolveTenant(String tenantCode) {
-        return tenantCode == null || tenantCode.isBlank() ? TenantContext.DEFAULT : tenantCode;
+        if (tenantCode == null || tenantCode.isBlank()) {
+            return TenantContext.DEFAULT;
+        }
+        if (!TenantContext.isValidTenantId(tenantCode)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "租户编码格式不正确");
+        }
+        return tenantCode;
     }
 
     @Operation(summary = "当前登录信息", description = "需 Bearer 令牌；令牌无效返回 401")
@@ -167,7 +176,12 @@ public class UserAuthController {
         if (authorization == null || !authorization.startsWith(HttpAuthConstants.BEARER_PREFIX)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "missing bearer token");
         }
-        return jwtService.verify(authorization.substring(HttpAuthConstants.BEARER_PREFIX.length()))
+        UserPrincipal principal = jwtService.verify(
+                authorization.substring(HttpAuthConstants.BEARER_PREFIX.length()))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid or expired token"));
+        if (!TenantContext.isValidTenantId(principal.tenantId())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "token tenant is invalid");
+        }
+        return principal;
     }
 }

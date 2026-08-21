@@ -10,6 +10,7 @@ import com.richard.fyoung.customeradmin.configversion.dto.GrayReleaseRequest;
 import com.richard.fyoung.customeradmin.configversion.entity.ConfigType;
 import com.richard.fyoung.customeradmin.configversion.service.ConfigRollbackService;
 import com.richard.fyoung.customeradmin.configversion.service.ConfigVersionService;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,16 +32,20 @@ public class ConfigVersionController {
 
     private final ConfigVersionService versionService;
     private final ConfigRollbackService rollbackService;
+    private final CrossTenantAuthority crossTenantAuthority;
 
     public ConfigVersionController(ConfigVersionService versionService,
-                                   ConfigRollbackService rollbackService) {
+                                   ConfigRollbackService rollbackService,
+                                   CrossTenantAuthority crossTenantAuthority) {
         this.versionService = versionService;
         this.rollbackService = rollbackService;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     @SaCheckPermission("config-version:view")
     @GetMapping("/page")
     public Result<PageResult<ConfigVersionVO>> page(ConfigVersionPageQuery query) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         return Result.success(versionService.page(query));
     }
 
@@ -48,6 +53,7 @@ public class ConfigVersionController {
     @SaCheckPermission("config-version:view")
     @GetMapping("/{id}")
     public Result<ConfigVersionVO> detail(@PathVariable Long id) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         return Result.success(versionService.detail(id));
     }
 
@@ -56,6 +62,7 @@ public class ConfigVersionController {
     @GetMapping("/list")
     public Result<List<ConfigVersionVO>> listByTarget(@RequestParam String configType,
                                                       @RequestParam String targetCode) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         return Result.success(versionService.listByTarget(ConfigType.parse(configType), targetCode));
     }
 
@@ -70,6 +77,7 @@ public class ConfigVersionController {
     @PostMapping("/{id}/rollback")
     public Result<Integer> rollback(@PathVariable Long id,
                                     @RequestParam(required = false) String remark) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         return Result.success(rollbackService.rollback(id, remark));
     }
 
@@ -79,6 +87,7 @@ public class ConfigVersionController {
     @PostMapping("/{id}/gray")
     public Result<Integer> grayRelease(@PathVariable Long id,
                                        @Valid @RequestBody GrayReleaseRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         return Result.success(rollbackService.grayRelease(id, request.getTenantCodes(), request.getRemark()));
     }
 }

@@ -132,7 +132,9 @@ public class WsSessionRegistry {
 
     private String tenantId() {
         String tenantId = TenantContext.get();
-        return tenantId == null ? TenantContext.DEFAULT : tenantId;
+        return tenantId == null
+            ? TenantContext.DEFAULT
+            : TenantContext.normalizedTenantKey(tenantId);
     }
 
     private String serialize(WsFrame frame) {

@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.safety.security;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
@@ -49,7 +51,8 @@ public final class AgentAccessCredential {
     public static String sign(String agentId, String tenantId, long expiresAtMs, String secret) {
         requireTokenPart(agentId, "agentId");
         requireTokenPart(tenantId, "tenantId");
-        String payload = agentId + SEPARATOR + tenantId + SEPARATOR + expiresAtMs;
+        String canonicalTenant = TenantContext.canonicalizeTenantId(tenantId);
+        String payload = agentId + SEPARATOR + canonicalTenant + SEPARATOR + expiresAtMs;
         String signature = base64Url(hmac(payload, secret));
         return payload + SEPARATOR + signature;
     }
@@ -105,7 +108,10 @@ public final class AgentAccessCredential {
         if (agentId.isBlank() || (tenantId != null && tenantId.isBlank())) {
             return Optional.empty();
         }
-        return Optional.of(new AgentIdentity(agentId, tenantId));
+        if (tenantId != null && !TenantContext.isValidTenantId(tenantId)) {
+            return Optional.empty();
+        }
+        return Optional.of(new AgentIdentity(agentId, TenantContext.canonicalizeTenantId(tenantId)));
     }
 
     /** 经过 HMAC 验证的坐席身份。 */

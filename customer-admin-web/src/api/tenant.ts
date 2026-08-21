@@ -1,7 +1,7 @@
 import { request } from './request'
 
 // 租户管理 API，与 admin-server /api/tenant/** 契约对应。
-// 除 current-view 外全部是平台运营方专属接口，后端会二次校验调用者身份。
+// 除 current-view 外全部要求控制面角色与对应权限点，后端会二次校验调用者身份。
 
 export interface TenantVO {
   id: number
@@ -14,7 +14,7 @@ export interface TenantVO {
   remark: string | null
   expireTime: string | null
   createTime: string | null
-  /** 保留租户（default / __platform__）不允许改编码、冻结、退租或删除。 */
+  /** 保留租户 default 不允许改编码、冻结、退租或删除。 */
   reserved: boolean
 }
 
@@ -47,7 +47,7 @@ export interface TenantPageResult {
 export interface TenantViewVO {
   userTenantId: string | null
   effectiveTenantId: string | null
-  platformOperator: boolean
+  crossTenantAuthority: boolean
 }
 
 export function pageTenants(params: TenantPageQuery) {
@@ -84,7 +84,7 @@ export function fetchCurrentView() {
   return request<TenantViewVO>({ url: '/tenant/current-view', method: 'get' })
 }
 
-/** 运营方切换目标租户视角；不传 tenantCode 回到平台自身视角。 */
+/** 控制面用户切换目标租户视角；不传 tenantCode 回到自身租户视角。 */
 export function switchTenantView(tenantCode?: string) {
   return request<void>({ url: '/tenant/switch-view', method: 'put', params: { tenantCode } })
 }

@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.safety.quota;
 
 import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
+import com.richard.fyoung.customerwork.safety.tenant.LegacyTenantCompatibility;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +27,6 @@ public class TenantQuotaGuard {
     private static final Logger log = LoggerFactory.getLogger(TenantQuotaGuard.class);
 
     private static final String KEY_PREFIX = "quota:";
-
     private final TenantQuotaStore quotaStore;
     private final WindowCounter counter;
     private final boolean enabled;
@@ -66,7 +66,7 @@ public class TenantQuotaGuard {
             if (!quota.enabled() || !quota.hasTokenLimit()) {
                 continue;
             }
-            long used = counter.current(counterKey(tenant, period), period.retentionSeconds());
+            long used = currentUsage(tenant, period);
             if (used >= quota.tokenLimit()) {
                 log.error("tenant token quota exceeded, code={}, tenant={}, period={}, used={}, limit={}, action={}",
                     "QUOTA-TOKEN-EXCEEDED", tenant, period, used, quota.tokenLimit(), quota.exceedAction());
@@ -101,18 +101,29 @@ public class TenantQuotaGuard {
     /** 当前周期已用量（后台展示"额度用了多少"用）。 */
     public long currentUsage(String tenantId, QuotaPeriod period) {
         String tenant = resolveTenant(tenantId);
-        return tenant == null ? 0L : counter.current(counterKey(tenant, period), period.retentionSeconds());
+        if (tenant == null) {
+            return 0L;
+        }
+        long current = counter.current(counterKey(tenant, period), period.retentionSeconds());
+        if (!TenantContext.isDefaultTenant(tenant)) {
+            return current;
+        }
+        // V7 只迁数据库，Redis 里最长 40 天的月度用量不会随 SQL 迁移；过渡期必须与 default 求和。
+        long legacy = counter.current(counterKey(LegacyTenantCompatibility.PLATFORM_TENANT_ID, period),
+            period.retentionSeconds());
+        return current > Long.MAX_VALUE - legacy ? Long.MAX_VALUE : current + legacy;
     }
 
     /** 计数键含周期标识（如 {@code quota:acme:MONTHLY:2026-08}），跨周期自然归零，无需显式重置。 */
     private String counterKey(String tenantId, QuotaPeriod period) {
-        return KEY_PREFIX + tenantId + ":" + period.name() + ":" + period.periodKey(LocalDate.now());
+        return KEY_PREFIX + TenantContext.canonicalizeTenantId(tenantId)
+            + ":" + period.name() + ":" + period.periodKey(LocalDate.now());
     }
 
     private String resolveTenant(String tenantId) {
         if (tenantId != null && !tenantId.isBlank()) {
-            return tenantId;
+            return TenantContext.canonicalizeTenantId(tenantId);
         }
-        return TenantContext.get();
+        return TenantContext.canonicalizeTenantId(TenantContext.get());
     }
 }

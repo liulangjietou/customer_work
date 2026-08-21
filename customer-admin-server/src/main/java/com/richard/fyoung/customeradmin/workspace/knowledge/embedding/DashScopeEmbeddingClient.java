@@ -1,17 +1,14 @@
 package com.richard.fyoung.customeradmin.workspace.knowledge.embedding;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
-import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminKnowledgeProperties;
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
-import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
 import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
@@ -32,15 +29,13 @@ import java.util.List;
 @Component
 public class DashScopeEmbeddingClient implements EmbeddingClient {
 
-    private static final int IS_DEFAULT = 1;
-
-    private final AiModelConfigMapper modelConfigMapper;
+    private final ModelConfigAccess modelConfigAccess;
     private final AesGcmCryptoUtil cryptoUtil;
     private final com.richard.fyoung.customerwork.data.knowledge.embedding.DashScopeEmbeddingClient delegate;
 
-    public DashScopeEmbeddingClient(AiModelConfigMapper modelConfigMapper, AesGcmCryptoUtil cryptoUtil,
+    public DashScopeEmbeddingClient(ModelConfigAccess modelConfigAccess, AesGcmCryptoUtil cryptoUtil,
                                     AdminKnowledgeProperties properties) {
-        this.modelConfigMapper = modelConfigMapper;
+        this.modelConfigAccess = modelConfigAccess;
         this.cryptoUtil = cryptoUtil;
         this.delegate = new com.richard.fyoung.customerwork.data.knowledge.embedding.DashScopeEmbeddingClient(
             this::resolveApiKey, properties.getEmbeddingBaseUrl(), properties.getEmbeddingModel(),
@@ -85,17 +80,11 @@ public class DashScopeEmbeddingClient implements EmbeddingClient {
      * 保住 {@link ResultCode#KNOWLEDGE_EMBEDDING_NOT_CONFIGURED} 这一更精确的语义。
      */
     String resolveApiKey() {
-        List<AiModelConfig> candidates = modelConfigMapper.selectList(new LambdaQueryWrapper<AiModelConfig>()
-            .eq(AiModelConfig::getProvider, ModelProviders.DASHSCOPE)
-            .eq(AiModelConfig::getStatus, StatusFlags.ENABLED)
-            .orderByDesc(AiModelConfig::getIsDefault)
-            .orderByAsc(AiModelConfig::getId));
-        if (CollectionUtils.isEmpty(candidates)) {
+        List<AiModelConfig> candidates = modelConfigAccess.listPreferredEnabled(ModelProviders.DASHSCOPE);
+        if (candidates.isEmpty()) {
             throw new BizException(ResultCode.KNOWLEDGE_EMBEDDING_NOT_CONFIGURED);
         }
-        AiModelConfig config = candidates.stream()
-            .filter(c -> Integer.valueOf(IS_DEFAULT).equals(c.getIsDefault()))
-            .findFirst().orElse(candidates.get(0));
+        AiModelConfig config = candidates.get(0);
         String apiKey = cryptoUtil.decrypt(config.getApiKey());
         if (!StringUtils.hasText(apiKey)) {
             throw new BizException(ResultCode.KNOWLEDGE_EMBEDDING_NOT_CONFIGURED);

@@ -58,7 +58,11 @@ public class AgentAuthWebFilter implements WebFilter {
         if (authenticated.tenantId() == null || authenticated.tenantId().isBlank()) {
             return AuthResponses.unauthorized(exchange, "agent token tenant is missing");
         }
-        if (TenantContext.isPresent() && !authenticated.tenantId().equals(TenantContext.get())) {
+        if (!TenantContext.isValidTenantId(authenticated.tenantId())) {
+            return AuthResponses.unauthorized(exchange, "agent token tenant is invalid");
+        }
+        if (TenantContext.isPresent()
+            && !TenantContext.sameTenant(authenticated.tenantId(), TenantContext.get())) {
             return AuthResponses.forbidden(exchange, "credential tenant mismatch");
         }
         return chainWithTenant(exchange, chain, authenticated.tenantId());

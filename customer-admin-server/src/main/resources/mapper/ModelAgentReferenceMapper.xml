@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.aiconfig.model.mapper.ModelAgentReferenceMapper">
+
+    <resultMap id="modelAgentReferenceMap"
+               type="com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelAgentReference">
+        <result property="tenantId" column="tenant_id"/>
+        <result property="agentId" column="agent_id"/>
+        <result property="agentCode" column="agent_code"/>
+    </resultMap>
+
+    <!--
+      主模型与备用模型引用统一投影为 tenantId/agentId/agentCode。
+      tenantId 非空时显式限定私有模型的当前租户，并继续叠加租户拦截器；
+      只有 default 共享模型的调用方会传 null，并以 CrossTenantOperations 显式关闭拦截器。
+    -->
+    <select id="findReferences" resultMap="modelAgentReferenceMap">
+        SELECT refs.tenant_id, refs.agent_id, refs.agent_code
+        FROM (
+            SELECT agent.tenant_id, agent.id AS agent_id, agent.agent_code
+            FROM ai_agent agent
+            WHERE agent.model_id = #{modelId}
+              AND agent.deleted = 0
+              <if test="tenantId != null and tenantId != ''">
+                  AND agent.tenant_id = #{tenantId}
+              </if>
+            UNION
+            SELECT agent.tenant_id, agent.id AS agent_id, agent.agent_code
+            FROM ai_agent_backup_model backup
+            INNER JOIN ai_agent agent
+                    ON agent.id = backup.agent_id
+                   AND agent.tenant_id = backup.tenant_id
+                   AND agent.deleted = 0
+            WHERE backup.model_id = #{modelId}
+              <if test="tenantId != null and tenantId != ''">
+                  AND agent.tenant_id = #{tenantId}
+              </if>
+        ) refs
+        ORDER BY refs.tenant_id, refs.agent_id
+    </select>
+</mapper>

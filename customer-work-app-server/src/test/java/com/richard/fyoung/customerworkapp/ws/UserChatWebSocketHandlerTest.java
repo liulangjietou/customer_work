@@ -9,6 +9,7 @@ import com.richard.fyoung.customerworkapp.chat.ChatDispatchService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.HandshakeInfo;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.Disposable;
@@ -63,6 +64,23 @@ class UserChatWebSocketHandlerTest {
         connection.dispose();
         assertNull(TenantContext.get());
         verify(registry).unregisterUser("user-1", sink);
+    }
+
+    @Test
+    void legacyTenantTokenShouldCloseWithPolicyViolation() {
+        UserJwtService jwtService = mock(UserJwtService.class);
+        WebSocketSession session = mock(WebSocketSession.class);
+        UserPrincipal principal = new UserPrincipal("user-1", "alice", "Alice", "__platform__");
+        when(jwtService.verify("jwt-token")).thenReturn(Optional.of(principal));
+        when(session.getHandshakeInfo()).thenReturn(handshake("/ws/user?token=jwt-token"));
+        when(session.close(CloseStatus.POLICY_VIOLATION)).thenReturn(Mono.empty());
+
+        UserChatWebSocketHandler handler = new UserChatWebSocketHandler(
+            jwtService, mock(ChatDispatchService.class), mock(WsSessionRegistry.class), new ObjectMapper());
+
+        handler.handle(session).block();
+
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
     }
 
     private static HandshakeInfo handshake(String path) {

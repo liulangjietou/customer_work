@@ -9,6 +9,7 @@ import com.richard.fyoung.customerworkapp.chat.ChatDispatchService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.HandshakeInfo;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.Disposable;
@@ -66,6 +67,25 @@ class AgentChatWebSocketHandlerTest {
         connection.dispose();
         assertNull(TenantContext.get());
         verify(registry).unregisterAgent("agent-1", sink);
+    }
+
+    @Test
+    void legacyTenantTokenShouldCloseWithPolicyViolation() {
+        CustomerWorkProperties properties = new CustomerWorkProperties();
+        properties.getTenant().setEnabled(true);
+        properties.getAgentAccess().setSecret(SECRET);
+        WebSocketSession session = mock(WebSocketSession.class);
+        String token = AgentAccessCredential.sign(
+            "agent-1", "__platform__", System.currentTimeMillis() + 60_000L, SECRET);
+        when(session.getHandshakeInfo()).thenReturn(handshake("/ws/agent?token=" + token));
+        when(session.close(CloseStatus.POLICY_VIOLATION)).thenReturn(Mono.empty());
+
+        AgentChatWebSocketHandler handler = new AgentChatWebSocketHandler(
+            properties, mock(ChatDispatchService.class), mock(WsSessionRegistry.class), new ObjectMapper());
+
+        handler.handle(session).block();
+
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
     }
 
     private static HandshakeInfo handshake(String path) {

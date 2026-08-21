@@ -146,7 +146,9 @@ admin:
     url: ${ADMIN_LDAP_URL:}
     domain-suffix: ${ADMIN_LDAP_DOMAIN_SUFFIX:}
     connect-timeout-millis: ${ADMIN_LDAP_TIMEOUT_MILLIS:5000}
-    default-role-codes: ${ADMIN_LDAP_DEFAULT_ROLE_CODES:super_admin}
+    # 安全默认值为空：LDAP Bind 只证明目录身份，不等于控制面授权；首次登录后由控制面管理员分配角色。
+    # 即使显式配置 super_admin/operator，服务端也会拒绝自动绑定 control_plane=1 的角色。
+    default-role-codes: ${ADMIN_LDAP_DEFAULT_ROLE_CODES:}
   model:
     failover:
       # 智能体模型主备容错熔断参数：主模型连续失败达 failure-threshold 次即熔断 open-duration-seconds 秒，

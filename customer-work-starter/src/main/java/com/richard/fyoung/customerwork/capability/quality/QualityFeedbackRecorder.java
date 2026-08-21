@@ -71,7 +71,7 @@ public class QualityFeedbackRecorder {
             fact.put("score", report.getScore());
             fact.put("issues", report.getIssues());
             fact.put("replies", replies);
-            factLog.append(tenantResolver.resolve(sessionId), mapper.writeValueAsString(fact));
+            factLog.append(tenantResolver.resolveDataScope(sessionId), mapper.writeValueAsString(fact));
         } catch (Exception e) {
             log.error("record quality failure fact failed, errorCode={}, sessionId={}",
                 "QUALITY-FEEDBACK-RECORD-FAIL", sessionId, e);

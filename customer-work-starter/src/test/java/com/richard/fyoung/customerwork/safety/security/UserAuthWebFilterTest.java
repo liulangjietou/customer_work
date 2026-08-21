@@ -157,4 +157,21 @@ class UserAuthWebFilterTest {
         assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
         assertNull(exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR));
     }
+
+    @Test
+    void userPath_signedTokenWithInvalidTenant_shouldReturn401() {
+        UserJwtService jwt = jwtService();
+        UserAuthWebFilter filter = new UserAuthWebFilter(jwt);
+        String token = jwt.issue("U1", "alice", "Alice", "_legacy");
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/user/tickets")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token));
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        filter.filter(exchange, recordingChain(invoked)).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+        assertNull(exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR));
+    }
 }

@@ -130,7 +130,7 @@ public class SandboxCommandService {
         cleanupExpired();
         String tenantId = currentTenant();
         return sandboxes.values().stream()
-            .filter(s -> s.key.tenantId.equals(tenantId)
+            .filter(s -> TenantContext.sameTenant(s.key.tenantId, tenantId)
                 && s.key.userId == userId
                 && s.key.agentCode.equals(agentCode))
             .sorted(Comparator.comparing((ManagedSandbox s) -> s.createdAt).reversed())
