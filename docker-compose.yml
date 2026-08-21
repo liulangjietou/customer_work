@@ -1,5 +1,9 @@
 # 一键起依赖 + 应用：docker compose up -d
-# 仅起依赖（本地用 mvn spring-boot:run 跑应用）：docker compose up -d redis mysql minio nacos xxl-job-admin
+# 仅起依赖（本地用 mvn spring-boot:run 跑应用）：docker compose up -d redis mysql minio nacos xxl-job-admin paddleocr
+# MySQL 首次初始化自动建三个库：agent_scope_customer_work（业务，MYSQL_DATABASE）、
+# customer_admin（后台，00-create-database.sql）、xxl_job（调度，xxl-job-schema.sql 内部建）；
+# 建表归各应用的 SchemaInitializer / Flyway 管，initdb 只负责建库。
+# 监控栈（Prometheus/Grafana/Tempo/Alertmanager）独立在 docker/observability/，见 docs/部署手册.md 第九节。
 services:
   redis:
     image: redis:7
@@ -19,10 +23,12 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-root}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-agent_scope_customer_work}
     ports: ["3306:3306"]
-    # 03-xxl-job 脚本自带 `CREATE DATABASE IF NOT EXISTS xxl_job`，随 MYSQL_DATABASE 一起在
-    # 容器首次初始化时执行；customer_admin 库由 admin-server Flyway 或 DBA 镜像脚本维护。
+    # 03-xxl-job 脚本自带 `CREATE DATABASE IF NOT EXISTS xxl_job`，02-customer-admin 脚本建
+    # customer_admin 后台库，二者随 MYSQL_DATABASE 一起在容器首次初始化时执行；
+    # 表结构由 admin-server Flyway（dev）或 DBA 镜像脚本维护，initdb 只建库。
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./mysql/02-customer-admin/00-create-database.sql:/docker-entrypoint-initdb.d/00-create-customer-admin-db.sql:ro
       - ./mysql/03-xxl-job/xxl-job-schema.sql:/docker-entrypoint-initdb.d/xxl-job-schema.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_PASSWORD:-root}"]
@@ -68,12 +74,34 @@ services:
       timeout: 5s
       retries: 10
 
+  # PaddleOCR 开源 OCR serving：8080/8082 对话附件图片 OCR 的默认引擎（engine=paddleocr）。
+  # 与 docker/paddleocr/docker-compose.yml 同源同镜像；首次构建+模型下载耗时较长，
+  # arm64（M 系列）走 Rosetta 模拟等说明见该目录 compose 头部。OCR 为惰性调用，
+  # 不起它也不影响应用启动，只是图片 OCR 不可用。
+  paddleocr:
+    build:
+      context: ./docker/paddleocr
+      dockerfile: Dockerfile
+    image: customer-work/paddleocr-serving:3.0.0-cpu
+    platform: linux/amd64          # arm64 走 Rosetta 模拟；x86_64 主机可删除此行
+    ports: ["8868:8080"]           # 宿主 8868 → 容器 8080（避开 app 的 8080）
+    volumes:
+      - paddlex-models:/root/.paddlex   # 模型缓存卷，首次下载后复用，避免重启重下
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s           # 首次要下模型（数百 MB），给足冷启动时间
+
   app:
     build: .
     depends_on:
       redis: { condition: service_healthy }
       mysql: { condition: service_healthy }
       minio: { condition: service_healthy }
+      # OCR 惰性调用且模型冷启动慢，只排启动顺序、不等健康，避免拖慢 app 启动
+      paddleocr: { condition: service_started }
     ports: ["8080:8080"]
     environment:
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
@@ -87,8 +115,11 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       NACOS_SERVER_ADDR: nacos:8848
+      # 容器内经 compose 服务名访问 PaddleOCR（yml 默认 localhost:8868 只在宿主机成立）
+      CUSTOMER_WORK_ATTACHMENT_OCR_PADDLE_BASE_URL: http://paddleocr:8080
 
 volumes:
   redis-data:
   mysql-data:
   minio-data:
+  paddlex-models:
