@@ -151,4 +151,43 @@ class NacosRuntimeConfigServiceTest {
         verify(configService).addListener(eq(properties.getNacos().getRuntimeConfigDataId()),
             eq(properties.getNacos().getGroup()), any());
     }
+
+    @Test
+    void defaultTenantAlias_shouldSubscribeCanonicalDataId() throws Exception {
+        CustomerWorkProperties properties = props();
+        properties.getNacos().setTenantCode(" DEFAULT ");
+        RuntimeConfigApplier applier = mock(RuntimeConfigApplier.class);
+        com.alibaba.nacos.api.config.ConfigService configService =
+            mock(com.alibaba.nacos.api.config.ConfigService.class);
+        when(configService.getConfig(any(), any(), anyLong())).thenReturn(null);
+        NacosRuntimeConfigService service = new NacosRuntimeConfigService(properties, applier);
+
+        service.bind(configService);
+
+        String tenantDataId = properties.getNacos().getRuntimeConfigDataId() + "-tenant-default";
+        verify(configService).getConfig(eq(tenantDataId), eq(properties.getNacos().getGroup()), anyLong());
+        verify(configService).addListener(eq(tenantDataId), eq(properties.getNacos().getGroup()), any());
+    }
+
+    @Test
+    void defaultTenant_shouldUseLegacyPlatformConfigWhenCanonicalDataIdMissing() throws Exception {
+        CustomerWorkProperties properties = props();
+        properties.getNacos().setTenantCode("__platform__");
+        RuntimeConfigApplier applier = mock(RuntimeConfigApplier.class);
+        when(applier.apply(any(), any(), any())).thenReturn(true);
+        com.alibaba.nacos.api.config.ConfigService configService =
+            mock(com.alibaba.nacos.api.config.ConfigService.class);
+        String base = properties.getNacos().getRuntimeConfigDataId();
+        String canonical = base + "-tenant-default";
+        String legacy = base + "-tenant-__platform__";
+        when(configService.getConfig(eq(canonical), any(), anyLong())).thenReturn(null);
+        when(configService.getConfig(eq(legacy), any(), anyLong())).thenReturn("{}");
+        NacosRuntimeConfigService service = new NacosRuntimeConfigService(properties, applier);
+
+        service.bind(configService);
+
+        verify(configService).getConfig(eq(legacy), eq(properties.getNacos().getGroup()), anyLong());
+        verify(configService, never()).publishConfig(any(), any(), any());
+        verify(applier).apply(any(), any(), any());
+    }
 }

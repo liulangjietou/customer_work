@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.knowledge.embedding;
 
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
-import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -12,7 +12,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -28,7 +27,7 @@ class DashScopeEmbeddingClientTest {
 
     private static final String TEST_SECRET = "0123456789abcdef";
 
-    private final AiModelConfigMapper modelConfigMapper = mock(AiModelConfigMapper.class);
+    private final ModelConfigAccess modelConfigAccess = mock(ModelConfigAccess.class);
     private final AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil(TEST_SECRET);
     private final AdminKnowledgeProperties properties = new AdminKnowledgeProperties();
 
@@ -36,7 +35,7 @@ class DashScopeEmbeddingClientTest {
     void resolveApiKey_shouldPreferDefaultModelRow() {
         AiModelConfig first = config(1L, 0, cryptoUtil.encrypt("sk-first"));
         AiModelConfig defaultRow = config(2L, 1, cryptoUtil.encrypt("sk-default"));
-        when(modelConfigMapper.selectList(any())).thenReturn(List.of(first, defaultRow));
+        when(modelConfigAccess.listPreferredEnabled("dashscope")).thenReturn(List.of(defaultRow, first));
 
         assertEquals("sk-default", client().resolveApiKey());
     }
@@ -44,14 +43,14 @@ class DashScopeEmbeddingClientTest {
     @Test
     void resolveApiKey_shouldFallbackToFirstEnabledRow() {
         AiModelConfig first = config(1L, 0, cryptoUtil.encrypt("sk-first"));
-        when(modelConfigMapper.selectList(any())).thenReturn(List.of(first));
+        when(modelConfigAccess.listPreferredEnabled("dashscope")).thenReturn(List.of(first));
 
         assertEquals("sk-first", client().resolveApiKey());
     }
 
     @Test
     void resolveApiKey_shouldFastFail_whenNoDashScopeModelConfigured() {
-        when(modelConfigMapper.selectList(any())).thenReturn(List.of());
+        when(modelConfigAccess.listPreferredEnabled("dashscope")).thenReturn(List.of());
 
         BizException ex = assertThrows(BizException.class, () -> client().resolveApiKey());
         assertEquals(ResultCode.KNOWLEDGE_EMBEDDING_NOT_CONFIGURED, ex.getResultCode());
@@ -60,7 +59,7 @@ class DashScopeEmbeddingClientTest {
     @Test
     void resolveApiKey_shouldFastFail_whenDecryptedKeyBlank() {
         AiModelConfig blank = config(1L, 1, cryptoUtil.encrypt(""));
-        when(modelConfigMapper.selectList(any())).thenReturn(List.of(blank));
+        when(modelConfigAccess.listPreferredEnabled("dashscope")).thenReturn(List.of(blank));
 
         BizException ex = assertThrows(BizException.class, () -> client().resolveApiKey());
         assertEquals(ResultCode.KNOWLEDGE_EMBEDDING_NOT_CONFIGURED, ex.getResultCode());
@@ -78,7 +77,7 @@ class DashScopeEmbeddingClientTest {
 
     @Test
     void embedDocuments_shouldTranslateNotConfigured_withoutWrappingIntoGenericFailure() {
-        when(modelConfigMapper.selectList(any())).thenReturn(List.of());
+        when(modelConfigAccess.listPreferredEnabled("dashscope")).thenReturn(List.of());
 
         BizException ex = assertThrows(BizException.class, () -> client().embedDocuments(List.of("hello")));
         assertEquals(ResultCode.KNOWLEDGE_EMBEDDING_NOT_CONFIGURED, ex.getResultCode());
@@ -93,7 +92,7 @@ class DashScopeEmbeddingClientTest {
     }
 
     private DashScopeEmbeddingClient client() {
-        return new DashScopeEmbeddingClient(modelConfigMapper, cryptoUtil, properties);
+        return new DashScopeEmbeddingClient(modelConfigAccess, cryptoUtil, properties);
     }
 
     private AiModelConfig config(Long id, Integer isDefault, String encryptedApiKey) {

@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.safety.subjectquota;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,7 +36,7 @@ public class InMemorySubjectQuotaHitStore implements SubjectQuotaHitStore {
     public synchronized List<SubjectQuotaHit> findRecent(String tenantId, long sinceMs, int limit) {
         List<SubjectQuotaHit> matched = new ArrayList<>();
         for (SubjectQuotaHit hit : records) {
-            if (hit.tenantId().equals(tenantId) && hit.createdAtMs() >= sinceMs) {
+            if (TenantContext.sameTenant(hit.tenantId(), tenantId) && hit.createdAtMs() >= sinceMs) {
                 matched.add(hit);
             }
         }
@@ -46,7 +48,7 @@ public class InMemorySubjectQuotaHitStore implements SubjectQuotaHitStore {
     public synchronized List<SubjectQuotaHitRank> rank(String tenantId, long sinceMs, int limit) {
         Map<String, SubjectQuotaHitRank> grouped = new LinkedHashMap<>();
         for (SubjectQuotaHit hit : records) {
-            if (!hit.tenantId().equals(tenantId) || hit.createdAtMs() < sinceMs) {
+            if (!TenantContext.sameTenant(hit.tenantId(), tenantId) || hit.createdAtMs() < sinceMs) {
                 continue;
             }
             SubjectQuotaHitRank row = grouped.computeIfAbsent(

@@ -1,6 +1,9 @@
 package com.richard.fyoung.customerwork.safety.subjectquota;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,7 +28,7 @@ public class InMemorySubjectQuotaLevelStore implements SubjectQuotaLevelStore {
     @Override
     public List<SubjectQuotaLevel> findByTenant(String tenantId) {
         return levels.values().stream()
-            .filter(level -> level.tenantId().equals(tenantId))
+            .filter(level -> TenantContext.sameTenant(level.tenantId(), tenantId))
             .toList();
     }
 
@@ -40,6 +43,6 @@ public class InMemorySubjectQuotaLevelStore implements SubjectQuotaLevelStore {
     }
 
     private static String key(String tenantId, String levelCode) {
-        return tenantId + '\n' + levelCode;
+        return TenantContext.normalizedTenantKey(tenantId) + '\n' + levelCode.toLowerCase(Locale.ROOT);
     }
 }

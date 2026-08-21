@@ -40,6 +40,7 @@ public class PermissionService {
     private static final String ACTION_DELETE = "DELETE";
     private static final String ACTION_MOVE = "MOVE";
     private static final String DEFAULT_ICON_TYPE = "library";
+    private static final String IMAGE_ICON_TYPE = "image";
     /** 菜单树全局互斥锁：拖拽排序影响面可能跨越树上任意层级，粒度按"整棵树"而非单个节点，
      * 避免两个管理员分别调整不相交子树时，各自基于过期的兄弟节点 sort 值算出的新序号仍然冲突。 */
     private static final String REORDER_LOCK_KEY = "admin:menu:reorder:lock";
@@ -158,6 +159,13 @@ public class PermissionService {
     /** 广播菜单版本变化，让其它在线用户的前端轮询感知到并自动刷新（"发布"按钮语义）。 */
     public void publish() {
         menuVersionHolder.bump();
+    }
+
+    /** 存量菜单图标没有独立对象名前缀，只允许仍被菜单记录精确引用的 URL 公开读取。 */
+    public boolean isReferencedImageUrl(String imageUrl) {
+        return permissionMapper.exists(new LambdaQueryWrapper<SysPermission>()
+            .eq(SysPermission::getIconType, IMAGE_ICON_TYPE)
+            .eq(SysPermission::getIcon, imageUrl));
     }
 
     private void fillFromRequest(SysPermission p, PermissionSaveRequest request) {

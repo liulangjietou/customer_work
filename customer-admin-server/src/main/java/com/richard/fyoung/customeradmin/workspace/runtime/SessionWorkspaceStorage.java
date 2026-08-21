@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
+import com.richard.fyoung.customerwork.safety.tenant.LegacyTenantCompatibility;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
@@ -16,6 +18,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -38,6 +41,8 @@ import java.util.zip.GZIPOutputStream;
 public class SessionWorkspaceStorage {
 
     private static final Logger log = LoggerFactory.getLogger(SessionWorkspaceStorage.class);
+    /** V63 上线前平台租户归档的历史作用域；仅用于 default 缺失时的一次性迁移读取。 */
+    private static final String LEGACY_PLATFORM_SCOPE = LegacyTenantCompatibility.PLATFORM_TENANT_ID + "::";
 
     private final AttachmentFileStorage fileStorage;
     private final String keyPrefix;
@@ -65,14 +70,22 @@ public class SessionWorkspaceStorage {
             if (!isEmptyDir(workspace)) {
                 return;
             }
-            byte[] archive;
-            try {
-                archive = fileStorage.read(objectKey(agentCode, sessionId));
-            } catch (Exception e) {
-                // 对象不存在是常态（新会话），不记 error 免得刷屏
-                return;
+            String currentKey = objectKey(agentCode, sessionId);
+            Optional<byte[]> current = fileStorage.readIfExists(currentKey);
+            byte[] archive = current.orElse(null);
+            if (archive == null) {
+                Optional<byte[]> legacy = readLegacyDefaultArchive(agentCode, sessionId);
+                if (legacy.isEmpty()) {
+                    // 对象不存在是常态（新会话），不记 error 免得刷屏
+                    return;
+                }
+                archive = legacy.get();
+                // 先验证并恢复，再尝试迁移；损坏归档绝不能被固化到 default key。
+                extractTo(archive, workspace);
+                archive = migrateLegacyArchiveIfAbsent(currentKey, archive, workspace, agentCode, sessionId);
+            } else {
+                extractTo(archive, workspace);
             }
-            extractTo(archive, workspace);
             log.info("vibecoding workspace hydrated, agentCode={}, sessionId={}, bytes={}",
                 agentCode, sessionId, archive.length);
         } catch (Exception e) {
@@ -109,6 +122,41 @@ public class SessionWorkspaceStorage {
     /** 对象 key：{@code {prefix}{agentCode}/{sessionId}.tar.gz}，一个会话恒定一个对象。 */
     String objectKey(String agentCode, String sessionId) {
         return keyPrefix + WorkspaceRuntimeScope.agent(agentCode) + "/" + sessionId + ".tar.gz";
+    }
+
+    /** 仅 default 视角允许回读历史平台对象，业务租户绝不触碰该兼容命名空间。 */
+    private Optional<byte[]> readLegacyDefaultArchive(String agentCode, String sessionId) throws IOException {
+        if (!TenantContext.isDefaultTenant(TenantContext.get())) {
+            return Optional.empty();
+        }
+        return fileStorage.readIfExists(
+            keyPrefix + LEGACY_PLATFORM_SCOPE + agentCode + "/" + sessionId + ".tar.gz");
+    }
+
+    /**
+     * 原子迁移已验证的历史归档。并发出现 default 对象时立即重新读取并覆盖本地，确保新对象优先；
+     * 网络/权限导致复制失败时保留已成功恢复的历史工作区，后续持久化仍会写入 default key。
+     */
+    private byte[] migrateLegacyArchiveIfAbsent(String currentKey, byte[] legacy, Path workspace,
+                                                String agentCode, String sessionId) throws IOException {
+        try {
+            if (fileStorage.storeAtIfAbsent(currentKey, legacy)) {
+                log.info("legacy platform workspace copied to default key, agentCode={}, sessionId={}",
+                    agentCode, sessionId);
+                return legacy;
+            }
+            byte[] current = fileStorage.readIfExists(currentKey)
+                .orElseThrow(() -> new IOException("default workspace disappeared during migration"));
+            extractTo(current, workspace);
+            return current;
+        } catch (UnsupportedOperationException | IOException e) {
+            // CAS 之后的新对象若损坏，extractTo 已清空目录；必须把已验证的 legacy 重新恢复回来。
+            extractTo(legacy, workspace);
+            log.error("copy legacy platform workspace failed, keep hydrated legacy workspace, code={}, "
+                    + "agentCode={}, sessionId={}",
+                "VIBECODING-WORKSPACE-LEGACY-COPY-FAIL", agentCode, sessionId, e);
+            return legacy;
+        }
     }
 
     /** 目录不存在或没有任何条目时视为空。 */

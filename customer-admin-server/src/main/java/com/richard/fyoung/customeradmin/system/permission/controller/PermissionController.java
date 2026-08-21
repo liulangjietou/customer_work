@@ -6,6 +6,8 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.system.permission.dto.PermissionSaveRequest;
 import com.richard.fyoung.customeradmin.system.permission.dto.PermissionVO;
 import com.richard.fyoung.customeradmin.system.permission.service.PermissionService;
+import com.richard.fyoung.customeradmin.tenant.ControlPlanePermissions;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,21 +29,28 @@ import java.util.List;
 public class PermissionController {
 
     private final PermissionService permissionService;
+    private final CrossTenantAuthority crossTenantAuthority;
 
-    public PermissionController(PermissionService permissionService) {
+    public PermissionController(PermissionService permissionService, CrossTenantAuthority crossTenantAuthority) {
         this.permissionService = permissionService;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     @SaCheckPermission("role:view")
     @GetMapping("/tree")
     public Result<List<PermissionVO>> tree() {
-        return Result.success(permissionService.tree());
+        List<PermissionVO> tree = permissionService.tree();
+        if (!crossTenantAuthority.hasCurrentUserAuthority()) {
+            tree = grantableTree(tree);
+        }
+        return Result.success(tree);
     }
 
     @SaCheckPermission("role:edit")
     @OperationLog(operation = "新建权限节点", target = "sys_permission")
     @PostMapping
     public Result<Void> create(@Valid @RequestBody PermissionSaveRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         permissionService.create(request);
         return Result.success();
     }
@@ -50,6 +59,7 @@ public class PermissionController {
     @OperationLog(operation = "编辑权限节点", target = "sys_permission")
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody PermissionSaveRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         permissionService.update(id, request);
         return Result.success();
     }
@@ -58,7 +68,18 @@ public class PermissionController {
     @OperationLog(operation = "删除权限节点", target = "sys_permission")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         permissionService.delete(id);
         return Result.success();
+    }
+
+    private List<PermissionVO> grantableTree(List<PermissionVO> nodes) {
+        if (nodes == null || nodes.isEmpty()) {
+            return List.of();
+        }
+        return nodes.stream()
+            .filter(node -> !ControlPlanePermissions.isControlPlaneOnly(node.getPermCode()))
+            .peek(node -> node.setChildren(grantableTree(node.getChildren())))
+            .toList();
     }
 }

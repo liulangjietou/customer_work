@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.attachment;
 
 import java.io.IOException;
+import java.util.Optional;
 
 /**
  * 附件原始文件存储抽象：把上传字节存到某种后端，返回相对 key。
@@ -44,6 +45,22 @@ public interface AttachmentFileStorage {
      * @throws IOException 对象不存在或读取失败（交上层翻译）
      */
     byte[] read(String storagePath) throws IOException;
+
+    /**
+     * 区分“对象不存在”与权限、网络等真实读取失败。
+     * 默认实现保持原 SPI 行为；需要安全迁移回退的存储实现必须覆盖并准确分类不存在错误。
+     */
+    default Optional<byte[]> readIfExists(String storagePath) throws IOException {
+        return Optional.of(read(storagePath));
+    }
+
+    /**
+     * 仅当 key 尚不存在时原子写入；已存在返回 false，绝不覆盖。
+     * 默认不支持，避免用“先查后写”伪装原子语义。
+     */
+    default boolean storeAtIfAbsent(String storagePath, byte[] data) throws IOException {
+        throw new UnsupportedOperationException("atomic store-if-absent is not supported");
+    }
 
     /**
      * 按相对 key 删除文件。

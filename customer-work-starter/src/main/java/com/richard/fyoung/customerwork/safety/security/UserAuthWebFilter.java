@@ -57,7 +57,10 @@ public class UserAuthWebFilter implements WebFilter {
         if (tenantId == null || tenantId.isBlank()) {
             return AuthResponses.unauthorized(exchange, "token tenant is missing");
         }
-        if (TenantContext.isPresent() && !tenantId.equals(TenantContext.get())) {
+        if (!TenantContext.isValidTenantId(tenantId)) {
+            return AuthResponses.unauthorized(exchange, "token tenant is invalid");
+        }
+        if (TenantContext.isPresent() && !TenantContext.sameTenant(tenantId, TenantContext.get())) {
             return AuthResponses.forbidden(exchange, "credential tenant mismatch");
         }
         exchange.getAttributes().put(PRINCIPAL_ATTR, principal.get());

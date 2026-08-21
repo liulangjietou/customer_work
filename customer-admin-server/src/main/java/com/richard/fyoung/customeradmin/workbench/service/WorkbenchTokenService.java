@@ -10,6 +10,7 @@ import com.richard.fyoung.customeradmin.workbench.dto.WorkbenchTokenVO;
 import com.richard.fyoung.customeradmin.workbench.entity.WorkbenchToken;
 import com.richard.fyoung.customeradmin.workbench.mapper.WorkbenchTokenMapper;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -112,6 +113,9 @@ public class WorkbenchTokenService {
             }
             if (token.getExpireTime() != null && token.getExpireTime().isBefore(LocalDateTime.now())) {
                 throw new BizException(ResultCode.TOKEN_EXPIRED, "令牌已过期");
+            }
+            if (!TenantContext.isValidTenantId(token.getTenantId())) {
+                throw new BizException(ResultCode.UNAUTHORIZED, "令牌租户已失效，请重新创建令牌");
             }
             token.setLastUsedTime(LocalDateTime.now());
             tokenMapper.updateById(token);

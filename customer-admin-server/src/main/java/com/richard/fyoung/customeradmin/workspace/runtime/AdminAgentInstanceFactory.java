@@ -23,7 +23,7 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
-import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.FailoverModel;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.ModelCircuitBreakerRegistry;
@@ -146,7 +146,7 @@ public class AdminAgentInstanceFactory {
     private final AiAgentSkillMapper agentSkillMapper;
     private final AiAgentBackupModelMapper agentBackupModelMapper;
     private final AiAgentSubAgentMapper agentSubAgentMapper;
-    private final AiModelConfigMapper modelConfigMapper;
+    private final ModelConfigAccess modelConfigAccess;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
     private final AiSkillFileMapper skillFileMapper;
@@ -201,7 +201,7 @@ public class AdminAgentInstanceFactory {
     public AdminAgentInstanceFactory(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
                                       AiAgentSkillMapper agentSkillMapper, AiAgentBackupModelMapper agentBackupModelMapper,
                                       AiAgentSubAgentMapper agentSubAgentMapper,
-                                      AiModelConfigMapper modelConfigMapper,
+                                      ModelConfigAccess modelConfigAccess,
                                       AiMcpMapper mcpMapper, AiSkillMapper skillMapper, AiSkillFileMapper skillFileMapper,
                                       AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
                                       ApplicationContext applicationContext,
@@ -233,7 +233,7 @@ public class AdminAgentInstanceFactory {
         this.agentSkillMapper = agentSkillMapper;
         this.agentBackupModelMapper = agentBackupModelMapper;
         this.agentSubAgentMapper = agentSubAgentMapper;
-        this.modelConfigMapper = modelConfigMapper;
+        this.modelConfigAccess = modelConfigAccess;
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
         this.skillFileMapper = skillFileMapper;
@@ -752,7 +752,7 @@ public class AdminAgentInstanceFactory {
     }
 
     private Model buildModel(Long modelId) {
-        AiModelConfig modelConfig = modelConfigMapper.selectById(modelId);
+        AiModelConfig modelConfig = modelConfigAccess.findVisibleById(modelId);
         if (modelConfig == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "智能体关联的模型配置不存在: " + modelId);
         }

@@ -32,12 +32,13 @@ class UserJwtServiceTest {
     @Test
     void issueThenVerify_shouldRoundTrip() {
         UserJwtService svc = service();
-        String token = svc.issue("U1", "alice", "Alice");
+        String token = svc.issue("U1", "alice", "Alice", "Tenant-A");
         Optional<UserPrincipal> principal = svc.verify(token);
         assertTrue(principal.isPresent());
         assertEquals("U1", principal.get().userId());
         assertEquals("alice", principal.get().username());
         assertEquals("Alice", principal.get().nickname());
+        assertEquals("Tenant-A", principal.get().tenantId(), "存量业务租户大小写不能改变外部资源命名空间");
     }
 
     @Test
@@ -72,5 +73,13 @@ class UserJwtServiceTest {
     void verify_blankToken_shouldReturnEmpty() {
         assertTrue(service().verify("  ").isEmpty());
         assertTrue(service().verify(null).isEmpty());
+    }
+
+    @Test
+    void verify_signedTokenWithLegacyTenant_shouldReturnEmpty() {
+        UserJwtService svc = service();
+        String token = svc.issue("U1", "alice", "Alice", "__platform__");
+
+        assertTrue(svc.verify(token).isEmpty());
     }
 }

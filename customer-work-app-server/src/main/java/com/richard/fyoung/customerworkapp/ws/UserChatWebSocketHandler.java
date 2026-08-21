@@ -66,6 +66,10 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
             log.info("ws user handshake rejected: token tenant missing");
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
+        if (!TenantContext.isValidTenantId(user.tenantId())) {
+            log.info("ws user handshake rejected: token tenant invalid");
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
         return handleAuthenticated(session, user)
             .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, user.tenantId()));
     }

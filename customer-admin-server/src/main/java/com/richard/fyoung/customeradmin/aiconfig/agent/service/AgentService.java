@@ -23,7 +23,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledg
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
-import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
@@ -94,7 +94,7 @@ public class AgentService {
     private final AiAgentSkillMapper agentSkillMapper;
     private final AiAgentBackupModelMapper agentBackupModelMapper;
     private final AiAgentSubAgentMapper agentSubAgentMapper;
-    private final AiModelConfigMapper modelConfigMapper;
+    private final ModelConfigAccess modelConfigAccess;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
     private final AiAgentSystemToolMapper agentSystemToolMapper;
@@ -109,7 +109,7 @@ public class AgentService {
     public AgentService(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
                          AiAgentSkillMapper agentSkillMapper, AiAgentBackupModelMapper agentBackupModelMapper,
                          AiAgentSubAgentMapper agentSubAgentMapper,
-                         AiModelConfigMapper modelConfigMapper,
+                         ModelConfigAccess modelConfigAccess,
                          AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
                          AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
                          AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper,
@@ -122,7 +122,7 @@ public class AgentService {
         this.agentSkillMapper = agentSkillMapper;
         this.agentBackupModelMapper = agentBackupModelMapper;
         this.agentSubAgentMapper = agentSubAgentMapper;
-        this.modelConfigMapper = modelConfigMapper;
+        this.modelConfigAccess = modelConfigAccess;
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
         this.agentSystemToolMapper = agentSystemToolMapper;
@@ -254,7 +254,7 @@ public class AgentService {
         if (!AGENT_CODE_PATTERN.matcher(request.agentCode()).matches()) {
             throw new BizException(ResultCode.PARAM_INVALID, "agentCode 仅支持小写字母/数字/短横线");
         }
-        if (modelConfigMapper.selectById(request.modelId()) == null) {
+        if (modelConfigAccess.findVisibleById(request.modelId()) == null) {
             throw new BizException(ResultCode.PARAM_INVALID, "modelId 不存在: " + request.modelId());
         }
         validateBackupModels(request);
@@ -354,7 +354,7 @@ public class AgentService {
         if (backupIds.contains(request.modelId())) {
             throw new BizException(ResultCode.PARAM_INVALID, "备用模型不能包含主模型: " + request.modelId());
         }
-        if (modelConfigMapper.selectBatchIds(backupIds).size() != backupIds.size()) {
+        if (modelConfigAccess.listVisibleByIds(backupIds).size() != backupIds.size()) {
             throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 backupModelIds");
         }
     }
@@ -450,7 +450,7 @@ public class AgentService {
         vo.setAgentName(agent.getAgentName());
         vo.setAgentCode(agent.getAgentCode());
         vo.setModelId(agent.getModelId());
-        AiModelConfig model = modelConfigMapper.selectById(agent.getModelId());
+        AiModelConfig model = modelConfigAccess.findVisibleById(agent.getModelId());
         vo.setModelName(model == null ? null : model.getModelName());
         fillBackupModels(vo, agent.getId());
         vo.setMcpIds(agentMcpMapper.selectList(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, agent.getId()))
@@ -506,7 +506,7 @@ public class AgentService {
             vo.setBackupModelNames(List.of());
             return;
         }
-        Map<Long, String> nameById = modelConfigMapper.selectBatchIds(backupIds).stream()
+        Map<Long, String> nameById = modelConfigAccess.listVisibleByIds(backupIds).stream()
             .collect(Collectors.toMap(AiModelConfig::getId, AiModelConfig::getModelName));
         vo.setBackupModelNames(backupIds.stream().map(nameById::get).collect(Collectors.toList()));
     }

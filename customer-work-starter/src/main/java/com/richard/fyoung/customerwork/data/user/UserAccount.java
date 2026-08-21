@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.user;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import lombok.Getter;
 
 /**
@@ -27,6 +28,8 @@ public class UserAccount {
     private final String nickname;
     private final String phone;
     private final long createdAtMs;
+    /** 数据库保存的权威租户编码，用于签发外部凭据与构造持久命名空间。 */
+    private final String tenantId;
 
     private volatile Status status;
     /** 头像访问 URL（相对路径，可为空——注册时无头像，上传后回填）。 */
@@ -41,7 +44,8 @@ public class UserAccount {
     private volatile String levelCode;
 
     private UserAccount(String id, String username, String passwordHash, String nickname,
-                        String phone, Status status, long createdAtMs, String avatarUrl, String levelCode) {
+                        String phone, Status status, long createdAtMs, String avatarUrl,
+                        String levelCode, String tenantId) {
         this.id = id;
         this.username = username;
         this.passwordHash = passwordHash;
@@ -51,6 +55,7 @@ public class UserAccount {
         this.createdAtMs = createdAtMs;
         this.avatarUrl = avatarUrl;
         this.levelCode = levelCode;
+        this.tenantId = tenantId;
     }
 
     /** 注册静态工厂：初始 ACTIVE，无头像，等级留空（= 走配置默认档）。 */
@@ -62,7 +67,7 @@ public class UserAccount {
     public static UserAccount create(String id, String username, String passwordHash, String nickname,
                                      String phone, String levelCode) {
         return new UserAccount(id, username, passwordHash, nickname, phone, Status.ACTIVE,
-            System.currentTimeMillis(), null, levelCode);
+            System.currentTimeMillis(), null, levelCode, TenantContext.get());
     }
 
     /** 停用账户（禁止后续登录）。 */
@@ -88,8 +93,8 @@ public class UserAccount {
     /** 供持久化层从数据源重建（跳过业务语义，仅回填字段）。包级可见。 */
     static UserAccount reconstruct(String id, String username, String passwordHash, String nickname,
                                    String phone, Status status, long createdAtMs, String avatarUrl,
-                                   String levelCode) {
+                                   String levelCode, String tenantId) {
         return new UserAccount(id, username, passwordHash, nickname, phone, status, createdAtMs,
-            avatarUrl, levelCode);
+            avatarUrl, levelCode, tenantId);
     }
 }

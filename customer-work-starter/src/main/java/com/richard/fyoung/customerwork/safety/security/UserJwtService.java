@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.UserAuthProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -16,7 +17,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Date;
 import java.util.Optional;
-import com.richard.fyoung.customerwork.infra.config.properties.UserAuthProperties;
 
 /**
  * 用户登录态 JWT 签发与校验（HS256，自签自验，无状态）。
@@ -105,12 +105,16 @@ public class UserJwtService {
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
+            String tenantId = normalizeTenant(claims.get(CLAIM_TENANT, String.class));
+            if (!TenantContext.isValidTenantId(tenantId)) {
+                return Optional.empty();
+            }
             return Optional.of(new UserPrincipal(
                 claims.getSubject(),
                 claims.get(CLAIM_USERNAME, String.class),
                 claims.get(CLAIM_NICKNAME, String.class),
                 // 多租户上线前签发的令牌没有这个 claim，回落默认租户，避免存量用户被强制登出
-                normalizeTenant(claims.get(CLAIM_TENANT, String.class))));
+                tenantId));
         } catch (Exception e) {
             // 验签失败 / 过期 / 格式非法：统一按未认证处理，不打堆栈（正常的攻击面噪声）
             return Optional.empty();
@@ -118,7 +122,8 @@ public class UserJwtService {
     }
 
     private static String normalizeTenant(String tenantId) {
-        return tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT : tenantId;
+        String resolved = tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT : tenantId;
+        return TenantContext.canonicalizeTenantId(resolved);
     }
 
     /** 把任意长度密钥摘要成 256bit 定长密钥，满足 HS256 强度且不约束配置密钥长度。 */

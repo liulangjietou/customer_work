@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * 登录页轮播图文件存储：写入对象存储（starter 的 {@link AttachmentFileStorage} SPI，
@@ -34,9 +35,13 @@ public class LoginImageStorageService {
     /** 与 {@code LoginImagePublicController} 的映射保持一致，改这里要同步改那边。 */
     public static final String URL_PREFIX = "/api/login-images/";
 
+    private static final String STORAGE_ID_PREFIX = "login-image-";
     /** 登录页背景是全屏大图，比菜单图标放宽到 5MB。 */
     private static final long MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("png", "jpg", "jpeg", "webp");
+    private static final Pattern OWNED_KEY_PATTERN = Pattern.compile(
+        "^\\d{6}/" + STORAGE_ID_PREFIX + "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+            + "[0-9a-f]{4}-[0-9a-f]{12}\\.(png|jpg|jpeg|webp)$");
 
     /**
      * 最低分辨率门槛：背景图以 cover 铺满整屏，低于主流视口（1280×720，高分屏还要再乘 DPR）
@@ -71,10 +76,16 @@ public class LoginImageStorageService {
         }
         checkMinResolution(data);
         try {
-            return URL_PREFIX + fileStorage.store(data, UUID.randomUUID().toString(), extension);
+            String storageId = STORAGE_ID_PREFIX + UUID.randomUUID();
+            return URL_PREFIX + fileStorage.store(data, storageId, extension);
         } catch (IOException e) {
             throw new BizException(ResultCode.PARAM_INVALID, "图片保存失败: " + e.getMessage());
         }
+    }
+
+    /** 新上传轮播图使用独立命名空间，公开出图接口据此与同桶中的私有附件隔离。 */
+    public boolean ownsKey(String key) {
+        return StringUtils.hasText(key) && OWNED_KEY_PATTERN.matcher(key).matches();
     }
 
     /**

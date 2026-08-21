@@ -96,4 +96,19 @@ class WsSessionRegistryTest {
             .thenCancel().verify();
         assertEquals(2, registry.onlineUsers());
     }
+
+    @Test
+    void tenantCaseAliases_shouldShareOneInternalSlot() {
+        WsSessionRegistry registry = registry();
+        Sinks.Many<String> sink = TenantContext.callWith(
+            "Acme", () -> registry.registerUser("U1"));
+
+        TenantContext.runWith("acme", () ->
+            assertTrue(registry.pushToUser("U1", WsFrame.system("same-tenant"))));
+
+        StepVerifier.create(sink.asFlux())
+            .assertNext(json -> assertTrue(json.contains("same-tenant")))
+            .thenCancel().verify();
+        assertEquals(1, registry.onlineUsers());
+    }
 }

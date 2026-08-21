@@ -32,10 +32,11 @@ public class AdminLdapProperties {
     /** LDAP 连接/读取超时（毫秒），AD 不可达时避免请求长时间挂起拖垮登录接口。 */
     private int connectTimeoutMillis = 5000;
 
-    /** 首次登录自动创建本地账号时默认分配的角色编码（对应 sys_role.role_code），逗号分隔多个。
-     * 默认给 super_admin（超级管理员）——OA 域账号本身已经过企业 AD 域控鉴权，视为可信身份；
-     * 如需收紧权限，生产环境可通过 ADMIN_LDAP_DEFAULT_ROLE_CODES 环境变量改回 operator 等受限角色。 */
-    private List<String> defaultRoleCodes = List.of("super_admin");
+    /**
+     * 首次登录自动创建本地账号时默认分配的普通角色编码，逗号分隔多个。
+     * 默认不分配角色，由控制面管理员审核后授权；控制面角色即使被写进配置也会被服务端拒绝。
+     */
+    private List<String> defaultRoleCodes = List.of();
 
     /**
      * Bean 初始化后，如果 yml 未配置 url / domainSuffix，则尝试从本地环境变量读取。

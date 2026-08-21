@@ -1,11 +1,13 @@
 package com.richard.fyoung.customerwork.safety.subjectquota;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -131,6 +133,6 @@ public class SubjectQuotaLevelProvider {
     }
 
     private static String key(String tenantId, String levelCode) {
-        return tenantId + '\n' + levelCode;
+        return TenantContext.normalizedTenantKey(tenantId) + '\n' + levelCode.toLowerCase(Locale.ROOT);
     }
 }

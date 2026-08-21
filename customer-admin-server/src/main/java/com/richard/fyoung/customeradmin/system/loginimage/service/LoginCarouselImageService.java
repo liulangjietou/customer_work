@@ -52,6 +52,12 @@ public class LoginCarouselImageService {
             .collect(Collectors.toList());
     }
 
+    /** 存量轮播图没有独立对象名前缀，只允许仍被业务记录精确引用的 URL 公开读取。 */
+    public boolean isReferencedImageUrl(String imageUrl) {
+        return imageMapper.exists(new LambdaQueryWrapper<LoginCarouselImage>()
+            .eq(LoginCarouselImage::getImageUrl, imageUrl));
+    }
+
     /** 上传新图：落盘后追加到当前排序末尾，默认启用。 */
     public LoginCarouselImageVO upload(MultipartFile file) {
         List<LoginCarouselImage> existing = listOrdered();

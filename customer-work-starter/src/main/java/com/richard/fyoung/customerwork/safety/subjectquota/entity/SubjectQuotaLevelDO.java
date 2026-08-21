@@ -8,7 +8,7 @@ import lombok.Data;
 /**
  * 配额等级持久化对象（贫血 DO，对应 {@code cw_subject_quota_level}）。
  *
- * <p>显式持有 {@code tenantId} 的理由同 {@code TenantQuotaDO}：运营方跨租户维护等级时，
+ * <p>显式持有 {@code tenantId} 的理由同 {@code TenantQuotaDO}：控制面用户跨租户维护等级时，
  * 要读出"这一档属于谁"，靠拦截器自动补值读不出来。</p>
  * @author owlzhangfq@gmail.com
  */

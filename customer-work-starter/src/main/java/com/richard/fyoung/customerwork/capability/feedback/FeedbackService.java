@@ -85,7 +85,7 @@ public class FeedbackService {
             fact.put("sessionId", feedback.sessionId());
             fact.put("messageId", feedback.messageId());
             fact.put("comment", feedback.comment());
-            factLog.append(tenantResolver.resolve(feedback.sessionId()), mapper.writeValueAsString(fact));
+            factLog.append(tenantResolver.resolveDataScope(feedback.sessionId()), mapper.writeValueAsString(fact));
         } catch (Exception e) {
             log.error("record negative feedback fact failed, errorCode={}, messageId={}",
                 "FEEDBACK-RECORD-FAIL", feedback.messageId(), e);

@@ -30,12 +30,12 @@ class AgentAccessCredentialTest {
     @Test
     void tenantToken_shouldBindAgentAndTenant() {
         long now = System.currentTimeMillis();
-        String token = AgentAccessCredential.sign("agent-1", "tenant-a", now + 60_000, SECRET);
+        String token = AgentAccessCredential.sign("agent-1", "Tenant-A", now + 60_000, SECRET);
 
         AgentAccessCredential.AgentIdentity identity = AgentAccessCredential
             .verifyIdentity(token, SECRET, now).orElseThrow();
         assertEquals("agent-1", identity.agentId());
-        assertEquals("tenant-a", identity.tenantId());
+        assertEquals("Tenant-A", identity.tenantId(), "存量业务租户大小写不能改变外部资源命名空间");
     }
 
     @Test

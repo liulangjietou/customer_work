@@ -106,6 +106,19 @@ class OpenApiAuthInterceptorTest {
     }
 
     @Test
+    void tenantModeShouldRejectCredentialMappedToInvalidTenant() throws Exception {
+        OpenApiAuthInterceptor interceptor = tenantInterceptor(Map.of("legacy-tenant-token", "_legacy"));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        boolean pass = interceptor.preHandle(
+            requestWithToken("legacy-tenant-token"), response, new Object());
+
+        assertFalse(pass);
+        assertEquals(401, response.getStatus());
+        assertFalse(TenantContext.isPresent());
+    }
+
+    @Test
     void shouldClearTenantAfterRequestCompletion() throws Exception {
         OpenApiAuthInterceptor interceptor = tenantInterceptor(Map.of("tenant-token", "tenant-a"));
         MockHttpServletRequest request = requestWithToken("tenant-token");

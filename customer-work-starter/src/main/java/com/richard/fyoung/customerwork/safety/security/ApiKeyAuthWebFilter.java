@@ -53,7 +53,7 @@ public class ApiKeyAuthWebFilter implements WebFilter {
         }
         String provided = exchange.getRequest().getHeaders().getFirst(auth.getHeaderName());
         String tenantId = resolveTenant(provided, auth);
-        if (tenantId != null) {
+        if (TenantContext.isValidTenantId(tenantId)) {
             return chainWithTenant(exchange, chain, tenantId);
         }
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
@@ -110,8 +110,9 @@ public class ApiKeyAuthWebFilter implements WebFilter {
      * 而同步的 MyBatis 拦截器只认 ThreadLocal，若下游恰好没发生线程切换，就靠这里直接设的这一份。</p>
      */
     private Mono<Void> chainWithTenant(ServerWebExchange exchange, WebFilterChain chain, String tenantId) {
-        return Mono.defer(() -> TenantContext.callWith(tenantId, () -> chain.filter(exchange)))
-            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId));
+        String canonicalTenant = TenantContext.canonicalizeTenantId(tenantId);
+        return Mono.defer(() -> TenantContext.callWith(canonicalTenant, () -> chain.filter(exchange)))
+            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, canonicalTenant));
     }
 
 }

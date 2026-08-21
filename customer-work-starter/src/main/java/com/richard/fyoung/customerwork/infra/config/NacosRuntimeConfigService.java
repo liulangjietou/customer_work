@@ -7,6 +7,7 @@ import com.alibaba.nacos.api.config.listener.Listener;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.data.outbox.OutboxService;
+import com.richard.fyoung.customerwork.safety.tenant.LegacyTenantCompatibility;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -43,7 +44,6 @@ public class NacosRuntimeConfigService implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(NacosRuntimeConfigService.class);
 
     private static final String CODE_PARSE_FAIL = "RUNTIME-CONFIG-PARSE-FAIL";
-
     private final CustomerWorkProperties properties;
     private final RuntimeConfigApplier applier;
     private final OutboxService outboxService;
@@ -143,6 +143,21 @@ public class NacosRuntimeConfigService implements DisposableBean {
             }
         }
         if (!StringUtils.hasText(initial)) {
+            String legacyDataId = legacyDefaultTenantDataId(cfg);
+            if (legacyDataId != null) {
+                initial = configService.getConfig(legacyDataId, cfg.getGroup(), cfg.getTimeoutMs());
+                if (StringUtils.hasText(initial)) {
+                    // 读旧值后再次确认 canonical key，避免并发发布的新配置被本次启动误用旧值遮住。
+                    String canonical = configService.getConfig(tenantDataId, cfg.getGroup(), cfg.getTimeoutMs());
+                    if (StringUtils.hasText(canonical)) {
+                        initial = canonical;
+                    } else {
+                        log.info("[Nacos] legacy platform runtime config used as default compatibility fallback");
+                    }
+                }
+            }
+        }
+        if (!StringUtils.hasText(initial)) {
             initial = configService.getConfig(mainDataId, cfg.getGroup(), cfg.getTimeoutMs());
         }
         applyConfig(initial);
@@ -196,11 +211,29 @@ public class NacosRuntimeConfigService implements DisposableBean {
 
     /** 租户专属 dataId；未配租户码时返回 null（单租户部署不受灰度机制影响）。 */
     private String tenantDataId(NacosProperties cfg) {
+        String tenantCode = configuredTenantCode(cfg);
+        if (tenantCode == null) {
+            return null;
+        }
+        return cfg.getRuntimeConfigDataId() + "-tenant-" + tenantCode;
+    }
+
+    /** 仅 default 实例兼容读取旧平台 dataId；业务租户永不进入此分支。 */
+    private String legacyDefaultTenantDataId(NacosProperties cfg) {
+        return TenantContext.isDefaultTenant(configuredTenantCode(cfg))
+            ? cfg.getRuntimeConfigDataId() + "-tenant-" + LegacyTenantCompatibility.PLATFORM_TENANT_ID
+            : null;
+    }
+
+    /** 兼容旧部署环境变量；运行期只暴露 default，不让历史字面量重新进入上下文或 dataId。 */
+    private String configuredTenantCode(NacosProperties cfg) {
         String tenantCode = cfg.getTenantCode();
         if (tenantCode == null || tenantCode.isBlank()) {
             return null;
         }
-        return cfg.getRuntimeConfigDataId() + "-tenant-" + tenantCode.trim();
+        String trimmed = tenantCode.trim();
+        return LegacyTenantCompatibility.PLATFORM_TENANT_ID.equals(trimmed)
+            ? TenantContext.DEFAULT : TenantContext.canonicalizeTenantId(trimmed);
     }
 
     /**
@@ -252,8 +285,8 @@ public class NacosRuntimeConfigService implements DisposableBean {
             RuntimeConfigAck ack = new RuntimeConfigAck(revision, contentHash, resolveInstanceId(nacos),
                 status, reason, System.currentTimeMillis());
             String payload = objectMapper.writeValueAsString(ack);
-            String tenant = StringUtils.hasText(nacos.getTenantCode())
-                ? nacos.getTenantCode().trim() : TenantContext.DEFAULT;
+            String configuredTenant = configuredTenantCode(nacos);
+            String tenant = configuredTenant == null ? TenantContext.DEFAULT : configuredTenant;
             TenantContext.runWith(tenant, () ->
                 outboxService.publish(RuntimeConfigAckOutboxHandler.TYPE, revision, payload));
         } catch (Exception e) {

@@ -69,11 +69,11 @@ class TenantServiceTest {
         when(tenantMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
 
         TenantSaveRequest request = new TenantSaveRequest();
-        request.setTenantCode("acme");
+        request.setTenantCode("AcMe");
         request.setTenantName("Acme");
         service.create(request);
 
-        // 不初始化角色的新租户是个空壳：管理员建了也没有任何角色可分配
+        // 不初始化角色的新租户是个空壳；编码统一小写，避免数据库与缓存采用不同大小写语义
         verify(provisionService).provision("acme");
     }
 
@@ -92,21 +92,17 @@ class TenantServiceTest {
     }
 
     @Test
-    void changeStatus_shouldProtectReservedTenants() {
+    void changeStatus_shouldProtectDefaultTenant() {
         when(tenantMapper.selectById(1L)).thenReturn(tenant(1L, TenantContext.DEFAULT, TenantStatus.ACTIVE));
-        when(tenantMapper.selectById(2L)).thenReturn(tenant(2L, TenantContext.PLATFORM, TenantStatus.ACTIVE));
 
         assertEquals(ResultCode.TENANT_RESERVED_PROTECTED,
             assertThrows(BizException.class, () -> service.changeStatus(1L, TenantStatus.SUSPENDED)).getResultCode(),
             "冻结 default 会让存量数据整体不可访问");
-        assertEquals(ResultCode.TENANT_RESERVED_PROTECTED,
-            assertThrows(BizException.class, () -> service.changeStatus(2L, TenantStatus.SUSPENDED)).getResultCode(),
-            "冻结平台租户等于运营方把自己锁在门外");
     }
 
     @Test
     void delete_shouldProtectReservedTenants() {
-        when(tenantMapper.selectById(1L)).thenReturn(tenant(1L, TenantContext.PLATFORM, TenantStatus.ACTIVE));
+        when(tenantMapper.selectById(1L)).thenReturn(tenant(1L, "DEFAULT", TenantStatus.ACTIVE));
         assertThrows(BizException.class, () -> service.delete(1L));
         verify(tenantMapper, never()).deleteById(any(Long.class));
     }
@@ -119,9 +115,9 @@ class TenantServiceTest {
     }
 
     @Test
-    void assertAccessible_shouldAlwaysAllowPlatform() {
-        assertDoesNotThrow(() -> service.assertAccessible(TenantContext.PLATFORM),
-            "平台自身不受租户生命周期约束");
+    void assertAccessible_shouldAlwaysAllowDefault() {
+        assertDoesNotThrow(() -> service.assertAccessible("DEFAULT"),
+            "default 承担系统保留数据与控制面入口，不受租户生命周期约束");
         verify(tenantMapper, never()).selectOne(any(LambdaQueryWrapper.class));
     }
 
@@ -155,6 +151,16 @@ class TenantServiceTest {
         when(tenantMapper.selectOne(any(LambdaQueryWrapper.class)))
             .thenReturn(tenant(1L, "acme", TenantStatus.TERMINATED));
         assertFalse(service.existsAccessible("acme"), "已退租的租户不能作为切换目标");
-        assertTrue(service.existsAccessible(TenantContext.PLATFORM), "平台视角恒可用");
+        assertTrue(service.existsAccessible(TenantContext.DEFAULT), "default 视角恒可用");
+    }
+
+    @Test
+    void resolveAccessibleCode_shouldReturnStoredTenantCode() {
+        when(tenantMapper.selectOne(any(LambdaQueryWrapper.class)))
+            .thenReturn(tenant(1L, "AcMe", TenantStatus.ACTIVE));
+
+        assertEquals("AcMe", service.resolveAccessibleCode("acme"),
+            "请求别名只用于数据库定位，会话必须保存数据库里的权威编码");
+        assertEquals(TenantContext.DEFAULT, service.resolveAccessibleCode("DEFAULT"));
     }
 }

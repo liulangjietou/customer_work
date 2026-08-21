@@ -66,6 +66,10 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
             log.info("ws agent handshake rejected: token tenant missing");
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
+        if (properties.getTenant().isEnabled() && !TenantContext.isValidTenantId(tenantId)) {
+            log.info("ws agent handshake rejected: token tenant invalid");
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
         String effectiveTenant = properties.getTenant().isEnabled() ? tenantId : TenantContext.DEFAULT;
         return handleAuthenticated(session, authenticated.agentId(), effectiveTenant)
             .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, effectiveTenant));

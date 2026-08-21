@@ -2,7 +2,6 @@ package com.richard.fyoung.customeradmin.aiconfig.model.service;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
-import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelVO;
@@ -52,17 +51,13 @@ class ModelConfigServiceTest {
     @BeforeAll
     static void initMybatisPlusLambdaCache() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiModelConfig.class);
-        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""),
-            com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent.class);
     }
 
     @BeforeEach
     void setUp() {
         mapper = mock(AiModelConfigMapper.class);
         modelFactory = mock(AdminModelFactory.class);
-        AiAgentMapper agentMapper = mock(AiAgentMapper.class);
-        com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentBackupModelMapper agentBackupModelMapper =
-            mock(com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentBackupModelMapper.class);
+        ModelReferenceAccess modelReferenceAccess = mock(ModelReferenceAccess.class);
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
         // 16 字节测试密钥，满足 AES-128 长度要求
         AesGcmCryptoUtil cryptoUtil = new AesGcmCryptoUtil("0123456789abcdef");
@@ -73,8 +68,9 @@ class ModelConfigServiceTest {
         com.richard.fyoung.customeradmin.tenant.AdminTenantProperties tenantProperties =
             new com.richard.fyoung.customeradmin.tenant.AdminTenantProperties();
         tenantProperties.setEnabled(false);
-        service = new ModelConfigService(mapper, agentMapper, agentBackupModelMapper, cryptoUtil, modelFactory,
-            agentInstanceCache, runtimeConfigPublisher, tenantProperties);
+        service = new ModelConfigService(mapper, modelReferenceAccess, cryptoUtil, modelFactory,
+            agentInstanceCache, runtimeConfigPublisher, tenantProperties,
+            mock(com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority.class));
     }
 
     @Test

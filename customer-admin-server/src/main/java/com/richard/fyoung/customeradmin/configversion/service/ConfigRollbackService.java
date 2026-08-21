@@ -7,10 +7,12 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.configversion.entity.AiConfigVersion;
 import com.richard.fyoung.customeradmin.configversion.entity.PublishScope;
+import com.richard.fyoung.customeradmin.tenant.service.TenantService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 
 /**
@@ -26,12 +28,15 @@ public class ConfigRollbackService {
 
     private final ConfigVersionService versionService;
     private final CustomerWorkConfigPublisher publisher;
+    private final TenantService tenantService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ConfigRollbackService(ConfigVersionService versionService,
-                                 CustomerWorkConfigPublisher publisher) {
+                                 CustomerWorkConfigPublisher publisher,
+                                 TenantService tenantService) {
         this.versionService = versionService;
         this.publisher = publisher;
+        this.tenantService = tenantService;
     }
 
     /**
@@ -43,13 +48,19 @@ public class ConfigRollbackService {
      */
     public int rollback(Long versionId, String remark) {
         assertPublishEnabled();
+        // ai_config_version 受 TenantLineInterceptor 约束；这里按主键读取时已经锁定到当前有效租户，
+        // 其他租户的版本 ID 会表现为不存在。后续仍校验 dataId，形成数据归属与发布目标两道边界。
         AiConfigVersion target = versionService.requireVersion(versionId);
         if (target.getContent() == null || target.getContent().isBlank()) {
             throw new BizException(ResultCode.PARAM_INVALID, "该版本没有可回滚的内容快照");
         }
 
-        publisher.publishJson(target.getTargetCode(), target.getTargetId(), target.getContent(),
-            null, PublishScope.FULL, null, target.getVersion(),
+        PublishScope sourceScope = PublishScope.parse(target.getPublishScope());
+        List<String> sourceGrayTenants = sourceScope == PublishScope.GRAY
+            ? parseGrayTenants(target.getGrayTenants()) : List.of();
+        publisher.publishRollbackToCurrentTenant(
+            target.getTargetCode(), target.getTargetId(), target.getContent(), target.getDataId(),
+            sourceScope, sourceGrayTenants, target.getVersion(),
             remark == null || remark.isBlank() ? "回滚至 v" + target.getVersion() : remark);
 
         return versionService.findCurrent(
@@ -77,15 +88,13 @@ public class ConfigRollbackService {
             throw new BizException(ResultCode.PARAM_INVALID, "该版本没有可下发的内容快照");
         }
 
-        String grayTenantsJson = serializeTenants(tenantCodes);
+        List<String> resolvedTenantCodes = resolveGrayTenantCodes(tenantCodes);
+        String grayTenantsJson = serializeTenants(resolvedTenantCodes);
         int published = 0;
-        for (String tenantCode : tenantCodes) {
-            if (tenantCode == null || tenantCode.isBlank()) {
-                continue;
-            }
+        for (String tenantCode : resolvedTenantCodes) {
             // 逐租户下发，单个失败不阻断其余：灰度本就是分批放量，一个租户失败不该让整批回不去
             try {
-                publisher.publishToDataId(publisher.grayDataId(tenantCode.trim()), target.getContent());
+                publisher.publishToDataId(publisher.grayDataId(tenantCode), target.getContent());
                 published++;
             } catch (Exception e) {
                 log.error("gray release failed for tenant, code={}, tenant={}, version={}",
@@ -99,12 +108,30 @@ public class ConfigRollbackService {
         versionService.recordPublish(
             com.richard.fyoung.customeradmin.configversion.entity.ConfigType.parse(target.getConfigType()),
             target.getTargetCode(), target.getTargetId(), target.getContent(),
-            publisher.grayDataId(tenantCodes.get(0)), PublishScope.GRAY, grayTenantsJson,
+            publisher.grayDataId(resolvedTenantCodes.get(0)), PublishScope.GRAY, grayTenantsJson,
             target.getVersion(), remark);
 
         log.info("gray release done, target={}, version={}, tenants={}/{}",
-            target.getTargetCode(), target.getVersion(), published, tenantCodes.size());
+            target.getTargetCode(), target.getVersion(), published, resolvedTenantCodes.size());
         return published;
+    }
+
+    /**
+     * 灰度目标必须先解析为租户主数据中的权威编码，禁止把历史兼容值或大小写别名写回外部命名空间。
+     */
+    private List<String> resolveGrayTenantCodes(List<String> tenantCodes) {
+        LinkedHashSet<String> resolved = new LinkedHashSet<>();
+        for (String tenantCode : tenantCodes) {
+            if (tenantCode == null || tenantCode.isBlank()) {
+                throw new BizException(ResultCode.PARAM_INVALID, "灰度租户编码不能为空");
+            }
+            String authoritativeCode = tenantService.resolveAccessibleCode(tenantCode.trim());
+            if (authoritativeCode == null) {
+                throw new BizException(ResultCode.TENANT_NOT_FOUND, "灰度租户不存在或不可用");
+            }
+            resolved.add(authoritativeCode);
+        }
+        return List.copyOf(resolved);
     }
 
     /** 解析灰度租户列表（存的是 JSON 数组）。 */

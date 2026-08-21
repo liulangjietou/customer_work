@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantPageQuery;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantSaveRequest;
@@ -27,10 +28,10 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 租户管理：CRUD + 生命周期 + 运营方视角切换。
+ * 租户管理：CRUD + 生命周期 + 控制面视角切换。
  *
- * <p>整个 Controller 是平台运营方专属。两道防线：{@code tenant:*} 权限点在租户开通时被显式排除，
- * 不会落到租户管理员的角色上；每个方法再校验一次调用者确实是运营方。
+ * <p>整个 Controller 是控制面专属。两道防线：{@code tenant:*} 权限点在租户开通时被显式排除，
+ * 不会落到租户管理员的角色上；每个方法再校验一次调用者具备显式控制面能力。
  * 后者不是冗余——权限点是通用 RBAC，可能被误配置，而租户列表泄露的是全体客户名单。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -39,30 +40,32 @@ import java.util.List;
 public class TenantController {
 
     private final TenantService tenantService;
+    private final CrossTenantAuthority crossTenantAuthority;
 
-    public TenantController(TenantService tenantService) {
+    public TenantController(TenantService tenantService, CrossTenantAuthority crossTenantAuthority) {
         this.tenantService = tenantService;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     @SaCheckPermission("tenant:view")
     @GetMapping("/page")
     public Result<PageResult<TenantVO>> page(TenantPageQuery query) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(tenantService.page(query));
     }
 
     @SaCheckPermission("tenant:view")
     @GetMapping("/{id}")
     public Result<TenantVO> get(@PathVariable Long id) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(tenantService.get(id));
     }
 
-    /** 可切换的租户下拉（运营方顶部租户切换器的数据源）。 */
+    /** 可切换的租户下拉（控制面顶部租户切换器的数据源）。 */
     @SaCheckPermission("tenant:view")
     @GetMapping("/options")
     public Result<List<TenantVO>> options() {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(tenantService.listActive());
     }
 
@@ -70,7 +73,7 @@ public class TenantController {
     @OperationLog(operation = "新增租户", target = "sys_tenant")
     @PostMapping
     public Result<Long> create(@Valid @RequestBody TenantSaveRequest request) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         return Result.success(tenantService.create(request));
     }
 
@@ -78,7 +81,7 @@ public class TenantController {
     @OperationLog(operation = "编辑租户", target = "sys_tenant")
     @PutMapping
     public Result<Void> update(@Valid @RequestBody TenantSaveRequest request) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         tenantService.update(request);
         return Result.success();
     }
@@ -88,7 +91,7 @@ public class TenantController {
     @OperationLog(operation = "变更租户状态", target = "sys_tenant")
     @PutMapping("/{id}/status")
     public Result<Void> changeStatus(@PathVariable Long id, @RequestParam String status) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         tenantService.changeStatus(id, TenantStatus.parse(status));
         return Result.success();
     }
@@ -97,7 +100,7 @@ public class TenantController {
     @OperationLog(operation = "删除租户", target = "sys_tenant")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
-        assertPlatformOperator();
+        assertCrossTenantAuthority();
         tenantService.delete(id);
         return Result.success();
     }
@@ -111,28 +114,33 @@ public class TenantController {
         TenantViewVO vo = new TenantViewVO();
         vo.setUserTenantId(TenantSession.currentUserTenant());
         vo.setEffectiveTenantId(TenantSession.effectiveTenant());
-        vo.setPlatformOperator(TenantSession.isPlatformOperator());
+        vo.setCrossTenantAuthority(crossTenantAuthority.hasCurrentUserAuthority());
         return Result.success(vo);
     }
 
     /**
-     * 运营方切换目标租户视角；传空回到平台自身视角。
+     * 控制面用户切换目标租户视角；传空回到自身租户视角。
      *
      * <p>切换只改自己会话里的一个值，不影响其他登录会话，也不改任何业务数据。</p>
      */
     @OperationLog(operation = "切换租户视角", target = "sys_tenant")
+    @SaCheckPermission("tenant:view")
     @PutMapping("/switch-view")
     public Result<Void> switchView(@RequestParam(required = false) String tenantCode) {
-        assertPlatformOperator();
-        if (tenantCode != null && !tenantCode.isBlank() && !tenantService.existsAccessible(tenantCode)) {
-            throw new BizException(ResultCode.TENANT_NOT_FOUND);
+        assertCrossTenantAuthority();
+        String resolvedTenantCode = null;
+        if (tenantCode != null && !tenantCode.isBlank()) {
+            resolvedTenantCode = tenantService.resolveAccessibleCode(tenantCode);
+            if (resolvedTenantCode == null) {
+                throw new BizException(ResultCode.TENANT_NOT_FOUND);
+            }
         }
-        TenantSession.switchView(tenantCode);
+        TenantSession.switchView(resolvedTenantCode);
         return Result.success();
     }
 
-    private void assertPlatformOperator() {
-        if (!TenantSession.isPlatformOperator()) {
+    private void assertCrossTenantAuthority() {
+        if (!crossTenantAuthority.hasCurrentUserAuthority()) {
             throw new BizException(ResultCode.TENANT_VIEW_FORBIDDEN);
         }
     }

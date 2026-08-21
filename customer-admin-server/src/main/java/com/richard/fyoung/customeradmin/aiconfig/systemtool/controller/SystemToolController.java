@@ -8,6 +8,7 @@ import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,9 +26,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class SystemToolController {
 
     private final SystemToolService systemToolService;
+    private final CrossTenantAuthority crossTenantAuthority;
 
-    public SystemToolController(SystemToolService systemToolService) {
+    public SystemToolController(SystemToolService systemToolService, CrossTenantAuthority crossTenantAuthority) {
         this.systemToolService = systemToolService;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     @SaCheckPermission("system-tool:view")
@@ -46,6 +49,7 @@ public class SystemToolController {
     @OperationLog(operation = "编辑系统工具", target = "ai_system_tool")
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody SystemToolSaveRequest request) {
+        crossTenantAuthority.requireCurrentUserAuthority();
         systemToolService.update(id, request);
         return Result.success();
     }

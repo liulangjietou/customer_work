@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { createUser, deleteUser, pageUsers, updateUser } from '@/api/user'
 import { pageRoles } from '@/api/role'
+import { fetchCurrentView } from '@/api/tenant'
 import { useAuthStore } from '@/store/auth'
 import { useCrudPage } from '@/composables/useCrudPage'
 import type { PageQuery, RoleVO, UserSaveRequest, UserVO } from '@/types/api'
@@ -10,6 +11,7 @@ import type { PageQuery, RoleVO, UserSaveRequest, UserVO } from '@/types/api'
 const auth = useAuthStore()
 
 const roleOptions = ref<RoleVO[]>([])
+const crossTenantAuthority = ref(false)
 const formRef = ref<FormInstance>()
 
 const {
@@ -47,9 +49,12 @@ async function loadRoleOptions() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadList()
-  loadRoleOptions()
+  crossTenantAuthority.value = await fetchCurrentView()
+    .then((view) => view.crossTenantAuthority === true)
+    .catch(() => false)
+  await loadRoleOptions()
 })
 </script>
 
@@ -110,7 +115,13 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="form.roleIds" multiple style="width: 100%">
-            <el-option v-for="role in roleOptions" :key="role.id" :label="role.roleName" :value="role.id" />
+            <el-option
+              v-for="role in roleOptions"
+              :key="role.id"
+              :label="role.roleName"
+              :value="role.id"
+              :disabled="role.controlPlane && !crossTenantAuthority"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">

@@ -90,7 +90,7 @@ public class SemanticCacheService {
             if (!cacheable(question, intent)) {
                 return Optional.empty();
             }
-            String scopeId = tenantResolver.resolve(sessionId);
+            String scopeId = tenantResolver.resolveDataScope(sessionId);
             long now = System.currentTimeMillis();
             List<SemanticCacheEntry> candidates = store.findCandidates(scopeId, intent,
                 notBefore(now), properties.getMaxCandidates());
@@ -135,7 +135,7 @@ public class SemanticCacheService {
             if (!cacheable(question, intent) || containsPersonalIdentifier(answer)) {
                 return;
             }
-            String scopeId = tenantResolver.resolve(sessionId);
+            String scopeId = tenantResolver.resolveDataScope(sessionId);
             long now = System.currentTimeMillis();
             float[] vector = embeddingClient.embedQuery(question);
             store.save(SemanticCacheEntry.of(scopeId, intent, question, formatVector(vector), answer, now));

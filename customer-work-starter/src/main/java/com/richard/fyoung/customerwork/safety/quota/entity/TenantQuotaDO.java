@@ -22,7 +22,7 @@ public class TenantQuotaDO {
      * 归属租户。
      *
      * <p>本表在租户拦截器的忽略清单外（正常参与过滤），但仍显式持有该字段：
-     * 运营方跨租户配额度时要读到"这条配额属于谁"，靠拦截器自动补值读不出来。</p>
+     * 控制面用户跨租户配额度时要读到"这条配额属于谁"，靠拦截器自动补值读不出来。</p>
      */
     private String tenantId;
     private String period;

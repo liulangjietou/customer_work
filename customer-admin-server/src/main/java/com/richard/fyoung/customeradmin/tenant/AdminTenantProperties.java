@@ -31,6 +31,6 @@ public class AdminTenantProperties {
     /** 租户列名（与客服端库统一）。 */
     private String columnName = "tenant_id";
 
-    /** 在内置平台级表之外，额外不参与租户过滤的表。 */
+    /** 在内置租户忽略表之外，额外不参与租户过滤的表。 */
     private List<String> ignoredTables = new ArrayList<>();
 }

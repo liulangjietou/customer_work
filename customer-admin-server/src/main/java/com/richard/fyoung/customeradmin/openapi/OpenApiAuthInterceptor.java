@@ -77,7 +77,8 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
         }
         String matchedTenant = null;
         for (Map.Entry<String, String> entry : properties.getTenantTokens().entrySet()) {
-            if (constantTimeEquals(actual, entry.getKey()) && StringUtils.hasText(entry.getValue())) {
+            if (constantTimeEquals(actual, entry.getKey())
+                && TenantContext.isValidTenantId(entry.getValue())) {
                 matchedTenant = entry.getValue();
             }
         }

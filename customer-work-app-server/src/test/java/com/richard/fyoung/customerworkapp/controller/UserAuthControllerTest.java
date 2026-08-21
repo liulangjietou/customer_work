@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.data.user.UserAccount;
 import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerworkapp.service.AvatarStorageService;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,8 @@ import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -84,6 +87,17 @@ class UserAuthControllerTest {
     }
 
     @Test
+    void register_withInvalidTenantCode_shouldReturn400WithoutWritingUser() {
+        webTestClient.post().uri("/api/customer/auth/register")
+            .bodyValue(Map.of("username", "alice", "password", "secret1",
+                "tenantCode", "__platform__"))
+            .exchange()
+            .expectStatus().isBadRequest();
+
+        verify(userAccountService, never()).register(any(), any(), any(), any());
+    }
+
+    @Test
     void login_shouldReturnToken() {
         when(userAccountService.verifyLogin("alice", "secret1")).thenReturn(Optional.of(account()));
 
@@ -99,6 +113,20 @@ class UserAuthControllerTest {
     }
 
     @Test
+    void login_shouldIssueTokenWithStoredAuthoritativeTenantCode() {
+        UserAccount stored = TenantContext.callWith("AcMe", this::account);
+        when(userAccountService.verifyLogin("alice", "secret1")).thenReturn(Optional.of(stored));
+
+        webTestClient.post().uri("/api/customer/auth/login")
+            .bodyValue(Map.of("username", "alice", "password", "secret1", "tenantCode", "acme"))
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.token").value(token -> assertEquals("AcMe",
+                jwtService.verify(String.valueOf(token)).orElseThrow().tenantId()));
+    }
+
+    @Test
     void login_wrongPassword_shouldReturn401() {
         when(userAccountService.verifyLogin(any(), any())).thenReturn(Optional.empty());
 
@@ -106,6 +134,17 @@ class UserAuthControllerTest {
             .bodyValue(Map.of("username", "alice", "password", "wrong"))
             .exchange()
             .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void login_withInvalidTenantCode_shouldReturn400WithoutReadingUser() {
+        webTestClient.post().uri("/api/customer/auth/login")
+            .bodyValue(Map.of("username", "alice", "password", "secret1",
+                "tenantCode", "__platform__"))
+            .exchange()
+            .expectStatus().isBadRequest();
+
+        verify(userAccountService, never()).verifyLogin(any(), any());
     }
 
     @Test
@@ -127,6 +166,18 @@ class UserAuthControllerTest {
         webTestClient.get().uri("/api/customer/auth/me")
             .exchange()
             .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void me_withLegacyTenantToken_shouldReturn401() {
+        String token = jwtService.issue("U-1", "alice", "Alice", "__platform__");
+
+        webTestClient.get().uri("/api/customer/auth/me")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .exchange()
+            .expectStatus().isUnauthorized();
+
+        verify(userAccountService, never()).findById(any());
     }
 
     @Test

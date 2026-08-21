@@ -35,6 +35,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 登录/登出/改密。
@@ -53,6 +54,8 @@ public class AuthService {
     /** 种子数据里 admin 账号的初始密码哈希——当前密码仍等于此值即视为"从未改过密"，强制改密。 */
     private static final String INITIAL_ADMIN_PASSWORD_HASH =
         "$2a$10$M7Z.8TA1.6l01JSeZRGAb.olJkoDmvk4JSX81kNlZ5rzE1LCsDCFC";
+
+    private static final String LDAP_LOGIN_TYPE = "LDAP";
 
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
@@ -124,12 +127,12 @@ public class AuthService {
 
         LdapBindResult bindResult = ldapAuthService.bind(username, request.password());
         if (bindResult == LdapBindResult.SERVICE_UNAVAILABLE) {
-            recordLoginLog(TenantContext.PLATFORM, username, null, false, "OA域服务不可用",
+            recordLoginLog(TenantContext.DEFAULT, username, null, false, "OA域服务不可用",
                 "OA登录失败", "AuthController#ssoLogin");
             throw new BizException(ResultCode.SSO_SERVICE_UNAVAILABLE);
         }
         if (bindResult == LdapBindResult.INVALID_CREDENTIALS) {
-            recordLoginLog(TenantContext.PLATFORM, username, null, false, "OA账号或密码错误",
+            recordLoginLog(TenantContext.DEFAULT, username, null, false, "OA账号或密码错误",
                 "OA登录失败", "AuthController#ssoLogin");
             throw new BizException(ResultCode.SSO_LOGIN_FAILED);
         }
@@ -178,10 +181,10 @@ public class AuthService {
         TenantContext.set(tenantId);
     }
 
-    /** 存量用户可能没有租户列值（升级前建的行），一律按平台运营方处理，与 V49 的存量归属口径一致。 */
+    /** 存量用户可能没有租户列值（升级前建的行），一律归入系统唯一保留的 default 租户。 */
     private String resolveTenantId(SysUser user) {
         String tenantId = user.getTenantId();
-        return tenantId == null || tenantId.isBlank() ? TenantContext.PLATFORM : tenantId;
+        return tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT : tenantId;
     }
 
     public void changePassword(ChangePasswordRequest request) {
@@ -203,7 +206,7 @@ public class AuthService {
      *
      * <p>{@code tenantId} 必须显式传入：本方法在 {@code doLogin} 之前调用（登录失败也要留痕），
      * 那时线程上还没有租户上下文，靠 {@link TenantContext} 推断只会把所有登录日志都算到平台头上，
-     * 租户管理员就看不到自己用户的登录记录了。用户名不存在时归平台——那是平台级安全事件。</p>
+     * 租户管理员就看不到自己用户的登录记录了。用户名不存在时归默认租户，作为系统级安全事件留痕。</p>
      */
     private void recordLoginLog(String tenantId, String username, Long userId, boolean success, String errorMsg,
                                  String operation, String method) {
@@ -224,9 +227,9 @@ public class AuthService {
         }
     }
 
-    /** 登录留痕用的租户归属：用户不存在时算平台级安全事件。 */
+    /** 登录留痕用的租户归属：用户不存在时归系统默认租户。 */
     private String loginLogTenant(SysUser user) {
-        return user == null ? TenantContext.PLATFORM : resolveTenantId(user);
+        return user == null ? TenantContext.DEFAULT : resolveTenantId(user);
     }
 
     /** 用户可直接输入 RichardFyoung 或 RichardFyoung@xxx，统一取 @ 前半部分再拼接配置的域名后缀发起 Bind。 */
@@ -239,12 +242,12 @@ public class AuthService {
     /**
      * LDAP 影子账号的查找与自动创建。
      *
-     * <p>整段跑在平台租户上下文里：LDAP 是企业内部域，通过它进来的都是运营方员工，
-     * 影子账号与默认角色都归 {@code __platform__}。若将来要支持"租户自带 AD 域"，
+     * <p>整段跑在默认租户上下文里：LDAP 是系统统一身份源，影子账号与默认角色都归 {@code default}。
+     * 若将来要支持"租户自带 AD 域"，
      * 这里换成按域名映射租户即可，其余链路不用动。</p>
      */
     private SysUser findOrCreateLdapUser(String username) {
-        return TenantContext.callWith(TenantContext.PLATFORM, () -> doFindOrCreateLdapUser(username));
+        return TenantContext.callWith(TenantContext.DEFAULT, () -> doFindOrCreateLdapUser(username));
     }
 
     private SysUser doFindOrCreateLdapUser(String username) {
@@ -252,8 +255,12 @@ public class AuthService {
         SysUser user = CrossTenantOperations.execute(() -> userMapper.selectOne(
             new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username)));
         if (user != null) {
-            return user;
+            return requireLdapAccount(user);
         }
+
+        // LDAP Bind 只证明目录身份，不等于控制面授权。角色解析必须发生在任何用户写入之前，
+        // 配置误把 super_admin/operator 等控制面角色放进默认清单时直接失败，避免留下半创建账号。
+        List<SysRole> defaultRoles = resolveAssignableDefaultRoles();
 
         // 坑：sys_user.uk_sys_user_username 是纯数据库唯一约束，不包含 deleted 列。该用户名如果曾被
         // 管理员删除过（UserService#delete 走的是逻辑删除，deleted 置 1），上面的 selectOne 会因
@@ -263,9 +270,10 @@ public class AuthService {
         SysUser deletedUser = CrossTenantOperations.execute(
             () -> userMapper.selectByUsernameIgnoreLogicDelete(username));
         if (deletedUser != null) {
+            requireLdapAccount(deletedUser);
             userMapper.reviveDeletedUser(deletedUser.getId(), username);
             userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, deletedUser.getId()));
-            assignDefaultRoles(deletedUser.getId());
+            assignDefaultRoles(deletedUser.getId(), defaultRoles);
             log.info("revived soft-deleted local account for LDAP sso login, username={}, userId={}",
                 username, deletedUser.getId());
             return userMapper.selectById(deletedUser.getId());
@@ -275,10 +283,10 @@ public class AuthService {
         created.setUsername(username);
         created.setPassword(null);
         created.setNickname(username);
-        created.setLoginType("LDAP");
+        created.setLoginType(LDAP_LOGIN_TYPE);
         created.setStatus(1);
-        // 显式写租户而非依赖拦截器补值：多租户关闭时拦截器根本没挂，落到 DDL 默认的 default 就错了
-        created.setTenantId(TenantContext.PLATFORM);
+        // 显式写租户而非依赖拦截器或 DDL 默认值，让账号归属在领域代码里保持可见。
+        created.setTenantId(TenantContext.DEFAULT);
         try {
             userMapper.insert(created);
         } catch (DuplicateKeyException e) {
@@ -287,22 +295,61 @@ public class AuthService {
             SysUser existing = CrossTenantOperations.execute(() -> userMapper.selectOne(
                 new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username)));
             if (existing != null) {
-                return existing;
+                return requireLdapAccount(existing);
             }
             throw e;
         }
-        assignDefaultRoles(created.getId());
+        assignDefaultRoles(created.getId(), defaultRoles);
         log.info("auto-created local account for LDAP sso login, username={}, userId={}", username, created.getId());
         return created;
     }
 
-    private void assignDefaultRoles(Long userId) {
-        List<String> roleCodes = ldapProperties.getDefaultRoleCodes();
-        if (CollectionUtils.isEmpty(roleCodes)) {
-            return;
+    /**
+     * LDAP Bind 只证明目录账号有效，不能据此接管同名本地账号；否则本地控制面账号可被绕过密码登录。
+     */
+    private SysUser requireLdapAccount(SysUser user) {
+        if (!LDAP_LOGIN_TYPE.equals(user.getLoginType())) {
+            log.error("LDAP login rejected due to local account collision, code={}, username={}, userId={}",
+                "LDAP-LOCAL-ACCOUNT-COLLISION", user.getUsername(), user.getId());
+            throw new BizException(ResultCode.SSO_LOGIN_FAILED);
+        }
+        return user;
+    }
+
+    private List<SysRole> resolveAssignableDefaultRoles() {
+        List<String> configuredRoleCodes = ldapProperties.getDefaultRoleCodes();
+        if (CollectionUtils.isEmpty(configuredRoleCodes)) {
+            return List.of();
+        }
+        List<String> roleCodes = configuredRoleCodes.stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(code -> !code.isEmpty())
+            .distinct()
+            .toList();
+        if (roleCodes.isEmpty()) {
+            return List.of();
         }
         List<SysRole> roles = roleMapper.selectList(
             new LambdaQueryWrapper<SysRole>().in(SysRole::getRoleCode, roleCodes));
+        boolean incompleteRoleConfiguration = roles.size() != roleCodes.size()
+            || roles.stream().anyMatch(role -> role.getStatus() == null || role.getStatus() != 1);
+        if (incompleteRoleConfiguration) {
+            log.error("LDAP default roles are missing or disabled, code={}",
+                "LDAP-DEFAULT-ROLE-INVALID");
+            throw new BizException(ResultCode.PARAM_INVALID, "LDAP 默认角色不存在或已禁用");
+        }
+        boolean containsControlPlaneRole = roles.stream().anyMatch(role ->
+            Integer.valueOf(SysRole.CONTROL_PLANE_ENABLED).equals(role.getControlPlane()));
+        if (containsControlPlaneRole) {
+            log.error("LDAP default roles contain control-plane authority, code={}",
+                "LDAP-CONTROL-PLANE-ROLE-FORBIDDEN");
+            throw new BizException(ResultCode.FORBIDDEN, "LDAP 默认角色不能包含控制面角色");
+        }
+        return roles;
+    }
+
+    private void assignDefaultRoles(Long userId, List<SysRole> roles) {
         for (SysRole role : roles) {
             SysUserRole ur = new SysUserRole();
             ur.setUserId(userId);

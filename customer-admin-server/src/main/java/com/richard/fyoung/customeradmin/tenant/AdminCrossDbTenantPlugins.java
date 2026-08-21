@@ -9,7 +9,7 @@ import java.util.List;
 
 /**
  * 为 admin 自建的跨库 SqlSessionFactory 提供与主库一致的租户行级过滤。
- * 平台跨租户查询仍必须在已校验运营方权限后显式使用 CrossTenantOperations。
+ * 跨租户查询仍必须在已校验控制面角色与权限点后显式使用 CrossTenantOperations。
  */
 @Component
 public class AdminCrossDbTenantPlugins {

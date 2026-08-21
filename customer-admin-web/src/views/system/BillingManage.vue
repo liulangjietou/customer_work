@@ -16,10 +16,10 @@ import {
   type TenantQuotaVO,
   type UsageAggregate,
 } from '@/api/billing'
-import { listTenantOptions, type TenantVO } from '@/api/tenant'
+import { fetchCurrentView, listTenantOptions, type TenantVO } from '@/api/tenant'
 
-// 配额与计费：平台运营方专属。三块内容各自独立，用 tab 分开而不是堆在一页——
-// 配额是"管上限"、单价是"管口径"、账单是"看结果"，同时看的场景很少。
+// 配额与单价是控制面能力；billing:view 仍允许租户管理员查看自己的账单。
+// 三块内容各自独立，用 tab 分开而不是堆在一页——配额是"管上限"、单价是"管口径"、账单是"看结果"。
 
 const PERIOD_LABELS: Record<string, string> = { DAILY: '按日', MONTHLY: '按月' }
 const ACTION_LABELS: Record<string, string> = {
@@ -28,7 +28,9 @@ const ACTION_LABELS: Record<string, string> = {
   WARN: '仅告警',
 }
 
-const activeTab = ref('quota')
+const activeTab = ref('bill')
+const crossTenantAuthority = ref(false)
+const currentTenantId = ref('')
 const tenants = ref<TenantVO[]>([])
 
 async function loadTenants() {
@@ -184,7 +186,10 @@ async function loadBill() {
   }
   billLoading.value = true
   try {
-    if (billTenant.value) {
+    if (!crossTenantAuthority.value) {
+      billRows.value = await fetchTenantBill({ from, to })
+      overviewRows.value = []
+    } else if (billTenant.value) {
       billRows.value = await fetchTenantBill({ tenantId: billTenant.value, from, to })
       overviewRows.value = []
     } else {
@@ -209,8 +214,17 @@ async function handleAggregate() {
 
 onMounted(async () => {
   billRange.value = defaultRange()
-  await loadTenants()
-  await Promise.all([loadPrice(), loadBill()])
+  const view = await fetchCurrentView()
+  crossTenantAuthority.value = view.crossTenantAuthority === true
+  currentTenantId.value = view.effectiveTenantId ?? view.userTenantId ?? ''
+  billTenant.value = crossTenantAuthority.value ? '' : currentTenantId.value
+  if (crossTenantAuthority.value) {
+    activeTab.value = 'quota'
+    await loadTenants()
+    await Promise.all([loadPrice(), loadBill()])
+    return
+  }
+  await loadBill()
 })
 </script>
 
@@ -219,7 +233,7 @@ onMounted(async () => {
     <el-card>
       <el-tabs v-model="activeTab">
         <!-- 配额 -->
-        <el-tab-pane label="租户配额" name="quota">
+        <el-tab-pane v-if="crossTenantAuthority" label="租户配额" name="quota">
           <div class="toolbar">
             <el-select
               v-model="quotaTenant"
@@ -290,7 +304,7 @@ onMounted(async () => {
         </el-tab-pane>
 
         <!-- 单价 -->
-        <el-tab-pane label="模型单价" name="price">
+        <el-tab-pane v-if="crossTenantAuthority" label="模型单价" name="price">
           <div class="toolbar">
             <el-button v-permission="'billing:price-edit'" type="primary" @click="openPriceDialog">
               新增单价
@@ -327,7 +341,14 @@ onMounted(async () => {
               end-placeholder="结束日期"
               style="width: 260px"
             />
-            <el-select v-model="billTenant" placeholder="全部租户（总览）" style="width: 260px" clearable filterable>
+            <el-select
+              v-if="crossTenantAuthority"
+              v-model="billTenant"
+              placeholder="全部租户（总览）"
+              style="width: 260px"
+              clearable
+              filterable
+            >
               <el-option
                 v-for="t in tenants"
                 :key="t.tenantCode"
@@ -335,12 +356,15 @@ onMounted(async () => {
                 :value="t.tenantCode"
               />
             </el-select>
+            <el-tag v-else type="info">当前租户：{{ currentTenantId || 'default' }}</el-tag>
             <el-button type="primary" @click="loadBill">查询</el-button>
-            <el-button v-permission="'billing:export'" @click="handleAggregate">手工归集</el-button>
+            <el-button v-if="crossTenantAuthority" v-permission="'billing:export'" @click="handleAggregate">
+              手工归集
+            </el-button>
           </div>
 
           <!-- 选了租户看按模型明细，没选看按租户总览 -->
-          <el-table v-if="billTenant" v-loading="billLoading" :data="billRows" style="width: 100%">
+          <el-table v-if="billTenant || !crossTenantAuthority" v-loading="billLoading" :data="billRows" style="width: 100%">
             <el-table-column prop="modelName" label="模型" width="200" />
             <el-table-column prop="callCount" label="调用次数" width="120" />
             <el-table-column prop="inputTokens" label="输入 token" width="140" />

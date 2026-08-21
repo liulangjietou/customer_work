@@ -356,7 +356,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
      * 使同租户不同会话共享长期记忆；无分隔符则整个 sessionId 作为租户。
      */
     String resolveTenant(String sessionId) {
-        return tenantResolver.resolve(sessionId);
+        return tenantResolver.resolveDataScope(sessionId);
     }
 
     /** 容器关闭时优雅释放 trace 导出器（AutoCloseable）。 */

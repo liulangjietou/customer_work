@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.system.menu.controller;
 
 import com.richard.fyoung.customeradmin.common.storage.ImageMediaTypes;
 import com.richard.fyoung.customeradmin.system.menu.service.MenuIconStorageService;
+import com.richard.fyoung.customeradmin.system.permission.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -24,20 +25,33 @@ import java.time.Duration;
 @RequestMapping("/api/menu-icons")
 public class MenuIconController {
 
-    private final MenuIconStorageService storageService;
+    private static final String HEADER_CONTENT_SECURITY_POLICY = "Content-Security-Policy";
+    private static final String HEADER_X_CONTENT_TYPE_OPTIONS = "X-Content-Type-Options";
+    private static final String IMAGE_SANDBOX_POLICY = "default-src 'none'; sandbox";
 
-    public MenuIconController(MenuIconStorageService storageService) {
+    private final MenuIconStorageService storageService;
+    private final PermissionService permissionService;
+
+    public MenuIconController(MenuIconStorageService storageService, PermissionService permissionService) {
         this.storageService = storageService;
+        this.permissionService = permissionService;
     }
 
     /** key 可能带 {@code yyyyMM/} 前缀（含斜杠），故用 {@code /**} 通配；找不到即 404，不泄漏存储细节。 */
     @GetMapping("/**")
     public ResponseEntity<byte[]> icon(HttpServletRequest request) {
         String key = ImageMediaTypes.extractKey(request, MenuIconStorageService.URL_PREFIX);
+        String imageUrl = MenuIconStorageService.URL_PREFIX + key;
+        if (!storageService.ownsKey(key) && !permissionService.isReferencedImageUrl(imageUrl)) {
+            return ResponseEntity.notFound().build();
+        }
         try {
             byte[] data = storageService.read(key);
             return ResponseEntity.ok()
                 .contentType(ImageMediaTypes.byExtension(key))
+                // SVG 允许作为 <img> 图标，但直接打开时必须进入无脚本沙箱，避免同源读取后台 token。
+                .header(HEADER_CONTENT_SECURITY_POLICY, IMAGE_SANDBOX_POLICY)
+                .header(HEADER_X_CONTENT_TYPE_OPTIONS, "nosniff")
                 .cacheControl(CacheControl.maxAge(Duration.ofDays(7)).cachePublic())
                 .body(data);
         } catch (IOException e) {

@@ -7,7 +7,7 @@
   cw_agent_call_log 本身只记 agent_code/agent_name，不含模型信息，token 也是分段级更准。
   provider 日志里没有，归集时留空，单价按 model_name 匹配。
 
-  注意：这几条 SQL 都会被租户拦截器改写。归集任务与运营方总览是刻意跨租户的，
+  注意：这几条 SQL 都会被租户拦截器改写。归集任务与控制面总览是刻意跨租户的，
   调用方必须包 CrossTenantOperations，否则只会汇总到当前上下文那一个租户。
 -->
 <mapper namespace="com.richard.fyoung.customeradmin.billing.mapper.CwTenantUsageDailyMapper">

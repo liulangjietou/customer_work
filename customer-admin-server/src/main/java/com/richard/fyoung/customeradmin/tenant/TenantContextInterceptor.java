@@ -1,5 +1,8 @@
 package com.richard.fyoung.customeradmin.tenant;
 
+import cn.dev33.satoken.stp.StpUtil;
+import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -18,9 +21,32 @@ import org.springframework.web.servlet.HandlerInterceptor;
  */
 public class TenantContextInterceptor implements HandlerInterceptor {
 
+    private final CrossTenantAuthority crossTenantAuthority;
+
+    public TenantContextInterceptor(CrossTenantAuthority crossTenantAuthority) {
+        this.crossTenantAuthority = crossTenantAuthority;
+    }
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        String userTenantId = TenantSession.currentUserTenant();
+        // 旧会话或被篡改凭据中的非法租户不能继续进入业务层，更不能在迁移后重新写回历史租户值。
+        if (userTenantId != null && !TenantContext.isValidTenantId(userTenantId)) {
+            StpUtil.logout();
+            throw new BizException(ResultCode.TOKEN_EXPIRED);
+        }
         String tenantId = TenantSession.effectiveTenant();
+        if (tenantId != null && !TenantContext.isValidTenantId(tenantId)) {
+            TenantSession.switchView(null);
+            tenantId = userTenantId;
+        }
+        // 控制面角色可能在会话存活期间被移除。每个请求都重验，避免旧 viewTenantId
+        // 让已降权用户继续在其他租户上下文中读写数据。
+        if (tenantId != null && !TenantContext.sameTenant(tenantId, userTenantId)
+            && !crossTenantAuthority.hasCurrentUserAuthority()) {
+            TenantSession.switchView(null);
+            tenantId = userTenantId;
+        }
         if (tenantId != null) {
             TenantContext.set(tenantId);
         }

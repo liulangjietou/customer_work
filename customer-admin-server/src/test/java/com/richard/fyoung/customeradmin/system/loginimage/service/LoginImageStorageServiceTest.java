@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -71,5 +72,13 @@ class LoginImageStorageServiceTest {
         BizException exception = assertThrows(BizException.class, () -> storageService.store(
             new MockMultipartFile("file", "small.png", "image/png", pngBytes(452, 300))));
         assertTrue(exception.getMessage().contains("分辨率过低"));
+    }
+
+    @Test
+    void storageNamespace_shouldNotAcceptPrivateAttachmentKeys() {
+        assertTrue(storageService.ownsKey(
+            "202608/login-image-12345678-1234-1234-1234-123456789abc.webp"));
+        assertFalse(storageService.ownsKey("202608/12345678123412341234123456789abc.pdf"));
+        assertFalse(storageService.ownsKey("../login-image-12345678-1234-1234-1234-123456789abc.webp"));
     }
 }

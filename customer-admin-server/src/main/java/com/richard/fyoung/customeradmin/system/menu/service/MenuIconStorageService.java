@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * 菜单图标图片上传：写入对象存储（starter 的 {@link AttachmentFileStorage} SPI，MinIO），通过
@@ -28,8 +29,12 @@ public class MenuIconStorageService {
     /** 与 {@code MenuIconController} 的映射保持一致，改这里要同步改那边。 */
     public static final String URL_PREFIX = "/api/menu-icons/";
 
+    private static final String STORAGE_ID_PREFIX = "menu-icon-";
     private static final long MAX_UPLOAD_BYTES = 1024 * 1024; // 1MB，图标没必要更大
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("png", "jpg", "jpeg", "gif", "svg");
+    private static final Pattern OWNED_KEY_PATTERN = Pattern.compile(
+        "^\\d{6}/" + STORAGE_ID_PREFIX + "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+            + "[0-9a-f]{4}-[0-9a-f]{12}\\.(png|jpg|jpeg|gif|svg)$");
 
     private final AttachmentFileStorage fileStorage;
 
@@ -50,10 +55,16 @@ public class MenuIconStorageService {
             throw new BizException(ResultCode.PARAM_INVALID, "仅支持 png/jpg/jpeg/gif/svg 格式图标");
         }
         try {
-            return URL_PREFIX + fileStorage.store(file.getBytes(), UUID.randomUUID().toString(), extension);
+            String storageId = STORAGE_ID_PREFIX + UUID.randomUUID();
+            return URL_PREFIX + fileStorage.store(file.getBytes(), storageId, extension);
         } catch (IOException e) {
             throw new BizException(ResultCode.PARAM_INVALID, "图标图片保存失败: " + e.getMessage());
         }
+    }
+
+    /** 新上传图标使用独立命名空间，公开出图接口据此与同桶中的私有附件隔离。 */
+    public boolean ownsKey(String key) {
+        return StringUtils.hasText(key) && OWNED_KEY_PATTERN.matcher(key).matches();
     }
 
     /**

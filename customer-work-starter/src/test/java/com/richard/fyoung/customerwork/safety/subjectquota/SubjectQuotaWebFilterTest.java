@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.safety.subjectquota;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
+import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -92,6 +93,22 @@ class SubjectQuotaWebFilterTest {
 
         assertNotNull(seen.get());
         assertEquals(QuotaSubjectType.IP, seen.get().type(), "无凭据时按来源 IP 算");
+        assertEquals("10.0.0.7", seen.get().id());
+    }
+
+    @Test
+    void filter_shouldResolveIpSubject_whenJwtContainsLegacyTenant() {
+        UserJwtService jwtService = new UserJwtService(properties);
+        String token = jwtService.issue("U-legacy", "legacy", "Legacy", "__platform__");
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get(CHAT_PATH)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .remoteAddress(new java.net.InetSocketAddress("10.0.0.7", 12345)));
+        SubjectQuotaWebFilter f = new SubjectQuotaWebFilter(properties, guard(true), jwtService);
+
+        StepVerifier.create(f.filter(exchange, chain)).verifyComplete();
+
+        assertEquals(QuotaSubjectType.IP, seen.get().type(), "旧平台租户令牌不能被识别成用户主体");
         assertEquals("10.0.0.7", seen.get().id());
     }
 

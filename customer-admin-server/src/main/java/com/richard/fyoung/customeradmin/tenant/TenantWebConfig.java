@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.tenant;
 
+import com.richard.fyoung.customeradmin.openapi.OpenApiWebConfig;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -21,10 +22,18 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @ConditionalOnProperty(prefix = "admin.tenant", name = "enabled", havingValue = "true")
 public class TenantWebConfig implements WebMvcConfigurer {
 
+    private final CrossTenantAuthority crossTenantAuthority;
+
+    public TenantWebConfig(CrossTenantAuthority crossTenantAuthority) {
+        this.crossTenantAuthority = crossTenantAuthority;
+    }
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new TenantContextInterceptor())
+        registry.addInterceptor(new TenantContextInterceptor(crossTenantAuthority))
             .addPathPatterns("/**")
+            // 开放 API 已由 X-Open-Api-Token 确定租户，不能让附带的后台 Cookie 覆盖它。
+            .excludePathPatterns(OpenApiWebConfig.PATH_PATTERN)
             .order(Ordered.LOWEST_PRECEDENCE);
     }
 }

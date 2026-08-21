@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.safety.subjectquota;
 import com.richard.fyoung.customerwork.infra.config.properties.SubjectQuotaProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -56,8 +57,8 @@ public class SubjectLevelResolver {
         }
         // 该租户没配这一档：回落平台默认租户的同名等级，再回落内置档。
         // 中间这一跳让"平台统一配一次、各租户不必重复配"成立，同时保留租户覆盖的能力。
-        SubjectQuotaLevel platformLevel = levelProvider.find(TenantContext.DEFAULT, levelCode);
-        return platformLevel != null ? platformLevel : builtin(tenantId, levelCode);
+        SubjectQuotaLevel defaultLevel = levelProvider.find(TenantContext.DEFAULT, levelCode);
+        return defaultLevel != null ? defaultLevel : builtin(tenantId, levelCode);
     }
 
     /** 主体对应的等级编码（用户查绑定，其余按类型取配置档）。 */
@@ -101,12 +102,20 @@ public class SubjectLevelResolver {
         if (builtins == null) {
             return null;
         }
-        SubjectQuotaProperties.Level level = builtins.get(levelCode);
+        String normalizedLevelCode = levelCode.toLowerCase(Locale.ROOT);
+        SubjectQuotaProperties.Level level = builtins.get(normalizedLevelCode);
+        if (level == null) {
+            level = builtins.entrySet().stream()
+                .filter(entry -> entry.getKey().equalsIgnoreCase(levelCode))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse(null);
+        }
         if (level == null) {
             return null;
         }
-        return new SubjectQuotaLevel(null, tenantId, levelCode,
-            level.getLevelName() == null ? levelCode : level.getLevelName(),
+        return new SubjectQuotaLevel(null, tenantId, normalizedLevelCode,
+            level.getLevelName() == null ? normalizedLevelCode : level.getLevelName(),
             QuotaSubjectType.parse(level.getSubjectType()),
             level.getWindowSeconds(),
             level.getTokenLimit(),

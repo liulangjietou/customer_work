@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.tenant.dto;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -21,11 +22,12 @@ public class TenantSaveRequest {
     /**
      * 租户编码，创建后不可改——它会被写进各业务表的 tenant_id、API Key 映射、日志与指标标签，
      * 改一次等于让所有存量数据失去归属。
-     * 限定字母数字与连字符：编码会出现在日志、指标标签与 Nacos dataId 里，特殊字符会带来转义问题。
+     * 限定字母、数字、连字符与下划线：编码会出现在日志、指标标签与 Nacos dataId 里，特殊字符会带来转义问题。
      */
     @NotBlank(message = "租户编码不能为空")
     @Size(max = 64, message = "租户编码长度不能超过 64")
-    @Pattern(regexp = "^[a-zA-Z0-9][a-zA-Z0-9-_]*$", message = "租户编码只能包含字母、数字、连字符和下划线，且以字母或数字开头")
+    @Pattern(regexp = TenantContext.TENANT_ID_REGEX,
+        message = "租户编码只能包含字母、数字、连字符和下划线，且以字母或数字开头")
     private String tenantCode;
 
     @NotBlank(message = "租户名称不能为空")

@@ -106,12 +106,14 @@ public class MybatisUserAccountStore implements UserAccountStore {
             UserAccount.Status.valueOf(row.getStatus()),
             row.getCreatedAtMs(),
             row.getAvatarUrl(),
-            row.getLevelCode());
+            row.getLevelCode(),
+            row.getTenantId());
     }
 
     private UserDO toDO(UserAccount account) {
         UserDO row = new UserDO();
         row.setId(account.getId());
+        row.setTenantId(account.getTenantId());
         row.setUsername(account.getUsername());
         row.setPasswordHash(account.getPasswordHash());
         row.setNickname(account.getNickname());

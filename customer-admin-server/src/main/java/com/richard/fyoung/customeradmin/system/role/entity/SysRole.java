@@ -18,6 +18,11 @@ import java.time.LocalDateTime;
 @TableName("sys_role")
 public class SysRole {
 
+    /** 普通租户角色，不具备控制面权限。 */
+    public static final int CONTROL_PLANE_DISABLED = 0;
+    /** 角色具备控制面权限。该能力由种子/迁移维护，不开放给普通角色编辑接口。 */
+    public static final int CONTROL_PLANE_ENABLED = 1;
+
     @TableId(type = IdType.AUTO)
     private Long id;
 
@@ -27,8 +32,10 @@ public class SysRole {
     private String remark;
     /** 0禁用 / 1启用。 */
     private Integer status;
+    /** 0 普通租户角色 / 1 控制面角色；跨租户授权只认此字段。 */
+    private Integer controlPlane;
     /**
-     * 数据范围：ALL 全部租户 / TENANT 本租户全部 / SELF 仅本人创建。取值见
+     * 数据范围：ALL 当前租户视角内全部 / TENANT 本租户全部 / SELF 仅本人创建。取值见
      * {@link com.richard.fyoung.customeradmin.datascope.DataScope}，为空按 SELF 处理。
      */
     private String dataScope;

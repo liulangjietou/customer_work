@@ -4,16 +4,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
-import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentBackupModel;
-import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentBackupModelMapper;
-import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
+import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelAgentReference;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
-import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
@@ -22,10 +19,11 @@ import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
+import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
-import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -33,16 +31,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
 
 /**
  * AI 模型配置管理：CRUD + AppKey 加密存储 + 默认模型互斥设置 + 连通性测试。
@@ -61,45 +55,46 @@ public class ModelConfigService {
     });
     private static final long TEST_FUTURE_TIMEOUT_SECONDS = 10;
 
-    /** 平台级凭据对租户视角的占位显示（不透出任何真实字符）。 */
-    private static final String PLATFORM_KEY_PLACEHOLDER = "********（平台统一配置）";
+    /** default 共享凭据对普通租户视角的占位显示（不透出任何真实字符）。 */
+    private static final String SHARED_KEY_PLACEHOLDER = "********（系统共享配置）";
 
     private final AiModelConfigMapper modelConfigMapper;
-    private final AiAgentMapper agentMapper;
-    private final AiAgentBackupModelMapper agentBackupModelMapper;
+    private final ModelReferenceAccess modelReferenceAccess;
     private final AesGcmCryptoUtil cryptoUtil;
     private final AdminModelFactory modelFactory;
     private final AgentInstanceCache agentInstanceCache;
     private final CustomerWorkConfigPublisher runtimeConfigPublisher;
     private final AdminTenantProperties tenantProperties;
+    private final CrossTenantAuthority crossTenantAuthority;
 
-    public ModelConfigService(AiModelConfigMapper modelConfigMapper, AiAgentMapper agentMapper,
-                               AiAgentBackupModelMapper agentBackupModelMapper,
+    public ModelConfigService(AiModelConfigMapper modelConfigMapper,
+                               ModelReferenceAccess modelReferenceAccess,
                                AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
                                AgentInstanceCache agentInstanceCache,
                                CustomerWorkConfigPublisher runtimeConfigPublisher,
-                               AdminTenantProperties tenantProperties) {
+                               AdminTenantProperties tenantProperties,
+                               CrossTenantAuthority crossTenantAuthority) {
         this.modelConfigMapper = modelConfigMapper;
-        this.agentMapper = agentMapper;
-        this.agentBackupModelMapper = agentBackupModelMapper;
+        this.modelReferenceAccess = modelReferenceAccess;
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
         this.agentInstanceCache = agentInstanceCache;
         this.runtimeConfigPublisher = runtimeConfigPublisher;
         this.tenantProperties = tenantProperties;
+        this.crossTenantAuthority = crossTenantAuthority;
     }
 
     // ---------------------------------------------------------------------
     // 两级可见性（docs/多租户架构设计.md §2.4）
     //
-    // 本表承载模型凭据，为支持"平台预置 + 租户自建"两级共享而进了租户忽略清单
-    // （TenantInterceptors.PLATFORM_LEVEL_TABLES），SQL 拦截器不会自动加租户条件。
-    // 补偿控制因此必须在本 Service 显式实现，且是这张表<b>唯一</b>的一道防线——
-    // 它也刻意不在 DataScopeTables 白名单里，没有第二层兜底。
+    // 本表承载模型凭据，为支持"default 共享基线 + 租户自建"两级共享而进了租户忽略清单
+    // （TenantInterceptors.TENANT_IGNORED_TABLES），SQL 拦截器不会自动加租户条件。
+    // 管理面补偿控制必须在本 Service 显式实现；运行时读取统一由 ModelConfigAccess 补偿。
+    // 该表也刻意不在 DataScopeTables 白名单里，业务代码不得绕过这两个入口直接调用 Mapper。
     // ---------------------------------------------------------------------
 
     /**
-     * 读可见范围：本租户 + 平台级。
+     * 读可见范围：当前租户 + default 共享基线。
      *
      * <p>多租户关闭时（单租户部署）不加条件，与拦截器整体不生效的行为保持一致。</p>
      */
@@ -108,7 +103,11 @@ public class ModelConfigService {
             return;
         }
         String tenant = requireTenant();
-        wrapper.in(AiModelConfig::getTenantId, tenant, TenantContext.PLATFORM);
+        if (TenantContext.isDefaultTenant(tenant)) {
+            wrapper.eq(AiModelConfig::getTenantId, TenantContext.DEFAULT);
+            return;
+        }
+        wrapper.in(AiModelConfig::getTenantId, tenant, TenantContext.DEFAULT);
     }
 
     /**
@@ -125,11 +124,15 @@ public class ModelConfigService {
         return tenant;
     }
 
-    /** 平台级记录对非运营方只读：租户能用平台预置的模型，但改不动、删不掉。 */
-    private boolean isPlatformRecordReadOnlyFor(AiModelConfig model) {
+    /** default 共享记录对非控制面用户隐藏真实凭据。 */
+    private boolean shouldHideSharedCredential(AiModelConfig model, boolean canManageSharedRecords) {
         return tenantProperties.isEnabled()
-            && TenantContext.PLATFORM.equals(model.getTenantId())
-            && !TenantSession.isPlatformOperator();
+            && TenantContext.isDefaultTenant(model.getTenantId())
+            && !canManageSharedRecords;
+    }
+
+    private boolean canManageSharedRecords() {
+        return !tenantProperties.isEnabled() || crossTenantAuthority.hasCurrentUserAuthority();
     }
 
     public PageResult<ModelVO> page(PageQuery query) {
@@ -144,11 +147,12 @@ public class ModelConfigService {
         wrapper.orderBy(true, "asc".equalsIgnoreCase(query.getSortOrder()), AiModelConfig::getCreateTime);
 
         IPage<AiModelConfig> page = modelConfigMapper.selectPage(new Page<>(query.getPageNum(), query.getPageSize()), wrapper);
-        return PageResult.of(page.convert(this::toVo));
+        boolean canManageSharedRecords = canManageSharedRecords();
+        return PageResult.of(page.convert(model -> toVo(model, canManageSharedRecords)));
     }
 
     public ModelVO get(Long id) {
-        return toVo(requireModel(id));
+        return toVo(requireModel(id), canManageSharedRecords());
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -162,7 +166,11 @@ public class ModelConfigService {
         model.setTestStatus(ConnectivityTestStatus.UNTESTED);
         // 本表在租户忽略清单里，拦截器不会自动补租户列，必须显式落归属
         if (tenantProperties.isEnabled()) {
-            model.setTenantId(requireTenant());
+            String tenant = requireTenant();
+            if (TenantContext.isDefaultTenant(tenant) && !canManageSharedRecords()) {
+                throw new BizException(ResultCode.FORBIDDEN, "只有控制面角色可以新建 default 共享模型配置");
+            }
+            model.setTenantId(tenant);
         }
         modelConfigMapper.insert(model);
 
@@ -183,41 +191,33 @@ public class ModelConfigService {
         if (Boolean.TRUE.equals(request.isDefault())) {
             clearOtherDefaults(id);
         }
-        evictAgentsReferencingModel(id);
+        propagateModelChange(model);
     }
 
     /**
      * 模型配置变更（baseUrl/apiKey/model 等）会让引用它的智能体运行时用上旧配置构建的实例，需一并失效。
      * 引用关系覆盖两处：作为主模型（{@code ai_agent.model_id}）与作为备用模型（{@code ai_agent_backup_model}）。
      */
-    private void evictAgentsReferencingModel(Long modelId) {
-        Set<String> agentCodes = new LinkedHashSet<>(agentMapper
-            .selectList(new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getModelId, modelId))
-            .stream().map(AiAgent::getAgentCode).collect(Collectors.toList()));
-        agentCodes.addAll(agentCodesReferencingModelAsBackup(modelId));
-        agentInstanceCache.evictAll(new ArrayList<>(agentCodes));
-        // 模型配置变更后，命中渠道绑定的智能体重新下发运行时配置到 8080（默认关闭，未启用即跳过）
-        runtimeConfigPublisher.publishForModelId(modelId);
-    }
-
-    /** 查以该模型为备用模型的智能体 code 列表（backup 关联表 -> agentId -> agentCode）。 */
-    private List<String> agentCodesReferencingModelAsBackup(Long modelId) {
-        List<Long> agentIds = agentBackupModelMapper
-            .selectList(new LambdaQueryWrapper<AiAgentBackupModel>().eq(AiAgentBackupModel::getModelId, modelId))
-            .stream().map(AiAgentBackupModel::getAgentId).collect(Collectors.toList());
-        if (agentIds.isEmpty()) {
-            return List.of();
+    private void propagateModelChange(AiModelConfig model) {
+        List<ModelAgentReference> references = modelReferenceAccess.findReferences(model);
+        for (ModelAgentReference reference : references) {
+            Runnable propagate = () -> {
+                agentInstanceCache.evict(reference.getAgentCode());
+                // 可靠任务与模型修改同事务写入；Publisher 会把兼容的 afterCommit 路径也绑定到当前租户。
+                runtimeConfigPublisher.publishForAgentId(reference.getAgentId());
+            };
+            if (tenantProperties.isEnabled()) {
+                TenantContext.runWith(reference.getTenantId(), propagate);
+            } else {
+                propagate.run();
+            }
         }
-        return agentMapper.selectBatchIds(agentIds).stream().map(AiAgent::getAgentCode).collect(Collectors.toList());
     }
 
     public void delete(Long id) {
-        requireWritableModel(id);
-        if (agentMapper.exists(new LambdaQueryWrapper<AiAgent>().eq(AiAgent::getModelId, id))) {
+        AiModelConfig model = requireWritableModel(id);
+        if (!modelReferenceAccess.findReferences(model).isEmpty()) {
             throw new BizException(ResultCode.RESOURCE_IN_USE, "该模型配置正被智能体引用，无法删除");
-        }
-        if (agentBackupModelMapper.exists(new LambdaQueryWrapper<AiAgentBackupModel>().eq(AiAgentBackupModel::getModelId, id))) {
-            throw new BizException(ResultCode.RESOURCE_IN_USE, "该模型配置正被智能体作为备用模型引用，无法删除");
         }
         modelConfigMapper.deleteById(id);
     }
@@ -228,6 +228,7 @@ public class ModelConfigService {
      */
     public CompletableFuture<ModelTestResult> testConnectivity(Long id) {
         AiModelConfig model = requireModel(id);
+        boolean persistResult = canPersistTestResult(model);
         String apiKey = cryptoUtil.decrypt(model.getApiKey());
 
         return CompletableFuture
@@ -242,9 +243,26 @@ public class ModelConfigService {
                 return new ModelTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(), "连通性测试超时或执行异常");
             })
             .thenApply(result -> {
-                persistTestResult(id, result);
+                if (persistResult) {
+                    persistTestResult(id, result);
+                }
                 return result;
             });
+    }
+
+    /**
+     * 连通性探测允许普通租户使用可见的 default 共享配置，但探测状态也是共享记录的一部分，
+     * 只有对该记录具备写权限时才回写，避免只读租户修改全局 test_status/test_time。
+     */
+    private boolean canPersistTestResult(AiModelConfig model) {
+        if (!tenantProperties.isEnabled()) {
+            return true;
+        }
+        String tenant = requireTenant();
+        if (!TenantContext.sameTenant(tenant, model.getTenantId())) {
+            return false;
+        }
+        return !TenantContext.isDefaultTenant(model.getTenantId()) || canManageSharedRecords();
     }
 
     private void persistTestResult(Long id, ModelTestResult result) {
@@ -281,14 +299,14 @@ public class ModelConfigService {
         model.setStatus(request.status() == null ? 1 : request.status());
     }
 
-    private ModelVO toVo(AiModelConfig model) {
+    private ModelVO toVo(AiModelConfig model, boolean canManageSharedRecords) {
         ModelVO vo = new ModelVO();
         vo.setId(model.getId());
         vo.setModelName(model.getModelName());
         vo.setProvider(model.getProvider());
-        // 平台级记录的凭据对租户视角不回显：脱敏串仍会漏出前后若干位，而这把 key 不属于他们
-        vo.setApiKeyMasked(isPlatformRecordReadOnlyFor(model)
-            ? PLATFORM_KEY_PLACEHOLDER
+        // default 共享记录的凭据对普通租户视角不回显：脱敏串仍会漏出前后若干位
+        vo.setApiKeyMasked(shouldHideSharedCredential(model, canManageSharedRecords)
+            ? SHARED_KEY_PLACEHOLDER
             : AesGcmCryptoUtil.mask(cryptoUtil.decrypt(model.getApiKey())));
         vo.setBaseUrl(model.getBaseUrl());
         vo.setModel(model.getModel());
@@ -301,7 +319,7 @@ public class ModelConfigService {
     }
 
     /**
-     * 读取一条模型配置：可见范围为本租户 + 平台级。
+     * 读取一条模型配置：可见范围为当前租户 + default 共享基线。
      *
      * <p>不可见与不存在统一报 404，不泄漏"这个 id 确实存在但属于别人"。</p>
      */
@@ -314,15 +332,23 @@ public class ModelConfigService {
     }
 
     /**
-     * 取一条<b>可写</b>的模型配置：在可读基础上再要求归属本租户。
+     * 取一条<b>可写</b>的模型配置：在可读基础上再要求归属当前视角租户。
      *
-     * <p>租户改不动平台记录——否则任一租户都能把平台主模型的 baseUrl 指向自己的服务器，
-     * 再触发一次连通性测试就能拿到平台的明文 apiKey。</p>
+     * <p>普通用户改不动 default 共享记录——否则可以把共享模型的 baseUrl 指向自己的服务器，
+     * 再触发一次连通性测试间接滥用共享 apiKey。控制面用户也必须先回到 default 视角才能修改共享记录，
+     * 避免在目标租户视角误改全局基线。</p>
      */
     private AiModelConfig requireWritableModel(Long id) {
         AiModelConfig model = requireModel(id);
-        if (isPlatformRecordReadOnlyFor(model)) {
-            throw new BizException(ResultCode.FORBIDDEN, "平台级模型配置不允许租户修改: " + id);
+        if (!tenantProperties.isEnabled()) {
+            return model;
+        }
+        String tenant = requireTenant();
+        if (!TenantContext.sameTenant(tenant, model.getTenantId())) {
+            throw new BizException(ResultCode.FORBIDDEN, "只能修改当前租户视角的模型配置: " + id);
+        }
+        if (TenantContext.isDefaultTenant(model.getTenantId()) && !canManageSharedRecords()) {
+            throw new BizException(ResultCode.FORBIDDEN, "只有控制面角色可以修改 default 共享模型配置: " + id);
         }
         return model;
     }
@@ -332,6 +358,7 @@ public class ModelConfigService {
             return true;
         }
         String tenant = requireTenant();
-        return tenant.equals(model.getTenantId()) || TenantContext.PLATFORM.equals(model.getTenantId());
+        return TenantContext.sameTenant(tenant, model.getTenantId())
+            || TenantContext.isDefaultTenant(model.getTenantId());
     }
 }

@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.core.support;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.tenant.LegacyTenantCompatibility;
 import org.springframework.stereotype.Component;
 
 /**
@@ -17,7 +18,6 @@ public class TenantResolver {
 
     /** 无法解析时的兜底租户。 */
     public static final String DEFAULT_TENANT = "default";
-
     private final CustomerWorkProperties properties;
 
     public TenantResolver(CustomerWorkProperties properties) {
@@ -39,5 +39,14 @@ public class TenantResolver {
             }
         }
         return sessionId;
+    }
+
+    /**
+     * 解析已由 V8 归一的长期数据分区。短期 AgentState 仍调用 {@link #resolve(String)}，
+     * 保留旧 userId 才能继续读同一历史会话，不能把两类生命周期不同的状态混为一谈。
+     */
+    public String resolveDataScope(String sessionId) {
+        String scope = resolve(sessionId);
+        return LegacyTenantCompatibility.PLATFORM_TENANT_ID.equals(scope) ? DEFAULT_TENANT : scope;
     }
 }

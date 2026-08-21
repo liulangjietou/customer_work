@@ -13,7 +13,7 @@ import java.util.Optional;
  * 配额的 MyBatis-Plus 实现。
  *
  * <p>查询走 {@link CrossTenantOperations}：配额判定发生在请求链路上，那时上下文里的租户
- * 正是要判定的对象，本该能自动过滤到。但配额也会被<b>运营方跨租户读写</b>（后台配额度、
+ * 正是要判定的对象，本该能自动过滤到。但配额也会被<b>控制面跨租户读写</b>（后台配额度、
  * 定时任务批量核对），两种调用方都用同一个 Store，让 Store 自己按显式 tenantId 取数
  * 比让调用方各自记得切上下文更不容易出错。</p>
  * @author owlzhangfq@gmail.com

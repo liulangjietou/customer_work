@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.datascope;
 
+import com.richard.fyoung.customeradmin.openapi.OpenApiWebConfig;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -27,6 +28,8 @@ public class DataScopeWebConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new DataScopeInterceptor(resolver))
             .addPathPatterns("/**")
+            // 机器凭据链路不继承请求里可能同时出现的后台 Sa-Token 数据范围。
+            .excludePathPatterns(OpenApiWebConfig.PATH_PATTERN)
             .order(Ordered.LOWEST_PRECEDENCE);
     }
 }
