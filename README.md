@@ -4,6 +4,19 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](docs/新人必读.md)
 [![AgentScope](https://img.shields.io/badge/AgentScope-2.0.0%20GA-green.svg)](https://github.com/agentscope-ai/agentscope-java)
+[![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.2.5-6DB33F.svg)](https://spring.io/projects/spring-boot)
+[![MyBatis-Plus](https://img.shields.io/badge/MyBatis--Plus-3.5.7-0F766E.svg)](https://baomidou.com)
+[![Sa-Token](https://img.shields.io/badge/Sa--Token-1.39.0-FF5C5C.svg)](https://sa-token.cc)
+[![Vue](https://img.shields.io/badge/Vue-3-41B883.svg)](https://vuejs.org)
+[![Element Plus](https://img.shields.io/badge/Element_Plus-2-409EFF.svg)](https://element-plus.org)
+[![Vant](https://img.shields.io/badge/Vant-4-1989FA.svg)](https://vant-ui.github.io)
+[![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1.svg)](docker-compose.yml)
+[![Redis](https://img.shields.io/badge/Redis-7-D82C20.svg)](docker-compose.yml)
+[![MinIO](https://img.shields.io/badge/MinIO-对象存储-C72E49.svg)](docker-compose.yml)
+[![Nacos](https://img.shields.io/badge/Nacos-2.3.2-21C1B9.svg)](docker-compose.yml)
+[![XXL-JOB](https://img.shields.io/badge/XXL--JOB-3.3.2-5A7D9A.svg)](docker-compose.yml)
+[![PaddleOCR](https://img.shields.io/badge/PaddleOCR-3.0-0064C8.svg)](docker/paddleocr/docker-compose.yml)
+[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-1.61.0-F5A800.svg)](https://opentelemetry.io)
 
 > 🚀 **新人从这里开始**：[docs/新人必读.md](docs/新人必读.md)（15 分钟跑起来 + 看懂结构 + 知道改哪里）
 > 📚 **功能 / 配置 / 接口的全部细节**：[docs/功能与配置全量参考.md](docs/功能与配置全量参考.md)（本 README 只讲"是什么、长什么样"，"怎么用"都在那里）
