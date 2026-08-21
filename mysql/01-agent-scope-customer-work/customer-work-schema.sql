@@ -91,6 +91,8 @@ CREATE TABLE IF NOT EXISTS `cw_slot_filling_progress` (
     `progress_key`    VARCHAR(191) PRIMARY KEY COMMENT '收集进度键：sessionId:formName',
     `asking`          VARCHAR(64) COMMENT '当前追问的槽位名',
     `collected_json`  TEXT COMMENT '已收集槽位值（JSON）',
+    `created_at`      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     INDEX `idx_slot_filling_progress_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -105,6 +107,8 @@ CREATE TABLE IF NOT EXISTS `cw_dialog_stage` (
     `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `session_id`  VARCHAR(191) PRIMARY KEY COMMENT '会话 ID',
     `stage`       VARCHAR(24) NOT NULL COMMENT '当前对话阶段：GREETING/COLLECTING/PROCESSING/CONFIRMING/ESCALATED',
+    `created_at`  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     INDEX `idx_dialog_stage_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -299,6 +303,8 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
     `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时（毫秒，仅MODEL段）',
     `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '分段是否成功',
     `error_msg`      VARCHAR(1024) COMMENT '失败原因',
+    `created_at`     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     INDEX `idx_segment_call_log` (`call_log_id`, `seq`),
     INDEX `idx_agent_call_segment_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -346,6 +352,8 @@ CREATE TABLE IF NOT EXISTS `cw_product` (
     `description`  VARCHAR(500) COMMENT '商品描述',
     `promotion`    VARCHAR(255) COMMENT '优惠活动',
     `status`       VARCHAR(16) NOT NULL DEFAULT 'ON_SALE' COMMENT 'ON_SALE/OFF_SALE',
+    `created_at`   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     INDEX `idx_product_category` (`category`),
     INDEX `idx_product_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -418,6 +426,8 @@ CREATE TABLE IF NOT EXISTS `cw_member` (
     `next_level`       VARCHAR(32) COMMENT '下一等级',
     `upgrade_gap`      DECIMAL(10,2) DEFAULT 0 COMMENT '升级所需再消费金额',
     `phone`            VARCHAR(32) COMMENT '注册手机号',
+    `created_at`       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     INDEX `idx_member_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -459,6 +469,8 @@ CREATE TABLE IF NOT EXISTS `cw_knowledge` (
     `title`      VARCHAR(255) NOT NULL COMMENT '条目标题',
     `content`    TEXT NOT NULL COMMENT '条目内容',
     `source`     VARCHAR(255) COMMENT '来源标注',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     UNIQUE KEY `uk_knowledge_title` (`tenant_id`, `title`),
     INDEX `idx_knowledge_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -652,6 +664,8 @@ CREATE TABLE IF NOT EXISTS `cw_fact_log` (
     `scope_id`       VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '记忆分区键（TenantResolver 由 sessionId 解析）',
     `fact`           TEXT NOT NULL COMMENT '事实内容',
     `ts`             BIGINT NOT NULL COMMENT '事实时间戳（毫秒）',
+    `created_at`     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     INDEX `idx_fact_log_scope` (`tenant_id`, `scope_id`, `id`),
     INDEX `idx_fact_log_ts` (`tenant_id`, `scope_id`, `ts`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='事实日志（L3，append-only 审计流水，永不改写）';
@@ -827,6 +841,8 @@ CREATE TABLE IF NOT EXISTS `cw_prompt_version` (
     -- 同一版会被反复观测到（重启、多副本），写入用 INSERT IGNORE 保留最早那次，
     -- 那才是"这版什么时候上线的"
     `captured_at_ms` BIGINT NOT NULL COMMENT '首次观测到该版本的时间戳（毫秒）',
+    `created_at`     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     INDEX `idx_prompt_version_time` (`tenant_id`, `captured_at_ms`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='提示词版本（运行时实际生效的那份）';
 
@@ -845,6 +861,8 @@ CREATE TABLE IF NOT EXISTS `cw_csat_survey` (
     `comment`         TEXT COMMENT '文字说明',
     `invited_at_ms`   BIGINT NOT NULL COMMENT '发出邀请时间戳（毫秒）——统计窗口以它为准',
     `submitted_at_ms` BIGINT NOT NULL DEFAULT 0 COMMENT '提交评分时间戳（毫秒）；未评价为 0',
+    `created_at`      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     -- 统计按 (scope_id, invited_at_ms) 的窗口扫描：分子分母必须同一口径，
     -- 按提交时间筛会把"这周邀请、下周才评"的算进下周，两头都不对
     INDEX `idx_csat_window` (`tenant_id`, `scope_id`, `invited_at_ms`),
@@ -867,6 +885,8 @@ CREATE TABLE IF NOT EXISTS `cw_knowledge_gap` (
     `miss_count`        BIGINT NOT NULL DEFAULT 1 COMMENT '累计未命中次数：排行依据，越大越该优先补',
     `first_seen_at_ms`  BIGINT NOT NULL COMMENT '首次出现时间戳（毫秒）——这个问题何时开始查不到',
     `last_seen_at_ms`   BIGINT NOT NULL COMMENT '最近出现时间戳（毫秒）',
+    `created_at`        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     UNIQUE KEY `uk_knowledge_gap` (`tenant_id`, `scope_id`, `question_hash`),
     -- 排行查询是 (scope_id, miss_count DESC) 的限额扫描
     INDEX `idx_knowledge_gap_rank` (`tenant_id`, `scope_id`, `miss_count`)
