@@ -229,7 +229,7 @@ stateDiagram-v2
 export DASHSCOPE_API_KEY=你的百炼密钥      # 必填，密钥仅从环境变量读取
 mvn -pl customer-work-app-server -am spring-boot:run
 
-# 方式二：Docker Compose 一键起（app + Redis + MySQL + Nacos）
+# 方式二：Docker Compose 一键起（app + Redis + MySQL(含后台库) + MinIO + Nacos + XXL-JOB + PaddleOCR）
 docker compose up -d
 
 # 发一条消息试试
