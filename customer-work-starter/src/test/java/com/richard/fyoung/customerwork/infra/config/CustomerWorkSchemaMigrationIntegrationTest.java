@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.config;
 
 import com.richard.fyoung.customerwork.infra.migration.V2__ReconcileLegacySchema;
+import com.richard.fyoung.customerwork.infra.migration.V9__AddAuditTimestamps;
 import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
@@ -19,8 +20,11 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -47,6 +51,10 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
+    private static final List<String> AUDIT_TIMESTAMP_TABLES = List.of(
+        "cw_slot_filling_progress", "cw_dialog_stage", "cw_agent_call_segment", "cw_product",
+        "cw_member", "cw_knowledge", "cw_fact_log", "cw_prompt_version", "cw_csat_survey",
+        "cw_knowledge_gap");
 
     private static final Set<String> TENANT_TABLES = Set.of(
         "cw_agent_call_log", "cw_agent_call_segment", "cw_approval", "cw_audit_log",
@@ -206,6 +214,49 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         }
     }
 
+    @Test
+    void v9ShouldFailFastAndRecoverAfterRepair() throws Exception {
+        assumeTrue(reachable(), "MySQL 不可达，跳过客服端 Flyway 门控测试");
+        String database = "cw_flyway_audit_missing_"
+            + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        assumeTrue(canCreateDatabases(database), "MySQL 测试账号无建库权限，跳过");
+
+        try (HikariDataSource dataSource = dataSource(database, "flyway-audit-missing-test")) {
+            migrateTo(dataSource, "8");
+            assertEquals(new HashSet<>(AUDIT_TIMESTAMP_TABLES), tablesMissingBothAuditTimestamps(dataSource),
+                "V8 快照中同时缺少两类审计时间的表必须与扫描清单一致");
+
+            execute(dataSource, "ALTER TABLE `cw_slot_filling_progress` "
+                + "ADD COLUMN `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) "
+                + "COMMENT '记录创建时间'");
+            execute(dataSource, "ALTER TABLE `cw_dialog_stage` "
+                + "ADD COLUMN `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) "
+                + "ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间'");
+            execute(dataSource, "RENAME TABLE `cw_knowledge_gap` TO `cw_knowledge_gap_v9_missing`");
+
+            assertThrows(IllegalStateException.class, () -> migrate(dataSource, database),
+                "任一目标表缺失时 V9 必须中止迁移");
+            assertFalse(columnExists(dataSource, "cw_slot_filling_progress", "updated_at"),
+                "缺表预检不得补齐仅有创建时间的表");
+            assertFalse(columnExists(dataSource, "cw_dialog_stage", "created_at"),
+                "缺表预检不得补齐仅有修改时间的表");
+            assertFalse(columnExists(dataSource, "cw_product", "created_at"),
+                "缺表预检必须早于第一张表的 DDL，避免不可回滚的部分迁移");
+
+            execute(dataSource, "RENAME TABLE `cw_knowledge_gap_v9_missing` TO `cw_knowledge_gap`");
+            repair(dataSource);
+            migrate(dataSource, database);
+
+            assertAuditTimestampColumns(dataSource);
+            assertTrue(tablesMissingBothAuditTimestamps(dataSource).isEmpty(),
+                "V9 完成后不得残留同时缺少两类审计时间的客服端业务表");
+            assertEquals(1, countHistoryVersion(dataSource, "9"), "repair 后重试只应登记一条成功的 V9");
+            assertEquals("9", latestHistoryVersion(dataSource));
+        } finally {
+            dropDatabase(database);
+        }
+    }
+
     private void verifyCompleteMirrorAdoption(String database) throws Exception {
         try (HikariDataSource dataSource = dataSource(database, "flyway-mirror-test")) {
             Path workingDirectory = Path.of("").toAbsolutePath();
@@ -226,15 +277,18 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertEquals(44, countBusinessTables(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertTrue(columnExists(dataSource, "cw_outbox_message", "lease_owner"));
-            // 接管基线 1 行 + 重跑的 V6/V7/V8 各 1 行。三者都是幂等迁移，
+            assertAuditTimestampColumns(dataSource);
+            // 接管基线 1 行 + 重跑的 V6/V7/V8/V9 各 1 行。四者都是幂等迁移，
             // 故刻意不给它们加镜像判定——为省历史行去写脆弱的数据猜测得不偿失
-            assertEquals(4, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
+            assertEquals(5, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
             // V5 是纯种子迁移，镜像里已带那两档，故接管版本要跟到 5——
             // 停在 4 的话 Flyway 会重跑 V5，撞唯一键直接失败（判定见 resolveBaselineVersion）
             assertEquals(1, countHistoryVersion(dataSource, "5"), "完整镜像应从当前版本接管");
             assertEquals(1, countHistoryVersion(dataSource, "6"), "幂等迁移重跑一次，两次 migrate 也只记一条");
             assertEquals(1, countHistoryVersion(dataSource, "7"), "平台租户归一迁移应登记一次");
             assertEquals(1, countHistoryVersion(dataSource, "8"), "遗留平台 scope 归一迁移应登记一次");
+            assertEquals(1, countHistoryVersion(dataSource, "9"), "审计时间迁移应登记一次");
+            assertEquals("9", latestHistoryVersion(dataSource));
         }
     }
 
@@ -242,11 +296,14 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         try (HikariDataSource dataSource = dataSource(database, "flyway-empty-test")) {
             migrate(dataSource, database);
             assertEquals(44, countBusinessTables(dataSource));
-            // V5（ADMIN_USER 档种子）、V6（运营分区归一）、V7/V8（平台租户与 scope 归一）都不建表
-            assertEquals(8, countHistoryRows(dataSource));
+            // V5（ADMIN_USER 档种子）、V6（运营分区归一）、V7/V8（平台租户与 scope 归一）、V9（审计列）都不建表
+            assertEquals(9, countHistoryRows(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
+            assertAuditTimestampColumns(dataSource);
+            verifyUpdatedAtAutoAdvance(dataSource);
             assertEquals(0, countHistoryVersion(dataSource, "0"), "空库不应写 baseline 记录");
-            assertEquals(1, countHistoryVersion(dataSource, "8"));
+            assertEquals(1, countHistoryVersion(dataSource, "9"));
+            assertEquals("9", latestHistoryVersion(dataSource));
         }
     }
 
@@ -265,10 +322,12 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             // V4 给存量 cw_user 加的配额等级列：这张表是 V1 就建好的，加列只能靠迁移补
             assertTrue(columnExists(dataSource, "cw_user", "level_code"));
             assertEquals(44, countBusinessTables(dataSource));
-            // baseline 0 + V1~V8
-            assertEquals(9, countHistoryRows(dataSource));
+            assertAuditTimestampColumns(dataSource);
+            // baseline 0 + V1~V9
+            assertEquals(10, countHistoryRows(dataSource));
             assertEquals(1, countHistoryVersion(dataSource, "0"), "非空存量库必须先登记 baseline 0");
-            assertEquals(1, countHistoryVersion(dataSource, "8"));
+            assertEquals(1, countHistoryVersion(dataSource, "9"));
+            assertEquals("9", latestHistoryVersion(dataSource));
         }
     }
 
@@ -369,10 +428,21 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             .locations("classpath:db/customerwork/migration")
             .validateMigrationNaming(true)
             .cleanDisabled(true)
-            .javaMigrations(new V2__ReconcileLegacySchema())
+            .javaMigrations(new V2__ReconcileLegacySchema(), new V9__AddAuditTimestamps())
             .target(target)
             .load()
             .migrate();
+    }
+
+    private void repair(HikariDataSource dataSource) {
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations("classpath:db/customerwork/migration")
+            .validateMigrationNaming(true)
+            .cleanDisabled(true)
+            .javaMigrations(new V2__ReconcileLegacySchema(), new V9__AddAuditTimestamps())
+            .load()
+            .repair();
     }
 
     private boolean canCreateDatabases(String... databases) {
@@ -429,6 +499,27 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         return tables;
     }
 
+    private Set<String> tablesMissingBothAuditTimestamps(HikariDataSource dataSource) throws Exception {
+        String sql = "SELECT `table_name` FROM information_schema.tables t "
+            + "WHERE t.table_schema = DATABASE() AND t.table_type = 'BASE TABLE' "
+            + "AND t.table_name LIKE 'cw\\_%' "
+            + "AND NOT EXISTS (SELECT 1 FROM information_schema.columns c "
+            + "WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name "
+            + "AND c.column_name IN ('created_at', 'created_at_ms')) "
+            + "AND NOT EXISTS (SELECT 1 FROM information_schema.columns c "
+            + "WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name "
+            + "AND c.column_name IN ('updated_at', 'updated_at_ms'))";
+        Set<String> tables = new HashSet<>();
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                tables.add(resultSet.getString(1));
+            }
+        }
+        return tables;
+    }
+
     private int countPlatformRows(HikariDataSource dataSource) throws Exception {
         int count = 0;
         for (String table : tenantTables(dataSource)) {
@@ -460,6 +551,68 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         }
     }
 
+    private String latestHistoryVersion(HikariDataSource dataSource) throws Exception {
+        return queryString(dataSource, "SELECT `version` FROM `flyway_schema_history` "
+            + "WHERE `success` = 1 AND `version` IS NOT NULL ORDER BY `installed_rank` DESC LIMIT 1");
+    }
+
+    private void assertAuditTimestampColumns(HikariDataSource dataSource) throws Exception {
+        for (String table : AUDIT_TIMESTAMP_TABLES) {
+            assertAuditTimestampColumn(dataSource, table, "created_at", "记录创建时间", false);
+            assertAuditTimestampColumn(dataSource, table, "updated_at", "记录最后修改时间", true);
+        }
+    }
+
+    private void assertAuditTimestampColumn(HikariDataSource dataSource, String table, String column,
+                                            String expectedComment, boolean autoUpdate) throws Exception {
+        String sql = "SELECT `data_type`, `datetime_precision`, `is_nullable`, `column_default`, "
+            + "`extra`, `column_comment` FROM information_schema.columns "
+            + "WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?";
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, table);
+            statement.setString(2, column);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                String label = table + "." + column;
+                assertTrue(resultSet.next(), label + " 应存在");
+                assertEquals("datetime", resultSet.getString("data_type"), label + " 类型");
+                assertEquals(3, resultSet.getInt("datetime_precision"), label + " 毫秒精度");
+                assertEquals("NO", resultSet.getString("is_nullable"), label + " 非空约束");
+                assertEquals("current_timestamp(3)",
+                    normalizeMetadataExpression(resultSet.getString("column_default")), label + " 默认值");
+                String extra = normalizeMetadataExpression(resultSet.getString("extra"));
+                if (autoUpdate) {
+                    assertTrue(extra.contains("onupdatecurrent_timestamp(3)"), label + " 自动更新时间");
+                } else {
+                    assertFalse(extra.contains("onupdate"), label + " 不应随更新变化");
+                }
+                assertEquals(expectedComment, resultSet.getString("column_comment"), label + " 注释");
+            }
+        }
+    }
+
+    private String normalizeMetadataExpression(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+    }
+
+    private void verifyUpdatedAtAutoAdvance(HikariDataSource dataSource) throws Exception {
+        execute(dataSource, "UPDATE `cw_product` SET `updated_at` = '2000-01-01 00:00:00.000' "
+            + "WHERE `product_id` = 'P001'");
+        Timestamp createdAtBefore = queryTimestamp(dataSource,
+            "SELECT `created_at` FROM `cw_product` WHERE `product_id` = 'P001'");
+        Timestamp updatedAtBefore = queryTimestamp(dataSource,
+            "SELECT `updated_at` FROM `cw_product` WHERE `product_id` = 'P001'");
+
+        execute(dataSource, "UPDATE `cw_product` SET `stock` = `stock` + 1 WHERE `product_id` = 'P001'");
+
+        assertTrue(queryTimestamp(dataSource,
+            "SELECT `updated_at` FROM `cw_product` WHERE `product_id` = 'P001'").after(updatedAtBefore),
+            "真实业务字段 UPDATE 后 updated_at 应由数据库推进");
+        assertEquals(createdAtBefore, queryTimestamp(dataSource,
+            "SELECT `created_at` FROM `cw_product` WHERE `product_id` = 'P001'"),
+            "业务字段 UPDATE 不应改写 created_at");
+    }
+
     private boolean columnExists(HikariDataSource dataSource, String table, String column) throws Exception {
         String sql = "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() "
             + "AND table_name = ? AND column_name = ?";
@@ -488,6 +641,15 @@ class CustomerWorkSchemaMigrationIntegrationTest {
              ResultSet resultSet = statement.executeQuery()) {
             resultSet.next();
             return resultSet.getString(1);
+        }
+    }
+
+    private Timestamp queryTimestamp(HikariDataSource dataSource, String sql) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet resultSet = statement.executeQuery()) {
+            resultSet.next();
+            return resultSet.getTimestamp(1);
         }
     }
 

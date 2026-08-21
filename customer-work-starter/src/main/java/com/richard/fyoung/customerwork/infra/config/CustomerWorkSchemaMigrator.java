@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.config;
 
 import com.richard.fyoung.customerwork.infra.migration.V2__ReconcileLegacySchema;
+import com.richard.fyoung.customerwork.infra.migration.V9__AddAuditTimestamps;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.slf4j.Logger;
@@ -54,7 +55,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
                 .baselineVersion(MigrationVersion.fromVersion(baselineVersion))
                 .validateMigrationNaming(true)
                 .cleanDisabled(true)
-                .javaMigrations(new V2__ReconcileLegacySchema())
+                .javaMigrations(new V2__ReconcileLegacySchema(), new V9__AddAuditTimestamps())
                 .load();
             int migrations = flyway.migrate().migrationsExecuted;
             log.info("customer-work schema migration completed, migrations={}", migrations);
