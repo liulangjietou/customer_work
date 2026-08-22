@@ -6,7 +6,6 @@ import com.richard.fyoung.customerwork.data.order.OrderDirectoryRow;
 import com.richard.fyoung.customerwork.data.order.OrderDirectoryService;
 import com.richard.fyoung.customerwork.data.order.OrderMutationResult;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
-import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
@@ -29,7 +28,7 @@ import static org.mockito.Mockito.when;
  * @author owlzhangfq@gmail.com
  */
 @WebFluxTest(AgentOrderController.class)
-@Import({AgentAuthWebFilter.class, AgentOrderControllerTest.Cfg.class})
+@Import({ControllerSecurityTestConfiguration.AgentAuth.class, AgentOrderControllerTest.Cfg.class})
 class AgentOrderControllerTest {
 
     private static final String SECRET = "agent-order-secret";

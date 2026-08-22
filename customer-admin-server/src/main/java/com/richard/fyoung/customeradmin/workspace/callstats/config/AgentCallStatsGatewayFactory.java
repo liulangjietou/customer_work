@@ -9,6 +9,7 @@ import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallLogMapper;
 import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallSegmentMapper;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateways;
+import org.apache.ibatis.plugin.Interceptor;
 
 import javax.sql.DataSource;
 import java.util.List;
@@ -24,10 +25,6 @@ import java.util.List;
  */
 final class AgentCallStatsGatewayFactory {
 
-
-    /** starter jar 内的调用日志主表 Mapper XML（classpath*: 才能命中 jar 内资源）。 */
-    /** starter jar 内的调用分段 Mapper XML。 */
-    /** admin 自带的读侧扩展 Mapper XML（放 /callstats 下，避开主 MP 默认的 /mapper 扫描）。 */
     private static final String EXT_XML = "classpath*:callstats/AgentCallStatsExtMapper.xml";
 
     /** 三张 Mapper 均由 XML namespace 绑定注册，无需接口登记。 */
@@ -48,9 +45,9 @@ final class AgentCallStatsGatewayFactory {
      *
      * <p>启动期只解析 XML/建工厂，不连库。</p>
      */
-    static AgentCallStatsGateway build(DataSource dataSource) {
+    static AgentCallStatsGateway build(DataSource dataSource, List<Interceptor> plugins) {
         return build(CrossDbGateways.attach(dataSource, ADMIN_GATEWAY_NAME,
-            MAPPER_CLASSES, MAPPER_XML_LOCATIONS));
+            MAPPER_CLASSES, MAPPER_XML_LOCATIONS, plugins));
     }
 
     /** 按跨库环境装配一套门面。 */

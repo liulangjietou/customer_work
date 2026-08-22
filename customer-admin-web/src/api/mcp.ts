@@ -1,6 +1,9 @@
 import { request } from './request'
 import type { McpDebugCallResult, McpDebugToolVO, McpSaveRequest, McpTestResult, McpVO, PageQuery, PageResult } from '@/types/api'
 
+/** 后端详情接口用于表达“沿用原 secret”的保留值；新建/复制时必须替换为真实凭据。 */
+export const MCP_SECRET_PLACEHOLDER = '__MCP_SECRET_REDACTED__'
+
 export function pageMcps(query: PageQuery) {
   return request<PageResult<McpVO>>({ url: '/aiconfig/mcp', method: 'get', params: query })
 }

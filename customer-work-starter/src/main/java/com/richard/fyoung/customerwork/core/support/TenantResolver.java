@@ -2,15 +2,18 @@ package com.richard.fyoung.customerwork.core.support;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.tenant.LegacyTenantCompatibility;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.stereotype.Component;
 
 /**
  * 租户解析器（单一职责，全链路复用）。
  *
- * <p>约定 sessionId 可写成 {@code 租户ID<分隔符>会话ID}（分隔符取 {@code memory.tenant-delimiter}，默认 {@code :}），
- * 用于跨会话共享长期记忆 / 按租户分文件落盘等。此前该解析逻辑在 {@code CustomerServiceAgentFactory}、
- * {@code QualityFeedbackRecorder} 各复制了一份；本类收敛为唯一实现，供二者与故障诊断链路统一调用，
- * 遵循"防御式编程只保留一处、高复用"的约定。</p>
+ * <p>请求链路优先读取鉴权入口写入的 {@link TenantContext}，绝不让客户端通过伪造
+ * {@code sessionId} 前缀切换租户。仅在没有请求上下文的兼容场景，才按历史约定从
+ * {@code 租户ID<分隔符>会话ID} 解析；生产入口必须由 API Key/JWT 建立可信上下文。</p>
+ *
+ * <p>此前该解析逻辑在 {@code CustomerServiceAgentFactory}、{@code QualityFeedbackRecorder}
+ * 各复制了一份；本类收敛为唯一实现，供状态、缓存、事实与诊断链路统一调用。</p>
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -24,10 +27,11 @@ public class TenantResolver {
         this.properties = properties;
     }
 
-    /**
-     * 从 sessionId 解析租户 ID：命中分隔符取前缀，否则整体即租户，空白回退 {@link #DEFAULT_TENANT}。
-     */
+    /** 解析数据租户：可信请求上下文优先；无上下文时保留旧会话前缀兼容。 */
     public String resolve(String sessionId) {
+        if (TenantContext.isPresent()) {
+            return TenantContext.require();
+        }
         if (sessionId == null || sessionId.isBlank()) {
             return DEFAULT_TENANT;
         }

@@ -13,8 +13,15 @@ package com.richard.fyoung.customerwork.safety.security;
  * @param userId   用户业务 ID（JWT subject）
  * @param username 登录名
  * @param nickname 昵称
- * @param tenantId 归属租户
+ * @param tenantId     归属租户
+ * @param accessEpoch  签发时的租户访问版本；旧令牌无该值，访问门禁启用后按已撤销处理
  * @author owlzhangfq@gmail.com
  */
-public record UserPrincipal(String userId, String username, String nickname, String tenantId) {
+public record UserPrincipal(String userId, String username, String nickname,
+                            String tenantId, Long accessEpoch) {
+
+    /** 保留旧构造器供下游源码兼容；它表示没有绑定访问版本的历史主体。 */
+    public UserPrincipal(String userId, String username, String nickname, String tenantId) {
+        this(userId, username, nickname, tenantId, null);
+    }
 }

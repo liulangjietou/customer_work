@@ -11,6 +11,20 @@ import java.util.Map;
 @Data
 public class MemoryProperties {
     private boolean longTermEnabled = true;
+    /** 是否要求终端主体显式同意后才允许长期记忆写入与召回。 */
+    private boolean consentRequired = false;
+    /** 同意记录存储：jdbc（生产）| memory（开发/测试）。 */
+    private String consentStoreMode = "jdbc";
+    /** 长期记忆与相关事实的最长保留天数；到期由跨租户治理任务分批清理。 */
+    private int retentionDays = 180;
+    /** 已撤回同意记录的保留天数；用于保留必要的撤回证明，超期后删除去标识化记录。 */
+    private int withdrawnConsentRetentionDays = 2555;
+    /** 是否执行持久化记忆保留策略清理。 */
+    private boolean retentionCleanupEnabled = true;
+    /** 保留策略任务执行间隔（毫秒）。 */
+    private long retentionCleanupIntervalMs = 3_600_000L;
+    /** 每张表每轮最多清理的行数，避免长事务。 */
+    private int retentionCleanupBatchSize = 1000;
     /** 长期记忆实现：memory（内置内存）| bailian（百炼）| mem0 | reme。 */
     private String provider = "memory";
     /**

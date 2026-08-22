@@ -1,4 +1,4 @@
-import { request } from './request'
+import { download, request } from './request'
 
 // 配额与计费 API，与 admin-server /api/billing/** 契约对应。
 // 配额落在客服端库（运行时要读它拦模型调用），单价与用量归集在 admin 库。
@@ -48,6 +48,37 @@ export interface UsageAggregate {
   amount: number
 }
 
+export interface CostForecastVO {
+  tenantId: string
+  period: string
+  periodKey: string
+  periodStart: string
+  asOfDate: string
+  elapsedDays: number
+  totalDays: number
+  usedAmount: number
+  averageDailyAmount: number
+  forecastAmount: number
+  amountLimit: number
+  utilizationPercent: number
+  forecastExceeded: boolean
+}
+
+export interface CostAlertVO {
+  id: number
+  tenantId: string
+  period: string
+  periodKey: string
+  alertType: 'BUDGET_WARNING' | 'BUDGET_EXCEEDED' | 'FORECAST_EXCEEDED'
+  usedAmount: number
+  limitAmount: number
+  forecastAmount: number
+  status: 'OPEN' | 'ACKED'
+  firstSeenAt: string
+  ackBy: number | null
+  ackAt: string | null
+}
+
 export function listQuota(tenantId: string) {
   return request<TenantQuotaVO[]>({ url: '/billing/quota', method: 'get', params: { tenantId } })
 }
@@ -78,6 +109,23 @@ export function fetchTenantBill(params: { tenantId?: string; from: string; to: s
 
 export function fetchPlatformOverview(params: { from: string; to: string }) {
   return request<UsageAggregate[]>({ url: '/billing/overview', method: 'get', params })
+}
+
+export function fetchCostForecast(params: { tenantId?: string; period: string; asOf?: string }) {
+  return request<CostForecastVO>({ url: '/billing/forecast', method: 'get', params })
+}
+
+export function listCostAlerts(params: { tenantId?: string; status?: string; limit?: number }) {
+  return request<CostAlertVO[]>({ url: '/billing/alerts', method: 'get', params })
+}
+
+export function acknowledgeCostAlert(id: number, tenantId?: string) {
+  return request<void>({ url: `/billing/alerts/${id}/ack`, method: 'post', params: { tenantId } })
+}
+
+/** 真实 CSV 下载：未指定租户时，控制面导出平台总览，普通租户导出自己的账单。 */
+export function exportBilling(params: { tenantId?: string; from: string; to: string }) {
+  return download({ url: '/billing/export', method: 'get', params }, 'billing.csv')
 }
 
 /** 手工触发归集（补数据用，幂等：同一天重跑就是覆盖）。 */

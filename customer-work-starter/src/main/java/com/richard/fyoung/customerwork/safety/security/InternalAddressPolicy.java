@@ -21,12 +21,11 @@ import java.net.InetAddress;
  */
 public enum InternalAddressPolicy {
 
-    /** 拒绝环回/任意本地/链路本地/私有网段地址，只放行公网（模型可控地址的默认策略）。 */
+    /** 拒绝环回/任意本地/链路本地/私有网段/组播地址，只放行公网（模型可控地址的默认策略）。 */
     DENY_INTERNAL("目标地址指向内网/环回，已拦截: ") {
         @Override
         public boolean rejects(InetAddress address) {
-            if (address.isLoopbackAddress() || address.isAnyLocalAddress()
-                || address.isLinkLocalAddress() || address.isSiteLocalAddress()) {
+            if (alwaysForbidden(address) || address.isSiteLocalAddress()) {
                 return true;
             }
             // Java 的 isSiteLocalAddress 不覆盖 IPv6 唯一本地地址 fc00::/7，手动判定
@@ -38,11 +37,23 @@ public enum InternalAddressPolicy {
         }
     },
 
+    /**
+     * 仅允许显式白名单中的企业私网地址：放行 RFC1918/ULA，仍拒绝环回、链路本地/元数据、
+     * 未指定地址与组播地址。用于管理员配置的自建模型端点，不能用于模型自行决定的 URL。
+     */
+    ALLOW_PRIVATE_NETWORK("目标地址指向环回/链路本地/元数据/组播，已拦截: ") {
+        @Override
+        public boolean rejects(InetAddress address) {
+            return alwaysForbidden(address);
+        }
+    },
+
     /** 放行内网/环回，仅拒绝链路本地地址（管理员显式配置地址的默认策略）。 */
     ALLOW_INTERNAL("目标地址指向链路本地/元数据服务，已拦截: ") {
         @Override
         public boolean rejects(InetAddress address) {
-            return address.isLinkLocalAddress();
+            return address.isAnyLocalAddress() || address.isLinkLocalAddress()
+                || address.isMulticastAddress();
         }
     };
 
@@ -54,6 +65,11 @@ public enum InternalAddressPolicy {
 
     /** 该地址是否应被本策略拒绝。 */
     public abstract boolean rejects(InetAddress address);
+
+    private static boolean alwaysForbidden(InetAddress address) {
+        return address.isLoopbackAddress() || address.isAnyLocalAddress()
+            || address.isLinkLocalAddress() || address.isMulticastAddress();
+    }
 
     /** 拦截原因描述（拼接被拦的 host，回给调用方定位）。 */
     public String rejectReason(String host) {

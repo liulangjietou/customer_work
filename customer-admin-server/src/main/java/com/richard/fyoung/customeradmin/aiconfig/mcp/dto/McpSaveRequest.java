@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.mcp.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 
 /**
@@ -10,6 +11,7 @@ import jakarta.validation.constraints.NotBlank;
 public record McpSaveRequest(
     @NotBlank(message = "mcpName 不能为空") String mcpName,
     @NotBlank(message = "mcpType 不能为空") String mcpType,
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @NotBlank(message = "config 不能为空") String config,
     String description,
     Integer status) {

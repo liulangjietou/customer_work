@@ -31,8 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 只要有任何一项被误删（或删错了一项其实是覆盖的），这里立刻红。</p>
  *
  * <p>基线文件 {@code application-ymlbaseline.yml} 是瘦身前那份的副本，只服务于本测试。
- * 后续如需<b>有意</b>修改默认行为，正确做法是改 Java 默认值并同步更新基线，
- * 而不是删掉这个测试。</p>
+ * 后续如需<b>有意</b>修改默认行为，应同步更新行为来源与基线：通用默认行为改 Java 默认值；
+ * app 的生产安全覆盖则保留显式 yml 配置。不要为了让测试通过而删掉测试或降级生产覆盖。</p>
  *
  * @author owlzhangfq@gmail.com
  */
@@ -74,6 +74,13 @@ class YmlTrimEquivalenceTest {
         assertEquals(before, after,
             "瘦身后的 yml 绑定结果与瘦身前不一致 —— 说明删掉的项里有一项并非"
                 + "「与 Java 默认值相同」，它实际改变了行为。用 toString 差异定位具体字段。");
+    }
+
+    @Test
+    @DisplayName("调用事实日志保持 JDBC 持久化")
+    void callLogFactsRemainPersisted() throws IOException {
+        assertEquals("jdbc", bind(MAIN_YML).getCallLog().getStoreMode(),
+            "调用日志支撑实验指标、SLO 与成本归因，app 配置不得退回进程内存");
     }
 
     /**

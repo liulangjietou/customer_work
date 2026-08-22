@@ -61,7 +61,7 @@ public class McpService {
     private final AiAgentMapper agentMapper;
     private final AgentInstanceCache agentInstanceCache;
     private final AdminMcpFactory mcpFactory;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final McpConfigProtector configProtector = new McpConfigProtector(new ObjectMapper());
 
     public McpService(AiMcpMapper mcpMapper, AiAgentMcpMapper agentMcpMapper, AiAgentMapper agentMapper,
                        AgentInstanceCache agentInstanceCache, AdminMcpFactory mcpFactory) {
@@ -83,25 +83,27 @@ public class McpService {
         wrapper.orderBy(true, "asc".equalsIgnoreCase(query.getSortOrder()), AiMcp::getCreateTime);
 
         IPage<AiMcp> page = mcpMapper.selectPage(new Page<>(query.getPageNum(), query.getPageSize()), wrapper);
-        return PageResult.of(page.convert(this::toVo));
+        return PageResult.of(page.convert(this::toSummaryVo));
     }
 
     public McpVO get(Long id) {
-        return toVo(requireMcp(id));
+        return toDetailVo(requireMcp(id));
     }
 
     public void create(McpSaveRequest request) {
-        validate(request);
+        validateType(request);
         AiMcp mcp = new AiMcp();
-        fillFromRequest(mcp, request);
+        fillFromRequest(mcp, request, configProtector.prepareForCreate(request.mcpType(), request.config()));
         mcp.setTestStatus(ConnectivityTestStatus.UNTESTED);
         mcpMapper.insert(mcp);
     }
 
     public void update(Long id, McpSaveRequest request) {
         AiMcp mcp = requireMcp(id);
-        validate(request);
-        fillFromRequest(mcp, request);
+        validateType(request);
+        String mergedConfig = configProtector.prepareForUpdate(
+            mcp.getMcpType(), mcp.getConfig(), request.mcpType(), request.config());
+        fillFromRequest(mcp, request, mergedConfig);
         mcpMapper.updateById(mcp);
         evictAgentsReferencingMcp(id);
     }
@@ -210,32 +212,37 @@ public class McpService {
         mcpMapper.updateById(update);
     }
 
-    /** mcpType 仅接受 stdio/sse/http；config 须为合法 JSON（一处防御式校验，供 create/update 复用）。 */
-    private void validate(McpSaveRequest request) {
+    /** mcpType 仅接受 stdio/sse/http；config 的合法性与占位符合并统一由 McpConfigProtector 负责。 */
+    private void validateType(McpSaveRequest request) {
         if (!VALID_MCP_TYPES.contains(request.mcpType())) {
             throw new BizException(ResultCode.PARAM_INVALID, "mcpType 仅支持 stdio/sse/http");
         }
-        try {
-            objectMapper.readTree(request.config());
-        } catch (Exception e) {
-            throw new BizException(ResultCode.PARAM_INVALID, "config 不是合法 JSON: " + e.getMessage());
-        }
     }
 
-    private void fillFromRequest(AiMcp mcp, McpSaveRequest request) {
+    private void fillFromRequest(AiMcp mcp, McpSaveRequest request, String protectedConfig) {
         mcp.setMcpName(request.mcpName());
         mcp.setMcpType(request.mcpType());
-        mcp.setConfig(request.config());
+        mcp.setConfig(protectedConfig);
         mcp.setDescription(request.description());
         mcp.setStatus(request.status() == null ? 1 : request.status());
     }
 
-    private McpVO toVo(AiMcp mcp) {
+    /** 列表/下拉只返回非敏感摘要字段，config 绝不离开服务端。 */
+    private McpVO toSummaryVo(AiMcp mcp) {
+        return toVo(mcp, "");
+    }
+
+    /** 编辑详情保留结构，但所有 secret 与 headers 值都替换为显式占位符。 */
+    private McpVO toDetailVo(AiMcp mcp) {
+        return toVo(mcp, configProtector.redactForDetail(mcp.getMcpType(), mcp.getConfig()));
+    }
+
+    private McpVO toVo(AiMcp mcp, String safeConfig) {
         McpVO vo = new McpVO();
         vo.setId(mcp.getId());
         vo.setMcpName(mcp.getMcpName());
         vo.setMcpType(mcp.getMcpType());
-        vo.setConfig(mcp.getConfig());
+        vo.setConfig(safeConfig);
         vo.setDescription(mcp.getDescription());
         vo.setStatus(mcp.getStatus());
         vo.setTestStatus(mcp.getTestStatus());

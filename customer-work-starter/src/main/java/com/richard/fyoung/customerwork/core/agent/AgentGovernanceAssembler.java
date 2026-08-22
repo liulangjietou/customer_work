@@ -80,13 +80,13 @@ public class AgentGovernanceAssembler {
     /**
      * 构造一次 Agent 调用的运行时上下文：把「会话 ID」映射为 2.0 的 {@code (userId, sessionId)}。
      *
-     * <p>会话 ID 形如 {@code tenantA:conv-1} 时，租户作为 {@code userId}（多租户隔离），
-     * 整个会话 ID 作为 {@code sessionId}，与状态存储 / 长期记忆的租户维度保持一致。</p>
+     * <p>{@code userId} 取鉴权入口建立的可信租户上下文，整个会话 ID 仅作为
+     * {@code sessionId}。没有请求上下文的存量内部调用才兼容旧会话前缀解析。</p>
      *
      * <p><b>这两个值决定了框架 {@code ReActAgent} 内部按 {@code slotKey(userId, sessionId)}
      * 缓存的对话状态落在哪个槽位上，因此绝不能写成常量</b>——写成常量会让所有用户共用一份对话历史。</p>
      *
-     * @param sessionId 会话标识（可含租户前缀）
+     * @param sessionId 会话标识；其内容不是租户身份凭据
      */
     public RuntimeContext contextFor(String sessionId) {
         RuntimeContext.Builder b = RuntimeContext.builder()

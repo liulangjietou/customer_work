@@ -30,7 +30,7 @@ import java.util.UUID;
  * @param metrics        该类型的完整原始指标，避免归一化丢信息
  * @param trigger        触发来源
  * @param datasetSize    评测集规模（用例数变了指标就不可直接比，对比时要提示）
- * @param promptFingerprint 本次运行时生效的提示词指纹——效果归因的支点，见 {@code PromptVersion}
+ * @param versionBinding 本次运行的数据集、模型、提示词、Agent、知识库、工具、Judge、rubric 版本
  * @param remark         备注（人工填，如"换 qwen-max 后重跑"）
  * @param createdAtMs    运行时间戳（毫秒）
  * @author owlzhangfq@gmail.com
@@ -47,7 +47,7 @@ public record EvalRun(
     Map<String, Object> metrics,
     EvalTrigger trigger,
     int datasetSize,
-    String promptFingerprint,
+    EvalVersionBinding versionBinding,
     String remark,
     long createdAtMs
 ) {
@@ -55,9 +55,16 @@ public record EvalRun(
     /** Judge 打分满分，用于把 1-5 分折算成 0-1 的主指标。 */
     private static final double QUALITY_MAX_SCORE = 5.0d;
 
+    public EvalRun {
+        failedCaseIds = failedCaseIds == null ? List.of() : List.copyOf(failedCaseIds);
+        failures = failures == null ? List.of() : List.copyOf(failures);
+        metrics = metrics == null ? Map.of() : Map.copyOf(metrics);
+        versionBinding = versionBinding == null ? EvalVersionBinding.legacy("") : versionBinding;
+    }
+
     /** 由意图评测报告构造：主指标取准确率，次指标取快车道覆盖率。 */
     public static EvalRun fromIntent(EvalReport report, EvalTrigger trigger,
-                                     String promptFingerprint, String remark) {
+                                     EvalVersionBinding versionBinding, String remark) {
         Map<String, Object> metrics = new LinkedHashMap<>();
         metrics.put("accuracy", report.accuracy());
         metrics.put("fastLaneCoverage", report.fastLaneCoverage());
@@ -76,14 +83,20 @@ public record EvalRun(
             metrics,
             trigger,
             report.getTotal(),
-            promptFingerprint,
+            versionBinding,
             remark,
             System.currentTimeMillis());
     }
 
+    /** 兼容旧调用方。 */
+    public static EvalRun fromIntent(EvalReport report, EvalTrigger trigger,
+                                     String promptFingerprint, String remark) {
+        return fromIntent(report, trigger, EvalVersionBinding.legacy(promptFingerprint), remark);
+    }
+
     /** 由质量评测报告构造：主指标取平均分折算值，次指标取通过率。 */
     public static EvalRun fromQuality(QualityEvalReport report, EvalTrigger trigger,
-                                      String promptFingerprint, String remark) {
+                                      EvalVersionBinding versionBinding, String remark) {
         Map<String, Object> metrics = new LinkedHashMap<>();
         metrics.put("avgScore", report.getAvgScore());
         metrics.put("passRate", report.passRate());
@@ -108,9 +121,32 @@ public record EvalRun(
             metrics,
             trigger,
             report.getTotal(),
-            promptFingerprint,
+            versionBinding,
             remark,
             System.currentTimeMillis());
+    }
+
+    /** 兼容旧调用方。 */
+    public static EvalRun fromQuality(QualityEvalReport report, EvalTrigger trigger,
+                                      String promptFingerprint, String remark) {
+        return fromQuality(report, trigger, EvalVersionBinding.legacy(promptFingerprint), remark);
+    }
+
+    /** 兼容旧调用方：历史运行只有提示词指纹，其余版本维度明确留空。 */
+    public EvalRun(String runId, EvalType evalType, int total, int passed,
+                   double primaryMetric, double secondaryMetric,
+                   List<String> failedCaseIds, List<String> failures,
+                   Map<String, Object> metrics, EvalTrigger trigger, int datasetSize,
+                   String promptFingerprint, String remark, long createdAtMs) {
+        this(runId, evalType, total, passed, primaryMetric, secondaryMetric,
+            failedCaseIds, failures, metrics, trigger, datasetSize,
+            EvalVersionBinding.legacy(promptFingerprint), remark, createdAtMs);
+    }
+
+    /** 保留原 API/JSON 字段，实际单一真相在 {@link #versionBinding}。 */
+    @JsonProperty("promptFingerprint")
+    public String promptFingerprint() {
+        return versionBinding == null ? "" : versionBinding.promptVersion();
     }
 
     /** 质量评测的 Judge 异常会把整轮标成 ERROR；意图评测始终是完整运行。 */

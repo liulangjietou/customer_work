@@ -24,6 +24,7 @@ public final class ControlPlanePermissions {
         "billing:quota-edit",
         "billing:price-edit",
         "billing:export",
+        "billing:aggregate",
         "sensitive-word:add",
         "sensitive-word:edit",
         "sensitive-word:delete"

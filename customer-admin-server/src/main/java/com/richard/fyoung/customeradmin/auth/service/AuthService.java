@@ -19,6 +19,7 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessSnapshot;
 import com.richard.fyoung.customeradmin.tenant.service.TenantService;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
@@ -29,6 +30,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -65,6 +67,7 @@ public class AuthService {
     private final SysRoleMapper roleMapper;
     private final SysUserRoleMapper userRoleMapper;
     private final TenantService tenantService;
+    private final SessionRevocationService sessionRevocationService;
 
     /** “记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置。 */
     @Value("${admin.remember-me-timeout-seconds:604800}")
@@ -73,7 +76,8 @@ public class AuthService {
     public AuthService(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
                        OperationLogMapper operationLogMapper, LdapAuthService ldapAuthService,
                        AdminLdapProperties ldapProperties, SysRoleMapper roleMapper,
-                       SysUserRoleMapper userRoleMapper, TenantService tenantService) {
+                       SysUserRoleMapper userRoleMapper, TenantService tenantService,
+                       SessionRevocationService sessionRevocationService) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.operationLogMapper = operationLogMapper;
@@ -82,6 +86,7 @@ public class AuthService {
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
         this.tenantService = tenantService;
+        this.sessionRevocationService = sessionRevocationService;
     }
 
     public LoginResponse login(LoginRequest request) {
@@ -169,7 +174,7 @@ public class AuthService {
      */
     private void doLogin(SysUser user, Boolean rememberMe) {
         String tenantId = resolveTenantId(user);
-        tenantService.assertAccessible(tenantId);
+        TenantAccessSnapshot tenantAccess = tenantService.requireAccessibleSnapshot(tenantId);
 
         if (Boolean.TRUE.equals(rememberMe)) {
             StpUtil.login(user.getId(), SaLoginModel.create().setTimeout(rememberMeTimeoutSeconds));
@@ -177,7 +182,8 @@ public class AuthService {
             StpUtil.login(user.getId());
         }
         StpUtil.getTokenSession().set("username", user.getUsername());
-        TenantSession.bindTenant(tenantId);
+        long authEpoch = user.getAuthEpoch() == null ? 0L : user.getAuthEpoch();
+        TenantSession.bindTenant(tenantId, authEpoch, tenantAccess.accessEpoch());
         TenantContext.set(tenantId);
     }
 
@@ -187,6 +193,7 @@ public class AuthService {
         return tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT : tenantId;
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public void changePassword(ChangePasswordRequest request) {
         Long userId = StpUtil.getLoginIdAsLong();
         SysUser user = userMapper.selectById(userId);
@@ -198,6 +205,10 @@ public class AuthService {
         }
         user.setPassword(passwordEncoder.encode(request.newPassword()));
         userMapper.updateById(user);
+        if (userMapper.incrementAuthEpoch(userId) != 1) {
+            throw new BizException(ResultCode.UNAUTHORIZED);
+        }
+        sessionRevocationService.revokeUserAfterCommit(userId);
         log.info("password changed, userId={}", userId);
     }
 

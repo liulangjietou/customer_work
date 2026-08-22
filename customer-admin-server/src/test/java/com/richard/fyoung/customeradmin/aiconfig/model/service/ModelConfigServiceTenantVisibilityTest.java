@@ -2,13 +2,17 @@ package com.richard.fyoung.customeradmin.aiconfig.model.service;
 
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
+import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelDeploymentLifecycle;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelAgentReference;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelVO;
+import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelAsset;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
+import com.richard.fyoung.customeradmin.aiconfig.secret.dto.SecretRotationRequest;
+import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
@@ -18,6 +22,7 @@ import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.security.ModelEndpointPolicy;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -28,13 +33,18 @@ import org.mockito.MockedStatic;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.net.InetAddress;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -51,6 +61,11 @@ class ModelConfigServiceTenantVisibilityTest {
     private AdminModelFactory modelFactory;
     private AgentInstanceCache agentInstanceCache;
     private CustomerWorkConfigPublisher runtimeConfigPublisher;
+    private ModelAssetService modelAssetService;
+    private SecretRefService secretRefService;
+    private ModelHealthService modelHealthService;
+    private ModelImpactService modelImpactService;
+    private ModelCertificationService modelCertificationService;
     private ModelConfigService service;
 
     @BeforeAll
@@ -67,17 +82,37 @@ class ModelConfigServiceTenantVisibilityTest {
         modelFactory = mock(AdminModelFactory.class);
         agentInstanceCache = mock(AgentInstanceCache.class);
         runtimeConfigPublisher = mock(CustomerWorkConfigPublisher.class);
+        modelAssetService = mock(ModelAssetService.class);
+        secretRefService = mock(SecretRefService.class);
+        modelHealthService = mock(ModelHealthService.class);
+        modelImpactService = mock(ModelImpactService.class);
+        modelCertificationService = mock(ModelCertificationService.class);
         AdminTenantProperties tenantProperties = new AdminTenantProperties();
         tenantProperties.setEnabled(true);
+        AiModelAsset asset = new AiModelAsset();
+        asset.setId(10L);
+        when(modelAssetService.resolveOrCreate(anyString(), anyString(), any(), eq(true))).thenReturn(asset);
+        when(secretRefService.createLocal(anyString(), anyString(), anyString(), isNull()))
+            .thenAnswer(invocation -> new SecretRefService.SecretWriteResult(
+                20L, 1, cryptoUtil.encrypt(invocation.getArgument(2)), null));
+        when(secretRefService.rotateOrCreate(any(AiModelConfig.class), anyString(), isNull()))
+            .thenAnswer(invocation -> new SecretRefService.SecretWriteResult(
+                20L, 2, cryptoUtil.encrypt(invocation.getArgument(1)), null));
+        when(modelHealthService.findSnapshots(any())).thenReturn(Map.of());
         service = new ModelConfigService(
             mapper,
             modelReferenceAccess,
-            cryptoUtil,
-            modelFactory,
+            modelAssetService,
+            secretRefService,
+            modelHealthService,
+            modelImpactService,
+            modelCertificationService,
             agentInstanceCache,
             runtimeConfigPublisher,
             tenantProperties,
-            crossTenantAuthority);
+            crossTenantAuthority,
+            new ModelEndpointPolicy(List::of,
+                host -> new InetAddress[] {InetAddress.getByName("8.8.8.8")}));
         when(modelReferenceAccess.findReferences(any())).thenReturn(List.of());
     }
 
@@ -89,7 +124,7 @@ class ModelConfigServiceTenantVisibilityTest {
         try (MockedStatic<TenantSession> tenantSession = effectiveTenant("acme")) {
             ModelVO vo = service.get(1L);
 
-            assertEquals("********（系统共享配置）", vo.getApiKeyMasked());
+            assertEquals("********", vo.getApiKeyMasked());
         }
     }
 
@@ -200,8 +235,8 @@ class ModelConfigServiceTenantVisibilityTest {
         AiModelConfig sharedModel = model(1L, TenantContext.DEFAULT);
         when(mapper.selectById(1L)).thenReturn(sharedModel);
         when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(true);
-        when(modelReferenceAccess.findReferences(sharedModel))
-            .thenReturn(List.of(reference("tenant-a", 11L, "agent-a")));
+        doThrow(new BizException(ResultCode.RESOURCE_IN_USE, "模型部署存在生效引用"))
+            .when(modelImpactService).requireAllowed(sharedModel, null, "DELETE");
 
         try (MockedStatic<TenantSession> tenantSession = effectiveTenant(TenantContext.DEFAULT)) {
             BizException exception = assertThrows(BizException.class, () -> service.delete(1L));
@@ -209,6 +244,62 @@ class ModelConfigServiceTenantVisibilityTest {
             assertEquals(ResultCode.RESOURCE_IN_USE, exception.getResultCode());
             verify(mapper, never()).deleteById(1L);
         }
+    }
+
+    @Test
+    void rotateCredential_shouldPreflightAsRotationAndRepublishExperimentAgent() {
+        AiModelConfig deployment = model(1L, "tenant-a");
+        deployment.setLifecycleStatus(ModelDeploymentLifecycle.ACTIVE.name());
+        when(mapper.selectById(1L)).thenReturn(deployment);
+        when(modelReferenceAccess.findReferences(deployment))
+            .thenReturn(List.of(reference("tenant-a", 11L, "experiment-agent")));
+        doAnswer(invocation -> {
+            assertEquals("tenant-a", TenantContext.get());
+            return null;
+        }).when(runtimeConfigPublisher).publishForAgentId(11L);
+
+        TenantContext.set("tenant-a");
+        try (MockedStatic<TenantSession> tenantSession = effectiveTenant("tenant-a")) {
+            service.rotateCredential(1L, new SecretRotationRequest("sk-rotated", null));
+        } finally {
+            TenantContext.clear();
+        }
+
+        verify(modelImpactService).requireAllowed(deployment, "tenant-a", "ROTATE");
+        verify(agentInstanceCache).evict("experiment-agent");
+        verify(runtimeConfigPublisher).publishForAgentId(11L);
+    }
+
+    @Test
+    void rotateCredential_shouldStillPreflightWhenDeploymentRowIsInactive() {
+        AiModelConfig deployment = model(1L, "tenant-a");
+        deployment.setStatus(0);
+        deployment.setLifecycleStatus(ModelDeploymentLifecycle.DRAFT.name());
+        when(mapper.selectById(1L)).thenReturn(deployment);
+        doThrow(new BizException(ResultCode.RESOURCE_IN_USE, "在线实验撤流尚未确认"))
+            .when(modelImpactService).requireAllowed(deployment, "tenant-a", "ROTATE");
+
+        try (MockedStatic<TenantSession> tenantSession = effectiveTenant("tenant-a")) {
+            BizException exception = assertThrows(BizException.class,
+                () -> service.rotateCredential(1L, new SecretRotationRequest("sk-rotated", null)));
+
+            assertEquals(ResultCode.RESOURCE_IN_USE, exception.getResultCode());
+        }
+
+        verify(secretRefService, never()).rotateOrCreate(any(), anyString(), any());
+        verify(mapper, never()).updateById(any(AiModelConfig.class));
+    }
+
+    @Test
+    void impact_shouldPreserveRotateActionForImpactAnalysis() {
+        AiModelConfig deployment = model(1L, "tenant-a");
+        when(mapper.selectById(1L)).thenReturn(deployment);
+
+        try (MockedStatic<TenantSession> tenantSession = effectiveTenant("tenant-a")) {
+            service.impact(1L, "rotate");
+        }
+
+        verify(modelImpactService).query(deployment, "tenant-a", "ROTATE");
     }
 
     @Test
@@ -229,8 +320,9 @@ class ModelConfigServiceTenantVisibilityTest {
     void testConnectivity_shouldNotPersistResultForReadOnlyDefaultSharedRecord() throws Exception {
         when(mapper.selectById(1L)).thenReturn(model(1L, TenantContext.DEFAULT));
         when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(false);
-        when(modelFactory.testConnectivity(anyString(), anyString(), anyString(), anyString()))
-            .thenReturn(new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), null));
+        when(modelHealthService.probe(eq(1L), any()))
+            .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(
+                new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), null)));
 
         try (MockedStatic<TenantSession> tenantSession = effectiveTenant("acme")) {
             ModelTestResult result = service.testConnectivity(1L).get();

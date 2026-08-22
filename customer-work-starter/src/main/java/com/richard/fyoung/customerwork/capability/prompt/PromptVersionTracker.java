@@ -48,8 +48,9 @@ public class PromptVersionTracker {
             if (version.fingerprint().isEmpty()) {
                 return "";
             }
-            store.record(version);
             if (!version.fingerprint().equals(lastFingerprint)) {
+                // 在线调用也会采集版本。仅版本变化时幂等落一次，避免每次请求都打 INSERT IGNORE。
+                store.record(version);
                 log.info("prompt version changed: {} -> {}, length={}",
                     lastFingerprint.isEmpty() ? "(none)" : lastFingerprint,
                     version.fingerprint(), version.length());

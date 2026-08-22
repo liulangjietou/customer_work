@@ -2,6 +2,15 @@ package com.richard.fyoung.customerwork.core.service;
 
 import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.core.dto.IntentResult;
+import com.richard.fyoung.customerwork.core.model.failover.FailoverModel;
+import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
+import com.richard.fyoung.customerwork.safety.quota.QuotaDecision;
+import com.richard.fyoung.customerwork.safety.quota.QuotaExceedAction;
+import com.richard.fyoung.customerwork.safety.quota.QuotaPeriod;
+import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentResultEvent;
@@ -25,6 +34,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -83,12 +93,93 @@ class CustomerServiceServiceTest {
     }
 
     @Test
+    void chat_shouldIsolateHotAgentByTrustedTenantAndUser_forSameSessionId() {
+        ReActAgent tenantAUser1 = replyingAgent("a1");
+        ReActAgent tenantAUser2 = replyingAgent("a2");
+        ReActAgent tenantBUser1 = replyingAgent("b1");
+        when(factory.createAgent("shared-session"))
+            .thenReturn(tenantAUser1, tenantAUser2, tenantBUser1);
+
+        String first = TenantContext.callWith("tenant-a", () -> QuotaSubjectContext.callWith(
+            QuotaSubject.user("user-1"), () -> service.chat("shared-session", "first").block()));
+        String second = TenantContext.callWith("tenant-a", () -> QuotaSubjectContext.callWith(
+            QuotaSubject.user("user-2"), () -> service.chat("shared-session", "second").block()));
+        String third = TenantContext.callWith("tenant-b", () -> QuotaSubjectContext.callWith(
+            QuotaSubject.user("user-1"), () -> service.chat("shared-session", "third").block()));
+        String repeated = TenantContext.callWith("tenant-a", () -> QuotaSubjectContext.callWith(
+            QuotaSubject.user("user-1"), () -> service.chat("shared-session", "again").block()));
+
+        org.junit.jupiter.api.Assertions.assertEquals("a1", first);
+        org.junit.jupiter.api.Assertions.assertEquals("a2", second);
+        org.junit.jupiter.api.Assertions.assertEquals("b1", third);
+        org.junit.jupiter.api.Assertions.assertEquals("a1", repeated);
+        verify(factory, org.mockito.Mockito.times(3)).createAgent("shared-session");
+    }
+
+    private ReActAgent replyingAgent(String reply) {
+        ReActAgent replyingAgent = mock(ReActAgent.class);
+        when(replyingAgent.call(anyString(), any(RuntimeContext.class)))
+            .thenReturn(Mono.just(assistantMsg(reply)));
+        return replyingAgent;
+    }
+
+    @Test
     void chat_shouldFallback_whenAgentFails() {
         when(agent.call(anyString(), any(RuntimeContext.class)))
             .thenReturn(Mono.error(new RuntimeException("model down")));
 
         StepVerifier.create(service.chat("u2", "查询订单"))
             .assertNext(reply -> org.junit.jupiter.api.Assertions.assertTrue(reply.contains("系统繁忙")))
+            .verifyComplete();
+    }
+
+    @Test
+    void chat_shouldForceFallbackRoute_whenQuotaRequestsDegrade() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getModel().getFallback().setEnabled(true);
+        service = new CustomerServiceService(factory, sessionStateManager, props);
+        TenantQuotaGuard quotaGuard = mock(TenantQuotaGuard.class);
+        when(quotaGuard.check(null)).thenReturn(degradeDecision());
+        service.setQuotaGuard(quotaGuard);
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenReturn(
+            Mono.deferContextual(context -> {
+                org.junit.jupiter.api.Assertions.assertTrue(
+                    ModelRoutingContext.isFallbackPreferred(context),
+                    "DEGRADE 必须把强制备用指令传到模型订阅链");
+                return Mono.just(assistantMsg("备用模型回答"));
+            }));
+
+        StepVerifier.create(service.chat("quota-degrade", "你好"))
+            .expectNext("备用模型回答")
+            .verifyComplete();
+    }
+
+    @Test
+    void chat_shouldRejectDegrade_whenFallbackIsNotConfigured() {
+        TenantQuotaGuard quotaGuard = mock(TenantQuotaGuard.class);
+        when(quotaGuard.check(null)).thenReturn(degradeDecision());
+        service.setQuotaGuard(quotaGuard);
+
+        StepVerifier.create(service.chat("quota-no-fallback", "你好"))
+            .expectNext(CustomerServiceService.QUOTA_EXCEEDED_REPLY)
+            .verifyComplete();
+        verify(agent, never()).call(anyString(), any(RuntimeContext.class));
+    }
+
+    @Test
+    void chat_shouldReturnQuotaReply_whenForcedFallbackHasNoAvailableCandidate() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getModel().getFallback().setEnabled(true);
+        service = new CustomerServiceService(factory, sessionStateManager, props);
+        TenantQuotaGuard quotaGuard = mock(TenantQuotaGuard.class);
+        when(quotaGuard.check(null)).thenReturn(degradeDecision());
+        service.setQuotaGuard(quotaGuard);
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenReturn(Mono.error(
+            new RuntimeException("agent wrapper",
+                new FailoverModel.FallbackModelUnavailableException("fallback circuit open"))));
+
+        StepVerifier.create(service.chat("quota-fallback-open", "你好"))
+            .expectNext(CustomerServiceService.QUOTA_EXCEEDED_REPLY)
             .verifyComplete();
     }
 
@@ -128,6 +219,26 @@ class CustomerServiceServiceTest {
         StepVerifier.create(service.chatStream("u4", "你好"))
             .assertNext(chunk -> org.junit.jupiter.api.Assertions.assertTrue(chunk.contains("系统繁忙")))
             .verifyComplete();
+    }
+
+    @Test
+    void chatStream_shouldReturnQuotaReply_whenForcedFallbackHasNoAvailableCandidate() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getModel().getFallback().setEnabled(true);
+        service = new CustomerServiceService(factory, sessionStateManager, props);
+        TenantQuotaGuard quotaGuard = mock(TenantQuotaGuard.class);
+        when(quotaGuard.check(null)).thenReturn(degradeDecision());
+        service.setQuotaGuard(quotaGuard);
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class))).thenReturn(Flux.error(
+            new FailoverModel.FallbackModelUnavailableException("fallback circuit open")));
+
+        StepVerifier.create(service.chatStream("quota-stream-fallback-open", "你好"))
+            .expectNext(CustomerServiceService.QUOTA_EXCEEDED_REPLY)
+            .verifyComplete();
+    }
+
+    private QuotaDecision degradeDecision() {
+        return new QuotaDecision(false, QuotaExceedAction.DEGRADE, 101L, 100L, QuotaPeriod.DAILY);
     }
 
     @Test

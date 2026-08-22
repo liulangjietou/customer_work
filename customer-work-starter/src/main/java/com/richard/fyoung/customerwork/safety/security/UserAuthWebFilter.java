@@ -3,6 +3,11 @@ package com.richard.fyoung.customerwork.safety.security;
 import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
@@ -34,9 +39,15 @@ public class UserAuthWebFilter implements WebFilter {
     public static final String PRINCIPAL_ATTR = "cw.user.principal";
 
     private final UserJwtService jwtService;
+    private final TenantAccessGuard tenantAccessGuard;
 
     public UserAuthWebFilter(UserJwtService jwtService) {
+        this(jwtService, null);
+    }
+
+    public UserAuthWebFilter(UserJwtService jwtService, TenantAccessGuard tenantAccessGuard) {
         this.jwtService = jwtService;
+        this.tenantAccessGuard = tenantAccessGuard;
     }
 
     @Override
@@ -63,8 +74,12 @@ public class UserAuthWebFilter implements WebFilter {
         if (TenantContext.isPresent() && !TenantContext.sameTenant(tenantId, TenantContext.get())) {
             return AuthResponses.forbidden(exchange, "credential tenant mismatch");
         }
+        TenantAccessDecision decision = checkTenantAccess(principal.get());
+        if (!decision.isAllowed()) {
+            return AuthResponses.tenantAccessDenied(exchange, decision);
+        }
         exchange.getAttributes().put(PRINCIPAL_ATTR, principal.get());
-        return chainWithTenant(exchange, chain, tenantId);
+        return chainWithIdentity(exchange, chain, principal.get());
     }
 
     /**
@@ -73,8 +88,19 @@ public class UserAuthWebFilter implements WebFilter {
      * <p>Reactor Context 与 ThreadLocal 都写，理由同 {@code ApiKeyAuthWebFilter}：
      * 前者跨线程边界还原，后者供未发生线程切换时的同步持久层读取。</p>
      */
-    private Mono<Void> chainWithTenant(ServerWebExchange exchange, WebFilterChain chain, String tenantId) {
-        return Mono.defer(() -> TenantContext.callWith(tenantId, () -> chain.filter(exchange)))
-            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId));
+    private Mono<Void> chainWithIdentity(ServerWebExchange exchange, WebFilterChain chain,
+                                         UserPrincipal principal) {
+        String tenantId = principal.tenantId();
+        QuotaSubject subject = QuotaSubject.user(principal.userId());
+        return Mono.defer(() -> TenantContext.callWith(tenantId,
+                () -> QuotaSubjectContext.callWith(subject, () -> chain.filter(exchange))))
+            .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId)
+                .put(QuotaSubjectContextThreadLocalAccessor.KEY, subject));
+    }
+
+    private TenantAccessDecision checkTenantAccess(UserPrincipal principal) {
+        return tenantAccessGuard == null
+            ? TenantAccessDecision.allowed(0L)
+            : tenantAccessGuard.check(principal.tenantId(), principal.accessEpoch(), true);
     }
 }

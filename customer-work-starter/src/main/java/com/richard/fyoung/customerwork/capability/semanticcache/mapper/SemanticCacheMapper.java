@@ -19,6 +19,7 @@ public interface SemanticCacheMapper extends BaseMapper<SemanticCacheDO> {
     /** 取候选集：同分区同意图、未过期，按最近命中倒序，限额。 */
     List<SemanticCacheDO> selectCandidates(@Param("scopeId") String scopeId,
                                            @Param("intent") String intent,
+                                           @Param("configGeneration") String configGeneration,
                                            @Param("notBeforeMs") long notBeforeMs,
                                            @Param("limit") int limit);
 
@@ -26,7 +27,8 @@ public interface SemanticCacheMapper extends BaseMapper<SemanticCacheDO> {
     int recordHit(@Param("id") Long id, @Param("hitAtMs") long hitAtMs);
 
     /** 分区内条目计数。 */
-    long countByScope(@Param("scopeId") String scopeId);
+    long countByScope(@Param("scopeId") String scopeId,
+                      @Param("configGeneration") String configGeneration);
 
     /**
      * 取 LRU 淘汰的时间界：按最近命中倒序数到第 {@code keepSize+1} 条的时间戳。
@@ -35,13 +37,23 @@ public interface SemanticCacheMapper extends BaseMapper<SemanticCacheDO> {
      * MySQL 不允许 DELETE 的子查询直接引用同表，绕开要多包一层派生表，而那条语句还得再过一遍
      * 租户拦截器的改写——低频操作没必要冒这个险，两次简单查询更稳。返回 null 表示没到淘汰量。</p>
      */
-    Long selectEvictThreshold(@Param("scopeId") String scopeId, @Param("keepSize") int keepSize);
+    Long selectEvictThreshold(@Param("scopeId") String scopeId,
+                              @Param("configGeneration") String configGeneration,
+                              @Param("keepSize") int keepSize);
 
     /** 删除最近命中时间早于（含）界值的条目。 */
-    int deleteOlderThan(@Param("scopeId") String scopeId, @Param("thresholdMs") long thresholdMs);
+    int deleteOlderThan(@Param("scopeId") String scopeId,
+                        @Param("configGeneration") String configGeneration,
+                        @Param("thresholdMs") long thresholdMs);
 
     /** 清空分区。 */
     int deleteByScope(@Param("scopeId") String scopeId);
+
+    /**
+     * 清空当前租户全部条目。SQL 刻意不写 WHERE，由生产租户拦截器强制补入
+     * {@code tenant_id = TenantContext.require()}；缺上下文时在拦截器边界直接失败。
+     */
+    int deleteCurrentTenant();
 
     /** 运营视角列出条目，按命中次数降序（"哪些缓存真的在被复用"）。 */
     List<SemanticCacheDO> selectByHits(@Param("scopeId") String scopeId, @Param("limit") int limit);

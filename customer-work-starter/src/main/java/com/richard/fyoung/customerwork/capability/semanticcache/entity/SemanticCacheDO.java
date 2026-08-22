@@ -22,6 +22,8 @@ public class SemanticCacheDO {
     private Long id;
 
     private String scopeId;
+    /** 运行时配置 contentHash；旧请求只允许写回其发起时的代际。 */
+    private String configGeneration;
     private String intent;
 
     /** 原始问题文本，排查"为什么这条命中了"时要看。 */

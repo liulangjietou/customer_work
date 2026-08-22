@@ -2,9 +2,15 @@ package com.richard.fyoung.customeradmin.tenant.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessSnapshot;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessDeliveryPlan;
+import com.richard.fyoung.customeradmin.tenant.access.TenantChannelDisableService;
+import com.richard.fyoung.customeradmin.tenant.access.dto.TenantAccessDeliveryVO;
+import com.richard.fyoung.customeradmin.tenant.access.service.TenantAccessPublishTaskService;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantPageQuery;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantSaveRequest;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantVO;
@@ -19,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 租户主数据与生命周期。
@@ -33,10 +40,19 @@ public class TenantService {
 
     private final SysTenantMapper tenantMapper;
     private final TenantProvisionService provisionService;
+    private final TenantAccessPublishTaskService accessPublishTaskService;
+    private final SessionRevocationService sessionRevocationService;
+    private final TenantChannelDisableService channelDisableService;
 
-    public TenantService(SysTenantMapper tenantMapper, TenantProvisionService provisionService) {
+    public TenantService(SysTenantMapper tenantMapper, TenantProvisionService provisionService,
+                         TenantAccessPublishTaskService accessPublishTaskService,
+                         SessionRevocationService sessionRevocationService,
+                         TenantChannelDisableService channelDisableService) {
         this.tenantMapper = tenantMapper;
         this.provisionService = provisionService;
+        this.accessPublishTaskService = accessPublishTaskService;
+        this.sessionRevocationService = sessionRevocationService;
+        this.channelDisableService = channelDisableService;
     }
 
     public PageResult<TenantVO> page(TenantPageQuery query) {
@@ -83,9 +99,11 @@ public class TenantService {
         entity.setId(null);
         entity.setTenantCode(TenantContext.normalizedTenantKey(request.getTenantCode()));
         entity.setStatus(TenantStatus.ACTIVE.name());
+        entity.setAccessEpoch(0L);
         tenantMapper.insert(entity);
 
         provisionService.provision(entity.getTenantCode());
+        accessPublishTaskService.enqueue(snapshot(entity), TenantAccessDeliveryPlan.provision());
         log.info("tenant created, code={}, name={}", entity.getTenantCode(), entity.getTenantName());
         return entity.getId();
     }
@@ -102,6 +120,14 @@ public class TenantService {
         entity.setTenantCode(existing.getTenantCode());
         entity.setStatus(existing.getStatus());
         tenantMapper.updateById(entity);
+        boolean expiryChanged = !TenantContext.isDefaultTenant(existing.getTenantCode())
+            && !Objects.equals(existing.getExpireTime(), request.getExpireTime());
+        if (expiryChanged) {
+            requireChanged(tenantMapper.incrementAccessEpoch(existing.getId()));
+            SysTenant changed = requireById(existing.getId());
+            accessPublishTaskService.enqueue(snapshot(changed), TenantAccessDeliveryPlan.expiryChange());
+            sessionRevocationService.revokeTenantAfterCommit(existing.getTenantCode());
+        }
         log.info("tenant updated, code={}", entity.getTenantCode());
     }
 
@@ -110,21 +136,57 @@ public class TenantService {
     public void changeStatus(Long id, TenantStatus target) {
         SysTenant existing = requireById(id);
         assertNotReserved(existing.getTenantCode());
-
-        SysTenant update = new SysTenant();
-        update.setId(id);
-        update.setStatus(target.name());
-        tenantMapper.updateById(update);
+        TenantStatus current = TenantStatus.parse(existing.getStatus());
+        if (current == target) {
+            return;
+        }
+        if (current == TenantStatus.TERMINATED) {
+            throw new BizException(ResultCode.PARAM_INVALID, "已退租租户不能恢复或再次变更状态");
+        }
+        requireChanged(tenantMapper.updateStatusAndIncrementAccessEpoch(id, target.name()));
+        SysTenant changed = requireById(id);
+        TenantAccessDeliveryPlan plan = target == TenantStatus.TERMINATED
+            ? TenantAccessDeliveryPlan.offboard(
+                channelDisableService.disableForOffboarding(existing.getTenantCode()))
+            : TenantAccessDeliveryPlan.statusChange();
+        accessPublishTaskService.enqueue(snapshot(changed), plan);
+        sessionRevocationService.revokeTenantAfterCommit(existing.getTenantCode());
         log.info("tenant status changed, code={}, status={}", existing.getTenantCode(), target);
+    }
+
+    /** 不改生命周期状态，仅轮换访问版本并撤销该租户全部后台会话。 */
+    @Transactional(rollbackFor = Exception.class)
+    public void revokeSessions(Long id) {
+        SysTenant existing = requireById(id);
+        assertNotReserved(existing.getTenantCode());
+        requireChanged(tenantMapper.incrementAccessEpoch(id));
+        SysTenant changed = requireById(id);
+        accessPublishTaskService.enqueue(snapshot(changed), TenantAccessDeliveryPlan.sessionRevoke());
+        sessionRevocationService.revokeTenantAfterCommit(existing.getTenantCode());
+        log.info("tenant sessions revocation requested, code={}, accessEpoch={}",
+            changed.getTenantCode(), changed.getAccessEpoch());
+    }
+
+    public TenantAccessDeliveryVO latestAccessDelivery(Long id) {
+        SysTenant tenant = requireById(id);
+        return accessPublishTaskService.latest(tenant.getTenantCode());
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         SysTenant existing = requireById(id);
         assertNotReserved(existing.getTenantCode());
-        // 逻辑删除：租户下的业务数据仍在库里，物理清理属于退租数据主权流程，不在这里做
-        tenantMapper.deleteById(id);
-        log.info("tenant deleted (logical), code={}", existing.getTenantCode());
+        if (TenantStatus.parse(existing.getStatus()) == TenantStatus.TERMINATED) {
+            return;
+        }
+        requireChanged(tenantMapper.updateStatusAndIncrementAccessEpoch(id, TenantStatus.TERMINATED.name()));
+        SysTenant terminated = requireById(id);
+        int channelsDisabled = channelDisableService.disableForOffboarding(existing.getTenantCode());
+        accessPublishTaskService.enqueue(snapshot(terminated),
+            TenantAccessDeliveryPlan.offboard(channelsDisabled));
+        // 租户主记录承担退租状态机与交付审计，必须保留；业务数据也不在此处级联删除。
+        sessionRevocationService.revokeTenantAfterCommit(existing.getTenantCode());
+        log.info("tenant offboarded, code={}", existing.getTenantCode());
     }
 
     /**
@@ -133,9 +195,13 @@ public class TenantService {
      * <p>这是"租户级熔断"的唯一落点——控制面冻结一个租户后，该租户的所有登录立刻失效。</p>
      */
     public void assertAccessible(String tenantCode) {
-        // default 承担系统保留数据与控制面入口，不受租户生命周期约束，避免系统被整体锁死
+        requireAccessibleSnapshot(tenantCode);
+    }
+
+    /** 返回校验后的权威访问快照；default 保留租户继续遵守既有恒可用语义。 */
+    public TenantAccessSnapshot requireAccessibleSnapshot(String tenantCode) {
         if (TenantContext.isDefaultTenant(tenantCode)) {
-            return;
+            return new TenantAccessSnapshot(TenantContext.DEFAULT, TenantStatus.ACTIVE.name(), 0L, null);
         }
         SysTenant tenant = findByCode(tenantCode);
         if (tenant == null) {
@@ -147,6 +213,7 @@ public class TenantService {
         if (tenant.getExpireTime() != null && tenant.getExpireTime().isBefore(java.time.LocalDateTime.now())) {
             throw new BizException(ResultCode.TENANT_SUSPENDED, "租户已到期，请联系管理员续约");
         }
+        return snapshot(tenant);
     }
 
     /** 租户编码是否存在且可用（控制面用户切换视角时校验目标租户）。 */
@@ -172,6 +239,12 @@ public class TenantService {
         return tenant.getTenantCode();
     }
 
+    /** 控制面切换视角时同时取得应写入会话的 access epoch。 */
+    public TenantAccessSnapshot resolveAccessibleSnapshot(String tenantCode) {
+        String resolved = resolveAccessibleCode(tenantCode);
+        return resolved == null ? null : requireAccessibleSnapshot(resolved);
+    }
+
     public SysTenant findByCode(String tenantCode) {
         if (!StringUtils.hasText(tenantCode)) {
             return null;
@@ -191,6 +264,18 @@ public class TenantService {
     private void assertNotReserved(String tenantCode) {
         if (TenantContext.isDefaultTenant(tenantCode)) {
             throw new BizException(ResultCode.TENANT_RESERVED_PROTECTED);
+        }
+    }
+
+    private TenantAccessSnapshot snapshot(SysTenant tenant) {
+        long accessEpoch = tenant.getAccessEpoch() == null ? 0L : tenant.getAccessEpoch();
+        return new TenantAccessSnapshot(
+            tenant.getTenantCode(), tenant.getStatus(), accessEpoch, tenant.getExpireTime());
+    }
+
+    private void requireChanged(int changed) {
+        if (changed != 1) {
+            throw new BizException(ResultCode.TENANT_NOT_FOUND);
         }
     }
 

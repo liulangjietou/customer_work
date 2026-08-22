@@ -5,6 +5,7 @@ import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -40,19 +41,42 @@ public class EvalService {
     private final ObjectProvider<JudgeModel> judgeModelProvider;
     private final ObjectProvider<CustomerServiceService> chatServiceProvider;
     private final ObjectProvider<PromptVersionTracker> promptTrackerProvider;
+    private final EvalDatasetSnapshotter datasetSnapshotter;
+    private final EvalArtifactVersionProvider artifactVersionProvider;
 
+    @Autowired
     public EvalService(IntentEvalRunner intentRunner,
                        EvalRunStore store,
                        EvalCaseStore caseStore,
                        ObjectProvider<JudgeModel> judgeModelProvider,
                        ObjectProvider<CustomerServiceService> chatServiceProvider,
-                       ObjectProvider<PromptVersionTracker> promptTrackerProvider) {
+                       ObjectProvider<PromptVersionTracker> promptTrackerProvider,
+                       EvalDatasetSnapshotStore datasetSnapshotStore,
+                       EvalArtifactVersionProvider artifactVersionProvider) {
         this.intentRunner = intentRunner;
         this.store = store;
         this.caseStore = caseStore;
         this.judgeModelProvider = judgeModelProvider;
         this.chatServiceProvider = chatServiceProvider;
         this.promptTrackerProvider = promptTrackerProvider;
+        this.datasetSnapshotter = new EvalDatasetSnapshotter(datasetSnapshotStore);
+        this.artifactVersionProvider = artifactVersionProvider;
+    }
+
+    /** 兼容离线测试与显式构造调用方。 */
+    public EvalService(IntentEvalRunner intentRunner,
+                       EvalRunStore store,
+                       EvalCaseStore caseStore,
+                       ObjectProvider<JudgeModel> judgeModelProvider,
+                       ObjectProvider<CustomerServiceService> chatServiceProvider,
+                       ObjectProvider<PromptVersionTracker> promptTrackerProvider) {
+        this(intentRunner, store, caseStore, judgeModelProvider, chatServiceProvider,
+            promptTrackerProvider, new InMemoryEvalDatasetSnapshotStore(),
+            (type, prompt) -> new EvalVersionBinding(
+                "", "", "UNSPECIFIED", prompt, "UNSPECIFIED", "UNSPECIFIED",
+                "UNSPECIFIED", type == EvalType.QUALITY ? "UNSPECIFIED" : "NOT_APPLICABLE",
+                type == EvalType.QUALITY ? QualityEvalRunner.rubricVersion()
+                    : IntentEvalRunner.evaluatorVersion()));
     }
 
     /**
@@ -61,8 +85,11 @@ public class EvalService {
      * <p>离线确定性：不调模型、无外部依赖，适合定时跑与 CI 门禁。</p>
      */
     public EvalComparison runIntent(EvalTrigger trigger, String remark) {
-        EvalReport report = intentRunner.run();
-        return persistAndCompare(EvalRun.fromIntent(report, trigger, capturePrompt(), remark));
+        List<EvalCase> cases = intentRunner.loadDataset();
+        EvalDatasetSnapshot dataset = datasetSnapshotter.snapshot(EvalType.INTENT, cases);
+        EvalReport report = intentRunner.run(cases);
+        return persistAndCompare(EvalRun.fromIntent(
+            report, trigger, captureVersions(EvalType.INTENT, dataset), remark));
     }
 
     /**
@@ -87,8 +114,18 @@ public class EvalService {
                 "quality eval unavailable: CustomerServiceService not present in this context");
         }
         List<QualityEvalCase> cases = runner.loadDataset();
+        EvalDatasetSnapshot dataset = datasetSnapshotter.snapshot(EvalType.QUALITY, cases);
         QualityEvalReport report = runner.run(cases, generateReplies(chatService, cases));
-        return persistAndCompare(EvalRun.fromQuality(report, trigger, capturePrompt(), remark));
+        return persistAndCompare(EvalRun.fromQuality(
+            report, trigger, captureVersions(EvalType.QUALITY, dataset), remark));
+    }
+
+    private EvalVersionBinding captureVersions(EvalType type, EvalDatasetSnapshot dataset) {
+        EvalVersionBinding binding = artifactVersionProvider.capture(type, capturePrompt());
+        if (binding == null) {
+            throw new IllegalStateException("eval artifact version provider returned null");
+        }
+        return binding.withDataset(dataset);
     }
 
     /**

@@ -10,9 +10,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
+import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -39,7 +41,6 @@ public class McpClientFactory {
     private static final Duration DEBUG_TIMEOUT = Duration.ofSeconds(15);
 
     private static final int MAX_ERROR_MESSAGE_LENGTH = 500;
-    private static final String MCP_SERVERS_WRAPPER_KEY = "mcpServers";
 
     /** 判定"疑似二进制内容被误当文本解码"的字符占比阈值——正常文本/代码/JSON 里控制字符占比接近 0，
      * 二进制文件（如图片）被误按文本解码后控制字符/替换字符占比通常远高于此。 */
@@ -64,7 +65,30 @@ public class McpClientFactory {
         }
         // http 之外的一切（含空值、未知值）都按 sse 处理，与历史行为一致
         String remoteType = McpServerSpec.TYPE_HTTP.equals(type) ? McpServerSpec.TYPE_HTTP : McpServerSpec.TYPE_SSE;
-        return McpServerSpec.remote(mcpName, remoteType, node.path("url").asText(), parseHeaders(node));
+        return McpServerSpec.remote(mcpName, remoteType,
+            validateRemoteUrl(node.path("url").asText()), parseHeaders(node));
+    }
+
+    /**
+     * 远程 MCP 的 URL 不承载凭据；这是最终建客户端前的统一防线，存量脏数据也不能绕过后台表单校验。
+     */
+    private String validateRemoteUrl(String rawUrl) throws Exception {
+        if (!StringUtils.hasText(rawUrl)) {
+            throw new IllegalArgumentException("remote MCP URL is required");
+        }
+        URI uri = new URI(rawUrl.trim()).normalize();
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            throw new IllegalArgumentException("remote MCP URL only supports http/https");
+        }
+        if (!StringUtils.hasText(uri.getHost())) {
+            throw new IllegalArgumentException("remote MCP URL host is required");
+        }
+        if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            throw new IllegalArgumentException(
+                "remote MCP URL must not contain userInfo, query or fragment; use headers for credentials");
+        }
+        return uri.toString();
     }
 
     /** 按 mcpType/config JSON 构建一个尚未连接、也尚未设置超时的 {@link McpClientBuilder}。 */
@@ -252,7 +276,7 @@ public class McpClientFactory {
      * 原样返回，两种格式都认。
      */
     private JsonNode unwrapMcpServers(JsonNode node) {
-        JsonNode servers = node.path(MCP_SERVERS_WRAPPER_KEY);
+        JsonNode servers = node.path(McpServerSpec.MCP_SERVERS_WRAPPER_KEY);
         if (servers.isObject() && servers.size() > 0) {
             return servers.elements().next();
         }

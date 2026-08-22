@@ -4,7 +4,6 @@ import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParseStatus;
 import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerworkapp.service.UserSessionGuard;
 import org.junit.jupiter.api.Test;
@@ -33,7 +32,8 @@ import static org.mockito.Mockito.when;
  * @author owlzhangfq@gmail.com
  */
 @WebFluxTest(AttachmentController.class)
-@Import({CustomerWorkProperties.class, UserJwtService.class, UserAuthWebFilter.class})
+@Import({CustomerWorkProperties.class, UserJwtService.class,
+    ControllerSecurityTestConfiguration.UserAuth.class})
 class AttachmentControllerTest {
 
     @Autowired

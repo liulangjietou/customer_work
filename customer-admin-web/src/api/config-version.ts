@@ -1,7 +1,7 @@
 import { request } from './request'
 
 // 配置版本 API，与 admin-server /api/config-version/** 契约对应。
-// 发布历史只增不删：回滚是"把旧内容作为新版本再发一次"，因此任何时刻都能回答线上跑的是哪一版。
+// 发布历史只增不删；安全回滚只复用历史行为补丁，其余运行资产均取目标租户当前权威配置。
 
 export interface ConfigVersionVO {
   id: number
@@ -9,7 +9,7 @@ export interface ConfigVersionVO {
   targetCode: string
   targetId: number | null
   version: number
-  /** 完整快照，仅详情接口返回（列表不带，快照可能几十 KB）。 */
+  /** 结构化脱敏快照，仅详情接口返回（列表不带，密文/请求头/实验盐已移除）。 */
   content: string | null
   contentHash: string
   publishScope: string
@@ -36,6 +36,23 @@ export interface ConfigVersionPageResult {
   list: ConfigVersionVO[]
 }
 
+export interface PendingConfigPublishTask {
+  taskId: string
+  tenantCode: string
+  targetId: number
+  status: 'PENDING'
+}
+
+/** 入队成功不等于生效；实例 ACK APPLIED 后才是真实运行状态。 */
+export interface ConfigPublishOperationResult {
+  operationId: string
+  publishIntent: 'SAFE_ROLLBACK' | 'SAFE_GRAY'
+  status: 'PENDING'
+  sourceConfigVersionId: number
+  sourceContentHash: string
+  tasks: PendingConfigPublishTask[]
+}
+
 export function pageVersions(params: ConfigVersionPageQuery) {
   return request<ConfigVersionPageResult>({ url: '/config-version/page', method: 'get', params })
 }
@@ -52,14 +69,18 @@ export function listVersionsByTarget(configType: string, targetCode: string) {
   })
 }
 
-/** 回滚到指定版本，返回新产生的版本号。 */
+/** 安全回滚到指定版本，返回可靠发布任务。 */
 export function rollbackVersion(id: number, remark?: string) {
-  return request<number>({ url: `/config-version/${id}/rollback`, method: 'post', params: { remark } })
+  return request<ConfigPublishOperationResult>({
+    url: `/config-version/${id}/rollback`,
+    method: 'post',
+    params: { remark },
+  })
 }
 
-/** 灰度发布，返回实际下发的租户数。 */
+/** 安全灰度，全部目标预校验通过后返回同一 operation 下的可靠任务。 */
 export function grayRelease(id: number, tenantCodes: string[], remark?: string) {
-  return request<number>({
+  return request<ConfigPublishOperationResult>({
     url: `/config-version/${id}/gray`,
     method: 'post',
     data: { tenantCodes, remark },

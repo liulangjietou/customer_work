@@ -10,8 +10,23 @@
             (#{ack.tenantId}, #{ack.revision}, #{ack.contentHash}, #{ack.instanceId}, #{ack.status}, #{ack.reason},
              #{ack.appliedAtMs}, #{ack.createdAtMs}, #{ack.updatedAtMs})
         ON DUPLICATE KEY UPDATE
-            content_hash = VALUES(content_hash), status = VALUES(status), reason = VALUES(reason),
-            applied_at_ms = VALUES(applied_at_ms), updated_at_ms = VALUES(updated_at_ms)
+            content_hash = IF(VALUES(applied_at_ms) &gt; applied_at_ms
+                OR (VALUES(applied_at_ms) = applied_at_ms
+                    AND VALUES(status) = 'APPLIED' AND status &lt;&gt; 'APPLIED'),
+                VALUES(content_hash), content_hash),
+            reason = IF(VALUES(applied_at_ms) &gt; applied_at_ms
+                OR (VALUES(applied_at_ms) = applied_at_ms
+                    AND VALUES(status) = 'APPLIED' AND status &lt;&gt; 'APPLIED'),
+                VALUES(reason), reason),
+            updated_at_ms = IF(VALUES(applied_at_ms) &gt; applied_at_ms
+                OR (VALUES(applied_at_ms) = applied_at_ms
+                    AND VALUES(status) = 'APPLIED' AND status &lt;&gt; 'APPLIED'),
+                VALUES(updated_at_ms), updated_at_ms),
+            status = IF(VALUES(applied_at_ms) &gt; applied_at_ms
+                OR (VALUES(applied_at_ms) = applied_at_ms
+                    AND VALUES(status) = 'APPLIED' AND status &lt;&gt; 'APPLIED'),
+                VALUES(status), status),
+            applied_at_ms = GREATEST(VALUES(applied_at_ms), applied_at_ms)
     </insert>
 
     <select id="countByStatus" resultType="int">

@@ -128,7 +128,9 @@ public class ChannelBindingService {
         vo.setAgentName(agentNameResolver.apply(binding.getAgentId()));
         vo.setStatus(binding.getStatus());
         if (publishTask != null) {
+            vo.setPublishTaskId(publishTask.getId());
             vo.setPublishStatus(publishTask.getStatus());
+            vo.setPublishGateStatus(publishTask.getGateStatus());
             vo.setPublishRevision(publishTask.getRevision());
             vo.setPublishLastError(publishTask.getLastError());
             vo.setPublishUpdatedAtMs(publishTask.getUpdatedAtMs());

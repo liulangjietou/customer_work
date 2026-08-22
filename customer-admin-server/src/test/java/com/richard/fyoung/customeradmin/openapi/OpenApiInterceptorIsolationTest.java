@@ -4,6 +4,7 @@ import com.richard.fyoung.customeradmin.datascope.DataScopeResolver;
 import com.richard.fyoung.customeradmin.datascope.DataScopeWebConfig;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import com.richard.fyoung.customeradmin.tenant.TenantWebConfig;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessPolicyService;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -22,7 +23,8 @@ class OpenApiInterceptorIsolationTest {
         InterceptorRegistry registry = registry();
         InterceptorRegistration registration = registrationOf(registry);
 
-        new TenantWebConfig(mock(CrossTenantAuthority.class)).addInterceptors(registry);
+        new TenantWebConfig(
+            mock(CrossTenantAuthority.class), mock(TenantAccessPolicyService.class)).addInterceptors(registry);
 
         verify(registration).excludePathPatterns(OpenApiWebConfig.PATH_PATTERN);
     }

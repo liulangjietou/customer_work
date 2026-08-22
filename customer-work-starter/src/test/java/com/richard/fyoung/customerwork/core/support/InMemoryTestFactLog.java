@@ -56,4 +56,10 @@ public class InMemoryTestFactLog implements FactLog {
     public List<FactRecord> readRecords(String scopeId) {
         return List.copyOf(byScope.getOrDefault(scopeId, List.of()));
     }
+
+    @Override
+    public List<String> readForSubjectAccess(String scopeId, int limit) {
+        List<String> facts = read(scopeId);
+        return facts.subList(Math.max(0, facts.size() - Math.max(1, limit)), facts.size());
+    }
 }

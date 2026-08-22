@@ -52,6 +52,12 @@ class HttpTargetGuardTest {
         assertThrows(HttpTargetForbiddenException.class, () -> allowInternal().checkAllowed("http:///no-host"));
     }
 
+    @Test
+    void shouldRejectUserInfoBeforeAnyRequest() {
+        assertThrows(HttpTargetForbiddenException.class,
+            () -> denyInternal().checkAllowed("https://user:password@8.8.8.8/v1"));
+    }
+
     // ---------- DENY_INTERNAL：拒内网/环回 ----------
 
     @Test
@@ -144,6 +150,8 @@ class HttpTargetGuardTest {
         assertTrue(InternalAddressPolicy.DENY_INTERNAL.rejects(InetAddress.getByName("10.0.0.1")));
         assertTrue(InternalAddressPolicy.DENY_INTERNAL.rejects(InetAddress.getByName("127.0.0.1")));
         assertTrue(InternalAddressPolicy.DENY_INTERNAL.rejects(InetAddress.getByName("169.254.1.1")));
+        assertTrue(InternalAddressPolicy.DENY_INTERNAL.rejects(InetAddress.getByName("0.0.0.0")));
+        assertTrue(InternalAddressPolicy.DENY_INTERNAL.rejects(InetAddress.getByName("224.0.0.1")));
         // IPv6 唯一本地地址 fc00::/7，Java 的 isSiteLocalAddress 不覆盖，靠手动判定
         assertTrue(InternalAddressPolicy.DENY_INTERNAL.rejects(InetAddress.getByName("fd00::1")));
         assertFalse(InternalAddressPolicy.DENY_INTERNAL.rejects(InetAddress.getByName("8.8.8.8")));
@@ -152,6 +160,12 @@ class HttpTargetGuardTest {
         assertFalse(InternalAddressPolicy.ALLOW_INTERNAL.rejects(InetAddress.getByName("127.0.0.1")));
         assertFalse(InternalAddressPolicy.ALLOW_INTERNAL.rejects(InetAddress.getByName("fd00::1")));
         assertTrue(InternalAddressPolicy.ALLOW_INTERNAL.rejects(InetAddress.getByName("169.254.1.1")));
+
+        assertFalse(InternalAddressPolicy.ALLOW_PRIVATE_NETWORK.rejects(InetAddress.getByName("10.0.0.1")));
+        assertFalse(InternalAddressPolicy.ALLOW_PRIVATE_NETWORK.rejects(InetAddress.getByName("fd00::1")));
+        assertTrue(InternalAddressPolicy.ALLOW_PRIVATE_NETWORK.rejects(InetAddress.getByName("127.0.0.1")));
+        assertTrue(InternalAddressPolicy.ALLOW_PRIVATE_NETWORK.rejects(InetAddress.getByName("169.254.1.1")));
+        assertTrue(InternalAddressPolicy.ALLOW_PRIVATE_NETWORK.rejects(InetAddress.getByName("224.0.0.1")));
     }
 
     @Test

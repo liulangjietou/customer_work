@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsDetailVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsPageVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsQuery;
+import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallReplayManifestVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsSummaryVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallTrendVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentCallStatsService;
@@ -62,6 +63,15 @@ public class AgentCallStatsController {
     public Result<AgentCallStatsDetailVO> detail(@PathVariable long id,
                                                  @RequestParam(defaultValue = DEFAULT_SOURCE) String source) {
         return Result.success(callStatsService.detail(id, source));
+    }
+
+    /** 只读重放清单：不再次执行模型或工具，避免查看权限产生外部副作用。 */
+    @SaCheckPermission("agent-call-stats:view")
+    @GetMapping("/{id}/replay-manifest")
+    public Result<AgentCallReplayManifestVO> replayManifest(
+        @PathVariable long id,
+        @RequestParam(defaultValue = DEFAULT_SOURCE) String source) {
+        return Result.success(callStatsService.replayManifest(id, source));
     }
 
     /** 删除一条调用（主记录 + 分段级联）。 */

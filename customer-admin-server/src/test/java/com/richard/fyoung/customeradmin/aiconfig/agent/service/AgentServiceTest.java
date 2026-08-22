@@ -23,6 +23,7 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelRoutingPolicyRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
@@ -32,6 +33,7 @@ import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystem
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiSystemToolMapper;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.menu.service.MenuVersionHolder;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -50,6 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -72,6 +75,7 @@ class AgentServiceTest {
     private AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper;
     private AiKnowledgeBaseMapper knowledgeBaseMapper;
     private ModelConfigService modelConfigService;
+    private ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess;
     private MenuVersionHolder menuVersionHolder;
     private AgentService service;
 
@@ -101,6 +105,7 @@ class AgentServiceTest {
         agentKnowledgeBaseMapper = mock(AiAgentKnowledgeBaseMapper.class);
         knowledgeBaseMapper = mock(AiKnowledgeBaseMapper.class);
         modelConfigService = mock(ModelConfigService.class);
+        routingPolicyRuntimeAccess = mock(ModelRoutingPolicyRuntimeAccess.class);
         menuVersionHolder = new MenuVersionHolder();
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
         com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher runtimeConfigPublisher =
@@ -108,7 +113,8 @@ class AgentServiceTest {
         service = new AgentService(agentMapper, agentMcpMapper, agentSkillMapper, agentBackupModelMapper,
             agentSubAgentMapper, modelConfigAccess, mcpMapper, skillMapper, agentSystemToolMapper, systemToolMapper,
             agentKnowledgeBaseMapper, knowledgeBaseMapper,
-            menuVersionHolder, agentInstanceCache, modelConfigService, runtimeConfigPublisher);
+            menuVersionHolder, agentInstanceCache, modelConfigService,
+            routingPolicyRuntimeAccess, runtimeConfigPublisher);
 
         when(modelConfigAccess.findVisibleById(1L)).thenReturn(new AiModelConfig());
         // 默认主模型连通性门禁通过（个别用例覆写为失败）
@@ -194,6 +200,28 @@ class AgentServiceTest {
         verify(agentSkillMapper).insert(any(AiAgentSkill.class));
         verify(agentSystemToolMapper).insert(any(AiAgentSystemTool.class));
         assertEquals(versionBefore + 1, menuVersionHolder.current());
+    }
+
+    @Test
+    void create_shouldValidateAndPersistActiveModelRoutePolicyBinding() {
+        AgentSaveRequest request = requestWithRoutePolicy(77L);
+
+        service.create(request);
+
+        verify(routingPolicyRuntimeAccess).requireActive(77L, null, null);
+        ArgumentCaptor<AiAgent> agentCaptor = ArgumentCaptor.forClass(AiAgent.class);
+        verify(agentMapper).insert(agentCaptor.capture());
+        assertEquals(77L, agentCaptor.getValue().getModelRoutePolicyId());
+    }
+
+    @Test
+    void create_shouldRejectUnavailableModelRoutePolicyBeforePersistence() {
+        doThrow(new BizException(ResultCode.PARAM_INVALID, "route policy unavailable"))
+            .when(routingPolicyRuntimeAccess).requireActive(77L, null, null);
+
+        assertThrows(BizException.class, () -> service.create(requestWithRoutePolicy(77L)));
+
+        verify(agentMapper, never()).insert(any(AiAgent.class));
     }
 
     @Test
@@ -533,6 +561,12 @@ class AgentServiceTest {
         return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
             null, List.of("chat"), null, 1,
             null, null, null, null, null, null, knowledgeBaseIds);
+    }
+
+    private AgentSaveRequest requestWithRoutePolicy(Long policyId) {
+        return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, null,
+            null, List.of("chat"), null, 1,
+            null, null, null, null, null, null, null, policyId);
     }
 
     @Test

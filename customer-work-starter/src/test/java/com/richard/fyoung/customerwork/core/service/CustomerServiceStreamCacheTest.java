@@ -38,6 +38,8 @@ import static org.mockito.Mockito.when;
 class CustomerServiceStreamCacheTest {
 
     private static final String SESSION_ID = "u42:conv-1";
+    private static final SemanticCacheService.CacheGeneration CACHE_GENERATION =
+        new SemanticCacheService.CacheGeneration("tenant", "test-generation", true);
 
     private CustomerServiceAgentFactory factory;
     private ReActAgent agent;
@@ -53,13 +55,15 @@ class CustomerServiceStreamCacheTest {
         when(factory.createAgent(anyString())).thenReturn(agent);
         when(factory.contextFor(anyString())).thenAnswer(inv ->
             RuntimeContext.builder().userId("tenant").sessionId(inv.getArgument(0)).build());
+        when(cache.captureGeneration()).thenReturn(CACHE_GENERATION);
         service = new CustomerServiceService(factory, stateManager, new CustomerWorkProperties(),
             empty(), empty(), empty(), empty(), providerOf(cache), empty());
     }
 
     @Test
     void cacheHit_shouldNotInvokeAgent() {
-        when(cache.lookup(eq(SESSION_ID), anyString())).thenReturn(Optional.of("七天无理由从签收次日算起。"));
+        when(cache.lookup(eq(CACHE_GENERATION), eq(SESSION_ID), anyString()))
+            .thenReturn(Optional.of("七天无理由从签收次日算起。"));
 
         String joined = String.join("", service.chatStream(SESSION_ID, "几天无理由怎么算")
             .collectList().block());
@@ -74,7 +78,8 @@ class CustomerServiceStreamCacheTest {
     void cacheHit_shouldEmitMultipleChunks_forLongAnswer() {
         // 一个超长 chunk 会让前端消息气泡突然撑开，与真实流式的观感差太多
         String answer = "七".repeat(100);
-        when(cache.lookup(eq(SESSION_ID), anyString())).thenReturn(Optional.of(answer));
+        when(cache.lookup(eq(CACHE_GENERATION), eq(SESSION_ID), anyString()))
+            .thenReturn(Optional.of(answer));
 
         List<String> chunks = service.chatStream(SESSION_ID, "几天无理由怎么算").collectList().block();
 
@@ -84,7 +89,8 @@ class CustomerServiceStreamCacheTest {
 
     @Test
     void cacheMiss_shouldInvokeAgentAndWriteCache() {
-        when(cache.lookup(eq(SESSION_ID), anyString())).thenReturn(Optional.empty());
+        when(cache.lookup(eq(CACHE_GENERATION), eq(SESSION_ID), anyString()))
+            .thenReturn(Optional.empty());
         when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
             .thenReturn(Flux.just(delta("运费"), delta("满 99 包邮。")));
 
@@ -93,12 +99,14 @@ class CustomerServiceStreamCacheTest {
 
         assertEquals("运费满 99 包邮。", joined);
         // 缓存的必须是完整回复，不是最后一个增量
-        verify(cache, timeout(2000)).put(eq(SESSION_ID), eq("运费怎么算"), eq("运费满 99 包邮。"));
+        verify(cache, timeout(2000)).put(eq(CACHE_GENERATION), eq(SESSION_ID),
+            eq("运费怎么算"), eq("运费满 99 包邮。"));
     }
 
     @Test
     void streamFailure_shouldNotCacheHalfAnswer() {
-        when(cache.lookup(eq(SESSION_ID), anyString())).thenReturn(Optional.empty());
+        when(cache.lookup(eq(CACHE_GENERATION), eq(SESSION_ID), anyString()))
+            .thenReturn(Optional.empty());
         // 已经吐了半句才失败：兜底文案会接在半句后面，把这段缓存下来，
         // 之后每个问到同类问题的人都会收到这段残缺回复
         when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
@@ -107,7 +115,8 @@ class CustomerServiceStreamCacheTest {
 
         service.chatStream(SESSION_ID, "运费怎么算").collectList().block();
 
-        verify(cache, never()).put(anyString(), anyString(), anyString());
+        verify(cache, never()).put(any(SemanticCacheService.CacheGeneration.class),
+            anyString(), anyString(), anyString());
     }
 
     @Test

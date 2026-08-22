@@ -8,6 +8,8 @@ import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
+import com.richard.fyoung.customerwork.core.model.routing.ModelRouteHint;
+import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEndEvent;
@@ -147,6 +149,29 @@ class ChatServiceTest {
 
         assertEquals(ChatNodeKind.THINKING_START, chunks.get(0).kind());
         assertEquals(ChatNodeKind.THINKING_END, chunks.get(chunks.size() - 1).kind());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void chatStreamForChannel_shouldExposeChannelOnlyInCurrentModelSubscription() {
+        AtomicReference<ModelRouteHint> observed = new AtomicReference<>();
+        when(agent.streamEvents(any(List.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.deferContextual(context -> {
+                observed.set(ModelRoutingContext.routeHint(context));
+                return Flux.just(new AgentResultEvent(assistantMsg("你好")));
+            }));
+
+        chatService.chatStreamForChannel("coder", "s1", "你好", "dingtalk")
+            .collectList().block();
+
+        assertNotNull(observed.get());
+        assertEquals("dingtalk", observed.get().channelCode());
+        assertNull(observed.get().agentId(), "agentId 由已发布的路由策略从 spec 补全");
+
+        observed.set(null);
+        chatService.chatStream("coder", "s2", "你好").collectList().block();
+        assertNotNull(observed.get());
+        assertNull(observed.get().channelCode(), "渠道事实不得泄漏到后续普通订阅");
     }
 
     @Test

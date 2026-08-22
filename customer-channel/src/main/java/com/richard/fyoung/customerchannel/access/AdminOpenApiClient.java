@@ -139,14 +139,19 @@ public class AdminOpenApiClient {
      * @param agentCode      智能体编码
      * @param sessionId      会话 id
      * @param message        用户消息
+     * @param channelType    可信渠道类型（用于 admin 校验精确绑定并注入模型路由）
+     * @param appKey         可信渠道 AppKey（用于 admin 校验精确绑定）
      * @param timeoutSeconds 聚合超时（秒）
      * @return 聚合后的完整回复正文
      */
-    public String chat(String agentCode, String sessionId, String message, int timeoutSeconds) {
+    public String chat(String agentCode, String sessionId, String message,
+                       String channelType, String appKey, int timeoutSeconds) {
         StringBuilder answer = new StringBuilder();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sessionId", sessionId);
         body.put("message", message);
+        body.put("channelType", channelType);
+        body.put("appKey", appKey);
         webClient.post()
             .uri(ChannelAccessConstants.PATH_AGENT_CHAT, agentCode)
             .contentType(MediaType.APPLICATION_JSON)

@@ -24,8 +24,8 @@ import java.util.Map;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class CustomerWorkRuntimeConfig {
 
-    /** 契约版本号（便于消费端做兼容处理，当前恒为 1）。 */
-    private int schemaVersion = 1;
+    /** 契约版本号：v2 新增不可变模型路由策略；消费端仍兼容无 routingPolicy 的 v1 载荷。 */
+    private int schemaVersion = 2;
 
     /** 发布时间戳（ISO-8601 文本，仅审计/展示用，不参与业务逻辑）。 */
     private String publishedAt;
@@ -51,8 +51,14 @@ public class CustomerWorkRuntimeConfig {
     /** MCP 远程服务列表（可空，空表示清空 MCP 接入）。 */
     private List<McpServer> mcpServers = new ArrayList<>();
 
-    /** Agent 运行时配置。 */
-    private Agent agent = new Agent();
+    /** Agent 运行时配置；整个 section 缺失表示保持现值，存在但 maxIters 为空表示重置部署基线。 */
+    private Agent agent;
+
+    /** 绑定到当前 Agent 的不可变模型路由策略；为空时沿用 v1 主备/分级模型链。 */
+    private RoutingPolicy routingPolicy;
+
+    /** 当前 Agent 唯一 RUNNING 的双臂在线实验；为空表示不分流。 */
+    private OnlineExperiment onlineExperiment;
 
     /** 模型主配置。 */
     @Data
@@ -104,5 +110,90 @@ public class CustomerWorkRuntimeConfig {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Agent {
         private Integer maxIters;
+    }
+
+    /**
+     * 不可变模型路由快照。部署凭据仍以 AES-GCM 密文跨网传输，规则只引用 deploymentId。
+     * policyContentHash 只描述规则版本；外层 contentHash 还会覆盖端点修订与部署快照。
+     */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class RoutingPolicy {
+        private Long policyId;
+        private Long versionId;
+        private Integer versionNo;
+        private String policyContentHash;
+        /** 当前发布绑定的 Agent/渠道事实，避免运行时从不可信请求参数猜测。 */
+        private Long agentId;
+        private String channelCode;
+        private List<RoutingDeployment> deployments = new ArrayList<>();
+        private List<RoutingRule> rules = new ArrayList<>();
+    }
+
+    /** 路由候选部署快照；不包含 SecretRef 元数据，只携带消费端所需的当前密文。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class RoutingDeployment {
+        private Long deploymentId;
+        private String provider;
+        private String name;
+        private String baseUrl;
+        private Integer endpointRevision;
+        private String apiKeyCipher;
+    }
+
+    /** 按 priority、ruleId 稳定排序的路由规则。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class RoutingRule {
+        private Long ruleId;
+        private String purpose;
+        private Long deploymentId;
+        private Integer priority;
+        private RoutingCondition condition = new RoutingCondition();
+    }
+
+    /** 所有非空维度按 AND 匹配；列表维度内部按 OR 匹配。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class RoutingCondition {
+        private List<Long> agentIds = new ArrayList<>();
+        private List<String> channelCodes = new ArrayList<>();
+        private Integer minInputTokens;
+        private Integer maxInputTokens;
+        private Boolean requiresTools;
+        private Boolean requiresStructuredOutput;
+        private String complexity;
+    }
+
+    /**
+     * 双臂在线实验的不可变运行快照。只发布 RUNNING 实验，生命周期变化必须触发新修订发布。
+     * assignmentSalt 只参与不可逆哈希分桶，不随调用日志落库。
+     */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class OnlineExperiment {
+        private Long experimentId;
+        private Integer revision;
+        private String assignmentSalt;
+        /** 实验组流量，基点制 1..9999。 */
+        private Integer treatmentBps;
+        /** 硬截止时间（epoch ms）；消费端到点立即回基线，不等待控制面巡检。 */
+        private Long expiresAtEpochMs;
+        private ExperimentArm control;
+        private ExperimentArm treatment;
+    }
+
+    /** 实验臂部署快照；凭据仍以 AES-GCM 密文跨网传输。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ExperimentArm {
+        private String arm;
+        private Long deploymentId;
+        private String provider;
+        private String name;
+        private String baseUrl;
+        private Integer endpointRevision;
+        private String apiKeyCipher;
     }
 }

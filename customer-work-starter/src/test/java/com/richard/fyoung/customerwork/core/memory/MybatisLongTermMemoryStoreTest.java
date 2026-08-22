@@ -108,6 +108,15 @@ class MybatisLongTermMemoryStoreTest {
         assertTrue(store.recall(scopeId, "顺丰", 5).isEmpty());
     }
 
+    @Test
+    void erase_shouldRemoveAllFactsOfScope() {
+        store.add(scopeId, "用户偏好顺丰快递");
+
+        store.erase(scopeId);
+
+        assertEquals(0, store.size(scopeId));
+    }
+
     private static boolean reachable(String host, int port) {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(host, port), 1500);

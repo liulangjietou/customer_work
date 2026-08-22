@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.tenant.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -36,6 +37,9 @@ public class SysTenant {
     private String remark;
     /** 到期时间，空 = 不限期。 */
     private LocalDateTime expireTime;
+    /** 访问版本；生命周期或主动撤权时原子递增，禁止普通更新覆盖。 */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Long accessEpoch;
 
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;

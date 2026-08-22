@@ -4,22 +4,53 @@
 
     <select id="findDueCandidates"
             resultType="com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask">
-        SELECT *
-        FROM ai_runtime_publish_task
-        WHERE (status = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
-           OR (status = 'PROCESSING' AND lease_until_ms &lt; #{nowMs})
-        ORDER BY seq ASC
+        <!-- Nacos 外写键是 tenant + dataId + group，与 Agent 无关；只串行尚可能外写的任务。 -->
+        SELECT candidate.*
+        FROM ai_runtime_publish_task candidate
+        WHERE ((candidate.status = 'PENDING' AND candidate.next_attempt_at_ms &lt;= #{nowMs})
+           OR (candidate.status = 'PROCESSING' AND candidate.lease_until_ms &lt; #{nowMs}))
+          AND NOT EXISTS (
+            SELECT 1
+            FROM ai_runtime_publish_task older
+            WHERE older.tenant_id = candidate.tenant_id
+              AND (older.data_id &lt;=&gt; candidate.data_id
+                OR older.data_id IS NULL OR candidate.data_id IS NULL)
+              AND (older.group_name &lt;=&gt; candidate.group_name
+                OR older.group_name IS NULL OR candidate.group_name IS NULL)
+              AND older.seq &lt; candidate.seq
+              AND older.status IN ('PENDING', 'PROCESSING')
+          )
+        ORDER BY candidate.seq ASC
         LIMIT #{limit}
     </select>
 
     <update id="claim">
-        UPDATE ai_runtime_publish_task
-        SET status = 'PROCESSING', lease_owner = #{owner}, lease_until_ms = #{leaseUntilMs},
-            updated_at_ms = #{nowMs}
-        WHERE id = #{id}
-          AND ((status = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
-            OR (status = 'PROCESSING' AND lease_until_ms &lt; #{nowMs}))
+        UPDATE ai_runtime_publish_task candidate
+        LEFT JOIN ai_runtime_publish_task older
+          ON older.tenant_id = candidate.tenant_id
+         AND (older.data_id &lt;=&gt; candidate.data_id
+           OR older.data_id IS NULL OR candidate.data_id IS NULL)
+         AND (older.group_name &lt;=&gt; candidate.group_name
+           OR older.group_name IS NULL OR candidate.group_name IS NULL)
+         AND older.seq &lt; candidate.seq
+         AND older.status IN ('PENDING', 'PROCESSING')
+        SET candidate.status = 'PROCESSING', candidate.lease_owner = #{owner},
+            candidate.lease_until_ms = #{leaseUntilMs}, candidate.updated_at_ms = #{nowMs}
+        WHERE candidate.id = #{id}
+          AND ((candidate.status = 'PENDING' AND candidate.next_attempt_at_ms &lt;= #{nowMs})
+            OR (candidate.status = 'PROCESSING' AND candidate.lease_until_ms &lt; #{nowMs}))
+          AND older.id IS NULL
     </update>
+
+    <!-- 持有行锁期间完成外部发布；抢占方只能在本事务提交后获得新租约，消除校验到外写的竞态窗口。 -->
+    <select id="lockLeaseForPublish"
+            resultType="com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask">
+        SELECT *
+        FROM ai_runtime_publish_task
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+          AND lease_until_ms &gt;= #{nowMs}
+        FOR UPDATE
+    </select>
 
     <update id="attachMetadata">
         UPDATE ai_runtime_publish_task
@@ -27,6 +58,7 @@
             group_name = #{task.groupName}, revision = #{task.revision}, content_hash = #{task.contentHash},
             updated_at_ms = #{nowMs}
         WHERE id = #{task.id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+          AND lease_until_ms &gt;= #{nowMs}
     </update>
 
     <update id="markPublished">
@@ -41,6 +73,78 @@
         SET status = #{status}, attempts = #{attempts}, next_attempt_at_ms = #{nextAttemptAtMs},
             lease_owner = NULL, lease_until_ms = 0, last_error = #{error}, updated_at_ms = #{nowMs}
         WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+          AND lease_until_ms &gt;= #{nowMs}
+    </update>
+
+    <!-- 快照变化是确定性结果：有同 Nacos 键更新任务则取代，否则立即失败，都不进入网络退避。 -->
+    <update id="markContentChangedTerminal">
+        UPDATE ai_runtime_publish_task candidate
+        LEFT JOIN ai_runtime_publish_task newer
+          ON newer.tenant_id = candidate.tenant_id
+         AND (newer.data_id &lt;=&gt; candidate.data_id
+           OR newer.data_id IS NULL OR candidate.data_id IS NULL)
+         AND (newer.group_name &lt;=&gt; candidate.group_name
+           OR newer.group_name IS NULL OR candidate.group_name IS NULL)
+         AND newer.seq &gt; candidate.seq
+        SET candidate.status = CASE WHEN newer.id IS NULL THEN 'FAILED' ELSE 'SUPERSEDED' END,
+            candidate.attempts = candidate.attempts + 1,
+            candidate.next_attempt_at_ms = 0,
+            candidate.lease_owner = NULL, candidate.lease_until_ms = 0,
+            candidate.last_error = #{error}, candidate.updated_at_ms = #{nowMs}
+        WHERE candidate.id = #{id} AND candidate.status = 'PROCESSING'
+          AND candidate.lease_owner = #{owner} AND candidate.lease_until_ms &gt;= #{nowMs}
+    </update>
+
+    <!-- 门禁通过/无需门禁时保持 PROCESSING；阻断时释放租约进入 BLOCKED，不消耗投递重试次数。 -->
+    <update id="recordGateDecision">
+        UPDATE ai_runtime_publish_task
+        SET candidate_versions_json = #{candidateVersionsJson},
+            gate_eval_run_ids_json = #{evalRunIdsJson}, gate_decision_json = #{decisionJson},
+            gate_status = #{gateStatus}, gate_evaluated_at_ms = #{nowMs},
+            status = #{publishStatus},
+            lease_owner = CASE WHEN #{publishStatus} = 'BLOCKED' THEN NULL ELSE lease_owner END,
+            lease_until_ms = CASE WHEN #{publishStatus} = 'BLOCKED' THEN 0 ELSE lease_until_ms END,
+            last_error = #{error}, updated_at_ms = #{nowMs}
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+          AND lease_until_ms &gt;= #{nowMs}
+    </update>
+
+    <update id="retryGateBlocked">
+        <!-- 已出现更新发布意图后，旧门禁任务只能保留审计，禁止重新入队覆盖新配置。 -->
+        UPDATE ai_runtime_publish_task candidate
+        LEFT JOIN ai_runtime_publish_task newer
+          ON newer.tenant_id = candidate.tenant_id
+         AND (newer.data_id &lt;=&gt; candidate.data_id
+           OR newer.data_id IS NULL OR candidate.data_id IS NULL)
+         AND (newer.group_name &lt;=&gt; candidate.group_name
+           OR newer.group_name IS NULL OR candidate.group_name IS NULL)
+         AND newer.seq &gt; candidate.seq
+        SET candidate.status = 'PENDING', candidate.gate_status = 'PENDING',
+            candidate.gate_eval_run_ids_json = NULL, candidate.gate_decision_json = NULL,
+            candidate.gate_evaluated_at_ms = NULL, candidate.next_attempt_at_ms = #{nowMs},
+            candidate.lease_owner = NULL, candidate.lease_until_ms = 0,
+            candidate.last_error = NULL, candidate.updated_at_ms = #{nowMs}
+        WHERE candidate.id = #{id} AND candidate.tenant_id = #{tenantId}
+          AND candidate.status = 'BLOCKED' AND candidate.gate_status = 'BLOCKED'
+          AND newer.id IS NULL
+    </update>
+
+    <update id="overrideGateBlocked">
+        UPDATE ai_runtime_publish_task candidate
+        LEFT JOIN ai_runtime_publish_task newer
+          ON newer.tenant_id = candidate.tenant_id
+         AND (newer.data_id &lt;=&gt; candidate.data_id
+           OR newer.data_id IS NULL OR candidate.data_id IS NULL)
+         AND (newer.group_name &lt;=&gt; candidate.group_name
+           OR newer.group_name IS NULL OR candidate.group_name IS NULL)
+         AND newer.seq &gt; candidate.seq
+        SET candidate.status = 'PENDING', candidate.gate_status = 'OVERRIDDEN',
+            candidate.gate_override_id = #{overrideId}, candidate.next_attempt_at_ms = #{nowMs},
+            candidate.lease_owner = NULL, candidate.lease_until_ms = 0,
+            candidate.last_error = NULL, candidate.updated_at_ms = #{nowMs}
+        WHERE candidate.id = #{id} AND candidate.tenant_id = #{tenantId}
+          AND candidate.status = 'BLOCKED' AND candidate.gate_status = 'BLOCKED'
+          AND newer.id IS NULL
     </update>
 
     <select id="findByRevision"
@@ -50,10 +154,20 @@
         LIMIT 1
     </select>
 
+    <!-- 串行同一发布版本的 ACK 聚合，防止并发首报各自只看到自己而永久 PARTIAL。 -->
+    <select id="lockByRevisionForAck"
+            resultType="com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask">
+        SELECT * FROM ai_runtime_publish_task
+        WHERE tenant_id = #{tenantId} AND revision = #{revision}
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
     <update id="updateAckStatus">
         UPDATE ai_runtime_publish_task
         SET status = #{status}, updated_at_ms = #{nowMs}
         WHERE tenant_id = #{tenantId} AND revision = #{revision}
           AND status IN ('PUBLISHED', 'PARTIAL', 'APPLIED', 'FAILED')
+          AND (status &lt;&gt; 'APPLIED' OR #{status} = 'APPLIED')
     </update>
 </mapper>

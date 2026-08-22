@@ -41,7 +41,8 @@ public class RuntimeConfigAckOutboxHandler implements OutboxHandler {
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(message.getPayload()));
         if (StringUtils.hasText(nacos.getRuntimeConfigAckToken())) {
-            builder.header(OpenApiProtocol.TOKEN_HEADER, nacos.getRuntimeConfigAckToken());
+            builder.header(OpenApiProtocol.RUNTIME_CONFIG_ACK_TOKEN_HEADER,
+                nacos.getRuntimeConfigAckToken());
         }
         HttpResponse<Void> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {

@@ -64,6 +64,7 @@ public class ProductionReadinessValidator implements InitializingBean {
         validateAuthentication(violations);
         validateDistributedRuntime(violations);
         validateStorage(violations);
+        validateMemoryPrivacy(violations);
         validateNotification(violations);
         validateRuntimeConfig(violations);
         require(violations, "customer-work.human-approval.execution-handler",
@@ -88,6 +89,9 @@ public class ProductionReadinessValidator implements InitializingBean {
         require(violations, "customer-work.human-approval.store-mode",
             !properties.getHumanApproval().isEnabled()
                 || StoreModes.isJdbc(properties.getHumanApproval().getStoreMode()));
+        require(violations, "customer-work.call-log.enabled", properties.getCallLog().isEnabled());
+        require(violations, "customer-work.call-log.store-mode",
+            StoreModes.isJdbc(properties.getCallLog().getStoreMode()));
     }
 
     private void validateAuthentication(List<String> violations) {
@@ -132,11 +136,37 @@ public class ProductionReadinessValidator implements InitializingBean {
             isProductionSecret(minio.getSecretKey()) && !DevDefaultCredentials.MINIO_CREDENTIAL.equals(minio.getSecretKey()));
     }
 
+    /**
+     * 外部长期记忆 Provider 当前没有可验证的删除回执契约，生产先限制为本地 JDBC；
+     * 否则页面显示“已删除”而第三方仍保留数据，会形成虚假合规承诺。
+     */
+    private void validateMemoryPrivacy(List<String> violations) {
+        if (!properties.getMemory().isLongTermEnabled()) {
+            return;
+        }
+        require(violations, "customer-work.memory.consent-required",
+            properties.getMemory().isConsentRequired());
+        require(violations, "customer-work.memory.store-mode",
+            StoreModes.isJdbc(properties.getMemory().getStoreMode()));
+        require(violations, "customer-work.memory.consent-store-mode",
+            StoreModes.isJdbc(properties.getMemory().getConsentStoreMode()));
+        require(violations, "customer-work.memory.retention-cleanup-enabled",
+            properties.getMemory().isRetentionCleanupEnabled());
+        require(violations, "customer-work.memory.retention-days",
+            properties.getMemory().getRetentionDays() > 0);
+        require(violations, "customer-work.memory.withdrawn-consent-retention-days",
+            properties.getMemory().getWithdrawnConsentRetentionDays() > 0);
+        require(violations, "customer-work.memory.provider.external-erasure-capability",
+            "memory".equalsIgnoreCase(properties.getMemory().getProvider()));
+    }
+
     private void validateRuntimeConfig(List<String> violations) {
         NacosProperties nacos = properties.getNacos();
         if (!nacos.isRuntimeConfigEnabled()) {
             return;
         }
+        require(violations, "customer-work.model.egress.allowed-hosts",
+            properties.getModel().getEgress().getAllowedHosts().stream().anyMatch(this::hasText));
         int keyBytes = hasText(nacos.getConfigAesKey())
             ? nacos.getConfigAesKey().getBytes(StandardCharsets.UTF_8).length : 0;
         require(violations, "customer-work.nacos.config-aes-key",

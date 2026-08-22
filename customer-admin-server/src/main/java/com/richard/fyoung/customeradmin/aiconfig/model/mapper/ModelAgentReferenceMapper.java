@@ -12,7 +12,7 @@ import java.util.List;
 public interface ModelAgentReferenceMapper {
 
     /**
-     * 查询主模型和备用模型两条引用链并去重。
+     * 查询主模型、备用模型，以及尚未确认撤流的在线实验双臂引用链并去重。
      *
      * @param modelId 模型配置 ID
      * @param tenantId 私有模型传当前租户；共享模型跨租户扫描时传 {@code null}

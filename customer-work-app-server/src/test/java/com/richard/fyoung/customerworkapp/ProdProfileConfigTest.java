@@ -44,10 +44,16 @@ class ProdProfileConfigTest {
         assertEquals("jdbc", prop(sources, "customer-work.human-approval.store-mode"));
         assertEquals("jdbc", prop(sources, "customer-work.slot-filling.store-mode"));
         assertEquals("jdbc", prop(sources, "customer-work.dialog.store-mode"));
+        assertEquals("jdbc", prop(sources, "customer-work.call-log.store-mode"));
+        assertEquals("true", String.valueOf(prop(sources, "customer-work.call-log.enabled")));
         assertEquals("true", String.valueOf(prop(sources, "customer-work.security.approval-auth.enabled")));
         assertEquals("mysql", prop(sources, "customer-work.skill.repository"));
         assertEquals("redis", prop(sources, "customer-work.distributed.counter-mode"));
         assertEquals("redis", prop(sources, "customer-work.distributed.session-lock-mode"));
+        assertEquals("${CW_TENANT_ACCESS_ENABLED:true}", prop(sources,
+            "customer-work.nacos.tenant-access-enabled"));
+        assertEquals("${CW_TENANT_ACCESS_DATA_ID:customer-work-tenant-access}", prop(sources,
+            "customer-work.nacos.tenant-access-data-id"));
         assertEquals("true", String.valueOf(prop(sources,
             "customer-work.session.mysql.migration-enabled")));
         assertEquals("health,prometheus", prop(sources, "management.endpoints.web.exposure.include"));

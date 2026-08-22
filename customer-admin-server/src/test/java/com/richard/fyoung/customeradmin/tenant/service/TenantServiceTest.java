@@ -1,15 +1,21 @@
 package com.richard.fyoung.customeradmin.tenant.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantSaveRequest;
 import com.richard.fyoung.customeradmin.tenant.entity.SysTenant;
 import com.richard.fyoung.customeradmin.tenant.entity.TenantStatus;
 import com.richard.fyoung.customeradmin.tenant.mapper.SysTenantMapper;
+import com.richard.fyoung.customeradmin.tenant.access.service.TenantAccessPublishTaskService;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessDeliveryPlan;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessOperation;
+import com.richard.fyoung.customeradmin.tenant.access.TenantChannelDisableService;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 
@@ -32,13 +38,21 @@ class TenantServiceTest {
 
     private SysTenantMapper tenantMapper;
     private TenantProvisionService provisionService;
+    private TenantAccessPublishTaskService accessPublishTaskService;
+    private SessionRevocationService sessionRevocationService;
+    private TenantChannelDisableService channelDisableService;
     private TenantService service;
 
     @BeforeEach
     void setUp() {
         tenantMapper = mock(SysTenantMapper.class);
         provisionService = mock(TenantProvisionService.class);
-        service = new TenantService(tenantMapper, provisionService);
+        accessPublishTaskService = mock(TenantAccessPublishTaskService.class);
+        sessionRevocationService = mock(SessionRevocationService.class);
+        channelDisableService = mock(TenantChannelDisableService.class);
+        service = new TenantService(
+            tenantMapper, provisionService, accessPublishTaskService,
+            sessionRevocationService, channelDisableService);
     }
 
     private SysTenant tenant(Long id, String code, TenantStatus status) {
@@ -47,6 +61,7 @@ class TenantServiceTest {
         entity.setTenantCode(code);
         entity.setTenantName(code + " 名称");
         entity.setStatus(status.name());
+        entity.setAccessEpoch(0L);
         return entity;
     }
 
@@ -75,6 +90,7 @@ class TenantServiceTest {
 
         // 不初始化角色的新租户是个空壳；编码统一小写，避免数据库与缓存采用不同大小写语义
         verify(provisionService).provision("acme");
+        verify(accessPublishTaskService).enqueue(any(), any(TenantAccessDeliveryPlan.class));
     }
 
     @Test
@@ -89,6 +105,29 @@ class TenantServiceTest {
         BizException e = assertThrows(BizException.class, () -> service.update(request));
         assertEquals(ResultCode.TENANT_CODE_IMMUTABLE, e.getResultCode(),
             "编码是业务数据的归属标识，改了等于让存量数据失去归属");
+    }
+
+    @Test
+    void update_shouldRotateAccessEpochWhenExpiryChanges() {
+        SysTenant existing = tenant(9L, "acme", TenantStatus.ACTIVE);
+        SysTenant changed = tenant(9L, "acme", TenantStatus.ACTIVE);
+        changed.setAccessEpoch(1L);
+        LocalDateTime expiry = LocalDateTime.now().plusDays(30);
+        changed.setExpireTime(expiry);
+        when(tenantMapper.selectById(9L)).thenReturn(existing, changed);
+        when(tenantMapper.incrementAccessEpoch(9L)).thenReturn(1);
+
+        TenantSaveRequest request = new TenantSaveRequest();
+        request.setId(9L);
+        request.setTenantCode("acme");
+        request.setTenantName("Acme");
+        request.setExpireTime(expiry);
+
+        service.update(request);
+
+        verify(tenantMapper).incrementAccessEpoch(9L);
+        verify(accessPublishTaskService).enqueue(any(), any(TenantAccessDeliveryPlan.class));
+        verify(sessionRevocationService).revokeTenantAfterCommit("acme");
     }
 
     @Test
@@ -109,9 +148,91 @@ class TenantServiceTest {
 
     @Test
     void changeStatus_shouldAllowNormalTenant() {
-        when(tenantMapper.selectById(9L)).thenReturn(tenant(9L, "acme", TenantStatus.ACTIVE));
+        SysTenant active = tenant(9L, "acme", TenantStatus.ACTIVE);
+        SysTenant suspended = tenant(9L, "acme", TenantStatus.SUSPENDED);
+        suspended.setAccessEpoch(1L);
+        when(tenantMapper.selectById(9L)).thenReturn(active, suspended);
+        when(tenantMapper.updateStatusAndIncrementAccessEpoch(9L, TenantStatus.SUSPENDED.name())).thenReturn(1);
         service.changeStatus(9L, TenantStatus.SUSPENDED);
-        verify(tenantMapper).updateById(any(SysTenant.class));
+        verify(tenantMapper).updateStatusAndIncrementAccessEpoch(9L, TenantStatus.SUSPENDED.name());
+        verify(accessPublishTaskService).enqueue(any(), any(TenantAccessDeliveryPlan.class));
+        verify(channelDisableService, never()).disableForOffboarding(any());
+        verify(sessionRevocationService).revokeTenantAfterCommit("acme");
+    }
+
+    @Test
+    void changeStatus_shouldRejectLeavingTerminatedState() {
+        when(tenantMapper.selectById(9L)).thenReturn(tenant(9L, "acme", TenantStatus.TERMINATED));
+
+        BizException exception = assertThrows(BizException.class,
+            () -> service.changeStatus(9L, TenantStatus.ACTIVE));
+
+        assertEquals(ResultCode.PARAM_INVALID, exception.getResultCode());
+        verify(tenantMapper, never()).updateStatusAndIncrementAccessEpoch(any(), any());
+    }
+
+    @Test
+    void changeStatus_terminateShouldDisableChannelsAndPersistOffboardingPlan() {
+        SysTenant active = tenant(9L, "acme", TenantStatus.ACTIVE);
+        SysTenant terminated = tenant(9L, "acme", TenantStatus.TERMINATED);
+        terminated.setAccessEpoch(1L);
+        when(tenantMapper.selectById(9L)).thenReturn(active, terminated);
+        when(tenantMapper.updateStatusAndIncrementAccessEpoch(9L, TenantStatus.TERMINATED.name()))
+            .thenReturn(1);
+        when(channelDisableService.disableForOffboarding("acme")).thenReturn(3);
+
+        service.changeStatus(9L, TenantStatus.TERMINATED);
+
+        verify(channelDisableService).disableForOffboarding("acme");
+        ArgumentCaptor<TenantAccessDeliveryPlan> planCaptor =
+            ArgumentCaptor.forClass(TenantAccessDeliveryPlan.class);
+        verify(accessPublishTaskService).enqueue(any(), planCaptor.capture());
+        assertEquals(TenantAccessOperation.OFFBOARD, planCaptor.getValue().operation());
+        assertEquals(3, planCaptor.getValue().channelsDisabledCount());
+        verify(sessionRevocationService).revokeTenantAfterCommit("acme");
+    }
+
+    @Test
+    void revokeSessions_shouldRotateEpochWithoutChangingStatus() {
+        SysTenant before = tenant(9L, "acme", TenantStatus.ACTIVE);
+        SysTenant after = tenant(9L, "acme", TenantStatus.ACTIVE);
+        after.setAccessEpoch(1L);
+        when(tenantMapper.selectById(9L)).thenReturn(before, after);
+        when(tenantMapper.incrementAccessEpoch(9L)).thenReturn(1);
+
+        service.revokeSessions(9L);
+
+        verify(tenantMapper).incrementAccessEpoch(9L);
+        verify(accessPublishTaskService).enqueue(any(), any(TenantAccessDeliveryPlan.class));
+        verify(sessionRevocationService).revokeTenantAfterCommit("acme");
+    }
+
+    @Test
+    void revokeSessions_shouldProtectDefaultTenant() {
+        when(tenantMapper.selectById(1L)).thenReturn(tenant(1L, TenantContext.DEFAULT, TenantStatus.ACTIVE));
+
+        BizException exception = assertThrows(BizException.class, () -> service.revokeSessions(1L));
+
+        assertEquals(ResultCode.TENANT_RESERVED_PROTECTED, exception.getResultCode());
+        verify(tenantMapper, never()).incrementAccessEpoch(1L);
+    }
+
+    @Test
+    void delete_shouldKeepTenantRecordForOffboardingAudit() {
+        SysTenant active = tenant(9L, "acme", TenantStatus.ACTIVE);
+        SysTenant terminated = tenant(9L, "acme", TenantStatus.TERMINATED);
+        terminated.setAccessEpoch(1L);
+        when(tenantMapper.selectById(9L)).thenReturn(active, terminated);
+        when(tenantMapper.updateStatusAndIncrementAccessEpoch(9L, TenantStatus.TERMINATED.name()))
+            .thenReturn(1);
+        when(channelDisableService.disableForOffboarding("acme")).thenReturn(2);
+
+        service.delete(9L);
+
+        verify(tenantMapper, never()).deleteById(9L);
+        verify(channelDisableService).disableForOffboarding("acme");
+        verify(accessPublishTaskService).enqueue(any(), any(TenantAccessDeliveryPlan.class));
+        verify(sessionRevocationService).revokeTenantAfterCommit("acme");
     }
 
     @Test

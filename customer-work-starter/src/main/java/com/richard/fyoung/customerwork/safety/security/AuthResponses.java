@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.safety.security;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -27,12 +28,24 @@ final class AuthResponses {
         return write(exchange, HttpStatus.FORBIDDEN, "Forbidden", message);
     }
 
+    /** 租户访问状态拒绝：状态冻结用 403，快照缺失/过期用 503，epoch 不一致用 401。 */
+    static Mono<Void> tenantAccessDenied(ServerWebExchange exchange, TenantAccessDecision decision) {
+        HttpStatus status = HttpStatus.valueOf(decision.httpStatus());
+        return write(exchange, status, status.getReasonPhrase(), decision.message(), decision.code());
+    }
+
     private static Mono<Void> write(ServerWebExchange exchange, HttpStatus status,
                                     String error, String message) {
+        return write(exchange, status, error, message, null);
+    }
+
+    private static Mono<Void> write(ServerWebExchange exchange, HttpStatus status,
+                                    String error, String message, String code) {
         exchange.getResponse().setStatusCode(status);
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
         String body = "{\"status\":" + status.value() + ",\"error\":\"" + error
-            + "\",\"message\":\"" + message + "\"}";
+            + "\"" + (code == null ? "" : ",\"code\":\"" + code + "\"")
+            + ",\"message\":\"" + message + "\"}";
         DataBuffer buffer = exchange.getResponse().bufferFactory()
             .wrap(body.getBytes(StandardCharsets.UTF_8));
         return exchange.getResponse().writeWith(Mono.just(buffer));

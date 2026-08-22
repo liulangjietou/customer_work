@@ -45,7 +45,8 @@ public class McpController {
         return Result.success(mcpService.page(query));
     }
 
-    @SaCheckPermission("mcp:view")
+    /** 编辑详情包含可复用的脱敏占位结构，只向具备编辑权限的用户开放。 */
+    @SaCheckPermission("mcp:edit")
     @GetMapping("/{id}")
     public Result<McpVO> get(@PathVariable Long id) {
         return Result.success(mcpService.get(id));
@@ -90,8 +91,8 @@ public class McpController {
         return mcpService.listDebugTools(id).thenApply(Result::success);
     }
 
-    /** 调试面板 · 单次调用工具——工具本身可能有副作用（比如真的查了/改了下游数据），落审计日志。 */
-    @SaCheckPermission("mcp:view")
+    /** 调试面板 · 单次调用工具可能改变下游数据，必须具备编辑权限并落审计日志。 */
+    @SaCheckPermission("mcp:edit")
     @OperationLog(operation = "MCP调试工具调用", target = "ai_mcp")
     @PostMapping("/{id}/debug/call")
     public CompletableFuture<Result<McpDebugCallResult>> debugCall(

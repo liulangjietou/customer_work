@@ -23,7 +23,7 @@ import reactor.core.publisher.Flux;
 /**
  * 开放 API - 智能体对话（SSE）：供 customer-channel 模块把渠道消息转发给绑定的工作区智能体。
  *
- * <p>复用 {@link ChatService#chatStream(String, String, String)}，只取可见回答正文（{@link ChatNodeKind#ANSWER}）
+ * <p>复用 {@link ChatService#chatStreamForChannel(String, String, String, String)}，只取可见回答正文（{@link ChatNodeKind#ANSWER}）
  * 的增量，以 {@code event:message} 发文本增量；正常结束发 {@code event:done} data {@code [DONE]}；
  * 异常发 {@code event:error} data 错误信息后结束。**不下发思考轨迹/工具节点等其余事件**（渠道侧只要正文）。</p>
  *
@@ -34,7 +34,7 @@ import reactor.core.publisher.Flux;
  * （customer-channel {@code AdminOpenApiClient}）用 {@code readValue(String.class)} 解码即还原。
  * {@code done} 事件 data 仍为固定的 {@code [DONE]} 结束标记（非 JSON），消费端据此判终止。</p>
  *
- * <p>授权：agentCode 必须有启用的渠道机器人绑定，否则在流内发 error 事件拒绝
+ * <p>授权：agentCode + channelType + appKey 必须精确命中同一条启用的渠道机器人绑定，否则在流内发 error 事件拒绝
  * （见 {@link OpenChannelService#requireAgentBound}）。鉴权（token）由 {@code OpenApiAuthInterceptor} 前置完成。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -62,8 +62,9 @@ public class OpenAgentChatController {
         String tenantId = TenantContext.get();
         // defer 到订阅时执行：授权校验的同步异常也能被 onErrorResume 兜成 error 事件（而非直接抛 JSON 错误体）
         Flux<ServerSentEvent<String>> body = Flux.defer(() -> {
-                openChannelService.requireAgentBound(agentCode);
-                return chatService.chatStream(agentCode, request.sessionId(), request.message());
+                openChannelService.requireAgentBound(agentCode, request.channelType(), request.appKey());
+                return chatService.chatStreamForChannel(
+                    agentCode, request.sessionId(), request.message(), request.channelType());
             })
             .filter(chunk -> chunk.kind() == ChatNodeKind.ANSWER)
             .map(chunk -> ServerSentEvent.<String>builder().event(OpenApiProtocol.SSE_EVENT_MESSAGE).data(jsonString(chunk.text())).build());

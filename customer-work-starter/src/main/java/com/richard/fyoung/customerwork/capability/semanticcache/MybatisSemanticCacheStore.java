@@ -14,9 +14,10 @@ import java.util.List;
  *
  * <p>多副本共享同一份缓存——进程内实现下命中率会被实例数直接除掉，而命中率正是这个功能的全部意义。</p>
  *
- * <p><b>全部操作失败只记日志、不抛异常</b>：与其他 Store 相反。缓存是纯粹的加速手段，
+ * <p><b>普通查写失败只记日志、不抛异常</b>：与其他 Store 相反。缓存是纯粹的加速手段，
  * 它挂了最坏的结果是"这次没省下那一次模型调用"，绝不该让用户问不了问题。
- * 上层 {@link SemanticCacheService} 也做了同样的兜底，这里是第二层。</p>
+ * 上层 {@link SemanticCacheService} 也做了同样的兜底，这里是第二层。唯一例外是
+ * {@link #clearCurrentTenant()}：它是配置切换的一致性前置条件，失败必须上抛。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisSemanticCacheStore implements SemanticCacheStore {
@@ -31,9 +32,15 @@ public class MybatisSemanticCacheStore implements SemanticCacheStore {
 
     @Override
     public void save(SemanticCacheEntry entry) {
+        save(entry, BASELINE_GENERATION);
+    }
+
+    @Override
+    public void save(SemanticCacheEntry entry, String configGeneration) {
         try {
             SemanticCacheDO row = new SemanticCacheDO();
             row.setScopeId(entry.scopeId());
+            row.setConfigGeneration(configGeneration);
             row.setIntent(entry.intent());
             row.setQuestion(entry.question());
             row.setQuestionVector(entry.questionVector());
@@ -50,8 +57,15 @@ public class MybatisSemanticCacheStore implements SemanticCacheStore {
 
     @Override
     public List<SemanticCacheEntry> findCandidates(String scopeId, String intent, long notBeforeMs, int limit) {
+        return findCandidates(scopeId, intent, BASELINE_GENERATION, notBeforeMs, limit);
+    }
+
+    @Override
+    public List<SemanticCacheEntry> findCandidates(String scopeId, String intent, String configGeneration,
+                                                    long notBeforeMs, int limit) {
         try {
-            List<SemanticCacheDO> rows = mapper.selectCandidates(scopeId, intent, notBeforeMs, limit);
+            List<SemanticCacheDO> rows = mapper.selectCandidates(
+                scopeId, intent, configGeneration, notBeforeMs, limit);
             List<SemanticCacheEntry> result = new ArrayList<>(rows.size());
             for (SemanticCacheDO row : rows) {
                 result.add(toDomain(row));
@@ -76,8 +90,13 @@ public class MybatisSemanticCacheStore implements SemanticCacheStore {
 
     @Override
     public long count(String scopeId) {
+        return count(scopeId, BASELINE_GENERATION);
+    }
+
+    @Override
+    public long count(String scopeId, String configGeneration) {
         try {
-            return mapper.countByScope(scopeId);
+            return mapper.countByScope(scopeId, configGeneration);
         } catch (Exception e) {
             log.error("[MybatisSemanticCacheStore] count failed, errorCode={}, scopeId={}",
                 "SEMCACHE-STORE-COUNT-FAIL", scopeId, e);
@@ -87,12 +106,17 @@ public class MybatisSemanticCacheStore implements SemanticCacheStore {
 
     @Override
     public int evictLeastRecentlyUsed(String scopeId, int keepSize) {
+        return evictLeastRecentlyUsed(scopeId, BASELINE_GENERATION, keepSize);
+    }
+
+    @Override
+    public int evictLeastRecentlyUsed(String scopeId, String configGeneration, int keepSize) {
         try {
-            Long threshold = mapper.selectEvictThreshold(scopeId, keepSize);
+            Long threshold = mapper.selectEvictThreshold(scopeId, configGeneration, keepSize);
             if (threshold == null) {
                 return 0;
             }
-            return mapper.deleteOlderThan(scopeId, threshold);
+            return mapper.deleteOlderThan(scopeId, configGeneration, threshold);
         } catch (Exception e) {
             log.error("[MybatisSemanticCacheStore] evict failed, errorCode={}, scopeId={}",
                 "SEMCACHE-STORE-EVICT-FAIL", scopeId, e);
@@ -109,6 +133,15 @@ public class MybatisSemanticCacheStore implements SemanticCacheStore {
                 "SEMCACHE-STORE-CLEAR-FAIL", scopeId, e);
             return 0;
         }
+    }
+
+    /**
+     * 配置切换的严格失效不能沿用普通缓存操作的 fail-open 语义，故不捕获异常。
+     * 租户条件由 MyBatis-Plus 租户拦截器统一补入。
+     */
+    @Override
+    public int clearCurrentTenant() {
+        return mapper.deleteCurrentTenant();
     }
 
     @Override

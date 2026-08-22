@@ -3,7 +3,10 @@ package com.richard.fyoung.customeradmin.aiconfig.model.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
+import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelCertification;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelCertificationMapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelDeploymentLifecycle;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
@@ -18,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.util.Collection;
 import java.util.List;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -34,6 +38,7 @@ class ModelConfigAccessTest {
 
     private AiModelConfigMapper mapper;
     private AdminTenantProperties tenantProperties;
+    private AiModelCertificationMapper certificationMapper;
     private ModelConfigAccess access;
 
     @BeforeAll
@@ -45,9 +50,10 @@ class ModelConfigAccessTest {
     @BeforeEach
     void setUp() {
         mapper = mock(AiModelConfigMapper.class);
+        certificationMapper = mock(AiModelCertificationMapper.class);
         tenantProperties = new AdminTenantProperties();
         tenantProperties.setEnabled(true);
-        access = new ModelConfigAccess(mapper, tenantProperties);
+        access = new ModelConfigAccess(mapper, certificationMapper, tenantProperties);
     }
 
     @AfterEach
@@ -134,12 +140,58 @@ class ModelConfigAccessTest {
         assertFalse(wrapper.getSqlSegment().contains("tenant_id"));
     }
 
+    @Test
+    void certificationRequired_shouldReturnDeployment_whenSnapshotIsCurrent() {
+        AiModelConfig deployment = model(7L, "tenant-a", 0);
+        deployment.setCertificationRequired(1);
+        deployment.setEndpointRevision(3);
+        AiModelCertification certification = certification(7L, "tenant-a", 3,
+            LocalDateTime.now().plusHours(1));
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(deployment);
+        when(certificationMapper.selectOne(any())).thenReturn(certification);
+        TenantContext.set("tenant-a");
+
+        AiModelConfig result = access.findVisibleById(7L);
+
+        assertEquals(deployment, result);
+    }
+
+    @Test
+    void certificationRequired_shouldFailClosed_whenSnapshotExpired() {
+        AiModelConfig deployment = model(7L, "tenant-a", 0);
+        deployment.setCertificationRequired(1);
+        deployment.setEndpointRevision(3);
+        AiModelCertification certification = certification(7L, "tenant-a", 3,
+            LocalDateTime.now().minusSeconds(1));
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(deployment);
+        when(certificationMapper.selectOne(any())).thenReturn(certification);
+        TenantContext.set("tenant-a");
+
+        AiModelConfig result = access.findVisibleById(7L);
+
+        assertEquals(null, result);
+    }
+
     private AiModelConfig model(Long id, String tenantId, Integer isDefault) {
         AiModelConfig model = new AiModelConfig();
         model.setId(id);
         model.setTenantId(tenantId);
         model.setIsDefault(isDefault);
+        model.setStatus(1);
+        model.setLifecycleStatus(ModelDeploymentLifecycle.ACTIVE.name());
+        model.setCertificationRequired(0);
         return model;
+    }
+
+    private AiModelCertification certification(Long modelId, String tenantId, Integer endpointRevision,
+                                                 LocalDateTime validUntil) {
+        AiModelCertification certification = new AiModelCertification();
+        certification.setModelConfigId(modelId);
+        certification.setTenantId(tenantId);
+        certification.setStatus("PASSED");
+        certification.setCertifiedEndpointRevision(endpointRevision);
+        certification.setValidUntil(validUntil);
+        return certification;
     }
 
     private LambdaQueryWrapper<AiModelConfig> capturedSelectOneWrapper() {

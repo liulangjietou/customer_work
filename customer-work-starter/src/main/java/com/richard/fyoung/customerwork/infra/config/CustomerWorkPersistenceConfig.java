@@ -42,8 +42,8 @@ import javax.sql.DataSource;
  * 与宿主自己的 SqlSessionFactory / MapperScan 互不影响。</p>
  *
  * <p><b>激活条件（{@link PersistenceJdbcCondition}）：</b>任一业务域 {@code store-mode=jdbc} 或
- * {@code tool-backend.mode=jdbc} 时才装配。三层记忆的 L2/L3（{@code memory.store-mode} /
- * {@code fact-log.store-mode}）默认即 jdbc，故本环境默认装配；把这两个键连同其余域一起显式配成
+ * {@code tool-backend.mode=jdbc} 时才装配。长期记忆与同意记录（{@code memory.store-mode} /
+ * {@code memory.consent-store-mode}）默认即 jdbc，故本环境默认装配；把这些键连同其余域一起显式配成
  * 非 jdbc，本类才整体不加载。数据源用 HikariCP 惰性连接（构造不建连），故装配本环境不等于启动即连库，
  * 结构迁移由 {@link CustomerWorkSchemaMigrator} 在 MyBatis 环境建立前执行，失败时阻断启动。</p>
  *

@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -20,9 +22,19 @@ public class AgentCallCollector {
     private final long startTimeMs = System.currentTimeMillis();
     private final List<AgentCallSegment> segments = Collections.synchronizedList(new ArrayList<>());
     private final AtomicInteger seq = new AtomicInteger(0);
+    /** 在订阅开始时冻结，避免长调用结束前发生热更新导致版本错配。 */
+    private final AgentCallLineage lineage;
 
     /** 智能体最终回答（从 onAgent 事件流的 AgentResultEvent 采集，最后一个 AGENT_RESULT 为准）。 */
     private volatile String answer;
+
+    public AgentCallCollector() {
+        this(AgentCallLineage.empty());
+    }
+
+    public AgentCallCollector(AgentCallLineage lineage) {
+        this.lineage = lineage == null ? AgentCallLineage.empty() : lineage;
+    }
 
     /**
      * 追加一段耗时明细。
@@ -74,6 +86,16 @@ public class AgentCallCollector {
                                     String agentCode, String agentName, String sessionId,
                                     AgentCallSessionType sessionType, String question,
                                     long endTimeMs, boolean success, String errorMsg) {
+        return toRecord(requestId, userId, username, agentCode, agentName, sessionId,
+            sessionType, question, endTimeMs, success, errorMsg, null);
+    }
+
+    /** 组装调用记录并附带模型层在运行时写入的真实实验曝光。 */
+    public AgentCallRecord toRecord(String requestId, String userId, String username,
+                                    String agentCode, String agentName, String sessionId,
+                                    AgentCallSessionType sessionType, String question,
+                                    long endTimeMs, boolean success, String errorMsg,
+                                    OnlineExperimentAssignment experimentAssignment) {
         // 快照分段（同步列表，拷贝出来再统计，避免统计期间被并发修改）
         List<AgentCallSegment> snapshot = new ArrayList<>(segments);
         long modelMs = 0L;
@@ -114,6 +136,6 @@ public class AgentCallCollector {
         return new AgentCallRecord(0L, requestId, userId, username, agentCode, agentName, sessionId,
             sessionType, question, answer, startTimeMs, endTimeMs, durationMs,
             modelMs, toolMs, mcpMs, skillMs, snapshot.size(), inputTokens, outputTokens, totalTokens,
-            cachedTokens, modelReportedMs, success, errorMsg, snapshot);
+            cachedTokens, modelReportedMs, success, errorMsg, experimentAssignment, lineage, snapshot);
     }
 }

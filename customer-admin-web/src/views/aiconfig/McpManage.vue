@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
-import { createMcp, deleteMcp, pageMcps, testMcpConnectivity, updateMcp } from '@/api/mcp'
+import { createMcp, deleteMcp, getMcp, MCP_SECRET_PLACEHOLDER, pageMcps, testMcpConnectivity, updateMcp } from '@/api/mcp'
 import McpDebugDialog from '@/components/McpDebugDialog.vue'
+import { useAuthStore } from '@/store/auth'
 import type { McpSaveRequest, McpVO, PageQuery } from '@/types/api'
 
+const auth = useAuthStore()
 const loading = ref(false)
 const list = ref<McpVO[]>([])
 const total = ref(0)
@@ -65,30 +67,45 @@ function openCreate() {
   dialogVisible.value = true
 }
 
-function openEdit(row: McpVO) {
+async function openEdit(row: McpVO) {
+  const detail = await getMcp(row.id)
   dialogMode.value = 'edit'
   editingId.value = row.id
-  Object.assign(form, { mcpName: row.mcpName, mcpType: row.mcpType, config: row.config, description: row.description, status: row.status })
+  Object.assign(form, {
+    mcpName: detail.mcpName,
+    mcpType: detail.mcpType,
+    config: detail.config,
+    description: detail.description,
+    status: detail.status,
+  })
   dialogVisible.value = true
 }
 
-/** 复制：预填选中行的配置，名称加"副本"提示，改名/改关键信息后当新建提交，不影响原 MCP。 */
-function openCopy(row: McpVO) {
+/** 复制必须重新提供详情里被脱敏的 secret，禁止把占位符当作真实凭据写入新记录。 */
+async function openCopy(row: McpVO) {
+  const detail = await getMcp(row.id)
   dialogMode.value = 'copy'
   editingId.value = null
   Object.assign(form, {
-    mcpName: `${row.mcpName}-副本`,
-    mcpType: row.mcpType,
-    config: row.config,
-    description: row.description,
-    status: row.status,
+    mcpName: `${detail.mcpName}-副本`,
+    mcpType: detail.mcpType,
+    config: detail.config,
+    description: detail.description,
+    status: detail.status,
   })
   dialogVisible.value = true
+  if (detail.config.includes(MCP_SECRET_PLACEHOLDER)) {
+    ElMessage.warning('配置中的 secret 已脱敏，复制前必须将占位符替换为真实凭据')
+  }
 }
 
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) {
+    return
+  }
+  if (dialogMode.value !== 'edit' && form.config.includes(MCP_SECRET_PLACEHOLDER)) {
+    ElMessage.error('新建或复制 MCP 必须重新提供 secret，不能提交脱敏占位符')
     return
   }
   if (dialogMode.value === 'edit' && editingId.value) {
@@ -168,9 +185,9 @@ onMounted(loadList)
         <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" :loading="testingId === row.id" @click="handleTest(row)">测试连通性</el-button>
-            <el-button link type="primary" @click="openDebug(row)">调试</el-button>
+            <el-button v-permission="'mcp:edit'" link type="primary" @click="openDebug(row)">调试</el-button>
             <el-button v-permission="'mcp:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'mcp:add'" link type="primary" @click="openCopy(row)">复制</el-button>
+            <el-button v-if="auth.hasPermission('mcp:add') && auth.hasPermission('mcp:edit')" link type="primary" @click="openCopy(row)">复制</el-button>
             <el-button v-permission="'mcp:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -201,6 +218,9 @@ onMounted(loadList)
         <el-form-item label="连接配置" prop="config" :rules="[{ required: true, message: '请输入 config' }, { validator: validateConfigJson }]">
           <el-input v-model="form.config" type="textarea" :rows="4" :placeholder="configPlaceholder" />
           <div class="config-hint">也支持直接粘贴 Claude/Cursor 等客户端的标准格式（外层带 mcpServers 包装），会自动识别</div>
+          <div v-if="form.config.includes(MCP_SECRET_PLACEHOLDER)" class="secret-hint">
+            {{ dialogMode === 'edit' ? '脱敏占位符表示沿用原 secret；替换为新值即可轮换凭据' : '复制不会复用原 secret，提交前必须替换全部脱敏占位符' }}
+          </div>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description!" type="textarea" :rows="2" />
@@ -229,6 +249,12 @@ onMounted(loadList)
 .config-hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+
+.secret-hint {
+  font-size: 12px;
+  color: var(--el-color-warning);
   margin-top: 4px;
 }
 </style>

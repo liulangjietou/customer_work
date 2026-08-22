@@ -100,11 +100,13 @@ class ChannelBindingServiceTest {
         agent.setId(1L);
         agent.setAgentName("客服智能体");
         RuntimePublishTask task = new RuntimePublishTask();
+        task.setId("publish-task-2");
         task.setTargetId(1L);
         task.setSeq(2L);
-        task.setStatus("PARTIAL");
+        task.setStatus("BLOCKED");
+        task.setGateStatus("BLOCKED");
         task.setRevision("revision-2");
-        task.setLastError("one instance rejected");
+        task.setLastError("metric below threshold");
         task.setUpdatedAtMs(200L);
         when(bindingMapper.selectList(any())).thenReturn(List.of(binding));
         when(agentMapper.selectBatchIds(any())).thenReturn(List.of(agent));
@@ -113,9 +115,11 @@ class ChannelBindingServiceTest {
         var result = service.list();
 
         assertEquals(1, result.size());
-        assertEquals("PARTIAL", result.get(0).getPublishStatus());
+        assertEquals("publish-task-2", result.get(0).getPublishTaskId());
+        assertEquals("BLOCKED", result.get(0).getPublishStatus());
+        assertEquals("BLOCKED", result.get(0).getPublishGateStatus());
         assertEquals("revision-2", result.get(0).getPublishRevision());
-        assertEquals("one instance rejected", result.get(0).getPublishLastError());
+        assertEquals("metric below threshold", result.get(0).getPublishLastError());
         assertEquals(200L, result.get(0).getPublishUpdatedAtMs());
     }
 }

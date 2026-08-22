@@ -18,6 +18,10 @@ public class AgentCallStatsQueryParam {
     private String sessionType;
     private String requestId;
     private String sessionId;
+    private String traceId;
+    private String runtimeRevision;
+    private Long experimentId;
+    private String experimentArm;
     private Long startFromMs;
     private Long startToMs;
     private int offset;

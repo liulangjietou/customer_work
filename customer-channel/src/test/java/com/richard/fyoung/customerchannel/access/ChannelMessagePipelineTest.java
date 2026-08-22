@@ -64,7 +64,7 @@ class ChannelMessagePipelineTest {
 
         assertEquals(List.of(ChannelAccessConstants.HINT_NON_TEXT), replies);
         verify(client, never()).resolveSession(TYPE, "ak1", "userA");
-        verify(client, never()).chat("agentX", "s1", "x", 300);
+        verify(client, never()).chat("agentX", "s1", "x", TYPE, "ak1", 300);
     }
 
     @Test
@@ -90,19 +90,19 @@ class ChannelMessagePipelineTest {
     @Test
     void shouldResolveThenChatOnNormalText() {
         when(client.resolveSession(TYPE, "ak1", "userA")).thenReturn("s1");
-        when(client.chat("agentX", "s1", "你好", 300)).thenReturn("你好，我是客服");
+        when(client.chat("agentX", "s1", "你好", TYPE, "ak1", 300)).thenReturn("你好，我是客服");
 
         pipeline.handle(text("你好"), reply);
 
         assertEquals(List.of("你好，我是客服"), replies);
         verify(client).resolveSession(TYPE, "ak1", "userA");
-        verify(client).chat("agentX", "s1", "你好", 300);
+        verify(client).chat("agentX", "s1", "你好", TYPE, "ak1", 300);
     }
 
     @Test
     void shouldUseOneshotSessionAndSkipResolveInPerMessageMode() {
         when(client.chat(eq("agentX"), startsWith(ChannelAccessConstants.ONESHOT_SESSION_PREFIX),
-            eq("你好"), eq(300))).thenReturn("答复");
+            eq("你好"), eq(TYPE), eq("ak1"), eq(300))).thenReturn("答复");
 
         pipeline.handle(perMessageText("你好"), reply);
 
@@ -123,7 +123,8 @@ class ChannelMessagePipelineTest {
     @Test
     void shouldReplyErrorHintWhenChatThrows() {
         when(client.resolveSession(TYPE, "ak1", "userA")).thenReturn("s1");
-        when(client.chat("agentX", "s1", "boom", 300)).thenThrow(new RuntimeException("timeout"));
+        when(client.chat("agentX", "s1", "boom", TYPE, "ak1", 300))
+            .thenThrow(new RuntimeException("timeout"));
 
         pipeline.handle(text("boom"), reply);
 

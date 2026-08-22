@@ -3,17 +3,21 @@ package com.richard.fyoung.customeradmin.billing.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.billing.dto.UsageAggregate;
 import com.richard.fyoung.customeradmin.billing.entity.CwTenantUsageDaily;
+import com.richard.fyoung.customeradmin.billing.event.UsageAggregationCompletedEvent;
 import com.richard.fyoung.customeradmin.billing.mapper.CwTenantUsageDailyMapper;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 用量归集：把 {@code cw_agent_call_log} 的原始调用记录按「租户 + 日期 + 模型」汇总进
@@ -31,10 +35,14 @@ public class UsageAggregationService {
 
     private final CwTenantUsageDailyMapper usageMapper;
     private final ModelPriceService priceService;
+    private final ApplicationEventPublisher eventPublisher;
 
-    public UsageAggregationService(CwTenantUsageDailyMapper usageMapper, ModelPriceService priceService) {
+    public UsageAggregationService(CwTenantUsageDailyMapper usageMapper,
+                                   ModelPriceService priceService,
+                                   ApplicationEventPublisher eventPublisher) {
         this.usageMapper = usageMapper;
         this.priceService = priceService;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -58,16 +66,19 @@ public class UsageAggregationService {
         // 按当日 23:59:59 取价：同一天内调价的情况按当日最终价结算，避免同一天出现两种价格
         LocalDateTime settleAt = target.atTime(23, 59, 59);
         int written = 0;
+        Set<String> tenantIds = new LinkedHashSet<>();
         for (UsageAggregate row : rows) {
+            tenantIds.add(canonicalTenant(row.getTenantId()));
             written += upsert(row, target, settleAt);
         }
+        // 事件在事务内发布，由 AFTER_COMMIT 监听器保证只有本次归集真正提交后才检查预算。
+        eventPublisher.publishEvent(new UsageAggregationCompletedEvent(target, tenantIds));
         log.info("usage aggregation done, date={}, rows={}", target, written);
         return written;
     }
 
     private int upsert(UsageAggregate row, LocalDate statDate, LocalDateTime settleAt) {
-        String tenantId = row.getTenantId() == null || row.getTenantId().isBlank()
-            ? TenantContext.DEFAULT : row.getTenantId();
+        String tenantId = canonicalTenant(row.getTenantId());
         String provider = row.getProvider() == null ? "" : row.getProvider();
         String modelName = row.getModelName() == null ? "" : row.getModelName();
 
@@ -106,5 +117,10 @@ public class UsageAggregationService {
 
     private long nullToZero(Long value) {
         return value == null ? 0L : value;
+    }
+
+    private String canonicalTenant(String tenantId) {
+        return tenantId == null || tenantId.isBlank()
+            ? TenantContext.DEFAULT : TenantContext.canonicalizeTenantId(tenantId);
     }
 }

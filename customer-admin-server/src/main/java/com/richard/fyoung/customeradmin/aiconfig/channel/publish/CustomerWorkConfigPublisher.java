@@ -20,20 +20,28 @@ import com.richard.fyoung.customeradmin.aiconfig.channel.entity.AiChannelBinding
 import com.richard.fyoung.customeradmin.aiconfig.channel.mapper.AiChannelBindingMapper;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.service.RuntimePublishTaskService;
+import com.richard.fyoung.customeradmin.aiconfig.experiment.domain.ModelExperimentPublishAction;
+import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelRoutingPolicyRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
+import com.richard.fyoung.customeradmin.aiconfig.experiment.service.ModelExperimentRuntimeAccess;
+import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.configversion.service.RuntimeRollbackPatch;
+import com.richard.fyoung.customeradmin.configversion.service.RuntimeRollbackPatchExtractor;
 import com.richard.fyoung.customeradmin.configversion.entity.ConfigType;
 import com.richard.fyoung.customeradmin.configversion.entity.PublishScope;
 import com.richard.fyoung.customeradmin.configversion.service.ConfigVersionService;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
+import com.richard.fyoung.customerwork.infra.config.RuntimeConfigContentHasher;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,15 +53,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -86,12 +90,17 @@ public class CustomerWorkConfigPublisher {
     private final AiMcpMapper mcpMapper;
     private final AesGcmCryptoUtil cryptoUtil;
     private final AdminModelFactory modelFactory;
+    private final SecretRefService secretRefService;
+    private final ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess;
+    private final ModelExperimentRuntimeAccess experimentRuntimeAccess;
     private final RuntimePublishProperties properties;
     /** 发布快照记录；为 null 时只发布不留版本（版本化未装配的场景，行为与引入版本化之前一致）。 */
     private final ConfigVersionService versionService;
     private final RuntimePublishTaskService taskService;
     private final boolean tenantEnabled;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final RuntimeRollbackPatchExtractor rollbackPatchExtractor =
+        new RuntimeRollbackPatchExtractor(objectMapper);
     private final McpClientFactory mcpClientFactory = new McpClientFactory();
 
     private volatile ConfigService configService;
@@ -105,7 +114,7 @@ public class CustomerWorkConfigPublisher {
                                        RuntimePublishProperties properties) {
         this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
             agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
-            (ConfigVersionService) null, (RuntimePublishTaskService) null, false);
+            null, null, null, (ConfigVersionService) null, (RuntimePublishTaskService) null, false);
     }
 
     CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
@@ -116,7 +125,7 @@ public class CustomerWorkConfigPublisher {
                                 RuntimePublishProperties properties, boolean tenantEnabled) {
         this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
             agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
-            (ConfigVersionService) null, (RuntimePublishTaskService) null, tenantEnabled);
+            null, null, null, (ConfigVersionService) null, (RuntimePublishTaskService) null, tenantEnabled);
     }
 
     /**
@@ -125,18 +134,43 @@ public class CustomerWorkConfigPublisher {
      * <p><b>必须标 {@code @Autowired}</b>：本类有多个构造器，不指明会让 Spring 去找无参构造并启动失败
      * （本项目已反复踩过这个坑）。</p>
      */
+    public CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
+                                       ModelConfigAccess modelConfigAccess,
+                                       AiAgentBackupModelMapper agentBackupModelMapper,
+                                       AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
+                                       AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
+                                       SecretRefService secretRefService,
+                                       ObjectProvider<ModelRoutingPolicyRuntimeAccess> routingPolicyRuntimeAccessProvider,
+                                       RuntimePublishProperties properties,
+                                       AdminTenantProperties tenantProperties,
+                                       ObjectProvider<ConfigVersionService> versionServiceProvider,
+                                       ObjectProvider<RuntimePublishTaskService> taskServiceProvider) {
+        this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
+            agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, secretRefService,
+            routingPolicyRuntimeAccessProvider, null, properties, tenantProperties,
+            versionServiceProvider, taskServiceProvider);
+    }
+
     @Autowired
     public CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
                                        ModelConfigAccess modelConfigAccess,
                                        AiAgentBackupModelMapper agentBackupModelMapper,
                                        AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
                                        AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
+                                       SecretRefService secretRefService,
+                                       ObjectProvider<ModelRoutingPolicyRuntimeAccess> routingPolicyRuntimeAccessProvider,
+                                       ObjectProvider<ModelExperimentRuntimeAccess> experimentRuntimeAccessProvider,
                                        RuntimePublishProperties properties,
                                        AdminTenantProperties tenantProperties,
                                        ObjectProvider<ConfigVersionService> versionServiceProvider,
                                        ObjectProvider<RuntimePublishTaskService> taskServiceProvider) {
         this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
             agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
+            secretRefService,
+            routingPolicyRuntimeAccessProvider == null
+                ? null : routingPolicyRuntimeAccessProvider.getIfAvailable(),
+            experimentRuntimeAccessProvider == null
+                ? null : experimentRuntimeAccessProvider.getIfAvailable(),
             versionServiceProvider == null ? null : versionServiceProvider.getIfAvailable(),
             taskServiceProvider == null ? null : taskServiceProvider.getIfAvailable(),
             tenantProperties.isEnabled());
@@ -147,7 +181,11 @@ public class CustomerWorkConfigPublisher {
                                         AiAgentBackupModelMapper agentBackupModelMapper,
                                         AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
                                         AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
-                                        RuntimePublishProperties properties, ConfigVersionService versionService,
+                                        RuntimePublishProperties properties,
+                                        SecretRefService secretRefService,
+                                        ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess,
+                                        ModelExperimentRuntimeAccess experimentRuntimeAccess,
+                                        ConfigVersionService versionService,
                                         RuntimePublishTaskService taskService, boolean tenantEnabled) {
         this.channelBindingMapper = channelBindingMapper;
         this.agentMapper = agentMapper;
@@ -157,6 +195,9 @@ public class CustomerWorkConfigPublisher {
         this.mcpMapper = mcpMapper;
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
+        this.secretRefService = secretRefService;
+        this.routingPolicyRuntimeAccess = routingPolicyRuntimeAccess;
+        this.experimentRuntimeAccess = experimentRuntimeAccess;
         this.properties = properties;
         this.versionService = versionService;
         this.taskService = taskService;
@@ -175,20 +216,34 @@ public class CustomerWorkConfigPublisher {
      * <p>正常容器中先把任务与业务修改同事务落库；仅在未装配任务服务的兼容场景，才由
      * {@link #runAfterCommitOrNow} 在提交后直接发布。</p>
      */
-    public void publishForAgentId(Long agentId) {
+    public String publishForAgentId(Long agentId) {
         if (!isEnabled() || agentId == null) {
-            return;
+            return null;
         }
         if (taskService != null) {
             if (!hasEnabledBinding(agentId)) {
-                return;
+                return null;
             }
-            taskService.enqueueAgent(agentId);
-            return;
+            return taskService.enqueueAgent(agentId);
         }
         // afterCommit 发生时调用线程可能已恢复到原租户，必须在注册回调前捕获引用方租户。
         String tenantId = tenantEnabled ? TenantContext.require() : null;
         runAfterCommitOrNow(() -> runInTenant(tenantId, () -> doPublishForAgentId(agentId)));
+        return null;
+    }
+
+    /**
+     * 发布在线实验的不可变激活/撤流意图。
+     *
+     * @return 可靠任务 ID；Nacos 关闭、无启用渠道绑定或兼容构造未装配任务服务时返回 null
+     */
+    public String publishExperiment(Long agentId, Long experimentId,
+                                    ModelExperimentPublishAction action) {
+        if (!isEnabled() || agentId == null || experimentId == null || action == null
+            || taskService == null || !hasEnabledBinding(agentId)) {
+            return null;
+        }
+        return taskService.enqueueExperiment(agentId, experimentId, action);
     }
 
     /**
@@ -271,7 +326,8 @@ public class CustomerWorkConfigPublisher {
         // 发布门禁：强制连通性探测（解密密钥仅用于探测，不进入下发载荷）
         assertConnectivity(primary);
 
-        CustomerWorkRuntimeConfig payload = assemble(agent, primary);
+        // 同一 dataId 是 Agent 级全局快照，绑定页触发来源不能冒充每次请求的运行时渠道事实。
+        CustomerWorkRuntimeConfig payload = assemble(agent, primary, null);
         enrichMetadata(payload, UUID.randomUUID().toString());
         String json = serialize(payload);
         return publishJson(agent.getAgentCode(), agent.getId(), json,
@@ -279,76 +335,25 @@ public class CustomerWorkConfigPublisher {
     }
 
     /**
-     * 把已组装好的 JSON 下发到 Nacos，并留一份版本快照。
-     *
-     * <p>回滚复用这条路径：回滚就是"拿旧版本的内容再发一次"，与正常发布走同一段代码——
-     * 若给回滚另写一条下发逻辑，两条路迟早在序列化或 dataId 拼装上产生差异。</p>
+     * 把当前权威数据组装出的 JSON 下发到 Nacos，并留一份版本快照。
+     * 历史回滚同样只在白名单补丁应用到当前组装结果后进入此私有出口，不接受外部原始 JSON。
      *
      * <p>失败也记一条 FAILED 版本：排查"线上为什么还是旧配置"时，一条失败留痕比什么都没有有用得多。</p>
      *
      * @return 发布使用的 dataId
      */
-    public String publishJson(String targetCode, Long targetId, String json, String channelCode,
-                              PublishScope scope, String grayTenants, Integer sourceVersion, String remark) {
+    private String publishJson(String targetCode, Long targetId, String json, String channelCode,
+                               PublishScope scope, String grayTenants, Integer sourceVersion, String remark) {
         String dataId = resolveDataId(scope, grayTenants);
         return publishJsonToDataId(targetCode, targetId, json, channelCode, scope,
-            grayTenants, sourceVersion, remark, dataId);
-    }
-
-    /**
-     * 把历史快照作为一个新的全量版本发布到当前有效租户。
-     *
-     * <p>多租户模式下发布目标只由 {@link TenantContext} 推导，绝不复用快照里的 dataId：
-     * 后者是审计记录，不是可信的路由参数。这样即使历史版本来自旧的全局 dataId，回滚也只会
-     * 写当前租户专属 dataId，不会覆盖全局基线或其他租户。</p>
-     */
-    public String publishRollbackToCurrentTenant(String targetCode, Long targetId, String json,
-                                                  String sourceDataId, PublishScope sourceScope,
-                                                  List<String> sourceGrayTenants, Integer sourceVersion,
-                                                  String remark) {
-        String dataId = resolveRollbackDataId(sourceDataId, sourceScope, sourceGrayTenants);
-        return publishJsonToDataId(targetCode, targetId, json, null, PublishScope.FULL,
-            null, sourceVersion, remark, dataId);
-    }
-
-    /**
-     * 校验快照原发布目标与当前租户一致，并返回本次回滚的可信目标。
-     * 包级可见仅供不触达 Nacos 的单元测试验证路由边界。
-     */
-    String resolveRollbackDataId(String sourceDataId, PublishScope sourceScope,
-                                 List<String> sourceGrayTenants) {
-        String baseDataId = properties.getNacos().getDataId();
-        if (!tenantEnabled) {
-            return baseDataId;
-        }
-
-        String currentTenant = TenantContext.require().trim();
-        String currentTenantDataId = grayDataId(currentTenant);
-        // V57 以前的版本可能只记录全局 base（或空值）。行级租户过滤已确认其归属，
-        // 因此允许把这类旧快照安全迁移到当前租户专属 dataId。
-        if (StringUtils.hasText(sourceDataId)
-            && !baseDataId.equals(sourceDataId)
-            && !currentTenantDataId.equals(sourceDataId)) {
-            throw new BizException(ResultCode.PARAM_INVALID, "回滚快照的发布目标不属于当前租户");
-        }
-
-        if (sourceScope == PublishScope.GRAY) {
-            boolean containsCurrentTenant = sourceGrayTenants != null && sourceGrayTenants.stream()
-                .filter(StringUtils::hasText)
-                .map(String::trim)
-                .anyMatch(currentTenant::equals);
-            if (!containsCurrentTenant) {
-                throw new BizException(ResultCode.PARAM_INVALID, "灰度快照不包含当前租户");
-            }
-        }
-        return currentTenantDataId;
+            grayTenants, sourceVersion, remark, dataId, properties.getNacos().getGroup());
     }
 
     private String publishJsonToDataId(String targetCode, Long targetId, String json, String channelCode,
                                        PublishScope scope, String grayTenants, Integer sourceVersion,
-                                       String remark, String dataId) {
+                                       String remark, String dataId, String groupName) {
         try {
-            boolean ok = configService().publishConfig(dataId, properties.getNacos().getGroup(), json);
+            boolean ok = configService().publishConfig(dataId, groupName, json);
             if (!ok) {
                 throw new IllegalStateException("nacos publishConfig returned false");
             }
@@ -364,7 +369,7 @@ public class CustomerWorkConfigPublisher {
                 scope, grayTenants, sourceVersion, remark);
         }
         log.info("runtime config published, channel={}, agent={}, dataId={}, group={}, scope={}",
-            channelCode, targetCode, dataId, properties.getNacos().getGroup(), scope);
+            channelCode, targetCode, dataId, groupName, scope);
         return dataId;
     }
 
@@ -374,8 +379,8 @@ public class CustomerWorkConfigPublisher {
      * <p>客服端按自己的租户读对应 dataId，读不到再回落主 dataId——因此灰度版本只影响
      * 名单内的租户，其余租户继续用主 dataId 上的全量版本，不需要客服端理解"灰度"这个概念。</p>
      *
-     * <p>多租户灰度会写多个 dataId，这里取第一个作为记录值；实际下发在
-     * {@code ConfigRollbackService} 里逐租户循环。</p>
+     * <p>可靠灰度任务会在各自租户上下文中通过 {@link #resolveTaskDataId(String)} 解析专属 dataId；
+     * 本方法仅供不装配可靠任务服务的兼容发布路径。</p>
      */
     private String resolveDataId(PublishScope scope, String grayTenants) {
         String base = properties.getNacos().getDataId();
@@ -395,23 +400,37 @@ public class CustomerWorkConfigPublisher {
             + TenantContext.canonicalizeTenantId(candidate);
     }
 
+
     /**
-     * 把给定内容直接写到指定 dataId（灰度逐租户下发用）。
+     * 在目标租户上下文中以当前权威资产重组安全回滚候选并完成发布前探测。
      *
-     * <p>不留版本快照：灰度的版本记录由调用方在全部租户下发完之后统一记一条，
-     * 每个租户各记一条只会把版本历史撑成噪音。</p>
+     * @return 该租户下与目标编码对应的当前 Agent 主键
      */
-    public void publishToDataId(String dataId, String json) {
-        try {
-            boolean ok = configService().publishConfig(dataId, properties.getNacos().getGroup(), json);
-            if (!ok) {
-                throw new IllegalStateException("nacos publishConfig returned false, dataId=" + dataId);
-            }
-        } catch (IllegalStateException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("publish to dataId failed: " + dataId + ", " + e.getMessage(), e);
+    public Long validateSafePublishCandidate(String targetCode, String rollbackPatchJson,
+                                             RuntimePublishIntent publishIntent) {
+        if (!isEnabled()) {
+            throw new BizException(ResultCode.RUNTIME_PUBLISH_DISABLED);
         }
+        if (!StringUtils.hasText(targetCode) || publishIntent == null
+            || !publishIntent.requiresRollbackPatch()) {
+            throw new BizException(ResultCode.PARAM_INVALID, "安全发布目标或意图无效");
+        }
+        rollbackPatchExtractor.deserialize(rollbackPatchJson);
+        AiAgent agent = agentMapper.selectOne(new LambdaQueryWrapper<AiAgent>()
+            .eq(AiAgent::getAgentCode, targetCode));
+        if (agent == null) {
+            throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "目标租户不存在同编码智能体");
+        }
+
+        RuntimePublishTask validationTask = new RuntimePublishTask();
+        validationTask.setTenantId(tenantEnabled ? TenantContext.require() : TenantContext.DEFAULT);
+        validationTask.setTargetId(agent.getId());
+        validationTask.setPublishIntent(publishIntent.name());
+        validationTask.setRollbackPatchJson(rollbackPatchJson);
+        validationTask.setPublishScope(publishIntent == RuntimePublishIntent.SAFE_GRAY ? "GRAY" : "FULL");
+        validationTask.setCreatedAtMs(System.currentTimeMillis());
+        prepareTask(validationTask);
+        return agent.getId();
     }
 
     /** 为可靠任务组装当前快照。快照只存于 worker 内存，任务表不复制密钥密文。 */
@@ -423,7 +442,6 @@ public class CustomerWorkConfigPublisher {
         if (CollectionUtils.isEmpty(bindings)) {
             throw new IllegalStateException("enabled channel binding not found for agent: " + task.getTargetId());
         }
-        AiChannelBinding binding = bindings.get(0);
         AiAgent agent = agentMapper.selectById(task.getTargetId());
         if (agent == null) {
             throw new IllegalStateException("bound agent not found: " + task.getTargetId());
@@ -432,23 +450,96 @@ public class CustomerWorkConfigPublisher {
         if (primary == null) {
             throw new IllegalStateException("primary model not found for agent: " + agent.getAgentCode());
         }
-        assertConnectivity(primary);
+        ModelExperimentPublishAction experimentAction = experimentAction(task);
+        if (experimentAction != ModelExperimentPublishAction.DEACTIVATE) {
+            assertConnectivity(primary);
+        }
         String revision = StringUtils.hasText(task.getRevision())
             ? task.getRevision() : UUID.randomUUID().toString();
-        CustomerWorkRuntimeConfig payload = assemble(agent, primary);
+        // 一个 Agent 可以绑定多个渠道；可靠任务只发布一份全局快照，不能把无序首绑定固化为默认路由事实。
+        // 渠道条件应由消费端在每次请求时注入 ModelRouteHint；未注入时只能命中无条件默认规则。
+        CustomerWorkRuntimeConfig payload = assemble(agent, primary, null, experimentAction == null);
+        applyExperimentIntent(payload, task, experimentAction);
+        applySafeRollbackPatch(payload, task);
         String publishedAt = LocalDateTime.ofInstant(
             Instant.ofEpochMilli(task.getCreatedAtMs()), ZoneOffset.UTC).toString();
         enrichMetadata(payload, revision, publishedAt);
-        return new PreparedRuntimeConfig(agent.getAgentCode(), binding.getChannelCode(),
-            resolveTaskDataId(task.getTenantId()), properties.getNacos().getGroup(), revision,
-            payload.getContentHash(), serialize(payload));
+        String taskDataId = StringUtils.hasText(task.getDataId())
+            ? task.getDataId() : resolveTaskDataId(task.getTenantId());
+        String taskGroupName = StringUtils.hasText(task.getGroupName())
+            ? task.getGroupName() : properties.getNacos().getGroup();
+        return new PreparedRuntimeConfig(agent.getAgentCode(), null,
+            taskDataId, taskGroupName, revision,
+            payload.getContentHash(), serialize(payload), EvalVersionBinding.fromRuntimeConfig(payload));
+    }
+
+    private ModelExperimentPublishAction experimentAction(RuntimePublishTask task) {
+        if (!StringUtils.hasText(task.getExperimentPublishAction())) {
+            if (task.getExperimentId() != null) {
+                throw new IllegalStateException("experiment publish action is missing");
+            }
+            return null;
+        }
+        if (task.getExperimentId() == null) {
+            throw new IllegalStateException("experiment publish task id is missing");
+        }
+        try {
+            return ModelExperimentPublishAction.valueOf(task.getExperimentPublishAction());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(
+                "unsupported experiment publish action: " + task.getExperimentPublishAction(), e);
+        }
+    }
+
+    private void applyExperimentIntent(CustomerWorkRuntimeConfig payload,
+                                       RuntimePublishTask task,
+                                       ModelExperimentPublishAction action) {
+        if (action == null) {
+            return;
+        }
+        if (action == ModelExperimentPublishAction.DEACTIVATE) {
+            payload.setOnlineExperiment(null);
+            return;
+        }
+        if (experimentRuntimeAccess == null) {
+            throw new IllegalStateException("model experiment runtime access is unavailable");
+        }
+        payload.setOnlineExperiment(experimentRuntimeAccess.requireRunning(
+            task.getTargetId(), task.getExperimentId()));
+    }
+
+    private void applySafeRollbackPatch(CustomerWorkRuntimeConfig payload, RuntimePublishTask task) {
+        RuntimePublishIntent intent = publishIntent(task);
+        if (!intent.requiresRollbackPatch()) {
+            if (StringUtils.hasText(task.getRollbackPatchJson())) {
+                throw new IllegalStateException("normal runtime publish task must not contain rollback patch");
+            }
+            return;
+        }
+        if (!StringUtils.hasText(task.getRollbackPatchJson())) {
+            throw new IllegalStateException("safe runtime publish task rollback patch is missing");
+        }
+        RuntimeRollbackPatch patch = rollbackPatchExtractor.deserialize(task.getRollbackPatchJson());
+        payload.setSystemPrompt(patch.systemPrompt());
+        payload.getAgent().setMaxIters(patch.maxIters());
+    }
+
+    private RuntimePublishIntent publishIntent(RuntimePublishTask task) {
+        if (!StringUtils.hasText(task.getPublishIntent())) {
+            return RuntimePublishIntent.NORMAL;
+        }
+        try {
+            return RuntimePublishIntent.valueOf(task.getPublishIntent());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("unsupported runtime publish intent: " + task.getPublishIntent(), e);
+        }
     }
 
     /** 任务 worker 复用既有 Nacos 发布入口，失败交给任务退避重试。 */
     public void publishPrepared(RuntimePublishTask task, PreparedRuntimeConfig prepared) {
         publishJsonToDataId(prepared.targetCode(), task.getTargetId(), prepared.json(), prepared.channelCode(),
             PublishScope.valueOf(task.getPublishScope()), task.getGrayTenants(),
-            task.getSourceVersion(), task.getRemark(), prepared.dataId());
+            task.getSourceVersion(), task.getRemark(), prepared.dataId(), prepared.groupName());
     }
 
     /** 多租户任务必须写租户专属 dataId，禁止不同租户互相覆盖模型密文。 */
@@ -464,7 +555,14 @@ public class CustomerWorkConfigPublisher {
 
     public record PreparedRuntimeConfig(String targetCode, String channelCode, String dataId,
                                         String groupName, String revision, String contentHash,
-                                        String json) {
+                                        String json, EvalVersionBinding versionBinding) {
+
+        /** 兼容既有单测与扩展调用方；未提供版本时门禁会 fail-closed。 */
+        public PreparedRuntimeConfig(String targetCode, String channelCode, String dataId,
+                                     String groupName, String revision, String contentHash,
+                                     String json) {
+            this(targetCode, channelCode, dataId, groupName, revision, contentHash, json, null);
+        }
     }
 
     private void recordFailure(String targetCode, Long targetId, String json, String reason) {
@@ -482,7 +580,7 @@ public class CustomerWorkConfigPublisher {
 
     /** 连通性门禁：解密主模型密钥后走既有探测协议，非成功即拒绝发布。 */
     private void assertConnectivity(AiModelConfig primary) {
-        String apiKey = cryptoUtil.decrypt(primary.getApiKey());
+        String apiKey = resolvePlaintext(primary);
         ModelTestResult result = modelFactory.testConnectivity(
             primary.getProvider(), primary.getBaseUrl(), apiKey, primary.getModel());
         if (result.testStatus() != ConnectivityTestStatus.SUCCESS) {
@@ -494,8 +592,18 @@ public class CustomerWorkConfigPublisher {
 
     /** 组装运行时配置载荷：模型密文原样携带；兜底取备用模型第一个（sort_order 升序）。包内可见供单测。 */
     CustomerWorkRuntimeConfig assemble(AiAgent agent, AiModelConfig primary) {
+        return assemble(agent, primary, null);
+    }
+
+    CustomerWorkRuntimeConfig assemble(AiAgent agent, AiModelConfig primary, String channelCode) {
+        return assemble(agent, primary, channelCode, true);
+    }
+
+    private CustomerWorkRuntimeConfig assemble(AiAgent agent, AiModelConfig primary,
+                                               String channelCode,
+                                               boolean includeCurrentExperiment) {
         CustomerWorkRuntimeConfig cfg = new CustomerWorkRuntimeConfig();
-        cfg.setSchemaVersion(1);
+        cfg.setSchemaVersion(2);
         cfg.setPublishedAt(LocalDateTime.now().toString());
         cfg.setSystemPrompt(agent.getSystemPrompt());
 
@@ -503,13 +611,27 @@ public class CustomerWorkConfigPublisher {
         model.setProvider(primary.getProvider());
         model.setName(primary.getModel());
         model.setBaseUrl(primary.getBaseUrl());
-        model.setApiKeyCipher(primary.getApiKey());   // 密文原样携带，不解密
+        model.setApiKeyCipher(resolveCipherText(primary));
 
-        cfg.setFallback(assembleFallback(agent.getId(), primary.getId()));
+        if (agent.getModelRoutePolicyId() == null) {
+            cfg.setFallback(assembleFallback(agent.getId(), primary.getId()));
+        } else {
+            if (routingPolicyRuntimeAccess == null) {
+                throw new IllegalStateException("model routing runtime access is unavailable");
+            }
+            CustomerWorkRuntimeConfig.RoutingPolicy routing = routingPolicyRuntimeAccess.requireActive(
+                agent.getModelRoutePolicyId(), agent.getId(), channelCode);
+            cfg.setRoutingPolicy(routing);
+            cfg.setFallback(assemblePolicyFallback(routing));
+        }
         cfg.setMcpServers(assembleMcpServers(agent.getId()));
+        if (includeCurrentExperiment && experimentRuntimeAccess != null) {
+            cfg.setOnlineExperiment(experimentRuntimeAccess.runningForAgent(agent.getId()));
+        }
 
-        CustomerWorkRuntimeConfig.Agent agentCfg = cfg.getAgent();
+        CustomerWorkRuntimeConfig.Agent agentCfg = new CustomerWorkRuntimeConfig.Agent();
         agentCfg.setMaxIters(agent.getMaxIters());
+        cfg.setAgent(agentCfg);
         return cfg;
     }
 
@@ -519,22 +641,9 @@ public class CustomerWorkConfigPublisher {
     }
 
     private void enrichMetadata(CustomerWorkRuntimeConfig payload, String revision, String publishedAt) {
-        payload.setPublishedAt(null);
-        payload.setRevision(null);
-        payload.setContentHash(null);
-        payload.setContentHash(sha256(serialize(payload)));
+        payload.setContentHash(RuntimeConfigContentHasher.compute(payload, objectMapper));
         payload.setPublishedAt(publishedAt);
         payload.setRevision(revision);
-    }
-
-    private String sha256(String content) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                .digest(content.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
     }
 
     /** 兜底模型 = 智能体备用模型列表第一个（按 sort_order 升序）；无备用则不启用兜底。 */
@@ -556,10 +665,49 @@ public class CustomerWorkConfigPublisher {
             fallback.setProvider(fb.getProvider());
             fallback.setName(fb.getModel());
             fallback.setBaseUrl(fb.getBaseUrl());
-            fallback.setApiKeyCipher(fb.getApiKey());   // 密文原样携带
+            fallback.setApiKeyCipher(resolveCipherText(fb));
             return fallback;
         }
         return null;
+    }
+
+    private CustomerWorkRuntimeConfig.Fallback assemblePolicyFallback(
+        CustomerWorkRuntimeConfig.RoutingPolicy policy) {
+        if (policy.getRules() == null || policy.getDeployments() == null) {
+            return null;
+        }
+        Long fallbackId = policy.getRules().stream()
+            .filter(rule -> "FALLBACK".equals(rule.getPurpose()))
+            .map(CustomerWorkRuntimeConfig.RoutingRule::getDeploymentId)
+            .findFirst().orElse(null);
+        if (fallbackId == null) {
+            return null;
+        }
+        return policy.getDeployments().stream()
+            .filter(deployment -> fallbackId.equals(deployment.getDeploymentId()))
+            .findFirst()
+            .map(deployment -> {
+                CustomerWorkRuntimeConfig.Fallback fallback = new CustomerWorkRuntimeConfig.Fallback();
+                fallback.setEnabled(true);
+                fallback.setProvider(deployment.getProvider());
+                fallback.setName(deployment.getName());
+                fallback.setBaseUrl(deployment.getBaseUrl());
+                fallback.setApiKeyCipher(deployment.getApiKeyCipher());
+                return fallback;
+            })
+            .orElseThrow(() -> new IllegalStateException("routing fallback deployment snapshot is missing"));
+    }
+
+    private String resolveCipherText(AiModelConfig model) {
+        return secretRefService == null
+            ? model.getApiKey()
+            : secretRefService.resolveCipherText(model.getSecretRefId(), model.getTenantId(), model.getApiKey());
+    }
+
+    private String resolvePlaintext(AiModelConfig model) {
+        return secretRefService == null
+            ? cryptoUtil.decrypt(model.getApiKey())
+            : secretRefService.resolvePlaintext(model);
     }
 
     /** 组装 MCP：取智能体绑定且启用的 sse/http 型 MCP，解析 config 的 url/headers（stdio 型 8080 不支持，跳过）。 */
@@ -613,7 +761,8 @@ public class CustomerWorkConfigPublisher {
             server.setUrl(spec.url());
             server.setHeaders(spec.headers());
         } catch (Exception e) {
-            log.error("parse mcp config failed, code={}, mcpName={}", "RUNTIME-PUBLISH-MCP-PARSE-FAIL", server.getName(), e);
+            // 不能静默跳过损坏的 MCP，否则发布成功但工具集已悄悄变化；任务层统一记录失败并重试/处置。
+            throw new IllegalStateException("runtime publish MCP config is invalid: " + server.getName(), e);
         }
     }
 

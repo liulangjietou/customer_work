@@ -88,6 +88,7 @@ public enum ResultCode {
     SANDBOX_COMMAND_BLOCKED(40044, "命令命中沙箱安全规则，已拒绝执行"),
     SANDBOX_COMMAND_RUNNING(40045, "该会话已有命令正在执行"),
     SANDBOX_RUNTIME_FAILED(40046, "沙箱运行失败，请检查运行时配置"),
+    MODEL_ENDPOINT_FORBIDDEN(40047, "模型端点不在允许访问范围内，已被安全策略拦截"),
 
     // 主体级速率配额（B7）：额度用尽不是权限问题也不是参数问题，单独发码，
     // 前端据此给"稍后再试"而不是"联系管理员开权限"

@@ -1,7 +1,6 @@
 package com.richard.fyoung.customeradmin.billing.schedule;
 
 import com.richard.fyoung.customeradmin.billing.service.UsageAggregationService;
-import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,7 +19,6 @@ import java.util.concurrent.TimeUnit;
  * 不会像"每天 02:00"那样错过就得等一整天。</p>
  * @author owlzhangfq@gmail.com
  */
-@Slf4j
 public class UsageAggregationDriver {
 
     private static final Logger log = LoggerFactory.getLogger(UsageAggregationDriver.class);

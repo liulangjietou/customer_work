@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -15,6 +17,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 坐席 HMAC 令牌过滤器单测：非 /agent 放行、无/错 token 401、合法 token 放入 agentId。
@@ -160,5 +164,27 @@ class AgentAuthWebFilterTest {
 
         assertFalse(invoked.get());
         assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+    }
+
+    @Test
+    void frozenTenantAgentToken_shouldReturnObservable403WithoutCallingChain() {
+        CustomerWorkProperties properties = props();
+        properties.getTenant().setEnabled(true);
+        TenantAccessGuard accessGuard = mock(TenantAccessGuard.class);
+        when(accessGuard.check("tenant-a", null, false)).thenReturn(
+            new TenantAccessDecision(TenantAccessDecision.Kind.ACCESS_DENIED, 3L));
+        AgentAuthWebFilter filter = new AgentAuthWebFilter(properties, accessGuard);
+        String token = AgentAccessCredential.sign(
+            "agent-7", "tenant-a", System.currentTimeMillis() + 60_000, SECRET);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/agent/tickets")
+                .header("X-Agent-Token", token));
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        filter.filter(exchange, recordingChain(invoked)).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
+        assertTrue(exchange.getResponse().getBodyAsString().block().contains("TENANT_ACCESS_DENIED"));
     }
 }

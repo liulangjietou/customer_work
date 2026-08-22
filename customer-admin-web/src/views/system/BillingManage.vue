@@ -5,12 +5,18 @@ import {
   createPrice,
   deletePrice,
   deleteQuota,
+  acknowledgeCostAlert,
+  exportBilling,
+  fetchCostForecast,
   fetchPlatformOverview,
   fetchTenantBill,
+  listCostAlerts,
   listPrice,
   listQuota,
   saveQuota,
   triggerAggregate,
+  type CostAlertVO,
+  type CostForecastVO,
   type ModelPriceVO,
   type TenantQuotaSaveRequest,
   type TenantQuotaVO,
@@ -26,6 +32,11 @@ const ACTION_LABELS: Record<string, string> = {
   BLOCK: '拦截',
   DEGRADE: '降级备用模型',
   WARN: '仅告警',
+}
+const ALERT_LABELS: Record<string, string> = {
+  BUDGET_WARNING: '预算预警',
+  BUDGET_EXCEEDED: '预算超限',
+  FORECAST_EXCEEDED: '预测超限',
 }
 
 const activeTab = ref('bill')
@@ -212,19 +223,73 @@ async function handleAggregate() {
   await loadBill()
 }
 
+async function handleExport() {
+  const [from, to] = billRange.value
+  if (!from || !to) {
+    ElMessage.warning('请选择日期区间')
+    return
+  }
+  await exportBilling({
+    tenantId: billTenant.value || undefined,
+    from,
+    to,
+  })
+}
+
+// ---------- 成本预测与告警 ----------
+
+const costLoading = ref(false)
+const costTenant = ref('')
+const forecastPeriod = ref('MONTHLY')
+const alertStatus = ref('OPEN')
+const forecast = ref<CostForecastVO | null>(null)
+const alerts = ref<CostAlertVO[]>([])
+
+async function loadCost() {
+  costLoading.value = true
+  try {
+    const tenantId = costTenant.value || undefined
+    const alertPromise = listCostAlerts({ tenantId, status: alertStatus.value || undefined, limit: 200 })
+    const canForecast = Boolean(costTenant.value) || !crossTenantAuthority.value
+    const forecastPromise = canForecast
+      ? fetchCostForecast({ tenantId, period: forecastPeriod.value })
+      : Promise.resolve(null)
+    const [alertRows, forecastResult] = await Promise.all([alertPromise, forecastPromise])
+    alerts.value = alertRows
+    forecast.value = forecastResult
+  } finally {
+    costLoading.value = false
+  }
+}
+
+async function handleAcknowledge(row: CostAlertVO) {
+  await acknowledgeCostAlert(row.id, row.tenantId)
+  ElMessage.success('告警已确认')
+  await loadCost()
+}
+
+function formatMoney(value: number | null | undefined) {
+  return Number(value ?? 0).toFixed(4)
+}
+
+function alertTagType(type: CostAlertVO['alertType']) {
+  return type === 'BUDGET_WARNING' ? 'warning' : 'danger'
+}
+
 onMounted(async () => {
   billRange.value = defaultRange()
   const view = await fetchCurrentView()
   crossTenantAuthority.value = view.crossTenantAuthority === true
   currentTenantId.value = view.effectiveTenantId ?? view.userTenantId ?? ''
   billTenant.value = crossTenantAuthority.value ? '' : currentTenantId.value
+  costTenant.value = crossTenantAuthority.value ? '' : currentTenantId.value
   if (crossTenantAuthority.value) {
     activeTab.value = 'quota'
     await loadTenants()
-    await Promise.all([loadPrice(), loadBill()])
+    await Promise.all([loadPrice(), loadBill(), loadCost()])
     return
   }
-  await loadBill()
+  await Promise.all([loadBill(), loadCost()])
 })
 </script>
 
@@ -358,7 +423,10 @@ onMounted(async () => {
             </el-select>
             <el-tag v-else type="info">当前租户：{{ currentTenantId || 'default' }}</el-tag>
             <el-button type="primary" @click="loadBill">查询</el-button>
-            <el-button v-if="crossTenantAuthority" v-permission="'billing:export'" @click="handleAggregate">
+            <el-button v-permission="'billing:export'" @click="handleExport">
+              导出 CSV
+            </el-button>
+            <el-button v-if="crossTenantAuthority" v-permission="'billing:aggregate'" @click="handleAggregate">
               手工归集
             </el-button>
           </div>
@@ -383,6 +451,101 @@ onMounted(async () => {
 
           <div class="tip">
             账单来自日归集表，默认 T+1；金额按归集当时的单价结算落库，之后调价不会改动已出的账。
+          </div>
+        </el-tab-pane>
+
+        <!-- 成本预测与告警 -->
+        <el-tab-pane label="成本告警" name="cost">
+          <div class="toolbar">
+            <el-select
+              v-if="crossTenantAuthority"
+              v-model="costTenant"
+              placeholder="全部租户告警"
+              style="width: 260px"
+              clearable
+              filterable
+              @change="loadCost"
+            >
+              <el-option
+                v-for="t in tenants"
+                :key="t.tenantCode"
+                :label="`${t.tenantName}（${t.tenantCode}）`"
+                :value="t.tenantCode"
+              />
+            </el-select>
+            <el-tag v-else type="info">当前租户：{{ currentTenantId || 'default' }}</el-tag>
+            <el-select v-model="forecastPeriod" style="width: 130px" @change="loadCost">
+              <el-option label="按月预测" value="MONTHLY" />
+              <el-option label="按日实际" value="DAILY" />
+            </el-select>
+            <el-select v-model="alertStatus" style="width: 130px" @change="loadCost">
+              <el-option label="待确认" value="OPEN" />
+              <el-option label="已确认" value="ACKED" />
+              <el-option label="全部状态" value="" />
+            </el-select>
+            <el-button type="primary" @click="loadCost">刷新</el-button>
+          </div>
+
+          <el-descriptions v-if="forecast" v-loading="costLoading" :column="4" border class="forecast-card">
+            <el-descriptions-item label="统计周期">{{ forecast.periodKey }}</el-descriptions-item>
+            <el-descriptions-item label="已结算金额">¥ {{ formatMoney(forecast.usedAmount) }}</el-descriptions-item>
+            <el-descriptions-item label="预算金额">
+              {{ forecast.amountLimit > 0 ? `¥ ${formatMoney(forecast.amountLimit)}` : '未设置' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="预算使用率">
+              {{ forecast.amountLimit > 0 ? `${forecast.utilizationPercent}%` : '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="日均金额">¥ {{ formatMoney(forecast.averageDailyAmount) }}</el-descriptions-item>
+            <el-descriptions-item label="周期预测">¥ {{ formatMoney(forecast.forecastAmount) }}</el-descriptions-item>
+            <el-descriptions-item label="统计进度">{{ forecast.elapsedDays }} / {{ forecast.totalDays }} 天</el-descriptions-item>
+            <el-descriptions-item label="预测状态">
+              <el-tag :type="forecast.forecastExceeded ? 'danger' : 'success'">
+                {{ forecast.forecastExceeded ? '预计超限' : '预算内' }}
+              </el-tag>
+            </el-descriptions-item>
+          </el-descriptions>
+          <el-empty
+            v-else-if="crossTenantAuthority && !costTenant"
+            description="当前展示全部租户告警；选择一个租户后查看金额预测"
+            :image-size="72"
+          />
+
+          <el-table v-loading="costLoading" :data="alerts" style="width: 100%">
+            <el-table-column prop="tenantId" label="租户" width="160" />
+            <el-table-column prop="periodKey" label="周期" width="120" />
+            <el-table-column label="类型" width="120">
+              <template #default="{ row }">
+                <el-tag :type="alertTagType(row.alertType)">
+                  {{ ALERT_LABELS[row.alertType] ?? row.alertType }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="已用 / 预算（元）" width="200">
+              <template #default="{ row }">
+                {{ formatMoney(row.usedAmount) }} / {{ formatMoney(row.limitAmount) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="预测金额（元）" width="150">
+              <template #default="{ row }">{{ formatMoney(row.forecastAmount) }}</template>
+            </el-table-column>
+            <el-table-column prop="firstSeenAt" label="首次触发" width="180" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'OPEN' ? 'danger' : 'info'">
+                  {{ row.status === 'OPEN' ? '待确认' : '已确认' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="100" fixed="right">
+              <template #default="{ row }">
+                <el-button v-if="row.status === 'OPEN'" link type="primary" @click="handleAcknowledge(row)">
+                  确认
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="tip">
+            告警在日用量归集事务成功提交后生成；同一租户、周期和告警类型只生成一次，重复补数不会反复通知。
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -483,5 +646,9 @@ onMounted(async () => {
 .form-tip {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+.forecast-card {
+  margin-bottom: 20px;
 }
 </style>

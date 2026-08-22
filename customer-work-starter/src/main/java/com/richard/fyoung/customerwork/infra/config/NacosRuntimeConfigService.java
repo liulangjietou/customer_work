@@ -20,6 +20,8 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
 import java.lang.management.ManagementFactory;
@@ -31,7 +33,8 @@ import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
  *
  * <p>{@code customer-work.nacos.runtime-config-enabled=true} 时：启动拉取一次 + 注册监听器，admin 侧
  * 在 Nacos 修改整份运行时配置（模型/兜底/重试/提示词/MCP/maxIters）后<b>无需重启 8080 即热生效</b>。
- * 解析 JSON → 用 {@link AesGcmDecryptor} 解密 API Key 密文 → 交 {@link RuntimeConfigApplier} 原子应用。</p>
+ * 解析 JSON → 用 {@link AesGcmDecryptor} 解密 API Key 密文 → 内容摘要变化时先严格失效当前租户语义缓存
+ * → 交 {@link RuntimeConfigApplier} 原子应用。缓存失效失败与 JSON/密钥解析失败一样保留旧配置。</p>
  *
  * <p>Nacos 不可用 / 无该配置 / JSON 坏 / 解密失败，均<b>保持 yml 既有行为</b>（不覆盖运行链），
  * 与 {@link NacosPromptService} 的降级语义一致——托管失败不拖垮主链路可用性。默认关闭。</p>
@@ -44,38 +47,68 @@ public class NacosRuntimeConfigService implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(NacosRuntimeConfigService.class);
 
     private static final String CODE_PARSE_FAIL = "RUNTIME-CONFIG-PARSE-FAIL";
+    private static final String CODE_HASH_FAIL = "RUNTIME-CONFIG-HASH-FAIL";
+    private static final RuntimeConfigCacheInvalidator NO_OP_CACHE_INVALIDATOR =
+        new RuntimeConfigCacheInvalidator() {
+            @Override
+            public void invalidateCurrentTenant() {
+            }
+        };
     private final CustomerWorkProperties properties;
     private final RuntimeConfigApplier applier;
     private final OutboxService outboxService;
+    private final RuntimeConfigCacheInvalidator cacheInvalidator;
     private final ConfigServiceFactory configServiceFactory;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicBoolean subscribed = new AtomicBoolean(false);
 
     private volatile AesGcmDecryptor decryptor;
     private volatile ConfigService boundConfigService;
+    /** 最近一份真正通过 applier 的配置身份；失败发布不得覆盖。 */
+    private volatile String activeRevision = "";
+    private volatile String activeContentHash = "";
     private ThreadPoolTaskScheduler retryScheduler;
 
     public NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier) {
-        this(properties, applier, (OutboxService) null);
+        this(properties, applier, null, NO_OP_CACHE_INVALIDATOR);
     }
 
     @Autowired
     public NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier,
-                                     ObjectProvider<OutboxService> outboxProvider) {
-        this(properties, applier, outboxProvider == null ? null : outboxProvider.getIfAvailable());
+                                     ObjectProvider<OutboxService> outboxProvider,
+                                     ObjectProvider<RuntimeConfigCacheInvalidator> cacheInvalidatorProvider) {
+        this(properties, applier,
+            outboxProvider == null ? null : outboxProvider.getIfAvailable(),
+            cacheInvalidatorProvider == null
+                ? NO_OP_CACHE_INVALIDATOR
+                : cacheInvalidatorProvider.getIfAvailable(() -> NO_OP_CACHE_INVALIDATOR));
     }
 
     NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier,
                               OutboxService outboxService) {
-        this(properties, applier, outboxService,
+        this(properties, applier, outboxService, NO_OP_CACHE_INVALIDATOR);
+    }
+
+    NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier,
+                              OutboxService outboxService,
+                              RuntimeConfigCacheInvalidator cacheInvalidator) {
+        this(properties, applier, outboxService, cacheInvalidator,
             nacosProperties -> NacosFactory.createConfigService(nacosProperties));
     }
 
     NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier,
                               OutboxService outboxService, ConfigServiceFactory configServiceFactory) {
+        this(properties, applier, outboxService, NO_OP_CACHE_INVALIDATOR, configServiceFactory);
+    }
+
+    NacosRuntimeConfigService(CustomerWorkProperties properties, RuntimeConfigApplier applier,
+                              OutboxService outboxService,
+                              RuntimeConfigCacheInvalidator cacheInvalidator,
+                              ConfigServiceFactory configServiceFactory) {
         this.properties = properties;
         this.applier = applier;
         this.outboxService = outboxService;
+        this.cacheInvalidator = cacheInvalidator == null ? NO_OP_CACHE_INVALIDATOR : cacheInvalidator;
         this.configServiceFactory = configServiceFactory;
     }
 
@@ -108,7 +141,7 @@ public class NacosRuntimeConfigService implements DisposableBean {
             boundConfigService = candidate;
             subscribed.set(true);
             log.info("[Nacos] runtime config hot-update enabled, dataId={}, group={}",
-                cfg.getRuntimeConfigDataId(), cfg.getGroup());
+                subscriptionDataId(cfg), cfg.getGroup());
             return true;
         } catch (Exception e) {
             shutdownQuietly(candidate);
@@ -122,47 +155,21 @@ public class NacosRuntimeConfigService implements DisposableBean {
     /**
      * 绑定到给定 ConfigService：拉取初始配置并注册热更新监听器（抽出以便单测）。
      *
-     * <p><b>灰度优先</b>：配了 {@code nacos.tenant-code} 时先看租户专属 dataId
-     * （{@code <主dataId>-tenant-<租户码>}），有内容就用它，没有才回落主 dataId。
-     * 灰度因此对本端是透明的——本端并不理解"灰度"，只是多试了一个更具体的 dataId；
-     * 运营方把灰度版本写进那个 dataId，名单外的实例自然继续用主 dataId 上的全量版本。</p>
-     *
-     * <p>两个 dataId 都要挂监听：灰度期间运营方可能改灰度版本，灰度结束后又会删掉它——
-     * 只听一个的话，要么灰度更新收不到，要么灰度撤销后回不到全量版本。</p>
+     * <p><b>租户边界</b>：多租户开启或配置了 {@code nacos.tenant-code} 时，只读取并监听
+     * {@code <主dataId>-tenant-<租户码>}。租户键缺失或删除只保留当前安全配置，绝不回落主 dataId，
+     * 避免一个租户误用另一发布域的模型凭据。只有未开启多租户且未配置租户码的单租户部署读取主 dataId。</p>
      */
     void bind(ConfigService configService) throws NacosException {
         NacosProperties cfg = properties.getNacos();
-        String mainDataId = cfg.getRuntimeConfigDataId();
-        String tenantDataId = tenantDataId(cfg);
-
-        String initial = null;
-        if (tenantDataId != null) {
-            initial = configService.getConfig(tenantDataId, cfg.getGroup(), cfg.getTimeoutMs());
-            if (StringUtils.hasText(initial)) {
-                log.info("[Nacos] gray config applied, dataId={}", tenantDataId);
-            }
-        }
-        if (!StringUtils.hasText(initial)) {
-            String legacyDataId = legacyDefaultTenantDataId(cfg);
-            if (legacyDataId != null) {
-                initial = configService.getConfig(legacyDataId, cfg.getGroup(), cfg.getTimeoutMs());
-                if (StringUtils.hasText(initial)) {
-                    // 读旧值后再次确认 canonical key，避免并发发布的新配置被本次启动误用旧值遮住。
-                    String canonical = configService.getConfig(tenantDataId, cfg.getGroup(), cfg.getTimeoutMs());
-                    if (StringUtils.hasText(canonical)) {
-                        initial = canonical;
-                    } else {
-                        log.info("[Nacos] legacy platform runtime config used as default compatibility fallback");
-                    }
-                }
-            }
-        }
-        if (!StringUtils.hasText(initial)) {
-            initial = configService.getConfig(mainDataId, cfg.getGroup(), cfg.getTimeoutMs());
+        String dataId = subscriptionDataId(cfg);
+        String initial = configService.getConfig(dataId, cfg.getGroup(), cfg.getTimeoutMs());
+        if (!StringUtils.hasText(initial) && tenantScopedMode(cfg)) {
+            log.error("tenant runtime config missing, keep last safe config, code={}, dataId={}",
+                "RUNTIME-CONFIG-TENANT-MISSING", dataId);
         }
         applyConfig(initial);
 
-        configService.addListener(mainDataId, cfg.getGroup(), new Listener() {
+        configService.addListener(dataId, cfg.getGroup(), new Listener() {
             @Override
             public Executor getExecutor() {
                 return Runnable::run;   // 同步回调，简单可控
@@ -170,43 +177,29 @@ public class NacosRuntimeConfigService implements DisposableBean {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
+                if (!StringUtils.hasText(configInfo) && tenantScopedMode(cfg)) {
+                    log.error("tenant runtime config removed, keep last safe config, code={}, dataId={}",
+                        "RUNTIME-CONFIG-TENANT-REMOVED", dataId);
+                    return;
+                }
                 applyConfig(configInfo);
             }
         });
-
-        if (tenantDataId != null) {
-            configService.addListener(tenantDataId, cfg.getGroup(), new Listener() {
-                @Override
-                public Executor getExecutor() {
-                    return Runnable::run;
-                }
-
-                @Override
-                public void receiveConfigInfo(String configInfo) {
-                    // 灰度被撤销时 Nacos 回调的是空串：此时不 applyConfig（那会被当成"无配置"跳过），
-                    // 而是主动回读主 dataId 恢复全量版本，否则实例会一直停在灰度版本上
-                    if (StringUtils.hasText(configInfo)) {
-                        applyConfig(configInfo);
-                        return;
-                    }
-                    restoreFromMainDataId(configService, cfg);
-                }
-            });
-        }
     }
 
-    /** 灰度撤销后回到全量版本。读取失败只记日志——保持当前配置总比清空好。 */
-    private void restoreFromMainDataId(ConfigService configService, NacosProperties cfg) {
-        try {
-            String main = configService.getConfig(cfg.getRuntimeConfigDataId(), cfg.getGroup(), cfg.getTimeoutMs());
-            if (StringUtils.hasText(main)) {
-                applyConfig(main);
-                log.info("[Nacos] gray config removed, restored from main dataId={}", cfg.getRuntimeConfigDataId());
-            }
-        } catch (Exception e) {
-            log.error("restore runtime config from main dataId failed, code={}",
-                "RUNTIME-CONFIG-RESTORE-FAIL", e);
+    private String subscriptionDataId(NacosProperties cfg) {
+        if (!tenantScopedMode(cfg)) {
+            return cfg.getRuntimeConfigDataId();
         }
+        String tenantDataId = tenantDataId(cfg);
+        if (tenantDataId == null) {
+            throw new IllegalStateException("nacos.tenant-code is required in multi-tenant mode");
+        }
+        return tenantDataId;
+    }
+
+    private boolean tenantScopedMode(NacosProperties cfg) {
+        return properties.getTenant().isEnabled() || configuredTenantCode(cfg) != null;
     }
 
     /** 租户专属 dataId；未配租户码时返回 null（单租户部署不受灰度机制影响）。 */
@@ -216,13 +209,6 @@ public class NacosRuntimeConfigService implements DisposableBean {
             return null;
         }
         return cfg.getRuntimeConfigDataId() + "-tenant-" + tenantCode;
-    }
-
-    /** 仅 default 实例兼容读取旧平台 dataId；业务租户永不进入此分支。 */
-    private String legacyDefaultTenantDataId(NacosProperties cfg) {
-        return TenantContext.isDefaultTenant(configuredTenantCode(cfg))
-            ? cfg.getRuntimeConfigDataId() + "-tenant-" + LegacyTenantCompatibility.PLATFORM_TENANT_ID
-            : null;
     }
 
     /** 兼容旧部署环境变量；运行期只暴露 default，不让历史字面量重新进入上下文或 dataId。 */
@@ -239,12 +225,13 @@ public class NacosRuntimeConfigService implements DisposableBean {
     /**
      * 解析并应用一份运行时配置 JSON。包内可见以便单测直接驱动（不依赖真实 Nacos）。
      *
-     * <p>坏 JSON / 解密失败在此收口——记 error 后直接返回，绝不调用 applier，保证旧配置不被覆盖。</p>
+     * <p>坏 JSON、解密失败或内容摘要校验失败均在此收口——记 error 后直接返回，绝不清缓存或调用
+     * applier，保证旧配置不被覆盖。</p>
      *
      * @param json Nacos 配置正文；空白视为「无配置」直接跳过
      * @return 是否成功应用
      */
-    boolean applyConfig(String json) {
+    synchronized boolean applyConfig(String json) {
         if (!StringUtils.hasText(json)) {
             return false;
         }
@@ -259,9 +246,13 @@ public class NacosRuntimeConfigService implements DisposableBean {
         }
         String primaryKey;
         String fallbackKey;
+        Map<Long, String> routingKeys;
+        Map<Long, String> experimentKeys;
         try {
             primaryKey = decryptIfPresent(dto.getModel() == null ? null : dto.getModel().getApiKeyCipher());
             fallbackKey = decryptIfPresent(dto.getFallback() == null ? null : dto.getFallback().getApiKeyCipher());
+            routingKeys = decryptRoutingKeys(dto.getRoutingPolicy());
+            experimentKeys = decryptExperimentKeys(dto.getOnlineExperiment());
         } catch (Exception e) {
             log.error("runtime config api key decrypt failed, keep old config, code={}",
                 "RUNTIME-CONFIG-DECRYPT-FAIL", e);
@@ -269,10 +260,133 @@ public class NacosRuntimeConfigService implements DisposableBean {
                 "runtime config API key decrypt failed");
             return false;
         }
-        boolean applied = applier.apply(dto, primaryKey, fallbackKey);
-        enqueueAck(dto.getRevision(), dto.getContentHash(), applied ? "APPLIED" : "REJECTED",
+        String verifiedContentHash;
+        try {
+            verifiedContentHash = RuntimeConfigContentHasher.compute(dto, objectMapper);
+        } catch (Exception e) {
+            log.error("runtime config content hash calculation failed, keep old config, code={}",
+                CODE_HASH_FAIL, e);
+            enqueueAck(dto.getRevision(), dto.getContentHash(), "REJECTED",
+                "runtime config content hash calculation failed");
+            return false;
+        }
+        String declaredContentHash = dto.getContentHash();
+        if (!RuntimeConfigContentHasher.isValidFormat(declaredContentHash)) {
+            log.error("runtime config content hash is missing or malformed, keep old config, code={}, revision={}",
+                CODE_HASH_FAIL, dto.getRevision());
+            enqueueAck(dto.getRevision(), verifiedContentHash, "REJECTED",
+                "runtime config content hash is missing or malformed");
+            return false;
+        }
+        if (!verifiedContentHash.equalsIgnoreCase(declaredContentHash)) {
+            log.error("runtime config content hash mismatch, keep old config, code={}, revision={}",
+                CODE_HASH_FAIL, dto.getRevision());
+            enqueueAck(dto.getRevision(), declaredContentHash, "REJECTED",
+                "runtime config content hash mismatch");
+            return false;
+        }
+        boolean generationChanged = !verifiedContentHash.equals(activeContentHash);
+        if (generationChanged) {
+            try {
+                beginSemanticCacheTransition(verifiedContentHash);
+            } catch (Exception e) {
+                log.error("runtime config semantic cache invalidation failed, keep old config, code={}, "
+                        + "contentHash={}",
+                    "RUNTIME-CONFIG-CACHE-INVALIDATE-FAIL", verifiedContentHash, e);
+                enqueueAck(dto.getRevision(), verifiedContentHash, "REJECTED",
+                    "runtime config semantic cache invalidation failed");
+                return false;
+            }
+        }
+        boolean applied = dto.getRoutingPolicy() == null && dto.getOnlineExperiment() == null
+            ? applier.apply(dto, primaryKey, fallbackKey)
+            : applier.apply(dto, primaryKey, fallbackKey, routingKeys, experimentKeys);
+        if (generationChanged) {
+            finishSemanticCacheTransition(verifiedContentHash, applied);
+        }
+        if (applied) {
+            activeRevision = normalize(dto.getRevision());
+            activeContentHash = verifiedContentHash;
+        }
+        enqueueAck(dto.getRevision(), verifiedContentHash, applied ? "APPLIED" : "REJECTED",
             applied ? null : "runtime config applier rejected configuration");
         return applied;
+    }
+
+    /** 路由候选密钥必须全部先解密成功，之后才允许清缓存与切换模型链。 */
+    private Map<Long, String> decryptRoutingKeys(CustomerWorkRuntimeConfig.RoutingPolicy policy) {
+        if (policy == null || policy.getDeployments() == null) {
+            return Map.of();
+        }
+        Map<Long, String> keys = new LinkedHashMap<>();
+        for (CustomerWorkRuntimeConfig.RoutingDeployment deployment : policy.getDeployments()) {
+            if (deployment == null || deployment.getDeploymentId() == null) {
+                throw new IllegalArgumentException("runtime routing deployment id is missing");
+            }
+            if (keys.containsKey(deployment.getDeploymentId())) {
+                throw new IllegalArgumentException(
+                    "runtime routing deployment is duplicated: " + deployment.getDeploymentId());
+            }
+            keys.put(deployment.getDeploymentId(), decryptIfPresent(deployment.getApiKeyCipher()));
+        }
+        return keys;
+    }
+
+    /** 双臂凭据也必须全部先解密成功，任何一臂失败都不能清缓存或切流量。 */
+    private Map<Long, String> decryptExperimentKeys(
+        CustomerWorkRuntimeConfig.OnlineExperiment experiment) {
+        if (experiment == null) {
+            return Map.of();
+        }
+        if (experiment.getControl() == null || experiment.getTreatment() == null) {
+            throw new IllegalArgumentException("runtime online experiment arms are missing");
+        }
+        Map<Long, String> keys = new LinkedHashMap<>();
+        decryptExperimentArm(experiment.getControl(), keys);
+        decryptExperimentArm(experiment.getTreatment(), keys);
+        return keys;
+    }
+
+    private void decryptExperimentArm(CustomerWorkRuntimeConfig.ExperimentArm arm,
+                                      Map<Long, String> keys) {
+        if (arm.getDeploymentId() == null) {
+            throw new IllegalArgumentException("runtime online experiment deployment id is missing");
+        }
+        if (keys.containsKey(arm.getDeploymentId())) {
+            throw new IllegalArgumentException(
+                "runtime online experiment deployment is duplicated: " + arm.getDeploymentId());
+        }
+        keys.put(arm.getDeploymentId(), decryptIfPresent(arm.getApiKeyCipher()));
+    }
+
+    /** 在当前部署租户上下文中先阻断缓存读写并清理旧代际。 */
+    private void beginSemanticCacheTransition(String nextContentHash) {
+        String configuredTenant = configuredTenantCode(properties.getNacos());
+        String tenant = configuredTenant == null ? TenantContext.DEFAULT : configuredTenant;
+        TenantContext.runWith(tenant, () -> cacheInvalidator.beginTransition(nextContentHash));
+    }
+
+    /** 应用成功才提交新 contentHash 代际；失败则恢复旧代际，候选配置期间不产生缓存写入。 */
+    private void finishSemanticCacheTransition(String nextContentHash, boolean applied) {
+        String configuredTenant = configuredTenantCode(properties.getNacos());
+        String tenant = configuredTenant == null ? TenantContext.DEFAULT : configuredTenant;
+        TenantContext.runWith(tenant, () -> {
+            if (applied) {
+                cacheInvalidator.commitTransition(nextContentHash);
+            } else {
+                cacheInvalidator.rollbackTransition(nextContentHash);
+            }
+        });
+    }
+
+    /** 当前实例最后成功应用的发布修订；仅 yml 启动、尚未接收发布时为空。 */
+    public String activeRevision() {
+        return activeRevision;
+    }
+
+    /** 当前实例最后成功应用的发布内容摘要；失败配置不会推进该值。 */
+    public String activeContentHash() {
+        return activeContentHash;
     }
 
     private void enqueueAck(String revision, String contentHash, String status, String reason) {
@@ -317,6 +431,10 @@ public class NacosRuntimeConfigService implements DisposableBean {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim();
     }
 
     /** 密文非空则解密，空则返回 null（表示不改动现有密钥）。 */

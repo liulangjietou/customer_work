@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import {
   deleteAgentCallStats,
   getAgentCallStatsDetail,
+  getAgentCallReplayManifest,
   getAgentCallStatsSummary,
   getAgentCallStatsTrend,
   pageAgentCallStats,
@@ -12,6 +13,7 @@ import { pageAgents } from '@/api/agent'
 import AgentCallTrendChart from '@/components/AgentCallTrendChart.vue'
 import type {
   AgentCallSegmentKind,
+  AgentCallReplayManifest,
   AgentCallSource,
   AgentCallStatsDetail,
   AgentCallStatsQuery,
@@ -53,6 +55,10 @@ interface FilterState {
   sessionType: 'CHAT' | 'VIBE_CODING' | ''
   requestId: string
   sessionId: string
+  traceId: string
+  runtimeRevision: string
+  experimentId: string
+  experimentArm: 'CONTROL' | 'TREATMENT' | ''
 }
 
 const filters = reactive<FilterState>({
@@ -62,6 +68,10 @@ const filters = reactive<FilterState>({
   sessionType: '',
   requestId: '',
   sessionId: '',
+  traceId: '',
+  runtimeRevision: '',
+  experimentId: '',
+  experimentArm: '',
 })
 
 function pad(n: number): string {
@@ -102,6 +112,12 @@ function buildFilterParams(): AgentCallStatsQuery {
   if (sessionType) q.sessionType = sessionType
   if (filters.requestId) q.requestId = filters.requestId
   if (filters.sessionId) q.sessionId = filters.sessionId
+  if (filters.traceId) q.traceId = filters.traceId
+  if (filters.runtimeRevision) q.runtimeRevision = filters.runtimeRevision
+  if (filters.experimentId && Number.isFinite(Number(filters.experimentId))) {
+    q.experimentId = Number(filters.experimentId)
+  }
+  if (filters.experimentArm) q.experimentArm = filters.experimentArm
   if (timeRange.value?.[0]) q.startTime = timeRange.value[0]
   if (timeRange.value?.[1]) q.endTime = timeRange.value[1]
   return q
@@ -218,6 +234,10 @@ function handleReset() {
   filters.sessionType = ''
   filters.requestId = ''
   filters.sessionId = ''
+  filters.traceId = ''
+  filters.runtimeRevision = ''
+  filters.experimentId = ''
+  filters.experimentArm = ''
   timeRange.value = defaultTimeRange()
   pageNum.value = 1
   refreshAll()
@@ -274,6 +294,51 @@ async function openDetail(row: AgentCallStatsRow) {
   } finally {
     detailLoading.value = false
   }
+}
+
+// ---------- 行操作：只读重放清单 ----------
+const replayVisible = ref(false)
+const replayLoading = ref(false)
+const replayManifest = ref<AgentCallReplayManifest | null>(null)
+
+const replayJson = computed(() =>
+  replayManifest.value ? JSON.stringify(replayManifest.value, null, 2) : '',
+)
+
+async function openReplayManifest(row: AgentCallStatsRow) {
+  replayVisible.value = true
+  replayLoading.value = true
+  replayManifest.value = null
+  try {
+    replayManifest.value = await getAgentCallReplayManifest(row.id, filters.source)
+  } catch (error) {
+    ElMessage.error('重放清单加载失败：' + (error instanceof Error ? error.message : String(error)))
+    replayVisible.value = false
+  } finally {
+    replayLoading.value = false
+  }
+}
+
+async function copyReplayManifest() {
+  if (!replayJson.value) return
+  await navigator.clipboard.writeText(replayJson.value)
+  ElMessage.success('重放清单已复制')
+}
+
+function downloadReplayManifest() {
+  if (!replayManifest.value) return
+  const blob = new Blob([replayJson.value], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `agent-call-replay-${replayManifest.value.requestId}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function shortVersion(version: string | null | undefined): string {
+  if (!version) return '—'
+  return version.length <= 16 ? version : version.slice(0, 16)
 }
 
 /** 分段时间轴的 CSS 条形定位：相对本次调用开始时间的偏移与占比，均以总耗时归一化。 */
@@ -342,6 +407,19 @@ onMounted(() => {
         />
         <el-input v-model="filters.requestId" placeholder="请求ID" style="width: 160px" clearable @keyup.enter="handleSearch" />
         <el-input v-model="filters.sessionId" placeholder="会话ID" style="width: 160px" clearable @keyup.enter="handleSearch" />
+        <el-input v-model="filters.traceId" placeholder="Trace ID" style="width: 180px" clearable @keyup.enter="handleSearch" />
+        <el-input
+          v-model="filters.runtimeRevision"
+          placeholder="运行配置修订"
+          style="width: 160px"
+          clearable
+          @keyup.enter="handleSearch"
+        />
+        <el-input v-model="filters.experimentId" placeholder="实验 ID" style="width: 120px" clearable @keyup.enter="handleSearch" />
+        <el-select v-model="filters.experimentArm" placeholder="实验臂" style="width: 130px" clearable>
+          <el-option label="对照组" value="CONTROL" />
+          <el-option label="实验组" value="TREATMENT" />
+        </el-select>
         <el-button type="primary" @click="handleSearch">搜索</el-button>
         <el-button @click="handleReset">重置</el-button>
       </div>
@@ -385,6 +463,23 @@ onMounted(() => {
         <el-table-column prop="question" label="问题" min-width="180" show-overflow-tooltip />
         <el-table-column prop="answerPreview" label="回答预览" min-width="180" show-overflow-tooltip />
         <el-table-column prop="requestId" label="请求ID" width="160" show-overflow-tooltip />
+        <el-table-column prop="traceId" label="Trace ID" width="150" show-overflow-tooltip>
+          <template #default="{ row }: { row: AgentCallStatsRow }">{{ row.traceId || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="runtimeRevision" label="配置修订" width="130" show-overflow-tooltip>
+          <template #default="{ row }: { row: AgentCallStatsRow }">{{ row.runtimeRevision || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="在线实验" width="170">
+          <template #default="{ row }: { row: AgentCallStatsRow }">
+            <span v-if="row.experimentId">
+              #{{ row.experimentId }}/r{{ row.experimentRevision }}
+              <el-tag :type="row.experimentArm === 'TREATMENT' ? 'warning' : 'info'" size="small">
+                {{ row.experimentArm === 'TREATMENT' ? '实验' : '对照' }}
+              </el-tag>
+            </span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="开始时间" width="150">
           <template #default="{ row }: { row: AgentCallStatsRow }">{{ row.startTime }}</template>
         </el-table-column>
@@ -428,9 +523,10 @@ onMounted(() => {
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }: { row: AgentCallStatsRow }">
             <el-button link type="primary" @click="openDetail(row)">耗时详情</el-button>
+            <el-button link type="primary" @click="openReplayManifest(row)">重放清单</el-button>
             <el-button v-if="filters.source === 'ADMIN'" link type="primary" @click="openInWorkspace(row)">打开会话</el-button>
             <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -454,12 +550,26 @@ onMounted(() => {
         <template v-if="detail">
           <el-descriptions :column="2" border size="small">
             <el-descriptions-item label="请求ID" :span="2">{{ detail.requestId }}</el-descriptions-item>
+            <el-descriptions-item label="Trace ID" :span="2">{{ detail.traceId || '—' }}</el-descriptions-item>
             <el-descriptions-item label="用户名">{{ detail.username || '—' }}</el-descriptions-item>
             <el-descriptions-item label="智能体">{{ detail.agentName || detail.agentCode }}</el-descriptions-item>
             <el-descriptions-item label="会话类型">{{ sessionTypeLabel(detail.sessionType) }}</el-descriptions-item>
             <el-descriptions-item label="会话ID">{{ detail.sessionId }}</el-descriptions-item>
             <el-descriptions-item label="开始时间">{{ detail.startTime }}</el-descriptions-item>
             <el-descriptions-item label="结束时间">{{ detail.endTime }}</el-descriptions-item>
+            <el-descriptions-item label="配置修订">{{ detail.runtimeRevision || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="配置摘要">
+              {{ shortVersion(detail.runtimeContentHash) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="在线实验">
+              {{ detail.experimentId ? `#${detail.experimentId}/r${detail.experimentRevision}` : '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="实验曝光">
+              {{ detail.experimentArm || '—' }} / 部署 {{ detail.experimentDeploymentId || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="实验分桶" :span="2">
+              {{ detail.experimentBucket == null ? '—' : detail.experimentBucket }}
+            </el-descriptions-item>
             <el-descriptions-item label="总耗时" :span="2">{{ formatDuration(detail.durationMs) }}</el-descriptions-item>
             <el-descriptions-item label="输入 Token">{{ formatTokens(detail.inputTokens) }}</el-descriptions-item>
             <el-descriptions-item label="输出 Token">{{ formatTokens(detail.outputTokens) }}</el-descriptions-item>
@@ -540,6 +650,60 @@ onMounted(() => {
               </el-table-column>
             </el-table>
           </div>
+        </template>
+      </div>
+    </el-drawer>
+
+    <el-drawer v-model="replayVisible" title="只读重放清单" size="720px" destroy-on-close>
+      <div v-loading="replayLoading">
+        <template v-if="replayManifest">
+          <el-alert
+            type="warning"
+            :closable="false"
+            show-icon
+            :title="replayManifest.executionBlockedReason"
+          />
+          <el-descriptions :column="2" border size="small" class="replay-summary">
+            <el-descriptions-item label="模式">只读审计</el-descriptions-item>
+            <el-descriptions-item label="来源">{{ replayManifest.source }}</el-descriptions-item>
+            <el-descriptions-item label="Trace ID" :span="2">{{ replayManifest.traceId || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="配置修订">{{ replayManifest.runtimeRevision || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="配置摘要">
+              {{ shortVersion(replayManifest.runtimeContentHash) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="模型版本">
+              {{ shortVersion(replayManifest.versionBinding.modelVersion) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="提示词版本">
+              {{ shortVersion(replayManifest.versionBinding.promptVersion) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="Agent 版本">
+              {{ shortVersion(replayManifest.versionBinding.agentVersion) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="知识库版本">
+              {{ shortVersion(replayManifest.versionBinding.knowledgeBaseVersion) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="工具版本" :span="2">
+              {{ shortVersion(replayManifest.versionBinding.toolVersion) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="在线实验">
+              {{ replayManifest.experimentId ? `#${replayManifest.experimentId}/r${replayManifest.experimentRevision}` : '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="实验臂">
+              {{ replayManifest.experimentArm || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="实验部署">
+              {{ replayManifest.experimentDeploymentId || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="分桶编号">
+              {{ replayManifest.experimentBucket ?? '—' }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <div class="replay-actions">
+            <el-button type="primary" @click="copyReplayManifest">复制 JSON</el-button>
+            <el-button @click="downloadReplayManifest">下载 JSON</el-button>
+          </div>
+          <pre class="replay-json">{{ replayJson }}</pre>
         </template>
       </div>
     </el-drawer>
@@ -688,5 +852,29 @@ onMounted(() => {
   flex-shrink: 0;
   text-align: right;
   color: var(--el-text-color-secondary);
+}
+
+.replay-summary {
+  margin-top: 16px;
+}
+
+.replay-actions {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 10px;
+}
+
+.replay-json {
+  margin: 0;
+  padding: 12px;
+  max-height: 520px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 6px;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  line-height: 1.5;
 }
 </style>

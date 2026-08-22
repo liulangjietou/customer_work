@@ -4,13 +4,19 @@ import com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.data.knowledge.VectorMath;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.infra.config.RuntimeConfigCacheInvalidator;
 import com.richard.fyoung.customerwork.infra.config.properties.SemanticCacheProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -38,7 +44,7 @@ import java.util.regex.Pattern;
  * 的直接证据，比意图更可信。</p>
  * @author owlzhangfq@gmail.com
  */
-public class SemanticCacheService {
+public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
 
     private static final Logger log = LoggerFactory.getLogger(SemanticCacheService.class);
 
@@ -60,6 +66,8 @@ public class SemanticCacheService {
     private final MultiAgentOrchestrator orchestrator;
     private final TenantResolver tenantResolver;
     private final SemanticCacheProperties properties;
+    /** 每租户配置代际与切换锁；contentHash 不落 ThreadLocal，异步缓存写仍可校验发起时版本。 */
+    private final Map<String, GenerationState> generationStates = new ConcurrentHashMap<>();
 
     public SemanticCacheService(SemanticCacheStore store,
                                 EmbeddingClient embeddingClient,
@@ -82,10 +90,17 @@ public class SemanticCacheService {
      * @return 命中则返回上次的答案
      */
     public Optional<String> lookup(String sessionId, String question) {
+        return lookup(captureGeneration(), sessionId, question);
+    }
+
+    /**
+     * 使用请求开始时捕获的代际查缓存。切换中的请求直接未命中，避免返回正被淘汰的旧答案。
+     */
+    public Optional<String> lookup(CacheGeneration generation, String sessionId, String question) {
         if (!active()) {
             return Optional.empty();
         }
-        try {
+        return withGeneration(generation, Optional.empty(), () -> {
             String intent = resolveIntent(question);
             if (!cacheable(question, intent)) {
                 return Optional.empty();
@@ -93,7 +108,7 @@ public class SemanticCacheService {
             String scopeId = tenantResolver.resolveDataScope(sessionId);
             long now = System.currentTimeMillis();
             List<SemanticCacheEntry> candidates = store.findCandidates(scopeId, intent,
-                notBefore(now), properties.getMaxCandidates());
+                generation.configGeneration(), notBefore(now), properties.getMaxCandidates());
             if (candidates.isEmpty()) {
                 return Optional.empty();
             }
@@ -114,11 +129,11 @@ public class SemanticCacheService {
             log.info("semantic cache hit: scopeId={}, intent={}, score={}, cachedQuestion={}",
                 scopeId, intent, String.format("%.4f", bestScore), best.question());
             return Optional.of(best.answer());
-        } catch (Exception e) {
+        }, e -> {
             log.error("semantic cache lookup failed, errorCode={}, sessionId={}",
                 "SEMCACHE-LOOKUP-FAIL", sessionId, e);
             return Optional.empty();
-        }
+        });
     }
 
     /**
@@ -127,22 +142,42 @@ public class SemanticCacheService {
      * <p>同样吞掉异常：写缓存失败只是下次还得再问一遍模型，不该影响本次已经答好的回复。</p>
      */
     public void put(String sessionId, String question, String answer) {
+        put(captureGeneration(), sessionId, question, answer);
+    }
+
+    /** 只允许写回请求发起时的代际；配置切换后完成的旧模型请求会被丢弃。 */
+    public void put(CacheGeneration generation, String sessionId, String question, String answer) {
         if (!active() || !StringUtils.hasText(answer)) {
             return;
         }
-        try {
+        withGeneration(generation, null, () -> {
             String intent = resolveIntent(question);
             if (!cacheable(question, intent) || containsPersonalIdentifier(answer)) {
-                return;
+                return null;
             }
             String scopeId = tenantResolver.resolveDataScope(sessionId);
             long now = System.currentTimeMillis();
             float[] vector = embeddingClient.embedQuery(question);
-            store.save(SemanticCacheEntry.of(scopeId, intent, question, formatVector(vector), answer, now));
-            enforceCapacity(scopeId);
-        } catch (Exception e) {
+            store.save(SemanticCacheEntry.of(scopeId, intent, question, formatVector(vector), answer, now),
+                generation.configGeneration());
+            enforceCapacity(scopeId, generation.configGeneration());
+            return null;
+        }, e -> {
             log.error("semantic cache put failed, errorCode={}, sessionId={}",
                 "SEMCACHE-PUT-FAIL", sessionId, e);
+            return null;
+        });
+    }
+
+    /** 请求进入缓存/模型链之前捕获一次，随后查与异步写必须复用同一 token。 */
+    public CacheGeneration captureGeneration() {
+        String tenantId = TenantContext.isPresent() ? TenantContext.require() : null;
+        GenerationState state = stateFor(tenantId);
+        state.lock.readLock().lock();
+        try {
+            return new CacheGeneration(tenantId, state.currentGeneration, !state.transitioning);
+        } finally {
+            state.lock.readLock().unlock();
         }
     }
 
@@ -151,6 +186,63 @@ public class SemanticCacheService {
         int removed = store.clear(scopeId);
         log.info("semantic cache invalidated: scopeId={}, removed={}", scopeId, removed);
         return removed;
+    }
+
+    /**
+     * 运行时配置切换前严格清理当前租户的全部语义缓存。
+     *
+     * <p>不吞异常：清理失败时新配置必须停在应用边界之前。</p>
+     */
+    @Override
+    public void invalidateCurrentTenant() {
+        String tenantId = TenantContext.require();
+        GenerationState state = stateFor(tenantId);
+        state.lock.writeLock().lock();
+        try {
+            int removed = store.clearCurrentTenant();
+            log.info("semantic cache invalidated for runtime config: tenantId={}, removed={}", tenantId, removed);
+        } finally {
+            state.lock.writeLock().unlock();
+        }
+    }
+
+    /** 先把当前租户置为切换中并清缓存；旧请求之后即使完成也无法再写入当前代际。 */
+    @Override
+    public void beginTransition(String nextContentHash) {
+        if (!StringUtils.hasText(nextContentHash)) {
+            throw new IllegalArgumentException("semantic cache generation is blank");
+        }
+        String tenantId = TenantContext.require();
+        GenerationState state = stateFor(tenantId);
+        state.lock.writeLock().lock();
+        try {
+            if (state.transitioning) {
+                throw new IllegalStateException("semantic cache generation transition is already active");
+            }
+            state.previousGeneration = state.currentGeneration;
+            state.pendingGeneration = nextContentHash;
+            state.transitioning = true;
+            try {
+                int removed = store.clearCurrentTenant();
+                log.info("semantic cache generation transition started: tenantId={}, removed={}",
+                    tenantId, removed);
+            } catch (RuntimeException e) {
+                resetTransition(state, false);
+                throw e;
+            }
+        } finally {
+            state.lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public void commitTransition(String nextContentHash) {
+        finishTransition(nextContentHash, true);
+    }
+
+    @Override
+    public void rollbackTransition(String nextContentHash) {
+        finishTransition(nextContentHash, false);
     }
 
     /** 运营视角列出条目（按命中次数降序）：看清楚到底缓存了什么、哪些真的在被复用。 */
@@ -211,13 +303,73 @@ public class SemanticCacheService {
     }
 
     /** 超出容量上限时淘汰最久未命中的条目——候选集无上限增长会让查缓存比调模型还慢。 */
-    private void enforceCapacity(String scopeId) {
+    private void enforceCapacity(String scopeId, String configGeneration) {
         int maxSize = properties.getMaxSize();
-        if (maxSize <= 0 || store.count(scopeId) <= maxSize) {
+        if (maxSize <= 0 || store.count(scopeId, configGeneration) <= maxSize) {
             return;
         }
-        int removed = store.evictLeastRecentlyUsed(scopeId, maxSize);
+        int removed = store.evictLeastRecentlyUsed(scopeId, configGeneration, maxSize);
         log.info("semantic cache evicted: scopeId={}, removed={}, keepSize={}", scopeId, removed, maxSize);
+    }
+
+    private void finishTransition(String nextContentHash, boolean commit) {
+        String tenantId = TenantContext.require();
+        GenerationState state = stateFor(tenantId);
+        state.lock.writeLock().lock();
+        try {
+            if (!state.transitioning || !nextContentHash.equals(state.pendingGeneration)) {
+                throw new IllegalStateException("semantic cache generation transition does not match");
+            }
+            resetTransition(state, commit);
+            log.info("semantic cache generation transition finished: tenantId={}, committed={}", tenantId, commit);
+        } finally {
+            state.lock.writeLock().unlock();
+        }
+    }
+
+    private void resetTransition(GenerationState state, boolean commit) {
+        state.currentGeneration = commit ? state.pendingGeneration : state.previousGeneration;
+        state.previousGeneration = null;
+        state.pendingGeneration = null;
+        state.transitioning = false;
+    }
+
+    private GenerationState stateFor(String tenantId) {
+        String effectiveTenant = StringUtils.hasText(tenantId) ? tenantId : TenantContext.DEFAULT;
+        String tenantKey = TenantContext.normalizedTenantKey(effectiveTenant);
+        return generationStates.computeIfAbsent(tenantKey, ignored -> new GenerationState());
+    }
+
+    private <T> T withGeneration(CacheGeneration generation, T unavailable, Supplier<T> action,
+                                 java.util.function.Function<Exception, T> onError) {
+        if (generation == null || !generation.available()) {
+            return unavailable;
+        }
+        GenerationState state = stateFor(generation.tenantId());
+        state.lock.readLock().lock();
+        try {
+            if (state.transitioning || !state.currentGeneration.equals(generation.configGeneration())) {
+                return unavailable;
+            }
+            return StringUtils.hasText(generation.tenantId())
+                ? TenantContext.callWith(generation.tenantId(), action) : action.get();
+        } catch (Exception e) {
+            return onError.apply(e);
+        } finally {
+            state.lock.readLock().unlock();
+        }
+    }
+
+    /** 请求级缓存代际；available=false 表示捕获时正处于配置切换。 */
+    public record CacheGeneration(String tenantId, String configGeneration, boolean available) {
+    }
+
+    private static final class GenerationState {
+        private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+        private String currentGeneration = SemanticCacheStore.BASELINE_GENERATION;
+        private String previousGeneration;
+        private String pendingGeneration;
+        private boolean transitioning;
     }
 
     private String formatVector(float[] vector) {

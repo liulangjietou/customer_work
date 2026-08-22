@@ -6,6 +6,13 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -110,5 +117,100 @@ class WsSessionRegistryTest {
             .assertNext(json -> assertTrue(json.contains("same-tenant")))
             .thenCancel().verify();
         assertEquals(1, registry.onlineUsers());
+    }
+
+    @Test
+    void disconnectTenantShouldCompleteOnlyTargetTenantConnections() {
+        WsSessionRegistry registry = registry();
+        Sinks.Many<String> userA = TenantContext.callWith(
+            "tenant-a", () -> registry.registerUser("U1"));
+        Sinks.Many<String> agentA = TenantContext.callWith(
+            "tenant-a", () -> registry.registerAgent("A1"));
+        TenantContext.callWith("tenant-b", () -> registry.registerUser("U1"));
+
+        StepVerifier.create(userA.asFlux())
+            .then(() -> registry.disconnectTenant("tenant-a"))
+            .verifyComplete();
+        StepVerifier.create(agentA.asFlux()).verifyComplete();
+
+        assertEquals(1, registry.onlineUsers());
+        assertEquals(0, registry.onlineAgents());
+        TenantContext.runWith("tenant-b", () ->
+            assertTrue(registry.pushToUser("U1", WsFrame.system("still-connected"))));
+    }
+
+    @Test
+    void restrictedTenantShouldRejectRegistrationUntilActiveSnapshotAllowsIt() {
+        WsSessionRegistry registry = registry();
+        registry.disconnectTenant("tenant-a");
+
+        Sinks.Many<String> rejected = TenantContext.callWith(
+            "tenant-a", () -> registry.registerUser("U1"));
+        StepVerifier.create(rejected.asFlux()).verifyComplete();
+        assertEquals(0, registry.onlineUsers());
+        assertTrue(registry.isTenantRestricted("tenant-a"));
+
+        registry.allowTenant("TENANT-A");
+        TenantContext.callWith("tenant-a", () -> registry.registerUser("U1"));
+        assertEquals(1, registry.onlineUsers());
+        assertFalse(registry.isTenantRestricted("tenant-a"));
+    }
+
+    @Test
+    void epochChangeShouldDisconnectExistingSessionsWithoutPermanentlyRestrictingTenant() {
+        WsSessionRegistry registry = registry();
+        Sinks.Many<String> oldSession = TenantContext.callWith(
+            "tenant-a", () -> registry.registerUser("U1"));
+
+        registry.disconnectTenantSessionsForEpochChange("tenant-a");
+
+        StepVerifier.create(oldSession.asFlux()).verifyComplete();
+        assertFalse(registry.isTenantRestricted("tenant-a"));
+        TenantContext.runWith("tenant-a", () -> registry.registerUser("U1"));
+        assertEquals(1, registry.onlineUsers());
+    }
+
+    @Test
+    void concurrentUserRegistrationAndDisconnectShouldNeverLeaveEscapedSession() throws Exception {
+        assertConcurrentRegistrationClosed(true);
+    }
+
+    @Test
+    void concurrentAgentRegistrationAndDisconnectShouldNeverLeaveEscapedSession() throws Exception {
+        assertConcurrentRegistrationClosed(false);
+    }
+
+    private void assertConcurrentRegistrationClosed(boolean user) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            for (int round = 0; round < 100; round++) {
+                WsSessionRegistry registry = registry();
+                CyclicBarrier barrier = new CyclicBarrier(2);
+                String connectionId = (user ? "U" : "A") + round;
+                Future<Sinks.Many<String>> registration = executor.submit(() -> {
+                    barrier.await(5, TimeUnit.SECONDS);
+                    return TenantContext.callWith("tenant-a", () -> user
+                        ? registry.registerUser(connectionId)
+                        : registry.registerAgent(connectionId));
+                });
+                Future<?> disconnect = executor.submit(() -> {
+                    barrier.await(5, TimeUnit.SECONDS);
+                    registry.disconnectTenant("tenant-a");
+                    return null;
+                });
+
+                Sinks.Many<String> sink = registration.get(5, TimeUnit.SECONDS);
+                disconnect.get(5, TimeUnit.SECONDS);
+
+                assertTrue(registry.isTenantRestricted("tenant-a"));
+                assertEquals(0, user ? registry.onlineUsers() : registry.onlineAgents());
+                StepVerifier.create(sink.asFlux())
+                    .expectComplete()
+                    .verify(Duration.ofSeconds(1));
+            }
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
     }
 }

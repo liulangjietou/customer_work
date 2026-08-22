@@ -3,12 +3,15 @@ package com.richard.fyoung.customeradmin.aiconfig.channel.publish;
 import com.richard.fyoung.customeradmin.aiconfig.channel.RuntimePublishProperties;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher.PreparedRuntimeConfig;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.gate.EvalGateDecision;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.gate.EvalReleaseGateService;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.service.RuntimePublishTaskService;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 
@@ -25,13 +28,26 @@ public class RuntimePublishWorker implements DisposableBean {
     private final RuntimePublishProperties properties;
     private final RuntimePublishTaskService taskService;
     private final CustomerWorkConfigPublisher publisher;
+    private final EvalReleaseGateService gateService;
     private ThreadPoolTaskScheduler scheduler;
 
+    @Autowired
     public RuntimePublishWorker(RuntimePublishProperties properties, RuntimePublishTaskService taskService,
-                                CustomerWorkConfigPublisher publisher) {
+                                CustomerWorkConfigPublisher publisher,
+                                EvalReleaseGateService gateService) {
         this.properties = properties;
         this.taskService = taskService;
         this.publisher = publisher;
+        this.gateService = gateService;
+    }
+
+    /** 兼容不装配门禁服务的独立单测。 */
+    RuntimePublishWorker(RuntimePublishProperties properties, RuntimePublishTaskService taskService,
+                         CustomerWorkConfigPublisher publisher) {
+        this.properties = properties;
+        this.taskService = taskService;
+        this.publisher = publisher;
+        this.gateService = null;
     }
 
     @PostConstruct
@@ -66,10 +82,24 @@ public class RuntimePublishWorker implements DisposableBean {
                 attachMetadata(task, prepared);
                 taskService.attachMetadata(task);
             } else if (!Objects.equals(task.getContentHash(), prepared.contentHash())) {
-                throw new IllegalStateException("runtime config changed while an older publish task was pending");
+                taskService.markContentChangedTerminal(task);
+                log.info("runtime publish task stopped after deterministic content change, taskId={}, agentId={}",
+                    task.getId(), task.getTargetId());
+                return;
             }
-            publisher.publishPrepared(task, prepared);
-            taskService.markPublished(task);
+            if (gateService != null) {
+                EvalGateDecision decision = gateService.evaluateAndRecord(task, prepared);
+                if (!decision.allowsPublish()) {
+                    log.info("runtime publish task blocked by eval gate, taskId={}, agentId={}, reason={}",
+                        task.getId(), task.getTargetId(), decision.summary());
+                    return;
+                }
+            }
+            taskService.publishWithFencing(task, () -> publisher.publishPrepared(task, prepared));
+        } catch (RuntimePublishLeaseLostException e) {
+            // 租约已由其它 Worker 接管，不得把旧 Worker 的失败覆盖到新租约状态。
+            log.info("runtime publish task stopped after lease loss, taskId={}, agentId={}",
+                task.getId(), task.getTargetId());
         } catch (Exception e) {
             try {
                 taskService.markDeliveryFailed(task, e);

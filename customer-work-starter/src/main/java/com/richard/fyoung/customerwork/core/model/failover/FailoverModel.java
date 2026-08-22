@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.core.model.failover;
 
+import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
+
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.GenerateOptions;
@@ -67,8 +69,12 @@ public class FailoverModel implements Model {
 
     @Override
     public Flux<ChatResponse> stream(List<Msg> messages, List<ToolSchema> tools, GenerateOptions options) {
-        List<Candidate> order = selectCandidates();
-        return attemptFrom(order, 0, messages, tools, options);
+        return Flux.deferContextual(context -> {
+            List<Candidate> order = ModelRoutingContext.isFallbackPreferred(context)
+                ? selectFallbackCandidates()
+                : selectCandidates();
+            return attemptFrom(order, 0, messages, tools, options);
+        });
     }
 
     /** 从第 {@code index} 个候选开始尝试，失败则递归降级到下一个。 */
@@ -106,6 +112,21 @@ public class FailoverModel implements Model {
         return available.isEmpty() ? candidates : available;
     }
 
+    /**
+     * 配额降级只允许备用候选，不能在备用失败后偷偷回到主模型继续消耗原预算。
+     * 熔断中的备用同样不可选；没有可用备用时快速失败，由入口层返回明确的额度提示。
+     */
+    private List<Candidate> selectFallbackCandidates() {
+        List<Candidate> available = candidates.stream()
+            .skip(1)
+            .filter(candidate -> !registry.isOpen(candidate.modelId()))
+            .collect(Collectors.toList());
+        if (available.isEmpty()) {
+            throw new FallbackModelUnavailableException("no available fallback model for forced route");
+        }
+        return available;
+    }
+
     /** 标识/能力探测均委托给配置的主模型（候选列表首个）。 */
     private Model primary() {
         return candidates.get(0).model();
@@ -136,5 +157,12 @@ public class FailoverModel implements Model {
      * starter 自身按 yml 建链时用固定序号），{@code model} 为真实调用实例。
      */
     public record Candidate(Long modelId, Model model) {
+    }
+
+    /** 强制降级时没有可用备用模型。 */
+    public static class FallbackModelUnavailableException extends IllegalStateException {
+        public FallbackModelUnavailableException(String message) {
+            super(message);
+        }
     }
 }

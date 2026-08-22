@@ -4,14 +4,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
+import com.richard.fyoung.customerwork.safety.security.ModelEndpointPolicy;
+import okhttp3.Interceptor;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.http.HttpTimeoutException;
+import java.io.InterruptedIOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
@@ -23,8 +27,9 @@ import org.springframework.http.MediaType;
  * 模型连通性探活器：按厂商各自的<b>最小探活协议</b>直连一次，验证 baseUrl / apiKey / modelName 是否可用。
  *
  * <p>与 {@link com.richard.fyoung.customerwork.infra.config.ChatModelFactory}（构建长生命周期的对话模型实例）
- * 分工明确：本类只发一条固定 prompt 的短生命周期探测请求，因此用 JDK 内置 {@link HttpClient} 直连原生
- * HTTP 协议，不经过各厂商 SDK、也不引入额外 HTTP 客户端依赖。</p>
+ * 分工明确：本类只发一条固定 prompt 的短生命周期探测请求，不经过各厂商 SDK。HTTP 客户端的 DNS
+ * 解析由 {@link ModelEndpointPolicy} 接管：校验后的同一组地址直接用于建连，且禁止自动重定向，避免
+ * 模型凭据经 DNS rebinding 或 3xx 跳转被带到未授权目标。</p>
  *
  * <p>支持 openai（及全部 OpenAI 兼容端点）/ dashscope / anthropic / gemini 四种协议；未知或空 provider
  * 按 OpenAI 兼容协议探活——provider 合法性由调用方收口（防御一处），本类不重复校验。</p>
@@ -45,6 +50,7 @@ public class ChatModelProber {
     private static final String TEST_PROMPT = "你好";
     private static final int TEST_MAX_TOKENS = 8;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 500;
+    private static final okhttp3.MediaType JSON_MEDIA_TYPE = okhttp3.MediaType.get(MediaType.APPLICATION_JSON_VALUE);
 
     // ---- 各厂商探活端点路径 / 专有鉴权头（通用头名走 Spring HttpHeaders）----
     private static final String OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions";
@@ -58,20 +64,44 @@ public class ChatModelProber {
     /** Anthropic Messages API 版本（原生协议必填头）。 */
     private static final String ANTHROPIC_VERSION = "2023-06-01";
 
-    private final HttpClient httpClient;
+    private final OkHttpClient httpClient;
+    private final ModelEndpointPolicy endpointPolicy;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Duration testTimeout;
 
     public ChatModelProber() {
-        this(DEFAULT_TEST_TIMEOUT);
+        this(DEFAULT_TEST_TIMEOUT, new ModelEndpointPolicy(List::of));
+    }
+
+    public ChatModelProber(ModelEndpointPolicy endpointPolicy) {
+        this(DEFAULT_TEST_TIMEOUT, endpointPolicy);
     }
 
     /** @param testTimeout 单次探测超时（单测注入短超时，避免真实等待默认 8s） */
     public ChatModelProber(Duration testTimeout) {
+        this(testTimeout, new ModelEndpointPolicy(List::of));
+    }
+
+    public ChatModelProber(Duration testTimeout, ModelEndpointPolicy endpointPolicy) {
+        this(testTimeout, endpointPolicy, null);
+    }
+
+    /** 包内测试构造：通过拦截器离线验证请求契约，不放宽生产端点策略。 */
+    ChatModelProber(Duration testTimeout, ModelEndpointPolicy endpointPolicy, Interceptor interceptor) {
         this.testTimeout = testTimeout;
-        this.httpClient = HttpClient.newBuilder()
+        this.endpointPolicy = endpointPolicy;
+        OkHttpClient.Builder builder = new OkHttpClient.Builder()
             .connectTimeout(CONNECT_TIMEOUT)
-            .build();
+            .readTimeout(testTimeout)
+            .writeTimeout(testTimeout)
+            .callTimeout(testTimeout)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .dns(hostname -> endpointPolicy.resolveForConnection(hostname));
+        if (interceptor != null) {
+            builder.addInterceptor(interceptor);
+        }
+        this.httpClient = builder.build();
     }
 
     /**
@@ -81,13 +111,17 @@ public class ChatModelProber {
     public ProbeResult probe(String provider, String baseUrl, String apiKey, String modelName) {
         String normalized = provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
         try {
-            HttpRequest request = buildProbeRequest(normalized, baseUrl, apiKey, modelName);
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (isSuccessStatus(response.statusCode()) && hasValidResponseStructure(normalized, response.body())) {
-                return new ProbeResult(true, null);
+            String normalizedBaseUrl = endpointPolicy.validateAndNormalizeBaseUrl(baseUrl);
+            Request request = buildProbeRequest(normalized, normalizedBaseUrl, apiKey, modelName);
+            try (Response response = httpClient.newCall(request).execute()) {
+                ResponseBody responseBody = response.body();
+                String body = responseBody == null ? "" : responseBody.string();
+                if (isSuccessStatus(response.code()) && hasValidResponseStructure(normalized, body)) {
+                    return new ProbeResult(true, null);
+                }
+                return new ProbeResult(false, "HTTP " + response.code() + ": " + truncate(body));
             }
-            return new ProbeResult(false, "HTTP " + response.statusCode() + ": " + truncate(response.body()));
-        } catch (HttpTimeoutException e) {
+        } catch (InterruptedIOException e) {
             log.error("model connectivity test timeout, code={}, provider={}", CODE_PROBE_TIMEOUT, normalized, e);
             return new ProbeResult(false, "连通性测试超时（>" + testTimeout.getSeconds() + "s）");
         } catch (Exception e) {
@@ -98,7 +132,7 @@ public class ChatModelProber {
 
     // ==================== 各厂商探活请求构建 ====================
 
-    private HttpRequest buildProbeRequest(String provider, String baseUrl, String apiKey, String modelName)
+    private Request buildProbeRequest(String provider, String baseUrl, String apiKey, String modelName)
             throws Exception {
         switch (provider) {
             case ModelProviders.DASHSCOPE:
@@ -113,7 +147,7 @@ public class ChatModelProber {
     }
 
     /** OpenAI 兼容：POST {base}/chat/completions，Bearer 鉴权，成功响应含 choices 数组。 */
-    private HttpRequest openAiProbe(String baseUrl, String apiKey, String modelName) throws Exception {
+    private Request openAiProbe(String baseUrl, String apiKey, String modelName) throws Exception {
         String body = mapper.writeValueAsString(Map.of(
             "model", modelName,
             "messages", List.of(Map.of("role", "user", "content", TEST_PROMPT)),
@@ -124,7 +158,7 @@ public class ChatModelProber {
     }
 
     /** 百炼 DashScope 原生：POST {base}/api/v1/.../generation，Bearer 鉴权，成功响应含 output 对象。 */
-    private HttpRequest dashScopeProbe(String baseUrl, String apiKey, String modelName) throws Exception {
+    private Request dashScopeProbe(String baseUrl, String apiKey, String modelName) throws Exception {
         String body = mapper.writeValueAsString(Map.of(
             "model", modelName,
             "input", Map.of("messages", List.of(Map.of("role", "user", "content", TEST_PROMPT))),
@@ -135,7 +169,7 @@ public class ChatModelProber {
     }
 
     /** Anthropic 原生：POST {base}/v1/messages，x-api-key + anthropic-version 鉴权，成功响应含 content 数组。 */
-    private HttpRequest anthropicProbe(String baseUrl, String apiKey, String modelName) throws Exception {
+    private Request anthropicProbe(String baseUrl, String apiKey, String modelName) throws Exception {
         String body = mapper.writeValueAsString(Map.of(
             "model", modelName,
             "max_tokens", TEST_MAX_TOKENS,
@@ -151,22 +185,21 @@ public class ChatModelProber {
      * （官方支持的头式鉴权；不用 ?key= 查询串，避免 key 出现在 URL 里被异常信息/日志带出），
      * 成功响应含 candidates 数组。
      */
-    private HttpRequest geminiProbe(String baseUrl, String apiKey, String modelName) throws Exception {
+    private Request geminiProbe(String baseUrl, String apiKey, String modelName) throws Exception {
         String body = mapper.writeValueAsString(Map.of(
             "contents", List.of(Map.of("parts", List.of(Map.of("text", TEST_PROMPT))))));
-        String path = String.format(GEMINI_GENERATE_CONTENT_PATH_TEMPLATE, modelName);
+        String path = String.format(GEMINI_GENERATE_CONTENT_PATH_TEMPLATE, encodePathSegment(modelName));
         return baseRequest(appendPath(baseUrl, path), body)
             .header(HEADER_GEMINI_API_KEY, apiKey)
             .build();
     }
 
     /** 公共请求骨架：JSON POST + 超时。鉴权头由各厂商分支追加。 */
-    private HttpRequest.Builder baseRequest(String url, String body) {
-        return HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(testTimeout)
+    private Request.Builder baseRequest(String url, String body) {
+        return new Request.Builder()
+            .url(url)
             .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-            .POST(HttpRequest.BodyPublishers.ofString(body));
+            .post(RequestBody.create(body, JSON_MEDIA_TYPE));
     }
 
     // ==================== 各厂商成功响应结构校验 ====================
@@ -202,11 +235,40 @@ public class ChatModelProber {
         return trimmed.endsWith(path) ? trimmed : trimmed + path;
     }
 
+    /** RFC 3986 path segment：只保留 unreserved 字符，其余按 UTF-8 百分号编码。 */
+    private String encodePathSegment(String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        StringBuilder encoded = new StringBuilder(bytes.length);
+        for (byte valueByte : bytes) {
+            int unsigned = valueByte & 0xff;
+            char character = (char) unsigned;
+            if (character >= 'a' && character <= 'z'
+                || character >= 'A' && character <= 'Z'
+                || character >= '0' && character <= '9'
+                || character == '-' || character == '.' || character == '_' || character == '~') {
+                encoded.append(character);
+            } else {
+                encoded.append('%');
+                String hex = Integer.toHexString(unsigned).toUpperCase(Locale.ROOT);
+                if (hex.length() == 1) {
+                    encoded.append('0');
+                }
+                encoded.append(hex);
+            }
+        }
+        return encoded.toString();
+    }
+
     private String truncate(String text) {
         if (text == null) {
             return "unknown error";
         }
         return text.length() > MAX_ERROR_MESSAGE_LENGTH ? text.substring(0, MAX_ERROR_MESSAGE_LENGTH) + "..." : text;
+    }
+
+    /** 测试与安全审计可见：两个方向的自动重定向都必须保持关闭。 */
+    boolean followsRedirects() {
+        return httpClient.followRedirects() || httpClient.followSslRedirects();
     }
 
     /**

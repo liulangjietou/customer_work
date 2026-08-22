@@ -11,9 +11,11 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link AdminOpenApiClient} 的 SSE 聚合与会话解析测试。
@@ -72,7 +74,7 @@ class AdminOpenApiClientSseTest {
         server.start();
 
         AdminOpenApiClient client = new AdminOpenApiClient(baseUrl, "tok");
-        String answer = client.chat("agentX", "s1", "hi", 10);
+        String answer = client.chat("agentX", "s1", "hi", "dingtalk", "ak1", 10);
 
         assertEquals("你好世界", answer);
     }
@@ -91,7 +93,7 @@ class AdminOpenApiClientSseTest {
         server.start();
 
         AdminOpenApiClient client = new AdminOpenApiClient(baseUrl, "tok");
-        String answer = client.chat("agentX", "s1", "hi", 10);
+        String answer = client.chat("agentX", "s1", "hi", "dingtalk", "ak1", 10);
 
         assertEquals("第一行\n第二行", answer);
     }
@@ -108,7 +110,30 @@ class AdminOpenApiClientSseTest {
 
         AdminOpenApiClient client = new AdminOpenApiClient(baseUrl, "tok");
 
-        assertThrows(Exception.class, () -> client.chat("agentX", "s1", "hi", 10));
+        assertThrows(Exception.class,
+            () -> client.chat("agentX", "s1", "hi", "dingtalk", "ak1", 10));
+    }
+
+    @Test
+    void shouldSendExactChannelBindingFactsInChatBody() {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        server.createContext("/api/open/agents/agentX/chat", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] bytes = ("event: done\n" + "data: [DONE]\n\n").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+        });
+        server.start();
+
+        AdminOpenApiClient client = new AdminOpenApiClient(baseUrl, "tok");
+        client.chat("agentX", "s1", "hi", "dingtalk", "ak1", 10);
+
+        String body = requestBody.get();
+        assertTrue(body.contains("\"channelType\":\"dingtalk\""));
+        assertTrue(body.contains("\"appKey\":\"ak1\""));
     }
 
     @Test

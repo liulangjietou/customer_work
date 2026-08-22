@@ -20,6 +20,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -30,6 +32,8 @@ import static org.mockito.Mockito.when;
 class OpenAgentChatControllerTest {
 
     private static final String AGENT = "agent-x";
+    private static final String CHANNEL = "dingtalk";
+    private static final String APP_KEY = "app-key-1";
 
     private ChatService chatService;
     private OpenChannelService openChannelService;
@@ -44,11 +48,11 @@ class OpenAgentChatControllerTest {
 
     @Test
     void messageDataShouldBeJsonStringLiteralWithEscapedNewline() {
-        when(chatService.chatStream(eq(AGENT), any(), any()))
+        when(chatService.chatStreamForChannel(eq(AGENT), any(), any(), eq(CHANNEL)))
             .thenReturn(Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "a\nb")));
 
         List<ServerSentEvent<String>> events =
-            controller.chat(AGENT, new OpenChatRequest("s1", "hi")).collectList().block();
+            controller.chat(AGENT, request()).collectList().block();
 
         assertEquals(2, events.size());
         assertEquals("message", events.get(0).event());
@@ -56,28 +60,31 @@ class OpenAgentChatControllerTest {
         assertEquals("\"a\\nb\"", events.get(0).data());
         assertEquals("done", events.get(1).event());
         assertEquals("[DONE]", events.get(1).data());
+        verify(openChannelService).requireAgentBound(AGENT, CHANNEL, APP_KEY);
     }
 
     @Test
     void errorDataShouldBeJsonStringLiteral() {
-        doThrow(new RuntimeException("boom")).when(openChannelService).requireAgentBound(AGENT);
+        doThrow(new RuntimeException("boom")).when(openChannelService)
+            .requireAgentBound(AGENT, CHANNEL, APP_KEY);
 
         List<ServerSentEvent<String>> events =
-            controller.chat(AGENT, new OpenChatRequest("s1", "hi")).collectList().block();
+            controller.chat(AGENT, request()).collectList().block();
 
         assertEquals(1, events.size());
         assertEquals("error", events.get(0).event());
         assertEquals("\"boom\"", events.get(0).data());
+        verify(chatService, never()).chatStreamForChannel(any(), any(), any(), any());
     }
 
     @Test
     void shouldCarryCapturedTenantIntoDeferredChatSubscription() {
         TenantContext.set("tenant-a");
-        when(chatService.chatStream(eq(AGENT), any(), any()))
+        when(chatService.chatStreamForChannel(eq(AGENT), any(), any(), eq(CHANNEL)))
             .thenReturn(Flux.deferContextual(context -> Flux.just(
                 new ChatStreamChunk(ChatNodeKind.ANSWER, tenantFrom(context)))));
 
-        Flux<ServerSentEvent<String>> result = controller.chat(AGENT, new OpenChatRequest("s1", "hi"));
+        Flux<ServerSentEvent<String>> result = controller.chat(AGENT, request());
         TenantContext.clear();
         List<ServerSentEvent<String>> events = result.collectList().block();
 
@@ -86,5 +93,9 @@ class OpenAgentChatControllerTest {
 
     private String tenantFrom(ContextView context) {
         return context.get(TenantContextThreadLocalAccessor.KEY);
+    }
+
+    private OpenChatRequest request() {
+        return new OpenChatRequest("s1", "hi", CHANNEL, APP_KEY);
     }
 }

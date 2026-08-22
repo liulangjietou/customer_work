@@ -23,8 +23,8 @@ import java.util.List;
  * {@code customer-work.memory.recall-scan-limit} 控制——不设上限的话，长期积累的分区会把整表拉进内存。
  * 真正的语义召回请切 {@code memory.provider=bailian/mem0/reme}。</p>
  *
- * <p>全部方法失败只记 error 不抛异常：长期记忆是增强能力，DB 抖动不该打断对话主链路
- * （读失败退化为"没召回到记忆"，写失败退化为"这条没记住"）。</p>
+ * <p>对话链路的方法失败只记 error 不抛异常：长期记忆是增强能力，DB 抖动不该打断对话主链路。
+ * 隐私治理使用的 {@link #erase(String)} 例外：删除失败必须抛出，不能给主体虚假的删除成功响应。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisLongTermMemoryStore implements LongTermMemoryStore {
@@ -71,6 +71,12 @@ public class MybatisLongTermMemoryStore implements LongTermMemoryStore {
     }
 
     @Override
+    public List<String> list(String scopeId, int limit) {
+        // 数据主体访问链路必须暴露真实失败，不能把数据库故障伪装成“没有记忆”。
+        return mapper.selectRecentFacts(scopeId, Math.max(1, limit));
+    }
+
+    @Override
     public void clear(String scopeId) {
         try {
             mapper.delete(new LambdaQueryWrapper<LongTermMemoryDO>().eq(LongTermMemoryDO::getScopeId, scopeId));
@@ -78,6 +84,11 @@ public class MybatisLongTermMemoryStore implements LongTermMemoryStore {
             log.error("[MybatisLongTermMemoryStore] clear failed, errorCode={}, scopeId={}",
                 "LTM-STORE-CLEAR-FAIL", scopeId, e);
         }
+    }
+
+    @Override
+    public void erase(String scopeId) {
+        mapper.delete(new LambdaQueryWrapper<LongTermMemoryDO>().eq(LongTermMemoryDO::getScopeId, scopeId));
     }
 
     @Override

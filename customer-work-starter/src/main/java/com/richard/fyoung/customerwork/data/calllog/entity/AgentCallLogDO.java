@@ -44,6 +44,20 @@ public class AgentCallLogDO {
     private Long cachedTokens;
     /** 各 MODEL 段模型自报耗时之和（毫秒），与实测 modelMs 之差即网络/排队开销。 */
     private Long modelReportedMs;
+    /** W3C trace-id，关联 OTel/Tempo。 */
+    private String traceId;
+    /** 当前实例真正应用成功的运行配置发布修订。 */
+    private String runtimeRevision;
+    /** 与发布任务/实例 ACK 一致的业务配置摘要。 */
+    private String runtimeContentHash;
+    /** 模型、提示词、Agent、知识库、工具版本绑定 JSON（不含密钥）。 */
+    private String versionBindingJson;
+    /** 实际在线实验曝光；未参与实验时均为空。 */
+    private Long experimentId;
+    private Integer experimentRevision;
+    private String experimentArm;
+    private Long experimentDeploymentId;
+    private Integer experimentBucket;
     private Boolean success;
     private String errorMsg;
 }

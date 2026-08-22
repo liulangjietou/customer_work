@@ -10,12 +10,12 @@ import {
 } from '@/api/config-version'
 import { listTenantOptions, type TenantVO } from '@/api/tenant'
 
-// 配置版本：看历史、比两版差异、回滚、灰度发布。
-// 回滚产生新版本而不是删后续版本——发布历史只增不删，任何时刻都能回答"当时线上是哪一版"。
+// 配置版本：看历史、比两版差异、安全回滚、按租户安全灰度。
+// 历史只提供提示词/maxIters 补丁；目标模型、凭据、MCP、路由和实验始终取当前权威配置。
 
-const STATUS_LABELS: Record<string, { text: string; type: 'success' | 'info' | 'danger' }> = {
-  PUBLISHED: { text: '生效中', type: 'success' },
-  SUPERSEDED: { text: '已被取代', type: 'info' },
+const STATUS_LABELS: Record<string, { text: string; type: 'success' | 'info' | 'danger' | 'warning' }> = {
+  PUBLISHED: { text: '已投递，待实例确认', type: 'warning' },
+  SUPERSEDED: { text: '已有后续投递', type: 'info' },
   FAILED: { text: '发布失败', type: 'danger' },
 }
 
@@ -57,7 +57,7 @@ async function openDiff() {
     ElMessage.warning('请勾选两个版本进行对比')
     return
   }
-  // 列表不返回 content（快照可能几十 KB），对比时才按需拉详情
+  // 列表不返回 content；对比时按需拉取服务端结构化脱敏后的快照。
   const [a, b] = selected.value
   const [left, right] = await Promise.all([getVersion(a.id), getVersion(b.id)])
   // 版本号小的放左边，读起来才是"从旧到新"
@@ -88,12 +88,14 @@ const changedCount = computed(() => diffRows.value.filter((r) => r.changed).leng
 
 async function handleRollback(row: ConfigVersionVO) {
   const { value } = await ElMessageBox.prompt(
-    `将把 v${row.version} 的内容作为一个新版本重新下发（不会删除现有版本）。请填写回滚原因：`,
+    `将只提取 v${row.version} 的提示词和最大迭代次数；模型、凭据、MCP、路由与实验使用当前配置。请填写回滚原因：`,
     `回滚到 v${row.version}`,
-    { inputPlaceholder: '如：v5 的提示词导致答非所问', confirmButtonText: '确认回滚', type: 'warning' },
+    { inputPlaceholder: '如：v5 的提示词导致答非所问', confirmButtonText: '创建安全回滚任务', type: 'warning' },
   )
-  const newVersion = await rollbackVersion(row.id, value)
-  ElMessage.success(`已回滚，新版本 v${newVersion}`)
+  const operation = await rollbackVersion(row.id, value)
+  ElMessage.success(
+    `安全回滚任务已入队（${operation.tasks.length} 个，${operation.status}），实例 ACK APPLIED 后生效`,
+  )
   await loadList()
 }
 
@@ -116,8 +118,10 @@ async function submitGray() {
     ElMessage.warning('请至少选择一个租户')
     return
   }
-  const count = await grayRelease(grayTarget.value.id, grayForm.tenantCodes, grayForm.remark)
-  ElMessage.success(`灰度发布完成，已下发 ${count} 个租户`)
+  const operation = await grayRelease(grayTarget.value.id, grayForm.tenantCodes, grayForm.remark)
+  ElMessage.success(
+    `安全灰度任务已整批入队（${operation.tasks.length} 个，${operation.status}），实例 ACK APPLIED 后生效`,
+  )
   grayVisible.value = false
   await loadList()
 }
@@ -224,8 +228,8 @@ onMounted(async () => {
       />
 
       <div class="tip">
-        回滚会产生一个<b>新版本</b>（内容取自目标版本），不会删除现有版本——发布历史只增不删，
-        任何时刻都能回答"当时线上跑的是哪一版"，回滚本身也可被再回滚。
+        安全回滚不会重放历史模型密文、MCP 请求头、路由或实验盐，只回退提示词和最大迭代次数。
+        操作先进入可靠任务并经过评测门禁；“已投递”不代表已生效，只有实例 ACK APPLIED 才算完成。
       </div>
     </el-card>
 
@@ -258,7 +262,7 @@ onMounted(async () => {
             />
           </el-select>
           <div class="form-tip">
-            只有名单内的租户会收到这一版，其余租户继续用当前全量版本。
+            每个租户都会使用自己的当前模型与凭据重组候选。任一租户预校验失败时整批不创建任务。
           </div>
         </el-form-item>
         <el-form-item label="发布说明">
@@ -267,7 +271,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="grayVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitGray">确认灰度</el-button>
+        <el-button type="primary" @click="submitGray">创建安全灰度任务</el-button>
       </template>
     </el-dialog>
   </div>

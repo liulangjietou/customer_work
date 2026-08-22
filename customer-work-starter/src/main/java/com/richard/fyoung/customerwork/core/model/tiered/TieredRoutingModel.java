@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.core.model.tiered;
 
+import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
+
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.GenerateOptions;
@@ -55,23 +57,28 @@ public class TieredRoutingModel implements Model {
 
     @Override
     public Flux<ChatResponse> stream(List<Msg> messages, List<ToolSchema> tools, GenerateOptions options) {
-        if (policy.decide(messages) == ModelTier.STANDARD) {
-            standardCount.incrementAndGet();
-            return standard.stream(messages, tools, options);
-        }
-        economyCount.incrementAndGet();
-        AtomicBoolean emitted = new AtomicBoolean(false);
-        return economy.stream(messages, tools, options)
-            .doOnNext(response -> emitted.set(true))
-            .onErrorResume(error -> {
-                if (emitted.get()) {
-                    // 已经上屏的内容后面再接主模型的完整回答，用户看到的是错乱的两段
-                    return Flux.error(error);
-                }
-                log.error("economy tier failed before first chunk, falling back to standard, code={}",
-                    CODE_ECONOMY_FAIL, error);
+        return Flux.deferContextual(context -> {
+            // 强制备用指令必须先穿过分级路由，交给 standard 内部的 FailoverModel 处理；
+            // 否则简单问题会被经济档截走，DEGRADE 名义生效、实际却没有走备用候选。
+            if (ModelRoutingContext.isFallbackPreferred(context)
+                || policy.decide(messages) == ModelTier.STANDARD) {
+                standardCount.incrementAndGet();
                 return standard.stream(messages, tools, options);
-            });
+            }
+            economyCount.incrementAndGet();
+            AtomicBoolean emitted = new AtomicBoolean(false);
+            return economy.stream(messages, tools, options)
+                .doOnNext(response -> emitted.set(true))
+                .onErrorResume(error -> {
+                    if (emitted.get()) {
+                        // 已经上屏的内容后面再接主模型的完整回答，用户看到的是错乱的两段
+                        return Flux.error(error);
+                    }
+                    log.error("economy tier failed before first chunk, falling back to standard, code={}",
+                        CODE_ECONOMY_FAIL, error);
+                    return standard.stream(messages, tools, options);
+                });
+        });
     }
 
     /** 对外报主模型名：调用方感知到的是"这套系统用的是什么模型"，档位是内部优化。 */

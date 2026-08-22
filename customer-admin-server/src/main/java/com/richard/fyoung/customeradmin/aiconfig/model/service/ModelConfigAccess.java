@@ -2,11 +2,15 @@ package com.richard.fyoung.customeradmin.aiconfig.model.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
+import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelCertification;
+import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelDeploymentLifecycle;
+import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelCertificationMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelConfigMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
+import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +23,8 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.time.LocalDateTime;
+import java.util.Objects;
 
 /**
  * 模型配置运行时读取入口。
@@ -41,15 +47,27 @@ public class ModelConfigAccess {
     private static final int DEFAULT_MODEL = 1;
 
     private final AiModelConfigMapper modelConfigMapper;
+    private final AiModelCertificationMapper certificationMapper;
     private final AdminTenantProperties tenantProperties;
 
-    public ModelConfigAccess(AiModelConfigMapper modelConfigMapper, AdminTenantProperties tenantProperties) {
+    public ModelConfigAccess(AiModelConfigMapper modelConfigMapper,
+                             AiModelCertificationMapper certificationMapper,
+                             AdminTenantProperties tenantProperties) {
         this.modelConfigMapper = modelConfigMapper;
+        this.certificationMapper = certificationMapper;
         this.tenantProperties = tenantProperties;
     }
 
-    /** 按 ID 读取当前租户可见的模型；不可见与不存在统一返回 {@code null}，避免泄漏资源归属。 */
+    /**
+     * 按 ID 读取当前租户可运行的部署。新部署还必须持有未过期且未漂移的认证；存量行按迁移兼容位放行。
+     */
     public AiModelConfig findVisibleById(Long modelId) {
+        AiModelConfig model = findVisibleAnyStateById(modelId);
+        return runnable(model) ? model : null;
+    }
+
+    /** 管理面、健康与认证读取任意生命周期的可见部署，不作为运行时建模入口。 */
+    public AiModelConfig findVisibleAnyStateById(Long modelId) {
         if (modelId == null) {
             return null;
         }
@@ -68,7 +86,7 @@ public class ModelConfigAccess {
         LambdaQueryWrapper<AiModelConfig> wrapper = new LambdaQueryWrapper<AiModelConfig>()
             .in(AiModelConfig::getId, distinctIds);
         applyVisibleScope(wrapper, currentTenant());
-        return modelConfigMapper.selectList(wrapper);
+        return modelConfigMapper.selectList(wrapper).stream().filter(this::runnable).toList();
     }
 
     /**
@@ -84,7 +102,8 @@ public class ModelConfigAccess {
             wrapper.eq(AiModelConfig::getProvider, provider);
         }
         applyVisibleScope(wrapper, tenant);
-        List<AiModelConfig> models = new ArrayList<>(modelConfigMapper.selectList(wrapper));
+        List<AiModelConfig> models = modelConfigMapper.selectList(wrapper).stream()
+            .filter(this::runnable).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         models.sort(Comparator
             .comparingInt((AiModelConfig model) -> tenantPriority(model, tenant))
             .thenComparingInt(this::defaultPriority)
@@ -125,5 +144,25 @@ public class ModelConfigAccess {
 
     private int defaultPriority(AiModelConfig model) {
         return Integer.valueOf(DEFAULT_MODEL).equals(model.getIsDefault()) ? 0 : 1;
+    }
+
+    private boolean runnable(AiModelConfig model) {
+        if (model == null
+            || !Integer.valueOf(StatusFlags.ENABLED).equals(model.getStatus())
+            || !ModelDeploymentLifecycle.ACTIVE.name().equals(model.getLifecycleStatus())) {
+            return false;
+        }
+        if (!Integer.valueOf(1).equals(model.getCertificationRequired())) {
+            return true;
+        }
+        AiModelCertification certification = CrossTenantOperations.execute(() -> certificationMapper.selectOne(
+            new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiModelCertification>()
+                .eq("model_config_id", model.getId())
+                .eq("tenant_id", model.getTenantId())));
+        return certification != null
+            && "PASSED".equals(certification.getStatus())
+            && Objects.equals(model.getEndpointRevision(), certification.getCertifiedEndpointRevision())
+            && certification.getValidUntil() != null
+            && certification.getValidUntil().isAfter(LocalDateTime.now());
     }
 }

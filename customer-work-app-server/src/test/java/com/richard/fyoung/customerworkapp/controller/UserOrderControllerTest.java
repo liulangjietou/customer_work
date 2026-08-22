@@ -4,7 +4,6 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao.OrderView;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao.OwnedOrder;
-import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +23,8 @@ import static org.mockito.Mockito.when;
  * @author owlzhangfq@gmail.com
  */
 @WebFluxTest(UserOrderController.class)
-@Import({CustomerWorkProperties.class, UserJwtService.class, UserAuthWebFilter.class})
+@Import({CustomerWorkProperties.class, UserJwtService.class,
+    ControllerSecurityTestConfiguration.UserAuth.class})
 class UserOrderControllerTest {
 
     private static final String USER_ID = "U1";

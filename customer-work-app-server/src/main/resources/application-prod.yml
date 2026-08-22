@@ -51,8 +51,23 @@ customer-work:
     counter-mode: redis
     session-lock-mode: redis
 
+  # 控制面实时停用门禁：生产默认开启。非 default 租户缺失或过期快照时拒绝新请求。
+  nacos:
+    tenant-access-enabled: ${CW_TENANT_ACCESS_ENABLED:true}
+    tenant-access-data-id: ${CW_TENANT_ACCESS_DATA_ID:customer-work-tenant-access}
+    tenant-access-refresh-interval-ms: ${CW_TENANT_ACCESS_REFRESH_INTERVAL_MS:5000}
+    tenant-access-max-staleness-ms: ${CW_TENANT_ACCESS_MAX_STALENESS_MS:30000}
+
   memory:
     provider: ${MEMORY_PROVIDER:memory}
+    store-mode: jdbc
+    consent-required: true
+    consent-store-mode: jdbc
+    retention-cleanup-enabled: true
+    retention-days: ${MEMORY_RETENTION_DAYS:180}
+    withdrawn-consent-retention-days: ${MEMORY_CONSENT_RETENTION_DAYS:2555}
+    retention-cleanup-interval-ms: ${MEMORY_RETENTION_CLEANUP_INTERVAL_MS:3600000}
+    retention-cleanup-batch-size: ${MEMORY_RETENTION_CLEANUP_BATCH_SIZE:1000}
 
   rag:
     provider: ${RAG_PROVIDER:memory}
@@ -118,6 +133,11 @@ customer-work:
   feedback:
     store-mode: jdbc
 
+  # 在线实验护栏、SLO 与成本归因依赖真实调用日志，生产禁止退回进程内存。
+  call-log:
+    enabled: true
+    store-mode: jdbc
+
   # ------------------------------------------------------------------
   # 模型私有化兜底：生产开启，使用自研 FailoverModel（starter 下沉版，主备有序候选 + 熔断记忆）
   # 框架内置的 ReActAgent.Builder.fallbackModel(...) 存在已知缺陷（#1850），生产不采用；
@@ -125,6 +145,9 @@ customer-work:
   # ------------------------------------------------------------------
   model:
     api-key: ${DASHSCOPE_API_KEY:}
+    egress:
+      # 必须列全公网厂商与企业私网模型 host；运行时载荷不能修改该信任边界。
+      allowed-hosts: ${CUSTOMER_WORK_MODEL_EGRESS_ALLOWED_HOSTS:}
     fallback:
       enabled: true
       provider: ${MODEL_FALLBACK_PROVIDER:ollama}

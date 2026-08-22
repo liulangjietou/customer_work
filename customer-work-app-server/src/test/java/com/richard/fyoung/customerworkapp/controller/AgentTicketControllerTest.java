@@ -8,7 +8,6 @@ import com.richard.fyoung.customerwork.data.ticket.Ticket;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
 import com.richard.fyoung.customerwork.data.ticket.TicketService;
-import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +32,7 @@ import static org.mockito.Mockito.when;
  * @author owlzhangfq@gmail.com
  */
 @WebFluxTest(AgentTicketController.class)
-@Import({AgentAuthWebFilter.class, AgentTicketControllerTest.Cfg.class})
+@Import({ControllerSecurityTestConfiguration.AgentAuth.class, AgentTicketControllerTest.Cfg.class})
 class AgentTicketControllerTest {
 
     private static final String SECRET = "agent-ctl-secret";

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.tenant.access.mapper.TenantAccessPublishTaskMapper">
+
+    <update id="supersedePending">
+        UPDATE sys_tenant_access_publish_task
+        SET status = 'SUPERSEDED', updated_at_ms = #{nowMs}
+        WHERE tenant_id = #{tenantId} AND status = 'PENDING'
+    </update>
+
+    <select id="findDueCandidates"
+            resultType="com.richard.fyoung.customeradmin.tenant.access.entity.TenantAccessPublishTask">
+        SELECT task.*
+        FROM sys_tenant_access_publish_task task
+        WHERE ((task.status = 'PENDING' AND task.next_attempt_at_ms &lt;= #{nowMs})
+            OR (task.status = 'PROCESSING' AND task.lease_until_ms &lt; #{nowMs}))
+          AND NOT EXISTS (
+              SELECT 1 FROM sys_tenant_access_publish_task active
+              WHERE active.tenant_id = task.tenant_id
+                AND active.status = 'PROCESSING'
+                AND active.lease_until_ms &gt;= #{nowMs}
+                AND active.id &lt;&gt; task.id
+          )
+        ORDER BY task.seq ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="claim">
+        UPDATE sys_tenant_access_publish_task
+        SET status = 'PROCESSING', active_lease_key = #{tenantId}, lease_owner = #{owner},
+            lease_until_ms = #{leaseUntilMs}, updated_at_ms = #{nowMs}
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+          AND ((status = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
+            OR (status = 'PROCESSING' AND lease_until_ms &lt; #{nowMs}))
+    </update>
+
+    <update id="markPublished">
+        UPDATE sys_tenant_access_publish_task
+        SET status = 'PUBLISHED', active_lease_key = NULL, lease_owner = NULL, lease_until_ms = 0,
+            last_error = NULL, published_at_ms = #{nowMs}, updated_at_ms = #{nowMs}
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
+
+    <update id="markDeliveryFailed">
+        UPDATE sys_tenant_access_publish_task
+        SET status = #{status}, attempts = #{attempts}, next_attempt_at_ms = #{nextAttemptAtMs},
+            active_lease_key = NULL, lease_owner = NULL, lease_until_ms = 0,
+            last_error = #{error}, updated_at_ms = #{nowMs}
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
+
+    <select id="countNewerTasks" resultType="int">
+        SELECT COUNT(*) FROM sys_tenant_access_publish_task
+        WHERE tenant_id = #{tenantId} AND seq &gt; #{seq}
+    </select>
+
+    <select id="findLatest"
+            resultType="com.richard.fyoung.customeradmin.tenant.access.entity.TenantAccessPublishTask">
+        SELECT * FROM sys_tenant_access_publish_task
+        WHERE tenant_id = #{tenantId}
+        ORDER BY seq DESC
+        LIMIT 1
+    </select>
+</mapper>

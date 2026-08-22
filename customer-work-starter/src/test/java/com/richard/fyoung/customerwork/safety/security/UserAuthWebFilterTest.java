@@ -2,6 +2,11 @@ package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -18,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 用户 JWT 过滤器单测：非 /user 放行、无/错 token 401、合法 token 放入主体。
@@ -28,6 +35,7 @@ class UserAuthWebFilterTest {
     @AfterEach
     void clearTenantContext() {
         TenantContext.clear();
+        QuotaSubjectContext.clear();
     }
 
     private UserJwtService jwtService() {
@@ -122,6 +130,57 @@ class UserAuthWebFilterTest {
         UserPrincipal principal = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
         assertEquals("U1", principal.userId());
         assertFalse(TenantContext.isPresent(), "请求结束必须清理租户上下文");
+    }
+
+    @Test
+    void validJwt_shouldAlwaysPropagateVerifiedUserSubjectEvenWhenQuotaGuardIsDisabled() {
+        UserJwtService jwt = jwtService();
+        TenantAccessGuard accessGuard = mock(TenantAccessGuard.class);
+        when(accessGuard.check("tenant-a", 7L, true)).thenReturn(TenantAccessDecision.allowed(7L));
+        UserAuthWebFilter filter = new UserAuthWebFilter(jwt, accessGuard);
+        String token = jwt.issue("U1", "alice", "Alice", "tenant-a", 7L);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/user/tickets")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token));
+        AtomicBoolean threadLocalSeen = new AtomicBoolean(false);
+        AtomicBoolean reactorContextSeen = new AtomicBoolean(false);
+        WebFilterChain chain = ignored -> {
+            assertEquals(QuotaSubject.user("U1"), QuotaSubjectContext.get());
+            threadLocalSeen.set(true);
+            return Mono.deferContextual(context -> {
+                assertEquals(QuotaSubject.user("U1"),
+                    context.get(QuotaSubjectContextThreadLocalAccessor.KEY));
+                reactorContextSeen.set(true);
+                return Mono.empty();
+            });
+        };
+
+        filter.filter(exchange, chain).block();
+
+        assertTrue(threadLocalSeen.get());
+        assertTrue(reactorContextSeen.get());
+        assertFalse(QuotaSubjectContext.isPresent(), "请求结束必须恢复主体上下文");
+    }
+
+    @Test
+    void revokedTenantEpoch_shouldReturnObservable401WithoutCallingChain() {
+        UserJwtService jwt = jwtService();
+        TenantAccessGuard accessGuard = mock(TenantAccessGuard.class);
+        when(accessGuard.check("tenant-a", 7L, true)).thenReturn(
+            new TenantAccessDecision(TenantAccessDecision.Kind.CREDENTIAL_REVOKED, 8L));
+        UserAuthWebFilter filter = new UserAuthWebFilter(jwt, accessGuard);
+        String token = jwt.issue("U1", "alice", "Alice", "tenant-a", 7L);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/user/tickets")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token));
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        filter.filter(exchange, recordingChain(invoked)).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+        String body = exchange.getResponse().getBodyAsString().block();
+        assertTrue(body.contains("TENANT_CREDENTIAL_REVOKED"));
     }
 
     @Test

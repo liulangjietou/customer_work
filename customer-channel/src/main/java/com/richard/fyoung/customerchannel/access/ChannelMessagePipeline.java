@@ -66,7 +66,8 @@ public class ChannelMessagePipeline implements AutoCloseable {
                 : adminClient.resolveSession(
                     message.getChannelType(), message.getAppKey(), message.getExternalUserId());
             String answer = adminClient.chat(
-                message.getAgentCode(), sessionId, text, properties.getChatTimeoutSeconds());
+                message.getAgentCode(), sessionId, text, message.getChannelType(), message.getAppKey(),
+                properties.getChatTimeoutSeconds());
             reply.send(answer);
         } catch (Exception e) {
             log.error("channel message handle failed, code={}, channelType={}, externalUserId={}",

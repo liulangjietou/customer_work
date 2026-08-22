@@ -6,7 +6,6 @@ import com.richard.fyoung.customerwork.data.ticket.Ticket;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
 import com.richard.fyoung.customerwork.data.ticket.TicketService;
-import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerworkapp.service.UserSessionGuard;
 import org.junit.jupiter.api.Test;
@@ -31,7 +30,8 @@ import static org.mockito.Mockito.when;
  * @author owlzhangfq@gmail.com
  */
 @WebFluxTest(UserTicketController.class)
-@Import({CustomerWorkProperties.class, UserJwtService.class, UserAuthWebFilter.class})
+@Import({CustomerWorkProperties.class, UserJwtService.class,
+    ControllerSecurityTestConfiguration.UserAuth.class})
 class UserTicketControllerTest {
 
     private static final String USER_ID = "U1";

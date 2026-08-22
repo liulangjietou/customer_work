@@ -6,7 +6,7 @@
     <!-- 公共列。tenant_id 由 TenantLineInnerInterceptor 自动补进 WHERE，此处不列；
          scope_id 是业务分区键，必须显式参与条件。 -->
     <sql id="columns">
-        id, scope_id, intent, question, question_vector, answer,
+        id, scope_id, config_generation, intent, question, question_vector, answer,
         hit_count, created_at_ms, last_hit_at_ms
     </sql>
 
@@ -15,6 +15,7 @@
     <select id="selectCandidates" resultType="com.richard.fyoung.customerwork.capability.semanticcache.entity.SemanticCacheDO">
         SELECT <include refid="columns"/> FROM cw_semantic_cache
         WHERE scope_id = #{scopeId}
+          AND config_generation = #{configGeneration}
           AND intent = #{intent}
           AND created_at_ms &gt;= #{notBeforeMs}
         ORDER BY last_hit_at_ms DESC
@@ -28,24 +29,35 @@
     </update>
 
     <select id="countByScope" resultType="long">
-        SELECT COUNT(*) FROM cw_semantic_cache WHERE scope_id = #{scopeId}
+        SELECT COUNT(*) FROM cw_semantic_cache
+        WHERE scope_id = #{scopeId} AND config_generation = #{configGeneration}
     </select>
 
     <!-- 淘汰界值：跳过要保留的 keepSize 条，取下一条的时间戳；不足则无结果（不淘汰）。 -->
     <select id="selectEvictThreshold" resultType="java.lang.Long">
         SELECT last_hit_at_ms FROM cw_semantic_cache
         WHERE scope_id = #{scopeId}
+          AND config_generation = #{configGeneration}
         ORDER BY last_hit_at_ms DESC
         LIMIT 1 OFFSET #{keepSize}
     </select>
 
     <delete id="deleteOlderThan">
         DELETE FROM cw_semantic_cache
-        WHERE scope_id = #{scopeId} AND last_hit_at_ms &lt;= #{thresholdMs}
+        WHERE scope_id = #{scopeId}
+          AND config_generation = #{configGeneration}
+          AND last_hit_at_ms &lt;= #{thresholdMs}
     </delete>
 
     <delete id="deleteByScope">
         DELETE FROM cw_semantic_cache WHERE scope_id = #{scopeId}
+    </delete>
+
+    <!-- 运行时配置切换的租户级严格失效。不显式写 tenant_id：
+         TenantLineInnerInterceptor 是唯一租户真源，它会改写为当前租户条件；
+         缺 TenantContext 则 fail closed，不得退化成全表删除。 -->
+    <delete id="deleteCurrentTenant">
+        DELETE FROM cw_semantic_cache
     </delete>
 
     <!-- 运营视角：按命中次数降序，一眼看出哪些缓存真的在被复用、哪些只是白占容量。

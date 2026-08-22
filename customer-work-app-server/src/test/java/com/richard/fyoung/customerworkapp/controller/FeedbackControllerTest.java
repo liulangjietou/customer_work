@@ -7,7 +7,6 @@ import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerworkapp.service.UserSessionGuard;
 import org.junit.jupiter.api.Test;
@@ -28,7 +27,8 @@ import static org.mockito.Mockito.when;
 
 /** 消息反馈必须同时满足用户拥有会话、消息属于会话，避免伪造 messageId 覆盖他人反馈。 */
 @WebFluxTest(FeedbackController.class)
-@Import({CustomerWorkProperties.class, UserJwtService.class, UserAuthWebFilter.class})
+@Import({CustomerWorkProperties.class, UserJwtService.class,
+    ControllerSecurityTestConfiguration.UserAuth.class})
 class FeedbackControllerTest {
 
     private static final String SESSION_ID = "uU1:conv-1";

@@ -1,8 +1,13 @@
 package com.richard.fyoung.customeradmin.billing.controller;
 
+import cn.dev33.satoken.stp.StpUtil;
+import com.richard.fyoung.customeradmin.billing.dto.BillingCsvFile;
 import com.richard.fyoung.customeradmin.billing.dto.TenantQuotaSaveRequest;
 import com.richard.fyoung.customeradmin.billing.entity.AiModelPrice;
+import com.richard.fyoung.customeradmin.billing.service.BillingCsvExportService;
 import com.richard.fyoung.customeradmin.billing.service.BillingReportService;
+import com.richard.fyoung.customeradmin.billing.service.CostAlertService;
+import com.richard.fyoung.customeradmin.billing.service.CostForecastService;
 import com.richard.fyoung.customeradmin.billing.service.ModelPriceAdminService;
 import com.richard.fyoung.customeradmin.billing.service.TenantQuotaService;
 import com.richard.fyoung.customeradmin.billing.service.UsageAggregationService;
@@ -10,10 +15,13 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customerwork.safety.quota.QuotaPeriod;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
+import org.springframework.http.ResponseEntity;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -33,6 +41,9 @@ class BillingControllerTest {
     private ModelPriceAdminService priceService;
     private BillingReportService reportService;
     private UsageAggregationService aggregationService;
+    private CostAlertService alertService;
+    private CostForecastService forecastService;
+    private BillingCsvExportService csvExportService;
     private CrossTenantAuthority crossTenantAuthority;
     private BillingController controller;
 
@@ -42,12 +53,18 @@ class BillingControllerTest {
         priceService = mock(ModelPriceAdminService.class);
         reportService = mock(BillingReportService.class);
         aggregationService = mock(UsageAggregationService.class);
+        alertService = mock(CostAlertService.class);
+        forecastService = mock(CostForecastService.class);
+        csvExportService = mock(BillingCsvExportService.class);
         crossTenantAuthority = mock(CrossTenantAuthority.class);
         controller = new BillingController(
             quotaService,
             priceService,
             reportService,
             aggregationService,
+            alertService,
+            forecastService,
+            csvExportService,
             crossTenantAuthority);
     }
 
@@ -130,6 +147,81 @@ class BillingControllerTest {
         verify(priceService).delete(1L);
         verify(reportService).platformOverview(date, date);
         verify(aggregationService).aggregate(date);
+    }
+
+    @Test
+    void forecast_shouldRejectExplicitCrossTenantReadBeforeServiceCall() {
+        when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(false);
+        try (MockedStatic<TenantSession> tenantSession = mockStatic(TenantSession.class)) {
+            tenantSession.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
+
+            BizException exception = assertThrows(BizException.class,
+                () -> controller.forecast("tenant-b", QuotaPeriod.MONTHLY, LocalDate.of(2026, 8, 20)));
+
+            assertEquals(ResultCode.TENANT_VIEW_FORBIDDEN, exception.getResultCode());
+            verifyNoInteractions(forecastService);
+        }
+    }
+
+    @Test
+    void listAlerts_shouldScopeOrdinaryUserToEffectiveTenant() {
+        when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(false);
+        when(alertService.list("tenant-a", "OPEN", 100)).thenReturn(List.of());
+        try (MockedStatic<TenantSession> tenantSession = mockStatic(TenantSession.class)) {
+            tenantSession.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
+
+            controller.listAlerts(null, "OPEN", 100);
+
+            verify(alertService).list("tenant-a", "OPEN", 100);
+        }
+    }
+
+    @Test
+    void acknowledgeAlert_shouldBeTenantScopedAndPassCurrentUser() {
+        try (MockedStatic<TenantSession> tenantSession = mockStatic(TenantSession.class);
+             MockedStatic<StpUtil> stp = mockStatic(StpUtil.class)) {
+            tenantSession.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
+            stp.when(StpUtil::getLoginIdAsLong).thenReturn(7L);
+
+            controller.acknowledgeAlert(9L, "tenant-a");
+
+            verify(alertService).acknowledge(9L, "tenant-a", 7L);
+        }
+    }
+
+    @Test
+    void export_shouldKeepOrdinaryTenantOnOwnDetailedBill() {
+        LocalDate date = LocalDate.of(2026, 8, 20);
+        byte[] content = "csv".getBytes(StandardCharsets.UTF_8);
+        when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(false);
+        when(csvExportService.exportTenant("tenant-a", date, date))
+            .thenReturn(new BillingCsvFile("billing-tenant-a.csv", content));
+        try (MockedStatic<TenantSession> tenantSession = mockStatic(TenantSession.class)) {
+            tenantSession.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
+
+            ResponseEntity<byte[]> response = controller.export(null, date, date);
+
+            assertEquals(200, response.getStatusCode().value());
+            assertEquals("attachment; filename=\"billing-tenant-a.csv\"",
+                response.getHeaders().getFirst("Content-Disposition"));
+            assertEquals(content, response.getBody());
+            verify(csvExportService).exportTenant("tenant-a", date, date);
+            verify(csvExportService, never()).exportPlatform(date, date);
+        }
+    }
+
+    @Test
+    void export_shouldUsePlatformOverviewOnlyForControlPlaneWithoutTenant() {
+        LocalDate date = LocalDate.of(2026, 8, 20);
+        when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(true);
+        when(csvExportService.exportPlatform(date, date))
+            .thenReturn(new BillingCsvFile("billing-platform.csv", new byte[0]));
+
+        controller.export(null, date, date);
+
+        verify(csvExportService).exportPlatform(date, date);
+        verify(csvExportService, never()).exportTenant(org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     private void assertForbidden(Runnable action) {

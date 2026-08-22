@@ -1,5 +1,8 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
+import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallLogDO;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSegmentDO;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSummaryDO;
@@ -25,6 +28,7 @@ import java.util.stream.Collectors;
 public class MybatisAgentCallLogStore implements AgentCallLogStore {
 
     private static final Logger log = LoggerFactory.getLogger(MybatisAgentCallLogStore.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final AgentCallLogMapper callLogMapper;
     private final AgentCallSegmentMapper segmentMapper;
@@ -176,6 +180,18 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         d.setTotalTokens(r.totalTokens());
         d.setCachedTokens(r.cachedTokens());
         d.setModelReportedMs(r.modelReportedMs());
+        d.setTraceId(emptyToNull(r.lineage().traceId()));
+        d.setRuntimeRevision(emptyToNull(r.lineage().runtimeRevision()));
+        d.setRuntimeContentHash(emptyToNull(r.lineage().runtimeContentHash()));
+        d.setVersionBindingJson(writeVersionBinding(r.lineage().versionBinding()));
+        OnlineExperimentAssignment assignment = r.experimentAssignment();
+        if (assignment != null) {
+            d.setExperimentId(assignment.experimentId());
+            d.setExperimentRevision(assignment.revision());
+            d.setExperimentArm(assignment.arm());
+            d.setExperimentDeploymentId(assignment.deploymentId());
+            d.setExperimentBucket(assignment.bucket());
+        }
         d.setSuccess(r.success());
         d.setErrorMsg(r.errorMsg());
         return d;
@@ -215,7 +231,11 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
             d.getSegmentCount() == null ? 0 : d.getSegmentCount(),
             d.getInputTokens(), d.getOutputTokens(), d.getTotalTokens(),
             d.getCachedTokens(), d.getModelReportedMs(),
-            d.getSuccess() != null && d.getSuccess(), d.getErrorMsg(), List.of());
+            d.getSuccess() != null && d.getSuccess(), d.getErrorMsg(),
+            experimentAssignment(d),
+            new AgentCallLineage(d.getTraceId(), d.getRuntimeRevision(), d.getRuntimeContentHash(),
+                readVersionBinding(d.getVersionBindingJson())),
+            List.of());
     }
 
     private AgentCallSegment toSegment(AgentCallSegmentDO d) {
@@ -233,5 +253,41 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
 
     private double toDouble(BigDecimal value) {
         return value == null ? 0d : value.doubleValue();
+    }
+
+    private String writeVersionBinding(EvalVersionBinding binding) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(
+                binding == null ? EvalVersionBinding.legacy("") : binding);
+        } catch (Exception e) {
+            log.error("agent call version binding serialize failed, code={}",
+                "CALLLOG-LINEAGE-SERIALIZE-FAIL", e);
+            return null;
+        }
+    }
+
+    private EvalVersionBinding readVersionBinding(String json) {
+        if (json == null || json.isBlank()) {
+            return EvalVersionBinding.legacy("");
+        }
+        try {
+            return OBJECT_MAPPER.readValue(json, EvalVersionBinding.class);
+        } catch (Exception e) {
+            log.error("agent call version binding deserialize failed, code={}",
+                "CALLLOG-LINEAGE-DESERIALIZE-FAIL", e);
+            return EvalVersionBinding.legacy("");
+        }
+    }
+
+    private String emptyToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    private OnlineExperimentAssignment experimentAssignment(AgentCallLogDO source) {
+        if (source.getExperimentId() == null) {
+            return null;
+        }
+        return new OnlineExperimentAssignment(source.getExperimentId(), source.getExperimentRevision(),
+            source.getExperimentArm(), source.getExperimentDeploymentId(), source.getExperimentBucket());
     }
 }

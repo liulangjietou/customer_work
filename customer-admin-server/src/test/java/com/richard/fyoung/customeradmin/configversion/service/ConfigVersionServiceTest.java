@@ -120,7 +120,7 @@ class ConfigVersionServiceTest {
         ArgumentCaptor<AiConfigVersion> captor = ArgumentCaptor.forClass(AiConfigVersion.class);
         verify(versionMapper).updateById(captor.capture());
         assertEquals("SUPERSEDED", captor.getValue().getStatus(),
-            "旧版本要标记为已取代，否则列表里看不出哪一版在生效");
+            "旧版本要标记已有后续投递；真实生效仍以可靠任务 ACK 为准");
     }
 
     @Test
@@ -165,14 +165,45 @@ class ConfigVersionServiceTest {
     }
 
     @Test
-    void detail_shouldReturnContentButListShouldNot() {
+    void detail_shouldRedactSecretsButListShouldNotReturnContent() {
         AiConfigVersion entity = existing(1, "hash", "PUBLISHED");
-        entity.setContent("{\"big\":\"payload\"}");
+        entity.setContent("""
+            {"systemPrompt":"keep","model":{"apiKeyCipher":"cipher-value"},
+             "primary":{"baseUrl":"https://models.example.com/v1?api_key=model-token"},
+             "fallback":{"baseUrl":"https://[invalid-model-endpoint"},
+             "routing":{"baseUrl":"https://safe-model.example.com/v1"},
+             "mcpServers":[{"url":"https://user:password@mcp.example.com/mcp?api_key=url-token",
+                             "headers":{"Authorization":"Bearer token"}},
+                            {"url":"https://safe.example.com/mcp"}],
+             "onlineExperiment":{"assignmentSalt":"bucket-salt"}}
+            """);
         when(versionMapper.selectById(101L)).thenReturn(entity);
         when(versionMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(java.util.List.of(entity));
 
-        assertEquals("{\"big\":\"payload\"}", service.detail(101L).getContent(), "详情要带完整快照供对比");
+        String detail = service.detail(101L).getContent();
+        org.junit.jupiter.api.Assertions.assertTrue(detail.contains("keep"));
+        org.junit.jupiter.api.Assertions.assertFalse(detail.contains("cipher-value"));
+        org.junit.jupiter.api.Assertions.assertFalse(detail.contains("Bearer token"));
+        org.junit.jupiter.api.Assertions.assertFalse(detail.contains("url-token"));
+        org.junit.jupiter.api.Assertions.assertFalse(detail.contains("model-token"));
+        org.junit.jupiter.api.Assertions.assertFalse(detail.contains("invalid-model-endpoint"));
+        org.junit.jupiter.api.Assertions.assertFalse(detail.contains("password"));
+        org.junit.jupiter.api.Assertions.assertTrue(detail.contains("https://safe-model.example.com/v1"));
+        org.junit.jupiter.api.Assertions.assertTrue(detail.contains("https://safe.example.com/mcp"));
+        org.junit.jupiter.api.Assertions.assertFalse(detail.contains("bucket-salt"));
         assertNull(service.listByTarget(ConfigType.AGENT, "agent-a").get(0).getContent(),
             "列表不该带快照——一条可能几十 KB，既慢又没人看");
+    }
+
+    @Test
+    void detail_shouldNotReturnRawInvalidSnapshot() {
+        AiConfigVersion entity = existing(1, "hash", "PUBLISHED");
+        entity.setContent("apiKeyCipher=legacy-secret");
+        when(versionMapper.selectById(101L)).thenReturn(entity);
+
+        String detail = service.detail(101L).getContent();
+
+        org.junit.jupiter.api.Assertions.assertFalse(detail.contains("legacy-secret"));
+        org.junit.jupiter.api.Assertions.assertTrue(detail.contains("invalid snapshot"));
     }
 }

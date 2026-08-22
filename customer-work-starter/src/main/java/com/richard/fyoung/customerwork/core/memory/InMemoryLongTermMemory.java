@@ -10,11 +10,11 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 /**
- * 多租户长期记忆（实现框架 {@link LongTermMemory} 接口，对应深度解析 3.4）。
+ * 主体级长期记忆（实现框架 {@link LongTermMemory} 接口，对应深度解析 3.4）。
  *
- * <p>每个实例绑定一个租户视图，底层共享 {@link LongTermMemoryStore}：</p>
+ * <p>每个实例绑定一个已去标识化的主体分区，底层共享 {@link LongTermMemoryStore}：</p>
  * <ul>
- *   <li>{@link #record(List)}：把用户陈述沉淀为该租户的长期事实（只记用户消息，避免噪声）；</li>
+ *   <li>{@link #record(List)}：把用户陈述沉淀为该主体的长期事实（只记用户消息，避免噪声）；</li>
  *   <li>{@link #retrieve(Msg)}：按当前问题召回相关历史记忆，拼成提示注入上下文，
  *       让 Agent"越用越懂这个用户"。</li>
  * </ul>
@@ -29,14 +29,14 @@ public class InMemoryLongTermMemory implements LongTermMemory {
 
     private final LongTermMemoryStore store;
     private final FactLog factLog;
-    private final String tenantId;
+    private final String scopeId;
     private final int retrieveTopK;
 
     public InMemoryLongTermMemory(LongTermMemoryStore store, FactLog factLog,
-                                  String tenantId, int retrieveTopK) {
+                                  String scopeId, int retrieveTopK) {
         this.store = store;
         this.factLog = factLog;
-        this.tenantId = tenantId;
+        this.scopeId = scopeId;
         this.retrieveTopK = retrieveTopK;
     }
 
@@ -50,14 +50,14 @@ public class InMemoryLongTermMemory implements LongTermMemory {
                 if (msg != null && msg.getRole() == MsgRole.USER) {
                     String text = msg.getTextContent();
                     if (text != null && !text.isBlank()) {
-                        store.add(tenantId, text);        // L2：可语义召回的长期记忆
+                        store.add(scopeId, text);        // L2：可语义召回的长期记忆
                         if (factLog != null) {
-                            factLog.append(tenantId, text); // L3：只追加事实日志（可审计）
+                            factLog.append(scopeId, text); // L3：只追加事实日志（可审计）
                         }
                     }
                 }
             }
-            log.debug("[LTM] 租户 {} 记忆条数={}", tenantId, store.size(tenantId));
+            log.info("[LTM] subject memory recorded, scopeId={}, count={}", scopeId, store.size(scopeId));
         });
     }
 
@@ -65,7 +65,7 @@ public class InMemoryLongTermMemory implements LongTermMemory {
     public Mono<String> retrieve(Msg query) {
         return Mono.fromSupplier(() -> {
             String q = query == null ? null : query.getTextContent();
-            List<String> facts = store.recall(tenantId, q, retrieveTopK);
+            List<String> facts = store.recall(scopeId, q, retrieveTopK);
             if (facts.isEmpty()) {
                 return "";
             }

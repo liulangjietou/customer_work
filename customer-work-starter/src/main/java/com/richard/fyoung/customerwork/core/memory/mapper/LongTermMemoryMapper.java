@@ -23,4 +23,7 @@ public interface LongTermMemoryMapper extends BaseMapper<LongTermMemoryDO> {
      * 再打分——不设上限的话，长期积累的分区会把整表拉进内存。</p>
      */
     List<String> selectRecentFacts(@Param("scopeId") String scopeId, @Param("limit") int limit);
+
+    /** 跨租户保留策略任务分批清理到期事实。调用方必须显式进入治理作用域。 */
+    int deleteExpiredBefore(@Param("cutoffMs") long cutoffMs, @Param("limit") int limit);
 }

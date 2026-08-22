@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.safety.security;
 import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.UserAuthProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessConstants;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -73,12 +74,22 @@ public class UserJwtService {
      * @return 已签名的紧凑 JWT 字符串
      */
     public String issue(String userId, String username, String nickname, String tenantId) {
+        return issue(userId, username, nickname, tenantId, 0L);
+    }
+
+    /** 签发绑定控制面访问版本的令牌；运行时门禁开启时登录入口必须使用本方法。 */
+    public String issue(String userId, String username, String nickname,
+                        String tenantId, long tenantAccessEpoch) {
+        if (tenantAccessEpoch < 0) {
+            throw new IllegalArgumentException("tenantAccessEpoch must not be negative");
+        }
         long now = System.currentTimeMillis();
         return Jwts.builder()
             .subject(userId)
             .claim(CLAIM_USERNAME, username)
             .claim(CLAIM_NICKNAME, nickname)
             .claim(CLAIM_TENANT, normalizeTenant(tenantId))
+            .claim(TenantAccessConstants.ACCESS_EPOCH_KEY, tenantAccessEpoch)
             .issuedAt(new Date(now))
             .expiration(new Date(now + expireMs))
             .signWith(signingKey)
@@ -109,12 +120,15 @@ public class UserJwtService {
             if (!TenantContext.isValidTenantId(tenantId)) {
                 return Optional.empty();
             }
+            Object rawAccessEpoch = claims.get(TenantAccessConstants.ACCESS_EPOCH_KEY);
+            Long accessEpoch = rawAccessEpoch instanceof Number number ? number.longValue() : null;
             return Optional.of(new UserPrincipal(
                 claims.getSubject(),
                 claims.get(CLAIM_USERNAME, String.class),
                 claims.get(CLAIM_NICKNAME, String.class),
                 // 多租户上线前签发的令牌没有这个 claim，回落默认租户，避免存量用户被强制登出
-                tenantId));
+                tenantId,
+                accessEpoch));
         } catch (Exception e) {
             // 验签失败 / 过期 / 格式非法：统一按未认证处理，不打堆栈（正常的攻击面噪声）
             return Optional.empty();

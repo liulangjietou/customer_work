@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.capability.eval;
 
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalCaseMapper;
+import com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetSnapshotMapper;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalRunMapper;
 import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -69,6 +70,27 @@ public class EvalConfig {
         return new InMemoryEvalCaseStore();
     }
 
+    /** 数据集版本与运行记录使用同一存储模式，保证运行事实始终能回放到确切用例。 */
+    @Bean
+    @ConditionalOnMissingBean(EvalDatasetSnapshotStore.class)
+    public EvalDatasetSnapshotStore evalDatasetSnapshotStore(
+        CustomerWorkProperties properties,
+        ObjectProvider<EvalDatasetSnapshotMapper> mapperProvider) {
+        if (StoreModes.isJdbc(properties.getEval().getStoreMode())) {
+            log.info("eval dataset snapshot store: jdbc (table=cw_eval_dataset_version)");
+            return new MybatisEvalDatasetSnapshotStore(mapperProvider.getObject());
+        }
+        log.info("eval dataset snapshot store: memory");
+        return new InMemoryEvalDatasetSnapshotStore();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(EvalArtifactVersionProvider.class)
+    public EvalArtifactVersionProvider evalArtifactVersionProvider(
+        CustomerWorkProperties properties, ObjectProvider<JudgeModel> judgeModelProvider) {
+        return new ConfigurationEvalArtifactVersionProvider(properties, judgeModelProvider);
+    }
+
     /**
      * LLM-as-Judge 打分模型：把框架的流式 {@code Model} 适配成"一进一出"的同步契约。
      *
@@ -81,30 +103,40 @@ public class EvalConfig {
     @ConditionalOnMissingBean(JudgeModel.class)
     public JudgeModel judgeModel(ObjectProvider<Model> modelProvider, CustomerWorkProperties properties) {
         long timeoutSeconds = Math.max(1, properties.getEval().getJudgeTimeoutSeconds());
-        return message -> {
-            Model model = modelProvider.getIfAvailable();
-            if (model == null) {
-                throw new IllegalStateException("judge unavailable: no Model bean (needs a real model key)");
+        return new JudgeModel() {
+            @Override
+            public Msg chat(Msg message) {
+                Model model = modelProvider.getIfAvailable();
+                if (model == null) {
+                    throw new IllegalStateException("judge unavailable: no Model bean (needs a real model key)");
+                }
+                List<ChatResponse> responses = model
+                    .stream(List.of(message), List.of(), GenerateOptions.builder().build())
+                    .collectList()
+                    .block(Duration.ofSeconds(timeoutSeconds));
+                if (responses == null || responses.isEmpty()) {
+                    throw new IllegalStateException("judge model returned empty response");
+                }
+                String text = responses.stream()
+                    .flatMap(response -> response.getContent().stream())
+                    .filter(TextBlock.class::isInstance)
+                    .map(TextBlock.class::cast)
+                    .map(TextBlock::getText)
+                    .filter(StringUtils::hasText)
+                    .collect(Collectors.joining());
+                return Msg.builder()
+                    .role(MsgRole.ASSISTANT)
+                    .name("judge")
+                    .content(TextBlock.builder().text(text).build())
+                    .build();
             }
-            List<ChatResponse> responses = model
-                .stream(List.of(message), List.of(), GenerateOptions.builder().build())
-                .collectList()
-                .block(Duration.ofSeconds(timeoutSeconds));
-            if (responses == null || responses.isEmpty()) {
-                throw new IllegalStateException("judge model returned empty response");
+
+            @Override
+            public String version() {
+                return EvalFingerprint.of("default-main-model-judge-v1",
+                    properties.getModel().getProvider(), properties.getModel().getName(),
+                    properties.getModel().getBaseUrl());
             }
-            String text = responses.stream()
-                .flatMap(response -> response.getContent().stream())
-                .filter(TextBlock.class::isInstance)
-                .map(TextBlock.class::cast)
-                .map(TextBlock::getText)
-                .filter(StringUtils::hasText)
-                .collect(Collectors.joining());
-            return Msg.builder()
-                .role(MsgRole.ASSISTANT)
-                .name("judge")
-                .content(TextBlock.builder().text(text).build())
-                .build();
         };
     }
 }

@@ -30,6 +30,7 @@ public class IntentEvalRunner {
     private static final Logger log = LoggerFactory.getLogger(IntentEvalRunner.class);
 
     private static final String DATASET_PATH = "eval/intent-eval-cases.json";
+    private static final String EVALUATOR_VERSION = "intent-fast-route-v1";
 
     private final MultiAgentOrchestrator orchestrator;
     private final EvalCaseStore caseStore;
@@ -113,5 +114,10 @@ public class IntentEvalRunner {
             report.getTotal(), String.format("%.1f%%", report.accuracy() * 100),
             String.format("%.1f%%", report.fastLaneCoverage() * 100));
         return report;
+    }
+
+    /** 意图判定 rubric/算法版本，随判分规则变更而变化。 */
+    public static String evaluatorVersion() {
+        return EvalFingerprint.of(EVALUATOR_VERSION);
     }
 }

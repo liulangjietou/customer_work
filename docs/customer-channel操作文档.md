@@ -264,6 +264,8 @@ customer-channel:
   **一个机器人绑定一个智能体**，多机器人多智能体；改绑/启停后 ≤30s 自动生效，无需重启。
 - 会话：每个钉钉用户一个持续会话（群聊按 群+用户 隔离）；发送 `/new` 或 `新会话` 重置。
 - 仅支持文本消息；回复以 markdown 下发（经消息回调里的 sessionWebhook）。
+- 对话转发会把已加载机器人配置中的 `channelType + appKey` 随请求发送；admin 必须连同 `agentCode`
+  精确命中同一条启用绑定后才调用智能体，并把已验证的渠道类型写入本次 Reactor 路由上下文。
 
 ### 8.2 接入步骤
 
@@ -285,7 +287,10 @@ customer-channel:
 
 ### 8.3 注意事项
 
-- 开放对话 API 有绑定校验：agentCode 必须存在启用中的渠道机器人绑定，未绑定的智能体外部不可调用。
+- 开放对话 API 有精确绑定校验：请求体必须包含 `sessionId/message/channelType/appKey`，且
+  `agentCode + channelType + appKey` 必须命中同一条启用中的渠道机器人；未匹配的组合外部不可调用。
+- 模型路由的渠道条件只读取上述已验证事实，不使用发布时任选一条机器人绑定生成的静态默认值；普通工作台对话
+  不带渠道上下文，因此只能命中无渠道约束的规则。
 - 传输层复用 AgentScope 的 `DingTalkStreamClient`（JDK 内置 WebSocket 实现 Stream 协议，零新增钉钉 SDK 依赖）。
 - 同一用户消息按会话串行处理，不同会话并行；连接器启动失败/admin 不可达均兜底重试，不影响应用启动。
 - **SSE 换行安全契约**：admin 开放对话 API 的 `event:message`/`event:error` data 为 **JSON 字符串字面量**

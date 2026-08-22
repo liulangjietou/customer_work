@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { clearAgentMemory, createAgent, deleteAgent, disableAgent, enableAgent, getAgentMemory, pageAgents, updateAgent } from '@/api/agent'
-import { pageModels, testModelConnectivity } from '@/api/model'
+import { listModelRoutePolicies, pageModels, testModelConnectivity } from '@/api/model'
 import { pageMcps } from '@/api/mcp'
 import { pageSkills } from '@/api/skill'
 import { fetchSystemTools } from '@/api/system-tool'
@@ -11,7 +11,7 @@ import { fetchKnowledgeBaseOptions } from '@/api/knowledgeBase'
 import { useMenuStore } from '@/store/menu'
 import IconPicker from '@/components/IconPicker.vue'
 import ChannelBindingDrawer from '@/views/aiconfig/ChannelBindingDrawer.vue'
-import type { AgentSaveRequest, AgentVO, KnowledgeBaseOption, McpVO, ModelVO, PageQuery, SkillVO, SystemToolVO } from '@/types/api'
+import type { AgentSaveRequest, AgentVO, KnowledgeBaseOption, McpVO, ModelRoutePolicy, ModelVO, PageQuery, SkillVO, SystemToolVO } from '@/types/api'
 
 const menuStore = useMenuStore()
 
@@ -24,6 +24,7 @@ const total = ref(0)
 const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
 
 const modelOptions = ref<ModelVO[]>([])
+const routePolicyOptions = ref<ModelRoutePolicy[]>([])
 const mcpOptions = ref<McpVO[]>([])
 const skillOptions = ref<SkillVO[]>([])
 const systemToolOptions = ref<SystemToolVO[]>([])
@@ -65,6 +66,7 @@ const editingId = ref<number | null>(null)
 const form = reactive<AgentSaveRequest>({
   agentName: '', agentCode: '', modelId: undefined as unknown as number, backupModelIds: [], mcpIds: [], skillIds: [], systemToolIds: [],
   knowledgeBaseIds: [],
+  modelRoutePolicyId: null,
   systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
   subAgentIds: [], maxIters: null, toolTimeoutSeconds: null, toolMaxAttempts: null,
   compressTriggerMsgs: null, compressKeepMsgs: null,
@@ -151,13 +153,14 @@ async function loadList() {
 }
 
 async function loadOptions() {
-  const [models, mcps, skills, systemTools, agents, knowledgeBases] = await Promise.all([
+  const [models, mcps, skills, systemTools, agents, knowledgeBases, routePolicies] = await Promise.all([
     pageModels({ pageNum: 1, pageSize: 100 }),
     pageMcps({ pageNum: 1, pageSize: 100 }),
     pageSkills({ pageNum: 1, pageSize: 100 }),
     fetchSystemTools({ pageNum: 1, pageSize: 100 }),
     pageAgents({ pageNum: 1, pageSize: AGENT_OPTION_PAGE_SIZE }),
     fetchKnowledgeBaseOptions(),
+    listModelRoutePolicies(),
   ])
   modelOptions.value = models.list
   mcpOptions.value = mcps.list
@@ -166,6 +169,7 @@ async function loadOptions() {
   systemToolOptions.value = systemTools.list.filter((t) => t.enabled === 1)
   agentOptions.value = agents.list
   knowledgeBaseOptions.value = knowledgeBases
+  routePolicyOptions.value = routePolicies.filter((policy) => policy.status === 'ACTIVE')
 }
 
 function handleSearch() {
@@ -179,6 +183,7 @@ function openCreate() {
   Object.assign(form, {
     agentName: '', agentCode: '', modelId: undefined, backupModelIds: [], mcpIds: [], skillIds: [], systemToolIds: [],
     knowledgeBaseIds: [],
+    modelRoutePolicyId: null,
     systemPrompt: '', capabilities: ['chat'], icon: '', status: 1,
     subAgentIds: [], maxIters: null, toolTimeoutSeconds: null, toolMaxAttempts: null,
     compressTriggerMsgs: null, compressKeepMsgs: null,
@@ -196,6 +201,7 @@ function openEdit(row: AgentVO) {
     agentName: row.agentName, agentCode: row.agentCode, modelId: row.modelId, backupModelIds: [...(row.backupModelIds ?? [])],
     mcpIds: row.mcpIds, skillIds: row.skillIds, systemToolIds: row.systemToolIds,
     knowledgeBaseIds: [...(row.knowledgeBaseIds ?? [])],
+    modelRoutePolicyId: row.modelRoutePolicyId ?? null,
     systemPrompt: row.systemPrompt,
     capabilities: row.capabilities, icon: row.icon, status: row.status,
     subAgentIds: row.subAgentIds ?? [], maxIters: row.maxIters ?? null,
@@ -435,6 +441,22 @@ onMounted(() => {
           <el-select v-model="form.backupModelIds" multiple style="width: 100%" placeholder="可选，主模型异常时的降级候选">
             <el-option v-for="m in backupModelOptions" :key="m.id" :label="m.modelName" :value="m.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="路由策略">
+          <el-select
+            v-model="form.modelRoutePolicyId"
+            clearable
+            style="width: 100%"
+            placeholder="可选；绑定后按 ACTIVE 不可变版本在线选模"
+          >
+            <el-option
+              v-for="policy in routePolicyOptions"
+              :key="policy.id"
+              :label="`${policy.policyName} · v${policy.currentVersionNo}`"
+              :value="policy.id"
+            />
+          </el-select>
+          <div class="connectivity-hint">未绑定时继续使用上方主模型与备用模型链；策略激活后会自动重发运行时配置。</div>
         </el-form-item>
         <el-form-item label="MCP">
           <el-select v-model="form.mcpIds" multiple style="width: 100%" placeholder="可选">

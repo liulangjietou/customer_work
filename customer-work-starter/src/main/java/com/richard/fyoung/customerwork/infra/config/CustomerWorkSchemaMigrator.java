@@ -31,6 +31,11 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String OUTBOX_MIRROR_VERSION = "3";
     private static final String SUBJECT_QUOTA_MIRROR_VERSION = "4";
     private static final String ADMIN_QUOTA_MIRROR_VERSION = "5";
+    private static final String MEMORY_PRIVACY_MIRROR_VERSION = "10";
+    private static final String EVAL_GOVERNANCE_MIRROR_VERSION = "11";
+    private static final String CALL_LINEAGE_MIRROR_VERSION = "12";
+    private static final String ONLINE_EXPERIMENT_MIRROR_VERSION = "13";
+    private static final String SEMANTIC_CACHE_GENERATION_MIRROR_VERSION = "14";
 
     private final DataSource dataSource;
     private final boolean enabled;
@@ -71,7 +76,8 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
      *
      * <p>完整镜像会持续同步最新迁移，因此接管版本不能写死。先核对 V1-V3 的完整结构，再用 V4
      * 的表与列判断镜像是否已经包含主体配额；旧的 V3 镜像仍从版本 3 接管并补跑 V4，当前镜像则
-     * 从版本 4 接管。普通旧库仍从 0 开始执行全部修复。</p>
+     * 从版本 4 接管。V10 以后每个非幂等结构迁移继续以关键表/列逐级判定；普通旧库仍从 0
+     * 开始执行全部修复。</p>
      *
      * <p><b>幂等的数据迁移可以不判定</b>：V6（运营分区归一）在空镜像库上影响 0 行、重跑结果相同，
      * 因此没有为它加判定——镜像库会重跑它一次，多一行历史而已。判定要写成"列注释里有没有某几个字"
@@ -110,7 +116,40 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             }
             boolean adminQuotaMirror = rowExists(connection,
                 "SELECT 1 FROM `cw_subject_quota_level` WHERE `level_code` = 'admin-default' LIMIT 1");
-            return adminQuotaMirror ? ADMIN_QUOTA_MIRROR_VERSION : SUBJECT_QUOTA_MIRROR_VERSION;
+            if (!adminQuotaMirror) {
+                return SUBJECT_QUOTA_MIRROR_VERSION;
+            }
+            boolean memoryPrivacyMirror = tableExists(connection, "cw_memory_consent")
+                && columnExists(connection, "cw_memory_consent", "scope_id");
+            if (!memoryPrivacyMirror) {
+                return ADMIN_QUOTA_MIRROR_VERSION;
+            }
+            boolean evalGovernanceMirror = tableExists(connection, "cw_eval_dataset_version")
+                && columnExists(connection, "cw_eval_run", "dataset_version_id")
+                && columnExists(connection, "cw_eval_run", "dataset_fingerprint")
+                && columnExists(connection, "cw_eval_run", "version_binding_json");
+            if (!evalGovernanceMirror) {
+                return MEMORY_PRIVACY_MIRROR_VERSION;
+            }
+            boolean callLineageMirror = columnExists(connection, "cw_agent_call_log", "trace_id")
+                && columnExists(connection, "cw_agent_call_log", "runtime_revision")
+                && columnExists(connection, "cw_agent_call_log", "runtime_content_hash")
+                && columnExists(connection, "cw_agent_call_log", "version_binding_json");
+            if (!callLineageMirror) {
+                return EVAL_GOVERNANCE_MIRROR_VERSION;
+            }
+            boolean onlineExperimentMirror = columnExists(connection, "cw_agent_call_log", "experiment_id")
+                && columnExists(connection, "cw_agent_call_log", "experiment_revision")
+                && columnExists(connection, "cw_agent_call_log", "experiment_arm")
+                && columnExists(connection, "cw_agent_call_log", "experiment_deployment_id")
+                && columnExists(connection, "cw_agent_call_log", "experiment_bucket");
+            if (!onlineExperimentMirror) {
+                return CALL_LINEAGE_MIRROR_VERSION;
+            }
+            boolean semanticCacheGenerationMirror =
+                columnExists(connection, "cw_semantic_cache", "config_generation");
+            return semanticCacheGenerationMirror
+                ? SEMANTIC_CACHE_GENERATION_MIRROR_VERSION : ONLINE_EXPERIMENT_MIRROR_VERSION;
         }
     }
 

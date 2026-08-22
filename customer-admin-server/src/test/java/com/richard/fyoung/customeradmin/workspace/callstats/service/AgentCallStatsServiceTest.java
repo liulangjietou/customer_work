@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.workspace.callstats.config.AppAgentCallS
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsDetailVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsPageVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsQuery;
+import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallReplayManifestVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsSummaryVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallTrendVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsExtMapper;
@@ -30,6 +31,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -107,6 +109,8 @@ class AgentCallStatsServiceTest {
         AgentCallStatsQuery query = new AgentCallStatsQuery();
         query.setPageNum(2);
         query.setPageSize(10);
+        query.setTraceId("trace-1");
+        query.setRuntimeRevision("revision-1");
         AgentCallStatsPageVO vo = service.page(query);
 
         assertEquals(1L, vo.getTotal());
@@ -125,6 +129,8 @@ class AgentCallStatsServiceTest {
         verify(adminExtMapper).findPage(captor.capture());
         assertEquals(10, captor.getValue().getOffset());
         assertEquals(10, captor.getValue().getLimit());
+        assertEquals("trace-1", captor.getValue().getTraceId());
+        assertEquals("revision-1", captor.getValue().getRuntimeRevision());
     }
 
     @Test
@@ -157,6 +163,13 @@ class AgentCallStatsServiceTest {
         d.setInputTokens(640L);
         d.setOutputTokens(160L);
         d.setTotalTokens(800L);
+        d.setTraceId("0123456789abcdef0123456789abcdef");
+        d.setRuntimeRevision("revision-7");
+        d.setRuntimeContentHash("hash-7");
+        d.setVersionBindingJson("{\"datasetVersion\":\"\",\"datasetFingerprint\":\"\","
+            + "\"modelVersion\":\"model-v1\",\"promptVersion\":\"prompt-v1\","
+            + "\"agentVersion\":\"agent-v1\",\"knowledgeBaseVersion\":\"kb-v1\","
+            + "\"toolVersion\":\"tool-v1\",\"judgeVersion\":\"\",\"rubricVersion\":\"\"}");
 
         AgentCallStatsDetailVO vo = service.detail(5L, "ADMIN");
 
@@ -167,6 +180,35 @@ class AgentCallStatsServiceTest {
         assertEquals(800L, vo.getSegments().get(0).getDurationMs());
         assertEquals(640L, vo.getSegments().get(0).getInputTokens(), "MODEL 段透出输入 token");
         assertEquals(160L, vo.getSegments().get(0).getOutputTokens(), "MODEL 段透出输出 token");
+        assertEquals("0123456789abcdef0123456789abcdef", vo.getTraceId());
+        assertEquals("revision-7", vo.getRuntimeRevision());
+        assertEquals("model-v1", vo.getVersionBinding().modelVersion());
+    }
+
+    @Test
+    void replayManifest_shouldRemainInspectOnly_andReuseTenantScopedDetail() {
+        AgentCallLogDO d = new AgentCallLogDO();
+        d.setId(8L);
+        d.setRequestId("req-8");
+        d.setAgentCode("customer-service");
+        d.setSessionType("CHAT");
+        d.setQuestion("问题");
+        d.setAnswer("回答");
+        d.setStartTime(1_700_000_000_000L);
+        d.setTraceId("trace-8");
+        d.setRuntimeRevision("revision-8");
+        d.setRuntimeContentHash("hash-8");
+        when(adminLogMapper.selectById(8L)).thenReturn(d);
+        when(adminSegmentMapper.findByCallLogId(8L)).thenReturn(List.of());
+
+        AgentCallReplayManifestVO manifest = service.replayManifest(8L, "ADMIN");
+
+        assertEquals("INSPECT_ONLY", manifest.mode());
+        assertFalse(manifest.executable());
+        assertEquals("trace-8", manifest.traceId());
+        assertEquals("问题", manifest.question());
+        assertEquals("回答", manifest.recordedAnswer());
+        assertTrue(manifest.executionBlockedReason().contains("外部副作用"));
     }
 
     @Test

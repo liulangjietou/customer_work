@@ -12,8 +12,8 @@ import java.time.LocalDateTime;
 /**
  * 配置发布版本快照。
  *
- * <p>发布历史只增不改：回滚不是删掉新版本，而是把旧版本的内容作为一个新版本再发一次，
- * 这样任何时刻都能回答"当时线上跑的是哪一版"。</p>
+ * <p>发布历史只增不改。安全回滚只从旧快照提取行为白名单，以当前权威运行资产重组后产生新发布；
+ * 实例是否真实生效以可靠发布任务的 ACK 状态为准。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data
@@ -40,7 +40,7 @@ public class AiConfigVersion {
     /** 灰度租户编码列表（JSON 数组）。 */
     private String grayTenants;
     private String dataId;
-    /** PUBLISHED / SUPERSEDED / FAILED。 */
+    /** PUBLISHED（已投递）/ SUPERSEDED（已有后续投递）/ FAILED。 */
     private String status;
     /** 回滚来源版本号；非回滚产生的版本为空。 */
     private Integer sourceVersion;

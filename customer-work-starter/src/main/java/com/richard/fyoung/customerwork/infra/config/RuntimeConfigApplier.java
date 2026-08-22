@@ -1,15 +1,22 @@
 package com.richard.fyoung.customerwork.infra.config;
 
 import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.constant.ModelProviders;
+import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentRoutingModel;
+import com.richard.fyoung.customerwork.core.model.routing.PolicyRoutingModel;
+import com.richard.fyoung.customerwork.safety.security.ModelEndpointPolicy;
 import io.agentscope.core.model.Model;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import com.richard.fyoung.customerwork.infra.config.properties.McpProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 
@@ -41,17 +48,34 @@ public class RuntimeConfigApplier {
     private final MutableDelegatingModel mutableModel;
     private final NacosPromptService nacosPromptService;
     private final CustomerServiceService customerServiceService;
+    /** 部署级出网信任边界；不能由收到的运行时载荷自行修改。 */
+    private final ModelEndpointPolicy endpointPolicy;
+    /** 进程启动时的 yml/Java 基线；完整快照显式 null 用它清除旧热覆盖。 */
+    private final int baselineMaxIters;
 
+    @Autowired
     public RuntimeConfigApplier(CustomerWorkProperties properties,
                                 ModelConfig modelConfig,
                                 MutableDelegatingModel mutableModel,
                                 NacosPromptService nacosPromptService,
                                 CustomerServiceService customerServiceService) {
+        this(properties, modelConfig, mutableModel, nacosPromptService, customerServiceService,
+            new ModelEndpointPolicy(() -> properties.getModel().getEgress().getAllowedHosts()));
+    }
+
+    RuntimeConfigApplier(CustomerWorkProperties properties,
+                         ModelConfig modelConfig,
+                         MutableDelegatingModel mutableModel,
+                         NacosPromptService nacosPromptService,
+                         CustomerServiceService customerServiceService,
+                         ModelEndpointPolicy endpointPolicy) {
         this.properties = properties;
         this.modelConfig = modelConfig;
         this.mutableModel = mutableModel;
         this.nacosPromptService = nacosPromptService;
         this.customerServiceService = customerServiceService;
+        this.endpointPolicy = endpointPolicy;
+        this.baselineMaxIters = properties.getAgent().getMaxIters();
     }
 
     /**
@@ -63,16 +87,45 @@ public class RuntimeConfigApplier {
      * @return 是否成功应用（失败时旧配置原样保留）
      */
     public synchronized boolean apply(CustomerWorkRuntimeConfig dto, String primaryApiKey, String fallbackApiKey) {
+        return apply(dto, primaryApiKey, fallbackApiKey, Map.of());
+    }
+
+    /**
+     * 热应用 v2 路由配置。routingApiKeys 以 deploymentId 为键，仅在临时建链阶段存在，不写回 properties。
+     */
+    public synchronized boolean apply(CustomerWorkRuntimeConfig dto,
+                                      String primaryApiKey,
+                                      String fallbackApiKey,
+                                      Map<Long, String> routingApiKeys) {
+        return apply(dto, primaryApiKey, fallbackApiKey, routingApiKeys, Map.of());
+    }
+
+    /**
+     * 热应用 v2 路由与在线实验配置。两组密钥只在临时建链阶段存在，不进入 properties 或日志。
+     */
+    public synchronized boolean apply(CustomerWorkRuntimeConfig dto,
+                                      String primaryApiKey,
+                                      String fallbackApiKey,
+                                      Map<Long, String> routingApiKeys,
+                                      Map<Long, String> experimentApiKeys) {
         try {
             validate(dto);
+            validateAndNormalizeModelEndpoints(dto);
             // 先在临时配置上构建新链（可能抛错：厂商不支持 / 密钥缺失等），成功后才提交
             ModelProperties staged = stageModelCfg(dto, primaryApiKey, fallbackApiKey);
-            Model newChain = modelConfig.buildChain(staged);
+            Model baseline = dto.getRoutingPolicy() == null
+                ? modelConfig.buildChain(staged)
+                : buildPolicyChain(dto.getRoutingPolicy(), staged, routingApiKeys);
+            Model newChain = dto.getOnlineExperiment() == null
+                ? baseline
+                : buildExperimentChain(dto.getOnlineExperiment(), staged, experimentApiKeys, baseline);
+            PreparedMcp preparedMcp = prepareMcp(dto);
+            PreparedAgent preparedAgent = prepareAgent(dto);
 
             // ---- 提交阶段：以下步骤均为不抛错的赋值/替换，保证全有或全无 ----
             copyModelCfg(staged, properties.getModel());
-            applyMcp(dto);
-            applyAgent(dto);
+            applyMcp(preparedMcp);
+            applyAgent(preparedAgent);
             nacosPromptService.updatePrompt(dto.getSystemPrompt());
             mutableModel.swap(newChain);
             customerServiceService.flushHotAgents();
@@ -99,6 +152,112 @@ public class RuntimeConfigApplier {
         if (!StringUtils.hasText(m.getName())) {
             throw new IllegalArgumentException("runtime config model.name is blank");
         }
+        if ((dto.getRoutingPolicy() != null || dto.getOnlineExperiment() != null)
+            && dto.getSchemaVersion() < 2) {
+            throw new IllegalArgumentException(
+                "routing policy and online experiment require runtime schemaVersion >= 2");
+        }
+    }
+
+    /**
+     * 在解密后的密钥进入任何 SDK 模型构造前，一次性校验整份快照里的全部自定义模型端点。
+     * DTO 是本次 Nacos 消息的私有反序列化对象，可安全原地规范化；任一端点失败则整份配置拒绝。
+     */
+    private void validateAndNormalizeModelEndpoints(CustomerWorkRuntimeConfig dto) {
+        dto.getModel().setBaseUrl(normalizeOptionalEndpoint(dto.getModel().getBaseUrl()));
+        if (dto.getFallback() != null) {
+            dto.getFallback().setBaseUrl(normalizeOptionalEndpoint(dto.getFallback().getBaseUrl()));
+        }
+        if (dto.getRoutingPolicy() != null && !CollectionUtils.isEmpty(dto.getRoutingPolicy().getDeployments())) {
+            for (CustomerWorkRuntimeConfig.RoutingDeployment deployment
+                : dto.getRoutingPolicy().getDeployments()) {
+                if (deployment != null) {
+                    deployment.setBaseUrl(normalizeOptionalEndpoint(deployment.getBaseUrl()));
+                }
+            }
+        }
+        if (dto.getOnlineExperiment() != null) {
+            normalizeExperimentArm(dto.getOnlineExperiment().getControl());
+            normalizeExperimentArm(dto.getOnlineExperiment().getTreatment());
+        }
+    }
+
+    private void normalizeExperimentArm(CustomerWorkRuntimeConfig.ExperimentArm arm) {
+        if (arm != null) {
+            arm.setBaseUrl(normalizeOptionalEndpoint(arm.getBaseUrl()));
+        }
+    }
+
+    private String normalizeOptionalEndpoint(String baseUrl) {
+        return StringUtils.hasText(baseUrl)
+            ? endpointPolicy.validateAndNormalizeBaseUrl(baseUrl)
+            : baseUrl;
+    }
+
+    private Model buildExperimentChain(CustomerWorkRuntimeConfig.OnlineExperiment experiment,
+                                       ModelProperties staged,
+                                       Map<Long, String> experimentApiKeys,
+                                       Model baseline) {
+        if (experiment.getControl() == null || experiment.getTreatment() == null) {
+            throw new IllegalArgumentException("online experiment arms are incomplete");
+        }
+        Model control = buildExperimentArm(experiment.getControl(), staged, experimentApiKeys);
+        Model treatment = buildExperimentArm(experiment.getTreatment(), staged, experimentApiKeys);
+        return new OnlineExperimentRoutingModel(RuntimeOnlineExperimentMapper.toSpec(experiment),
+            baseline, control, treatment);
+    }
+
+    private Model buildExperimentArm(CustomerWorkRuntimeConfig.ExperimentArm arm,
+                                     ModelProperties staged,
+                                     Map<Long, String> experimentApiKeys) {
+        if (arm.getDeploymentId() == null || !StringUtils.hasText(arm.getProvider())
+            || !StringUtils.hasText(arm.getName())) {
+            throw new IllegalArgumentException("online experiment arm fields are incomplete");
+        }
+        String key = experimentApiKeys == null ? null : experimentApiKeys.get(arm.getDeploymentId());
+        if (!ModelProviders.OLLAMA.equalsIgnoreCase(arm.getProvider()) && !StringUtils.hasText(key)) {
+            throw new IllegalArgumentException(
+                "online experiment deployment API key is missing: " + arm.getDeploymentId());
+        }
+        Model candidate = modelConfig.buildByProvider(
+            arm.getProvider(), arm.getName(), key, arm.getBaseUrl(), staged);
+        if (staged.getRetry().isEnabled()) {
+            candidate = new ResilientChatModel(candidate, staged.getRetry().getMaxAttempts(),
+                staged.getRetry().getBackoffMs());
+        }
+        return candidate;
+    }
+
+    private Model buildPolicyChain(CustomerWorkRuntimeConfig.RoutingPolicy policy,
+                                   ModelProperties staged,
+                                   Map<Long, String> routingApiKeys) {
+        if (CollectionUtils.isEmpty(policy.getDeployments())) {
+            throw new IllegalArgumentException("routing policy deployments are empty");
+        }
+        Map<Long, Model> candidates = new LinkedHashMap<>();
+        for (CustomerWorkRuntimeConfig.RoutingDeployment deployment : policy.getDeployments()) {
+            if (deployment == null || deployment.getDeploymentId() == null
+                || !StringUtils.hasText(deployment.getProvider())
+                || !StringUtils.hasText(deployment.getName())) {
+                throw new IllegalArgumentException("routing deployment fields are incomplete");
+            }
+            String key = routingApiKeys == null ? null : routingApiKeys.get(deployment.getDeploymentId());
+            if (!ModelProviders.OLLAMA.equalsIgnoreCase(deployment.getProvider()) && !StringUtils.hasText(key)) {
+                throw new IllegalArgumentException(
+                    "routing deployment API key is missing: " + deployment.getDeploymentId());
+            }
+            Model candidate = modelConfig.buildByProvider(deployment.getProvider(), deployment.getName(),
+                key, deployment.getBaseUrl(), staged);
+            if (staged.getRetry().isEnabled()) {
+                candidate = new ResilientChatModel(candidate, staged.getRetry().getMaxAttempts(),
+                    staged.getRetry().getBackoffMs());
+            }
+            if (candidates.putIfAbsent(deployment.getDeploymentId(), candidate) != null) {
+                throw new IllegalArgumentException(
+                    "duplicate routing deployment: " + deployment.getDeploymentId());
+            }
+        }
+        return new PolicyRoutingModel(RuntimeModelRouteMapper.toSpec(policy), candidates);
     }
 
     /** 用当前配置打底、以 DTO 覆盖，产出一份用于构建新链的临时模型配置（不改动 properties）。 */
@@ -155,7 +314,7 @@ public class RuntimeConfigApplier {
         return staged;
     }
 
-    /** 复制模型链构建相关字段（scalar + fallback/retry 内部字段），不复制 costControl 等无关项。 */
+    /** 复制模型链构建相关字段（scalar + fallback/retry/tieredRouting 内部字段），不复制成本统计等无关项。 */
     private void copyModelCfg(ModelProperties from, ModelProperties to) {
         to.setProvider(from.getProvider());
         to.setApiKey(from.getApiKey());
@@ -176,19 +335,33 @@ public class RuntimeConfigApplier {
         to.getRetry().setEnabled(from.getRetry().isEnabled());
         to.getRetry().setMaxAttempts(from.getRetry().getMaxAttempts());
         to.getRetry().setBackoffMs(from.getRetry().getBackoffMs());
+        to.getTieredRouting().setEnabled(from.getTieredRouting().isEnabled());
+        to.getTieredRouting().setProvider(from.getTieredRouting().getProvider());
+        to.getTieredRouting().setName(from.getTieredRouting().getName());
+        to.getTieredRouting().setApiKey(from.getTieredRouting().getApiKey());
+        to.getTieredRouting().setBaseUrl(from.getTieredRouting().getBaseUrl());
+        to.getTieredRouting().setMaxMessagesForEconomy(
+            from.getTieredRouting().getMaxMessagesForEconomy());
+        to.getTieredRouting().setMaxUserTextLengthForEconomy(
+            from.getTieredRouting().getMaxUserTextLengthForEconomy());
     }
 
-    /** 回写 MCP 服务列表：空列表表示清空接入（enabled=false）。 */
-    private void applyMcp(CustomerWorkRuntimeConfig dto) {
+    /**
+     * 在提交前完成 MCP 的全部遍历和映射。
+     *
+     * <p>运行时快照属于外部输入，列表中出现 null 也必须在任何共享配置写入之前拒绝；否则先回写模型、
+     * 再映射 MCP 时抛错会留下“属性已变、delegate 未切”的半应用状态。</p>
+     */
+    private PreparedMcp prepareMcp(CustomerWorkRuntimeConfig dto) {
         List<CustomerWorkRuntimeConfig.McpServer> servers = dto.getMcpServers();
-        McpProperties mcp = properties.getMcp();
         if (CollectionUtils.isEmpty(servers)) {
-            mcp.setEnabled(false);
-            mcp.setServers(new ArrayList<>());
-            return;
+            return new PreparedMcp(false, List.of());
         }
         List<McpProperties.Server> mapped = new ArrayList<>();
         for (CustomerWorkRuntimeConfig.McpServer s : servers) {
+            if (s == null) {
+                throw new IllegalArgumentException("runtime config MCP server is null");
+            }
             McpProperties.Server server = new McpProperties.Server();
             server.setName(s.getName());
             server.setUrl(s.getUrl());
@@ -196,14 +369,35 @@ public class RuntimeConfigApplier {
             server.setHeaders(s.getHeaders());
             mapped.add(server);
         }
-        mcp.setEnabled(true);
-        mcp.setServers(mapped);
+        return new PreparedMcp(true, List.copyOf(mapped));
     }
 
-    /** 回写 Agent maxIters（DTO 未提供则不动）。 */
-    private void applyAgent(CustomerWorkRuntimeConfig dto) {
-        if (dto.getAgent() != null && dto.getAgent().getMaxIters() != null) {
-            properties.getAgent().setMaxIters(dto.getAgent().getMaxIters());
+    /** 回写已准备完成的 MCP 快照；这里不再解析外部输入。 */
+    private void applyMcp(PreparedMcp prepared) {
+        McpProperties mcp = properties.getMcp();
+        mcp.setEnabled(prepared.enabled());
+        mcp.setServers(new ArrayList<>(prepared.servers()));
+    }
+
+    /** 在提交前把 Agent wire 语义解析为确定值。 */
+    private PreparedAgent prepareAgent(CustomerWorkRuntimeConfig dto) {
+        if (dto.getAgent() == null) {
+            return new PreparedAgent(false, null);
         }
+        Integer maxIters = dto.getAgent().getMaxIters();
+        return new PreparedAgent(true, maxIters == null ? baselineMaxIters : maxIters);
+    }
+
+    /** Agent section 缺失表示不动；section 存在且 maxIters 为空表示重置为部署基线。 */
+    private void applyAgent(PreparedAgent prepared) {
+        if (prepared.present()) {
+            properties.getAgent().setMaxIters(prepared.maxIters());
+        }
+    }
+
+    private record PreparedMcp(boolean enabled, List<McpProperties.Server> servers) {
+    }
+
+    private record PreparedAgent(boolean present, Integer maxIters) {
     }
 }

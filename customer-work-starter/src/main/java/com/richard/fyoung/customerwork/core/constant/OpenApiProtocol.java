@@ -13,6 +13,8 @@ public final class OpenApiProtocol {
 
     /** 开放 API 令牌请求头。 */
     public static final String TOKEN_HEADER = "X-Open-Api-Token";
+    /** 运行时配置 ACK 专用的实例级令牌请求头；不得复用租户通用 Open API 凭据。 */
+    public static final String RUNTIME_CONFIG_ACK_TOKEN_HEADER = "X-Runtime-Config-Ack-Token";
 
     /** SSE 事件名：一个回复增量。 */
     public static final String SSE_EVENT_MESSAGE = "message";

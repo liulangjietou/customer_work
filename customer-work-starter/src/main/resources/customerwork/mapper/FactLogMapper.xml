@@ -11,4 +11,12 @@
         ORDER BY id DESC
         LIMIT #{limit}
     </select>
+
+    <!-- 跨租户治理任务调用；常规业务链路仍保持只追加。 -->
+    <delete id="deleteExpiredBefore">
+        DELETE FROM cw_fact_log
+        WHERE ts &lt; #{cutoffMs}
+        ORDER BY id
+        LIMIT #{limit}
+    </delete>
 </mapper>

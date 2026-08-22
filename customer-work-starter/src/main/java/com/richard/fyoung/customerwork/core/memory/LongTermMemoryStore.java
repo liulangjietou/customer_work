@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * 长期记忆存储 SPI（对应深度解析 3.4 的"多租户隔离 + 长期记忆"，三层记忆体系的 L2）。
  *
- * <p>按记忆分区键（{@code scopeId}，由 {@code TenantResolver} 从 sessionId 解析）分区的事实存储，
+ * <p>按记忆分区键（{@code scopeId}，由 {@link MemorySubjectResolver} 从已验证主体解析）分区的事实存储，
  * 作为 {@link InMemoryLongTermMemory} 的共享底座，使同一分区的多个会话能共享长期记忆，
  * 而不同分区之间严格隔离（ToB 硬要求）。</p>
  *
@@ -33,8 +33,25 @@ public interface LongTermMemoryStore {
      */
     List<String> recall(String scopeId, String query, int topK);
 
+    /**
+     * 按最新优先顺序列出分区记忆，供主体本人查看。
+     *
+     * <p>这是隐私治理阶段新增的可选能力。保留默认实现，避免已有的第三方存储实现仅因 SPI
+     * 增加方法而在二进制链接或升级编译时被破坏；调用查看能力时仍以 fail-fast 明确暴露不支持。</p>
+     */
+    default List<String> list(String scopeId, int limit) {
+        throw new UnsupportedOperationException("long-term memory listing is not supported");
+    }
+
     /** 清空指定分区的全部记忆。 */
     void clear(String scopeId);
+
+    /**
+     * 隐私治理链路擦除指定主体分区。实现必须在删除失败时抛出，不能沿用增强能力的静默降级语义。
+     */
+    default void erase(String scopeId) {
+        throw new UnsupportedOperationException("long-term memory erasure is not supported");
+    }
 
     /** 指定分区已存储的记忆条数（便于观测 / 测试）。 */
     int size(String scopeId);

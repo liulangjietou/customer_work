@@ -105,6 +105,10 @@ public class MybatisEvalRunStore implements EvalRunStore {
         row.setMetricsJson(writeJson(run.metrics(), run.runId()));
         row.setTriggerSource(run.trigger().name());
         row.setDatasetSize(run.datasetSize());
+        EvalVersionBinding binding = run.versionBinding();
+        row.setDatasetVersionId(binding == null ? null : binding.datasetVersion());
+        row.setDatasetFingerprint(binding == null ? null : binding.datasetFingerprint());
+        row.setVersionBindingJson(writeJson(binding, run.runId()));
         row.setPromptFingerprint(run.promptFingerprint());
         row.setRemark(run.remark());
         row.setCreatedAtMs(run.createdAtMs());
@@ -112,6 +116,7 @@ public class MybatisEvalRunStore implements EvalRunStore {
     }
 
     private EvalRun toDomain(EvalRunDO row) {
+        EvalVersionBinding binding = readVersionBinding(row);
         return new EvalRun(
             row.getRunId(),
             EvalType.valueOf(row.getEvalType()),
@@ -124,9 +129,25 @@ public class MybatisEvalRunStore implements EvalRunStore {
             readMetrics(row.getMetricsJson(), row.getRunId()),
             EvalTrigger.valueOf(row.getTriggerSource()),
             row.getDatasetSize() == null ? 0 : row.getDatasetSize(),
-            row.getPromptFingerprint(),
+            binding,
             row.getRemark(),
             row.getCreatedAtMs() == null ? 0L : row.getCreatedAtMs());
+    }
+
+    private EvalVersionBinding readVersionBinding(EvalRunDO row) {
+        String json = row.getVersionBindingJson();
+        if (json == null || json.isBlank()) {
+            return EvalVersionBinding.legacy(row.getPromptFingerprint());
+        }
+        try {
+            EvalVersionBinding binding = objectMapper.readValue(json, EvalVersionBinding.class);
+            return binding == null ? EvalVersionBinding.legacy(row.getPromptFingerprint()) : binding;
+        } catch (Exception e) {
+            log.error("[MybatisEvalRunStore] deserialize version binding failed, errorCode={}, runId={}",
+                "EVAL-RUN-DESERIALIZE-FAIL", row.getRunId(), e);
+            return new EvalVersionBinding(row.getDatasetVersionId(), row.getDatasetFingerprint(),
+                "", row.getPromptFingerprint(), "", "", "", "", "");
+        }
     }
 
     private String writeJson(Object value, String runId) {

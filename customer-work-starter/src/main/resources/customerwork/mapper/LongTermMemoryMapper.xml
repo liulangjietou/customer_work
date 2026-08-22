@@ -19,4 +19,12 @@
         ORDER BY id DESC
         LIMIT #{limit}
     </select>
+
+    <!-- 跨租户治理任务调用；CrossTenantOperations 在调用点显式关闭租户行过滤。 -->
+    <delete id="deleteExpiredBefore">
+        DELETE FROM cw_long_term_memory
+        WHERE created_at_ms &lt; #{cutoffMs}
+        ORDER BY id
+        LIMIT #{limit}
+    </delete>
 </mapper>

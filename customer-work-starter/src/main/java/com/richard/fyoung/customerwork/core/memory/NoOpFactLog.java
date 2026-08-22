@@ -26,4 +26,14 @@ public class NoOpFactLog implements FactLog {
     public List<FactRecord> readRecords(String scopeId) {
         return List.of();
     }
+
+    @Override
+    public List<String> readForSubjectAccess(String scopeId, int limit) {
+        return List.of();
+    }
+
+    @Override
+    public void erase(String scopeId) {
+        // 无持久化数据，无需处理
+    }
 }

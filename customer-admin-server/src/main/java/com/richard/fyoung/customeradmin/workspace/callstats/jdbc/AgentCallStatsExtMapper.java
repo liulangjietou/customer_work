@@ -35,4 +35,11 @@ public interface AgentCallStatsExtMapper {
     /** 趋势聚合：{@code dateFormat} 为 MySQL DATE_FORMAT 格式串（按天/小时），含各段平均耗时。 */
     List<AgentCallStatsTrendRow> trend(@Param("q") AgentCallStatsQueryParam query,
                                        @Param("dateFormat") String dateFormat);
+
+    /** 按不可变实验修订和实验臂聚合真实曝光；tenantId 必须显式传入。 */
+    List<ModelExperimentMetricsRow> experimentMetrics(@Param("tenantId") String tenantId,
+                                                       @Param("experimentId") Long experimentId,
+                                                       @Param("revision") Integer revision,
+                                                       @Param("startedAtMs") Long startedAtMs,
+                                                       @Param("endedAtMs") Long endedAtMs);
 }

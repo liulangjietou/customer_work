@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -45,10 +46,16 @@ public class StoreAgentCallRecordSink implements AgentCallRecordSink, Disposable
         if (record == null) {
             return;
         }
+        // 异步线程无法自动继承 ThreadLocal；提交时冻结租户，落库时恢复，避免实验归因写入 default 或直接失败。
+        String tenantId = TenantContext.get();
         try {
             executor.execute(() -> {
                 try {
-                    store.save(record);
+                    if (tenantId == null) {
+                        store.save(record);
+                    } else {
+                        TenantContext.runWith(tenantId, () -> store.save(record));
+                    }
                 } catch (Exception e) {
                     log.error("agent call log async save failed, code={}, requestId={}",
                         "CALLLOG-ASYNC-SAVE-FAIL", record.requestId(), e);

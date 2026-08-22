@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.billing.mapper.CostAlertMapper">
+
+    <insert id="insertIgnore" useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO ai_cost_alert
+        (tenant_id, period, period_key, alert_type, used_amount, limit_amount, forecast_amount,
+         status, first_seen_at, create_time, update_time)
+        VALUES
+        (#{tenantId}, #{period}, #{periodKey}, #{alertType}, #{usedAmount}, #{limitAmount}, #{forecastAmount},
+         #{status}, #{firstSeenAt}, #{createTime}, #{updateTime})
+    </insert>
+
+    <update id="acknowledge">
+        UPDATE ai_cost_alert
+        SET status = 'ACKED', ack_by = #{ackBy}, ack_at = #{ackAt}, update_time = #{ackAt}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND status = 'OPEN'
+    </update>
+
+    <select id="findBillingViewUserIds" resultType="java.lang.Long">
+        SELECT DISTINCT u.id
+        FROM sys_user u
+        INNER JOIN sys_user_role ur ON ur.user_id = u.id
+        INNER JOIN sys_role r ON r.id = ur.role_id AND r.deleted = 0 AND r.status = 1
+        INNER JOIN sys_role_permission rp ON rp.role_id = r.id
+        INNER JOIN sys_permission p ON p.id = rp.permission_id
+        WHERE u.tenant_id = #{tenantId}
+          AND ur.tenant_id = #{tenantId}
+          AND r.tenant_id = #{tenantId}
+          AND rp.tenant_id = #{tenantId}
+          AND u.deleted = 0
+          AND u.status = 1
+          AND p.deleted = 0
+          AND p.perm_code = 'billing:view'
+    </select>
+
+</mapper>

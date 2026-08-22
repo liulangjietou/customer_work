@@ -5,6 +5,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.infra.config.NacosPromptService;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
+import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
 import com.richard.fyoung.customerwork.data.rag.KnowledgeProvider;
 import com.richard.fyoung.customerwork.data.skill.MysqlSkillMaterializer;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
@@ -75,6 +76,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
     private final Model model;
     private final CustomerWorkProperties properties;
     private final LongTermMemoryProvider longTermMemoryProvider;
+    private final MemorySubjectResolver memorySubjectResolver;
     private final KnowledgeProvider knowledgeProvider;
     private final McpToolkitConfigurer mcpToolkitConfigurer;
     private final HigressToolkitConfigurer higressToolkitConfigurer;
@@ -110,6 +112,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                                        PermissionContextState permissionContext,
                                        NacosPromptService nacosPromptService,
                                        TenantResolver tenantResolver,
+                                       MemorySubjectResolver memorySubjectResolver,
                                        ToolKindRegistry toolKindRegistry,
                                        AgentGovernanceAssembler governanceAssembler,
                                        ObjectProvider<MysqlSkillMaterializer> skillMaterializerProvider) {
@@ -124,6 +127,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         this.permissionContext = permissionContext;
         this.nacosPromptService = nacosPromptService;
         this.tenantResolver = tenantResolver;
+        this.memorySubjectResolver = memorySubjectResolver;
         this.toolKindRegistry = toolKindRegistry;
         this.governanceAssembler = governanceAssembler;
         this.skillMaterializerProvider = skillMaterializerProvider;
@@ -225,8 +229,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
         // 多租户长期记忆（memory / 百炼，由 Provider 选择）
         if (properties.getMemory().isLongTermEnabled()) {
-            String tenantId = resolveTenant(sessionId);
-            builder.longTermMemory(longTermMemoryProvider.create(tenantId))
+            builder.longTermMemory(longTermMemoryProvider.create(memorySubjectResolver.resolve(
+                    sessionId, MemorySubjectResolver.CUSTOMER_SERVICE_AGENT)))
                 .longTermMemoryMode(LongTermMemoryMode.BOTH);
         }
 

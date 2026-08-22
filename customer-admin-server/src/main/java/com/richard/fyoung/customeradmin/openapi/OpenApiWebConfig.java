@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.openapi;
 
+import com.richard.fyoung.customeradmin.aiconfig.channel.RuntimePublishProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -17,18 +18,26 @@ public class OpenApiWebConfig implements WebMvcConfigurer {
 
     /** 开放 API 使用独立机器凭据，不得再被后台 Sa-Token 上下文覆盖。 */
     public static final String PATH_PATTERN = "/api/open/**";
+    /** 运行时配置回执使用实例级专用凭据，不属于通用开放 API 权限面。 */
+    public static final String RUNTIME_CONFIG_ACK_PATH = "/api/open/runtime-config/acks";
 
     private final OpenApiProperties properties;
     private final AdminTenantProperties tenantProperties;
+    private final RuntimePublishProperties runtimePublishProperties;
 
-    public OpenApiWebConfig(OpenApiProperties properties, AdminTenantProperties tenantProperties) {
+    public OpenApiWebConfig(OpenApiProperties properties, AdminTenantProperties tenantProperties,
+                            RuntimePublishProperties runtimePublishProperties) {
         this.properties = properties;
         this.tenantProperties = tenantProperties;
+        this.runtimePublishProperties = runtimePublishProperties;
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new OpenApiAuthInterceptor(properties, tenantProperties))
-            .addPathPatterns(PATH_PATTERN);
+            .addPathPatterns(PATH_PATTERN)
+            .excludePathPatterns(RUNTIME_CONFIG_ACK_PATH);
+        registry.addInterceptor(new RuntimeConfigAckAuthInterceptor(runtimePublishProperties))
+            .addPathPatterns(RUNTIME_CONFIG_ACK_PATH);
     }
 }

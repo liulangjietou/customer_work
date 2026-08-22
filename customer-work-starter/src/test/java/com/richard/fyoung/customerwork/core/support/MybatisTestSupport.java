@@ -21,8 +21,10 @@ import com.richard.fyoung.customerwork.capability.handoff.mapper.HandoffMapper;
 import com.richard.fyoung.customerwork.core.memory.mapper.FactLogMapper;
 import com.richard.fyoung.customerwork.core.memory.mapper.HarnessMemoryMapper;
 import com.richard.fyoung.customerwork.core.memory.mapper.LongTermMemoryMapper;
+import com.richard.fyoung.customerwork.core.memory.mapper.MemoryConsentMapper;
 import com.richard.fyoung.customerwork.observability.mapper.AuditLogMapper;
 import com.richard.fyoung.customerwork.capability.routing.mapper.SeatAgentMapper;
+import com.richard.fyoung.customerwork.capability.semanticcache.mapper.SemanticCacheMapper;
 import com.richard.fyoung.customerwork.safety.sensitiveword.mapper.SensitiveWordMapper;
 import com.richard.fyoung.customerwork.capability.slotfilling.mapper.SlotFillingMapper;
 import com.richard.fyoung.customerwork.data.skill.mapper.SkillFileMapper;
@@ -75,6 +77,8 @@ public final class MybatisTestSupport {
         AgentCallLogMapper.class, AgentCallSegmentMapper.class,
         DictTypeMapper.class, DictItemMapper.class,
         LongTermMemoryMapper.class, FactLogMapper.class, HarnessMemoryMapper.class,
+        MemoryConsentMapper.class,
+        SemanticCacheMapper.class,
         SkillMapper.class, SkillFileMapper.class,
         DeadLetterMapper.class, OutboxMessageMapper.class
     };

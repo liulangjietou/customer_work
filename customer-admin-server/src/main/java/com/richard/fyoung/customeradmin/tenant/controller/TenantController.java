@@ -8,6 +8,8 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessSnapshot;
+import com.richard.fyoung.customeradmin.tenant.access.dto.TenantAccessDeliveryVO;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantPageQuery;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantSaveRequest;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantVO;
@@ -96,8 +98,26 @@ public class TenantController {
         return Result.success();
     }
 
+    /** 不改租户状态，主动让该租户全部后台会话失效并发布新访问版本。 */
+    @SaCheckPermission("tenant:edit")
+    @OperationLog(operation = "撤销租户会话", target = "sys_tenant")
+    @PostMapping("/{id}/revoke-sessions")
+    public Result<Void> revokeSessions(@PathVariable Long id) {
+        assertCrossTenantAuthority();
+        tenantService.revokeSessions(id);
+        return Result.success();
+    }
+
+    /** 最近一次租户访问快照的可靠投递状态。 */
+    @SaCheckPermission("tenant:view")
+    @GetMapping("/{id}/access-delivery")
+    public Result<TenantAccessDeliveryVO> accessDelivery(@PathVariable Long id) {
+        assertCrossTenantAuthority();
+        return Result.success(tenantService.latestAccessDelivery(id));
+    }
+
     @SaCheckPermission("tenant:delete")
-    @OperationLog(operation = "删除租户", target = "sys_tenant")
+    @OperationLog(operation = "租户退租", target = "sys_tenant")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         assertCrossTenantAuthority();
@@ -128,14 +148,18 @@ public class TenantController {
     @PutMapping("/switch-view")
     public Result<Void> switchView(@RequestParam(required = false) String tenantCode) {
         assertCrossTenantAuthority();
-        String resolvedTenantCode = null;
+        TenantAccessSnapshot snapshot = null;
         if (tenantCode != null && !tenantCode.isBlank()) {
-            resolvedTenantCode = tenantService.resolveAccessibleCode(tenantCode);
-            if (resolvedTenantCode == null) {
+            snapshot = tenantService.resolveAccessibleSnapshot(tenantCode);
+            if (snapshot == null) {
                 throw new BizException(ResultCode.TENANT_NOT_FOUND);
             }
         }
-        TenantSession.switchView(resolvedTenantCode);
+        if (snapshot == null) {
+            TenantSession.clearView();
+        } else {
+            TenantSession.switchView(snapshot.tenantId(), snapshot.accessEpoch());
+        }
         return Result.success();
     }
 

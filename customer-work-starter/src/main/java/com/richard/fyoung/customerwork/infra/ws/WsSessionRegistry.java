@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Sinks;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -30,6 +31,8 @@ public class WsSessionRegistry {
 
     private final Map<String, Sinks.Many<String>> userSinks = new ConcurrentHashMap<>();
     private final Map<String, Sinks.Many<String>> agentSinks = new ConcurrentHashMap<>();
+    /** 先封锁登记、再扫描旧连接，配合 register 的写后复查闭合撤权并发窗口。 */
+    private final Set<String> restrictedTenants = ConcurrentHashMap.newKeySet();
 
     private final ObjectMapper objectMapper;
 
@@ -91,17 +94,85 @@ public class WsSessionRegistry {
         return agentSinks.size();
     }
 
+    /**
+     * 租户访问快照冻结/终止后主动断开该租户全部连接。
+     *
+     * <p>只拒绝新握手仍会让已经建立的 WebSocket 继续收发；访问快照消费者在状态收紧时调用本方法，
+     * 以租户前缀原子移除并完成用户、坐席两类 Sink，使在途连接立即正常收尾。</p>
+     */
+    public void disconnectTenant(String tenantId) {
+        if (!TenantContext.isValidTenantId(tenantId)) {
+            throw new IllegalArgumentException("tenantId format is invalid");
+        }
+        String tenantKey = TenantContext.normalizedTenantKey(tenantId);
+        boolean newlyRestricted = restrictedTenants.add(tenantKey);
+        String prefix = tenantKey + SCOPE_DELIMITER;
+        int users = disconnectByPrefix(userSinks, prefix);
+        int agents = disconnectByPrefix(agentSinks, prefix);
+        if (newlyRestricted || users > 0 || agents > 0) {
+            log.info("ws tenant connections disconnected: tenantId={}, users={}, agents={}",
+                tenantId, users, agents);
+        }
+    }
+
+    /** 租户恢复为有效 ACTIVE 快照后才重新允许登记连接。 */
+    public void allowTenant(String tenantId) {
+        if (!TenantContext.isValidTenantId(tenantId)) {
+            throw new IllegalArgumentException("tenantId format is invalid");
+        }
+        if (restrictedTenants.remove(TenantContext.normalizedTenantKey(tenantId))) {
+            log.info("ws tenant connections allowed: tenantId={}", tenantId);
+        }
+    }
+
+    /**
+     * ACTIVE 快照访问版本递增时撤销旧 epoch 的全部长连接，并立即允许新 epoch 重新握手。
+     *
+     * <p>复用 disconnect 的“先封锁登记、再扫描”并发闭环，扫描完成后再解除封锁；因此旧连接不会漏断，
+     * 新凭据也不会被永久拒绝。处于切换窗口内的握手会正常结束，客户端可按新令牌重连。</p>
+     */
+    public void disconnectTenantSessionsForEpochChange(String tenantId) {
+        disconnectTenant(tenantId);
+        allowTenant(tenantId);
+    }
+
+    public boolean isTenantRestricted(String tenantId) {
+        return TenantContext.isValidTenantId(tenantId)
+            && restrictedTenants.contains(TenantContext.normalizedTenantKey(tenantId));
+    }
+
     private Sinks.Many<String> register(Map<String, Sinks.Many<String>> sinks, String id, String kind) {
         Sinks.Many<String> sink = Sinks.many().unicast().onBackpressureBuffer();
+        String tenantKey = tenantKey(id);
+        if (restrictedTenants.contains(tenantKey)) {
+            sink.tryEmitComplete();
+            return sink;
+        }
         Sinks.Many<String> previous = sinks.put(id, sink);
         if (previous != null) {
-            // 顶号：旧连接下行流正常收尾
+            // 先完成旧连接，避免撤权恰好发生在 put 之后时把被替换的旧 Sink 遗漏在扫描外。
             previous.tryEmitComplete();
+        }
+        // check-then-register 与撤权扫描并发时，写后复查负责移除扫描可能错过的新连接。
+        if (restrictedTenants.contains(tenantKey) && sinks.remove(id, sink)) {
+            sink.tryEmitComplete();
+            return sink;
+        }
+        if (previous != null) {
+            // 顶号：旧连接下行流正常收尾
             log.info("ws {} reconnected, superseding old sink: id={}", kind, id);
         } else {
             log.info("ws {} connected: id={}", kind, id);
         }
         return sink;
+    }
+
+    private String tenantKey(String scopedId) {
+        int delimiter = scopedId.indexOf(SCOPE_DELIMITER);
+        if (delimiter <= 0) {
+            throw new IllegalStateException("scoped WebSocket id is invalid");
+        }
+        return scopedId.substring(0, delimiter);
     }
 
     private void unregister(Map<String, Sinks.Many<String>> sinks, String id, Sinks.Many<String> sink) {
@@ -110,6 +181,17 @@ public class WsSessionRegistry {
             sink.tryEmitComplete();
             log.info("ws disconnected: id={}", id);
         }
+    }
+
+    private int disconnectByPrefix(Map<String, Sinks.Many<String>> sinks, String prefix) {
+        int disconnected = 0;
+        for (Map.Entry<String, Sinks.Many<String>> entry : sinks.entrySet()) {
+            if (entry.getKey().startsWith(prefix) && sinks.remove(entry.getKey(), entry.getValue())) {
+                entry.getValue().tryEmitComplete();
+                disconnected++;
+            }
+        }
+        return disconnected;
     }
 
     private boolean push(Map<String, Sinks.Many<String>> sinks, String id, WsFrame frame, String kind) {
