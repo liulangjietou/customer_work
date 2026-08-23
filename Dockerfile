@@ -5,7 +5,7 @@ COPY . .
 RUN mvn -q -B -DskipTests package
 
 # ---- runtime stage ----
-FROM eclipse-temurin:17-jre
+FROM eclipse-temurin:24-jre
 WORKDIR /app
 COPY --from=build /build/customer-work-app-server/target/customer-work.jar app.jar
 EXPOSE 8080
