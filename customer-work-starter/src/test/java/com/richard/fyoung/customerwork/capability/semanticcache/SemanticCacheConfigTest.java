@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.RuntimeConfigCacheInvalidator;
 import io.agentscope.core.model.Model;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -13,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 
 /**
@@ -90,7 +92,11 @@ class SemanticCacheConfigTest {
 
     @Test
     void defaultStore_shouldBeInMemory() {
-        runner().run(context ->
-            assertEquals(InMemorySemanticCacheStore.class, context.getBean(SemanticCacheStore.class).getClass()));
+        runner().run(context -> {
+            assertEquals(InMemorySemanticCacheStore.class, context.getBean(SemanticCacheStore.class).getClass());
+            assertSame(context.getBean(SemanticCacheService.class),
+                context.getBean(RuntimeConfigCacheInvalidator.class),
+                "Nacos 热更新必须能从容器解析到语义缓存失效边界");
+        });
     }
 }

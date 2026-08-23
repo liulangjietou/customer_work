@@ -24,6 +24,7 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelRoutingPolicyRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
@@ -104,6 +105,7 @@ public class AgentService {
     private final MenuVersionHolder menuVersionHolder;
     private final AgentInstanceCache agentInstanceCache;
     private final ModelConfigService modelConfigService;
+    private final ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess;
     private final CustomerWorkConfigPublisher runtimeConfigPublisher;
 
     public AgentService(AiAgentMapper agentMapper, AiAgentMcpMapper agentMcpMapper,
@@ -116,6 +118,7 @@ public class AgentService {
                          AiKnowledgeBaseMapper knowledgeBaseMapper,
                          MenuVersionHolder menuVersionHolder, AgentInstanceCache agentInstanceCache,
                          ModelConfigService modelConfigService,
+                         ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess,
                          CustomerWorkConfigPublisher runtimeConfigPublisher) {
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
@@ -132,6 +135,7 @@ public class AgentService {
         this.menuVersionHolder = menuVersionHolder;
         this.agentInstanceCache = agentInstanceCache;
         this.modelConfigService = modelConfigService;
+        this.routingPolicyRuntimeAccess = routingPolicyRuntimeAccess;
         this.runtimeConfigPublisher = runtimeConfigPublisher;
     }
 
@@ -256,6 +260,9 @@ public class AgentService {
         }
         if (modelConfigAccess.findVisibleById(request.modelId()) == null) {
             throw new BizException(ResultCode.PARAM_INVALID, "modelId 不存在: " + request.modelId());
+        }
+        if (request.modelRoutePolicyId() != null) {
+            routingPolicyRuntimeAccess.requireActive(request.modelRoutePolicyId(), selfId, null);
         }
         validateBackupModels(request);
         if (!CollectionUtils.isEmpty(request.mcpIds())
@@ -431,6 +438,7 @@ public class AgentService {
         agent.setAgentName(request.agentName());
         agent.setAgentCode(request.agentCode());
         agent.setModelId(request.modelId());
+        agent.setModelRoutePolicyId(request.modelRoutePolicyId());
         agent.setSystemPrompt(request.systemPrompt());
         agent.setCapabilities(CollectionUtils.isEmpty(request.capabilities())
             ? AgentCapabilities.CHAT : String.join(AgentCapabilities.DELIMITER, request.capabilities()));
@@ -450,6 +458,7 @@ public class AgentService {
         vo.setAgentName(agent.getAgentName());
         vo.setAgentCode(agent.getAgentCode());
         vo.setModelId(agent.getModelId());
+        vo.setModelRoutePolicyId(agent.getModelRoutePolicyId());
         AiModelConfig model = modelConfigAccess.findVisibleById(agent.getModelId());
         vo.setModelName(model == null ? null : model.getModelName());
         fillBackupModels(vo, agent.getId());

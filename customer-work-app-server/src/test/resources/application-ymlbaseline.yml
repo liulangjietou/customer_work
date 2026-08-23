@@ -489,6 +489,11 @@ customer-work:
     embedding-batch-size: 10
   # =================== B6 运营闭环 结束 ===================
 
+  # 调用明细是 Trace/Replay、实验指标、SLO 与成本归因的共同事实表；生产与本地集成环境均持久化。
+  call-log:
+    enabled: true
+    store-mode: jdbc
+
   chat-log:
     # 聊天日志（会话/工单消息留痕）：存储模式 memory | jdbc（MyBatis-Plus 实现，跨实例共享）
     # badcase 登记时靠它回查「用户问了什么、AI 答了什么」，不开则筛选界面没有上下文

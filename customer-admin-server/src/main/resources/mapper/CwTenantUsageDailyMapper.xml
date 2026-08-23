@@ -61,4 +61,11 @@
         ORDER BY amount DESC
     </select>
 
+    <select id="sumAmountByTenantAndRange" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(amount), 0)
+        FROM cw_tenant_usage_daily
+        WHERE tenant_id = #{tenantId}
+          AND stat_date BETWEEN #{from} AND #{to}
+    </select>
+
 </mapper>

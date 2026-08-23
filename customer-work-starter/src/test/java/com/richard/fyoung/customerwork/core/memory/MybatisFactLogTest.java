@@ -61,6 +61,7 @@ class MybatisFactLogTest {
         assertEquals(2, facts.size());
         assertEquals("用户偏好顺丰快递", facts.get(0), "读取应还原写入顺序");
         assertEquals("用户常用收货地址杭州", facts.get(1));
+        assertEquals(facts, factLog.readForSubjectAccess(scopeId, 10));
     }
 
     @Test

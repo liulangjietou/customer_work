@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.system.user.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -50,6 +51,9 @@ public class SysUser {
     private String levelCode;
     /** 0禁用 / 1启用。 */
     private Integer status;
+    /** 认证版本；安全属性变化时原子递增，禁止通用 updateById 用旧值覆盖。 */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Long authEpoch;
     private LocalDateTime lastLoginTime;
     private String lastLoginIp;
 

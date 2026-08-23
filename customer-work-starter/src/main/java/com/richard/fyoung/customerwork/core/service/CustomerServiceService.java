@@ -1,6 +1,10 @@
 package com.richard.fyoung.customerwork.core.service;
 
 import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
+import com.richard.fyoung.customerwork.core.memory.MemorySubjectKey;
+import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
+import com.richard.fyoung.customerwork.core.model.failover.FailoverModel;
+import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallSessionType;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -16,6 +20,7 @@ import com.richard.fyoung.customerwork.safety.quota.QuotaDecision;
 import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordFilter;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStreamGuard;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentResultEvent;
@@ -82,6 +87,8 @@ public class CustomerServiceService {
     private static final String M_CHAT_FALLBACK = "customerwork.chat.fallback";
     /** 语义缓存命中计数指标名：省下的每一次模型调用都记在这里，用来算这个功能到底值不值。 */
     private static final String M_CACHE_HIT = "customerwork.chat.cache.hit";
+    /** 配额触发备用模型路由的次数。 */
+    private static final String M_QUOTA_DEGRADE = "customerwork.quota.degrade";
 
     /**
      * 命中缓存后下发的切片长度（字符）。
@@ -110,10 +117,14 @@ public class CustomerServiceService {
     private SensitiveWordFilter sensitiveWordFilter;
 
     /**
-     * 进程内热 Agent 缓存：sessionId -> Agent，有界 LRU（访问序）。
-     * 仅为摊薄装配开销；会话状态由 StateStore 持久化，淘汰不丢数据。
+     * 进程内热 Agent 缓存：记忆主体 + sessionId -> Agent，有界 LRU（访问序）。
+     * Agent 创建时已绑定长期记忆，故缓存键必须包含可信租户和终端主体；只用客户端可控的
+     * sessionId 会让不同租户或同租户不同用户复用第一位调用者的记忆代理。
      */
-    private final Map<String, ReActAgent> sessionAgents;
+    private final Map<AgentSessionKey, ReActAgent> sessionAgents;
+
+    /** 与 Agent 工厂共用同一主体解析规则，保证缓存分区和长期记忆分区完全一致。 */
+    private final MemorySubjectResolver memorySubjectResolver;
 
     /**
      * 会话级并发锁：同一 sessionId 的请求串行执行，防止并发写状态导致状态冲突 / 覆盖。
@@ -133,9 +144,9 @@ public class CustomerServiceService {
         new TenantQuotaGuard(new InMemoryTenantQuotaStore(), new InMemoryWindowCounter(), false);
 
     /**
-     * 会话最后活跃时间戳（用于超时清理）：sessionId -> lastActivityMs。
+     * 会话最后活跃时间戳（用于超时清理）：安全会话键 -> lastActivityMs。
      */
-    private final ConcurrentHashMap<String, Long> sessionActivity = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<AgentSessionKey, Long> sessionActivity = new ConcurrentHashMap<>();
 
     /**
      * 语义缓存；未装配（或未开启）时为 {@code null}，主链路走原路径、零额外开销。
@@ -153,13 +164,14 @@ public class CustomerServiceService {
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
                                   SessionStateManager sessionStateManager,
                                   CustomerWorkProperties properties,
+                                  MemorySubjectResolver memorySubjectResolver,
                                   ObjectProvider<MeterRegistry> meterRegistryProvider,
                                   ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
                                   ObjectProvider<SessionLock> sessionLockProvider,
                                   ObjectProvider<TenantQuotaGuard> quotaGuardProvider,
                                   ObjectProvider<SemanticCacheService> semanticCacheProvider,
                                   ObjectProvider<CsatService> csatServiceProvider) {
-        this(agentFactory, sessionStateManager, properties);
+        this(agentFactory, sessionStateManager, properties, memorySubjectResolver);
         this.meterRegistry = meterRegistryProvider.getIfAvailable();
         this.sensitiveWordFilter = sensitiveWordFilterProvider.getIfAvailable();
         this.semanticCache = semanticCacheProvider == null ? null : semanticCacheProvider.getIfAvailable();
@@ -174,6 +186,21 @@ public class CustomerServiceService {
         }
     }
 
+    /** 保留既有显式构造调用；生产容器走上面的主体解析器 Bean。 */
+    public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
+                                  SessionStateManager sessionStateManager,
+                                  CustomerWorkProperties properties,
+                                  ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                  ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
+                                  ObjectProvider<SessionLock> sessionLockProvider,
+                                  ObjectProvider<TenantQuotaGuard> quotaGuardProvider,
+                                  ObjectProvider<SemanticCacheService> semanticCacheProvider,
+                                  ObjectProvider<CsatService> csatServiceProvider) {
+        this(agentFactory, sessionStateManager, properties, new MemorySubjectResolver(),
+            meterRegistryProvider, sensitiveWordFilterProvider, sessionLockProvider,
+            quotaGuardProvider, semanticCacheProvider, csatServiceProvider);
+    }
+
     /** 无指标构造（单测 / 未接入 Micrometer 场景）；properties 为空时使用默认配置。 */
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
                                   SessionStateManager sessionStateManager) {
@@ -184,13 +211,21 @@ public class CustomerServiceService {
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
                                   SessionStateManager sessionStateManager,
                                   CustomerWorkProperties properties) {
+        this(agentFactory, sessionStateManager, properties, new MemorySubjectResolver());
+    }
+
+    private CustomerServiceService(CustomerServiceAgentFactory agentFactory,
+                                   SessionStateManager sessionStateManager,
+                                   CustomerWorkProperties properties,
+                                   MemorySubjectResolver memorySubjectResolver) {
         this.agentFactory = agentFactory;
         this.sessionStateManager = sessionStateManager;
         this.properties = properties;
+        this.memorySubjectResolver = memorySubjectResolver;
         this.sessionAgents = Collections.synchronizedMap(
-            new LinkedHashMap<String, ReActAgent>(256, 0.75f, true) {
+            new LinkedHashMap<AgentSessionKey, ReActAgent>(256, 0.75f, true) {
                 @Override
-                protected boolean removeEldestEntry(Map.Entry<String, ReActAgent> eldest) {
+                protected boolean removeEldestEntry(Map.Entry<AgentSessionKey, ReActAgent> eldest) {
                     return size() > MAX_HOT_AGENTS;
                 }
             });
@@ -267,6 +302,11 @@ public class CustomerServiceService {
         this.meterRegistry = meterRegistry;
     }
 
+    /** 测试可注入配额判定器（生产走构造注入）。 */
+    void setQuotaGuard(TenantQuotaGuard quotaGuard) {
+        this.quotaGuard = quotaGuard;
+    }
+
     /**
      * 处理一条用户消息，返回完整回复（非流式）。
      *
@@ -277,38 +317,51 @@ public class CustomerServiceService {
     public Mono<String> chat(String sessionId, String userText) {
         log.info("[session {}] received user message: {}", sessionId, userText);
         QuotaDecision quota = quotaGuard.check(null);
-        if (quota.shouldBlock()) {
+        if (shouldRejectForQuota(quota)) {
             return Mono.just(QUOTA_EXCEEDED_REPLY);
         }
-        touchSession(sessionId);
+        AgentSessionKey sessionKey = sessionKey(sessionId);
+        touchSession(sessionKey);
+        Mono<String> result;
         if (semanticCache == null) {
-            return invokeAgent(sessionId, userText);
+            result = invokeAgent(sessionKey, userText);
+        } else {
+            SemanticCacheService.CacheGeneration cacheGeneration = semanticCache.captureGeneration();
+            // 查缓存要调 Embedding（阻塞 HTTP），必须挪到弹性线程池，不能占用调用线程
+            result = Mono.fromCallable(() -> semanticCache.lookup(cacheGeneration, sessionId, userText))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(cached -> cached
+                    .map(answer -> {
+                        incr(M_CACHE_HIT);
+                        // 命中的内容仍要过一遍出站敏感词过滤：写入时合规不代表现在合规，词库是会变的。
+                        // 口径与流式命中路径 streamCachedAnswer 完全一致，两条路径不得再分叉。
+                        return Mono.just(applyOutboundGuard(answer));
+                    })
+                    .orElseGet(() -> invokeAgent(sessionKey, userText)
+                        .doOnNext(reply -> cacheReply(cacheGeneration, sessionId, userText, reply))));
         }
-        // 查缓存要调 Embedding（阻塞 HTTP），必须挪到弹性线程池，不能占用调用线程
-        return Mono.fromCallable(() -> semanticCache.lookup(sessionId, userText))
-            .subscribeOn(Schedulers.boundedElastic())
-            .flatMap(cached -> cached
-                .map(answer -> {
-                    incr(M_CACHE_HIT);
-                    // 命中的内容仍要过一遍出站敏感词过滤：写入时合规不代表现在合规，词库是会变的。
-                    // 口径与流式命中路径 streamCachedAnswer 完全一致，两条路径不得再分叉。
-                    return Mono.just(applyOutboundGuard(answer));
-                })
-                .orElseGet(() -> invokeAgent(sessionId, userText)
-                    .doOnNext(reply -> cacheReply(sessionId, userText, reply))));
+        return quota.shouldDegrade()
+            ? result.contextWrite(ModelRoutingContext::preferFallback)
+            : result;
     }
 
     /** 真正走一遍 Agent（装配 + 知识检索 + 模型调用）——缓存未命中时才发生。 */
-    private Mono<String> invokeAgent(String sessionId, String userText) {
-        ReActAgent agent = resolveAgent(sessionId);
+    private Mono<String> invokeAgent(AgentSessionKey sessionKey, String userText) {
+        String sessionId = sessionKey.sessionId();
+        ReActAgent agent = resolveAgent(sessionKey);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
 
-        return withSessionLock(sessionId, () ->
+        return withSessionLock(sessionKey, () ->
             agent.call(spotlightAttachments(userText), ctx)
                 .map(Msg::getTextContent)
                 .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
                 .onErrorResume(e -> {
+                    if (isFallbackModelUnavailable(e)) {
+                        log.error("[session {}] quota fallback unavailable, code={}",
+                            sessionId, "QUOTA-DEGRADE-FALLBACK-UNAVAILABLE", e);
+                        return Mono.just(QUOTA_EXCEEDED_REPLY);
+                    }
                     log.error("[session {}] chat failed, code={}", sessionId, "AGENT_CALL_ERROR", e);
                     incr(M_CHAT_FALLBACK);
                     return Mono.just(FALLBACK_REPLY);
@@ -322,11 +375,12 @@ public class CustomerServiceService {
      * <p>写入同样要调 Embedding，放在响应链里会把这次的延迟凭空加上去——而用户此刻已经拿到答案了。
      * 兜底回复不写缓存：把"服务开小差"缓存起来，后面每个问到同类问题的人都会收到它。</p>
      */
-    private void cacheReply(String sessionId, String userText, String reply) {
+    private void cacheReply(SemanticCacheService.CacheGeneration cacheGeneration,
+                            String sessionId, String userText, String reply) {
         if (FALLBACK_REPLY.equals(reply) || QUOTA_EXCEEDED_REPLY.equals(reply)) {
             return;
         }
-        Mono.fromRunnable(() -> semanticCache.put(sessionId, userText, reply))
+        Mono.fromRunnable(() -> semanticCache.put(cacheGeneration, sessionId, userText, reply))
             .subscribeOn(Schedulers.boundedElastic())
             .subscribe();
     }
@@ -346,19 +400,46 @@ public class CustomerServiceService {
     public Flux<String> chatStream(String sessionId, String userText) {
         log.info("[session {}] received user message (stream): {}", sessionId, userText);
         QuotaDecision quota = quotaGuard.check(null);
-        if (quota.shouldBlock()) {
+        if (shouldRejectForQuota(quota)) {
             return Flux.just(QUOTA_EXCEEDED_REPLY);
         }
-        touchSession(sessionId);
+        AgentSessionKey sessionKey = sessionKey(sessionId);
+        touchSession(sessionKey);
+        Flux<String> result;
         if (semanticCache == null) {
-            return streamFromAgent(sessionId, userText, new AtomicBoolean(false));
+            result = streamFromAgent(sessionKey, userText, new AtomicBoolean(false));
+        } else {
+            SemanticCacheService.CacheGeneration cacheGeneration = semanticCache.captureGeneration();
+            // 查缓存要调 Embedding（阻塞 HTTP），必须挪到弹性线程池，理由同非流式路径
+            result = Mono.fromCallable(() -> semanticCache.lookup(cacheGeneration, sessionId, userText))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMapMany(cached -> cached
+                    .map(this::streamCachedAnswer)
+                    .orElseGet(() -> streamFromAgentAndCache(cacheGeneration, sessionKey, userText)));
         }
-        // 查缓存要调 Embedding（阻塞 HTTP），必须挪到弹性线程池，理由同非流式路径
-        return Mono.fromCallable(() -> semanticCache.lookup(sessionId, userText))
-            .subscribeOn(Schedulers.boundedElastic())
-            .flatMapMany(cached -> cached
-                .map(this::streamCachedAnswer)
-                .orElseGet(() -> streamFromAgentAndCache(sessionId, userText)));
+        return quota.shouldDegrade()
+            ? result.contextWrite(ModelRoutingContext::preferFallback)
+            : result;
+    }
+
+    /**
+     * BLOCK 直接拒绝；DEGRADE 只有在备用链已配置时才放行。
+     * 缺备用模型时继续调用主模型会违反管理员设置的预算边界，因此选择 fail-closed。
+     */
+    private boolean shouldRejectForQuota(QuotaDecision quota) {
+        if (quota.shouldBlock()) {
+            return true;
+        }
+        if (!quota.shouldDegrade()) {
+            return false;
+        }
+        if (!properties.getModel().getFallback().isEnabled()) {
+            log.error("quota degrade requested without fallback model, code={}",
+                "QUOTA-DEGRADE-FALLBACK-MISSING");
+            return true;
+        }
+        incr(M_QUOTA_DEGRADE);
+        return false;
     }
 
     /**
@@ -389,14 +470,16 @@ public class CustomerServiceService {
      * 而中途失败的流里累积的是"半截回答 + 兜底文案"，把它缓存下来，之后每个问到同类问题的人
      * 都会收到这段残缺的回复。降级标志由 {@link #streamFromAgent} 在兜底时置位。</p>
      */
-    private Flux<String> streamFromAgentAndCache(String sessionId, String userText) {
+    private Flux<String> streamFromAgentAndCache(SemanticCacheService.CacheGeneration cacheGeneration,
+                                                 AgentSessionKey sessionKey, String userText) {
+        String sessionId = sessionKey.sessionId();
         StringBuilder accumulated = new StringBuilder();
         AtomicBoolean degraded = new AtomicBoolean(false);
-        return streamFromAgent(sessionId, userText, degraded)
+        return streamFromAgent(sessionKey, userText, degraded)
             .doOnNext(accumulated::append)
             .doOnComplete(() -> {
                 if (!degraded.get()) {
-                    cacheReply(sessionId, userText, accumulated.toString());
+                    cacheReply(cacheGeneration, sessionId, userText, accumulated.toString());
                 }
             });
     }
@@ -406,12 +489,13 @@ public class CustomerServiceService {
      *
      * @param degraded 出参：走了兜底（超时 / 调用失败）时置位，调用方据此决定不写缓存
      */
-    private Flux<String> streamFromAgent(String sessionId, String userText, AtomicBoolean degraded) {
-        ReActAgent agent = resolveAgent(sessionId);
+    private Flux<String> streamFromAgent(AgentSessionKey sessionKey, String userText, AtomicBoolean degraded) {
+        String sessionId = sessionKey.sessionId();
+        ReActAgent agent = resolveAgent(sessionKey);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
 
-        Flux<String> flux = withSessionLockFlux(sessionId, Flux.defer(() -> {
+        Flux<String> flux = withSessionLockFlux(sessionKey, Flux.defer(() -> {
             // 兜底标记（每次订阅独立）：正常流式下模型逐块吐 TEXT_BLOCK_DELTA，最终的 AGENT_RESULT
             // 只是同一段文本的汇总，不再下发；仅当一个增量都没出现时（非流式 provider）才用它补全文
             AtomicBoolean deltaSeen = new AtomicBoolean(false);
@@ -453,9 +537,30 @@ public class CustomerServiceService {
                     sessionId, idle, "STREAM_IDLE_TIMEOUT");
                 return Flux.just(FALLBACK_REPLY);
             }
+            if (isFallbackModelUnavailable(e)) {
+                log.error("[session {}] quota fallback unavailable, code={}",
+                    sessionId, "QUOTA-DEGRADE-FALLBACK-UNAVAILABLE", e);
+                return Flux.just(QUOTA_EXCEEDED_REPLY);
+            }
             log.error("[session {}] stream chat failed, code={}", sessionId, "AGENT_STREAM_ERROR", e);
             return Flux.just(FALLBACK_REPLY);
         });
+    }
+
+    /** AgentScope 可能包装底层模型异常，沿 cause 链识别“强制备用但无可用候选”。 */
+    private boolean isFallbackModelUnavailable(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof FailoverModel.FallbackModelUnavailableException) {
+                return true;
+            }
+            Throwable cause = current.getCause();
+            if (cause == current) {
+                break;
+            }
+            current = cause;
+        }
+        return false;
     }
 
     /**
@@ -517,7 +622,8 @@ public class CustomerServiceService {
      * @return 是否存在可中断的活跃会话
      */
     public boolean interrupt(String sessionId) {
-        ReActAgent agent = sessionAgents.get(sessionId);
+        AgentSessionKey sessionKey = sessionKey(sessionId);
+        ReActAgent agent = sessionAgents.get(sessionKey);
         if (agent == null) {
             log.info("[session {}] no active agent, ignore interrupt", sessionId);
             return false;
@@ -536,8 +642,7 @@ public class CustomerServiceService {
      * 这里若强行清理反而可能把正在使用中的锁摘掉。</p>
      */
     public void endSession(String sessionId) {
-        discardSession(sessionId);
-        inviteCsat(sessionId);
+        endSession(sessionKey(sessionId));
         log.info("[session {}] ended and cleaned", sessionId);
     }
 
@@ -549,11 +654,15 @@ public class CustomerServiceService {
      * 实测本机库里 10 条 CSAT 记录全部来自评测，没有一条来自真实会话。</p>
      */
     public void discardSession(String sessionId) {
-        sessionAgents.remove(sessionId);
-        sessionActivity.remove(sessionId);
+        discardSession(sessionKey(sessionId));
+    }
+
+    private void discardSession(AgentSessionKey sessionKey) {
+        String sessionId = sessionKey.sessionId();
+        sessionAgents.remove(sessionKey);
+        sessionActivity.remove(sessionKey);
         try {
-            RuntimeContext ctx = agentFactory.contextFor(sessionId);
-            sessionStateManager.delete(ctx.getUserId(), ctx.getSessionId());
+            sessionStateManager.delete(sessionKey.stateUserId(), sessionId);
         } catch (Exception e) {
             log.error("[session {}] delete persisted state failed (ignored), code={}", sessionId,
                 "SESSION_DELETE_ERROR", e);
@@ -584,6 +693,14 @@ public class CustomerServiceService {
         }
     }
 
+    /** 定时清理也必须恢复该缓存项所属租户，避免无请求线程把 CSAT 等旁路数据写进默认租户。 */
+    private void endSession(AgentSessionKey sessionKey) {
+        TenantContext.runWith(sessionKey.memorySubject().tenantId(), () -> {
+            discardSession(sessionKey);
+            inviteCsat(sessionKey.sessionId());
+        });
+    }
+
     /**
      * 热配置刷新：清空进程内热 Agent 缓存，使下一次会话请求按最新配置（提示词/MCP/maxIters）重建 Agent。
      *
@@ -599,8 +716,8 @@ public class CustomerServiceService {
     }
 
     /** 更新会话活跃时间戳。 */
-    private void touchSession(String sessionId) {
-        sessionActivity.put(sessionId, System.currentTimeMillis());
+    private void touchSession(AgentSessionKey sessionKey) {
+        sessionActivity.put(sessionKey, System.currentTimeMillis());
     }
 
     /**
@@ -615,11 +732,12 @@ public class CustomerServiceService {
         }
         long threshold = System.currentTimeMillis() - timeoutMinutes * 60_000L;
         int cleaned = 0;
-        for (Map.Entry<String, Long> entry : sessionActivity.entrySet()) {
+        for (Map.Entry<AgentSessionKey, Long> entry : sessionActivity.entrySet()) {
             if (entry.getValue() < threshold) {
-                String sessionId = entry.getKey();
+                AgentSessionKey sessionKey = entry.getKey();
+                String sessionId = sessionKey.sessionId();
                 log.info("[session {}] idle timeout ({}min), cleaning up", sessionId, timeoutMinutes);
-                endSession(sessionId);
+                endSession(sessionKey);
                 cleaned++;
             }
         }
@@ -637,8 +755,21 @@ public class CustomerServiceService {
     }
 
     /** 获取热 Agent；未命中时新建（首次 call 自动从 StateStore 恢复历史，无需手工 load）。 */
-    private ReActAgent resolveAgent(String sessionId) {
-        return sessionAgents.computeIfAbsent(sessionId, agentFactory::createAgent);
+    private ReActAgent resolveAgent(AgentSessionKey sessionKey) {
+        return sessionAgents.computeIfAbsent(sessionKey,
+            key -> agentFactory.createAgent(key.sessionId()));
+    }
+
+    /**
+     * 建立热缓存与分布式锁使用的安全键。长期记忆主体、状态 userId 与会话 ID 都参与，
+     * 从而让缓存复用边界与真实数据边界一致。
+     */
+    private AgentSessionKey sessionKey(String sessionId) {
+        String effectiveSessionId = sessionId == null || sessionId.isBlank() ? "default" : sessionId;
+        MemorySubjectKey memorySubject = memorySubjectResolver.resolve(
+            effectiveSessionId, MemorySubjectResolver.CUSTOMER_SERVICE_AGENT);
+        String stateUserId = agentFactory.contextFor(effectiveSessionId).getUserId();
+        return new AgentSessionKey(memorySubject, stateUserId, effectiveSessionId);
     }
 
     /**
@@ -662,8 +793,8 @@ public class CustomerServiceService {
      * 会话级锁包装（Mono）：同一 sessionId 的请求串行执行，防止并发写 StateStore 导致状态覆盖。
      * 在 boundedElastic 上获取锁并执行，不阻塞 Netty 事件循环线程。
      */
-    private <T> Mono<T> withSessionLock(String sessionId, Supplier<Mono<T>> supplier) {
-        return Mono.fromCallable(() -> sessionLock.acquire(sessionId))
+    private <T> Mono<T> withSessionLock(AgentSessionKey sessionKey, Supplier<Mono<T>> supplier) {
+        return Mono.fromCallable(() -> sessionLock.acquire(sessionKey.lockId()))
             .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
             .flatMap(releasable -> supplier.get()
                 // 释放挂在内层：doFinally 只有拿到锁之后才注册，避免获取失败时误释放别人的锁
@@ -673,10 +804,20 @@ public class CustomerServiceService {
     /**
      * 会话级锁包装（Flux）：同 {@link #withSessionLock}，用于流式输出。
      */
-    private <T> Flux<T> withSessionLockFlux(String sessionId, Flux<T> flux) {
-        return Mono.fromCallable(() -> sessionLock.acquire(sessionId))
+    private <T> Flux<T> withSessionLockFlux(AgentSessionKey sessionKey, Flux<T> flux) {
+        return Mono.fromCallable(() -> sessionLock.acquire(sessionKey.lockId()))
             .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
             .flatMapMany(releasable -> flux.doFinally(signal -> releasable.release()));
+    }
+
+    /** 缓存内部键；scopeId 是固定长度摘要，拼接原会话后不存在字段边界碰撞。 */
+    private record AgentSessionKey(MemorySubjectKey memorySubject,
+                                   String stateUserId,
+                                   String sessionId) {
+
+        private String lockId() {
+            return memorySubject.scopeId() + ":" + sessionId;
+        }
     }
 
     private Msg toUserMsg(String userText) {

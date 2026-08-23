@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
+import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
 import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallLogMapper;
 import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallSegmentMapper;
 import com.richard.fyoung.customerwork.core.support.MybatisTestSupport;
@@ -68,7 +70,13 @@ class MybatisAgentCallLogStoreTest {
             new AgentCallSegment(3, AgentCallKind.MCP, "mcp_weather", startMs + 50, 10L, false, "boom", null, null, null, null));
         return new AgentCallRecord(0L, "req-" + UUID.randomUUID(), "u-" + username, username, agentCode,
             "客服Agent", "sess-" + UUID.randomUUID(), AgentCallSessionType.CHAT, "问题", "回答",
-            startMs, startMs + 60, 60L, 30L, 20L, 10L, 0L, segs.size(), 100L, 20L, 120L, 60L, 18L, true, null, segs);
+            startMs, startMs + 60, 60L, 30L, 20L, 10L, 0L, segs.size(), 100L, 20L, 120L,
+            60L, 18L, true, null,
+            new OnlineExperimentAssignment(77L, 2, "TREATMENT", 12L, 4200),
+            new AgentCallLineage("0123456789abcdef0123456789abcdef", "revision-7", "hash-7",
+                new EvalVersionBinding("", "", "model-v1", "prompt-v1", "agent-v1",
+                    "kb-v1", "tool-v1", "", "")),
+            segs);
     }
 
     @Test
@@ -86,6 +94,17 @@ class MybatisAgentCallLogStoreTest {
         assertEquals(100L, segs.get(0).inputTokens(), "MODEL 段输入 token 往返");
         assertEquals(20L, segs.get(0).outputTokens(), "MODEL 段输出 token 往返");
         assertNull(segs.get(1).inputTokens(), "工具段无 token");
+
+        AgentCallRecord roundTrip = store.findPage(new AgentCallLogQuery(
+            saved.username(), null, null, null, null, null, 0, 10)).get(0);
+        assertEquals("0123456789abcdef0123456789abcdef", roundTrip.lineage().traceId());
+        assertEquals("revision-7", roundTrip.lineage().runtimeRevision());
+        assertEquals("model-v1", roundTrip.lineage().versionBinding().modelVersion());
+        assertEquals(77L, roundTrip.experimentAssignment().experimentId());
+        assertEquals(2, roundTrip.experimentAssignment().revision());
+        assertEquals("TREATMENT", roundTrip.experimentAssignment().arm());
+        assertEquals(12L, roundTrip.experimentAssignment().deploymentId());
+        assertEquals(4200, roundTrip.experimentAssignment().bucket());
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.infra.config.properties;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessConstants;
 import lombok.Data;
 
 import java.util.ArrayList;
@@ -51,18 +52,29 @@ public class NacosProperties {
     /** 运行时配置应用结果回传地址（admin 的 /api/open/runtime-config/acks）。 */
     private String runtimeConfigAckUrl = "";
 
-    /** ACK 服务鉴权令牌，使用 admin 开放 API token。 */
+    /** ACK 服务实例级鉴权令牌；每个实例必须唯一，不得复用租户通用 Open API token。 */
     private String runtimeConfigAckToken = "";
 
     /** 实例稳定标识；留空时优先取 HOSTNAME，再回落 JVM 运行实例名。 */
     private String runtimeConfigInstanceId = "";
 
     /**
-     * 本实例所属租户编码，用于接收<b>按租户灰度</b>的运行时配置。
+     * 本实例所属租户编码，用于隔离运行时配置发布域。
      *
-     * <p>配了就先读 {@code <runtime-config-data-id>-tenant-<租户码>}，读不到才回落主 dataId。
-     * 本端并不理解"灰度"，只是多试了一个更具体的 dataId；运营方把灰度版本写进那个 dataId，
-     * 名单外的实例自然继续用主 dataId 上的全量版本。留空即不参与灰度（单租户部署无需配置）。</p>
+     * <p>配置后只读取 {@code <runtime-config-data-id>-tenant-<租户码>}，缺失或删除时保留最后安全配置，
+     * 不回落主 dataId。开启 {@code customer-work.tenant.enabled} 时本项必填；只有单租户部署可留空并读取主 dataId。</p>
      */
     private String tenantCode = "";
+
+    /** 是否消费控制面发布的租户访问快照；开启后非 default 租户缺快照即 fail-closed。 */
+    private boolean tenantAccessEnabled = false;
+
+    /** 租户访问快照基础 dataId；实际订阅 {@code <dataId>-tenant-<租户码>}。 */
+    private String tenantAccessDataId = TenantAccessConstants.DEFAULT_DATA_ID;
+
+    /** 对已订阅租户主动回读 Nacos 的间隔，用于补偿监听丢失并刷新确认时间。 */
+    private long tenantAccessRefreshIntervalMs = 5000;
+
+    /** 可用快照允许失联后继续使用的最长时间；超时后拒绝新请求，0 表示不做失联超时。 */
+    private long tenantAccessMaxStalenessMs = 30000;
 }

@@ -15,10 +15,11 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  * Java 默认值在这里是<b>看不见</b>的，默认为 jdbc 的域必须登记进 {@link #JDBC_BY_DEFAULT_KEYS}，
  * 否则会出现"Store 想用 jdbc、但持久化环境没激活因而 Mapper 取不到"的错配。</p>
  *
- * <p><b>记忆链路默认落库（B5 起）</b>：{@code memory.store-mode} 与 {@code harness.memory-store-mode}
- * 的默认值是 {@code jdbc}，故本条件默认为真、持久化环境默认装配。数据源是 HikariCP 惰性建连（构造不建连），
+ * <p><b>记忆链路默认落库（B5 起）</b>：{@code memory.store-mode}、
+ * {@code memory.consent-store-mode} 与 {@code harness.memory-store-mode} 的默认值是 {@code jdbc}，
+ * 故本条件默认为真、持久化环境默认装配。数据源是 HikariCP 惰性建连（构造不建连），
  * 但 Flyway 迁移启用时会主动连接并在失败时阻断启动；所以默认配置仍要求 MySQL 可用。确实需要
- * 纯内存形态的宿主可把这两个键显式配成 {@code memory} 并关闭迁移（事实日志随之降为
+ * 纯内存形态的宿主可把这三个键显式配成 {@code memory} 并关闭迁移（事实日志随之降为
  * {@code NoOpFactLog}——本项目不再提供文件形态的事实日志）。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -52,12 +53,14 @@ public class PersistenceJdbcCondition implements Condition {
     /**
      * 默认即 jdbc 的域：配置缺省时按 {@code jdbc} 判定（其余键缺省时按"未启用"判定）。
      *
-     * <p>三层记忆的 L2 / L3——跨会话、跨重启、跨副本才有意义，落进程内或单机磁盘等于没有。
-     * 对应 {@code MemoryProperties#storeMode} 与 {@code FactLogProperties#storeMode} 的 Java 默认值，
-     * 改那边的默认值必须同步改这里，否则两处判定会漂移。</p>
+     * <p>长期记忆与主体同意——跨会话、跨重启、跨副本才有意义，落进程内或单机磁盘等于没有。
+     * 对应 {@code MemoryProperties#storeMode}、{@code MemoryProperties#consentStoreMode}
+     * 的 Java 默认值；改那边的默认值必须同步改这里，否则两处判定会漂移。</p>
      */
     private static final String[] JDBC_BY_DEFAULT_KEYS = {
         "customer-work.memory.store-mode",
+        // 主体授权/撤回是合规控制状态，不能因 L2 改用外部 Provider 或进程内实现而丢失
+        "customer-work.memory.consent-store-mode",
         // Harness 分层记忆（MEMORY.md 的权威副本）。harness 默认关闭，本键此时无实际影响，
         // 但仍要登记：否则把上面那个键配成非 jdbc 之后，开着 harness 的宿主会静默降级进程内
         "customer-work.harness.memory-store-mode"

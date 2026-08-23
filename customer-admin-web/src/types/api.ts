@@ -216,6 +216,10 @@ export interface AgentCallStatsQuery extends PageQuery {
   sessionType?: AgentCallSessionType
   requestId?: string
   sessionId?: string
+  traceId?: string
+  runtimeRevision?: string
+  experimentId?: number
+  experimentArm?: 'CONTROL' | 'TREATMENT'
   /** 格式 yyyy-MM-dd HH:mm:ss，与后端 SQL 通用日期参数约定一致（见 SqlQueryView 同类用法）。 */
   startTime?: string
   endTime?: string
@@ -232,6 +236,15 @@ export interface AgentCallStatsRow {
   agentName: string | null
   sessionId: string
   sessionType: AgentCallSessionType
+  /** W3C trace-id；未开启 OTel 时为空。 */
+  traceId: string | null
+  /** 当前实例最后成功应用的发布修订；仅 yml 启动时为空。 */
+  runtimeRevision: string | null
+  experimentId: number | null
+  experimentRevision: number | null
+  experimentArm: 'CONTROL' | 'TREATMENT' | null
+  experimentDeploymentId: number | null
+  experimentBucket: number | null
   question: string
   answerPreview: string
   startTime: string
@@ -279,6 +292,47 @@ export interface AgentCallStatsSegment {
 /** 单条调用详情：分页行字段 + 回答全文 + 分段耗时明细。 */
 export interface AgentCallStatsDetail extends AgentCallStatsRow {
   answer: string
+  runtimeContentHash: string | null
+  versionBinding: AgentArtifactVersionBinding
+  segments: AgentCallStatsSegment[]
+}
+
+/** 在线调用与离线评测共用的非密钥制品版本口径。 */
+export interface AgentArtifactVersionBinding {
+  datasetVersion: string
+  datasetFingerprint: string
+  modelVersion: string
+  promptVersion: string
+  agentVersion: string
+  knowledgeBaseVersion: string
+  toolVersion: string
+  judgeVersion: string
+  rubricVersion: string
+}
+
+/** 只读重放清单：可导出审计，不会再次调用模型或执行工具。 */
+export interface AgentCallReplayManifest {
+  schemaVersion: number
+  mode: 'INSPECT_ONLY'
+  executable: false
+  executionBlockedReason: string
+  source: AgentCallSource
+  callLogId: number
+  traceId: string | null
+  requestId: string
+  agentCode: string
+  sessionType: AgentCallSessionType
+  question: string
+  recordedAnswer: string
+  startTime: string
+  runtimeRevision: string | null
+  runtimeContentHash: string | null
+  experimentId: number | null
+  experimentRevision: number | null
+  experimentArm: 'CONTROL' | 'TREATMENT' | null
+  experimentDeploymentId: number | null
+  experimentBucket: number | null
+  versionBinding: AgentArtifactVersionBinding
   segments: AgentCallStatsSegment[]
 }
 
@@ -316,34 +370,309 @@ export interface AgentCallStatsTrendPoint {
 }
 
 // ---------- aiconfig.model ----------
+export type ModelHealthStatus = 'UNKNOWN' | 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'RECOVERING'
+export type ModelHealthErrorCategory = 'AUTH' | 'RATE_LIMIT' | 'TIMEOUT' | 'CONTRACT' | 'UNKNOWN'
+export type ModelCertificationStatus = 'NOT_REQUIRED' | 'UNKNOWN' | 'PASSED' | 'FAILED' | 'EXPIRED' | 'STALE'
+export type ModelRoutePurpose = 'DEFAULT' | 'ECONOMY' | 'COMPLEX_REASONING' | 'FALLBACK'
+
+export interface SecretMetadataVO {
+  refId: number
+  refCode: string
+  providerType: string
+  currentVersion: number
+  status: 'ACTIVE' | 'EXPIRED' | 'DISABLED' | 'ERROR'
+  expiresAt: string | null
+  lastRotatedAt: string | null
+  lastRotatedBy: number | null
+}
+
+export interface ModelHealthSnapshot {
+  healthStatus: ModelHealthStatus
+  authStatus: 'UNKNOWN' | 'PASSED' | 'FAILED'
+  capabilityStatus: 'UNKNOWN' | 'PASSED' | 'FAILED'
+  consecutiveFailures: number
+  lastLatencyMs: number | null
+  lastErrorCategory: ModelHealthErrorCategory | null
+  lastMessage: string | null
+  lastProbeAt: string | null
+  lastSuccessAt: string | null
+  lastFailureAt: string | null
+  nextProbeAt: string | null
+  revision: number
+}
+
+export interface ModelCertificationCheck {
+  code: string
+  name: string
+  status: 'PASSED' | 'FAILED' | 'SKIPPED'
+  measuredValue: string | null
+  threshold: string | null
+  message: string | null
+}
+
+export interface ModelCertification {
+  runId: number | null
+  status: ModelCertificationStatus
+  effectiveStatus: ModelCertificationStatus
+  staleReason: string | null
+  certifiedEndpointRevision: number | null
+  certifiedSecretVersion: number | null
+  validUntil: string | null
+  completedAt: string | null
+  passedChecks: number
+  failedChecks: number
+  latencyP95Ms: number | null
+  verifiedContextTokens: number | null
+  inputPrice: number | null
+  outputPrice: number | null
+  currency: string | null
+  failureCode: string | null
+  failureMessage: string | null
+  checks: ModelCertificationCheck[]
+}
+
+export interface ModelCertificationRequest {
+  requiredContextTokens: number
+  maxLatencyMs: number
+  maxInputPrice: number
+  maxOutputPrice: number
+  validDays: number
+  requireStreaming: boolean
+  requireToolCall: boolean
+  requireStructuredOutput: boolean
+}
+
 export interface ModelVO {
   id: number
+  assetId: number | null
+  assetCode: string | null
+  assetName: string | null
+  vendor: string | null
+  family: string | null
+  assetVersion: string | null
+  modality: string | null
+  contextWindow: number | null
+  maxOutputTokens: number | null
+  supportsStream: boolean | null
+  supportsTool: boolean | null
+  supportsJsonSchema: boolean | null
+  supportsMultimodal: boolean | null
+  assetLifecycleStatus: string | null
   modelName: string
+  deploymentCode: string | null
   provider: string
-  apiKeyMasked: string
+  protocolAdapter: string | null
+  apiKeyMasked: string | null
+  credential: SecretMetadataVO | null
   baseUrl: string
+  region: string | null
+  environment: string | null
+  endpointRevision: number | null
+  lifecycleStatus: string | null
+  certificationRequired: boolean
+  certification: ModelCertification | null
   model: string
   isDefault: boolean
   status: number
   testStatus: number
   testTime: string | null
+  health: ModelHealthSnapshot | null
   createTime: string
 }
 
 export interface ModelSaveRequest {
+  assetId?: number | null
+  assetCode?: string | null
+  assetName?: string | null
+  vendor?: string | null
+  family?: string | null
+  assetVersion?: string | null
+  modality?: string | null
+  contextWindow?: number | null
+  maxOutputTokens?: number | null
+  supportsStream?: boolean | null
+  supportsTool?: boolean | null
+  supportsJsonSchema?: boolean | null
+  supportsMultimodal?: boolean | null
   modelName: string
+  deploymentCode?: string | null
   provider?: string | null
   apiKey?: string | null
+  secretExpiresAt?: string | null
   baseUrl: string
+  region?: string | null
+  environment?: string | null
   model: string
   isDefault?: boolean | null
   status?: number | null
+  lifecycleStatus?: string | null
 }
 
 export interface ModelTestResult {
   testStatus: number
   testTime: string | null
   message: string | null
+  healthStatus: ModelHealthStatus | null
+  errorCategory: ModelHealthErrorCategory | null
+  latencyMs: number | null
+}
+
+export interface ModelAssetOption {
+  id: number
+  assetCode: string
+  assetName: string
+  vendor: string
+  modelKey: string
+  family: string | null
+  assetVersion: string | null
+  lifecycleStatus: string
+}
+
+export interface ModelHealthEvent {
+  id: number
+  source: 'MANUAL' | 'SCHEDULED' | 'RUNTIME' | 'MIGRATION'
+  probeKind: string
+  healthStatus: ModelHealthStatus
+  testStatus: number
+  latencyMs: number | null
+  errorCategory: ModelHealthErrorCategory | null
+  message: string | null
+  occurredAt: string
+}
+
+export interface ModelImpactItem {
+  tenantId: string
+  resourceType: string
+  relationType: string
+  resourceId: string
+  resourceCode: string | null
+  resourceName: string | null
+  status: string | null
+  blocking: boolean
+}
+
+export interface ModelImpact {
+  modelId: number
+  action: 'DELETE' | 'DISABLE' | 'ROTATE'
+  totalCount: number
+  blockerCount: number
+  allowed: boolean
+  countsByType: Record<string, number>
+  items: ModelImpactItem[]
+}
+
+export interface ModelCredentialRotationRequest {
+  secretValue: string
+  expiresAt?: string | null
+}
+
+export interface ModelRouteCondition {
+  agentIds: number[]
+  channelCodes: string[]
+  minInputTokens: number | null
+  maxInputTokens: number | null
+  requiresTools: boolean | null
+  requiresStructuredOutput: boolean | null
+  complexity: 'LOW' | 'MEDIUM' | 'HIGH' | null
+}
+
+export interface ModelRouteRuleRequest {
+  purpose: ModelRoutePurpose
+  deploymentId: number | null
+  priority: number
+  condition: ModelRouteCondition
+}
+
+export interface ModelRouteRule extends Omit<ModelRouteRuleRequest, 'deploymentId'> {
+  id: number
+  deploymentId: number
+  deploymentCode: string | null
+  deploymentName: string | null
+  conditionSummary: string
+}
+
+export interface ModelRouteVersion {
+  id: number
+  versionNo: number
+  status: 'DRAFT' | 'ACTIVE' | 'RETIRED'
+  contentHash: string
+  changeNote: string | null
+  activatedBy: number | null
+  activatedAt: string | null
+  createBy: number | null
+  createTime: string | null
+  rules: ModelRouteRule[]
+}
+
+export interface ModelRoutePolicy {
+  id: number
+  policyCode: string
+  policyName: string
+  description: string | null
+  status: 'DRAFT' | 'ACTIVE' | 'RETIRED'
+  currentVersionNo: number | null
+  latestVersionNo: number
+  currentVersion: ModelRouteVersion | null
+  updateTime: string | null
+}
+
+export interface ModelRoutePolicyCreateRequest {
+  policyCode: string
+  policyName: string
+  description?: string | null
+  changeNote?: string | null
+  rules: ModelRouteRuleRequest[]
+}
+
+export interface ModelRouteVersionCreateRequest {
+  changeNote?: string | null
+  rules: ModelRouteRuleRequest[]
+}
+
+export interface ModelRouteConflict {
+  code: string
+  ruleIndex: number | null
+  conflictingRuleIndex: number | null
+  message: string
+}
+
+export interface ModelRouteValidation {
+  valid: boolean
+  conflicts: ModelRouteConflict[]
+}
+
+export interface ModelRouteDryRunRequest {
+  agentId?: number | null
+  channelCode?: string | null
+  inputTokens?: number | null
+  requiresTools?: boolean | null
+  requiresStructuredOutput?: boolean | null
+  complexity?: 'LOW' | 'MEDIUM' | 'HIGH' | null
+  preferFallback?: boolean | null
+}
+
+export interface ModelRouteCandidateExplanation {
+  ruleId: number
+  purpose: ModelRoutePurpose
+  deploymentId: number
+  priority: number
+  matched: boolean
+  reasons: string[]
+}
+
+export interface ModelRouteDryRunResult {
+  policyId: number
+  versionNo: number
+  contentHash: string
+  matched: boolean
+  failClosed: boolean
+  deploymentId: number | null
+  deploymentCode: string | null
+  deploymentName: string | null
+  purpose: ModelRoutePurpose | null
+  priority: number | null
+  explanation: string
+  candidates: ModelRouteCandidateExplanation[]
 }
 
 // ---------- aiconfig.knowledge-base ----------
@@ -401,6 +730,7 @@ export interface McpVO {
   id: number
   mcpName: string
   mcpType: string
+  /** 分页接口固定为空；仅 mcp:edit 详情返回结构化脱敏配置。 */
   config: string
   description: string | null
   status: number
@@ -520,6 +850,8 @@ export interface AgentVO {
   agentCode: string
   modelId: number
   modelName: string | null
+  /** ACTIVE 路由策略绑定；为空时使用主模型/备用模型链。 */
+  modelRoutePolicyId?: number | null
   /** 备用模型：主模型连通性异常时的降级候选，可空。 */
   backupModelIds: number[]
   backupModelNames: string[]
@@ -559,6 +891,7 @@ export interface AgentSaveRequest {
   agentName: string
   agentCode: string
   modelId: number
+  modelRoutePolicyId?: number | null
   backupModelIds?: number[] | null
   mcpIds?: number[] | null
   skillIds?: number[] | null

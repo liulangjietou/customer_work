@@ -7,7 +7,8 @@
     <sql id="columns">
         run_id, `seq`, eval_type, `total`, `passed`, primary_metric, secondary_metric,
         failed_case_ids_json, failures_json, metrics_json,
-        trigger_source, dataset_size, prompt_fingerprint, remark, created_at_ms
+        trigger_source, dataset_size, dataset_version_id, dataset_fingerprint,
+        version_binding_json, prompt_fingerprint, remark, created_at_ms
     </sql>
 
     <!-- 某类型最近 limit 次运行，按写入顺序倒序（最新在前）。

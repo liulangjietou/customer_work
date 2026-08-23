@@ -17,6 +17,7 @@ class ControlPlanePermissionsTest {
         assertTrue(ControlPlanePermissions.isControlPlaneOnly("billing:quota-edit"));
         assertTrue(ControlPlanePermissions.isControlPlaneOnly("billing:price-edit"));
         assertTrue(ControlPlanePermissions.isControlPlaneOnly("billing:export"));
+        assertTrue(ControlPlanePermissions.isControlPlaneOnly("billing:aggregate"));
         assertTrue(ControlPlanePermissions.isControlPlaneOnly("sensitive-word:add"));
         assertTrue(ControlPlanePermissions.isControlPlaneOnly("sensitive-word:edit"));
         assertTrue(ControlPlanePermissions.isControlPlaneOnly("sensitive-word:delete"));

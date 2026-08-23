@@ -6,6 +6,7 @@ import com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.core.memory.InMemoryLongTermMemoryStore;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryStore;
+import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
 import com.richard.fyoung.customerwork.data.rag.KnowledgeProvider;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
@@ -52,6 +53,7 @@ class CustomerServiceAgentFactoryTest {
             new com.richard.fyoung.customerwork.infra.config.PermissionConfig().permissionContextState(props),
             new com.richard.fyoung.customerwork.infra.config.NacosPromptService(props),
             new com.richard.fyoung.customerwork.core.support.TenantResolver(props),
+            new MemorySubjectResolver(),
             new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry(),
             // 治理装配器：中间件装配已收敛到这一处，工厂不再各自持有 Hook 列表与 MeterRegistry
             new AgentGovernanceAssembler(props,

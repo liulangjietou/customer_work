@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.aiconfig.model.mapper.AiModelCertificationMapper">
+
+    <!--
+      只晋级仍与当前 endpoint revision / SecretRef version 一致的认证；current_run_id 是
+      probe 开始前生成的时间有序 ID，旧慢认证即使更晚完成也不能覆盖更新的运行。
+    -->
+    <insert id="promoteIfCurrent">
+        INSERT INTO ai_model_certification (
+            model_config_id, tenant_id, status, current_run_id, certified_endpoint_revision,
+            certified_secret_version, valid_until, completed_at, passed_checks, failed_checks,
+            latency_p95_ms, verified_context_tokens, failure_code, failure_message, revision
+        )
+        SELECT
+            #{certification.modelConfigId}, #{certification.tenantId}, #{certification.status},
+            #{certification.currentRunId}, #{certification.certifiedEndpointRevision},
+            #{certification.certifiedSecretVersion}, #{certification.validUntil},
+            #{certification.completedAt}, #{certification.passedChecks},
+            #{certification.failedChecks}, #{certification.latencyP95Ms},
+            #{certification.verifiedContextTokens}, #{certification.failureCode},
+            #{certification.failureMessage}, #{certification.revision}
+        FROM ai_model_config model
+        LEFT JOIN ai_secret_ref secret
+               ON secret.id = model.secret_ref_id
+              AND secret.tenant_id = model.tenant_id
+              AND secret.deleted = 0
+        WHERE model.id = #{certification.modelConfigId}
+          AND model.tenant_id = #{certification.tenantId}
+          AND model.deleted = 0
+          AND model.endpoint_revision = #{certification.certifiedEndpointRevision}
+          AND model.secret_ref_id &lt;=&gt; #{secretRefId}
+          AND ((#{secretRefId} IS NULL AND #{certification.certifiedSecretVersion} IS NULL)
+            OR (secret.status = 'ACTIVE'
+              AND secret.current_version &lt;=&gt; #{certification.certifiedSecretVersion}))
+        ON DUPLICATE KEY UPDATE
+            tenant_id = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(tenant_id), ai_model_certification.tenant_id),
+            status = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(status), ai_model_certification.status),
+            certified_endpoint_revision = IF(
+                VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(certified_endpoint_revision), ai_model_certification.certified_endpoint_revision),
+            certified_secret_version = IF(
+                VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(certified_secret_version), ai_model_certification.certified_secret_version),
+            valid_until = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(valid_until), ai_model_certification.valid_until),
+            completed_at = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(completed_at), ai_model_certification.completed_at),
+            passed_checks = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(passed_checks), ai_model_certification.passed_checks),
+            failed_checks = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(failed_checks), ai_model_certification.failed_checks),
+            latency_p95_ms = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(latency_p95_ms), ai_model_certification.latency_p95_ms),
+            verified_context_tokens = IF(
+                VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(verified_context_tokens), ai_model_certification.verified_context_tokens),
+            failure_code = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(failure_code), ai_model_certification.failure_code),
+            failure_message = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(failure_message), ai_model_certification.failure_message),
+            revision = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                ai_model_certification.revision + 1, ai_model_certification.revision),
+            current_run_id = IF(VALUES(current_run_id) > ai_model_certification.current_run_id,
+                VALUES(current_run_id), ai_model_certification.current_run_id)
+    </insert>
+</mapper>

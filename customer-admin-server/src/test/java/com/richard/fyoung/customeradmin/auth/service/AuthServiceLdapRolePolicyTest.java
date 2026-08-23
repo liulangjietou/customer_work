@@ -50,7 +50,8 @@ class AuthServiceLdapRolePolicyTest {
         when(roleMapper.selectList(any())).thenReturn(List.of(superAdmin));
         AuthService service = new AuthService(
             mock(SysUserMapper.class), mock(PasswordEncoder.class), mock(OperationLogMapper.class),
-            mock(LdapAuthService.class), properties, roleMapper, userRoleMapper, mock(TenantService.class));
+            mock(LdapAuthService.class), properties, roleMapper, userRoleMapper, mock(TenantService.class),
+            mock(SessionRevocationService.class));
 
         BizException exception = assertThrows(BizException.class,
             () -> ReflectionTestUtils.invokeMethod(service, "resolveAssignableDefaultRoles"));
@@ -68,7 +69,7 @@ class AuthServiceLdapRolePolicyTest {
         AuthService service = new AuthService(
             mock(SysUserMapper.class), mock(PasswordEncoder.class), mock(OperationLogMapper.class),
             mock(LdapAuthService.class), properties, roleMapper, mock(SysUserRoleMapper.class),
-            mock(TenantService.class));
+            mock(TenantService.class), mock(SessionRevocationService.class));
 
         BizException exception = assertThrows(BizException.class,
             () -> ReflectionTestUtils.invokeMethod(service, "resolveAssignableDefaultRoles"));
@@ -88,7 +89,7 @@ class AuthServiceLdapRolePolicyTest {
         AuthService service = new AuthService(
             mock(SysUserMapper.class), mock(PasswordEncoder.class), mock(OperationLogMapper.class),
             mock(LdapAuthService.class), properties, roleMapper, mock(SysUserRoleMapper.class),
-            mock(TenantService.class));
+            mock(TenantService.class), mock(SessionRevocationService.class));
 
         BizException exception = assertThrows(BizException.class,
             () -> ReflectionTestUtils.invokeMethod(service, "resolveAssignableDefaultRoles"));
@@ -152,7 +153,8 @@ class AuthServiceLdapRolePolicyTest {
             new AdminLdapProperties(),
             mock(SysRoleMapper.class),
             userRoleMapper,
-            mock(TenantService.class));
+            mock(TenantService.class),
+            mock(SessionRevocationService.class));
     }
 
     private SysUser localUser() {

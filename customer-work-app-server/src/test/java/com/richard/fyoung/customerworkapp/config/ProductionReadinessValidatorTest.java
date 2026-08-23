@@ -68,6 +68,73 @@ class ProductionReadinessValidatorTest {
         assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-ack-token"));
         assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-subscribe-retry-ms"));
         assertTrue(error.getMessage().contains("customer-work.outbox.store-mode"));
+        assertTrue(error.getMessage().contains("customer-work.model.egress.allowed-hosts"));
+    }
+
+    @Test
+    void volatileCallLog_shouldFailBecauseExperimentAndSloFactsWouldDisappear() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getCallLog().setStoreMode("memory");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.call-log.store-mode"));
+    }
+
+    @Test
+    void longTermMemoryWithoutConsent_shouldFail() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getMemory().setConsentRequired(false);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.memory.consent-required"));
+    }
+
+    @Test
+    void longTermMemoryWithVolatileConsentStore_shouldFail() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getMemory().setConsentStoreMode("memory");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.memory.consent-store-mode"));
+    }
+
+    @Test
+    void longTermMemoryWithVolatileMemoryStore_shouldFail() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getMemory().setStoreMode("memory");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.memory.store-mode"));
+    }
+
+    @Test
+    void externalMemoryProviderWithoutErasureCapability_shouldFail() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getMemory().setProvider("mem0");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.memory.provider.external-erasure-capability"));
+    }
+
+    @Test
+    void disabledMemoryRetentionCleanup_shouldFail() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getMemory().setRetentionCleanupEnabled(false);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.memory.retention-cleanup-enabled"));
     }
 
     private CustomerWorkProperties validProperties() {
@@ -76,6 +143,8 @@ class ProductionReadinessValidatorTest {
         properties.getSession().getMysql().setPassword("database-secret");
         properties.getSession().getMysql().setMigrationEnabled(true);
         properties.getHumanApproval().setStoreMode("jdbc");
+        properties.getCallLog().setEnabled(true);
+        properties.getCallLog().setStoreMode("jdbc");
         properties.getSecurity().getAuth().setEnabled(true);
         properties.getSecurity().getAuth().setApiKeys(List.of("api-secret"));
         properties.getSecurity().getApprovalAuth().setEnabled(true);
@@ -84,6 +153,10 @@ class ProductionReadinessValidatorTest {
         properties.getAgentAccess().setSecret("agent-secret-with-at-least-32-characters-01");
         properties.getDistributed().setCounterMode("redis");
         properties.getDistributed().setSessionLockMode("redis");
+        properties.getMemory().setConsentRequired(true);
+        properties.getMemory().setStoreMode("jdbc");
+        properties.getMemory().setConsentStoreMode("jdbc");
+        properties.getMemory().setProvider("memory");
         properties.getSkill().setRepository("mysql");
         properties.getNotification().setWebhookUrl("https://notify.internal.example/messages");
         properties.getNotification().setAuthToken("notification-secret");

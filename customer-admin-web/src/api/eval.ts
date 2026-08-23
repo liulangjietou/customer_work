@@ -10,8 +10,8 @@ export type EvalTypeCode = 'INTENT' | 'QUALITY'
 /** 触发来源。 */
 export type EvalTriggerCode = 'MANUAL' | 'SCHEDULED' | 'API'
 
-/** 对比结论：首次运行 / 变好 / 变差 / 持平。 */
-export type EvalVerdict = 'FIRST_RUN' | 'IMPROVED' | 'REGRESSED' | 'UNCHANGED'
+/** 对比结论：首次运行 / 变好 / 变差 / 持平 / Judge 或运行错误。 */
+export type EvalVerdict = 'FIRST_RUN' | 'IMPROVED' | 'REGRESSED' | 'UNCHANGED' | 'ERROR'
 
 export interface EvalRun {
   runId: string

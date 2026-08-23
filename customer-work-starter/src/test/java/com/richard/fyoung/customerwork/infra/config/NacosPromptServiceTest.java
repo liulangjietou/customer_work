@@ -63,4 +63,27 @@ class NacosPromptServiceTest {
 
         assertTrue(service.currentPrompt().isEmpty(), "空白配置不应生效");
     }
+
+    @Test
+    void runtimeOverride_shouldTakePriorityAndNullShouldFallBackToLatestNacosPrompt() throws Exception {
+        NacosPromptService service = new NacosPromptService(props());
+        ConfigService configService = mock(ConfigService.class);
+        when(configService.getConfig(any(), any(), anyLong())).thenReturn("nacos-v1");
+        service.bind(configService);
+        ArgumentCaptor<Listener> captor = ArgumentCaptor.forClass(Listener.class);
+        verify(configService).addListener(any(), any(), captor.capture());
+
+        service.updatePrompt("runtime-override");
+        captor.getValue().receiveConfigInfo("nacos-v2");
+        assertEquals("runtime-override", service.currentPrompt().orElseThrow());
+
+        service.updatePrompt(null);
+        assertEquals("nacos-v2", service.currentPrompt().orElseThrow());
+        service.updatePrompt("runtime-again");
+        service.updatePrompt("   ");
+        assertEquals("nacos-v2", service.currentPrompt().orElseThrow());
+
+        captor.getValue().receiveConfigInfo(" ");
+        assertTrue(service.currentPrompt().isEmpty(), "独立 dataId 清空后应继续回落代码内置提示词");
+    }
 }

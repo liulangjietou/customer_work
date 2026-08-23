@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
 import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
@@ -82,11 +83,14 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
     /** 可为 null：主体配额未装配时不记账。与租户配额并列而非二选一——两者是不同维度的上限。 */
     private final SubjectQuotaGuard subjectQuotaGuard;
 
+    /** 可为 null：版本采集是旁路能力，缺失时仍记录 trace 及基础调用事实。 */
+    private final AgentCallLineageProvider lineageProvider;
+
     public AgentCallTimingMiddleware(CustomerWorkProperties properties,
                                      ToolKindRegistry toolKindRegistry,
                                      AgentCallRecordSink sink,
                                      ObjectProvider<MeterRegistry> meterRegistryProvider) {
-        this(properties, toolKindRegistry, sink, meterRegistryProvider, null, null);
+        this(properties, toolKindRegistry, sink, meterRegistryProvider, null, null, null);
     }
 
     /** 兼容既有五参调用（只接租户配额）：主体配额缺省不记账。 */
@@ -95,7 +99,18 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
                                      AgentCallRecordSink sink,
                                      ObjectProvider<MeterRegistry> meterRegistryProvider,
                                      ObjectProvider<TenantQuotaGuard> quotaGuardProvider) {
-        this(properties, toolKindRegistry, sink, meterRegistryProvider, quotaGuardProvider, null);
+        this(properties, toolKindRegistry, sink, meterRegistryProvider, quotaGuardProvider, null, null);
+    }
+
+    /** 兼容既有六参调用；未显式注入时只采 traceId，不采配置与制品版本。 */
+    public AgentCallTimingMiddleware(CustomerWorkProperties properties,
+                                     ToolKindRegistry toolKindRegistry,
+                                     AgentCallRecordSink sink,
+                                     ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                     ObjectProvider<TenantQuotaGuard> quotaGuardProvider,
+                                     ObjectProvider<SubjectQuotaGuard> subjectQuotaGuardProvider) {
+        this(properties, toolKindRegistry, sink, meterRegistryProvider, quotaGuardProvider,
+            subjectQuotaGuardProvider, null);
     }
 
     /**
@@ -110,7 +125,8 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
                                      AgentCallRecordSink sink,
                                      ObjectProvider<MeterRegistry> meterRegistryProvider,
                                      ObjectProvider<TenantQuotaGuard> quotaGuardProvider,
-                                     ObjectProvider<SubjectQuotaGuard> subjectQuotaGuardProvider) {
+                                     ObjectProvider<SubjectQuotaGuard> subjectQuotaGuardProvider,
+                                     ObjectProvider<AgentCallLineageProvider> lineageProvider) {
         this.enabled = properties.getCallLog().isEnabled();
         this.toolKindRegistry = toolKindRegistry;
         this.sink = sink;
@@ -118,6 +134,7 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         this.quotaGuard = quotaGuardProvider == null ? null : quotaGuardProvider.getIfAvailable();
         this.subjectQuotaGuard = subjectQuotaGuardProvider == null
             ? null : subjectQuotaGuardProvider.getIfAvailable();
+        this.lineageProvider = lineageProvider == null ? null : lineageProvider.getIfAvailable();
     }
 
     @Override
@@ -131,23 +148,25 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         // onModelCall/onActing 用的却是从该 key 解析出的真实 rc。故这里也从 Reactor Context 兜底取同一实例，
         // 保证三个 hook 读写同一个 ctx（collector 互通、meta 可读、sessionId 非空）。deferContextual 在订阅期
         // 拿到承载 RUNTIME_CONTEXT_KEY 的上下文视图。
-        return Flux.deferContextual(cv -> onAgentWithContext(agent, resolveEffectiveCtx(ctx, cv), input, next));
+        return Flux.deferContextual(cv ->
+            onAgentWithContext(agent, resolveEffectiveCtx(ctx, cv), input, next, cv));
     }
 
     /** 用归一后的 {@code ctx} 执行采集主逻辑（供 {@link #onAgent} 在 deferContextual 内调用）。 */
     private Flux<AgentEvent> onAgentWithContext(Agent agent, RuntimeContext ctx, AgentInput input,
-                                                Function<AgentInput, Flux<AgentEvent>> next) {
+                                                Function<AgentInput, Flux<AgentEvent>> next,
+                                                reactor.util.context.ContextView contextView) {
         // 嵌套调用防护：子 agent 若复用同一 RuntimeContext（同链路再次进入 onAgent），不覆盖父采集器、
         // 不另发记录——子 agent 的模型/工具分段经 ctx 里既有采集器自然归入父请求，父级统一结算
         if (collectorOf(ctx) != null) {
             return next.apply(input);
         }
-        AgentCallCollector collector = new AgentCallCollector();
+        AgentCallMeta meta = safeMeta(ctx);
+        AgentCallCollector collector = new AgentCallCollector(captureLineage(contextView, meta));
         // 放进 ctx 供 onModelCall/onActing 追加分段；ctx 缺失（如单测直传 null 且无 Reactor 上下文）
         // 则仅本 hook 记录，不报错
         putCollector(ctx, collector);
 
-        AgentCallMeta meta = safeMeta(ctx);
         String question = resolveQuestion(meta, input);
 
         AtomicBoolean ended = new AtomicBoolean(false);
@@ -397,7 +416,7 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
 
             AgentCallRecord record = collector.toRecord(requestId, userId, username, agentCode,
                 resolvedAgentName, sessionId, sessionType, question, System.currentTimeMillis(),
-                success, errorMsg);
+                success, errorMsg, experimentAssignmentOf(ctx));
             sink.emit(record);
         } catch (Exception e) {
             log.error("agent call record settle failed, code={}", "CALLLOG-SETTLE-FAIL", e);
@@ -458,11 +477,47 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         }
     }
 
+    private OnlineExperimentAssignment experimentAssignmentOf(RuntimeContext ctx) {
+        if (ctx == null) {
+            return null;
+        }
+        try {
+            return ctx.get(OnlineExperimentAssignment.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private String mdcRequestId() {
         try {
             return org.slf4j.MDC.get(MdcContextLifter.REQUEST_ID_KEY);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /**
+     * 调用开始时冻结 trace 与制品版本。失败只降级为空谱系，不能影响主调用。
+     */
+    private AgentCallLineage captureLineage(reactor.util.context.ContextView contextView,
+                                             AgentCallMeta meta) {
+        try {
+            AgentCallLineage callerLineage = meta == null ? null : meta.lineage();
+            AgentCallLineage captured = callerLineage != null && callerLineage.hasArtifactContext()
+                ? callerLineage
+                : (lineageProvider == null ? AgentCallLineage.empty() : lineageProvider.capture());
+            String traceId = null;
+            if (contextView != null) {
+                Object value = contextView.getOrDefault(MdcContextLifter.TRACE_ID_KEY, null);
+                traceId = value == null ? null : value.toString();
+            }
+            if (traceId == null || traceId.isBlank()) {
+                traceId = org.slf4j.MDC.get(MdcContextLifter.TRACE_ID_KEY);
+            }
+            return (captured == null ? AgentCallLineage.empty() : captured).withTraceId(traceId);
+        } catch (Exception e) {
+            log.error("agent call lineage capture failed, code={}", "CALLLOG-LINEAGE-CAPTURE-FAIL", e);
+            return AgentCallLineage.empty();
         }
     }
 

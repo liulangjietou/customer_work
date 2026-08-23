@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.config;
 
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.RuntimeAckIdentity;
 import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -12,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /** admin 生产启动硬门禁：拒绝本地依赖、开发密钥和无隔离代码执行进入流量池。 */
 @Component
@@ -19,6 +22,7 @@ import java.util.Map;
 public class AdminProductionReadinessValidator implements InitializingBean {
 
     private static final String DEV_AES_KEY = "0123456789abcdef0123456789abcdef";
+    private static final int MIN_RUNTIME_ACK_TOKEN_BYTES = 32;
     private static final List<String> FORBIDDEN_PRODUCTION_AI_CODING_FEATURES = List.of(
         "admin.sandbox.features.command-execution-enabled",
         "admin.sandbox.features.diagnosis-enabled",
@@ -70,6 +74,7 @@ public class AdminProductionReadinessValidator implements InitializingBean {
             DevDefaultCredentials.MINIO_CREDENTIAL);
         requireNonDefaultSecret(violations, "customer-work.attachment.storage.minio.secret-key",
             DevDefaultCredentials.MINIO_CREDENTIAL);
+        validateModelEgress(violations);
         validateOpenApi(violations);
         validateRuntimePublish(violations);
 
@@ -77,6 +82,14 @@ public class AdminProductionReadinessValidator implements InitializingBean {
             throw new IllegalStateException("admin production readiness validation failed, invalid keys: "
                 + String.join(", ", violations));
         }
+    }
+
+    private void validateModelEgress(List<String> violations) {
+        List<String> allowedHosts = Binder.get(environment)
+            .bind("admin.model.egress.allowed-hosts", Bindable.listOf(String.class))
+            .orElse(List.of());
+        require(violations, "admin.model.egress.allowed-hosts",
+            allowedHosts.stream().anyMatch(this::hasText));
     }
 
     private void validateRuntimePublish(List<String> violations) {
@@ -104,8 +117,39 @@ public class AdminProductionReadinessValidator implements InitializingBean {
             positiveLong("admin.runtime-publish.base-backoff-ms"));
         require(violations, "admin.runtime-publish.minimum-ack-count",
             environment.getProperty("admin.runtime-publish.minimum-ack-count", Integer.class, 0) > 0);
+        validateRuntimeAckIdentities(violations);
         require(violations, "admin.runtime-publish.nacos.timeout-ms",
             positiveLong("admin.runtime-publish.nacos.timeout-ms"));
+    }
+
+    private void validateRuntimeAckIdentities(List<String> violations) {
+        List<String> configured = Binder.get(environment)
+            .bind("admin.runtime-publish.ack-identities", Bindable.listOf(String.class))
+            .orElse(List.of());
+        List<RuntimeAckIdentity> identities = configured.stream()
+            .map(RuntimeAckIdentity::parse)
+            .flatMap(java.util.Optional::stream)
+            .toList();
+        int minimumAckCount = environment.getProperty(
+            "admin.runtime-publish.minimum-ack-count", Integer.class, 0);
+        boolean syntaxValid = !configured.isEmpty() && identities.size() == configured.size();
+        boolean secretsValid = identities.stream().allMatch(identity ->
+            isProductionSecret(identity.token())
+                && identity.token().getBytes(StandardCharsets.UTF_8).length >= MIN_RUNTIME_ACK_TOKEN_BYTES);
+        boolean uniqueTokens = identities.stream().map(RuntimeAckIdentity::token).distinct().count()
+            == identities.size();
+        boolean uniqueInstances = identities.stream()
+            .map(identity -> TenantContext.normalizedTenantKey(identity.tenantId())
+                + "\u001f" + identity.instanceId())
+            .distinct().count() == identities.size();
+        Map<String, Long> instanceCountsByTenant = identities.stream().collect(
+            Collectors.groupingBy(identity -> TenantContext.normalizedTenantKey(identity.tenantId()),
+                Collectors.counting()));
+        boolean everyTenantCanReachQuorum = !instanceCountsByTenant.isEmpty()
+            && instanceCountsByTenant.values().stream().allMatch(count -> count >= minimumAckCount);
+        require(violations, "admin.runtime-publish.ack-identities",
+            syntaxValid && secretsValid && uniqueTokens && uniqueInstances
+                && everyTenantCanReachQuorum);
     }
 
     private void validateOpenApi(List<String> violations) {

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.common.constant.StatsGranularity;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -9,6 +10,7 @@ import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsDe
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsPageVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsQuery;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsRowVO;
+import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallReplayManifestVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsSource;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsSummaryVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallTrendVO;
@@ -19,6 +21,7 @@ import com.richard.fyoung.customerwork.data.calllog.TrendGranularity;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallLogDO;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSegmentDO;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSummaryDO;
+import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -46,6 +49,7 @@ import java.util.List;
 public class AgentCallStatsService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentCallStatsService.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /** 列表视图问题/回答预览截断长度。 */
     private static final int PREVIEW_MAX_LENGTH = 200;
@@ -53,6 +57,8 @@ public class AgentCallStatsService {
     private static final int DEFAULT_PAGE_SIZE = 10;
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final ZoneId ZONE = ZoneId.systemDefault();
+    private static final String REPLAY_BLOCKED_REASON =
+        "生产工具可能产生外部副作用；该清单仅用于审计与隔离环境复现，不会自动执行";
 
     private final AgentCallStatsGateway adminGateway;
     private final AppAgentCallStatsGatewayProvider appGatewayProvider;
@@ -86,6 +92,36 @@ public class AgentCallStatsService {
         }
         List<AgentCallSegmentDO> segments = gateway.segmentMapper().findByCallLogId(id);
         return toDetail(logDO, segments);
+    }
+
+    /**
+     * 返回只读重放清单。这里刻意不调用 Agent：查看权限不能隐式获得工具执行权限。
+     */
+    public AgentCallReplayManifestVO replayManifest(long id, String source) {
+        AgentCallStatsDetailVO detail = detail(id, source);
+        return new AgentCallReplayManifestVO(
+            2,
+            "INSPECT_ONLY",
+            false,
+            REPLAY_BLOCKED_REASON,
+            AgentCallStatsSource.parse(source).name(),
+            detail.getId(),
+            detail.getTraceId(),
+            detail.getRequestId(),
+            detail.getAgentCode(),
+            detail.getSessionType(),
+            detail.getQuestion(),
+            detail.getAnswer(),
+            detail.getStartTime(),
+            detail.getRuntimeRevision(),
+            detail.getRuntimeContentHash(),
+            detail.getExperimentId(),
+            detail.getExperimentRevision(),
+            detail.getExperimentArm(),
+            detail.getExperimentDeploymentId(),
+            detail.getExperimentBucket(),
+            detail.getVersionBinding(),
+            detail.getSegments() == null ? List.of() : List.copyOf(detail.getSegments()));
     }
 
     /** 汇总统计。 */
@@ -132,6 +168,10 @@ public class AgentCallStatsService {
         param.setSessionType(trimToNull(query.getSessionType()));
         param.setRequestId(trimToNull(query.getRequestId()));
         param.setSessionId(trimToNull(query.getSessionId()));
+        param.setTraceId(trimToNull(query.getTraceId()));
+        param.setRuntimeRevision(trimToNull(query.getRuntimeRevision()));
+        param.setExperimentId(query.getExperimentId());
+        param.setExperimentArm(trimToNull(query.getExperimentArm()));
         param.setStartFromMs(parseTime(query.getStartTime()));
         param.setStartToMs(parseTime(query.getEndTime()));
         if (paged) {
@@ -153,6 +193,9 @@ public class AgentCallStatsService {
         vo.setAgentName(d.getAgentName());
         vo.setSessionId(d.getSessionId());
         vo.setSessionType(d.getSessionType());
+        vo.setTraceId(d.getTraceId());
+        vo.setRuntimeRevision(d.getRuntimeRevision());
+        copyExperiment(d, vo);
         vo.setQuestion(truncate(d.getQuestion()));
         vo.setAnswerPreview(truncate(d.getAnswer()));
         vo.setStartTime(formatTime(d.getStartTime()));
@@ -180,6 +223,11 @@ public class AgentCallStatsService {
         vo.setAgentName(d.getAgentName());
         vo.setSessionId(d.getSessionId());
         vo.setSessionType(d.getSessionType());
+        vo.setTraceId(d.getTraceId());
+        vo.setRuntimeRevision(d.getRuntimeRevision());
+        vo.setRuntimeContentHash(d.getRuntimeContentHash());
+        copyExperiment(d, vo);
+        vo.setVersionBinding(readVersionBinding(d.getVersionBindingJson()));
         vo.setQuestion(d.getQuestion());
         vo.setAnswer(d.getAnswer());
         vo.setStartTime(formatTime(d.getStartTime()));
@@ -303,5 +351,34 @@ public class AgentCallStatsService {
 
     private String trimToNull(String text) {
         return StringUtils.hasText(text) ? text.trim() : null;
+    }
+
+    private EvalVersionBinding readVersionBinding(String json) {
+        if (!StringUtils.hasText(json)) {
+            return EvalVersionBinding.legacy("");
+        }
+        try {
+            return OBJECT_MAPPER.readValue(json, EvalVersionBinding.class);
+        } catch (Exception e) {
+            log.error("parse call stats version binding failed, code={}",
+                "CALLSTATS-LINEAGE-PARSE-FAIL", e);
+            return EvalVersionBinding.legacy("");
+        }
+    }
+
+    private void copyExperiment(AgentCallLogDO source, AgentCallStatsRowVO target) {
+        target.setExperimentId(source.getExperimentId());
+        target.setExperimentRevision(source.getExperimentRevision());
+        target.setExperimentArm(source.getExperimentArm());
+        target.setExperimentDeploymentId(source.getExperimentDeploymentId());
+        target.setExperimentBucket(source.getExperimentBucket());
+    }
+
+    private void copyExperiment(AgentCallLogDO source, AgentCallStatsDetailVO target) {
+        target.setExperimentId(source.getExperimentId());
+        target.setExperimentRevision(source.getExperimentRevision());
+        target.setExperimentArm(source.getExperimentArm());
+        target.setExperimentDeploymentId(source.getExperimentDeploymentId());
+        target.setExperimentBucket(source.getExperimentBucket());
     }
 }

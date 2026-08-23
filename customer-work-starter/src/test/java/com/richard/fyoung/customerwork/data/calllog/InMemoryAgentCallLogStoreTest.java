@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -36,6 +37,24 @@ class InMemoryAgentCallLogStoreTest {
     void save_shouldAssignAutoIncrementId() {
         AgentCallRecord saved = store.save(record("alice", "A", 1000L, 50L, 30L, 20L, List.of()));
         assertTrue(saved.id() > 0, "自增主键回填");
+    }
+
+    @Test
+    void saveAndRead_shouldRoundTripOnlineExperimentAssignment() {
+        OnlineExperimentAssignment assignment =
+            new OnlineExperimentAssignment(77L, 4, "TREATMENT", 12L, 4200);
+        AgentCallRecord source = new AgentCallRecord(
+            0L, "req-experiment", "user-1", "alice", "A", "客服Agent", "session-1",
+            AgentCallSessionType.CHAT, "问题", "回答", 1000L, 1050L, 50L,
+            30L, 20L, 0L, 0L, 0, 10L, 5L, 15L, 4L, 8L,
+            true, null, assignment, AgentCallLineage.empty(), List.of());
+
+        AgentCallRecord saved = store.save(source);
+        AgentCallRecord loaded = store.findPage(new AgentCallLogQuery(
+            null, null, "req-experiment", null, null, null, 0, 10)).get(0);
+
+        assertEquals(assignment, saved.experimentAssignment());
+        assertEquals(assignment, loaded.experimentAssignment());
     }
 
     @Test

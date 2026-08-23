@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.core.memory.mapper.MemoryConsentMapper">
+
+    <!-- tenant_id 由 TenantLineInnerInterceptor 自动补齐；唯一键命中时只更新授权状态和时间。 -->
+    <insert id="upsert">
+        INSERT INTO cw_memory_consent
+        (subject_type, subject_id, agent_id, scope_id, status, consent_version,
+         granted_at_ms, withdrawn_at_ms, updated_at_ms)
+        VALUES
+        (#{record.subjectType}, #{record.subjectId}, #{record.agentId}, #{record.scopeId},
+         #{record.status}, #{record.consentVersion}, #{record.grantedAtMs},
+         #{record.withdrawnAtMs}, #{record.updatedAtMs})
+        ON DUPLICATE KEY UPDATE
+            scope_id = VALUES(scope_id),
+            status = VALUES(status),
+            consent_version = VALUES(consent_version),
+            granted_at_ms = VALUES(granted_at_ms),
+            withdrawn_at_ms = VALUES(withdrawn_at_ms),
+            updated_at_ms = VALUES(updated_at_ms)
+    </insert>
+
+    <!-- 只清理已撤回且超过审计保留期的记录，有效授权不参与过期删除。 -->
+    <delete id="deleteWithdrawnBefore">
+        DELETE FROM cw_memory_consent
+        WHERE status = 'WITHDRAWN' AND updated_at_ms &lt; #{cutoffMs}
+        ORDER BY id
+        LIMIT #{limit}
+    </delete>
+</mapper>

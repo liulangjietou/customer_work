@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetSnapshotMapper">
+
+    <sql id="columns">
+        version_id, eval_type, content_hash, case_count, cases_json, created_at_ms
+    </sql>
+
+    <!-- 同租户、同类型、同内容只产生一个不可变版本；重复观测不改首次创建时间。 -->
+    <insert id="insertIgnore"
+            parameterType="com.richard.fyoung.customerwork.capability.eval.entity.EvalDatasetSnapshotDO">
+        INSERT IGNORE INTO cw_eval_dataset_version
+        (version_id, eval_type, content_hash, case_count, cases_json, created_at_ms)
+        VALUES
+        (#{versionId}, #{evalType}, #{contentHash}, #{caseCount}, #{casesJson}, #{createdAtMs})
+    </insert>
+
+    <select id="selectByVersion"
+            resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalDatasetSnapshotDO">
+        SELECT <include refid="columns"/> FROM cw_eval_dataset_version
+        WHERE version_id = #{versionId}
+    </select>
+
+    <select id="selectByContent"
+            resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalDatasetSnapshotDO">
+        SELECT <include refid="columns"/> FROM cw_eval_dataset_version
+        WHERE eval_type = #{evalType} AND content_hash = #{contentHash}
+        LIMIT 1
+    </select>
+</mapper>

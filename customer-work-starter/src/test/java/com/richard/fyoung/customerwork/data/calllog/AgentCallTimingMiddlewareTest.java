@@ -1,6 +1,9 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
+import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.observability.MdcContextLifter;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -105,6 +108,52 @@ class AgentCallTimingMiddlewareTest {
         assertEquals(1, mcp);
         assertEquals("qwen-max", record.segments().stream()
             .filter(s -> s.kind() == AgentCallKind.MODEL).findFirst().orElseThrow().name());
+    }
+
+    /** traceId 与版本谱系必须在订阅开始时冻结到同一条调用事实。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void onAgent_shouldCaptureTraceAndArtifactLineage() {
+        when(agent.getName()).thenReturn("客服Agent");
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        EvalVersionBinding versions = new EvalVersionBinding(
+            "", "", "model-v1", "prompt-v1", "agent-v1", "kb-v1", "tool-v1", "", "");
+        AgentCallLineageProvider lineageProvider = () ->
+            new AgentCallLineage("", "revision-7", "hash-7", versions);
+        ObjectProvider<AgentCallLineageProvider> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(lineageProvider);
+        AgentCallTimingMiddleware middleware = new AgentCallTimingMiddleware(
+            enabledProps(), new ToolKindRegistry(), captured::set, null, null, null, provider);
+
+        middleware.onAgent(agent, ctx(), new AgentInput(List.of(msg(MsgRole.USER, "你好"))),
+                input -> Flux.just(new AgentResultEvent(msg(MsgRole.ASSISTANT, "回答"))))
+            .contextWrite(context -> context.put(MdcContextLifter.TRACE_ID_KEY,
+                "0123456789abcdef0123456789abcdef"))
+            .blockLast();
+
+        AgentCallLineage lineage = captured.get().lineage();
+        assertEquals("0123456789abcdef0123456789abcdef", lineage.traceId());
+        assertEquals("revision-7", lineage.runtimeRevision());
+        assertEquals("hash-7", lineage.runtimeContentHash());
+        assertEquals("model-v1", lineage.versionBinding().modelVersion());
+    }
+
+    @Test
+    void onAgent_shouldCarryRuntimeExperimentAssignmentIntoCallRecord() {
+        when(agent.getName()).thenReturn("客服Agent");
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        AgentCallTimingMiddleware middleware = new AgentCallTimingMiddleware(
+            enabledProps(), new ToolKindRegistry(), captured::set, null);
+        RuntimeContext runtime = ctx();
+        OnlineExperimentAssignment assignment =
+            new OnlineExperimentAssignment(77L, 4, "TREATMENT", 12L, 4200);
+        runtime.put(OnlineExperimentAssignment.class, assignment);
+
+        middleware.onAgent(agent, runtime, new AgentInput(List.of(msg(MsgRole.USER, "你好"))),
+                input -> Flux.just(new AgentResultEvent(msg(MsgRole.ASSISTANT, "回答"))))
+            .blockLast();
+
+        assertEquals(assignment, captured.get().experimentAssignment());
     }
 
     /** onModelCall 采集 ModelCallEndEvent 携带的 ChatUsage：MODEL 段挂 token，请求级汇总求和。 */

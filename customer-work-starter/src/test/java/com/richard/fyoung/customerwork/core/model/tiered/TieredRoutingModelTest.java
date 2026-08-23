@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.model.tiered;
 
+import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
@@ -70,6 +71,16 @@ class TieredRoutingModelTest {
 
         assertEquals(1L, routing.economyCount());
         assertEquals(0L, routing.standardCount());
+    }
+
+    @Test
+    void forcedFallback_shouldBypassEconomyAndReachStandardChain() {
+        routing.stream(List.of(user("运费怎么算")), List.of(), GenerateOptions.builder().build())
+            .contextWrite(ModelRoutingContext::preferFallback)
+            .collectList().block();
+
+        assertEquals(0L, routing.economyCount());
+        assertEquals(1L, routing.standardCount());
     }
 
     @Test

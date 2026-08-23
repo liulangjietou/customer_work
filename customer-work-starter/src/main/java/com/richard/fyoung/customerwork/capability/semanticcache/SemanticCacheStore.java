@@ -19,8 +19,21 @@ import java.util.List;
  */
 public interface SemanticCacheStore {
 
+    /** 未接入运行时配置前的缓存代际。数据库迁移也以此回填历史条目。 */
+    String BASELINE_GENERATION = "bootstrap";
+
     /** 写入一条缓存。 */
     void save(SemanticCacheEntry entry);
+
+    /**
+     * 按配置代际写入。自定义 Store 未实现代际隔离时只能服务基线，收到热配置后必须停止缓存写入。
+     */
+    default void save(SemanticCacheEntry entry, String configGeneration) {
+        if (!BASELINE_GENERATION.equals(configGeneration)) {
+            throw new UnsupportedOperationException("semantic cache generation is not supported");
+        }
+        save(entry);
+    }
 
     /**
      * 取候选集：同分区同意图、未过期的条目，按最近命中时间倒序，最多 {@code limit} 条。
@@ -29,17 +42,48 @@ public interface SemanticCacheStore {
      */
     List<SemanticCacheEntry> findCandidates(String scopeId, String intent, long notBeforeMs, int limit);
 
+    /** 按配置代际取候选；旧自定义 Store 在非基线代际下安全退化为未命中。 */
+    default List<SemanticCacheEntry> findCandidates(String scopeId, String intent, String configGeneration,
+                                                     long notBeforeMs, int limit) {
+        return BASELINE_GENERATION.equals(configGeneration)
+            ? findCandidates(scopeId, intent, notBeforeMs, limit) : List.of();
+    }
+
     /** 命中后回写计数与最近命中时间（用于容量淘汰时保留高频条目）。 */
     void recordHit(Long id, long hitAtMs);
 
     /** 当前分区的条目总数（容量控制用）。 */
     long count(String scopeId);
 
+    /** 当前配置代际的容量计数。 */
+    default long count(String scopeId, String configGeneration) {
+        return BASELINE_GENERATION.equals(configGeneration) ? count(scopeId) : 0L;
+    }
+
     /** 淘汰：只保留最近命中的 {@code keepSize} 条，其余删除，返回实际删除数。 */
     int evictLeastRecentlyUsed(String scopeId, int keepSize);
 
+    /** 只淘汰当前配置代际，避免旧代际条目挤掉新配置答案。 */
+    default int evictLeastRecentlyUsed(String scopeId, String configGeneration, int keepSize) {
+        return BASELINE_GENERATION.equals(configGeneration)
+            ? evictLeastRecentlyUsed(scopeId, keepSize) : 0;
+    }
+
     /** 清空某分区的缓存（知识库或提示词更新后，旧答案不再可信）。 */
     int clear(String scopeId);
+
+    /**
+     * 严格清空当前租户的全部缓存。
+     *
+     * <p>这是运行时配置切换的一致性边界，与普通查写的“缓存故障可降级”不同：
+     * 失败必须抛异常，让上游拒绝切换新配置。实现不得使用 {@code scopeId} 代替租户边界；
+     * JDBC 依赖租户拦截器补 {@code tenant_id}，内存实现依赖 {@code TenantContext} 分区。</p>
+     *
+     * <p>默认失败关闭，保证下游自定义 Store 未显式实现时不会静默遗留旧缓存。</p>
+     */
+    default int clearCurrentTenant() {
+        throw new UnsupportedOperationException("tenant-wide semantic cache invalidation is not supported");
+    }
 
     /**
      * 运营视角列出缓存条目，按命中次数降序。

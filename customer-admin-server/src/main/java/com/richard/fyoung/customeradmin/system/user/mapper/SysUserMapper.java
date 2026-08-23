@@ -6,6 +6,8 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.util.List;
+
 /**
  * 后台用户 Mapper。
  * @author owlzhangfq@gmail.com
@@ -29,6 +31,15 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
      * 不会被 MyBatis-Plus 自动追加 {@code AND deleted=0}，能正常命中当前 deleted=1 的目标行。
      */
     @Update("UPDATE sys_user SET deleted = 0, status = 1, login_type = 'LDAP', nickname = #{username}, "
-        + "password = NULL, update_time = NOW() WHERE id = #{id}")
+        + "password = NULL, auth_epoch = auth_epoch + 1, update_time = NOW() WHERE id = #{id}")
     int reviveDeletedUser(@Param("id") Long id, @Param("username") String username);
+
+    /** 安全属性变化时原子递增认证版本，避免并发更新丢失撤权。 */
+    @Update("UPDATE sys_user SET auth_epoch = auth_epoch + 1, update_time = NOW() "
+        + "WHERE id = #{id} AND deleted = 0")
+    int incrementAuthEpoch(@Param("id") Long id);
+
+    /** 由租户行拦截器限定当前租户，仅返回撤权所需的用户主键。 */
+    @Select("SELECT id FROM sys_user WHERE deleted = 0")
+    List<Long> selectUserIdsForSessionRevocation();
 }

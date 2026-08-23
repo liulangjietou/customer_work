@@ -2,6 +2,7 @@ import { request } from './request'
 import type {
   AgentCallSource,
   AgentCallStatsDetail,
+  AgentCallReplayManifest,
   AgentCallStatsPageResult,
   AgentCallStatsQuery,
   AgentCallStatsSummary,
@@ -19,6 +20,15 @@ export function pageAgentCallStats(query: AgentCallStatsQuery) {
 /** 单条调用全量详情（含回答全文 + 分段耗时明细）。 */
 export function getAgentCallStatsDetail(id: number, source: AgentCallSource) {
   return request<AgentCallStatsDetail>({ url: `${BASE_URL}/${id}`, method: 'get', params: { source } })
+}
+
+/** 获取不会执行模型/工具的只读重放清单。 */
+export function getAgentCallReplayManifest(id: number, source: AgentCallSource) {
+  return request<AgentCallReplayManifest>({
+    url: `${BASE_URL}/${id}/replay-manifest`,
+    method: 'get',
+    params: { source },
+  })
 }
 
 /** 汇总卡片：与分页查询共用同一套筛选参数，不含 pageNum/pageSize。 */

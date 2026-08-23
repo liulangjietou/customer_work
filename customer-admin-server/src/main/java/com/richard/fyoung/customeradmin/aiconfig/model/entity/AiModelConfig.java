@@ -32,12 +32,26 @@ public class AiModelConfig {
      */
     private String tenantId;
 
+    /** 模型目录资产 ID；旧 Agent 仍引用本部署的 {@link #id}。 */
+    private Long assetId;
     private String modelName;
-    /** 模型厂商：openai / dashscope / anthropic / gemini（见 {@code ModelProvider} 枚举）。 */
+    /** 租户内稳定部署编码。 */
+    private String deploymentCode;
+    /** 兼容旧字段：实际语义是接入协议，而不是模型厂商。 */
     private String provider;
+    /** 新协议字段；迁移期与 {@link #provider} 双写。 */
+    private String protocolAdapter;
     @JsonIgnore
     private String apiKey;
+    /** SecretRef ID；迁移期优先读它，缺失时回退 {@link #apiKey}。 */
+    private Long secretRefId;
     private String baseUrl;
+    private String region;
+    private String environment;
+    private Integer endpointRevision;
+    private String lifecycleStatus;
+    /** 0=存量兼容免认证；1=ACTIVE 前必须通过且持续持有有效认证。 */
+    private Integer certificationRequired;
     private String model;
     /** 0否 / 1是。 */
     private Integer isDefault;

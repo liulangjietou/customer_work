@@ -37,6 +37,7 @@ const VERDICT_LABELS: Record<EvalVerdict, { text: string; type: 'success' | 'dan
   IMPROVED: { text: '变好', type: 'success' },
   REGRESSED: { text: '变差', type: 'danger' },
   UNCHANGED: { text: '持平', type: 'info' },
+  ERROR: { text: '运行异常', type: 'danger' },
 }
 
 const TRIGGER_LABELS: Record<string, string> = {

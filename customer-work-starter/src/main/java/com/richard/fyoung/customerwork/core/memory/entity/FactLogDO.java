@@ -8,9 +8,9 @@ import lombok.Data;
 /**
  * 事实日志持久化对象（贫血数据袋）：与 {@code cw_fact_log} 表一一映射。
  *
- * <p>{@code scopeId} 是记忆分区键（{@code TenantResolver} 从 sessionId 解析），与租户列 {@code tenant_id}
- * 是两个维度——后者由租户拦截器自动填充过滤，不出现在本类里。表是 append-only 的，
- * 故本类没有更新语义，Store 侧只 INSERT。</p>
+ * <p>{@code scopeId} 是 {@code MemorySubjectResolver} 生成的主体记忆分区键，与租户列
+ * {@code tenant_id} 是两个维度——后者由租户拦截器自动填充过滤，不出现在本类里。
+ * 常规业务链路只追加；隐私擦除与保留策略由独立治理链路执行。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data

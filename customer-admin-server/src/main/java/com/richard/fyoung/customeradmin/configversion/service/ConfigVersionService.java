@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.configversion.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -40,9 +41,11 @@ public class ConfigVersionService {
     private static final String STATUS_FAILED = "FAILED";
 
     private final AiConfigVersionMapper versionMapper;
+    private final ConfigSnapshotRedactor snapshotRedactor;
 
     public ConfigVersionService(AiConfigVersionMapper versionMapper) {
         this.versionMapper = versionMapper;
+        this.snapshotRedactor = new ConfigSnapshotRedactor(new ObjectMapper());
     }
 
     /**
@@ -67,7 +70,7 @@ public class ConfigVersionService {
         }
 
         int nextVersion = latest.map(v -> v.getVersion() + 1).orElse(1);
-        // 旧版本标记为已被取代：让"当前生效版本"在列表里一眼可辨，而不必靠比对时间戳
+        // 旧版本标记为已有后续投递；实例真实生效状态仍以可靠发布任务 ACK 为准。
         latest.ifPresent(prev -> {
             if (STATUS_PUBLISHED.equals(prev.getStatus())) {
                 AiConfigVersion update = new AiConfigVersion();
@@ -101,7 +104,7 @@ public class ConfigVersionService {
      * 记录一次失败的发布尝试。
      *
      * <p>失败也要留痕：排查"线上为什么还是旧配置"时，一条 FAILED 记录比什么都没有有用得多。
-     * 失败版本不参与"取代上一版"——上一版仍然是线上生效的那一版。</p>
+     * 失败版本不参与"取代上一版"；实例真实运行版本仍以可靠任务 ACK 为准。</p>
      */
     @Transactional(rollbackFor = Exception.class)
     public void recordFailure(ConfigType type, String targetCode, Long targetId,
@@ -139,13 +142,15 @@ public class ConfigVersionService {
         return result;
     }
 
-    /** 版本详情（含完整快照内容，供对比与回滚预览）。 */
+    /** 版本详情仅返回结构化脱敏快照；内部安全回滚读取原始事实后也只能经白名单提取器使用。 */
     public ConfigVersionVO detail(Long id) {
         AiConfigVersion entity = versionMapper.selectById(id);
         if (entity == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND);
         }
-        return toVO(entity, true);
+        ConfigVersionVO vo = toVO(entity, true);
+        vo.setContent(snapshotRedactor.redact(entity.getContent()));
+        return vo;
     }
 
     /** 某目标的全部版本（版本选择下拉与对比用）。 */
@@ -157,7 +162,7 @@ public class ConfigVersionService {
             .stream().map(v -> toVO(v, false)).toList();
     }
 
-    /** 当前生效版本（状态为 PUBLISHED 的那一条）。 */
+    /** 最新已投递版本；PUBLISHED 不代表实例已 ACK APPLIED。 */
     public Optional<AiConfigVersion> findCurrent(ConfigType type, String targetCode) {
         return Optional.ofNullable(versionMapper.selectOne(new LambdaQueryWrapper<AiConfigVersion>()
             .eq(AiConfigVersion::getConfigType, type.name())

@@ -150,6 +150,10 @@ admin:
     # 即使显式配置 super_admin/operator，服务端也会拒绝自动绑定 control_plane=1 的角色。
     default-role-codes: ${ADMIN_LDAP_DEFAULT_ROLE_CODES:}
   model:
+    egress:
+      # 模型端点默认只允许公网；企业内网自建模型须显式列出 host（逗号分隔）。
+      # 白名单只放宽 RFC1918/ULA，环回/链路本地/元数据/未指定/组播地址仍永久拒绝。
+      allowed-hosts: ${ADMIN_MODEL_EGRESS_ALLOWED_HOSTS:}
     failover:
       # 智能体模型主备容错熔断参数：主模型连续失败达 failure-threshold 次即熔断 open-duration-seconds 秒，
       # 期间请求直接走备用模型；熔断到期自动半开（重置计数、放行一次主模型尝试）。见 ModelCircuitBreakerRegistry。
@@ -278,6 +282,9 @@ admin:
     max-attempts: ${ADMIN_RUNTIME_PUBLISH_MAX_ATTEMPTS:8}
     base-backoff-ms: ${ADMIN_RUNTIME_PUBLISH_BASE_BACKOFF_MS:5000}
     minimum-ack-count: ${ADMIN_RUNTIME_PUBLISH_MINIMUM_ACK_COUNT:1}
+    # 每个 8080 实例独立身份：tenantId|instanceId|token，逗号分隔；不得复用 admin.open-api token。
+    # instanceId/token 分别与 CW_RUNTIME_CONFIG_INSTANCE_ID/CW_RUNTIME_CONFIG_ACK_TOKEN 一一对应。
+    ack-identities: ${ADMIN_RUNTIME_PUBLISH_ACK_IDENTITIES:}
     nacos:
       enabled: ${ADMIN_RUNTIME_PUBLISH_NACOS_ENABLED:false}
       server-addr: ${ADMIN_RUNTIME_PUBLISH_NACOS_SERVER_ADDR:localhost:8848}

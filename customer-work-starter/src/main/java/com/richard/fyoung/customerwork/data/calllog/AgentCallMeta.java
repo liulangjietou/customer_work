@@ -14,8 +14,21 @@ package com.richard.fyoung.customerwork.data.calllog;
  * @param agentName   智能体名称（缺失时中间件回退 agent 名称）
  * @param sessionType 会话类型（缺失视为 CHAT）
  * @param question    用户问题（缺失时中间件回退 onAgent 入参首条用户消息文本）
+ * @param lineage     调用方已知的制品版本；为空时中间件从运行配置统一采集
  * @author owlzhangfq@gmail.com
  */
 public record AgentCallMeta(String requestId, String username, String agentCode, String agentName,
-                            AgentCallSessionType sessionType, String question) {
+                            AgentCallSessionType sessionType, String question,
+                            AgentCallLineage lineage) {
+
+    public AgentCallMeta {
+        lineage = lineage == null ? AgentCallLineage.empty() : lineage;
+    }
+
+    /** 兼容既有调用方；版本由中间件默认提供器采集。 */
+    public AgentCallMeta(String requestId, String username, String agentCode, String agentName,
+                         AgentCallSessionType sessionType, String question) {
+        this(requestId, username, agentCode, agentName, sessionType, question,
+            AgentCallLineage.empty());
+    }
 }

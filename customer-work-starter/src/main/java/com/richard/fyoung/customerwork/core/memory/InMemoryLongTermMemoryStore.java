@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.core.memory;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,7 +41,24 @@ public class InMemoryLongTermMemoryStore implements LongTermMemoryStore {
     }
 
     @Override
+    public List<String> list(String scopeId, int limit) {
+        List<String> facts = scopedFacts.get(scopeId);
+        if (facts == null || limit <= 0) {
+            return List.of();
+        }
+        int from = Math.max(0, facts.size() - limit);
+        List<String> recent = new ArrayList<>(facts.subList(from, facts.size()));
+        Collections.reverse(recent);
+        return List.copyOf(recent);
+    }
+
+    @Override
     public void clear(String scopeId) {
+        scopedFacts.remove(scopeId);
+    }
+
+    @Override
+    public void erase(String scopeId) {
         scopedFacts.remove(scopeId);
     }
 

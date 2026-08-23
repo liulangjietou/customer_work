@@ -31,6 +31,16 @@ public class AgentCallStatsQuery {
     /** 会话ID（精确匹配）。 */
     private String sessionId;
 
+    /** W3C trace-id（精确匹配）。 */
+    private String traceId;
+
+    /** 已应用的运行配置发布修订（精确匹配）。 */
+    private String runtimeRevision;
+
+    /** 在线实验 ID 与实验臂（CONTROL/TREATMENT），用于曝光追溯。 */
+    private Long experimentId;
+    private String experimentArm;
+
     /** 起始时间下界（含），格式 {@code yyyy-MM-dd HH:mm:ss}。 */
     private String startTime;
 

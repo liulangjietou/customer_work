@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsDetailVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsPageVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsQuery;
+import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallReplayManifestVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsSummaryVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallTrendVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentCallStatsService;
@@ -71,6 +72,17 @@ class AgentCallStatsControllerTest {
         when(service.detail(5L, "APP")).thenReturn(vo);
         assertSame(vo, controller.detail(5L, "APP").getData());
         verify(service).detail(5L, "APP");
+    }
+
+    @Test
+    void replayManifest_shouldPassIdAndSource() {
+        AgentCallReplayManifestVO vo = new AgentCallReplayManifestVO(
+            2, "INSPECT_ONLY", false, "blocked", "APP", 6L, "trace", "request",
+            "agent", "CHAT", "question", "answer", "2026-01-01 00:00:00",
+            "revision", "hash", null, null, null, null, null, null, List.of());
+        when(service.replayManifest(6L, "APP")).thenReturn(vo);
+        assertSame(vo, controller.replayManifest(6L, "APP").getData());
+        verify(service).replayManifest(6L, "APP");
     }
 
     @Test

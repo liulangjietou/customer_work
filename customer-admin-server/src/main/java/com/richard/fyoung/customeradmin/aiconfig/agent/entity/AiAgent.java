@@ -27,6 +27,9 @@ public class AiAgent {
     /** 用于动态菜单路由，[a-z0-9-]+。 */
     private String agentCode;
     private Long modelId;
+    /** 可选的不可变模型路由策略绑定；为空时沿用主模型/备用模型链。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private Long modelRoutePolicyId;
     private String systemPrompt;
     private String capabilities;
     private String icon;

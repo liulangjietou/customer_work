@@ -24,9 +24,11 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelRoutingPolicyRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.FailoverModel;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.ModelCircuitBreakerRegistry;
+import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillFile;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillFileMapper;
@@ -41,6 +43,9 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
+import com.richard.fyoung.customerwork.infra.config.RuntimeModelRouteMapper;
+import com.richard.fyoung.customerwork.core.model.routing.PolicyRoutingModel;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallTimingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.SensitiveWordMiddleware;
@@ -88,6 +93,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -147,6 +153,8 @@ public class AdminAgentInstanceFactory {
     private final AiAgentBackupModelMapper agentBackupModelMapper;
     private final AiAgentSubAgentMapper agentSubAgentMapper;
     private final ModelConfigAccess modelConfigAccess;
+    private final ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess;
+    private final SecretRefService secretRefService;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
     private final AiSkillFileMapper skillFileMapper;
@@ -222,7 +230,9 @@ public class AdminAgentInstanceFactory {
                                       ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider,
                                       IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware,
                                       TaskRepository taskRepository,
-                                      ObjectProvider<SessionWorkspaceStorage> sessionWorkspaceStorageProvider) {
+                                      ObjectProvider<SessionWorkspaceStorage> sessionWorkspaceStorageProvider,
+                                      SecretRefService secretRefService,
+                                      ObjectProvider<ModelRoutingPolicyRuntimeAccess> routingPolicyRuntimeAccessProvider) {
         this.indirectInjectionGuardMiddleware = indirectInjectionGuardMiddleware;
         this.taskRepository = taskRepository;
         // 容错 null provider：单测直传 null 依赖构造本类验证路径防御逻辑（同 CustomerServiceAgentFactory 的 meterRegistry 手法）
@@ -234,6 +244,9 @@ public class AdminAgentInstanceFactory {
         this.agentBackupModelMapper = agentBackupModelMapper;
         this.agentSubAgentMapper = agentSubAgentMapper;
         this.modelConfigAccess = modelConfigAccess;
+        this.secretRefService = secretRefService;
+        this.routingPolicyRuntimeAccess = routingPolicyRuntimeAccessProvider == null
+            ? null : routingPolicyRuntimeAccessProvider.getIfAvailable();
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
         this.skillFileMapper = skillFileMapper;
@@ -319,6 +332,12 @@ public class AdminAgentInstanceFactory {
             || compressTriggerMsgs != null;
     }
 
+    /** 返回运行时真正使用的系统提示词，供实例组装与调用谱系统一计算版本。 */
+    public static String effectiveSystemPrompt(AiAgent agent) {
+        return agent != null && StringUtils.hasText(agent.getSystemPrompt())
+            ? agent.getSystemPrompt() : DEFAULT_SYSTEM_PROMPT;
+    }
+
     /**
      * 组装内层 ReActAgent（模型/工具/技能/高级参数）。子智能体也走这条路径——子智能体只构建为内层
      * ReActAgent，不递归叠加它自己的 Harness 能力，避免嵌套复杂度。
@@ -331,7 +350,7 @@ public class AdminAgentInstanceFactory {
 
         ReActAgent.Builder builder = ReActAgent.builder()
             .name("AdminAgent-" + agentCode)
-            .sysPrompt(StringUtils.hasText(agent.getSystemPrompt()) ? agent.getSystemPrompt() : DEFAULT_SYSTEM_PROMPT)
+            .sysPrompt(effectiveSystemPrompt(agent))
             .model(model)
             .toolkit(toolkit)
             .stateStore(stateStore)
@@ -756,7 +775,9 @@ public class AdminAgentInstanceFactory {
         if (modelConfig == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "智能体关联的模型配置不存在: " + modelId);
         }
-        String apiKey = cryptoUtil.decrypt(modelConfig.getApiKey());
+        String apiKey = secretRefService == null
+            ? cryptoUtil.decrypt(modelConfig.getApiKey())
+            : secretRefService.resolvePlaintext(modelConfig);
         return modelFactory.buildModel(modelConfig.getProvider(), modelConfig.getBaseUrl(), apiKey, modelConfig.getModel());
     }
 
@@ -766,6 +787,9 @@ public class AdminAgentInstanceFactory {
      * {@link FailoverModel}，运行时主模型失败自动按序切备并带熔断记忆。
      */
     private Model buildAgentModel(AiAgent agent) {
+        if (agent.getModelRoutePolicyId() != null) {
+            return buildPolicyModel(agent);
+        }
         Model primaryModel = buildModel(agent.getModelId());
         List<Long> backupModelIds = agentBackupModelMapper.selectList(
                 new LambdaQueryWrapper<AiAgentBackupModel>()
@@ -782,6 +806,27 @@ public class AdminAgentInstanceFactory {
         }
         log.info("[workspace] failover model built: agentCode={} candidates={}", agent.getAgentCode(), candidates.size());
         return new FailoverModel(candidates, circuitBreakerRegistry);
+    }
+
+    private Model buildPolicyModel(AiAgent agent) {
+        if (routingPolicyRuntimeAccess == null) {
+            throw new BizException(ResultCode.SYSTEM_ERROR, "模型路由运行时读取能力未装配");
+        }
+        CustomerWorkRuntimeConfig.RoutingPolicy policy = routingPolicyRuntimeAccess.requireActive(
+            agent.getModelRoutePolicyId(), agent.getId(), "admin");
+        Map<Long, Model> candidates = new LinkedHashMap<>();
+        for (CustomerWorkRuntimeConfig.RoutingDeployment deployment : policy.getDeployments()) {
+            String apiKey = cryptoUtil.decrypt(deployment.getApiKeyCipher());
+            Model candidate = modelFactory.buildModel(deployment.getProvider(), deployment.getBaseUrl(),
+                apiKey, deployment.getName());
+            if (candidates.putIfAbsent(deployment.getDeploymentId(), candidate) != null) {
+                throw new BizException(ResultCode.PARAM_INVALID,
+                    "路由策略包含重复部署: " + deployment.getDeploymentId());
+            }
+        }
+        log.info("[workspace] policy routing model built: agentCode={}, policyId={}, version={}, candidates={}",
+            agent.getAgentCode(), policy.getPolicyId(), policy.getVersionNo(), candidates.size());
+        return new PolicyRoutingModel(RuntimeModelRouteMapper.toSpec(policy), candidates);
     }
 
     /**

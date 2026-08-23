@@ -16,6 +16,8 @@ public class AgentVO {
     private String agentCode;
     private Long modelId;
     private String modelName;
+    /** 绑定的模型路由策略；为空表示沿用主备模型链。 */
+    private Long modelRoutePolicyId;
     /** 有序备用模型ID（容错切换顺序），字段名为前端契约，不可改动。 */
     private List<Long> backupModelIds;
     /** 与 {@link #backupModelIds} 一一对应的模型名称。 */

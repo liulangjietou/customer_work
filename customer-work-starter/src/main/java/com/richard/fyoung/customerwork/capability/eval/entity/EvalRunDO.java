@@ -48,6 +48,13 @@ public class EvalRunDO {
     private String triggerSource;
     private Integer datasetSize;
 
+    /** 本次实际执行的数据集不可变版本。 */
+    private String datasetVersionId;
+    private String datasetFingerprint;
+
+    /** 模型/提示词/Agent/知识/工具/Judge/rubric 的完整版本绑定 JSON。 */
+    private String versionBindingJson;
+
     /** 本次运行时生效的提示词指纹——效果归因用：指标掉了，先看这一位变没变。 */
     private String promptFingerprint;
 

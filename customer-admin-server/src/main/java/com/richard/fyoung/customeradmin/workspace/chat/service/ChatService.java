@@ -12,6 +12,8 @@ import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionMode;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService.PlanChannel;
+import com.richard.fyoung.customerwork.core.model.routing.ModelRouteHint;
+import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
@@ -174,6 +176,17 @@ public class ChatService {
         return chatStream(agentCode, sessionId, userText, null, null, usage -> { });
     }
 
+    /**
+     * 渠道开放 API 的流式对话入口。channelCode 必须在调用前由
+     * {@code OpenChannelService} 按 agentCode + channelType + appKey 精确校验；本方法只负责把已验证的
+     * 渠道事实放入 Reactor Context，供底层模型策略路由在每次调用时读取。
+     */
+    public Flux<ChatStreamChunk> chatStreamForChannel(String agentCode, String sessionId, String userText,
+                                                       String channelCode) {
+        ModelRouteHint routeHint = new ModelRouteHint(null, channelCode, null, null, null, null);
+        return chatStream(agentCode, sessionId, userText, null, null, null, usage -> { }, routeHint);
+    }
+
     /** 流式对话（带执行模式，无用量观察者）：保留旧签名，供既有调用点/测试使用。 */
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText, String mode) {
         return chatStream(agentCode, sessionId, userText, mode, null, usage -> { });
@@ -241,6 +254,13 @@ public class ChatService {
     public Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
                                              String mode, AgentCallMeta callMeta, List<String> attachmentIds,
                                              Consumer<ChatUsage> usageTotalObserver) {
+        return chatStream(agentCode, sessionId, userText, mode, callMeta, attachmentIds,
+            usageTotalObserver, null);
+    }
+
+    private Flux<ChatStreamChunk> chatStream(String agentCode, String sessionId, String userText,
+                                              String mode, AgentCallMeta callMeta, List<String> attachmentIds,
+                                              Consumer<ChatUsage> usageTotalObserver, ModelRouteHint routeHint) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
         // 在 Tomcat 线程上把限流主体取下来：下面整条链会切到 Reactor 线程，ThreadLocal 到不了那边，
@@ -340,7 +360,9 @@ public class ChatService {
             .doFinally(signal -> executionModeRegistry.remove(agentCode, safeSession))
             // Reactor Context 不接受 null 值，故主体为空时原样返回
             .contextWrite(context -> quotaSubject == null ? context
-                : context.put(QuotaSubjectContextThreadLocalAccessor.KEY, quotaSubject));
+                : context.put(QuotaSubjectContextThreadLocalAccessor.KEY, quotaSubject))
+            // 渠道事实与配额主体使用不同 Context key，两者可同时传播且仅影响本次订阅。
+            .contextWrite(context -> ModelRoutingContext.withHint(context, routeHint));
     }
 
     /** 收集单次模型调用的用量：按 {@code replyId} 存一份（同一 replyId 只会来一条 MODEL_CALL_END）。 */

@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.system.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
@@ -32,6 +33,7 @@ class UserServiceControlPlaneTest {
     private SysUserRoleMapper userRoleMapper;
     private SysRoleMapper roleMapper;
     private CrossTenantAuthority crossTenantAuthority;
+    private SessionRevocationService sessionRevocationService;
     private UserService service;
 
     @BeforeEach
@@ -40,10 +42,12 @@ class UserServiceControlPlaneTest {
         userRoleMapper = mock(SysUserRoleMapper.class);
         roleMapper = mock(SysRoleMapper.class);
         crossTenantAuthority = mock(CrossTenantAuthority.class);
+        sessionRevocationService = mock(SessionRevocationService.class);
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         when(passwordEncoder.encode(any())).thenReturn("encoded");
         service = new UserService(
-            userMapper, userRoleMapper, roleMapper, passwordEncoder, crossTenantAuthority);
+            userMapper, userRoleMapper, roleMapper, passwordEncoder, crossTenantAuthority,
+            sessionRevocationService);
     }
 
     @Test
@@ -89,10 +93,13 @@ class UserServiceControlPlaneTest {
         when(userRoleMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
         when(crossTenantAuthority.hasAuthority(List.of(operator))).thenReturn(true);
         when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(true);
+        when(userMapper.incrementAuthEpoch(9L)).thenReturn(1);
 
         service.update(9L, request("ignored", "", List.of(3L)));
 
         verify(userMapper).updateById(user);
+        verify(userMapper).incrementAuthEpoch(9L);
+        verify(sessionRevocationService).revokeUserAfterCommit(9L);
         verify(userRoleMapper).insert(any(SysUserRole.class));
     }
 

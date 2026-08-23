@@ -6,6 +6,8 @@ import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import com.richard.fyoung.customerworkapp.service.AvatarStorageService;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
 import io.swagger.v3.oas.annotations.Operation;
@@ -17,6 +19,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.multipart.FilePart;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -49,13 +52,16 @@ public class UserAuthController {
     private final UserJwtService jwtService;
     private final DemoOrderSeeder demoOrderSeeder;
     private final AvatarStorageService avatarStorageService;
+    private final TenantAccessGuard tenantAccessGuard;
 
     public UserAuthController(UserAccountService userAccountService, UserJwtService jwtService,
-                             DemoOrderSeeder demoOrderSeeder, AvatarStorageService avatarStorageService) {
+                             DemoOrderSeeder demoOrderSeeder, AvatarStorageService avatarStorageService,
+                             ObjectProvider<TenantAccessGuard> tenantAccessGuardProvider) {
         this.userAccountService = userAccountService;
         this.jwtService = jwtService;
         this.demoOrderSeeder = demoOrderSeeder;
         this.avatarStorageService = avatarStorageService;
+        this.tenantAccessGuard = tenantAccessGuardProvider.getIfAvailable();
     }
 
     /**
@@ -84,6 +90,7 @@ public class UserAuthController {
     public Mono<Map<String, Object>> register(@Valid @RequestBody RegisterRequest request) {
         String tenantId = resolveTenant(request.tenantCode());
         return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> {
+                requireTenantAccess(tenantId, null, false, true);
                 UserAccount account = userAccountService.register(
                     request.username(), request.password(), request.nickname(), request.phone());
                 // 演示订单播种：失败已在 seeder 内部 catch 并 error 日志，不影响注册主流程
@@ -101,8 +108,10 @@ public class UserAuthController {
     @PostMapping("/login")
     public Mono<Map<String, Object>> login(@Valid @RequestBody LoginRequest request) {
         String tenantId = resolveTenant(request.tenantCode());
-        return Mono.fromCallable(() -> TenantContext.callWith(tenantId,
-                () -> userAccountService.verifyLogin(request.username(), request.password())))
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> {
+                requireTenantAccess(tenantId, null, false, true);
+                return userAccountService.verifyLogin(request.username(), request.password());
+            }))
             .subscribeOn(Schedulers.boundedElastic())
             .flatMap(Mono::justOrEmpty)
             .switchIfEmpty(Mono.error(new ResponseStatusException(
@@ -112,8 +121,11 @@ public class UserAuthController {
                 // 租户焊进令牌：后续请求一律以令牌里的为准，不再看客户端传什么
                 String authoritativeTenant = StringUtils.hasText(account.getTenantId())
                     ? account.getTenantId() : tenantId;
+                TenantAccessDecision access = requireTenantAccess(
+                    authoritativeTenant, null, false, true);
                 body.put("token", jwtService.issue(
-                    account.getId(), account.getUsername(), account.getNickname(), authoritativeTenant));
+                    account.getId(), account.getUsername(), account.getNickname(),
+                    authoritativeTenant, access.accessEpoch()));
                 body.put("userId", account.getId());
                 body.put("nickname", account.getNickname());
                 body.put("expiresAtMs", jwtService.expiresAtMs());
@@ -182,6 +194,21 @@ public class UserAuthController {
         if (!TenantContext.isValidTenantId(principal.tenantId())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "token tenant is invalid");
         }
+        requireTenantAccess(principal.tenantId(), principal.accessEpoch(), true, false);
         return principal;
+    }
+
+    private TenantAccessDecision requireTenantAccess(String tenantId, Long expectedEpoch,
+                                                     boolean requireEpoch, boolean refresh) {
+        if (tenantAccessGuard == null) {
+            return TenantAccessDecision.allowed(0L);
+        }
+        TenantAccessDecision decision = refresh
+            ? tenantAccessGuard.refreshAndCheck(tenantId, expectedEpoch, requireEpoch)
+            : tenantAccessGuard.check(tenantId, expectedEpoch, requireEpoch);
+        if (!decision.isAllowed()) {
+            throw new ResponseStatusException(HttpStatus.valueOf(decision.httpStatus()), decision.code());
+        }
+        return decision;
     }
 }

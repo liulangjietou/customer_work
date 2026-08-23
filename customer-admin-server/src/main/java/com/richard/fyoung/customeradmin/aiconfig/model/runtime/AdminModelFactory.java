@@ -2,21 +2,24 @@ package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
-import com.richard.fyoung.customerwork.infra.config.ChatModelFactory;
 import com.richard.fyoung.customerwork.core.model.ChatModelProber;
+import com.richard.fyoung.customerwork.infra.config.ChatModelFactory;
+import com.richard.fyoung.customerwork.safety.security.ModelEndpointPolicy;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 模型运行时构建（admin 薄壳）：连通性测试（{@link #testConnectivity}）+ 现场构建真实 {@link Model} 实例
  * （{@link #buildModel}，供动态智能体运行时注入 {@code ReActAgent}）。
  *
  * <p>两件事的通用能力都已下沉 starter：建模走 {@link ChatModelFactory}（五厂商静态工厂），
- * 探活走 {@link ChatModelProber}（四厂商最小探活协议，JDK 内置 HttpClient）。本类只保留 admin 侧职责——
+ * 探活走 {@link ChatModelProber}（四厂商最小探活协议 + 固定 DNS 解析结果）。本类只保留 admin 侧职责——
  * 用 {@link ModelProvider#of} 做 provider 合法性 fast fail 收口，并把探活结果译成前端用的
  * {@link ModelTestResult}（带测试时刻，落库到 {@code ai_model_config.test_status}）。</p>
  *
@@ -28,14 +31,35 @@ import java.time.LocalDateTime;
 public class AdminModelFactory {
 
     private final ChatModelProber prober;
+    private final ModelEndpointPolicy endpointPolicy;
 
     public AdminModelFactory() {
-        this.prober = new ChatModelProber();
+        this(new ModelEndpointPolicy(List::of));
     }
 
-    /** 包内可见，供单测注入短超时，避免真实等待默认 8s（生产始终走无参构造）。 */
+    @Autowired
+    public AdminModelFactory(ModelEndpointPolicy endpointPolicy) {
+        this(new ChatModelProber(endpointPolicy), endpointPolicy);
+    }
+
+    /** 包内可见，供单测注入短超时，避免真实等待默认 8s（生产走策略注入构造）。 */
     AdminModelFactory(Duration testTimeout) {
-        this.prober = new ChatModelProber(testTimeout);
+        this(testTimeout, new ModelEndpointPolicy(List::of));
+    }
+
+    private AdminModelFactory(Duration testTimeout, ModelEndpointPolicy endpointPolicy) {
+        this(new ChatModelProber(testTimeout, endpointPolicy), endpointPolicy);
+    }
+
+    /** 包内测试构造：薄壳测试只验证委托与结果翻译。 */
+    AdminModelFactory(ChatModelProber prober) {
+        this(prober, new ModelEndpointPolicy(List::of));
+    }
+
+    /** 包内测试构造：为模型构建注入确定性的端点策略与 DNS 结果。 */
+    AdminModelFactory(ChatModelProber prober, ModelEndpointPolicy endpointPolicy) {
+        this.prober = prober;
+        this.endpointPolicy = endpointPolicy;
     }
 
     /**
@@ -56,11 +80,13 @@ public class AdminModelFactory {
      *
      * <p>四家厂商全部走框架原生 ChatModel（由 {@link ChatModelFactory} 统一构建）；未知 provider 由
      * {@link ModelProvider#of} fast fail，不会落到工厂的默认厂商分支。高级生成参数（温度/maxTokens）
-     * 交给模型默认值，与 {@code ModelSaveRequest} 不暴露调参保持一致。</p>
+     * 交给模型默认值，与 {@code ModelSaveRequest} 不暴露调参保持一致。构建前会重新校验当次运行时
+     * baseUrl，阻断已发布配置绕过保存期校验；该校验不替代厂商 SDK 自身连接阶段的 DNS 与重定向控制。</p>
      */
     public Model buildModel(String provider, String baseUrl, String apiKey, String modelName) {
         ModelProvider p = ModelProvider.of(provider);
-        return ChatModelFactory.build(p.getCode(), modelName, apiKey, baseUrl, true,
+        String validatedBaseUrl = endpointPolicy.validateAndNormalizeBaseUrl(baseUrl);
+        return ChatModelFactory.build(p.getCode(), modelName, apiKey, validatedBaseUrl, true,
             GenerateOptions.builder().build(), null, null);
     }
 }

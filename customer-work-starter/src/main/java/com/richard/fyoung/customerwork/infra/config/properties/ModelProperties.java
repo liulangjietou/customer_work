@@ -46,6 +46,17 @@ public class ModelProperties {
     private final Retry retry = new Retry();
     /** 按难度分级路由：简单问题走便宜模型。 */
     private final TieredRouting tieredRouting = new TieredRouting();
+    /** 模型自定义端点出网策略；运行时热配置不能覆盖此部署级信任边界。 */
+    private final Egress egress = new Egress();
+
+    @Data
+    public static class Egress {
+        /**
+         * 自定义端点 host 白名单。空列表允许任意公网 host、仍拒绝内部地址；非空后切为严格名单。
+         * 生产启用运行时配置时由启动门禁强制非空，避免 Nacos 写权限被用于重定向模型凭据。
+         */
+        private List<String> allowedHosts = new ArrayList<>();
+    }
 
     /**
      * 分级路由：一句"运费怎么算"和一场多轮投诉处理不该花同样的钱。

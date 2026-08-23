@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.tenant;
 
 import com.richard.fyoung.customeradmin.openapi.OpenApiWebConfig;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessPolicyService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -23,14 +24,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class TenantWebConfig implements WebMvcConfigurer {
 
     private final CrossTenantAuthority crossTenantAuthority;
+    private final TenantAccessPolicyService accessPolicyService;
 
-    public TenantWebConfig(CrossTenantAuthority crossTenantAuthority) {
+    public TenantWebConfig(CrossTenantAuthority crossTenantAuthority,
+                           TenantAccessPolicyService accessPolicyService) {
         this.crossTenantAuthority = crossTenantAuthority;
+        this.accessPolicyService = accessPolicyService;
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new TenantContextInterceptor(crossTenantAuthority))
+        registry.addInterceptor(new TenantContextInterceptor(crossTenantAuthority, accessPolicyService))
             .addPathPatterns("/**")
             // 开放 API 已由 X-Open-Api-Token 确定租户，不能让附带的后台 Cookie 覆盖它。
             .excludePathPatterns(OpenApiWebConfig.PATH_PATTERN)

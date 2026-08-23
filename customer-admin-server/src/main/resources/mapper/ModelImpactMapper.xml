@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.aiconfig.model.mapper.ModelImpactMapper">
+
+    <resultMap id="modelImpactMap" type="com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelImpactItemVO">
+        <result property="tenantId" column="tenant_id"/>
+        <result property="resourceType" column="resource_type"/>
+        <result property="relationType" column="relation_type"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="resourceCode" column="resource_code"/>
+        <result property="resourceName" column="resource_name"/>
+        <result property="status" column="resource_status"/>
+        <result property="blocking" column="blocking"/>
+    </resultMap>
+
+    <!--
+      查询由 ModelImpactService 在 CrossTenantOperations 中执行：私有/普通租户视角始终显式传 tenantId；
+      只有已通过可写与控制面校验的 default 共享模型预检才传 null 扫描全部租户。
+      DRAFT 只提示计划引用；RUNNING 始终阻断；曾启动的 STOPPED/COMPLETED 只有撤流任务已 APPLIED 才视为不再引用。
+    -->
+    <select id="findImpacts" resultMap="modelImpactMap">
+        WITH model_agents AS (
+            SELECT agent.tenant_id, agent.id AS agent_id, agent.agent_code, agent.agent_name,
+                   agent.status AS agent_status, 'PRIMARY_MODEL' AS model_relation
+            FROM ai_agent agent
+            WHERE agent.model_id = #{modelId}
+              AND agent.deleted = 0
+              <if test="tenantId != null and tenantId != ''">
+                  AND agent.tenant_id = #{tenantId}
+              </if>
+            UNION ALL
+            SELECT agent.tenant_id, agent.id AS agent_id, agent.agent_code, agent.agent_name,
+                   agent.status AS agent_status, 'BACKUP_MODEL' AS model_relation
+            FROM ai_agent_backup_model backup
+            INNER JOIN ai_agent agent
+                    ON agent.id = backup.agent_id
+                   AND agent.tenant_id = backup.tenant_id
+                   AND agent.deleted = 0
+            WHERE backup.model_id = #{modelId}
+              <if test="tenantId != null and tenantId != ''">
+                  AND agent.tenant_id = #{tenantId}
+              </if>
+        ),
+        model_experiments AS (
+            SELECT experiment.*,
+                   CASE
+                       WHEN experiment.status = 'DRAFT' THEN 'DRAFT/INACTIVE'
+                       WHEN experiment.status = 'RUNNING'
+                           AND activation.status = 'APPLIED'
+                           AND (activation.gate_status IS NULL OR activation.gate_status &lt;&gt; 'BLOCKED')
+                           THEN 'RUNNING/ACTIVE'
+                       WHEN experiment.status = 'RUNNING'
+                           AND activation.status IN ('PENDING', 'PROCESSING', 'PUBLISHED')
+                           AND (activation.gate_status IS NULL OR activation.gate_status &lt;&gt; 'BLOCKED')
+                           THEN 'RUNNING/ACTIVATING'
+                       WHEN experiment.status = 'RUNNING' THEN 'RUNNING/ACTIVATION_FAILED'
+                       WHEN deactivation.status IN ('PENDING', 'PROCESSING', 'PUBLISHED')
+                           AND (deactivation.gate_status IS NULL OR deactivation.gate_status &lt;&gt; 'BLOCKED')
+                           THEN CONCAT(experiment.status, '/DEACTIVATING')
+                       ELSE CONCAT(experiment.status, '/DEACTIVATION_FAILED')
+                   END AS impact_status,
+                   CASE WHEN experiment.status = 'DRAFT' THEN 0 ELSE 1 END AS impact_blocking
+            FROM ai_model_experiment experiment
+            LEFT JOIN ai_runtime_publish_task activation
+                   ON activation.id = experiment.activation_task_id
+                  AND activation.tenant_id = experiment.tenant_id
+                  AND activation.experiment_id = experiment.id
+                  AND activation.experiment_publish_action = 'ACTIVATE'
+            LEFT JOIN ai_runtime_publish_task deactivation
+                   ON deactivation.id = experiment.deactivation_task_id
+                  AND deactivation.tenant_id = experiment.tenant_id
+                  AND deactivation.experiment_id = experiment.id
+                  AND deactivation.experiment_publish_action = 'DEACTIVATE'
+            WHERE (
+                    experiment.status IN ('DRAFT', 'RUNNING')
+                    OR (
+                        experiment.status IN ('STOPPED', 'COMPLETED')
+                        AND (experiment.activation_task_id IS NOT NULL OR experiment.started_at IS NOT NULL)
+                        AND (
+                            deactivation.id IS NULL
+                            OR deactivation.status &lt;&gt; 'APPLIED'
+                            OR deactivation.gate_status = 'BLOCKED'
+                        )
+                    )
+                  )
+              <if test="tenantId != null and tenantId != ''">
+                  AND experiment.tenant_id = #{tenantId}
+              </if>
+        )
+        SELECT impacts.*
+        FROM (
+            SELECT ma.tenant_id, 'AGENT' AS resource_type, ma.model_relation AS relation_type,
+                   CAST(ma.agent_id AS CHAR) AS resource_id, ma.agent_code AS resource_code,
+                   ma.agent_name AS resource_name, CAST(ma.agent_status AS CHAR) AS resource_status,
+                   1 AS blocking
+            FROM model_agents ma
+
+            UNION ALL
+
+            SELECT binding.tenant_id, 'CHANNEL_BINDING', 'AGENT_CHANNEL',
+                   CAST(binding.id AS CHAR), binding.channel_code, binding.channel_code,
+                   CAST(binding.status AS CHAR), CASE WHEN binding.status = 1 THEN 1 ELSE 0 END
+            FROM ai_channel_binding binding
+            INNER JOIN model_agents ma
+                    ON ma.agent_id = binding.agent_id
+                   AND ma.tenant_id = binding.tenant_id
+            WHERE binding.deleted = 0
+
+            UNION ALL
+
+            SELECT robot.tenant_id, 'CHANNEL_ROBOT', 'AGENT_CHANNEL',
+                   CAST(robot.id AS CHAR), robot.channel_type, robot.robot_name,
+                   CAST(robot.status AS CHAR), CASE WHEN robot.status = 1 THEN 1 ELSE 0 END
+            FROM ai_channel_robot robot
+            INNER JOIN model_agents ma
+                    ON ma.agent_code = robot.agent_code
+                   AND ma.tenant_id = robot.tenant_id
+
+            UNION ALL
+
+            SELECT task.tenant_id, 'SCHEDULED_TASK', 'AGENT_TASK',
+                   CAST(task.id AS CHAR), task.task_code, task.task_name,
+                   CAST(task.enabled AS CHAR), CASE WHEN task.enabled = 1 THEN 1 ELSE 0 END
+            FROM ai_scheduled_task task
+            INNER JOIN model_agents ma
+                    ON ma.agent_id = task.agent_id
+                   AND ma.tenant_id = task.tenant_id
+            WHERE task.deleted = 0
+
+            UNION ALL
+
+            SELECT version.tenant_id, 'CONFIG_VERSION', 'AGENT_VERSION',
+                   CAST(version.id AS CHAR), version.target_code,
+                   CONCAT(version.target_code, ' v', version.version), version.status, 0
+            FROM ai_config_version version
+            INNER JOIN model_agents ma
+                    ON version.target_id = ma.agent_id
+                   AND version.tenant_id = ma.tenant_id
+            WHERE version.config_type = 'AGENT'
+
+            UNION ALL
+
+            SELECT version.tenant_id, 'CONFIG_VERSION', 'MODEL_VERSION',
+                   CAST(version.id AS CHAR), version.target_code,
+                   CONCAT(version.target_code, ' v', version.version), version.status, 0
+            FROM ai_config_version version
+            WHERE version.config_type = 'MODEL'
+              AND version.target_id = #{modelId}
+              <if test="tenantId != null and tenantId != ''">
+                  AND version.tenant_id = #{tenantId}
+              </if>
+
+            UNION ALL
+
+            SELECT experiment.tenant_id, 'MODEL_EXPERIMENT', 'EXPERIMENT_CONTROL',
+                   CAST(experiment.id AS CHAR), experiment.experiment_code,
+                   experiment.experiment_name, experiment.impact_status,
+                   experiment.impact_blocking
+            FROM model_experiments experiment
+            WHERE experiment.control_deployment_id = #{modelId}
+
+            UNION ALL
+
+            SELECT experiment.tenant_id, 'MODEL_EXPERIMENT', 'EXPERIMENT_TREATMENT',
+                   CAST(experiment.id AS CHAR), experiment.experiment_code,
+                   experiment.experiment_name, experiment.impact_status,
+                   experiment.impact_blocking
+            FROM model_experiments experiment
+            WHERE experiment.treatment_deployment_id = #{modelId}
+
+            UNION ALL
+
+            SELECT policy.tenant_id, 'ROUTE_POLICY', CONCAT('ROUTE_', rule.purpose),
+                   CAST(policy.id AS CHAR), policy.policy_code,
+                   CONCAT(policy.policy_name, ' v', version.version_no), version.status,
+                   CASE WHEN policy.status = 'ACTIVE' AND version.status = 'ACTIVE' THEN 1 ELSE 0 END
+            FROM ai_model_route_rule rule
+            INNER JOIN ai_model_route_policy_version version
+                    ON version.id = rule.policy_version_id
+                   AND version.tenant_id = rule.tenant_id
+            INNER JOIN ai_model_route_policy policy
+                    ON policy.id = version.policy_id
+                   AND policy.tenant_id = version.tenant_id
+                   AND policy.deleted = 0
+            WHERE rule.deployment_id = #{modelId}
+              <if test="tenantId != null and tenantId != ''">
+                  AND rule.tenant_id = #{tenantId}
+              </if>
+
+            UNION ALL
+
+            SELECT publish_task.tenant_id, 'PUBLISH_TASK', 'RUNTIME_DELIVERY',
+                   publish_task.id, publish_task.revision,
+                   COALESCE(publish_task.channel_code, publish_task.target_code), publish_task.status,
+                   CASE WHEN publish_task.status IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'PARTIAL') THEN 1 ELSE 0 END
+            FROM ai_runtime_publish_task publish_task
+            INNER JOIN model_agents ma
+                    ON publish_task.target_id = ma.agent_id
+                   AND publish_task.tenant_id = ma.tenant_id
+        ) impacts
+        ORDER BY impacts.resource_type, impacts.tenant_id, impacts.resource_id
+    </select>
+</mapper>

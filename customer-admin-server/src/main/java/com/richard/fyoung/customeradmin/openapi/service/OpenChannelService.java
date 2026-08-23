@@ -100,16 +100,19 @@ public class OpenChannelService {
     }
 
     /**
-     * 对话前授权校验：agentCode 必须有启用的渠道机器人绑定，否则拒绝
-     * （防止开放 API 借 agentCode 任意调用未授权智能体）。
+     * 对话前授权校验：请求携带的 agentCode + channelType + appKey 必须精确命中同一条启用绑定。
+     * 这个校验同时把渠道路由事实的信任边界收在 admin，避免 token 持有方只凭自报 channelType
+     * 命中其它机器人的渠道规则。
      */
-    public void requireAgentBound(String agentCode) {
+    public void requireAgentBound(String agentCode, String channelType, String appKey) {
         boolean bound = robotMapper.exists(new LambdaQueryWrapper<AiChannelRobot>()
             .eq(AiChannelRobot::getAgentCode, agentCode)
+            .eq(AiChannelRobot::getChannelType, channelType)
+            .eq(AiChannelRobot::getAppKey, appKey)
             .eq(AiChannelRobot::getStatus, StatusFlags.ENABLED));
         if (!bound) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND,
-                "no enabled channel robot bound to agent: " + agentCode);
+                "no enabled channel robot binding matched: " + agentCode);
         }
     }
 

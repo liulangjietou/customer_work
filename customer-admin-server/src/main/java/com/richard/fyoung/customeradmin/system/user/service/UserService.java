@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.system.user.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
@@ -23,6 +24,7 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -40,15 +42,18 @@ public class UserService {
     private final SysRoleMapper roleMapper;
     private final PasswordEncoder passwordEncoder;
     private final CrossTenantAuthority crossTenantAuthority;
+    private final SessionRevocationService sessionRevocationService;
 
     public UserService(SysUserMapper userMapper, SysUserRoleMapper userRoleMapper,
                        SysRoleMapper roleMapper, PasswordEncoder passwordEncoder,
-                       CrossTenantAuthority crossTenantAuthority) {
+                       CrossTenantAuthority crossTenantAuthority,
+                       SessionRevocationService sessionRevocationService) {
         this.userMapper = userMapper;
         this.userRoleMapper = userRoleMapper;
         this.roleMapper = roleMapper;
         this.passwordEncoder = passwordEncoder;
         this.crossTenantAuthority = crossTenantAuthority;
+        this.sessionRevocationService = sessionRevocationService;
     }
 
     public PageResult<UserVO> page(PageQuery query) {
@@ -98,6 +103,10 @@ public class UserService {
     public void update(Long id, UserSaveRequest request) {
         SysUser user = requireUser(id);
         List<Long> roleIds = validateRoleChange(id, request.roleIds());
+        List<Long> previousRoleIds = existingRoleIds(id);
+        boolean statusChanged = request.status() != null && !Objects.equals(user.getStatus(), request.status());
+        boolean passwordChanged = StringUtils.hasText(request.password());
+        boolean rolesChanged = !new HashSet<>(previousRoleIds).equals(new HashSet<>(roleIds));
         user.setNickname(request.nickname());
         if (request.status() != null) {
             user.setStatus(request.status());
@@ -107,14 +116,20 @@ public class UserService {
         }
         userMapper.updateById(user);
         replaceRoles(id, roleIds);
+        if (statusChanged || passwordChanged || rolesChanged) {
+            requireEpochIncremented(userMapper.incrementAuthEpoch(id));
+            sessionRevocationService.revokeUserAfterCommit(id);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         requireUser(id);
         guardExistingControlPlaneAssignment(id);
+        requireEpochIncremented(userMapper.incrementAuthEpoch(id));
         userMapper.deleteById(id);
         userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, id));
+        sessionRevocationService.revokeUserAfterCommit(id);
     }
 
     private void replaceRoles(Long userId, List<Long> roleIds) {
@@ -179,6 +194,22 @@ public class UserService {
             return false;
         }
         return crossTenantAuthority.hasAuthority(roleMapper.selectBatchIds(existingRoleIds));
+    }
+
+    private List<Long> existingRoleIds(Long userId) {
+        return userRoleMapper.selectList(
+                new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId))
+            .stream()
+            .map(SysUserRole::getRoleId)
+            .filter(Objects::nonNull)
+            .distinct()
+            .toList();
+    }
+
+    private void requireEpochIncremented(int changed) {
+        if (changed != 1) {
+            throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "用户不存在或已删除");
+        }
     }
 
     private void fillRoles(List<UserVO> users) {

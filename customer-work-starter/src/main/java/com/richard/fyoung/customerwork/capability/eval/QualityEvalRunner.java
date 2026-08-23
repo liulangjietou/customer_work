@@ -40,6 +40,20 @@ public class QualityEvalRunner {
 
     private static final String DATASET_PATH = "eval/quality-eval-cases.json";
 
+    private static final String JUDGE_RUBRIC_TEMPLATE = """
+        你是一个客服回复质量评测员。请对以下客服回复进行打分（1-5分），评分维度包括：
+        1. 相关性：回复是否与用户问题相关
+        2. 准确性：回复中的信息是否准确
+        3. 完整性：回复是否完整回答了用户的问题
+
+        用户输入：%s
+        期望要点：%s
+        客服回复：%s
+
+        请输出格式：SCORE: <1-5的分数>
+        理由：<评分理由>
+        """;
+
     private final JudgeModel judgeModel;
     private final EvalCaseStore caseStore;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -161,19 +175,12 @@ public class QualityEvalRunner {
     }
 
     private String buildJudgePrompt(QualityEvalCase testCase, String reply) {
-        return """
-            你是一个客服回复质量评测员。请对以下客服回复进行打分（1-5分），评分维度包括：
-            1. 相关性：回复是否与用户问题相关
-            2. 准确性：回复中的信息是否准确
-            3. 完整性：回复是否完整回答了用户的问题
+        return JUDGE_RUBRIC_TEMPLATE.formatted(testCase.input(), testCase.expected(), reply);
+    }
 
-            用户输入：%s
-            期望要点：%s
-            客服回复：%s
-
-            请输出格式：SCORE: <1-5的分数>
-            理由：<评分理由>
-            """.formatted(testCase.input(), testCase.expected(), reply);
+    /** Judge 提示词与通过线共同组成 rubric 版本，任一变化都会产生新指纹。 */
+    public static String rubricVersion() {
+        return EvalFingerprint.of(JUDGE_RUBRIC_TEMPLATE, PASS_THRESHOLD, SCORE_PATTERN.pattern());
     }
 
     int parseScore(String text) {

@@ -7,12 +7,15 @@ import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential.AgentIdentity;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import com.richard.fyoung.customerworkapp.chat.ChatDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
@@ -40,15 +43,26 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
     private final ChatDispatchService dispatch;
     private final WsSessionRegistry registry;
     private final ObjectMapper objectMapper;
+    private final TenantAccessGuard tenantAccessGuard;
 
     public AgentChatWebSocketHandler(CustomerWorkProperties properties,
                                      ChatDispatchService dispatch,
                                      WsSessionRegistry registry,
                                      ObjectMapper objectMapper) {
+        this(properties, dispatch, registry, objectMapper, null);
+    }
+
+    @Autowired
+    public AgentChatWebSocketHandler(CustomerWorkProperties properties,
+                                     ChatDispatchService dispatch,
+                                     WsSessionRegistry registry,
+                                     ObjectMapper objectMapper,
+                                     TenantAccessGuard tenantAccessGuard) {
         this.properties = properties;
         this.dispatch = dispatch;
         this.registry = registry;
         this.objectMapper = objectMapper;
+        this.tenantAccessGuard = tenantAccessGuard;
     }
 
     @Override
@@ -71,32 +85,76 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
         String effectiveTenant = properties.getTenant().isEnabled() ? tenantId : TenantContext.DEFAULT;
-        return handleAuthenticated(session, authenticated.agentId(), effectiveTenant)
+        TenantAccessDecision access = currentAccess(effectiveTenant);
+        if (!access.isAllowed()) {
+            log.info("ws agent handshake rejected: code={}, tenantId={}", access.code(), effectiveTenant);
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
+        return handleAuthenticated(session, authenticated.agentId(), effectiveTenant, access.accessEpoch())
             .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, effectiveTenant));
     }
 
-    private Mono<Void> handleAuthenticated(WebSocketSession session, String agent, String tenantId) {
+    private Mono<Void> handleAuthenticated(WebSocketSession session, String agent, String tenantId,
+                                           long handshakeAccessEpoch) {
         return Mono.defer(() -> TenantContext.callWith(tenantId, () -> {
+            TenantAccessDecision beforeRegistration = currentAccess(tenantId);
+            if (!sameAllowedEpoch(beforeRegistration, handshakeAccessEpoch)) {
+                log.info("ws agent registration rejected before register: code={}, tenantId={}",
+                    beforeRegistration.code(), tenantId);
+                return session.close(CloseStatus.POLICY_VIOLATION);
+            }
             Sinks.Many<String> sink = registry.registerAgent(agent);
+            TenantAccessDecision afterRegistration = currentAccess(tenantId);
+            // 坐席令牌不携带 epoch，因此必须把握手时确认的 epoch 带入登记前后双检。
+            if (!sameAllowedEpoch(afterRegistration, handshakeAccessEpoch)
+                || registry.isTenantRestricted(tenantId)) {
+                registry.unregisterAgent(agent, sink);
+                log.info("ws agent registration rejected after tenant access change: code={}, tenantId={}",
+                    afterRegistration.code(), tenantId);
+                return session.close(CloseStatus.POLICY_VIOLATION);
+            }
 
             Flux<WebSocketMessage> outbound = sink.asFlux().map(session::textMessage);
             Mono<Void> receive = session.receive()
                 .map(WebSocketMessage::getPayloadAsText)
-                .concatMap(payload -> handleInbound(agent, payload)
-                    .onErrorResume(e -> {
-                        log.error("ws agent inbound failed, code={}, agent={}",
-                            "WS-AGENT-INBOUND-FAIL", agent, e);
-                        registry.pushToAgent(agent,
-                            WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
-                        return Mono.empty();
-                    }))
+                .concatMap(payload -> handleAuthorizedInbound(session, agent, tenantId, payload))
                 .then();
 
-            return session.send(outbound)
-                .and(receive)
+            // 任一方向结束就取消另一侧：撤权完成出站 Sink 后，不能继续等待客户端 receive 无限存活。
+            return Mono.firstWithSignal(session.send(outbound), receive)
                 .doFinally(signal -> TenantContext.runWith(tenantId,
                     () -> registry.unregisterAgent(agent, sink)));
         }));
+    }
+
+    private boolean sameAllowedEpoch(TenantAccessDecision decision, long expectedEpoch) {
+        return decision.isAllowed() && decision.accessEpoch() == expectedEpoch;
+    }
+
+    private Mono<Void> handleAuthorizedInbound(WebSocketSession session,
+                                               String agent,
+                                               String tenantId,
+                                               String payload) {
+        TenantAccessDecision access = currentAccess(tenantId);
+        if (!access.isAllowed()) {
+            log.info("ws agent connection revoked: code={}, tenantId={}", access.code(), tenantId);
+            registry.disconnectTenant(tenantId);
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
+        return handleInbound(agent, payload)
+            .onErrorResume(e -> {
+                log.error("ws agent inbound failed, code={}, agent={}",
+                    "WS-AGENT-INBOUND-FAIL", agent, e);
+                registry.pushToAgent(agent,
+                    WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
+                return Mono.empty();
+            });
+    }
+
+    private TenantAccessDecision currentAccess(String tenantId) {
+        return tenantAccessGuard == null
+            ? TenantAccessDecision.allowed(0L)
+            : tenantAccessGuard.check(tenantId, null, false);
     }
 
     private Mono<Void> handleInbound(String agent, String payload) {

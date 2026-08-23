@@ -5,6 +5,8 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential.AgentIdentity;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.web.server.ServerWebExchange;
@@ -33,9 +35,15 @@ public class AgentAuthWebFilter implements WebFilter {
     public static final String AGENT_ID_ATTR = "cw.agent.id";
 
     private final CustomerWorkProperties properties;
+    private final TenantAccessGuard tenantAccessGuard;
 
     public AgentAuthWebFilter(CustomerWorkProperties properties) {
+        this(properties, null);
+    }
+
+    public AgentAuthWebFilter(CustomerWorkProperties properties, TenantAccessGuard tenantAccessGuard) {
         this.properties = properties;
+        this.tenantAccessGuard = tenantAccessGuard;
     }
 
     @Override
@@ -65,11 +73,21 @@ public class AgentAuthWebFilter implements WebFilter {
             && !TenantContext.sameTenant(authenticated.tenantId(), TenantContext.get())) {
             return AuthResponses.forbidden(exchange, "credential tenant mismatch");
         }
+        TenantAccessDecision decision = checkTenantAccess(authenticated.tenantId());
+        if (!decision.isAllowed()) {
+            return AuthResponses.tenantAccessDenied(exchange, decision);
+        }
         return chainWithTenant(exchange, chain, authenticated.tenantId());
     }
 
     private Mono<Void> chainWithTenant(ServerWebExchange exchange, WebFilterChain chain, String tenantId) {
         return Mono.defer(() -> TenantContext.callWith(tenantId, () -> chain.filter(exchange)))
             .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId));
+    }
+
+    private TenantAccessDecision checkTenantAccess(String tenantId) {
+        return tenantAccessGuard == null
+            ? TenantAccessDecision.allowed(0L)
+            : tenantAccessGuard.check(tenantId, null, false);
     }
 }

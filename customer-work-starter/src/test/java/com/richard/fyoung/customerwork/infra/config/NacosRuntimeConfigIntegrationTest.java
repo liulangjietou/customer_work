@@ -70,7 +70,9 @@ class NacosRuntimeConfigIntegrationTest {
         dto.getModel().setProvider("openai");
         dto.getModel().setName("gpt-4o");
         dto.getModel().setApiKeyCipher(adminEncrypt("sk-it-plain", KEY));
-        String json = new ObjectMapper().writeValueAsString(dto);
+        ObjectMapper objectMapper = new ObjectMapper();
+        dto.setContentHash(RuntimeConfigContentHasher.compute(dto, objectMapper));
+        String json = objectMapper.writeValueAsString(dto);
 
         Properties nacosProps = new Properties();
         nacosProps.put(PropertyKeyConst.SERVER_ADDR, HOST + ":" + PORT);

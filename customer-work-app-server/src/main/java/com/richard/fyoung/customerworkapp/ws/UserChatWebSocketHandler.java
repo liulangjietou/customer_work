@@ -7,11 +7,14 @@ import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
@@ -43,15 +46,26 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
     private final ChatDispatchService dispatch;
     private final WsSessionRegistry registry;
     private final ObjectMapper objectMapper;
+    private final TenantAccessGuard tenantAccessGuard;
 
     public UserChatWebSocketHandler(UserJwtService jwtService,
                                     ChatDispatchService dispatch,
                                     WsSessionRegistry registry,
                                     ObjectMapper objectMapper) {
+        this(jwtService, dispatch, registry, objectMapper, null);
+    }
+
+    @Autowired
+    public UserChatWebSocketHandler(UserJwtService jwtService,
+                                    ChatDispatchService dispatch,
+                                    WsSessionRegistry registry,
+                                    ObjectMapper objectMapper,
+                                    TenantAccessGuard tenantAccessGuard) {
         this.jwtService = jwtService;
         this.dispatch = dispatch;
         this.registry = registry;
         this.objectMapper = objectMapper;
+        this.tenantAccessGuard = tenantAccessGuard;
     }
 
     @Override
@@ -70,32 +84,75 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
             log.info("ws user handshake rejected: token tenant invalid");
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
-        return handleAuthenticated(session, user)
+        TenantAccessDecision access = currentAccess(user);
+        if (!access.isAllowed()) {
+            log.info("ws user handshake rejected: code={}, tenantId={}", access.code(), user.tenantId());
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
+        return handleAuthenticated(session, user, access.accessEpoch())
             .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, user.tenantId()));
     }
 
-    private Mono<Void> handleAuthenticated(WebSocketSession session, UserPrincipal user) {
+    private Mono<Void> handleAuthenticated(WebSocketSession session, UserPrincipal user,
+                                           long handshakeAccessEpoch) {
         return Mono.defer(() -> TenantContext.callWith(user.tenantId(), () -> {
+            TenantAccessDecision beforeRegistration = currentAccess(user);
+            if (!sameAllowedEpoch(beforeRegistration, handshakeAccessEpoch)) {
+                log.info("ws user registration rejected before register: code={}, tenantId={}",
+                    beforeRegistration.code(), user.tenantId());
+                return session.close(CloseStatus.POLICY_VIOLATION);
+            }
             Sinks.Many<String> sink = registry.registerUser(user.userId());
+            TenantAccessDecision afterRegistration = currentAccess(user);
+            // 前后双检与 registry 写后复查共同闭合 check→register→epoch 轮换的全部并发窗口。
+            if (!sameAllowedEpoch(afterRegistration, handshakeAccessEpoch)
+                || registry.isTenantRestricted(user.tenantId())) {
+                registry.unregisterUser(user.userId(), sink);
+                log.info("ws user registration rejected after tenant access change: code={}, tenantId={}",
+                    afterRegistration.code(), user.tenantId());
+                return session.close(CloseStatus.POLICY_VIOLATION);
+            }
 
             Flux<WebSocketMessage> outbound = sink.asFlux().map(session::textMessage);
             Mono<Void> receive = session.receive()
                 .map(WebSocketMessage::getPayloadAsText)
-                .concatMap(payload -> handleInbound(user, payload)
-                    .onErrorResume(e -> {
-                        log.error("ws user inbound failed, code={}, user={}",
-                            "WS-USER-INBOUND-FAIL", user.userId(), e);
-                        registry.pushToUser(user.userId(),
-                            WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
-                        return Mono.empty();
-                    }))
+                .concatMap(payload -> handleAuthorizedInbound(session, user, payload))
                 .then();
 
-            return session.send(outbound)
-                .and(receive)
+            // 任一方向结束就取消另一侧：撤权完成出站 Sink 后，不能继续等待客户端 receive 无限存活。
+            return Mono.firstWithSignal(session.send(outbound), receive)
                 .doFinally(signal -> TenantContext.runWith(user.tenantId(),
                     () -> registry.unregisterUser(user.userId(), sink)));
         }));
+    }
+
+    private boolean sameAllowedEpoch(TenantAccessDecision decision, long expectedEpoch) {
+        return decision.isAllowed() && decision.accessEpoch() == expectedEpoch;
+    }
+
+    private Mono<Void> handleAuthorizedInbound(WebSocketSession session,
+                                               UserPrincipal user,
+                                               String payload) {
+        TenantAccessDecision access = currentAccess(user);
+        if (!access.isAllowed()) {
+            log.info("ws user connection revoked: code={}, tenantId={}", access.code(), user.tenantId());
+            registry.disconnectTenant(user.tenantId());
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
+        return handleInbound(user, payload)
+            .onErrorResume(e -> {
+                log.error("ws user inbound failed, code={}, user={}",
+                    "WS-USER-INBOUND-FAIL", user.userId(), e);
+                registry.pushToUser(user.userId(),
+                    WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
+                return Mono.empty();
+            });
+    }
+
+    private TenantAccessDecision currentAccess(UserPrincipal user) {
+        return tenantAccessGuard == null
+            ? TenantAccessDecision.allowed(0L)
+            : tenantAccessGuard.check(user.tenantId(), user.accessEpoch(), true);
     }
 
     /** 解析并分发单条入站帧。解析异常抛出交由上层 onErrorResume 兜底。 */

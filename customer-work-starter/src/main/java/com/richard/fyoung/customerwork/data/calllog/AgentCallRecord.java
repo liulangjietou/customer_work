@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
+
 import java.util.List;
 
 /**
@@ -37,6 +39,8 @@ import java.util.List;
  * @param modelReportedMs 各 MODEL 段模型自报耗时之和（毫秒，缺失为 null）
  * @param success      整次调用是否成功
  * @param errorMsg     失败原因（成功时为 null）
+ * @param experimentAssignment 实际在线实验曝光；未进入实验时为 null
+ * @param lineage      调用开始时冻结的 trace、发布修订与制品版本谱系
  * @param segments     分段明细（按 seq 升序）
  * @author owlzhangfq@gmail.com
  */
@@ -48,14 +52,51 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
                               int segmentCount, Long inputTokens, Long outputTokens, Long totalTokens,
                               Long cachedTokens, Long modelReportedMs,
                               boolean success, String errorMsg,
+                              OnlineExperimentAssignment experimentAssignment,
+                              AgentCallLineage lineage,
                               List<AgentCallSegment> segments) {
+
+    public AgentCallRecord {
+        lineage = lineage == null ? AgentCallLineage.empty() : lineage;
+    }
+
+    /** 兼容历史调用方：未采集谱系时显式落空对象，不用 null 扩散到展示层。 */
+    public AgentCallRecord(long id, String requestId, String userId, String username,
+                           String agentCode, String agentName, String sessionId,
+                           AgentCallSessionType sessionType, String question, String answer,
+                           long startTimeMs, long endTimeMs, long durationMs,
+                           long modelMs, long toolMs, long mcpMs, long skillMs,
+                           int segmentCount, Long inputTokens, Long outputTokens, Long totalTokens,
+                           Long cachedTokens, Long modelReportedMs,
+                           boolean success, String errorMsg, List<AgentCallSegment> segments) {
+        this(id, requestId, userId, username, agentCode, agentName, sessionId, sessionType,
+            question, answer, startTimeMs, endTimeMs, durationMs, modelMs, toolMs, mcpMs,
+            skillMs, segmentCount, inputTokens, outputTokens, totalTokens, cachedTokens,
+            modelReportedMs, success, errorMsg, null, AgentCallLineage.empty(), segments);
+    }
+
+    /** 兼容 V12 谱系调用方；未采集在线实验曝光。 */
+    public AgentCallRecord(long id, String requestId, String userId, String username,
+                           String agentCode, String agentName, String sessionId,
+                           AgentCallSessionType sessionType, String question, String answer,
+                           long startTimeMs, long endTimeMs, long durationMs,
+                           long modelMs, long toolMs, long mcpMs, long skillMs,
+                           int segmentCount, Long inputTokens, Long outputTokens, Long totalTokens,
+                           Long cachedTokens, Long modelReportedMs,
+                           boolean success, String errorMsg, AgentCallLineage lineage,
+                           List<AgentCallSegment> segments) {
+        this(id, requestId, userId, username, agentCode, agentName, sessionId, sessionType,
+            question, answer, startTimeMs, endTimeMs, durationMs, modelMs, toolMs, mcpMs,
+            skillMs, segmentCount, inputTokens, outputTokens, totalTokens, cachedTokens,
+            modelReportedMs, success, errorMsg, null, lineage, segments);
+    }
 
     /** 回填自增主键后的副本。 */
     public AgentCallRecord withId(long assignedId) {
         return new AgentCallRecord(assignedId, requestId, userId, username, agentCode, agentName,
             sessionId, sessionType, question, answer, startTimeMs, endTimeMs, durationMs,
             modelMs, toolMs, mcpMs, skillMs, segmentCount, inputTokens, outputTokens, totalTokens,
-            cachedTokens, modelReportedMs, success, errorMsg, segments);
+            cachedTokens, modelReportedMs, success, errorMsg, experimentAssignment, lineage, segments);
     }
 
     /**

@@ -84,6 +84,7 @@ class CustomerWorkPersistenceConfigTest {
             assertThat(context).hasBean("longTermMemoryMapper");
             assertThat(context).hasBean("factLogMapper");
             assertThat(context).hasBean("harnessMemoryMapper");
+            assertThat(context).hasBean("memoryConsentMapper");
         });
     }
 
@@ -95,7 +96,7 @@ class CustomerWorkPersistenceConfigTest {
     void whenAllMemory_shouldNotWireAnyPersistenceBean() {
         runner.withPropertyValues(
                 "customer-work.memory.store-mode=memory",
-                "customer-work.fact-log.store-mode=file",
+                "customer-work.memory.consent-store-mode=memory",
                 "customer-work.harness.memory-store-mode=memory")
             .run(context -> {
                 assertThat(context).hasNotFailed();
@@ -103,6 +104,19 @@ class CustomerWorkPersistenceConfigTest {
                 assertThat(context).doesNotHaveBean("customerWorkSqlSessionTemplate");
                 assertThat(context).doesNotHaveBean("customerWorkTransactionManager");
                 assertThat(context).doesNotHaveBean("ticketMapper");
+            });
+    }
+
+    @Test
+    void whenOnlyMemoryConsentJdbc_shouldWirePersistenceBeans() {
+        runner.withPropertyValues(
+                "customer-work.memory.store-mode=memory",
+                "customer-work.memory.consent-store-mode=jdbc",
+                "customer-work.harness.memory-store-mode=memory")
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasBean("customerWorkSqlSessionTemplate");
+                assertThat(context).hasBean("memoryConsentMapper");
             });
     }
 

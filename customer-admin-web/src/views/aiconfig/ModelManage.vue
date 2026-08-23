@@ -1,85 +1,197 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
-import { createModel, deleteModel, pageModels, testModelConnectivity, updateModel } from '@/api/model'
+import {
+  createModel,
+  deleteModel,
+  getModelImpact,
+  listModelAssetOptions,
+  pageModels,
+  runModelHealthCheck,
+  updateModel,
+} from '@/api/model'
 import { useCrudPage } from '@/composables/useCrudPage'
-import type { ModelSaveRequest, ModelVO, PageQuery } from '@/types/api'
+import { useAuthStore } from '@/store/auth'
+import type { ModelAssetOption, ModelSaveRequest, ModelVO, PageQuery } from '@/types/api'
+import ModelExperimentPanel from './components/ModelExperimentPanel.vue'
+import ModelGovernanceDrawer from './components/ModelGovernanceDrawer.vue'
+import ModelRoutingPanel from './components/ModelRoutingPanel.vue'
 
 const testingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
+const assets = ref<ModelAssetOption[]>([])
+const assetMode = ref<'existing' | 'new'>('new')
+const editingRow = ref<ModelVO | null>(null)
+const governanceVisible = ref(false)
+const governanceModelId = ref<number | null>(null)
+const auth = useAuthStore()
 
 const {
   loading, list, total, query,
-  dialogVisible, dialogMode, form,
-  loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
+  dialogVisible, dialogMode, editingId, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit: submitCrud,
 } = useCrudPage<ModelVO, PageQuery, ModelSaveRequest>({
   page: pageModels,
   formRef,
   create: createModel,
   update: updateModel,
-  remove: (row) => deleteModel(row.id),
   initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
   initForm: () => ({
-    modelName: '', provider: 'openai', apiKey: '', baseUrl: '', model: '',
-    isDefault: false, status: 1,
+    assetId: null,
+    assetCode: '',
+    assetName: '',
+    vendor: '',
+    family: '',
+    assetVersion: '',
+    modality: 'TEXT',
+    contextWindow: null,
+    maxOutputTokens: null,
+    supportsStream: true,
+    supportsTool: true,
+    supportsJsonSchema: false,
+    supportsMultimodal: false,
+    modelName: '',
+    deploymentCode: '',
+    provider: 'openai',
+    apiKey: '',
+    secretExpiresAt: null,
+    baseUrl: '',
+    region: '',
+    environment: 'PRODUCTION',
+    model: '',
+    isDefault: false,
+    status: 1,
+    lifecycleStatus: 'ACTIVE',
   }),
-  // 编辑回填时 apiKey 置空表示"留空则不修改"
+  // 编辑不回填任何凭据值；空值表示保持当前 SecretRef 版本。
   toForm: (row) => ({
-    modelName: row.modelName, provider: row.provider, apiKey: '', baseUrl: row.baseUrl, model: row.model,
-    isDefault: row.isDefault, status: row.status,
+    assetId: row.assetId,
+    assetCode: row.assetCode,
+    assetName: row.assetName,
+    vendor: row.vendor,
+    family: row.family,
+    assetVersion: row.assetVersion,
+    modality: row.modality,
+    contextWindow: row.contextWindow,
+    maxOutputTokens: row.maxOutputTokens,
+    supportsStream: row.supportsStream,
+    supportsTool: row.supportsTool,
+    supportsJsonSchema: row.supportsJsonSchema,
+    supportsMultimodal: row.supportsMultimodal,
+    modelName: row.modelName,
+    deploymentCode: row.deploymentCode,
+    provider: row.protocolAdapter ?? row.provider,
+    apiKey: '',
+    secretExpiresAt: row.credential?.expiresAt ?? null,
+    baseUrl: row.baseUrl,
+    region: row.region,
+    environment: row.environment ?? 'PRODUCTION',
+    model: row.model,
+    isDefault: row.isDefault,
+    status: row.status,
+    lifecycleStatus: row.lifecycleStatus ?? 'ACTIVE',
   }),
-  beforeSubmit: (mode, f) => {
-    if (mode === 'create' && !f.apiKey) {
-      ElMessage.warning('新建模型配置必须填写 AppKey')
+  beforeSubmit: (mode, value) => {
+    if (mode === 'create' && !value.apiKey?.trim()) {
+      ElMessage.warning('新建部署必须填写凭据')
+      return false
+    }
+    if (assetMode.value === 'existing' && !value.assetId) {
+      ElMessage.warning('请选择模型资产')
+      return false
+    }
+    if (assetMode.value === 'new' && !value.assetName?.trim()) {
+      ElMessage.warning('请填写新资产名称')
       return false
     }
     return true
   },
-  deleteConfirm: (row) => `确认删除模型配置「${row.modelName}」？`,
 })
 
-const testStatusMap: Record<number, { label: string; type: 'info' | 'success' | 'danger' }> = {
-  0: { label: '未测试', type: 'info' },
-  1: { label: '连通成功', type: 'success' },
-  2: { label: '连通失败', type: 'danger' },
-}
+const healthyCount = computed(() => list.value.filter((row) => row.health?.healthStatus === 'HEALTHY').length)
+const unknownCount = computed(() => list.value.filter((row) => !row.health || row.health.healthStatus === 'UNKNOWN').length)
+const credentialRiskCount = computed(() => list.value.filter((row) =>
+  row.credential && row.credential.status !== 'ACTIVE').length)
 
-// 厂商预设：默认 Base URL 与常用模型占位（与后端 ModelProvider 枚举默认值语义一致，用户可改）
 interface ProviderPreset {
   value: string
   label: string
   defaultBaseUrl: string
   modelPlaceholder: string
 }
+
 const providerPresets: ProviderPreset[] = [
   { value: 'openai', label: 'OpenAI 兼容', defaultBaseUrl: 'https://api.openai.com/v1', modelPlaceholder: '如 gpt-4o-mini' },
-  { value: 'dashscope', label: '百炼 DashScope（通义千问）', defaultBaseUrl: 'https://dashscope.aliyuncs.com', modelPlaceholder: '如 qwen-max' },
-  { value: 'anthropic', label: 'Anthropic Claude', defaultBaseUrl: 'https://api.anthropic.com', modelPlaceholder: '如 claude-3-5-sonnet-latest' },
-  { value: 'gemini', label: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com', modelPlaceholder: '如 gemini-2.0-flash' },
+  { value: 'dashscope', label: '百炼 DashScope', defaultBaseUrl: 'https://dashscope.aliyuncs.com', modelPlaceholder: '如 qwen-max' },
+  { value: 'anthropic', label: 'Anthropic Claude', defaultBaseUrl: 'https://api.anthropic.com', modelPlaceholder: '如 claude-sonnet-4-5' },
+  { value: 'gemini', label: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com', modelPlaceholder: '如 gemini-2.5-flash' },
 ]
 
 function presetOf(provider: string | null | undefined): ProviderPreset {
-  return providerPresets.find((p) => p.value === provider) ?? providerPresets[0]
+  return providerPresets.find((preset) => preset.value === provider) ?? providerPresets[0]
 }
 
-// 切换厂商时预填默认 Base URL：仅当当前 Base URL 为空或等于其它厂商默认值时覆盖，避免冲掉用户自定义值
 function handleProviderChange(provider: string) {
   const preset = presetOf(provider)
-  const isDefaultOrEmpty = !form.baseUrl
-    || providerPresets.some((p) => p.defaultBaseUrl === form.baseUrl)
-  if (isDefaultOrEmpty) {
+  if (!form.baseUrl || providerPresets.some((item) => item.defaultBaseUrl === form.baseUrl)) {
     form.baseUrl = preset.defaultBaseUrl
   }
+}
+
+function handleAssetSelected(assetId: number | null | undefined) {
+  const asset = assets.value.find((item) => item.id === assetId)
+  if (!asset) return
+  form.model = asset.modelKey
+  form.vendor = asset.vendor
+}
+
+async function loadAssets() {
+  assets.value = await listModelAssetOptions()
+}
+
+function openCreateModel() {
+  editingRow.value = null
+  assetMode.value = assets.value.length > 0 ? 'existing' : 'new'
+  openCreate()
+  if (assetMode.value === 'existing') {
+    form.assetId = assets.value[0]?.id ?? null
+    handleAssetSelected(form.assetId)
+  }
+}
+
+function openEditModel(row: ModelVO) {
+  editingRow.value = row
+  assetMode.value = row.assetId ? 'existing' : 'new'
+  openEdit(row)
+}
+
+async function handleSubmitModel() {
+  if (dialogMode.value === 'edit'
+    && editingId.value
+    && editingRow.value?.status === 1
+    && form.status === 0) {
+    const impact = await getModelImpact(editingId.value, 'DISABLE')
+    if (!impact.allowed) {
+      ElMessage.error(`禁用被阻断：仍有 ${impact.blockerCount} 个生效引用`)
+      openGovernance(editingRow.value)
+      return
+    }
+  }
+  if (assetMode.value === 'new') {
+    form.assetId = null
+  }
+  await submitCrud()
+  await loadAssets()
 }
 
 async function handleTest(row: ModelVO) {
   testingId.value = row.id
   try {
-    const result = await testModelConnectivity(row.id)
+    const result = await runModelHealthCheck(row.id)
     if (result.testStatus === 1) {
-      ElMessage.success('连通性测试成功')
+      ElMessage.success(`健康探测通过 · ${result.latencyMs ?? 0} ms`)
     } else {
-      ElMessage.error(result.message || '连通性测试失败')
+      ElMessage.error(`${result.errorCategory ?? 'UNKNOWN'} · ${result.message || '健康探测失败'}`)
     }
     await loadList()
   } finally {
@@ -87,49 +199,121 @@ async function handleTest(row: ModelVO) {
   }
 }
 
-onMounted(loadList)
+async function handleDelete(row: ModelVO) {
+  const impact = await getModelImpact(row.id, 'DELETE')
+  if (!impact.allowed) {
+    ElMessage.error(`删除被阻断：仍有 ${impact.blockerCount} 个生效引用`)
+    openGovernance(row)
+    return
+  }
+  await ElMessageBox.confirm(
+    `预检已通过。确认删除部署「${row.modelName}」？资产和凭据审计记录将保留。`,
+    '删除模型部署',
+    { type: 'warning' },
+  )
+  await deleteModel(row.id)
+  ElMessage.success('删除成功')
+  await loadList()
+}
+
+function openGovernance(row: ModelVO) {
+  governanceModelId.value = row.id
+  governanceVisible.value = true
+}
+
+function healthTagType(status: string | null | undefined) {
+  if (status === 'HEALTHY') return 'success'
+  if (status === 'DEGRADED' || status === 'RECOVERING') return 'warning'
+  if (status === 'UNHEALTHY') return 'danger'
+  return 'info'
+}
+
+function credentialTagType(row: ModelVO) {
+  if (!row.credential) return 'info'
+  return row.credential.status === 'ACTIVE' ? 'success' : 'danger'
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return '—'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
+
+onMounted(async () => {
+  await Promise.all([loadList(), loadAssets()])
+})
 </script>
 
 <template>
-  <div class="page">
-    <el-card>
+  <div class="modelops-page">
+    <section class="page-hero">
+      <div>
+        <p class="eyebrow">ENTERPRISE MODEL CONTROL PLANE</p>
+        <h1>模型治理工作台</h1>
+        <p>把模型能力资产、运行部署、SecretRef 和健康证据放在同一条可审计链路中。</p>
+      </div>
+      <el-button v-permission="'model:add'" type="primary" size="large" @click="openCreateModel">新建部署</el-button>
+    </section>
+
+    <section class="summary-strip">
+      <div><span>当前页部署</span><strong>{{ list.length }}</strong></div>
+      <div class="is-good"><span>健康</span><strong>{{ healthyCount }}</strong></div>
+      <div class="is-risk"><span>凭据风险</span><strong>{{ credentialRiskCount }}</strong></div>
+      <div><span>待建立基线</span><strong>{{ unknownCount }}</strong></div>
+    </section>
+
+    <el-card class="workspace-card" shadow="never">
       <div class="toolbar">
-        <el-input v-model="query.keyword" placeholder="按模型名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
-        <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'model:add'" type="primary" @click="openCreate">新建模型</el-button>
+        <div>
+          <el-input v-model="query.keyword" placeholder="搜索部署名称" style="width: 240px" clearable @keyup.enter="handleSearch" />
+          <el-button @click="handleSearch">搜索</el-button>
+        </div>
+        <span>总计 {{ total }} 个部署</span>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="modelName" label="名称" />
-        <!-- provider 是接入协议/SDK 通道（openai=所有 OpenAI 兼容端点，智谱/DeepSeek 等第三方模型
-             走兼容协议时同样是 openai），不是"模型出品公司"——列名叫"厂商"会让人误读成数据错了。
-             单元格复用编辑表单 providerPresets 的友好文案（如「OpenAI 兼容」），不裸显枚举 code。 -->
-        <el-table-column label="接入协议" width="200">
-          <template #default="{ row }">{{ presetOf(row.provider).label }}</template>
-        </el-table-column>
-        <el-table-column prop="model" label="模型标识" />
-        <el-table-column label="AppKey" width="140">
-          <template #default="{ row }">{{ row.apiKeyMasked }}</template>
-        </el-table-column>
-        <el-table-column label="默认" width="70">
+      <el-table v-loading="loading" :data="list" row-key="id" style="width: 100%">
+        <el-table-column label="资产 / 部署" min-width="230">
           <template #default="{ row }">
-            <el-tag v-if="row.isDefault" type="warning">默认</el-tag>
+            <div class="primary-cell">
+              <strong>{{ row.assetName || row.model }}</strong>
+              <span>{{ row.modelName }} · {{ row.deploymentCode || `deployment-${row.id}` }}</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="端点" min-width="220">
           <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
+            <div class="endpoint-cell">
+              <span>{{ presetOf(row.protocolAdapter || row.provider).label }}</span>
+              <small>{{ row.environment || 'PRODUCTION' }} · {{ row.region || 'GLOBAL' }} · r{{ row.endpointRevision || 1 }}</small>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="连通性" width="140">
+        <el-table-column label="凭据" width="160">
           <template #default="{ row }">
-            <el-tag :type="testStatusMap[row.testStatus]?.type ?? 'info'">{{ testStatusMap[row.testStatus]?.label ?? '未测试' }}</el-tag>
+            <el-tag :type="credentialTagType(row)" effect="plain">
+              {{ row.credential?.status || 'LEGACY' }} · v{{ row.credential?.currentVersion || 1 }}
+            </el-tag>
+            <small class="cell-note">{{ row.credential?.expiresAt ? formatTime(row.credential.expiresAt) : '无到期时间' }}</small>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="健康" width="150">
           <template #default="{ row }">
-            <el-button link type="primary" :loading="testingId === row.id" @click="handleTest(row)">测试连通性</el-button>
-            <el-button v-permission="'model:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-tag :type="healthTagType(row.health?.healthStatus)">{{ row.health?.healthStatus || 'UNKNOWN' }}</el-tag>
+            <small class="cell-note">{{ row.health?.lastLatencyMs == null ? '尚无延迟数据' : `${row.health.lastLatencyMs} ms` }}</small>
+          </template>
+        </el-table-column>
+        <el-table-column label="生命周期" width="120">
+          <template #default="{ row }">
+            <span class="lifecycle" :class="{ muted: row.status !== 1 }">
+              {{ row.status === 1 ? (row.lifecycleStatus || 'ACTIVE') : 'DISABLED' }}
+            </span>
+            <el-tag v-if="row.isDefault" class="default-tag" type="warning" size="small">默认</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="286" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openGovernance(row)">治理详情</el-button>
+            <el-button v-permission="'model:health-test'" link type="primary" :loading="testingId === row.id" @click="handleTest(row)">健康探测</el-button>
+            <el-button v-permission="'model:edit'" link type="primary" @click="openEditModel(row)">编辑</el-button>
             <el-button v-permission="'model:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -140,49 +324,142 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建模型配置' : '编辑模型配置'" width="520px">
-      <el-form ref="formRef" :model="form" label-width="100px">
-        <el-form-item label="名称" prop="modelName" :rules="[{ required: true, message: '请输入名称' }]">
-          <el-input v-model="form.modelName" />
-        </el-form-item>
-        <el-form-item label="厂商">
-          <el-select v-model="form.provider" @change="handleProviderChange">
-            <el-option v-for="p in providerPresets" :key="p.value" :label="p.label" :value="p.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="模型标识" prop="model" :rules="[{ required: true, message: '请输入模型标识' }]">
-          <el-input v-model="form.model" :placeholder="presetOf(form.provider).modelPlaceholder" />
-        </el-form-item>
-        <el-form-item label="Base URL" prop="baseUrl" :rules="[{ required: true, message: '请输入 Base URL' }]">
-          <el-input v-model="form.baseUrl" :placeholder="presetOf(form.provider).defaultBaseUrl" />
-        </el-form-item>
-        <el-form-item label="AppKey">
-          <el-input v-model="form.apiKey!" type="password" show-password :placeholder="dialogMode === 'edit' ? '留空则不修改' : '必填'" />
-        </el-form-item>
-        <el-form-item label="设为默认">
-          <el-switch v-model="form.isDefault" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
-        </el-form-item>
+    <ModelRoutingPanel v-if="auth.hasPermission('model:view')" />
+
+    <ModelExperimentPanel v-if="auth.hasPermission('model-experiment:view')" />
+
+    <el-dialog
+      v-model="dialogVisible"
+      :title="dialogMode === 'create' ? '新建模型部署' : '编辑模型部署'"
+      width="min(760px, 94vw)"
+      destroy-on-close
+    >
+      <el-form ref="formRef" :model="form" label-position="top">
+        <div class="form-section">
+          <div class="form-section-title">
+            <span>01</span>
+            <div><strong>模型资产</strong><small>描述模型本身的稳定能力，不包含端点与密钥。</small></div>
+          </div>
+          <el-radio-group v-model="assetMode" :disabled="dialogMode === 'edit' && !!form.assetId">
+            <el-radio-button value="existing">选择已有资产</el-radio-button>
+            <el-radio-button value="new">登记新资产</el-radio-button>
+          </el-radio-group>
+          <el-form-item v-if="assetMode === 'existing'" label="模型资产" prop="assetId">
+            <el-select v-model="form.assetId" filterable style="width: 100%" @change="handleAssetSelected">
+              <el-option v-for="asset in assets" :key="asset.id" :label="`${asset.assetName} · ${asset.vendor} · ${asset.modelKey}`" :value="asset.id" />
+            </el-select>
+          </el-form-item>
+          <div v-else class="form-grid">
+            <el-form-item label="资产名称" prop="assetName"><el-input v-model="form.assetName!" placeholder="如 GPT-4o Mini" /></el-form-item>
+            <el-form-item label="资产编码"><el-input v-model="form.assetCode!" placeholder="留空自动生成" /></el-form-item>
+            <el-form-item label="厂商"><el-input v-model="form.vendor!" placeholder="如 OPENAI / ALIBABA" /></el-form-item>
+            <el-form-item label="家族 / 版本"><el-input v-model="form.family!" placeholder="如 GPT-4o / 2026-08" /></el-form-item>
+            <el-form-item label="上下文窗口"><el-input-number v-model="form.contextWindow!" :min="1" controls-position="right" style="width: 100%" /></el-form-item>
+            <el-form-item label="最大输出 Token"><el-input-number v-model="form.maxOutputTokens!" :min="1" controls-position="right" style="width: 100%" /></el-form-item>
+            <el-form-item label="能力声明" class="full-row">
+              <el-checkbox v-model="form.supportsStream">流式</el-checkbox>
+              <el-checkbox v-model="form.supportsTool">工具调用</el-checkbox>
+              <el-checkbox v-model="form.supportsJsonSchema">JSON Schema</el-checkbox>
+              <el-checkbox v-model="form.supportsMultimodal">多模态</el-checkbox>
+            </el-form-item>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="form-section-title">
+            <span>02</span>
+            <div><strong>运行部署</strong><small>Agent 继续引用部署 ID，端点变更通过修订号追踪。</small></div>
+          </div>
+          <div class="form-grid">
+            <el-form-item label="部署名称" prop="modelName" :rules="[{ required: true, message: '请输入部署名称' }]"><el-input v-model="form.modelName" /></el-form-item>
+            <el-form-item label="部署编码"><el-input v-model="form.deploymentCode!" placeholder="留空自动生成" /></el-form-item>
+            <el-form-item label="接入协议">
+              <el-select v-model="form.provider" style="width: 100%" @change="handleProviderChange">
+                <el-option v-for="preset in providerPresets" :key="preset.value" :label="preset.label" :value="preset.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="模型标识" prop="model" :rules="[{ required: true, message: '请输入模型标识' }]"><el-input v-model="form.model" :placeholder="presetOf(form.provider).modelPlaceholder" /></el-form-item>
+            <el-form-item label="环境">
+              <el-select v-model="form.environment" style="width: 100%">
+                <el-option label="生产 PRODUCTION" value="PRODUCTION" />
+                <el-option label="预发 STAGING" value="STAGING" />
+                <el-option label="开发 DEVELOPMENT" value="DEVELOPMENT" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="地域"><el-input v-model="form.region!" placeholder="如 cn-hangzhou / global" /></el-form-item>
+            <el-form-item label="Base URL" prop="baseUrl" class="full-row" :rules="[{ required: true, message: '请输入 Base URL' }]"><el-input v-model="form.baseUrl" :placeholder="presetOf(form.provider).defaultBaseUrl" /></el-form-item>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="form-section-title">
+            <span>03</span>
+            <div><strong>凭据与状态</strong><small>编辑留空不会读取旧值；独立轮换请进入治理详情。</small></div>
+          </div>
+          <div class="form-grid">
+            <el-form-item :label="dialogMode === 'edit' ? '新凭据（留空不变）' : '凭据'"><el-input v-model="form.apiKey!" type="password" show-password autocomplete="new-password" /></el-form-item>
+            <el-form-item label="凭据到期时间">
+              <el-date-picker v-model="form.secretExpiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="可选" style="width: 100%" />
+            </el-form-item>
+            <el-form-item label="部署状态"><el-switch v-model="form.status" :active-value="1" :inactive-value="0" active-text="启用" inactive-text="禁用" /></el-form-item>
+            <el-form-item label="设为默认"><el-switch v-model="form.isDefault" /></el-form-item>
+          </div>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button type="primary" @click="handleSubmitModel">保存部署</el-button>
       </template>
     </el-dialog>
+
+    <ModelGovernanceDrawer v-model="governanceVisible" :model-id="governanceModelId" @refreshed="loadList" />
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+.modelops-page { --ink: #172033; --muted: #64748b; --line: #dfe5ed; --accent: #2457d6; min-height: 100%; background: #f3f6fa; }
+.page-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; padding: 30px 34px 28px; color: white; border-radius: 16px 16px 0 0; background: linear-gradient(120deg, rgb(10 22 43 / 98%), rgb(31 55 91 / 94%)), repeating-linear-gradient(90deg, transparent 0 47px, rgb(255 255 255 / 4%) 48px); }
+.page-hero h1 { margin: 3px 0 8px; font-size: 30px; letter-spacing: -.03em; }
+.page-hero p { margin: 0; color: #cbd5e1; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .16em; }
+.summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-top: 0; background: white; }
+.summary-strip > div { padding: 18px 24px; border-right: 1px solid var(--line); }
+.summary-strip > div:last-child { border-right: 0; }
+.summary-strip span { display: block; color: var(--muted); font-size: 12px; }
+.summary-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: 24px; }
+.summary-strip .is-good strong { color: #0f8b6d; }
+.summary-strip .is-risk strong { color: #c2413b; }
+.workspace-card { border: 0; border-radius: 0 0 16px 16px; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+.toolbar > div { display: flex; gap: 8px; }
+.primary-cell strong, .primary-cell span, .endpoint-cell span, .endpoint-cell small, .cell-note { display: block; }
+.primary-cell strong { color: var(--ink); font-size: 14px; }
+.primary-cell span, .endpoint-cell small, .cell-note { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.endpoint-cell span { color: #334155; }
+.lifecycle { color: #0f8b6d; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.lifecycle.muted { color: #94a3b8; }
+.default-tag { display: block; width: fit-content; margin-top: 5px; }
+.pagination { margin-top: 18px; justify-content: flex-end; }
+.form-section { margin-bottom: 20px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
+.form-section-title { display: flex; gap: 11px; margin-bottom: 16px; }
+.form-section-title > span { display: grid; place-items: center; width: 28px; height: 28px; color: white; border-radius: 8px; background: var(--accent); font-size: 11px; font-weight: 700; }
+.form-section-title strong, .form-section-title small { display: block; }
+.form-section-title strong { color: var(--ink); }
+.form-section-title small { margin-top: 3px; color: var(--muted); }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
+.full-row { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  .page-hero { align-items: flex-start; flex-direction: column; padding: 24px; }
+  .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-strip > div:nth-child(2) { border-right: 0; }
+  .summary-strip > div:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+  .form-grid { grid-template-columns: 1fr; }
+  .full-row { grid-column: auto; }
+  .toolbar { align-items: stretch; flex-direction: column; }
 }
 </style>

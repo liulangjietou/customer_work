@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.core.constant;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessConstants;
+import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -169,6 +171,9 @@ class SharedConstantAlignmentTest {
         map.put(HttpAuthConstants.BEARER_PREFIX, "HttpAuthConstants.BEARER_PREFIX");
         map.put(HttpAuthConstants.AGENT_TOKEN_HEADER, "HttpAuthConstants.AGENT_TOKEN_HEADER");
         map.put(OpenApiProtocol.TOKEN_HEADER, "OpenApiProtocol.TOKEN_HEADER");
+        map.put(OpenApiProtocol.RUNTIME_CONFIG_ACK_TOKEN_HEADER,
+            "OpenApiProtocol.RUNTIME_CONFIG_ACK_TOKEN_HEADER");
+        map.put(TenantAccessConstants.ACCESS_EPOCH_KEY, "TenantAccessConstants.ACCESS_EPOCH_KEY");
         map.put(OpenApiProtocol.SSE_DONE_MARKER, "OpenApiProtocol.SSE_DONE_MARKER");
         map.put(ModelProviders.DASHSCOPE, "ModelProviders.DASHSCOPE");
         map.put(ModelProviders.OPENAI, "ModelProviders.OPENAI");
@@ -180,8 +185,11 @@ class SharedConstantAlignmentTest {
         map.put(DevDefaultCredentials.USER_JWT_SECRET, "DevDefaultCredentials.USER_JWT_SECRET");
         map.put(DevDefaultCredentials.AGENT_ACCESS_SECRET, "DevDefaultCredentials.AGENT_ACCESS_SECRET");
         map.put(DevDefaultCredentials.MINIO_CREDENTIAL, "DevDefaultCredentials.MINIO_CREDENTIAL");
+        map.put(McpServerSpec.TYPE_STDIO, "McpServerSpec.TYPE_STDIO");
+        map.put(McpServerSpec.TYPE_SSE, "McpServerSpec.TYPE_SSE");
+        map.put(McpServerSpec.MCP_SERVERS_WRAPPER_KEY, "McpServerSpec.MCP_SERVERS_WRAPPER_KEY");
         // 下面几处的公共定义在别的包/模块，这里按值登记即可
-        map.put("streamable-http", "McpServerSpec.TRANSPORT_STREAMABLE_HTTP");
+        map.put(McpServerSpec.TRANSPORT_STREAMABLE_HTTP, "McpServerSpec.TRANSPORT_STREAMABLE_HTTP");
         map.put("agent-tool", "ToolConstants.AGENT_TOOL_SESSION");
         map.put("EVAL-LOAD-FAIL", "EvalErrorCodes.LOAD_FAIL");
         map.put("Asia/Shanghai", "DevToolConstants.DEFAULT_ZONE");
@@ -219,6 +227,8 @@ class SharedConstantAlignmentTest {
         map.put(HttpAuthConstants.BEARER_PREFIX, "HttpAuthConstants.java");
         map.put(HttpAuthConstants.AGENT_TOKEN_HEADER, "HttpAuthConstants.java");
         map.put(OpenApiProtocol.TOKEN_HEADER, "OpenApiProtocol.java");
+        map.put(OpenApiProtocol.RUNTIME_CONFIG_ACK_TOKEN_HEADER, "OpenApiProtocol.java");
+        map.put(TenantAccessConstants.ACCESS_EPOCH_KEY, "TenantAccessConstants.java");
         map.put(OpenApiProtocol.SSE_DONE_MARKER, "OpenApiProtocol.java");
         map.put(ModelProviders.DASHSCOPE, "ModelProviders.java");
         map.put(ModelProviders.OPENAI, "ModelProviders.java");
@@ -230,7 +240,10 @@ class SharedConstantAlignmentTest {
         map.put(DevDefaultCredentials.USER_JWT_SECRET, "DevDefaultCredentials.java");
         map.put(DevDefaultCredentials.AGENT_ACCESS_SECRET, "DevDefaultCredentials.java");
         map.put(DevDefaultCredentials.MINIO_CREDENTIAL, "DevDefaultCredentials.java");
-        map.put("streamable-http", "McpServerSpec.java");
+        map.put(McpServerSpec.TYPE_STDIO, "McpServerSpec.java");
+        map.put(McpServerSpec.TYPE_SSE, "McpServerSpec.java");
+        map.put(McpServerSpec.MCP_SERVERS_WRAPPER_KEY, "McpServerSpec.java");
+        map.put(McpServerSpec.TRANSPORT_STREAMABLE_HTTP, "McpServerSpec.java");
         map.put("agent-tool", "ToolConstants.java");
         map.put("EVAL-LOAD-FAIL", "EvalErrorCodes.java");
         map.put("Asia/Shanghai", "DevToolConstants.java");

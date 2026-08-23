@@ -61,6 +61,9 @@ class EvalServiceTest {
         assertTrue(store.find(comparison.current().runId()).isPresent(), "运行记录应已落库");
         assertEquals(EvalTrigger.MANUAL, comparison.current().trigger());
         assertEquals("首次基线", comparison.current().remark());
+        assertTrue(!comparison.current().versionBinding().datasetVersion().isBlank(),
+            "运行记录必须绑定执行前固化的数据集版本");
+        assertTrue(!comparison.current().versionBinding().datasetFingerprint().isBlank());
     }
 
     @Test

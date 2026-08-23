@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.capability.semanticcache;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -26,21 +28,41 @@ public class InMemorySemanticCacheStore implements SemanticCacheStore {
     private static final Comparator<SemanticCacheEntry> MOST_HIT_FIRST =
         Comparator.comparingLong(SemanticCacheEntry::hitCount).reversed();
 
-    private final Map<Long, SemanticCacheEntry> entries = new ConcurrentHashMap<>();
+    /**
+     * 内存存储也必须先按租户分区，不能只依赖 scopeId。
+     *
+     * <p>JDBC 的 {@code tenant_id} 由拦截器强制；内存模式没有 SQL 拦截器，因此在存储层
+     * 镜像同一条边界。无上下文的历史直调场景落到 default，保留单租户兼容语义。</p>
+     */
+    private final Map<String, Map<Long, VersionedEntry>> entriesByTenant = new ConcurrentHashMap<>();
     private final AtomicLong idSequence = new AtomicLong();
 
     @Override
     public void save(SemanticCacheEntry entry) {
+        save(entry, BASELINE_GENERATION);
+    }
+
+    @Override
+    public void save(SemanticCacheEntry entry, String configGeneration) {
         long id = idSequence.incrementAndGet();
-        entries.put(id, new SemanticCacheEntry(id, entry.scopeId(), entry.intent(), entry.question(),
-            entry.questionVector(), entry.answer(), entry.hitCount(), entry.createdAtMs(), entry.lastHitAtMs()));
+        SemanticCacheEntry persisted = new SemanticCacheEntry(id, entry.scopeId(), entry.intent(), entry.question(),
+            entry.questionVector(), entry.answer(), entry.hitCount(), entry.createdAtMs(), entry.lastHitAtMs());
+        currentEntries().put(id, new VersionedEntry(configGeneration, persisted));
     }
 
     @Override
     public List<SemanticCacheEntry> findCandidates(String scopeId, String intent, long notBeforeMs, int limit) {
+        return findCandidates(scopeId, intent, BASELINE_GENERATION, notBeforeMs, limit);
+    }
+
+    @Override
+    public List<SemanticCacheEntry> findCandidates(String scopeId, String intent, String configGeneration,
+                                                    long notBeforeMs, int limit) {
         List<SemanticCacheEntry> matched = new ArrayList<>();
-        for (SemanticCacheEntry entry : entries.values()) {
-            if (Objects.equals(entry.scopeId(), scopeId)
+        for (VersionedEntry versioned : currentEntries().values()) {
+            SemanticCacheEntry entry = versioned.entry();
+            if (Objects.equals(versioned.configGeneration(), configGeneration)
+                && Objects.equals(entry.scopeId(), scopeId)
                 && Objects.equals(entry.intent(), intent)
                 && entry.createdAtMs() >= notBeforeMs) {
                 matched.add(entry);
@@ -52,23 +74,45 @@ public class InMemorySemanticCacheStore implements SemanticCacheStore {
 
     @Override
     public void recordHit(Long id, long hitAtMs) {
-        entries.computeIfPresent(id, (key, entry) -> new SemanticCacheEntry(entry.id(), entry.scopeId(),
-            entry.intent(), entry.question(), entry.questionVector(), entry.answer(),
-            entry.hitCount() + 1, entry.createdAtMs(), hitAtMs));
+        currentEntries().computeIfPresent(id, (key, versioned) -> {
+            SemanticCacheEntry entry = versioned.entry();
+            SemanticCacheEntry updated = new SemanticCacheEntry(entry.id(), entry.scopeId(), entry.intent(),
+                entry.question(), entry.questionVector(), entry.answer(), entry.hitCount() + 1,
+                entry.createdAtMs(), hitAtMs);
+            return new VersionedEntry(versioned.configGeneration(), updated);
+        });
     }
 
     @Override
     public long count(String scopeId) {
-        return entries.values().stream()
+        return currentEntries().values().stream()
+            .map(VersionedEntry::entry)
+            .filter(entry -> Objects.equals(entry.scopeId(), scopeId))
+            .count();
+    }
+
+    @Override
+    public long count(String scopeId, String configGeneration) {
+        return currentEntries().values().stream()
+            .filter(entry -> Objects.equals(entry.configGeneration(), configGeneration))
+            .map(VersionedEntry::entry)
             .filter(entry -> Objects.equals(entry.scopeId(), scopeId))
             .count();
     }
 
     @Override
     public int evictLeastRecentlyUsed(String scopeId, int keepSize) {
+        return evictLeastRecentlyUsed(scopeId, null, keepSize);
+    }
+
+    @Override
+    public int evictLeastRecentlyUsed(String scopeId, String configGeneration, int keepSize) {
+        Map<Long, VersionedEntry> entries = currentEntries();
         List<SemanticCacheEntry> owned = new ArrayList<>();
-        for (SemanticCacheEntry entry : entries.values()) {
-            if (Objects.equals(entry.scopeId(), scopeId)) {
+        for (VersionedEntry versioned : entries.values()) {
+            SemanticCacheEntry entry = versioned.entry();
+            if ((configGeneration == null || Objects.equals(versioned.configGeneration(), configGeneration))
+                && Objects.equals(entry.scopeId(), scopeId)) {
                 owned.add(entry);
             }
         }
@@ -87,7 +131,8 @@ public class InMemorySemanticCacheStore implements SemanticCacheStore {
     @Override
     public List<SemanticCacheEntry> listByHits(String scopeId, int limit) {
         List<SemanticCacheEntry> owned = new ArrayList<>();
-        for (SemanticCacheEntry entry : entries.values()) {
+        for (VersionedEntry versioned : currentEntries().values()) {
+            SemanticCacheEntry entry = versioned.entry();
             if (Objects.equals(entry.scopeId(), scopeId)) {
                 owned.add(entry);
             }
@@ -98,13 +143,14 @@ public class InMemorySemanticCacheStore implements SemanticCacheStore {
 
     @Override
     public boolean remove(Long id) {
-        return entries.remove(id) != null;
+        return currentEntries().remove(id) != null;
     }
 
     @Override
     public List<SemanticCacheScope> listScopes(int limit) {
         Map<String, Long> counts = new HashMap<>();
-        for (SemanticCacheEntry entry : entries.values()) {
+        for (VersionedEntry versioned : currentEntries().values()) {
+            SemanticCacheEntry entry = versioned.entry();
             counts.merge(entry.scopeId(), 1L, Long::sum);
         }
         List<SemanticCacheScope> scopes = new ArrayList<>(counts.size());
@@ -117,13 +163,31 @@ public class InMemorySemanticCacheStore implements SemanticCacheStore {
 
     @Override
     public int clear(String scopeId) {
+        Map<Long, VersionedEntry> entries = currentEntries();
         int removed = 0;
-        for (SemanticCacheEntry entry : List.copyOf(entries.values())) {
+        for (VersionedEntry versioned : List.copyOf(entries.values())) {
+            SemanticCacheEntry entry = versioned.entry();
             if (Objects.equals(entry.scopeId(), scopeId)) {
                 entries.remove(entry.id());
                 removed++;
             }
         }
         return removed;
+    }
+
+    @Override
+    public int clearCurrentTenant() {
+        String tenantKey = TenantContext.normalizedTenantKey(TenantContext.require());
+        Map<Long, VersionedEntry> removed = entriesByTenant.remove(tenantKey);
+        return removed == null ? 0 : removed.size();
+    }
+
+    private Map<Long, VersionedEntry> currentEntries() {
+        String tenantId = TenantContext.isPresent() ? TenantContext.require() : TenantContext.DEFAULT;
+        String tenantKey = TenantContext.normalizedTenantKey(tenantId);
+        return entriesByTenant.computeIfAbsent(tenantKey, ignored -> new ConcurrentHashMap<>());
+    }
+
+    private record VersionedEntry(String configGeneration, SemanticCacheEntry entry) {
     }
 }

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
+import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallRecordSink;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallTimingMiddleware;
@@ -37,9 +38,10 @@ public class AgentCallStatsStoreConfig {
 
     /** ADMIN 数据源门面：用 admin 主数据源，启动期只解析 XML/建工厂，不连库。 */
     @Bean
-    public AgentCallStatsGateway adminAgentCallStatsGateway(DataSource dataSource) {
+    public AgentCallStatsGateway adminAgentCallStatsGateway(
+        DataSource dataSource, AdminCrossDbTenantPlugins tenantPlugins) {
         log.info("agent call stats ADMIN gateway wired on primary datasource");
-        return AgentCallStatsGatewayFactory.build(dataSource);
+        return AgentCallStatsGatewayFactory.build(dataSource, tenantPlugins.create());
     }
 
     /** 工具名→类别登记表：供 AdminAgentInstanceFactory 装配 MCP/Skill 时登记，采集时 onActing 归类。 */

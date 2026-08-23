@@ -17,6 +17,15 @@ public class AgentCallStatsRowVO {
     private String agentName;
     private String sessionId;
     private String sessionType;
+    /** OTel/Tempo 关联标识；未开启追踪时为空。 */
+    private String traceId;
+    /** 当前实例已应用的发布修订；仅本地 yml 启动时为空。 */
+    private String runtimeRevision;
+    private Long experimentId;
+    private Integer experimentRevision;
+    private String experimentArm;
+    private Long experimentDeploymentId;
+    private Integer experimentBucket;
     /** 用户问题（截断至预览长度）。 */
     private String question;
     /** 智能体回答预览（截断至预览长度）。 */

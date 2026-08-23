@@ -74,6 +74,16 @@ class McpClientFactoryTest {
     }
 
     @Test
+    void parseSpec_shouldRejectCredentialsOrMetadataInRemoteUrl() {
+        assertThrows(Exception.class, () -> factory.parseSpec("test", "http",
+            "{\"url\":\"https://user:secret@mcp.example.com/mcp\"}"));
+        assertThrows(Exception.class, () -> factory.parseSpec("test", "http",
+            "{\"url\":\"https://mcp.example.com/mcp?api_key=secret\"}"));
+        assertThrows(Exception.class, () -> factory.parseSpec("test", "sse",
+            "{\"url\":\"https://mcp.example.com/sse#token\"}"));
+    }
+
+    @Test
     void testConnectivity_shouldFail_whenUrlUnreachable() {
         McpConnectivityResult result = factory.testConnectivity("test", "sse", "{\"url\": \"http://127.0.0.1:1\"}");
 

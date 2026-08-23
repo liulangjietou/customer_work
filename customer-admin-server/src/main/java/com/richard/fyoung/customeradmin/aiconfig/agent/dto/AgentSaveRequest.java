@@ -34,5 +34,31 @@ public record AgentSaveRequest(
     Integer compressTriggerMsgs,
     Integer compressKeepMsgs,
     /** 绑定的 RAG 知识库 ID 列表（可空=不做知识库检索），只允许绑定启用且连通性测试成功的知识库。 */
-    List<Long> knowledgeBaseIds) {
+    List<Long> knowledgeBaseIds,
+    /** 可选的 ACTIVE 模型路由策略；为空时继续使用 modelId + backupModelIds。 */
+    Long modelRoutePolicyId) {
+
+    /** 保留旧位置构造契约，避免无路由策略的既有调用方被迫传占位参数。 */
+    public AgentSaveRequest(String agentName,
+                            String agentCode,
+                            Long modelId,
+                            List<Long> backupModelIds,
+                            List<Long> mcpIds,
+                            List<Long> skillIds,
+                            List<Long> systemToolIds,
+                            String systemPrompt,
+                            List<String> capabilities,
+                            String icon,
+                            Integer status,
+                            List<Long> subAgentIds,
+                            Integer maxIters,
+                            Integer toolTimeoutSeconds,
+                            Integer toolMaxAttempts,
+                            Integer compressTriggerMsgs,
+                            Integer compressKeepMsgs,
+                            List<Long> knowledgeBaseIds) {
+        this(agentName, agentCode, modelId, backupModelIds, mcpIds, skillIds, systemToolIds,
+            systemPrompt, capabilities, icon, status, subAgentIds, maxIters, toolTimeoutSeconds,
+            toolMaxAttempts, compressTriggerMsgs, compressKeepMsgs, knowledgeBaseIds, null);
+    }
 }

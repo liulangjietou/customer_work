@@ -10,7 +10,7 @@
     </resultMap>
 
     <!--
-      主模型与备用模型引用统一投影为 tenantId/agentId/agentCode。
+      主模型、备用模型与计划中/运行中/未确认撤流实验双臂引用统一投影为 tenantId/agentId/agentCode。
       tenantId 非空时显式限定私有模型的当前租户，并继续叠加租户拦截器；
       只有 default 共享模型的调用方会传 null，并以 CrossTenantOperations 显式关闭拦截器。
     -->
@@ -33,6 +33,36 @@
                    AND agent.deleted = 0
             WHERE backup.model_id = #{modelId}
               <if test="tenantId != null and tenantId != ''">
+                  AND agent.tenant_id = #{tenantId}
+              </if>
+            UNION
+            SELECT agent.tenant_id, agent.id AS agent_id, agent.agent_code
+            FROM ai_model_experiment experiment
+            INNER JOIN ai_agent agent
+                    ON agent.id = experiment.agent_id
+                   AND agent.tenant_id = experiment.tenant_id
+                   AND agent.deleted = 0
+            LEFT JOIN ai_runtime_publish_task deactivation
+                   ON deactivation.id = experiment.deactivation_task_id
+                  AND deactivation.tenant_id = experiment.tenant_id
+                  AND deactivation.experiment_id = experiment.id
+                  AND deactivation.experiment_publish_action = 'DEACTIVATE'
+            WHERE (experiment.control_deployment_id = #{modelId}
+                    OR experiment.treatment_deployment_id = #{modelId})
+              AND (
+                    experiment.status IN ('DRAFT', 'RUNNING')
+                    OR (
+                        experiment.status IN ('STOPPED', 'COMPLETED')
+                        AND (experiment.activation_task_id IS NOT NULL OR experiment.started_at IS NOT NULL)
+                        AND (
+                            deactivation.id IS NULL
+                            OR deactivation.status &lt;&gt; 'APPLIED'
+                            OR deactivation.gate_status = 'BLOCKED'
+                        )
+                    )
+                  )
+              <if test="tenantId != null and tenantId != ''">
+                  AND experiment.tenant_id = #{tenantId}
                   AND agent.tenant_id = #{tenantId}
               </if>
         ) refs

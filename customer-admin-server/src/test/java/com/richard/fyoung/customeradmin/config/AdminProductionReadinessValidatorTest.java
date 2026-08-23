@@ -21,6 +21,17 @@ class AdminProductionReadinessValidatorTest {
     }
 
     @Test
+    void modelEgressAllowlist_shouldBeRequiredInProduction() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.model.egress.allowed-hosts", "   ");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.model.egress.allowed-hosts"));
+    }
+
+    @Test
     void developmentDefaults_shouldFail_withoutLeakingValues() {
         MockEnvironment environment = validEnvironment()
             .withProperty("spring.datasource.url", "jdbc:mysql://localhost:3306/customer_admin")
@@ -69,16 +80,46 @@ class AdminProductionReadinessValidatorTest {
     }
 
     @Test
-    void runtimePublish_shouldRejectLocalNacosAndMissingAckCredential() {
+    void runtimePublish_shouldRejectLocalNacosAndMissingDedicatedAckIdentities() {
         MockEnvironment environment = validEnvironment()
             .withProperty("admin.runtime-publish.nacos.server-addr", "localhost:8848")
-            .withProperty("admin.open-api.token", "REPLACE_ME");
+            .withProperty("admin.open-api.token", "REPLACE_ME")
+            .withProperty("admin.runtime-publish.ack-identities[0]", "broken")
+            .withProperty("admin.runtime-publish.ack-identities[1]", "also-broken");
 
         IllegalStateException error = assertThrows(IllegalStateException.class,
             () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
 
         assertTrue(error.getMessage().contains("admin.runtime-publish.nacos.server-addr"));
         assertTrue(error.getMessage().contains("admin.open-api.token"));
+        assertTrue(error.getMessage().contains("admin.runtime-publish.ack-identities"));
+    }
+
+    @Test
+    void runtimePublish_shouldRejectWeakDedicatedAckToken() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.runtime-publish.ack-identities[0]", "default|customer-work-1|short")
+            .withProperty("admin.runtime-publish.ack-identities[1]",
+                "default|customer-work-2|runtime-ack-secret-instance-0002");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.runtime-publish.ack-identities"));
+    }
+
+    @Test
+    void runtimePublish_shouldRequireMinimumAckCountForEveryTenant() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.runtime-publish.ack-identities[0]",
+                "tenant-a|customer-work-1|runtime-ack-secret-tenant-a-0001")
+            .withProperty("admin.runtime-publish.ack-identities[1]",
+                "tenant-b|customer-work-1|runtime-ack-secret-tenant-b-0001");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.runtime-publish.ack-identities"));
     }
 
     @Test
@@ -107,6 +148,9 @@ class AdminProductionReadinessValidatorTest {
             .withProperty("admin.customer-work.ws-url", "wss://customer.example/ws/agent")
             .withProperty("admin.customer-work.api-key", "customer-work-api-secret")
             .withProperty("admin.customer-work.agent-secret", "production-agent-secret-32-bytes-0001")
+            .withProperty("admin.model.egress.allowed-hosts",
+                "api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,"
+                    + "dashscope.aliyuncs.com,ollama.internal")
             .withProperty("admin.sandbox.mode", "disabled")
             .withProperty("customer-work.attachment.storage.minio.endpoint", "http://minio.internal:9000")
             .withProperty("customer-work.attachment.storage.minio.access-key", "minio-access-secret")
@@ -125,6 +169,10 @@ class AdminProductionReadinessValidatorTest {
             .withProperty("admin.runtime-publish.max-attempts", "8")
             .withProperty("admin.runtime-publish.base-backoff-ms", "5000")
             .withProperty("admin.runtime-publish.nacos.timeout-ms", "3000")
-            .withProperty("admin.runtime-publish.minimum-ack-count", "2");
+            .withProperty("admin.runtime-publish.minimum-ack-count", "2")
+            .withProperty("admin.runtime-publish.ack-identities[0]",
+                "default|customer-work-1|runtime-ack-secret-instance-0001")
+            .withProperty("admin.runtime-publish.ack-identities[1]",
+                "default|customer-work-2|runtime-ack-secret-instance-0002");
     }
 }

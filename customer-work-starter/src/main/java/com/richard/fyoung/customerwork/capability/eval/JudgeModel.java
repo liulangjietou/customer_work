@@ -25,4 +25,9 @@ public interface JudgeModel {
      * @return 模型回复消息；失败时返回 null
      */
     Msg chat(Msg message);
+
+    /** Judge 的稳定版本标识；自定义实现应覆盖为模型部署或配置版本。 */
+    default String version() {
+        return getClass().getName();
+    }
 }

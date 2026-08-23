@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.model.failover;
 
+import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.GenerateOptions;
@@ -105,6 +106,37 @@ class FailoverModelTest {
         assertEquals("b", out.get(0).getId());
         assertEquals(1, primary.subscribeCount.get());
         assertEquals(1, backup.subscribeCount.get());
+    }
+
+    @Test
+    void forcedFallback_shouldNeverCallPrimary() {
+        StubModel primary = new StubModel("p", false);
+        StubModel backup = new StubModel("b", false);
+        FailoverModel model = new FailoverModel(
+            List.of(new FailoverModel.Candidate(1L, primary), new FailoverModel.Candidate(2L, backup)),
+            new ModelCircuitBreakerRegistry(3, 60));
+
+        List<ChatResponse> out = model.stream(List.of(), null, null)
+            .contextWrite(ModelRoutingContext::preferFallback)
+            .collectList().block();
+
+        assertEquals("b", out.get(0).getId());
+        assertEquals(0, primary.subscribeCount.get());
+        assertEquals(1, backup.subscribeCount.get());
+    }
+
+    @Test
+    void forcedFallback_shouldFailFast_whenNoAvailableBackup() {
+        ModelCircuitBreakerRegistry registry = new ModelCircuitBreakerRegistry(1, 60);
+        registry.recordFailure(2L);
+        FailoverModel model = new FailoverModel(
+            List.of(new FailoverModel.Candidate(1L, new StubModel("p", false)),
+                new FailoverModel.Candidate(2L, new StubModel("b", false))), registry);
+
+        assertThrows(FailoverModel.FallbackModelUnavailableException.class,
+            () -> model.stream(List.of(), null, null)
+                .contextWrite(ModelRoutingContext::preferFallback)
+                .collectList().block());
     }
 
     @Test

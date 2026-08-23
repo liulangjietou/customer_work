@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.dto;
 
+import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
 import lombok.Data;
 
 import java.util.List;
@@ -19,6 +20,16 @@ public class AgentCallStatsDetailVO {
     private String agentName;
     private String sessionId;
     private String sessionType;
+    private String traceId;
+    private String runtimeRevision;
+    private String runtimeContentHash;
+    private Long experimentId;
+    private Integer experimentRevision;
+    private String experimentArm;
+    private Long experimentDeploymentId;
+    private Integer experimentBucket;
+    /** 不含任何 API Key/MCP header 的制品版本绑定。 */
+    private EvalVersionBinding versionBinding;
     private String question;
     /** 智能体回答全文（不截断）。 */
     private String answer;

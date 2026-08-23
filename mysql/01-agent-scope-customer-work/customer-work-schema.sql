@@ -276,6 +276,15 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
     `total_tokens`   BIGINT DEFAULT NULL COMMENT '请求级总token合计（缺失为NULL）',
     `cached_tokens`  BIGINT DEFAULT NULL COMMENT '命中缓存的输入token（input_tokens的子集，不计入total）',
     `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时合计（毫秒），与model_ms之差=网络/排队开销',
+    `trace_id`       VARCHAR(32) DEFAULT NULL COMMENT 'W3C trace-id，关联 OTel/Tempo',
+    `runtime_revision` VARCHAR(64) DEFAULT NULL COMMENT '实例实际应用的运行配置发布修订',
+    `runtime_content_hash` CHAR(64) DEFAULT NULL COMMENT '运行配置内容摘要，关联发布任务与实例ACK',
+    `version_binding_json` JSON DEFAULT NULL COMMENT '模型/提示词/Agent/知识库/工具版本绑定（不含密钥）',
+    `experiment_id` BIGINT DEFAULT NULL COMMENT '在线实验ID',
+    `experiment_revision` INT DEFAULT NULL COMMENT '不可变实验修订号',
+    `experiment_arm` VARCHAR(16) DEFAULT NULL COMMENT 'CONTROL/TREATMENT',
+    `experiment_deployment_id` BIGINT DEFAULT NULL COMMENT '实际命中的模型部署ID',
+    `experiment_bucket` INT DEFAULT NULL COMMENT '稳定分桶0..9999；无可信主体时为空',
     `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '整次调用是否成功',
     `error_msg`      VARCHAR(1024) COMMENT '失败原因',
     `created_at`     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '落库时间',
@@ -284,6 +293,9 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
     INDEX `idx_call_agent_code` (`agent_code`),
     INDEX `idx_call_session` (`session_id`),
     INDEX `idx_call_start` (`start_time`),
+    INDEX `idx_call_trace_id` (`trace_id`),
+    INDEX `idx_call_runtime_revision` (`runtime_revision`),
+    INDEX `idx_call_experiment_arm` (`experiment_id`, `experiment_revision`, `experiment_arm`, `start_time`),
     INDEX `idx_agent_call_log_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -668,7 +680,29 @@ CREATE TABLE IF NOT EXISTS `cw_fact_log` (
     `updated_at`     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
     INDEX `idx_fact_log_scope` (`tenant_id`, `scope_id`, `id`),
     INDEX `idx_fact_log_ts` (`tenant_id`, `scope_id`, `ts`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='事实日志（L3，append-only 审计流水，永不改写）';
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='事实日志（L3，常规链路只追加，隐私治理可按主体擦除）';
+
+-- 长期记忆主体同意记录：生产启用长期记忆时必须显式授权；撤回后停止写入/召回并清除 L2/L3。
+CREATE TABLE IF NOT EXISTS `cw_memory_consent` (
+    `tenant_id`        VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `id`               BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    `subject_type`     VARCHAR(32) NOT NULL COMMENT '主体类型: USER/SESSION/SERVICE_ACCOUNT',
+    `subject_id`       VARCHAR(128) NOT NULL COMMENT '租户内主体ID',
+    `agent_id`         VARCHAR(128) NOT NULL COMMENT 'Agent稳定标识',
+    `scope_id`         VARCHAR(68) NOT NULL COMMENT '四维主体键SHA-256分区',
+    `status`           VARCHAR(16) NOT NULL COMMENT 'GRANTED/WITHDRAWN',
+    `consent_version`  VARCHAR(64) NOT NULL COMMENT '用户同意的隐私条款版本',
+    `granted_at_ms`    BIGINT NULL COMMENT '授权时间戳（毫秒）',
+    `withdrawn_at_ms`  BIGINT NULL COMMENT '撤回时间戳（毫秒）',
+    `updated_at_ms`    BIGINT NOT NULL COMMENT '最后更新时间戳（毫秒）',
+    `created_at`       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    `updated_at`       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+                         ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
+    UNIQUE KEY `uk_memory_consent_subject`
+        (`tenant_id`, `subject_type`, `subject_id`, `agent_id`),
+    UNIQUE KEY `uk_memory_consent_scope` (`tenant_id`, `scope_id`),
+    INDEX `idx_memory_consent_status` (`tenant_id`, `status`, `updated_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='长期记忆主体同意记录';
 
 -- Harness 分层记忆表（cw_harness_memory）：HarnessAgent 的 MEMORY.md 权威副本（MybatisHarnessMemoryStore）。
 -- 框架只认 {workspace}/MEMORY.md 这个文件，故落盘不可避免；本表让"权威副本"落在 MySQL，
@@ -716,6 +750,20 @@ CREATE TABLE IF NOT EXISTS `cw_skill_file` (
     INDEX `idx_cw_skill_file_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='技能附属文件';
 
+-- 评测数据集内容快照：只插入、不更新；同租户/类型/内容只产生一个版本。
+CREATE TABLE IF NOT EXISTS `cw_eval_dataset_version` (
+    `tenant_id`      VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `version_id`     VARCHAR(64) NOT NULL COMMENT '数据集版本ID（应用生成UUID）',
+    `eval_type`      VARCHAR(16) NOT NULL COMMENT 'INTENT/QUALITY',
+    `content_hash`   VARCHAR(64) NOT NULL COMMENT '规范化用例JSON的SHA-256',
+    `case_count`     INT NOT NULL COMMENT '快照用例数',
+    `cases_json`     LONGTEXT NOT NULL COMMENT '本次实际执行的完整用例JSON',
+    `created_at_ms`  BIGINT NOT NULL COMMENT '首次创建时间戳（毫秒）',
+    PRIMARY KEY (`version_id`),
+    UNIQUE KEY `uk_eval_dataset_content` (`tenant_id`, `eval_type`, `content_hash`),
+    KEY `idx_eval_dataset_tenant_time` (`tenant_id`, `eval_type`, `created_at_ms`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='评测数据集不可变版本';
+
 -- 评测运行记录表（MybatisEvalRunStore / cw_eval_run）：每跑一次标准集落一条。
 -- 评测的价值全在纵向对比上——"这版比上版好还是坏"；没有历史，每次运行都退化成孤立的一次性体检。
 -- 只追加不更新：一次运行的结果是既成事实，改写它等于篡改后续所有对比的基线。
@@ -738,13 +786,17 @@ CREATE TABLE IF NOT EXISTS `cw_eval_run` (
     `metrics_json`         TEXT COMMENT '该类型完整原始指标的JSON字典（归一化不丢信息）',
     `trigger_source`       VARCHAR(16) NOT NULL DEFAULT 'MANUAL' COMMENT '触发来源：MANUAL/SCHEDULED/API',
     `dataset_size`         INT NOT NULL DEFAULT 0 COMMENT '评测集规模（用例增删后两次指标不可直接比）',
+    `dataset_version_id`   VARCHAR(64) COMMENT '本次实际执行的数据集版本',
+    `dataset_fingerprint`  VARCHAR(64) COMMENT '数据集内容SHA-256',
+    `version_binding_json` TEXT COMMENT '模型/提示词/Agent/知识/工具/Judge/rubric版本绑定JSON',
     -- 效果归因的支点：指标掉了先看这一位变没变。变了就去比那两版提示词全文，
     -- 没变就别再对着提示词逐字找原因，该去查模型或数据
     `prompt_fingerprint`   VARCHAR(32) COMMENT '本次运行时生效的提示词指纹（cw_prompt_version.fingerprint）',
     `remark`               VARCHAR(500) COMMENT '备注（如"换 qwen-max 后重跑"）',
     `created_at_ms`        BIGINT NOT NULL COMMENT '运行时间戳（毫秒）',
     -- 取基线是 (eval_type, created_at_ms DESC) 上的取最值查询，联合索引直接命中
-    INDEX `idx_eval_run_type_time` (`tenant_id`, `eval_type`, `created_at_ms`)
+    INDEX `idx_eval_run_type_time` (`tenant_id`, `eval_type`, `created_at_ms`),
+    INDEX `idx_eval_run_dataset_version` (`tenant_id`, `eval_type`, `dataset_version_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='评测运行记录（只追加，供版本对比）';
 
 -- 评测用例表（MybatisEvalCaseStore / cw_eval_case）：让评测集能随 badcase 增长。
@@ -814,6 +866,7 @@ CREATE TABLE IF NOT EXISTS `cw_semantic_cache` (
     -- 与 tenant_id 是两回事：这是缓存分区键（TenantResolver 由 sessionId 前缀解析），
     -- 同 cw_fact_log 的 scope_id；容量淘汰与失效清空都按它进行
     `scope_id`        VARCHAR(128) NOT NULL DEFAULT 'default' COMMENT '缓存分区键',
+    `config_generation` VARCHAR(64) NOT NULL DEFAULT 'bootstrap' COMMENT '写入时运行配置 contentHash；bootstrap 表示尚未接入热配置',
     `intent`          VARCHAR(32) NOT NULL COMMENT '意图分类，命中时先按它缩小候选集（关键剪枝）',
     `question`        VARCHAR(512) NOT NULL COMMENT '原始问题（人读，排查"为什么这条命中了"要看）',
     `question_vector` MEDIUMTEXT NOT NULL COMMENT '问题向量，逗号分隔浮点数',
@@ -822,8 +875,8 @@ CREATE TABLE IF NOT EXISTS `cw_semantic_cache` (
     `created_at_ms`   BIGINT NOT NULL COMMENT '写入时间戳（毫秒），TTL 以此为准',
     `last_hit_at_ms`  BIGINT NOT NULL COMMENT '最近命中时间戳（毫秒），LRU 淘汰以此为准',
     -- 候选集查询是 (scope_id, intent, last_hit_at_ms DESC) 上的限额扫描，联合索引直接命中
-    INDEX `idx_semcache_lookup` (`tenant_id`, `scope_id`, `intent`, `last_hit_at_ms`),
-    INDEX `idx_semcache_created` (`tenant_id`, `scope_id`, `created_at_ms`)
+    INDEX `idx_semcache_lookup` (`tenant_id`, `config_generation`, `scope_id`, `intent`, `last_hit_at_ms`),
+    INDEX `idx_semcache_created` (`tenant_id`, `config_generation`, `scope_id`, `created_at_ms`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='语义缓存（仅通用问答，默认关闭）';
 
 -- 提示词版本表（MybatisPromptVersionStore / cw_prompt_version）：效果归因的底座。

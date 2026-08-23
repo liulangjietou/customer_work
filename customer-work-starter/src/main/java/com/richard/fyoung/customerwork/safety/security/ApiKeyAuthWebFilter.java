@@ -4,6 +4,9 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -39,9 +42,16 @@ import java.util.Map;
 public class ApiKeyAuthWebFilter implements WebFilter {
 
     private final CustomerWorkProperties properties;
+    private final TenantAccessGuard tenantAccessGuard;
 
     public ApiKeyAuthWebFilter(CustomerWorkProperties properties) {
+        this(properties, null);
+    }
+
+    @Autowired
+    public ApiKeyAuthWebFilter(CustomerWorkProperties properties, TenantAccessGuard tenantAccessGuard) {
         this.properties = properties;
+        this.tenantAccessGuard = tenantAccessGuard;
     }
 
     @Override
@@ -54,10 +64,20 @@ public class ApiKeyAuthWebFilter implements WebFilter {
         String provided = exchange.getRequest().getHeaders().getFirst(auth.getHeaderName());
         String tenantId = resolveTenant(provided, auth);
         if (TenantContext.isValidTenantId(tenantId)) {
+            TenantAccessDecision decision = checkTenantAccess(tenantId);
+            if (!decision.isAllowed()) {
+                return AuthResponses.tenantAccessDenied(exchange, decision);
+            }
             return chainWithTenant(exchange, chain, tenantId);
         }
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
         return exchange.getResponse().setComplete();
+    }
+
+    private TenantAccessDecision checkTenantAccess(String tenantId) {
+        return tenantAccessGuard == null
+            ? TenantAccessDecision.allowed(0L)
+            : tenantAccessGuard.check(tenantId, null, false);
     }
 
     /**

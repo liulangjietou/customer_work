@@ -4,9 +4,12 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.data.user.UserAccount;
 import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerworkapp.service.AvatarStorageService;
 import com.richard.fyoung.customerworkapp.service.DemoOrderSeeder;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
@@ -23,7 +26,11 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -51,6 +58,17 @@ class UserAuthControllerTest {
 
     @MockBean
     private AvatarStorageService avatarStorageService;
+
+    @MockBean
+    private TenantAccessGuard tenantAccessGuard;
+
+    @BeforeEach
+    void allowTenantAccessByDefault() {
+        when(tenantAccessGuard.refreshAndCheck(anyString(), nullable(Long.class), anyBoolean()))
+            .thenReturn(TenantAccessDecision.allowed(0L));
+        when(tenantAccessGuard.check(anyString(), nullable(Long.class), anyBoolean()))
+            .thenReturn(TenantAccessDecision.allowed(0L));
+    }
 
     private UserAccount account() {
         return UserAccount.create("U-1", "alice", "hash", "Alice", "13800000000");
@@ -143,6 +161,19 @@ class UserAuthControllerTest {
                 "tenantCode", "__platform__"))
             .exchange()
             .expectStatus().isBadRequest();
+
+        verify(userAccountService, never()).verifyLogin(any(), any());
+    }
+
+    @Test
+    void login_frozenTenantShouldFailBeforeReadingCredentials() {
+        when(tenantAccessGuard.refreshAndCheck(eq("acme"), isNull(), eq(false))).thenReturn(
+            new TenantAccessDecision(TenantAccessDecision.Kind.ACCESS_DENIED, 7L));
+
+        webTestClient.post().uri("/api/customer/auth/login")
+            .bodyValue(Map.of("username", "alice", "password", "secret1", "tenantCode", "acme"))
+            .exchange()
+            .expectStatus().isForbidden();
 
         verify(userAccountService, never()).verifyLogin(any(), any());
     }

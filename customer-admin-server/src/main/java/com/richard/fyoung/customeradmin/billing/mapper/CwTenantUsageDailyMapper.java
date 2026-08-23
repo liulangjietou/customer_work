@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.billing.dto.UsageAggregate;
 import com.richard.fyoung.customeradmin.billing.entity.CwTenantUsageDaily;
 import org.apache.ibatis.annotations.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -29,4 +30,9 @@ public interface CwTenantUsageDailyMapper extends BaseMapper<CwTenantUsageDaily>
 
     /** 跨租户汇总（控制面账单总览）。 */
     List<UsageAggregate> sumGroupByTenant(@Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    /** 指定租户、日期区间的已结算金额，预算告警与预测共用同一账单口径。 */
+    BigDecimal sumAmountByTenantAndRange(@Param("tenantId") String tenantId,
+                                         @Param("from") LocalDate from,
+                                         @Param("to") LocalDate to);
 }

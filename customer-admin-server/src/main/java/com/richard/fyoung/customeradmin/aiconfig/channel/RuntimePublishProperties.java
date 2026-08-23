@@ -1,8 +1,13 @@
 package com.richard.fyoung.customeradmin.aiconfig.channel;
 
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.RuntimeAckIdentity;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * 客服机器人运行时配置发布配置：{@code admin.runtime-publish.*}。
@@ -27,6 +32,25 @@ public class RuntimePublishProperties {
     private long baseBackoffMs = 5000;
     /** 至少多少个实例 APPLIED 才算整体已应用。 */
     private int minimumAckCount = 1;
+    /**
+     * ACK 实例身份，单项格式 {@code tenantId|instanceId|token}。每个实例必须使用不同 token，
+     * 与客服端 {@code runtime-config-instance-id/runtime-config-ack-token} 一一对应。
+     */
+    private List<String> ackIdentities = new ArrayList<>();
+
+    public Optional<RuntimeAckIdentity> authenticateAckToken(String actualToken) {
+        RuntimeAckIdentity matched = null;
+        for (String configured : ackIdentities) {
+            Optional<RuntimeAckIdentity> candidate = RuntimeAckIdentity.parse(configured);
+            if (candidate.isPresent() && candidate.get().tokenMatches(actualToken)) {
+                if (matched != null) {
+                    return Optional.empty();
+                }
+                matched = candidate.get();
+            }
+        }
+        return Optional.ofNullable(matched);
+    }
 
     /** Nacos 配置中心发布目标（与 starter 消费端 {@code customer-work.nacos.*} 对齐）。 */
     @Data

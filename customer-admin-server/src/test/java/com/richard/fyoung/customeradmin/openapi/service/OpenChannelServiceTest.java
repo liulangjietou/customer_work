@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.openapi.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.entity.AiChannelRobot;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.entity.AiChannelSession;
@@ -9,11 +10,13 @@ import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.openapi.dto.OpenChannelRobotVO;
+import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -135,14 +138,31 @@ class OpenChannelServiceTest {
     void requireAgentBound_shouldThrow_whenNoEnabledBinding() {
         when(robotMapper.exists(any())).thenReturn(false);
 
-        BizException ex = assertThrows(BizException.class, () -> service.requireAgentBound("agent-x"));
+        BizException ex = assertThrows(BizException.class,
+            () -> service.requireAgentBound("agent-x", CHANNEL, APP_KEY));
         assertEquals(ResultCode.RESOURCE_NOT_FOUND, ex.getResultCode());
     }
 
     @Test
-    void requireAgentBound_shouldPass_whenBound() {
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void requireAgentBound_shouldPassOnlyExactEnabledBinding() {
         when(robotMapper.exists(any())).thenReturn(true);
 
-        service.requireAgentBound("agent-x");
+        service.requireAgentBound("agent-x", CHANNEL, APP_KEY);
+
+        ArgumentCaptor<LambdaQueryWrapper<AiChannelRobot>> captor =
+            ArgumentCaptor.forClass((Class) LambdaQueryWrapper.class);
+        verify(robotMapper).exists(captor.capture());
+        LambdaQueryWrapper<AiChannelRobot> wrapper = captor.getValue();
+        String sql = wrapper.getSqlSegment();
+        String normalizedSql = sql.replace("_", "").toLowerCase();
+        assertTrue(normalizedSql.contains("agentcode"));
+        assertTrue(normalizedSql.contains("channeltype"));
+        assertTrue(normalizedSql.contains("appkey"));
+        assertTrue(normalizedSql.contains("status"));
+        assertTrue(wrapper.getParamNameValuePairs().containsValue("agent-x"));
+        assertTrue(wrapper.getParamNameValuePairs().containsValue(CHANNEL));
+        assertTrue(wrapper.getParamNameValuePairs().containsValue(APP_KEY));
+        assertTrue(wrapper.getParamNameValuePairs().containsValue(StatusFlags.ENABLED));
     }
 }

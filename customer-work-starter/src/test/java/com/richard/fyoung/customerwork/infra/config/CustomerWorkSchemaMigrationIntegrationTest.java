@@ -251,7 +251,12 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertTrue(tablesMissingBothAuditTimestamps(dataSource).isEmpty(),
                 "V9 完成后不得残留同时缺少两类审计时间的客服端业务表");
             assertEquals(1, countHistoryVersion(dataSource, "9"), "repair 后重试只应登记一条成功的 V9");
-            assertEquals("9", latestHistoryVersion(dataSource));
+            assertEquals(1, countHistoryVersion(dataSource, "10"));
+            assertEquals(1, countHistoryVersion(dataSource, "11"));
+            assertEquals(1, countHistoryVersion(dataSource, "12"));
+            assertEquals(1, countHistoryVersion(dataSource, "13"));
+            assertEquals(1, countHistoryVersion(dataSource, "14"));
+            assertEquals("14", latestHistoryVersion(dataSource));
         } finally {
             dropDatabase(database);
         }
@@ -274,36 +279,50 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             migrate(dataSource, database);
             migrate(dataSource, database);
 
-            assertEquals(44, countBusinessTables(dataSource));
+            assertEquals(46, countBusinessTables(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertTrue(columnExists(dataSource, "cw_outbox_message", "lease_owner"));
             assertAuditTimestampColumns(dataSource);
-            // 接管基线 1 行 + 重跑的 V6/V7/V8/V9 各 1 行。四者都是幂等迁移，
-            // 故刻意不给它们加镜像判定——为省历史行去写脆弱的数据猜测得不偿失
-            assertEquals(5, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
-            // V5 是纯种子迁移，镜像里已带那两档，故接管版本要跟到 5——
-            // 停在 4 的话 Flyway 会重跑 V5，撞唯一键直接失败（判定见 resolveBaselineVersion）
-            assertEquals(1, countHistoryVersion(dataSource, "5"), "完整镜像应从当前版本接管");
-            assertEquals(1, countHistoryVersion(dataSource, "6"), "幂等迁移重跑一次，两次 migrate 也只记一条");
-            assertEquals(1, countHistoryVersion(dataSource, "7"), "平台租户归一迁移应登记一次");
-            assertEquals(1, countHistoryVersion(dataSource, "8"), "遗留平台 scope 归一迁移应登记一次");
-            assertEquals(1, countHistoryVersion(dataSource, "9"), "审计时间迁移应登记一次");
-            assertEquals("9", latestHistoryVersion(dataSource));
+            // 完整镜像已包含 V10 隐私、V11 评测、V12 谱系、V13 实验归因与 V14 缓存代际，
+            // 必须直接从 V14 接管；
+            // 否则非幂等 ALTER TABLE 会在镜像库上重复加列。
+            assertEquals(1, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
+            assertEquals(1, countHistoryVersion(dataSource, "14"), "完整镜像应从 V14 接管");
+            assertEquals(0, countHistoryVersion(dataSource, "13"), "V13 已包含在镜像，不应重跑");
+            assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
+            assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
+            assertTrue(columnExists(dataSource, "cw_eval_dataset_version", "content_hash"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_log", "version_binding_json"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
+            assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
+            assertEquals("14", latestHistoryVersion(dataSource));
         }
     }
 
     private void verifyEmptyDatabaseMigration(String database) throws Exception {
         try (HikariDataSource dataSource = dataSource(database, "flyway-empty-test")) {
             migrate(dataSource, database);
-            assertEquals(44, countBusinessTables(dataSource));
-            // V5（ADMIN_USER 档种子）、V6（运营分区归一）、V7/V8（平台租户与 scope 归一）、V9（审计列）都不建表
-            assertEquals(9, countHistoryRows(dataSource));
+            assertEquals(46, countBusinessTables(dataSource));
+            // V10 长期记忆同意、V11 评测数据集、V12 谱系、V13 实验归因、V14 缓存代际；
+            // 空库逐版登记 V1-V14
+            assertEquals(14, countHistoryRows(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertAuditTimestampColumns(dataSource);
             verifyUpdatedAtAutoAdvance(dataSource);
             assertEquals(0, countHistoryVersion(dataSource, "0"), "空库不应写 baseline 记录");
             assertEquals(1, countHistoryVersion(dataSource, "9"));
-            assertEquals("9", latestHistoryVersion(dataSource));
+            assertEquals(1, countHistoryVersion(dataSource, "10"));
+            assertEquals(1, countHistoryVersion(dataSource, "11"));
+            assertEquals(1, countHistoryVersion(dataSource, "12"));
+            assertEquals(1, countHistoryVersion(dataSource, "13"));
+            assertEquals(1, countHistoryVersion(dataSource, "14"));
+            assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
+            assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
+            assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
+            assertEquals("14", latestHistoryVersion(dataSource));
         }
     }
 
@@ -321,13 +340,23 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertTrue(columnExists(dataSource, "cw_chat_attachment", "message_id"));
             // V4 给存量 cw_user 加的配额等级列：这张表是 V1 就建好的，加列只能靠迁移补
             assertTrue(columnExists(dataSource, "cw_user", "level_code"));
-            assertEquals(44, countBusinessTables(dataSource));
+            assertEquals(46, countBusinessTables(dataSource));
             assertAuditTimestampColumns(dataSource);
-            // baseline 0 + V1~V9
-            assertEquals(10, countHistoryRows(dataSource));
+            // baseline 0 + V1~V14
+            assertEquals(15, countHistoryRows(dataSource));
             assertEquals(1, countHistoryVersion(dataSource, "0"), "非空存量库必须先登记 baseline 0");
             assertEquals(1, countHistoryVersion(dataSource, "9"));
-            assertEquals("9", latestHistoryVersion(dataSource));
+            assertEquals(1, countHistoryVersion(dataSource, "10"));
+            assertEquals(1, countHistoryVersion(dataSource, "11"));
+            assertEquals(1, countHistoryVersion(dataSource, "12"));
+            assertEquals(1, countHistoryVersion(dataSource, "13"));
+            assertEquals(1, countHistoryVersion(dataSource, "14"));
+            assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
+            assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
+            assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
+            assertEquals("14", latestHistoryVersion(dataSource));
         }
     }
 
@@ -374,7 +403,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
 
             migrate(dataSource, database);
 
-            assertEquals(0, countPlatformRows(dataSource), "44 张租户表不得残留平台租户行");
+            assertEquals(0, countPlatformRows(dataSource), "全部租户表不得残留平台租户行");
             assertEquals(DEFAULT_TENANT, queryString(dataSource,
                 "SELECT `tenant_id` FROM `cw_agent_call_log` WHERE `request_id` = 'platform-request'"));
             assertEquals("default::assistant", queryString(dataSource,

@@ -39,6 +39,16 @@ class UserJwtServiceTest {
         assertEquals("alice", principal.get().username());
         assertEquals("Alice", principal.get().nickname());
         assertEquals("Tenant-A", principal.get().tenantId(), "存量业务租户大小写不能改变外部资源命名空间");
+        assertEquals(0L, principal.get().accessEpoch());
+    }
+
+    @Test
+    void issueWithAccessEpoch_shouldBindCredentialToTenantVersion() {
+        UserPrincipal principal = service().verify(
+            service().issue("U1", "alice", "Alice", "tenant-a", 9L)).orElseThrow();
+
+        assertEquals("tenant-a", principal.tenantId());
+        assertEquals(9L, principal.accessEpoch());
     }
 
     @Test

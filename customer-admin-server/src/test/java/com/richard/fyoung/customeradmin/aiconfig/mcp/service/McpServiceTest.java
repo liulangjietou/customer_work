@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.mcp.service;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallRequest;
@@ -13,9 +14,12 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.page.PageQuery;
+import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -27,8 +31,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,13 +45,14 @@ import static org.mockito.Mockito.when;
 class McpServiceTest {
 
     private AiMcpMapper mcpMapper;
+    private AiAgentMcpMapper agentMcpMapper;
     private AdminMcpFactory mcpFactory;
     private McpService service;
 
     @BeforeEach
     void setUp() {
         mcpMapper = mock(AiMcpMapper.class);
-        AiAgentMcpMapper agentMcpMapper = mock(AiAgentMcpMapper.class);
+        agentMcpMapper = mock(AiAgentMcpMapper.class);
         AiAgentMapper agentMapper = mock(AiAgentMapper.class);
         AgentInstanceCache agentInstanceCache = mock(AgentInstanceCache.class);
         mcpFactory = mock(AdminMcpFactory.class);
@@ -76,6 +83,34 @@ class McpServiceTest {
     }
 
     @Test
+    void create_shouldRejectNonObjectJsonRoots() {
+        List<String> invalidRoots = List.of("null", "[]", "\"secret scalar\"", "1", "true");
+
+        for (String root : invalidRoots) {
+            BizException error = assertThrows(BizException.class,
+                () -> service.create(new McpSaveRequest("测试MCP", "http", root, null, 1)));
+            assertTrue(error.getMessage().contains("JSON object"), root);
+        }
+    }
+
+    @Test
+    void create_shouldRejectRemoteUrlCredentialCarriersAndNonHttpSchemes() {
+        List<String> unsafeUrls = List.of(
+            "https://user:password@mcp.example.com/mcp",
+            "https://mcp.example.com/mcp?api_key=secret",
+            "https://mcp.example.com/mcp#token",
+            "file:///tmp/mcp.sock",
+            "ftp://mcp.example.com/mcp");
+
+        for (String url : unsafeUrls) {
+            BizException error = assertThrows(BizException.class, () -> service.create(
+                new McpSaveRequest("测试MCP", "http", "{\"url\":\"" + url + "\"}", null, 1)));
+            assertTrue(error.getMessage().contains("URL"), url);
+        }
+        verify(mcpMapper, never()).insert(any(AiMcp.class));
+    }
+
+    @Test
     void get_shouldExposeTestStatusAndTime() {
         AiMcp mcp = new AiMcp();
         mcp.setId(1L);
@@ -89,6 +124,199 @@ class McpServiceTest {
         McpVO vo = service.get(1L);
 
         assertEquals(ConnectivityTestStatus.SUCCESS, vo.getTestStatus());
+    }
+
+    @Test
+    void page_shouldNeverExposeRawConfig() {
+        AiMcp mcp = mcpWithConfig("{\"url\":\"https://mcp.example.com\",\"headers\":{\"Authorization\":\"Bearer page-secret\"}}");
+        Page<AiMcp> dbPage = new Page<>(1, 10);
+        dbPage.setRecords(List.of(mcp));
+        dbPage.setTotal(1);
+        when(mcpMapper.selectPage(any(Page.class), any())).thenReturn(dbPage);
+
+        PageResult<McpVO> result = service.page(new PageQuery());
+
+        assertEquals(1, result.getList().size());
+        assertEquals("", result.getList().get(0).getConfig());
+        assertFalse(result.getList().get(0).getConfig().contains("page-secret"));
+    }
+
+    @Test
+    void get_shouldRecursivelyRedactSecretsAndEveryHeaderValue() {
+        AiMcp mcp = mcpWithConfig("""
+            {"url":"https://mcp.example.com","headers":{"Authorization":"Bearer header-secret","Content-Type":"application/json"},
+             "env":{"X-API-Key":"api-secret","clientCredential":"credential-secret","privateKeyPem":"private-key-secret",
+                    "accessKeyId":"access-key-secret","nested":{"accessToken":"token-secret"}},"password":"password-secret"}
+            """);
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+
+        String safeConfig = service.get(1L).getConfig();
+
+        assertTrue(safeConfig.contains("https://mcp.example.com"));
+        assertTrue(safeConfig.contains(McpConfigProtector.SECRET_PLACEHOLDER));
+        assertFalse(safeConfig.contains("header-secret"));
+        assertFalse(safeConfig.contains("application/json"));
+        assertFalse(safeConfig.contains("api-secret"));
+        assertFalse(safeConfig.contains("credential-secret"));
+        assertFalse(safeConfig.contains("private-key-secret"));
+        assertFalse(safeConfig.contains("access-key-secret"));
+        assertFalse(safeConfig.contains("token-secret"));
+        assertFalse(safeConfig.contains("password-secret"));
+    }
+
+    @Test
+    void get_shouldFailClosedForNonObjectStoredConfig() {
+        AiMcp mcp = mcpWithConfig("\"stored-secret\"");
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+
+        String safeConfig = service.get(1L).getConfig();
+
+        assertEquals("{\"redacted\":true,\"reason\":\"invalid config\"}", safeConfig);
+        assertFalse(safeConfig.contains("stored-secret"));
+    }
+
+    @Test
+    void get_shouldFailClosedForLegacyUrlContainingCredentials() {
+        AiMcp mcp = mcpWithConfig("{\"url\":\"https://mcp.example.com/mcp?api_key=legacy-secret\"}");
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+
+        String safeConfig = service.get(1L).getConfig();
+
+        assertEquals("{\"redacted\":true,\"reason\":\"invalid config\"}", safeConfig);
+        assertFalse(safeConfig.contains("legacy-secret"));
+    }
+
+    @Test
+    void update_shouldReuseStoredSecretsOnlyForSameNormalizedEndpoint() {
+        AiMcp mcp = mcpWithConfig("""
+            {"url":"HTTPS://MCP.EXAMPLE.COM/mcp","headers":{"Authorization":"Bearer old-token","X-Tenant":"tenant-secret"},
+             "env":{"CLIENT_SECRET":"old-client-secret"}}
+            """);
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+        when(agentMcpMapper.selectList(any())).thenReturn(List.of());
+        String submitted = """
+            {"url":"https://mcp.example.com:443/a/../mcp","headers":{"Authorization":"__MCP_SECRET_REDACTED__","X-Tenant":"__MCP_SECRET_REDACTED__"},
+             "env":{"CLIENT_SECRET":"__MCP_SECRET_REDACTED__"}}
+            """;
+
+        service.update(1L, new McpSaveRequest("测试MCP", "http", submitted, null, 1));
+
+        ArgumentCaptor<AiMcp> captor = ArgumentCaptor.forClass(AiMcp.class);
+        verify(mcpMapper).updateById(captor.capture());
+        String persisted = captor.getValue().getConfig();
+        assertTrue(persisted.contains("https://mcp.example.com:443/a/../mcp"));
+        assertTrue(persisted.contains("Bearer old-token"));
+        assertTrue(persisted.contains("tenant-secret"));
+        assertTrue(persisted.contains("old-client-secret"));
+        assertFalse(persisted.contains(McpConfigProtector.SECRET_PLACEHOLDER));
+    }
+
+    @Test
+    void update_shouldRejectOldSecretReuseAfterRemoteEndpointChange() {
+        AiMcp mcp = mcpWithConfig("""
+            {"url":"https://trusted.example.com/mcp","headers":{"Authorization":"Bearer old-token"}}
+            """);
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+        String submitted = """
+            {"url":"https://attacker.example.com/mcp","headers":{"Authorization":"__MCP_SECRET_REDACTED__"}}
+            """;
+
+        BizException error = assertThrows(BizException.class,
+            () -> service.update(1L, new McpSaveRequest("测试MCP", "http", submitted, null, 1)));
+
+        assertTrue(error.getMessage().contains("连接目标已变化"));
+        assertTrue(error.getMessage().contains("重新提供全部凭据"));
+        verify(mcpMapper, never()).updateById(any(AiMcp.class));
+    }
+
+    @Test
+    void update_shouldAllowEndpointChangeWhenAllCredentialsAreResubmitted() {
+        AiMcp mcp = mcpWithConfig(
+            "{\"url\":\"https://old.example.com/mcp\",\"headers\":{\"Authorization\":\"old-token\"}}");
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+        when(agentMcpMapper.selectList(any())).thenReturn(List.of());
+        String submitted =
+            "{\"url\":\"https://new.example.com/mcp\",\"headers\":{\"Authorization\":\"new-token\"}}";
+
+        service.update(1L, new McpSaveRequest("测试MCP", "http", submitted, null, 1));
+
+        ArgumentCaptor<AiMcp> captor = ArgumentCaptor.forClass(AiMcp.class);
+        verify(mcpMapper).updateById(captor.capture());
+        assertTrue(captor.getValue().getConfig().contains("https://new.example.com/mcp"));
+        assertTrue(captor.getValue().getConfig().contains("new-token"));
+        assertFalse(captor.getValue().getConfig().contains("old-token"));
+    }
+
+    @Test
+    void update_shouldRejectOldSecretReuseAfterRemoteTransportTypeChange() {
+        AiMcp mcp = mcpWithConfig("{\"url\":\"https://trusted.example.com/mcp\",\"headers\":{\"Authorization\":\"old\"}}");
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+        String submitted = "{\"url\":\"https://trusted.example.com/mcp\",\"headers\":{\"Authorization\":\"__MCP_SECRET_REDACTED__\"}}";
+
+        BizException error = assertThrows(BizException.class,
+            () -> service.update(1L, new McpSaveRequest("测试MCP", "sse", submitted, null, 1)));
+
+        assertTrue(error.getMessage().contains("连接目标已变化"));
+        verify(mcpMapper, never()).updateById(any(AiMcp.class));
+    }
+
+    @Test
+    void update_shouldRejectOldSecretReuseAfterStdioExecutionTargetChange() {
+        List<String> changedConfigs = List.of(
+            "{\"command\":\"node\",\"args\":[\"server.js\"],\"cwd\":\"/srv/mcp\",\"env\":{\"TOKEN\":\"__MCP_SECRET_REDACTED__\"}}",
+            "{\"command\":\"python\",\"args\":[\"attacker.py\"],\"cwd\":\"/srv/mcp\",\"env\":{\"TOKEN\":\"__MCP_SECRET_REDACTED__\"}}",
+            "{\"command\":\"python\",\"args\":[\"server.py\"],\"cwd\":\"/tmp/attacker\",\"env\":{\"TOKEN\":\"__MCP_SECRET_REDACTED__\"}}");
+
+        for (String submitted : changedConfigs) {
+            AiMcp mcp = mcpWithConfig("stdio",
+                "{\"command\":\"python\",\"args\":[\"server.py\"],\"cwd\":\"/srv/mcp\",\"env\":{\"TOKEN\":\"old-token\"}}");
+            when(mcpMapper.selectById(1L)).thenReturn(mcp);
+
+            BizException error = assertThrows(BizException.class,
+                () -> service.update(1L, new McpSaveRequest("测试MCP", "stdio", submitted, null, 1)));
+
+            assertTrue(error.getMessage().contains("连接目标已变化"), submitted);
+        }
+        verify(mcpMapper, never()).updateById(any(AiMcp.class));
+    }
+
+    @Test
+    void update_shouldReuseStdioSecretForUnchangedExecutionTarget() {
+        AiMcp mcp = mcpWithConfig("stdio",
+            "{\"command\":\"python\",\"args\":[\"server.py\"],\"workingDirectory\":\"/srv/mcp\",\"env\":{\"TOKEN\":\"old-token\"}}");
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+        when(agentMcpMapper.selectList(any())).thenReturn(List.of());
+        String submitted =
+            "{\"command\":\"python\",\"args\":[\"server.py\"],\"cwd\":\"/srv/mcp\",\"env\":{\"TOKEN\":\"__MCP_SECRET_REDACTED__\"}}";
+
+        service.update(1L, new McpSaveRequest("测试MCP", "stdio", submitted, null, 1));
+
+        ArgumentCaptor<AiMcp> captor = ArgumentCaptor.forClass(AiMcp.class);
+        verify(mcpMapper).updateById(captor.capture());
+        assertTrue(captor.getValue().getConfig().contains("old-token"));
+        assertFalse(captor.getValue().getConfig().contains(McpConfigProtector.SECRET_PLACEHOLDER));
+    }
+
+    @Test
+    void create_shouldRejectRedactedPlaceholder() {
+        McpSaveRequest request = new McpSaveRequest("复制MCP", "http",
+            "{\"headers\":{\"Authorization\":\"__MCP_SECRET_REDACTED__\"}}", null, 1);
+
+        BizException error = assertThrows(BizException.class, () -> service.create(request));
+
+        assertTrue(error.getMessage().contains("重新提供 secret"));
+    }
+
+    @Test
+    void update_shouldRejectPlaceholderOutsideProtectedPosition() {
+        AiMcp mcp = mcpWithConfig("{\"url\":\"https://mcp.example.com\"}");
+        when(mcpMapper.selectById(1L)).thenReturn(mcp);
+        McpSaveRequest request = new McpSaveRequest("测试MCP", "http",
+            "{\"url\":\"__MCP_SECRET_REDACTED__\"}", null, 1);
+
+        BizException error = assertThrows(BizException.class, () -> service.update(1L, request));
+
+        assertTrue(error.getMessage().contains("只能用于敏感字段"));
     }
 
     @Test
@@ -186,5 +414,18 @@ class McpServiceTest {
 
         assertFalse(result.success());
         assertEquals("tool not found", result.errorMessage());
+    }
+
+    private AiMcp mcpWithConfig(String config) {
+        return mcpWithConfig("http", config);
+    }
+
+    private AiMcp mcpWithConfig(String mcpType, String config) {
+        AiMcp mcp = new AiMcp();
+        mcp.setId(1L);
+        mcp.setMcpName("测试MCP");
+        mcp.setMcpType(mcpType);
+        mcp.setConfig(config);
+        return mcp;
     }
 }

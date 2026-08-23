@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -19,12 +20,14 @@ import org.springframework.context.annotation.Configuration;
 public class SecurityWebFilterConfig {
 
     @Bean
-    public UserAuthWebFilter userAuthWebFilter(UserJwtService jwtService) {
-        return new UserAuthWebFilter(jwtService);
+    public UserAuthWebFilter userAuthWebFilter(UserJwtService jwtService,
+                                               TenantAccessGuard tenantAccessGuard) {
+        return new UserAuthWebFilter(jwtService, tenantAccessGuard);
     }
 
     @Bean
-    public AgentAuthWebFilter agentAuthWebFilter(CustomerWorkProperties properties) {
-        return new AgentAuthWebFilter(properties);
+    public AgentAuthWebFilter agentAuthWebFilter(CustomerWorkProperties properties,
+                                                 TenantAccessGuard tenantAccessGuard) {
+        return new AgentAuthWebFilter(properties, tenantAccessGuard);
     }
 }

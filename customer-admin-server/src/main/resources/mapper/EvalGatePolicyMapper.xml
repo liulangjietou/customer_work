@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.aiconfig.channel.publish.gate.mapper.EvalGatePolicyMapper">
+
+    <insert id="upsert">
+        INSERT INTO ai_eval_release_gate_policy
+        (tenant_id, eval_type, enabled, min_primary_metric, min_secondary_metric,
+         max_primary_regression, max_secondary_regression, critical_case_ids_json,
+         judge_error_policy, require_artifact_match, create_by, create_time, update_by, update_time)
+        VALUES
+        (#{tenantId}, #{evalType}, #{enabled}, #{minPrimaryMetric}, #{minSecondaryMetric},
+         #{maxPrimaryRegression}, #{maxSecondaryRegression}, #{criticalCaseIdsJson},
+         #{judgeErrorPolicy}, #{requireArtifactMatch}, #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+        ON DUPLICATE KEY UPDATE
+            enabled = VALUES(enabled),
+            min_primary_metric = VALUES(min_primary_metric),
+            min_secondary_metric = VALUES(min_secondary_metric),
+            max_primary_regression = VALUES(max_primary_regression),
+            max_secondary_regression = VALUES(max_secondary_regression),
+            critical_case_ids_json = VALUES(critical_case_ids_json),
+            judge_error_policy = VALUES(judge_error_policy),
+            require_artifact_match = VALUES(require_artifact_match),
+            update_by = VALUES(update_by),
+            update_time = VALUES(update_time)
+    </insert>
+</mapper>

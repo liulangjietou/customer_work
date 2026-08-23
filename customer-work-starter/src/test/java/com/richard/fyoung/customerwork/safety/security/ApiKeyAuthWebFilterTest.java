@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
+import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * API Key 鉴权过滤器单测（接入层安全）。
@@ -173,5 +177,27 @@ class ApiKeyAuthWebFilterTest {
 
         assertFalse(invoked.get());
         assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+    }
+
+    @Test
+    void frozenTenantKey_shouldReturnObservable403WithoutCallingChain() {
+        CustomerWorkProperties properties = propsWithAuth(true);
+        properties.getSecurity().getAuth().getTenantKeys().put("tenant-key", "acme");
+        TenantAccessGuard accessGuard = mock(TenantAccessGuard.class);
+        when(accessGuard.check("acme", null, false)).thenReturn(
+            new TenantAccessDecision(TenantAccessDecision.Kind.ACCESS_DENIED, 5L));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/chat")
+                .header("X-API-Key", "tenant-key").build());
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        new ApiKeyAuthWebFilter(properties, accessGuard).filter(exchange, current -> {
+            invoked.set(true);
+            return Mono.empty();
+        }).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
+        assertTrue(exchange.getResponse().getBodyAsString().block().contains("TENANT_ACCESS_DENIED"));
     }
 }

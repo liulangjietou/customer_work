@@ -32,6 +32,9 @@ public record McpServerSpec(
     /** SSE 传输（默认）。 */
     public static final String TYPE_SSE = "sse";
 
+    /** Claude Desktop / Cursor 标准配置的服务列表包装字段。 */
+    public static final String MCP_SERVERS_WRAPPER_KEY = "mcpServers";
+
     /**
      * 配置侧的 transport 取值，映射到 {@link #TYPE_HTTP}。
      *

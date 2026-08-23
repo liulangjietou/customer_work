@@ -5,6 +5,8 @@ import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SemanticCacheProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -40,6 +42,11 @@ class SemanticCacheServiceTest {
     private MultiAgentOrchestrator orchestrator;
     private SemanticCacheProperties properties;
     private SemanticCacheService service;
+
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
+    }
 
     @BeforeEach
     void setUp() {
@@ -114,6 +121,43 @@ class SemanticCacheServiceTest {
 
         assertEquals("订单详情页可自助申请电子发票。", hit.orElseThrow(),
             "换个问法是同一个问题——这正是用向量而非字符串比对的理由");
+    }
+
+    @Test
+    void configGeneration_shouldRejectOldInflightWriteAfterRuntimeSwitch() {
+        stubVector("发票怎么开", VECTOR_INVOICE);
+        SemanticCacheService.CacheGeneration oldGeneration = service.captureGeneration();
+
+        TenantContext.runWith(TenantContext.DEFAULT, () -> {
+            service.beginTransition("a".repeat(64));
+            assertFalse(service.captureGeneration().available(), "切换窗口必须禁用缓存读写");
+            service.commitTransition("a".repeat(64));
+        });
+        service.put(oldGeneration, "tenantA:sess-old", "发票怎么开", "旧配置答案");
+
+        SemanticCacheService.CacheGeneration currentGeneration = service.captureGeneration();
+        service.put(currentGeneration, "tenantA:sess-new", "发票怎么开", "新配置答案");
+
+        assertEquals("新配置答案",
+            service.lookup(currentGeneration, "tenantA:sess-read", "发票怎么开").orElseThrow());
+        assertEquals(0L, store.count("tenantA", oldGeneration.configGeneration()),
+            "旧请求在配置切换后完成也不得回写旧答案");
+        assertEquals(1L, store.count("tenantA", currentGeneration.configGeneration()));
+    }
+
+    @Test
+    void failedRuntimeSwitch_shouldRestorePreviousGeneration() {
+        stubVector("发票怎么开", VECTOR_INVOICE);
+        SemanticCacheService.CacheGeneration oldGeneration = service.captureGeneration();
+
+        TenantContext.runWith(TenantContext.DEFAULT, () -> {
+            service.beginTransition("b".repeat(64));
+            service.rollbackTransition("b".repeat(64));
+        });
+        service.put(oldGeneration, "tenantA:sess-old", "发票怎么开", "仍是旧配置答案");
+
+        assertEquals("仍是旧配置答案",
+            service.lookup(oldGeneration, "tenantA:sess-read", "发票怎么开").orElseThrow());
     }
 
     @Test
