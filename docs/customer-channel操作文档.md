@@ -86,7 +86,7 @@ mvn -s settings-central-direct.xml -pl customer-channel -am -DskipTests install
 # 启动控制台（默认端口 8081）
 mvn -s settings-central-direct.xml -pl customer-channel spring-boot:run
 # 或打包后运行
-java -jar customer-channel/target/customer-channel-2.2.0.jar   # 版本号随父 POM
+java -jar customer-channel/target/customer-channel-2.4.0.jar   # 版本号随父 POM
 ```
 
 ### 3.3 访问入口（已实测，端口 8081）

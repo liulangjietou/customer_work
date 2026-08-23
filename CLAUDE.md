@@ -34,7 +34,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
-- 测试基线：starter **1466** + admin-server **858** + app **95** + customer-channel 65 + gateway 1（合计 **2485**）
+- 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
   （2026-08-20 公共常量收敛批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，6 skip。
   本批次自身加 starter **+2**（`SharedConstantAlignmentTest`：已收敛值不得重新声明 + 同值不得多处定义）。
   **同值不同概念别硬合**：本批次差点把 `sys_operation_log.result` 与 `ai_coding_audit_log.result`
@@ -228,7 +228,8 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **迁移脚本里不要写库名前缀**（`INSERT INTO \`customer_admin\`.\`xxx\``）：脚本执行时已经 USE 到目标库，
   写死库名会让脚本换库不可用，验证/多环境时甚至串库写到别的库去。V14 踩过。
 - **多租户（B1 起）**：隔离靠 MyBatis-Plus `TenantLineInnerInterceptor` 全局改写，租户值取自
-  `TenantContext`（starter 的 ThreadLocal），默认关闭（`customer-work.tenant.enabled` / `admin.tenant.enabled`）。
+  `TenantContext`（starter 的 ThreadLocal）。starter 的 `customer-work.tenant.enabled` 默认关闭，
+  admin 示例应用的 `admin.tenant.enabled` 默认开启；两侧开关不能混写成同一个默认值。
   设计与逐表归属见 `docs/多租户架构设计.md`。三条硬约定：
   ① **新增业务表一律带 `tenant_id`**，不要往忽略清单里加——清单越短越安全，加表等于放弃该表的自动隔离；
   ② **有意的跨租户查询必须走 `CrossTenantOperations`**（可 grep 的白名单），不要靠"给上下文塞特殊值"；
@@ -237,7 +238,8 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   `ai_model_config` 是例外的租户忽略表：管理面统一走 `ModelConfigService`，运行时统一走
   `ModelConfigAccess`，禁止业务代码直接注入 `AiModelConfigMapper`；异步消费前还必须显式传播
   `TenantContext`，否则运行时访问器会 fail-closed。
-- **水平扩展（B2 起）**：限流与成本熔断共用 `WindowCounter` SPI、会话串行锁走 `SessionLock` SPI，
+- **水平扩展（B2 起）**：限流、租户配额与主体配额共用 `WindowCounter` SPI、会话串行锁走 `SessionLock` SPI；
+  `ModelCostCircuitBreaker` 当前没有生产调用方，不能算作已接线的成本保护，
   默认进程内，多副本部署切 `customer-work.distributed.{counter-mode,session-lock-mode}=redis`。
   两条约定：① Redis 实现失败一律**降级进程内**而非放行（保护性能力不能因基础设施故障消失）；
   ② 会话锁必须用 `RPermitExpirableSemaphore` 而非 `RLock`——加锁在 Reactor 链、释放在 `doFinally`，
@@ -306,7 +308,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   ⑧ **死信重试耗尽转 ABANDONED 而不删**，退避必须指数（下游多半在重启，密集重试是自制雪崩）；
   没注册 handler 的类型跳过且**不累计次数**——累计会让它悄悄耗尽，掩盖"这类压根没人处理"。
 - **主体级速率配额（B7 起）**：按**调用者**限流（每登录用户 / 每匿名 IP / 每把 API Key），
-  滚动窗口内的 token 量与请求次数双上限，默认关闭（`customer-work.subject-quota.enabled`）。
+  滚动窗口内的 token 量与请求次数双上限。starter 属性默认关闭，示例 app 在 `application.yml` 显式开启。
   与 B3 租户配额并存互不替代：那边是"这个客户这个月能花多少钱"（自然日/月对齐，要跟账单对得上），
   这边是"这个调用者这半小时能用多少"（滚动窗口，防滥用）。九条约定：
   ① **判定只读、放行后才记账**：`check` 不写计数，通过后 `recordRequest`、模型调用后由
@@ -335,7 +337,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   后台页面必须把"哪些立即生效、哪些要等"写给运营看。
   新增的 `subject-quota.store-mode` 已登记进 `PersistenceJdbcCondition`（漏登记会出现
   "Store 想用 jdbc 但持久化环境没激活"的错配）。
-  **后台登录用户同样纳入（`admin.subject-quota.enabled`，默认关闭）**，六条补充约定：
+  **后台登录用户同样纳入（`admin.subject-quota.enabled`，示例 admin 默认开启）**，六条补充约定：
   ① **主体类型单列 `ADMIN_USER`**：`sys_user` 与 `cw_user` 是两套 ID 空间，同一个 ID 值指的是
   不同的人，混用 `USER` 会让计数键碰撞（管理员与终端用户共用一份额度，且查不出原因）；
   等级定义共用 `cw_subject_quota_level`（靠 `subject_type` 区分），绑定落 `sys_user.level_code`；

@@ -1,6 +1,7 @@
-# customer-work · 基于 AgentScope Java 的生产级智能客服系统
+# customer-work · 基于 AgentScope Java 的企业级智能客服与 Agent 平台
 
 [![CI](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml/badge.svg)](https://github.com/liulangjietou/customer_work/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/liulangjietou/customer_work)](https://github.com/liulangjietou/customer_work/releases)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](docs/新人必读.md)
 [![AgentScope](https://img.shields.io/badge/AgentScope-2.0.0%20GA-green.svg)](https://github.com/agentscope-ai/agentscope-java)
@@ -18,150 +19,249 @@
 [![PaddleOCR](https://img.shields.io/badge/PaddleOCR-3.0-0064C8.svg)](docker/paddleocr/docker-compose.yml)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-1.61.0-F5A800.svg)](https://opentelemetry.io)
 
-> 🚀 **新人从这里开始**：[docs/新人必读.md](docs/新人必读.md)（15 分钟跑起来 + 看懂结构 + 知道改哪里）
-> 📚 **功能 / 配置 / 接口的全部细节**：[docs/功能与配置全量参考.md](docs/功能与配置全量参考.md)（本 README 只讲"是什么、长什么样"，"怎么用"都在那里）
+> 🚀 **第一次使用**：[快速开始](#五快速开始) → [新人必读](docs/新人必读.md)<br>
+> 📚 **查功能、配置和接口**：[功能与配置全量参考](docs/功能与配置全量参考.md) ·
+> [生产接口使用手册](docs/生产接口使用手册.md) · [部署手册](docs/部署手册.md)<br>
+> 🛡️ **评估生产边界**：[企业级 AI 智能体能力与运维边界](docs/企业级AI智能体能力与运维边界.md)
 
-## 一、这个项目是做什么的
+## 导航
 
-**把一张典型的客服业务流程图，落成一套可上生产的代码**：从接入与流量治理、会话恢复、意图识别与路由、
-七域业务工具执行，到人工审批 / 转人工工单的人机协作闭环，再到质检反馈驱动的数据飞轮——全链路可运行、可测试、可部署。
+- [项目定位](#一项目定位)
+- [模块与运行边界](#二模块与运行边界)
+- [架构图与核心流程](#三架构图与核心流程)
+- [能力地图](#四能力地图)
+- [快速开始](#五快速开始)
+- [Roadmap](#六roadmap)
+- [文档地图](#七文档地图)
+- [重要边界](#八重要边界)
 
-- **技术底座**：`io.agentscope:agentscope-harness:2.0.0`（GA 正式版），模型默认对接**阿里云百炼（DashScope / 通义千问）**，
-  完整用上 2.0 新能力（Permission / Plan Mode / Compaction / Sandbox / Subagent / 五段 Middleware）。
-- **设计原则**：**每个能力 = 一个配置开关 + 一个可替换实现**。默认内置实现保证离线开箱即用、单测全绿；
-  改一行配置或声明一个 Bean，即可切到 Redis / MySQL / 百炼 / Nacos 等真实后端，业务代码零改动。
-- **可改造为你自己的业务 Agent**：业务工具壳只暴露 Schema，真正逻辑委托给 `tool.backend.*` SPI 接口
-  （Order / AfterSales / Knowledge / Product / Member / Complaint），实现接口或覆盖 Bean 即可接入自有订单 / 售后 / 知识系统，
-  无需改框架代码（用法见 [全量参考 §6.9](docs/功能与配置全量参考.md)）。
-- **两套完整系统**：智能客服系统（AI 对话 + 用户工单 + 坐席协作）+ 后台管理系统（模型 / 提示词 / MCP / 渠道 /
-  定时任务 / 工单工作台，改配置经 Nacos 热更新到运行中的客服应用，免重启）。
-- **多租户 SaaS 就绪（默认关闭）**：共享库 + `tenant_id` 行级隔离（MyBatis-Plus 拦截器全局改写，缺上下文 fail-closed），
-  配套租户配额与 T+1 计费账单、配置版本化与按租户灰度发布、多副本水平扩展（Redis 窗口计数 / 会话锁 + `deploy/k8s/` 清单）。
-  不开启时单租户部署行为与升级前完全一致，设计见 [多租户架构设计](docs/多租户架构设计.md)。
+## 一、项目定位
 
-## 二、模块结构
+customer-work 把典型客服流程落成一套可运行的 Java Agent 系统：从接入与身份校验、会话恢复、知识与工具调用，
+到退款审批、转人工工单、CSAT，再到模型发布、评测门禁、FinOps、SLO 与多租户治理。它既能作为可运行的
+客服产品参考实现，也能只引入 `customer-work-starter`，把 Agent 基础设施嵌入已有 Spring Boot 应用；
+默认启动成功不等于已经完成真实业务、身份、数据主权与生产环境集成。
 
-| 模块 | 端口 | 类型 | 说明 |
-|---|---|---|---|
-| `customer-work-starter` | — | Maven | **可复用智能体基础设施**：模型 / 会话 / 记忆 / RAG / 工具 SPI / Middleware / 审批 / 工单 / 用户 / 聊天记录…… `@AutoConfiguration` 自动装配，可作为依赖被任意工程引入 |
-| `customer-work-app-server` | 8080 | Maven | **可运行客服应用**：HTTP + SSE + WebSocket 接口、用户工单系统、Swagger 文档 |
-| `customer-channel` | 8081 | Maven | **多渠道接入**：官方五套前端能力演示（admin 控制台 / chat-completions / AG-UI / Studio / 钉钉·飞书·企业微信）+ 生产用渠道接入层（**钉钉 + 微信公众号**机器人 ↔ 后台工作区智能体，连接器 SPI 预留企业微信） |
-| `customer-admin-server` | 8082 | Maven | **后台管理系统后端**：Spring MVC + MyBatis-Plus + Sa-Token，独立库 `customer_admin`，含坐席工单工作台与 AI 编码助手 |
-| `customer-work-gateway` | 8888 | Maven | **统一入口网关（可选）**：Spring Cloud Gateway + Nacos 服务发现，把 8080 / 8082 聚合到同一入口 |
-| `customer-admin-web` | 5174 | 前端 | **后台管理前端**：Vue3 + TS + Vite + Element Plus（非 Maven 模块） |
-| `customer-work-app` | 5175 | 前端 | **终端用户 H5**：Vue3 + TS + Vite + Vant4，登录 / 聊天 / 我的工单（非 Maven 模块） |
+- **技术基线**：项目版本 `2.4.0`，JDK 17、Spring Boot 3.2.5、AgentScope Java 2.0.0 GA；默认模型为
+  阿里云百炼，同时已接入 OpenAI、Anthropic、Gemini 与 Ollama 模型扩展。
+- **两套产品面**：用户侧客服系统（H5 / HTTP / SSE / WebSocket / 工单）与运营控制台（模型、Agent、MCP、
+  渠道、评测、发布、账单、工单与 AI 编码助手）。
+- **可替换业务后端**：工具 Schema 与业务实现分离，订单、售后、知识、商品、会员、投诉等能力通过
+  `tool.backend.*` SPI 接入真实系统；用法见[全量参考 §6.9](docs/功能与配置全量参考.md)。
+- **SaaS 与治理**：共享库 `tenant_id` 行级隔离、角色数据范围、主体/租户配额、配置版本、灰度发布、
+  访问 epoch 撤权、ModelOps / EvalOps / FinOps 与审计链路均已有代码和自动化测试。
+- **默认值有明确边界**：客服端租户隔离默认关闭，后台租户隔离与数据范围默认开启；starter 的语义缓存默认关闭，
+  示例 app 已显式开启；Nacos 热更新、OTel、合成健康巡检仍需显式配置。默认关闭不等于未实现。
 
-模块间的依赖与数据边界（三个后端服务都只依赖 starter，两个库彻底分离）：
+### 1.1 成熟度口径
+
+| 标记 | 含义 |
+|---|---|
+| ✅ 已交付 | 源码、接口/迁移契约和自动化测试均已落地 |
+| 🟡 可选能力 | 已实现，但默认关闭或需要 MySQL、Redis、Nacos、模型凭据等外部条件 |
+| 🧪 有限实现 | 主链路可用，但存在文档明确列出的能力或生产边界 |
+| ⏳ 规划中 | 当前没有可直接启用的完整实现，Roadmap 只描述目标与验收出口 |
+
+> “企业级 / 生产级”描述的是代码中的治理目标与交付能力，不代表任意部署已经自动通过生产验收。
+> 真实 Nacos 往返、多 Pod ACK、生产模型凭据、网络出站策略和浏览器端到端验证仍需在目标环境留证。
+
+### 1.2 核心术语
+
+| 术语 | 本项目中的含义 |
+|---|---|
+| 主体（subject） | 已验签用户、匿名 IP、API Key 或后台用户，是配额、记忆与审计的身份边界 |
+| access epoch | 租户 / 用户访问版本号；冻结、退租或撤权时递增，让旧 JWT / WebSocket 快照失效 |
+| fencing | 发布 Worker 的单调令牌；旧 Worker 即使恢复，也不能覆盖新 Worker 已发布的配置 |
+| contentHash / 缓存代际 | 配置内容指纹及其对应缓存版本，用来拒绝错配 ACK 和旧请求回写 |
+| Outbox | 业务事务内先落事件，再异步至少一次投递；消费者必须按稳定事件 ID 幂等 |
+| SecretRef | 只保存凭据引用和版本，不在业务表、接口或配置载荷中回显明文 |
+| AG-UI / A2A | 前者是 Agent 与 UI 的事件协议；后者是 Agent 之间的发现与调用协议，两者不等同于模型 API |
+
+## 二、模块与运行边界
+
+| 模块 | 默认端口 | 职责 | 主要依赖 |
+|---|---:|---|---|
+| `customer-work-starter` | — | 可复用 Agent 基础设施：模型、会话、记忆、RAG、工具 SPI、治理中间件、审批与工单 | AgentScope Java、Spring Boot AutoConfiguration |
+| `customer-work-app-server` | 8080 | 客服运行面：HTTP / SSE / WebSocket、用户工单与健康检查 | `customer-work-starter`、MySQL；Redis / 对象存储按能力启用 |
+| `customer-channel` | 8081 | 协议与渠道适配：chat-completions、AG-UI、Studio、钉钉 / 飞书 / 企业微信；另含钉钉与微信公众号生产接入 | `customer-work-starter`、渠道连接器 |
+| `customer-admin-server` | 8082 | 运营控制面：模型、Agent、MCP、评测、发布、账单、坐席工作台与 AI 编码助手 | `customer-work-starter`、独立 `customer_admin` 库 |
+| `customer-work-gateway` | 8888 | 可选统一入口，通过 Nacos 发现并路由 app / admin | Spring Cloud Gateway、Nacos |
+| `customer-admin-web` | 5174 | Vue 3 运营后台 | 8082 API |
+| `customer-work-app` | 5175 | Vue 3 用户 H5：登录、聊天、工单、CSAT | 8080 API / WebSocket |
 
 ```mermaid
 flowchart LR
-    APPFE["customer-work-app · 5175<br/>用户 H5"] --> APPSRV
-    ADMINFE["customer-admin-web · 5174<br/>后台前端"] --> ADMSRV
-    GW["customer-work-gateway · 8888<br/>SCG 统一入口（可选）"] -.->|Nacos 服务发现| APPSRV & ADMSRV
-    APPSRV["customer-work-app-server · 8080<br/>客服应用"] --> ST
-    CH["customer-channel · 8081<br/>多渠道接入（钉钉 / 微信公众号）"] --> ST
-    ADMSRV["customer-admin-server · 8082<br/>后台管理"] --> ST
-    ST["customer-work-starter<br/>可复用智能体基础设施"]
-    APPSRV --- DBA[("agent_scope_customer_work<br/>cw_* 业务表")]
-    ADMSRV --- DBB[("customer_admin<br/>Flyway 管理")]
-    ADMSRV -.->|"Nacos 配置热更新：改模型 / 提示词，8080 免重启生效"| APPSRV
+    subgraph CLIENT["客户端与渠道"]
+        H5["用户 H5 · 5175"]
+        OPEN["HTTP / SSE 调用方"]
+        IM["IM 渠道"]
+        ADMINWEB["运营后台 · 5174"]
+    end
+
+    subgraph RUNTIME["运行面"]
+        GW["可选网关 · 8888"]
+        APP["app-server · 8080"]
+        CHANNEL["channel · 8081"]
+        STARTER["starter<br/>Agent 基础设施"]
+    end
+
+    subgraph CONTROL["控制面"]
+        ADMIN["admin-server · 8082"]
+    end
+
+    subgraph STATE["状态与配置"]
+        CWDB[("agent_scope_customer_work<br/>业务表")]
+        ADMINDB[("customer_admin<br/>管理表")]
+        REDIS[("Redis")]
+        MINIO[("MinIO")]
+        NACOS[("Nacos")]
+    end
+
+    H5 --> APP
+    OPEN --> GW --> APP
+    IM --> CHANNEL
+    ADMINWEB --> ADMIN
+    APP --> STARTER
+    CHANNEL --> STARTER
+    ADMIN --> STARTER
+    APP --> CWDB & REDIS & MINIO
+    GW -. "可选 admin 路由" .-> ADMIN
+    ADMIN --> ADMINDB
+    ADMIN -. "CustomerWorkFacade 受控访问" .-> CWDB
+    ADMIN --> NACOS
+    NACOS -. "租户专属运行时配置" .-> APP
 ```
 
-> 附属目录：`mysql/` 建库脚本（业务库 / admin 库 / XXL-JOB 库）、`docker/` 中间件编排（MinIO / PaddleOCR /
-> [observability](docker/observability/README.md) 一键监控栈：Prometheus + Grafana + Alertmanager + Tempo + 钉钉告警）、
-> [deploy/k8s/](deploy/k8s/README.md) 多副本 K8s 清单（Deployment / HPA / PDB / 探针 / 优雅停机）、
-> `Dockerfile` + `docker-compose.yml` 一键起应用与依赖、`.github/workflows/ci.yml` CI。
-> starter 的代码分层与"作为依赖引入"的方式见 [全量参考 §九](docs/功能与配置全量参考.md)。
+- 根目录 `docker-compose.yml` 只编排 app-server 与 Redis、MySQL、MinIO、Nacos、XXL-JOB、PaddleOCR，
+  **不包含** admin-server、channel、gateway、两个前端和监控栈。
+- app 业务表与 admin 管理表分库治理；admin 对业务库的跨边界访问必须经 `CustomerWorkFacade`，不能直接复用管理库 Mapper。
+- Nacos 热更新默认关闭，且是“控制面发布、运行面消费”的单向配置链；租户配置缺失时保留最后安全值，不跨租户回退。
+- [deploy/k8s/](deploy/k8s/README.md) 只提供 app / admin 的工作负载、Service、HPA、PDB 和探针，基础设施、Ingress、
+  网关与前端需由部署环境另行提供。
 
-**可观测性**：应用侧默认暴露 Prometheus 指标；开启 `customer-work.observability.otel.enabled`（starter）/
-`admin.observability.otel.enabled`（admin）后接入 OpenTelemetry，按 agent/model/tool（starter 另加 HTTP 入口）
-三段出 span 并经 OTLP 导出。配套的一键监控栈见 [docker/observability/README.md](docker/observability/README.md)，
-预置 Prometheus + Grafana（4 张仪表盘）+ Alertmanager（13 条告警规则 + 钉钉转发）+ Tempo 链路追踪后端；
-详细配置项见 [全量参考 §6.13c](docs/功能与配置全量参考.md#613c-otel-链路追踪最后一公里)，
-生产部署步骤见 [部署手册 §九](docs/部署手册.md#九可观测性与告警)。
+应用默认暴露 Prometheus 指标；显式开启 OTel 后可导出 agent / model / tool / HTTP span。
+[独立监控栈](docker/observability/README.md) 提供 Prometheus、Grafana、Alertmanager、Tempo 与钉钉告警，
+启动前需先运行业务服务并配置监控栈自己的 `.env`。详细配置见
+[全量参考 §6.13c](docs/功能与配置全量参考.md#613c-otel-链路追踪最后一公里)。
 
 ## 三、架构图与核心流程
 
-### 3.1 全景架构
+### 3.1 H5 对话、转人工与 CSAT 闭环
 
-一次用户消息从渠道进来，到 AI 回复 / 人工接管 / 数据沉淀的完整链路（①~⑥ 对应客服业务流程图的六个阶段）：
+H5 的逐消息主链路是单一客服 `ReActAgent`。多 Agent 编排是独立能力，不在 WebSocket 每条消息中隐式执行。
 
 ```mermaid
-flowchart TB
-    subgraph CLIENT["渠道与客户端"]
-        H5["用户端 H5<br/>customer-work-app · 5175"]
-        IM["IM 渠道<br/>钉钉 / 飞书 / 企业微信"]
-        OPEN["OpenAPI 调用方<br/>chat / SSE / AG-UI / chat-completions"]
-        ADMINWEB["后台管理前端<br/>customer-admin-web · 5174"]
-    end
+flowchart TD
+    H5["H5 Chat.vue"] -->|"创建会话"| SESSION["POST /api/customer/user/sessions<br/>创建 AI_SERVING 工单"]
+    H5 -->|"WS /ws/user?token=JWT"| UWS["UserChatWebSocketHandler<br/>JWT、租户、accessEpoch 校验"]
+    UWS -->|"chat 帧"| DISPATCH["ChatDispatchService<br/>归属校验、主体配额、用户消息落库"]
 
-    subgraph EDGE["① 接入与流量治理"]
-        GW["Spring Cloud Gateway 统一路由<br/>+ Nacos 服务注册发现"]
-        SEC["API Key 鉴权 · 滑动窗口限流<br/>防注入围栏 · RequestId / MDC 全链路"]
-    end
+    DISPATCH --> KEYWORD{"命中转人工关键词？"}
+    KEYWORD -->|是| HANDOFF["TicketService.requestHandoff<br/>AI_SERVING → WAITING_AGENT"]
+    KEYWORD -->|否| STATUS{"工单状态"}
+    STATUS -->|AI_SERVING| CHAT["CustomerServiceService.chatStream"]
+    STATUS -->|PROCESSING / ON_HOLD| AGENTWS["转发给已受理坐席 /ws/agent"]
+    STATUS -->|WAITING_AGENT / WAITING_CONFIRM| NOTICE["返回排队或待确认提示"]
 
-    subgraph CORE["customer-work-app-server · 8080（能力由 customer-work-starter 自动装配）"]
-        SVC["CustomerServiceService<br/>② 会话恢复 + 状态持久化"]
-        AGENT["ReActAgent / HarnessAgent<br/>③ 意图识别 → 工具路由 → 观察-再推理"]
-        MAS["MultiAgentOrchestrator<br/>快慢车道路由 → 专家并行 → reduce 归纳"]
-        MW["五段 Middleware<br/>可观测 / 审计 / 脱敏 / 工具护栏 / 人工审批 / 对话阶段"]
-    end
+    CHAT --> CACHE{"语义缓存命中？<br/>安全意图 + 租户分区 + 配置代际"}
+    CACHE -->|命中| REFILTER["缓存答案切片<br/>重新执行出站敏感词过滤"]
+    CACHE -->|未命中| FACTORY["CustomerServiceAgentFactory<br/>构建主 ReActAgent"]
+    FACTORY --> GOV["AgentGovernanceAssembler<br/>审计、脱敏、敏感词、配额、租户"]
+    GOV --> CAP["模型 + RAG + 业务工具 + MCP + Skill"]
+    CAP -->|transferToHuman| HANDOFF
+    CAP --> DELTA["过滤后的增量文本"]
+    DELTA --> CACHEWRITE["仅正常完成后<br/>缓存用户实际看到的完整答案"]
+    REFILTER --> DONE["BOT 消息落库<br/>chat_chunk → chat_done"]
+    CACHEWRITE --> DONE
+    DONE --> H5
 
-    subgraph BRAIN["记忆 · 知识 · 技能"]
-        MEM["三层记忆：L1 短期 + L2 长期多租户 + L3 FactLog"]
-        RAG["RAG 检索：memory / simple / 百炼 / Dify"]
-        SKILL["Skill 技能库 + 自进化"]
-    end
-
-    MODEL["模型层：百炼默认 / OpenAI / Ollama …<br/>重试 + 私有化兜底 + 成本熔断"]
-
-    subgraph TOOLS["④ 七域业务工具（tool.backend SPI 可替换）"]
-        T["知识库 · 订单 · 售后 · 售前导购 · 会员 · 投诉 · 转人工"]
-        DB[("MySQL 业务库 cw_*<br/>或你自己的订单 / 售后系统")]
-    end
-
-    subgraph HITL["⑤ 人机协作闭环"]
-        AP["人工审批：退款挂起 → 放行 / 拒绝<br/>+ 超时巡检"]
-        HO["转人工 / 用户工单<br/>7 态状态机 + SLA 升级"]
-        SEAT["坐席工作台 + 后台管理<br/>customer-admin-server · 8082"]
-    end
-
-    subgraph WHEEL["⑥ 数据飞轮"]
-        QC["会话质检 · 坐席辅助"]
-        FB["消息级反馈：点赞 / 点踩"]
-        FACT["FactLog 事实流水 → 离线复盘 / 评测集"]
-    end
-
-    subgraph OPS["配置与运维面"]
-        NACOS["Nacos 配置热更新<br/>后台改模型 / 提示词 / MCP → 8080 免重启生效"]
-        OBS["Prometheus 指标 · Tracing · Grafana"]
-        XXL["XXL-JOB 定时调度"]
-    end
-
-    H5 --> GW
-    IM --> GW
-    OPEN --> GW
-    GW --> SEC --> SVC --> AGENT
-    ADMINWEB --> SEAT
-    AGENT <--> MODEL
-    AGENT --- MW
-    AGENT --> MAS
-    AGENT <--> BRAIN
-    AGENT --> T
-    T --> DB
-    T -->|submitRefund 挂起| AP
-    T -->|transferToHuman| HO
-    HO <--> SEAT
-    AP --> SEAT
-    AGENT --> QC
-    H5 -. 点赞 / 点踩 .-> FB
-    QC --> FACT
-    FB --> FACT
-    NACOS -. 热更新 .-> MODEL
-    OPS -.-> CORE
+    HANDOFF --> EVENT["工单状态机 + 事务 Outbox"]
+    EVENT --> H5
+    EVENT --> SEAT["坐席工作台"]
+    SEAT -->|"接单、挂起、转派、解决、关闭"| EVENT
+    EVENT --> TERMINAL{"进入 RESOLVED / CLOSED？"}
+    TERMINAL -->|是| CSAT["幂等创建 CSAT 邀请<br/>H5 提交 1~5 分"]
+    CSAT --> H5
 ```
 
-### 3.2 退款人工审批闭环（挂起 → 人工决策 → 生效）
+缓存查找发生在主 Agent 中间件之前：命中时不会再次跑入站 `SensitiveWordMiddleware`，但会执行专门的
+出站敏感词过滤；未命中才进入完整 Agent 治理链。关键实现：
+[`ChatDispatchService`](customer-work-app-server/src/main/java/com/richard/fyoung/customerworkapp/chat/ChatDispatchService.java)、
+[`CustomerServiceService`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/core/service/CustomerServiceService.java)、
+[`CsatTicketInviteListener`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/capability/csat/CsatTicketInviteListener.java)。
+
+### 3.2 HTTP 与多 Agent 编排边界
+
+```mermaid
+flowchart LR
+    H5["H5 实时聊天"] --> WS["/ws/user"] --> MAIN["CustomerServiceService.chatStream"] --> SINGLE["单一客服 ReActAgent"]
+
+    CALLER["服务接入方"] --> CHAT["POST /api/customer/chat"]
+    CALLER --> SSE["POST /api/customer/chat/stream"]
+    CALLER --> INTENT["POST /api/customer/intent"]
+    CALLER --> CONSULT["POST /api/customer/consult"]
+    CHAT --> MAIN
+    SSE --> MAIN
+    INTENT --> CLASSIFIER["一次性结构化意图分类 Agent"]
+
+    CONSULT --> MAS["MultiAgentOrchestrator.consult"]
+    MAS --> MODE{"sequential 模式？"}
+    MODE -->|是| SEQ["订单 → 售后 → 知识专家串行细化"]
+    MODE -->|否| FAST{"零模型规则能唯一命中？"}
+    FAST -->|是| EXPERTS["映射专家子集"]
+    FAST -->|否| ROUTER["RouterAgent LLM 分诊"] --> EXPERTS
+    EXPERTS --> FANOUT["受 maxConcurrency 限制的专家 fanout"]
+    FANOUT --> REDUCE{"多专家且启用 reduce？"}
+    REDUCE -->|是| REDUCER["ReducerAgent 去重、消歧、统一口径"]
+    REDUCE -->|否| JOIN["返回单专家或拼接结果"]
+```
+
+`/ws/user` 不调用 `/consult` 或 `/intent`。语义缓存只复用 `fastRouteIntent()` 的纯规则结果判断可缓存意图，
+不会触发 RouterAgent、专家 fanout 或 ReducerAgent。接口入口见
+[`CustomerServiceController`](customer-work-app-server/src/main/java/com/richard/fyoung/customerworkapp/controller/CustomerServiceController.java)。
+
+### 3.3 运行时配置发布、热更新与 ACK
+
+```mermaid
+flowchart LR
+    subgraph ADMIN["admin-server 控制面"]
+        CHANGE["模型 / Agent / 路由 / 渠道变更<br/>或手动 republish"] --> TASK["同业务事务写入 PENDING 发布任务"]
+        TASK --> WORKER["RuntimePublishWorker<br/>扫描并 CAS 抢租约"]
+        WORKER --> PREPARE["读取权威资产<br/>连通性探测、revision、contentHash"]
+        PREPARE --> GATE{"EvalReleaseGate 通过？"}
+        GATE -->|否| BLOCK["GATE_BLOCKED"]
+        GATE -->|是| FENCE["行锁 fencing<br/>阻止旧 Worker 越权发布"]
+        FENCE -->|失败| RETRY["指数退避，耗尽后 FAILED"] --> WORKER
+        FENCE -->|成功| PUBLISHED["Nacos 接收配置<br/>任务标记 PUBLISHED"]
+    end
+
+    PUBLISHED --> NACOS["租户专属 Nacos dataId"]
+
+    subgraph APP["app-server 运行面"]
+        NACOS --> LISTENER["启动拉取 + Listener + 订阅重试"]
+        LISTENER --> VALIDATE["JSON、密钥解密、contentHash<br/>候选模型链与缓存代际校验"]
+        VALIDATE --> APPLY{"候选配置可应用？"}
+        APPLY -->|否| KEEP["保留最后安全配置<br/>回滚缓存代际"]
+        APPLY -->|是| SWAP["原子替换模型 / Prompt / MCP / maxIters<br/>刷新热 Agent"]
+        KEEP --> REJECTED["REJECTED ACK"]
+        SWAP --> APPLIED["APPLIED ACK"]
+    end
+
+    REJECTED --> OUTBOX["ACK Outbox"]
+    APPLIED --> OUTBOX
+    OUTBOX --> ACKAPI["POST /api/open/runtime-config/acks"]
+    ACKAPI --> AGG["按实例 ACK 计数聚合<br/>APPLIED / PARTIAL / FAILED"]
+```
+
+- admin 与 app 两侧开关默认均为 `false`；namespace、group、base dataId 与 AES 密钥必须成对配置。
+- 多租户实例必须指定 `NACOS_TENANT_CODE`；专属配置缺失或删除时保留旧值，不回退主 dataId。
+- `PUBLISHED` 只表示 Nacos 已接受配置；一条 `APPLIED ACK` 只证明对应实例生效。当前任务可以按期望实例数聚合，
+  但尚未冻结发布时刻的目标实例清单，因此生产级“整批生效”仍以 Roadmap R0 的全目标 ACK 闭环为准。
+  回滚通过重新发布旧快照完成，不删除历史版本。
+- 当前发布器组装主模型、兜底 / 路由策略、系统提示词、MCP、在线实验与 `maxIters`；`retry`、temperature、
+  maxTokens、topP、stream 尚未从后台资产完整下发，列入 Roadmap。
+
+### 3.4 退款人工审批闭环（挂起 → 人工决策 → 生效）
 
 高风险工具不直接生效：`submitRefund` 只登记待审单，人工放行后才执行退款回调（详见 [全量参考 §6.11](docs/功能与配置全量参考.md)）：
 
@@ -186,7 +286,7 @@ sequenceDiagram
     end
 ```
 
-### 3.3 用户工单 7 态状态机（AI 自助 ↔ 人工坐席全生命周期）
+### 3.5 用户工单 7 态状态机（AI 自助 ↔ 人工坐席全生命周期）
 
 状态名与代码 `TicketStatus` 枚举一一对应，非法流转 fast-fail：
 
@@ -199,89 +299,211 @@ stateDiagram-v2
     PROCESSING --> ON_HOLD : 挂起（等用户补材料）
     ON_HOLD --> PROCESSING : 恢复处理
     PROCESSING --> WAITING_AGENT : 转回工单池
+    ON_HOLD --> WAITING_AGENT : 转回工单池
     PROCESSING --> WAITING_CONFIRM : 处理完毕待确认
     WAITING_CONFIRM --> RESOLVED : 用户确认解决
     WAITING_CONFIRM --> PROCESSING : 用户不认可，退回
+    WAITING_CONFIRM --> CLOSED : 用户直接关闭
     RESOLVED --> CLOSED : 结案
     AI_SERVING --> CLOSED : AI 已解决，直接关闭
-    CLOSED --> WAITING_AGENT : reopen 重开回流
-    CLOSED --> [*]
+    RESOLVED --> WAITING_AGENT : reopen 回人工队列
+    CLOSED --> WAITING_AGENT : reopen 回人工队列
+    RESOLVED --> AI_SERVING : reopenToAi 回 AI
+    CLOSED --> AI_SERVING : reopenToAi 回 AI
 
     note right of CLOSED
-        RESOLVED / CLOSED 均可 reopen，
-        回人工队列或回 AI 自助；
-        forceClose 可从任意非终态强制关闭
+        forceClose 可把任意非 CLOSED 状态强制关闭；
+        CLOSED 仍允许显式 reopen / reopenToAi
     end note
 ```
 
 ## 四、能力地图
 
-细节（配置项、curl 示例、对应测试类）全部在 [功能与配置全量参考](docs/功能与配置全量参考.md)，此处只给地图：
+配置项、接口示例与测试入口见 [功能与配置全量参考](docs/功能与配置全量参考.md)；这里同时标明当前边界，
+避免把“已有代码”误读成“目标环境已经验收”。
 
-| 能力域 | 内容 | 全量参考 |
-|---|---|---|
-| 对话与编排 | 同步 / SSE 流式 / 结构化意图 / AG-UI 协议 / 多 Agent 快慢车道路由 + 并行聚合 / 安全中断 | §6.1~6.3 |
-| 会话与记忆 | 会话状态持久化（memory/json/redis/mysql）、按“租户 + 已验签主体 + Agent”隔离的长期记忆、同意/查看/导出/删除/保留清理、三层记忆 + FactLog、上下文压缩；百炼/Mem0/ReMe 有适配器，但生产合规基线强制 `memory` + JDBC | §6.4~6.7、§6.34 |
-| 知识与技能 | RAG 四后端（内存/向量/百炼/Dify）、Skill 技能库 + 自进化 + 代码执行 | §6.8、§6.10 |
-| 业务工具 | 七域工具组覆盖售前→售中→售后全旅程，`tool.backend.*` SPI 一键换成你的真实系统（jdbc 实现内置） | §6.9 |
-| 人机协作 | 退款人工审批闭环（挂起→放行）、转人工工单、多轮槽位收集、审批/工单持久化 SPI + 超时/SLA 巡检 | §6.11 |
-| 用户工单系统 | 终端用户 JWT 认证、7 态工单状态机、用户/坐席 WebSocket 双通道、事务化工单写入 + 数据库 Outbox 可靠事件、聊天消息落库、附件解析（OCR + 文档） | §6.21~6.23 |
-| 模型层 | 多厂商（百炼/OpenAI/Anthropic/Gemini/Ollama）、私有化兜底、重试、成本熔断；模型资产/部署分离、SecretRef、健康探测、上线认证、影响分析、不可变路由与运行时真实选路 | §6.12~6.13b、§6.34 |
-| 安全与治理 | API Key 鉴权、限流、敏感词与入站防注入、脱敏、Permission、沙箱；租户/用户 epoch 撤权、退租交付、发布 Eval gate 与审计豁免 | §6.14~6.14.2、§6.18、§6.27、§6.34 |
-| 可观测与运维 | Prometheus、OTel/MDC/慢请求/合成监控、Outbox/死信；Trace/只读 Replay、SLO/error budget、业务结果与成本可用性 | §6.13~6.13c、§6.34 |
-| 配置面 | Nacos 热更新、不可变版本/回滚/租户灰度、可靠发布任务与 ACK、内容变更时语义缓存严格失效、MCP / Higress / Studio 接入 | §6.15~6.17、§6.30、§6.34 |
-| 多租户 SaaS | 行级隔离与双视角权限、Redis/K8s 水平扩展、租户 epoch 访问快照与冻结/退租撤权、token 配额、T+1 账单、预算预测/告警/ACK/CSV | §6.27~6.29、§6.34 |
-| 数据飞轮 | 会话质检、坐席辅助、消息反馈、不可变评测集快照、九维制品绑定、发布门禁与 badcase 回流 | §6.11 末、§6.20、§6.31、§6.34 |
-| 运营闭环 | 评测与发布治理、语义缓存、在线双臂分流/归因/护栏、提示词版本、CSAT、知识盲区、死信、SLO 与业务结果下钻 | §6.31、§6.34 |
-| 后台管理系统 | RBAC 权限、模型/MCP/Skill/智能体配置、工作区聊天 + VibeCoding、渠道、定时任务(XXL-JOB)、工单工作台、内容风控、数据字典、开发者工具箱（HTTP/证书/cron/JWT/diff/格式互转/SQL 客户端等）、调用统计（token + 缓存命中率）、AI 编码助手 | §6.21 |
+| 能力域 | 状态 | 已有能力 | 当前边界 |
+|---|:---:|---|---|
+| 对话与编排 | ✅ | 同步 / SSE / WS、结构化意图、AG-UI、单 Agent 主链路、独立多 Agent 快慢路由 / fanout / reduce | H5 不逐消息调用多 Agent |
+| 模型与路由 | 🟡 | 百炼、OpenAI、Anthropic、Gemini、Ollama；重试、兜底、模型资产、健康探测、不可变路由、主体 / 租户配额 | 没有“成本熔断器”；真实厂商凭据与可用性需环境验收 |
+| 会话与记忆 | 🧪 | memory / json / Redis / MySQL 会话，按“租户 + 已验签主体 + Agent”隔离长期记忆，授权、查看、导出、删除、保留清理与 FactLog | 生产隐私闭环以 JDBC 为基线；外部记忆适配器尚未全部满足同等删除 / 导出契约 |
+| 知识与 Skill | 🧪 | 内存 / simple / 百炼 / Dify RAG，Skill ZIP、代码执行与有限自进化 | 生产向量库、增量索引和知识运营仍需补齐 |
+| 业务工具 | ✅ | 知识、订单、售后、导购、会员、投诉、转人工七域工具，`tool.backend.*` SPI 与 JDBC 实现 | 接真实业务系统时必须替换示例后端并保留租户 / 权限上下文 |
+| 人机协作 | ✅ | 退款审批挂起、幂等决策、超时巡检、7 态工单、用户 / 坐席 WS、SLA、事务 Outbox、CSAT | 外部退款回调与企业坐席组织需按 SPI 对接 |
+| MCP 与工具安全 | 🧪 | MCP / Higress / Studio 接入、出站地址校验、工具审计与审批 | 尚缺按 tool / Agent / 主体的细粒度策略；MCP headers 尚未统一为 SecretRef |
+| 多租户 SaaS | 🧪 | 行级隔离、双视角数据权限、access epoch 撤权、租户 / 主体配额、T+1 账单、预算告警 | 客服端隔离默认关闭；完整退租归档 / 擦除回执与敏感词租户分区仍在演进 |
+| 配置发布 | 🟡 | 不可变版本、Eval gate、租户灰度、Nacos 热更新、fencing、重试、实例 ACK、缓存代际失效 | 默认关闭；需真实 Nacos、多实例目标清单和密钥一致性验证 |
+| EvalOps / ModelOps / FinOps | 🧪 | 评测集快照、badcase 回流、在线双臂实验、Trace / 只读 Replay、SLO / error budget、业务结果与成本统计 | 尚缺自动化 SLO 调度、双臂离线评测和逐调用 / 会话结算级成本归因 |
+| 渠道与 A2A | 🟡 | 多协议渠道适配；可信内网可显式开启直接 A2A 协议导出 | A2A 的 Nacos AI 注册发现未落地，直接导出默认关闭且不等于公网安全边界 |
+| 后台与 AI 编码 | 🧪 | RBAC、模型 / Agent / MCP / Skill、渠道、工单、风控、任务、统计与开发工具；AI Coding P0~P2 及 P3-1 / P3-2 有限版本 | 完整暂停恢复、多 Agent 协作编程、远程沙箱、向量化增量索引仍在 Roadmap |
 
 ## 五、快速开始
 
+### 5.1 环境要求
+
+- JDK 17；Maven 3.9 推荐。
+- Node.js 24 推荐；最低需满足 Vite 8 的 `^20.19.0 || >=22.12.0`。
+- Docker Engine 与 `docker compose` v2 兼容 CLI。
+- 真实百炼 `DASHSCOPE_API_KEY`；`.env` 只会被 Compose 自动读取，本地 Maven / IDE 启动仍需显式注入环境变量。
+
+### 5.2 最小后端启动
+
 ```bash
-# 方式一：本地运行（示例应用默认使用本机 MySQL；纯内存宿主可按需关闭 JDBC 域与迁移）
-export DASHSCOPE_API_KEY=你的百炼密钥      # 必填，密钥仅从环境变量读取
-mvn -pl customer-work-app-server -am spring-boot:run
+# 1. app 默认将会话、工单、用户和运营数据写入 MySQL
+docker compose up -d mysql
 
-# 方式二：Docker Compose 一键起（app + Redis + MySQL(含后台库) + MinIO + Nacos + XXL-JOB + PaddleOCR）
-docker compose up -d
+# 2. 在终端 A 注入真实模型密钥，构建并启动 app-server（进程会持续占用前台）
+export DASHSCOPE_API_KEY=你的百炼密钥
+mvn -pl customer-work-app-server -am -DskipTests package
+java -jar customer-work-app-server/target/customer-work.jar
 
-# 发一条消息试试
-curl -X POST http://localhost:8080/api/customer/chat \
+# 3. 另开终端 B 做依赖级健康检查；固定返回 OK 的 /api/customer/health 不能替代它
+curl -fsS http://localhost:8080/actuator/health
+
+# 4. 发一条 HTTP 单 Agent 消息；这不是 H5 JWT / WebSocket / 工单闭环验收
+curl -fsS -X POST http://localhost:8080/api/customer/chat \
   -H "Content-Type: application/json" \
   -d '{"sessionId":"u1001","message":"帮我查一下订单 20260613001 的状态和物流"}'
 ```
 
-- 启动后打开 **http://localhost:8080/swagger-ui.html** 在线调试全部接口。
-- 跑测试（无需 API Key，任何环境全绿）：`mvn test` ——当前基线 **2222 个**（starter 1323 + admin-server 753 +
-  app 80 + customer-channel 65 + gateway 1），外部依赖（Redis/MySQL/Nacos/百炼/OCR/MinIO）不可达的用例自动跳过。
-- 环境要求、前端启动、构建坑位速查见 [新人必读](docs/新人必读.md)。
+成功时返回 HTTP 2xx，响应结构为
+`{"sessionId":"u1001","reply":"...","messageId":"..."}`；完整 H5 登录、WebSocket、工单与 CSAT 烟测见 5.4。
+
+开发环境可访问 [app Swagger](http://localhost:8080/swagger-ui.html)；`prod` profile 默认关闭 Swagger。
+app 启动时会执行 starter 内置的 Flyway 迁移初始化业务表。默认本地配置把会话、语义缓存与主体等级落 JDBC，
+分布式计数器仍为进程内实现，因此最小单实例路径不要求 Redis；MinIO / OCR 为惰性依赖，不上传附件时不阻断启动。
+
+### 5.3 app-server 与基础设施 Compose 联调
+
+```bash
+cp .env.example .env
+# 编辑 .env，将 DASHSCOPE_API_KEY 替换为真实值；不要提交 .env
+docker compose up -d --build
+docker compose ps
+curl -fsS http://localhost:8080/actuator/health
+docker compose logs --tail=200 app
+```
+
+根 Compose 首次使用空 MySQL 数据卷时创建业务、admin 与 XXL-JOB 三个数据库；initdb 脚本不会在已有数据卷重复执行。
+业务表由 app Flyway 迁移，Compose **只创建 admin 数据库，不创建完整 admin 表结构**。首次构建 PaddleOCR 会下载模型且在
+Apple Silicon 上经 `linux/amd64` 兼容层运行，耗时通常明显长于其他服务。
+根 Compose 当前按默认库 `agent_scope_customer_work` 与 root 用户连库；若修改 `.env` 中的 `MYSQL_DATABASE` 或
+`MYSQL_USERNAME`，还需同步扩展 app 的环境变量映射并创建普通用户，不能只改 `.env` 一侧。
+
+已有数据卷若缺少 admin 库，不要删卷；先非破坏性建库，再按 5.4 用 dev profile 执行 admin Flyway：
+
+```bash
+docker compose exec mysql mysql -uroot -p \
+  -e "CREATE DATABASE IF NOT EXISTS customer_admin CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+密码提示出现后输入 `.env` 中的 `MYSQL_ROOT_PASSWORD`；终端不会回显密码。
+
+### 5.4 可选 admin 与前端
+
+```bash
+# admin：dev profile 才执行 admin Flyway；Compose Redis 的本地默认密码为 123456
+docker compose up -d mysql redis minio
+mvn -pl customer-admin-server -am -DskipTests package
+SPRING_PROFILES_ACTIVE=dev ADMIN_REDIS_PASSWORD=123456 \
+  java -jar customer-admin-server/target/customer-admin-server-*.jar
+
+# 开发环境种子账号 admin/admin，首次登录强制改密
+```
+
+两个前端分别在独立终端运行：
+
+```bash
+cd customer-admin-web
+npm ci
+npm run dev         # 5174，/api -> 8082
+```
+
+```bash
+cd customer-work-app
+npm ci
+npm run dev         # 5175，/api、/ws -> 8080
+```
+
+H5 首次使用可在 5175 页面直接注册，也可先用 API 建立测试账号；登录响应中的 `token` 用于 H5 WebSocket 和
+`/api/customer/user/**`：
+
+```bash
+curl -fsS -X POST http://localhost:8080/api/customer/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo-user","password":"demo123456","nickname":"Demo"}'
+
+curl -fsS -X POST http://localhost:8080/api/customer/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo-user","password":"demo123456"}'
+
+# 从登录响应复制 token
+export CW_DEMO_TOKEN=eyJ...
+curl -fsS -X POST http://localhost:8080/api/customer/user/sessions \
+  -H "Authorization: Bearer ${CW_DEMO_TOKEN}"
+```
+
+admin 健康检查为 `http://localhost:8082/actuator/health`，开发 Swagger 为
+`http://localhost:8082/swagger-ui.html`；生产 profile 同样默认关闭 Swagger。admin 的工单、坐席和部分运营功能会调用
+8080，验收这些功能时必须同时保持 app-server 运行。
+
+### 5.5 验证
+
+```bash
+# 本地全模块 Java 测试入口；无需模型 API Key
+mvn -B -gs settings-central-direct.xml -s settings-central-direct.xml \
+  clean test -Djacoco.skip=true
+
+# 后台前端生产构建
+cd customer-admin-web
+npm ci
+npm run build
+
+# 回到仓库根，再构建 H5
+cd ../customer-work-app
+npm ci
+npm run build
+
+# Compose 结构与仓库密钥扫描
+cd ..
+docker compose config --quiet
+bash scripts/verify-no-committed-secrets.sh
+```
+
+不在 README 固定测试数量，合并门禁以当前 CI 结果为准。依赖型集成测试会按环境条件执行或跳过；如果本机 6379 端口
+已有不带项目密码的 Redis，先隔离该实例，避免把本地配置冲突误判为代码失败。更多坑位见
+[新人必读](docs/新人必读.md)。
 
 ## 六、Roadmap
 
 ```mermaid
 timeline
-    title customer-work 演进路线
-    已完成 · 1.x 基线 : AgentScope 1.0.12 核心客服链路 : 存档于 legacy-main-1.0.12 标签
-    已完成 · 2.0 迁移 : RC4 首轮迁移（rc2.0 分支存档） : 2.0.0 GA 全量迁移 + Harness 新能力补齐
-    已完成 · 生产化 : HITL 审批闭环 + 人机切换工单 : 用户工单系统（JWT + WS 双通道 + 7 态状态机） : 后台管理系统 + Nacos 配置热更新 : 真实业务后端 jdbc + 附件解析 OCR : Nacos 注册发现 + SCG 网关 + XXL-JOB
-    已完成 · 平台化 : 内容风控（敏感词 + 限流）+ 数据字典 + 开发者工具箱 : 十项通用能力薄壳化下沉 starter : OTel 链路追踪 + 一键 Grafana / Tempo 监控栈 : 登录态 Redis 持久化 + streamEvents 流式重构
-    已完成 · SaaS 化 : 多租户行级隔离 + 租户管理双视角 : 水平扩展（Redis 计数 / 会话锁 + K8s 清单） : 租户配额 + T+1 计费账单 : 配置版本化 + 按租户灰度 : starter 按域拆分治理
-    已完成 · 运营闭环 : 评测中心 + badcase 回流 : 语义缓存 + 模型分级路由 : 提示词版本归因 + CSAT : 知识盲区 + 死信队列
-    已完成 · 企业治理闭环 : 租户实时撤权与退租交付 : 主体级记忆隐私 : FinOps + EvalOps + ModelOps : Trace/Replay + 在线实验 : SLO/error budget + 业务结果
-    规划中 · 扩展点 : 退租数据归档导出 : A2A Agent Card 注册发现 : RocketMQ 异步消息 : Training 数据飞轮（RM Gallery / Trinity-RFT） : 后台 AI 编码助手 P1~P3 演进
+    title customer-work 能力演进
+    section 已交付的核心实现
+        AgentScope 2.0 GA : 单 Agent 客服主链 : 多 Agent 独立编排 : RAG、工具与 Skill
+        产品闭环 : 用户与坐席双 WS : 7 态工单与 Outbox : 审批、CSAT、附件解析
+        SaaS 与治理 : 租户和主体撤权 : 配额与账单 : EvalOps、ModelOps、FinOps : Trace 与只读 Replay
+        控制与运营 : 版本发布和 ACK : 在线实验 : SLO 与业务结果 : AI 编码 P0~P2 和有限 P3
+    section 下一阶段
+        生产验证闭环 : 真实 Nacos 多实例 : 全目标 ACK : 密钥和网络出站治理
+        数据主权与身份 : 退租归档和擦除回执 : 企业 SSO 与身份同步 : 外部 KMS
+        效果与成本闭环 : 双臂离线评测 : 自动 SLO 调度 : 调用和会话级成本结算
+        生态扩展 : Nacos AI A2A 发现 : 消息总线 : 远程沙箱和外部知识平台
 ```
 
-规划中的能力框架均已提供扩展点（保留为"配置即用"，不硬编入以保证开箱即用）：
+Roadmap 按风险与验收出口排序，不承诺未经评估的日期，也不把“留有 SPI”写成“配置即可用”。
 
-| 方向 | 需要 | 说明 |
-|---|---|---|
-| A2A Agent Card 注册发现 | 新版 nacos-client AI API + `io.a2a` SDK | Nacos 配置中心层已落地，待 SDK 坐标 |
-| RocketMQ 异步消息 / 消息总线 | RocketMQ broker | 任务解耦 / A2A over MQ |
-| Training 数据飞轮 | RM Gallery + Trinity-RFT 平台 | FactLog 数据出口已就绪，待平台对接 |
-| Anthropic / Gemini 模型 | 各厂商 SDK 依赖 | 代码已就绪，补依赖即可 |
-| RAGFlow / Haystack 知识库 | 对应 client | 同 Dify 模式扩展 `KnowledgeProvider` |
-| 远端云沙箱（k8s / e2b 等） | `agentscope-extensions-sandbox-*` | local / docker 沙箱已内置 |
-| 后台 AI 编码助手 P1~P3 | P1-2 / P2-1~P2-3 已完成 | 交互式运行、Bug/日志诊断、自动化重构、沙箱管理与多 Agent 协作编程，见[需求文档 §8](docs/AI编码助手需求文档.md) |
+| 优先级 | 目标 | 主要交付物 | 验收出口 |
+|---|---|---|---|
+| R0 | 生产验证闭环 | 冻结每次发布的目标实例集合；真实 Nacos 多 Pod 发布 / 回滚 / ACK；MCP headers SecretRef 与细粒度授权；推理 SDK DNS / 重定向出站约束；补齐后台下发 retry 和模型采样参数 | 所有目标实例 ACK 后才显示整批 APPLIED；故障实例、旧 Worker、跨租户 dataId 与密钥不一致均有可重复演练和证据 |
+| R1 | 数据主权与企业身份 | 覆盖 MySQL、Redis、MinIO、向量库、外部记忆的租户归档 / 导出 / 擦除清单和回执；OIDC / SAML、SCIM、MFA；外部 KMS / Vault SecretRef | 单租户退租演练可证明数据完整交付且到期不可再访问；身份停用 SLA 在方案评审时量化并纳入自动化演练 |
+| R2 | 效果、知识与成本运营 | 在线实验增加双臂离线评测；SLO 自动调度与通知；逐调用 / 会话成本结算；知识入库、增量索引、租户级敏感词与初始化种子 | 发布门禁同时约束经业务确认的质量、SLO 和预算阈值；任一指标可下钻到版本、租户、主体、调用与证据快照 |
+| R3 | Agent 与基础设施生态 | Nacos AI A2A 注册发现、RocketMQ 消息总线、RAGFlow / Haystack、远程 K8s / E2B 沙箱、Training 平台 | 每个适配器提供契约测试、故障降级检查单、租户隔离测试和最小生产部署样例；直接 A2A 导出与注册发现分开验收 |
+| R4 | AI 编码完整形态 | 可持久化暂停 / 恢复、远程沙箱生命周期、向量化增量代码索引、多 Agent 协作编程与冲突治理 | 进程重启后任务可恢复；越权、超时、并发写冲突和部分失败都有显式状态机与回归测试，恢复时限在方案评审时量化 |
+
+更细的治理缺口与上线前置条件见
+[企业级 AI 智能体能力与运维边界](docs/企业级AI智能体能力与运维边界.md)；AI 编码范围见
+[AI 编码助手需求文档](docs/AI编码助手需求文档.md)。
 
 ## 七、文档地图
 
@@ -292,28 +514,36 @@ timeline
 | 企业级 Agent 治理、运维闭环、上线前置条件与剩余边界 | [docs/企业级AI智能体能力与运维边界.md](docs/企业级AI智能体能力与运维边界.md) |
 | 架构原理、时序图、UML 类图、扩展点 | [docs/详细技术文档.md](docs/详细技术文档.md) |
 | 多租户隔离模型、逐表归属、身份链路 | [docs/多租户架构设计.md](docs/多租户架构设计.md) |
+| 后台数据范围、租户与用户级行过滤 | [docs/数据权限设计.md](docs/数据权限设计.md) |
 | 全部接口的请求 / 响应示例（生产调用方视角） | [docs/生产接口使用手册.md](docs/生产接口使用手册.md) |
 | 生产部署步骤、环境变量、建表、灰度回滚 | [docs/部署手册.md](docs/部署手册.md) |
 | 1.x→2.0 API 映射、RC4→GA 变更、issue 核对 | [docs/MIGRATION-2.0.md](docs/MIGRATION-2.0.md) |
 | 框架 open issues 与本项目链路的交叉评估 | [docs/生产就绪评估.md](docs/生产就绪评估.md) |
 | 五套官方前端能力接入（8081 演示模块） | [docs/customer-channel操作文档.md](docs/customer-channel操作文档.md) |
-| 后台管理系统需求与实施路线 | [docs/AI编码助手需求文档.md](docs/AI编码助手需求文档.md) |
+| AI 编码助手需求与实施路线 | [docs/AI编码助手需求文档.md](docs/AI编码助手需求文档.md) |
+| 版本变化与兼容性 | [CHANGELOG.md](CHANGELOG.md) |
+| 贡献流程与安全报告 | [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) |
 
-## 八、重要说明
+## 八、重要边界
 
 - **分支策略**：`main` 有分支保护、禁止直接 push，开发从 `main` 切分支走 PR；`legacy-main-1.0.12` 标签与
   `rc2.0` 分支为历史存档，不再更新。
 - 基于官方 GA 坐标 `io.agentscope:agentscope-harness:2.0.0`（`agentscope-bom` 统一管理版本）；框架高速迭代，
   升级遇 API 不匹配请对照该版本源码微调。
-- API Key 支持配置项与环境变量两种来源，**生产请用环境变量注入**，勿把密钥留在仓库。
-- 客服业务库由 starter 的 Flyway 管理；存量非空库以版本 `0` 接管后顺序执行增量迁移，迁移失败会阻断启动。
+- API Key 支持配置项与环境变量来源；**生产应使用 Secret / KMS 注入**，勿把明文密钥写入仓库、镜像或 Nacos。
+- 客服业务库由 starter Flyway 管理；admin 在 dev / test 运行 Flyway、生产由 DBA 执行镜像 SQL。存量库升级只新增迁移，
+  不修改已经部署的 Flyway 历史；迁移失败应阻断启动。
 - 工单状态、事件轨迹和 Outbox 在同一本地事务中提交；消费语义为至少一次，处理器必须按稳定事件 ID 幂等。
 - CI 会扫描当前提交中的常见密钥格式。若密钥曾进入 Git 历史，删除文件内容不足以止损，仍须立即吊销并轮换。
-- 业务链路全异步（`Mono`/`Flux`，无 `.block()`）；所有外部后端均为配置开关，默认实现保证离线开箱即用与单测全绿。
+- app 的对话流采用 `Mono` / `Flux`，admin 是 Spring MVC 控制面；不要把 admin 的阻塞数据访问搬进响应式聊天线程。
+- 默认 app 配置依赖 MySQL，真实对话依赖模型凭据；“外部服务不可达时部分测试跳过”不代表应用可以无依赖启动。
+- 成本约束由主体 / 租户配额、预算与告警承担，当前没有自动切断模型调用的“成本熔断器”。
+- 生产 profile 默认关闭 Swagger；健康检查以 `/actuator/health` 及 readiness / liveness 为准，不以端口监听或
+  `/api/customer/health` 固定响应代替依赖就绪证明。
 - 包名按模块划分，根均为 `com.richard.fyoung`：starter `…customerwork`、app-server `…customerworkapp`、
   channel `…customerchannel`、admin-server `…customeradmin`、gateway `…customerworkgateway`。
 
-## 关注作者
+## 九、关注作者
 
 如果你对 AI 及本项目感兴趣，欢迎关注我的微信公众号 **AI赛博炼丹炉**，将带来更多高质量文章和干货。
 
