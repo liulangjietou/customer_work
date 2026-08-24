@@ -39,6 +39,10 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String USER_SESSION_REVOCATION_MIRROR_VERSION = "15";
     private static final String MODEL_CALL_ATTRIBUTION_MIRROR_VERSION = "16";
     private static final String HANDOFF_AUTHORITY_MIRROR_VERSION = "17";
+    private static final String EVAL_DATASET_RELEASE_MIRROR_VERSION = "18";
+    private static final String AGENT_REPLAY_SNAPSHOT_MIRROR_VERSION = "19";
+    private static final String MODEL_COST_SETTLEMENT_MIRROR_VERSION = "20";
+    private static final String BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION = "21";
 
     private final DataSource dataSource;
     private final boolean enabled;
@@ -79,7 +83,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
      *
      * <p>完整镜像会持续同步最新迁移，因此接管版本不能写死。先核对 V1-V3 的完整结构，再用 V4
      * 的表与列判断镜像是否已经包含主体配额；旧的 V3 镜像仍从版本 3 接管并补跑 V4，当前镜像则
-     * 从版本 4 接管。V10 以后每个非幂等结构迁移继续以关键表/列逐级判定；普通旧库仍从 0
+     * 从版本 4 接管。V10 以后每个结构迁移继续以关键表/列逐级判定；普通旧库仍从 0
      * 开始执行全部修复。</p>
      *
      * <p><b>幂等的数据迁移可以不判定</b>：V6（运营分区归一）在空镜像库上影响 0 行、重跑结果相同，
@@ -90,6 +94,9 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
      * 没有任何结构变化，用 {@code tableExists}/{@code columnExists} 是看不出来的。只按结构判定的话，
      * 完整镜像会被当成"停在 V4"而重新执行 V5，撞上唯一键直接迁移失败。往后再加纯数据迁移，
      * 同样要在这里补一条对应的数据判定。</p>
+     *
+     * <p>V20、V21 虽然可以重入，但都包含存量数据汇总或回填。完整镜像必须按索引等末端结构确认
+     * 脚本已完整执行后直接接管，避免每次首次启动都扫描业务表。</p>
      */
     private String resolveBaselineVersion() throws Exception {
         try (Connection connection = dataSource.getConnection()) {
@@ -165,8 +172,37 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
                 && columnExists(connection, "cw_ticket", "routing_priority")
                 && columnExists(connection, "cw_ticket", "emotion")
                 && columnExists(connection, "cw_ticket", "suggested_assignees");
-            return handoffAuthorityMirror
-                ? HANDOFF_AUTHORITY_MIRROR_VERSION : MODEL_CALL_ATTRIBUTION_MIRROR_VERSION;
+            if (!handoffAuthorityMirror) {
+                return MODEL_CALL_ATTRIBUTION_MIRROR_VERSION;
+            }
+            boolean evalDatasetReleaseMirror = tableExists(connection, "cw_eval_dataset_release")
+                && columnExists(connection, "cw_eval_dataset_release", "snapshot_version_id")
+                && columnExists(connection, "cw_eval_dataset_release", "content_hash")
+                && columnExists(connection, "cw_eval_dataset_release", "status");
+            if (!evalDatasetReleaseMirror) {
+                return HANDOFF_AUTHORITY_MIRROR_VERSION;
+            }
+            if (!columnExists(connection, "cw_agent_call_log", "replay_snapshot_json")) {
+                return EVAL_DATASET_RELEASE_MIRROR_VERSION;
+            }
+            boolean modelCostSettlementMirror =
+                columnExists(connection, "cw_agent_call_segment", "cost_amount")
+                    && columnExists(connection, "cw_agent_call_segment", "cost_currency")
+                    && columnExists(connection, "cw_agent_call_segment", "cost_status")
+                    && columnExists(connection, "cw_agent_call_log", "model_cost_amount")
+                    && columnExists(connection, "cw_agent_call_log", "model_cost_currency")
+                    && columnExists(connection, "cw_agent_call_log", "model_cost_status")
+                    && columnExists(connection, "cw_agent_call_log", "model_segment_count")
+                    && columnExists(connection, "cw_agent_call_log", "settled_cost_segment_count")
+                    && columnExists(connection, "cw_agent_call_log", "unsettled_cost_segment_count")
+                    && indexExists(connection, "cw_agent_call_log", "idx_agent_call_cost_window");
+            if (!modelCostSettlementMirror) {
+                return AGENT_REPLAY_SNAPSHOT_MIRROR_VERSION;
+            }
+            boolean badcaseRecurrenceSignalMirror = columnExists(connection, "cw_badcase", "signal_hash")
+                && indexExists(connection, "cw_badcase", "idx_badcase_signal");
+            return badcaseRecurrenceSignalMirror
+                ? BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION : MODEL_COST_SETTLEMENT_MIRROR_VERSION;
         }
     }
 
@@ -195,6 +231,18 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, table);
             statement.setString(2, column);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next();
+            }
+        }
+    }
+
+    private boolean indexExists(Connection connection, String table, String index) throws Exception {
+        String sql = "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() "
+            + "AND table_name = ? AND index_name = ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, table);
+            statement.setString(2, index);
             try (ResultSet resultSet = statement.executeQuery()) {
                 return resultSet.next();
             }

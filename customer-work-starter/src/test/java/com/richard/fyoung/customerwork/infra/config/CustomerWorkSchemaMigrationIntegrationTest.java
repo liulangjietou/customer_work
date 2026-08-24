@@ -51,6 +51,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
+    private static final int CURRENT_SCHEMA_VERSION = 21;
+    private static final int CURRENT_BUSINESS_TABLE_COUNT = 47;
     private static final List<String> AUDIT_TIMESTAMP_TABLES = List.of(
         "cw_slot_filling_progress", "cw_dialog_stage", "cw_agent_call_segment", "cw_product",
         "cw_member", "cw_knowledge", "cw_fact_log", "cw_prompt_version", "cw_csat_survey",
@@ -119,19 +121,23 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         String emptyDatabase = "cw_flyway_empty_" + suffix;
         String legacyDatabase = "cw_flyway_legacy_" + suffix;
         String mirrorDatabase = "cw_flyway_mirror_" + suffix;
+        String previousMirrorDatabase = "cw_flyway_previous_mirror_" + suffix;
         String platformDatabase = "cw_flyway_platform_" + suffix;
-        assumeTrue(canCreateDatabases(emptyDatabase, legacyDatabase, mirrorDatabase, platformDatabase),
+        assumeTrue(canCreateDatabases(
+            emptyDatabase, legacyDatabase, mirrorDatabase, previousMirrorDatabase, platformDatabase),
             "MySQL 测试账号无建库权限，跳过");
 
         try {
             verifyEmptyDatabaseMigration(emptyDatabase);
             verifyLegacyDatabaseMigration(legacyDatabase);
             verifyCompleteMirrorAdoption(mirrorDatabase);
+            verifyPreviousMirrorUpgrade(previousMirrorDatabase);
             verifyPlatformTenantMigration(platformDatabase);
         } finally {
             dropDatabase(emptyDatabase);
             dropDatabase(legacyDatabase);
             dropDatabase(mirrorDatabase);
+            dropDatabase(previousMirrorDatabase);
             dropDatabase(platformDatabase);
         }
     }
@@ -250,16 +256,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertAuditTimestampColumns(dataSource);
             assertTrue(tablesMissingBothAuditTimestamps(dataSource).isEmpty(),
                 "V9 完成后不得残留同时缺少两类审计时间的客服端业务表");
-            assertEquals(1, countHistoryVersion(dataSource, "9"), "repair 后重试只应登记一条成功的 V9");
-            assertEquals(1, countHistoryVersion(dataSource, "10"));
-            assertEquals(1, countHistoryVersion(dataSource, "11"));
-            assertEquals(1, countHistoryVersion(dataSource, "12"));
-            assertEquals(1, countHistoryVersion(dataSource, "13"));
-            assertEquals(1, countHistoryVersion(dataSource, "14"));
-            assertEquals(1, countHistoryVersion(dataSource, "15"));
-            assertEquals(1, countHistoryVersion(dataSource, "16"));
-            assertEquals(1, countHistoryVersion(dataSource, "17"));
-            assertEquals("17", latestHistoryVersion(dataSource));
+            assertSuccessfulMigrationVersions(dataSource, 9, CURRENT_SCHEMA_VERSION);
+            assertEquals(currentSchemaVersion(), latestHistoryVersion(dataSource));
         } finally {
             dropDatabase(database);
         }
@@ -295,7 +293,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
                 + "'agent-only', 700, 'finished', 800, '物流', 'logistics', 'URGENT', 'sad', "
                 + "'[\"agent-only\"]')");
 
-            migrate(dataSource, database);
+            migrateTo(dataSource, "17");
 
             assertEquals(1, queryInt(dataSource,
                 "SELECT COUNT(*) FROM `cw_ticket` WHERE `session_id` = 'session-existing'"));
@@ -333,72 +331,82 @@ class CustomerWorkSchemaMigrationIntegrationTest {
 
     private void verifyCompleteMirrorAdoption(String database) throws Exception {
         try (HikariDataSource dataSource = dataSource(database, "flyway-mirror-test")) {
-            Path workingDirectory = Path.of("").toAbsolutePath();
-            Path repositoryRoot = Files.isDirectory(workingDirectory.resolve("mysql"))
-                ? workingDirectory : workingDirectory.getParent();
-            Path mirrorPath = repositoryRoot.resolve(
-                "mysql/01-agent-scope-customer-work/customer-work-schema.sql");
-            String mirrorSql = Files.readString(mirrorPath, StandardCharsets.UTF_8)
-                .replaceFirst("(?is)CREATE DATABASE IF NOT EXISTS .*?;", "")
-                .replaceFirst("(?is)USE\\s+`[^`]+`\\s*;", "");
-            ResourceDatabasePopulator populator = new ResourceDatabasePopulator(
-                new ByteArrayResource(mirrorSql.getBytes(StandardCharsets.UTF_8)));
-            populator.execute(dataSource);
+            populateSchemaMirror(dataSource);
 
             migrate(dataSource, database);
             migrate(dataSource, database);
 
-            assertEquals(46, countBusinessTables(dataSource));
+            assertEquals(CURRENT_BUSINESS_TABLE_COUNT, countBusinessTables(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertTrue(columnExists(dataSource, "cw_outbox_message", "lease_owner"));
             assertAuditTimestampColumns(dataSource);
-            // 完整镜像已包含 V10 隐私至 V17 工单权威源归并，必须直接从 V17 接管；
-            // 否则非幂等 ALTER TABLE 会在镜像库上重复加列。
+            // 完整镜像已包含全部当前迁移，必须直接从当前版本接管，
+            // 避免重复扫描存量数据。
             assertEquals(1, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
-            assertEquals(1, countHistoryVersion(dataSource, "17"), "完整镜像应从 V17 接管");
-            assertEquals(0, countHistoryVersion(dataSource, "16"), "V16 已包含在镜像，不应重跑");
-            assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
-            assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
-            assertTrue(columnExists(dataSource, "cw_eval_dataset_version", "content_hash"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_log", "version_binding_json"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
-            assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
-            assertTrue(columnExists(dataSource, "cw_user", "session_epoch"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_segment", "pricing_status"));
-            assertTrue(columnExists(dataSource, "cw_ticket", "routing_category"));
-            assertEquals("17", latestHistoryVersion(dataSource));
+            assertEquals(1, countHistoryVersion(dataSource, currentSchemaVersion()),
+                "完整镜像应从当前版本接管");
+            assertEquals(0, countHistoryVersion(dataSource, String.valueOf(CURRENT_SCHEMA_VERSION - 1)),
+                "前序迁移已包含在镜像，不应重跑");
+            assertCurrentAgentSchema(dataSource);
+            assertEquals(currentSchemaVersion(), latestHistoryVersion(dataSource));
         }
+    }
+
+    private void verifyPreviousMirrorUpgrade(String database) throws Exception {
+        try (HikariDataSource dataSource = dataSource(database, "flyway-previous-mirror-test")) {
+            populateSchemaMirror(dataSource);
+            execute(dataSource, "DROP TABLE `cw_eval_dataset_release`");
+            execute(dataSource, "ALTER TABLE `cw_agent_call_log` "
+                + "DROP INDEX `idx_agent_call_cost_window`, "
+                + "DROP COLUMN `replay_snapshot_json`, "
+                + "DROP COLUMN `model_cost_amount`, "
+                + "DROP COLUMN `model_cost_currency`, "
+                + "DROP COLUMN `model_cost_status`, "
+                + "DROP COLUMN `model_segment_count`, "
+                + "DROP COLUMN `settled_cost_segment_count`, "
+                + "DROP COLUMN `unsettled_cost_segment_count`");
+            execute(dataSource, "ALTER TABLE `cw_agent_call_segment` "
+                + "DROP COLUMN `cost_amount`, DROP COLUMN `cost_currency`, DROP COLUMN `cost_status`");
+            execute(dataSource, "ALTER TABLE `cw_badcase` "
+                + "DROP INDEX `idx_badcase_signal`, DROP COLUMN `signal_hash`");
+
+            migrate(dataSource, database);
+
+            assertEquals(5, countHistoryRows(dataSource), "V17 镜像应登记接管基线并补跑 V18-V21");
+            assertEquals(1, countHistoryVersion(dataSource, "17"), "上一版完整镜像应从 V17 接管");
+            assertSuccessfulMigrationVersions(dataSource, 18, CURRENT_SCHEMA_VERSION);
+            assertCurrentAgentSchema(dataSource);
+            assertEquals(currentSchemaVersion(), latestHistoryVersion(dataSource));
+        }
+    }
+
+    private void populateSchemaMirror(HikariDataSource dataSource) throws Exception {
+        Path workingDirectory = Path.of("").toAbsolutePath();
+        Path repositoryRoot = Files.isDirectory(workingDirectory.resolve("mysql"))
+            ? workingDirectory : workingDirectory.getParent();
+        Path mirrorPath = repositoryRoot.resolve(
+            "mysql/01-agent-scope-customer-work/customer-work-schema.sql");
+        String mirrorSql = Files.readString(mirrorPath, StandardCharsets.UTF_8)
+            .replaceFirst("(?is)CREATE DATABASE IF NOT EXISTS .*?;", "")
+            .replaceFirst("(?is)USE\\s+`[^`]+`\\s*;", "");
+        ResourceDatabasePopulator populator = new ResourceDatabasePopulator(
+            new ByteArrayResource(mirrorSql.getBytes(StandardCharsets.UTF_8)));
+        populator.execute(dataSource);
     }
 
     private void verifyEmptyDatabaseMigration(String database) throws Exception {
         try (HikariDataSource dataSource = dataSource(database, "flyway-empty-test")) {
             migrate(dataSource, database);
-            assertEquals(46, countBusinessTables(dataSource));
-            // 空库逐版登记 V1-V17。
-            assertEquals(17, countHistoryRows(dataSource));
+            assertEquals(CURRENT_BUSINESS_TABLE_COUNT, countBusinessTables(dataSource));
+            // 空库逐版登记全部当前迁移。
+            assertEquals(CURRENT_SCHEMA_VERSION, countHistoryRows(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertAuditTimestampColumns(dataSource);
             verifyUpdatedAtAutoAdvance(dataSource);
             assertEquals(0, countHistoryVersion(dataSource, "0"), "空库不应写 baseline 记录");
-            assertEquals(1, countHistoryVersion(dataSource, "9"));
-            assertEquals(1, countHistoryVersion(dataSource, "10"));
-            assertEquals(1, countHistoryVersion(dataSource, "11"));
-            assertEquals(1, countHistoryVersion(dataSource, "12"));
-            assertEquals(1, countHistoryVersion(dataSource, "13"));
-            assertEquals(1, countHistoryVersion(dataSource, "14"));
-            assertEquals(1, countHistoryVersion(dataSource, "15"));
-            assertEquals(1, countHistoryVersion(dataSource, "16"));
-            assertEquals(1, countHistoryVersion(dataSource, "17"));
-            assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
-            assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
-            assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
-            assertTrue(columnExists(dataSource, "cw_user", "session_epoch"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_segment", "pricing_status"));
-            assertTrue(columnExists(dataSource, "cw_ticket", "routing_category"));
-            assertEquals("17", latestHistoryVersion(dataSource));
+            assertSuccessfulMigrationVersions(dataSource, 1, CURRENT_SCHEMA_VERSION);
+            assertCurrentAgentSchema(dataSource);
+            assertEquals(currentSchemaVersion(), latestHistoryVersion(dataSource));
         }
     }
 
@@ -416,30 +424,46 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertTrue(columnExists(dataSource, "cw_chat_attachment", "message_id"));
             // V4 给存量 cw_user 加的配额等级列：这张表是 V1 就建好的，加列只能靠迁移补
             assertTrue(columnExists(dataSource, "cw_user", "level_code"));
-            assertEquals(46, countBusinessTables(dataSource));
+            assertEquals(CURRENT_BUSINESS_TABLE_COUNT, countBusinessTables(dataSource));
             assertAuditTimestampColumns(dataSource);
-            // baseline 0 + V1~V17
-            assertEquals(18, countHistoryRows(dataSource));
+            // baseline 0 + 全部当前迁移。
+            assertEquals(CURRENT_SCHEMA_VERSION + 1, countHistoryRows(dataSource));
             assertEquals(1, countHistoryVersion(dataSource, "0"), "非空存量库必须先登记 baseline 0");
-            assertEquals(1, countHistoryVersion(dataSource, "9"));
-            assertEquals(1, countHistoryVersion(dataSource, "10"));
-            assertEquals(1, countHistoryVersion(dataSource, "11"));
-            assertEquals(1, countHistoryVersion(dataSource, "12"));
-            assertEquals(1, countHistoryVersion(dataSource, "13"));
-            assertEquals(1, countHistoryVersion(dataSource, "14"));
-            assertEquals(1, countHistoryVersion(dataSource, "15"));
-            assertEquals(1, countHistoryVersion(dataSource, "16"));
-            assertEquals(1, countHistoryVersion(dataSource, "17"));
-            assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
-            assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
-            assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
-            assertTrue(columnExists(dataSource, "cw_user", "session_epoch"));
-            assertTrue(columnExists(dataSource, "cw_agent_call_segment", "pricing_status"));
-            assertTrue(columnExists(dataSource, "cw_ticket", "routing_category"));
-            assertEquals("17", latestHistoryVersion(dataSource));
+            assertSuccessfulMigrationVersions(dataSource, 1, CURRENT_SCHEMA_VERSION);
+            assertCurrentAgentSchema(dataSource);
+            assertEquals(currentSchemaVersion(), latestHistoryVersion(dataSource));
         }
+    }
+
+    private void assertSuccessfulMigrationVersions(HikariDataSource dataSource, int firstVersion,
+                                                   int lastVersion) throws Exception {
+        for (int version = firstVersion; version <= lastVersion; version++) {
+            assertEquals(1, countHistoryVersion(dataSource, String.valueOf(version)),
+                "V" + version + " 应且只应登记一次成功迁移");
+        }
+    }
+
+    private void assertCurrentAgentSchema(HikariDataSource dataSource) throws Exception {
+        assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
+        assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
+        assertTrue(columnExists(dataSource, "cw_eval_dataset_version", "content_hash"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
+        assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
+        assertTrue(columnExists(dataSource, "cw_user", "session_epoch"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_segment", "pricing_status"));
+        assertTrue(columnExists(dataSource, "cw_ticket", "routing_category"));
+        assertTrue(columnExists(dataSource, "cw_eval_dataset_release", "content_hash"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "replay_snapshot_json"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_segment", "cost_status"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "model_cost_status"));
+        assertTrue(indexExists(dataSource, "cw_agent_call_log", "idx_agent_call_cost_window"));
+        assertTrue(columnExists(dataSource, "cw_badcase", "signal_hash"));
+        assertTrue(indexExists(dataSource, "cw_badcase", "idx_badcase_signal"));
+    }
+
+    private String currentSchemaVersion() {
+        return String.valueOf(CURRENT_SCHEMA_VERSION);
     }
 
     private void verifyPlatformTenantMigration(String database) throws Exception {
@@ -731,6 +755,19 @@ class CustomerWorkSchemaMigrationIntegrationTest {
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, table);
             statement.setString(2, column);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next();
+            }
+        }
+    }
+
+    private boolean indexExists(HikariDataSource dataSource, String table, String index) throws Exception {
+        String sql = "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() "
+            + "AND table_name = ? AND index_name = ?";
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, table);
+            statement.setString(2, index);
             try (ResultSet resultSet = statement.executeQuery()) {
                 return resultSet.next();
             }
