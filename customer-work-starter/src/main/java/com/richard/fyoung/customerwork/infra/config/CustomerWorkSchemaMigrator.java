@@ -47,6 +47,17 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private final DataSource dataSource;
     private final boolean enabled;
 
+    /**
+     * 为已经持有客服端数据源的宿主执行强制迁移。
+     *
+     * <p>典型场景是 Admin 的惰性跨库门面：它不加载 starter 自动装配，但在真正暴露客服端
+     * Mapper 前仍必须先把同一套权威 schema 迁到当前版本。</p>
+     */
+    public CustomerWorkSchemaMigrator(DataSource dataSource) {
+        this.dataSource = dataSource;
+        this.enabled = true;
+    }
+
     public CustomerWorkSchemaMigrator(DataSource dataSource, CustomerWorkProperties properties) {
         this.dataSource = dataSource;
         this.enabled = properties.getSession().getMysql().isSchemaMigrationEnabled();

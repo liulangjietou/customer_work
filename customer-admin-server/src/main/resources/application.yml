@@ -135,10 +135,11 @@ admin:
     # 推荐通过外部 Secret YAML 注入 admin.open-api.tenant-tokens，避免把令牌提交进仓库。
     tenant-tokens: {}
   a2a:
-    # A2A 导出默认关闭；启用时必须同时配置 agent-code 与专用 Bearer Token。
+    # A2A 导出默认关闭；111111 只用于本地开发免配置启动。生产 profile 会清空该默认值，
+    # 启用时还会由 AdminProductionReadinessValidator 强制要求至少 32 字节的专用 Bearer Token。
     enabled: ${ADMIN_A2A_ENABLED:false}
     agent-code: ${ADMIN_A2A_AGENT_CODE:}
-    token: ${ADMIN_A2A_TOKEN:}
+    token: ${ADMIN_A2A_TOKEN:111111}
   # 后台登录用户的 AI 用量额度：按 sys_user 登录 ID 计，与客服端的
   # customer-work.subject-quota（按终端用户/IP/API Key 计）是同一套机制的两个部署侧。
   # 等级定义共用客服端库的 cw_subject_quota_level（靠 subject_type=ADMIN_USER 区分），
@@ -416,6 +417,8 @@ admin:
       # 采样比例 [0,1]：1.0 全采，生产高流量建议下调；父级已采样的链路始终跟随父级，不会截成两截。
       sampler-ratio: ${ADMIN_OTEL_SAMPLER_RATIO:1.0}
   content-guard:
+    # Admin 只启动 8082 时也要在首次跨库访问前补齐客服端 V1-V21；生产 profile 关闭，仍由 DBA 变更。
+    schema-migration-enabled: ${ADMIN_CUSTOMER_WORK_SCHEMA_MIGRATION_ENABLED:true}
     # 给后台工作区智能体（对话/VibeCoding）挂敏感词过滤；词库与 8080 客服链路共用客服端库那一份。
     agent-filter-enabled: ${ADMIN_CONTENT_GUARD_ENABLED:false}
     # 生效方向：INBOUND（只管用户输入）| OUTBOUND（只管模型输出）| BOTH（默认，两端都过）。
@@ -425,6 +428,11 @@ admin:
     # 命中日志：开了才有「命中看板」的数据。默认关是因为它会把用户原文片段落库（属敏感数据），
     # 是否留存需按合规要求显式决定；片段长度由 hit-log-snippet-max-length 控制，置 0 则只记命中词不留原文。
     hit-log-enabled: ${ADMIN_CONTENT_GUARD_HIT_LOG_ENABLED:false}
+  dict:
+    schema-migration-enabled: ${ADMIN_CUSTOMER_WORK_SCHEMA_MIGRATION_ENABLED:true}
+  agent-call-stats:
+    app:
+      schema-migration-enabled: ${ADMIN_CUSTOMER_WORK_SCHEMA_MIGRATION_ENABLED:true}
 
 # 对话附件多格式解析（starter attachment 域配置，admin 经 AdminAttachmentConfig 显式装配复用这份强类型绑定）。
 # 顶层 customer-work.* 前缀（区别于上面 admin.customer-work.* 的坐席服务客户端配置），对应 AttachmentProperties。

@@ -26,6 +26,9 @@ class AdminProdProfileConfigTest {
             "admin.sandbox.features.refactor-enabled"));
         assertEquals("${ADMIN_SANDBOX_MANAGEMENT_ENABLED:true}", property(sources,
             "admin.sandbox.features.management-enabled"));
+        assertEquals("${ADMIN_A2A_TOKEN:111111}", property(sources, "admin.a2a.token"));
+        assertEquals("${ADMIN_CUSTOMER_WORK_SCHEMA_MIGRATION_ENABLED:true}", property(sources,
+            "admin.content-guard.schema-migration-enabled"));
     }
 
     @Test
@@ -48,6 +51,12 @@ class AdminProdProfileConfigTest {
             "admin.sandbox.features.refactor-enabled"));
         assertEquals(Boolean.FALSE, property(sources,
             "admin.sandbox.features.management-enabled"));
+        assertEquals("${ADMIN_A2A_TOKEN:}", property(sources, "admin.a2a.token"));
+        assertEquals(Boolean.FALSE, property(sources,
+            "admin.content-guard.schema-migration-enabled"));
+        assertEquals(Boolean.FALSE, property(sources, "admin.dict.schema-migration-enabled"));
+        assertEquals(Boolean.FALSE, property(sources,
+            "admin.agent-call-stats.app.schema-migration-enabled"));
     }
 
     private Object property(List<PropertySource<?>> sources, String key) {

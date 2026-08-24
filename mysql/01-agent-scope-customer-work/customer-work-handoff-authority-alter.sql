@@ -47,7 +47,8 @@ WHERE newer.id IS NULL;
 -- 已有同会话 Ticket 时只补齐迁移事实；若 Ticket 已经走过人工链路，绝不让旧三态覆盖新状态机。
 UPDATE `cw_ticket` t
 INNER JOIN `_v17_legacy_handoff_latest` h
-        ON h.tenant_id = t.tenant_id AND h.session_id = t.session_id
+        ON CAST(h.tenant_id AS BINARY) = CAST(t.tenant_id AS BINARY)
+       AND CAST(h.session_id AS BINARY) = CAST(t.session_id AS BINARY)
 LEFT JOIN `cw_ticket` newer
        ON newer.tenant_id = t.tenant_id AND newer.session_id = t.session_id
       AND (newer.created_at_ms > t.created_at_ms
@@ -61,7 +62,7 @@ SET t.status = CASE
         ELSE t.status
     END,
     t.assignee = COALESCE(t.assignee, h.claimed_by),
-    t.handoff_reason = COALESCE(NULLIF(t.handoff_reason, ''), h.reason),
+    t.handoff_reason = COALESCE(NULLIF(t.handoff_reason, ''), LEFT(h.reason, 255)),
     t.handoff_at_ms = GREATEST(COALESCE(t.handoff_at_ms, 0), h.created_at_ms),
     t.claimed_at_ms = GREATEST(COALESCE(t.claimed_at_ms, 0), COALESCE(h.claimed_at_ms, 0)),
     t.resolved_at_ms = GREATEST(COALESCE(t.resolved_at_ms, 0), COALESCE(h.resolved_at_ms, 0)),
@@ -82,11 +83,11 @@ INSERT INTO `cw_ticket`
      `routing_priority`, `emotion`, `suggested_assignees`, `reopen_count`, `created_at_ms`,
      `updated_at_ms`, `handoff_at_ms`, `claimed_at_ms`, `resolved_at_ms`, `closed_at_ms`,
      `last_user_active_at_ms`)
-SELECT h.tenant_id, h.id, h.session_id, CONCAT('legacy-handoff:', h.session_id),
+SELECT h.tenant_id, h.id, h.session_id, LEFT(CONCAT('legacy-handoff:', h.session_id), 64),
        LEFT(COALESCE(NULLIF(h.reason, ''), 'Legacy handoff'), 255), 'OTHER', 'NORMAL',
        CASE h.status WHEN 'PENDING' THEN 'WAITING_AGENT' WHEN 'CLAIMED' THEN 'PROCESSING'
             WHEN 'RESOLVED' THEN 'RESOLVED' ELSE 'WAITING_AGENT' END,
-       h.claimed_by, h.reason, h.resolution_note, h.category, h.required_skill, h.priority,
+       h.claimed_by, LEFT(h.reason, 255), h.resolution_note, h.category, h.required_skill, h.priority,
        h.emotion, h.suggested_assignees, 0, h.created_at_ms,
        GREATEST(h.created_at_ms, COALESCE(h.claimed_at_ms, 0), COALESCE(h.resolved_at_ms, 0)),
        h.created_at_ms, COALESCE(h.claimed_at_ms, 0), COALESCE(h.resolved_at_ms, 0), 0,
@@ -95,7 +96,8 @@ FROM `_v17_legacy_handoff_latest` h
 WHERE h.session_id IS NOT NULL AND h.session_id <> ''
   AND NOT EXISTS (
       SELECT 1 FROM `cw_ticket` t
-      WHERE t.tenant_id = h.tenant_id AND t.session_id = h.session_id
+      WHERE CAST(t.tenant_id AS BINARY) = CAST(h.tenant_id AS BINARY)
+        AND CAST(t.session_id AS BINARY) = CAST(h.session_id AS BINARY)
   );
 
 -- 每个迁移来源只追加一次审计事件，重复手工执行脚本也不会重复留痕。
@@ -106,7 +108,8 @@ SELECT h.tenant_id, t.id, 'HANDOFF_MIGRATED', NULL, t.status, 'SYSTEM',
        'flyway-v17', 'Migrated from legacy handoff authority', h.created_at_ms
 FROM `_v17_legacy_handoff_latest` h
 INNER JOIN `cw_ticket` t
-        ON t.tenant_id = h.tenant_id AND t.session_id = h.session_id
+        ON CAST(t.tenant_id AS BINARY) = CAST(h.tenant_id AS BINARY)
+       AND CAST(t.session_id AS BINARY) = CAST(h.session_id AS BINARY)
 LEFT JOIN `cw_ticket` newer
        ON newer.tenant_id = t.tenant_id AND newer.session_id = t.session_id
       AND (newer.created_at_ms > t.created_at_ms
@@ -114,7 +117,8 @@ LEFT JOIN `cw_ticket` newer
 WHERE newer.id IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM `cw_ticket_event` e
-      WHERE e.tenant_id = h.tenant_id AND e.ticket_id = t.id
+      WHERE CAST(e.tenant_id AS BINARY) = CAST(h.tenant_id AS BINARY)
+        AND e.ticket_id = t.id
         AND e.event_type = 'HANDOFF_MIGRATED'
   );
 

@@ -35,6 +35,17 @@ springdoc:
 # AI 编码命令、诊断、重构与沙箱管理属于高风险开发能力，生产环境禁止开放。
 # 即使环境变量试图覆盖这些值，AdminProductionReadinessValidator 也会拒绝启动。
 admin:
+  a2a:
+    # 覆盖 application.yml 的本地开发默认值；生产启用 A2A 时必须由 Secret 注入强令牌。
+    token: ${ADMIN_A2A_TOKEN:}
+  # 客服端生产库沿用 DBA 手工变更约定；Admin 只消费已审核结构，不持有 DDL 权限。
+  content-guard:
+    schema-migration-enabled: false
+  dict:
+    schema-migration-enabled: false
+  agent-call-stats:
+    app:
+      schema-migration-enabled: false
   sandbox:
     features:
       command-execution-enabled: false

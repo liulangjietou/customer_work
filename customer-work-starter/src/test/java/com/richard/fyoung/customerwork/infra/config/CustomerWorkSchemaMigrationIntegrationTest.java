@@ -122,9 +122,11 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         String legacyDatabase = "cw_flyway_legacy_" + suffix;
         String mirrorDatabase = "cw_flyway_mirror_" + suffix;
         String previousMirrorDatabase = "cw_flyway_previous_mirror_" + suffix;
+        String v16PartialDatabase = "cw_flyway_v16_partial_" + suffix;
         String platformDatabase = "cw_flyway_platform_" + suffix;
         assumeTrue(canCreateDatabases(
-            emptyDatabase, legacyDatabase, mirrorDatabase, previousMirrorDatabase, platformDatabase),
+            emptyDatabase, legacyDatabase, mirrorDatabase, previousMirrorDatabase,
+            v16PartialDatabase, platformDatabase),
             "MySQL 测试账号无建库权限，跳过");
 
         try {
@@ -132,12 +134,14 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             verifyLegacyDatabaseMigration(legacyDatabase);
             verifyCompleteMirrorAdoption(mirrorDatabase);
             verifyPreviousMirrorUpgrade(previousMirrorDatabase);
+            verifyV16HistoryWithPartialNewDdlUpgrade(v16PartialDatabase);
             verifyPlatformTenantMigration(platformDatabase);
         } finally {
             dropDatabase(emptyDatabase);
             dropDatabase(legacyDatabase);
             dropDatabase(mirrorDatabase);
             dropDatabase(previousMirrorDatabase);
+            dropDatabase(v16PartialDatabase);
             dropDatabase(platformDatabase);
         }
     }
@@ -272,6 +276,15 @@ class CustomerWorkSchemaMigrationIntegrationTest {
 
         try (HikariDataSource dataSource = dataSource(database, "flyway-handoff-test")) {
             migrateTo(dataSource, "16");
+            // 复现真实旧库：两代初始化脚本曾给权威工单与旧 handoff 表留下不同排序规则。
+            execute(dataSource, "ALTER TABLE `cw_ticket` "
+                + "MODIFY `tenant_id` VARCHAR(64) CHARACTER SET utf8mb4 "
+                + "COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'default', "
+                + "MODIFY `session_id` VARCHAR(128) CHARACTER SET utf8mb4 "
+                + "COLLATE utf8mb4_0900_ai_ci NOT NULL");
+            execute(dataSource, "ALTER TABLE `cw_ticket_event` "
+                + "MODIFY `tenant_id` VARCHAR(64) CHARACTER SET utf8mb4 "
+                + "COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'default'");
             execute(dataSource, "INSERT INTO `cw_ticket` "
                 + "(`tenant_id`, `id`, `session_id`, `user_id`, `title`, `category`, `priority`, "
                 + "`status`, `reopen_count`, `created_at_ms`, `updated_at_ms`) VALUES "
@@ -380,6 +393,28 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         }
     }
 
+    /**
+     * 复现 Admin 单独启动时发现的真实存量状态：Flyway 历史停在 V16，但有人已手工补过 V18 表，
+     * V20 成本列仍不存在。重新接管必须安全登记 V17-V21，并补齐全部结构。
+     */
+    private void verifyV16HistoryWithPartialNewDdlUpgrade(String database) throws Exception {
+        try (HikariDataSource dataSource = dataSource(database, "flyway-v16-partial-test")) {
+            migrateTo(dataSource, "16");
+            new ResourceDatabasePopulator(new ClassPathResource(
+                "db/customerwork/migration/V18__eval_dataset_governance.sql")).execute(dataSource);
+
+            assertEquals("16", latestHistoryVersion(dataSource));
+            assertTrue(columnExists(dataSource, "cw_eval_dataset_release", "content_hash"));
+            assertFalse(columnExists(dataSource, "cw_agent_call_log", "model_segment_count"));
+
+            migrate(dataSource, database);
+
+            assertSuccessfulMigrationVersions(dataSource, 17, CURRENT_SCHEMA_VERSION);
+            assertCurrentAgentSchema(dataSource);
+            assertEquals(currentSchemaVersion(), latestHistoryVersion(dataSource));
+        }
+    }
+
     private void populateSchemaMirror(HikariDataSource dataSource) throws Exception {
         Path workingDirectory = Path.of("").toAbsolutePath();
         Path repositoryRoot = Files.isDirectory(workingDirectory.resolve("mysql"))
@@ -453,10 +488,22 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         assertTrue(columnExists(dataSource, "cw_user", "session_epoch"));
         assertTrue(columnExists(dataSource, "cw_agent_call_segment", "pricing_status"));
         assertTrue(columnExists(dataSource, "cw_ticket", "routing_category"));
+        assertTrue(columnExists(dataSource, "cw_eval_dataset_release", "version_name"));
+        assertTrue(columnExists(dataSource, "cw_eval_dataset_release", "snapshot_version_id"));
         assertTrue(columnExists(dataSource, "cw_eval_dataset_release", "content_hash"));
+        assertTrue(columnExists(dataSource, "cw_eval_dataset_release", "status"));
+        assertTrue(indexExists(dataSource, "cw_eval_dataset_release", "uk_eval_dataset_release_name"));
+        assertTrue(indexExists(dataSource, "cw_eval_dataset_release", "idx_eval_dataset_release_status"));
         assertTrue(columnExists(dataSource, "cw_agent_call_log", "replay_snapshot_json"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_segment", "cost_amount"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_segment", "cost_currency"));
         assertTrue(columnExists(dataSource, "cw_agent_call_segment", "cost_status"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "model_cost_amount"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "model_cost_currency"));
         assertTrue(columnExists(dataSource, "cw_agent_call_log", "model_cost_status"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "model_segment_count"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "settled_cost_segment_count"));
+        assertTrue(columnExists(dataSource, "cw_agent_call_log", "unsettled_cost_segment_count"));
         assertTrue(indexExists(dataSource, "cw_agent_call_log", "idx_agent_call_cost_window"));
         assertTrue(columnExists(dataSource, "cw_badcase", "signal_hash"));
         assertTrue(indexExists(dataSource, "cw_badcase", "idx_badcase_signal"));

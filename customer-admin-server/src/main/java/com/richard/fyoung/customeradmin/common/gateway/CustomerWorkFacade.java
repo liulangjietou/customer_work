@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.common.gateway;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkSchemaMigrator;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbConnectionSettings;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGatewayProvider;
@@ -11,7 +12,9 @@ import com.richard.fyoung.customerwork.infra.gateway.CrossDbUnavailableException
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -19,7 +22,7 @@ import java.util.function.Function;
  *
  * <p><b>为什么需要它</b>：admin 用 {@code spring.autoconfigure.exclude} 关掉了 starter 的自动装配，
  * 凡是要读写客服端库的能力都得自己建一套跨库环境。这套代码有固定套路（惰性建池、探测、
- * 库不可达转业务异常、销毁时关池），此前每个能力域各抄一份——内容风控、评测、badcase、
+ * schema 迁移、库不可达转业务异常、销毁时关池），此前每个能力域各抄一份——内容风控、评测、badcase、
  * 字典、配额、运营看板、主体配额，7 份 Provider 共 493 行，差异只有下面那几个参数。</p>
  *
  * <p>抄一份的代价不是行数，是<b>散落</b>：套路里任何一条要改（比如池参数、异常转换口径），
@@ -98,8 +101,11 @@ public final class CustomerWorkFacade<T> {
         private List<Class<?>> mapperClasses = List.of();
         private List<String> mapperXmlLocations = List.of();
         private int maxPoolSize = CrossDbConnectionSettings.DEFAULT_MAX_POOL_SIZE;
+        private String driverClassName = CrossDbConnectionSettings.DEFAULT_DRIVER_CLASS;
         private String errorCode = "CUSTOMER-WORK-DS-UNAVAILABLE";
         private String errorHint = "客服端库不可达";
+        private Consumer<DataSource> schemaMigrator = dataSource ->
+            new CustomerWorkSchemaMigrator(dataSource).afterPropertiesSet();
 
         private Builder(String poolName, CustomerWorkDbConnection properties,
                         AdminCrossDbTenantPlugins tenantPlugins) {
@@ -136,13 +142,36 @@ public final class CustomerWorkFacade<T> {
             return this;
         }
 
+        /** 测试替换点：生产统一执行 {@link CustomerWorkSchemaMigrator}，不允许各业务域自行改迁移口径。 */
+        Builder schemaMigrator(Consumer<DataSource> migrator) {
+            this.schemaMigrator = migrator;
+            return this;
+        }
+
+        /** 测试数据源驱动替换点；生产始终沿用客服端 MySQL 默认驱动。 */
+        Builder driverClassName(String driverClassName) {
+            this.driverClassName = driverClassName;
+            return this;
+        }
+
         public <T> CustomerWorkFacade<T> build(Function<CrossDbGateway, T> factory) {
+            Function<CrossDbGateway, T> schemaGuardedFactory = gateway -> {
+                // Mapper 代理构建本身不会访问表；首次把业务门面交给调用方之前完成迁移，
+                // 避免把缺表/缺列延迟成第一条真实业务 SQL 的 BadSqlGrammarException。
+                if (properties.isSchemaMigrationEnabled()) {
+                    schemaMigrator.accept(gateway.dataSource());
+                } else {
+                    log.info("customer-work schema migration disabled for cross-db facade, pool={}", poolName);
+                }
+                return factory.apply(gateway);
+            };
             CrossDbGatewayProvider<T> provider = CrossDbGateways.lazy(
                 () -> CrossDbConnectionSettings.builder(poolName, properties.jdbcUrl())
                     .credentials(properties.getUsername(), properties.getPassword())
+                    .driverClassName(driverClassName)
                     .maximumPoolSize(maxPoolSize)
                     .build(),
-                mapperClasses, mapperXmlLocations, tenantPlugins::create, factory);
+                mapperClasses, mapperXmlLocations, tenantPlugins::create, schemaGuardedFactory);
             return new CustomerWorkFacade<>(properties, provider, errorCode, errorHint);
         }
     }

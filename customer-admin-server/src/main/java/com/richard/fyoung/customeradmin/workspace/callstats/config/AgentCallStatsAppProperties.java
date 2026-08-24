@@ -30,6 +30,9 @@ public class AgentCallStatsAppProperties implements CustomerWorkDbConnection {
     /** 密码。 */
     private String password = "root";
 
+    /** Admin 首次访问客服端库前是否执行其权威 Flyway；生产 DBA 模式关闭。 */
+    private boolean schemaMigrationEnabled = true;
+
     /** 拼装 JDBC URL（与 admin 主库同款连接参数）。 */
     public String jdbcUrl() {
         return "jdbc:mysql://" + host + ":" + port + "/" + database

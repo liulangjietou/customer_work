@@ -22,6 +22,7 @@ import java.util.stream.Collectors;
 public class AdminProductionReadinessValidator implements InitializingBean {
 
     private static final String DEV_AES_KEY = "0123456789abcdef0123456789abcdef";
+    private static final int MIN_A2A_TOKEN_BYTES = 32;
     private static final int MIN_RUNTIME_ACK_TOKEN_BYTES = 32;
     private static final List<String> FORBIDDEN_PRODUCTION_AI_CODING_FEATURES = List.of(
         "admin.sandbox.features.command-execution-enabled",
@@ -78,6 +79,7 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         validateModelEgress(violations);
         validateModelHealth(violations);
         validateOpenApi(violations);
+        validateA2a(violations);
         validateRuntimePublish(violations);
         validateGovernance(violations);
 
@@ -200,6 +202,16 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         require(violations, "admin.open-api.tenant-tokens",
             tenantTokens.entrySet().stream().anyMatch(entry ->
                 isProductionSecret(entry.getKey()) && hasText(entry.getValue())));
+    }
+
+    private void validateA2a(List<String> violations) {
+        if (!environment.getProperty("admin.a2a.enabled", Boolean.class, false)) {
+            return;
+        }
+        requireText(violations, "admin.a2a.agent-code");
+        String token = value("admin.a2a.token");
+        require(violations, "admin.a2a.token", isProductionSecret(token)
+            && token.getBytes(StandardCharsets.UTF_8).length >= MIN_A2A_TOKEN_BYTES);
     }
 
     private void validateGovernance(List<String> violations) {

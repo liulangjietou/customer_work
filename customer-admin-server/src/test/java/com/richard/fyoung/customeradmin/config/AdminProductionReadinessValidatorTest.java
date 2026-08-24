@@ -50,6 +50,30 @@ class AdminProductionReadinessValidatorTest {
     }
 
     @Test
+    void a2aShouldRejectDevelopmentTokenWhenEnabled() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.a2a.enabled", "true")
+            .withProperty("admin.a2a.agent-code", "customer-service")
+            .withProperty("admin.a2a.token", "111111");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.a2a.token"));
+        assertFalse(error.getMessage().contains("111111"));
+    }
+
+    @Test
+    void a2aShouldAcceptDedicatedStrongTokenWhenEnabled() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.a2a.enabled", "true")
+            .withProperty("admin.a2a.agent-code", "customer-service")
+            .withProperty("admin.a2a.token", "production-a2a-token-at-least-32-bytes");
+
+        assertDoesNotThrow(() -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+    }
+
+    @Test
     void dockerSandbox_shouldRequireNetworkIsolation() {
         MockEnvironment environment = validEnvironment()
             .withProperty("admin.sandbox.mode", "docker")

@@ -19,4 +19,9 @@ public interface CustomerWorkDbConnection {
     String getUsername();
 
     String getPassword();
+
+    /** 是否在暴露客服端 Mapper 前执行 Flyway；生产 DBA 模式可显式关闭。 */
+    default boolean isSchemaMigrationEnabled() {
+        return true;
+    }
 }
