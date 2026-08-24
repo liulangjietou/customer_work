@@ -93,6 +93,8 @@ public class AdminOpenApiClient {
                 n.path("robotCode").asText(null),
                 n.path("agentCode").asText(null),
                 n.path("sessionMode").asText(null),
+                n.path("callbackMode").asText(null),
+                n.path("encodingAesKey").asText(null),
                 n.path("version").isMissingNode() ? null : n.path("version").asLong()));
         }
         return result;
@@ -141,17 +143,19 @@ public class AdminOpenApiClient {
      * @param message        用户消息
      * @param channelType    可信渠道类型（用于 admin 校验精确绑定并注入模型路由）
      * @param appKey         可信渠道 AppKey（用于 admin 校验精确绑定）
+     * @param externalUserId 渠道连接器验证并归一化的外部用户 ID
      * @param timeoutSeconds 聚合超时（秒）
      * @return 聚合后的完整回复正文
      */
     public String chat(String agentCode, String sessionId, String message,
-                       String channelType, String appKey, int timeoutSeconds) {
+                       String channelType, String appKey, String externalUserId, int timeoutSeconds) {
         StringBuilder answer = new StringBuilder();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sessionId", sessionId);
         body.put("message", message);
         body.put("channelType", channelType);
         body.put("appKey", appKey);
+        body.put("externalUserId", externalUserId);
         webClient.post()
             .uri(ChannelAccessConstants.PATH_AGENT_CHAT, agentCode)
             .contentType(MediaType.APPLICATION_JSON)

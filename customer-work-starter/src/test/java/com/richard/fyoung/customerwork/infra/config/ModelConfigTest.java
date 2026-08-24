@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.infra.config;
 
+import com.richard.fyoung.customerwork.core.model.attribution.AttributedModel;
 import com.richard.fyoung.customerwork.core.model.failover.FailoverModel;
+import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.GenerateOptions;
@@ -15,17 +17,15 @@ import reactor.test.StepVerifier;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 
 /**
  * 模型层进阶单测：多厂商模型构建（离线）+ {@code buildChain} 组装出的模型链语义
- * （主挂切备 / 备也挂抛错 / 首分片后不切备 / 重试叠加 / 未开兜底时不加壳）。
+ * （主挂切备 / 备也挂抛错 / 首分片后不切备 / 重试叠加 / 未开兜底时仅保留归因装饰）。
  *
  * <p>兜底实现已由 {@code FallbackChatModel} 换成下沉到 starter 的
  * {@link FailoverModel}（主备有序候选 + 熔断记忆），原有语义在此逐条保留。</p>
@@ -75,15 +75,21 @@ class ModelConfigTest {
     }
 
     @Test
-    void buildChain_shouldReturnPrimaryOnly_whenFallbackAndRetryDisabled() {
+    void buildChain_shouldAttributeAndDelegatePrimary_whenFallbackAndRetryDisabled() {
         Model primary = mock(Model.class);
         when(primary.getModelName()).thenReturn("primary");
+        ChatResponse response = mock(ChatResponse.class);
+        when(primary.stream(any(), any(), any())).thenReturn(Flux.just(response));
         ModelProperties cfg = modelCfg("dashscope");
 
         Model chain = new StubbingModelConfig(primary, mock(Model.class)).buildChain(cfg);
 
-        // 未开兜底/重试：链就是主模型本身，不加任何壳（与改造前一致）
-        assertSame(primary, chain);
+        // 未开兜底/重试时只保留归因装饰器；模型能力和流式结果必须透明委托。
+        assertInstanceOf(AttributedModel.class, chain);
+        StepVerifier.create(stream(chain))
+            .expectNext(response)
+            .verifyComplete();
+        verify(primary).stream(any(), any(), any());
     }
 
     @Test

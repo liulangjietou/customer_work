@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.slo.mapper.SloNotificationTaskMapper">
+
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO ai_slo_notification_task
+          (id, tenant_id, event_id, alert_id, policy_id, event_type, title, content,
+           status, attempts, next_attempt_at_ms, lease_until_ms, recipient_count,
+           created_at_ms, updated_at_ms)
+        VALUES
+          (#{id}, #{tenantId}, #{eventId}, #{alertId}, #{policyId}, #{eventType}, #{title}, #{content},
+           #{status}, #{attempts}, #{nextAttemptAtMs}, #{leaseUntilMs}, #{recipientCount},
+           #{createdAtMs}, #{updatedAtMs})
+    </insert>
+
+    <select id="findDueCandidates"
+            resultType="com.richard.fyoung.customeradmin.slo.entity.SloNotificationTask">
+        SELECT *
+        FROM ai_slo_notification_task
+        WHERE (status = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
+           OR (status = 'PROCESSING' AND lease_until_ms &lt; #{nowMs})
+        ORDER BY created_at_ms, id
+        LIMIT #{limit}
+    </select>
+
+    <update id="claim">
+        UPDATE ai_slo_notification_task
+        SET status = 'PROCESSING', lease_owner = #{owner}, lease_until_ms = #{leaseUntilMs},
+            updated_at_ms = #{nowMs}
+        WHERE id = #{id}
+          AND ((status = 'PENDING' AND next_attempt_at_ms &lt;= #{nowMs})
+            OR (status = 'PROCESSING' AND lease_until_ms &lt; #{nowMs}))
+    </update>
+
+    <select id="lockOwned"
+            resultType="com.richard.fyoung.customeradmin.slo.entity.SloNotificationTask">
+        SELECT *
+        FROM ai_slo_notification_task
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+          AND lease_until_ms &gt;= #{nowMs}
+        FOR UPDATE
+    </select>
+
+    <update id="markDelivered">
+        UPDATE ai_slo_notification_task
+        SET status = 'DELIVERED', recipient_count = #{recipientCount}, delivered_at_ms = #{nowMs},
+            lease_owner = NULL, lease_until_ms = 0, last_error = NULL, updated_at_ms = #{nowMs}
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
+
+    <update id="markFailed">
+        UPDATE ai_slo_notification_task
+        SET status = 'PENDING', attempts = #{attempts}, next_attempt_at_ms = #{nextAttemptAtMs},
+            lease_owner = NULL, lease_until_ms = 0, last_error = #{error}, updated_at_ms = #{nowMs}
+        WHERE id = #{id} AND status = 'PROCESSING' AND lease_owner = #{owner}
+    </update>
+
+    <select id="findSloViewUserIds" resultType="java.lang.Long">
+        SELECT DISTINCT u.id
+        FROM sys_user u
+        INNER JOIN sys_user_role ur ON ur.user_id = u.id
+        INNER JOIN sys_role r ON r.id = ur.role_id AND r.deleted = 0 AND r.status = 1
+        INNER JOIN sys_role_permission rp ON rp.role_id = r.id
+        INNER JOIN sys_permission p ON p.id = rp.permission_id
+        WHERE u.tenant_id = #{tenantId}
+          AND ur.tenant_id = #{tenantId}
+          AND r.tenant_id = #{tenantId}
+          AND rp.tenant_id = #{tenantId}
+          AND u.deleted = 0 AND u.status = 1 AND p.deleted = 0
+          AND p.perm_code = 'slo:view'
+    </select>
+
+</mapper>

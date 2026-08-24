@@ -18,11 +18,23 @@ public class ChannelRobot {
     private final String agentCode;
     /** 会话模式：continuous 持续会话 / per_message 单次问答（空值按持续会话处理）。 */
     private final String sessionMode;
+    /** 微信回调模式：plaintext 明文 / safe AES 安全模式。 */
+    private final String callbackMode;
+    /** 微信安全模式 EncodingAESKey（仅可信开放 API 下发）。 */
+    private final String encodingAesKey;
     private final Long version;
 
     public ChannelRobot(Long id, String channelType, String robotName, String appKey,
                         String appSecret, String robotCode, String agentCode,
                         String sessionMode, Long version) {
+        this(id, channelType, robotName, appKey, appSecret, robotCode, agentCode,
+            sessionMode, null, null, version);
+    }
+
+    public ChannelRobot(Long id, String channelType, String robotName, String appKey,
+                        String appSecret, String robotCode, String agentCode,
+                        String sessionMode, String callbackMode, String encodingAesKey,
+                        Long version) {
         this.id = id;
         this.channelType = channelType;
         this.robotName = robotName;
@@ -31,6 +43,8 @@ public class ChannelRobot {
         this.robotCode = robotCode;
         this.agentCode = agentCode;
         this.sessionMode = sessionMode;
+        this.callbackMode = callbackMode;
+        this.encodingAesKey = encodingAesKey;
         this.version = version;
     }
 
@@ -64,6 +78,14 @@ public class ChannelRobot {
 
     public String getSessionMode() {
         return sessionMode;
+    }
+
+    public String getCallbackMode() {
+        return callbackMode;
+    }
+
+    public String getEncodingAesKey() {
+        return encodingAesKey;
     }
 
     public Long getVersion() {

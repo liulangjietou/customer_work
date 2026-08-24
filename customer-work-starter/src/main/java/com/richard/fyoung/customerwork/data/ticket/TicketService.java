@@ -137,6 +137,12 @@ public class TicketService {
             actorType, actorId, note);
     }
 
+    /** 兼容人机切换端点的单步结案：PROCESSING|ON_HOLD → RESOLVED。 */
+    public Ticket resolveHandoff(String ticketId, String note, String agentId) {
+        return applyTransition(ticketId, t -> t.resolveHandoff(note), TicketEventType.HANDOFF_RESOLVE,
+            TicketActorType.AGENT, agentId, note);
+    }
+
     /** 用户确认：WAITING_CONFIRM → RESOLVED。 */
     public Ticket confirm(String ticketId, TicketActorType actorType, String actorId) {
         return applyTransition(ticketId, Ticket::confirm, TicketEventType.CONFIRM, actorType, actorId, null);
@@ -152,6 +158,14 @@ public class TicketService {
     public Ticket close(String ticketId, String reason, TicketActorType actorType, String actorId) {
         return applyTransition(ticketId, t -> t.close(reason), TicketEventType.CLOSE,
             actorType, actorId, reason);
+    }
+
+    /** 智能路由建议回写到权威工单并追加审计事件。 */
+    public Ticket applyRoutingSuggestion(String ticketId, String category, String requiredSkill,
+                                         String priority, String emotion, String suggestedAssignees) {
+        return applyTransition(ticketId,
+            t -> t.applyRoutingSuggestion(category, requiredSkill, priority, emotion, suggestedAssignees),
+            TicketEventType.ROUTING_SUGGESTION, TicketActorType.SYSTEM, "routing-enricher", category);
     }
 
     /**

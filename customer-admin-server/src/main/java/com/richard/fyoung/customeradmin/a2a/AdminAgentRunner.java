@@ -1,6 +1,13 @@
 package com.richard.fyoung.customeradmin.a2a;
 
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.a2a.server.executor.runner.AgentRequestOptions;
 import io.agentscope.core.a2a.server.executor.runner.AgentRunner;
@@ -35,13 +42,21 @@ public class AdminAgentRunner implements AgentRunner {
     private static final Logger log = LoggerFactory.getLogger(AdminAgentRunner.class);
 
     private final AgentInstanceCache agentInstanceCache;
+    private final AdminAgentInstanceFactory agentInstanceFactory;
     private final String agentCode;
     private final String description;
+    private final String tenantId;
+    private final String subjectId;
 
-    public AdminAgentRunner(AgentInstanceCache agentInstanceCache, String agentCode, String description) {
+    public AdminAgentRunner(AgentInstanceCache agentInstanceCache,
+                            AdminAgentInstanceFactory agentInstanceFactory,
+                            String agentCode, String description, String tenantId, String tokenFingerprint) {
         this.agentInstanceCache = agentInstanceCache;
+        this.agentInstanceFactory = agentInstanceFactory;
         this.agentCode = agentCode;
         this.description = description;
+        this.tenantId = tenantId;
+        this.subjectId = "a2a:" + tokenFingerprint;
     }
 
     @Override
@@ -59,14 +74,21 @@ public class AdminAgentRunner implements AgentRunner {
         // defer：装配失败（模型配置缺失、MCP 握手超时等）是同步抛异常而非发错误信号，
         // 不包一层的话异常会直接穿透 A2A 的请求处理链，客户端拿到的是连接中断而不是协议错误响应
         return Flux.defer(() -> {
-            Agent agent = agentInstanceCache.getOrBuild(agentCode);
-            RuntimeContext ctx = RuntimeContext.builder()
-                .userId(agentCode)
-                .sessionId(resolveSessionId(options))
-                .build();
-            log.info("[a2a] agent invoke: agentCode={} sessionId={} taskId={}",
-                agentCode, ctx.getSessionId(), options == null ? null : options.getTaskId());
-            return streamEvents(agent, requestMessages, ctx);
+            String sessionId = resolveSessionId(options);
+            AgentInvocationIdentity identity = new AgentInvocationIdentity(
+                tenantId, QuotaSubjectType.API_KEY, subjectId, true)
+                .forInvocation(AgentInvocationIdentity.CHANNEL_A2A, sessionId, agentCode);
+            Flux<Event> body = TenantContext.callWith(tenantId,
+                () -> AgentInvocationIdentityContext.callWith(identity, () -> {
+                    Agent agent = agentInstanceCache.getOrBuild(agentCode);
+                    RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
+                    log.info("[a2a] agent invoke: agentCode={} sessionId={} taskId={}",
+                        agentCode, ctx.getSessionId(), options == null ? null : options.getTaskId());
+                    return streamEvents(agent, requestMessages, ctx);
+                }));
+            return body.contextWrite(context -> context
+                .put(TenantContextThreadLocalAccessor.KEY, tenantId)
+                .put(AgentInvocationIdentityContextThreadLocalAccessor.KEY, identity));
         });
     }
 

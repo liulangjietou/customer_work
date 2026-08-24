@@ -67,17 +67,20 @@ public class KnowledgeBaseService {
     private final AesGcmCryptoUtil cryptoUtil;
     private final KnowledgeSearchClient searchClient;
     private final AdminRagProperties properties;
+    private final KnowledgeBaseVersionService versionService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public KnowledgeBaseService(AiKnowledgeBaseMapper knowledgeBaseMapper,
                                  AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper,
                                  AesGcmCryptoUtil cryptoUtil, KnowledgeSearchClient searchClient,
-                                 AdminRagProperties properties) {
+                                 AdminRagProperties properties,
+                                 KnowledgeBaseVersionService versionService) {
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.agentKnowledgeBaseMapper = agentKnowledgeBaseMapper;
         this.cryptoUtil = cryptoUtil;
         this.searchClient = searchClient;
         this.properties = properties;
+        this.versionService = versionService;
     }
 
     public PageResult<KnowledgeBaseVO> page(PageQuery query) {
@@ -106,7 +109,8 @@ public class KnowledgeBaseService {
                 .eq(AiKnowledgeBase::getTestStatus, ConnectivityTestStatus.SUCCESS)
                 .orderByAsc(AiKnowledgeBase::getId))
             .stream()
-            .map(kb -> new KnowledgeBaseOptionVO(kb.getId(), kb.getKbName()))
+            .map(kb -> new KnowledgeBaseOptionVO(kb.getId(), kb.getKbName(),
+                kb.getCurrentVersionId(), kb.getLatestVersionNo(), null, null))
             .collect(Collectors.toList());
     }
 
@@ -138,6 +142,7 @@ public class KnowledgeBaseService {
             knowledgeBaseMapper.reviveDeleted(softDeleted.getId());
             entity.setId(softDeleted.getId());
             knowledgeBaseMapper.updateById(entity);
+            versionService.createConfigurationVersion(entity.getId(), "重新创建知识库");
             log.info("[rag] revived soft-deleted knowledge base for re-create, kbName={}, kbId={}",
                 request.kbName(), softDeleted.getId());
             return;
@@ -149,6 +154,7 @@ public class KnowledgeBaseService {
         } catch (DuplicateKeyException e) {
             throw new BizException(ResultCode.RESOURCE_DUPLICATE, "知识库名称已存在: " + request.kbName());
         }
+        versionService.createConfigurationVersion(entity.getId(), "创建知识库");
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -178,6 +184,7 @@ public class KnowledgeBaseService {
         } catch (DuplicateKeyException e) {
             throw new BizException(ResultCode.RESOURCE_DUPLICATE, "知识库名称已存在: " + request.kbName());
         }
+        versionService.createConfigurationVersion(entity.getId(), "编辑知识库配置");
     }
 
     public void delete(Long id) {
@@ -334,6 +341,8 @@ public class KnowledgeBaseService {
         vo.setTestStatus(entity.getTestStatus());
         vo.setTestTime(entity.getTestTime());
         vo.setRemark(entity.getRemark());
+        vo.setCurrentVersionId(entity.getCurrentVersionId());
+        vo.setLatestVersionNo(entity.getLatestVersionNo());
         vo.setCreateTime(entity.getCreateTime());
         vo.setUpdateTime(entity.getUpdateTime());
         return vo;

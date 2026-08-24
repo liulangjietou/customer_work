@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.config;
 
 import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.agent.RuntimeAgentAccessState;
 import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentRoutingModel;
 import com.richard.fyoung.customerwork.core.model.routing.ModelRouteHint;
 import com.richard.fyoung.customerwork.core.model.routing.PolicyRoutingModel;
@@ -49,6 +50,31 @@ class RuntimeConfigApplierTest {
     }
 
     @Test
+    void revocation_shouldCloseRuntimeWithoutReadingOrReplacingModelConfiguration() {
+        CustomerWorkProperties properties = new CustomerWorkProperties();
+        ModelConfig modelConfig = mock(ModelConfig.class);
+        Model initial = mock(Model.class);
+        MutableDelegatingModel mutableModel = new MutableDelegatingModel(initial);
+        CustomerServiceService customerServiceService = mock(CustomerServiceService.class);
+        RuntimeAgentAccessState accessState = new RuntimeAgentAccessState();
+        RuntimeConfigApplier applier = new RuntimeConfigApplier(properties, modelConfig, mutableModel,
+            new NacosPromptService(properties), customerServiceService, endpointPolicy(), accessState);
+        CustomerWorkRuntimeConfig tombstone = new CustomerWorkRuntimeConfig();
+        tombstone.setSchemaVersion(3);
+        tombstone.setActive(Boolean.FALSE);
+        tombstone.setTargetCode("cs-bot");
+        tombstone.setRevision("revision-2");
+        tombstone.setContentHash("a".repeat(64));
+
+        assertTrue(applier.apply(tombstone, null, null));
+
+        assertFalse(accessState.isActive());
+        assertSame(initial, mutableModel.current());
+        verify(modelConfig, never()).buildChain(any(), any(), any(), any());
+        verify(customerServiceService).flushHotAgents();
+    }
+
+    @Test
     void applyCommitsAllOnSuccess() {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         properties.getModel().getTieredRouting().setEnabled(true);
@@ -61,7 +87,7 @@ class RuntimeConfigApplierTest {
         ModelConfig modelConfig = mock(ModelConfig.class);
         Model newChain = mock(Model.class);
         when(newChain.getModelName()).thenReturn("new-chain");
-        when(modelConfig.buildChain(any())).thenReturn(newChain);
+        when(modelConfig.buildChain(any(), any(), any(), any())).thenReturn(newChain);
 
         Model initial = mock(Model.class);
         when(initial.getModelName()).thenReturn("old-chain");
@@ -98,7 +124,8 @@ class RuntimeConfigApplierTest {
     void buildFailureKeepsOldConfig() {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         ModelConfig modelConfig = mock(ModelConfig.class);
-        when(modelConfig.buildChain(any())).thenThrow(new IllegalStateException("build boom"));
+        when(modelConfig.buildChain(any(), any(), any(), any()))
+            .thenThrow(new IllegalStateException("build boom"));
 
         Model initial = mock(Model.class);
         when(initial.getModelName()).thenReturn("old-chain");
@@ -118,12 +145,33 @@ class RuntimeConfigApplierTest {
     }
 
     @Test
+    void nullBuildResult_shouldFailBeforeMutatingSharedConfiguration() {
+        CustomerWorkProperties properties = new CustomerWorkProperties();
+        String oldProvider = properties.getModel().getProvider();
+        ModelConfig modelConfig = mock(ModelConfig.class);
+        Model initial = mock(Model.class);
+        MutableDelegatingModel mutableModel = new MutableDelegatingModel(initial);
+        NacosPromptService prompt = new NacosPromptService(properties);
+        CustomerServiceService customerServiceService = mock(CustomerServiceService.class);
+        RuntimeConfigApplier applier = new RuntimeConfigApplier(properties, modelConfig, mutableModel,
+            prompt, customerServiceService, endpointPolicy());
+
+        assertFalse(applier.apply(sampleDto(), "sk-plain", null));
+
+        assertEquals(oldProvider, properties.getModel().getProvider());
+        assertFalse(properties.getMcp().isEnabled());
+        assertTrue(prompt.currentPrompt().isEmpty());
+        assertSame(initial, mutableModel.current());
+        verify(customerServiceService, never()).flushHotAgents();
+    }
+
+    @Test
     void invalidMcpSnapshot_shouldFailBeforeMutatingSharedConfiguration() {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         String oldProvider = properties.getModel().getProvider();
         ModelConfig modelConfig = mock(ModelConfig.class);
         Model newChain = mock(Model.class);
-        when(modelConfig.buildChain(any())).thenReturn(newChain);
+        when(modelConfig.buildChain(any(), any(), any(), any())).thenReturn(newChain);
         Model initial = mock(Model.class);
         MutableDelegatingModel mutableModel = new MutableDelegatingModel(initial);
         NacosPromptService prompt = new NacosPromptService(properties);
@@ -161,7 +209,7 @@ class RuntimeConfigApplierTest {
         bad.getModel().setName("");
 
         assertFalse(applier.apply(bad, null, null));
-        verify(modelConfig, never()).buildChain(any());
+        verify(modelConfig, never()).buildChain(any(), any(), any(), any());
         verify(css, never()).flushHotAgents();
     }
 
@@ -181,7 +229,7 @@ class RuntimeConfigApplierTest {
 
         assertFalse(applier.apply(dto, "real-secret", null));
 
-        verify(modelConfig, never()).buildChain(any());
+        verify(modelConfig, never()).buildChain(any(), any(), any(), any());
         verify(modelConfig, never()).buildByProvider(any(), any(), any(), any(), any());
         verify(customerServiceService, never()).flushHotAgents();
         assertSame(initial, mutableModel.current());
@@ -193,7 +241,7 @@ class RuntimeConfigApplierTest {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         properties.getAgent().setMaxIters(10);
         ModelConfig modelConfig = mock(ModelConfig.class);
-        when(modelConfig.buildChain(any())).thenReturn(mock(Model.class));
+        when(modelConfig.buildChain(any(), any(), any(), any())).thenReturn(mock(Model.class));
         MutableDelegatingModel mutableModel = new MutableDelegatingModel(mock(Model.class));
         NacosPromptService prompt = new NacosPromptService(properties);
         CustomerServiceService customerServiceService = mock(CustomerServiceService.class);
@@ -273,7 +321,7 @@ class RuntimeConfigApplierTest {
         when(baseline.getContextWindowSize()).thenReturn(8192);
         when(control.getContextWindowSize()).thenReturn(8192);
         when(treatment.getContextWindowSize()).thenReturn(4096);
-        when(modelConfig.buildChain(any())).thenReturn(baseline);
+        when(modelConfig.buildChain(any(), any(), any(), any())).thenReturn(baseline);
         when(modelConfig.buildByProvider(any(), any(), any(), any(), any()))
             .thenReturn(control, treatment);
         Model initial = mock(Model.class);
@@ -307,7 +355,7 @@ class RuntimeConfigApplierTest {
         ModelConfig modelConfig = mock(ModelConfig.class);
         Model baseline = mock(Model.class);
         Model control = mock(Model.class);
-        when(modelConfig.buildChain(any())).thenReturn(baseline);
+        when(modelConfig.buildChain(any(), any(), any(), any())).thenReturn(baseline);
         when(modelConfig.buildByProvider(any(), any(), any(), any(), any()))
             .thenReturn(control)
             .thenThrow(new IllegalStateException("treatment build failed"));

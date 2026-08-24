@@ -1,10 +1,12 @@
 package com.richard.fyoung.customeradmin.aiconfig.model.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.richard.fyoung.customeradmin.aiconfig.model.config.ModelHealthMonitorProperties;
 import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelHealthErrorCategory;
+import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelHealthEventType;
+import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelHealthOverrideMode;
 import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelHealthStatus;
 import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelProbeSource;
-import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthSnapshotVO;
+import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthOverrideRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelHealthEvent;
@@ -20,15 +22,14 @@ import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 健康状态机、错误分类投影和事件一致性测试。 */
+/** 健康快照、追加事件和人工覆盖的事务语义测试。 */
 class ModelHealthStoreTest {
 
     private AiModelHealthSnapshotMapper snapshotMapper;
@@ -39,88 +40,119 @@ class ModelHealthStoreTest {
     void setUp() {
         snapshotMapper = mock(AiModelHealthSnapshotMapper.class);
         eventMapper = mock(AiModelHealthEventMapper.class);
-        store = new ModelHealthStore(snapshotMapper, eventMapper);
+        ModelHealthMonitorProperties properties = new ModelHealthMonitorProperties();
+        properties.setFailureThreshold(3);
+        properties.setRecoveryThreshold(2);
+        properties.setProbeIntervalSeconds(300);
+        properties.setCooldownSeconds(60);
+        store = new ModelHealthStore(snapshotMapper, eventMapper,
+            new ModelHealthStateMachine(properties));
+        when(eventMapper.insert(any(AiModelHealthEvent.class))).thenReturn(1);
     }
 
     @Test
     void firstAuthFailure_shouldCreateDegradedSnapshotAndAuditEvent() {
+        when(snapshotMapper.lockSnapshot(11L, "tenant-a")).thenReturn(null);
         when(snapshotMapper.insertIgnore(any(AiModelHealthSnapshot.class))).thenReturn(1);
-        when(snapshotMapper.selectOne(any(QueryWrapper.class))).thenReturn(null);
         LocalDateTime occurredAt = LocalDateTime.now();
-        ModelTestResult result = new ModelTestResult(ConnectivityTestStatus.FAILED, occurredAt,
-            "模型凭据不可用", ModelHealthStatus.DEGRADED.name(),
-            ModelHealthErrorCategory.AUTH.name(), 31L);
 
-        ModelHealthStore.RecordResult recorded = store.record(model(), result, ModelProbeSource.MANUAL);
-        ModelHealthSnapshotVO snapshot = recorded.snapshot();
+        ModelHealthStore.RecordResult recorded = store.record(model(), failure(occurredAt,
+            ModelHealthErrorCategory.AUTH), ModelProbeSource.MANUAL);
 
-        assertEquals(ModelHealthStatus.DEGRADED.name(), snapshot.healthStatus());
-        assertEquals("FAILED", snapshot.authStatus());
-        assertEquals(1, snapshot.consecutiveFailures());
-        assertNotNull(snapshot.nextProbeAt());
+        assertEquals(ModelHealthStatus.DEGRADED.name(), recorded.snapshot().healthStatus());
+        assertEquals("FAILED", recorded.snapshot().authStatus());
+        assertEquals(1, recorded.snapshot().consecutiveFailures());
+        assertTrue(recorded.snapshot().routingAvailable());
         assertTrue(recorded.applied());
         ArgumentCaptor<AiModelHealthEvent> event = ArgumentCaptor.forClass(AiModelHealthEvent.class);
         verify(eventMapper).insert(event.capture());
-        assertEquals("tenant-a", event.getValue().getTenantId());
+        assertEquals(ModelHealthEventType.STATE_TRANSITION.name(), event.getValue().getEventType());
         assertEquals(ModelProbeSource.MANUAL.name(), event.getValue().getSource());
         assertEquals(ModelHealthErrorCategory.AUTH.name(), event.getValue().getErrorCategory());
     }
 
     @Test
-    void thirdFailure_shouldMoveDeploymentToUnhealthy() {
-        AiModelHealthSnapshot updated = current(ModelHealthStatus.UNHEALTHY.name(), 3);
-        updated.setLastErrorCategory(ModelHealthErrorCategory.RATE_LIMIT.name());
-        updated.setRevision(8);
-        when(snapshotMapper.updateIfNewer(any(), eq(false), eq(false), eq(3))).thenReturn(1);
-        when(snapshotMapper.selectOne(any(QueryWrapper.class))).thenReturn(updated);
-        ModelTestResult failure = new ModelTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(),
-            "quota exhausted", ModelHealthStatus.DEGRADED.name(),
-            ModelHealthErrorCategory.RATE_LIMIT.name(), 10L);
+    void thirdFailure_shouldMoveDeploymentToUnhealthyAndStartCooldown() {
+        LocalDateTime occurredAt = LocalDateTime.now();
+        AiModelHealthSnapshot current = current(ModelHealthStatus.DEGRADED, 2, 0);
+        current.setLastProbeAt(occurredAt.minusSeconds(1));
+        when(snapshotMapper.lockSnapshot(11L, "tenant-a")).thenReturn(current);
+        when(snapshotMapper.updateById(current)).thenReturn(1);
 
-        ModelHealthSnapshotVO snapshot = store.record(model(), failure, ModelProbeSource.SCHEDULED).snapshot();
+        ModelHealthStore.RecordResult recorded = store.record(model(), failure(occurredAt,
+            ModelHealthErrorCategory.RATE_LIMIT), ModelProbeSource.SCHEDULED);
 
-        assertEquals(ModelHealthStatus.UNHEALTHY.name(), snapshot.healthStatus());
-        assertEquals(3, snapshot.consecutiveFailures());
-        assertEquals(ModelHealthErrorCategory.RATE_LIMIT.name(), snapshot.lastErrorCategory());
-        assertEquals(8, snapshot.revision());
+        assertEquals(ModelHealthStatus.UNHEALTHY.name(), recorded.snapshot().healthStatus());
+        assertEquals(3, recorded.snapshot().consecutiveFailures());
+        assertEquals(occurredAt.plusSeconds(60), recorded.snapshot().cooldownUntil());
+        assertFalse(recorded.snapshot().routingAvailable());
+        assertTrue(recorded.routingChanged());
     }
 
     @Test
-    void firstSuccessAfterUnhealthy_shouldEnterRecoveringAndResetFailures() {
-        AiModelHealthSnapshot updated = current(ModelHealthStatus.RECOVERING.name(), 0);
-        updated.setAuthStatus("PASSED");
-        updated.setLastSuccessAt(LocalDateTime.now());
-        updated.setRevision(8);
-        when(snapshotMapper.updateIfNewer(any(), eq(true), eq(false), eq(3))).thenReturn(1);
-        when(snapshotMapper.selectOne(any(QueryWrapper.class))).thenReturn(updated);
-        ModelTestResult success = new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(),
-            null, ModelHealthStatus.HEALTHY.name(), null, 8L);
-
-        ModelHealthSnapshotVO snapshot = store.record(model(), success, ModelProbeSource.SCHEDULED).snapshot();
-
-        assertEquals(ModelHealthStatus.RECOVERING.name(), snapshot.healthStatus());
-        assertEquals("PASSED", snapshot.authStatus());
-        assertEquals(0, snapshot.consecutiveFailures());
-        assertNotNull(snapshot.lastSuccessAt());
-    }
-
-    @Test
-    void olderProbe_shouldRemainInEventHistoryWithoutOverwritingSnapshot() {
+    void staleProbe_shouldAppendEventWithoutOverwritingSnapshot() {
         LocalDateTime latestAt = LocalDateTime.now();
-        AiModelHealthSnapshot latest = current(ModelHealthStatus.HEALTHY.name(), 0);
-        latest.setLastProbeAt(latestAt);
-        when(snapshotMapper.updateIfNewer(any(), eq(false), eq(false), eq(3))).thenReturn(0);
-        when(snapshotMapper.selectOne(any(QueryWrapper.class))).thenReturn(latest);
-        ModelTestResult older = new ModelTestResult(ConnectivityTestStatus.FAILED,
-            latestAt.minusSeconds(1), "timeout", ModelHealthStatus.DEGRADED.name(),
-            ModelHealthErrorCategory.TIMEOUT.name(), 1000L);
+        AiModelHealthSnapshot current = current(ModelHealthStatus.HEALTHY, 0, 2);
+        current.setLastProbeAt(latestAt);
+        when(snapshotMapper.lockSnapshot(11L, "tenant-a")).thenReturn(current);
 
-        ModelHealthStore.RecordResult recorded = store.record(model(), older, ModelProbeSource.SCHEDULED);
+        ModelHealthStore.RecordResult recorded = store.record(model(),
+            failure(latestAt.minusSeconds(1), ModelHealthErrorCategory.TIMEOUT),
+            ModelProbeSource.SCHEDULED);
 
         assertFalse(recorded.applied());
         assertEquals(ModelHealthStatus.HEALTHY.name(), recorded.snapshot().healthStatus());
-        assertEquals(0, recorded.snapshot().consecutiveFailures());
-        verify(snapshotMapper).updateIfNewer(any(), eq(false), eq(false), eq(3));
+        verify(snapshotMapper, never()).updateById(any(AiModelHealthSnapshot.class));
+        ArgumentCaptor<AiModelHealthEvent> event = ArgumentCaptor.forClass(AiModelHealthEvent.class);
+        verify(eventMapper).insert(event.capture());
+        assertEquals(ModelHealthEventType.STALE_PROBE.name(), event.getValue().getEventType());
+    }
+
+    @Test
+    void forceHealthyOverride_shouldMakeUnderlyingUnhealthyDeploymentRouteable() {
+        AiModelHealthSnapshot current = current(ModelHealthStatus.UNHEALTHY, 3, 0);
+        when(snapshotMapper.lockSnapshot(11L, "tenant-a")).thenReturn(current);
+        when(snapshotMapper.updateById(current)).thenReturn(1);
+        LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
+
+        ModelHealthStore.RecordResult recorded = store.override(model(),
+            new ModelHealthOverrideRequest(ModelHealthOverrideMode.FORCE_HEALTHY,
+                "approved emergency recovery", expiresAt), 7L, "operator");
+
+        assertEquals(ModelHealthStatus.UNHEALTHY.name(), recorded.snapshot().healthStatus());
+        assertEquals(ModelHealthStatus.HEALTHY.name(), recorded.snapshot().effectiveHealthStatus());
+        assertTrue(recorded.snapshot().routingAvailable());
+        assertTrue(recorded.routingChanged());
+        ArgumentCaptor<AiModelHealthEvent> event = ArgumentCaptor.forClass(AiModelHealthEvent.class);
+        verify(eventMapper).insert(event.capture());
+        assertEquals(ModelHealthEventType.OVERRIDE_SET.name(), event.getValue().getEventType());
+        assertEquals(7L, event.getValue().getOperatorId());
+    }
+
+    @Test
+    void expiredOverride_shouldRestoreAutomaticRoutingExactlyOnce() {
+        LocalDateTime now = LocalDateTime.now();
+        AiModelHealthSnapshot current = current(ModelHealthStatus.UNHEALTHY, 3, 0);
+        current.setOverrideMode(ModelHealthOverrideMode.FORCE_HEALTHY.name());
+        current.setOverrideReason("temporary recovery");
+        current.setOverrideUntil(now.minusSeconds(1));
+        when(snapshotMapper.lockSnapshot(11L, "tenant-a")).thenReturn(current);
+        when(snapshotMapper.updateById(current)).thenReturn(1);
+
+        ModelHealthStore.RecordResult recorded = store.expireOverride(model(), now);
+
+        assertTrue(recorded.applied());
+        assertTrue(recorded.routingChanged());
+        assertEquals(ModelHealthOverrideMode.AUTO.name(), recorded.snapshot().overrideMode());
+        assertFalse(recorded.snapshot().routingAvailable());
+        ArgumentCaptor<AiModelHealthEvent> event = ArgumentCaptor.forClass(AiModelHealthEvent.class);
+        verify(eventMapper).insert(event.capture());
+        assertEquals(ModelHealthEventType.OVERRIDE_EXPIRED.name(), event.getValue().getEventType());
+    }
+
+    private ModelTestResult failure(LocalDateTime occurredAt, ModelHealthErrorCategory category) {
+        return new ModelTestResult(ConnectivityTestStatus.FAILED, occurredAt,
+            "probe failed", ModelHealthStatus.DEGRADED.name(), category.name(), 31L);
     }
 
     private AiModelConfig model() {
@@ -130,14 +162,16 @@ class ModelHealthStoreTest {
         return model;
     }
 
-    private AiModelHealthSnapshot current(String status, Integer failures) {
+    private AiModelHealthSnapshot current(ModelHealthStatus status, int failures, int successes) {
         AiModelHealthSnapshot snapshot = new AiModelHealthSnapshot();
         snapshot.setModelConfigId(11L);
         snapshot.setTenantId("tenant-a");
-        snapshot.setHealthStatus(status);
+        snapshot.setHealthStatus(status.name());
         snapshot.setAuthStatus("PASSED");
         snapshot.setCapabilityStatus("UNKNOWN");
         snapshot.setConsecutiveFailures(failures);
+        snapshot.setConsecutiveSuccesses(successes);
+        snapshot.setOverrideMode(ModelHealthOverrideMode.AUTO.name());
         snapshot.setRevision(7);
         return snapshot;
     }

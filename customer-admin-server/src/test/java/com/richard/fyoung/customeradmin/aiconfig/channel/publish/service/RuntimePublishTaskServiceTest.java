@@ -52,6 +52,8 @@ class RuntimePublishTaskServiceTest {
 
     @Test
     void enqueueBindsTaskToCurrentTenant() {
+        properties.setAckIdentities(List.of(
+            "tenant-a|pod-b|token-b", "tenant-a|pod-a|token-a", "tenant-b|pod-z|token-z"));
         TenantContext.set("tenant-a");
         service.enqueueAgent(42L);
 
@@ -65,6 +67,36 @@ class RuntimePublishTaskServiceTest {
         assertEquals(RuntimePublishIntent.NORMAL.name(), captor.getValue().getPublishIntent());
         assertEquals(RuntimePublishStatus.PENDING.name(), captor.getValue().getStatus());
         assertEquals(EvalGateStatus.PENDING.name(), captor.getValue().getGateStatus());
+        assertEquals("[\"pod-a\",\"pod-b\"]", captor.getValue().getAckTargetsJson());
+    }
+
+    @Test
+    void enqueueRevocation_shouldFreezeTargetBeforeAuthoritativeRowsDisappear() {
+        TenantContext.set("tenant-a");
+
+        String taskId = service.enqueueRevocation(42L, "cs-bot");
+
+        ArgumentCaptor<RuntimePublishTask> captor = ArgumentCaptor.forClass(RuntimePublishTask.class);
+        verify(taskMapper).insert(captor.capture());
+        RuntimePublishTask task = captor.getValue();
+        assertEquals(taskId, task.getId());
+        assertEquals(RuntimePublishIntent.REVOKE.name(), task.getPublishIntent());
+        assertEquals("cs-bot", task.getTargetCode());
+        assertEquals(EvalGateStatus.NOT_REQUIRED.name(), task.getGateStatus());
+    }
+
+    @Test
+    void enqueueHealthOverlay_shouldFreezeDedicatedIntentAndSkipEvalGate() {
+        TenantContext.set("tenant-a");
+
+        String taskId = service.enqueueHealthOverlay(42L);
+
+        ArgumentCaptor<RuntimePublishTask> captor = ArgumentCaptor.forClass(RuntimePublishTask.class);
+        verify(taskMapper).insert(captor.capture());
+        RuntimePublishTask task = captor.getValue();
+        assertEquals(taskId, task.getId());
+        assertEquals(RuntimePublishIntent.HEALTH_OVERLAY.name(), task.getPublishIntent());
+        assertEquals(EvalGateStatus.NOT_REQUIRED.name(), task.getGateStatus());
     }
 
     @Test
@@ -230,6 +262,40 @@ class RuntimePublishTaskServiceTest {
         ackOrder.verify(taskMapper).lockByRevisionForAck("tenant-a", "rev-1");
         ackOrder.verify(ackMapper).upsert(any());
         verify(taskMapper).updateAckStatus(eq("tenant-a"), eq("rev-1"), eq("APPLIED"), anyLong());
+    }
+
+    @Test
+    void frozenAckTargets_shouldIgnoreLaterConfigurationChangesAndRequireEveryTarget() {
+        RuntimePublishTask task = task("task-1", "tenant-a", "rev-1", "hash-1");
+        task.setAckTargetsJson("[\"pod-1\",\"pod-2\"]");
+        properties.setAckIdentities(List.of("tenant-a|pod-3|new-token"));
+        when(taskMapper.lockByRevisionForAck("tenant-a", "rev-1")).thenReturn(task);
+        when(ackMapper.countByStatus("tenant-a", "rev-1", "APPLIED")).thenReturn(1, 2);
+        when(ackMapper.countByStatus("tenant-a", "rev-1", "REJECTED")).thenReturn(0);
+        when(taskMapper.updateAckStatus(eq("tenant-a"), eq("rev-1"), anyString(), anyLong()))
+            .thenReturn(1);
+        TenantContext.set("tenant-a");
+
+        RuntimePublishStatus first = service.recordAck(
+            new RuntimeConfigAck("rev-1", "hash-1", "pod-1", "APPLIED", null, 100L), "pod-1");
+        RuntimePublishStatus second = service.recordAck(
+            new RuntimeConfigAck("rev-1", "hash-1", "pod-2", "APPLIED", null, 200L), "pod-2");
+
+        assertEquals(RuntimePublishStatus.PARTIAL, first);
+        assertEquals(RuntimePublishStatus.APPLIED, second);
+    }
+
+    @Test
+    void ackFromInstanceOutsideFrozenTargetsIsRejected() {
+        RuntimePublishTask task = task("task-1", "tenant-a", "rev-1", "hash-1");
+        task.setAckTargetsJson("[\"pod-1\"]");
+        when(taskMapper.lockByRevisionForAck("tenant-a", "rev-1")).thenReturn(task);
+        TenantContext.set("tenant-a");
+
+        assertThrows(IllegalArgumentException.class, () -> service.recordAck(
+            new RuntimeConfigAck("rev-1", "hash-1", "pod-2", "APPLIED", null, 100L), "pod-2"));
+
+        verify(ackMapper, never()).upsert(any());
     }
 
     @Test

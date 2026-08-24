@@ -282,6 +282,9 @@ customer-channel:
 | `CHANNEL_ACCESS_ADMIN_BASE_URL` | admin 地址，默认 `http://localhost:8082` |
 | `CHANNEL_ACCESS_REFRESH_SECONDS` | 配置刷新间隔，默认 30 |
 | `CHANNEL_ACCESS_CHAT_TIMEOUT_SECONDS` | 单轮对话聚合超时，默认 300 |
+| `CHANNEL_WECHAT_REPLAY_STORE` | 微信回放保护存储，生产保持 `redis`；`memory` 仅单实例测试/开发 |
+| `CHANNEL_WECHAT_REDIS_HOST/PORT/PASSWORD` | 微信 nonce 与消息幂等 Redis；多实例共用 |
+| `CHANNEL_WECHAT_TIMESTAMP_TOLERANCE_SECONDS` | 回调时间窗，默认 300 秒 |
 
 5. 钉钉里给机器人发消息（单聊直接发 / 群聊 @机器人）即可对话。
 
@@ -303,7 +306,7 @@ customer-channel:
 
 ```
 微信用户 → 微信服务器 --POST--> customer-channel(8081) /api/channels/wechat/{AppID}/callback
-                                     │ 验签(sha1(sort(Token,timestamp,nonce)))→解析XML→立即回 "success"(5秒内)
+                                     │ 时间窗→验签/安全模式AES解密→Redis nonce+消息幂等→立即回 success
                                      │ 文本走统一 ChannelMessagePipeline（与钉钉共用）
                                      ↓ AdminOpenApiClient（X-Open-Api-Token）
               customer-admin-server(8082) /api/open/agents/{agentCode}/chat  SSE 对话
@@ -313,12 +316,16 @@ customer-channel:
 
 **架构差异要点**：
 
-- 回调必须 **5 秒内应答 "success"**，否则微信重试最多 3 次；故消息处理与回复全部异步，回调只做验签+解析+登记。
+- 回调必须 **5 秒内应答 "success"**，否则微信重试；故消息处理与回复全部异步，回调只做安全校验、幂等占位与登记。
+- 请求时间戳默认只接受当前时间前后 300 秒；安全模式按 `Token/timestamp/nonce/Encrypt` 校验
+  `msg_signature`，AES-CBC 解密后还会核对密文尾部 AppID，防止跨公众号密文复用。
 - 回复经**客服消息 API**（48 小时内可主动下发），单条文本上限保守取 1000 字符，超长自动分段多条发送。
 - 微信客服消息是**纯文本**（不渲染 markdown）：表格降级为「表头: 值」列表、剥加粗/行内码/标题符、链接改写为
   `文本(url)`、剥代码围栏保留内容、换行原样保留。
 - `access_token` 按 AppID 缓存、提前 5 分钟刷新；客服消息遇 `errcode` 40001/42001（token 失效）强刷一次重试。
-- MsgId 做有界 LRU 去重，防微信重试重复触发对话。
+- nonce 与消息键使用 Redis `SET NX + TTL` 原子占位；消息优先使用 MsgId，无 MsgId 的事件使用
+  `FromUserName/CreateTime/MsgType/Event/EventKey` 等稳定字段。相同消息即使换 nonce 重试也只触发一次。
+- Redis 故障时 fail-closed 返回 503 且不分发，让微信稍后重试；不会降级为多实例各自执行。
 
 **接入步骤**：
 
@@ -326,6 +333,7 @@ customer-channel:
 2. 「接口配置信息」填写：
    - URL = `https://<公网域名>/api/channels/wechat/<AppID>/callback`
    - Token = 自定义字符串（下一步后台「回调 Token」需与此**完全一致**）
+   - 消息加解密方式建议选择**安全模式**，记录平台生成的 43 位 EncodingAESKey
    - 回调需**公网可达**；本地开发用内网穿透（ngrok / natapp 等）把 8081 暴露到公网。
 3. 后台「AI 配置 → 渠道接入」新增机器人，渠道选**微信**，字段映射：
 
@@ -334,6 +342,8 @@ customer-channel:
    | AppKey | 公众号 **AppID** |
    | AppSecret | 公众号 **AppSecret** |
    | RobotCode / 回调 Token | 「接口配置信息」里的 **Token**（必填，参与验签，不自动回填 AppKey） |
+   | 回调模式 | 生产选择 **安全模式**；明文仅为旧配置兼容 |
+   | EncodingAESKey | 安全模式必填，后台 AES-GCM 加密存储，不向管理前端回显 |
 
 4. customer-channel(8081) 环境变量同 8.2（`CHANNEL_ACCESS_ENABLED=true` 等）；启用后 ≤30s 自动拉起微信连接器。
 5. 在公众平台保存「接口配置信息」（触发一次 GET 验证，验签通过回显 echostr 即成功），之后给公众号发文本消息即可对话。

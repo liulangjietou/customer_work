@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.Locale;
 
 /**
  * 微信公众号消息签名校验。
@@ -34,10 +35,26 @@ final class WeChatSignatureVerifier {
         if (!StringUtils.hasText(token) || !StringUtils.hasText(signature)) {
             return false;
         }
-        String[] arr = {emptyIfNull(token), emptyIfNull(timestamp), emptyIfNull(nonce)};
-        Arrays.sort(arr);
-        String expected = sha1Hex(arr[0] + arr[1] + arr[2]);
-        return expected.equalsIgnoreCase(signature);
+        return verifyParts(signature, token, timestamp, nonce);
+    }
+
+    /** 安全模式签名比明文模式多一个密文参数，并使用请求参数 {@code msg_signature}。 */
+    static boolean verifySafe(String token, String timestamp, String nonce,
+                              String encrypted, String messageSignature) {
+        if (!StringUtils.hasText(token) || !StringUtils.hasText(encrypted)
+            || !StringUtils.hasText(messageSignature)) {
+            return false;
+        }
+        return verifyParts(messageSignature, token, timestamp, nonce, encrypted);
+    }
+
+    private static boolean verifyParts(String signature, String... parts) {
+        String[] sorted = Arrays.stream(parts).map(WeChatSignatureVerifier::emptyIfNull).toArray(String[]::new);
+        Arrays.sort(sorted);
+        String expected = sha1Hex(String.join("", sorted));
+        byte[] expectedBytes = expected.getBytes(StandardCharsets.US_ASCII);
+        byte[] actualBytes = signature.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII);
+        return MessageDigest.isEqual(expectedBytes, actualBytes);
     }
 
     private static String emptyIfNull(String s) {

@@ -54,7 +54,8 @@ class SkillExportTest {
         skillMapper = mock(AiSkillMapper.class);
         skillFileMapper = mock(AiSkillFileMapper.class);
         service = new SkillService(skillMapper, skillFileMapper, mock(AiAgentSkillMapper.class),
-            mock(AiAgentMapper.class), mock(AgentInstanceCache.class), List.of());
+            mock(AiAgentMapper.class), mock(AgentInstanceCache.class), List.of(),
+            mock(SkillVersionService.class));
     }
 
     @Test

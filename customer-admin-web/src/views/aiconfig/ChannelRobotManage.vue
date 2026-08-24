@@ -76,6 +76,7 @@ const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
 // hasSecret 仅用于编辑时展示「已配置」标识，不随表单提交。
 const editingHasSecret = ref(false)
+const editingHasEncodingAesKey = ref(false)
 
 function emptyForm(): ChannelRobotSaveRequest {
   return {
@@ -84,6 +85,8 @@ function emptyForm(): ChannelRobotSaveRequest {
     appKey: '',
     appSecret: '',
     robotCode: '',
+    callbackMode: 'plaintext',
+    encodingAesKey: '',
     agentCode: '',
     sessionMode: 'continuous',
     status: 1,
@@ -94,11 +97,13 @@ const form = reactive<ChannelRobotSaveRequest>(emptyForm())
 
 // 当前表单选中的是否为微信：微信下 RobotCode 语义为「回调 Token」，必填且不自动回填 AppKey。
 const isWechat = computed(() => form.channelType === 'wechat')
+const isWechatSafe = computed(() => isWechat.value && form.callbackMode === 'safe')
 
 function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
   editingHasSecret.value = false
+  editingHasEncodingAesKey.value = false
   Object.assign(form, emptyForm())
   dialogVisible.value = true
 }
@@ -107,6 +112,7 @@ function openEdit(row: ChannelRobotVO) {
   dialogMode.value = 'edit'
   editingId.value = row.id
   editingHasSecret.value = row.hasSecret
+  editingHasEncodingAesKey.value = row.hasEncodingAesKey
   Object.assign(form, {
     channelType: row.channelType,
     robotName: row.robotName,
@@ -114,6 +120,8 @@ function openEdit(row: ChannelRobotVO) {
     // 编辑回填 appSecret 置空表示「留空则不修改」
     appSecret: '',
     robotCode: row.robotCode,
+    callbackMode: row.callbackMode ?? 'plaintext',
+    encodingAesKey: '',
     agentCode: row.agentCode,
     // 旧数据无 sessionMode 时按后端默认 continuous 展示
     sessionMode: row.sessionMode ?? 'continuous',
@@ -132,13 +140,31 @@ async function handleSubmit() {
     ElMessage.warning('新建渠道机器人必须填写 AppSecret')
     return
   }
+  if (isWechatSafe.value
+    && dialogMode.value === 'create'
+    && !form.encodingAesKey?.trim()) {
+    ElMessage.warning('微信安全模式必须填写 EncodingAESKey')
+    return
+  }
+  if (isWechatSafe.value
+    && dialogMode.value === 'edit'
+    && !editingHasEncodingAesKey.value
+    && !form.encodingAesKey?.trim()) {
+    ElMessage.warning('微信安全模式必须填写 EncodingAESKey')
+    return
+  }
   // 微信下 RobotCode = 回调 Token，必填且不回填 AppKey；钉钉留空时按契约默认与 AppKey 一致。
   const robotCode = isWechat.value
     ? (form.robotCode?.trim() ?? '')
     : form.robotCode?.trim()
       ? form.robotCode.trim()
       : form.appKey.trim()
-  const payload: ChannelRobotSaveRequest = { ...form, robotCode }
+  const payload: ChannelRobotSaveRequest = {
+    ...form,
+    robotCode,
+    callbackMode: isWechat.value ? form.callbackMode : 'plaintext',
+    encodingAesKey: isWechatSafe.value ? form.encodingAesKey?.trim() : null,
+  }
   if (dialogMode.value === 'edit' && editingId.value) {
     await updateChannelRobot(editingId.value, payload)
     ElMessage.success('保存成功')
@@ -188,7 +214,7 @@ onMounted(() => {
           2. 在「接口配置信息」填写 URL 与 Token：URL =
           <code>https://&lt;公网域名&gt;/api/channels/wechat/&lt;AppID&gt;/callback</code>，Token 自定义。
         </div>
-        <div>3. 本页新建机器人：渠道选「微信」，AppKey=AppID、AppSecret=AppSecret、<strong>回调 Token</strong> 与上面 Token 完全一致。</div>
+        <div>3. 建议在公众平台选择「安全模式」，并把 Token 与 43 位 EncodingAESKey 一并填入本页；明文模式仅用于兼容。</div>
         <div>4. 回调需公网可达，本地开发请用内网穿透（如 ngrok / natapp）把 8081 暴露出去。</div>
       </template>
     </el-alert>
@@ -218,6 +244,14 @@ onMounted(() => {
         <el-table-column prop="robotName" label="机器人名称" min-width="140" show-overflow-tooltip />
         <el-table-column prop="appKey" label="AppKey" min-width="160" show-overflow-tooltip />
         <el-table-column prop="robotCode" label="RobotCode" min-width="160" show-overflow-tooltip />
+        <el-table-column label="回调模式" width="100">
+          <template #default="{ row }: { row: ChannelRobotVO }">
+            <el-tag v-if="row.channelType === 'wechat'" :type="row.callbackMode === 'safe' ? 'success' : 'warning'" effect="plain">
+              {{ row.callbackMode === 'safe' ? '安全' : '明文' }}
+            </el-tag>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="绑定智能体" min-width="140">
           <template #default="{ row }: { row: ChannelRobotVO }">
             {{ agentNameOf(row.agentCode) }}
@@ -308,6 +342,26 @@ onMounted(() => {
                 ? '微信语义下即公众平台「接口配置信息」里的 Token，必填且需与其完全一致（参与回调签名校验）。'
                 : '钉钉 Stream 模式下 RobotCode 通常与 AppKey 相同，留空提交时自动填为 AppKey。'
             }}
+          </div>
+        </el-form-item>
+        <el-form-item v-if="isWechat" label="回调模式">
+          <el-radio-group v-model="form.callbackMode!">
+            <el-radio value="safe">安全模式</el-radio>
+            <el-radio value="plaintext">明文兼容</el-radio>
+          </el-radio-group>
+          <div class="form-tip">生产建议安全模式：消息签名校验后使用 AES 解密，并核对密文中的 AppID。</div>
+        </el-form-item>
+        <el-form-item v-if="isWechatSafe" label="EncodingAESKey">
+          <el-input
+            v-model="form.encodingAesKey!"
+            type="password"
+            show-password
+            maxlength="43"
+            :placeholder="dialogMode === 'edit' ? '留空表示不修改' : '公众平台生成的 43 位 EncodingAESKey'"
+          />
+          <div v-if="dialogMode === 'edit' && editingHasEncodingAesKey" class="form-tip">
+            <el-tag type="success" size="small">已配置</el-tag>
+            <span>已加密保存，留空则沿用现有值</span>
           </div>
         </el-form-item>
         <el-form-item label="绑定智能体" prop="agentCode" :rules="[{ required: true, message: '请选择要绑定的智能体' }]">

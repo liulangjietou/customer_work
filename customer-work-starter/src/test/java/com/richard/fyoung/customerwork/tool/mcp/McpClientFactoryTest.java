@@ -6,6 +6,8 @@ import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
+import java.net.InetAddress;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -26,7 +28,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class McpClientFactoryTest {
 
-    private final McpClientFactory factory = new McpClientFactory();
+    /** 连接类用例使用确定性公网解析结果；真实 HttpClient 仍按 URL 连接本地测试服务。 */
+    private final McpSecurityPolicy testPolicy = new McpSecurityPolicy(List::of,
+        () -> List.of(realPath("/usr/bin/env")), () -> List.of(realPath("/tmp")), () -> List.of("TOKEN"),
+        host -> new InetAddress[]{InetAddress.getByAddress(host, new byte[]{93, (byte) 184, (byte) 216, 34})});
+    private final McpClientFactory factory = new McpClientFactory(testPolicy);
 
     @Test
     void buildClientBuilder_shouldSucceed_forSseType() {
@@ -47,7 +53,8 @@ class McpClientFactoryTest {
     @Test
     void buildClientBuilder_shouldSucceed_forStdioType() {
         McpClientBuilder builder = assertDoesNotThrow(() ->
-            factory.buildClientBuilder("test", "stdio", "{\"command\": \"python\", \"args\": [\"-m\", \"mcp_server\"]}"));
+            factory.buildClientBuilder("test", "stdio", "{\"command\": \"/usr/bin/env\", "
+                + "\"args\": [\"--version\"], \"cwd\": \"/tmp\"}"));
 
         assertNotNull(builder);
     }
@@ -56,11 +63,12 @@ class McpClientFactoryTest {
     @Test
     void parseSpec_shouldExtractCommandAndArgs_forStdioType() throws Exception {
         McpServerSpec spec = factory.parseSpec("test", "stdio",
-            "{\"command\": \"python\", \"args\": [\"-m\", \"mcp_server\"]}");
+            "{\"command\": \"/usr/bin/env\", \"args\": [\"--version\"], \"cwd\": \"/tmp\"}");
 
         assertEquals(McpServerSpec.TYPE_STDIO, spec.type());
-        assertEquals("python", spec.command());
-        assertEquals(List.of("-m", "mcp_server"), spec.args());
+        assertEquals(realPath("/usr/bin/env"), spec.command());
+        assertEquals(List.of("--version"), spec.args());
+        assertEquals(realPath("/tmp"), spec.workingDirectory());
     }
 
     /** 未知/空传输类型按 sse 兜底（历史行为，多数远程 MCP 服务默认走 sse）。 */
@@ -81,6 +89,38 @@ class McpClientFactoryTest {
             "{\"url\":\"https://mcp.example.com/mcp?api_key=secret\"}"));
         assertThrows(Exception.class, () -> factory.parseSpec("test", "sse",
             "{\"url\":\"https://mcp.example.com/sse#token\"}"));
+    }
+
+    @Test
+    void parseSpec_shouldRejectPrivateAddressByDefault() throws Exception {
+        McpSecurityPolicy policy = new McpSecurityPolicy(List::of, List::of, List::of, List::of,
+            host -> new InetAddress[]{InetAddress.getByAddress(host, new byte[]{10, 0, 0, 8})});
+
+        assertThrows(Exception.class, () -> new McpClientFactory(policy).parseSpec("test", "http",
+            "{\"url\":\"https://attacker.example/mcp\"}"));
+    }
+
+    @Test
+    void parseSpec_shouldRejectStdioWithoutExplicitExecutionBoundary() {
+        assertThrows(Exception.class, () -> new McpClientFactory().parseSpec("test", "stdio",
+            "{\"command\":\"/usr/bin/env\",\"cwd\":\"/tmp\"}"));
+    }
+
+    @Test
+    void parseSpec_shouldRejectUnauthorizedStdioEnvironment() {
+        assertThrows(Exception.class, () -> factory.parseSpec("test", "stdio",
+            "{\"command\":\"/usr/bin/env\",\"cwd\":\"/tmp\",\"env\":{\"PATH\":\"/tmp\"}}"));
+    }
+
+    @Test
+    void stdioLauncher_shouldKeepSecretOutOfProcessArguments() throws Exception {
+        McpServerSpec spec = factory.parseSpec("test", "stdio",
+            "{\"command\":\"/usr/bin/env\",\"cwd\":\"/tmp\",\"env\":{\"TOKEN\":\"top-secret\"}}" );
+
+        McpStdioProcessLauncher.LaunchCommand launch = McpStdioProcessLauncher.commandFor(spec);
+
+        assertTrue(launch.arguments().stream().noneMatch(value -> value.contains("top-secret")));
+        assertEquals("top-secret", launch.environment().get("TOKEN"));
     }
 
     @Test
@@ -269,5 +309,13 @@ class McpClientFactoryTest {
         assertFalse(callResult.success());
         assertEquals("参数 orderId 非法", callResult.errorMessage());
         assertNull(callResult.output());
+    }
+
+    private static String realPath(String value) {
+        try {
+            return Path.of(value).toRealPath().toString();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

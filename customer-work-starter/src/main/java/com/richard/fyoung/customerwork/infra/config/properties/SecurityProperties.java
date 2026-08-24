@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.infra.config.properties;
 
 import lombok.Data;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,15 +18,24 @@ public class SecurityProperties {
     /** API Key 鉴权。 */
     @Data
     public static class Auth {
-        /** 是否启用鉴权（默认关闭，生产建议开启并配置 api-keys）。 */
+        /** 是否启用鉴权（默认关闭，生产开启并配置结构化 credentials）。 */
         private boolean enabled = false;
         /** 携带 API Key 的请求头名。 */
         private String headerName = "X-API-Key";
-        /** 合法 API Key 列表。 */
+        /** 携带逻辑 Key ID 的请求头名；结构化凭据必须同时提交 keyId 与 secret。 */
+        private String keyIdHeaderName = "X-API-Key-Id";
+        /**
+         * 结构化 API Key 凭据。只保存 secret 的 SHA-256 十六进制摘要，不保存明文。
+         * 同一 keyId 可并存多个 epoch，用于无中断轮换。
+         */
+        private List<Credential> credentials = new ArrayList<>();
+        /** 每个逻辑 keyId 当前允许的最小 epoch；提升后旧 epoch 立即失效。 */
+        private Map<String, Long> minimumEpochs = new LinkedHashMap<>();
+        /** 旧版明文 API Key 列表，仅兼容非生产配置；prod 门禁拒绝。 */
         private List<String> apiKeys = new ArrayList<>();
 
         /**
-         * 多租户下的 Key→租户映射：{@code key: 租户ID}。
+         * 旧版明文 Key→租户映射：{@code key: 租户ID}，仅兼容非生产配置；prod 门禁拒绝。
          *
          * <p>开启多租户后，服务端接入方的租户身份就取自这里——Key 是接入方唯一提供的凭据，
          * 也是唯一不可伪造的租户线索（请求头里的租户参数谁都能改）。</p>
@@ -34,6 +44,25 @@ public class SecurityProperties {
          * 只在 {@code apiKeys} 里的 Key 归入默认租户，保证单租户部署升级后行为不变。</p>
          */
         private Map<String, String> tenantKeys = new LinkedHashMap<>();
+    }
+
+    /** 结构化 API Key；scope 表达式支持 {@code *}、路径及 {@code METHOD:/path/**}。 */
+    @Data
+    public static class Credential {
+        /** 稳定的调用方标识；轮换 secret 时保持不变。 */
+        private String keyId;
+        /** 原始 secret 的完整 SHA-256 小写十六进制摘要（64 字符）。 */
+        private String keyHash;
+        /** 凭据所属租户。 */
+        private String tenantId = "default";
+        /** 允许的 HTTP 方法/路径范围；空集合按无权限处理。 */
+        private List<String> scopes = new ArrayList<>();
+        /** 到期时刻；null 表示不设置到期时间。 */
+        private Instant expiresAt;
+        /** 轮换版本；必须不小于 auth.minimum-epochs[keyId]。 */
+        private long epoch = 1L;
+        /** 紧急停用开关。 */
+        private boolean enabled = true;
     }
 
     /**

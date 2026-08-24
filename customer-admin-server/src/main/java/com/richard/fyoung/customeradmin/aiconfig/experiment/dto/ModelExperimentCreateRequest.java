@@ -22,6 +22,17 @@ public record ModelExperimentCreateRequest(
     @NotNull @Min(1) Long minSample,
     @NotNull @DecimalMin("0.0") @DecimalMax("1.0") BigDecimal maxErrorRate,
     @NotNull @Min(1) Long maxP95LatencyMs,
-    @NotNull @Future LocalDateTime expiresAt
+    @NotNull @Future LocalDateTime expiresAt,
+    @NotBlank @Size(max = 64) String datasetReleaseId
 ) {
+
+    /** 兼容服务层旧单测与内部调用；HTTP 新建请求必须通过校验显式绑定审核版本。 */
+    public ModelExperimentCreateRequest(String experimentName, Long agentId,
+                                        Long controlDeploymentId, Long treatmentDeploymentId,
+                                        Integer treatmentBps, Long minSample,
+                                        BigDecimal maxErrorRate, Long maxP95LatencyMs,
+                                        LocalDateTime expiresAt) {
+        this(experimentName, agentId, controlDeploymentId, treatmentDeploymentId,
+            treatmentBps, minSample, maxErrorRate, maxP95LatencyMs, expiresAt, null);
+    }
 }

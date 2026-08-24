@@ -30,6 +30,16 @@ public class Ticket {
     private volatile String handoffReason;
     /** 坐席处理结论备注。 */
     private volatile String resolveNote;
+    /** 智能路由分类原文（与受控枚举 category 分离，允许业务侧自定义分类标签）。 */
+    private volatile String routingCategory;
+    /** 智能路由要求的坐席技能。 */
+    private volatile String requiredSkill;
+    /** 智能路由给出的优先级原文。 */
+    private volatile String routingPriority;
+    /** 智能路由识别的用户情绪。 */
+    private volatile String emotion;
+    /** 推荐坐席列表 JSON（仅供 HITL 展示，不自动派单）。 */
+    private volatile String suggestedAssignees;
     /** 被重新打开的次数。 */
     private volatile int reopenCount;
 
@@ -151,6 +161,23 @@ public class Ticket {
         touch();
     }
 
+    /**
+     * 坐席在兼容的人机切换端点直接结案：PROCESSING | ON_HOLD → RESOLVED。
+     *
+     * <p>完整工单工作台仍使用 markResolved → 用户 confirm 两步语义；旧的 /handoffs/{id}/resolve
+     * 合同自始就是“坐席结案并回收给 AI”，因此由权威状态机提供单步动作，避免应用层用两次事务
+     * 拼接状态、在中途失败时留下 WAITING_CONFIRM 半状态。</p>
+     */
+    public void resolveHandoff(String note) {
+        if (status != TicketStatus.PROCESSING && status != TicketStatus.ON_HOLD) {
+            throw new IllegalStateException(illegal("resolveHandoff"));
+        }
+        this.status = TicketStatus.RESOLVED;
+        this.resolveNote = note;
+        this.resolvedAtMs = System.currentTimeMillis();
+        touch();
+    }
+
     /** 用户驳回：WAITING_CONFIRM → PROCESSING（问题未解决，打回坐席继续处理）。 */
     public void reject(String reason) {
         requireStatus("reject", TicketStatus.WAITING_CONFIRM);
@@ -169,6 +196,19 @@ public class Ticket {
         this.status = TicketStatus.CLOSED;
         this.resolveNote = reason;
         this.closedAtMs = System.currentTimeMillis();
+        touch();
+    }
+
+    /** 智能路由结果回写：不改变工单状态，仅更新同一权威工单上的分配建议。 */
+    public void applyRoutingSuggestion(String routingCategory, String requiredSkill,
+                                       String routingPriority, String emotion,
+                                       String suggestedAssignees) {
+        requireNotClosed("applyRoutingSuggestion");
+        this.routingCategory = routingCategory;
+        this.requiredSkill = requiredSkill;
+        this.routingPriority = routingPriority;
+        this.emotion = emotion;
+        this.suggestedAssignees = suggestedAssignees;
         touch();
     }
 
@@ -295,6 +335,19 @@ public class Ticket {
                               String assignee, String handoffReason, String resolveNote, int reopenCount,
                               long createdAtMs, long updatedAtMs, long handoffAtMs, long claimedAtMs,
                               long resolvedAtMs, long closedAtMs, long lastUserActiveAtMs) {
+        return reconstruct(id, sessionId, userId, title, category, priority, status, assignee,
+            handoffReason, resolveNote, reopenCount, createdAtMs, updatedAtMs, handoffAtMs,
+            claimedAtMs, resolvedAtMs, closedAtMs, lastUserActiveAtMs,
+            null, null, null, null, null);
+    }
+
+    static Ticket reconstruct(String id, String sessionId, String userId, String title,
+                              TicketCategory category, TicketPriority priority, TicketStatus status,
+                              String assignee, String handoffReason, String resolveNote, int reopenCount,
+                              long createdAtMs, long updatedAtMs, long handoffAtMs, long claimedAtMs,
+                              long resolvedAtMs, long closedAtMs, long lastUserActiveAtMs,
+                              String routingCategory, String requiredSkill, String routingPriority,
+                              String emotion, String suggestedAssignees) {
         Ticket ticket = new Ticket(id, sessionId, userId, createdAtMs);
         ticket.title = title;
         ticket.category = category;
@@ -310,6 +363,11 @@ public class Ticket {
         ticket.resolvedAtMs = resolvedAtMs;
         ticket.closedAtMs = closedAtMs;
         ticket.lastUserActiveAtMs = lastUserActiveAtMs;
+        ticket.routingCategory = routingCategory;
+        ticket.requiredSkill = requiredSkill;
+        ticket.routingPriority = routingPriority;
+        ticket.emotion = emotion;
+        ticket.suggestedAssignees = suggestedAssignees;
         return ticket;
     }
 }

@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.infra.config;
 
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
+import com.richard.fyoung.customerwork.core.model.attribution.AttributedModel;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
 import com.richard.fyoung.customerwork.core.model.failover.FailoverModel;
 import com.richard.fyoung.customerwork.core.model.failover.ModelCircuitBreakerRegistry;
 import com.richard.fyoung.customerwork.core.model.tiered.ModelTierPolicy;
@@ -14,6 +16,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import java.util.Set;
 import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 
 /**
@@ -63,20 +66,35 @@ public class ModelConfig {
      * 再切兜底会把两段输出拼在一起，用户看到重复错乱的文字——此时宁可让错误透传给上层做截断/兜底文案。</p>
      */
     Model buildChain(ModelProperties cfg) {
-        Model primary = buildPrimary(cfg);
+        return buildChain(cfg,
+            ModelCallAttribution.unpriced(cfg.getProvider(), PRIMARY_CANDIDATE_ID, cfg.getName()),
+            ModelCallAttribution.unpriced(cfg.getFallback().getProvider(), FALLBACK_CANDIDATE_ID,
+                cfg.getFallback().getName()));
+    }
+
+    /** 按发布快照构建模型链；归因装饰器必须包在每个真实候选上，才能记录实际命中的部署。 */
+    Model buildChain(ModelProperties cfg, ModelCallAttribution primaryAttribution,
+                     ModelCallAttribution fallbackAttribution) {
+        return buildChain(cfg, primaryAttribution, fallbackAttribution, Set.of());
+    }
+
+    /** 按健康 overlay 预先剔除硬不可用候选；本地调用熔断仍负责处理快照发布间隙的故障。 */
+    Model buildChain(ModelProperties cfg, ModelCallAttribution primaryAttribution,
+                     ModelCallAttribution fallbackAttribution, Set<Long> unavailableDeployments) {
+        Model primary = new AttributedModel(buildPrimary(cfg), primaryAttribution);
 
         Model model = primary;
         ModelProperties.Fallback fb = cfg.getFallback();
         if (fb.isEnabled()) {
-            Model fallback = buildByProvider(fb.getProvider(), fb.getName(),
-                fb.getApiKey(), fb.getBaseUrl(), cfg);
+            Model fallback = new AttributedModel(buildByProvider(fb.getProvider(), fb.getName(),
+                fb.getApiKey(), fb.getBaseUrl(), cfg), fallbackAttribution);
             log.info("已启用私有化兜底：主 {} -> 兜底 {}({})",
                 primary.getModelName(), fb.getProvider(), fb.getName());
             model = new FailoverModel(
-                List.of(new FailoverModel.Candidate(PRIMARY_CANDIDATE_ID, primary),
-                    new FailoverModel.Candidate(FALLBACK_CANDIDATE_ID, fallback)),
+                List.of(new FailoverModel.Candidate(candidateId(primaryAttribution, PRIMARY_CANDIDATE_ID), primary),
+                    new FailoverModel.Candidate(candidateId(fallbackAttribution, FALLBACK_CANDIDATE_ID), fallback)),
                 new ModelCircuitBreakerRegistry(BREAKER_FAILURE_THRESHOLD, BREAKER_OPEN_DURATION_SECONDS),
-                false);
+                false, unavailableDeployments);
         }
 
         ModelProperties.Retry retry = cfg.getRetry();
@@ -91,8 +109,9 @@ public class ModelConfig {
         // 它的容错由 TieredRoutingModel 自己的"首分片前失败即回退标准档"承担
         ModelProperties.TieredRouting tiered = cfg.getTieredRouting();
         if (tiered.isEnabled()) {
-            Model economy = buildByProvider(tiered.getProvider(), tiered.getName(),
-                resolveKey(tiered.getProvider(), tiered.getApiKey()), tiered.getBaseUrl(), cfg);
+            Model economy = new AttributedModel(buildByProvider(tiered.getProvider(), tiered.getName(),
+                resolveKey(tiered.getProvider(), tiered.getApiKey()), tiered.getBaseUrl(), cfg),
+                ModelCallAttribution.unpriced(tiered.getProvider(), null, tiered.getName()));
             log.info("已启用模型分级路由：经济档 {}({}) / 标准档 {}",
                 tiered.getProvider(), tiered.getName(), model.getModelName());
             model = new TieredRoutingModel(economy, model,
@@ -100,6 +119,11 @@ public class ModelConfig {
                     tiered.getMaxUserTextLengthForEconomy()));
         }
         return model;
+    }
+
+    private Long candidateId(ModelCallAttribution attribution, Long fallbackId) {
+        return attribution == null || attribution.deploymentId() == null
+            ? fallbackId : attribution.deploymentId();
     }
 
     /** DashScope 的 Key 支持环境变量兜底，其余厂商按配置原样取（与 {@link #buildPrimary} 同一口径）。 */

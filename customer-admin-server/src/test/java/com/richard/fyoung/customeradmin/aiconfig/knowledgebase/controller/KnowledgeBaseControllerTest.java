@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBase
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseVO;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service.KnowledgeBaseService;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service.KnowledgeBaseVersionService;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
@@ -35,7 +36,7 @@ class KnowledgeBaseControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(KnowledgeBaseService.class);
-        controller = new KnowledgeBaseController(service);
+        controller = new KnowledgeBaseController(service, mock(KnowledgeBaseVersionService.class));
     }
 
     @Test

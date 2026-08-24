@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.improvement.mapper.AgentImprovementCaseMapper">
+
+    <select id="lockById" resultType="com.richard.fyoung.customeradmin.improvement.entity.AgentImprovementCase">
+        SELECT * FROM ai_agent_improvement_case WHERE id = #{id} FOR UPDATE
+    </select>
+
+    <select id="findDueCandidates"
+            resultType="com.richard.fyoung.customeradmin.improvement.entity.AgentImprovementCase">
+        SELECT *
+        FROM ai_agent_improvement_case
+        WHERE status IN ('PUBLISHING', 'OBSERVING')
+          AND next_action_at_ms &lt;= #{nowMs}
+          AND (lease_until_ms IS NULL OR lease_until_ms &lt; #{nowMs})
+        ORDER BY next_action_at_ms, id
+        LIMIT #{limit}
+    </select>
+
+    <update id="claim">
+        UPDATE ai_agent_improvement_case
+        SET lease_owner = #{owner}, lease_until_ms = #{leaseUntilMs}, updated_at_ms = #{nowMs}
+        WHERE id = #{id}
+          AND status IN ('PUBLISHING', 'OBSERVING')
+          AND next_action_at_ms &lt;= #{nowMs}
+          AND (lease_until_ms IS NULL OR lease_until_ms &lt; #{nowMs})
+    </update>
+</mapper>

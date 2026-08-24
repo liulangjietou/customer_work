@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelPricingStatus;
 import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
 import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallLogMapper;
 import com.richard.fyoung.customerwork.data.calllog.mapper.AgentCallSegmentMapper;
@@ -11,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.SqlSessionTemplate;
 
+import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.List;
@@ -65,7 +68,10 @@ class MybatisAgentCallLogStoreTest {
 
     private AgentCallRecord newRecord(String username, String agentCode, long startMs) {
         List<AgentCallSegment> segs = List.of(
-            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", startMs, 30L, true, null, 100L, 20L, 60L, 18L),
+            new AgentCallSegment(1, AgentCallKind.MODEL, "qwen-max", startMs, 30L, true, null,
+                100L, 20L, 60L, 18L, new ModelCallAttribution("aliyun", 12L, "qwen-max",
+                    91L, "CNY", new BigDecimal("2.50"), new BigDecimal("7.50"),
+                    new BigDecimal("0.25"), ModelPricingStatus.PRICED)),
             new AgentCallSegment(2, AgentCallKind.TOOL, "queryOrder", startMs + 30, 20L, true, null, null, null, null, null),
             new AgentCallSegment(3, AgentCallKind.MCP, "mcp_weather", startMs + 50, 10L, false, "boom", null, null, null, null));
         return new AgentCallRecord(0L, "req-" + UUID.randomUUID(), "u-" + username, username, agentCode,
@@ -93,6 +99,12 @@ class MybatisAgentCallLogStoreTest {
         // token 往返：MODEL 段有值，工具段为 null
         assertEquals(100L, segs.get(0).inputTokens(), "MODEL 段输入 token 往返");
         assertEquals(20L, segs.get(0).outputTokens(), "MODEL 段输出 token 往返");
+        assertEquals("aliyun", segs.get(0).attribution().provider(), "真实供应商归因往返");
+        assertEquals(12L, segs.get(0).attribution().deploymentId(), "真实部署归因往返");
+        assertEquals(91L, segs.get(0).attribution().priceId(), "冻结价格版本往返");
+        assertEquals(ModelPricingStatus.PRICED, segs.get(0).attribution().pricingStatus());
+        assertEquals(new BigDecimal("0.00026500000000"), segs.get(0).cost().amount(),
+            "分段成本可由持久化冻结价目精确复算");
         assertNull(segs.get(1).inputTokens(), "工具段无 token");
 
         AgentCallRecord roundTrip = store.findPage(new AgentCallLogQuery(

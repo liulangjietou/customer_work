@@ -203,11 +203,11 @@ class ModelConfigServiceTenantVisibilityTest {
         doAnswer(invocation -> {
             assertEquals("tenant-a", TenantContext.get());
             return null;
-        }).when(agentInstanceCache).evict("agent-a");
+        }).when(agentInstanceCache).invalidate("agent-a");
         doAnswer(invocation -> {
             assertEquals("tenant-b", TenantContext.get());
             return null;
-        }).when(agentInstanceCache).evict("agent-b");
+        }).when(agentInstanceCache).invalidate("agent-b");
         doAnswer(invocation -> {
             assertEquals("tenant-a", TenantContext.get());
             return null;
@@ -224,8 +224,8 @@ class ModelConfigServiceTenantVisibilityTest {
             TenantContext.clear();
         }
 
-        verify(agentInstanceCache).evict("agent-a");
-        verify(agentInstanceCache).evict("agent-b");
+        verify(agentInstanceCache).invalidate("agent-a");
+        verify(agentInstanceCache).invalidate("agent-b");
         verify(runtimeConfigPublisher).publishForAgentId(11L);
         verify(runtimeConfigPublisher).publishForAgentId(22L);
     }
@@ -266,7 +266,7 @@ class ModelConfigServiceTenantVisibilityTest {
         }
 
         verify(modelImpactService).requireAllowed(deployment, "tenant-a", "ROTATE");
-        verify(agentInstanceCache).evict("experiment-agent");
+        verify(agentInstanceCache).invalidate("experiment-agent");
         verify(runtimeConfigPublisher).publishForAgentId(11L);
     }
 

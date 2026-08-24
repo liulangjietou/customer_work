@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.aiconfig.experiment.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentCreateRequest;
+import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentArmEvalVO;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentEventVO;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentMetricsVO;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentStopRequest;
@@ -76,5 +77,11 @@ public class ModelExperimentController {
     @GetMapping("/{id}/metrics")
     public Result<ModelExperimentMetricsVO> metrics(@PathVariable Long id) {
         return Result.success(experimentService.metrics(id));
+    }
+
+    @SaCheckPermission("model-experiment:view")
+    @GetMapping("/{id}/arm-evaluations")
+    public Result<List<ModelExperimentArmEvalVO>> armEvaluations(@PathVariable Long id) {
+        return Result.success(experimentService.armEvaluations(id));
     }
 }

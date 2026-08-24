@@ -231,7 +231,7 @@ public class AuthService {
             entity.setResult(success ? SysOperationLog.RESULT_SUCCESS : SysOperationLog.RESULT_FAILURE);
             entity.setErrorMsg(errorMsg);
             entity.setIp(resolveClientIp());
-            entity.setCreateTime(LocalDateTime.now());
+            entity.initializeAudit(SysOperationLog.AUDIT_COMPLETED, LocalDateTime.now());
             TenantContext.runWith(tenantId, () -> operationLogMapper.insert(entity));
         } catch (Exception e) {
             log.error("record login log failed, code={}", "LOGIN-LOG-RECORD-FAIL", e);

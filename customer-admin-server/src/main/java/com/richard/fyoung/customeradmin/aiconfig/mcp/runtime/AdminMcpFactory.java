@@ -5,10 +5,13 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugImageVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugToolVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
+import com.richard.fyoung.customeradmin.config.AdminMcpSecurityProperties;
 import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
 import com.richard.fyoung.customerwork.tool.mcp.McpConnectivityResult;
 import com.richard.fyoung.customerwork.tool.mcp.McpToolCallResult;
 import com.richard.fyoung.customerwork.tool.mcp.McpToolDescriptor;
+import com.richard.fyoung.customerwork.tool.mcp.McpSecurityPolicy;
+import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
 import org.springframework.stereotype.Component;
 
@@ -28,7 +31,26 @@ import java.util.stream.Collectors;
 @Component
 public class AdminMcpFactory {
 
-    private final McpClientFactory mcpClientFactory = new McpClientFactory();
+    private final McpClientFactory mcpClientFactory;
+
+    public AdminMcpFactory(AdminMcpSecurityProperties properties) {
+        this(new McpSecurityPolicy(properties::getAllowedHosts, properties::getAllowedCommands,
+            properties::getAllowedWorkingDirectories, properties::getAllowedEnvironmentKeys));
+    }
+
+    /** 离线单测默认沿用最严格策略。 */
+    AdminMcpFactory() {
+        this(McpSecurityPolicy.strict());
+    }
+
+    AdminMcpFactory(McpSecurityPolicy securityPolicy) {
+        this.mcpClientFactory = new McpClientFactory(securityPolicy);
+    }
+
+    /** 保存门禁：与真实运行时构建复用同一解析与安全策略。 */
+    public McpServerSpec validateConfiguration(String mcpName, String mcpType, String config) throws Exception {
+        return mcpClientFactory.parseSpec(mcpName, mcpType, config);
+    }
 
     /**
      * 按 mcpType/config 构建一个尚未连接的 {@link McpClientBuilder}。支持 stdio / sse / http 三种传输，

@@ -1,11 +1,13 @@
 package com.richard.fyoung.customeradmin.aiconfig.model.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelAssetOptionVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelCertificationRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelCertificationVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthEventVO;
+import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthOverrideRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthSnapshotVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelImpactVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
@@ -108,6 +110,16 @@ public class ModelConfigController {
     public Result<List<ModelHealthEventVO>> healthEvents(@PathVariable Long id,
                                                          @RequestParam(required = false) Integer limit) {
         return Result.success(modelConfigService.healthEvents(id, limit));
+    }
+
+    @SaCheckPermission("model:health-override")
+    @OperationLog(operation = "覆盖模型健康路由", target = "ai_model_health_snapshot")
+    @PutMapping("/{id}/health-override")
+    public Result<ModelHealthSnapshotVO> overrideHealth(
+        @PathVariable Long id,
+        @Valid @RequestBody ModelHealthOverrideRequest request) {
+        return Result.success(modelConfigService.overrideHealth(id, request,
+            StpUtil.getLoginIdAsLong(), StpUtil.getTokenSession().getString("username")));
     }
 
     @SaCheckPermission("model:view")

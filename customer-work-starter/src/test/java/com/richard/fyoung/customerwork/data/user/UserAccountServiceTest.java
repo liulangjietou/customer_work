@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.user;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -9,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 用户账户服务单测（内存存储）：注册成功/重名 fast-fail、BCrypt 校验、密码错/停用统一返回 empty。
@@ -134,5 +137,37 @@ class UserAccountServiceTest {
         svc.updateLevel(created.getId(), "vip");
         // 不广播的话，同进程改完档也要等绑定缓存过期——而那层缓存本是为跨进程场景设的
         assertEquals(java.util.List.of(created.getId()), notified, "改档必须广播给配额侧失效缓存");
+    }
+
+    @Test
+    void revokeSessions_shouldInvalidatePreviouslyIssuedEpoch() {
+        init();
+        UserAccount account = service.register("revoked", "pwd12345", "撤权用户", null);
+        assertTrue(service.isSessionActive(account.getId(), 0L));
+
+        long current = service.revokeSessions(account.getId());
+
+        assertEquals(1L, current);
+        assertTrue(!service.isSessionActive(account.getId(), 0L));
+        assertTrue(service.isSessionActive(account.getId(), 1L));
+    }
+
+    @Test
+    void tenantAwareSessionCheck_shouldBindAndRestoreTenantContext() {
+        UserAccountStore scopedStore = mock(UserAccountStore.class);
+        UserAccount account = TenantContext.callWith("tenant-a",
+            () -> UserAccount.create("U-tenant", "tenant-user", "hash", "Tenant", null));
+        when(scopedStore.findById("U-tenant")).thenAnswer(invocation -> {
+            assertEquals("tenant-a", TenantContext.get());
+            return Optional.of(account);
+        });
+        UserAccountService scopedService = new UserAccountService(scopedStore);
+        TenantContext.set("outer-tenant");
+        try {
+            assertTrue(scopedService.isSessionActive("tenant-a", "U-tenant", 0L));
+            assertEquals("outer-tenant", TenantContext.get());
+        } finally {
+            TenantContext.clear();
+        }
     }
 }

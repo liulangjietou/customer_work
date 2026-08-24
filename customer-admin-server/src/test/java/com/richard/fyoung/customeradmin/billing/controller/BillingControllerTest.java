@@ -11,6 +11,7 @@ import com.richard.fyoung.customeradmin.billing.service.CostForecastService;
 import com.richard.fyoung.customeradmin.billing.service.ModelPriceAdminService;
 import com.richard.fyoung.customeradmin.billing.service.TenantQuotaService;
 import com.richard.fyoung.customeradmin.billing.service.UsageAggregationService;
+import com.richard.fyoung.customeradmin.billing.service.UsageReconciliationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
@@ -41,6 +42,7 @@ class BillingControllerTest {
     private ModelPriceAdminService priceService;
     private BillingReportService reportService;
     private UsageAggregationService aggregationService;
+    private UsageReconciliationService reconciliationService;
     private CostAlertService alertService;
     private CostForecastService forecastService;
     private BillingCsvExportService csvExportService;
@@ -53,6 +55,7 @@ class BillingControllerTest {
         priceService = mock(ModelPriceAdminService.class);
         reportService = mock(BillingReportService.class);
         aggregationService = mock(UsageAggregationService.class);
+        reconciliationService = mock(UsageReconciliationService.class);
         alertService = mock(CostAlertService.class);
         forecastService = mock(CostForecastService.class);
         csvExportService = mock(BillingCsvExportService.class);
@@ -62,6 +65,7 @@ class BillingControllerTest {
             priceService,
             reportService,
             aggregationService,
+            reconciliationService,
             alertService,
             forecastService,
             csvExportService,
@@ -104,6 +108,24 @@ class BillingControllerTest {
             controller.tenantBill("default", date, date);
 
             verify(reportService).tenantBill("default", date, date);
+        }
+    }
+
+    @Test
+    void reconciliation_shouldRequireTargetForControlPlaneAndScopeOrdinaryTenant() {
+        LocalDate date = LocalDate.of(2026, 8, 21);
+        when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(true);
+        BizException missingTarget = assertThrows(BizException.class,
+            () -> controller.reconciliation(null, date, date));
+        assertEquals(ResultCode.PARAM_INVALID, missingTarget.getResultCode());
+        verifyNoInteractions(reconciliationService);
+
+        when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(false);
+        when(reconciliationService.reconcile("tenant-a", date, date)).thenReturn(List.of());
+        try (MockedStatic<TenantSession> tenantSession = mockStatic(TenantSession.class)) {
+            tenantSession.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
+            controller.reconciliation(null, date, date);
+            verify(reconciliationService).reconcile("tenant-a", date, date);
         }
     }
 

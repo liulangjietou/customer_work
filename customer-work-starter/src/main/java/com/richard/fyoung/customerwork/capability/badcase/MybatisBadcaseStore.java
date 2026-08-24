@@ -93,6 +93,7 @@ public class MybatisBadcaseStore implements BadcaseStore {
         row.setMessageId(badcase.getMessageId());
         row.setUserInput(badcase.getUserInput());
         row.setAgentReply(badcase.getAgentReply());
+        row.setSignalHash(badcase.getSignalHash());
         row.setDetail(badcase.getDetail());
         row.setStatus(badcase.getStatus().name());
         row.setAdoptedKnowledgeId(badcase.getAdoptedKnowledgeId());
@@ -112,6 +113,7 @@ public class MybatisBadcaseStore implements BadcaseStore {
             row.getMessageId(),
             row.getUserInput(),
             row.getAgentReply(),
+            row.getSignalHash(),
             row.getDetail(),
             row.getCreatedAtMs() == null ? 0L : row.getCreatedAtMs());
         badcase.restoreState(

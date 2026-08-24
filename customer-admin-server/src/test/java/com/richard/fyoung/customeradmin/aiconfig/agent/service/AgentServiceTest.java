@@ -117,6 +117,9 @@ class AgentServiceTest {
             routingPolicyRuntimeAccess, runtimeConfigPublisher);
 
         when(modelConfigAccess.findVisibleById(1L)).thenReturn(new AiModelConfig());
+        when(skillMapper.selectById(20L)).thenReturn(enabledSkill());
+        when(knowledgeBaseMapper.selectById(40L))
+            .thenReturn(usableKnowledgeBase(40L, "产品知识库"));
         // 默认主模型连通性门禁通过（个别用例覆写为失败）
         when(modelConfigService.testConnectivity(any())).thenReturn(
             CompletableFuture.completedFuture(new ModelTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), null)));
@@ -126,6 +129,14 @@ class AgentServiceTest {
         return new AgentSaveRequest("客服助手", "customer-helper", 1L, null, List.of(10L), List.of(20L), List.of(30L),
             "你是客服助手", List.of("chat", "vibecoding"), "robot", 1,
             null, null, null, null, null, null, null);
+    }
+
+    private AiSkill enabledSkill() {
+        AiSkill skill = new AiSkill();
+        skill.setSkillCode("skill-20");
+        skill.setStatus(1);
+        skill.setCurrentVersionId(200L);
+        return skill;
     }
 
     /** 只带 5 个高级参数的请求（能力固定 chat），供取值范围校验用例复用。 */
@@ -170,6 +181,20 @@ class AgentServiceTest {
     }
 
     @Test
+    void create_shouldRejectDisabledSkillBinding() {
+        AiSkill disabled = new AiSkill();
+        disabled.setSkillCode("disabled-skill");
+        disabled.setStatus(0);
+        when(skillMapper.selectBatchIds(List.of(20L))).thenReturn(List.of(disabled));
+        AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null,
+            null, List.of(20L), null, null, null, null, 1,
+            null, null, null, null, null, null, null);
+
+        assertThrows(BizException.class, () -> service.create(request));
+        verify(agentMapper, never()).insert(any(AiAgent.class));
+    }
+
+    @Test
     void create_shouldRejectInvalidSystemToolIds() {
         when(systemToolMapper.selectBatchIds(List.of(30L))).thenReturn(List.of()); // 0 条命中，说明 30L 不存在
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 1L, null, null, null, List.of(30L),
@@ -189,7 +214,7 @@ class AgentServiceTest {
     @Test
     void create_shouldInsertRelationRows_andBumpMenuVersion() {
         when(mcpMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(new AiMcp()));
-        when(skillMapper.selectBatchIds(List.of(20L))).thenReturn(List.of(new AiSkill()));
+        when(skillMapper.selectBatchIds(List.of(20L))).thenReturn(List.of(enabledSkill()));
         when(systemToolMapper.selectBatchIds(List.of(30L))).thenReturn(List.of(new AiSystemTool()));
 
         long versionBefore = menuVersionHolder.current();
@@ -197,7 +222,9 @@ class AgentServiceTest {
 
         verify(agentMapper).insert(any(AiAgent.class));
         verify(agentMcpMapper).insert(any(AiAgentMcp.class));
-        verify(agentSkillMapper).insert(any(AiAgentSkill.class));
+        ArgumentCaptor<AiAgentSkill> skillRelation = ArgumentCaptor.forClass(AiAgentSkill.class);
+        verify(agentSkillMapper).insert(skillRelation.capture());
+        assertEquals(200L, skillRelation.getValue().getSkillVersionId());
         verify(agentSystemToolMapper).insert(any(AiAgentSystemTool.class));
         assertEquals(versionBefore + 1, menuVersionHolder.current());
     }
@@ -230,7 +257,7 @@ class AgentServiceTest {
         existing.setId(1L);
         when(agentMapper.selectById(1L)).thenReturn(existing);
         when(mcpMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(new AiMcp()));
-        when(skillMapper.selectBatchIds(List.of(20L))).thenReturn(List.of(new AiSkill()));
+        when(skillMapper.selectBatchIds(List.of(20L))).thenReturn(List.of(enabledSkill()));
         when(systemToolMapper.selectBatchIds(List.of(30L))).thenReturn(List.of(new AiSystemTool()));
 
         service.update(1L, validRequest());
@@ -365,7 +392,7 @@ class AgentServiceTest {
         existing.setModelId(1L); // 与 validRequest 的 modelId 相同
         when(agentMapper.selectById(1L)).thenReturn(existing);
         when(mcpMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(new AiMcp()));
-        when(skillMapper.selectBatchIds(List.of(20L))).thenReturn(List.of(new AiSkill()));
+        when(skillMapper.selectBatchIds(List.of(20L))).thenReturn(List.of(enabledSkill()));
         when(systemToolMapper.selectBatchIds(List.of(30L))).thenReturn(List.of(new AiSystemTool()));
 
         service.update(1L, validRequest());
@@ -554,6 +581,7 @@ class AgentServiceTest {
         kb.setKbName(name);
         kb.setStatus(1);
         kb.setTestStatus(ConnectivityTestStatus.SUCCESS);
+        kb.setCurrentVersionId(id * 10);
         return kb;
     }
 
@@ -576,7 +604,9 @@ class AgentServiceTest {
 
         service.create(requestWithKnowledgeBases(List.of(40L)));
 
-        verify(agentKnowledgeBaseMapper).insert(any(AiAgentKnowledgeBase.class));
+        ArgumentCaptor<AiAgentKnowledgeBase> relation = ArgumentCaptor.forClass(AiAgentKnowledgeBase.class);
+        verify(agentKnowledgeBaseMapper).insert(relation.capture());
+        assertEquals(400L, relation.getValue().getKnowledgeBaseVersionId());
     }
 
     @Test
@@ -634,6 +664,7 @@ class AgentServiceTest {
         AiAgentKnowledgeBase relation = new AiAgentKnowledgeBase();
         relation.setAgentId(1L);
         relation.setKnowledgeBaseId(40L);
+        relation.setKnowledgeBaseVersionId(400L);
         when(agentKnowledgeBaseMapper.selectList(any())).thenReturn(List.of(relation));
         when(knowledgeBaseMapper.selectBatchIds(List.of(40L)))
             .thenReturn(List.of(usableKnowledgeBase(40L, "产品知识库")));
@@ -641,6 +672,7 @@ class AgentServiceTest {
         AgentVO vo = service.get(1L);
 
         assertEquals(List.of(40L), vo.getKnowledgeBaseIds());
+        assertEquals(List.of(400L), vo.getKnowledgeBaseVersionIds());
         assertEquals(List.of("产品知识库"), vo.getKnowledgeBaseNames());
     }
 

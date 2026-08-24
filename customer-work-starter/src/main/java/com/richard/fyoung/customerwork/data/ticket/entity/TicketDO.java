@@ -30,6 +30,11 @@ public class TicketDO {
     private String assignee;
     private String handoffReason;
     private String resolveNote;
+    private String routingCategory;
+    private String requiredSkill;
+    private String routingPriority;
+    private String emotion;
+    private String suggestedAssignees;
     private Integer reopenCount;
     private Long createdAtMs;
     private Long updatedAtMs;

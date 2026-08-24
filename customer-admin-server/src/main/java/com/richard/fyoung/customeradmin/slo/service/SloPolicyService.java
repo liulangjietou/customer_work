@@ -59,6 +59,9 @@ public class SloPolicyService {
             policyMapper.update(policy, new QueryWrapper<SloPolicy>()
                 .eq("id", policy.getId()).eq("tenant_id", tenantId));
         }
+        if (Boolean.TRUE.equals(policy.getEnabled())) {
+            policyMapper.scheduleNow(policy.getId(), tenantId, System.currentTimeMillis());
+        }
         return policy.getId();
     }
 
@@ -111,6 +114,7 @@ public class SloPolicyService {
         return new SloPolicyVO(p.getId(), p.getPolicyName(), p.getScopeType(), p.getScopeKey(),
             p.getAvailabilityTarget(), p.getLatencyTarget(), p.getLatencyThresholdMs(),
             p.getShortWindowMinutes(), p.getLongWindowMinutes(), p.getMinimumSampleCount(),
-            p.getBurnRateThreshold(), p.getEnabled(), p.getUpdateTime());
+            p.getBurnRateThreshold(), p.getEnabled(), p.getLastEvaluatedAt(),
+            p.getLastEvaluationStatus(), p.getLastEvaluationError(), p.getUpdateTime());
     }
 }

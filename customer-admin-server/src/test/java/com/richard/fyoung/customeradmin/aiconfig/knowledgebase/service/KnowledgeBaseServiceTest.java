@@ -51,6 +51,7 @@ class KnowledgeBaseServiceTest {
     private AiKnowledgeBaseMapper knowledgeBaseMapper;
     private AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper;
     private KnowledgeSearchClient searchClient;
+    private KnowledgeBaseVersionService versionService;
     private KnowledgeBaseService service;
 
     /**
@@ -68,8 +69,9 @@ class KnowledgeBaseServiceTest {
         knowledgeBaseMapper = mock(AiKnowledgeBaseMapper.class);
         agentKnowledgeBaseMapper = mock(AiAgentKnowledgeBaseMapper.class);
         searchClient = mock(KnowledgeSearchClient.class);
+        versionService = mock(KnowledgeBaseVersionService.class);
         service = new KnowledgeBaseService(knowledgeBaseMapper, agentKnowledgeBaseMapper,
-            new AesGcmCryptoUtil(TEST_SECRET_KEY), searchClient, new AdminRagProperties());
+            new AesGcmCryptoUtil(TEST_SECRET_KEY), searchClient, new AdminRagProperties(), versionService);
         // 默认探测成功（个别用例覆写为失败）
         when(searchClient.searchOne(any(KnowledgeBaseEndpoint.class), anyString()))
             .thenReturn(List.of(new KnowledgeNode("kb", "片段", new BigDecimal("0.18"), "d1", "c1")));

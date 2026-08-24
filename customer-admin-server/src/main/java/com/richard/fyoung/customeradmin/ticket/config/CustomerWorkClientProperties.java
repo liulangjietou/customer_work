@@ -35,10 +35,13 @@ public class CustomerWorkClientProperties {
      *
      * <p>与 {@link #agentSecret} 是两条不同的身份线：坐席令牌代表"某个客服在操作工单"，
      * 而评测这类动作是运营方对整套系统的操作、与具体坐席无关，硬塞一个坐席身份进去会让
-     * 8080 侧的审计把运营行为记成某个客服干的。对应 8080 的
-     * {@code customer-work.security.auth.api-keys}；未开启鉴权时留空即可。</p>
+     * 8080 侧的审计把运营行为记成某个客服干的。对应 8080 的结构化 API Key；
+     * 未开启鉴权时留空即可。</p>
      */
     private String apiKey = "";
+
+    /** 运营侧结构化 API Key 的稳定 keyId，与 {@link #apiKey} 成对发送。 */
+    private String apiKeyId = "";
 
     /** WS 接入凭证有效期（小时）：签发给前端的长有效期凭证，比单次 HTTP 请求令牌长。 */
     private long credentialExpireHours = 12;

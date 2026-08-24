@@ -1,8 +1,10 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.dto;
 
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
+import com.richard.fyoung.customerwork.data.calllog.AgentReplaySnapshot;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -30,6 +32,7 @@ public class AgentCallStatsDetailVO {
     private Integer experimentBucket;
     /** 不含任何 API Key/MCP header 的制品版本绑定。 */
     private EvalVersionBinding versionBinding;
+    private AgentReplaySnapshot replaySnapshot;
     private String question;
     /** 智能体回答全文（不截断）。 */
     private String answer;
@@ -48,5 +51,11 @@ public class AgentCallStatsDetailVO {
     private Long cachedTokens;
     /** 模型自报耗时合计（毫秒），与 modelMs 之差即网络/排队开销。 */
     private Long modelReportedMs;
+    private BigDecimal modelCostAmount;
+    private String modelCostCurrency;
+    private String modelCostStatus;
+    private Integer modelSegmentCount;
+    private Integer settledCostSegmentCount;
+    private Integer unsettledCostSegmentCount;
     private List<AgentCallSegmentVO> segments;
 }

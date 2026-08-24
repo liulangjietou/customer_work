@@ -7,6 +7,7 @@ import com.alibaba.nacos.api.config.listener.Listener;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -236,6 +237,14 @@ public class TenantAccessNacosService implements DisposableBean {
         Map<String, String> tenantKeys = properties.getSecurity().getAuth().getTenantKeys();
         if (tenantKeys != null) {
             tenants.addAll(tenantKeys.values());
+        }
+        if (properties.getSecurity().getAuth().getCredentials() != null) {
+            for (SecurityProperties.Credential credential
+                : properties.getSecurity().getAuth().getCredentials()) {
+                if (credential != null && credential.isEnabled()) {
+                    tenants.add(credential.getTenantId());
+                }
+            }
         }
         tenants.removeIf(tenant -> tenant == null || TenantContext.isDefaultTenant(tenant));
         return tenants;

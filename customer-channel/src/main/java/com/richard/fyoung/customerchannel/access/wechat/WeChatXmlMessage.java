@@ -33,16 +33,24 @@ final class WeChatXmlMessage {
 
     private final String toUserName;
     private final String fromUserName;
+    private final String createTime;
     private final String msgType;
     private final String content;
     private final String msgId;
+    private final String event;
+    private final String eventKey;
 
-    private WeChatXmlMessage(String toUserName, String fromUserName, String msgType, String content, String msgId) {
+    private WeChatXmlMessage(String toUserName, String fromUserName, String createTime,
+                             String msgType, String content, String msgId,
+                             String event, String eventKey) {
         this.toUserName = toUserName;
         this.fromUserName = fromUserName;
+        this.createTime = createTime;
         this.msgType = msgType;
         this.content = content;
         this.msgId = msgId;
+        this.event = event;
+        this.eventKey = eventKey;
     }
 
     /**
@@ -57,22 +65,16 @@ final class WeChatXmlMessage {
             throw new IllegalArgumentException("wechat callback body is blank");
         }
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            // 关闭 DTD/外部实体，防 XXE
-            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setExpandEntityReferences(false);
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(new InputSource(new StringReader(xml)));
-            doc.getDocumentElement().normalize();
+            Document doc = parseDocument(xml);
             return new WeChatXmlMessage(
                 text(doc, "ToUserName"),
                 text(doc, "FromUserName"),
+                text(doc, "CreateTime"),
                 text(doc, "MsgType"),
                 text(doc, "Content"),
-                text(doc, "MsgId"));
+                text(doc, "MsgId"),
+                text(doc, "Event"),
+                text(doc, "EventKey"));
         } catch (Exception e) {
             throw new IllegalArgumentException("invalid wechat callback xml", e);
         }
@@ -89,6 +91,54 @@ final class WeChatXmlMessage {
         return value == null ? "" : value.trim();
     }
 
+    /** 解析安全模式外层 XML 的 Encrypt 字段；XXE 防御仍只收敛在本解析器。 */
+    static String encryptedPayload(String xml) {
+        if (!StringUtils.hasText(xml)) {
+            throw new IllegalArgumentException("wechat callback body is blank");
+        }
+        try {
+            Document document = parseDocument(xml);
+            String encrypted = text(document, "Encrypt");
+            if (!StringUtils.hasText(encrypted)) {
+                throw new IllegalArgumentException("wechat encrypted payload is blank");
+            }
+            return encrypted;
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("invalid wechat callback xml", e);
+        }
+    }
+
+    private static Document parseDocument(String xml) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setExpandEntityReferences(false);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        Document document = builder.parse(new InputSource(new StringReader(xml)));
+        document.getDocumentElement().normalize();
+        return document;
+    }
+
+    /**
+     * 平台消息幂等键：优先使用 MsgId；事件类消息无 MsgId 时使用稳定业务字段组合。
+     * 缺少 FromUserName/CreateTime/MsgType 时无法安全判定同一消息，返回空并由入口拒绝分发。
+     */
+    String idempotencyKey() {
+        if (StringUtils.hasText(msgId)) {
+            return "msgid:" + msgId;
+        }
+        if (!StringUtils.hasText(fromUserName) || !StringUtils.hasText(createTime)
+            || !StringUtils.hasText(msgType)) {
+            return "";
+        }
+        return "fallback:" + fromUserName + "\n" + createTime + "\n" + msgType + "\n"
+            + event + "\n" + eventKey + "\n" + content;
+    }
+
     boolean isText() {
         return ChannelAccessConstants.WECHAT_MSG_TYPE_TEXT.equalsIgnoreCase(msgType);
     }
@@ -101,6 +151,10 @@ final class WeChatXmlMessage {
         return fromUserName;
     }
 
+    String getCreateTime() {
+        return createTime;
+    }
+
     String getMsgType() {
         return msgType;
     }
@@ -111,5 +165,13 @@ final class WeChatXmlMessage {
 
     String getMsgId() {
         return msgId;
+    }
+
+    String getEvent() {
+        return event;
+    }
+
+    String getEventKey() {
+        return eventKey;
     }
 }

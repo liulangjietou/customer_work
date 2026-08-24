@@ -40,8 +40,10 @@ export interface BusinessOutcomeSummary {
   averageCsat: number | null
   csatSatisfiedRate: number
   totalCost: number | null
+  costCurrency: string | null
   costPerAutoResolvedSession: number | null
   costAvailability: MetricAvailability
+  costPerAutoResolvedAvailability: MetricAvailability
   definitions: BusinessOutcomeDefinitions
 }
 
@@ -56,6 +58,9 @@ export interface BusinessOutcomeSession {
   autoResolvedProxy: boolean
   totalTokens: number | null
   tokenAvailability: MetricAvailability
+  modelCost: number | null
+  costCurrency: string | null
+  costAvailability: MetricAvailability
   csatScore: number | null
 }
 

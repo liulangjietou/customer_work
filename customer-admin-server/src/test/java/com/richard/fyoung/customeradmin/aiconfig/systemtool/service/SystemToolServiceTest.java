@@ -93,7 +93,7 @@ class SystemToolServiceTest {
         service.update(1L, new SystemToolSaveRequest("HTTP请求工具", "desc", 0, "remark"));
 
         verify(systemToolMapper).updateById(any(AiSystemTool.class));
-        verify(agentInstanceCache).evictAll(List.of("sales-assistant"));
+        verify(agentInstanceCache).invalidateAll(List.of("sales-assistant"));
     }
 
     @Test

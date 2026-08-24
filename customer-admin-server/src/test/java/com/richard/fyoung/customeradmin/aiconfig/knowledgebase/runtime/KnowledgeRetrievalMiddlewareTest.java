@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,7 +55,7 @@ class KnowledgeRetrievalMiddlewareTest {
     /** 壳必须把构建期绑定的 agentCode 与本轮提问原样交给查表服务，接错了整条 RAG 链路会静默不召回。 */
     @Test
     void shouldWireRetrievalServiceAsProvider() {
-        when(retrievalService.retrieve(anyString(), anyString())).thenReturn(BLOCK);
+        when(retrievalService.retrieve(anyString(), anyString(), isNull())).thenReturn(BLOCK);
         AtomicReference<ReasoningInput> passed = new AtomicReference<>();
 
         middleware.onReasoning(null, RuntimeContext.builder().sessionId("s1").build(),
@@ -63,7 +64,7 @@ class KnowledgeRetrievalMiddlewareTest {
                 return Flux.<AgentEvent>empty();
             }).blockLast();
 
-        verify(retrievalService).retrieve(AGENT_CODE, "公积金怎么提取");
+        verify(retrievalService).retrieve(AGENT_CODE, "公积金怎么提取", null);
         // 壳确实继承了父类的注入行为：原消息不动，末尾多一条隔离包裹的合成消息
         List<Msg> sent = passed.get().messages();
         assertEquals(2, sent.size());
@@ -75,7 +76,7 @@ class KnowledgeRetrievalMiddlewareTest {
     /** 查表服务返回 null（未绑知识库/未命中/降级）时原样透传，壳不得自己造空块。 */
     @Test
     void shouldPassThrough_whenRetrievalServiceReturnsNull() {
-        when(retrievalService.retrieve(anyString(), anyString())).thenReturn(null);
+        when(retrievalService.retrieve(anyString(), anyString(), isNull())).thenReturn(null);
         ReasoningInput input = inputOf("问题");
         AtomicReference<ReasoningInput> passed = new AtomicReference<>();
 

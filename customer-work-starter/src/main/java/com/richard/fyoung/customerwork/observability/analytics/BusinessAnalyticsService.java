@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
 /**
  * 业务数据分析聚合服务（运营视角：这段时间业务运转得怎么样）。
  *
- * <p>聚合审批（{@code cw_approval}）、人机切换（{@code cw_handoff_ticket}）、质检
+ * <p>聚合审批（{@code cw_approval}）、权威工单转人工事实（{@code cw_ticket}）、质检
  * （{@code FactLog}）三个已有数据源，按时间窗口计算业务指标——这些是 Prometheus 技术指标
  * 无法直接给出的"业务级周期报告"（如"过去 7 天平均放行率""平均接单时长"），数据源本身已具备
  * 时间戳与完整状态机，只是此前没有聚合视角。</p>

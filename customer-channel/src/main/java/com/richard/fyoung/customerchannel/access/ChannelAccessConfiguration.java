@@ -6,6 +6,12 @@ import com.richard.fyoung.customerchannel.access.wechat.WeChatAccessTokenClient;
 import com.richard.fyoung.customerchannel.access.wechat.WeChatConnectorFactory;
 import com.richard.fyoung.customerchannel.access.wechat.WeChatConnectorRegistry;
 import com.richard.fyoung.customerchannel.access.wechat.WeChatCustomerMessageSender;
+import com.richard.fyoung.customerchannel.access.wechat.InMemoryWeChatReplayGuard;
+import com.richard.fyoung.customerchannel.access.wechat.RedisWeChatReplayGuard;
+import com.richard.fyoung.customerchannel.access.wechat.WeChatReplayGuard;
+import com.richard.fyoung.customerwork.infra.lock.DistributedLockConfig;
+import org.redisson.api.RedissonClient;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -59,6 +65,30 @@ public class ChannelAccessConfiguration {
     @Bean
     public WeChatCustomerMessageSender weChatCustomerMessageSender(WeChatAccessTokenClient tokenClient) {
         return new WeChatCustomerMessageSender(tokenClient);
+    }
+
+    /** 生产默认用 Redis 原子占位，确保多实例回调只执行一次。 */
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnProperty(prefix = "customer-channel.access.wechat", name = "replay-store",
+        havingValue = "redis", matchIfMissing = true)
+    public RedissonClient weChatReplayRedissonClient(ChannelAccessProperties properties) {
+        return DistributedLockConfig.buildRedissonClient(properties.getWechat().getRedis());
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "customer-channel.access.wechat", name = "replay-store",
+        havingValue = "redis", matchIfMissing = true)
+    public WeChatReplayGuard redisWeChatReplayGuard(RedissonClient weChatReplayRedissonClient,
+                                                    ChannelAccessProperties properties) {
+        return new RedisWeChatReplayGuard(weChatReplayRedissonClient, properties.getWechat().getKeyPrefix());
+    }
+
+    /** 仅单实例测试/开发使用；生产多副本必须保持默认 redis。 */
+    @Bean
+    @ConditionalOnProperty(prefix = "customer-channel.access.wechat", name = "replay-store",
+        havingValue = "memory")
+    public WeChatReplayGuard inMemoryWeChatReplayGuard(ChannelAccessProperties properties) {
+        return new InMemoryWeChatReplayGuard(properties.getWechat().getMemoryMaxEntries());
     }
 
     /** 微信连接器工厂（第二个渠道实现）。 */

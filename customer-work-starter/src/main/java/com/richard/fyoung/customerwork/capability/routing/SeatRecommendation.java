@@ -11,7 +11,7 @@ import java.util.List;
 /**
  * 坐席推荐项（HITL 推荐：给坐席工作台展示的候选坐席 + 打分 + 可解释理由）。
  *
- * <p>由 {@link SeatRoutingScorer} 产出并以 JSON 落到 {@code cw_handoff_ticket.suggested_assignees}；坐席
+ * <p>由 {@link SeatRoutingScorer} 产出并以 JSON 落到权威 {@code cw_ticket.suggested_assignees}；坐席
  * <b>人工点选</b>后仍复用现有 claim 流程真正接单——<b>不自动派单</b>。JSON ↔ 对象转换收敛在本类静态方法，
  * 解析失败降级空集合（fail-open：无推荐、坐席照常手动接单）。</p>
  *

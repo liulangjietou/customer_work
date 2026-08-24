@@ -2,9 +2,11 @@ package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.dto.IntentResult;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import com.richard.fyoung.customerwork.tool.AfterSalesTools;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.KnowledgeBaseTools;
+import com.richard.fyoung.customerwork.tool.ManagedToolkit;
 import com.richard.fyoung.customerwork.tool.OrderTools;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
@@ -167,7 +169,8 @@ public class MultiAgentOrchestrator {
     private RuntimeContext contextFor(String sessionId, String stage) {
         String scoped = (sessionId == null || sessionId.isBlank() ? "default" : sessionId) + "#mas-" + stage;
         return governanceAssembler != null
-            ? governanceAssembler.contextFor(scoped)
+            ? governanceAssembler.contextFor("multi-agent-" + stage, scoped,
+                AgentInvocationIdentity.CHANNEL_INTERNAL)
             : RuntimeContext.builder().userId("multi-agent").sessionId(scoped).build();
     }
 
@@ -222,7 +225,8 @@ public class MultiAgentOrchestrator {
 
         if (MODE_SEQUENTIAL.equalsIgnoreCase(cfg.getMode())) {
             log.info("multi-agent orchestration: sequential, {} specialists", all.size());
-            return sequential(all, msg, consultCtx).map(Msg::getTextContent);
+            return sequential(all, msg, consultCtx).map(Msg::getTextContent)
+                .doFinally(signal -> closeAgents(all, "multi-agent-sequential"));
         }
         return selectExperts(sessionId, userText, all)
             .flatMap(experts -> {
@@ -233,7 +237,8 @@ public class MultiAgentOrchestrator {
                     .collect(Collectors.toList());
                 return fanout(tasks, cfg.getMaxConcurrency());
             })
-            .flatMap(replies -> reduce(sessionId, userText, replies));
+            .flatMap(replies -> reduce(sessionId, userText, replies))
+            .doFinally(signal -> closeAgents(all, "multi-agent-fanout"));
     }
 
     /**
@@ -259,9 +264,12 @@ public class MultiAgentOrchestrator {
             }
         }
         // 慢车道：交 LLM 分诊
-        return routerAgent().call("判断用户意图并结构化输出：" + userText, IntentResult.class,
-                contextFor(sessionId, "router"))
-            .map(m -> m.getStructuredData(IntentResult.class))
+        return Mono.using(
+                this::routerAgent,
+                router -> router.call("判断用户意图并结构化输出：" + userText, IntentResult.class,
+                    contextFor(sessionId, "router")),
+                router -> AgentResourceCloser.closeQuietly(router, "multi-agent-router"))
+            .map(message -> message.getStructuredData(IntentResult.class))
             .map(intent -> {
                 List<ReActAgent> picked = expertsForIntent(intent.intent(), all);
                 log.info("multi-agent routing: intent={}, picked={}", intent.intent(),
@@ -353,7 +361,10 @@ public class MultiAgentOrchestrator {
         recordReduce(true);
         String prompt = "用户问题：" + userText + "\n\n以下是各专家的结论，请综合成一段面向用户的、统一口径的简洁回复，"
             + "去重并消解冲突，不要罗列专家名：\n\n" + joined;
-        return reducerAgent().call(prompt, contextFor(sessionId, "reducer"))
+        return Mono.using(
+                this::reducerAgent,
+                reducer -> reducer.call(prompt, contextFor(sessionId, "reducer")),
+                reducer -> AgentResourceCloser.closeQuietly(reducer, "multi-agent-reducer"))
             .map(Msg::getTextContent)
             .onErrorResume(err -> {
                 log.error("multi-agent reduce failed, fallback to aggregated replies, errorCode={}", ERR_REDUCE_FAIL, err);
@@ -405,7 +416,7 @@ public class MultiAgentOrchestrator {
             .sysPrompt("你是客服分诊器。判断用户消息意图并归类为：order（订单/物流）、refund（退款/售后）、"
                 + "complaint（投诉）、consult（政策咨询）、other。只输出结构化结果，不要调用工具。")
             .model(model)
-            .toolkit(new Toolkit())
+            .toolkit(new ManagedToolkit())
             .maxIters(1);
         if (governanceAssembler != null) {
             governanceAssembler.applyTo(builder);
@@ -425,12 +436,16 @@ public class MultiAgentOrchestrator {
             .sysPrompt("你是客服回复归纳器。把多位专家的结论综合成一段面向用户的、统一口径的简洁中文回复："
                 + "去重、消解冲突、保留关键事实与来源，不要罗列专家名，不要调用工具。")
             .model(model)
-            .toolkit(new Toolkit())
+            .toolkit(new ManagedToolkit())
             .maxIters(1);
         if (governanceAssembler != null) {
             governanceAssembler.applyTo(builder);
         }
         return builder.build();
+    }
+
+    private void closeAgents(List<ReActAgent> agents, String owner) {
+        agents.forEach(agent -> AgentResourceCloser.closeQuietly(agent, owner));
     }
 
     /** 记录路由结果：意图分布 + 本次 fanout 实际投递的专家数。 */

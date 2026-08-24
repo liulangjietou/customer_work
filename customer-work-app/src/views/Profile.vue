@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
-import { fetchMe } from '@/api/auth'
+import { fetchMe, revokeSessions } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import { chatSocket } from '@/utils/ws'
 import type { UserInfo } from '@/types/api'
@@ -13,6 +13,7 @@ const auth = useAuthStore()
 
 const profile = ref<UserInfo | null>(null)
 const loading = ref(true)
+const revoking = ref(false)
 
 async function loadProfile() {
   loading.value = true
@@ -36,6 +37,30 @@ async function onLogout() {
   showToast('已退出登录')
   router.replace('/login')
 }
+
+async function onRevokeSessions() {
+  if (revoking.value) {
+    return
+  }
+  try {
+    await showConfirmDialog({
+      title: '退出所有设备',
+      message: '确认撤销该账号的全部登录状态？所有设备都需要重新登录。',
+    })
+  } catch {
+    return // 用户取消
+  }
+  revoking.value = true
+  try {
+    await revokeSessions()
+    auth.clear()
+    chatSocket.close()
+    showToast('所有设备已退出登录')
+    router.replace('/login')
+  } finally {
+    revoking.value = false
+  }
+}
 </script>
 
 <template>
@@ -56,7 +81,8 @@ async function onLogout() {
       </van-cell-group>
 
       <van-cell-group inset class="menu-group">
-        <van-cell title="退出登录" icon="warning-o" is-link clickable @click="onLogout" />
+        <van-cell title="退出当前设备" icon="warning-o" is-link clickable @click="onLogout" />
+        <van-cell title="退出所有设备" icon="close" is-link clickable @click="onRevokeSessions" />
       </van-cell-group>
     </div>
 

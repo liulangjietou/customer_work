@@ -30,6 +30,9 @@ public class AiSkill {
     private Integer status;
     /** 存储目标，逗号分隔（如 {@code "local,nacos"}），仿 ai_agent.capabilities 的存法。 */
     private String storageTargets;
+    /** 当前最新不可变版本。Agent 关系会冻结该版本 ID，不跟随此指针漂移。 */
+    private Long currentVersionId;
+    private Integer latestVersionNo;
 
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;

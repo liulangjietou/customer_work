@@ -65,7 +65,28 @@ class McpServiceTest {
 
         service.create(request);
 
-        verify(mcpMapper).insert(org.mockito.ArgumentMatchers.any(AiMcp.class));
+        ArgumentCaptor<AiMcp> captor = ArgumentCaptor.forClass(AiMcp.class);
+        verify(mcpMapper).insert(captor.capture());
+        assertEquals("ADMIN_USER", captor.getValue().getAllowedSubjectTypes());
+    }
+
+    @Test
+    void create_shouldPersistNormalizedSubjectPolicy() {
+        McpSaveRequest request = new McpSaveRequest("测试MCP", "http",
+            "{\"url\": \"https://mcp.example.com/mcp\"}", null,
+            List.of("api_key", "user"), 1);
+
+        service.create(request);
+
+        ArgumentCaptor<AiMcp> captor = ArgumentCaptor.forClass(AiMcp.class);
+        verify(mcpMapper).insert(captor.capture());
+        assertEquals("USER,API_KEY", captor.getValue().getAllowedSubjectTypes());
+    }
+
+    @Test
+    void create_shouldRejectEmptyOrUnknownSubjectPolicy() {
+        assertThrows(BizException.class, () -> service.create(new McpSaveRequest("测试MCP", "http",
+            "{\"url\": \"https://mcp.example.com/mcp\"}", null, List.of("unknown"), 1)));
     }
 
     @Test
@@ -124,6 +145,7 @@ class McpServiceTest {
         McpVO vo = service.get(1L);
 
         assertEquals(ConnectivityTestStatus.SUCCESS, vo.getTestStatus());
+        assertEquals(List.of("USER", "ADMIN_USER", "API_KEY"), vo.getAllowedSubjectTypes());
     }
 
     @Test

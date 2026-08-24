@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.capability.eval;
 
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalCaseMapper;
+import com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetReleaseMapper;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetSnapshotMapper;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalRunMapper;
 import com.richard.fyoung.customerwork.core.constant.StoreModes;
@@ -82,6 +83,20 @@ public class EvalConfig {
         }
         log.info("eval dataset snapshot store: memory");
         return new InMemoryEvalDatasetSnapshotStore();
+    }
+
+    /** 命名版本与快照使用同一存储模式；memory 模式适合离线测试，生产应使用 JDBC。 */
+    @Bean
+    @ConditionalOnMissingBean(EvalDatasetReleaseStore.class)
+    public EvalDatasetReleaseStore evalDatasetReleaseStore(
+        CustomerWorkProperties properties,
+        ObjectProvider<EvalDatasetReleaseMapper> mapperProvider) {
+        if (StoreModes.isJdbc(properties.getEval().getStoreMode())) {
+            log.info("eval dataset release store: jdbc (table=cw_eval_dataset_release)");
+            return new MybatisEvalDatasetReleaseStore(mapperProvider.getObject());
+        }
+        log.info("eval dataset release store: memory");
+        return new InMemoryEvalDatasetReleaseStore();
     }
 
     @Bean

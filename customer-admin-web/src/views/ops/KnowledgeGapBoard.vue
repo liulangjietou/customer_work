@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
+import ImprovementClosurePanel from '@/components/ImprovementClosurePanel.vue'
 import {
   fillKnowledgeGap,
   listKnowledgeGaps,
@@ -18,6 +19,8 @@ const loading = ref(false)
 const list = ref<KnowledgeGap[]>([])
 // 分区键 = 租户码（未开多租户时统一落 default），与 CSAT 看板同一口径
 const scopeId = ref('default')
+const closureVisible = ref(false)
+const closureGap = ref<KnowledgeGap | null>(null)
 
 async function loadList() {
   loading.value = true
@@ -69,6 +72,11 @@ function openFill(row: KnowledgeGap) {
   formRef.value?.clearValidate()
 }
 
+function openClosure(row: KnowledgeGap) {
+  closureGap.value = row
+  closureVisible.value = true
+}
+
 async function submitFill() {
   if (!formRef.value) return
   await formRef.value.validate()
@@ -116,10 +124,18 @@ onMounted(loadList)
         <el-table-column label="最近出现" width="170">
           <template #default="{ row }">{{ formatTime(row.lastSeenAtMs) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button v-permission="'knowledge-gap:fill'" link type="primary" @click="openFill(row)">
               补充知识
+            </el-button>
+            <el-button
+              v-permission="'improvement:manage'"
+              link
+              type="success"
+              @click="openClosure(row)"
+            >
+              治理闭环
             </el-button>
           </template>
         </el-table-column>
@@ -161,6 +177,14 @@ onMounted(loadList)
         <el-button type="primary" :loading="submitting" @click="submitFill">补进知识库</el-button>
       </template>
     </el-dialog>
+
+    <el-drawer v-model="closureVisible" title="知识盲区治理闭环" size="760px">
+      <ImprovementClosurePanel
+        v-if="closureGap"
+        source-type="KNOWLEDGE_GAP"
+        :source-key="closureGap.questionHash"
+      />
+    </el-drawer>
   </div>
 </template>
 

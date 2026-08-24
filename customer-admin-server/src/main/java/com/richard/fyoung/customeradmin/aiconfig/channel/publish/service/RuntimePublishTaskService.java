@@ -40,8 +40,9 @@ public class RuntimePublishTaskService {
     private final RuntimeConfigAckMapper ackMapper;
     private final RuntimePublishProperties properties;
     private final AdminTenantProperties tenantProperties;
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final RuntimeRollbackPatchExtractor rollbackPatchExtractor =
-        new RuntimeRollbackPatchExtractor(new ObjectMapper());
+        new RuntimeRollbackPatchExtractor(objectMapper);
     private final String workerId = ManagementFactory.getRuntimeMXBean().getName() + "-" + UUID.randomUUID();
 
     public RuntimePublishTaskService(RuntimePublishTaskMapper taskMapper, RuntimeConfigAckMapper ackMapper,
@@ -56,7 +57,45 @@ public class RuntimePublishTaskService {
     /** 与智能体/模型业务修改同事务写入，不在 afterCommit 内存回调中丢任务。 */
     @Transactional(rollbackFor = Exception.class)
     public String enqueueAgent(Long agentId) {
-        return enqueue(agentId, null, null);
+        return enqueue(agentId, null, null, RuntimePublishIntent.NORMAL);
+    }
+
+    /** 健康 overlay 变化使用独立意图，避免故障主模型反过来阻止安全路由快照下发。 */
+    @Transactional(rollbackFor = Exception.class)
+    public String enqueueHealthOverlay(Long agentId) {
+        return enqueue(agentId, null, null, RuntimePublishIntent.HEALTH_OVERLAY);
+    }
+
+    /**
+     * 在权威 Agent 行/绑定被删除前固化撤销目标；后续 Worker 不再查询可能已经消失的业务数据。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public String enqueueRevocation(Long agentId, String targetCode) {
+        Objects.requireNonNull(agentId, "agentId");
+        if (!StringUtils.hasText(targetCode)) {
+            throw new IllegalArgumentException("runtime revocation targetCode is missing");
+        }
+        long now = System.currentTimeMillis();
+        RuntimePublishTask task = new RuntimePublishTask();
+        task.setId(UUID.randomUUID().toString());
+        task.setOperationId(task.getId());
+        task.setPublishIntent(RuntimePublishIntent.REVOKE.name());
+        task.setTenantId(currentTenant());
+        task.setTargetId(agentId);
+        task.setTargetCode(targetCode);
+        freezeAckTargets(task);
+        task.setDataId(resolveTaskDataId(task.getTenantId()));
+        task.setGroupName(resolveTaskGroupName());
+        task.setPublishScope("FULL");
+        task.setStatus(RuntimePublishStatus.PENDING.name());
+        task.setGateStatus(EvalGateStatus.NOT_REQUIRED.name());
+        task.setAttempts(0);
+        task.setNextAttemptAtMs(now);
+        task.setLeaseUntilMs(0L);
+        task.setCreatedAtMs(now);
+        task.setUpdatedAtMs(now);
+        taskMapper.insert(task);
+        return task.getId();
     }
 
     /** 实验生命周期变更与不可变发布意图同事务写入，避免 Worker 从后续状态反推动作。 */
@@ -66,25 +105,29 @@ public class RuntimePublishTaskService {
         Objects.requireNonNull(agentId, "agentId");
         Objects.requireNonNull(experimentId, "experimentId");
         Objects.requireNonNull(action, "action");
-        return enqueue(agentId, experimentId, action);
+        return enqueue(agentId, experimentId, action, RuntimePublishIntent.NORMAL);
     }
 
-    private String enqueue(Long agentId, Long experimentId, ModelExperimentPublishAction action) {
+    private String enqueue(Long agentId, Long experimentId, ModelExperimentPublishAction action,
+                           RuntimePublishIntent intent) {
         Objects.requireNonNull(agentId, "agentId");
+        Objects.requireNonNull(intent, "intent");
         long now = System.currentTimeMillis();
         RuntimePublishTask task = new RuntimePublishTask();
         task.setId(UUID.randomUUID().toString());
         task.setOperationId(task.getId());
-        task.setPublishIntent(RuntimePublishIntent.NORMAL.name());
+        task.setPublishIntent(intent.name());
         task.setTenantId(currentTenant());
         task.setTargetId(agentId);
+        freezeAckTargets(task);
         task.setDataId(resolveTaskDataId(task.getTenantId()));
         task.setGroupName(resolveTaskGroupName());
         task.setExperimentId(experimentId);
         task.setExperimentPublishAction(action == null ? null : action.name());
         task.setPublishScope("FULL");
         task.setStatus(RuntimePublishStatus.PENDING.name());
-        task.setGateStatus(action == ModelExperimentPublishAction.DEACTIVATE
+        task.setGateStatus(intent.bypassesEvalGate()
+            || action == ModelExperimentPublishAction.DEACTIVATE
             ? EvalGateStatus.NOT_REQUIRED.name() : EvalGateStatus.PENDING.name());
         task.setAttempts(0);
         task.setNextAttemptAtMs(now);
@@ -113,6 +156,7 @@ public class RuntimePublishTaskService {
             task.setPublishIntent(command.publishIntent().name());
             task.setTenantId(target.tenantId());
             task.setTargetId(target.agentId());
+            freezeAckTargets(task);
             task.setDataId(resolveTaskDataId(target.tenantId()));
             task.setGroupName(resolveTaskGroupName());
             task.setSourceConfigVersionId(command.sourceConfigVersionId());
@@ -187,7 +231,7 @@ public class RuntimePublishTaskService {
         int changed = CrossTenantOperations.execute(() ->
             taskMapper.markPublished(task.getId(), workerId, System.currentTimeMillis()));
         requireLease(changed, task.getId());
-        refreshAckStatus(task.getTenantId(), task.getRevision());
+        refreshAckStatus(task);
     }
 
     public void markDeliveryFailed(RuntimePublishTask task, Throwable failure) {
@@ -265,6 +309,7 @@ public class RuntimePublishTaskService {
         if (!Objects.equals(task.getContentHash(), ack.contentHash())) {
             throw new IllegalArgumentException("runtime config content hash mismatch");
         }
+        validateAckTarget(task, ack.instanceId());
 
         long now = System.currentTimeMillis();
         RuntimeConfigAckEntity entity = new RuntimeConfigAckEntity();
@@ -279,20 +324,26 @@ public class RuntimePublishTaskService {
         entity.setUpdatedAtMs(now);
         ackMapper.upsert(entity);
 
-        return refreshAckStatus(tenantId, ack.revision());
+        return refreshAckStatus(task);
     }
 
-    private RuntimePublishStatus refreshAckStatus(String tenantId, String revision) {
+    private RuntimePublishStatus refreshAckStatus(RuntimePublishTask task) {
+        String tenantId = task.getTenantId();
+        String revision = task.getRevision();
         int applied = ackMapper.countByStatus(tenantId, revision, "APPLIED");
         int rejected = ackMapper.countByStatus(tenantId, revision, "REJECTED");
-        if (applied == 0 && rejected == 0) {
-            return RuntimePublishStatus.PUBLISHED;
-        }
+        List<String> frozenTargets = frozenAckTargets(task);
         RuntimePublishStatus aggregate;
         if (rejected > 0) {
             aggregate = applied > 0 ? RuntimePublishStatus.PARTIAL : RuntimePublishStatus.FAILED;
-        } else if (applied >= properties.getMinimumAckCount()) {
+        } else if (frozenTargets != null && frozenTargets.isEmpty()) {
+            aggregate = RuntimePublishStatus.PUBLISHED;
+        } else if (frozenTargets != null && applied >= frozenTargets.size()) {
             aggregate = RuntimePublishStatus.APPLIED;
+        } else if (frozenTargets == null && applied >= properties.getMinimumAckCount()) {
+            aggregate = RuntimePublishStatus.APPLIED;
+        } else if (applied == 0) {
+            aggregate = RuntimePublishStatus.PUBLISHED;
         } else {
             aggregate = RuntimePublishStatus.PARTIAL;
         }
@@ -305,6 +356,35 @@ public class RuntimePublishTaskService {
             }
         }
         return aggregate;
+    }
+
+    private void freezeAckTargets(RuntimePublishTask task) {
+        try {
+            task.setAckTargetsJson(objectMapper.writeValueAsString(
+                properties.ackTargetInstanceIds(task.getTenantId())));
+        } catch (Exception e) {
+            throw new IllegalStateException("runtime ACK target snapshot serialization failed", e);
+        }
+    }
+
+    /** null 只兼容 V89 前任务；新任务即使没有目标也固化为 []。 */
+    private List<String> frozenAckTargets(RuntimePublishTask task) {
+        if (task.getAckTargetsJson() == null) {
+            return null;
+        }
+        try {
+            String[] values = objectMapper.readValue(task.getAckTargetsJson(), String[].class);
+            return List.of(values);
+        } catch (Exception e) {
+            throw new IllegalStateException("runtime ACK target snapshot is invalid", e);
+        }
+    }
+
+    private void validateAckTarget(RuntimePublishTask task, String instanceId) {
+        List<String> targets = frozenAckTargets(task);
+        if (targets != null && !targets.contains(instanceId)) {
+            throw new IllegalArgumentException("runtime config ACK instance is not a frozen publish target");
+        }
     }
 
     private void validateAck(RuntimeConfigAck ack, String authenticatedInstanceId) {

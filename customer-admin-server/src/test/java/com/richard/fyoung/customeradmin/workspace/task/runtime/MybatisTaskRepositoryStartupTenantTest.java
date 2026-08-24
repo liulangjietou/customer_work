@@ -1,57 +1,57 @@
 package com.richard.fyoung.customeradmin.workspace.task.runtime;
 
-import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.core.plugins.InterceptorIgnoreHelper;
-import com.richard.fyoung.customeradmin.workspace.task.entity.AiAgentTask;
-
 import com.richard.fyoung.customeradmin.workspace.task.mapper.AiAgentTaskMapper;
-import org.apache.ibatis.builder.MapperBuilderAssistant;
-import org.apache.ibatis.session.Configuration;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * 重启清理孤儿任务的租户上下文测试。
+ * 后台任务租约维护的租户上下文测试。
  *
- * <p>清理跑在 {@code @PostConstruct} 里——启动期没有租户上下文，不显式跨租户会被拦截器
- * fail-closed；而那段代码外面裹着 {@code catch(Exception)}，异常被吞掉后表现为
- * "清理静默不生效"，比直接报错更难发现。</p>
+ * <p>心跳和接管扫描都跑在独立维护线程里，没有 Web 请求租户上下文；不显式跨租户会被拦截器
+ * fail-closed，表现为租约静默不续期、宕机任务永远无法被其它 Pod 接管。</p>
  * @author owlzhangfq@gmail.com
  */
 class MybatisTaskRepositoryStartupTenantTest {
 
-    /** LambdaUpdateWrapper 解析字段名要读 MyBatis-Plus 的表信息缓存，脱离容器时需手工初始化。 */
-    @BeforeAll
-    static void initMybatisPlusLambdaCache() {
-        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), AiAgentTask.class);
-    }
-
     @Test
-    void cleanupOrphanTasks_shouldRunAcrossTenants() {
+    void recoverExpiredTasks_shouldRunAcrossTenants() {
         AiAgentTaskMapper taskMapper = mock(AiAgentTaskMapper.class);
-        boolean[] crossTenant = {false};
-        when(taskMapper.update(isNull(), any())).thenAnswer(invocation -> {
-            crossTenant[0] = InterceptorIgnoreHelper.willIgnoreTenantLine("anyMapperId");
+        boolean[] candidateScanCrossTenant = {false};
+        boolean[] terminalScanCrossTenant = {false};
+        when(taskMapper.selectExpiredReplayable(any(), anyInt(), anyInt())).thenAnswer(invocation -> {
+            candidateScanCrossTenant[0] = InterceptorIgnoreHelper.willIgnoreTenantLine("anyMapperId");
+            return List.of();
+        });
+        when(taskMapper.failExpiredUnrecoverable(any(), anyInt(), anyString())).thenAnswer(invocation -> {
+            terminalScanCrossTenant[0] = InterceptorIgnoreHelper.willIgnoreTenantLine("anyMapperId");
             return 0;
         });
 
         MybatisTaskRepository repository = new MybatisTaskRepository(taskMapper, properties());
-        repository.init();
+        repository.useExecutor(Executors.newSingleThreadExecutor());
+        repository.setReplayExecutor((task, context) -> "unused");
+        repository.recoverExpiredTasks();
+        repository.shutdown();
 
-        assertTrue(crossTenant[0], "重启清理是跨租户运维扫描，必须显式跨租户，否则会被 fail-closed 静默吞掉");
+        assertTrue(candidateScanCrossTenant[0], "可重放候选扫描必须显式跨租户");
+        assertTrue(terminalScanCrossTenant[0], "不可恢复任务收敛扫描必须显式跨租户");
         assertFalse(InterceptorIgnoreHelper.willIgnoreTenantLine("anyMapperId"), "作用域退出后不得泄漏");
     }
 
     private AgentTaskExecutorProperties properties() {
         AgentTaskExecutorProperties properties = new AgentTaskExecutorProperties();
-        properties.setCleanupOrphansOnStartup(true);
+        properties.setOwnerId("pod-a");
         return properties;
     }
 }

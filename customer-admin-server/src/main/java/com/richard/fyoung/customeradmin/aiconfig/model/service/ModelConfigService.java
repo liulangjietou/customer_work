@@ -12,6 +12,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelAssetOptionVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelCertificationRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelCertificationVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthEventVO;
+import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthOverrideRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthSnapshotVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelImpactVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelSaveRequest;
@@ -281,7 +282,7 @@ public class ModelConfigService {
         List<ModelAgentReference> references = modelReferenceAccess.findReferences(model);
         for (ModelAgentReference reference : references) {
             Runnable propagate = () -> {
-                agentInstanceCache.evict(reference.getAgentCode());
+                agentInstanceCache.invalidate(reference.getAgentCode());
                 // 可靠任务与模型修改同事务写入；Publisher 会把兼容的 afterCommit 路径也绑定到当前租户。
                 runtimeConfigPublisher.publishForAgentId(reference.getAgentId());
             };
@@ -344,6 +345,11 @@ public class ModelConfigService {
 
     public List<ModelHealthEventVO> healthEvents(Long id, Integer limit) {
         return modelHealthService.listEvents(id, limit);
+    }
+
+    public ModelHealthSnapshotVO overrideHealth(Long id, ModelHealthOverrideRequest request,
+                                                Long operatorId, String operatorName) {
+        return modelHealthService.override(id, request, operatorId, operatorName);
     }
 
     public ModelCertificationVO certification(Long id) {

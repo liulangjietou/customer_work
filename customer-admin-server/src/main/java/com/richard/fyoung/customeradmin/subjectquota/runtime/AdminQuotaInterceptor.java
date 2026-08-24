@@ -7,6 +7,8 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaDecision;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
@@ -48,21 +50,32 @@ public class AdminQuotaInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
-        if (!guard.isEnabled() || !StpUtil.isLogin()) {
-            // 未登录的请求由 Sa-Token 拦截器负责拒绝，这里不重复判身份，也无从算额度
+        if (!StpUtil.isLogin()) {
+            // 未登录的请求由 Sa-Token 拦截器负责拒绝，这里无从建立可信主体
+            QuotaSubjectContext.clear();
+            AgentInvocationIdentityContext.clear();
             return true;
         }
         QuotaSubject subject = QuotaSubject.adminUser(StpUtil.getLoginIdAsString());
+        // 主体身份来自 Sa-Token，必须独立于配额开关存在；MCP 授权与审计同样依赖它。
+        QuotaSubjectContext.set(subject);
+        AgentInvocationIdentityContext.set(new AgentInvocationIdentity(
+            tenantOf(), subject.type(), subject.id(), true)
+            .withChannel(AgentInvocationIdentity.CHANNEL_ADMIN));
+        if (!guard.isEnabled()) {
+            return true;
+        }
         String tenantId = tenantOf();
         SubjectQuotaDecision decision = TenantContext.callWith(tenantId,
             () -> guard.check(subject, request.getRequestURI()));
 
         if (decision.shouldBlock()) {
+            QuotaSubjectContext.clear();
+            AgentInvocationIdentityContext.clear();
             writeQuotaExceeded(response, decision);
             return false;
         }
         TenantContext.runWith(tenantId, () -> guard.recordRequest(subject));
-        QuotaSubjectContext.set(subject);
         return true;
     }
 
@@ -71,6 +84,7 @@ public class AdminQuotaInterceptor implements HandlerInterceptor {
                                 Object handler, Exception ex) {
         // 线程是复用的，不清理会让下一个请求的 token 记到上一个人头上
         QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
     }
 
     /** 登录态里的租户；取不到按默认租户算（未开多租户时就是这种情况）。 */

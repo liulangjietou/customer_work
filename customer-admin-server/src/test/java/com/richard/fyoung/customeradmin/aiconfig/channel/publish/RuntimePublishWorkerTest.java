@@ -103,6 +103,29 @@ class RuntimePublishWorkerTest {
     }
 
     @Test
+    void healthOverlayTaskShouldBypassEvalGateAndUseReliablePublish() {
+        EvalReleaseGateService gateService = mock(EvalReleaseGateService.class);
+        RuntimePublishWorker gatedWorker = new RuntimePublishWorker(
+            new RuntimePublishProperties(), taskService, publisher, gateService);
+        RuntimePublishTask task = task();
+        task.setPublishIntent(RuntimePublishIntent.HEALTH_OVERLAY.name());
+        PreparedRuntimeConfig prepared = new PreparedRuntimeConfig(
+            "agent-a", "web", "runtime-config", "DEFAULT_GROUP", "rev-1", "hash-1", "{}");
+        when(taskService.claimDue()).thenReturn(List.of(task));
+        when(publisher.prepareTask(task)).thenReturn(prepared);
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(1).run();
+            return null;
+        }).when(taskService).publishWithFencing(eq(task), any(Runnable.class));
+
+        gatedWorker.dispatchSafely();
+
+        verify(gateService, never()).evaluateAndRecord(task, prepared);
+        verify(publisher).publishPrepared(task, prepared);
+        verify(taskService).publishWithFencing(eq(task), any(Runnable.class));
+    }
+
+    @Test
     void leaseLostBeforeFencedPublishShouldStopWithoutRetryMutation() {
         RuntimePublishTask task = task();
         PreparedRuntimeConfig prepared = new PreparedRuntimeConfig(

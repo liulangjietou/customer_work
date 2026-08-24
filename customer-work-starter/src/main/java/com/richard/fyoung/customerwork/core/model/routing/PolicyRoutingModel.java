@@ -65,7 +65,7 @@ public final class PolicyRoutingModel implements Model {
             AtomicBoolean emitted = new AtomicBoolean(false);
             Flux<ChatResponse> primary = selectedModel.stream(messages, tools, options)
                 .doOnNext(response -> emitted.set(true));
-            if (forcedFallback || fallbackRule == null
+            if (forcedFallback || fallbackRule == null || !isAvailable(fallbackRule.deploymentId())
                 || Objects.equals(selected.deploymentId(), fallbackRule.deploymentId())) {
                 return primary;
             }
@@ -106,13 +106,23 @@ public final class PolicyRoutingModel implements Model {
     }
 
     private PolicyRouteSpec.Rule selectNormal(ModelRouteHint hint) {
-        return normalRules.stream().filter(rule -> matches(rule.condition(), hint)).findFirst()
-            .orElseThrow(() -> new ModelRouteUnavailableException(
-                "no route matched policy " + spec.policyId() + " version " + spec.versionNo()));
+        PolicyRouteSpec.Rule matched = normalRules.stream()
+            .filter(rule -> matches(rule.condition(), hint))
+            .filter(rule -> isAvailable(rule.deploymentId()))
+            .findFirst().orElse(null);
+        if (matched != null) {
+            return matched;
+        }
+        if (fallbackRule != null && isAvailable(fallbackRule.deploymentId())) {
+            return fallbackRule;
+        }
+        throw new ModelRouteUnavailableException(
+            "no healthy route matched policy " + spec.policyId() + " version " + spec.versionNo());
     }
 
     private PolicyRouteSpec.Rule requireFallbackRule() {
-        if (fallbackRule == null || !models.containsKey(fallbackRule.deploymentId())) {
+        if (fallbackRule == null || !models.containsKey(fallbackRule.deploymentId())
+            || !isAvailable(fallbackRule.deploymentId())) {
             throw new FallbackModelUnavailableException("no policy fallback deployment for forced route");
         }
         return fallbackRule;
@@ -243,6 +253,11 @@ public final class PolicyRoutingModel implements Model {
 
     private Model modelFor(PolicyRouteSpec.Rule rule) {
         return models.get(rule.deploymentId());
+    }
+
+    private boolean isAvailable(Long deploymentId) {
+        PolicyRouteSpec.Health health = spec.healthOverlays().get(deploymentId);
+        return health == null || health.routingAvailable();
     }
 
     private String normalize(String value) {

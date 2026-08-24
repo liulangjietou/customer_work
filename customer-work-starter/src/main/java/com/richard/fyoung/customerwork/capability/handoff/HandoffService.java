@@ -1,26 +1,35 @@
 package com.richard.fyoung.customerwork.capability.handoff;
 
 import com.richard.fyoung.customerwork.capability.routing.HandoffCreatedEnricher;
+import com.richard.fyoung.customerwork.data.ticket.InMemoryTicketStore;
+import com.richard.fyoung.customerwork.data.ticket.Ticket;
+import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
+import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
+import com.richard.fyoung.customerwork.data.ticket.TicketService;
+import com.richard.fyoung.customerwork.data.ticket.TicketStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * 人机切换工单服务（AI→人工接管→人工→AI 回收 的应用层闭环）。
+ * 人机切换兼容服务（AI→人工接管→人工→AI 回收）。
  *
  * <p>取代 {@code HumanHandoffTools.transferToHuman} 此前"只打日志 + 生成随机字符串工单号"的空实现——
  * 转人工不再是一句无状态的话术，而是一张可查询、可流转的 {@link HandoffTicket}：AI 转出生成
  * {@code PENDING} 工单 → 坐席 {@link #claim} 接单（{@code CLAIMED}）→ 坐席处理完毕
  * {@link #resolve}（{@code RESOLVED}，会话可回收给 AI 续接）。</p>
  *
- * <p>存储委托给 {@link HandoffStore} SPI：默认 {@link InMemoryHandoffStore}（进程内，离线可测），
- * 生产可声明自己的 {@link HandoffStore} Bean（如 JDBC / Redis 实现）覆盖默认，保证工单重启不丢失。</p>
+ * <p>生产环境只以 {@link TicketService}/{@code cw_ticket} 为权威状态机。本服务保留旧 /handoffs
+ * 三态合同，将完整工单投影为 PENDING/CLAIMED/RESOLVED；所有写动作仍回到 TicketService，避免
+ * {@code cw_handoff_ticket} 与 {@code cw_ticket} 双写分叉。</p>
  * @author owlzhangfq@gmail.com
  */
 @Service
@@ -29,8 +38,12 @@ public class HandoffService {
     private static final Logger log = LoggerFactory.getLogger(HandoffService.class);
 
     private static final String ID_PREFIX = "HO-";
+    private static final String LEGACY_USER_PREFIX = "legacy-handoff:";
+    private static final String SYSTEM_OPERATOR = "handoff-api";
 
-    private final HandoffStore store;
+    private final TicketService ticketService;
+    /** 仅供旧表迁移回归单测显式构造，Spring 生产路径永不注入。 */
+    private final HandoffStore legacyStore;
 
     /**
      * 转人工增强器（智能路由中控·会话总结 + 工单智能分配）：<b>可选</b>，setter 注入。
@@ -42,16 +55,12 @@ public class HandoffService {
     private HandoffCreatedEnricher enricher;
 
     /**
-     * Spring 注入构造：使用自动装配的 {@link HandoffStore} Bean（memory 模式为 {@link InMemoryHandoffStore}，
-     * jdbc 模式为 {@link MybatisHandoffStore}，均由 {@link HandoffConfig} 提供）。
-     *
-     * <p>必须标 {@code @Autowired}：本类同时存在无参构造，Spring 对"多构造器 + 存在无参 + 无
-     * {@code @Autowired}"会回退到无参构造 → 永远用内存实现、{@code human-handoff.store-mode=jdbc} 空转。
-     * 显式标注让容器选中本构造，真正注入配置好的 Store Bean。</p>
+     * Spring 生产构造：完整 {@link TicketService} 是唯一权威工单服务。
      */
     @Autowired
-    public HandoffService(HandoffStore store) {
-        this.store = store;
+    public HandoffService(TicketService ticketService) {
+        this.ticketService = ticketService;
+        this.legacyStore = null;
     }
 
     /** 可选注入转人工增强器（不存在则不增强，建单行为不变）。 */
@@ -60,19 +69,40 @@ public class HandoffService {
         this.enricher = enricher;
     }
 
-    /** 无参构造（兼容旧测试与无 Spring 场景）：使用默认内存存储。 */
+    /** 无 Spring 场景仍使用完整 Ticket 状态机，而不是另起一套 Handoff 状态。 */
     public HandoffService() {
-        this.store = new InMemoryHandoffStore();
+        this(new TicketService(new InMemoryTicketStore(), null));
     }
 
-    /** AI 转出：登记一张待接单工单（PENDING）。 */
+    /**
+     * 旧表迁移回归适配器：仅供显式构造的存储单测使用，不是生产 Bean 构造路径。
+     * 生产代码必须注入 TicketService。
+     */
+    public HandoffService(HandoffStore legacyStore) {
+        this.ticketService = null;
+        this.legacyStore = legacyStore;
+    }
+
+    /** AI 转出：在权威工单上推进到 WAITING_AGENT，并返回兼容三态读模型。 */
     public HandoffTicket create(String sessionId, String reason) {
-        String id = ID_PREFIX + UUID.randomUUID();
-        HandoffTicket ticket = new HandoffTicket(id, sessionId, reason, System.currentTimeMillis());
-        store.save(ticket);
-        log.info("handoff created: id={}, session={}, reason={}", id, sessionId, reason);
-        fireEnrichment(ticket);
-        return ticket;
+        if (isLegacyMode()) {
+            String id = ID_PREFIX + UUID.randomUUID();
+            HandoffTicket ticket = new HandoffTicket(id, sessionId, reason, System.currentTimeMillis());
+            legacyStore.save(ticket);
+            fireEnrichment(ticket);
+            return ticket;
+        }
+        Ticket ticket = ticketService.findActiveBySession(sessionId)
+            .orElseGet(() -> ticketService.createForSession(sessionId, LEGACY_USER_PREFIX + sessionId,
+                reason, TicketCategory.OTHER));
+        TicketStatus before = ticket.getStatus();
+        Ticket handedOff = ticketService.requestHandoff(sessionId, reason, TicketActorType.BOT, null);
+        HandoffTicket projection = HandoffTicket.fromTicket(handedOff);
+        if (before == TicketStatus.AI_SERVING) {
+            fireEnrichment(projection);
+        }
+        log.info("handoff created on canonical ticket: id={}, session={}", handedOff.getId(), sessionId);
+        return projection;
     }
 
     /**
@@ -86,7 +116,7 @@ public class HandoffService {
         try {
             enricher.onHandoffCreated(ticket);
         } catch (Exception e) {
-            log.error("[HandoffService] enrichment trigger failed, code={}, id={}",
+            log.error("handoff enrichment trigger failed, code={}, id={}",
                 "HANDOFF-ENRICH-TRIGGER-FAIL", ticket.getId(), e);
         }
     }
@@ -94,58 +124,123 @@ public class HandoffService {
     /**
      * 回写工单智能分配的分类与推荐结果（由 {@code HandoffCreatedEnricher} 异步调用）。
      *
-     * <p>走本服务自身的 {@link HandoffStore}，保证与坐席工作台经本服务读到的是同一份工单。工单不存在时只
-     * error 记录、不抛（fail-open：增强回写迟到于工单已被清理等边界情况不应产生异常）。</p>
+     * <p>生产回写同一张 {@code cw_ticket}。工单不存在或增强结果迟到终态时只 error 记录、不抛，
+     * 因为路由建议是 fail-open 旁路，不能反向破坏已完成的转人工主链路。</p>
      */
     public void applyRoutingSuggestion(String id, String category, String requiredSkill,
                                        String priority, String emotion, String suggestedAssignees) {
-        Optional<HandoffTicket> found = store.find(id);
-        if (found.isEmpty()) {
-            log.error("[HandoffService] apply routing suggestion skipped (ticket not found), code={}, id={}",
-                "HANDOFF-ROUTING-APPLY-MISS", id);
+        if (isLegacyMode()) {
+            Optional<HandoffTicket> found = legacyStore.find(id);
+            if (found.isEmpty()) {
+                routingMiss(id);
+                return;
+            }
+            HandoffTicket ticket = found.get();
+            ticket.applyRoutingSuggestion(category, requiredSkill, priority, emotion, suggestedAssignees);
+            legacyStore.update(ticket);
             return;
         }
-        HandoffTicket ticket = found.get();
-        ticket.applyRoutingSuggestion(category, requiredSkill, priority, emotion, suggestedAssignees);
-        store.update(ticket);
-        log.info("handoff routing suggestion applied: id={}, category={}, priority={}", id, category, priority);
+        if (find(id).isEmpty()) {
+            routingMiss(id);
+            return;
+        }
+        try {
+            ticketService.applyRoutingSuggestion(id, category, requiredSkill, priority, emotion,
+                suggestedAssignees);
+            log.info("handoff routing suggestion applied: id={}, category={}, priority={}",
+                id, category, priority);
+        } catch (IllegalStateException e) {
+            log.error("handoff routing suggestion failed, code={}, id={}",
+                "HANDOFF-ROUTING-APPLY-FAIL", id, e);
+        }
+    }
+
+    private void routingMiss(String id) {
+        log.error("handoff routing suggestion skipped, code={}, id={}",
+            "HANDOFF-ROUTING-APPLY-MISS", id);
     }
 
     /** 全部工单（含已结案）。 */
     public List<HandoffTicket> list() {
-        return store.findAll();
+        if (isLegacyMode()) {
+            return legacyStore.findAll();
+        }
+        List<HandoffTicket> tickets = new ArrayList<>();
+        for (TicketStatus status : TicketStatus.values()) {
+            if (status == TicketStatus.AI_SERVING) {
+                continue;
+            }
+            ticketService.findByStatus(status).stream()
+                .filter(HandoffService::wasHandedOff)
+                .map(HandoffTicket::fromTicket)
+                .forEach(tickets::add);
+        }
+        tickets.sort(Comparator.comparingLong(HandoffTicket::getCreatedAtMs).reversed());
+        return tickets;
     }
 
     /** 按状态过滤（如只看 PENDING 待接单）。 */
     public List<HandoffTicket> listByStatus(HandoffStatus status) {
-        return store.findByStatus(status);
+        if (isLegacyMode()) {
+            return legacyStore.findByStatus(status);
+        }
+        return list().stream().filter(ticket -> ticket.getStatus() == status).toList();
     }
 
     public Optional<HandoffTicket> find(String id) {
-        return store.find(id);
+        if (isLegacyMode()) {
+            return legacyStore.find(id);
+        }
+        return ticketService.find(id)
+            .filter(HandoffService::wasHandedOff)
+            .filter(ticket -> ticket.getStatus() != TicketStatus.AI_SERVING)
+            .map(HandoffTicket::fromTicket);
     }
 
     /** 坐席接单：仅 PENDING 可推进，重复接单 fast-fail。 */
     public HandoffTicket claim(String id, String operator) {
-        HandoffTicket ticket = require(id);
-        ticket.claim(operator, System.currentTimeMillis());
-        store.update(ticket);
-        log.info("handoff claimed: id={}, operator={}", id, operator);
+        if (isLegacyMode()) {
+            HandoffTicket ticket = requireLegacy(id);
+            ticket.claim(operator, System.currentTimeMillis());
+            legacyStore.update(ticket);
+            return ticket;
+        }
+        HandoffTicket ticket = HandoffTicket.fromTicket(ticketService.claim(id, operator));
+        log.info("handoff claimed on canonical ticket: id={}, operator={}", id, operator);
         return ticket;
     }
 
     /** 坐席处理完毕、回收给 AI：仅 CLAIMED 可推进，未接单先结案 fast-fail。 */
     public HandoffTicket resolve(String id, String note) {
-        HandoffTicket ticket = require(id);
-        ticket.resolve(note, System.currentTimeMillis());
-        store.update(ticket);
-        log.info("handoff resolved: id={}, note={}", id, note);
+        String operator = find(id).map(HandoffTicket::getClaimedBy).orElse(SYSTEM_OPERATOR);
+        return resolve(id, note, operator == null ? SYSTEM_OPERATOR : operator);
+    }
+
+    /** 坐席结案：权威状态机 PROCESSING|ON_HOLD → RESOLVED。 */
+    public HandoffTicket resolve(String id, String note, String operator) {
+        if (isLegacyMode()) {
+            HandoffTicket ticket = requireLegacy(id);
+            ticket.resolve(note, System.currentTimeMillis());
+            legacyStore.update(ticket);
+            return ticket;
+        }
+        HandoffTicket ticket = HandoffTicket.fromTicket(ticketService.resolveHandoff(id, note, operator));
+        log.info("handoff resolved on canonical ticket: id={}, operator={}", id, operator);
         return ticket;
     }
 
     /** 单一防御点：工单必须存在，否则 fast-fail。 */
-    private HandoffTicket require(String id) {
-        return store.find(id).orElseThrow(() ->
+    private HandoffTicket requireLegacy(String id) {
+        return legacyStore.find(id).orElseThrow(() ->
             new NoSuchElementException("handoff not found: " + id));
+    }
+
+    private boolean isLegacyMode() {
+        return legacyStore != null;
+    }
+
+    private static boolean wasHandedOff(Ticket ticket) {
+        return ticket.getHandoffAtMs() > 0 || (ticket.getHandoffReason() != null
+            && !ticket.getHandoffReason().isBlank());
     }
 }

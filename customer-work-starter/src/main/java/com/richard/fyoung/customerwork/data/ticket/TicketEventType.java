@@ -49,5 +49,14 @@ public enum TicketEventType {
     PRIORITY_CHANGE,
 
     /** 分类变更。 */
-    CATEGORY_CHANGE
+    CATEGORY_CHANGE,
+
+    /** 兼容人机切换端点由坐席直接结案。 */
+    HANDOFF_RESOLVE,
+
+    /** 智能路由建议写入权威工单。 */
+    ROUTING_SUGGESTION,
+
+    /** 历史 cw_handoff_ticket 归并到权威工单。 */
+    HANDOFF_MIGRATED
 }

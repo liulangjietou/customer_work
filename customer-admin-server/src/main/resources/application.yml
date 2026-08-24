@@ -75,6 +75,40 @@ sa-token:
 
 # AES 加密密钥：AES-256 需 32 字节明文密钥（不入库不硬编码，本地开发用固定测试值，生产由运维走 Secret 管理下发）
 admin:
+  billing:
+    aggregation:
+      enabled: ${ADMIN_BILLING_AGGREGATION_ENABLED:false}
+      interval-ms: ${ADMIN_BILLING_AGGREGATION_INTERVAL_MS:21600000}
+      backfill-days: ${ADMIN_BILLING_AGGREGATION_BACKFILL_DAYS:3}
+    settlement:
+      zone-id: ${ADMIN_BILLING_SETTLEMENT_ZONE:Asia/Shanghai}
+      max-reconciliation-days: ${ADMIN_BILLING_MAX_RECONCILIATION_DAYS:31}
+  agent-replay:
+    # 生产默认只允许 MOCK；DRY_RUN 必须在独立部署同时显式开启并标记 isolated。
+    dry-run-enabled: ${ADMIN_AGENT_REPLAY_DRY_RUN_ENABLED:false}
+    environment: ${ADMIN_AGENT_REPLAY_ENVIRONMENT:production}
+  slo:
+    automation:
+      enabled: ${ADMIN_SLO_AUTOMATION_ENABLED:true}
+      scan-interval-ms: ${ADMIN_SLO_SCAN_INTERVAL_MS:30000}
+      evaluation-interval-ms: ${ADMIN_SLO_EVALUATION_INTERVAL_MS:60000}
+      evaluation-lease-ms: ${ADMIN_SLO_EVALUATION_LEASE_MS:120000}
+      evaluation-batch-size: ${ADMIN_SLO_EVALUATION_BATCH_SIZE:50}
+      notification-scan-interval-ms: ${ADMIN_SLO_NOTIFICATION_SCAN_INTERVAL_MS:5000}
+      notification-lease-ms: ${ADMIN_SLO_NOTIFICATION_LEASE_MS:30000}
+      notification-batch-size: ${ADMIN_SLO_NOTIFICATION_BATCH_SIZE:50}
+      notification-base-backoff-ms: ${ADMIN_SLO_NOTIFICATION_BASE_BACKOFF_MS:1000}
+      notification-max-backoff-ms: ${ADMIN_SLO_NOTIFICATION_MAX_BACKOFF_MS:60000}
+  improvement:
+    automation:
+      enabled: ${ADMIN_IMPROVEMENT_AUTOMATION_ENABLED:true}
+      scan-interval-ms: ${ADMIN_IMPROVEMENT_SCAN_INTERVAL_MS:30000}
+      lease-ms: ${ADMIN_IMPROVEMENT_LEASE_MS:120000}
+      batch-size: ${ADMIN_IMPROVEMENT_BATCH_SIZE:50}
+      observation-window-ms: ${ADMIN_IMPROVEMENT_OBSERVATION_WINDOW_MS:86400000}
+      min-exposure-calls: ${ADMIN_IMPROVEMENT_MIN_EXPOSURE_CALLS:20}
+      max-recurrence-signals: ${ADMIN_IMPROVEMENT_MAX_RECURRENCE_SIGNALS:0}
+      max-backoff-ms: ${ADMIN_IMPROVEMENT_MAX_BACKOFF_MS:300000}
   aes-secret-key: ${ADMIN_AES_SECRET_KEY:0123456789abcdef0123456789abcdef}
   tenant:
     # 多租户行级隔离（MyBatis-Plus TenantLineInnerInterceptor 全局改写）。默认开启：
@@ -100,6 +134,11 @@ admin:
     # 多租户开启时必须配置 token -> tenantId 映射，旧的全局 token 会被拒绝。
     # 推荐通过外部 Secret YAML 注入 admin.open-api.tenant-tokens，避免把令牌提交进仓库。
     tenant-tokens: {}
+  a2a:
+    # A2A 导出默认关闭；启用时必须同时配置 agent-code 与专用 Bearer Token。
+    enabled: ${ADMIN_A2A_ENABLED:false}
+    agent-code: ${ADMIN_A2A_AGENT_CODE:}
+    token: ${ADMIN_A2A_TOKEN:}
   # 后台登录用户的 AI 用量额度：按 sys_user 登录 ID 计，与客服端的
   # customer-work.subject-quota（按终端用户/IP/API Key 计）是同一套机制的两个部署侧。
   # 等级定义共用客服端库的 cw_subject_quota_level（靠 subject_type=ADMIN_USER 区分），
@@ -121,6 +160,10 @@ admin:
     # 智能体长期记忆权威存储：留空（默认）= 落库 ai_agent_memory 表；
     # 需要存磁盘时在此显式指定根目录，记忆改存 {disk-root}/{agentCode}/MEMORY.md（不再读写库表）
     disk-root: ${ADMIN_AGENT_MEMORY_DISK_ROOT:}
+  agent-runtime:
+    # 同一 tenant + agent + session 的对话跨 Pod 串行；租约必须覆盖允许的最长 Agent 执行时间。
+    session-lock-wait-seconds: ${ADMIN_AGENT_SESSION_LOCK_WAIT_SECONDS:10}
+    session-lock-lease-seconds: ${ADMIN_AGENT_SESSION_LOCK_LEASE_SECONDS:1800}
   workbench:
     # 生成的 ScriptCat 登录脚本里内嵌的 admin-server 访问基址：脚本用 GM_xmlhttpRequest 回调此地址取凭证。
     # 必须是运行脚本的浏览器可达的地址（本地默认 8082，生产由运维改成内网可达域名）。
@@ -159,6 +202,27 @@ admin:
       # 期间请求直接走备用模型；熔断到期自动半开（重置计数、放行一次主模型尝试）。见 ModelCircuitBreakerRegistry。
       failure-threshold: ${ADMIN_MODEL_FAILOVER_FAILURE_THRESHOLD:3}
       open-duration-seconds: ${ADMIN_MODEL_FAILOVER_OPEN_DURATION_SECONDS:60}
+  model-health:
+    # 持续探测会产生真实模型调用费用，开发环境默认关闭；生产清单显式开启。
+    enabled: ${ADMIN_MODEL_HEALTH_ENABLED:false}
+    scan-interval-ms: ${ADMIN_MODEL_HEALTH_SCAN_INTERVAL_MS:60000}
+    batch-size: ${ADMIN_MODEL_HEALTH_BATCH_SIZE:20}
+    worker-count: ${ADMIN_MODEL_HEALTH_WORKER_COUNT:8}
+    queue-capacity: ${ADMIN_MODEL_HEALTH_QUEUE_CAPACITY:32}
+    probe-timeout-seconds: ${ADMIN_MODEL_HEALTH_PROBE_TIMEOUT_SECONDS:10}
+    failure-threshold: ${ADMIN_MODEL_HEALTH_FAILURE_THRESHOLD:3}
+    recovery-threshold: ${ADMIN_MODEL_HEALTH_RECOVERY_THRESHOLD:2}
+    probe-interval-seconds: ${ADMIN_MODEL_HEALTH_PROBE_INTERVAL_SECONDS:300}
+    cooldown-seconds: ${ADMIN_MODEL_HEALTH_COOLDOWN_SECONDS:60}
+    max-override-hours: ${ADMIN_MODEL_HEALTH_MAX_OVERRIDE_HOURS:24}
+  mcp:
+    security:
+      # 远程 MCP 默认只允许公网；企业私网 host 必须显式列入，环回/链路本地/元数据仍永久拒绝。
+      allowed-hosts: ${ADMIN_MCP_ALLOWED_HOSTS:}
+      # stdio 默认关闭；启用时命令与工作目录必须同时命中真实路径白名单，子进程不继承宿主环境。
+      allowed-commands: ${ADMIN_MCP_STDIO_ALLOWED_COMMANDS:}
+      allowed-working-directories: ${ADMIN_MCP_STDIO_ALLOWED_WORKING_DIRECTORIES:}
+      allowed-environment-keys: ${ADMIN_MCP_STDIO_ALLOWED_ENVIRONMENT_KEYS:}
   scheduler:
     # 定时任务调度模式：internal（默认，admin-server 内置动态调度器按 cron 执行，无需外部 XXL-JOB）
     # ｜xxl-job（周期以 XXL-JOB 控制台为准，内置调度器不注册，cron 字段仅保存展示）。两模式互斥执行避免双跑。
@@ -183,7 +247,8 @@ admin:
     base-url: ${CW_BASE_URL:http://localhost:8080}
     # 坐席 WebSocket 接入地址（客服浏览器直连）。
     ws-url: ${CW_WS_URL:ws://localhost:8080/ws/agent}
-    # 运营接口（评测等）调用 8080 时使用的 API Key，须属于 8080 的 auth.api-keys/tenant-keys。
+    # 运营接口（评测等）调用 8080 时使用的结构化 API Key（keyId + 原始 secret）。
+    api-key-id: ${ADMIN_CUSTOMER_WORK_API_KEY_ID:}
     api-key: ${ADMIN_CUSTOMER_WORK_API_KEY:}
     # 坐席令牌签名密钥：必须与 8080 侧共享同一 env（CW_AGENT_WS_SECRET），否则签发的令牌 8080 校验不过。
     agent-secret: ${CW_AGENT_WS_SECRET:dev-agent-secret-change-me-0001}
@@ -282,6 +347,10 @@ admin:
     max-attempts: ${ADMIN_RUNTIME_PUBLISH_MAX_ATTEMPTS:8}
     base-backoff-ms: ${ADMIN_RUNTIME_PUBLISH_BASE_BACKOFF_MS:5000}
     minimum-ack-count: ${ADMIN_RUNTIME_PUBLISH_MINIMUM_ACK_COUNT:1}
+    signing:
+      enabled: ${ADMIN_RUNTIME_PUBLISH_SIGNING_ENABLED:false}
+      key-id: ${ADMIN_RUNTIME_PUBLISH_SIGNING_KEY_ID:}
+      secret: ${ADMIN_RUNTIME_PUBLISH_SIGNING_SECRET:}
     # 每个 8080 实例独立身份：tenantId|instanceId|token，逗号分隔；不得复用 admin.open-api token。
     # instanceId/token 分别与 CW_RUNTIME_CONFIG_INSTANCE_ID/CW_RUNTIME_CONFIG_ACK_TOKEN 一一对应。
     ack-identities: ${ADMIN_RUNTIME_PUBLISH_ACK_IDENTITIES:}

@@ -4,11 +4,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 人机切换工单存储 SPI（持久化扩展点）。
+ * 历史人机切换工单存储 SPI（迁移兼容扩展点）。
  *
- * <p>默认由 {@link InMemoryHandoffStore} 提供进程内实现（离线可测、确定性）；
- * 生产可替换为 JDBC / Redis 等持久化实现（声明同类型 Bean 覆盖默认），保证工单重启不丢失——
- * 多实例部署下坐席在实例 A 接单、查询落到实例 B 也应能看到最新状态。</p>
+ * <p>P1-03 起生产不再注册该 SPI，权威状态统一由 {@code TicketService/cw_ticket} 承载。
+ * 本接口与两种实现仅用于读取旧表和迁移回归测试，禁止新生产代码注入。</p>
  *
  * <p>语义约定：</p>
  * <ul>

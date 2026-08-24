@@ -36,6 +36,26 @@ class HandoffControllerTest {
     }
 
     @Test
+    void shouldUseVerifiedAgentIdentityWhenResolving() {
+        HandoffService service = mock(HandoffService.class);
+        AuditSink auditSink = mock(AuditSink.class);
+        HandoffTicket ticket = new HandoffTicket("HO-1", "session-1", "need help", 1L);
+        ticket.claim("agent-7", 2L);
+        ticket.resolve("done", 3L);
+        when(service.resolve("HO-1", "done", "agent-7")).thenReturn(ticket);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/handoffs/HO-1/resolve?note=done"));
+        exchange.getAttributes().put(AgentAuthWebFilter.AGENT_ID_ATTR, "agent-7");
+
+        new HandoffController(service, auditSink).resolve("HO-1", "done", exchange).block();
+
+        verify(service).resolve("HO-1", "done", "agent-7");
+        verify(auditSink).record(eq("handoff-decision"),
+            argThat(fields -> "agent-7".equals(fields.get("operator"))
+                && "done".equals(fields.get("note"))));
+    }
+
+    @Test
     void shouldRejectMissingVerifiedAgentIdentity() {
         HandoffController controller = new HandoffController(
             mock(HandoffService.class), mock(AuditSink.class));

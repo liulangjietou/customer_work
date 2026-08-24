@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.aiconfig.experiment.entity.AiModelExperi
 import com.richard.fyoung.customeradmin.aiconfig.experiment.mapper.AiModelExperimentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelHealthRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -13,6 +14,7 @@ import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -33,15 +35,26 @@ public class ModelExperimentRuntimeAccess {
     private final AiModelExperimentMapper experimentMapper;
     private final ModelConfigAccess modelConfigAccess;
     private final SecretRefService secretRefService;
+    private final ModelHealthRuntimeAccess healthRuntimeAccess;
     private final AdminTenantProperties tenantProperties;
 
     public ModelExperimentRuntimeAccess(AiModelExperimentMapper experimentMapper,
                                         ModelConfigAccess modelConfigAccess,
                                         SecretRefService secretRefService,
                                         AdminTenantProperties tenantProperties) {
+        this(experimentMapper, modelConfigAccess, secretRefService, tenantProperties, null);
+    }
+
+    @Autowired
+    public ModelExperimentRuntimeAccess(AiModelExperimentMapper experimentMapper,
+                                        ModelConfigAccess modelConfigAccess,
+                                        SecretRefService secretRefService,
+                                        AdminTenantProperties tenantProperties,
+                                        ModelHealthRuntimeAccess healthRuntimeAccess) {
         this.experimentMapper = experimentMapper;
         this.modelConfigAccess = modelConfigAccess;
         this.secretRefService = secretRefService;
+        this.healthRuntimeAccess = healthRuntimeAccess;
         this.tenantProperties = tenantProperties;
     }
 
@@ -124,6 +137,9 @@ public class ModelExperimentRuntimeAccess {
         arm.setEndpointRevision(actualRevision);
         arm.setApiKeyCipher(secretRefService.resolveCipherText(
             deployment.getSecretRefId(), deployment.getTenantId(), deployment.getApiKey()));
+        if (healthRuntimeAccess != null) {
+            arm.setHealth(healthRuntimeAccess.overlay(deployment));
+        }
         return arm;
     }
 

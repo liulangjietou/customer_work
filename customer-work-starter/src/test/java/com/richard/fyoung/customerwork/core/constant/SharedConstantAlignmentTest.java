@@ -83,6 +83,8 @@ class SharedConstantAlignmentTest {
         "http",
         // WS 帧字段 / MDC 日志键 / 开放 API 响应字段
         "sessionId",
+        // WS 出站协议字段 / 进程内 MDC 日志键；改动任一侧不要求另一侧同步
+        "traceId",
         // store-mode 取值 / 智能体能力码 / 记忆目录名
         "memory",
         // 默认租户码 / 默认会话名
@@ -103,6 +105,8 @@ class SharedConstantAlignmentTest {
         "auto",
         // 定时任务触发方式 / 评测触发来源
         "MANUAL",
+        // 智能体调用来源 / admin 调度器执行模式，两套独立的配置词汇
+        "internal",
         // 微信消息类型 / 钉钉消息类型，两个平台各自的协议值
         "text",
         // WS 对话帧类型 / 智能体的基础对话能力码

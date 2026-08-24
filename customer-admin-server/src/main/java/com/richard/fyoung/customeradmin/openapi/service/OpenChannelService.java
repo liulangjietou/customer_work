@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.openapi.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.entity.AiChannelRobot;
+import com.richard.fyoung.customeradmin.aiconfig.channelrobot.WeChatCallbackMode;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.entity.AiChannelSession;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.mapper.AiChannelRobotMapper;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.mapper.AiChannelSessionMapper;
@@ -9,6 +10,7 @@ import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.openapi.dto.OpenChannelRobotVO;
+import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -16,7 +18,11 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.time.ZoneId;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
@@ -116,6 +122,32 @@ public class OpenChannelService {
         }
     }
 
+    /**
+     * 对话信任边界：先校验智能体绑定，再校验持续会话确属同一个渠道外部用户。
+     * 单次问答会话不落映射表，只接受双方共享协议定义的不可混淆前缀。
+     *
+     */
+    public void requireChatAuthorized(String agentCode, String channelType, String appKey,
+                                      String externalUserId, String sessionId) {
+        requireAgentBound(agentCode, channelType, appKey);
+        if (!sessionId.startsWith(OpenApiProtocol.CHANNEL_ONESHOT_SESSION_PREFIX)) {
+            boolean owned = sessionMapper.exists(new LambdaQueryWrapper<AiChannelSession>()
+                .eq(AiChannelSession::getChannelType, channelType)
+                .eq(AiChannelSession::getAppKey, appKey)
+                .eq(AiChannelSession::getExternalUserId, externalUserId)
+                .eq(AiChannelSession::getSessionId, sessionId));
+            if (!owned) {
+                throw new BizException(ResultCode.RESOURCE_NOT_FOUND,
+                    "channel session ownership not matched");
+            }
+        }
+    }
+
+    /** 外部用户明文不进入运行时状态，仅使用渠道三元组的稳定摘要。 */
+    public String channelSubjectId(String channelType, String appKey, String externalUserId) {
+        return "channel:" + digest(channelType + "\n" + appKey + "\n" + externalUserId);
+    }
+
     private AiChannelSession findSession(String channelType, String appKey, String externalUserId) {
         return sessionMapper.selectOne(new LambdaQueryWrapper<AiChannelSession>()
             .eq(AiChannelSession::getChannelType, channelType)
@@ -136,6 +168,16 @@ public class OpenChannelService {
         return SESSION_PREFIX + UUID.randomUUID().toString().replace("-", "");
     }
 
+    private String digest(String value) {
+        try {
+            byte[] bytes = MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(bytes).substring(0, 24);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
+    }
+
     private OpenChannelRobotVO toOpenVo(AiChannelRobot robot) {
         OpenChannelRobotVO vo = new OpenChannelRobotVO();
         vo.setId(robot.getId());
@@ -144,6 +186,10 @@ public class OpenChannelService {
         vo.setAppKey(robot.getAppKey());
         vo.setAppSecret(cryptoUtil.decrypt(robot.getAppSecretCipher()));
         vo.setRobotCode(robot.getRobotCode());
+        vo.setCallbackMode(StringUtils.hasText(robot.getCallbackMode())
+            ? robot.getCallbackMode() : WeChatCallbackMode.PLAINTEXT.getCode());
+        vo.setEncodingAesKey(StringUtils.hasText(robot.getEncodingAesKeyCipher())
+            ? cryptoUtil.decrypt(robot.getEncodingAesKeyCipher()) : null);
         vo.setAgentCode(robot.getAgentCode());
         vo.setSessionMode(robot.getSessionMode());
         vo.setVersion(robot.getUpdateTime() == null ? null

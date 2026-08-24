@@ -256,7 +256,76 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertEquals(1, countHistoryVersion(dataSource, "12"));
             assertEquals(1, countHistoryVersion(dataSource, "13"));
             assertEquals(1, countHistoryVersion(dataSource, "14"));
-            assertEquals("14", latestHistoryVersion(dataSource));
+            assertEquals(1, countHistoryVersion(dataSource, "15"));
+            assertEquals(1, countHistoryVersion(dataSource, "16"));
+            assertEquals(1, countHistoryVersion(dataSource, "17"));
+            assertEquals("17", latestHistoryVersion(dataSource));
+        } finally {
+            dropDatabase(database);
+        }
+    }
+
+    @Test
+    void v17ShouldConsolidateLegacyHandoffsIntoCanonicalTickets() throws Exception {
+        assumeTrue(reachable(), "MySQL 不可达，跳过客服端 Flyway 门控测试");
+        String database = "cw_flyway_handoff_"
+            + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        assumeTrue(canCreateDatabases(database), "MySQL 测试账号无建库权限，跳过");
+
+        try (HikariDataSource dataSource = dataSource(database, "flyway-handoff-test")) {
+            migrateTo(dataSource, "16");
+            execute(dataSource, "INSERT INTO `cw_ticket` "
+                + "(`tenant_id`, `id`, `session_id`, `user_id`, `title`, `category`, `priority`, "
+                + "`status`, `reopen_count`, `created_at_ms`, `updated_at_ms`) VALUES "
+                + "('default', 'TK-existing', 'session-existing', 'user-existing', 'Existing', "
+                + "'OTHER', 'NORMAL', 'AI_SERVING', 0, 100, 100), "
+                + "('default', 'TK-canonical', 'session-canonical', 'user-canonical', 'Canonical', "
+                + "'OTHER', 'NORMAL', 'WAITING_AGENT', 0, 300, 400)");
+            execute(dataSource, "UPDATE `cw_ticket` SET `handoff_reason` = 'canonical reason', "
+                + "`handoff_at_ms` = 400 WHERE `id` = 'TK-canonical'");
+            execute(dataSource, "INSERT INTO `cw_handoff_ticket` "
+                + "(`tenant_id`, `id`, `session_id`, `reason`, `created_at_ms`, `status`, "
+                + "`claimed_by`, `claimed_at_ms`, `resolution_note`, `resolved_at_ms`, `category`, "
+                + "`required_skill`, `priority`, `emotion`, `suggested_assignees`) VALUES "
+                + "('default', 'HO-existing', 'session-existing', 'legacy reason', 150, 'CLAIMED', "
+                + "'agent-old', 200, NULL, 0, '退款', 'refund', 'HIGH', 'angry', '[\"agent-old\"]'), "
+                + "('default', 'HO-canonical', 'session-canonical', 'stale reason', 350, 'RESOLVED', "
+                + "'agent-stale', 450, 'stale resolution', 500, NULL, NULL, NULL, NULL, NULL), "
+                + "('default', 'HO-only', 'session-only', 'legacy only', 600, 'RESOLVED', "
+                + "'agent-only', 700, 'finished', 800, '物流', 'logistics', 'URGENT', 'sad', "
+                + "'[\"agent-only\"]')");
+
+            migrate(dataSource, database);
+
+            assertEquals(1, queryInt(dataSource,
+                "SELECT COUNT(*) FROM `cw_ticket` WHERE `session_id` = 'session-existing'"));
+            assertEquals("PROCESSING", queryString(dataSource,
+                "SELECT `status` FROM `cw_ticket` WHERE `id` = 'TK-existing'"));
+            assertEquals("agent-old", queryString(dataSource,
+                "SELECT `assignee` FROM `cw_ticket` WHERE `id` = 'TK-existing'"));
+            assertEquals("退款", queryString(dataSource,
+                "SELECT `routing_category` FROM `cw_ticket` WHERE `id` = 'TK-existing'"));
+            assertEquals("refund", queryString(dataSource,
+                "SELECT `required_skill` FROM `cw_ticket` WHERE `id` = 'TK-existing'"));
+
+            assertEquals("WAITING_AGENT", queryString(dataSource,
+                "SELECT `status` FROM `cw_ticket` WHERE `id` = 'TK-canonical'"),
+                "已经进入权威人工链路的工单不得被旧表状态覆盖");
+            assertEquals("canonical reason", queryString(dataSource,
+                "SELECT `handoff_reason` FROM `cw_ticket` WHERE `id` = 'TK-canonical'"));
+
+            assertEquals(1, queryInt(dataSource,
+                "SELECT COUNT(*) FROM `cw_ticket` WHERE `session_id` = 'session-only'"));
+            assertEquals("HO-only", queryString(dataSource,
+                "SELECT `id` FROM `cw_ticket` WHERE `session_id` = 'session-only'"));
+            assertEquals("RESOLVED", queryString(dataSource,
+                "SELECT `status` FROM `cw_ticket` WHERE `id` = 'HO-only'"));
+            assertEquals("finished", queryString(dataSource,
+                "SELECT `resolve_note` FROM `cw_ticket` WHERE `id` = 'HO-only'"));
+            assertEquals(3, queryInt(dataSource,
+                "SELECT COUNT(*) FROM `cw_ticket_event` WHERE `event_type` = 'HANDOFF_MIGRATED'"));
+            assertEquals(1, countHistoryVersion(dataSource, "17"));
+            assertEquals("17", latestHistoryVersion(dataSource));
         } finally {
             dropDatabase(database);
         }
@@ -283,12 +352,11 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertTrue(columnExists(dataSource, "cw_outbox_message", "lease_owner"));
             assertAuditTimestampColumns(dataSource);
-            // 完整镜像已包含 V10 隐私、V11 评测、V12 谱系、V13 实验归因与 V14 缓存代际，
-            // 必须直接从 V14 接管；
+            // 完整镜像已包含 V10 隐私至 V17 工单权威源归并，必须直接从 V17 接管；
             // 否则非幂等 ALTER TABLE 会在镜像库上重复加列。
             assertEquals(1, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
-            assertEquals(1, countHistoryVersion(dataSource, "14"), "完整镜像应从 V14 接管");
-            assertEquals(0, countHistoryVersion(dataSource, "13"), "V13 已包含在镜像，不应重跑");
+            assertEquals(1, countHistoryVersion(dataSource, "17"), "完整镜像应从 V17 接管");
+            assertEquals(0, countHistoryVersion(dataSource, "16"), "V16 已包含在镜像，不应重跑");
             assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
             assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
             assertTrue(columnExists(dataSource, "cw_eval_dataset_version", "content_hash"));
@@ -296,7 +364,10 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertTrue(columnExists(dataSource, "cw_agent_call_log", "version_binding_json"));
             assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
             assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
-            assertEquals("14", latestHistoryVersion(dataSource));
+            assertTrue(columnExists(dataSource, "cw_user", "session_epoch"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_segment", "pricing_status"));
+            assertTrue(columnExists(dataSource, "cw_ticket", "routing_category"));
+            assertEquals("17", latestHistoryVersion(dataSource));
         }
     }
 
@@ -304,9 +375,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         try (HikariDataSource dataSource = dataSource(database, "flyway-empty-test")) {
             migrate(dataSource, database);
             assertEquals(46, countBusinessTables(dataSource));
-            // V10 长期记忆同意、V11 评测数据集、V12 谱系、V13 实验归因、V14 缓存代际；
-            // 空库逐版登记 V1-V14
-            assertEquals(14, countHistoryRows(dataSource));
+            // 空库逐版登记 V1-V17。
+            assertEquals(17, countHistoryRows(dataSource));
             assertTrue(columnExists(dataSource, "cw_dead_letter", "lease_owner"));
             assertAuditTimestampColumns(dataSource);
             verifyUpdatedAtAutoAdvance(dataSource);
@@ -317,12 +387,18 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertEquals(1, countHistoryVersion(dataSource, "12"));
             assertEquals(1, countHistoryVersion(dataSource, "13"));
             assertEquals(1, countHistoryVersion(dataSource, "14"));
+            assertEquals(1, countHistoryVersion(dataSource, "15"));
+            assertEquals(1, countHistoryVersion(dataSource, "16"));
+            assertEquals(1, countHistoryVersion(dataSource, "17"));
             assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
             assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
             assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
             assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
             assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
-            assertEquals("14", latestHistoryVersion(dataSource));
+            assertTrue(columnExists(dataSource, "cw_user", "session_epoch"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_segment", "pricing_status"));
+            assertTrue(columnExists(dataSource, "cw_ticket", "routing_category"));
+            assertEquals("17", latestHistoryVersion(dataSource));
         }
     }
 
@@ -342,8 +418,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertTrue(columnExists(dataSource, "cw_user", "level_code"));
             assertEquals(46, countBusinessTables(dataSource));
             assertAuditTimestampColumns(dataSource);
-            // baseline 0 + V1~V14
-            assertEquals(15, countHistoryRows(dataSource));
+            // baseline 0 + V1~V17
+            assertEquals(18, countHistoryRows(dataSource));
             assertEquals(1, countHistoryVersion(dataSource, "0"), "非空存量库必须先登记 baseline 0");
             assertEquals(1, countHistoryVersion(dataSource, "9"));
             assertEquals(1, countHistoryVersion(dataSource, "10"));
@@ -351,12 +427,18 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertEquals(1, countHistoryVersion(dataSource, "12"));
             assertEquals(1, countHistoryVersion(dataSource, "13"));
             assertEquals(1, countHistoryVersion(dataSource, "14"));
+            assertEquals(1, countHistoryVersion(dataSource, "15"));
+            assertEquals(1, countHistoryVersion(dataSource, "16"));
+            assertEquals(1, countHistoryVersion(dataSource, "17"));
             assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
             assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
             assertTrue(columnExists(dataSource, "cw_agent_call_log", "trace_id"));
             assertTrue(columnExists(dataSource, "cw_agent_call_log", "experiment_arm"));
             assertTrue(columnExists(dataSource, "cw_semantic_cache", "config_generation"));
-            assertEquals("14", latestHistoryVersion(dataSource));
+            assertTrue(columnExists(dataSource, "cw_user", "session_epoch"));
+            assertTrue(columnExists(dataSource, "cw_agent_call_segment", "pricing_status"));
+            assertTrue(columnExists(dataSource, "cw_ticket", "routing_category"));
+            assertEquals("17", latestHistoryVersion(dataSource));
         }
     }
 

@@ -23,6 +23,9 @@ public class AiAgent {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    /** 多租户行级隔离列；由租户拦截器写入，跨租户运维查询时用于恢复可信运行上下文。 */
+    private String tenantId;
+
     private String agentName;
     /** 用于动态菜单路由，[a-z0-9-]+。 */
     private String agentCode;
@@ -35,6 +38,11 @@ public class AiAgent {
     private String icon;
     /** 0停用 / 1启用。 */
     private Integer status;
+
+    /**
+     * Admin 多 Pod 运行时实例修订号。任何影响 Agent 装配的写操作原子递增，缓存命中前按该值校验。
+     */
+    private Long runtimeRevision;
 
     // ---- 高级参数（全部选填，null=用框架/工厂默认；updateStrategy=ALWAYS 保证编辑时能清空回默认） ----
 

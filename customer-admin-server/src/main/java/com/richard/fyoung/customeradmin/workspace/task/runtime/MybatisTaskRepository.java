@@ -8,6 +8,9 @@ import com.richard.fyoung.customeradmin.workspace.task.mapper.AiAgentTaskMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.harness.agent.subagent.task.BackgroundTask;
@@ -30,6 +33,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -69,12 +73,13 @@ public class MybatisTaskRepository implements TaskRepository {
 
     private static final String CODE_TASK_PERSIST_FAIL = "AGENT-TASK-PERSIST-FAIL";
     private static final String CODE_TASK_REMOTE_UNSUPPORTED = "AGENT-TASK-REMOTE-UNSUPPORTED";
-    private static final String CODE_TASK_RESTART_ORPHAN = "AGENT-TASK-RESTART-ORPHAN";
+    private static final String CODE_TASK_MAINTENANCE_FAIL = "AGENT-TASK-MAINTENANCE-FAIL";
+    private static final String CODE_TASK_REPLAY_UNAVAILABLE = "AGENT-TASK-REPLAY-UNAVAILABLE";
 
     /** 结果/错误文本落库上限：列是 MEDIUMTEXT，截断只为挡住异常巨大的输出撑爆单行。 */
     private static final int MAX_TEXT_LENGTH = 100_000;
-    /** 进程重启后遗留的非终态任务统一置为该错误信息。 */
-    private static final String RESTART_ERROR = "task interrupted by service restart";
+    /** 无可重放输入或重试耗尽的过期任务收敛错误。 */
+    private static final String RECOVERY_EXHAUSTED_ERROR = "task lease expired and no recovery attempt remains";
     private static final String REMOTE_ERROR = "remote background task is not supported by admin server";
 
     private final AiAgentTaskMapper taskMapper;
@@ -90,6 +95,9 @@ public class MybatisTaskRepository implements TaskRepository {
     private final ConcurrentHashMap<String, BackgroundTask> activeTasks = new ConcurrentHashMap<>();
 
     private ExecutorService executor;
+    private ScheduledExecutorService maintenanceScheduler;
+    private String ownerId;
+    private volatile ReplayExecutor replayExecutor;
 
     public MybatisTaskRepository(AiAgentTaskMapper taskMapper, AgentTaskExecutorProperties properties) {
         this.taskMapper = taskMapper;
@@ -98,14 +106,23 @@ public class MybatisTaskRepository implements TaskRepository {
 
     @PostConstruct
     void init() {
+        validateProperties();
+        this.ownerId = properties.resolveOwnerId();
         this.executor = Executors.newFixedThreadPool(properties.getPoolSize(), namedThreadFactory());
-        if (properties.isCleanupOrphansOnStartup()) {
-            cleanupOrphanTasks();
-        }
+        this.maintenanceScheduler = Executors.newSingleThreadScheduledExecutor(maintenanceThreadFactory());
+        maintenanceScheduler.scheduleWithFixedDelay(this::heartbeatOwnedTasks,
+            properties.getHeartbeatSeconds(), properties.getHeartbeatSeconds(), TimeUnit.SECONDS);
+        maintenanceScheduler.scheduleWithFixedDelay(this::recoverExpiredTasks,
+            properties.getRecoveryScanSeconds(), properties.getRecoveryScanSeconds(), TimeUnit.SECONDS);
+        log.info("[agent-task] lease executor started: ownerId={} leaseSeconds={} heartbeatSeconds={}",
+            ownerId, properties.getLeaseSeconds(), properties.getHeartbeatSeconds());
     }
 
     @PreDestroy
     void shutdown() {
+        if (maintenanceScheduler != null) {
+            maintenanceScheduler.shutdownNow();
+        }
         if (executor == null) {
             return;
         }
@@ -113,39 +130,12 @@ public class MybatisTaskRepository implements TaskRepository {
         log.info("[agent-task] executor shutdown requested");
     }
 
-    /**
-     * 把进程重启前遗留的非终态任务标记为失败。
-     *
-     * <p>那些任务的执行线程已随上个进程消失，不可能再推进，留在库里就是永远转圈的假 RUNNING，
-     * 对使用者是纯误导。<b>注意</b>：这是按"后台管理端单实例部署"的前提做的全局清理——若将来
-     * 多实例部署，本实例启动会误伤其它实例正在跑的任务，届时需要改成按实例 ID 划分清理范围。</p>
-     */
-    private void cleanupOrphanTasks() {
-        try {
-            LocalDateTime now = LocalDateTime.now();
-            LambdaUpdateWrapper<AiAgentTask> update = new LambdaUpdateWrapper<AiAgentTask>()
-                .in(AiAgentTask::getStatus, TaskStatus.PENDING.name(), TaskStatus.RUNNING.name())
-                .set(AiAgentTask::getStatus, TaskStatus.FAILED.name())
-                .set(AiAgentTask::getErrorMessage, RESTART_ERROR)
-                .set(AiAgentTask::getFinishedAt, now)
-                .set(AiAgentTask::getUpdatedAt, now);
-            // 重启清理是明确的跨租户运维扫描：僵尸任务属于所有租户，而启动期没有租户上下文。
-            // 不显式跨租户的话会被拦截器 fail-closed，异常又被下面的 catch 吞掉——
-            // 表现为"清理静默不生效"，比报错更难发现
-            int affected = CrossTenantOperations.execute(() -> taskMapper.update(null, update));
-            if (affected > 0) {
-                log.info("[agent-task] marked {} orphan tasks as failed after restart", affected);
-            }
-        } catch (Exception e) {
-            // 清理失败不能阻断应用启动：任务功能本身仍可用，只是列表里会残留假 RUNNING
-            log.error("[agent-task] orphan cleanup failed, code={}", CODE_TASK_RESTART_ORPHAN, e);
-        }
-    }
-
     @Override
     public BackgroundTask putTask(RuntimeContext rc, String taskId, String subAgentId,
                                   String sessionId, TaskRunSpec spec) {
-        insertRecord(taskId, subAgentId, sessionId, agentCodeOf(rc));
+        ensureInitialized();
+        AgentTaskReplayContext.ReplaySpec replay = claimReplaySpec(rc, subAgentId, spec);
+        insertRecord(rc, taskId, subAgentId, sessionId, agentCodeOf(rc), replay);
         String tenantId = TenantContext.get();
 
         CompletableFuture<String> future;
@@ -157,24 +147,24 @@ public class MybatisTaskRepository implements TaskRepository {
             future = CompletableFuture.supplyAsync(
                 () -> TenantContext.callWith(tenantId,
                     () -> QuotaSubjectContext.callWith(quotaSubject,
-                        () -> runLocal(sessionId, taskId, local.execution()))), executor);
+                        () -> runLocal(sessionId, taskId, ownerId, local.execution()))), executor);
         } else if (spec instanceof TaskRunSpec.AdoptedTaskRunSpec adopted) {
             // 同步调用超时后被提升为后台任务：future 已经在跑，只补挂状态回写，绝不能重复提交执行
             future = adopted.future();
-            updateStatus(taskId, TaskStatus.RUNNING, null, null);
+            updateStatus(taskId, ownerId, TaskStatus.RUNNING, null, null);
             future.whenComplete((result, err) -> {
                 TenantContext.runWith(tenantId, () -> {
                     if (err == null) {
-                        updateStatus(taskId, TaskStatus.COMPLETED, result, null);
+                        updateStatus(taskId, ownerId, TaskStatus.COMPLETED, result, null);
                     } else {
-                        updateStatus(taskId, TaskStatus.FAILED, null, rootMessage(err));
+                        updateStatus(taskId, ownerId, TaskStatus.FAILED, null, rootMessage(err));
                     }
                 });
             });
         } else {
             log.error("[agent-task] remote task spec is not supported, code={}, taskId={}, subAgentId={}",
                 CODE_TASK_REMOTE_UNSUPPORTED, taskId, subAgentId);
-            updateStatus(taskId, TaskStatus.FAILED, null, REMOTE_ERROR);
+            updateStatus(taskId, ownerId, TaskStatus.FAILED, null, REMOTE_ERROR);
             future = CompletableFuture.failedFuture(new UnsupportedOperationException(REMOTE_ERROR));
         }
 
@@ -191,23 +181,26 @@ public class MybatisTaskRepository implements TaskRepository {
      * future 还没开始跑，中断无效），以及任务跑完了但结果还没落库时被取消（此时不该把成功态
      * 盖掉用户的取消意图）。</p>
      */
-    private String runLocal(String sessionId, String taskId, java.util.function.Supplier<String> execution) {
+    private String runLocal(String sessionId, String taskId, String executionOwner,
+                            java.util.function.Supplier<String> execution) {
         if (isCancelRequested(taskId)) {
-            updateStatus(taskId, TaskStatus.CANCELLED, null, null);
+            markOwnedCancelled(taskId, executionOwner);
             return null;
         }
-        updateStatus(taskId, TaskStatus.RUNNING, null, null);
+        if (!updateStatus(taskId, executionOwner, TaskStatus.RUNNING, null, null)) {
+            throw new IllegalStateException("task ownership lost before execution");
+        }
         try {
             String result = execution.get();
             if (isCancelRequested(taskId)) {
-                updateStatus(taskId, TaskStatus.CANCELLED, null, null);
+                markOwnedCancelled(taskId, executionOwner);
                 return null;
             }
-            updateStatus(taskId, TaskStatus.COMPLETED, result, null);
+            updateStatus(taskId, executionOwner, TaskStatus.COMPLETED, result, null);
             log.info("[agent-task] task completed: taskId={} sessionId={}", taskId, sessionId);
             return result;
         } catch (Exception e) {
-            updateStatus(taskId, TaskStatus.FAILED, null, rootMessage(e));
+            updateStatus(taskId, executionOwner, TaskStatus.FAILED, null, rootMessage(e));
             log.error("[agent-task] task failed, code={}, taskId={}, sessionId={}",
                 CODE_TASK_PERSIST_FAIL, taskId, sessionId, e);
             throw e instanceof RuntimeException re ? re : new RuntimeException(e);
@@ -295,13 +288,15 @@ public class MybatisTaskRepository implements TaskRepository {
             case FAILED -> future.completeExceptionally(new IllegalStateException(
                 StringUtils.hasText(record.getErrorMessage()) ? record.getErrorMessage() : "task failed"));
             case CANCELLED -> future.cancel(true);
-            // PENDING/RUNNING 却不在内存表里 = 上个进程留下的孤儿，等下去永远不会有结果
-            default -> future.completeExceptionally(new IllegalStateException(RESTART_ERROR));
+            // 任务可能正在其它 Pod 运行；保持未完成，让 task_output 明确展示 running。
+            default -> {
+            }
         }
         return new BackgroundTask(record.getTaskId(), record.getSubAgentId(), future);
     }
 
-    private void insertRecord(String taskId, String subAgentId, String sessionId, String agentCode) {
+    private void insertRecord(RuntimeContext rc, String taskId, String subAgentId, String sessionId,
+                              String agentCode, AgentTaskReplayContext.ReplaySpec replay) {
         LocalDateTime now = LocalDateTime.now();
         AiAgentTask record = new AiAgentTask();
         record.setTaskId(taskId);
@@ -310,6 +305,22 @@ public class MybatisTaskRepository implements TaskRepository {
         record.setParentAgentCode(agentCode);
         record.setStatus(TaskStatus.PENDING.name());
         record.setCancelRequested(false);
+        record.setOwnerId(ownerId);
+        record.setLeaseUntil(leaseUntil(now));
+        record.setHeartbeatAt(now);
+        record.setAttemptCount(1);
+        record.setReplayable(replay != null);
+        record.setTaskInput(replay == null ? null : truncate(replay.input()));
+        record.setChildSessionId("replay-" + taskId);
+        record.setRuntimeUserId(rc == null ? null : rc.getUserId());
+        AgentInvocationIdentity identity = rc == null ? null : rc.get(AgentInvocationIdentity.class);
+        if (identity != null) {
+            record.setSubjectType(identity.subjectType().name());
+            record.setSubjectId(identity.subjectId());
+            record.setSubjectAuthenticated(identity.authenticated());
+            record.setAccessEpoch(identity.accessEpoch());
+            record.setChannelCode(identity.channelCode());
+        }
         record.setCreatedAt(now);
         record.setUpdatedAt(now);
         taskMapper.insert(record);
@@ -319,30 +330,185 @@ public class MybatisTaskRepository implements TaskRepository {
      * 状态回写。异常一律吞掉只记日志：这些调用发生在任务执行线程里，
      * 落库失败不该把已经跑完的任务结果连带弄丢，更不该反向影响智能体主链路。
      */
-    private void updateStatus(String taskId, TaskStatus status, String result, String errorMessage) {
+    private boolean updateStatus(String taskId, String executionOwner, TaskStatus status,
+                                 String result, String errorMessage) {
         try {
             LocalDateTime now = LocalDateTime.now();
-            LambdaUpdateWrapper<AiAgentTask> update = new LambdaUpdateWrapper<AiAgentTask>()
-                .eq(AiAgentTask::getTaskId, taskId)
-                .set(AiAgentTask::getStatus, status.name())
-                .set(AiAgentTask::getUpdatedAt, now);
-            if (status == TaskStatus.RUNNING) {
-                update.set(AiAgentTask::getStartedAt, now);
+            int affected = taskMapper.updateOwnedStatus(taskId, executionOwner, status.name(), now,
+                status.isTerminal() ? null : leaseUntil(now),
+                status == TaskStatus.RUNNING ? now : null,
+                status.isTerminal() ? now : null,
+                result == null ? null : truncate(result),
+                errorMessage == null ? null : truncate(errorMessage));
+            if (affected == 0) {
+                log.info("[agent-task] status update skipped after ownership change: taskId={} ownerId={} status={}",
+                    taskId, executionOwner, status);
             }
-            if (status.isTerminal()) {
-                update.set(AiAgentTask::getFinishedAt, now);
-            }
-            if (result != null) {
-                update.set(AiAgentTask::getResult, truncate(result));
-            }
-            if (errorMessage != null) {
-                update.set(AiAgentTask::getErrorMessage, truncate(errorMessage));
-            }
-            taskMapper.update(null, update);
+            return affected > 0;
         } catch (Exception e) {
             log.error("[agent-task] status persist failed, code={}, taskId={}, status={}",
                 CODE_TASK_PERSIST_FAIL, taskId, status, e);
+            return false;
         }
+    }
+
+    /** 当前 Pod 批量续租；SQL 只命中 owner_id 相同的非终态任务。 */
+    void heartbeatOwnedTasks() {
+        if (!StringUtils.hasText(ownerId)) {
+            return;
+        }
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            int affected = CrossTenantOperations.execute(
+                () -> taskMapper.heartbeatOwned(ownerId, now, leaseUntil(now)));
+            if (affected > 0) {
+                log.info("[agent-task] lease heartbeat renewed: ownerId={} tasks={}", ownerId, affected);
+            }
+        } catch (Exception e) {
+            log.error("[agent-task] lease heartbeat failed, code={}, ownerId={}",
+                CODE_TASK_MAINTENANCE_FAIL, ownerId, e);
+        }
+    }
+
+    /**
+     * 扫描过期租约并以 CAS 领取；只有持久化了完整提示词的任务才会重新执行。
+     *
+     * <p>语义是 at-least-once：数据库租约保证同一时刻只有一个所有者，极端长时间 STW 超过租约仍可能
+     * 产生重复执行，因此有外部副作用的工具必须继续依赖既有业务幂等键，不能把租约误当 exactly-once。</p>
+     */
+    void recoverExpiredTasks() {
+        ReplayExecutor executorSnapshot = replayExecutor;
+        if (!StringUtils.hasText(ownerId)) {
+            return;
+        }
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            if (executorSnapshot != null) {
+                List<AiAgentTask> candidates = CrossTenantOperations.execute(
+                    () -> taskMapper.selectExpiredReplayable(now, properties.getMaxAttempts(),
+                        properties.getRecoveryBatchSize()));
+                for (AiAgentTask candidate : candidates) {
+                    claimAndReplay(candidate, executorSnapshot, now);
+                }
+            }
+            int failed = CrossTenantOperations.execute(() -> taskMapper.failExpiredUnrecoverable(
+                now, properties.getMaxAttempts(), RECOVERY_EXHAUSTED_ERROR));
+            if (failed > 0) {
+                log.error("[agent-task] expired tasks cannot be replayed, code={}, count={}",
+                    CODE_TASK_REPLAY_UNAVAILABLE, failed);
+            }
+        } catch (Exception e) {
+            log.error("[agent-task] lease recovery scan failed, code={}, ownerId={}",
+                CODE_TASK_MAINTENANCE_FAIL, ownerId, e);
+        }
+    }
+
+    private void claimAndReplay(AiAgentTask candidate, ReplayExecutor executorSnapshot,
+                                LocalDateTime now) {
+        int claimed = CrossTenantOperations.execute(() -> taskMapper.claimExpired(
+            candidate.getTaskId(), ownerId, now, leaseUntil(now), properties.getMaxAttempts()));
+        if (claimed == 0) {
+            return;
+        }
+        candidate.setOwnerId(ownerId);
+        candidate.setAttemptCount((candidate.getAttemptCount() == null ? 0 : candidate.getAttemptCount()) + 1);
+        CompletableFuture<String> future = CompletableFuture.supplyAsync(
+            () -> runRecovered(candidate, executorSnapshot), executor);
+        BackgroundTask task = new BackgroundTask(candidate.getTaskId(), candidate.getSubAgentId(), future);
+        activeTasks.put(key(candidate.getRuntimeUserId(), candidate.getParentSessionId(), candidate.getTaskId()), task);
+        log.info("[agent-task] expired task claimed: taskId={} ownerId={} attempt={}",
+            candidate.getTaskId(), ownerId, candidate.getAttemptCount());
+    }
+
+    private String runRecovered(AiAgentTask task, ReplayExecutor executorSnapshot) {
+        String tenantId = StringUtils.hasText(task.getTenantId()) ? task.getTenantId() : TenantContext.DEFAULT;
+        AgentInvocationIdentity identity = identityOf(task, tenantId);
+        QuotaSubject quotaSubject = identity == null ? null
+            : new QuotaSubject(identity.subjectType(), identity.subjectId());
+        RuntimeContext runtimeContext = runtimeContextOf(task, identity);
+        return TenantContext.callWith(tenantId, () -> QuotaSubjectContext.callWith(quotaSubject,
+            () -> AgentInvocationIdentityContext.callWith(identity,
+                () -> runLocal(task.getParentSessionId(), task.getTaskId(), ownerId,
+                    () -> executorSnapshot.execute(task, runtimeContext)))));
+    }
+
+    private RuntimeContext runtimeContextOf(AiAgentTask task, AgentInvocationIdentity identity) {
+        RuntimeContext.Builder builder = RuntimeContext.builder()
+            .sessionId(task.getChildSessionId());
+        if (StringUtils.hasText(task.getRuntimeUserId())) {
+            builder.userId(task.getRuntimeUserId());
+        }
+        if (identity != null) {
+            builder.put(AgentInvocationIdentity.class, identity);
+        }
+        return builder.build();
+    }
+
+    private AgentInvocationIdentity identityOf(AiAgentTask task, String tenantId) {
+        if (!StringUtils.hasText(task.getSubjectType()) || !StringUtils.hasText(task.getSubjectId())) {
+            return null;
+        }
+        try {
+            return new AgentInvocationIdentity(tenantId, QuotaSubjectType.valueOf(task.getSubjectType()),
+                task.getSubjectId(), Boolean.TRUE.equals(task.getSubjectAuthenticated()), task.getAccessEpoch(),
+                task.getChannelCode(), task.getChildSessionId(), task.getSubAgentId());
+        } catch (IllegalArgumentException e) {
+            log.error("[agent-task] invalid replay subject, code={}, taskId={}, subjectType={}",
+                CODE_TASK_REPLAY_UNAVAILABLE, task.getTaskId(), task.getSubjectType(), e);
+            return null;
+        }
+    }
+
+    private void markOwnedCancelled(String taskId, String executionOwner) {
+        try {
+            taskMapper.markOwnedCancelled(taskId, executionOwner, LocalDateTime.now());
+        } catch (Exception e) {
+            log.error("[agent-task] cancel status persist failed, code={}, taskId={}",
+                CODE_TASK_PERSIST_FAIL, taskId, e);
+        }
+    }
+
+    private AgentTaskReplayContext.ReplaySpec claimReplaySpec(RuntimeContext rc, String subAgentId,
+                                                               TaskRunSpec spec) {
+        if (!(spec instanceof TaskRunSpec.LocalTaskRunSpec) || rc == null) {
+            return null;
+        }
+        AgentTaskReplayContext context = rc.get(AgentTaskReplayContext.class);
+        return context == null ? null : context.claim(subAgentId);
+    }
+
+    private LocalDateTime leaseUntil(LocalDateTime now) {
+        return now.plusSeconds(properties.getLeaseSeconds());
+    }
+
+    private void ensureInitialized() {
+        if (!StringUtils.hasText(ownerId)) {
+            ownerId = properties.resolveOwnerId();
+        }
+        if (executor == null) {
+            executor = Executors.newFixedThreadPool(properties.getPoolSize(), namedThreadFactory());
+        }
+    }
+
+    private void validateProperties() {
+        if (properties.getPoolSize() <= 0 || properties.getLeaseSeconds() <= 0
+            || properties.getHeartbeatSeconds() <= 0 || properties.getRecoveryScanSeconds() <= 0
+            || properties.getRecoveryBatchSize() <= 0 || properties.getMaxAttempts() <= 0) {
+            throw new IllegalArgumentException("admin.agent-task numeric properties must be positive");
+        }
+        if (properties.getHeartbeatSeconds() * 2 >= properties.getLeaseSeconds()) {
+            throw new IllegalArgumentException("admin.agent-task heartbeat-seconds must be less than half lease-seconds");
+        }
+    }
+
+    /** 注册由 Admin Agent 工厂提供的可重放执行器；仓储不反向依赖具体 Agent 构建实现。 */
+    public void setReplayExecutor(ReplayExecutor replayExecutor) {
+        this.replayExecutor = replayExecutor;
+    }
+
+    @FunctionalInterface
+    public interface ReplayExecutor {
+        String execute(AiAgentTask task, RuntimeContext runtimeContext);
     }
 
     private boolean isCancelRequested(String taskId) {
@@ -388,6 +554,11 @@ public class MybatisTaskRepository implements TaskRepository {
 
     private String key(RuntimeContext rc, String sessionId, String taskId) {
         String scopedAgent = rc == null || !StringUtils.hasText(rc.getUserId()) ? "anonymous" : rc.getUserId();
+        return key(scopedAgent, sessionId, taskId);
+    }
+
+    private String key(String runtimeUserId, String sessionId, String taskId) {
+        String scopedAgent = StringUtils.hasText(runtimeUserId) ? runtimeUserId : "anonymous";
         return scopedAgent + "::" + sessionId + "::" + taskId;
     }
 
@@ -401,6 +572,14 @@ public class MybatisTaskRepository implements TaskRepository {
         };
     }
 
+    private ThreadFactory maintenanceThreadFactory() {
+        return runnable -> {
+            Thread thread = new Thread(runnable, "agent-task-maintenance");
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
+
     /** 供单测断言内存活跃表规模。 */
     int activeTaskCount() {
         return activeTasks.size();
@@ -409,6 +588,9 @@ public class MybatisTaskRepository implements TaskRepository {
     /** 供单测直接注入线程池（避免依赖 {@code @PostConstruct} 的容器时机）。 */
     void useExecutor(ExecutorService executorService) {
         this.executor = executorService;
+        if (!StringUtils.hasText(ownerId)) {
+            this.ownerId = properties.resolveOwnerId();
+        }
     }
 
     /** 供单测等待线程池排空。 */

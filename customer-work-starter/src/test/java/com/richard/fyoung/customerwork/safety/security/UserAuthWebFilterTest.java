@@ -1,12 +1,16 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.data.user.InMemoryUserAccountStore;
+import com.richard.fyoung.customerwork.data.user.UserAccount;
+import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
 import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -36,6 +40,7 @@ class UserAuthWebFilterTest {
     void clearTenantContext() {
         TenantContext.clear();
         QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
     }
 
     private UserJwtService jwtService() {
@@ -69,6 +74,7 @@ class UserAuthWebFilterTest {
         String[] paths = {
             "/api/customer/auth/me",
             "/api/customer/auth/avatar",
+            "/api/customer/auth/revoke-sessions",
             "/api/customer/attachment",
             "/api/customer/feedback",
             "/api/customer/csat/session-1"
@@ -146,10 +152,15 @@ class UserAuthWebFilterTest {
         AtomicBoolean reactorContextSeen = new AtomicBoolean(false);
         WebFilterChain chain = ignored -> {
             assertEquals(QuotaSubject.user("U1"), QuotaSubjectContext.get());
+            assertEquals(QuotaSubjectType.USER,
+                AgentInvocationIdentityContext.get().subjectType());
             threadLocalSeen.set(true);
             return Mono.deferContextual(context -> {
                 assertEquals(QuotaSubject.user("U1"),
                     context.get(QuotaSubjectContextThreadLocalAccessor.KEY));
+                assertEquals(QuotaSubjectType.USER,
+                    context.<AgentInvocationIdentity>get(
+                        AgentInvocationIdentityContextThreadLocalAccessor.KEY).subjectType());
                 reactorContextSeen.set(true);
                 return Mono.empty();
             });
@@ -215,6 +226,26 @@ class UserAuthWebFilterTest {
         assertFalse(invoked.get());
         assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
         assertNull(exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR));
+    }
+
+    @Test
+    void revokedUserSessionEpoch_shouldReturn401WithoutCallingChain() {
+        UserJwtService jwt = jwtService();
+        UserAccountService accounts = new UserAccountService(new InMemoryUserAccountStore());
+        UserAccount account = accounts.register("epoch-user", "pwd12345", "Epoch", null);
+        String token = jwt.issue(account.getId(), account.getUsername(), account.getNickname(),
+            TenantContext.DEFAULT, 0L, account.getSessionEpoch());
+        accounts.revokeSessions(account.getId());
+        UserAuthWebFilter filter = new UserAuthWebFilter(jwt, null, accounts);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/user/tickets")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token));
+        AtomicBoolean invoked = new AtomicBoolean(false);
+
+        filter.filter(exchange, recordingChain(invoked)).block();
+
+        assertFalse(invoked.get());
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
     }
 
     @Test

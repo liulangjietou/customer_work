@@ -1,13 +1,15 @@
 package com.richard.fyoung.customerwork.capability.handoff;
 
+import com.richard.fyoung.customerwork.data.ticket.Ticket;
+import com.richard.fyoung.customerwork.data.ticket.TicketStatus;
 import lombok.Getter;
 
 /**
- * 人机切换工单（充血：自带状态流转方法，非纯数据袋）。
+ * 旧人机切换 API 的三态兼容读模型。
  *
  * <p>由 {@code HumanHandoffTools.transferToHuman} 触发创建，取代此前"只打日志 + 生成随机字符串"
- * 的空实现——把转人工从一句话术升级为可查询、可流转的持久化实体。状态机由 {@link #claim}/{@link #resolve}
- * 在各自前置状态校验下推进，避免重复接单或未接单先结案。</p>
+ * 的空实现。P1-03 起生产状态由 {@link Ticket} 统一承载，本类型只投影 PENDING/CLAIMED/RESOLVED；
+ * {@link #claim}/{@link #resolve} 仅供旧表迁移回归测试使用。</p>
  * @author owlzhangfq@gmail.com
  */
 @Getter
@@ -75,6 +77,32 @@ public class HandoffTicket {
         this.priority = priority;
         this.emotion = emotion;
         this.suggestedAssignees = suggestedAssignees;
+    }
+
+    /**
+     * 将权威 {@link Ticket} 投影为旧 /handoffs API 的三态读模型。
+     *
+     * <p>此对象不再承担生产持久化；兼容 API 需要的字段全部来自同一张 cw_ticket，因而创建、接单、
+     * 结案和智能路由不会再出现双表状态分叉。</p>
+     */
+    public static HandoffTicket fromTicket(Ticket ticket) {
+        HandoffStatus projectedStatus = projectStatus(ticket.getStatus());
+        long createdAt = ticket.getHandoffAtMs() > 0 ? ticket.getHandoffAtMs() : ticket.getCreatedAtMs();
+        long resolvedAt = ticket.getResolvedAtMs() > 0 ? ticket.getResolvedAtMs() : ticket.getClosedAtMs();
+        return reconstruct(ticket.getId(), ticket.getSessionId(), ticket.getHandoffReason(), createdAt,
+            projectedStatus, ticket.getAssignee(), ticket.getClaimedAtMs(), ticket.getResolveNote(),
+            resolvedAt, ticket.getRoutingCategory(), ticket.getRequiredSkill(), ticket.getRoutingPriority(),
+            ticket.getEmotion(),
+            ticket.getSuggestedAssignees());
+    }
+
+    private static HandoffStatus projectStatus(TicketStatus status) {
+        return switch (status) {
+            case WAITING_AGENT -> HandoffStatus.PENDING;
+            case PROCESSING, ON_HOLD, WAITING_CONFIRM -> HandoffStatus.CLAIMED;
+            case RESOLVED, CLOSED -> HandoffStatus.RESOLVED;
+            case AI_SERVING -> throw new IllegalArgumentException("AI_SERVING is not a handoff ticket");
+        };
     }
 
     /**

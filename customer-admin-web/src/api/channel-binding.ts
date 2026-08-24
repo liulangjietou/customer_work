@@ -1,10 +1,27 @@
 import { request } from './request'
-import type { ChannelBindingSaveRequest, ChannelBindingVO } from '@/types/api'
+import type { ChannelBindingSaveRequest, ChannelBindingVO, RuntimePublishGateVO } from '@/types/api'
 
 const BASE_URL = '/aiconfig/channel-binding'
 
 export function listChannelBindings() {
   return request<ChannelBindingVO[]>({ url: BASE_URL, method: 'get' })
+}
+
+const GATE_BASE_URL = '/aiconfig/runtime-publish/gate/tasks'
+
+/** 查询可靠发布任务所冻结的门禁判定、版本与评测运行。 */
+export function getRuntimePublishGate(taskId: string) {
+  return request<RuntimePublishGateVO>({ url: `${GATE_BASE_URL}/${taskId}`, method: 'get' })
+}
+
+/** 重新进入原门禁状态机，不绕过任何门禁规则。 */
+export function retryRuntimePublishGate(taskId: string) {
+  return request<void>({ url: `${GATE_BASE_URL}/${taskId}/retry`, method: 'post' })
+}
+
+/** 紧急豁免只作用于当前任务冻结的候选哈希，reason 会进入独立审计记录。 */
+export function overrideRuntimePublishGate(taskId: string, reason: string) {
+  return request<void>({ url: `${GATE_BASE_URL}/${taskId}/override`, method: 'post', data: { reason } })
 }
 
 export function createChannelBinding(data: ChannelBindingSaveRequest) {

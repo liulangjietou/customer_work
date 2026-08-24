@@ -87,7 +87,10 @@ public class RuntimePublishWorker implements DisposableBean {
                     task.getId(), task.getTargetId());
                 return;
             }
-            if (gateService != null) {
+            // V71 上线前的历史任务 publish_intent 可能为空，按 NORMAL 处理。
+            RuntimePublishIntent intent = task.getPublishIntent() == null
+                ? RuntimePublishIntent.NORMAL : RuntimePublishIntent.valueOf(task.getPublishIntent());
+            if (gateService != null && !intent.bypassesEvalGate()) {
                 EvalGateDecision decision = gateService.evaluateAndRecord(task, prepared);
                 if (!decision.allowsPublish()) {
                     log.info("runtime publish task blocked by eval gate, taskId={}, agentId={}, reason={}",

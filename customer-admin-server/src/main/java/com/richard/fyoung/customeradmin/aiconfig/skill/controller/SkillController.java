@@ -6,7 +6,9 @@ import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillExportPackage;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillUploadParseResult;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillVO;
+import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillVersionVO;
 import com.richard.fyoung.customeradmin.aiconfig.skill.service.SkillService;
+import com.richard.fyoung.customeradmin.aiconfig.skill.service.SkillVersionService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
@@ -28,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * Skill 管理：CRUD + 分页/搜索/筛选/排序。
@@ -38,9 +41,11 @@ import java.nio.charset.StandardCharsets;
 public class SkillController {
 
     private final SkillService skillService;
+    private final SkillVersionService skillVersionService;
 
-    public SkillController(SkillService skillService) {
+    public SkillController(SkillService skillService, SkillVersionService skillVersionService) {
         this.skillService = skillService;
+        this.skillVersionService = skillVersionService;
     }
 
     @SaCheckPermission("skill:view")
@@ -53,6 +58,12 @@ public class SkillController {
     @GetMapping("/{id}")
     public Result<SkillVO> get(@PathVariable Long id) {
         return Result.success(skillService.get(id));
+    }
+
+    @SaCheckPermission("skill:view")
+    @GetMapping("/{id}/versions")
+    public Result<List<SkillVersionVO>> versions(@PathVariable Long id) {
+        return Result.success(skillVersionService.versions(id));
     }
 
     @SaCheckPermission("skill:add")

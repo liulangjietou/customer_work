@@ -2,6 +2,8 @@ package com.richard.fyoung.customeradmin.workspace.callstats.dto;
 
 import lombok.Data;
 
+import java.math.BigDecimal;
+
 /**
  * 调用耗时统计分页行（列表视图，问题/回答按预览截断）。时间字段输出 {@code yyyy-MM-dd HH:mm:ss}。
  * @author owlzhangfq@gmail.com
@@ -45,4 +47,11 @@ public class AgentCallStatsRowVO {
     private Long cachedTokens;
     /** 模型自报耗时合计（毫秒），与 modelMs 之差即网络/排队开销。 */
     private Long modelReportedMs;
+    /** COMPLETE 时为调用完整模型成本，PARTIAL 时仅为已结算部分。 */
+    private BigDecimal modelCostAmount;
+    private String modelCostCurrency;
+    private String modelCostStatus;
+    private Integer modelSegmentCount;
+    private Integer settledCostSegmentCount;
+    private Integer unsettledCostSegmentCount;
 }

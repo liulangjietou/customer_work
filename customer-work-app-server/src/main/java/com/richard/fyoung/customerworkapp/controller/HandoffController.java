@@ -93,7 +93,7 @@ public class HandoffController {
                                        @RequestParam(required = false) String note,
                                        ServerWebExchange exchange) {
         String operator = requireAgent(exchange);
-        return Mono.fromCallable(() -> handoffService.resolve(id, note))
+        return Mono.fromCallable(() -> handoffService.resolve(id, note, operator))
             .doOnNext(t -> audit(t, "resolve", operator, note))
             .onErrorMap(this::translate);
     }

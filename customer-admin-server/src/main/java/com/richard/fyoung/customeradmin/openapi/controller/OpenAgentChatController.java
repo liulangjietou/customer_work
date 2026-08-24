@@ -8,6 +8,12 @@ import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContextThreadLocalAccessor;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,12 +66,27 @@ public class OpenAgentChatController {
                                               @Valid @RequestBody OpenChatRequest request) {
         // MVC 拦截器在线程释放前先捕获可信凭据解析出的租户，订阅和异步模型链路再从 Reactor Context 恢复。
         String tenantId = TenantContext.get();
+        QuotaSubject quotaSubject = QuotaSubjectContext.get();
+        AgentInvocationIdentity ingressIdentity = AgentInvocationIdentityContext.get();
+        // 先构造候选快照，但只有 requireChatAuthorized 通过后才进入 Agent。
+        // 外部用户 ID 只以摘要进入主体快照，不泄露到状态键、工作区路径或日志。
+        AgentInvocationIdentity invocationIdentity = ingressIdentity == null ? null
+            : ingressIdentity.withChannel("channel:" + request.channelType())
+                .withTrustedSubjectId(openChannelService.channelSubjectId(
+                    request.channelType(), request.appKey(), request.externalUserId()));
         // defer 到订阅时执行：授权校验的同步异常也能被 onErrorResume 兜成 error 事件（而非直接抛 JSON 错误体）
-        Flux<ServerSentEvent<String>> body = Flux.defer(() -> {
-                openChannelService.requireAgentBound(agentCode, request.channelType(), request.appKey());
-                return chatService.chatStreamForChannel(
-                    agentCode, request.sessionId(), request.message(), request.channelType());
-            })
+        Flux<ServerSentEvent<String>> body = Flux.defer(() -> TenantContext.callWith(tenantId,
+                () -> QuotaSubjectContext.callWith(quotaSubject,
+                    () -> AgentInvocationIdentityContext.callWith(invocationIdentity, () -> {
+                        if (invocationIdentity == null) {
+                            throw new IllegalStateException("authenticated invocation identity missing");
+                        }
+                        openChannelService.requireChatAuthorized(
+                            agentCode, request.channelType(), request.appKey(),
+                            request.externalUserId(), request.sessionId());
+                        return chatService.chatStreamForChannel(
+                            agentCode, request.sessionId(), request.message(), request.channelType());
+                    }))))
             .filter(chunk -> chunk.kind() == ChatNodeKind.ANSWER)
             .map(chunk -> ServerSentEvent.<String>builder().event(OpenApiProtocol.SSE_EVENT_MESSAGE).data(jsonString(chunk.text())).build());
 
@@ -76,8 +97,20 @@ public class OpenAgentChatController {
                 return Flux.just(ServerSentEvent.<String>builder()
                     .event(OpenApiProtocol.SSE_EVENT_ERROR).data(jsonString(errorMessage(e))).build());
             });
-        return tenantId == null ? result
-            : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));
+        return result.contextWrite(context -> {
+            reactor.util.context.Context updated = context;
+            if (tenantId != null) {
+                updated = updated.put(TenantContextThreadLocalAccessor.KEY, tenantId);
+            }
+            if (quotaSubject != null) {
+                updated = updated.put(QuotaSubjectContextThreadLocalAccessor.KEY, quotaSubject);
+            }
+            if (invocationIdentity != null) {
+                updated = updated.put(
+                    AgentInvocationIdentityContextThreadLocalAccessor.KEY, invocationIdentity);
+            }
+            return updated;
+        });
     }
 
     private String errorMessage(Throwable e) {

@@ -25,21 +25,16 @@ public class JdbcAgentMemoryStore implements AgentMemoryStore {
         if (row == null || row.getContent() == null) {
             return Optional.empty();
         }
-        return Optional.of(new AgentMemorySnapshot(row.getContent(), row.getUpdateTime()));
+        return Optional.of(new AgentMemorySnapshot(row.getContent(), row.getUpdateTime(),
+            row.getVersion() == null ? 1L : row.getVersion()));
     }
 
     @Override
-    public void save(String agentCode, String content) {
-        AiAgentMemory row = selectByAgentCode(agentCode);
-        if (row == null) {
-            AiAgentMemory insert = new AiAgentMemory();
-            insert.setAgentCode(agentCode);
-            insert.setContent(content);
-            memoryMapper.insert(insert);
-            return;
+    public boolean compareAndSet(String agentCode, String content, long expectedVersion) {
+        if (expectedVersion == 0L) {
+            return memoryMapper.insertIfAbsent(agentCode, content) == 1;
         }
-        row.setContent(content);
-        memoryMapper.updateById(row);
+        return memoryMapper.updateIfVersion(agentCode, content, expectedVersion) == 1;
     }
 
     @Override

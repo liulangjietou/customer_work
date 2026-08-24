@@ -1,11 +1,13 @@
 package com.richard.fyoung.customerwork.safety.subjectquota;
 
 import com.richard.fyoung.customerwork.core.constant.StoreModes;
+import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SubjectQuotaProperties;
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContextThreadLocalAccessor;
 import com.richard.fyoung.customerwork.safety.subjectquota.mapper.SubjectQuotaHitMapper;
 import com.richard.fyoung.customerwork.safety.subjectquota.mapper.SubjectQuotaLevelMapper;
 import io.micrometer.context.ContextRegistry;
@@ -34,6 +36,8 @@ public class SubjectQuotaConfig {
     @PostConstruct
     public void registerContextAccessor() {
         ContextRegistry.getInstance().registerThreadLocalAccessor(new QuotaSubjectContextThreadLocalAccessor());
+        ContextRegistry.getInstance().registerThreadLocalAccessor(
+            new AgentInvocationIdentityContextThreadLocalAccessor());
     }
 
     @Bean
@@ -122,7 +126,9 @@ public class SubjectQuotaConfig {
     @ConditionalOnMissingBean
     public SubjectQuotaWebFilter subjectQuotaWebFilter(CustomerWorkProperties properties,
                                                        SubjectQuotaGuard guard,
-                                                       ObjectProvider<UserJwtService> jwtServiceProvider) {
-        return new SubjectQuotaWebFilter(properties, guard, jwtServiceProvider.getIfAvailable());
+                                                       ObjectProvider<UserJwtService> jwtServiceProvider,
+                                                       ObjectProvider<UserAccountService> accountServiceProvider) {
+        return new SubjectQuotaWebFilter(properties, guard, jwtServiceProvider.getIfAvailable(),
+            accountServiceProvider.getIfAvailable());
     }
 }

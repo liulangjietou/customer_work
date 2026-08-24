@@ -5,7 +5,7 @@
 
     <!-- 公共列。tenant_id 由 TenantLineInnerInterceptor 自动补，此处不列。 -->
     <sql id="columns">
-        id, `source`, session_id, message_id, user_input, agent_reply, detail, `status`,
+        id, `source`, session_id, message_id, user_input, agent_reply, signal_hash, detail, `status`,
         adopted_knowledge_id, adopted_eval_case_id, handled_by, handled_at_ms,
         ignore_reason, created_at_ms
     </sql>
@@ -20,15 +20,16 @@
 
     <!-- 新建与状态流转回写共用；created_at_ms 不更新，那是这条 badcase 的出生时间 -->
     <insert id="upsert" parameterType="com.richard.fyoung.customerwork.capability.badcase.entity.BadcaseDO">
-        INSERT INTO cw_badcase (id, `source`, session_id, message_id, user_input, agent_reply, detail,
+        INSERT INTO cw_badcase (id, `source`, session_id, message_id, user_input, agent_reply, signal_hash, detail,
             `status`, adopted_knowledge_id, adopted_eval_case_id, handled_by, handled_at_ms,
             ignore_reason, created_at_ms)
-        VALUES (#{id}, #{source}, #{sessionId}, #{messageId}, #{userInput}, #{agentReply}, #{detail},
+        VALUES (#{id}, #{source}, #{sessionId}, #{messageId}, #{userInput}, #{agentReply}, #{signalHash}, #{detail},
             #{status}, #{adoptedKnowledgeId}, #{adoptedEvalCaseId}, #{handledBy}, #{handledAtMs},
             #{ignoreReason}, #{createdAtMs})
         ON DUPLICATE KEY UPDATE
             user_input = VALUES(user_input),
             agent_reply = VALUES(agent_reply),
+            signal_hash = VALUES(signal_hash),
             detail = VALUES(detail),
             `status` = VALUES(`status`),
             adopted_knowledge_id = VALUES(adopted_knowledge_id),

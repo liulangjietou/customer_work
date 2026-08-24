@@ -27,6 +27,21 @@ public class InMemoryEvalCaseStore implements EvalCaseStore {
     }
 
     @Override
+    public synchronized void saveAll(List<PersistedEvalCase> evalCases) {
+        if (evalCases == null || evalCases.isEmpty()) {
+            return;
+        }
+        for (PersistedEvalCase evalCase : evalCases) {
+            if (evalCase == null || evalCase.caseId() == null) {
+                throw new IllegalArgumentException("eval case and caseId must not be null");
+            }
+        }
+        for (PersistedEvalCase evalCase : evalCases) {
+            cases.put(key(evalCase.evalType(), evalCase.caseId()), evalCase);
+        }
+    }
+
+    @Override
     public List<PersistedEvalCase> findByType(EvalType type) {
         List<PersistedEvalCase> matched = new ArrayList<>();
         for (PersistedEvalCase evalCase : cases.values()) {

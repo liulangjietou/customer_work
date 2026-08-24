@@ -63,6 +63,16 @@ customer-channel:
     admin-token: ${CHANNEL_ACCESS_ADMIN_TOKEN:}                             # 开放 API 令牌(X-Open-Api-Token)，勿硬编码
     refresh-interval-seconds: ${CHANNEL_ACCESS_REFRESH_SECONDS:30}          # 机器人列表刷新/diff 间隔(秒)
     chat-timeout-seconds: ${CHANNEL_ACCESS_CHAT_TIMEOUT_SECONDS:300}        # 单轮对话聚合超时(秒)，超时回复友好错误
+    wechat:
+      # 多实例必须使用 Redis，故障时回调 fail-closed 返回 503，让微信稍后重试而不是重复执行智能体。
+      replay-store: ${CHANNEL_WECHAT_REPLAY_STORE:redis}
+      timestamp-tolerance-seconds: ${CHANNEL_WECHAT_TIMESTAMP_TOLERANCE_SECONDS:300}
+      nonce-ttl-seconds: ${CHANNEL_WECHAT_NONCE_TTL_SECONDS:600}
+      message-ttl-seconds: ${CHANNEL_WECHAT_MESSAGE_TTL_SECONDS:86400}
+      redis:
+        host: ${CHANNEL_WECHAT_REDIS_HOST:localhost}
+        port: ${CHANNEL_WECHAT_REDIS_PORT:6379}
+        password: ${CHANNEL_WECHAT_REDIS_PASSWORD:}
   channel:
     dingtalk:
       enabled: false               # 启用需在钉钉开放平台建机器人应用并配齐下面凭证

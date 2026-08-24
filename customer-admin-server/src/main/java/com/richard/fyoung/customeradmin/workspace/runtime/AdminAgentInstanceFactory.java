@@ -21,6 +21,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime.Knowledge
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime.KnowledgeRetrievalService;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.service.McpCredentialService;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.runtime.AdminMcpFactory;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
@@ -30,9 +31,10 @@ import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.Failover
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.ModelCircuitBreakerRegistry;
 import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
-import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillFile;
-import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillFileMapper;
+import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillVersion;
+import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillVersionFile;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
+import com.richard.fyoung.customeradmin.aiconfig.skill.service.SkillVersionService;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiSystemTool;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystemToolMapper;
@@ -42,20 +44,32 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSandboxProperties;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
+import com.richard.fyoung.customeradmin.workspace.task.entity.AiAgentTask;
+import com.richard.fyoung.customeradmin.workspace.task.runtime.AgentTaskReplayCaptureMiddleware;
+import com.richard.fyoung.customeradmin.workspace.task.runtime.MybatisTaskRepository;
+import com.richard.fyoung.customerwork.core.agent.AgentResourceCloser;
 import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
 import com.richard.fyoung.customerwork.infra.config.RuntimeModelRouteMapper;
 import com.richard.fyoung.customerwork.core.model.routing.PolicyRoutingModel;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallTimingMiddleware;
+import com.richard.fyoung.customerwork.data.calllog.ModelReplayCaptureMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.SensitiveWordMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.SubjectToolAuthorizationMiddleware;
 import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.tool.mcp.McpSubjectPolicy;
+import com.richard.fyoung.customerwork.tool.mcp.McpToolAuthorizationRegistry;
+import com.richard.fyoung.customerwork.tool.ManagedToolkit;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.model.ExecutionConfig;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
+import io.agentscope.core.message.Msg;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.skill.AgentSkill;
 import io.agentscope.core.skill.SkillBox;
@@ -82,6 +96,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
+import jakarta.annotation.PostConstruct;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -157,7 +172,7 @@ public class AdminAgentInstanceFactory {
     private final SecretRefService secretRefService;
     private final AiMcpMapper mcpMapper;
     private final AiSkillMapper skillMapper;
-    private final AiSkillFileMapper skillFileMapper;
+    private final SkillVersionService skillVersionService;
     private final AiAgentSystemToolMapper agentSystemToolMapper;
     private final AiSystemToolMapper systemToolMapper;
     private final ApplicationContext applicationContext;
@@ -166,6 +181,7 @@ public class AdminAgentInstanceFactory {
     private final AgentStateStore stateStore;
     private final PermissionContextState permissionContext;
     private final AdminMcpFactory mcpFactory;
+    private final McpCredentialService mcpCredentialService;
     private final AdminSandboxProperties sandboxProperties;
     private final SandboxGuardMiddleware sandboxGuardMiddleware;
     private final ExecutionModeMiddleware executionModeMiddleware;
@@ -199,6 +215,9 @@ public class AdminAgentInstanceFactory {
     private final TaskRepository taskRepository;
     /** VibeCoding 会话工作区持久化；未启用时为 null（产出物仅存本地临时目录）。 */
     private final SessionWorkspaceStorage sessionWorkspaceStorage;
+    /** MCP 工具主体策略登记与执行闸门，按智能体作用域隔离。 */
+    private final McpToolAuthorizationRegistry mcpToolAuthorizationRegistry;
+    private final SubjectToolAuthorizationMiddleware subjectToolAuthorizationMiddleware;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -210,7 +229,8 @@ public class AdminAgentInstanceFactory {
                                       AiAgentSkillMapper agentSkillMapper, AiAgentBackupModelMapper agentBackupModelMapper,
                                       AiAgentSubAgentMapper agentSubAgentMapper,
                                       ModelConfigAccess modelConfigAccess,
-                                      AiMcpMapper mcpMapper, AiSkillMapper skillMapper, AiSkillFileMapper skillFileMapper,
+                                      AiMcpMapper mcpMapper, AiSkillMapper skillMapper,
+                                      SkillVersionService skillVersionService,
                                       AiAgentSystemToolMapper agentSystemToolMapper, AiSystemToolMapper systemToolMapper,
                                       ApplicationContext applicationContext,
                                       AdminModelFactory modelFactory, AesGcmCryptoUtil cryptoUtil,
@@ -232,7 +252,10 @@ public class AdminAgentInstanceFactory {
                                       TaskRepository taskRepository,
                                       ObjectProvider<SessionWorkspaceStorage> sessionWorkspaceStorageProvider,
                                       SecretRefService secretRefService,
-                                      ObjectProvider<ModelRoutingPolicyRuntimeAccess> routingPolicyRuntimeAccessProvider) {
+                                      ObjectProvider<ModelRoutingPolicyRuntimeAccess> routingPolicyRuntimeAccessProvider,
+                                      ObjectProvider<McpCredentialService> mcpCredentialServiceProvider,
+                                      McpToolAuthorizationRegistry mcpToolAuthorizationRegistry,
+                                      SubjectToolAuthorizationMiddleware subjectToolAuthorizationMiddleware) {
         this.indirectInjectionGuardMiddleware = indirectInjectionGuardMiddleware;
         this.taskRepository = taskRepository;
         // 容错 null provider：单测直传 null 依赖构造本类验证路径防御逻辑（同 CustomerServiceAgentFactory 的 meterRegistry 手法）
@@ -249,7 +272,7 @@ public class AdminAgentInstanceFactory {
             ? null : routingPolicyRuntimeAccessProvider.getIfAvailable();
         this.mcpMapper = mcpMapper;
         this.skillMapper = skillMapper;
-        this.skillFileMapper = skillFileMapper;
+        this.skillVersionService = skillVersionService;
         this.agentSystemToolMapper = agentSystemToolMapper;
         this.systemToolMapper = systemToolMapper;
         this.applicationContext = applicationContext;
@@ -258,6 +281,8 @@ public class AdminAgentInstanceFactory {
         this.stateStore = stateStore;
         this.permissionContext = permissionContext;
         this.mcpFactory = mcpFactory;
+        this.mcpCredentialService = mcpCredentialServiceProvider == null
+            ? null : mcpCredentialServiceProvider.getIfAvailable();
         this.sandboxProperties = sandboxProperties;
         this.sandboxGuardMiddleware = sandboxGuardMiddleware;
         this.executionModeMiddleware = executionModeMiddleware;
@@ -274,6 +299,32 @@ public class AdminAgentInstanceFactory {
             ? null : sensitiveWordMiddlewareProvider.getIfAvailable();
         this.otelTracingMiddleware = otelTracingMiddlewareProvider == null
             ? null : otelTracingMiddlewareProvider.getIfAvailable();
+        this.mcpToolAuthorizationRegistry = mcpToolAuthorizationRegistry;
+        this.subjectToolAuthorizationMiddleware = subjectToolAuthorizationMiddleware;
+    }
+
+    /**
+     * 把可重放执行器注册给任务仓储，保持依赖方向为“运行时工厂 -> 仓储契约”。
+     * 仓储负责 owner/lease/heartbeat，工厂只负责按当前数据库配置重建子智能体并执行原始提示词。
+     */
+    @PostConstruct
+    void registerBackgroundTaskReplayExecutor() {
+        if (taskRepository instanceof MybatisTaskRepository repository) {
+            repository.setReplayExecutor(this::replayBackgroundTask);
+        }
+    }
+
+    private String replayBackgroundTask(AiAgentTask task, RuntimeContext runtimeContext) {
+        Agent agent = buildSubagentInner(task.getSubAgentId(), Set.of(task.getParentAgentCode()));
+        try {
+            if (!(agent instanceof ReActAgent reActAgent)) {
+                throw new IllegalStateException("replayed subagent must be a ReActAgent");
+            }
+            Msg reply = reActAgent.call(task.getTaskInput(), runtimeContext).block();
+            return reply == null ? "" : reply.getTextContent();
+        } finally {
+            AgentResourceCloser.closeQuietly(agent, "background-task-replay:" + task.getTaskId());
+        }
     }
 
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
@@ -283,10 +334,19 @@ public class AdminAgentInstanceFactory {
 
     /** 单次调用上下文：userId 同时包含租户与智能体作用域，避免框架状态表跨租户碰撞。 */
     public RuntimeContext contextFor(String agentCode, String sessionId) {
-        return RuntimeContext.builder()
-            .userId(WorkspaceRuntimeScope.agent(agentCode))
-            .sessionId(WorkspaceRuntimeScope.safeSession(sessionId))
-            .build();
+        AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
+        AgentInvocationIdentity identity = AgentInvocationIdentity.capture();
+        String channel = identity != null && identity.channelCode() != null
+            ? identity.channelCode() : AgentInvocationIdentity.CHANNEL_ADMIN;
+        AgentInvocationIdentity invocation = identity == null
+            ? null : identity.forInvocation(channel, WorkspaceRuntimeScope.safeSession(sessionId), agentCode);
+        RuntimeContext.Builder builder = RuntimeContext.builder()
+            .userId(memoryScope.stateUserId())
+            .sessionId(WorkspaceRuntimeScope.safeSession(sessionId));
+        if (invocation != null) {
+            builder.put(AgentInvocationIdentity.class, invocation);
+        }
+        return builder.build();
     }
 
     /**
@@ -299,8 +359,21 @@ public class AdminAgentInstanceFactory {
         return buildAgentModel(agent);
     }
 
+    /**
+     * 按确切部署构建无工具的一次性模型实例，供模型实验的 control/treatment/Judge 离线评测使用。
+     * 调用方必须先冻结并校验 endpointRevision；本方法只负责凭据解析与模型装配。
+     */
+    public Model buildModelForDeployment(Long deploymentId) {
+        return buildModel(deploymentId);
+    }
+
     /** 从零构建一次智能体实例（供 {@link AgentInstanceCache} 惰性重建时调用）。 */
     public Agent build(String agentCode) {
+        return build(agentCode, AgentMemoryScope.current(agentCode));
+    }
+
+    /** 按鉴权主体分区构建实例，避免 Harness MEMORY.md 在 Admin/渠道主体间共享。 */
+    public Agent build(String agentCode, AgentMemoryScope memoryScope) {
         AiAgent agent = requireEnabledAgent(agentCode);
         List<String> capabilities = parseCapabilities(agent.getCapabilities());
         Model model = buildAgentModel(agent);
@@ -313,7 +386,7 @@ public class AdminAgentInstanceFactory {
         // visited 记录子智能体构建链上的父链 agentCode，用于断开循环引用（A→B→A），根节点先入链
         Set<String> visited = new HashSet<>();
         visited.add(agentCode);
-        return buildHarnessAgent(agent, capabilities, inner, model, visited);
+        return buildHarnessAgent(agent, capabilities, inner, model, visited, memoryScope);
     }
 
     /**
@@ -344,8 +417,10 @@ public class AdminAgentInstanceFactory {
      */
     private ReActAgent buildInnerReActAgent(AiAgent agent, List<String> capabilities, Model model) {
         String agentCode = agent.getAgentCode();
+        String runtimeScope = WorkspaceRuntimeScope.agent(agentCode);
+        mcpToolAuthorizationRegistry.clearScope(runtimeScope);
         Set<String> mcpToolNames = new HashSet<>();
-        Toolkit toolkit = buildToolkit(agent.getId(), mcpToolNames);
+        Toolkit toolkit = buildToolkit(agent.getId(), runtimeScope, mcpToolNames);
         buildSystemTools(agent.getId(), toolkit);
 
         ReActAgent.Builder builder = ReActAgent.builder()
@@ -385,6 +460,11 @@ public class AdminAgentInstanceFactory {
         builder.middleware(promptInjectionGuardMiddleware);
         // 出站脱敏：对最终回复里的手机号/身份证/银行卡/邮箱做掩码，与敏感词过滤各管一段
         builder.middleware(maskingMiddleware);
+        // AgentScope 的本地 TaskRunSpec 不暴露原始 prompt；在工具执行前捕获 timeout=0 的 agent_spawn
+        // 参数，供 MybatisTaskRepository 持久化为可重放任务。中间件无状态，每个 Agent 独立装配。
+        builder.middleware(new AgentTaskReplayCaptureMiddleware());
+        // 主体授权必须在任何 MCP 工具真正执行前 fail closed；策略来自当前智能体绑定的 MCP 快照。
+        builder.middleware(subjectToolAuthorizationMiddleware);
         builder.middleware(executionModeMiddleware);
         // 知识库检索注入：按 agentCode 现建一份（中间件需要知道"本智能体绑了哪些知识库"，构建期绑定
         // 比运行时反推更直接）。挂在这里=注入只影响每次模型调用的输入消息，不进持久化 AgentState，
@@ -396,6 +476,8 @@ public class AdminAgentInstanceFactory {
         // 召回内容由 KnowledgeRetrievalMiddleware 自己包，工具结果由框架产出、只能在这里拦。
         // 两者的系统提示词规则走同一个幂等追加方法，不会写重复。
         builder.middleware(indirectInjectionGuardMiddleware);
+        // 最内层采集最终模型输入：外层的 RAG/动态参数改写均已完成；只保存哈希和非密钥参数。
+        builder.middleware(new ModelReplayCaptureMiddleware());
         if (capabilities.contains(AgentCapabilities.VIBECODING)) {
             // 只有 vibecoding 能力的 agent 才会跑到文件系统/shell 工具，护栏只对这类 agent 挂载作最后防线——
             // 即便高风险被人工批准/放行，catastrophic 命令仍会被护栏改写，护栏不被绕过（需求 §4.4.2.5「两者叠加」）。
@@ -448,7 +530,7 @@ public class AdminAgentInstanceFactory {
      * docker filesystem 的 sessionId 转义问题，同样不需要），workspace 仍复用 {@link #resolveWorkspace}。
      */
     private HarnessAgent buildHarnessAgent(AiAgent agent, List<String> capabilities, ReActAgent inner,
-                                           Model model, Set<String> visited) {
+                                           Model model, Set<String> visited, AgentMemoryScope memoryScope) {
         String agentCode = agent.getAgentCode();
         boolean vibecoding = capabilities.contains(AgentCapabilities.VIBECODING);
 
@@ -458,7 +540,7 @@ public class AdminAgentInstanceFactory {
         // 包一层转义规避，local 模式与未挂 filesystem 沙箱的升级路径不受影响（见该类 Javadoc）。
         AgentStateStore harnessStateStore = vibecoding && sandboxProperties.isDockerMode()
             ? new SandboxSafeAgentStateStore(stateStore) : stateStore;
-        Path workspace = resolveWorkspace(agentCode);
+        Path workspace = resolveWorkspace(memoryScope);
         HarnessAgent.Builder harnessBuilder = HarnessAgent.Builder.fromAgent(inner)
             .stateStore(harnessStateStore)
             .defaultSessionId(WorkspaceRuntimeScope.agent(agentCode))
@@ -494,7 +576,7 @@ public class AdminAgentInstanceFactory {
             // 按 agentCode 隔离（一个智能体一份记忆，全部会话共享）。workspace 文件只是框架的工作副本，
             // 权威存储在 AgentMemoryStore（默认落库）：构建时水合到 workspace，对话轮次结束后由
             // ChatService 回写（见 AgentMemorySyncService）
-            memorySyncService.hydrate(agentCode, workspace);
+            memorySyncService.hydrate(memoryScope.storageKey(), workspace);
             harnessBuilder.memory(MemoryConfig.builder().model(model).build());
             log.info("[workspace] layered memory enabled: agentCode={}", agentCode);
         }
@@ -685,11 +767,19 @@ public class AdminAgentInstanceFactory {
      * 仅供快照根路径使用，Agent 运行时请使用 {@link #resolveSessionWorkspace(String, String)} 按会话隔离。
      */
     public Path resolveWorkspace(String agentCode) {
-        Path workspace = Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(agentCode));
+        return resolveWorkspace(AgentMemoryScope.current(agentCode));
+    }
+
+    /** 已冻结主体的工作区；可信请求下 MEMORY.md 物理隔离。 */
+    public Path resolveWorkspace(AgentMemoryScope scope) {
+        Path base = Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(scope.agentCode()));
+        Path workspace = scope.trusted()
+            ? base.resolve("subjects").resolve(scope.subjectHash()) : base;
         try {
             Files.createDirectories(workspace);
         } catch (Exception e) {
-            log.error("[workspace] create workspace dir failed, code={}, agentCode={}", "WORKSPACE_INIT_ERROR", agentCode, e);
+            log.error("[workspace] create workspace dir failed, code={}, agentCode={}",
+                "WORKSPACE_INIT_ERROR", scope.agentCode(), e);
         }
         return workspace;
     }
@@ -707,7 +797,8 @@ public class AdminAgentInstanceFactory {
      */
     public Path resolveSessionWorkspace(String agentCode, String sessionId) {
         String safeSession = requireSafeSessionId(sessionId);
-        Path sessionsRoot = Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(agentCode), "sessions").normalize();
+        Path sessionsRoot = resolveWorkspace(AgentMemoryScope.current(agentCode))
+            .resolve("sessions").normalize();
         Path workspace = sessionsRoot.resolve(safeSession).normalize();
         // 双保险：字符黑名单之外，normalize 后必须仍是 sessions 根目录的真子路径（防未预见的编码绕过）
         if (!workspace.startsWith(sessionsRoot) || workspace.equals(sessionsRoot)) {
@@ -743,7 +834,8 @@ public class AdminAgentInstanceFactory {
         }
         String safeSession = requireSafeSessionId(sessionId);
         sessionWorkspaceStorage.persist(agentCode, safeSession,
-            Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(agentCode), "sessions", safeSession).normalize());
+            resolveWorkspace(AgentMemoryScope.current(agentCode))
+                .resolve("sessions").resolve(safeSession).normalize());
     }
 
     /**
@@ -778,7 +870,8 @@ public class AdminAgentInstanceFactory {
         String apiKey = secretRefService == null
             ? cryptoUtil.decrypt(modelConfig.getApiKey())
             : secretRefService.resolvePlaintext(modelConfig);
-        return modelFactory.buildModel(modelConfig.getProvider(), modelConfig.getBaseUrl(), apiKey, modelConfig.getModel());
+        return modelFactory.buildModel(modelConfig.getProvider(), modelConfig.getBaseUrl(), apiKey,
+            modelConfig.getModel(), modelConfig.getId());
     }
 
     /**
@@ -818,7 +911,7 @@ public class AdminAgentInstanceFactory {
         for (CustomerWorkRuntimeConfig.RoutingDeployment deployment : policy.getDeployments()) {
             String apiKey = cryptoUtil.decrypt(deployment.getApiKeyCipher());
             Model candidate = modelFactory.buildModel(deployment.getProvider(), deployment.getBaseUrl(),
-                apiKey, deployment.getName());
+                apiKey, deployment.getName(), deployment.getDeploymentId());
             if (candidates.putIfAbsent(deployment.getDeploymentId(), candidate) != null) {
                 throw new BizException(ResultCode.PARAM_INVALID,
                     "路由策略包含重复部署: " + deployment.getDeploymentId());
@@ -843,25 +936,30 @@ public class AdminAgentInstanceFactory {
      * {@code mcpToolNames} 收集本次注册进来的工具名——{@code ToolUseBlock} 不带来源信息，只能靠
      * 注册前后 {@link Toolkit#getToolNames()} 的差集在装配时记下来，供对话流式展示按来源分类。
      */
-    private Toolkit buildToolkit(Long agentId, Set<String> mcpToolNames) {
-        Toolkit toolkit = new Toolkit();
+    private Toolkit buildToolkit(Long agentId, String runtimeScope, Set<String> mcpToolNames) {
+        Toolkit toolkit = new ManagedToolkit();
         List<Long> mcpIds = agentMcpMapper.selectList(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, agentId))
             .stream().map(AiAgentMcp::getMcpId).collect(Collectors.toList());
         if (mcpIds.isEmpty()) {
             return toolkit;
         }
         for (AiMcp mcp : mcpMapper.selectBatchIds(mcpIds)) {
+            McpClientWrapper wrapper = null;
             try {
                 Set<String> before = new HashSet<>(toolkit.getToolNames());
-                McpClientWrapper wrapper = buildMcpClient(mcp).block(MCP_REGISTER_TIMEOUT);
+                wrapper = buildMcpClient(mcp).block(MCP_REGISTER_TIMEOUT);
                 if (wrapper != null) {
                     toolkit.registerMcpClient(wrapper).block(MCP_REGISTER_TIMEOUT);
                     Set<String> added = new HashSet<>(toolkit.getToolNames());
                     added.removeAll(before);
                     mcpToolNames.addAll(added);
+                    mcpToolAuthorizationRegistry.register(runtimeScope, added,
+                        McpSubjectPolicy.toNames(mcp.getAllowedSubjectTypes()));
                     log.info("[workspace] MCP registered: name={} type={}", mcp.getMcpName(), mcp.getMcpType());
+                    wrapper = null; // 生命周期已交给 ManagedToolkit。
                 }
             } catch (Exception e) {
+                closeMcpRegistrationFailure(wrapper, mcp.getMcpName());
                 // 单个 MCP 不可用（含握手超时）不应阻断整个智能体的装配，跳过它继续装配其余能力
                 log.error("[workspace] MCP registration failed, code={}, name={}", "MCP_REGISTER_FAIL", mcp.getMcpName(), e);
             }
@@ -869,8 +967,22 @@ public class AdminAgentInstanceFactory {
         return toolkit;
     }
 
+    private void closeMcpRegistrationFailure(McpClientWrapper wrapper, String mcpName) {
+        if (wrapper == null) {
+            return;
+        }
+        try {
+            wrapper.close();
+        } catch (Exception closeError) {
+            log.error("[workspace] MCP registration rollback close failed, code={}, name={}",
+                "MCP_REGISTER_ROLLBACK_CLOSE_FAIL", mcpName, closeError);
+        }
+    }
+
     private reactor.core.publisher.Mono<McpClientWrapper> buildMcpClient(AiMcp mcp) throws Exception {
-        return mcpFactory.buildClientBuilder(mcp.getMcpName(), mcp.getMcpType(), mcp.getConfig())
+        String executableConfig = mcpCredentialService == null
+            ? mcp.getConfig() : mcpCredentialService.resolve(mcp);
+        return mcpFactory.buildClientBuilder(mcp.getMcpName(), mcp.getMcpType(), executableConfig)
             .timeout(java.time.Duration.ofSeconds(30))
             .buildAsync();
     }
@@ -908,23 +1020,38 @@ public class AdminAgentInstanceFactory {
      * {@code skillToolNames} 收集本次注册进来的工具名，同 {@link #buildToolkit} 的差集手法。
      */
     private SkillBox buildSkillBox(AiAgent agent, Toolkit toolkit, Set<String> skillToolNames) {
-        List<Long> skillIds = agentSkillMapper.selectList(
-                new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, agent.getId()))
-            .stream().map(AiAgentSkill::getSkillId).collect(Collectors.toList());
-        if (skillIds.isEmpty()) {
+        List<AiAgentSkill> relations = agentSkillMapper.selectList(
+            new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, agent.getId()));
+        if (relations.isEmpty()) {
             return null;
         }
         try {
             Path skillDir = Path.of(SKILL_ROOT, agent.getAgentCode());
+            // 整体重建 Agent 的技能投影，先删目录才能清掉刚禁用/解绑的旧 Skill。
+            deleteRecursively(skillDir);
             Files.createDirectories(skillDir);
-            for (AiSkill skill : skillMapper.selectBatchIds(skillIds)) {
-                Path skillSubDir = skillDir.resolve(skill.getSkillCode());
-                deleteRecursively(skillSubDir);
+            List<Long> skillIds = relations.stream().map(AiAgentSkill::getSkillId).toList();
+            List<AiSkill> enabledSkills = skillMapper.selectList(new LambdaQueryWrapper<AiSkill>()
+                .in(AiSkill::getId, skillIds)
+                .eq(AiSkill::getStatus, StatusFlags.ENABLED));
+            Map<Long, AiSkill> enabledById = enabledSkills.stream()
+                .collect(Collectors.toMap(AiSkill::getId, skill -> skill));
+            if (enabledById.isEmpty()) {
+                return null;
+            }
+            for (AiAgentSkill relation : relations) {
+                AiSkill skill = enabledById.get(relation.getSkillId());
+                if (skill == null) {
+                    continue;
+                }
+                Long versionId = relation.getSkillVersionId() == null
+                    ? skill.getCurrentVersionId() : relation.getSkillVersionId();
+                AiSkillVersion version = skillVersionService.requireVersion(skill.getId(), versionId);
+                Path skillSubDir = skillDir.resolve(version.getSkillCode());
                 Files.createDirectories(skillSubDir);
-                Files.writeString(skillSubDir.resolve(AgentFileNames.SKILL_MD), skill.getContent());
+                Files.writeString(skillSubDir.resolve(AgentFileNames.SKILL_MD), version.getContent());
                 // 附属文件路径合法性在 SkillService 保存时已统一校验，此处直接落盘
-                for (AiSkillFile skillFile : skillFileMapper.selectList(
-                        new LambdaQueryWrapper<AiSkillFile>().eq(AiSkillFile::getSkillId, skill.getId()))) {
+                for (AiSkillVersionFile skillFile : skillVersionService.files(version.getId())) {
                     Path target = skillSubDir.resolve(skillFile.getFilePath());
                     Files.createDirectories(target.getParent());
                     Files.write(target, skillFile.getContent());

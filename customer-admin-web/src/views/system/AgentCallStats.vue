@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   deleteAgentCallStats,
+  executeAgentCallReplay,
   getAgentCallStatsDetail,
   getAgentCallReplayManifest,
   getAgentCallStatsSummary,
@@ -14,6 +15,7 @@ import AgentCallTrendChart from '@/components/AgentCallTrendChart.vue'
 import type {
   AgentCallSegmentKind,
   AgentCallReplayManifest,
+  AgentReplayExecution,
   AgentCallSource,
   AgentCallStatsDetail,
   AgentCallStatsQuery,
@@ -261,6 +263,17 @@ function formatTokens(tokens: number | null | undefined): string {
   return tokens.toLocaleString('en-US')
 }
 
+function formatModelCost(amount: number | null | undefined, currency: string | null | undefined): string {
+  if (amount == null) return '—'
+  return `${currency || ''} ${amount.toFixed(8)}`.trim()
+}
+
+function costTagType(status: string | null | undefined) {
+  if (status === 'COMPLETE' || status === 'SETTLED') return 'success'
+  if (status === 'PARTIAL') return 'warning'
+  return 'info'
+}
+
 function sessionTypeLabel(type: string): string {
   return type === 'VIBE_CODING' ? 'VibeCoding' : '对话'
 }
@@ -300,6 +313,7 @@ async function openDetail(row: AgentCallStatsRow) {
 const replayVisible = ref(false)
 const replayLoading = ref(false)
 const replayManifest = ref<AgentCallReplayManifest | null>(null)
+const replayExecution = ref<AgentReplayExecution | null>(null)
 
 const replayJson = computed(() =>
   replayManifest.value ? JSON.stringify(replayManifest.value, null, 2) : '',
@@ -309,11 +323,29 @@ async function openReplayManifest(row: AgentCallStatsRow) {
   replayVisible.value = true
   replayLoading.value = true
   replayManifest.value = null
+  replayExecution.value = null
   try {
     replayManifest.value = await getAgentCallReplayManifest(row.id, filters.source)
   } catch (error) {
     ElMessage.error('重放清单加载失败：' + (error instanceof Error ? error.message : String(error)))
     replayVisible.value = false
+  } finally {
+    replayLoading.value = false
+  }
+}
+
+async function executeMockReplay() {
+  if (!replayManifest.value) return
+  replayLoading.value = true
+  try {
+    replayExecution.value = await executeAgentCallReplay(
+      replayManifest.value.callLogId,
+      replayManifest.value.source,
+      'MOCK',
+    )
+    ElMessage.success('MOCK 重放完成，外部调用数为 0')
+  } catch (error) {
+    ElMessage.error('MOCK 重放失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {
     replayLoading.value = false
   }
@@ -502,6 +534,17 @@ onMounted(() => {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
+        <el-table-column label="模型成本" width="150" align="right">
+          <template #default="{ row }: { row: AgentCallStatsRow }">
+            <el-tooltip placement="top">
+              <template #content>
+                <div>状态：{{ row.modelCostStatus }}</div>
+                <div>已结算分段：{{ row.settledCostSegmentCount }} / {{ row.modelSegmentCount }}</div>
+              </template>
+              <span>{{ formatModelCost(row.modelCostAmount, row.modelCostCurrency) }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="分段耗时" width="140">
           <template #default="{ row }: { row: AgentCallStatsRow }">
             <el-tooltip placement="top">
@@ -580,6 +623,15 @@ onMounted(() => {
                 （占输入 {{ ((detail.cachedTokens / detail.inputTokens) * 100).toFixed(1) }}%）
               </span>
             </el-descriptions-item>
+            <el-descriptions-item label="模型成本">
+              {{ formatModelCost(detail.modelCostAmount, detail.modelCostCurrency) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="成本完整性">
+              <el-tag :type="costTagType(detail.modelCostStatus)">{{ detail.modelCostStatus }}</el-tag>
+              <span class="muted">
+                （已结算 {{ detail.settledCostSegmentCount }} / {{ detail.modelSegmentCount }} 段）
+              </span>
+            </el-descriptions-item>
             <el-descriptions-item label="模型自报耗时" :span="2">
               {{ detail.modelReportedMs == null ? '—' : formatDuration(detail.modelReportedMs) }}
               <span v-if="detail.modelReportedMs != null" class="muted">
@@ -630,6 +682,23 @@ onMounted(() => {
                 </template>
               </el-table-column>
               <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+              <el-table-column label="实际部署" min-width="190" show-overflow-tooltip>
+                <template #default="{ row }: { row: AgentCallStatsSegment }">
+                  <span v-if="row.kind === 'MODEL'">
+                    {{ row.provider || '未知供应商' }} / {{ row.modelName || row.name }}
+                    <span v-if="row.deploymentId != null">#{{ row.deploymentId }}</span>
+                  </span>
+                  <span v-else>—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="价格快照" min-width="120">
+                <template #default="{ row }: { row: AgentCallStatsSegment }">
+                  <el-tag v-if="row.pricingStatus" :type="row.pricingStatus === 'PRICED' ? 'success' : 'danger'" size="small">
+                    {{ row.pricingStatus }}<span v-if="row.priceId != null"> #{{ row.priceId }}</span>
+                  </el-tag>
+                  <span v-else>—</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="startTime" label="开始时间" width="150" />
               <el-table-column label="耗时" width="90" align="right">
                 <template #default="{ row }: { row: AgentCallStatsSegment }">{{ formatDuration(row.durationMs) }}</template>
@@ -639,6 +708,15 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="输出Token" width="90" align="right">
                 <template #default="{ row }: { row: AgentCallStatsSegment }">{{ formatTokens(row.outputTokens) }}</template>
+              </el-table-column>
+              <el-table-column label="模型成本" width="150" align="right">
+                <template #default="{ row }: { row: AgentCallStatsSegment }">
+                  <el-tag v-if="row.kind === 'MODEL'" :type="costTagType(row.costStatus)" size="small">
+                    {{ row.costStatus }}
+                  </el-tag>
+                  <div v-if="row.costAmount != null">{{ formatModelCost(row.costAmount, row.costCurrency) }}</div>
+                  <span v-else-if="row.kind !== 'MODEL'">—</span>
+                </template>
               </el-table-column>
               <el-table-column label="成败" width="70">
                 <template #default="{ row }: { row: AgentCallStatsSegment }">
@@ -654,17 +732,17 @@ onMounted(() => {
       </div>
     </el-drawer>
 
-    <el-drawer v-model="replayVisible" title="只读重放清单" size="720px" destroy-on-close>
+    <el-drawer v-model="replayVisible" title="安全重放与差异" size="760px" destroy-on-close>
       <div v-loading="replayLoading">
         <template v-if="replayManifest">
           <el-alert
-            type="warning"
+            :type="replayManifest.captureWarnings.length ? 'warning' : 'info'"
             :closable="false"
             show-icon
             :title="replayManifest.executionBlockedReason"
           />
           <el-descriptions :column="2" border size="small" class="replay-summary">
-            <el-descriptions-item label="模式">只读审计</el-descriptions-item>
+            <el-descriptions-item label="默认模式">MOCK（零外部调用）</el-descriptions-item>
             <el-descriptions-item label="来源">{{ replayManifest.source }}</el-descriptions-item>
             <el-descriptions-item label="Trace ID" :span="2">{{ replayManifest.traceId || '—' }}</el-descriptions-item>
             <el-descriptions-item label="配置修订">{{ replayManifest.runtimeRevision || '—' }}</el-descriptions-item>
@@ -700,9 +778,24 @@ onMounted(() => {
             </el-descriptions-item>
           </el-descriptions>
           <div class="replay-actions">
+            <el-button
+              v-permission="'agent-call-stats:replay'"
+              type="success"
+              :loading="replayLoading"
+              @click="executeMockReplay"
+            >执行 MOCK</el-button>
             <el-button type="primary" @click="copyReplayManifest">复制 JSON</el-button>
             <el-button @click="downloadReplayManifest">下载 JSON</el-button>
           </div>
+          <el-alert
+            v-if="replayExecution"
+            :type="replayExecution.diff.answerChanged || replayExecution.diff.warnings.length ? 'warning' : 'success'"
+            :closable="false"
+            show-icon
+            :title="`重放 ${replayExecution.mode} 完成：外部调用 ${replayExecution.externalCallCount}，制品漂移 ${replayExecution.diff.artifactVersions.filter(item => item.status === 'CHANGED').length} 项`"
+            class="replay-result"
+          />
+          <pre v-if="replayExecution" class="replay-json">{{ JSON.stringify(replayExecution.diff, null, 2) }}</pre>
           <pre class="replay-json">{{ replayJson }}</pre>
         </template>
       </div>

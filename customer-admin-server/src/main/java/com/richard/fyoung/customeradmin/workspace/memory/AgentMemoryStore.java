@@ -21,7 +21,15 @@ public interface AgentMemoryStore {
     Optional<AgentMemorySnapshot> load(String agentCode);
 
     /** 保存（覆盖）指定智能体的长期记忆全文。 */
-    void save(String agentCode, String content);
+    default void save(String agentCode, String content) {
+        long expectedVersion = load(agentCode).map(AgentMemorySnapshot::version).orElse(0L);
+        if (!compareAndSet(agentCode, content, expectedVersion)) {
+            throw new AgentMemoryVersionConflictException(agentCode, expectedVersion);
+        }
+    }
+
+    /** 仅当权威版本仍等于 expectedVersion 时写入；新记录 expectedVersion=0。 */
+    boolean compareAndSet(String agentCode, String content, long expectedVersion);
 
     /** 删除指定智能体的长期记忆（不存在视为成功，幂等）。 */
     void delete(String agentCode);

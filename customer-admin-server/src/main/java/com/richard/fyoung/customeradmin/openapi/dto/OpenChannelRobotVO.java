@@ -17,6 +17,10 @@ public class OpenChannelRobotVO {
     /** 解密后的 AppSecret 明文。 */
     private String appSecret;
     private String robotCode;
+    /** 微信回调模式：plaintext / safe。 */
+    private String callbackMode;
+    /** 解密后的微信 EncodingAESKey，仅对可信 channel 服务下发。 */
+    private String encodingAesKey;
     private String agentCode;
     /** 会话模式：continuous 持续会话 / per_message 单次问答。 */
     private String sessionMode;

@@ -53,6 +53,7 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         requireRemote(violations, "admin.customer-work.base-url");
         requireRemote(violations, "admin.customer-work.ws-url");
         requireSecret(violations, "admin.customer-work.api-key");
+        requireText(violations, "admin.customer-work.api-key-id");
         String agentSecret = value("admin.customer-work.agent-secret");
         require(violations, "admin.customer-work.agent-secret",
             isProductionSecret(agentSecret) && !DevDefaultCredentials.AGENT_ACCESS_SECRET.equals(agentSecret)
@@ -75,8 +76,10 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         requireNonDefaultSecret(violations, "customer-work.attachment.storage.minio.secret-key",
             DevDefaultCredentials.MINIO_CREDENTIAL);
         validateModelEgress(violations);
+        validateModelHealth(violations);
         validateOpenApi(violations);
         validateRuntimePublish(violations);
+        validateGovernance(violations);
 
         if (!violations.isEmpty()) {
             throw new IllegalStateException("admin production readiness validation failed, invalid keys: "
@@ -90,6 +93,34 @@ public class AdminProductionReadinessValidator implements InitializingBean {
             .orElse(List.of());
         require(violations, "admin.model.egress.allowed-hosts",
             allowedHosts.stream().anyMatch(this::hasText));
+    }
+
+    private void validateModelHealth(List<String> violations) {
+        if (!environment.getProperty("admin.model-health.enabled", Boolean.class, false)) {
+            return;
+        }
+        require(violations, "admin.runtime-publish.nacos.enabled",
+            environment.getProperty("admin.runtime-publish.nacos.enabled", Boolean.class, false));
+        require(violations, "admin.model-health.scan-interval-ms",
+            positiveLong("admin.model-health.scan-interval-ms"));
+        require(violations, "admin.model-health.batch-size",
+            environment.getProperty("admin.model-health.batch-size", Integer.class, 0) > 0);
+        require(violations, "admin.model-health.worker-count",
+            environment.getProperty("admin.model-health.worker-count", Integer.class, 0) > 0);
+        require(violations, "admin.model-health.queue-capacity",
+            environment.getProperty("admin.model-health.queue-capacity", Integer.class, 0) > 0);
+        require(violations, "admin.model-health.probe-timeout-seconds",
+            positiveLong("admin.model-health.probe-timeout-seconds"));
+        require(violations, "admin.model-health.failure-threshold",
+            environment.getProperty("admin.model-health.failure-threshold", Integer.class, 0) > 0);
+        require(violations, "admin.model-health.recovery-threshold",
+            environment.getProperty("admin.model-health.recovery-threshold", Integer.class, 0) > 0);
+        require(violations, "admin.model-health.probe-interval-seconds",
+            positiveLong("admin.model-health.probe-interval-seconds"));
+        require(violations, "admin.model-health.cooldown-seconds",
+            positiveLong("admin.model-health.cooldown-seconds"));
+        require(violations, "admin.model-health.max-override-hours",
+            environment.getProperty("admin.model-health.max-override-hours", Integer.class, 0) > 0);
     }
 
     private void validateRuntimePublish(List<String> violations) {
@@ -117,6 +148,13 @@ public class AdminProductionReadinessValidator implements InitializingBean {
             positiveLong("admin.runtime-publish.base-backoff-ms"));
         require(violations, "admin.runtime-publish.minimum-ack-count",
             environment.getProperty("admin.runtime-publish.minimum-ack-count", Integer.class, 0) > 0);
+        require(violations, "admin.runtime-publish.signing.enabled",
+            environment.getProperty("admin.runtime-publish.signing.enabled", Boolean.class, false));
+        requireText(violations, "admin.runtime-publish.signing.key-id");
+        String signingSecret = value("admin.runtime-publish.signing.secret");
+        require(violations, "admin.runtime-publish.signing.secret",
+            isProductionSecret(signingSecret)
+                && signingSecret.getBytes(StandardCharsets.UTF_8).length >= 32);
         validateRuntimeAckIdentities(violations);
         require(violations, "admin.runtime-publish.nacos.timeout-ms",
             positiveLong("admin.runtime-publish.nacos.timeout-ms"));
@@ -162,6 +200,15 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         require(violations, "admin.open-api.tenant-tokens",
             tenantTokens.entrySet().stream().anyMatch(entry ->
                 isProductionSecret(entry.getKey()) && hasText(entry.getValue())));
+    }
+
+    private void validateGovernance(List<String> violations) {
+        require(violations, "admin.governance.approval-expiry-hours",
+            environment.getProperty("admin.governance.approval-expiry-hours", Integer.class, 24) > 0);
+        require(violations, "admin.governance.execution-timeout-seconds",
+            environment.getProperty("admin.governance.execution-timeout-seconds", Integer.class, 600) >= 60);
+        require(violations, "admin.governance.audit-retention-days",
+            environment.getProperty("admin.governance.audit-retention-days", Integer.class, 3650) >= 365);
     }
 
     private void requireRemote(List<String> violations, String key) {

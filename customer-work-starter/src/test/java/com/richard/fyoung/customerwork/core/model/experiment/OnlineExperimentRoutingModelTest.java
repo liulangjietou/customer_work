@@ -172,6 +172,31 @@ class OnlineExperimentRoutingModelTest {
         assertEquals(0, control.calls.get());
     }
 
+    @Test
+    void unavailableAssignedArm_shouldReturnBaselineAndClearExposure() {
+        StubModel baseline = new StubModel("baseline", false);
+        StubModel control = new StubModel("control", false);
+        StubModel treatment = new StubModel("treatment", false);
+        OnlineExperimentSpec spec = spec();
+        OnlineExperimentRoutingModel model = new OnlineExperimentRoutingModel(
+            spec, baseline, control, treatment, true, false);
+        String subjectKey = findSubjectForArm(model, "TREATMENT");
+        RuntimeContext runtime = RuntimeContext.builder().userId("tenant-a").sessionId("session-a").build();
+
+        List<ChatResponse> result = model.stream(List.of(), List.of(), GenerateOptions.builder().build())
+            .contextWrite(context -> context
+                .put(QuotaSubjectContextThreadLocalAccessor.KEY,
+                    QuotaSubject.user(subjectKey.substring("USER:".length())))
+                .put(AgentBase.RUNTIME_CONTEXT_KEY, runtime))
+            .collectList().block();
+
+        assertEquals("baseline", result.get(0).getId());
+        assertEquals(1, baseline.calls.get());
+        assertEquals(0, treatment.calls.get());
+        assertEquals(0, control.calls.get());
+        assertNull(runtime.get(OnlineExperimentAssignment.class));
+    }
+
     private String findSubjectForArm(OnlineExperimentRoutingModel model, String arm) {
         for (int i = 0; i < 10000; i++) {
             String key = "USER:user-" + i;
@@ -183,11 +208,14 @@ class OnlineExperimentRoutingModelTest {
     }
 
     private OnlineExperimentRoutingModel model(Model baseline, Model control, Model treatment) {
-        OnlineExperimentSpec spec = new OnlineExperimentSpec(7L, 3, "salt-123", 5000,
+        return new OnlineExperimentRoutingModel(spec(), baseline, control, treatment);
+    }
+
+    private OnlineExperimentSpec spec() {
+        return new OnlineExperimentSpec(7L, 3, "salt-123", 5000,
             System.currentTimeMillis() + 60000,
             new OnlineExperimentSpec.Arm("CONTROL", 11L),
             new OnlineExperimentSpec.Arm("TREATMENT", 12L));
-        return new OnlineExperimentRoutingModel(spec, baseline, control, treatment);
     }
 
     private void invoke(OnlineExperimentRoutingModel model, RuntimeContext runtime) {

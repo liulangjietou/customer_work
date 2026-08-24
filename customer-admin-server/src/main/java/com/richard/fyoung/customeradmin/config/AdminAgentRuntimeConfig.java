@@ -3,7 +3,9 @@ package com.richard.fyoung.customeradmin.config;
 import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.SubjectToolAuthorizationMiddleware;
 import com.richard.fyoung.customerwork.safety.security.SensitiveDataMasker;
+import com.richard.fyoung.customerwork.tool.mcp.McpToolAuthorizationRegistry;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.permission.PermissionMode;
 import io.agentscope.core.state.AgentStateStore;
@@ -108,5 +110,17 @@ public class AdminAgentRuntimeConfig {
             AdminPromptGuardProperties properties, ObjectProvider<MeterRegistry> meterRegistryProvider) {
         return new PromptInjectionGuardMiddleware(properties.isEnabled(), properties.getRefusalReply(),
             properties.getInjectionPatterns(), meterRegistryProvider.getIfAvailable());
+    }
+
+    /** admin 排除了 starter 自动装配，MCP 主体授权登记表与执行闸门在此显式提供。 */
+    @Bean
+    public McpToolAuthorizationRegistry mcpToolAuthorizationRegistry() {
+        return new McpToolAuthorizationRegistry();
+    }
+
+    @Bean
+    public SubjectToolAuthorizationMiddleware subjectToolAuthorizationMiddleware(
+            McpToolAuthorizationRegistry registry) {
+        return new SubjectToolAuthorizationMiddleware(registry);
     }
 }

@@ -1,11 +1,15 @@
 package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
+import com.richard.fyoung.customerwork.tool.mcp.McpSecurityPolicy;
 import com.sun.net.httpserver.HttpServer;
 import io.agentscope.core.tool.Toolkit;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
+import java.net.InetAddress;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -81,7 +85,11 @@ class McpToolkitConfigurerTest {
             server.setHeaders(Map.of("Authorization", "Bearer starter-token"));
             props.getMcp().getServers().add(server);
 
-            new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry()).configure(new Toolkit());
+            McpSecurityPolicy testPolicy = new McpSecurityPolicy(List::of, List::of, List::of, List::of,
+                host -> new InetAddress[]{InetAddress.getByAddress(host,
+                    new byte[]{93, (byte) 184, (byte) 216, 34})});
+            new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry(),
+                new McpClientFactory(testPolicy)).configure(new Toolkit());
 
             assertEquals("Bearer starter-token", receivedAuth.get(), "配置的 Authorization 头应随请求发出");
         } finally {

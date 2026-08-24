@@ -24,6 +24,8 @@ public class AgentVO {
     private List<String> backupModelNames;
     private List<Long> mcpIds;
     private List<Long> skillIds;
+    /** 与 skillIds 一一对应的冻结版本 ID。 */
+    private List<Long> skillVersionIds;
     private List<Long> systemToolIds;
     private String systemPrompt;
     private List<String> capabilities;
@@ -42,6 +44,8 @@ public class AgentVO {
 
     /** 绑定的 RAG 知识库 id 列表。 */
     private List<Long> knowledgeBaseIds;
+    /** 与 knowledgeBaseIds 一一对应的冻结版本 ID。 */
+    private List<Long> knowledgeBaseVersionIds;
     /** 与 {@link #knowledgeBaseIds} 一一对应的知识库名称（列表页直接展示，免前端再查一次）。 */
     private List<String> knowledgeBaseNames;
 }

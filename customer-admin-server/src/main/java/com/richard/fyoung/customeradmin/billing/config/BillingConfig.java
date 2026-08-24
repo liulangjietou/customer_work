@@ -4,6 +4,7 @@ import com.richard.fyoung.customeradmin.billing.schedule.UsageAggregationDriver;
 import com.richard.fyoung.customeradmin.billing.service.UsageAggregationService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -16,6 +17,7 @@ import org.springframework.context.annotation.Configuration;
  * @author owlzhangfq@gmail.com
  */
 @Configuration
+@EnableConfigurationProperties(BillingSettlementProperties.class)
 public class BillingConfig {
 
     @Bean(destroyMethod = "stop")

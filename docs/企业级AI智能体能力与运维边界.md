@@ -9,15 +9,17 @@
 |---|---|---|
 | 身份与租户生命周期 | 用户 `authEpoch` 和租户 `accessEpoch`、后台会话撤销、租户状态/到期校验、渠道停用、访问快照可靠投递、既有 WebSocket 主动断开 | 非 `default` 业务租户的冻结、恢复、到期变更、手工撤销会话或退租都递增 epoch；快照经持久任务发布到独立 Nacos dataId，`GET /api/tenant/{id}/access-delivery` 查询最近交付状态；8080 在新请求和 WebSocket 握手时 fail-closed，并在应用冻结/退租快照后断开既有连接 |
 | 长期记忆与隐私 | 主体级隔离、明示同意、查看、JSON 导出、撤回并删除、定期保留清理 | `/api/customer/user/privacy/memory-consent`、`/memory`、`/memory/export`；只有已验签 USER 才按用户跨会话共享；生产门禁强制 `provider=memory`、记忆与同意记录均为 JDBC |
-| FinOps | token 实时配额（`BLOCK/DEGRADE/WARN`）、T+1 金额账单、线性预测、预算/预测超限告警、告警 ACK、CSV 导出 | `/api/billing/forecast`、`/alerts`、`/alerts/{id}/ack`、`/export`；告警按业务键去重，ACK 幂等；CSV 处理公式注入 |
-| EvalOps 与发布门禁 | 评测集不可变快照、内容指纹、九维制品绑定、指标/回归/关键用例门禁、Judge 故障策略、重评与紧急豁免 | `/api/aiconfig/runtime-publish/gate/**`；豁免必须绑定 taskId 和候选内容 hash，记录操作人、原因与原判定 |
-| ModelOps | 模型资产与部署分离、SecretRef 版本轮换、端点保存期出网校验、健康快照/事件、上线认证、影响分析、不可变路由版本、冲突校验、dry-run 与运行时真实选路 | `/aiconfig/model` 是统一入口；凭据响应只返回元数据；路由候选部署必须具有当前、未过期且与端点/凭据版本匹配的 PASSED 认证 |
-| Trace / Replay | 调用时冻结 traceId、runtime revision/hash、模型/提示词/Agent/知识/工具版本与实验曝光；产生只读重放清单 | `GET /api/agent-call-stats/{id}/replay-manifest`；清单冻结输入、已录输出和分段，不会再次执行模型或工具 |
+| FinOps | token 实时配额（`BLOCK/DEGRADE/WARN`）、逐模型段冻结价结算、T+1 精确金额账单与源事实对账、线性预测、预算/预测超限告警、告警 ACK、CSV 导出 | `/api/billing/reconciliation` 按租户/日期/币种报告 `MATCHED/INCOMPLETE/STALE/MISMATCH`；缺价、缺用量和混合币种不伪造为 0；其余入口为 `/forecast`、`/alerts`、`/alerts/{id}/ack`、`/export` |
+| EvalOps 与发布门禁 | 工作集 CRUD/导入导出、命名版本、审核与 diff；评测集不可变快照、内容指纹、九维制品绑定、指标/回归/关键用例门禁、Judge 故障策略、重评与紧急豁免；实验启动前双臂离线评测 | `/api/eval/datasets/**` 与 `/api/aiconfig/runtime-publish/gate/**`；实验必须绑定已审核 QUALITY 版本，control/treatment 均通过才可激活；豁免必须绑定 taskId 和候选内容 hash，记录操作人、原因与原判定 |
+| Agent 改进闭环 | KnowledgeGap/badcase 统一责任认领、SLA、目标回归用例、精确候选版本、复评、可靠发布任务和上线效果观察 | `/api/improvement-cases/**`；发布任务全目标 `APPLIED` 后冻结 revision 与信号基线，多副本租约 Worker 按真实 revision 曝光和同类问题复发输出 `VERIFIED/INEFFECTIVE/INCONCLUSIVE` |
+| ModelOps | 模型资产与部署分离、SecretRef 版本轮换、端点保存期出网校验、连续失败/恢复阈值、冷却、限时人工 override、持久健康事件、动态路由 overlay、上线认证、影响分析、不可变路由版本、冲突校验与 dry-run | `/aiconfig/model` 是统一入口；凭据响应只返回元数据；路由候选部署必须具有当前、未过期且与端点/凭据版本匹配的 PASSED 认证；`UNHEALTHY/RECOVERING` 不进入实际选路 |
+| KnowledgeOps | PUSH 文档源、增量/删除/全量同步、checkpoint CAS、幂等运行、文档 lineage、ACL、新鲜度与质量门禁、KB/Skill 不可变版本 | `/api/aiconfig/knowledge-base/{id}/sources/**` 管理来源与同步事实；Agent 保存时冻结当前 KB/Skill versionId，后续资产编辑不会让既有 Agent 静默漂移 |
+| Trace / Replay | 调用时冻结 traceId、runtime revision/hash、最终模型参数白名单与输入 hash、RAG/工具摘要、模型/提示词/Agent/知识/工具版本与实验曝光；支持安全重放差异 | `GET /api/agent-call-stats/{id}/replay-manifest` 只读，`POST .../{id}/replay` 默认 MOCK；不存在 LIVE 且外部调用数恒为 0，DRY_RUN 只允许显式开启的隔离部署；不保存凭据、RAG 正文或工具原始结果 |
 | MCP 治理 | 列表不返回配置内容；编辑详情要求 `mcp:edit`，敏感字段与 headers 只返回占位符，更新时按相同 JSON 路径合并旧值；真正调用工具要求 `mcp:edit` 并记操作审计 | `test-connectivity` 与 `debug/tools` 是只读探测，使用 `mcp:view`；`debug/call` 可能改变下游数据，使用 `mcp:edit` |
-| 运行时配置完整性与语义缓存 | 消费端按发布端同一算法重算 contentHash；缺失、格式错误或正文不一致均 REJECTED；请求捕获实际配置 generation，hash 变化时先阻断缓存读写并清理旧代际，再原子应用新配置 | 旧在途请求的回写因 generation 不匹配被拒绝；校验、缓存清理或配置应用失败均保留旧配置；contentHash 是漂移/损坏检测，不是发布者签名 |
+| 运行时配置完整性与语义缓存 | 消费端重算 contentHash，并在解密前按可信 keyId 验证 HMAC-SHA256；请求捕获实际配置 generation，hash 变化时先阻断缓存读写并清理旧代际，再原子应用新配置 | 缺失、篡改、未知 key 或正文不一致均 REJECTED；旧在途请求的回写因 generation 不匹配被拒绝，校验、缓存清理或配置应用失败均保留旧配置 |
 | 在线实验 | 不可变双臂定义、用户/会话稳定 SHA-256 分桶、曝光归因、真实调用日志指标、样本门槛、错误率/P95 护栏、到期与自动停止 | 控制面生命周期 `DRAFT/RUNNING/STOPPED/COMPLETED` 是 desired state；effective state 单列 `INACTIVE/ACTIVATING/ACTIVE/ACTIVATION_FAILED/DEACTIVATING/DEACTIVATION_FAILED`，由 ACTIVATE/DEACTIVATE 发布任务与 ACK 事实计算 |
-| SLO / error budget | 按租户、Agent 或渠道配置可用性与延迟目标，同步评估短/长窗口，计算剩余错误预算与 burn rate | `POST /api/slo/policies/{id}/evaluate`；只有短窗和长窗同时超过 burn-rate 阈值才落唯一告警，无样本明确返回 `NO_DATA` |
-| 业务结果—成本 | 按真实调用会话汇总技术成功、自动解决代理指标、转人工、token 完整度与 CSAT，并提供会话下钻 | `/api/business-outcomes/summary` 和 `/sessions`；接口随返指标口径与 availability，不把技术成功冒充真实业务解决 |
+| SLO / error budget | 按租户、Agent 或渠道配置可用性与延迟目标；多副本数据库租约周期评估短/长窗口，计算剩余错误预算与 burn rate；告警 OPEN/ACKED/RESOLVED、恢复事件与可靠通知 | `/api/slo/policies`、`/alerts`、`/alerts/{id}/ack`、`/alerts/{id}/events`；同一策略只允许一个活跃告警，`NO_DATA`/样本不足不误判恢复，事件与通知任务同事务提交后由租约 Worker 重试投递 |
+| 业务结果—成本 | 按真实调用会话汇总技术成功、自动解决代理指标、转人工、token/金额完整度与 CSAT，并提供会话下钻和单位成本 | `/api/business-outcomes/summary` 和 `/sessions`；仅完整单币种事实计算单次自动解决代理成本，接口随返指标口径与 availability，不把技术成功冒充真实业务解决 |
 
 ## 2. 关键运维闭环
 
@@ -53,6 +55,12 @@
 - 每次评测在执行前固化实际用例序列和内容 hash，运行事实绑定评测集、模型、提示词、Agent、知识库、工具、Judge 和 rubric 版本。
 - 发布 Worker 在 Nacos 投递前执行门禁。无匹配且完整的评测事实、关键用例失败、指标低于阈值、回归超标或 Judge 故障都可按策略阻断。
 - 模型凭据轮换、端点修订或认证过期会让旧认证变为 `STALE/EXPIRED`；路由激活和实验启动不接受这类过期事实。
+- 自动巡检按连续失败阈值把部署转为 `UNHEALTHY`，冷却结束后进入 `RECOVERING`，达到连续成功阈值才恢复；
+  健康选择语义变化时，为全部引用 Agent 同事务创建 `HEALTH_OVERLAY` 可靠发布任务。普通 failover、策略候选和
+  在线实验臂使用同一 overlay，实验不会因某臂故障把受试用户跨到另一实验臂，而是回到健康基线。
+- `PUT /api/aiconfig/model/{id}/health-override` 只接受带原因和到期时间的限时覆盖，要求独立权限
+  `model:health-override`；设置、清除、到期和探测状态转换均持久化事件。`FORCE_HEALTHY` 是有审计的运维判断，
+  不会改写底层探测事实。
 - 模型删除、停用或凭据轮换前可查看 Agent、渠道、路由策略与在线实验引用；实验已撤流并取得对应 APPLIED 事实后才不再作为阻断项。
 - 模型 `baseUrl` 只允许 http/https，拒绝 userinfo、query 和 fragment；保存时解析全部地址，默认只放公网。
   `admin.model.egress.allowed-hosts` 非空后切换为严格 host 白名单，支持精确值和 `*.example.com`；名单命中只放宽
@@ -74,39 +82,71 @@
   读写并清理旧条目；应用成功提交新 generation，应用失败回滚旧 generation。切换前已开始的旧请求即使稍后完成，
   也会因 generation 不匹配而拒绝回写，不能污染新配置答案。
 
+### 2.4 知识与 Skill 版本闭环
+
+- 知识库和 Skill 的稳定记录只表示“当前编辑态”；每次创建或修改都会生成新的不可变版本。Agent 关联行保存
+  `knowledgeBaseVersionId` / `skillVersionId`，因此资产继续编辑不会改变已经发布 Agent 的行为；要升级必须再次保存 Agent。
+- PUSH 同步以 `requestId` 幂等，以 `expectedCheckpoint` 对当前 checkpoint 做 CAS。增量批次接受 `UPSERT/DELETE`；
+  全量批次只接受 UPSERT，快照中缺失的旧文档会生成 DELETE 修订。冲突、向量化失败或质量不达标均不推进 checkpoint，
+  也不发布新的知识库版本。
+- 每个文档保留稳定 externalId、父修订链、来源版本、正文 hash、来源时间与 ACL。`RESTRICTED` ACL 按可信
+  `subjectType + subjectId + channel` 的已配置维度共同匹配；未知 ACL 模式、损坏 ACL 或缺少可信主体均 fail-closed。
+- 文档源记录最后成功同步时间、新鲜度 SLA、有效文档数、重复正文数和质量分。当前质量门槛按单个来源评估，
+  分数取“去重率”和“期望文档覆盖率”的较小值；成功版本记录本次门禁分数和完整 KB 文档快照。
+- 托管语料使用既有 `admin.knowledge.*` Embedding 配置，当前向量以 JSON 存 MySQL、应用层算余弦相似度；
+  首个来源适配器仅为 PUSH。这是中小规模可执行基线，不代表已经接入企业专用向量库或外部抓取连接器。
+
+### 2.5 KnowledgeGap / badcase 改进闭环
+
+1. 运营在原页面认领信号，保存 owner 与未来 SLA；两类信号只共享治理状态机，原始问题事实仍留在客服库。
+2. 绑定 Agent 时冻结当前运行候选的版本指纹和九维证据，并绑定一条真实存在的目标回归用例。
+3. 复评在 Admin 长事务之外执行；只有运行完整、候选维度一致、目标用例通过、无新增回归且数据集未变化才可发布。
+4. 发布前重新组装当前候选并拒绝漂移；状态推进与 `ai_runtime_publish_task` 入队位于同一 Admin 事务。
+5. 数据库租约 Worker 等待任务全目标 `APPLIED`，再冻结 runtime revision、观察窗口、最小曝光量和复发基线。
+6. 同类信号超过阈值立即记为 `INEFFECTIVE`；窗口结束且 revision 曝光达标才为 `VERIFIED`，流量不足为
+   `INCONCLUSIVE`。这三个结论都保留观察计数，不以“已经发布”替代线上效果证据。
+
 ## 3. 上线前必须完成的环境配置
 
 1. 启用 `admin.runtime-publish.nacos.enabled`，并使 admin 与 app-server 的 namespace、group、dataId 一致；
    多租户或租户专属实例必须显式配置 `customer-work.nacos.tenant-code`，不能依赖主 dataId 回落。
 2. 配置相同的 admin 加密密钥与 app-server 解密密钥；密钥不得入库、入日志或出现在配置详情响应中。
-3. MCP `config` 与 Nacos 运行时载荷中的 headers 尚未 SecretRef 化；数据库和 Nacos 必须启用最小权限 ACL、
-   传输 TLS，并严格限制运行时 dataId 的写权限。
+3. MCP 敏感叶子必须迁入 SecretRef；数据库 config 只保留不可执行占位符，Nacos 只携带 `headersCipher`。
+   数据库和 Nacos 仍必须启用最小权限 ACL、传输 TLS，并严格限制运行时 dataId 的写权限。
 4. 生产开启 `customer-work.nacos.tenant-access-enabled=true`，设定快照主动回读间隔和最大陈旧时间。
 5. 长期记忆使用 `provider=memory` + JDBC 存储，启用同意门禁与保留清理；隐私接口必须经用户 JWT 鉴权。
 6. 为每个运行时实例配置唯一 `CW_RUNTIME_CONFIG_INSTANCE_ID`、至少 32 字节的独立 ACK token，并在
-   `admin.runtime-publish.ack-identities` 中绑定租户与实例；多副本还要按实际副本设置 `minimum-ack-count`。
+   `admin.runtime-publish.ack-identities` 中绑定租户与实例；新任务会冻结当时的完整目标集合，
+   `minimum-ack-count` 仅供没有冻结集合的历史任务兼容。
 7. 为需发布的租户配置 Eval gate，完成模型认证与基线评测；紧急豁免权限与普通评测编辑权限分离。
 8. 企业私网模型通过 `admin.model.egress.allowed-hosts`（`ADMIN_MODEL_EGRESS_ALLOWED_HOSTS`）显式列出 host；
    启用运行时热配置时还必须设置消费者侧 `customer-work.model.egress.allowed-hosts`
    （`CUSTOMER_WORK_MODEL_EGRESS_ALLOWED_HOSTS`）。两个名单都要列全公网厂商与私网模型 host。
-9. 需要持续模型探测时，在核算外部调用预算后开启 `admin.model-health.enabled`；默认关闭时仍可手工探测，但不会自动巡检。
-10. 根据真实流量和风险定义 SLO 窗口、目标、延迟阈值和 burn-rate 阈值；当前评估是同步触发，不应假设系统已自动周期调度。
+9. 需要持续模型探测时，在核算外部调用预算后开启 `admin.model-health.enabled`，并明确设置失败/恢复阈值、
+   冷却、探测间隔和人工 override 最大时长；生产门禁要求运行时发布同时开启。默认关闭时仍可手工探测，
+   但不会自动巡检和自动恢复。
+10. 根据真实流量和风险定义 SLO 窗口、目标、延迟阈值和 burn-rate 阈值；确认 `admin.slo.automation.*`
+    的评估/通知间隔、租约时长和批量大小适配实际流量，并为接收人授予 `slo:view`、为值班角色单独授予 `slo:ack`。
+11. 应用 V91 迁移并校验 Agent 旧关联已回填不可变版本；为同步调用方单独授予
+    `knowledge-base:source-sync`。上线前用重复 requestId、错误 expectedCheckpoint、质量失败和受限 ACL 四类用例验证 fail-closed。
+12. 应用客服库 V21 与 Admin V96；按业务流量校准 `admin.improvement.automation.observation-window-ms`、
+    `min-exposure-calls` 和 `max-recurrence-signals`，并向运营、评测和发布角色分别授予
+    `improvement:manage`、`eval:run`、`agent:edit`。上线演练必须覆盖候选漂移、发布失败、信号复发和低流量四种结论。
 
 ## 4. 仍然存在的边界
 
 | 边界 | 影响 | 当前运维建议 |
 |---|---|---|
-| 多 Pod ACK 没有冻结目标实例清单 | `minimum-ack-count` 默认为 1；APPLIED 只证明达到数量阈值，不证明发布时的全部实例都确认 | 按现网副本数显式配置阈值并监控 `PARTIAL`；后续在任务创建时冻结 instanceId 集合 |
-| 实验 ACTIVATE 不是双臂离线实验评测 | 当前去除实验身份后校验基线候选，双臂依靠当前模型认证与线上错误率/P95 护栏 | 不得将门禁结果解读为“双臂均已完成离线效果对比”；高风险模型更换应先单独评测两臂 |
+| 双臂离线评测依赖远程模型与 Judge | ACTIVATE 前会分别评测 control/treatment，但远程限流、超时或 Judge 故障都会阻断激活并产生真实费用 | 使用已审核的代表性 QUALITY 版本，核算评测预算；将失败事实与线上错误率/P95 护栏结合判断，不以单次离线分数替代长期观测 |
 | 金额预测是简单线性外推 | 当前用“期内已用金额 / 已过天数 × 总天数”，没有季节性、节假日、增长趋势或置信区间 | 只作预算早期信号，不作财务承诺；对周期波动明显的租户使用外部预测平台 |
 | 跨运行时退租依赖访问快照传播 | Nacos 投递、监听与主动回读存在延迟；在超过最大陈旧时间后新请求 fail-closed | 观测租户访问交付状态；快照发布失败时不要将退租宣称为已在全部运行时完成 |
 | 外部长期记忆 Provider 尚未进入生产合规基线 | 百炼/Mem0/ReMe 没有统一的主体导出、擦除与可验证回执契约；生产门禁当前直接拒绝这类配置 | 开放前先补 Provider capability SPI、失败语义、回执审计和集成验证，再调整 `ProductionReadinessValidator` |
-| MCP config/headers 尚未 SecretRef 化 | 页面不会回显密钥，但数据库权威配置与发布到 Nacos 的 MCP headers 仍是敏感载荷 | 依赖数据库/Nacos ACL、TLS、备份访问控制和审计；后续把 MCP 凭据迁入 SecretRef，并只发布引用或受控密文 |
-| contentHash 不是签名 | 有 Nacos 写权限的人可改正文后自行重算合法 hash；当前校验只能识别传输损坏、漂移或误写 | 把 Nacos dataId 写权限视为生产信任边界并最小化；需要来源真实性时再增加带独立密钥的签名验证 |
 | AgentScope 厂商 SDK 推理出网尚未固定解析与重定向策略 | 保存期会校验端点，连通性/健康探测及认证的连通性阶段已固定 DNS 结果并禁重定向；但认证能力检查与实际推理仍由各厂商 SDK 管理 HTTP/DNS | 不把探测链路保障宣传成全部推理请求保障；在 SDK 支持注入受控 HTTP client 前，以网络 egress ACL/代理限制模型目的地并监控 DNS |
 | SecretRef 当前只有本地 AES 材料后端 | 数据模型保留 Vault/AWS/Azure/GCP/ENV 类型，但服务只实现 `LOCAL_AES` 创建与轮换 | 不得宣称已接入外部密钥管理器；生产需求外部 KMS 时先实现对应 Provider |
+| KnowledgeOps 首个来源适配器仅支持 PUSH，向量暂存 MySQL | 当前没有网页/对象存储/数据库 CDC 连接器；应用层向量排序不适合海量 chunk | 外部采集器按 checkpoint 协议调用 PUSH；规模增长前把检索实现替换为专用向量库，并保留版本、ACL 与 lineage 契约 |
 | Replay 仅为只读清单 | 生产工具可能发消息、改数据或触发审批，查看权限不能隐式升级为执行权限 | 真正重跑必须进入隔离环境并逐项授权 |
-| 业务结果视图无会话级金额 | 现有金额事实只按“租户 + 自然日 + 模型”归集，无法无损关联 session；接口返回 cost `UNAVAILABLE` | 不按调用次数或 token 比例伪分摊；要算每次自动解决成本，先在调用事实上写入可结算金额或单价版本 |
+| 单次自动解决成本仍是代理指标 | 金额已按模型段冻结价精确结算到 call/session，但“自动解决”当前定义为技术成功且无转人工，不等同于经客户确认的问题解决 | 结合 CSAT、复访或业务完成事件校准代理口径；缺价、缺用量和混合币种时保持 `PARTIAL/UNAVAILABLE/MULTI_CURRENCY`，不得强行比较 |
+| 改进效果按精确问题哈希观察 | 能确定同一归一化问题是否复发，但同义改写不会自动归为一类；低流量窗口也无法证明候选有效 | 将 `INCONCLUSIVE` 保持为独立终态并人工延长/重开观察；需要语义复发聚类时先建立可审计阈值与误聚类评测，不直接改写现有精确计数 |
 
 ## 5. 验证口径
 

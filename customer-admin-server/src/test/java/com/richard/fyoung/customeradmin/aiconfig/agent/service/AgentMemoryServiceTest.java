@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.agent.service;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentMemoryVO;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySnapshot;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryStore;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
@@ -24,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 /**
  * {@link AgentMemoryService} 单测：查看走权威存储（查看前先回写同步）、清空同时删权威存储与
@@ -51,7 +53,7 @@ class AgentMemoryServiceTest {
         when(agentService.requireAgent(AGENT_ID)).thenReturn(agent);
 
         AdminAgentInstanceFactory instanceFactory = mock(AdminAgentInstanceFactory.class);
-        when(instanceFactory.resolveWorkspace(AGENT_CODE)).thenReturn(workspace);
+        when(instanceFactory.resolveWorkspace(any(AgentMemoryScope.class))).thenReturn(workspace);
 
         memoryStore = mock(AgentMemoryStore.class);
         memorySyncService = mock(AgentMemorySyncService.class);

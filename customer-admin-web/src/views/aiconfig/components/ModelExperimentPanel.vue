@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { pageAgents } from '@/api/agent'
+import { listDatasetVersions, type EvalDatasetRelease } from '@/api/eval'
 import { pageModels } from '@/api/model'
 import {
   createModelExperiment,
   getModelExperimentMetrics,
+  listModelExperimentArmEvaluations,
   listModelExperimentEvents,
   listModelExperiments,
   startModelExperiment,
   stopModelExperiment,
   type ModelExperiment,
+  type ModelExperimentArmEvaluation,
   type ModelExperimentCreateRequest,
   type ModelExperimentEvent,
   type ModelExperimentEffectiveState,
@@ -29,6 +32,8 @@ const detailVisible = ref(false)
 const selected = ref<ModelExperiment | null>(null)
 const metrics = ref<ModelExperimentMetrics | null>(null)
 const events = ref<ModelExperimentEvent[]>([])
+const armEvaluations = ref<ModelExperimentArmEvaluation[]>([])
+const datasetReleases = ref<EvalDatasetRelease[]>([])
 
 const filter = reactive<{ agentId?: number; status?: ModelExperimentStatus }>({})
 const form = reactive<ModelExperimentCreateRequest>({
@@ -41,6 +46,7 @@ const form = reactive<ModelExperimentCreateRequest>({
   maxErrorRate: 0.05,
   maxP95LatencyMs: 3000,
   expiresAt: futureDateTimeValue(7),
+  datasetReleaseId: '',
 })
 
 const runningCount = computed(() => experiments.value.filter((item) => item.status === 'RUNNING').length)
@@ -63,12 +69,14 @@ async function reloadExperiments() {
 async function openCreate() {
   optionLoading.value = true
   try {
-    const [agentPage, modelPage] = await Promise.all([
+    const [agentPage, modelPage, releases] = await Promise.all([
       pageAgents({ pageNum: 1, pageSize: 200 }),
       pageModels({ pageNum: 1, pageSize: 200 }),
+      listDatasetVersions('QUALITY'),
     ])
     agents.value = agentPage.list
     deployments.value = modelPage.list
+    datasetReleases.value = releases.filter((item) => item.status === 'APPROVED')
   } finally {
     optionLoading.value = false
   }
@@ -84,14 +92,15 @@ async function openCreate() {
     maxErrorRate: 0.05,
     maxP95LatencyMs: 3000,
     expiresAt: futureDateTimeValue(7),
+    datasetReleaseId: datasetReleases.value[0]?.releaseId ?? '',
   })
   createVisible.value = true
 }
 
 async function createExperiment() {
   if (!form.experimentName.trim() || !form.agentId
-    || !form.controlDeploymentId || !form.treatmentDeploymentId) {
-    ElMessage.warning('请完整填写实验名称、智能体和双臂部署')
+    || !form.controlDeploymentId || !form.treatmentDeploymentId || !form.datasetReleaseId) {
+    ElMessage.warning('请完整填写实验名称、智能体、双臂部署和审核数据集版本')
     return
   }
   if (form.controlDeploymentId === form.treatmentDeploymentId) {
@@ -111,7 +120,7 @@ async function createExperiment() {
 
 async function startExperiment(row: ModelExperiment) {
   await ElMessageBox.confirm(
-    '后端将重新校验 Agent 启用态、双臂 ACTIVE 状态、端点修订与有效认证。确认启动？',
+    '后端会先用审核数据集分别评测 control/treatment；两臂均达到平均分 3.0、通过率 80% 且无错误后，才进入运行时激活。确认启动？',
     '启动实验',
     { type: 'warning' },
   )
@@ -136,9 +145,11 @@ async function inspectExperiment(row: ModelExperiment) {
   detailVisible.value = true
   metrics.value = null
   events.value = []
-  ;[metrics.value, events.value] = await Promise.all([
+  armEvaluations.value = []
+  ;[metrics.value, events.value, armEvaluations.value] = await Promise.all([
     getModelExperimentMetrics(row.id),
     listModelExperimentEvents(row.id),
+    listModelExperimentArmEvaluations(row.id),
   ])
 }
 
@@ -170,6 +181,13 @@ function effectiveStateLabel(state: ModelExperimentEffectiveState) {
 
 function isEffectiveFailure(state: ModelExperimentEffectiveState) {
   return state === 'ACTIVATION_FAILED' || state === 'DEACTIVATION_FAILED'
+}
+
+function offlineStatusType(status: string) {
+  if (status === 'PASSED') return 'success'
+  if (status === 'FAILED') return 'danger'
+  if (status === 'RUNNING') return 'warning'
+  return 'info'
 }
 
 function formatTime(value: string | null | undefined) {
@@ -240,6 +258,14 @@ function futureDateTimeValue(days: number) {
           </div>
         </template>
       </el-table-column>
+      <el-table-column label="离线门禁" min-width="190">
+        <template #default="{ row }">
+          <div class="guardrail-cell">
+            <span>{{ row.datasetVersionName || '未绑定版本' }}</span>
+            <el-tag :type="offlineStatusType(row.offlineEvalStatus)" size="small">{{ row.offlineEvalStatus }}</el-tag>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column label="流量" width="118">
         <template #default="{ row }">C {{ 100 - row.treatmentBps / 100 }}% / T {{ row.treatmentBps / 100 }}%</template>
       </el-table-column>
@@ -293,6 +319,16 @@ function futureDateTimeValue(days: number) {
               <el-option v-for="model in deployments" :key="model.id" :label="`${model.modelName} · ${model.model} · r${model.endpointRevision || 1}`" :value="model.id" />
             </el-select>
           </el-form-item>
+          <el-form-item label="审核通过的 QUALITY 数据集版本" class="full-row">
+            <el-select v-model="form.datasetReleaseId" filterable style="width: 100%" placeholder="请先到评测中心创建并审核版本">
+              <el-option
+                v-for="release in datasetReleases"
+                :key="release.releaseId"
+                :label="`${release.versionName} · ${release.caseCount} 条 · ${release.contentHash.slice(0, 10)}`"
+                :value="release.releaseId"
+              />
+            </el-select>
+          </el-form-item>
           <el-form-item label="实验组流量（bps）"><el-input-number v-model="form.treatmentBps" :min="1" :max="9999" :step="100" style="width: 100%" /></el-form-item>
           <el-form-item label="最小样本"><el-input-number v-model="form.minSample" :min="1" :step="100" style="width: 100%" /></el-form-item>
           <el-form-item label="最大错误率（0~1）"><el-input-number v-model="form.maxErrorRate" :min="0" :max="1" :step="0.01" :precision="4" style="width: 100%" /></el-form-item>
@@ -316,6 +352,16 @@ function futureDateTimeValue(days: number) {
             <el-tag :type="effectiveStateType(selected.effectiveState)">
               {{ effectiveStateLabel(selected.effectiveState) }} · {{ selected.effectiveState }}
             </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="离线评测数据集">
+            {{ selected.datasetVersionName || '—' }} · {{ selected.datasetContentHash?.slice(0, 12) || '—' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="离线门禁">
+            <el-tag :type="offlineStatusType(selected.offlineEvalStatus)">{{ selected.offlineEvalStatus }}</el-tag>
+            <span v-if="selected.offlineEvalError"> · {{ selected.offlineEvalError }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="Judge 部署">
+            {{ selected.judgeModelRef }} · r{{ selected.judgeEndpointRevision }}
           </el-descriptions-item>
           <el-descriptions-item label="当前生效任务">
             <template v-if="selected.effectiveTaskId">
@@ -354,7 +400,24 @@ function futureDateTimeValue(days: number) {
           class="effective-error"
         />
 
-        <h3>指标</h3>
+        <h3>启动前双臂离线评测</h3>
+        <el-empty v-if="armEvaluations.length === 0" description="尚未执行离线评测" :image-size="72" />
+        <el-table v-else :data="armEvaluations" size="small" border>
+          <el-table-column prop="arm" label="实验臂" width="110" />
+          <el-table-column prop="attemptNo" label="尝试" width="70" />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }"><el-tag :type="offlineStatusType(row.status)" size="small">{{ row.status }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="平均分/通过率" min-width="170">
+            <template #default="{ row }">
+              {{ row.avgScore == null ? '—' : Number(row.avgScore).toFixed(2) }} /
+              {{ formatPercent(row.passRate) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="errorMessage" label="错误" min-width="180" show-overflow-tooltip />
+        </el-table>
+
+        <h3>在线指标</h3>
         <el-alert
           v-if="metrics?.availability === 'AWAITING_RUNTIME'"
           :title="metrics.message"

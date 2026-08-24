@@ -96,6 +96,27 @@ public class MybatisUserAccountStore implements UserAccountStore {
         }
     }
 
+    @Override
+    public long incrementSessionEpoch(String id) {
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("user id is required");
+        }
+        try {
+            if (mapper.incrementSessionEpoch(id) != 1) {
+                throw new IllegalStateException("user not found: " + id);
+            }
+            Long epoch = mapper.selectSessionEpoch(id);
+            if (epoch == null) {
+                throw new IllegalStateException("user session epoch not found: " + id);
+            }
+            return epoch;
+        } catch (Exception e) {
+            log.error("user sessions revoke failed, code={}, id={}",
+                "USER-STORE-REVOKE-FAIL", id, e);
+            throw new IllegalStateException("failed to revoke user sessions: " + id, e);
+        }
+    }
+
     private UserAccount toDomain(UserDO row) {
         return UserAccount.reconstruct(
             row.getId(),
@@ -107,7 +128,8 @@ public class MybatisUserAccountStore implements UserAccountStore {
             row.getCreatedAtMs(),
             row.getAvatarUrl(),
             row.getLevelCode(),
-            row.getTenantId());
+            row.getTenantId(),
+            row.getSessionEpoch() == null ? 0L : row.getSessionEpoch());
     }
 
     private UserDO toDO(UserAccount account) {
@@ -122,6 +144,7 @@ public class MybatisUserAccountStore implements UserAccountStore {
         row.setCreatedAtMs(account.getCreatedAtMs());
         row.setAvatarUrl(account.getAvatarUrl());
         row.setLevelCode(account.getLevelCode());
+        row.setSessionEpoch(account.getSessionEpoch());
         return row;
     }
 }

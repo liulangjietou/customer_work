@@ -117,18 +117,12 @@ class BusinessOutcomeMapperCollationIntegrationTest {
                 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
                 """);
             statement.execute("""
-                CREATE TABLE cw_handoff_ticket (
-                    tenant_id VARCHAR(64) COLLATE utf8mb4_unicode_ci NOT NULL,
-                    session_id VARCHAR(128) COLLATE utf8mb4_unicode_ci
-                ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-                """);
-            statement.execute("""
                 CREATE TABLE cw_ticket (
-                    tenant_id VARCHAR(64) COLLATE utf8mb4_0900_ai_ci NOT NULL,
-                    session_id VARCHAR(128) COLLATE utf8mb4_0900_ai_ci,
+                    tenant_id VARCHAR(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+                    session_id VARCHAR(128) COLLATE utf8mb4_unicode_ci,
                     handoff_at_ms BIGINT,
                     handoff_reason VARCHAR(255)
-                ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
+                ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
                 """);
             statement.execute("""
                 CREATE TABLE cw_csat_survey (
@@ -140,9 +134,9 @@ class BusinessOutcomeMapperCollationIntegrationTest {
             statement.execute("INSERT INTO cw_agent_call_log VALUES "
                 + "('tenant-a', 'session-1', 'support-agent', 100, 1, 42), "
                 + "('tenant-a', 'tenant-collision', 'support-agent', 200, 1, 21)");
-            statement.execute("INSERT INTO cw_handoff_ticket VALUES "
-                + "('tenant-a', 'session-1'), "
-                + "('tenant-b', 'tenant-collision')");
+            statement.execute("INSERT INTO cw_ticket VALUES "
+                + "('tenant-a', 'session-1', 100, 'need human'), "
+                + "('tenant-b', 'tenant-collision', 200, 'other tenant')");
             statement.execute("INSERT INTO cw_csat_survey VALUES "
                 + "('tenant-a', 'session-1', 5), "
                 + "('tenant-b', 'tenant-collision', 1)");

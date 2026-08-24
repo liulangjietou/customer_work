@@ -12,6 +12,58 @@ export type EvalTriggerCode = 'MANUAL' | 'SCHEDULED' | 'API'
 
 /** 对比结论：首次运行 / 变好 / 变差 / 持平 / Judge 或运行错误。 */
 export type EvalVerdict = 'FIRST_RUN' | 'IMPROVED' | 'REGRESSED' | 'UNCHANGED' | 'ERROR'
+export type EvalDatasetReviewStatus = 'DRAFT' | 'APPROVED' | 'REJECTED'
+export type EvalCaseSource = 'SEED' | 'BADCASE' | 'MANUAL' | 'IMPORT'
+
+export interface EvalDatasetCase {
+  caseId: string
+  evalType: EvalTypeCode
+  input: string
+  expected: string | null
+  category: string | null
+  source: EvalCaseSource
+  enabled: boolean
+  originRef: string | null
+  createdAtMs: number
+}
+
+export interface EvalDatasetCaseInput {
+  caseId: string
+  input: string
+  expected?: string | null
+  category?: string | null
+  enabled?: boolean
+  originRef?: string | null
+}
+
+export interface EvalDatasetRelease {
+  releaseId: string
+  evalType: EvalTypeCode
+  versionName: string
+  snapshotVersionId: string
+  contentHash: string
+  caseCount: number
+  status: EvalDatasetReviewStatus
+  reviewComment: string | null
+  createdBy: number | null
+  reviewedBy: number | null
+  createdAtMs: number
+  reviewedAtMs: number | null
+}
+
+export interface EvalDatasetCaseDiff {
+  caseId: string
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+}
+
+export interface EvalDatasetDiff {
+  fromReleaseId: string
+  toReleaseId: string
+  addedCaseIds: string[]
+  removedCaseIds: string[]
+  changedCases: EvalDatasetCaseDiff[]
+}
 
 export interface EvalRun {
   runId: string
@@ -72,4 +124,67 @@ export function getComparison(runId: string) {
  */
 export function triggerEval(type: EvalTypeCode, remark?: string) {
   return request<EvalComparison>({ url: '/eval/run', method: 'post', params: { type, remark } })
+}
+
+export function listDatasetCases(type: EvalTypeCode) {
+  return request<EvalDatasetCase[]>({ url: `/eval/datasets/${type}/cases`, method: 'get' })
+}
+
+export function createDatasetCase(type: EvalTypeCode, data: EvalDatasetCaseInput) {
+  return request<EvalDatasetCase>({ url: `/eval/datasets/${type}/cases`, method: 'post', data })
+}
+
+export function updateDatasetCase(type: EvalTypeCode, caseId: string, data: EvalDatasetCaseInput) {
+  return request<EvalDatasetCase>({
+    url: `/eval/datasets/${type}/cases/${encodeURIComponent(caseId)}`,
+    method: 'put',
+    data,
+  })
+}
+
+export function deleteDatasetCase(type: EvalTypeCode, caseId: string) {
+  return request<void>({
+    url: `/eval/datasets/${type}/cases/${encodeURIComponent(caseId)}`,
+    method: 'delete',
+  })
+}
+
+export function importDatasetCases(type: EvalTypeCode, cases: EvalDatasetCaseInput[]) {
+  return request<EvalDatasetCase[]>({ url: `/eval/datasets/${type}/import`, method: 'post', data: { cases } })
+}
+
+export function exportDatasetCases(type: EvalTypeCode) {
+  return request<EvalDatasetCase[]>({ url: `/eval/datasets/${type}/export`, method: 'get' })
+}
+
+export function listDatasetVersions(type: EvalTypeCode) {
+  return request<EvalDatasetRelease[]>({ url: `/eval/datasets/${type}/versions`, method: 'get' })
+}
+
+export function createDatasetVersion(type: EvalTypeCode, versionName: string) {
+  return request<EvalDatasetRelease>({
+    url: `/eval/datasets/${type}/versions`,
+    method: 'post',
+    data: { versionName },
+  })
+}
+
+export function reviewDatasetVersion(
+  releaseId: string,
+  decision: Exclude<EvalDatasetReviewStatus, 'DRAFT'>,
+  comment?: string,
+) {
+  return request<EvalDatasetRelease>({
+    url: `/eval/datasets/versions/${releaseId}/review`,
+    method: 'post',
+    data: { decision, comment },
+  })
+}
+
+export function diffDatasetVersions(fromReleaseId: string, toReleaseId: string) {
+  return request<EvalDatasetDiff>({
+    url: '/eval/datasets/versions/diff',
+    method: 'get',
+    params: { fromReleaseId, toReleaseId },
+  })
 }

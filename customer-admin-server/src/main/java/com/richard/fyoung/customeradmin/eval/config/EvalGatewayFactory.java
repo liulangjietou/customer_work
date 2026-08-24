@@ -2,7 +2,13 @@ package com.richard.fyoung.customeradmin.eval.config;
 
 import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customerwork.capability.eval.EvalRunStore;
+import com.richard.fyoung.customerwork.capability.eval.MybatisEvalCaseStore;
+import com.richard.fyoung.customerwork.capability.eval.MybatisEvalDatasetReleaseStore;
+import com.richard.fyoung.customerwork.capability.eval.MybatisEvalDatasetSnapshotStore;
 import com.richard.fyoung.customerwork.capability.eval.MybatisEvalRunStore;
+import com.richard.fyoung.customerwork.capability.eval.mapper.EvalCaseMapper;
+import com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetReleaseMapper;
+import com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetSnapshotMapper;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalRunMapper;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
 
@@ -27,12 +33,20 @@ final class EvalGatewayFactory {
     /** 无需额外接口注册：EvalRunMapper 由 XML namespace 自动绑定。 */
     static final List<Class<?>> MAPPER_CLASSES = List.of();
 
-    static final List<String> MAPPER_XML_LOCATIONS = List.of(StarterMapperXml.EVAL_RUN);
+    static final List<String> MAPPER_XML_LOCATIONS = List.of(
+        StarterMapperXml.EVAL_RUN,
+        StarterMapperXml.EVAL_CASE,
+        StarterMapperXml.EVAL_DATASET_SNAPSHOT,
+        StarterMapperXml.EVAL_DATASET_RELEASE);
 
     private EvalGatewayFactory() {
     }
 
-    static EvalRunStore build(CrossDbGateway gateway) {
-        return new MybatisEvalRunStore(gateway.getMapper(EvalRunMapper.class));
+    static EvalGateway build(CrossDbGateway gateway) {
+        return new EvalGateway(
+            new MybatisEvalRunStore(gateway.getMapper(EvalRunMapper.class)),
+            new MybatisEvalCaseStore(gateway.getMapper(EvalCaseMapper.class)),
+            new MybatisEvalDatasetSnapshotStore(gateway.getMapper(EvalDatasetSnapshotMapper.class)),
+            new MybatisEvalDatasetReleaseStore(gateway.getMapper(EvalDatasetReleaseMapper.class)));
     }
 }

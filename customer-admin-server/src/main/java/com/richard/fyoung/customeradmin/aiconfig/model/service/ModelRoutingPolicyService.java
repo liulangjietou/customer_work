@@ -227,7 +227,7 @@ public class ModelRoutingPolicyService {
             return;
         }
         for (AiAgent agent : agents) {
-            agentInstanceCache.evict(agent.getAgentCode());
+            agentInstanceCache.invalidate(agent.getAgentCode());
             runtimeConfigPublisher.publishForAgentId(agent.getId());
         }
     }

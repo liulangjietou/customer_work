@@ -20,4 +20,11 @@ public class BusinessOutcomeAggregateRow {
     private Long csatRespondedSessions;
     private Long csatSatisfiedSessions;
     private BigDecimal averageCsat;
+    private Long modelSegmentCount;
+    private Long settledCostSegmentCount;
+    private Long unsettledCostSegmentCount;
+    private Long multiCurrencyCalls;
+    private Long costCurrencyCount;
+    private String costCurrency;
+    private BigDecimal settledCostAmount;
 }

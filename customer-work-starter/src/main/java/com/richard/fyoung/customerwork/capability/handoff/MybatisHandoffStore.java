@@ -11,11 +11,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * MyBatis-Plus 人机切换工单存储（生产实现：{@code human-handoff.store-mode=jdbc} 时装配）。
+ * MyBatis-Plus 历史人机切换工单存储（仅旧表迁移回归测试）。
  *
- * <p>把工单结构化写入 {@code cw_handoff_ticket} 表，保证应用重启 / 多实例部署下工单不丢失——
- * 坐席在实例 A 接单、坐席工作台轮询落到实例 B 也应看到最新状态（进程内 {@link InMemoryHandoffStore}
- * 无此保证）。建表与种子由统一 Flyway 迁移负责，本类只表达读写。</p>
+ * <p>P1-03 起生产不再装配本类，{@code cw_handoff_ticket} 只读归档；权威状态统一写入
+ * {@code cw_ticket}。保留本类是为了验证 V17 迁移前的旧数据读写合同。</p>
  *
  * <p>DO ↔ 领域对象转换收敛在本层：写入前 {@link #toDO} 拆解充血实体为贫血 DO，读出后
  * {@link #toDomain} 经 {@link HandoffTicket#reconstruct} 跳过状态机校验重建。异常一律

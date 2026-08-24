@@ -35,8 +35,12 @@ public class CwTenantUsageDaily {
     private Long outputTokens;
     private Long cachedTokens;
     private Long totalTokens;
+    private Long modelSegmentCount;
+    private Long settledSegmentCount;
+    private Long unsettledSegmentCount;
     private BigDecimal amount;
     private String currency;
+    private Long sourceMaxCallLogId;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

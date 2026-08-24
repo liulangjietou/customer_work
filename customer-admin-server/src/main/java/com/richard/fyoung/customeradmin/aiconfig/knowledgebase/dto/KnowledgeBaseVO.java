@@ -25,6 +25,8 @@ public class KnowledgeBaseVO {
     private Integer testStatus;
     private LocalDateTime testTime;
     private String remark;
+    private Long currentVersionId;
+    private Integer latestVersionNo;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

@@ -2,9 +2,15 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  acknowledgeSloAlert,
   evaluateSloPolicy,
+  listSloAlertEvents,
+  listSloAlerts,
   listSloPolicies,
   saveSloPolicy,
+  type SloAlert,
+  type SloAlertEvent,
+  type SloAlertStatus,
   type SloEvaluation,
   type SloPolicy,
   type SloPolicySaveRequest,
@@ -26,10 +32,16 @@ const STATUS_LABELS: Record<SloEvaluation['status'], string> = {
 
 const loading = ref(false)
 const policies = ref<SloPolicy[]>([])
+const alerts = ref<SloAlert[]>([])
 const dialogVisible = ref(false)
 const evaluationVisible = ref(false)
+const eventVisible = ref(false)
 const evaluation = ref<SloEvaluation | null>(null)
+const alertEvents = ref<SloAlertEvent[]>([])
+const activeAlert = ref<SloAlert | null>(null)
 const evaluatingId = ref<number | null>(null)
+const acknowledgingId = ref<number | null>(null)
+const alertStatus = ref<SloAlertStatus | undefined>(undefined)
 
 const emptyForm = (): SloPolicySaveRequest => ({
   policyName: '',
@@ -49,7 +61,12 @@ const form = reactive<SloPolicySaveRequest>(emptyForm())
 async function loadPolicies() {
   loading.value = true
   try {
-    policies.value = await listSloPolicies()
+    const [policyRows, alertRows] = await Promise.all([
+      listSloPolicies(),
+      listSloAlerts(alertStatus.value),
+    ])
+    policies.value = policyRows
+    alerts.value = alertRows
   } finally {
     loading.value = false
   }
@@ -94,11 +111,31 @@ async function evaluate(row: SloPolicy) {
     evaluation.value = await evaluateSloPolicy(row.id)
     evaluationVisible.value = true
     if (evaluation.value.alertCreated) {
-      ElMessage.warning('短、长窗口均超过燃烧率阈值，已记录幂等告警事实')
+      ElMessage.warning('短、长窗口均超过阈值，已打开告警并进入可靠通知队列')
+    } else if (evaluation.value.alertTransition === 'RESOLVED') {
+      ElMessage.success('指标已恢复，告警状态与恢复通知已持久化')
     }
+    await loadPolicies()
   } finally {
     evaluatingId.value = null
   }
+}
+
+async function acknowledge(row: SloAlert) {
+  acknowledgingId.value = row.id
+  try {
+    await acknowledgeSloAlert(row.id)
+    ElMessage.success('告警已确认')
+    await loadPolicies()
+  } finally {
+    acknowledgingId.value = null
+  }
+}
+
+async function showEvents(row: SloAlert) {
+  activeAlert.value = row
+  alertEvents.value = await listSloAlertEvents(row.id)
+  eventVisible.value = true
 }
 
 function percent(value: number) {
@@ -107,6 +144,20 @@ function percent(value: number) {
 
 function statusType(status: SloEvaluation['status']) {
   return status === 'HEALTHY' ? 'success' : status === 'BURNING' ? 'danger' : 'info'
+}
+
+function alertStatusType(status: SloAlertStatus) {
+  return status === 'OPEN' ? 'danger' : status === 'ACKED' ? 'warning' : 'success'
+}
+
+function alertStatusLabel(status: SloAlertStatus) {
+  return status === 'OPEN' ? '待确认' : status === 'ACKED' ? '已确认' : '已恢复'
+}
+
+function evaluationStatusLabel(status: SloPolicy['lastEvaluationStatus']) {
+  if (!status) return '待评估'
+  if (status === 'FAILED') return '执行失败'
+  return STATUS_LABELS[status]
 }
 
 onMounted(loadPolicies)
@@ -119,7 +170,7 @@ onMounted(loadPolicies)
         <div class="header">
           <div>
             <h2>SLO 错误预算</h2>
-            <p>以真实调用的成功标记和耗时阈值计算；短、长窗口都达到最低样本并同时超限才产生告警事实。</p>
+            <p>多副本通过数据库租约周期评估；短、长窗口同时超限打开告警，恢复后自动闭环并可靠投递通知。</p>
           </div>
           <el-button v-permission="'slo:edit'" type="primary" @click="openCreate">新建策略</el-button>
         </div>
@@ -151,12 +202,64 @@ onMounted(loadPolicies)
             <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="最近自动评估" min-width="170">
+          <template #default="{ row }">
+            <el-tag :type="row.lastEvaluationStatus === 'FAILED' ? 'danger' : row.lastEvaluationStatus === 'HEALTHY' ? 'success' : 'info'" effect="plain">
+              {{ evaluationStatusLabel(row.lastEvaluationStatus) }}
+            </el-tag>
+            <div class="subtle">{{ row.lastEvaluatedAt || '等待 Worker 领取' }}</div>
+            <div v-if="row.lastEvaluationError" class="evaluation-error">{{ row.lastEvaluationError }}</div>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button v-permission="'slo:evaluate'" link type="primary" :loading="evaluatingId === row.id" @click="evaluate(row)">
               立即评估
             </el-button>
             <el-button v-permission="'slo:edit'" link @click="openEdit(row)">编辑</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card shadow="never" class="alert-card">
+      <template #header>
+        <div class="header">
+          <div>
+            <h2>告警生命周期</h2>
+            <p>每个策略只保留一个活跃告警；确认不等于恢复，只有足量健康样本才能进入 RESOLVED。</p>
+          </div>
+          <el-select v-model="alertStatus" clearable placeholder="全部状态" style="width: 140px" @change="loadPolicies">
+            <el-option label="待确认" value="OPEN" />
+            <el-option label="已确认" value="ACKED" />
+            <el-option label="已恢复" value="RESOLVED" />
+          </el-select>
+        </div>
+      </template>
+      <el-table v-loading="loading" :data="alerts" stripe>
+        <el-table-column prop="policyName" label="策略" min-width="150" />
+        <el-table-column label="范围" min-width="150">
+          <template #default="{ row }">{{ row.scopeType || '-' }}<span v-if="row.scopeKey"> · {{ row.scopeKey }}</span></template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }"><el-tag :type="alertStatusType(row.status)">{{ alertStatusLabel(row.status) }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="短/长窗燃烧率" min-width="150">
+          <template #default="{ row }">{{ row.shortBurnRate }}× / {{ row.longBurnRate }}×</template>
+        </el-table-column>
+        <el-table-column prop="firstSeenAt" label="首次发现" min-width="165" />
+        <el-table-column prop="lastSeenAt" label="最近观测" min-width="165" />
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'OPEN'"
+              v-permission="'slo:ack'"
+              link
+              type="primary"
+              :loading="acknowledgingId === row.id"
+              @click="acknowledge(row)"
+            >确认</el-button>
+            <el-button link @click="showEvents(row)">事件</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -219,6 +322,16 @@ onMounted(loadPolicies)
         </el-table>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="eventVisible" :title="`${activeAlert?.policyName || 'SLO'} · 状态事件`" width="720px">
+      <el-timeline>
+        <el-timeline-item v-for="item in alertEvents" :key="item.id" :timestamp="item.occurredAt" placement="top">
+          <strong>{{ item.eventType }}</strong>
+          <span class="event-rate">短窗 {{ item.shortBurnRate }}× / 长窗 {{ item.longBurnRate }}×</span>
+          <span v-if="item.actorUserId" class="subtle">操作人 #{{ item.actorUserId }}</span>
+        </el-timeline-item>
+      </el-timeline>
+    </el-dialog>
   </div>
 </template>
 
@@ -231,4 +344,8 @@ onMounted(loadPolicies)
 .hint { margin-left: 10px; color: var(--el-text-color-secondary); }
 .split { margin: 0 10px; }
 .result-table { margin-top: 18px; }
+.alert-card { margin-top: 18px; }
+.subtle { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; }
+.evaluation-error { max-width: 260px; margin-top: 4px; color: var(--el-color-danger); font-size: 12px; white-space: normal; }
+.event-rate { margin-left: 14px; }
 </style>

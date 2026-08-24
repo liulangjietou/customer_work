@@ -17,4 +17,6 @@ public class AiAgentKnowledgeBase {
     private Long id;
     private Long agentId;
     private Long knowledgeBaseId;
+    /** 绑定时冻结的不可变知识库版本。 */
+    private Long knowledgeBaseVersionId;
 }

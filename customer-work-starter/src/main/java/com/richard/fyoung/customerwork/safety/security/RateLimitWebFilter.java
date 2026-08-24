@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.safety.security;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitAlgorithm;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitDimension;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitRule;
@@ -141,10 +142,14 @@ public class RateLimitWebFilter implements WebFilter {
             return "global";
         }
         if (dimension != RateLimitDimension.IP) {
+            ApiKeyPrincipal principal = exchange.getAttribute(ApiKeyPrincipal.EXCHANGE_ATTRIBUTE);
+            if (principal != null) {
+                return "key:" + principal.keyId();
+            }
             String apiKey = exchange.getRequest().getHeaders()
                 .getFirst(properties.getSecurity().getAuth().getHeaderName());
             if (apiKey != null && !apiKey.isBlank()) {
-                return "key:" + apiKey;
+                return "key:" + QuotaSubject.apiKey(apiKey).id();
             }
         }
         if (exchange.getRequest().getRemoteAddress() != null) {

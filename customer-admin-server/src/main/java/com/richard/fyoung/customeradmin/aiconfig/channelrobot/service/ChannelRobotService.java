@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.ChannelType;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.SessionMode;
+import com.richard.fyoung.customeradmin.aiconfig.channelrobot.WeChatCallbackMode;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.dto.ChannelRobotSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.dto.ChannelRobotVO;
 import com.richard.fyoung.customeradmin.aiconfig.channelrobot.entity.AiChannelRobot;
@@ -17,6 +18,8 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+
+import java.util.Base64;
 
 /**
  * 渠道机器人 CRUD：AppSecret 加密落库/留空不改、channelType 枚举校验、agentCode 必须绑定到启用的
@@ -65,6 +68,7 @@ public class ChannelRobotService {
         AiChannelRobot robot = new AiChannelRobot();
         fillFromRequest(robot, request);
         robot.setAppSecretCipher(cryptoUtil.encrypt(request.appSecret()));
+        applyCallbackSecurity(robot, request, true);
         robotMapper.insert(robot);
     }
 
@@ -78,6 +82,7 @@ public class ChannelRobotService {
         if (StringUtils.hasText(request.appSecret())) {
             robot.setAppSecretCipher(cryptoUtil.encrypt(request.appSecret()));
         }
+        applyCallbackSecurity(robot, request, false);
         robotMapper.updateById(robot);
     }
 
@@ -130,6 +135,56 @@ public class ChannelRobotService {
         robot.setStatus(request.status() == null ? StatusFlags.ENABLED : request.status());
     }
 
+    /** 微信安全模式密钥只在此处校验并加密，编辑留空沿用原密文。 */
+    private void applyCallbackSecurity(AiChannelRobot robot, ChannelRobotSaveRequest request, boolean creating) {
+        if (!ChannelType.WECHAT.getCode().equals(request.channelType())) {
+            robot.setCallbackMode(WeChatCallbackMode.PLAINTEXT.getCode());
+            robot.setEncodingAesKeyCipher(null);
+            return;
+        }
+        if (!StringUtils.hasText(request.robotCode())) {
+            throw new BizException(ResultCode.PARAM_MISSING, "微信回调 Token 不能为空");
+        }
+        WeChatCallbackMode mode = resolveCallbackMode(request.callbackMode());
+        robot.setCallbackMode(mode.getCode());
+        if (mode == WeChatCallbackMode.PLAINTEXT) {
+            robot.setEncodingAesKeyCipher(null);
+            return;
+        }
+        if (StringUtils.hasText(request.encodingAesKey())) {
+            validateEncodingAesKey(request.encodingAesKey());
+            robot.setEncodingAesKeyCipher(cryptoUtil.encrypt(request.encodingAesKey()));
+            return;
+        }
+        if (creating || !StringUtils.hasText(robot.getEncodingAesKeyCipher())) {
+            throw new BizException(ResultCode.PARAM_MISSING, "安全模式 EncodingAESKey 不能为空");
+        }
+    }
+
+    private WeChatCallbackMode resolveCallbackMode(String callbackMode) {
+        if (!StringUtils.hasText(callbackMode)) {
+            return WeChatCallbackMode.PLAINTEXT;
+        }
+        WeChatCallbackMode mode = WeChatCallbackMode.fromCode(callbackMode);
+        if (mode == null) {
+            throw new BizException(ResultCode.PARAM_INVALID, "非法的微信回调模式: " + callbackMode);
+        }
+        return mode;
+    }
+
+    private void validateEncodingAesKey(String encodingAesKey) {
+        if (encodingAesKey.length() != 43) {
+            throw new BizException(ResultCode.PARAM_INVALID, "EncodingAESKey 必须为 43 位字符");
+        }
+        try {
+            if (Base64.getDecoder().decode(encodingAesKey + "=").length != 32) {
+                throw new BizException(ResultCode.PARAM_INVALID, "EncodingAESKey 格式非法");
+            }
+        } catch (IllegalArgumentException e) {
+            throw new BizException(ResultCode.PARAM_INVALID, "EncodingAESKey 格式非法");
+        }
+    }
+
     /** 会话模式：空值取默认 continuous，非法值 fast fail。 */
     private String resolveSessionMode(String sessionMode) {
         if (!StringUtils.hasText(sessionMode)) {
@@ -149,6 +204,9 @@ public class ChannelRobotService {
         vo.setRobotName(robot.getRobotName());
         vo.setAppKey(robot.getAppKey());
         vo.setRobotCode(robot.getRobotCode());
+        vo.setCallbackMode(StringUtils.hasText(robot.getCallbackMode())
+            ? robot.getCallbackMode() : WeChatCallbackMode.PLAINTEXT.getCode());
+        vo.setHasEncodingAesKey(StringUtils.hasText(robot.getEncodingAesKeyCipher()));
         vo.setAgentCode(robot.getAgentCode());
         vo.setSessionMode(robot.getSessionMode());
         vo.setStatus(robot.getStatus());

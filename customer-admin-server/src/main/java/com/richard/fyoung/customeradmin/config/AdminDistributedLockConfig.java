@@ -4,6 +4,8 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.lock.DistributedLockConfig;
 import com.richard.fyoung.customerwork.infra.lock.DistributedLockExecutor;
 import com.richard.fyoung.customerwork.infra.lock.RedissonDistributedLockExecutor;
+import com.richard.fyoung.customerwork.infra.lock.RedissonSessionLock;
+import com.richard.fyoung.customerwork.infra.lock.SessionLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -30,6 +32,12 @@ public class AdminDistributedLockConfig {
     @Value("${admin.redis.password}")
     private String password;
 
+    @Value("${admin.agent-runtime.session-lock-wait-seconds:10}")
+    private long sessionLockWaitSeconds;
+
+    @Value("${admin.agent-runtime.session-lock-lease-seconds:1800}")
+    private long sessionLockLeaseSeconds;
+
     @Bean(destroyMethod = "shutdown")
     public RedissonClient redissonClient() {
         DistributedLockProperties.Redis r = new DistributedLockProperties.Redis();
@@ -42,5 +50,15 @@ public class AdminDistributedLockConfig {
     @Bean
     public DistributedLockExecutor distributedLockExecutor(RedissonClient redissonClient) {
         return new RedissonDistributedLockExecutor(redissonClient);
+    }
+
+    /**
+     * Admin 对话按 tenant + agent + session 跨 Pod 串行。Redis 故障时必须失败关闭，
+     * 否则退化为每 Pod 一把本地锁会制造“看似加锁、实际并发写历史”的数据损坏。
+     */
+    @Bean
+    public SessionLock adminSessionLock(RedissonClient redissonClient) {
+        return new RedissonSessionLock(redissonClient, "cw:admin:sessionlock:",
+            sessionLockWaitSeconds, sessionLockLeaseSeconds, null, false);
     }
 }

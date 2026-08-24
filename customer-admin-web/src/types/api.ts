@@ -165,6 +165,9 @@ export interface SysOperationLog {
   result: number
   errorMsg: string | null
   ip: string | null
+  eventId: string | null
+  auditStatus: 'STARTED' | 'COMPLETED'
+  retentionUntil: string | null
   createTime: string
 }
 
@@ -262,6 +265,12 @@ export interface AgentCallStatsRow {
   cachedTokens: number | null
   /** 模型自报耗时（毫秒）；与 modelMs 之差即网络/排队开销。 */
   modelReportedMs: number | null
+  modelCostAmount: number | null
+  modelCostCurrency: string | null
+  modelCostStatus: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE' | 'MULTI_CURRENCY' | 'NO_MODEL'
+  modelSegmentCount: number
+  settledCostSegmentCount: number
+  unsettledCostSegmentCount: number
 }
 
 // 契约固定 { total, rows }，与通用 PageResult 的 pageNum/pageSize/list 命名不同（同 MpPageResult
@@ -285,6 +294,19 @@ export interface AgentCallStatsSegment {
   cachedTokens: number | null
   /** 模型自报耗时（毫秒，仅 MODEL 段）。 */
   modelReportedMs: number | null
+  /** 实际调用的模型部署与价格快照（仅 MODEL 段）。 */
+  provider: string | null
+  deploymentId: number | null
+  modelName: string | null
+  priceId: number | null
+  currency: string | null
+  inputUnitPrice: number | null
+  outputUnitPrice: number | null
+  cachedUnitPrice: number | null
+  pricingStatus: 'PRICED' | 'UNPRICED' | null
+  costAmount: number | null
+  costCurrency: string | null
+  costStatus: 'SETTLED' | 'UNPRICED' | 'USAGE_MISSING' | 'USAGE_INVALID' | 'NOT_APPLICABLE'
   success: boolean
   errorMsg: string | null
 }
@@ -310,11 +332,72 @@ export interface AgentArtifactVersionBinding {
   rubricVersion: string
 }
 
-/** 只读重放清单：可导出审计，不会再次调用模型或执行工具。 */
+export interface AgentReplayGenerateOptions {
+  stream: boolean | null
+  temperature: number | null
+  topP: number | null
+  topK: number | null
+  maxTokens: number | null
+  maxCompletionTokens: number | null
+  frequencyPenalty: number | null
+  presencePenalty: number | null
+  thinkingBudget: number | null
+  reasoningEffort: string | null
+  seed: number | null
+  cacheControl: boolean | null
+  parallelToolCalls: boolean | null
+  toolChoice: string | null
+  responseFormat: string | null
+  timeoutMs: number | null
+  maxAttempts: number | null
+  initialBackoffMs: number | null
+  maxBackoffMs: number | null
+  backoffMultiplier: number | null
+  additionalHeaderNames: string[]
+  additionalBodyParamNames: string[]
+  additionalBodySha256: string | null
+  additionalQueryParamNames: string[]
+}
+
+export interface AgentReplaySnapshot {
+  schemaVersion: number
+  modelCalls: Array<{
+    sequence: number
+    modelName: string | null
+    parameters: AgentReplayGenerateOptions
+    messageCount: number
+    toolSchemaCount: number
+    toolNames: string[]
+    inputSha256: string
+  }>
+  ragRetrievals: Array<{
+    sequence: number
+    agentCode: string
+    status: 'HIT' | 'MISS' | 'ERROR'
+    querySha256: string
+    resultChars: number
+    resultSha256: string
+    references: Array<{ knowledgeBase: string; documentId: string; chunkId: string; score: string }>
+  }>
+  toolCalls: Array<{
+    sequence: number
+    toolCallId: string | null
+    toolName: string
+    kind: AgentCallSegmentKind
+    inputShape: string
+    inputSha256: string
+    resultState: string
+    resultChars: number
+    resultSha256: string
+    errorMessage: string | null
+  }>
+}
+
+/** 重放清单：查看只返回事实；执行仍走独立权限的 MOCK/隔离 DRY_RUN。 */
 export interface AgentCallReplayManifest {
   schemaVersion: number
-  mode: 'INSPECT_ONLY'
-  executable: false
+  mode: 'MOCK_DEFAULT'
+  executable: boolean
   executionBlockedReason: string
   source: AgentCallSource
   callLogId: number
@@ -334,6 +417,35 @@ export interface AgentCallReplayManifest {
   experimentBucket: number | null
   versionBinding: AgentArtifactVersionBinding
   segments: AgentCallStatsSegment[]
+  replaySnapshot: AgentReplaySnapshot
+  supportedModes: Array<'MOCK' | 'DRY_RUN'>
+  captureWarnings: string[]
+}
+
+export interface AgentReplayExecution {
+  replayId: string
+  callLogId: number
+  mode: 'MOCK' | 'DRY_RUN'
+  isolated: boolean
+  externalCallCount: number
+  mockedModelCalls: number
+  mockedRagRetrievals: number
+  mockedToolCalls: number
+  replayedAnswer: string
+  diff: {
+    answerChanged: boolean
+    recordedAnswerSha256: string
+    replayedAnswerSha256: string
+    commonPrefixChars: number
+    artifactVersions: Array<{
+      artifact: 'MODEL' | 'PROMPT' | 'AGENT' | 'KNOWLEDGE_BASE' | 'TOOL'
+      recordedVersion: string
+      currentVersion: string
+      status: 'SAME' | 'CHANGED' | 'UNAVAILABLE'
+    }>
+    warnings: string[]
+  }
+  executedAtMs: number
 }
 
 /** 汇总卡片：总调用数/耗时均值峰值/各分段耗时均值。 */
@@ -372,6 +484,9 @@ export interface AgentCallStatsTrendPoint {
 // ---------- aiconfig.model ----------
 export type ModelHealthStatus = 'UNKNOWN' | 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'RECOVERING'
 export type ModelHealthErrorCategory = 'AUTH' | 'RATE_LIMIT' | 'TIMEOUT' | 'CONTRACT' | 'UNKNOWN'
+export type ModelHealthOverrideMode = 'AUTO' | 'FORCE_HEALTHY' | 'FORCE_UNHEALTHY'
+export type ModelHealthEventType = 'PROBE' | 'STATE_TRANSITION' | 'STALE_PROBE'
+  | 'OVERRIDE_SET' | 'OVERRIDE_CLEARED' | 'OVERRIDE_EXPIRED'
 export type ModelCertificationStatus = 'NOT_REQUIRED' | 'UNKNOWN' | 'PASSED' | 'FAILED' | 'EXPIRED' | 'STALE'
 export type ModelRoutePurpose = 'DEFAULT' | 'ECONOMY' | 'COMPLEX_REASONING' | 'FALLBACK'
 
@@ -380,7 +495,7 @@ export interface SecretMetadataVO {
   refCode: string
   providerType: string
   currentVersion: number
-  status: 'ACTIVE' | 'EXPIRED' | 'DISABLED' | 'ERROR'
+  status: 'ACTIVE' | 'EXPIRED' | 'DISABLED' | 'REVOKED' | 'ERROR'
   expiresAt: string | null
   lastRotatedAt: string | null
   lastRotatedBy: number | null
@@ -388,9 +503,12 @@ export interface SecretMetadataVO {
 
 export interface ModelHealthSnapshot {
   healthStatus: ModelHealthStatus
+  effectiveHealthStatus: ModelHealthStatus
+  routingAvailable: boolean
   authStatus: 'UNKNOWN' | 'PASSED' | 'FAILED'
   capabilityStatus: 'UNKNOWN' | 'PASSED' | 'FAILED'
   consecutiveFailures: number
+  consecutiveSuccesses: number
   lastLatencyMs: number | null
   lastErrorCategory: ModelHealthErrorCategory | null
   lastMessage: string | null
@@ -398,7 +516,19 @@ export interface ModelHealthSnapshot {
   lastSuccessAt: string | null
   lastFailureAt: string | null
   nextProbeAt: string | null
+  cooldownUntil: string | null
+  overrideMode: ModelHealthOverrideMode
+  overrideReason: string | null
+  overrideOperatorId: number | null
+  overrideOperatorName: string | null
+  overrideUntil: string | null
   revision: number
+}
+
+export interface ModelHealthOverrideRequest {
+  mode: ModelHealthOverrideMode
+  reason: string
+  expiresAt: string | null
 }
 
 export interface ModelCertificationCheck {
@@ -530,12 +660,18 @@ export interface ModelAssetOption {
 
 export interface ModelHealthEvent {
   id: number
+  eventType: ModelHealthEventType
   source: 'MANUAL' | 'SCHEDULED' | 'RUNTIME' | 'MIGRATION'
   probeKind: string
+  previousHealthStatus: ModelHealthStatus | null
   healthStatus: ModelHealthStatus
-  testStatus: number
+  effectiveHealthStatus: ModelHealthStatus
+  testStatus: number | null
   latencyMs: number | null
   errorCategory: ModelHealthErrorCategory | null
+  overrideMode: ModelHealthOverrideMode | null
+  operatorId: number | null
+  operatorName: string | null
   message: string | null
   occurredAt: string
 }
@@ -694,6 +830,9 @@ export interface KnowledgeBaseVO {
   testStatus: number
   testTime: string | null
   remark: string | null
+  /** 当前不可变版本；编辑知识库或文档同步成功后递增。 */
+  currentVersionId: number | null
+  latestVersionNo: number
   createTime: string
   updateTime: string
 }
@@ -723,6 +862,128 @@ export interface KnowledgeBaseTestResult {
 export interface KnowledgeBaseOption {
   id: number
   kbName: string
+  currentVersionId: number
+  latestVersionNo: number
+  freshnessStatus: KnowledgeFreshnessStatus | null
+  qualityStatus: KnowledgeQualityStatus | null
+}
+
+export type KnowledgeFreshnessStatus = 'NEVER_SYNCED' | 'FRESH' | 'STALE' | 'FAILED'
+export type KnowledgeQualityStatus = 'UNKNOWN' | 'PASSED' | 'FAILED'
+export type KnowledgeSyncStatus = 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'QUALITY_FAILED'
+
+export interface KnowledgeAclRequest {
+  mode: 'PUBLIC' | 'RESTRICTED'
+  allowedSubjectTypes: Array<'USER' | 'ADMIN_USER' | 'IP' | 'API_KEY'>
+  allowedSubjectIds: string[]
+  allowedChannels: string[]
+}
+
+export interface KnowledgeBaseVersionVO {
+  id: number
+  versionNo: number
+  checkpoint: string | null
+  snapshotHash: string
+  documentCount: number
+  qualityScore: number
+  qualityStatus: KnowledgeQualityStatus
+  changeNote: string | null
+  createTime: string
+}
+
+export interface KnowledgeSourceVO {
+  id: number
+  knowledgeBaseId: number
+  sourceCode: string
+  sourceName: string
+  sourceType: 'PUSH'
+  status: number
+  freshnessSlaMinutes: number
+  qualityThreshold: number
+  defaultAcl: KnowledgeAclRequest
+  currentCheckpoint: string | null
+  lastSyncAt: string | null
+  lastSuccessfulSyncAt: string | null
+  lastSyncStatus: KnowledgeSyncStatus | null
+  lastSyncError: string | null
+  activeDocumentCount: number
+  qualityScore: number | null
+  qualityStatus: KnowledgeQualityStatus
+  freshnessStatus: KnowledgeFreshnessStatus
+  freshnessDeadline: string | null
+  revision: number
+  createTime: string
+  updateTime: string
+}
+
+export interface KnowledgeSourceSaveRequest {
+  sourceCode: string
+  sourceName: string
+  sourceType: 'PUSH'
+  status: number
+  freshnessSlaMinutes: number
+  qualityThreshold: number
+  defaultAcl: KnowledgeAclRequest
+}
+
+export interface KnowledgeDocumentChangeRequest {
+  operation: 'UPSERT' | 'DELETE'
+  externalId: string
+  sourceVersion?: string | null
+  title?: string | null
+  sourceUri?: string | null
+  content?: string | null
+  sourceUpdatedAt?: string | null
+  acl?: KnowledgeAclRequest | null
+}
+
+export interface KnowledgeSyncRequest {
+  requestId: string
+  expectedCheckpoint?: string | null
+  checkpoint: string
+  fullSnapshot: boolean
+  expectedDocumentCount?: number | null
+  documents: KnowledgeDocumentChangeRequest[]
+}
+
+export interface KnowledgeSyncRunVO {
+  id: number
+  sourceId: number
+  requestId: string
+  syncMode: 'FULL' | 'INCREMENTAL'
+  checkpointBefore: string | null
+  checkpointAfter: string
+  status: KnowledgeSyncStatus
+  receivedCount: number
+  upsertedCount: number | null
+  deletedCount: number | null
+  unchangedCount: number | null
+  activeDocumentCount: number | null
+  duplicateContentCount: number | null
+  qualityScore: number | null
+  qualityStatus: KnowledgeQualityStatus | null
+  knowledgeBaseVersionId: number | null
+  snapshotHash: string | null
+  errorMessage: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+
+export interface KnowledgeDocumentRevisionVO {
+  id: number
+  parentRevisionId: number | null
+  externalId: string
+  operation: 'UPSERT' | 'DELETE'
+  sourceVersion: string | null
+  title: string | null
+  sourceUri: string | null
+  contentHash: string | null
+  aclMode: 'PUBLIC' | 'RESTRICTED'
+  allowedSubjectTypes: string
+  allowedSubjectIds: string
+  allowedChannels: string
+  sourceUpdatedAt: string | null
+  createTime: string
 }
 
 // ---------- aiconfig.mcp ----------
@@ -732,10 +993,14 @@ export interface McpVO {
   mcpType: string
   /** 分页接口固定为空；仅 mcp:edit 详情返回结构化脱敏配置。 */
   config: string
+  /** MCP 敏感连接参数对应的 SecretRef 元数据；明文永不返回前端。 */
+  credential: SecretMetadataVO | null
   description: string | null
   status: number
   testStatus: number
   testTime: string | null
+  /** 服务端执行 MCP 工具前强制校验的主体类型。 */
+  allowedSubjectTypes: Array<'USER' | 'ADMIN_USER' | 'IP' | 'API_KEY'>
   createTime: string
 }
 
@@ -744,6 +1009,9 @@ export interface McpSaveRequest {
   mcpType: string
   config: string
   description?: string | null
+  /** SecretRef 到期时间；更新敏感字段时一并轮换。 */
+  secretExpiresAt?: string | null
+  allowedSubjectTypes: Array<'USER' | 'ADMIN_USER' | 'IP' | 'API_KEY'>
   status?: number | null
 }
 
@@ -805,11 +1073,22 @@ export interface SkillVO {
   content: string
   description: string | null
   status: number
+  currentVersionId: number | null
+  latestVersionNo: number
+  contentHash: string | null
   createTime: string
   /** 上传目标：local(本地Workspace) / nacos / sftp，见 SkillStorageTarget。 */
   storageTargets: string[]
   /** 附属文件清单（zip 上传的 references/scripts 等，不含内容）。 */
   files: SkillFileVO[]
+}
+
+export interface SkillVersionVO {
+  id: number
+  versionNo: number
+  contentHash: string
+  changeNote: string | null
+  createTime: string
 }
 
 export interface SkillSaveRequest {
@@ -857,9 +1136,13 @@ export interface AgentVO {
   backupModelNames: string[]
   mcpIds: number[]
   skillIds: number[]
+  /** 与 skillIds 一一对应的不可变版本 ID。 */
+  skillVersionIds: number[]
   systemToolIds: number[]
   /** 挂载的 RAG 知识库 ID 列表，检索由后端在对话时自动执行 */
   knowledgeBaseIds: number[]
+  /** 与 knowledgeBaseIds 一一对应的不可变版本 ID。 */
+  knowledgeBaseVersionIds: number[]
   knowledgeBaseNames: string[]
   systemPrompt: string | null
   capabilities: string[]
@@ -1496,7 +1779,10 @@ export interface ChannelBindingVO {
   agentName: string
   /** 0 停用 / 1 启用 */
   status: number
-  publishStatus?: 'PENDING' | 'PROCESSING' | 'PUBLISHED' | 'PARTIAL' | 'APPLIED' | 'FAILED'
+  /** 最近一次可靠发布任务 ID；门禁详情、重评和紧急豁免都以它为入口。 */
+  publishTaskId?: string
+  publishStatus?: RuntimePublishStatus
+  publishGateStatus?: EvalGateStatus
   publishRevision?: string
   publishLastError?: string
   publishUpdatedAtMs?: number
@@ -1511,12 +1797,67 @@ export interface ChannelBindingSaveRequest {
   status?: number
 }
 
+export type RuntimePublishStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'BLOCKED'
+  | 'PUBLISHED'
+  | 'PARTIAL'
+  | 'APPLIED'
+  | 'FAILED'
+
+export type EvalGateStatus = 'NOT_REQUIRED' | 'PENDING' | 'PASSED' | 'BLOCKED' | 'OVERRIDDEN'
+
+/** 一次评测所绑定的完整制品版本，用于判断评测结果是否属于本次发布候选。 */
+export interface EvalVersionBindingVO {
+  datasetVersion: string
+  datasetFingerprint: string
+  modelVersion: string
+  promptVersion: string
+  agentVersion: string
+  knowledgeBaseVersion: string
+  toolVersion: string
+  judgeVersion: string
+  rubricVersion: string
+}
+
+export interface EvalGateCheckResultVO {
+  evalType: 'INTENT' | 'QUALITY'
+  runId?: string
+  baselineRunId?: string
+  passed: boolean
+  failures: string[]
+  notices: string[]
+}
+
+export interface EvalGateDecisionVO {
+  status: EvalGateStatus
+  checks: EvalGateCheckResultVO[]
+  evaluatedAtMs: number
+}
+
+/** 发布候选的门禁审计事实，与后端 RuntimePublishGateVO 一一对应。 */
+export interface RuntimePublishGateVO {
+  taskId: string
+  publishStatus: RuntimePublishStatus
+  gateStatus: EvalGateStatus
+  candidateContentHash?: string
+  candidateVersions?: EvalVersionBindingVO
+  evalRunIds: string[]
+  decision?: EvalGateDecisionVO
+  evaluatedAtMs?: number
+  overrideId?: number
+}
+
 // ---------- channel-robot（渠道机器人接入）----------
 // 渠道类型枚举 code（与后端约定：当前仅钉钉可接入，企业微信/微信占位待支持）。
 export type ChannelType = 'dingtalk' | 'wecom' | 'wechat'
 
 /** 会话模式：continuous 持续会话（多轮携带上下文）/ per_message 单次问答（每条消息全新上下文）。 */
 export type ChannelSessionMode = 'continuous' | 'per_message'
+
+/** 微信公众号回调模式：明文兼容 / AES 安全模式。 */
+export type WeChatCallbackMode = 'plaintext' | 'safe'
 
 // 分页列表行：后端出于安全不回传 appSecret，仅用 hasSecret 标识是否已配置。
 export interface ChannelRobotVO {
@@ -1525,6 +1866,9 @@ export interface ChannelRobotVO {
   robotName: string
   appKey: string
   robotCode: string
+  callbackMode: WeChatCallbackMode
+  /** 是否已配置 EncodingAESKey：后端不返回明文或密文。 */
+  hasEncodingAesKey: boolean
   agentCode: string
   sessionMode: ChannelSessionMode
   /** 0 停用 / 1 启用 */
@@ -1544,6 +1888,10 @@ export interface ChannelRobotSaveRequest {
   appSecret?: string | null
   /** 留空后端与 appKey 一致，前端提交时也默认回填 appKey。 */
   robotCode?: string | null
+  /** 微信渠道有效；旧配置默认 plaintext。 */
+  callbackMode?: WeChatCallbackMode | null
+  /** 微信 safe 模式新建必填；编辑留空表示不修改。 */
+  encodingAesKey?: string | null
   agentCode: string
   /** 留空后端取默认 continuous。 */
   sessionMode?: ChannelSessionMode | null

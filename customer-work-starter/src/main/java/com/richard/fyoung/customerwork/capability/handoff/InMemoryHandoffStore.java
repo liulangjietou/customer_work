@@ -7,12 +7,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * 进程内人机切换工单存储（默认实现）。
+ * 进程内历史人机切换工单存储（仅迁移回归测试）。
  *
  * <p>用 {@link ConcurrentHashMap} 保证线程安全；{@link #update} 在内存实现中与 {@link #save}
  * 等价（同一引用覆盖），但保留独立方法签名以便 JDBC 等实现区分 INSERT 与 UPDATE 语义。</p>
  *
- * <p>以 {@code @ConditionalOnMissingBean} 注册，下游声明自己的 {@link HandoffStore} Bean 即可覆盖。</p>
+ * <p>生产不会注册该实现；权威状态统一使用 {@code TicketService/cw_ticket}。</p>
  * @author owlzhangfq@gmail.com
  */
 public class InMemoryHandoffStore implements HandoffStore {

@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EvalGovernanceMigrationContractTest {
@@ -31,6 +32,25 @@ class EvalGovernanceMigrationContractTest {
         }
         assertFalse(migration.toUpperCase().contains("DROP TABLE"));
         assertFalse(migration.toUpperCase().contains("DROP COLUMN"));
+    }
+
+    @Test
+    void v18ManualUpgradeAndCompleteSchemaShouldContainNamedReviewVersions() throws Exception {
+        Path root = repositoryRoot();
+        String migration = Files.readString(root.resolve(
+            "customer-work-starter/src/main/resources/db/customerwork/migration/V18__eval_dataset_governance.sql"));
+        String manual = Files.readString(root.resolve(
+            "mysql/01-agent-scope-customer-work/customer-work-eval-dataset-governance-alter.sql"));
+        String schema = Files.readString(root.resolve(
+            "mysql/01-agent-scope-customer-work/customer-work-schema.sql"));
+
+        assertEquals(migration, manual);
+        for (String fragment : new String[]{"cw_eval_dataset_release", "version_name",
+            "snapshot_version_id", "DRAFT/APPROVED/REJECTED", "reviewed_by",
+            "uk_eval_dataset_release_name"}) {
+            assertTrue(migration.contains(fragment), "V18 缺少：" + fragment);
+            assertTrue(schema.contains(fragment), "完整镜像缺少：" + fragment);
+        }
     }
 
     private Path repositoryRoot() {

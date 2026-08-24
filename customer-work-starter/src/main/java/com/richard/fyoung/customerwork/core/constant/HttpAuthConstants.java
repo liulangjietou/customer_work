@@ -21,6 +21,12 @@ public final class HttpAuthConstants {
      */
     public static final String AGENT_TOKEN_HEADER = "X-Agent-Token";
 
+    /** 结构化 API Key 的原始 secret 请求头。 */
+    public static final String API_KEY_HEADER = "X-API-Key";
+
+    /** 结构化 API Key 的稳定逻辑标识请求头。 */
+    public static final String API_KEY_ID_HEADER = "X-API-Key-Id";
+
     private HttpAuthConstants() {
     }
 }

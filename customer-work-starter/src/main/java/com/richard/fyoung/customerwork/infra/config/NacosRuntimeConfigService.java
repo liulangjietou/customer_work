@@ -6,6 +6,7 @@ import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.config.listener.Listener;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.richard.fyoung.customerwork.data.outbox.OutboxService;
 import com.richard.fyoung.customerwork.safety.tenant.LegacyTenantCompatibility;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
@@ -21,6 +22,8 @@ import org.springframework.util.StringUtils;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
@@ -244,22 +247,6 @@ public class NacosRuntimeConfigService implements DisposableBean {
                 "runtime config JSON parse failed");
             return false;
         }
-        String primaryKey;
-        String fallbackKey;
-        Map<Long, String> routingKeys;
-        Map<Long, String> experimentKeys;
-        try {
-            primaryKey = decryptIfPresent(dto.getModel() == null ? null : dto.getModel().getApiKeyCipher());
-            fallbackKey = decryptIfPresent(dto.getFallback() == null ? null : dto.getFallback().getApiKeyCipher());
-            routingKeys = decryptRoutingKeys(dto.getRoutingPolicy());
-            experimentKeys = decryptExperimentKeys(dto.getOnlineExperiment());
-        } catch (Exception e) {
-            log.error("runtime config api key decrypt failed, keep old config, code={}",
-                "RUNTIME-CONFIG-DECRYPT-FAIL", e);
-            enqueueAck(dto.getRevision(), dto.getContentHash(), "REJECTED",
-                "runtime config API key decrypt failed");
-            return false;
-        }
         String verifiedContentHash;
         try {
             verifiedContentHash = RuntimeConfigContentHasher.compute(dto, objectMapper);
@@ -285,6 +272,33 @@ public class NacosRuntimeConfigService implements DisposableBean {
                 "runtime config content hash mismatch");
             return false;
         }
+        if (!RuntimeConfigSignature.verify(dto, properties.getNacos().trustedRuntimeConfigSigningKeys(),
+            properties.getNacos().isRuntimeConfigSignatureRequired())) {
+            log.error("runtime config signature verification failed, keep old config, code={}, revision={}, keyId={}",
+                "RUNTIME-CONFIG-SIGNATURE-FAIL", dto.getRevision(), dto.getSignatureKeyId());
+            enqueueAck(dto.getRevision(), verifiedContentHash, "REJECTED",
+                "runtime config signature verification failed");
+            return false;
+        }
+        String primaryKey;
+        String fallbackKey;
+        Map<Long, String> routingKeys;
+        Map<Long, String> experimentKeys;
+        List<Map<String, String>> mcpHeaders;
+        try {
+            primaryKey = decryptIfPresent(dto.getModel() == null ? null : dto.getModel().getApiKeyCipher());
+            fallbackKey = decryptIfPresent(dto.getFallback() == null ? null : dto.getFallback().getApiKeyCipher());
+            routingKeys = decryptRoutingKeys(dto.getRoutingPolicy());
+            experimentKeys = decryptExperimentKeys(dto.getOnlineExperiment());
+            mcpHeaders = decryptMcpHeaders(dto.getMcpServers());
+        } catch (Exception e) {
+            log.error("runtime config credential decrypt failed, keep old config, code={}",
+                "RUNTIME-CONFIG-DECRYPT-FAIL", e);
+            enqueueAck(dto.getRevision(), dto.getContentHash(), "REJECTED",
+                "runtime config credential decrypt failed");
+            return false;
+        }
+        applyMcpHeaders(dto.getMcpServers(), mcpHeaders);
         boolean generationChanged = !verifiedContentHash.equals(activeContentHash);
         if (generationChanged) {
             try {
@@ -357,6 +371,44 @@ public class NacosRuntimeConfigService implements DisposableBean {
                 "runtime online experiment deployment is duplicated: " + arm.getDeploymentId());
         }
         keys.put(arm.getDeploymentId(), decryptIfPresent(arm.getApiKeyCipher()));
+    }
+
+    /** MCP 密文与服务列表按下标绑定；解密结果在 hash 校验通过前不得写回 DTO。 */
+    private List<Map<String, String>> decryptMcpHeaders(
+        List<CustomerWorkRuntimeConfig.McpServer> servers) throws Exception {
+        if (servers == null || servers.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, String>> resolved = new ArrayList<>(servers.size());
+        for (CustomerWorkRuntimeConfig.McpServer server : servers) {
+            if (server == null || !StringUtils.hasText(server.getHeadersCipher())) {
+                resolved.add(null);
+                continue;
+            }
+            if (server.getHeaders() != null && !server.getHeaders().isEmpty()) {
+                throw new IllegalArgumentException("runtime MCP headers cannot contain plaintext and cipher together");
+            }
+            String json = requireDecryptor().decrypt(server.getHeadersCipher());
+            Map<String, String> headers = objectMapper.readValue(
+                json, new TypeReference<LinkedHashMap<String, String>>() { });
+            resolved.add(Map.copyOf(headers));
+        }
+        return resolved;
+    }
+
+    private void applyMcpHeaders(List<CustomerWorkRuntimeConfig.McpServer> servers,
+                                 List<Map<String, String>> resolved) {
+        if (servers == null || servers.isEmpty()) {
+            return;
+        }
+        if (servers.size() != resolved.size()) {
+            throw new IllegalStateException("runtime MCP credential snapshot size mismatch");
+        }
+        for (int i = 0; i < servers.size(); i++) {
+            if (servers.get(i) != null && resolved.get(i) != null) {
+                servers.get(i).setHeaders(resolved.get(i));
+            }
+        }
     }
 
     /** 在当前部署租户上下文中先阻断缓存读写并清理旧代际。 */

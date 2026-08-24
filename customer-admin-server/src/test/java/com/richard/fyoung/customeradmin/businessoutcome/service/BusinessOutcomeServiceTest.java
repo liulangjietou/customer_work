@@ -44,7 +44,7 @@ class BusinessOutcomeServiceTest {
     }
 
     @Test
-    void summary_shouldExposeProxyOutcomeAndNeverFabricateSessionCost() {
+    void summary_shouldExposeProxyOutcomeAndExactFrozenModelCost() {
         BusinessOutcomeAggregateRow row = aggregate();
         when(mapper.aggregate("tenant-a", "support-agent", 1_000L, 2_000L)).thenReturn(row);
 
@@ -61,10 +61,11 @@ class BusinessOutcomeServiceTest {
             assertEquals(new BigDecimal("4.25"), result.averageCsat());
             assertEquals(new BigDecimal("0.750000"), result.csatResponseRate());
             assertEquals(new BigDecimal("0.666667"), result.csatSatisfiedRate());
-            assertNull(result.totalCost());
-            assertNull(result.costPerAutoResolvedSession());
-            assertEquals("UNAVAILABLE", result.costAvailability().status());
-            assertTrue(result.costAvailability().reason().contains("未进行比例分摊"));
+            assertEquals(new BigDecimal("12.34560000000000"), result.totalCost());
+            assertEquals("CNY", result.costCurrency());
+            assertEquals(new BigDecimal("2.05760000"), result.costPerAutoResolvedSession());
+            assertEquals("COMPLETE", result.costAvailability().status());
+            assertEquals("COMPLETE", result.costPerAutoResolvedAvailability().status());
             assertTrue(result.definitions().autoResolvedProxy().contains("代理指标"));
             verify(mapper).aggregate("tenant-a", "support-agent", 1_000L, 2_000L);
         }
@@ -87,6 +88,29 @@ class BusinessOutcomeServiceTest {
     }
 
     @Test
+    void summary_shouldNotFabricateUnitCostForPartialOrMixedCurrencyFacts() {
+        BusinessOutcomeAggregateRow partial = aggregate();
+        partial.setSettledCostSegmentCount(9L);
+        partial.setUnsettledCostSegmentCount(3L);
+        partial.setSettledCostAmount(new BigDecimal("9.00000000000000"));
+        when(mapper.aggregate("tenant-a", null, 1_000L, 2_000L)).thenReturn(partial);
+
+        try (MockedStatic<TenantSession> session = mockStatic(TenantSession.class)) {
+            session.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
+            BusinessOutcomeSummaryVO partialResult = service.summary(1_000L, 2_000L, null);
+            assertEquals(new BigDecimal("9.00000000000000"), partialResult.totalCost());
+            assertEquals("PARTIAL", partialResult.costAvailability().status());
+            assertNull(partialResult.costPerAutoResolvedSession());
+
+            partial.setMultiCurrencyCalls(1L);
+            partial.setCostCurrencyCount(2L);
+            BusinessOutcomeSummaryVO mixed = service.summary(1_000L, 2_000L, null);
+            assertNull(mixed.totalCost());
+            assertEquals("UNAVAILABLE", mixed.costAvailability().status());
+        }
+    }
+
+    @Test
     void sessions_shouldPreservePerSessionEvidenceAndAvailability() {
         BusinessOutcomeSessionRow row = new BusinessOutcomeSessionRow();
         row.setSessionId("session-1");
@@ -100,6 +124,13 @@ class BusinessOutcomeServiceTest {
         row.setKnownTotalTokens(77L);
         row.setHandedOff(false);
         row.setCsatScore(5);
+        row.setModelSegmentCount(2L);
+        row.setSettledCostSegmentCount(2L);
+        row.setUnsettledCostSegmentCount(0L);
+        row.setMultiCurrencyCalls(0L);
+        row.setCostCurrencyCount(1L);
+        row.setCostCurrency("CNY");
+        row.setSettledCostAmount(new BigDecimal("0.12345600000000"));
         when(mapper.countSessions("tenant-a", null, 1_000L, 2_000L)).thenReturn(1L);
         when(mapper.findSessions("tenant-a", null, 1_000L, 2_000L, 0L, 20))
             .thenReturn(List.of(row));
@@ -113,6 +144,8 @@ class BusinessOutcomeServiceTest {
             assertFalse(result.records().get(0).handedOff());
             assertEquals(77L, result.records().get(0).totalTokens());
             assertEquals("COMPLETE", result.records().get(0).tokenAvailability().status());
+            assertEquals(new BigDecimal("0.12345600000000"), result.records().get(0).modelCost());
+            assertEquals("COMPLETE", result.records().get(0).costAvailability().status());
             assertEquals(5, result.records().get(0).csatScore());
         }
     }
@@ -143,6 +176,13 @@ class BusinessOutcomeServiceTest {
         row.setCsatRespondedSessions(6L);
         row.setCsatSatisfiedSessions(4L);
         row.setAverageCsat(new BigDecimal("4.250000"));
+        row.setModelSegmentCount(12L);
+        row.setSettledCostSegmentCount(12L);
+        row.setUnsettledCostSegmentCount(0L);
+        row.setMultiCurrencyCalls(0L);
+        row.setCostCurrencyCount(1L);
+        row.setCostCurrency("CNY");
+        row.setSettledCostAmount(new BigDecimal("12.34560000000000"));
         return row;
     }
 }

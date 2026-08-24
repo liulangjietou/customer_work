@@ -42,10 +42,12 @@ public class UserAccount {
      * 与启停、头像同属账户自身状态，拆出去只会让每次限流判定多一次跨表查询。</p>
      */
     private volatile String levelCode;
+    /** 用户会话撤销版本；任何全端退出/停用都必须单调递增。 */
+    private volatile long sessionEpoch;
 
     private UserAccount(String id, String username, String passwordHash, String nickname,
                         String phone, Status status, long createdAtMs, String avatarUrl,
-                        String levelCode, String tenantId) {
+                        String levelCode, String tenantId, long sessionEpoch) {
         this.id = id;
         this.username = username;
         this.passwordHash = passwordHash;
@@ -56,6 +58,7 @@ public class UserAccount {
         this.avatarUrl = avatarUrl;
         this.levelCode = levelCode;
         this.tenantId = tenantId;
+        this.sessionEpoch = sessionEpoch;
     }
 
     /** 注册静态工厂：初始 ACTIVE，无头像，等级留空（= 走配置默认档）。 */
@@ -67,12 +70,13 @@ public class UserAccount {
     public static UserAccount create(String id, String username, String passwordHash, String nickname,
                                      String phone, String levelCode) {
         return new UserAccount(id, username, passwordHash, nickname, phone, Status.ACTIVE,
-            System.currentTimeMillis(), null, levelCode, TenantContext.get());
+            System.currentTimeMillis(), null, levelCode, TenantContext.get(), 0L);
     }
 
     /** 停用账户（禁止后续登录）。 */
     public void disable() {
         this.status = Status.DISABLED;
+        revokeSessions();
     }
 
     /** 是否处于启用态。 */
@@ -90,11 +94,24 @@ public class UserAccount {
         this.levelCode = levelCode;
     }
 
+    /** 撤销所有已签发令牌；返回新版本供持久化层校验。 */
+    public synchronized long revokeSessions() {
+        return ++sessionEpoch;
+    }
+
+    /** 持久化层完成原子递增后回填权威版本。 */
+    void synchronizeSessionEpoch(long epoch) {
+        if (epoch < sessionEpoch) {
+            throw new IllegalArgumentException("session epoch must not move backwards");
+        }
+        this.sessionEpoch = epoch;
+    }
+
     /** 供持久化层从数据源重建（跳过业务语义，仅回填字段）。包级可见。 */
     static UserAccount reconstruct(String id, String username, String passwordHash, String nickname,
                                    String phone, Status status, long createdAtMs, String avatarUrl,
-                                   String levelCode, String tenantId) {
+                                   String levelCode, String tenantId, long sessionEpoch) {
         return new UserAccount(id, username, passwordHash, nickname, phone, status, createdAtMs,
-            avatarUrl, levelCode, tenantId);
+            avatarUrl, levelCode, tenantId, sessionEpoch);
     }
 }

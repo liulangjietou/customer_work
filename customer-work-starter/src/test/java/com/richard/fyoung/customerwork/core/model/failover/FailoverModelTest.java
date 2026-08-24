@@ -11,6 +11,7 @@ import reactor.core.publisher.Flux;
 import reactor.test.StepVerifier;
 
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -153,6 +154,32 @@ class FailoverModelTest {
         assertEquals("b", out.get(0).getId());
         assertEquals(0, primary.subscribeCount.get()); // 主被熔断跳过，未订阅
         assertEquals(1, backup.subscribeCount.get());
+    }
+
+    @Test
+    void healthOverlayUnavailablePrimary_shouldAlwaysSkipPrimary() {
+        StubModel primary = new StubModel("p", false);
+        StubModel backup = new StubModel("b", false);
+        FailoverModel model = new FailoverModel(
+            List.of(new FailoverModel.Candidate(1L, primary),
+                new FailoverModel.Candidate(2L, backup)),
+            new ModelCircuitBreakerRegistry(3, 60), false, Set.of(1L));
+
+        List<ChatResponse> out = run(model);
+
+        assertEquals("b", out.get(0).getId());
+        assertEquals(0, primary.subscribeCount.get());
+        assertEquals(1, backup.subscribeCount.get());
+    }
+
+    @Test
+    void allHealthOverlayCandidatesUnavailable_shouldFailClosed() {
+        FailoverModel model = new FailoverModel(
+            List.of(new FailoverModel.Candidate(1L, new StubModel("p", false)),
+                new FailoverModel.Candidate(2L, new StubModel("b", false))),
+            new ModelCircuitBreakerRegistry(3, 60), false, Set.of(1L, 2L));
+
+        assertThrows(FailoverModel.NoHealthyModelAvailableException.class, () -> run(model));
     }
 
     @Test

@@ -6,12 +6,14 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanAction;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanEvent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService.PlanChannel;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService.PlanTicket;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.store.InMemoryPlanConfirmationStore;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -122,5 +124,26 @@ class PlanConfirmationServiceTest {
         assertEquals(2, events.size(), "已确认后 timeout 不应再补发 TIMEOUT 事件");
         long resultCount = events.stream().filter(e -> e.kind() == ChatNodeKind.PLAN_RESULT).count();
         assertEquals(1, resultCount, "plan_result 终态只应出现一次");
+    }
+
+    @Test
+    void confirm_shouldResumeOriginatingPod_whenHandledByAnotherPod() throws Exception {
+        InMemoryPlanConfirmationStore sharedStore = new InMemoryPlanConfirmationStore();
+        PlanConfirmationService podA = new PlanConfirmationService(sharedStore);
+        PlanConfirmationService podB = new PlanConfirmationService(sharedStore);
+        try {
+            PlanChannel channel = podA.openChannel("tenant-a", "coder", "s1");
+            podA.events(channel).subscribe();
+            PlanTicket ticket = com.richard.fyoung.customerwork.safety.tenant.TenantContext.callWith("tenant-a",
+                () -> podA.submit("coder", "s1", planEvent("cross-pod-plan")).orElseThrow());
+
+            assertTrue(podB.confirm("tenant-a", "coder", "s1", "cross-pod-plan", true));
+
+            assertEquals(Boolean.TRUE, ticket.future().get(2, TimeUnit.SECONDS),
+                "发起 Pod 应观察到其它 Pod 写入的终态并恢复挂起 future");
+        } finally {
+            podA.shutdownObserver();
+            podB.shutdownObserver();
+        }
     }
 }

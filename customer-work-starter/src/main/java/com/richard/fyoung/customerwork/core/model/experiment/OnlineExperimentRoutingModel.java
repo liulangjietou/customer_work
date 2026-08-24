@@ -35,15 +35,29 @@ public final class OnlineExperimentRoutingModel implements Model {
     private final Model baseline;
     private final Model control;
     private final Model treatment;
+    private final boolean controlAvailable;
+    private final boolean treatmentAvailable;
 
     public OnlineExperimentRoutingModel(OnlineExperimentSpec spec,
                                         Model baseline,
                                         Model control,
                                         Model treatment) {
+        this(spec, baseline, control, treatment, true, true);
+    }
+
+    /** 健康 overlay 只决定实验臂是否可曝光；不可用臂回到基线，禁止跨臂偷换流量。 */
+    public OnlineExperimentRoutingModel(OnlineExperimentSpec spec,
+                                        Model baseline,
+                                        Model control,
+                                        Model treatment,
+                                        boolean controlAvailable,
+                                        boolean treatmentAvailable) {
         this.spec = Objects.requireNonNull(spec, "spec");
         this.baseline = Objects.requireNonNull(baseline, "baseline");
         this.control = Objects.requireNonNull(control, "control");
         this.treatment = Objects.requireNonNull(treatment, "treatment");
+        this.controlAvailable = controlAvailable;
+        this.treatmentAvailable = treatmentAvailable;
     }
 
     @Override
@@ -55,6 +69,10 @@ public final class OnlineExperimentRoutingModel implements Model {
             }
             OnlineExperimentAssignment existing = currentAssignment(context);
             if (belongsToCurrentExperiment(existing)) {
+                if (!isAvailable(existing)) {
+                    clearAssignment(context);
+                    return baseline.stream(messages, tools, options);
+                }
                 return selectedModel(existing).stream(messages, tools, options);
             }
             if (System.currentTimeMillis() >= spec.expiresAtEpochMs()) {
@@ -62,6 +80,10 @@ public final class OnlineExperimentRoutingModel implements Model {
                 return baseline.stream(messages, tools, options);
             }
             OnlineExperimentAssignment assignment = assign(context);
+            if (!isAvailable(assignment)) {
+                clearAssignment(context);
+                return baseline.stream(messages, tools, options);
+            }
             bindAssignment(context, assignment);
             return selectedModel(assignment).stream(messages, tools, options);
         });
@@ -146,6 +168,10 @@ public final class OnlineExperimentRoutingModel implements Model {
 
     private Model selectedModel(OnlineExperimentAssignment assignment) {
         return "TREATMENT".equals(assignment.arm()) ? treatment : control;
+    }
+
+    private boolean isAvailable(OnlineExperimentAssignment assignment) {
+        return "TREATMENT".equals(assignment.arm()) ? treatmentAvailable : controlAvailable;
     }
 
     /** 同一 RuntimeContext 可能承载多次模型调用；回到基线时必须移除旧曝光，避免护栏指标串臂。 */

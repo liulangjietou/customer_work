@@ -2,6 +2,9 @@ package com.richard.fyoung.customerwork.data.user.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.richard.fyoung.customerwork.data.user.entity.UserDO;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 /**
  * 终端用户账户 Mapper：账户创建为纯 INSERT（无 upsert 语义，用户名唯一由表约束保证），
@@ -9,4 +12,10 @@ import com.richard.fyoung.customerwork.data.user.entity.UserDO;
  * @author owlzhangfq@gmail.com
  */
 public interface UserMapper extends BaseMapper<UserDO> {
+
+    @Update("UPDATE cw_user SET session_epoch = session_epoch + 1 WHERE id = #{id}")
+    int incrementSessionEpoch(@Param("id") String id);
+
+    @Select("SELECT session_epoch FROM cw_user WHERE id = #{id}")
+    Long selectSessionEpoch(@Param("id") String id);
 }

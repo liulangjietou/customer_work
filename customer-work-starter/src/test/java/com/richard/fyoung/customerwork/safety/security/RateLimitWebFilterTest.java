@@ -1,12 +1,14 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.InMemoryRateLimitRuleStore;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitAlgorithm;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitDimension;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitRule;
 import com.richard.fyoung.customerwork.safety.security.ratelimit.RateLimitRuleProvider;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
@@ -20,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -105,6 +108,28 @@ class RateLimitWebFilterTest {
             }).block();
         }
         assertEquals(5, chainCalls.get(), "关闭限流时全部放行");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void apiKeyDimension_shouldNeverPersistRawSecretInCounterKey() {
+        CustomerWorkProperties properties = props(true, 10);
+        WindowCounter counter = mock(WindowCounter.class);
+        when(counter.increment(org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(1L);
+        ObjectProvider<WindowCounter> counterProvider = mock(ObjectProvider.class);
+        when(counterProvider.getIfAvailable()).thenReturn(counter);
+        RateLimitWebFilter filter = new RateLimitWebFilter(properties, null, counterProvider);
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/chat")
+                .header("X-API-Key", "raw-production-secret").build());
+
+        filter.filter(exchange, current -> Mono.empty()).block();
+
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        verify(counter).increment(key.capture(), org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.eq(60));
+        assertFalse(key.getValue().contains("raw-production-secret"), "Redis/内存计数键不得泄露原始 Key");
     }
 
     // ======== 滑动窗口限流测试 ========

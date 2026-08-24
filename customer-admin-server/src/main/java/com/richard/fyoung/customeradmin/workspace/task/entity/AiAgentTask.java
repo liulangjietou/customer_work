@@ -32,6 +32,8 @@ public class AiAgentTask {
     private String subAgentId;
     /** 父会话 ID（任务归属的那次对话）。 */
     private String parentSessionId;
+    /** 多租户行级隔离列；恢复扫描时用于重建线程租户上下文。 */
+    private String tenantId;
     /** 状态：PENDING / RUNNING / COMPLETED / FAILED / CANCELLED。 */
     private String status;
     /** 成功时的结果文本。 */
@@ -40,6 +42,29 @@ public class AiAgentTask {
     private String errorMessage;
     /** 是否已请求取消：取消请求与实际终态分开记，便于区分"用户点了取消"与"任务自己失败了"。 */
     private Boolean cancelRequested;
+    /** 当前执行所有者（Pod/进程唯一 ID）。 */
+    private String ownerId;
+    /** 所有权租约到期时间；过期后其它实例可 CAS 接管。 */
+    private LocalDateTime leaseUntil;
+    /** 当前所有者最近一次心跳。 */
+    private LocalDateTime heartbeatAt;
+    /** 已领取执行次数，首次提交为 1，每次宕机接管递增。 */
+    private Integer attemptCount;
+    /** 是否具备完整可重放输入。 */
+    private Boolean replayable;
+    /** 子智能体原始任务提示词。 */
+    private String taskInput;
+    /** 恢复执行使用的稳定子会话 ID。 */
+    private String childSessionId;
+    /** 原 RuntimeContext.userId，用于状态/记忆分区。 */
+    private String runtimeUserId;
+    /** 可信主体类型。 */
+    private String subjectType;
+    /** 可信主体 ID（API Key 仅持久化指纹）。 */
+    private String subjectId;
+    private Boolean subjectAuthenticated;
+    private Long accessEpoch;
+    private String channelCode;
     private LocalDateTime createdAt;
     /** 进入 RUNNING 的时间；仍在排队时为 null。 */
     private LocalDateTime startedAt;

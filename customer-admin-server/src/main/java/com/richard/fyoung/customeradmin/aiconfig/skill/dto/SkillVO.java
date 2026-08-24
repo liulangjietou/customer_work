@@ -21,5 +21,8 @@ public class SkillVO {
     private List<String> storageTargets;
     /** 附属文件清单（不含内容），zip 上传的 references/scripts 等。 */
     private List<SkillFileVO> files;
+    private Long currentVersionId;
+    private Integer latestVersionNo;
+    private String contentHash;
     private LocalDateTime createTime;
 }

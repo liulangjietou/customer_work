@@ -6,7 +6,6 @@ import com.richard.fyoung.customerchannel.access.model.ChannelInboundMessage;
 import com.richard.fyoung.customerchannel.access.model.ChannelReplySender;
 import com.richard.fyoung.customerchannel.access.model.ChannelRobot;
 import com.richard.fyoung.customerchannel.access.spi.ImChannelConnector;
-import com.richard.fyoung.customerchannel.access.support.BoundedIdDeduplicator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,7 +18,7 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  *   <li>externalUserId = 微信 openid（FromUserName），公众号无群聊概念；</li>
- *   <li>MsgId 去重防微信重试；文本走统一管道，非文本由管道回「目前只支持文本消息」；</li>
+ *   <li>回调入口完成跨实例消息幂等；文本走统一管道，非文本由管道回「目前只支持文本消息」；</li>
  *   <li>回复器：openid → {@link WeChatTextFormatter} 降级为纯文本 → {@link WeChatCustomerMessageSender} 推送。</li>
  * </ul>
  * <p>本连接器不持有平台长连接，start/stop 只做注册表登记；sessionMode 由管道处理，无需特殊逻辑。</p>
@@ -34,8 +33,6 @@ public class WeChatChannelConnector implements ImChannelConnector {
     private final WeChatConnectorRegistry registry;
     private final WeChatAccessTokenClient tokenClient;
     private final WeChatCustomerMessageSender messageSender;
-    private final BoundedIdDeduplicator deduplicator =
-        new BoundedIdDeduplicator(ChannelAccessConstants.WECHAT_MSGID_DEDUP_CAPACITY);
 
     private volatile boolean running;
 
@@ -83,16 +80,22 @@ public class WeChatChannelConnector implements ImChannelConnector {
         return robot.getRobotCode();
     }
 
+    /** 微信回调模式，旧配置空值按明文模式兼容。 */
+    public String callbackMode() {
+        return robot.getCallbackMode();
+    }
+
+    /** 微信安全模式 EncodingAESKey。 */
+    public String encodingAesKey() {
+        return robot.getEncodingAesKey();
+    }
+
     /**
      * 分发一条已解析的入站消息到管道（供 controller 调用，立即返回；实际处理由管道异步串行执行）。
      *
-     * <p>先按 MsgId 去重（微信重试防重复触发），再构造归一化消息与客服消息回复器交给管道。</p>
+     * <p>消息已由回调入口完成验签和跨实例幂等，本方法只负责构造归一化消息并交给管道。</p>
      */
     public void dispatch(WeChatXmlMessage message) {
-        if (!deduplicator.firstSeen(message.getMsgId())) {
-            // 重复投递（微信重试）：直接丢弃，不重复回复
-            return;
-        }
         String openId = message.getFromUserName();
         ChannelInboundMessage inbound = new ChannelInboundMessage(
             ChannelAccessConstants.CHANNEL_TYPE_WECHAT, robot.getAppKey(), robot.getAgentCode(),

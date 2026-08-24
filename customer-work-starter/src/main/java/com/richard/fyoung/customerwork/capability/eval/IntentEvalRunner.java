@@ -1,14 +1,11 @@
 package com.richard.fyoung.customerwork.capability.eval;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -29,17 +26,15 @@ public class IntentEvalRunner {
 
     private static final Logger log = LoggerFactory.getLogger(IntentEvalRunner.class);
 
-    private static final String DATASET_PATH = "eval/intent-eval-cases.json";
     private static final String EVALUATOR_VERSION = "intent-fast-route-v1";
 
     private final MultiAgentOrchestrator orchestrator;
-    private final EvalCaseStore caseStore;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final EvalDatasetCatalog datasetCatalog;
 
     @Autowired
     public IntentEvalRunner(MultiAgentOrchestrator orchestrator, EvalCaseStore caseStore) {
         this.orchestrator = orchestrator;
-        this.caseStore = caseStore;
+        this.datasetCatalog = new EvalDatasetCatalog(caseStore);
     }
 
     /** 便捷重载：只用 classpath 种子（单测与离线试跑用）。 */
@@ -49,29 +44,7 @@ public class IntentEvalRunner {
 
     /** 加载评测集：classpath 种子 + 库中增量，同 ID 以库为准，停用的剔除。 */
     public List<EvalCase> loadDataset() {
-        List<PersistedEvalCase> merged =
-            EvalDatasetMerger.merge(loadSeeds(), caseStore.findByType(EvalType.INTENT));
-        List<EvalCase> cases = new ArrayList<>(merged.size());
-        for (PersistedEvalCase evalCase : merged) {
-            cases.add(evalCase.toIntentCase());
-        }
-        return List.copyOf(cases);
-    }
-
-    /** 读 classpath 种子并统一成存储形状，便于与库中用例合并。 */
-    private List<PersistedEvalCase> loadSeeds() {
-        try (InputStream in = new ClassPathResource(DATASET_PATH).getInputStream()) {
-            EvalCase[] seeds = objectMapper.readValue(in, EvalCase[].class);
-            List<PersistedEvalCase> result = new ArrayList<>(seeds.length);
-            for (EvalCase seed : seeds) {
-                result.add(new PersistedEvalCase(seed.id(), EvalType.INTENT, seed.input(),
-                    seed.expectedIntent(), seed.category(), EvalCaseSource.SEED, true, null, 0L));
-            }
-            return result;
-        } catch (Exception e) {
-            log.error("load eval dataset failed, errorCode={}, path={}", EvalErrorCodes.LOAD_FAIL, DATASET_PATH, e);
-            throw new IllegalStateException("eval dataset not loadable: " + DATASET_PATH, e);
-        }
+        return datasetCatalog.intentCases();
     }
 
     /** 跑默认评测集。 */

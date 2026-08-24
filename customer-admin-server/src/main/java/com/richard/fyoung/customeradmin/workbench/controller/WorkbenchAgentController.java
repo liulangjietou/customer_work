@@ -70,7 +70,7 @@ public class WorkbenchAgentController {
         log.setTarget("workbench_site");
         log.setResult(SysOperationLog.RESULT_SUCCESS);
         log.setIp(request.getRemoteAddr());
-        log.setCreateTime(LocalDateTime.now());
+        log.initializeAudit(SysOperationLog.AUDIT_COMPLETED, LocalDateTime.now());
         operationLogMapper.insert(log);
     }
 }

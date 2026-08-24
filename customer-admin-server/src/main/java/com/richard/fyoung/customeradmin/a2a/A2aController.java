@@ -11,6 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -28,8 +30,8 @@ import java.util.Map;
  * 自动发现服务端能力的，改成别的名字等于要求每个客户端手工配置，失去互操作的意义。</p>
  *
  * <p><b>这两个端点不走 Sa-Token 的权限拦截</b>：调用方是外部系统而不是后台登录用户，会话式鉴权
- * 对它们不适用。这一点不需要额外配置——{@code SaTokenConfig} 的拦截器只挂 {@code /api/**}，
- * 两个路径都在其外。</p>
+ * 对它们不适用。Agent Card 保持公开以支持协议发现；JSON-RPC 必须携带 A2A 专用 Bearer Token，
+ * 校验在进入框架协议分发前完成。</p>
  *
  * <p><b>但 Sa-Token 还有一道独立的请求路径防火墙</b>（{@code SaPathCheckFilter} →
  * {@code SaStrategy.checkRequestPath}），它作用于<b>所有</b>请求且无差别拒绝含 {@code "/."} 的路径，
@@ -37,9 +39,7 @@ import java.util.Map;
  * {@link AdminA2aServerConfig#allowAgentCardPathThroughFirewall()}——权限拦截器与防火墙是两回事，
  * 只看前者会得出"无需任何配置"的错误结论。</p>
  *
- * <p><b>因此当前形态只适用于内网可信调用。</b>对外开放前必须在 Agent Card 的
- * {@code securitySchemes} 里声明鉴权方式并在本类落实校验，否则等于把智能体裸奔在网上——
- * 这也是 {@code admin.a2a.enabled} 默认关闭的原因之一。</p>
+ * <p>A2A 仍默认关闭；对外开放时除配置专用令牌外，还应在网关层配置 TLS、限流与来源约束。</p>
  * @author owlzhangfq@gmail.com
  */
 @RestController
@@ -51,6 +51,7 @@ public class A2aController {
     private static final String CODE_A2A_REQUEST_FAIL = "A2A-REQUEST-FAIL";
 
     private final AgentScopeA2aServer server;
+    private final AdminA2aProperties properties;
 
     /**
      * 条件用 {@code @ConditionalOnProperty} 而不是 {@code @ConditionalOnBean(AgentScopeA2aServer.class)}。
@@ -62,8 +63,9 @@ public class A2aController {
      * Spring 文档也明确 {@code @ConditionalOnBean} 只应用于 {@code @Configuration} 的 {@code @Bean} 方法。
      * 改用与 {@link AdminA2aServerConfig} 完全相同的属性条件，两者要么一起在、要么一起不在。</p>
      */
-    public A2aController(AgentScopeA2aServer server) {
+    public A2aController(AgentScopeA2aServer server, AdminA2aProperties properties) {
         this.server = server;
+        this.properties = properties;
         // 端点在本 Bean 创建时即随 MVC 就绪，此时通知框架完成注册中心上报等收尾动作
         // （当前未配注册中心，这一步是空转，但保留调用以免将来接 Nacos 时漏掉）
         server.postEndpointReady();
@@ -88,6 +90,9 @@ public class A2aController {
         MediaType.APPLICATION_JSON_VALUE, MediaType.TEXT_EVENT_STREAM_VALUE})
     @SuppressWarnings("unchecked")
     public Object jsonRpc(@RequestBody String body, HttpServletRequest request) {
+        if (!properties.authenticates(request.getHeader("Authorization"))) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
         try {
             // 框架的 getTransportWrapper 返回裸类型（其类上就标着 @SuppressWarnings("rawtypes")），
             // JSON-RPC 实现的实际签名是 TransportWrapper<String, Object>，按此收窄。

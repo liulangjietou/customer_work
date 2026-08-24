@@ -2,15 +2,12 @@ package com.richard.fyoung.customeradmin.slo.service;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.slo.dto.SloEvaluationVO;
-import com.richard.fyoung.customeradmin.slo.entity.SloAlert;
 import com.richard.fyoung.customeradmin.slo.entity.SloPolicy;
-import com.richard.fyoung.customeradmin.slo.mapper.SloAlertMapper;
 import com.richard.fyoung.customeradmin.slo.mapper.SloCallAggregate;
 import com.richard.fyoung.customeradmin.slo.mapper.SloCallAggregateMapper;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 
 import java.math.BigDecimal;
@@ -23,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -35,16 +33,18 @@ class SloEvaluationServiceTest {
 
     private SloPolicyService policyService;
     private SloCallAggregateMapper aggregateMapper;
-    private SloAlertMapper alertMapper;
+    private SloAlertService alertService;
     private SloEvaluationService service;
 
     @BeforeEach
     void setUp() {
         policyService = mock(SloPolicyService.class);
         aggregateMapper = mock(SloCallAggregateMapper.class);
-        alertMapper = mock(SloAlertMapper.class);
+        alertService = mock(SloAlertService.class);
         Clock clock = Clock.fixed(Instant.parse("2026-08-22T08:30:45Z"), ZoneOffset.UTC);
-        service = new SloEvaluationService(policyService, aggregateMapper, alertMapper, clock);
+        service = new SloEvaluationService(policyService, aggregateMapper, alertService, clock);
+        when(alertService.reconcile(any(), any(), any(), anyBoolean(), anyBoolean(),
+            any(), any(), anyLong())).thenReturn(SloAlertService.Transition.NONE);
     }
 
     @Test
@@ -66,7 +66,6 @@ class SloEvaluationServiceTest {
             assertEquals(new BigDecimal("0.400000"), result.shortWindow().burnRate());
             assertEquals(100, result.minimumSampleCount());
             assertFalse(result.alertCreated());
-            verify(alertMapper, never()).insertIgnore(any());
         }
     }
 
@@ -76,7 +75,8 @@ class SloEvaluationServiceTest {
         when(policyService.requirePolicy(7L, "tenant-a")).thenReturn(policy);
         when(aggregateMapper.aggregate(eq("tenant-a"), eq("support-agent"), anyLong(), anyLong(), eq(3000L)))
             .thenReturn(aggregate(100, 90, 90, 85));
-        when(alertMapper.insertIgnore(any())).thenReturn(1);
+        when(alertService.reconcile(any(), any(), any(), eq(true), eq(false),
+            any(), any(), anyLong())).thenReturn(SloAlertService.Transition.OPENED);
 
         try (MockedStatic<TenantSession> session = mockStatic(TenantSession.class)) {
             session.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
@@ -84,12 +84,7 @@ class SloEvaluationServiceTest {
 
             assertEquals("BURNING", result.status());
             assertTrue(result.alertCreated());
-            ArgumentCaptor<SloAlert> captor = ArgumentCaptor.forClass(SloAlert.class);
-            verify(alertMapper).insertIgnore(captor.capture());
-            assertEquals("tenant-a", captor.getValue().getTenantId());
-            assertEquals(7L, captor.getValue().getPolicyId());
-            assertEquals(Instant.parse("2026-08-22T08:30:45Z").getEpochSecond() / 60,
-                captor.getValue().getWindowEndMinute());
+            assertEquals("OPENED", result.alertTransition());
         }
     }
 
@@ -99,7 +94,6 @@ class SloEvaluationServiceTest {
         when(policyService.requirePolicy(7L, "tenant-a")).thenReturn(policy);
         when(aggregateMapper.aggregate(any(), any(), anyLong(), anyLong(), anyLong()))
             .thenReturn(aggregate(100, 0, 0, 0));
-        when(alertMapper.insertIgnore(any())).thenReturn(0);
 
         try (MockedStatic<TenantSession> session = mockStatic(TenantSession.class)) {
             session.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
@@ -125,7 +119,6 @@ class SloEvaluationServiceTest {
             assertEquals(100, result.longWindow().total());
             assertEquals(100, result.minimumSampleCount());
             assertFalse(result.alertCreated());
-            verify(alertMapper, never()).insertIgnore(any());
         }
     }
 

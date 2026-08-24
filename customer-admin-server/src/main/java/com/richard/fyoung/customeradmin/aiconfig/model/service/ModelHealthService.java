@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelHealthStatus;
 import com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelProbeSource;
 import com.richard.fyoung.customeradmin.aiconfig.model.config.ModelHealthMonitorProperties;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthEventVO;
+import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthOverrideRequest;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelHealthSnapshotVO;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
@@ -52,6 +53,7 @@ public class ModelHealthService {
     private final SecretRefService secretRefService;
     private final AdminModelFactory modelFactory;
     private final ModelHealthStore healthStore;
+    private final ModelHealthCoordinator healthCoordinator;
     private final AdminTenantProperties tenantProperties;
     private final ModelEndpointPolicy endpointPolicy;
     private final ModelHealthMonitorProperties monitorProperties;
@@ -63,6 +65,7 @@ public class ModelHealthService {
                               SecretRefService secretRefService,
                               AdminModelFactory modelFactory,
                               ModelHealthStore healthStore,
+                              ModelHealthCoordinator healthCoordinator,
                               AdminTenantProperties tenantProperties,
                               ModelEndpointPolicy endpointPolicy,
                               ModelHealthMonitorProperties monitorProperties,
@@ -73,6 +76,7 @@ public class ModelHealthService {
         this.secretRefService = secretRefService;
         this.modelFactory = modelFactory;
         this.healthStore = healthStore;
+        this.healthCoordinator = healthCoordinator;
         this.tenantProperties = tenantProperties;
         this.endpointPolicy = endpointPolicy;
         this.monitorProperties = monitorProperties;
@@ -142,6 +146,31 @@ public class ModelHealthService {
         return healthStore.findByModels(models);
     }
 
+    public ModelHealthSnapshotVO override(Long id, ModelHealthOverrideRequest request,
+                                          Long operatorId, String operatorName) {
+        AiModelConfig model = requireVisible(id);
+        if (!canPersist(model)) {
+            throw new BizException(ResultCode.FORBIDDEN, "共享模型健康状态只能由其归属控制面覆盖");
+        }
+        validateOverride(request, operatorId);
+        return healthCoordinator.override(model, request, operatorId, operatorName).snapshot();
+    }
+
+    /** 清理到期覆盖并在同一事务登记需要的健康 overlay 发布任务。 */
+    public int expireOverrides(int limit) {
+        LocalDateTime now = LocalDateTime.now();
+        List<AiModelConfig> models = healthStore.findExpiredOverrideModels(limit, now);
+        int expired = 0;
+        for (AiModelConfig model : models) {
+            ModelHealthStore.RecordResult result = TenantContext.callWith(model.getTenantId(),
+                () -> healthCoordinator.expireOverride(model, now));
+            if (result.applied()) {
+                expired++;
+            }
+        }
+        return expired;
+    }
+
     private ModelTestResult executeProbe(AiModelConfig model, LocalDateTime probeStartedAt) {
         long started = System.nanoTime();
         String secretValue = null;
@@ -174,7 +203,7 @@ public class ModelHealthService {
     }
 
     private ModelTestResult persist(AiModelConfig model, ModelTestResult result, ModelProbeSource source) {
-        ModelHealthStore.RecordResult recorded = healthStore.record(model, result, source);
+        ModelHealthStore.RecordResult recorded = healthCoordinator.record(model, result, source);
         ModelHealthSnapshotVO snapshot = recorded.snapshot();
         if (recorded.applied()) {
             AiModelConfig compatibility = new AiModelConfig();
@@ -202,6 +231,25 @@ public class ModelHealthService {
         }
         String tenant = TenantContext.require();
         return TenantContext.sameTenant(tenant, model.getTenantId());
+    }
+
+    private void validateOverride(ModelHealthOverrideRequest request, Long operatorId) {
+        if (request == null || request.mode() == null || operatorId == null) {
+            throw new BizException(ResultCode.PARAM_INVALID, "健康路由覆盖参数或操作人缺失");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (request.mode() == com.richard.fyoung.customeradmin.aiconfig.model.domain.ModelHealthOverrideMode.AUTO) {
+            if (request.expiresAt() != null) {
+                throw new BizException(ResultCode.PARAM_INVALID, "清除健康覆盖时不能设置到期时间");
+            }
+            return;
+        }
+        LocalDateTime latest = now.plusHours(Math.max(1, monitorProperties.getMaxOverrideHours()));
+        if (request.expiresAt() == null || !request.expiresAt().isAfter(now)
+            || request.expiresAt().isAfter(latest)) {
+            throw new BizException(ResultCode.PARAM_INVALID,
+                "强制健康覆盖必须设置未来且不超过最大时长的到期时间");
+        }
     }
 
     private ModelTestResult failedResult(ModelHealthErrorCategory category, String message, Long latency) {

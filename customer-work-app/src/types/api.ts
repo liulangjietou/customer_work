@@ -75,6 +75,11 @@ export interface UserInfo {
   avatarUrl?: string | null
 }
 
+export interface RevokeSessionsResponse {
+  revoked: true
+  sessionEpoch: number
+}
+
 export interface CreateSessionResponse {
   sessionId: string
   ticketId: string
@@ -195,9 +200,24 @@ export interface WsChatChunk {
   content: string
 }
 
-/** 服务端 -> 用户：流式完成，含全文 */
-export interface WsChatDone {
+/** 四种对话协议共用的终止元数据。 */
+export interface ChatTerminalEnvelope {
   messageId: string
+  finishReason: string
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    cachedTokens: number
+    totalTokens: number
+    timeSeconds: number
+  }
+  traceId: string
+}
+
+/** 服务端 -> 用户：流式完成，含已落库全文与会话归属。 */
+export interface WsChatDone extends ChatTerminalEnvelope {
+  sessionId: string
+  ticketId: string | null
   content: string
   ts: number
 }

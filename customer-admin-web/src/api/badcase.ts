@@ -20,6 +20,8 @@ export interface Badcase {
   userInput: string | null
   /** AI 答了什么（同上）。 */
   agentReply: string | null
+  /** 归一化用户问题哈希；用于同类 badcase 上线复发观察。 */
+  signalHash: string | null
   /** 原始信号明细：点踩存用户留言，质检存得分与扣分项。 */
   detail: string | null
   status: BadcaseStatusCode

@@ -9,6 +9,8 @@ public record TicketEventPayload(
     String assignee, String handoffReason, String resolveNote, int reopenCount,
     long createdAtMs, long updatedAtMs, long handoffAtMs, long claimedAtMs,
     long resolvedAtMs, long closedAtMs, long lastUserActiveAtMs,
+    String routingCategory, String requiredSkill, String routingPriority,
+    String emotion, String suggestedAssignees,
     TicketEvent event) {
 
     public static TicketEventPayload from(Ticket ticket, TicketEvent event) {
@@ -16,12 +18,15 @@ public record TicketEventPayload(
             ticket.getTitle(), ticket.getCategory(), ticket.getPriority(), ticket.getStatus(),
             ticket.getAssignee(), ticket.getHandoffReason(), ticket.getResolveNote(), ticket.getReopenCount(),
             ticket.getCreatedAtMs(), ticket.getUpdatedAtMs(), ticket.getHandoffAtMs(), ticket.getClaimedAtMs(),
-            ticket.getResolvedAtMs(), ticket.getClosedAtMs(), ticket.getLastUserActiveAtMs(), event);
+            ticket.getResolvedAtMs(), ticket.getClosedAtMs(), ticket.getLastUserActiveAtMs(),
+            ticket.getRoutingCategory(), ticket.getRequiredSkill(), ticket.getRoutingPriority(),
+            ticket.getEmotion(), ticket.getSuggestedAssignees(), event);
     }
 
     public Ticket toTicket() {
         return Ticket.reconstruct(id, sessionId, userId, title, category, priority, status, assignee,
             handoffReason, resolveNote, reopenCount, createdAtMs, updatedAtMs, handoffAtMs, claimedAtMs,
-            resolvedAtMs, closedAtMs, lastUserActiveAtMs);
+            resolvedAtMs, closedAtMs, lastUserActiveAtMs, routingCategory, requiredSkill,
+            routingPriority, emotion, suggestedAssignees);
     }
 }

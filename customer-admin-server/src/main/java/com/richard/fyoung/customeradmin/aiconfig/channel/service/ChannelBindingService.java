@@ -74,7 +74,8 @@ public class ChannelBindingService {
     /** 新建绑定：channelCode 唯一、agentId 必须存在；成功后触发一次发布。 */
     @Transactional(rollbackFor = Exception.class)
     public void create(ChannelBindingSaveRequest request) {
-        requireAgent(request.agentId());
+        AiAgent agent = requireAgent(request.agentId());
+        assertAgentCanServe(agent, request.status());
         assertChannelCodeUnique(request.channelCode(), null);
         assertSingleActiveRuntimeAgent(request.agentId(), request.status(), null);
         AiChannelBinding binding = new AiChannelBinding();
@@ -89,19 +90,32 @@ public class ChannelBindingService {
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, ChannelBindingSaveRequest request) {
         AiChannelBinding binding = requireBinding(id);
-        requireAgent(request.agentId());
+        Long oldAgentId = binding.getAgentId();
+        Integer oldStatus = binding.getStatus();
+        AiAgent oldAgent = requireAgent(oldAgentId);
+        AiAgent newAgent = requireAgent(request.agentId());
+        assertAgentCanServe(newAgent, request.status());
         assertChannelCodeUnique(request.channelCode(), id);
         assertSingleActiveRuntimeAgent(request.agentId(), request.status(), id);
         binding.setChannelCode(request.channelCode());
         binding.setAgentId(request.agentId());
         binding.setStatus(request.status() == null ? StatusFlags.ENABLED : request.status());
         bindingMapper.updateById(binding);
-        publisher.publishForAgentId(binding.getAgentId());
+        revokeOldTargetWhenUnbound(oldAgentId, oldAgent.getAgentCode(), oldStatus,
+            binding.getAgentId(), binding.getStatus());
+        if (binding.getStatus() == StatusFlags.ENABLED) {
+            publisher.publishForAgentId(binding.getAgentId());
+        }
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireBinding(id);
+        AiChannelBinding binding = requireBinding(id);
+        AiAgent agent = requireAgent(binding.getAgentId());
         bindingMapper.deleteById(id);
+        if (binding.getStatus() == StatusFlags.ENABLED && !hasEnabledBinding(binding.getAgentId())) {
+            publisher.revokeForAgentId(binding.getAgentId(), agent.getAgentCode());
+        }
     }
 
     /** 手动重新发布：发布能力未启用直接拒绝；正常容器写入可靠任务并返回任务 ID。 */
@@ -177,10 +191,37 @@ public class ChannelBindingService {
         }
     }
 
-    private void requireAgent(Long agentId) {
-        if (agentMapper.selectById(agentId) == null) {
+    private AiAgent requireAgent(Long agentId) {
+        AiAgent agent = agentMapper.selectById(agentId);
+        if (agent == null) {
             throw new BizException(ResultCode.PARAM_INVALID, "agentId 不存在: " + agentId);
         }
+        return agent;
+    }
+
+    /** 启用绑定不能指向停用 Agent，否则下一次普通发布会重新打开已撤销的运行目标。 */
+    private void assertAgentCanServe(AiAgent agent, Integer bindingStatus) {
+        int effectiveStatus = bindingStatus == null ? StatusFlags.ENABLED : bindingStatus;
+        if (effectiveStatus == StatusFlags.ENABLED
+            && (agent.getStatus() == null || agent.getStatus() != StatusFlags.ENABLED)) {
+            throw new BizException(ResultCode.AGENT_DISABLED, "停用智能体不能创建启用中的渠道绑定");
+        }
+    }
+
+    private void revokeOldTargetWhenUnbound(Long oldAgentId, String oldAgentCode, Integer oldStatus,
+                                             Long newAgentId, Integer newStatus) {
+        boolean oldBindingWasActive = oldStatus != null && oldStatus == StatusFlags.ENABLED;
+        boolean stillRepresentsSameActiveTarget = oldAgentId.equals(newAgentId)
+            && newStatus != null && newStatus == StatusFlags.ENABLED;
+        if (oldBindingWasActive && !stillRepresentsSameActiveTarget && !hasEnabledBinding(oldAgentId)) {
+            publisher.revokeForAgentId(oldAgentId, oldAgentCode);
+        }
+    }
+
+    private boolean hasEnabledBinding(Long agentId) {
+        return bindingMapper.exists(new LambdaQueryWrapper<AiChannelBinding>()
+            .eq(AiChannelBinding::getAgentId, agentId)
+            .eq(AiChannelBinding::getStatus, StatusFlags.ENABLED));
     }
 
     private AiChannelBinding requireBinding(Long id) {

@@ -27,6 +27,8 @@ public class RuntimePublishTask {
     private String groupName;
     private String revision;
     private String contentHash;
+    /** 入队时冻结的目标实例 ID JSON；null 仅表示 V89 前历史任务。 */
+    private String ackTargetsJson;
     private String publishScope;
     private String grayTenants;
     private Integer sourceVersion;

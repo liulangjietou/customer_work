@@ -2,6 +2,8 @@ package com.richard.fyoung.customeradmin.workspace.callstats.dto;
 
 import lombok.Data;
 
+import java.math.BigDecimal;
+
 /**
  * 调用明细中的一段耗时（MODEL/TOOL/MCP/SKILL）。{@code startTime} 输出 {@code yyyy-MM-dd HH:mm:ss}。
  * @author owlzhangfq@gmail.com
@@ -21,6 +23,19 @@ public class AgentCallSegmentVO {
     private Long cachedTokens;
     /** 模型自报耗时（毫秒，仅 MODEL 段）。 */
     private Long modelReportedMs;
+    /** 实际调用的模型部署与价格快照（仅 MODEL 段）。 */
+    private String provider;
+    private Long deploymentId;
+    private String modelName;
+    private Long priceId;
+    private String currency;
+    private BigDecimal inputUnitPrice;
+    private BigDecimal outputUnitPrice;
+    private BigDecimal cachedUnitPrice;
+    private String pricingStatus;
+    private BigDecimal costAmount;
+    private String costCurrency;
+    private String costStatus;
     private Boolean success;
     private String errorMsg;
 }

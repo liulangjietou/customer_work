@@ -36,6 +36,9 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String CALL_LINEAGE_MIRROR_VERSION = "12";
     private static final String ONLINE_EXPERIMENT_MIRROR_VERSION = "13";
     private static final String SEMANTIC_CACHE_GENERATION_MIRROR_VERSION = "14";
+    private static final String USER_SESSION_REVOCATION_MIRROR_VERSION = "15";
+    private static final String MODEL_CALL_ATTRIBUTION_MIRROR_VERSION = "16";
+    private static final String HANDOFF_AUTHORITY_MIRROR_VERSION = "17";
 
     private final DataSource dataSource;
     private final boolean enabled;
@@ -148,8 +151,22 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             }
             boolean semanticCacheGenerationMirror =
                 columnExists(connection, "cw_semantic_cache", "config_generation");
-            return semanticCacheGenerationMirror
-                ? SEMANTIC_CACHE_GENERATION_MIRROR_VERSION : ONLINE_EXPERIMENT_MIRROR_VERSION;
+            if (!semanticCacheGenerationMirror) {
+                return ONLINE_EXPERIMENT_MIRROR_VERSION;
+            }
+            if (!columnExists(connection, "cw_user", "session_epoch")) {
+                return SEMANTIC_CACHE_GENERATION_MIRROR_VERSION;
+            }
+            if (!columnExists(connection, "cw_agent_call_segment", "pricing_status")) {
+                return USER_SESSION_REVOCATION_MIRROR_VERSION;
+            }
+            boolean handoffAuthorityMirror = columnExists(connection, "cw_ticket", "routing_category")
+                && columnExists(connection, "cw_ticket", "required_skill")
+                && columnExists(connection, "cw_ticket", "routing_priority")
+                && columnExists(connection, "cw_ticket", "emotion")
+                && columnExists(connection, "cw_ticket", "suggested_assignees");
+            return handoffAuthorityMirror
+                ? HANDOFF_AUTHORITY_MIRROR_VERSION : MODEL_CALL_ATTRIBUTION_MIRROR_VERSION;
         }
     }
 

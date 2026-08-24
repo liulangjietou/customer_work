@@ -102,6 +102,12 @@ class AgentCallStatsServiceTest {
         d.setInputTokens(800L);
         d.setOutputTokens(200L);
         d.setTotalTokens(1000L);
+        d.setModelCostAmount(new BigDecimal("0.01234567890123"));
+        d.setModelCostCurrency("CNY");
+        d.setModelCostStatus("COMPLETE");
+        d.setModelSegmentCount(1);
+        d.setSettledCostSegmentCount(1);
+        d.setUnsettledCostSegmentCount(0);
 
         when(adminExtMapper.countBy(any())).thenReturn(1L);
         when(adminExtMapper.findPage(any())).thenReturn(List.of(d));
@@ -123,6 +129,9 @@ class AgentCallStatsServiceTest {
         assertEquals(800L, vo.getRows().get(0).getInputTokens(), "行透出输入 token");
         assertEquals(200L, vo.getRows().get(0).getOutputTokens(), "行透出输出 token");
         assertEquals(1000L, vo.getRows().get(0).getTotalTokens(), "行透出总 token");
+        assertEquals(new BigDecimal("0.01234567890123"),
+            vo.getRows().get(0).getModelCostAmount(), "行透出调用级精确成本");
+        assertEquals("COMPLETE", vo.getRows().get(0).getModelCostStatus());
 
         // 分页偏移：pageNum=2, pageSize=10 → offset=10, limit=10
         ArgumentCaptor<AgentCallStatsQueryParam> captor = ArgumentCaptor.forClass(AgentCallStatsQueryParam.class);
@@ -158,6 +167,9 @@ class AgentCallStatsServiceTest {
         seg.setDurationMs(800L);
         seg.setInputTokens(640L);
         seg.setOutputTokens(160L);
+        seg.setCostAmount(new BigDecimal("0.00123456789012"));
+        seg.setCostCurrency("CNY");
+        seg.setCostStatus("SETTLED");
         seg.setSuccess(true);
         when(adminSegmentMapper.findByCallLogId(5L)).thenReturn(List.of(seg));
         d.setInputTokens(640L);
@@ -166,6 +178,12 @@ class AgentCallStatsServiceTest {
         d.setTraceId("0123456789abcdef0123456789abcdef");
         d.setRuntimeRevision("revision-7");
         d.setRuntimeContentHash("hash-7");
+        d.setModelCostAmount(new BigDecimal("0.00123456789012"));
+        d.setModelCostCurrency("CNY");
+        d.setModelCostStatus("COMPLETE");
+        d.setModelSegmentCount(1);
+        d.setSettledCostSegmentCount(1);
+        d.setUnsettledCostSegmentCount(0);
         d.setVersionBindingJson("{\"datasetVersion\":\"\",\"datasetFingerprint\":\"\","
             + "\"modelVersion\":\"model-v1\",\"promptVersion\":\"prompt-v1\","
             + "\"agentVersion\":\"agent-v1\",\"knowledgeBaseVersion\":\"kb-v1\","
@@ -183,10 +201,12 @@ class AgentCallStatsServiceTest {
         assertEquals("0123456789abcdef0123456789abcdef", vo.getTraceId());
         assertEquals("revision-7", vo.getRuntimeRevision());
         assertEquals("model-v1", vo.getVersionBinding().modelVersion());
+        assertEquals(new BigDecimal("0.00123456789012"), vo.getModelCostAmount());
+        assertEquals("SETTLED", vo.getSegments().get(0).getCostStatus());
     }
 
     @Test
-    void replayManifest_shouldRemainInspectOnly_andReuseTenantScopedDetail() {
+    void replayManifest_shouldExposeSafeSnapshot_andReuseTenantScopedDetail() {
         AgentCallLogDO d = new AgentCallLogDO();
         d.setId(8L);
         d.setRequestId("req-8");
@@ -198,17 +218,22 @@ class AgentCallStatsServiceTest {
         d.setTraceId("trace-8");
         d.setRuntimeRevision("revision-8");
         d.setRuntimeContentHash("hash-8");
+        d.setReplaySnapshotJson("{\"schemaVersion\":1,\"modelCalls\":[],"
+            + "\"ragRetrievals\":[],\"toolCalls\":[]}");
         when(adminLogMapper.selectById(8L)).thenReturn(d);
         when(adminSegmentMapper.findByCallLogId(8L)).thenReturn(List.of());
 
         AgentCallReplayManifestVO manifest = service.replayManifest(8L, "ADMIN");
 
-        assertEquals("INSPECT_ONLY", manifest.mode());
-        assertFalse(manifest.executable());
+        assertEquals(3, manifest.schemaVersion());
+        assertEquals("MOCK_DEFAULT", manifest.mode());
+        assertTrue(manifest.executable());
         assertEquals("trace-8", manifest.traceId());
         assertEquals("问题", manifest.question());
         assertEquals("回答", manifest.recordedAnswer());
-        assertTrue(manifest.executionBlockedReason().contains("外部副作用"));
+        assertTrue(manifest.executionBlockedReason().contains("isolated"));
+        assertEquals(1, manifest.replaySnapshot().schemaVersion());
+        assertEquals(List.of("MOCK", "DRY_RUN"), manifest.supportedModes());
     }
 
     @Test

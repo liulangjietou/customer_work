@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
+import java.math.BigDecimal;
+
 /**
  * 智能体调用主记录表 {@code cw_agent_call_log} 的持久化对象（贫血 DO）。
  *
@@ -44,6 +46,13 @@ public class AgentCallLogDO {
     private Long cachedTokens;
     /** 各 MODEL 段模型自报耗时之和（毫秒），与实测 modelMs 之差即网络/排队开销。 */
     private Long modelReportedMs;
+    /** 本次调用已结算的模型金额；PARTIAL 时只代表已结算部分。 */
+    private BigDecimal modelCostAmount;
+    private String modelCostCurrency;
+    private String modelCostStatus;
+    private Integer modelSegmentCount;
+    private Integer settledCostSegmentCount;
+    private Integer unsettledCostSegmentCount;
     /** W3C trace-id，关联 OTel/Tempo。 */
     private String traceId;
     /** 当前实例真正应用成功的运行配置发布修订。 */
@@ -52,6 +61,8 @@ public class AgentCallLogDO {
     private String runtimeContentHash;
     /** 模型、提示词、Agent、知识库、工具版本绑定 JSON（不含密钥）。 */
     private String versionBindingJson;
+    /** 模型参数、RAG 与工具调用的脱敏重放事实 JSON。 */
+    private String replaySnapshotJson;
     /** 实际在线实验曝光；未参与实验时均为空。 */
     private Long experimentId;
     private Integer experimentRevision;

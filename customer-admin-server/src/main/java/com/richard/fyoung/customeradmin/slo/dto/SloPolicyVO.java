@@ -17,6 +17,9 @@ public record SloPolicyVO(
     Integer minimumSampleCount,
     BigDecimal burnRateThreshold,
     Boolean enabled,
+    LocalDateTime lastEvaluatedAt,
+    String lastEvaluationStatus,
+    String lastEvaluationError,
     LocalDateTime updateTime
 ) {
 }

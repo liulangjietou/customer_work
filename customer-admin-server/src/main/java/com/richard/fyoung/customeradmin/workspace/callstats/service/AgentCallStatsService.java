@@ -18,6 +18,7 @@ import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsG
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsQueryParam;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsTrendRow;
 import com.richard.fyoung.customerwork.data.calllog.TrendGranularity;
+import com.richard.fyoung.customerwork.data.calllog.AgentReplaySnapshot;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallLogDO;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSegmentDO;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSummaryDO;
@@ -58,7 +59,7 @@ public class AgentCallStatsService {
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final ZoneId ZONE = ZoneId.systemDefault();
     private static final String REPLAY_BLOCKED_REASON =
-        "生产工具可能产生外部副作用；该清单仅用于审计与隔离环境复现，不会自动执行";
+        "默认仅 MOCK；DRY_RUN 需 agent-call-stats:replay 权限且服务必须显式运行在 isolated 环境";
 
     private final AgentCallStatsGateway adminGateway;
     private final AppAgentCallStatsGatewayProvider appGatewayProvider;
@@ -95,14 +96,14 @@ public class AgentCallStatsService {
     }
 
     /**
-     * 返回只读重放清单。这里刻意不调用 Agent：查看权限不能隐式获得工具执行权限。
+     * 返回重放清单。查看权限只获取事实；真正发起 MOCK/DRY_RUN 走独立 POST 与权限点。
      */
     public AgentCallReplayManifestVO replayManifest(long id, String source) {
         AgentCallStatsDetailVO detail = detail(id, source);
         return new AgentCallReplayManifestVO(
-            2,
-            "INSPECT_ONLY",
-            false,
+            3,
+            "MOCK_DEFAULT",
+            true,
             REPLAY_BLOCKED_REASON,
             AgentCallStatsSource.parse(source).name(),
             detail.getId(),
@@ -121,7 +122,10 @@ public class AgentCallStatsService {
             detail.getExperimentDeploymentId(),
             detail.getExperimentBucket(),
             detail.getVersionBinding(),
-            detail.getSegments() == null ? List.of() : List.copyOf(detail.getSegments()));
+            detail.getSegments() == null ? List.of() : List.copyOf(detail.getSegments()),
+            detail.getReplaySnapshot(),
+            List.of("MOCK", "DRY_RUN"),
+            captureWarnings(detail));
     }
 
     /** 汇总统计。 */
@@ -210,6 +214,12 @@ public class AgentCallStatsService {
         vo.setTotalTokens(d.getTotalTokens());
         vo.setCachedTokens(d.getCachedTokens());
         vo.setModelReportedMs(d.getModelReportedMs());
+        vo.setModelCostAmount(d.getModelCostAmount());
+        vo.setModelCostCurrency(d.getModelCostCurrency());
+        vo.setModelCostStatus(d.getModelCostStatus());
+        vo.setModelSegmentCount(d.getModelSegmentCount());
+        vo.setSettledCostSegmentCount(d.getSettledCostSegmentCount());
+        vo.setUnsettledCostSegmentCount(d.getUnsettledCostSegmentCount());
         return vo;
     }
 
@@ -228,6 +238,7 @@ public class AgentCallStatsService {
         vo.setRuntimeContentHash(d.getRuntimeContentHash());
         copyExperiment(d, vo);
         vo.setVersionBinding(readVersionBinding(d.getVersionBindingJson()));
+        vo.setReplaySnapshot(readReplaySnapshot(d.getReplaySnapshotJson()));
         vo.setQuestion(d.getQuestion());
         vo.setAnswer(d.getAnswer());
         vo.setStartTime(formatTime(d.getStartTime()));
@@ -242,6 +253,12 @@ public class AgentCallStatsService {
         vo.setTotalTokens(d.getTotalTokens());
         vo.setCachedTokens(d.getCachedTokens());
         vo.setModelReportedMs(d.getModelReportedMs());
+        vo.setModelCostAmount(d.getModelCostAmount());
+        vo.setModelCostCurrency(d.getModelCostCurrency());
+        vo.setModelCostStatus(d.getModelCostStatus());
+        vo.setModelSegmentCount(d.getModelSegmentCount());
+        vo.setSettledCostSegmentCount(d.getSettledCostSegmentCount());
+        vo.setUnsettledCostSegmentCount(d.getUnsettledCostSegmentCount());
         List<AgentCallSegmentVO> segmentVOs = new ArrayList<>();
         if (!CollectionUtils.isEmpty(segments)) {
             for (AgentCallSegmentDO segment : segments) {
@@ -263,6 +280,18 @@ public class AgentCallStatsService {
         vo.setOutputTokens(d.getOutputTokens());
         vo.setCachedTokens(d.getCachedTokens());
         vo.setModelReportedMs(d.getModelReportedMs());
+        vo.setProvider(d.getProvider());
+        vo.setDeploymentId(d.getDeploymentId());
+        vo.setModelName(d.getModelName());
+        vo.setPriceId(d.getPriceId());
+        vo.setCurrency(d.getCurrency());
+        vo.setInputUnitPrice(d.getInputUnitPrice());
+        vo.setOutputUnitPrice(d.getOutputUnitPrice());
+        vo.setCachedUnitPrice(d.getCachedUnitPrice());
+        vo.setPricingStatus(d.getPricingStatus());
+        vo.setCostAmount(d.getCostAmount());
+        vo.setCostCurrency(d.getCostCurrency());
+        vo.setCostStatus(d.getCostStatus());
         vo.setSuccess(d.getSuccess());
         vo.setErrorMsg(d.getErrorMsg());
         return vo;
@@ -364,6 +393,42 @@ public class AgentCallStatsService {
                 "CALLSTATS-LINEAGE-PARSE-FAIL", e);
             return EvalVersionBinding.legacy("");
         }
+    }
+
+    private AgentReplaySnapshot readReplaySnapshot(String json) {
+        if (!StringUtils.hasText(json)) {
+            return AgentReplaySnapshot.empty();
+        }
+        try {
+            return OBJECT_MAPPER.readValue(json, AgentReplaySnapshot.class);
+        } catch (Exception e) {
+            log.error("agent replay snapshot parse failed, code={}",
+                "CALLSTATS-REPLAY-SNAPSHOT-PARSE-FAIL", e);
+            return AgentReplaySnapshot.empty();
+        }
+    }
+
+    private List<String> captureWarnings(AgentCallStatsDetailVO detail) {
+        AgentReplaySnapshot snapshot = detail.getReplaySnapshot() == null
+            ? AgentReplaySnapshot.empty() : detail.getReplaySnapshot();
+        List<String> warnings = new ArrayList<>();
+        boolean hasModelSegment = detail.getSegments() != null && detail.getSegments().stream()
+            .anyMatch(segment -> "MODEL".equals(segment.getKind()));
+        boolean hasToolSegment = detail.getSegments() != null && detail.getSegments().stream()
+            .anyMatch(segment -> !"MODEL".equals(segment.getKind()));
+        if (hasModelSegment && snapshot.modelCalls().isEmpty()) {
+            warnings.add("历史记录缺少模型参数快照");
+        }
+        if (hasToolSegment && snapshot.toolCalls().isEmpty()) {
+            warnings.add("历史记录缺少工具摘要快照");
+        }
+        EvalVersionBinding binding = detail.getVersionBinding();
+        if (binding == null || !StringUtils.hasText(binding.modelVersion())
+            || !StringUtils.hasText(binding.promptVersion())
+            || !StringUtils.hasText(binding.agentVersion())) {
+            warnings.add("制品版本绑定不完整");
+        }
+        return List.copyOf(warnings);
     }
 
     private void copyExperiment(AgentCallLogDO source, AgentCallStatsRowVO target) {

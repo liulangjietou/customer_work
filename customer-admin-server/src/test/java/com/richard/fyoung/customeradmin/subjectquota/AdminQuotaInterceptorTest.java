@@ -12,6 +12,7 @@ import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaDecision;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaLevel;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
@@ -45,6 +46,7 @@ class AdminQuotaInterceptorTest {
     @AfterEach
     void tearDown() {
         QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
         TenantContext.clear();
     }
 
@@ -66,10 +68,18 @@ class AdminQuotaInterceptorTest {
         when(guard.isEnabled()).thenReturn(false);
         AdminQuotaInterceptor interceptor = new AdminQuotaInterceptor(guard, objectMapper);
 
-        assertTrue(interceptor.preHandle(request(), new MockHttpServletResponse(), new Object()));
-        // 关闭时连登录态都不该去碰，更不该写上下文
-        assertNull(QuotaSubjectContext.get());
-        verify(guard, never()).check(any(), any());
+        try (MockedStatic<StpUtil> stpUtil = mockStatic(StpUtil.class);
+             MockedStatic<TenantSession> tenantSession = mockStatic(TenantSession.class)) {
+            stpUtil.when(StpUtil::isLogin).thenReturn(true);
+            stpUtil.when(StpUtil::getLoginIdAsString).thenReturn(ADMIN_ID);
+            tenantSession.when(TenantSession::effectiveTenant).thenReturn("acme");
+
+            assertTrue(interceptor.preHandle(request(), new MockHttpServletResponse(), new Object()));
+            assertEquals(QuotaSubjectType.ADMIN_USER, QuotaSubjectContext.get().type());
+            assertEquals(QuotaSubjectType.ADMIN_USER,
+                AgentInvocationIdentityContext.get().subjectType());
+            verify(guard, never()).check(any(), any());
+        }
     }
 
     @Test
@@ -105,6 +115,7 @@ class AdminQuotaInterceptorTest {
             assertNotNull(bound, "放行后必须把主体写进上下文，否则 token 记不到人头上");
             assertEquals(QuotaSubjectType.ADMIN_USER, bound.type());
             assertEquals(ADMIN_ID, bound.id());
+            assertEquals("acme", AgentInvocationIdentityContext.get().tenantId());
             verify(guard).recordRequest(bound);
         }
     }
@@ -133,6 +144,7 @@ class AdminQuotaInterceptorTest {
             // 被拒的请求不占额度：判定只读，记账发生在放行之后
             verify(guard, never()).recordRequest(any());
             assertNull(QuotaSubjectContext.get(), "被拒时不写上下文");
+            assertNull(AgentInvocationIdentityContext.get());
         }
     }
 
@@ -145,5 +157,6 @@ class AdminQuotaInterceptorTest {
         interceptor.afterCompletion(request(), new MockHttpServletResponse(), new Object(), null);
         // Tomcat 线程是复用的，不清理会把上一个请求的身份带给下一个人
         assertNull(QuotaSubjectContext.get());
+        assertNull(AgentInvocationIdentityContext.get());
     }
 }

@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.data.rag.search;
 
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.message.Msg;
@@ -22,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -51,6 +54,11 @@ class KnowledgeInjectionMiddlewareTest {
     @BeforeEach
     void setUp() {
         retrievalProvider = mock(KnowledgeRetrievalProvider.class);
+        // Mockito 不会自动调用接口 default 方法；显式桥接到二参入口，既保持旧用例语义，
+        // 也让中间件始终走带可信主体的新契约。
+        when(retrievalProvider.retrieve(anyString(), anyString(),
+            nullable(AgentInvocationIdentity.class))).thenAnswer(invocation ->
+                retrievalProvider.retrieve(invocation.getArgument(0), invocation.getArgument(1)));
         middleware = new KnowledgeInjectionMiddleware(retrievalProvider, AGENT_CODE);
     }
 
@@ -176,6 +184,21 @@ class KnowledgeInjectionMiddlewareTest {
         middleware.onReasoning(null, ctx, inputOf(userMsg(directivePrefixed)), input -> Flux.empty()).blockLast();
 
         verify(retrievalProvider).retrieve(AGENT_CODE, "写一个冒泡排序");
+    }
+
+    @Test
+    void shouldPassTrustedInvocationIdentityToRetrievalProvider() {
+        when(retrievalProvider.retrieve(anyString(), anyString())).thenReturn(null);
+        AgentInvocationIdentity identity = new AgentInvocationIdentity(
+            "tenant-a", QuotaSubjectType.USER, "42", true)
+            .forInvocation(AgentInvocationIdentity.CHANNEL_USER_HTTP, "s1", AGENT_CODE);
+        RuntimeContext ctx = RuntimeContext.builder().sessionId("s1").build();
+        ctx.put(AgentInvocationIdentity.class, identity);
+
+        middleware.onReasoning(null, ctx, inputOf(userMsg("公积金怎么提取")), input -> Flux.empty())
+            .blockLast();
+
+        verify(retrievalProvider).retrieve(AGENT_CODE, "公积金怎么提取", identity);
     }
 
     @Test

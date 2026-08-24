@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.infra.config;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -24,8 +25,17 @@ import java.util.Map;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class CustomerWorkRuntimeConfig {
 
-    /** 契约版本号：v2 新增不可变模型路由策略；消费端仍兼容无 routingPolicy 的 v1 载荷。 */
-    private int schemaVersion = 2;
+    /** 契约版本号：v5 新增模型健康动态路由 overlay；消费端仍兼容旧正常载荷。 */
+    private int schemaVersion = 5;
+
+    /**
+     * 运行目标是否允许继续服务。旧载荷缺少该字段时 Jackson 保留默认 true，保证向后兼容；
+     * false 是显式 tombstone，消费端必须先关闭总闸门，不能继续沿用最后一份正常模型配置。
+     */
+    private Boolean active = Boolean.TRUE;
+
+    /** 当前 dataId 对应的智能体编码；撤销载荷不再依赖已删除的数据库行，故必须随快照固化。 */
+    private String targetCode;
 
     /** 发布时间戳（ISO-8601 文本，仅审计/展示用，不参与业务逻辑）。 */
     private String publishedAt;
@@ -35,6 +45,10 @@ public class CustomerWorkRuntimeConfig {
 
     /** 业务配置内容摘要，用于实例 ACK 与运营侧核对实际应用的是哪份内容。 */
     private String contentHash;
+    /** 签名密钥 ID，支持消费端在轮换窗口同时信任多把 key。 */
+    private String signatureKeyId;
+    private String signatureAlgorithm;
+    private String signature;
 
     /** 模型主配置。 */
     private Model model = new Model();
@@ -64,6 +78,7 @@ public class CustomerWorkRuntimeConfig {
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Model {
+        private Long deploymentId;
         private String provider;
         private String name;
         private String baseUrl;
@@ -73,6 +88,8 @@ public class CustomerWorkRuntimeConfig {
         private Integer maxTokens;
         private Double topP;
         private Boolean stream;
+        private Pricing pricing;
+        private HealthOverlay health;
     }
 
     /** 私有化兜底模型（明文/密文分离：兜底密钥同样走 apiKeyCipher）。 */
@@ -80,10 +97,13 @@ public class CustomerWorkRuntimeConfig {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Fallback {
         private boolean enabled;
+        private Long deploymentId;
         private String provider;
         private String name;
         private String baseUrl;
         private String apiKeyCipher;
+        private Pricing pricing;
+        private HealthOverlay health;
     }
 
     /** 模型调用重试。 */
@@ -102,7 +122,12 @@ public class CustomerWorkRuntimeConfig {
         private String name;
         private String url;
         private String transport = "sse";
+        /** 仅兼容本地静态配置；控制面发布必须使用 headersCipher，禁止在 Nacos 保存明文。 */
         private Map<String, String> headers;
+        /** MCP headers 的 AES-GCM 密文 JSON，由消费端验签、验 hash 后一次性解密。 */
+        private String headersCipher;
+        /** 服务端主体授权快照；消费端必须在工具执行前判定，不能仅依赖控制台 UI。 */
+        private List<String> allowedSubjectTypes = new ArrayList<>();
     }
 
     /** Agent 运行时配置。 */
@@ -140,6 +165,8 @@ public class CustomerWorkRuntimeConfig {
         private String baseUrl;
         private Integer endpointRevision;
         private String apiKeyCipher;
+        private Pricing pricing;
+        private HealthOverlay health;
     }
 
     /** 按 priority、ruleId 稳定排序的路由规则。 */
@@ -195,5 +222,34 @@ public class CustomerWorkRuntimeConfig {
         private String baseUrl;
         private Integer endpointRevision;
         private String apiKeyCipher;
+        private Pricing pricing;
+        private HealthOverlay health;
+    }
+
+    /**
+     * 控制面健康状态的动态路由投影。缺失表示兼容旧载荷并允许路由；运行面不得自行修改该快照。
+     */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class HealthOverlay {
+        private String healthStatus = "UNKNOWN";
+        private String effectiveHealthStatus = "UNKNOWN";
+        private boolean routingAvailable = true;
+        private String overrideMode = "AUTO";
+        private Integer revision = 0;
+        private Long cooldownUntilEpochMs;
+        private Long overrideUntilEpochMs;
+    }
+
+    /** 发布时冻结的同供应商、同模型有效价目；缺价显式为 UNPRICED。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Pricing {
+        private String status = "UNPRICED";
+        private Long priceId;
+        private String currency;
+        private BigDecimal inputUnitPrice;
+        private BigDecimal outputUnitPrice;
+        private BigDecimal cachedUnitPrice;
     }
 }

@@ -4,6 +4,8 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 /**
  * 后台委派任务执行参数：{@code admin.agent-task.*}。
  * @author owlzhangfq@gmail.com
@@ -19,10 +21,31 @@ public class AgentTaskExecutorProperties {
      */
     private int poolSize = 4;
 
-    /**
-     * 启动时是否把上个进程遗留的非终态任务标记为失败。默认开启——那些任务的执行线程已随进程
-     * 消失，留在库里就是永远转圈的假 RUNNING。多实例部署时需关闭（见
-     * {@code MybatisTaskRepository#cleanupOrphanTasks} 的说明）。
-     */
-    private boolean cleanupOrphansOnStartup = true;
+    /** Pod/进程所有者标识；留空时按 HOSTNAME + 进程 ID + 随机后缀生成。 */
+    private String ownerId;
+
+    /** 单次所有权租约秒数。 */
+    private int leaseSeconds = 90;
+
+    /** 活跃任务心跳间隔秒数，必须显著小于 leaseSeconds。 */
+    private int heartbeatSeconds = 20;
+
+    /** 过期租约扫描间隔秒数。 */
+    private int recoveryScanSeconds = 15;
+
+    /** 每次最多接管的任务数。 */
+    private int recoveryBatchSize = 20;
+
+    /** 首次执行加宕机重试的总次数上限。 */
+    private int maxAttempts = 3;
+
+    public String resolveOwnerId() {
+        if (ownerId != null && !ownerId.isBlank()) {
+            return ownerId.trim();
+        }
+        String host = System.getenv("HOSTNAME");
+        String node = host == null || host.isBlank() ? "local" : host.trim();
+        return node + "-" + ProcessHandle.current().pid() + "-"
+            + UUID.randomUUID().toString().substring(0, 8);
+    }
 }

@@ -2,7 +2,8 @@ package com.richard.fyoung.customerworkapp.chat;
 
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
-import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.service.ChatTurnEvent;
+import com.richard.fyoung.customerwork.core.service.ChatTurnService;
 import com.richard.fyoung.customerwork.data.ticket.Ticket;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
@@ -10,6 +11,8 @@ import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContextThreadLocalAccessor;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaDecision;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
@@ -55,7 +58,7 @@ public class ChatDispatchService {
 
     private final TicketService ticketService;
     private final ChatLogService chatLogService;
-    private final CustomerServiceService customerServiceService;
+    private final ChatTurnService chatTurnService;
     private final HandoffKeywordDetector keywordDetector;
     private final WsSessionRegistry registry;
 
@@ -69,13 +72,13 @@ public class ChatDispatchService {
 
     public ChatDispatchService(TicketService ticketService,
                                ChatLogService chatLogService,
-                               CustomerServiceService customerServiceService,
+                               ChatTurnService chatTurnService,
                                HandoffKeywordDetector keywordDetector,
                                WsSessionRegistry registry,
                                SubjectQuotaGuard subjectQuotaGuard) {
         this.ticketService = ticketService;
         this.chatLogService = chatLogService;
-        this.customerServiceService = customerServiceService;
+        this.chatTurnService = chatTurnService;
         this.keywordDetector = keywordDetector;
         this.registry = registry;
         this.subjectQuotaGuard = subjectQuotaGuard;
@@ -101,6 +104,9 @@ public class ChatDispatchService {
             return Mono.empty();
         }
         QuotaSubject subject = QuotaSubject.user(user.userId());
+        AgentInvocationIdentity invocationIdentity = new AgentInvocationIdentity(
+            tenantOf(user), subject.type(), subject.id(), true, user.accessEpoch())
+            .withChannel(AgentInvocationIdentity.CHANNEL_USER_WS);
         // 判定与记账都要在用户归属租户下进行：等级表按租户隔离，拿错租户就会查到别人那一档
         SubjectQuotaDecision quota = TenantContext.callWith(tenantOf(user),
             () -> subjectQuotaGuard.check(subject, QUOTA_RESOURCE_WS_CHAT));
@@ -124,6 +130,7 @@ public class ChatDispatchService {
             // 只有写进 Reactor Context 才能在那里还原出"这次是谁在用"
             .contextWrite(ctx -> ctx
                 .put(QuotaSubjectContextThreadLocalAccessor.KEY, subject)
+                .put(AgentInvocationIdentityContextThreadLocalAccessor.KEY, invocationIdentity)
                 .put(TenantContextThreadLocalAccessor.KEY, tenantOf(user)));
     }
 
@@ -229,18 +236,17 @@ public class ChatDispatchService {
 
     /** AI 自助流式：逐增量推 chat_chunk，完成聚合落库 BOT 消息并推 chat_done。 */
     private Mono<Void> streamAi(String userId, String sessionId, String content, String ticketId) {
-        StringBuilder acc = new StringBuilder();
-        return customerServiceService.chatStream(sessionId, content)
-            .doOnNext(chunk -> {
-                acc.append(chunk);
-                registry.pushToUser(userId, WsFrame.chatChunk(chunk));
+        return chatTurnService.stream(sessionId, content, ticketId)
+            .doOnNext(event -> {
+                if (event instanceof ChatTurnEvent.Delta delta) {
+                    registry.pushToUser(userId, WsFrame.chatChunk(delta.content()));
+                } else if (event instanceof ChatTurnEvent.Completed completed) {
+                    ChatMessage botMsg = completed.completion().message();
+                    registry.pushToUser(userId, WsFrame.chatDone(
+                        completed.completion().terminal(), botMsg.sessionId(), botMsg.ticketId(),
+                        botMsg.content(), botMsg.createdAtMs()));
+                }
             })
-            .then(Mono.fromRunnable(() -> {
-                ChatMessage botMsg = chatLogService.append(
-                    sessionId, ticketId, TicketActorType.BOT, null, acc.toString());
-                registry.pushToUser(userId,
-                    WsFrame.chatDone(botMsg.messageId(), botMsg.content(), botMsg.createdAtMs()));
-            }).subscribeOn(Schedulers.boundedElastic()))
             .onErrorResume(e -> {
                 log.error("[session {}] ai stream dispatch failed, code={}", sessionId, "CHAT-AI-STREAM-FAIL", e);
                 registry.pushToUser(userId, WsFrame.error("CHAT-AI-STREAM-FAIL", "AI 回复出错，请稍后再试"));

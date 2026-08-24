@@ -42,8 +42,14 @@ onMounted(loadList)
         <el-table-column prop="ip" label="IP" width="140" />
         <el-table-column label="结果" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.result === 1 ? 'success' : 'danger'">{{ row.result === 1 ? '成功' : '失败' }}</el-tag>
+            <el-tag :type="row.result === 1 ? 'success' : row.result === 2 ? 'warning' : 'danger'">
+              {{ row.result === 1 ? '成功' : row.result === 2 ? '待确认' : '失败' }}
+            </el-tag>
           </template>
+        </el-table-column>
+        <el-table-column prop="eventId" label="审计事件" width="150" show-overflow-tooltip />
+        <el-table-column label="留存至" width="180">
+          <template #default="{ row }">{{ row.retentionUntil || '-' }}</template>
         </el-table-column>
         <el-table-column prop="errorMsg" label="错误信息" show-overflow-tooltip />
         <el-table-column prop="createTime" label="时间" width="180" />

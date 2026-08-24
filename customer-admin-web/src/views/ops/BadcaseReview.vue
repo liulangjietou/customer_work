@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
+import ImprovementClosurePanel from '@/components/ImprovementClosurePanel.vue'
 import {
   adoptAsEvalCase,
   adoptAsKnowledge,
@@ -376,6 +377,14 @@ onMounted(loadList)
               <span class="hint">用户输入直接取自本条 badcase，不改写</span>
             </el-form-item>
           </el-form>
+        </div>
+
+        <div v-permission="'improvement:manage'" class="section">
+          <div class="section-title">
+            上线效果闭环
+            <span class="hint">责任、SLA、精确制品、复评、可靠发布与同类问题复发观察</span>
+          </div>
+          <ImprovementClosurePanel source-type="BADCASE" :source-key="current.id" />
         </div>
       </div>
     </el-drawer>

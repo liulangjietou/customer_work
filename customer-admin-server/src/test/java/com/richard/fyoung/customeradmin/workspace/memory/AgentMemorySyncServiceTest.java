@@ -18,6 +18,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
 
 /**
  * {@link AgentMemorySyncService} 单测：水合（正向/存量迁移）、回写（变更/未变更/文件缺失）与异常兜底。
@@ -52,11 +53,12 @@ class AgentMemorySyncServiceTest {
     @Test
     void hydrate_shouldImportLegacyWorkspaceFile_whenStoreEmpty() throws Exception {
         when(store.load(AGENT_CODE)).thenReturn(Optional.empty());
+        when(store.compareAndSet(AGENT_CODE, "legacy", 0L)).thenReturn(true);
         Files.writeString(workspace.resolve("MEMORY.md"), "legacy", StandardCharsets.UTF_8);
 
         service.hydrate(AGENT_CODE, workspace);
 
-        verify(store).save(AGENT_CODE, "legacy");
+        verify(store).compareAndSet(AGENT_CODE, "legacy", 0L);
     }
 
     @Test
@@ -65,7 +67,7 @@ class AgentMemorySyncServiceTest {
 
         service.hydrate(AGENT_CODE, workspace);
 
-        verify(store, never()).save(anyString(), anyString());
+        verify(store, never()).compareAndSet(anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
     }
 
     @Test
@@ -73,10 +75,11 @@ class AgentMemorySyncServiceTest {
         Files.writeString(workspace.resolve("MEMORY.md"), "v2", StandardCharsets.UTF_8);
         when(store.load(AGENT_CODE))
             .thenReturn(Optional.of(new AgentMemorySnapshot("v1", LocalDateTime.now())));
+        when(store.compareAndSet(eq(AGENT_CODE), eq("v2"), eq(1L))).thenReturn(true);
 
         service.persistIfChanged(AGENT_CODE, workspace);
 
-        verify(store).save(AGENT_CODE, "v2");
+        verify(store).compareAndSet(AGENT_CODE, "v2", 1L);
     }
 
     @Test
@@ -87,7 +90,7 @@ class AgentMemorySyncServiceTest {
 
         service.persistIfChanged(AGENT_CODE, workspace);
 
-        verify(store, never()).save(anyString(), anyString());
+        verify(store, never()).compareAndSet(anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
     }
 
     @Test
@@ -104,6 +107,29 @@ class AgentMemorySyncServiceTest {
 
         assertDoesNotThrow(() -> service.hydrate(AGENT_CODE, workspace));
         assertDoesNotThrow(() -> service.persistIfChanged(AGENT_CODE, workspace));
-        verify(store, never()).save(any(), any());
+        verify(store, never()).compareAndSet(any(), any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void persistIfChanged_shouldRejectStaleWorkspaceByCas() throws Exception {
+        Path storeRoot = workspace.resolve("store");
+        Path podA = workspace.resolve("pod-a");
+        Path podB = workspace.resolve("pod-b");
+        Files.createDirectories(podA);
+        Files.createDirectories(podB);
+        DiskAgentMemoryStore sharedStore = new DiskAgentMemoryStore(storeRoot);
+        sharedStore.save(AGENT_CODE, "v1");
+        AgentMemorySyncService serviceA = new AgentMemorySyncService(sharedStore);
+        AgentMemorySyncService serviceB = new AgentMemorySyncService(sharedStore);
+        serviceA.hydrate(AGENT_CODE, podA);
+        serviceB.hydrate(AGENT_CODE, podB);
+        Files.writeString(podA.resolve("MEMORY.md"), "pod-a-update", StandardCharsets.UTF_8);
+        Files.writeString(podB.resolve("MEMORY.md"), "pod-b-stale-update", StandardCharsets.UTF_8);
+
+        serviceA.persistIfChanged(AGENT_CODE, podA);
+        serviceB.persistIfChanged(AGENT_CODE, podB);
+
+        assertEquals("pod-a-update", sharedStore.load(AGENT_CODE).orElseThrow().content(),
+            "旧版本工作副本不得覆盖已提交的并发更新");
     }
 }

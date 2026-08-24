@@ -40,7 +40,7 @@ public class ToolRegistrar {
     private final ComplaintBackend complaintBackend;
     private final PendingApprovalService approvalService;
     private final HandoffService handoffService;
-    /** 可空：未装配工单域时退化为仅 handoff 旧链路（HumanHandoffTools 二参构造）。 */
+    /** 可空：保留构造合同；生产 HandoffService 内部已统一依赖同一个 TicketService。 */
     private final TicketService ticketService;
 
     /**
@@ -99,14 +99,15 @@ public class ToolRegistrar {
         toolkit.registration().tool(new KnowledgeBaseTools(knowledgeBackend, knowledgeGapService))
             .group(GROUP_KNOWLEDGE).apply();
         toolkit.registration().tool(new OrderTools(orderBackend)).group(GROUP_ORDER).apply();
-        toolkit.registration().tool(new AfterSalesTools(afterSalesBackend, approvalService)).group(GROUP_AFTER_SALES).apply();
+        toolkit.registration().tool(new AfterSalesTools(afterSalesBackend, approvalService, sessionId))
+            .group(GROUP_AFTER_SALES).apply();
         toolkit.registration().tool(new ProductTools(productBackend)).group(GROUP_PRESALE).apply();
         toolkit.registration().tool(new MemberTools(memberBackend)).group(GROUP_MEMBER).apply();
         toolkit.registration().tool(new ComplaintTools(complaintBackend)).group(GROUP_COMPLAINT).apply();
         toolkit.registration().tool(buildHumanHandoffTools(sessionId)).group(GROUP_HUMAN).apply();
     }
 
-    /** 有真实会话时用三参构造（driving 工单域 + handoff 双写），否则退化为仅 handoff 旧链路。 */
+    /** 有真实会话时传入 sessionId；HandoffService 内部只推进一次权威工单状态机。 */
     private HumanHandoffTools buildHumanHandoffTools(String sessionId) {
         if (sessionId != null && ticketService != null) {
             return new HumanHandoffTools(handoffService, ticketService, sessionId);

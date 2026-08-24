@@ -53,6 +53,8 @@ public final class TenantInterceptors {
         "ai_model_config",
         // 单价由控制面统一定义，租户不该也不能自己定价，故无 tenant_id 列
         "ai_model_price",
+        // 日账单按自然日串行重建的内部锁，无业务数据且无 tenant_id
+        "cw_usage_aggregation_lock",
         // 配额带 tenant_id 但刻意不自动过滤：控制面要跨租户配额度，而租户管理员
         // 本就不该看到自己的额度设置。访问控制由 Controller 的跨租户权限校验负责
         "sys_tenant_quota",

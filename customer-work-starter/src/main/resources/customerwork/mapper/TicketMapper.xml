@@ -7,11 +7,13 @@
     <insert id="upsert" parameterType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
         INSERT INTO cw_ticket
             (id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
-             resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
-             resolved_at_ms, closed_at_ms, last_user_active_at_ms)
+             resolve_note, routing_category, required_skill, routing_priority, emotion,
+             suggested_assignees, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms,
+             claimed_at_ms, resolved_at_ms, closed_at_ms, last_user_active_at_ms)
         VALUES
             (#{id}, #{sessionId}, #{userId}, #{title}, #{category}, #{priority}, #{status}, #{assignee},
-             #{handoffReason}, #{resolveNote}, #{reopenCount}, #{createdAtMs}, #{updatedAtMs},
+             #{handoffReason}, #{resolveNote}, #{routingCategory}, #{requiredSkill}, #{routingPriority},
+             #{emotion}, #{suggestedAssignees}, #{reopenCount}, #{createdAtMs}, #{updatedAtMs},
              #{handoffAtMs}, #{claimedAtMs}, #{resolvedAtMs}, #{closedAtMs}, #{lastUserActiveAtMs})
         ON DUPLICATE KEY UPDATE
             title = VALUES(title),
@@ -21,6 +23,11 @@
             assignee = VALUES(assignee),
             handoff_reason = VALUES(handoff_reason),
             resolve_note = VALUES(resolve_note),
+            routing_category = VALUES(routing_category),
+            required_skill = VALUES(required_skill),
+            routing_priority = VALUES(routing_priority),
+            emotion = VALUES(emotion),
+            suggested_assignees = VALUES(suggested_assignees),
             reopen_count = VALUES(reopen_count),
             updated_at_ms = VALUES(updated_at_ms),
             handoff_at_ms = VALUES(handoff_at_ms),
@@ -33,8 +40,9 @@
     <!-- 该会话的活跃工单：状态字面量 'CLOSED'/'RESOLVED' 对应 TicketStatus.CLOSED/RESOLVED 枚举名。 -->
     <select id="findActiveBySession" resultType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
         SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
-               resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
-               resolved_at_ms, closed_at_ms, last_user_active_at_ms
+               resolve_note, routing_category, required_skill, routing_priority, emotion,
+               suggested_assignees, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms,
+               claimed_at_ms, resolved_at_ms, closed_at_ms, last_user_active_at_ms
         FROM cw_ticket
         WHERE session_id = #{sessionId}
           AND status NOT IN ('CLOSED', 'RESOLVED')
@@ -45,8 +53,9 @@
     <!-- 会话资源归属校验必须覆盖终态工单，不能因关单后查不到而绕过。 -->
     <select id="findBySession" resultType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
         SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
-               resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
-               resolved_at_ms, closed_at_ms, last_user_active_at_ms
+               resolve_note, routing_category, required_skill, routing_priority, emotion,
+               suggested_assignees, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms,
+               claimed_at_ms, resolved_at_ms, closed_at_ms, last_user_active_at_ms
         FROM cw_ticket
         WHERE session_id = #{sessionId}
         ORDER BY created_at_ms DESC
@@ -56,8 +65,9 @@
     <!-- 该用户的活跃工单：状态字面量 'CLOSED'/'RESOLVED' 对应 TicketStatus.CLOSED/RESOLVED 枚举名。 -->
     <select id="findActiveByUser" resultType="com.richard.fyoung.customerwork.data.ticket.entity.TicketDO">
         SELECT id, session_id, user_id, title, category, priority, status, assignee, handoff_reason,
-               resolve_note, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms, claimed_at_ms,
-               resolved_at_ms, closed_at_ms, last_user_active_at_ms
+               resolve_note, routing_category, required_skill, routing_priority, emotion,
+               suggested_assignees, reopen_count, created_at_ms, updated_at_ms, handoff_at_ms,
+               claimed_at_ms, resolved_at_ms, closed_at_ms, last_user_active_at_ms
         FROM cw_ticket
         WHERE user_id = #{userId}
           AND status NOT IN ('CLOSED', 'RESOLVED')

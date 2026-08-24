@@ -1,20 +1,20 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: customer-work-app
   namespace: customer-work
   labels:
     app: customer-work-app
 spec:
+  # 运行时配置 ACK 以稳定实例 ID 冻结目标集合；StatefulSet 序号不得随滚动发布变化。
+  serviceName: customer-work-app-headless
   replicas: 2
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: customer-work-app
-  strategy:
+  updateStrategy:
     type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
   template:
     metadata:
       labels:
@@ -27,6 +27,40 @@ spec:
       # 必须大于应用自身的 shutdown-timeout-seconds（ConfigMap 里是 30），
       # 否则正在处理的对话会在优雅停机走完之前被 SIGKILL 打断
       terminationGracePeriodSeconds: 45
+      initContainers:
+        - name: select-runtime-ack-identity
+          image: busybox:1.36.1
+          command:
+            - sh
+            - -ec
+            - |
+              ordinal="${POD_NAME##*-}"
+              case "${ordinal}" in
+                0) token="${ACK_TOKEN_0}" ;;
+                1) token="${ACK_TOKEN_1}" ;;
+                *) echo "unsupported runtime ACK ordinal: ${ordinal}" >&2; exit 1 ;;
+              esac
+              test -n "${token}"
+              printf '%s' "${POD_NAME}" > /run/runtime-ack/customer-work.nacos.runtime-config-instance-id
+              printf '%s' "${token}" > /run/runtime-ack/customer-work.nacos.runtime-config-ack-token
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ACK_TOKEN_0
+              valueFrom:
+                secretKeyRef:
+                  name: customer-work-secret
+                  key: CW_RUNTIME_CONFIG_ACK_TOKEN_0
+            - name: ACK_TOKEN_1
+              valueFrom:
+                secretKeyRef:
+                  name: customer-work-secret
+                  key: CW_RUNTIME_CONFIG_ACK_TOKEN_1
+          volumeMounts:
+            - name: runtime-ack
+              mountPath: /run/runtime-ack
       containers:
         - name: app
           image: customer-work/app-server:latest
@@ -39,6 +73,15 @@ spec:
                 name: customer-work-config
             - secretRef:
                 name: customer-work-secret
+          env:
+            # 每个 StatefulSet 序号的 ACK token/instanceId 由 initContainer 写入 Config Tree，
+            # 避免共享令牌或滚动发布后实例 ID 漂移。
+            - name: SPRING_CONFIG_IMPORT
+              value: "optional:configtree:/run/runtime-ack/"
+          volumeMounts:
+            - name: runtime-ack
+              mountPath: /run/runtime-ack
+              readOnly: true
           resources:
             requests:
               cpu: "500m"
@@ -72,6 +115,27 @@ spec:
                 # 先让 Service 摘掉本 Pod 的 endpoint，再开始停机，避免摘流量与停机竞争
                 # 导致的少量 502（K8s 的 endpoint 更新与 SIGTERM 是并行发生的）
                 command: ["sh", "-c", "sleep 5"]
+      volumes:
+        - name: runtime-ack
+          emptyDir:
+            medium: Memory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-work-app-headless
+  namespace: customer-work
+  labels:
+    app: customer-work-app
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: customer-work-app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
 ---
 apiVersion: v1
 kind: Service

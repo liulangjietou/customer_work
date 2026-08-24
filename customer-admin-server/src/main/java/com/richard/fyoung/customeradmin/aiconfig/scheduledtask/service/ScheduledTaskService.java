@@ -20,6 +20,9 @@ import com.richard.fyoung.customeradmin.config.AdminScheduledTaskProperties;
 import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
@@ -237,17 +240,34 @@ public class ScheduledTaskService {
         if (agent == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "定时任务关联的智能体不存在: " + task.getAgentId());
         }
-        Agent runtimeAgent = agentInstanceFactory.build(agent.getAgentCode());
         String sessionId = "sched-" + task.getTaskCode() + "-" + System.currentTimeMillis();
-        RuntimeContext ctx = agentInstanceFactory.contextFor(agent.getAgentCode(), sessionId);
-        Msg userMsg = Msg.builder()
-            .role(MsgRole.USER)
-            .name("user")
-            .content(TextBlock.builder().text(task.getPrompt()).build())
-            .build();
-        Msg reply = callWithContext(runtimeAgent, List.of(userMsg), ctx)
-            .block(Duration.ofSeconds(properties.getExecuteTimeoutSeconds()));
-        return reply == null ? null : reply.getTextContent();
+        AgentInvocationIdentity identity = scheduledInvocationIdentity(task, agent, sessionId);
+        return AgentInvocationIdentityContext.callWith(identity, () -> {
+            Agent runtimeAgent = agentInstanceFactory.build(agent.getAgentCode());
+            RuntimeContext ctx = agentInstanceFactory.contextFor(agent.getAgentCode(), sessionId);
+            Msg userMsg = Msg.builder()
+                .role(MsgRole.USER)
+                .name("user")
+                .content(TextBlock.builder().text(task.getPrompt()).build())
+                .build();
+            Msg reply = callWithContext(runtimeAgent, List.of(userMsg), ctx)
+                .block(Duration.ofSeconds(properties.getExecuteTimeoutSeconds()));
+            return reply == null ? null : reply.getTextContent();
+        });
+    }
+
+    /** 非 Web 调度入口建立稳定的系统主体；手动触发则沿用后台鉴权已经建立的真实主体。 */
+    private AgentInvocationIdentity scheduledInvocationIdentity(AiScheduledTask task, AiAgent agent,
+                                                                 String sessionId) {
+        AgentInvocationIdentity current = AgentInvocationIdentity.capture();
+        if (current != null) {
+            return current.forInvocation(
+                current.channelCode() == null ? AgentInvocationIdentity.CHANNEL_ADMIN : current.channelCode(),
+                sessionId, agent.getAgentCode());
+        }
+        return new AgentInvocationIdentity(TenantContext.require(), QuotaSubjectType.API_KEY,
+            "scheduled-task:" + task.getId(), true)
+            .forInvocation(AgentInvocationIdentity.CHANNEL_INTERNAL, sessionId, agent.getAgentCode());
     }
 
     /**

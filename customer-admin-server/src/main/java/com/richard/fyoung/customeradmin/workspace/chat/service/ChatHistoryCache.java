@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.workspace.chat.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
 import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,21 +43,33 @@ public class ChatHistoryCache {
     }
 
     public Optional<List<ChatMessageVO>> getMessages(String agentCode, String sessionId) {
-        return read(messagesKey(agentCode, sessionId), new TypeReference<List<ChatMessageVO>>() {
+        return getMessages(AgentMemoryScope.current(agentCode), sessionId);
+    }
+
+    public Optional<List<ChatMessageVO>> getMessages(AgentMemoryScope scope, String sessionId) {
+        return read(messagesKey(scope, sessionId), new TypeReference<List<ChatMessageVO>>() {
         });
     }
 
     public void putMessages(String agentCode, String sessionId, List<ChatMessageVO> messages) {
-        write(messagesKey(agentCode, sessionId), messages);
+        putMessages(AgentMemoryScope.current(agentCode), sessionId, messages);
+    }
+
+    public void putMessages(AgentMemoryScope scope, String sessionId, List<ChatMessageVO> messages) {
+        write(messagesKey(scope, sessionId), messages);
     }
 
     /** 一轮对话完成后调用：这次会话的消息内容已过期（会话列表不缓存，无需清理）。 */
     public void evict(String agentCode, String sessionId) {
+        evict(AgentMemoryScope.current(agentCode), sessionId);
+    }
+
+    public void evict(AgentMemoryScope scope, String sessionId) {
         try (Jedis jedis = jedisPool.getResource()) {
-            jedis.del(messagesKey(agentCode, sessionId));
+            jedis.del(messagesKey(scope, sessionId));
         } catch (Exception e) {
             log.error("[workspace] chat history cache evict failed, code={}, agentCode={}",
-                "CHAT_HISTORY_CACHE_EVICT_ERROR", agentCode, e);
+                "CHAT_HISTORY_CACHE_EVICT_ERROR", scope.agentCode(), e);
         }
     }
 
@@ -83,7 +96,8 @@ public class ChatHistoryCache {
         }
     }
 
-    private String messagesKey(String agentCode, String sessionId) {
-        return KEY_PREFIX + "messages:" + WorkspaceRuntimeScope.session(agentCode, sessionId);
+    private String messagesKey(AgentMemoryScope scope, String sessionId) {
+        return KEY_PREFIX + "messages:" + scope.storageKey() + ":"
+            + WorkspaceRuntimeScope.safeSession(sessionId);
     }
 }

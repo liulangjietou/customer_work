@@ -3,6 +3,9 @@ package com.richard.fyoung.customeradmin.openapi;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -23,6 +26,8 @@ class OpenApiAuthInterceptorTest {
     @AfterEach
     void clearTenant() {
         TenantContext.clear();
+        QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
     }
 
     private OpenApiAuthInterceptor interceptor(String configuredToken) {
@@ -87,6 +92,9 @@ class OpenApiAuthInterceptorTest {
 
         assertTrue(pass);
         assertEquals(200, resp.getStatus());
+        assertEquals(QuotaSubjectType.API_KEY, QuotaSubjectContext.get().type());
+        assertEquals(QuotaSubjectType.API_KEY,
+            AgentInvocationIdentityContext.get().subjectType());
     }
 
     @Test
@@ -116,6 +124,8 @@ class OpenApiAuthInterceptorTest {
         assertFalse(pass);
         assertEquals(401, response.getStatus());
         assertFalse(TenantContext.isPresent());
+        assertFalse(QuotaSubjectContext.isPresent());
+        assertTrue(AgentInvocationIdentityContext.get() == null);
     }
 
     @Test

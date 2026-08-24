@@ -1,15 +1,19 @@
 package com.richard.fyoung.customeradmin.configversion.controller;
 
+import cn.dev33.satoken.session.SaSession;
+import cn.dev33.satoken.stp.StpUtil;
+
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.configversion.dto.ConfigVersionPageQuery;
 import com.richard.fyoung.customeradmin.configversion.entity.ConfigType;
 import com.richard.fyoung.customeradmin.configversion.dto.GrayReleaseRequest;
-import com.richard.fyoung.customeradmin.configversion.service.ConfigRollbackService;
 import com.richard.fyoung.customeradmin.configversion.service.ConfigVersionService;
+import com.richard.fyoung.customeradmin.governance.change.service.GovernedChangeService;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 
 import java.util.List;
 
@@ -25,16 +29,16 @@ import static org.mockito.Mockito.verifyNoInteractions;
 class ConfigVersionControllerTest {
 
     private ConfigVersionService versionService;
-    private ConfigRollbackService rollbackService;
+    private GovernedChangeService governedChangeService;
     private CrossTenantAuthority crossTenantAuthority;
     private ConfigVersionController controller;
 
     @BeforeEach
     void setUp() {
         versionService = mock(ConfigVersionService.class);
-        rollbackService = mock(ConfigRollbackService.class);
+        governedChangeService = mock(GovernedChangeService.class);
         crossTenantAuthority = mock(CrossTenantAuthority.class);
-        controller = new ConfigVersionController(versionService, rollbackService, crossTenantAuthority);
+        controller = new ConfigVersionController(versionService, governedChangeService, crossTenantAuthority);
     }
 
     @Test
@@ -51,7 +55,7 @@ class ConfigVersionControllerTest {
         assertForbidden(() -> controller.grayRelease(1L, request));
 
         verifyNoInteractions(versionService);
-        verifyNoInteractions(rollbackService);
+        verifyNoInteractions(governedChangeService);
     }
 
     @Test
@@ -59,18 +63,26 @@ class ConfigVersionControllerTest {
         GrayReleaseRequest request = grayRequest();
         ConfigVersionPageQuery query = new ConfigVersionPageQuery();
 
-        controller.page(query);
-        controller.detail(1L);
-        controller.listByTarget("AGENT", "agent-a");
-        controller.rollback(1L, "rollback");
-        controller.grayRelease(1L, request);
+        try (MockedStatic<StpUtil> stp = org.mockito.Mockito.mockStatic(StpUtil.class)) {
+            SaSession session = mock(SaSession.class);
+            stp.when(StpUtil::getLoginIdAsLong).thenReturn(9L);
+            stp.when(StpUtil::getTokenSession).thenReturn(session);
+            org.mockito.Mockito.when(session.getString("username")).thenReturn("checker");
+
+            controller.page(query);
+            controller.detail(1L);
+            controller.listByTarget("AGENT", "agent-a");
+            controller.rollback(1L, "rollback");
+            controller.grayRelease(1L, request);
+        }
 
         verify(crossTenantAuthority, times(5)).requireCurrentUserAuthority();
         verify(versionService).page(query);
         verify(versionService).detail(1L);
         verify(versionService).listByTarget(ConfigType.AGENT, "agent-a");
-        verify(rollbackService).rollback(1L, "rollback");
-        verify(rollbackService).grayRelease(1L, request.getTenantCodes(), request.getRemark());
+        verify(governedChangeService).submitRollback(1L, "rollback", 9L, "checker");
+        verify(governedChangeService).submitGrayRelease(
+            1L, request.getTenantCodes(), request.getRemark(), 9L, "checker");
     }
 
     private GrayReleaseRequest grayRequest() {

@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import cn.dev33.satoken.fun.strategy.SaCheckRequestPathFunction;
 import cn.dev33.satoken.strategy.SaStrategy;
 import io.a2a.spec.TransportProtocol;
@@ -80,10 +81,14 @@ public class AdminA2aServerConfig {
     @Bean
     public AgentScopeA2aServer agentScopeA2aServer(AdminA2aProperties properties,
                                                    AgentInstanceCache agentInstanceCache,
+                                                   AdminAgentInstanceFactory agentInstanceFactory,
                                                    AiAgentMapper agentMapper) {
         String agentCode = properties.getAgentCode();
         if (!StringUtils.hasText(agentCode)) {
             throw new IllegalStateException("admin.a2a.enabled=true requires admin.a2a.agent-code");
+        }
+        if (!StringUtils.hasText(properties.getToken())) {
+            throw new IllegalStateException("admin.a2a.enabled=true requires admin.a2a.token");
         }
         // 启动期没有请求、也就没有租户上下文，直连查询会被租户拦截器 fail-closed 打断，整个应用起不来。
         // A2A 暴露的是运维在配置里点名的那一个智能体，与"谁在访问"无关，因此这是明确的跨租户定位；
@@ -108,7 +113,8 @@ public class AdminA2aServerConfig {
             .build();
 
         AgentScopeA2aServer server = AgentScopeA2aServer
-            .builder(new AdminAgentRunner(agentInstanceCache, agentCode, description))
+            .builder(new AdminAgentRunner(agentInstanceCache, agentInstanceFactory, agentCode, description,
+                agent.getTenantId(), properties.tokenFingerprint()))
             .agentCard(card)
             .withTransport(TransportProperties.builder(TransportProtocol.JSONRPC.asString())
                 .path(JSONRPC_PATH)

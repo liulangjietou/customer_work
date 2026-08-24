@@ -2,6 +2,9 @@ package com.richard.fyoung.customerwork.data.calllog;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallCost;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelPricingStatus;
 import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallLogDO;
 import com.richard.fyoung.customerwork.data.calllog.entity.AgentCallSegmentDO;
@@ -180,10 +183,18 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         d.setTotalTokens(r.totalTokens());
         d.setCachedTokens(r.cachedTokens());
         d.setModelReportedMs(r.modelReportedMs());
+        AgentCallCostSummary cost = r.costSummary();
+        d.setModelCostAmount(cost.settledAmount());
+        d.setModelCostCurrency(cost.currency());
+        d.setModelCostStatus(cost.status().name());
+        d.setModelSegmentCount(cost.modelSegmentCount());
+        d.setSettledCostSegmentCount(cost.settledSegmentCount());
+        d.setUnsettledCostSegmentCount(cost.unsettledSegmentCount());
         d.setTraceId(emptyToNull(r.lineage().traceId()));
         d.setRuntimeRevision(emptyToNull(r.lineage().runtimeRevision()));
         d.setRuntimeContentHash(emptyToNull(r.lineage().runtimeContentHash()));
         d.setVersionBindingJson(writeVersionBinding(r.lineage().versionBinding()));
+        d.setReplaySnapshotJson(writeReplaySnapshot(r.replaySnapshot()));
         OnlineExperimentAssignment assignment = r.experimentAssignment();
         if (assignment != null) {
             d.setExperimentId(assignment.experimentId());
@@ -209,6 +220,21 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         d.setOutputTokens(s.outputTokens());
         d.setCachedTokens(s.cachedTokens());
         d.setModelReportedMs(s.modelReportedMs());
+        if (s.attribution() != null) {
+            d.setProvider(s.attribution().provider());
+            d.setDeploymentId(s.attribution().deploymentId());
+            d.setModelName(s.attribution().model());
+            d.setPriceId(s.attribution().priceId());
+            d.setCurrency(s.attribution().currency());
+            d.setInputUnitPrice(s.attribution().inputUnitPrice());
+            d.setOutputUnitPrice(s.attribution().outputUnitPrice());
+            d.setCachedUnitPrice(s.attribution().cachedUnitPrice());
+            d.setPricingStatus(s.attribution().pricingStatus().name());
+        }
+        ModelCallCost cost = s.cost();
+        d.setCostAmount(cost.amount());
+        d.setCostCurrency(cost.currency());
+        d.setCostStatus(cost.status().name());
         d.setSuccess(s.success());
         d.setErrorMsg(s.errorMsg());
         return d;
@@ -235,6 +261,7 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
             experimentAssignment(d),
             new AgentCallLineage(d.getTraceId(), d.getRuntimeRevision(), d.getRuntimeContentHash(),
                 readVersionBinding(d.getVersionBindingJson())),
+            readReplaySnapshot(d.getReplaySnapshotJson()),
             List.of());
     }
 
@@ -248,7 +275,20 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
             d.getSuccess() != null && d.getSuccess(),
             d.getErrorMsg(),
             d.getInputTokens(), d.getOutputTokens(),
-            d.getCachedTokens(), d.getModelReportedMs());
+            d.getCachedTokens(), d.getModelReportedMs(),
+            toAttribution(d));
+    }
+
+    private ModelCallAttribution toAttribution(AgentCallSegmentDO segment) {
+        if (!AgentCallKind.MODEL.name().equals(segment.getKind())
+            || segment.getPricingStatus() == null) {
+            return null;
+        }
+        return new ModelCallAttribution(
+            segment.getProvider(), segment.getDeploymentId(), segment.getModelName(),
+            segment.getPriceId(), segment.getCurrency(), segment.getInputUnitPrice(),
+            segment.getOutputUnitPrice(), segment.getCachedUnitPrice(),
+            ModelPricingStatus.valueOf(segment.getPricingStatus()));
     }
 
     private double toDouble(BigDecimal value) {
@@ -276,6 +316,30 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
             log.error("agent call version binding deserialize failed, code={}",
                 "CALLLOG-LINEAGE-DESERIALIZE-FAIL", e);
             return EvalVersionBinding.legacy("");
+        }
+    }
+
+    private String writeReplaySnapshot(AgentReplaySnapshot snapshot) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(
+                snapshot == null ? AgentReplaySnapshot.empty() : snapshot);
+        } catch (Exception e) {
+            log.error("agent replay snapshot serialize failed, code={}",
+                "CALLLOG-REPLAY-SERIALIZE-FAIL", e);
+            return null;
+        }
+    }
+
+    private AgentReplaySnapshot readReplaySnapshot(String json) {
+        if (json == null || json.isBlank()) {
+            return AgentReplaySnapshot.empty();
+        }
+        try {
+            return OBJECT_MAPPER.readValue(json, AgentReplaySnapshot.class);
+        } catch (Exception e) {
+            log.error("agent replay snapshot deserialize failed, code={}",
+                "CALLLOG-REPLAY-DESERIALIZE-FAIL", e);
+            return AgentReplaySnapshot.empty();
         }
     }
 

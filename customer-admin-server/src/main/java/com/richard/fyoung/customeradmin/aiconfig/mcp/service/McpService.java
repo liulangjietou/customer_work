@@ -23,6 +23,10 @@ import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
+import com.richard.fyoung.customerwork.tool.mcp.McpSubjectPolicy;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -61,15 +65,36 @@ public class McpService {
     private final AiAgentMapper agentMapper;
     private final AgentInstanceCache agentInstanceCache;
     private final AdminMcpFactory mcpFactory;
+    private final CustomerWorkConfigPublisher runtimeConfigPublisher;
+    private final McpCredentialService credentialService;
     private final McpConfigProtector configProtector = new McpConfigProtector(new ObjectMapper());
 
+    @Autowired
     public McpService(AiMcpMapper mcpMapper, AiAgentMcpMapper agentMcpMapper, AiAgentMapper agentMapper,
-                       AgentInstanceCache agentInstanceCache, AdminMcpFactory mcpFactory) {
+                       AgentInstanceCache agentInstanceCache, AdminMcpFactory mcpFactory,
+                       CustomerWorkConfigPublisher runtimeConfigPublisher,
+                       McpCredentialService credentialService) {
         this.mcpMapper = mcpMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentMapper = agentMapper;
         this.agentInstanceCache = agentInstanceCache;
         this.mcpFactory = mcpFactory;
+        this.runtimeConfigPublisher = runtimeConfigPublisher;
+        this.credentialService = credentialService;
+    }
+
+    /** 兼容不装配 SecretRef 的离线测试。 */
+    public McpService(AiMcpMapper mcpMapper, AiAgentMcpMapper agentMcpMapper, AiAgentMapper agentMapper,
+                      AgentInstanceCache agentInstanceCache, AdminMcpFactory mcpFactory,
+                      CustomerWorkConfigPublisher runtimeConfigPublisher) {
+        this(mcpMapper, agentMcpMapper, agentMapper, agentInstanceCache, mcpFactory,
+            runtimeConfigPublisher, null);
+    }
+
+    /** 兼容不关注运行时发布的离线单测。 */
+    public McpService(AiMcpMapper mcpMapper, AiAgentMcpMapper agentMcpMapper, AiAgentMapper agentMapper,
+                      AgentInstanceCache agentInstanceCache, AdminMcpFactory mcpFactory) {
+        this(mcpMapper, agentMcpMapper, agentMapper, agentInstanceCache, mcpFactory, null);
     }
 
     public PageResult<McpVO> page(PageQuery query) {
@@ -92,8 +117,18 @@ public class McpService {
 
     public void create(McpSaveRequest request) {
         validateType(request);
+        String tenantId = currentTenant();
+        McpCredentialService.StoredConfig stored = credentialService == null
+            ? new McpCredentialService.StoredConfig(
+                configProtector.prepareForCreate(request.mcpType(), request.config()), null)
+            : credentialService.create(tenantId, request.mcpName(), request.mcpType(),
+                request.config(), request.secretExpiresAt());
+        String protectedConfig = stored.protectedConfig();
+        validateExecutionBoundary(request.mcpName(), request.mcpType(), protectedConfig);
         AiMcp mcp = new AiMcp();
-        fillFromRequest(mcp, request, configProtector.prepareForCreate(request.mcpType(), request.config()));
+        mcp.setTenantId(tenantId);
+        mcp.setSecretRefId(stored.secretRefId());
+        fillFromRequest(mcp, request, protectedConfig, false);
         mcp.setTestStatus(ConnectivityTestStatus.UNTESTED);
         mcpMapper.insert(mcp);
     }
@@ -101,9 +136,15 @@ public class McpService {
     public void update(Long id, McpSaveRequest request) {
         AiMcp mcp = requireMcp(id);
         validateType(request);
-        String mergedConfig = configProtector.prepareForUpdate(
-            mcp.getMcpType(), mcp.getConfig(), request.mcpType(), request.config());
-        fillFromRequest(mcp, request, mergedConfig);
+        McpCredentialService.StoredConfig stored = credentialService == null
+            ? new McpCredentialService.StoredConfig(configProtector.prepareForUpdate(
+                mcp.getMcpType(), mcp.getConfig(), request.mcpType(), request.config()),
+                mcp.getSecretRefId())
+            : credentialService.update(mcp, request.mcpType(), request.config(), request.secretExpiresAt());
+        String mergedConfig = stored.protectedConfig();
+        validateExecutionBoundary(request.mcpName(), request.mcpType(), mergedConfig);
+        mcp.setSecretRefId(stored.secretRefId());
+        fillFromRequest(mcp, request, mergedConfig, true);
         mcpMapper.updateById(mcp);
         evictAgentsReferencingMcp(id);
     }
@@ -115,9 +156,12 @@ public class McpService {
         if (agentIds.isEmpty()) {
             return;
         }
-        List<String> agentCodes = agentMapper.selectBatchIds(agentIds).stream()
-            .map(AiAgent::getAgentCode).collect(Collectors.toList());
-        agentInstanceCache.evictAll(agentCodes);
+        List<AiAgent> agents = agentMapper.selectBatchIds(agentIds);
+        List<String> agentCodes = agents.stream().map(AiAgent::getAgentCode).collect(Collectors.toList());
+        agentInstanceCache.invalidateAll(agentCodes);
+        if (runtimeConfigPublisher != null) {
+            agents.forEach(agent -> runtimeConfigPublisher.publishForAgentId(agent.getId()));
+        }
     }
 
     public void delete(Long id) {
@@ -133,9 +177,11 @@ public class McpService {
      */
     public CompletableFuture<McpTestResult> testConnectivity(Long id) {
         AiMcp mcp = requireMcp(id);
+        String executableConfig = resolveExecutableConfig(mcp);
 
         return CompletableFuture
-            .supplyAsync(() -> mcpFactory.testConnectivity(mcp.getMcpName(), mcp.getMcpType(), mcp.getConfig()), MCP_TEST_EXECUTOR)
+            .supplyAsync(() -> mcpFactory.testConnectivity(
+                mcp.getMcpName(), mcp.getMcpType(), executableConfig), MCP_TEST_EXECUTOR)
             .orTimeout(TEST_FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .exceptionally(ex -> {
                 if (ex.getCause() instanceof TimeoutException || ex instanceof TimeoutException) {
@@ -158,10 +204,11 @@ public class McpService {
      */
     public CompletableFuture<List<McpDebugToolVO>> listDebugTools(Long id) {
         AiMcp mcp = requireMcp(id);
+        String executableConfig = resolveExecutableConfig(mcp);
         return CompletableFuture
             .supplyAsync(() -> {
                 try {
-                    return mcpFactory.listDebugTools(mcp.getMcpName(), mcp.getMcpType(), mcp.getConfig());
+                    return mcpFactory.listDebugTools(mcp.getMcpName(), mcp.getMcpType(), executableConfig);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
@@ -176,10 +223,11 @@ public class McpService {
     /** 调试面板 · 单次调用工具：同上分发到独立线程池；工具调用本身可能有副作用（比如真的下了单/查了数据），不做重试。 */
     public CompletableFuture<McpDebugCallResult> callDebugTool(Long id, McpDebugCallRequest request) {
         AiMcp mcp = requireMcp(id);
+        String executableConfig = resolveExecutableConfig(mcp);
         return CompletableFuture
             .supplyAsync(() -> {
                 try {
-                    return mcpFactory.callDebugTool(mcp.getMcpName(), mcp.getMcpType(), mcp.getConfig(),
+                    return mcpFactory.callDebugTool(mcp.getMcpName(), mcp.getMcpType(), executableConfig,
                         request.toolName(), request.arguments());
                 } catch (Exception e) {
                     throw new RuntimeException(e);
@@ -219,11 +267,29 @@ public class McpService {
         }
     }
 
-    private void fillFromRequest(AiMcp mcp, McpSaveRequest request, String protectedConfig) {
+    private void validateExecutionBoundary(String mcpName, String mcpType, String config) {
+        try {
+            mcpFactory.validateConfiguration(mcpName, mcpType, config);
+        } catch (Exception e) {
+            throw new BizException(ResultCode.PARAM_INVALID, "MCP 安全校验失败: " + e.getMessage());
+        }
+    }
+
+    private void fillFromRequest(AiMcp mcp, McpSaveRequest request, String protectedConfig,
+                                 boolean preserveExistingPolicy) {
         mcp.setMcpName(request.mcpName());
         mcp.setMcpType(request.mcpType());
         mcp.setConfig(protectedConfig);
         mcp.setDescription(request.description());
+        try {
+            if (request.allowedSubjectTypes() != null) {
+                mcp.setAllowedSubjectTypes(McpSubjectPolicy.serialize(request.allowedSubjectTypes()));
+            } else if (!preserveExistingPolicy || !StringUtils.hasText(mcp.getAllowedSubjectTypes())) {
+                mcp.setAllowedSubjectTypes(McpSubjectPolicy.serialize(McpSubjectPolicy.adminCreateDefault()));
+            }
+        } catch (IllegalArgumentException e) {
+            throw new BizException(ResultCode.PARAM_INVALID, "MCP 主体授权配置非法: " + e.getMessage());
+        }
         mcp.setStatus(request.status() == null ? 1 : request.status());
     }
 
@@ -234,7 +300,13 @@ public class McpService {
 
     /** 编辑详情保留结构，但所有 secret 与 headers 值都替换为显式占位符。 */
     private McpVO toDetailVo(AiMcp mcp) {
-        return toVo(mcp, configProtector.redactForDetail(mcp.getMcpType(), mcp.getConfig()));
+        McpVO vo = toVo(mcp, credentialService == null
+            ? configProtector.redactForDetail(mcp.getMcpType(), mcp.getConfig())
+            : credentialService.redactForDetail(mcp));
+        if (credentialService != null && mcp.getSecretRefId() != null) {
+            vo.setCredential(credentialService.metadata(mcp));
+        }
+        return vo;
     }
 
     private McpVO toVo(AiMcp mcp, String safeConfig) {
@@ -247,6 +319,7 @@ public class McpService {
         vo.setStatus(mcp.getStatus());
         vo.setTestStatus(mcp.getTestStatus());
         vo.setTestTime(mcp.getTestTime());
+        vo.setAllowedSubjectTypes(McpSubjectPolicy.toNames(mcp.getAllowedSubjectTypes()));
         vo.setCreateTime(mcp.getCreateTime());
         return vo;
     }
@@ -257,5 +330,13 @@ public class McpService {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "MCP 不存在: " + id);
         }
         return mcp;
+    }
+
+    private String resolveExecutableConfig(AiMcp mcp) {
+        return credentialService == null ? mcp.getConfig() : credentialService.resolve(mcp);
+    }
+
+    private String currentTenant() {
+        return TenantContext.isPresent() ? TenantContext.require() : TenantContext.DEFAULT;
     }
 }

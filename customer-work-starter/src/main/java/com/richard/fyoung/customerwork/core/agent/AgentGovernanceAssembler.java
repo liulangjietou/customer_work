@@ -1,14 +1,18 @@
 package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.core.middleware.HumanApprovalMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.AgentLifecycleMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.ObservabilityMiddleware;
+import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.middleware.MiddlewareBase;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
@@ -41,15 +45,29 @@ public class AgentGovernanceAssembler {
     private final ObjectProvider<MiddlewareBase> pluggableMiddlewares;
     /** 可为 null：未接入 Micrometer 时观测降级为仅日志。 */
     private final MeterRegistry meterRegistry;
+    /** 运行时生命周期总闸门；所有 Agent 构建路径必须共享同一实例。 */
+    private final RuntimeAgentAccessState runtimeAccessState;
 
+    @Autowired
     public AgentGovernanceAssembler(CustomerWorkProperties properties,
                                     TenantResolver tenantResolver,
                                     ObjectProvider<MiddlewareBase> pluggableMiddlewares,
-                                    ObjectProvider<MeterRegistry> meterRegistryProvider) {
+                                    ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                    RuntimeAgentAccessState runtimeAccessState) {
         this.properties = properties;
         this.tenantResolver = tenantResolver;
         this.pluggableMiddlewares = pluggableMiddlewares;
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+        this.runtimeAccessState = runtimeAccessState;
+    }
+
+    /** 兼容离线单测与未装配热配置的叶子模块，默认保持启用态。 */
+    public AgentGovernanceAssembler(CustomerWorkProperties properties,
+                                    TenantResolver tenantResolver,
+                                    ObjectProvider<MiddlewareBase> pluggableMiddlewares,
+                                    ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        this(properties, tenantResolver, pluggableMiddlewares, meterRegistryProvider,
+            RuntimeAgentAccessState.alwaysActive());
     }
 
     /**
@@ -61,6 +79,9 @@ public class AgentGovernanceAssembler {
      * @param builder 待装配的 Agent builder
      */
     public void applyTo(ReActAgent.Builder builder) {
+        // 生命周期必须最先判定：撤销态不允许进入模型、MCP、Skill 或任何其它工具链。
+        builder.middleware(new AgentLifecycleMiddleware(runtimeAccessState));
+
         // 可观测中间件（请求/工具/错误打点）
         builder.middleware(new ObservabilityMiddleware(meterRegistry));
 
@@ -89,6 +110,17 @@ public class AgentGovernanceAssembler {
      * @param sessionId 会话标识；其内容不是租户身份凭据
      */
     public RuntimeContext contextFor(String sessionId) {
+        return contextFor(MemorySubjectResolver.CUSTOMER_SERVICE_AGENT, sessionId,
+            AgentInvocationIdentity.CHANNEL_INTERNAL);
+    }
+
+    /** 冻结完整可信调用快照；渠道优先使用接入层已建立的值。 */
+    public RuntimeContext contextFor(String agentCode, String sessionId, String fallbackChannel) {
+        AgentInvocationIdentity identity = AgentInvocationIdentity.capture();
+        String channel = identity != null && identity.channelCode() != null
+            ? identity.channelCode() : fallbackChannel;
+        AgentInvocationIdentity invocation = identity == null
+            ? null : identity.forInvocation(channel, sessionId, agentCode);
         RuntimeContext.Builder b = RuntimeContext.builder()
             .userId(tenantResolver.resolve(sessionId))
             .sessionId(sessionId == null || sessionId.isBlank() ? "default" : sessionId);
@@ -96,6 +128,9 @@ public class AgentGovernanceAssembler {
         String org = properties.getHarness().getOrg();
         if (org != null && !org.isBlank()) {
             b.put("org", org);
+        }
+        if (invocation != null) {
+            b.put(AgentInvocationIdentity.class, invocation);
         }
         return b.build();
     }

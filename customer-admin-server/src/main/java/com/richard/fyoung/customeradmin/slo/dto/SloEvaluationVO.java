@@ -13,6 +13,7 @@ public record SloEvaluationVO(
     int minimumSampleCount,
     SloWindowEvaluation shortWindow,
     SloWindowEvaluation longWindow,
-    boolean alertCreated
+    boolean alertCreated,
+    String alertTransition
 ) {
 }
