@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.safety.tenant;
 import com.alibaba.nacos.api.config.ConfigService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Sinks;
@@ -115,6 +116,26 @@ class TenantAccessNacosServiceTest {
         service.refreshAllSafely();
 
         verify(registry).disconnectTenant("acme");
+    }
+
+    @Test
+    void structuredApiKeyTenantShouldJoinInitialSubscriptionSet() throws Exception {
+        CustomerWorkProperties properties = properties();
+        SecurityProperties.Credential credential = new SecurityProperties.Credential();
+        credential.setKeyId("partner-a");
+        credential.setTenantId("acme");
+        credential.setEnabled(true);
+        properties.getSecurity().getAuth().getCredentials().add(credential);
+        ConfigService configService = mock(ConfigService.class);
+        when(configService.getConfig("customer-work-tenant-access-tenant-acme", "ACCESS_GROUP", 3000L))
+            .thenReturn(json("acme", "ACTIVE", 5L));
+        TenantAccessNacosService service = new TenantAccessNacosService(
+            properties, new TenantAccessSnapshotStore(), ignored -> configService);
+
+        service.refreshAllSafely();
+
+        verify(configService).getConfig(
+            "customer-work-tenant-access-tenant-acme", "ACCESS_GROUP", 3000L);
     }
 
     private CustomerWorkProperties properties() {

@@ -33,6 +33,9 @@ public class ContentGuardProperties implements CustomerWorkDbConnection {
     /** 密码。 */
     private String password = "root";
 
+    /** Admin 首次访问客服端库前是否执行其权威 Flyway；生产 DBA 模式关闭。 */
+    private boolean schemaMigrationEnabled = true;
+
     /**
      * 是否给 admin 自己的 workspace 智能体（对话 / VibeCoding）挂敏感词过滤。默认关闭。
      *

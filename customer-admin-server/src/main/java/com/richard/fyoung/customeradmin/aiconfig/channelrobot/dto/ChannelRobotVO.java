@@ -16,6 +16,10 @@ public class ChannelRobotVO {
     private String robotName;
     private String appKey;
     private String robotCode;
+    /** 微信回调模式：plaintext / safe。 */
+    private String callbackMode;
+    /** 是否已配置 EncodingAESKey 密文。 */
+    private Boolean hasEncodingAesKey;
     private String agentCode;
     /** 会话模式：continuous 持续会话 / per_message 单次问答。 */
     private String sessionMode;

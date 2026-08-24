@@ -40,6 +40,7 @@ class ModelRoutingPolicyRuntimeAccessTest {
     private AiModelRouteRuleMapper ruleMapper;
     private ModelConfigAccess modelConfigAccess;
     private SecretRefService secretRefService;
+    private ModelHealthRuntimeAccess healthRuntimeAccess;
     private AdminTenantProperties tenantProperties;
     private ModelRoutingPolicyRuntimeAccess access;
 
@@ -50,10 +51,12 @@ class ModelRoutingPolicyRuntimeAccessTest {
         ruleMapper = mock(AiModelRouteRuleMapper.class);
         modelConfigAccess = mock(ModelConfigAccess.class);
         secretRefService = mock(SecretRefService.class);
+        healthRuntimeAccess = mock(ModelHealthRuntimeAccess.class);
         tenantProperties = new AdminTenantProperties();
         tenantProperties.setEnabled(true);
         access = new ModelRoutingPolicyRuntimeAccess(policyMapper, versionMapper, ruleMapper,
-            modelConfigAccess, secretRefService, tenantProperties, new ObjectMapper());
+            modelConfigAccess, secretRefService, tenantProperties, new ObjectMapper(),
+            healthRuntimeAccess);
         TenantContext.set("tenant-a");
     }
 
@@ -74,6 +77,10 @@ class ModelRoutingPolicyRuntimeAccessTest {
         when(modelConfigAccess.findVisibleById(10L)).thenReturn(deployment);
         when(secretRefService.resolveCipherText(91L, "tenant-a", "LEGACY_CIPHER"))
             .thenReturn("CURRENT_SECRET_CIPHER");
+        CustomerWorkRuntimeConfig.HealthOverlay health = new CustomerWorkRuntimeConfig.HealthOverlay();
+        health.setEffectiveHealthStatus("UNHEALTHY");
+        health.setRoutingAvailable(false);
+        when(healthRuntimeAccess.overlay(deployment)).thenReturn(health);
 
         CustomerWorkRuntimeConfig.RoutingPolicy runtime =
             access.requireActive(1L, 7L, "webchat");
@@ -84,6 +91,9 @@ class ModelRoutingPolicyRuntimeAccessTest {
         assertEquals(7L, runtime.getAgentId());
         assertEquals("webchat", runtime.getChannelCode());
         assertEquals("CURRENT_SECRET_CIPHER", runtime.getDeployments().get(0).getApiKeyCipher());
+        assertEquals("UNHEALTHY",
+            runtime.getDeployments().get(0).getHealth().getEffectiveHealthStatus());
+        assertTrue(!runtime.getDeployments().get(0).getHealth().isRoutingAvailable());
         assertEquals(List.of(7L), runtime.getRules().get(0).getCondition().getAgentIds());
 
         ArgumentCaptor<QueryWrapper<AiModelRoutePolicy>> policyQuery = ArgumentCaptor.forClass(QueryWrapper.class);

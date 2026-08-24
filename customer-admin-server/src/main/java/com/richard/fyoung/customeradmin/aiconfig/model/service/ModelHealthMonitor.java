@@ -58,6 +58,7 @@ public class ModelHealthMonitor implements DisposableBean {
 
     void dispatchSafely() {
         try {
+            healthService.expireOverrides(effectiveBatchSize());
             List<AiModelConfig> models = CrossTenantOperations.execute(
                 () -> snapshotMapper.findDueModels(effectiveBatchSize()));
             for (AiModelConfig model : models) {

@@ -10,7 +10,7 @@
     </resultMap>
 
     <!--
-      主模型、备用模型与计划中/运行中/未确认撤流实验双臂引用统一投影为 tenantId/agentId/agentCode。
+      主模型、备用模型、ACTIVE 路由当前版本与计划中/运行中/未确认撤流实验双臂引用统一投影。
       tenantId 非空时显式限定私有模型的当前租户，并继续叠加租户拦截器；
       只有 default 共享模型的调用方会传 null，并以 CrossTenantOperations 显式关闭拦截器。
     -->
@@ -33,6 +33,28 @@
                    AND agent.deleted = 0
             WHERE backup.model_id = #{modelId}
               <if test="tenantId != null and tenantId != ''">
+                  AND agent.tenant_id = #{tenantId}
+              </if>
+            UNION
+            SELECT agent.tenant_id, agent.id AS agent_id, agent.agent_code
+            FROM ai_model_route_rule route_rule
+            INNER JOIN ai_model_route_policy_version route_version
+                    ON route_version.id = route_rule.policy_version_id
+                   AND route_version.tenant_id = route_rule.tenant_id
+                   AND route_version.status = 'ACTIVE'
+            INNER JOIN ai_model_route_policy route_policy
+                    ON route_policy.id = route_version.policy_id
+                   AND route_policy.tenant_id = route_version.tenant_id
+                   AND route_policy.current_version_id = route_version.id
+                   AND route_policy.status = 'ACTIVE'
+                   AND route_policy.deleted = 0
+            INNER JOIN ai_agent agent
+                    ON agent.model_route_policy_id = route_policy.id
+                   AND agent.tenant_id = route_policy.tenant_id
+                   AND agent.deleted = 0
+            WHERE route_rule.deployment_id = #{modelId}
+              <if test="tenantId != null and tenantId != ''">
+                  AND route_rule.tenant_id = #{tenantId}
                   AND agent.tenant_id = #{tenantId}
               </if>
             UNION

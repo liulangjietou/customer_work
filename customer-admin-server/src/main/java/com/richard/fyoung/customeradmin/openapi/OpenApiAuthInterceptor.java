@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.core.constant.OpenApiProtocol;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -43,6 +47,8 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
         String actual = request.getHeader(OpenApiProtocol.TOKEN_HEADER);
         String tenantId = authenticate(actual);
         if (tenantId == null) {
@@ -53,6 +59,11 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
         if (tenantProperties.isEnabled()) {
             TenantContext.set(tenantId);
         }
+        QuotaSubject subject = QuotaSubject.apiKey(actual);
+        QuotaSubjectContext.set(subject);
+        AgentInvocationIdentityContext.set(new AgentInvocationIdentity(
+            tenantId, subject.type(), subject.id(), true)
+            .withChannel(AgentInvocationIdentity.CHANNEL_API));
         return true;
     }
 
@@ -60,12 +71,16 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
     public void afterConcurrentHandlingStarted(HttpServletRequest request, HttpServletResponse response,
                                                Object handler) {
         TenantContext.clear();
+        QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
     }
 
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
                                 Object handler, Exception ex) {
         TenantContext.clear();
+        QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
     }
 
     private String authenticate(String actual) {

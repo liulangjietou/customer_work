@@ -8,7 +8,7 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentStateAccessor;
-import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentStore;
@@ -87,7 +87,8 @@ public class ChatHistoryService {
         // 总数与数据页因此必然用同一个值，不会出现翻页空页
         ownerUserId = DataScopeContext.relaxedBeyondSelf() ? null : ownerUserId;
         String tenantId = tenantProperties.isEnabled() ? TenantContext.require() : TenantContext.DEFAULT;
-        String stateUserId = WorkspaceRuntimeScope.agent(agentCode);
+        AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
+        String stateUserId = memoryScope.stateUserId();
         long total = sessionStateQueryMapper.countSessions(tenantId, stateUserId, agentCode, ownerUserId);
         List<ChatSessionSummary> summaries = new ArrayList<>();
 
@@ -125,13 +126,14 @@ public class ChatHistoryService {
 
     /** 30 分钟读缓存命中直接返回；未命中回源 MySQL（{@link AgentStateStore}）后回填缓存。 */
     public List<ChatMessageVO> getMessages(String agentCode, String sessionId) {
-        Optional<List<ChatMessageVO>> cached = historyCache.getMessages(agentCode, sessionId);
+        AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
+        Optional<List<ChatMessageVO>> cached = historyCache.getMessages(memoryScope, sessionId);
         if (cached.isPresent()) {
             return cached.get();
         }
 
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
-        AgentState state = agentStateAccessor.resolve(agent, WorkspaceRuntimeScope.agent(agentCode), sessionId);
+        AgentState state = agentStateAccessor.resolve(agent, memoryScope.stateUserId(), sessionId);
         // 该会话的附件按绑定的 message_id 分组（未绑定的跳过）：查询失败 listBySession 已内置兜底返回空列表，
         // 不影响历史返回。附件通常按用户消息挂载，一条消息可带多个附件。
         Map<String, List<ChatMessageAttachmentVO>> attachmentsByMessage = attachmentStore.listBySession(sessionId).stream()
@@ -153,7 +155,7 @@ public class ChatHistoryService {
             messages.add(new ChatMessageVO(msg.getId(),
                 msg.getRole() == MsgRole.USER ? "user" : "assistant", text, msg.getTimestamp(), msgAttachments));
         }
-        historyCache.putMessages(agentCode, sessionId, messages);
+        historyCache.putMessages(memoryScope, sessionId, messages);
         return messages;
     }
 
@@ -171,7 +173,7 @@ public class ChatHistoryService {
     public Optional<ChatSessionSummary> getSessionSummary(String agentCode, String sessionId) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         List<Msg> context = agentStateAccessor.resolve(
-            agent, WorkspaceRuntimeScope.agent(agentCode), sessionId).getContext();
+            agent, AgentMemoryScope.current(agentCode).stateUserId(), sessionId).getContext();
         if (context.isEmpty()) {
             return Optional.empty();
         }

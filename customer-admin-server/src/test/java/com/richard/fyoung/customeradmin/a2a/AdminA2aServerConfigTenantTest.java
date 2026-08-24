@@ -34,6 +34,7 @@ class AdminA2aServerConfigTenantTest {
         AiAgent agent = new AiAgent();
         agent.setAgentCode("coder");
         agent.setAgentName("编码助手");
+        agent.setTenantId("tenant-a");
         when(agentMapper.selectOne(any())).thenAnswer(invocation -> {
             assertTrue(InterceptorIgnoreHelper.willIgnoreTenantLine("anyMapperId"),
                 "启动期查询必须显式跨租户，否则缺上下文会 fail-closed 导致应用起不来");
@@ -42,9 +43,11 @@ class AdminA2aServerConfigTenantTest {
 
         AdminA2aProperties properties = new AdminA2aProperties();
         properties.setAgentCode("coder");
+        properties.setToken("a2a-test-token");
 
         assertNotNull(new AdminA2aServerConfig()
-            .agentScopeA2aServer(properties, mock(AgentInstanceCache.class), agentMapper));
+            .agentScopeA2aServer(properties, mock(AgentInstanceCache.class),
+                mock(com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory.class), agentMapper));
     }
 
     /** 作用域退出后必须还原，不能把"忽略租户"泄漏给后续调用。 */
@@ -54,11 +57,14 @@ class AdminA2aServerConfigTenantTest {
         AiAgent agent = new AiAgent();
         agent.setAgentCode("coder");
         agent.setAgentName("编码助手");
+        agent.setTenantId("tenant-a");
         when(agentMapper.selectOne(any())).thenReturn(agent);
 
         AdminA2aProperties properties = new AdminA2aProperties();
         properties.setAgentCode("coder");
-        new AdminA2aServerConfig().agentScopeA2aServer(properties, mock(AgentInstanceCache.class), agentMapper);
+        properties.setToken("a2a-test-token");
+        new AdminA2aServerConfig().agentScopeA2aServer(properties, mock(AgentInstanceCache.class),
+            mock(com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory.class), agentMapper);
 
         assertTrue(!InterceptorIgnoreHelper.willIgnoreTenantLine("anyMapperId"));
     }

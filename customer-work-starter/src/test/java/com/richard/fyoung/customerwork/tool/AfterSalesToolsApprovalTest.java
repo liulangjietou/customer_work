@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -20,12 +21,14 @@ class AfterSalesToolsApprovalTest {
     @Test
     void submitRefund_shouldRegisterPendingApproval_whenServicePresent() {
         PendingApprovalService svc = new PendingApprovalService();
-        AfterSalesTools tools = new AfterSalesTools(new MockAfterSalesBackend(), svc);
+        AfterSalesTools tools = new AfterSalesTools(new MockAfterSalesBackend(), svc, "session-real-1");
 
         String reply = tools.submitRefund("O1", "299.00", "七天无理由").block(Duration.ofSeconds(2));
 
         assertTrue(reply.contains("审批单号 AP-"), "回执应包含审批单号: " + reply);
         assertEquals(1, svc.listByStatus(ApprovalStatus.PENDING).size(), "应登记一张待审单");
+        assertEquals("session-real-1",
+            svc.listByStatus(ApprovalStatus.PENDING).get(0).getSessionId());
     }
 
     @Test
@@ -33,5 +36,14 @@ class AfterSalesToolsApprovalTest {
         AfterSalesTools tools = new AfterSalesTools(new MockAfterSalesBackend());
         String reply = tools.submitRefund("O1", "299.00", "七天无理由").block(Duration.ofSeconds(2));
         assertTrue(reply.contains("退款工单"), "未注入审批服务时应仍返回工单文案: " + reply);
+    }
+
+    @Test
+    void submitRefund_shouldFailFast_whenApprovalHasNoRealSession() {
+        AfterSalesTools tools = new AfterSalesTools(
+            new MockAfterSalesBackend(), new PendingApprovalService());
+
+        assertThrows(IllegalStateException.class,
+            () -> tools.submitRefund("O1", "299.00", "七天无理由").block(Duration.ofSeconds(2)));
     }
 }

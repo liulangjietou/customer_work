@@ -19,6 +19,17 @@ public class ModelExperimentVO {
     private Long treatmentDeploymentId;
     private String treatmentModelRef;
     private Integer treatmentEndpointRevision;
+    private String datasetReleaseId;
+    private String datasetVersionName;
+    private String datasetSnapshotVersionId;
+    private String datasetContentHash;
+    private Long judgeDeploymentId;
+    private String judgeModelRef;
+    private Integer judgeEndpointRevision;
+    private String offlineEvalStatus;
+    private LocalDateTime offlineEvalStartedAt;
+    private LocalDateTime offlineEvalCompletedAt;
+    private String offlineEvalError;
     private Integer revision;
     private Integer treatmentBps;
     private String status;

@@ -15,6 +15,8 @@ import java.util.Map;
  * @param command stdio 传输的启动命令
  * @param args    stdio 传输的启动参数
  * @param headers http/sse 传输的附加请求头（如 {@code Authorization}），null 表示不透传
+ * @param workingDirectory stdio 子进程工作目录
+ * @param environment stdio 子进程显式环境变量
  * @author owlzhangfq@gmail.com
  */
 public record McpServerSpec(
@@ -23,7 +25,9 @@ public record McpServerSpec(
     String url,
     String command,
     List<String> args,
-    Map<String, String> headers) {
+    Map<String, String> headers,
+    String workingDirectory,
+    Map<String, String> environment) {
 
     /** 本地进程传输：拉起子进程用标准输入输出通信。 */
     public static final String TYPE_STDIO = "stdio";
@@ -45,6 +49,13 @@ public record McpServerSpec(
 
     /** 构造一个 http/sse 传输的规格（无 stdio 相关字段）。 */
     public static McpServerSpec remote(String name, String type, String url, Map<String, String> headers) {
-        return new McpServerSpec(name, type, url, null, List.of(), headers);
+        return new McpServerSpec(name, type, url, null, List.of(), headers, null, Map.of());
+    }
+
+    /** 构造一个经过策略校验的 stdio 规格。 */
+    public static McpServerSpec stdio(String name, String command, List<String> args,
+                                      String workingDirectory, Map<String, String> environment) {
+        return new McpServerSpec(name, TYPE_STDIO, null, command, args, null,
+            workingDirectory, environment);
     }
 }

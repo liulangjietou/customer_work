@@ -58,4 +58,22 @@ class WeChatSignatureVerifierTest {
         assertFalse(WeChatSignatureVerifier.verify("", TIMESTAMP, NONCE, sig));
         assertFalse(WeChatSignatureVerifier.verify(TOKEN, TIMESTAMP, NONCE, ""));
     }
+
+    @Test
+    void safeModeShouldIncludeEncryptedPayloadInSignature() throws Exception {
+        String encrypted = "base64-encrypted-payload";
+        String[] parts = {TOKEN, TIMESTAMP, NONCE, encrypted};
+        Arrays.sort(parts);
+        MessageDigest md = MessageDigest.getInstance("SHA-1");
+        byte[] digest = md.digest(String.join("", parts).getBytes(StandardCharsets.UTF_8));
+        StringBuilder signature = new StringBuilder();
+        for (byte b : digest) {
+            signature.append(String.format("%02x", b));
+        }
+
+        assertTrue(WeChatSignatureVerifier.verifySafe(TOKEN, TIMESTAMP, NONCE,
+            encrypted, signature.toString()));
+        assertFalse(WeChatSignatureVerifier.verifySafe(TOKEN, TIMESTAMP, NONCE,
+            encrypted + "changed", signature.toString()));
+    }
 }

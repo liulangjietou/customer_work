@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
+import com.richard.fyoung.customerwork.tool.mcp.McpSecurityPolicy;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.extensions.higress.HigressMcpClientBuilder;
 import io.agentscope.extensions.higress.HigressMcpClientWrapper;
@@ -30,9 +31,12 @@ public class HigressToolkitConfigurer {
     private static final Logger log = LoggerFactory.getLogger(HigressToolkitConfigurer.class);
 
     private final CustomerWorkProperties properties;
+    private final McpSecurityPolicy securityPolicy;
 
     public HigressToolkitConfigurer(CustomerWorkProperties properties) {
         this.properties = properties;
+        this.securityPolicy = new McpSecurityPolicy(properties.getMcp()::getAllowedHosts,
+            java.util.List::of, java.util.List::of, java.util.List::of);
     }
 
     /** 是否启用 Higress（开关开启且配置了 endpoint）。 */
@@ -47,27 +51,44 @@ public class HigressToolkitConfigurer {
             return;
         }
         HigressProperties h = properties.getHigress();
+        HigressMcpClientWrapper wrapper = null;
         try {
-            HigressMcpClientWrapper wrapper = buildClient(h).block();
+            wrapper = buildClient(h).block();
             if (wrapper != null) {
                 toolkit.registerMcpClient(wrapper).block();
-                log.info("[Higress] 已接入 AI 网关 endpoint={} toolSearch={}",
+                log.info("[Higress] AI gateway registered, endpoint={} toolSearch={}",
                     h.getEndpoint(), h.getToolSearch());
+                wrapper = null; // 生命周期已交给 ManagedToolkit。
             }
         } catch (Exception e) {
+            closeRegistrationFailure(wrapper, h.getName());
             // Higress 不可用不应阻断应用启动
-            log.error("[Higress] 接入失败 endpoint={}: {}", h.getEndpoint(), e.getMessage());
+            log.error("[Higress] registration failed, code={} endpoint={}",
+                "HIGRESS-REGISTER-FAIL", h.getEndpoint(), e);
+        }
+    }
+
+    private void closeRegistrationFailure(HigressMcpClientWrapper wrapper, String name) {
+        if (wrapper == null) {
+            return;
+        }
+        try {
+            wrapper.close();
+        } catch (Exception closeError) {
+            log.error("[Higress] registration rollback close failed, code={} name={}",
+                "HIGRESS-REGISTER-ROLLBACK-CLOSE-FAIL", name, closeError);
         }
     }
 
     private reactor.core.publisher.Mono<HigressMcpClientWrapper> buildClient(
             HigressProperties h) {
+        String safeEndpoint = securityPolicy.validateRemoteUrl(h.getEndpoint());
         HigressMcpClientBuilder builder = HigressMcpClientBuilder.create(h.getName())
             .timeout(Duration.ofSeconds(h.getTimeoutSeconds()));
         if (McpServerSpec.TRANSPORT_STREAMABLE_HTTP.equalsIgnoreCase(h.getTransport())) {
-            builder.streamableHttpEndpoint(h.getEndpoint());
+            builder.streamableHttpEndpoint(safeEndpoint);
         } else {
-            builder.sseEndpoint(h.getEndpoint());
+            builder.sseEndpoint(safeEndpoint);
         }
         if (StringUtils.hasText(h.getToolSearch())) {
             builder.toolSearch(h.getToolSearch(), h.getMaxTools());

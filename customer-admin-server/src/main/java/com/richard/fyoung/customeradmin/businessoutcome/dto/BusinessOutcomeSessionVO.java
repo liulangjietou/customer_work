@@ -1,5 +1,7 @@
 package com.richard.fyoung.customeradmin.businessoutcome.dto;
 
+import java.math.BigDecimal;
+
 /** 单会话的可解释代理结果；不把技术成功冒充为真实业务解决。 */
 public record BusinessOutcomeSessionVO(
     String sessionId,
@@ -12,6 +14,9 @@ public record BusinessOutcomeSessionVO(
     boolean autoResolvedProxy,
     Long totalTokens,
     MetricAvailability tokenAvailability,
+    BigDecimal modelCost,
+    String costCurrency,
+    MetricAvailability costAvailability,
     Integer csatScore
 ) {
 }

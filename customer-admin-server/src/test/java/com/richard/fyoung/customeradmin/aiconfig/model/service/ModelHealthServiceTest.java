@@ -46,6 +46,7 @@ class ModelHealthServiceTest {
     private SecretRefService secretRefService;
     private AdminModelFactory modelFactory;
     private ModelHealthStore healthStore;
+    private ModelHealthCoordinator healthCoordinator;
     private AdminTenantProperties tenantProperties;
     private ModelEndpointPolicy endpointPolicy;
     private ModelHealthMonitorProperties monitorProperties;
@@ -59,6 +60,7 @@ class ModelHealthServiceTest {
         secretRefService = mock(SecretRefService.class);
         modelFactory = mock(AdminModelFactory.class);
         healthStore = mock(ModelHealthStore.class);
+        healthCoordinator = mock(ModelHealthCoordinator.class);
         tenantProperties = new AdminTenantProperties();
         endpointPolicy = new ModelEndpointPolicy(List::of,
             host -> new InetAddress[] {InetAddress.getByName("8.8.8.8")});
@@ -87,7 +89,7 @@ class ModelHealthServiceTest {
         when(modelFactory.testConnectivity("openai", "https://example.test/v1", secret, "gpt-test"))
             .thenReturn(new ModelTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(),
                 "401 invalid credential " + secret));
-        when(healthStore.record(eq(model), any(ModelTestResult.class), eq(ModelProbeSource.MANUAL)))
+        when(healthCoordinator.record(eq(model), any(ModelTestResult.class), eq(ModelProbeSource.MANUAL)))
             .thenReturn(recorded(ModelHealthStatus.DEGRADED.name()));
         ModelHealthService service = service();
 
@@ -97,7 +99,7 @@ class ModelHealthServiceTest {
         assertEquals(ModelHealthErrorCategory.AUTH.name(), result.errorCategory());
         assertFalse(result.message().contains(secret));
         ArgumentCaptor<ModelTestResult> persisted = ArgumentCaptor.forClass(ModelTestResult.class);
-        verify(healthStore).record(eq(model), persisted.capture(), eq(ModelProbeSource.MANUAL));
+        verify(healthCoordinator).record(eq(model), persisted.capture(), eq(ModelProbeSource.MANUAL));
         assertFalse(persisted.getValue().message().contains(secret));
         verify(modelConfigMapper).updateById(any(AiModelConfig.class));
     }
@@ -111,7 +113,7 @@ class ModelHealthServiceTest {
         when(modelFactory.testConnectivity(any(), any(), any(), any()))
             .thenReturn(new ModelTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(),
                 "429 rate limit exceeded"));
-        when(healthStore.record(eq(model), any(ModelTestResult.class), eq(ModelProbeSource.SCHEDULED)))
+        when(healthCoordinator.record(eq(model), any(ModelTestResult.class), eq(ModelProbeSource.SCHEDULED)))
             .thenReturn(recorded(ModelHealthStatus.DEGRADED.name()));
 
         ModelTestResult result = service().probe(11L, ModelProbeSource.SCHEDULED)
@@ -134,7 +136,7 @@ class ModelHealthServiceTest {
             .get(2, TimeUnit.SECONDS);
 
         assertEquals(ModelHealthStatus.HEALTHY.name(), result.healthStatus());
-        verify(healthStore, never()).record(any(), any(), any());
+        verify(healthCoordinator, never()).record(any(), any(), any());
         verify(modelConfigMapper, never()).updateById(any(AiModelConfig.class));
     }
 
@@ -145,7 +147,7 @@ class ModelHealthServiceTest {
         AiModelConfig model = model("default");
         model.setBaseUrl("http://127.0.0.1:11434/v1");
         when(modelConfigAccess.findVisibleAnyStateById(11L)).thenReturn(model);
-        when(healthStore.record(eq(model), any(ModelTestResult.class), eq(ModelProbeSource.MANUAL)))
+        when(healthCoordinator.record(eq(model), any(ModelTestResult.class), eq(ModelProbeSource.MANUAL)))
             .thenReturn(recorded(ModelHealthStatus.DEGRADED.name()));
 
         ModelTestResult result = service().probe(11L, ModelProbeSource.MANUAL)
@@ -213,7 +215,7 @@ class ModelHealthServiceTest {
 
     private ModelHealthService service() {
         return new ModelHealthService(modelConfigAccess, modelConfigMapper, secretRefService,
-            modelFactory, healthStore, tenantProperties, endpointPolicy, monitorProperties,
+            modelFactory, healthStore, healthCoordinator, tenantProperties, endpointPolicy, monitorProperties,
             probeExecutor, timeoutScheduler);
     }
 
@@ -229,8 +231,9 @@ class ModelHealthServiceTest {
     }
 
     private ModelHealthSnapshotVO snapshot(String status) {
-        return new ModelHealthSnapshotVO(status, "UNKNOWN", "UNKNOWN", 1, 10L,
-            null, null, LocalDateTime.now(), null, null, LocalDateTime.now().plusMinutes(5), 1);
+        return new ModelHealthSnapshotVO(status, status, true, "UNKNOWN", "UNKNOWN",
+            1, 0, 10L, null, null, LocalDateTime.now(), null, null,
+            LocalDateTime.now().plusMinutes(5), null, "AUTO", null, null, null, null, 1);
     }
 
     private ModelHealthStore.RecordResult recorded(String status) {

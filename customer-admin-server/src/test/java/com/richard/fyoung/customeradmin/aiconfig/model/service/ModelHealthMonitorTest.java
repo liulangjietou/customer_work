@@ -60,6 +60,7 @@ class ModelHealthMonitorTest {
 
         monitor.dispatchSafely();
 
+        verify(healthService).expireOverrides(100);
         verify(healthService).probe(1L, ModelProbeSource.SCHEDULED);
         verify(healthService).probe(2L, ModelProbeSource.SCHEDULED);
         assertNull(TenantContext.get());

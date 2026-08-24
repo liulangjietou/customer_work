@@ -5,5 +5,6 @@ public enum SecretRefStatus {
     ACTIVE,
     EXPIRED,
     DISABLED,
+    REVOKED,
     ERROR
 }

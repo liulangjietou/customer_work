@@ -2,7 +2,11 @@ package com.richard.fyoung.customerworkapp.chat;
 
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
-import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
+import com.richard.fyoung.customerwork.core.dto.ChatUsageSnapshot;
+import com.richard.fyoung.customerwork.core.service.ChatTurnCompletion;
+import com.richard.fyoung.customerwork.core.service.ChatTurnEvent;
+import com.richard.fyoung.customerwork.core.service.ChatTurnService;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.data.ticket.Ticket;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
@@ -44,7 +48,7 @@ class ChatDispatchServiceTest {
 
     private TicketService ticketService;
     private ChatLogService chatLogService;
-    private CustomerServiceService customerServiceService;
+    private ChatTurnService chatTurnService;
     private HandoffKeywordDetector keywordDetector;
     private WsSessionRegistry registry;
     private SubjectQuotaGuard subjectQuotaGuard;
@@ -56,13 +60,13 @@ class ChatDispatchServiceTest {
     void setUp() {
         ticketService = mock(TicketService.class);
         chatLogService = mock(ChatLogService.class);
-        customerServiceService = mock(CustomerServiceService.class);
+        chatTurnService = mock(ChatTurnService.class);
         keywordDetector = mock(HandoffKeywordDetector.class);
         registry = mock(WsSessionRegistry.class);
         // 默认放行：本类测的是分发路由，配额行为另有专门用例
         subjectQuotaGuard = mock(SubjectQuotaGuard.class);
         lenient().when(subjectQuotaGuard.check(any(), any())).thenReturn(SubjectQuotaDecision.allow());
-        dispatch = new ChatDispatchService(ticketService, chatLogService, customerServiceService,
+        dispatch = new ChatDispatchService(ticketService, chatLogService, chatTurnService,
             keywordDetector, registry, subjectQuotaGuard);
         // 落库统一返回一条带 messageId 的消息（AI 流式收尾需要读 messageId）
         lenient().when(chatLogService.append(any(), any(), any(), any(), any()))
@@ -71,6 +75,21 @@ class ChatDispatchServiceTest {
 
     private Ticket aiServing() {
         return Ticket.create("TK-1", SESSION_ID, USER_ID, null, TicketCategory.CONSULT);
+    }
+
+    private Flux<ChatTurnEvent> turn(String... chunks) {
+        java.util.List<ChatTurnEvent> events = new java.util.ArrayList<>();
+        StringBuilder reply = new StringBuilder();
+        for (String chunk : chunks) {
+            reply.append(chunk);
+            events.add(new ChatTurnEvent.Delta(chunk));
+        }
+        ChatMessage message = ChatMessage.of("MSG-9", SESSION_ID, "TK-1",
+            TicketActorType.BOT, null, reply.toString());
+        ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-9", "MODEL_STOP",
+            new ChatUsageSnapshot(8, 2, 0, 10, 0.1), "trace-ws");
+        events.add(new ChatTurnEvent.Completed(new ChatTurnCompletion(message, terminal)));
+        return Flux.fromIterable(events);
     }
 
     private boolean typeIs(Object frame, String type) {
@@ -94,7 +113,7 @@ class ChatDispatchServiceTest {
         StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "我要转人工")).verifyComplete();
 
         verify(ticketService).requestHandoff(eq(SESSION_ID), anyString(), eq(TicketActorType.USER), eq(USER_ID));
-        verify(customerServiceService, never()).chatStream(anyString(), anyString());
+        verify(chatTurnService, never()).stream(anyString(), anyString(), any());
         // system 通知帧必须携带会话/工单标识，供前端按当前查看会话过滤
         verify(registry).pushToUser(eq(USER_ID), argThat(f -> systemWithSession(f, SESSION_ID, "TK-1")));
     }
@@ -113,14 +132,21 @@ class ChatDispatchServiceTest {
     void aiServing_shouldBridgeChatStreamToChunkAndDoneFrames() {
         when(ticketService.findActiveBySession(SESSION_ID)).thenReturn(Optional.of(aiServing()));
         when(keywordDetector.hit(anyString())).thenReturn(false);
-        when(customerServiceService.chatStream(SESSION_ID, "你好")).thenReturn(Flux.just("你", "好"));
+        when(chatTurnService.stream(SESSION_ID, "你好", "TK-1")).thenReturn(turn("你", "好"));
 
         StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好")).verifyComplete();
 
         verify(registry, times(2)).pushToUser(eq(USER_ID), argThat(f -> typeIs(f, WsFrame.TYPE_CHAT_CHUNK)));
         verify(registry).pushToUser(eq(USER_ID), argThat(f -> typeIs(f, WsFrame.TYPE_CHAT_DONE)));
-        // 聚合全文落库为 BOT 消息
-        verify(chatLogService).append(eq(SESSION_ID), eq("TK-1"), eq(TicketActorType.BOT), isNull(), eq("你好"));
+        verify(registry).pushToUser(eq(USER_ID), argThat(frame -> {
+            if (!typeIs(frame, WsFrame.TYPE_CHAT_DONE)) {
+                return false;
+            }
+            java.util.Map<?, ?> data = (java.util.Map<?, ?>) ((WsFrame) frame).data();
+            return "MSG-9".equals(data.get("messageId"))
+                && "MODEL_STOP".equals(data.get("finishReason"))
+                && "trace-ws".equals(data.get("traceId"));
+        }));
         // 首条消息回填标题
         verify(ticketService).fillTitle("TK-1", "你好");
     }
@@ -136,7 +162,7 @@ class ChatDispatchServiceTest {
         StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "在吗")).verifyComplete();
 
         verify(registry).pushToAgent(eq("agent-9"), argThat(f -> typeIs(f, WsFrame.TYPE_CHAT)));
-        verify(customerServiceService, never()).chatStream(anyString(), anyString());
+        verify(chatTurnService, never()).stream(anyString(), anyString(), any());
     }
 
     @Test
@@ -146,7 +172,7 @@ class ChatDispatchServiceTest {
         when(ticketService.createForSession(SESSION_ID, USER_ID, null, TicketCategory.CONSULT))
             .thenReturn(created);
         when(keywordDetector.hit(anyString())).thenReturn(false);
-        when(customerServiceService.chatStream(anyString(), anyString())).thenReturn(Flux.just("hi"));
+        when(chatTurnService.stream(anyString(), anyString(), anyString())).thenReturn(turn("hi"));
 
         StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好")).verifyComplete();
 

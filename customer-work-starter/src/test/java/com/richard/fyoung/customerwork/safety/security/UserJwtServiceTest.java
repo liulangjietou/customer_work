@@ -52,6 +52,14 @@ class UserJwtServiceTest {
     }
 
     @Test
+    void issue_shouldFreezeUserSessionEpoch() {
+        UserPrincipal principal = service().verify(
+            service().issue("U1", "alice", "Alice", "tenant-a", 9L, 3L)).orElseThrow();
+
+        assertEquals(3L, principal.sessionEpoch());
+    }
+
+    @Test
     void verify_tamperedToken_shouldReturnEmpty() {
         UserJwtService svc = service();
         String token = svc.issue("U1", "alice", "Alice");

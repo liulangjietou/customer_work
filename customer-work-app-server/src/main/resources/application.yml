@@ -88,6 +88,10 @@ customer-work:
     tenant-code: ${NACOS_TENANT_CODE:}
     # API Key 密文 AES 解密密钥：必须与 admin 的 ADMIN_AES_SECRET_KEY 同值，否则整份配置解密失败并保留旧配置。
     config-aes-key: ${CUSTOMER_WORK_CONFIG_AES_KEY:}
+    # 先验签再解密；生产门禁要求开启。轮换旧 key 可通过外部配置绑定 runtime-config-signing-keys map。
+    runtime-config-signature-required: ${CW_RUNTIME_CONFIG_SIGNATURE_REQUIRED:false}
+    runtime-config-signing-key-id: ${CW_RUNTIME_CONFIG_SIGNING_KEY_ID:}
+    runtime-config-signing-secret: ${CW_RUNTIME_CONFIG_SIGNING_SECRET:}
     # 实例应用结果经 DB Outbox 可靠回传 admin；开启运行时配置时生产环必须配置。
     runtime-config-ack-url: ${CW_RUNTIME_CONFIG_ACK_URL:}
     runtime-config-ack-token: ${CW_RUNTIME_CONFIG_ACK_TOKEN:}

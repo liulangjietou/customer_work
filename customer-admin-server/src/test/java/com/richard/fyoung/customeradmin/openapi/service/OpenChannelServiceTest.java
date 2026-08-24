@@ -21,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -44,6 +45,8 @@ class OpenChannelServiceTest {
     private static final String APP_KEY = "app-key-1";
     private static final String USER = "user-42";
     private static final String PLAIN_SECRET = "app-secret-9999";
+    private static final String ENCODING_AES_KEY =
+        Base64.getEncoder().withoutPadding().encodeToString(new byte[32]);
 
     private AiChannelRobotMapper robotMapper;
     private AiChannelSessionMapper sessionMapper;
@@ -75,6 +78,8 @@ class OpenChannelServiceTest {
         robot.setAppKey(APP_KEY);
         robot.setAgentCode("agent-x");
         robot.setAppSecretCipher(cryptoUtil.encrypt(PLAIN_SECRET));
+        robot.setCallbackMode("safe");
+        robot.setEncodingAesKeyCipher(cryptoUtil.encrypt(ENCODING_AES_KEY));
         robot.setUpdateTime(updateTime);
         when(robotMapper.selectList(any())).thenReturn(List.of(robot));
 
@@ -83,6 +88,8 @@ class OpenChannelServiceTest {
         assertEquals(1, list.size());
         OpenChannelRobotVO vo = list.get(0);
         assertEquals(PLAIN_SECRET, vo.getAppSecret(), "开放 API 下发解密后的明文密钥");
+        assertEquals("safe", vo.getCallbackMode());
+        assertEquals(ENCODING_AES_KEY, vo.getEncodingAesKey());
         long expected = updateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
         assertEquals(expected, vo.getVersion());
     }
@@ -164,5 +171,28 @@ class OpenChannelServiceTest {
         assertTrue(wrapper.getParamNameValuePairs().containsValue(CHANNEL));
         assertTrue(wrapper.getParamNameValuePairs().containsValue(APP_KEY));
         assertTrue(wrapper.getParamNameValuePairs().containsValue(StatusFlags.ENABLED));
+    }
+
+    @Test
+    void requireChatAuthorized_shouldRejectSessionOwnedByAnotherChannelUser() {
+        when(robotMapper.exists(any())).thenReturn(true);
+        when(sessionMapper.exists(any())).thenReturn(false);
+
+        BizException ex = assertThrows(BizException.class,
+            () -> service.requireChatAuthorized("agent-x", CHANNEL, APP_KEY, USER, "ch-other"));
+
+        assertEquals(ResultCode.RESOURCE_NOT_FOUND, ex.getResultCode());
+    }
+
+    @Test
+    void channelSubjectId_shouldBeStableAndIsolateExternalUsers() {
+        String first = service.channelSubjectId(CHANNEL, APP_KEY, USER);
+        String same = service.channelSubjectId(CHANNEL, APP_KEY, USER);
+        String another = service.channelSubjectId(CHANNEL, APP_KEY, "user-43");
+
+        assertEquals(first, same);
+        assertNotEquals(first, another);
+        assertTrue(first.startsWith("channel:"));
+        assertTrue(!first.contains(USER));
     }
 }

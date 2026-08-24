@@ -31,15 +31,25 @@ public class RedissonSessionLock implements SessionLock {
     /** Redis 不可达时的降级去处：退回单实例串行，总比完全没有互斥好。 */
     private final SessionLock fallback;
 
+    /** 是否允许 Redis 故障时退化为进程内锁；多副本强一致入口必须关闭。 */
+    private final boolean fallbackOnError;
+
     private volatile boolean degradedLogged = false;
 
     public RedissonSessionLock(RedissonClient redisson, String keyPrefix,
                                long waitSeconds, long leaseSeconds, SessionLock fallback) {
+        this(redisson, keyPrefix, waitSeconds, leaseSeconds, fallback, true);
+    }
+
+    public RedissonSessionLock(RedissonClient redisson, String keyPrefix,
+                               long waitSeconds, long leaseSeconds, SessionLock fallback,
+                               boolean fallbackOnError) {
         this.redisson = redisson;
         this.keyPrefix = keyPrefix == null || keyPrefix.isBlank() ? "cw:sessionlock:" : keyPrefix;
         this.waitSeconds = waitSeconds <= 0 ? 10 : waitSeconds;
         this.leaseSeconds = leaseSeconds <= 0 ? 120 : leaseSeconds;
         this.fallback = fallback == null ? new InMemorySessionLock(waitSeconds) : fallback;
+        this.fallbackOnError = fallbackOnError;
     }
 
     @Override
@@ -55,6 +65,9 @@ public class RedissonSessionLock implements SessionLock {
             Thread.currentThread().interrupt();
             throw new SessionLockTimeoutException(sessionId);
         } catch (Exception e) {
+            if (!fallbackOnError) {
+                throw new SessionLockUnavailableException(sessionId, e);
+            }
             logDegraded(e);
             return fallback.acquire(sessionId);
         }

@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class EvalGatewayProvider {
 
-    private final CustomerWorkFacade<EvalRunStore> facade;
+    private final CustomerWorkFacade<EvalGateway> facade;
 
     public EvalGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("eval-run-pool", properties, tenantPlugins)
@@ -34,6 +34,11 @@ public class EvalGatewayProvider {
 
     /** 取门面（惰性建连 + 探测 + 缓存）；库不可达抛带业务语义的异常。 */
     public EvalRunStore get() {
+        return facade.get().runStore();
+    }
+
+    /** 数据集治理入口；与运行记录共用连接池，避免同一客服端库重复建池。 */
+    public EvalGateway dataset() {
         return facade.get();
     }
 

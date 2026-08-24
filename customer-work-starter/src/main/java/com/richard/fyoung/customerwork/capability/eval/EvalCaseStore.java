@@ -18,6 +18,17 @@ public interface EvalCaseStore {
     /** 保存（新建或覆盖）一条用例。 */
     void save(PersistedEvalCase evalCase);
 
+    /**
+     * 批量保存（新建或覆盖）用例。
+     *
+     * <p>默认实现保持 SPI 向后兼容；JDBC 实现会覆盖为单条批量 SQL，确保导入不会只成功一半。</p>
+     */
+    default void saveAll(List<PersistedEvalCase> evalCases) {
+        for (PersistedEvalCase evalCase : evalCases) {
+            save(evalCase);
+        }
+    }
+
     /** 按类型取全部用例（含 disabled——合并种子时要靠 disabled 记录去屏蔽同 ID 的种子）。 */
     List<PersistedEvalCase> findByType(EvalType type);
 

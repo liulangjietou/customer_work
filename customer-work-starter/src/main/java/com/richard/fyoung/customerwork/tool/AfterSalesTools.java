@@ -21,14 +21,22 @@ public class AfterSalesTools {
     private final AfterSalesBackend backend;
     /** 可空：未注入时不登记审批单，保持纯工具可用。 */
     private final PendingApprovalService approvalService;
+    /** 构建 Agent 时冻结的真实会话；非 Agent 工具场景可为 null。 */
+    private final String sessionId;
 
     public AfterSalesTools(AfterSalesBackend backend) {
-        this(backend, null);
+        this(backend, null, null);
     }
 
     public AfterSalesTools(AfterSalesBackend backend, PendingApprovalService approvalService) {
+        this(backend, approvalService, null);
+    }
+
+    public AfterSalesTools(AfterSalesBackend backend, PendingApprovalService approvalService,
+                           String sessionId) {
         this.backend = backend;
         this.approvalService = approvalService;
+        this.sessionId = sessionId;
     }
 
     @Tool(description = "校验某订单是否满足退款条件（是否在七天无理由期内、是否已支付）。发起退款前必须先调用此工具。")
@@ -54,9 +62,16 @@ public class AfterSalesTools {
                     return result;
                 }
                 ApprovalRequest req = approvalService.submit(
-                    ApprovalType.REFUND, ToolConstants.AGENT_TOOL_SESSION, orderId, amount, reason);
+                    ApprovalType.REFUND, requireSessionId(), orderId, amount, reason);
                 return result + "（审批单号 " + req.getId() + "，需人工坐席放行后执行打款）";
             });
+    }
+
+    private String requireSessionId() {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalStateException("refund approval requires a real agent session");
+        }
+        return sessionId;
     }
 
     @Tool(description = "查询某订单的退款/退货处理进度。用户问'退款到哪了''退款进度''钱什么时候到'时调用。")

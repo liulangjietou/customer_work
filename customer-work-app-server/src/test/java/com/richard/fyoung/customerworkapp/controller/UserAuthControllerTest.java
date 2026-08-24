@@ -68,6 +68,8 @@ class UserAuthControllerTest {
             .thenReturn(TenantAccessDecision.allowed(0L));
         when(tenantAccessGuard.check(anyString(), nullable(Long.class), anyBoolean()))
             .thenReturn(TenantAccessDecision.allowed(0L));
+        when(userAccountService.isSessionActive(anyString(), anyString(), nullable(Long.class)))
+            .thenReturn(true);
     }
 
     private UserAccount account() {
@@ -209,6 +211,39 @@ class UserAuthControllerTest {
             .expectStatus().isUnauthorized();
 
         verify(userAccountService, never()).findById(any());
+    }
+
+    @Test
+    void me_withRevokedUserSession_shouldReturn401() {
+        when(userAccountService.isSessionActive(eq(TenantContext.DEFAULT), eq("U-1"), eq(0L)))
+            .thenReturn(false);
+        String token = jwtService.issue("U-1", "alice", "Alice");
+
+        webTestClient.get().uri("/api/customer/auth/me")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .exchange()
+            .expectStatus().isUnauthorized();
+
+        verify(userAccountService, never()).findById(any());
+    }
+
+    @Test
+    void revokeSessions_withValidToken_shouldReturnNewEpoch() {
+        when(userAccountService.revokeSessions("U-1")).thenAnswer(invocation -> {
+            assertEquals(TenantContext.DEFAULT, TenantContext.get());
+            return 1L;
+        });
+        String token = jwtService.issue("U-1", "alice", "Alice");
+
+        webTestClient.post().uri("/api/customer/auth/revoke-sessions")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody()
+            .jsonPath("$.revoked").isEqualTo(true)
+            .jsonPath("$.sessionEpoch").isEqualTo(1);
+
+        verify(userAccountService).revokeSessions("U-1");
     }
 
     @Test

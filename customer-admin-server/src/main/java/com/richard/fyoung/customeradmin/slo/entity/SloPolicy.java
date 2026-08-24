@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.slo.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -30,6 +32,21 @@ public class SloPolicy {
     private Integer minimumSampleCount;
     private BigDecimal burnRateThreshold;
     private Boolean enabled;
+    /** 以下字段只由周期评估租约 Mapper 更新，策略编辑不得覆盖正在执行的租约。 */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Long nextEvaluationAtMs;
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String evaluationLeaseOwner;
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Long evaluationLeaseUntilMs;
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Integer evaluationFailures;
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private LocalDateTime lastEvaluatedAt;
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String lastEvaluationStatus;
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String lastEvaluationError;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

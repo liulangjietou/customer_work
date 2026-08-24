@@ -5,12 +5,14 @@ import com.richard.fyoung.customerwork.infra.config.ModelConfig;
 import com.richard.fyoung.customerwork.infra.config.PermissionConfig;
 import com.richard.fyoung.customerwork.infra.config.SessionConfig;
 import com.richard.fyoung.customerwork.core.agent.AgentGovernanceAssembler;
+import com.richard.fyoung.customerwork.core.agent.RuntimeAgentAccessState;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import io.agentscope.core.middleware.MiddlewareBase;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import com.richard.fyoung.customerwork.observability.StudioConfigurer;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
+import com.richard.fyoung.customerwork.tool.ManagedToolkit;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
@@ -68,12 +70,18 @@ public class CustomerWebAgentConfig {
      * 走统一装配器的意义在于：日后主链路新增治理能力时，这条渠道链路不会再被落下。</p>
      */
     @Bean
+    public RuntimeAgentAccessState runtimeAgentAccessState() {
+        return new RuntimeAgentAccessState();
+    }
+
+    @Bean
     public AgentGovernanceAssembler agentGovernanceAssembler(
             CustomerWorkProperties properties,
             ObjectProvider<MiddlewareBase> pluggableMiddlewares,
-            ObjectProvider<MeterRegistry> meterRegistryProvider) {
+            ObjectProvider<MeterRegistry> meterRegistryProvider,
+            RuntimeAgentAccessState runtimeAccessState) {
         return new AgentGovernanceAssembler(properties, new TenantResolver(properties),
-            pluggableMiddlewares, meterRegistryProvider);
+            pluggableMiddlewares, meterRegistryProvider, runtimeAccessState);
     }
 
     /** 状态外置存储（复用 SessionConfig：memory/json/redis/mysql AgentStateStore）。 */
@@ -121,9 +129,9 @@ public class CustomerWebAgentConfig {
     }
 
     /** 业务工具集（复用 ToolRegistrar + 默认 Mock 后端；生产可换真实后端）。 */
-    @Bean
-    public Toolkit customerToolkit() {
-        Toolkit toolkit = new DefaultActiveGroupsToolkit();
+    @Bean(destroyMethod = "close")
+    public ManagedToolkit customerToolkit() {
+        ManagedToolkit toolkit = new DefaultActiveGroupsToolkit();
         new ToolRegistrar(new MockOrderBackend(), new MockAfterSalesBackend(), new MockKnowledgeBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
             new com.richard.fyoung.customerwork.tool.backend.MockMemberBackend(),

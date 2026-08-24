@@ -4,20 +4,35 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
-import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanEvent;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.PlanResultEvent;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.store.InMemoryPlanConfirmationStore;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.store.PlanConfirmationRecord;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.store.PlanConfirmationState;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.store.PlanConfirmationStore;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.time.LocalDateTime;
+import java.util.function.Supplier;
 
 /**
  * Plan Mode 人工确认注册表 + 会话级事件通道（需求 P1-1「流中暂停等确认」的核心）。
@@ -33,30 +48,51 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>超时由中间件侧对 future 施加，超时后调 {@link #timeout} 补 {@code plan_result=TIMEOUT}。</li>
  * </ol>
  *
- * <h3>单实例语义（简化边界，符合需求 §4.4.3）</h3>
- * 挂起态只存进程内存（{@link #channels} + 每通道的 {@link PlanChannel#pending}），<b>不持久化</b>：
- * 服务重启即全部失效，重启后到来的 {@code /plan/confirm} 找不到挂起项直接 fast fail（返回 false）；
- * 且正在挂起的 SSE 连接本身也会随重启断开。多实例部署需要把注册表外部化（如 Redis），当前不做。
+ * <p>本地通道只负责向原始 SSE 回送事件；PENDING 与终态写入共享存储。任意 Pod 确认后，
+ * 发起 Pod 的观察器会完成本地 future，使挂起工具恢复或拒绝。</p>
  * @author owlzhangfq@gmail.com
  */
 @Service
 public class PlanConfirmationService {
 
     private static final Logger log = LoggerFactory.getLogger(PlanConfirmationService.class);
+    private static final long REMOTE_DECISION_POLL_MS = 100L;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final PlanConfirmationStore store;
+    private final ScheduledExecutorService decisionObserver;
 
     /** {@code agentCode:sessionId -> 会话通道}。同一会话重新 stream 会顶替旧通道（旧的挂起项一并 fast fail）。 */
     private final Map<String, PlanChannel> channels = new ConcurrentHashMap<>();
 
+    @Autowired
+    public PlanConfirmationService(PlanConfirmationStore store) {
+        this.store = store;
+        ThreadFactory factory = runnable -> {
+            Thread thread = new Thread(runnable, "plan-confirmation-observer");
+            thread.setDaemon(true);
+            return thread;
+        };
+        this.decisionObserver = Executors.newSingleThreadScheduledExecutor(factory);
+    }
+
+    /** 单测/嵌入式使用；跨 Pod 测试应显式让两个实例共享同一个 Store。 */
+    public PlanConfirmationService() {
+        this(new InMemoryPlanConfirmationStore());
+    }
+
     /** 打开会话通道（stream 订阅时调用，早于 Agent 产出任何事件，保证中间件挂起时能找到通道）。 */
     public PlanChannel openChannel(String agentCode, String sessionId) {
-        String key = channelKey(agentCode, sessionId);
-        PlanChannel channel = new PlanChannel(key);
+        return openChannel(currentTenant(), agentCode, sessionId);
+    }
+
+    public PlanChannel openChannel(String tenantId, String agentCode, String sessionId) {
+        String key = channelKey(tenantId, agentCode, sessionId);
+        PlanChannel channel = new PlanChannel(key, tenantId, agentCode, sessionId);
         PlanChannel previous = channels.put(key, channel);
         if (previous != null) {
             // 同一会话上一轮通道未清理（异常残留）：拒绝其残留挂起项并关掉，避免泄漏
-            previous.abortAll();
+            abortAll(previous);
         }
         return channel;
     }
@@ -80,7 +116,7 @@ public class PlanConfirmationService {
             return;
         }
         channels.remove(channel.key, channel);
-        channel.abortAll();
+        abortAll(channel);
         // 同 completeEvents：断连清理与并发超时/确认的发射存在竞态窗口，complete 必须纳入 emitLock
         synchronized (channel.emitLock) {
             channel.sink.tryEmitComplete();
@@ -92,17 +128,30 @@ public class PlanConfirmationService {
      * 通道不存在（无活跃 SSE 承接确认）时返回 {@link Optional#empty()}——调用方据此 fast fail 放行给护栏兜底。
      */
     public Optional<PlanTicket> submit(String agentCode, String sessionId, PlanEvent event) {
-        PlanChannel channel = channels.get(channelKey(agentCode, sessionId));
+        String tenantId = currentTenant();
+        PlanChannel channel = channels.get(channelKey(tenantId, agentCode, sessionId));
         if (channel == null) {
             log.info("[workspace] plan confirm skipped: no live channel, agentCode={}, sessionId={}", agentCode, sessionId);
             return Optional.empty();
         }
-        CompletableFuture<Boolean> future = new CompletableFuture<>();
-        channel.pending.put(event.planId(), future);
+        int timeoutSeconds = Math.max(1, event.timeoutSeconds());
+        PlanConfirmationRecord record = new PlanConfirmationRecord(tenantId, agentCode, sessionId, event.planId(),
+            PlanConfirmationState.PENDING, LocalDateTime.now().plusSeconds(timeoutSeconds));
+        if (!inTenant(tenantId, () -> store.create(record))) {
+            log.error("create plan confirmation failed, code={}, planId={}",
+                "PLAN-CONFIRMATION-DUPLICATE", event.planId());
+            return Optional.empty();
+        }
+        PlanTicket ticket = new PlanTicket(channel, event.planId());
+        channel.pending.put(event.planId(), ticket);
+        ScheduledFuture<?> watcher = decisionObserver.scheduleWithFixedDelay(
+            () -> observeRemoteDecision(ticket), REMOTE_DECISION_POLL_MS,
+            REMOTE_DECISION_POLL_MS, TimeUnit.MILLISECONDS);
+        ticket.watch(watcher);
         emit(channel, ChatNodeKind.PLAN, event, "PLAN_EVENT_JSON_ERROR");
-        log.info("[workspace] plan pending confirmation, agentCode={}, sessionId={}, planId={}, actions={}",
-            agentCode, sessionId, event.planId(), event.actions().size());
-        return Optional.of(new PlanTicket(channel, event.planId(), future));
+        log.info("[workspace] plan pending confirmation, tenantId={}, agentCode={}, sessionId={}, planId={}, actions={}",
+            tenantId, agentCode, sessionId, event.planId(), event.actions().size());
+        return Optional.of(ticket);
     }
 
     /**
@@ -112,19 +161,23 @@ public class PlanConfirmationService {
      * @return 是否命中并解决了一个挂起项；false 表示 planId 不存在或已被处理（过期/超时/重启）
      */
     public boolean confirm(String agentCode, String sessionId, String planId, boolean approved) {
-        PlanChannel channel = channels.get(channelKey(agentCode, sessionId));
-        if (channel == null) {
+        return confirm(currentTenant(), agentCode, sessionId, planId, approved);
+    }
+
+    public boolean confirm(String tenantId, String agentCode, String sessionId, String planId, boolean approved) {
+        PlanConfirmationState target = approved
+            ? PlanConfirmationState.APPROVED : PlanConfirmationState.REJECTED;
+        boolean changed = inTenant(tenantId,
+            () -> store.transition(tenantId, agentCode, sessionId, planId, target));
+        if (!changed) {
             return false;
         }
-        CompletableFuture<Boolean> future = channel.pending.remove(planId);
-        if (future == null || future.isDone()) {
-            return false;
+        PlanChannel local = channels.get(channelKey(tenantId, agentCode, sessionId));
+        if (local != null) {
+            resolveLocal(local, planId, target);
         }
-        emit(channel, ChatNodeKind.PLAN_RESULT, new PlanResultEvent(planId,
-            approved ? PlanResultEvent.STATUS_APPROVED : PlanResultEvent.STATUS_REJECTED), "PLAN_RESULT_JSON_ERROR");
-        future.complete(approved);
-        log.info("[workspace] plan confirmed, agentCode={}, sessionId={}, planId={}, approved={}",
-            agentCode, sessionId, planId, approved);
+        log.info("[workspace] plan confirmed, tenantId={}, agentCode={}, sessionId={}, planId={}, approved={}",
+            tenantId, agentCode, sessionId, planId, approved);
         return true;
     }
 
@@ -134,11 +187,13 @@ public class PlanConfirmationService {
      * 与 confirm 侧的 {@code isDone} 检查对齐，避免前端先收 APPROVED 又收 TIMEOUT 的矛盾终态。
      */
     public void timeout(PlanTicket ticket) {
-        if (ticket.channel().pending.remove(ticket.planId()) == null) {
+        PlanChannel channel = ticket.channel();
+        boolean changed = inTenant(channel.tenantId, () -> store.transition(channel.tenantId, channel.agentCode,
+            channel.sessionId, ticket.planId(), PlanConfirmationState.TIMEOUT));
+        if (!changed) {
             return;
         }
-        emit(ticket.channel(), ChatNodeKind.PLAN_RESULT,
-            new PlanResultEvent(ticket.planId(), PlanResultEvent.STATUS_TIMEOUT), "PLAN_RESULT_JSON_ERROR");
+        resolveLocal(channel, ticket.planId(), PlanConfirmationState.TIMEOUT);
         log.info("[workspace] plan confirm timeout (treated as reject), planId={}", ticket.planId());
     }
 
@@ -156,8 +211,62 @@ public class PlanConfirmationService {
         }
     }
 
-    private String channelKey(String agentCode, String sessionId) {
-        return WorkspaceRuntimeScope.session(agentCode, sessionId);
+    private void observeRemoteDecision(PlanTicket ticket) {
+        PlanChannel channel = ticket.channel();
+        if (!channel.pending.containsKey(ticket.planId())) {
+            ticket.stopWatching();
+            return;
+        }
+        try {
+            Optional<PlanConfirmationRecord> record = inTenant(channel.tenantId,
+                () -> store.find(channel.tenantId, channel.agentCode, channel.sessionId, ticket.planId()));
+            record.filter(item -> item.state().terminal())
+                .ifPresent(item -> resolveLocal(channel, ticket.planId(), item.state()));
+        } catch (Exception e) {
+            log.error("observe remote plan decision failed, code={}, planId={}",
+                "PLAN-CONFIRMATION-OBSERVE-FAIL", ticket.planId(), e);
+        }
+    }
+
+    private void resolveLocal(PlanChannel channel, String planId, PlanConfirmationState state) {
+        PlanTicket ticket = channel.pending.remove(planId);
+        if (ticket == null || !ticket.claimCompletion()) {
+            return;
+        }
+        try {
+            // 先把确认结果放进 SSE，再恢复挂起 future。反过来会让执行分支抢先 complete sink，静默丢事件。
+            if (state != PlanConfirmationState.CANCELLED) {
+                emit(channel, ChatNodeKind.PLAN_RESULT, new PlanResultEvent(planId, state.name()),
+                    "PLAN_RESULT_JSON_ERROR");
+            }
+        } finally {
+            ticket.completeFuture(state);
+        }
+    }
+
+    private void abortAll(PlanChannel channel) {
+        channel.pending.values().forEach(ticket -> {
+            inTenant(channel.tenantId, () -> store.transition(channel.tenantId, channel.agentCode,
+                channel.sessionId, ticket.planId(), PlanConfirmationState.CANCELLED));
+            resolveLocal(channel, ticket.planId(), PlanConfirmationState.CANCELLED);
+        });
+    }
+
+    private String channelKey(String tenantId, String agentCode, String sessionId) {
+        return tenantId + "\u001f" + agentCode + "\u001f" + sessionId;
+    }
+
+    private String currentTenant() {
+        return TenantContext.isPresent() ? TenantContext.require() : TenantContext.DEFAULT;
+    }
+
+    private <T> T inTenant(String tenantId, Supplier<T> action) {
+        return TenantContext.callWith(tenantId, action);
+    }
+
+    @PreDestroy
+    void shutdownObserver() {
+        decisionObserver.shutdownNow();
     }
 
     /**
@@ -167,21 +276,66 @@ public class PlanConfirmationService {
     public static final class PlanChannel {
         private final String key;
         private final Sinks.Many<ChatStreamChunk> sink = Sinks.many().unicast().onBackpressureBuffer();
-        private final Map<String, CompletableFuture<Boolean>> pending = new ConcurrentHashMap<>();
+        private final Map<String, PlanTicket> pending = new ConcurrentHashMap<>();
         private final Object emitLock = new Object();
+        private final String tenantId;
+        private final String agentCode;
+        private final String sessionId;
 
-        private PlanChannel(String key) {
+        private PlanChannel(String key, String tenantId, String agentCode, String sessionId) {
             this.key = key;
-        }
-
-        /** 拒绝并清空所有残留挂起项（关闭/顶替通道时的 fast fail）。 */
-        private void abortAll() {
-            pending.values().forEach(f -> f.complete(false));
-            pending.clear();
+            this.tenantId = tenantId;
+            this.agentCode = agentCode;
+            this.sessionId = sessionId;
         }
     }
 
     /** 一次挂起的凭据：定位通道 + planId + 挂起 future，供中间件 await/超时收尾。 */
-    public record PlanTicket(PlanChannel channel, String planId, CompletableFuture<Boolean> future) {
+    public static final class PlanTicket {
+        private final PlanChannel channel;
+        private final String planId;
+        private final CompletableFuture<Boolean> future = new CompletableFuture<>();
+        private final AtomicReference<ScheduledFuture<?>> watcher = new AtomicReference<>();
+        private final AtomicBoolean completed = new AtomicBoolean(false);
+
+        private PlanTicket(PlanChannel channel, String planId) {
+            this.channel = channel;
+            this.planId = planId;
+        }
+
+        public PlanChannel channel() {
+            return channel;
+        }
+
+        public String planId() {
+            return planId;
+        }
+
+        public CompletableFuture<Boolean> future() {
+            return future;
+        }
+
+        private void watch(ScheduledFuture<?> scheduled) {
+            watcher.set(scheduled);
+            if (completed.get()) {
+                scheduled.cancel(false);
+            }
+        }
+
+        private boolean claimCompletion() {
+            return completed.compareAndSet(false, true);
+        }
+
+        private void completeFuture(PlanConfirmationState state) {
+            stopWatching();
+            future.complete(state.approved());
+        }
+
+        private void stopWatching() {
+            ScheduledFuture<?> scheduled = watcher.getAndSet(null);
+            if (scheduled != null) {
+                scheduled.cancel(false);
+            }
+        }
     }
 }

@@ -26,8 +26,10 @@ public record BusinessOutcomeSummaryVO(
     BigDecimal averageCsat,
     BigDecimal csatSatisfiedRate,
     BigDecimal totalCost,
+    String costCurrency,
     BigDecimal costPerAutoResolvedSession,
     MetricAvailability costAvailability,
+    MetricAvailability costPerAutoResolvedAvailability,
     BusinessOutcomeDefinitions definitions
 ) {
 }

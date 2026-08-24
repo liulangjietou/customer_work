@@ -1,8 +1,10 @@
 package com.richard.fyoung.customerwork.data.rag.search;
 
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.data.calllog.AgentReplayCapture;
 import com.richard.fyoung.customerwork.safety.security.spotlight.ContentSpotlighter;
 import com.richard.fyoung.customerwork.safety.security.spotlight.UntrustedSource;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -121,7 +123,8 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
         AtomicBoolean retrievalFailed = new AtomicBoolean(false);
         // 阻塞式 HTTP 检索强制丢到 boundedElastic：不管本流被谁订阅（Spring MVC 的 SSE 适配器可能在
         // 请求线程上订阅），都保证不会占住 Tomcat 请求线程。
-        return Mono.fromCallable(() -> retrievalProvider.retrieve(agentCode, query))
+        AgentInvocationIdentity identity = ctx == null ? null : ctx.get(AgentInvocationIdentity.class);
+        return Mono.fromCallable(() -> retrievalProvider.retrieve(agentCode, query, identity))
             .subscribeOn(Schedulers.boundedElastic())
             // retrieve 返回 null 时 fromCallable 发出的是空信号，统一归一成空串走同一条注入分支
             .defaultIfEmpty("")
@@ -134,6 +137,7 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
                 if (ctx != null) {
                     ctx.put(cacheKey, RetrievedBlock.class, new RetrievedBlock(block));
                 }
+                recordReplayFact(ctx, query, block, retrievalFailed.get());
                 recordGapIfMiss(query, block, retrievalFailed.get());
                 return next.apply(withKnowledge(input, block));
             });
@@ -151,6 +155,19 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
             return;
         }
         gapRecorder.recordMiss(null, query);
+    }
+
+    private void recordReplayFact(RuntimeContext context, String query, String block,
+                                  boolean retrievalFailed) {
+        AgentReplayCapture capture = AgentReplayCapture.from(context);
+        if (capture != null) {
+            try {
+                capture.recordRag(agentCode, query, block, retrievalFailed);
+            } catch (Exception e) {
+                log.error("[rag] replay fact capture failed, code={}, agentCode={}",
+                    "RAG-REPLAY-CAPTURE-FAIL", agentCode, e);
+            }
+        }
     }
 
     /**

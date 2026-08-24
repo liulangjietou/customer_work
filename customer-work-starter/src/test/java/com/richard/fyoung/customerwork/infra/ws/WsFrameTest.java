@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.infra.ws;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
+import com.richard.fyoung.customerwork.core.dto.ChatUsageSnapshot;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -45,5 +47,22 @@ class WsFrameTest {
         JsonNode data = mapper.readTree(mapper.writeValueAsString(frame)).get("data");
         assertFalse(data.has("sessionId"), "空标识不应以 null 值输出");
         assertFalse(data.has("ticketId"), "空标识不应以 null 值输出");
+    }
+
+    @Test
+    void chatDone_shouldCarryUnifiedTerminalEnvelopeAndPersistedMessageScope() throws Exception {
+        ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-9", "MODEL_STOP",
+            new ChatUsageSnapshot(8, 2, 1, 10, 0.3), "trace-9");
+
+        WsFrame frame = WsFrame.chatDone(terminal, "u1:conv-1", "TK-1", "您好", 123L);
+        JsonNode data = mapper.readTree(mapper.writeValueAsString(frame)).get("data");
+
+        assertEquals("MSG-9", data.get("messageId").asText());
+        assertEquals("MODEL_STOP", data.get("finishReason").asText());
+        assertEquals(10, data.get("usage").get("totalTokens").asInt());
+        assertEquals("trace-9", data.get("traceId").asText());
+        assertEquals("u1:conv-1", data.get("sessionId").asText());
+        assertEquals("TK-1", data.get("ticketId").asText());
+        assertEquals("您好", data.get("content").asText());
     }
 }

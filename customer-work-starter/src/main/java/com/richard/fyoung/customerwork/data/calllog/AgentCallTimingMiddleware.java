@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttributionContext;
 import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
 import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
@@ -162,10 +164,13 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             return next.apply(input);
         }
         AgentCallMeta meta = safeMeta(ctx);
-        AgentCallCollector collector = new AgentCallCollector(captureLineage(contextView, meta));
+        AgentReplayCapture replayCapture = new AgentReplayCapture();
+        AgentCallCollector collector = new AgentCallCollector(
+            captureLineage(contextView, meta), replayCapture);
         // 放进 ctx 供 onModelCall/onActing 追加分段；ctx 缺失（如单测直传 null 且无 Reactor 上下文）
         // 则仅本 hook 记录，不报错
         putCollector(ctx, collector);
+        bindReplayCapture(ctx, replayCapture);
 
         String question = resolveQuestion(meta, input);
 
@@ -210,13 +215,16 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         // token 采集：模型调用结束时框架回放一个带 ChatUsage 的 ModelCallEndEvent（与 admin 审计模块
         // 的 usage 同源），流内捕获后挂到本 MODEL 分段；usage 缺失（如离线/未上报）时保持 null
         AtomicReference<ChatUsage> usageRef = new AtomicReference<>(null);
+        AtomicReference<ModelCallAttribution> attributionRef = new AtomicReference<>(null);
         Flux<AgentEvent> upstream = next.apply(input)
             .doOnNext(event -> {
                 if (event instanceof ModelCallEndEvent mce && mce.getUsage() != null) {
                     usageRef.set(mce.getUsage());
                 }
-            });
-        return timeSegment(upstream, collector, AgentCallKind.MODEL, modelName, null, usageRef);
+            })
+            .contextWrite(context -> ModelCallAttributionContext.withSink(context, attributionRef::set));
+        return timeSegment(upstream, collector, AgentCallKind.MODEL, modelName,
+            null, usageRef, attributionRef);
     }
 
     @Override
@@ -231,16 +239,25 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         }
         String toolName = firstToolName(input);
         AgentCallKind kind = toolKindRegistry.classify(toolName);
+        AgentReplayCapture.ToolBatchCapture replayBatch = beginReplayTools(collector, input);
         // 工具执行成败取自流中的 ToolResultEndEvent（onError 兜底捕获异常）
         AtomicReference<ToolResultState> lastState = new AtomicReference<>(null);
         Flux<AgentEvent> upstream = next.apply(input)
             .doOnNext(event -> {
+                if (replayBatch != null) {
+                    replayBatch.onEvent(event);
+                }
                 if (event instanceof ToolResultEndEvent tre && tre.getState() != null) {
                     lastState.set(tre.getState());
                 }
-            });
+            })
+            .doOnError(error -> completeReplayTools(replayBatch, "ERROR", safeMsg(error)))
+            .doOnCancel(() -> completeReplayTools(replayBatch, "CANCELLED", CANCELLED))
+            .doOnComplete(() -> completeReplayTools(replayBatch,
+                lastState.get() == null ? "SUCCESS" : lastState.get().name(),
+                isSuccess(lastState) ? null : "tool result state=" + lastState.get()));
         // 工具段无 token 概念，usageRef 传 null
-        return timeSegment(upstream, collector, kind, toolName, lastState, null);
+        return timeSegment(upstream, collector, kind, toolName, lastState, null, null);
     }
 
     /**
@@ -251,7 +268,8 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
     private Flux<AgentEvent> timeSegment(Flux<AgentEvent> upstream, AgentCallCollector collector,
                                          AgentCallKind kind, String name,
                                          AtomicReference<ToolResultState> stateRef,
-                                         AtomicReference<ChatUsage> usageRef) {
+                                         AtomicReference<ChatUsage> usageRef,
+                                         AtomicReference<ModelCallAttribution> attributionRef) {
         long[] startMs = new long[1];
         long[] startNano = new long[1];
         AtomicBoolean ended = new AtomicBoolean(false);
@@ -264,17 +282,20 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
                 if (ended.compareAndSet(false, true)) {
                     boolean success = isSuccess(stateRef);
                     String err = success ? null : "tool result state=" + (stateRef == null ? null : stateRef.get());
-                    addSegment(collector, kind, name, startMs[0], startNano[0], success, err, usageRef);
+                    addSegment(collector, kind, name, startMs[0], startNano[0], success, err,
+                        usageRef, attributionRef);
                 }
             })
             .doOnError(e -> {
                 if (ended.compareAndSet(false, true)) {
-                    addSegment(collector, kind, name, startMs[0], startNano[0], false, safeMsg(e), usageRef);
+                    addSegment(collector, kind, name, startMs[0], startNano[0], false, safeMsg(e),
+                        usageRef, attributionRef);
                 }
             })
             .doOnCancel(() -> {
                 if (ended.compareAndSet(false, true)) {
-                    addSegment(collector, kind, name, startMs[0], startNano[0], false, CANCELLED, usageRef);
+                    addSegment(collector, kind, name, startMs[0], startNano[0], false, CANCELLED,
+                        usageRef, attributionRef);
                 }
             });
     }
@@ -291,7 +312,8 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
     /** 追加分段（异常安全：采集失败不影响主链路）。{@code usageRef} 携带 MODEL 段 token，工具段/缺失为 null。 */
     private void addSegment(AgentCallCollector collector, AgentCallKind kind, String name,
                             long startMs, long startNano, boolean success, String errorMsg,
-                            AtomicReference<ChatUsage> usageRef) {
+                            AtomicReference<ChatUsage> usageRef,
+                            AtomicReference<ModelCallAttribution> attributionRef) {
         Long inputTokens = null;
         Long outputTokens = null;
         Long cachedTokens = null;
@@ -306,8 +328,12 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             modelReportedMs = Math.round(usage.getTime() * 1000d);
         }
         try {
+            ModelCallAttribution attribution = attributionRef == null ? null : attributionRef.get();
+            if (kind == AgentCallKind.MODEL && attribution == null) {
+                attribution = ModelCallAttribution.unpriced(null, null, name);
+            }
             collector.addSegment(kind, name, startMs, startNano, success, errorMsg,
-                inputTokens, outputTokens, cachedTokens, modelReportedMs);
+                inputTokens, outputTokens, cachedTokens, modelReportedMs, attribution);
             // 分段结算是 token 的唯一落点（三态终止各只走一次，CAS 保证不重复），指标在此同步累加，
             // 与落库口径天然一致；工具段 usage 恒为 null，不产生指标
             recordTokens(inputTokens, outputTokens);
@@ -452,6 +478,38 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             ctx.put(AgentCallCollector.class, collector);
         } catch (Exception e) {
             log.error("agent call collector bind failed, code={}", "CALLLOG-BIND-FAIL", e);
+        }
+    }
+
+    private void bindReplayCapture(RuntimeContext context, AgentReplayCapture capture) {
+        try {
+            AgentReplayCapture.bind(context, capture);
+        } catch (Exception e) {
+            log.error("agent replay capture bind failed, code={}", "CALLLOG-REPLAY-BIND-FAIL", e);
+        }
+    }
+
+    private AgentReplayCapture.ToolBatchCapture beginReplayTools(AgentCallCollector collector,
+                                                                  ActingInput input) {
+        try {
+            return collector.replayCapture().beginTools(input, toolKindRegistry::classify);
+        } catch (Exception e) {
+            log.error("agent replay tool capture start failed, code={}",
+                "CALLLOG-REPLAY-TOOL-START-FAIL", e);
+            return null;
+        }
+    }
+
+    private void completeReplayTools(AgentReplayCapture.ToolBatchCapture batch,
+                                     String state, String errorMessage) {
+        if (batch == null) {
+            return;
+        }
+        try {
+            batch.complete(state, errorMessage);
+        } catch (Exception e) {
+            log.error("agent replay tool capture complete failed, code={}",
+                "CALLLOG-REPLAY-TOOL-COMPLETE-FAIL", e);
         }
     }
 

@@ -1,16 +1,17 @@
 package com.richard.fyoung.customeradmin.configversion.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
-import com.richard.fyoung.customeradmin.configversion.dto.ConfigPublishOperationResult;
 import com.richard.fyoung.customeradmin.configversion.dto.ConfigVersionPageQuery;
 import com.richard.fyoung.customeradmin.configversion.dto.ConfigVersionVO;
 import com.richard.fyoung.customeradmin.configversion.dto.GrayReleaseRequest;
 import com.richard.fyoung.customeradmin.configversion.entity.ConfigType;
-import com.richard.fyoung.customeradmin.configversion.service.ConfigRollbackService;
 import com.richard.fyoung.customeradmin.configversion.service.ConfigVersionService;
+import com.richard.fyoung.customeradmin.governance.change.dto.GovernedChangeVO;
+import com.richard.fyoung.customeradmin.governance.change.service.GovernedChangeService;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,14 +33,14 @@ import java.util.List;
 public class ConfigVersionController {
 
     private final ConfigVersionService versionService;
-    private final ConfigRollbackService rollbackService;
+    private final GovernedChangeService governedChangeService;
     private final CrossTenantAuthority crossTenantAuthority;
 
     public ConfigVersionController(ConfigVersionService versionService,
-                                   ConfigRollbackService rollbackService,
+                                   GovernedChangeService governedChangeService,
                                    CrossTenantAuthority crossTenantAuthority) {
         this.versionService = versionService;
-        this.rollbackService = rollbackService;
+        this.governedChangeService = governedChangeService;
         this.crossTenantAuthority = crossTenantAuthority;
     }
 
@@ -76,19 +77,25 @@ public class ConfigVersionController {
     @SaCheckPermission("config-version:rollback")
     @OperationLog(operation = "回滚配置版本", target = "ai_config_version")
     @PostMapping("/{id}/rollback")
-    public Result<ConfigPublishOperationResult> rollback(
+    public Result<GovernedChangeVO> rollback(
         @PathVariable Long id, @RequestParam(required = false) String remark) {
         crossTenantAuthority.requireCurrentUserAuthority();
-        return Result.success(rollbackService.rollback(id, remark));
+        return Result.success(governedChangeService.submitRollback(
+            id, remark, StpUtil.getLoginIdAsLong(), username()));
     }
 
     /** 安全灰度：全部目标预校验通过后整批可靠入队，每个租户使用自己的当前凭据与资产。 */
     @SaCheckPermission("config-version:gray")
     @OperationLog(operation = "灰度发布配置", target = "ai_config_version")
     @PostMapping("/{id}/gray")
-    public Result<ConfigPublishOperationResult> grayRelease(
+    public Result<GovernedChangeVO> grayRelease(
         @PathVariable Long id, @Valid @RequestBody GrayReleaseRequest request) {
         crossTenantAuthority.requireCurrentUserAuthority();
-        return Result.success(rollbackService.grayRelease(id, request.getTenantCodes(), request.getRemark()));
+        return Result.success(governedChangeService.submitGrayRelease(id, request.getTenantCodes(),
+            request.getRemark(), StpUtil.getLoginIdAsLong(), username()));
+    }
+
+    private String username() {
+        return StpUtil.getTokenSession().getString("username");
     }
 }

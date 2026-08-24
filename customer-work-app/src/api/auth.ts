@@ -1,5 +1,12 @@
 import { request } from '@/api/request'
-import type { LoginRequest, LoginResponse, RegisterRequest, RegisterResponse, UserInfo } from '@/types/api'
+import type {
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
+  RegisterResponse,
+  RevokeSessionsResponse,
+  UserInfo,
+} from '@/types/api'
 import { currentTenantCode } from '@/utils/tenant'
 
 // baseURL 已配置为 /api（见 request.ts + .env.development），此处 url 不再重复 /api 前缀
@@ -24,6 +31,11 @@ export function login(payload: LoginRequest): Promise<LoginResponse> {
 
 export function fetchMe(): Promise<UserInfo> {
   return request({ url: '/customer/auth/me', method: 'get' })
+}
+
+/** 撤销该用户的全部 JWT；成功响应返回前服务端已经原子推进 sessionEpoch。 */
+export function revokeSessions(): Promise<RevokeSessionsResponse> {
+  return request({ url: '/customer/auth/revoke-sessions', method: 'post' })
 }
 
 /** 头像上传：multipart/form-data，字段名 file。传 FormData 时 axios 会自动带 boundary 设置 Content-Type，无需手动指定。

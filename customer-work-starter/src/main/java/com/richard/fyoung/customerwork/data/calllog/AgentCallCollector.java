@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
 import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,16 +25,27 @@ public class AgentCallCollector {
     private final AtomicInteger seq = new AtomicInteger(0);
     /** 在订阅开始时冻结，避免长调用结束前发生热更新导致版本错配。 */
     private final AgentCallLineage lineage;
+    /** 与本采集器同生命周期；正文不落库，只产出脱敏重放快照。 */
+    private final AgentReplayCapture replayCapture;
 
     /** 智能体最终回答（从 onAgent 事件流的 AgentResultEvent 采集，最后一个 AGENT_RESULT 为准）。 */
     private volatile String answer;
 
     public AgentCallCollector() {
-        this(AgentCallLineage.empty());
+        this(AgentCallLineage.empty(), new AgentReplayCapture());
     }
 
     public AgentCallCollector(AgentCallLineage lineage) {
+        this(lineage, new AgentReplayCapture());
+    }
+
+    public AgentCallCollector(AgentCallLineage lineage, AgentReplayCapture replayCapture) {
         this.lineage = lineage == null ? AgentCallLineage.empty() : lineage;
+        this.replayCapture = replayCapture == null ? new AgentReplayCapture() : replayCapture;
+    }
+
+    public AgentReplayCapture replayCapture() {
+        return replayCapture;
     }
 
     /**
@@ -53,9 +65,17 @@ public class AgentCallCollector {
     public void addSegment(AgentCallKind kind, String name, long segStartMs, long segStartNano,
                            boolean success, String errorMsg, Long inputTokens, Long outputTokens,
                            Long cachedTokens, Long modelReportedMs) {
+        addSegment(kind, name, segStartMs, segStartNano, success, errorMsg,
+            inputTokens, outputTokens, cachedTokens, modelReportedMs, null);
+    }
+
+    public void addSegment(AgentCallKind kind, String name, long segStartMs, long segStartNano,
+                           boolean success, String errorMsg, Long inputTokens, Long outputTokens,
+                           Long cachedTokens, Long modelReportedMs,
+                           ModelCallAttribution attribution) {
         long durationMs = Math.max(0L, (System.nanoTime() - segStartNano) / 1_000_000L);
         segments.add(new AgentCallSegment(seq.incrementAndGet(), kind, name, segStartMs, durationMs,
-            success, errorMsg, inputTokens, outputTokens, cachedTokens, modelReportedMs));
+            success, errorMsg, inputTokens, outputTokens, cachedTokens, modelReportedMs, attribution));
     }
 
     /** 设置最终回答（可被后续 AGENT_RESULT 覆盖为最新全文）。 */
@@ -136,6 +156,7 @@ public class AgentCallCollector {
         return new AgentCallRecord(0L, requestId, userId, username, agentCode, agentName, sessionId,
             sessionType, question, answer, startTimeMs, endTimeMs, durationMs,
             modelMs, toolMs, mcpMs, skillMs, snapshot.size(), inputTokens, outputTokens, totalTokens,
-            cachedTokens, modelReportedMs, success, errorMsg, experimentAssignment, lineage, snapshot);
+            cachedTokens, modelReportedMs, success, errorMsg, experimentAssignment, lineage,
+            replayCapture.snapshot(), snapshot);
     }
 }

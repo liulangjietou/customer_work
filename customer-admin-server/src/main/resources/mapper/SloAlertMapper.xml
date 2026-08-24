@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.slo.mapper.SloAlertMapper">
+
+    <insert id="insertIgnore" useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO ai_slo_alert
+          (tenant_id, policy_id, window_end_minute, alert_type, active_policy_id, status,
+           short_burn_rate, long_burn_rate, first_seen_at, last_seen_at, update_time)
+        VALUES
+          (#{tenantId}, #{policyId}, #{windowEndMinute}, #{alertType}, #{activePolicyId}, #{status},
+           #{shortBurnRate}, #{longBurnRate}, #{firstSeenAt}, #{lastSeenAt}, #{updateTime})
+    </insert>
+
+    <select id="findActiveForUpdate"
+            resultType="com.richard.fyoung.customeradmin.slo.entity.SloAlert">
+        SELECT *
+        FROM ai_slo_alert
+        WHERE tenant_id = #{tenantId} AND active_policy_id = #{policyId}
+          AND status IN ('OPEN', 'ACKED')
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <update id="updateActiveSeen">
+        UPDATE ai_slo_alert
+        SET short_burn_rate = #{shortBurnRate}, long_burn_rate = #{longBurnRate},
+            last_seen_at = #{seenAt}, update_time = #{seenAt}
+        WHERE id = #{id} AND status IN ('OPEN', 'ACKED')
+    </update>
+
+    <update id="resolve">
+        UPDATE ai_slo_alert
+        SET status = 'RESOLVED', active_policy_id = NULL,
+            short_burn_rate = #{shortBurnRate}, long_burn_rate = #{longBurnRate},
+            last_seen_at = #{resolvedAt}, resolved_at = #{resolvedAt}, update_time = #{resolvedAt}
+        WHERE id = #{id} AND status IN ('OPEN', 'ACKED')
+    </update>
+
+    <update id="acknowledge">
+        UPDATE ai_slo_alert
+        SET status = 'ACKED', ack_by = #{ackBy}, ack_at = #{ackAt}, update_time = #{ackAt}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND status = 'OPEN'
+    </update>
+
+</mapper>

@@ -36,9 +36,17 @@ class AdminMcpFactoryTest {
     @Test
     void buildClientBuilder_shouldDelegateToStarter() {
         McpClientBuilder builder = assertDoesNotThrow(() ->
-            factory.buildClientBuilder("test", "sse", "{\"url\": \"https://mcp.example.com/sse\"}"));
+            factory.buildClientBuilder("test", "sse", "{\"url\": \"https://93.184.216.34/sse\"}"));
 
         assertNotNull(builder);
+    }
+
+    @Test
+    void buildClientBuilder_shouldBlockLoopbackAndStdioByDefault() {
+        org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () ->
+            factory.buildClientBuilder("test", "http", "{\"url\":\"http://127.0.0.1/mcp\"}"));
+        org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () ->
+            factory.buildClientBuilder("test", "stdio", "{\"command\":\"/usr/bin/env\",\"cwd\":\"/tmp\"}"));
     }
 
     @Test

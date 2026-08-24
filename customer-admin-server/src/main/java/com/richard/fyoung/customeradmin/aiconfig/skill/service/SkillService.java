@@ -15,6 +15,7 @@ import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillUploadParseResul
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillVO;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillFile;
+import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillVersion;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillFileMapper;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
@@ -83,17 +84,20 @@ public class SkillService {
     private final AiAgentSkillMapper agentSkillMapper;
     private final AiAgentMapper agentMapper;
     private final AgentInstanceCache agentInstanceCache;
+    private final SkillVersionService versionService;
     /** 按目标索引的发布器；未启用的目标（nacos/sftp）在容器中无对应 Bean，故此处无键。 */
     private final Map<SkillStorageTarget, SkillContentPublisher> publishers;
 
     public SkillService(AiSkillMapper skillMapper, AiSkillFileMapper skillFileMapper,
                          AiAgentSkillMapper agentSkillMapper, AiAgentMapper agentMapper,
-                         AgentInstanceCache agentInstanceCache, List<SkillContentPublisher> contentPublishers) {
+                         AgentInstanceCache agentInstanceCache, List<SkillContentPublisher> contentPublishers,
+                         SkillVersionService versionService) {
         this.skillMapper = skillMapper;
         this.skillFileMapper = skillFileMapper;
         this.agentSkillMapper = agentSkillMapper;
         this.agentMapper = agentMapper;
         this.agentInstanceCache = agentInstanceCache;
+        this.versionService = versionService;
         this.publishers = new EnumMap<>(SkillStorageTarget.class);
         for (SkillContentPublisher publisher : contentPublishers) {
             this.publishers.put(publisher.target(), publisher);
@@ -133,6 +137,7 @@ public class SkillService {
         fillFromRequest(skill, request, targets);
         skillMapper.insert(skill);
         replaceFiles(skill.getId(), request.files() == null ? List.of() : request.files());
+        versionService.createVersion(skill.getId(), "创建 Skill");
         // 入库成功后发布，发布失败抛业务异常回滚事务，保证"保存成功=目标已上传"
         publishToTargets(skill.getSkillCode(), skill.getContent(), loadFileContents(skill.getId()), targets);
     }
@@ -140,6 +145,7 @@ public class SkillService {
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, SkillSaveRequest request) {
         AiSkill skill = requireSkill(id);
+        Integer oldStatus = skill.getStatus();
         String oldSkillCode = skill.getSkillCode();
         List<SkillStorageTarget> oldTargets = parseStoredTargets(skill.getStorageTargets());
         if (!skill.getSkillCode().equals(request.skillCode())
@@ -153,9 +159,13 @@ public class SkillService {
         if (request.files() != null) {
             replaceFiles(id, request.files());
         }
+        versionService.createVersion(id, "编辑 Skill");
         // 覆盖发布到本次勾选的目标（失败回滚）；附属文件从库里读当前全量（未重传时即原有文件）
         publishToTargets(skill.getSkillCode(), skill.getContent(), loadFileContents(id), targets);
-        evictAgentsReferencingSkill(id);
+        // 内容更新只生成新版本，既有 Agent 继续使用冻结版本；生命周期变化才需立即失效缓存。
+        if (!java.util.Objects.equals(oldStatus, skill.getStatus())) {
+            evictAgentsReferencingSkill(id);
+        }
         // 本次取消勾选的目标：尽力清理旧产物，失败仅记日志不阻断
         List<SkillStorageTarget> cancelled = new ArrayList<>(oldTargets);
         cancelled.removeAll(targets);
@@ -171,7 +181,7 @@ public class SkillService {
         }
         List<String> agentCodes = agentMapper.selectBatchIds(agentIds).stream()
             .map(AiAgent::getAgentCode).collect(Collectors.toList());
-        agentInstanceCache.evictAll(agentCodes);
+        agentInstanceCache.invalidateAll(agentCodes);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -541,6 +551,10 @@ public class SkillService {
         vo.setStorageTargets(parseStoredTargets(skill.getStorageTargets()).stream()
             .map(SkillStorageTarget::getCode).collect(Collectors.toList()));
         vo.setFiles(files);
+        vo.setCurrentVersionId(skill.getCurrentVersionId());
+        vo.setLatestVersionNo(skill.getLatestVersionNo());
+        AiSkillVersion current = versionService.findVersion(skill.getCurrentVersionId());
+        vo.setContentHash(current == null ? null : current.getContentHash());
         vo.setCreateTime(skill.getCreateTime());
         return vo;
     }

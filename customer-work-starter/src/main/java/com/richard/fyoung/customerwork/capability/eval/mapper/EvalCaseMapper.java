@@ -18,6 +18,9 @@ public interface EvalCaseMapper extends BaseMapper<EvalCaseDO> {
     /** 按业务唯一键 upsert。 */
     int upsert(EvalCaseDO record);
 
+    /** 单条 SQL 批量 upsert，供导入场景保持原子性。 */
+    int upsertBatch(@Param("records") List<EvalCaseDO> records);
+
     /** 按类型取全部用例（含 disabled），用例编号正序。 */
     List<EvalCaseDO> selectByType(@Param("evalType") String evalType);
 

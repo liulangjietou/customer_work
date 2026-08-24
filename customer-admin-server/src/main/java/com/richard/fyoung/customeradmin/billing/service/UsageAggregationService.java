@@ -1,126 +1,192 @@
 package com.richard.fyoung.customeradmin.billing.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.richard.fyoung.customeradmin.billing.config.BillingSettlementProperties;
 import com.richard.fyoung.customeradmin.billing.dto.UsageAggregate;
 import com.richard.fyoung.customeradmin.billing.entity.CwTenantUsageDaily;
 import com.richard.fyoung.customeradmin.billing.event.UsageAggregationCompletedEvent;
+import com.richard.fyoung.customeradmin.billing.gateway.CustomerUsageFactGatewayProvider;
 import com.richard.fyoung.customeradmin.billing.mapper.CwTenantUsageDailyMapper;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallCost;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * 用量归集：把 {@code cw_agent_call_log} 的原始调用记录按「租户 + 日期 + 模型」汇总进
- * {@code cw_tenant_usage_daily}，并按当日单价算好金额。
+ * 用量归集：从客服端真实 MODEL 分段读取已冻结金额，在数据库自然日锁内整体重建日账单。
  *
- * <p><b>为什么要落一张汇总表而不是查询时实时聚合</b>：账单要能对得上——单价会调整，
- * 实时聚合会让历史账单随调价而变动；且原始日志量级远大于汇总，按月出账时全表扫不可接受。</p>
- *
- * <p>归集可重复执行（同一天再跑一次就覆盖），因此补数据只要重跑对应日期即可。</p>
- * @author owlzhangfq@gmail.com
+ * <p>归集不再按“当天最终价”二次计算。每段金额已经在调用结束时按当时冻结的价目结算，
+ * 日账单、call/session 成本和业务结果因此共享同一份不可变事实。</p>
  */
 @Slf4j
 @Service
 public class UsageAggregationService {
 
     private final CwTenantUsageDailyMapper usageMapper;
-    private final ModelPriceService priceService;
+    private final CustomerUsageFactGatewayProvider sourceProvider;
+    private final BillingSettlementProperties settlementProperties;
     private final ApplicationEventPublisher eventPublisher;
 
     public UsageAggregationService(CwTenantUsageDailyMapper usageMapper,
-                                   ModelPriceService priceService,
+                                   CustomerUsageFactGatewayProvider sourceProvider,
+                                   BillingSettlementProperties settlementProperties,
                                    ApplicationEventPublisher eventPublisher) {
         this.usageMapper = usageMapper;
-        this.priceService = priceService;
+        this.sourceProvider = sourceProvider;
+        this.settlementProperties = settlementProperties;
         this.eventPublisher = eventPublisher;
     }
 
     /**
-     * 归集指定日期的用量。
+     * 归集指定自然日。多副本先锁定日期，再冻结客服端调用 ID 上界并整体替换当天派生账单。
      *
-     * <p>整段跑在跨租户豁免下：归集本身就是要覆盖所有租户，
-     * 若按当前上下文过滤，就只会汇总到某一个租户的数据。</p>
-     *
-     * @return 写入的记录数
+     * @return 写入的日账单分组数
      */
     @Transactional(rollbackFor = Exception.class)
     public int aggregate(LocalDate statDate) {
-        LocalDate target = statDate == null ? LocalDate.now().minusDays(1) : statDate;
-        List<UsageAggregate> rows = CrossTenantOperations.execute(
-            () -> usageMapper.aggregateFromCallLog(target));
-        if (rows.isEmpty()) {
-            log.info("usage aggregation found no data, date={}", target);
-            return 0;
+        LocalDate target = statDate == null
+            ? LocalDate.now(settlementProperties.zone()).minusDays(1) : statDate;
+        usageMapper.ensureAggregationLock(target);
+        LocalDate lockedDate = usageMapper.lockAggregationDate(target);
+        if (!target.equals(lockedDate)) {
+            throw new IllegalStateException("failed to acquire usage aggregation date lock: " + target);
         }
 
-        // 按当日 23:59:59 取价：同一天内调价的情况按当日最终价结算，避免同一天出现两种价格
-        LocalDateTime settleAt = target.atTime(23, 59, 59);
-        int written = 0;
-        Set<String> tenantIds = new LinkedHashSet<>();
+        SettlementWindow window = window(target, settlementProperties.zone());
+        long sourceMaxCallLogId = CrossTenantOperations.execute(() -> sourceProvider.get().mapper()
+            .maxCallLogId(null, window.fromMs(), window.toMs()));
+        List<UsageAggregate> rows = sourceMaxCallLogId == 0L ? List.of()
+            : CrossTenantOperations.execute(() -> sourceProvider.get().mapper()
+                .aggregate(null, window.fromMs(), window.toMs(), sourceMaxCallLogId));
+        rows = rows == null ? List.of() : rows;
+
+        Set<String> affectedTenants = new LinkedHashSet<>();
+        List<String> previousTenantIds = usageMapper.findTenantIdsByDate(target);
+        if (!CollectionUtils.isEmpty(previousTenantIds)) {
+            previousTenantIds.stream().map(this::canonicalTenant).forEach(affectedTenants::add);
+        }
+
+        usageMapper.deleteByStatDate(target);
         for (UsageAggregate row : rows) {
-            tenantIds.add(canonicalTenant(row.getTenantId()));
-            written += upsert(row, target, settleAt);
+            String tenantId = canonicalTenant(row.getTenantId());
+            affectedTenants.add(tenantId);
+            insert(row, tenantId, target, sourceMaxCallLogId);
         }
-        // 事件在事务内发布，由 AFTER_COMMIT 监听器保证只有本次归集真正提交后才检查预算。
-        eventPublisher.publishEvent(new UsageAggregationCompletedEvent(target, tenantIds));
-        log.info("usage aggregation done, date={}, rows={}", target, written);
-        return written;
+        verifySnapshot(rows, usageMapper.listByDate(null, target), target, sourceMaxCallLogId);
+
+        if (!affectedTenants.isEmpty()) {
+            eventPublisher.publishEvent(new UsageAggregationCompletedEvent(target, affectedTenants));
+        }
+        log.info("usage aggregation done, date={}, sourceMaxCallLogId={}, rows={}, tenants={}",
+            target, sourceMaxCallLogId, rows.size(), affectedTenants.size());
+        return rows.size();
     }
 
-    private int upsert(UsageAggregate row, LocalDate statDate, LocalDateTime settleAt) {
-        String tenantId = canonicalTenant(row.getTenantId());
-        String provider = row.getProvider() == null ? "" : row.getProvider();
-        String modelName = row.getModelName() == null ? "" : row.getModelName();
+    private void insert(UsageAggregate row, String tenantId, LocalDate statDate,
+                        long sourceMaxCallLogId) {
+        CwTenantUsageDaily entity = new CwTenantUsageDaily();
+        entity.setTenantId(tenantId);
+        entity.setStatDate(statDate);
+        entity.setProvider(normalize(row.getProvider()));
+        entity.setModelName(normalize(row.getModelName()));
+        entity.setCallCount(value(row.getCallCount()));
+        entity.setInputTokens(value(row.getInputTokens()));
+        entity.setOutputTokens(value(row.getOutputTokens()));
+        entity.setCachedTokens(value(row.getCachedTokens()));
+        entity.setTotalTokens(value(row.getTotalTokens()));
+        entity.setModelSegmentCount(value(row.getModelSegmentCount()));
+        entity.setSettledSegmentCount(value(row.getSettledSegmentCount()));
+        entity.setUnsettledSegmentCount(value(row.getUnsettledSegmentCount()));
+        entity.setAmount(amount(row.getAmount()));
+        entity.setCurrency(normalize(row.getCurrency()));
+        entity.setSourceMaxCallLogId(sourceMaxCallLogId);
+        int inserted = TenantContext.callWith(tenantId, () -> usageMapper.insert(entity));
+        if (inserted != 1) {
+            throw new IllegalStateException("failed to persist usage aggregation row");
+        }
+    }
 
-        BigDecimal amount = priceService.calculate(provider, modelName,
-            nullToZero(row.getInputTokens()), nullToZero(row.getOutputTokens()),
-            nullToZero(row.getCachedTokens()), settleAt);
+    /** 写后读取并逐字段核对，任何精度、分组或完整性漂移都让当前归集事务回滚。 */
+    private void verifySnapshot(List<UsageAggregate> sourceRows,
+                                List<UsageAggregate> persistedRows,
+                                LocalDate statDate,
+                                long sourceMaxCallLogId) {
+        Map<UsageKey, UsageFingerprint> expected = fingerprints(sourceRows, sourceMaxCallLogId);
+        Map<UsageKey, UsageFingerprint> actual = fingerprints(
+            persistedRows == null ? List.of() : persistedRows, sourceMaxCallLogId);
+        if (!expected.equals(actual)) {
+            throw new IllegalStateException("usage aggregation verification failed for date: " + statDate);
+        }
+    }
 
-        // 归集结果本身跨租户，写入时要切到对应租户的上下文，让拦截器补出正确的 tenant_id
-        return TenantContext.callWith(tenantId, () -> {
-            CwTenantUsageDaily existing = usageMapper.selectOne(new LambdaQueryWrapper<CwTenantUsageDaily>()
-                .eq(CwTenantUsageDaily::getStatDate, statDate)
-                .eq(CwTenantUsageDaily::getProvider, provider)
-                .eq(CwTenantUsageDaily::getModelName, modelName));
-
-            CwTenantUsageDaily entity = existing == null ? new CwTenantUsageDaily() : existing;
-            entity.setTenantId(tenantId);
-            entity.setStatDate(statDate);
-            entity.setProvider(provider);
-            entity.setModelName(modelName);
-            entity.setCallCount(nullToZero(row.getCallCount()));
-            entity.setInputTokens(nullToZero(row.getInputTokens()));
-            entity.setOutputTokens(nullToZero(row.getOutputTokens()));
-            entity.setCachedTokens(nullToZero(row.getCachedTokens()));
-            entity.setTotalTokens(nullToZero(row.getTotalTokens()));
-            entity.setAmount(amount);
-            entity.setCurrency("CNY");
-
-            if (existing == null) {
-                usageMapper.insert(entity);
-            } else {
-                usageMapper.updateById(entity);
+    private Map<UsageKey, UsageFingerprint> fingerprints(List<UsageAggregate> rows,
+                                                          long fallbackSourceMaxId) {
+        Map<UsageKey, UsageFingerprint> result = new LinkedHashMap<>();
+        if (rows == null) {
+            return result;
+        }
+        for (UsageAggregate row : rows) {
+            UsageKey key = new UsageKey(canonicalTenant(row.getTenantId()), normalize(row.getProvider()),
+                normalize(row.getModelName()), normalize(row.getCurrency()));
+            long sourceMaxId = row.getSourceMaxCallLogId() == null
+                ? fallbackSourceMaxId : row.getSourceMaxCallLogId();
+            UsageFingerprint previous = result.put(key, new UsageFingerprint(
+                value(row.getCallCount()), value(row.getInputTokens()), value(row.getOutputTokens()),
+                value(row.getCachedTokens()), value(row.getTotalTokens()), value(row.getModelSegmentCount()),
+                value(row.getSettledSegmentCount()), value(row.getUnsettledSegmentCount()),
+                amount(row.getAmount()), sourceMaxId));
+            if (previous != null) {
+                throw new IllegalStateException("duplicate usage aggregation group: " + key);
             }
-            return 1;
-        });
+        }
+        return result;
     }
 
-    private long nullToZero(Long value) {
+    static SettlementWindow window(LocalDate date, ZoneId zone) {
+        long fromMs = date.atStartOfDay(zone).toInstant().toEpochMilli();
+        long toMs = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli();
+        return new SettlementWindow(fromMs, toMs);
+    }
+
+    private BigDecimal amount(BigDecimal value) {
+        BigDecimal normalized = value == null ? BigDecimal.ZERO : value;
+        return normalized.setScale(ModelCallCost.AMOUNT_SCALE);
+    }
+
+    private long value(Long value) {
         return value == null ? 0L : value;
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private String canonicalTenant(String tenantId) {
         return tenantId == null || tenantId.isBlank()
             ? TenantContext.DEFAULT : TenantContext.canonicalizeTenantId(tenantId);
+    }
+
+    record SettlementWindow(long fromMs, long toMs) {
+    }
+
+    private record UsageKey(String tenantId, String provider, String modelName, String currency) {
+    }
+
+    private record UsageFingerprint(long callCount, long inputTokens, long outputTokens,
+                                    long cachedTokens, long totalTokens, long modelSegmentCount,
+                                    long settledSegmentCount, long unsettledSegmentCount,
+                                    BigDecimal amount, long sourceMaxCallLogId) {
     }
 }

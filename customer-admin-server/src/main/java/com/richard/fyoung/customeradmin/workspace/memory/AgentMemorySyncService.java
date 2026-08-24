@@ -9,6 +9,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 长期记忆同步：权威存储（{@link AgentMemoryStore}）与框架工作副本（{@code {workspace}/MEMORY.md}）
@@ -31,6 +33,8 @@ public class AgentMemorySyncService {
     private static final Logger log = LoggerFactory.getLogger(AgentMemorySyncService.class);
 
     private final AgentMemoryStore memoryStore;
+    /** 每个工作副本水合时看到的权威版本；跨 Pod 的最终裁决仍由 Store CAS 完成。 */
+    private final Map<String, Long> workspaceVersions = new ConcurrentHashMap<>();
 
     public AgentMemorySyncService(AgentMemoryStore memoryStore) {
         this.memoryStore = memoryStore;
@@ -43,12 +47,18 @@ public class AgentMemorySyncService {
             Optional<AgentMemorySnapshot> snapshot = memoryStore.load(agentCode);
             if (snapshot.isPresent()) {
                 Files.writeString(memoryFile, snapshot.get().content(), StandardCharsets.UTF_8);
+                workspaceVersions.put(workspaceKey(agentCode, workspace), snapshot.get().version());
                 log.info("agent memory hydrated to workspace: agentCode={}", agentCode);
                 return;
             }
             if (Files.exists(memoryFile)) {
                 // 存量迁移：老版本记忆只落过 workspace 磁盘，第一次构建时收编进权威存储
-                memoryStore.save(agentCode, Files.readString(memoryFile, StandardCharsets.UTF_8));
+                boolean created = memoryStore.compareAndSet(agentCode,
+                    Files.readString(memoryFile, StandardCharsets.UTF_8), 0L);
+                if (!created) {
+                    throw new AgentMemoryVersionConflictException(agentCode, 0L);
+                }
+                workspaceVersions.put(workspaceKey(agentCode, workspace), 1L);
                 log.info("legacy workspace memory imported into store: agentCode={}", agentCode);
             }
         } catch (Exception e) {
@@ -64,14 +74,25 @@ public class AgentMemorySyncService {
                 return;
             }
             String content = Files.readString(memoryFile, StandardCharsets.UTF_8);
-            String stored = memoryStore.load(agentCode).map(AgentMemorySnapshot::content).orElse(null);
-            if (content.equals(stored)) {
+            Optional<AgentMemorySnapshot> current = memoryStore.load(agentCode);
+            if (current.isPresent() && content.equals(current.get().content())) {
+                workspaceVersions.put(workspaceKey(agentCode, workspace), current.get().version());
                 return;
             }
-            memoryStore.save(agentCode, content);
+            String workspaceKey = workspaceKey(agentCode, workspace);
+            long expectedVersion = current.isEmpty() ? 0L
+                : workspaceVersions.getOrDefault(workspaceKey, current.get().version());
+            if (!memoryStore.compareAndSet(agentCode, content, expectedVersion)) {
+                throw new AgentMemoryVersionConflictException(agentCode, expectedVersion);
+            }
+            workspaceVersions.put(workspaceKey, expectedVersion + 1L);
             log.info("agent memory persisted to store: agentCode={} bytes={}", agentCode, content.length());
         } catch (Exception e) {
             log.error("persist agent memory failed, code={}, agentCode={}", "AGENT-MEMORY-PERSIST-FAIL", agentCode, e);
         }
+    }
+
+    private String workspaceKey(String agentCode, Path workspace) {
+        return agentCode + "\u001f" + workspace.toAbsolutePath().normalize();
     }
 }

@@ -3,8 +3,11 @@ package com.richard.fyoung.customerworkapp.config;
 import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
+import com.richard.fyoung.customerwork.safety.security.ApiKeySecretHasher;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -69,6 +72,9 @@ class ProductionReadinessValidatorTest {
         assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-subscribe-retry-ms"));
         assertTrue(error.getMessage().contains("customer-work.outbox.store-mode"));
         assertTrue(error.getMessage().contains("customer-work.model.egress.allowed-hosts"));
+        assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-signature-required"));
+        assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-signing-key-id"));
+        assertTrue(error.getMessage().contains("customer-work.nacos.runtime-config-signing-secret"));
     }
 
     @Test
@@ -137,6 +143,35 @@ class ProductionReadinessValidatorTest {
         assertTrue(error.getMessage().contains("customer-work.memory.retention-cleanup-enabled"));
     }
 
+    @Test
+    void legacyPlaintextApiKey_shouldFailProductionGate() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getSecurity().getAuth().setApiKeys(List.of("legacy-plaintext-secret"));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.security.auth.legacy-plaintext-disabled"));
+        assertFalse(error.getMessage().contains("legacy-plaintext-secret"));
+    }
+
+    @Test
+    void malformedOrExpiredStructuredApiKey_shouldFailProductionGate() {
+        CustomerWorkProperties malformed = validProperties();
+        malformed.getSecurity().getAuth().getCredentials().get(0).setKeyHash("not-sha256");
+        CustomerWorkProperties expired = validProperties();
+        expired.getSecurity().getAuth().getCredentials().get(0)
+            .setExpiresAt(Instant.parse("2020-01-01T00:00:00Z"));
+
+        IllegalStateException malformedError = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(malformed, validAttachmentProperties()).afterPropertiesSet());
+        IllegalStateException expiredError = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(expired, validAttachmentProperties()).afterPropertiesSet());
+
+        assertTrue(malformedError.getMessage().contains("customer-work.security.auth.credentials"));
+        assertTrue(expiredError.getMessage().contains("customer-work.security.auth.credentials"));
+    }
+
     private CustomerWorkProperties validProperties() {
         CustomerWorkProperties properties = new CustomerWorkProperties();
         properties.getModel().setApiKey("model-secret");
@@ -146,7 +181,7 @@ class ProductionReadinessValidatorTest {
         properties.getCallLog().setEnabled(true);
         properties.getCallLog().setStoreMode("jdbc");
         properties.getSecurity().getAuth().setEnabled(true);
-        properties.getSecurity().getAuth().setApiKeys(List.of("api-secret"));
+        properties.getSecurity().getAuth().getCredentials().add(structuredCredential());
         properties.getSecurity().getApprovalAuth().setEnabled(true);
         properties.getSecurity().getApprovalAuth().getOperators().put("approval-secret", "operator-a");
         properties.getUserAuth().setJwtSecret("jwt-secret-with-at-least-32-characters-0001");
@@ -161,6 +196,16 @@ class ProductionReadinessValidatorTest {
         properties.getNotification().setWebhookUrl("https://notify.internal.example/messages");
         properties.getNotification().setAuthToken("notification-secret");
         return properties;
+    }
+
+    private SecurityProperties.Credential structuredCredential() {
+        SecurityProperties.Credential credential = new SecurityProperties.Credential();
+        credential.setKeyId("partner-a");
+        credential.setKeyHash(ApiKeySecretHasher.sha256Hex("api-secret"));
+        credential.setTenantId("default");
+        credential.setScopes(List.of("*"));
+        credential.setEpoch(1L);
+        return credential;
     }
 
     private AttachmentProperties validAttachmentProperties() {

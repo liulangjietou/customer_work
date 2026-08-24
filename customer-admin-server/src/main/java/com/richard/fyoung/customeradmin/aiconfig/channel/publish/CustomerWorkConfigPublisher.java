@@ -24,13 +24,16 @@ import com.richard.fyoung.customeradmin.aiconfig.experiment.domain.ModelExperime
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.entity.AiMcp;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.mapper.AiMcpMapper;
+import com.richard.fyoung.customeradmin.aiconfig.mcp.service.McpCredentialService;
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelHealthRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelRoutingPolicyRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.service.ModelExperimentRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
+import com.richard.fyoung.customeradmin.billing.service.ModelPriceService;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -42,6 +45,7 @@ import com.richard.fyoung.customeradmin.configversion.service.ConfigVersionServi
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
 import com.richard.fyoung.customerwork.infra.config.RuntimeConfigContentHasher;
+import com.richard.fyoung.customerwork.infra.config.RuntimeConfigSignature;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,12 +95,15 @@ public class CustomerWorkConfigPublisher {
     private final AesGcmCryptoUtil cryptoUtil;
     private final AdminModelFactory modelFactory;
     private final SecretRefService secretRefService;
+    private final McpCredentialService mcpCredentialService;
     private final ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess;
     private final ModelExperimentRuntimeAccess experimentRuntimeAccess;
+    private final ModelHealthRuntimeAccess healthRuntimeAccess;
     private final RuntimePublishProperties properties;
     /** 发布快照记录；为 null 时只发布不留版本（版本化未装配的场景，行为与引入版本化之前一致）。 */
     private final ConfigVersionService versionService;
     private final RuntimePublishTaskService taskService;
+    private final ModelPriceService modelPriceService;
     private final boolean tenantEnabled;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RuntimeRollbackPatchExtractor rollbackPatchExtractor =
@@ -114,7 +121,8 @@ public class CustomerWorkConfigPublisher {
                                        RuntimePublishProperties properties) {
         this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
             agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
-            null, null, null, (ConfigVersionService) null, (RuntimePublishTaskService) null, false);
+            null, null, null, (ConfigVersionService) null, (RuntimePublishTaskService) null,
+            null, null, null, false);
     }
 
     CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
@@ -125,7 +133,8 @@ public class CustomerWorkConfigPublisher {
                                 RuntimePublishProperties properties, boolean tenantEnabled) {
         this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
             agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
-            null, null, null, (ConfigVersionService) null, (RuntimePublishTaskService) null, tenantEnabled);
+            null, null, null, (ConfigVersionService) null, (RuntimePublishTaskService) null,
+            null, null, null, tenantEnabled);
     }
 
     /**
@@ -148,7 +157,26 @@ public class CustomerWorkConfigPublisher {
         this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
             agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, secretRefService,
             routingPolicyRuntimeAccessProvider, null, properties, tenantProperties,
-            versionServiceProvider, taskServiceProvider);
+            versionServiceProvider, taskServiceProvider, null, null, null);
+    }
+
+    /** 兼容显式装配在线实验能力的既有测试与扩展调用方。 */
+    public CustomerWorkConfigPublisher(AiChannelBindingMapper channelBindingMapper, AiAgentMapper agentMapper,
+                                       ModelConfigAccess modelConfigAccess,
+                                       AiAgentBackupModelMapper agentBackupModelMapper,
+                                       AiAgentMcpMapper agentMcpMapper, AiMcpMapper mcpMapper,
+                                       AesGcmCryptoUtil cryptoUtil, AdminModelFactory modelFactory,
+                                       SecretRefService secretRefService,
+                                       ObjectProvider<ModelRoutingPolicyRuntimeAccess> routingPolicyRuntimeAccessProvider,
+                                       ObjectProvider<ModelExperimentRuntimeAccess> experimentRuntimeAccessProvider,
+                                       RuntimePublishProperties properties,
+                                       AdminTenantProperties tenantProperties,
+                                       ObjectProvider<ConfigVersionService> versionServiceProvider,
+                                       ObjectProvider<RuntimePublishTaskService> taskServiceProvider) {
+        this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
+            agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, secretRefService,
+            routingPolicyRuntimeAccessProvider, experimentRuntimeAccessProvider, properties,
+            tenantProperties, versionServiceProvider, taskServiceProvider, null, null, null);
     }
 
     @Autowired
@@ -163,7 +191,10 @@ public class CustomerWorkConfigPublisher {
                                        RuntimePublishProperties properties,
                                        AdminTenantProperties tenantProperties,
                                        ObjectProvider<ConfigVersionService> versionServiceProvider,
-                                       ObjectProvider<RuntimePublishTaskService> taskServiceProvider) {
+                                       ObjectProvider<RuntimePublishTaskService> taskServiceProvider,
+                                       ObjectProvider<ModelPriceService> modelPriceServiceProvider,
+                                       ObjectProvider<McpCredentialService> mcpCredentialServiceProvider,
+                                       ObjectProvider<ModelHealthRuntimeAccess> healthRuntimeAccessProvider) {
         this(channelBindingMapper, agentMapper, modelConfigAccess, agentBackupModelMapper,
             agentMcpMapper, mcpMapper, cryptoUtil, modelFactory, properties,
             secretRefService,
@@ -173,6 +204,9 @@ public class CustomerWorkConfigPublisher {
                 ? null : experimentRuntimeAccessProvider.getIfAvailable(),
             versionServiceProvider == null ? null : versionServiceProvider.getIfAvailable(),
             taskServiceProvider == null ? null : taskServiceProvider.getIfAvailable(),
+            modelPriceServiceProvider == null ? null : modelPriceServiceProvider.getIfAvailable(),
+            mcpCredentialServiceProvider == null ? null : mcpCredentialServiceProvider.getIfAvailable(),
+            healthRuntimeAccessProvider == null ? null : healthRuntimeAccessProvider.getIfAvailable(),
             tenantProperties.isEnabled());
     }
 
@@ -186,7 +220,11 @@ public class CustomerWorkConfigPublisher {
                                         ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess,
                                         ModelExperimentRuntimeAccess experimentRuntimeAccess,
                                         ConfigVersionService versionService,
-                                        RuntimePublishTaskService taskService, boolean tenantEnabled) {
+                                        RuntimePublishTaskService taskService,
+                                        ModelPriceService modelPriceService,
+                                        McpCredentialService mcpCredentialService,
+                                        ModelHealthRuntimeAccess healthRuntimeAccess,
+                                        boolean tenantEnabled) {
         this.channelBindingMapper = channelBindingMapper;
         this.agentMapper = agentMapper;
         this.modelConfigAccess = modelConfigAccess;
@@ -196,17 +234,41 @@ public class CustomerWorkConfigPublisher {
         this.cryptoUtil = cryptoUtil;
         this.modelFactory = modelFactory;
         this.secretRefService = secretRefService;
+        this.mcpCredentialService = mcpCredentialService;
         this.routingPolicyRuntimeAccess = routingPolicyRuntimeAccess;
         this.experimentRuntimeAccess = experimentRuntimeAccess;
+        this.healthRuntimeAccess = healthRuntimeAccess;
         this.properties = properties;
         this.versionService = versionService;
         this.taskService = taskService;
+        this.modelPriceService = modelPriceService;
         this.tenantEnabled = tenantEnabled;
     }
 
     /** 发布能力是否启用（供 Controller 手动发布前门禁判断）。 */
     public boolean isEnabled() {
         return properties.getNacos().isEnabled();
+    }
+
+    /**
+     * 冻结当前 Agent 可发布候选的非密钥版本绑定，供 badcase/知识盲区在复评前绑定精确制品。
+     *
+     * <p>这里只组装候选，不做 Nacos 外写或连通性探测；真正发布仍必须进入可靠任务、Eval gate 与 ACK 状态机。</p>
+     */
+    public EvalVersionBinding previewVersionBinding(Long agentId) {
+        if (!isEnabled()) {
+            throw new IllegalStateException("runtime config publishing is disabled");
+        }
+        if (agentId == null || !hasEnabledAgent(agentId) || !hasEnabledBinding(agentId)) {
+            throw new IllegalArgumentException("enabled agent/channel binding not found: " + agentId);
+        }
+        AiAgent agent = agentMapper.selectById(agentId);
+        AiModelConfig primary = modelConfigAccess.findVisibleById(agent.getModelId());
+        if (primary == null) {
+            throw new IllegalStateException("primary model not found for agent: " + agent.getAgentCode());
+        }
+        CustomerWorkRuntimeConfig payload = assemble(agent, primary, null, true);
+        return EvalVersionBinding.fromRuntimeConfig(payload);
     }
 
     /**
@@ -221,7 +283,7 @@ public class CustomerWorkConfigPublisher {
             return null;
         }
         if (taskService != null) {
-            if (!hasEnabledBinding(agentId)) {
+            if (!hasEnabledBinding(agentId) || !hasEnabledAgent(agentId)) {
                 return null;
             }
             return taskService.enqueueAgent(agentId);
@@ -230,6 +292,39 @@ public class CustomerWorkConfigPublisher {
         String tenantId = tenantEnabled ? TenantContext.require() : null;
         runAfterCommitOrNow(() -> runInTenant(tenantId, () -> doPublishForAgentId(agentId)));
         return null;
+    }
+
+    /**
+     * 健康状态变化必须可靠下发，即使主模型当前不可连通也不能被发布前探测拦住。
+     * 该入口只登记 HEALTH_OVERLAY 任务，实际发布仍走 fencing、签名和冻结目标 ACK。
+     */
+    public String publishHealthOverlayForAgentId(Long agentId) {
+        if (!isEnabled() || agentId == null || !hasEnabledBinding(agentId) || !hasEnabledAgent(agentId)) {
+            return null;
+        }
+        if (taskService == null) {
+            throw new IllegalStateException("reliable runtime publish task service is required for health overlay");
+        }
+        return taskService.enqueueHealthOverlay(agentId);
+    }
+
+    private boolean hasEnabledAgent(Long agentId) {
+        return agentMapper.selectCount(new LambdaQueryWrapper<AiAgent>()
+            .eq(AiAgent::getId, agentId)
+            .eq(AiAgent::getStatus, StatusFlags.ENABLED)) > 0;
+    }
+
+    /**
+     * 发布显式撤销快照。调用方必须在删除 Agent 行前传入已读取的 targetCode；可靠任务与业务变更同事务提交。
+     */
+    public String revokeForAgentId(Long agentId, String targetCode) {
+        if (!isEnabled() || agentId == null || !StringUtils.hasText(targetCode)) {
+            return null;
+        }
+        if (taskService == null) {
+            throw new IllegalStateException("reliable runtime publish task service is required for revocation");
+        }
+        return taskService.enqueueRevocation(agentId, targetCode);
     }
 
     /**
@@ -303,6 +398,10 @@ public class CustomerWorkConfigPublisher {
             new LambdaQueryWrapper<AiChannelBinding>().eq(AiChannelBinding::getChannelCode, channelCode));
         if (binding == null) {
             throw new IllegalArgumentException("channel binding not found: " + channelCode);
+        }
+        if (binding.getStatus() == null || binding.getStatus() != StatusFlags.ENABLED
+            || !hasEnabledAgent(binding.getAgentId())) {
+            throw new IllegalStateException("channel binding or agent is disabled: " + channelCode);
         }
         if (taskService != null) {
             return taskService.enqueueAgent(binding.getAgentId());
@@ -435,6 +534,9 @@ public class CustomerWorkConfigPublisher {
 
     /** 为可靠任务组装当前快照。快照只存于 worker 内存，任务表不复制密钥密文。 */
     public PreparedRuntimeConfig prepareTask(RuntimePublishTask task) {
+        if (publishIntent(task).isRevocation()) {
+            return prepareRevocation(task);
+        }
         List<AiChannelBinding> bindings = channelBindingMapper.selectList(
             new LambdaQueryWrapper<AiChannelBinding>()
                 .eq(AiChannelBinding::getAgentId, task.getTargetId())
@@ -450,8 +552,10 @@ public class CustomerWorkConfigPublisher {
         if (primary == null) {
             throw new IllegalStateException("primary model not found for agent: " + agent.getAgentCode());
         }
+        RuntimePublishIntent intent = publishIntent(task);
         ModelExperimentPublishAction experimentAction = experimentAction(task);
-        if (experimentAction != ModelExperimentPublishAction.DEACTIVATE) {
+        if (!intent.bypassesConnectivityGate()
+            && experimentAction != ModelExperimentPublishAction.DEACTIVATE) {
             assertConnectivity(primary);
         }
         String revision = StringUtils.hasText(task.getRevision())
@@ -460,6 +564,7 @@ public class CustomerWorkConfigPublisher {
         // 渠道条件应由消费端在每次请求时注入 ModelRouteHint；未注入时只能命中无条件默认规则。
         CustomerWorkRuntimeConfig payload = assemble(agent, primary, null, experimentAction == null);
         applyExperimentIntent(payload, task, experimentAction);
+        enrichPricing(payload);
         applySafeRollbackPatch(payload, task);
         String publishedAt = LocalDateTime.ofInstant(
             Instant.ofEpochMilli(task.getCreatedAtMs()), ZoneOffset.UTC).toString();
@@ -471,6 +576,28 @@ public class CustomerWorkConfigPublisher {
         return new PreparedRuntimeConfig(agent.getAgentCode(), null,
             taskDataId, taskGroupName, revision,
             payload.getContentHash(), serialize(payload), EvalVersionBinding.fromRuntimeConfig(payload));
+    }
+
+    /** 撤销任务只依赖入队时固化的目标，不读取已经停用/删除的 Agent、绑定、模型或 MCP 行。 */
+    private PreparedRuntimeConfig prepareRevocation(RuntimePublishTask task) {
+        if (!StringUtils.hasText(task.getTargetCode())) {
+            throw new IllegalStateException("runtime revocation targetCode is missing");
+        }
+        CustomerWorkRuntimeConfig payload = new CustomerWorkRuntimeConfig();
+        payload.setSchemaVersion(5);
+        payload.setActive(Boolean.FALSE);
+        payload.setTargetCode(task.getTargetCode());
+        String revision = StringUtils.hasText(task.getRevision())
+            ? task.getRevision() : UUID.randomUUID().toString();
+        String publishedAt = LocalDateTime.ofInstant(
+            Instant.ofEpochMilli(task.getCreatedAtMs()), ZoneOffset.UTC).toString();
+        enrichMetadata(payload, revision, publishedAt);
+        String taskDataId = StringUtils.hasText(task.getDataId())
+            ? task.getDataId() : resolveTaskDataId(task.getTenantId());
+        String taskGroupName = StringUtils.hasText(task.getGroupName())
+            ? task.getGroupName() : properties.getNacos().getGroup();
+        return new PreparedRuntimeConfig(task.getTargetCode(), null, taskDataId, taskGroupName,
+            revision, payload.getContentHash(), serialize(payload), null);
     }
 
     private ModelExperimentPublishAction experimentAction(RuntimePublishTask task) {
@@ -603,15 +730,19 @@ public class CustomerWorkConfigPublisher {
                                                String channelCode,
                                                boolean includeCurrentExperiment) {
         CustomerWorkRuntimeConfig cfg = new CustomerWorkRuntimeConfig();
-        cfg.setSchemaVersion(2);
+        cfg.setSchemaVersion(5);
+        cfg.setActive(Boolean.TRUE);
+        cfg.setTargetCode(agent.getAgentCode());
         cfg.setPublishedAt(LocalDateTime.now().toString());
         cfg.setSystemPrompt(agent.getSystemPrompt());
 
         CustomerWorkRuntimeConfig.Model model = cfg.getModel();
+        model.setDeploymentId(primary.getId());
         model.setProvider(primary.getProvider());
         model.setName(primary.getModel());
         model.setBaseUrl(primary.getBaseUrl());
         model.setApiKeyCipher(resolveCipherText(primary));
+        model.setHealth(healthOverlay(primary));
 
         if (agent.getModelRoutePolicyId() == null) {
             cfg.setFallback(assembleFallback(agent.getId(), primary.getId()));
@@ -628,6 +759,7 @@ public class CustomerWorkConfigPublisher {
         if (includeCurrentExperiment && experimentRuntimeAccess != null) {
             cfg.setOnlineExperiment(experimentRuntimeAccess.runningForAgent(agent.getId()));
         }
+        enrichPricing(cfg);
 
         CustomerWorkRuntimeConfig.Agent agentCfg = new CustomerWorkRuntimeConfig.Agent();
         agentCfg.setMaxIters(agent.getMaxIters());
@@ -644,6 +776,11 @@ public class CustomerWorkConfigPublisher {
         payload.setContentHash(RuntimeConfigContentHasher.compute(payload, objectMapper));
         payload.setPublishedAt(publishedAt);
         payload.setRevision(revision);
+        if (properties.getSigning().isEnabled()) {
+            payload.setSignatureKeyId(properties.getSigning().getKeyId());
+            payload.setSignatureAlgorithm(RuntimeConfigSignature.ALGORITHM);
+            payload.setSignature(RuntimeConfigSignature.sign(payload, properties.getSigning().getSecret()));
+        }
     }
 
     /** 兜底模型 = 智能体备用模型列表第一个（按 sort_order 升序）；无备用则不启用兜底。 */
@@ -662,10 +799,12 @@ public class CustomerWorkConfigPublisher {
             }
             CustomerWorkRuntimeConfig.Fallback fallback = new CustomerWorkRuntimeConfig.Fallback();
             fallback.setEnabled(true);
+            fallback.setDeploymentId(fb.getId());
             fallback.setProvider(fb.getProvider());
             fallback.setName(fb.getModel());
             fallback.setBaseUrl(fb.getBaseUrl());
             fallback.setApiKeyCipher(resolveCipherText(fb));
+            fallback.setHealth(healthOverlay(fb));
             return fallback;
         }
         return null;
@@ -689,13 +828,53 @@ public class CustomerWorkConfigPublisher {
             .map(deployment -> {
                 CustomerWorkRuntimeConfig.Fallback fallback = new CustomerWorkRuntimeConfig.Fallback();
                 fallback.setEnabled(true);
+                fallback.setDeploymentId(deployment.getDeploymentId());
                 fallback.setProvider(deployment.getProvider());
                 fallback.setName(deployment.getName());
                 fallback.setBaseUrl(deployment.getBaseUrl());
                 fallback.setApiKeyCipher(deployment.getApiKeyCipher());
+                fallback.setPricing(deployment.getPricing());
+                fallback.setHealth(deployment.getHealth());
                 return fallback;
             })
             .orElseThrow(() -> new IllegalStateException("routing fallback deployment snapshot is missing"));
+    }
+
+    /** 对载荷内全部真实部署冻结同供应商、同模型价目；兼容构造未装配价格服务时显式 UNPRICED。 */
+    private void enrichPricing(CustomerWorkRuntimeConfig config) {
+        CustomerWorkRuntimeConfig.Model primary = config.getModel();
+        primary.setPricing(priceSnapshot(primary.getProvider(), primary.getName()));
+        CustomerWorkRuntimeConfig.Fallback fallback = config.getFallback();
+        if (fallback != null) {
+            fallback.setPricing(priceSnapshot(fallback.getProvider(), fallback.getName()));
+        }
+        if (config.getRoutingPolicy() != null && config.getRoutingPolicy().getDeployments() != null) {
+            for (CustomerWorkRuntimeConfig.RoutingDeployment deployment
+                : config.getRoutingPolicy().getDeployments()) {
+                deployment.setPricing(priceSnapshot(deployment.getProvider(), deployment.getName()));
+            }
+        }
+        CustomerWorkRuntimeConfig.OnlineExperiment experiment = config.getOnlineExperiment();
+        if (experiment != null) {
+            enrichArmPricing(experiment.getControl());
+            enrichArmPricing(experiment.getTreatment());
+        }
+    }
+
+    private void enrichArmPricing(CustomerWorkRuntimeConfig.ExperimentArm arm) {
+        if (arm != null) {
+            arm.setPricing(priceSnapshot(arm.getProvider(), arm.getName()));
+        }
+    }
+
+    private CustomerWorkRuntimeConfig.Pricing priceSnapshot(String provider, String modelName) {
+        return modelPriceService == null
+            ? new CustomerWorkRuntimeConfig.Pricing()
+            : modelPriceService.snapshot(provider, modelName);
+    }
+
+    private CustomerWorkRuntimeConfig.HealthOverlay healthOverlay(AiModelConfig model) {
+        return healthRuntimeAccess == null ? null : healthRuntimeAccess.overlay(model);
     }
 
     private String resolveCipherText(AiModelConfig model) {
@@ -733,7 +912,11 @@ public class CustomerWorkConfigPublisher {
             CustomerWorkRuntimeConfig.McpServer server = new CustomerWorkRuntimeConfig.McpServer();
             server.setName(mcp.getMcpName());
             server.setTransport(transport);
-            fillUrlAndHeaders(server, mcp.getMcpType(), mcp.getConfig());
+            server.setAllowedSubjectTypes(
+                com.richard.fyoung.customerwork.tool.mcp.McpSubjectPolicy.toNames(mcp.getAllowedSubjectTypes()));
+            String executableConfig = mcpCredentialService == null
+                ? mcp.getConfig() : mcpCredentialService.resolve(mcp);
+            fillUrlAndHeaders(server, mcp.getMcpType(), executableConfig);
             if (StringUtils.hasText(server.getUrl())) {
                 servers.add(server);
             }
@@ -759,7 +942,9 @@ public class CustomerWorkConfigPublisher {
         try {
             McpServerSpec spec = mcpClientFactory.parseSpec(server.getName(), mcpType, config);
             server.setUrl(spec.url());
-            server.setHeaders(spec.headers());
+            if (!CollectionUtils.isEmpty(spec.headers())) {
+                server.setHeadersCipher(cryptoUtil.encrypt(objectMapper.writeValueAsString(spec.headers())));
+            }
         } catch (Exception e) {
             // 不能静默跳过损坏的 MCP，否则发布成功但工具集已悄悄变化；任务层统一记录失败并重试/处置。
             throw new IllegalStateException("runtime publish MCP config is invalid: " + server.getName(), e);

@@ -10,13 +10,13 @@ import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
+import java.util.concurrent.CompletionStage;
 
 /**
  * 操作日志 AOP 切面：环绕标注 {@link OperationLog} 的方法，记录操作人/时间/对象/结果/IP。
@@ -50,38 +50,73 @@ public class OperationLogAspect {
         String params = masker.maskToJson(args.length == 1 ? args[0] : args);
         String ip = resolveClientIp();
 
+        SysOperationLog audit = start(operationLog.operation(), method, target, params, ip);
         try {
             Object result = joinPoint.proceed();
-            recordAsync(operationLog.operation(), method, target, params, SysOperationLog.RESULT_SUCCESS, null, ip);
+            if (result instanceof CompletionStage<?> stage) {
+                return stage.whenComplete((ignored, error) -> complete(audit,
+                    error == null ? SysOperationLog.RESULT_SUCCESS : SysOperationLog.RESULT_FAILURE,
+                    error == null ? null : error.getMessage()));
+            }
+            complete(audit, SysOperationLog.RESULT_SUCCESS, null);
             return result;
         } catch (Throwable t) {
-            recordAsync(operationLog.operation(), method, target, params,
-                SysOperationLog.RESULT_FAILURE, t.getMessage(), ip);
+            complete(audit, SysOperationLog.RESULT_FAILURE, t.getMessage());
             throw t;
         }
     }
 
-    /** 落库用 {@code @Async} 异步，不拖慢主流程 P95 响应时间。 */
-    @Async
-    public void recordAsync(String operation, String method, String target, String params,
-                            int result, String errorMsg, String ip) {
+    /** 业务执行前同步写 STARTED；写入失败必须阻止高风险操作继续。 */
+    private SysOperationLog start(String operation, String method, String target,
+                                  String params, String ip) {
         try {
             SysOperationLog entity = new SysOperationLog();
-            if (StpUtil.isLogin()) {
-                entity.setUserId(StpUtil.getLoginIdAsLong());
-                entity.setUsername(StpUtil.getTokenSession().getString("username"));
-            }
+            captureActor(entity);
             entity.setOperation(operation);
             entity.setMethod(method);
             entity.setTarget(target);
             entity.setParams(params);
+            entity.setResult(SysOperationLog.RESULT_PENDING);
+            entity.setIp(ip);
+            entity.initializeAudit(SysOperationLog.AUDIT_STARTED, LocalDateTime.now());
+            if (operationLogMapper.insert(entity) != 1) {
+                throw new IllegalStateException("operation audit start was not persisted");
+            }
+            return entity;
+        } catch (Exception e) {
+            log.error("record operation audit start failed, code={}",
+                "OPERATION-AUDIT-START-FAIL", e);
+            throw new IllegalStateException("操作审计留痕失败，已阻止本次操作", e);
+        }
+    }
+
+    /** 终态补写失败时保留 STARTED 行，供巡检识别不确定操作。 */
+    private void complete(SysOperationLog entity, int result, String errorMsg) {
+        try {
+            if (operationLogMapper.completeAudit(
+                entity.getId(), entity.getEventId(), result, errorMsg) != 1) {
+                throw new IllegalStateException("operation audit completion was not persisted");
+            }
             entity.setResult(result);
             entity.setErrorMsg(errorMsg);
-            entity.setIp(ip);
-            entity.setCreateTime(LocalDateTime.now());
-            operationLogMapper.insert(entity);
+            entity.setAuditStatus(SysOperationLog.AUDIT_COMPLETED);
         } catch (Exception e) {
-            log.error("record operation log failed, code={}", "OPERATION-LOG-RECORD-FAIL", e);
+            log.error("record operation audit completion failed, code={}, eventId={}",
+                "OPERATION-AUDIT-COMPLETE-FAIL", entity.getEventId(), e);
+        }
+    }
+
+    private void captureActor(SysOperationLog entity) {
+        try {
+            if (!StpUtil.isLogin()) {
+                throw new IllegalStateException("authenticated operation audit actor is missing");
+            }
+            entity.setUserId(StpUtil.getLoginIdAsLong());
+            entity.setUsername(StpUtil.getTokenSession().getString("username"));
+        } catch (Exception e) {
+            log.error("resolve operation audit actor failed, code={}",
+                "OPERATION-AUDIT-ACTOR-FAIL", e);
+            throw new IllegalStateException("操作审计无法确认操作人，已阻止本次操作", e);
         }
     }
 

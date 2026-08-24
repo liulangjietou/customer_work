@@ -15,13 +15,20 @@ package com.richard.fyoung.customerwork.safety.security;
  * @param nickname 昵称
  * @param tenantId     归属租户
  * @param accessEpoch  签发时的租户访问版本；旧令牌无该值，访问门禁启用后按已撤销处理
+ * @param sessionEpoch 签发时的用户会话版本；与 cw_user 不一致即撤销
  * @author owlzhangfq@gmail.com
  */
 public record UserPrincipal(String userId, String username, String nickname,
-                            String tenantId, Long accessEpoch) {
+                            String tenantId, Long accessEpoch, Long sessionEpoch) {
 
     /** 保留旧构造器供下游源码兼容；它表示没有绑定访问版本的历史主体。 */
     public UserPrincipal(String userId, String username, String nickname, String tenantId) {
-        this(userId, username, nickname, tenantId, null);
+        this(userId, username, nickname, tenantId, null, null);
+    }
+
+    /** 保留既有租户 epoch 构造器的源码兼容。 */
+    public UserPrincipal(String userId, String username, String nickname,
+                         String tenantId, Long accessEpoch) {
+        this(userId, username, nickname, tenantId, accessEpoch, null);
     }
 }

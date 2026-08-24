@@ -24,7 +24,7 @@ import java.util.List;
  * <p>会话一旦真实持久化过非空激活组，仍以会话自身集合为准——不影响 meta-tool 运行时动态装备语义。</p>
  * @author owlzhangfq@gmail.com
  */
-public class DefaultActiveGroupsToolkit extends Toolkit {
+public class DefaultActiveGroupsToolkit extends ManagedToolkit {
 
     /**
      * 返回自身而非防御性拷贝。

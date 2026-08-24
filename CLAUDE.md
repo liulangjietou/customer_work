@@ -188,10 +188,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   `YmlTrimEquivalenceTest` 用 Spring 的 `Binder` 比对瘦身前后的绑定结果，误删会立刻红。
   例外：prod profile 里的**生产安全基线**（如 `skill.code-execution-enabled: false`）即使与默认值相同也显式声明，
   那表达的是"生产明确要求它是关的"，有人改了 Java 默认值时仍守得住——这类项旁边都写了理由。
-- **admin 访问客服端库一律走 `CustomerWorkFacade`**：惰性建池、探测、库不可达转业务异常、销毁关池
+- **admin 访问客服端库一律走 `CustomerWorkFacade`**：惰性建池、探测、首次访问前执行客服端 Flyway、
+  库不可达转业务异常、销毁关池
   这套固定套路此前 8 个能力域各抄一份（~560 行），改池参数或异常口径要记得改 8 处，
   新增时最容易"照着抄但漏了 `@PreDestroy`"——漏了不报错，只在反复重启时慢慢泄漏连接池。
   现在全 admin 只有 `CustomerWorkFacade` 一处调 `CrossDbGateways.lazy`，新增门面只需填 5 个参数。
+  本地/测试默认在业务 Mapper 暴露前运行 `CustomerWorkSchemaMigrator`，生产 profile 通过三套连接属性的
+  `schema-migration-enabled=false` 保持 DBA 手工变更约定；迁移失败不得缓存门面，下次访问原样重试。
   连接信息走 `CustomerWorkDbConnection` 接口而非某个具体属性类——**9 个门面里有 6 个复用
   `admin.content-guard.*`，字典用 `admin.dict.*`、调用统计用 `admin.agent-call-stats.app.*`**。
   **批量模板化重构这批文件时踩了两个坑（都只在全量测试才暴露）**：
@@ -214,13 +217,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   已套用 8 次：Approval/SlotFilling/DialogStage/Handoff/Feedback/Ticket/UserAccount/ChatLog），别发明新模式。
   持久层规范：贫血 DO(entity/)+BaseMapper(mapper/)+复杂 SQL 进 resources/customerwork/mapper/*.xml，
   代码里禁止手写 SQL；独立 customerWorkDataSource/SqlSessionFactory（CustomerWorkPersistenceConfig），
-  不污染宿主 MyBatis 环境；建表种子统一走 SchemaInitializer（customer-work-schema.sql，与 mysql/01-agent-scope-customer-work/ 同步）。
-- **客服端库（`cw_*` 表）没有任何加列机制**：SchemaInitializer 执行的是 `CREATE TABLE IF NOT EXISTS`，
-  对**已存在**的表既不加列也不报错。空库首次启动没问题，但开发期途中给 `cw_*` 加了列的话，
-  本机已建好的旧表**不会**跟着变——代码里 DO 多了字段、XML 多了列名，启动一切正常，
-  一调接口就 `Unknown column` 报 500。改完 schema 请手工 `ALTER TABLE` 同步本机库，
-  或直接 drop 掉那张表让它重建。B6 踩过：`cw_eval_run` 的 `seq`/`prompt_fingerprint` 是中途加的，
-  先启动过的库里没有，评测接口一调就 500。（admin 库不受影响，那边有 Flyway。）
+  不污染宿主 MyBatis 环境；客服端建表/加列统一走 `db/customerwork/migration` 的 Flyway，完整初始化镜像
+  `mysql/01-agent-scope-customer-work/customer-work-schema.sql` 必须同步。
+- **客服端库（`cw_*` 表）由 `CustomerWorkSchemaMigrator` 统一升级**：空库逐版执行全部迁移；
+  旧 `SchemaInitializer`/完整 SQL 镜像创建的非空库先按实际结构确定接管版本，再补跑后续迁移。
+  已部署的迁移文件禁止修改；新增结构必须新建下一版本迁移、同步手工升级 SQL 与完整镜像，并更新
+  `CustomerWorkSchemaMigrationIntegrationTest`。Admin 因排除了 starter 自动装配，必须通过
+  `CustomerWorkFacade` 的迁移门禁接管客服端库，不能把缺表/缺列延迟成业务 SQL 的 `Unknown column`。
 - **admin 库新增 Flyway 迁移必须同步一份到 `mysql/02-customer-admin/`**（文件名加数字前缀：`<版本号>-V<版本号>__xxx.sql`，
   字典序即执行序）。那个目录是 Flyway 迁移的镜像副本，供手工初始化与 **CI 建库**使用；漏同步不会影响本地
   （本地走 Flyway），但 CI 从空库灌脚本时会在依赖该表的后续脚本上炸掉——V27/V28/V36/V37/V38/V39/V41 就这么漏了 7 个，

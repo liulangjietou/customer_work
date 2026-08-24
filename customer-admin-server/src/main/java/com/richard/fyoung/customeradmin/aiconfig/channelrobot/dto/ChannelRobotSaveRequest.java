@@ -14,6 +14,10 @@ public record ChannelRobotSaveRequest(
     @NotBlank(message = "appKey 不能为空") String appKey,
     String appSecret,
     String robotCode,
+    /** 微信回调模式：plaintext / safe，非微信渠道忽略。 */
+    String callbackMode,
+    /** 微信安全模式 EncodingAESKey；编辑留空表示沿用原密文。 */
+    String encodingAesKey,
     @NotBlank(message = "agentCode 不能为空") String agentCode,
     /** 会话模式：continuous 持续会话 / per_message 单次问答（空值按 continuous）。 */
     String sessionMode,

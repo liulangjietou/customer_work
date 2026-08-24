@@ -21,14 +21,16 @@ class BusinessOutcomeMapperSqlTest {
         String sql = boundAggregate(null);
 
         assertTrue(sql.contains("l.tenant_id = ?"));
-        assertTrue(sql.contains("h.tenant_id = ?"));
         assertTrue(sql.contains("t.tenant_id = ?"));
         assertTrue(sql.contains("c.tenant_id = ?"));
         assertTrue(sql.contains("l.start_time >= ?"));
         assertTrue(sql.contains("l.start_time < ?"));
-        assertTrue(sql.contains("cw_handoff_ticket"));
+        assertFalse(sql.contains("cw_handoff_ticket"));
         assertTrue(sql.contains("cw_ticket"));
         assertTrue(sql.contains("cw_csat_survey"));
+        assertTrue(sql.contains("l.model_cost_amount"));
+        assertTrue(sql.contains("l.model_cost_status = 'MULTI_CURRENCY'"));
+        assertTrue(sql.contains("settled_cost_segment_count"));
         assertFalse(sql.contains("l.agent_code = ?"));
         assertFalse(sql.contains("cw_tenant_usage_daily"));
     }

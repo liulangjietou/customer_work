@@ -3,6 +3,7 @@ package com.richard.fyoung.customerworkapp.ws;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerworkapp.chat.ChatDispatchService;
+import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
@@ -47,6 +48,7 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
     private final WsSessionRegistry registry;
     private final ObjectMapper objectMapper;
     private final TenantAccessGuard tenantAccessGuard;
+    private final UserAccountService userAccountService;
 
     public UserChatWebSocketHandler(UserJwtService jwtService,
                                     ChatDispatchService dispatch,
@@ -55,17 +57,27 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
         this(jwtService, dispatch, registry, objectMapper, null);
     }
 
-    @Autowired
     public UserChatWebSocketHandler(UserJwtService jwtService,
                                     ChatDispatchService dispatch,
                                     WsSessionRegistry registry,
                                     ObjectMapper objectMapper,
                                     TenantAccessGuard tenantAccessGuard) {
+        this(jwtService, dispatch, registry, objectMapper, tenantAccessGuard, null);
+    }
+
+    @Autowired
+    public UserChatWebSocketHandler(UserJwtService jwtService,
+                                    ChatDispatchService dispatch,
+                                    WsSessionRegistry registry,
+                                    ObjectMapper objectMapper,
+                                    TenantAccessGuard tenantAccessGuard,
+                                    UserAccountService userAccountService) {
         this.jwtService = jwtService;
         this.dispatch = dispatch;
         this.registry = registry;
         this.objectMapper = objectMapper;
         this.tenantAccessGuard = tenantAccessGuard;
+        this.userAccountService = userAccountService;
     }
 
     @Override
@@ -84,6 +96,10 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
             log.info("ws user handshake rejected: token tenant invalid");
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
+        if (!isUserSessionActive(user)) {
+            log.info("ws user handshake rejected: user credential revoked");
+            return session.close(CloseStatus.POLICY_VIOLATION);
+        }
         TenantAccessDecision access = currentAccess(user);
         if (!access.isAllowed()) {
             log.info("ws user handshake rejected: code={}, tenantId={}", access.code(), user.tenantId());
@@ -97,7 +113,7 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
                                            long handshakeAccessEpoch) {
         return Mono.defer(() -> TenantContext.callWith(user.tenantId(), () -> {
             TenantAccessDecision beforeRegistration = currentAccess(user);
-            if (!sameAllowedEpoch(beforeRegistration, handshakeAccessEpoch)) {
+            if (!sameAllowedEpoch(beforeRegistration, handshakeAccessEpoch) || !isUserSessionActive(user)) {
                 log.info("ws user registration rejected before register: code={}, tenantId={}",
                     beforeRegistration.code(), user.tenantId());
                 return session.close(CloseStatus.POLICY_VIOLATION);
@@ -106,6 +122,7 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
             TenantAccessDecision afterRegistration = currentAccess(user);
             // 前后双检与 registry 写后复查共同闭合 check→register→epoch 轮换的全部并发窗口。
             if (!sameAllowedEpoch(afterRegistration, handshakeAccessEpoch)
+                || !isUserSessionActive(user)
                 || registry.isTenantRestricted(user.tenantId())) {
                 registry.unregisterUser(user.userId(), sink);
                 log.info("ws user registration rejected after tenant access change: code={}, tenantId={}",
@@ -134,7 +151,7 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
                                                UserPrincipal user,
                                                String payload) {
         TenantAccessDecision access = currentAccess(user);
-        if (!access.isAllowed()) {
+        if (!access.isAllowed() || !isUserSessionActive(user)) {
             log.info("ws user connection revoked: code={}, tenantId={}", access.code(), user.tenantId());
             registry.disconnectTenant(user.tenantId());
             return session.close(CloseStatus.POLICY_VIOLATION);
@@ -153,6 +170,11 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
         return tenantAccessGuard == null
             ? TenantAccessDecision.allowed(0L)
             : tenantAccessGuard.check(user.tenantId(), user.accessEpoch(), true);
+    }
+
+    private boolean isUserSessionActive(UserPrincipal user) {
+        return userAccountService == null
+            || userAccountService.isSessionActive(user.tenantId(), user.userId(), user.sessionEpoch());
     }
 
     /** 解析并分发单条入站帧。解析异常抛出交由上层 onErrorResume 兜底。 */

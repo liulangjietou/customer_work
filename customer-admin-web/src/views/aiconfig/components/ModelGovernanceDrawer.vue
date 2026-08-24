@@ -7,6 +7,7 @@ import {
   listModelHealthEvents,
   rotateModelCredential,
   runModelHealthCheck,
+  updateModelHealthOverride,
 } from '@/api/model'
 import type {
   ModelHealthEvent,
@@ -33,6 +34,7 @@ const drawerVisible = computed({
 const loading = ref(false)
 const probing = ref(false)
 const rotating = ref(false)
+const overriding = ref(false)
 const activeTab = ref('overview')
 const detail = ref<ModelVO | null>(null)
 const health = ref<ModelHealthSnapshot | null>(null)
@@ -40,10 +42,15 @@ const events = ref<ModelHealthEvent[]>([])
 const impact = ref<ModelImpact | null>(null)
 const impactAction = ref<'DELETE' | 'DISABLE' | 'ROTATE'>('DELETE')
 const rotation = ref({ secretValue: '', expiresAt: null as string | null })
+const healthOverride = ref({
+  mode: 'FORCE_UNHEALTHY' as 'FORCE_HEALTHY' | 'FORCE_UNHEALTHY',
+  reason: '',
+  expiresAt: null as string | null,
+})
 
 const rail = computed(() => {
   const credentialStatus = detail.value?.credential?.status
-  const healthStatus = health.value?.healthStatus ?? 'UNKNOWN'
+  const healthStatus = health.value?.effectiveHealthStatus ?? 'UNKNOWN'
   const certificationStatus = detail.value?.certification?.effectiveStatus
     ?? (detail.value?.certificationRequired ? 'UNKNOWN' : 'NOT_REQUIRED')
   return [
@@ -85,6 +92,7 @@ watch(
     }
     if (!visible) {
       rotation.value = { secretValue: '', expiresAt: null }
+      healthOverride.value = { mode: 'FORCE_UNHEALTHY', reason: '', expiresAt: null }
       activeTab.value = 'overview'
     }
   },
@@ -134,6 +142,52 @@ async function probe() {
     emit('refreshed')
   } finally {
     probing.value = false
+  }
+}
+
+async function applyHealthOverride() {
+  if (!props.modelId || !healthOverride.value.reason.trim()) {
+    ElMessage.warning('请填写人工覆盖原因')
+    return
+  }
+  if (!healthOverride.value.expiresAt) {
+    ElMessage.warning('请设置覆盖到期时间')
+    return
+  }
+  await ElMessageBox.confirm(
+    `确认将有效路由状态设置为${healthOverride.value.mode === 'FORCE_HEALTHY' ? '强制健康' : '强制不可用'}？到期后会自动恢复状态机判断。`,
+    '模型健康路由覆盖',
+    { type: 'warning' },
+  )
+  overriding.value = true
+  try {
+    await updateModelHealthOverride(props.modelId, {
+      mode: healthOverride.value.mode,
+      reason: healthOverride.value.reason.trim(),
+      expiresAt: healthOverride.value.expiresAt,
+    })
+    ElMessage.success('人工健康路由覆盖已生效')
+    await loadAll()
+    emit('refreshed')
+  } finally {
+    overriding.value = false
+  }
+}
+
+async function clearHealthOverride() {
+  if (!props.modelId) return
+  overriding.value = true
+  try {
+    await updateModelHealthOverride(props.modelId, {
+      mode: 'AUTO',
+      reason: '清除人工健康路由覆盖',
+      expiresAt: null,
+    })
+    ElMessage.success('已恢复自动健康路由')
+    await loadAll()
+    emit('refreshed')
+  } finally {
+    overriding.value = false
   }
 }
 
@@ -281,8 +335,9 @@ function healthTagType(status: string | null | undefined) {
         <el-tab-pane label="健康历史" name="health">
           <div class="health-hero">
             <div>
-              <span>当前健康状态</span>
-              <strong>{{ health?.healthStatus ?? 'UNKNOWN' }}</strong>
+              <span>有效路由状态</span>
+              <strong>{{ health?.effectiveHealthStatus ?? 'UNKNOWN' }}</strong>
+              <small>状态机：{{ health?.healthStatus ?? 'UNKNOWN' }} · {{ health?.routingAvailable ? '可路由' : '已摘除' }}</small>
             </div>
             <el-button v-permission="'model:health-test'" type="primary" :loading="probing" @click="probe">
               立即探测
@@ -292,16 +347,76 @@ function healthTagType(status: string | null | undefined) {
             <div><span>认证</span><strong>{{ health?.authStatus ?? 'UNKNOWN' }}</strong></div>
             <div><span>最近延迟</span><strong>{{ health?.lastLatencyMs == null ? '—' : `${health.lastLatencyMs} ms` }}</strong></div>
             <div><span>连续失败</span><strong>{{ health?.consecutiveFailures ?? 0 }}</strong></div>
+            <div><span>连续恢复</span><strong>{{ health?.consecutiveSuccesses ?? 0 }}</strong></div>
+            <div><span>冷却截止</span><strong>{{ formatTime(health?.cooldownUntil) }}</strong></div>
             <div><span>下次巡检</span><strong>{{ formatTime(health?.nextProbeAt) }}</strong></div>
+            <div><span>人工覆盖</span><strong>{{ health?.overrideMode ?? 'AUTO' }}</strong></div>
+            <div><span>覆盖截止</span><strong>{{ formatTime(health?.overrideUntil) }}</strong></div>
+          </div>
+          <el-alert
+            v-if="health?.overrideMode !== 'AUTO'"
+            :title="`人工覆盖生效中：${health?.overrideReason ?? '未填写原因'}`"
+            :description="`操作人：${health?.overrideOperatorName ?? health?.overrideOperatorId ?? '—'}；到期：${formatTime(health?.overrideUntil)}`"
+            type="warning"
+            :closable="false"
+            show-icon
+          />
+          <div class="health-override-panel">
+            <div class="section-heading">
+              <div>
+                <h3>人工路由覆盖</h3>
+                <p>只覆盖有效路由判断，不改写探测事实；到期后自动恢复 AUTO。</p>
+              </div>
+              <el-button
+                v-if="health?.overrideMode !== 'AUTO'"
+                v-permission="'model:health-override'"
+                :loading="overriding"
+                @click="clearHealthOverride"
+              >恢复自动</el-button>
+            </div>
+            <el-form label-position="top">
+              <el-form-item label="覆盖模式">
+                <el-radio-group v-model="healthOverride.mode">
+                  <el-radio-button value="FORCE_UNHEALTHY">强制摘除</el-radio-button>
+                  <el-radio-button value="FORCE_HEALTHY">强制可用</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item label="原因">
+                <el-input
+                  v-model="healthOverride.reason"
+                  type="textarea"
+                  :rows="2"
+                  maxlength="500"
+                  show-word-limit
+                  placeholder="填写审批、故障或恢复依据"
+                />
+              </el-form-item>
+              <el-form-item label="到期时间">
+                <el-date-picker
+                  v-model="healthOverride.expiresAt"
+                  type="datetime"
+                  value-format="YYYY-MM-DDTHH:mm:ss"
+                  placeholder="到期后自动恢复"
+                  style="width: 100%"
+                />
+              </el-form-item>
+              <el-button
+                v-permission="'model:health-override'"
+                type="primary"
+                :loading="overriding"
+                @click="applyHealthOverride"
+              >应用覆盖</el-button>
+            </el-form>
           </div>
           <el-table :data="events" max-height="360" empty-text="暂无健康事件">
             <el-table-column prop="occurredAt" label="时间" width="180">
               <template #default="{ row }">{{ formatTime(row.occurredAt) }}</template>
             </el-table-column>
             <el-table-column prop="source" label="来源" width="100" />
+            <el-table-column prop="eventType" label="事件" width="150" />
             <el-table-column label="状态" width="120">
               <template #default="{ row }">
-                <el-tag :type="healthTagType(row.healthStatus)">{{ row.healthStatus }}</el-tag>
+                <el-tag :type="healthTagType(row.effectiveHealthStatus)">{{ row.effectiveHealthStatus }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="latencyMs" label="延迟(ms)" width="100" />
@@ -426,9 +541,12 @@ function healthTagType(status: string | null | undefined) {
 .health-hero { display: flex; align-items: center; justify-content: space-between; margin: 10px 0 16px; padding: 18px 20px; border-radius: 12px; color: white; background: linear-gradient(120deg, #172033, #344565); }
 .health-hero strong { display: block; font-size: 24px; letter-spacing: .04em; }
 .health-hero span { color: #cbd5e1; }
+.health-hero small { display: block; margin-top: 6px; color: #cbd5e1; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
 .metric-grid > div { padding: 14px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
 .metric-grid strong { color: #172033; font-size: 14px; }
+.health-override-panel { margin: 18px 0; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
+.health-override-panel .section-heading { margin-top: 0; }
 
 @media (max-width: 760px) {
   .status-rail,

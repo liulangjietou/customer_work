@@ -45,6 +45,10 @@ function valueOrDash(value: number | null | undefined, digits = 0) {
   }) : '-'
 }
 
+function formatCost(value: number | null | undefined, currency?: string | null) {
+  return typeof value === 'number' ? `${currency || ''} ${value.toFixed(8)}`.trim() : '-'
+}
+
 function formatTime(ms: number) {
   return ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '-'
 }
@@ -65,7 +69,7 @@ onMounted(() => loadData())
         <div class="header">
           <div>
             <h2>业务结果与成本</h2>
-            <p>基于客服端真实调用、转人工和 CSAT 事实；代理指标与不可归因金额均显式标注。</p>
+            <p>基于客服端真实调用、冻结价目、转人工和 CSAT 事实；代理指标与成本完整性均显式标注。</p>
           </div>
           <div class="toolbar">
             <el-input v-model="query.agentCode" clearable placeholder="Agent 编码（可选）" style="width: 190px" />
@@ -96,7 +100,8 @@ onMounted(() => loadData())
         <div class="metric"><strong>{{ valueOrDash(summary?.averageCsat, 2) }}</strong><span>平均 CSAT（1-5）</span></div>
         <div class="metric"><strong>{{ percent(summary?.csatSatisfiedRate) }}</strong><span>满意率（≥4）</span></div>
         <div class="metric"><strong>{{ valueOrDash(summary?.totalTokens) }}</strong><span>已上报 Token</span></div>
-        <div class="metric unavailable"><strong>-</strong><span>会话成本不可归因</span></div>
+        <div class="metric"><strong>{{ formatCost(summary?.totalCost, summary?.costCurrency) }}</strong><span>已结算模型成本</span></div>
+        <div class="metric primary"><strong>{{ formatCost(summary?.costPerAutoResolvedSession, summary?.costCurrency) }}</strong><span>单次自动解决代理成本</span></div>
       </div>
 
       <div class="availability-row">
@@ -106,6 +111,10 @@ onMounted(() => loadData())
         <span>{{ summary?.tokenAvailability.reason }}</span>
         <el-tag type="info">Cost {{ summary?.costAvailability.status || 'UNAVAILABLE' }}</el-tag>
         <span>{{ summary?.costAvailability.reason }}</span>
+        <el-tag :type="availabilityType(summary?.costPerAutoResolvedAvailability.status)">
+          Unit Cost {{ summary?.costPerAutoResolvedAvailability.status || 'UNAVAILABLE' }}
+        </el-tag>
+        <span>{{ summary?.costPerAutoResolvedAvailability.reason }}</span>
       </div>
     </el-card>
 
@@ -134,6 +143,13 @@ onMounted(() => loadData())
         </el-table-column>
         <el-table-column label="Token" width="120">
           <template #default="{ row }">{{ valueOrDash(row.totalTokens) }}</template>
+        </el-table-column>
+        <el-table-column label="模型成本" width="160">
+          <template #default="{ row }">
+            <el-tooltip :content="row.costAvailability.reason">
+              <span>{{ formatCost(row.modelCost, row.costCurrency) }}</span>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column label="CSAT" width="80">
           <template #default="{ row }">{{ row.csatScore ?? '-' }}</template>

@@ -1,5 +1,8 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallCost;
+
 /**
  * 智能体一次调用中的一段耗时明细（不可变）。
  *
@@ -32,5 +35,24 @@ package com.richard.fyoung.customerwork.data.calllog;
 public record AgentCallSegment(int seq, AgentCallKind kind, String name, long startTimeMs,
                                long durationMs, boolean success, String errorMsg,
                                Long inputTokens, Long outputTokens,
-                               Long cachedTokens, Long modelReportedMs) {
+                               Long cachedTokens, Long modelReportedMs,
+                               ModelCallAttribution attribution) {
+
+    /**
+     * 按本分段冻结的价目与真实 usage 生成金额事实。非 MODEL 分段明确返回 NOT_APPLICABLE。
+     */
+    public ModelCallCost cost() {
+        return kind == AgentCallKind.MODEL
+            ? ModelCallCost.settle(attribution, inputTokens, outputTokens, cachedTokens)
+            : ModelCallCost.notApplicable();
+    }
+
+    /** 兼容工具分段与旧调用方；模型采集入口会始终传入明确的 PRICED/UNPRICED 快照。 */
+    public AgentCallSegment(int seq, AgentCallKind kind, String name, long startTimeMs,
+                            long durationMs, boolean success, String errorMsg,
+                            Long inputTokens, Long outputTokens,
+                            Long cachedTokens, Long modelReportedMs) {
+        this(seq, kind, name, startTimeMs, durationMs, success, errorMsg,
+            inputTokens, outputTokens, cachedTokens, modelReportedMs, null);
+    }
 }

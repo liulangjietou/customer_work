@@ -11,14 +11,12 @@ import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * {@link WeChatChannelConnector} 测试：MsgId 去重、归一化消息构造、客服消息回复器降级+推送、start/stop 注册表登记。
+ * {@link WeChatChannelConnector} 测试：归一化消息构造、客服消息回复器降级+推送、start/stop 注册表登记。
  * @author owlzhangfq@gmail.com
  */
 class WeChatChannelConnectorTest {
@@ -80,15 +78,6 @@ class WeChatChannelConnectorTest {
         // 回复器：markdown 降级为纯文本后经客服消息推送给 openid
         replyCaptor.getValue().send("**加粗**回复");
         verify(sender).send(eq(APP_ID), eq(SECRET), eq(OPENID), eq("加粗回复"));
-    }
-
-    @Test
-    void shouldDeduplicateByMsgId() {
-        connector.dispatch(textMessage("你好", "dup-1"));
-        connector.dispatch(textMessage("你好", "dup-1"));
-
-        // 相同 MsgId 只投递一次
-        verify(pipeline, times(1)).submit(any(), any());
     }
 
     @Test

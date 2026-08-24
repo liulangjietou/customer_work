@@ -1,12 +1,26 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import EvalTrendChart from '@/components/EvalTrendChart.vue'
 import {
+  createDatasetCase,
+  createDatasetVersion,
+  deleteDatasetCase,
+  diffDatasetVersions,
+  exportDatasetCases,
   getComparison,
+  importDatasetCases,
+  listDatasetCases,
+  listDatasetVersions,
   listRuns,
+  reviewDatasetVersion,
   triggerEval,
+  updateDatasetCase,
   type EvalComparison,
+  type EvalDatasetCase,
+  type EvalDatasetCaseInput,
+  type EvalDatasetDiff,
+  type EvalDatasetRelease,
   type EvalRun,
   type EvalTypeCode,
   type EvalVerdict,
@@ -50,6 +64,9 @@ const evalType = ref<EvalTypeCode>('INTENT')
 const loading = ref(false)
 const running = ref(false)
 const runs = ref<EvalRun[]>([])
+const datasetLoading = ref(false)
+const datasetCases = ref<EvalDatasetCase[]>([])
+const datasetVersions = ref<EvalDatasetRelease[]>([])
 
 const labels = computed(() => METRIC_LABELS[evalType.value])
 
@@ -64,7 +81,19 @@ async function loadRuns() {
 
 function handleTypeChange() {
   detailVisible.value = false
-  return loadRuns()
+  return Promise.all([loadRuns(), loadDatasetGovernance()])
+}
+
+async function loadDatasetGovernance() {
+  datasetLoading.value = true
+  try {
+    ;[datasetCases.value, datasetVersions.value] = await Promise.all([
+      listDatasetCases(evalType.value),
+      listDatasetVersions(evalType.value),
+    ])
+  } finally {
+    datasetLoading.value = false
+  }
 }
 
 function formatPercent(value: number | null | undefined): string {
@@ -148,7 +177,140 @@ const metricRows = computed(() => {
   }))
 })
 
-onMounted(loadRuns)
+// ---------- 数据集工作区与命名版本 ----------
+
+const caseDialogVisible = ref(false)
+const editingCase = ref(false)
+const caseForm = reactive<EvalDatasetCaseInput>({
+  caseId: '',
+  input: '',
+  expected: '',
+  category: '',
+  enabled: true,
+  originRef: null,
+})
+const diffVisible = ref(false)
+const datasetDiff = ref<EvalDatasetDiff | null>(null)
+
+function openCreateCase() {
+  editingCase.value = false
+  Object.assign(caseForm, { caseId: '', input: '', expected: '', category: '', enabled: true, originRef: null })
+  caseDialogVisible.value = true
+}
+
+function openEditCase(row: EvalDatasetCase) {
+  editingCase.value = true
+  Object.assign(caseForm, {
+    caseId: row.caseId,
+    input: row.input,
+    expected: row.expected,
+    category: row.category,
+    enabled: row.enabled,
+    originRef: row.originRef,
+  })
+  caseDialogVisible.value = true
+}
+
+async function saveCase() {
+  if (!caseForm.caseId.trim() || !caseForm.input.trim()) {
+    ElMessage.warning('用例编号和用户输入不能为空')
+    return
+  }
+  if (evalType.value === 'QUALITY' && !caseForm.expected?.trim()) {
+    ElMessage.warning('回复质量用例必须填写期望要点')
+    return
+  }
+  const payload = { ...caseForm, caseId: caseForm.caseId.trim(), input: caseForm.input.trim() }
+  if (editingCase.value) {
+    await updateDatasetCase(evalType.value, payload.caseId, payload)
+  } else {
+    await createDatasetCase(evalType.value, payload)
+  }
+  ElMessage.success(editingCase.value ? '用例已更新' : '用例已创建')
+  caseDialogVisible.value = false
+  await loadDatasetGovernance()
+}
+
+async function removeCase(row: EvalDatasetCase) {
+  await ElMessageBox.confirm(
+    '删除后若该编号来自种子，将恢复为种子内容；种子本身只能通过编辑 enabled=false 停用。',
+    '删除数据库覆盖',
+    { type: 'warning' },
+  )
+  await deleteDatasetCase(evalType.value, row.caseId)
+  ElMessage.success('数据库覆盖已删除')
+  await loadDatasetGovernance()
+}
+
+async function importCases() {
+  const { value } = await ElMessageBox.prompt(
+    '粘贴 JSON 数组。服务端会先校验整批，再以单条批量 SQL 原子写入（最多 1000 条）。',
+    '导入评测用例',
+    { inputType: 'textarea', inputPlaceholder: '[{"caseId":"...","input":"..."}]' },
+  )
+  let parsed: EvalDatasetCaseInput[]
+  try {
+    parsed = JSON.parse(value) as EvalDatasetCaseInput[]
+    if (!Array.isArray(parsed)) throw new Error('not array')
+  } catch {
+    ElMessage.error('JSON 必须是用例数组')
+    return
+  }
+  await importDatasetCases(evalType.value, parsed)
+  ElMessage.success(`已导入 ${parsed.length} 条用例`)
+  await loadDatasetGovernance()
+}
+
+async function exportCases() {
+  const data = await exportDatasetCases(evalType.value)
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `eval-${evalType.value.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+async function createVersion() {
+  const { value } = await ElMessageBox.prompt(
+    '命名版本会固化当前有效工作集，创建后内容不可修改。',
+    '创建数据集版本',
+    { inputPlaceholder: '例如 quality-2026.08.24' },
+  )
+  await createDatasetVersion(evalType.value, value.trim())
+  ElMessage.success('DRAFT 版本已创建，需由另一位有审核权限的用户审核')
+  await loadDatasetGovernance()
+}
+
+async function reviewVersion(row: EvalDatasetRelease, decision: 'APPROVED' | 'REJECTED') {
+  const { value } = await ElMessageBox.prompt(
+    decision === 'APPROVED' ? '审核通过后可绑定模型实验，结论不可撤销。' : '驳回后结论不可撤销。',
+    decision === 'APPROVED' ? '通过版本' : '驳回版本',
+    { inputPlaceholder: '审核意见（可选）' },
+  )
+  await reviewDatasetVersion(row.releaseId, decision, value || undefined)
+  ElMessage.success(decision === 'APPROVED' ? '版本已通过' : '版本已驳回')
+  await loadDatasetGovernance()
+}
+
+async function openVersionDiff(row: EvalDatasetRelease, index: number) {
+  const previous = datasetVersions.value[index + 1]
+  if (!previous) {
+    ElMessage.info('没有更早版本可比较')
+    return
+  }
+  datasetDiff.value = await diffDatasetVersions(previous.releaseId, row.releaseId)
+  diffVisible.value = true
+}
+
+function reviewTagType(status: string) {
+  if (status === 'APPROVED') return 'success'
+  if (status === 'REJECTED') return 'danger'
+  return 'warning'
+}
+
+onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
 </script>
 
 <template>
@@ -213,6 +375,109 @@ onMounted(loadRuns)
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-card v-loading="datasetLoading" shadow="never" class="list-card">
+      <template #header>
+        <div class="dataset-header">
+          <div>
+            <strong>评测数据集治理</strong>
+            <span>当前有效 {{ datasetCases.length }} 条 · {{ datasetVersions.length }} 个不可变版本</span>
+          </div>
+          <div class="dataset-actions">
+            <el-button v-permission="'eval:dataset-edit'" @click="importCases">导入 JSON</el-button>
+            <el-button @click="exportCases">导出 JSON</el-button>
+            <el-button v-permission="'eval:dataset-edit'" @click="createVersion">创建命名版本</el-button>
+            <el-button v-permission="'eval:dataset-edit'" type="primary" @click="openCreateCase">新增用例</el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-tabs>
+        <el-tab-pane label="工作集用例">
+          <el-table :data="datasetCases" row-key="caseId">
+            <el-table-column prop="caseId" label="用例编号" width="170" />
+            <el-table-column prop="input" label="用户输入" min-width="230" show-overflow-tooltip />
+            <el-table-column prop="expected" label="期望" min-width="260" show-overflow-tooltip />
+            <el-table-column prop="category" label="分类" width="120" />
+            <el-table-column label="来源/状态" width="150">
+              <template #default="{ row }">
+                <el-tag size="small" effect="plain">{{ row.source }}</el-tag>
+                <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
+                  {{ row.enabled ? '启用' : '停用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="145" fixed="right">
+              <template #default="{ row }">
+                <el-button v-permission="'eval:dataset-edit'" link type="primary" @click="openEditCase(row)">编辑</el-button>
+                <el-button
+                  v-if="row.source !== 'SEED'"
+                  v-permission="'eval:dataset-edit'"
+                  link
+                  type="danger"
+                  @click="removeCase(row)"
+                >删除覆盖</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+
+        <el-tab-pane label="命名版本与审核">
+          <el-table :data="datasetVersions" row-key="releaseId">
+            <el-table-column prop="versionName" label="版本名" min-width="190" />
+            <el-table-column label="快照" min-width="220">
+              <template #default="{ row }">
+                <code>{{ row.snapshotVersionId.slice(0, 12) }}</code>
+                · {{ row.caseCount }} 条
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="120">
+              <template #default="{ row }"><el-tag :type="reviewTagType(row.status)">{{ row.status }}</el-tag></template>
+            </el-table-column>
+            <el-table-column label="创建时间" width="180">
+              <template #default="{ row }">{{ formatTime(row.createdAtMs) }}</template>
+            </el-table-column>
+            <el-table-column prop="reviewComment" label="审核意见" min-width="180" show-overflow-tooltip />
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row, $index }">
+                <el-button link type="primary" @click="openVersionDiff(row, $index)">与前版 diff</el-button>
+                <template v-if="row.status === 'DRAFT'">
+                  <el-button v-permission="'eval:dataset-review'" link type="success" @click="reviewVersion(row, 'APPROVED')">通过</el-button>
+                  <el-button v-permission="'eval:dataset-review'" link type="danger" @click="reviewVersion(row, 'REJECTED')">驳回</el-button>
+                </template>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+      </el-tabs>
+    </el-card>
+
+    <el-dialog v-model="caseDialogVisible" :title="editingCase ? '编辑评测用例' : '新增评测用例'" width="min(620px, 94vw)">
+      <el-form :model="caseForm" label-position="top">
+        <el-form-item label="用例编号"><el-input v-model="caseForm.caseId" :disabled="editingCase" maxlength="64" /></el-form-item>
+        <el-form-item label="用户输入"><el-input v-model="caseForm.input" type="textarea" :rows="3" maxlength="1024" show-word-limit /></el-form-item>
+        <el-form-item :label="evalType === 'QUALITY' ? '期望要点' : '期望意图（留空表示不应命中快车道）'">
+          <el-input v-model="caseForm.expected" type="textarea" :rows="3" maxlength="1024" show-word-limit />
+        </el-form-item>
+        <el-form-item label="分类"><el-input v-model="caseForm.category" maxlength="64" /></el-form-item>
+        <el-form-item label="参与评测"><el-switch v-model="caseForm.enabled" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="caseDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveCase">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="diffVisible" title="数据集版本差异" width="min(760px, 94vw)">
+      <template v-if="datasetDiff">
+        <el-descriptions :column="3" border>
+          <el-descriptions-item label="新增">{{ datasetDiff.addedCaseIds.length }}</el-descriptions-item>
+          <el-descriptions-item label="删除">{{ datasetDiff.removedCaseIds.length }}</el-descriptions-item>
+          <el-descriptions-item label="修改">{{ datasetDiff.changedCases.length }}</el-descriptions-item>
+        </el-descriptions>
+        <pre class="diff-json">{{ JSON.stringify(datasetDiff, null, 2) }}</pre>
+      </template>
+    </el-dialog>
 
     <el-drawer v-model="detailVisible" title="运行详情与版本对比" size="620px">
       <div v-loading="detailLoading">
@@ -342,6 +607,40 @@ onMounted(loadRuns)
 .hint {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.dataset-header,
+.dataset-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dataset-header {
+  justify-content: space-between;
+}
+
+.dataset-header > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dataset-header span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.diff-json {
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .section {

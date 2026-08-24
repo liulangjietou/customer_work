@@ -5,15 +5,16 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
 /** 新增或更新 SLO 策略；目标值使用 0..1 小数。 */
 public record SloPolicySaveRequest(
     Long id,
-    @NotBlank String policyName,
-    @NotBlank String scopeType,
-    String scopeKey,
+    @NotBlank @Size(max = 128) String policyName,
+    @NotBlank @Size(max = 16) String scopeType,
+    @Size(max = 128) String scopeKey,
     @NotNull @DecimalMin(value = "0", inclusive = false) @DecimalMax(value = "1", inclusive = false)
     BigDecimal availabilityTarget,
     @NotNull @DecimalMin(value = "0", inclusive = false) @DecimalMax(value = "1", inclusive = false)

@@ -84,6 +84,88 @@ class NacosRuntimeConfigServiceTest {
     }
 
     @Test
+    void mcpHeaders_shouldStayEncryptedUntilHashIsVerifiedThenReachApplierAsPlaintext() throws Exception {
+        RuntimeConfigApplier applier = mock(RuntimeConfigApplier.class);
+        when(applier.apply(any(), any(), any())).thenReturn(true);
+        NacosRuntimeConfigService service = new NacosRuntimeConfigService(props(), applier);
+        CustomerWorkRuntimeConfig.McpServer mcp = new CustomerWorkRuntimeConfig.McpServer();
+        mcp.setName("orders");
+        mcp.setUrl("https://mcp.example.com/mcp");
+        mcp.setTransport("streamable-http");
+        mcp.setHeadersCipher(adminEncrypt("{\"Authorization\":\"Bearer secret\"}", KEY));
+        CustomerWorkRuntimeConfig dto = new CustomerWorkRuntimeConfig();
+        dto.setMcpServers(List.of(mcp));
+
+        assertTrue(service.applyConfig(runtimeJson(dto)));
+
+        ArgumentCaptor<CustomerWorkRuntimeConfig> applied =
+            ArgumentCaptor.forClass(CustomerWorkRuntimeConfig.class);
+        verify(applier).apply(applied.capture(), any(), any());
+        assertEquals("Bearer secret",
+            applied.getValue().getMcpServers().get(0).getHeaders().get("Authorization"));
+    }
+
+    @Test
+    void invalidMcpHeadersCipher_shouldFailBeforeApplier() throws Exception {
+        RuntimeConfigApplier applier = mock(RuntimeConfigApplier.class);
+        NacosRuntimeConfigService service = new NacosRuntimeConfigService(props(), applier);
+        CustomerWorkRuntimeConfig.McpServer mcp = new CustomerWorkRuntimeConfig.McpServer();
+        mcp.setName("orders");
+        mcp.setUrl("https://mcp.example.com/mcp");
+        mcp.setHeadersCipher("not-a-cipher");
+        CustomerWorkRuntimeConfig dto = new CustomerWorkRuntimeConfig();
+        dto.setMcpServers(List.of(mcp));
+
+        assertFalse(service.applyConfig(runtimeJson(dto)));
+
+        verifyNoInteractions(applier);
+    }
+
+    @Test
+    void requiredSignature_shouldVerifyBeforeCredentialDecryptionAndApply() throws Exception {
+        String signingSecret = "runtime-signing-secret-at-least-32-bytes";
+        CustomerWorkProperties properties = props();
+        properties.getNacos().setRuntimeConfigSignatureRequired(true);
+        properties.getNacos().setRuntimeConfigSigningKeyId("key-1");
+        properties.getNacos().setRuntimeConfigSigningSecret(signingSecret);
+        RuntimeConfigApplier applier = mock(RuntimeConfigApplier.class);
+        when(applier.apply(any(), eq("sk-plain"), any())).thenReturn(true);
+        NacosRuntimeConfigService service = new NacosRuntimeConfigService(properties, applier);
+        CustomerWorkRuntimeConfig dto = new CustomerWorkRuntimeConfig();
+        dto.setRevision("revision-1");
+        dto.setPublishedAt("2026-08-24T10:00:00");
+        dto.getModel().setApiKeyCipher(adminEncrypt("sk-plain", KEY));
+        dto.setContentHash(RuntimeConfigContentHasher.compute(dto, mapper));
+        dto.setSignatureKeyId("key-1");
+        dto.setSignatureAlgorithm(RuntimeConfigSignature.ALGORITHM);
+        dto.setSignature(RuntimeConfigSignature.sign(dto, signingSecret));
+
+        assertTrue(service.applyConfig(mapper.writeValueAsString(dto)));
+        verify(applier).apply(any(), eq("sk-plain"), any());
+    }
+
+    @Test
+    void invalidSignature_shouldRejectEvenWhenCiphertextIsAlsoInvalid() throws Exception {
+        CustomerWorkProperties properties = props();
+        properties.getNacos().setRuntimeConfigSignatureRequired(true);
+        properties.getNacos().setRuntimeConfigSigningKeyId("key-1");
+        properties.getNacos().setRuntimeConfigSigningSecret("runtime-signing-secret-at-least-32-bytes");
+        RuntimeConfigApplier applier = mock(RuntimeConfigApplier.class);
+        NacosRuntimeConfigService service = new NacosRuntimeConfigService(properties, applier);
+        CustomerWorkRuntimeConfig dto = new CustomerWorkRuntimeConfig();
+        dto.setRevision("revision-1");
+        dto.setPublishedAt("2026-08-24T10:00:00");
+        dto.getModel().setApiKeyCipher("invalid-cipher-must-not-be-decrypted");
+        dto.setContentHash(RuntimeConfigContentHasher.compute(dto, mapper));
+        dto.setSignatureKeyId("key-1");
+        dto.setSignatureAlgorithm(RuntimeConfigSignature.ALGORITHM);
+        dto.setSignature("invalid-signature");
+
+        assertFalse(service.applyConfig(mapper.writeValueAsString(dto)));
+        verifyNoInteractions(applier);
+    }
+
+    @Test
     void changedContentHash_shouldInvalidateTenantCacheBeforeApply() throws Exception {
         CustomerWorkProperties properties = props();
         properties.getNacos().setTenantCode("tenant-a");

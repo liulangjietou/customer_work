@@ -3,6 +3,8 @@ package com.richard.fyoung.customerwork.safety.subjectquota;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -37,14 +39,18 @@ class SubjectQuotaWebFilterTest {
 
     /** 记录链路末端看到的主体，用来验证上下文确实写进去了。 */
     private final AtomicReference<QuotaSubject> seen = new AtomicReference<>();
+    private final AtomicReference<AgentInvocationIdentity> identitySeen = new AtomicReference<>();
 
-    private final WebFilterChain chain = exchange -> Mono.fromRunnable(
-        () -> seen.set(QuotaSubjectContext.get()));
+    private final WebFilterChain chain = exchange -> Mono.fromRunnable(() -> {
+        seen.set(QuotaSubjectContext.get());
+        identitySeen.set(AgentInvocationIdentityContext.get());
+    });
 
     @AfterEach
     void tearDown() {
         TenantContext.clear();
         QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
     }
 
     private SubjectQuotaGuard guard(boolean enabled) {
@@ -65,10 +71,12 @@ class SubjectQuotaWebFilterTest {
     }
 
     @Test
-    void filter_shouldPassThrough_whenDisabled() {
+    void filter_shouldStillEstablishServerDerivedIdentity_whenQuotaDisabled() {
         SubjectQuotaWebFilter f = filter(guard(false));
         StepVerifier.create(f.filter(get(CHAT_PATH), chain)).verifyComplete();
-        assertNull(seen.get(), "功能关闭时连上下文都不该写——省掉一次无谓的 ThreadLocal 写入");
+        assertEquals(QuotaSubjectType.IP, seen.get().type());
+        assertEquals(QuotaSubjectType.IP, identitySeen.get().subjectType(),
+            "主体授权不能依赖配额开关");
     }
 
     @Test
@@ -114,6 +122,7 @@ class SubjectQuotaWebFilterTest {
 
     @Test
     void filter_shouldResolveApiKeySubject_whenHeaderPresent() {
+        properties.getSecurity().getAuth().setEnabled(true);
         String header = properties.getSecurity().getAuth().getHeaderName();
         MockServerWebExchange exchange = MockServerWebExchange.from(
             MockServerHttpRequest.get(CHAT_PATH).header(header, "sk-abc")
@@ -121,6 +130,20 @@ class SubjectQuotaWebFilterTest {
 
         StepVerifier.create(filter(guard(true)).filter(exchange, chain)).verifyComplete();
         assertEquals(QuotaSubjectType.API_KEY, seen.get().type(), "带 Key 时按接入方算，不退化到 IP");
+        assertTrue(identitySeen.get().authenticated());
+    }
+
+    @Test
+    void filter_shouldNotTrustArbitraryApiKeyHeader_whenAuthenticationDisabled() {
+        String header = properties.getSecurity().getAuth().getHeaderName();
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get(CHAT_PATH).header(header, "attacker-value")
+                .remoteAddress(new java.net.InetSocketAddress("10.0.0.7", 12345)));
+
+        StepVerifier.create(filter(guard(false)).filter(exchange, chain)).verifyComplete();
+
+        assertEquals(QuotaSubjectType.IP, identitySeen.get().subjectType());
+        assertTrue(!identitySeen.get().authenticated());
     }
 
     @Test
@@ -134,6 +157,7 @@ class SubjectQuotaWebFilterTest {
         StepVerifier.create(filter(guard(true)).filter(exchange, chain)).verifyComplete();
         assertEquals(QuotaSubjectType.USER, seen.get().type(), "已鉴权的用户优先于 IP");
         assertEquals("U-9", seen.get().id());
+        assertEquals(QuotaSubjectType.USER, identitySeen.get().subjectType());
     }
 
     @Test

@@ -1,5 +1,10 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
+import com.richard.fyoung.customerwork.tool.ManagedToolkit;
+import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
@@ -14,6 +19,9 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /**
  * {@link AgentInstanceCache} 单测：惰性重建 + 命中不重建 + evict 后下次调用重新构建。
@@ -30,7 +38,8 @@ class AgentInstanceCacheTest {
         factory = mock(AdminAgentInstanceFactory.class);
         cache = new AgentInstanceCache(factory);
         buildCount = new AtomicInteger();
-        when(factory.build("agent-a")).thenAnswer(invocation -> {
+        when(factory.build(org.mockito.ArgumentMatchers.eq("agent-a"), any(AgentMemoryScope.class)))
+            .thenAnswer(invocation -> {
             buildCount.incrementAndGet();
             return mock(Agent.class);
         });
@@ -61,8 +70,25 @@ class AgentInstanceCacheTest {
     }
 
     @Test
+    void evict_shouldCloseAgentAndToolkitBeforeDroppingOwnership() {
+        ReActAgent agent = mock(ReActAgent.class);
+        ManagedToolkit toolkit = mock(ManagedToolkit.class);
+        when(agent.getName()).thenReturn("agent-a");
+        when(agent.getToolkit()).thenReturn(toolkit);
+        when(factory.build(org.mockito.ArgumentMatchers.eq("agent-a"), any(AgentMemoryScope.class)))
+            .thenReturn(agent);
+
+        cache.getOrBuild("agent-a");
+        cache.evict("agent-a");
+
+        verify(agent).close();
+        verify(toolkit).close();
+    }
+
+    @Test
     void evictAll_shouldForceRebuild_forEveryListedAgentCode() {
-        when(factory.build("agent-b")).thenReturn(mock(Agent.class));
+        when(factory.build(org.mockito.ArgumentMatchers.eq("agent-b"), any(AgentMemoryScope.class)))
+            .thenReturn(mock(Agent.class));
         Agent a1 = cache.getOrBuild("agent-a");
         Agent b1 = cache.getOrBuild("agent-b");
 
@@ -90,5 +116,31 @@ class AgentInstanceCacheTest {
         assertNotSame(tenantA, tenantB);
         assertSame(tenantA, cache.getOrBuild("agent-a"));
         assertEquals(2, buildCount.get());
+    }
+
+    @Test
+    void sharedRevisionChange_shouldRebuildWithoutLocalEviction() {
+        AiAgentMapper agentMapper = mock(AiAgentMapper.class);
+        AiAgent revisionOne = runtimeAgent(1L);
+        AiAgent revisionTwo = runtimeAgent(2L);
+        when(agentMapper.selectOne(any())).thenReturn(revisionOne, revisionTwo);
+        when(factory.build(org.mockito.ArgumentMatchers.eq("agent-a"), any(AgentMemoryScope.class)))
+            .thenAnswer(invocation -> mock(Agent.class));
+        AgentInstanceCache revisionAwareCache = new AgentInstanceCache(factory, agentMapper);
+
+        Agent first = revisionAwareCache.getOrBuild("agent-a");
+        Agent second = revisionAwareCache.getOrBuild("agent-a");
+
+        assertNotSame(first, second);
+        verify(factory, times(2)).build(org.mockito.ArgumentMatchers.eq("agent-a"), any(AgentMemoryScope.class));
+    }
+
+    private AiAgent runtimeAgent(long revision) {
+        AiAgent agent = new AiAgent();
+        agent.setId(1L);
+        agent.setAgentCode("agent-a");
+        agent.setStatus(1);
+        agent.setRuntimeRevision(revision);
+        return agent;
     }
 }

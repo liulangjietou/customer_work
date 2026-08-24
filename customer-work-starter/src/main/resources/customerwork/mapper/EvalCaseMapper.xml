@@ -25,6 +25,25 @@
             origin_ref = VALUES(origin_ref)
     </insert>
 
+    <!-- 导入必须全成或全败；一条 INSERT 承载整个批次，避免逐条 upsert 留下半批数据。 -->
+    <insert id="upsertBatch">
+        INSERT INTO cw_eval_case (eval_type, case_id, `input`, expected, category, `source`,
+            `enabled`, origin_ref, created_at_ms)
+        VALUES
+        <foreach collection="records" item="record" separator=",">
+            (#{record.evalType}, #{record.caseId}, #{record.input}, #{record.expected},
+             #{record.category}, #{record.source}, #{record.enabled}, #{record.originRef},
+             #{record.createdAtMs})
+        </foreach>
+        ON DUPLICATE KEY UPDATE
+            `input` = VALUES(`input`),
+            expected = VALUES(expected),
+            category = VALUES(category),
+            `source` = VALUES(`source`),
+            `enabled` = VALUES(`enabled`),
+            origin_ref = VALUES(origin_ref)
+    </insert>
+
     <select id="selectByType" resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalCaseDO">
         SELECT <include refid="columns"/> FROM cw_eval_case
         WHERE eval_type = #{evalType}

@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.ticket.config.CustomerWorkClientProperties;
 import com.richard.fyoung.customerwork.capability.eval.EvalComparison;
 import com.richard.fyoung.customerwork.capability.eval.EvalType;
+import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -27,7 +28,6 @@ public class EvalTriggerClient {
 
     private static final Logger log = LoggerFactory.getLogger(EvalTriggerClient.class);
 
-    private static final String API_KEY_HEADER = "X-API-Key";
     private static final String INTENT_PATH = "/api/customer/eval/intent";
     private static final String QUALITY_PATH = "/api/customer/eval/quality";
     private static final String TRIGGER_SOURCE_MANUAL = "MANUAL";
@@ -54,7 +54,10 @@ public class EvalTriggerClient {
             .requestFactory(factory);
         // 未开启鉴权时 apiKey 为空，此时不带头；带一个空值头反而会被 8080 判成"提供了错误的 key"
         if (StringUtils.hasText(properties.getApiKey())) {
-            builder.defaultHeader(API_KEY_HEADER, properties.getApiKey());
+            builder.defaultHeader(HttpAuthConstants.API_KEY_HEADER, properties.getApiKey());
+            if (StringUtils.hasText(properties.getApiKeyId())) {
+                builder.defaultHeader(HttpAuthConstants.API_KEY_ID_HEADER, properties.getApiKeyId());
+            }
         }
         this.restClient = builder.build();
     }

@@ -19,6 +19,7 @@ import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 
 import java.util.Comparator;
@@ -39,6 +40,7 @@ public class ModelRoutingPolicyRuntimeAccess {
     private final AiModelRouteRuleMapper ruleMapper;
     private final ModelConfigAccess modelConfigAccess;
     private final SecretRefService secretRefService;
+    private final ModelHealthRuntimeAccess healthRuntimeAccess;
     private final AdminTenantProperties tenantProperties;
     private final ObjectMapper objectMapper;
 
@@ -49,11 +51,25 @@ public class ModelRoutingPolicyRuntimeAccess {
                                            SecretRefService secretRefService,
                                            AdminTenantProperties tenantProperties,
                                            ObjectMapper objectMapper) {
+        this(policyMapper, versionMapper, ruleMapper, modelConfigAccess, secretRefService,
+            tenantProperties, objectMapper, null);
+    }
+
+    @Autowired
+    public ModelRoutingPolicyRuntimeAccess(AiModelRoutePolicyMapper policyMapper,
+                                           AiModelRoutePolicyVersionMapper versionMapper,
+                                           AiModelRouteRuleMapper ruleMapper,
+                                           ModelConfigAccess modelConfigAccess,
+                                           SecretRefService secretRefService,
+                                           AdminTenantProperties tenantProperties,
+                                           ObjectMapper objectMapper,
+                                           ModelHealthRuntimeAccess healthRuntimeAccess) {
         this.policyMapper = policyMapper;
         this.versionMapper = versionMapper;
         this.ruleMapper = ruleMapper;
         this.modelConfigAccess = modelConfigAccess;
         this.secretRefService = secretRefService;
+        this.healthRuntimeAccess = healthRuntimeAccess;
         this.tenantProperties = tenantProperties;
         this.objectMapper = objectMapper;
     }
@@ -154,6 +170,9 @@ public class ModelRoutingPolicyRuntimeAccess {
         deployment.setEndpointRevision(model.getEndpointRevision());
         deployment.setApiKeyCipher(secretRefService.resolveCipherText(
             model.getSecretRefId(), model.getTenantId(), model.getApiKey()));
+        if (healthRuntimeAccess != null) {
+            deployment.setHealth(healthRuntimeAccess.overlay(model));
+        }
         return deployment;
     }
 

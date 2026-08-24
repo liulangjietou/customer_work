@@ -26,7 +26,6 @@ public class KnowledgeRetrievalMiddleware extends KnowledgeInjectionMiddleware {
 
     public KnowledgeRetrievalMiddleware(KnowledgeRetrievalService retrievalService, String agentCode,
                                        KnowledgeGapRecorder gapRecorder) {
-        // retrieve(agentCode, query) 的签名与 KnowledgeRetrievalProvider 完全一致，直接方法引用
-        super(retrievalService::retrieve, agentCode, gapRecorder);
+        super(retrievalService, agentCode, gapRecorder);
     }
 }

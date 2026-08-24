@@ -30,6 +30,10 @@ public class AiChannelRobot {
     private String appSecretCipher;
     /** 机器人编码（钉钉 robotCode 等，选填）。 */
     private String robotCode;
+    /** 微信回调模式：plaintext 明文 / safe AES 安全模式。 */
+    private String callbackMode;
+    /** 微信 EncodingAESKey 的 AES-GCM 密文。 */
+    private String encodingAesKeyCipher;
     /** 绑定的智能体编码。 */
     private String agentCode;
     /** 会话模式：continuous 持续会话 / per_message 单次问答。 */

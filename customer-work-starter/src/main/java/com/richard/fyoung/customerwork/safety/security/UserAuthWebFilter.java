@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
+import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
@@ -40,14 +41,21 @@ public class UserAuthWebFilter implements WebFilter {
 
     private final UserJwtService jwtService;
     private final TenantAccessGuard tenantAccessGuard;
+    private final UserAccountService userAccountService;
 
     public UserAuthWebFilter(UserJwtService jwtService) {
-        this(jwtService, null);
+        this(jwtService, null, null);
     }
 
     public UserAuthWebFilter(UserJwtService jwtService, TenantAccessGuard tenantAccessGuard) {
+        this(jwtService, tenantAccessGuard, null);
+    }
+
+    public UserAuthWebFilter(UserJwtService jwtService, TenantAccessGuard tenantAccessGuard,
+                             UserAccountService userAccountService) {
         this.jwtService = jwtService;
         this.tenantAccessGuard = tenantAccessGuard;
+        this.userAccountService = userAccountService;
     }
 
     @Override
@@ -78,8 +86,13 @@ public class UserAuthWebFilter implements WebFilter {
         if (!decision.isAllowed()) {
             return AuthResponses.tenantAccessDenied(exchange, decision);
         }
+        if (userAccountService != null
+            && !userAccountService.isSessionActive(tenantId, principal.get().userId(),
+                principal.get().sessionEpoch())) {
+            return AuthResponses.unauthorized(exchange, "user credential revoked");
+        }
         exchange.getAttributes().put(PRINCIPAL_ATTR, principal.get());
-        return chainWithIdentity(exchange, chain, principal.get());
+        return chainWithIdentity(exchange, chain, principal.get(), decision.accessEpoch());
     }
 
     /**
@@ -89,13 +102,18 @@ public class UserAuthWebFilter implements WebFilter {
      * 前者跨线程边界还原，后者供未发生线程切换时的同步持久层读取。</p>
      */
     private Mono<Void> chainWithIdentity(ServerWebExchange exchange, WebFilterChain chain,
-                                         UserPrincipal principal) {
+                                         UserPrincipal principal, long accessEpoch) {
         String tenantId = principal.tenantId();
         QuotaSubject subject = QuotaSubject.user(principal.userId());
+        AgentInvocationIdentity identity = new AgentInvocationIdentity(
+            tenantId, subject.type(), subject.id(), true, accessEpoch)
+            .withChannel(AgentInvocationIdentity.CHANNEL_USER_HTTP);
         return Mono.defer(() -> TenantContext.callWith(tenantId,
-                () -> QuotaSubjectContext.callWith(subject, () -> chain.filter(exchange))))
+                () -> QuotaSubjectContext.callWith(subject,
+                    () -> AgentInvocationIdentityContext.callWith(identity, () -> chain.filter(exchange)))))
             .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, tenantId)
-                .put(QuotaSubjectContextThreadLocalAccessor.KEY, subject));
+                .put(QuotaSubjectContextThreadLocalAccessor.KEY, subject)
+                .put(AgentInvocationIdentityContextThreadLocalAccessor.KEY, identity));
     }
 
     private TenantAccessDecision checkTenantAccess(UserPrincipal principal) {

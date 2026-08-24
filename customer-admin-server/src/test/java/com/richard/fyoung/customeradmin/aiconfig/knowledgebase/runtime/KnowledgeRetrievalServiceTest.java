@@ -9,6 +9,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKno
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseVersionMapper;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
@@ -66,7 +67,8 @@ class KnowledgeRetrievalServiceTest {
         knowledgeBaseMapper = mock(AiKnowledgeBaseMapper.class);
         searchClient = mock(KnowledgeSearchClient.class);
         service = new KnowledgeRetrievalService(agentMapper, agentKnowledgeBaseMapper, knowledgeBaseMapper,
-            new AesGcmCryptoUtil(TEST_SECRET_KEY), searchClient);
+            mock(AiKnowledgeBaseVersionMapper.class), new AesGcmCryptoUtil(TEST_SECRET_KEY), searchClient,
+            mock(ManagedKnowledgeSearchService.class));
 
         AiAgent agent = new AiAgent();
         agent.setId(1L);

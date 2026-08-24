@@ -31,6 +31,7 @@ class WeChatXmlMessageTest {
         assertEquals("text", msg.getMsgType());
         assertEquals("你好，客服", msg.getContent());
         assertEquals("1234567890123456", msg.getMsgId());
+        assertEquals("msgid:1234567890123456", msg.idempotencyKey());
         assertTrue(msg.isText());
     }
 
@@ -52,5 +53,36 @@ class WeChatXmlMessageTest {
     void shouldThrowOnInvalidXml() {
         assertThrows(IllegalArgumentException.class, () -> WeChatXmlMessage.parse("not-xml <<<"));
         assertThrows(IllegalArgumentException.class, () -> WeChatXmlMessage.parse(""));
+    }
+
+    @Test
+    void eventWithoutMsgIdShouldBuildStableFallbackKey() {
+        String xml = "<xml>"
+            + "<FromUserName>openid-1</FromUserName>"
+            + "<CreateTime>1700000000</CreateTime>"
+            + "<MsgType>event</MsgType>"
+            + "<Event>subscribe</Event>"
+            + "<EventKey>qrscene_42</EventKey>"
+            + "</xml>";
+
+        WeChatXmlMessage message = WeChatXmlMessage.parse(xml);
+
+        assertEquals("fallback:openid-1\n1700000000\nevent\nsubscribe\nqrscene_42\n",
+            message.idempotencyKey());
+    }
+
+    @Test
+    void messageWithoutStableFieldsShouldNotBeDispatchable() {
+        WeChatXmlMessage message = WeChatXmlMessage.parse("<xml><MsgType>event</MsgType></xml>");
+
+        assertEquals("", message.idempotencyKey());
+    }
+
+    @Test
+    void shouldParseEncryptedOuterPayload() {
+        assertEquals("cipher-text", WeChatXmlMessage.encryptedPayload(
+            "<xml><Encrypt><![CDATA[cipher-text]]></Encrypt></xml>"));
+        assertThrows(IllegalArgumentException.class,
+            () -> WeChatXmlMessage.encryptedPayload("<xml></xml>"));
     }
 }

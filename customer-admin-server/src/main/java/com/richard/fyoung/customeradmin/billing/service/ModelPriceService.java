@@ -3,6 +3,9 @@ package com.richard.fyoung.customeradmin.billing.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.billing.entity.AiModelPrice;
 import com.richard.fyoung.customeradmin.billing.mapper.AiModelPriceMapper;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelPricingStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -61,25 +64,45 @@ public class ModelPriceService {
         return amount.setScale(AMOUNT_SCALE, RoundingMode.HALF_UP);
     }
 
-    /**
-     * 查生效单价：provider 为空时只按模型名匹配。
-     *
-     * <p>日志里没有 provider（{@code cw_agent_call_log} 只记 agent 信息），
-     * 归集时传空是常态，因此这里必须容忍。</p>
-     */
+    /** 查同供应商、同模型的生效单价；任一身份缺失都返回空，禁止跨供应商同名误配。 */
     public AiModelPrice findEffectivePrice(String provider, String modelName, LocalDateTime settleAt) {
-        if (modelName == null || modelName.isBlank()) {
+        if (provider == null || provider.isBlank() || modelName == null || modelName.isBlank()) {
             return null;
         }
         LambdaQueryWrapper<AiModelPrice> wrapper = new LambdaQueryWrapper<AiModelPrice>()
+            .eq(AiModelPrice::getProvider, provider)
             .eq(AiModelPrice::getModelName, modelName)
             .le(AiModelPrice::getEffectiveFrom, settleAt == null ? LocalDateTime.now() : settleAt)
-            .orderByDesc(AiModelPrice::getEffectiveFrom);
-        if (provider != null && !provider.isBlank()) {
-            wrapper.eq(AiModelPrice::getProvider, provider);
-        }
+            .orderByDesc(AiModelPrice::getEffectiveFrom)
+            .orderByDesc(AiModelPrice::getId);
         List<AiModelPrice> candidates = priceMapper.selectList(wrapper);
         return candidates.isEmpty() ? null : candidates.get(0);
+    }
+
+    /** 发布/装配时冻结价格；缺价仍返回显式 UNPRICED，而不是用零价伪装成功结算。 */
+    public CustomerWorkRuntimeConfig.Pricing snapshot(String provider, String modelName) {
+        CustomerWorkRuntimeConfig.Pricing snapshot = new CustomerWorkRuntimeConfig.Pricing();
+        AiModelPrice price = findEffectivePrice(provider, modelName, LocalDateTime.now());
+        if (price == null) {
+            return snapshot;
+        }
+        snapshot.setStatus("PRICED");
+        snapshot.setPriceId(price.getId());
+        snapshot.setCurrency(price.getCurrency());
+        snapshot.setInputUnitPrice(price.getInputPrice());
+        snapshot.setOutputUnitPrice(price.getOutputPrice());
+        snapshot.setCachedUnitPrice(price.getCachedPrice());
+        return snapshot;
+    }
+
+    public ModelCallAttribution attribution(String provider, Long deploymentId, String modelName) {
+        CustomerWorkRuntimeConfig.Pricing pricing = snapshot(provider, modelName);
+        if (!ModelPricingStatus.PRICED.name().equals(pricing.getStatus())) {
+            return ModelCallAttribution.unpriced(provider, deploymentId, modelName);
+        }
+        return new ModelCallAttribution(provider, deploymentId, modelName, pricing.getPriceId(),
+            pricing.getCurrency(), pricing.getInputUnitPrice(), pricing.getOutputUnitPrice(),
+            pricing.getCachedUnitPrice(), ModelPricingStatus.PRICED);
     }
 
     private BigDecimal multiply(long tokens, BigDecimal pricePerMillion) {

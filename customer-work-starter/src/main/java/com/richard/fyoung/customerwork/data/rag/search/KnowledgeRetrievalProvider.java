@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.rag.search;
 
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+
 /**
  * 知识库召回的<b>来源</b>抽象：给定智能体与本轮提问，返回一段可直接注入模型上下文的文本块。
  *
@@ -28,4 +30,11 @@ public interface KnowledgeRetrievalProvider {
      * @return 渲染好的注入块；不需要注入时返回 null 或空串
      */
     String retrieve(String agentCode, String query);
+
+    /**
+     * 带可信调用主体的检索入口。旧实现保持二参函数式接口兼容；需要文档 ACL 的实现覆写本方法。
+     */
+    default String retrieve(String agentCode, String query, AgentInvocationIdentity identity) {
+        return retrieve(agentCode, query);
+    }
 }

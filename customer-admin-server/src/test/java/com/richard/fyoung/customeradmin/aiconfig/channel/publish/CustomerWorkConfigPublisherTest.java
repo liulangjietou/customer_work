@@ -28,6 +28,7 @@ import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
 import com.richard.fyoung.customerwork.infra.config.RuntimeConfigContentHasher;
+import com.richard.fyoung.customerwork.infra.config.RuntimeConfigSignature;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -151,6 +152,8 @@ class CustomerWorkConfigPublisherTest {
     @Test
     void assembleBuildsPayloadWithCipherFallbackAndMcp() {
         CustomerWorkConfigPublisher publisher = publisher(true);
+        when(cryptoUtil.encrypt("{\"Authorization\":\"Bearer x\"}"))
+            .thenReturn("MCP_HEADERS_CIPHER");
         AiModelConfig primary = model(100L, "openai", "gpt-4o", "CIPHER_PRIMARY");
 
         // 备用模型：首个（sort_order=0）作为兜底
@@ -172,7 +175,7 @@ class CustomerWorkConfigPublisherTest {
         mcp.setMcpName("orders");
         mcp.setMcpType("sse");
         mcp.setStatus(1);
-        mcp.setConfig("{\"url\":\"https://mcp.example.com/sse\",\"headers\":{\"Authorization\":\"Bearer x\"}}");
+        mcp.setConfig("{\"url\":\"https://93.184.216.34/sse\",\"headers\":{\"Authorization\":\"Bearer x\"}}");
         when(mcpMapper.selectBatchIds(any())).thenReturn(List.of(mcp));
 
         CustomerWorkRuntimeConfig cfg = publisher.assemble(agent(), primary);
@@ -191,9 +194,12 @@ class CustomerWorkConfigPublisherTest {
 
         assertEquals(1, cfg.getMcpServers().size());
         assertEquals("orders", cfg.getMcpServers().get(0).getName());
-        assertEquals("https://mcp.example.com/sse", cfg.getMcpServers().get(0).getUrl());
+        assertEquals("https://93.184.216.34/sse", cfg.getMcpServers().get(0).getUrl());
         assertEquals("sse", cfg.getMcpServers().get(0).getTransport());
-        assertEquals("Bearer x", cfg.getMcpServers().get(0).getHeaders().get("Authorization"));
+        assertEquals(List.of("USER", "ADMIN_USER", "API_KEY"),
+            cfg.getMcpServers().get(0).getAllowedSubjectTypes());
+        assertNull(cfg.getMcpServers().get(0).getHeaders(), "Nacos payload must not contain plaintext headers");
+        assertEquals("MCP_HEADERS_CIPHER", cfg.getMcpServers().get(0).getHeadersCipher());
     }
 
     @Test
@@ -215,7 +221,7 @@ class CustomerWorkConfigPublisherTest {
         CustomerWorkRuntimeConfig payload = publisher.assemble(routedAgent, primary, "webchat");
         String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(payload);
 
-        assertEquals(2, payload.getSchemaVersion());
+        assertEquals(5, payload.getSchemaVersion());
         assertEquals("PRIMARY_CURRENT_CIPHER", payload.getModel().getApiKeyCipher());
         assertEquals(77L, payload.getRoutingPolicy().getPolicyId());
         assertEquals("ROUTE_CURRENT_CIPHER",
@@ -256,6 +262,8 @@ class CustomerWorkConfigPublisherTest {
     @Test
     void assembleUnwrapsMcpServersWrapperConfig() {
         CustomerWorkConfigPublisher publisher = publisher(true);
+        when(cryptoUtil.encrypt("{\"Authorization\":\"Bearer y\"}"))
+            .thenReturn("WRAPPED_MCP_HEADERS_CIPHER");
         AiModelConfig primary = model(100L, "openai", "gpt-4o", "CIPHER_PRIMARY");
         when(backupModelMapper.selectList(any())).thenReturn(List.of());
 
@@ -279,7 +287,8 @@ class CustomerWorkConfigPublisherTest {
         assertEquals("amap", cfg.getMcpServers().get(0).getName(), "名称以 ai_mcp.mcp_name 为准，不读 wrapper 的 key");
         assertEquals("https://mcp.amap.com/mcp", cfg.getMcpServers().get(0).getUrl());
         assertEquals("streamable-http", cfg.getMcpServers().get(0).getTransport());
-        assertEquals("Bearer y", cfg.getMcpServers().get(0).getHeaders().get("Authorization"));
+        assertNull(cfg.getMcpServers().get(0).getHeaders());
+        assertEquals("WRAPPED_MCP_HEADERS_CIPHER", cfg.getMcpServers().get(0).getHeadersCipher());
     }
 
     @Test
@@ -303,10 +312,13 @@ class CustomerWorkConfigPublisherTest {
     }
 
     @Test
-    void multiTenantTaskUsesTenantScopedDataId() {
+    void multiTenantTaskUsesTenantScopedDataIdAndSignedEnvelope() throws Exception {
         RuntimePublishProperties properties = new RuntimePublishProperties();
         properties.getNacos().setEnabled(true);
         properties.getNacos().setGroup("CURRENT_GROUP");
+        properties.getSigning().setEnabled(true);
+        properties.getSigning().setKeyId("key-1");
+        properties.getSigning().setSecret("runtime-signing-secret-at-least-32-bytes");
         CustomerWorkConfigPublisher publisher = new CustomerWorkConfigPublisher(
             bindingMapper, agentMapper, modelConfigAccess, backupModelMapper, agentMcpMapper,
             mcpMapper, cryptoUtil, modelFactory, properties, true);
@@ -316,6 +328,7 @@ class CustomerWorkConfigPublisherTest {
         binding.setStatus(1);
         when(bindingMapper.selectList(any())).thenReturn(List.of(binding));
         when(agentMapper.selectById(1L)).thenReturn(agent());
+        when(agentMapper.selectCount(any())).thenReturn(1L);
         AiModelConfig primary = model(100L, "openai", "gpt-4o", "CIPHER");
         when(modelConfigAccess.findVisibleById(100L)).thenReturn(primary);
         when(cryptoUtil.decrypt("CIPHER")).thenReturn("sk-plain");
@@ -333,6 +346,12 @@ class CustomerWorkConfigPublisherTest {
 
         assertEquals("customer-work-runtime-config-tenant-tenant-a", prepared.dataId());
         assertEquals("FROZEN_GROUP", prepared.groupName());
+        CustomerWorkRuntimeConfig signed = new ObjectMapper().readValue(
+            prepared.json(), CustomerWorkRuntimeConfig.class);
+        assertEquals("key-1", signed.getSignatureKeyId());
+        assertEquals(RuntimeConfigSignature.ALGORITHM, signed.getSignatureAlgorithm());
+        assertTrue(RuntimeConfigSignature.verify(signed,
+            java.util.Map.of("key-1", "runtime-signing-secret-at-least-32-bytes"), true));
     }
 
     @Test
@@ -465,6 +484,7 @@ class CustomerWorkConfigPublisherTest {
         binding.setStatus(1);
         when(bindingMapper.selectOne(any())).thenReturn(binding);
         when(agentMapper.selectById(1L)).thenReturn(agent());
+        when(agentMapper.selectCount(any())).thenReturn(1L);
         when(modelConfigAccess.findVisibleById(100L))
             .thenReturn(model(100L, "openai", "gpt-4o", "CIPHER"));
         when(cryptoUtil.decrypt("CIPHER")).thenReturn("sk-plain");
@@ -490,6 +510,7 @@ class CustomerWorkConfigPublisherTest {
         RuntimePublishTaskService taskService = mock(RuntimePublishTaskService.class);
         CustomerWorkConfigPublisher publisher = reliablePublisher(true, taskService);
         when(bindingMapper.selectCount(any())).thenReturn(1L);
+        when(agentMapper.selectCount(any())).thenReturn(1L);
         when(taskService.enqueueAgent(1L)).thenReturn("task-agent-1");
 
         assertEquals("task-agent-1", publisher.publishForAgentId(1L));
@@ -497,6 +518,76 @@ class CustomerWorkConfigPublisherTest {
         when(bindingMapper.selectCount(any())).thenReturn(0L);
         assertNull(publisher.publishForAgentId(2L));
         verify(taskService, never()).enqueueAgent(2L);
+    }
+
+    @Test
+    void healthOverlayPublish_shouldUseDedicatedReliableTask() {
+        RuntimePublishTaskService taskService = mock(RuntimePublishTaskService.class);
+        CustomerWorkConfigPublisher publisher = reliablePublisher(true, taskService);
+        when(bindingMapper.selectCount(any())).thenReturn(1L);
+        when(agentMapper.selectCount(any())).thenReturn(1L);
+        when(taskService.enqueueHealthOverlay(1L)).thenReturn("task-health-1");
+
+        assertEquals("task-health-1", publisher.publishHealthOverlayForAgentId(1L));
+
+        verify(taskService).enqueueHealthOverlay(1L);
+        verify(taskService, never()).enqueueAgent(1L);
+    }
+
+    @Test
+    void healthOverlayTask_shouldBypassBrokenPrimaryConnectivity() {
+        CustomerWorkConfigPublisher publisher = publisher(true);
+        AiChannelBinding binding = new AiChannelBinding();
+        binding.setAgentId(1L);
+        binding.setChannelCode("webchat");
+        binding.setStatus(1);
+        when(bindingMapper.selectList(any())).thenReturn(List.of(binding));
+        when(agentMapper.selectById(1L)).thenReturn(agent());
+        when(modelConfigAccess.findVisibleById(100L))
+            .thenReturn(model(100L, "openai", "gpt-4o", "CIPHER"));
+        when(backupModelMapper.selectList(any())).thenReturn(List.of());
+        when(agentMcpMapper.selectList(any())).thenReturn(List.of());
+        RuntimePublishTask task = new RuntimePublishTask();
+        task.setId("task-health-1");
+        task.setTargetId(1L);
+        task.setTenantId("tenant-a");
+        task.setDataId("runtime-tenant-a");
+        task.setGroupName("DEFAULT_GROUP");
+        task.setPublishIntent(RuntimePublishIntent.HEALTH_OVERLAY.name());
+        task.setCreatedAtMs(1000L);
+
+        CustomerWorkConfigPublisher.PreparedRuntimeConfig prepared = publisher.prepareTask(task);
+
+        assertNotNull(prepared);
+        verify(modelFactory, never()).testConnectivity(anyString(), anyString(), anyString(), anyString());
+        verify(cryptoUtil, never()).decrypt(anyString());
+    }
+
+    @Test
+    void reliableRevocation_shouldPersistAndPrepareTombstoneWithoutQueryingDeletedAgent() throws Exception {
+        RuntimePublishTaskService taskService = mock(RuntimePublishTaskService.class);
+        CustomerWorkConfigPublisher publisher = reliablePublisher(true, taskService);
+        when(taskService.enqueueRevocation(1L, "cs-bot")).thenReturn("task-revoke-1");
+
+        assertEquals("task-revoke-1", publisher.revokeForAgentId(1L, "cs-bot"));
+
+        RuntimePublishTask task = new RuntimePublishTask();
+        task.setId("task-revoke-1");
+        task.setTargetId(1L);
+        task.setTargetCode("cs-bot");
+        task.setTenantId("tenant-a");
+        task.setDataId("runtime-tenant-a");
+        task.setGroupName("DEFAULT_GROUP");
+        task.setPublishIntent(RuntimePublishIntent.REVOKE.name());
+        task.setCreatedAtMs(1000L);
+        CustomerWorkConfigPublisher.PreparedRuntimeConfig prepared = publisher.prepareTask(task);
+        CustomerWorkRuntimeConfig payload = new ObjectMapper().readValue(
+            prepared.json(), CustomerWorkRuntimeConfig.class);
+
+        assertEquals(Boolean.FALSE, payload.getActive());
+        assertEquals("cs-bot", payload.getTargetCode());
+        assertEquals(5, payload.getSchemaVersion());
+        verifyNoInteractions(modelConfigAccess);
     }
 
     @Test

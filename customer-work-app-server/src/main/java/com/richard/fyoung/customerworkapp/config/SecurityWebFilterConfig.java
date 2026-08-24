@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerworkapp.config;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
@@ -21,8 +22,9 @@ public class SecurityWebFilterConfig {
 
     @Bean
     public UserAuthWebFilter userAuthWebFilter(UserJwtService jwtService,
-                                               TenantAccessGuard tenantAccessGuard) {
-        return new UserAuthWebFilter(jwtService, tenantAccessGuard);
+                                               TenantAccessGuard tenantAccessGuard,
+                                               UserAccountService userAccountService) {
+        return new UserAuthWebFilter(jwtService, tenantAccessGuard, userAccountService);
     }
 
     @Bean

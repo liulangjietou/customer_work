@@ -33,4 +33,6 @@ public class UserDO {
     private String avatarUrl;
     /** 配额等级编码（可为空 = 走配置默认档），见 cw_subject_quota_level.level_code。 */
     private String levelCode;
+    /** 用户会话撤销版本。 */
+    private Long sessionEpoch;
 }

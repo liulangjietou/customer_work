@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 人工转接工具单测：未注入退化为纯文案兜底；注入 HandoffService 后真实登记；
- * 注入 TicketService + 真实会话后驱动工单域到 WAITING_AGENT 并与 handoff 双写。
+ * 注入 TicketService + 真实会话后只驱动一张权威工单到 WAITING_AGENT。
  * @author owlzhangfq@gmail.com
  */
 class HumanHandoffToolsTest {
@@ -38,7 +38,7 @@ class HumanHandoffToolsTest {
 
         StepVerifier.create(tools.transferToHuman("涉及大额退款"))
             .assertNext(result -> {
-                assertTrue(result.contains("HO-"), "应包含真实工单号前缀");
+                assertTrue(result.contains("TK-"), "应包含权威工单号前缀");
                 assertTrue(result.contains("涉及大额退款"), "应回带转接原因");
             })
             .verifyComplete();
@@ -50,22 +50,22 @@ class HumanHandoffToolsTest {
     }
 
     @Test
-    void transferToHuman_withSessionAndTicketService_shouldDriveTicketDomainAndDoubleWrite() {
+    void transferToHuman_withSessionAndTicketService_shouldDriveSingleCanonicalTicket() {
         InMemoryTicketStore store = new InMemoryTicketStore();
         TicketService ticketService = new TicketService(store, null);
         ticketService.createForSession("sess-1", "u1", "标题", TicketCategory.COMPLAINT);
 
-        HandoffService handoffService = new HandoffService();
+        HandoffService handoffService = new HandoffService(ticketService);
         HumanHandoffTools tools = new HumanHandoffTools(handoffService, ticketService, "sess-1");
 
         StepVerifier.create(tools.transferToHuman("投诉升级"))
-            .assertNext(result -> assertTrue(result.contains("HO-"), "应回带 handoff 工单号"))
+            .assertNext(result -> assertTrue(result.contains("TK-"), "应回带权威工单号"))
             .verifyComplete();
 
         // 工单域被驱动：活跃工单推进到 WAITING_AGENT
         assertEquals(TicketStatus.WAITING_AGENT,
             ticketService.findActiveBySession("sess-1").orElseThrow().getStatus());
-        // handoff 双写：会话号用真实 sessionId
+        // /handoffs 兼容读模型来自同一张 Ticket，不存在第二次写入
         assertEquals(1, handoffService.list().size());
         assertEquals("sess-1", handoffService.list().get(0).getSessionId());
     }
@@ -75,14 +75,16 @@ class HumanHandoffToolsTest {
         InMemoryTicketStore store = new InMemoryTicketStore();
         TicketService ticketService = new TicketService(store, null);
         // 未建单：driveTicketDomain 内部 requestHandoff 抛异常应被吞掉，不阻断话术
-        HandoffService handoffService = new HandoffService();
+        HandoffService handoffService = new HandoffService(ticketService);
         HumanHandoffTools tools = new HumanHandoffTools(handoffService, ticketService, "sess-empty");
 
         StepVerifier.create(tools.transferToHuman("要人工"))
             .assertNext(result -> assertTrue(result.contains("人工坐席")))
             .verifyComplete();
 
-        // handoff 双写仍应发生
+        // 无活跃工单时在同一权威域补建并转人工
         assertEquals(1, handoffService.list().size());
+        assertEquals(TicketStatus.WAITING_AGENT,
+            ticketService.findActiveBySession("sess-empty").orElseThrow().getStatus());
     }
 }

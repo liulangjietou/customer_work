@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
@@ -18,6 +19,9 @@ import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.infra.lock.InMemorySessionLock;
+import com.richard.fyoung.customerwork.infra.lock.SessionLock;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -45,10 +49,12 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordFilter;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStreamGuard;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -90,18 +96,21 @@ public class ChatService {
     private final ExecutionModeRegistry executionModeRegistry;
     private final PlanConfirmationService planConfirmationService;
     private final ChatAttachmentService chatAttachmentService;
+    private final SessionLock sessionLock;
     /** 出站敏感词过滤器；未开启 {@code admin.content-guard.agent-filter-enabled} 时为 null，跳过过滤。 */
     private final SensitiveWordFilter sensitiveWordFilter;
     /** 出站命中 BLOCK 时替换用的安全话术。 */
     private final String outboundSafeReply;
 
+    @Autowired
     public ChatService(AgentInstanceCache agentInstanceCache, AdminAgentInstanceFactory agentInstanceFactory,
                         ChatHistoryCache historyCache, AgentMemorySyncService memorySyncService,
                         ExecutionModeRegistry executionModeRegistry,
                         PlanConfirmationService planConfirmationService,
                         ChatAttachmentService chatAttachmentService,
                         ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
-                        ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider) {
+                        ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider,
+                        ObjectProvider<SessionLock> sessionLockProvider) {
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
         this.historyCache = historyCache;
@@ -109,6 +118,8 @@ public class ChatService {
         this.executionModeRegistry = executionModeRegistry;
         this.planConfirmationService = planConfirmationService;
         this.chatAttachmentService = chatAttachmentService;
+        SessionLock providedLock = sessionLockProvider == null ? null : sessionLockProvider.getIfAvailable();
+        this.sessionLock = providedLock == null ? new InMemorySessionLock(10) : providedLock;
         // 敏感词关闭时容器里没有该 Bean，此处为 null，出站过滤整体跳过
         this.sensitiveWordFilter = sensitiveWordFilterProvider == null
             ? null : sensitiveWordFilterProvider.getIfAvailable();
@@ -117,6 +128,19 @@ public class ChatService {
         this.outboundSafeReply = guardProperties == null || !StringUtils.hasText(guardProperties.getSafeReply())
             ? SensitiveWordProperties.DEFAULT_OUTBOUND_SAFE_REPLY
             : guardProperties.getSafeReply();
+    }
+
+    /** 保留既有单测/嵌入式调用构造；生产由 Spring 注入强一致分布式锁。 */
+    public ChatService(AgentInstanceCache agentInstanceCache, AdminAgentInstanceFactory agentInstanceFactory,
+                       ChatHistoryCache historyCache, AgentMemorySyncService memorySyncService,
+                       ExecutionModeRegistry executionModeRegistry,
+                       PlanConfirmationService planConfirmationService,
+                       ChatAttachmentService chatAttachmentService,
+                       ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
+                       ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider) {
+        this(agentInstanceCache, agentInstanceFactory, historyCache, memorySyncService, executionModeRegistry,
+            planConfirmationService, chatAttachmentService, sensitiveWordFilterProvider,
+            contentGuardPropertiesProvider, null);
     }
 
     /**
@@ -263,6 +287,8 @@ public class ChatService {
                                               Consumer<ChatUsage> usageTotalObserver, ModelRouteHint routeHint) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
+        AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
+        Path memoryWorkspace = agentInstanceFactory.resolveWorkspace(memoryScope);
         // 在 Tomcat 线程上把限流主体取下来：下面整条链会切到 Reactor 线程，ThreadLocal 到不了那边，
         // 而 token 记账（AgentCallTimingMiddleware）恰恰发生在那里。主体由 AdminQuotaInterceptor 写入，
         // 功能关闭或非 AI 入口时为 null，此时不写 Context。
@@ -274,6 +300,7 @@ public class ChatService {
         }
         // 归一 sessionId：与下方 Plan 通道/执行模式登记、以及历史接口读取口径完全一致（hasText ? 原值 : default）。
         String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
+        String tenantId = TenantContext.isPresent() ? TenantContext.require() : TenantContext.DEFAULT;
         // 知识库自动检索<b>不在这里做</b>：请求线程同步段做 HTTP 检索会最长占住一个 Tomcat 请求线程 10s
         // （返回 Flux 不等于方法体异步，方法体跑完才返回），RAG 后端变慢会连累登录等无关接口；而且拼进
         // 用户消息文本会让召回块随消息进 AgentState 被持久化，用户在历史里看到 <retrieved_knowledge> 原文、
@@ -332,11 +359,11 @@ public class ChatService {
                     new ChatStreamChunk(ChatNodeKind.ANSWER, FALLBACK_REPLY));
             })
             .doOnComplete(() -> {
-                historyCache.evict(agentCode, sessionId);
+                historyCache.evict(memoryScope, sessionId);
                 // 长期记忆回写：框架的记忆 flush 只落 workspace/MEMORY.md 工作副本，这里把变更同步回
                 // 权威存储（默认库表）。非记忆智能体没有 MEMORY.md，方法内直接短路，无额外开销；
                 // 同步失败只记日志不打断流（见 AgentMemorySyncService 的兜底约定）
-                memorySyncService.persistIfChanged(agentCode, agentInstanceFactory.resolveWorkspace(agentCode));
+                memorySyncService.persistIfChanged(memoryScope.storageKey(), memoryWorkspace);
             })
             // 用量回调必须在终止信号"向下游传播之前"执行，故用 peek 语义的 doOnComplete/doOnCancel
             // 而不是 doFinally：Reactor 的 doFinally 是先把 onComplete 传给下游、回调最后才跑，下游
@@ -350,8 +377,8 @@ public class ChatService {
         // 合并进输出流；主流结束/取消时完成通道事件流并关闭通道。registry 用 doFirst/doFinally 配对登记与摘除，
         // 未指定/非法模式不登记（中间件回落全局语义）。BYPASS/无高风险时通道恒空、零开销。
         ExecutionMode executionMode = ExecutionMode.parse(mode);
-        return Flux.using(
-                () -> planConfirmationService.openChannel(agentCode, safeSession),
+        Flux<ChatStreamChunk> serializedConversation = Flux.using(
+                () -> planConfirmationService.openChannel(tenantId, agentCode, safeSession),
                 channel -> Flux.merge(
                     conversation.doFinally(signal -> planConfirmationService.completeEvents(channel)),
                     planConfirmationService.events(channel)),
@@ -363,6 +390,14 @@ public class ChatService {
                 : context.put(QuotaSubjectContextThreadLocalAccessor.KEY, quotaSubject))
             // 渠道事实与配额主体使用不同 Context key，两者可同时传播且仅影响本次订阅。
             .contextWrite(context -> ModelRoutingContext.withHint(context, routeHint));
+        return withSessionLock(tenantId + ":" + agentCode + ":" + safeSession, serializedConversation);
+    }
+
+    /** 获取动作会阻塞，放到 boundedElastic；释放句柄与线程无关，可安全挂在流终止钩子。 */
+    <T> Flux<T> withSessionLock(String lockId, Flux<T> source) {
+        return reactor.core.publisher.Mono.fromCallable(() -> sessionLock.acquire(lockId))
+            .subscribeOn(Schedulers.boundedElastic())
+            .flatMapMany(releasable -> source.doFinally(signal -> releasable.release()));
     }
 
     /** 收集单次模型调用的用量：按 {@code replyId} 存一份（同一 replyId 只会来一条 MODEL_CALL_END）。 */

@@ -48,9 +48,8 @@ const initializing = ref(true)
 const streamingContent = ref('')
 const streamingActive = computed(() => streamingContent.value.length > 0)
 /**
- * chat_chunk/chat_done 帧本身不携带 sessionId/ticketId（后端 WsFrame.chatChunk/chatDone 只有
- * content/messageId/ts），无法直接按帧内容与当前会话比对。这里记录"本页面最近一次发起流式请求所属的
- * sessionId"作为本地归属标记：切换会话后 sessionId 变化，迟到的旧会话增量会因不匹配被丢弃。
+ * chat_chunk 没有会话归属，仍用本地记录的“最近发起流式请求 sessionId”过滤；chat_done 已携带
+ * 服务端持久化消息的 sessionId/ticketId，优先按权威归属校验并兼容旧服务端帧。
  */
 const streamingSessionId = ref<string | null>(null)
 
@@ -339,8 +338,8 @@ function onWsChatChunk(data: unknown) {
 
 function onWsChatDone(data: unknown) {
   const payload = data as WsChatDone
-  // 理由同 onWsChatChunk：chat_done 同样不带会话标识，按本地流式归属标记比对
-  if (streamingSessionId.value !== sessionId.value) {
+  const frameSessionId = payload.sessionId || streamingSessionId.value
+  if (frameSessionId !== sessionId.value || (payload.ticketId && payload.ticketId !== ticketId.value)) {
     return
   }
   messages.value.push({

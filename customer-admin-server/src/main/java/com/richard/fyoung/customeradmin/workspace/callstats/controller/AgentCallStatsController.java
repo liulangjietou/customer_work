@@ -8,10 +8,16 @@ import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsQu
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallReplayManifestVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallStatsSummaryVO;
 import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentCallTrendVO;
+import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentReplayExecuteRequest;
+import com.richard.fyoung.customeradmin.workspace.callstats.dto.AgentReplayExecutionVO;
+import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentReplayExecutionService;
 import com.richard.fyoung.customeradmin.workspace.callstats.service.AgentCallStatsService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,9 +37,17 @@ public class AgentCallStatsController {
     private static final String DEFAULT_SOURCE = "ADMIN";
 
     private final AgentCallStatsService callStatsService;
+    private final AgentReplayExecutionService replayExecutionService;
 
     public AgentCallStatsController(AgentCallStatsService callStatsService) {
+        this(callStatsService, null);
+    }
+
+    @Autowired
+    public AgentCallStatsController(AgentCallStatsService callStatsService,
+                                    AgentReplayExecutionService replayExecutionService) {
         this.callStatsService = callStatsService;
+        this.replayExecutionService = replayExecutionService;
     }
 
     /** 分页查询（{total, rows}），支持 source/username/agentCode/sessionType/requestId/sessionId/时间范围过滤。 */
@@ -72,6 +86,19 @@ public class AgentCallStatsController {
         @PathVariable long id,
         @RequestParam(defaultValue = DEFAULT_SOURCE) String source) {
         return Result.success(callStatsService.replayManifest(id, source));
+    }
+
+    /** MOCK 默认不触发任何外部调用；DRY_RUN 还需服务端隔离部署闸门。不存在 LIVE 模式。 */
+    @SaCheckPermission("agent-call-stats:replay")
+    @PostMapping("/{id}/replay")
+    public Result<AgentReplayExecutionVO> replay(
+        @PathVariable long id,
+        @RequestParam(defaultValue = DEFAULT_SOURCE) String source,
+        @RequestBody(required = false) AgentReplayExecuteRequest request) {
+        if (replayExecutionService == null) {
+            throw new IllegalStateException("agent replay execution service is not configured");
+        }
+        return Result.success(replayExecutionService.execute(id, source, request));
     }
 
     /** 删除一条调用（主记录 + 分段级联）。 */

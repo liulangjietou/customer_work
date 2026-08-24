@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -40,6 +41,8 @@ import static org.mockito.Mockito.when;
 class ChannelRobotServiceTest {
 
     private static final String PLAIN_SECRET = "app-secret-1234";
+    private static final String ENCODING_AES_KEY =
+        Base64.getEncoder().withoutPadding().encodeToString(new byte[32]);
 
     private AiChannelRobotMapper robotMapper;
     private AiAgentMapper agentMapper;
@@ -62,8 +65,13 @@ class ChannelRobotServiceTest {
     }
 
     private ChannelRobotSaveRequest request(String channelType, String appSecret) {
+        return request(channelType, appSecret, null, null);
+    }
+
+    private ChannelRobotSaveRequest request(String channelType, String appSecret,
+                                             String callbackMode, String encodingAesKey) {
         return new ChannelRobotSaveRequest(channelType, "钉钉客服", "app-key-1", appSecret,
-            "robot-code-1", "agent-x", null, 1, "备注");
+            "robot-code-1", callbackMode, encodingAesKey, "agent-x", null, 1, "备注");
     }
 
     private void mockEnabledAgent() {
@@ -195,5 +203,70 @@ class ChannelRobotServiceTest {
         ChannelRobotVO vo = result.getRecords().get(0);
         assertEquals("钉钉客服", vo.getRobotName());
         assertTrue(vo.getHasSecret(), "已配置密钥时 hasSecret=true");
+    }
+
+    @Test
+    void createWechatSafeModeShouldEncryptEncodingAesKey() {
+        mockEnabledAgent();
+        when(robotMapper.exists(any())).thenReturn(false);
+
+        service.create(request("wechat", PLAIN_SECRET, "safe", ENCODING_AES_KEY));
+
+        ArgumentCaptor<AiChannelRobot> captor = ArgumentCaptor.forClass(AiChannelRobot.class);
+        verify(robotMapper).insert(captor.capture());
+        AiChannelRobot saved = captor.getValue();
+        assertEquals("safe", saved.getCallbackMode());
+        assertNotEquals(ENCODING_AES_KEY, saved.getEncodingAesKeyCipher());
+        assertEquals(ENCODING_AES_KEY, cryptoUtil.decrypt(saved.getEncodingAesKeyCipher()));
+    }
+
+    @Test
+    void createWechatSafeModeShouldRequireValidEncodingAesKey() {
+        mockEnabledAgent();
+        when(robotMapper.exists(any())).thenReturn(false);
+
+        BizException missing = assertThrows(BizException.class,
+            () -> service.create(request("wechat", PLAIN_SECRET, "safe", null)));
+        BizException invalid = assertThrows(BizException.class,
+            () -> service.create(request("wechat", PLAIN_SECRET, "safe", "invalid")));
+
+        assertEquals(ResultCode.PARAM_MISSING, missing.getResultCode());
+        assertEquals(ResultCode.PARAM_INVALID, invalid.getResultCode());
+        verify(robotMapper, never()).insert(any(AiChannelRobot.class));
+    }
+
+    @Test
+    void updateWechatSafeModeShouldKeepEncodingKeyWhenBlank() {
+        AiChannelRobot existing = new AiChannelRobot();
+        existing.setId(1L);
+        existing.setAppSecretCipher(cryptoUtil.encrypt(PLAIN_SECRET));
+        String originalCipher = cryptoUtil.encrypt(ENCODING_AES_KEY);
+        existing.setEncodingAesKeyCipher(originalCipher);
+        when(robotMapper.selectById(1L)).thenReturn(existing);
+        mockEnabledAgent();
+        when(robotMapper.exists(any())).thenReturn(false);
+
+        service.update(1L, request("wechat", null, "safe", null));
+
+        ArgumentCaptor<AiChannelRobot> captor = ArgumentCaptor.forClass(AiChannelRobot.class);
+        verify(robotMapper).updateById(captor.capture());
+        assertEquals(originalCipher, captor.getValue().getEncodingAesKeyCipher());
+    }
+
+    @Test
+    void updateWechatToPlaintextShouldRemoveObsoleteEncodingKey() {
+        AiChannelRobot existing = new AiChannelRobot();
+        existing.setId(1L);
+        existing.setAppSecretCipher(cryptoUtil.encrypt(PLAIN_SECRET));
+        existing.setEncodingAesKeyCipher(cryptoUtil.encrypt(ENCODING_AES_KEY));
+        when(robotMapper.selectById(1L)).thenReturn(existing);
+        mockEnabledAgent();
+        when(robotMapper.exists(any())).thenReturn(false);
+
+        service.update(1L, request("wechat", null, "plaintext", null));
+
+        ArgumentCaptor<AiChannelRobot> captor = ArgumentCaptor.forClass(AiChannelRobot.class);
+        verify(robotMapper).updateById(captor.capture());
+        assertEquals(null, captor.getValue().getEncodingAesKeyCipher());
     }
 }

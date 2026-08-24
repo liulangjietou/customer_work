@@ -41,6 +41,7 @@ import java.util.List;
  * @param errorMsg     失败原因（成功时为 null）
  * @param experimentAssignment 实际在线实验曝光；未进入实验时为 null
  * @param lineage      调用开始时冻结的 trace、发布修订与制品版本谱系
+ * @param replaySnapshot 模型参数、RAG 与工具调用的脱敏重放事实
  * @param segments     分段明细（按 seq 升序）
  * @author owlzhangfq@gmail.com
  */
@@ -54,10 +55,12 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
                               boolean success, String errorMsg,
                               OnlineExperimentAssignment experimentAssignment,
                               AgentCallLineage lineage,
+                              AgentReplaySnapshot replaySnapshot,
                               List<AgentCallSegment> segments) {
 
     public AgentCallRecord {
         lineage = lineage == null ? AgentCallLineage.empty() : lineage;
+        replaySnapshot = replaySnapshot == null ? AgentReplaySnapshot.empty() : replaySnapshot;
     }
 
     /** 兼容历史调用方：未采集谱系时显式落空对象，不用 null 扩散到展示层。 */
@@ -72,7 +75,8 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
         this(id, requestId, userId, username, agentCode, agentName, sessionId, sessionType,
             question, answer, startTimeMs, endTimeMs, durationMs, modelMs, toolMs, mcpMs,
             skillMs, segmentCount, inputTokens, outputTokens, totalTokens, cachedTokens,
-            modelReportedMs, success, errorMsg, null, AgentCallLineage.empty(), segments);
+            modelReportedMs, success, errorMsg, null, AgentCallLineage.empty(),
+            AgentReplaySnapshot.empty(), segments);
     }
 
     /** 兼容 V12 谱系调用方；未采集在线实验曝光。 */
@@ -88,7 +92,26 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
         this(id, requestId, userId, username, agentCode, agentName, sessionId, sessionType,
             question, answer, startTimeMs, endTimeMs, durationMs, modelMs, toolMs, mcpMs,
             skillMs, segmentCount, inputTokens, outputTokens, totalTokens, cachedTokens,
-            modelReportedMs, success, errorMsg, null, lineage, segments);
+            modelReportedMs, success, errorMsg, null, lineage, AgentReplaySnapshot.empty(), segments);
+    }
+
+    /** 兼容在线实验曝光已接入、但尚未采集重放快照的调用方。 */
+    public AgentCallRecord(long id, String requestId, String userId, String username,
+                           String agentCode, String agentName, String sessionId,
+                           AgentCallSessionType sessionType, String question, String answer,
+                           long startTimeMs, long endTimeMs, long durationMs,
+                           long modelMs, long toolMs, long mcpMs, long skillMs,
+                           int segmentCount, Long inputTokens, Long outputTokens, Long totalTokens,
+                           Long cachedTokens, Long modelReportedMs,
+                           boolean success, String errorMsg,
+                           OnlineExperimentAssignment experimentAssignment,
+                           AgentCallLineage lineage,
+                           List<AgentCallSegment> segments) {
+        this(id, requestId, userId, username, agentCode, agentName, sessionId, sessionType,
+            question, answer, startTimeMs, endTimeMs, durationMs, modelMs, toolMs, mcpMs,
+            skillMs, segmentCount, inputTokens, outputTokens, totalTokens, cachedTokens,
+            modelReportedMs, success, errorMsg, experimentAssignment, lineage,
+            AgentReplaySnapshot.empty(), segments);
     }
 
     /** 回填自增主键后的副本。 */
@@ -96,7 +119,8 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
         return new AgentCallRecord(assignedId, requestId, userId, username, agentCode, agentName,
             sessionId, sessionType, question, answer, startTimeMs, endTimeMs, durationMs,
             modelMs, toolMs, mcpMs, skillMs, segmentCount, inputTokens, outputTokens, totalTokens,
-            cachedTokens, modelReportedMs, success, errorMsg, experimentAssignment, lineage, segments);
+            cachedTokens, modelReportedMs, success, errorMsg, experimentAssignment, lineage,
+            replaySnapshot, segments);
     }
 
     /**
@@ -110,5 +134,10 @@ public record AgentCallRecord(long id, String requestId, String userId, String u
             return null;
         }
         return (double) cachedTokens / (double) inputTokens;
+    }
+
+    /** 单次调用的模型金额完整性与已结算金额；由不可变分段事实确定。 */
+    public AgentCallCostSummary costSummary() {
+        return AgentCallCostSummary.from(segments);
     }
 }

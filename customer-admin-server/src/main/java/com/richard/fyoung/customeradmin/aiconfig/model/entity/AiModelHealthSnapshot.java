@@ -18,6 +18,7 @@ public class AiModelHealthSnapshot {
     private String authStatus;
     private String capabilityStatus;
     private Integer consecutiveFailures;
+    private Integer consecutiveSuccesses;
     private Long lastLatencyMs;
     private String lastErrorCategory;
     private String lastMessage;
@@ -25,6 +26,12 @@ public class AiModelHealthSnapshot {
     private LocalDateTime lastSuccessAt;
     private LocalDateTime lastFailureAt;
     private LocalDateTime nextProbeAt;
+    private LocalDateTime cooldownUntil;
+    private String overrideMode;
+    private String overrideReason;
+    private Long overrideOperatorId;
+    private String overrideOperatorName;
+    private LocalDateTime overrideUntil;
     private Integer revision;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

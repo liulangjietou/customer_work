@@ -5,6 +5,7 @@ import type {
   ModelCertificationRequest,
   ModelCredentialRotationRequest,
   ModelHealthEvent,
+  ModelHealthOverrideRequest,
   ModelHealthSnapshot,
   ModelImpact,
   ModelRouteDryRunRequest,
@@ -63,6 +64,14 @@ export function listModelHealthEvents(id: number, limit = 50) {
     url: `/aiconfig/model/${id}/health-events`,
     method: 'get',
     params: { limit },
+  })
+}
+
+export function updateModelHealthOverride(id: number, data: ModelHealthOverrideRequest) {
+  return request<ModelHealthSnapshot>({
+    url: `/aiconfig/model/${id}/health-override`,
+    method: 'put',
+    data,
   })
 }
 

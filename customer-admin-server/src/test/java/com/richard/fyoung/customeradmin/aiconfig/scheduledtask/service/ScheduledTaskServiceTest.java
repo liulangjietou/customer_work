@@ -12,11 +12,16 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminScheduledTaskProperties;
 import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
@@ -26,6 +31,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -50,6 +56,7 @@ class ScheduledTaskServiceTest {
 
     @BeforeEach
     void setUp() {
+        TenantContext.set(TenantContext.DEFAULT);
         taskMapper = mock(AiScheduledTaskMapper.class);
         runMapper = mock(AiScheduledTaskRunMapper.class);
         agentMapper = mock(AiAgentMapper.class);
@@ -62,6 +69,12 @@ class ScheduledTaskServiceTest {
 
         runtimeAgent = mock(ReActAgent.class);
         when(agentInstanceFactory.contextFor(anyString(), anyString())).thenReturn(mock(RuntimeContext.class));
+    }
+
+    @AfterEach
+    void tearDown() {
+        AgentInvocationIdentityContext.clear();
+        TenantContext.clear();
     }
 
     private AiScheduledTask enabledTask() {
@@ -98,6 +111,29 @@ class ScheduledTaskServiceTest {
         assertEquals("今日报表已生成", run.getOutput());
         assertNotNull(run.getCostMs());
         verify(runMapper).insert(run);
+    }
+
+    @Test
+    void execute_shouldEstablishInternalIdentity_whenSchedulerHasNoWebSubject() {
+        when(taskMapper.selectOne(any())).thenReturn(enabledTask());
+        when(agentMapper.selectById(10L)).thenReturn(enabledAgent());
+        when(agentInstanceFactory.build("report-agent")).thenAnswer(invocation -> {
+            AgentInvocationIdentity identity = AgentInvocationIdentity.capture();
+            assertEquals(TenantContext.DEFAULT, identity.tenantId());
+            assertEquals(QuotaSubjectType.API_KEY, identity.subjectType());
+            assertEquals("scheduled-task:1", identity.subjectId());
+            assertEquals(AgentInvocationIdentity.CHANNEL_INTERNAL, identity.channelCode());
+            assertEquals("report-agent", identity.agentCode());
+            return runtimeAgent;
+        });
+        Msg reply = Msg.builder().role(MsgRole.ASSISTANT)
+            .content(TextBlock.builder().text("done").build()).build();
+        when(runtimeAgent.call(any(List.class), any(RuntimeContext.class))).thenReturn(Mono.just(reply));
+
+        TenantContext.callWith(TenantContext.DEFAULT,
+            () -> service.execute("daily-report", ScheduledTaskService.TRIGGER_TYPE_INTERNAL));
+
+        assertNull(AgentInvocationIdentityContext.get());
     }
 
     @Test

@@ -21,6 +21,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 
 /**
  * {@link ChannelBindingService} 单测：channelCode 唯一性校验（create 全局查重 / update 排除自身查重）。
@@ -31,6 +32,7 @@ class ChannelBindingServiceTest {
     private AiChannelBindingMapper bindingMapper;
     private AiAgentMapper agentMapper;
     private RuntimePublishTaskMapper publishTaskMapper;
+    private CustomerWorkConfigPublisher publisher;
     private ChannelBindingService service;
 
     @BeforeEach
@@ -38,10 +40,14 @@ class ChannelBindingServiceTest {
         bindingMapper = mock(AiChannelBindingMapper.class);
         agentMapper = mock(AiAgentMapper.class);
         publishTaskMapper = mock(RuntimePublishTaskMapper.class);
-        CustomerWorkConfigPublisher publisher = mock(CustomerWorkConfigPublisher.class);
+        publisher = mock(CustomerWorkConfigPublisher.class);
         service = new ChannelBindingService(
             bindingMapper, agentMapper, publisher, publishTaskMapper);
-        when(agentMapper.selectById(1L)).thenReturn(new AiAgent());
+        AiAgent agent = new AiAgent();
+        agent.setId(1L);
+        agent.setAgentCode("cs-bot");
+        agent.setStatus(1);
+        when(agentMapper.selectById(1L)).thenReturn(agent);
     }
 
     private AiChannelBinding binding(Long id, String code) {
@@ -84,6 +90,7 @@ class ChannelBindingServiceTest {
     void createRejectsDifferentAgentSharingGlobalRuntimeDataId() {
         AiAgent anotherAgent = new AiAgent();
         anotherAgent.setId(2L);
+        anotherAgent.setStatus(1);
         when(agentMapper.selectById(2L)).thenReturn(anotherAgent);
         when(bindingMapper.exists(any())).thenReturn(false, true);
 
@@ -91,6 +98,27 @@ class ChannelBindingServiceTest {
             () -> service.create(new ChannelBindingSaveRequest("wechat", 2L, 1)));
 
         assertEquals(ResultCode.PARAM_INVALID, error.getResultCode());
+    }
+
+    @Test
+    void disablingLastActiveBinding_shouldPublishRevocationInsteadOfNormalSnapshot() {
+        when(bindingMapper.selectById(10L)).thenReturn(binding(10L, "web"));
+        when(bindingMapper.exists(any())).thenReturn(false);
+
+        service.update(10L, new ChannelBindingSaveRequest("web", 1L, 0));
+
+        verify(publisher).revokeForAgentId(1L, "cs-bot");
+        verify(publisher, never()).publishForAgentId(1L);
+    }
+
+    @Test
+    void deletingLastActiveBinding_shouldPublishRevocation() {
+        when(bindingMapper.selectById(10L)).thenReturn(binding(10L, "web"));
+        when(bindingMapper.exists(any())).thenReturn(false);
+
+        service.delete(10L);
+
+        verify(publisher).revokeForAgentId(1L, "cs-bot");
     }
 
     @Test

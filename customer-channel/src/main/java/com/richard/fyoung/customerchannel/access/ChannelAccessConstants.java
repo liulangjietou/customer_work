@@ -34,7 +34,7 @@ public final class ChannelAccessConstants {
     /** 单次问答：每条消息独立会话，不携带历史上下文。 */
     public static final String SESSION_MODE_PER_MESSAGE = "per_message";
     /** 单次问答模式的一次性 sessionId 前缀（本地生成，不经 admin 会话映射）。 */
-    public static final String ONESHOT_SESSION_PREFIX = "ch-oneshot-";
+    public static final String ONESHOT_SESSION_PREFIX = OpenApiProtocol.CHANNEL_ONESHOT_SESSION_PREFIX;
 
     // ===== 指令关键字（文本 trim 后精确匹配则开启新会话）=====
     public static final String CMD_NEW_SLASH = "/new";
@@ -63,11 +63,12 @@ public final class ChannelAccessConstants {
     public static final int WECHAT_ERRCODE_INVALID_TOKEN = 40001;
     /** 业务错误码：access_token 过期（触发强刷一次重试）。 */
     public static final int WECHAT_ERRCODE_EXPIRED_TOKEN = 42001;
-    /** MsgId 去重环形容量（有界 LRU，防微信重试重复触发管道）。 */
-    public static final int WECHAT_MSGID_DEDUP_CAPACITY = 4096;
     /** 微信文本消息类型。 */
     public static final String WECHAT_MSG_TYPE_TEXT = "text";
-
+    /** 微信回调明文模式。 */
+    public static final String WECHAT_CALLBACK_MODE_PLAINTEXT = "plaintext";
+    /** 微信回调 AES 安全模式。 */
+    public static final String WECHAT_CALLBACK_MODE_SAFE = "safe";
     // ===== 错误码（error 日志占位符）=====
     public static final String CODE_ROBOTS_FETCH_FAIL = "CHANNEL-ACCESS-ROBOTS-FETCH-FAIL";
     public static final String CODE_REFRESH_FAIL = "CHANNEL-ACCESS-REFRESH-FAIL";
@@ -80,4 +81,5 @@ public final class ChannelAccessConstants {
     public static final String CODE_WECHAT_SEND_FAIL = "CHANNEL-ACCESS-WECHAT-SEND-FAIL";
     public static final String CODE_WECHAT_CALLBACK_FAIL = "CHANNEL-ACCESS-WECHAT-CALLBACK-FAIL";
     public static final String CODE_WECHAT_UNKNOWN_APPID = "CHANNEL-ACCESS-WECHAT-UNKNOWN-APPID";
+    public static final String CODE_WECHAT_REPLAY_STORE_FAIL = "CHANNEL-ACCESS-WECHAT-REPLAY-STORE-FAIL";
 }

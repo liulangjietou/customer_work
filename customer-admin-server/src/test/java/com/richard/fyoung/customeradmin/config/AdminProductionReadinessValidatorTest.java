@@ -50,6 +50,30 @@ class AdminProductionReadinessValidatorTest {
     }
 
     @Test
+    void a2aShouldRejectDevelopmentTokenWhenEnabled() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.a2a.enabled", "true")
+            .withProperty("admin.a2a.agent-code", "customer-service")
+            .withProperty("admin.a2a.token", "111111");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.a2a.token"));
+        assertFalse(error.getMessage().contains("111111"));
+    }
+
+    @Test
+    void a2aShouldAcceptDedicatedStrongTokenWhenEnabled() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.a2a.enabled", "true")
+            .withProperty("admin.a2a.agent-code", "customer-service")
+            .withProperty("admin.a2a.token", "production-a2a-token-at-least-32-bytes");
+
+        assertDoesNotThrow(() -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+    }
+
+    @Test
     void dockerSandbox_shouldRequireNetworkIsolation() {
         MockEnvironment environment = validEnvironment()
             .withProperty("admin.sandbox.mode", "docker")
@@ -136,6 +160,38 @@ class AdminProductionReadinessValidatorTest {
         assertDoesNotThrow(() -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
     }
 
+    @Test
+    void governance_shouldRequireBoundedApprovalAndMinimumAuditRetention() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.governance.approval-expiry-hours", "0")
+            .withProperty("admin.governance.execution-timeout-seconds", "30")
+            .withProperty("admin.governance.audit-retention-days", "30");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.governance.approval-expiry-hours"));
+        assertTrue(error.getMessage().contains("admin.governance.execution-timeout-seconds"));
+        assertTrue(error.getMessage().contains("admin.governance.audit-retention-days"));
+    }
+
+    @Test
+    void modelHealth_shouldRequireBoundedStateMachineAndReliablePublish() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.model-health.failure-threshold", "0")
+            .withProperty("admin.model-health.recovery-threshold", "0")
+            .withProperty("admin.model-health.cooldown-seconds", "0")
+            .withProperty("admin.model-health.max-override-hours", "0");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.model-health.failure-threshold"));
+        assertTrue(error.getMessage().contains("admin.model-health.recovery-threshold"));
+        assertTrue(error.getMessage().contains("admin.model-health.cooldown-seconds"));
+        assertTrue(error.getMessage().contains("admin.model-health.max-override-hours"));
+    }
+
     private MockEnvironment validEnvironment() {
         return new MockEnvironment()
             .withProperty("spring.datasource.url", "jdbc:mysql://mysql.internal:3306/customer_admin")
@@ -146,11 +202,23 @@ class AdminProductionReadinessValidatorTest {
             .withProperty("admin.aes-secret-key", "production-aes-key-32-bytes-0001")
             .withProperty("admin.customer-work.base-url", "http://customer-work-app:8080")
             .withProperty("admin.customer-work.ws-url", "wss://customer.example/ws/agent")
+            .withProperty("admin.customer-work.api-key-id", "admin-eval")
             .withProperty("admin.customer-work.api-key", "customer-work-api-secret")
             .withProperty("admin.customer-work.agent-secret", "production-agent-secret-32-bytes-0001")
             .withProperty("admin.model.egress.allowed-hosts",
                 "api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,"
                     + "dashscope.aliyuncs.com,ollama.internal")
+            .withProperty("admin.model-health.enabled", "true")
+            .withProperty("admin.model-health.scan-interval-ms", "60000")
+            .withProperty("admin.model-health.batch-size", "20")
+            .withProperty("admin.model-health.worker-count", "8")
+            .withProperty("admin.model-health.queue-capacity", "32")
+            .withProperty("admin.model-health.probe-timeout-seconds", "10")
+            .withProperty("admin.model-health.failure-threshold", "3")
+            .withProperty("admin.model-health.recovery-threshold", "2")
+            .withProperty("admin.model-health.probe-interval-seconds", "300")
+            .withProperty("admin.model-health.cooldown-seconds", "60")
+            .withProperty("admin.model-health.max-override-hours", "24")
             .withProperty("admin.sandbox.mode", "disabled")
             .withProperty("customer-work.attachment.storage.minio.endpoint", "http://minio.internal:9000")
             .withProperty("customer-work.attachment.storage.minio.access-key", "minio-access-secret")
@@ -170,6 +238,10 @@ class AdminProductionReadinessValidatorTest {
             .withProperty("admin.runtime-publish.base-backoff-ms", "5000")
             .withProperty("admin.runtime-publish.nacos.timeout-ms", "3000")
             .withProperty("admin.runtime-publish.minimum-ack-count", "2")
+            .withProperty("admin.runtime-publish.signing.enabled", "true")
+            .withProperty("admin.runtime-publish.signing.key-id", "runtime-signing-2026-08")
+            .withProperty("admin.runtime-publish.signing.secret",
+                "runtime-signing-secret-at-least-32-bytes")
             .withProperty("admin.runtime-publish.ack-identities[0]",
                 "default|customer-work-1|runtime-ack-secret-instance-0001")
             .withProperty("admin.runtime-publish.ack-identities[1]",

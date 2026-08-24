@@ -51,7 +51,11 @@ kubectl create secret generic customer-work-secret -n customer-work \
   --from-literal=MYSQL_PASSWORD='真实值' \
   --from-literal=REDIS_PASSWORD='真实值' \
   --from-literal=NACOS_PASSWORD='真实值' \
-  --from-literal=AUTH_API_KEYS='至少一个随机 API Key' \
+  --from-literal=AUTH_KEY_ID='partner-primary' \
+  --from-literal=AUTH_KEY_HASH='原始 API Key 的 64 位 SHA-256 小写摘要' \
+  --from-literal=AUTH_KEY_TENANT_ID='default' \
+  --from-literal=AUTH_KEY_SCOPES='*' \
+  --from-literal=AUTH_KEY_EPOCH='1' \
   --from-literal=CW_USER_JWT_SECRET='真实值' \
   --from-literal=CW_AGENT_WS_SECRET='真实值' \
   --from-literal=MINIO_ACCESS_KEY='真实值' \
@@ -60,17 +64,32 @@ kubectl create secret generic customer-work-secret -n customer-work \
   --from-literal=ADMIN_AES_SECRET_KEY='真实值' \
   --from-literal=ADMIN_MYSQL_PASSWORD='真实值' \
   --from-literal=ADMIN_REDIS_PASSWORD='真实值' \
+  --from-literal=ADMIN_CUSTOMER_WORK_API_KEY_ID='与 AUTH_KEY_ID 相同' \
   --from-literal=ADMIN_CUSTOMER_WORK_API_KEY='与 8080 鉴权配置一致的真实值' \
-  --from-literal=CW_RUNTIME_CONFIG_ACK_TOKEN='ACK 专用高强度令牌' \
-  --from-literal=ADMIN_OPEN_API_TOKEN='与 ACK token 相同' \
+  --from-literal=CW_RUNTIME_CONFIG_ACK_TOKEN_0='app-0 ACK 专用高强度令牌' \
+  --from-literal=CW_RUNTIME_CONFIG_ACK_TOKEN_1='app-1 ACK 专用高强度令牌' \
+  --from-literal=ADMIN_RUNTIME_PUBLISH_ACK_IDENTITIES='default|customer-work-app-0|app-0 ACK 令牌,default|customer-work-app-1|app-1 ACK 令牌' \
+  --from-literal=ADMIN_RUNTIME_PUBLISH_SIGNING_SECRET='运行时配置 HMAC 密钥' \
+  --from-literal=CW_RUNTIME_CONFIG_SIGNING_SECRET='与发布端相同的运行时配置 HMAC 密钥' \
+  --from-literal=ADMIN_OPEN_API_TOKEN='独立的 admin Open API 令牌' \
   --from-literal=ADMIN_RUNTIME_PUBLISH_NACOS_PASSWORD='与 Nacos 密码相同' \
   --from-literal=CUSTOMER_WORK_CONFIG_AES_KEY='与 ADMIN_AES_SECRET_KEY 相同' \
   --from-literal=CW_NOTIFICATION_AUTH_TOKEN='通知网关 Bearer 令牌'
 ```
 
+摘要可用 `printf %s "$RAW_API_KEY" | shasum -a 256` 生成；8080 不接收明文配置。调用方保管原始值，
+请求同时发送 `X-API-Key-Id: partner-primary` 与 `X-API-Key: <原始值>`。多版本轮换、到期时间和
+`minimum-epochs` 请通过挂载的 Secret yml 或 `SPRING_APPLICATION_JSON` 下发，先并存新旧 epoch，
+确认流量切换后再提高最小 epoch 撤销旧凭据。
+
 `prod` profile 会在启动时执行硬门禁：上面的 API Key、JWT、坐席密钥、审批操作员映射、MinIO 凭据，
 运行时配置 ACK、通知 Webhook，以及 MySQL/Redis/Flyway/技能库配置任一缺失，Pod 都不会进入 Ready。模板中的 `REPLACE_ME` 只是占位符，
 不能用于真实环境。
+
+app 使用 StatefulSet 固定为 `customer-work-app-0/1`。initContainer 根据序号只写入本实例的
+`runtime-config-instance-id` 与 ACK token，admin 则在任务入队时把这两个目标冻结。当前 HPA 上限因此固定为 2；
+扩容前必须先增加新序号的独立 token、`ADMIN_RUNTIME_PUBLISH_ACK_IDENTITIES` 和 initContainer 映射，再提高上限，
+否则新实例无法可靠回执，旧发布任务的完成条件也不应被事后改变。
 
 ## HPA 的伸缩依据
 

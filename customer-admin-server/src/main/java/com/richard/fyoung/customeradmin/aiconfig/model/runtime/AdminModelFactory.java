@@ -2,7 +2,10 @@ package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
+import com.richard.fyoung.customeradmin.billing.service.ModelPriceService;
 import com.richard.fyoung.customerwork.core.model.ChatModelProber;
+import com.richard.fyoung.customerwork.core.model.attribution.AttributedModel;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
 import com.richard.fyoung.customerwork.infra.config.ChatModelFactory;
 import com.richard.fyoung.customerwork.safety.security.ModelEndpointPolicy;
 import io.agentscope.core.model.GenerateOptions;
@@ -32,14 +35,19 @@ public class AdminModelFactory {
 
     private final ChatModelProber prober;
     private final ModelEndpointPolicy endpointPolicy;
+    private final ModelPriceService modelPriceService;
 
     public AdminModelFactory() {
-        this(new ModelEndpointPolicy(List::of));
+        this(new ModelEndpointPolicy(List::of), null);
+    }
+
+    public AdminModelFactory(ModelEndpointPolicy endpointPolicy) {
+        this(endpointPolicy, null);
     }
 
     @Autowired
-    public AdminModelFactory(ModelEndpointPolicy endpointPolicy) {
-        this(new ChatModelProber(endpointPolicy), endpointPolicy);
+    public AdminModelFactory(ModelEndpointPolicy endpointPolicy, ModelPriceService modelPriceService) {
+        this(new ChatModelProber(endpointPolicy), endpointPolicy, modelPriceService);
     }
 
     /** 包内可见，供单测注入短超时，避免真实等待默认 8s（生产走策略注入构造）。 */
@@ -48,18 +56,24 @@ public class AdminModelFactory {
     }
 
     private AdminModelFactory(Duration testTimeout, ModelEndpointPolicy endpointPolicy) {
-        this(new ChatModelProber(testTimeout, endpointPolicy), endpointPolicy);
+        this(new ChatModelProber(testTimeout, endpointPolicy), endpointPolicy, null);
     }
 
     /** 包内测试构造：薄壳测试只验证委托与结果翻译。 */
     AdminModelFactory(ChatModelProber prober) {
-        this(prober, new ModelEndpointPolicy(List::of));
+        this(prober, new ModelEndpointPolicy(List::of), null);
     }
 
     /** 包内测试构造：为模型构建注入确定性的端点策略与 DNS 结果。 */
     AdminModelFactory(ChatModelProber prober, ModelEndpointPolicy endpointPolicy) {
+        this(prober, endpointPolicy, null);
+    }
+
+    AdminModelFactory(ChatModelProber prober, ModelEndpointPolicy endpointPolicy,
+                      ModelPriceService modelPriceService) {
         this.prober = prober;
         this.endpointPolicy = endpointPolicy;
+        this.modelPriceService = modelPriceService;
     }
 
     /**
@@ -88,5 +102,14 @@ public class AdminModelFactory {
         String validatedBaseUrl = endpointPolicy.validateAndNormalizeBaseUrl(baseUrl);
         return ChatModelFactory.build(p.getCode(), modelName, apiKey, validatedBaseUrl, true,
             GenerateOptions.builder().build(), null, null);
+    }
+
+    public Model buildModel(String provider, String baseUrl, String apiKey,
+                            String modelName, Long deploymentId) {
+        Model model = buildModel(provider, baseUrl, apiKey, modelName);
+        ModelCallAttribution attribution = modelPriceService == null
+            ? ModelCallAttribution.unpriced(provider, deploymentId, modelName)
+            : modelPriceService.attribution(provider, deploymentId, modelName);
+        return new AttributedModel(model, attribution);
     }
 }

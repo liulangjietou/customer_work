@@ -7,7 +7,9 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeSet;
 
 /**
  * 客服机器人运行时配置发布配置：{@code admin.runtime-publish.*}。
@@ -30,6 +32,7 @@ public class RuntimePublishProperties {
     private int batchSize = 20;
     private int maxAttempts = 8;
     private long baseBackoffMs = 5000;
+    private Signing signing = new Signing();
     /** 至少多少个实例 APPLIED 才算整体已应用。 */
     private int minimumAckCount = 1;
     /**
@@ -50,6 +53,21 @@ public class RuntimePublishProperties {
             }
         }
         return Optional.ofNullable(matched);
+    }
+
+    /**
+     * 返回某租户当前声明的实例集合。调用方应在发布任务入队时固化结果，后续配置变更不得改变
+     * 已发布 revision 的完成条件。
+     */
+    public List<String> ackTargetInstanceIds(String tenantId) {
+        TreeSet<String> instances = new TreeSet<>();
+        for (String configured : ackIdentities) {
+            RuntimeAckIdentity.parse(configured)
+                .filter(identity -> Objects.equals(identity.tenantId(), tenantId))
+                .map(RuntimeAckIdentity::instanceId)
+                .ifPresent(instances::add);
+        }
+        return List.copyOf(instances);
     }
 
     /** Nacos 配置中心发布目标（与 starter 消费端 {@code customer-work.nacos.*} 对齐）。 */
@@ -75,5 +93,13 @@ public class RuntimePublishProperties {
          * 多网卡 / 容器场景可显式指定可达 IP。
          */
         private String instanceIp;
+    }
+
+    /** 当前发布签名 key；消费端可在轮换窗口同时配置多个可信 keyId。 */
+    @Data
+    public static class Signing {
+        private boolean enabled = false;
+        private String keyId = "";
+        private String secret = "";
     }
 }

@@ -82,7 +82,7 @@ public class SystemToolService {
         }
         List<String> agentCodes = agentMapper.selectBatchIds(agentIds).stream()
             .map(AiAgent::getAgentCode).collect(Collectors.toList());
-        agentInstanceCache.evictAll(agentCodes);
+        agentInstanceCache.invalidateAll(agentCodes);
     }
 
     private SystemToolVO toVo(AiSystemTool tool) {

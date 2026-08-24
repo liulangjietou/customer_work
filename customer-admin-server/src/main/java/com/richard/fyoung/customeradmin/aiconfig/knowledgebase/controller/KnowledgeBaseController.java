@@ -5,7 +5,9 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBase
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseVO;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseVersionVO;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service.KnowledgeBaseService;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service.KnowledgeBaseVersionService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
@@ -36,9 +38,12 @@ import java.util.concurrent.CompletableFuture;
 public class KnowledgeBaseController {
 
     private final KnowledgeBaseService knowledgeBaseService;
+    private final KnowledgeBaseVersionService versionService;
 
-    public KnowledgeBaseController(KnowledgeBaseService knowledgeBaseService) {
+    public KnowledgeBaseController(KnowledgeBaseService knowledgeBaseService,
+                                   KnowledgeBaseVersionService versionService) {
         this.knowledgeBaseService = knowledgeBaseService;
+        this.versionService = versionService;
     }
 
     @SaCheckPermission("knowledge-base:view")
@@ -51,6 +56,12 @@ public class KnowledgeBaseController {
     @GetMapping("/{id}")
     public Result<KnowledgeBaseVO> get(@PathVariable Long id) {
         return Result.success(knowledgeBaseService.get(id));
+    }
+
+    @SaCheckPermission("knowledge-base:view")
+    @GetMapping("/{id}/versions")
+    public Result<List<KnowledgeBaseVersionVO>> versions(@PathVariable Long id) {
+        return Result.success(versionService.versions(id));
     }
 
     /** 智能体表单下拉：仅 status=1 且 testStatus=1 的知识库，权限点复用 view。 */

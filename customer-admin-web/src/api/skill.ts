@@ -1,5 +1,5 @@
 import { download, request } from './request'
-import type { PageQuery, PageResult, SkillSaveRequest, SkillUploadParseResult, SkillVO } from '@/types/api'
+import type { PageQuery, PageResult, SkillSaveRequest, SkillUploadParseResult, SkillVersionVO, SkillVO } from '@/types/api'
 
 export function pageSkills(query: PageQuery) {
   return request<PageResult<SkillVO>>({ url: '/aiconfig/skill', method: 'get', params: query })
@@ -7,6 +7,10 @@ export function pageSkills(query: PageQuery) {
 
 export function getSkill(id: number) {
   return request<SkillVO>({ url: `/aiconfig/skill/${id}`, method: 'get' })
+}
+
+export function fetchSkillVersions(id: number) {
+  return request<SkillVersionVO[]>({ url: `/aiconfig/skill/${id}/versions`, method: 'get' })
 }
 
 export function createSkill(data: SkillSaveRequest) {

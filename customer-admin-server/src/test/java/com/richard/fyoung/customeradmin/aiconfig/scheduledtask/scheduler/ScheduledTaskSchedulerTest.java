@@ -8,6 +8,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -21,6 +22,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * {@link ScheduledTaskScheduler} 单测：注册/取消生命周期、调度模式门控、防重叠。
@@ -189,5 +192,20 @@ class ScheduledTaskSchedulerTest {
         scheduler.runOnce(1L, "code-1");
 
         assertEquals(2, org.mockito.Mockito.mockingDetails(service).getInvocations().size());
+    }
+
+    @Test
+    void runOnce_shouldSkipWhenAnotherPodClaimedSameFireTime() {
+        taskMapper = mock(AiScheduledTaskMapper.class);
+        service = mock(ScheduledTaskService.class);
+        ScheduledTaskClaimStore claimStore = mock(ScheduledTaskClaimStore.class);
+        AdminSchedulerProperties properties = new AdminSchedulerProperties();
+        scheduler = new ScheduledTaskScheduler(taskMapper, service, properties, claimStore);
+        Instant fireTime = Instant.parse("2026-08-23T12:00:00Z");
+        when(claimStore.claim("tenant-a", 1L, "code-1", fireTime)).thenReturn(false);
+
+        scheduler.runOnce(1L, "code-1", "tenant-a", fireTime);
+
+        verify(service, never()).executeFromScheduler(anyString(), anyString());
     }
 }

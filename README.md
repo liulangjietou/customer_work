@@ -239,7 +239,7 @@ flowchart LR
 
     subgraph APP["app-server 运行面"]
         NACOS --> LISTENER["启动拉取 + Listener + 订阅重试"]
-        LISTENER --> VALIDATE["JSON、密钥解密、contentHash<br/>候选模型链与缓存代际校验"]
+        LISTENER --> VALIDATE["JSON、HMAC / contentHash 验证<br/>随后解密密钥与 headersCipher"]
         VALIDATE --> APPLY{"候选配置可应用？"}
         APPLY -->|否| KEEP["保留最后安全配置<br/>回滚缓存代际"]
         APPLY -->|是| SWAP["原子替换模型 / Prompt / MCP / maxIters<br/>刷新热 Agent"]
@@ -250,14 +250,15 @@ flowchart LR
     REJECTED --> OUTBOX["ACK Outbox"]
     APPLIED --> OUTBOX
     OUTBOX --> ACKAPI["POST /api/open/runtime-config/acks"]
-    ACKAPI --> AGG["按实例 ACK 计数聚合<br/>APPLIED / PARTIAL / FAILED"]
+    ACKAPI --> AGG["按发布时冻结的实例集合聚合<br/>APPLIED / PARTIAL / FAILED"]
 ```
 
 - admin 与 app 两侧开关默认均为 `false`；namespace、group、base dataId 与 AES 密钥必须成对配置。
 - 多租户实例必须指定 `NACOS_TENANT_CODE`；专属配置缺失或删除时保留旧值，不回退主 dataId。
-- `PUBLISHED` 只表示 Nacos 已接受配置；一条 `APPLIED ACK` 只证明对应实例生效。当前任务可以按期望实例数聚合，
-  但尚未冻结发布时刻的目标实例清单，因此生产级“整批生效”仍以 Roadmap R0 的全目标 ACK 闭环为准。
-  回滚通过重新发布旧快照完成，不删除历史版本。
+- `PUBLISHED` 只表示 Nacos 已接受配置；发布任务入队时会冻结目标实例清单，集合外 ACK 被拒绝，只有冻结集合
+  全部返回 `APPLIED` 才算整批生效。回滚通过 maker-checker 审批后重新发布旧快照完成，不删除历史版本。
+- 模型密钥与 MCP headers 都只以密文进入配置载荷；消费端先校验 HMAC-SHA256、`contentHash` 与 keyId，
+  再解密并构造候选运行态。签名 key 支持滚动轮换窗口。
 - 当前发布器组装主模型、兜底 / 路由策略、系统提示词、MCP、在线实验与 `maxIters`；`retry`、temperature、
   maxTokens、topP、stream 尚未从后台资产完整下发，列入 Roadmap。
 
@@ -325,15 +326,15 @@ stateDiagram-v2
 | 能力域 | 状态 | 已有能力 | 当前边界 |
 |---|:---:|---|---|
 | 对话与编排 | ✅ | 同步 / SSE / WS、结构化意图、AG-UI、单 Agent 主链路、独立多 Agent 快慢路由 / fanout / reduce | H5 不逐消息调用多 Agent |
-| 模型与路由 | 🟡 | 百炼、OpenAI、Anthropic、Gemini、Ollama；重试、兜底、模型资产、健康探测、不可变路由、主体 / 租户配额 | 没有“成本熔断器”；真实厂商凭据与可用性需环境验收 |
+| 模型与路由 | 🟡 | 百炼、OpenAI、Anthropic、Gemini、Ollama；重试、兜底、模型资产、连续失败/恢复阈值、冷却、人工 override、动态健康路由 overlay、不可变路由、主体 / 租户配额 | 没有“成本熔断器”；持续探测会产生真实调用费用，厂商凭据与可用性仍需环境验收 |
 | 会话与记忆 | 🧪 | memory / json / Redis / MySQL 会话，按“租户 + 已验签主体 + Agent”隔离长期记忆，授权、查看、导出、删除、保留清理与 FactLog | 生产隐私闭环以 JDBC 为基线；外部记忆适配器尚未全部满足同等删除 / 导出契约 |
-| 知识与 Skill | 🧪 | 内存 / simple / 百炼 / Dify RAG，Skill ZIP、代码执行与有限自进化 | 生产向量库、增量索引和知识运营仍需补齐 |
+| 知识与 Skill | 🧪 | 内存 / simple / 百炼 / Dify RAG；KnowledgeOps 文档源、增量/删除同步、checkpoint、lineage、ACL、新鲜度/质量门禁；KB/Skill 不可变版本与 Agent 冻结绑定 | 首个托管文档源适配器仅支持 PUSH，向量暂存 MySQL JSON 并在应用层排序；大规模语料仍应接入专用向量库 |
 | 业务工具 | ✅ | 知识、订单、售后、导购、会员、投诉、转人工七域工具，`tool.backend.*` SPI 与 JDBC 实现 | 接真实业务系统时必须替换示例后端并保留租户 / 权限上下文 |
 | 人机协作 | ✅ | 退款审批挂起、幂等决策、超时巡检、7 态工单、用户 / 坐席 WS、SLA、事务 Outbox、CSAT | 外部退款回调与企业坐席组织需按 SPI 对接 |
-| MCP 与工具安全 | 🧪 | MCP / Higress / Studio 接入、出站地址校验、工具审计与审批 | 尚缺按 tool / Agent / 主体的细粒度策略；MCP headers 尚未统一为 SecretRef |
+| MCP 与工具安全 | 🧪 | MCP / Higress / Studio 接入、DNS/重定向/stdio 出站约束、tool/Agent/渠道/主体授权、SecretRef、工具审计与审批 | 真实 KMS/Vault 与生产网络策略仍需目标环境接入验收 |
 | 多租户 SaaS | 🧪 | 行级隔离、双视角数据权限、access epoch 撤权、租户 / 主体配额、T+1 账单、预算告警 | 客服端隔离默认关闭；完整退租归档 / 擦除回执与敏感词租户分区仍在演进 |
-| 配置发布 | 🟡 | 不可变版本、Eval gate、租户灰度、Nacos 热更新、fencing、重试、实例 ACK、缓存代际失效 | 默认关闭；需真实 Nacos、多实例目标清单和密钥一致性验证 |
-| EvalOps / ModelOps / FinOps | 🧪 | 评测集快照、badcase 回流、在线双臂实验、Trace / 只读 Replay、SLO / error budget、业务结果与成本统计 | 尚缺自动化 SLO 调度、双臂离线评测和逐调用 / 会话结算级成本归因 |
+| 配置发布 | 🟡 | 不可变版本、Eval gate、maker-checker、签名、冻结目标 ACK、租户灰度、fencing、重试与缓存代际失效 | 默认关闭；真实 Nacos 往返及密钥一致性仍需目标环境留证 |
+| EvalOps / ModelOps / FinOps | 🧪 | 评测集 CRUD/导入导出/审核/命名版本/diff、KnowledgeGap/badcase 责任/SLA/制品/复评/可靠发布/线上 revision 效果闭环、双臂启动前离线评测、在线实验、Trace、安全 Replay、SLO 多副本周期评估/告警恢复/可靠通知、逐调用/会话精确成本、日账单对账与业务结果单位成本 | 线上改进结论要求达到最小 revision 曝光，低流量只报 `INCONCLUSIVE`；Replay 默认仅 MOCK；缺价、缺用量或混合币种只报告不完整，不伪造成本 |
 | 渠道与 A2A | 🟡 | 多协议渠道适配；可信内网可显式开启直接 A2A 协议导出 | A2A 的 Nacos AI 注册发现未落地，直接导出默认关闭且不等于公网安全边界 |
 | 后台与 AI 编码 | 🧪 | RBAC、模型 / Agent / MCP / Skill、渠道、工单、风控、任务、统计与开发工具；AI Coding P0~P2 及 P3-1 / P3-2 有限版本 | 完整暂停恢复、多 Agent 协作编程、远程沙箱、向量化增量索引仍在 Roadmap |
 
@@ -482,12 +483,12 @@ timeline
     section 已交付的核心实现
         AgentScope 2.0 GA : 单 Agent 客服主链 : 多 Agent 独立编排 : RAG、工具与 Skill
         产品闭环 : 用户与坐席双 WS : 7 态工单与 Outbox : 审批、CSAT、附件解析
-        SaaS 与治理 : 租户和主体撤权 : 配额与账单 : EvalOps、ModelOps、FinOps : Trace 与只读 Replay
+        SaaS 与治理 : 租户和主体撤权 : 配额与账单 : EvalOps、ModelOps、FinOps : Trace 与安全 Replay
         控制与运营 : 版本发布和 ACK : 在线实验 : SLO 与业务结果 : AI 编码 P0~P2 和有限 P3
     section 下一阶段
         生产验证闭环 : 真实 Nacos 多实例 : 全目标 ACK : 密钥和网络出站治理
         数据主权与身份 : 退租归档和擦除回执 : 企业 SSO 与身份同步 : 外部 KMS
-        效果与成本闭环 : 双臂离线评测 : 自动 SLO 调度 : 调用和会话级成本结算
+        效果与成本闭环 : 闭环效果趋势与复发聚类 : 质量成本联合门禁
         生态扩展 : Nacos AI A2A 发现 : 消息总线 : 远程沙箱和外部知识平台
 ```
 
@@ -497,7 +498,7 @@ Roadmap 按风险与验收出口排序，不承诺未经评估的日期，也不
 |---|---|---|---|
 | R0 | 生产验证闭环 | 冻结每次发布的目标实例集合；真实 Nacos 多 Pod 发布 / 回滚 / ACK；MCP headers SecretRef 与细粒度授权；推理 SDK DNS / 重定向出站约束；补齐后台下发 retry 和模型采样参数 | 所有目标实例 ACK 后才显示整批 APPLIED；故障实例、旧 Worker、跨租户 dataId 与密钥不一致均有可重复演练和证据 |
 | R1 | 数据主权与企业身份 | 覆盖 MySQL、Redis、MinIO、向量库、外部记忆的租户归档 / 导出 / 擦除清单和回执；OIDC / SAML、SCIM、MFA；外部 KMS / Vault SecretRef | 单租户退租演练可证明数据完整交付且到期不可再访问；身份停用 SLA 在方案评审时量化并纳入自动化演练 |
-| R2 | 效果、知识与成本运营 | 在线实验增加双臂离线评测；SLO 自动调度与通知；逐调用 / 会话成本结算；知识入库、增量索引、租户级敏感词与初始化种子 | 发布门禁同时约束经业务确认的质量、SLO 和预算阈值；任一指标可下钻到版本、租户、主体、调用与证据快照 |
+| R2 | 效果、知识与成本运营 | 闭环效果趋势与语义复发聚类；质量成本联合门禁；知识入库、增量索引、租户级敏感词与初始化种子 | 发布门禁同时约束经业务确认的质量、SLO 和预算阈值；趋势可下钻到闭环、版本、租户、主体、调用与证据快照 |
 | R3 | Agent 与基础设施生态 | Nacos AI A2A 注册发现、RocketMQ 消息总线、RAGFlow / Haystack、远程 K8s / E2B 沙箱、Training 平台 | 每个适配器提供契约测试、故障降级检查单、租户隔离测试和最小生产部署样例；直接 A2A 导出与注册发现分开验收 |
 | R4 | AI 编码完整形态 | 可持久化暂停 / 恢复、远程沙箱生命周期、向量化增量代码索引、多 Agent 协作编程与冲突治理 | 进程重启后任务可恢复；越权、超时、并发写冲突和部分失败都有显式状态机与回归测试，恢复时限在方案评审时量化 |
 
@@ -530,7 +531,7 @@ Roadmap 按风险与验收出口排序，不承诺未经评估的日期，也不
   `rc2.0` 分支为历史存档，不再更新。
 - 基于官方 GA 坐标 `io.agentscope:agentscope-harness:2.0.0`（`agentscope-bom` 统一管理版本）；框架高速迭代，
   升级遇 API 不匹配请对照该版本源码微调。
-- API Key 支持配置项与环境变量来源；**生产应使用 Secret / KMS 注入**，勿把明文密钥写入仓库、镜像或 Nacos。
+- API Key 使用 `keyId + SHA-256 hash + scope + expiry + epoch`；生产门禁拒绝旧明文列表，原始 secret 只由调用方通过 Secret / KMS 保管。
 - 客服业务库由 starter Flyway 管理；admin 在 dev / test 运行 Flyway、生产由 DBA 执行镜像 SQL。存量库升级只新增迁移，
   不修改已经部署的 Flyway 历史；迁移失败应阻断启动。
 - 工单状态、事件轨迹和 Outbox 在同一本地事务中提交；消费语义为至少一次，处理器必须按稳定事件 ID 幂等。

@@ -122,6 +122,13 @@
             </exclusions>
         </dependency>
 
+        <!-- 微信回调 nonce/消息幂等必须跨实例原子占位；显式声明而不依赖 starter 的传递依赖。 -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>3.52.0</version>
+        </dependency>
+
         <!-- 测试 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

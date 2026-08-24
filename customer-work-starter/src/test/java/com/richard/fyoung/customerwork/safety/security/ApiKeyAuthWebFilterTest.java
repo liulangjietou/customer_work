@@ -1,9 +1,13 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
 import com.richard.fyoung.customerwork.safety.tenant.TenantAccessDecision;
 import com.richard.fyoung.customerwork.safety.tenant.TenantAccessGuard;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -13,6 +17,9 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -32,6 +39,8 @@ class ApiKeyAuthWebFilterTest {
     @AfterEach
     void clearTenantContext() {
         TenantContext.clear();
+        QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
     }
 
     private CustomerWorkProperties propsWithAuth(boolean enabled, String... keys) {
@@ -76,9 +85,22 @@ class ApiKeyAuthWebFilterTest {
 
     @Test
     void shouldPass_whenValidKey() {
-        boolean passed = runFilter(propsWithAuth(true, "secret-key"),
+        CustomerWorkProperties props = propsWithAuth(true, "secret-key");
+        MockServerWebExchange exchange = MockServerWebExchange.from(
             MockServerHttpRequest.post("/api/customer/chat").header("X-API-Key", "secret-key").build());
-        assertTrue(passed, "合法 Key 应放行");
+        AtomicReference<QuotaSubject> captured = new AtomicReference<>();
+        AtomicReference<AgentInvocationIdentity> identityCaptured = new AtomicReference<>();
+
+        new ApiKeyAuthWebFilter(props).filter(exchange, ex -> {
+            captured.set(QuotaSubjectContext.get());
+            identityCaptured.set(AgentInvocationIdentityContext.get());
+            return Mono.empty();
+        }).block();
+
+        assertEquals(QuotaSubjectType.API_KEY, captured.get().type());
+        assertFalse(captured.get().id().contains("secret-key"), "主体只允许保留 API Key 指纹");
+        assertEquals(QuotaSubjectType.API_KEY, identityCaptured.get().subjectType());
+        assertTrue(identityCaptured.get().authenticated());
     }
 
     @Test
@@ -96,6 +118,8 @@ class ApiKeyAuthWebFilterTest {
 
         assertTrue(runFilter(props, MockServerHttpRequest.post("/api/customer/auth/login").build()));
         assertTrue(runFilter(props, MockServerHttpRequest.get("/api/customer/auth/me").build()));
+        assertTrue(runFilter(props,
+            MockServerHttpRequest.post("/api/customer/auth/revoke-sessions").build()));
         assertTrue(runFilter(props, MockServerHttpRequest.get("/api/customer/user/tickets").build()));
         assertTrue(runFilter(props, MockServerHttpRequest.post("/api/customer/attachment").build()));
         assertTrue(runFilter(props, MockServerHttpRequest.post("/api/customer/feedback").build()));
@@ -199,5 +223,120 @@ class ApiKeyAuthWebFilterTest {
         assertFalse(invoked.get());
         assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
         assertTrue(exchange.getResponse().getBodyAsString().block().contains("TENANT_ACCESS_DENIED"));
+    }
+
+    @Test
+    void structuredCredential_shouldAuthenticateByKeyIdAndHashWithoutPersistingSecret() {
+        CustomerWorkProperties properties = propsWithAuth(true);
+        properties.getSecurity().getAuth().getCredentials().add(
+            credential("partner-a", "partner-secret", "tenant-a", 3L,
+                Instant.parse("2030-01-01T00:00:00Z"), List.of("POST:/api/customer/**")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/chat")
+                .header("X-API-Key-Id", "partner-a")
+                .header("X-API-Key", "partner-secret").build());
+        AtomicReference<ApiKeyPrincipal> captured = new AtomicReference<>();
+        AtomicReference<QuotaSubject> subject = new AtomicReference<>();
+
+        new ApiKeyAuthWebFilter(properties, null, fixedClock()).filter(exchange, current -> {
+            captured.set(current.getAttribute(ApiKeyPrincipal.EXCHANGE_ATTRIBUTE));
+            subject.set(QuotaSubjectContext.get());
+            return Mono.empty();
+        }).block();
+
+        assertEquals("partner-a", captured.get().keyId());
+        assertEquals("tenant-a", captured.get().tenantId());
+        assertEquals(3L, captured.get().epoch());
+        assertEquals("partner-a", subject.get().id(), "限流与审计使用稳定 keyId，不使用原始 secret");
+        SecurityProperties.Credential configured = properties.getSecurity().getAuth().getCredentials().get(0);
+        assertFalse(configured.getKeyHash().contains("partner-secret"));
+        assertEquals(64, configured.getKeyHash().length());
+    }
+
+    @Test
+    void structuredCredential_shouldDenyPathOutsideScope() {
+        CustomerWorkProperties properties = propsWithAuth(true);
+        properties.getSecurity().getAuth().getCredentials().add(
+            credential("chat-only", "secret", "tenant-a", 1L, null,
+                List.of("POST:/api/customer/chat")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/customer/csat/summary")
+                .header("X-API-Key-Id", "chat-only")
+                .header("X-API-Key", "secret").build());
+
+        new ApiKeyAuthWebFilter(properties, null, fixedClock())
+            .filter(exchange, current -> Mono.empty()).block();
+
+        assertEquals(HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
+    }
+
+    @Test
+    void structuredCredential_shouldRejectExpiredSecret() {
+        CustomerWorkProperties properties = propsWithAuth(true);
+        properties.getSecurity().getAuth().getCredentials().add(
+            credential("expired", "secret", "tenant-a", 1L,
+                Instant.parse("2025-12-31T23:59:59Z"), List.of("*")));
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/chat")
+                .header("X-API-Key-Id", "expired")
+                .header("X-API-Key", "secret").build());
+
+        new ApiKeyAuthWebFilter(properties, null, fixedClock())
+            .filter(exchange, current -> Mono.empty()).block();
+
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+    }
+
+    @Test
+    void structuredCredential_rotationShouldOverlapThenRevokeOldEpoch() {
+        CustomerWorkProperties properties = propsWithAuth(true);
+        properties.getSecurity().getAuth().getCredentials().add(
+            credential("partner-a", "old-secret", "tenant-a", 1L, null, List.of("*")));
+        properties.getSecurity().getAuth().getCredentials().add(
+            credential("partner-a", "new-secret", "tenant-a", 2L, null, List.of("*")));
+        properties.getSecurity().getAuth().getMinimumEpochs().put("partner-a", 1L);
+
+        assertTrue(runStructured(properties, "partner-a", "old-secret"), "轮换窗口内旧新 secret 应重叠可用");
+        assertTrue(runStructured(properties, "partner-a", "new-secret"));
+
+        properties.getSecurity().getAuth().getMinimumEpochs().put("partner-a", 2L);
+        assertFalse(runStructured(properties, "partner-a", "old-secret"), "推进最小 epoch 后旧 secret 必须失效");
+        assertTrue(runStructured(properties, "partner-a", "new-secret"));
+    }
+
+    @Test
+    void structuredCredential_shouldNotFallBackToLegacyWhenKeyIdIsWrong() {
+        CustomerWorkProperties properties = propsWithAuth(true, "legacy-secret");
+        assertFalse(runStructured(properties, "unknown", "legacy-secret"),
+            "提交 keyId 后必须走结构化凭据，不能借兼容列表绕过 scope/epoch");
+    }
+
+    private boolean runStructured(CustomerWorkProperties properties, String keyId, String secret) {
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/chat")
+                .header("X-API-Key-Id", keyId)
+                .header("X-API-Key", secret).build());
+        AtomicBoolean invoked = new AtomicBoolean();
+        new ApiKeyAuthWebFilter(properties, null, fixedClock()).filter(exchange, current -> {
+            invoked.set(true);
+            return Mono.empty();
+        }).block();
+        return invoked.get();
+    }
+
+    private SecurityProperties.Credential credential(String keyId, String secret, String tenantId,
+                                                     long epoch, Instant expiresAt, List<String> scopes) {
+        SecurityProperties.Credential credential = new SecurityProperties.Credential();
+        credential.setKeyId(keyId);
+        credential.setKeyHash(ApiKeySecretHasher.sha256Hex(secret));
+        credential.setTenantId(tenantId);
+        credential.setEpoch(epoch);
+        credential.setExpiresAt(expiresAt);
+        credential.setScopes(scopes);
+        return credential;
+    }
+
+    private Clock fixedClock() {
+        return Clock.fixed(Instant.parse("2026-08-24T00:00:00Z"), ZoneOffset.UTC);
     }
 }

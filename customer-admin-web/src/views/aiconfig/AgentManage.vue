@@ -30,6 +30,10 @@ const skillOptions = ref<SkillVO[]>([])
 const systemToolOptions = ref<SystemToolVO[]>([])
 // 知识库选项：/options 接口已过滤"启用且测试通过"，无需前端二次筛选
 const knowledgeBaseOptions = ref<KnowledgeBaseOption[]>([])
+
+function skillName(skillId: number) {
+  return skillOptions.value.find((skill) => skill.id === skillId)?.skillName ?? `Skill ${skillId}`
+}
 // 智能体选项复用于「子Agent协作」多选，无独立全量接口，拉大页分页兜底
 const AGENT_OPTION_PAGE_SIZE = 200
 const agentOptions = ref<AgentVO[]>([])
@@ -355,8 +359,18 @@ onMounted(() => {
         <!-- 知识库名称由后端 AgentVO.knowledgeBaseNames 直接回填，前端不再二次查询 -->
         <el-table-column label="知识库" width="200">
           <template #default="{ row }">
-            <el-tag v-for="k in row.knowledgeBaseNames" :key="k" type="success" style="margin: 2px">{{ k }}</el-tag>
+            <el-tooltip v-for="(k, index) in row.knowledgeBaseNames" :key="`${k}-${index}`" :content="`冻结版本 ID：${row.knowledgeBaseVersionIds?.[index] ?? '-'}`">
+              <el-tag type="success" style="margin: 2px">{{ k }}</el-tag>
+            </el-tooltip>
             <span v-if="!row.knowledgeBaseNames?.length" style="color: #909399">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Skill" width="180">
+          <template #default="{ row }">
+            <el-tooltip v-for="(skillId, index) in row.skillIds" :key="skillId" :content="`冻结版本 ID：${row.skillVersionIds?.[index] ?? '-'}`">
+              <el-tag type="warning" style="margin: 2px">{{ skillName(skillId) }}</el-tag>
+            </el-tooltip>
+            <span v-if="!row.skillIds?.length" style="color: #909399">-</span>
           </template>
         </el-table-column>
         <el-table-column label="能力" width="260">
@@ -465,8 +479,9 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="Skill">
           <el-select v-model="form.skillIds" multiple style="width: 100%" placeholder="可选">
-            <el-option v-for="s in skillOptions" :key="s.id" :label="s.skillName" :value="s.id" />
+            <el-option v-for="s in skillOptions" :key="s.id" :label="`${s.skillName} · v${s.latestVersionNo}`" :value="s.id" />
           </el-select>
+          <div class="version-hint">保存 Agent 时冻结所选 Skill 的当前版本；后续编辑 Skill 不会影响已运行 Agent。</div>
         </el-form-item>
         <el-form-item label="系统工具">
           <el-select v-model="form.systemToolIds" multiple style="width: 100%" placeholder="可选">
@@ -475,8 +490,9 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="知识库">
           <el-select v-model="form.knowledgeBaseIds" multiple style="width: 100%" placeholder="可选，仅展示连通性测试通过的知识库">
-            <el-option v-for="k in knowledgeBaseOptions" :key="k.id" :label="k.kbName" :value="k.id" />
+            <el-option v-for="k in knowledgeBaseOptions" :key="k.id" :label="`${k.kbName} · v${k.latestVersionNo}`" :value="k.id" />
           </el-select>
+          <div class="version-hint">保存 Agent 时冻结所选知识库当前版本；升级需重新保存 Agent。</div>
         </el-form-item>
         <el-form-item label="能力">
           <el-checkbox-group v-model="form.capabilities">
@@ -613,6 +629,13 @@ onMounted(() => {
   margin-top: 4px;
   font-size: 12px;
   color: #f56c6c;
+}
+
+.version-hint {
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .memory-meta {

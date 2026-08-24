@@ -8,10 +8,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 人机切换工单存储配置。
+ * 历史三态人机切换配置（仅兼容旧配置绑定）。
  *
- * <p>决定 {@code HandoffService} 的工单持久化方式：memory 模式下多实例部署时，坐席在实例 A
- * 接单、坐席工作台轮询落到实例 B 会查不到最新状态；jdbc 模式跨实例共享同一份工单状态。</p>
+ * <p>P1-03 起生产统一读取 {@code customer-work.ticket.*}。保留字段只为旧配置平滑升级，运行时不再
+ * 注册 HandoffStore/HandoffSlaScheduler。</p>
  */
 @Data
 public class HumanHandoffProperties {

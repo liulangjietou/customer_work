@@ -10,19 +10,23 @@ import com.richard.fyoung.customeradmin.config.AdminSchedulerProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.scheduling.support.CronTrigger;
+import org.springframework.scheduling.Trigger;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 内置动态定时任务调度器（internal 调度模式）：用 {@link ThreadPoolTaskScheduler} + Spring
@@ -49,6 +53,7 @@ public class ScheduledTaskScheduler implements DisposableBean {
     private final AiScheduledTaskMapper taskMapper;
     private final ScheduledTaskService scheduledTaskService;
     private final AdminSchedulerProperties properties;
+    private final ScheduledTaskClaimStore claimStore;
 
     private final ThreadPoolTaskScheduler taskScheduler;
     /** 已注册任务的调度句柄，key=任务ID，用于动态取消。 */
@@ -56,16 +61,24 @@ public class ScheduledTaskScheduler implements DisposableBean {
     /** 正在执行中的任务ID，用于防重叠。 */
     private final Set<Long> running = ConcurrentHashMap.newKeySet();
 
+    @Autowired
     public ScheduledTaskScheduler(AiScheduledTaskMapper taskMapper, ScheduledTaskService scheduledTaskService,
-                                  AdminSchedulerProperties properties) {
+                                  AdminSchedulerProperties properties, ScheduledTaskClaimStore claimStore) {
         this.taskMapper = taskMapper;
         this.scheduledTaskService = scheduledTaskService;
         this.properties = properties;
+        this.claimStore = claimStore;
         this.taskScheduler = new ThreadPoolTaskScheduler();
         this.taskScheduler.setPoolSize(properties.getPoolSize());
         this.taskScheduler.setThreadNamePrefix("sched-task-");
         this.taskScheduler.setWaitForTasksToCompleteOnShutdown(false);
         this.taskScheduler.initialize();
+    }
+
+    /** 兼容离线单测；生产构造器必须注入数据库认领存储。 */
+    ScheduledTaskScheduler(AiScheduledTaskMapper taskMapper, ScheduledTaskService scheduledTaskService,
+                           AdminSchedulerProperties properties) {
+        this(taskMapper, scheduledTaskService, properties, (tenantId, taskId, taskCode, fireTime) -> true);
     }
 
     /**
@@ -136,9 +149,9 @@ public class ScheduledTaskScheduler implements DisposableBean {
         if (!StringUtils.hasText(task.getCron())) {
             return false;
         }
-        CronTrigger trigger;
+        CronTrigger cronTrigger;
         try {
-            trigger = new CronTrigger(task.getCron().trim());
+            cronTrigger = new CronTrigger(task.getCron().trim());
         } catch (IllegalArgumentException e) {
             // cron 入库时已校验，此处仅兜底存量脏数据，skip 不影响其它任务
             log.error("internal scheduler skip invalid cron, code={}, taskId={}, cron={}",
@@ -147,7 +160,14 @@ public class ScheduledTaskScheduler implements DisposableBean {
         }
         Long taskId = task.getId();
         String taskCode = task.getTaskCode();
-        ScheduledFuture<?> future = taskScheduler.schedule(() -> runOnce(taskId, taskCode), trigger);
+        AtomicReference<Instant> scheduledFireTime = new AtomicReference<>();
+        Trigger trigger = context -> {
+            Instant next = cronTrigger.nextExecution(context);
+            scheduledFireTime.set(next);
+            return next;
+        };
+        ScheduledFuture<?> future = taskScheduler.schedule(
+            () -> runOnce(taskId, taskCode, task.getTenantId(), scheduledFireTime.get()), trigger);
         if (future != null) {
             futures.put(taskId, future);
         }
@@ -166,11 +186,21 @@ public class ScheduledTaskScheduler implements DisposableBean {
 
     /** 单次触发：防重叠 + 复用统一执行入口；execute 内部已落执行历史并吞异常，这里再兜底一层。 */
     void runOnce(Long taskId, String taskCode) {
+        runOnce(taskId, taskCode, null, Instant.now());
+    }
+
+    void runOnce(Long taskId, String taskCode, String tenantId, Instant scheduledFireTime) {
         if (!running.add(taskId)) {
             log.info("internal scheduler skip overlapping run, taskId={}, taskCode={}", taskId, taskCode);
             return;
         }
         try {
+            if (scheduledFireTime == null
+                || !claimStore.claim(tenantId, taskId, taskCode, scheduledFireTime)) {
+                log.info("internal scheduler skip globally claimed run, taskId={}, taskCode={}, fireTime={}",
+                    taskId, taskCode, scheduledFireTime);
+                return;
+            }
             scheduledTaskService.executeFromScheduler(taskCode, ScheduledTaskService.TRIGGER_TYPE_INTERNAL);
         } catch (Exception e) {
             log.error("internal scheduler run failed, code={}, taskId={}, taskCode={}",

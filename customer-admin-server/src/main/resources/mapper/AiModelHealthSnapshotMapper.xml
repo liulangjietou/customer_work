@@ -5,38 +5,27 @@
     <insert id="insertIgnore">
         INSERT IGNORE INTO ai_model_health_snapshot (
             model_config_id, tenant_id, health_status, auth_status, capability_status,
-            consecutive_failures, last_latency_ms, last_error_category, last_message,
-            last_probe_at, last_success_at, last_failure_at, next_probe_at, revision
+            consecutive_failures, consecutive_successes, last_latency_ms, last_error_category, last_message,
+            last_probe_at, last_success_at, last_failure_at, next_probe_at, cooldown_until,
+            override_mode, override_reason, override_operator_id, override_operator_name, override_until,
+            revision
         ) VALUES (
             #{modelConfigId}, #{tenantId}, #{healthStatus}, #{authStatus}, #{capabilityStatus},
-            #{consecutiveFailures}, #{lastLatencyMs}, #{lastErrorCategory}, #{lastMessage},
-            #{lastProbeAt}, #{lastSuccessAt}, #{lastFailureAt}, #{nextProbeAt}, #{revision}
+            #{consecutiveFailures}, #{consecutiveSuccesses}, #{lastLatencyMs}, #{lastErrorCategory}, #{lastMessage},
+            #{lastProbeAt}, #{lastSuccessAt}, #{lastFailureAt}, #{nextProbeAt}, #{cooldownUntil},
+            #{overrideMode}, #{overrideReason}, #{overrideOperatorId}, #{overrideOperatorName}, #{overrideUntil},
+            #{revision}
         )
     </insert>
 
-    <!--
-      last_probe_at 是探测实际开始时间（V78 提升到微秒精度）。条件 UPDATE 是显式 CAS：
-      更旧 probe 匹配不到行；失败计数直接在持锁的数据库行上递增，不做 Java read-modify-write。
-    -->
-    <update id="updateIfNewer">
-        UPDATE ai_model_health_snapshot
-        SET health_status = IF(#{success},
-                IF(health_status = 'UNHEALTHY', 'RECOVERING', 'HEALTHY'),
-                IF(consecutive_failures + 1 >= #{failureThreshold}, 'UNHEALTHY', 'DEGRADED')),
-            auth_status = IF(#{success}, 'PASSED', IF(#{authFailure}, 'FAILED', auth_status)),
-            consecutive_failures = IF(#{success}, 0, consecutive_failures + 1),
-            last_latency_ms = #{snapshot.lastLatencyMs},
-            last_error_category = #{snapshot.lastErrorCategory},
-            last_message = #{snapshot.lastMessage},
-            last_success_at = IF(#{success}, #{snapshot.lastSuccessAt}, last_success_at),
-            last_failure_at = IF(#{success}, last_failure_at, #{snapshot.lastFailureAt}),
-            next_probe_at = #{snapshot.nextProbeAt},
-            revision = revision + 1,
-            last_probe_at = #{snapshot.lastProbeAt}
-        WHERE model_config_id = #{snapshot.modelConfigId}
-          AND tenant_id = #{snapshot.tenantId}
-          AND last_probe_at &lt; #{snapshot.lastProbeAt}
-    </update>
+    <select id="lockSnapshot"
+            resultType="com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelHealthSnapshot">
+        SELECT *
+        FROM ai_model_health_snapshot
+        WHERE model_config_id = #{modelConfigId}
+          AND tenant_id = #{tenantId}
+        FOR UPDATE
+    </select>
 
     <select id="findDueModels"
             resultType="com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig">
@@ -50,6 +39,21 @@
           AND model.lifecycle_status = 'ACTIVE'
           AND (health.next_probe_at IS NULL OR health.next_probe_at &lt;= NOW())
         ORDER BY COALESCE(health.next_probe_at, model.create_time), model.id
+        LIMIT #{limit}
+    </select>
+
+    <select id="findExpiredOverrideModels"
+            resultType="com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig">
+        SELECT model.*
+        FROM ai_model_health_snapshot health
+        INNER JOIN ai_model_config model
+                ON model.id = health.model_config_id
+               AND model.tenant_id = health.tenant_id
+        WHERE model.deleted = 0
+          AND health.override_mode IN ('FORCE_HEALTHY', 'FORCE_UNHEALTHY')
+          AND health.override_until IS NOT NULL
+          AND health.override_until &lt;= #{now}
+        ORDER BY health.override_until, health.model_config_id
         LIMIT #{limit}
     </select>
 </mapper>

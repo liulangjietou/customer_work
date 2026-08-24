@@ -49,6 +49,22 @@ public class NacosProperties {
      */
     private String configAesKey = "";
 
+    /** 生产必须开启；消费端先验签、再解密与切换运行态。 */
+    private boolean runtimeConfigSignatureRequired = false;
+    private String runtimeConfigSigningKeyId = "";
+    private String runtimeConfigSigningSecret = "";
+    /** 额外可信 keyId -> HMAC secret；轮换窗口用于保留上一把 key。 */
+    private Map<String, String> runtimeConfigSigningKeys = new LinkedHashMap<>();
+
+    public Map<String, String> trustedRuntimeConfigSigningKeys() {
+        LinkedHashMap<String, String> trusted = new LinkedHashMap<>(runtimeConfigSigningKeys);
+        if (runtimeConfigSigningKeyId != null && !runtimeConfigSigningKeyId.isBlank()
+            && runtimeConfigSigningSecret != null && !runtimeConfigSigningSecret.isBlank()) {
+            trusted.put(runtimeConfigSigningKeyId, runtimeConfigSigningSecret);
+        }
+        return Map.copyOf(trusted);
+    }
+
     /** 运行时配置应用结果回传地址（admin 的 /api/open/runtime-config/acks）。 */
     private String runtimeConfigAckUrl = "";
 

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { FormInstance, UploadRequestOptions } from 'element-plus'
-import { createSkill, deleteSkill, downloadSkill, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
+import { createSkill, deleteSkill, downloadSkill, fetchSkillVersions, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
 import { useCrudPage } from '@/composables/useCrudPage'
-import type { PageQuery, SkillSaveRequest, SkillVO } from '@/types/api'
+import type { PageQuery, SkillSaveRequest, SkillVersionVO, SkillVO } from '@/types/api'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
 /** 文件大小人性化展示（附属文件清单用）。 */
@@ -44,6 +44,25 @@ const {
 
 const previewVisible = ref(false)
 const previewSkill = ref<SkillVO | null>(null)
+const versionsVisible = ref(false)
+const versionsLoading = ref(false)
+const versionSkill = ref<SkillVO | null>(null)
+const versions = ref<SkillVersionVO[]>([])
+
+async function openVersions(row: SkillVO) {
+  versionSkill.value = row
+  versionsVisible.value = true
+  versionsLoading.value = true
+  try {
+    versions.value = await fetchSkillVersions(row.id)
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+function shortHash(hash: string | null) {
+  return hash ? `${hash.slice(0, 12)}…` : '-'
+}
 
 /** 正在下载的行 id：同一行的按钮转 loading，避免大包重复点。 */
 const downloadingId = ref<number | null>(null)
@@ -130,6 +149,13 @@ onMounted(loadList)
             <span>{{ row.files?.length ?? 0 }} 个</span>
           </template>
         </el-table-column>
+        <el-table-column label="版本" width="100">
+          <template #default="{ row }">
+            <el-tooltip :content="`不可变版本 ID：${row.currentVersionId ?? '-'}`">
+              <el-tag type="primary">v{{ row.latestVersionNo ?? 0 }}</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
@@ -137,9 +163,10 @@ onMounted(loadList)
           </template>
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="180" />
-        <el-table-column label="操作" width="270" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openPreview(row)">查看</el-button>
+            <el-button link type="primary" @click="openVersions(row)">版本</el-button>
             <el-button
               v-permission="'skill:export'"
               link
@@ -218,6 +245,20 @@ onMounted(loadList)
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="versionsVisible" :title="`不可变版本 · ${versionSkill?.skillName ?? ''}`" width="820px">
+      <el-table v-loading="versionsLoading" :data="versions" border>
+        <el-table-column prop="versionNo" label="版本" width="90">
+          <template #default="{ row }">v{{ row.versionNo }}</template>
+        </el-table-column>
+        <el-table-column prop="id" label="版本 ID" width="110" />
+        <el-table-column label="contentHash" min-width="180">
+          <template #default="{ row }"><el-tooltip :content="row.contentHash"><code>{{ shortHash(row.contentHash) }}</code></el-tooltip></template>
+        </el-table-column>
+        <el-table-column prop="changeNote" label="变更说明" min-width="180" />
+        <el-table-column prop="createTime" label="创建时间" width="180" />
+      </el-table>
     </el-dialog>
 
     <el-dialog v-model="previewVisible" :title="previewSkill ? `查看 · ${previewSkill.skillName}` : '查看'" width="1000px" top="5vh">

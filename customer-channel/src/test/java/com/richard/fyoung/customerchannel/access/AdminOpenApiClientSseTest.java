@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerchannel.access;
 
+import com.richard.fyoung.customerchannel.access.model.ChannelRobot;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -12,6 +13,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -74,7 +76,7 @@ class AdminOpenApiClientSseTest {
         server.start();
 
         AdminOpenApiClient client = new AdminOpenApiClient(baseUrl, "tok");
-        String answer = client.chat("agentX", "s1", "hi", "dingtalk", "ak1", 10);
+        String answer = client.chat("agentX", "s1", "hi", "dingtalk", "ak1", "userA", 10);
 
         assertEquals("你好世界", answer);
     }
@@ -93,7 +95,7 @@ class AdminOpenApiClientSseTest {
         server.start();
 
         AdminOpenApiClient client = new AdminOpenApiClient(baseUrl, "tok");
-        String answer = client.chat("agentX", "s1", "hi", "dingtalk", "ak1", 10);
+        String answer = client.chat("agentX", "s1", "hi", "dingtalk", "ak1", "userA", 10);
 
         assertEquals("第一行\n第二行", answer);
     }
@@ -111,7 +113,7 @@ class AdminOpenApiClientSseTest {
         AdminOpenApiClient client = new AdminOpenApiClient(baseUrl, "tok");
 
         assertThrows(Exception.class,
-            () -> client.chat("agentX", "s1", "hi", "dingtalk", "ak1", 10));
+            () -> client.chat("agentX", "s1", "hi", "dingtalk", "ak1", "userA", 10));
     }
 
     @Test
@@ -129,7 +131,7 @@ class AdminOpenApiClientSseTest {
         server.start();
 
         AdminOpenApiClient client = new AdminOpenApiClient(baseUrl, "tok");
-        client.chat("agentX", "s1", "hi", "dingtalk", "ak1", 10);
+        client.chat("agentX", "s1", "hi", "dingtalk", "ak1", "userA", 10);
 
         String body = requestBody.get();
         assertTrue(body.contains("\"channelType\":\"dingtalk\""));
@@ -146,5 +148,23 @@ class AdminOpenApiClientSseTest {
         String sessionId = client.resolveSession("dingtalk", "ak1", "userA");
 
         assertEquals("sess-42", sessionId);
+    }
+
+    @Test
+    void shouldParseWechatSafeModeSecretsFromTrustedOpenApi() {
+        serve("/api/open/channel/robots", "application/json",
+            "{\"code\":0,\"data\":[{"
+                + "\"id\":1,\"channelType\":\"wechat\",\"robotName\":\"微信客服\","
+                + "\"appKey\":\"wx-app\",\"appSecret\":\"app-secret\","
+                + "\"robotCode\":\"token\",\"agentCode\":\"agent-x\","
+                + "\"sessionMode\":\"continuous\",\"callbackMode\":\"safe\","
+                + "\"encodingAesKey\":\"encoding-key\",\"version\":42}]}" );
+        server.start();
+
+        List<ChannelRobot> robots = new AdminOpenApiClient(baseUrl, "tok").listRobots("wechat");
+
+        assertEquals(1, robots.size());
+        assertEquals("safe", robots.get(0).getCallbackMode());
+        assertEquals("encoding-key", robots.get(0).getEncodingAesKey());
     }
 }

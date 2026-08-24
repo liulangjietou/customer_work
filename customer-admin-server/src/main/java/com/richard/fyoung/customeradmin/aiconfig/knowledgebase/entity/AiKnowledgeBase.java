@@ -45,6 +45,9 @@ public class AiKnowledgeBase {
     private Integer testStatus;
     private LocalDateTime testTime;
     private String remark;
+    /** 当前最新不可变版本。Agent 关系冻结具体版本，不跟随该指针漂移。 */
+    private Long currentVersionId;
+    private Integer latestVersionNo;
 
     @TableField(fill = FieldFill.INSERT)
     private Long createBy;

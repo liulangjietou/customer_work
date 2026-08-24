@@ -3,6 +3,7 @@ import type {
   AgentCallSource,
   AgentCallStatsDetail,
   AgentCallReplayManifest,
+  AgentReplayExecution,
   AgentCallStatsPageResult,
   AgentCallStatsQuery,
   AgentCallStatsSummary,
@@ -28,6 +29,21 @@ export function getAgentCallReplayManifest(id: number, source: AgentCallSource) 
     url: `${BASE_URL}/${id}/replay-manifest`,
     method: 'get',
     params: { source },
+  })
+}
+
+/** 默认执行零外部调用的 MOCK；DRY_RUN 由服务端隔离环境闸门决定是否放行。 */
+export function executeAgentCallReplay(
+  id: number,
+  source: AgentCallSource,
+  mode: 'MOCK' | 'DRY_RUN' = 'MOCK',
+  mockAnswer?: string,
+) {
+  return request<AgentReplayExecution>({
+    url: `${BASE_URL}/${id}/replay`,
+    method: 'post',
+    params: { source },
+    data: { mode, mockAnswer },
   })
 }
 

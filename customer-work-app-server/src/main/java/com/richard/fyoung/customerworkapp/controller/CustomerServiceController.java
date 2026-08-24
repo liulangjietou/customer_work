@@ -7,6 +7,8 @@ import com.richard.fyoung.customerwork.core.dto.ChatResponse;
 import com.richard.fyoung.customerwork.core.dto.IntentResult;
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
 import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.service.ChatTurnEvent;
+import com.richard.fyoung.customerwork.core.service.ChatTurnService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -39,13 +41,16 @@ import java.util.UUID;
 public class CustomerServiceController {
 
     private final CustomerServiceService service;
+    private final ChatTurnService chatTurnService;
     private final MultiAgentOrchestrator multiAgentOrchestrator;
     private final AguiService aguiService;
 
     public CustomerServiceController(CustomerServiceService service,
+                                     ChatTurnService chatTurnService,
                                      MultiAgentOrchestrator multiAgentOrchestrator,
                                      AguiService aguiService) {
         this.service = service;
+        this.chatTurnService = chatTurnService;
         this.multiAgentOrchestrator = multiAgentOrchestrator;
         this.aguiService = aguiService;
     }
@@ -57,8 +62,7 @@ public class CustomerServiceController {
     @PostMapping("/chat")
     public Mono<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
-        return service.chat(sessionId, request.message())
-            .map(reply -> new ChatResponse(sessionId, reply, newMessageId()))
+        return chatTurnService.chat(sessionId, request.message())
             .contextWrite(ctx -> ctx.put(MdcContextLifter.SESSION_ID_KEY, sessionId));
     }
 
@@ -67,17 +71,20 @@ public class CustomerServiceController {
      */
     @Operation(summary = "流式对话(SSE)", description = "逐增量片段推送")
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<String>> chatStream(@Valid @RequestBody ChatRequest request) {
+    public Flux<ServerSentEvent<Object>> chatStream(@Valid @RequestBody ChatRequest request) {
         String sessionId = resolveSessionId(request.sessionId());
-        return service.chatStream(sessionId, request.message())
-            .map(chunk -> ServerSentEvent.<String>builder()
-                .event("message")
-                .data(chunk)
-                .build())
-            .concatWithValues(ServerSentEvent.<String>builder()
-                .event("done")
-                .data("[DONE]")
-                .build())
+        return chatTurnService.stream(sessionId, request.message(), null)
+            .map(event -> {
+                if (event instanceof ChatTurnEvent.Delta delta) {
+                    return ServerSentEvent.builder((Object) delta.content())
+                        .event("message")
+                        .build();
+                }
+                ChatTurnEvent.Completed completed = (ChatTurnEvent.Completed) event;
+                return ServerSentEvent.builder((Object) completed.completion().terminal())
+                    .event("done")
+                    .build();
+            })
             .contextWrite(ctx -> ctx.put(MdcContextLifter.SESSION_ID_KEY, sessionId));
     }
 
@@ -152,8 +159,4 @@ public class CustomerServiceController {
         return StringUtils.hasText(sessionId) ? sessionId : "anonymous-" + UUID.randomUUID();
     }
 
-    /** 生成本条回复的消息 ID，供客户端提交点赞/点踩反馈时引用。 */
-    private String newMessageId() {
-        return "MSG-" + UUID.randomUUID();
-    }
 }

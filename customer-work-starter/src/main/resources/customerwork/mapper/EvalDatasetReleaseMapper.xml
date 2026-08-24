@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetReleaseMapper">
+
+    <sql id="columns">
+        release_id, eval_type, version_name, snapshot_version_id, content_hash, case_count,
+        status, review_comment, created_by, reviewed_by, created_at_ms, reviewed_at_ms
+    </sql>
+
+    <insert id="insert"
+            parameterType="com.richard.fyoung.customerwork.capability.eval.entity.EvalDatasetReleaseDO">
+        INSERT INTO cw_eval_dataset_release
+        (release_id, eval_type, version_name, snapshot_version_id, content_hash, case_count,
+         status, review_comment, created_by, reviewed_by, created_at_ms, reviewed_at_ms)
+        VALUES
+        (#{releaseId}, #{evalType}, #{versionName}, #{snapshotVersionId}, #{contentHash}, #{caseCount},
+         #{status}, #{reviewComment}, #{createdBy}, #{reviewedBy}, #{createdAtMs}, #{reviewedAtMs})
+    </insert>
+
+    <select id="selectByReleaseId"
+            resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalDatasetReleaseDO">
+        SELECT <include refid="columns"/> FROM cw_eval_dataset_release
+        WHERE release_id = #{releaseId}
+    </select>
+
+    <select id="selectByType"
+            resultType="com.richard.fyoung.customerwork.capability.eval.entity.EvalDatasetReleaseDO">
+        SELECT <include refid="columns"/> FROM cw_eval_dataset_release
+        WHERE eval_type = #{evalType}
+        ORDER BY created_at_ms DESC
+    </select>
+
+    <!-- 审核只能从 DRAFT 走一次；并发审核只有一个请求能更新成功。 -->
+    <update id="review">
+        UPDATE cw_eval_dataset_release
+        SET status = #{targetStatus}, review_comment = #{reviewComment},
+            reviewed_by = #{reviewedBy}, reviewed_at_ms = #{reviewedAtMs}
+        WHERE release_id = #{releaseId} AND status = 'DRAFT'
+    </update>
+</mapper>

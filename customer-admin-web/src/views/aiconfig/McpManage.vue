@@ -17,7 +17,17 @@ const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
 const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
-const form = reactive<McpSaveRequest>({ mcpName: '', mcpType: 'sse', config: '', description: '', status: 1 })
+const form = reactive<McpSaveRequest>({
+  mcpName: '', mcpType: 'sse', config: '', description: '', secretExpiresAt: null,
+  allowedSubjectTypes: ['ADMIN_USER'], status: 1,
+})
+
+const subjectTypeOptions = [
+  { value: 'ADMIN_USER', label: '后台用户' },
+  { value: 'USER', label: '终端用户' },
+  { value: 'API_KEY', label: 'API Key 接入方' },
+  { value: 'IP', label: '匿名 IP（谨慎开放）' },
+] as const
 
 const testStatusMap: Record<number, { label: string; type: 'info' | 'success' | 'danger' }> = {
   0: { label: '未测试', type: 'info' },
@@ -63,7 +73,10 @@ function handleSearch() {
 function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
-  Object.assign(form, { mcpName: '', mcpType: 'sse', config: '', description: '', status: 1 })
+  Object.assign(form, {
+    mcpName: '', mcpType: 'sse', config: '', description: '', secretExpiresAt: null,
+    allowedSubjectTypes: ['ADMIN_USER'], status: 1,
+  })
   dialogVisible.value = true
 }
 
@@ -76,6 +89,8 @@ async function openEdit(row: McpVO) {
     mcpType: detail.mcpType,
     config: detail.config,
     description: detail.description,
+    secretExpiresAt: detail.credential?.expiresAt ?? null,
+    allowedSubjectTypes: [...detail.allowedSubjectTypes],
     status: detail.status,
   })
   dialogVisible.value = true
@@ -91,6 +106,8 @@ async function openCopy(row: McpVO) {
     mcpType: detail.mcpType,
     config: detail.config,
     description: detail.description,
+    secretExpiresAt: null,
+    allowedSubjectTypes: [...detail.allowedSubjectTypes],
     status: detail.status,
   })
   dialogVisible.value = true
@@ -181,6 +198,13 @@ onMounted(loadList)
             <el-tag :type="testStatusMap[row.testStatus]?.type ?? 'info'">{{ testStatusMap[row.testStatus]?.label ?? '未测试' }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="凭据" width="150">
+          <template #default="{ row }">
+            <el-tag :type="row.credential?.status === 'ACTIVE' ? 'success' : 'info'">
+              {{ row.credential ? `${row.credential.status} · v${row.credential.currentVersion}` : '无敏感参数' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="180" />
         <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }">
@@ -224,6 +248,21 @@ onMounted(loadList)
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description!" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="凭据到期">
+          <el-date-picker
+            v-model="form.secretExpiresAt"
+            type="datetime"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            placeholder="可选；仅影响 SecretRef"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="允许主体" prop="allowedSubjectTypes" :rules="[{ required: true, message: '至少选择一种允许主体' }]">
+          <el-select v-model="form.allowedSubjectTypes" multiple style="width: 100%">
+            <el-option v-for="option in subjectTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+          <div class="config-hint">该策略由服务端在 MCP 工具真正执行前校验；匿名 IP 默认不开放。</div>
         </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />

@@ -7,6 +7,10 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.chat.service.ChatService;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.codec.ServerSentEvent;
@@ -44,6 +48,14 @@ class OpenAgentChatControllerTest {
         chatService = mock(ChatService.class);
         openChannelService = mock(OpenChannelService.class);
         controller = new OpenAgentChatController(chatService, openChannelService);
+        AgentInvocationIdentityContext.set(new AgentInvocationIdentity(
+            "default", QuotaSubjectType.API_KEY, "api-key-fingerprint", true));
+    }
+
+    @AfterEach
+    void tearDown() {
+        AgentInvocationIdentityContext.clear();
+        TenantContext.clear();
     }
 
     @Test
@@ -60,13 +72,13 @@ class OpenAgentChatControllerTest {
         assertEquals("\"a\\nb\"", events.get(0).data());
         assertEquals("done", events.get(1).event());
         assertEquals("[DONE]", events.get(1).data());
-        verify(openChannelService).requireAgentBound(AGENT, CHANNEL, APP_KEY);
+        verify(openChannelService).requireChatAuthorized(AGENT, CHANNEL, APP_KEY, "user-1", "s1");
     }
 
     @Test
     void errorDataShouldBeJsonStringLiteral() {
         doThrow(new RuntimeException("boom")).when(openChannelService)
-            .requireAgentBound(AGENT, CHANNEL, APP_KEY);
+            .requireChatAuthorized(AGENT, CHANNEL, APP_KEY, "user-1", "s1");
 
         List<ServerSentEvent<String>> events =
             controller.chat(AGENT, request()).collectList().block();
@@ -96,6 +108,6 @@ class OpenAgentChatControllerTest {
     }
 
     private OpenChatRequest request() {
-        return new OpenChatRequest("s1", "hi", CHANNEL, APP_KEY);
+        return new OpenChatRequest("s1", "hi", CHANNEL, APP_KEY, "user-1");
     }
 }

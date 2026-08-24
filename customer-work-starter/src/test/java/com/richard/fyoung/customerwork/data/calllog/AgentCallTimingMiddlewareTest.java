@@ -2,6 +2,9 @@ package com.richard.fyoung.customerwork.data.calllog;
 
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
 import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentAssignment;
+import com.richard.fyoung.customerwork.core.model.attribution.AttributedModel;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelPricingStatus;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.observability.MdcContextLifter;
 import io.agentscope.core.agent.Agent;
@@ -26,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import reactor.core.publisher.Flux;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -38,6 +42,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 
 /**
  * 分段耗时中间件单测：MODEL/TOOL/MCP/SKILL 分段采集与归类、答案采集、失败判定、异常不打断主链路、开关直通。
@@ -188,6 +194,34 @@ class AgentCallTimingMiddlewareTest {
         assertEquals(128L, record.inputTokens(), "请求级输入 token 汇总");
         assertEquals(32L, record.outputTokens(), "请求级输出 token 汇总");
         assertEquals(160L, record.totalTokens(), "请求级总 token = 输入 + 输出");
+    }
+
+    @Test
+    void onModelCall_shouldCaptureActualDeploymentAndFrozenPrice() {
+        Model delegate = mock(Model.class);
+        when(delegate.getModelName()).thenReturn("same-name");
+        when(delegate.stream(anyList(), anyList(), any())).thenReturn(Flux.empty());
+        ModelCallAttribution frozen = new ModelCallAttribution(
+            "provider-a", 42L, "same-name", 9L, "CNY",
+            new BigDecimal("1.20"), new BigDecimal("4.80"), new BigDecimal("0.12"),
+            ModelPricingStatus.PRICED);
+        Model attributed = new AttributedModel(delegate, frozen);
+        AgentCallTimingMiddleware middleware = new AgentCallTimingMiddleware(
+            enabledProps(), new ToolKindRegistry(), record -> { }, null);
+        RuntimeContext runtime = ctx();
+        AgentCallCollector collector = new AgentCallCollector();
+        runtime.put(AgentCallCollector.class, collector);
+
+        middleware.onModelCall(agent, runtime,
+                new ModelCallInput(List.of(), List.of(), null, attributed),
+                ignored -> attributed.stream(List.of(), List.of(), null)
+                    .thenMany(Flux.just(new ModelCallEndEvent("reply", new ChatUsage(10, 2, 0.0)))))
+            .blockLast();
+
+        AgentCallSegment segment = collector.toRecord("req", "u", "u", "a", "a", "s",
+            AgentCallSessionType.CHAT, "q", System.currentTimeMillis(), true, null)
+            .segments().get(0);
+        assertEquals(frozen, segment.attribution());
     }
 
     /** onActing 工具结果为 ERROR 时段判失败并记错误信息。 */

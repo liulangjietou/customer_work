@@ -124,8 +124,51 @@ class PolicyRoutingModelTest {
         assertEquals(0, fallback.calls.get());
     }
 
+    @Test
+    void unhealthyMatchedDeployment_shouldUseHealthyDefaultRule() {
+        StubModel economy = new StubModel("economy", false, false);
+        StubModel standard = new StubModel("standard", false, false);
+        PolicyRoutingModel routing = model(List.of(
+                rule(10L, PolicyRouteSpec.Purpose.ECONOMY, 2L, 10,
+                    new PolicyRouteSpec.Condition(List.of(), List.of(), null, 100,
+                        false, false, "LOW")),
+                rule(11L, PolicyRouteSpec.Purpose.DEFAULT, 1L, 100,
+                    PolicyRouteSpec.Condition.empty())),
+            Map.of(1L, standard, 2L, economy),
+            Map.of(2L, new PolicyRouteSpec.Health("UNHEALTHY", false, "AUTO", 8)));
+
+        List<ChatResponse> result = routing.stream(List.of(user("hello")), List.of(),
+            GenerateOptions.builder().build()).collectList().block();
+
+        assertEquals("standard", result.get(0).getId());
+        assertEquals(0, economy.calls.get());
+    }
+
+    @Test
+    void unhealthyFallback_shouldNeverBeUsedAfterPrimaryFailure() {
+        StubModel primary = new StubModel("primary", true, false);
+        StubModel fallback = new StubModel("fallback", false, false);
+        PolicyRoutingModel routing = model(List.of(
+                rule(11L, PolicyRouteSpec.Purpose.DEFAULT, 1L, 100,
+                    PolicyRouteSpec.Condition.empty()),
+                rule(12L, PolicyRouteSpec.Purpose.FALLBACK, 2L, 1000,
+                    PolicyRouteSpec.Condition.empty())),
+            Map.of(1L, primary, 2L, fallback),
+            Map.of(2L, new PolicyRouteSpec.Health("UNHEALTHY", false, "AUTO", 4)));
+
+        assertThrows(IllegalStateException.class, () -> routing.stream(List.of(user("hello")),
+            List.of(), GenerateOptions.builder().build()).collectList().block());
+        assertEquals(0, fallback.calls.get());
+    }
+
     private PolicyRoutingModel model(List<PolicyRouteSpec.Rule> rules, Map<Long, Model> models) {
         return new PolicyRoutingModel(new PolicyRouteSpec(5L, 6L, 3, "hash", 7L, "web", rules), models);
+    }
+
+    private PolicyRoutingModel model(List<PolicyRouteSpec.Rule> rules, Map<Long, Model> models,
+                                     Map<Long, PolicyRouteSpec.Health> health) {
+        return new PolicyRoutingModel(
+            new PolicyRouteSpec(5L, 6L, 3, "hash", 7L, "web", rules, health), models);
     }
 
     private PolicyRouteSpec.Rule rule(Long id, PolicyRouteSpec.Purpose purpose, Long deploymentId,

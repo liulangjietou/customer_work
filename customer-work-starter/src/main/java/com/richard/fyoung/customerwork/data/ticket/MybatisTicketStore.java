@@ -191,6 +191,11 @@ public class MybatisTicketStore implements TicketStore {
         record.setAssignee(t.getAssignee());
         record.setHandoffReason(t.getHandoffReason());
         record.setResolveNote(t.getResolveNote());
+        record.setRoutingCategory(t.getRoutingCategory());
+        record.setRequiredSkill(t.getRequiredSkill());
+        record.setRoutingPriority(t.getRoutingPriority());
+        record.setEmotion(t.getEmotion());
+        record.setSuggestedAssignees(t.getSuggestedAssignees());
         record.setReopenCount(t.getReopenCount());
         record.setCreatedAtMs(t.getCreatedAtMs());
         record.setUpdatedAtMs(t.getUpdatedAtMs());
@@ -224,7 +229,12 @@ public class MybatisTicketStore implements TicketStore {
             orZero(record.getClosedAtMs()),
             // 历史数据 last_user_active_at_ms 可能为 NULL：用 updated_at_ms 兜底，避免空闲巡检误判
             record.getLastUserActiveAtMs() == null ? orZero(record.getUpdatedAtMs())
-                : record.getLastUserActiveAtMs());
+                : record.getLastUserActiveAtMs(),
+            record.getRoutingCategory(),
+            record.getRequiredSkill(),
+            record.getRoutingPriority(),
+            record.getEmotion(),
+            record.getSuggestedAssignees());
     }
 
     /** 事件领域对象 → 事件 DO（id 交由自增回填，此处不设）。 */

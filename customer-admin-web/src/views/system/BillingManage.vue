@@ -10,6 +10,7 @@ import {
   fetchCostForecast,
   fetchPlatformOverview,
   fetchTenantBill,
+  fetchUsageReconciliation,
   listCostAlerts,
   listPrice,
   listQuota,
@@ -21,6 +22,7 @@ import {
   type TenantQuotaSaveRequest,
   type TenantQuotaVO,
   type UsageAggregate,
+  type UsageReconciliationVO,
 } from '@/api/billing'
 import { fetchCurrentView, listTenantOptions, type TenantVO } from '@/api/tenant'
 
@@ -181,6 +183,7 @@ const billRange = ref<[string, string]>(['', ''])
 const billTenant = ref('')
 const billRows = ref<UsageAggregate[]>([])
 const overviewRows = ref<UsageAggregate[]>([])
+const reconciliationRows = ref<UsageReconciliationVO[]>([])
 
 function defaultRange(): [string, string] {
   const now = new Date()
@@ -198,18 +201,36 @@ async function loadBill() {
   billLoading.value = true
   try {
     if (!crossTenantAuthority.value) {
-      billRows.value = await fetchTenantBill({ from, to })
+      const [bill, reconciliation] = await Promise.all([
+        fetchTenantBill({ from, to }),
+        canReconcile(from, to) ? fetchUsageReconciliation({ from, to }) : Promise.resolve([]),
+      ])
+      billRows.value = bill
+      reconciliationRows.value = reconciliation
       overviewRows.value = []
     } else if (billTenant.value) {
-      billRows.value = await fetchTenantBill({ tenantId: billTenant.value, from, to })
+      const [bill, reconciliation] = await Promise.all([
+        fetchTenantBill({ tenantId: billTenant.value, from, to }),
+        canReconcile(from, to)
+          ? fetchUsageReconciliation({ tenantId: billTenant.value, from, to })
+          : Promise.resolve([]),
+      ])
+      billRows.value = bill
+      reconciliationRows.value = reconciliation
       overviewRows.value = []
     } else {
       overviewRows.value = await fetchPlatformOverview({ from, to })
       billRows.value = []
+      reconciliationRows.value = []
     }
   } finally {
     billLoading.value = false
   }
+}
+
+function canReconcile(from: string, to: string) {
+  const days = Math.floor((new Date(to).getTime() - new Date(from).getTime()) / (24 * 60 * 60 * 1000)) + 1
+  return days > 0 && days <= 31
 }
 
 async function handleAggregate() {
@@ -270,6 +291,16 @@ async function handleAcknowledge(row: CostAlertVO) {
 
 function formatMoney(value: number | null | undefined) {
   return Number(value ?? 0).toFixed(4)
+}
+
+function formatExactAmount(value: number | null | undefined) {
+  return Number(value ?? 0).toFixed(8)
+}
+
+function reconciliationTagType(status: UsageReconciliationVO['status']) {
+  if (status === 'MATCHED') return 'success'
+  if (status === 'INCOMPLETE' || status === 'STALE') return 'warning'
+  return 'danger'
 }
 
 function alertTagType(type: CostAlertVO['alertType']) {
@@ -433,25 +464,66 @@ onMounted(async () => {
 
           <!-- 选了租户看按模型明细，没选看按租户总览 -->
           <el-table v-if="billTenant || !crossTenantAuthority" v-loading="billLoading" :data="billRows" style="width: 100%">
+            <el-table-column prop="provider" label="厂商" width="130" />
             <el-table-column prop="modelName" label="模型" width="200" />
+            <el-table-column prop="currency" label="币种" width="90" />
             <el-table-column prop="callCount" label="调用次数" width="120" />
             <el-table-column prop="inputTokens" label="输入 token" width="140" />
             <el-table-column prop="outputTokens" label="输出 token" width="140" />
             <el-table-column prop="cachedTokens" label="缓存 token" width="140" />
             <el-table-column prop="totalTokens" label="总 token" width="140" />
-            <el-table-column prop="amount" label="金额（元）" width="140" />
+            <el-table-column label="已结算金额" width="150">
+              <template #default="{ row }">{{ formatExactAmount(row.amount) }}</template>
+            </el-table-column>
+            <el-table-column label="完整性" width="130">
+              <template #default="{ row }">
+                <el-tag :type="row.pricingStatus === 'COMPLETE' ? 'success' : 'warning'">
+                  {{ row.pricingStatus }}
+                </el-tag>
+              </template>
+            </el-table-column>
           </el-table>
 
           <el-table v-else v-loading="billLoading" :data="overviewRows" style="width: 100%">
             <el-table-column prop="tenantId" label="租户" width="200" />
             <el-table-column prop="callCount" label="调用次数" width="120" />
             <el-table-column prop="totalTokens" label="总 token" width="160" />
-            <el-table-column prop="amount" label="金额（元）" width="160" />
+            <el-table-column prop="currency" label="币种" width="90" />
+            <el-table-column label="已结算金额" width="160">
+              <template #default="{ row }">{{ formatExactAmount(row.amount) }}</template>
+            </el-table-column>
           </el-table>
 
           <div class="tip">
-            账单来自日归集表，默认 T+1；金额按归集当时的单价结算落库，之后调价不会改动已出的账。
+            账单来自客服端真实 MODEL 分段，默认 T+1；每段在调用完成时按冻结价目结算，日账单只做精确求和。
+            对账查询单次最多 31 天，超出时仅展示账单。
           </div>
+
+          <template v-if="billTenant || !crossTenantAuthority">
+            <h3 class="section-title">账实对账</h3>
+            <el-table v-loading="billLoading" :data="reconciliationRows" style="width: 100%">
+              <el-table-column prop="statDate" label="日期" width="120" />
+              <el-table-column prop="currency" label="币种" width="100" />
+              <el-table-column label="调用事实" width="150">
+                <template #default="{ row }">{{ formatExactAmount(row.sourceAmount) }}</template>
+              </el-table-column>
+              <el-table-column label="日账单" width="150">
+                <template #default="{ row }">{{ formatExactAmount(row.billAmount) }}</template>
+              </el-table-column>
+              <el-table-column label="差额" width="150">
+                <template #default="{ row }">{{ formatExactAmount(row.difference) }}</template>
+              </el-table-column>
+              <el-table-column label="未结算分段" width="130">
+                <template #default="{ row }">{{ row.sourceUnsettledSegments }} / {{ row.sourceModelSegments }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="120">
+                <template #default="{ row }">
+                  <el-tag :type="reconciliationTagType(row.status)">{{ row.status }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="reason" label="说明" min-width="280" show-overflow-tooltip />
+            </el-table>
+          </template>
         </el-tab-pane>
 
         <!-- 成本预测与告警 -->
@@ -650,5 +722,10 @@ onMounted(async () => {
 
 .forecast-card {
   margin-bottom: 20px;
+}
+
+.section-title {
+  margin: 24px 0 12px;
+  font-size: 15px;
 }
 </style>

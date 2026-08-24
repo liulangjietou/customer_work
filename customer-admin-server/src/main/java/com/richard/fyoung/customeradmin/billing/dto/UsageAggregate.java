@@ -21,6 +21,14 @@ public class UsageAggregate {
     private Long outputTokens;
     private Long cachedTokens;
     private Long totalTokens;
-    /** 从调用日志汇总时为空（金额由归集服务按单价算出后回填）。 */
+    private Long modelSegmentCount;
+    private Long settledSegmentCount;
+    private Long unsettledSegmentCount;
+    /** COMPLETE/PARTIAL/UNAVAILABLE，由分段结算状态聚合得出。 */
+    private String pricingStatus;
+    /** 本行归集冻结的客服端调用日志最大 ID。 */
+    private Long sourceMaxCallLogId;
+    private String currency;
+    /** 已 SETTLED 分段的不可变金额之和。 */
     private BigDecimal amount;
 }

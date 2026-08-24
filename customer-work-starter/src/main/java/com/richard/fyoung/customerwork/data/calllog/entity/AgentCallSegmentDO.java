@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
+import java.math.BigDecimal;
+
 /**
  * 智能体调用分段明细表 {@code cw_agent_call_segment} 的持久化对象（贫血 DO）。
  *
@@ -31,6 +33,19 @@ public class AgentCallSegmentDO {
     private Long cachedTokens;
     /** 模型自报耗时（毫秒，仅 MODEL 段）。 */
     private Long modelReportedMs;
+    private String provider;
+    private Long deploymentId;
+    private String modelName;
+    private Long priceId;
+    private String currency;
+    private BigDecimal inputUnitPrice;
+    private BigDecimal outputUnitPrice;
+    private BigDecimal cachedUnitPrice;
+    private String pricingStatus;
+    /** 按冻结价目结算的本分段金额；未完整结算时为空。 */
+    private BigDecimal costAmount;
+    private String costCurrency;
+    private String costStatus;
     private Boolean success;
     private String errorMsg;
 }

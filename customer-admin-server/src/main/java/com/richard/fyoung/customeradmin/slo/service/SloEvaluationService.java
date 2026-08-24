@@ -4,11 +4,10 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.slo.dto.SloEvaluationVO;
 import com.richard.fyoung.customeradmin.slo.dto.SloWindowEvaluation;
-import com.richard.fyoung.customeradmin.slo.entity.SloAlert;
 import com.richard.fyoung.customeradmin.slo.entity.SloPolicy;
-import com.richard.fyoung.customeradmin.slo.mapper.SloAlertMapper;
 import com.richard.fyoung.customeradmin.slo.mapper.SloCallAggregate;
 import com.richard.fyoung.customeradmin.slo.mapper.SloCallAggregateMapper;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,29 +32,39 @@ public class SloEvaluationService {
 
     private final SloPolicyService policyService;
     private final SloCallAggregateMapper aggregateMapper;
-    private final SloAlertMapper alertMapper;
+    private final SloAlertService alertService;
     private final Clock clock;
 
     @Autowired
     public SloEvaluationService(SloPolicyService policyService,
                                 SloCallAggregateMapper aggregateMapper,
-                                SloAlertMapper alertMapper) {
-        this(policyService, aggregateMapper, alertMapper, Clock.systemUTC());
+                                SloAlertService alertService) {
+        this(policyService, aggregateMapper, alertService, Clock.systemUTC());
     }
 
     SloEvaluationService(SloPolicyService policyService,
                          SloCallAggregateMapper aggregateMapper,
-                         SloAlertMapper alertMapper,
+                         SloAlertService alertService,
                          Clock clock) {
         this.policyService = policyService;
         this.aggregateMapper = aggregateMapper;
-        this.alertMapper = alertMapper;
+        this.alertService = alertService;
         this.clock = clock;
     }
 
     @Transactional(rollbackFor = Exception.class)
     public SloEvaluationVO evaluate(Long policyId) {
         String tenantId = SloPolicyService.requireTenant();
+        return evaluatePolicy(policyId, tenantId);
+    }
+
+    /** 后台 Worker 的可信入口；显式建立租户上下文，不能从客户端传入。 */
+    @Transactional(rollbackFor = Exception.class)
+    public SloEvaluationVO evaluateForTenant(Long policyId, String tenantId) {
+        return TenantContext.callWith(tenantId, () -> evaluatePolicy(policyId, tenantId));
+    }
+
+    private SloEvaluationVO evaluatePolicy(Long policyId, String tenantId) {
         SloPolicy policy = policyService.requirePolicy(policyId, tenantId);
         if (!Boolean.TRUE.equals(policy.getEnabled())) {
             throw new BizException(ResultCode.PARAM_INVALID, "SLO 策略未启用");
@@ -73,13 +82,17 @@ public class SloEvaluationService {
         boolean burning = enoughSamples
             && shortWindow.burnRate().compareTo(policy.getBurnRateThreshold()) >= 0
             && longWindow.burnRate().compareTo(policy.getBurnRateThreshold()) >= 0;
-        boolean alertCreated = burning && createAlert(policy, tenantId, now, shortWindow, longWindow);
         String status = noData ? STATUS_NO_DATA
             : !enoughSamples ? STATUS_INSUFFICIENT_DATA
             : burning ? STATUS_BURNING : STATUS_HEALTHY;
+        LocalDateTime evaluatedAt = LocalDateTime.ofInstant(now, ZoneOffset.UTC);
+        SloAlertService.Transition transition = alertService.reconcile(
+            policy, tenantId, evaluatedAt, burning, STATUS_HEALTHY.equals(status),
+            shortWindow, longWindow, now.getEpochSecond() / 60L);
         return new SloEvaluationVO(policy.getId(), policy.getPolicyName(), policy.getScopeType(),
-            policy.getScopeKey(), LocalDateTime.ofInstant(now, ZoneOffset.UTC), status,
-            minimumSampleCount, shortWindow, longWindow, alertCreated);
+            policy.getScopeKey(), evaluatedAt, status,
+            minimumSampleCount, shortWindow, longWindow,
+            transition == SloAlertService.Transition.OPENED, transition.name());
     }
 
     private int resolveMinimumSampleCount(SloPolicy policy) {
@@ -128,19 +141,6 @@ public class SloEvaluationService {
             .max(burn(latencyRatio, policy.getLatencyTarget()));
         return new SloWindowEvaluation(minutes, total, compositeGood, bad, availabilityGood, latencyGood,
             availabilityRatio, latencyRatio, remaining, burn);
-    }
-
-    private boolean createAlert(SloPolicy policy, String tenantId, Instant now,
-                                SloWindowEvaluation shortWindow, SloWindowEvaluation longWindow) {
-        SloAlert alert = new SloAlert();
-        alert.setTenantId(tenantId);
-        alert.setPolicyId(policy.getId());
-        alert.setWindowEndMinute(now.getEpochSecond() / 60L);
-        alert.setAlertType("MULTI_WINDOW_BURN");
-        alert.setShortBurnRate(shortWindow.burnRate());
-        alert.setLongBurnRate(longWindow.burnRate());
-        alert.setFirstSeenAt(LocalDateTime.ofInstant(now, ZoneOffset.UTC));
-        return alertMapper.insertIgnore(alert) == 1;
     }
 
     private static long value(Long value) {

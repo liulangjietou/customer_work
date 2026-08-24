@@ -6,13 +6,11 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 /**
- * 人机切换工单 SLA 巡检器（升级引擎）。
+ * 历史三态工单 SLA 巡检器（仅供迁移回归）。
  *
  * <p>周期性扫描工单，超过 SLA 阈值仍未流转的按阶段告警：</p>
  * <ul>
@@ -27,9 +25,11 @@ import java.util.List;
  * 自动结案"这种合理的兜底动作，升级只能是告警，交由人工介入）。每个巡检周期对仍超标的工单重复告警
  * （与既有 {@code ApprovalTimeoutScheduler} 一致，依赖下游日志/指标系统做告警去重与聚合，不在本类维护
  * 状态）。仅当对应阈值 &gt; 0 时生效。</p>
+ *
+ * <p>P1-03 起生产 SLA 已统一由 TicketSlaScheduler 扫描 cw_ticket，本类不注册为组件，避免同一工单
+ * 被两套调度器重复告警或推进。</p>
  * @author owlzhangfq@gmail.com
  */
-@Component
 public class HandoffSlaScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(HandoffSlaScheduler.class);
@@ -51,7 +51,6 @@ public class HandoffSlaScheduler {
         this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
     }
 
-    @Scheduled(fixedDelayString = "${customer-work.runtime.scheduler-fixed-delay-ms:60000}")
     public void checkSla() {
         checkPendingSla();
         checkClaimedSla();

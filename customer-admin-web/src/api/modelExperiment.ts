@@ -20,6 +20,7 @@ export interface ModelExperimentCreateRequest {
   maxErrorRate: number
   maxP95LatencyMs: number
   expiresAt: string
+  datasetReleaseId: string
 }
 
 export interface ModelExperiment {
@@ -33,6 +34,17 @@ export interface ModelExperiment {
   treatmentDeploymentId: number
   treatmentModelRef: string
   treatmentEndpointRevision: number
+  datasetReleaseId: string
+  datasetVersionName: string
+  datasetSnapshotVersionId: string
+  datasetContentHash: string
+  judgeDeploymentId: number
+  judgeModelRef: string
+  judgeEndpointRevision: number
+  offlineEvalStatus: 'NOT_STARTED' | 'RUNNING' | 'PASSED' | 'FAILED'
+  offlineEvalStartedAt: string | null
+  offlineEvalCompletedAt: string | null
+  offlineEvalError: string | null
   revision: number
   treatmentBps: number
   status: ModelExperimentStatus
@@ -87,6 +99,31 @@ export interface ModelExperimentMetrics {
   evaluatedAt: string | null
 }
 
+export interface ModelExperimentArmEvaluation {
+  id: number
+  arm: 'CONTROL' | 'TREATMENT'
+  attemptNo: number
+  deploymentId: number
+  endpointRevision: number
+  datasetReleaseId: string
+  datasetSnapshotVersionId: string
+  datasetContentHash: string
+  judgeDeploymentId: number
+  judgeEndpointRevision: number
+  rubricVersion: string
+  status: 'RUNNING' | 'PASSED' | 'FAILED' | 'ERROR'
+  total: number | null
+  judged: number | null
+  passed: number | null
+  avgScore: number | null
+  passRate: number | null
+  failedCaseIds: string[]
+  errorCaseIds: string[]
+  errorMessage: string | null
+  startedAt: string
+  completedAt: string | null
+}
+
 export function listModelExperiments(params?: { agentId?: number; status?: ModelExperimentStatus }) {
   return request<ModelExperiment[]>({ url: '/aiconfig/model-experiments', method: 'get', params })
 }
@@ -117,6 +154,13 @@ export function listModelExperimentEvents(id: number) {
 export function getModelExperimentMetrics(id: number) {
   return request<ModelExperimentMetrics>({
     url: `/aiconfig/model-experiments/${id}/metrics`,
+    method: 'get',
+  })
+}
+
+export function listModelExperimentArmEvaluations(id: number) {
+  return request<ModelExperimentArmEvaluation[]>({
+    url: `/aiconfig/model-experiments/${id}/arm-evaluations`,
     method: 'get',
   })
 }

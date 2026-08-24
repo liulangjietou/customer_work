@@ -49,4 +49,13 @@ public class InMemoryUserAccountStore implements UserAccountStore {
             account.changeLevel(levelCode);
         }
     }
+
+    @Override
+    public long incrementSessionEpoch(String id) {
+        UserAccount account = byId.get(id);
+        if (account == null) {
+            throw new IllegalStateException("user not found: " + id);
+        }
+        return account.revokeSessions();
+    }
 }

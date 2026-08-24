@@ -1,9 +1,15 @@
 package com.richard.fyoung.customerwork.infra.config;
 
 import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.agent.RuntimeAgentAccessState;
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
+import com.richard.fyoung.customerwork.core.model.attribution.AttributedModel;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
+import com.richard.fyoung.customerwork.core.model.attribution.ModelPricingStatus;
 import com.richard.fyoung.customerwork.core.model.experiment.OnlineExperimentRoutingModel;
 import com.richard.fyoung.customerwork.core.model.routing.PolicyRoutingModel;
+import com.richard.fyoung.customerwork.infra.config.properties.McpProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
 import com.richard.fyoung.customerwork.safety.security.ModelEndpointPolicy;
 import io.agentscope.core.model.Model;
 import org.slf4j.Logger;
@@ -15,10 +21,11 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import com.richard.fyoung.customerwork.infra.config.properties.McpProperties;
-import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * 运行时配置热应用器（消费端热更新的落地单元）。
@@ -52,15 +59,29 @@ public class RuntimeConfigApplier {
     private final ModelEndpointPolicy endpointPolicy;
     /** 进程启动时的 yml/Java 基线；完整快照显式 null 用它清除旧热覆盖。 */
     private final int baselineMaxIters;
+    /** 与全部 Agent 治理中间件共享的生命周期总闸门。 */
+    private final RuntimeAgentAccessState runtimeAccessState;
 
     @Autowired
     public RuntimeConfigApplier(CustomerWorkProperties properties,
                                 ModelConfig modelConfig,
                                 MutableDelegatingModel mutableModel,
                                 NacosPromptService nacosPromptService,
+                                CustomerServiceService customerServiceService,
+                                RuntimeAgentAccessState runtimeAccessState) {
+        this(properties, modelConfig, mutableModel, nacosPromptService, customerServiceService,
+            new ModelEndpointPolicy(() -> properties.getModel().getEgress().getAllowedHosts()), runtimeAccessState);
+    }
+
+    /** 兼容不装配生命周期热更新的离线单测。 */
+    public RuntimeConfigApplier(CustomerWorkProperties properties,
+                                ModelConfig modelConfig,
+                                MutableDelegatingModel mutableModel,
+                                NacosPromptService nacosPromptService,
                                 CustomerServiceService customerServiceService) {
         this(properties, modelConfig, mutableModel, nacosPromptService, customerServiceService,
-            new ModelEndpointPolicy(() -> properties.getModel().getEgress().getAllowedHosts()));
+            new ModelEndpointPolicy(() -> properties.getModel().getEgress().getAllowedHosts()),
+            RuntimeAgentAccessState.alwaysActive());
     }
 
     RuntimeConfigApplier(CustomerWorkProperties properties,
@@ -69,12 +90,24 @@ public class RuntimeConfigApplier {
                          NacosPromptService nacosPromptService,
                          CustomerServiceService customerServiceService,
                          ModelEndpointPolicy endpointPolicy) {
+        this(properties, modelConfig, mutableModel, nacosPromptService, customerServiceService,
+            endpointPolicy, RuntimeAgentAccessState.alwaysActive());
+    }
+
+    RuntimeConfigApplier(CustomerWorkProperties properties,
+                         ModelConfig modelConfig,
+                         MutableDelegatingModel mutableModel,
+                         NacosPromptService nacosPromptService,
+                         CustomerServiceService customerServiceService,
+                         ModelEndpointPolicy endpointPolicy,
+                         RuntimeAgentAccessState runtimeAccessState) {
         this.properties = properties;
         this.modelConfig = modelConfig;
         this.mutableModel = mutableModel;
         this.nacosPromptService = nacosPromptService;
         this.customerServiceService = customerServiceService;
         this.endpointPolicy = endpointPolicy;
+        this.runtimeAccessState = runtimeAccessState;
         this.baselineMaxIters = properties.getAgent().getMaxIters();
     }
 
@@ -109,16 +142,24 @@ public class RuntimeConfigApplier {
                                       Map<Long, String> routingApiKeys,
                                       Map<Long, String> experimentApiKeys) {
         try {
+            if (dto != null && Boolean.FALSE.equals(dto.getActive())) {
+                return applyRevocation(dto);
+            }
             validate(dto);
             validateAndNormalizeModelEndpoints(dto);
             // 先在临时配置上构建新链（可能抛错：厂商不支持 / 密钥缺失等），成功后才提交
             ModelProperties staged = stageModelCfg(dto, primaryApiKey, fallbackApiKey);
-            Model baseline = dto.getRoutingPolicy() == null
-                ? modelConfig.buildChain(staged)
-                : buildPolicyChain(dto.getRoutingPolicy(), staged, routingApiKeys);
-            Model newChain = dto.getOnlineExperiment() == null
+            Model baseline = Objects.requireNonNull(dto.getRoutingPolicy() == null
+                ? modelConfig.buildChain(staged,
+                    attribution(dto.getModel().getProvider(), dto.getModel().getDeploymentId(),
+                        dto.getModel().getName(), dto.getModel().getPricing()),
+                    fallbackAttribution(dto.getFallback()), unavailableBaselineDeployments(dto))
+                : buildPolicyChain(dto.getRoutingPolicy(), staged, routingApiKeys),
+                "runtime baseline model chain must not be null");
+            Model newChain = Objects.requireNonNull(dto.getOnlineExperiment() == null
                 ? baseline
-                : buildExperimentChain(dto.getOnlineExperiment(), staged, experimentApiKeys, baseline);
+                : buildExperimentChain(dto.getOnlineExperiment(), staged, experimentApiKeys, baseline),
+                "runtime model chain must not be null");
             PreparedMcp preparedMcp = prepareMcp(dto);
             PreparedAgent preparedAgent = prepareAgent(dto);
 
@@ -129,6 +170,7 @@ public class RuntimeConfigApplier {
             nacosPromptService.updatePrompt(dto.getSystemPrompt());
             mutableModel.swap(newChain);
             customerServiceService.flushHotAgents();
+            runtimeAccessState.activate(dto.getTargetCode(), dto.getRevision(), dto.getContentHash());
 
             log.info("[hot-config] runtime config applied, schemaVersion={}, provider={}, model={}, mcpServers={}",
                 dto.getSchemaVersion(), staged.getProvider(), staged.getName(),
@@ -138,6 +180,21 @@ public class RuntimeConfigApplier {
             log.error("runtime config apply failed, keep old config, code={}", CODE_APPLY_FAIL, e);
             return false;
         }
+    }
+
+    /**
+     * 撤销快照不依赖模型/MCP 等已删除资产，只推进总闸门并清理热 Agent。
+     * 先关闸再清缓存，保证并发新调用不会在淘汰窗口重新取得旧实例。
+     */
+    private boolean applyRevocation(CustomerWorkRuntimeConfig dto) {
+        if (dto.getSchemaVersion() < 3 || !StringUtils.hasText(dto.getTargetCode())) {
+            throw new IllegalArgumentException("runtime revocation targetCode and schemaVersion >= 3 are required");
+        }
+        runtimeAccessState.revoke(dto.getTargetCode(), dto.getRevision(), dto.getContentHash());
+        customerServiceService.flushHotAgents();
+        log.info("[hot-config] runtime agent revoked, targetCode={}, revision={}",
+            dto.getTargetCode(), dto.getRevision());
+        return true;
     }
 
     /** DTO 基本校验：模型 provider/name 必填（fast fail，防坏配置下发覆盖运行链）。 */
@@ -204,7 +261,8 @@ public class RuntimeConfigApplier {
         Model control = buildExperimentArm(experiment.getControl(), staged, experimentApiKeys);
         Model treatment = buildExperimentArm(experiment.getTreatment(), staged, experimentApiKeys);
         return new OnlineExperimentRoutingModel(RuntimeOnlineExperimentMapper.toSpec(experiment),
-            baseline, control, treatment);
+            baseline, control, treatment, routingAvailable(experiment.getControl().getHealth()),
+            routingAvailable(experiment.getTreatment().getHealth()));
     }
 
     private Model buildExperimentArm(CustomerWorkRuntimeConfig.ExperimentArm arm,
@@ -225,7 +283,8 @@ public class RuntimeConfigApplier {
             candidate = new ResilientChatModel(candidate, staged.getRetry().getMaxAttempts(),
                 staged.getRetry().getBackoffMs());
         }
-        return candidate;
+        return new AttributedModel(candidate,
+            attribution(arm.getProvider(), arm.getDeploymentId(), arm.getName(), arm.getPricing()));
     }
 
     private Model buildPolicyChain(CustomerWorkRuntimeConfig.RoutingPolicy policy,
@@ -252,12 +311,50 @@ public class RuntimeConfigApplier {
                 candidate = new ResilientChatModel(candidate, staged.getRetry().getMaxAttempts(),
                     staged.getRetry().getBackoffMs());
             }
+            candidate = new AttributedModel(candidate,
+                attribution(deployment.getProvider(), deployment.getDeploymentId(),
+                    deployment.getName(), deployment.getPricing()));
             if (candidates.putIfAbsent(deployment.getDeploymentId(), candidate) != null) {
                 throw new IllegalArgumentException(
                     "duplicate routing deployment: " + deployment.getDeploymentId());
             }
         }
         return new PolicyRoutingModel(RuntimeModelRouteMapper.toSpec(policy), candidates);
+    }
+
+    private ModelCallAttribution fallbackAttribution(CustomerWorkRuntimeConfig.Fallback fallback) {
+        if (fallback == null) {
+            return ModelCallAttribution.unpriced(null, null, null);
+        }
+        return attribution(fallback.getProvider(), fallback.getDeploymentId(),
+            fallback.getName(), fallback.getPricing());
+    }
+
+    private Set<Long> unavailableBaselineDeployments(CustomerWorkRuntimeConfig dto) {
+        Set<Long> unavailable = new LinkedHashSet<>();
+        if (!routingAvailable(dto.getModel().getHealth()) && dto.getModel().getDeploymentId() != null) {
+            unavailable.add(dto.getModel().getDeploymentId());
+        }
+        if (dto.getFallback() != null && !routingAvailable(dto.getFallback().getHealth())
+            && dto.getFallback().getDeploymentId() != null) {
+            unavailable.add(dto.getFallback().getDeploymentId());
+        }
+        return Set.copyOf(unavailable);
+    }
+
+    private boolean routingAvailable(CustomerWorkRuntimeConfig.HealthOverlay health) {
+        return health == null || health.isRoutingAvailable();
+    }
+
+    private ModelCallAttribution attribution(String provider, Long deploymentId, String model,
+                                             CustomerWorkRuntimeConfig.Pricing pricing) {
+        if (pricing == null || !ModelPricingStatus.PRICED.name().equals(pricing.getStatus())
+            || pricing.getPriceId() == null) {
+            return ModelCallAttribution.unpriced(provider, deploymentId, model);
+        }
+        return new ModelCallAttribution(provider, deploymentId, model, pricing.getPriceId(),
+            pricing.getCurrency(), pricing.getInputUnitPrice(), pricing.getOutputUnitPrice(),
+            pricing.getCachedUnitPrice(), ModelPricingStatus.PRICED);
     }
 
     /** 用当前配置打底、以 DTO 覆盖，产出一份用于构建新链的临时模型配置（不改动 properties）。 */
@@ -367,6 +464,9 @@ public class RuntimeConfigApplier {
             server.setUrl(s.getUrl());
             server.setTransport(StringUtils.hasText(s.getTransport()) ? s.getTransport() : "sse");
             server.setHeaders(s.getHeaders());
+            server.setAllowedSubjectTypes(new ArrayList<>(
+                com.richard.fyoung.customerwork.tool.mcp.McpSubjectPolicy.parse(s.getAllowedSubjectTypes())
+                    .stream().sorted().map(Enum::name).toList()));
             mapped.add(server);
         }
         return new PreparedMcp(true, List.copyOf(mapped));

@@ -113,13 +113,10 @@ CREATE TABLE IF NOT EXISTS `cw_dialog_stage` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- =============================================================================
--- 人机切换工单表（JdbcHandoffStore 结构化存储，human-handoff.store-mode=jdbc 时启用）
+-- 历史人机切换工单归档表（P1-03 起生产只读，V17 归并到 cw_ticket）
 -- =============================================================================
--- 说明：由 JdbcHandoffStore 自动建表（CREATE TABLE IF NOT EXISTS），
---       本脚本用于 DBA 预审 / 受限权限环境。取代此前 transferToHuman "只打日志 + 生成随机字符串"
---       的空实现——AI 转出生成 PENDING 工单，坐席 claim 接单（CLAIMED），处理完毕 resolve
---       结案（RESOLVED，会话可回收给 AI 续接）。多实例部署下坐席在实例 A 接单、
---       坐席工作台轮询落到实例 B 也应查到最新状态。
+-- 说明：仅为 V17 接管存量数据保留。所有新建、接单、结案、路由和 SLA 均使用 cw_ticket；
+--       新生产代码不得再写本表。
 
 CREATE TABLE IF NOT EXISTS `cw_handoff_ticket` (
     `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
@@ -185,6 +182,7 @@ CREATE TABLE IF NOT EXISTS `cw_user` (
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
     `avatar_url`     VARCHAR(255) COMMENT '头像访问URL（相对路径，可为空）',
     `level_code`     VARCHAR(64) DEFAULT NULL COMMENT '配额等级编码（空=默认档），见 cw_subject_quota_level',
+    `session_epoch`  BIGINT NOT NULL DEFAULT 0 COMMENT '用户会话撤销版本',
     UNIQUE KEY `uk_user_username` (`tenant_id`, `username`),
     INDEX `idx_user_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -202,6 +200,11 @@ CREATE TABLE IF NOT EXISTS `cw_ticket` (
     `assignee`        VARCHAR(64) COMMENT '当前处理坐席',
     `handoff_reason`  VARCHAR(255) COMMENT '转人工原因',
     `resolve_note`    TEXT COMMENT '处理结论/备注',
+    `routing_category` VARCHAR(64) COMMENT '智能路由分类原文',
+    `required_skill`   VARCHAR(64) COMMENT '所需坐席技能',
+    `routing_priority` VARCHAR(16) COMMENT '智能路由优先级原文',
+    `emotion`          VARCHAR(32) COMMENT '用户情绪',
+    `suggested_assignees` TEXT COMMENT '推荐坐席列表 JSON（HITL 展示）',
     `reopen_count`    INT NOT NULL DEFAULT 0 COMMENT '重开次数',
     `created_at_ms`   BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
     `updated_at_ms`   BIGINT NOT NULL COMMENT '更新时间戳（毫秒）',
@@ -276,10 +279,17 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
     `total_tokens`   BIGINT DEFAULT NULL COMMENT '请求级总token合计（缺失为NULL）',
     `cached_tokens`  BIGINT DEFAULT NULL COMMENT '命中缓存的输入token（input_tokens的子集，不计入total）',
     `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时合计（毫秒），与model_ms之差=网络/排队开销',
+    `model_cost_amount` DECIMAL(30,14) DEFAULT NULL COMMENT '本次调用已结算模型金额',
+    `model_cost_currency` VARCHAR(16) DEFAULT NULL COMMENT '单币种结算币种',
+    `model_cost_status` VARCHAR(24) NOT NULL DEFAULT 'NO_MODEL' COMMENT 'COMPLETE/PARTIAL/UNAVAILABLE/MULTI_CURRENCY/NO_MODEL',
+    `model_segment_count` INT NOT NULL DEFAULT 0 COMMENT '模型分段数',
+    `settled_cost_segment_count` INT NOT NULL DEFAULT 0 COMMENT '已结算模型分段数',
+    `unsettled_cost_segment_count` INT NOT NULL DEFAULT 0 COMMENT '未结算模型分段数',
     `trace_id`       VARCHAR(32) DEFAULT NULL COMMENT 'W3C trace-id，关联 OTel/Tempo',
     `runtime_revision` VARCHAR(64) DEFAULT NULL COMMENT '实例实际应用的运行配置发布修订',
     `runtime_content_hash` CHAR(64) DEFAULT NULL COMMENT '运行配置内容摘要，关联发布任务与实例ACK',
     `version_binding_json` JSON DEFAULT NULL COMMENT '模型/提示词/Agent/知识库/工具版本绑定（不含密钥）',
+    `replay_snapshot_json` JSON DEFAULT NULL COMMENT '脱敏模型参数、RAG与工具重放事实',
     `experiment_id` BIGINT DEFAULT NULL COMMENT '在线实验ID',
     `experiment_revision` INT DEFAULT NULL COMMENT '不可变实验修订号',
     `experiment_arm` VARCHAR(16) DEFAULT NULL COMMENT 'CONTROL/TREATMENT',
@@ -296,6 +306,7 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_log` (
     INDEX `idx_call_trace_id` (`trace_id`),
     INDEX `idx_call_runtime_revision` (`runtime_revision`),
     INDEX `idx_call_experiment_arm` (`experiment_id`, `experiment_revision`, `experiment_arm`, `start_time`),
+    INDEX `idx_agent_call_cost_window` (`tenant_id`, `start_time`, `model_cost_status`),
     INDEX `idx_agent_call_log_tenant` (`tenant_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -313,6 +324,18 @@ CREATE TABLE IF NOT EXISTS `cw_agent_call_segment` (
     `output_tokens`  BIGINT DEFAULT NULL COMMENT '输出token（仅MODEL段，缺失为NULL）',
     `cached_tokens`  BIGINT DEFAULT NULL COMMENT '命中缓存的输入token（仅MODEL段）',
     `model_reported_ms` BIGINT DEFAULT NULL COMMENT '模型自报耗时（毫秒，仅MODEL段）',
+    `provider`       VARCHAR(64) DEFAULT NULL COMMENT '实际模型供应商',
+    `deployment_id`  BIGINT DEFAULT NULL COMMENT '实际模型部署ID',
+    `model_name`     VARCHAR(191) DEFAULT NULL COMMENT '实际模型名',
+    `price_id`       BIGINT DEFAULT NULL COMMENT '调用时冻结的价目ID',
+    `currency`       VARCHAR(16) DEFAULT NULL COMMENT '调用时冻结的币种',
+    `input_unit_price` DECIMAL(20,8) DEFAULT NULL COMMENT '调用时输入单价（每百万token）',
+    `output_unit_price` DECIMAL(20,8) DEFAULT NULL COMMENT '调用时输出单价（每百万token）',
+    `cached_unit_price` DECIMAL(20,8) DEFAULT NULL COMMENT '调用时缓存输入单价（每百万token）',
+    `pricing_status` VARCHAR(16) NOT NULL DEFAULT 'UNPRICED' COMMENT 'PRICED/UNPRICED',
+    `cost_amount` DECIMAL(30,14) DEFAULT NULL COMMENT '按冻结价目结算的模型金额',
+    `cost_currency` VARCHAR(16) DEFAULT NULL COMMENT '结算币种',
+    `cost_status` VARCHAR(24) NOT NULL DEFAULT 'NOT_APPLICABLE' COMMENT 'SETTLED/UNPRICED/USAGE_MISSING/USAGE_INVALID/NOT_APPLICABLE',
     `success`        TINYINT(1) NOT NULL DEFAULT 1 COMMENT '分段是否成功',
     `error_msg`      VARCHAR(1024) COMMENT '失败原因',
     `created_at`     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
@@ -580,14 +603,8 @@ INSERT IGNORE INTO `cw_seat_agent` (`tenant_id`, `id`, `name`, `skills`, `max_lo
 ('default', 'SEAT-1004', '综合坐席-小李', 'refund,logistics,complaint,invoice', 6, 5, 1, 'general', 1779235200000, 1779235200000),
 ('default', 'SEAT-1005', '离线坐席-小周', 'refund', 5, 0, 0, 'aftersales', 1779235200000, 1779235200000);
 
--- 人机切换工单智能分配增强列（cw_handoff_ticket 已在上文建表时含 category/required_skill/priority/emotion/suggested_assignees；
--- 旧库存量表可手工执行下列 ALTER 补列，MySQL 无 ADD COLUMN IF NOT EXISTS，重复执行报 Duplicate column 可忽略）：
--- ALTER TABLE `cw_handoff_ticket`
---   ADD COLUMN `category` VARCHAR(64) NULL COMMENT '工单分类（LLM 分类，可空）',
---   ADD COLUMN `required_skill` VARCHAR(64) NULL COMMENT '所需坐席技能标签（LLM 分类，可空）',
---   ADD COLUMN `priority` VARCHAR(16) NULL COMMENT '优先级 LOW/MEDIUM/HIGH/URGENT（LLM 分类，可空）',
---   ADD COLUMN `emotion` VARCHAR(32) NULL COMMENT '用户情绪（LLM 分类，可空）',
---   ADD COLUMN `suggested_assignees` TEXT NULL COMMENT '推荐坐席列表 JSON（HITL 推荐，可空）';
+-- P1-03：智能分配增强字段已归属上文 cw_ticket。存量归并和幂等升级见
+-- customer-work-handoff-authority-alter.sql / Flyway V17。
 
 -- 数据字典（DictStore / cw_dict_type + cw_dict_item）：少量枚举型键值数据的统一落点，免于逐个建表。
 -- 后台管理系统"字典管理"页直连维护这两张表（单一数据真源，照内容风控先例不做双写同步）。
@@ -764,6 +781,27 @@ CREATE TABLE IF NOT EXISTS `cw_eval_dataset_version` (
     KEY `idx_eval_dataset_tenant_time` (`tenant_id`, `eval_type`, `created_at_ms`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='评测数据集不可变版本';
 
+-- 命名评测集版本：内容继续引用不可变快照，本表只承载版本名与一次性审核事实。
+CREATE TABLE IF NOT EXISTS `cw_eval_dataset_release` (
+    `tenant_id`          VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `release_id`         VARCHAR(64) NOT NULL COMMENT '命名版本ID（应用生成UUID）',
+    `eval_type`          VARCHAR(16) NOT NULL COMMENT 'INTENT/QUALITY',
+    `version_name`       VARCHAR(128) NOT NULL COMMENT '租户内、类型内唯一的人类可读版本名',
+    `snapshot_version_id` VARCHAR(64) NOT NULL COMMENT '不可变内容快照 cw_eval_dataset_version.version_id',
+    `content_hash`       VARCHAR(64) NOT NULL COMMENT '快照内容SHA-256，跨库绑定时用于校验漂移',
+    `case_count`         INT NOT NULL COMMENT '版本包含的用例数',
+    `status`             VARCHAR(16) NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT/APPROVED/REJECTED',
+    `review_comment`     VARCHAR(500) DEFAULT NULL COMMENT '审核意见',
+    `created_by`         BIGINT DEFAULT NULL COMMENT '创建人',
+    `reviewed_by`        BIGINT DEFAULT NULL COMMENT '审核人',
+    `created_at_ms`      BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    `reviewed_at_ms`     BIGINT DEFAULT NULL COMMENT '审核时间戳（毫秒）',
+    PRIMARY KEY (`release_id`),
+    UNIQUE KEY `uk_eval_dataset_release_name` (`tenant_id`, `eval_type`, `version_name`),
+    KEY `idx_eval_dataset_release_status` (`tenant_id`, `eval_type`, `status`, `created_at_ms`),
+    KEY `idx_eval_dataset_release_snapshot` (`tenant_id`, `snapshot_version_id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='评测数据集命名版本与审核';
+
 -- 评测运行记录表（MybatisEvalRunStore / cw_eval_run）：每跑一次标准集落一条。
 -- 评测的价值全在纵向对比上——"这版比上版好还是坏"；没有历史，每次运行都退化成孤立的一次性体检。
 -- 只追加不更新：一次运行的结果是既成事实，改写它等于篡改后续所有对比的基线。
@@ -812,7 +850,7 @@ CREATE TABLE IF NOT EXISTS `cw_eval_case` (
     `input`         VARCHAR(1024) NOT NULL COMMENT '用户输入',
     `expected`      VARCHAR(1024) COMMENT 'INTENT=期望意图（空=期望快车道不命中，交LLM）；QUALITY=期望要点',
     `category`      VARCHAR(64) COMMENT '归类标签',
-    `source`        VARCHAR(16) NOT NULL DEFAULT 'MANUAL' COMMENT '来源：SEED 种子/BADCASE 回流/MANUAL 手工',
+    `source`        VARCHAR(16) NOT NULL DEFAULT 'MANUAL' COMMENT '来源：SEED/BADCASE/MANUAL/IMPORT',
     `enabled`       TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否参与评测：0 可屏蔽同号种子用例',
     `origin_ref`    VARCHAR(64) COMMENT '溯源引用：来自 badcase 时记 badcase ID，便于回看原始会话',
     `created_at_ms` BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
@@ -836,6 +874,7 @@ CREATE TABLE IF NOT EXISTS `cw_badcase` (
     `message_id`           VARCHAR(64) COMMENT '被反馈的消息ID（质检来源为空，质检针对一批回复）',
     `user_input`           TEXT COMMENT '用户问了什么（从聊天留痕回查）',
     `agent_reply`          TEXT COMMENT 'AI答了什么（从聊天留痕回查）',
+    `signal_hash`          CHAR(64) COMMENT '归一化用户问题SHA-256，供上线复发观测',
     `detail`               TEXT COMMENT '原始信号明细：点踩存用户留言，质检存得分与扣分项',
     `status`               VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING 待筛/RESOLVED 已处理/IGNORED 已忽略',
     -- 补知识是治本、加评测用例是防复发，两件事不互斥，故分两个字段而非做成互斥状态
@@ -847,6 +886,7 @@ CREATE TABLE IF NOT EXISTS `cw_badcase` (
     `created_at_ms`        BIGINT NOT NULL COMMENT '登记时间戳（毫秒）',
     -- 待筛队列按 (status, 时间倒序) 翻页，联合索引直接命中
     INDEX `idx_badcase_status` (`tenant_id`, `status`, `created_at_ms`),
+    INDEX `idx_badcase_signal` (`tenant_id`, `signal_hash`, `created_at_ms`),
     INDEX `idx_badcase_session` (`session_id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='badcase 待筛队列（回流知识库/评测用例）';
 

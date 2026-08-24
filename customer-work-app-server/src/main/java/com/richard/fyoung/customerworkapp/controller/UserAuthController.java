@@ -125,7 +125,7 @@ public class UserAuthController {
                     authoritativeTenant, null, false, true);
                 body.put("token", jwtService.issue(
                     account.getId(), account.getUsername(), account.getNickname(),
-                    authoritativeTenant, access.accessEpoch()));
+                    authoritativeTenant, access.accessEpoch(), account.getSessionEpoch()));
                 body.put("userId", account.getId());
                 body.put("nickname", account.getNickname());
                 body.put("expiresAtMs", jwtService.expiresAtMs());
@@ -164,6 +164,22 @@ public class UserAuthController {
             });
     }
 
+    @Operation(summary = "撤销全部登录态", description = "需 Bearer 令牌；成功后包含当前令牌在内的全部旧 JWT 立即失效")
+    @PostMapping("/revoke-sessions")
+    public Mono<Map<String, Object>> revokeSessions(
+        @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        UserPrincipal principal = requirePrincipal(authorization);
+        return Mono.fromCallable(() -> {
+                long epoch = TenantContext.callWith(principal.tenantId(),
+                    () -> userAccountService.revokeSessions(principal.userId()));
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("revoked", true);
+                body.put("sessionEpoch", epoch);
+                return body;
+            })
+            .subscribeOn(Schedulers.boundedElastic());
+    }
+
     @Operation(summary = "上传头像", description = "需 Bearer 令牌；multipart 字段名 file，支持 png/jpg/jpeg/gif，≤2MB；返回头像访问 URL")
     @PostMapping(value = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<Map<String, Object>> uploadAvatar(
@@ -195,6 +211,10 @@ public class UserAuthController {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "token tenant is invalid");
         }
         requireTenantAccess(principal.tenantId(), principal.accessEpoch(), true, false);
+        if (!userAccountService.isSessionActive(principal.tenantId(), principal.userId(),
+            principal.sessionEpoch())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "user credential revoked");
+        }
         return principal;
     }
 

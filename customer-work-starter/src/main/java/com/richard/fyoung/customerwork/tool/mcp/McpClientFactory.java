@@ -10,11 +10,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
-import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -48,6 +47,16 @@ public class McpClientFactory {
     private static final int BINARY_TEXT_MIN_LENGTH = 20;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final McpSecurityPolicy securityPolicy;
+
+    /** 默认只允许公网远程 MCP，stdio 保持关闭。 */
+    public McpClientFactory() {
+        this(McpSecurityPolicy.strict());
+    }
+
+    public McpClientFactory(McpSecurityPolicy securityPolicy) {
+        this.securityPolicy = securityPolicy;
+    }
 
     /**
      * 解析一段 MCP 配置 JSON 为 {@link McpServerSpec}。
@@ -60,35 +69,14 @@ public class McpClientFactory {
         String type = mcpType == null ? "" : mcpType.toLowerCase();
         if (McpServerSpec.TYPE_STDIO.equals(type)) {
             List<String> args = objectMapper.convertValue(node.path("args"), new TypeReference<List<String>>() {});
-            return new McpServerSpec(mcpName, McpServerSpec.TYPE_STDIO, null,
-                node.path("command").asText(), args == null ? List.of() : args, null);
+            McpServerSpec spec = McpServerSpec.stdio(mcpName, node.path("command").asText(),
+                args == null ? List.of() : args, workingDirectory(node), parseEnvironment(node));
+            return securityPolicy.validateStdio(spec);
         }
         // http 之外的一切（含空值、未知值）都按 sse 处理，与历史行为一致
         String remoteType = McpServerSpec.TYPE_HTTP.equals(type) ? McpServerSpec.TYPE_HTTP : McpServerSpec.TYPE_SSE;
         return McpServerSpec.remote(mcpName, remoteType,
-            validateRemoteUrl(node.path("url").asText()), parseHeaders(node));
-    }
-
-    /**
-     * 远程 MCP 的 URL 不承载凭据；这是最终建客户端前的统一防线，存量脏数据也不能绕过后台表单校验。
-     */
-    private String validateRemoteUrl(String rawUrl) throws Exception {
-        if (!StringUtils.hasText(rawUrl)) {
-            throw new IllegalArgumentException("remote MCP URL is required");
-        }
-        URI uri = new URI(rawUrl.trim()).normalize();
-        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
-        if (!"http".equals(scheme) && !"https".equals(scheme)) {
-            throw new IllegalArgumentException("remote MCP URL only supports http/https");
-        }
-        if (!StringUtils.hasText(uri.getHost())) {
-            throw new IllegalArgumentException("remote MCP URL host is required");
-        }
-        if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
-            throw new IllegalArgumentException(
-                "remote MCP URL must not contain userInfo, query or fragment; use headers for credentials");
-        }
-        return uri.toString();
+            securityPolicy.validateRemoteUrl(node.path("url").asText()), parseHeaders(node));
     }
 
     /** 按 mcpType/config JSON 构建一个尚未连接、也尚未设置超时的 {@link McpClientBuilder}。 */
@@ -108,15 +96,22 @@ public class McpClientFactory {
         String type = spec.type() == null ? "" : spec.type().toLowerCase();
         switch (type) {
             case McpServerSpec.TYPE_STDIO -> {
-                List<String> args = spec.args() == null ? List.<String>of() : spec.args();
-                builder.stdioTransport(spec.command(), args.toArray(new String[0]));
+                McpServerSpec safeSpec = securityPolicy.validateStdio(spec);
+                McpStdioProcessLauncher.LaunchCommand launch = McpStdioProcessLauncher.commandFor(safeSpec);
+                builder.stdioTransport(launch.command(), launch.arguments(), launch.environment());
             }
             case McpServerSpec.TYPE_HTTP -> {
-                builder.streamableHttpTransport(spec.url());
+                String safeUrl = securityPolicy.validateRemoteUrl(spec.url());
+                builder.streamableHttpTransport(safeUrl)
+                    .httpRequestCustomizer((request, method, uri, body, context) ->
+                        securityPolicy.validateRequestTarget(uri));
                 applyHeaders(builder, spec.headers());
             }
             default -> {
-                builder.sseTransport(spec.url());
+                String safeUrl = securityPolicy.validateRemoteUrl(spec.url());
+                builder.sseTransport(safeUrl)
+                    .httpRequestCustomizer((request, method, uri, body, context) ->
+                        securityPolicy.validateRequestTarget(uri));
                 applyHeaders(builder, spec.headers());
             }
         }
@@ -180,6 +175,34 @@ public class McpClientFactory {
             return null;
         }
         return objectMapper.convertValue(headersNode, new TypeReference<Map<String, String>>() {});
+    }
+
+    private Map<String, String> parseEnvironment(JsonNode node) {
+        JsonNode environmentNode = node.path("env");
+        if (!environmentNode.isObject() || environmentNode.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> environment = objectMapper.convertValue(environmentNode,
+            new TypeReference<LinkedHashMap<String, String>>() {});
+        return environment == null ? Map.of() : environment;
+    }
+
+    private String workingDirectory(JsonNode node) {
+        String resolved = null;
+        for (String key : List.of("workingDirectory", "workingDir", "cwd")) {
+            JsonNode value = node.get(key);
+            if (value == null || value.isNull()) {
+                continue;
+            }
+            if (!value.isTextual()) {
+                throw new IllegalArgumentException("stdio MCP workingDirectory 必须是字符串");
+            }
+            if (resolved != null && !resolved.equals(value.textValue())) {
+                throw new IllegalArgumentException("stdio MCP 不能配置相互冲突的工作目录");
+            }
+            resolved = value.textValue();
+        }
+        return resolved;
     }
 
     /** buildAsync() 只构造客户端对象、不建立连接——listTools()/callTool() 前必须先 initialize() 完成
@@ -278,6 +301,9 @@ public class McpClientFactory {
     private JsonNode unwrapMcpServers(JsonNode node) {
         JsonNode servers = node.path(McpServerSpec.MCP_SERVERS_WRAPPER_KEY);
         if (servers.isObject() && servers.size() > 0) {
+            if (servers.size() != 1) {
+                throw new IllegalArgumentException("mcpServers 只能包含一个服务配置");
+            }
             return servers.elements().next();
         }
         return node;

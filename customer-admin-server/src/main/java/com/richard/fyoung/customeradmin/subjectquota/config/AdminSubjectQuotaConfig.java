@@ -9,6 +9,7 @@ import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.infra.counter.RedissonWindowCounter;
 import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContextThreadLocalAccessor;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectLevelResolver;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaHitStore;
@@ -64,6 +65,8 @@ public class AdminSubjectQuotaConfig {
     @PostConstruct
     public void setUpContextPropagation() {
         ContextRegistry.getInstance().registerThreadLocalAccessor(new QuotaSubjectContextThreadLocalAccessor());
+        ContextRegistry.getInstance().registerThreadLocalAccessor(
+            new AgentInvocationIdentityContextThreadLocalAccessor());
         if (properties.isEnabled()) {
             Hooks.enableAutomaticContextPropagation();
             log.info("admin quota subject context propagation enabled");

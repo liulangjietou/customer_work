@@ -16,9 +16,15 @@ public class AiModelHealthEvent {
     private Long id;
     private String tenantId;
     private Long modelConfigId;
+    private String eventType;
     private String source;
     private String probeKind;
+    private String previousHealthStatus;
     private String healthStatus;
+    private String effectiveHealthStatus;
+    private String overrideMode;
+    private Long operatorId;
+    private String operatorName;
     private Integer testStatus;
     private Long latencyMs;
     private String errorCategory;

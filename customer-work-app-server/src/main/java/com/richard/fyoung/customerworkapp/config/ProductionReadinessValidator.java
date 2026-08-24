@@ -8,17 +8,24 @@ import com.richard.fyoung.customerwork.data.attachment.AttachmentProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.NacosProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
+import com.richard.fyoung.customerwork.safety.security.ApiKeySecretHasher;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 生产配置启动门禁：只检查会导致裸奔、跨实例失效或数据不可恢复的硬约束。
@@ -97,9 +104,10 @@ public class ProductionReadinessValidator implements InitializingBean {
     private void validateAuthentication(List<String> violations) {
         SecurityProperties.Auth auth = properties.getSecurity().getAuth();
         require(violations, "customer-work.security.auth.enabled", auth.isEnabled());
-        boolean hasApiKey = auth.getApiKeys().stream().anyMatch(this::isProductionSecret)
-            || auth.getTenantKeys().entrySet().stream().anyMatch(this::validCredentialEntry);
-        require(violations, "customer-work.security.auth.api-keys|tenant-keys", hasApiKey);
+        boolean legacyPlaintextAbsent = CollectionUtils.isEmpty(auth.getApiKeys())
+            && (auth.getTenantKeys() == null || auth.getTenantKeys().isEmpty());
+        require(violations, "customer-work.security.auth.legacy-plaintext-disabled", legacyPlaintextAbsent);
+        require(violations, "customer-work.security.auth.credentials", validStructuredCredentials(auth));
 
         SecurityProperties.ApprovalAuth approvalAuth = properties.getSecurity().getApprovalAuth();
         require(violations, "customer-work.security.approval-auth.enabled", approvalAuth.isEnabled());
@@ -171,6 +179,13 @@ public class ProductionReadinessValidator implements InitializingBean {
             ? nacos.getConfigAesKey().getBytes(StandardCharsets.UTF_8).length : 0;
         require(violations, "customer-work.nacos.config-aes-key",
             keyBytes == 16 || keyBytes == 24 || keyBytes == 32);
+        require(violations, "customer-work.nacos.runtime-config-signature-required",
+            nacos.isRuntimeConfigSignatureRequired());
+        requireText(violations, "customer-work.nacos.runtime-config-signing-key-id",
+            nacos.getRuntimeConfigSigningKeyId());
+        require(violations, "customer-work.nacos.runtime-config-signing-secret",
+            isProductionSecret(nacos.getRuntimeConfigSigningSecret())
+                && nacos.getRuntimeConfigSigningSecret().getBytes(StandardCharsets.UTF_8).length >= 32);
         require(violations, "customer-work.nacos.server-addr", isRemoteAddress(nacos.getServerAddr()));
         requireText(violations, "customer-work.nacos.namespace", nacos.getNamespace());
         requireText(violations, "customer-work.nacos.group", nacos.getGroup());
@@ -211,6 +226,61 @@ public class ProductionReadinessValidator implements InitializingBean {
 
     private boolean validCredentialEntry(Map.Entry<String, String> entry) {
         return isProductionSecret(entry.getKey()) && hasText(entry.getValue());
+    }
+
+    private boolean validStructuredCredentials(SecurityProperties.Auth auth) {
+        List<SecurityProperties.Credential> credentials = auth.getCredentials();
+        if (CollectionUtils.isEmpty(credentials)) {
+            return false;
+        }
+        Set<String> credentialKeys = new HashSet<>();
+        Set<String> keyIds = new HashSet<>();
+        boolean activeCredentialPresent = false;
+        for (SecurityProperties.Credential credential : credentials) {
+            if (!wellFormedCredential(credential)) {
+                return false;
+            }
+            String keyId = credential.getKeyId().trim();
+            keyIds.add(keyId);
+            String uniqueKey = keyId + "\n" + credential.getKeyHash().toLowerCase(Locale.ROOT);
+            if (!credentialKeys.add(uniqueKey)) {
+                return false;
+            }
+            long minimumEpoch = minimumEpoch(auth.getMinimumEpochs(), keyId);
+            if (minimumEpoch < 0L || credential.getEpoch() < minimumEpoch) {
+                return false;
+            }
+            if (credential.isEnabled()
+                && (credential.getExpiresAt() == null || credential.getExpiresAt().isAfter(Instant.now()))) {
+                activeCredentialPresent = true;
+            }
+        }
+        if (auth.getMinimumEpochs() != null) {
+            for (Map.Entry<String, Long> minimum : auth.getMinimumEpochs().entrySet()) {
+                if (!hasText(minimum.getKey()) || minimum.getValue() == null
+                    || minimum.getValue() <= 0L || !keyIds.contains(minimum.getKey())) {
+                    return false;
+                }
+            }
+        }
+        return activeCredentialPresent;
+    }
+
+    private boolean wellFormedCredential(SecurityProperties.Credential credential) {
+        return credential != null
+            && hasText(credential.getKeyId())
+            && ApiKeySecretHasher.isSha256Hex(credential.getKeyHash())
+            && TenantContext.isValidTenantId(credential.getTenantId())
+            && credential.getEpoch() > 0L
+            && !CollectionUtils.isEmpty(credential.getScopes())
+            && credential.getScopes().stream().anyMatch(this::hasText);
+    }
+
+    private long minimumEpoch(Map<String, Long> minimumEpochs, String keyId) {
+        if (minimumEpochs == null || minimumEpochs.get(keyId) == null) {
+            return 0L;
+        }
+        return minimumEpochs.get(keyId);
     }
 
     private boolean isProductionSecret(String value) {

@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.infra.ws;
 
+import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -48,6 +50,9 @@ public record WsFrame(String type, Object data) {
     public static final String KEY_TS = "ts";
     public static final String KEY_CODE = "code";
     public static final String KEY_MESSAGE = "message";
+    public static final String KEY_FINISH_REASON = "finishReason";
+    public static final String KEY_USAGE = "usage";
+    public static final String KEY_TRACE_ID = "traceId";
 
     /** 对话转发帧（data 结构与前端契约对齐：messageId/sessionId/ticketId/senderType/senderId/content/ts）。 */
     public static WsFrame chat(Object data) {
@@ -61,10 +66,16 @@ public record WsFrame(String type, Object data) {
         return new WsFrame(TYPE_CHAT_CHUNK, data);
     }
 
-    /** AI 流式结束帧：{@code {messageId, content, ts}}（content 为聚合后的全文，前端据此定稿流式气泡）。 */
-    public static WsFrame chatDone(String messageId, String content, long ts) {
+    /** AI 流式结束帧：终止信封 + 会话归属 + 全文，前端据此定稿流式气泡。 */
+    public static WsFrame chatDone(ChatTerminalEnvelope terminal, String sessionId, String ticketId,
+                                   String content, long ts) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put(KEY_MESSAGE_ID, messageId);
+        data.put(KEY_MESSAGE_ID, terminal.messageId());
+        data.put(KEY_FINISH_REASON, terminal.finishReason());
+        data.put(KEY_USAGE, terminal.usage());
+        data.put(KEY_TRACE_ID, terminal.traceId());
+        data.put(KEY_SESSION_ID, sessionId);
+        data.put(KEY_TICKET_ID, ticketId);
         data.put(KEY_CONTENT, content);
         data.put(KEY_TS, ts);
         return new WsFrame(TYPE_CHAT_DONE, data);

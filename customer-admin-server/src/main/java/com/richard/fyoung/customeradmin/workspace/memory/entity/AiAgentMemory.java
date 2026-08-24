@@ -26,6 +26,9 @@ public class AiAgentMemory {
     /** 长期记忆内容（MEMORY.md 全文）。 */
     private String content;
 
+    /** 乐观锁版本；每次成功回写递增。 */
+    private Long version;
+
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

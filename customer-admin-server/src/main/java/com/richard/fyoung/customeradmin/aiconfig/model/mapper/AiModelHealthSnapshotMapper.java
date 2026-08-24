@@ -12,11 +12,14 @@ public interface AiModelHealthSnapshotMapper extends BaseMapper<AiModelHealthSna
 
     int insertIgnore(AiModelHealthSnapshot snapshot);
 
-    int updateIfNewer(@Param("snapshot") AiModelHealthSnapshot snapshot,
-                      @Param("success") boolean success,
-                      @Param("authFailure") boolean authFailure,
-                      @Param("failureThreshold") int failureThreshold);
+    /** 同一部署状态机的行锁读取；调用方必须处于事务中。 */
+    AiModelHealthSnapshot lockSnapshot(@Param("modelConfigId") Long modelConfigId,
+                                       @Param("tenantId") String tenantId);
 
     /** 跨租户内部巡检使用；调用方必须显式进入 CrossTenantOperations。 */
     List<AiModelConfig> findDueModels(@Param("limit") int limit);
+
+    /** 跨租户查找已到期人工覆盖；调用方必须显式进入 CrossTenantOperations。 */
+    List<AiModelConfig> findExpiredOverrideModels(@Param("now") java.time.LocalDateTime now,
+                                                  @Param("limit") int limit);
 }

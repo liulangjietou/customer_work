@@ -20,9 +20,12 @@
         SELECT id, request_id, user_id, username, agent_code, agent_name, session_id, session_type,
                question, answer, start_time, end_time, duration_ms, model_ms, tool_ms, mcp_ms,
                skill_ms, segment_count, input_tokens, output_tokens, total_tokens,
-               cached_tokens, model_reported_ms, trace_id, runtime_revision,
+               cached_tokens, model_reported_ms, model_cost_amount, model_cost_currency,
+               model_cost_status, model_segment_count, settled_cost_segment_count,
+               unsettled_cost_segment_count, trace_id, runtime_revision,
                runtime_content_hash, version_binding_json, experiment_id, experiment_revision,
-               experiment_arm, experiment_deployment_id, experiment_bucket, success, error_msg
+               experiment_arm, experiment_deployment_id, experiment_bucket, replay_snapshot_json,
+               success, error_msg
         FROM cw_agent_call_log
         <include refid="whereClause"/>
         ORDER BY id DESC

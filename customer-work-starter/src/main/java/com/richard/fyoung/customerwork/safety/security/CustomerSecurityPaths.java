@@ -36,6 +36,7 @@ public final class CustomerSecurityPaths {
     public static boolean requiresUserJwt(String path) {
         return path.equals(AUTH_PREFIX + "me")
             || path.equals(AUTH_PREFIX + "avatar")
+            || path.equals(AUTH_PREFIX + "revoke-sessions")
             || path.startsWith(USER_PREFIX)
             || path.equals("/api/customer/attachment")
             || path.equals(FEEDBACK_PREFIX)

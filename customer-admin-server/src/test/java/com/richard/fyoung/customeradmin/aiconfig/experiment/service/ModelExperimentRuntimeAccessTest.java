@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.aiconfig.experiment.entity.AiModelExperi
 import com.richard.fyoung.customeradmin.aiconfig.experiment.mapper.AiModelExperimentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelHealthRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -38,6 +39,7 @@ class ModelExperimentRuntimeAccessTest {
     private AiModelExperimentMapper experimentMapper;
     private ModelConfigAccess modelConfigAccess;
     private SecretRefService secretRefService;
+    private ModelHealthRuntimeAccess healthRuntimeAccess;
     private ModelExperimentRuntimeAccess access;
 
     /** 纯 Mockito 单测不启动 Mapper，解析 LambdaQueryWrapper 前需显式初始化实体列元数据。 */
@@ -52,10 +54,12 @@ class ModelExperimentRuntimeAccessTest {
         experimentMapper = mock(AiModelExperimentMapper.class);
         modelConfigAccess = mock(ModelConfigAccess.class);
         secretRefService = mock(SecretRefService.class);
+        healthRuntimeAccess = mock(ModelHealthRuntimeAccess.class);
         AdminTenantProperties tenantProperties = new AdminTenantProperties();
         tenantProperties.setEnabled(true);
         access = new ModelExperimentRuntimeAccess(
-            experimentMapper, modelConfigAccess, secretRefService, tenantProperties);
+            experimentMapper, modelConfigAccess, secretRefService, tenantProperties,
+            healthRuntimeAccess);
     }
 
     @AfterEach
@@ -67,14 +71,18 @@ class ModelExperimentRuntimeAccessTest {
     void runningForAgent_shouldUseExplicitTenantRunningScopeAndCurrentSecretRefs() {
         AiModelExperiment experiment = runningExperiment();
         when(experimentMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(experiment);
-        when(modelConfigAccess.findVisibleById(11L)).thenReturn(deployment(
-            11L, "control-model", 3, 101L, "LEGACY_CONTROL"));
-        when(modelConfigAccess.findVisibleById(12L)).thenReturn(deployment(
-            12L, "treatment-model", 5, 102L, "LEGACY_TREATMENT"));
+        AiModelConfig control = deployment(11L, "control-model", 3, 101L, "LEGACY_CONTROL");
+        AiModelConfig treatment = deployment(12L, "treatment-model", 5, 102L, "LEGACY_TREATMENT");
+        when(modelConfigAccess.findVisibleById(11L)).thenReturn(control);
+        when(modelConfigAccess.findVisibleById(12L)).thenReturn(treatment);
         when(secretRefService.resolveCipherText(101L, "tenant-a", "LEGACY_CONTROL"))
             .thenReturn("CURRENT_CONTROL_CIPHER");
         when(secretRefService.resolveCipherText(102L, "tenant-a", "LEGACY_TREATMENT"))
             .thenReturn("CURRENT_TREATMENT_CIPHER");
+        CustomerWorkRuntimeConfig.HealthOverlay unhealthy = new CustomerWorkRuntimeConfig.HealthOverlay();
+        unhealthy.setEffectiveHealthStatus("UNHEALTHY");
+        unhealthy.setRoutingAvailable(false);
+        when(healthRuntimeAccess.overlay(treatment)).thenReturn(unhealthy);
 
         TenantContext.set("tenant-a");
         CustomerWorkRuntimeConfig.OnlineExperiment runtime = access.runningForAgent(7L);
@@ -85,6 +93,8 @@ class ModelExperimentRuntimeAccessTest {
         assertEquals("CURRENT_TREATMENT_CIPHER", runtime.getTreatment().getApiKeyCipher());
         assertEquals(3, runtime.getControl().getEndpointRevision());
         assertEquals(5, runtime.getTreatment().getEndpointRevision());
+        assertEquals("UNHEALTHY", runtime.getTreatment().getHealth().getEffectiveHealthStatus());
+        assertTrue(!runtime.getTreatment().getHealth().isRoutingAvailable());
 
         ArgumentCaptor<LambdaQueryWrapper<AiModelExperiment>> query =
             ArgumentCaptor.forClass(LambdaQueryWrapper.class);

@@ -126,8 +126,8 @@ class ModelRoutingPolicyServiceTest {
 
         service.activate(1L, 11L);
 
-        verify(agentInstanceCache).evict("support-a");
-        verify(agentInstanceCache).evict("support-b");
+        verify(agentInstanceCache).invalidate("support-a");
+        verify(agentInstanceCache).invalidate("support-b");
         verify(runtimeConfigPublisher).publishForAgentId(101L);
         verify(runtimeConfigPublisher).publishForAgentId(102L);
     }

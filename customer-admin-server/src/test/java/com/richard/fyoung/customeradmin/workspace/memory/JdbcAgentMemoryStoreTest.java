@@ -8,7 +8,6 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -17,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -56,6 +54,7 @@ class JdbcAgentMemoryStoreTest {
         AiAgentMemory row = new AiAgentMemory();
         row.setAgentCode(AGENT_CODE);
         row.setContent("记忆内容");
+        row.setVersion(7L);
         row.setUpdateTime(LocalDateTime.of(2026, 7, 22, 10, 30));
         when(mapper.selectOne(any())).thenReturn(row);
 
@@ -64,35 +63,25 @@ class JdbcAgentMemoryStoreTest {
         assertTrue(snapshot.isPresent());
         assertEquals("记忆内容", snapshot.get().content());
         assertEquals(LocalDateTime.of(2026, 7, 22, 10, 30), snapshot.get().updateTime());
+        assertEquals(7L, snapshot.get().version());
     }
 
     @Test
-    void save_shouldInsert_whenRowAbsent() {
-        when(mapper.selectOne(any())).thenReturn(null);
+    void compareAndSet_shouldInsert_whenExpectedVersionIsZero() {
+        when(mapper.insertIfAbsent(AGENT_CODE, "first")).thenReturn(1);
 
-        store.save(AGENT_CODE, "first");
+        assertTrue(store.compareAndSet(AGENT_CODE, "first", 0L));
 
-        ArgumentCaptor<AiAgentMemory> captor = ArgumentCaptor.forClass(AiAgentMemory.class);
-        verify(mapper).insert(captor.capture());
-        assertEquals(AGENT_CODE, captor.getValue().getAgentCode());
-        assertEquals("first", captor.getValue().getContent());
-        verify(mapper, never()).updateById(any(AiAgentMemory.class));
+        verify(mapper).insertIfAbsent(AGENT_CODE, "first");
     }
 
     @Test
-    void save_shouldUpdate_whenRowPresent() {
-        AiAgentMemory row = new AiAgentMemory();
-        row.setId(9L);
-        row.setAgentCode(AGENT_CODE);
-        row.setContent("old");
-        when(mapper.selectOne(any())).thenReturn(row);
+    void compareAndSet_shouldUpdateOnlyExpectedVersion() {
+        when(mapper.updateIfVersion(AGENT_CODE, "new", 9L)).thenReturn(1);
 
-        store.save(AGENT_CODE, "new");
+        assertTrue(store.compareAndSet(AGENT_CODE, "new", 9L));
 
-        ArgumentCaptor<AiAgentMemory> captor = ArgumentCaptor.forClass(AiAgentMemory.class);
-        verify(mapper).updateById(captor.capture());
-        assertEquals("new", captor.getValue().getContent());
-        verify(mapper, never()).insert(any(AiAgentMemory.class));
+        verify(mapper).updateIfVersion(AGENT_CODE, "new", 9L);
     }
 
     @Test

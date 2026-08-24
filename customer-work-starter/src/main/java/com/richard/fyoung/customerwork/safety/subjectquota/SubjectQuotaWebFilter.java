@@ -1,11 +1,16 @@
 package com.richard.fyoung.customerwork.safety.subjectquota;
 
 import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
+import com.richard.fyoung.customerwork.data.user.UserAccountService;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SubjectQuotaProperties;
 import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserJwtService;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -56,31 +61,42 @@ public class SubjectQuotaWebFilter implements WebFilter {
 
     /** 可为 null：宿主没装配用户登录态时，登录用户一律退化为按 IP 判定。 */
     private final UserJwtService jwtService;
+    private final UserAccountService userAccountService;
 
     public SubjectQuotaWebFilter(CustomerWorkProperties properties,
                                  SubjectQuotaGuard guard,
                                  UserJwtService jwtService) {
+        this(properties, guard, jwtService, null);
+    }
+
+    public SubjectQuotaWebFilter(CustomerWorkProperties properties,
+                                 SubjectQuotaGuard guard,
+                                 UserJwtService jwtService,
+                                 UserAccountService userAccountService) {
         this.properties = properties;
         this.guard = guard;
         this.jwtService = jwtService;
+        this.userAccountService = userAccountService;
     }
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        if (!guard.isEnabled()) {
-            return chain.filter(exchange);
-        }
         String path = exchange.getRequest().getPath().value();
         if (isExempt(path) || !matches(path)) {
             return chain.filter(exchange);
         }
         QuotaSubject subject = resolveSubject(exchange);
+        AgentInvocationIdentity identity = identityOf(subject);
+        if (!guard.isEnabled()) {
+            // 身份建立独立于配额开关；关闭限流不能让 MCP 主体授权失去依据。
+            return chainWithSubject(exchange, chain, subject, identity);
+        }
         SubjectQuotaDecision decision = guard.check(subject, path);
         if (decision.shouldBlock()) {
             return tooManyRequests(exchange, decision);
         }
         guard.recordRequest(subject);
-        return chainWithSubject(exchange, chain, subject);
+        return chainWithSubject(exchange, chain, subject, identity);
     }
 
     /**
@@ -96,7 +112,7 @@ public class SubjectQuotaWebFilter implements WebFilter {
         }
         String apiKey = exchange.getRequest().getHeaders()
             .getFirst(properties.getSecurity().getAuth().getHeaderName());
-        if (apiKey != null && !apiKey.isBlank()) {
+        if (properties.getSecurity().getAuth().isEnabled() && apiKey != null && !apiKey.isBlank()) {
             return QuotaSubject.apiKey(apiKey);
         }
         return QuotaSubject.ip(remoteAddress(exchange));
@@ -116,7 +132,14 @@ public class SubjectQuotaWebFilter implements WebFilter {
             return null;
         }
         // 验签失败不报错：这里只是想认出"他是谁"，令牌无效自有鉴权过滤器去拒，本类只管退回按 IP 限
-        return jwtService.verify(header.substring(HttpAuthConstants.BEARER_PREFIX.length())).orElse(null);
+        UserPrincipal principal = jwtService.verify(
+            header.substring(HttpAuthConstants.BEARER_PREFIX.length())).orElse(null);
+        if (principal != null && userAccountService != null
+            && !userAccountService.isSessionActive(principal.tenantId(), principal.userId(),
+                principal.sessionEpoch())) {
+            return null;
+        }
+        return principal;
     }
 
     private static String remoteAddress(ServerWebExchange exchange) {
@@ -132,11 +155,44 @@ public class SubjectQuotaWebFilter implements WebFilter {
      * 后者在切到 boundedElastic（阻塞 IO、模型调用都在那里）时由自动传播还原。
      * 只写一个，token 记账就会在某一类链路上拿不到主体。</p>
      */
-    private Mono<Void> chainWithSubject(ServerWebExchange exchange, WebFilterChain chain, QuotaSubject subject) {
-        QuotaSubjectContext.set(subject);
-        return chain.filter(exchange)
-            .contextWrite(ctx -> ctx.put(QuotaSubjectContextThreadLocalAccessor.KEY, subject))
-            .doFinally(signal -> QuotaSubjectContext.clear());
+    private Mono<Void> chainWithSubject(ServerWebExchange exchange, WebFilterChain chain, QuotaSubject subject,
+                                        AgentInvocationIdentity identity) {
+        return Mono.using(
+                () -> new SubjectContextScope(subject, identity),
+                ignored -> chain.filter(exchange),
+                SubjectContextScope::close)
+            .contextWrite(ctx -> ctx.put(QuotaSubjectContextThreadLocalAccessor.KEY, subject)
+                .put(AgentInvocationIdentityContextThreadLocalAccessor.KEY, identity));
+    }
+
+    /**
+     * ThreadLocal 必须覆盖 Publisher 的订阅期，而不只是 {@code chain.filter} 的组装期。
+     * 否则下游延迟执行时上下文已经恢复，独立运行或未开启自动传播的链路会读到空主体。
+     */
+    private static final class SubjectContextScope implements AutoCloseable {
+
+        private final QuotaSubject previousSubject;
+        private final AgentInvocationIdentity previousIdentity;
+
+        private SubjectContextScope(QuotaSubject subject, AgentInvocationIdentity identity) {
+            this.previousSubject = QuotaSubjectContext.get();
+            this.previousIdentity = AgentInvocationIdentityContext.get();
+            QuotaSubjectContext.set(subject);
+            AgentInvocationIdentityContext.set(identity);
+        }
+
+        @Override
+        public void close() {
+            AgentInvocationIdentityContext.set(previousIdentity);
+            QuotaSubjectContext.set(previousSubject);
+        }
+    }
+
+    private AgentInvocationIdentity identityOf(QuotaSubject subject) {
+        String tenantId = TenantContext.isPresent() ? TenantContext.get() : TenantContext.DEFAULT;
+        return new AgentInvocationIdentity(tenantId, subject.type(), subject.id(),
+            subject.type() != QuotaSubjectType.IP)
+            .withChannel(AgentInvocationIdentity.CHANNEL_USER_HTTP);
     }
 
     private boolean matches(String path) {

@@ -31,4 +31,7 @@ public interface UserAccountStore {
      * 照抄 {@link #updateAvatar} 的写法会让"取消特批额度"这个操作静默失效。</p>
      */
     void updateLevel(String id, String levelCode);
+
+    /** 原子递增用户会话版本并返回新值，用于立即撤销旧 JWT。 */
+    long incrementSessionEpoch(String id);
 }

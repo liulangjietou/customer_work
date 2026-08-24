@@ -27,6 +27,7 @@ import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelRoutingPolicyRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkConfigPublisher;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigService;
+import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.mapper.AiSkillMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.entity.AiAgentSystemTool;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystemToolMapper;
@@ -195,7 +196,7 @@ public class AgentService {
         menuVersionHolder.bump();
         // agentCode 理论上不应改变，但仍按新旧两个 code 双清，避免缓存键错位残留旧实例
         agentInstanceCache.evict(oldAgentCode);
-        agentInstanceCache.evict(request.agentCode());
+        agentInstanceCache.invalidate(request.agentCode());
         // 命中渠道绑定则热下发运行时配置到 8080（默认关闭，未启用即跳过）
         runtimeConfigPublisher.publishForAgentId(id);
     }
@@ -222,6 +223,8 @@ public class AgentService {
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         AiAgent agent = requireAgent(id);
+        // 必须在 Agent 行消失前固化 targetCode；撤销任务与删除同事务提交，回滚时两者一起消失。
+        runtimeConfigPublisher.revokeForAgentId(id, agent.getAgentCode());
         agentMapper.deleteById(id);
         agentMcpMapper.delete(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, id));
         agentSkillMapper.delete(new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, id));
@@ -243,9 +246,12 @@ public class AgentService {
         update.setStatus(status);
         agentMapper.updateById(update);
         menuVersionHolder.bump();
-        agentInstanceCache.evict(agent.getAgentCode());
-        // 启停会影响运行时配置有效性，命中绑定则重新下发（启用时下发最新配置；停用后由绑定停用侧处理）
-        runtimeConfigPublisher.publishForAgentId(id);
+        agentInstanceCache.invalidate(agent.getAgentCode());
+        if (status == StatusFlags.ENABLED) {
+            runtimeConfigPublisher.publishForAgentId(id);
+        } else {
+            runtimeConfigPublisher.revokeForAgentId(id, agent.getAgentCode());
+        }
     }
 
     /**
@@ -269,10 +275,7 @@ public class AgentService {
             && mcpMapper.selectBatchIds(request.mcpIds()).size() != request.mcpIds().size()) {
             throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 mcpIds");
         }
-        if (!CollectionUtils.isEmpty(request.skillIds())
-            && skillMapper.selectBatchIds(request.skillIds()).size() != request.skillIds().size()) {
-            throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 skillIds");
-        }
+        validateSkillIds(request.skillIds());
         if (!CollectionUtils.isEmpty(request.systemToolIds())
             && systemToolMapper.selectBatchIds(request.systemToolIds()).size() != request.systemToolIds().size()) {
             throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 systemToolIds");
@@ -305,6 +308,31 @@ public class AgentService {
                 || !Integer.valueOf(ConnectivityTestStatus.SUCCESS).equals(knowledgeBase.getTestStatus())) {
                 throw new BizException(ResultCode.PARAM_INVALID,
                     "仅可绑定已启用且连通性测试成功的知识库: " + knowledgeBase.getKbName());
+            }
+            if (knowledgeBase.getCurrentVersionId() == null) {
+                throw new BizException(ResultCode.PARAM_INVALID,
+                    "知识库尚无可绑定的不可变版本: " + knowledgeBase.getKbName());
+            }
+        }
+    }
+
+    /** Skill 绑定门禁：必须真实存在且处于启用状态，禁用 Skill 不得产生新的 Agent 关联。 */
+    private void validateSkillIds(List<Long> skillIds) {
+        if (CollectionUtils.isEmpty(skillIds)) {
+            return;
+        }
+        List<AiSkill> skills = skillMapper.selectBatchIds(skillIds);
+        if (skills.size() != skillIds.size()) {
+            throw new BizException(ResultCode.PARAM_INVALID, "存在无效的 skillIds");
+        }
+        for (AiSkill skill : skills) {
+            if (!Integer.valueOf(StatusFlags.ENABLED).equals(skill.getStatus())) {
+                throw new BizException(ResultCode.PARAM_INVALID,
+                    "仅可绑定已启用的 Skill: " + skill.getSkillCode());
+            }
+            if (skill.getCurrentVersionId() == null) {
+                throw new BizException(ResultCode.PARAM_INVALID,
+                    "Skill 尚无可绑定的不可变版本: " + skill.getSkillCode());
             }
         }
     }
@@ -401,6 +429,8 @@ public class AgentService {
                 AiAgentSkill relation = new AiAgentSkill();
                 relation.setAgentId(agentId);
                 relation.setSkillId(skillId);
+                AiSkill skill = skillMapper.selectById(skillId);
+                relation.setSkillVersionId(skill.getCurrentVersionId());
                 agentSkillMapper.insert(relation);
             }
         }
@@ -429,6 +459,8 @@ public class AgentService {
                 AiAgentKnowledgeBase relation = new AiAgentKnowledgeBase();
                 relation.setAgentId(agentId);
                 relation.setKnowledgeBaseId(knowledgeBaseId);
+                AiKnowledgeBase knowledgeBase = knowledgeBaseMapper.selectById(knowledgeBaseId);
+                relation.setKnowledgeBaseVersionId(knowledgeBase.getCurrentVersionId());
                 agentKnowledgeBaseMapper.insert(relation);
             }
         }
@@ -464,8 +496,10 @@ public class AgentService {
         fillBackupModels(vo, agent.getId());
         vo.setMcpIds(agentMcpMapper.selectList(new LambdaQueryWrapper<AiAgentMcp>().eq(AiAgentMcp::getAgentId, agent.getId()))
             .stream().map(AiAgentMcp::getMcpId).collect(Collectors.toList()));
-        vo.setSkillIds(agentSkillMapper.selectList(new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, agent.getId()))
-            .stream().map(AiAgentSkill::getSkillId).collect(Collectors.toList()));
+        List<AiAgentSkill> skillRelations = agentSkillMapper.selectList(
+            new LambdaQueryWrapper<AiAgentSkill>().eq(AiAgentSkill::getAgentId, agent.getId()));
+        vo.setSkillIds(skillRelations.stream().map(AiAgentSkill::getSkillId).collect(Collectors.toList()));
+        vo.setSkillVersionIds(skillRelations.stream().map(AiAgentSkill::getSkillVersionId).collect(Collectors.toList()));
         vo.setSystemToolIds(agentSystemToolMapper.selectList(new LambdaQueryWrapper<AiAgentSystemTool>().eq(AiAgentSystemTool::getAgentId, agent.getId()))
             .stream().map(AiAgentSystemTool::getSystemToolId).collect(Collectors.toList()));
         vo.setSystemPrompt(agent.getSystemPrompt());
@@ -488,10 +522,13 @@ public class AgentService {
 
     /** 回填绑定的知识库 id 与名称：名称走一次批量查询（避免 N+1 单查），与 {@link #fillBackupModels} 同款手法。 */
     private void fillKnowledgeBases(AgentVO vo, Long agentId) {
-        List<Long> knowledgeBaseIds = agentKnowledgeBaseMapper.selectList(
-                new LambdaQueryWrapper<AiAgentKnowledgeBase>().eq(AiAgentKnowledgeBase::getAgentId, agentId))
-            .stream().map(AiAgentKnowledgeBase::getKnowledgeBaseId).collect(Collectors.toList());
+        List<AiAgentKnowledgeBase> relations = agentKnowledgeBaseMapper.selectList(
+            new LambdaQueryWrapper<AiAgentKnowledgeBase>().eq(AiAgentKnowledgeBase::getAgentId, agentId));
+        List<Long> knowledgeBaseIds = relations.stream()
+            .map(AiAgentKnowledgeBase::getKnowledgeBaseId).collect(Collectors.toList());
         vo.setKnowledgeBaseIds(knowledgeBaseIds);
+        vo.setKnowledgeBaseVersionIds(relations.stream()
+            .map(AiAgentKnowledgeBase::getKnowledgeBaseVersionId).collect(Collectors.toList()));
         if (CollectionUtils.isEmpty(knowledgeBaseIds)) {
             vo.setKnowledgeBaseNames(List.of());
             return;

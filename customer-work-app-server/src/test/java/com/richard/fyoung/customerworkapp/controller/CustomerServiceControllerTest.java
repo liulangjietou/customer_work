@@ -2,8 +2,16 @@ package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.dto.ChatRequest;
+import com.richard.fyoung.customerwork.core.dto.ChatResponse;
+import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
+import com.richard.fyoung.customerwork.core.dto.ChatUsageSnapshot;
 import com.richard.fyoung.customerwork.core.dto.IntentResult;
 import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.service.ChatTurnCompletion;
+import com.richard.fyoung.customerwork.core.service.ChatTurnEvent;
+import com.richard.fyoung.customerwork.core.service.ChatTurnService;
+import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
+import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
@@ -35,6 +43,9 @@ class CustomerServiceControllerTest {
     private CustomerServiceService service;
 
     @MockBean
+    private ChatTurnService chatTurnService;
+
+    @MockBean
     private com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator multiAgentOrchestrator;
 
     @MockBean
@@ -42,7 +53,9 @@ class CustomerServiceControllerTest {
 
     @Test
     void chat_shouldReturnReply() {
-        when(service.chat(anyString(), eq("你好"))).thenReturn(Mono.just("您好，有什么可以帮您？"));
+        when(chatTurnService.chat(anyString(), eq("你好"))).thenReturn(Mono.just(
+            new ChatResponse("u1", "您好，有什么可以帮您？", "MSG-9", "MODEL_STOP",
+                new ChatUsageSnapshot(10, 4, 0, 14, 0.2), "trace-9")));
 
         webTestClient.post().uri("/api/customer/chat")
             .bodyValue(new ChatRequest("u1", "你好"))
@@ -50,7 +63,11 @@ class CustomerServiceControllerTest {
             .expectStatus().isOk()
             .expectBody()
             .jsonPath("$.sessionId").isEqualTo("u1")
-            .jsonPath("$.reply").isEqualTo("您好，有什么可以帮您？");
+            .jsonPath("$.reply").isEqualTo("您好，有什么可以帮您？")
+            .jsonPath("$.messageId").isEqualTo("MSG-9")
+            .jsonPath("$.finishReason").isEqualTo("MODEL_STOP")
+            .jsonPath("$.usage.totalTokens").isEqualTo(14)
+            .jsonPath("$.traceId").isEqualTo("trace-9");
     }
 
     @Test
@@ -65,7 +82,11 @@ class CustomerServiceControllerTest {
 
     @Test
     void chat_shouldUseAnonymousSession_whenSessionIdMissing() {
-        when(service.chat(anyString(), anyString())).thenReturn(Mono.just("hi"));
+        when(chatTurnService.chat(anyString(), anyString())).thenAnswer(invocation -> {
+            String sessionId = invocation.getArgument(0);
+            return Mono.just(new ChatResponse(sessionId, "hi", "MSG-1", "CACHE_HIT",
+                ChatUsageSnapshot.empty(), "trace-1"));
+        });
 
         webTestClient.post().uri("/api/customer/chat")
             .bodyValue(Map.of("message", "你好"))
@@ -79,16 +100,21 @@ class CustomerServiceControllerTest {
 
     @Test
     void chatStream_shouldStreamChunks() {
-        when(service.chatStream(anyString(), anyString()))
-            .thenReturn(Flux.just("您", "好"));
+        ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-9", "MODEL_STOP",
+            new ChatUsageSnapshot(10, 4, 0, 14, 0.2), "trace-9");
+        ChatMessage message = ChatMessage.of("MSG-9", "u1", null,
+            TicketActorType.BOT, null, "您好");
+        when(chatTurnService.stream(anyString(), anyString(), org.mockito.ArgumentMatchers.isNull()))
+            .thenReturn(Flux.just(new ChatTurnEvent.Delta("您"), new ChatTurnEvent.Delta("好"),
+                new ChatTurnEvent.Completed(new ChatTurnCompletion(message, terminal))));
 
         webTestClient.post().uri("/api/customer/chat/stream")
             .bodyValue(new ChatRequest("u1", "你好"))
             .exchange()
             .expectStatus().isOk()
-            .returnResult(String.class)
-            .getResponseBody()
-            .blockLast();
+            .expectBody(String.class)
+            .value(body -> org.assertj.core.api.Assertions.assertThat(body)
+                .contains("event:message", "event:done", "MSG-9", "MODEL_STOP", "trace-9"));
     }
 
     @Test

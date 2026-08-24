@@ -44,6 +44,27 @@ public class MybatisEvalCaseStore implements EvalCaseStore {
     }
 
     @Override
+    public void saveAll(List<PersistedEvalCase> evalCases) {
+        if (evalCases == null || evalCases.isEmpty()) {
+            return;
+        }
+        List<EvalCaseDO> rows = new ArrayList<>(evalCases.size());
+        for (PersistedEvalCase evalCase : evalCases) {
+            if (evalCase == null || evalCase.caseId() == null) {
+                throw new IllegalArgumentException("eval case and caseId must not be null");
+            }
+            rows.add(toDO(evalCase));
+        }
+        try {
+            mapper.upsertBatch(rows);
+        } catch (Exception e) {
+            log.error("[MybatisEvalCaseStore] batch save failed, errorCode={}, caseCount={}",
+                "EVAL-CASE-BATCH-SAVE-FAIL", rows.size(), e);
+            throw new IllegalStateException("failed to batch save eval cases", e);
+        }
+    }
+
+    @Override
     public List<PersistedEvalCase> findByType(EvalType type) {
         try {
             List<EvalCaseDO> rows = mapper.selectByType(type.name());

@@ -7,5 +7,10 @@ import java.time.LocalDateTime;
  * （JDBC 模式取 update_time 列，磁盘模式取文件 mtime）。
  * @author owlzhangfq@gmail.com
  */
-public record AgentMemorySnapshot(String content, LocalDateTime updateTime) {
+public record AgentMemorySnapshot(String content, LocalDateTime updateTime, long version) {
+
+    /** 兼容旧调用点；存量无版本快照按首版处理。 */
+    public AgentMemorySnapshot(String content, LocalDateTime updateTime) {
+        this(content, updateTime, 1L);
+    }
 }

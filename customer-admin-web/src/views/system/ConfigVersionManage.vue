@@ -9,6 +9,15 @@ import {
   type ConfigVersionVO,
 } from '@/api/config-version'
 import { listTenantOptions, type TenantVO } from '@/api/tenant'
+import {
+  approveGovernedChange,
+  listGovernanceAudit,
+  listGovernedChanges,
+  rejectGovernedChange,
+  type GovernanceAuditEventVO,
+  type GovernedChangeVO,
+} from '@/api/governance'
+import { useAuthStore } from '@/store/auth'
 
 // 配置版本：看历史、比两版差异、安全回滚、按租户安全灰度。
 // 历史只提供提示词/maxIters 补丁；目标模型、凭据、MCP、路由和实验始终取当前权威配置。
@@ -20,10 +29,13 @@ const STATUS_LABELS: Record<string, { text: string; type: 'success' | 'info' | '
 }
 
 const loading = ref(false)
+const auth = useAuthStore()
 const list = ref<ConfigVersionVO[]>([])
 const total = ref(0)
 const query = reactive({ pageNum: 1, pageSize: 10, configType: '', targetCode: '' })
 const tenants = ref<TenantVO[]>([])
+const approvals = ref<GovernedChangeVO[]>([])
+const approvalLoading = ref(false)
 
 async function loadList() {
   loading.value = true
@@ -33,6 +45,16 @@ async function loadList() {
     total.value = data.total
   } finally {
     loading.value = false
+  }
+}
+
+async function loadApprovals() {
+  if (!auth.hasPermission('governance:view')) return
+  approvalLoading.value = true
+  try {
+    approvals.value = await listGovernedChanges()
+  } finally {
+    approvalLoading.value = false
   }
 }
 
@@ -92,11 +114,9 @@ async function handleRollback(row: ConfigVersionVO) {
     `回滚到 v${row.version}`,
     { inputPlaceholder: '如：v5 的提示词导致答非所问', confirmButtonText: '创建安全回滚任务', type: 'warning' },
   )
-  const operation = await rollbackVersion(row.id, value)
-  ElMessage.success(
-    `安全回滚任务已入队（${operation.tasks.length} 个，${operation.status}），实例 ACK APPLIED 后生效`,
-  )
-  await loadList()
+  const approval = await rollbackVersion(row.id, value)
+  ElMessage.success(`审批请求 ${approval.id} 已提交，需另一名管理员复核后才会发布`)
+  await loadApprovals()
 }
 
 // ---------- 灰度发布 ----------
@@ -118,12 +138,53 @@ async function submitGray() {
     ElMessage.warning('请至少选择一个租户')
     return
   }
-  const operation = await grayRelease(grayTarget.value.id, grayForm.tenantCodes, grayForm.remark)
-  ElMessage.success(
-    `安全灰度任务已整批入队（${operation.tasks.length} 个，${operation.status}），实例 ACK APPLIED 后生效`,
-  )
+  const approval = await grayRelease(grayTarget.value.id, grayForm.tenantCodes, grayForm.remark)
+  ElMessage.success(`审批请求 ${approval.id} 已提交，需另一名管理员复核后才会执行整批预检`)
   grayVisible.value = false
-  await loadList()
+  await loadApprovals()
+}
+
+const CHANGE_LABELS: Record<string, string> = {
+  CONFIG_ROLLBACK: '安全回滚',
+  CONFIG_GRAY_RELEASE: '安全灰度',
+}
+
+const APPROVAL_STATUS_TYPES: Record<string, 'info' | 'success' | 'danger' | 'warning'> = {
+  PENDING: 'warning', EXECUTING: 'warning', EXECUTED: 'success',
+  REJECTED: 'info', FAILED: 'danger', EXPIRED: 'info',
+}
+
+async function decide(row: GovernedChangeVO, decision: 'approve' | 'reject') {
+  if (row.makerName === auth.username) {
+    ElMessage.error('发起人与复核人必须是不同用户')
+    return
+  }
+  const { value } = await ElMessageBox.prompt(
+    decision === 'approve' ? '确认复核通过并执行该变更？' : '确认拒绝该变更？',
+    decision === 'approve' ? '复核通过' : '拒绝变更',
+    { inputPlaceholder: '请填写复核依据', inputValidator: (text) => !!text?.trim() || '复核理由不能为空' },
+  )
+  if (decision === 'approve') {
+    await approveGovernedChange(row.id, value)
+    ElMessage.success('复核通过，变更已进入执行终态；运行时发布仍以 ACK APPLIED 为准')
+    await Promise.all([loadApprovals(), loadList()])
+  } else {
+    await rejectGovernedChange(row.id, value)
+    ElMessage.success('变更已拒绝')
+    await loadApprovals()
+  }
+}
+
+const auditVisible = ref(false)
+const auditEvents = ref<GovernanceAuditEventVO[]>([])
+
+async function openAudit(row: GovernedChangeVO) {
+  auditEvents.value = await listGovernanceAudit(row.id)
+  auditVisible.value = true
+}
+
+function shortHash(hash: string) {
+  return `${hash.slice(0, 12)}…${hash.slice(-8)}`
 }
 
 function formatGrayTenants(raw: string | null) {
@@ -136,7 +197,7 @@ function formatGrayTenants(raw: string | null) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadList(), listTenantOptions().then((t) => (tenants.value = t))])
+  await Promise.all([loadList(), loadApprovals(), listTenantOptions().then((t) => (tenants.value = t))])
 })
 </script>
 
@@ -229,8 +290,54 @@ onMounted(async () => {
 
       <div class="tip">
         安全回滚不会重放历史模型密文、MCP 请求头、路由或实验盐，只回退提示词和最大迭代次数。
-        操作先进入可靠任务并经过评测门禁；“已投递”不代表已生效，只有实例 ACK APPLIED 才算完成。
+        操作必须由另一名管理员复核，之后才进入可靠任务和评测门禁；只有实例 ACK APPLIED 才算完成。
       </div>
+    </el-card>
+
+    <el-card v-if="auth.hasPermission('governance:view')" class="approval-card">
+      <template #header>
+        <div class="card-head">
+          <span>高风险变更审批</span>
+          <el-button link type="primary" @click="loadApprovals">刷新</el-button>
+        </div>
+      </template>
+      <el-table v-loading="approvalLoading" :data="approvals" style="width: 100%">
+        <el-table-column label="类型" width="110">
+          <template #default="{ row }">{{ CHANGE_LABELS[row.changeType] ?? row.changeType }}</template>
+        </el-table-column>
+        <el-table-column prop="targetKey" label="目标" width="180" />
+        <el-table-column label="发起/复核" width="170">
+          <template #default="{ row }">{{ row.makerName || row.makerId }} → {{ row.checkerName || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="APPROVAL_STATUS_TYPES[row.status] ?? 'info'">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="decisionReason" label="复核理由" show-overflow-tooltip />
+        <el-table-column prop="expiresAt" label="审批到期" width="180" />
+        <el-table-column label="操作" width="210" fixed="right">
+          <template #default="{ row }">
+            <el-button link @click="openAudit(row)">审计链</el-button>
+            <template v-if="row.status === 'PENDING'">
+              <el-button
+                v-permission="'governance:approve'"
+                link
+                type="primary"
+                :disabled="row.makerName === auth.username"
+                @click="decide(row, 'approve')"
+              >通过</el-button>
+              <el-button
+                v-permission="'governance:approve'"
+                link
+                type="danger"
+                :disabled="row.makerName === auth.username"
+                @click="decide(row, 'reject')"
+              >拒绝</el-button>
+            </template>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <el-dialog v-model="diffVisible" title="版本对比" width="90%" top="5vh">
@@ -274,6 +381,22 @@ onMounted(async () => {
         <el-button type="primary" @click="submitGray">创建安全灰度任务</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="auditVisible" title="审批审计哈希链" width="760px">
+      <el-timeline>
+        <el-timeline-item
+          v-for="event in auditEvents"
+          :key="event.sequenceNo"
+          :timestamp="event.createTime"
+          placement="top"
+        >
+          <strong>#{{ event.sequenceNo }} {{ event.eventType }}</strong>
+          <div>{{ event.actorName || 'system' }} · {{ event.detail || '-' }}</div>
+          <div class="hash-line">{{ shortHash(event.previousHash) }} → {{ shortHash(event.eventHash) }}</div>
+          <div class="hash-line">最短留存至 {{ event.retentionUntil }}</div>
+        </el-timeline-item>
+      </el-timeline>
+    </el-dialog>
   </div>
 </template>
 
@@ -282,6 +405,23 @@ onMounted(async () => {
   display: flex;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.approval-card {
+  margin-top: 16px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hash-line {
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 
 .tip {

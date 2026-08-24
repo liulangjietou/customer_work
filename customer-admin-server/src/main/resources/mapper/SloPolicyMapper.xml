@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.slo.mapper.SloPolicyMapper">
+
+    <select id="findDueCandidates"
+            resultType="com.richard.fyoung.customeradmin.slo.entity.SloPolicy">
+        SELECT *
+        FROM ai_slo_policy
+        WHERE enabled = 1
+          AND next_evaluation_at_ms &lt;= #{nowMs}
+          AND (evaluation_lease_owner IS NULL OR evaluation_lease_until_ms &lt; #{nowMs})
+        ORDER BY next_evaluation_at_ms, id
+        LIMIT #{limit}
+    </select>
+
+    <update id="claimEvaluation">
+        UPDATE ai_slo_policy
+        SET evaluation_lease_owner = #{owner}, evaluation_lease_until_ms = #{leaseUntilMs}
+        WHERE id = #{id} AND enabled = 1 AND next_evaluation_at_ms &lt;= #{nowMs}
+          AND (evaluation_lease_owner IS NULL OR evaluation_lease_until_ms &lt; #{nowMs})
+    </update>
+
+    <update id="markEvaluationSuccess">
+        UPDATE ai_slo_policy
+        SET next_evaluation_at_ms = #{nextEvaluationAtMs}, evaluation_lease_owner = NULL,
+            evaluation_lease_until_ms = 0, evaluation_failures = 0,
+            last_evaluated_at = #{evaluatedAt}, last_evaluation_status = #{status},
+            last_evaluation_error = NULL
+        WHERE id = #{id} AND evaluation_lease_owner = #{owner}
+    </update>
+
+    <update id="markEvaluationFailure">
+        UPDATE ai_slo_policy
+        SET next_evaluation_at_ms = #{nextEvaluationAtMs}, evaluation_lease_owner = NULL,
+            evaluation_lease_until_ms = 0, evaluation_failures = evaluation_failures + 1,
+            last_evaluated_at = #{evaluatedAt}, last_evaluation_status = 'FAILED',
+            last_evaluation_error = #{error}
+        WHERE id = #{id} AND evaluation_lease_owner = #{owner}
+    </update>
+
+    <update id="scheduleNow">
+        UPDATE ai_slo_policy
+        SET next_evaluation_at_ms = LEAST(next_evaluation_at_ms, #{nowMs})
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND enabled = 1
+    </update>
+
+</mapper>

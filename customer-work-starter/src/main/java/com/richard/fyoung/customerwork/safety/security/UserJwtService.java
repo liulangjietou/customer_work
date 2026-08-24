@@ -41,6 +41,7 @@ public class UserJwtService {
     private static final String CLAIM_USERNAME = "username";
     private static final String CLAIM_NICKNAME = "nickname";
     private static final String CLAIM_TENANT = "tenant";
+    private static final String CLAIM_USER_SESSION_EPOCH = "userSessionEpoch";
     private static final long HOUR_MS = 3600_000L;
 
     private final SecretKey signingKey;
@@ -80,8 +81,17 @@ public class UserJwtService {
     /** 签发绑定控制面访问版本的令牌；运行时门禁开启时登录入口必须使用本方法。 */
     public String issue(String userId, String username, String nickname,
                         String tenantId, long tenantAccessEpoch) {
+        return issue(userId, username, nickname, tenantId, tenantAccessEpoch, 0L);
+    }
+
+    /** 签发同时绑定租户访问版本与用户会话版本的令牌。 */
+    public String issue(String userId, String username, String nickname,
+                        String tenantId, long tenantAccessEpoch, long userSessionEpoch) {
         if (tenantAccessEpoch < 0) {
             throw new IllegalArgumentException("tenantAccessEpoch must not be negative");
+        }
+        if (userSessionEpoch < 0) {
+            throw new IllegalArgumentException("userSessionEpoch must not be negative");
         }
         long now = System.currentTimeMillis();
         return Jwts.builder()
@@ -90,6 +100,7 @@ public class UserJwtService {
             .claim(CLAIM_NICKNAME, nickname)
             .claim(CLAIM_TENANT, normalizeTenant(tenantId))
             .claim(TenantAccessConstants.ACCESS_EPOCH_KEY, tenantAccessEpoch)
+            .claim(CLAIM_USER_SESSION_EPOCH, userSessionEpoch)
             .issuedAt(new Date(now))
             .expiration(new Date(now + expireMs))
             .signWith(signingKey)
@@ -122,13 +133,16 @@ public class UserJwtService {
             }
             Object rawAccessEpoch = claims.get(TenantAccessConstants.ACCESS_EPOCH_KEY);
             Long accessEpoch = rawAccessEpoch instanceof Number number ? number.longValue() : null;
+            Object rawSessionEpoch = claims.get(CLAIM_USER_SESSION_EPOCH);
+            Long sessionEpoch = rawSessionEpoch instanceof Number number ? number.longValue() : null;
             return Optional.of(new UserPrincipal(
                 claims.getSubject(),
                 claims.get(CLAIM_USERNAME, String.class),
                 claims.get(CLAIM_NICKNAME, String.class),
                 // 多租户上线前签发的令牌没有这个 claim，回落默认租户，避免存量用户被强制登出
                 tenantId,
-                accessEpoch));
+                accessEpoch,
+                sessionEpoch));
         } catch (Exception e) {
             // 验签失败 / 过期 / 格式非法：统一按未认证处理，不打堆栈（正常的攻击面噪声）
             return Optional.empty();

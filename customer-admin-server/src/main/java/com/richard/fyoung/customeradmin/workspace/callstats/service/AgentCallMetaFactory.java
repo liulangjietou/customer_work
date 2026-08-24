@@ -40,22 +40,31 @@ public class AgentCallMetaFactory {
     private final AiAgentMapper agentMapper;
     private final ModelConfigAccess modelConfigAccess;
     private final ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess;
+    private final AgentArtifactVersionResolver artifactVersionResolver;
 
     public AgentCallMetaFactory(AiAgentMapper agentMapper) {
-        this(agentMapper, null, null);
+        this(agentMapper, null, null, null);
     }
 
     public AgentCallMetaFactory(AiAgentMapper agentMapper, ModelConfigAccess modelConfigAccess) {
-        this(agentMapper, modelConfigAccess, null);
+        this(agentMapper, modelConfigAccess, null, null);
+    }
+
+    public AgentCallMetaFactory(AiAgentMapper agentMapper,
+                                ModelConfigAccess modelConfigAccess,
+                                ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess) {
+        this(agentMapper, modelConfigAccess, routingPolicyRuntimeAccess, null);
     }
 
     @Autowired
     public AgentCallMetaFactory(AiAgentMapper agentMapper,
                                 ModelConfigAccess modelConfigAccess,
-                                ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess) {
+                                ModelRoutingPolicyRuntimeAccess routingPolicyRuntimeAccess,
+                                AgentArtifactVersionResolver artifactVersionResolver) {
         this.agentMapper = agentMapper;
         this.modelConfigAccess = modelConfigAccess;
         this.routingPolicyRuntimeAccess = routingPolicyRuntimeAccess;
+        this.artifactVersionResolver = artifactVersionResolver;
     }
 
     /** 构建调用元数据。{@code question} 为用户原始输入（VibeCoding 传原始需求而非注入路径指引后的富文本）。 */
@@ -63,6 +72,11 @@ public class AgentCallMetaFactory {
         AiAgent agent = resolveAgent(agentCode);
         return new AgentCallMeta(UUID.randomUUID().toString(), resolveUsername(), agentCode,
             resolveAgentName(agent, agentCode), sessionType, question, resolveLineage(agent));
+    }
+
+    /** 供重放 diff 读取当前制品版本；不创建 requestId，也不读取登录 ThreadLocal。 */
+    public AgentCallLineage currentLineage(String agentCode) {
+        return resolveLineage(resolveAgent(agentCode));
     }
 
     /** 当前登录用户账号；未登录/无 Sa-Token 上下文（如单测/开放 API）时返回 null，不阻断对话。 */
@@ -123,9 +137,24 @@ public class AgentCallMetaFactory {
             agent.getToolMaxAttempts(),
             agent.getCompressTriggerMsgs(),
             agent.getCompressKeepMsgs());
+        AgentArtifactVersionResolver.ArtifactVersions artifacts = resolveArtifacts(agent.getId());
         EvalVersionBinding binding = new EvalVersionBinding(
-            "", "", modelVersion, promptVersion, agentVersion, "", "", "", "");
+            "", "", modelVersion, promptVersion, agentVersion,
+            artifacts.knowledgeBaseVersion(), artifacts.toolVersion(), "", "");
         return new AgentCallLineage("", "", "", binding);
+    }
+
+    private AgentArtifactVersionResolver.ArtifactVersions resolveArtifacts(Long agentId) {
+        if (artifactVersionResolver == null || agentId == null) {
+            return new AgentArtifactVersionResolver.ArtifactVersions("", "");
+        }
+        try {
+            return artifactVersionResolver.resolve(agentId);
+        } catch (Exception e) {
+            log.error("resolve call meta artifact lineage failed, code={}, agentId={}",
+                "CALLSTATS-META-ARTIFACT-FAIL", agentId, e);
+            return new AgentArtifactVersionResolver.ArtifactVersions("", "");
+        }
     }
 
     private String resolveRouteVersion(AiAgent agent) {

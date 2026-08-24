@@ -45,7 +45,32 @@ export interface UsageAggregate {
   outputTokens: number
   cachedTokens: number
   totalTokens: number
+  modelSegmentCount: number
+  settledSegmentCount: number
+  unsettledSegmentCount: number
+  pricingStatus: 'COMPLETE' | 'PARTIAL' | 'UNAVAILABLE'
+  sourceMaxCallLogId: number | null
+  currency: string
   amount: number
+}
+
+export interface UsageReconciliationVO {
+  tenantId: string
+  statDate: string
+  currency: string
+  sourceAmount: number
+  billAmount: number
+  difference: number
+  sourceModelSegments: number
+  billModelSegments: number
+  sourceSettledSegments: number
+  billSettledSegments: number
+  sourceUnsettledSegments: number
+  billUnsettledSegments: number
+  sourceMaxCallLogId: number
+  billSourceMaxCallLogId: number
+  status: 'MATCHED' | 'INCOMPLETE' | 'STALE' | 'MISMATCH'
+  reason: string
 }
 
 export interface CostForecastVO {
@@ -109,6 +134,10 @@ export function fetchTenantBill(params: { tenantId?: string; from: string; to: s
 
 export function fetchPlatformOverview(params: { from: string; to: string }) {
   return request<UsageAggregate[]>({ url: '/billing/overview', method: 'get', params })
+}
+
+export function fetchUsageReconciliation(params: { tenantId?: string; from: string; to: string }) {
+  return request<UsageReconciliationVO[]>({ url: '/billing/reconciliation', method: 'get', params })
 }
 
 export function fetchCostForecast(params: { tenantId?: string; period: string; asOf?: string }) {

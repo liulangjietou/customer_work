@@ -29,10 +29,16 @@ public final class RuntimeConfigContentHasher {
         String publishedAt = config.getPublishedAt();
         String revision = config.getRevision();
         String contentHash = config.getContentHash();
+        String signatureKeyId = config.getSignatureKeyId();
+        String signatureAlgorithm = config.getSignatureAlgorithm();
+        String signature = config.getSignature();
         try {
             config.setPublishedAt(null);
             config.setRevision(null);
             config.setContentHash(null);
+            config.setSignatureKeyId(null);
+            config.setSignatureAlgorithm(null);
+            config.setSignature(null);
             return sha256(objectMapper.writeValueAsString(config));
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("runtime config content serialization failed", e);
@@ -40,6 +46,9 @@ public final class RuntimeConfigContentHasher {
             config.setPublishedAt(publishedAt);
             config.setRevision(revision);
             config.setContentHash(contentHash);
+            config.setSignatureKeyId(signatureKeyId);
+            config.setSignatureAlgorithm(signatureAlgorithm);
+            config.setSignature(signature);
         }
     }
 

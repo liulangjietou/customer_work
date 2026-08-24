@@ -10,9 +10,11 @@ import com.richard.fyoung.customeradmin.aiconfig.channel.publish.CustomerWorkCon
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.entity.RuntimePublishTask;
 import com.richard.fyoung.customeradmin.aiconfig.channel.publish.mapper.RuntimePublishTaskMapper;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.domain.ModelExperimentEventType;
+import com.richard.fyoung.customeradmin.aiconfig.experiment.domain.ModelExperimentOfflineEvalStatus;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.domain.ModelExperimentPublishAction;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.domain.ModelExperimentStatus;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentArmMetricsVO;
+import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentArmEvalVO;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentCreateRequest;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentEventVO;
 import com.richard.fyoung.customeradmin.aiconfig.experiment.dto.ModelExperimentMetricsVO;
@@ -27,13 +29,18 @@ import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelCertificatio
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.eval.service.EvalDatasetAdminService;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
+import com.richard.fyoung.customerwork.capability.eval.EvalDatasetRelease;
+import com.richard.fyoung.customerwork.capability.eval.EvalDatasetSnapshot;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -66,6 +73,9 @@ public class ModelExperimentService {
     private final AdminTenantProperties tenantProperties;
     private final CustomerWorkConfigPublisher runtimePublisher;
     private final RuntimePublishTaskMapper publishTaskMapper;
+    private EvalDatasetAdminService datasetService;
+    private ModelExperimentArmEvaluationService armEvaluationService;
+    private TransactionTemplate transactionTemplate;
 
     public ModelExperimentService(AiModelExperimentMapper experimentMapper,
                                   AiModelExperimentEventMapper eventMapper,
@@ -111,6 +121,19 @@ public class ModelExperimentService {
         this.publishTaskMapper = publishTaskMapper;
     }
 
+    /**
+     * 离线评测是跨客服端库与远程模型的长操作，不持有 admin 主库事务；仅最后激活阶段进入短事务。
+     * 可选注入只为保留现有纯单元测试的手工构造方式，生产容器中三项均为必备 Bean。
+     */
+    @Autowired(required = false)
+    void configureOfflineEvaluation(EvalDatasetAdminService datasetService,
+                                    ModelExperimentArmEvaluationService armEvaluationService,
+                                    PlatformTransactionManager transactionManager) {
+        this.datasetService = datasetService;
+        this.armEvaluationService = armEvaluationService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+    }
+
     public List<ModelExperimentVO> list(Long agentId, String status) {
         LambdaQueryWrapper<AiModelExperiment> wrapper = new LambdaQueryWrapper<>();
         if (agentId != null) {
@@ -135,9 +158,23 @@ public class ModelExperimentService {
         if (Objects.equals(request.controlDeploymentId(), request.treatmentDeploymentId())) {
             throw new BizException(ResultCode.PARAM_INVALID, "对照组与实验组必须引用不同部署");
         }
-        requireEnabledAgent(request.agentId());
+        AiAgent agent = requireEnabledAgent(request.agentId());
         AiModelConfig control = requireVisibleDeployment(request.controlDeploymentId());
         AiModelConfig treatment = requireVisibleDeployment(request.treatmentDeploymentId());
+        EvalDatasetRelease datasetRelease = null;
+        EvalDatasetSnapshot datasetSnapshot = null;
+        AiModelConfig judge = null;
+        if (datasetService != null) {
+            if (!StringUtils.hasText(request.datasetReleaseId())) {
+                throw new BizException(ResultCode.PARAM_MISSING, "模型实验必须绑定已审核的 QUALITY 数据集版本");
+            }
+            datasetRelease = datasetService.requireApprovedQualityRelease(request.datasetReleaseId());
+            datasetSnapshot = datasetService.requireSnapshot(datasetRelease.snapshotVersionId());
+            if (!Objects.equals(datasetRelease.contentHash(), datasetSnapshot.contentHash())) {
+                throw new BizException(ResultCode.PARAM_INVALID, "数据集命名版本与内容快照不一致");
+            }
+            judge = requireVisibleDeployment(agent.getModelId());
+        }
 
         AiModelExperiment experiment = new AiModelExperiment();
         experiment.setTenantId(currentTenant());
@@ -150,6 +187,16 @@ public class ModelExperimentService {
         experiment.setTreatmentDeploymentId(treatment.getId());
         experiment.setTreatmentModelRef(treatment.getModel());
         experiment.setTreatmentEndpointRevision(endpointRevision(treatment));
+        if (datasetRelease != null) {
+            experiment.setDatasetReleaseId(datasetRelease.releaseId());
+            experiment.setDatasetVersionName(datasetRelease.versionName());
+            experiment.setDatasetSnapshotVersionId(datasetSnapshot.versionId());
+            experiment.setDatasetContentHash(datasetSnapshot.contentHash());
+            experiment.setJudgeDeploymentId(judge.getId());
+            experiment.setJudgeModelRef(judge.getModel());
+            experiment.setJudgeEndpointRevision(endpointRevision(judge));
+            experiment.setOfflineEvalStatus(ModelExperimentOfflineEvalStatus.NOT_STARTED.name());
+        }
         experiment.setRevision(INITIAL_REVISION);
         experiment.setAssignmentSalt(UUID.randomUUID().toString().replace("-", ""));
         experiment.setTreatmentBps(request.treatmentBps());
@@ -162,20 +209,102 @@ public class ModelExperimentService {
         return toVO(experiment);
     }
 
-    /** 启动是有副作用的独立能力；定义漂移、认证失效或同 Agent 已运行实验都会 fail-fast。 */
-    @Transactional(rollbackFor = Exception.class)
+    /**
+     * 启动前先在无主库事务的阶段分别评测 control/treatment；两臂均通过后才进入短事务激活。
+     * 定义漂移、认证失效、数据集未审核或同 Agent 已运行实验都会 fail-fast。
+     */
     public ModelExperimentVO start(Long id) {
-        AiModelExperiment experiment = requireExperiment(id);
-        requireState(experiment, ModelExperimentStatus.DRAFT);
-        if (!experiment.getExpiresAt().isAfter(LocalDateTime.now())) {
-            throw new BizException(ResultCode.PARAM_INVALID, "实验已超过 expiresAt，不能启动");
+        if (datasetService != null && armEvaluationService != null) {
+            AiModelExperiment experiment = requireExperiment(id);
+            AiAgent agent = validateStartDefinition(experiment);
+            executeOfflineGate(experiment, agent);
         }
-        requireEnabledAgent(experiment.getAgentId());
-        validateArmForStart(experiment.getControlDeploymentId(), experiment.getControlModelRef(),
-            experiment.getControlEndpointRevision(), "对照组");
-        validateArmForStart(experiment.getTreatmentDeploymentId(), experiment.getTreatmentModelRef(),
-            experiment.getTreatmentEndpointRevision(), "实验组");
+        if (transactionTemplate == null) {
+            return activateAfterGate(id);
+        }
+        ModelExperimentVO activated = transactionTemplate.execute(status -> activateAfterGate(id));
+        if (activated == null) {
+            throw new BizException(ResultCode.SYSTEM_ERROR, "模型实验激活事务未返回结果");
+        }
+        return activated;
+    }
 
+    public List<ModelExperimentArmEvalVO> armEvaluations(Long id) {
+        requireExperiment(id);
+        return armEvaluationService == null ? List.of() : armEvaluationService.list(id);
+    }
+
+    private void executeOfflineGate(AiModelExperiment experiment, AiAgent agent) {
+        if (!StringUtils.hasText(experiment.getDatasetReleaseId())
+            || !StringUtils.hasText(experiment.getDatasetSnapshotVersionId())
+            || !StringUtils.hasText(experiment.getDatasetContentHash())
+            || experiment.getJudgeDeploymentId() == null) {
+            throw new BizException(ResultCode.PARAM_INVALID, "旧实验未绑定离线评测制品，请重新创建实验");
+        }
+        EvalDatasetRelease release = datasetService.requireApprovedQualityRelease(experiment.getDatasetReleaseId());
+        EvalDatasetSnapshot snapshot = datasetService.requireSnapshot(experiment.getDatasetSnapshotVersionId());
+        if (!Objects.equals(release.snapshotVersionId(), snapshot.versionId())
+            || !Objects.equals(release.contentHash(), snapshot.contentHash())
+            || !Objects.equals(experiment.getDatasetContentHash(), snapshot.contentHash())) {
+            throw new BizException(ResultCode.PARAM_INVALID, "实验绑定的数据集制品已不一致");
+        }
+        if (ModelExperimentOfflineEvalStatus.PASSED.name().equals(experiment.getOfflineEvalStatus())) {
+            return;
+        }
+        int claimed = experimentMapper.update(null, new LambdaUpdateWrapper<AiModelExperiment>()
+            .eq(AiModelExperiment::getId, experiment.getId())
+            .eq(AiModelExperiment::getStatus, ModelExperimentStatus.DRAFT.name())
+            .and(wrapper -> wrapper
+                .eq(AiModelExperiment::getOfflineEvalStatus,
+                    ModelExperimentOfflineEvalStatus.NOT_STARTED.name())
+                .or()
+                .eq(AiModelExperiment::getOfflineEvalStatus,
+                    ModelExperimentOfflineEvalStatus.FAILED.name()))
+            .set(AiModelExperiment::getOfflineEvalStatus, ModelExperimentOfflineEvalStatus.RUNNING.name())
+            .set(AiModelExperiment::getOfflineEvalStartedAt, LocalDateTime.now())
+            .set(AiModelExperiment::getOfflineEvalCompletedAt, null)
+            .set(AiModelExperiment::getOfflineEvalError, null));
+        if (claimed != 1) {
+            throw new BizException(ResultCode.PARAM_INVALID, "实验离线评测已在运行或状态已变化，请刷新后重试");
+        }
+        ModelExperimentArmEvaluationService.GateResult gate;
+        try {
+            gate = armEvaluationService.evaluateBoth(experiment, agent, snapshot);
+        } catch (Exception e) {
+            markOfflineGate(experiment.getId(), ModelExperimentOfflineEvalStatus.FAILED,
+                truncate(errorMessage(e)));
+            throw new BizException(ResultCode.MODEL_TEST_FAILED, "双臂离线评测执行失败: " + errorMessage(e));
+        }
+        if (!gate.passed()) {
+            markOfflineGate(experiment.getId(), ModelExperimentOfflineEvalStatus.FAILED,
+                gate.failureSummary());
+            throw new BizException(ResultCode.MODEL_TEST_FAILED,
+                "双臂离线评测未通过: " + gate.failureSummary());
+        }
+        markOfflineGate(experiment.getId(), ModelExperimentOfflineEvalStatus.PASSED, null);
+        experiment.setOfflineEvalStatus(ModelExperimentOfflineEvalStatus.PASSED.name());
+    }
+
+    private void markOfflineGate(Long experimentId, ModelExperimentOfflineEvalStatus status,
+                                 String error) {
+        int updated = experimentMapper.update(null, new LambdaUpdateWrapper<AiModelExperiment>()
+            .eq(AiModelExperiment::getId, experimentId)
+            .eq(AiModelExperiment::getStatus, ModelExperimentStatus.DRAFT.name())
+            .eq(AiModelExperiment::getOfflineEvalStatus, ModelExperimentOfflineEvalStatus.RUNNING.name())
+            .set(AiModelExperiment::getOfflineEvalStatus, status.name())
+            .set(AiModelExperiment::getOfflineEvalCompletedAt, LocalDateTime.now())
+            .set(AiModelExperiment::getOfflineEvalError, error));
+        assertTransition(updated, "实验离线评测状态已变化，请刷新后重试");
+    }
+
+    /** 只包围最终状态迁移、发布任务入队与事件写入。 */
+    private ModelExperimentVO activateAfterGate(Long id) {
+        AiModelExperiment experiment = requireExperiment(id);
+        validateStartDefinition(experiment);
+        if (datasetService != null && armEvaluationService != null
+            && !ModelExperimentOfflineEvalStatus.PASSED.name().equals(experiment.getOfflineEvalStatus())) {
+            throw new BizException(ResultCode.PARAM_INVALID, "control/treatment 离线评测尚未全部通过");
+        }
         Long running = experimentMapper.selectCount(new LambdaQueryWrapper<AiModelExperiment>()
             .eq(AiModelExperiment::getAgentId, experiment.getAgentId())
             .eq(AiModelExperiment::getStatus, ModelExperimentStatus.RUNNING.name()));
@@ -202,6 +331,23 @@ public class ModelExperimentService {
         appendEvent(experiment, ModelExperimentEventType.START,
             ModelExperimentStatus.DRAFT, ModelExperimentStatus.RUNNING, null, currentUserId(), now);
         return toVO(experiment);
+    }
+
+    private AiAgent validateStartDefinition(AiModelExperiment experiment) {
+        requireState(experiment, ModelExperimentStatus.DRAFT);
+        if (!experiment.getExpiresAt().isAfter(LocalDateTime.now())) {
+            throw new BizException(ResultCode.PARAM_INVALID, "实验已超过 expiresAt，不能启动");
+        }
+        AiAgent agent = requireEnabledAgent(experiment.getAgentId());
+        validateArmForStart(experiment.getControlDeploymentId(), experiment.getControlModelRef(),
+            experiment.getControlEndpointRevision(), "对照组");
+        validateArmForStart(experiment.getTreatmentDeploymentId(), experiment.getTreatmentModelRef(),
+            experiment.getTreatmentEndpointRevision(), "实验组");
+        if (experiment.getJudgeDeploymentId() != null) {
+            validateArmForStart(experiment.getJudgeDeploymentId(), experiment.getJudgeModelRef(),
+                experiment.getJudgeEndpointRevision(), "Judge");
+        }
+        return agent;
     }
 
     /** 人工停止仅接受 RUNNING，且原因必须非空。 */
@@ -365,6 +511,17 @@ public class ModelExperimentService {
         target.setTreatmentDeploymentId(source.getTreatmentDeploymentId());
         target.setTreatmentModelRef(source.getTreatmentModelRef());
         target.setTreatmentEndpointRevision(source.getTreatmentEndpointRevision());
+        target.setDatasetReleaseId(source.getDatasetReleaseId());
+        target.setDatasetVersionName(source.getDatasetVersionName());
+        target.setDatasetSnapshotVersionId(source.getDatasetSnapshotVersionId());
+        target.setDatasetContentHash(source.getDatasetContentHash());
+        target.setJudgeDeploymentId(source.getJudgeDeploymentId());
+        target.setJudgeModelRef(source.getJudgeModelRef());
+        target.setJudgeEndpointRevision(source.getJudgeEndpointRevision());
+        target.setOfflineEvalStatus(source.getOfflineEvalStatus());
+        target.setOfflineEvalStartedAt(source.getOfflineEvalStartedAt());
+        target.setOfflineEvalCompletedAt(source.getOfflineEvalCompletedAt());
+        target.setOfflineEvalError(source.getOfflineEvalError());
         target.setRevision(source.getRevision());
         target.setTreatmentBps(source.getTreatmentBps());
         target.setStatus(source.getStatus());
@@ -456,6 +613,10 @@ public class ModelExperimentService {
 
     private String truncate(String value) {
         return value.length() <= MAX_REASON_LENGTH ? value : value.substring(0, MAX_REASON_LENGTH);
+    }
+
+    private String errorMessage(Exception e) {
+        return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
     }
 
     private String publishRuntime(AiModelExperiment experiment,

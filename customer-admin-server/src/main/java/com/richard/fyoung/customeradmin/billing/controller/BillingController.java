@@ -8,6 +8,7 @@ import com.richard.fyoung.customeradmin.billing.dto.CostForecastVO;
 import com.richard.fyoung.customeradmin.billing.dto.TenantQuotaSaveRequest;
 import com.richard.fyoung.customeradmin.billing.dto.TenantQuotaVO;
 import com.richard.fyoung.customeradmin.billing.dto.UsageAggregate;
+import com.richard.fyoung.customeradmin.billing.dto.UsageReconciliationVO;
 import com.richard.fyoung.customeradmin.billing.entity.AiModelPrice;
 import com.richard.fyoung.customeradmin.billing.service.BillingCsvExportService;
 import com.richard.fyoung.customeradmin.billing.service.BillingReportService;
@@ -16,6 +17,7 @@ import com.richard.fyoung.customeradmin.billing.service.CostForecastService;
 import com.richard.fyoung.customeradmin.billing.service.ModelPriceAdminService;
 import com.richard.fyoung.customeradmin.billing.service.TenantQuotaService;
 import com.richard.fyoung.customeradmin.billing.service.UsageAggregationService;
+import com.richard.fyoung.customeradmin.billing.service.UsageReconciliationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
@@ -57,6 +59,7 @@ public class BillingController {
     private final ModelPriceAdminService priceService;
     private final BillingReportService reportService;
     private final UsageAggregationService aggregationService;
+    private final UsageReconciliationService reconciliationService;
     private final CostAlertService alertService;
     private final CostForecastService forecastService;
     private final BillingCsvExportService csvExportService;
@@ -66,6 +69,7 @@ public class BillingController {
                              ModelPriceAdminService priceService,
                              BillingReportService reportService,
                              UsageAggregationService aggregationService,
+                             UsageReconciliationService reconciliationService,
                              CostAlertService alertService,
                              CostForecastService forecastService,
                              BillingCsvExportService csvExportService,
@@ -74,6 +78,7 @@ public class BillingController {
         this.priceService = priceService;
         this.reportService = reportService;
         this.aggregationService = aggregationService;
+        this.reconciliationService = reconciliationService;
         this.alertService = alertService;
         this.forecastService = forecastService;
         this.csvExportService = csvExportService;
@@ -158,6 +163,20 @@ public class BillingController {
         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         assertCrossTenantAuthority();
         return Result.success(reportService.platformOverview(from, to));
+    }
+
+    /** 客服端调用金额事实与日账单逐日逐币种对账；控制面必须明确选择目标租户。 */
+    @SaCheckPermission("billing:view")
+    @GetMapping("/reconciliation")
+    public Result<List<UsageReconciliationVO>> reconciliation(
+        @RequestParam(required = false) String tenantId,
+        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        if ((tenantId == null || tenantId.isBlank()) && crossTenantAuthority.hasCurrentUserAuthority()) {
+            throw new BizException(ResultCode.PARAM_INVALID, "控制面执行对账时必须选择目标租户");
+        }
+        String targetTenant = resolveAccessibleTenant(tenantId);
+        return Result.success(reconciliationService.reconcile(targetTenant, from, to));
     }
 
     /** 金额预算预测：普通租户只能查询自己，控制面可显式指定目标租户。 */

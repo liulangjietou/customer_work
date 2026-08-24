@@ -26,6 +26,7 @@ import java.util.Objects;
 final class McpConfigProtector {
 
     static final String SECRET_PLACEHOLDER = "__MCP_SECRET_REDACTED__";
+    static final String SECRET_REF_MARKER = "__MCP_SECRET_REF__";
 
     private static final String INVALID_CONFIG = "{\"redacted\":true,\"reason\":\"invalid config\"}";
     private static final String HTTP_SCHEME = "http";
@@ -40,7 +41,7 @@ final class McpConfigProtector {
     /** 新建必须提交完整配置，占位符没有可复用的服务端事实。 */
     String prepareForCreate(String mcpType, String config) {
         JsonNode root = parse(config);
-        if (containsPlaceholder(root)) {
+        if (containsPlaceholder(root) || containsSecretRefMarker(root)) {
             throw invalid("新建 MCP 不能使用脱敏占位符，请重新提供 secret");
         }
         validateTarget(mcpType, root);
@@ -52,6 +53,9 @@ final class McpConfigProtector {
      */
     String prepareForUpdate(String currentType, String currentConfig, String submittedType, String submittedConfig) {
         JsonNode submitted = parse(submittedConfig);
+        if (containsSecretRefMarker(submitted)) {
+            throw invalid("MCP SecretRef 内部占位符不能由客户端提交");
+        }
         boolean hasPlaceholder = containsPlaceholder(submitted);
         if (hasPlaceholder) {
             validatePlaceholderPositions(submitted, false);
@@ -106,6 +110,97 @@ final class McpConfigProtector {
             // 损坏的存量配置也不能回退原文，否则异常数据会绕过字段级脱敏。
             return INVALID_CONFIG;
         }
+    }
+
+    /** 把 headers、token、password 等敏感叶子从可执行配置剥离为独立 JSON 材料。 */
+    SecretExtraction extractSecrets(String normalizedConfig) {
+        JsonNode root = parse(normalizedConfig).deepCopy();
+        ObjectNode secretBundle = objectMapper.createObjectNode();
+        JsonNode protectedRoot = extractNode(root, false, "", secretBundle);
+        return new SecretExtraction(write(protectedRoot), write(secretBundle), !secretBundle.isEmpty());
+    }
+
+    /** 只在单次运行时构建边界恢复敏感叶子；持久化层永远保存 protectedConfig。 */
+    String restoreSecrets(String protectedConfig, String secretBundleJson) {
+        JsonNode protectedRoot = parse(protectedConfig).deepCopy();
+        JsonNode bundle = parse(secretBundleJson);
+        int[] restored = {0};
+        JsonNode resolved = restoreNode(protectedRoot, "", bundle, restored);
+        if (restored[0] != bundle.size() || containsSecretRefMarker(resolved)) {
+            throw invalid("MCP SecretRef 材料与配置占位符不一致");
+        }
+        return write(resolved);
+    }
+
+    boolean containsInlineSecrets(String config) {
+        return extractSecrets(config).hasSecrets();
+    }
+
+    private JsonNode extractNode(JsonNode node, boolean protectedPosition, String pointer,
+                                 ObjectNode secretBundle) {
+        if (node == null || node.isNull()) {
+            return node;
+        }
+        if (node.isValueNode()) {
+            if (!protectedPosition) {
+                return node;
+            }
+            if (isPlaceholder(node) || isSecretRefMarker(node)) {
+                throw invalid("MCP 敏感字段不能使用内部占位符");
+            }
+            secretBundle.set(pointer, node.deepCopy());
+            return objectMapper.getNodeFactory().textNode(SECRET_REF_MARKER);
+        }
+        if (node.isObject()) {
+            ObjectNode object = (ObjectNode) node;
+            List<String> names = new ArrayList<>();
+            object.fieldNames().forEachRemaining(names::add);
+            for (String name : names) {
+                boolean childProtected = protectedPosition || isHeaders(name) || isSensitiveKey(name);
+                object.set(name, extractNode(object.get(name), childProtected,
+                    pointer + "/" + escapePointer(name), secretBundle));
+            }
+            return object;
+        }
+        ArrayNode array = (ArrayNode) node;
+        for (int i = 0; i < array.size(); i++) {
+            array.set(i, extractNode(array.get(i), protectedPosition,
+                pointer + "/" + i, secretBundle));
+        }
+        return array;
+    }
+
+    private JsonNode restoreNode(JsonNode node, String pointer, JsonNode bundle, int[] restored) {
+        if (isSecretRefMarker(node)) {
+            JsonNode secret = bundle.get(pointer);
+            if (secret == null) {
+                throw invalid("MCP SecretRef 缺少路径: " + pointer);
+            }
+            restored[0]++;
+            return secret.deepCopy();
+        }
+        if (node == null || node.isValueNode()) {
+            return node;
+        }
+        if (node.isObject()) {
+            ObjectNode object = (ObjectNode) node;
+            List<String> names = new ArrayList<>();
+            object.fieldNames().forEachRemaining(names::add);
+            for (String name : names) {
+                object.set(name, restoreNode(object.get(name),
+                    pointer + "/" + escapePointer(name), bundle, restored));
+            }
+            return object;
+        }
+        ArrayNode array = (ArrayNode) node;
+        for (int i = 0; i < array.size(); i++) {
+            array.set(i, restoreNode(array.get(i), pointer + "/" + i, bundle, restored));
+        }
+        return array;
+    }
+
+    private String escapePointer(String value) {
+        return value.replace("~", "~0").replace("/", "~1");
     }
 
     private TargetIdentity validateTarget(String mcpType, JsonNode root) {
@@ -316,6 +411,25 @@ final class McpConfigProtector {
         return node != null && node.isTextual() && SECRET_PLACEHOLDER.equals(node.textValue());
     }
 
+    private boolean containsSecretRefMarker(JsonNode node) {
+        if (isSecretRefMarker(node)) {
+            return true;
+        }
+        if (node == null || node.isValueNode()) {
+            return false;
+        }
+        for (JsonNode child : node) {
+            if (containsSecretRefMarker(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isSecretRefMarker(JsonNode node) {
+        return node != null && node.isTextual() && SECRET_REF_MARKER.equals(node.textValue());
+    }
+
     private boolean isHeaders(String fieldName) {
         return "headers".equals(normalize(fieldName));
     }
@@ -369,5 +483,8 @@ final class McpConfigProtector {
     }
 
     private record TargetIdentity(String type, String endpoint, List<String> executionTarget) {
+    }
+
+    record SecretExtraction(String protectedConfig, String secretBundleJson, boolean hasSecrets) {
     }
 }

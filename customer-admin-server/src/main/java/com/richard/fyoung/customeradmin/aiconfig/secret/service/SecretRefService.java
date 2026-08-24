@@ -54,6 +54,13 @@ public class SecretRefService {
     @Transactional(rollbackFor = Exception.class)
     public SecretWriteResult createLocal(String tenantId, String refName,
                                          String secretValue, LocalDateTime expiresAt) {
+        return createLocal(tenantId, "model", refName, secretValue, expiresAt);
+    }
+
+    /** 为模型、MCP 等不同资产建立同一套 SecretRef；refCode 只承担可检索身份，不携带密钥。 */
+    @Transactional(rollbackFor = Exception.class)
+    public SecretWriteResult createLocal(String tenantId, String refCodePrefix, String refName,
+                                         String secretValue, LocalDateTime expiresAt) {
         if (!StringUtils.hasText(secretValue)) {
             throw new BizException(ResultCode.PARAM_MISSING, "凭据值不能为空");
         }
@@ -61,7 +68,8 @@ public class SecretRefService {
         Long operator = currentUserId();
         AiSecretRef ref = new AiSecretRef();
         ref.setTenantId(tenantId);
-        ref.setRefCode("model-" + UUID.randomUUID().toString().replace("-", ""));
+        ref.setRefCode(normalizePrefix(refCodePrefix) + "-"
+            + UUID.randomUUID().toString().replace("-", ""));
         ref.setRefName(refName);
         ref.setProviderType(SecretProviderType.LOCAL_AES.name());
         ref.setCurrentVersion(1);
@@ -141,6 +149,28 @@ public class SecretRefService {
     public String resolvePlaintext(AiModelConfig model) {
         return cryptoUtil.decrypt(resolveCipherText(
             model.getSecretRefId(), model.getTenantId(), model.getApiKey()));
+    }
+
+    /** 解析任意 SecretRef 当前版本；调用方负责把明文限制在单次构建/调用生命周期。 */
+    public String resolvePlaintext(Long refId, String tenantId) {
+        return cryptoUtil.decrypt(resolveCipherText(refId, tenantId, null));
+    }
+
+    /** 资产已移除全部敏感字段时吊销旧引用，历史材料保留用于审计但不能再解析。 */
+    @Transactional(rollbackFor = Exception.class)
+    public void revoke(Long refId, String tenantId) {
+        if (refId == null) {
+            return;
+        }
+        AiSecretRef ref = requireRefForUpdate(refId, tenantId);
+        ref.setStatus(SecretRefStatus.REVOKED.name());
+        CrossTenantOperations.run(() -> secretRefMapper.updateById(ref));
+        CrossTenantOperations.run(() -> secretMaterialMapper.update(null,
+            new UpdateWrapper<AiSecretMaterial>()
+                .eq("tenant_id", tenantId)
+                .eq("secret_ref_id", refId)
+                .eq("status", SecretMaterialStatus.ACTIVE.name())
+                .set("status", SecretMaterialStatus.REVOKED.name())));
     }
 
     public SecretMetadataVO metadata(Long refId, String tenantId) {
@@ -230,6 +260,14 @@ public class SecretRefService {
         } catch (SaTokenException e) {
             return null;
         }
+    }
+
+    private String normalizePrefix(String refCodePrefix) {
+        if (!StringUtils.hasText(refCodePrefix)) {
+            return "secret";
+        }
+        String normalized = refCodePrefix.trim().toLowerCase().replaceAll("[^a-z0-9-]", "-");
+        return StringUtils.hasText(normalized) ? normalized : "secret";
     }
 
     /** 仅供模型服务双写旧列；不得进入 Controller 返回值。 */

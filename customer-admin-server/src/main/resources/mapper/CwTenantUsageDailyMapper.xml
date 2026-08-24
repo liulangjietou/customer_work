@@ -1,31 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<!--
-  租户用量归集与账单聚合。
-
-  模型名取自 cw_agent_call_segment.name（kind='MODEL' 的分段名就是模型名）——
-  cw_agent_call_log 本身只记 agent_code/agent_name，不含模型信息，token 也是分段级更准。
-  provider 日志里没有，归集时留空，单价按 model_name 匹配。
-
-  注意：这几条 SQL 都会被租户拦截器改写。归集任务与控制面总览是刻意跨租户的，
-  调用方必须包 CrossTenantOperations，否则只会汇总到当前上下文那一个租户。
--->
+<!-- 日账单只汇总客服端已冻结的分段金额；不在查询时重新取价。 -->
 <mapper namespace="com.richard.fyoung.customeradmin.billing.mapper.CwTenantUsageDailyMapper">
 
-    <select id="aggregateFromCallLog" resultType="com.richard.fyoung.customeradmin.billing.dto.UsageAggregate">
+    <select id="listByDate" resultType="com.richard.fyoung.customeradmin.billing.dto.UsageAggregate">
         SELECT
-            l.tenant_id                              AS tenantId,
-            s.name                                   AS modelName,
-            COUNT(DISTINCT l.id)                     AS callCount,
-            COALESCE(SUM(s.input_tokens), 0)         AS inputTokens,
-            COALESCE(SUM(s.output_tokens), 0)        AS outputTokens,
-            COALESCE(SUM(s.cached_tokens), 0)        AS cachedTokens,
-            COALESCE(SUM(s.input_tokens), 0) + COALESCE(SUM(s.output_tokens), 0) AS totalTokens
-        FROM cw_agent_call_log l
-        INNER JOIN cw_agent_call_segment s ON s.call_log_id = l.id AND s.kind = 'MODEL'
-        WHERE l.created_at &gt;= #{statDate}
-          AND l.created_at &lt; DATE_ADD(#{statDate}, INTERVAL 1 DAY)
-        GROUP BY l.tenant_id, s.name
+            tenant_id AS tenantId,
+            stat_date AS statDate,
+            provider,
+            model_name AS modelName,
+            call_count AS callCount,
+            input_tokens AS inputTokens,
+            output_tokens AS outputTokens,
+            cached_tokens AS cachedTokens,
+            total_tokens AS totalTokens,
+            model_segment_count AS modelSegmentCount,
+            settled_segment_count AS settledSegmentCount,
+            unsettled_segment_count AS unsettledSegmentCount,
+            CASE
+                WHEN settled_segment_count = model_segment_count AND model_segment_count &gt; 0 THEN 'COMPLETE'
+                WHEN settled_segment_count = 0 THEN 'UNAVAILABLE'
+                ELSE 'PARTIAL'
+            END AS pricingStatus,
+            amount,
+            currency,
+            source_max_call_log_id AS sourceMaxCallLogId
+        FROM cw_tenant_usage_daily
+        WHERE stat_date = #{statDate}
+        <if test="tenantId != null and tenantId != ''">
+          AND tenant_id = #{tenantId}
+        </if>
+        ORDER BY tenant_id, provider, model_name, currency
     </select>
 
     <select id="sumByTenantAndRange" resultType="com.richard.fyoung.customeradmin.billing.dto.UsageAggregate">
@@ -33,31 +38,51 @@
             tenant_id                 AS tenantId,
             provider                  AS provider,
             model_name                AS modelName,
+            currency                  AS currency,
             COALESCE(SUM(call_count), 0)    AS callCount,
             COALESCE(SUM(input_tokens), 0)  AS inputTokens,
             COALESCE(SUM(output_tokens), 0) AS outputTokens,
             COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
             COALESCE(SUM(total_tokens), 0)  AS totalTokens,
+            COALESCE(SUM(model_segment_count), 0) AS modelSegmentCount,
+            COALESCE(SUM(settled_segment_count), 0) AS settledSegmentCount,
+            COALESCE(SUM(unsettled_segment_count), 0) AS unsettledSegmentCount,
+            CASE
+                WHEN SUM(settled_segment_count) = SUM(model_segment_count)
+                     AND SUM(model_segment_count) &gt; 0 THEN 'COMPLETE'
+                WHEN SUM(settled_segment_count) = 0 THEN 'UNAVAILABLE'
+                ELSE 'PARTIAL'
+            END AS pricingStatus,
             COALESCE(SUM(amount), 0)        AS amount
         FROM cw_tenant_usage_daily
         WHERE tenant_id = #{tenantId}
           AND stat_date BETWEEN #{from} AND #{to}
-        GROUP BY tenant_id, provider, model_name
+        GROUP BY tenant_id, provider, model_name, currency
         ORDER BY amount DESC
     </select>
 
     <select id="sumGroupByTenant" resultType="com.richard.fyoung.customeradmin.billing.dto.UsageAggregate">
         SELECT
             tenant_id                 AS tenantId,
+            currency                  AS currency,
             COALESCE(SUM(call_count), 0)    AS callCount,
             COALESCE(SUM(input_tokens), 0)  AS inputTokens,
             COALESCE(SUM(output_tokens), 0) AS outputTokens,
             COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
             COALESCE(SUM(total_tokens), 0)  AS totalTokens,
+            COALESCE(SUM(model_segment_count), 0) AS modelSegmentCount,
+            COALESCE(SUM(settled_segment_count), 0) AS settledSegmentCount,
+            COALESCE(SUM(unsettled_segment_count), 0) AS unsettledSegmentCount,
+            CASE
+                WHEN SUM(settled_segment_count) = SUM(model_segment_count)
+                     AND SUM(model_segment_count) &gt; 0 THEN 'COMPLETE'
+                WHEN SUM(settled_segment_count) = 0 THEN 'UNAVAILABLE'
+                ELSE 'PARTIAL'
+            END AS pricingStatus,
             COALESCE(SUM(amount), 0)        AS amount
         FROM cw_tenant_usage_daily
         WHERE stat_date BETWEEN #{from} AND #{to}
-        GROUP BY tenant_id
+        GROUP BY tenant_id, currency
         ORDER BY amount DESC
     </select>
 
@@ -66,6 +91,7 @@
         FROM cw_tenant_usage_daily
         WHERE tenant_id = #{tenantId}
           AND stat_date BETWEEN #{from} AND #{to}
+          AND currency = 'CNY'
     </select>
 
 </mapper>

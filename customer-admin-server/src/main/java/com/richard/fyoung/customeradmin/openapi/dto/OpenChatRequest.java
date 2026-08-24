@@ -12,5 +12,6 @@ public record OpenChatRequest(
     @NotBlank(message = "sessionId 不能为空") String sessionId,
     @NotBlank(message = "message 不能为空") String message,
     @NotBlank(message = "channelType 不能为空") String channelType,
-    @NotBlank(message = "appKey 不能为空") String appKey) {
+    @NotBlank(message = "appKey 不能为空") String appKey,
+    @NotBlank(message = "externalUserId 不能为空") String externalUserId) {
 }

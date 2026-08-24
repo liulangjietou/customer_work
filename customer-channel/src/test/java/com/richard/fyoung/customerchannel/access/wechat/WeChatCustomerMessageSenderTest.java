@@ -25,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class WeChatCustomerMessageSenderTest {
 
+    private static final String LOOPBACK_HOST = "127.0.0.1";
+
     private HttpServer server;
     private String baseUrl;
     private final AtomicInteger tokenHits = new AtomicInteger();
@@ -32,8 +34,8 @@ class WeChatCustomerMessageSenderTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        server = HttpServer.create(new InetSocketAddress(0), 0);
-        baseUrl = "http://localhost:" + server.getAddress().getPort();
+        server = HttpServer.create(new InetSocketAddress(LOOPBACK_HOST, 0), 0);
+        baseUrl = "http://" + LOOPBACK_HOST + ":" + server.getAddress().getPort();
     }
 
     @AfterEach

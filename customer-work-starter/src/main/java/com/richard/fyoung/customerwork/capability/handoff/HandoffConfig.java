@@ -6,36 +6,25 @@ import com.richard.fyoung.customerwork.capability.handoff.mapper.HandoffMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
- * 人机切换工单存储配置。
+ * 历史人机切换表的迁移测试配置。
  *
- * <p>按 {@code human-handoff.store-mode} 选择实现：默认 {@code memory}（进程内，离线可测）；
- * {@code jdbc} 落地为 {@link MybatisHandoffStore}（MyBatis-Plus，复用 {@code CustomerWorkPersistenceConfig}
- * 的独立持久化环境），保证工单重启 / 多实例部署不丢失。{@link HandoffMapper} 用 {@link ObjectProvider}
- * 惰性获取：仅 jdbc 分支才真正取用，memory 模式下即便未装配 Mapper 也不报错。</p>
- *
- * <p>下游声明自己的 {@link HandoffStore} Bean 即可整体覆盖（如 Redis 实现）。
- * {@link HandoffService} 通过构造注入获取 {@link HandoffStore}，业务逻辑与存储解耦。</p>
+ * <p>P1-03 起生产 HandoffService 统一使用 TicketService/cw_ticket，本类不再是 Spring Configuration，
+ * 因而不会注册第二个 HandoffStore 权威源。保留工厂方法仅用于旧表迁移回归测试。</p>
  * @author owlzhangfq@gmail.com
  */
-@Configuration
 public class HandoffConfig {
 
     private static final Logger log = LoggerFactory.getLogger(HandoffConfig.class);
 
-    @Bean
-    @ConditionalOnMissingBean(HandoffStore.class)
     public HandoffStore handoffStore(CustomerWorkProperties properties, ObjectProvider<HandoffMapper> mapperProvider) {
         String mode = properties.getHumanHandoff().getStoreMode();
         if (StoreModes.isJdbc(mode)) {
-            log.info("handoff store: jdbc (MyBatis-Plus 实现, table=cw_handoff_ticket)");
+            log.info("legacy handoff migration store: jdbc, table=cw_handoff_ticket");
             return new MybatisHandoffStore(mapperProvider.getObject());
         }
-        log.info("handoff store: memory (进程内，重启不保留，生产建议 store-mode=jdbc)");
+        log.info("legacy handoff migration store: memory");
         return new InMemoryHandoffStore();
     }
 }

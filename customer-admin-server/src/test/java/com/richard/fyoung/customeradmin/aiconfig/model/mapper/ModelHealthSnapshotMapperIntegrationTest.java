@@ -11,12 +11,11 @@ import org.apache.ibatis.session.SqlSessionFactory;
 import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.junit.jupiter.api.Test;
 
+import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -25,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-/** 真实 MySQL/Mapper 验证旧 probe 拒绝与数据库侧失败计数。 */
+/** 真实 MySQL 验证健康快照扩展字段与行锁读取映射。 */
 class ModelHealthSnapshotMapperIntegrationTest {
 
     private static final String HOST = System.getenv().getOrDefault("MYSQL_HOST", "localhost");
@@ -34,7 +33,7 @@ class ModelHealthSnapshotMapperIntegrationTest {
     private static final String PASSWORD = env("ADMIN_MYSQL_PASSWORD", "root");
 
     @Test
-    void conditionalUpdate_shouldRejectOlderProbeAndIncrementStoredCounter() throws Exception {
+    void insertAndLock_shouldRoundTripRoutingOverlayState() throws Exception {
         assumeTrue(reachable(), "MySQL 不可达，跳过模型健康 Mapper 真库测试");
         String database = "model_health_mapper_"
             + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
@@ -50,30 +49,19 @@ class ModelHealthSnapshotMapperIntegrationTest {
                 new JdbcTransactionFactory(), dataSource));
             parseMapper(configuration);
             SqlSessionFactory factory = new MybatisSqlSessionFactoryBuilder().build(configuration);
-            LocalDateTime initialAt = LocalDateTime.of(2026, 8, 22, 12, 0, 0, 100000000);
+            LocalDateTime now = LocalDateTime.of(2026, 8, 24, 12, 0, 0, 123000000);
 
-            try (SqlSession session = factory.openSession(true)) {
+            try (SqlSession session = factory.openSession(false)) {
                 AiModelHealthSnapshotMapper mapper = session.getMapper(AiModelHealthSnapshotMapper.class);
-                assertEquals(1, mapper.insertIgnore(snapshot(initialAt, 1)));
-                assertEquals(0, mapper.updateIfNewer(snapshot(initialAt.minusNanos(1_000), 999),
-                    false, false, 3));
-                assertEquals(1, mapper.updateIfNewer(snapshot(initialAt.plusNanos(1_000), 999),
-                    false, false, 3));
-                assertEquals(1, mapper.updateIfNewer(snapshot(initialAt.plusNanos(2_000), 999),
-                    false, false, 3));
-            }
-
-            try (Connection connection = DriverManager.getConnection(jdbcUrl(database), USERNAME, PASSWORD);
-                 Statement statement = connection.createStatement();
-                 ResultSet resultSet = statement.executeQuery(
-                     "SELECT consecutive_failures, health_status, revision, last_probe_at "
-                         + "FROM ai_model_health_snapshot WHERE model_config_id = 11")) {
-                resultSet.next();
-                assertEquals(3, resultSet.getInt("consecutive_failures"));
-                assertEquals("UNHEALTHY", resultSet.getString("health_status"));
-                assertEquals(3, resultSet.getInt("revision"));
-                assertEquals(initialAt.plusNanos(2_000),
-                    resultSet.getObject("last_probe_at", LocalDateTime.class));
+                assertEquals(1, mapper.insertIgnore(snapshot(now)));
+                assertEquals(0, mapper.insertIgnore(snapshot(now)));
+                AiModelHealthSnapshot locked = mapper.lockSnapshot(11L, "tenant-a");
+                assertNotNull(locked);
+                assertEquals(2, locked.getConsecutiveSuccesses());
+                assertEquals("FORCE_UNHEALTHY", locked.getOverrideMode());
+                assertEquals(now.plusMinutes(30), locked.getOverrideUntil());
+                assertEquals(now.plusMinutes(1), locked.getCooldownUntil());
+                session.rollback();
             }
         } finally {
             if (dataSource != null) {
@@ -93,21 +81,26 @@ class ModelHealthSnapshotMapperIntegrationTest {
         }
     }
 
-    private AiModelHealthSnapshot snapshot(LocalDateTime probeAt, int failures) {
+    private AiModelHealthSnapshot snapshot(LocalDateTime now) {
         AiModelHealthSnapshot snapshot = new AiModelHealthSnapshot();
         snapshot.setModelConfigId(11L);
         snapshot.setTenantId("tenant-a");
-        snapshot.setHealthStatus("DEGRADED");
-        snapshot.setAuthStatus("UNKNOWN");
+        snapshot.setHealthStatus("HEALTHY");
+        snapshot.setAuthStatus("PASSED");
         snapshot.setCapabilityStatus("UNKNOWN");
-        snapshot.setConsecutiveFailures(failures);
+        snapshot.setConsecutiveFailures(0);
+        snapshot.setConsecutiveSuccesses(2);
         snapshot.setLastLatencyMs(10L);
-        snapshot.setLastErrorCategory("TIMEOUT");
-        snapshot.setLastMessage("timeout");
-        snapshot.setLastProbeAt(probeAt);
-        snapshot.setLastFailureAt(probeAt);
-        snapshot.setNextProbeAt(probeAt.plusMinutes(5));
-        snapshot.setRevision(1);
+        snapshot.setLastProbeAt(now);
+        snapshot.setLastSuccessAt(now);
+        snapshot.setNextProbeAt(now.plusMinutes(5));
+        snapshot.setCooldownUntil(now.plusMinutes(1));
+        snapshot.setOverrideMode("FORCE_UNHEALTHY");
+        snapshot.setOverrideReason("operator isolation");
+        snapshot.setOverrideOperatorId(7L);
+        snapshot.setOverrideOperatorName("operator");
+        snapshot.setOverrideUntil(now.plusMinutes(30));
+        snapshot.setRevision(3);
         return snapshot;
     }
 
@@ -118,9 +111,13 @@ class ModelHealthSnapshotMapperIntegrationTest {
                 + "model_config_id BIGINT PRIMARY KEY, tenant_id VARCHAR(64) NOT NULL, "
                 + "health_status VARCHAR(16) NOT NULL, auth_status VARCHAR(16) NOT NULL, "
                 + "capability_status VARCHAR(16) NOT NULL, consecutive_failures INT NOT NULL, "
-                + "last_latency_ms BIGINT, last_error_category VARCHAR(32), last_message VARCHAR(500), "
+                + "consecutive_successes INT NOT NULL, last_latency_ms BIGINT, "
+                + "last_error_category VARCHAR(32), last_message VARCHAR(500), "
                 + "last_probe_at DATETIME(6), last_success_at DATETIME(6), last_failure_at DATETIME(6), "
-                + "next_probe_at DATETIME(6), revision INT NOT NULL, "
+                + "next_probe_at DATETIME(6), cooldown_until DATETIME(6), "
+                + "override_mode VARCHAR(24) NOT NULL, override_reason VARCHAR(500), "
+                + "override_operator_id BIGINT, override_operator_name VARCHAR(100), "
+                + "override_until DATETIME(6), revision INT NOT NULL, "
                 + "create_time DATETIME DEFAULT CURRENT_TIMESTAMP, "
                 + "update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)");
         }

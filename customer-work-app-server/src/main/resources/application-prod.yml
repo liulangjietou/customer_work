@@ -113,7 +113,7 @@ customer-work:
     idle-timeout-seconds: ${STREAM_IDLE_TIMEOUT_SECONDS:120}
 
   # ------------------------------------------------------------------
-  # 审批工单 / 多轮槽位收集 / 对话阶段 / 人机切换工单 / 用户反馈：生产切 jdbc，多实例部署下跨实例共享状态
+  # 审批工单 / 多轮槽位收集 / 对话阶段 / 权威客服工单 / 用户反馈：生产切 jdbc，多实例部署下跨实例共享状态
   # memory（默认）是进程内存储，请求被负载均衡到不同实例会导致：
   #   - 审批工单查不到（人工坐席在实例 A 提交退款申请，实例 B 处理 approve 请求时找不到工单）；
   #   - 多轮信息收集进度丢失（用户被路由到另一实例，需要从头重答）；
@@ -128,7 +128,7 @@ customer-work:
     store-mode: jdbc
   dialog:
     store-mode: jdbc
-  human-handoff:
+  ticket:
     store-mode: jdbc
   feedback:
     store-mode: jdbc
@@ -162,7 +162,14 @@ customer-work:
       # 生产默认开启（与非 prod profile 相反的 fail-safe 默认值）：忘记设置环境变量时
       # 宁可鉴权拦住合法请求（需要运维介入排查），也不要默认放行造成接口裸奔
       enabled: ${AUTH_ENABLED:true}
-      api-keys: ${AUTH_API_KEYS:}   # 逗号分隔的多个 Key，经 Spring 数组/List 绑定（如 "key1,key2"）
+      # 生产只保存 SHA-256 摘要。客户端同时携带 X-API-Key-Id 与原始 X-API-Key；轮换多版本、
+      # expiry 与 minimum-epochs 可由 K8s Secret 挂载的额外 yml / SPRING_APPLICATION_JSON 下发。
+      credentials:
+        - key-id: ${AUTH_KEY_ID:}
+          key-hash: ${AUTH_KEY_HASH:}
+          tenant-id: ${AUTH_KEY_TENANT_ID:default}
+          scopes: ${AUTH_KEY_SCOPES:*}
+          epoch: ${AUTH_KEY_EPOCH:1}
     rate-limit:
       enabled: ${RATE_LIMIT_ENABLED:true}
       requests-per-minute: ${RATE_LIMIT_RPM:120}

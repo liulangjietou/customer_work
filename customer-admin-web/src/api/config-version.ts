@@ -1,4 +1,5 @@
 import { request } from './request'
+import type { GovernedChangeVO } from './governance'
 
 // 配置版本 API，与 admin-server /api/config-version/** 契约对应。
 // 发布历史只增不删；安全回滚只复用历史行为补丁，其余运行资产均取目标租户当前权威配置。
@@ -69,18 +70,18 @@ export function listVersionsByTarget(configType: string, targetCode: string) {
   })
 }
 
-/** 安全回滚到指定版本，返回可靠发布任务。 */
+/** 安全回滚先提交 maker-checker 请求；不同用户复核后才创建可靠发布任务。 */
 export function rollbackVersion(id: number, remark?: string) {
-  return request<ConfigPublishOperationResult>({
+  return request<GovernedChangeVO>({
     url: `/config-version/${id}/rollback`,
     method: 'post',
     params: { remark },
   })
 }
 
-/** 安全灰度，全部目标预校验通过后返回同一 operation 下的可靠任务。 */
+/** 安全灰度先提交 maker-checker 请求；复核执行时才做整批预检与入队。 */
 export function grayRelease(id: number, tenantCodes: string[], remark?: string) {
-  return request<ConfigPublishOperationResult>({
+  return request<GovernedChangeVO>({
     url: `/config-version/${id}/gray`,
     method: 'post',
     data: { tenantCodes, remark },

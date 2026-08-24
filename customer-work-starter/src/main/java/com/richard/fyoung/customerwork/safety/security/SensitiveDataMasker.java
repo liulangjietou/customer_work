@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.safety.security;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,7 +10,6 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
-import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 
 /**
  * 敏感信息脱敏器（手机号 / 身份证 / 银行卡 / 邮箱 + 自定义正则）。

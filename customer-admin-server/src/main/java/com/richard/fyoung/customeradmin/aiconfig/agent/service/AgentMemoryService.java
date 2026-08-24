@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySnapshot;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryStore;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
@@ -58,9 +59,10 @@ public class AgentMemoryService {
     public AgentMemoryVO getMemory(Long id) {
         AiAgent agent = agentService.requireAgent(id);
         String agentCode = agent.getAgentCode();
-        memorySyncService.persistIfChanged(agentCode, instanceFactory.resolveWorkspace(agentCode));
+        AgentMemoryScope scope = AgentMemoryScope.current(agentCode);
+        memorySyncService.persistIfChanged(scope.storageKey(), instanceFactory.resolveWorkspace(scope));
         try {
-            Optional<AgentMemorySnapshot> snapshot = memoryStore.load(agentCode);
+            Optional<AgentMemorySnapshot> snapshot = memoryStore.load(scope.storageKey());
             if (snapshot.isEmpty()) {
                 return new AgentMemoryVO(false, "", null);
             }
@@ -77,9 +79,10 @@ public class AgentMemoryService {
     public void clearMemory(Long id) {
         AiAgent agent = agentService.requireAgent(id);
         String agentCode = agent.getAgentCode();
-        Path workspace = instanceFactory.resolveWorkspace(agentCode);
+        AgentMemoryScope scope = AgentMemoryScope.current(agentCode);
+        Path workspace = instanceFactory.resolveWorkspace(scope);
         try {
-            memoryStore.delete(agentCode);
+            memoryStore.delete(scope.storageKey());
             boolean removed = Files.deleteIfExists(workspace.resolve(AgentFileNames.MEMORY_MD));
             deleteRecursively(workspace.resolve(MEMORY_DIR_NAME));
             log.info("agent memory cleared: agentCode={} workspaceCopyRemoved={}", agentCode, removed);

@@ -32,6 +32,26 @@ class BadcaseTest {
     }
 
     @Test
+    void signalHash_shouldMatchMysqlTrimAndUnicodeCharacterBoundary() {
+        String prefix = "😀".repeat(499);
+        Badcase normalized = new Badcase("bc-2", BadcaseSource.NEGATIVE_FEEDBACK, "sess-1", "MSG-2",
+            "  " + prefix + "问后缀  ", "reply", "detail", 1000L);
+        Badcase sameFirstFiveHundredCharacters = new Badcase("bc-3", BadcaseSource.NEGATIVE_FEEDBACK,
+            "sess-1", "MSG-3", prefix + "问另一个后缀", "reply", "detail", 1000L);
+
+        assertEquals(sameFirstFiveHundredCharacters.getSignalHash(), normalized.getSignalHash(),
+            "Java 新写入必须与 V21 的 LEFT(TRIM(user_input), 500) 使用同一字符边界");
+    }
+
+    @Test
+    void signalHash_shouldBeAbsentWhenUserInputIsBlank() {
+        Badcase badcase = new Badcase("bc-2", BadcaseSource.QUALITY_FAILURE, "sess-1", null,
+            "   ", null, "detail", 1000L);
+
+        assertNull(badcase.getSignalHash());
+    }
+
+    @Test
     void adoptAsKnowledge_shouldResolve() {
         Badcase badcase = newBadcase();
 

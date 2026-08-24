@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.user;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -28,6 +29,38 @@ public class UserAccountService {
 
     /** 新注册账户落的配额等级（来自 {@code customer-work.subject-quota.default-user-level}）；空表示不写等级。 */
     private final String defaultLevelCode;
+
+    /** 令当前用户已签发的所有 JWT 立即失效。 */
+    public long revokeSessions(String userId) {
+        UserAccount account = store.findById(userId)
+            .orElseThrow(() -> new IllegalStateException("user not found: " + userId));
+        long epoch = store.incrementSessionEpoch(userId);
+        account.synchronizeSessionEpoch(epoch);
+        log.info("user sessions revoked: id={}, sessionEpoch={}", userId, epoch);
+        return epoch;
+    }
+
+    /** 每次鉴权都与权威账户状态/会话版本比对，旧令牌 fail closed。 */
+    public boolean isSessionActive(String userId, Long expectedEpoch) {
+        if (userId == null || userId.isBlank() || expectedEpoch == null) {
+            return false;
+        }
+        return store.findById(userId)
+            .filter(UserAccount::isActive)
+            .map(account -> account.getSessionEpoch() == expectedEpoch)
+            .orElse(false);
+    }
+
+    /**
+     * 在凭据声明的租户内校验会话版本，并在完成后恢复调用线程原有上下文。
+     * HTTP、WebSocket 与匿名聊天入口都应调用本方法，避免在租户上下文建立前查询 {@code cw_user}。
+     */
+    public boolean isSessionActive(String tenantId, String userId, Long expectedEpoch) {
+        if (!TenantContext.isValidTenantId(tenantId)) {
+            return false;
+        }
+        return TenantContext.callWith(tenantId, () -> isSessionActive(userId, expectedEpoch));
+    }
 
     /**
      * 等级变更监听（可为 null）：用来让配额侧的绑定缓存立即失效。

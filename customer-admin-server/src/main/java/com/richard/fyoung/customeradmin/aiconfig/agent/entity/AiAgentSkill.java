@@ -17,4 +17,6 @@ public class AiAgentSkill {
     private Long id;
     private Long agentId;
     private Long skillId;
+    /** 绑定时冻结的不可变 Skill 版本。 */
+    private Long skillVersionId;
 }

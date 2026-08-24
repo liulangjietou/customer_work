@@ -30,6 +30,9 @@ public class BadcaseDO {
     /** AI 答了什么（从聊天留痕回查）。 */
     private String agentReply;
 
+    /** 用户问题归一化哈希：线上复发观测键。 */
+    private String signalHash;
+
     /** 原始信号明细：点踩存用户留言，质检存扣分项与得分。 */
     private String detail;
 

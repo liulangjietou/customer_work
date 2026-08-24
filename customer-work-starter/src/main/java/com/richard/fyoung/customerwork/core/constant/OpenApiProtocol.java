@@ -24,6 +24,8 @@ public final class OpenApiProtocol {
     public static final String SSE_EVENT_ERROR = "error";
     /** 结束事件的负载标记（沿用 OpenAI 兼容协议的写法，便于既有客户端直接对接）。 */
     public static final String SSE_DONE_MARKER = "[DONE]";
+    /** 渠道单次问答会话前缀：此类会话不写渠道用户会话映射。 */
+    public static final String CHANNEL_ONESHOT_SESSION_PREFIX = "ch-oneshot-";
 
     private OpenApiProtocol() {
     }

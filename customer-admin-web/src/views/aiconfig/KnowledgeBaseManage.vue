@@ -11,12 +11,15 @@ import {
 } from '@/api/knowledgeBase'
 import { useCrudPage } from '@/composables/useCrudPage'
 import type { KnowledgeBaseSaveRequest, KnowledgeBaseVO, PageQuery } from '@/types/api'
+import KnowledgeSourceDrawer from './components/KnowledgeSourceDrawer.vue'
 
 const testingId = ref<number | null>(null)
 // 保存会触发后端同步实测连通性（可达数秒），单独维护提交中状态给保存按钮加 loading，
 // 不进 useCrudPage（该动作是本页特有的耗时语义，composable 只收敛通用 CRUD 状态机）。
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
+const knowledgeOpsVisible = ref(false)
+const knowledgeOpsRow = ref<KnowledgeBaseVO | null>(null)
 
 const {
   loading, list, total, query,
@@ -101,6 +104,11 @@ async function handleToggleStatus(row: KnowledgeBaseVO) {
   await loadList()
 }
 
+function openKnowledgeOps(row: KnowledgeBaseVO) {
+  knowledgeOpsRow.value = row
+  knowledgeOpsVisible.value = true
+}
+
 onMounted(loadList)
 </script>
 
@@ -121,6 +129,13 @@ onMounted(loadList)
           <template #default="{ row }">{{ row.apiKeyMasked }}</template>
         </el-table-column>
         <el-table-column prop="topN" label="top_n" width="80" />
+        <el-table-column label="版本" width="100">
+          <template #default="{ row }">
+            <el-tooltip :content="`不可变版本 ID：${row.currentVersionId ?? '-'}`">
+              <el-tag type="primary">v{{ row.latestVersionNo ?? 0 }}</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
@@ -134,8 +149,9 @@ onMounted(loadList)
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="350" fixed="right">
           <template #default="{ row }">
+            <el-button link type="primary" @click="openKnowledgeOps(row)">KnowledgeOps</el-button>
             <el-button link type="primary" :loading="testingId === row.id" @click="handleTest(row)">测试连通性</el-button>
             <el-button v-permission="'knowledge-base:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button v-permission="'knowledge-base:edit'" link type="primary" @click="handleToggleStatus(row)">
@@ -200,6 +216,12 @@ onMounted(loadList)
         <el-button type="primary" :loading="submitting" @click="handleSubmitWithLoading">确定</el-button>
       </template>
     </el-dialog>
+
+    <KnowledgeSourceDrawer
+      v-model="knowledgeOpsVisible"
+      :knowledge-base="knowledgeOpsRow"
+      @changed="loadList"
+    />
   </div>
 </template>
 

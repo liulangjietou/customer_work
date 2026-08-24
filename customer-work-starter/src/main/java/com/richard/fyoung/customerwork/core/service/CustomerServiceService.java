@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.core.service;
 
 import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
+import com.richard.fyoung.customerwork.core.agent.AgentResourceCloser;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectKey;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
 import com.richard.fyoung.customerwork.core.model.failover.FailoverModel;
@@ -32,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import jakarta.annotation.PreDestroy;
 import java.util.concurrent.atomic.AtomicBoolean;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -226,7 +228,12 @@ public class CustomerServiceService {
             new LinkedHashMap<AgentSessionKey, ReActAgent>(256, 0.75f, true) {
                 @Override
                 protected boolean removeEldestEntry(Map.Entry<AgentSessionKey, ReActAgent> eldest) {
-                    return size() > MAX_HOT_AGENTS;
+                    boolean remove = size() > MAX_HOT_AGENTS;
+                    if (remove) {
+                        AgentResourceCloser.closeQuietly(eldest.getValue(),
+                            "customer-hot-cache-lru:" + eldest.getKey().sessionId());
+                    }
+                    return remove;
                 }
             });
     }
@@ -588,17 +595,21 @@ public class CustomerServiceService {
         return Mono.defer(() -> {
                 log.info("[session {}] structured intent classification: {}", sessionId, userText);
                 String intentSessionId = "intent:" + sessionId;
-                ReActAgent intentAgent = agentFactory.createAgent(intentSessionId);
-                RuntimeContext ctx = agentFactory.contextFor(intentSessionId);
-
-                String prompt = "请判断以下用户消息的意图，并调用工具输出结构化结果，不要直接用文本回答。"
-                    + "必须调用一次生成结构化响应的工具，且 intent 字段只能是"
-                    + " presale/consult/order/refund/complaint/other 之一。"
-                    + "待分类的用户消息：" + userText;
-                return intentAgent.call(prompt, IntentResult.class, ctx)
-                    .map(msg -> msg.hasStructuredData()
-                        ? msg.getStructuredData(IntentResult.class)
-                        : fallbackIntent(sessionId, "model did not produce structured output"));
+                return Mono.using(
+                    () -> agentFactory.createAgent(intentSessionId),
+                    intentAgent -> {
+                        RuntimeContext ctx = agentFactory.contextFor(intentSessionId);
+                        String prompt = "请判断以下用户消息的意图，并调用工具输出结构化结果，不要直接用文本回答。"
+                            + "必须调用一次生成结构化响应的工具，且 intent 字段只能是"
+                            + " presale/consult/order/refund/complaint/other 之一。"
+                            + "待分类的用户消息：" + userText;
+                        return intentAgent.call(prompt, IntentResult.class, ctx)
+                            .map(msg -> msg.hasStructuredData()
+                                ? msg.getStructuredData(IntentResult.class)
+                                : fallbackIntent(sessionId, "model did not produce structured output"));
+                    },
+                    intentAgent -> AgentResourceCloser.closeQuietly(intentAgent,
+                        "intent-classifier:" + intentSessionId));
             })
             .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
             .onErrorResume(e -> {
@@ -659,7 +670,8 @@ public class CustomerServiceService {
 
     private void discardSession(AgentSessionKey sessionKey) {
         String sessionId = sessionKey.sessionId();
-        sessionAgents.remove(sessionKey);
+        ReActAgent removed = sessionAgents.remove(sessionKey);
+        AgentResourceCloser.closeQuietly(removed, "customer-session-discard:" + sessionId);
         sessionActivity.remove(sessionKey);
         try {
             sessionStateManager.delete(sessionKey.stateUserId(), sessionId);
@@ -710,9 +722,19 @@ public class CustomerServiceService {
      * （模型链是共享单例，无需重建 Agent 即生效；提示词/MCP/maxIters 绑定在 Agent 上，需重建）。</p>
      */
     public void flushHotAgents() {
-        int before = sessionAgents.size();
-        sessionAgents.clear();
+        List<ReActAgent> agents;
+        synchronized (sessionAgents) {
+            agents = new ArrayList<>(sessionAgents.values());
+            sessionAgents.clear();
+        }
+        int before = agents.size();
+        agents.forEach(agent -> AgentResourceCloser.closeQuietly(agent, "customer-hot-cache-flush"));
         log.info("[hot-config] flushed hot agents, evicted={}, state preserved in store", before);
+    }
+
+    @PreDestroy
+    void destroy() {
+        flushHotAgents();
     }
 
     /** 更新会话活跃时间戳。 */

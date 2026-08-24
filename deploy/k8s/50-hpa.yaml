@@ -6,10 +6,12 @@ metadata:
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
-    kind: Deployment
+    kind: StatefulSet
     name: customer-work-app
   minReplicas: 2
-  maxReplicas: 10
+  # ACK 目标身份是发布时冻结的固定集合。增加副本前必须先增配对应序号 token 和
+  # ADMIN_RUNTIME_PUBLISH_ACK_IDENTITIES，再同步扩展 initContainer 的序号映射。
+  maxReplicas: 2
   metrics:
     - type: Resource
       resource:

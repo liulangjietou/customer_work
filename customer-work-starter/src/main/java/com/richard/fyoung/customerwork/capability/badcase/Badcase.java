@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.badcase;
 
+import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGap;
 import lombok.Getter;
 
 /**
@@ -30,6 +31,9 @@ public class Badcase {
     /** AI 答了什么（从聊天留痕回查；查不到为空）。 */
     private final String agentReply;
 
+    /** 用户问题归一化后的 SHA-256，用于判断上线后同类 badcase 是否复发。 */
+    private final String signalHash;
+
     /** 原始信号明细：点踩来源存用户留言，质检来源存扣分项与得分。 */
     private final String detail;
 
@@ -51,14 +55,55 @@ public class Badcase {
 
     public Badcase(String id, BadcaseSource source, String sessionId, String messageId,
                    String userInput, String agentReply, String detail, long createdAtMs) {
+        this(id, source, sessionId, messageId, userInput, agentReply,
+            signalHashOf(userInput), detail, createdAtMs);
+    }
+
+    /** Store 还原入口：优先使用已持久化的信号哈希，兼容迁移前记录。 */
+    public Badcase(String id, BadcaseSource source, String sessionId, String messageId,
+                   String userInput, String agentReply, String signalHash,
+                   String detail, long createdAtMs) {
         this.id = id;
         this.source = source;
         this.sessionId = sessionId;
         this.messageId = messageId;
         this.userInput = userInput;
         this.agentReply = agentReply;
+        this.signalHash = signalHash == null ? signalHashOf(userInput) : signalHash;
         this.detail = detail;
         this.createdAtMs = createdAtMs;
+    }
+
+    private static String signalHashOf(String userInput) {
+        String normalized = normalizeSignal(userInput);
+        return normalized.isEmpty() ? null : KnowledgeGap.hashOf(normalized);
+    }
+
+    /**
+     * 与 V21 的 {@code LEFT(TRIM(user_input), 500)} 保持一致。
+     *
+     * <p>MySQL 默认 TRIM 只去 ASCII 空格，LEFT 按 Unicode 字符计数；Java 的
+     * {@link String#trim()} 与 {@link String#substring(int, int)} 在控制字符和代理对上语义不同，
+     * 不能直接复用，否则历史回填与新写入会在 emoji 边界产生两个复发键。</p>
+     */
+    private static String normalizeSignal(String userInput) {
+        if (userInput == null) {
+            return "";
+        }
+        int start = 0;
+        int end = userInput.length();
+        while (start < end && userInput.charAt(start) == ' ') {
+            start++;
+        }
+        while (end > start && userInput.charAt(end - 1) == ' ') {
+            end--;
+        }
+        String trimmed = userInput.substring(start, end);
+        if (trimmed.codePointCount(0, trimmed.length()) <= KnowledgeGap.MAX_QUESTION_LENGTH) {
+            return trimmed;
+        }
+        int cutoff = trimmed.offsetByCodePoints(0, KnowledgeGap.MAX_QUESTION_LENGTH);
+        return trimmed.substring(0, cutoff);
     }
 
     /**

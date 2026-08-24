@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
@@ -41,6 +42,7 @@ public class FailoverModel implements Model {
     private final List<Candidate> candidates;
     private final ModelCircuitBreakerRegistry registry;
     private final boolean midStreamFailoverEnabled;
+    private final Set<Long> unavailableCandidates;
 
     /**
      * 默认允许流中途失败切候选。
@@ -49,7 +51,7 @@ public class FailoverModel implements Model {
      * @param registry   熔断状态登记表
      */
     public FailoverModel(List<Candidate> candidates, ModelCircuitBreakerRegistry registry) {
-        this(candidates, registry, true);
+        this(candidates, registry, true, Set.of());
     }
 
     /**
@@ -59,12 +61,20 @@ public class FailoverModel implements Model {
      */
     public FailoverModel(List<Candidate> candidates, ModelCircuitBreakerRegistry registry,
                          boolean midStreamFailoverEnabled) {
+        this(candidates, registry, midStreamFailoverEnabled, Set.of());
+    }
+
+    /** 健康 overlay 标记的候选是硬不可用，不得因本地熔断候选耗尽而重新放行。 */
+    public FailoverModel(List<Candidate> candidates, ModelCircuitBreakerRegistry registry,
+                         boolean midStreamFailoverEnabled, Set<Long> unavailableCandidates) {
         if (candidates == null || candidates.isEmpty()) {
             throw new IllegalArgumentException("FailoverModel requires at least one candidate");
         }
         this.candidates = candidates;
         this.registry = registry;
         this.midStreamFailoverEnabled = midStreamFailoverEnabled;
+        this.unavailableCandidates = unavailableCandidates == null
+            ? Set.of() : Set.copyOf(unavailableCandidates);
     }
 
     @Override
@@ -106,10 +116,16 @@ public class FailoverModel implements Model {
 
     /** 取未熔断候选；若全部熔断则退化为全量候选兜底（不能拒绝服务）。 */
     private List<Candidate> selectCandidates() {
-        List<Candidate> available = candidates.stream()
+        List<Candidate> eligible = candidates.stream()
+            .filter(candidate -> !unavailableCandidates.contains(candidate.modelId()))
+            .collect(Collectors.toList());
+        if (eligible.isEmpty()) {
+            throw new NoHealthyModelAvailableException("no healthy primary or fallback model available");
+        }
+        List<Candidate> available = eligible.stream()
             .filter(c -> !registry.isOpen(c.modelId()))
             .collect(Collectors.toList());
-        return available.isEmpty() ? candidates : available;
+        return available.isEmpty() ? eligible : available;
     }
 
     /**
@@ -119,6 +135,7 @@ public class FailoverModel implements Model {
     private List<Candidate> selectFallbackCandidates() {
         List<Candidate> available = candidates.stream()
             .skip(1)
+            .filter(candidate -> !unavailableCandidates.contains(candidate.modelId()))
             .filter(candidate -> !registry.isOpen(candidate.modelId()))
             .collect(Collectors.toList());
         if (available.isEmpty()) {
@@ -162,6 +179,12 @@ public class FailoverModel implements Model {
     /** 强制降级时没有可用备用模型。 */
     public static class FallbackModelUnavailableException extends IllegalStateException {
         public FallbackModelUnavailableException(String message) {
+            super(message);
+        }
+    }
+
+    public static class NoHealthyModelAvailableException extends IllegalStateException {
+        public NoHealthyModelAvailableException(String message) {
             super(message);
         }
     }

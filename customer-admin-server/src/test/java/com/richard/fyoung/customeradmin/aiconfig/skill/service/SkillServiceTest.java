@@ -2,6 +2,8 @@ package com.richard.fyoung.customeradmin.aiconfig.skill.service;
 
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentSkillMapper;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
+import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillUploadFile;
 import com.richard.fyoung.customeradmin.aiconfig.skill.dto.SkillUploadParseResult;
@@ -60,6 +62,7 @@ class SkillServiceTest {
     private AiAgentSkillMapper agentSkillMapper;
     private AiAgentMapper agentMapper;
     private AgentInstanceCache agentInstanceCache;
+    private SkillVersionService versionService;
 
     @BeforeEach
     void setUp() {
@@ -68,12 +71,13 @@ class SkillServiceTest {
         agentSkillMapper = mock(AiAgentSkillMapper.class);
         agentMapper = mock(AiAgentMapper.class);
         agentInstanceCache = mock(AgentInstanceCache.class);
+        versionService = mock(SkillVersionService.class);
     }
 
     /** 用给定发布器组装 Service。 */
     private SkillService serviceWith(SkillContentPublisher... publishers) {
         return new SkillService(skillMapper, skillFileMapper, agentSkillMapper, agentMapper,
-            agentInstanceCache, List.of(publishers));
+            agentInstanceCache, List.of(publishers), versionService);
     }
 
     private SkillContentPublisher publisher(SkillStorageTarget target) {
@@ -262,6 +266,27 @@ class SkillServiceTest {
 
         verify(skillFileMapper).delete(any());
         verify(skillFileMapper).insert(any(AiSkillFile.class));
+    }
+
+    @Test
+    void update_shouldInvalidateEveryAgentReferencingDisabledSkill() {
+        AiSkill existing = new AiSkill();
+        existing.setId(9L);
+        existing.setSkillCode("code-9");
+        existing.setStorageTargets("local");
+        when(skillMapper.selectById(9L)).thenReturn(existing);
+        AiAgentSkill relation = new AiAgentSkill();
+        relation.setAgentId(21L);
+        when(agentSkillMapper.selectList(any())).thenReturn(List.of(relation));
+        AiAgent agent = new AiAgent();
+        agent.setAgentCode("agent-21");
+        when(agentMapper.selectBatchIds(List.of(21L))).thenReturn(List.of(agent));
+        SkillSaveRequest disabled = new SkillSaveRequest(
+            "s9", "code-9", "正文", "desc", 0, List.of("local"), null);
+
+        serviceWith(publisher(SkillStorageTarget.MINIO)).update(9L, disabled);
+
+        verify(agentInstanceCache).invalidateAll(List.of("agent-21"));
     }
 
     @Test

@@ -20,6 +20,8 @@ public final class StarterMapperXml {
     public static final String CSAT_SURVEY = PREFIX + "CsatSurveyMapper.xml";
     public static final String DEAD_LETTER = PREFIX + "DeadLetterMapper.xml";
     public static final String EVAL_CASE = PREFIX + "EvalCaseMapper.xml";
+    public static final String EVAL_DATASET_RELEASE = PREFIX + "EvalDatasetReleaseMapper.xml";
+    public static final String EVAL_DATASET_SNAPSHOT = PREFIX + "EvalDatasetSnapshotMapper.xml";
     public static final String EVAL_RUN = PREFIX + "EvalRunMapper.xml";
     public static final String KNOWLEDGE = PREFIX + "KnowledgeMapper.xml";
     public static final String KNOWLEDGE_GAP = PREFIX + "KnowledgeGapMapper.xml";

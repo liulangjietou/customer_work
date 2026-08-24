@@ -16,5 +16,8 @@ public enum EvalCaseSource {
     BADCASE,
 
     /** 运营在后台手工添加。 */
-    MANUAL
+    MANUAL,
+
+    /** 通过数据集导入接口批量写入。 */
+    IMPORT
 }
