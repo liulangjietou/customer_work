@@ -113,7 +113,13 @@ class BusinessOutcomeMapperCollationIntegrationTest {
                     agent_code VARCHAR(64) COLLATE utf8mb4_0900_ai_ci,
                     start_time BIGINT NOT NULL,
                     success TINYINT NOT NULL,
-                    total_tokens BIGINT
+                    total_tokens BIGINT,
+                    model_cost_amount DECIMAL(30,14),
+                    model_cost_currency VARCHAR(16),
+                    model_cost_status VARCHAR(24) NOT NULL DEFAULT 'NO_MODEL',
+                    model_segment_count INT NOT NULL DEFAULT 0,
+                    settled_cost_segment_count INT NOT NULL DEFAULT 0,
+                    unsettled_cost_segment_count INT NOT NULL DEFAULT 0
                 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
                 """);
             statement.execute("""
@@ -131,7 +137,8 @@ class BusinessOutcomeMapperCollationIntegrationTest {
                     score INT
                 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
                 """);
-            statement.execute("INSERT INTO cw_agent_call_log VALUES "
+            statement.execute("INSERT INTO cw_agent_call_log "
+                + "(tenant_id, session_id, agent_code, start_time, success, total_tokens) VALUES "
                 + "('tenant-a', 'session-1', 'support-agent', 100, 1, 42), "
                 + "('tenant-a', 'tenant-collision', 'support-agent', 200, 1, 21)");
             statement.execute("INSERT INTO cw_ticket VALUES "

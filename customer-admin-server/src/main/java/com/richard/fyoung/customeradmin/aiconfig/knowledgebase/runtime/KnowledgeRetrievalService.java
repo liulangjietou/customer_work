@@ -71,16 +71,6 @@ public class KnowledgeRetrievalService implements KnowledgeRetrievalProvider {
         this.managedSearchService = managedSearchService;
     }
 
-    /** 兼容旧单测与迁移前关系；生产装配只使用包含版本依赖的公开构造器。 */
-    KnowledgeRetrievalService(AiAgentMapper agentMapper,
-                              AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper,
-                              AiKnowledgeBaseMapper knowledgeBaseMapper,
-                              AesGcmCryptoUtil cryptoUtil,
-                              KnowledgeSearchClient searchClient) {
-        this(agentMapper, agentKnowledgeBaseMapper, knowledgeBaseMapper, null,
-            cryptoUtil, searchClient, null);
-    }
-
     @Override
     public String retrieve(String agentCode, String query) {
         return retrieve(agentCode, query, null);
