@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerwork.safety.security.UserPrincipals;
 import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
@@ -53,7 +54,7 @@ public class UserQuotaController {
     @Operation(summary = "我的额度", description = "当前滚动窗口内的 token 与次数用量；-1 表示该维度不限")
     @GetMapping
     public Mono<Map<String, Object>> myQuota(ServerWebExchange exchange) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         // 等级按租户隔离，判定必须在用户归属租户下进行
         String tenantId = user.tenantId() == null || user.tenantId().isBlank()
             ? TenantContext.DEFAULT : user.tenantId();
@@ -75,11 +76,4 @@ public class UserQuotaController {
     }
 
     /** 从 exchange 属性取当前用户主体（过滤器已保证存在，此处为单一防御点）。 */
-    private UserPrincipal principal(ServerWebExchange exchange) {
-        UserPrincipal user = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
-        if (user == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
-        }
-        return user;
-    }
 }

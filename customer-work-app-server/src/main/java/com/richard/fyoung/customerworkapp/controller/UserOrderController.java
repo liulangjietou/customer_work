@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerwork.safety.security.UserPrincipals;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao.OrderView;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao.OwnedOrder;
@@ -42,7 +43,7 @@ public class UserOrderController {
     @Operation(summary = "我的订单列表", description = "当前用户全部订单，按下单时间倒序；不含物流轨迹")
     @GetMapping
     public Mono<List<OrderView>> list(ServerWebExchange exchange) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             requireEnabled();
             return orderDao.listByUser(user.userId());
@@ -52,7 +53,7 @@ public class UserOrderController {
     @Operation(summary = "订单详情", description = "含物流轨迹；非本人和不存在统一返回 404")
     @GetMapping("/{orderId}")
     public Mono<OrderView> detail(@PathVariable String orderId, ServerWebExchange exchange) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             requireEnabled();
             OwnedOrder owned = orderDao.findById(orderId)
@@ -67,13 +68,6 @@ public class UserOrderController {
     // ---- 内部 ----
 
     /** 从 exchange 属性取当前用户主体（过滤器已保证存在，此处为单一防御点）。 */
-    private UserPrincipal principal(ServerWebExchange exchange) {
-        UserPrincipal user = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
-        if (user == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
-        }
-        return user;
-    }
 
     /** 订单数据源未启用（mode!=jdbc）时语义化 503。 */
     private void requireEnabled() {
@@ -86,11 +80,18 @@ public class UserOrderController {
     private <T> Mono<T> blocking(Callable<T> callable) {
         return Mono.fromCallable(callable)
             .subscribeOn(Schedulers.boundedElastic())
-            .onErrorMap(this::translate);
+            .onErrorMap(this::mapError);
     }
 
-    /** 领域异常 → HTTP 状态：ResponseStatusException 原样透传；查询异常 503。 */
-    private Throwable translate(Throwable e) {
+    /**
+     * 领域异常 → HTTP 状态：ResponseStatusException 原样透传；查询异常 503。
+     *
+     * <p>与 {@code AgentOrderController#mapError} 同一套策略、故同名。<b>刻意不用
+     * {@code HttpErrors.translate}</b>：那边把 IllegalStateException 映射成 409（状态机拒绝流转，
+     * 客户端应刷新重试），而订单链路的 IllegalState 表达的是下游不可用，应给 503（稍后重试）。
+     * 两者只是长得像，合并会让订单接口在下游抖动时返回 409，把客户端引向错误的重试姿势。</p>
+     */
+    private Throwable mapError(Throwable e) {
         if (e instanceof ResponseStatusException) {
             return e;
         }

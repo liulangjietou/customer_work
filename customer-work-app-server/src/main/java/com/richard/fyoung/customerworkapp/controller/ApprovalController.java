@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerworkapp.web.HttpErrors;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalRequest;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalStatus;
 import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
@@ -77,7 +78,7 @@ public class ApprovalController {
         String resolvedOperator = resolveOperator(exchange, operator);
         return Mono.fromCallable(() -> approvalService.approve(id, resolvedOperator))
             .doOnNext(req -> audit(req, "approve", resolvedOperator, null))
-            .onErrorMap(this::translate);
+            .onErrorMap(HttpErrors::translate);
     }
 
     @Operation(summary = "拒绝审批单")
@@ -89,7 +90,7 @@ public class ApprovalController {
         String resolvedOperator = resolveOperator(exchange, operator);
         return Mono.fromCallable(() -> approvalService.deny(id, resolvedOperator, note))
             .doOnNext(req -> audit(req, "deny", resolvedOperator, note))
-            .onErrorMap(this::translate);
+            .onErrorMap(HttpErrors::translate);
     }
 
     /**
@@ -117,15 +118,6 @@ public class ApprovalController {
     }
 
     /** 领域异常 → HTTP 状态：不存在 404，重复决策 409。 */
-    private Throwable translate(Throwable e) {
-        if (e instanceof NoSuchElementException) {
-            return new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
-        }
-        if (e instanceof IllegalStateException) {
-            return new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
-        }
-        return e;
-    }
 
     private ApprovalStatus parseStatus(String status) {
         try {

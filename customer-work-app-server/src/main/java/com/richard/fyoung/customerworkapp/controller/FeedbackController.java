@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerwork.safety.security.UserPrincipals;
 import com.richard.fyoung.customerwork.core.dto.FeedbackRequest;
 import com.richard.fyoung.customerwork.capability.feedback.FeedbackService;
 import com.richard.fyoung.customerwork.capability.feedback.MessageFeedback;
@@ -53,7 +54,7 @@ public class FeedbackController {
     @PostMapping
     public Mono<MessageFeedback> submit(@Valid @RequestBody FeedbackRequest request, ServerWebExchange exchange) {
         return Mono.fromCallable(() -> {
-            sessionGuard.requireOwned(request.sessionId(), principal(exchange).userId());
+            sessionGuard.requireOwned(request.sessionId(), UserPrincipals.require(exchange).userId());
             requireMessageInSession(request.messageId(), request.sessionId());
             return feedbackService.submit(
                 request.sessionId(), request.messageId(), request.type(), request.comment());
@@ -67,7 +68,7 @@ public class FeedbackController {
             MessageFeedback feedback = feedbackService.find(messageId)
                 .orElseThrow(() -> new ResponseStatusException(
                     HttpStatus.NOT_FOUND, "feedback not found: " + messageId));
-            sessionGuard.requireOwned(feedback.sessionId(), principal(exchange).userId());
+            sessionGuard.requireOwned(feedback.sessionId(), UserPrincipals.require(exchange).userId());
             return feedback;
         });
     }
@@ -77,18 +78,11 @@ public class FeedbackController {
     public Mono<List<MessageFeedback>> listBySession(@RequestParam String sessionId,
                                                      ServerWebExchange exchange) {
         return Mono.fromCallable(() -> {
-            sessionGuard.requireOwned(sessionId, principal(exchange).userId());
+            sessionGuard.requireOwned(sessionId, UserPrincipals.require(exchange).userId());
             return feedbackService.findBySession(sessionId);
         });
     }
 
-    private UserPrincipal principal(ServerWebExchange exchange) {
-        UserPrincipal principal = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
-        if (principal == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
-        }
-        return principal;
-    }
 
     /** 消息不存在或不属于当前会话统一 404，不能让可伪造的 messageId 覆盖他人反馈。 */
     private ChatMessage requireMessageInSession(String messageId, String sessionId) {

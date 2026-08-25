@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -276,13 +277,7 @@ public class CollaborativeCodingService {
         if (CollectionUtils.isEmpty(responses)) {
             throw new BizException(ResultCode.COLLAB_ROLE_FAILED, "模型未返回任何内容");
         }
-        String text = responses.stream()
-            .flatMap(response -> response.getContent().stream())
-            .filter(TextBlock.class::isInstance)
-            .map(TextBlock.class::cast)
-            .map(TextBlock::getText)
-            .filter(StringUtils::hasText)
-            .collect(Collectors.joining());
+        String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new BizException(ResultCode.COLLAB_ROLE_FAILED, "模型返回内容为空");
         }

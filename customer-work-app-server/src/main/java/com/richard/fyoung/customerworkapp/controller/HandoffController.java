@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerworkapp.web.HttpErrors;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffStatus;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
@@ -84,7 +85,7 @@ public class HandoffController {
         String operator = requireAgent(exchange);
         return Mono.fromCallable(() -> handoffService.claim(id, operator))
             .doOnNext(t -> audit(t, "claim", operator, null))
-            .onErrorMap(this::translate);
+            .onErrorMap(HttpErrors::translate);
     }
 
     @Operation(summary = "结案回收给 AI", description = "CLAIMED → RESOLVED，未接单先结案返回 409")
@@ -95,7 +96,7 @@ public class HandoffController {
         String operator = requireAgent(exchange);
         return Mono.fromCallable(() -> handoffService.resolve(id, note, operator))
             .doOnNext(t -> audit(t, "resolve", operator, note))
-            .onErrorMap(this::translate);
+            .onErrorMap(HttpErrors::translate);
     }
 
     /** 工单流转审计留痕（合规追溯：谁在何时对哪张工单做了何种流转）。 */
@@ -114,15 +115,6 @@ public class HandoffController {
     }
 
     /** 领域异常 → HTTP 状态：不存在 404，状态机冲突 409。 */
-    private Throwable translate(Throwable e) {
-        if (e instanceof NoSuchElementException) {
-            return new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
-        }
-        if (e instanceof IllegalStateException) {
-            return new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
-        }
-        return e;
-    }
 
     private HandoffStatus parseStatus(String status) {
         try {
