@@ -1,40 +1,24 @@
 package com.richard.fyoung.customeradmin.contentguard.config;
 
-import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbConnection;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * 内容风控数据源连接参数：{@code admin.content-guard.*}。
+ * 内容风控业务开关：{@code admin.content-guard.*}。
  *
  * <p>敏感词库、限流规则、命中日志三张表都在<b>客服端库</b>（{@code agent_scope_customer_work}）——
  * 那是运行时真正读它们的进程所在的库，后台只是这份数据的维护端。刻意<b>不</b>在 admin 库另存一份再同步：
  * 双写必然出现"后台显示已停用、客服端仍在拦"这类不一致，而风控配置的不一致是要出事故的。</p>
  *
- * <p>该库不可达不影响 admin 启动——数据源惰性构建、首次访问才连（见 {@link ContentGuardGatewayProvider}）。</p>
+ * <p><b>连接参数已迁出本类</b>：客服端库全 admin 只有一份连接配置
+ * {@link com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties}
+ * （{@code admin.customer-work-db.*}）。本类此前既管连接又管业务开关，
+ * 而另外两个属性类各自抄了一份同值的连接参数，等于同一个库有三个真相来源。</p>
  * @author owlzhangfq@gmail.com
  */
 @Data
 @ConfigurationProperties(prefix = "admin.content-guard")
-public class ContentGuardProperties implements CustomerWorkDbConnection {
-
-    /** 数据库主机。 */
-    private String host = "localhost";
-
-    /** 数据库端口。 */
-    private int port = 3306;
-
-    /** 库名。 */
-    private String database = "agent_scope_customer_work";
-
-    /** 用户名。 */
-    private String username = "root";
-
-    /** 密码。 */
-    private String password = "root";
-
-    /** Admin 首次访问客服端库前是否执行其权威 Flyway；生产 DBA 模式关闭。 */
-    private boolean schemaMigrationEnabled = true;
+public class ContentGuardProperties {
 
     /**
      * 是否给 admin 自己的 workspace 智能体（对话 / VibeCoding）挂敏感词过滤。默认关闭。
@@ -68,9 +52,4 @@ public class ContentGuardProperties implements CustomerWorkDbConnection {
      */
     private String safeReply = "";
 
-    /** 拼装 JDBC URL（与 admin 主库同款连接参数）。 */
-    public String jdbcUrl() {
-        return "jdbc:mysql://" + host + ":" + port + "/" + database
-            + "?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true";
-    }
 }

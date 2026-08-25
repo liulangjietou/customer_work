@@ -7,8 +7,13 @@ data:
   SPRING_PROFILES_ACTIVE: "prod"
 
   # ---- 外部依赖地址（按实际部署填写）----
+  # 客服端库：app-server 直连，admin 的 12 个跨库门面经 admin.customer-work-db.* 绑同一套变量
+  # （同一个物理库没有理由有两套变量名）。DATABASE / USERNAME 此前两处清单都缺，
+  # 两个服务都会回落到各自 yml 里的 root 默认值——生产用 root 连库不是意图，是没人显式配过。
   MYSQL_HOST: "mysql.customer-work.svc.cluster.local"
   MYSQL_PORT: "3306"
+  MYSQL_DATABASE: "agent_scope_customer_work"
+  MYSQL_USERNAME: "customer_work"
   REDIS_HOST: "redis.customer-work.svc.cluster.local"
   REDIS_PORT: "6379"
   NACOS_SERVER_ADDR: "nacos.customer-work.svc.cluster.local:8848"

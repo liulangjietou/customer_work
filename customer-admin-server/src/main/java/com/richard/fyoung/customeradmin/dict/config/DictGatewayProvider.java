@@ -1,10 +1,10 @@
 package com.richard.fyoung.customeradmin.dict.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.dict.jdbc.DictGateway;
 import jakarta.annotation.PreDestroy;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,12 +18,11 @@ import org.springframework.stereotype.Component;
  * @author owlzhangfq@gmail.com
  */
 @Component
-@EnableConfigurationProperties(DictProperties.class)
 public class DictGatewayProvider {
 
     private final CustomerWorkFacade<DictGateway> facade;
 
-    public DictGatewayProvider(DictProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
+    public DictGatewayProvider(CustomerWorkDbProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("dict-pool", properties, tenantPlugins)
             .mapperClasses(DictGatewayFactory.MAPPER_CLASSES)
             .mapperXml(DictGatewayFactory.MAPPER_XML_LOCATIONS)

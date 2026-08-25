@@ -1,11 +1,12 @@
 package com.richard.fyoung.customeradmin.contentguard.config;
 
-import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.contentguard.jdbc.ContentGuardGateway;
 import jakarta.annotation.PreDestroy;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
@@ -20,12 +21,14 @@ import org.springframework.stereotype.Component;
  * @author owlzhangfq@gmail.com
  */
 @Component
+// ContentGuardProperties 只有 @ConfigurationProperties 没有 @Component，这里是它进容器的唯一入口。
+// 连接参数已迁到 admin.customer-work-db.*，本类保留的是敏感词那几个业务开关的注册职责。
 @EnableConfigurationProperties(ContentGuardProperties.class)
 public class ContentGuardGatewayProvider {
 
     private final CustomerWorkFacade<ContentGuardGateway> facade;
 
-    public ContentGuardGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
+    public ContentGuardGatewayProvider(CustomerWorkDbProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("content-guard-pool", properties, tenantPlugins)
             .mapperClasses(ContentGuardGatewayFactory.MAPPER_CLASSES)
             .mapperXml(ContentGuardGatewayFactory.MAPPER_XML_LOCATIONS)

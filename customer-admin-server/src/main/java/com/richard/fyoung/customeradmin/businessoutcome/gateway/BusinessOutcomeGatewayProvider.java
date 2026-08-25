@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.businessoutcome.gateway;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
-import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
@@ -14,7 +14,7 @@ public class BusinessOutcomeGatewayProvider {
 
     private final CustomerWorkFacade<BusinessOutcomeGateway> facade;
 
-    public BusinessOutcomeGatewayProvider(ContentGuardProperties properties,
+    public BusinessOutcomeGatewayProvider(CustomerWorkDbProperties properties,
                                           AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("business-outcome-pool", properties, tenantPlugins)
             .mapperClasses(BusinessOutcomeGatewayFactory.MAPPER_CLASSES)

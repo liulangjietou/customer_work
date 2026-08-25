@@ -31,7 +31,6 @@ import javax.sql.DataSource;
  * @author owlzhangfq@gmail.com
  */
 @Configuration
-@EnableConfigurationProperties(AgentCallStatsAppProperties.class)
 public class AgentCallStatsStoreConfig {
 
     private static final Logger log = LoggerFactory.getLogger(AgentCallStatsStoreConfig.class);
