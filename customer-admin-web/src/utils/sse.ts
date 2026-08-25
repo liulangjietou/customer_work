@@ -99,14 +99,31 @@ export function streamSse(path: string, body: unknown, handlers: SseHandlers): (
   return () => controller.abort()
 }
 
+/**
+ * 取 SSE 字段值：按规范只去掉<b>一个</b>前导空格，其余原样保留。
+ *
+ * <p>此前这里用的是 {@code trim()}，会把正文增量首尾的空格全吃掉——模型流是按 token 切片的，
+ * 一个以空格开头的英文 token（" the"）到了页面上就与前一个词粘成 "thethe"，Markdown 的缩进
+ * 也会被抹平。空格在正文里是有意义的字符，不是噪声。</p>
+ *
+ * <p>顺带处理行尾 {@code \r}：事件按 {@code \n\n} 切分、行按 {@code \n} 切分，若服务端用
+ * {@code \r\n} 作行分隔，每行尾部会残留 {@code \r}。原先由 {@code trim()} 顺手清掉，
+ * 去掉 trim 后必须显式处理，否则会把控制字符带进正文。</p>
+ */
+function readSseFieldValue(rawValue: string): string {
+  const withoutCr = rawValue.endsWith('\r') ? rawValue.slice(0, -1) : rawValue
+  return withoutCr.startsWith(' ') ? withoutCr.slice(1) : withoutCr
+}
+
 function parseSseBlock(block: string): SseEvent | null {
   let event = 'message'
   const dataLines: string[] = []
   for (const line of block.split('\n')) {
     if (line.startsWith('event:')) {
-      event = line.slice('event:'.length).trim()
+      // 事件名是协议标识而非正文，两端空白一律不保留
+      event = readSseFieldValue(line.slice('event:'.length)).trim()
     } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice('data:'.length).trim())
+      dataLines.push(readSseFieldValue(line.slice('data:'.length)))
     }
   }
   if (dataLines.length === 0) {

@@ -43,6 +43,37 @@ public final class TenantContext {
         CURRENT.set(canonicalizeTenantId(tenantId));
     }
 
+    /**
+     * 恢复一个<b>此前已经过 {@link #set} 校验</b>的租户值：跳过格式校验，保留归一。
+     *
+     * <p><b>只给上下文传播机制用</b>（{@link TenantContextThreadLocalAccessor}），业务代码一律用
+     * {@link #set}。语义上这不是"写入一个新租户"，而是"把快照里的值放回当前线程"——值的唯一来源
+     * 是某次 {@code set} 成功后被 Reactor Context 捕获的快照，格式在那一刻已经校验过，
+     * 这里再验一遍纯属重复，且重复的位置恰恰是全链路最热的一点。</p>
+     *
+     * <p><b>为什么这一点这么热</b>：开启 {@code Hooks.enableAutomaticContextPropagation()} 后，
+     * Reactor 会给链上<b>每个</b>算子包一层 {@code ContextWriteRestoringThreadLocals}，每层在
+     * {@code onNext} 时都要把全部 ThreadLocal 快照恢复一遍。AI 流式链实测有 110+ 层，于是模型每吐
+     * 一个增量，这个方法就要被调用上百次；原先走 {@code set} 时那上百次正则匹配会把一整颗核烧满，
+     * 表现为流式输出一卡一卡（实测吞吐被压到约 5 字符/秒）。</p>
+     *
+     * <p>校验并未因此减弱：所有<b>入口</b>（鉴权过滤器、拦截器、{@link #callWith}）仍走 {@link #set}
+     * 的全量校验，符合"整条链路只做一处防御式编程"的约定。</p>
+     *
+     * <p><b>归一仍然保留</b>，只跳过校验：并非所有写入方放进 Reactor Context 的都是归一后的值——
+     * {@code UserAuthWebFilter}/{@code AgentAuthWebFilter} 放的是原始入参（{@code ApiKeyAuthWebFilter}
+     * 放的才是 {@code canonicalTenant}）。跳过归一会让 {@code "DEFAULT"} 这类写法在传播后变成与
+     * {@link #set} 不同的值，破坏"保留租户只有一份"的约定。而 {@link #canonicalizeTenantId} 只是一次
+     * {@code equalsIgnoreCase}（长度不等即短路），与被去掉的正则不在一个量级上。</p>
+     */
+    static void restore(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            CURRENT.remove();
+            return;
+        }
+        CURRENT.set(canonicalizeTenantId(tenantId));
+    }
+
     /** 统一校验所有会话、JWT、API Key 与后台请求带入的租户编码。 */
     public static boolean isValidTenantId(String tenantId) {
         return tenantId != null && TENANT_ID_PATTERN.matcher(tenantId).matches();

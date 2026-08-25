@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { WarningFilled } from '@element-plus/icons-vue'
-import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { createScrollFollower } from '@/utils/scrollFollower'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
 import { confirmChatPlan } from '@/api/chat'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -75,11 +76,15 @@ async function openSession(targetSessionId: string) {
   }
 }
 
+// 跟随到底部：每帧最多滚一次、瞬时定位。流式增量的到达频率远高于平滑滚动动画的时长，
+// 逐条调 scrollTo({behavior:'smooth'}) 会不断打断上一次动画，反而跟不上内容（详见 scrollFollower）。
+const scrollFollower = createScrollFollower(() => scrollRef.value)
+
 function scrollToBottom() {
-  nextTick(() => {
-    scrollRef.value?.scrollTo({ top: scrollRef.value.scrollHeight, behavior: 'smooth' })
-  })
+  nextTick(() => scrollFollower.follow())
 }
+
+onBeforeUnmount(() => scrollFollower.cancel())
 
 function send() {
   store.send(props.agentCode, buildMessageWithAttachments, scrollToBottom)

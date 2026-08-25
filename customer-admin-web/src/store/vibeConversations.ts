@@ -11,6 +11,7 @@ import {
 import { getChatSessionMessages } from '@/api/chat'
 import { generateUuid } from '@/utils/uuid'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
+import { createTextChunkBatcher } from '@/utils/textChunkBatcher'
 import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
 import type { TraceNode } from '@/components/TraceTimeline.vue'
@@ -352,12 +353,19 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       onScroll?: () => void,
     ) {
       const sid = conv.sessionId
-      conv.abort = starter({
+      const isActive = () => this.byAgent[agentCode]?.activeId === sid
+      // 与对话面板同款的整帧合并：模型流可能在一帧内推多次正文增量，逐片改 Pinia 会反复触发
+      // Markdown 解析与 DOM patch。此前只有 ChatPanel 做了合并，VibeCoding 漏了，两边行为不一致。
+      const textBatcher = createTextChunkBatcher((chunk) => {
+        assistantMessage.text += chunk
+        if (isActive()) onScroll?.()
+      })
+      const abortStream = starter({
         onEvent: (event) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (!c) return
-          const isActive = () => this.byAgent[agentCode]?.activeId === sid
           if (event.event === 'done') {
+            textBatcher.flush()
             c.streaming = false
             // 对话结束后自动刷新该会话文件目录树
             this.loadFiles(agentCode, sid)
@@ -371,6 +379,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
             return
           }
           if (event.event === 'test_report') {
+            textBatcher.flush()
             try {
               const parsed = JSON.parse(event.data) as TestReport
               ;(assistantMessage.testReports ??= []).push(parsed)
@@ -379,16 +388,19 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
             return
           }
           if (event.event === 'role_stage') {
+            textBatcher.flush()
             this.applyRoleStage(assistantMessage, event.data)
             if (isActive()) onScroll?.()
             return
           }
           if (event.event === 'plan') {
+            textBatcher.flush()
             this.applyPlanEvent(c, assistantMessage, event.data)
             if (isActive()) onScroll?.()
             return
           }
           if (event.event === 'plan_result') {
+            textBatcher.flush()
             try {
               const parsed = JSON.parse(event.data) as PlanResultEvent
               const card = c.pendingPlans.get(parsed.planId)
@@ -401,6 +413,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
             return
           }
           if (event.event.startsWith('node:')) {
+            textBatcher.flush()
             const kind = event.event.slice('node:'.length)
             const payload = parseChatStreamPayload(event.data)
             appendChatStreamNode(assistantMessage.nodes, kind, payload.text, payload.source, payload.subagentName)
@@ -410,13 +423,16 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
               // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板
               appendChatStreamNode(assistantMessage.nodes, ANSWER_KIND, payload.text, payload.source, payload.subagentName)
             } else {
-              assistantMessage.text += payload.text
+              // 合并进本帧待发文本；滚动由 batcher 的回调统一触发，此处直接返回避免每片都滚
+              textBatcher.append(payload.text)
+              return
             }
           }
           // 其余未知事件静默忽略（需求 §5.5 向后兼容）
           if (isActive()) onScroll?.()
         },
         onError: (error) => {
+          textBatcher.discard()
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (c) {
             c.streaming = false
@@ -428,6 +444,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
           assistantMessage.failed = true
         },
         onComplete: () => {
+          textBatcher.flush()
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (c) {
             c.streaming = false
@@ -439,6 +456,11 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
           this.historyVersion[agentCode] = (this.historyVersion[agentCode] ?? 0) + 1
         },
       })
+      // 中断时先把本帧待发文本落进消息，否则用户点"中断"会丢掉最后一小段已收到的正文
+      conv.abort = () => {
+        textBatcher.flush()
+        abortStream()
+      }
     },
 
     /** P1-2：执行命令并保留当前会话最近 20 条历史。 */
