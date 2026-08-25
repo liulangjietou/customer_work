@@ -1,15 +1,21 @@
 package com.richard.fyoung.customerwork.tool.mcp;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 
-import java.net.InetSocketAddress;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -98,6 +104,29 @@ class McpClientFactoryTest {
 
         assertThrows(Exception.class, () -> new McpClientFactory(policy).parseSpec("test", "http",
             "{\"url\":\"https://attacker.example/mcp\"}"));
+    }
+
+    @Test
+    void parseSpec_shouldAllowLoopbackOnlyWhenHostExplicitlyAllowlisted() throws Exception {
+        McpSecurityPolicy policy = new McpSecurityPolicy(() -> List.of("127.0.0.1"),
+            List::of, List::of, List::of,
+            host -> new InetAddress[]{InetAddress.getByAddress(host, new byte[]{127, 0, 0, 1})});
+
+        McpServerSpec spec = assertDoesNotThrow(() -> new McpClientFactory(policy).parseSpec("test", "http",
+            "{\"url\":\"http://127.0.0.1:3002/mcp\"}"));
+
+        assertEquals("http://127.0.0.1:3002/mcp", spec.url());
+    }
+
+    @Test
+    void parseSpec_shouldStillRejectMetadataWhenHostExplicitlyAllowlisted() throws Exception {
+        McpSecurityPolicy policy = new McpSecurityPolicy(() -> List.of("169.254.169.254"),
+            List::of, List::of, List::of,
+            host -> new InetAddress[]{InetAddress.getByAddress(host,
+                new byte[]{(byte) 169, (byte) 254, (byte) 169, (byte) 254})});
+
+        assertThrows(Exception.class, () -> new McpClientFactory(policy).parseSpec("test", "http",
+            "{\"url\":\"http://169.254.169.254/latest/meta-data\"}"));
     }
 
     @Test
@@ -216,6 +245,69 @@ class McpClientFactoryTest {
     }
 
     /**
+     * Streamable HTTP 的独立 GET 事件流是可选能力：服务端可以返回 405，只保留 POST 请求/响应模式。
+     * 回归真实报错形状，确保 SDK 0.17.0 不会再把这类 405 JSON 当成 SSE 解析失败并污染生命周期。
+     */
+    @Test
+    void testConnectivity_shouldSucceed_whenStreamableHttpServerRejectsOptionalGet() throws Exception {
+        CountDownLatch optionalGet = new CountDownLatch(1);
+        AtomicInteger postRequests = new AtomicInteger();
+        ObjectMapper objectMapper = new ObjectMapper();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/mcp", exchange -> {
+            try {
+                if ("GET".equals(exchange.getRequestMethod())) {
+                    optionalGet.countDown();
+                    respondJson(exchange, 405, "{\"error\":\"GET not supported, use POST\"}");
+                    return;
+                }
+                if ("DELETE".equals(exchange.getRequestMethod())) {
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
+                }
+                postRequests.incrementAndGet();
+                JsonNode request = objectMapper.readTree(exchange.getRequestBody());
+                String method = request.path("method").asText();
+                if ("notifications/initialized".equals(method)) {
+                    exchange.sendResponseHeaders(202, -1);
+                    return;
+                }
+                String id = request.path("id").toString();
+                if ("initialize".equals(method)) {
+                    String protocolVersion = request.path("params").path("protocolVersion").asText();
+                    exchange.getResponseHeaders().set("Mcp-Session-Id", "post-only-session");
+                    respondJson(exchange, 200, "{\"jsonrpc\":\"2.0\",\"id\":" + id
+                        + ",\"result\":{\"protocolVersion\":\"" + protocolVersion
+                        + "\",\"capabilities\":{\"tools\":{\"listChanged\":false}},"
+                        + "\"serverInfo\":{\"name\":\"post-only\",\"version\":\"1.0.0\"}}}");
+                    return;
+                }
+                if ("tools/list".equals(method)) {
+                    respondJson(exchange, 200,
+                        "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"tools\":[]}}");
+                    return;
+                }
+                respondJson(exchange, 404,
+                    "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32601,\"message\":\"not found\"}}");
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        try {
+            String config = "{\"url\":\"http://127.0.0.1:" + server.getAddress().getPort() + "/mcp\"}";
+
+            McpConnectivityResult result = factory.testConnectivity("post-only", "http", config);
+
+            assertTrue(result.success(), result.errorMessage());
+            assertTrue(optionalGet.await(2, TimeUnit.SECONDS), "客户端应识别并兼容服务端拒绝可选 GET");
+            assertTrue(postRequests.get() >= 3, "initialize、initialized、tools/list 都应继续使用 POST");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
      * listTools/callTool 跟 testConnectivity 不一样，不在方法内部兜底成失败结果，
      * 而是直接把连接异常往外抛——交给调用方（如后台 McpService）统一包成自己的业务异常，
      * 这里只验证"连不上会抛异常"这个边界，不吞掉。
@@ -317,5 +409,13 @@ class McpClientFactoryTest {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private static void respondJson(com.sun.net.httpserver.HttpExchange exchange, int status, String body)
+            throws java.io.IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        exchange.getResponseBody().write(bytes);
     }
 }

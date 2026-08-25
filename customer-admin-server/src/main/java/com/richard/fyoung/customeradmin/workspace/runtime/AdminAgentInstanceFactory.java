@@ -996,9 +996,8 @@ public class AdminAgentInstanceFactory {
     private reactor.core.publisher.Mono<McpClientWrapper> buildMcpClient(AiMcp mcp) throws Exception {
         String executableConfig = mcpCredentialService == null
             ? mcp.getConfig() : mcpCredentialService.resolve(mcp);
-        return mcpFactory.buildClientBuilder(mcp.getMcpName(), mcp.getMcpType(), executableConfig)
-            .timeout(java.time.Duration.ofSeconds(30))
-            .buildAsync();
+        return mcpFactory.buildClient(mcp.getMcpName(), mcp.getMcpType(), executableConfig,
+            java.time.Duration.ofSeconds(30));
     }
 
     /**

@@ -23,6 +23,49 @@ admin:
   content-guard:
     agent-filter-enabled: true
     hit-log-enabled: true
+  # 出网 SSRF 白名单（本地联调放行本机）：主配置 application.yml 里这几项默认为空（生产语义不变），
+  # 仅 dev profile 下把 localhost/127.0.0.1 列入白名单。命中后仍解析地址按 IP 判定，
+  # 链路本地（169.254/16，含云元数据）、未指定与组播地址在所有环境永久拒绝。
+  mcp:
+    security:
+      # 白名单是「强制名单」而非「内网例外」：不在名单里的 host 一律拒绝，公网域名同样要显式列入。
+      # 企业私网/公司域名请走环境变量注入，不要写进本文件——本仓库是个人开源项目，不携带公司信息。
+      # 例：ADMIN_MCP_ALLOWED_HOSTS=localhost,127.0.0.1,mcp.example-corp.com
+      allowed-hosts: ${ADMIN_MCP_ALLOWED_HOSTS:localhost,127.0.0.1}
+      # stdio 白名单（本机联调）。三项留空即关闭 stdio；换机器时用下面的环境变量覆盖或清空。
+      # 两条硬约束，写错任何一条会让「所有」stdio MCP 一起失败，而不只是配错的那个：
+      #   ① 路径必须在本机真实存在——realPaths() 对不存在的条目直接抛「不存在或不可访问」，
+      #      不是跳过它。此处原先填的两个示例路径并不存在，stdio 就是这么被整体拖死的。
+      #   ② 命令必须是可执行的普通文件、工作目录必须是目录；两边都按 toRealPath() 比较，
+      #      符号链接会被解析，所以填软链或真实路径都可以。
+      # 刻意放行「具体的 MCP server 可执行文件」而不是 npx：npx -y <任意包> 等于允许执行任意
+      # npm 包，白名单就失去意义了。新增 stdio MCP 时按同样口径追加它自己的可执行文件。
+      allowed-commands: ${ADMIN_MCP_STDIO_ALLOWED_COMMANDS:/opt/homebrew/bin/mcp-server-filesystem}
+      # 子进程 cwd 的根白名单。filesystem server 的实际可访问范围由它自己的启动参数决定，
+      # 与 cwd 无关，故这里给一个任何机器都存在的中立目录即可。
+      allowed-working-directories: ${ADMIN_MCP_STDIO_ALLOWED_WORKING_DIRECTORIES:/tmp}
+      # 子进程环境默认被清空（McpStdioProcessLauncher 会 clear()），这里列出允许透传的变量名。
+      # PATH 必须放行：npm 系的 MCP server 可执行文件是带 `#!/usr/bin/env node` 的脚本，
+      # PATH 为空时 env 找不到 node，进程起不来，报「Client failed to initialize」。
+      allowed-environment-keys: ${ADMIN_MCP_STDIO_ALLOWED_ENVIRONMENT_KEYS:PATH}
+  model:
+    egress:
+      # 注意：模型端点命中白名单后的地址策略固定为 ALLOW_PRIVATE_NETWORK（只放宽 RFC1918/ULA，
+      # 环回永久拒绝），所以 localhost 自建模型代理在本地开发仍会被拦，私网 IP 可用。
+      allowed-hosts: localhost,127.0.0.1,tokenhub.tencentmaas.com,api.deepseek.com,dashscope.aliyuncs.com
+  rag:
+    # RAG 知识库默认本就放行内网（地址由管理员显式配置），此处列白名单是收紧为仅本机。
+    allowed-hosts: localhost,127.0.0.1
+  system-tool:
+    http:
+      allowed-hosts: localhost,127.0.0.1
+
+# MyBatis 的 SQL 打印（Preparing/Parameters/Total）走 mapper 接口的 DEBUG logger，
+# 下面把业务包开到 DEBUG 后 SQL 会刷屏。这里统一换成 NoLogging 实现关掉 SQL 打印，
+# 业务 DEBUG 日志不受影响；需要排查 SQL 时临时改回 org.apache.ibatis.logging.slf4j.Slf4jImpl。
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 
 logging:
   level:

@@ -137,9 +137,7 @@ public class McpToolkitConfigurer {
         String type = McpServerSpec.TRANSPORT_STREAMABLE_HTTP.equalsIgnoreCase(server.getTransport())
             ? McpServerSpec.TYPE_HTTP
             : McpServerSpec.TYPE_SSE;
-        return mcpClientFactory
-            .buildClientBuilder(McpServerSpec.remote(server.getName(), type, server.getUrl(), server.getHeaders()))
-            .timeout(CLIENT_TIMEOUT)
-            .buildAsync();
+        return mcpClientFactory.buildClient(
+            McpServerSpec.remote(server.getName(), type, server.getUrl(), server.getHeaders()), CLIENT_TIMEOUT);
     }
 }

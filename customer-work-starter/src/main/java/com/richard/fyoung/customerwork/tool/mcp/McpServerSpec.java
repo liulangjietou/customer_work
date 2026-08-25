@@ -6,7 +6,7 @@ import java.util.Map;
 /**
  * MCP 服务连接规格：把「配置从哪来」（后台库里的一段 JSON / yml 里的一个 Server 节点）与
  * 「怎么建客户端」这两件事解耦——所有来源先归一成本规格，再交给
- * {@link McpClientFactory#buildClientBuilder(McpServerSpec)} 构建客户端。
+ * {@link McpClientFactory#buildClient(McpServerSpec, java.time.Duration)} 构建运行时客户端。
  *
  * @param name    MCP 服务名（作为客户端标识，也是工具名前缀来源）
  * @param type    传输类型：{@link #TYPE_STDIO} / {@link #TYPE_HTTP} / {@link #TYPE_SSE}，

@@ -5,6 +5,8 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminSystemToolProperties;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -17,7 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * 异常转译（{@code HttpTargetForbiddenException} → {@link BizException} 且错误码正确）。
  * 判定算法本身（通配匹配、IP 分类、DNS 场景）在 starter 的 {@code HttpTargetGuardTest} 覆盖，不在此重复。
  *
- * <p>用例全部走 IP 字面量或白名单匹配，不发真实请求、不触 DNS。</p>
+ * <p>用例全部走 IP 字面量或确定性解析器，不发真实请求、不触真实 DNS：白名单命中后也要解析地址按
+ * IP 判定，域名用固定解析器给出确定性结果；IP 字面量不触 DNS，可直接用系统解析。</p>
  * @author owlzhangfq@gmail.com
  */
 class SystemToolHttpGuardTest {
@@ -27,7 +30,17 @@ class SystemToolHttpGuardTest {
         if (allowedHosts.length > 0) {
             properties.getHttp().setAllowedHosts(List.of(allowedHosts));
         }
-        return new SystemToolHttpGuard(properties);
+        // 确定性解析器：域名固定解析到公网地址（不触真实 DNS）；IP 字面量回落系统解析。
+        return new SystemToolHttpGuard(properties, SystemToolHttpGuardTest::deterministicResolve);
+    }
+
+    private static InetAddress[] deterministicResolve(String host) throws UnknownHostException {
+        return switch (host) {
+            case "api.example.com", "svc.internal.example.com", "evil.attacker.com" ->
+                new InetAddress[]{ InetAddress.getByName("93.184.216.34") };
+            case "internal.corp" -> new InetAddress[]{ InetAddress.getByName("10.20.30.40") };
+            default -> InetAddress.getAllByName(host);
+        };
     }
 
     @Test
@@ -44,6 +57,15 @@ class SystemToolHttpGuardTest {
         assertDoesNotThrow(() -> guard("api.example.com").checkAllowed("https://api.example.com/v1/x"));
         assertDoesNotThrow(() -> guard("*.example.com").checkAllowed("https://svc.internal.example.com/x"));
         assertThrows(BizException.class, () -> guard("api.example.com").checkAllowed("https://evil.attacker.com/x"));
+    }
+
+    @Test
+    void whitelistMode_shouldAllowLoopback_butStillRejectLinkLocal() {
+        // 显式列入白名单即信任该 host（本地联调依赖它调 127.0.0.1）；
+        // 命中后仍按 IP 判定，链路本地/云元数据地址即使伪造进白名单也拦得住。
+        assertDoesNotThrow(() -> guard("127.0.0.1").checkAllowed("http://127.0.0.1:9000/x"));
+        assertDoesNotThrow(() -> guard("api.example.com").checkAllowed("http://api.example.com/v1/x"));
+        assertThrows(BizException.class, () -> guard("169.254.169.254").checkAllowed("http://169.254.169.254/latest/meta-data"));
     }
 
     @Test

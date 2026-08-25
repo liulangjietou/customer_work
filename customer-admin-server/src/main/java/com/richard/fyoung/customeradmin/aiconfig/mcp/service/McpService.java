@@ -178,6 +178,7 @@ public class McpService {
     public CompletableFuture<McpTestResult> testConnectivity(Long id) {
         AiMcp mcp = requireMcp(id);
         String executableConfig = resolveExecutableConfig(mcp);
+        String tenantId = currentTenant();
 
         return CompletableFuture
             .supplyAsync(() -> mcpFactory.testConnectivity(
@@ -192,7 +193,8 @@ public class McpService {
                 return new McpTestResult(ConnectivityTestStatus.FAILED, LocalDateTime.now(), "连通性测试超时或执行异常");
             })
             .thenApply(result -> {
-                persistTestResult(id, result);
+                // CompletableFuture 回调不继承 Servlet 线程的租户上下文，按发起测试时已校验的租户恢复后回写。
+                TenantContext.runWith(tenantId, () -> persistTestResult(id, result));
                 return result;
             });
     }
