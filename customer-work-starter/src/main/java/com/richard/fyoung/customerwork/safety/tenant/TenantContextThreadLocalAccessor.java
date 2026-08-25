@@ -26,9 +26,16 @@ public class TenantContextThreadLocalAccessor implements ThreadLocalAccessor<Str
         return TenantContext.get();
     }
 
+    /**
+     * 恢复快照值走 {@link TenantContext#restore}（不校验、不归一）而非 {@code set}。
+     *
+     * <p>这里拿到的 {@code value} 是某次入口 {@code set} 成功后被 Reactor Context 捕获的结果，
+     * 格式与归一在写入那一刻已经完成。而本方法处在全链路最热的位置——自动上下文传播会给链上
+     * 每个算子包一层，AI 流式链实测 110+ 层，模型每吐一个增量就要走上百次。</p>
+     */
     @Override
     public void setValue(String value) {
-        TenantContext.set(value);
+        TenantContext.restore(value);
     }
 
     @Override

@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.tool.mcp;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,16 +19,27 @@ public final class McpStdioProcessLauncher {
 
     private static final String MAIN_CLASS = McpStdioProcessLauncher.class.getName();
 
+    /** fat jar 启动器；只有以可执行 jar 运行时才在 classpath 上。 */
+    private static final String PROPERTIES_LAUNCHER = "org.springframework.boot.loader.launch.PropertiesLauncher";
+
     private McpStdioProcessLauncher() {
     }
 
     /** 把目标规格转换成启动本代理进程的命令；secret 只走环境变量，不进入进程参数。 */
     static LaunchCommand commandFor(McpServerSpec spec) {
         List<String> arguments = new ArrayList<>();
-        arguments.add("-Dloader.main=" + MAIN_CLASS);
+        // 打成可执行 jar 时 java.class.path 只有那一个 jar，内部依赖要靠 PropertiesLauncher 展开才找得到；
+        // 而以 exploded classpath 运行时（IDE 直接跑、mvn spring-boot:run、java -cp）loader 根本不在
+        // classpath 上——此时仍拼 PropertiesLauncher 会让代理进程直接 ClassNotFoundException 退出，
+        // 表现为所有 stdio MCP 一律「Client failed to initialize」，且与白名单怎么配都无关。
+        // 故按 loader 是否真的可加载来选启动方式，两种运行模式都能起来。
+        boolean fatJar = propertiesLauncherPresent();
+        if (fatJar) {
+            arguments.add("-Dloader.main=" + MAIN_CLASS);
+        }
         arguments.add("-cp");
         arguments.add(System.getProperty("java.class.path"));
-        arguments.add("org.springframework.boot.loader.launch.PropertiesLauncher");
+        arguments.add(fatJar ? PROPERTIES_LAUNCHER : MAIN_CLASS);
         arguments.add(spec.workingDirectory());
         arguments.add(spec.command());
         Map<String, String> environment = spec.environment() == null ? Map.of() : spec.environment();
@@ -37,6 +50,16 @@ public final class McpStdioProcessLauncher {
         arguments.addAll(targetArgs);
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         return new LaunchCommand(java, List.copyOf(arguments), Map.copyOf(environment));
+    }
+
+    /** loader 是否在当前 classpath 上；决定代理进程用哪种方式启动。 */
+    private static boolean propertiesLauncherPresent() {
+        try {
+            Class.forName(PROPERTIES_LAUNCHER, false, McpStdioProcessLauncher.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError e) {
+            return false;
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -53,8 +76,7 @@ public final class McpStdioProcessLauncher {
         Thread inputPump = new Thread(() -> copyInput(child), "mcp-stdio-input");
         inputPump.setDaemon(true);
         inputPump.start();
-        child.getInputStream().transferTo(System.out);
-        System.out.flush();
+        pump(child.getInputStream(), System.out);
         int exitCode = child.waitFor();
         if (exitCode != 0) {
             System.exit(exitCode);
@@ -70,9 +92,27 @@ public final class McpStdioProcessLauncher {
 
     private static void copyInput(Process child) {
         try (var output = child.getOutputStream()) {
-            System.in.transferTo(output);
+            pump(System.in, output);
         } catch (IOException e) {
             child.destroy();
+        }
+    }
+
+    /**
+     * 边读边写并<b>逐块 flush</b> 地转发字节流。
+     *
+     * <p>不能用 {@code InputStream#transferTo}：两端都是带缓冲的流，而 transferTo 只在读到 EOF、
+     * 由 close() 隐式 flush 一次。MCP 走的是长连接上的行式 JSON-RPC——单条消息只有几百字节，
+     * 既填不满 8KB 缓冲区，连接也不会 EOF，于是 initialize 请求会一直躺在缓冲区里发不到子进程，
+     * 子进程的响应同样卡在回程缓冲里。两个方向一起堵死，表现为握手 8 秒超时，
+     * 而进程树看上去一切正常（代理进程和目标进程都活着），极难往 I/O 缓冲上想。</p>
+     */
+    static void pump(InputStream source, OutputStream sink) throws IOException {
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = source.read(buffer)) >= 0) {
+            sink.write(buffer, 0, read);
+            sink.flush();
         }
     }
 

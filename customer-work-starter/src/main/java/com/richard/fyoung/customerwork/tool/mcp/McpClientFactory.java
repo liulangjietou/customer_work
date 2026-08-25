@@ -3,13 +3,20 @@ package com.richard.fyoung.customerwork.tool.mcp;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.agentscope.core.Version;
+import io.agentscope.core.tool.mcp.McpAsyncClientWrapper;
 import io.agentscope.core.tool.mcp.McpClientBuilder;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
+import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
+import io.modelcontextprotocol.spec.McpClientTransport;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
+import reactor.core.publisher.Mono;
 
+import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -24,8 +31,8 @@ import java.util.stream.Collectors;
  *
  * <p>本类是无状态纯工具类，不注册为 Spring Bean——需要的模块自行 {@code new} 并按自己的装配方式持有。</p>
  *
- * <p>方法分两层：{@link #buildClientBuilder(McpServerSpec)} 只做「规格 -&gt; 客户端」，
- * 不设超时也不发起连接（超时由调用方按用途决定：启动期注册、连通性探测、人工调试三者耐心不同）；
+ * <p>方法分三层：{@link #buildClientBuilder(McpServerSpec)} 保留底层 AgentScope 构建入口；
+ * {@link #buildClient(McpServerSpec, Duration)} 负责生产运行时的传输兼容与超时；
  * {@link #testConnectivity}/{@link #listTools}/{@link #callTool} 则是自带连接与关闭的一次性操作。</p>
  *
  * @author owlzhangfq@gmail.com
@@ -79,7 +86,10 @@ public class McpClientFactory {
             securityPolicy.validateRemoteUrl(node.path("url").asText()), parseHeaders(node));
     }
 
-    /** 按 mcpType/config JSON 构建一个尚未连接、也尚未设置超时的 {@link McpClientBuilder}。 */
+    /**
+     * 按 mcpType/config JSON 构建尚未连接、也尚未设置超时的底层 {@link McpClientBuilder}。
+     * 生产运行时应使用 {@link #buildClient(String, String, String, Duration)}。
+     */
     public McpClientBuilder buildClientBuilder(String mcpName, String mcpType, String config) throws Exception {
         return buildClientBuilder(parseSpec(mcpName, mcpType, config));
     }
@@ -88,8 +98,8 @@ public class McpClientFactory {
      * 按连接规格构建一个尚未连接的 {@link McpClientBuilder}。支持 stdio / sse / http 三种传输。
      *
      * <p>http/sse 传输额外透传规格里的 {@code headers}（如 {@code Authorization}）——需要鉴权的远程
-     * MCP 服务（Bearer token 等）没有这层透传会在握手时被拒（401）；调试面板、连通性测试与真实注册路径
-     * 共用本方法，一处透传处处生效。</p>
+     * MCP 服务（Bearer token 等）没有这层透传会在握手时被拒（401）。Streamable HTTP 生产调用还需经过
+     * {@link #buildClient(McpServerSpec, Duration)} 的 405 兼容层。</p>
      */
     public McpClientBuilder buildClientBuilder(McpServerSpec spec) {
         McpClientBuilder builder = McpClientBuilder.create(spec.name());
@@ -116,6 +126,54 @@ public class McpClientFactory {
             }
         }
         return builder;
+    }
+
+    /**
+     * 构建尚未初始化的 MCP 客户端。
+     *
+     * <p>stdio/sse 沿用 AgentScope 构建器；Streamable HTTP 单独使用 MCP SDK 构建，是为了兼容只提供
+     * POST 的服务端，同时保留支持 GET 事件流的标准服务端能力。所有生产调用方都走本入口，避免连通性测试
+     * 能用、真实 Agent 注册仍卡在 GET SSE 的链路分叉。</p>
+     */
+    public Mono<McpClientWrapper> buildClient(McpServerSpec spec, Duration timeout) {
+        if (!McpServerSpec.TYPE_HTTP.equalsIgnoreCase(spec.type())) {
+            return buildClientBuilder(spec)
+                .timeout(timeout)
+                .initializationTimeout(timeout)
+                .buildAsync();
+        }
+        return Mono.fromCallable(() -> buildStreamableHttpClient(spec, timeout));
+    }
+
+    /** 解析配置并构建尚未初始化的客户端。 */
+    public Mono<McpClientWrapper> buildClient(String mcpName, String mcpType, String config,
+                                               Duration timeout) throws Exception {
+        return buildClient(parseSpec(mcpName, mcpType, config), timeout);
+    }
+
+    private McpClientWrapper buildStreamableHttpClient(McpServerSpec spec, Duration timeout) {
+        String safeUrl = securityPolicy.validateRemoteUrl(spec.url());
+        URI target = URI.create(safeUrl);
+        String endpoint = StringUtils.hasText(target.getRawPath()) ? target.getRawPath() : "/";
+        Map<String, String> headers = spec.headers() == null ? Map.of() : Map.copyOf(spec.headers());
+
+        McpClientTransport transport = HttpClientStreamableHttpTransport.builder(safeUrl)
+            .endpoint(endpoint)
+            .openConnectionOnStartup(false)
+            .httpRequestCustomizer((request, method, uri, body, context) -> {
+                securityPolicy.validateRequestTarget(uri);
+                headers.forEach(request::header);
+            })
+            .build();
+        McpClientTransport compatibleTransport = new StreamableHttpCompatibilityTransport(transport);
+        McpSchema.Implementation clientInfo = new McpSchema.Implementation(
+            "agentscope-java", "AgentScope Java Framework", Version.VERSION);
+        return new McpAsyncClientWrapper(spec.name(), McpClient.async(compatibleTransport)
+            .requestTimeout(timeout)
+            .initializationTimeout(timeout)
+            .clientInfo(clientInfo)
+            .capabilities(McpSchema.ClientCapabilities.builder().build())
+            .build());
     }
 
     /** 尝试建立连接并列出工具，验证 MCP 服务可达；用完即关闭，不缓存实例（与真实注册用途区分）。 */
@@ -209,10 +267,7 @@ public class McpClientFactory {
      * MCP 握手，否则 SDK 抛 IllegalStateException("MCP client '...' not initialized")；与
      * Toolkit#registerMcpClient（真实注册路径）内部的调用顺序保持一致。 */
     private McpClientWrapper connectAndInitialize(String mcpName, String mcpType, String config, Duration timeout) throws Exception {
-        McpClientWrapper wrapper = buildClientBuilder(mcpName, mcpType, config)
-            .timeout(timeout)
-            .buildAsync()
-            .block(timeout);
+        McpClientWrapper wrapper = buildClient(mcpName, mcpType, config, timeout).block(timeout);
         if (wrapper == null) {
             throw new IllegalStateException("构建 MCP 客户端失败");
         }

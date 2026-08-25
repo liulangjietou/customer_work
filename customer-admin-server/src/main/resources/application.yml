@@ -218,7 +218,7 @@ admin:
     max-override-hours: ${ADMIN_MODEL_HEALTH_MAX_OVERRIDE_HOURS:24}
   mcp:
     security:
-      # 远程 MCP 默认只允许公网；企业私网 host 必须显式列入，环回/链路本地/元数据仍永久拒绝。
+      # 远程 MCP 默认只允许公网；企业私网/本机 host 必须显式列入，命中后仍拒链路本地/元数据/未指定/组播。
       allowed-hosts: ${ADMIN_MCP_ALLOWED_HOSTS:}
       # stdio 默认关闭；启用时命令与工作目录必须同时命中真实路径白名单，子进程不继承宿主环境。
       allowed-commands: ${ADMIN_MCP_STDIO_ALLOWED_COMMANDS:}

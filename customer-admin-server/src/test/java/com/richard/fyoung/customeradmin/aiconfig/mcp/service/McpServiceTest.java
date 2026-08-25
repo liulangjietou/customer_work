@@ -17,6 +17,7 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -342,20 +344,33 @@ class McpServiceTest {
     }
 
     @Test
-    void testConnectivity_shouldPersistResult() throws Exception {
+    void testConnectivity_shouldPersistResultWithinCapturedTenant() throws Exception {
         AiMcp mcp = new AiMcp();
         mcp.setId(1L);
+        mcp.setTenantId("tenant-a");
         mcp.setMcpName("测试MCP");
         mcp.setMcpType("http");
         mcp.setConfig("{\"url\": \"https://mcp.example.com/mcp\"}");
         when(mcpMapper.selectById(1L)).thenReturn(mcp);
         when(mcpFactory.testConnectivity(anyString(), anyString(), anyString()))
             .thenReturn(new McpTestResult(ConnectivityTestStatus.SUCCESS, LocalDateTime.now(), null));
+        AtomicReference<String> persistedTenant = new AtomicReference<>();
+        when(mcpMapper.updateById(any(AiMcp.class))).thenAnswer(invocation -> {
+            persistedTenant.set(TenantContext.get());
+            return 1;
+        });
 
-        CompletableFuture<McpTestResult> future = service.testConnectivity(1L);
-        McpTestResult result = future.get();
+        TenantContext.set("tenant-a");
+        McpTestResult result;
+        try {
+            CompletableFuture<McpTestResult> future = service.testConnectivity(1L);
+            result = future.get();
+        } finally {
+            TenantContext.clear();
+        }
 
         assertEquals(ConnectivityTestStatus.SUCCESS, result.testStatus());
+        assertEquals("tenant-a", persistedTenant.get());
         verify(mcpMapper).updateById(org.mockito.ArgumentMatchers.any(AiMcp.class));
     }
 

@@ -4,6 +4,8 @@ import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugCallResult;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpDebugToolVO;
 import com.richard.fyoung.customeradmin.aiconfig.mcp.dto.McpTestResult;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
+import com.richard.fyoung.customeradmin.config.AdminMcpSecurityProperties;
+import com.richard.fyoung.customerwork.tool.mcp.McpSecurityPolicy;
 import com.richard.fyoung.customerwork.tool.mcp.McpConnectivityResult;
 import com.richard.fyoung.customerwork.tool.mcp.McpImageContent;
 import com.richard.fyoung.customerwork.tool.mcp.McpToolCallResult;
@@ -20,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -30,7 +33,37 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AdminMcpFactoryTest {
 
-    private final AdminMcpFactory factory = new AdminMcpFactory();
+    private final AdminMcpFactory factory = new AdminMcpFactory(McpSecurityPolicy.strict());
+
+    /**
+     * 防回归：容器装配出来的实例必须<b>从配置读白名单</b>，不能回退到 {@link McpSecurityPolicy#strict()}。
+     *
+     * <p>本类有多个构造器，Spring 在缺 {@code @Autowired} 时会挑无参构造器而不是参数最多的那个。
+     * 此前就是这样：容器拿到的是 strict 策略，白名单恒为空，{@code admin.mcp.security.allowed-hosts}
+     * 配了 localhost 也没用，页面上表现为「目标地址指向内网/环回，已拦截: localhost」。
+     * 这个断言直接验证「配了就能过」，比断言注解存在更贴近真实故障。</p>
+     */
+    @Test
+    void springWiredInstance_shouldHonourConfiguredAllowlist() {
+        AdminMcpSecurityProperties properties = new AdminMcpSecurityProperties();
+        properties.setAllowedHosts(List.of("localhost"));
+
+        AdminMcpFactory wired = new AdminMcpFactory(properties);
+
+        assertDoesNotThrow(() -> wired.validateConfiguration("oa", "http",
+                "{\"mcpServers\": {\"oa\": {\"url\": \"http://localhost:3002/mcp\"}}}"),
+            "白名单已含 localhost，环回地址应放行");
+    }
+
+    /** 反过来：白名单为空时环回必须仍被拦，确认放行来自配置而不是策略本身被削弱。 */
+    @Test
+    void emptyAllowlist_shouldStillRejectLoopback() {
+        AdminMcpFactory strictFactory = new AdminMcpFactory(new AdminMcpSecurityProperties());
+
+        assertThrows(Exception.class, () -> strictFactory.validateConfiguration("oa", "http",
+                "{\"mcpServers\": {\"oa\": {\"url\": \"http://localhost:3002/mcp\"}}}"),
+            "未配置白名单时环回地址不得放行");
+    }
 
     /** 委托链路接通即可（三种类型的解析分支由 starter 单测覆盖，这里不重复）。 */
     @Test

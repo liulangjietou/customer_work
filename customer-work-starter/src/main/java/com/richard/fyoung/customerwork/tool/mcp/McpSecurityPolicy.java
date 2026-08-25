@@ -20,10 +20,10 @@ import java.util.stream.Collectors;
 /**
  * MCP 唯一执行安全策略：远程传输收口 SSRF，stdio 收口可执行文件、工作目录与环境变量。
  *
- * <p>默认策略只允许公网远程 MCP，并关闭 stdio。企业私网 MCP 必须显式配置 host；stdio 必须同时
- * 配置可执行文件与工作目录白名单，且最终进程由 {@link McpStdioProcessLauncher} 清空继承环境、固定
- * 工作目录后再启动。任何调用方都只通过 {@link McpClientFactory} 建客户端，避免保存校验与真实执行
- * 使用两套规则。</p>
+ * <p>默认策略只允许公网远程 MCP，并关闭 stdio。企业私网或本机 MCP 必须显式配置 host，命中后仍拒绝
+ * 链路本地、云元数据、未指定和组播地址；stdio 必须同时配置可执行文件与工作目录白名单，且最终进程由
+ * {@link McpStdioProcessLauncher} 清空继承环境、固定工作目录后再启动。任何调用方都只通过
+ * {@link McpClientFactory} 建客户端，避免保存校验与真实执行使用两套规则。</p>
  */
 public final class McpSecurityPolicy {
 
@@ -118,7 +118,7 @@ public final class McpSecurityPolicy {
 
     private HttpTargetPolicy currentRemotePolicy() {
         return HttpTargetPolicy.ofResolvedAllowlist(current(allowedHostsSupplier),
-            InternalAddressPolicy.DENY_INTERNAL, InternalAddressPolicy.ALLOW_PRIVATE_NETWORK);
+            InternalAddressPolicy.DENY_INTERNAL, InternalAddressPolicy.ALLOW_INTERNAL);
     }
 
     private List<String> current(Supplier<List<String>> supplier) {
