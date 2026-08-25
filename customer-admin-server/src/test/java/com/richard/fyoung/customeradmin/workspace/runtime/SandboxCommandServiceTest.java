@@ -32,6 +32,7 @@ class SandboxCommandServiceTest {
     private final AdminSandboxProperties properties = new AdminSandboxProperties();
     private final SandboxRiskDetector riskDetector = mock(SandboxRiskDetector.class);
     private final AdminAgentInstanceFactory factory = mock(AdminAgentInstanceFactory.class);
+    private final AgentWorkspaceManager workspaceManager = mock(AgentWorkspaceManager.class);
     private final AiCodingAuditService auditService = mock(AiCodingAuditService.class);
     private SandboxCommandService service;
 
@@ -45,11 +46,11 @@ class SandboxCommandServiceTest {
     @Test
     void executeLocal_shouldStreamOutputReturnExitCodeAndExposeIdleSandbox() {
         enableFeatures();
-        when(factory.resolveSessionWorkspace("coder", "s1")).thenReturn(workspace);
+        when(workspaceManager.resolveSessionWorkspace("coder", "s1")).thenReturn(workspace);
         when(auditService.begin(org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.eq("coder"), org.mockito.ArgumentMatchers.eq("s1")))
             .thenReturn(new AiCodingAuditLog());
-        service = new SandboxCommandService(properties, riskDetector, factory, auditService);
+        service = new SandboxCommandService(properties, riskDetector, factory, auditService, workspaceManager);
 
         List<SandboxCommandEvent> events = service.execute("coder", "s1", 7L,
                 "printf 'first\\n'; sleep 0.1; printf 'second\\n'")
@@ -64,7 +65,7 @@ class SandboxCommandServiceTest {
         assertEquals(0, result.exitCode());
         assertTrue(result.success());
         assertEquals("IDLE", service.list("coder", 7L).get(0).status());
-        verify(factory).persistSessionWorkspace("coder", "s1");
+        verify(workspaceManager).persistSessionWorkspace("coder", "s1");
 
         assertTrue(service.cleanup("coder", "s1", 7L));
         assertFalse(service.cleanup("coder", "s1", 7L));
@@ -74,9 +75,9 @@ class SandboxCommandServiceTest {
     @Test
     void execute_shouldRejectDestructiveCommandThroughSharedDetector() {
         enableFeatures();
-        when(factory.resolveSessionWorkspace("coder", "s1")).thenReturn(workspace);
+        when(workspaceManager.resolveSessionWorkspace("coder", "s1")).thenReturn(workspace);
         when(riskDetector.matchesDestructive("rm -rf .")).thenReturn(true);
-        service = new SandboxCommandService(properties, riskDetector, factory, auditService);
+        service = new SandboxCommandService(properties, riskDetector, factory, auditService, workspaceManager);
 
         BizException error = assertThrows(BizException.class,
             () -> service.execute("coder", "s1", 7L, "rm -rf ."));
@@ -86,7 +87,7 @@ class SandboxCommandServiceTest {
 
     @Test
     void execute_shouldFailClosedWhenFeatureNotEnabled() {
-        service = new SandboxCommandService(properties, riskDetector, factory, auditService);
+        service = new SandboxCommandService(properties, riskDetector, factory, auditService, workspaceManager);
 
         BizException error = assertThrows(BizException.class,
             () -> service.execute("coder", "s1", 7L, "mvn test"));

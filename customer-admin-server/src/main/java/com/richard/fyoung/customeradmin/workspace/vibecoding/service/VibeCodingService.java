@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -83,6 +84,7 @@ public class VibeCodingService {
 
     private final ChatService chatService;
     private final AdminAgentInstanceFactory agentInstanceFactory;
+    private final AgentWorkspaceManager workspaceManager;
     private final AiAgentMapper agentMapper;
     private final GitWorkspaceService gitWorkspaceService;
     private final AdminSandboxProperties sandboxProperties;
@@ -98,7 +100,9 @@ public class VibeCodingService {
                               AiAgentMapper agentMapper, GitWorkspaceService gitWorkspaceService,
                               AdminSandboxProperties sandboxProperties, AiCodingAuditService auditService,
                               PlanConfirmationService planConfirmationService,
-                              AgentCallMetaFactory agentCallMetaFactory) {
+                              AgentCallMetaFactory agentCallMetaFactory,
+                                    AgentWorkspaceManager workspaceManager) {
+        this.workspaceManager = workspaceManager;
         this.chatService = chatService;
         this.agentInstanceFactory = agentInstanceFactory;
         this.agentMapper = agentMapper;
@@ -175,7 +179,7 @@ public class VibeCodingService {
         }
         requireVibeCodingCapable(agentCode);
         // 创建会话子目录（幂等），并以此为基础拍快照，对话结束后 diff 出本轮变更
-        Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path sessionWorkspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         // 必须在本轮写入发生前建立 git 基线（幂等，仅会话第一轮真正生效）——如果拖到 Git 助手被
         // 点开时才建（GitAssistantService 内部同样调用 ensureRepo），本轮已经写完的文件会被基线
         // 提交一并吞掉，导致 diff 永远是空的。
@@ -226,7 +230,7 @@ public class VibeCodingService {
             auditService.finish(audit, signal == SignalType.ON_COMPLETE ? null : "VIBECODING_STREAM_" + signal.name());
             // 产出物落权威存储：工作区在系统临时目录，不保存的话 OS 一清理 / 容器一销毁本轮生成的代码就没了。
             // 放在 doFinally 而非 onComplete——用户中途取消时本轮已写出的文件同样要保住。
-            agentInstanceFactory.persistSessionWorkspace(agentCode, safeSession);
+            workspaceManager.persistSessionWorkspace(agentCode, safeSession);
         });
     }
 
@@ -255,7 +259,7 @@ public class VibeCodingService {
      */
     public List<String> listChangedArtifacts(String agentCode, String sessionId) {
         requireVibeCodingCapable(agentCode);
-        Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path sessionWorkspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         Map<String, FileFingerprint> before = beforeSnapshots.getOrDefault(snapshotKey(agentCode, sessionId), Map.of());
         Map<String, FileFingerprint> after = snapshot(sessionWorkspace);
 
@@ -277,7 +281,7 @@ public class VibeCodingService {
      */
     public List<WorkspaceFileNode> listWorkspaceFiles(String agentCode, String sessionId) {
         requireVibeCodingCapable(agentCode);
-        Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path sessionWorkspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         if (!Files.exists(sessionWorkspace)) {
             return List.of();
         }
@@ -296,7 +300,7 @@ public class VibeCodingService {
      */
     public WorkspaceFileContent readFileContent(String agentCode, String sessionId, String relativePath) {
         requireVibeCodingCapable(agentCode);
-        Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path sessionWorkspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         // 路径穿越防御：normalize 后必须以 sessionWorkspace 开头
         Path filePath = sessionWorkspace.resolve(relativePath).normalize();
         if (!filePath.startsWith(sessionWorkspace.normalize())) {
@@ -341,7 +345,7 @@ public class VibeCodingService {
     public RollbackResult rollback(String agentCode, String sessionId) {
         requireVibeCodingCapable(agentCode);
         String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
-        Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, safeSession);
+        Path sessionWorkspace = workspaceManager.resolveSessionWorkspace(agentCode, safeSession);
         // 审计（需求 §5.2/§5.3）：回滚是同步操作，操作人取自 Sa-Token ThreadLocal，begin/finish 同线程；
         // 业务动作自持控制流，审计只在旁路记录（含 baseline 缺失/git 失败等破坏性尝试的失败留痕）。
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.ROLLBACK, agentCode, safeSession);
@@ -355,7 +359,7 @@ public class VibeCodingService {
             log.info("[workspace] session rolled back, agentCode={}, sessionId={}, restored={}, deleted={}",
                 agentCode, safeSession, result.restoredFiles().size(), result.deletedFiles().size());
             // 回滚同样是写操作：不保存的话权威副本仍是回滚前的状态，下次恢复会把已撤销的改动又拉回来
-            agentInstanceFactory.persistSessionWorkspace(agentCode, safeSession);
+            workspaceManager.persistSessionWorkspace(agentCode, safeSession);
             auditService.finish(audit, (String) null);
             return result;
         } catch (RuntimeException e) {
@@ -383,7 +387,7 @@ public class VibeCodingService {
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.FILE_SAVE, agentCode, sessionId);
         auditService.applyChangedFiles(audit, List.of(relativePath));
         try {
-            Path sessionWorkspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+            Path sessionWorkspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
             // 路径穿越防御
             Path filePath = sessionWorkspace.resolve(relativePath).normalize();
             if (!filePath.startsWith(sessionWorkspace.normalize())) {
@@ -400,7 +404,7 @@ public class VibeCodingService {
                 log.error("[workspace] save file content failed, agentCode={}, sessionId={}, path={}", agentCode, sessionId, relativePath, e);
                 throw new BizException(ResultCode.SYSTEM_ERROR, "文件保存失败: " + relativePath);
             }
-            agentInstanceFactory.persistSessionWorkspace(agentCode, sessionId);
+            workspaceManager.persistSessionWorkspace(agentCode, sessionId);
             auditService.finish(audit, (String) null);
         } catch (RuntimeException e) {
             auditService.finish(audit, e);

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -109,6 +110,7 @@ public class GitAssistantService {
 
     private final AiAgentMapper agentMapper;
     private final AdminAgentInstanceFactory agentInstanceFactory;
+    private final AgentWorkspaceManager workspaceManager;
     private final GitWorkspaceService gitWorkspaceService;
     private final AiCodingAuditService auditService;
     private final CodeReviewTaskMapper reviewTaskMapper;
@@ -119,7 +121,9 @@ public class GitAssistantService {
 
     public GitAssistantService(AiAgentMapper agentMapper, AdminAgentInstanceFactory agentInstanceFactory,
                                 GitWorkspaceService gitWorkspaceService, AiCodingAuditService auditService,
-                                CodeReviewTaskMapper reviewTaskMapper, SiteMessageService siteMessageService) {
+                                CodeReviewTaskMapper reviewTaskMapper, SiteMessageService siteMessageService,
+                               AgentWorkspaceManager workspaceManager) {
+        this.workspaceManager = workspaceManager;
         this.agentMapper = agentMapper;
         this.agentInstanceFactory = agentInstanceFactory;
         this.gitWorkspaceService = gitWorkspaceService;
@@ -131,7 +135,7 @@ public class GitAssistantService {
     /** diff 摘要：无变更时直接返回空摘要，不额外调用模型。 */
     public CompletableFuture<GitDiffSummary> diffSummary(String agentCode, String sessionId) {
         requireVibeCodingCapable(agentCode);
-        Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         // 审计条目在请求线程同步段创建（操作人依赖 Sa-Token ThreadLocal），异步链路里只补结果
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.GIT_DIFF_SUMMARY, agentCode, sessionId);
         return CompletableFuture.supplyAsync(() -> {
@@ -154,7 +158,7 @@ public class GitAssistantService {
     /** 生成 commit message：无变更时直接报错，不调用模型（没有内容可总结）。 */
     public CompletableFuture<CommitMessageResponse> commitMessage(String agentCode, String sessionId, String style) {
         requireVibeCodingCapable(agentCode);
-        Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.COMMIT_MESSAGE, agentCode, sessionId);
         return CompletableFuture.supplyAsync(() -> {
             String diff = requireNonEmptyDiff(workspace);
@@ -176,7 +180,7 @@ public class GitAssistantService {
     /** 生成 PR description：无变更时直接报错，不调用模型。 */
     public CompletableFuture<PrDescriptionResponse> prDescription(String agentCode, String sessionId) {
         requireVibeCodingCapable(agentCode);
-        Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.PR_DESCRIPTION, agentCode, sessionId);
         return CompletableFuture.supplyAsync(() -> {
             String diff = requireNonEmptyDiff(workspace);
@@ -206,7 +210,7 @@ public class GitAssistantService {
      */
     public Long submitReview(String agentCode, String sessionId, Long userId) {
         requireVibeCodingCapable(agentCode);
-        Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         // 无变更在同步段快速失败（NO_FILE_CHANGES，与原同步 review 一致）：避免为"本轮无内容可审查"
         // 创建 FAILED 任务并推送误导性的失败站内信。git diff 是子进程读取、非分钟级模型调用，同步执行可接受
         String diff = requireNonEmptyDiff(workspace);

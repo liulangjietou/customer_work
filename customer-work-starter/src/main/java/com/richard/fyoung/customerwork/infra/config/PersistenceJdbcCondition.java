@@ -37,6 +37,10 @@ public class PersistenceJdbcCondition implements Condition {
         "customer-work.chat-log.store-mode",
         "customer-work.call-log.store-mode",
         "customer-work.outbox.store-mode",
+        // 附件元数据的 Java 默认值虽是 jdbc，但刻意留在本清单（缺省按"未启用"判）而不是
+        // JDBC_BY_DEFAULT_KEYS：AttachmentConfig#attachmentStore 在取不到 Mapper 时会主动降级内存
+        // 并打日志，故它不该仅凭自身默认值就强制拉起整个持久化环境（那等于要求宿主必须有 MySQL，
+        // 纯内存形态就跑不起来了）。这条例外登记在 PersistenceJdbcConditionRegistryTest 里。
         "customer-work.attachment.store-mode",
         "customer-work.sensitive-word.store-mode",
         // 命中日志与词表是两个独立开关：允许"词表用内存种子、只把命中记录落库"这种组合，
@@ -46,6 +50,20 @@ public class PersistenceJdbcCondition implements Condition {
         "customer-work.security.rate-limit.store-mode",
         // 主体级速率配额（等级表 + 命中记录）同理：它可能是宿主唯一想落库的东西
         "customer-work.subject-quota.store-mode",
+        // 以下 10 个域是 B6 运营闭环 / B7 主体配额等批次陆续加的，加了 Store 却没更新本表——
+        // 默认配置下被 memory.store-mode（默认 jdbc）顺带激活而看不出问题，
+        // 但宿主一旦把记忆两键显式配成 memory，再单独把这里任何一个配成 jdbc，
+        // 持久化环境就不会激活、Mapper 取不到。PersistenceJdbcConditionRegistryTest 现在盯着这张表。
+        "customer-work.human-handoff.store-mode",
+        "customer-work.quota.store-mode",
+        "customer-work.eval.store-mode",
+        "customer-work.badcase.store-mode",
+        "customer-work.csat.store-mode",
+        "customer-work.knowledge-gap.store-mode",
+        "customer-work.dead-letter.store-mode",
+        "customer-work.prompt-version.store-mode",
+        "customer-work.semantic-cache.store-mode",
+        "customer-work.routing.seat-store-mode",
         "customer-work.tool-backend.mode"
     };
 
