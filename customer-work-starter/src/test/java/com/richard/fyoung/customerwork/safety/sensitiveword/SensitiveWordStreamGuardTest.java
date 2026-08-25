@@ -25,6 +25,15 @@ class SensitiveWordStreamGuardTest {
             new SensitiveWordFilter(store, '*', SensitiveWordAction.BLOCK), SAFE_REPLY);
     }
 
+    private SensitiveWordStreamGuard guard(SensitiveWord... words) {
+        InMemorySensitiveWordStore store = new InMemorySensitiveWordStore();
+        for (SensitiveWord word : words) {
+            store.save(word);
+        }
+        return new SensitiveWordStreamGuard(
+            new SensitiveWordFilter(store, '*', SensitiveWordAction.BLOCK), SAFE_REPLY);
+    }
+
     /** 按片喂入并拼接放行结果 + flush 尾巴，等价于用户最终看到的正文。 */
     private String feed(SensitiveWordStreamGuard guard, String... deltas) {
         StringBuilder sb = new StringBuilder();
@@ -39,6 +48,25 @@ class SensitiveWordStreamGuardTest {
     void mask_shouldCatchWordSplitAcrossDeltas() {
         // 逐片匹配必漏，只有滑动缓冲能命中——这条是整个流式过滤的立身之本
         assertEquals("冠军是***队", feed(guard(SensitiveWordAction.MASK, "阿根廷"), "冠军是阿", "根", "廷队"));
+    }
+
+    @Test
+    void cleanText_shouldEmitImmediately_insteadOfWaitingForLongestDictionaryWord() {
+        SensitiveWordStreamGuard g = guard(SensitiveWordAction.BLOCK,
+            "这是一个长度很长但与当前回复毫无前缀关系的敏感词条用于验证不应固定缓冲全部短回复");
+
+        assertEquals("好", g.accept("好"));
+        assertEquals("", g.flush());
+    }
+
+    @Test
+    void cleanText_shouldRetainOnlyActualAmbiguousSuffix() {
+        SensitiveWordStreamGuard g = guard(SensitiveWordAction.MASK, "阿根廷");
+
+        assertEquals("普通", g.accept("普通阿"));
+        assertEquals("", g.accept("根"));
+        assertEquals("***队", g.accept("廷队"));
+        assertEquals("", g.flush());
     }
 
     @Test
@@ -60,6 +88,24 @@ class SensitiveWordStreamGuardTest {
     @Test
     void mask_shouldHandleMultipleOccurrences() {
         assertEquals("***和***", feed(guard(SensitiveWordAction.MASK, "阿根廷"), "阿根", "廷和阿根廷"));
+    }
+
+    @Test
+    void mask_shouldCatchObfuscatedWordSplitAcrossDeltas() {
+        assertEquals("文本*****结束", feed(guard(SensitiveWordAction.MASK, "敏感词"),
+            "文本敏*", "感*词结束"));
+    }
+
+    @Test
+    void shorterMaskMustNotHideLongerBlockAcrossDeltas() {
+        SensitiveWordStreamGuard g = guard(
+            SensitiveWord.of("违禁", SensitiveWordCategory.CUSTOM, SensitiveWordAction.MASK),
+            SensitiveWord.of("违禁词", SensitiveWordCategory.CUSTOM, SensitiveWordAction.BLOCK));
+
+        assertEquals("出现", g.accept("出现违禁"), "短词虽已命中，也要保留原文等待可能的长词");
+        assertEquals(SAFE_REPLY, g.accept("词"));
+        assertTrue(g.isBlocked());
+        assertEquals("", g.flush());
     }
 
     @Test
@@ -85,9 +131,9 @@ class SensitiveWordStreamGuardTest {
     @Test
     void flush_shouldBeIdempotent() {
         SensitiveWordStreamGuard g = guard(SensitiveWordAction.MASK, "阿根廷");
-        g.accept("普通文本");
+        assertEquals("普通", g.accept("普通阿"));
 
-        assertEquals("普通文本", g.flush());
+        assertEquals("阿", g.flush());
         assertEquals("", g.flush(), "重复 flush 不应重复吐出内容");
     }
 

@@ -219,7 +219,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
      * 流式正文增量的滑动缓冲过滤。
      *
      * <p>每片到达后与缓冲区拼接整体过滤，只放行"确定不可能再是某个词前缀"的前半段，
-     * 尾部留 {@link SensitiveWordFilter#streamRetainLength()} 个字符等下一片——
+     * 尾部只保留仍可扩展成敏感词的真实歧义前缀等下一片——
      * 否则 {@code 阿根廷} 被拆成三片推送时永远匹配不上。</p>
      *
      * <p><b>BLOCK 在流式下的固有限制</b>：命中时前面的片段已经在用户屏幕上，收不回来。

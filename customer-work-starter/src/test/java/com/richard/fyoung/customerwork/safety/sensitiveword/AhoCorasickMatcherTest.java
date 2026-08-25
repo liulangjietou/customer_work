@@ -58,4 +58,16 @@ class AhoCorasickMatcherTest {
         AhoCorasickMatcher m = AhoCorasickMatcher.build(List.of(w("abc"), w(""), w("def")));
         assertEquals(2, m.patternCount());
     }
+
+    @Test
+    void pendingPrefixLength_shouldKeepOnlySuffixThatCanStillExtend() {
+        AhoCorasickMatcher m = AhoCorasickMatcher.build(List.of(w("abc"), w("abcdef"), w("bcde")));
+
+        assertEquals(0, m.pendingPrefixLength("普通文本"));
+        assertEquals(2, m.pendingPrefixLength("xxab"));
+        assertEquals(3, m.pendingPrefixLength("xxabc"), "abc 同时是更长词前缀，必须继续保留");
+        AhoCorasickMatcher leafWithExpandableSuffix = AhoCorasickMatcher.build(List.of(w("abc"), w("bcde")));
+        assertEquals(2, leafWithExpandableSuffix.pendingPrefixLength("xabc"),
+            "叶子命中后应沿 fail 链找到可扩展后缀");
+    }
 }

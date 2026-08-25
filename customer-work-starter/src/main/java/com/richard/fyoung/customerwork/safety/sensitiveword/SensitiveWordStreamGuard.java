@@ -23,9 +23,8 @@ import java.util.function.Consumer;
  * 非流式 {@code call()} 路径），不该夹带进迁移里，故两侧的流式出口各挂一道 guard 仍是当前做法。</p>
  *
  * <p><b>滑动缓冲</b>：一个词会被拆进相邻增量（"阿根廷" 可能来自三次推送），逐片匹配必漏。
- * 每片与缓冲区拼接后整体过滤，只放行"确定不再是任何词前缀"的前半段，尾部留
- * {@link SensitiveWordFilter#streamRetainLength()} 个字符等下一片；{@link #flush()} 时吐出剩余，
- * 一个字都不吞。</p>
+ * 每片与缓冲区拼接后整体过滤，只放行"确定不再是任何词前缀"的前半段；尾部只保留当前仍可扩展成
+ * 某个词的真实歧义前缀，而不是按全局最长词固定缓冲。{@link #flush()} 时吐出剩余，一个字都不吞。</p>
  *
  * <p><b>BLOCK 的固有限制</b>：命中时前面的片段已经发出去了，收不回。这里的处置是"立即停止后续
  * 输出 + 补一条安全话术"，把伤害面收敛到命中点之后。要一个字都不漏只能整段缓冲后再发，
@@ -84,7 +83,8 @@ public class SensitiveWordStreamGuard {
             return "";
         }
         buffer.append(delta);
-        SensitiveWordFilterResult result = filter.check(buffer.toString());
+        SensitiveWordFilter.StreamWindow window = filter.checkStreamWindow(buffer.toString());
+        SensitiveWordFilterResult result = window.result();
         if (result.decision() == SensitiveWordAction.BLOCK) {
             blocked = true;
             buffer.setLength(0);
@@ -97,10 +97,11 @@ public class SensitiveWordStreamGuard {
             notifyHit(result);
         }
         String masked = result.maskedText();
-        int retain = Math.min(filter.streamRetainLength(), masked.length());
+        int retain = Math.min(window.retainLength(), masked.length());
         String emit = masked.substring(0, masked.length() - retain);
-        buffer.setLength(0);
-        buffer.append(masked, masked.length() - retain, masked.length());
+        // 缓冲区必须保留原文而不是打码文本：若短词是长词前缀（短词 MASK、长词 BLOCK），提前把短词
+        // 改成 *** 会破坏下一片到来时的长词匹配。这里只删除已安全放行的原文前缀。
+        buffer.delete(0, buffer.length() - retain);
         return emit;
     }
 
