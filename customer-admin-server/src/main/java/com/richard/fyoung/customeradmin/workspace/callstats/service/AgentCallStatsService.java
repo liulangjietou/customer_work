@@ -150,12 +150,21 @@ public class AgentCallStatsService {
         return result;
     }
 
-    /** 删除一条调用（主记录 + 分段级联，复用 starter Store）。 */
+    /**
+     * 删除一条调用（主记录 + 分段级联，复用 starter Store）。
+     *
+     * <p><b>只允许删 ADMIN 本库的记录</b>：APP 源是客服端运行库，写入方是 8080 那条链路，
+     * 后台只查不写。这道判定与 {@code AppAgentCallStatsGatewayProvider} 的只读连接池是
+     * 双保险——只读池会让误写在驱动层报 SQLException，那对使用者是一串看不懂的堆栈；
+     * 这里先 fast-fail，给出"这条数据的写入方不是后台"这个真正有用的信息。</p>
+     */
     public boolean delete(long id, String source) {
-        AgentCallStatsGateway gateway = gatewayOf(source);
-        boolean deleted = gateway.store().delete(id);
-        log.info("agent call stats deleted, source={}, id={}, deleted={}",
-            AgentCallStatsSource.parse(source), id, deleted);
+        AgentCallStatsSource parsed = AgentCallStatsSource.parse(source);
+        if (parsed == AgentCallStatsSource.APP) {
+            throw new BizException(ResultCode.CUSTOMER_WORK_READONLY, "客服端调用日志由客服端链路写入，后台不支持删除");
+        }
+        boolean deleted = gatewayOf(source).store().delete(id);
+        log.info("agent call stats deleted, source={}, id={}, deleted={}", parsed, id, deleted);
         return deleted;
     }
 

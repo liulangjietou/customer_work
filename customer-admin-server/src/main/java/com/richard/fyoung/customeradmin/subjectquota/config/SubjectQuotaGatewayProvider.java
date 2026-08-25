@@ -25,6 +25,7 @@ public class SubjectQuotaGatewayProvider {
         this.facade = CustomerWorkFacade.builder("subject-quota-pool", properties, tenantPlugins)
             .mapperClasses(SubjectQuotaGatewayFactory.MAPPER_CLASSES)
             .mapperXml(SubjectQuotaGatewayFactory.MAPPER_XML_LOCATIONS)
+            .readOnly(false)
             .error("SQUOTA-DS-UNAVAILABLE", "客服端库不可达（主体配额等级存放于此）")
             .build(SubjectQuotaGatewayFactory::build);
     }

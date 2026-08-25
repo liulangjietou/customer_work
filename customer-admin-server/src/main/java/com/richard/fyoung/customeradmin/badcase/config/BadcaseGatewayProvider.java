@@ -25,6 +25,7 @@ public class BadcaseGatewayProvider {
         this.facade = CustomerWorkFacade.builder("badcase-pool", properties, tenantPlugins)
             .mapperClasses(BadcaseGatewayFactory.MAPPER_CLASSES)
             .mapperXml(BadcaseGatewayFactory.MAPPER_XML_LOCATIONS)
+            .readOnly(false)
             .error("BADCASE-DS-UNAVAILABLE", "客服端库不可达（badcase 与回流目标存放于此）")
             .build(BadcaseGatewayFactory::build);
     }

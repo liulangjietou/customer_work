@@ -19,6 +19,7 @@ public class BusinessOutcomeGatewayProvider {
         this.facade = CustomerWorkFacade.builder("business-outcome-pool", properties, tenantPlugins)
             .mapperClasses(BusinessOutcomeGatewayFactory.MAPPER_CLASSES)
             .maxPoolSize(4)
+            .readOnly(true)
             .error("BUSINESS-OUTCOME-DS-UNAVAILABLE", "客服端库不可达（业务结果事实存放于此）")
             .build(BusinessOutcomeGatewayFactory::build);
     }

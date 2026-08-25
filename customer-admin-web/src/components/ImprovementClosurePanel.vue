@@ -53,6 +53,25 @@ const STATUS_LABELS: Record<ImprovementCaseStatus, string> = {
   CANCELLED: '已取消',
 }
 
+// 发布任务状态（RuntimePublishStatus）的中文标签。此前"发布状态"那一格直接渲染后端枚举名，
+// 门禁阻断时运营看到的是一个没有翻译的裸 BLOCKED，而那恰恰是最需要看懂的时刻。
+// 用词与渠道绑定抽屉（ChannelBindingDrawer.vue）保持一致。
+const PUBLISH_STATUS_LABELS: Record<string, string> = {
+  PENDING: '待调度',
+  PROCESSING: '处理中',
+  BLOCKED: '门禁阻断',
+  PUBLISHED: '已投递',
+  PARTIAL: '部分生效',
+  APPLIED: '已生效',
+  SUPERSEDED: '已被新版本取代',
+  FAILED: '发布失败',
+}
+const publishStatusLabel = computed(() => {
+  const raw = improvement.value?.publishStatus
+  if (!raw) return '-'
+  return PUBLISH_STATUS_LABELS[raw] ?? raw
+})
+
 const statusType = computed(() => {
   const status = improvement.value?.status
   if (status === 'VERIFIED') return 'success'
@@ -210,7 +229,7 @@ onMounted(load)
           {{ improvement.reevaluationStatus }} / {{ improvement.reevaluationVerdict || '-' }}
         </el-descriptions-item>
         <el-descriptions-item label="发布任务">{{ improvement.publishTaskId || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="发布状态">{{ improvement.publishStatus || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="发布状态">{{ publishStatusLabel }}</el-descriptions-item>
         <el-descriptions-item label="发布 revision">{{ improvement.publishRevision || '-' }}</el-descriptions-item>
         <el-descriptions-item label="观察窗口">
           {{ formatTime(improvement.observationStartedAtMs) }} → {{ formatTime(improvement.observationEndsAtMs) }}

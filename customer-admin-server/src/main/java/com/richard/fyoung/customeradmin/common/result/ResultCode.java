@@ -84,11 +84,17 @@ public enum ResultCode {
     TENANT_RESERVED_PROTECTED(40040, "系统保留租户不允许该操作"),
     TENANT_SUSPENDED(40041, "租户已被冻结或已退租，请联系管理员"),
     TENANT_VIEW_FORBIDDEN(40042, "缺少跨租户控制面权限"),
-    AI_CODING_FEATURE_DISABLED(40043, "该 AI 编码能力未开启"),
     SANDBOX_COMMAND_BLOCKED(40044, "命令命中沙箱安全规则，已拒绝执行"),
     SANDBOX_COMMAND_RUNNING(40045, "该会话已有命令正在执行"),
     SANDBOX_RUNTIME_FAILED(40046, "沙箱运行失败，请检查运行时配置"),
     MODEL_ENDPOINT_FORBIDDEN(40047, "模型端点不在允许访问范围内，已被安全策略拦截"),
+    // 原为 40043，与下方 QUOTA_EXCEEDED 撞值：前端 sse.ts 按 40043 判定"额度用尽"，
+    // 于是"AI 编码能力未开启"会被当成额度用尽提示。改号到未占用的 40048，
+    // QUOTA_EXCEEDED 保持 40043 不动（前端已按它取值，改那边才是契约变更）
+    AI_CODING_FEATURE_DISABLED(40048, "该 AI 编码能力未开启"),
+    // 跨库只读门面上的写操作：既不是没权限也不是参数错，单独发码，
+    // 让调用方知道"这条数据的写入方不是后台"而不是去申请权限
+    CUSTOMER_WORK_READONLY(40049, "客服端运行库为只读接入，后台不支持写操作"),
 
     // 主体级速率配额（B7）：额度用尽不是权限问题也不是参数问题，单独发码，
     // 前端据此给"稍后再试"而不是"联系管理员开权限"

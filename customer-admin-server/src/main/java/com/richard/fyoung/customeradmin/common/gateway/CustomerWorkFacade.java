@@ -101,6 +101,7 @@ public final class CustomerWorkFacade<T> {
         private List<Class<?>> mapperClasses = List.of();
         private List<String> mapperXmlLocations = List.of();
         private int maxPoolSize = CrossDbConnectionSettings.DEFAULT_MAX_POOL_SIZE;
+        private boolean readOnly = false;
         private String driverClassName = CrossDbConnectionSettings.DEFAULT_DRIVER_CLASS;
         private String errorCode = "CUSTOMER-WORK-DS-UNAVAILABLE";
         private String errorHint = "客服端库不可达";
@@ -127,6 +128,20 @@ public final class CustomerWorkFacade<T> {
 
         public Builder maxPoolSize(int size) {
             this.maxPoolSize = size;
+            return this;
+        }
+
+        /**
+         * 只读门面开启后 Hikari 把连接置为只读，误写立即报错，而不是事后才发现客服端运行库被改。
+         *
+         * <p><b>凡是 javadoc 里自称"只读"的门面都必须调它</b>——这两件事一旦分家就没人能发现：
+         * {@code faa1c7bf} 把各域装配收敛进本类时，{@code maxPoolSize} 被逐个搬了过来，
+         * 而当时只有 callstats 一处用到的 {@code readOnly} 没有，注释却原样保留，
+         * 于是"只读"变成了一句无人执行的描述，后台删除按钮开始真删客服端库的行。
+         * {@code CustomerWorkFacadeReadOnlyAlignmentTest} 现在对此下断言。</p>
+         */
+        public Builder readOnly(boolean readOnly) {
+            this.readOnly = readOnly;
             return this;
         }
 
@@ -170,6 +185,7 @@ public final class CustomerWorkFacade<T> {
                     .credentials(properties.getUsername(), properties.getPassword())
                     .driverClassName(driverClassName)
                     .maximumPoolSize(maxPoolSize)
+                    .readOnly(readOnly)
                     .build(),
                 mapperClasses, mapperXmlLocations, tenantPlugins::create, schemaGuardedFactory);
             return new CustomerWorkFacade<>(properties, provider, errorCode, errorHint);

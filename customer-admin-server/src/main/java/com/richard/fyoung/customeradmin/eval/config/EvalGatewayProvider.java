@@ -28,6 +28,7 @@ public class EvalGatewayProvider {
         this.facade = CustomerWorkFacade.builder("eval-run-pool", properties, tenantPlugins)
             .mapperClasses(EvalGatewayFactory.MAPPER_CLASSES)
             .mapperXml(EvalGatewayFactory.MAPPER_XML_LOCATIONS)
+            .readOnly(false)
             .error("EVAL-DS-UNAVAILABLE", "客服端库不可达（评测记录存放于此）")
             .build(EvalGatewayFactory::build);
     }

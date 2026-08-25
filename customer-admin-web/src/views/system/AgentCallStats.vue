@@ -571,7 +571,9 @@ onMounted(() => {
             <el-button link type="primary" @click="openDetail(row)">耗时详情</el-button>
             <el-button link type="primary" @click="openReplayManifest(row)">重放清单</el-button>
             <el-button v-if="filters.source === 'ADMIN'" link type="primary" @click="openInWorkspace(row)">打开会话</el-button>
-            <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
+            <!-- 删除仅 ADMIN 行可用：APP 是客服端运行库，写入方是 8080 那条链路，后台只查不写。
+                 后端 AgentCallStatsService#delete 与只读连接池各有一道防线，这里只是不给出无效按钮 -->
+            <el-button v-if="!sourceIsApp" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
