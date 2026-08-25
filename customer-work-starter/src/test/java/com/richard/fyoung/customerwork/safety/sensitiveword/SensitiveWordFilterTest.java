@@ -91,6 +91,17 @@ class SensitiveWordFilterTest {
     }
 
     @Test
+    void streamWindow_shouldRetainOnlyAmbiguousRawSuffixIncludingNoise() {
+        InMemorySensitiveWordStore store = new InMemorySensitiveWordStore();
+        store.save(SensitiveWord.of("敏感词", SensitiveWordCategory.CUSTOM, SensitiveWordAction.MASK));
+        SensitiveWordFilter f = new SensitiveWordFilter(store, '*', SensitiveWordAction.BLOCK);
+
+        assertEquals(0, f.checkStreamWindow("完全普通").retainLength());
+        assertEquals(2, f.checkStreamWindow("普通敏*").retainLength(), "归一化前缀后的插入符也必须留在窗口内");
+        assertEquals(3, f.checkStreamWindow("普通敏*感").retainLength());
+    }
+
+    @Test
     void reload_shouldPickUpNewWord() {
         InMemorySensitiveWordStore store = new InMemorySensitiveWordStore();
         SensitiveWordFilter f = new SensitiveWordFilter(store, '*', SensitiveWordAction.BLOCK);

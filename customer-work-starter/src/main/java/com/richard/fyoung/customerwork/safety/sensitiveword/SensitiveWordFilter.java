@@ -102,12 +102,10 @@ public class SensitiveWordFilter {
     }
 
     /**
-     * 流式过滤的安全保留长度：{@code 最长词长 - 1}。
-     *
-     * <p>流式输出下一个词会被拆进相邻增量片段（"阿根廷" 可能来自三次推送），必须留住这么多字符
-     * 等下一片拼上来再匹配，否则跨片段的词永远命中不了。fail-closed 哨兵态返回 0——那时任何文本
-     * 都会被整体拦下，不存在"放行一部分"的问题。</p>
+     * 流式过滤的最大安全保留长度。保留该旧 API 供外部兼容；项目内流式链路使用
+     * {@link #checkStreamWindow(String)} 的动态歧义前缀长度。
      */
+    @Deprecated
     public int streamRetainLength() {
         if (failClosed) {
             return 0;
@@ -126,16 +124,33 @@ public class SensitiveWordFilter {
      * @param rawText 原始文本（null / 空返回放行结果）
      */
     public SensitiveWordFilterResult check(String rawText) {
+        return check(rawText, matcher, failClosed);
+    }
+
+    /**
+     * 在同一个词表快照上完成过滤与流式尾部判定，避免热重载恰好发生在两步之间时使用两份词表。
+     */
+    StreamWindow checkStreamWindow(String rawText) {
+        boolean failClosedSnapshot = failClosed;
+        AhoCorasickMatcher matcherSnapshot = matcher;
+        SensitiveWordFilterResult result = check(rawText, matcherSnapshot, failClosedSnapshot);
+        int retainLength = result.decision() == SensitiveWordAction.BLOCK
+            ? 0 : streamRetainLength(rawText, matcherSnapshot, failClosedSnapshot);
+        return new StreamWindow(result, retainLength);
+    }
+
+    private SensitiveWordFilterResult check(String rawText, AhoCorasickMatcher matcherSnapshot,
+                                             boolean failClosedSnapshot) {
         if (rawText == null || rawText.isEmpty()) {
             return SensitiveWordFilterResult.pass(rawText);
         }
-        if (failClosed) {
+        if (failClosedSnapshot) {
             // fail-closed 哨兵：词表从未成功加载，任何非空文本一律拦截（合成一个 BLOCK 命中）
             List<SensitiveWordHit> sentinelHits = List.of(new SensitiveWordHit(SENTINEL_BLOCK_WORD, 0, 0));
             return new SensitiveWordFilterResult(rawText, rawText, sentinelHits, SensitiveWordAction.BLOCK);
         }
         TextNormalizer.Normalized norm = TextNormalizer.normalizeTracked(rawText);
-        List<SensitiveWordHit> hits = matcher.match(norm.text());
+        List<SensitiveWordHit> hits = matcherSnapshot.match(norm.text());
         if (hits.isEmpty()) {
             return SensitiveWordFilterResult.pass(rawText);
         }
@@ -144,6 +159,26 @@ public class SensitiveWordFilter {
             ? rawText  // BLOCK 决策整体替换为兜底话术，无需逐词打码
             : maskHits(rawText, norm.originalIndex(), hits);
         return new SensitiveWordFilterResult(rawText, maskedText, hits, decision);
+    }
+
+    /** 把归一化歧义前缀映射回原文尾部长度，保留其中用于绕过的空白与插入符。 */
+    private int streamRetainLength(String rawText, AhoCorasickMatcher matcherSnapshot,
+                                   boolean failClosedSnapshot) {
+        if (failClosedSnapshot || rawText == null || rawText.isEmpty()) {
+            return 0;
+        }
+        TextNormalizer.Normalized normalized = TextNormalizer.normalizeTracked(rawText);
+        int normalizedRetain = matcherSnapshot.pendingPrefixLength(normalized.text());
+        if (normalizedRetain == 0) {
+            return 0;
+        }
+        int normalizedStart = normalized.text().length() - normalizedRetain;
+        int rawStart = normalized.originalIndex()[normalizedStart];
+        return rawText.length() - rawStart;
+    }
+
+    /** 一次流式窗口检查的不可变结果。 */
+    record StreamWindow(SensitiveWordFilterResult result, int retainLength) {
     }
 
     /** 命中词的动作（防御式：动作缺省时回退 {@link #defaultAction}）。 */

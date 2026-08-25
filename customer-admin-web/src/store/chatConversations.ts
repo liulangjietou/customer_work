@@ -4,6 +4,7 @@ import { generateUuid } from '@/utils/uuid'
 import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
 import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
+import { createTextChunkBatcher } from '@/utils/textChunkBatcher'
 import type { TraceNode } from '@/components/TraceTimeline.vue'
 import type { ExecutionMode, LiveSession, PlanEvent, PlanResultEvent } from '@/types/api'
 
@@ -230,22 +231,29 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       conv.attachments = []
       conv.streaming = true
       const sid = conv.sessionId
+      const isActive = () => this.byAgent[agentCode]?.activeId === sid
+      const textBatcher = createTextChunkBatcher((chunk) => {
+        assistantMessage.text += chunk
+        if (isActive()) onScroll?.()
+      })
 
-      conv.abort = streamChat(agentCode, { sessionId: sid, message: messageToSend, mode: conv.mode, attachmentIds }, {
+      const abortStream = streamChat(agentCode, { sessionId: sid, message: messageToSend, mode: conv.mode, attachmentIds }, {
         onEvent: (event) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (!c) return
-          const isActive = () => this.byAgent[agentCode]?.activeId === sid
           if (event.event === 'done') {
+            textBatcher.flush()
             c.streaming = false
             return
           }
           if (event.event === 'plan') {
+            textBatcher.flush()
             this.applyPlanEvent(c, assistantMessage, event.data)
             if (isActive()) onScroll?.()
             return
           }
           if (event.event === 'plan_result') {
+            textBatcher.flush()
             try {
               const parsed = JSON.parse(event.data) as PlanResultEvent
               const card = c.pendingPlans.get(parsed.planId)
@@ -258,6 +266,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
             return
           }
           if (event.event.startsWith('node:')) {
+            textBatcher.flush()
             const kind = event.event.slice('node:'.length)
             const payload = parseChatStreamPayload(event.data)
             appendChatStreamNode(assistantMessage.nodes, kind, payload.text, payload.source, payload.subagentName)
@@ -267,13 +276,15 @@ export const useChatConversationsStore = defineStore('chatConversations', {
               // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板
               appendChatStreamNode(assistantMessage.nodes, ANSWER_KIND, payload.text, payload.source, payload.subagentName)
             } else {
-              assistantMessage.text += payload.text
+              textBatcher.append(payload.text)
+              return
             }
           }
           // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
           if (isActive()) onScroll?.()
         },
         onError: (error) => {
+          textBatcher.discard()
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (c) {
             c.streaming = false
@@ -286,6 +297,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
           assistantMessage.failed = true
         },
         onComplete: () => {
+          textBatcher.flush()
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (c) {
             c.streaming = false
@@ -298,6 +310,10 @@ export const useChatConversationsStore = defineStore('chatConversations', {
           this.historyVersion[agentCode] = (this.historyVersion[agentCode] ?? 0) + 1
         },
       })
+      conv.abort = () => {
+        textBatcher.flush()
+        abortStream()
+      }
       onScroll?.()
     },
 

@@ -258,7 +258,7 @@ public class CustomerServiceService {
     /**
      * 把 guard 挂到文本流上：逐片过滤（可能整片被缓冲而不发），流末尾 flush 出留住的尾巴。
      *
-     * <p>不 flush 会吞掉正文最后几个字——尾部那 {@code 最长词长-1} 个字符正是被刻意留住等下一片的。</p>
+     * <p>不 flush 会吞掉正文末尾仍可能扩展成敏感词的歧义前缀——它们被刻意留住等待下一片。</p>
      */
     private Flux<String> applyOutboundGuard(Flux<String> source, SensitiveWordStreamGuard guard) {
         if (guard == null) {

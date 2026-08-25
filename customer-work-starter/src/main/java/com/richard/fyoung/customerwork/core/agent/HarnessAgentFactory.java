@@ -14,7 +14,6 @@ import io.agentscope.harness.agent.IsolationScope;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
-import io.agentscope.harness.agent.memory.MemoryConfig;
 import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
 import io.agentscope.harness.agent.memory.compaction.ToolResultEvictionConfig;
 import io.agentscope.harness.agent.skill.curator.SkillCuratorConfig;
@@ -98,6 +97,14 @@ public class HarnessAgentFactory {
 
         // 上下文压缩（长对话有界）
         CompactionConfig compaction = contextMemoryFactory.createCompaction();
+        boolean filesystemEnabled = !"none".equalsIgnoreCase(cfg.getSandbox().getMode());
+        HarnessOptInPolicy.apply(builder,
+            filesystemEnabled,
+            compaction != null,
+            cfg.isToolResultEvictionEnabled(),
+            cfg.getSubagent().isEnabled(),
+            false,
+            cfg.isSkillCuratorEnabled());
         if (compaction != null) {
             builder.compaction(compaction);
         }
@@ -105,11 +112,12 @@ public class HarnessAgentFactory {
         // 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation
         // 框架只从 workspace 文件读记忆，故构建前先把 MySQL 里的权威副本水合下来——
         // 否则换机 / 重启 / 清理 workspace 之后，历史记忆对框架就等于不存在。
-        if (cfg.isMemoryEnabled()) {
+        boolean memoryEnabled = cfg.isMemoryEnabled();
+        if (memoryEnabled) {
             memorySyncService.hydrate(resolveWorkspace(cfg.getWorkspaceDir()));
-            builder.memory(MemoryConfig.builder().model(model).build());
             log.info("[Harness] layered memory enabled (MEMORY.md + consolidation)");
         }
+        HarnessMemoryPolicy.apply(builder, memoryEnabled, model);
 
         // 环境级记忆：跨会话共享的环境记忆
         if (StringUtils.hasText(cfg.getEnvironmentMemory())) {
@@ -156,8 +164,10 @@ public class HarnessAgentFactory {
             log.info("[Harness] subagents registered: order/after-sales/knowledge experts");
         }
 
+        HarnessAgent harnessAgent = builder.build();
+        HarnessOptInPolicy.pruneBuiltInTools(harnessAgent, cfg.getSubagent().isEnabled(), false);
         log.info("[Harness] HarnessAgent built for session {}", sessionId);
-        return builder.build();
+        return harnessAgent;
     }
 
     /**

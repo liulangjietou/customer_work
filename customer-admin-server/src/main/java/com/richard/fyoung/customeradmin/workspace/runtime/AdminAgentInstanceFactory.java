@@ -49,6 +49,8 @@ import com.richard.fyoung.customeradmin.workspace.task.entity.AiAgentTask;
 import com.richard.fyoung.customeradmin.workspace.task.runtime.AgentTaskReplayCaptureMiddleware;
 import com.richard.fyoung.customeradmin.workspace.task.runtime.MybatisTaskRepository;
 import com.richard.fyoung.customerwork.core.agent.AgentResourceCloser;
+import com.richard.fyoung.customerwork.core.agent.HarnessMemoryPolicy;
+import com.richard.fyoung.customerwork.core.agent.HarnessOptInPolicy;
 import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkRuntimeConfig;
 import com.richard.fyoung.customerwork.infra.config.RuntimeModelRouteMapper;
@@ -84,7 +86,6 @@ import io.agentscope.harness.agent.subagent.task.TaskRepository;
 import io.agentscope.harness.agent.IsolationScope;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
-import io.agentscope.harness.agent.memory.MemoryConfig;
 import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
 import io.agentscope.harness.agent.sandbox.WorkspaceSpec;
 import io.agentscope.harness.agent.sandbox.impl.docker.DockerFilesystemSpec;
@@ -476,6 +477,9 @@ public class AdminAgentInstanceFactory {
         // 召回内容由 KnowledgeRetrievalMiddleware 自己包，工具结果由框架产出、只能在这里拦。
         // 两者的系统提示词规则走同一个幂等追加方法，不会写重复。
         builder.middleware(indirectInjectionGuardMiddleware);
+        // 当前时间作为瞬时系统上下文注入：模型可直接回答“今天/现在/星期”等确定性问题，避免先调用
+        // timestamp_convert 再进行第二轮推理；不拼进用户消息，因此不会污染会话历史。
+        builder.middleware(new CurrentTimeContextMiddleware());
         // 最内层采集最终模型输入：外层的 RAG/动态参数改写均已完成；只保存哈希和非密钥参数。
         builder.middleware(new ModelReplayCaptureMiddleware());
         if (capabilities.contains(AgentCapabilities.VIBECODING)) {
@@ -553,6 +557,17 @@ public class AdminAgentInstanceFactory {
             .taskRepository(taskRepository)
             .workspace(workspace);
 
+        boolean staticSubagentsEnabled = capabilities.contains(AgentCapabilities.SUBAGENT);
+        boolean dynamicSubagentsEnabled = capabilities.contains(AgentCapabilities.DYNAMIC_SUBAGENT);
+        boolean dynamicSkillsEnabled = capabilities.contains(AgentCapabilities.SKILL_LEARNING);
+        HarnessOptInPolicy.apply(harnessBuilder,
+            vibecoding,
+            agent.getCompressTriggerMsgs() != null,
+            false,
+            staticSubagentsEnabled,
+            dynamicSubagentsEnabled,
+            dynamicSkillsEnabled);
+
         if (vibecoding) {
             if (sandboxProperties.isDockerMode()) {
                 harnessBuilder.filesystem(buildDockerFilesystemSpec(sandboxProperties, agentCode));
@@ -566,20 +581,21 @@ public class AdminAgentInstanceFactory {
                 .allowShellInPlanMode(false)
                 .planFileDirectory(workspace.resolve(PLAN_DIR_NAME).toString());
         }
-        if (capabilities.contains(AgentCapabilities.SKILL_LEARNING)) {
+        if (dynamicSkillsEnabled) {
             // 互动学习新技能（Harness 半边）：技能管理工具 + SkillCurator 自动沉淀成功模式
             harnessBuilder.enableSkillManageTool(true)
                 .enableSkillCurator(SkillCuratorConfig.defaults());
         }
-        if (capabilities.contains(AgentCapabilities.MEMORY)) {
+        boolean memoryEnabled = capabilities.contains(AgentCapabilities.MEMORY);
+        if (memoryEnabled) {
             // 跨会话长期记忆（分层记忆）：对话事实自动 flush 到 workspace/MEMORY.md 并定期 consolidation，
             // 按 agentCode 隔离（一个智能体一份记忆，全部会话共享）。workspace 文件只是框架的工作副本，
             // 权威存储在 AgentMemoryStore（默认落库）：构建时水合到 workspace，对话轮次结束后由
             // ChatService 回写（见 AgentMemorySyncService）
             memorySyncService.hydrate(memoryScope.storageKey(), workspace);
-            harnessBuilder.memory(MemoryConfig.builder().model(model).build());
             log.info("[workspace] layered memory enabled: agentCode={}", agentCode);
         }
+        HarnessMemoryPolicy.apply(harnessBuilder, memoryEnabled, model);
         if (agent.getCompressTriggerMsgs() != null) {
             int keepMsgs = agent.getCompressKeepMsgs() != null
                 ? agent.getCompressKeepMsgs() : DEFAULT_COMPRESS_KEEP_MSGS;
@@ -589,19 +605,17 @@ public class AdminAgentInstanceFactory {
                 .model(model)
                 .build());
         }
-        if (capabilities.contains(AgentCapabilities.SUBAGENT)) {
+        if (staticSubagentsEnabled) {
             registerSubagents(harnessBuilder, agent, visited);
         }
-        if (capabilities.contains(AgentCapabilities.DYNAMIC_SUBAGENT)) {
+        if (dynamicSubagentsEnabled) {
             // 动态子Agent：框架在 HarnessAgent 上默认开启（DynamicSubagentsMiddleware），勾选时保留默认，
             // 主 Agent 可在运行时按任务临时声明子 Agent（SubagentSpecGenerator 现场生成规格，无需预注册）
             log.info("[workspace] dynamic subagents enabled: agentCode={}", agentCode);
-        } else {
-            // 未勾选则显式关闭，避免框架默认行为让所有 Harness 智能体都悄悄具备运行时造 Agent 的能力
-            harnessBuilder.disableDynamicSubagents();
         }
 
         HarnessAgent harnessAgent = harnessBuilder.build();
+        HarnessOptInPolicy.pruneBuiltInTools(harnessAgent, staticSubagentsEnabled, dynamicSubagentsEnabled);
         log.info("[workspace] harness agent built: agentCode={} capabilities={} sandboxMode={}",
             agentCode, capabilities, vibecoding ? sandboxProperties.getMode() : "none");
         return harnessAgent;

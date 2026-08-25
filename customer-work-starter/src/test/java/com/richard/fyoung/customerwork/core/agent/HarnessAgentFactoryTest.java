@@ -13,6 +13,9 @@ import io.agentscope.core.tool.Toolkit;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.junit.jupiter.api.Test;
 
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -60,6 +63,18 @@ class HarnessAgentFactoryTest {
 
         assertNotNull(agent, "HarnessAgent 应成功构建");
         assertNotNull(agent.getStateStore(), "应挂载 StateStore");
+        assertFalse(agent.getDelegate().getMiddlewares().stream()
+            .anyMatch(middleware -> middleware.getClass().getSimpleName().contains("Memory")));
+        assertFalse(agent.getDelegate().getMiddlewares().stream()
+            .anyMatch(middleware -> middleware.getClass().getSimpleName().contains("Compaction")));
+        assertFalse(agent.getDelegate().getMiddlewares().stream()
+            .anyMatch(middleware -> middleware.getClass().getSimpleName().contains("ToolResultEviction")));
+        Set<String> toolNames = agent.getToolkit().getToolNames();
+        assertFalse(toolNames.stream().anyMatch(name -> name.startsWith("memory_") || name.startsWith("session_")));
+        assertFalse(toolNames.stream().anyMatch(name -> name.startsWith("agent_") || name.startsWith("task_")
+            || "wait_async_results".equals(name)));
+        assertFalse(toolNames.stream().anyMatch(name -> Set.of("list_files", "read_file", "write_file", "edit_file",
+            "grep_files", "glob_files", "execute").contains(name)));
     }
 
     @Test

@@ -28,6 +28,8 @@ public final class AhoCorasickMatcher {
     private final List<Map<Character, Integer>> gotoTable = new ArrayList<>();
     /** 失败指针。 */
     private final List<Integer> fail = new ArrayList<>();
+    /** Trie 深度：节点对应的模式前缀长度。 */
+    private final List<Integer> depth = new ArrayList<>();
     /** 每个节点的输出（以该节点结尾的模式，含经失败链继承的），元素为词表下标。 */
     private final List<List<Integer>> output = new ArrayList<>();
     /** 词表（下标与 output 元素对应）。 */
@@ -67,8 +69,8 @@ public final class AhoCorasickMatcher {
     /**
      * 最长模式串长度（归一化后）。
      *
-     * <p>流式过滤要用它决定"尾部留多少字符不放行"：一个词可能被拆进相邻两个增量片段，
-     * 只有留住 {@code maxPatternLength - 1} 个字符等下一片拼上来再匹配，才不会漏。</p>
+     * <p>保留给旧版固定窗口 API 计算安全上界；当前项目流式链路使用
+     * {@link #pendingPrefixLength(String)} 计算真实歧义后缀，避免长词让所有短回复都延迟到流结束。</p>
      */
     public int maxPatternLength() {
         int max = 0;
@@ -76,6 +78,27 @@ public final class AhoCorasickMatcher {
             max = Math.max(max, word.getMatchWord().length());
         }
         return max;
+    }
+
+    /**
+     * 返回文本尾部仍可能继续扩展成某个模式串的归一化字符数。
+     *
+     * <p>完整扫描后的 AC 状态就是“文本最长后缀且为 Trie 前缀”的节点；若该节点是叶子，说明它即使
+     * 已完整命中也不可能再向后扩展，此时沿 fail 链寻找下一个仍有子节点的后缀。与固定保留
+     * {@code maxPatternLength - 1} 相比，本方法只保留真实歧义前缀。</p>
+     */
+    int pendingPrefixLength(String normalizedText) {
+        if (normalizedText == null || normalizedText.isEmpty() || patterns.isEmpty()) {
+            return 0;
+        }
+        int node = 0;
+        for (int i = 0; i < normalizedText.length(); i++) {
+            node = step(node, normalizedText.charAt(i));
+        }
+        while (node != 0 && gotoTable.get(node).isEmpty()) {
+            node = fail.get(node);
+        }
+        return depth.get(node);
     }
 
     /**
@@ -122,6 +145,7 @@ public final class AhoCorasickMatcher {
                 Integer child = gotoTable.get(node).get(c);
                 if (child == null) {
                     child = newNode();
+                    depth.set(child, depth.get(node) + 1);
                     gotoTable.get(node).put(c, child);
                 }
                 node = child;
@@ -158,6 +182,7 @@ public final class AhoCorasickMatcher {
     private int newNode() {
         gotoTable.add(new HashMap<>());
         fail.add(0);
+        depth.add(0);
         output.add(new ArrayList<>());
         return gotoTable.size() - 1;
     }
