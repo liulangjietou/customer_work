@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createScrollFollower } from '@/utils/scrollFollower'
+import { shouldRestoreMostRecentSession } from '@/utils/conversationRestore'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
 import {
   confirmVibeCodingPlan,
@@ -132,6 +133,13 @@ async function openSession(targetSessionId: string) {
     ElMessage.error('历史会话加载失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {
     historyLoading.value = false
+  }
+}
+
+/** Chat 面板同语义：只用最新历史替换首次初始化的纯空占位，不覆盖用户当前状态。 */
+function restoreMostRecentSession(targetSessionId: string) {
+  if (shouldRestoreMostRecentSession(active.value, targetSessionId, props.initialSessionId)) {
+    openSession(targetSessionId)
   }
 }
 
@@ -773,6 +781,7 @@ defineExpose({ newSession })
         :active-session-id="activeSessionId"
         :live-sessions="liveSessions"
         @select="openSession"
+        @initial-session="restoreMostRecentSession"
       />
     </div>
 

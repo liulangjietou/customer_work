@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollFollower } from '@/utils/scrollFollower'
+import { shouldRestoreMostRecentSession } from '@/utils/conversationRestore'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
 import { confirmChatPlan } from '@/api/chat'
 import AssistantResponse from '@/components/AssistantResponse.vue'
@@ -71,6 +72,16 @@ async function openSession(targetSessionId: string) {
     ElMessage.error('历史会话加载失败：' + (error instanceof Error ? error.message : String(error)))
   } finally {
     historyLoading.value = false
+  }
+}
+
+/**
+ * 页面刷新/组件重建后 store 只含临时空会话时，恢复后端按更新时间倒序返回的第一条历史。
+ * 判断集中在共享工具中，确保 Chat/VibeCoding 都不会覆盖显式跳转、草稿或进行中的会话。
+ */
+function restoreMostRecentSession(targetSessionId: string) {
+  if (shouldRestoreMostRecentSession(active.value, targetSessionId, props.initialSessionId)) {
+    openSession(targetSessionId)
   }
 }
 
@@ -241,6 +252,7 @@ defineExpose({ newSession })
         :active-session-id="activeSessionId"
         :live-sessions="liveSessions"
         @select="openSession"
+        @initial-session="restoreMostRecentSession"
       />
     </div>
   </div>
