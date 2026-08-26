@@ -10,7 +10,10 @@ spring:
     # 而这与当前分支的正确性毫无关系。注意它只对"版本号高于本地最高版本"之外的情况有影响：
     # 未来版本 Flyway 本就默认忽略，一旦本分支的新迁移号超过它们才会暴露成 missing。
     # 生产 profile 刻意不配：那里出现 missing 就是真的漏发布了迁移脚本，必须拦下来。
-    ignore-migration-patterns: "*:missing"
+    # 该属性会整体覆盖 Flyway 默认的 *:future，因此必须把 missing 与 future 同时显式保留。
+    ignore-migration-patterns:
+      - "*:missing"
+      - "*:future"
 
 
 # 本地/测试联调默认打开 OA 域账号登录入口；生产默认关闭，需运维显式设置 ADMIN_LDAP_ENABLED=true 开通。
