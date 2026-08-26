@@ -27,8 +27,8 @@ import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelRoutingPolicyRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
-import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.FailoverModel;
-import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.ModelCircuitBreakerRegistry;
+import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.AdminFailoverModel;
+import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.AdminModelCircuitBreakerRegistry;
 import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillVersion;
@@ -145,14 +145,11 @@ public class AdminAgentInstanceFactory {
     /** Plan Mode 计划文件目录名（workspace 下的子目录）。 */
     private static final String PLAN_DIR_NAME = "plans";
     private static final long BYTES_PER_MB = 1024L * 1024L;
-    private static final String WORKSPACE_ROOT = RuntimeWorkDir.of("admin-workspace");
     private static final String SKILL_ROOT = RuntimeWorkDir.of("admin-skills");
     /** 会话产物目录名（{@code {agentCode}/sessions/}），docker 模式下 bind mount 前置预建的子目录之一。 */
-    private static final String SESSIONS_DIR_NAME = "sessions";
     /** 容器工作区根（框架 {@code DockerSandboxClientOptions} 默认值，勿改——bind mount 目标路径依赖它）。 */
     static final String CONTAINER_WORKSPACE_ROOT = "/workspace";
     /** 探测宿主机 uid/gid 的 {@code id} 命令超时秒数。 */
-    private static final long ID_CMD_TIMEOUT_SECONDS = 5;
     /**
      * 宿主机 JVM 进程的 {@code uid:gid}（类加载时经 {@code id -u}/{@code id -g} 探测一次，失败为 null）。
      * docker 模式下注入 {@code docker run --user uid:gid}：原生 Linux Docker 上容器默认以 root 运行，
@@ -160,7 +157,6 @@ public class AdminAgentInstanceFactory {
      * 属主不可写而失败；令容器进程 uid 与宿主机 JVM 一致后产物属主天然对齐。macOS Docker Desktop 本有
      * 属主映射，注入同样无害。探测失败（如 Windows）时不注入并记日志，回退行为见部署手册"Docker 模式产物同步"。
      */
-    private static final String HOST_UID_GID = resolveHostUidGid();
     private static final String DEFAULT_SYSTEM_PROMPT = "你是一个乐于助人的智能助手。不清楚的问题说不知道，需要人工确认，不要瞎编或者胡说八道。";
 
     private final AiAgentMapper agentMapper;
@@ -186,7 +182,7 @@ public class AdminAgentInstanceFactory {
     private final AdminSandboxProperties sandboxProperties;
     private final SandboxGuardMiddleware sandboxGuardMiddleware;
     private final ExecutionModeMiddleware executionModeMiddleware;
-    private final ModelCircuitBreakerRegistry circuitBreakerRegistry;
+    private final AdminModelCircuitBreakerRegistry circuitBreakerRegistry;
     private final AgentMemorySyncService memorySyncService;
     /** 分段耗时采集中间件（starter 提供，admin 显式装配），挂在内层 ReActAgent 上采集每次调用的分段耗时。 */
     private final AgentCallTimingMiddleware agentCallTimingMiddleware;
@@ -215,7 +211,7 @@ public class AdminAgentInstanceFactory {
     /** 后台委派任务仓储（落 MySQL），挂到每个 HarnessAgent 上接管 {@code agent_spawn} 的异步任务。 */
     private final TaskRepository taskRepository;
     /** VibeCoding 会话工作区持久化；未启用时为 null（产出物仅存本地临时目录）。 */
-    private final SessionWorkspaceStorage sessionWorkspaceStorage;
+    private final AgentWorkspaceManager workspaceManager;
     /** MCP 工具主体策略登记与执行闸门，按智能体作用域隔离。 */
     private final McpToolAuthorizationRegistry mcpToolAuthorizationRegistry;
     private final SubjectToolAuthorizationMiddleware subjectToolAuthorizationMiddleware;
@@ -239,7 +235,7 @@ public class AdminAgentInstanceFactory {
                                       AdminMcpFactory mcpFactory, AdminSandboxProperties sandboxProperties,
                                       SandboxGuardMiddleware sandboxGuardMiddleware,
                                       ExecutionModeMiddleware executionModeMiddleware,
-                                      ModelCircuitBreakerRegistry circuitBreakerRegistry,
+                                      AdminModelCircuitBreakerRegistry circuitBreakerRegistry,
                                       AgentMemorySyncService memorySyncService,
                                       AgentCallTimingMiddleware agentCallTimingMiddleware,
                                       ToolKindRegistry agentCallToolKindRegistry,
@@ -251,7 +247,7 @@ public class AdminAgentInstanceFactory {
                                       ObjectProvider<SensitiveWordMiddleware> sensitiveWordMiddlewareProvider,
                                       IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware,
                                       TaskRepository taskRepository,
-                                      ObjectProvider<SessionWorkspaceStorage> sessionWorkspaceStorageProvider,
+                                      AgentWorkspaceManager workspaceManager,
                                       SecretRefService secretRefService,
                                       ObjectProvider<ModelRoutingPolicyRuntimeAccess> routingPolicyRuntimeAccessProvider,
                                       ObjectProvider<McpCredentialService> mcpCredentialServiceProvider,
@@ -259,9 +255,7 @@ public class AdminAgentInstanceFactory {
                                       SubjectToolAuthorizationMiddleware subjectToolAuthorizationMiddleware) {
         this.indirectInjectionGuardMiddleware = indirectInjectionGuardMiddleware;
         this.taskRepository = taskRepository;
-        // 容错 null provider：单测直传 null 依赖构造本类验证路径防御逻辑（同 CustomerServiceAgentFactory 的 meterRegistry 手法）
-        this.sessionWorkspaceStorage = sessionWorkspaceStorageProvider == null
-            ? null : sessionWorkspaceStorageProvider.getIfAvailable();
+        this.workspaceManager = workspaceManager;
         this.agentMapper = agentMapper;
         this.agentMcpMapper = agentMcpMapper;
         this.agentSkillMapper = agentSkillMapper;
@@ -530,7 +524,7 @@ public class AdminAgentInstanceFactory {
 
     /**
      * 在内层 ReActAgent 上叠加 Harness 能力：vibecoding 沙箱 / plan 计划模式 / skill-learning 技能自进化 /
-     * 上下文压缩 / 子智能体编排。非 vibecoding 时不挂 filesystem 沙箱（SandboxSafeAgentStateStore 也只是
+     * 上下文压缩 / 子智能体编排。非 vibecoding 时不挂 filesystem 沙箱（AdminSandboxSafeAgentStateStore 也只是
      * docker filesystem 的 sessionId 转义问题，同样不需要），workspace 仍复用 {@link #resolveWorkspace}。
      */
     private HarnessAgent buildHarnessAgent(AiAgent agent, List<String> capabilities, ReActAgent inner,
@@ -540,11 +534,11 @@ public class AdminAgentInstanceFactory {
 
         // Docker 模式下 HarnessAgent 内部的 SessionSandboxStateStore 会给沙箱状态槽位拼出带 "/"
         // 的 sessionId（IsolationScope 四种取值全部如此，框架侧硬编码），而 MysqlAgentStateStore
-        // 拒绝接受含路径分隔符的 sessionId，两者组合必然抛异常——用 SandboxSafeAgentStateStore
+        // 拒绝接受含路径分隔符的 sessionId，两者组合必然抛异常——用 AdminSandboxSafeAgentStateStore
         // 包一层转义规避，local 模式与未挂 filesystem 沙箱的升级路径不受影响（见该类 Javadoc）。
         AgentStateStore harnessStateStore = vibecoding && sandboxProperties.isDockerMode()
-            ? new SandboxSafeAgentStateStore(stateStore) : stateStore;
-        Path workspace = resolveWorkspace(memoryScope);
+            ? new AdminSandboxSafeAgentStateStore(stateStore) : stateStore;
+        Path workspace = workspaceManager.resolveWorkspace(memoryScope);
         HarnessAgent.Builder harnessBuilder = HarnessAgent.Builder.fromAgent(inner)
             .stateStore(harnessStateStore)
             .defaultSessionId(WorkspaceRuntimeScope.agent(agentCode))
@@ -702,15 +696,15 @@ public class AdminAgentInstanceFactory {
      */
     static SandboxFilesystemSpec buildDockerFilesystemSpec(AdminSandboxProperties sandboxProperties, String agentCode) {
         AdminSandboxProperties.Docker docker = sandboxProperties.getDocker();
-        Path hostWorkspaceRoot = prepareHostWorkspaceRoot(agentCode);
+        Path hostWorkspaceRoot = AgentWorkspaceManager.prepareHostWorkspaceRoot(agentCode);
         List<String> runArgs = new ArrayList<>();
         // P1-3 核心：宿主机 agent 工作区根 ↔ 容器 /workspace 双向实时可见
         runArgs.add("-v");
         runArgs.add(hostWorkspaceRoot + ":" + CONTAINER_WORKSPACE_ROOT + ":rw");
-        if (HOST_UID_GID != null) {
+        if (AgentWorkspaceManager.hostUidGid() != null) {
             // 容器进程 uid/gid 对齐宿主机 JVM，bind mount 写出的产物属主即宿主机用户（Linux 属主问题的根治）
             runArgs.add("--user");
-            runArgs.add(HOST_UID_GID);
+            runArgs.add(AgentWorkspaceManager.hostUidGid());
         } else {
             log.info("[workspace] host uid/gid unresolved, docker sandbox runs as image default user, agentCode={}", agentCode);
         }
@@ -725,144 +719,6 @@ public class AdminAgentInstanceFactory {
             .workspaceSpec(workspaceSpec)
             .workspaceProjectionEnabled(false)
             .isolationScope(IsolationScope.AGENT);
-    }
-
-    /**
-     * bind mount 前置：预建宿主机 agent 工作区根及 {@code sessions/} 子目录并 fast fail——若交给
-     * {@code docker -v} 自动补建，缺失目录会以 root 属主创建，后续宿主机侧 git/回滚必然撞权限，
-     * 这正是本方法要规避的场景，建不出来就不该继续挂载（沙箱装配随之失败，错误信息直达调用方）。
-     * 返回绝对 normalize 路径，与 {@link #resolveSessionWorkspace} 的解析同源（同一 {@code WORKSPACE_ROOT}
-     * 相对 JVM 工作目录），保证容器内写入与宿主机读取指向同一目录。
-     */
-    private static Path prepareHostWorkspaceRoot(String agentCode) {
-        Path hostWorkspaceRoot = Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(agentCode))
-            .toAbsolutePath().normalize();
-        try {
-            Files.createDirectories(hostWorkspaceRoot.resolve(SESSIONS_DIR_NAME));
-        } catch (Exception e) {
-            log.error("[workspace] create host workspace dir for bind mount failed, code={}, agentCode={}",
-                "SANDBOX_BIND_MOUNT_INIT_ERROR", agentCode, e);
-            throw new BizException(ResultCode.SYSTEM_ERROR, "docker 沙箱工作区目录创建失败: " + hostWorkspaceRoot);
-        }
-        return hostWorkspaceRoot;
-    }
-
-    /**
-     * 探测宿主机 JVM 进程的 {@code uid:gid}（POSIX {@code id -u}/{@code id -g}），供
-     * {@code docker run --user} 使用；任何异常（命令缺失/超时/非 POSIX 平台）返回 null 表示不注入。
-     * 类加载时执行一次，进程生命周期内 uid 不会变。
-     */
-    private static String resolveHostUidGid() {
-        try {
-            String uid = execIdCommand("-u");
-            String gid = execIdCommand("-g");
-            if (StringUtils.hasText(uid) && StringUtils.hasText(gid)) {
-                return uid + ":" + gid;
-            }
-        } catch (Exception e) {
-            log.error("[workspace] resolve host uid/gid failed, code={}", "SANDBOX_UID_RESOLVE_FAIL", e);
-        }
-        return null;
-    }
-
-    /** 执行 {@code id <flag>} 并返回 trim 后的输出；非零退出码/超时返回 null。 */
-    private static String execIdCommand(String flag) throws Exception {
-        Process process = new ProcessBuilder("id", flag).redirectErrorStream(true).start();
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-        if (!process.waitFor(ID_CMD_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            return null;
-        }
-        return process.exitValue() == 0 ? output : null;
-    }
-
-    /**
-     * VibeCoding 沙箱工作区路径（智能体根目录）：{@code {临时根}/admin-workspace/{agentCode}}。
-     * 仅供快照根路径使用，Agent 运行时请使用 {@link #resolveSessionWorkspace(String, String)} 按会话隔离。
-     */
-    public Path resolveWorkspace(String agentCode) {
-        return resolveWorkspace(AgentMemoryScope.current(agentCode));
-    }
-
-    /** 已冻结主体的工作区；可信请求下 MEMORY.md 物理隔离。 */
-    public Path resolveWorkspace(AgentMemoryScope scope) {
-        Path base = Path.of(WORKSPACE_ROOT, WorkspaceRuntimeScope.agent(scope.agentCode()));
-        Path workspace = scope.trusted()
-            ? base.resolve("subjects").resolve(scope.subjectHash()) : base;
-        try {
-            Files.createDirectories(workspace);
-        } catch (Exception e) {
-            log.error("[workspace] create workspace dir failed, code={}, agentCode={}",
-                "WORKSPACE_INIT_ERROR", scope.agentCode(), e);
-        }
-        return workspace;
-    }
-
-    /**
-     * VibeCoding 沙箱工作区路径（会话级隔离）：{@code {临时根}/admin-workspace/{agentCode}/sessions/{sessionId}}。
-     * HarnessAgent 的文件操作根目录，不同会话产出物物理隔离，互不污染。
-     *
-     * <p><b>安全约束（会话路径解析的全链路唯一防御点）</b>：本方法是 stream/files/file-content/rollback
-     * 等所有会话级功能解析磁盘路径的公共入口，sessionId 由前端透传（正常值是 UUID v4），在此统一做
-     * 路径穿越校验——含路径分隔符或 {@code ..} 的 sessionId 直接 fast fail，并对拼接结果 normalize 后
-     * 强校验必须仍落在该 agent 的 {@code sessions/} 根目录内。否则恶意 sessionId（如
-     * {@code ../其他会话ID} / 绝对路径）可越界访问他人会话甚至宿主机任意目录（rollback 链路会对目标
-     * 目录执行破坏性的 git checkout + clean）。</p>
-     */
-    public Path resolveSessionWorkspace(String agentCode, String sessionId) {
-        String safeSession = requireSafeSessionId(sessionId);
-        Path sessionsRoot = resolveWorkspace(AgentMemoryScope.current(agentCode))
-            .resolve("sessions").normalize();
-        Path workspace = sessionsRoot.resolve(safeSession).normalize();
-        // 双保险：字符黑名单之外，normalize 后必须仍是 sessions 根目录的真子路径（防未预见的编码绕过）
-        if (!workspace.startsWith(sessionsRoot) || workspace.equals(sessionsRoot)) {
-            log.error("[workspace] session workspace path traversal blocked, code={}, agentCode={}, sessionId={}",
-                "SESSION_PATH_TRAVERSAL", agentCode, safeSession);
-            throw new BizException(ResultCode.PARAM_INVALID, "非法 sessionId：解析路径越界");
-        }
-        try {
-            Files.createDirectories(workspace);
-        } catch (Exception e) {
-            log.error("[workspace] create session workspace dir failed, code={}, agentCode={}, sessionId={}",
-                "SESSION_WORKSPACE_INIT_ERROR", agentCode, safeSession, e);
-        }
-        // 恢复权威副本：工作区落在系统临时目录（会被 OS 清理）、容器化部署更是一销毁就没了，
-        // 而会话产出物是用户生成的代码、不是可重建的派生物。本方法是所有会话级功能解析路径的公共入口，
-        // 挂在这里能覆盖 stream / files / file-content / rollback 全部链路。
-        // 仅在本地目录为空时真正拉取（见 SessionWorkspaceStorage#hydrate），故重复调用无额外开销。
-        if (sessionWorkspaceStorage != null) {
-            sessionWorkspaceStorage.hydrate(agentCode, safeSession, workspace);
-        }
-        return workspace;
-    }
-
-    /**
-     * 把会话工作区保存回权威存储（对象存储）。产出物写入之后必须调用一次，否则本地临时目录一被清理就丢。
-     *
-     * <p>调用点覆盖三条会造成写入的链路：对话轮次结束、手工保存文件、一键回滚。
-     * 未启用持久化时静默跳过；失败只记 error，不打断主链路（见 {@link SessionWorkspaceStorage#persist}）。</p>
-     */
-    public void persistSessionWorkspace(String agentCode, String sessionId) {
-        if (sessionWorkspaceStorage == null) {
-            return;
-        }
-        String safeSession = requireSafeSessionId(sessionId);
-        sessionWorkspaceStorage.persist(agentCode, safeSession,
-            resolveWorkspace(AgentMemoryScope.current(agentCode))
-                .resolve("sessions").resolve(safeSession).normalize());
-    }
-
-    /**
-     * sessionId 合法性校验：空值回退 {@code default}；含 {@code /}、{@code \}、{@code ..} 任一直接拒绝——
-     * 前端生成的 sessionId 是 UUID v4（十六进制 + 连字符，见 customer-admin-web/src/utils/uuid.ts），
-     * 正常值不可能出现这些字符，出现即恶意构造，fast fail。
-     */
-    static String requireSafeSessionId(String sessionId) {
-        String safeSession = StringUtils.hasText(sessionId) ? sessionId : "default";
-        if (safeSession.contains("/") || safeSession.contains("\\") || safeSession.contains("..")) {
-            throw new BizException(ResultCode.PARAM_INVALID, "非法 sessionId：不允许包含路径分隔符或 ..");
-        }
-        return safeSession;
     }
 
     private AiAgent requireEnabledAgent(String agentCode) {
@@ -890,8 +746,8 @@ public class AdminAgentInstanceFactory {
 
     /**
      * 按智能体主备模型配置构建运行时 {@link Model}：无备用模型时行为与旧逻辑完全一致（直接返回单个主模型，
-     * 不包 {@link FailoverModel}）；有备用模型时按 {@code sort_order} 组装有序候选（主在前备在后）包成
-     * {@link FailoverModel}，运行时主模型失败自动按序切备并带熔断记忆。
+     * 不包 {@link AdminFailoverModel}）；有备用模型时按 {@code sort_order} 组装有序候选（主在前备在后）包成
+     * {@link AdminFailoverModel}，运行时主模型失败自动按序切备并带熔断记忆。
      */
     private Model buildAgentModel(AiAgent agent) {
         if (agent.getModelRoutePolicyId() != null) {
@@ -906,13 +762,13 @@ public class AdminAgentInstanceFactory {
         if (CollectionUtils.isEmpty(backupModelIds)) {
             return primaryModel;
         }
-        List<FailoverModel.Candidate> candidates = new ArrayList<>();
-        candidates.add(new FailoverModel.Candidate(agent.getModelId(), primaryModel));
+        List<AdminFailoverModel.Candidate> candidates = new ArrayList<>();
+        candidates.add(new AdminFailoverModel.Candidate(agent.getModelId(), primaryModel));
         for (Long backupModelId : backupModelIds) {
-            candidates.add(new FailoverModel.Candidate(backupModelId, buildModel(backupModelId)));
+            candidates.add(new AdminFailoverModel.Candidate(backupModelId, buildModel(backupModelId)));
         }
         log.info("[workspace] failover model built: agentCode={} candidates={}", agent.getAgentCode(), candidates.size());
-        return new FailoverModel(candidates, circuitBreakerRegistry);
+        return new AdminFailoverModel(candidates, circuitBreakerRegistry);
     }
 
     private Model buildPolicyModel(AiAgent agent) {

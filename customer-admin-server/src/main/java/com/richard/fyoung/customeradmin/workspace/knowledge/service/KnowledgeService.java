@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.knowledge.service;
 
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
@@ -366,13 +367,7 @@ public class KnowledgeService {
         if (CollectionUtils.isEmpty(responses)) {
             throw new BizException(ResultCode.GIT_ASSISTANT_AI_FAILED, "模型未返回任何内容");
         }
-        String text = responses.stream()
-            .flatMap(response -> response.getContent().stream())
-            .filter(TextBlock.class::isInstance)
-            .map(TextBlock.class::cast)
-            .map(TextBlock::getText)
-            .filter(StringUtils::hasText)
-            .collect(Collectors.joining());
+        String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new BizException(ResultCode.GIT_ASSISTANT_AI_FAILED, "模型返回内容为空");
         }

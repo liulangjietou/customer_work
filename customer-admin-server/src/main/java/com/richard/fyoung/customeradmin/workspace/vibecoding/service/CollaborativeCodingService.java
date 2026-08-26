@@ -1,5 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -74,6 +76,7 @@ public class CollaborativeCodingService {
     private static final int MAX_DIFF_CHARS_FOR_REVIEW = 60_000;
 
     private final AiAgentMapper agentMapper;
+    private final AgentWorkspaceManager workspaceManager;
     private final AdminCollaborationProperties properties;
     private final AdminAgentInstanceFactory agentInstanceFactory;
     private final VibeCodingService vibeCodingService;
@@ -85,7 +88,9 @@ public class CollaborativeCodingService {
                                       AdminAgentInstanceFactory agentInstanceFactory,
                                       VibeCodingService vibeCodingService,
                                       GitWorkspaceService gitWorkspaceService,
-                                      AiCodingAuditService auditService) {
+                                      AiCodingAuditService auditService,
+                                     AgentWorkspaceManager workspaceManager) {
+        this.workspaceManager = workspaceManager;
         this.agentMapper = agentMapper;
         this.properties = properties;
         this.agentInstanceFactory = agentInstanceFactory;
@@ -252,7 +257,7 @@ public class CollaborativeCodingService {
     /** 审查角色提示词：角色指令 + 上游上下文 + 本轮真实 git diff（截断防溢出）。 */
     private String buildReviewPrompt(String agentCode, String sessionId,
                                      AdminCollaborationProperties.Role role, String context) {
-        Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+        Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         String diff = gitWorkspaceService.diffAgainstBaseline(workspace);
         String diffSection = StringUtils.hasText(diff)
             ? truncate(diff, MAX_DIFF_CHARS_FOR_REVIEW)
@@ -276,13 +281,7 @@ public class CollaborativeCodingService {
         if (CollectionUtils.isEmpty(responses)) {
             throw new BizException(ResultCode.COLLAB_ROLE_FAILED, "模型未返回任何内容");
         }
-        String text = responses.stream()
-            .flatMap(response -> response.getContent().stream())
-            .filter(TextBlock.class::isInstance)
-            .map(TextBlock.class::cast)
-            .map(TextBlock::getText)
-            .filter(StringUtils::hasText)
-            .collect(Collectors.joining());
+        String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new BizException(ResultCode.COLLAB_ROLE_FAILED, "模型返回内容为空");
         }
@@ -319,7 +318,7 @@ public class CollaborativeCodingService {
 
     private List<String> safeChangedFiles(String agentCode, String sessionId) {
         try {
-            Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, sessionId);
+            Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
             return gitWorkspaceService.changedFilesAgainstBaseline(workspace);
         } catch (Exception e) {
             log.error("[collab] resolve changed files for audit failed, code={}, agentCode={}",

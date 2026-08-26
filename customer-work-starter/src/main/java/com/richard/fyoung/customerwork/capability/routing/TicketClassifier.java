@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.routing;
 
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.capability.assist.ConversationSummary;
@@ -17,7 +18,6 @@ import org.springframework.util.StringUtils;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * 工单分类器（智能路由中控·工单智能分配的分类环节）：一次性 LLM 调用，从工单 reason + 会话摘要推断
@@ -88,7 +88,7 @@ public class TicketClassifier {
     }
 
     private TicketClassification parse(String modelText, String emotionHint) {
-        String json = extractJsonObject(modelText);
+        String json = ModelResponses.extractJsonObject(modelText);
         if (json == null) {
             log.error("[TicketClassifier] classify json degraded (no json), code={}", "TICKET-CLASSIFY-DEGRADE");
             return TicketClassification.fallback(emotionHint);
@@ -132,27 +132,13 @@ public class TicketClassifier {
         if (responses == null || responses.isEmpty()) {
             throw new IllegalStateException("classify model returned empty response");
         }
-        String text = responses.stream()
-            .flatMap(response -> response.getContent().stream())
-            .filter(TextBlock.class::isInstance)
-            .map(TextBlock.class::cast)
-            .map(TextBlock::getText)
-            .filter(StringUtils::hasText)
-            .collect(Collectors.joining());
+        String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new IllegalStateException("classify model returned no text content");
         }
         return text.trim();
     }
 
-    private String extractJsonObject(String text) {
-        if (!StringUtils.hasText(text)) {
-            return null;
-        }
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        return (start >= 0 && end > start) ? text.substring(start, end + 1) : null;
-    }
 
     private String nullToEmpty(String s) {
         return s == null ? "" : s;

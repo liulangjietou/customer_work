@@ -203,7 +203,7 @@ public class AgentService {
 
     /**
      * 保存门禁：同步实测主模型连通性，非成功即抛业务异常阻止保存。防御只做这一处（后端保存链路），
-     * 运行时不再重复校验（运行时靠 FailoverModel 主备容错兜底）。
+     * 运行时不再重复校验（运行时靠 AdminFailoverModel 主备容错兜底）。
      */
     private void assertPrimaryModelConnectivity(Long modelId) {
         try {

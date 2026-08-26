@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.eval.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
-import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.capability.eval.EvalRunStore;
 import jakarta.annotation.PreDestroy;
@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 /**
  * 客服端库评测记录门面的惰性提供者。
  *
- * <p>连接参数复用 {@link ContentGuardProperties}——评测记录与内容风控三表同在客服端库，
+ * <p>连接参数复用 {@link CustomerWorkDbProperties}——评测记录与内容风控三表同在客服端库，
  * 再配一套连接参数只会多一处要同步维护的配置（与配额门面同一取舍）。</p>
  *
  * <p>惰性建连，<b>绝不在 admin 启动期触碰客服端库</b>：后台不该因为客服端库没起来就启动不了。</p>
@@ -24,7 +24,7 @@ public class EvalGatewayProvider {
 
     private final CustomerWorkFacade<EvalGateway> facade;
 
-    public EvalGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
+    public EvalGatewayProvider(CustomerWorkDbProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("eval-run-pool", properties, tenantPlugins)
             .mapperClasses(EvalGatewayFactory.MAPPER_CLASSES)
             .mapperXml(EvalGatewayFactory.MAPPER_XML_LOCATIONS)

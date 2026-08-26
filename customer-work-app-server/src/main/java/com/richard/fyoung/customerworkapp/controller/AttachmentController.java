@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerwork.safety.security.UserPrincipals;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
 import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
@@ -72,7 +73,7 @@ public class AttachmentController {
         @RequestPart("file") FilePart file,
         @RequestPart(value = "sessionId", required = false) String sessionId,
         ServerWebExchange exchange) {
-        UserPrincipal principal = principal(exchange);
+        UserPrincipal principal = UserPrincipals.require(exchange);
         if (sessionId != null && !sessionId.isBlank()) {
             sessionGuard.requireOwned(sessionId, principal.userId());
         }
@@ -112,11 +113,4 @@ public class AttachmentController {
             attachment.getErrorMessage());
     }
 
-    private UserPrincipal principal(ServerWebExchange exchange) {
-        UserPrincipal principal = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
-        if (principal == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
-        }
-        return principal;
-    }
 }

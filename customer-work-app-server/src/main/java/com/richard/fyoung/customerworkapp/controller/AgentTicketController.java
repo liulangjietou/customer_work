@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerworkapp.web.HttpErrors;
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
 import com.richard.fyoung.customerwork.core.common.PageResult;
@@ -271,19 +272,7 @@ public class AgentTicketController {
     private <T> Mono<T> blocking(Callable<T> callable) {
         return Mono.fromCallable(callable)
             .subscribeOn(Schedulers.boundedElastic())
-            .onErrorMap(this::translate);
+            .onErrorMap(HttpErrors::translate);
     }
 
-    private Throwable translate(Throwable e) {
-        if (e instanceof ResponseStatusException) {
-            return e;
-        }
-        if (e instanceof NoSuchElementException) {
-            return new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
-        }
-        if (e instanceof IllegalStateException) {
-            return new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
-        }
-        return e;
-    }
 }

@@ -397,8 +397,14 @@ function openInWorkspace(row: AgentCallStatsRow) {
 // ---------- 行操作：删除 ----------
 async function handleDelete(row: AgentCallStatsRow) {
   await ElMessageBox.confirm(`确认删除这条调用记录？（请求ID：${row.requestId}）`, '提示', { type: 'warning' })
-  await deleteAgentCallStats(row.id, filters.source)
-  ElMessage.success('删除成功')
+  // 后端返回的布尔值表示「是否真的删掉了一行」，false = 这条记录已经不在了（可能被别人先删）。
+  // 此前无条件提示「删除成功」，用户在没删掉的时候也会看到成功——列表刷新后记录还在，很费解。
+  const deleted = await deleteAgentCallStats(row.id, filters.source)
+  if (deleted) {
+    ElMessage.success('删除成功')
+  } else {
+    ElMessage.warning('该记录已不存在，可能已被其他管理员删除')
+  }
   await refreshAll()
 }
 

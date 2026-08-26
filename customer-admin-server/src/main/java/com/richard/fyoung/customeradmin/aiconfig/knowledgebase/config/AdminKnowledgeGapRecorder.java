@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
-import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapService;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapRecorder;
@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
  * 这与 {@link KnowledgeGapService} 内部"全程吞异常"的取舍一致，
  * 但门面的建连异常发生在它之外，得在这一层再兜一次。</p>
  *
- * <p>连接参数复用 {@link ContentGuardProperties}——盲区表与内容风控三表同在客服端库，
+ * <p>连接参数复用 {@link CustomerWorkDbProperties}——盲区表与内容风控三表同在客服端库，
  * 再配一套连接参数只会多一处要同步维护的配置（与配额、评测、badcase 门面同一取舍）。</p>
  *
  * @author owlzhangfq@gmail.com
@@ -35,10 +35,10 @@ public class AdminKnowledgeGapRecorder implements KnowledgeGapRecorder {
 
     private static final String CODE_RECORD_FAIL = "GAP-RECORD-FAIL";
 
-    private final ContentGuardProperties properties;
+    private final CustomerWorkDbProperties properties;
     private final CustomerWorkFacade<KnowledgeGapService> facade;
 
-    public AdminKnowledgeGapRecorder(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
+    public AdminKnowledgeGapRecorder(CustomerWorkDbProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.properties = properties;
         this.facade = CustomerWorkFacade.builder("knowledge-gap-pool", properties, tenantPlugins)
             .mapperClasses(KnowledgeGapGatewayFactory.MAPPER_CLASSES)

@@ -1,8 +1,8 @@
 package com.richard.fyoung.customeradmin.billing.gateway;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.billing.mapper.CustomerUsageFactMapper;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
-import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
@@ -17,7 +17,7 @@ public class CustomerUsageFactGatewayProvider {
 
     private final CustomerWorkFacade<CustomerUsageFactGateway> facade;
 
-    public CustomerUsageFactGatewayProvider(ContentGuardProperties properties,
+    public CustomerUsageFactGatewayProvider(CustomerWorkDbProperties properties,
                                             AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("billing-usage-fact-pool", properties, tenantPlugins)
             .mapperClasses(List.of(CustomerUsageFactMapper.class))

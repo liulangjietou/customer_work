@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.eval;
 
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalCaseMapper;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetReleaseMapper;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalDatasetSnapshotMapper;
@@ -22,7 +23,6 @@ import org.springframework.util.StringUtils;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * 评测能力装配。
@@ -132,13 +132,7 @@ public class EvalConfig {
                 if (responses == null || responses.isEmpty()) {
                     throw new IllegalStateException("judge model returned empty response");
                 }
-                String text = responses.stream()
-                    .flatMap(response -> response.getContent().stream())
-                    .filter(TextBlock.class::isInstance)
-                    .map(TextBlock.class::cast)
-                    .map(TextBlock::getText)
-                    .filter(StringUtils::hasText)
-                    .collect(Collectors.joining());
+                String text = ModelResponses.text(responses);
                 return Msg.builder()
                     .role(MsgRole.ASSISTANT)
                     .name("judge")

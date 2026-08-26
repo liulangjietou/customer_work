@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerwork.safety.security.UserPrincipals;
 import com.richard.fyoung.customerwork.capability.csat.CsatService;
 import com.richard.fyoung.customerwork.capability.csat.CsatSummary;
 import com.richard.fyoung.customerwork.capability.csat.CsatSurvey;
@@ -53,7 +54,7 @@ public class CsatController {
     public Mono<ResponseEntity<CsatSurvey>> status(@PathVariable String sessionId,
                                                    ServerWebExchange exchange) {
         return Mono.fromCallable(() -> {
-                sessionGuard.requireOwned(sessionId, principal(exchange).userId());
+                sessionGuard.requireOwned(sessionId, UserPrincipals.require(exchange).userId());
                 return csatService.find(sessionId)
                     .map(ResponseEntity::ok)
                     .orElseGet(() -> ResponseEntity.notFound().build());
@@ -69,7 +70,7 @@ public class CsatController {
                                    @RequestParam(required = false) String comment,
                                    ServerWebExchange exchange) {
         return Mono.fromCallable(() -> {
-                sessionGuard.requireOwned(sessionId, principal(exchange).userId());
+                sessionGuard.requireOwned(sessionId, UserPrincipals.require(exchange).userId());
                 return csatService.submit(sessionId, score, comment);
             })
             .subscribeOn(Schedulers.boundedElastic());
@@ -89,11 +90,4 @@ public class CsatController {
             .subscribeOn(Schedulers.boundedElastic());
     }
 
-    private UserPrincipal principal(ServerWebExchange exchange) {
-        UserPrincipal principal = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
-        if (principal == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
-        }
-        return principal;
-    }
 }

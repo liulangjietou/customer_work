@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerworkapp.controller;
 
+import com.richard.fyoung.customerworkapp.web.HttpErrors;
+import com.richard.fyoung.customerwork.safety.security.UserPrincipals;
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
 import com.richard.fyoung.customerwork.core.common.PageResult;
@@ -84,7 +86,7 @@ public class UserTicketController {
         description = "用户级唯一活跃会话：已有进行中会话返回 409（体带 sessionId/ticketId/status），否则建单")
     @PostMapping("/sessions")
     public Mono<ResponseEntity<Map<String, Object>>> createSession(ServerWebExchange exchange) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             // 用户级唯一活跃会话：命中进行中工单则拒绝新建，回传现有会话信息供前端跳转
             Optional<Ticket> active = ticketService.findActiveByUser(user.userId());
@@ -107,7 +109,7 @@ public class UserTicketController {
                                                  @RequestParam(required = false) String status,
                                                  @RequestParam(defaultValue = "1") int page,
                                                  @RequestParam(defaultValue = "20") int size) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         TicketQuery query = new TicketQuery(parseStatus(status), null, null, null, user.userId(), page, size);
         return blocking(() -> {
             PageResult<Ticket> result = ticketService.findPage(query);
@@ -121,7 +123,7 @@ public class UserTicketController {
     @Operation(summary = "工单详情", description = "含事件轨迹；非本人和不存在统一返回 404")
     @GetMapping("/tickets/{id}")
     public Mono<Map<String, Object>> getTicket(@PathVariable String id, ServerWebExchange exchange) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             Ticket ticket = ownedTicket(id, user);
             Map<String, Object> body = new LinkedHashMap<>();
@@ -136,7 +138,7 @@ public class UserTicketController {
     public Mono<List<ChatMessage>> messages(@PathVariable String sessionId, ServerWebExchange exchange,
                                             @RequestParam(required = false) Long beforeId,
                                             @RequestParam(defaultValue = "" + DEFAULT_MESSAGE_LIMIT) int limit) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             sessionGuard.requireOwned(sessionId, user.userId());
             return chatLogService.historyBySession(sessionId, beforeId, limit);
@@ -147,7 +149,7 @@ public class UserTicketController {
     @PostMapping("/tickets/{id}/handoff")
     public Mono<Ticket> handoff(@PathVariable String id, ServerWebExchange exchange,
                                 @RequestBody(required = false) ReasonRequest request) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             Ticket ticket = ownedTicket(id, user);
             return ticketService.requestHandoff(ticket.getSessionId(), reasonOf(request),
@@ -158,7 +160,7 @@ public class UserTicketController {
     @Operation(summary = "确认解决", description = "WAITING_CONFIRM → RESOLVED，非法状态 409")
     @PostMapping("/tickets/{id}/confirm")
     public Mono<Ticket> confirm(@PathVariable String id, ServerWebExchange exchange) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             ownedTicket(id, user);
             return ticketService.confirm(id, TicketActorType.USER, user.userId());
@@ -169,7 +171,7 @@ public class UserTicketController {
     @PostMapping("/tickets/{id}/reject")
     public Mono<Ticket> reject(@PathVariable String id, ServerWebExchange exchange,
                                @RequestBody(required = false) ReasonRequest request) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             ownedTicket(id, user);
             return ticketService.reject(id, reasonOf(request), TicketActorType.USER, user.userId());
@@ -182,7 +184,7 @@ public class UserTicketController {
     @PostMapping("/tickets/{id}/reopen")
     public Mono<ResponseEntity<Object>> reopen(@PathVariable String id, ServerWebExchange exchange,
                                @RequestBody(required = false) ReasonRequest request) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         return blocking(() -> {
             Ticket ticket = ownedTicket(id, user);
             // 用户级唯一活跃会话不变式：reopen 本质是"新开一张活跃工单"，需与 createSession 同样的前置校验，
@@ -204,7 +206,7 @@ public class UserTicketController {
     @PostMapping("/tickets/{id}/close")
     public Mono<Ticket> close(@PathVariable String id, ServerWebExchange exchange,
                               @RequestBody(required = false) CloseRequest request) {
-        UserPrincipal user = principal(exchange);
+        UserPrincipal user = UserPrincipals.require(exchange);
         boolean force = request != null && Boolean.TRUE.equals(request.force());
         String reason = request == null ? null : request.reason();
         return blocking(() -> {
@@ -220,13 +222,6 @@ public class UserTicketController {
     // ---- 内部 ----
 
     /** 从 exchange 属性取当前用户主体（过滤器已保证存在，此处为单一防御点）。 */
-    private UserPrincipal principal(ServerWebExchange exchange) {
-        UserPrincipal user = exchange.getAttribute(UserAuthWebFilter.PRINCIPAL_ATTR);
-        if (user == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthenticated");
-        }
-        return user;
-    }
 
     /** 加载工单并校验归属：不存在与非本人统一 404。 */
     private Ticket ownedTicket(String id, UserPrincipal user) {
@@ -268,20 +263,8 @@ public class UserTicketController {
     private <T> Mono<T> blocking(Callable<T> callable) {
         return Mono.fromCallable(callable)
             .subscribeOn(Schedulers.boundedElastic())
-            .onErrorMap(this::translate);
+            .onErrorMap(HttpErrors::translate);
     }
 
     /** 领域异常 → HTTP 状态：已是 ResponseStatusException 原样透传；不存在 404；状态机冲突 409。 */
-    private Throwable translate(Throwable e) {
-        if (e instanceof ResponseStatusException) {
-            return e;
-        }
-        if (e instanceof NoSuchElementException) {
-            return new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
-        }
-        if (e instanceof IllegalStateException) {
-            return new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
-        }
-        return e;
-    }
 }

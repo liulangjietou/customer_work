@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.attachment;
 
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ImageBlock;
 import io.agentscope.core.message.Msg;
@@ -16,7 +17,6 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
  * 基于 AgentScope 视觉模型的 OCR 实现：图片 Base64 → {@link ImageBlock} 拼 OCR 提示词 {@link TextBlock}
@@ -63,13 +63,7 @@ public class ModelVisionOcrService implements VisionOcrService {
         if (responses == null || responses.isEmpty()) {
             throw new IllegalStateException("vision model returned empty response");
         }
-        String text = responses.stream()
-            .flatMap(response -> response.getContent().stream())
-            .filter(TextBlock.class::isInstance)
-            .map(TextBlock.class::cast)
-            .map(TextBlock::getText)
-            .filter(StringUtils::hasText)
-            .collect(Collectors.joining());
+        String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new IllegalStateException("vision model returned no text content");
         }

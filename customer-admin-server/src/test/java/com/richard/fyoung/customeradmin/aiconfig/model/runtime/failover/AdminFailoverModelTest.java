@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
  * 且沿用父类默认的"流中途失败也切下一候选"语义。降级/熔断的完整语义由 starter 的同名测试覆盖。
  * @author owlzhangfq@gmail.com
  */
-class FailoverModelTest {
+class AdminFailoverModelTest {
 
     /** 可选"先吐一个分片再失败"的桩模型。 */
     private static final class StubModel implements Model {
@@ -46,17 +46,17 @@ class FailoverModelTest {
         }
     }
 
-    private ModelCircuitBreakerRegistry newRegistry() {
+    private AdminModelCircuitBreakerRegistry newRegistry() {
         AdminModelFailoverProperties props = new AdminModelFailoverProperties();
         props.setFailureThreshold(3);
         props.setOpenDurationSeconds(60);
-        return new ModelCircuitBreakerRegistry(props);
+        return new AdminModelCircuitBreakerRegistry(props);
     }
 
     @Test
     void shouldExtendSharedFailoverModel() {
-        FailoverModel model = new FailoverModel(
-            List.of(new FailoverModel.Candidate(1L, new StubModel("p", false))), newRegistry());
+        AdminFailoverModel model = new AdminFailoverModel(
+            List.of(new AdminFailoverModel.Candidate(1L, new StubModel("p", false))), newRegistry());
 
         assertInstanceOf(com.richard.fyoung.customerwork.core.model.failover.FailoverModel.class, model);
         assertEquals("p", model.getModelName());
@@ -66,8 +66,8 @@ class FailoverModelTest {
     void shouldKeepMidStreamFailover_forDynamicAgentRuntime() {
         StubModel primary = new StubModel("p", true);
         StubModel backup = new StubModel("b", false);
-        FailoverModel model = new FailoverModel(
-            List.of(new FailoverModel.Candidate(1L, primary), new FailoverModel.Candidate(2L, backup)),
+        AdminFailoverModel model = new AdminFailoverModel(
+            List.of(new AdminFailoverModel.Candidate(1L, primary), new AdminFailoverModel.Candidate(2L, backup)),
             newRegistry());
 
         List<ChatResponse> out = model.stream(List.<Msg>of(), null, null).collectList().block();

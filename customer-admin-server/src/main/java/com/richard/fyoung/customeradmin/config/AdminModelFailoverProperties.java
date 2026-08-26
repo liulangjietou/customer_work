@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
- * 智能体模型主备容错熔断参数（见 {@code ModelCircuitBreakerRegistry} / {@code FailoverModel}）。
+ * 智能体模型主备容错熔断参数（见 {@code AdminModelCircuitBreakerRegistry} / {@code AdminFailoverModel}）。
  * 主模型连续失败达 {@link #failureThreshold} 次即熔断 {@link #openDurationSeconds} 秒，
  * 期间请求直接走备模型；熔断到期自动半开（重置计数、允许再次尝试主模型）。
  * @author owlzhangfq@gmail.com

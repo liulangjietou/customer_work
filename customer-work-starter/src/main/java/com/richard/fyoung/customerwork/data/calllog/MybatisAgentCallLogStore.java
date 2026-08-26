@@ -96,15 +96,18 @@ public class MybatisAgentCallLogStore implements AgentCallLogStore {
         }
     }
 
+    /**
+     * 删除主记录与级联分段；返回 {@code false} 仅表示<b>没有这一行</b>（可能已被删）。
+     *
+     * <p><b>库故障不再吞成 false</b>：此前 DB 异常与"行不存在"都返回 false，调用方无从分辨——
+     * 后台删除按钮因此在删除失败时照样提示"删除成功"（拿到的是 HTTP 200 + false，而前端并不看这个值）。
+     * 写操作失败必须向上传播，这是 Store 层的既有约定（38 处写方法里 24 处如此），
+     * 现由 {@code StoreFailurePolicyTest} 守着。</p>
+     */
     @Override
     public boolean delete(long id) {
-        try {
-            segmentMapper.deleteByCallLogId(id);
-            return callLogMapper.deleteById(id) > 0;
-        } catch (Exception e) {
-            log.error("agent call log delete failed, code={}, id={}", "CALLLOG-DELETE-FAIL", id, e);
-            return false;
-        }
+        segmentMapper.deleteByCallLogId(id);
+        return callLogMapper.deleteById(id) > 0;
     }
 
     @Override
