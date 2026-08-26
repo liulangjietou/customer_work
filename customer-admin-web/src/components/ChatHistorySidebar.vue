@@ -9,7 +9,11 @@ const props = withDefaults(
   defineProps<{ agentCode: string; activeSessionId: string; liveSessions?: LiveSession[] }>(),
   { liveSessions: () => [] },
 )
-const emit = defineEmits<{ select: [sessionId: string] }>()
+const emit = defineEmits<{
+  select: [sessionId: string]
+  /** 首次加载完成后把排序第一的会话交给父面板决定是否恢复；手动刷新不会重复触发。 */
+  initialSession: [sessionId: string]
+}>()
 
 /** 每页条数，与后端 ChatController#sessions 的 size 默认值保持一致。 */
 const PAGE_SIZE = 20
@@ -112,7 +116,19 @@ async function loadMore() {
   }
 }
 
-onMounted(refresh)
+/**
+ * 初次挂载与用户手动刷新语义不同：只有初次挂载需要尝试恢复最近会话，后续刷新只更新列表，
+ * 避免用户已点“新建会话”时被后台历史刷新意外切走。
+ */
+async function initialize() {
+  await refresh()
+  const first = displaySessions.value[0]
+  if (first) {
+    emit('initialSession', first.sessionId)
+  }
+}
+
+onMounted(initialize)
 
 defineExpose({ refresh })
 

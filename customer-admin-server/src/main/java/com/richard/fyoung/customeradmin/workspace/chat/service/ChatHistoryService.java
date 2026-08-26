@@ -2,17 +2,18 @@ package com.richard.fyoung.customeradmin.workspace.chat.service;
 
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.datascope.DataScopeContext;
+import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageAttachmentVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentStateAccessor;
-import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
-import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
-import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentStore;
 import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -74,8 +75,9 @@ public class ChatHistoryService {
     }
 
     /**
-     * 历史会话列表（按最后更新时间倒序、SQL 级分页）。mapper 只查出本页会话 id（带
-     * {@code {agentCode}:} 前缀），去前缀后逐个 resolve 完整上下文组装摘要——context 为空的会话跳过，
+     * 历史会话列表（按最后更新时间倒序、SQL 级分页）。mapper 合并当前主体分区与旧租户分区，
+     * 只查出本页物理会话 id；服务按物理前缀选择对应 state userId，逐个 resolve 完整上下文组装摘要。
+     * context 为空的会话跳过，
      * 因此本页返回条数可能略少于 {@code size}（顺序仍以 SQL 的 updated_at 倒序为准）。
      *
      * @param page 页码（从 1 起）
@@ -89,7 +91,9 @@ public class ChatHistoryService {
         String tenantId = tenantProperties.isEnabled() ? TenantContext.require() : TenantContext.DEFAULT;
         AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
         String stateUserId = memoryScope.stateUserId();
-        long total = sessionStateQueryMapper.countSessions(tenantId, stateUserId, agentCode, ownerUserId);
+        String legacyStateUserId = WorkspaceRuntimeScope.agent(agentCode);
+        long total = sessionStateQueryMapper.countSessions(
+            tenantId, stateUserId, legacyStateUserId, agentCode, ownerUserId);
         List<ChatSessionSummary> summaries = new ArrayList<>();
 
         PageResult<ChatSessionSummary> result = new PageResult<>();
@@ -103,18 +107,16 @@ public class ChatHistoryService {
 
         long offset = (page - 1) * size;
         List<String> prefixedSessionIds = sessionStateQueryMapper.pageSessionIds(
-            tenantId, stateUserId, agentCode, ownerUserId, offset, size);
+            tenantId, stateUserId, legacyStateUserId, agentCode, ownerUserId, offset, size);
         if (CollectionUtils.isEmpty(prefixedSessionIds)) {
             return result;
         }
 
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
-        String prefix = stateUserId + ":";
         for (String prefixedSessionId : prefixedSessionIds) {
-            // mapper 查出的是完整带前缀 id，resolve 用的是去前缀的裸 sessionId（与写入侧 listSessionIds 语义对齐）
-            String sessionId = prefixedSessionId.startsWith(prefix)
-                ? prefixedSessionId.substring(prefix.length()) : prefixedSessionId;
-            List<Msg> context = agentStateAccessor.resolve(agent, stateUserId, sessionId).getContext();
+            String sourceStateUserId = sourceStateUserId(prefixedSessionId, stateUserId, legacyStateUserId);
+            String sessionId = stripStateUserId(prefixedSessionId, sourceStateUserId);
+            List<Msg> context = agentStateAccessor.resolve(agent, sourceStateUserId, sessionId).getContext();
             if (context.isEmpty()) {
                 continue;
             }
@@ -133,7 +135,7 @@ public class ChatHistoryService {
         }
 
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
-        AgentState state = agentStateAccessor.resolve(agent, memoryScope.stateUserId(), sessionId);
+        List<Msg> context = resolveCurrentOrLegacyContext(agent, memoryScope, agentCode, sessionId);
         // 该会话的附件按绑定的 message_id 分组（未绑定的跳过）：查询失败 listBySession 已内置兜底返回空列表，
         // 不影响历史返回。附件通常按用户消息挂载，一条消息可带多个附件。
         Map<String, List<ChatMessageAttachmentVO>> attachmentsByMessage = attachmentStore.listBySession(sessionId).stream()
@@ -142,7 +144,7 @@ public class ChatHistoryService {
                 Collectors.mapping(this::toAttachmentVO, Collectors.toList())));
 
         List<ChatMessageVO> messages = new ArrayList<>();
-        for (Msg msg : state.getContext()) {
+        for (Msg msg : context) {
             if (msg.getRole() != MsgRole.USER && msg.getRole() != MsgRole.ASSISTANT) {
                 continue;
             }
@@ -172,13 +174,40 @@ public class ChatHistoryService {
      */
     public Optional<ChatSessionSummary> getSessionSummary(String agentCode, String sessionId) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
-        List<Msg> context = agentStateAccessor.resolve(
-            agent, AgentMemoryScope.current(agentCode).stateUserId(), sessionId).getContext();
+        AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
+        List<Msg> context = resolveCurrentOrLegacyContext(agent, memoryScope, agentCode, sessionId);
         if (context.isEmpty()) {
             return Optional.empty();
         }
         return Optional.of(new ChatSessionSummary(sessionId, previewOf(context),
             context.get(context.size() - 1).getTimestamp(), context.size()));
+    }
+
+    /** 当前主体分区没有该会话时回读旧租户分区，保证主体隔离升级前的已授权历史仍可查看。 */
+    private List<Msg> resolveCurrentOrLegacyContext(Agent agent, AgentMemoryScope memoryScope,
+                                                     String agentCode, String sessionId) {
+        String stateUserId = memoryScope.stateUserId();
+        List<Msg> current = agentStateAccessor.resolve(agent, stateUserId, sessionId).getContext();
+        String legacyStateUserId = WorkspaceRuntimeScope.agent(agentCode);
+        if (!current.isEmpty() || stateUserId.equals(legacyStateUserId)) {
+            return current;
+        }
+        return agentStateAccessor.resolve(agent, legacyStateUserId, sessionId).getContext();
+    }
+
+    /** mapper 优先返回当前主体分区的物理 id；不存在时才返回旧租户分区 id。 */
+    private String sourceStateUserId(String prefixedSessionId, String stateUserId, String legacyStateUserId) {
+        if (prefixedSessionId.startsWith(stateUserId + ":")) {
+            return stateUserId;
+        }
+        if (prefixedSessionId.startsWith(legacyStateUserId + ":")) {
+            return legacyStateUserId;
+        }
+        throw new IllegalStateException("Unexpected chat state session scope");
+    }
+
+    private String stripStateUserId(String prefixedSessionId, String sourceStateUserId) {
+        return prefixedSessionId.substring(sourceStateUserId.length() + 1);
     }
 
     private String previewOf(List<Msg> context) {

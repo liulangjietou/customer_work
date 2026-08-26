@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { WarningFilled } from '@element-plus/icons-vue'
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollFollower } from '@/utils/scrollFollower'
+import { shouldRestoreMostRecentSession } from '@/utils/conversationRestore'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
 import { confirmChatPlan } from '@/api/chat'
-import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import TraceTimeline from '@/components/TraceTimeline.vue'
+import AssistantResponse from '@/components/AssistantResponse.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
 import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
@@ -76,12 +75,27 @@ async function openSession(targetSessionId: string) {
   }
 }
 
+/**
+ * 页面刷新/组件重建后 store 只含临时空会话时，恢复后端按更新时间倒序返回的第一条历史。
+ * 判断集中在共享工具中，确保 Chat/VibeCoding 都不会覆盖显式跳转、草稿或进行中的会话。
+ */
+function restoreMostRecentSession(targetSessionId: string) {
+  if (shouldRestoreMostRecentSession(active.value, targetSessionId, props.initialSessionId)) {
+    openSession(targetSessionId)
+  }
+}
+
 // 跟随到底部：每帧最多滚一次、瞬时定位。流式增量的到达频率远高于平滑滚动动画的时长，
 // 逐条调 scrollTo({behavior:'smooth'}) 会不断打断上一次动画，反而跟不上内容（详见 scrollFollower）。
 const scrollFollower = createScrollFollower(() => scrollRef.value)
 
 function scrollToBottom() {
   nextTick(() => scrollFollower.follow())
+}
+
+/** 只有当前会话最后一条助手消息属于本轮 SSE，避免切历史或旧消息显示成执行中。 */
+function isStreamingMessage(index: number): boolean {
+  return !!active.value?.streaming && index === active.value.messages.length - 1
 }
 
 onBeforeUnmount(() => scrollFollower.cancel())
@@ -168,19 +182,21 @@ defineExpose({ newSession })
     <div class="chat-column">
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
-          <div class="bubble" :class="{ failed: msg.failed }">
-            <!-- 失败提示（额度用尽/后端异常）：与正常回答区分开，同一段文字看起来像"AI 说的话"
-                 还是"系统告诉你这轮没成"，差别很大 -->
-            <div v-if="msg.failed" class="failed-title">
-              <el-icon><WarningFilled /></el-icon>
-              <span>本轮对话未完成</span>
-            </div>
-            <TraceTimeline
-              v-if="msg.role === 'assistant' && msg.nodes.length > 0"
+          <div class="bubble">
+            <AssistantResponse
+              v-if="msg.role === 'assistant'"
               :nodes="msg.nodes"
-              :active="(active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1 && !msg.text"
-            />
-            <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
+              :text="msg.text"
+              :active="isStreamingMessage(index)"
+              :failed="msg.failed"
+            >
+              <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
+              <PlanConfirmCard
+                v-if="msg.plans && msg.plans.length > 0"
+                :plans="msg.plans"
+                @decision="handlePlanDecision"
+              />
+            </AssistantResponse>
             <template v-else>{{ msg.text }}</template>
             <!-- 用户消息携带的附件：图片缩略图/文本芯片，历史消息与刚发送的消息共用同一组件 -->
             <MessageAttachments
@@ -188,13 +204,6 @@ defineExpose({ newSession })
               :agent-code="agentCode"
               :attachments="msg.attachments"
             />
-            <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
-            <PlanConfirmCard
-              v-if="msg.role === 'assistant' && msg.plans && msg.plans.length > 0"
-              :plans="msg.plans"
-              @decision="handlePlanDecision"
-            />
-            <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && (active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1">思考中…</span>
           </div>
         </div>
         <el-empty v-if="(active?.messages.length ?? 0) === 0" description="开始和智能体对话吧" />
@@ -243,6 +252,7 @@ defineExpose({ newSession })
         :active-session-id="activeSessionId"
         :live-sessions="liveSessions"
         @select="openSession"
+        @initial-session="restoreMostRecentSession"
       />
     </div>
   </div>
@@ -289,30 +299,16 @@ defineExpose({ newSession })
   justify-content: flex-end;
 }
 
-.bubble.failed {
-  background: var(--el-color-danger-light-9);
-  border: 1px solid var(--el-color-danger-light-5);
-  color: var(--el-color-danger);
-}
-
-.failed-title {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 4px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .bubble {
-  max-width: 70%;
-  padding: 10px 14px;
-  border-radius: 8px;
+  min-width: 0;
   word-break: break-word;
 }
 
 .message-row.user .bubble {
+  max-width: 70%;
+  padding: 10px 14px;
   background: var(--theme-primary, var(--el-color-primary));
+  border-radius: 12px 12px 3px 12px;
   color: #fff;
   white-space: pre-wrap;
 }
@@ -322,14 +318,21 @@ defineExpose({ newSession })
 }
 
 .message-row.assistant .bubble {
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
 }
 
 .input-bar {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-top: 12px;
+}
+
+.input-bar :deep(.el-input) {
+  flex: 1;
+  min-width: 180px;
 }
 
 /* :not(.is-link) 排除"继续"链接按钮——link 按钮的文字色本就用的是同一个主题蓝（靠透明背景显色），
@@ -349,5 +352,29 @@ defineExpose({ newSession })
   min-width: 200px;
   border-left: 1px solid var(--el-border-color-lighter);
   padding-left: 16px;
+}
+
+@media (max-width: 900px) {
+  .chat-panel {
+    flex-direction: column;
+    height: auto;
+    min-height: 60vh;
+  }
+
+  .history-column {
+    min-height: 180px;
+    padding-top: 14px;
+    padding-left: 0;
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+  }
+
+  .message-row.user .bubble {
+    max-width: 88%;
+  }
+
+  .input-bar {
+    flex-wrap: wrap;
+  }
 }
 </style>

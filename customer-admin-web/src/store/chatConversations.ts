@@ -1,11 +1,15 @@
 import { defineStore } from 'pinia'
 import { getChatSessionMessages, interruptChat, streamChat } from '@/api/chat'
 import { generateUuid } from '@/utils/uuid'
-import { ANSWER_KIND, appendChatStreamNode, parseChatStreamPayload } from '@/utils/traceTimeline'
+import {
+  ANSWER_KIND,
+  appendChatStreamNode,
+  parseChatStreamPayload,
+  type TraceNode,
+} from '@/utils/traceTimeline'
 import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
 import { createTextChunkBatcher } from '@/utils/textChunkBatcher'
-import type { TraceNode } from '@/components/TraceTimeline.vue'
 import type { ExecutionMode, LiveSession, PlanEvent, PlanResultEvent } from '@/types/api'
 
 export interface ChatMessage {

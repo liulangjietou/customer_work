@@ -158,6 +158,11 @@ jobs:
         working-directory: ${{ matrix.project }}
         run: npm ci
 
+      - name: Run frontend unit tests
+        if: ${{ matrix.project == 'customer-admin-web' }}
+        working-directory: ${{ matrix.project }}
+        run: npm test
+
       - name: Type-check and build
         working-directory: ${{ matrix.project }}
         run: npm run build

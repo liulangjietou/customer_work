@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { WarningFilled } from '@element-plus/icons-vue'
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createScrollFollower } from '@/utils/scrollFollower'
+import { shouldRestoreMostRecentSession } from '@/utils/conversationRestore'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
 import {
   confirmVibeCodingPlan,
@@ -15,7 +15,7 @@ import {
   saveWorkspaceFileContent,
 } from '@/api/vibecoding'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import TraceTimeline from '@/components/TraceTimeline.vue'
+import AssistantResponse from '@/components/AssistantResponse.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ReviewReport from '@/components/ReviewReport.vue'
 import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
@@ -136,12 +136,24 @@ async function openSession(targetSessionId: string) {
   }
 }
 
+/** Chat 面板同语义：只用最新历史替换首次初始化的纯空占位，不覆盖用户当前状态。 */
+function restoreMostRecentSession(targetSessionId: string) {
+  if (shouldRestoreMostRecentSession(active.value, targetSessionId, props.initialSessionId)) {
+    openSession(targetSessionId)
+  }
+}
+
 // 跟随到底部：每帧最多滚一次、瞬时定位。流式增量的到达频率远高于平滑滚动动画的时长，
 // 逐条调 scrollTo({behavior:'smooth'}) 会不断打断上一次动画，反而跟不上内容（详见 scrollFollower）。
 const scrollFollower = createScrollFollower(() => scrollRef.value)
 
 function scrollToBottom() {
   nextTick(() => scrollFollower.follow())
+}
+
+/** 只有当前会话最后一条助手消息属于本轮 SSE；正文开始输出后仍保持执行中，直到流真正完成。 */
+function isStreamingMessage(index: number): boolean {
+  return !!active.value?.streaming && index === active.value.messages.length - 1
 }
 
 onBeforeUnmount(() => scrollFollower.cancel())
@@ -554,84 +566,81 @@ defineExpose({ newSession })
     <div class="chat-column">
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
-          <div class="bubble" :class="{ failed: msg.failed }">
-            <!-- 失败提示（额度用尽/后端异常）：与正常回答区分开 -->
-            <div v-if="msg.failed" class="failed-title">
-              <el-icon><WarningFilled /></el-icon>
-              <span>本轮未完成</span>
-            </div>
-            <TraceTimeline
-              v-if="msg.role === 'assistant' && msg.nodes.length > 0"
+          <div class="bubble">
+            <AssistantResponse
+              v-if="msg.role === 'assistant'"
               :nodes="msg.nodes"
-              :active="(active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1 && !msg.text"
-            />
-            <MarkdownRenderer v-if="msg.role === 'assistant'" :text="msg.text" />
-            <!-- 沙箱编译/测试报告卡片时间线（P0-3）：每轮验证一张，通过绿/失败红，可展开看失败明细 -->
-            <div
-              v-if="msg.role === 'assistant' && msg.testReports && msg.testReports.length > 0"
-              class="test-reports"
+              :text="msg.text"
+              :active="isStreamingMessage(index)"
+              :failed="msg.failed"
             >
-              <el-collapse>
-                <el-collapse-item v-for="(report, ri) in msg.testReports" :key="ri" :name="ri">
-                  <template #title>
-                    <span class="test-report-title" :class="report.success ? 'is-success' : 'is-failure'">
-                      <el-icon v-if="report.success"><SuccessFilled /></el-icon>
-                      <el-icon v-else><CircleCloseFilled /></el-icon>
-                      <span class="test-report-title-text">{{ testReportTitle(report) }}</span>
-                      <el-tag v-if="report.exhausted" type="danger" size="small" effect="dark" class="exhausted-tag">
-                        已达最大修复轮次
-                      </el-tag>
-                    </span>
-                  </template>
-                  <div v-if="report.durationMs != null" class="test-report-meta">耗时 {{ report.durationMs }} ms</div>
-                  <ul v-if="report.failureDetails.length > 0" class="test-report-failures">
-                    <li v-for="(d, di) in report.failureDetails" :key="di">{{ d }}</li>
-                  </ul>
-                  <pre v-if="report.rawOutput" class="test-report-raw">{{ report.rawOutput }}</pre>
-                  <div
-                    v-if="report.success && report.failureDetails.length === 0 && !report.rawOutput"
-                    class="test-report-ok"
-                  >
-                    验证通过 ✓
-                  </div>
-                </el-collapse-item>
-              </el-collapse>
-            </div>
-            <!-- 协作模式多角色阶段进度（P3-1）：每个角色一张卡片，展示状态标签、类型徽标与文本产物 -->
-            <div
-              v-if="msg.role === 'assistant' && msg.stages && msg.stages.length > 0"
-              class="role-stages"
-            >
+              <!-- 沙箱编译/测试报告卡片时间线（P0-3）：每轮验证一张，通过绿/失败红，可展开看失败明细 -->
               <div
-                v-for="(stage, si) in msg.stages"
-                :key="si"
-                class="role-stage-card"
-                :class="`role-stage-card--${stage.status.toLowerCase()}`"
+                v-if="msg.testReports && msg.testReports.length > 0"
+                class="test-reports"
               >
-                <div class="role-stage-header">
-                  <span class="role-stage-name">{{ stage.role }}</span>
-                  <el-tag size="small" class="role-stage-type">{{ roleStageTypeText(stage.type) }}</el-tag>
-                  <span class="role-stage-index">{{ stage.index }}/{{ stage.total }}</span>
-                  <el-tag
-                    :type="roleStageStatusTag(stage.status)"
-                    size="small"
-                    effect="dark"
-                    class="role-stage-status"
-                  >
-                    {{ roleStageStatusText(stage.status) }}
-                  </el-tag>
-                </div>
-                <div v-if="stage.output" class="role-stage-output">
-                  <MarkdownRenderer :text="stage.output" />
+                <el-collapse>
+                  <el-collapse-item v-for="(report, ri) in msg.testReports" :key="ri" :name="ri">
+                    <template #title>
+                      <span class="test-report-title" :class="report.success ? 'is-success' : 'is-failure'">
+                        <el-icon v-if="report.success"><SuccessFilled /></el-icon>
+                        <el-icon v-else><CircleCloseFilled /></el-icon>
+                        <span class="test-report-title-text">{{ testReportTitle(report) }}</span>
+                        <el-tag v-if="report.exhausted" type="danger" size="small" effect="dark" class="exhausted-tag">
+                          已达最大修复轮次
+                        </el-tag>
+                      </span>
+                    </template>
+                    <div v-if="report.durationMs != null" class="test-report-meta">耗时 {{ report.durationMs }} ms</div>
+                    <ul v-if="report.failureDetails.length > 0" class="test-report-failures">
+                      <li v-for="(d, di) in report.failureDetails" :key="di">{{ d }}</li>
+                    </ul>
+                    <pre v-if="report.rawOutput" class="test-report-raw">{{ report.rawOutput }}</pre>
+                    <div
+                      v-if="report.success && report.failureDetails.length === 0 && !report.rawOutput"
+                      class="test-report-ok"
+                    >
+                      验证通过 ✓
+                    </div>
+                  </el-collapse-item>
+                </el-collapse>
+              </div>
+              <!-- 协作模式多角色阶段进度（P3-1）：每个角色一张卡片，展示状态标签、类型徽标与文本产物 -->
+              <div
+                v-if="msg.stages && msg.stages.length > 0"
+                class="role-stages"
+              >
+                <div
+                  v-for="(stage, si) in msg.stages"
+                  :key="si"
+                  class="role-stage-card"
+                  :class="`role-stage-card--${stage.status.toLowerCase()}`"
+                >
+                  <div class="role-stage-header">
+                    <span class="role-stage-name">{{ stage.role }}</span>
+                    <el-tag size="small" class="role-stage-type">{{ roleStageTypeText(stage.type) }}</el-tag>
+                    <span class="role-stage-index">{{ stage.index }}/{{ stage.total }}</span>
+                    <el-tag
+                      :type="roleStageStatusTag(stage.status)"
+                      size="small"
+                      effect="dark"
+                      class="role-stage-status"
+                    >
+                      {{ roleStageStatusText(stage.status) }}
+                    </el-tag>
+                  </div>
+                  <div v-if="stage.output" class="role-stage-output">
+                    <MarkdownRenderer :text="stage.output" />
+                  </div>
                 </div>
               </div>
-            </div>
-            <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
-            <PlanConfirmCard
-              v-if="msg.role === 'assistant' && msg.plans && msg.plans.length > 0"
-              :plans="msg.plans"
-              @decision="handlePlanDecision"
-            />
+              <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
+              <PlanConfirmCard
+                v-if="msg.plans && msg.plans.length > 0"
+                :plans="msg.plans"
+                @decision="handlePlanDecision"
+              />
+            </AssistantResponse>
             <template v-if="msg.role === 'user'">{{ msg.text }}</template>
             <!-- 用户消息携带的附件：图片缩略图/文本芯片，历史消息与刚发送的消息共用同一组件 -->
             <MessageAttachments
@@ -639,7 +648,6 @@ defineExpose({ newSession })
               :agent-code="agentCode"
               :attachments="msg.attachments"
             />
-            <span v-if="msg.role === 'assistant' && !msg.text && msg.nodes.length === 0 && (active?.streaming ?? false) && index === (active?.messages.length ?? 0) - 1">生成中…</span>
           </div>
         </div>
         <el-empty v-if="(active?.messages.length ?? 0) === 0" description="描述你想让智能体生成/修改的代码" />
@@ -773,6 +781,7 @@ defineExpose({ newSession })
         :active-session-id="activeSessionId"
         :live-sessions="liveSessions"
         @select="openSession"
+        @initial-session="restoreMostRecentSession"
       />
     </div>
 
@@ -961,30 +970,16 @@ defineExpose({ newSession })
   justify-content: flex-end;
 }
 
-.bubble.failed {
-  background: var(--el-color-danger-light-9);
-  border: 1px solid var(--el-color-danger-light-5);
-  color: var(--el-color-danger);
-}
-
-.failed-title {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 4px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .bubble {
-  max-width: 90%;
-  padding: 10px 14px;
-  border-radius: 8px;
+  min-width: 0;
   word-break: break-word;
 }
 
 .message-row.user .bubble {
+  max-width: 88%;
+  padding: 10px 14px;
   background: var(--theme-primary, var(--el-color-primary));
+  border-radius: 12px 12px 3px 12px;
   color: #fff;
   white-space: pre-wrap;
 }
@@ -994,14 +989,21 @@ defineExpose({ newSession })
 }
 
 .message-row.assistant .bubble {
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
 }
 
 .input-bar {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-top: 12px;
+}
+
+.input-bar :deep(.el-input) {
+  flex: 1;
+  min-width: 180px;
 }
 
 /* :not(.is-link) 排除"继续"链接按钮——link 按钮的文字色本就用的是同一个主题蓝（靠透明背景显色），
@@ -1351,5 +1353,42 @@ defineExpose({ newSession })
 .code-editor:focus {
   border-color: var(--theme-primary, var(--el-color-primary));
   background: var(--el-bg-color);
+}
+
+@media (max-width: 1100px) {
+  .vibecoding-panel {
+    flex-wrap: wrap;
+    gap: 12px;
+    height: auto;
+    min-height: 60vh;
+  }
+
+  .history-column {
+    flex: 1 1 100%;
+    min-height: 180px;
+    padding-top: 14px;
+    padding-left: 0;
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+  }
+
+  .input-bar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 760px) {
+  .chat-column,
+  .artifacts-column {
+    flex: 1 1 100%;
+    min-height: 55vh;
+  }
+
+  .artifacts-column {
+    padding-top: 14px;
+    padding-left: 0;
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+  }
 }
 </style>
