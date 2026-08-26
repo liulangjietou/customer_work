@@ -26,6 +26,7 @@ public class OpsGatewayProvider {
             .mapperClasses(OpsGatewayFactory.MAPPER_CLASSES)
             .mapperXml(OpsGatewayFactory.MAPPER_XML_LOCATIONS)
             .maxPoolSize(4)
+            .readOnly(false)
             .error("OPS-DS-UNAVAILABLE", "客服端库不可达（运营闭环数据存放于此）")
             .build(OpsGatewayFactory::build);
     }

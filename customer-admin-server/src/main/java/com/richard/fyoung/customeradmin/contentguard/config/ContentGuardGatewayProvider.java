@@ -29,6 +29,7 @@ public class ContentGuardGatewayProvider {
         this.facade = CustomerWorkFacade.builder("content-guard-pool", properties, tenantPlugins)
             .mapperClasses(ContentGuardGatewayFactory.MAPPER_CLASSES)
             .mapperXml(ContentGuardGatewayFactory.MAPPER_XML_LOCATIONS)
+            .readOnly(false)
             .error("CONTENTGUARD-DS-UNAVAILABLE", "客服端库不可达（敏感词/限流规则存放于此）")
             .build(ContentGuardGatewayFactory::build);
     }

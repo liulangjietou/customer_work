@@ -25,6 +25,7 @@ public class ImprovementSignalGatewayProvider {
             .mapperClasses(List.of(ImprovementSignalMapper.class))
             .mapperXml(List.of(StarterMapperXml.EVAL_CASE))
             .maxPoolSize(2)
+            .readOnly(false)
             .error("IMPROVEMENT-SIGNAL-DS-UNAVAILABLE", "客服端库不可达（改进信号与评测用例存放于此）")
             .build(gateway -> new ImprovementSignalGateway(
                 gateway.getMapper(ImprovementSignalMapper.class),

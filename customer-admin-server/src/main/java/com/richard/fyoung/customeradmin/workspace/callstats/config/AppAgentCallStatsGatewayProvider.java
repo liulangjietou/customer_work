@@ -26,6 +26,7 @@ public class AppAgentCallStatsGatewayProvider {
         this.facade = CustomerWorkFacade.builder("agent-call-stats-app-pool", properties, tenantPlugins)
             .mapperClasses(AgentCallStatsGatewayFactory.MAPPER_CLASSES)
             .mapperXml(AgentCallStatsGatewayFactory.MAPPER_XML_LOCATIONS)
+            .readOnly(true)
             .error("CALLSTATS-APP-DS-UNAVAILABLE", "客服端调用日志库不可达")
             .build(AgentCallStatsGatewayFactory::build);
     }

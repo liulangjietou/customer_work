@@ -44,6 +44,7 @@ public class AdminKnowledgeGapRecorder implements KnowledgeGapRecorder {
             .mapperClasses(KnowledgeGapGatewayFactory.MAPPER_CLASSES)
             .mapperXml(KnowledgeGapGatewayFactory.MAPPER_XML_LOCATIONS)
             .maxPoolSize(2)
+            .readOnly(false)
             .error("GAP-DS-UNAVAILABLE", "客服端库不可达（知识盲区计数存放于此）")
             .build(KnowledgeGapGatewayFactory::build);
     }

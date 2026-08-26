@@ -28,6 +28,7 @@ public class DictGatewayProvider {
             .mapperClasses(DictGatewayFactory.MAPPER_CLASSES)
             .mapperXml(DictGatewayFactory.MAPPER_XML_LOCATIONS)
             .maxPoolSize(2)
+            .readOnly(false)
             .error("DICT-DS-UNAVAILABLE", "客服端库不可达（字典数据存放于此）")
             .build(DictGatewayFactory::build);
     }

@@ -167,6 +167,88 @@ class ImprovementCaseServiceTest {
         assertEquals(25L, row.getObservedCalls());
     }
 
+    /**
+     * 门禁阻断必须停掉轮询并把原因抬上来。
+     *
+     * <p>此前 BLOCKED 落在 refreshPublish 的兜底 else 分支里被当成"进行中"，而调度器的
+     * findDueCandidates 只认 PENDING 与租约过期的 PROCESSING、永远不会再捞 BLOCKED——
+     * 于是这条 case 每个扫描周期被捞一次、判一次、再排下一次，状态永远停在 PUBLISHING，
+     * lastError 恒为空所以面板的错误提示条也不显示。</p>
+     */
+    @Test
+    void refreshPublish_shouldStopPollingAndSurfaceReasonWhenGateBlocked() throws Exception {
+        AgentImprovementCase row = publishingRow("task-blocked");
+        RuntimePublishTask task = publishTask("task-blocked", RuntimePublishStatus.BLOCKED);
+        task.setLastError("回归指标未达标：intent 通过率 0.62 低于阈值 0.80");
+        when(publishTaskMapper.selectById("task-blocked")).thenReturn(task);
+        claim(row, "worker-blocked");
+
+        service.processAutomation(row);
+
+        assertEquals(ImprovementCaseStatus.PUBLISH_FAILED.name(), row.getStatus(),
+            "BLOCKED 不会自行推进，必须离开 PUBLISHING，否则面板上永远是不动的「发布中」");
+        assertEquals(Long.MAX_VALUE, row.getNextActionAtMs(),
+            "BLOCKED 必须停掉轮询：调度器不会再捞它，继续排下一次就是无限循环");
+        assertEquals("回归指标未达标：intent 通过率 0.62 低于阈值 0.80", row.getLastError(),
+            "门禁失败摘要要抬到面板上，运营才知道是被门禁拦住而不是责任人拖了");
+    }
+
+    @Test
+    void refreshPublish_shouldKeepPollingWhileStillAdvancing() throws Exception {
+        for (RuntimePublishStatus advancing : List.of(
+            RuntimePublishStatus.PENDING, RuntimePublishStatus.PROCESSING,
+            RuntimePublishStatus.PUBLISHED, RuntimePublishStatus.PARTIAL)) {
+
+            String taskId = "task-" + advancing.name();
+            AgentImprovementCase row = publishingRow(taskId);
+            when(publishTaskMapper.selectById(taskId)).thenReturn(publishTask(taskId, advancing));
+            claim(row, "worker-" + advancing.name());
+
+            service.processAutomation(row);
+
+            assertEquals(ImprovementCaseStatus.PUBLISHING.name(), row.getStatus(),
+                advancing + " 仍会自行推进，不该提前离开 PUBLISHING");
+            assertTrue(row.getNextActionAtMs() < Long.MAX_VALUE,
+                advancing + " 仍会自行推进，必须排下一次扫描");
+        }
+    }
+
+    @Test
+    void refreshPublish_shouldStopPollingWhenPublishSettledAsFailure() throws Exception {
+        for (RuntimePublishStatus settled : List.of(
+            RuntimePublishStatus.FAILED, RuntimePublishStatus.SUPERSEDED)) {
+
+            String taskId = "task-" + settled.name();
+            AgentImprovementCase row = publishingRow(taskId);
+            RuntimePublishTask task = publishTask(taskId, settled);
+            task.setLastError("实例拒绝：schema 校验失败");
+            when(publishTaskMapper.selectById(taskId)).thenReturn(task);
+            claim(row, "worker-" + settled.name());
+
+            service.processAutomation(row);
+
+            assertEquals(ImprovementCaseStatus.PUBLISH_FAILED.name(), row.getStatus(), settled.name());
+            assertEquals(Long.MAX_VALUE, row.getNextActionAtMs(), settled.name());
+            assertEquals("实例拒绝：schema 校验失败", row.getLastError(), settled.name());
+        }
+    }
+
+    /** 处于 PUBLISHING、已关联发布任务的 case（refreshPublish 的入口条件）。 */
+    private AgentImprovementCase publishingRow(String taskId) throws Exception {
+        AgentImprovementCase row = row(ImprovementCaseStatus.PUBLISHING, candidate("model-v1"));
+        row.setPublishTaskId(taskId);
+        when(caseMapper.lockById(1L)).thenReturn(row);
+        return row;
+    }
+
+    private RuntimePublishTask publishTask(String id, RuntimePublishStatus status) {
+        RuntimePublishTask task = new RuntimePublishTask();
+        task.setId(id);
+        task.setStatus(status.name());
+        task.setRevision("revision-42");
+        return task;
+    }
+
     @Test
     void observe_shouldMarkRecurrenceIneffectiveAndLowTrafficInconclusive() throws Exception {
         AgentImprovementCase recurrence = observingRow();

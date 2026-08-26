@@ -26,6 +26,7 @@ public class QuotaGatewayProvider {
         this.facade = CustomerWorkFacade.builder("tenant-quota-pool", properties, tenantPlugins)
             .mapperClasses(QuotaGatewayFactory.MAPPER_CLASSES)
             .mapperXml(QuotaGatewayFactory.MAPPER_XML_LOCATIONS)
+            .readOnly(false)
             .error("QUOTA-DS-UNAVAILABLE", "客服端库不可达（租户配额存放于此）")
             .build(QuotaGatewayFactory::build);
     }

@@ -66,16 +66,35 @@ public final class ModelExperimentEffectiveStateResolver {
         if (EvalGateStatus.BLOCKED.name().equals(task.getGateStatus())) {
             return TaskOutcome.FAILED;
         }
-        if (RuntimePublishStatus.APPLIED.name().equals(task.getStatus())) {
-            return TaskOutcome.APPLIED;
+        RuntimePublishStatus status = parseStatus(task.getStatus());
+        if (status == null) {
+            // 库里出现枚举外的值：按最保守的方向判，绝不冒充生效
+            return TaskOutcome.FAILED;
         }
-        if (RuntimePublishStatus.PENDING.name().equals(task.getStatus())
-            || RuntimePublishStatus.PROCESSING.name().equals(task.getStatus())
-            || RuntimePublishStatus.PUBLISHED.name().equals(task.getStatus())) {
-            return TaskOutcome.IN_PROGRESS;
+        // 穷尽 switch 且不写 default：将来给 RuntimePublishStatus 加值时这里会编译不过，
+        // 强制新增者回答"它在'当前是否已生效'这个问题上算什么"。
+        // 此前是 if 链 + 兜底 return FAILED，新枚举值会被静默吞成"失败"而无人察觉。
+        return switch (status) {
+            case APPLIED -> TaskOutcome.APPLIED;
+            case PENDING, PROCESSING, PUBLISHED -> TaskOutcome.IN_PROGRESS;
+            // 本方法问的是"现在能不能宣布整体生效"，与 RuntimePublishStatus#isAdvancing()
+            // 问的"还会不会自行推进"是两个问题，刻意不复用那组判定：
+            // PARTIAL 会随 ACK 到齐继续推进（isAdvancing 为真），但此刻已有实例拒绝或尚未形成
+            // 一致生效事实，不能把局部成功冒充整体 ACTIVE/INACTIVE；
+            // BLOCKED 等人重评或豁免，在这个问题上同样只能答否。
+            case PARTIAL, BLOCKED, SUPERSEDED, FAILED -> TaskOutcome.FAILED;
+        };
+    }
+
+    private static RuntimePublishStatus parseStatus(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
         }
-        // PARTIAL 表示已有实例拒绝或尚未形成一致生效事实，不能把局部成功冒充整体 ACTIVE/INACTIVE。
-        return TaskOutcome.FAILED;
+        try {
+            return RuntimePublishStatus.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private enum TaskOutcome {

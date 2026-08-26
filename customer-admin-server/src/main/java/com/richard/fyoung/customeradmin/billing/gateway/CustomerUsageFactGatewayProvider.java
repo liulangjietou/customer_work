@@ -22,6 +22,7 @@ public class CustomerUsageFactGatewayProvider {
         this.facade = CustomerWorkFacade.builder("billing-usage-fact-pool", properties, tenantPlugins)
             .mapperClasses(List.of(CustomerUsageFactMapper.class))
             .maxPoolSize(2)
+            .readOnly(false)
             .error("BILLING-USAGE-DS-UNAVAILABLE", "客服端库不可达（模型调用金额事实存放于此）")
             .build(gateway -> new CustomerUsageFactGateway(
                 gateway.getMapper(CustomerUsageFactMapper.class)));

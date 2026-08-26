@@ -422,13 +422,25 @@ public class ImprovementCaseService {
             row.setEffectStatus(ImprovementEffectStatus.OBSERVING.name());
             row.setStatus(ImprovementCaseStatus.OBSERVING.name());
             row.setNextActionAtMs(now);
-        } else if (publishStatus == RuntimePublishStatus.FAILED
-            || publishStatus == RuntimePublishStatus.SUPERSEDED) {
+        } else if (publishStatus.isAdvancing()) {
+            // Worker 或实例 ACK 会把它继续往前推，排下一次扫描等它走完
+            row.setNextActionAtMs(now + Math.max(1000L, properties.getScanIntervalMs()));
+        } else {
+            // 剩下的只有 BLOCKED（门禁阻断，等重评或紧急豁免）与 FAILED / SUPERSEDED，
+            // 共同点是"不会自己往前走"，所以一律停掉轮询并把失败原因抬到面板上。
+            //
+            // BLOCKED 此前落在"继续轮询"那一支，是本方法真正的缺陷所在：调度器的
+            // findDueCandidates 只认 PENDING 与租约过期的 PROCESSING，永远不会再捞 BLOCKED，
+            // 于是这条 case 每个扫描周期被捞一次、判一次、再排下一次——状态永远停在 PUBLISHING，
+            // 又因为没走失败分支，lastError 恒为空、面板的错误提示条不显示，
+            // 运营只能看到"发布中"挂着不动，直到 SLA 逾期才冒出一个误导性的"责任人拖了"。
+            //
+            // 置为非终态的 PUBLISH_FAILED：重评（retryGateBlocked）或豁免（overrideGateBlocked）
+            // 之后会新建发布任务重新驱动本 case，面板上它也仍是可再次操作的状态。
+            // 门禁失败摘要由 recordGateDecision 写进 last_error，与发布失败共用同一个字段。
             row.setStatus(ImprovementCaseStatus.PUBLISH_FAILED.name());
             row.setNextActionAtMs(NO_ACTION_AT);
             row.setLastError(truncate(task.getLastError()));
-        } else {
-            row.setNextActionAtMs(now + Math.max(1000L, properties.getScanIntervalMs()));
         }
     }
 
