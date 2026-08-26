@@ -61,7 +61,13 @@ export function getAgentCallStatsTrend(query: AgentCallStatsQuery, granularity: 
   })
 }
 
-/** 删除一条调用记录。 */
+/**
+ * 删除一条调用记录。
+ *
+ * 返回值是「是否真的删掉了一行」：false 表示这条记录已经不在了（可能被其他管理员先删）。
+ * 此前声明成 void，而后端一直返回 Result<Boolean>——类型对不上，调用方也就无从判断结果，
+ * 于是删除失败时照样提示「删除成功」。
+ */
 export function deleteAgentCallStats(id: number, source: AgentCallSource) {
-  return request<void>({ url: `${BASE_URL}/${id}`, method: 'delete', params: { source } })
+  return request<boolean>({ url: `${BASE_URL}/${id}`, method: 'delete', params: { source } })
 }
