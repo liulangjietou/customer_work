@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
@@ -58,6 +59,7 @@ class GitAssistantServiceTest {
 
     private AiAgentMapper agentMapper;
     private AdminAgentInstanceFactory agentInstanceFactory;
+    private AgentWorkspaceManager workspaceManager;
     private GitWorkspaceService gitWorkspaceService;
     private CodeReviewTaskMapper reviewTaskMapper;
     private SiteMessageService siteMessageService;
@@ -76,15 +78,16 @@ class GitAssistantServiceTest {
     void setUp() {
         agentMapper = mock(AiAgentMapper.class);
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
+        workspaceManager = mock(AgentWorkspaceManager.class);
         gitWorkspaceService = mock(GitWorkspaceService.class);
         reviewTaskMapper = mock(CodeReviewTaskMapper.class);
         siteMessageService = mock(SiteMessageService.class);
         model = mock(Model.class);
         // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
         service = new GitAssistantService(agentMapper, agentInstanceFactory, gitWorkspaceService,
-            mock(AiCodingAuditService.class), reviewTaskMapper, siteMessageService);
+            mock(AiCodingAuditService.class), reviewTaskMapper, siteMessageService, workspaceManager);
 
-        when(agentInstanceFactory.resolveSessionWorkspace(anyString(), anyString())).thenReturn(sessionWorkspace);
+        when(workspaceManager.resolveSessionWorkspace(anyString(), anyString())).thenReturn(sessionWorkspace);
         when(agentInstanceFactory.buildModelForAgent(anyString())).thenReturn(model);
     }
 

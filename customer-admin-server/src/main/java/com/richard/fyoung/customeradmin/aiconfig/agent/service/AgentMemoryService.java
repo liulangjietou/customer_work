@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.agent.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentMemoryVO;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
@@ -44,11 +45,14 @@ public class AgentMemoryService {
 
     private final AgentService agentService;
     private final AdminAgentInstanceFactory instanceFactory;
+    private final AgentWorkspaceManager workspaceManager;
     private final AgentMemoryStore memoryStore;
     private final AgentMemorySyncService memorySyncService;
 
     public AgentMemoryService(AgentService agentService, AdminAgentInstanceFactory instanceFactory,
-                               AgentMemoryStore memoryStore, AgentMemorySyncService memorySyncService) {
+                               AgentMemoryStore memoryStore, AgentMemorySyncService memorySyncService,
+                                    AgentWorkspaceManager workspaceManager) {
+        this.workspaceManager = workspaceManager;
         this.agentService = agentService;
         this.instanceFactory = instanceFactory;
         this.memoryStore = memoryStore;
@@ -60,7 +64,7 @@ public class AgentMemoryService {
         AiAgent agent = agentService.requireAgent(id);
         String agentCode = agent.getAgentCode();
         AgentMemoryScope scope = AgentMemoryScope.current(agentCode);
-        memorySyncService.persistIfChanged(scope.storageKey(), instanceFactory.resolveWorkspace(scope));
+        memorySyncService.persistIfChanged(scope.storageKey(), workspaceManager.resolveWorkspace(scope));
         try {
             Optional<AgentMemorySnapshot> snapshot = memoryStore.load(scope.storageKey());
             if (snapshot.isEmpty()) {
@@ -80,7 +84,7 @@ public class AgentMemoryService {
         AiAgent agent = agentService.requireAgent(id);
         String agentCode = agent.getAgentCode();
         AgentMemoryScope scope = AgentMemoryScope.current(agentCode);
-        Path workspace = instanceFactory.resolveWorkspace(scope);
+        Path workspace = workspaceManager.resolveWorkspace(scope);
         try {
             memoryStore.delete(scope.storageKey());
             boolean removed = Files.deleteIfExists(workspace.resolve(AgentFileNames.MEMORY_MD));

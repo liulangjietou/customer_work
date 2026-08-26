@@ -70,6 +70,7 @@ public class SandboxCommandService {
     private final AdminSandboxProperties properties;
     private final SandboxRiskDetector riskDetector;
     private final AdminAgentInstanceFactory agentInstanceFactory;
+    private final AgentWorkspaceManager workspaceManager;
     private final AiCodingAuditService auditService;
     private final Map<SandboxKey, ManagedSandbox> sandboxes = new ConcurrentHashMap<>();
     private final ExecutorService commandExecutor = Executors.newCachedThreadPool(daemonFactory("sandbox-command-"));
@@ -77,7 +78,9 @@ public class SandboxCommandService {
         Executors.newSingleThreadScheduledExecutor(daemonFactory("sandbox-timeout-"));
 
     public SandboxCommandService(AdminSandboxProperties properties, SandboxRiskDetector riskDetector,
-                                 AdminAgentInstanceFactory agentInstanceFactory, AiCodingAuditService auditService) {
+                                 AdminAgentInstanceFactory agentInstanceFactory, AiCodingAuditService auditService,
+                                    AgentWorkspaceManager workspaceManager) {
+        this.workspaceManager = workspaceManager;
         this.properties = properties;
         this.riskDetector = riskDetector;
         this.agentInstanceFactory = agentInstanceFactory;
@@ -90,7 +93,7 @@ public class SandboxCommandService {
         if (!StringUtils.hasText(command)) {
             throw new BizException(ResultCode.PARAM_INVALID, "命令不能为空");
         }
-        String safeSession = AdminAgentInstanceFactory.requireSafeSessionId(sessionId);
+        String safeSession = AgentWorkspaceManager.requireSafeSessionId(sessionId);
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.COMMAND_EXECUTE, agentCode, safeSession);
         try {
             if (properties.getGuard().isEnabled() && riskDetector.matchesDestructive(command)) {
@@ -103,7 +106,7 @@ public class SandboxCommandService {
 
             String tenantId = currentTenant();
             SandboxKey key = new SandboxKey(tenantId, userId, agentCode, safeSession);
-            Path workspace = agentInstanceFactory.resolveSessionWorkspace(agentCode, safeSession);
+            Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, safeSession);
             ManagedSandbox managed = sandboxes.computeIfAbsent(key,
                 ignored -> new ManagedSandbox(key, properties.isDockerMode() ? "docker" : "local", workspace));
             if (!managed.inUse.compareAndSet(false, true)) {
@@ -141,7 +144,7 @@ public class SandboxCommandService {
     /** 手动停止并删除一个会话沙箱；不存在时幂等返回 false。 */
     public boolean cleanup(String agentCode, String sessionId, long userId) {
         requireFeature(properties.getFeatures().isManagementEnabled());
-        String safeSession = AdminAgentInstanceFactory.requireSafeSessionId(sessionId);
+        String safeSession = AgentWorkspaceManager.requireSafeSessionId(sessionId);
         SandboxKey key = new SandboxKey(currentTenant(), userId, agentCode, safeSession);
         ManagedSandbox managed = sandboxes.remove(key);
         if (managed == null) {
@@ -261,7 +264,7 @@ public class SandboxCommandService {
             if (managed.status != SandboxStatus.FAILED) {
                 managed.status = SandboxStatus.IDLE;
             }
-            agentInstanceFactory.persistSessionWorkspace(managed.key.agentCode, managed.key.sessionId);
+            workspaceManager.persistSessionWorkspace(managed.key.agentCode, managed.key.sessionId);
         }
     }
 

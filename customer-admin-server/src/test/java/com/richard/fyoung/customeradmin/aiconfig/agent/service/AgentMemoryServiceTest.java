@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.agent.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentMemoryVO;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySnapshot;
@@ -53,11 +54,12 @@ class AgentMemoryServiceTest {
         when(agentService.requireAgent(AGENT_ID)).thenReturn(agent);
 
         AdminAgentInstanceFactory instanceFactory = mock(AdminAgentInstanceFactory.class);
-        when(instanceFactory.resolveWorkspace(any(AgentMemoryScope.class))).thenReturn(workspace);
+        AgentWorkspaceManager workspaceManager = mock(AgentWorkspaceManager.class);
+        when(workspaceManager.resolveWorkspace(any(AgentMemoryScope.class))).thenReturn(workspace);
 
         memoryStore = mock(AgentMemoryStore.class);
         memorySyncService = mock(AgentMemorySyncService.class);
-        service = new AgentMemoryService(agentService, instanceFactory, memoryStore, memorySyncService);
+        service = new AgentMemoryService(agentService, instanceFactory, memoryStore, memorySyncService, workspaceManager);
     }
 
     @Test

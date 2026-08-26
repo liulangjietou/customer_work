@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
@@ -43,6 +44,7 @@ class VibeCodingServiceTest {
 
     private ChatService chatService;
     private AdminAgentInstanceFactory agentInstanceFactory;
+    private AgentWorkspaceManager workspaceManager;
     private AiAgentMapper agentMapper;
     private GitWorkspaceService gitWorkspaceService;
     private VibeCodingService service;
@@ -60,6 +62,7 @@ class VibeCodingServiceTest {
     void setUp() {
         chatService = mock(ChatService.class);
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
+        workspaceManager = mock(AgentWorkspaceManager.class);
         agentMapper = mock(AiAgentMapper.class);
         gitWorkspaceService = mock(GitWorkspaceService.class);
         // 默认 local 模式（isDockerMode()=false）；docker 模式的容器↔宿主机 bind mount 产物同步（P1-3）
@@ -67,12 +70,12 @@ class VibeCodingServiceTest {
         // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
         service = new VibeCodingService(chatService, agentInstanceFactory, agentMapper, gitWorkspaceService,
             new AdminSandboxProperties(), mock(AiCodingAuditService.class), new PlanConfirmationService(),
-            mock(AgentCallMetaFactory.class));
+            mock(AgentCallMetaFactory.class), workspaceManager);
 
         // resolveWorkspace 返回 agentRoot（向后兼容，listChangedArtifacts 旧逻辑已不使用此方法）
-        when(agentInstanceFactory.resolveWorkspace("coder")).thenReturn(agentRoot);
+        when(workspaceManager.resolveWorkspace("coder")).thenReturn(agentRoot);
         // resolveSessionWorkspace 返回 agentRoot/sessions/{sessionId}
-        when(agentInstanceFactory.resolveSessionWorkspace(anyString(), anyString())).thenAnswer(inv -> {
+        when(workspaceManager.resolveSessionWorkspace(anyString(), anyString())).thenAnswer(inv -> {
             String sessionId = inv.getArgument(1);
             Path p = agentRoot.resolve("sessions").resolve(sessionId);
             Files.createDirectories(p);

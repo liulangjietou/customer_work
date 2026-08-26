@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
@@ -42,6 +43,7 @@ class CollaborativeCodingServiceTest {
 
     private final AiAgentMapper agentMapper = mock(AiAgentMapper.class);
     private final AdminAgentInstanceFactory agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
+    private final AgentWorkspaceManager workspaceManager = mock(AgentWorkspaceManager.class);
     private final VibeCodingService vibeCodingService = mock(VibeCodingService.class);
     private final GitWorkspaceService gitWorkspaceService = mock(GitWorkspaceService.class);
     private final AiCodingAuditService auditService = mock(AiCodingAuditService.class);
@@ -52,11 +54,11 @@ class CollaborativeCodingServiceTest {
         agent.setCapabilities("vibecoding");
         when(agentMapper.selectOne(any())).thenReturn(agent);
         when(agentInstanceFactory.buildModelForAgent(any())).thenReturn(model);
-        when(agentInstanceFactory.resolveSessionWorkspace(any(), any())).thenReturn(Path.of(System.getProperty("java.io.tmpdir")));
+        when(workspaceManager.resolveSessionWorkspace(any(), any())).thenReturn(Path.of(System.getProperty("java.io.tmpdir")));
         when(gitWorkspaceService.changedFilesAgainstBaseline(any())).thenReturn(List.of());
         when(auditService.begin(any(), any(), any())).thenReturn(new AiCodingAuditLog());
         return new CollaborativeCodingService(agentMapper, properties, agentInstanceFactory,
-            vibeCodingService, gitWorkspaceService, auditService);
+            vibeCodingService, gitWorkspaceService, auditService, workspaceManager);
     }
 
     private static AdminCollaborationProperties.Role planRole(String name) {

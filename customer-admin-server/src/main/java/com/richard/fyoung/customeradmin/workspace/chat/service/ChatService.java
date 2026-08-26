@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
@@ -91,6 +92,7 @@ public class ChatService {
 
     private final AgentInstanceCache agentInstanceCache;
     private final AdminAgentInstanceFactory agentInstanceFactory;
+    private final AgentWorkspaceManager workspaceManager;
     private final ChatHistoryCache historyCache;
     private final AgentMemorySyncService memorySyncService;
     private final ExecutionModeRegistry executionModeRegistry;
@@ -110,7 +112,9 @@ public class ChatService {
                         ChatAttachmentService chatAttachmentService,
                         ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
                         ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider,
-                        ObjectProvider<SessionLock> sessionLockProvider) {
+                        ObjectProvider<SessionLock> sessionLockProvider,
+                                    AgentWorkspaceManager workspaceManager) {
+        this.workspaceManager = workspaceManager;
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
         this.historyCache = historyCache;
@@ -140,7 +144,7 @@ public class ChatService {
                        ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider) {
         this(agentInstanceCache, agentInstanceFactory, historyCache, memorySyncService, executionModeRegistry,
             planConfirmationService, chatAttachmentService, sensitiveWordFilterProvider,
-            contentGuardPropertiesProvider, null);
+            contentGuardPropertiesProvider, null, new AgentWorkspaceManager(null));
     }
 
     /**
@@ -288,7 +292,7 @@ public class ChatService {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
         AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
-        Path memoryWorkspace = agentInstanceFactory.resolveWorkspace(memoryScope);
+        Path memoryWorkspace = workspaceManager.resolveWorkspace(memoryScope);
         // 在 Tomcat 线程上把限流主体取下来：下面整条链会切到 Reactor 线程，ThreadLocal 到不了那边，
         // 而 token 记账（AgentCallTimingMiddleware）恰恰发生在那里。主体由 AdminQuotaInterceptor 写入，
         // 功能关闭或非 AI 入口时为 null，此时不写 Context。
