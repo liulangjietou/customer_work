@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.experiment.service;
 
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,7 +36,6 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * 在线实验启动前的两臂离线质量评测。
@@ -194,13 +194,7 @@ public class ModelExperimentArmEvaluationService {
         if (CollectionUtils.isEmpty(responses)) {
             throw new IllegalStateException("model returned empty response");
         }
-        String text = responses.stream()
-            .flatMap(response -> response.getContent().stream())
-            .filter(TextBlock.class::isInstance)
-            .map(TextBlock.class::cast)
-            .map(TextBlock::getText)
-            .filter(StringUtils::hasText)
-            .collect(Collectors.joining());
+        String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new IllegalStateException("model returned empty text");
         }

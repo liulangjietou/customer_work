@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.assist;
 
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
@@ -147,7 +148,7 @@ public class ConversationSummaryService {
 
     /** 解析模型返回的摘要 JSON（容忍前后夹带说明/代码块标记）；结构不完整或异常返回 empty 交由上层降级。 */
     private Optional<ConversationSummary> parse(String modelText) {
-        String json = extractJsonObject(modelText);
+        String json = ModelResponses.extractJsonObject(modelText);
         if (json == null) {
             return Optional.empty();
         }
@@ -190,13 +191,7 @@ public class ConversationSummaryService {
         if (responses == null || responses.isEmpty()) {
             throw new IllegalStateException("summary model returned empty response");
         }
-        String text = responses.stream()
-            .flatMap(response -> response.getContent().stream())
-            .filter(TextBlock.class::isInstance)
-            .map(TextBlock.class::cast)
-            .map(TextBlock::getText)
-            .filter(StringUtils::hasText)
-            .collect(Collectors.joining());
+        String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new IllegalStateException("summary model returned no text content");
         }
@@ -241,14 +236,6 @@ public class ConversationSummaryService {
         }
     }
 
-    private String extractJsonObject(String text) {
-        if (!StringUtils.hasText(text)) {
-            return null;
-        }
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        return (start >= 0 && end > start) ? text.substring(start, end + 1) : null;
-    }
 
     private List<String> nullSafe(List<String> list) {
         return list == null ? List.of() : new ArrayList<>(list);

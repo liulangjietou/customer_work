@@ -27,8 +27,8 @@ import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelRoutingPolicyRuntimeAccess;
 import com.richard.fyoung.customeradmin.aiconfig.model.runtime.AdminModelFactory;
-import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.FailoverModel;
-import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.ModelCircuitBreakerRegistry;
+import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.AdminFailoverModel;
+import com.richard.fyoung.customeradmin.aiconfig.model.runtime.failover.AdminModelCircuitBreakerRegistry;
 import com.richard.fyoung.customeradmin.aiconfig.secret.service.SecretRefService;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkill;
 import com.richard.fyoung.customeradmin.aiconfig.skill.entity.AiSkillVersion;
@@ -186,7 +186,7 @@ public class AdminAgentInstanceFactory {
     private final AdminSandboxProperties sandboxProperties;
     private final SandboxGuardMiddleware sandboxGuardMiddleware;
     private final ExecutionModeMiddleware executionModeMiddleware;
-    private final ModelCircuitBreakerRegistry circuitBreakerRegistry;
+    private final AdminModelCircuitBreakerRegistry circuitBreakerRegistry;
     private final AgentMemorySyncService memorySyncService;
     /** 分段耗时采集中间件（starter 提供，admin 显式装配），挂在内层 ReActAgent 上采集每次调用的分段耗时。 */
     private final AgentCallTimingMiddleware agentCallTimingMiddleware;
@@ -239,7 +239,7 @@ public class AdminAgentInstanceFactory {
                                       AdminMcpFactory mcpFactory, AdminSandboxProperties sandboxProperties,
                                       SandboxGuardMiddleware sandboxGuardMiddleware,
                                       ExecutionModeMiddleware executionModeMiddleware,
-                                      ModelCircuitBreakerRegistry circuitBreakerRegistry,
+                                      AdminModelCircuitBreakerRegistry circuitBreakerRegistry,
                                       AgentMemorySyncService memorySyncService,
                                       AgentCallTimingMiddleware agentCallTimingMiddleware,
                                       ToolKindRegistry agentCallToolKindRegistry,
@@ -530,7 +530,7 @@ public class AdminAgentInstanceFactory {
 
     /**
      * 在内层 ReActAgent 上叠加 Harness 能力：vibecoding 沙箱 / plan 计划模式 / skill-learning 技能自进化 /
-     * 上下文压缩 / 子智能体编排。非 vibecoding 时不挂 filesystem 沙箱（SandboxSafeAgentStateStore 也只是
+     * 上下文压缩 / 子智能体编排。非 vibecoding 时不挂 filesystem 沙箱（AdminSandboxSafeAgentStateStore 也只是
      * docker filesystem 的 sessionId 转义问题，同样不需要），workspace 仍复用 {@link #resolveWorkspace}。
      */
     private HarnessAgent buildHarnessAgent(AiAgent agent, List<String> capabilities, ReActAgent inner,
@@ -540,10 +540,10 @@ public class AdminAgentInstanceFactory {
 
         // Docker 模式下 HarnessAgent 内部的 SessionSandboxStateStore 会给沙箱状态槽位拼出带 "/"
         // 的 sessionId（IsolationScope 四种取值全部如此，框架侧硬编码），而 MysqlAgentStateStore
-        // 拒绝接受含路径分隔符的 sessionId，两者组合必然抛异常——用 SandboxSafeAgentStateStore
+        // 拒绝接受含路径分隔符的 sessionId，两者组合必然抛异常——用 AdminSandboxSafeAgentStateStore
         // 包一层转义规避，local 模式与未挂 filesystem 沙箱的升级路径不受影响（见该类 Javadoc）。
         AgentStateStore harnessStateStore = vibecoding && sandboxProperties.isDockerMode()
-            ? new SandboxSafeAgentStateStore(stateStore) : stateStore;
+            ? new AdminSandboxSafeAgentStateStore(stateStore) : stateStore;
         Path workspace = resolveWorkspace(memoryScope);
         HarnessAgent.Builder harnessBuilder = HarnessAgent.Builder.fromAgent(inner)
             .stateStore(harnessStateStore)
@@ -890,8 +890,8 @@ public class AdminAgentInstanceFactory {
 
     /**
      * 按智能体主备模型配置构建运行时 {@link Model}：无备用模型时行为与旧逻辑完全一致（直接返回单个主模型，
-     * 不包 {@link FailoverModel}）；有备用模型时按 {@code sort_order} 组装有序候选（主在前备在后）包成
-     * {@link FailoverModel}，运行时主模型失败自动按序切备并带熔断记忆。
+     * 不包 {@link AdminFailoverModel}）；有备用模型时按 {@code sort_order} 组装有序候选（主在前备在后）包成
+     * {@link AdminFailoverModel}，运行时主模型失败自动按序切备并带熔断记忆。
      */
     private Model buildAgentModel(AiAgent agent) {
         if (agent.getModelRoutePolicyId() != null) {
@@ -906,13 +906,13 @@ public class AdminAgentInstanceFactory {
         if (CollectionUtils.isEmpty(backupModelIds)) {
             return primaryModel;
         }
-        List<FailoverModel.Candidate> candidates = new ArrayList<>();
-        candidates.add(new FailoverModel.Candidate(agent.getModelId(), primaryModel));
+        List<AdminFailoverModel.Candidate> candidates = new ArrayList<>();
+        candidates.add(new AdminFailoverModel.Candidate(agent.getModelId(), primaryModel));
         for (Long backupModelId : backupModelIds) {
-            candidates.add(new FailoverModel.Candidate(backupModelId, buildModel(backupModelId)));
+            candidates.add(new AdminFailoverModel.Candidate(backupModelId, buildModel(backupModelId)));
         }
         log.info("[workspace] failover model built: agentCode={} candidates={}", agent.getAgentCode(), candidates.size());
-        return new FailoverModel(candidates, circuitBreakerRegistry);
+        return new AdminFailoverModel(candidates, circuitBreakerRegistry);
     }
 
     private Model buildPolicyModel(AiAgent agent) {

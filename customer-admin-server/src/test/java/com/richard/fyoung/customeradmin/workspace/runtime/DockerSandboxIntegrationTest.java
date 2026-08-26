@@ -40,7 +40,7 @@ import static org.mockito.Mockito.verify;
  *
  * <p>覆盖需求 §4.6.2：①容器内写文件→编译运行→读回 + bind mount 产物实时落宿主机（含跨会话
  * {@code MEMORY.md} 的宿主机持久化、{@code --user} 下的产物属主对齐）；②沙箱资源获取失败时快速抛错
- * 不挂起；③sessionId 转义（{@link SandboxSafeAgentStateStore}）在 docker 模式同样生效；④破坏性命令识别
+ * 不挂起；③sessionId 转义（{@link AdminSandboxSafeAgentStateStore}）在 docker 模式同样生效；④破坏性命令识别
  * （{@link SandboxRiskDetector}）与模式无关，docker 模式一样拦得住。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -160,9 +160,9 @@ class DockerSandboxIntegrationTest {
     @Test
     void sessionIdWithSlash_isEscaped_beforeReachingStore() {
         // docker 模式下框架给沙箱状态槽位拼出带 "/" 的 sessionId，MysqlAgentStateStore 会拒绝——
-        // SandboxSafeAgentStateStore 装饰器在转发前把分隔符转义掉（见其 Javadoc）。此保证与是否真起容器无关。
+        // AdminSandboxSafeAgentStateStore 装饰器在转发前把分隔符转义掉（见其 Javadoc）。此保证与是否真起容器无关。
         AgentStateStore delegate = mock(AgentStateStore.class);
-        SandboxSafeAgentStateStore safe = new SandboxSafeAgentStateStore(delegate);
+        AdminSandboxSafeAgentStateStore safe = new AdminSandboxSafeAgentStateStore(delegate);
 
         safe.exists("agent", "sandbox/agent/slot");
         safe.delete("agent", "a\\b");

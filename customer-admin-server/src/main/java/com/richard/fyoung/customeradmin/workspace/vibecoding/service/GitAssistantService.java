@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -341,7 +342,7 @@ public class GitAssistantService {
      */
     private ReviewResult parseReviewResult(String modelText, boolean diffTruncated) {
         String truncateNote = diffTruncated ? "[注意] diff 过大已截断，仅审查前 " + MAX_DIFF_CHARS_FOR_REVIEW + " 字符。" : "";
-        String json = extractJsonObject(modelText);
+        String json = ModelResponses.extractJsonObject(modelText);
         if (json != null) {
             try {
                 ReviewResult parsed = objectMapper.readValue(json, ReviewResult.class);
@@ -387,14 +388,6 @@ public class GitAssistantService {
     }
 
     /** 截取文本中第一个 {@code '{'} 到最后一个 {@code '}'} 之间的子串（容忍模型在 JSON 前后夹带说明/代码块标记）。 */
-    private String extractJsonObject(String text) {
-        if (!StringUtils.hasText(text)) {
-            return null;
-        }
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        return (start >= 0 && end > start) ? text.substring(start, end + 1) : null;
-    }
 
     private String requireNonEmptyDiff(Path workspace) {
         String diff = gitWorkspaceService.diffAgainstBaseline(workspace);
@@ -429,13 +422,7 @@ public class GitAssistantService {
         if (responses == null || responses.isEmpty()) {
             throw new BizException(ResultCode.GIT_ASSISTANT_AI_FAILED, "模型未返回任何内容");
         }
-        String text = responses.stream()
-            .flatMap(response -> response.getContent().stream())
-            .filter(TextBlock.class::isInstance)
-            .map(TextBlock.class::cast)
-            .map(TextBlock::getText)
-            .filter(StringUtils::hasText)
-            .collect(Collectors.joining());
+        String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new BizException(ResultCode.GIT_ASSISTANT_AI_FAILED, "模型返回内容为空");
         }

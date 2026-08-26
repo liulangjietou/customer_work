@@ -12,15 +12,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 熔断本身的语义（阈值/半开/重置）由 starter 的同名测试覆盖，这里不重复。
  * @author owlzhangfq@gmail.com
  */
-class ModelCircuitBreakerRegistryTest {
+class AdminModelCircuitBreakerRegistryTest {
 
     private static final Long MODEL_ID = 1L;
 
-    private ModelCircuitBreakerRegistry newRegistry(int threshold, int openSeconds) {
+    private AdminModelCircuitBreakerRegistry newRegistry(int threshold, int openSeconds) {
         AdminModelFailoverProperties props = new AdminModelFailoverProperties();
         props.setFailureThreshold(threshold);
         props.setOpenDurationSeconds(openSeconds);
-        return new ModelCircuitBreakerRegistry(props);
+        return new AdminModelCircuitBreakerRegistry(props);
     }
 
     @Test
@@ -31,7 +31,7 @@ class ModelCircuitBreakerRegistryTest {
 
     @Test
     void shouldApplyFailureThresholdFromProperties() {
-        ModelCircuitBreakerRegistry registry = newRegistry(2, 60);
+        AdminModelCircuitBreakerRegistry registry = newRegistry(2, 60);
 
         registry.recordFailure(MODEL_ID);
         assertFalse(registry.isOpen(MODEL_ID)); // 1 次未达配置阈值 2
@@ -43,7 +43,7 @@ class ModelCircuitBreakerRegistryTest {
     @Test
     void shouldApplyOpenDurationFromProperties() {
         // openDurationSeconds=0：熔断窗口即刻到期，isOpen 走半开分支放行
-        ModelCircuitBreakerRegistry registry = newRegistry(1, 0);
+        AdminModelCircuitBreakerRegistry registry = newRegistry(1, 0);
 
         registry.recordFailure(MODEL_ID);
 
