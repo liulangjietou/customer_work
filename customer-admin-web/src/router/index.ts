@@ -80,6 +80,11 @@ router.beforeEach(async (to) => {
   if (auth.forceChangePassword && to.name !== 'ChangePassword') {
     return { name: 'ChangePassword' }
   }
+  // 待审核/已拒绝账号即使手工输入已知地址，也只能停留在首页。真正的数据权限仍由后端
+  // UserRoleResolver + 接口权限校验兜底；这里负责把前端可见范围收敛到“首页 + 品牌 Logo”。
+  if (!auth.isApproved && to.name !== 'Home') {
+    return { name: 'Home' }
+  }
 
   const menuStore = useMenuStore()
   if (!menuStore.routesRegistered) {

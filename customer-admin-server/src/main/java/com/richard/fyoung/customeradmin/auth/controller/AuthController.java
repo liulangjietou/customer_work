@@ -4,10 +4,12 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.auth.dto.ChangePasswordRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginResponse;
+import com.richard.fyoung.customeradmin.auth.dto.RegisterRequest;
 import com.richard.fyoung.customeradmin.auth.dto.SsoLoginRequest;
 import com.richard.fyoung.customeradmin.auth.service.AuthService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
+import com.richard.fyoung.customeradmin.system.user.service.UserRegistrationService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,14 +28,23 @@ import java.util.List;
 public class AuthController {
 
     private final AuthService authService;
+    private final UserRegistrationService userRegistrationService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, UserRegistrationService userRegistrationService) {
         this.authService = authService;
+        this.userRegistrationService = userRegistrationService;
     }
 
     @PostMapping("/login")
     public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         return Result.success(authService.login(request));
+    }
+
+    /** 本地账号自助注册：只创建待审核、无角色的最小权限账号。 */
+    @PostMapping("/register")
+    public Result<Void> register(@Valid @RequestBody RegisterRequest request) {
+        userRegistrationService.register(request);
+        return Result.success();
     }
 
     /** OA 域账号（LDAP/AD）单点登录，与上面的账号密码登录入口共存，前端登录页 Tab 切换。 */

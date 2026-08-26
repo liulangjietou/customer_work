@@ -1,11 +1,21 @@
 import { defineStore } from 'pinia'
 import { fetchMyPermissions, logout as logoutApi } from '@/api/auth'
-import type { LoginResponse } from '@/types/api'
+import type { LoginResponse, UserApprovalStatus } from '@/types/api'
 
 const STORAGE_TOKEN_KEY = 'admin-token'
 const STORAGE_NICKNAME_KEY = 'admin-nickname'
 const STORAGE_USERNAME_KEY = 'admin-username'
 const STORAGE_FORCE_CHANGE_PASSWORD_KEY = 'admin-force-change-password'
+const STORAGE_APPROVAL_STATUS_KEY = 'admin-approval-status'
+const STORAGE_APPROVAL_REMARK_KEY = 'admin-approval-remark'
+
+function storedApprovalStatus(): UserApprovalStatus {
+  const value = localStorage.getItem(STORAGE_APPROVAL_STATUS_KEY)
+  if (value === null) {
+    return 'APPROVED'
+  }
+  return value === 'PENDING' || value === 'APPROVED' || value === 'REJECTED' ? value : 'PENDING'
+}
 
 interface AuthState {
   token: string | null
@@ -14,6 +24,8 @@ interface AuthState {
    * 供「系统管理 - 用户管理」编辑用户后判断是不是在改自己、需要同步刷新右上角昵称缓存。 */
   username: string | null
   forceChangePassword: boolean
+  approvalStatus: UserApprovalStatus
+  approvalRemark: string | null
   permissions: string[]
 }
 
@@ -25,10 +37,14 @@ export const useAuthStore = defineStore('auth', {
     // 必须持久化，不能只活在内存里：若只存内存，浏览器在改密页意外刷新（如表单原生提交触发的整页刷新）
     // 会让这个强制改密的门禁悄悄消失，用户绕过强制改密直接进入系统。
     forceChangePassword: localStorage.getItem(STORAGE_FORCE_CHANGE_PASSWORD_KEY) === 'true',
+    // 兼容升级前已存在的登录态：旧缓存没有审核字段，而既有账号迁移后默认均为 APPROVED。
+    approvalStatus: storedApprovalStatus(),
+    approvalRemark: localStorage.getItem(STORAGE_APPROVAL_REMARK_KEY),
     permissions: [],
   }),
   getters: {
     isLoggedIn: (state) => !!state.token,
+    isApproved: (state) => state.approvalStatus === 'APPROVED',
   },
   actions: {
     applyLoginResult(result: LoginResponse, username: string) {
@@ -36,10 +52,18 @@ export const useAuthStore = defineStore('auth', {
       this.nickname = result.nickname
       this.username = username
       this.forceChangePassword = result.forceChangePassword
+      this.approvalStatus = result.approvalStatus
+      this.approvalRemark = result.approvalRemark
       localStorage.setItem(STORAGE_TOKEN_KEY, result.token)
       localStorage.setItem(STORAGE_NICKNAME_KEY, result.nickname)
       localStorage.setItem(STORAGE_USERNAME_KEY, username)
       localStorage.setItem(STORAGE_FORCE_CHANGE_PASSWORD_KEY, String(result.forceChangePassword))
+      localStorage.setItem(STORAGE_APPROVAL_STATUS_KEY, result.approvalStatus)
+      if (result.approvalRemark) {
+        localStorage.setItem(STORAGE_APPROVAL_REMARK_KEY, result.approvalRemark)
+      } else {
+        localStorage.removeItem(STORAGE_APPROVAL_REMARK_KEY)
+      }
     },
     /** 「用户管理」编辑资料时若改的是当前登录用户自己，用这个同步刷新右上角展示的昵称缓存，
      * 否则要等下次重新登录才会更新——旧 bug：编辑自己的昵称后页面仍显示登录时缓存的旧值。 */
@@ -62,11 +86,15 @@ export const useAuthStore = defineStore('auth', {
       this.nickname = null
       this.username = null
       this.forceChangePassword = false
+      this.approvalStatus = 'APPROVED'
+      this.approvalRemark = null
       this.permissions = []
       localStorage.removeItem(STORAGE_TOKEN_KEY)
       localStorage.removeItem(STORAGE_NICKNAME_KEY)
       localStorage.removeItem(STORAGE_USERNAME_KEY)
       localStorage.removeItem(STORAGE_FORCE_CHANGE_PASSWORD_KEY)
+      localStorage.removeItem(STORAGE_APPROVAL_STATUS_KEY)
+      localStorage.removeItem(STORAGE_APPROVAL_REMARK_KEY)
     },
     async logout() {
       try {

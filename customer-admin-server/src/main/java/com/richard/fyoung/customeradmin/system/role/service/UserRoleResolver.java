@@ -3,7 +3,10 @@ package com.richard.fyoung.customeradmin.system.role.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
+import com.richard.fyoung.customeradmin.system.user.domain.UserApprovalStatus;
+import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
+import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.TenantSession;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
@@ -28,10 +31,13 @@ public class UserRoleResolver {
 
     private final SysUserRoleMapper userRoleMapper;
     private final SysRoleMapper roleMapper;
+    private final SysUserMapper userMapper;
 
-    public UserRoleResolver(SysUserRoleMapper userRoleMapper, SysRoleMapper roleMapper) {
+    public UserRoleResolver(SysUserRoleMapper userRoleMapper, SysRoleMapper roleMapper,
+                            SysUserMapper userMapper) {
         this.userRoleMapper = userRoleMapper;
         this.roleMapper = roleMapper;
+        this.userMapper = userMapper;
     }
 
     /**
@@ -49,6 +55,10 @@ public class UserRoleResolver {
 
     private List<SysRole> doQuery(Object loginId) {
         Long userId = Long.valueOf(loginId.toString());
+        SysUser user = userMapper.selectById(userId);
+        if (user == null || !UserApprovalStatus.parse(user.getApprovalStatus()).allowsPermissions()) {
+            return List.of();
+        }
         List<Long> roleIds = userRoleMapper.selectList(
                 new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId))
             .stream().map(SysUserRole::getRoleId).toList();

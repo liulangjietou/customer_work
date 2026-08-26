@@ -5,5 +5,6 @@ package com.richard.fyoung.customeradmin.auth.dto;
  * （账号当前密码仍等于初始化种子哈希值，见 {@code AuthService#login}）。
  * @author owlzhangfq@gmail.com
  */
-public record LoginResponse(String token, String nickname, boolean forceChangePassword) {
+public record LoginResponse(String token, String nickname, boolean forceChangePassword,
+                            String approvalStatus, String approvalRemark) {
 }

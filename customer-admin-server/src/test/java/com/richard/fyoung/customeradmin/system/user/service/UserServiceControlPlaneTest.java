@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
+import com.richard.fyoung.customeradmin.system.user.domain.UserApprovalStatus;
 import com.richard.fyoung.customeradmin.system.user.dto.UserSaveRequest;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
@@ -131,6 +132,7 @@ class UserServiceControlPlaneTest {
         user.setId(id);
         user.setUsername("existing");
         user.setStatus(1);
+        user.setApprovalStatus(UserApprovalStatus.APPROVED.name());
         return user;
     }
 
