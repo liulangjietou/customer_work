@@ -14,6 +14,8 @@ import com.richard.fyoung.customeradmin.system.role.mapper.SysRolePermissionMapp
 import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -21,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -44,6 +47,7 @@ class RoleServiceDataScopeTest {
 
     @BeforeEach
     void setUp() {
+        TenantContext.set("tenant-a");
         roleMapper = mock(SysRoleMapper.class);
         permissionMapper = mock(SysPermissionMapper.class);
         rolePermissionMapper = mock(SysRolePermissionMapper.class);
@@ -52,6 +56,11 @@ class RoleServiceDataScopeTest {
         service = new RoleService(roleMapper, rolePermissionMapper, permissionMapper, userRoleMapper,
             crossTenantAuthority);
         when(roleMapper.exists(any())).thenReturn(false);
+    }
+
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
     }
 
     /** 不传范围时按最小权限落 SELF，而不是留空由 SQL 默认值兜底——留空会让"是否设过"变得不可知。 */
@@ -110,7 +119,7 @@ class RoleServiceDataScopeTest {
     @Test
     void create_shouldRejectRevivingDeletedControlPlaneRoleFromOrdinaryUser() {
         SysRole operator = controlPlaneRole(3L);
-        when(roleMapper.selectDeletedByRoleCode("operator")).thenReturn(operator);
+        when(roleMapper.selectDeletedByRoleCode("tenant-a", "operator")).thenReturn(operator);
         when(crossTenantAuthority.isControlPlaneRole(operator)).thenReturn(true);
         when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(false);
 
@@ -118,7 +127,7 @@ class RoleServiceDataScopeTest {
             () -> service.create(request("operator", "TENANT")));
 
         assertEquals(ResultCode.FORBIDDEN, exception.getResultCode());
-        verify(roleMapper, never()).reviveDeleted(3L);
+        verify(roleMapper, never()).reviveDeleted(3L, "tenant-a");
     }
 
     @Test
@@ -146,6 +155,58 @@ class RoleServiceDataScopeTest {
         verify(roleMapper).deleteById(5L);
         verify(rolePermissionMapper).delete(any());
         verify(userRoleMapper).delete(any());
+    }
+
+    @Test
+    void update_shouldNotTreatTenantRoleCodeAsControlPlaneSuperAdmin() {
+        SysRole tenantRole = new SysRole();
+        tenantRole.setId(8L);
+        tenantRole.setRoleCode("super_admin");
+        tenantRole.setControlPlane(SysRole.CONTROL_PLANE_DISABLED);
+        when(roleMapper.selectById(8L)).thenReturn(tenantRole);
+        when(crossTenantAuthority.isControlPlaneRole(tenantRole)).thenReturn(false);
+
+        service.update(8L, request("tenant_super_admin", "TENANT"));
+
+        verify(roleMapper).updateById(tenantRole);
+    }
+
+    @Test
+    void get_shouldNotSynthesizeAllPermissionsForTenantRoleNamedSuperAdmin() {
+        SysRole tenantRole = new SysRole();
+        tenantRole.setId(8L);
+        tenantRole.setRoleCode("super_admin");
+        tenantRole.setControlPlane(SysRole.CONTROL_PLANE_DISABLED);
+        SysPermission allPermission = new SysPermission();
+        allPermission.setId(1L);
+        SysRolePermission assigned = new SysRolePermission();
+        assigned.setRoleId(8L);
+        assigned.setPermissionId(2L);
+        when(roleMapper.selectById(8L)).thenReturn(tenantRole);
+        when(crossTenantAuthority.isControlPlaneRole(tenantRole)).thenReturn(false);
+        when(permissionMapper.selectList(null)).thenReturn(List.of(allPermission));
+        when(rolePermissionMapper.selectList(any())).thenReturn(List.of(assigned));
+
+        RoleVO role = service.get(8L);
+
+        assertFalse(role.getControlPlane());
+        assertEquals(List.of(2L), role.getPermissionIds());
+    }
+
+    @Test
+    void delete_shouldStillProtectControlPlaneSuperAdmin() {
+        SysRole superAdmin = new SysRole();
+        superAdmin.setId(1L);
+        superAdmin.setRoleCode("super_admin");
+        superAdmin.setControlPlane(SysRole.CONTROL_PLANE_ENABLED);
+        when(roleMapper.selectById(1L)).thenReturn(superAdmin);
+        when(crossTenantAuthority.isControlPlaneRole(superAdmin)).thenReturn(true);
+        when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(true);
+
+        BizException exception = assertThrows(BizException.class, () -> service.delete(1L));
+
+        assertEquals(ResultCode.FORBIDDEN, exception.getResultCode());
+        verify(roleMapper, never()).deleteById(1L);
     }
 
     @Test

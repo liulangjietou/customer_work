@@ -1,15 +1,24 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
-import { createUser, deleteUser, pageUsers, reviewUser, updateUser } from '@/api/user'
+import {
+  createUser,
+  deleteUser,
+  getUserApprovalOptions,
+  pageUsers,
+  reviewUser,
+  updateUser,
+} from '@/api/user'
 import { pageRoles } from '@/api/role'
 import { fetchCurrentView } from '@/api/tenant'
 import { useAuthStore } from '@/store/auth'
 import { useCrudPage } from '@/composables/useCrudPage'
 import type {
   RoleVO,
+  UserApprovalRoleOption,
   UserApprovalRequest,
   UserApprovalStatus,
+  UserApprovalTenantOption,
   UserPageQuery,
   UserSaveRequest,
   UserVO,
@@ -23,9 +32,13 @@ const formRef = ref<FormInstance>()
 const editingApprovalStatus = ref<UserApprovalStatus>('APPROVED')
 const reviewDialogVisible = ref(false)
 const reviewSubmitting = ref(false)
+const reviewOptionsLoading = ref(false)
 const reviewTarget = ref<UserVO | null>(null)
+const reviewTenantOptions = ref<UserApprovalTenantOption[]>([])
+const reviewRoleOptions = ref<UserApprovalRoleOption[]>([])
 const reviewForm = reactive<UserApprovalRequest>({
   decision: 'APPROVED',
+  tenantId: '',
   roleIds: [],
   remark: '',
 })
@@ -84,14 +97,36 @@ function approvalTagType(status: UserApprovalStatus): 'warning' | 'success' | 'd
   return status === 'PENDING' ? 'warning' : 'danger'
 }
 
-function openReview(row: UserVO) {
+async function openReview(row: UserVO) {
   reviewTarget.value = row
   Object.assign(reviewForm, {
     decision: row.approvalStatus === 'REJECTED' ? 'REJECTED' : 'APPROVED',
-    roleIds: row.roleIds ? [...row.roleIds] : [],
+    tenantId: row.tenantId,
+    roleIds: [],
     remark: row.approvalRemark || '',
   })
   reviewDialogVisible.value = true
+  await loadReviewOptions(row.tenantId)
+}
+
+async function loadReviewOptions(tenantId?: string) {
+  reviewOptionsLoading.value = true
+  try {
+    const options = await getUserApprovalOptions(tenantId)
+    reviewTenantOptions.value = options.tenants
+    reviewRoleOptions.value = options.roles
+    reviewForm.tenantId = options.selectedTenantId
+    reviewForm.roleIds = []
+  } catch {
+    reviewTenantOptions.value = []
+    reviewRoleOptions.value = []
+  } finally {
+    reviewOptionsLoading.value = false
+  }
+}
+
+async function handleReviewTenantChange(tenantId: string) {
+  await loadReviewOptions(tenantId)
 }
 
 async function submitReview() {
@@ -102,14 +137,21 @@ async function submitReview() {
     ElMessage.warning('审核通过时至少分配一个角色')
     return
   }
+  if (reviewForm.decision === 'APPROVED' && !reviewForm.tenantId) {
+    ElMessage.warning('审核通过时请选择归属租户')
+    return
+  }
   reviewSubmitting.value = true
   try {
     await reviewUser(reviewTarget.value.id, {
       decision: reviewForm.decision,
+      tenantId: reviewForm.decision === 'APPROVED' ? reviewForm.tenantId : reviewTarget.value.tenantId,
       roleIds: reviewForm.decision === 'APPROVED' ? reviewForm.roleIds : [],
       remark: reviewForm.remark?.trim() || null,
     })
-    ElMessage.success(reviewForm.decision === 'APPROVED' ? '审核通过，角色权限已生效' : '已拒绝该注册申请')
+    ElMessage.success(reviewForm.decision === 'APPROVED'
+      ? `审核通过，用户已归属 ${reviewForm.tenantId}`
+      : '已拒绝该注册申请')
     reviewDialogVisible.value = false
     await loadList()
   } finally {
@@ -155,6 +197,7 @@ onMounted(async () => {
 
       <el-table v-loading="loading" :data="list" style="width: 100%">
         <el-table-column prop="username" label="用户名" />
+        <el-table-column prop="tenantId" label="归属租户" min-width="120" />
         <el-table-column prop="nickname" label="昵称" />
         <el-table-column label="角色">
           <template #default="{ row }">{{ row.roleNames?.join('、') || '-' }}</template>
@@ -241,6 +284,7 @@ onMounted(async () => {
       <el-descriptions v-if="reviewTarget" :column="1" border class="review-user">
         <el-descriptions-item label="用户名">{{ reviewTarget.username }}</el-descriptions-item>
         <el-descriptions-item label="昵称">{{ reviewTarget.nickname || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="当前租户">{{ reviewTarget.tenantId }}</el-descriptions-item>
       </el-descriptions>
       <el-form :model="reviewForm" label-width="84px">
         <el-form-item label="审核结果">
@@ -249,12 +293,35 @@ onMounted(async () => {
             <el-radio-button value="REJECTED">拒绝</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="reviewForm.decision === 'APPROVED'" label="分配角色" required>
-          <el-select v-model="reviewForm.roleIds" multiple style="width: 100%" placeholder="至少选择一个角色">
+        <el-form-item v-if="reviewForm.decision === 'APPROVED'" label="归属租户" required>
+          <el-select
+            v-model="reviewForm.tenantId"
+            filterable
+            style="width: 100%"
+            placeholder="请选择用户归属租户"
+            :loading="reviewOptionsLoading"
+            @change="handleReviewTenantChange"
+          >
             <el-option
-              v-for="role in roleOptions"
+              v-for="tenant in reviewTenantOptions"
+              :key="tenant.tenantId"
+              :label="`${tenant.tenantName} (${tenant.tenantId})`"
+              :value="tenant.tenantId"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="reviewForm.decision === 'APPROVED'" label="分配角色" required>
+          <el-select
+            v-model="reviewForm.roleIds"
+            multiple
+            style="width: 100%"
+            placeholder="至少选择一个目标租户角色"
+            :loading="reviewOptionsLoading"
+          >
+            <el-option
+              v-for="role in reviewRoleOptions"
               :key="role.id"
-              :label="role.roleName"
+              :label="`${role.roleName} (${role.roleCode})`"
               :value="role.id"
               :disabled="role.controlPlane && !crossTenantAuthority"
             />

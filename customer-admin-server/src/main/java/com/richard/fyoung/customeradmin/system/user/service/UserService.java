@@ -11,6 +11,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.user.domain.UserApprovalStatus;
+import com.richard.fyoung.customeradmin.system.user.dto.UserApprovalOptionsVO;
 import com.richard.fyoung.customeradmin.system.user.dto.UserApprovalRequest;
 import com.richard.fyoung.customeradmin.system.user.dto.UserPageQuery;
 import com.richard.fyoung.customeradmin.system.user.dto.UserSaveRequest;
@@ -20,6 +21,10 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import com.richard.fyoung.customeradmin.tenant.access.TenantAccessSnapshot;
+import com.richard.fyoung.customeradmin.tenant.dto.TenantVO;
+import com.richard.fyoung.customeradmin.tenant.service.TenantService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -50,17 +55,20 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final CrossTenantAuthority crossTenantAuthority;
     private final SessionRevocationService sessionRevocationService;
+    private final TenantService tenantService;
 
     public UserService(SysUserMapper userMapper, SysUserRoleMapper userRoleMapper,
                        SysRoleMapper roleMapper, PasswordEncoder passwordEncoder,
                        CrossTenantAuthority crossTenantAuthority,
-                       SessionRevocationService sessionRevocationService) {
+                       SessionRevocationService sessionRevocationService,
+                       TenantService tenantService) {
         this.userMapper = userMapper;
         this.userRoleMapper = userRoleMapper;
         this.roleMapper = roleMapper;
         this.passwordEncoder = passwordEncoder;
         this.crossTenantAuthority = crossTenantAuthority;
         this.sessionRevocationService = sessionRevocationService;
+        this.tenantService = tenantService;
     }
 
     public PageResult<UserVO> page(UserPageQuery query) {
@@ -89,6 +97,54 @@ public class UserService {
         UserVO vo = toVoWithoutRoles(user);
         fillRoles(List.of(vo));
         return vo;
+    }
+
+    /**
+     * 返回注册审核可选租户及目标租户内的启用角色。
+     *
+     * <p>普通租户审核人只能看到当前租户；具备控制面能力的审核人才能跨租户选择。角色查询临时进入
+     * 目标租户上下文，前端无需切换整个管理后台视角，也不能通过伪造 tenantId 越权枚举其它租户角色。</p>
+     */
+    public UserApprovalOptionsVO approvalOptions(String requestedTenantId) {
+        String currentTenant = TenantContext.require();
+        boolean canCrossTenant = crossTenantAuthority.hasCurrentUserAuthority();
+        List<TenantVO> activeTenants = tenantService.listActive().stream()
+            .filter(tenant -> tenant.getExpireTime() == null
+                || !tenant.getExpireTime().isBefore(LocalDateTime.now()))
+            .toList();
+        List<TenantVO> visibleTenants = canCrossTenant
+            ? activeTenants
+            : activeTenants.stream()
+                .filter(tenant -> TenantContext.sameTenant(currentTenant, tenant.getTenantCode()))
+                .toList();
+
+        String targetInput = StringUtils.hasText(requestedTenantId)
+            ? requestedTenantId.trim()
+            : currentTenant;
+        if (!TenantContext.sameTenant(currentTenant, targetInput) && !canCrossTenant) {
+            // 先做越权判定再查租户主数据，避免普通租户用户借错误码枚举其它租户是否存在。
+            throw new BizException(ResultCode.TENANT_VIEW_FORBIDDEN);
+        }
+        TenantAccessSnapshot targetSnapshot = tenantService.resolveAccessibleSnapshot(targetInput);
+        if (targetSnapshot == null) {
+            throw new BizException(ResultCode.TENANT_NOT_FOUND);
+        }
+        String targetTenant = targetSnapshot.tenantId();
+
+        List<UserApprovalOptionsVO.RoleOption> roles = TenantContext.callWith(targetTenant,
+            () -> roleMapper.selectList(new LambdaQueryWrapper<SysRole>()
+                    .eq(SysRole::getStatus, 1)
+                    .orderByAsc(SysRole::getRoleName))
+                .stream()
+                .map(role -> new UserApprovalOptionsVO.RoleOption(
+                    role.getId(), role.getRoleName(), role.getRoleCode(),
+                    crossTenantAuthority.isControlPlaneRole(role)))
+                .toList());
+        List<UserApprovalOptionsVO.TenantOption> tenants = visibleTenants.stream()
+            .map(tenant -> new UserApprovalOptionsVO.TenantOption(
+                tenant.getTenantCode(), tenant.getTenantName()))
+            .toList();
+        return new UserApprovalOptionsVO(targetTenant, tenants, roles);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -148,8 +204,8 @@ public class UserService {
     }
 
     /**
-     * 审核自助注册用户。批准与角色分配在同一事务完成，拒绝则清空角色；两种决策都会撤销旧会话，
-     * 让用户重新登录后读取新的审核状态和权限集合。
+     * 审核自助注册用户。批准时把用户归属、角色关系一次提交到目标租户；拒绝保持原租户并清空角色。
+     * 租户或安全属性发生变化时撤销旧会话，让用户重新登录后读取新的租户与权限集合。
      */
     @Transactional(rollbackFor = Exception.class)
     public void review(Long id, UserApprovalRequest request) {
@@ -157,31 +213,67 @@ public class UserService {
             throw new BizException(ResultCode.PARAM_INVALID, "审核结果只能是通过或拒绝");
         }
         SysUser user = requireUser(id);
-        List<Long> previousRoleIds = existingRoleIds(id);
+        String sourceTenant = StringUtils.hasText(user.getTenantId())
+            ? TenantContext.canonicalizeTenantId(user.getTenantId())
+            : TenantContext.require();
+        String targetTenant = resolveApprovalTenant(sourceTenant, request);
+        List<Long> previousRoleIds = TenantContext.callWith(sourceTenant, () -> existingRoleIds(id));
+        TenantContext.runWith(sourceTenant, () -> guardExistingControlPlaneAssignment(id));
         List<Long> roleIds;
         if (request.decision() == UserApprovalStatus.APPROVED) {
-            roleIds = validateRoleChange(id, request.roleIds());
+            roleIds = TenantContext.callWith(targetTenant,
+                () -> validateRoleChange(null, request.roleIds()));
             if (roleIds.isEmpty()) {
                 throw new BizException(ResultCode.PARAM_MISSING, "审核通过时必须至少分配一个角色");
             }
         } else {
-            roleIds = validateRoleChange(id, List.of());
+            roleIds = List.of();
         }
 
         boolean approvalChanged = request.decision()
             != UserApprovalStatus.parse(user.getApprovalStatus());
         boolean rolesChanged = !new HashSet<>(previousRoleIds).equals(new HashSet<>(roleIds));
+        boolean tenantChanged = !TenantContext.sameTenant(sourceTenant, targetTenant);
         user.setApprovalStatus(request.decision().name());
+        user.setTenantId(targetTenant);
         user.setApprovalBy(StpUtil.getLoginIdAsLong());
         user.setApprovalTime(LocalDateTime.now());
         user.setApprovalRemark(StringUtils.hasText(request.remark()) ? request.remark().trim() : null);
-        userMapper.updateById(user);
-        replaceRoles(id, roleIds);
+        int userChanged = TenantContext.callWith(sourceTenant, () -> userMapper.updateById(user));
+        if (userChanged != 1) {
+            throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "用户不存在或归属租户已变化");
+        }
+        TenantContext.runWith(sourceTenant, () -> replaceRoles(id, List.of()));
+        TenantContext.runWith(targetTenant, () -> insertRoles(id, roleIds));
 
-        if (approvalChanged || rolesChanged) {
-            requireEpochIncremented(userMapper.incrementAuthEpoch(id));
+        if (approvalChanged || rolesChanged || tenantChanged) {
+            requireEpochIncremented(TenantContext.callWith(targetTenant,
+                () -> userMapper.incrementAuthEpoch(id)));
             sessionRevocationService.revokeUserAfterCommit(id);
         }
+    }
+
+    private String resolveApprovalTenant(String sourceTenant, UserApprovalRequest request) {
+        if (request.decision() == UserApprovalStatus.REJECTED) {
+            if (StringUtils.hasText(request.tenantId())
+                && !TenantContext.sameTenant(sourceTenant, request.tenantId().trim())) {
+                throw new BizException(ResultCode.PARAM_INVALID, "拒绝注册申请时不能变更用户归属租户");
+            }
+            return sourceTenant;
+        }
+        if (!StringUtils.hasText(request.tenantId())) {
+            throw new BizException(ResultCode.PARAM_MISSING, "审核通过时必须选择归属租户");
+        }
+        String requestedTenant = request.tenantId().trim();
+        if (!TenantContext.sameTenant(sourceTenant, requestedTenant)) {
+            // 授权判定先于目标租户查询，普通审核人不能利用错误差异枚举平台租户。
+            crossTenantAuthority.requireCurrentUserAuthority();
+        }
+        TenantAccessSnapshot target = tenantService.resolveAccessibleSnapshot(requestedTenant);
+        if (target == null) {
+            throw new BizException(ResultCode.TENANT_NOT_FOUND);
+        }
+        return target.tenantId();
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -196,6 +288,10 @@ public class UserService {
 
     private void replaceRoles(Long userId, List<Long> roleIds) {
         userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId));
+        insertRoles(userId, roleIds);
+    }
+
+    private void insertRoles(Long userId, List<Long> roleIds) {
         if (CollectionUtils.isEmpty(roleIds)) {
             return;
         }
@@ -226,6 +322,9 @@ public class UserService {
         List<SysRole> requestedRoles = roleMapper.selectBatchIds(roleIds);
         if (requestedRoles.size() != roleIds.size()) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "角色不存在或不属于当前租户");
+        }
+        if (requestedRoles.stream().anyMatch(role -> !Integer.valueOf(1).equals(role.getStatus()))) {
+            throw new BizException(ResultCode.PARAM_INVALID, "不能分配已停用角色");
         }
         boolean touchesControlPlane = crossTenantAuthority.hasAuthority(requestedRoles)
             || hasExistingControlPlaneAssignment(userId);
@@ -304,6 +403,7 @@ public class UserService {
         UserVO vo = new UserVO();
         vo.setId(user.getId());
         vo.setUsername(user.getUsername());
+        vo.setTenantId(user.getTenantId());
         vo.setNickname(user.getNickname());
         vo.setStatus(user.getStatus());
         vo.setApprovalStatus(UserApprovalStatus.parse(user.getApprovalStatus()).name());
