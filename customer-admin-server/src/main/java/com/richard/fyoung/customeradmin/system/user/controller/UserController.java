@@ -2,9 +2,10 @@ package com.richard.fyoung.customeradmin.system.user.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
-import com.richard.fyoung.customeradmin.common.page.PageQuery;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
+import com.richard.fyoung.customeradmin.system.user.dto.UserApprovalRequest;
+import com.richard.fyoung.customeradmin.system.user.dto.UserPageQuery;
 import com.richard.fyoung.customeradmin.system.user.dto.UserSaveRequest;
 import com.richard.fyoung.customeradmin.system.user.dto.UserVO;
 import com.richard.fyoung.customeradmin.system.user.service.UserService;
@@ -34,7 +35,7 @@ public class UserController {
 
     @SaCheckPermission("user:view")
     @GetMapping
-    public Result<PageResult<UserVO>> page(PageQuery query) {
+    public Result<PageResult<UserVO>> page(UserPageQuery query) {
         return Result.success(userService.page(query));
     }
 
@@ -57,6 +58,15 @@ public class UserController {
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody UserSaveRequest request) {
         userService.update(id, request);
+        return Result.success();
+    }
+
+    @SaCheckPermission("user:edit")
+    @OperationLog(operation = "审核注册用户", target = "sys_user")
+    @PutMapping("/{id}/approval")
+    public Result<Void> review(@PathVariable Long id,
+                               @Valid @RequestBody UserApprovalRequest request) {
+        userService.review(id, request);
         return Result.success();
     }
 

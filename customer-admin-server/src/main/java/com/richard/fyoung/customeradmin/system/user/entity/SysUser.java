@@ -51,6 +51,14 @@ public class SysUser {
     private String levelCode;
     /** 0禁用 / 1启用。 */
     private Integer status;
+    /** PENDING 待审核 / APPROVED 已通过 / REJECTED 已拒绝。 */
+    private String approvalStatus;
+    /** 最近一次审核人 sys_user.id。 */
+    private Long approvalBy;
+    /** 最近一次审核时间。 */
+    private LocalDateTime approvalTime;
+    /** 最近一次审核说明；拒绝原因可在登录后首页展示。 */
+    private String approvalRemark;
     /** 认证版本；安全属性变化时原子递增，禁止通用 updateById 用旧值覆盖。 */
     @TableField(updateStrategy = FieldStrategy.NEVER)
     private Long authEpoch;

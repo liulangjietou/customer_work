@@ -15,6 +15,10 @@ public class UserVO {
     private String username;
     private String nickname;
     private Integer status;
+    private String approvalStatus;
+    private Long approvalBy;
+    private LocalDateTime approvalTime;
+    private String approvalRemark;
     private LocalDateTime lastLoginTime;
     private String lastLoginIp;
     private LocalDateTime createTime;

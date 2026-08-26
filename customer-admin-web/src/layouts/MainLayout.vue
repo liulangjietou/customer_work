@@ -60,6 +60,7 @@ async function handleLogout() {
       <el-header class="layout-header">
         <div class="header-left">
           <el-button
+            v-if="auth.isApproved"
             class="collapse-btn"
             text
             :icon="menuStore.collapsed ? 'Expand' : 'Fold'"
@@ -67,7 +68,7 @@ async function handleLogout() {
           />
         </div>
         <div class="header-right">
-          <TenantSwitcher />
+          <TenantSwitcher v-if="auth.isApproved" />
           <el-button
             class="collapse-btn"
             text
@@ -75,7 +76,7 @@ async function handleLogout() {
             :title="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
             @click="themeStore.toggleDark()"
           />
-          <NotificationBell />
+          <NotificationBell v-if="auth.isApproved" />
           <el-dropdown>
             <span class="user-info">{{ auth.nickname }}<el-icon><ArrowDown /></el-icon></span>
           <template #dropdown>
@@ -87,8 +88,8 @@ async function handleLogout() {
           </el-dropdown>
         </div>
       </el-header>
-      <TabsBar />
-      <AppBreadcrumb />
+      <TabsBar v-if="auth.isApproved" />
+      <AppBreadcrumb v-if="auth.isApproved" />
       <el-main class="layout-main" :class="{ 'layout-main--home': route.name === 'Home' }">
         <!-- 只精确缓存 WorkspaceView：TabsBar 让"已打开的标签"在视觉上常驻，但底下的路由组件此前没配
              keep-alive，标签切走再切回其实是整个组件重新 mount——WorkspaceView 里的对话/VibeCoding

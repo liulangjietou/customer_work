@@ -1,14 +1,30 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useAuthStore } from '@/store/auth'
 
 const auth = useAuthStore()
+
+const homeMessage = computed(() => {
+  if (auth.approvalStatus === 'PENDING') {
+    return '账号正在等待管理员审核，审核并分配角色后即可查看菜单。'
+  }
+  if (auth.approvalStatus === 'REJECTED') {
+    return auth.approvalRemark
+      ? `账号审核未通过：${auth.approvalRemark}`
+      : '账号审核未通过，请联系管理员。'
+  }
+  if (auth.permissions.length === 0) {
+    return '账号尚未分配可用权限，请联系管理员。'
+  }
+  return '请从左侧菜单选择要管理的模块。'
+})
 </script>
 
 <template>
   <div class="home-page">
     <img src="/home-cover.jpg" alt="首页" class="home-cover" />
     <p class="home-tip">
-      <strong>{{ auth.nickname }}</strong>，请从左侧菜单选择要管理的模块。
+      <strong>{{ auth.nickname }}</strong>，{{ homeMessage }}
     </p>
   </div>
 </template>

@@ -14,6 +14,7 @@ import com.richard.fyoung.customeradmin.system.log.entity.SysOperationLog;
 import com.richard.fyoung.customeradmin.system.log.mapper.OperationLogMapper;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
+import com.richard.fyoung.customeradmin.system.user.domain.UserApprovalStatus;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
@@ -114,7 +115,7 @@ public class AuthService {
         userMapper.updateById(user);
 
         boolean forceChangePassword = INITIAL_ADMIN_PASSWORD_HASH.equals(user.getPassword());
-        return new LoginResponse(StpUtil.getTokenValue(), user.getNickname(), forceChangePassword);
+        return loginResponse(user, forceChangePassword);
     }
 
     /**
@@ -158,7 +159,7 @@ public class AuthService {
         userMapper.updateById(user);
 
         // LDAP 账号密码由企业域控统一管理，不走本地初始密码强制改密逻辑
-        return new LoginResponse(StpUtil.getTokenValue(), user.getNickname(), false);
+        return loginResponse(user, false);
     }
 
     public void logout() {
@@ -296,6 +297,7 @@ public class AuthService {
         created.setNickname(username);
         created.setLoginType(LDAP_LOGIN_TYPE);
         created.setStatus(1);
+        created.setApprovalStatus(UserApprovalStatus.APPROVED.name());
         // 显式写租户而非依赖拦截器或 DDL 默认值，让账号归属在领域代码里保持可见。
         created.setTenantId(TenantContext.DEFAULT);
         try {
@@ -367,6 +369,12 @@ public class AuthService {
             ur.setRoleId(role.getId());
             userRoleMapper.insert(ur);
         }
+    }
+
+    private LoginResponse loginResponse(SysUser user, boolean forceChangePassword) {
+        UserApprovalStatus approvalStatus = UserApprovalStatus.parse(user.getApprovalStatus());
+        return new LoginResponse(StpUtil.getTokenValue(), user.getNickname(), forceChangePassword,
+            approvalStatus.name(), user.getApprovalRemark());
     }
 
     private String resolveClientIp() {

@@ -31,7 +31,8 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
      * 不会被 MyBatis-Plus 自动追加 {@code AND deleted=0}，能正常命中当前 deleted=1 的目标行。
      */
     @Update("UPDATE sys_user SET deleted = 0, status = 1, login_type = 'LDAP', nickname = #{username}, "
-        + "password = NULL, auth_epoch = auth_epoch + 1, update_time = NOW() WHERE id = #{id}")
+        + "password = NULL, approval_status = 'APPROVED', approval_by = NULL, approval_time = NULL, "
+        + "approval_remark = NULL, auth_epoch = auth_epoch + 1, update_time = NOW() WHERE id = #{id}")
     int reviveDeletedUser(@Param("id") Long id, @Param("username") String username);
 
     /** 安全属性变化时原子递增认证版本，避免并发更新丢失撤权。 */

@@ -57,6 +57,17 @@ export interface LoginResponse {
   token: string
   nickname: string
   forceChangePassword: boolean
+  approvalStatus: UserApprovalStatus
+  approvalRemark: string | null
+}
+
+export type UserApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
+export interface RegisterRequest {
+  username: string
+  password: string
+  confirmPassword: string
+  nickname?: string | null
 }
 
 export interface ChangePasswordRequest {
@@ -70,6 +81,10 @@ export interface UserVO {
   username: string
   nickname: string
   status: number
+  approvalStatus: UserApprovalStatus
+  approvalBy: number | null
+  approvalTime: string | null
+  approvalRemark: string | null
   lastLoginTime: string | null
   lastLoginIp: string | null
   createTime: string
@@ -83,6 +98,16 @@ export interface UserSaveRequest {
   nickname?: string | null
   status?: number | null
   roleIds?: number[] | null
+}
+
+export interface UserPageQuery extends PageQuery {
+  approvalStatus?: UserApprovalStatus
+}
+
+export interface UserApprovalRequest {
+  decision: Exclude<UserApprovalStatus, 'PENDING'>
+  roleIds?: number[]
+  remark?: string | null
 }
 
 // ---------- system.role ----------

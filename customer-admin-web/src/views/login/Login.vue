@@ -2,16 +2,19 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
-import { login, ssoLogin } from '@/api/auth'
+import { login, register, ssoLogin } from '@/api/auth'
 import { fetchLoginCarouselUrls } from '@/api/login-image'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
 import FooterCopyright from '@/components/FooterCopyright.vue'
+import type { RegisterRequest } from '@/types/api'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const menuStore = useMenuStore()
+
+const authPanel = ref<'login' | 'register'>('login')
 
 /** local：账号密码登录（数据库） / sso：OA 域账号登录（LDAP/AD） */
 const loginMode = ref<'local' | 'sso'>('local')
@@ -22,6 +25,40 @@ const form = reactive({ username: '', password: '', rememberMe: false })
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+}
+
+const registerFormRef = ref<FormInstance>()
+const registerSubmitting = ref(false)
+const registerForm = reactive<RegisterRequest>({
+  username: '',
+  nickname: '',
+  password: '',
+  confirmPassword: '',
+})
+const registerRules: FormRules = {
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { min: 3, max: 32, message: '用户名长度为 3 至 32 位', trigger: 'blur' },
+    { pattern: /^[A-Za-z0-9._-]+$/, message: '仅支持字母、数字、点、下划线和短横线', trigger: 'blur' },
+  ],
+  nickname: [{ max: 64, message: '昵称不能超过 64 位', trigger: 'blur' }],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, max: 32, message: '密码长度为 6 至 32 位', trigger: 'blur' },
+  ],
+  confirmPassword: [
+    { required: true, message: '请再次输入密码', trigger: 'blur' },
+    {
+      validator: (_rule, value, callback) => {
+        if (value !== registerForm.password) {
+          callback(new Error('两次输入的密码不一致'))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur',
+    },
+  ],
 }
 
 // “记住我”只记住用户名 + 是否勾选（不在前端存明文密码）；密码本身交给浏览器自带的密码管理器
@@ -43,6 +80,17 @@ function switchMode(mode: 'local' | 'sso') {
   loginMode.value = mode
   form.password = ''
   loadRememberedUsername(mode)
+  formRef.value?.clearValidate()
+}
+
+function openRegister() {
+  authPanel.value = 'register'
+  registerFormRef.value?.clearValidate()
+}
+
+function backToLogin() {
+  authPanel.value = 'login'
+  loginMode.value = 'local'
   formRef.value?.clearValidate()
 }
 
@@ -92,12 +140,31 @@ async function handleSubmit() {
     submitting.value = false
   }
 }
+
+async function handleRegister() {
+  const valid = await registerFormRef.value?.validate().catch(() => false)
+  if (!valid) {
+    return
+  }
+  registerSubmitting.value = true
+  try {
+    const username = registerForm.username
+    await register(registerForm)
+    ElMessage.success('注册成功，请登录后等待管理员审核')
+    registerFormRef.value?.resetFields()
+    backToLogin()
+    form.username = username
+    form.password = ''
+  } finally {
+    registerSubmitting.value = false
+  }
+}
 </script>
 
 <template>
   <div class="login-page">
     <div class="bg-carousel">
-      <el-carousel type="fade" height="100%" :interval="2000" arrow="never" indicator-position="none">
+      <el-carousel height="100%" :interval="2000" arrow="never" indicator-position="none">
         <el-carousel-item v-for="img in bgImages" :key="img">
           <div class="bg-slide" :style="{ backgroundImage: `url(${img})` }" />
         </el-carousel-item>
@@ -108,7 +175,14 @@ async function handleSubmit() {
       <template #header>
         <div class="login-title">智能体客服后台管理系统</div>
       </template>
-      <div class="login-tabs">
+      <div class="access-flow" aria-label="账号开通流程">
+        <span>注册账号</span>
+        <i />
+        <span>管理员审核</span>
+        <i />
+        <span>开通菜单</span>
+      </div>
+      <div v-if="authPanel === 'login'" class="login-tabs">
         <div
           class="login-tab"
           :class="{ active: loginMode === 'local' }"
@@ -124,7 +198,14 @@ async function handleSubmit() {
           OA 登录
         </div>
       </div>
-      <el-form ref="formRef" :model="form" :rules="rules" @keyup.enter="handleSubmit" @submit.prevent>
+      <el-form
+        v-if="authPanel === 'login'"
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        @keyup.enter="handleSubmit"
+        @submit.prevent
+      >
         <el-form-item prop="username">
           <el-input
             v-model="form.username"
@@ -153,6 +234,76 @@ async function handleSubmit() {
             登录
           </el-button>
         </el-form-item>
+        <div v-if="loginMode === 'local'" class="panel-switch">
+          还没有账号？<el-button link type="primary" @click="openRegister">立即注册</el-button>
+        </div>
+      </el-form>
+      <el-form
+        v-else
+        ref="registerFormRef"
+        :model="registerForm"
+        :rules="registerRules"
+        @keyup.enter="handleRegister"
+        @submit.prevent
+      >
+        <div class="register-heading">
+          <strong>注册本地账号</strong>
+          <span>注册后可登录查看审核状态，菜单将在管理员分配角色后开通。</span>
+        </div>
+        <el-form-item prop="username">
+          <el-input
+            v-model="registerForm.username"
+            placeholder="用户名（3-32 位）"
+            size="large"
+            autocomplete="username"
+            :prefix-icon="'User'"
+          />
+        </el-form-item>
+        <el-form-item prop="nickname">
+          <el-input
+            v-model="registerForm.nickname"
+            placeholder="昵称（选填）"
+            size="large"
+            autocomplete="name"
+            :prefix-icon="'Postcard'"
+          />
+        </el-form-item>
+        <el-form-item prop="password">
+          <el-input
+            v-model="registerForm.password"
+            type="password"
+            placeholder="密码（6-32 位）"
+            size="large"
+            show-password
+            autocomplete="new-password"
+            :prefix-icon="'Lock'"
+          />
+        </el-form-item>
+        <el-form-item prop="confirmPassword">
+          <el-input
+            v-model="registerForm.confirmPassword"
+            type="password"
+            placeholder="再次输入密码"
+            size="large"
+            show-password
+            autocomplete="new-password"
+            :prefix-icon="'Lock'"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button
+            type="primary"
+            size="large"
+            style="width: 100%"
+            :loading="registerSubmitting"
+            @click="handleRegister"
+          >
+            提交注册
+          </el-button>
+        </el-form-item>
+        <div class="panel-switch">
+          已有账号？<el-button link type="primary" @click="backToLogin">返回登录</el-button>
+        </div>
       </el-form>
     </el-card>
     <FooterCopyright dark />
@@ -210,7 +361,7 @@ async function handleSubmit() {
 .login-card {
   position: relative;
   z-index: 1;
-  width: 360px;
+  width: 390px;
   margin-bottom: auto;
   margin-top: auto;
   background: rgba(255, 255, 255, 0.92);
@@ -226,6 +377,22 @@ html.dark .login-card {
   text-align: center;
   font-size: 18px;
   font-weight: 600;
+}
+
+.access-flow {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.access-flow i {
+  height: 1px;
+  background: var(--el-border-color);
 }
 
 .login-tabs {
@@ -249,6 +416,37 @@ html.dark .login-card {
   color: var(--el-color-primary);
   border-bottom-color: var(--el-color-primary);
   font-weight: 600;
+}
+
+.register-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 16px;
+}
+
+.register-heading strong {
+  color: var(--el-text-color-primary);
+  font-size: 16px;
+}
+
+.register-heading span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.panel-switch {
+  margin-top: -4px;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+@media (max-width: 480px) {
+  .login-card {
+    width: calc(100% - 32px);
+  }
 }
 
 /* FooterCopyright 是子组件，scoped 样式默认不穿透，显式提到背景遮罩之上 */
