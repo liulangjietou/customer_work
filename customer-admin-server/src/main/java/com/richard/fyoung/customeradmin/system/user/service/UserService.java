@@ -17,6 +17,7 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +37,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class UserService {
+
+    private static final String DUPLICATE_USERNAME_MESSAGE = "用户名已存在";
 
     private final SysUserMapper userMapper;
     private final SysUserRoleMapper userRoleMapper;
@@ -87,7 +90,7 @@ public class UserService {
             throw new BizException(ResultCode.PARAM_MISSING, "新建用户必须设置初始密码");
         }
         if (userMapper.exists(new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, request.username()))) {
-            throw new BizException(ResultCode.RESOURCE_DUPLICATE, "用户名已存在");
+            throw duplicateUsernameException();
         }
         List<Long> roleIds = validateRoleChange(null, request.roleIds());
         SysUser user = new SysUser();
@@ -95,8 +98,18 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(request.password()));
         user.setNickname(request.nickname());
         user.setStatus(request.status() == null ? 1 : request.status());
-        userMapper.insert(user);
+        // exists() 只能减少常规冲突，无法覆盖并发创建，也看不到被逻辑删除但仍占唯一键的用户。
+        // 数据库唯一约束是最终防线；这里将其转换为稳定业务错误，供前端统一请求拦截器直接提示。
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException e) {
+            throw duplicateUsernameException();
+        }
         replaceRoles(user.getId(), roleIds);
+    }
+
+    private BizException duplicateUsernameException() {
+        return new BizException(ResultCode.RESOURCE_DUPLICATE, DUPLICATE_USERNAME_MESSAGE);
     }
 
     @Transactional(rollbackFor = Exception.class)
