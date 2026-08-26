@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.workspace.callstats.jdbc.AgentCallStatsGateway;
@@ -21,7 +22,7 @@ public class AppAgentCallStatsGatewayProvider {
 
     private final CustomerWorkFacade<AgentCallStatsGateway> facade;
 
-    public AppAgentCallStatsGatewayProvider(AgentCallStatsAppProperties properties,
+    public AppAgentCallStatsGatewayProvider(CustomerWorkDbProperties properties,
                                             AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("agent-call-stats-app-pool", properties, tenantPlugins)
             .mapperClasses(AgentCallStatsGatewayFactory.MAPPER_CLASSES)

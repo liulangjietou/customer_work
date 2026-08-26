@@ -39,13 +39,11 @@ admin:
     # 覆盖 application.yml 的本地开发默认值；生产启用 A2A 时必须由 Secret 注入强令牌。
     token: ${ADMIN_A2A_TOKEN:}
   # 客服端生产库沿用 DBA 手工变更约定；Admin 只消费已审核结构，不持有 DDL 权限。
-  content-guard:
+  # 这条铁律此前要靠三行各写一遍来守——新增第四个跨库能力域时只要再造一份连接属性就会漏掉，
+  # 而漏掉的后果是 admin 拿着自己那份连接对生产客服端库跑 DDL。收敛成单一连接后只需一行。
+  # 与 Java 默认值（true）刻意不同，属「生产明确要求它是关的」，将来默认值变了也仍守得住。
+  customer-work-db:
     schema-migration-enabled: false
-  dict:
-    schema-migration-enabled: false
-  agent-call-stats:
-    app:
-      schema-migration-enabled: false
   sandbox:
     features:
       command-execution-enabled: false

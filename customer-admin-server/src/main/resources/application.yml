@@ -416,9 +416,20 @@ admin:
       service-name: ${ADMIN_OTEL_SERVICE_NAME:customer-admin}
       # 采样比例 [0,1]：1.0 全采，生产高流量建议下调；父级已采样的链路始终跟随父级，不会截成两截。
       sampler-ratio: ${ADMIN_OTEL_SAMPLER_RATIO:1.0}
-  content-guard:
+  # 客服端库（agent_scope_customer_work）连接：全 admin 唯一一份，12 个跨库门面共用。
+  # 绑的就是 app-server 连同一个库用的那套 MYSQL_* 变量——同一个物理库没有理由有两套变量名，
+  # 且 admin Deployment 已 envFrom 同一份 ConfigMap，无需为它新增任何部署配置。
+  # 此前这五项被 content-guard / dict / agent-call-stats.app 三处各配一份、且一个占位都没写，
+  # 于是既不在部署手册也不在 k8s 清单里，按清单部署会让 12 个门面全去连 pod 内的 localhost:3306。
+  customer-work-db:
+    host: ${MYSQL_HOST:localhost}
+    port: ${MYSQL_PORT:3306}
+    database: ${MYSQL_DATABASE:agent_scope_customer_work}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:root}
     # Admin 只启动 8082 时也要在首次跨库访问前补齐客服端 V1-V21；生产 profile 关闭，仍由 DBA 变更。
     schema-migration-enabled: ${ADMIN_CUSTOMER_WORK_SCHEMA_MIGRATION_ENABLED:true}
+  content-guard:
     # 给后台工作区智能体（对话/VibeCoding）挂敏感词过滤；词库与 8080 客服链路共用客服端库那一份。
     agent-filter-enabled: ${ADMIN_CONTENT_GUARD_ENABLED:false}
     # 生效方向：INBOUND（只管用户输入）| OUTBOUND（只管模型输出）| BOTH（默认，两端都过）。
@@ -428,11 +439,6 @@ admin:
     # 命中日志：开了才有「命中看板」的数据。默认关是因为它会把用户原文片段落库（属敏感数据），
     # 是否留存需按合规要求显式决定；片段长度由 hit-log-snippet-max-length 控制，置 0 则只记命中词不留原文。
     hit-log-enabled: ${ADMIN_CONTENT_GUARD_HIT_LOG_ENABLED:false}
-  dict:
-    schema-migration-enabled: ${ADMIN_CUSTOMER_WORK_SCHEMA_MIGRATION_ENABLED:true}
-  agent-call-stats:
-    app:
-      schema-migration-enabled: ${ADMIN_CUSTOMER_WORK_SCHEMA_MIGRATION_ENABLED:true}
 
 # 对话附件多格式解析（starter attachment 域配置，admin 经 AdminAttachmentConfig 显式装配复用这份强类型绑定）。
 # 顶层 customer-work.* 前缀（区别于上面 admin.customer-work.* 的坐席服务客户端配置），对应 AttachmentProperties。

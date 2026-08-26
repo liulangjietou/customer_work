@@ -1,8 +1,8 @@
 package com.richard.fyoung.customeradmin.improvement.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.constant.StarterMapperXml;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
-import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSignalGateway;
 import com.richard.fyoung.customeradmin.improvement.mapper.ImprovementSignalMapper;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
@@ -19,7 +19,7 @@ public class ImprovementSignalGatewayProvider {
 
     private final CustomerWorkFacade<ImprovementSignalGateway> facade;
 
-    public ImprovementSignalGatewayProvider(ContentGuardProperties properties,
+    public ImprovementSignalGatewayProvider(CustomerWorkDbProperties properties,
                                             AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("improvement-signal-pool", properties, tenantPlugins)
             .mapperClasses(List.of(ImprovementSignalMapper.class))

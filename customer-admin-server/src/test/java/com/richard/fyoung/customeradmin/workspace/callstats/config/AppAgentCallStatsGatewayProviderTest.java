@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.callstats.config;
 
 import com.richard.fyoung.customeradmin.common.exception.BizException;
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
@@ -18,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class AppAgentCallStatsGatewayProviderTest {
 
     private AppAgentCallStatsGatewayProvider unreachableProvider() {
-        AgentCallStatsAppProperties props = new AgentCallStatsAppProperties();
+        CustomerWorkDbProperties props = new CustomerWorkDbProperties();
         props.setHost("127.0.0.1");
         // 65534 端口默认无监听，连接立即被拒（不会长时间超时）
         props.setPort(65534);

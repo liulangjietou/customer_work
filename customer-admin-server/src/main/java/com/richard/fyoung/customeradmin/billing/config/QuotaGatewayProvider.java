@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.billing.config;
 
+import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
-import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.billing.jdbc.QuotaGateway;
 import jakarta.annotation.PreDestroy;
@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 /**
  * 客服端库配额门面的惰性提供者。
  *
- * <p>连接参数复用 {@link ContentGuardProperties}——配额表与内容风控三表在同一个客服端库，
+ * <p>连接参数复用 {@link CustomerWorkDbProperties}——配额表与内容风控三表在同一个客服端库，
  * 再配一套连接参数只会多一处要同步维护的配置。连接池另建（各自 3 连接）而不是共用：
  * 池子共用会让后台配额操作与词库维护互相排队，两者都是低频操作，多一个小池的代价可以忽略。</p>
  *
@@ -22,7 +22,7 @@ public class QuotaGatewayProvider {
 
     private final CustomerWorkFacade<QuotaGateway> facade;
 
-    public QuotaGatewayProvider(ContentGuardProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
+    public QuotaGatewayProvider(CustomerWorkDbProperties properties, AdminCrossDbTenantPlugins tenantPlugins) {
         this.facade = CustomerWorkFacade.builder("tenant-quota-pool", properties, tenantPlugins)
             .mapperClasses(QuotaGatewayFactory.MAPPER_CLASSES)
             .mapperXml(QuotaGatewayFactory.MAPPER_XML_LOCATIONS)

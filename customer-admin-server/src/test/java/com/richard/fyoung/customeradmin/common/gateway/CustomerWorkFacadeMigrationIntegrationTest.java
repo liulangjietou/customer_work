@@ -3,7 +3,6 @@ package com.richard.fyoung.customeradmin.common.gateway;
 import com.richard.fyoung.customeradmin.businessoutcome.dto.BusinessOutcomeAggregateRow;
 import com.richard.fyoung.customeradmin.businessoutcome.gateway.BusinessOutcomeGateway;
 import com.richard.fyoung.customeradmin.businessoutcome.gateway.BusinessOutcomeGatewayFactory;
-import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import org.junit.jupiter.api.Test;
@@ -37,7 +36,7 @@ class CustomerWorkFacadeMigrationIntegrationTest {
 
         CustomerWorkFacade<BusinessOutcomeGateway> facade = null;
         try {
-            ContentGuardProperties connection = new ContentGuardProperties();
+            CustomerWorkDbProperties connection = new CustomerWorkDbProperties();
             connection.setHost(HOST);
             connection.setPort(PORT);
             connection.setDatabase(database);
