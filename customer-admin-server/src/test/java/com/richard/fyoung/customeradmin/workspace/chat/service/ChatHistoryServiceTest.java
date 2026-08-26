@@ -6,16 +6,23 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentStateAccessor;
+import com.richard.fyoung.customeradmin.workspace.runtime.WorkspaceRuntimeScope;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParseStatus;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentStore;
 import com.richard.fyoung.customerwork.data.attachment.ChatAttachment;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.state.AgentState;
 import io.agentscope.core.state.AgentStateStore;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -34,7 +41,7 @@ import static org.mockito.Mockito.when;
  * ① 顺序以 mapper 返回的 updated_at 倒序为准、去掉 {@code {agentCode}:} 前缀后逐个组装；
  * ② offset 按 {@code (page-1)*size} 计算；
  * ③ context 为空的会话跳过（本页可能略少于 size）；
- * ④ 总数为 0 时短路、不再查页数据。
+ * ④ 当前主体分区与升级前租户分区可合并读取；⑤ 总数为 0 时短路、不再查页数据。
  * @author owlzhangfq@gmail.com
  */
 class ChatHistoryServiceTest {
@@ -68,11 +75,21 @@ class ChatHistoryServiceTest {
         when(agentInstanceCache.getOrBuild(AGENT_CODE)).thenReturn(agent);
     }
 
+    @AfterEach
+    void clearContexts() {
+        AgentInvocationIdentityContext.clear();
+        TenantContext.clear();
+    }
+
     /** 给某个裸 sessionId 备好一段上下文（首条为用户消息，供 preview 取值）。 */
     private void stubContext(String sessionId, Msg... msgs) {
+        stubContext(AGENT_CODE, sessionId, msgs);
+    }
+
+    private void stubContext(String stateUserId, String sessionId, Msg... msgs) {
         AgentState state = mock(AgentState.class);
         when(state.getContext()).thenReturn(List.of(msgs));
-        when(agentStateAccessor.resolve(agent, AGENT_CODE, sessionId)).thenReturn(state);
+        when(agentStateAccessor.resolve(agent, stateUserId, sessionId)).thenReturn(state);
     }
 
     private Msg userMsg(String text) {
@@ -85,9 +102,11 @@ class ChatHistoryServiceTest {
 
     @Test
     void listSessions_shouldPageInSqlOrder_stripPrefix_andBuildSummaries() {
-        when(sessionStateQueryMapper.countSessions(TENANT_ID, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(5L);
+        when(sessionStateQueryMapper.countSessions(
+            TENANT_ID, AGENT_CODE, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(5L);
         when(sessionStateQueryMapper.pageSessionIds(
-            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID), eq(0L), eq(20L)))
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(AGENT_CODE),
+            eq(OWNER_USER_ID), eq(0L), eq(20L)))
             .thenReturn(List.of("coder:s1", "coder:s2"));
         stubContext("s1", userMsg("你好"), assistantMsg("在的"));
         stubContext("s2", userMsg("在吗"));
@@ -108,9 +127,11 @@ class ChatHistoryServiceTest {
 
     @Test
     void listSessions_shouldComputeOffset_fromPageAndSize() {
-        when(sessionStateQueryMapper.countSessions(TENANT_ID, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(50L);
+        when(sessionStateQueryMapper.countSessions(
+            TENANT_ID, AGENT_CODE, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(50L);
         when(sessionStateQueryMapper.pageSessionIds(
-            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID), eq(20L), eq(20L)))
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(AGENT_CODE),
+            eq(OWNER_USER_ID), eq(20L), eq(20L)))
             .thenReturn(List.of("coder:s3"));
         stubContext("s3", userMsg("第三页第一条"));
 
@@ -118,16 +139,19 @@ class ChatHistoryServiceTest {
 
         // offset = (2-1)*20 = 20
         verify(sessionStateQueryMapper).pageSessionIds(
-            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID), eq(20L), eq(20L));
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(AGENT_CODE),
+            eq(OWNER_USER_ID), eq(20L), eq(20L));
         assertEquals(1, result.getList().size());
         assertEquals("s3", result.getList().get(0).sessionId());
     }
 
     @Test
     void listSessions_shouldSkipEmptyContextSessions_soPageMayBeShorterThanSize() {
-        when(sessionStateQueryMapper.countSessions(TENANT_ID, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(2L);
+        when(sessionStateQueryMapper.countSessions(
+            TENANT_ID, AGENT_CODE, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(2L);
         when(sessionStateQueryMapper.pageSessionIds(
-            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID), eq(0L), eq(20L)))
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(AGENT_CODE),
+            eq(OWNER_USER_ID), eq(0L), eq(20L)))
             .thenReturn(List.of("coder:empty", "coder:s2"));
         stubContext("empty"); // 空上下文
         stubContext("s2", userMsg("在吗"));
@@ -193,8 +217,51 @@ class ChatHistoryServiceTest {
     }
 
     @Test
+    void listSessions_shouldMergeCurrentSubjectAndLegacyTenantScopes() {
+        TenantContext.set(TENANT_ID);
+        AgentInvocationIdentityContext.set(new AgentInvocationIdentity(
+            TENANT_ID, QuotaSubjectType.ADMIN_USER, OWNER_USER_ID.toString(), true));
+        String stateUserId = AgentMemoryScope.current(AGENT_CODE).stateUserId();
+        String legacyStateUserId = WorkspaceRuntimeScope.agent(AGENT_CODE);
+
+        when(sessionStateQueryMapper.countSessions(
+            TENANT_ID, stateUserId, legacyStateUserId, AGENT_CODE, OWNER_USER_ID)).thenReturn(2L);
+        when(sessionStateQueryMapper.pageSessionIds(
+            TENANT_ID, stateUserId, legacyStateUserId, AGENT_CODE, OWNER_USER_ID, 0L, 20L))
+            .thenReturn(List.of(stateUserId + ":new-session", legacyStateUserId + ":legacy-session"));
+        stubContext(stateUserId, "new-session", userMsg("最近对话"));
+        stubContext(legacyStateUserId, "legacy-session", userMsg("旧历史"));
+
+        PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, OWNER_USER_ID, 1, 20);
+
+        assertEquals(List.of("new-session", "legacy-session"), result.getList().stream()
+            .map(ChatSessionSummary::sessionId).toList());
+        assertEquals(List.of("最近对话", "旧历史"), result.getList().stream()
+            .map(ChatSessionSummary::preview).toList());
+    }
+
+    @Test
+    void getMessages_shouldFallbackToLegacyTenantScope_whenCurrentSubjectStateMissing() {
+        TenantContext.set(TENANT_ID);
+        AgentInvocationIdentityContext.set(new AgentInvocationIdentity(
+            TENANT_ID, QuotaSubjectType.ADMIN_USER, OWNER_USER_ID.toString(), true));
+        String stateUserId = AgentMemoryScope.current(AGENT_CODE).stateUserId();
+        String legacyStateUserId = WorkspaceRuntimeScope.agent(AGENT_CODE);
+        String sessionId = "legacy-session";
+        stubContext(stateUserId, sessionId);
+        stubContext(legacyStateUserId, sessionId, userMsg("旧历史"));
+        when(attachmentStore.listBySession(sessionId)).thenReturn(List.of());
+
+        List<ChatMessageVO> messages = service.getMessages(AGENT_CODE, sessionId);
+
+        assertEquals(1, messages.size());
+        assertEquals("旧历史", messages.get(0).text());
+    }
+
+    @Test
     void listSessions_shouldShortCircuit_whenTotalIsZero() {
-        when(sessionStateQueryMapper.countSessions(TENANT_ID, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(0L);
+        when(sessionStateQueryMapper.countSessions(
+            TENANT_ID, AGENT_CODE, AGENT_CODE, AGENT_CODE, OWNER_USER_ID)).thenReturn(0L);
 
         PageResult<ChatSessionSummary> result = service.listSessions(AGENT_CODE, OWNER_USER_ID, 1, 20);
 
@@ -202,7 +269,7 @@ class ChatHistoryServiceTest {
         assertTrue(result.getList().isEmpty());
         // 总数为 0 时不再查页数据
         verify(sessionStateQueryMapper, never()).pageSessionIds(
-            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID),
+            eq(TENANT_ID), eq(AGENT_CODE), eq(AGENT_CODE), eq(AGENT_CODE), eq(OWNER_USER_ID),
             org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
     }
 }

@@ -14,28 +14,47 @@
 <mapper namespace="com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper">
 
     <select id="pageSessionIds" resultType="java.lang.String">
-        SELECT state.session_id
+        SELECT COALESCE(
+                   MAX(CASE
+                       WHEN state.session_id LIKE CONCAT(#{stateUserId}, ':%') THEN state.session_id
+                   END),
+                   MAX(state.session_id)
+               ) AS session_id
         FROM ai_chat_session_state state
         INNER JOIN ai_workspace_session owner
                ON owner.tenant_id = #{tenantId}
                AND owner.agent_code = #{agentCode}
-               AND owner.session_id = SUBSTRING(state.session_id, CHAR_LENGTH(#{stateUserId}) + 2)
+               AND owner.session_id = CASE
+                   WHEN state.session_id LIKE CONCAT(#{stateUserId}, ':%')
+                       THEN SUBSTRING(state.session_id, CHAR_LENGTH(#{stateUserId}) + 2)
+                   ELSE SUBSTRING(state.session_id, CHAR_LENGTH(#{legacyStateUserId}) + 2)
+               END
                <if test="ownerUserId != null">AND owner.owner_user_id = #{ownerUserId}</if>
         WHERE state.session_id LIKE CONCAT(#{stateUserId}, ':%')
-        GROUP BY state.session_id
-        ORDER BY MAX(state.updated_at) DESC
+           OR (#{stateUserId} != #{legacyStateUserId}
+               AND state.session_id LIKE CONCAT(#{legacyStateUserId}, ':%')
+               AND state.session_id NOT LIKE CONCAT(#{legacyStateUserId}, '::subject::%'))
+        GROUP BY owner.session_id
+        ORDER BY MAX(state.updated_at) DESC, owner.session_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
     <select id="countSessions" resultType="long">
-        SELECT COUNT(DISTINCT state.session_id)
+        SELECT COUNT(DISTINCT owner.session_id)
         FROM ai_chat_session_state state
         INNER JOIN ai_workspace_session owner
                ON owner.tenant_id = #{tenantId}
                AND owner.agent_code = #{agentCode}
-               AND owner.session_id = SUBSTRING(state.session_id, CHAR_LENGTH(#{stateUserId}) + 2)
+               AND owner.session_id = CASE
+                   WHEN state.session_id LIKE CONCAT(#{stateUserId}, ':%')
+                       THEN SUBSTRING(state.session_id, CHAR_LENGTH(#{stateUserId}) + 2)
+                   ELSE SUBSTRING(state.session_id, CHAR_LENGTH(#{legacyStateUserId}) + 2)
+               END
                <if test="ownerUserId != null">AND owner.owner_user_id = #{ownerUserId}</if>
         WHERE state.session_id LIKE CONCAT(#{stateUserId}, ':%')
+           OR (#{stateUserId} != #{legacyStateUserId}
+               AND state.session_id LIKE CONCAT(#{legacyStateUserId}, ':%')
+               AND state.session_id NOT LIKE CONCAT(#{legacyStateUserId}, '::subject::%'))
     </select>
 
 </mapper>
