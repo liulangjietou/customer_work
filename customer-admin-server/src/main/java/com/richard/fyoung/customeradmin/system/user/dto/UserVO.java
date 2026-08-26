@@ -13,6 +13,8 @@ import java.util.List;
 public class UserVO {
     private Long id;
     private String username;
+    /** 用户当前归属租户。 */
+    private String tenantId;
     private String nickname;
     private Integer status;
     private String approvalStatus;

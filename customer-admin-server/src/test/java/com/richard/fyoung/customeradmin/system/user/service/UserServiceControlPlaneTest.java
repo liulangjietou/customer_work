@@ -13,6 +13,7 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import com.richard.fyoung.customeradmin.tenant.service.TenantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -48,7 +49,7 @@ class UserServiceControlPlaneTest {
         when(passwordEncoder.encode(any())).thenReturn("encoded");
         service = new UserService(
             userMapper, userRoleMapper, roleMapper, passwordEncoder, crossTenantAuthority,
-            sessionRevocationService);
+            sessionRevocationService, mock(TenantService.class));
     }
 
     @Test

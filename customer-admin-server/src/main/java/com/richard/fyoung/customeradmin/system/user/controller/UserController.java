@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
 import com.richard.fyoung.customeradmin.common.result.Result;
+import com.richard.fyoung.customeradmin.system.user.dto.UserApprovalOptionsVO;
 import com.richard.fyoung.customeradmin.system.user.dto.UserApprovalRequest;
 import com.richard.fyoung.customeradmin.system.user.dto.UserPageQuery;
 import com.richard.fyoung.customeradmin.system.user.dto.UserSaveRequest;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -43,6 +45,14 @@ public class UserController {
     @GetMapping("/{id}")
     public Result<UserVO> get(@PathVariable Long id) {
         return Result.success(userService.get(id));
+    }
+
+    /** 审核弹窗的租户与角色选项；跨租户可见范围由服务端按控制面能力收敛。 */
+    @SaCheckPermission("user:edit")
+    @GetMapping("/approval-options")
+    public Result<UserApprovalOptionsVO> approvalOptions(
+        @RequestParam(required = false) String tenantId) {
+        return Result.success(userService.approvalOptions(tenantId));
     }
 
     @SaCheckPermission("user:add")

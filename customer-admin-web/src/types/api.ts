@@ -79,6 +79,7 @@ export interface ChangePasswordRequest {
 export interface UserVO {
   id: number
   username: string
+  tenantId: string
   nickname: string
   status: number
   approvalStatus: UserApprovalStatus
@@ -106,8 +107,27 @@ export interface UserPageQuery extends PageQuery {
 
 export interface UserApprovalRequest {
   decision: Exclude<UserApprovalStatus, 'PENDING'>
+  tenantId?: string | null
   roleIds?: number[]
   remark?: string | null
+}
+
+export interface UserApprovalTenantOption {
+  tenantId: string
+  tenantName: string
+}
+
+export interface UserApprovalRoleOption {
+  id: number
+  roleName: string
+  roleCode: string
+  controlPlane: boolean
+}
+
+export interface UserApprovalOptions {
+  selectedTenantId: string
+  tenants: UserApprovalTenantOption[]
+  roles: UserApprovalRoleOption[]
 }
 
 // ---------- system.role ----------

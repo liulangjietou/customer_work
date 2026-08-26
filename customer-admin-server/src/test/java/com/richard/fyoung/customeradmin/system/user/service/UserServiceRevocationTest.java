@@ -8,6 +8,7 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import com.richard.fyoung.customeradmin.tenant.service.TenantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -38,7 +39,8 @@ class UserServiceRevocationTest {
             mock(SysRoleMapper.class),
             mock(PasswordEncoder.class),
             mock(CrossTenantAuthority.class),
-            revocationService);
+            revocationService,
+            mock(TenantService.class));
         when(userRoleMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
         when(userMapper.incrementAuthEpoch(9L)).thenReturn(1);
     }

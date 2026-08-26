@@ -10,6 +10,7 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import com.richard.fyoung.customeradmin.tenant.service.TenantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
@@ -42,7 +43,8 @@ class UserServiceDuplicateUsernameTest {
             mock(SysRoleMapper.class),
             passwordEncoder,
             mock(CrossTenantAuthority.class),
-            mock(SessionRevocationService.class));
+            mock(SessionRevocationService.class),
+            mock(TenantService.class));
     }
 
     @Test

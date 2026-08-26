@@ -21,6 +21,7 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUserRole;
 import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.ControlPlanePermissions;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -37,8 +38,9 @@ import java.util.stream.Collectors;
 /**
  * 角色/权限分配管理。
  *
- * <p>{@code role_code=super_admin} 不可编辑/删除（防止误操作导致系统失去管理入口），
- * 其权限点在读取时合成为全量权限 ID（实际不落 {@code sys_role_permission}，
+ * <p>同时满足 {@code role_code=super_admin} 与 {@code control_plane=1} 的平台超管角色不可编辑/删除
+ * （防止误操作导致系统失去管理入口），其权限点在读取时合成为全量权限 ID（实际不落
+ * {@code sys_role_permission}，
  * 见 {@link com.richard.fyoung.customeradmin.config.AdminStpInterfaceImpl} 的特判）。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -98,16 +100,17 @@ public class RoleService {
         role.setControlPlane(SysRole.CONTROL_PLANE_DISABLED);
         role.setDataScope(resolveDataScope(request.dataScope()).name());
 
-        // 坑：sys_role.uk_sys_role_code 是不含 deleted 列的纯数据库唯一约束，delete() 走逻辑删除，
+        // 坑：sys_role.uk_sys_role_tenant_code 是不含 deleted 列的租户内唯一约束，delete() 走逻辑删除，
         // 被删过的编码仍占着唯一索引。上面的 exists() 会被自动追加 deleted=0 判定“可用”，但直接
         // insert 会撞唯一键抛 DuplicateKeyException（与 AuthService/KnowledgeBaseService 同款坑）。
         // 先查有没有被软删除过的旧行，有就“复活”它再整体覆盖字段，而不是插新行——若只把异常兜成
         // 友好提示，一个编码被删过一次就永久不能再用，那是功能缺陷而不只是错误信息不友好。
-        SysRole softDeleted = roleMapper.selectDeletedByRoleCode(request.roleCode());
+        String tenantId = TenantContext.require();
+        SysRole softDeleted = roleMapper.selectDeletedByRoleCode(tenantId, request.roleCode());
         if (softDeleted != null) {
             guardControlPlaneRole(softDeleted, "恢复");
             List<Long> permissionIds = validateGrantablePermissions(softDeleted, request.permissionIds());
-            roleMapper.reviveDeleted(softDeleted.getId());
+            roleMapper.reviveDeleted(softDeleted.getId(), tenantId);
             role.setId(softDeleted.getId());
             role.setControlPlane(softDeleted.getControlPlane());
             roleMapper.updateById(role);
@@ -169,7 +172,8 @@ public class RoleService {
     }
 
     private void guardSuperAdmin(SysRole role, String action) {
-        if (SystemRoles.SUPER_ADMIN.equals(role.getRoleCode())) {
+        if (SystemRoles.SUPER_ADMIN.equals(role.getRoleCode())
+            && crossTenantAuthority.isControlPlaneRole(role)) {
             throw new BizException(ResultCode.FORBIDDEN, "超级管理员角色不可" + action);
         }
     }
@@ -229,7 +233,8 @@ public class RoleService {
                 Collectors.mapping(SysRolePermission::getPermissionId, Collectors.toList())));
 
         for (RoleVO vo : roles) {
-            if (SystemRoles.SUPER_ADMIN.equals(vo.getRoleCode())) {
+            if (SystemRoles.SUPER_ADMIN.equals(vo.getRoleCode())
+                && Boolean.TRUE.equals(vo.getControlPlane())) {
                 vo.setPermissionIds(superAdminAllIds);
             } else {
                 vo.setPermissionIds(permissionIdsByRole.getOrDefault(vo.getId(), List.of()));

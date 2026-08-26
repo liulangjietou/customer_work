@@ -10,6 +10,8 @@ import com.richard.fyoung.customeradmin.system.role.entity.SysRolePermission;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRolePermissionMapper;
 import com.richard.fyoung.customeradmin.system.role.service.UserRoleResolver;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import com.richard.fyoung.customeradmin.tenant.TenantSession;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -49,6 +51,15 @@ public class AdminStpInterfaceImpl implements StpInterface {
 
     @Override
     public List<String> getPermissionList(Object loginId, String loginType) {
+        String userTenant = TenantSession.currentUserTenant();
+        if (userTenant != null) {
+            // Sa-Token 的注解鉴权早于 Web 租户拦截器执行，权限关联查询必须自行绑定用户归属租户。
+            return TenantContext.callWith(userTenant, () -> resolvePermissionList(loginId));
+        }
+        return resolvePermissionList(loginId);
+    }
+
+    private List<String> resolvePermissionList(Object loginId) {
         List<SysRole> roles = rolesOf(loginId);
         if (roles.isEmpty()) {
             return List.of();
