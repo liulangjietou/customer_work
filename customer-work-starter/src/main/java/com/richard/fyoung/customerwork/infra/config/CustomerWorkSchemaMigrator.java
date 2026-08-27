@@ -43,6 +43,10 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String AGENT_REPLAY_SNAPSHOT_MIRROR_VERSION = "19";
     private static final String MODEL_COST_SETTLEMENT_MIRROR_VERSION = "20";
     private static final String BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION = "21";
+    private static final String COLLATION_ALIGNMENT_MIRROR_VERSION = "22";
+
+    /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
+    private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
 
     private final DataSource dataSource;
     private final boolean enabled;
@@ -212,8 +216,13 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             }
             boolean badcaseRecurrenceSignalMirror = columnExists(connection, "cw_badcase", "signal_hash")
                 && indexExists(connection, "cw_badcase", "idx_badcase_signal");
-            return badcaseRecurrenceSignalMirror
-                ? BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION : MODEL_COST_SETTLEMENT_MIRROR_VERSION;
+            if (!badcaseRecurrenceSignalMirror) {
+                return MODEL_COST_SETTLEMENT_MIRROR_VERSION;
+            }
+            // V22 只改排序规则、不改结构，因此判定信号就是排序规则本身：一张不合规的表都没有，
+            // 就说明这个库（无论是新镜像还是已执行过 V22 的旧库）已经在 V22 的终态上。
+            return allBusinessTablesUseTargetCollation(connection)
+                ? COLLATION_ALIGNMENT_MIRROR_VERSION : BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION;
         }
     }
 
@@ -244,6 +253,25 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             statement.setString(2, column);
             try (ResultSet resultSet = statement.executeQuery()) {
                 return resultSet.next();
+            }
+        }
+    }
+
+    /**
+     * 全部 cw_* 业务表是否都已落在 {@link #TARGET_COLLATION}。
+     *
+     * <p>V22 是纯排序规则对齐，没有任何结构痕迹可查——用 {@code tableExists}/{@code columnExists}
+     * 判不出来，只按结构判定会让完整镜像被当成"停在 V21"而重跑一次 V22（多一行历史，
+     * 且白扫 47 张表）。这里直接问 information_schema 要排序规则本身。</p>
+     */
+    private boolean allBusinessTablesUseTargetCollation(Connection connection) throws Exception {
+        String sql = "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() "
+            + "AND table_type = 'BASE TABLE' AND table_name LIKE 'cw\\_%' "
+            + "AND table_collation <> ? LIMIT 1";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, TARGET_COLLATION);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return !resultSet.next();
             }
         }
     }

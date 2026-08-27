@@ -21,6 +21,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
@@ -51,7 +52,9 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
-    private static final int CURRENT_SCHEMA_VERSION = 21;
+    private static final int CURRENT_SCHEMA_VERSION = 22;
+    /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
+    private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
     private static final int CURRENT_BUSINESS_TABLE_COUNT = 47;
     private static final List<String> AUDIT_TIMESTAMP_TABLES = List.of(
         "cw_slot_filling_progress", "cw_dialog_stage", "cw_agent_call_segment", "cw_product",
@@ -358,6 +361,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertEquals(1, countHistoryRows(dataSource), "完整镜像只应登记一次接管基线");
             assertEquals(1, countHistoryVersion(dataSource, currentSchemaVersion()),
                 "完整镜像应从当前版本接管");
+            assertTablesUseTargetCollation(dataSource, "完整镜像");
             assertEquals(0, countHistoryVersion(dataSource, String.valueOf(CURRENT_SCHEMA_VERSION - 1)),
                 "前序迁移已包含在镜像，不应重跑");
             assertCurrentAgentSchema(dataSource);
@@ -385,7 +389,9 @@ class CustomerWorkSchemaMigrationIntegrationTest {
 
             migrate(dataSource, database);
 
-            assertEquals(5, countHistoryRows(dataSource), "V17 镜像应登记接管基线并补跑 V18-V21");
+            assertEquals(6, countHistoryRows(dataSource), "V17 镜像应登记接管基线并补跑 V18-V22");
+            // 上一版镜像的 6 张表还是 utf8mb4_0900_ai_ci，V22 必须把它们一并转过来。
+            assertTablesUseTargetCollation(dataSource, "上一版完整镜像补跑 V22");
             assertEquals(1, countHistoryVersion(dataSource, "17"), "上一版完整镜像应从 V17 接管");
             assertSuccessfulMigrationVersions(dataSource, 18, CURRENT_SCHEMA_VERSION);
             assertCurrentAgentSchema(dataSource);
@@ -439,6 +445,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             assertAuditTimestampColumns(dataSource);
             verifyUpdatedAtAutoAdvance(dataSource);
             assertEquals(0, countHistoryVersion(dataSource, "0"), "空库不应写 baseline 记录");
+            assertTablesUseTargetCollation(dataSource, "空库逐版迁移");
             assertSuccessfulMigrationVersions(dataSource, 1, CURRENT_SCHEMA_VERSION);
             assertCurrentAgentSchema(dataSource);
             assertEquals(currentSchemaVersion(), latestHistoryVersion(dataSource));
@@ -709,6 +716,43 @@ class CustomerWorkSchemaMigrationIntegrationTest {
                 + " WHERE `tenant_id` = '__platform__'");
         }
         return count;
+    }
+
+    /**
+     * 断言迁移终态的排序规则真的落成了 {@link #TARGET_COLLATION}（表级与列级都查）。
+     *
+     * <p>{@code TableCollationAlignmentContractTest} 回放的是 SQL 文本，证明"脚本写对了"；
+     * 这里连真实 MySQL 验证"实际落成了什么"。两层都要：MySQL 8 把不带 COLLATE 的
+     * {@code CHARSET=utf8mb4} 解析成字符集默认 utf8mb4_0900_ai_ci 而非建库参数，
+     * 正是这层"写的和落的不一致"让 1267 反复复发。</p>
+     */
+    private void assertTablesUseTargetCollation(HikariDataSource dataSource, String scope)
+        throws Exception {
+        List<String> offenders = new ArrayList<>();
+        collectCollationOffenders(dataSource, offenders,
+            "SELECT CONCAT(table_name, '(表)=', table_collation) FROM information_schema.tables "
+                + "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' "
+                + "AND table_name LIKE 'cw\\_%' AND table_collation <> ?");
+        collectCollationOffenders(dataSource, offenders,
+            "SELECT CONCAT(table_name, '.', column_name, '(列)=', collation_name) "
+                + "FROM information_schema.columns WHERE table_schema = DATABASE() "
+                + "AND table_name LIKE 'cw\\_%' AND collation_name IS NOT NULL "
+                + "AND collation_name <> ?");
+        assertTrue(offenders.isEmpty(), scope + "后仍有对象不是 " + TARGET_COLLATION
+            + "，跨表比较字符串列时会炸 1267：" + offenders);
+    }
+
+    private void collectCollationOffenders(HikariDataSource dataSource, List<String> offenders,
+                                           String sql) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, TARGET_COLLATION);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    offenders.add(resultSet.getString(1));
+                }
+            }
+        }
     }
 
     private int countBusinessTables(HikariDataSource dataSource) throws Exception {

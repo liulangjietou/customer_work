@@ -35,6 +35,19 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-08-27 表排序规则统一批次实测：starter 1705 / 5 skip、app-server 129、channel 80、
+  admin 1434 / 1 skip、gateway 1，**合计 3349**，BUILD SUCCESS，0 失败 0 错误，
+  排除 `RedisSessionPersistenceTest`。本批次自身加 admin **+5**
+  （`TableCollationAlignmentContractTest`：四条建库路径各断言终态全部 utf8mb4_unicode_ci +
+  Flyway 与完整镜像逐表比对）。cw Flyway 下次 **V23**、admin Flyway 下次 **V101**。
+  **改迁移后必须跑 `./scripts/export-schema-snapshot.sh` 刷新快照**，否则快照门禁直接红；
+  刷新后两库快照的 collation 分布从「cw 43+4 / admin 82+5+1」收敛为「cw 47 / admin 88」全 unicode_ci。
+  **纯排序规则迁移没有结构痕迹，`resolveBaselineVersion` 只能拿排序规则本身当判定信号**——
+  按结构判定会让完整镜像被当成"停在 V21"重跑一次，`verifyCompleteMirrorAdoption` 立刻红。
+  **admin 单模块跑会假红**：V22 在 starter 资源里，`-pl customer-admin-server` 解析的是本地仓库
+  的陈旧 jar，`CustomerWorkFacadeMigrationIntegrationTest` 会报"期望 22 实得 21"，跑全反应堆即好。
+  **加这类"全量对齐"迁移时，逐表守卫比无条件 ALTER 重要**：生产库可能大部分表已合规，
+  无条件 ALTER 等于把每张表都重建一遍——包括那几张最不该在业务时间重建的高写入表。
   （2026-08-27 上下文窗口认证修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1442/1 skip、gateway 1，合计 3357
   （排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+13**（窗口实测判定 9 + 建模窗口注入 4）。
@@ -46,9 +59,10 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   （排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+1**、admin **+1**（两个库的结构快照门禁）。
   **改了会进快照文件的东西（含文件头文案）之后，必须重新生成快照再复验**——本批次就踩了一次：
   全量跑完之后才改 header，那次全量对这两个用例的结论已经失效，得重新生成 + 单独重跑。
-  另外**快照对建库 collation 只在少数表上敏感**：MySQL 8 里建表语句写了 `DEFAULT CHARSET=utf8mb4`
-  却不写 COLLATE 时用的是字符集默认的 `utf8mb4_0900_ai_ci` 而非库的 collation，所以两个库的快照里
-  两种 collation 并存是既有状况；只有 `ENGINE=InnoDB;` 这种连 charset 都不写的表才继承建库参数。
+  另外**快照会忠实反映建库 collation**：MySQL 8 里建表语句写了 `DEFAULT CHARSET=utf8mb4`
+  却不写 COLLATE 时用的是字符集默认的 `utf8mb4_0900_ai_ci` 而非库的 collation。
+  当时两个库的快照里两种 collation 并存，**已由下一批次（表排序规则统一）全量收敛**，
+  现在两库快照应只有 `utf8mb4_unicode_ci` 一种；再出现第二种就是有人建表漏写了 COLLATE。
   上一版基线 2026-08-20 公共常量收敛批次：合计 2485。）
   （2026-08-20 公共常量收敛批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，6 skip。
   本批次自身加 starter **+2**（`SharedConstantAlignmentTest`：已收敛值不得重新声明 + 同值不得多处定义）。
@@ -271,6 +285,24 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   命中一个时照样通过，所以很容易一直写错而不自知。
 - **迁移脚本里不要写库名前缀**（`INSERT INTO \`customer_admin\`.\`xxx\``）：脚本执行时已经 USE 到目标库，
   写死库名会让脚本换库不可用，验证/多环境时甚至串库写到别的库去。V14 踩过。
+- **建表必须显式写 `COLLATE utf8mb4_unicode_ci`**（cw V22 / admin V100 起，两库已全量对齐）：
+  MySQL 8 下 `DEFAULT CHARSET=utf8mb4` 不带 COLLATE 用的是**字符集默认** `utf8mb4_0900_ai_ci`，
+  **不是**建库时 `CREATE DATABASE` 指定的排序规则——只有连 CHARSET 都不写才继承建库参数。
+  漏写不报任何错，只在某天两张表 JOIN 字符串列时炸 `1267 Illegal mix of collations`。
+  这个形状复发过四次：V58、V97 各 ALTER 一次涉事表，`ModelImpactMapper` 用 `COLLATE` 字面量绕一次，
+  `BusinessOutcomeMapper` 用 `CAST(x AS BINARY)` 绕一次（**代价是 session_id 索引失效**）。
+  三条约定：
+  ① **四条建库路径必须给出同一结果**——Flyway 迁移、`mysql/01` 完整镜像、`mysql/02` 镜像、增量 alter 脚本。
+  此前迁移写 `DEFAULT CHARSET=utf8mb4`、镜像写 `COLLATE utf8mb4_unicode_ci`，同一张 `cw_ticket`
+  两路不一致，**37 张 cw_\* 表的排序规则取决于这个库当初是怎么建的**；本机开发库实测就是混合的
+  （6 张遗留表与 Flyway 预测不符）。`TableCollationAlignmentContractTest` 回放四条路径对此下断言，
+  新增建表漏写 COLLATE 会立刻红并点名违规表；
+  ② **`ALTER ... CONVERT TO` 没有在线选项**（实测 MySQL 8.0：`ALGORITHM=INPLACE` 报 1846
+  `Cannot change column type INPLACE`，`ALGORITHM=COPY, LOCK=NONE` 报 1846 `COPY algorithm requires a lock`），
+  即全表重建 + `LOCK=SHARED`（读不阻塞，写阻塞）。故 V22/V100 逐表守卫：已是目标规则的表跳过，
+  不做无谓重建；高写入表在迁移抬头逐张标注，大数据量时走停写窗口或 gh-ost；
+  ③ **收尾自检不可省**：迁移末尾查一遍 `information_schema`，仍有残留就 `SELECT * FROM __xxx_not_aligned__`
+  显式炸掉，而不是留一个半统一的库——守卫式跳过一旦判错，静默通过比失败难查得多。
 - **多租户（B1 起）**：隔离靠 MyBatis-Plus `TenantLineInnerInterceptor` 全局改写，租户值取自
   `TenantContext`（starter 的 ThreadLocal）。starter 的 `customer-work.tenant.enabled` 默认关闭，
   admin 示例应用的 `admin.tenant.enabled` 默认开启；两侧开关不能混写成同一个默认值。

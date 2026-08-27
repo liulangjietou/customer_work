@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V99
+-- 对应版本：Flyway V100
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 用途：结构查阅与全新建库。**不要对已有库执行**，这里没有 IF NOT EXISTS 保护。
@@ -225,32 +225,32 @@ CREATE TABLE `ai_agent_system_tool` (
 -- ----------------------------------------------------------------------------
 CREATE TABLE `ai_agent_task` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `task_id` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT '框架任务ID（agent_spawn 返回给模型的那个，全局唯一）',
-  `parent_agent_code` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '发起任务的父智能体编码',
-  `sub_agent_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '执行任务的子智能体标识',
-  `parent_session_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '父会话ID（任务归属的对话）',
-  `status` varchar(16) COLLATE utf8mb4_general_ci NOT NULL COMMENT '状态：PENDING/RUNNING/COMPLETED/FAILED/CANCELLED',
-  `result` mediumtext COLLATE utf8mb4_general_ci COMMENT '任务成功时的结果文本',
-  `error_message` text COLLATE utf8mb4_general_ci COMMENT '任务失败时的错误信息',
+  `task_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '框架任务ID（agent_spawn 返回给模型的那个，全局唯一）',
+  `parent_agent_code` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '发起任务的父智能体编码',
+  `sub_agent_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '执行任务的子智能体标识',
+  `parent_session_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '父会话ID（任务归属的对话）',
+  `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '状态：PENDING/RUNNING/COMPLETED/FAILED/CANCELLED',
+  `result` mediumtext COLLATE utf8mb4_unicode_ci COMMENT '任务成功时的结果文本',
+  `error_message` text COLLATE utf8mb4_unicode_ci COMMENT '任务失败时的错误信息',
   `cancel_requested` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否已请求取消（1=是）',
-  `owner_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '当前执行所有者（Pod/进程唯一ID）',
+  `owner_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '当前执行所有者（Pod/进程唯一ID）',
   `lease_until` datetime(3) DEFAULT NULL COMMENT '所有权租约到期时间',
   `heartbeat_at` datetime(3) DEFAULT NULL COMMENT '当前所有者最近心跳',
   `attempt_count` int NOT NULL DEFAULT '0' COMMENT '领取执行次数',
   `replayable` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否具备可重放执行输入',
-  `task_input` mediumtext COLLATE utf8mb4_general_ci COMMENT '子智能体原始任务提示词',
-  `child_session_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '恢复执行的稳定子会话ID',
-  `runtime_user_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'RuntimeContext userId',
-  `subject_type` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '可信调用主体类型',
-  `subject_id` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '可信调用主体ID或指纹',
+  `task_input` mediumtext COLLATE utf8mb4_unicode_ci COMMENT '子智能体原始任务提示词',
+  `child_session_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '恢复执行的稳定子会话ID',
+  `runtime_user_id` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'RuntimeContext userId',
+  `subject_type` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '可信调用主体类型',
+  `subject_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '可信调用主体ID或指纹',
   `subject_authenticated` tinyint(1) DEFAULT NULL COMMENT '主体是否已认证',
   `access_epoch` bigint DEFAULT NULL COMMENT '租户访问版本快照',
-  `channel_code` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '服务端确认的调用渠道',
+  `channel_code` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '服务端确认的调用渠道',
   `created_at` datetime NOT NULL COMMENT '任务创建时间',
   `started_at` datetime DEFAULT NULL COMMENT '开始执行时间（进入 RUNNING）',
   `finished_at` datetime DEFAULT NULL COMMENT '结束时间（进入任一终态）',
   `updated_at` datetime NOT NULL COMMENT '最后更新时间',
-  `tenant_id` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_task_id` (`task_id`),
   KEY `idx_session` (`parent_session_id`),
@@ -259,7 +259,7 @@ CREATE TABLE `ai_agent_task` (
   KEY `idx_ai_agent_task_tenant` (`tenant_id`),
   KEY `idx_task_lease_recovery` (`status`,`replayable`,`lease_until`,`attempt_count`),
   KEY `idx_task_owner_status` (`owner_id`,`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='智能体后台委派任务';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体后台委派任务';
 
 -- ----------------------------------------------------------------------------
 -- ai_channel_binding
@@ -411,21 +411,21 @@ CREATE TABLE `ai_code_knowledge_index` (
 -- ----------------------------------------------------------------------------
 CREATE TABLE `ai_code_review_task` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `agent_code` varchar(64) NOT NULL COMMENT '智能体编码',
-  `session_id` varchar(64) NOT NULL COMMENT '会话 id',
+  `agent_code` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '智能体编码',
+  `session_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '会话 id',
   `user_id` bigint NOT NULL COMMENT '提交人（admin 用户 id）',
-  `status` varchar(20) NOT NULL COMMENT '状态：RUNNING/SUCCESS/FAILED',
-  `result_json` mediumtext COMMENT '审查结果 JSON（SUCCESS 才有）',
-  `error_msg` varchar(1000) DEFAULT NULL COMMENT '失败原因（FAILED 才有）',
+  `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '状态：RUNNING/SUCCESS/FAILED',
+  `result_json` mediumtext COLLATE utf8mb4_unicode_ci COMMENT '审查结果 JSON（SUCCESS 才有）',
+  `error_msg` varchar(1000) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '失败原因（FAILED 才有）',
   `create_time` datetime NOT NULL COMMENT '创建时间',
   `update_time` datetime NOT NULL COMMENT '更新时间',
   `finish_time` datetime DEFAULT NULL COMMENT '完成时间（SUCCESS/FAILED 时写入）',
-  `tenant_id` varchar(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
   PRIMARY KEY (`id`),
   KEY `idx_user` (`user_id`),
   KEY `idx_session` (`session_id`),
   KEY `idx_ai_code_review_task_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI 代码审查异步任务';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 代码审查异步任务';
 
 -- ----------------------------------------------------------------------------
 -- ai_coding_audit_log
@@ -1451,20 +1451,20 @@ CREATE TABLE `ai_secret_ref` (
 CREATE TABLE `ai_site_message` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
   `user_id` bigint NOT NULL COMMENT '接收人（admin 用户 id）',
-  `title` varchar(200) NOT NULL COMMENT '消息标题',
-  `content` varchar(2000) DEFAULT NULL COMMENT '消息正文',
-  `biz_type` varchar(50) NOT NULL COMMENT '业务类型（如 CODE_REVIEW）',
-  `biz_id` varchar(64) DEFAULT NULL COMMENT '业务主键',
-  `link` varchar(500) DEFAULT NULL COMMENT '前端跳转路由（可空）',
+  `title` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '消息标题',
+  `content` varchar(2000) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '消息正文',
+  `biz_type` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '业务类型（如 CODE_REVIEW）',
+  `biz_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '业务主键',
+  `link` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '前端跳转路由（可空）',
   `read_flag` tinyint NOT NULL DEFAULT '0' COMMENT '已读标记：0未读/1已读',
   `read_time` datetime DEFAULT NULL COMMENT '标记已读时间',
   `create_time` datetime NOT NULL COMMENT '创建时间',
   `update_time` datetime NOT NULL COMMENT '更新时间',
-  `tenant_id` varchar(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
   PRIMARY KEY (`id`),
   KEY `idx_user_read` (`user_id`,`read_flag`),
   KEY `idx_ai_site_message_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='通用站内消息';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='通用站内消息';
 
 -- ----------------------------------------------------------------------------
 -- ai_skill
@@ -1696,15 +1696,15 @@ CREATE TABLE `ai_workspace_session` (
 -- ----------------------------------------------------------------------------
 CREATE TABLE `cw_agent_call_log` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-  `request_id` varchar(64) NOT NULL DEFAULT '' COMMENT '请求ID（全链路关联）',
-  `user_id` varchar(128) NOT NULL DEFAULT '' COMMENT '用户ID（ctx.userId）',
-  `username` varchar(128) NOT NULL DEFAULT '' COMMENT '用户名',
-  `agent_code` varchar(128) NOT NULL DEFAULT '' COMMENT '智能体编码',
-  `agent_name` varchar(255) NOT NULL DEFAULT '' COMMENT '智能体名称',
-  `session_id` varchar(128) NOT NULL DEFAULT '' COMMENT '会话ID',
-  `session_type` varchar(32) NOT NULL DEFAULT 'CHAT' COMMENT '会话类型 CHAT/VIBE_CODING',
-  `question` mediumtext COMMENT '用户问题',
-  `answer` mediumtext COMMENT '智能体回答',
+  `request_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '请求ID（全链路关联）',
+  `user_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '用户ID（ctx.userId）',
+  `username` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '用户名',
+  `agent_code` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '智能体编码',
+  `agent_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '智能体名称',
+  `session_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '会话ID',
+  `session_type` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'CHAT' COMMENT '会话类型 CHAT/VIBE_CODING',
+  `question` mediumtext COLLATE utf8mb4_unicode_ci COMMENT '用户问题',
+  `answer` mediumtext COLLATE utf8mb4_unicode_ci COMMENT '智能体回答',
   `start_time` bigint NOT NULL COMMENT '调用开始时间戳（毫秒）',
   `end_time` bigint NOT NULL COMMENT '调用结束时间戳（毫秒）',
   `duration_ms` bigint NOT NULL DEFAULT '0' COMMENT '总耗时（毫秒）',
@@ -1719,25 +1719,25 @@ CREATE TABLE `cw_agent_call_log` (
   `cached_tokens` bigint DEFAULT NULL COMMENT '命中缓存的输入token（input_tokens的子集，不计入total）',
   `model_reported_ms` bigint DEFAULT NULL COMMENT '模型自报耗时合计（毫秒），与model_ms之差=网络/排队开销',
   `model_cost_amount` decimal(30,14) DEFAULT NULL COMMENT '本次调用已结算模型金额',
-  `model_cost_currency` varchar(16) DEFAULT NULL COMMENT '单币种结算币种',
-  `model_cost_status` varchar(24) NOT NULL DEFAULT 'NO_MODEL' COMMENT 'COMPLETE/PARTIAL/UNAVAILABLE/MULTI_CURRENCY/NO_MODEL',
+  `model_cost_currency` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '单币种结算币种',
+  `model_cost_status` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'NO_MODEL' COMMENT 'COMPLETE/PARTIAL/UNAVAILABLE/MULTI_CURRENCY/NO_MODEL',
   `model_segment_count` int NOT NULL DEFAULT '0' COMMENT '模型分段数',
   `settled_cost_segment_count` int NOT NULL DEFAULT '0' COMMENT '已结算模型分段数',
   `unsettled_cost_segment_count` int NOT NULL DEFAULT '0' COMMENT '未结算模型分段数',
-  `trace_id` varchar(32) DEFAULT NULL COMMENT 'W3C trace-id，关联 OTel/Tempo',
-  `runtime_revision` varchar(64) DEFAULT NULL COMMENT '实例实际应用的运行配置发布修订',
-  `runtime_content_hash` char(64) DEFAULT NULL COMMENT '运行配置内容摘要，关联发布任务与实例ACK',
+  `trace_id` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'W3C trace-id，关联 OTel/Tempo',
+  `runtime_revision` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '实例实际应用的运行配置发布修订',
+  `runtime_content_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '运行配置内容摘要，关联发布任务与实例ACK',
   `version_binding_json` json DEFAULT NULL COMMENT '模型/提示词/Agent/知识库/工具版本绑定（不含密钥）',
   `replay_snapshot_json` json DEFAULT NULL COMMENT '脱敏模型参数、RAG与工具重放事实',
   `experiment_id` bigint DEFAULT NULL COMMENT '在线实验ID',
   `experiment_revision` int DEFAULT NULL COMMENT '不可变实验修订号',
-  `experiment_arm` varchar(16) DEFAULT NULL COMMENT 'CONTROL/TREATMENT',
+  `experiment_arm` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'CONTROL/TREATMENT',
   `experiment_deployment_id` bigint DEFAULT NULL COMMENT '实际命中的模型部署ID',
   `experiment_bucket` int DEFAULT NULL COMMENT '稳定分桶0..9999；无可信主体时为空',
   `success` tinyint(1) NOT NULL DEFAULT '1' COMMENT '整次调用是否成功',
-  `error_msg` varchar(1024) DEFAULT NULL COMMENT '失败原因',
+  `error_msg` varchar(1024) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '失败原因',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '落库时间',
-  `tenant_id` varchar(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
   PRIMARY KEY (`id`),
   KEY `idx_call_request` (`request_id`),
   KEY `idx_call_username` (`username`),
@@ -1749,7 +1749,7 @@ CREATE TABLE `cw_agent_call_log` (
   KEY `idx_call_runtime_revision` (`runtime_revision`),
   KEY `idx_call_experiment_arm` (`experiment_id`,`experiment_revision`,`experiment_arm`,`start_time`),
   KEY `idx_agent_call_cost_window` (`tenant_id`,`start_time`,`model_cost_status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='智能体调用主记录（分段耗时统计）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体调用主记录（分段耗时统计）';
 
 -- ----------------------------------------------------------------------------
 -- cw_agent_call_segment
@@ -1758,35 +1758,35 @@ CREATE TABLE `cw_agent_call_segment` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `call_log_id` bigint NOT NULL COMMENT '所属主记录ID',
   `seq` int NOT NULL COMMENT '调用内分段序号（从1起）',
-  `kind` varchar(16) NOT NULL COMMENT '分段类别 MODEL/TOOL/MCP/SKILL',
-  `name` varchar(255) NOT NULL DEFAULT '' COMMENT '分段名称（模型名/工具名）',
+  `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '分段类别 MODEL/TOOL/MCP/SKILL',
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '分段名称（模型名/工具名）',
   `start_time` bigint NOT NULL COMMENT '分段开始时间戳（毫秒）',
   `duration_ms` bigint NOT NULL DEFAULT '0' COMMENT '分段耗时（毫秒）',
   `input_tokens` bigint DEFAULT NULL COMMENT '输入token（仅MODEL段，缺失为NULL）',
   `output_tokens` bigint DEFAULT NULL COMMENT '输出token（仅MODEL段，缺失为NULL）',
   `cached_tokens` bigint DEFAULT NULL COMMENT '命中缓存的输入token（仅MODEL段）',
   `model_reported_ms` bigint DEFAULT NULL COMMENT '模型自报耗时（毫秒，仅MODEL段）',
-  `provider` varchar(64) DEFAULT NULL COMMENT '实际模型供应商',
+  `provider` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '实际模型供应商',
   `deployment_id` bigint DEFAULT NULL COMMENT '实际模型部署ID',
-  `model_name` varchar(191) DEFAULT NULL COMMENT '实际模型名',
+  `model_name` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '实际模型名',
   `price_id` bigint DEFAULT NULL COMMENT '调用时冻结的价目ID',
-  `currency` varchar(16) DEFAULT NULL COMMENT '调用时冻结的币种',
+  `currency` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '调用时冻结的币种',
   `input_unit_price` decimal(20,8) DEFAULT NULL COMMENT '调用时输入单价（每百万token）',
   `output_unit_price` decimal(20,8) DEFAULT NULL COMMENT '调用时输出单价（每百万token）',
   `cached_unit_price` decimal(20,8) DEFAULT NULL COMMENT '调用时缓存输入单价（每百万token）',
-  `pricing_status` varchar(16) NOT NULL DEFAULT 'UNPRICED' COMMENT 'PRICED/UNPRICED',
+  `pricing_status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'UNPRICED' COMMENT 'PRICED/UNPRICED',
   `cost_amount` decimal(30,14) DEFAULT NULL COMMENT '按冻结价目结算的模型金额',
-  `cost_currency` varchar(16) DEFAULT NULL COMMENT '结算币种',
-  `cost_status` varchar(24) NOT NULL DEFAULT 'NOT_APPLICABLE' COMMENT 'SETTLED/UNPRICED/USAGE_MISSING/USAGE_INVALID/NOT_APPLICABLE',
+  `cost_currency` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '结算币种',
+  `cost_status` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'NOT_APPLICABLE' COMMENT 'SETTLED/UNPRICED/USAGE_MISSING/USAGE_INVALID/NOT_APPLICABLE',
   `success` tinyint(1) NOT NULL DEFAULT '1' COMMENT '分段是否成功',
-  `error_msg` varchar(1024) DEFAULT NULL COMMENT '失败原因',
-  `tenant_id` varchar(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+  `error_msg` varchar(1024) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '失败原因',
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '修改时间',
   PRIMARY KEY (`id`),
   KEY `idx_segment_call_log` (`call_log_id`,`seq`),
   KEY `idx_cw_agent_call_segment_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='智能体调用分段明细';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体调用分段明细';
 
 -- ----------------------------------------------------------------------------
 -- cw_tenant_usage_daily
@@ -1943,16 +1943,16 @@ CREATE TABLE `sql_field_transform` (
 CREATE TABLE `sys_menu_change_log` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `menu_id` bigint NOT NULL COMMENT '被操作的菜单节点ID（删除后节点已不存在，此处仍保留历史指向）',
-  `action` varchar(16) NOT NULL COMMENT '操作类型：CREATE/UPDATE/DELETE/MOVE',
-  `before_snapshot` text COMMENT '变更前节点 JSON（CREATE 时为空）',
-  `after_snapshot` text COMMENT '变更后节点 JSON（DELETE 时为空）',
+  `action` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '操作类型：CREATE/UPDATE/DELETE/MOVE',
+  `before_snapshot` text COLLATE utf8mb4_unicode_ci COMMENT '变更前节点 JSON（CREATE 时为空）',
+  `after_snapshot` text COLLATE utf8mb4_unicode_ci COMMENT '变更后节点 JSON（DELETE 时为空）',
   `operator_id` bigint DEFAULT NULL COMMENT '操作人用户ID',
-  `operator_name` varchar(64) DEFAULT NULL COMMENT '操作人昵称（冗余存储，用户改名/删除后历史记录仍可读）',
+  `operator_name` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '操作人昵称（冗余存储，用户改名/删除后历史记录仍可读）',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_menu_change_log_menu` (`menu_id`),
   KEY `idx_menu_change_log_time` (`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='菜单变更审计流水（排查用，不支持回滚）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='菜单变更审计流水（排查用，不支持回滚）';
 
 -- ----------------------------------------------------------------------------
 -- sys_operation_log
