@@ -37,6 +37,7 @@ public enum ResultCode {
     SQL_NOT_READONLY(30008, "仅允许只读 SELECT/WITH 查询"),
     SQL_PARAM_INVALID(30009, "SQL 查询参数不合法"),
     CAPTCHA_INVALID(30010, "图形验证码错误或已过期"),
+    EMAIL_CODE_INVALID(30012, "邮箱验证码错误或已过期"),
     PASSWORD_TOO_WEAK(30011, "密码强度不足，请至少包含字母与数字且不少于 8 位"),
 
     // 4xxxx 外部依赖类
@@ -109,6 +110,10 @@ public enum ResultCode {
     // 功能未开放与无权限刻意分开：前者申请权限也拿不到，提示"联系管理员开权限"只会浪费两边时间
     FEATURE_NOT_AVAILABLE(40050, "该功能在当前部署形态下未开放"),
     REGISTER_TOO_FREQUENT(40051, "注册请求过于频繁，请稍后再试"),
+    // 发信是唯一会向站外第三方产生副作用的匿名操作，单独发码：
+    // 前端据此提示"稍后再试"，而不是把它混进注册频率里让人以为是自己点太快
+    EMAIL_CODE_TOO_FREQUENT(40052, "验证码获取过于频繁，请稍后再试"),
+    EMAIL_CODE_SEND_FAILED(40053, "验证码发送失败，请稍后重试"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

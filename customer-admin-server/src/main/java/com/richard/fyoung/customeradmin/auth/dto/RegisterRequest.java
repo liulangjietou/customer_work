@@ -12,7 +12,8 @@ import jakarta.validation.constraints.Size;
  * 注解式校验表达不了"对外实例要求 8 位且字母数字混合、内网实例可放宽"这种依赖部署形态的规则，
  * 两边各写一份必然漂移。</p>
  *
- * <p>邮箱与验证码是否必填同样取决于部署形态，故都标为可空，由 Guard 判定。</p>
+ * <p>邮箱与两种验证码是否必填同样取决于部署形态，故都标为可空，由 Guard 判定：
+ * 开启邮箱验证时校验 {@code emailCode}（图形码已在发码那一步挡过），否则校验图形码。</p>
  * @author owlzhangfq@gmail.com
  */
 public record RegisterRequest(
@@ -37,11 +38,15 @@ public record RegisterRequest(
     @Size(max = 128, message = "邮箱长度不能超过 128 位")
     String email,
 
-    /** 验证码凭据，取自 {@code GET /api/auth/captcha}。 */
+    /** 图形验证码凭据，取自 {@code GET /api/auth/captcha}；开启邮箱验证时不再用于注册。 */
     @Size(max = 64, message = "captchaId 非法")
     String captchaId,
 
-    /** 用户输入的验证码文本。 */
+    /** 用户输入的图形验证码文本。 */
     @Size(max = 16, message = "验证码非法")
-    String captcha) {
+    String captcha,
+
+    /** 邮箱验证码，取自 {@code POST /api/auth/email-code} 发到邮箱的那封信。 */
+    @Size(max = 16, message = "邮箱验证码非法")
+    String emailCode) {
 }

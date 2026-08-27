@@ -4,9 +4,6 @@ import com.richard.fyoung.customeradmin.message.service.SiteMessageService;
 import com.richard.fyoung.customeradmin.system.user.domain.UserApprovalStatus;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -32,15 +29,12 @@ public class RegistrationNotificationService {
     private static final String BIZ_TYPE = "REGISTER_APPROVAL";
 
     private final SiteMessageService siteMessageService;
-    private final MailNotificationProperties mailProperties;
-    private final ObjectProvider<JavaMailSender> mailSenderProvider;
+    private final AdminMailSender mailSender;
 
     public RegistrationNotificationService(SiteMessageService siteMessageService,
-                                           MailNotificationProperties mailProperties,
-                                           ObjectProvider<JavaMailSender> mailSenderProvider) {
+                                           AdminMailSender mailSender) {
         this.siteMessageService = siteMessageService;
-        this.mailProperties = mailProperties;
-        this.mailSenderProvider = mailSenderProvider;
+        this.mailSender = mailSender;
     }
 
     /**
@@ -101,38 +95,31 @@ public class RegistrationNotificationService {
         if (StringUtils.hasText(remark)) {
             sb.append("\n审核说明：").append(remark);
         }
-        if (StringUtils.hasText(mailProperties.getLoginUrl())) {
-            sb.append("\n登录地址：").append(mailProperties.getLoginUrl());
+        if (StringUtils.hasText(mailSender.loginUrl())) {
+            sb.append("\n登录地址：").append(mailSender.loginUrl());
         }
         return sb.toString();
     }
 
-    /** 邮件是旁路：未启用、无地址、发送失败都只记日志，不向上抛。 */
+    /**
+     * 邮件是旁路：未启用、无地址、发送失败都只记日志，不向上抛。
+     *
+     * <p>与注册验证码相反——那边发不出去必须让用户当场看到失败，
+     * 所以 {@link AdminMailSender#send} 一律抛，吞不吞由调用方按语义决定。</p>
+     */
     private void sendMail(SysUser user, String title, String content) {
-        if (!mailProperties.isEnabled() || !StringUtils.hasText(user.getEmail())) {
+        if (!StringUtils.hasText(user.getEmail())) {
             return;
         }
-        JavaMailSender sender = mailSenderProvider.getIfAvailable();
-        if (sender == null) {
-            log.error("mail notify skipped, no JavaMailSender available, code={}, userId={}",
-                "NOTIFY-MAIL-NO-SENDER", user.getId());
+        if (!mailSender.available()) {
+            log.info("mail notify skipped, mail is not available, userId={}", user.getId());
             return;
         }
         try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(resolveFrom());
-            message.setTo(user.getEmail());
-            message.setSubject("【" + mailProperties.getPlatformName() + "】" + title);
-            message.setText(content);
-            sender.send(message);
+            mailSender.send(user.getEmail(), title, content);
             log.info("registration approval mail sent, userId={}", user.getId());
         } catch (Exception e) {
             log.error("mail notify failed, code={}, userId={}", "NOTIFY-MAIL-FAIL", user.getId(), e);
         }
-    }
-
-    private String resolveFrom() {
-        return StringUtils.hasText(mailProperties.getFrom())
-            ? mailProperties.getFrom() : mailProperties.getUsername();
     }
 }

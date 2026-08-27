@@ -1,10 +1,13 @@
 package com.richard.fyoung.customeradmin.system.user.service;
 
 import com.richard.fyoung.customeradmin.auth.dto.RegisterRequest;
+import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
+import com.richard.fyoung.customeradmin.auth.email.InMemoryEmailVerificationStore;
 import com.richard.fyoung.customeradmin.auth.guard.CaptchaService;
 import com.richard.fyoung.customeradmin.auth.guard.InMemoryCaptchaStore;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuard;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuardProperties;
+import com.richard.fyoung.customeradmin.notify.AdminMailSender;
 import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -57,12 +60,46 @@ class UserRegistrationServiceTest {
     private RegistrationGuard guard() {
         return new RegistrationGuard(guardProperties, publicDeployment,
             new CaptchaService(new InMemoryCaptchaStore(), guardProperties.getCaptcha()),
+            new EmailVerificationService(guardProperties, new InMemoryEmailVerificationStore(),
+                mock(AdminMailSender.class), new InMemoryWindowCounter()),
             new InMemoryWindowCounter());
+    }
+
+    /**
+     * 邮箱已被占用时不发信。
+     *
+     * <p>照发不误的话，用户要等收到码、填完整张表才被告知"这邮箱已注册"，白跑一趟；
+     * 更要紧的是那封信已经发到别人的邮箱里了——注册流程成了给他人发骚扰信的通道。</p>
+     */
+    @Test
+    void sendEmailCode_shouldRejectAlreadyRegisteredAddressBeforeSendingMail() {
+        guardProperties.getEmailVerification().setEnabled(true);
+        service = new UserRegistrationService(userMapper, passwordEncoder, guard());
+        when(userMapper.selectCount(any())).thenReturn(1L);
+
+        BizException error = assertThrows(BizException.class,
+            () -> service.sendEmailCode("Richard@Example.com", null, null, CLIENT_IP));
+
+        assertEquals(ResultCode.RESOURCE_DUPLICATE, error.getResultCode());
+    }
+
+    /** 占用判定用归一后的邮箱：大小写不同的同一地址必须命中同一条记录。 */
+    @Test
+    void sendEmailCode_shouldNormalizeAddressBeforeCheckingOccupancy() {
+        guardProperties.getEmailVerification().setEnabled(true);
+        service = new UserRegistrationService(userMapper, passwordEncoder, guard());
+        when(userMapper.selectCount(any())).thenReturn(0L);
+
+        // 邮件不可用会在占用检查之后才报错，说明占用检查确实跑到了且放行
+        BizException error = assertThrows(BizException.class,
+            () -> service.sendEmailCode("  Richard@Example.com ", null, null, CLIENT_IP));
+
+        assertEquals(ResultCode.EMAIL_CODE_SEND_FAILED, error.getResultCode());
     }
 
     /** 常规注册请求：不带邮箱与验证码，内网默认配置下应当放行。 */
     private RegisterRequest request(String username, String password, String confirm, String nickname) {
-        return new RegisterRequest(username, password, confirm, nickname, null, null, null);
+        return new RegisterRequest(username, password, confirm, nickname, null, null, null, null);
     }
 
     @AfterEach

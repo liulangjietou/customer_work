@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.notify;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -33,6 +34,18 @@ public class MailNotificationConfig {
     private static final String PROP_CONNECT_TIMEOUT = "mail.smtp.connectiontimeout";
     private static final String PROP_TIMEOUT = "mail.smtp.timeout";
     private static final String PROP_WRITE_TIMEOUT = "mail.smtp.writetimeout";
+
+    /**
+     * 后台唯一的邮件出口，审核通知与注册验证码共用。
+     *
+     * <p>无条件创建：邮件关闭时它也要存在，好让依赖发信的功能能问一句
+     * {@link AdminMailSender#available()} 再决定放不放行，而不是各自去读属性。</p>
+     */
+    @Bean
+    public AdminMailSender adminMailSender(MailNotificationProperties properties,
+                                           ObjectProvider<JavaMailSender> senderProvider) {
+        return new AdminMailSender(properties, senderProvider);
+    }
 
     /**
      * 仅在启用且配了 host 时创建。缺 host 却创建，会让每次通知都去连 {@code null} 主机，

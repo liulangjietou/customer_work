@@ -6,10 +6,7 @@ import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.mail.MailSendException;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,17 +28,14 @@ import static org.mockito.Mockito.when;
 class RegistrationNotificationServiceTest {
 
     private SiteMessageService siteMessageService;
-    private MailNotificationProperties mailProperties;
-    private JavaMailSender mailSender;
+    private AdminMailSender mailSender;
     private RegistrationNotificationService service;
 
     @BeforeEach
     void setUp() {
         siteMessageService = mock(SiteMessageService.class);
-        mailProperties = new MailNotificationProperties();
-        mailSender = mock(JavaMailSender.class);
-        service = new RegistrationNotificationService(siteMessageService, mailProperties,
-            providerOf(mailSender));
+        mailSender = mock(AdminMailSender.class);
+        service = new RegistrationNotificationService(siteMessageService, mailSender);
     }
 
     @Test
@@ -69,46 +63,46 @@ class RegistrationNotificationServiceTest {
     }
 
     @Test
-    void notifyApprovalResult_shouldSendMailWhenEnabled() {
-        mailProperties.setEnabled(true);
-        mailProperties.setFrom("noreply@example.com");
-        mailProperties.setLoginUrl("https://console.example.com");
+    void notifyApprovalResult_shouldSendMailWhenAvailable() {
+        when(mailSender.available()).thenReturn(true);
+        when(mailSender.loginUrl()).thenReturn("https://console.example.com");
 
         service.notifyApprovalResult(user(), UserApprovalStatus.APPROVED, null, "acme-corp");
 
-        ArgumentCaptor<SimpleMailMessage> captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
-        verify(mailSender).send(captor.capture());
-        SimpleMailMessage message = captor.getValue();
-        assertEquals("noreply@example.com", message.getFrom());
-        assertEquals("richard@example.com", message.getTo()[0]);
-        assertTrue(message.getText().contains("https://console.example.com"));
+        ArgumentCaptor<String> toCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mailSender).send(toCaptor.capture(), any(), textCaptor.capture());
+        assertEquals("richard@example.com", toCaptor.getValue());
+        assertTrue(textCaptor.getValue().contains("https://console.example.com"));
     }
 
     /** 没有邮箱就没法发——LDAP 影子账号与管理员预建账号都是这种情况。 */
     @Test
     void notifyApprovalResult_shouldSkipMailWithoutEmailAddress() {
-        mailProperties.setEnabled(true);
+        when(mailSender.available()).thenReturn(true);
         SysUser user = user();
         user.setEmail(null);
 
         service.notifyApprovalResult(user, UserApprovalStatus.APPROVED, null, "acme-corp");
 
-        verify(mailSender, never()).send(any(SimpleMailMessage.class));
+        verify(mailSender, never()).send(any(), any(), any());
         verify(siteMessageService).send(any(), any(), any(), any(), any(), any());
     }
 
+    /** 邮件未配置（available=false）时静默跳过，不抛。 */
     @Test
-    void notifyApprovalResult_shouldNotSendMailWhenDisabled() {
+    void notifyApprovalResult_shouldSkipMailWhenUnavailable() {
         service.notifyApprovalResult(user(), UserApprovalStatus.APPROVED, null, "acme-corp");
 
-        verify(mailSender, never()).send(any(SimpleMailMessage.class));
+        verify(mailSender, never()).send(any(), any(), any());
+        verify(siteMessageService).send(any(), any(), any(), any(), any(), any());
     }
 
     /** SMTP 挂了不能把审核带下水。 */
     @Test
     void notifyApprovalResult_shouldSwallowMailFailure() {
-        mailProperties.setEnabled(true);
-        doThrow(new MailSendException("smtp down")).when(mailSender).send(any(SimpleMailMessage.class));
+        when(mailSender.available()).thenReturn(true);
+        doThrow(new MailSendException("smtp down")).when(mailSender).send(any(), any(), any());
 
         assertDoesNotThrow(() ->
             service.notifyApprovalResult(user(), UserApprovalStatus.APPROVED, null, "acme-corp"));
@@ -119,25 +113,14 @@ class RegistrationNotificationServiceTest {
     /** 站内信写失败同样不能中断审核，且不该阻止邮件继续发出。 */
     @Test
     void notifyApprovalResult_shouldSwallowSiteMessageFailureAndStillSendMail() {
-        mailProperties.setEnabled(true);
+        when(mailSender.available()).thenReturn(true);
         doThrow(new IllegalStateException("db down"))
             .when(siteMessageService).send(any(), any(), any(), any(), any(), any());
 
         assertDoesNotThrow(() ->
             service.notifyApprovalResult(user(), UserApprovalStatus.APPROVED, null, "acme-corp"));
 
-        verify(mailSender).send(any(SimpleMailMessage.class));
-    }
-
-    /** 启用了却没有可用的发送器（host 未配）时静默跳过，不抛。 */
-    @Test
-    void notifyApprovalResult_shouldTolerateMissingMailSender() {
-        mailProperties.setEnabled(true);
-        service = new RegistrationNotificationService(siteMessageService, mailProperties,
-            providerOf(null));
-
-        assertDoesNotThrow(() ->
-            service.notifyApprovalResult(user(), UserApprovalStatus.APPROVED, null, "acme-corp"));
+        verify(mailSender).send(any(), any(), any());
     }
 
     private SysUser user() {
@@ -148,10 +131,4 @@ class RegistrationNotificationServiceTest {
         return user;
     }
 
-    @SuppressWarnings("unchecked")
-    private ObjectProvider<JavaMailSender> providerOf(JavaMailSender sender) {
-        ObjectProvider<JavaMailSender> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(sender);
-        return provider;
-    }
 }

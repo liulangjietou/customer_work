@@ -37,6 +37,9 @@ public class RegistrationGuardProperties {
     @NestedConfigurationProperty
     private LoginLock loginLock = new LoginLock();
 
+    @NestedConfigurationProperty
+    private EmailVerification emailVerification = new EmailVerification();
+
     /**
      * 是否信任反向代理写入的 {@code X-Forwarded-For}。
      *
@@ -83,6 +86,53 @@ public class RegistrationGuardProperties {
          * 不限的话，这个免登接口本身就是一条廉价的 CPU 消耗路径。</p>
          */
         private int maxIssuePerWindow = 30;
+    }
+
+    /**
+     * 邮箱验证码参数。
+     *
+     * <p>开启后注册必须先向邮箱收一封验证码，核验通过才创建账号——这是"这个邮箱确实归申请人所有"
+     * 的唯一证据。对外部署强制开启（见 {@code RegistrationGuard#emailVerificationRequired()}），
+     * 且要求 SMTP 真的可用，否则注册整条链路无法完成。</p>
+     */
+    @Getter
+    @Setter
+    public static class EmailVerification {
+
+        /** 是否要求邮箱验证码。对外部署强制为 true。 */
+        private boolean enabled = false;
+
+        /** 验证码位数。 */
+        private int codeLength = 6;
+
+        /**
+         * 有效期（秒），默认 10 分钟。
+         *
+         * <p>比图形验证码长得多：邮件从投递到被看见本身就要几十秒到几分钟，
+         * 按图形码那样给 3 分钟会让相当一部分人拿到手时已经过期。</p>
+         */
+        private int ttlSeconds = 600;
+
+        /**
+         * 同一份验证码允许核验失败的次数，达到即作废。
+         *
+         * <p>不设成"错一次就作废"：那会逼着用户为一个笔误重新收信，而每一次重发
+         * 都是一封真实的外部邮件。也不能不限——6 位数字在不限次数下是可以直接猜穿的。</p>
+         */
+        private int maxAttempts = 5;
+
+        /** 同一邮箱两次发码之间的最小间隔（秒）。 */
+        private int resendCooldownSeconds = 60;
+
+        /**
+         * 同一邮箱每天可收到的验证码封数。
+         *
+         * <p>拦的是"拿别人的邮箱当轰炸目标"——冷却只能限制频率，限制不了总量。</p>
+         */
+        private int maxSendPerEmailPerDay = 10;
+
+        /** 同一来源 IP 在 {@link RateLimit#getWindowSeconds()} 窗口内可触发的发信次数。 */
+        private int maxSendPerIpPerWindow = 10;
     }
 
     /** 登录失败锁定参数。 */

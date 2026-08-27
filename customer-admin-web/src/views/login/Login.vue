@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
-import { fetchCaptcha, fetchRegisterOptions, login, register, ssoLogin } from '@/api/auth'
+import { fetchCaptcha, fetchRegisterOptions, login, register, sendRegisterEmailCode, ssoLogin } from '@/api/auth'
 import { fetchLoginCarouselUrls } from '@/api/login-image'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
@@ -37,6 +37,7 @@ const registerForm = reactive<RegisterRequest>({
   confirmPassword: '',
   captchaId: '',
   captcha: '',
+  emailCode: '',
 })
 
 // 本实例是否开放注册、是否要求验证码与邮箱：由后端按部署形态给出，
@@ -45,9 +46,65 @@ const registerOptions = ref<RegisterOptionsVO>({
   selfServiceEnabled: true,
   captchaRequired: false,
   emailRequired: false,
+  emailVerificationRequired: false,
 })
 const captchaImage = ref('')
 const captchaLoading = ref(false)
+
+// 邮箱验证码：发码后按冷却时间倒计时，避免用户反复点击——每一次点击都是一封真实的邮件
+const emailCodeSending = ref(false)
+const emailCodeCountdown = ref(0)
+let emailCodeTimer: ReturnType<typeof setInterval> | undefined
+
+function startEmailCodeCountdown(seconds: number) {
+  emailCodeCountdown.value = seconds
+  clearEmailCodeTimer()
+  emailCodeTimer = setInterval(() => {
+    emailCodeCountdown.value -= 1
+    if (emailCodeCountdown.value <= 0) {
+      clearEmailCodeTimer()
+    }
+  }, 1000)
+}
+
+function clearEmailCodeTimer() {
+  if (emailCodeTimer) {
+    clearInterval(emailCodeTimer)
+    emailCodeTimer = undefined
+  }
+}
+
+// 定时器不随组件销毁自动停止，离开登录页后继续跑会一直持有闭包
+onBeforeUnmount(clearEmailCodeTimer)
+
+async function handleSendEmailCode() {
+  // 只校验邮箱与图形码这两项：整表校验会因为密码还没填而拦下发码
+  const emailValid = await registerFormRef.value?.validateField('email').then(() => true).catch(() => false)
+  if (!emailValid) {
+    return
+  }
+  if (registerOptions.value.captchaRequired && !registerForm.captcha) {
+    ElMessage.warning('请先填写图形验证码')
+    return
+  }
+  emailCodeSending.value = true
+  try {
+    const ttlSeconds = await sendRegisterEmailCode({
+      email: registerForm.email as string,
+      captchaId: registerForm.captchaId,
+      captcha: registerForm.captcha,
+    })
+    ElMessage.success(`验证码已发送，${Math.round(ttlSeconds / 60)} 分钟内有效`)
+    // 冷却按服务端的 60 秒走；这里只是不让用户空点，真正的限制在服务端
+    startEmailCodeCountdown(60)
+  } catch (error) {
+    // 图形码是一次性的，无论因为什么失败都已作废，必须换一张
+    await refreshCaptcha()
+    throw error
+  } finally {
+    emailCodeSending.value = false
+  }
+}
 
 async function refreshCaptcha() {
   if (!registerOptions.value.captchaRequired) {
@@ -73,7 +130,16 @@ const registerRules: FormRules = {
   captcha: [
     {
       validator: (_rule, value, callback) => {
-        callback(registerOptions.value.captchaRequired && !value ? new Error('请输入验证码') : undefined)
+        callback(registerOptions.value.captchaRequired && !value ? new Error('请输入图形验证码') : undefined)
+      },
+      trigger: 'blur',
+    },
+  ],
+  emailCode: [
+    {
+      validator: (_rule, value, callback) => {
+        callback(registerOptions.value.emailVerificationRequired && !value
+          ? new Error('请输入邮箱验证码') : undefined)
       },
       trigger: 'blur',
     },
@@ -214,13 +280,19 @@ async function handleRegister() {
     await register(registerForm)
     ElMessage.success('注册成功，请登录后等待管理员审核')
     registerFormRef.value?.resetFields()
+    clearEmailCodeTimer()
+    emailCodeCountdown.value = 0
     backToLogin()
     form.username = username
     form.password = ''
   } catch (error) {
-    // 验证码是一次性的：无论因为什么失败，那张图都已经作废，必须换一张，
-    // 否则用户改完手机号再提交会拿到一个"验证码错误"的二次失败。
-    await refreshCaptcha()
+    // 开了邮箱验证时，图形码是在「获取验证码」那一步用掉的，注册失败与它无关；
+    // 邮箱验证码也不刷新——用户名重复这类失败并不作废它，逼人重新收信只会多发一封邮件。
+    // 没开邮箱验证时，图形码刚刚被这次提交消费掉，必须换一张，
+    // 否则用户改完再提交会拿到一个"验证码错误"的二次失败。
+    if (!registerOptions.value.emailVerificationRequired) {
+      await refreshCaptcha()
+    }
     throw error
   } finally {
     registerSubmitting.value = false
@@ -315,7 +387,13 @@ async function handleRegister() {
       >
         <div class="register-heading">
           <strong>注册本地账号</strong>
-          <span>注册后可登录查看审核状态，菜单将在管理员分配角色后开通。</span>
+          <span>
+            {{
+              registerOptions.emailVerificationRequired
+                ? '需先验证邮箱，注册后可登录查看审核状态，菜单将在管理员分配角色后开通。'
+                : '注册后可登录查看审核状态，菜单将在管理员分配角色后开通。'
+            }}
+          </span>
         </div>
         <el-form-item prop="username">
           <el-input
@@ -344,6 +422,52 @@ async function handleRegister() {
             :prefix-icon="'Message'"
           />
         </el-form-item>
+        <el-form-item v-if="registerOptions.captchaRequired" prop="captcha">
+          <div class="captcha-row">
+            <el-input
+              v-model="registerForm.captcha"
+              placeholder="图形验证码"
+              size="large"
+              maxlength="8"
+              autocomplete="off"
+              :prefix-icon="'Key'"
+            />
+            <!-- 点击图片换一张：图形码是一次性的，看不清时不该逼人重填整张表 -->
+            <img
+              v-if="captchaImage"
+              class="captcha-image"
+              :src="captchaImage"
+              alt="点击刷新验证码"
+              title="点击刷新"
+              @click="refreshCaptcha"
+            />
+            <el-button v-else size="large" :loading="captchaLoading" @click="refreshCaptcha">
+              获取
+            </el-button>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="registerOptions.emailVerificationRequired" prop="emailCode">
+          <div class="captcha-row">
+            <el-input
+              v-model="registerForm.emailCode"
+              placeholder="邮箱验证码"
+              size="large"
+              maxlength="8"
+              autocomplete="one-time-code"
+              :prefix-icon="'Message'"
+            />
+            <!-- 倒计时期间禁用：每一次点击都是一封真实的邮件，服务端还有 60 秒冷却与每日总量 -->
+            <el-button
+              class="email-code-button"
+              size="large"
+              :loading="emailCodeSending"
+              :disabled="emailCodeCountdown > 0"
+              @click="handleSendEmailCode"
+            >
+              {{ emailCodeCountdown > 0 ? `${emailCodeCountdown} 秒后重发` : '获取验证码' }}
+            </el-button>
+          </div>
+        </el-form-item>
         <el-form-item prop="password">
           <el-input
             v-model="registerForm.password"
@@ -365,30 +489,6 @@ async function handleRegister() {
             autocomplete="new-password"
             :prefix-icon="'Lock'"
           />
-        </el-form-item>
-        <el-form-item v-if="registerOptions.captchaRequired" prop="captcha">
-          <div class="captcha-row">
-            <el-input
-              v-model="registerForm.captcha"
-              placeholder="验证码"
-              size="large"
-              maxlength="8"
-              autocomplete="off"
-              :prefix-icon="'Key'"
-            />
-            <!-- 点击图片换一张：验证码是一次性的，看不清时不该逼人重填整张表 -->
-            <img
-              v-if="captchaImage"
-              class="captcha-image"
-              :src="captchaImage"
-              alt="点击刷新验证码"
-              title="点击刷新"
-              @click="refreshCaptcha"
-            />
-            <el-button v-else size="large" :loading="captchaLoading" @click="refreshCaptcha">
-              获取
-            </el-button>
-          </div>
         </el-form-item>
         <el-form-item>
           <el-button
@@ -416,6 +516,11 @@ async function handleRegister() {
   gap: 8px;
   width: 100%;
   align-items: center;
+}
+
+.email-code-button {
+  flex-shrink: 0;
+  min-width: 108px;
 }
 
 .captcha-image {

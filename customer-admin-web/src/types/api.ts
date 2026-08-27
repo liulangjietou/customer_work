@@ -70,7 +70,16 @@ export interface RegisterRequest {
   nickname?: string | null
   /** 注册邮箱；对外开放实例必填，用于接收审核结果与找回密码 */
   email?: string | null
-  /** 验证码凭据，取自 GET /auth/captcha */
+  /** 图形验证码凭据，取自 GET /auth/captcha；开启邮箱验证时图形码用在发码那一步 */
+  captchaId?: string | null
+  captcha?: string | null
+  /** 邮箱验证码，来自 POST /auth/email-code 发出的那封邮件 */
+  emailCode?: string | null
+}
+
+/** 请求向注册邮箱发送验证码 */
+export interface EmailCodeRequest {
+  email: string
   captchaId?: string | null
   captcha?: string | null
 }
@@ -78,8 +87,11 @@ export interface RegisterRequest {
 /** 注册页的部署形态：决定是否渲染验证码框与邮箱必填标记 */
 export interface RegisterOptionsVO {
   selfServiceEnabled: boolean
+  /** 是否需要图形验证码。开启邮箱验证时它用在「获取验证码」那一步，否则用在注册那一步 */
   captchaRequired: boolean
   emailRequired: boolean
+  /** 是否需要邮箱验证码 */
+  emailVerificationRequired: boolean
 }
 
 /** 一次验证码挑战；image 是 PNG 的 data URI，直接塞进 <img src> */

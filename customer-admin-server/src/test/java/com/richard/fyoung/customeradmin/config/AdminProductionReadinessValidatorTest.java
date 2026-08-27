@@ -272,6 +272,49 @@ class AdminProductionReadinessValidatorTest {
             new AdminProductionReadinessValidator(publicDeploymentEnvironment()).afterPropertiesSet());
     }
 
+    /**
+     * 开了邮箱验证码就必须真的能发信。
+     *
+     * <p>与对外部署那组门禁的区别是它不看部署形态：内网实例手工打开邮箱验证却没配 SMTP 时，
+     * 注册链路会在"获取验证码"那一步整体失败——运行时有 fail-closed 兜底，
+     * 但那时用户已经在注册页上了，不如启动时就拒绝。</p>
+     */
+    @Test
+    void emailVerification_shouldRequireWorkingMailEvenOnInternalDeployment() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.registration.email-verification.enabled", "true")
+            .withProperty("admin.notification.mail.enabled", "false");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.notification.mail.enabled"));
+    }
+
+    /** 邮箱验证开着、host 却是空的：同样拒绝启动。 */
+    @Test
+    void emailVerification_shouldRequireMailHost() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.registration.email-verification.enabled", "true")
+            .withProperty("admin.notification.mail.enabled", "true")
+            .withProperty("admin.notification.mail.host", "  ");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.notification.mail.host"));
+    }
+
+    @Test
+    void emailVerification_shouldPassWithWorkingMail() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.registration.email-verification.enabled", "true")
+            .withProperty("admin.notification.mail.enabled", "true")
+            .withProperty("admin.notification.mail.host", "smtp.example.com");
+
+        assertDoesNotThrow(() -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+    }
+
     private MockEnvironment publicDeploymentEnvironment() {
         return validEnvironment()
             .withProperty("admin.public-deployment.enabled", "true")

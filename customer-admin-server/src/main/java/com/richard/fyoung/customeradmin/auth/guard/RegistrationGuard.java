@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.auth.guard;
 
+import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
@@ -35,15 +36,18 @@ public class RegistrationGuard {
     private final RegistrationGuardProperties properties;
     private final PublicDeploymentProperties publicDeployment;
     private final CaptchaService captchaService;
+    private final EmailVerificationService emailVerificationService;
     private final WindowCounter counter;
 
     public RegistrationGuard(RegistrationGuardProperties properties,
                              PublicDeploymentProperties publicDeployment,
                              CaptchaService captchaService,
+                             EmailVerificationService emailVerificationService,
                              WindowCounter counter) {
         this.properties = properties;
         this.publicDeployment = publicDeployment;
         this.captchaService = captchaService;
+        this.emailVerificationService = emailVerificationService;
         this.counter = counter;
     }
 
@@ -52,9 +56,26 @@ public class RegistrationGuard {
         return publicDeployment.isEnabled() || properties.isCaptchaEnabled();
     }
 
-    /** 对外实例强制要求邮箱：没有联系方式就无法通知审核结果，也无法找回密码。 */
+    /**
+     * 对外实例强制要求邮箱：没有联系方式就无法通知审核结果，也无法找回密码。
+     *
+     * <p><b>开了邮箱验证就必然要求填邮箱</b>——两者独立判定的话，内网实例只开
+     * {@code email-verification.enabled} 而忘了开 {@code email-required} 时，
+     * 表单会放行一个空邮箱，然后在发码那一步才报"请填写注册邮箱"，
+     * 把一个配置疏漏变成用户眼里的莫名其妙。</p>
+     */
     public boolean emailRequired() {
-        return publicDeployment.isEnabled() || properties.isEmailRequired();
+        return publicDeployment.isEnabled() || properties.isEmailRequired() || emailVerificationRequired();
+    }
+
+    /**
+     * 是否要求邮箱验证码。对外实例强制开启。
+     *
+     * <p>光"填了邮箱"不等于"这个邮箱是他的"——不验证的话，注册者可以随手填一个别人的地址，
+     * 而审核结果、密码重置都会发到那个人手里。收到验证码并填回来，是这件事的唯一证据。</p>
+     */
+    public boolean emailVerificationRequired() {
+        return publicDeployment.isEnabled() || properties.getEmailVerification().isEnabled();
     }
 
     /** 自助注册总开关，关闭时只能由管理员预建账号。 */
@@ -94,14 +115,15 @@ public class RegistrationGuard {
      * </ol>
      *
      * @param clientIp        来源 IP，用于频率统计
-     * @param captchaId       验证码凭据（未开启验证码时忽略）
-     * @param captcha         用户输入的验证码
-     * @param email           注册邮箱
+     * @param captchaId       图形验证码凭据（仅在未开启邮箱验证时使用）
+     * @param captcha         用户输入的图形验证码
+     * @param email           注册邮箱（调用方已归一为小写）
+     * @param emailCode       邮箱验证码
      * @param password        明文密码，仅用于强度判定，不做任何记录
      * @param confirmPassword 确认密码，与上一项比对
      */
     public void admit(String clientIp, String captchaId, String captcha, String email,
-                      String password, String confirmPassword) {
+                      String emailCode, String password, String confirmPassword) {
         if (!selfServiceEnabled()) {
             throw new BizException(ResultCode.FEATURE_NOT_AVAILABLE, "本系统未开放自助注册，请联系管理员开通账号");
         }
@@ -117,9 +139,50 @@ public class RegistrationGuard {
         }
         // ---- 第二段：有副作用的防滥用判定 ----
         checkRateLimit(clientIp);
+        verifyHumanEvidence(captchaId, captcha, email, emailCode);
+    }
+
+    /**
+     * "这不是脚本"的证据，二选一而不是两个都要。
+     *
+     * <p>开了邮箱验证时，图形码已经在<b>发码那一步</b>挡过一次脚本，而手里这份邮箱验证码
+     * 进一步证明了申请人确实控制着那个邮箱——比图形码强得多。此时再要一次图形码是纯粹的
+     * 体验损耗：多一个输入框，换不到任何额外保证。</p>
+     *
+     * <p>没开邮箱验证时（内网实例），图形码就是唯一的那道，仍在注册这一步校验。</p>
+     */
+    private void verifyHumanEvidence(String captchaId, String captcha, String email, String emailCode) {
+        if (emailVerificationRequired()) {
+            emailVerificationService.verify(email, emailCode);
+            return;
+        }
         if (captchaRequired() && !captchaService.verify(captchaId, captcha)) {
             throw new BizException(ResultCode.CAPTCHA_INVALID);
         }
+    }
+
+    /**
+     * 发送注册邮箱验证码。
+     *
+     * <p>图形验证码在这里校验而不是在注册那一步——发信是唯一会向站外第三方产生副作用的
+     * 匿名操作（服务端替调用者给任意地址发一封信），它才是最该先挡住脚本的地方。</p>
+     *
+     * @return 验证码有效期（秒）
+     */
+    public int sendEmailCode(String email, String captchaId, String captcha, String clientIp) {
+        if (!selfServiceEnabled()) {
+            throw new BizException(ResultCode.FEATURE_NOT_AVAILABLE, "本系统未开放自助注册，请联系管理员开通账号");
+        }
+        if (!emailVerificationRequired()) {
+            throw new BizException(ResultCode.FEATURE_NOT_AVAILABLE, "本实例未开启邮箱验证");
+        }
+        if (!StringUtils.hasText(email)) {
+            throw new BizException(ResultCode.PARAM_MISSING, "请填写注册邮箱");
+        }
+        if (captchaRequired() && !captchaService.verify(captchaId, captcha)) {
+            throw new BizException(ResultCode.CAPTCHA_INVALID);
+        }
+        return emailVerificationService.sendCode(email, clientIp);
     }
 
     /**

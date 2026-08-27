@@ -27,6 +27,9 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 // 两者都不含敏感信息，防滥用由 RegistrationGuard 的 IP 限流负责
                 "/api/auth/register-options",
                 "/api/auth/captcha",
+                // 注册邮箱验证码：登录前的匿名接口。它会真的发出一封邮件，
+                // 防滥用由图形验证码 + IP 限流 + 单邮箱冷却与日限四道负责（见 EmailVerificationService）
+                "/api/auth/email-code",
                 "/api/auth/sso-login",
                 // 内网工作台脚本回调：ScriptCat 脚本运行在目标站点页面里，拿不到后台登录态，
                 // 改用个人访问令牌鉴权（见 WorkbenchAgentController，自行校验 X-Workbench-Token）

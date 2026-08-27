@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.system.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.richard.fyoung.customeradmin.auth.dto.RegisterRequest;
+import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuard;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -43,6 +44,7 @@ public class UserRegistrationService {
     private static final Logger log = LoggerFactory.getLogger(UserRegistrationService.class);
     private static final String LOCAL_LOGIN_TYPE = "LOCAL";
     private static final int EMAIL_UNVERIFIED = 0;
+    private static final int EMAIL_VERIFIED = 1;
 
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
@@ -64,12 +66,13 @@ public class UserRegistrationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void register(RegisterRequest request, String clientIp) {
-        // 准入判定（开关/表单校验/频率/验证码）统一在 Guard 一处，这里不再重复任何一项
-        registrationGuard.admit(clientIp, request.captchaId(), request.captcha(),
-            request.email(), request.password(), request.confirmPassword());
-
         String username = request.username().trim();
         String email = normalizeEmail(request.email());
+
+        // 准入判定（开关/表单校验/频率/验证码）统一在 Guard 一处，这里不再重复任何一项。
+        // 传归一后的邮箱：邮箱验证码是按收件人存的，大小写不同会查不到自己刚收到的那份码。
+        registrationGuard.admit(clientIp, request.captchaId(), request.captcha(),
+            email, request.emailCode(), request.password(), request.confirmPassword());
 
         SysUser occupied = CrossTenantOperations.execute(
             () -> userMapper.selectByUsernameIgnoreLogicDelete(username));
@@ -86,7 +89,10 @@ public class UserRegistrationService {
         user.setPassword(passwordEncoder.encode(request.password()));
         user.setNickname(StringUtils.hasText(request.nickname()) ? request.nickname().trim() : username);
         user.setEmail(email);
-        user.setEmailVerified(EMAIL_UNVERIFIED);
+        // 验证码核验通过才走到这里，所以此刻邮箱确实归申请人所有；
+        // 未开启邮箱验证的内网实例只是"填了个地址"，不能算已验证
+        user.setEmailVerified(
+            registrationGuard.emailVerificationRequired() ? EMAIL_VERIFIED : EMAIL_UNVERIFIED);
         user.setLoginType(LOCAL_LOGIN_TYPE);
         user.setStatus(1);
         user.setApprovalStatus(UserApprovalStatus.PENDING.name());
@@ -98,8 +104,27 @@ public class UserRegistrationService {
             // 用户名与邮箱各有一个唯一键，异常信息里的键名决定该报哪一个。
             throw isEmailConflict(e) ? duplicateEmail() : duplicateUsername();
         }
-        log.info("self-registration created pending admin account, userId={}, username={}, hasEmail={}",
-            user.getId(), username, email != null);
+        log.info("self-registration created pending admin account, userId={}, username={}, emailVerified={}",
+            user.getId(), username, user.getEmailVerified());
+    }
+
+    /**
+     * 发送注册邮箱验证码。
+     *
+     * <p><b>先查占用再发信</b>：邮箱已被注册还照发不误的话，用户要等收到码、填完整张表
+     * 才被告知"这邮箱已注册"，白跑一趟；更要紧的是那封信本身已经发到别人的邮箱里了。</p>
+     *
+     * <p>占用判定要跨租户查：待审核账号先落 {@code default}，审核通过后会被迁到目标租户，
+     * 只在当前租户里查会漏掉那些已经迁走的人。</p>
+     *
+     * @return 验证码有效期（秒），供前端提示
+     */
+    public int sendEmailCode(String email, String captchaId, String captcha, String clientIp) {
+        String normalized = normalizeEmail(email);
+        if (normalized != null && emailTaken(normalized)) {
+            throw duplicateEmail();
+        }
+        return registrationGuard.sendEmailCode(normalized, captchaId, captcha, clientIp);
     }
 
     /**
@@ -112,9 +137,14 @@ public class UserRegistrationService {
         return count != null && count > 0;
     }
 
-    /** 邮箱统一小写存储：大小写不同的同一邮箱是同一个人，唯一键必须能挡住。 */
+    /**
+     * 邮箱归一：大小写不同的同一邮箱是同一个人，唯一键、验证码存储键与占用判定必须用同一份口径。
+     *
+     * <p>复用 {@link EmailVerificationService#normalize}，不在这里另写一遍——两处口径一旦分叉，
+     * 用户会遇到"验证码明明填对了却说过期"这种查不出来的故障。</p>
+     */
     private String normalizeEmail(String email) {
-        return StringUtils.hasText(email) ? email.trim().toLowerCase(Locale.ROOT) : null;
+        return StringUtils.hasText(email) ? EmailVerificationService.normalize(email) : null;
     }
 
     /** MySQL 唯一键冲突信息里带索引名，据此区分是用户名撞了还是邮箱撞了。 */

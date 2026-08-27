@@ -2,6 +2,7 @@ import { request } from './request'
 import type {
   CaptchaChallenge,
   ChangePasswordRequest,
+  EmailCodeRequest,
   LoginRequest,
   LoginResponse,
   RegisterOptionsVO,
@@ -22,6 +23,11 @@ export function fetchRegisterOptions() {
 /** 取一张新的图形验证码。每次调用都是新的一张。 */
 export function fetchCaptcha() {
   return request<CaptchaChallenge>({ url: '/auth/captcha', method: 'get' })
+}
+
+/** 向注册邮箱发送验证码，返回有效期（秒）。 */
+export function sendRegisterEmailCode(data: EmailCodeRequest) {
+  return request<number>({ url: '/auth/email-code', method: 'post', data })
 }
 
 export function login(data: LoginRequest) {

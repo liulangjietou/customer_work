@@ -83,6 +83,7 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         validateRuntimePublish(violations);
         validateGovernance(violations);
         validatePublicDeployment(violations);
+        validateEmailVerification(violations);
 
         if (!violations.isEmpty()) {
             throw new IllegalStateException("admin production readiness validation failed, invalid keys: "
@@ -99,10 +100,12 @@ public class AdminProductionReadinessValidator implements InitializingBean {
      *   <li><b>用量配额必须开</b>：注册者是陌生人，不限量等于把平台的模型账单交给公众；</li>
      *   <li><b>默认档不能是 admin-default</b>：那是按内部员工定的 1 小时 200 万 token，
      *       对外该用 {@code public-trial}（cw 库 V23 种子）；</li>
-     *   <li><b>多租户必须开</b>：关掉等于所有注册者与平台共处一个隔离域；</li>
-     *   <li><b>自助注册开着就必须能通知</b>：审核结果只发站内信的话，被拒绝的人永远看不到，
-     *       通过的人也不知道自己已经可以用了。</li>
+     *   <li><b>多租户必须开</b>：关掉等于所有注册者与平台共处一个隔离域。</li>
      * </ul>
+     *
+     * <p>邮件那一项不在这里判——它同时是"审核结果要能通知到人"和"注册验证码要发得出去"
+     * 两件事的前提，且都只在自助注册开着时才成立，故统一收在
+     * {@link #validateEmailVerification} 一处，避免两段各判一次而条件不一致。</p>
      */
     private void validatePublicDeployment(List<String> violations) {
         if (!environment.getProperty("admin.public-deployment.enabled", Boolean.class, false)) {
@@ -115,11 +118,35 @@ public class AdminProductionReadinessValidator implements InitializingBean {
             hasText(defaultLevel) && !"admin-default".equals(defaultLevel));
         require(violations, "admin.tenant.enabled",
             environment.getProperty("admin.tenant.enabled", Boolean.class, true));
-        if (environment.getProperty("admin.registration.self-service-enabled", Boolean.class, true)) {
-            require(violations, "admin.notification.mail.enabled",
-                environment.getProperty("admin.notification.mail.enabled", Boolean.class, false));
-            requireText(violations, "admin.notification.mail.host");
+    }
+
+    /**
+     * 自助注册开着时，邮件必须真的能发。
+     *
+     * <p>两件事都指向它：<b>审核结果要通知到人</b>（只发站内信的话，被拒绝的人永远看不到，
+     * 通过的人也不知道自己已经可以用了），以及<b>注册验证码要发得出去</b>
+     * （开了邮箱验证却没配 SMTP，注册链路会在"获取验证码"那一步整体失败——
+     * 运行时有 fail-closed 兜底，但那时用户已经在注册页上了，不如启动时就拒绝）。</p>
+     *
+     * <p><b>前置条件是自助注册开着</b>：关掉自助注册的实例只由管理员预建账号，
+     * 既不会发验证码、也没有待审核的人要通知，此时强制配 SMTP 只是白挡一道。</p>
+     */
+    private void validateEmailVerification(List<String> violations) {
+        if (!environment.getProperty("admin.registration.self-service-enabled", Boolean.class, true)) {
+            return;
         }
+        boolean required = environment.getProperty("admin.public-deployment.enabled", Boolean.class, false)
+            || environment.getProperty("admin.registration.email-verification.enabled", Boolean.class, false);
+        if (!required) {
+            return;
+        }
+        requireWorkingMail(violations);
+    }
+
+    private void requireWorkingMail(List<String> violations) {
+        require(violations, "admin.notification.mail.enabled",
+            environment.getProperty("admin.notification.mail.enabled", Boolean.class, false));
+        requireText(violations, "admin.notification.mail.host");
     }
 
     private void validateModelEgress(List<String> violations) {

@@ -36,11 +36,11 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
   （2026-08-27 对外开放注册批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
-  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1518/1 skip、gateway 1，**合计 3433**
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1556/1 skip、gateway 1，**合计 3471**
   （排除 `RedisSessionPersistenceTest`，数字为 rebase 到含 PR #157 的 main 之后实测）。
-  本批次自身加 admin **+70**（注册门禁 14 + 登录锁定 7 +
-  验证码 6 + 密码策略 4 + IP 解析 5 + 内部工具闸门 4 + 审核通知 8 + 对外部署审核 6 +
-  控制面权限与生产门禁扩断言）。
+  本批次自身加 admin **+108**：权限与注册加固 70（注册门禁 14 + 登录锁定 7 + 图形验证码 6 +
+  密码策略 4 + IP 解析 5 + 内部工具闸门 4 + 审核通知 8 + 对外部署审核 6 + 控制面权限与生产门禁扩断言），
+  邮箱验证码 38（发码与核验 13 + 注册链路 10 + 存储 7 + 邮件出口 4 + 占用检查与生产门禁扩断言）。
   **既有测试拿"某个权限码"当样本时，收权限的批次会把它们连带打红**——本批次
   `TenantProvisionServiceTest` 与 `PlatformTenantConsolidationMigrationIntegrationTest` 都用
   `billing:view` 当"租户可授予"的样本，而它被收归控制面后两处同时失败。那不是回归，
@@ -527,7 +527,21 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   靠 SELF 隔离」在公网场景下不成立，审核必须走「新开租户」路径（复用 `TenantService#create`，
   它内部已含 provision）。新租户的角色 ID 由服务端从 `tenant_admin` 反查——那个角色是上一行
   刚插入的，调用方不可能提前知道；
-  ⑤ **注册准入判定收敛在 `RegistrationGuard#admit` 一处**，顺序按代价从低到高：开关 → IP 限流
+  ⑤ **邮箱验证码是注册的准入条件（对外强制）**：只"填了邮箱"不等于"这邮箱是他的"，
+  不验证的话审核结果与密码重置都会发到别人手里。**两道验证码各在各的位置，不是叠加**——
+  图形码在「发码」那一步（`POST /api/auth/email-code`，发信是唯一会向站外第三方产生副作用的
+  匿名操作，那里才最该挡脚本），邮箱码在「注册」那一步；开了邮箱验证后注册就不再要图形码，
+  手里那份邮箱码是更强的证据，再要一次只是多一个输入框。发码接口四道防线各挡一种打法：
+  图形码挡脚本、IP 限流挡「一个来源换着邮箱轰炸」、单邮箱冷却挡「对同一受害者高频轰炸」、
+  单邮箱日总量挡「每 60 秒一封发一整天」（冷却对最后这种完全无效）。三条实现约定：
+  **验证码输错不立刻作废**（错一位就要重新收信，而每次重发都是一封真实的外部邮件），
+  但有次数上限（6 位数字无限试可以直接猜穿）；**失败计数写回时必须保持原过期时刻**，
+  否则不断试错就能让验证码永不过期；**发信失败要清掉刚写入的码**，留着是一份死码——
+  用户拿不到，而下一次重发会被冷却挡住，等于把这个邮箱锁死一个冷却周期。
+  发码前先查邮箱占用（`UserRegistrationService#sendEmailCode`），否则那封信已经发到别人邮箱里了。
+  邮件出口统一在 `AdminMailSender`（审核通知与验证码共用），它一律抛异常、吞不吞由调用方定：
+  审核通知是旁路可以吞，验证码发不出去必须让用户当场看到失败；
+  ⑤.1 **注册准入判定收敛在 `RegistrationGuard#admit` 一处**，顺序按代价从低到高：开关 → IP 限流
   → 验证码 → 邮箱 → 密码强度。**限流必须排在验证码之前**，否则每次攻击尝试都会先让服务端画一张图。
   对外部署的强制项（验证码、邮箱、登录锁定）不看 `admin.registration.*` 的开关——
   把公网实例的验证码配成关，等于把注册接口变成匿名可打的免费入口，这不该是一个能配错的选项。

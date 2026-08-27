@@ -123,9 +123,14 @@ admin:
   registration:
     # 是否开放自助注册；关闭后只能由管理员预建账号
     self-service-enabled: ${ADMIN_REGISTRATION_SELF_SERVICE:true}
-    # 下面两项在 public-deployment.enabled=true 时被强制为 true，配 false 也不生效
+    # 下面三项在 public-deployment.enabled=true 时被强制为 true，配 false 也不生效
     captcha-enabled: ${ADMIN_REGISTRATION_CAPTCHA:false}
     email-required: ${ADMIN_REGISTRATION_EMAIL_REQUIRED:false}
+    email-verification:
+      # 注册必须先收一封邮箱验证码。开启后 SMTP 必须可用（AdminProductionReadinessValidator 强制校验），
+      # 否则整条注册链路在"获取验证码"那一步就走不下去。
+      # 开启时图形验证码改在「发码」那一步校验，注册那一步不再要——手里的邮箱验证码已经是更强的证据。
+      enabled: ${ADMIN_REGISTRATION_EMAIL_VERIFICATION:false}
     # 反代必须“覆写”而不是“追加”X-Forwarded-For，否则客户端可伪造首段绕开 IP 限流；
     # 直连暴露的部署要设为 false
     trust-forwarded-header: ${ADMIN_REGISTRATION_TRUST_XFF:true}

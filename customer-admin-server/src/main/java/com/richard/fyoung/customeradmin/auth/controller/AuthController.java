@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.auth.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.auth.dto.ChangePasswordRequest;
+import com.richard.fyoung.customeradmin.auth.dto.EmailCodeRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginResponse;
 import com.richard.fyoung.customeradmin.auth.dto.RegisterRequest;
@@ -62,7 +63,23 @@ public class AuthController {
         return Result.success(new RegisterOptionsVO(
             registrationGuard.selfServiceEnabled(),
             registrationGuard.captchaRequired(),
-            registrationGuard.emailRequired()));
+            registrationGuard.emailRequired(),
+            registrationGuard.emailVerificationRequired()));
+    }
+
+    /**
+     * 向注册邮箱发送验证码。
+     *
+     * <p>图形验证码在这一步校验（而不是注册那一步）：发信是唯一会向站外第三方产生副作用的
+     * 匿名操作——服务端替调用者给任意地址发一封信，它才是最该先挡住脚本的地方。</p>
+     *
+     * @return 验证码有效期（秒），供前端做倒计时提示
+     */
+    @PostMapping("/email-code")
+    public Result<Integer> sendEmailCode(@Valid @RequestBody EmailCodeRequest request,
+                                         HttpServletRequest httpRequest) {
+        return Result.success(userRegistrationService.sendEmailCode(
+            request.email(), request.captchaId(), request.captcha(), clientIpOf(httpRequest)));
     }
 
     /** 下发一张图形验证码；每次调用都是新的一张，前端点击图片即可刷新。签发按 IP 限流。 */
@@ -91,12 +108,14 @@ public class AuthController {
     /**
      * 注册页需要知道的部署形态。
      *
-     * @param selfServiceEnabled 是否开放自助注册
-     * @param captchaRequired    是否必须填验证码
-     * @param emailRequired      是否必须填邮箱
+     * @param selfServiceEnabled       是否开放自助注册
+     * @param captchaRequired          是否需要图形验证码。开启邮箱验证时它用在<b>发码</b>那一步，
+     *                                 否则用在注册那一步
+     * @param emailRequired            是否必须填邮箱
+     * @param emailVerificationRequired 是否需要邮箱验证码（决定注册表单渲染"获取验证码"按钮）
      */
     public record RegisterOptionsVO(boolean selfServiceEnabled, boolean captchaRequired,
-                                    boolean emailRequired) {
+                                    boolean emailRequired, boolean emailVerificationRequired) {
     }
 
     /** OA 域账号（LDAP/AD）单点登录，与上面的账号密码登录入口共存，前端登录页 Tab 切换。 */

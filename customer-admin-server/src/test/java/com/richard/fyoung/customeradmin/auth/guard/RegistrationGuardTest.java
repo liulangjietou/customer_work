@@ -1,7 +1,10 @@
 package com.richard.fyoung.customeradmin.auth.guard;
 
+import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
+import com.richard.fyoung.customeradmin.auth.email.InMemoryEmailVerificationStore;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.notify.AdminMailSender;
 import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
 import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +34,7 @@ class RegistrationGuardTest {
     private PublicDeploymentProperties publicDeployment;
     private CaptchaStore captchaStore;
     private CaptchaService captchaService;
+    private AdminMailSender mailSender;
     private RegistrationGuard guard;
 
     @BeforeEach
@@ -39,42 +43,48 @@ class RegistrationGuardTest {
         publicDeployment = new PublicDeploymentProperties();
         captchaStore = new InMemoryCaptchaStore();
         captchaService = new CaptchaService(captchaStore, properties.getCaptcha());
+        // 默认不可发信：本类只验图形码这条分支，邮箱验证有单独的测试类
+        mailSender = org.mockito.Mockito.mock(AdminMailSender.class);
         guard = new RegistrationGuard(properties, publicDeployment, captchaService,
+            new EmailVerificationService(properties, new InMemoryEmailVerificationStore(),
+                mailSender, new InMemoryWindowCounter()),
             new InMemoryWindowCounter());
     }
 
     @Test
     void admit_shouldPassOnInternalDeploymentWithoutCaptchaOrEmail() {
-        assertDoesNotThrow(() -> guard.admit(IP, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
+        assertDoesNotThrow(() -> guard.admit(IP, null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
     }
 
     /**
-     * 对外部署强制验证码与邮箱，且不看 {@code admin.registration.*} 的开关。
+     * 对外部署强制图形码、邮箱与邮箱验证码，且不看 {@code admin.registration.*} 的开关。
      *
-     * <p>把公网实例的验证码配成关，等于把注册接口变成匿名可打的免费入口，
+     * <p>把公网实例的这几项配成关，等于把注册接口变成匿名可打的免费入口，
      * 这不该是一个能配错的选项。</p>
      */
     @Test
-    void admit_shouldEnforceCaptchaAndEmailOnPublicDeploymentIgnoringConfig() {
+    void admit_shouldEnforceGuardsOnPublicDeploymentIgnoringConfig() {
         publicDeployment.setEnabled(true);
         properties.setCaptchaEnabled(false);
         properties.setEmailRequired(false);
+        properties.getEmailVerification().setEnabled(false);
 
         assertTrue(guard.captchaRequired());
         assertTrue(guard.emailRequired());
+        assertTrue(guard.emailVerificationRequired());
 
-        BizException noCaptcha = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, "a@example.com", STRONG_PASSWORD, STRONG_PASSWORD));
-        assertEquals(ResultCode.CAPTCHA_INVALID, noCaptcha.getResultCode());
+        // 开了邮箱验证后，注册这一步校验的是邮箱验证码而非图形码
+        BizException noEmailCode = assertThrows(BizException.class,
+            () -> guard.admit(IP, null, null, "a@example.com", null, STRONG_PASSWORD, STRONG_PASSWORD));
+        assertEquals(ResultCode.EMAIL_CODE_INVALID, noEmailCode.getResultCode());
     }
 
     @Test
     void admit_shouldRejectMissingEmailOnPublicDeployment() {
         publicDeployment.setEnabled(true);
-        CaptchaChallenge challenge = guard.issueCaptcha(IP);
 
         BizException error = assertThrows(BizException.class, () -> guard.admit(
-            IP, challenge.captchaId(), answerOf(challenge), null, STRONG_PASSWORD, STRONG_PASSWORD));
+            IP, null, null, null, "123456", STRONG_PASSWORD, STRONG_PASSWORD));
 
         assertEquals(ResultCode.PARAM_MISSING, error.getResultCode());
     }
@@ -82,7 +92,7 @@ class RegistrationGuardTest {
     @Test
     void admit_shouldRejectWeakPassword() {
         BizException error = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, null, "abcdefgh", "abcdefgh"));
+            () -> guard.admit(IP, null, null, null, null, "abcdefgh", "abcdefgh"));
 
         assertEquals(ResultCode.PASSWORD_TOO_WEAK, error.getResultCode());
     }
@@ -90,7 +100,7 @@ class RegistrationGuardTest {
     @Test
     void admit_shouldRejectPasswordConfirmationMismatch() {
         BizException error = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, null, STRONG_PASSWORD, "secret13"));
+            () -> guard.admit(IP, null, null, null, null, STRONG_PASSWORD, "secret13"));
 
         assertEquals(ResultCode.PARAM_INVALID, error.getResultCode());
     }
@@ -105,12 +115,12 @@ class RegistrationGuardTest {
     void admit_shouldNotConsumeRateLimitBudgetOnFormValidationFailure() {
         for (int i = 0; i < 20; i++) {
             assertThrows(BizException.class,
-                () -> guard.admit(IP, null, null, null, "weak", "weak"));
+                () -> guard.admit(IP, null, null, null, null, "weak", "weak"));
         }
 
         // 额度一次未扣：仍能用完整的默认次数正常提交
         for (int i = 0; i < properties.getRateLimit().getMaxAttempts(); i++) {
-            assertDoesNotThrow(() -> guard.admit(IP, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
+            assertDoesNotThrow(() -> guard.admit(IP, null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
         }
     }
 
@@ -118,11 +128,11 @@ class RegistrationGuardTest {
     @Test
     void admit_shouldRejectAfterExceedingPerIpRateLimit() {
         for (int i = 0; i < properties.getRateLimit().getMaxAttempts(); i++) {
-            assertDoesNotThrow(() -> guard.admit(IP, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
+            assertDoesNotThrow(() -> guard.admit(IP, null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
         }
 
         BizException error = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
+            () -> guard.admit(IP, null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
 
         assertEquals(ResultCode.REGISTER_TOO_FREQUENT, error.getResultCode());
     }
@@ -131,10 +141,10 @@ class RegistrationGuardTest {
     @Test
     void admit_shouldIsolateRateLimitPerSourceAddress() {
         for (int i = 0; i < properties.getRateLimit().getMaxAttempts(); i++) {
-            guard.admit(IP, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD);
+            guard.admit(IP, null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD);
         }
 
-        assertDoesNotThrow(() -> guard.admit("198.51.100.4", null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
+        assertDoesNotThrow(() -> guard.admit("198.51.100.4", null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
     }
 
     /**
@@ -145,15 +155,15 @@ class RegistrationGuardTest {
      */
     @Test
     void admit_shouldCheckRateLimitBeforeConsumingCaptcha() {
-        publicDeployment.setEnabled(true);
+        properties.setCaptchaEnabled(true);
         CaptchaChallenge challenge = guard.issueCaptcha(IP);
         for (int i = 0; i < properties.getRateLimit().getMaxAttempts(); i++) {
             assertThrows(BizException.class,
-                () -> guard.admit(IP, "not-exist", "0000", "a@example.com", STRONG_PASSWORD, STRONG_PASSWORD));
+                () -> guard.admit(IP, "not-exist", "0000", "a@example.com", null, STRONG_PASSWORD, STRONG_PASSWORD));
         }
 
         BizException error = assertThrows(BizException.class, () -> guard.admit(
-            IP, challenge.captchaId(), answerOf(challenge), "a@example.com", STRONG_PASSWORD, STRONG_PASSWORD));
+            IP, challenge.captchaId(), answerOf(challenge), "a@example.com", null, STRONG_PASSWORD, STRONG_PASSWORD));
 
         assertEquals(ResultCode.REGISTER_TOO_FREQUENT, error.getResultCode());
         // 没被消费掉才能再次通过校验
@@ -165,7 +175,7 @@ class RegistrationGuardTest {
         properties.setSelfServiceEnabled(false);
 
         BizException error = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
+            () -> guard.admit(IP, null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
 
         assertEquals(ResultCode.FEATURE_NOT_AVAILABLE, error.getResultCode());
     }
@@ -176,7 +186,7 @@ class RegistrationGuardTest {
         properties.getRateLimit().setMaxAttempts(0);
 
         for (int i = 0; i < 20; i++) {
-            assertDoesNotThrow(() -> guard.admit(IP, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
+            assertDoesNotThrow(() -> guard.admit(IP, null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
         }
     }
 
@@ -213,7 +223,7 @@ class RegistrationGuardTest {
      */
     @Test
     void issueCaptcha_shouldNotConsumeRegistrationRateLimitBudget() {
-        publicDeployment.setEnabled(true);
+        properties.setCaptchaEnabled(true);
         for (int i = 0; i < properties.getCaptcha().getMaxIssuePerWindow(); i++) {
             guard.issueCaptcha(IP);
         }
@@ -221,7 +231,7 @@ class RegistrationGuardTest {
         CaptchaChallenge challenge = guard.issueCaptcha("198.51.100.23");
         // 注册额度未被验证码签发消耗，这一次仍应走到验证码校验而不是被限流拦下
         BizException error = assertThrows(BizException.class,
-            () -> guard.admit(IP, challenge.captchaId(), "wrong", "a@example.com", STRONG_PASSWORD, STRONG_PASSWORD));
+            () -> guard.admit(IP, challenge.captchaId(), "wrong", "a@example.com", null, STRONG_PASSWORD, STRONG_PASSWORD));
         assertEquals(ResultCode.CAPTCHA_INVALID, error.getResultCode());
     }
 
