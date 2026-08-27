@@ -8,9 +8,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,6 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * @author owlzhangfq@gmail.com
  */
 class GitWorkspaceServiceTest {
+
+    /** 断言用的只读 git 调用超时，与被测类的执行超时无关，取值只需覆盖一次本地 config 读取。 */
+    private static final long GIT_READ_TIMEOUT_SECONDS = 15;
 
     private final GitWorkspaceService service = new GitWorkspaceService();
 
@@ -40,6 +45,36 @@ class GitWorkspaceServiceTest {
         // 第二次调用不应报错（.git 已存在，直接跳过）
         service.ensureRepo(workspace);
         assertTrue(Files.isDirectory(workspace.resolve(".git")));
+    }
+
+    /**
+     * 本类曾在 CI 上间歇性失败：{@code @TempDir} 清理报
+     * {@code NoSuchFileException: .git/objects/maintenance.lock}——不是"删不掉"，是"列到了它、删的时候
+     * 已经没了"。病根在 {@code commit} 收尾时 fork 的后台 {@code git maintenance run --auto}：
+     * 它建这个 lock 再自行删除，而这个进程不在 {@code runGit} 的 waitFor 范围内，与调用方遍历 workspace
+     * 天然竞态。会话仓库不需要任何维护，故建仓时就把它关掉，让这个文件根本不会出现。
+     *
+     * <p>删掉那行 config 这里就会红——竞态本身在本机复现不出来（窗口只有几毫秒，只有 CI 的负载
+     * 才拉得开），所以能守住的只有"后台维护是关的"这个事实。</p>
+     */
+    @Test
+    void ensureRepo_shouldDisableBackgroundMaintenance() throws Exception {
+        service.ensureRepo(workspace);
+
+        assertEquals(GitWorkspaceService.MAINTENANCE_AUTO_OFF,
+            readRepoConfig(GitWorkspaceService.MAINTENANCE_AUTO_KEY),
+            "会话仓库必须关闭 git 后台自动维护，否则 commit 之后仍有后台进程在动 .git/objects/");
+    }
+
+    /** 读取 workspace 自身 git 仓库的一项配置（读不到时返回空串）。 */
+    private String readRepoConfig(String key) throws IOException, InterruptedException {
+        Process process = new ProcessBuilder("git", "config", "--get", key)
+            .directory(workspace.toFile())
+            .redirectErrorStream(true)
+            .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        process.waitFor(GIT_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        return output.trim();
     }
 
     @Test
