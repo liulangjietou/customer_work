@@ -48,6 +48,12 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   的陈旧 jar，`CustomerWorkFacadeMigrationIntegrationTest` 会报"期望 22 实得 21"，跑全反应堆即好。
   **加这类"全量对齐"迁移时，逐表守卫比无条件 ALTER 重要**：生产库可能大部分表已合规，
   无条件 ALTER 等于把每张表都重建一遍——包括那几张最不该在业务时间重建的高写入表。
+  （2026-08-27 上下文窗口认证修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1442/1 skip、gateway 1，合计 3357
+  （排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+13**（窗口实测判定 9 + 建模窗口注入 4）。
+  **跑全量的同时别再跑单模块测试**——两个 Maven 进程同时写同一个 `target/`，正在跑的那个会报
+  `NoClassDefFoundError`，看起来像代码问题，实际是 class 文件被另一个进程覆盖了；本批次踩过一次。
+  上一版基线 2026-08-27 表结构快照批次：合计 3344。）
   （2026-08-27 表结构快照批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1429/1 skip、gateway 1，合计 3344
   （排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+1**、admin **+1**（两个库的结构快照门禁）。
@@ -198,6 +204,19 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   是各自组件的调优参数，合了会让"改 outbox 退避"意外改到死信队列。
   **`@ConfigurationProperties` 的字段默认值刻意保持字面量**：`spring-boot-configuration-processor`
   只从字面量初始化表达式提取 `defaultValue`，改成常量引用会让那 336 项默认值元数据静默消失。
+- **外部依赖返回的 0 / 空值，先分清是「未知」还是「零」**：框架 `Model#getContextWindowSize()` 走
+  `ModelContextWindows.lookup` 按模型名前缀查一张硬编码表，表里只有各厂商**官方**模型名；
+  `glm` / `deepseek` 这类走 OpenAI 兼容协议接入的第三方模型一律返回 `0`，含义是「表里没有这个名字」
+  而不是「窗口为零」。上线认证早期实现把它当能力值参与 `min` 交集（`runtime == 0 || declared == 0 ? 0`），
+  结果**所有 OpenAI 兼容第三方部署的窗口检查恒为失败**，与运营在资产里登记多大窗口无关。
+  三个既有单测全用 `StubModel` 直接返回非零值，一个都没照出来——又一次「注了 mock 就照不出真实链路」。
+  现在两侧收口：① 建模一律走 `AdminModelFactory.buildModelWithWindow` 或
+  `buildModel(..., deploymentId)`（后者自己从 `ai_model_asset.context_window` 解析注入），
+  **不要让调用方各自记得传窗口**——建模路径有主备模型/路由候选/知识库/认证探测四条，逐个要求「记得传」
+  必然漏，漏了还不报错；② 认证窗口判定改成「先声明后实测」，实测真发一次填充请求读
+  `usage.inputTokens` 作证据。`AdminModelFactoryTest` 里那条
+  `buildModel_withoutDeclaredWindow_leavesThirdPartyModelWindowUnknown` 专门钉住「框架对 glm-5.2 推断为 0」
+  这个前提，框架哪天扩了推断表它会红，那是提醒不是故障。
 - **改动"某条链路的能力"时，先列出全部同类链路再动手**。当前共 7 条：
   `chat()` / `chatStream()` / WS `/ws/user` / `/consult` 多 Agent / admin 工作台 / customer-channel / Harness。
   只在一条上验证通过 ≠ 修好了——前六次复发都是这么来的。

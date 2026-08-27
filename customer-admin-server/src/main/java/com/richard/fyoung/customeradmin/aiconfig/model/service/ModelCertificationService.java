@@ -46,6 +46,9 @@ public class ModelCertificationService {
     private static final int HISTORY_LIMIT = 20;
     private static final int MAX_MESSAGE_LENGTH = 500;
 
+    /** 缺价时的摘要要指得出下一步落点：单价按 (provider, model) 精确匹配，改名或换厂商都要重新维护。 */
+    private static final String PRICE_MISSING = "未配置生效模型单价，请在计费管理维护该模型单价后重试";
+
     private final ModelConfigAccess modelConfigAccess;
     private final ModelAssetService modelAssetService;
     private final SecretRefService secretRefService;
@@ -199,8 +202,8 @@ public class ModelCertificationService {
     private void appendCostChecks(List<ModelCertificationCheckVO> checks, AiModelPrice price,
                                   ModelCertificationRequest request) {
         if (price == null) {
-            checks.add(failedCost("INPUT_COST", "输入成本", null, request.maxInputPrice(), "未配置生效模型单价"));
-            checks.add(failedCost("OUTPUT_COST", "输出成本", null, request.maxOutputPrice(), "未配置生效模型单价"));
+            checks.add(failedCost("INPUT_COST", "输入成本", null, request.maxInputPrice(), PRICE_MISSING));
+            checks.add(failedCost("OUTPUT_COST", "输出成本", null, request.maxOutputPrice(), PRICE_MISSING));
             return;
         }
         checks.add(costCheck("INPUT_COST", "输入成本", price.getInputPrice(), request.maxInputPrice()));
