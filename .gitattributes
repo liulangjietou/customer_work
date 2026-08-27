@@ -1,0 +1,4 @@
+# 结构快照由 scripts/export-schema-snapshot.sh 生成，每次刷新都是整份重写。
+# 标成 generated 后 GitHub 的 PR diff 默认折叠它们，避免两百多 KB 的 DDL 淹没真正要看的改动。
+# 只影响 GitHub 的展示与语言统计，不改变 git 本身的任何行为。
+mysql/schema-snapshot/*.sql linguist-generated=true
