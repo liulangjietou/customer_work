@@ -35,6 +35,18 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-08-27 git 后台维护 flaky 修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1448/1 skip、gateway 1，合计 3363
+  （排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+1**（建仓时后台维护必须关闭的门禁）。
+  **CI 报"临时目录删不掉"时先看 suppressed 是不是 `NoSuchFileException`**：那是"遍历列到了它、
+  stat 时已经没了"的竞态，不是权限也不是残留，往权限方向查会全程走偏。本批次的病根在生产代码——
+  `git commit` 收尾会 fork `git maintenance run --auto --detach`，它在 `.git/objects/` 下建
+  `maintenance.lock` 再自行删除，而这个进程不在 `GitWorkspaceService#runGit` 的 waitFor 范围内。
+  **这类竞态本机与 Linux 容器都复现不出来**（macOS 500 轮、容器 900 轮重负载均 0 次：lock 在 commit
+  返回那一刻已消失，CI 是负载把它拖住的）。能拿到的确定性证据是"根因还在不在"——修复前每次 commit
+  都 fork 维护进程（200/200、300/300）、每次都产生 lock（20/20、30/30），修复后全为 0。
+  **别把"改完跑一轮绿了"当成修好**：那正是这条用例在 CI 上挂之前每天的样子。
+  上一版基线 2026-08-27 上下文窗口认证修复 + 表排序规则统一两批合入 main 后：合计 3362。）
   （2026-08-27 表排序规则统一批次实测：starter 1705 / 5 skip、app-server 129、channel 80、
   admin 1434 / 1 skip、gateway 1，**合计 3349**，BUILD SUCCESS，0 失败 0 错误，
   排除 `RedisSessionPersistenceTest`。本批次自身加 admin **+5**

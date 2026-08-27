@@ -36,13 +36,38 @@ public class GitWorkspaceService {
     static final String GIT_DIR_NAME = ".git";
     /** baseline 是会话内唯一提交，故 HEAD 恒等于 baseline，回滚以 HEAD 为恢复基准。 */
     private static final String HEAD_REF = "HEAD";
+    /** git 后台自动维护的开关配置项；建仓时置 {@link #MAINTENANCE_AUTO_OFF}，原因见 {@link #ensureRepo}。 */
+    static final String MAINTENANCE_AUTO_KEY = "maintenance.auto";
+    /** {@link #MAINTENANCE_AUTO_KEY} 的取值：关闭。 */
+    static final String MAINTENANCE_AUTO_OFF = "false";
 
-    /** 幂等：{@code .git} 已存在则直接返回；否则 init + 建立空基线提交，作为后续 diff 的对比基准。 */
+    /**
+     * 幂等：{@code .git} 已存在则直接返回；否则 init + 建立空基线提交，作为后续 diff 的对比基准。
+     *
+     * <p><b>建仓即关掉 git 的后台自动维护</b>：git 2.30 起 {@code commit} 收尾时会 fork 一个
+     * {@code git maintenance run --auto}（新版还带 {@code --detach} 直接 daemonize），它先在
+     * {@code .git/objects/} 下建 {@code maintenance.lock} 再干活，结束时自行删除——也就是
+     * <b>{@link #runGit} 已经 waitFor 到我们启的那个 git 进程了，git 却还有个后台进程在动这个目录</b>。
+     * 会话仓库是一次性快照仓库（只有一个 baseline 提交、随会话销毁），没有任何需要维护的对象，
+     * 这个后台进程带来的只有与调用方的竞态：遍历 workspace 时列到了 lock 文件，轮到删除时它已被后台
+     * 进程删掉（CI 上 {@code GitWorkspaceServiceTest} 的 {@code @TempDir} 清理即因此间歇性报
+     * {@code NoSuchFileException: .git/objects/maintenance.lock}）。从源头不产生它，而不是让调用方
+     * 去容忍这个文件的时有时无。</p>
+     *
+     * <p>只有 {@code commit} 会触发自动维护，故配置必须写在 baseline 提交之前；已有 {@code .git}
+     * 的老仓库走上面的早退分支，它们此后不再产生新提交，也就不会再 fork 维护进程。</p>
+     *
+     * <p>配置写进仓库、而不是每次调用都带 {@code -c}：同一个 workspace 目录还会被沙箱
+     * （{@code SandboxCommandService} 就在这个目录里执行智能体给出的命令，其中可能有 git）
+     * 和会话打包（{@code SessionWorkspaceStorage} 遍历整棵树、{@code .git} 也在内）读写，
+     * 只有落到仓库 config 上才能一并约束那些不经过 {@link #runGit} 的 git 调用。</p>
+     */
     public void ensureRepo(Path workspace) {
         if (Files.isDirectory(workspace.resolve(".git"))) {
             return;
         }
         runGit(workspace, "init", "-q");
+        runGit(workspace, "config", MAINTENANCE_AUTO_KEY, MAINTENANCE_AUTO_OFF);
         runGit(workspace, "config", "user.email", "vibecoding@customer-work.local");
         runGit(workspace, "config", "user.name", "VibeCoding");
         runGit(workspace, "add", "-A");
