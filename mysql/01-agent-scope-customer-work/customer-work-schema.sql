@@ -528,7 +528,7 @@ CREATE TABLE IF NOT EXISTS `cw_sensitive_word` (
     `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
     UNIQUE KEY `uk_sensitive_word` (`tenant_id`, `word`),
     INDEX `idx_sensitive_word_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感词表（一次拦截词库）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='敏感词表（一次拦截词库）';
 
 INSERT IGNORE INTO `cw_sensitive_word` (`tenant_id`, `word`, `category`, `action`, `enabled`, `created_at_ms`, `updated_at_ms`) VALUES
 ('default', '测试敏感词A', 'CUSTOM', 'BLOCK', 1, 1779235200000, 1779235200000),
@@ -557,7 +557,7 @@ CREATE TABLE IF NOT EXISTS `cw_sensitive_word_hit_log` (
     KEY `idx_hit_action` (`action`),
     KEY `idx_hit_session` (`session_id`),
     INDEX `idx_sensitive_word_hit_log_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感词命中日志（后台看板数据源）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='敏感词命中日志（后台看板数据源）';
 
 -- 限流规则表（RateLimitRuleProvider / cw_rate_limit_rule）：接入层限流的规则层，后台运营维护。
 -- 刻意不给种子：空表 = 无规则命中 = 回退 yml 全局兜底参数，与规则化之前行为完全一致。
@@ -577,7 +577,7 @@ CREATE TABLE IF NOT EXISTS `cw_rate_limit_rule` (
     UNIQUE KEY `uk_rate_limit_rule_name` (`tenant_id`, `rule_name`),
     KEY `idx_rate_limit_priority` (`priority`),
     INDEX `idx_rate_limit_rule_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='限流规则表（接入层限流规则层）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='限流规则表（接入层限流规则层）';
 
 -- 坐席库表（MybatisSeatAgentStore / cw_seat_agent）：智能路由中控"工单智能分配"的候选坐席池。
 -- skills 为逗号分隔技能标签串；seat_group 避开 SQL 保留字 group；种子为演示坐席（多技能/负载/在离线）。
@@ -594,7 +594,7 @@ CREATE TABLE IF NOT EXISTS `cw_seat_agent` (
     `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
     INDEX `idx_seat_online` (`online`),
     INDEX `idx_seat_agent_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='坐席库（智能分配候选坐席池）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='坐席库（智能分配候选坐席池）';
 
 INSERT IGNORE INTO `cw_seat_agent` (`tenant_id`, `id`, `name`, `skills`, `max_load`, `current_load`, `online`, `seat_group`, `created_at_ms`, `updated_at_ms`) VALUES
 ('default', 'SEAT-1001', '退款专员-小赵', 'refund,invoice', 5, 1, 1, 'aftersales', 1779235200000, 1779235200000),
@@ -619,7 +619,7 @@ CREATE TABLE IF NOT EXISTS `cw_dict_type` (
     `updated_at_ms`  BIGINT COMMENT '更新时间戳（毫秒）',
     UNIQUE KEY `uk_dict_type` (`tenant_id`, `dict_type`),
     INDEX `idx_dict_type_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='字典类型表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='字典类型表';
 
 CREATE TABLE IF NOT EXISTS `cw_dict_item` (
     `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
@@ -635,7 +635,7 @@ CREATE TABLE IF NOT EXISTS `cw_dict_item` (
     UNIQUE KEY `uk_dict_item` (`tenant_id`, `dict_type`, `item_key`),
     KEY `idx_dict_item_type` (`dict_type`),
     INDEX `idx_dict_item_tenant` (`tenant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='字典项表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='字典项表';
 
 -- 演示种子：订单状态（与 InMemoryDictStore 种子、后台订单页硬编码文案一致）。
 INSERT IGNORE INTO `cw_dict_type` (`tenant_id`, `dict_type`, `type_name`, `remark`, `enabled`, `created_at_ms`, `updated_at_ms`) VALUES

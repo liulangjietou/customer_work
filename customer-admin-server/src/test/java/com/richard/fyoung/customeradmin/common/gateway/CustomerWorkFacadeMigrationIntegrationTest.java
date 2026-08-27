@@ -54,9 +54,17 @@ class CustomerWorkFacadeMigrationIntegrationTest {
                 .aggregate("default", null, 0L, 1_000L);
 
             assertEquals(0L, aggregate.getTotalSessions());
-            assertEquals("21", query(database,
+            assertEquals("22", query(database,
                 "SELECT `version` FROM `flyway_schema_history` WHERE `success` = 1 "
                     + "ORDER BY `installed_rank` DESC LIMIT 1"));
+            // BusinessOutcomeMapper 正是按 session_id 关联三张 cw_* 表的那条查询，
+            // 跨 collation 时报 1267。门面建库后必须已经是对齐的，否则它只能继续靠
+            // CAST(x AS BINARY) 绕开——那会让 session_id 索引失效。
+            assertEquals("0", query(database,
+                "SELECT COUNT(*) FROM information_schema.tables "
+                    + "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' "
+                    + "AND table_name LIKE 'cw\\_%' "
+                    + "AND table_collation <> 'utf8mb4_unicode_ci'"));
             assertEquals("1", query(database,
                 "SELECT COUNT(*) FROM information_schema.tables "
                     + "WHERE table_schema = DATABASE() AND table_name = 'cw_eval_dataset_release'"));
