@@ -6,6 +6,10 @@ import {
   listModelCertificationRuns,
   updateModel,
 } from '@/api/model'
+import {
+  canActivateByCertification,
+  certificationResultMessage,
+} from '@/utils/certificationResult'
 import type {
   ModelCertification,
   ModelCertificationRequest,
@@ -39,7 +43,7 @@ const form = reactive<ModelCertificationRequest>({
 })
 
 const effectiveStatus = computed(() => current.value?.effectiveStatus ?? 'UNKNOWN')
-const canActivate = computed(() => effectiveStatus.value === 'PASSED'
+const canActivate = computed(() => canActivateByCertification(effectiveStatus.value)
   && (props.model?.status !== 1 || props.model?.lifecycleStatus !== 'ACTIVE'))
 
 watch(() => props.modelId, (id) => {
@@ -70,11 +74,8 @@ async function certify() {
   certifying.value = true
   try {
     current.value = await certifyModel(props.modelId, { ...form })
-    ElMessage[current.value.effectiveStatus === 'PASSED' ? 'success' : 'error'](
-      current.value.effectiveStatus === 'PASSED'
-        ? '上线认证通过，可以激活部署'
-        : `认证失败：${current.value.failureMessage || current.value.failureCode || '请查看检查项'}`,
-    )
+    const message = certificationResultMessage(current.value)
+    ElMessage[message.type](message.text)
     await load()
     emit('updated')
   } finally {
@@ -152,7 +153,12 @@ function formatTime(value: string | null | undefined) {
     <section class="cert-hero" :class="`is-${effectiveStatus.toLowerCase()}`">
       <div>
         <span>当前上线认证</span>
-        <strong>{{ effectiveStatus }}</strong>
+        <strong>
+          {{ effectiveStatus }}
+          <el-tag v-if="current?.runId" :type="checkType(current.status)" size="small" effect="plain">
+            最近一次运行 {{ current.status }}
+          </el-tag>
+        </strong>
         <small v-if="current?.staleReason">{{ current.staleReason }}</small>
         <small v-else>有效至 {{ formatTime(current?.validUntil) }}</small>
       </div>
@@ -221,8 +227,10 @@ function formatTime(value: string | null | undefined) {
       <h3>认证历史</h3>
       <el-table :data="history" max-height="260" empty-text="暂无历史">
         <el-table-column prop="runId" label="Run" width="80" />
+        <!-- 历史要回答的是「那次跑得怎么样」，所以取 status；effectiveStatus 是按当前配置算的
+             门禁态，对每条历史行都算成同一个值，看不出哪次通过哪次失败 -->
         <el-table-column label="状态" width="110">
-          <template #default="{ row }"><el-tag :type="statusType(row.effectiveStatus)">{{ row.effectiveStatus }}</el-tag></template>
+          <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
         </el-table-column>
         <el-table-column prop="latencyP95Ms" label="P95(ms)" width="100" />
         <el-table-column label="完成时间" min-width="170">
