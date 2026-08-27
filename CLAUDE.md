@@ -35,17 +35,28 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
-  （2026-08-27 表排序规则统一批次实测：starter 1704 / 5 skip、app-server 129、channel 80、
-  admin 1433 / 1 skip、gateway 1，**合计 3347**，BUILD SUCCESS，0 失败 0 错误，
+  （2026-08-27 表排序规则统一批次实测：starter 1705 / 5 skip、app-server 129、channel 80、
+  admin 1434 / 1 skip、gateway 1，**合计 3349**，BUILD SUCCESS，0 失败 0 错误，
   排除 `RedisSessionPersistenceTest`。本批次自身加 admin **+5**
   （`TableCollationAlignmentContractTest`：四条建库路径各断言终态全部 utf8mb4_unicode_ci +
   Flyway 与完整镜像逐表比对）。cw Flyway 下次 **V23**、admin Flyway 下次 **V101**。
+  **改迁移后必须跑 `./scripts/export-schema-snapshot.sh` 刷新快照**，否则快照门禁直接红；
+  刷新后两库快照的 collation 分布从「cw 43+4 / admin 82+5+1」收敛为「cw 47 / admin 88」全 unicode_ci。
   **纯排序规则迁移没有结构痕迹，`resolveBaselineVersion` 只能拿排序规则本身当判定信号**——
   按结构判定会让完整镜像被当成"停在 V21"重跑一次，`verifyCompleteMirrorAdoption` 立刻红。
   **admin 单模块跑会假红**：V22 在 starter 资源里，`-pl customer-admin-server` 解析的是本地仓库
   的陈旧 jar，`CustomerWorkFacadeMigrationIntegrationTest` 会报"期望 22 实得 21"，跑全反应堆即好。
   **加这类"全量对齐"迁移时，逐表守卫比无条件 ALTER 重要**：生产库可能大部分表已合规，
   无条件 ALTER 等于把每张表都重建一遍——包括那几张最不该在业务时间重建的高写入表。
+  （2026-08-27 表结构快照批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1429/1 skip、gateway 1，合计 3344
+  （排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+1**、admin **+1**（两个库的结构快照门禁）。
+  **改了会进快照文件的东西（含文件头文案）之后，必须重新生成快照再复验**——本批次就踩了一次：
+  全量跑完之后才改 header，那次全量对这两个用例的结论已经失效，得重新生成 + 单独重跑。
+  另外**快照会忠实反映建库 collation**：MySQL 8 里建表语句写了 `DEFAULT CHARSET=utf8mb4`
+  却不写 COLLATE 时用的是字符集默认的 `utf8mb4_0900_ai_ci` 而非库的 collation。
+  当时两个库的快照里两种 collation 并存，**已由下一批次（表排序规则统一）全量收敛**，
+  现在两库快照应只有 `utf8mb4_unicode_ci` 一种；再出现第二种就是有人建表漏写了 COLLATE。
   上一版基线 2026-08-20 公共常量收敛批次：合计 2485。）
   （2026-08-20 公共常量收敛批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，6 skip。
   本批次自身加 starter **+2**（`SharedConstantAlignmentTest`：已收敛值不得重新声明 + 同值不得多处定义）。
@@ -132,7 +143,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
 - **本机跑全量的环境门控**：Redis 无密码时 `RedisSessionPersistenceTest` 必挂，需排除
   （starter 一挂会让下游模块整体 skip，`-fae` 也救不回来）：
-  `-Dtest='!RedisSessionPersistenceTest' -DfailIfNoSpecifiedTests=false`
+  `-Dtest='!RedisSessionPersistenceTest' -Dsurefire.failIfNoSpecifiedTests=false`
   MinIO 起在 9000 时 `MinioAttachmentFileStorageIntegrationTest` 可以正常跑，不必再排除；
   9000 被别的栈（如 kb-rag）占用时才需要连它一起排除。
 - 模块 A 改完给模块 B 用时，先 `mvn install -Dmaven.test.skip=true -Djacoco.skip=true`（B 解析的是本地仓库的 jar，
@@ -240,6 +251,19 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   字典序即执行序）。那个目录是 Flyway 迁移的镜像副本，供手工初始化与 **CI 建库**使用；漏同步不会影响本地
   （本地走 Flyway），但 CI 从空库灌脚本时会在依赖该表的后续脚本上炸掉——V27/V28/V36/V37/V38/V39/V41 就这么漏了 7 个，
   让 main 的 CI 从 PR #65 起连红 6 次（表现为 `Table 'customer_admin.cw_agent_call_log' doesn't exist`）。
+- **改完任何一条迁移都要跑 `./scripts/export-schema-snapshot.sh` 刷新结构快照**
+  （`mysql/schema-snapshot/{agent_scope_customer_work,customer_admin}.sql`）。这两份是「这两个库现在长什么样」
+  的直接答案，只读、不参与建库，改它们不会对任何库生效。**生成源必须是临时空库跑完迁移的产物，不是开发机的
+  长期业务库**——本机库被并行分支的迁移反复试跑过，沉积的结构与迁移产物无法区分，直接 dump 等于把污染固化。
+  漏刷新由 `CustomerWorkSchemaSnapshotTest` / `CustomerAdminSchemaSnapshotTest` 拦下：它们每次跑测试都重新
+  迁移一个临时库比对快照，不一致会指出是哪张表的第几行。**门禁与生成共用 `SchemaSnapshotExporter` 一段逻辑**，
+  不会出现「脚本生成的和门禁期望的不是一回事」。两条相关事实：
+  ① 客服端快照刻意不含框架自建的 `agentscope_sessions`（`MysqlSession` 内置 DDL 建的，没有迁移可导出它）；
+  ② 快照内容取决于 `SHOW CREATE TABLE` 的输出格式，跨 MySQL 大版本升级后需要重新生成一次，那是预期内的
+  一次性刷新而不是漂移。
+- **surefire 3.1.2 的跳过空匹配参数是 `-Dsurefire.failIfNoSpecifiedTests=false`**，不带 `surefire.` 前缀的
+  旧名已失效。只在「指定的测试类在某个模块里一个都没匹配上」时才暴露，多模块 `-Dtest=A,B` 恰好每个模块都
+  命中一个时照样通过，所以很容易一直写错而不自知。
 - **迁移脚本里不要写库名前缀**（`INSERT INTO \`customer_admin\`.\`xxx\``）：脚本执行时已经 USE 到目标库，
   写死库名会让脚本换库不可用，验证/多环境时甚至串库写到别的库去。V14 踩过。
 - **建表必须显式写 `COLLATE utf8mb4_unicode_ci`**（cw V22 / admin V100 起，两库已全量对齐）：
