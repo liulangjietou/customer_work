@@ -60,18 +60,26 @@ class PermissionControllerTest {
         verify(permissionService).delete(1L);
     }
 
+    /**
+     * 普通租户看到的权限树里不应出现控制面节点，且过滤要递归到子节点。
+     *
+     * <p>用 {@code agent} 族做"应当保留"的样本：它是租户自服务能力。
+     * {@code billing} 与 {@code menu} 整族是控制面专属（计费看到的是全平台数据），
+     * {@code sql-console} 是内部运维工具，三者都必须被剪掉。</p>
+     */
     @Test
     void tree_shouldHideControlPlanePermissionsFromOrdinaryTenant() {
-        PermissionVO billing = node("billing:view");
-        billing.setChildren(List.of(node("billing:quota-edit"), node("billing:view-own")));
-        when(permissionService.tree()).thenReturn(List.of(node("menu"), billing));
+        PermissionVO agent = node("agent:view");
+        agent.setChildren(List.of(node("model:edit"), node("agent:edit")));
+        when(permissionService.tree())
+            .thenReturn(List.of(node("menu"), node("billing:view"), node("sql-console:query"), agent));
         when(crossTenantAuthority.hasCurrentUserAuthority()).thenReturn(false);
 
         List<PermissionVO> result = controller.tree().getData();
 
         assertEquals(1, result.size());
-        assertEquals("billing:view", result.get(0).getPermCode());
-        assertEquals(List.of("billing:view-own"),
+        assertEquals("agent:view", result.get(0).getPermCode());
+        assertEquals(List.of("agent:edit"),
             result.get(0).getChildren().stream().map(PermissionVO::getPermCode).toList());
     }
 

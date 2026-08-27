@@ -153,8 +153,17 @@ class PlatformTenantConsolidationMigrationIntegrationTest {
                     "SELECT COUNT(*) FROM `sys_role_permission` rp "
                         + "JOIN `sys_role` r ON r.id = rp.role_id "
                         + "JOIN `sys_permission` p ON p.id = rp.permission_id "
-                        + "WHERE r.role_code = 'auditor' AND p.perm_code = 'billing:view'"),
+                        + "WHERE r.role_code = 'auditor' AND p.perm_code = 'agent:edit'"),
                     "租户自助权限不能被控制面清理误删");
+                // billing 族在 V101 里整族收归控制面（计费看到的是全平台数据），
+                // 存量授权必须被那条迁移回收——此前它是本用例的"不该误删"样本，
+                // 现在恰恰是"应当回收"的样本。
+                assertEquals(0, queryInt(connection,
+                    "SELECT COUNT(*) FROM `sys_role_permission` rp "
+                        + "JOIN `sys_role` r ON r.id = rp.role_id "
+                        + "JOIN `sys_permission` p ON p.id = rp.permission_id "
+                        + "WHERE r.role_code = 'auditor' AND p.perm_code = 'billing:view'"),
+                    "V101 应回收非控制面角色上的 billing 族授权");
                 assertEquals(1, queryInt(connection,
                     "SELECT COUNT(*) FROM `sys_role_permission` rp "
                         + "JOIN `sys_role` r ON r.id = rp.role_id "
@@ -267,7 +276,7 @@ class PlatformTenantConsolidationMigrationIntegrationTest {
             + "('租户角色', 'tenant-a-role', 1, 'tenant-a', 'SELF')");
         execute(connection, "INSERT INTO `sys_role_permission` (`role_id`, `permission_id`, `tenant_id`) "
             + "SELECT r.id, p.id, r.tenant_id FROM `sys_role` r JOIN `sys_permission` p "
-            + "WHERE (r.role_code = 'auditor' AND p.perm_code IN ('menu:edit', 'billing:view')) "
+            + "WHERE (r.role_code = 'auditor' AND p.perm_code IN ('menu:edit', 'billing:view', 'agent:edit')) "
             + "OR (r.role_code = 'operator' AND p.perm_code = 'menu:edit') "
             + "OR (r.role_code = 'tenant-a-role' AND p.perm_code = 'sensitive-word:edit')");
         execute(connection, "INSERT INTO `ai_chat_session_state` "

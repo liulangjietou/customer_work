@@ -23,6 +23,10 @@ public class SaTokenConfig implements WebMvcConfigurer {
             .excludePathPatterns(
                 "/api/auth/login",
                 "/api/auth/register",
+                // 注册页在未登录状态下就要取验证码图片与"本实例开不开放注册"，
+                // 两者都不含敏感信息，防滥用由 RegistrationGuard 的 IP 限流负责
+                "/api/auth/register-options",
+                "/api/auth/captcha",
                 "/api/auth/sso-login",
                 // 内网工作台脚本回调：ScriptCat 脚本运行在目标站点页面里，拿不到后台登录态，
                 // 改用个人访问令牌鉴权（见 WorkbenchAgentController，自行校验 X-Workbench-Token）

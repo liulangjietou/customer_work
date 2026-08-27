@@ -4,6 +4,8 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
 import com.richard.fyoung.customeradmin.datascope.DataScope;
+import com.richard.fyoung.customeradmin.notify.RegistrationNotificationService;
+import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.user.domain.UserApprovalStatus;
@@ -86,13 +88,15 @@ class UserApprovalTenantBindingIntegrationTest {
             mock(PasswordEncoder.class),
             crossTenantAuthority,
             revocationService,
-            tenantService);
+            tenantService,
+            new PublicDeploymentProperties(),
+            mock(RegistrationNotificationService.class));
 
         try (MockedStatic<StpUtil> stpUtil = org.mockito.Mockito.mockStatic(StpUtil.class)) {
             stpUtil.when(StpUtil::getLoginIdAsLong).thenReturn(1L);
             TenantContext.runWith(TenantContext.DEFAULT, () -> service.review(user.getId(),
                 new UserApprovalRequest(
-                    UserApprovalStatus.APPROVED, targetTenant, List.of(targetRole.getId()), "真库核验")));
+                    UserApprovalStatus.APPROVED, targetTenant, List.of(targetRole.getId()), "真库核验", null)));
         }
 
         TenantContext.runWith(TenantContext.DEFAULT, () -> {

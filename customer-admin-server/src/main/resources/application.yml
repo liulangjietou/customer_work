@@ -115,6 +115,34 @@ admin:
     # 关掉等于跨租户数据完全打通，而本系统的登录用户可能来自不同租户。
     # 单租户部署也不必关——所有数据都在同一个 tenant_id 下，过滤条件恒真，行为与关掉一致。
     enabled: ${ADMIN_TENANT_ENABLED:true}
+  # 对外开放部署总开关。打开后：内部运维工具（SQL 客户端/账号本/开发者工具箱）的菜单与接口
+  # 一并下架、自助注册强制验证码与邮箱、审核通过不允许并入平台自用的 default 租户。
+  # 默认 false（内网自用）——误判成对外只是工具消失，误判成内网等于把这些工具挂到公网上。
+  public-deployment:
+    enabled: ${ADMIN_PUBLIC_DEPLOYMENT_ENABLED:false}
+  registration:
+    # 是否开放自助注册；关闭后只能由管理员预建账号
+    self-service-enabled: ${ADMIN_REGISTRATION_SELF_SERVICE:true}
+    # 下面两项在 public-deployment.enabled=true 时被强制为 true，配 false 也不生效
+    captcha-enabled: ${ADMIN_REGISTRATION_CAPTCHA:false}
+    email-required: ${ADMIN_REGISTRATION_EMAIL_REQUIRED:false}
+    # 反代必须“覆写”而不是“追加”X-Forwarded-For，否则客户端可伪造首段绕开 IP 限流；
+    # 直连暴露的部署要设为 false
+    trust-forwarded-header: ${ADMIN_REGISTRATION_TRUST_XFF:true}
+    login-lock:
+      # 对外部署强制启用，此处只对内网实例生效
+      enabled: ${ADMIN_LOGIN_LOCK_ENABLED:false}
+  notification:
+    mail:
+      # 审核结果邮件通知。开着但不配 host 会让每次审核都去连一个不存在的 SMTP，
+      # 故装配处额外校验 host 非空（见 MailNotificationConfig）
+      enabled: ${ADMIN_MAIL_ENABLED:false}
+      host: ${ADMIN_MAIL_HOST:}
+      port: ${ADMIN_MAIL_PORT:587}
+      username: ${ADMIN_MAIL_USERNAME:}
+      password: ${ADMIN_MAIL_PASSWORD:}
+      from: ${ADMIN_MAIL_FROM:}
+      login-url: ${ADMIN_MAIL_LOGIN_URL:}
   data-scope:
     # 用户维度行级隔离：角色数据范围为 SELF 时，只看本人创建的个人产出物
     # （项目/会话/对话附件/工作台账号本/定时任务/操作日志等，清单见 DataScopeTables）。
@@ -155,8 +183,14 @@ admin:
     # 防的是"调用失控"而不是"有人刷接口"，把翻列表也算进去只会让人干不了活。
     path-patterns:
       - /api/workspace/*/chat/stream
+      # 计划确认会接着往下跑同一条 AI 流程，不算进去等于给每轮对话留了一个免费的续跑入口
+      - /api/workspace/*/chat/plan/confirm
       - /api/workspace/*/vibecoding/**
       - /api/aiconfig/agent-task/**
+      # 评测一次跑完整个数据集，是单次成本最高的入口
+      - /api/eval/run
+      # 知识库连通性测试会真发一次 embedding 请求
+      - /api/aiconfig/knowledge-base/*/test-connectivity
   agent-memory:
     # 智能体长期记忆权威存储：留空（默认）= 落库 ai_agent_memory 表；
     # 需要存磁盘时在此显式指定根目录，记忆改存 {disk-root}/{agentCode}/MEMORY.md（不再读写库表）

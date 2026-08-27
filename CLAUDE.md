@@ -35,6 +35,20 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-08-27 对外开放注册批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1518/1 skip、gateway 1，**合计 3433**
+  （排除 `RedisSessionPersistenceTest`，数字为 rebase 到含 PR #157 的 main 之后实测）。
+  本批次自身加 admin **+70**（注册门禁 14 + 登录锁定 7 +
+  验证码 6 + 密码策略 4 + IP 解析 5 + 内部工具闸门 4 + 审核通知 8 + 对外部署审核 6 +
+  控制面权限与生产门禁扩断言）。
+  **既有测试拿"某个权限码"当样本时，收权限的批次会把它们连带打红**——本批次
+  `TenantProvisionServiceTest` 与 `PlatformTenantConsolidationMigrationIntegrationTest` 都用
+  `billing:view` 当"租户可授予"的样本，而它被收归控制面后两处同时失败。那不是回归，
+  恰恰证明代码判定与 V101 迁移一致地生效了；顺手把后者的断言反过来写成"V101 应回收它"。
+  **两个 Maven 进程同时写 `target/` 会伪装成编译错误**：本批次杀掉后台全量后立刻跑单模块，
+  报"方法应用不到给定类型"，看着像代码没改对，实际是半清理的 target，`clean` 一次即好
+  （本文件早记过这条，仍踩了）。cw Flyway 下次 **V24**、admin Flyway 下次 **V102**。
+  上一版基线 2026-08-27 git 后台维护 flaky 修复批次：合计 3363。）
   （2026-08-27 git 后台维护 flaky 修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1448/1 skip、gateway 1，合计 3363
   （排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+1**（建仓时后台维护必须关闭的门禁）。
@@ -490,6 +504,42 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   写这类测试时**别断言"没抛异常"**——单测里本就没挂拦截器，怎么写都不会抛，那种断言恒真；
   要断言 `InterceptorIgnoreHelper.willIgnoreTenantLine(...)` 在查询发生的那一刻为真
   （见 `AdminA2aServerConfigTenantTest`），并且退出作用域后为假。
+- **对外开放部署（公网自助注册）**：把后台开放给陌生人时，`admin.public-deployment.enabled=true`
+  是**唯一**总开关，别逐项勾选——漏配任何一条都是实打实的暴露面。它一次性生效三件事：
+  内部运维工具下架（菜单不下发 + 接口 403）、注册强制验证码与邮箱、审核不允许并入 `default`。
+  六条约定：
+  ① **权限边界只有 `ControlPlanePermissions` 一处定义**（29 族 + 1 个逐点码）。判定标准是
+  「租户管理员拿到它，影响面会不会越出自己的租户」，不是菜单挂在哪一级。三类必须收：
+  操作的表不参与租户过滤（`ai_model_config` 在 `TENANT_IGNORED_TABLES` 里，**全平台一份**，
+  授出去等于让任一租户改删所有租户在用的模型配置）；能把代码或流量带出本进程（MCP 挂任意外部
+  服务端、Skill 含代码执行、SQL 客户端跑任意语句、HTTP 工具是现成 SSRF 面）；视野是全平台
+  而非本租户（计费/SLO/死信/敏感词库与命中/限流规则/编码审计）。
+  `ControlPlanePermissionsTest` 对此下断言，新增权限族先回答那个问题再决定进哪一档；
+  ② **内部工具是「控制面专属」与「对外下架」的交集，两个判定必须同时成立**：只判前者，
+  对外实例上超管仍看得到 SQL 客户端菜单（点进去必然 403）；只判后者，内网实例的租户管理员
+  会拿到能跑任意 SQL 的权限。菜单过滤与接口拦截共用 `internalToolFamilies()` 一份清单；
+  ③ **`InternalToolGuardInterceptor` 必须排在 Sa-Token 之前**（`HIGHEST_PRECEDENCE`）：
+  `/api/workbench/agent/**` 是免登接口（ScriptCat 回调走 X-Workbench-Token），排在登录校验
+  之后就永远轮不到它——那恰恰是对外实例上最该堵的一条；
+  ④ **注册者不能落进 `default` 租户**。`DataScopeTables` 的 SELF 过滤只覆盖 9 张个人产出物表，
+  它的类注释明确写着 `ai_agent`/`ai_knowledge_base`/`ai_skill`/`ai_mcp`/`ai_channel_robot`/
+  `sql_*`/字典/敏感词/限流规则是**租户内共享**的；`sys_user` 也不在白名单。所以「统一租户 +
+  靠 SELF 隔离」在公网场景下不成立，审核必须走「新开租户」路径（复用 `TenantService#create`，
+  它内部已含 provision）。新租户的角色 ID 由服务端从 `tenant_admin` 反查——那个角色是上一行
+  刚插入的，调用方不可能提前知道；
+  ⑤ **注册准入判定收敛在 `RegistrationGuard#admit` 一处**，顺序按代价从低到高：开关 → IP 限流
+  → 验证码 → 邮箱 → 密码强度。**限流必须排在验证码之前**，否则每次攻击尝试都会先让服务端画一张图。
+  对外部署的强制项（验证码、邮箱、登录锁定）不看 `admin.registration.*` 的开关——
+  把公网实例的验证码配成关，等于把注册接口变成匿名可打的免费入口，这不该是一个能配错的选项。
+  **验证码签发本身也要限流且单独计数**：`/api/auth/captcha` 是免登接口，每次调用都要画一张图 +
+  写一次 Redis，不限的话攻击者根本不必尝试注册；与注册共用一个桶则会让真人换几张图就把注册额度用光；
+  ⑥ **登录失败锁定的维度是「账号+来源 IP」的组合**：只锁账号，任何人拿一个已知用户名连打几次
+  就能把真实用户挡在门外（防爆破变成拒绝服务）；只锁 IP，挡不住每个 IP 只试几个账号的分布式撞库。
+  被锁期间只读不累加，否则锁定期被无限延长；成功即清零。
+  **注册重名仍明确提示**——那是注册页的可用性底线，批量枚举由 IP 限流兜住，而登录侧本就不区分
+  「账号不存在」与「密码错误」。
+  存量库的越权授权由 admin `V101` 回收（只动 `control_plane=0` 的角色，幂等，空库无操作）；
+  对外配额档 `public-trial` 是客服端库 `V23` 的纯种子迁移，已在 `resolveBaselineVersion` 补数据判定。
 - **本机开发库是所有分支共用的，Flyway 版本号常年被并行分支占走**：新增迁移前先查
   `SELECT MAX(version) FROM customer_admin.flyway_schema_history`，而不是只看当前分支的文件名——
   本批次就先后被 V55（已合入 main）、V56~V58（未合并的并行分支）挤到 V59/V60。

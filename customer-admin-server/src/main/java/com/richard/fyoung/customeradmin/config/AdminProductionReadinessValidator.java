@@ -82,10 +82,43 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         validateA2a(violations);
         validateRuntimePublish(violations);
         validateGovernance(violations);
+        validatePublicDeployment(violations);
 
         if (!violations.isEmpty()) {
             throw new IllegalStateException("admin production readiness validation failed, invalid keys: "
                 + String.join(", ", violations));
+        }
+    }
+
+    /**
+     * 对外开放实例的额外门禁。
+     *
+     * <p>只在 {@code admin.public-deployment.enabled=true} 时生效，逐条都是"漏了就会被人
+     * 拿去烧钱或翻数据"的项：</p>
+     * <ul>
+     *   <li><b>用量配额必须开</b>：注册者是陌生人，不限量等于把平台的模型账单交给公众；</li>
+     *   <li><b>默认档不能是 admin-default</b>：那是按内部员工定的 1 小时 200 万 token，
+     *       对外该用 {@code public-trial}（cw 库 V23 种子）；</li>
+     *   <li><b>多租户必须开</b>：关掉等于所有注册者与平台共处一个隔离域；</li>
+     *   <li><b>自助注册开着就必须能通知</b>：审核结果只发站内信的话，被拒绝的人永远看不到，
+     *       通过的人也不知道自己已经可以用了。</li>
+     * </ul>
+     */
+    private void validatePublicDeployment(List<String> violations) {
+        if (!environment.getProperty("admin.public-deployment.enabled", Boolean.class, false)) {
+            return;
+        }
+        require(violations, "admin.subject-quota.enabled",
+            environment.getProperty("admin.subject-quota.enabled", Boolean.class, false));
+        String defaultLevel = value("admin.subject-quota.default-level");
+        require(violations, "admin.subject-quota.default-level",
+            hasText(defaultLevel) && !"admin-default".equals(defaultLevel));
+        require(violations, "admin.tenant.enabled",
+            environment.getProperty("admin.tenant.enabled", Boolean.class, true));
+        if (environment.getProperty("admin.registration.self-service-enabled", Boolean.class, true)) {
+            require(violations, "admin.notification.mail.enabled",
+                environment.getProperty("admin.notification.mail.enabled", Boolean.class, false));
+            requireText(violations, "admin.notification.mail.host");
         }
     }
 

@@ -52,7 +52,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
-    private static final int CURRENT_SCHEMA_VERSION = 22;
+    private static final int CURRENT_SCHEMA_VERSION = 23;
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
     private static final int CURRENT_BUSINESS_TABLE_COUNT = 47;
@@ -389,7 +389,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
 
             migrate(dataSource, database);
 
-            assertEquals(6, countHistoryRows(dataSource), "V17 镜像应登记接管基线并补跑 V18-V22");
+            // 1 条接管基线 + V18~V23 六条补跑；加迁移时这个数要跟着涨
+            assertEquals(7, countHistoryRows(dataSource), "V17 镜像应登记接管基线并补跑 V18-V23");
             // 上一版镜像的 6 张表还是 utf8mb4_0900_ai_ci，V22 必须把它们一并转过来。
             assertTablesUseTargetCollation(dataSource, "上一版完整镜像补跑 V22");
             assertEquals(1, countHistoryVersion(dataSource, "17"), "上一版完整镜像应从 V17 接管");

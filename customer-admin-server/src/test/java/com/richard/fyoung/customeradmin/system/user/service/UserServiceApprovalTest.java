@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.notify.RegistrationNotificationService;
+import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.user.domain.UserApprovalStatus;
@@ -67,7 +69,9 @@ class UserServiceApprovalTest {
             mock(PasswordEncoder.class),
             crossTenantAuthority,
             revocationService,
-            tenantService);
+            tenantService,
+            new PublicDeploymentProperties(),
+            mock(RegistrationNotificationService.class));
         when(userRoleMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
         when(userMapper.updateById(any(SysUser.class))).thenReturn(1);
         when(userMapper.incrementAuthEpoch(9L)).thenReturn(1);
@@ -91,7 +95,7 @@ class UserServiceApprovalTest {
             stpUtil.when(StpUtil::getLoginIdAsLong).thenReturn(99L);
 
             service.review(9L, new UserApprovalRequest(
-                UserApprovalStatus.APPROVED, TenantContext.DEFAULT, List.of(3L), " 已核验 "));
+                UserApprovalStatus.APPROVED, TenantContext.DEFAULT, List.of(3L), " 已核验 ", null));
         }
 
         assertEquals(UserApprovalStatus.APPROVED.name(), user.getApprovalStatus());
@@ -133,7 +137,7 @@ class UserServiceApprovalTest {
         try (MockedStatic<StpUtil> stpUtil = mockStatic(StpUtil.class)) {
             stpUtil.when(StpUtil::getLoginIdAsLong).thenReturn(99L);
             service.review(9L, new UserApprovalRequest(
-                UserApprovalStatus.APPROVED, "tenant-a", List.of(30L), null));
+                UserApprovalStatus.APPROVED, "tenant-a", List.of(30L), null, null));
         }
 
         assertEquals("tenant-a", user.getTenantId());
@@ -150,7 +154,7 @@ class UserServiceApprovalTest {
             .when(crossTenantAuthority).requireCurrentUserAuthority();
 
         BizException error = assertThrows(BizException.class, () -> service.review(9L,
-            new UserApprovalRequest(UserApprovalStatus.APPROVED, "tenant-a", List.of(30L), null)));
+            new UserApprovalRequest(UserApprovalStatus.APPROVED, "tenant-a", List.of(30L), null, null)));
 
         assertEquals(ResultCode.TENANT_VIEW_FORBIDDEN, error.getResultCode());
         verify(userMapper, never()).updateById(any(SysUser.class));
@@ -166,7 +170,7 @@ class UserServiceApprovalTest {
 
         BizException error = assertThrows(BizException.class, () -> service.review(9L,
             new UserApprovalRequest(
-                UserApprovalStatus.APPROVED, TenantContext.DEFAULT, List.of(3L), null)));
+                UserApprovalStatus.APPROVED, TenantContext.DEFAULT, List.of(3L), null, null)));
 
         assertEquals(ResultCode.PARAM_INVALID, error.getResultCode());
         verify(userMapper, never()).updateById(any(SysUser.class));
@@ -242,10 +246,10 @@ class UserServiceApprovalTest {
         when(userMapper.selectById(9L)).thenReturn(pendingUser());
 
         BizException missingTenant = assertThrows(BizException.class, () -> service.review(9L,
-            new UserApprovalRequest(UserApprovalStatus.APPROVED, null, List.of(3L), null)));
+            new UserApprovalRequest(UserApprovalStatus.APPROVED, null, List.of(3L), null, null)));
         BizException missingRole = assertThrows(BizException.class, () -> service.review(9L,
             new UserApprovalRequest(
-                UserApprovalStatus.APPROVED, TenantContext.DEFAULT, List.of(), null)));
+                UserApprovalStatus.APPROVED, TenantContext.DEFAULT, List.of(), null, null)));
 
         assertEquals(ResultCode.PARAM_MISSING, missingTenant.getResultCode());
         assertEquals(ResultCode.PARAM_MISSING, missingRole.getResultCode());
@@ -264,7 +268,7 @@ class UserServiceApprovalTest {
         try (MockedStatic<StpUtil> stpUtil = mockStatic(StpUtil.class)) {
             stpUtil.when(StpUtil::getLoginIdAsLong).thenReturn(99L);
             service.review(9L, new UserApprovalRequest(
-                UserApprovalStatus.REJECTED, TenantContext.DEFAULT, List.of(3L), "资料不完整"));
+                UserApprovalStatus.REJECTED, TenantContext.DEFAULT, List.of(3L), "资料不完整", null));
         }
 
         assertEquals(UserApprovalStatus.REJECTED.name(), user.getApprovalStatus());
@@ -281,7 +285,7 @@ class UserServiceApprovalTest {
         when(userMapper.selectById(9L)).thenReturn(pendingUser());
 
         BizException error = assertThrows(BizException.class, () -> service.review(9L,
-            new UserApprovalRequest(UserApprovalStatus.REJECTED, "tenant-a", List.of(), null)));
+            new UserApprovalRequest(UserApprovalStatus.REJECTED, "tenant-a", List.of(), null, null)));
 
         assertEquals(ResultCode.PARAM_INVALID, error.getResultCode());
         verify(userMapper, never()).updateById(any(SysUser.class));

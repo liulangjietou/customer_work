@@ -192,6 +192,100 @@ class AdminProductionReadinessValidatorTest {
         assertTrue(error.getMessage().contains("admin.model-health.max-override-hours"));
     }
 
+    /**
+     * 对外开放实例的额外门禁：只在 {@code admin.public-deployment.enabled=true} 时生效，
+     * 内网实例不受影响。
+     */
+    @Test
+    void publicDeploymentGate_shouldStayInactiveOnInternalDeployment() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.subject-quota.enabled", "false");
+
+        assertDoesNotThrow(() -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+    }
+
+    /** 注册者是陌生人，不限量等于把平台的模型账单交给公众。 */
+    @Test
+    void publicDeployment_shouldRequireSubjectQuotaEnabled() {
+        MockEnvironment environment = publicDeploymentEnvironment()
+            .withProperty("admin.subject-quota.enabled", "false");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.subject-quota.enabled"));
+    }
+
+    /** admin-default 是按内部员工定的 1 小时 200 万 token，对外该用 public-trial。 */
+    @Test
+    void publicDeployment_shouldRejectInternalDefaultQuotaLevel() {
+        MockEnvironment environment = publicDeploymentEnvironment()
+            .withProperty("admin.subject-quota.default-level", "admin-default");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.subject-quota.default-level"));
+    }
+
+    /** 关掉多租户等于所有注册者与平台共处一个隔离域。 */
+    @Test
+    void publicDeployment_shouldRequireTenantIsolation() {
+        MockEnvironment environment = publicDeploymentEnvironment()
+            .withProperty("admin.tenant.enabled", "false");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.tenant.enabled"));
+    }
+
+    /**
+     * 开放自助注册就必须能通知：只发站内信的话，被拒绝的人永远看不到，
+     * 通过的人也不知道自己已经可以用了。
+     */
+    @Test
+    void publicDeployment_shouldRequireMailWhenSelfRegistrationOpen() {
+        MockEnvironment environment = publicDeploymentEnvironment()
+            .withProperty("admin.notification.mail.enabled", "false");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.notification.mail.enabled"));
+    }
+
+    /** 关闭自助注册（仅管理员预建账号）时不强制邮件——没有待通知的人。 */
+    @Test
+    void publicDeployment_shouldNotRequireMailWhenSelfRegistrationClosed() {
+        MockEnvironment environment = publicDeploymentEnvironment()
+            .withProperty("admin.registration.self-service-enabled", "false")
+            .withProperty("admin.notification.mail.enabled", "false")
+            .withProperty("admin.notification.mail.host", "");
+
+        assertDoesNotThrow(() -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+    }
+
+    @Test
+    void publicDeployment_shouldPassWithCompleteConfiguration() {
+        assertDoesNotThrow(() ->
+            new AdminProductionReadinessValidator(publicDeploymentEnvironment()).afterPropertiesSet());
+    }
+
+    private MockEnvironment publicDeploymentEnvironment() {
+        return validEnvironment()
+            .withProperty("admin.public-deployment.enabled", "true")
+            .withProperty("admin.subject-quota.enabled", "true")
+            .withProperty("admin.subject-quota.default-level", "public-trial")
+            .withProperty("admin.tenant.enabled", "true")
+            // 多租户一开，开放 API 就必须配 token→租户映射（见 validateOpenApi），
+            // 与本节要验的对外部署门禁无关，这里补齐以免干扰断言
+            .withProperty("admin.open-api.tenant-tokens[runtime-ack-secret]", "tenant-a")
+            .withProperty("admin.registration.self-service-enabled", "true")
+            .withProperty("admin.notification.mail.enabled", "true")
+            .withProperty("admin.notification.mail.host", "smtp.example.com");
+    }
+
     private MockEnvironment validEnvironment() {
         return new MockEnvironment()
             .withProperty("spring.datasource.url", "jdbc:mysql://mysql.internal:3306/customer_admin")

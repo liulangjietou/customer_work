@@ -18,6 +18,9 @@ public enum ResultCode {
     SSO_LOGIN_FAILED(10004, "OA账号或密码错误"),
     SSO_SERVICE_UNAVAILABLE(10005, "OA域服务暂不可用，请稍后重试或联系管理员"),
     SSO_NOT_ENABLED(10006, "OA单点登录未开通"),
+    // 对外开放实例的登录爆破防线：锁的是"账号+来源IP"这对组合，
+    // 不区分"密码错"与"账号不存在"，否则错误差异本身就是账号枚举接口
+    LOGIN_LOCKED(10007, "连续登录失败次数过多，请稍后再试"),
 
     // 2xxxx 权限类
     FORBIDDEN(20001, "无权限执行该操作"),
@@ -33,6 +36,8 @@ public enum ResultCode {
     NO_FILE_CHANGES(30007, "本轮对话暂无文件变更"),
     SQL_NOT_READONLY(30008, "仅允许只读 SELECT/WITH 查询"),
     SQL_PARAM_INVALID(30009, "SQL 查询参数不合法"),
+    CAPTCHA_INVALID(30010, "图形验证码错误或已过期"),
+    PASSWORD_TOO_WEAK(30011, "密码强度不足，请至少包含字母与数字且不少于 8 位"),
 
     // 4xxxx 外部依赖类
     MODEL_TEST_TIMEOUT(40001, "模型连通性测试超时"),
@@ -99,6 +104,11 @@ public enum ResultCode {
     // 主体级速率配额（B7）：额度用尽不是权限问题也不是参数问题，单独发码，
     // 前端据此给"稍后再试"而不是"联系管理员开权限"
     QUOTA_EXCEEDED(40043, "本时段的 AI 用量额度已用尽，请稍后再试"),
+
+    // 对外开放部署（admin.public-deployment.enabled=true）
+    // 功能未开放与无权限刻意分开：前者申请权限也拿不到，提示"联系管理员开权限"只会浪费两边时间
+    FEATURE_NOT_AVAILABLE(40050, "该功能在当前部署形态下未开放"),
+    REGISTER_TOO_FREQUENT(40051, "注册请求过于频繁，请稍后再试"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

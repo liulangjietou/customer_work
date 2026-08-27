@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.service.AgentService;
 import com.richard.fyoung.customeradmin.menu.dto.MenuNode;
+import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
 import org.junit.jupiter.api.Test;
@@ -56,7 +57,7 @@ class MenuAggregationServiceTest {
         when(permissionMapper.selectList(null)).thenReturn(defaultMenus());
         AgentService agentService = mock(AgentService.class);
         when(agentService.listEnabled()).thenReturn(List.of(enabledAgent(100L, "customer-helper")));
-        MenuAggregationService service = new MenuAggregationService(permissionMapper, agentService);
+        MenuAggregationService service = new MenuAggregationService(permissionMapper, agentService, new PublicDeploymentProperties());
 
         try (MockedStatic<StpUtil> stpUtil = mockStatic(StpUtil.class)) {
             stpUtil.when(StpUtil::getPermissionList).thenReturn(List.of("system", "workspace"));
@@ -78,7 +79,7 @@ class MenuAggregationServiceTest {
         when(permissionMapper.selectList(null)).thenReturn(defaultMenus());
         AgentService agentService = mock(AgentService.class);
         when(agentService.listEnabled()).thenReturn(List.of(enabledAgent(100L, "customer-helper")));
-        MenuAggregationService service = new MenuAggregationService(permissionMapper, agentService);
+        MenuAggregationService service = new MenuAggregationService(permissionMapper, agentService, new PublicDeploymentProperties());
 
         try (MockedStatic<StpUtil> stpUtil = mockStatic(StpUtil.class)) {
             stpUtil.when(StpUtil::getPermissionList).thenReturn(List.of("system"));
@@ -86,6 +87,65 @@ class MenuAggregationServiceTest {
             List<MenuNode> tree = service.buildMenuTree();
 
             assertTrue(tree.stream().noneMatch(n -> "workspace".equals(n.getPermCode())));
+        }
+    }
+
+    /**
+     * 对外开放实例上，内部运维工具的菜单不下发——即使当前用户拥有对应权限点。
+     *
+     * <p>与权限过滤是两道独立的闸门：权限过滤回答"这个人能不能用"，这里回答"这个实例有没有这个能力"。
+     * 对应接口已由 InternalToolGuardInterceptor 拒绝，菜单还留着只会给出一个点进去必然报错的入口。</p>
+     */
+    @Test
+    void buildMenuTree_shouldHideInternalToolMenusOnPublicDeployment() {
+        SysPermissionMapper permissionMapper = mock(SysPermissionMapper.class);
+        when(permissionMapper.selectList(null)).thenReturn(List.of(
+            permission(1, 0, "系统管理", "system", 1, 1),
+            permission(110, 0, "SQL配置管理", "sql-config", 1, 2),
+            permission(160, 0, "我的工作台", "workbench", 1, 3),
+            permission(161, 160, "开发者工具箱", "devtools", 1, 1),
+            permission(162, 160, "SQL 客户端", "sql-console:query", 1, 2)));
+        AgentService agentService = mock(AgentService.class);
+        when(agentService.listEnabled()).thenReturn(List.of());
+        PublicDeploymentProperties publicDeployment = new PublicDeploymentProperties();
+        publicDeployment.setEnabled(true);
+        MenuAggregationService service =
+            new MenuAggregationService(permissionMapper, agentService, publicDeployment);
+
+        try (MockedStatic<StpUtil> stpUtil = mockStatic(StpUtil.class)) {
+            // 故意给全量权限：菜单仍不该出现，证明这道闸门与权限无关
+            stpUtil.when(StpUtil::getPermissionList).thenReturn(
+                List.of("system", "sql-config", "workbench", "devtools", "sql-console:query"));
+
+            List<MenuNode> tree = service.buildMenuTree();
+
+            assertEquals(List.of("system"), tree.stream().map(MenuNode::getPermCode).toList());
+        }
+    }
+
+    /** 内网实例保持原样：这些菜单正是内部工程师的主力功能。 */
+    @Test
+    void buildMenuTree_shouldKeepInternalToolMenusOnInternalDeployment() {
+        SysPermissionMapper permissionMapper = mock(SysPermissionMapper.class);
+        when(permissionMapper.selectList(null)).thenReturn(List.of(
+            permission(1, 0, "系统管理", "system", 1, 1),
+            permission(160, 0, "我的工作台", "workbench", 1, 2),
+            permission(161, 160, "开发者工具箱", "devtools", 1, 1)));
+        AgentService agentService = mock(AgentService.class);
+        when(agentService.listEnabled()).thenReturn(List.of());
+        MenuAggregationService service =
+            new MenuAggregationService(permissionMapper, agentService, new PublicDeploymentProperties());
+
+        try (MockedStatic<StpUtil> stpUtil = mockStatic(StpUtil.class)) {
+            stpUtil.when(StpUtil::getPermissionList)
+                .thenReturn(List.of("system", "workbench", "devtools"));
+
+            List<MenuNode> tree = service.buildMenuTree();
+
+            assertEquals(List.of("system", "workbench"),
+                tree.stream().map(MenuNode::getPermCode).toList());
+            assertEquals(List.of("devtools"),
+                tree.get(1).getChildren().stream().map(MenuNode::getPermCode).toList());
         }
     }
 }

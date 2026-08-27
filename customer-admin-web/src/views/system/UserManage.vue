@@ -43,6 +43,12 @@ const reviewForm = reactive<UserApprovalRequest>({
   remark: '',
 })
 
+// 归属方式：并入已有租户，或顺带开一个新租户。
+// 对外开放实例上后者才是常态——注册者是陌生人，塞进任何已有租户都意味着与那个租户
+// 共享全部配置资产（智能体、知识库、技能、MCP、渠道、字典、敏感词都是租户内共享的）。
+const reviewTenantMode = ref<'existing' | 'new'>('existing')
+const reviewNewTenant = reactive({ tenantCode: '', tenantName: '' })
+
 const {
   loading, list, total, query,
   dialogVisible, dialogMode, form,
@@ -105,6 +111,9 @@ async function openReview(row: UserVO) {
     roleIds: [],
     remark: row.approvalRemark || '',
   })
+  reviewTenantMode.value = 'existing'
+  reviewNewTenant.tenantCode = ''
+  reviewNewTenant.tenantName = ''
   reviewDialogVisible.value = true
   await loadReviewOptions(row.tenantId)
 }
@@ -133,24 +142,43 @@ async function submitReview() {
   if (!reviewTarget.value) {
     return
   }
-  if (reviewForm.decision === 'APPROVED' && !reviewForm.roleIds?.length) {
-    ElMessage.warning('审核通过时至少分配一个角色')
-    return
-  }
-  if (reviewForm.decision === 'APPROVED' && !reviewForm.tenantId) {
-    ElMessage.warning('审核通过时请选择归属租户')
-    return
+  const provisioning = reviewForm.decision === 'APPROVED' && reviewTenantMode.value === 'new'
+  if (provisioning) {
+    if (!reviewNewTenant.tenantCode.trim() || !reviewNewTenant.tenantName.trim()) {
+      ElMessage.warning('新开租户需要填写租户编码与名称')
+      return
+    }
+  } else if (reviewForm.decision === 'APPROVED') {
+    if (!reviewForm.roleIds?.length) {
+      ElMessage.warning('审核通过时至少分配一个角色')
+      return
+    }
+    if (!reviewForm.tenantId) {
+      ElMessage.warning('审核通过时请选择归属租户')
+      return
+    }
   }
   reviewSubmitting.value = true
   try {
     await reviewUser(reviewTarget.value.id, {
       decision: reviewForm.decision,
-      tenantId: reviewForm.decision === 'APPROVED' ? reviewForm.tenantId : reviewTarget.value.tenantId,
-      roleIds: reviewForm.decision === 'APPROVED' ? reviewForm.roleIds : [],
+      // 新开租户时租户与角色都由服务端接管：那个租户管理员角色是建租户时刚生成的，
+      // 前端不可能提前知道它的 ID
+      tenantId: provisioning
+        ? null
+        : (reviewForm.decision === 'APPROVED' ? reviewForm.tenantId : reviewTarget.value.tenantId),
+      roleIds: provisioning || reviewForm.decision !== 'APPROVED' ? [] : reviewForm.roleIds,
       remark: reviewForm.remark?.trim() || null,
+      newTenant: provisioning
+        ? {
+            tenantCode: reviewNewTenant.tenantCode.trim(),
+            tenantName: reviewNewTenant.tenantName.trim(),
+            contactEmail: reviewTarget.value.email || null,
+          }
+        : null,
     })
     ElMessage.success(reviewForm.decision === 'APPROVED'
-      ? `审核通过，用户已归属 ${reviewForm.tenantId}`
+      ? `审核通过，用户已归属 ${provisioning ? reviewNewTenant.tenantCode.trim() : reviewForm.tenantId}`
       : '已拒绝该注册申请')
     reviewDialogVisible.value = false
     await loadList()
@@ -199,6 +227,9 @@ onMounted(async () => {
         <el-table-column prop="username" label="用户名" />
         <el-table-column prop="tenantId" label="归属租户" min-width="120" />
         <el-table-column prop="nickname" label="昵称" />
+        <el-table-column label="邮箱" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.email || '-' }}</template>
+        </el-table-column>
         <el-table-column label="角色">
           <template #default="{ row }">{{ row.roleNames?.join('、') || '-' }}</template>
         </el-table-column>
@@ -293,7 +324,32 @@ onMounted(async () => {
             <el-radio-button value="REJECTED">拒绝</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="reviewForm.decision === 'APPROVED'" label="归属租户" required>
+        <el-form-item v-if="reviewForm.decision === 'APPROVED'" label="归属方式">
+          <el-radio-group v-model="reviewTenantMode">
+            <el-radio-button value="existing">并入已有租户</el-radio-button>
+            <el-radio-button value="new">新开租户</el-radio-button>
+          </el-radio-group>
+          <div class="review-hint">
+            新开租户会自动创建该租户的管理员角色并授予本租户内全部权限，无需另行分配。
+          </div>
+        </el-form-item>
+        <template v-if="reviewForm.decision === 'APPROVED' && reviewTenantMode === 'new'">
+          <el-form-item label="租户编码" required>
+            <el-input
+              v-model="reviewNewTenant.tenantCode"
+              maxlength="64"
+              placeholder="字母、数字、连字符或下划线，创建后不可修改"
+            />
+          </el-form-item>
+          <el-form-item label="租户名称" required>
+            <el-input v-model="reviewNewTenant.tenantName" maxlength="128" placeholder="展示用名称" />
+          </el-form-item>
+        </template>
+        <el-form-item
+          v-if="reviewForm.decision === 'APPROVED' && reviewTenantMode === 'existing'"
+          label="归属租户"
+          required
+        >
           <el-select
             v-model="reviewForm.tenantId"
             filterable
@@ -310,7 +366,11 @@ onMounted(async () => {
             />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="reviewForm.decision === 'APPROVED'" label="分配角色" required>
+        <el-form-item
+          v-if="reviewForm.decision === 'APPROVED' && reviewTenantMode === 'existing'"
+          label="分配角色"
+          required
+        >
           <el-select
             v-model="reviewForm.roleIds"
             multiple
@@ -355,5 +415,13 @@ onMounted(async () => {
 
 .review-user {
   margin-bottom: 18px;
+}
+
+.review-hint {
+  width: 100%;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 </style>
