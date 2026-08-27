@@ -293,9 +293,23 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   `CustomerWorkSchemaMigrationIntegrationTest`。Admin 因排除了 starter 自动装配，必须通过
   `CustomerWorkFacade` 的迁移门禁接管客服端库，不能把缺表/缺列延迟成业务 SQL 的 `Unknown column`。
 - **admin 库新增 Flyway 迁移必须同步一份到 `mysql/02-customer-admin/`**（文件名加数字前缀：`<版本号>-V<版本号>__xxx.sql`，
-  字典序即执行序）。那个目录是 Flyway 迁移的镜像副本，供手工初始化与 **CI 建库**使用；漏同步不会影响本地
+  **执行序是版本序，不是字典序**）。那个目录是 Flyway 迁移的镜像副本，供手工初始化与 **CI 建库**使用；漏同步不会影响本地
   （本地走 Flyway），但 CI 从空库灌脚本时会在依赖该表的后续脚本上炸掉——V27/V28/V36/V37/V38/V39/V41 就这么漏了 7 个，
   让 main 的 CI 从 PR #65 起连红 6 次（表现为 `Table 'customer_admin.cw_agent_call_log' doesn't exist`）。
+  **版本号进三位数后，字典序不再等于版本序**：shell glob 与 `ls` 给出的是
+  `... 09-V9, 10-V10, 100-V100, 101-V101, 11-V11, ... 99-V99`——V100/V101 跑在 V11 之前。
+  实测后果分两种，后一种更阴险：V101 直接报 `Unknown column 'r.control_plane'`（V63 才加的列），
+  **而 V100 逐表守卫、表不存在就跳过，于是静默什么都没做**，建出来的库排序规则始终没对齐且不报错。
+  一律走 `scripts/apply-admin-schema-mirror.sh`（内部用 `sort -V`），CI 也已改用它；
+  别再写 `for f in mysql/02-customer-admin/*.sql`。
+- **完整镜像自带演示数据，上生产前必须清**：`mysql/01-agent-scope-customer-work/customer-work-schema.sql`
+  里有一批 demo 业务数据（`U-demo-1`、"旗舰款无线降噪耳机"、"退款专员-小赵"这类假订单/会员/商品/坐席/
+  知识条目）。本地跑 demo 时有用，上生产就是脏数据——**客服智能体会拿它们当真实业务回答问题**。
+  走 `scripts/clear-demo-data.sh <客服端库> <后台库> [--public]`，它按"系统缺了会不会坏"划界：
+  清订单/会员/商品/投诉/退款/坐席/知识条目，留配额档位（`cw_subject_quota_level`，限流按
+  `level_code` 查，缺了直接 fail-closed）、字典、敏感词词库，以及后台的菜单权限/角色/租户/
+  模型单价/系统工具定义。对外部署加 `--public` 再清掉 SQL 查询功能的示例配置（那个功能已下架）。
+  实测：全新库跑完镜像后有数据的表共 11 张（cw 侧）+ 12 张（admin 侧），清理后只剩系统种子。
 - **改完任何一条迁移都要跑 `./scripts/export-schema-snapshot.sh` 刷新结构快照**
   （`mysql/schema-snapshot/{agent_scope_customer_work,customer_admin}.sql`）。这两份是「这两个库现在长什么样」
   的直接答案，只读、不参与建库，改它们不会对任何库生效。**生成源必须是临时空库跑完迁移的产物，不是开发机的

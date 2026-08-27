@@ -109,12 +109,15 @@ jobs:
       # 用 -e "source" 而非 stdin 管道 + 显式 utf8mb4，规避 stdin 下客户端字符集回退 latin1
       # 把中文 COMMENT 字节级写坏的已知坑。
       - name: Verify admin schema mirror actually builds
+        # 走 scripts/apply-admin-schema-mirror.sh 而不是在这里 for-glob：
+        # 那个目录的约定是"文件名前缀 = 版本号，排序即执行序"，但 shell glob 用的是字典序，
+        # 版本号进三位数后两者分叉——... 09-V9, 10-V10, 100-V100, 101-V101, 11-V11 ...
+        # V100/V101 会跑在 V11 之前。实测：V101 直接报 Unknown column 'r.control_plane'
+        # （那是 V63 才加的列），而 V100 逐表守卫、表不存在就跳过，于是静默什么都没做，
+        # 建出来的库排序规则始终没对齐且没有任何报错。脚本里用 sort -V 修正。
         run: |
-          mysql -h127.0.0.1 -P3306 -uroot -proot -e "CREATE DATABASE customer_admin_mirror_check DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-          for f in mysql/02-customer-admin/*.sql; do
-            echo "applying $f"
-            mysql --default-character-set=utf8mb4 -h127.0.0.1 -P3306 -uroot -proot customer_admin_mirror_check -e "source $f"
-          done
+          MYSQL_HOST=127.0.0.1 MYSQL_PORT=3306 MYSQL_USER=root MYSQL_PASSWORD=root \
+            scripts/apply-admin-schema-mirror.sh customer_admin_mirror_check
           mysql -h127.0.0.1 -P3306 -uroot -proot -e "DROP DATABASE customer_admin_mirror_check;"
 
       - name: Build, test and generate coverage
