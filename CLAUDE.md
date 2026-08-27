@@ -35,6 +35,15 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-08-27 表结构快照批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1429/1 skip、gateway 1，合计 3344
+  （排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+1**、admin **+1**（两个库的结构快照门禁）。
+  **改了会进快照文件的东西（含文件头文案）之后，必须重新生成快照再复验**——本批次就踩了一次：
+  全量跑完之后才改 header，那次全量对这两个用例的结论已经失效，得重新生成 + 单独重跑。
+  另外**快照对建库 collation 只在少数表上敏感**：MySQL 8 里建表语句写了 `DEFAULT CHARSET=utf8mb4`
+  却不写 COLLATE 时用的是字符集默认的 `utf8mb4_0900_ai_ci` 而非库的 collation，所以两个库的快照里
+  两种 collation 并存是既有状况；只有 `ENGINE=InnoDB;` 这种连 charset 都不写的表才继承建库参数。
+  上一版基线 2026-08-20 公共常量收敛批次：合计 2485。）
   （2026-08-20 公共常量收敛批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，6 skip。
   本批次自身加 starter **+2**（`SharedConstantAlignmentTest`：已收敛值不得重新声明 + 同值不得多处定义）。
   **同值不同概念别硬合**：本批次差点把 `sys_operation_log.result` 与 `ai_coding_audit_log.result`
@@ -120,7 +129,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   外部依赖门控测试：MySQL(root/root)、Redis(密码 123456)、Nacos(nacos/nacos:8848)，不可达自动跳过。
 - **本机跑全量的环境门控**：Redis 无密码时 `RedisSessionPersistenceTest` 必挂，需排除
   （starter 一挂会让下游模块整体 skip，`-fae` 也救不回来）：
-  `-Dtest='!RedisSessionPersistenceTest' -DfailIfNoSpecifiedTests=false`
+  `-Dtest='!RedisSessionPersistenceTest' -Dsurefire.failIfNoSpecifiedTests=false`
   MinIO 起在 9000 时 `MinioAttachmentFileStorageIntegrationTest` 可以正常跑，不必再排除；
   9000 被别的栈（如 kb-rag）占用时才需要连它一起排除。
 - 模块 A 改完给模块 B 用时，先 `mvn install -Dmaven.test.skip=true -Djacoco.skip=true`（B 解析的是本地仓库的 jar，
@@ -228,6 +237,19 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   字典序即执行序）。那个目录是 Flyway 迁移的镜像副本，供手工初始化与 **CI 建库**使用；漏同步不会影响本地
   （本地走 Flyway），但 CI 从空库灌脚本时会在依赖该表的后续脚本上炸掉——V27/V28/V36/V37/V38/V39/V41 就这么漏了 7 个，
   让 main 的 CI 从 PR #65 起连红 6 次（表现为 `Table 'customer_admin.cw_agent_call_log' doesn't exist`）。
+- **改完任何一条迁移都要跑 `./scripts/export-schema-snapshot.sh` 刷新结构快照**
+  （`mysql/schema-snapshot/{agent_scope_customer_work,customer_admin}.sql`）。这两份是「这两个库现在长什么样」
+  的直接答案，只读、不参与建库，改它们不会对任何库生效。**生成源必须是临时空库跑完迁移的产物，不是开发机的
+  长期业务库**——本机库被并行分支的迁移反复试跑过，沉积的结构与迁移产物无法区分，直接 dump 等于把污染固化。
+  漏刷新由 `CustomerWorkSchemaSnapshotTest` / `CustomerAdminSchemaSnapshotTest` 拦下：它们每次跑测试都重新
+  迁移一个临时库比对快照，不一致会指出是哪张表的第几行。**门禁与生成共用 `SchemaSnapshotExporter` 一段逻辑**，
+  不会出现「脚本生成的和门禁期望的不是一回事」。两条相关事实：
+  ① 客服端快照刻意不含框架自建的 `agentscope_sessions`（`MysqlSession` 内置 DDL 建的，没有迁移可导出它）；
+  ② 快照内容取决于 `SHOW CREATE TABLE` 的输出格式，跨 MySQL 大版本升级后需要重新生成一次，那是预期内的
+  一次性刷新而不是漂移。
+- **surefire 3.1.2 的跳过空匹配参数是 `-Dsurefire.failIfNoSpecifiedTests=false`**，不带 `surefire.` 前缀的
+  旧名已失效。只在「指定的测试类在某个模块里一个都没匹配上」时才暴露，多模块 `-Dtest=A,B` 恰好每个模块都
+  命中一个时照样通过，所以很容易一直写错而不自知。
 - **迁移脚本里不要写库名前缀**（`INSERT INTO \`customer_admin\`.\`xxx\``）：脚本执行时已经 USE 到目标库，
   写死库名会让脚本换库不可用，验证/多环境时甚至串库写到别的库去。V14 踩过。
 - **多租户（B1 起）**：隔离靠 MyBatis-Plus `TenantLineInnerInterceptor` 全局改写，租户值取自
