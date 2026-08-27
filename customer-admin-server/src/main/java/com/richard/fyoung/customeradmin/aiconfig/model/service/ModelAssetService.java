@@ -98,6 +98,24 @@ public class ModelAssetService {
             (left, right) -> left));
     }
 
+    /**
+     * 解析部署背后资产登记的上下文窗口，供运行时建模注入框架。
+     *
+     * <p>查不到资产或资产未登记窗口时返回 {@code null}，由调用方回落框架推断——窗口只是能力元信息，
+     * 缺了不该阻断建模；真正需要 fail 的场景（上线认证）由认证自己判定，不在这里代劳。</p>
+     */
+    public Integer findDeclaredContextWindow(AiModelConfig model) {
+        if (model == null || model.getAssetId() == null) {
+            return null;
+        }
+        AiModelAsset asset = CrossTenantOperations.execute(() -> assetMapper.selectOne(
+            new QueryWrapper<AiModelAsset>().eq("id", model.getAssetId())));
+        if (asset == null || asset.getContextWindow() == null || asset.getContextWindow() <= 0) {
+            return null;
+        }
+        return asset.getContextWindow();
+    }
+
     public AiModelAsset requireVisible(Long id, String currentTenant, boolean tenantEnabled) {
         QueryWrapper<AiModelAsset> wrapper = new QueryWrapper<AiModelAsset>().eq("id", id);
         if (tenantEnabled) {
