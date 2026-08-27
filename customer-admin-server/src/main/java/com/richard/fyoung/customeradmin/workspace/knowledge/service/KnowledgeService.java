@@ -351,8 +351,10 @@ public class KnowledgeService {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "未配置可用的对话模型用于知识库问答");
         }
         AiModelConfig config = candidates.get(0);
-        return modelFactory.buildModel(config.getProvider(), config.getBaseUrl(),
-            cryptoUtil.decrypt(config.getApiKey()), config.getModel());
+        // 窗口取资产登记值而不是让框架按模型名猜：第三方模型猜不出来会返回 0（未知），下游会当成「窗口为零」
+        return modelFactory.buildModelWithWindow(config.getProvider(), config.getBaseUrl(),
+            cryptoUtil.decrypt(config.getApiKey()), config.getModel(),
+            modelFactory.resolveDeclaredContextWindow(config.getId()));
     }
 
     /** 一次性模型调用（与 GitAssistantService/CollaborativeCodingService 同手法），带知识库问答系统提示词。 */

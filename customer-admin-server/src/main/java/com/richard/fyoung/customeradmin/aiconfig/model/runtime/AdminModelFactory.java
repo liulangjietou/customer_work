@@ -2,6 +2,9 @@ package com.richard.fyoung.customeradmin.aiconfig.model.runtime;
 
 import com.richard.fyoung.customeradmin.aiconfig.model.dto.ModelTestResult;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
+import com.richard.fyoung.customeradmin.aiconfig.model.entity.AiModelConfig;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelAssetService;
+import com.richard.fyoung.customeradmin.aiconfig.model.service.ModelConfigAccess;
 import com.richard.fyoung.customeradmin.billing.service.ModelPriceService;
 import com.richard.fyoung.customerwork.core.model.ChatModelProber;
 import com.richard.fyoung.customerwork.core.model.attribution.AttributedModel;
@@ -36,6 +39,8 @@ public class AdminModelFactory {
     private final ChatModelProber prober;
     private final ModelEndpointPolicy endpointPolicy;
     private final ModelPriceService modelPriceService;
+    private final ModelConfigAccess modelConfigAccess;
+    private final ModelAssetService modelAssetService;
 
     public AdminModelFactory() {
         this(new ModelEndpointPolicy(List::of), null);
@@ -45,9 +50,19 @@ public class AdminModelFactory {
         this(endpointPolicy, null);
     }
 
-    @Autowired
     public AdminModelFactory(ModelEndpointPolicy endpointPolicy, ModelPriceService modelPriceService) {
-        this(new ChatModelProber(endpointPolicy), endpointPolicy, modelPriceService);
+        this(new ChatModelProber(endpointPolicy), endpointPolicy, modelPriceService, null, null);
+    }
+
+    /**
+     * 生产装配构造。{@code modelConfigAccess} 与 {@code modelAssetService} 用于按部署 ID 解析
+     * 资产登记的上下文窗口——见 {@link #resolveDeclaredContextWindow}。
+     */
+    @Autowired
+    public AdminModelFactory(ModelEndpointPolicy endpointPolicy, ModelPriceService modelPriceService,
+                             ModelConfigAccess modelConfigAccess, ModelAssetService modelAssetService) {
+        this(new ChatModelProber(endpointPolicy), endpointPolicy, modelPriceService,
+            modelConfigAccess, modelAssetService);
     }
 
     /** 包内可见，供单测注入短超时，避免真实等待默认 8s（生产走策略注入构造）。 */
@@ -56,24 +71,32 @@ public class AdminModelFactory {
     }
 
     private AdminModelFactory(Duration testTimeout, ModelEndpointPolicy endpointPolicy) {
-        this(new ChatModelProber(testTimeout, endpointPolicy), endpointPolicy, null);
+        this(new ChatModelProber(testTimeout, endpointPolicy), endpointPolicy, null, null, null);
     }
 
     /** 包内测试构造：薄壳测试只验证委托与结果翻译。 */
     AdminModelFactory(ChatModelProber prober) {
-        this(prober, new ModelEndpointPolicy(List::of), null);
+        this(prober, new ModelEndpointPolicy(List::of), null, null, null);
     }
 
     /** 包内测试构造：为模型构建注入确定性的端点策略与 DNS 结果。 */
     AdminModelFactory(ChatModelProber prober, ModelEndpointPolicy endpointPolicy) {
-        this(prober, endpointPolicy, null);
+        this(prober, endpointPolicy, null, null, null);
     }
 
     AdminModelFactory(ChatModelProber prober, ModelEndpointPolicy endpointPolicy,
                       ModelPriceService modelPriceService) {
+        this(prober, endpointPolicy, modelPriceService, null, null);
+    }
+
+    AdminModelFactory(ChatModelProber prober, ModelEndpointPolicy endpointPolicy,
+                      ModelPriceService modelPriceService, ModelConfigAccess modelConfigAccess,
+                      ModelAssetService modelAssetService) {
         this.prober = prober;
         this.endpointPolicy = endpointPolicy;
         this.modelPriceService = modelPriceService;
+        this.modelConfigAccess = modelConfigAccess;
+        this.modelAssetService = modelAssetService;
     }
 
     /**
@@ -98,18 +121,53 @@ public class AdminModelFactory {
      * baseUrl，阻断已发布配置绕过保存期校验；该校验不替代厂商 SDK 自身连接阶段的 DNS 与重定向控制。</p>
      */
     public Model buildModel(String provider, String baseUrl, String apiKey, String modelName) {
+        return buildModelWithWindow(provider, baseUrl, apiKey, modelName, null);
+    }
+
+    /**
+     * 同上，并把权威上下文窗口注入运行时，覆盖框架的模型名推断。
+     *
+     * <p>框架的推断表只收录各厂商官方模型名；{@code glm} / {@code deepseek} 这类第三方模型走
+     * OpenAI 兼容协议接入时一律推断为 0，而下游会把 0 当成「窗口为零」而不是「未知」——
+     * 路由按各档取 min 上报能力、上线认证按窗口判门槛，都会因此失真。已经持有资产对象的调用方
+     * 直接传声明值；只有部署 ID 的调用方走 {@link #buildModel(String, String, String, String, Long)}，
+     * 由本类自行解析。</p>
+     *
+     * @param contextWindowSize 权威上下文窗口（可空；空或非正数则回落框架推断）
+     */
+    public Model buildModelWithWindow(String provider, String baseUrl, String apiKey, String modelName,
+                                      Integer contextWindowSize) {
         ModelProvider p = ModelProvider.of(provider);
         String validatedBaseUrl = endpointPolicy.validateAndNormalizeBaseUrl(baseUrl);
         return ChatModelFactory.build(p.getCode(), modelName, apiKey, validatedBaseUrl, true,
-            GenerateOptions.builder().build(), null, null);
+            GenerateOptions.builder().build(), null, null, contextWindowSize);
     }
 
+    /**
+     * 按部署建模：在计费归因之外，同时把该部署对应资产登记的上下文窗口注入运行时。
+     *
+     * <p>窗口在这里解析而不是让调用方各传各的——建模路径不止一条（主备模型、路由策略候选、
+     * 知识库、认证探测），逐个要求「记得传窗口」必然漏，漏了还不报错，只表现为运行时能力上报为 0。</p>
+     */
     public Model buildModel(String provider, String baseUrl, String apiKey,
                             String modelName, Long deploymentId) {
-        Model model = buildModel(provider, baseUrl, apiKey, modelName);
+        Model model = buildModelWithWindow(provider, baseUrl, apiKey, modelName,
+            resolveDeclaredContextWindow(deploymentId));
         ModelCallAttribution attribution = modelPriceService == null
             ? ModelCallAttribution.unpriced(provider, deploymentId, modelName)
             : modelPriceService.attribution(provider, deploymentId, modelName);
         return new AttributedModel(model, attribution);
+    }
+
+    /**
+     * 按部署 ID 解析资产登记的上下文窗口；依赖未装配、部署不可见或资产未登记窗口时返回 {@code null}，
+     * 由调用方回落框架推断。窗口只是能力元信息，解析不到不该阻断建模。
+     */
+    public Integer resolveDeclaredContextWindow(Long deploymentId) {
+        if (deploymentId == null || modelConfigAccess == null || modelAssetService == null) {
+            return null;
+        }
+        AiModelConfig deployment = modelConfigAccess.findVisibleAnyStateById(deploymentId);
+        return deployment == null ? null : modelAssetService.findDeclaredContextWindow(deployment);
     }
 }

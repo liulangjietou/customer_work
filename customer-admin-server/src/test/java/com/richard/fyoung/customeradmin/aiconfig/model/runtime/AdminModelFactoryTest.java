@@ -153,6 +153,49 @@ class AdminModelFactoryTest {
         assertInstanceOf(OpenAIChatModel.class, model);
     }
 
+    // ==================== 上下文窗口注入 ====================
+
+    /**
+     * 钉住本次修复的前提事实：框架按模型名前缀查硬编码表推断窗口，表里只有各厂商官方模型名。
+     * glm / deepseek 这类走 OpenAI 兼容协议接入的第三方模型推断为 0——0 是「未知」不是「窗口为零」。
+     * 框架哪天扩了推断表，这条会红，那是提醒而不是故障。
+     */
+    @Test
+    void buildModel_withoutDeclaredWindow_leavesThirdPartyModelWindowUnknown() {
+        Model model = publicEndpointFactory().buildModel(
+            "openai", "https://api.openai.com/v1", "sk-test", "glm-5.2");
+
+        assertEquals(0, model.getContextWindowSize());
+    }
+
+    @Test
+    void buildModelWithWindow_shouldOverrideFrameworkInference() {
+        Model model = publicEndpointFactory().buildModelWithWindow(
+            "openai", "https://api.openai.com/v1", "sk-test", "glm-5.2", 1_000_000);
+
+        assertEquals(1_000_000, model.getContextWindowSize());
+    }
+
+    /** 声明缺失或非法时回落框架推断，不能把 0 / 负数当窗口写进运行时。 */
+    @Test
+    void buildModelWithWindow_shouldFallBackToInferenceOnInvalidDeclaration() {
+        AdminModelFactory factory = publicEndpointFactory();
+
+        assertEquals(128_000, factory.buildModelWithWindow(
+            "openai", "https://api.openai.com/v1", "sk-test", "gpt-4o-mini", null)
+            .getContextWindowSize());
+        assertEquals(128_000, factory.buildModelWithWindow(
+            "openai", "https://api.openai.com/v1", "sk-test", "gpt-4o-mini", 0)
+            .getContextWindowSize());
+    }
+
+    /** 依赖未装配（单测与旧构造）时解析返回 null，不能因此抛异常阻断建模。 */
+    @Test
+    void resolveDeclaredContextWindow_withoutDependencies_shouldReturnNull() {
+        assertNull(publicEndpointFactory().resolveDeclaredContextWindow(1L));
+        assertNull(publicEndpointFactory().resolveDeclaredContextWindow(null));
+    }
+
     private AdminModelFactory publicEndpointFactory() {
         ModelEndpointPolicy endpointPolicy = new ModelEndpointPolicy(List::of,
             host -> new InetAddress[] {InetAddress.getByName("8.8.8.8")});

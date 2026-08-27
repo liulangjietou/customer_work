@@ -30,25 +30,51 @@ public final class ChatModelFactory {
     }
 
     /**
-     * 按厂商构建模型。stream 开关与高级生成参数对各厂商统一应用；{@code baseUrl} 有值才覆盖（否则用厂商默认端点）。
+     * 按厂商构建模型，上下文窗口交给框架按模型名前缀推断。
      *
-     * @param provider       厂商标识（大小写不敏感，空则 dashscope）
-     * @param modelName      模型名
-     * @param apiKey         鉴权密钥（ollama 本地私有化不需要）
-     * @param baseUrl        自定义端点（可空）
-     * @param stream         是否流式
-     * @param options        高级生成参数（温度 / topP / maxTokens / 推理强度）
-     * @param enableSearch   DashScope 联网搜索（仅 dashscope 生效，可空）
-     * @param enableThinking DashScope 深度思考（仅 dashscope 生效，可空）
+     * <p>框架的推断表只收录各厂商官方模型名（{@code gpt-4o} / {@code qwen-plus} 等），
+     * 第三方模型走 OpenAI 兼容协议接入时推断不出来、{@code getContextWindowSize()} 返回 0。
+     * 有权威声明值的场景请改用 {@link #build(String, String, String, String, boolean,
+     * GenerateOptions, Boolean, Boolean, Integer)}。</p>
      */
     public static Model build(String provider, String modelName, String apiKey, String baseUrl,
                               boolean stream, GenerateOptions options,
                               Boolean enableSearch, Boolean enableThinking) {
+        return build(provider, modelName, apiKey, baseUrl, stream, options,
+            enableSearch, enableThinking, null);
+    }
+
+    /**
+     * 按厂商构建模型。stream 开关与高级生成参数对各厂商统一应用；{@code baseUrl} 有值才覆盖（否则用厂商默认端点）。
+     *
+     * <p>{@code contextWindowSize} 传入时覆盖框架的模型名推断。框架推断表只认各厂商官方模型名，
+     * 第三方模型（glm / deepseek / 自建网关）走 OpenAI 兼容协议时一律推断为 0，而 0 会被下游
+     * 当成「窗口为零」而非「未知」——路由按各档取 min 上报能力、上线认证按窗口判定门槛，都会因此失真。
+     * 调用方拿得到权威声明（如模型资产登记的窗口）时必须传进来。</p>
+     *
+     * @param provider          厂商标识（大小写不敏感，空则 dashscope）
+     * @param modelName         模型名
+     * @param apiKey            鉴权密钥（ollama 本地私有化不需要）
+     * @param baseUrl           自定义端点（可空）
+     * @param stream            是否流式
+     * @param options           高级生成参数（温度 / topP / maxTokens / 推理强度）
+     * @param enableSearch      DashScope 联网搜索（仅 dashscope 生效，可空）
+     * @param enableThinking    DashScope 深度思考（仅 dashscope 生效，可空）
+     * @param contextWindowSize 权威上下文窗口（可空；空或非正数则回落框架推断）
+     */
+    public static Model build(String provider, String modelName, String apiKey, String baseUrl,
+                              boolean stream, GenerateOptions options,
+                              Boolean enableSearch, Boolean enableThinking,
+                              Integer contextWindowSize) {
         String p = provider == null ? ModelProviders.DASHSCOPE : provider.toLowerCase();
+        boolean declaredWindow = contextWindowSize != null && contextWindowSize > 0;
         switch (p) {
             case ModelProviders.OPENAI: {
                 OpenAIChatModel.Builder b = OpenAIChatModel.builder()
                     .apiKey(apiKey).modelName(modelName).stream(stream).generateOptions(options);
+                if (declaredWindow) {
+                    b.contextWindowSize(contextWindowSize);
+                }
                 if (StringUtils.hasText(baseUrl)) {
                     b.baseUrl(baseUrl);
                 }
@@ -57,6 +83,9 @@ public final class ChatModelFactory {
             case ModelProviders.ANTHROPIC: {
                 AnthropicChatModel.Builder b = AnthropicChatModel.builder()
                     .apiKey(apiKey).modelName(modelName).stream(stream).defaultOptions(options);
+                if (declaredWindow) {
+                    b.contextWindowSize(contextWindowSize);
+                }
                 if (StringUtils.hasText(baseUrl)) {
                     b.baseUrl(baseUrl);
                 }
@@ -66,6 +95,9 @@ public final class ChatModelFactory {
                 // 注意：Gemini 需额外引入 google-genai 依赖
                 GeminiChatModel.Builder b = GeminiChatModel.builder()
                     .apiKey(apiKey).modelName(modelName).streamEnabled(stream).defaultOptions(options);
+                if (declaredWindow) {
+                    b.contextWindowSize(contextWindowSize);
+                }
                 if (StringUtils.hasText(baseUrl)) {
                     b.baseUrl(baseUrl);
                 }
@@ -74,6 +106,9 @@ public final class ChatModelFactory {
             case ModelProviders.OLLAMA: {
                 // Ollama 本地私有化：使用 OllamaOptions（生成参数另行配置），默认 localhost:11434
                 OllamaChatModel.Builder b = OllamaChatModel.builder().modelName(modelName);
+                if (declaredWindow) {
+                    b.contextWindowSize(contextWindowSize);
+                }
                 if (StringUtils.hasText(baseUrl)) {
                     b.baseUrl(baseUrl);
                 }
@@ -82,6 +117,9 @@ public final class ChatModelFactory {
             default: {
                 DashScopeChatModel.Builder b = DashScopeChatModel.builder()
                     .apiKey(apiKey).modelName(modelName).stream(stream).defaultOptions(options);
+                if (declaredWindow) {
+                    b.contextWindowSize(contextWindowSize);
+                }
                 if (StringUtils.hasText(baseUrl)) {
                     b.baseUrl(baseUrl);
                 }
