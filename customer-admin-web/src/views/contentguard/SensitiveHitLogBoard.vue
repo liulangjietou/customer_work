@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import ContentGuardTrendChart from '@/components/ContentGuardTrendChart.vue'
 import { fetchHitLogStats, pageHitLogs } from '@/api/contentGuard'
+import { summarizeSensitiveHitWords } from '@/utils/sensitiveHitWords'
 import type {
   ContentGuardCountVO,
   SensitiveWordHitLogPageQuery,
@@ -178,7 +179,14 @@ onMounted(handleSearch)
         </el-table-column>
         <el-table-column label="命中词" min-width="180">
           <template #default="{ row }">
-            <el-tag v-for="word in row.words" :key="word" size="small" class="word-tag">{{ word }}</el-tag>
+            <el-tag
+              v-for="item in summarizeSensitiveHitWords(row.words)"
+              :key="item.word"
+              size="small"
+              class="word-tag"
+            >
+              {{ item.word }}<span v-if="item.extraCount > 0" class="word-extra-count">+{{ item.extraCount }}</span>
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="agentName" label="智能体" width="140" show-overflow-tooltip />
@@ -293,5 +301,10 @@ onMounted(handleSearch)
 
 .word-tag {
   margin-right: 4px;
+}
+
+.word-extra-count {
+  margin-left: 4px;
+  font-weight: 600;
 }
 </style>
