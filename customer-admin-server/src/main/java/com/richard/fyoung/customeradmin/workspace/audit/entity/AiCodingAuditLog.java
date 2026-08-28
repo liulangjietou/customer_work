@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -61,4 +62,12 @@ public class AiCodingAuditLog {
     /** 操作开始时间戳（毫秒），仅用于进程内计算耗时，不落库。 */
     @TableField(exist = false)
     private transient long startMillis;
+
+    /**
+     * 审计开始时的租户快照，仅用于跨异步线程恢复上下文，不直接映射 tenant_id 列。
+     * tenant_id 仍由全局租户拦截器统一写入，避免出现第二套隔离规则。
+     */
+    @TableField(exist = false)
+    @JsonIgnore
+    private transient String tenantContextId;
 }

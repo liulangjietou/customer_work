@@ -17,11 +17,17 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewTaskVO;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.entity.CodeReviewTask;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.mapper.CodeReviewTaskMapper;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.ChatResponse;
 import io.agentscope.core.model.Model;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,10 +37,13 @@ import reactor.core.publisher.Flux;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -76,6 +85,7 @@ class GitAssistantServiceTest {
 
     @BeforeEach
     void setUp() {
+        TenantContext.set("tenant-test");
         agentMapper = mock(AiAgentMapper.class);
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
         workspaceManager = mock(AgentWorkspaceManager.class);
@@ -89,6 +99,13 @@ class GitAssistantServiceTest {
 
         when(workspaceManager.resolveSessionWorkspace(anyString(), anyString())).thenReturn(sessionWorkspace);
         when(agentInstanceFactory.buildModelForAgent(anyString())).thenReturn(model);
+    }
+
+    @AfterEach
+    void clearRequestContexts() {
+        TenantContext.clear();
+        QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
     }
 
     /** mock 的 insert 不会回填自增 id，异步链路要用 taskId 回写，故 stub 成插入即赋 id。 */
@@ -155,6 +172,47 @@ class GitAssistantServiceTest {
 
         assertEquals("新增了 Foo 类。", summary.summary());
         assertEquals(List.of("Foo.java"), summary.changedFiles());
+    }
+
+    @Test
+    void diffSummary_shouldPropagateRequestContextsToAsyncModelBuild() {
+        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+        when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace))
+            .thenReturn("diff --git a/Foo.java b/Foo.java\n+class Foo {}");
+        when(gitWorkspaceService.changedFilesAgainstBaseline(sessionWorkspace)).thenReturn(List.of("Foo.java"));
+        mockModelReply("新增了 Foo 类。");
+
+        QuotaSubject quotaSubject = QuotaSubject.adminUser("7");
+        AgentInvocationIdentity identity = new AgentInvocationIdentity(
+            "tenant-a", quotaSubject.type(), quotaSubject.id(), true)
+            .withChannel(AgentInvocationIdentity.CHANNEL_ADMIN);
+        TenantContext.set("tenant-a");
+        QuotaSubjectContext.set(quotaSubject);
+        AgentInvocationIdentityContext.set(identity);
+        AtomicReference<String> workerTenant = new AtomicReference<>();
+        AtomicReference<QuotaSubject> workerQuotaSubject = new AtomicReference<>();
+        AtomicReference<AgentInvocationIdentity> workerIdentity = new AtomicReference<>();
+        when(agentInstanceFactory.buildModelForAgent("coder")).thenAnswer(invocation -> {
+            workerTenant.set(TenantContext.get());
+            workerQuotaSubject.set(QuotaSubjectContext.get());
+            workerIdentity.set(AgentInvocationIdentityContext.get());
+            return model;
+        });
+
+        CompletableFuture<GitDiffSummary> future = service.diffSummary("coder", "s1");
+        TenantContext.clear();
+        QuotaSubjectContext.clear();
+        AgentInvocationIdentityContext.clear();
+        future.join();
+
+        assertEquals("tenant-a", workerTenant.get());
+        assertSame(quotaSubject, workerQuotaSubject.get());
+        assertEquals("tenant-a", workerIdentity.get().tenantId());
+        assertEquals(quotaSubject.type(), workerIdentity.get().subjectType());
+        assertEquals(quotaSubject.id(), workerIdentity.get().subjectId());
+        assertEquals(AgentInvocationIdentity.CHANNEL_ADMIN, workerIdentity.get().channelCode());
+        assertEquals("s1", workerIdentity.get().sessionId());
+        assertEquals("coder", workerIdentity.get().agentCode());
     }
 
     // ===== commit message =====
@@ -250,6 +308,11 @@ class GitAssistantServiceTest {
         when(gitWorkspaceService.diffAgainstBaseline(sessionWorkspace))
             .thenReturn("diff --git a/Foo.java b/Foo.java\n+String sql = \"select * where id=\"+id;");
         stubReviewTaskInsertAssignsId(99L);
+        AtomicReference<String> updateTenant = new AtomicReference<>();
+        when(reviewTaskMapper.updateById(any(CodeReviewTask.class))).thenAnswer(invocation -> {
+            updateTenant.set(TenantContext.get());
+            return 1;
+        });
         // 模型在 JSON 外还夹了 Markdown 代码块标记，解析器应能剥离
         mockModelReply("```json\n{\"issues\":[{\"severity\":\"CRITICAL\",\"file\":\"Foo.java\",\"line\":1,"
             + "\"category\":\"SECURITY\",\"message\":\"SQL 注入\",\"suggestion\":\"用参数化查询\"}],"
@@ -264,6 +327,7 @@ class GitAssistantServiceTest {
         assertEquals(1, result.issues().size());
         assertEquals("CRITICAL", result.issues().get(0).severity());
         assertEquals("SECURITY", result.issues().get(0).category());
+        assertEquals("tenant-test", updateTenant.get(), "Review 异步回写必须恢复请求租户");
         // 成功站内信：接收人=提交人、bizType=CODE_REVIEW、bizId=taskId、link 携带 reviewTask=taskId
         verify(siteMessageService, timeout(2000)).send(eq(7L), eq("AI 代码审查完成"), anyString(),
             eq("CODE_REVIEW"), eq("99"), contains("reviewTask=99"));
