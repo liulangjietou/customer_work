@@ -84,9 +84,11 @@ watch(
 
 <style scoped>
 .devtoolbox-page {
+  height: 100%;
+  min-height: 0;
   display: flex;
   gap: 16px;
-  align-items: flex-start;
+  align-items: stretch;
 }
 
 .devtoolbox-sidebar {
@@ -99,7 +101,8 @@ watch(
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 12px;
-  height: calc(100vh - 140px);
+  height: 100%;
+  min-height: 0;
 }
 
 .devtoolbox-search {
@@ -108,6 +111,7 @@ watch(
 
 .devtoolbox-list {
   flex: 1;
+  min-height: 0;
 }
 
 .devtoolbox-item {
@@ -148,6 +152,8 @@ watch(
 .devtoolbox-panel {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .panel-title {

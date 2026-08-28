@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
 import { useThemeStore } from '@/store/theme'
 
 const themeStore = useThemeStore()
-onMounted(() => themeStore.apply())
+// 在首个路由组件渲染前应用已保存的明暗模式，避免全局壳先以亮色闪现再切暗色。
+themeStore.apply()
 </script>
 
 <template>

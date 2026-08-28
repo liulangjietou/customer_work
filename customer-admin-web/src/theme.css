@@ -5,6 +5,13 @@
  */
 
 :root {
+  --cw-nav-rail-width: 72px;
+  --cw-context-nav-width: 180px;
+  --cw-shell-expanded-width: calc(var(--cw-nav-rail-width) + var(--cw-context-nav-width));
+  --cw-topbar-height: 64px;
+  --cw-tabs-height: 40px;
+  --cw-footer-height: 36px;
+  --cw-focus-ring: var(--theme-primary, var(--el-color-primary));
   /* 全局圆角从 4px 提到 6px，弹窗更圆润 */
   --el-border-radius-base: 6px;
   --el-dialog-border-radius: 10px;

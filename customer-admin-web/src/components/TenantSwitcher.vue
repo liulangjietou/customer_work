@@ -52,6 +52,7 @@ onMounted(load)
     size="default"
     :loading="switching"
     filterable
+    aria-label="租户视角"
   >
     <template #prefix>
       <el-icon><OfficeBuilding /></el-icon>

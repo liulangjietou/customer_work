@@ -2,30 +2,13 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMenuStore } from '@/store/menu'
-import type { MenuNode } from '@/types/api'
+import { findMenuTrail } from './navigationModel'
 
 const route = useRoute()
 const menuStore = useMenuStore()
 
-/** 按 path 精确匹配菜单树，返回从根到命中节点的名称链（分组名 + 叶子名）。 */
-function findAncestorNames(nodes: MenuNode[], path: string, trail: string[]): string[] | null {
-  for (const node of nodes) {
-    const nextTrail = [...trail, node.name]
-    if (node.path && node.path === path) {
-      return nextTrail
-    }
-    if (node.children && node.children.length > 0) {
-      const found = findAncestorNames(node.children, path, nextTrail)
-      if (found) {
-        return found
-      }
-    }
-  }
-  return null
-}
-
 const crumbs = computed(() => {
-  const found = findAncestorNames(menuStore.tree, route.path, [])
+  const found = findMenuTrail(menuStore.tree, route.fullPath, route.path)
   if (found) {
     return found
   }
@@ -33,17 +16,25 @@ const crumbs = computed(() => {
   const title = (route.meta.title as string | undefined) || (route.name ? String(route.name) : route.path)
   return [title]
 })
+
+// 两级路径已由生命周期导航 + 当前页签完整表达；只有真正的深层路径才额外占用面包屑行。
+const shouldShow = computed(() => crumbs.value.length > 2)
 </script>
 
 <template>
-  <el-breadcrumb class="app-breadcrumb" separator="/">
+  <el-breadcrumb v-if="shouldShow" class="app-breadcrumb" separator="/" aria-label="当前位置">
     <el-breadcrumb-item v-for="(name, idx) in crumbs" :key="idx">{{ name }}</el-breadcrumb-item>
   </el-breadcrumb>
 </template>
 
 <style scoped>
 .app-breadcrumb {
-  padding: 10px 16px;
-  font-size: 13px;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+  font-size: 12px;
 }
 </style>
