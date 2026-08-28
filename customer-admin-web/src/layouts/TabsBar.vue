@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTabsStore } from '@/store/tabs'
 import type { TabsPaneContext, TabPaneName } from 'element-plus'
@@ -9,9 +9,9 @@ const tabsStore = useTabsStore()
 
 function handleTabClick(pane: TabsPaneContext) {
   const key = pane.paneName
-  const tab = tabsStore.tabs.find((t) => t.key === key)
+  const tab = tabsStore.tabs.find((item) => item.key === key)
   if (tab) {
-    router.push(tab.fullPath)
+    void router.push(tab.fullPath)
   }
 }
 
@@ -19,65 +19,142 @@ function handleTabRemove(paneName: TabPaneName) {
   tabsStore.closeTab(String(paneName))
 }
 
-// 右键上下文菜单：定位到具体被右键的标签靠事件委托 + DOM 顺序对齐 tabsStore.tabs（Element Plus
-// 的 el-tab-pane 不是实际渲染节点，拿不到 paneName，只能反查 .el-tabs__item 在导航条里的下标）。
 const menuVisible = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
 const menuTargetKey = ref('')
+const contextMenu = ref<HTMLElement>()
+let contextTriggerItem: HTMLElement | null = null
+type MenuFocusTarget = 'none' | 'trigger' | 'active'
+
+function tabKeyFromItem(item: HTMLElement): string | undefined {
+  return item.querySelector<HTMLElement>('[data-tab-key]')?.dataset.tabKey
+}
+
+function openContextMenu(item: HTMLElement, x: number, y: number) {
+  const key = tabKeyFromItem(item)
+  if (!key || !tabsStore.tabs.some((tab) => tab.key === key)) return
+  menuTargetKey.value = key
+  menuX.value = Math.min(x, window.innerWidth - 150)
+  menuY.value = Math.min(y, window.innerHeight - 132)
+  contextTriggerItem = item
+  menuVisible.value = true
+  void nextTick(() => contextMenu.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus())
+}
 
 function onTabsContextMenu(event: MouseEvent) {
   const item = (event.target as HTMLElement).closest('.el-tabs__item') as HTMLElement | null
-  if (!item) {
-    return
-  }
+  if (!item) return
   event.preventDefault()
-  const nav = item.parentElement
-  const items = nav ? Array.from(nav.querySelectorAll('.el-tabs__item')) : []
-  const index = items.indexOf(item)
-  const tab = tabsStore.tabs[index]
-  if (!tab) {
-    return
-  }
-  menuTargetKey.value = tab.key
-  menuX.value = event.clientX
-  menuY.value = event.clientY
-  menuVisible.value = true
+  openContextMenu(item, event.clientX, event.clientY)
 }
 
-function closeMenu() {
+function onTabsKeydown(event: KeyboardEvent) {
+  if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return
+  const item = (event.target as HTMLElement).closest('.el-tabs__item') as HTMLElement | null
+  if (!item) return
+  event.preventDefault()
+  const rect = item.getBoundingClientRect()
+  openContextMenu(item, rect.left, rect.bottom + 4)
+}
+
+function findTabItem(key: string): HTMLElement | undefined {
+  return Array.from(document.querySelectorAll<HTMLElement>('.el-tabs__item'))
+    .find((item) => tabKeyFromItem(item) === key)
+}
+
+function focusTab(key: string) {
+  void nextTick(() => findTabItem(key)?.focus())
+}
+
+function closeMenu(focusTarget: MenuFocusTarget = 'none') {
   menuVisible.value = false
+  const trigger = contextTriggerItem
+  contextTriggerItem = null
+  if (focusTarget === 'trigger' && trigger?.isConnected) {
+    void nextTick(() => trigger.focus())
+  } else if (focusTarget === 'active') {
+    focusTab(tabsStore.activeKey)
+  }
+}
+
+function handleWindowDismiss() {
+  closeMenu()
+}
+
+function handleMenuKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeMenu('trigger')
+    return
+  }
+
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  const items = Array.from(
+    contextMenu.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [],
+  )
+  if (items.length === 0) return
+  event.preventDefault()
+  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+  const nextIndex = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? items.length - 1
+      : event.key === 'ArrowUp'
+        ? (currentIndex <= 0 ? items.length - 1 : currentIndex - 1)
+        : (currentIndex + 1) % items.length
+  items[nextIndex]?.focus()
+}
+
+function handleMenuFocusout(event: FocusEvent) {
+  const nextTarget = event.relatedTarget
+  if (!(nextTarget instanceof Node) || !contextMenu.value?.contains(nextTarget)) {
+    closeMenu()
+  }
 }
 
 function doClose() {
   tabsStore.closeTab(menuTargetKey.value)
-  closeMenu()
+  closeMenu('active')
 }
 
 function doCloseOthers() {
   tabsStore.closeOthers(menuTargetKey.value)
-  closeMenu()
+  closeMenu('trigger')
 }
 
 function doCloseToRight() {
   tabsStore.closeToRight(menuTargetKey.value)
-  closeMenu()
+  closeMenu('trigger')
 }
 
-const targetTab = () => tabsStore.tabs.find((t) => t.key === menuTargetKey.value)
+const targetTab = () => tabsStore.tabs.find((tab) => tab.key === menuTargetKey.value)
 const canClose = () => targetTab()?.closable ?? false
-const canCloseOthers = () => tabsStore.tabs.some((t) => t.closable && t.key !== menuTargetKey.value)
+const canCloseOthers = () => tabsStore.tabs.some((tab) => tab.closable && tab.key !== menuTargetKey.value)
 const canCloseToRight = () => {
-  const idx = tabsStore.tabs.findIndex((t) => t.key === menuTargetKey.value)
-  return idx !== -1 && idx < tabsStore.tabs.length - 1
+  const index = tabsStore.tabs.findIndex((tab) => tab.key === menuTargetKey.value)
+  return index !== -1 && index < tabsStore.tabs.length - 1
 }
 
-onMounted(() => window.addEventListener('click', closeMenu))
-onBeforeUnmount(() => window.removeEventListener('click', closeMenu))
+onMounted(() => {
+  window.addEventListener('click', handleWindowDismiss)
+  window.addEventListener('resize', handleWindowDismiss)
+  window.addEventListener('blur', handleWindowDismiss)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', handleWindowDismiss)
+  window.removeEventListener('resize', handleWindowDismiss)
+  window.removeEventListener('blur', handleWindowDismiss)
+})
 </script>
 
 <template>
-  <div class="tabs-bar-wrapper" @contextmenu="onTabsContextMenu">
+  <div
+    class="tabs-bar-wrapper"
+    @contextmenu="onTabsContextMenu"
+    @keydown="onTabsKeydown"
+  >
     <el-tabs
       v-model="tabsStore.activeKey"
       type="card"
@@ -89,88 +166,166 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenu))
         v-for="tab in tabsStore.tabs"
         :key="tab.key"
         :name="tab.key"
-        :label="tab.title"
         :closable="tab.closable"
-      />
+      >
+        <template #label>
+          <span class="tab-label" :data-tab-key="tab.key">{{ tab.title }}</span>
+        </template>
+      </el-tab-pane>
     </el-tabs>
 
-    <ul
+    <div
       v-if="menuVisible"
+      ref="contextMenu"
       class="tab-context-menu"
-      :style="{ left: menuX + 'px', top: menuY + 'px' }"
+      role="menu"
+      aria-label="页签操作"
+      :style="{ left: `${menuX}px`, top: `${menuY}px` }"
       @click.stop
+      @keydown="handleMenuKeydown"
+      @focusout="handleMenuFocusout"
     >
-      <li :class="{ disabled: !canClose() }" @click="canClose() && doClose()">关闭</li>
-      <li :class="{ disabled: !canCloseOthers() }" @click="canCloseOthers() && doCloseOthers()">关闭其他</li>
-      <li :class="{ disabled: !canCloseToRight() }" @click="canCloseToRight() && doCloseToRight()">关闭右侧</li>
-    </ul>
+      <button type="button" role="menuitem" :disabled="!canClose()" @click="doClose">关闭</button>
+      <button type="button" role="menuitem" :disabled="!canCloseOthers()" @click="doCloseOthers">关闭其他</button>
+      <button type="button" role="menuitem" :disabled="!canCloseToRight()" @click="doCloseToRight">关闭右侧</button>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.tabs-bar-wrapper {
+  height: var(--cw-tabs-height);
+  position: relative;
+  flex: 0 0 var(--cw-tabs-height);
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
 .tabs-bar {
-  padding: 8px 16px 0;
+  height: var(--cw-tabs-height);
+  padding: 5px 14px 0;
   background: var(--el-bg-color);
 }
 
 .tabs-bar :deep(.el-tabs__header) {
+  height: 35px;
   margin: 0;
+  border-bottom: 0;
+}
+
+.tabs-bar :deep(.el-tabs__nav-wrap),
+.tabs-bar :deep(.el-tabs__nav-scroll),
+.tabs-bar :deep(.el-tabs__nav) {
+  height: 35px;
 }
 
 .tabs-bar :deep(.el-tabs__nav) {
-  border: none;
+  border: 0;
+  gap: 4px;
 }
 
 .tabs-bar :deep(.el-tabs__item) {
-  border: 1px solid var(--el-border-color);
-  border-radius: 4px 4px 0 0;
-  margin-right: 4px;
-  height: 32px;
-  line-height: 32px;
+  height: 31px;
+  position: relative;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  line-height: 31px;
+  font-size: 12px;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.tabs-bar :deep(.el-tabs__item + .el-tabs__item) {
+  border-left: 1px solid transparent;
+}
+
+.tabs-bar :deep(.el-tabs__item:hover) {
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
 }
 
 .tabs-bar :deep(.el-tabs__item.is-active) {
-  color: var(--el-color-primary);
+  border-color: var(--el-border-color-lighter);
+  border-bottom-color: var(--el-bg-color);
+  background: var(--el-bg-color);
+  color: var(--el-text-color-primary);
   font-weight: 600;
 }
 
-.tabs-bar-wrapper {
-  position: relative;
+.tabs-bar :deep(.el-tabs__item.is-active::before) {
+  content: '';
+  height: 2px;
+  position: absolute;
+  inset: -1px 8px auto;
+  border-radius: 0 0 2px 2px;
+  background: var(--theme-primary, var(--el-color-primary));
 }
 
-.tab-context-menu {
-  position: fixed;
-  z-index: 2000;
-  min-width: 100px;
-  padding: 4px 0;
-  margin: 0;
-  list-style: none;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color);
-  border-radius: 4px;
-  box-shadow: 0 2px 12px rgb(0 0 0 / 10%);
+.tabs-bar :deep(.el-tabs__item .is-icon-close) {
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
 
-.tab-context-menu li {
-  padding: 6px 16px;
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-  cursor: pointer;
+.tabs-bar :deep(.el-tabs__item:hover .is-icon-close),
+.tabs-bar :deep(.el-tabs__item.is-active .is-icon-close),
+.tabs-bar :deep(.el-tabs__item:focus-visible .is-icon-close) {
+  opacity: 1;
+}
+
+.tab-label {
+  display: inline-block;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
   white-space: nowrap;
 }
 
-.tab-context-menu li:hover {
-  background: var(--el-fill-color-light);
-  color: var(--el-color-primary);
+.tab-context-menu {
+  min-width: 132px;
+  position: fixed;
+  z-index: 2200;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 9px;
+  background: var(--el-bg-color-overlay);
+  box-shadow: 0 12px 30px rgb(15 23 42 / 16%);
 }
 
-.tab-context-menu li.disabled {
+.tab-context-menu button {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--el-text-color-regular);
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tab-context-menu button:hover:not(:disabled),
+.tab-context-menu button:focus-visible:not(:disabled) {
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+}
+
+.tab-context-menu button:disabled {
   color: var(--el-text-color-placeholder);
   cursor: not-allowed;
 }
 
-.tab-context-menu li.disabled:hover {
-  background: transparent;
-  color: var(--el-text-color-placeholder);
+@media (prefers-reduced-motion: reduce) {
+  .tabs-bar :deep(.el-tabs__item),
+  .tabs-bar :deep(.el-tabs__item .is-icon-close) {
+    transition: none;
+  }
 }
 </style>

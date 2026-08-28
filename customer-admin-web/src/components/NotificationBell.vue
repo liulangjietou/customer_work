@@ -116,7 +116,7 @@ onUnmounted(() => {
   >
     <template #reference>
       <el-badge :value="unreadCount" :max="99" :hidden="unreadCount === 0" class="notification-badge">
-        <el-button class="bell-btn" text title="站内消息">
+        <el-button class="bell-btn" text title="站内消息" aria-label="打开站内消息">
           <el-icon :size="18"><Bell /></el-icon>
         </el-button>
       </el-badge>
@@ -130,9 +130,10 @@ onUnmounted(() => {
       </div>
       <el-empty v-if="!loading && messages.length === 0" description="暂无消息" :image-size="50" />
       <el-scrollbar v-else max-height="360px">
-        <div
+        <button
           v-for="msg in messages"
           :key="msg.id"
+          type="button"
           class="notification-item"
           @click="handleMessageClick(msg)"
         >
@@ -142,7 +143,7 @@ onUnmounted(() => {
             <div class="notification-item-content">{{ msg.content }}</div>
             <div class="notification-item-time">{{ formatRelativeTime(msg.createTime) }}</div>
           </div>
-        </div>
+        </button>
       </el-scrollbar>
     </div>
   </el-popover>
@@ -183,11 +184,17 @@ onUnmounted(() => {
 }
 
 .notification-item {
+  width: 100%;
   display: flex;
   align-items: flex-start;
   gap: 6px;
   padding: 8px 4px;
+  border: 0;
   border-bottom: 1px solid var(--el-border-color-lighter);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
   cursor: pointer;
 }
 
