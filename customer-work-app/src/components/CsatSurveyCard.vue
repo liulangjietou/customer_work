@@ -99,10 +99,15 @@ watch(
     @close="handleClose"
   >
     <div class="csat-card">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="csat-mark" aria-hidden="true">✓</div>
+      <div class="csat-kicker">SERVICE COMPLETE</div>
       <div class="csat-title">本次服务您还满意吗？</div>
-      <div class="csat-sub">您的评价会帮我们改进服务</div>
+      <div class="csat-sub">只需几秒，您的真实感受会帮助我们持续改进</div>
 
-      <van-rate v-model="score" :size="32" gutter="10" color="#ffd21e" void-icon="star" void-color="#eee" />
+      <div class="rate-shell">
+        <van-rate v-model="score" :size="34" gutter="9" color="#f6b73c" void-icon="star" void-color="#e7ecf3" />
+      </div>
       <div class="csat-score-label">{{ SCORE_LABELS[score] || '请点击星星评分' }}</div>
 
       <!-- 只在低分时追问原因：满意的用户不该被额外打扰，而低分留言才是能拿来改进的东西 -->
@@ -127,43 +132,96 @@ watch(
       >
         提交评价
       </van-button>
+      <div class="privacy-note">评价仅用于服务质量改进</div>
     </div>
   </van-popup>
 </template>
 
 <style scoped>
 .csat-card {
-  padding: 28px 20px 24px;
+  position: relative;
+  padding: 15px 22px calc(24px + env(safe-area-inset-bottom));
   text-align: center;
+  background:
+    radial-gradient(circle at 50% 5%, rgba(24, 119, 242, 0.08), transparent 30%),
+    #fff;
+}
+
+.sheet-handle {
+  width: 42px;
+  height: 4px;
+  margin: 0 auto 18px;
+  border-radius: 999px;
+  background: #dce3ed;
+}
+
+.csat-mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  margin: 0 auto 11px;
+  place-items: center;
+  border-radius: 15px;
+  color: #fff;
+  background: linear-gradient(145deg, #2bd09a, #18a978);
+  font-size: 21px;
+  font-weight: 800;
+  box-shadow: 0 11px 24px rgba(37, 196, 138, 0.23);
+}
+
+.csat-kicker {
+  margin-bottom: 4px;
+  color: #1677ff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.7px;
 }
 
 .csat-title {
-  font-size: 17px;
-  font-weight: 600;
-  color: #323233;
+  font-size: 20px;
+  font-weight: 750;
+  color: #13233a;
 }
 
 .csat-sub {
+  max-width: 270px;
+  margin: 7px auto 18px;
   font-size: 12px;
-  color: #969799;
-  margin-top: 6px;
-  margin-bottom: 20px;
+  color: #718096;
+  line-height: 1.55;
+}
+
+.rate-shell {
+  display: inline-flex;
+  padding: 12px 14px;
+  border: 1px solid rgba(19, 35, 58, 0.06);
+  border-radius: 18px;
+  background: #f8fafc;
 }
 
 .csat-score-label {
   font-size: 13px;
-  color: #646566;
-  margin-top: 12px;
+  color: #45566d;
+  margin-top: 10px;
   min-height: 18px;
 }
 
 .csat-comment {
   margin-top: 16px;
-  background: #f7f8fa;
-  border-radius: 8px;
+  border: 1px solid rgba(19, 35, 58, 0.06);
+  border-radius: 14px;
+  background: #f7f9fc;
 }
 
 .csat-submit {
   margin-top: 20px;
+  min-height: 48px;
+  box-shadow: 0 11px 24px rgba(24, 119, 242, 0.2);
+}
+
+.privacy-note {
+  margin-top: 12px;
+  color: #a1abba;
+  font-size: 10px;
 }
 </style>

@@ -1,43 +1,153 @@
-* {
-  box-sizing: border-box;
+:root {
+  /* Service Pulse 视觉基线：深海蓝承载信息，服务蓝承载交互，状态绿只表达正常/完成。 */
+  --cw-ink: #142033;
+  --cw-ink-soft: #526078;
+  --cw-primary: #316cff;
+  --cw-primary-light: #5f8cff;
+  --cw-primary-dark: #1748bf;
+  --cw-primary-soft: #eaf1ff;
+  --cw-success: #19a995;
+  --cw-success-dark: #137b6e;
+  --cw-success-soft: #e5f8f3;
+  --cw-warning: #d88717;
+  --cw-warning-soft: #fff4df;
+  --cw-danger: #e85d5d;
+  --cw-danger-soft: #fff0f0;
+  --cw-page-bg: #f4f7fb;
+  --cw-card-bg: #ffffff;
+  --cw-line: #e6ebf2;
+  --cw-border-color: var(--cw-line);
+  --cw-text-primary: var(--cw-ink);
+  --cw-text-secondary: var(--cw-ink-soft);
+  --cw-text-muted: #8490a2;
+  --cw-gradient-brand: linear-gradient(135deg, #2257d5 0%, #316cff 58%, #19a995 142%);
+  --cw-gradient-hero: linear-gradient(145deg, #142033 0%, #1d3f87 68%, #316cff 132%);
+  --cw-bubble-user-bg: #eaf1ff;
+  --cw-card-radius: 18px;
+  --cw-card-radius-lg: 24px;
+  --cw-card-radius-sm: 12px;
+  --cw-card-shadow: 0 12px 34px rgba(37, 55, 85, 0.1);
+  --cw-card-shadow-soft: 0 6px 20px rgba(37, 55, 85, 0.07);
+  --cw-shell-width: 480px;
+  --cw-tabbar-height: 72px;
+  --cw-tabbar-space: calc(96px + max(0px, env(safe-area-inset-bottom)));
+  --cw-focus-ring: rgba(49, 108, 255, 0.32);
+  --cw-font-sans: 'HarmonyOS Sans SC', 'MiSans', 'PingFang SC', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --cw-font-data: 'DIN Alternate', 'SFMono-Regular', 'Roboto Mono', 'Menlo', 'Consolas',
+    'PingFang SC', monospace;
+
+  /* Vant 仍负责组件行为，只将其语义 token 对齐到本项目的视觉系统。 */
+  --van-primary-color: var(--cw-primary);
+  --van-success-color: var(--cw-success);
+  --van-warning-color: var(--cw-warning);
+  --van-danger-color: var(--cw-danger);
+  --van-text-color: var(--cw-text-primary);
+  --van-text-color-2: var(--cw-text-secondary);
+  --van-text-color-3: var(--cw-text-muted);
+  --van-active-color: var(--cw-primary-soft);
+  --van-background: var(--cw-page-bg);
+  --van-background-2: var(--cw-card-bg);
+  --van-background-3: var(--cw-card-bg);
+  --van-border-color: var(--cw-border-color);
+  --van-base-font: var(--cw-font-sans);
+  --van-price-font: var(--cw-font-data);
+  --van-radius-md: 8px;
+  --van-radius-lg: 12px;
 }
 
-:root {
-  /* 主题色沿用 Vant 默认蓝（与 --van-primary-color 一致），渐变/背景/卡片等派生变量统一从这里读取，
-     各页面 scoped style 引用 var(--cw-*) 而非散落硬编码色值。 */
-  --cw-primary: #1989fa;
-  --cw-primary-light: #4facfe;
-  --cw-primary-dark: #0b5fd1;
-  --cw-gradient-brand: linear-gradient(135deg, #4facfe 0%, #1989fa 55%, #0b5fd1 100%);
-  --cw-page-bg: #f5f7fa;
-  --cw-card-bg: #ffffff;
-  --cw-card-radius: 12px;
-  --cw-card-shadow: 0 2px 12px rgba(25, 137, 250, 0.08);
-  --cw-border-color: #ebedf0;
-  --cw-text-primary: #323233;
-  --cw-text-secondary: #969799;
-  --cw-danger: #ee0a24;
-  --cw-bubble-user-bg: #d6ebff;
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 html,
 body,
 #app {
+  width: 100%;
   height: 100%;
   margin: 0;
   padding: 0;
 }
 
+html {
+  color: var(--cw-text-primary);
+  background: #e9eef6;
+  font-family: var(--cw-font-sans);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
-  background: var(--cw-page-bg);
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    'Helvetica Neue',
-    Helvetica,
-    'PingFang SC',
-    'Hiragino Sans GB',
-    'Microsoft YaHei',
-    Arial,
-    sans-serif;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 78% 12%, rgba(49, 108, 255, 0.11), transparent 28%),
+    radial-gradient(circle at 18% 83%, rgba(25, 169, 149, 0.09), transparent 24%),
+    #edf2f8;
+  color: var(--cw-text-primary);
+  font-family: var(--cw-font-sans);
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+[role='button'],
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  color: var(--cw-primary);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--cw-focus-ring);
+  outline-offset: 2px;
+}
+
+/* 订单金额、编号、时间等可按需挂载该角色，数字排版保持等宽稳定。 */
+.cw-data,
+[data-cw-data] {
+  font-family: var(--cw-font-data);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+@media (max-width: 480px) {
+  html,
+  body {
+    background: var(--cw-page-bg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

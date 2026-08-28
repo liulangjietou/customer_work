@@ -17,6 +17,7 @@ npm run dev        # 端口 5175；/api 与 /ws 经 vite proxy 转发到 localho
 ## 构建与部署
 
 ```bash
+npm test           # Vitest：认证迁移、头像兜底、请求竞态与页面状态回归
 npm run build      # vue-tsc 类型检查 + vite build，产物 dist/
 ```
 
