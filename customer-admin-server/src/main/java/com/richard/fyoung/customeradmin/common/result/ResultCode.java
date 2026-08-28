@@ -37,8 +37,9 @@ public enum ResultCode {
     SQL_NOT_READONLY(30008, "仅允许只读 SELECT/WITH 查询"),
     SQL_PARAM_INVALID(30009, "SQL 查询参数不合法"),
     CAPTCHA_INVALID(30010, "图形验证码错误或已过期"),
-    EMAIL_CODE_INVALID(30012, "邮箱验证码错误或已过期"),
     PASSWORD_TOO_WEAK(30011, "密码强度不足，请至少包含字母与数字且不少于 8 位"),
+    EMAIL_CODE_INVALID(30012, "邮箱验证码错误"),
+    EMAIL_CODE_REISSUE_REQUIRED(30013, "邮箱验证码已失效，请重新获取"),
 
     // 4xxxx 外部依赖类
     MODEL_TEST_TIMEOUT(40001, "模型连通性测试超时"),

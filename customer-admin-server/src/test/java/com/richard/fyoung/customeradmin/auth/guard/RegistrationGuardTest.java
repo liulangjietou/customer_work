@@ -56,6 +56,13 @@ class RegistrationGuardTest {
         assertDoesNotThrow(() -> guard.admit(IP, null, null, null, null, STRONG_PASSWORD, STRONG_PASSWORD));
     }
 
+    @Test
+    void emailCodeCooldown_shouldExposeTheServerConfigurationToTheLoginPage() {
+        properties.getEmailVerification().setResendCooldownSeconds(37);
+
+        assertEquals(37, guard.emailCodeResendCooldownSeconds());
+    }
+
     /**
      * 对外部署强制图形码、邮箱与邮箱验证码，且不看 {@code admin.registration.*} 的开关。
      *

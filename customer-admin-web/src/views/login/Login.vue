@@ -1,23 +1,37 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
-import { fetchCaptcha, fetchRegisterOptions, login, register, sendRegisterEmailCode, ssoLogin } from '@/api/auth'
+import { fetchRegisterOptions, login, ssoLogin } from '@/api/auth'
 import { fetchLoginCarouselUrls } from '@/api/login-image'
+import FooterCopyright from '@/components/FooterCopyright.vue'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
-import FooterCopyright from '@/components/FooterCopyright.vue'
-import type { RegisterOptionsVO, RegisterRequest } from '@/types/api'
+import { useThemeStore } from '@/store/theme'
+import type { LoginResponse, RegisterOptionsVO } from '@/types/api'
+import { chooseButtonTextColor } from '@/utils/themeContrast'
+import LoginBrandStage from './LoginBrandStage.vue'
+import RegisterPanel from './RegisterPanel.vue'
+import {
+  createLoginSubmission,
+  getLoginModePresentation,
+  shouldShowRegisterEntry,
+  type LoginMode,
+} from './loginPageModel'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const menuStore = useMenuStore()
+const themeStore = useThemeStore()
 
+const authSurfaceRef = ref<HTMLElement>()
 const authPanel = ref<'login' | 'register'>('login')
-
-/** local：账号密码登录（数据库） / sso：OA 域账号登录（LDAP/AD） */
-const loginMode = ref<'local' | 'sso'>('local')
+const loginMode = ref<LoginMode>('local')
+const modePresentation = computed(() => getLoginModePresentation(loginMode.value))
+const localModePresentation = getLoginModePresentation('local')
+const ssoModePresentation = getLoginModePresentation('sso')
+const primaryTextColor = computed(() => chooseButtonTextColor(themeStore.primaryColor))
 
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
@@ -27,235 +41,138 @@ const rules: FormRules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
-const registerFormRef = ref<FormInstance>()
-const registerSubmitting = ref(false)
-const registerForm = reactive<RegisterRequest>({
-  username: '',
-  nickname: '',
-  email: '',
-  password: '',
-  confirmPassword: '',
-  captchaId: '',
-  captcha: '',
-  emailCode: '',
-})
-
-// 本实例是否开放注册、是否要求验证码与邮箱：由后端按部署形态给出，
-// 对外开放实例上这两项是强制的，前端不做本地判断（判断了也会被后端再拦一次）。
+// 注册能力必须由匿名接口成功确认；接口未返回时按关闭处理，避免先展示再被服务端拒绝。
+const registerOptionsLoaded = ref(false)
 const registerOptions = ref<RegisterOptionsVO>({
-  selfServiceEnabled: true,
+  selfServiceEnabled: false,
   captchaRequired: false,
   emailRequired: false,
   emailVerificationRequired: false,
 })
-const captchaImage = ref('')
-const captchaLoading = ref(false)
+const canRegister = computed(() => shouldShowRegisterEntry(
+  loginMode.value,
+  registerOptionsLoaded.value,
+  registerOptions.value.selfServiceEnabled,
+))
 
-// 邮箱验证码：发码后按冷却时间倒计时，避免用户反复点击——每一次点击都是一封真实的邮件
-const emailCodeSending = ref(false)
-const emailCodeCountdown = ref(0)
-let emailCodeTimer: ReturnType<typeof setInterval> | undefined
+// 后台仍可配置多张登录图；接口不可用时用首页同源客服视觉兜底。
+const bgImages = ref<string[]>(['/home-cover.jpg'])
 
-function startEmailCodeCountdown(seconds: number) {
-  emailCodeCountdown.value = seconds
-  clearEmailCodeTimer()
-  emailCodeTimer = setInterval(() => {
-    emailCodeCountdown.value -= 1
-    if (emailCodeCountdown.value <= 0) {
-      clearEmailCodeTimer()
-    }
-  }, 1000)
-}
-
-function clearEmailCodeTimer() {
-  if (emailCodeTimer) {
-    clearInterval(emailCodeTimer)
-    emailCodeTimer = undefined
-  }
-}
-
-// 定时器不随组件销毁自动停止，离开登录页后继续跑会一直持有闭包
-onBeforeUnmount(clearEmailCodeTimer)
-
-async function handleSendEmailCode() {
-  // 只校验邮箱与图形码这两项：整表校验会因为密码还没填而拦下发码
-  const emailValid = await registerFormRef.value?.validateField('email').then(() => true).catch(() => false)
-  if (!emailValid) {
-    return
-  }
-  if (registerOptions.value.captchaRequired && !registerForm.captcha) {
-    ElMessage.warning('请先填写图形验证码')
-    return
-  }
-  emailCodeSending.value = true
-  try {
-    const ttlSeconds = await sendRegisterEmailCode({
-      email: registerForm.email as string,
-      captchaId: registerForm.captchaId,
-      captcha: registerForm.captcha,
-    })
-    ElMessage.success(`验证码已发送，${Math.round(ttlSeconds / 60)} 分钟内有效`)
-    // 冷却按服务端的 60 秒走；这里只是不让用户空点，真正的限制在服务端
-    startEmailCodeCountdown(60)
-  } catch (error) {
-    // 图形码是一次性的，无论因为什么失败都已作废，必须换一张
-    await refreshCaptcha()
-    throw error
-  } finally {
-    emailCodeSending.value = false
-  }
-}
-
-async function refreshCaptcha() {
-  if (!registerOptions.value.captchaRequired) {
-    return
-  }
-  captchaLoading.value = true
-  try {
-    const challenge = await fetchCaptcha()
-    registerForm.captchaId = challenge.captchaId
-    registerForm.captcha = ''
-    captchaImage.value = challenge.image
-  } finally {
-    captchaLoading.value = false
-  }
-}
-const registerRules: FormRules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 32, message: '用户名长度为 3 至 32 位', trigger: 'blur' },
-    { pattern: /^[A-Za-z0-9._-]+$/, message: '仅支持字母、数字、点、下划线和短横线', trigger: 'blur' },
-  ],
-  nickname: [{ max: 64, message: '昵称不能超过 64 位', trigger: 'blur' }],
-  captcha: [
-    {
-      validator: (_rule, value, callback) => {
-        callback(registerOptions.value.captchaRequired && !value ? new Error('请输入图形验证码') : undefined)
-      },
-      trigger: 'blur',
-    },
-  ],
-  emailCode: [
-    {
-      validator: (_rule, value, callback) => {
-        callback(registerOptions.value.emailVerificationRequired && !value
-          ? new Error('请输入邮箱验证码') : undefined)
-      },
-      trigger: 'blur',
-    },
-  ],
-  email: [
-    {
-      validator: (_rule, value, callback) => {
-        if (!value) {
-          callback(registerOptions.value.emailRequired ? new Error('请输入邮箱') : undefined)
-          return
-        }
-        callback(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? undefined : new Error('邮箱格式不正确'))
-      },
-      trigger: 'blur',
-    },
-  ],
-  password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 8, max: 64, message: '密码长度为 8 至 64 位', trigger: 'blur' },
-    {
-      // 与后端 PasswordPolicy 保持同一条规则：够长 + 字母数字混合。
-      // 前端先拦一道只是为了少一次往返，真正的判定在服务端。
-      pattern: /^(?=.*[A-Za-z])(?=.*\d).+$/,
-      message: '密码需同时包含字母与数字',
-      trigger: 'blur',
-    },
-  ],
-  confirmPassword: [
-    { required: true, message: '请再次输入密码', trigger: 'blur' },
-    {
-      validator: (_rule, value, callback) => {
-        if (value !== registerForm.password) {
-          callback(new Error('两次输入的密码不一致'))
-          return
-        }
-        callback()
-      },
-      trigger: 'blur',
-    },
-  ],
-}
-
-// “记住我”只记住用户名 + 是否勾选（不在前端存明文密码）；密码本身交给浏览器自带的密码管理器
-// 记住（表单已加 autocomplete 属性），后端登录态有效期见 applyRememberedUsername 配套的 rememberMe 参数。
 const REMEMBER_KEY_PREFIX = 'admin-remember-username-'
 
-function loadRememberedUsername(mode: 'local' | 'sso') {
+function loadRememberedUsername(mode: LoginMode) {
   const saved = localStorage.getItem(REMEMBER_KEY_PREFIX + mode)
-  if (saved) {
-    form.username = saved
-    form.rememberMe = true
-  } else {
-    form.username = ''
-    form.rememberMe = false
+  form.username = saved || ''
+  form.rememberMe = Boolean(saved)
+}
+
+async function resetAuthScroll() {
+  await nextTick()
+  if (authSurfaceRef.value) {
+    authSurfaceRef.value.scrollTop = 0
+  }
+  const documentScroller = document.scrollingElement
+  if (documentScroller) {
+    documentScroller.scrollTop = 0
   }
 }
 
-function switchMode(mode: 'local' | 'sso') {
+async function switchMode(mode: LoginMode) {
+  if (submitting.value || loginMode.value === mode) {
+    return
+  }
   loginMode.value = mode
   form.password = ''
   loadRememberedUsername(mode)
   formRef.value?.clearValidate()
+  await resetAuthScroll()
+}
+
+async function handleModeKeydown(event: KeyboardEvent) {
+  if (submitting.value) {
+    return
+  }
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+    return
+  }
+  event.preventDefault()
+  const nextMode: LoginMode = event.key === 'ArrowLeft' || event.key === 'Home' ? 'local' : 'sso'
+  await switchMode(nextMode)
+  await nextTick()
+  document.getElementById(`login-mode-${nextMode}`)?.focus()
 }
 
 async function openRegister() {
+  if (submitting.value || !canRegister.value) {
+    return
+  }
   authPanel.value = 'register'
-  registerFormRef.value?.clearValidate()
-  await refreshCaptcha()
+  await resetAuthScroll()
 }
 
-function backToLogin() {
+async function backToLogin(username?: string) {
   authPanel.value = 'login'
   loginMode.value = 'local'
+  form.password = ''
+  if (username) {
+    form.username = username
+    form.rememberMe = false
+  } else {
+    loadRememberedUsername('local')
+  }
   formRef.value?.clearValidate()
+  await resetAuthScroll()
 }
 
-loadRememberedUsername(loginMode.value)
-
-// 登录页轮播背景图：先用 public/ 下的内置默认图兜底，挂载后实时拉取后台
-// "系统管理 › 登录页图片"上传的启用图（免鉴权接口，见后端 LoginImagePublicController）；
-// 拉取失败或列表为空时保持默认图，登录页永远有背景可展示。
-const DEFAULT_BG_IMAGES = ['/A1.jpg', '/A2.jpg', '/A3.jpg']
-const bgImages = ref<string[]>(DEFAULT_BG_IMAGES)
-
-onMounted(async () => {
+async function loadLoginImages() {
   try {
     const urls = await fetchLoginCarouselUrls()
     if (urls.length > 0) {
       bgImages.value = urls
     }
   } catch {
-    // 后端不可用时静默保持默认图，不打扰登录
+    // 后端不可用时静默使用内置图，不干扰身份验证主流程。
   }
+}
+
+async function loadRegisterOptions() {
   try {
     registerOptions.value = await fetchRegisterOptions()
+    registerOptionsLoaded.value = true
   } catch {
-    // 拿不到部署形态时保持默认（开放注册、不强制验证码）：
-    // 真正的强制在服务端，这里只影响表单要不要渲染验证码框
+    registerOptionsLoaded.value = false
   }
-})
+}
 
 async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
+  if (submitting.value) {
     return
   }
   submitting.value = true
   try {
-    const result = loginMode.value === 'local' ? await login(form) : await ssoLogin(form)
-    const rememberKey = REMEMBER_KEY_PREFIX + loginMode.value
-    if (form.rememberMe) {
-      localStorage.setItem(rememberKey, form.username)
+    const valid = await formRef.value?.validate().catch(() => false)
+    if (!valid) {
+      return
+    }
+    // 请求发出后，界面仍可能因脚本触发变化；后续处理必须绑定本次提交身份。
+    const submission = createLoginSubmission(loginMode.value, form)
+    let result: LoginResponse
+    try {
+      result = submission.mode === 'local'
+        ? await login(submission.credentials)
+        : await ssoLogin(submission.credentials)
+    } catch {
+      // 请求层已展示业务或网络错误，组件只负责恢复可提交状态。
+      return
+    }
+    const rememberKey = REMEMBER_KEY_PREFIX + submission.mode
+    if (submission.credentials.rememberMe) {
+      localStorage.setItem(rememberKey, submission.credentials.username)
     } else {
       localStorage.removeItem(rememberKey)
     }
-    auth.applyLoginResult(result, form.username)
+    // 必须应用完整登录结果，保留昵称、强制改密与账号审核状态。
+    auth.applyLoginResult(result, submission.credentials.username)
     if (result.forceChangePassword) {
       ElMessage.warning('首次登录请先修改密码')
       await router.replace({ name: 'ChangePassword' })
@@ -269,410 +186,426 @@ async function handleSubmit() {
   }
 }
 
-async function handleRegister() {
-  const valid = await registerFormRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  registerSubmitting.value = true
-  try {
-    const username = registerForm.username
-    await register(registerForm)
-    ElMessage.success('注册成功，请登录后等待管理员审核')
-    registerFormRef.value?.resetFields()
-    clearEmailCodeTimer()
-    emailCodeCountdown.value = 0
-    backToLogin()
-    form.username = username
-    form.password = ''
-  } catch (error) {
-    // 开了邮箱验证时，图形码是在「获取验证码」那一步用掉的，注册失败与它无关；
-    // 邮箱验证码也不刷新——用户名重复这类失败并不作废它，逼人重新收信只会多发一封邮件。
-    // 没开邮箱验证时，图形码刚刚被这次提交消费掉，必须换一张，
-    // 否则用户改完再提交会拿到一个"验证码错误"的二次失败。
-    if (!registerOptions.value.emailVerificationRequired) {
-      await refreshCaptcha()
-    }
-    throw error
-  } finally {
-    registerSubmitting.value = false
-  }
-}
+loadRememberedUsername(loginMode.value)
+
+onMounted(() => {
+  // 图片与注册能力互不依赖，并行加载，慢图片不会阻塞注册入口判断。
+  void Promise.allSettled([loadLoginImages(), loadRegisterOptions()])
+})
 </script>
 
 <template>
-  <div class="login-page">
-    <div class="bg-carousel">
-      <el-carousel height="100%" :interval="2000" arrow="never" indicator-position="none">
-        <el-carousel-item v-for="img in bgImages" :key="img">
-          <div class="bg-slide" :style="{ backgroundImage: `url(${img})` }" />
-        </el-carousel-item>
-      </el-carousel>
-      <div class="bg-overlay" />
-    </div>
-    <el-card class="login-card">
-      <template #header>
-        <div class="login-title">智能体客服后台管理系统</div>
-      </template>
-      <div class="access-flow" aria-label="账号开通流程">
-        <span>注册账号</span>
-        <i />
-        <span>管理员审核</span>
-        <i />
-        <span>开通菜单</span>
+  <main class="login-page">
+    <LoginBrandStage :images="bgImages" />
+
+    <section ref="authSurfaceRef" class="auth-surface" data-login-scroll aria-label="身份验证">
+      <div class="auth-toolbar">
+        <span class="secure-context"><i aria-hidden="true" /> 安全登录</span>
+        <el-button
+          circle
+          plain
+          :icon="themeStore.isDark ? 'Sunny' : 'Moon'"
+          :aria-label="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
+          :title="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
+          @click="themeStore.toggleDark()"
+        />
       </div>
-      <div v-if="authPanel === 'login'" class="login-tabs">
-        <div
-          class="login-tab"
-          :class="{ active: loginMode === 'local' }"
-          @click="switchMode('local')"
+
+      <div class="auth-content">
+        <section
+          v-if="authPanel === 'login'"
+          id="login-panel"
+          class="auth-panel"
+          role="tabpanel"
+          :aria-labelledby="`login-mode-${loginMode}`"
         >
-          账号密码登录
-        </div>
-        <div
-          class="login-tab"
-          :class="{ active: loginMode === 'sso' }"
-          @click="switchMode('sso')"
-        >
-          OA 登录
-        </div>
-      </div>
-      <el-form
-        v-if="authPanel === 'login'"
-        ref="formRef"
-        :model="form"
-        :rules="rules"
-        @keyup.enter="handleSubmit"
-        @submit.prevent
-      >
-        <el-form-item prop="username">
-          <el-input
-            v-model="form.username"
-            :placeholder="loginMode === 'local' ? '用户名' : 'OA 账号（如 RichardFyoung）'"
-            size="large"
-            autocomplete="username"
-            :prefix-icon="'User'"
-          />
-        </el-form-item>
-        <el-form-item prop="password">
-          <el-input
-            v-model="form.password"
-            type="password"
-            :placeholder="loginMode === 'local' ? '密码' : 'OA 密码'"
-            size="large"
-            show-password
-            autocomplete="current-password"
-            :prefix-icon="'Lock'"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-checkbox v-model="form.rememberMe">记住我（7 天内免登录）</el-checkbox>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" size="large" style="width: 100%" :loading="submitting" @click="handleSubmit">
-            登录
-          </el-button>
-        </el-form-item>
-        <div v-if="loginMode === 'local' && registerOptions.selfServiceEnabled" class="panel-switch">
-          还没有账号？<el-button link type="primary" @click="openRegister">立即注册</el-button>
-        </div>
-      </el-form>
-      <el-form
-        v-else
-        ref="registerFormRef"
-        :model="registerForm"
-        :rules="registerRules"
-        @keyup.enter="handleRegister"
-        @submit.prevent
-      >
-        <div class="register-heading">
-          <strong>注册本地账号</strong>
-          <span>
-            {{
-              registerOptions.emailVerificationRequired
-                ? '需先验证邮箱，注册后可登录查看审核状态，菜单将在管理员分配角色后开通。'
-                : '注册后可登录查看审核状态，菜单将在管理员分配角色后开通。'
-            }}
-          </span>
-        </div>
-        <el-form-item prop="username">
-          <el-input
-            v-model="registerForm.username"
-            placeholder="用户名（3-32 位）"
-            size="large"
-            autocomplete="username"
-            :prefix-icon="'User'"
-          />
-        </el-form-item>
-        <el-form-item prop="nickname">
-          <el-input
-            v-model="registerForm.nickname"
-            placeholder="昵称（选填）"
-            size="large"
-            autocomplete="name"
-            :prefix-icon="'Postcard'"
-          />
-        </el-form-item>
-        <el-form-item prop="email">
-          <el-input
-            v-model="registerForm.email"
-            :placeholder="registerOptions.emailRequired ? '邮箱（接收审核结果）' : '邮箱（选填）'"
-            size="large"
-            autocomplete="email"
-            :prefix-icon="'Message'"
-          />
-        </el-form-item>
-        <el-form-item v-if="registerOptions.captchaRequired" prop="captcha">
-          <div class="captcha-row">
-            <el-input
-              v-model="registerForm.captcha"
-              placeholder="图形验证码"
-              size="large"
-              maxlength="8"
-              autocomplete="off"
-              :prefix-icon="'Key'"
-            />
-            <!-- 点击图片换一张：图形码是一次性的，看不清时不该逼人重填整张表 -->
-            <img
-              v-if="captchaImage"
-              class="captcha-image"
-              :src="captchaImage"
-              alt="点击刷新验证码"
-              title="点击刷新"
-              @click="refreshCaptcha"
-            />
-            <el-button v-else size="large" :loading="captchaLoading" @click="refreshCaptcha">
-              获取
-            </el-button>
-          </div>
-        </el-form-item>
-        <el-form-item v-if="registerOptions.emailVerificationRequired" prop="emailCode">
-          <div class="captcha-row">
-            <el-input
-              v-model="registerForm.emailCode"
-              placeholder="邮箱验证码"
-              size="large"
-              maxlength="8"
-              autocomplete="one-time-code"
-              :prefix-icon="'Message'"
-            />
-            <!-- 倒计时期间禁用：每一次点击都是一封真实的邮件，服务端还有 60 秒冷却与每日总量 -->
-            <el-button
-              class="email-code-button"
-              size="large"
-              :loading="emailCodeSending"
-              :disabled="emailCodeCountdown > 0"
-              @click="handleSendEmailCode"
+          <header class="login-heading">
+            <p class="eyebrow">customer_work · Agent Console</p>
+            <h1>{{ modePresentation.title }}</h1>
+            <p>{{ modePresentation.description }}</p>
+          </header>
+
+          <div class="mode-switch" role="tablist" aria-label="登录方式">
+            <button
+              id="login-mode-local"
+              type="button"
+              role="tab"
+              :class="{ active: loginMode === 'local' }"
+              :aria-selected="loginMode === 'local'"
+              :disabled="submitting"
+              aria-controls="login-panel"
+              :tabindex="loginMode === 'local' ? 0 : -1"
+              @click="switchMode('local')"
+              @keydown="handleModeKeydown"
             >
-              {{ emailCodeCountdown > 0 ? `${emailCodeCountdown} 秒后重发` : '获取验证码' }}
-            </el-button>
+              {{ localModePresentation.label }}
+            </button>
+            <button
+              id="login-mode-sso"
+              type="button"
+              role="tab"
+              :class="{ active: loginMode === 'sso' }"
+              :aria-selected="loginMode === 'sso'"
+              :disabled="submitting"
+              aria-controls="login-panel"
+              :tabindex="loginMode === 'sso' ? 0 : -1"
+              @click="switchMode('sso')"
+              @keydown="handleModeKeydown"
+            >
+              {{ ssoModePresentation.label }}
+            </button>
           </div>
-        </el-form-item>
-        <el-form-item prop="password">
-          <el-input
-            v-model="registerForm.password"
-            type="password"
-            placeholder="密码（至少 8 位，含字母与数字）"
-            size="large"
-            show-password
-            autocomplete="new-password"
-            :prefix-icon="'Lock'"
-          />
-        </el-form-item>
-        <el-form-item prop="confirmPassword">
-          <el-input
-            v-model="registerForm.confirmPassword"
-            type="password"
-            placeholder="再次输入密码"
-            size="large"
-            show-password
-            autocomplete="new-password"
-            :prefix-icon="'Lock'"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-button
-            type="primary"
-            size="large"
-            style="width: 100%"
-            :loading="registerSubmitting"
-            @click="handleRegister"
-          >
-            提交注册
-          </el-button>
-        </el-form-item>
-        <div class="panel-switch">
-          已有账号？<el-button link type="primary" @click="backToLogin">返回登录</el-button>
-        </div>
-      </el-form>
-    </el-card>
-    <FooterCopyright dark />
-  </div>
+
+          <el-form ref="formRef" class="login-form" :model="form" :rules="rules" @submit.prevent="handleSubmit">
+            <label class="field-label" for="login-username">{{ modePresentation.usernameLabel }}</label>
+            <el-form-item prop="username">
+              <el-input
+                id="login-username"
+                v-model="form.username"
+                size="large"
+                autocomplete="username"
+                :placeholder="modePresentation.usernamePlaceholder"
+                :prefix-icon="'User'"
+                :disabled="submitting"
+              />
+            </el-form-item>
+
+            <label class="field-label" for="login-password">{{ modePresentation.passwordLabel }}</label>
+            <el-form-item prop="password">
+              <el-input
+                id="login-password"
+                v-model="form.password"
+                type="password"
+                size="large"
+                show-password
+                autocomplete="current-password"
+                :placeholder="modePresentation.passwordPlaceholder"
+                :prefix-icon="'Lock'"
+                :disabled="submitting"
+              />
+            </el-form-item>
+
+            <div class="remember-row">
+              <el-checkbox v-model="form.rememberMe" :disabled="submitting">保持登录</el-checkbox>
+              <span>延长登录状态；本机仅保存用户名</span>
+            </div>
+
+            <el-button
+              native-type="submit"
+              type="primary"
+              size="large"
+              class="primary-action"
+              :style="{ '--login-primary-text': primaryTextColor }"
+              :loading="submitting"
+            >
+              {{ loginMode === 'local' ? '进入运营台' : '使用 OA 账号登录' }}
+            </el-button>
+          </el-form>
+
+          <p v-if="loginMode === 'sso'" class="mode-note">
+            OA 身份由企业目录校验，首次登录会关联后台身份。
+          </p>
+
+          <div v-if="canRegister" class="register-entry">
+            <span>还没有本地账号？</span>
+            <el-button link type="primary" :disabled="submitting" @click="openRegister">创建账号</el-button>
+            <small>注册后由管理员审核并分配菜单权限</small>
+          </div>
+        </section>
+
+        <RegisterPanel
+          v-else
+          class="auth-panel"
+          :options="registerOptions"
+          :primary-text-color="primaryTextColor"
+          @back="backToLogin()"
+          @complete="backToLogin"
+          @request-scroll-top="resetAuthScroll"
+        />
+      </div>
+
+      <FooterCopyright />
+    </section>
+  </main>
 </template>
 
 <style scoped>
-.captcha-row {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-  align-items: center;
-}
-
-.email-code-button {
-  flex-shrink: 0;
-  min-width: 108px;
-}
-
-.captcha-image {
-  height: 40px;
-  width: 120px;
-  border-radius: 4px;
-  cursor: pointer;
-  flex-shrink: 0;
-  border: 1px solid var(--el-border-color);
-}
-
 .login-page {
-  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 560px;
+  display: grid;
+  grid-template-columns: minmax(0, 58fr) minmax(500px, 42fr);
+  overflow: hidden;
+  background: var(--el-bg-color-page);
+}
+
+.auth-surface {
+  min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at 100% 0%, var(--el-color-primary-light-9) 0%, transparent 31%),
+    var(--el-bg-color);
+  color: var(--el-text-color-primary);
+  scrollbar-gutter: stable;
+}
+
+.auth-toolbar {
+  min-height: var(--cw-topbar-height, 64px);
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  box-sizing: border-box;
+  padding: 12px clamp(24px, 3vw, 42px) 0;
+}
+
+.secure-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.secure-context i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--el-color-success);
+  box-shadow: 0 0 0 4px var(--el-color-success-light-9);
+}
+
+.auth-content {
+  width: 100%;
+  min-height: 0;
+  flex: 1 0 auto;
+  display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  box-sizing: border-box;
+  padding: 26px clamp(34px, 4.2vw, 64px) 30px;
 }
 
-/* 背景轮播层：铺满整页，垫在登录卡片和页脚之下。深灰渐变作为兜底——背景图加载失败也不会白屏。
-   inset:0 只是撑出了"视觉上"的高度，CSS 百分比高度解析认的是父元素显式声明的 height 属性
-   （不认 inset 撑出来的隐式高度）——不显式补一个 height:100%，el-carousel 的 height="100%"
-   会算成 0，导致轮播完全不可见（只剩兜底渐变）。 */
-.bg-carousel {
-  position: absolute;
-  inset: 0;
-  height: 100%;
+.auth-panel {
   width: 100%;
-  z-index: 0;
-  background: linear-gradient(135deg, #1f2937, #4b5563);
+  max-width: 440px;
+  margin-block: auto;
 }
 
-/* el-carousel 组件本身只把 height="100%" 这个 prop 透传给 .el-carousel__container，根节点
-   .el-carousel 自己不带任何高度样式——即便父级 .bg-carousel 有了显式高度，根节点 auto 高度
-   在只有一个百分比高度子节点的情况下仍会被解析为 0（子节点撑不起 auto 高度的父节点），
-   容器和 .el-carousel__item 的 100% 高度就跟着全部塌成 0。显式补上根节点高度打破这层循环。 */
-.bg-carousel :deep(.el-carousel) {
-  height: 100%;
+.login-heading {
+  margin-bottom: 26px;
 }
 
-/* cover 铺满整屏不留空，与屏幕宽高比不一致的部分会被裁切（竖版图在横屏上会切掉上下）。
-   不做 Ken Burns 缩放动画：背景层是先光栅化再按 transform 拉伸，慢速放大必然发虚。 */
-.bg-slide {
-  width: 100%;
-  height: 100%;
-  background-size: cover;
-  background-position: center;
-}
-
-/* 深色渐变遮罩：保证登录卡片和页脚文字在任意风景图上都有足够对比度可读 */
-.bg-overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.55) 0%, rgba(15, 23, 42, 0.35) 50%, rgba(15, 23, 42, 0.65) 100%);
-}
-
-.login-card {
-  position: relative;
-  z-index: 1;
-  width: 390px;
-  margin-bottom: auto;
-  margin-top: auto;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(6px);
-}
-
-/* 暗色模式下毛玻璃卡片跟随变深，与内部表单控件的暗色保持一致 */
-html.dark .login-card {
-  background: rgba(20, 20, 20, 0.88);
-}
-
-.login-title {
-  text-align: center;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.access-flow {
-  display: grid;
-  grid-template-columns: auto 1fr auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-  color: var(--el-text-color-secondary);
+.eyebrow {
+  margin: 0 0 9px;
+  color: var(--el-color-primary);
   font-size: 12px;
-  white-space: nowrap;
+  font-weight: 700;
+  letter-spacing: 0.08em;
 }
 
-.access-flow i {
-  height: 1px;
-  background: var(--el-border-color);
+.login-heading h1 {
+  margin: 0;
+  color: var(--el-text-color-primary);
+  font-size: clamp(30px, 2.5vw, 38px);
+  line-height: 1.2;
+  letter-spacing: -0.03em;
 }
 
-.login-tabs {
-  display: flex;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--el-border-color);
-}
-
-.login-tab {
-  flex: 1;
-  text-align: center;
-  padding: 8px 0;
-  cursor: pointer;
+.login-heading > p:last-child {
+  margin: 10px 0 0;
   color: var(--el-text-color-secondary);
   font-size: 14px;
-  border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-}
-
-.login-tab.active {
-  color: var(--el-color-primary);
-  border-bottom-color: var(--el-color-primary);
-  font-weight: 600;
-}
-
-.register-heading {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 2px 0 16px;
-}
-
-.register-heading strong {
-  color: var(--el-text-color-primary);
-  font-size: 16px;
-}
-
-.register-heading span {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
   line-height: 1.6;
 }
 
-.panel-switch {
-  margin-top: -4px;
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 24px;
+  padding: 4px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 11px;
+  background: var(--el-fill-color-extra-light);
+}
+
+.mode-switch button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background-color 160ms ease-out, color 160ms ease-out, box-shadow 160ms ease-out;
+}
+
+.mode-switch button.active {
+  background: var(--el-bg-color);
+  color: var(--el-color-primary);
+  box-shadow: var(--cw-card-shadow);
+}
+
+.mode-switch button:disabled {
+  cursor: wait;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.login-form :deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
+.login-form :deep(.el-input__wrapper) {
+  min-height: 46px;
+}
+
+.remember-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: -2px 0 20px;
+}
+
+.remember-row span {
+  color: var(--el-text-color-placeholder);
+  font-size: 11px;
+}
+
+.auth-panel :deep(.primary-action) {
+  width: 100%;
+  min-height: 46px;
+  --el-button-text-color: var(--login-primary-text);
+  --el-button-hover-text-color: var(--login-primary-text);
+  --el-button-active-text-color: var(--login-primary-text);
+}
+
+.mode-note {
+  margin: 14px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.6;
   text-align: center;
+}
+
+.register-entry {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: center;
+  align-items: center;
+  column-gap: 4px;
+  margin-top: 21px;
   color: var(--el-text-color-secondary);
   font-size: 13px;
 }
 
-@media (max-width: 480px) {
-  .login-card {
-    width: calc(100% - 32px);
+.register-entry small {
+  grid-column: 1 / -1;
+  margin-top: 3px;
+  color: var(--el-text-color-placeholder);
+  font-size: 11px;
+  text-align: center;
+}
+
+@media (max-width: 1200px) and (min-width: 1024px) {
+  .login-page {
+    grid-template-columns: minmax(0, 54fr) minmax(480px, 46fr);
+  }
+
+  .auth-content {
+    padding-inline: 30px;
   }
 }
 
-/* FooterCopyright 是子组件，scoped 样式默认不穿透，显式提到背景遮罩之上 */
-.login-page :deep(.footer-copyright) {
-  position: relative;
-  z-index: 1;
+@media (min-width: 900px) and (max-height: 720px) {
+  .auth-toolbar {
+    min-height: 52px;
+  }
+
+  .auth-content {
+    padding-block: 16px 18px;
+  }
+
+  .login-heading {
+    margin-bottom: 18px;
+  }
+
+  .mode-switch {
+    margin-bottom: 18px;
+  }
+}
+
+@media (max-width: 899px) {
+  .login-page {
+    height: auto;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .auth-surface {
+    height: auto;
+    min-height: calc(100svh - 210px);
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+
+  .auth-toolbar {
+    min-height: 54px;
+    padding: 10px 24px 0;
+  }
+
+  .auth-content {
+    min-height: auto;
+    align-items: flex-start;
+    padding: 18px 28px 34px;
+  }
+
+  .auth-panel {
+    margin-block: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .secure-context {
+    display: none;
+  }
+
+  .auth-toolbar {
+    min-height: 48px;
+    padding-inline: 20px;
+  }
+
+  .auth-content {
+    padding: 14px 20px 30px;
+  }
+
+  .login-heading {
+    margin-bottom: 20px;
+  }
+
+  .remember-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
 }
 </style>

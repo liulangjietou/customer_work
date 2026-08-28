@@ -71,7 +71,7 @@ class RegistrationEmailVerificationFlowTest {
             STRONG_PASSWORD, STRONG_PASSWORD));
     }
 
-    /** 没有邮箱验证码就注册不了——这正是"填了别人的邮箱"这条路被堵死的地方。 */
+    /** 空输入属于可修正的表单错误，不应误导客户端认为必须重新发码。 */
     @Test
     void admit_shouldRejectWithoutEmailCode() {
         BizException error = assertThrows(BizException.class,
@@ -80,7 +80,7 @@ class RegistrationEmailVerificationFlowTest {
         assertEquals(ResultCode.EMAIL_CODE_INVALID, error.getResultCode());
     }
 
-    /** 一个邮箱收到的码不能拿去注册另一个邮箱。 */
+    /** 目标邮箱没有签发记录时，客户端必须引导重新获取，而不是继续重试当前码。 */
     @Test
     void admit_shouldRejectCodeIssuedForAnotherAddress() {
         guard.sendEmailCode(EMAIL, null, null, IP);
@@ -90,7 +90,43 @@ class RegistrationEmailVerificationFlowTest {
             () -> guard.admit(IP, null, null, "someone-else@example.com", code,
                 STRONG_PASSWORD, STRONG_PASSWORD));
 
-        assertEquals(ResultCode.EMAIL_CODE_INVALID, error.getResultCode());
+        assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
+    }
+
+    /** 普通输错仍可继续尝试当前验证码，不应要求用户重复收信。 */
+    @Test
+    void admit_shouldKeepCurrentCodeRetryableAfterOrdinaryMismatch() {
+        guard.sendEmailCode(EMAIL, null, null, IP);
+        String code = emailStore.get(EMAIL).code();
+
+        BizException mismatch = assertThrows(BizException.class,
+            () -> guard.admit(IP, null, null, EMAIL, wrongCodeFor(code),
+                STRONG_PASSWORD, STRONG_PASSWORD));
+
+        assertEquals(ResultCode.EMAIL_CODE_INVALID, mismatch.getResultCode());
+        assertDoesNotThrow(() -> guard.admit(IP, null, null, EMAIL, code,
+            STRONG_PASSWORD, STRONG_PASSWORD));
+    }
+
+    /** 尝试次数耗尽后当前码已销毁，客户端必须切换到重新发码流程。 */
+    @Test
+    void admit_shouldRequireReissueAfterAttemptsExhausted() {
+        guard.sendEmailCode(EMAIL, null, null, IP);
+        String code = emailStore.get(EMAIL).code();
+        String wrongCode = wrongCodeFor(code);
+        int maxAttempts = properties.getEmailVerification().getMaxAttempts();
+
+        for (int i = 0; i < maxAttempts - 1; i++) {
+            BizException retryable = assertThrows(BizException.class,
+                () -> guard.admit(IP, null, null, EMAIL, wrongCode,
+                    STRONG_PASSWORD, STRONG_PASSWORD));
+            assertEquals(ResultCode.EMAIL_CODE_INVALID, retryable.getResultCode());
+        }
+        BizException exhausted = assertThrows(BizException.class,
+            () -> guard.admit(IP, null, null, EMAIL, wrongCode,
+                STRONG_PASSWORD, STRONG_PASSWORD));
+
+        assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, exhausted.getResultCode());
     }
 
     /**
@@ -211,5 +247,9 @@ class RegistrationEmailVerificationFlowTest {
         }
         captchaStore.save(challenge.captchaId(), answer, properties.getCaptcha().getTtlSeconds());
         return answer.toUpperCase(Locale.ROOT);
+    }
+
+    private String wrongCodeFor(String code) {
+        return "000000".equals(code) ? "111111" : "000000";
     }
 }

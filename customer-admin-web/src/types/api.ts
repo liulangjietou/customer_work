@@ -92,6 +92,8 @@ export interface RegisterOptionsVO {
   emailRequired: boolean
   /** 是否需要邮箱验证码 */
   emailVerificationRequired: boolean
+  /** 服务端配置的同邮箱发码冷却秒数；可选以兼容滚动升级期间的旧服务端。 */
+  emailCodeCooldownSeconds?: number
 }
 
 /** 一次验证码挑战；image 是 PNG 的 data URI，直接塞进 <img src> */

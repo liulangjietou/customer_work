@@ -101,7 +101,7 @@ public class EmailVerificationService {
         }
         EmailVerificationCode stored = store.get(email);
         if (stored == null) {
-            throw new BizException(ResultCode.EMAIL_CODE_INVALID, "验证码已过期，请重新获取");
+            throw new BizException(ResultCode.EMAIL_CODE_REISSUE_REQUIRED);
         }
         if (!stored.code().equals(input.trim())) {
             int maxAttempts = properties.getEmailVerification().getMaxAttempts();
@@ -109,7 +109,7 @@ public class EmailVerificationService {
             if (failed.attempts() >= maxAttempts) {
                 store.invalidate(email);
                 log.info("email verification code invalidated after {} failed attempts", maxAttempts);
-                throw new BizException(ResultCode.EMAIL_CODE_INVALID, "验证码错误次数过多，请重新获取");
+                throw new BizException(ResultCode.EMAIL_CODE_REISSUE_REQUIRED);
             }
             store.save(email, failed);
             throw new BizException(ResultCode.EMAIL_CODE_INVALID);

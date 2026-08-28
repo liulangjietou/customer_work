@@ -96,7 +96,7 @@ class EmailVerificationServiceTest {
         // 同一份码不能注册两个账号
         assertNull(store.get(EMAIL));
         BizException replay = assertThrows(BizException.class, () -> service.verify(EMAIL, code));
-        assertEquals(ResultCode.EMAIL_CODE_INVALID, replay.getResultCode());
+        assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, replay.getResultCode());
     }
 
     /**
@@ -109,10 +109,14 @@ class EmailVerificationServiceTest {
     void verify_shouldAllowRetriesUntilMaxAttemptsThenInvalidate() {
         service.sendCode(EMAIL, IP);
         String code = store.get(EMAIL).code();
+        String wrongCode = wrongCodeFor(code);
         int maxAttempts = properties.getEmailVerification().getMaxAttempts();
 
         for (int i = 0; i < maxAttempts - 1; i++) {
-            assertThrows(BizException.class, () -> service.verify(EMAIL, "000000"));
+            BizException retryable = assertThrows(BizException.class,
+                () -> service.verify(EMAIL, wrongCode));
+            assertEquals(ResultCode.EMAIL_CODE_INVALID, retryable.getResultCode(),
+                "未耗尽尝试次数时客户端应允许继续输入当前验证码");
             assertNotNull(store.get(EMAIL), "未达上限前验证码应当仍然有效");
         }
         // 中途输对仍然算数
@@ -123,24 +127,54 @@ class EmailVerificationServiceTest {
     void verify_shouldInvalidateCodeAfterMaxFailedAttempts() {
         service.sendCode(EMAIL, IP);
         String code = store.get(EMAIL).code();
+        String wrongCode = wrongCodeFor(code);
+        int maxAttempts = properties.getEmailVerification().getMaxAttempts();
 
-        for (int i = 0; i < properties.getEmailVerification().getMaxAttempts(); i++) {
-            assertThrows(BizException.class, () -> service.verify(EMAIL, "000000"));
+        for (int i = 0; i < maxAttempts - 1; i++) {
+            BizException retryable = assertThrows(BizException.class,
+                () -> service.verify(EMAIL, wrongCode));
+            assertEquals(ResultCode.EMAIL_CODE_INVALID, retryable.getResultCode());
         }
+        BizException exhausted = assertThrows(BizException.class,
+            () -> service.verify(EMAIL, wrongCode));
 
+        assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, exhausted.getResultCode(),
+            "次数耗尽后客户端必须引导重新获取验证码");
         assertNull(store.get(EMAIL), "失败次数耗尽后验证码必须作废");
         BizException error = assertThrows(BizException.class, () -> service.verify(EMAIL, code));
-        assertEquals(ResultCode.EMAIL_CODE_INVALID, error.getResultCode());
+        assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
+    }
+
+    @Test
+    void verify_shouldRequireReissueWhenCodeDoesNotExist() {
+        BizException error = assertThrows(BizException.class,
+            () -> service.verify(EMAIL, "123456"));
+
+        assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
+    }
+
+    @Test
+    void verify_shouldRequireReissueWhenCodeExpired() {
+        store.save(EMAIL, new EmailVerificationCode("123456", 0, System.currentTimeMillis() - 1));
+
+        BizException error = assertThrows(BizException.class,
+            () -> service.verify(EMAIL, "123456"));
+
+        assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
+        assertNull(store.get(EMAIL));
     }
 
     /** 失败重写不得续期，否则不断试错就能让验证码永不过期，正好方便暴力猜码。 */
     @Test
     void verify_shouldKeepOriginalExpiryWhenRecordingFailure() {
         service.sendCode(EMAIL, IP);
+        String code = store.get(EMAIL).code();
         long expireAtBefore = store.get(EMAIL).expireAtMs();
 
-        assertThrows(BizException.class, () -> service.verify(EMAIL, "000000"));
+        BizException error = assertThrows(BizException.class,
+            () -> service.verify(EMAIL, wrongCodeFor(code)));
 
+        assertEquals(ResultCode.EMAIL_CODE_INVALID, error.getResultCode());
         assertEquals(expireAtBefore, store.get(EMAIL).expireAtMs());
     }
 
@@ -230,5 +264,9 @@ class EmailVerificationServiceTest {
     void normalize_shouldLowercaseAndTrim() {
         assertEquals("richard@example.com", EmailVerificationService.normalize("  Richard@Example.COM "));
         assertNull(EmailVerificationService.normalize(null));
+    }
+
+    private String wrongCodeFor(String code) {
+        return "000000".equals(code) ? "111111" : "000000";
     }
 }

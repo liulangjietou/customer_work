@@ -161,13 +161,24 @@ jobs:
         working-directory: ${{ matrix.project }}
         run: npm ci
 
-      - name: Run frontend unit tests
+      - name: Run frontend tests
         working-directory: ${{ matrix.project }}
         run: npm test
 
       - name: Type-check and build
         working-directory: ${{ matrix.project }}
         run: npm run build
+
+      - name: Upload frontend test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.project }}-test-results
+          path: |
+            ${{ matrix.project }}/test-results
+            ${{ matrix.project }}/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
 
   deployment-smoke:
     runs-on: ubuntu-latest
