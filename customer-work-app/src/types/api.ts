@@ -41,6 +41,66 @@ export function isTicketEnded(status: TicketStatus): boolean {
   return ENDED_TICKET_STATUSES.has(status)
 }
 
+const TICKET_CATEGORY_TEXT: Readonly<Record<string, string>> = {
+  CONSULT: '咨询',
+  ORDER: '订单',
+  AFTER_SALE: '售后',
+  COMPLAINT: '投诉',
+  OTHER: '其他',
+}
+
+const TICKET_PRIORITY_TEXT: Readonly<Record<string, string>> = {
+  LOW: '低',
+  NORMAL: '普通',
+  HIGH: '高',
+  URGENT: '紧急',
+}
+
+const TICKET_EVENT_TYPE_TEXT: Readonly<Record<string, string>> = {
+  CREATE: '创建工单',
+  REQUEST_HANDOFF: '申请转人工',
+  CANCEL_HANDOFF: '撤销转人工',
+  CLAIM: '客服接单',
+  HOLD: '挂起处理',
+  RESUME: '恢复处理',
+  TRANSFER: '转派工单',
+  MARK_RESOLVED: '处理完成',
+  CONFIRM: '确认解决',
+  REJECT: '反馈未解决',
+  CLOSE: '关闭工单',
+  FORCE_CLOSE: '结束工单',
+  REOPEN: '重新打开',
+  PRIORITY_CHANGE: '调整优先级',
+  CATEGORY_CHANGE: '调整分类',
+  HANDOFF_RESOLVE: '人工服务完成',
+  ROUTING_SUGGESTION: '更新路由建议',
+  HANDOFF_MIGRATED: '迁移历史记录',
+}
+
+const TICKET_ACTOR_TYPE_TEXT: Readonly<Record<string, string>> = {
+  USER: '用户',
+  AGENT: '客服',
+  BOT: '智能助手',
+  SYSTEM: '系统',
+}
+
+/** 显示层使用中文语义；遇到服务端未来新增值时保留原值，避免把真实数据误写成“未知”。 */
+export function ticketCategoryText(category: string): string {
+  return TICKET_CATEGORY_TEXT[category] || category
+}
+
+export function ticketPriorityText(priority: string): string {
+  return TICKET_PRIORITY_TEXT[priority] || priority
+}
+
+export function ticketEventTypeText(eventType: string): string {
+  return TICKET_EVENT_TYPE_TEXT[eventType] || eventType
+}
+
+export function ticketActorTypeText(actorType: string): string {
+  return TICKET_ACTOR_TYPE_TEXT[actorType] || actorType
+}
+
 /** 消息发送者类型 */
 export type SenderType = 'USER' | 'BOT' | 'AGENT' | 'SYSTEM'
 

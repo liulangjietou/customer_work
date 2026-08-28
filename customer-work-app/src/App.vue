@@ -8,12 +8,23 @@
 
 <style scoped>
 .mobile-shell {
-  max-width: 480px;
+  position: relative;
+  width: 100%;
+  max-width: var(--cw-shell-width);
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0 auto;
-  background: var(--cw-page-bg);
-  box-shadow: 0 0 12px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
+  isolation: isolate;
+  overflow-x: hidden;
+  background: var(--cw-page-bg);
+  box-shadow: 0 28px 76px rgba(31, 48, 78, 0.2);
+}
+
+@media (max-width: 480px) {
+  .mobile-shell {
+    box-shadow: none;
+  }
 }
 </style>

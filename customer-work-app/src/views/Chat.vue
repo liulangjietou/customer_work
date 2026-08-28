@@ -43,6 +43,7 @@ const inputContent = ref('')
 const wsConnected = ref(false)
 const wsReconnecting = ref(false)
 const initializing = ref(true)
+const initializationError = ref('')
 
 // 机器人流式回复：chat_chunk 增量拼接到这里做打字机效果，chat_done 定稿后清空并落入 messages
 const streamingContent = ref('')
@@ -132,6 +133,27 @@ const canHandoff = computed(() => {
 
 // 会话已结束（CLOSED/RESOLVED）：历史消息只读展示，输入区替换为"重新开始对话"
 const ended = computed(() => (ticket.value ? isTicketEnded(ticket.value.status) : false))
+
+const statusHint = computed(() => {
+  switch (ticket.value?.status) {
+    case 'AI_SERVING':
+      return '智能助手正在为您服务'
+    case 'WAITING_AGENT':
+      return '已进入人工队列，请稍候'
+    case 'PROCESSING':
+      return '人工客服已接入当前会话'
+    case 'ON_HOLD':
+      return '问题处理中，消息会继续保留'
+    case 'WAITING_CONFIRM':
+      return '处理结果等待您的确认'
+    case 'RESOLVED':
+      return '本次服务已解决'
+    case 'CLOSED':
+      return '本次会话已关闭'
+    default:
+      return '正在准备服务会话'
+  }
+})
 
 // 顶栏会话管理 action-sheet
 const sessionMenuVisible = ref(false)
@@ -636,12 +658,20 @@ async function onCloseSession() {
   }
 }
 
-onMounted(async () => {
+async function initializeChat() {
+  initializing.value = true
+  initializationError.value = ''
   try {
     await initSession()
+  } catch {
+    initializationError.value = '会话暂时加载失败，请稍后重试'
   } finally {
     initializing.value = false
   }
+}
+
+onMounted(async () => {
+  await initializeChat()
   // 带 orderId 进入（订单详情跳转）：预填咨询文案，仅预填不自动发送
   const orderId = route.query.orderId
   if (typeof orderId === 'string' && orderId) {
@@ -659,113 +689,170 @@ onUnmounted(() => {
 
 <template>
   <div class="chat-page">
-    <van-nav-bar title="智能客服" left-arrow @click-left="router.back()">
+    <van-nav-bar title="智能客服" left-arrow safe-area-inset-top @click-left="router.back()">
       <template #right>
-        <van-icon name="ellipsis" size="20" @click="openSessionMenu" />
+        <button class="nav-action" type="button" aria-label="会话管理" @click="openSessionMenu">
+          <van-icon name="ellipsis" size="22" />
+        </button>
       </template>
     </van-nav-bar>
 
-    <div class="status-bar">
-      <van-tag v-if="ticket" :type="TICKET_STATUS_TAG_TYPE[ticket.status]" size="medium">
-        {{ TICKET_STATUS_TEXT[ticket.status] }}
-      </van-tag>
-      <van-button size="small" round plain type="primary" :disabled="!canHandoff" :loading="acting" @click="onHandoff">
+    <div class="status-card">
+      <div class="status-copy">
+        <span class="status-pulse" :class="{ offline: !wsConnected }" aria-hidden="true"></span>
+        <div>
+          <div class="status-title">
+            {{ ticket ? TICKET_STATUS_TEXT[ticket.status] : '正在连接' }}
+            <van-tag v-if="ticket" :type="TICKET_STATUS_TAG_TYPE[ticket.status]" plain size="medium">
+              {{ wsConnected ? '在线' : '连接中' }}
+            </van-tag>
+          </div>
+          <p>{{ statusHint }}</p>
+        </div>
+      </div>
+      <van-button
+        class="handoff-button"
+        size="small"
+        round
+        plain
+        type="primary"
+        :disabled="!canHandoff"
+        :loading="acting"
+        @click="onHandoff"
+      >
         转人工
       </van-button>
     </div>
 
-    <div v-if="wsReconnecting" class="reconnect-tip">连接已断开，正在重连...</div>
+    <div v-if="wsReconnecting" class="reconnect-tip" role="status">
+      <van-loading size="13" />
+      连接已断开，正在重连…
+    </div>
 
     <div ref="scrollBox" class="message-area">
-      <van-loading v-if="initializing" class="loading" vertical>加载中...</van-loading>
+      <div v-if="initializing" class="state-panel" role="status">
+        <van-loading color="var(--cw-primary, #1677ff)" vertical>正在加载会话…</van-loading>
+      </div>
+      <div v-else-if="initializationError" class="state-panel state-error">
+        <div class="state-symbol" aria-hidden="true">!</div>
+        <strong>会话没有加载成功</strong>
+        <p>{{ initializationError }}</p>
+        <van-button round type="primary" size="small" @click="initializeChat">重新加载</van-button>
+      </div>
       <template v-else>
-        <div v-for="message in messages" :key="message.messageId" class="message-row" :class="`row-${message.senderType}`">
-          <div v-if="message.senderType === 'SYSTEM'" class="system-line">{{ message.content }}</div>
-          <div v-else class="bubble-wrap">
-            <div v-if="message.senderType === 'AGENT'" class="badge">人工客服</div>
-            <div v-else-if="message.senderType === 'BOT'" class="badge">智能助手</div>
-            <div class="bubble">{{ message.content }}</div>
-            <div v-if="message.senderType === 'BOT'" class="feedback-actions">
-              <van-icon
-                :name="feedbackByMessage[message.messageId] === 'UP' ? 'good-job' : 'good-job-o'"
-                :class="{ active: feedbackByMessage[message.messageId] === 'UP' }"
-                @click="onFeedback(message, 'UP')"
-              />
-              <van-icon
-                :name="feedbackByMessage[message.messageId] === 'DOWN' ? 'good-job' : 'good-job-o'"
-                class="thumb-down"
-                :class="{ active: feedbackByMessage[message.messageId] === 'DOWN' }"
-                @click="onFeedback(message, 'DOWN')"
-              />
-            </div>
+        <div v-if="messages.length === 0" class="welcome-card">
+          <div class="welcome-mark">AI</div>
+          <div>
+            <strong>您好，我是智能客服</strong>
+            <p>请描述您遇到的问题，我会结合服务记录为您提供帮助。</p>
           </div>
         </div>
+        <div
+          v-for="message in messages"
+          :key="message.messageId"
+          class="message-row"
+          :class="`row-${message.senderType}`"
+        >
+          <div v-if="message.senderType === 'SYSTEM'" class="system-line">{{ message.content }}</div>
+          <template v-else>
+            <div class="sender-avatar" aria-hidden="true">
+              {{ message.senderType === 'BOT' ? 'AI' : message.senderType === 'AGENT' ? '客' : '我' }}
+            </div>
+            <div class="bubble-wrap">
+              <div class="badge">
+                {{ message.senderType === 'AGENT' ? '人工客服' : message.senderType === 'BOT' ? '智能助手' : '我' }}
+              </div>
+              <div class="bubble">{{ message.content }}</div>
+              <div v-if="message.senderType === 'BOT'" class="feedback-actions" aria-label="评价这条回复">
+                <button
+                  type="button"
+                  aria-label="回复有帮助"
+                  :aria-pressed="feedbackByMessage[message.messageId] === 'UP'"
+                  :class="{ active: feedbackByMessage[message.messageId] === 'UP' }"
+                  @click="onFeedback(message, 'UP')"
+                >
+                  <van-icon :name="feedbackByMessage[message.messageId] === 'UP' ? 'good-job' : 'good-job-o'" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="回复没有帮助"
+                  :aria-pressed="feedbackByMessage[message.messageId] === 'DOWN'"
+                  class="thumb-down"
+                  :class="{ active: feedbackByMessage[message.messageId] === 'DOWN' }"
+                  @click="onFeedback(message, 'DOWN')"
+                >
+                  <van-icon :name="feedbackByMessage[message.messageId] === 'DOWN' ? 'good-job' : 'good-job-o'" />
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
         <div v-if="streamingActive" class="message-row row-BOT">
+          <div class="sender-avatar" aria-hidden="true">AI</div>
           <div class="bubble-wrap">
             <div class="badge">智能助手</div>
-            <div class="bubble">{{ streamingContent }}<span class="cursor">|</span></div>
+            <div class="bubble">{{ streamingContent }}<span class="cursor" aria-hidden="true">|</span></div>
           </div>
         </div>
       </template>
     </div>
 
     <div v-if="ticket?.status === 'WAITING_CONFIRM'" class="confirm-card">
-      <van-cell-group inset>
-        <van-cell title="客服已处理完毕，请确认是否解决">
-          <template #value>
-            <div class="confirm-actions">
-              <van-button size="small" type="primary" :loading="acting" @click="onConfirmResolved">确认解决</van-button>
-              <van-button size="small" plain :loading="acting" @click="openReject">仍有问题</van-button>
-            </div>
-          </template>
-        </van-cell>
-      </van-cell-group>
+      <div class="confirm-copy">
+        <span class="confirm-icon" aria-hidden="true">✓</span>
+        <div><strong>问题已处理完成</strong><p>请确认本次服务是否解决了您的问题</p></div>
+      </div>
+      <div class="confirm-actions">
+        <van-button size="small" type="primary" round :loading="acting" @click="onConfirmResolved">确认解决</van-button>
+        <van-button size="small" plain round :loading="acting" @click="openReject">仍有问题</van-button>
+      </div>
     </div>
 
     <div v-if="ended" class="ended-bar">
+      <div><strong>本次会话已结束</strong><p>历史消息会一直保留，您也可以继续咨询。</p></div>
       <van-button block round type="primary" :loading="acting" @click="onReopen">重新开始对话</van-button>
     </div>
     <template v-else>
-      <div v-if="attachments.length > 0" class="attachment-chips">
-        <van-tag
-          v-for="a in attachments"
-          :key="a.localId"
-          :closeable="a.status !== 'uploading'"
-          :type="a.status === 'failed' ? 'danger' : 'primary'"
-          plain
-          size="medium"
-          @close="removeAttachment(a.localId)"
-        >
-          <van-loading v-if="a.status === 'uploading'" size="12" class="chip-loading" />
-          📎 {{ a.name }}
-        </van-tag>
-      </div>
-      <div v-if="quotaHint" class="quota-hint">
-        <van-icon name="info-o" class="quota-hint-icon" />
-        {{ quotaHint }}
-      </div>
-      <div class="input-bar">
-        <van-field
-          v-model="inputContent"
-          placeholder="请输入消息"
-          :disabled="!wsConnected"
-          @keyup.enter="sendMessage"
-        >
-          <template #left-icon>
-            <van-uploader
-              :accept="ATTACHMENT_ACCEPT"
-              :before-read="beforeReadAttachment"
-              :after-read="afterReadAttachment"
-            >
-              <van-icon name="link-o" size="20" class="attach-icon" />
-            </van-uploader>
-          </template>
-          <template #button>
-            <van-button size="small" type="primary" :disabled="!canSend" @click="sendMessage">
-              {{ wsConnected ? '发送' : '重连中' }}
-            </van-button>
-          </template>
-        </van-field>
+      <div class="composer-shell">
+        <div v-if="attachments.length > 0" class="attachment-chips">
+          <van-tag
+            v-for="a in attachments"
+            :key="a.localId"
+            :closeable="a.status !== 'uploading'"
+            :type="a.status === 'failed' ? 'danger' : 'primary'"
+            plain
+            size="medium"
+            @close="removeAttachment(a.localId)"
+          >
+            <van-loading v-if="a.status === 'uploading'" size="12" class="chip-loading" />
+            📎 {{ a.name }}
+          </van-tag>
+        </div>
+        <div v-if="quotaHint" class="quota-hint">
+          <van-icon name="info-o" class="quota-hint-icon" />
+          {{ quotaHint }}
+        </div>
+        <div class="input-bar">
+          <van-uploader
+            :accept="ATTACHMENT_ACCEPT"
+            :before-read="beforeReadAttachment"
+            :after-read="afterReadAttachment"
+          >
+            <button class="attach-button" type="button" aria-label="添加附件">
+              <van-icon name="link-o" size="22" />
+            </button>
+          </van-uploader>
+          <van-field
+            v-model="inputContent"
+            class="message-input"
+            placeholder="输入消息…"
+            :disabled="!wsConnected"
+            @keyup.enter="sendMessage"
+          />
+          <van-button class="send-button" round type="primary" :disabled="!canSend" @click="sendMessage">
+            {{ wsConnected ? '发送' : '重连中' }}
+          </van-button>
+        </div>
       </div>
     </template>
 
@@ -791,53 +878,209 @@ onUnmounted(() => {
 .chat-page {
   display: flex;
   flex-direction: column;
-  /* 锁定视口高度并禁止自身溢出：顶部导航/状态条与底部输入栏固定，仅消息区内部滚动。
-     不能加 flex:1——其 flex-basis:0 会让父级 .mobile-shell 按消息内容 max-content 撑高，
-     滚动落到 body 上导致顶栏被顶走。
-     不再是 tabbar 根页面（改由消息列表点入），无需再为固定 tabbar 预留 padding-bottom。 */
   height: 100vh;
+  height: 100dvh;
   max-height: 100vh;
+  max-height: 100dvh;
   overflow: hidden;
   box-sizing: border-box;
-  background: var(--cw-page-bg);
+  background:
+    radial-gradient(circle at 10% 4%, rgba(24, 119, 242, 0.09), transparent 27%),
+    var(--cw-page-bg, #f4f7fb);
 }
 
-.status-bar {
+.nav-action,
+.feedback-actions button,
+.attach-button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.status-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--cw-card-bg);
-  border-bottom: 1px solid var(--cw-border-color);
+  gap: 12px;
+  margin: 10px 12px 4px;
+  padding: 13px 14px;
+  border: 1px solid rgba(24, 119, 242, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.93);
+  box-shadow: 0 10px 26px rgba(21, 52, 92, 0.07);
+}
+
+.status-copy {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+
+.status-pulse {
+  position: relative;
+  flex: 0 0 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--cw-success, #25c48a);
+  box-shadow: 0 0 0 5px rgba(37, 196, 138, 0.13);
+}
+
+.status-pulse::after {
+  position: absolute;
+  inset: -5px;
+  border: 1px solid rgba(37, 196, 138, 0.45);
+  border-radius: inherit;
+  content: '';
+  animation: status-pulse 1.8s ease-out infinite;
+}
+
+.status-pulse.offline {
+  background: #aeb7c4;
+  box-shadow: 0 0 0 5px rgba(174, 183, 196, 0.13);
+}
+
+.status-pulse.offline::after {
+  display: none;
+}
+
+.status-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--cw-text-primary, #13233a);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.status-copy p,
+.confirm-copy p,
+.ended-bar p,
+.welcome-card p,
+.state-panel p {
+  margin: 3px 0 0;
+  color: var(--cw-text-secondary, #718096);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.handoff-button {
+  flex: 0 0 auto;
+  min-height: 36px;
 }
 
 .reconnect-tip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 5px 12px 0;
+  border-radius: 10px;
   text-align: center;
   font-size: 12px;
-  color: var(--cw-danger);
-  background: #fff4f4;
-  padding: 4px 0;
+  color: #a46100;
+  background: #fff5df;
+  padding: 7px 10px;
 }
 
 .message-area {
   flex: 1;
-  /* flex 子项默认 min-height:auto 不会收缩到内容以下，必须显式归零，滚动才发生在本区域内 */
   min-height: 0;
   overflow-y: auto;
-  padding: 12px;
+  overscroll-behavior: contain;
+  padding: 14px 12px 20px;
+  scrollbar-width: none;
 }
 
-.loading {
-  margin-top: 30vh;
+.message-area::-webkit-scrollbar {
+  display: none;
+}
+
+.state-panel {
+  display: flex;
+  min-height: 48vh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.state-panel strong {
+  margin-top: 12px;
+  color: var(--cw-text-primary, #13233a);
+  font-size: 16px;
+}
+
+.state-error .van-button {
+  margin-top: 16px;
+}
+
+.state-symbol {
+  display: grid;
+  width: 50px;
+  height: 50px;
+  place-items: center;
+  border-radius: 16px;
+  color: #fff;
+  background: #ef6d6d;
+  font-size: 24px;
+  font-weight: 800;
+  box-shadow: 0 10px 22px rgba(239, 109, 109, 0.25);
+}
+
+.welcome-card {
+  display: flex;
+  gap: 12px;
+  margin: 6px 0 18px;
+  padding: 16px;
+  border: 1px solid rgba(24, 119, 242, 0.1);
+  border-radius: 18px;
+  background: linear-gradient(135deg, #fff 20%, #f1f7ff 100%);
+  box-shadow: 0 10px 30px rgba(21, 52, 92, 0.06);
+}
+
+.welcome-card strong {
+  color: var(--cw-text-primary, #13233a);
+  font-size: 15px;
+}
+
+.welcome-mark,
+.sender-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(145deg, #258cff, #0b61da);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  box-shadow: 0 7px 16px rgba(24, 119, 242, 0.22);
+}
+
+.welcome-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
 }
 
 .message-row {
-  margin-bottom: 12px;
   display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
 .row-USER {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
+  justify-content: flex-start;
 }
 
 .row-BOT,
@@ -850,44 +1093,83 @@ onUnmounted(() => {
 }
 
 .system-line {
+  max-width: 88%;
   font-size: 12px;
-  color: var(--cw-text-secondary);
-  background: rgba(0, 0, 0, 0.04);
-  padding: 4px 10px;
-  border-radius: 10px;
+  color: var(--cw-text-secondary, #718096);
+  background: rgba(19, 35, 58, 0.06);
+  padding: 6px 12px;
+  border-radius: 999px;
+  text-align: center;
+}
+
+.sender-avatar {
+  width: 34px;
+  height: 34px;
+  margin-top: 18px;
+  border-radius: 11px;
+}
+
+.row-USER .sender-avatar {
+  background: linear-gradient(145deg, #193b66, #102642);
+  box-shadow: 0 7px 16px rgba(16, 38, 66, 0.2);
+}
+
+.row-AGENT .sender-avatar {
+  color: #0d6e54;
+  background: #dff8ee;
+  box-shadow: 0 7px 16px rgba(37, 196, 138, 0.14);
 }
 
 .bubble-wrap {
-  max-width: 78%;
+  max-width: calc(82% - 42px);
 }
 
 .badge {
   font-size: 11px;
-  color: var(--cw-text-secondary);
-  margin-bottom: 2px;
+  color: var(--cw-text-secondary, #718096);
+  margin: 0 2px 4px;
+}
+
+.row-USER .badge {
+  text-align: right;
 }
 
 .bubble {
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--cw-card-bg);
-  box-shadow: var(--cw-card-shadow);
+  padding: 10px 13px;
+  border: 1px solid rgba(19, 35, 58, 0.05);
+  border-radius: 6px 17px 17px;
+  color: var(--cw-text-primary, #13233a);
+  background: var(--cw-card-bg, #fff);
+  box-shadow: 0 7px 20px rgba(21, 52, 92, 0.07);
   word-break: break-word;
   white-space: pre-wrap;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .row-USER .bubble {
-  background: var(--cw-bubble-user-bg);
+  border-color: rgba(24, 119, 242, 0.15);
+  border-radius: 17px 6px 17px 17px;
+  color: #fff;
+  background: linear-gradient(135deg, #268cff, #1268df);
+  box-shadow: 0 9px 22px rgba(24, 119, 242, 0.2);
 }
 
 .feedback-actions {
   display: flex;
-  gap: 14px;
-  margin-top: 4px;
-  padding-left: 2px;
-  font-size: 15px;
-  color: var(--cw-text-secondary);
+  gap: 2px;
+  margin-top: 2px;
+  color: var(--cw-text-secondary, #718096);
+}
+
+.feedback-actions button {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 12px;
+  font-size: 16px;
+}
+
+.feedback-actions button:active {
+  background: rgba(24, 119, 242, 0.08);
 }
 
 /* Vant 无独立点踩图标，复用 good-job 旋转 180 度表达"踩" */
@@ -896,7 +1178,8 @@ onUnmounted(() => {
 }
 
 .feedback-actions .active {
-  color: var(--van-primary-color, #1989fa);
+  color: var(--van-primary-color, #1677ff);
+  background: rgba(24, 119, 242, 0.08);
 }
 
 .cursor {
@@ -909,23 +1192,63 @@ onUnmounted(() => {
   }
 }
 
+@keyframes status-pulse {
+  from { transform: scale(0.75); opacity: 1; }
+  to { transform: scale(1.55); opacity: 0; }
+}
+
 .confirm-card {
-  padding: 8px 0;
-  background: var(--cw-card-bg);
+  display: grid;
+  gap: 12px;
+  margin: 0 12px 10px;
+  padding: 14px;
+  border: 1px solid rgba(37, 196, 138, 0.2);
+  border-radius: 18px;
+  background: #f4fcf9;
+  box-shadow: 0 9px 24px rgba(20, 91, 71, 0.08);
+}
+
+.confirm-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--cw-text-primary, #13233a);
+}
+
+.confirm-icon {
+  display: grid;
+  flex: 0 0 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  background: var(--cw-success, #25c48a);
+  font-weight: 800;
 }
 
 .confirm-actions {
   display: flex;
   gap: 8px;
+  padding-left: 46px;
+}
+
+.confirm-actions .van-button {
+  min-height: 36px;
+}
+
+.composer-shell {
+  z-index: 2;
+  padding: 7px 10px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(19, 35, 58, 0.06);
+  background: rgba(244, 247, 251, 0.92);
+  backdrop-filter: blur(14px);
 }
 
 .attachment-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 8px 12px 0;
-  border-top: 1px solid var(--cw-border-color);
-  background: var(--cw-card-bg);
+  padding: 0 4px 7px;
 }
 
 .chip-loading {
@@ -933,19 +1256,16 @@ onUnmounted(() => {
   vertical-align: middle;
 }
 
-.attach-icon {
-  color: var(--cw-text-secondary);
-  padding: 0 4px;
-}
-
 .quota-hint {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 12px;
+  margin-bottom: 6px;
+  padding: 7px 10px;
+  border-radius: 10px;
   font-size: 12px;
-  color: var(--van-orange, #ff976a);
-  background: #fff7e8;
+  color: #9b5e00;
+  background: #fff4dc;
 }
 
 .quota-hint-icon {
@@ -953,17 +1273,82 @@ onUnmounted(() => {
 }
 
 .input-bar {
-  border-top: 1px solid var(--cw-border-color);
-  background: var(--cw-card-bg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 5px;
+  border: 1px solid rgba(19, 35, 58, 0.08);
+  border-radius: 18px;
+  background: var(--cw-card-bg, #fff);
+  box-shadow: 0 9px 28px rgba(21, 52, 92, 0.1);
+}
+
+.attach-button {
+  color: var(--cw-text-secondary, #718096);
+  border-radius: 14px;
+}
+
+.message-input {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.send-button {
+  flex: 0 0 auto;
+  min-width: 66px;
+  min-height: 40px;
+  padding: 0 16px;
 }
 
 .ended-bar {
-  padding: 10px 16px;
-  border-top: 1px solid var(--cw-border-color);
-  background: var(--cw-card-bg);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(19, 35, 58, 0.07);
+  color: var(--cw-text-primary, #13233a);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.ended-bar .van-button {
+  width: auto;
+  min-height: 42px;
+  padding: 0 18px;
 }
 
 .dialog-field {
   padding: 16px;
+}
+
+@media (max-width: 340px) {
+  .status-card {
+    align-items: flex-start;
+  }
+
+  .status-copy p {
+    display: none;
+  }
+
+  .bubble-wrap {
+    max-width: calc(86% - 42px);
+  }
+
+  .send-button {
+    min-width: 58px;
+    padding: 0 12px;
+  }
+
+  .confirm-actions {
+    padding-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-pulse::after,
+  .cursor {
+    animation: none;
+  }
 }
 </style>
