@@ -15,8 +15,11 @@ defineProps<{
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px 16px;
+  width: 100%;
+  height: 100%;
+  padding: 0 16px;
   font-size: 12px;
+  line-height: 1;
   color: var(--el-text-color-secondary);
 }
 

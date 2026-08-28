@@ -97,9 +97,47 @@ async function copyResult() {
 
 <style scoped>
 .assistant-response {
+  --response-accent: var(--theme-primary, var(--el-color-primary));
+  position: relative;
   width: min(100%, 880px);
   min-width: 0;
+  box-sizing: border-box;
+  padding: 0 0 2px 22px;
   color: var(--el-text-color-primary);
+}
+
+.assistant-response::before {
+  position: absolute;
+  top: 2px;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: linear-gradient(
+    180deg,
+    var(--response-accent),
+    color-mix(in srgb, var(--response-accent) 22%, transparent) 78%,
+    transparent
+  );
+  border-radius: 999px;
+  content: '';
+}
+
+.assistant-response::after {
+  position: absolute;
+  top: 5px;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  background: var(--el-bg-color);
+  border: 2px solid var(--response-accent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--response-accent) 10%, transparent);
+  content: '';
+}
+
+.assistant-response.is-failed {
+  --response-accent: var(--el-color-danger);
 }
 
 .connecting-state {
@@ -145,28 +183,7 @@ async function copyResult() {
 }
 
 .result-section {
-  position: relative;
-  padding: 2px 2px 0 16px;
-}
-
-.result-section::before {
-  position: absolute;
-  top: 3px;
-  bottom: 0;
-  left: 0;
-  width: 3px;
-  background: linear-gradient(
-    180deg,
-    var(--theme-primary, var(--el-color-primary)),
-    color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 18%, transparent) 72%,
-    transparent
-  );
-  border-radius: 999px;
-  content: '';
-}
-
-.is-failed .result-section::before {
-  background: linear-gradient(180deg, var(--el-color-danger), transparent);
+  padding: 2px 2px 0 0;
 }
 
 .result-header {
@@ -279,8 +296,8 @@ async function copyResult() {
 }
 
 @media (max-width: 640px) {
-  .result-section {
-    padding-left: 12px;
+  .assistant-response {
+    padding-left: 18px;
   }
 
   .copy-action span,

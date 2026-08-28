@@ -134,10 +134,27 @@ watch(
 <template>
   <div class="workspace-view">
     <div class="workspace-header">
-      <h2 class="agent-title">{{ agentNode?.name ?? agentCode }}</h2>
+      <div class="agent-identity">
+        <span class="agent-mark" aria-hidden="true">&lt;/&gt;</span>
+        <div class="agent-copy">
+          <h1 class="agent-title">{{ agentNode?.name ?? agentCode }}</h1>
+          <div class="agent-meta">
+            <span>智能体工作台</span>
+            <span class="meta-separator" aria-hidden="true">/</span>
+            <code class="agent-code">{{ agentCode }}</code>
+          </div>
+        </div>
+      </div>
       <div class="header-actions">
-        <!-- 与 ThemeToolbar 里两个按钮保持同一胶囊规格（34px 高/17px 圆角/13px 字号），蓝底白字 -->
-        <button type="button" class="knowledge-btn" @click="knowledgeVisible = true">代码知识库</button>
+        <button
+          type="button"
+          class="knowledge-btn"
+          aria-label="打开代码知识库"
+          @click="knowledgeVisible = true"
+        >
+          <el-icon aria-hidden="true"><Collection /></el-icon>
+          <span>代码知识库</span>
+        </button>
         <ThemeToolbar :on-new-session="newSession" />
       </div>
     </div>
@@ -147,7 +164,7 @@ watch(
     <el-dialog v-model="reviewDialogVisible" title="AI 代码审查报告" width="640px" destroy-on-close>
       <ReviewReport v-if="reviewDialogResult" :result="reviewDialogResult" :interactive="false" />
     </el-dialog>
-    <el-tabs v-model="activeTab" type="border-card" class="workspace-tabs">
+    <el-tabs v-model="activeTab" class="workspace-tabs">
       <el-tab-pane label="对话" name="chat">
         <!-- workspace/:agentCode 是同一条路由，只换参数，Vue Router 默认复用组件实例——
              不加 :key 的话切换智能体时 ChatPanel 内部的 messages/sessionId 状态会跟着串到下一个
@@ -165,58 +182,257 @@ watch(
 <style scoped>
 .workspace-view {
   height: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 18px;
+  box-shadow: var(--cw-card-shadow, 0 1px 3px rgb(16 24 40 / 6%));
 }
 
 .workspace-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  flex: 0 0 auto;
+  min-height: 64px;
+  gap: 24px;
+  padding: 10px 18px 10px 20px;
+  background: color-mix(in srgb, var(--el-bg-color) 96%, var(--theme-primary, var(--el-color-primary)) 4%);
+}
+
+.agent-identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.agent-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  color: #fff;
+  background: linear-gradient(145deg, #2d374b, #151c2a);
+  border-radius: 11px;
+  box-shadow: 0 5px 14px rgb(18 25 39 / 18%);
+  font-family: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.08em;
+}
+
+.agent-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
 }
 
 .agent-title {
   margin: 0;
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 20px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-meta {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.meta-separator {
+  color: var(--el-text-color-placeholder);
+}
+
+.agent-code {
+  overflow: hidden;
+  color: var(--el-text-color-regular);
+  font-family: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex: 0 0 auto;
+  gap: 8px;
 }
 
-/* 代码知识库：蓝底白字胶囊，规格与 ThemeToolbar 的主题色/新建会话按钮一致（34px 高/17px 圆角） */
 .knowledge-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 18px;
-  border: none;
-  border-radius: 17px;
-  background: #409eff;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
+  height: 36px;
+  padding: 0 12px;
+  color: var(--el-text-color-regular);
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  transition: box-shadow 0.2s, transform 0.2s, filter 0.2s;
+  font-size: 12px;
+  font-weight: 560;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 3%);
+  transition: border-color 160ms ease, color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.knowledge-btn .el-icon {
+  color: #2563eb;
+  font-size: 15px;
 }
 
 .knowledge-btn:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  color: var(--el-text-color-primary);
+  border-color: var(--theme-primary, var(--el-color-primary));
+  box-shadow: 0 4px 10px rgb(16 24 40 / 8%);
   transform: translateY(-1px);
 }
 
 .knowledge-btn:active {
   transform: translateY(0);
-  filter: brightness(0.96);
+}
+
+.knowledge-btn:focus-visible {
+  outline: 0;
+  box-shadow:
+    0 0 0 2px var(--el-bg-color),
+    0 0 0 4px var(--el-text-color-primary);
 }
 
 .workspace-tabs {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-tabs :deep(.el-tabs__header) {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 20px;
+  background: color-mix(in srgb, var(--el-bg-color) 97%, var(--theme-primary, var(--el-color-primary)) 3%);
+}
+
+.workspace-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background: var(--el-border-color-lighter);
+}
+
+.workspace-tabs :deep(.el-tabs__item) {
+  height: 42px;
+  padding: 0 2px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.workspace-tabs :deep(.el-tabs__item + .el-tabs__item) {
+  margin-left: 22px;
+}
+
+.workspace-tabs :deep(.el-tabs__item:hover),
+.workspace-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--el-text-color-primary);
+}
+
+.workspace-tabs :deep(.el-tabs__active-bar) {
+  height: 2px;
+  background: var(--theme-primary, var(--el-color-primary));
+  border-radius: 2px 2px 0 0;
+}
+
+.workspace-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  container-name: workspace-panel;
+  container-type: inline-size;
+}
+
+.workspace-tabs :deep(.el-tab-pane) {
+  height: 100%;
+  min-height: 0;
+}
+
+@media (max-width: 760px) {
+  .workspace-view {
+    border-radius: 12px;
+  }
+
+  .workspace-header {
+    align-items: flex-start;
+    flex-direction: column;
+    min-height: auto;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .agent-mark {
+    flex-basis: 36px;
+    width: 36px;
+    height: 36px;
+  }
+
+  .agent-title {
+    font-size: 18px;
+  }
+
+  .header-actions {
+    justify-content: flex-end;
+    width: 100%;
+  }
+
+  .workspace-tabs :deep(.el-tabs__header) {
+    padding: 0 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .knowledge-btn {
+    width: 36px;
+    padding: 0;
+  }
+
+  .knowledge-btn span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-btn {
+    transition: none;
+  }
+
+  .knowledge-btn:hover {
+    transform: none;
+  }
 }
 </style>

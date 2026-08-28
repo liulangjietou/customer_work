@@ -1,0 +1,261 @@
+/** Chat 与 VibeCoding 共用的对话视觉骨架；各面板仅保留列结构与容器断点。 */
+.workspace-conversation {
+  --conversation-messages-padding: 28px 32px 36px;
+  --conversation-composer-padding: 10px 24px 14px;
+  --conversation-user-bubble-max-width: 72%;
+  --conversation-toolbar-wrap: nowrap;
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--el-bg-color);
+  transition: grid-template-columns 0.2s ease;
+}
+
+.workspace-conversation .chat-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--el-bg-color);
+}
+
+.workspace-conversation .messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--conversation-messages-padding);
+  background-color: var(--el-bg-color);
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent 31px,
+    color-mix(in srgb, var(--el-border-color-lighter) 24%, transparent) 32px
+  );
+  scrollbar-color: var(--el-border-color) transparent;
+  scrollbar-width: thin;
+}
+
+.workspace-conversation .messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.workspace-conversation .messages::-webkit-scrollbar-thumb {
+  background: var(--el-border-color);
+  border-radius: 999px;
+}
+
+.workspace-conversation .attachment-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 7px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.workspace-conversation .message-row {
+  display: flex;
+  width: min(880px, 100%);
+  margin: 0 auto 22px;
+}
+
+.workspace-conversation .message-row.user {
+  justify-content: flex-end;
+}
+
+.workspace-conversation .bubble {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.workspace-conversation .message-row.user .bubble {
+  max-width: var(--conversation-user-bubble-max-width);
+  padding: 10px 14px;
+  color: color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 38%, var(--el-text-color-primary));
+  background: color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 13%, var(--el-bg-color));
+  border: 1px solid color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 28%, var(--el-border-color-lighter));
+  border-radius: 14px 14px 4px 14px;
+  box-shadow: 0 2px 5px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 8%, transparent);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.workspace-conversation .message-row.user .bubble:hover {
+  background: color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 17%, var(--el-bg-color));
+}
+
+.workspace-conversation .message-row.assistant .bubble {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+}
+
+.workspace-conversation .input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-conversation .input-bar .el-input {
+  flex: 1;
+  min-width: 180px;
+}
+
+.workspace-conversation .input-bar .el-input__wrapper {
+  padding: 0 4px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspace-conversation .input-bar .el-input__inner {
+  height: 36px;
+  line-height: 36px;
+}
+
+.workspace-conversation .composer-wrap {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  padding: var(--conversation-composer-padding);
+  background: linear-gradient(transparent, color-mix(in srgb, var(--el-bg-color) 96%, transparent) 24%);
+}
+
+.workspace-conversation .composer-shell {
+  width: min(880px, 100%);
+  margin: 0 auto;
+  padding: 9px 10px 8px 12px;
+  background: var(--el-bg-color-overlay, var(--el-bg-color));
+  border: 1px solid var(--el-border-color);
+  border-radius: 14px;
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--el-text-color-primary) 9%, transparent);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.workspace-conversation .composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 58%, var(--el-border-color));
+  box-shadow:
+    0 10px 30px color-mix(in srgb, var(--el-text-color-primary) 10%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 10%, transparent);
+}
+
+.workspace-conversation .composer-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: var(--conversation-toolbar-wrap);
+  min-width: 0;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.workspace-conversation .composer-toolbar .el-button {
+  height: 28px;
+  padding: 0 9px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
+  border-color: var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+
+.workspace-conversation .composer-toolbar .el-button:hover {
+  color: var(--theme-primary, var(--el-color-primary));
+  border-color: color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 34%, var(--el-border-color));
+}
+
+.workspace-conversation .composer-send {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-conversation .composer-send .el-button + .el-button {
+  margin-left: 0;
+}
+
+.workspace-conversation .composer-send .el-button:not(.is-link) {
+  min-width: 64px;
+  border-radius: 9px;
+}
+
+/* link“继续”靠透明背景显示主题文字，不能与实心主按钮共用背景覆盖。 */
+.workspace-conversation .input-bar .el-button--primary:not(.is-link) {
+  background-color: var(--theme-primary, var(--el-color-primary));
+  border-color: var(--theme-primary, var(--el-color-primary));
+}
+
+.workspace-conversation .input-bar .el-button--primary:not(.is-link):hover {
+  background-color: var(--theme-primary-light, #79bbff);
+  border-color: var(--theme-primary-light, #79bbff);
+}
+
+.workspace-conversation .history-column {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 15px 14px 12px 16px;
+  background: color-mix(in srgb, var(--el-fill-color-lighter) 58%, var(--el-bg-color));
+  border-left: 1px solid var(--el-border-color-lighter);
+  opacity: 1;
+  transition: opacity 0.16s ease, padding 0.2s ease;
+}
+
+.workspace-conversation.is-history-collapsed .history-column {
+  visibility: hidden;
+  padding-right: 0;
+  padding-left: 0;
+  border-left-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-conversation .history-restore {
+  position: absolute;
+  z-index: 5;
+  top: 14px;
+  right: 12px;
+  color: var(--theme-primary, var(--el-color-primary));
+  background: var(--el-bg-color-overlay, var(--el-bg-color));
+  border-color: var(--el-border-color);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--el-text-color-primary) 10%, transparent);
+}
+
+@container workspace-panel (max-width: 1040px) {
+  .workspace-conversation.vibecoding-panel .history-column {
+    padding: 14px 16px;
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+  }
+
+  .workspace-conversation.vibecoding-panel.is-history-collapsed .history-column {
+    padding-top: 0;
+    padding-bottom: 0;
+    border-top-color: transparent;
+  }
+}
+
+@container workspace-panel (max-width: 900px) {
+  .workspace-conversation.chat-panel .history-column {
+    padding: 14px 16px;
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-left: 0;
+  }
+
+  .workspace-conversation.chat-panel.is-history-collapsed .history-column {
+    padding-top: 0;
+    padding-bottom: 0;
+    border-top-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-conversation,
+  .workspace-conversation .history-column,
+  .workspace-conversation .composer-shell {
+    transition-duration: 0.01ms;
+  }
+}
