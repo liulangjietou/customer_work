@@ -16,6 +16,8 @@ public class UserVO {
     /** 用户当前归属租户。 */
     private String tenantId;
     private String nickname;
+    /** 注册邮箱；自助注册账号才有，审核通过时可直接作为新租户的联系邮箱。 */
+    private String email;
     private Integer status;
     private String approvalStatus;
     private Long approvalBy;

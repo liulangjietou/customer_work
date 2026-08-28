@@ -1087,4 +1087,5 @@ VALUES
     ('default', 'api-key',   '接入方',   'API_KEY', 3600, 1000000, 2000, 'BLOCK', 1, '服务端接入，按Key指纹计', UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000),
     -- 后台管理系统登录用户（sys_user）：内部员工跑调试/VibeCoding，负载重、频次低，故窗口 1 小时、额度放宽
     ('default', 'admin-default', '后台用户', 'ADMIN_USER', 3600,  2000000,  200, 'BLOCK', 1, '后台登录用户默认档', UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000),
-    ('default', 'admin-power',   '后台高配', 'ADMIN_USER', 3600, 10000000, 1000, 'BLOCK', 1, '给需要跑大批量调试的账号单独提档', UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000);
+    ('default', 'admin-power',   '后台高配', 'ADMIN_USER', 3600, 10000000, 1000, 'BLOCK', 1, '给需要跑大批量调试的账号单独提档', UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000),
+    ('default', 'public-trial',  '对外试用', 'ADMIN_USER', 3600,   200000,   50, 'BLOCK', 1, '对外开放实例的注册用户默认档', UNIX_TIMESTAMP() * 1000, UNIX_TIMESTAMP() * 1000);

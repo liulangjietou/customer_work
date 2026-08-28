@@ -8,6 +8,8 @@ import com.richard.fyoung.customeradmin.common.constant.TreeConstants;
 import com.richard.fyoung.customeradmin.menu.dto.MenuNode;
 import com.richard.fyoung.customeradmin.system.permission.entity.SysPermission;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
+import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
+import com.richard.fyoung.customeradmin.tenant.ControlPlanePermissions;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
@@ -32,10 +34,13 @@ public class MenuAggregationService {
 
     private final SysPermissionMapper permissionMapper;
     private final AgentService agentService;
+    private final PublicDeploymentProperties publicDeployment;
 
-    public MenuAggregationService(SysPermissionMapper permissionMapper, AgentService agentService) {
+    public MenuAggregationService(SysPermissionMapper permissionMapper, AgentService agentService,
+                                  PublicDeploymentProperties publicDeployment) {
         this.permissionMapper = permissionMapper;
         this.agentService = agentService;
+        this.publicDeployment = publicDeployment;
     }
 
     /** 当前登录用户可见的菜单树：静态菜单按权限点过滤 + workspace 节点下挂启用中的智能体动态节点。 */
@@ -43,6 +48,7 @@ public class MenuAggregationService {
         Set<String> granted = new HashSet<>(StpUtil.getPermissionList());
         List<SysPermission> menus = permissionMapper.selectList(null).stream()
             .filter(p -> p.getType() != null && p.getType() == TYPE_MENU)
+            .filter(this::visibleInCurrentDeployment)
             .toList();
 
         Map<Long, MenuNode> nodeById = new LinkedHashMap<>();
@@ -83,6 +89,21 @@ public class MenuAggregationService {
         mergeDynamicAgentNodes(roots);
         sortTree(roots);
         return roots;
+    }
+
+    /**
+     * 对外开放实例上剔除内部运维工具菜单。
+     *
+     * <p>与权限点过滤是两道独立的闸门，不能互相替代：权限过滤回答“这个人能不能用”，
+     * 这里回答“这个实例有没有这个能力”。超管在对外实例上同样看不到——
+     * 对应接口已由 {@code InternalToolGuardInterceptor} 拒绝，
+     * 菜单还留着只会给出一个点进去必然报错的入口。</p>
+     */
+    private boolean visibleInCurrentDeployment(SysPermission permission) {
+        if (!publicDeployment.isEnabled()) {
+            return true;
+        }
+        return !ControlPlanePermissions.isInternalTool(permission.getPermCode());
     }
 
     /** 把启用中的智能体拼进 workspace 节点（若当前用户没有 workspace 权限，节点本就不在树里，天然不可见）。 */

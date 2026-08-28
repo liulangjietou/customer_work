@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.notify.RegistrationNotificationService;
+import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
 import com.richard.fyoung.customeradmin.system.role.entity.SysRole;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.user.domain.UserApprovalStatus;
@@ -49,7 +51,8 @@ class UserServiceControlPlaneTest {
         when(passwordEncoder.encode(any())).thenReturn("encoded");
         service = new UserService(
             userMapper, userRoleMapper, roleMapper, passwordEncoder, crossTenantAuthority,
-            sessionRevocationService, mock(TenantService.class));
+            sessionRevocationService, mock(TenantService.class),
+            new PublicDeploymentProperties(), mock(RegistrationNotificationService.class));
     }
 
     @Test

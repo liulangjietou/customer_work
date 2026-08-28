@@ -8,6 +8,9 @@ import com.richard.fyoung.customeradmin.auth.dto.ChangePasswordRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginResponse;
 import com.richard.fyoung.customeradmin.auth.dto.SsoLoginRequest;
+import com.richard.fyoung.customeradmin.auth.guard.ClientIpResolver;
+import com.richard.fyoung.customeradmin.auth.guard.LoginAttemptGuard;
+import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuardProperties;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.system.log.entity.SysOperationLog;
@@ -24,7 +27,6 @@ import com.richard.fyoung.customeradmin.tenant.access.TenantAccessSnapshot;
 import com.richard.fyoung.customeradmin.tenant.service.TenantService;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
-import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,8 +35,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -69,6 +69,8 @@ public class AuthService {
     private final SysUserRoleMapper userRoleMapper;
     private final TenantService tenantService;
     private final SessionRevocationService sessionRevocationService;
+    private final LoginAttemptGuard loginAttemptGuard;
+    private final RegistrationGuardProperties registrationProperties;
 
     /** “记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置。 */
     @Value("${admin.remember-me-timeout-seconds:604800}")
@@ -78,7 +80,9 @@ public class AuthService {
                        OperationLogMapper operationLogMapper, LdapAuthService ldapAuthService,
                        AdminLdapProperties ldapProperties, SysRoleMapper roleMapper,
                        SysUserRoleMapper userRoleMapper, TenantService tenantService,
-                       SessionRevocationService sessionRevocationService) {
+                       SessionRevocationService sessionRevocationService,
+                       LoginAttemptGuard loginAttemptGuard,
+                       RegistrationGuardProperties registrationProperties) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.operationLogMapper = operationLogMapper;
@@ -88,9 +92,16 @@ public class AuthService {
         this.userRoleMapper = userRoleMapper;
         this.tenantService = tenantService;
         this.sessionRevocationService = sessionRevocationService;
+        this.loginAttemptGuard = loginAttemptGuard;
+        this.registrationProperties = registrationProperties;
     }
 
     public LoginResponse login(LoginRequest request) {
+        String clientIp = resolveClientIp();
+        // 锁定判定要在查库与密码比对之前：被锁期间不该再消耗一次 BCrypt 计算，
+        // 那正是爆破想要的——每次尝试都让服务端做一次昂贵的哈希
+        loginAttemptGuard.checkNotLocked(request.username(), lockScopeIp(clientIp));
+
         // 跨租户查：此刻还不知道这个用户名属于哪个租户，租户上下文正是登录要产出的结果。
         // sys_user.username 全局唯一（见 docs/多租户架构设计.md §2.3），故按用户名足以唯一定位。
         SysUser user = CrossTenantOperations.execute(() -> userMapper.selectOne(
@@ -105,13 +116,16 @@ public class AuthService {
             success ? "登录" : "登录失败", "AuthController#login");
 
         if (!success) {
+            // 账号不存在与密码错误记同一个计数：区分两者会让失败计数本身变成账号存在性探针
+            loginAttemptGuard.recordFailure(request.username(), lockScopeIp(clientIp));
             throw new BizException(ResultCode.LOGIN_FAILED);
         }
+        loginAttemptGuard.recordSuccess(request.username(), lockScopeIp(clientIp));
 
         doLogin(user, request.rememberMe());
 
         user.setLastLoginTime(LocalDateTime.now());
-        user.setLastLoginIp(resolveClientIp());
+        user.setLastLoginIp(clientIp);
         userMapper.updateById(user);
 
         boolean forceChangePassword = INITIAL_ADMIN_PASSWORD_HASH.equals(user.getPassword());
@@ -377,17 +391,18 @@ public class AuthService {
             approvalStatus.name(), user.getApprovalRemark());
     }
 
+    /**
+     * 来源 IP：解析规则与注册限流共用 {@link ClientIpResolver} 一处实现。
+     *
+     * <p>此前这里另写了一份 X-Forwarded-For 解析，与限流那份是同一个概念的两个真相来源——
+     * 一边改了信任策略而另一边没跟，就会出现"限流按真实 IP、登录日志按反代 IP"的错配。</p>
+     */
     private String resolveClientIp() {
-        ServletRequestAttributes attrs =
-            (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        if (attrs == null) {
-            return null;
-        }
-        HttpServletRequest req = attrs.getRequest();
-        String forwarded = req.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return req.getRemoteAddr();
+        return ClientIpResolver.fromCurrentRequest(registrationProperties.isTrustForwardedHeader());
+    }
+
+    /** 锁定计数用的 IP：拿不到来源地址时退化为固定桶，宁可锁得偏严也不放行。 */
+    private String lockScopeIp(String clientIp) {
+        return clientIp == null ? "unknown" : clientIp;
     }
 }

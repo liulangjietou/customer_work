@@ -38,6 +38,18 @@ public class SysUser {
     private String password;
 
     private String nickname;
+
+    /**
+     * 注册邮箱：对外开放实例的自助注册必填（{@code RegistrationGuard#emailRequired()}），
+     * LDAP 影子账号与管理员预建账号可空。
+     *
+     * <p>没有它就无法通知审核结果、无法找回密码，也无法在同一个人重复注册时识别出来——
+     * 用户名可以随便再取一个，邮箱不行。</p>
+     */
+    private String email;
+
+    /** 邮箱是否已验证：0否 / 1是。当前由管理员审核兜底，预留给后续的邮箱验证链路。 */
+    private Integer emailVerified;
     /** 账号来源：LOCAL 本地账号 / LDAP 域账号（OA 单点登录，见 AuthService#ssoLogin）。 */
     private String loginType;
 

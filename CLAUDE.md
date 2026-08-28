@@ -35,6 +35,20 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-08-27 对外开放注册批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1556/1 skip、gateway 1，**合计 3471**
+  （排除 `RedisSessionPersistenceTest`，数字为 rebase 到含 PR #157 的 main 之后实测）。
+  本批次自身加 admin **+108**：权限与注册加固 70（注册门禁 14 + 登录锁定 7 + 图形验证码 6 +
+  密码策略 4 + IP 解析 5 + 内部工具闸门 4 + 审核通知 8 + 对外部署审核 6 + 控制面权限与生产门禁扩断言），
+  邮箱验证码 38（发码与核验 13 + 注册链路 10 + 存储 7 + 邮件出口 4 + 占用检查与生产门禁扩断言）。
+  **既有测试拿"某个权限码"当样本时，收权限的批次会把它们连带打红**——本批次
+  `TenantProvisionServiceTest` 与 `PlatformTenantConsolidationMigrationIntegrationTest` 都用
+  `billing:view` 当"租户可授予"的样本，而它被收归控制面后两处同时失败。那不是回归，
+  恰恰证明代码判定与 V101 迁移一致地生效了；顺手把后者的断言反过来写成"V101 应回收它"。
+  **两个 Maven 进程同时写 `target/` 会伪装成编译错误**：本批次杀掉后台全量后立刻跑单模块，
+  报"方法应用不到给定类型"，看着像代码没改对，实际是半清理的 target，`clean` 一次即好
+  （本文件早记过这条，仍踩了）。cw Flyway 下次 **V24**、admin Flyway 下次 **V102**。
+  上一版基线 2026-08-27 git 后台维护 flaky 修复批次：合计 3363。）
   （2026-08-27 git 后台维护 flaky 修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1448/1 skip、gateway 1，合计 3363
   （排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+1**（建仓时后台维护必须关闭的门禁）。
@@ -279,9 +293,23 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   `CustomerWorkSchemaMigrationIntegrationTest`。Admin 因排除了 starter 自动装配，必须通过
   `CustomerWorkFacade` 的迁移门禁接管客服端库，不能把缺表/缺列延迟成业务 SQL 的 `Unknown column`。
 - **admin 库新增 Flyway 迁移必须同步一份到 `mysql/02-customer-admin/`**（文件名加数字前缀：`<版本号>-V<版本号>__xxx.sql`，
-  字典序即执行序）。那个目录是 Flyway 迁移的镜像副本，供手工初始化与 **CI 建库**使用；漏同步不会影响本地
+  **执行序是版本序，不是字典序**）。那个目录是 Flyway 迁移的镜像副本，供手工初始化与 **CI 建库**使用；漏同步不会影响本地
   （本地走 Flyway），但 CI 从空库灌脚本时会在依赖该表的后续脚本上炸掉——V27/V28/V36/V37/V38/V39/V41 就这么漏了 7 个，
   让 main 的 CI 从 PR #65 起连红 6 次（表现为 `Table 'customer_admin.cw_agent_call_log' doesn't exist`）。
+  **版本号进三位数后，字典序不再等于版本序**：shell glob 与 `ls` 给出的是
+  `... 09-V9, 10-V10, 100-V100, 101-V101, 11-V11, ... 99-V99`——V100/V101 跑在 V11 之前。
+  实测后果分两种，后一种更阴险：V101 直接报 `Unknown column 'r.control_plane'`（V63 才加的列），
+  **而 V100 逐表守卫、表不存在就跳过，于是静默什么都没做**，建出来的库排序规则始终没对齐且不报错。
+  一律走 `scripts/apply-admin-schema-mirror.sh`（内部用 `sort -V`），CI 也已改用它；
+  别再写 `for f in mysql/02-customer-admin/*.sql`。
+- **完整镜像自带演示数据，上生产前必须清**：`mysql/01-agent-scope-customer-work/customer-work-schema.sql`
+  里有一批 demo 业务数据（`U-demo-1`、"旗舰款无线降噪耳机"、"退款专员-小赵"这类假订单/会员/商品/坐席/
+  知识条目）。本地跑 demo 时有用，上生产就是脏数据——**客服智能体会拿它们当真实业务回答问题**。
+  走 `scripts/clear-demo-data.sh <客服端库> <后台库> [--public]`，它按"系统缺了会不会坏"划界：
+  清订单/会员/商品/投诉/退款/坐席/知识条目，留配额档位（`cw_subject_quota_level`，限流按
+  `level_code` 查，缺了直接 fail-closed）、字典、敏感词词库，以及后台的菜单权限/角色/租户/
+  模型单价/系统工具定义。对外部署加 `--public` 再清掉 SQL 查询功能的示例配置（那个功能已下架）。
+  实测：全新库跑完镜像后有数据的表共 11 张（cw 侧）+ 12 张（admin 侧），清理后只剩系统种子。
 - **改完任何一条迁移都要跑 `./scripts/export-schema-snapshot.sh` 刷新结构快照**
   （`mysql/schema-snapshot/{agent_scope_customer_work,customer_admin}.sql`）。这两份是「这两个库现在长什么样」
   的直接答案，只读、不参与建库，改它们不会对任何库生效。**生成源必须是临时空库跑完迁移的产物，不是开发机的
@@ -490,6 +518,56 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   写这类测试时**别断言"没抛异常"**——单测里本就没挂拦截器，怎么写都不会抛，那种断言恒真；
   要断言 `InterceptorIgnoreHelper.willIgnoreTenantLine(...)` 在查询发生的那一刻为真
   （见 `AdminA2aServerConfigTenantTest`），并且退出作用域后为假。
+- **对外开放部署（公网自助注册）**：把后台开放给陌生人时，`admin.public-deployment.enabled=true`
+  是**唯一**总开关，别逐项勾选——漏配任何一条都是实打实的暴露面。它一次性生效三件事：
+  内部运维工具下架（菜单不下发 + 接口 403）、注册强制验证码与邮箱、审核不允许并入 `default`。
+  六条约定：
+  ① **权限边界只有 `ControlPlanePermissions` 一处定义**（29 族 + 1 个逐点码）。判定标准是
+  「租户管理员拿到它，影响面会不会越出自己的租户」，不是菜单挂在哪一级。三类必须收：
+  操作的表不参与租户过滤（`ai_model_config` 在 `TENANT_IGNORED_TABLES` 里，**全平台一份**，
+  授出去等于让任一租户改删所有租户在用的模型配置）；能把代码或流量带出本进程（MCP 挂任意外部
+  服务端、Skill 含代码执行、SQL 客户端跑任意语句、HTTP 工具是现成 SSRF 面）；视野是全平台
+  而非本租户（计费/SLO/死信/敏感词库与命中/限流规则/编码审计）。
+  `ControlPlanePermissionsTest` 对此下断言，新增权限族先回答那个问题再决定进哪一档；
+  ② **内部工具是「控制面专属」与「对外下架」的交集，两个判定必须同时成立**：只判前者，
+  对外实例上超管仍看得到 SQL 客户端菜单（点进去必然 403）；只判后者，内网实例的租户管理员
+  会拿到能跑任意 SQL 的权限。菜单过滤与接口拦截共用 `internalToolFamilies()` 一份清单；
+  ③ **`InternalToolGuardInterceptor` 必须排在 Sa-Token 之前**（`HIGHEST_PRECEDENCE`）：
+  `/api/workbench/agent/**` 是免登接口（ScriptCat 回调走 X-Workbench-Token），排在登录校验
+  之后就永远轮不到它——那恰恰是对外实例上最该堵的一条；
+  ④ **注册者不能落进 `default` 租户**。`DataScopeTables` 的 SELF 过滤只覆盖 9 张个人产出物表，
+  它的类注释明确写着 `ai_agent`/`ai_knowledge_base`/`ai_skill`/`ai_mcp`/`ai_channel_robot`/
+  `sql_*`/字典/敏感词/限流规则是**租户内共享**的；`sys_user` 也不在白名单。所以「统一租户 +
+  靠 SELF 隔离」在公网场景下不成立，审核必须走「新开租户」路径（复用 `TenantService#create`，
+  它内部已含 provision）。新租户的角色 ID 由服务端从 `tenant_admin` 反查——那个角色是上一行
+  刚插入的，调用方不可能提前知道；
+  ⑤ **邮箱验证码是注册的准入条件（对外强制）**：只"填了邮箱"不等于"这邮箱是他的"，
+  不验证的话审核结果与密码重置都会发到别人手里。**两道验证码各在各的位置，不是叠加**——
+  图形码在「发码」那一步（`POST /api/auth/email-code`，发信是唯一会向站外第三方产生副作用的
+  匿名操作，那里才最该挡脚本），邮箱码在「注册」那一步；开了邮箱验证后注册就不再要图形码，
+  手里那份邮箱码是更强的证据，再要一次只是多一个输入框。发码接口四道防线各挡一种打法：
+  图形码挡脚本、IP 限流挡「一个来源换着邮箱轰炸」、单邮箱冷却挡「对同一受害者高频轰炸」、
+  单邮箱日总量挡「每 60 秒一封发一整天」（冷却对最后这种完全无效）。三条实现约定：
+  **验证码输错不立刻作废**（错一位就要重新收信，而每次重发都是一封真实的外部邮件），
+  但有次数上限（6 位数字无限试可以直接猜穿）；**失败计数写回时必须保持原过期时刻**，
+  否则不断试错就能让验证码永不过期；**发信失败要清掉刚写入的码**，留着是一份死码——
+  用户拿不到，而下一次重发会被冷却挡住，等于把这个邮箱锁死一个冷却周期。
+  发码前先查邮箱占用（`UserRegistrationService#sendEmailCode`），否则那封信已经发到别人邮箱里了。
+  邮件出口统一在 `AdminMailSender`（审核通知与验证码共用），它一律抛异常、吞不吞由调用方定：
+  审核通知是旁路可以吞，验证码发不出去必须让用户当场看到失败；
+  ⑤.1 **注册准入判定收敛在 `RegistrationGuard#admit` 一处**，顺序按代价从低到高：开关 → IP 限流
+  → 验证码 → 邮箱 → 密码强度。**限流必须排在验证码之前**，否则每次攻击尝试都会先让服务端画一张图。
+  对外部署的强制项（验证码、邮箱、登录锁定）不看 `admin.registration.*` 的开关——
+  把公网实例的验证码配成关，等于把注册接口变成匿名可打的免费入口，这不该是一个能配错的选项。
+  **验证码签发本身也要限流且单独计数**：`/api/auth/captcha` 是免登接口，每次调用都要画一张图 +
+  写一次 Redis，不限的话攻击者根本不必尝试注册；与注册共用一个桶则会让真人换几张图就把注册额度用光；
+  ⑥ **登录失败锁定的维度是「账号+来源 IP」的组合**：只锁账号，任何人拿一个已知用户名连打几次
+  就能把真实用户挡在门外（防爆破变成拒绝服务）；只锁 IP，挡不住每个 IP 只试几个账号的分布式撞库。
+  被锁期间只读不累加，否则锁定期被无限延长；成功即清零。
+  **注册重名仍明确提示**——那是注册页的可用性底线，批量枚举由 IP 限流兜住，而登录侧本就不区分
+  「账号不存在」与「密码错误」。
+  存量库的越权授权由 admin `V101` 回收（只动 `control_plane=0` 的角色，幂等，空库无操作）；
+  对外配额档 `public-trial` 是客服端库 `V23` 的纯种子迁移，已在 `resolveBaselineVersion` 补数据判定。
 - **本机开发库是所有分支共用的，Flyway 版本号常年被并行分支占走**：新增迁移前先查
   `SELECT MAX(version) FROM customer_admin.flyway_schema_history`，而不是只看当前分支的文件名——
   本批次就先后被 V55（已合入 main）、V56~V58（未合并的并行分支）挤到 V59/V60。

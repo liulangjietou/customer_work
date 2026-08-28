@@ -2,6 +2,8 @@ package com.richard.fyoung.customeradmin.system.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
+import com.richard.fyoung.customeradmin.notify.RegistrationNotificationService;
+import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.user.dto.UserSaveRequest;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
@@ -40,7 +42,9 @@ class UserServiceRevocationTest {
             mock(PasswordEncoder.class),
             mock(CrossTenantAuthority.class),
             revocationService,
-            mock(TenantService.class));
+            mock(TenantService.class),
+            new PublicDeploymentProperties(),
+            mock(RegistrationNotificationService.class));
         when(userRoleMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
         when(userMapper.incrementAuthEpoch(9L)).thenReturn(1);
     }

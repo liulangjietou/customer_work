@@ -1,9 +1,33 @@
 import { request } from './request'
-import type { ChangePasswordRequest, LoginRequest, LoginResponse, RegisterRequest, SsoLoginRequest } from '@/types/api'
+import type {
+  CaptchaChallenge,
+  ChangePasswordRequest,
+  EmailCodeRequest,
+  LoginRequest,
+  LoginResponse,
+  RegisterOptionsVO,
+  RegisterRequest,
+  SsoLoginRequest,
+} from '@/types/api'
 
 /** 登录页自助注册。新账号默认进入待审核态，不自动登录。 */
 export function register(data: RegisterRequest) {
   return request<void>({ url: '/auth/register', method: 'post', data })
+}
+
+/** 本实例是否开放注册、是否要求验证码与邮箱。登录前匿名可调。 */
+export function fetchRegisterOptions() {
+  return request<RegisterOptionsVO>({ url: '/auth/register-options', method: 'get' })
+}
+
+/** 取一张新的图形验证码。每次调用都是新的一张。 */
+export function fetchCaptcha() {
+  return request<CaptchaChallenge>({ url: '/auth/captcha', method: 'get' })
+}
+
+/** 向注册邮箱发送验证码，返回有效期（秒）。 */
+export function sendRegisterEmailCode(data: EmailCodeRequest) {
+  return request<number>({ url: '/auth/email-code', method: 'post', data })
 }
 
 export function login(data: LoginRequest) {

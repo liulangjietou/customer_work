@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/customerwork/migration 的全部迁移
 --           （含 V2/V9 两个 Java 迁移）后逐表导出，自增当前值已抹除。
--- 对应版本：Flyway V22
+-- 对应版本：Flyway V23
 -- 真源：customer-work-starter/src/main/resources/db/customerwork/migration/
 --       + com.richard.fyoung.customerwork.infra.migration 下的 Java 迁移。
 --       改结构一律新增迁移，改本文件不会生效。

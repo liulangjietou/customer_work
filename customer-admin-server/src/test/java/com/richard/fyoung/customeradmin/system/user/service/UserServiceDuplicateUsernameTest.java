@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.notify.RegistrationNotificationService;
+import com.richard.fyoung.customeradmin.publicdeploy.PublicDeploymentProperties;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
 import com.richard.fyoung.customeradmin.system.user.dto.UserSaveRequest;
 import com.richard.fyoung.customeradmin.system.user.entity.SysUser;
@@ -44,7 +46,9 @@ class UserServiceDuplicateUsernameTest {
             passwordEncoder,
             mock(CrossTenantAuthority.class),
             mock(SessionRevocationService.class),
-            mock(TenantService.class));
+            mock(TenantService.class),
+            new PublicDeploymentProperties(),
+            mock(RegistrationNotificationService.class));
     }
 
     @Test

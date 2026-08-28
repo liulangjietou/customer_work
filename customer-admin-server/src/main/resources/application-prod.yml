@@ -44,6 +44,12 @@ admin:
   # 与 Java 默认值（true）刻意不同，属「生产明确要求它是关的」，将来默认值变了也仍守得住。
   customer-work-db:
     schema-migration-enabled: false
+  # 生产一律开启登录失败锁定，与 Java 默认值（false）刻意不同：
+  # 那个默认值是给本地开发准备的，生产上不锁等于把登录接口留给撞库。
+  # 对外开放实例本就强制开启，这一行守的是「内网生产」那一类。
+  registration:
+    login-lock:
+      enabled: true
   sandbox:
     features:
       command-execution-enabled: false

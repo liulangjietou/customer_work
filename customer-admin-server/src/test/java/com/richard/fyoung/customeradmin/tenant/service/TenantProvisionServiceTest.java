@@ -31,8 +31,11 @@ class TenantProvisionServiceTest {
         when(permissionMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(
             permission(1L, "menu:view"),
             permission(2L, "sensitive-word:edit"),
+            // billing 与 sql-console 分别代表"视野是全平台"与"内部运维工具"两类，都不该发给租户
             permission(3L, "billing:view"),
-            permission(4L, "role:edit")));
+            permission(4L, "sql-console:query"),
+            permission(5L, "agent:edit"),
+            permission(6L, "role:edit")));
         when(roleMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         doAnswer(invocation -> {
             SysRole role = invocation.getArgument(0);
@@ -49,7 +52,7 @@ class TenantProvisionServiceTest {
 
         ArgumentCaptor<SysRolePermission> relationCaptor = ArgumentCaptor.forClass(SysRolePermission.class);
         verify(rolePermissionMapper, times(2)).insert(relationCaptor.capture());
-        assertEquals(List.of(3L, 4L),
+        assertEquals(List.of(5L, 6L),
             relationCaptor.getAllValues().stream().map(SysRolePermission::getPermissionId).toList());
         assertEquals(List.of(10L, 10L),
             relationCaptor.getAllValues().stream().map(SysRolePermission::getRoleId).toList());

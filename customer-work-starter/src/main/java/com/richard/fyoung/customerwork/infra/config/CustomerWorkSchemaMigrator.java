@@ -44,6 +44,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String MODEL_COST_SETTLEMENT_MIRROR_VERSION = "20";
     private static final String BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION = "21";
     private static final String COLLATION_ALIGNMENT_MIRROR_VERSION = "22";
+    private static final String PUBLIC_TRIAL_QUOTA_MIRROR_VERSION = "23";
 
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
@@ -221,8 +222,15 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             }
             // V22 只改排序规则、不改结构，因此判定信号就是排序规则本身：一张不合规的表都没有，
             // 就说明这个库（无论是新镜像还是已执行过 V22 的旧库）已经在 V22 的终态上。
-            return allBusinessTablesUseTargetCollation(connection)
-                ? COLLATION_ALIGNMENT_MIRROR_VERSION : BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION;
+            if (!allBusinessTablesUseTargetCollation(connection)) {
+                return BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION;
+            }
+            // V23 同样没有结构痕迹（纯种子），只能问那行数据在不在。
+            // 漏掉这条判定，完整镜像会被当成"停在 V22"而重跑 V23——虽然它带了
+            // ON DUPLICATE KEY 不会炸，但历史里会多出一条本不该存在的执行记录。
+            return rowExists(connection,
+                "SELECT 1 FROM `cw_subject_quota_level` WHERE `level_code` = 'public-trial' LIMIT 1")
+                ? PUBLIC_TRIAL_QUOTA_MIRROR_VERSION : COLLATION_ALIGNMENT_MIRROR_VERSION;
         }
     }
 

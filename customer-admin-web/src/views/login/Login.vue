@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
-import { login, register, ssoLogin } from '@/api/auth'
+import { fetchCaptcha, fetchRegisterOptions, login, register, sendRegisterEmailCode, ssoLogin } from '@/api/auth'
 import { fetchLoginCarouselUrls } from '@/api/login-image'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
 import FooterCopyright from '@/components/FooterCopyright.vue'
-import type { RegisterRequest } from '@/types/api'
+import type { RegisterOptionsVO, RegisterRequest } from '@/types/api'
 
 const router = useRouter()
 const route = useRoute()
@@ -32,9 +32,94 @@ const registerSubmitting = ref(false)
 const registerForm = reactive<RegisterRequest>({
   username: '',
   nickname: '',
+  email: '',
   password: '',
   confirmPassword: '',
+  captchaId: '',
+  captcha: '',
+  emailCode: '',
 })
+
+// 本实例是否开放注册、是否要求验证码与邮箱：由后端按部署形态给出，
+// 对外开放实例上这两项是强制的，前端不做本地判断（判断了也会被后端再拦一次）。
+const registerOptions = ref<RegisterOptionsVO>({
+  selfServiceEnabled: true,
+  captchaRequired: false,
+  emailRequired: false,
+  emailVerificationRequired: false,
+})
+const captchaImage = ref('')
+const captchaLoading = ref(false)
+
+// 邮箱验证码：发码后按冷却时间倒计时，避免用户反复点击——每一次点击都是一封真实的邮件
+const emailCodeSending = ref(false)
+const emailCodeCountdown = ref(0)
+let emailCodeTimer: ReturnType<typeof setInterval> | undefined
+
+function startEmailCodeCountdown(seconds: number) {
+  emailCodeCountdown.value = seconds
+  clearEmailCodeTimer()
+  emailCodeTimer = setInterval(() => {
+    emailCodeCountdown.value -= 1
+    if (emailCodeCountdown.value <= 0) {
+      clearEmailCodeTimer()
+    }
+  }, 1000)
+}
+
+function clearEmailCodeTimer() {
+  if (emailCodeTimer) {
+    clearInterval(emailCodeTimer)
+    emailCodeTimer = undefined
+  }
+}
+
+// 定时器不随组件销毁自动停止，离开登录页后继续跑会一直持有闭包
+onBeforeUnmount(clearEmailCodeTimer)
+
+async function handleSendEmailCode() {
+  // 只校验邮箱与图形码这两项：整表校验会因为密码还没填而拦下发码
+  const emailValid = await registerFormRef.value?.validateField('email').then(() => true).catch(() => false)
+  if (!emailValid) {
+    return
+  }
+  if (registerOptions.value.captchaRequired && !registerForm.captcha) {
+    ElMessage.warning('请先填写图形验证码')
+    return
+  }
+  emailCodeSending.value = true
+  try {
+    const ttlSeconds = await sendRegisterEmailCode({
+      email: registerForm.email as string,
+      captchaId: registerForm.captchaId,
+      captcha: registerForm.captcha,
+    })
+    ElMessage.success(`验证码已发送，${Math.round(ttlSeconds / 60)} 分钟内有效`)
+    // 冷却按服务端的 60 秒走；这里只是不让用户空点，真正的限制在服务端
+    startEmailCodeCountdown(60)
+  } catch (error) {
+    // 图形码是一次性的，无论因为什么失败都已作废，必须换一张
+    await refreshCaptcha()
+    throw error
+  } finally {
+    emailCodeSending.value = false
+  }
+}
+
+async function refreshCaptcha() {
+  if (!registerOptions.value.captchaRequired) {
+    return
+  }
+  captchaLoading.value = true
+  try {
+    const challenge = await fetchCaptcha()
+    registerForm.captchaId = challenge.captchaId
+    registerForm.captcha = ''
+    captchaImage.value = challenge.image
+  } finally {
+    captchaLoading.value = false
+  }
+}
 const registerRules: FormRules = {
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
@@ -42,9 +127,45 @@ const registerRules: FormRules = {
     { pattern: /^[A-Za-z0-9._-]+$/, message: '仅支持字母、数字、点、下划线和短横线', trigger: 'blur' },
   ],
   nickname: [{ max: 64, message: '昵称不能超过 64 位', trigger: 'blur' }],
+  captcha: [
+    {
+      validator: (_rule, value, callback) => {
+        callback(registerOptions.value.captchaRequired && !value ? new Error('请输入图形验证码') : undefined)
+      },
+      trigger: 'blur',
+    },
+  ],
+  emailCode: [
+    {
+      validator: (_rule, value, callback) => {
+        callback(registerOptions.value.emailVerificationRequired && !value
+          ? new Error('请输入邮箱验证码') : undefined)
+      },
+      trigger: 'blur',
+    },
+  ],
+  email: [
+    {
+      validator: (_rule, value, callback) => {
+        if (!value) {
+          callback(registerOptions.value.emailRequired ? new Error('请输入邮箱') : undefined)
+          return
+        }
+        callback(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? undefined : new Error('邮箱格式不正确'))
+      },
+      trigger: 'blur',
+    },
+  ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, max: 32, message: '密码长度为 6 至 32 位', trigger: 'blur' },
+    { min: 8, max: 64, message: '密码长度为 8 至 64 位', trigger: 'blur' },
+    {
+      // 与后端 PasswordPolicy 保持同一条规则：够长 + 字母数字混合。
+      // 前端先拦一道只是为了少一次往返，真正的判定在服务端。
+      pattern: /^(?=.*[A-Za-z])(?=.*\d).+$/,
+      message: '密码需同时包含字母与数字',
+      trigger: 'blur',
+    },
   ],
   confirmPassword: [
     { required: true, message: '请再次输入密码', trigger: 'blur' },
@@ -83,9 +204,10 @@ function switchMode(mode: 'local' | 'sso') {
   formRef.value?.clearValidate()
 }
 
-function openRegister() {
+async function openRegister() {
   authPanel.value = 'register'
   registerFormRef.value?.clearValidate()
+  await refreshCaptcha()
 }
 
 function backToLogin() {
@@ -110,6 +232,12 @@ onMounted(async () => {
     }
   } catch {
     // 后端不可用时静默保持默认图，不打扰登录
+  }
+  try {
+    registerOptions.value = await fetchRegisterOptions()
+  } catch {
+    // 拿不到部署形态时保持默认（开放注册、不强制验证码）：
+    // 真正的强制在服务端，这里只影响表单要不要渲染验证码框
   }
 })
 
@@ -152,9 +280,20 @@ async function handleRegister() {
     await register(registerForm)
     ElMessage.success('注册成功，请登录后等待管理员审核')
     registerFormRef.value?.resetFields()
+    clearEmailCodeTimer()
+    emailCodeCountdown.value = 0
     backToLogin()
     form.username = username
     form.password = ''
+  } catch (error) {
+    // 开了邮箱验证时，图形码是在「获取验证码」那一步用掉的，注册失败与它无关；
+    // 邮箱验证码也不刷新——用户名重复这类失败并不作废它，逼人重新收信只会多发一封邮件。
+    // 没开邮箱验证时，图形码刚刚被这次提交消费掉，必须换一张，
+    // 否则用户改完再提交会拿到一个"验证码错误"的二次失败。
+    if (!registerOptions.value.emailVerificationRequired) {
+      await refreshCaptcha()
+    }
+    throw error
   } finally {
     registerSubmitting.value = false
   }
@@ -234,7 +373,7 @@ async function handleRegister() {
             登录
           </el-button>
         </el-form-item>
-        <div v-if="loginMode === 'local'" class="panel-switch">
+        <div v-if="loginMode === 'local' && registerOptions.selfServiceEnabled" class="panel-switch">
           还没有账号？<el-button link type="primary" @click="openRegister">立即注册</el-button>
         </div>
       </el-form>
@@ -248,7 +387,13 @@ async function handleRegister() {
       >
         <div class="register-heading">
           <strong>注册本地账号</strong>
-          <span>注册后可登录查看审核状态，菜单将在管理员分配角色后开通。</span>
+          <span>
+            {{
+              registerOptions.emailVerificationRequired
+                ? '需先验证邮箱，注册后可登录查看审核状态，菜单将在管理员分配角色后开通。'
+                : '注册后可登录查看审核状态，菜单将在管理员分配角色后开通。'
+            }}
+          </span>
         </div>
         <el-form-item prop="username">
           <el-input
@@ -268,11 +413,66 @@ async function handleRegister() {
             :prefix-icon="'Postcard'"
           />
         </el-form-item>
+        <el-form-item prop="email">
+          <el-input
+            v-model="registerForm.email"
+            :placeholder="registerOptions.emailRequired ? '邮箱（接收审核结果）' : '邮箱（选填）'"
+            size="large"
+            autocomplete="email"
+            :prefix-icon="'Message'"
+          />
+        </el-form-item>
+        <el-form-item v-if="registerOptions.captchaRequired" prop="captcha">
+          <div class="captcha-row">
+            <el-input
+              v-model="registerForm.captcha"
+              placeholder="图形验证码"
+              size="large"
+              maxlength="8"
+              autocomplete="off"
+              :prefix-icon="'Key'"
+            />
+            <!-- 点击图片换一张：图形码是一次性的，看不清时不该逼人重填整张表 -->
+            <img
+              v-if="captchaImage"
+              class="captcha-image"
+              :src="captchaImage"
+              alt="点击刷新验证码"
+              title="点击刷新"
+              @click="refreshCaptcha"
+            />
+            <el-button v-else size="large" :loading="captchaLoading" @click="refreshCaptcha">
+              获取
+            </el-button>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="registerOptions.emailVerificationRequired" prop="emailCode">
+          <div class="captcha-row">
+            <el-input
+              v-model="registerForm.emailCode"
+              placeholder="邮箱验证码"
+              size="large"
+              maxlength="8"
+              autocomplete="one-time-code"
+              :prefix-icon="'Message'"
+            />
+            <!-- 倒计时期间禁用：每一次点击都是一封真实的邮件，服务端还有 60 秒冷却与每日总量 -->
+            <el-button
+              class="email-code-button"
+              size="large"
+              :loading="emailCodeSending"
+              :disabled="emailCodeCountdown > 0"
+              @click="handleSendEmailCode"
+            >
+              {{ emailCodeCountdown > 0 ? `${emailCodeCountdown} 秒后重发` : '获取验证码' }}
+            </el-button>
+          </div>
+        </el-form-item>
         <el-form-item prop="password">
           <el-input
             v-model="registerForm.password"
             type="password"
-            placeholder="密码（6-32 位）"
+            placeholder="密码（至少 8 位，含字母与数字）"
             size="large"
             show-password
             autocomplete="new-password"
@@ -311,6 +511,27 @@ async function handleRegister() {
 </template>
 
 <style scoped>
+.captcha-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  align-items: center;
+}
+
+.email-code-button {
+  flex-shrink: 0;
+  min-width: 108px;
+}
+
+.captcha-image {
+  height: 40px;
+  width: 120px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  border: 1px solid var(--el-border-color);
+}
+
 .login-page {
   position: relative;
   height: 100%;

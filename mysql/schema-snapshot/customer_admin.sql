@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V100
+-- 对应版本：Flyway V101
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 用途：结构查阅与全新建库。**不要对已有库执行**，这里没有 IF NOT EXISTS 保护。
@@ -2107,6 +2107,8 @@ CREATE TABLE `sys_user` (
   `username` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '登录账号',
   `password` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '密码（BCrypt 加密存储，LDAP 账号为 NULL）',
   `nickname` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '昵称',
+  `email` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '注册邮箱（自助注册必填，LDAP/预建账号可空）',
+  `email_verified` tinyint NOT NULL DEFAULT '0' COMMENT '邮箱是否已验证：0否 / 1是',
   `login_type` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'LOCAL' COMMENT '账号来源：LOCAL本地账号 / LDAP域账号(OA单点登录)',
   `status` tinyint NOT NULL DEFAULT '1' COMMENT '状态：0禁用 / 1启用',
   `approval_status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'APPROVED' COMMENT '注册审核状态：PENDING/APPROVED/REJECTED',
@@ -2125,6 +2127,7 @@ CREATE TABLE `sys_user` (
   `auth_epoch` bigint NOT NULL DEFAULT '0' COMMENT '认证版本；禁用、删号、改密或角色变化时递增',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_sys_user_username` (`username`),
+  UNIQUE KEY `uk_sys_user_email` (`email`),
   KEY `idx_sys_user_tenant` (`tenant_id`),
   KEY `idx_sys_user_approval` (`tenant_id`,`approval_status`,`deleted`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='后台用户';
