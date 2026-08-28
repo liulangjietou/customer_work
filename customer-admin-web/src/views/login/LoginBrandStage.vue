@@ -8,19 +8,19 @@ const props = defineProps<{
 const carouselRef = ref<{ setActiveItem: (index: number) => void }>()
 const activeImageIndex = ref(0)
 const manuallyPaused = ref(false)
-const pointerPaused = ref(false)
-const focusPaused = ref(false)
 const prefersReducedMotion = ref(false)
+const pageVisible = ref(true)
 let reducedMotionQuery: MediaQueryList | undefined
+
+const CAROUSEL_INTERVAL_MS = 3000
 
 const displayImages = computed(() => props.images.map((image) => image.trim()).filter(Boolean))
 const hasMultipleImages = computed(() => displayImages.value.length > 1)
 const shouldAutoplay = computed(() => (
   hasMultipleImages.value
   && !manuallyPaused.value
-  && !pointerPaused.value
-  && !focusPaused.value
   && !prefersReducedMotion.value
+  && pageVisible.value
 ))
 
 function syncReducedMotion(event: MediaQueryListEvent | MediaQueryList) {
@@ -29,7 +29,6 @@ function syncReducedMotion(event: MediaQueryListEvent | MediaQueryList) {
 
 function selectImage(index: number) {
   activeImageIndex.value = index
-  manuallyPaused.value = true
   carouselRef.value?.setActiveItem(index)
 }
 
@@ -39,14 +38,21 @@ function toggleAutoplay() {
   }
 }
 
+function syncPageVisibility() {
+  pageVisible.value = document.visibilityState === 'visible'
+}
+
 onMounted(() => {
   reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
   syncReducedMotion(reducedMotionQuery)
   reducedMotionQuery.addEventListener('change', syncReducedMotion)
+  syncPageVisibility()
+  document.addEventListener('visibilitychange', syncPageVisibility)
 })
 
 onBeforeUnmount(() => {
   reducedMotionQuery?.removeEventListener('change', syncReducedMotion)
+  document.removeEventListener('visibilitychange', syncPageVisibility)
 })
 </script>
 
@@ -54,10 +60,6 @@ onBeforeUnmount(() => {
   <section
     class="brand-stage"
     aria-labelledby="brand-stage-title"
-    @mouseenter="pointerPaused = true"
-    @mouseleave="pointerPaused = false"
-    @focusin="focusPaused = true"
-    @focusout="focusPaused = false"
   >
     <div class="brand-media" aria-hidden="true">
       <el-carousel
@@ -65,7 +67,7 @@ onBeforeUnmount(() => {
         ref="carouselRef"
         height="100%"
         :autoplay="shouldAutoplay"
-        :interval="8000"
+        :interval="CAROUSEL_INTERVAL_MS"
         :pause-on-hover="false"
         arrow="never"
         indicator-position="none"

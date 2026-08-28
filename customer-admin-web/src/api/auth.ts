@@ -3,6 +3,9 @@ import type {
   CaptchaChallenge,
   ChangePasswordRequest,
   EmailCodeRequest,
+  LoginCaptchaChallenge,
+  LoginCaptchaProof,
+  LoginCaptchaVerifyRequest,
   LoginRequest,
   LoginResponse,
   RegisterOptionsVO,
@@ -28,6 +31,25 @@ export function fetchCaptcha() {
 /** 向注册邮箱发送验证码，返回有效期（秒）。 */
 export function sendRegisterEmailCode(data: EmailCodeRequest) {
   return request<number>({ url: '/auth/email-code', method: 'post', data })
+}
+
+/** 签发与当前来源 IP、浏览器绑定的登录拖动挑战。 */
+export function fetchLoginCaptchaChallenge() {
+  return request<LoginCaptchaChallenge>({
+    url: '/auth/login-captcha/challenge',
+    method: 'post',
+    suppressErrorMessage: true,
+  })
+}
+
+/** 提交归一化拖动轨迹，换取短期、一次性的登录 proof。 */
+export function verifyLoginCaptcha(data: LoginCaptchaVerifyRequest) {
+  return request<LoginCaptchaProof>({
+    url: '/auth/login-captcha/verify',
+    method: 'post',
+    data,
+    suppressErrorMessage: true,
+  })
 }
 
 export function login(data: LoginRequest) {

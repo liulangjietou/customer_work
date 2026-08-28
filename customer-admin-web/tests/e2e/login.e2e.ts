@@ -5,6 +5,8 @@ import { LOGIN_E2E_ORIGIN } from './loginTestEnvironment'
 const LOGIN_PATH = '/login?redirect=/home'
 const LOGIN_IMAGES_API = `${LOGIN_E2E_ORIGIN}/api/login-images/list`
 const REGISTER_OPTIONS_API = `${LOGIN_E2E_ORIGIN}/api/auth/register-options`
+const LOGIN_CAPTCHA_CHALLENGE_API = `${LOGIN_E2E_ORIGIN}/api/auth/login-captcha/challenge`
+const LOGIN_CAPTCHA_VERIFY_API = `${LOGIN_E2E_ORIGIN}/api/auth/login-captcha/verify`
 const CAPTCHA_API = `${LOGIN_E2E_ORIGIN}/api/auth/captcha`
 const EMAIL_CODE_API = `${LOGIN_E2E_ORIGIN}/api/auth/email-code`
 const REGISTER_API = `${LOGIN_E2E_ORIGIN}/api/auth/register`
@@ -36,17 +38,71 @@ interface PendingLoginRequest {
   release: () => void
 }
 
+interface LoginBootstrapOverrides {
+  images?: string[]
+  challengeResponse?: (attempt: number) => unknown | Promise<unknown>
+  verifyResponse?: (attempt: number, payload: Record<string, unknown>) => unknown
+}
+
+interface LoginCaptchaHarness {
+  challengeRequestCount: number
+  verificationPayloads: Record<string, unknown>[]
+}
+
 function successResult<T>(data: T) {
   return { code: 0, message: 'success', data }
 }
 
-async function mockLoginBootstrap(page: Page, options: RegisterOptionsVO = REGISTER_OPTIONS) {
+async function mockLoginCaptcha(
+  page: Page,
+  overrides: LoginBootstrapOverrides = {},
+): Promise<LoginCaptchaHarness> {
+  const harness: LoginCaptchaHarness = {
+    challengeRequestCount: 0,
+    verificationPayloads: [],
+  }
+  await page.route(LOGIN_CAPTCHA_CHALLENGE_API, async (route) => {
+    harness.challengeRequestCount += 1
+    const response = await overrides.challengeResponse?.(harness.challengeRequestCount)
+      ?? successResult({
+        challengeId: `login-challenge-${harness.challengeRequestCount}`,
+        ttlSeconds: 120,
+      })
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(response),
+    })
+  })
+  await page.route(LOGIN_CAPTCHA_VERIFY_API, async (route) => {
+    const payload = route.request().postDataJSON() as Record<string, unknown>
+    harness.verificationPayloads.push(payload)
+    const attempt = harness.verificationPayloads.length
+    const response = overrides.verifyResponse?.(attempt, payload) ?? successResult({
+      proof: `login-proof-${attempt}`,
+      ttlSeconds: 120,
+    })
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(response),
+    })
+  })
+  return harness
+}
+
+async function mockLoginBootstrap(
+  page: Page,
+  options: RegisterOptionsVO = REGISTER_OPTIONS,
+  overrides: LoginBootstrapOverrides = {},
+): Promise<LoginCaptchaHarness> {
+  const captchaHarness = await mockLoginCaptcha(page, overrides)
   // 只拦截浏览器真正访问的后端 URL；不能使用 **/api/**，否则会误伤 Vite 的 /src/api/*.ts。
   await page.route(LOGIN_IMAGES_API, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(successResult([])),
+      body: JSON.stringify(successResult(overrides.images ?? [])),
     })
   })
   await page.route(REGISTER_OPTIONS_API, async (route) => {
@@ -56,6 +112,7 @@ async function mockLoginBootstrap(page: Page, options: RegisterOptionsVO = REGIS
       body: JSON.stringify(successResult(options)),
     })
   })
+  return captchaHarness
 }
 
 async function mockAuthenticatedBootstrap(page: Page, onRequest?: (url: string) => void) {
@@ -151,11 +208,54 @@ async function suppressExpectedLoginRejection(page: Page) {
   }, TEST_BUSINESS_REJECTION_CODE)
 }
 
-async function openLogin(page: Page) {
-  await mockLoginBootstrap(page)
+async function openLogin(
+  page: Page,
+  overrides: LoginBootstrapOverrides = {},
+): Promise<LoginCaptchaHarness> {
+  const captchaHarness = await mockLoginBootstrap(page, REGISTER_OPTIONS, overrides)
   await page.goto(LOGIN_PATH, { waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible()
   await expect(page.getByRole('button', { name: '创建账号' })).toBeVisible()
+  await expect(page.getByRole('slider', { name: '拖动验证码' }))
+    .toHaveAttribute('aria-valuetext', '按住滑块，拖动完成验证')
+  return captchaHarness
+}
+
+async function dragLoginCaptcha(page: Page) {
+  const track = page.locator('[data-login-captcha]')
+  const handle = page.getByRole('slider', { name: '拖动验证码' })
+  await expect(handle).toHaveAttribute('aria-disabled', 'false')
+  await expect.poll(async () => {
+    const [trackBox, handleBox] = await Promise.all([track.boundingBox(), handle.boundingBox()])
+    return trackBox && handleBox ? Math.abs(handleBox.x - trackBox.x - 2) : Number.POSITIVE_INFINITY
+  }).toBeLessThanOrEqual(2)
+  const [trackBox, handleBox] = await Promise.all([track.boundingBox(), handle.boundingBox()])
+  expect(trackBox).not.toBeNull()
+  expect(handleBox).not.toBeNull()
+  if (!trackBox || !handleBox) {
+    return
+  }
+
+  const startX = handleBox.x + handleBox.width / 2
+  const startY = handleBox.y + handleBox.height / 2
+  const endX = trackBox.x + trackBox.width - handleBox.width / 2
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  for (let step = 1; step <= 10; step += 1) {
+    const ratio = step / 10
+    await page.mouse.move(
+      startX + (endX - startX) * ratio,
+      startY + (step % 2 === 0 ? 1 : -1),
+    )
+    await page.waitForTimeout(35)
+  }
+  await page.mouse.up()
+}
+
+async function completeLoginCaptcha(page: Page) {
+  await dragLoginCaptcha(page)
+  await expect(page.getByRole('slider', { name: '拖动验证码' }))
+    .toHaveAttribute('aria-valuetext', '验证通过')
 }
 
 async function documentScrollTop(page: Page) {
@@ -280,12 +380,27 @@ test.describe('桌面登录布局', () => {
     await page.getByRole('checkbox', { name: '保持登录' })
       .evaluate((element: HTMLInputElement) => element.click())
     await expect(page.getByRole('checkbox', { name: '保持登录' })).toBeChecked()
+
+    const loginBeforeCaptcha = page.waitForRequest(LOCAL_LOGIN_API, { timeout: 500 })
+      .then(() => true)
+      .catch(() => false)
+    await page.getByRole('button', { name: '进入运营台' }).click()
+    expect(await loginBeforeCaptcha).toBe(false)
+    await expect(page.getByText('请先完成拖动验证', { exact: true })).toBeVisible()
+
+    await completeLoginCaptcha(page)
     await page.getByRole('button', { name: '进入运营台' }).click()
 
     const localRequest = await localCapture.requestCaptured
     try {
       expect(localRequest.url).toBe(LOCAL_LOGIN_API)
-      expect(localRequest.body).toMatchObject({ username: 'local.richard', rememberMe: true })
+      expect(localRequest.body).toEqual({
+        username: 'local.richard',
+        password: 'Local1234',
+        rememberMe: true,
+        captchaProof: 'login-proof-1',
+      })
+      expect(localRequest.body).not.toHaveProperty('trajectory')
       await expect(localTab).toBeDisabled()
       await expect(ssoTab).toBeDisabled()
     } finally {
@@ -293,18 +408,27 @@ test.describe('桌面登录布局', () => {
     }
     await expect(localTab).toBeEnabled()
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}${LOGIN_PATH}`)
+    await expect(page.locator('#login-username')).toHaveValue('local.richard')
+    await expect(page.locator('#login-password')).toHaveValue('Local1234')
 
     await ssoTab.click()
     const ssoCapture = await captureRejectedLogin(page, SSO_LOGIN_API)
     await page.locator('#login-username').fill('oa.richard')
     await page.locator('#login-password').fill('Sso12345')
     await expect(page.getByRole('checkbox', { name: '保持登录' })).not.toBeChecked()
+    await completeLoginCaptcha(page)
     await page.getByRole('button', { name: '使用 OA 账号登录' }).click()
 
     const ssoRequest = await ssoCapture.requestCaptured
     try {
       expect(ssoRequest.url).toBe(SSO_LOGIN_API)
-      expect(ssoRequest.body).toMatchObject({ username: 'oa.richard', rememberMe: false })
+      expect(ssoRequest.body).toEqual({
+        username: 'oa.richard',
+        password: 'Sso12345',
+        rememberMe: false,
+        captchaProof: 'login-proof-2',
+      })
+      expect(ssoRequest.body).not.toHaveProperty('trajectory')
       await expect(localTab).toBeDisabled()
       await expect(ssoTab).toBeDisabled()
     } finally {
@@ -312,6 +436,162 @@ test.describe('桌面登录布局', () => {
     }
     await expect(ssoTab).toBeEnabled()
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}${LOGIN_PATH}`)
+  })
+
+  test('轨迹校验失败就地恢复，不清空账号密码，也不弹全局消息', async ({ page }) => {
+    const captchaHarness = await openLogin(page, {
+      verifyResponse: (attempt) => (
+        attempt === 1
+          ? { code: 30014, message: '拖动轨迹无效，请重试', data: null }
+          : successResult({ proof: 'recovered-login-proof', ttlSeconds: 120 })
+      ),
+    })
+    await page.locator('#login-username').fill('local.richard')
+    await page.locator('#login-password').fill('Local1234')
+
+    await dragLoginCaptcha(page)
+
+    await expect(page.getByText('拖动轨迹无效，请重试', { exact: true })).toBeVisible()
+    await expect(page.locator('#login-username')).toHaveValue('local.richard')
+    await expect(page.locator('#login-password')).toHaveValue('Local1234')
+    await expect(page.locator('.el-message')).toHaveCount(0)
+    await expect.poll(() => captchaHarness.challengeRequestCount).toBe(2)
+    const slider = page.getByRole('slider', { name: '拖动验证码' })
+    await expect(slider).toHaveAttribute('aria-valuetext', '拖动轨迹无效，请重试')
+    await expect(slider).toHaveAttribute('aria-disabled', 'false')
+
+    await page.waitForTimeout(50)
+    await completeLoginCaptcha(page)
+
+    expect(captchaHarness.verificationPayloads).toHaveLength(2)
+    expect(captchaHarness.verificationPayloads[0]).toMatchObject({
+      challengeId: 'login-challenge-1',
+    })
+    expect(captchaHarness.verificationPayloads[1]).toMatchObject({
+      challengeId: 'login-challenge-2',
+    })
+    for (const payload of captchaHarness.verificationPayloads) {
+      const trajectory = payload.trajectory as Array<{ x: number; y: number; t: number }>
+      expect(trajectory.length).toBeGreaterThanOrEqual(6)
+      expect(trajectory.at(0)).toEqual({ x: 0, y: 0, t: 0 })
+      expect(trajectory.at(-1)?.x).toBe(1000)
+    }
+  })
+
+  test('慢网重取 challenge 时复用同一请求，重复点击和 Enter 不消耗签发额度', async ({ page }) => {
+    let releaseSecondChallenge!: () => void
+    const secondChallengeReleased = new Promise<void>((resolve) => {
+      releaseSecondChallenge = resolve
+    })
+    const captchaHarness = await openLogin(page, {
+      challengeResponse: async (attempt) => {
+        if (attempt === 2) {
+          await secondChallengeReleased
+        }
+        return successResult({ challengeId: `login-challenge-${attempt}`, ttlSeconds: 120 })
+      },
+      verifyResponse: (attempt) => (
+        attempt === 1
+          ? { code: 30014, message: '拖动轨迹无效，请重试', data: null }
+          : successResult({ proof: 'recovered-login-proof', ttlSeconds: 120 })
+      ),
+    })
+
+    try {
+      await dragLoginCaptcha(page)
+      await expect(page.getByText('拖动轨迹无效，请重试', { exact: true })).toBeVisible()
+      await expect.poll(() => captchaHarness.challengeRequestCount).toBe(2)
+
+      const slider = page.getByRole('slider', { name: '拖动验证码' })
+      await slider.focus()
+      await page.keyboard.press('Enter')
+      await expect(slider).toHaveAttribute('aria-valuetext', '正在准备安全验证…')
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await slider.click({ force: true })
+      }
+      await page.keyboard.press('Enter')
+      await page.waitForTimeout(100)
+
+      expect(captchaHarness.challengeRequestCount).toBe(2)
+      await expect(slider).toHaveAttribute('aria-valuetext', '正在准备安全验证…')
+      await expect(page.getByText('拖动轨迹无效，请重试', { exact: true })).toHaveCount(0)
+    } finally {
+      releaseSecondChallenge()
+    }
+
+    const slider = page.getByRole('slider', { name: '拖动验证码' })
+    await expect(slider).toHaveAttribute('aria-valuetext', '按住滑块，拖动完成验证')
+    await expect(slider).toHaveAttribute('aria-disabled', 'false')
+    await expect(page.getByText('拖动轨迹无效，请重试', { exact: true })).toHaveCount(0)
+    expect(captchaHarness.challengeRequestCount).toBe(2)
+  })
+
+  test('键盘可完成验证，并满足服务端最短轨迹时长契约', async ({ page }) => {
+    const captchaHarness = await openLogin(page)
+    const slider = page.getByRole('slider', { name: '拖动验证码' })
+    await slider.focus()
+
+    for (let step = 0; step < 10; step += 1) {
+      await page.keyboard.press('ArrowRight')
+    }
+
+    await expect(slider).toHaveAttribute('aria-valuetext', '验证通过')
+    expect(captchaHarness.verificationPayloads).toHaveLength(1)
+    const trajectory = captchaHarness.verificationPayloads[0].trajectory as Array<{ t: number }>
+    expect(trajectory.at(-1)?.t).toBeGreaterThanOrEqual(300)
+  })
+})
+
+test.describe('品牌背景轮播', () => {
+  test.use({ viewport: { width: 1280, height: 720 } })
+
+  test('严格按 3 秒轮播，悬停、聚焦和圆点选择都不会永久停止', async ({ page }) => {
+    await openLogin(page, { images: ['/A1.jpg', '/A2.jpg', '/A3.jpg'] })
+
+    const firstDot = page.getByRole('button', { name: '查看第 1 张品牌背景图' })
+    const secondDot = page.getByRole('button', { name: '查看第 2 张品牌背景图' })
+    const thirdDot = page.getByRole('button', { name: '查看第 3 张品牌背景图' })
+    const pauseButton = page.getByRole('button', { name: '暂停轮播' })
+    const currentImage = () => page.locator('.carousel-dots button[aria-current="true"]')
+      .getAttribute('aria-label')
+    await expect(firstDot).toHaveAttribute('aria-current', 'true')
+
+    // 先暂停再恢复，以恢复点击作为新的计时起点，钉住 3000ms 而不是宽松的“最终会切换”。
+    await pauseButton.click()
+    await page.getByRole('button', { name: '继续轮播' }).click()
+    await page.waitForTimeout(2_700)
+    await expect(firstDot).toHaveAttribute('aria-current', 'true')
+    await expect(secondDot).toHaveAttribute('aria-current', 'true', { timeout: 900 })
+
+    await page.locator('.brand-stage').hover()
+    await pauseButton.focus()
+    await expect(thirdDot).toHaveAttribute('aria-current', 'true', { timeout: 3_600 })
+
+    await firstDot.click()
+    await expect(firstDot).toHaveAttribute('aria-current', 'true')
+    await expect(secondDot).toHaveAttribute('aria-current', 'true', { timeout: 3_600 })
+
+    await pauseButton.click()
+    await expect(page.getByRole('button', { name: '继续轮播' })).toHaveAttribute('aria-pressed', 'true')
+    const pausedImage = await currentImage()
+    await page.waitForTimeout(3_500)
+    expect(await currentImage()).toBe(pausedImage)
+
+    await page.getByRole('button', { name: '继续轮播' }).click()
+    await page.waitForTimeout(2_700)
+    expect(await currentImage()).toBe(pausedImage)
+    await expect.poll(currentImage, { timeout: 900 }).not.toBe(pausedImage)
+  })
+
+  test('系统要求减少动态效果时保持静止并禁用自动轮播开关', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await openLogin(page, { images: ['/A1.jpg', '/A2.jpg'] })
+
+    const firstDot = page.getByRole('button', { name: '查看第 1 张品牌背景图' })
+    await expect(firstDot).toHaveAttribute('aria-current', 'true')
+    await expect(page.getByRole('button', { name: '自动切换已关闭' })).toBeDisabled()
+    await page.waitForTimeout(3_500)
+    await expect(firstDot).toHaveAttribute('aria-current', 'true')
   })
 })
 
@@ -337,6 +617,7 @@ test.describe('登录成功状态机', () => {
     await page.locator('#login-password').fill('Local1234')
     await page.getByRole('checkbox', { name: '保持登录' })
       .evaluate((element: HTMLInputElement) => element.click())
+    await completeLoginCaptcha(page)
     await page.getByRole('button', { name: '进入运营台' }).click()
 
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}/home`)
@@ -344,6 +625,7 @@ test.describe('登录成功状态机', () => {
       username: 'local.richard',
       password: 'Local1234',
       rememberMe: true,
+      captchaProof: 'login-proof-1',
     })
     expect(bootstrapRequests).toEqual([
       PERMISSIONS_API,
@@ -386,6 +668,7 @@ test.describe('登录成功状态机', () => {
 
     await page.locator('#login-username').fill('first.login')
     await page.locator('#login-password').fill('Local1234')
+    await completeLoginCaptcha(page)
     await page.getByRole('button', { name: '进入运营台' }).click()
 
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}/change-password`)
@@ -801,6 +1084,7 @@ test.describe('注册入口能力', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
   test('注册选项业务失败时 fail-closed，仍保留本地登录能力', async ({ page }) => {
+    await mockLoginCaptcha(page)
     await page.route(LOGIN_IMAGES_API, async (route) => {
       await route.fulfill({
         status: 200,

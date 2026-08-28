@@ -8,9 +8,8 @@ import com.richard.fyoung.customeradmin.auth.dto.ChangePasswordRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginResponse;
 import com.richard.fyoung.customeradmin.auth.dto.SsoLoginRequest;
-import com.richard.fyoung.customeradmin.auth.guard.ClientIpResolver;
 import com.richard.fyoung.customeradmin.auth.guard.LoginAttemptGuard;
-import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuardProperties;
+import com.richard.fyoung.customeradmin.auth.guard.LoginCaptchaService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.system.log.entity.SysOperationLog;
@@ -52,6 +51,8 @@ import java.util.Objects;
 @Service
 public class AuthService {
 
+    private static final int MAX_LOGIN_USERNAME_LENGTH = 64;
+
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     /** 种子数据里 admin 账号的初始密码哈希——当前密码仍等于此值即视为"从未改过密"，强制改密。 */
@@ -70,7 +71,7 @@ public class AuthService {
     private final TenantService tenantService;
     private final SessionRevocationService sessionRevocationService;
     private final LoginAttemptGuard loginAttemptGuard;
-    private final RegistrationGuardProperties registrationProperties;
+    private final LoginCaptchaService loginCaptchaService;
 
     /** “记住我”勾选后登录态有效期（秒），默认 7 天；不勾选时沿用 sa-token.timeout（2 小时）全局配置。 */
     @Value("${admin.remember-me-timeout-seconds:604800}")
@@ -82,7 +83,7 @@ public class AuthService {
                        SysUserRoleMapper userRoleMapper, TenantService tenantService,
                        SessionRevocationService sessionRevocationService,
                        LoginAttemptGuard loginAttemptGuard,
-                       RegistrationGuardProperties registrationProperties) {
+                       LoginCaptchaService loginCaptchaService) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.operationLogMapper = operationLogMapper;
@@ -93,14 +94,16 @@ public class AuthService {
         this.tenantService = tenantService;
         this.sessionRevocationService = sessionRevocationService;
         this.loginAttemptGuard = loginAttemptGuard;
-        this.registrationProperties = registrationProperties;
+        this.loginCaptchaService = loginCaptchaService;
     }
 
-    public LoginResponse login(LoginRequest request) {
-        String clientIp = resolveClientIp();
+    public LoginResponse login(LoginRequest request, String clientIp, String userAgent) {
+        // proof 必须先于查库与 BCrypt 消费；只在 Controller 校验会给未来新增入口留下绕过路径。
+        loginCaptchaService.consumeProof(request.captchaProof(), clientIp, userAgent);
+        String lockScopeIp = lockScopeIp(clientIp);
         // 锁定判定要在查库与密码比对之前：被锁期间不该再消耗一次 BCrypt 计算，
         // 那正是爆破想要的——每次尝试都让服务端做一次昂贵的哈希
-        loginAttemptGuard.checkNotLocked(request.username(), lockScopeIp(clientIp));
+        loginAttemptGuard.checkNotLocked(request.username(), lockScopeIp);
 
         // 跨租户查：此刻还不知道这个用户名属于哪个租户，租户上下文正是登录要产出的结果。
         // sys_user.username 全局唯一（见 docs/多租户架构设计.md §2.3），故按用户名足以唯一定位。
@@ -113,14 +116,14 @@ public class AuthService {
 
         recordLoginLog(loginLogTenant(user), request.username(), user == null ? null : user.getId(), success,
             success ? null : "用户名或密码错误，或账号已禁用",
-            success ? "登录" : "登录失败", "AuthController#login");
+            success ? "登录" : "登录失败", "AuthController#login", clientIp);
 
         if (!success) {
             // 账号不存在与密码错误记同一个计数：区分两者会让失败计数本身变成账号存在性探针
-            loginAttemptGuard.recordFailure(request.username(), lockScopeIp(clientIp));
+            loginAttemptGuard.recordFailure(request.username(), lockScopeIp);
             throw new BizException(ResultCode.LOGIN_FAILED);
         }
-        loginAttemptGuard.recordSuccess(request.username(), lockScopeIp(clientIp));
+        loginAttemptGuard.recordSuccess(request.username(), lockScopeIp);
 
         doLogin(user, request.rememberMe());
 
@@ -139,37 +142,46 @@ public class AuthService {
      * 首次登录自动在 {@code sys_user} 创建本地影子账号（{@code login_type=LDAP}）并按配置默认角色，
      * 后继开始复用同一行、不重复创建。</p>
      */
-    public LoginResponse ssoLogin(SsoLoginRequest request) {
+    public LoginResponse ssoLogin(SsoLoginRequest request, String clientIp, String userAgent) {
         if (!ldapProperties.isEnabled()) {
             throw new BizException(ResultCode.SSO_NOT_ENABLED);
         }
         String username = normalizeLdapUsername(request.username());
+        // OA 功能关闭不消耗 proof；启用后必须在任何外部 LDAP 请求之前消费。
+        loginCaptchaService.consumeProof(request.captchaProof(), clientIp, userAgent);
+        String lockScopeIp = lockScopeIp(clientIp);
+        loginAttemptGuard.checkNotLocked(username, lockScopeIp);
 
         LdapBindResult bindResult = ldapAuthService.bind(username, request.password());
         if (bindResult == LdapBindResult.SERVICE_UNAVAILABLE) {
             recordLoginLog(TenantContext.DEFAULT, username, null, false, "OA域服务不可用",
-                "OA登录失败", "AuthController#ssoLogin");
+                "OA登录失败", "AuthController#ssoLogin", clientIp);
+            // 域控不可用不是凭据失败，不累计登录锁定计数。
             throw new BizException(ResultCode.SSO_SERVICE_UNAVAILABLE);
         }
         if (bindResult == LdapBindResult.INVALID_CREDENTIALS) {
             recordLoginLog(TenantContext.DEFAULT, username, null, false, "OA账号或密码错误",
-                "OA登录失败", "AuthController#ssoLogin");
+                "OA登录失败", "AuthController#ssoLogin", clientIp);
+            loginAttemptGuard.recordFailure(username, lockScopeIp);
             throw new BizException(ResultCode.SSO_LOGIN_FAILED);
         }
 
         SysUser user = findOrCreateLdapUser(username);
         if (user.getStatus() == null || user.getStatus() != 1) {
             recordLoginLog(loginLogTenant(user), username, user.getId(), false, "账号已禁用",
-                "OA登录失败", "AuthController#ssoLogin");
+                "OA登录失败", "AuthController#ssoLogin", clientIp);
+            loginAttemptGuard.recordFailure(username, lockScopeIp);
             throw new BizException(ResultCode.SSO_LOGIN_FAILED, "账号已被禁用，请联系管理员");
         }
 
-        recordLoginLog(loginLogTenant(user), username, user.getId(), true, null, "OA登录", "AuthController#ssoLogin");
+        loginAttemptGuard.recordSuccess(username, lockScopeIp);
+        recordLoginLog(loginLogTenant(user), username, user.getId(), true, null,
+            "OA登录", "AuthController#ssoLogin", clientIp);
 
         doLogin(user, request.rememberMe());
 
         user.setLastLoginTime(LocalDateTime.now());
-        user.setLastLoginIp(resolveClientIp());
+        user.setLastLoginIp(clientIp);
         userMapper.updateById(user);
 
         // LDAP 账号密码由企业域控统一管理，不走本地初始密码强制改密逻辑
@@ -235,7 +247,7 @@ public class AuthService {
      * 租户管理员就看不到自己用户的登录记录了。用户名不存在时归默认租户，作为系统级安全事件留痕。</p>
      */
     private void recordLoginLog(String tenantId, String username, Long userId, boolean success, String errorMsg,
-                                 String operation, String method) {
+                                 String operation, String method, String clientIp) {
         try {
             SysOperationLog entity = new SysOperationLog();
             entity.setUserId(userId);
@@ -245,7 +257,7 @@ public class AuthService {
             entity.setTarget("sys_user");
             entity.setResult(success ? SysOperationLog.RESULT_SUCCESS : SysOperationLog.RESULT_FAILURE);
             entity.setErrorMsg(errorMsg);
-            entity.setIp(resolveClientIp());
+            entity.setIp(clientIp);
             entity.initializeAudit(SysOperationLog.AUDIT_COMPLETED, LocalDateTime.now());
             TenantContext.runWith(tenantId, () -> operationLogMapper.insert(entity));
         } catch (Exception e) {
@@ -262,7 +274,11 @@ public class AuthService {
     private String normalizeLdapUsername(String rawUsername) {
         String trimmed = rawUsername.trim();
         int at = trimmed.indexOf('@');
-        return at > 0 ? trimmed.substring(0, at) : trimmed;
+        String username = at >= 0 ? trimmed.substring(0, at) : trimmed;
+        if (username.isBlank() || username.length() > MAX_LOGIN_USERNAME_LENGTH) {
+            throw new BizException(ResultCode.PARAM_INVALID, "OA账号格式不正确");
+        }
+        return username;
     }
 
     /**
@@ -389,16 +405,6 @@ public class AuthService {
         UserApprovalStatus approvalStatus = UserApprovalStatus.parse(user.getApprovalStatus());
         return new LoginResponse(StpUtil.getTokenValue(), user.getNickname(), forceChangePassword,
             approvalStatus.name(), user.getApprovalRemark());
-    }
-
-    /**
-     * 来源 IP：解析规则与注册限流共用 {@link ClientIpResolver} 一处实现。
-     *
-     * <p>此前这里另写了一份 X-Forwarded-For 解析，与限流那份是同一个概念的两个真相来源——
-     * 一边改了信任策略而另一边没跟，就会出现"限流按真实 IP、登录日志按反代 IP"的错配。</p>
-     */
-    private String resolveClientIp() {
-        return ClientIpResolver.fromCurrentRequest(registrationProperties.isTrustForwardedHeader());
     }
 
     /** 锁定计数用的 IP：拿不到来源地址时退化为固定桶，宁可锁得偏严也不放行。 */

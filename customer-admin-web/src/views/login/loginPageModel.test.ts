@@ -55,19 +55,25 @@ describe('getLoginModePresentation', () => {
 })
 
 describe('createLoginSubmission', () => {
-  it('冻结登录模式与凭据快照，且请求凭据不混入 mode', () => {
+  it.each(['local', 'sso'] as const)('%s 模式冻结登录凭据与一次性 proof，且不携带原始轨迹', (mode) => {
     const form = { username: 'richard', password: 'Secret123', rememberMe: true }
 
-    const submission = createLoginSubmission('local', form)
+    const submission = createLoginSubmission(mode, form, 'proof-once')
     form.username = 'changed'
     form.password = 'Changed456'
     form.rememberMe = false
 
     expect(submission).toEqual({
-      mode: 'local',
-      credentials: { username: 'richard', password: 'Secret123', rememberMe: true },
+      mode,
+      credentials: {
+        username: 'richard',
+        password: 'Secret123',
+        rememberMe: true,
+        captchaProof: 'proof-once',
+      },
     })
     expect(submission.credentials).not.toHaveProperty('mode')
+    expect(submission.credentials).not.toHaveProperty('trajectory')
     expect(Object.isFrozen(submission)).toBe(true)
     expect(Object.isFrozen(submission.credentials)).toBe(true)
   })

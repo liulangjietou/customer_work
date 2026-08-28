@@ -11,6 +11,7 @@ import { useThemeStore } from '@/store/theme'
 import type { LoginResponse, RegisterOptionsVO } from '@/types/api'
 import { chooseButtonTextColor } from '@/utils/themeContrast'
 import LoginBrandStage from './LoginBrandStage.vue'
+import LoginSliderCaptcha from './LoginSliderCaptcha.vue'
 import RegisterPanel from './RegisterPanel.vue'
 import {
   createLoginSubmission,
@@ -34,7 +35,9 @@ const ssoModePresentation = getLoginModePresentation('sso')
 const primaryTextColor = computed(() => chooseButtonTextColor(themeStore.primaryColor))
 
 const formRef = ref<FormInstance>()
+const loginCaptchaRef = ref<InstanceType<typeof LoginSliderCaptcha>>()
 const submitting = ref(false)
+const captchaProof = ref('')
 const form = reactive({ username: '', password: '', rememberMe: false })
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -83,6 +86,8 @@ async function switchMode(mode: LoginMode) {
   }
   loginMode.value = mode
   form.password = ''
+  captchaProof.value = ''
+  void loginCaptchaRef.value?.reset()
   loadRememberedUsername(mode)
   formRef.value?.clearValidate()
   await resetAuthScroll()
@@ -106,6 +111,7 @@ async function openRegister() {
   if (submitting.value || !canRegister.value) {
     return
   }
+  captchaProof.value = ''
   authPanel.value = 'register'
   await resetAuthScroll()
 }
@@ -114,6 +120,7 @@ async function backToLogin(username?: string) {
   authPanel.value = 'login'
   loginMode.value = 'local'
   form.password = ''
+  captchaProof.value = ''
   if (username) {
     form.username = username
     form.rememberMe = false
@@ -154,8 +161,14 @@ async function handleSubmit() {
     if (!valid) {
       return
     }
+    if (!captchaProof.value) {
+      loginCaptchaRef.value?.requireVerification()
+      return
+    }
     // 请求发出后，界面仍可能因脚本触发变化；后续处理必须绑定本次提交身份。
-    const submission = createLoginSubmission(loginMode.value, form)
+    const submission = createLoginSubmission(loginMode.value, form, captchaProof.value)
+    // proof 在服务端按一次性凭据消费；请求一旦发出，当前页面就不再复用它。
+    captchaProof.value = ''
     let result: LoginResponse
     try {
       result = submission.mode === 'local'
@@ -163,6 +176,7 @@ async function handleSubmit() {
         : await ssoLogin(submission.credentials)
     } catch {
       // 请求层已展示业务或网络错误，组件只负责恢复可提交状态。
+      await loginCaptchaRef.value?.reset()
       return
     }
     const rememberKey = REMEMBER_KEY_PREFIX + submission.mode
@@ -284,6 +298,14 @@ onMounted(() => {
                 :disabled="submitting"
               />
             </el-form-item>
+
+            <LoginSliderCaptcha
+              ref="loginCaptchaRef"
+              :disabled="submitting"
+              :primary-text-color="primaryTextColor"
+              @verified="captchaProof = $event"
+              @invalidated="captchaProof = ''"
+            />
 
             <div class="remember-row">
               <el-checkbox v-model="form.rememberMe" :disabled="submitting">保持登录</el-checkbox>
@@ -536,19 +558,71 @@ onMounted(() => {
 
 @media (min-width: 900px) and (max-height: 720px) {
   .auth-toolbar {
-    min-height: 52px;
+    min-height: 44px;
   }
 
   .auth-content {
-    padding-block: 16px 18px;
+    padding-block: 8px 10px;
   }
 
   .login-heading {
-    margin-bottom: 18px;
+    margin-bottom: 12px;
+  }
+
+  .eyebrow {
+    margin-bottom: 4px;
+    font-size: 11px;
+  }
+
+  .login-heading h1 {
+    font-size: 28px;
+  }
+
+  .login-heading > p:last-child {
+    margin-top: 4px;
+    font-size: 13px;
+    line-height: 1.4;
   }
 
   .mode-switch {
-    margin-bottom: 18px;
+    margin-bottom: 12px;
+    padding: 3px;
+  }
+
+  .mode-switch button {
+    min-height: 32px;
+  }
+
+  .field-label {
+    margin-bottom: 4px;
+  }
+
+  .login-form :deep(.el-form-item) {
+    margin-bottom: 10px;
+  }
+
+  .login-form :deep(.el-input__wrapper) {
+    min-height: 40px;
+  }
+
+  .login-form :deep(.login-captcha) {
+    margin-bottom: 10px;
+  }
+
+  .login-form :deep(.keyboard-hint) {
+    display: none;
+  }
+
+  .remember-row {
+    margin-bottom: 10px;
+  }
+
+  .mode-note {
+    margin-top: 8px;
+  }
+
+  .register-entry {
+    margin-top: 10px;
   }
 }
 

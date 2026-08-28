@@ -21,6 +21,7 @@ class SensitiveDataMaskerTest {
         Map<String, Object> params = Map.of(
             "username", "admin",
             "password", "admin123",
+            "captchaProof", "one-time-login-proof",
             "apiKey", "sk-real-secret-key",
             "modelName", "gpt-4o");
 
@@ -30,7 +31,9 @@ class SensitiveDataMaskerTest {
         assertTrue(json.contains("\"modelName\":\"gpt-4o\""));
         assertFalse(json.contains("admin123"), "password 字段值不应出现在输出中");
         assertFalse(json.contains("sk-real-secret-key"), "apiKey 字段值不应出现在输出中");
+        assertFalse(json.contains("one-time-login-proof"), "proof 字段值不应出现在输出中");
         assertTrue(json.contains("\"password\":\"******\""));
+        assertTrue(json.contains("\"captchaProof\":\"******\""));
         assertTrue(json.contains("\"apiKey\":\"******\""));
     }
 

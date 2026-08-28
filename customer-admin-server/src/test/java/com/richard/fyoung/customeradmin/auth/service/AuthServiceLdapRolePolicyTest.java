@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.auth.service;
 
 import com.richard.fyoung.customeradmin.auth.guard.LoginAttemptGuard;
-import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuardProperties;
+import com.richard.fyoung.customeradmin.auth.guard.LoginCaptchaService;
 import com.richard.fyoung.customeradmin.auth.config.AdminLdapProperties;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -54,7 +54,7 @@ class AuthServiceLdapRolePolicyTest {
             mock(SysUserMapper.class), mock(PasswordEncoder.class), mock(OperationLogMapper.class),
             mock(LdapAuthService.class), properties, roleMapper, userRoleMapper, mock(TenantService.class),
             mock(SessionRevocationService.class),
-            mock(LoginAttemptGuard.class), new RegistrationGuardProperties());
+            mock(LoginAttemptGuard.class), mock(LoginCaptchaService.class));
 
         BizException exception = assertThrows(BizException.class,
             () -> ReflectionTestUtils.invokeMethod(service, "resolveAssignableDefaultRoles"));
@@ -73,7 +73,7 @@ class AuthServiceLdapRolePolicyTest {
             mock(SysUserMapper.class), mock(PasswordEncoder.class), mock(OperationLogMapper.class),
             mock(LdapAuthService.class), properties, roleMapper, mock(SysUserRoleMapper.class),
             mock(TenantService.class), mock(SessionRevocationService.class),
-            mock(LoginAttemptGuard.class), new RegistrationGuardProperties());
+            mock(LoginAttemptGuard.class), mock(LoginCaptchaService.class));
 
         BizException exception = assertThrows(BizException.class,
             () -> ReflectionTestUtils.invokeMethod(service, "resolveAssignableDefaultRoles"));
@@ -94,7 +94,7 @@ class AuthServiceLdapRolePolicyTest {
             mock(SysUserMapper.class), mock(PasswordEncoder.class), mock(OperationLogMapper.class),
             mock(LdapAuthService.class), properties, roleMapper, mock(SysUserRoleMapper.class),
             mock(TenantService.class), mock(SessionRevocationService.class),
-            mock(LoginAttemptGuard.class), new RegistrationGuardProperties());
+            mock(LoginAttemptGuard.class), mock(LoginCaptchaService.class));
 
         BizException exception = assertThrows(BizException.class,
             () -> ReflectionTestUtils.invokeMethod(service, "resolveAssignableDefaultRoles"));
@@ -160,7 +160,7 @@ class AuthServiceLdapRolePolicyTest {
             userRoleMapper,
             mock(TenantService.class),
             mock(SessionRevocationService.class),
-            mock(LoginAttemptGuard.class), new RegistrationGuardProperties());
+            mock(LoginAttemptGuard.class), mock(LoginCaptchaService.class));
     }
 
     private SysUser localUser() {

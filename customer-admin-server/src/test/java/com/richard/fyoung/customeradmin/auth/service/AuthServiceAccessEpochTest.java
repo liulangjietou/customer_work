@@ -3,7 +3,7 @@ package com.richard.fyoung.customeradmin.auth.service;
 import cn.dev33.satoken.session.SaSession;
 import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.auth.guard.LoginAttemptGuard;
-import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuardProperties;
+import com.richard.fyoung.customeradmin.auth.guard.LoginCaptchaService;
 import com.richard.fyoung.customeradmin.auth.config.AdminLdapProperties;
 import com.richard.fyoung.customeradmin.auth.dto.ChangePasswordRequest;
 import com.richard.fyoung.customeradmin.system.log.mapper.OperationLogMapper;
@@ -92,7 +92,7 @@ class AuthServiceAccessEpochTest {
             mock(SysUserRoleMapper.class),
             tenantService,
             revocationService,
-            mock(LoginAttemptGuard.class), new RegistrationGuardProperties());
+            mock(LoginAttemptGuard.class), mock(LoginCaptchaService.class));
     }
 
     private SysUser user() {
