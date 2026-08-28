@@ -21,7 +21,7 @@ import java.util.Map;
 public class SensitiveDataMasker {
 
     private static final List<String> SENSITIVE_KEYWORDS =
-        List.of("apikey", "password", "secret", "token");
+        List.of("apikey", "password", "proof", "secret", "token");
 
     private static final String MASK = "******";
 

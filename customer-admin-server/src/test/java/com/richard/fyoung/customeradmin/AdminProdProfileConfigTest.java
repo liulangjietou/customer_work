@@ -37,6 +37,11 @@ class AdminProdProfileConfigTest {
             property(sources, "admin.customer-work-db.database"));
         assertEquals("${MYSQL_USERNAME:root}", property(sources, "admin.customer-work-db.username"));
         assertEquals("${MYSQL_PASSWORD:root}", property(sources, "admin.customer-work-db.password"));
+        assertEquals("${ADMIN_REGISTRATION_TRUST_XFF:false}", property(sources,
+            "admin.registration.trust-forwarded-header"));
+        assertEquals("${ADMIN_REGISTRATION_TRUSTED_PROXY_CIDRS:}", property(sources,
+            "admin.registration.trusted-proxy-cidrs"));
+        assertEquals("none", property(sources, "server.forward-headers-strategy"));
     }
 
     @Test

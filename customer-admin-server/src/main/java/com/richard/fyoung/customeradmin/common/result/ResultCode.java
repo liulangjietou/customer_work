@@ -40,6 +40,7 @@ public enum ResultCode {
     PASSWORD_TOO_WEAK(30011, "密码强度不足，请至少包含字母与数字且不少于 8 位"),
     EMAIL_CODE_INVALID(30012, "邮箱验证码错误"),
     EMAIL_CODE_REISSUE_REQUIRED(30013, "邮箱验证码已失效，请重新获取"),
+    LOGIN_CAPTCHA_INVALID(30014, "拖动验证码无效或已过期，请重新验证"),
 
     // 4xxxx 外部依赖类
     MODEL_TEST_TIMEOUT(40001, "模型连通性测试超时"),
@@ -115,6 +116,8 @@ public enum ResultCode {
     // 前端据此提示"稍后再试"，而不是把它混进注册频率里让人以为是自己点太快
     EMAIL_CODE_TOO_FREQUENT(40052, "验证码获取过于频繁，请稍后再试"),
     EMAIL_CODE_SEND_FAILED(40053, "验证码发送失败，请稍后重试"),
+    LOGIN_CAPTCHA_TOO_FREQUENT(40054, "拖动验证请求过于频繁，请稍后再试"),
+    LOGIN_CAPTCHA_UNAVAILABLE(40055, "拖动验证码服务暂不可用，请稍后重试"),
 
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");

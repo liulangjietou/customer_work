@@ -44,6 +44,8 @@ export interface LoginRequest {
   password: string
   /** 记住我：勾选后登录态有效期延长（见后端 admin.remember-me-timeout-seconds），默认 7 天免登录。 */
   rememberMe?: boolean
+  /** 登录拖动验证通过后由服务端签发的一次性凭据。 */
+  captchaProof: string
 }
 
 // OA 域账号（LDAP/AD）单点登录请求，字段与本地登录保持一致。
@@ -51,6 +53,31 @@ export interface SsoLoginRequest {
   username: string
   password: string
   rememberMe?: boolean
+  captchaProof: string
+}
+
+/** 登录拖动验证挑战。挑战与当前来源 IP、浏览器 UA 绑定。 */
+export interface LoginCaptchaChallenge {
+  challengeId: string
+  ttlSeconds: number
+}
+
+/** 拖动轨迹点：横纵坐标归一到千分比，t 为按下后的相对毫秒数。 */
+export interface LoginCaptchaTrackPoint {
+  x: number
+  y: number
+  t: number
+}
+
+export interface LoginCaptchaVerifyRequest {
+  challengeId: string
+  trajectory: LoginCaptchaTrackPoint[]
+}
+
+/** 轨迹核验成功后签发的短期一次性登录凭据。 */
+export interface LoginCaptchaProof {
+  proof: string
+  ttlSeconds: number
 }
 
 export interface LoginResponse {

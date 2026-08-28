@@ -43,9 +43,13 @@ export interface LoginFormData {
   rememberMe: boolean
 }
 
+export interface LoginSubmissionCredentials extends LoginFormData {
+  captchaProof: string
+}
+
 export interface LoginSubmission {
   readonly mode: LoginMode
-  readonly credentials: Readonly<LoginFormData>
+  readonly credentials: Readonly<LoginSubmissionCredentials>
 }
 
 /**
@@ -54,11 +58,13 @@ export interface LoginSubmission {
 export function createLoginSubmission(
   mode: LoginMode,
   form: Readonly<LoginFormData>,
+  captchaProof: string,
 ): Readonly<LoginSubmission> {
   const credentials = Object.freeze({
     username: form.username,
     password: form.password,
     rememberMe: form.rememberMe,
+    captchaProof,
   })
   return Object.freeze({ mode, credentials })
 }

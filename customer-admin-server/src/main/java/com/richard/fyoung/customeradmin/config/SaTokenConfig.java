@@ -22,6 +22,8 @@ public class SaTokenConfig implements WebMvcConfigurer {
             .addPathPatterns("/api/**")
             .excludePathPatterns(
                 "/api/auth/login",
+                "/api/auth/login-captcha/challenge",
+                "/api/auth/login-captcha/verify",
                 "/api/auth/register",
                 // 注册页在未登录状态下就要取验证码图片与"本实例开不开放注册"，
                 // 两者都不含敏感信息，防滥用由 RegistrationGuard 的 IP 限流负责

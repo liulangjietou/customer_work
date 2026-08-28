@@ -3,6 +3,11 @@ import router from '@/router'
 import { useAuthStore } from '@/store/auth'
 import type { Result } from '@/types/api'
 
+/** 需要在组件内就地呈现错误的请求，可关闭全局顶部消息。 */
+export interface AppRequestConfig extends AxiosRequestConfig {
+  suppressErrorMessage?: boolean
+}
+
 // ResultCode 分段（与后端 common/result/ResultCode.java 保持一致）
 const CODE_UNAUTHORIZED = 10001
 const CODE_FORCE_CHANGE_PASSWORD = 20002
@@ -25,7 +30,7 @@ http.interceptors.request.use((config) => {
 
 // 拦截器把 AxiosResponse<Result<T>> 拆箱为 T 直接返回，与 axios 自身的类型声明（要求返回
 // AxiosResponse）不一致，是该封装模式的既有取舍，用 any 顶掉这一层类型摩擦。
-http.interceptors.response.use(((response: { data: Result<unknown> | Blob; config: AxiosRequestConfig }) => {
+http.interceptors.response.use(((response: { data: Result<unknown> | Blob; config: AppRequestConfig }) => {
   // 二进制下载（responseType: 'blob'，如 SQL 查询导出 xlsx）响应体不是 Result 包装，
   // 原样透传整个 response，交给下面的 download() 解析 Content-Disposition 后再落盘，
   // 不复用下面的 Result 拆箱逻辑（body.code 在 Blob 上访问不到，会被误判成请求失败）。
@@ -52,20 +57,40 @@ http.interceptors.response.use(((response: { data: Result<unknown> | Blob; confi
     router.push('/change-password')
     return Promise.reject(body)
   }
-  ElMessage.error(body.message || '请求失败')
+  if (!response.config.suppressErrorMessage) {
+    ElMessage.error(body.message || '请求失败')
+  }
   return Promise.reject(body)
 }) as never, (error) => {
   // 非 2xx 的响应体同样是 Result 包装（如额度用尽返回 429 + code 40043），优先显示后端文案：
   // 只读 error.message 的话用户看到的是 "Request failed with status code 429"，
   // 而真正该看的"最近 60 分钟内已达 N 次上限"就被吞掉了
   const body = error.response?.data as Result<unknown> | undefined
-  ElMessage.error(body?.message || error.message || '网络异常')
+  const config = error.config as AppRequestConfig | undefined
+  if (!config?.suppressErrorMessage) {
+    ElMessage.error(body?.message || error.message || '网络异常')
+  }
   return Promise.reject(error)
 })
 
 /** 统一走 Result<T> 拦截解包，业务代码直接拿到 data。 */
-export function request<T>(config: AxiosRequestConfig): Promise<T> {
+export function request<T>(config: AppRequestConfig): Promise<T> {
   return http.request(config) as unknown as Promise<T>
+}
+
+/** 就地错误展示优先取标准 Result 文案，再回退 Axios/业务异常的顶层 message。 */
+export function getRequestErrorMessage(error: unknown, fallback: string): string {
+  if (!error || typeof error !== 'object') {
+    return fallback
+  }
+  const responseMessage = (error as {
+    response?: { data?: { message?: unknown } }
+  }).response?.data?.message
+  if (typeof responseMessage === 'string' && responseMessage.trim()) {
+    return responseMessage.trim()
+  }
+  const message = (error as { message?: unknown }).message
+  return typeof message === 'string' && message.trim() ? message.trim() : fallback
 }
 
 /** 从 Content-Disposition 头解析文件名，兼容 filename="x.xlsx" 与 RFC 5987 filename*=UTF-8''x.xlsx 两种形式。 */

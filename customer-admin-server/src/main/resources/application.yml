@@ -1,5 +1,8 @@
 server:
   port: 8082   # 与 customer-work-app-server(8080)、customer-channel(8081) 分开
+  # 禁止容器在 Controller 之前按自带规则重写 remoteAddr；匿名接口统一由
+  # ClientIpResolver 按显式 trusted-proxy-cidrs 解析，避免两套信任链相互绕过。
+  forward-headers-strategy: none
 
 spring:
   application:
@@ -131,9 +134,10 @@ admin:
       # 否则整条注册链路在"获取验证码"那一步就走不下去。
       # 开启时图形验证码改在「发码」那一步校验，注册那一步不再要——手里的邮箱验证码已经是更强的证据。
       enabled: ${ADMIN_REGISTRATION_EMAIL_VERIFICATION:false}
-    # 反代必须“覆写”而不是“追加”X-Forwarded-For，否则客户端可伪造首段绕开 IP 限流；
-    # 直连暴露的部署要设为 false
-    trust-forwarded-header: ${ADMIN_REGISTRATION_TRUST_XFF:true}
+    # 默认不采信客户端可控的转发头。开启时必须同时配置直接连接方的可信代理 CIDR；
+    # 服务端从右向左剥离可信代理链，直连、异常头和伪造的最左段都不会被采信
+    trust-forwarded-header: ${ADMIN_REGISTRATION_TRUST_XFF:false}
+    trusted-proxy-cidrs: ${ADMIN_REGISTRATION_TRUSTED_PROXY_CIDRS:}
     login-lock:
       # 对外部署强制启用，此处只对内网实例生效
       enabled: ${ADMIN_LOGIN_LOCK_ENABLED:false}

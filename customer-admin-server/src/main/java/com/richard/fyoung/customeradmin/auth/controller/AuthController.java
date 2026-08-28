@@ -4,19 +4,23 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.auth.dto.ChangePasswordRequest;
 import com.richard.fyoung.customeradmin.auth.dto.EmailCodeRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginRequest;
+import com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaChallengeResponse;
+import com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaProofResponse;
+import com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaVerifyRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginResponse;
 import com.richard.fyoung.customeradmin.auth.dto.RegisterRequest;
 import com.richard.fyoung.customeradmin.auth.dto.SsoLoginRequest;
 import com.richard.fyoung.customeradmin.auth.guard.CaptchaChallenge;
 import com.richard.fyoung.customeradmin.auth.guard.ClientIpResolver;
+import com.richard.fyoung.customeradmin.auth.guard.LoginCaptchaService;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuard;
-import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuardProperties;
 import com.richard.fyoung.customeradmin.auth.service.AuthService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.system.user.service.UserRegistrationService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,20 +40,40 @@ public class AuthController {
     private final AuthService authService;
     private final UserRegistrationService userRegistrationService;
     private final RegistrationGuard registrationGuard;
-    private final RegistrationGuardProperties registrationProperties;
+    private final ClientIpResolver clientIpResolver;
+    private final LoginCaptchaService loginCaptchaService;
 
     public AuthController(AuthService authService, UserRegistrationService userRegistrationService,
                           RegistrationGuard registrationGuard,
-                          RegistrationGuardProperties registrationProperties) {
+                          ClientIpResolver clientIpResolver,
+                          LoginCaptchaService loginCaptchaService) {
         this.authService = authService;
         this.userRegistrationService = userRegistrationService;
         this.registrationGuard = registrationGuard;
-        this.registrationProperties = registrationProperties;
+        this.clientIpResolver = clientIpResolver;
+        this.loginCaptchaService = loginCaptchaService;
     }
 
     @PostMapping("/login")
-    public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        return Result.success(authService.login(request));
+    public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request,
+                                       HttpServletRequest httpRequest) {
+        ClientContext client = clientContextOf(httpRequest);
+        return Result.success(authService.login(request, client.ip(), client.userAgent()));
+    }
+
+    /** 下发登录滑块 challenge；签发限流、TTL 与指纹绑定均由独立服务负责。 */
+    @PostMapping("/login-captcha/challenge")
+    public Result<LoginCaptchaChallengeResponse> loginCaptchaChallenge(HttpServletRequest httpRequest) {
+        ClientContext client = clientContextOf(httpRequest);
+        return Result.success(loginCaptchaService.issueChallenge(client.ip(), client.userAgent()));
+    }
+
+    /** 校验一次滑动轨迹并签发仅能消费一次的登录 proof。 */
+    @PostMapping("/login-captcha/verify")
+    public Result<LoginCaptchaProofResponse> verifyLoginCaptcha(
+        @Valid @RequestBody LoginCaptchaVerifyRequest request, HttpServletRequest httpRequest) {
+        ClientContext client = clientContextOf(httpRequest);
+        return Result.success(loginCaptchaService.verify(request, client.ip(), client.userAgent()));
     }
 
     /**
@@ -103,7 +127,15 @@ public class AuthController {
 
     /** 来源 IP 解析口径与限流、登录锁定共用一处实现。 */
     private String clientIpOf(HttpServletRequest request) {
-        return ClientIpResolver.resolve(request, registrationProperties.isTrustForwardedHeader());
+        return clientIpResolver.resolve(request);
+    }
+
+    /** 登录链路只解析一次来源上下文，验证码绑定、锁定与日志共享同一份值。 */
+    private ClientContext clientContextOf(HttpServletRequest request) {
+        return new ClientContext(clientIpOf(request), request.getHeader(HttpHeaders.USER_AGENT));
+    }
+
+    private record ClientContext(String ip, String userAgent) {
     }
 
     /**
@@ -123,8 +155,10 @@ public class AuthController {
 
     /** OA 域账号（LDAP/AD）单点登录，与上面的账号密码登录入口共存，前端登录页 Tab 切换。 */
     @PostMapping("/sso-login")
-    public Result<LoginResponse> ssoLogin(@Valid @RequestBody SsoLoginRequest request) {
-        return Result.success(authService.ssoLogin(request));
+    public Result<LoginResponse> ssoLogin(@Valid @RequestBody SsoLoginRequest request,
+                                          HttpServletRequest httpRequest) {
+        ClientContext client = clientContextOf(httpRequest);
+        return Result.success(authService.ssoLogin(request, client.ip(), client.userAgent()));
     }
 
     @OperationLog(operation = "登出")

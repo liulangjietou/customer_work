@@ -12,9 +12,11 @@ import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.StringUtils;
 
 /**
  * 注册与登录防滥用能力的装配。
@@ -23,13 +25,14 @@ import org.springframework.context.annotation.Configuration;
  * （它只有 {@code @ConfigurationProperties}，没有 {@code @Component}），删掉会在启动时报
  * {@code NoSuchBeanDefinitionException}——本项目在批量重构配置类时踩过这个坑。</p>
  *
- * <p>计数器与验证码存储都遵循同一个降级方向：Redis 可用则用 Redis（多副本共享），
- * 不可用退进程内而不是放行。防滥用能力不能因为基础设施抖动就整体消失。</p>
+ * <p>计数器与注册验证码延续原有 Redis 运行期降级策略。登录滑块更严格：仅在启动时
+ * 没有 Redisson Bean 才选用进程内存储；一旦选用 Redis，请求期异常直接失败关闭，
+ * 防止 challenge/proof 因跨存储切换而复活。</p>
  * @author owlzhangfq@gmail.com
  */
 @Slf4j
 @Configuration
-@EnableConfigurationProperties(RegistrationGuardProperties.class)
+@EnableConfigurationProperties({RegistrationGuardProperties.class, LoginCaptchaProperties.class})
 public class AuthGuardConfig {
 
     /** Redis 键前缀与配额计数器一致，靠各自的业务键前缀区分用途。 */
@@ -67,6 +70,40 @@ public class AuthGuardConfig {
     public CaptchaService captchaService(CaptchaStore captchaStore,
                                          RegistrationGuardProperties properties) {
         return new CaptchaService(captchaStore, properties.getCaptcha());
+    }
+
+    /** 转发头只有在直接连接方命中显式可信代理网段时才参与来源 IP 解析。 */
+    @Bean
+    public ClientIpResolver clientIpResolver(RegistrationGuardProperties properties,
+                                             ServerProperties serverProperties) {
+        ServerProperties.Tomcat.Remoteip remoteIp = serverProperties.getTomcat().getRemoteip();
+        if (serverProperties.getForwardHeadersStrategy() != ServerProperties.ForwardHeadersStrategy.NONE
+            || StringUtils.hasText(remoteIp.getRemoteIpHeader())
+            || StringUtils.hasText(remoteIp.getProtocolHeader())) {
+            throw new IllegalStateException(
+                "container forward-header handling must remain disabled; ClientIpResolver is the only trust boundary");
+        }
+        return new ClientIpResolver(properties);
+    }
+
+    @Bean
+    public LoginCaptchaStore loginCaptchaStore(ObjectProvider<RedissonClient> redissonProvider,
+                                               LoginCaptchaProperties properties) {
+        InMemoryLoginCaptchaStore inMemory = new InMemoryLoginCaptchaStore(
+            properties.getMaxInMemoryEntries(), java.time.Clock.systemUTC());
+        RedissonClient redisson = redissonProvider.getIfAvailable();
+        if (redisson == null) {
+            log.info("login captcha store uses in-process mode (no RedissonClient at startup)");
+            return inMemory;
+        }
+        return new RedissonLoginCaptchaStore(redisson);
+    }
+
+    @Bean
+    public LoginCaptchaService loginCaptchaService(LoginCaptchaStore loginCaptchaStore,
+                                                   LoginCaptchaProperties properties,
+                                                   WindowCounter authGuardWindowCounter) {
+        return new LoginCaptchaService(loginCaptchaStore, properties, authGuardWindowCounter);
     }
 
     /**

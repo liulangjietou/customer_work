@@ -1,5 +1,7 @@
 package com.richard.fyoung.customeradmin.auth.controller;
 
+import com.richard.fyoung.customeradmin.auth.guard.ClientIpResolver;
+import com.richard.fyoung.customeradmin.auth.guard.LoginCaptchaService;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuard;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuardProperties;
 import com.richard.fyoung.customeradmin.auth.service.AuthService;
@@ -82,6 +84,16 @@ class AuthControllerRegisterOptionsTest {
         @Bean
         RegistrationGuardProperties registrationGuardProperties() {
             return new RegistrationGuardProperties();
+        }
+
+        @Bean
+        ClientIpResolver clientIpResolver(RegistrationGuardProperties properties) {
+            return new ClientIpResolver(properties);
+        }
+
+        @Bean
+        LoginCaptchaService loginCaptchaService() {
+            return mock(LoginCaptchaService.class);
         }
     }
 }

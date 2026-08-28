@@ -5,6 +5,8 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
+import java.util.List;
+
 /**
  * 自助注册与登录的防滥用参数。
  *
@@ -43,12 +45,17 @@ public class RegistrationGuardProperties {
     /**
      * 是否信任反向代理写入的 {@code X-Forwarded-For}。
      *
-     * <p>默认信任：对外实例必然部署在网关/Nginx 之后，不信任的话所有请求的来源地址
-     * 都是同一个反代 IP，限流会把全体用户按一个桶算。<b>运维侧的前提是反代必须
-     * 覆写而不是追加该请求头</b>，否则客户端可以自己伪造首段绕开 IP 限流。
-     * 直连暴露的部署要把它设为 false。</p>
+     * <p>默认不信任，避免直连暴露或错误代理配置时客户端伪造来源地址绕开限流。
+     * 显式开启后仍只有 {@link #trustedProxyCidrs} 命中的直接连接方可以写入转发链，
+     * 服务端会从右向左剥离可信代理，而不是直接采信客户端可控的最左段。</p>
      */
-    private boolean trustForwardedHeader = true;
+    private boolean trustForwardedHeader = false;
+
+    /**
+     * 允许写入转发头的直接代理网段。开启转发头信任时至少配置一项，支持 IPv4/IPv6 CIDR。
+     * 空列表代表任何连接方都不可信。
+     */
+    private List<String> trustedProxyCidrs = List.of();
 
     /** 按来源 IP 的注册频率上限。 */
     @Getter
