@@ -12,6 +12,11 @@
   --cw-tabs-height: 40px;
   --cw-footer-height: 36px;
   --cw-focus-ring: var(--theme-primary, var(--el-color-primary));
+  --cw-brand-ink: #0b1728;
+  --cw-brand-ink-hover: #15263c;
+  --cw-brand-logo-start: #5a78ff;
+  --cw-brand-logo-end: #3c5ee8;
+  --cw-brand-signal: #6f8aff;
   /* 全局圆角从 4px 提到 6px，弹窗更圆润 */
   --el-border-radius-base: 6px;
   --el-dialog-border-radius: 10px;

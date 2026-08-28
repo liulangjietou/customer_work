@@ -78,6 +78,11 @@ public class RegistrationGuard {
         return publicDeployment.isEnabled() || properties.getEmailVerification().isEnabled();
     }
 
+    /** 前端发码按钮应与服务端使用同一重发冷却时间，避免配置变化后出现假倒计时。 */
+    public int emailCodeResendCooldownSeconds() {
+        return properties.getEmailVerification().getResendCooldownSeconds();
+    }
+
     /** 自助注册总开关，关闭时只能由管理员预建账号。 */
     public boolean selfServiceEnabled() {
         return properties.isSelfServiceEnabled();

@@ -242,8 +242,8 @@ defineExpose({ toggleFromHeader })
 
 <style scoped>
 .layout-aside {
-  --cw-rail-bg: #0b1728;
-  --cw-rail-hover: #15263c;
+  --cw-rail-bg: var(--cw-brand-ink);
+  --cw-rail-hover: var(--cw-brand-ink-hover);
   height: 100%;
   display: flex;
   position: relative;
@@ -285,7 +285,7 @@ defineExpose({ toggleFromHeader })
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: linear-gradient(145deg, #5a78ff, #3c5ee8);
+  background: linear-gradient(145deg, var(--cw-brand-logo-start), var(--cw-brand-logo-end));
   color: #fff;
   font-size: 12px;
   font-weight: 800;
@@ -340,7 +340,7 @@ defineExpose({ toggleFromHeader })
   right: -8px;
   top: 50%;
   border-radius: 3px 0 0 3px;
-  background: #6f8aff;
+  background: var(--cw-brand-signal);
   transform: translateY(-50%);
 }
 

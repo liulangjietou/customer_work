@@ -64,7 +64,8 @@ public class AuthController {
             registrationGuard.selfServiceEnabled(),
             registrationGuard.captchaRequired(),
             registrationGuard.emailRequired(),
-            registrationGuard.emailVerificationRequired()));
+            registrationGuard.emailVerificationRequired(),
+            registrationGuard.emailCodeResendCooldownSeconds()));
     }
 
     /**
@@ -113,9 +114,11 @@ public class AuthController {
      *                                 否则用在注册那一步
      * @param emailRequired            是否必须填邮箱
      * @param emailVerificationRequired 是否需要邮箱验证码（决定注册表单渲染"获取验证码"按钮）
+     * @param emailCodeCooldownSeconds 同一邮箱两次发码之间的服务端冷却时间（秒）
      */
     public record RegisterOptionsVO(boolean selfServiceEnabled, boolean captchaRequired,
-                                    boolean emailRequired, boolean emailVerificationRequired) {
+                                    boolean emailRequired, boolean emailVerificationRequired,
+                                    int emailCodeCooldownSeconds) {
     }
 
     /** OA 域账号（LDAP/AD）单点登录，与上面的账号密码登录入口共存，前端登录页 Tab 切换。 */

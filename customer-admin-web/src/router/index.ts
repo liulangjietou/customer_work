@@ -77,8 +77,12 @@ router.beforeEach(async (to) => {
   if (!auth.isLoggedIn) {
     return { name: 'Login', query: { redirect: to.fullPath } }
   }
-  if (auth.forceChangePassword && to.name !== 'ChangePassword') {
-    return { name: 'ChangePassword' }
+  if (auth.forceChangePassword) {
+    if (to.name !== 'ChangePassword') {
+      return { name: 'ChangePassword' }
+    }
+    // 强制改密是独立的最小登录态，不应提前加载权限与菜单；改密成功并重新登录后再进入正常链路。
+    return true
   }
   // 待审核/已拒绝账号即使手工输入已知地址，也只能停留在首页。真正的数据权限仍由后端
   // UserRoleResolver + 接口权限校验兜底；这里负责把前端可见范围收敛到“首页 + 品牌 Logo”。
