@@ -10,6 +10,7 @@ import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
 import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
 import AttachmentPendingList from '@/components/attachment/AttachmentPendingList.vue'
 import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
+import WorkspaceConversationEmptyState from '@/components/workspace/WorkspaceConversationEmptyState.vue'
 import { useThemeStore } from '@/store/theme'
 import '@/styles/workspace-conversation.css'
 import {
@@ -18,7 +19,7 @@ import {
 } from '@/store/chatConversations'
 import type { PlanCard } from '@/utils/planCard'
 
-const props = defineProps<{ agentCode: string; initialSessionId?: string }>()
+const props = defineProps<{ agentCode: string; assistantName: string; initialSessionId?: string }>()
 
 /**
  * 会话状态全部在 Pinia store（chatConversations）里，本组件只是"当前正在看哪个会话"的视图：
@@ -190,7 +191,12 @@ defineExpose({ newSession })
 <template>
   <div class="chat-panel workspace-conversation" :class="{ 'is-history-collapsed': historyCollapsed }">
     <div class="chat-column">
-      <div ref="scrollRef" class="messages" v-loading="historyLoading">
+      <div
+        ref="scrollRef"
+        class="messages"
+        :class="{ 'is-empty': (active?.messages.length ?? 0) === 0 }"
+        v-loading="historyLoading"
+      >
         <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
           <div class="bubble">
             <AssistantResponse
@@ -216,7 +222,10 @@ defineExpose({ newSession })
             />
           </div>
         </div>
-        <el-empty v-if="(active?.messages.length ?? 0) === 0" description="开始和智能体对话吧" />
+        <WorkspaceConversationEmptyState
+          v-if="(active?.messages.length ?? 0) === 0"
+          :assistant-name="assistantName"
+        />
       </div>
       <div class="composer-wrap">
         <div class="composer-shell">

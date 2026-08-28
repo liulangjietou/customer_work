@@ -4,6 +4,7 @@
   --conversation-composer-padding: 10px 24px 14px;
   --conversation-user-bubble-max-width: 72%;
   --conversation-toolbar-wrap: nowrap;
+  --conversation-empty-canvas: color-mix(in srgb, var(--el-fill-color-lighter) 72%, var(--el-bg-color));
   position: relative;
   display: grid;
   width: 100%;
@@ -17,6 +18,8 @@
 .workspace-conversation .chat-column {
   display: flex;
   flex-direction: column;
+  container-name: conversation-canvas;
+  container-type: inline-size;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -24,20 +27,21 @@
 }
 
 .workspace-conversation .messages {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--conversation-messages-padding);
   background-color: var(--el-bg-color);
-  background-image: repeating-linear-gradient(
-    90deg,
-    transparent 0,
-    transparent 31px,
-    color-mix(in srgb, var(--el-border-color-lighter) 24%, transparent) 32px
-  );
   scrollbar-color: var(--el-border-color) transparent;
   scrollbar-width: thin;
+}
+
+.workspace-conversation .messages.is-empty {
+  overflow: hidden;
+  padding: 0;
+  background-color: var(--conversation-empty-canvas);
 }
 
 .workspace-conversation .messages::-webkit-scrollbar {
@@ -123,6 +127,13 @@
   flex: 0 0 auto;
   padding: var(--conversation-composer-padding);
   background: linear-gradient(transparent, color-mix(in srgb, var(--el-bg-color) 96%, transparent) 24%);
+}
+
+.workspace-conversation .messages.is-empty + .composer-wrap {
+  background: linear-gradient(
+    transparent,
+    color-mix(in srgb, var(--conversation-empty-canvas) 96%, transparent) 24%
+  );
 }
 
 .workspace-conversation .composer-shell {
