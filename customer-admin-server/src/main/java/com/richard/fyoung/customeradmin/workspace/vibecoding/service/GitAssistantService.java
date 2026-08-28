@@ -24,6 +24,11 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewResult;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ReviewTaskVO;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.entity.CodeReviewTask;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.mapper.CodeReviewTaskMapper;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
@@ -50,6 +55,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -138,7 +144,8 @@ public class GitAssistantService {
         Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         // 审计条目在请求线程同步段创建（操作人依赖 Sa-Token ThreadLocal），异步链路里只补结果
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.GIT_DIFF_SUMMARY, agentCode, sessionId);
-        return CompletableFuture.supplyAsync(() -> {
+        GitAssistantExecutionContext executionContext = captureExecutionContext(agentCode, sessionId);
+        return supplyAsyncWithContext(executionContext, () -> {
             String diff = gitWorkspaceService.diffAgainstBaseline(workspace);
             List<String> changedFiles = gitWorkspaceService.changedFilesAgainstBaseline(workspace);
             if (changedFiles.isEmpty()) {
@@ -150,7 +157,7 @@ public class GitAssistantService {
                     + truncateDiff(diff));
             auditService.applyUsage(audit, outcome.usage());
             return new GitDiffSummary(outcome.text(), changedFiles);
-        }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        }).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .exceptionally(ex -> rethrow(ex, ResultCode.GIT_ASSISTANT_AI_FAILED, "GIT_DIFF_SUMMARY_FAIL", agentCode, sessionId))
             .whenComplete((result, error) -> auditService.finish(audit, error));
     }
@@ -160,7 +167,8 @@ public class GitAssistantService {
         requireVibeCodingCapable(agentCode);
         Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.COMMIT_MESSAGE, agentCode, sessionId);
-        return CompletableFuture.supplyAsync(() -> {
+        GitAssistantExecutionContext executionContext = captureExecutionContext(agentCode, sessionId);
+        return supplyAsyncWithContext(executionContext, () -> {
             String diff = requireNonEmptyDiff(workspace);
             Model model = agentInstanceFactory.buildModelForAgent(agentCode);
             String prompt = "conventional".equals(style)
@@ -172,7 +180,7 @@ public class GitAssistantService {
             ModelCallOutcome outcome = callModelOnce(model, prompt);
             auditService.applyUsage(audit, outcome.usage());
             return new CommitMessageResponse(outcome.text());
-        }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        }).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .exceptionally(ex -> rethrow(ex, ResultCode.GIT_ASSISTANT_AI_FAILED, "GIT_COMMIT_MESSAGE_FAIL", agentCode, sessionId))
             .whenComplete((result, error) -> auditService.finish(audit, error));
     }
@@ -182,7 +190,8 @@ public class GitAssistantService {
         requireVibeCodingCapable(agentCode);
         Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, sessionId);
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.PR_DESCRIPTION, agentCode, sessionId);
-        return CompletableFuture.supplyAsync(() -> {
+        GitAssistantExecutionContext executionContext = captureExecutionContext(agentCode, sessionId);
+        return supplyAsyncWithContext(executionContext, () -> {
             String diff = requireNonEmptyDiff(workspace);
             List<String> changedFiles = gitWorkspaceService.changedFilesAgainstBaseline(workspace);
             Model model = agentInstanceFactory.buildModelForAgent(agentCode);
@@ -193,7 +202,7 @@ public class GitAssistantService {
             ModelCallOutcome outcome = callModelOnce(model, prompt);
             auditService.applyUsage(audit, outcome.usage());
             return new PrDescriptionResponse(outcome.text());
-        }, GIT_ASSISTANT_EXECUTOR).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        }).orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .exceptionally(ex -> rethrow(ex, ResultCode.GIT_ASSISTANT_AI_FAILED, "GIT_PR_DESCRIPTION_FAIL", agentCode, sessionId))
             .whenComplete((result, error) -> auditService.finish(audit, error));
     }
@@ -227,16 +236,17 @@ public class GitAssistantService {
         Long taskId = task.getId();
         log.info("code review task submitted, taskId={}, agentCode={}, sessionId={}", taskId, agentCode, sessionId);
 
-        CompletableFuture.supplyAsync(() -> doReview(agentCode, diff, audit), GIT_ASSISTANT_EXECUTOR)
+        GitAssistantExecutionContext executionContext = captureExecutionContext(agentCode, sessionId);
+        supplyAsyncWithContext(executionContext, () -> doReview(agentCode, diff, audit))
             .orTimeout(AI_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .whenComplete((result, error) -> {
+            .whenComplete((result, error) -> executionContext.runWith(() -> {
                 auditService.finish(audit, error);
                 if (error == null) {
                     completeReviewTask(taskId, agentCode, userId, result);
                 } else {
                     failReviewTask(taskId, agentCode, userId, error);
                 }
-            });
+            }));
         return taskId;
     }
 
@@ -264,6 +274,39 @@ public class GitAssistantService {
     }
 
     // ---------------------- private helpers ----------------------
+
+    /**
+     * 请求进入异步边界前捕获三类调用上下文：租户决定数据隔离，配额主体决定 token 归属，
+     * 调用身份决定 Agent 授权与审计。三者必须作为同一份不可变快照传播，不能在工作线程重新推断。
+     */
+    private GitAssistantExecutionContext captureExecutionContext(String agentCode, String sessionId) {
+        AgentInvocationIdentity identity = AgentInvocationIdentityContext.get();
+        if (identity != null) {
+            identity = identity.forInvocation(identity.channelCode(), sessionId, agentCode);
+        }
+        return new GitAssistantExecutionContext(TenantContext.require(), QuotaSubjectContext.get(), identity);
+    }
+
+    private <T> CompletableFuture<T> supplyAsyncWithContext(
+            GitAssistantExecutionContext executionContext, Supplier<T> supplier) {
+        return CompletableFuture.supplyAsync(() -> executionContext.callWith(supplier), GIT_ASSISTANT_EXECUTOR);
+    }
+
+    private record GitAssistantExecutionContext(String tenantId, QuotaSubject quotaSubject,
+                                                AgentInvocationIdentity invocationIdentity) {
+
+        private <T> T callWith(Supplier<T> action) {
+            return TenantContext.callWith(tenantId, () -> QuotaSubjectContext.callWith(quotaSubject,
+                () -> AgentInvocationIdentityContext.callWith(invocationIdentity, action)));
+        }
+
+        private void runWith(Runnable action) {
+            callWith(() -> {
+                action.run();
+                return null;
+            });
+        }
+    }
 
     /**
      * 审查计算主体（在异步线程执行）：diff 已在同步段校验非空。模型输出 JSON 解析失败时降级（§4.2.3）

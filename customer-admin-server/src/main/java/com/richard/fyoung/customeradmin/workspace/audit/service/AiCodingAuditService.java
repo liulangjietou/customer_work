@@ -12,6 +12,7 @@ import com.richard.fyoung.customeradmin.workspace.audit.AiCodingOperation;
 import com.richard.fyoung.customeradmin.workspace.audit.dto.AiCodingAuditQuery;
 import com.richard.fyoung.customeradmin.workspace.audit.entity.AiCodingAuditLog;
 import com.richard.fyoung.customeradmin.workspace.audit.mapper.AiCodingAuditLogMapper;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.model.ChatUsage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +61,8 @@ public class AiCodingAuditService {
         entry.setAgentCode(agentCode);
         entry.setSessionId(sessionId);
         entry.setStartMillis(System.currentTimeMillis());
+        // finish/Recorder 都可能运行在异步线程；租户必须在请求同步段与操作人一起捕获
+        entry.setTenantContextId(TenantContext.get());
         try {
             if (StpUtil.isLogin()) {
                 entry.setUserId(StpUtil.getLoginIdAsLong());
@@ -76,7 +79,13 @@ public class AiCodingAuditService {
         entry.setDurationMs(System.currentTimeMillis() - entry.getStartMillis());
         entry.setResult(errorCode == null ? AiCodingAuditLog.RESULT_SUCCESS : AiCodingAuditLog.RESULT_FAILURE);
         entry.setErrorCode(errorCode);
-        recorder.persist(entry);
+        try {
+            recorder.persist(entry);
+        } catch (Exception e) {
+            // @Async 代理提交任务时也可能同步失败；审计是旁路，不能覆盖 Git 助手的业务结果
+            log.error("submit ai coding audit persist task failed, code={}, operation={}, agentCode={}, sessionId={}",
+                "AI-CODING-AUDIT-SUBMIT-FAIL", entry.getOperation(), entry.getAgentCode(), entry.getSessionId(), e);
+        }
     }
 
     /** 结束一次审计（异常形式）：{@code error} 为空视为成功，否则沿 cause 链解析错误码。 */

@@ -2,6 +2,7 @@ package com.richard.fyoung.customeradmin.workspace.audit.service;
 
 import com.richard.fyoung.customeradmin.workspace.audit.entity.AiCodingAuditLog;
 import com.richard.fyoung.customeradmin.workspace.audit.mapper.AiCodingAuditLogMapper;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -30,10 +31,12 @@ public class AiCodingAuditRecorder {
     @Async
     public void persist(AiCodingAuditLog entry) {
         try {
-            if (entry.getCreateTime() == null) {
-                entry.setCreateTime(LocalDateTime.now());
-            }
-            auditLogMapper.insert(entry);
+            TenantContext.runWith(entry.getTenantContextId(), () -> {
+                if (entry.getCreateTime() == null) {
+                    entry.setCreateTime(LocalDateTime.now());
+                }
+                auditLogMapper.insert(entry);
+            });
         } catch (Exception e) {
             log.error("persist ai coding audit log failed, code={}, operation={}, agentCode={}, sessionId={}",
                 "AI-CODING-AUDIT-PERSIST-FAIL", entry.getOperation(), entry.getAgentCode(), entry.getSessionId(), e);
