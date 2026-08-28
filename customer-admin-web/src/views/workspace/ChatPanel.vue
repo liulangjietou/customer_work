@@ -11,6 +11,7 @@ import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
 import AttachmentPendingList from '@/components/attachment/AttachmentPendingList.vue'
 import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
 import { useThemeStore } from '@/store/theme'
+import '@/styles/workspace-conversation.css'
 import {
   useChatConversationsStore,
   type ChatConversation,
@@ -35,10 +36,19 @@ const anyAttachmentUploading = computed(() => active.value?.attachments.some((a)
 const historyLoading = ref(false)
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
+const historyCollapsed = ref(false)
 const themeStore = useThemeStore()
 
 function newSession() {
   store.newSession(props.agentCode)
+}
+
+function collapseHistory() {
+  historyCollapsed.value = true
+}
+
+function restoreHistory() {
+  historyCollapsed.value = false
 }
 
 // 附件上传（回形针按钮 + 输入框 ⌘/Ctrl+V 粘贴）统一走组合式函数，与 VibeCodingPanel 共用同一条链路
@@ -178,7 +188,7 @@ defineExpose({ newSession })
 </script>
 
 <template>
-  <div class="chat-panel">
+  <div class="chat-panel workspace-conversation" :class="{ 'is-history-collapsed': historyCollapsed }">
     <div class="chat-column">
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
         <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
@@ -208,44 +218,52 @@ defineExpose({ newSession })
         </div>
         <el-empty v-if="(active?.messages.length ?? 0) === 0" description="开始和智能体对话吧" />
       </div>
-      <AttachmentPendingList
-        v-if="active && active.attachments.length > 0"
-        class="attachment-tags"
-        :attachments="active.attachments"
-        @remove="removeAttachment"
-      />
-      <div class="input-bar">
-        <el-upload
-          :show-file-list="false"
-          :http-request="handleAttachmentUpload"
-          :before-upload="beforeAttachmentUpload"
-          :accept="ATTACHMENT_ACCEPT"
-        >
-          <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
-            <el-icon><Paperclip /></el-icon>
-          </el-button>
-        </el-upload>
-        <ExecutionModeSelect
-          v-if="active"
-          v-model="active.mode"
-          :disabled="active.streaming"
-        />
-        <el-input
-          v-if="active"
-          v-model="active.input"
-          placeholder="输入消息，回车发送；⌘/Ctrl+V 可粘贴截图或文件作为附件"
-          :disabled="active.streaming"
-          @keyup.enter="send"
-          @paste="handleAttachmentPaste"
-        />
-        <el-button v-if="!active?.streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
-        <el-button v-else type="danger" :loading="active?.interrupting" @click="handleInterrupt">
-          {{ active?.interrupting ? '终止中…' : '终止' }}
-        </el-button>
-        <el-button v-if="active?.interrupted && !active?.streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
+      <div class="composer-wrap">
+        <div class="composer-shell">
+          <AttachmentPendingList
+            v-if="active && active.attachments.length > 0"
+            class="attachment-tags"
+            :attachments="active.attachments"
+            @remove="removeAttachment"
+          />
+          <div class="input-bar">
+            <el-input
+              v-if="active"
+              v-model="active.input"
+              placeholder="输入消息，回车发送；⌘/Ctrl+V 可粘贴截图或文件作为附件"
+              :disabled="active.streaming"
+              @keyup.enter="send"
+              @paste="handleAttachmentPaste"
+            />
+            <div class="composer-send">
+              <el-button v-if="!active?.streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
+              <el-button v-else type="danger" :loading="active?.interrupting" @click="handleInterrupt">
+                {{ active?.interrupting ? '终止中…' : '终止' }}
+              </el-button>
+              <el-button v-if="active?.interrupted && !active?.streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
+            </div>
+          </div>
+          <div class="composer-toolbar">
+            <el-upload
+              :show-file-list="false"
+              :http-request="handleAttachmentUpload"
+              :before-upload="beforeAttachmentUpload"
+              :accept="ATTACHMENT_ACCEPT"
+            >
+              <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
+                <el-icon><Paperclip /></el-icon>
+              </el-button>
+            </el-upload>
+            <ExecutionModeSelect
+              v-if="active"
+              v-model="active.mode"
+              :disabled="active.streaming"
+            />
+          </div>
+        </div>
       </div>
     </div>
-    <div class="history-column">
+    <div class="history-column" :aria-hidden="historyCollapsed">
       <ChatHistorySidebar
         ref="historySidebar"
         :agent-code="agentCode"
@@ -253,128 +271,46 @@ defineExpose({ newSession })
         :live-sessions="liveSessions"
         @select="openSession"
         @initial-session="restoreMostRecentSession"
+        @collapse="collapseHistory"
       />
     </div>
+    <el-button
+      v-if="historyCollapsed"
+      class="history-restore"
+      circle
+      title="展开历史会话"
+      aria-label="展开历史会话"
+      @click="restoreHistory"
+    >
+      <el-icon><Expand /></el-icon>
+    </el-button>
   </div>
 </template>
 
 <style scoped>
 .chat-panel {
-  display: flex;
-  gap: 16px;
-  height: 60vh;
+  --conversation-messages-padding: 28px 32px 36px;
+  --conversation-composer-padding: 10px 24px 14px;
+  grid-template-columns: minmax(0, 1fr) 300px;
 }
 
-.chat-column {
-  flex: 3;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  background-color: var(--theme-page-bg, #fff);
-  border-radius: 8px;
-  padding: 12px;
-  transition: background-color 0.3s ease;
+.chat-panel.is-history-collapsed {
+  grid-template-columns: minmax(0, 1fr) 0;
 }
 
-.messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-  border-radius: 6px;
-}
-
-.attachment-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.message-row {
-  display: flex;
-  margin-bottom: 12px;
-}
-
-.message-row.user {
-  justify-content: flex-end;
-}
-
-.bubble {
-  min-width: 0;
-  word-break: break-word;
-}
-
-.message-row.user .bubble {
-  max-width: 70%;
-  padding: 10px 14px;
-  background: var(--theme-primary, var(--el-color-primary));
-  border-radius: 12px 12px 3px 12px;
-  color: #fff;
-  white-space: pre-wrap;
-}
-
-.message-row.user .bubble:hover {
-  background: var(--theme-primary-light, #79bbff);
-}
-
-.message-row.assistant .bubble {
-  width: 100%;
-  max-width: 100%;
-  padding: 0;
-}
-
-.input-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.input-bar :deep(.el-input) {
-  flex: 1;
-  min-width: 180px;
-}
-
-/* :not(.is-link) 排除"继续"链接按钮——link 按钮的文字色本就用的是同一个主题蓝（靠透明背景显色），
-   这条规则如果连它一起覆盖成纯色背景，文字会跟背景同色而"隐形"。 */
-.input-bar :deep(.el-button--primary:not(.is-link)) {
-  background-color: var(--theme-primary, var(--el-color-primary));
-  border-color: var(--theme-primary, var(--el-color-primary));
-}
-
-.input-bar :deep(.el-button--primary:not(.is-link):hover) {
-  background-color: var(--theme-primary-light, #79bbff);
-  border-color: var(--theme-primary-light, #79bbff);
-}
-
-.history-column {
-  flex: 1;
-  min-width: 200px;
-  border-left: 1px solid var(--el-border-color-lighter);
-  padding-left: 16px;
-}
-
-@media (max-width: 900px) {
+@container workspace-panel (max-width: 900px) {
   .chat-panel {
-    flex-direction: column;
-    height: auto;
-    min-height: 60vh;
+    --conversation-messages-padding: 24px 16px 30px;
+    --conversation-composer-padding: 10px 12px 14px;
+    --conversation-user-bubble-max-width: 88%;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(420px, 1fr) 210px;
+    overflow-y: auto;
   }
 
-  .history-column {
-    min-height: 180px;
-    padding-top: 14px;
-    padding-left: 0;
-    border-top: 1px solid var(--el-border-color-lighter);
-    border-left: 0;
-  }
-
-  .message-row.user .bubble {
-    max-width: 88%;
-  }
-
-  .input-bar {
-    flex-wrap: wrap;
+  .chat-panel.is-history-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 0;
   }
 }
 </style>

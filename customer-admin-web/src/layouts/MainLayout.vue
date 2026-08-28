@@ -24,6 +24,8 @@ const themeStore = useThemeStore()
 // 与菜单节点 node.path 里存的 /sql/query?defineKey=xxx 完整链接对齐，其它页面维持原样按 path 高亮。
 const activePath = computed(() => (route.path === '/sql/query' ? route.fullPath : route.path))
 const asideWidth = computed(() => menuStore.collapsed ? '64px' : '220px')
+// 工作区需要接管 el-main 的剩余高度来承载内部滚动；只按精确路由名收口，避免表格、表单页受影响。
+const isWorkspaceRoute = computed(() => route.name === 'Workspace')
 
 // MainLayout 只在 Layout 的子路由下挂载（登录页/改密页在其外层），路由一变化就落一个标签，
 // 已存在的标签只切激活态、不重复追加。
@@ -56,7 +58,7 @@ async function handleLogout() {
         <MenuTree :nodes="menuStore.tree" :collapsed="menuStore.collapsed" />
       </el-menu>
     </el-aside>
-    <el-container>
+    <el-container class="layout-content">
       <el-header class="layout-header">
         <div class="header-left">
           <el-button
@@ -90,7 +92,13 @@ async function handleLogout() {
       </el-header>
       <TabsBar v-if="auth.isApproved" />
       <AppBreadcrumb v-if="auth.isApproved" />
-      <el-main class="layout-main" :class="{ 'layout-main--home': route.name === 'Home' }">
+      <el-main
+        class="layout-main"
+        :class="{
+          'layout-main--home': route.name === 'Home',
+          'layout-main--workspace': isWorkspaceRoute,
+        }"
+      >
         <!-- 只精确缓存 WorkspaceView：TabsBar 让"已打开的标签"在视觉上常驻，但底下的路由组件此前没配
              keep-alive，标签切走再切回其实是整个组件重新 mount——WorkspaceView 里的对话/VibeCoding
              面板state 全在组件本地 ref，一销毁就清空，进行中的 SSE 流也被 onUnmounted 里的 abortStream
@@ -113,6 +121,11 @@ async function handleLogout() {
 <style scoped>
 .layout {
   height: 100%;
+}
+
+.layout-content {
+  min-width: 0;
+  min-height: 0;
 }
 
 .layout-aside {
@@ -209,12 +222,26 @@ async function handleLogout() {
 }
 
 .layout-main {
+  min-width: 0;
+  min-height: 0;
   background: var(--el-bg-color-page);
 }
 
 .layout-main--home {
   padding: 0;
   overflow: hidden;
+}
+
+.layout-main--workspace {
+  padding: 14px 18px 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      circle at 13% 0%,
+      color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 5%, transparent),
+      transparent 24%
+    ),
+    var(--el-bg-color-page);
 }
 
 .layout-footer {
@@ -224,5 +251,18 @@ async function handleLogout() {
   background: var(--el-bg-color);
   border-top: 1px solid var(--el-border-color-lighter);
   padding: 0;
+}
+
+@media (max-width: 900px) {
+  .layout-main--workspace {
+    padding: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layout-aside,
+  .logo-text {
+    transition: none;
+  }
 }
 </style>

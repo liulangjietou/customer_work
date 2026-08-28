@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useThemeStore, PRESET_COLORS } from '@/store/theme'
+import { chooseButtonTextColor } from '@/utils/themeContrast'
 
 const props = defineProps<{
   onNewSession: () => void
@@ -8,35 +9,107 @@ const props = defineProps<{
 
 const themeStore = useThemeStore()
 const showPicker = ref(false)
+const toolbarRef = ref<HTMLElement>()
+const themeButtonRef = ref<HTMLButtonElement>()
+
+/** 为实心主题色按钮选择满足普通文字对比度的黑/白文字。 */
+const primaryTextColor = computed(() => chooseButtonTextColor(themeStore.primaryColor))
+
+function togglePicker() {
+  showPicker.value = !showPicker.value
+}
+
+function closePicker(restoreFocus = false) {
+  if (!showPicker.value) return
+  showPicker.value = false
+  if (restoreFocus) {
+    nextTick(() => themeButtonRef.value?.focus())
+  }
+}
+
+function selectColor(color: string) {
+  themeStore.setPrimaryColor(color)
+  closePicker(true)
+}
+
+function handleDocumentPointerDown(event: PointerEvent) {
+  if (showPicker.value && !toolbarRef.value?.contains(event.target as Node)) {
+    closePicker()
+  }
+}
+
+function handleEscape(event: KeyboardEvent) {
+  if (!showPicker.value) return
+  event.stopPropagation()
+  event.preventDefault()
+  closePicker(true)
+}
+
+function handleFocusOut(event: FocusEvent) {
+  const nextTarget = event.relatedTarget as Node | null
+  if (showPicker.value && (!nextTarget || !toolbarRef.value?.contains(nextTarget))) {
+    closePicker()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
+  document.addEventListener('keydown', handleEscape)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  document.removeEventListener('keydown', handleEscape)
+})
 </script>
 
 <template>
-  <div class="theme-toolbar">
-    <!-- 主题色选择 -->
-    <div class="theme-picker" @mouseenter="showPicker = true" @mouseleave="showPicker = false">
-      <button type="button" class="theme-btn" title="切换主题色">
+  <div ref="toolbarRef" class="theme-toolbar" @focusout="handleFocusOut">
+    <div class="theme-picker">
+      <button
+        ref="themeButtonRef"
+        type="button"
+        class="theme-btn"
+        title="切换主题色"
+        aria-label="切换主题色"
+        :aria-expanded="showPicker"
+        aria-controls="theme-color-palette"
+        @click="togglePicker"
+      >
         <span class="color-dot" :style="{ backgroundColor: themeStore.primaryColor }" />
-        <span class="color-label">主题色</span>
-        <el-icon class="arrow" :class="{ open: showPicker }"><ArrowDown /></el-icon>
       </button>
-      <transition name="fade">
-        <div v-show="showPicker" class="color-popover">
-          <div
+      <transition name="theme-popover">
+        <div
+          v-show="showPicker"
+          id="theme-color-palette"
+          class="color-popover"
+          role="group"
+          aria-label="选择主题色"
+        >
+          <button
             v-for="color in PRESET_COLORS"
             :key="color"
+            type="button"
             class="color-option"
             :class="{ active: themeStore.primaryColor === color }"
             :style="{ backgroundColor: color }"
-            :title="color"
-            @click="themeStore.setPrimaryColor(color)"
-          />
+            :title="`使用主题色 ${color}`"
+            :aria-label="`使用主题色 ${color}`"
+            :aria-pressed="themeStore.primaryColor === color"
+            @click="selectColor(color)"
+          >
+            <el-icon v-if="themeStore.primaryColor === color" class="check-mark" aria-hidden="true"><Check /></el-icon>
+          </button>
         </div>
       </transition>
     </div>
 
-    <!-- 新建会话 -->
-    <button type="button" class="new-session-btn" @click="props.onNewSession">
-      <el-icon><Plus /></el-icon>
+    <button
+      type="button"
+      class="new-session-btn"
+      :style="{ color: primaryTextColor }"
+      @click="props.onNewSession"
+    >
+      <el-icon aria-hidden="true"><Plus /></el-icon>
       新建会话
     </button>
   </div>
@@ -53,51 +126,34 @@ const showPicker = ref(false)
   position: relative;
 }
 
-/* 主题色胶囊按钮：浅黄底，规格与代码知识库/新建会话一致（34px 高/17px 圆角/0 18px 内距） */
 .theme-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 18px;
-  border-radius: 17px;
-  border: none;
-  background: #fdf0cd;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  color: var(--el-text-color-regular);
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  transition: box-shadow 0.2s, transform 0.2s, filter 0.2s;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 3%);
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 
 .theme-btn:hover {
-  filter: brightness(1.03);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  border-color: var(--theme-primary, var(--el-color-primary));
+  box-shadow: 0 4px 10px rgb(16 24 40 / 8%);
   transform: translateY(-1px);
 }
 
 .color-dot {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  border: 2px solid var(--el-bg-color);
-  box-shadow: 0 0 0 1px var(--el-border-color), 0 1px 3px rgba(0, 0, 0, 0.15);
-}
-
-.color-label {
-  /* 浅黄底上固定深棕字保证可读性，不随明暗模式切换 */
-  color: #8a6116;
-  font-weight: 500;
-}
-
-.arrow {
-  font-size: 12px;
-  color: #8a6116;
-  transition: transform 0.2s;
-}
-
-.arrow.open {
-  transform: rotate(180deg);
+  border: 3px solid var(--el-bg-color);
+  box-shadow: 0 0 0 1px var(--el-border-color), 0 1px 3px rgb(16 24 40 / 18%);
 }
 
 .color-popover {
@@ -110,52 +166,62 @@ const showPicker = ref(false)
   gap: 10px;
   padding: 12px;
   background: var(--el-bg-color);
-  border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
-  border: 1px solid var(--el-border-color-lighter);
-  width: 172px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgb(16 24 40 / 14%);
+  width: 170px;
 }
 
 .color-option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 24px;
   height: 24px;
+  padding: 0;
   border-radius: 50%;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
   border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 150ms ease, box-shadow 150ms ease;
 }
 
 .color-option:hover {
-  transform: scale(1.18);
+  transform: scale(1.12);
 }
 
 .color-option.active {
   border-color: var(--el-bg-color);
-  box-shadow: 0 0 0 2px var(--theme-primary, var(--el-color-primary));
+  box-shadow: 0 0 0 2px var(--el-text-color-primary);
 }
 
-/* 新建会话：白底细边框胶囊，规格与代码知识库/主题色按钮一致；悬浮时描主题色边 */
+.check-mark {
+  color: #fff;
+  font-size: 13px;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 45%));
+}
+
 .new-session-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 18px;
-  border: 1px solid var(--el-border-color);
-  border-radius: 17px;
-  background: var(--el-bg-color);
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-  font-weight: 500;
+  min-width: 106px;
+  height: 36px;
+  padding: 0 14px;
+  background: var(--theme-primary, var(--el-color-primary));
+  border: 1px solid var(--theme-primary, var(--el-color-primary));
+  border-radius: 10px;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 25%, transparent);
+  transition: filter 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 
 .new-session-btn:hover {
-  border-color: var(--theme-primary, var(--el-color-primary));
-  color: var(--theme-primary, var(--el-color-primary));
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  filter: brightness(0.96);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 32%, transparent);
   transform: translateY(-1px);
 }
 
@@ -164,14 +230,39 @@ const showPicker = ref(false)
   filter: brightness(0.96);
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s, transform 0.2s;
+.theme-btn:focus-visible,
+.new-session-btn:focus-visible,
+.color-option:focus-visible {
+  outline: 0;
+  box-shadow:
+    0 0 0 2px var(--el-bg-color),
+    0 0 0 4px var(--el-text-color-primary);
 }
 
-.fade-enter-from,
-.fade-leave-to {
+.theme-popover-enter-active,
+.theme-popover-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.theme-popover-enter-from,
+.theme-popover-leave-to {
   opacity: 0;
   transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-btn,
+  .new-session-btn,
+  .color-option,
+  .theme-popover-enter-active,
+  .theme-popover-leave-active {
+    transition: none;
+  }
+
+  .theme-btn:hover,
+  .new-session-btn:hover,
+  .color-option:hover {
+    transform: none;
+  }
 }
 </style>

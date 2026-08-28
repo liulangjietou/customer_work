@@ -24,6 +24,7 @@ import VibeCodingToolsDrawer from '@/components/VibeCodingToolsDrawer.vue'
 import AttachmentPendingList from '@/components/attachment/AttachmentPendingList.vue'
 import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
 import { useThemeStore } from '@/store/theme'
+import '@/styles/workspace-conversation.css'
 import {
   useVibeConversationsStore,
   type PlanCard,
@@ -70,6 +71,7 @@ const collaborationMode = ref(false)
 const historyLoading = ref(false)
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
+const historyCollapsed = ref(false)
 const themeStore = useThemeStore()
 const toolsDrawer = ref<InstanceType<typeof VibeCodingToolsDrawer>>()
 
@@ -103,6 +105,14 @@ const saving = ref(false)
 
 function newSession() {
   store.newSession(props.agentCode)
+}
+
+function collapseHistory() {
+  historyCollapsed.value = true
+}
+
+function restoreHistory() {
+  historyCollapsed.value = false
 }
 
 // 附件上传（回形针按钮 + 输入框 ⌘/Ctrl+V 粘贴）统一走组合式函数，与 ChatPanel 共用同一条链路
@@ -561,7 +571,7 @@ defineExpose({ newSession })
 </script>
 
 <template>
-  <div class="vibecoding-panel">
+  <div class="vibecoding-panel workspace-conversation" :class="{ 'is-history-collapsed': historyCollapsed }">
     <!-- 左列：对话区 -->
     <div class="chat-column">
       <div ref="scrollRef" class="messages" v-loading="historyLoading">
@@ -652,50 +662,58 @@ defineExpose({ newSession })
         </div>
         <el-empty v-if="(active?.messages.length ?? 0) === 0" description="描述你想让智能体生成/修改的代码" />
       </div>
-      <AttachmentPendingList
-        v-if="active && active.attachments.length > 0"
-        class="attachment-tags"
-        :attachments="active.attachments"
-        @remove="removeAttachment"
-      />
-      <div class="input-bar">
-        <el-button title="运行命令、诊断日志、自动化重构与沙箱管理" @click="toolsDrawer?.open('run')">
-          <el-icon><Tools /></el-icon>
-          开发工具
-        </el-button>
-        <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" :before-upload="beforeAttachmentUpload" :accept="ATTACHMENT_ACCEPT">
-          <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
-            <el-icon><Paperclip /></el-icon>
-          </el-button>
-        </el-upload>
-        <ExecutionModeSelect
-          v-if="active"
-          v-model="active.mode"
-          :disabled="active.streaming"
-        />
-        <el-input
-          v-model="input"
-          placeholder="描述需求，回车发送；⌘/Ctrl+V 可粘贴截图或文件作为附件"
-          :disabled="active?.streaming"
-          @keyup.enter="send"
-          @paste="handleAttachmentPaste"
-        />
-        <el-tooltip
-          placement="top"
-          content="开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作"
-        >
-          <el-switch
-            v-model="collaborationMode"
-            :disabled="active?.streaming"
-            active-text="协作模式"
-            class="collaboration-switch"
+      <div class="composer-wrap">
+        <div class="composer-shell">
+          <AttachmentPendingList
+            v-if="active && active.attachments.length > 0"
+            class="attachment-tags"
+            :attachments="active.attachments"
+            @remove="removeAttachment"
           />
-        </el-tooltip>
-        <el-button v-if="!active?.streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
-        <el-button v-else type="danger" :loading="active?.interrupting" @click="handleInterrupt">
-          {{ active?.interrupting ? '终止中…' : '终止' }}
-        </el-button>
-        <el-button v-if="active?.interrupted && !active?.streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
+          <div class="input-bar">
+            <el-input
+              v-model="input"
+              placeholder="描述需求，回车发送；⌘/Ctrl+V 可粘贴截图或文件作为附件"
+              :disabled="active?.streaming"
+              @keyup.enter="send"
+              @paste="handleAttachmentPaste"
+            />
+            <div class="composer-send">
+              <el-button v-if="!active?.streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
+              <el-button v-else type="danger" :loading="active?.interrupting" @click="handleInterrupt">
+                {{ active?.interrupting ? '终止中…' : '终止' }}
+              </el-button>
+              <el-button v-if="active?.interrupted && !active?.streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
+            </div>
+          </div>
+          <div class="composer-toolbar">
+            <el-button title="运行命令、诊断日志、自动化重构与沙箱管理" @click="toolsDrawer?.open('run')">
+              <el-icon><Tools /></el-icon>
+              开发工具
+            </el-button>
+            <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" :before-upload="beforeAttachmentUpload" :accept="ATTACHMENT_ACCEPT">
+              <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
+                <el-icon><Paperclip /></el-icon>
+              </el-button>
+            </el-upload>
+            <ExecutionModeSelect
+              v-if="active"
+              v-model="active.mode"
+              :disabled="active.streaming"
+            />
+            <el-tooltip
+              placement="top"
+              content="开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作"
+            >
+              <el-switch
+                v-model="collaborationMode"
+                :disabled="active?.streaming"
+                active-text="协作模式"
+                class="collaboration-switch"
+              />
+            </el-tooltip>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -774,7 +792,7 @@ defineExpose({ newSession })
     </div>
 
     <!-- 右列：历史会话 -->
-    <div class="history-column">
+    <div class="history-column" :aria-hidden="historyCollapsed">
       <ChatHistorySidebar
         ref="historySidebar"
         :agent-code="agentCode"
@@ -782,8 +800,20 @@ defineExpose({ newSession })
         :live-sessions="liveSessions"
         @select="openSession"
         @initial-session="restoreMostRecentSession"
+        @collapse="collapseHistory"
       />
     </div>
+
+    <el-button
+      v-if="historyCollapsed"
+      class="history-restore"
+      circle
+      title="展开历史会话"
+      aria-label="展开历史会话"
+      @click="restoreHistory"
+    >
+      <el-icon><Expand /></el-icon>
+    </el-button>
 
     <!-- 文件内容预览抽屉 -->
     <el-drawer
@@ -931,102 +961,25 @@ defineExpose({ newSession })
 
 <style scoped>
 .vibecoding-panel {
-  display: flex;
-  gap: 16px;
-  height: 60vh;
+  --conversation-messages-padding: 28px 28px 36px;
+  --conversation-composer-padding: 10px 20px 14px;
+  grid-template-columns: minmax(520px, 1fr) minmax(220px, 260px) 300px;
 }
 
-.chat-column {
-  flex: 2;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  background-color: var(--theme-page-bg, #fff);
-  border-radius: 8px;
-  padding: 12px;
-  transition: background-color 0.3s ease;
-}
-
-.messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-  border-radius: 6px;
-}
-
-.attachment-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.message-row {
-  display: flex;
-  margin-bottom: 12px;
-}
-
-.message-row.user {
-  justify-content: flex-end;
-}
-
-.bubble {
-  min-width: 0;
-  word-break: break-word;
-}
-
-.message-row.user .bubble {
-  max-width: 88%;
-  padding: 10px 14px;
-  background: var(--theme-primary, var(--el-color-primary));
-  border-radius: 12px 12px 3px 12px;
-  color: #fff;
-  white-space: pre-wrap;
-}
-
-.message-row.user .bubble:hover {
-  background: var(--theme-primary-light, #79bbff);
-}
-
-.message-row.assistant .bubble {
-  width: 100%;
-  max-width: 100%;
-  padding: 0;
-}
-
-.input-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.input-bar :deep(.el-input) {
-  flex: 1;
-  min-width: 180px;
-}
-
-/* :not(.is-link) 排除"继续"链接按钮——link 按钮的文字色本就用的是同一个主题蓝（靠透明背景显色），
-   这条规则如果连它一起覆盖成纯色背景，文字会跟背景同色而"隐形"。 */
-.input-bar :deep(.el-button--primary:not(.is-link)) {
-  background-color: var(--theme-primary, var(--el-color-primary));
-  border-color: var(--theme-primary, var(--el-color-primary));
-}
-
-.input-bar :deep(.el-button--primary:not(.is-link):hover) {
-  background-color: var(--theme-primary-light, #79bbff);
-  border-color: var(--theme-primary-light, #79bbff);
+.vibecoding-panel.is-history-collapsed {
+  grid-template-columns: minmax(520px, 1fr) minmax(220px, 280px) 0;
 }
 
 /* 产物文件树列 */
 .artifacts-column {
-  flex: 1;
-  border-left: 1px solid var(--el-border-color-lighter);
-  padding-left: 16px;
   display: flex;
   flex-direction: column;
-  min-width: 200px;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
+  padding: 15px 14px 12px 16px;
+  background: color-mix(in srgb, var(--el-fill-color-lighter) 42%, var(--el-bg-color));
+  border-left: 1px solid var(--el-border-color-lighter);
 }
 
 .artifacts-header {
@@ -1272,14 +1225,6 @@ defineExpose({ newSession })
   color: var(--theme-primary, var(--el-color-primary));
 }
 
-/* 历史会话列 */
-.history-column {
-  flex: 1;
-  border-left: 1px solid var(--el-border-color-lighter);
-  padding-left: 16px;
-  min-width: 180px;
-}
-
 /* 预览抽屉 */
 .preview-loading {
   display: flex;
@@ -1355,40 +1300,46 @@ defineExpose({ newSession })
   background: var(--el-bg-color);
 }
 
-@media (max-width: 1100px) {
+@container workspace-panel (max-width: 1040px) {
   .vibecoding-panel {
-    flex-wrap: wrap;
-    gap: 12px;
-    height: auto;
-    min-height: 60vh;
+    --conversation-messages-padding: 28px 20px 36px;
+    --conversation-composer-padding: 10px 14px 14px;
+    grid-template-columns: minmax(480px, 1fr) minmax(220px, 280px);
+    grid-template-rows: minmax(480px, 1fr) 210px;
+    overflow-y: auto;
+  }
+
+  .vibecoding-panel.is-history-collapsed {
+    grid-template-columns: minmax(480px, 1fr) minmax(220px, 280px);
+    grid-template-rows: minmax(0, 1fr) 0;
   }
 
   .history-column {
-    flex: 1 1 100%;
-    min-height: 180px;
-    padding-top: 14px;
-    padding-left: 0;
-    border-top: 1px solid var(--el-border-color-lighter);
-    border-left: 0;
-  }
-
-  .input-bar {
-    flex-wrap: wrap;
+    grid-column: 1 / -1;
   }
 }
 
-@media (max-width: 760px) {
-  .chat-column,
-  .artifacts-column {
-    flex: 1 1 100%;
-    min-height: 55vh;
+@container workspace-panel (max-width: 700px) {
+  .vibecoding-panel,
+  .vibecoding-panel.is-history-collapsed {
+    --conversation-user-bubble-max-width: 88%;
+    --conversation-toolbar-wrap: wrap;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(480px, 1fr) 260px 210px;
   }
 
   .artifacts-column {
-    padding-top: 14px;
-    padding-left: 0;
+    padding: 14px 16px;
     border-top: 1px solid var(--el-border-color-lighter);
     border-left: 0;
+  }
+
+  .history-column {
+    grid-column: 1;
+  }
+
+  .vibecoding-panel.is-history-collapsed {
+    grid-template-rows: minmax(480px, 1fr) 260px 0;
   }
 }
 </style>
