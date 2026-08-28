@@ -23,6 +23,7 @@ import PlanConfirmCard from '@/components/PlanConfirmCard.vue'
 import VibeCodingToolsDrawer from '@/components/VibeCodingToolsDrawer.vue'
 import AttachmentPendingList from '@/components/attachment/AttachmentPendingList.vue'
 import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
+import WorkspaceConversationEmptyState from '@/components/workspace/WorkspaceConversationEmptyState.vue'
 import { useThemeStore } from '@/store/theme'
 import '@/styles/workspace-conversation.css'
 import {
@@ -48,7 +49,7 @@ import 'highlight.js/styles/github.css'
 const REVIEW_POLL_INTERVAL_MS = 5000
 const MAX_REVIEW_POLL_COUNT = 40
 
-const props = defineProps<{ agentCode: string; initialSessionId?: string }>()
+const props = defineProps<{ agentCode: string; assistantName: string; initialSessionId?: string }>()
 
 /**
  * 会话状态全部在 Pinia store（vibeConversations）里，本组件只是视图：切页面、切智能体、组件销毁
@@ -574,7 +575,12 @@ defineExpose({ newSession })
   <div class="vibecoding-panel workspace-conversation" :class="{ 'is-history-collapsed': historyCollapsed }">
     <!-- 左列：对话区 -->
     <div class="chat-column">
-      <div ref="scrollRef" class="messages" v-loading="historyLoading">
+      <div
+        ref="scrollRef"
+        class="messages"
+        :class="{ 'is-empty': (active?.messages.length ?? 0) === 0 }"
+        v-loading="historyLoading"
+      >
         <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
           <div class="bubble">
             <AssistantResponse
@@ -660,7 +666,10 @@ defineExpose({ newSession })
             />
           </div>
         </div>
-        <el-empty v-if="(active?.messages.length ?? 0) === 0" description="描述你想让智能体生成/修改的代码" />
+        <WorkspaceConversationEmptyState
+          v-if="(active?.messages.length ?? 0) === 0"
+          :assistant-name="assistantName"
+        />
       </div>
       <div class="composer-wrap">
         <div class="composer-shell">

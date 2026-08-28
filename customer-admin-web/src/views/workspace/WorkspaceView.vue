@@ -40,6 +40,7 @@ function findNode(nodes: MenuNode[], agentCode: string): MenuNode | null {
 }
 
 const agentNode = computed(() => findNode(menuStore.tree, props.agentCode))
+const agentDisplayName = computed(() => agentNode.value?.name ?? props.agentCode)
 const supportsVibeCoding = computed(() => agentNode.value?.capabilities?.includes('vibecoding') ?? false)
 
 // 主题色/新建会话工具栏上提到 Tab 上方后，"新建会话"要按当前激活的 Tab 分发到对应面板
@@ -137,7 +138,7 @@ watch(
       <div class="agent-identity">
         <span class="agent-mark" aria-hidden="true">&lt;/&gt;</span>
         <div class="agent-copy">
-          <h1 class="agent-title">{{ agentNode?.name ?? agentCode }}</h1>
+          <h1 class="agent-title">{{ agentDisplayName }}</h1>
           <div class="agent-meta">
             <span>智能体工作台</span>
             <span class="meta-separator" aria-hidden="true">/</span>
@@ -170,10 +171,22 @@ watch(
              不加 :key 的话切换智能体时 ChatPanel 内部的 messages/sessionId 状态会跟着串到下一个
              智能体身上。加 :key 强制按 agentCode 重建实例，天然顺带把上一个智能体未结束的 SSE
              流也一起 abort 掉（复用 ChatPanel 自己 onUnmounted 里已有的 abortStream 逻辑）。 -->
-        <ChatPanel ref="chatPanelRef" :key="agentCode" :agent-code="agentCode" :initial-session-id="initialSessionId" />
+        <ChatPanel
+          ref="chatPanelRef"
+          :key="agentCode"
+          :agent-code="agentCode"
+          :assistant-name="agentDisplayName"
+          :initial-session-id="initialSessionId"
+        />
       </el-tab-pane>
       <el-tab-pane v-if="supportsVibeCoding" label="VibeCoding" name="vibecoding">
-        <VibeCodingPanel ref="vibeCodingPanelRef" :key="agentCode" :agent-code="agentCode" :initial-session-id="initialSessionId" />
+        <VibeCodingPanel
+          ref="vibeCodingPanelRef"
+          :key="agentCode"
+          :agent-code="agentCode"
+          :assistant-name="agentDisplayName"
+          :initial-session-id="initialSessionId"
+        />
       </el-tab-pane>
     </el-tabs>
   </div>
