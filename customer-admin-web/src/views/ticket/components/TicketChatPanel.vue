@@ -520,8 +520,8 @@ const categoryOptions = Object.entries(CATEGORY_LABELS) as [TicketCategory, stri
 }
 
 .message-row.agent .bubble {
-  background: var(--theme-primary, var(--el-color-primary));
-  color: #fff;
+  background: var(--theme-primary-solid, var(--el-color-primary));
+  color: var(--cw-on-primary, #fff);
 }
 
 .bot-badge {
@@ -531,7 +531,7 @@ const categoryOptions = Object.entries(CATEGORY_LABELS) as [TicketCategory, stri
 }
 
 .message-row.agent .bot-badge {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--cw-on-primary, #fff);
 }
 
 .content {

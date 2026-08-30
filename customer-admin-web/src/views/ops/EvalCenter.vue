@@ -67,32 +67,56 @@ const runs = ref<EvalRun[]>([])
 const datasetLoading = ref(false)
 const datasetCases = ref<EvalDatasetCase[]>([])
 const datasetVersions = ref<EvalDatasetRelease[]>([])
+let runRequestId = 0
+let datasetRequestId = 0
+let detailRequestId = 0
+let diffRequestId = 0
 
 const labels = computed(() => METRIC_LABELS[evalType.value])
+// 后端按持久化 seq 倒序返回；同毫秒内 createdAtMs 无法区分先后，首条才是真正的最新运行。
+const latestRun = computed(() => runs.value[0] ?? null)
 
 async function loadRuns() {
+  const requestId = ++runRequestId
+  const selectedType = evalType.value
   loading.value = true
   try {
-    runs.value = await listRuns(evalType.value)
+    const nextRuns = await listRuns(selectedType)
+    if (requestId === runRequestId && evalType.value === selectedType) {
+      runs.value = nextRuns
+    }
   } finally {
-    loading.value = false
+    if (requestId === runRequestId) {
+      loading.value = false
+    }
   }
 }
 
 function handleTypeChange() {
   detailVisible.value = false
+  diffVisible.value = false
+  cancelDetailRequest()
+  cancelVersionDiffRequest()
   return Promise.all([loadRuns(), loadDatasetGovernance()])
 }
 
 async function loadDatasetGovernance() {
+  const requestId = ++datasetRequestId
+  const selectedType = evalType.value
   datasetLoading.value = true
   try {
-    ;[datasetCases.value, datasetVersions.value] = await Promise.all([
-      listDatasetCases(evalType.value),
-      listDatasetVersions(evalType.value),
+    const [nextCases, nextVersions] = await Promise.all([
+      listDatasetCases(selectedType),
+      listDatasetVersions(selectedType),
     ])
+    if (requestId === datasetRequestId && evalType.value === selectedType) {
+      datasetCases.value = nextCases
+      datasetVersions.value = nextVersions
+    }
   } finally {
-    datasetLoading.value = false
+    if (requestId === datasetRequestId) {
+      datasetLoading.value = false
+    }
   }
 }
 
@@ -115,8 +139,11 @@ function formatTime(ms: number): string {
 // ---------- 触发评测 ----------
 
 async function handleRun() {
+  if (running.value) return
+  const selectedType = evalType.value
   const label = labels.value
-  const isQuality = evalType.value === 'QUALITY'
+  const isQuality = selectedType === 'QUALITY'
+  running.value = true
   try {
     const { value: remark } = await ElMessageBox.prompt(
       isQuality
@@ -131,8 +158,7 @@ async function handleRun() {
         inputValidator: () => true,
       },
     )
-    running.value = true
-    const comparison = await triggerEval(evalType.value, remark || undefined)
+    const comparison = await triggerEval(selectedType, remark || undefined)
     ElMessage.success(
       comparison.regressions.length > 0
         ? `评测完成，发现 ${comparison.regressions.length} 个回归用例，请查看详情`
@@ -157,14 +183,27 @@ const detailLoading = ref(false)
 const comparison = ref<EvalComparison | null>(null)
 
 async function openDetail(run: EvalRun) {
+  const requestId = ++detailRequestId
+  const runId = run.runId
   detailVisible.value = true
   detailLoading.value = true
   comparison.value = null
   try {
-    comparison.value = await getComparison(run.runId)
+    const nextComparison = await getComparison(runId)
+    if (requestId === detailRequestId && detailVisible.value && nextComparison.current.runId === runId) {
+      comparison.value = nextComparison
+    }
   } finally {
-    detailLoading.value = false
+    if (requestId === detailRequestId) {
+      detailLoading.value = false
+    }
   }
+}
+
+function cancelDetailRequest() {
+  detailRequestId += 1
+  detailLoading.value = false
+  comparison.value = null
 }
 
 /** 原始指标字典转成可渲染的行；归一化后的主/次指标已单独展示，这里给的是未折算的原值。 */
@@ -190,6 +229,7 @@ const caseForm = reactive<EvalDatasetCaseInput>({
   originRef: null,
 })
 const diffVisible = ref(false)
+const diffLoading = ref(false)
 const datasetDiff = ref<EvalDatasetDiff | null>(null)
 
 function openCreateCase() {
@@ -300,8 +340,28 @@ async function openVersionDiff(row: EvalDatasetRelease, index: number) {
     ElMessage.info('没有更早版本可比较')
     return
   }
-  datasetDiff.value = await diffDatasetVersions(previous.releaseId, row.releaseId)
+  const requestId = ++diffRequestId
+  const fromReleaseId = previous.releaseId
+  const toReleaseId = row.releaseId
+  datasetDiff.value = null
   diffVisible.value = true
+  diffLoading.value = true
+  try {
+    const nextDiff = await diffDatasetVersions(fromReleaseId, toReleaseId)
+    if (requestId === diffRequestId && diffVisible.value) {
+      datasetDiff.value = nextDiff
+    }
+  } finally {
+    if (requestId === diffRequestId) {
+      diffLoading.value = false
+    }
+  }
+}
+
+function cancelVersionDiffRequest() {
+  diffRequestId += 1
+  diffLoading.value = false
+  datasetDiff.value = null
 }
 
 function reviewTagType(status: string) {
@@ -315,9 +375,9 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
 
 <template>
   <div class="eval-center">
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
-        <el-radio-group v-model="evalType" @change="handleTypeChange">
+        <el-radio-group v-model="evalType" :disabled="running" @change="handleTypeChange">
           <el-radio-button value="INTENT">意图路由</el-radio-button>
           <el-radio-button value="QUALITY">回复质量</el-radio-button>
         </el-radio-group>
@@ -325,6 +385,7 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
         <div class="spacer" />
         <el-button
           v-permission="'eval:run'"
+          class="cw-final-action"
           type="primary"
           :loading="running"
           @click="handleRun"
@@ -333,7 +394,32 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
         </el-button>
         <el-button :loading="loading" @click="loadRuns">刷新</el-button>
       </div>
+    </el-card>
 
+    <div class="summary-row" v-loading="loading">
+      <div class="stat">
+        <strong>{{ runs.length }}</strong>
+        <span>当前类型运行记录</span>
+      </div>
+      <div class="stat">
+        <strong>{{ formatPercent(latestRun?.primaryMetric) }}</strong>
+        <span>最新{{ labels.primary }}</span>
+      </div>
+      <div class="stat">
+        <strong>{{ formatPercent(latestRun?.secondaryMetric) }}</strong>
+        <span>最新{{ labels.secondary }}</span>
+      </div>
+      <div class="stat" :class="{ 'stat-danger': (latestRun?.failedCaseIds.length ?? 0) > 0 }">
+        <strong>{{ latestRun?.failedCaseIds.length ?? 0 }}</strong>
+        <span>最新失败用例</span>
+      </div>
+    </div>
+
+    <el-card shadow="never" class="trend-card">
+      <div class="section-heading">
+        <strong>评测趋势</strong>
+        <span>先看指标方向，再到运行明细确认失败与版本变化</span>
+      </div>
       <EvalTrendChart
         :runs="runs"
         :loading="loading"
@@ -387,7 +473,7 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
             <el-button v-permission="'eval:dataset-edit'" @click="importCases">导入 JSON</el-button>
             <el-button @click="exportCases">导出 JSON</el-button>
             <el-button v-permission="'eval:dataset-edit'" @click="createVersion">创建命名版本</el-button>
-            <el-button v-permission="'eval:dataset-edit'" type="primary" @click="openCreateCase">新增用例</el-button>
+            <el-button v-permission="'eval:dataset-edit'" class="cw-final-action" type="primary" @click="openCreateCase">新增用例</el-button>
           </div>
         </div>
       </template>
@@ -464,11 +550,11 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
       </el-form>
       <template #footer>
         <el-button @click="caseDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveCase">保存</el-button>
+        <el-button class="cw-final-action" type="primary" @click="saveCase">保存用例</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="diffVisible" title="数据集版本差异" width="min(760px, 94vw)">
+    <el-dialog v-model="diffVisible" v-loading="diffLoading" title="数据集版本差异" width="min(760px, 94vw)" @close="cancelVersionDiffRequest">
       <template v-if="datasetDiff">
         <el-descriptions :column="3" border>
           <el-descriptions-item label="新增">{{ datasetDiff.addedCaseIds.length }}</el-descriptions-item>
@@ -479,7 +565,7 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
       </template>
     </el-dialog>
 
-    <el-drawer v-model="detailVisible" title="运行详情与版本对比" size="620px">
+    <el-drawer v-model="detailVisible" title="运行详情与版本对比" size="620px" @close="cancelDetailRequest">
       <div v-loading="detailLoading">
         <template v-if="comparison">
           <el-descriptions :column="2" border>
@@ -589,7 +675,7 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
 .eval-center {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .toolbar {
@@ -600,13 +686,76 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
   flex-wrap: wrap;
 }
 
+.filter-card .toolbar {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .spacer {
   flex: 1;
 }
 
 .hint {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  min-height: 88px;
+  padding: 15px 16px 14px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: var(--cw-paper);
+  box-shadow: var(--cw-shadow-xs);
+}
+
+.stat strong {
+  display: block;
+  color: var(--cw-text);
+  font-size: 25px;
+  font-weight: 720;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.stat span {
+  display: block;
+  margin-top: 7px;
+  color: var(--cw-text-muted);
+  font-size: 12px;
+}
+
+.stat-danger strong {
+  color: var(--cw-danger);
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.section-heading strong {
+  color: var(--cw-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.section-heading span {
+  color: var(--cw-text-muted);
+  font-size: 12px;
+  text-align: right;
 }
 
 .dataset-header,
@@ -628,7 +777,7 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
 }
 
 .dataset-header span {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
 }
 
@@ -636,8 +785,10 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
   max-height: 420px;
   overflow: auto;
   padding: 12px;
-  border-radius: 6px;
-  background: var(--el-fill-color-light);
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-sm);
+  background: var(--cw-canvas);
+  color: var(--cw-text);
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
@@ -672,7 +823,52 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
   padding-left: 18px;
   font-size: 13px;
   line-height: 1.8;
-  color: var(--el-text-color-regular);
+  color: var(--cw-text);
   word-break: break-all;
+}
+
+@media (max-width: 1023px) {
+  .summary-row {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .summary-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-heading span {
+    text-align: left;
+  }
+
+  .dataset-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dataset-actions > .el-button {
+    flex: 1 1 calc(50% - 5px);
+    margin-left: 0;
+  }
+
+  .eval-center :deep(.el-dialog .el-descriptions) {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .summary-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dataset-actions > .el-button {
+    flex-basis: 100%;
+  }
 }
 </style>

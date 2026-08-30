@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useThemeStore, PRESET_COLORS } from '@/store/theme'
 import { chooseButtonTextColor } from '@/utils/themeContrast'
 
@@ -11,9 +11,6 @@ const themeStore = useThemeStore()
 const showPicker = ref(false)
 const toolbarRef = ref<HTMLElement>()
 const themeButtonRef = ref<HTMLButtonElement>()
-
-/** 为实心主题色按钮选择满足普通文字对比度的黑/白文字。 */
-const primaryTextColor = computed(() => chooseButtonTextColor(themeStore.primaryColor))
 
 function togglePicker() {
   showPicker.value = !showPicker.value
@@ -91,7 +88,7 @@ onBeforeUnmount(() => {
             type="button"
             class="color-option"
             :class="{ active: themeStore.primaryColor === color }"
-            :style="{ backgroundColor: color }"
+            :style="{ backgroundColor: color, color: chooseButtonTextColor(color) }"
             :title="`使用主题色 ${color}`"
             :aria-label="`使用主题色 ${color}`"
             :aria-pressed="themeStore.primaryColor === color"
@@ -106,7 +103,6 @@ onBeforeUnmount(() => {
     <button
       type="button"
       class="new-session-btn"
-      :style="{ color: primaryTextColor }"
       @click="props.onNewSession"
     >
       <el-icon aria-hidden="true"><Plus /></el-icon>
@@ -196,7 +192,7 @@ onBeforeUnmount(() => {
 }
 
 .check-mark {
-  color: #fff;
+  color: currentColor;
   font-size: 13px;
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / 45%));
 }
@@ -209,25 +205,26 @@ onBeforeUnmount(() => {
   min-width: 106px;
   height: 36px;
   padding: 0 14px;
-  background: var(--theme-primary, var(--el-color-primary));
-  border: 1px solid var(--theme-primary, var(--el-color-primary));
+  color: var(--cw-on-primary);
+  background: var(--theme-primary-solid, var(--el-color-primary));
+  border: 1px solid var(--theme-primary-solid, var(--el-color-primary));
   border-radius: 10px;
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
-  box-shadow: 0 4px 10px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 25%, transparent);
-  transition: filter 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--theme-primary-solid, var(--el-color-primary)) 25%, transparent);
+  transition: background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 
 .new-session-btn:hover {
-  filter: brightness(0.96);
-  box-shadow: 0 6px 14px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 32%, transparent);
+  background: var(--theme-primary-solid-hover, var(--theme-primary-solid));
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--theme-primary-solid, var(--el-color-primary)) 32%, transparent);
   transform: translateY(-1px);
 }
 
 .new-session-btn:active {
+  background: var(--theme-primary-solid-active, var(--theme-primary-solid));
   transform: translateY(0);
-  filter: brightness(0.96);
 }
 
 .theme-btn:focus-visible,

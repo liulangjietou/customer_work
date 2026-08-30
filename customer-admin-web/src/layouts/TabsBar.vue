@@ -198,18 +198,18 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 0 0 var(--cw-tabs-height);
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--cw-line, var(--el-border-color-lighter));
+  background: var(--cw-paper, var(--el-bg-color));
 }
 
 .tabs-bar {
   height: var(--cw-tabs-height);
-  padding: 5px 14px 0;
-  background: var(--el-bg-color);
+  padding: 3px 12px 0;
+  background: var(--cw-paper, var(--el-bg-color));
 }
 
 .tabs-bar :deep(.el-tabs__header) {
-  height: 35px;
+  height: 34px;
   margin: 0;
   border-bottom: 0;
 }
@@ -217,23 +217,23 @@ onBeforeUnmount(() => {
 .tabs-bar :deep(.el-tabs__nav-wrap),
 .tabs-bar :deep(.el-tabs__nav-scroll),
 .tabs-bar :deep(.el-tabs__nav) {
-  height: 35px;
+  height: 34px;
 }
 
 .tabs-bar :deep(.el-tabs__nav) {
   border: 0;
-  gap: 4px;
+  gap: 2px;
 }
 
 .tabs-bar :deep(.el-tabs__item) {
-  height: 31px;
+  height: 34px;
   position: relative;
-  padding: 0 12px;
+  padding: 0 11px;
   border: 1px solid transparent;
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--cw-radius-sm, 6px) var(--cw-radius-sm, 6px) 0 0;
   background: transparent;
-  color: var(--el-text-color-secondary);
-  line-height: 31px;
+  color: var(--cw-text-muted, var(--el-text-color-secondary));
+  line-height: 34px;
   font-size: 12px;
   transition: background-color 140ms ease, color 140ms ease;
 }
@@ -243,25 +243,25 @@ onBeforeUnmount(() => {
 }
 
 .tabs-bar :deep(.el-tabs__item:hover) {
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
+  background: var(--cw-canvas, var(--el-fill-color-light));
+  color: var(--cw-text, var(--el-text-color-primary));
 }
 
 .tabs-bar :deep(.el-tabs__item.is-active) {
-  border-color: var(--el-border-color-lighter);
-  border-bottom-color: var(--el-bg-color);
-  background: var(--el-bg-color);
-  color: var(--el-text-color-primary);
-  font-weight: 600;
+  border-color: var(--cw-line, var(--el-border-color-lighter));
+  border-bottom-color: var(--cw-paper, var(--el-bg-color));
+  background: var(--cw-paper, var(--el-bg-color));
+  color: var(--cw-cobalt, var(--el-color-primary));
+  font-weight: 650;
 }
 
 .tabs-bar :deep(.el-tabs__item.is-active::before) {
   content: '';
   height: 2px;
   position: absolute;
-  inset: -1px 8px auto;
+  inset: -1px 7px auto;
   border-radius: 0 0 2px 2px;
-  background: var(--theme-primary, var(--el-color-primary));
+  background: var(--cw-cobalt, var(--el-color-primary));
 }
 
 .tabs-bar :deep(.el-tabs__item .is-icon-close) {
@@ -292,10 +292,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 2px;
   padding: 5px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 9px;
-  background: var(--el-bg-color-overlay);
-  box-shadow: 0 12px 30px rgb(15 23 42 / 16%);
+  border: 1px solid var(--cw-line, var(--el-border-color-lighter));
+  border-radius: var(--cw-radius-md, 8px);
+  background: var(--cw-paper, var(--el-bg-color-overlay));
+  box-shadow: var(--cw-shadow-sm, 0 12px 30px rgb(15 23 42 / 16%));
 }
 
 .tab-context-menu button {
@@ -303,9 +303,9 @@ onBeforeUnmount(() => {
   height: 32px;
   padding: 0 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--cw-radius-sm, 6px);
   background: transparent;
-  color: var(--el-text-color-regular);
+  color: var(--cw-text-muted, var(--el-text-color-regular));
   text-align: left;
   font-size: 12px;
   cursor: pointer;
@@ -313,13 +313,33 @@ onBeforeUnmount(() => {
 
 .tab-context-menu button:hover:not(:disabled),
 .tab-context-menu button:focus-visible:not(:disabled) {
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
+  background: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 9%, var(--cw-paper, var(--el-bg-color)));
+  color: var(--cw-cobalt, var(--el-color-primary));
 }
 
 .tab-context-menu button:disabled {
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-text-muted, var(--el-text-color-placeholder));
+  opacity: 0.55;
   cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .tabs-bar {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .tabs-bar :deep(.el-tabs__nav) {
+    gap: 1px;
+  }
+
+  .tabs-bar :deep(.el-tabs__item) {
+    padding: 0 9px;
+  }
+
+  .tab-label {
+    max-width: 116px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

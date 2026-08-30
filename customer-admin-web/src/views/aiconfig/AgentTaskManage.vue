@@ -149,11 +149,11 @@ onBeforeUnmount(() => {
         <el-button @click="handleReset">重置</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="taskId" label="任务ID" width="180" show-overflow-tooltip />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的后台任务">
+        <el-table-column prop="taskId" label="任务ID" width="180" show-overflow-tooltip class-name="primary-column" />
         <el-table-column prop="subAgentId" label="子智能体" width="150" show-overflow-tooltip />
         <el-table-column prop="parentAgentCode" label="父智能体" width="150" show-overflow-tooltip />
-        <el-table-column label="状态" width="110">
+        <el-table-column label="状态" width="110" align="center">
           <template #default="{ row }: { row: AgentTaskVO }">
             <el-tag :type="statusTagType(row.status)">{{ row.status }}</el-tag>
           </template>
@@ -236,14 +236,20 @@ onBeforeUnmount(() => {
 
 .toolbar {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
 
-.pagination {
-  margin-top: 12px;
-  justify-content: flex-end;
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .muted {

@@ -1,0 +1,311 @@
+/*
+ * 路由级页面母版。这里只描述信息层级与响应式几何，颜色、组件基线留在 theme.css。
+ * data-page-template 由 MainLayout 根据显式路由映射产生，避免靠 DOM 猜测页面类型。
+ */
+
+.cw-page-context {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1600px;
+  margin: 0 auto 18px;
+  padding: 4px 2px 0;
+}
+
+.cw-page-context__copy {
+  min-width: 0;
+}
+
+.cw-page-context__eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--cw-cobalt);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  line-height: 1;
+}
+
+.cw-page-context h1 {
+  margin: 0;
+  color: var(--cw-text);
+  font-size: clamp(22px, 2vw, 29px);
+  font-weight: 760;
+  letter-spacing: -0.025em;
+  line-height: 1.18;
+}
+
+.cw-page-context p {
+  max-width: 760px;
+  margin: 7px 0 0;
+  color: var(--cw-text-muted);
+  line-height: 1.55;
+}
+
+.cw-page-context__scope {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 11px;
+  color: var(--cw-text-muted);
+  border: 1px solid var(--cw-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cw-paper) 88%, transparent);
+  font-size: 12px;
+}
+
+.cw-page-context__scope span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cw-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cw-success) 15%, transparent);
+}
+
+.layout-main:not(.layout-main--home):not(.layout-main--workspace) {
+  padding: 22px 24px 28px;
+  overflow: auto;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--cw-line) 25%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(color-mix(in srgb, var(--cw-line) 25%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--cw-canvas);
+}
+
+.layout-main:not(.layout-main--home):not(.layout-main--workspace) > :not(.cw-page-context) {
+  width: 100%;
+  max-width: 1600px;
+  margin-inline: auto;
+}
+
+.layout-main[data-page-template] > :not(.cw-page-context) {
+  min-width: 0;
+}
+
+/* 标准列表：一个稳定工作面承载筛选、数据与分页，不再叠加重阴影卡片。 */
+.layout-main[data-page-template='list'] > .page,
+.layout-main[data-page-template='list'] > .login-image-page {
+  display: grid;
+  gap: 14px;
+}
+
+.layout-main[data-page-template='list'] > .page > .el-card,
+.layout-main[data-page-template='list'] > .login-image-page > .el-card {
+  box-shadow: var(--cw-shadow-xs);
+}
+
+/* 运营看板：指标连续带与证据区共享同一视觉节奏，页面仍保留自己的业务布局。 */
+.layout-main[data-page-template='dashboard'] :is(.stats, .summary-row, .stat-row, .metric-grid) {
+  gap: 12px;
+}
+
+.layout-main[data-page-template='dashboard'] :is(.stat, .stat-card, .metric) {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--cw-line);
+  background: var(--cw-paper);
+  box-shadow: var(--cw-shadow-xs);
+}
+
+.layout-main[data-page-template='dashboard'] :is(.stat, .stat-card, .metric)::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--cw-cobalt);
+  content: '';
+}
+
+.layout-main[data-page-template='dashboard'] :is(.stat-value, .metric strong) {
+  color: var(--cw-text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+.layout-main[data-page-template='dashboard'] :is(.stat-label, .metric span) {
+  color: var(--cw-text-muted);
+}
+
+/* 主从与控制台：允许内部双栏接管高度，但始终限制在内容视口内。 */
+.layout-main[data-page-template='console'] > :not(.cw-page-context) {
+  min-height: min(640px, calc(100vh - 250px));
+}
+
+.layout-main[data-page-template='console'] > :is(.page, .modelops-page, .devtoolbox-page) {
+  min-width: 0;
+}
+
+.layout-main[data-page-template='console'] :is(.devtoolbox-sidebar, .type-panel, .item-panel, .sidebar, .main) {
+  border-color: var(--cw-line);
+  background: var(--cw-paper);
+}
+
+.layout-main[data-page-template='console'] :is(.devtoolbox-item, .db-node, .table-node) {
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.layout-main[data-page-template='console'] :is(.devtoolbox-item.active, .db-node:hover, .table-node:hover) {
+  background: color-mix(in srgb, var(--cw-cobalt) 9%, var(--cw-paper));
+}
+
+.layout-main[data-page-template='console'] :is(.devtoolbox-item.active, .table-node:hover) {
+  color: var(--cw-cobalt);
+}
+
+.layout-main[data-page-template='console'] :is(.result-meta, .tip, .hint, .form-tip, .form-hint) {
+  color: var(--cw-text-muted);
+}
+
+.layout-main[data-page-template='console'] :is(.sql-input, .sql-textarea) textarea {
+  tab-size: 2;
+  color: var(--cw-text);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--cw-cobalt) 8%, transparent) 1px, transparent 1px) 0 0 / 28px 100%,
+    var(--cw-paper);
+  line-height: 1.65;
+}
+
+.layout-main[data-page-template='console'] .param-form {
+  padding: 14px 14px 2px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: color-mix(in srgb, var(--cw-paper) 94%, var(--cw-cobalt));
+}
+
+/* 兼容现有静态路由的 toolbar 命名；限制在路由内容，避免污染抽屉内部工具栏。 */
+.layout-main[data-page-template] > :not(.cw-page-context) .toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: color-mix(in srgb, var(--cw-paper) 94%, transparent);
+  box-shadow: var(--cw-shadow-xs);
+}
+
+.layout-main[data-page-template] > :not(.cw-page-context) .toolbar :is(.el-input, .el-select, .el-date-editor) {
+  max-width: 100%;
+}
+
+.layout-main[data-page-template] .el-table {
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (max-width: 1023px) {
+  .layout-main:not(.layout-main--home):not(.layout-main--workspace) {
+    padding: 18px 16px 24px;
+  }
+
+  .cw-page-context {
+    align-items: flex-start;
+  }
+
+  .layout-main[data-page-template='console'] :is(.devtoolbox-page, .layout, .console-body) {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 767px) {
+  .layout-main:not(.layout-main--home):not(.layout-main--workspace) {
+    padding: 16px 12px 20px;
+    background: var(--cw-canvas);
+  }
+
+  .cw-page-context {
+    display: block;
+    margin-bottom: 14px;
+  }
+
+  .cw-page-context p {
+    font-size: 13px;
+  }
+
+  .cw-page-context__scope {
+    margin-top: 12px;
+  }
+
+  .layout-main[data-page-template] > :not(.cw-page-context) .toolbar {
+    align-items: stretch;
+    padding: 10px;
+  }
+
+  .layout-main[data-page-template] > :not(.cw-page-context) .toolbar > * {
+    flex: 1 1 100%;
+    width: 100% !important;
+    margin-left: 0 !important;
+  }
+
+  .layout-main[data-page-template] > :not(.cw-page-context) .toolbar > .el-button + .el-button {
+    margin-left: 0;
+  }
+
+  .layout-main[data-page-template='dashboard'] :is(.stats, .summary-row, .stat-row, .metric-grid) {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .layout-main[data-page-template='console'] > :not(.cw-page-context) {
+    min-height: 0;
+  }
+
+  .layout-main[data-page-template='console'] :is(.devtoolbox-page, .layout, .console-body) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+  }
+
+  .layout-main[data-page-template='console'] :is(.devtoolbox-sidebar, .type-panel, .sidebar) {
+    box-sizing: border-box;
+    width: 100%;
+    height: auto;
+    max-height: 320px;
+    border-right: 0;
+    border-bottom: 1px solid var(--cw-line);
+  }
+
+  .layout-main[data-page-template='console'] :is(.devtoolbox-panel, .item-panel, .main) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .layout-main[data-page-template='console'] .snapshot-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .layout-main[data-page-template='console'] .diff-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .layout-main[data-page-template='console'] .diff-row {
+    min-width: 680px;
+  }
+
+  .layout-main[data-page-template='console'] .param-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .layout-main[data-page-template='console'] .param-form .el-form-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    margin-right: 0;
+  }
+
+  .layout-main[data-page-template='console'] .param-form :is(.el-input, .el-select, .el-date-editor, .el-input-number) {
+    width: 100% !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .layout-main[data-page-template='dashboard'] :is(.stats, .summary-row, .stat-row, .metric-grid) {
+    grid-template-columns: 1fr;
+  }
+}

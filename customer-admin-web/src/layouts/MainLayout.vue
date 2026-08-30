@@ -7,6 +7,8 @@ import LifecycleNavigation from './LifecycleNavigation.vue'
 import AppHeader from './AppHeader.vue'
 import TabsBar from './TabsBar.vue'
 import AppBreadcrumb from './AppBreadcrumb.vue'
+import PageContextHeader from './PageContextHeader.vue'
+import { resolvePageTemplate } from './pagePresentation'
 import FooterCopyright from '@/components/FooterCopyright.vue'
 
 interface LifecycleNavigationHandle {
@@ -26,6 +28,14 @@ const navigationState = reactive({
 
 // 工作区需要接管 el-main 的剩余高度来承载内部滚动；只按精确路由名收口，避免表格、表单页受影响。
 const isWorkspaceRoute = computed(() => route.name === 'Workspace')
+const pageTemplate = computed(() => resolvePageTemplate(route.path))
+const shouldShowPageContext = computed(() => ![
+  'Home',
+  'Workspace',
+  'WorkspaceEmpty',
+  'ChangePassword',
+  'NotFound',
+].includes(String(route.name ?? '')))
 
 // MainLayout 只负责壳层编排：路由变化落标签，导航归属与焦点生命周期由 LifecycleNavigation 自己维护。
 watch(() => route.fullPath, () => tabsStore.openTab(route), { immediate: true })
@@ -68,7 +78,9 @@ function focusMainContent() {
           'layout-main--home': route.name === 'Home',
           'layout-main--workspace': isWorkspaceRoute,
         }"
+        :data-page-template="pageTemplate"
       >
+        <PageContextHeader v-if="shouldShowPageContext" />
         <!-- 只精确缓存 WorkspaceView：不要给 component 增加 fullPath key，也不要因主导航切换卸载
              router-view；否则切页会中断进行中的 SSE，并丢失对话或 VibeCoding 状态。 -->
         <router-view v-slot="{ Component }">

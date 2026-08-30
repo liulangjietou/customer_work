@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   acknowledgeSloAlert,
   evaluateSloPolicy,
+  getSloAlertSummary,
   listSloAlertEvents,
   listSloAlerts,
   listSloPolicies,
@@ -11,6 +12,7 @@ import {
   type SloAlert,
   type SloAlertEvent,
   type SloAlertStatus,
+  type SloAlertSummary,
   type SloEvaluation,
   type SloPolicy,
   type SloPolicySaveRequest,
@@ -33,6 +35,7 @@ const STATUS_LABELS: Record<SloEvaluation['status'], string> = {
 const loading = ref(false)
 const policies = ref<SloPolicy[]>([])
 const alerts = ref<SloAlert[]>([])
+const alertSummary = ref<SloAlertSummary>({ openCount: 0, acknowledgedCount: 0 })
 const dialogVisible = ref(false)
 const evaluationVisible = ref(false)
 const eventVisible = ref(false)
@@ -41,7 +44,19 @@ const alertEvents = ref<SloAlertEvent[]>([])
 const activeAlert = ref<SloAlert | null>(null)
 const evaluatingId = ref<number | null>(null)
 const acknowledgingId = ref<number | null>(null)
+const eventLoadingId = ref<number | null>(null)
 const alertStatus = ref<SloAlertStatus | undefined>(undefined)
+const saving = ref(false)
+let loadRequestId = 0
+let eventRequestId = 0
+
+const enabledPolicyCount = computed(() => policies.value.filter((item) => item.enabled).length)
+const healthyPolicyCount = computed(() => (
+  policies.value.filter((item) => item.lastEvaluationStatus === 'HEALTHY').length
+))
+// 顶部指标由服务端直接聚合事实表，不能被下方筛选或 200 条明细上限污染。
+const openAlertCount = computed(() => alertSummary.value.openCount)
+const acknowledgedAlertCount = computed(() => alertSummary.value.acknowledgedCount)
 
 const emptyForm = (): SloPolicySaveRequest => ({
   policyName: '',
@@ -59,30 +74,53 @@ const emptyForm = (): SloPolicySaveRequest => ({
 const form = reactive<SloPolicySaveRequest>(emptyForm())
 
 async function loadPolicies() {
+  const requestId = ++loadRequestId
   loading.value = true
   try {
-    const [policyRows, alertRows] = await Promise.all([
+    const [policyRows, alertRows, summary] = await Promise.all([
       listSloPolicies(),
       listSloAlerts(alertStatus.value),
+      getSloAlertSummary(),
     ])
-    policies.value = policyRows
-    alerts.value = alertRows
+    if (requestId === loadRequestId) {
+      policies.value = policyRows
+      alerts.value = alertRows
+      alertSummary.value = summary
+    }
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) {
+      loading.value = false
+    }
   }
 }
 
 function openCreate() {
+  // Object.assign 不会移除编辑态遗留的可选 id；必须显式删除，避免“新建”误走服务端 upsert 更新旧策略。
+  delete form.id
   Object.assign(form, emptyForm())
   dialogVisible.value = true
 }
 
 function openEdit(row: SloPolicy) {
-  Object.assign(form, row)
+  Object.assign(form, {
+    id: row.id,
+    policyName: row.policyName,
+    scopeType: row.scopeType,
+    scopeKey: row.scopeKey,
+    availabilityTarget: row.availabilityTarget,
+    latencyTarget: row.latencyTarget,
+    latencyThresholdMs: row.latencyThresholdMs,
+    shortWindowMinutes: row.shortWindowMinutes,
+    longWindowMinutes: row.longWindowMinutes,
+    minimumSampleCount: row.minimumSampleCount,
+    burnRateThreshold: row.burnRateThreshold,
+    enabled: row.enabled,
+  })
   dialogVisible.value = true
 }
 
 async function submit() {
+  if (saving.value) return
   if (!form.policyName.trim()) {
     ElMessage.warning('请填写策略名称')
     return
@@ -99,13 +137,19 @@ async function submit() {
     ElMessage.warning('最低样本数必须大于 0')
     return
   }
-  await saveSloPolicy({ ...form, scopeKey: form.scopeType === 'TENANT' ? null : form.scopeKey })
-  ElMessage.success('SLO 策略已保存')
-  dialogVisible.value = false
-  await loadPolicies()
+  saving.value = true
+  try {
+    await saveSloPolicy({ ...form, scopeKey: form.scopeType === 'TENANT' ? null : form.scopeKey })
+    ElMessage.success('SLO 策略已保存')
+    dialogVisible.value = false
+    await loadPolicies()
+  } finally {
+    saving.value = false
+  }
 }
 
 async function evaluate(row: SloPolicy) {
+  if (evaluatingId.value !== null) return
   evaluatingId.value = row.id
   try {
     evaluation.value = await evaluateSloPolicy(row.id)
@@ -117,25 +161,42 @@ async function evaluate(row: SloPolicy) {
     }
     await loadPolicies()
   } finally {
-    evaluatingId.value = null
+    if (evaluatingId.value === row.id) {
+      evaluatingId.value = null
+    }
   }
 }
 
 async function acknowledge(row: SloAlert) {
+  if (acknowledgingId.value !== null) return
   acknowledgingId.value = row.id
   try {
     await acknowledgeSloAlert(row.id)
     ElMessage.success('告警已确认')
     await loadPolicies()
   } finally {
-    acknowledgingId.value = null
+    if (acknowledgingId.value === row.id) {
+      acknowledgingId.value = null
+    }
   }
 }
 
 async function showEvents(row: SloAlert) {
+  const requestId = ++eventRequestId
   activeAlert.value = row
-  alertEvents.value = await listSloAlertEvents(row.id)
+  alertEvents.value = []
   eventVisible.value = true
+  eventLoadingId.value = row.id
+  try {
+    const events = await listSloAlertEvents(row.id)
+    if (requestId === eventRequestId && activeAlert.value?.id === row.id) {
+      alertEvents.value = events
+    }
+  } finally {
+    if (requestId === eventRequestId) {
+      eventLoadingId.value = null
+    }
+  }
 }
 
 function percent(value: number) {
@@ -165,14 +226,33 @@ onMounted(loadPolicies)
 
 <template>
   <div class="slo-page">
-    <el-card shadow="never">
+    <div class="summary-row" v-loading="loading">
+      <div class="stat">
+        <strong>{{ enabledPolicyCount }}</strong>
+        <span>启用策略</span>
+      </div>
+      <div class="stat">
+        <strong>{{ healthyPolicyCount }}</strong>
+        <span>最近评估健康</span>
+      </div>
+      <div class="stat stat-danger">
+        <strong>{{ openAlertCount }}</strong>
+        <span>全部待确认</span>
+      </div>
+      <div class="stat stat-warning">
+        <strong>{{ acknowledgedAlertCount }}</strong>
+        <span>全部已确认待恢复</span>
+      </div>
+    </div>
+
+    <el-card shadow="never" class="policy-card">
       <template #header>
         <div class="header">
           <div>
             <h2>SLO 错误预算</h2>
             <p>多副本通过数据库租约周期评估；短、长窗口同时超限打开告警，恢复后自动闭环并可靠投递通知。</p>
           </div>
-          <el-button v-permission="'slo:edit'" type="primary" @click="openCreate">新建策略</el-button>
+          <el-button v-permission="'slo:edit'" class="cw-final-action" type="primary" @click="openCreate">新建策略</el-button>
         </div>
       </template>
 
@@ -213,7 +293,7 @@ onMounted(loadPolicies)
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'slo:evaluate'" link type="primary" :loading="evaluatingId === row.id" @click="evaluate(row)">
+            <el-button v-permission="'slo:evaluate'" link type="primary" :loading="evaluatingId === row.id" :disabled="evaluatingId !== null && evaluatingId !== row.id" @click="evaluate(row)">
               立即评估
             </el-button>
             <el-button v-permission="'slo:edit'" link @click="openEdit(row)">编辑</el-button>
@@ -257,9 +337,10 @@ onMounted(loadPolicies)
               link
               type="primary"
               :loading="acknowledgingId === row.id"
+              :disabled="acknowledgingId !== null && acknowledgingId !== row.id"
               @click="acknowledge(row)"
             >确认</el-button>
-            <el-button link @click="showEvents(row)">事件</el-button>
+            <el-button link :loading="eventLoadingId === row.id" @click="showEvents(row)">事件</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -300,12 +381,12 @@ onMounted(loadPolicies)
         <el-form-item label="燃烧率阈值"><el-input-number v-model="form.burnRateThreshold" :min="0.01" :step="0.5" :precision="2" /></el-form-item>
         <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" @click="submit">保存</el-button></template>
+      <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button class="cw-final-action" type="primary" :loading="saving" @click="submit">保存策略</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="evaluationVisible" title="错误预算评估结果" width="760px">
       <template v-if="evaluation">
-        <el-descriptions :column="3" border>
+        <el-descriptions :column="3" border class="evaluation-summary">
           <el-descriptions-item label="策略">{{ evaluation.policyName }}</el-descriptions-item>
           <el-descriptions-item label="状态"><el-tag :type="statusType(evaluation.status)">{{ STATUS_LABELS[evaluation.status] }}</el-tag></el-descriptions-item>
           <el-descriptions-item label="评估时间">{{ evaluation.evaluatedAt }}</el-descriptions-item>
@@ -323,7 +404,7 @@ onMounted(loadPolicies)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="eventVisible" :title="`${activeAlert?.policyName || 'SLO'} · 状态事件`" width="720px">
+    <el-dialog v-model="eventVisible" v-loading="eventLoadingId !== null" :title="`${activeAlert?.policyName || 'SLO'} · 状态事件`" width="720px">
       <el-timeline>
         <el-timeline-item v-for="item in alertEvents" :key="item.id" :timestamp="item.occurredAt" placement="top">
           <strong>{{ item.eventType }}</strong>
@@ -336,16 +417,40 @@ onMounted(loadPolicies)
 </template>
 
 <style scoped>
-.slo-page { padding: 20px; }
+.slo-page { display: flex; flex-direction: column; gap: 14px; }
+.summary-row { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
+.stat { min-height: 88px; padding: 15px 16px 14px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius-md); background: var(--cw-paper); box-shadow: var(--cw-shadow-xs); }
+.stat strong { display: block; color: var(--cw-text); font-size: 25px; font-weight: 720; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.stat span { display: block; margin-top: 7px; color: var(--cw-text-muted); font-size: 12px; }
+.stat-danger strong { color: var(--cw-danger); }
+.stat-warning strong { color: var(--cw-amber); }
 .header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-.header h2 { margin: 0 0 6px; font-size: 20px; }
-.header p { margin: 0; color: var(--el-text-color-secondary); }
+.header h2 { margin: 0 0 6px; color: var(--cw-text); font-size: 18px; }
+.header p { max-width: 820px; margin: 0; color: var(--cw-text-muted); line-height: 1.55; }
 .scope-key { margin-left: 8px; font-family: ui-monospace, monospace; }
-.hint { margin-left: 10px; color: var(--el-text-color-secondary); }
+.hint { margin-left: 10px; color: var(--cw-text-muted); }
 .split { margin: 0 10px; }
 .result-table { margin-top: 18px; }
-.alert-card { margin-top: 18px; }
-.subtle { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; }
-.evaluation-error { max-width: 260px; margin-top: 4px; color: var(--el-color-danger); font-size: 12px; white-space: normal; }
+.subtle { margin-top: 4px; color: var(--cw-text-muted); font-size: 12px; }
+.evaluation-error { max-width: 260px; margin-top: 4px; color: var(--cw-danger); font-size: 12px; white-space: normal; }
 .event-rate { margin-left: 14px; }
+
+@media (max-width: 1023px) {
+  .summary-row { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+  .header { align-items: flex-start; flex-wrap: wrap; }
+}
+
+@media (max-width: 767px) {
+  .summary-row { grid-template-columns: 1fr 1fr; }
+  .header { flex-direction: column; gap: 12px; }
+  .header > .el-button,
+  .header > .el-select { width: 100%; }
+  .evaluation-summary { overflow-x: auto; }
+  .event-rate,
+  .subtle { display: block; margin: 5px 0 0; }
+}
+
+@media (max-width: 480px) {
+  .summary-row { grid-template-columns: 1fr; }
+}
 </style>

@@ -10,6 +10,7 @@ import {
   updateWorkbenchSite,
 } from '@/api/workbench'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import { copyText } from '@/views/system/devtools/composables/useCopy'
 import { parseUserscript } from '@/utils/scriptImport'
 import WorkbenchTokenDialog from './WorkbenchTokenDialog.vue'
@@ -22,7 +23,7 @@ const formRef = ref<FormInstance>()
 const secretLoadingId = ref<number | null>(null)
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, deletingId, list, total, query,
   dialogVisible, dialogMode, form,
   loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
 } = useCrudPage<WorkbenchSiteVO, PageQuery, WorkbenchSiteSaveRequest>({
@@ -152,19 +153,20 @@ onMounted(loadList)
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按名称/分类搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'workbench-site:add'" type="primary" @click="openCreate">新增站点</el-button>
-        <div class="toolbar-right">
+        <div class="toolbar-actions">
           <el-button @click="tokenDialogVisible = true">我的令牌</el-button>
           <el-button type="success" @click="openScriptDialog">生成登录脚本</el-button>
+          <el-button v-permission="'workbench-site:add'" class="cw-final-action" type="primary" @click="openCreate">新增站点</el-button>
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="name" label="名称" width="160" show-overflow-tooltip />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的工作台站点">
+        <el-table-column prop="name" label="名称" width="160" show-overflow-tooltip class-name="primary-column" />
         <el-table-column label="分类" width="110">
           <template #default="{ row }">
             <el-tag v-if="row.category" type="info">{{ row.category }}</el-tag>
@@ -201,7 +203,7 @@ onMounted(loadList)
           <template #default="{ row }">
             <el-button link type="primary" @click="openSite(row)">打开</el-button>
             <el-button v-permission="'workbench-site:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'workbench-site:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'workbench-site:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -211,7 +213,7 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -290,7 +292,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存站点</el-button>
       </template>
     </el-dialog>
 
@@ -354,13 +356,24 @@ onMounted(loadList)
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
 }
-.toolbar-right {
+.toolbar-actions {
   margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 .advanced-title {
   color: var(--el-text-color-secondary);
@@ -378,5 +391,16 @@ onMounted(loadList)
 }
 .import-textarea :deep(textarea) {
   font-family: var(--el-font-family-mono, monospace);
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 </style>

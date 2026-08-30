@@ -43,11 +43,15 @@ const SESSION_TYPE_OPTIONS: Array<{ label: string; value: 'CHAT' | 'VIBE_CODING'
 ]
 
 /** 分段耗时类型元信息：展示名 + 统一配色，明细表迷你条形图与详情抽屉标签共用。 */
-const SEGMENT_KIND_META: Record<AgentCallSegmentKind, { label: string; color: string }> = {
-  MODEL: { label: '大模型', color: '#f59e0b' },
-  TOOL: { label: '工具', color: '#67c23a' },
-  MCP: { label: 'MCP', color: '#409eff' },
-  SKILL: { label: 'Skill', color: '#8b5cf6' },
+const SEGMENT_KIND_META: Record<AgentCallSegmentKind, {
+  label: string
+  color: string
+  tagType: 'warning' | 'success' | 'primary' | 'info'
+}> = {
+  MODEL: { label: '大模型', color: 'var(--cw-amber)', tagType: 'warning' },
+  TOOL: { label: '工具', color: 'var(--cw-success)', tagType: 'success' },
+  MCP: { label: 'MCP', color: 'var(--cw-cobalt)', tagType: 'primary' },
+  SKILL: { label: 'Skill', color: 'var(--cw-brand-logo-start)', tagType: 'info' },
 }
 
 interface FilterState {
@@ -416,7 +420,7 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <el-card class="filter-card">
+    <el-card class="filter-card" shadow="never">
       <div class="toolbar">
         <el-select v-model="filters.source" placeholder="来源" style="width: 160px">
           <el-option v-for="opt in SOURCE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
@@ -471,7 +475,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-card class="trend-card">
+    <el-card class="trend-card" shadow="never">
       <div class="trend-header">
         <span class="trend-title">调用趋势</span>
         <el-radio-group v-model="trendGranularityMode" size="small">
@@ -483,7 +487,11 @@ onMounted(() => {
       <AgentCallTrendChart :points="trendPoints" :granularity="effectiveGranularity" :loading="trendLoading" />
     </el-card>
 
-    <el-card>
+    <el-card class="list-card" shadow="never">
+      <div class="section-heading">
+        <strong>调用证据明细</strong>
+        <span>每条记录可继续下钻耗时、Token、成本、运行配置与安全重放证据</span>
+      </div>
       <el-table v-loading="loading" :data="list" style="width: 100%">
         <el-table-column prop="username" label="用户名" width="110">
           <template #default="{ row }: { row: AgentCallStatsRow }">{{ row.username || '—' }}</template>
@@ -684,7 +692,7 @@ onMounted(() => {
               <el-table-column prop="seq" label="序号" width="60" />
               <el-table-column label="类型" width="90">
                 <template #default="{ row }: { row: AgentCallStatsSegment }">
-                  <el-tag :color="SEGMENT_KIND_META[row.kind].color" style="color: #fff; border: none">
+                  <el-tag :type="SEGMENT_KIND_META[row.kind].tagType">
                     {{ SEGMENT_KIND_META[row.kind].label }}
                   </el-tag>
                 </template>
@@ -815,7 +823,7 @@ onMounted(() => {
 .page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .toolbar {
@@ -824,10 +832,18 @@ onMounted(() => {
   gap: 8px;
 }
 
+.filter-card .toolbar {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .filter-tip {
   margin-top: 8px;
   font-size: 12px;
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-text-muted);
 }
 
 .summary-row {
@@ -837,22 +853,45 @@ onMounted(() => {
 }
 
 .stat-card {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  padding: 14px 16px;
+  min-height: 88px;
+  padding: 15px 16px 14px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: var(--cw-paper);
+  box-shadow: var(--cw-shadow-xs);
 }
 
 .stat-label {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   margin-bottom: 6px;
 }
 
 .stat-value {
   font-size: 22px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 700;
+  color: var(--cw-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.section-heading strong {
+  color: var(--cw-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.section-heading span {
+  color: var(--cw-text-muted);
+  font-size: 12px;
+  text-align: right;
 }
 
 .trend-header {
@@ -864,8 +903,8 @@ onMounted(() => {
 
 .trend-title {
   font-size: 14px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 700;
+  color: var(--cw-text);
 }
 
 .segment-bar {
@@ -884,7 +923,8 @@ onMounted(() => {
 }
 
 .muted {
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-text-muted);
+  opacity: 0.72;
   font-size: 12px;
 }
 
@@ -895,18 +935,19 @@ onMounted(() => {
 .detail-block-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--el-text-color-primary);
+  color: var(--cw-text);
   margin-bottom: 8px;
 }
 
 .detail-text {
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--el-fill-color-lighter);
-  border-radius: 6px;
+  border: 1px solid var(--cw-line);
+  background: var(--cw-canvas);
+  border-radius: var(--cw-radius-sm);
   padding: 10px 12px;
   font-size: 13px;
-  color: var(--el-text-color-regular);
+  color: var(--cw-text);
   max-height: 240px;
   overflow-y: auto;
 }
@@ -937,7 +978,7 @@ onMounted(() => {
   position: relative;
   flex: 1;
   height: 10px;
-  background: var(--el-fill-color-light);
+  background: var(--cw-canvas);
   border-radius: 3px;
 }
 
@@ -952,7 +993,7 @@ onMounted(() => {
   width: 64px;
   flex-shrink: 0;
   text-align: right;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
 }
 
 .replay-summary {
@@ -961,6 +1002,7 @@ onMounted(() => {
 
 .replay-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin: 16px 0 10px;
 }
@@ -972,10 +1014,41 @@ onMounted(() => {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  border-radius: 6px;
-  background: var(--el-fill-color-lighter);
-  color: var(--el-text-color-regular);
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-sm);
+  background: var(--cw-canvas);
+  color: var(--cw-text);
   font-size: 12px;
   line-height: 1.5;
+}
+
+@media (max-width: 767px) {
+  .section-heading,
+  .trend-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-heading span {
+    text-align: left;
+  }
+
+  .timeline-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+
+  .timeline-name {
+    width: auto;
+  }
+
+  .timeline-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .timeline-ms {
+    width: auto;
+  }
 }
 </style>

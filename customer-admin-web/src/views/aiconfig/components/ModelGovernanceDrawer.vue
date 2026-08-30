@@ -325,7 +325,7 @@ function healthTagType(status: string | null | undefined) {
                   style="width: 100%"
                 />
               </el-form-item>
-              <el-button v-permission="'model:edit'" type="primary" :loading="rotating" @click="rotateCredential">
+              <el-button v-permission="'model:edit'" class="cw-final-action" type="primary" :loading="rotating" @click="rotateCredential">
                 确认轮换
               </el-button>
             </el-form>
@@ -481,12 +481,12 @@ function healthTagType(status: string | null | undefined) {
 .section-heading h3,
 .rotation-panel h3 {
   margin: 0;
-  color: #172033;
+  color: var(--cw-text);
 }
 
 .eyebrow {
   margin: 0 0 4px;
-  color: #64748b;
+  color: var(--cw-text-muted);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .14em;
@@ -504,9 +504,9 @@ function healthTagType(status: string | null | undefined) {
   gap: 10px;
   min-height: 66px;
   padding: 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--cw-line);
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--el-fill-color-extra-light);
 }
 
 .rail-dot {
@@ -514,38 +514,38 @@ function healthTagType(status: string | null | undefined) {
   height: 9px;
   margin-top: 5px;
   border-radius: 50%;
-  background: #94a3b8;
-  box-shadow: 0 0 0 4px #e2e8f0;
+  background: var(--cw-text-muted);
+  box-shadow: 0 0 0 4px var(--cw-line);
 }
 
-.rail-item.is-ready .rail-dot { background: #0f9f78; box-shadow: 0 0 0 4px #d1fae5; }
-.rail-item.is-danger .rail-dot { background: #dc4c4c; box-shadow: 0 0 0 4px #fee2e2; }
+.rail-item.is-ready .rail-dot { background: var(--cw-success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--cw-success) 20%, transparent); }
+.rail-item.is-danger .rail-dot { background: var(--cw-danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--cw-danger) 20%, transparent); }
 .rail-label,
 .metric-grid span,
 .health-hero span {
   display: block;
   margin-bottom: 5px;
-  color: #64748b;
+  color: var(--cw-text-muted);
   font-size: 12px;
 }
 
-.rail-item strong { display: block; overflow: hidden; color: #25314a; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.rail-item strong { display: block; overflow: hidden; color: var(--cw-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .governance-tabs { --el-tabs-header-height: 48px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0; }
 .section-heading p,
-.rotation-panel p { margin: 5px 0 0; color: #64748b; font-size: 13px; }
+.rotation-panel p { margin: 5px 0 0; color: var(--cw-text-muted); font-size: 13px; }
 .split-heading { margin-top: 26px; }
 .section-body { margin-top: 16px; }
-.rotation-panel { margin-top: 22px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
+.rotation-panel { margin-top: 22px; padding: 18px; border: 1px solid var(--cw-line); border-radius: 12px; background: var(--el-fill-color-extra-light); }
 .rotation-panel .el-form { margin-top: 16px; }
 .health-hero { display: flex; align-items: center; justify-content: space-between; margin: 10px 0 16px; padding: 18px 20px; border-radius: 12px; color: white; background: linear-gradient(120deg, #172033, #344565); }
 .health-hero strong { display: block; font-size: 24px; letter-spacing: .04em; }
 .health-hero span { color: #cbd5e1; }
 .health-hero small { display: block; margin-top: 6px; color: #cbd5e1; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
-.metric-grid > div { padding: 14px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
-.metric-grid strong { color: #172033; font-size: 14px; }
-.health-override-panel { margin: 18px 0; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
+.metric-grid > div { padding: 14px; border: 1px solid var(--cw-line); border-radius: 10px; background: var(--cw-paper); }
+.metric-grid strong { color: var(--cw-text); font-size: 14px; }
+.health-override-panel { margin: 18px 0; padding: 18px; border: 1px solid var(--cw-line); border-radius: 12px; background: var(--el-fill-color-extra-light); }
 .health-override-panel .section-heading { margin-top: 0; }
 
 @media (max-width: 760px) {

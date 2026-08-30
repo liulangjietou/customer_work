@@ -18,6 +18,7 @@ import {
   updateSqlFieldTransform,
 } from '@/api/sql'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type {
   PageQuery,
   SqlDatasourceVO,
@@ -53,7 +54,7 @@ async function loadDatasourceOptions() {
 const formRef = ref<FormInstance>()
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, deletingId, list, total, query,
   dialogVisible: drawerVisible, dialogMode: drawerMode, form,
   loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
 } = useCrudPage<SqlDefineVO, PageQuery, SqlDefineSaveRequest>({
@@ -108,6 +109,7 @@ async function loadParams() {
 const paramFormVisible = ref(false)
 const paramFormRef = ref<FormInstance>()
 const editingParamId = ref<number | null>(null)
+const paramSubmitting = ref(false)
 const paramForm = reactive<SqlDefineParamSaveRequest>({
   paramName: '', paramDesc: '', paramType: 'STRING', dateFormat: '', required: false,
   defaultValue: '', dropDown: '', isPageNum: false, isPageSize: false, sort: 0,
@@ -136,23 +138,29 @@ function openParamEdit(row: SqlDefineParamVO) {
 }
 
 async function handleParamSubmit() {
-  const valid = await paramFormRef.value?.validate().catch(() => false)
-  if (!valid || !paramsDefineId.value) {
-    return
+  if (paramSubmitting.value) return
+  paramSubmitting.value = true
+  try {
+    const valid = await paramFormRef.value?.validate().catch(() => false)
+    if (!valid || !paramsDefineId.value) {
+      return
+    }
+    // 日期格式仅 DATETIME 类型有意义，类型切走后清空，避免后端校验拒绝
+    if (paramForm.paramType !== 'DATETIME') {
+      paramForm.dateFormat = ''
+    }
+    if (editingParamId.value) {
+      await updateSqlDefineParam(paramsDefineId.value, editingParamId.value, paramForm)
+      ElMessage.success('保存成功')
+    } else {
+      await createSqlDefineParam(paramsDefineId.value, paramForm)
+      ElMessage.success('新增成功')
+    }
+    paramFormVisible.value = false
+    await loadParams()
+  } finally {
+    paramSubmitting.value = false
   }
-  // 日期格式仅 DATETIME 类型有意义，类型切走后清空，避免后端校验拒绝
-  if (paramForm.paramType !== 'DATETIME') {
-    paramForm.dateFormat = ''
-  }
-  if (editingParamId.value) {
-    await updateSqlDefineParam(paramsDefineId.value, editingParamId.value, paramForm)
-    ElMessage.success('保存成功')
-  } else {
-    await createSqlDefineParam(paramsDefineId.value, paramForm)
-    ElMessage.success('新增成功')
-  }
-  paramFormVisible.value = false
-  await loadParams()
 }
 
 async function handleParamDelete(row: SqlDefineParamVO) {
@@ -190,6 +198,7 @@ async function loadTransforms() {
 const transformFormVisible = ref(false)
 const transformFormRef = ref<FormInstance>()
 const editingTransformId = ref<number | null>(null)
+const transformSubmitting = ref(false)
 const transformForm = reactive<SqlFieldTransformSaveRequest>({
   fieldName: '', transformType: 'DATE_FORMAT', transformConfig: '',
 })
@@ -215,19 +224,25 @@ function transformConfigPlaceholder() {
 }
 
 async function handleTransformSubmit() {
-  const valid = await transformFormRef.value?.validate().catch(() => false)
-  if (!valid || !transformsDefineId.value) {
-    return
+  if (transformSubmitting.value) return
+  transformSubmitting.value = true
+  try {
+    const valid = await transformFormRef.value?.validate().catch(() => false)
+    if (!valid || !transformsDefineId.value) {
+      return
+    }
+    if (editingTransformId.value) {
+      await updateSqlFieldTransform(transformsDefineId.value, editingTransformId.value, transformForm)
+      ElMessage.success('保存成功')
+    } else {
+      await createSqlFieldTransform(transformsDefineId.value, transformForm)
+      ElMessage.success('新增成功')
+    }
+    transformFormVisible.value = false
+    await loadTransforms()
+  } finally {
+    transformSubmitting.value = false
   }
-  if (editingTransformId.value) {
-    await updateSqlFieldTransform(transformsDefineId.value, editingTransformId.value, transformForm)
-    ElMessage.success('保存成功')
-  } else {
-    await createSqlFieldTransform(transformsDefineId.value, transformForm)
-    ElMessage.success('新增成功')
-  }
-  transformFormVisible.value = false
-  await loadTransforms()
 }
 
 async function handleTransformDelete(row: SqlFieldTransformVO) {
@@ -246,11 +261,12 @@ onMounted(() => {
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按 defineKey/描述搜索" style="width: 240px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'sql-define:add'" type="primary" @click="openCreate">新建 SQL 定义</el-button>
+        <el-button v-permission="'sql-define:add'" class="cw-final-action" type="primary" @click="openCreate">新建 SQL 定义</el-button>
       </div>
 
       <el-table v-loading="loading" :data="list" style="width: 100%">
@@ -275,7 +291,7 @@ onMounted(() => {
             <el-button link type="primary" @click="openTransforms(row)">列转换器</el-button>
             <el-button v-permission="'sql-define:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button v-permission="'sql-define:add'" link type="primary" @click="handleCopy(row)">复制</el-button>
-            <el-button v-permission="'sql-define:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'sql-define:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -335,14 +351,14 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="drawerVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存定义</el-button>
       </template>
     </el-drawer>
 
     <!-- 参数配置 -->
     <el-dialog v-model="paramsDialogVisible" :title="`参数配置 · ${paramsDefineKey}`" width="900px">
       <div class="toolbar">
-        <el-button type="primary" @click="openParamCreate">新增参数</el-button>
+        <el-button class="cw-final-action" type="primary" @click="openParamCreate">新增参数</el-button>
       </div>
       <el-table v-loading="paramsLoading" :data="paramsList" style="width: 100%" size="small">
         <el-table-column prop="paramName" label="参数名" width="130" />
@@ -424,14 +440,14 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="paramFormVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleParamSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="paramSubmitting" @click="handleParamSubmit">保存参数</el-button>
       </template>
     </el-dialog>
 
     <!-- 列转换器 -->
     <el-dialog v-model="transformsDialogVisible" :title="`列转换器 · ${transformsDefineKey}`" width="700px">
       <div class="toolbar">
-        <el-button type="primary" @click="openTransformCreate">新增转换器</el-button>
+        <el-button class="cw-final-action" type="primary" @click="openTransformCreate">新增转换器</el-button>
       </div>
       <el-table v-loading="transformsLoading" :data="transformsList" style="width: 100%" size="small">
         <el-table-column prop="fieldName" label="列名" width="140" />
@@ -469,7 +485,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="transformFormVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleTransformSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="transformSubmitting" @click="handleTransformSubmit">保存转换器</el-button>
       </template>
     </el-dialog>
   </div>
@@ -485,17 +501,25 @@ onMounted(() => {
 .form-tip {
   margin-left: 12px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
 }
 
 .param-date-format {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   line-height: 1.2;
 }
 
 .sql-textarea :deep(textarea) {
-  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
+}
+
+@media (max-width: 767px) {
+  .form-tip {
+    display: block;
+    margin: 6px 0 0;
+    line-height: 1.5;
+  }
 }
 </style>

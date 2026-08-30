@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listPromptVersions, type PromptVersion } from '@/api/ops'
+import { diffPromptLines } from './promptLineDiff'
 
 // 提示词版本看板：版本历史 + 两版全文比对。
 //
@@ -12,6 +13,10 @@ import { listPromptVersions, type PromptVersion } from '@/api/ops'
 const loading = ref(false)
 const list = ref<PromptVersion[]>([])
 const selected = ref<PromptVersion[]>([])
+const latestVersion = computed(() => list.value.reduce<PromptVersion | null>(
+  (latest, item) => (!latest || item.capturedAtMs > latest.capturedAtMs ? item : latest),
+  null,
+))
 
 async function loadList() {
   loading.value = true
@@ -49,23 +54,14 @@ function openDiff() {
   diffVisible.value = true
 }
 
-/** 逐行差异标记：提示词是纯文本，行级比对足以看出改了哪几句。 */
-function diffLines(source: string, other: string) {
-  const otherLines = new Set(other.split('\n'))
-  return source.split('\n').map((line) => ({ text: line, changed: !otherLines.has(line) }))
-}
-
-const leftLines = computed(() =>
+/** 提示词是纯文本，行级 LCS 足以稳定呈现增删、重排和重复行。 */
+const lineDiff = computed(() =>
   leftVersion.value && rightVersion.value
-    ? diffLines(leftVersion.value.content, rightVersion.value.content)
-    : [],
+    ? diffPromptLines(leftVersion.value.content, rightVersion.value.content)
+    : { left: [], right: [] },
 )
-
-const rightLines = computed(() =>
-  leftVersion.value && rightVersion.value
-    ? diffLines(rightVersion.value.content, leftVersion.value.content)
-    : [],
-)
+const leftLines = computed(() => lineDiff.value.left)
+const rightLines = computed(() => lineDiff.value.right)
 
 onMounted(loadList)
 </script>
@@ -81,13 +77,38 @@ onMounted(loadList)
         评测报告里的 promptFingerprint 就是它：指标掉了先比这一位，没变就别再对着提示词逐字找原因。"
     />
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-button type="primary" :loading="loading" @click="loadList">刷新</el-button>
         <el-button :disabled="selected.length !== 2" @click="openDiff">对比选中两版</el-button>
         <span class="hint">勾选两版即可比对全文差异</span>
       </div>
+    </el-card>
 
+    <div class="summary-row" v-loading="loading">
+      <div class="stat">
+        <strong>{{ list.length }}</strong>
+        <span>运行时版本</span>
+      </div>
+      <div class="stat stat-code">
+        <strong>{{ latestVersion?.fingerprint ?? '—' }}</strong>
+        <span>最新内容指纹</span>
+      </div>
+      <div class="stat">
+        <strong>{{ latestVersion?.length ?? 0 }}</strong>
+        <span>最新版本字数</span>
+      </div>
+      <div class="stat" :class="{ 'is-ready': selected.length === 2 }">
+        <strong>{{ selected.length }} / 2</strong>
+        <span>已选对比版本</span>
+      </div>
+    </div>
+
+    <el-card shadow="never" class="list-card">
+      <div class="section-heading">
+        <strong>运行时提示词证据</strong>
+        <span>指纹对应评测报告中的 promptFingerprint，可直接定位指标变化前后的实际内容</span>
+      </div>
       <el-table
         v-loading="loading"
         :data="list"
@@ -150,7 +171,7 @@ onMounted(loadList)
 .prompt-version-board {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .toolbar {
@@ -160,9 +181,83 @@ onMounted(loadList)
   margin-bottom: 12px;
 }
 
+.filter-card .toolbar {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .hint {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  min-height: 88px;
+  min-width: 0;
+  padding: 15px 16px 14px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: var(--cw-paper);
+  box-shadow: var(--cw-shadow-xs);
+}
+
+.stat strong {
+  display: block;
+  overflow: hidden;
+  color: var(--cw-text);
+  font-size: 25px;
+  font-weight: 720;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat span {
+  display: block;
+  margin-top: 7px;
+  color: var(--cw-text-muted);
+  font-size: 12px;
+}
+
+.stat-code strong {
+  color: var(--cw-cobalt);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 16px;
+  line-height: 30px;
+}
+
+.stat.is-ready strong {
+  color: var(--cw-success);
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.section-heading strong {
+  color: var(--cw-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.section-heading span {
+  color: var(--cw-text-muted);
+  font-size: 12px;
+  text-align: right;
 }
 
 .diff {
@@ -172,7 +267,8 @@ onMounted(loadList)
 }
 
 .diff-title {
-  font-weight: 600;
+  color: var(--cw-text);
+  font-weight: 700;
   margin-bottom: 8px;
   display: flex;
   align-items: center;
@@ -182,8 +278,10 @@ onMounted(loadList)
 .diff-body {
   margin: 0;
   padding: 12px;
-  background: var(--el-fill-color-light);
-  border-radius: 4px;
+  border: 1px solid var(--cw-line);
+  background: var(--cw-canvas);
+  border-radius: var(--cw-radius-sm);
+  color: var(--cw-text);
   font-size: 12px;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -193,14 +291,49 @@ onMounted(loadList)
 }
 
 .line-removed {
-  background: var(--el-color-danger-light-8);
+  background: color-mix(in srgb, var(--cw-danger) 16%, transparent);
   display: inline-block;
   width: 100%;
 }
 
 .line-added {
-  background: var(--el-color-success-light-8);
+  background: color-mix(in srgb, var(--cw-success) 16%, transparent);
   display: inline-block;
   width: 100%;
+}
+
+@media (max-width: 1023px) {
+  .summary-row {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .summary-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-heading span {
+    text-align: left;
+  }
+
+  .diff {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-body {
+    max-height: 42vh;
+  }
+}
+
+@media (max-width: 480px) {
+  .summary-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

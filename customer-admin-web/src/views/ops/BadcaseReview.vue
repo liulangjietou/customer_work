@@ -59,6 +59,14 @@ const query = reactive({
   pageSize: 20,
 })
 
+const currentPendingCount = computed(() => list.value.filter((item) => item.status === 'PENDING').length)
+const negativeFeedbackCount = computed(() => (
+  list.value.filter((item) => item.source === 'NEGATIVE_FEEDBACK').length
+))
+const qualityFailureCount = computed(() => (
+  list.value.filter((item) => item.source === 'QUALITY_FAILURE').length
+))
+
 async function loadList() {
   loading.value = true
   try {
@@ -179,7 +187,7 @@ onMounted(loadList)
 
 <template>
   <div class="badcase-review">
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-select v-model="query.status" placeholder="全部状态" clearable style="width: 130px">
           <el-option label="待筛选" value="PENDING" />
@@ -195,7 +203,32 @@ onMounted(loadList)
           筛选后可一键转知识库（治本）或转评测用例（防复发），两者不冲突
         </span>
       </div>
+    </el-card>
 
+    <div class="summary-row" v-loading="loading">
+      <div class="stat">
+        <strong>{{ total }}</strong>
+        <span>匹配记录</span>
+      </div>
+      <div class="stat stat-warning">
+        <strong>{{ currentPendingCount }}</strong>
+        <span>当前页待筛选</span>
+      </div>
+      <div class="stat stat-danger">
+        <strong>{{ negativeFeedbackCount }}</strong>
+        <span>当前页用户点踩</span>
+      </div>
+      <div class="stat">
+        <strong>{{ qualityFailureCount }}</strong>
+        <span>当前页质检不过</span>
+      </div>
+    </div>
+
+    <el-card shadow="never" class="list-card">
+      <div class="section-heading">
+        <strong>回流证据明细</strong>
+        <span>筛选原始信号后，可分别补知识与加入评测集，两个出口互不冲突</span>
+      </div>
       <el-table v-loading="loading" :data="list" style="width: 100%">
         <el-table-column label="发生时间" width="170">
           <template #default="{ row }">{{ formatTime(row.createdAtMs) }}</template>
@@ -319,6 +352,7 @@ onMounted(loadList)
             <el-form-item>
               <el-button
                 v-permission="'badcase:adopt'"
+                class="cw-final-action"
                 type="primary"
                 :loading="submitting"
                 @click="submitKnowledge"
@@ -368,6 +402,7 @@ onMounted(loadList)
             <el-form-item>
               <el-button
                 v-permission="'badcase:adopt'"
+                class="cw-final-action"
                 type="primary"
                 :loading="submitting"
                 @click="submitEvalCase"
@@ -392,6 +427,12 @@ onMounted(loadList)
 </template>
 
 <style scoped>
+.badcase-review {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -400,9 +441,76 @@ onMounted(loadList)
   flex-wrap: wrap;
 }
 
+.filter-card .toolbar {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .hint {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  min-height: 88px;
+  padding: 15px 16px 14px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: var(--cw-paper);
+  box-shadow: var(--cw-shadow-xs);
+}
+
+.stat strong {
+  display: block;
+  color: var(--cw-text);
+  font-size: 25px;
+  font-weight: 720;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.stat span {
+  display: block;
+  margin-top: 7px;
+  color: var(--cw-text-muted);
+  font-size: 12px;
+}
+
+.stat-warning strong {
+  color: var(--cw-amber);
+}
+
+.stat-danger strong {
+  color: var(--cw-danger);
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.section-heading strong {
+  color: var(--cw-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.section-heading span {
+  color: var(--cw-text-muted);
+  font-size: 12px;
+  text-align: right;
 }
 
 .source-hint {
@@ -410,7 +518,8 @@ onMounted(loadList)
 }
 
 .muted {
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-text-muted);
+  opacity: 0.72;
 }
 
 .section {
@@ -418,7 +527,8 @@ onMounted(loadList)
 }
 
 .section-title {
-  font-weight: 600;
+  color: var(--cw-text);
+  font-weight: 700;
   margin-bottom: 10px;
   display: flex;
   align-items: baseline;
@@ -428,5 +538,46 @@ onMounted(loadList)
 .pagination {
   margin-top: 12px;
   justify-content: flex-end;
+}
+
+@media (max-width: 1023px) {
+  .summary-row {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .summary-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-heading span {
+    text-align: left;
+  }
+
+  .source-hint {
+    display: block;
+    margin: 6px 0 0;
+  }
+
+  .badcase-review :deep(.el-drawer .el-form-item__label) {
+    width: 100% !important;
+    justify-content: flex-start;
+  }
+
+  .badcase-review :deep(.el-drawer .el-form-item__content) {
+    margin-left: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .summary-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

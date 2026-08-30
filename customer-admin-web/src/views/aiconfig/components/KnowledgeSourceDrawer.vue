@@ -283,7 +283,7 @@ function shortHash(hash: string | null) {
     <div v-loading="loading">
       <div class="section-title">
         <span>文档源</span>
-        <el-button v-permission="'knowledge-base:edit'" type="primary" @click="openCreateSource">新增文档源</el-button>
+        <el-button v-permission="'knowledge-base:edit'" class="cw-final-action" type="primary" @click="openCreateSource">新增文档源</el-button>
       </div>
       <el-table :data="sources" border>
         <el-table-column label="文档源" min-width="180">
@@ -381,7 +381,7 @@ function shortHash(hash: string | null) {
         </template>
         <el-form-item label="状态"><el-switch v-model="sourceForm.status" :active-value="1" :inactive-value="0" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="sourceDialogVisible = false">取消</el-button><el-button type="primary" @click="saveSource">保存</el-button></template>
+      <template #footer><el-button @click="sourceDialogVisible = false">取消</el-button><el-button class="cw-final-action" type="primary" @click="saveSource">保存文档源</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="syncDialogVisible" title="提交文档同步批次" width="820px" append-to-body>
@@ -389,7 +389,7 @@ function shortHash(hash: string | null) {
         checkpoint 采用 CAS：expectedCheckpoint 必须等于服务端当前值，成功后才推进。全量快照只传 UPSERT，缺失文档自动生成 DELETE 修订。
       </el-alert>
       <el-input v-model="syncPayload" type="textarea" :rows="20" class="json-editor" />
-      <template #footer><el-button @click="syncDialogVisible = false">取消</el-button><el-button type="primary" :loading="syncing" @click="submitSync">提交同步</el-button></template>
+      <template #footer><el-button @click="syncDialogVisible = false">取消</el-button><el-button class="cw-final-action" type="primary" :loading="syncing" @click="submitSync">提交同步</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="runsVisible" title="同步运行记录（最近 100 次）" width="1100px" append-to-body>

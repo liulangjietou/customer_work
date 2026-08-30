@@ -181,19 +181,21 @@ onMounted(loadList)
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'mcp:add'" type="primary" @click="openCreate">新建 MCP</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'mcp:add'" class="cw-final-action" type="primary" @click="openCreate">新建 MCP</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="mcpName" label="名称" />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的 MCP">
+        <el-table-column prop="mcpName" label="名称" class-name="primary-column" />
         <el-table-column prop="mcpType" label="类型" width="100" />
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="连通性" width="140">
+        <el-table-column label="连通性" width="140" align="center">
           <template #default="{ row }">
             <el-tag :type="testStatusMap[row.testStatus]?.type ?? 'info'">{{ testStatusMap[row.testStatus]?.label ?? '未测试' }}</el-tag>
           </template>
@@ -222,7 +224,7 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -270,7 +272,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存 MCP</el-button>
       </template>
     </el-dialog>
 
@@ -281,8 +283,37 @@ onMounted(loadList)
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 
 .config-hint {

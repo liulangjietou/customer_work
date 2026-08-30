@@ -662,7 +662,7 @@ h1 {
 
 .register-steps li.active > span,
 .register-steps li.complete > span {
-  background: var(--el-color-primary);
+  background: var(--theme-primary-solid, var(--el-color-primary));
   color: var(--login-primary-text, #fff);
 }
 

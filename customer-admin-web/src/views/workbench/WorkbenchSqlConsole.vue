@@ -16,7 +16,10 @@ const sql = ref('')
 const executing = ref(false)
 const exporting = ref(false)
 const result = ref<SqlQueryResultVO | null>(null)
+const executedQuery = ref<{ datasourceId: number; sql: string } | null>(null)
 const sqlInputRef = ref<{ textarea?: HTMLTextAreaElement } | null>(null)
+let databaseRequestId = 0
+let queryRequestId = 0
 
 // ===== 左侧库树（库列表 + 点库懒加载表）=====
 interface DbNode {
@@ -34,34 +37,51 @@ const filteredDatabases = computed(() => {
   const kw = dbFilter.value.trim().toLowerCase()
   return kw ? databases.value.filter((d) => d.name.toLowerCase().includes(kw)) : databases.value
 })
+const resultOutdated = computed(() => {
+  const snapshot = executedQuery.value
+  return Boolean(snapshot && (snapshot.datasourceId !== datasourceId.value || snapshot.sql !== sql.value))
+})
 
 async function loadDatasources() {
   datasources.value = await listAllSqlDatasources()
 }
 
 async function loadDatabases() {
+  const requestId = ++databaseRequestId
+  const selectedDatasourceId = datasourceId.value
   databases.value = []
-  if (!datasourceId.value) {
+  if (!selectedDatasourceId) {
+    treeLoading.value = false
     return
   }
   treeLoading.value = true
   try {
-    const names = await listAdhocDatabases(datasourceId.value)
-    databases.value = names.map((name) => ({ name, expanded: false, loading: false, loaded: false, tables: [] }))
+    const names = await listAdhocDatabases(selectedDatasourceId)
+    if (requestId === databaseRequestId && datasourceId.value === selectedDatasourceId) {
+      databases.value = names.map((name) => ({ name, expanded: false, loading: false, loaded: false, tables: [] }))
+    }
   } finally {
-    treeLoading.value = false
+    if (requestId === databaseRequestId) {
+      treeLoading.value = false
+    }
   }
 }
 
 async function toggleDb(db: DbNode) {
   db.expanded = !db.expanded
-  if (db.expanded && !db.loaded && datasourceId.value) {
+  const selectedDatasourceId = datasourceId.value
+  if (db.expanded && !db.loaded && selectedDatasourceId) {
     db.loading = true
     try {
-      db.tables = await listAdhocTables(datasourceId.value, db.name)
-      db.loaded = true
+      const tables = await listAdhocTables(selectedDatasourceId, db.name)
+      if (datasourceId.value === selectedDatasourceId && databases.value.includes(db)) {
+        db.tables = tables
+        db.loaded = true
+      }
     } finally {
-      db.loading = false
+      if (databases.value.includes(db)) {
+        db.loading = false
+      }
     }
   }
 }
@@ -140,24 +160,34 @@ function validate(): boolean {
 }
 
 async function runQuery() {
-  if (!validate()) {
+  if (executing.value || !validate()) {
     return
   }
+  const requestId = ++queryRequestId
+  const snapshot = { datasourceId: datasourceId.value!, sql: sql.value }
   executing.value = true
   try {
-    result.value = await executeAdhocSql({ datasourceId: datasourceId.value!, sql: sql.value })
+    const nextResult = await executeAdhocSql(snapshot)
+    if (requestId === queryRequestId && datasourceId.value === snapshot.datasourceId) {
+      result.value = nextResult
+      executedQuery.value = snapshot
+    }
   } finally {
-    executing.value = false
+    if (requestId === queryRequestId) {
+      executing.value = false
+    }
   }
 }
 
 async function handleExport() {
-  if (!validate()) {
+  if (exporting.value || !result.value || !executedQuery.value) {
     return
   }
+  const snapshot = executedQuery.value
   exporting.value = true
   try {
-    await exportAdhocSql({ datasourceId: datasourceId.value!, sql: sql.value })
+    // 导出必须绑定产生当前结果表的执行快照，不能读取用户随后编辑但尚未执行的 SQL。
+    await exportAdhocSql(snapshot)
   } finally {
     exporting.value = false
   }
@@ -172,9 +202,12 @@ function onKeydown(e: KeyboardEvent) {
 
 // 切换数据源：清空结果并重载库树
 watch(datasourceId, () => {
+  queryRequestId += 1
+  executing.value = false
   result.value = null
+  executedQuery.value = null
   dbFilter.value = ''
-  loadDatabases()
+  void loadDatabases()
 })
 
 onMounted(loadDatasources)
@@ -207,23 +240,24 @@ onMounted(loadDatasources)
             <el-empty v-if="!datasourceId" :image-size="60" description="请先选择数据源" />
             <template v-else>
               <div v-for="db in filteredDatabases" :key="db.name" class="db-block">
-                <div class="db-node" @click="toggleDb(db)">
+                <button type="button" class="db-node" :aria-expanded="db.expanded" @click="toggleDb(db)">
                   <span class="toggle">{{ db.expanded ? '▾' : '▸' }}</span>
                   <span class="db-name" :title="db.name">{{ db.name }}</span>
-                </div>
+                </button>
                 <div v-if="db.expanded" class="table-list">
                   <div v-if="db.loading" class="hint">加载中…</div>
                   <div v-else-if="db.tables.length === 0" class="hint">（无表）</div>
-                  <div
+                  <button
                     v-for="t in db.tables"
                     v-else
                     :key="t"
+                    type="button"
                     class="table-node"
                     :title="`点击插入 ${db.name}.${t}`"
                     @click="insertTable(db.name, t)"
                   >
                     {{ t }}
-                  </div>
+                  </button>
                 </div>
               </div>
               <el-empty v-if="filteredDatabases.length === 0" :image-size="60" description="无匹配数据库" />
@@ -242,7 +276,7 @@ onMounted(loadDatasources)
           />
 
           <div class="toolbar">
-            <el-button type="primary" :loading="executing" @click="runQuery">执行（Ctrl+Enter）</el-button>
+            <el-button class="cw-final-action" type="primary" :loading="executing" @click="runQuery">执行（Ctrl+Enter）</el-button>
             <el-button :disabled="!sql.trim()" @click="formatSql">格式化 SQL</el-button>
             <el-button
               v-permission="'sql-console:export'"
@@ -266,6 +300,7 @@ onMounted(loadDatasources)
 
           <div v-if="result" class="result-meta">
             耗时 {{ result.useMillis }} ms，返回 {{ result.rows.length }} 行<span v-if="result.rows.length >= 2000">（已达 2000 行上限，可能被截断）</span>
+            <span v-if="resultOutdated" class="result-outdated"> · SQL 已修改，结果与导出仍对应上一次执行</span>
           </div>
 
           <el-table
@@ -296,11 +331,13 @@ onMounted(loadDatasources)
 .console-body {
   display: flex;
   min-height: 560px;
+  background: var(--cw-paper);
 }
 .sidebar {
   width: 260px;
   flex-shrink: 0;
-  border-right: 1px solid var(--el-border-color-lighter);
+  border-right: 1px solid var(--cw-line);
+  background: color-mix(in srgb, var(--cw-paper) 94%, var(--cw-cobalt));
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -317,16 +354,22 @@ onMounted(loadDatasources)
   display: flex;
   align-items: center;
   gap: 4px;
+  width: 100%;
   padding: 4px 2px;
+  color: var(--cw-text);
+  text-align: left;
+  border: 0;
+  background: transparent;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--cw-radius-sm);
+  font: inherit;
 }
 .db-node:hover {
   background: var(--el-fill-color-light);
 }
 .toggle {
   width: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   flex-shrink: 0;
 }
 .db-name {
@@ -338,21 +381,32 @@ onMounted(loadDatasources)
   padding-left: 18px;
 }
 .table-node {
+  display: block;
+  width: 100%;
   padding: 3px 6px;
   cursor: pointer;
   color: var(--el-text-color-regular);
-  border-radius: 4px;
+  text-align: left;
+  border: 0;
+  border-radius: var(--cw-radius-sm);
+  background: transparent;
+  font: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .table-node:hover {
-  background: var(--el-fill-color-light);
-  color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--cw-cobalt) 9%, var(--cw-paper));
+  color: var(--cw-cobalt);
+}
+.db-node:focus-visible,
+.table-node:focus-visible {
+  outline: 2px solid var(--cw-focus-ring);
+  outline-offset: -2px;
 }
 .hint {
   padding: 3px 6px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
 }
 .main {
@@ -366,12 +420,35 @@ onMounted(loadDatasources)
   margin-bottom: 12px;
 }
 .sql-input :deep(textarea) {
-  font-family: var(--el-font-family-mono, monospace);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
 }
 .result-meta {
   margin-top: 12px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
+}
+.result-outdated {
+  color: var(--cw-amber);
+  font-weight: 650;
+}
+
+@media (max-width: 767px) {
+  .console-body {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .sidebar {
+    flex: none;
+    width: auto;
+    max-height: 300px;
+    border-right: 0;
+    border-bottom: 1px solid var(--cw-line);
+  }
+
+  .main {
+    padding: 10px;
+  }
 }
 </style>

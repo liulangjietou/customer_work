@@ -133,7 +133,8 @@ const emit = defineEmits<{ remove: [localId: string] }>()
 }
 
 .pending-thumb-remove:hover {
-  background: var(--el-color-danger);
+  color: var(--cw-on-danger, #fff);
+  background: var(--cw-danger-solid, #c2414b);
 }
 
 .pending-thumb-remove .el-icon {

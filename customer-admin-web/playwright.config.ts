@@ -15,6 +15,8 @@ export default defineConfig({
     headless: true,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
+    // 网络夹具依赖 BrowserContext 路由；禁用 Service Worker，避免其在路由之前截获请求。
+    serviceWorkers: 'block',
   },
   projects: [
     {

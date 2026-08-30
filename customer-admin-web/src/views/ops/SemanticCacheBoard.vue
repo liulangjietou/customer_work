@@ -22,31 +22,47 @@ const scopes = ref<SemanticCacheScope[]>([])
 // 分区键是用户级隔离键（形如 u42），运营手填是猜不出来的，故进页面先把实际存在的分区拉回来。
 // 留空而不是预填 'default'：预填一个多半查不到东西的值，只会让人以为"缓存没在工作"。
 const scopeId = ref('')
+let scopesRequestId = 0
+let listRequestId = 0
 
 /** 拉分区列表并默认选中条目最多的那个——运营多半就是想看它。 */
 async function loadScopes() {
+  const requestId = ++scopesRequestId
   scopesLoading.value = true
   try {
-    scopes.value = await listCacheScopes()
-    if (!scopeId.value && scopes.value.length > 0) {
-      scopeId.value = scopes.value[0].scopeId
+    const rows = await listCacheScopes()
+    if (requestId === scopesRequestId) {
+      scopes.value = rows
+      if (!scopeId.value) {
+        scopeId.value = rows[0]?.scopeId ?? ''
+      }
     }
   } finally {
-    scopesLoading.value = false
+    if (requestId === scopesRequestId) {
+      scopesLoading.value = false
+    }
   }
 }
 
 async function loadList() {
+  const requestId = ++listRequestId
+  const requestedScope = scopeId.value
   // 没有任何分区时不必空跑一次查询
-  if (!scopeId.value) {
+  if (!requestedScope) {
     list.value = []
+    loading.value = false
     return
   }
   loading.value = true
   try {
-    list.value = await listCacheEntries(scopeId.value)
+    const rows = await listCacheEntries(requestedScope)
+    if (requestId === listRequestId && scopeId.value === requestedScope) {
+      list.value = rows
+    }
   } finally {
-    loading.value = false
+    if (requestId === listRequestId) {
+      loading.value = false
+    }
   }
 }
 
@@ -60,14 +76,8 @@ function formatTime(ms: number): string {
   return ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '-'
 }
 
-/** 复用率 = 命中次数 / 条目数：低于 1 说明多数条目从没被用过，缓存在白占容量。 */
-const reuseRate = computed(() => {
-  if (list.value.length === 0) return 0
-  const hits = list.value.reduce((sum, entry) => sum + entry.hitCount, 0)
-  return hits / list.value.length
-})
-
 const totalHits = computed(() => list.value.reduce((sum, entry) => sum + entry.hitCount, 0))
+const zeroHitCount = computed(() => list.value.filter((entry) => entry.hitCount === 0).length)
 
 async function handleEvict(row: SemanticCacheEntry) {
   try {
@@ -78,6 +88,10 @@ async function handleEvict(row: SemanticCacheEntry) {
     )
     await evictCacheEntry(row.id)
     ElMessage.success('已删除')
+    // 列表只返回前 50 条；仅当当前结果确实只有这一条时，才可判定分区已被删空。
+    if (list.value.length === 1) {
+      scopeId.value = ''
+    }
     await reload()
   } catch (error) {
     if (error !== 'cancel') throw error
@@ -115,26 +129,22 @@ onMounted(reload)
         两个用户都问「我的订单到哪了」时语义高度相似但答案完全不同，无差别缓存会造成数据泄露。"
     />
 
-    <el-card shadow="never" class="stat-card">
-      <div class="stats">
-        <div class="stat">
-          <div class="stat-value">{{ list.length }}</div>
-          <div class="stat-label">缓存条目</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">{{ totalHits }}</div>
-          <div class="stat-label">累计命中（省下的模型调用）</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value" :class="{ 'stat-warn': reuseRate < 1 }">
-            {{ reuseRate.toFixed(2) }}
-          </div>
-          <div class="stat-label">平均复用次数（低于 1 说明多数条目从没被用过）</div>
-        </div>
+    <div class="stats" v-loading="loading">
+      <div class="stat">
+        <div class="stat-value">{{ list.length }}</div>
+        <div class="stat-label">当前列表条目</div>
       </div>
-    </el-card>
+      <div class="stat">
+        <div class="stat-value">{{ totalHits }}</div>
+        <div class="stat-label">当前列表累计命中</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" :class="{ 'stat-warn': zeroHitCount > 0 }">{{ zeroHitCount }}</div>
+        <div class="stat-label">当前列表零命中条目</div>
+      </div>
+    </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <!-- filterable + allow-create：分区多时能搜，也允许手填一个列表外的分区
              （列表有 100 条上限，长尾分区不在里面） -->
@@ -156,7 +166,7 @@ onMounted(reload)
           />
         </el-select>
         <el-button type="primary" :loading="loading" @click="loadList">查询</el-button>
-        <el-button :loading="scopesLoading" @click="loadScopes">刷新分区</el-button>
+        <el-button :loading="scopesLoading" @click="reload">刷新分区</el-button>
         <span v-if="!scopesLoading && scopes.length === 0" class="hint">
           当前还没有任何缓存分区
         </span>
@@ -171,7 +181,13 @@ onMounted(reload)
           清空该分区
         </el-button>
       </div>
+    </el-card>
 
+    <el-card shadow="never" class="list-card">
+      <div class="section-heading">
+        <strong>缓存证据明细</strong>
+        <span>按实际命中次数识别有效复用与长期占用容量的低价值条目</span>
+      </div>
       <el-table v-loading="loading" :data="list" style="width: 100%">
         <el-table-column label="命中" width="90" sortable :sort-by="'hitCount'">
           <template #default="{ row }">
@@ -209,33 +225,39 @@ onMounted(reload)
   gap: 12px;
 }
 
-.stat-card :deep(.el-card__body) {
-  padding: 16px 20px;
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
 }
 
-.stats {
-  display: flex;
-  gap: 48px;
-  flex-wrap: wrap;
+.stat {
+  min-height: 88px;
+  padding: 15px 16px 14px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: var(--cw-paper);
+  box-shadow: var(--cw-shadow-xs);
 }
 
 .stat-value {
   font-size: 26px;
-  font-weight: 600;
+  font-weight: 720;
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-warn {
-  color: var(--el-color-warning);
+  color: var(--cw-amber);
 }
 
 .hint {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
 }
 
 .stat-label {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
   margin-top: 4px;
 }
@@ -248,7 +270,60 @@ onMounted(reload)
   flex-wrap: wrap;
 }
 
+.filter-card .toolbar {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .spacer {
   flex: 1;
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.section-heading strong {
+  color: var(--cw-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.section-heading span {
+  color: var(--cw-text-muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+@media (max-width: 767px) {
+  .stats {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .spacer {
+    display: none;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-heading span {
+    text-align: left;
+  }
+}
+
+@media (max-width: 480px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

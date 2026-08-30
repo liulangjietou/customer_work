@@ -9,13 +9,14 @@ import {
   updateSqlDatasource,
 } from '@/api/sql'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { PageQuery, SqlDatasourceSaveRequest, SqlDatasourceVO } from '@/types/api'
 
 const testingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, deletingId, list, total, query,
   dialogVisible, dialogMode, form,
   loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
 } = useCrudPage<SqlDatasourceVO, PageQuery, SqlDatasourceSaveRequest>({
@@ -57,21 +58,24 @@ onMounted(loadList)
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按数据源名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'sql-datasource:add'" type="primary" @click="openCreate">新建数据源</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'sql-datasource:add'" class="cw-final-action" type="primary" @click="openCreate">新建数据源</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="name" label="名称" width="160" />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的数据源">
+        <el-table-column prop="name" label="名称" width="160" class-name="primary-column" />
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column label="密码" width="120">
           <template #default="{ row }">{{ row.passwordMasked }}</template>
         </el-table-column>
         <el-table-column prop="jdbcUrl" label="JDBC URL" show-overflow-tooltip />
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '禁用' }}</el-tag>
           </template>
@@ -81,7 +85,7 @@ onMounted(loadList)
           <template #default="{ row }">
             <el-button link type="primary" :loading="testingId === row.id" @click="handleTest(row)">测试连接</el-button>
             <el-button v-permission="'sql-datasource:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'sql-datasource:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'sql-datasource:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -91,7 +95,7 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -119,7 +123,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存数据源</el-button>
       </template>
     </el-dialog>
   </div>
@@ -128,7 +132,36 @@ onMounted(loadList)
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 </style>

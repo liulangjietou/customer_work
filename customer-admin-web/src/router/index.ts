@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
+import { useTabsStore } from '@/store/tabs'
 // WorkspaceView 特意同步导入（其余路由仍懒加载）：MainLayout 的 <keep-alive :include="['WorkspaceView']">
 // 按组件 name 字符串匹配，而懒加载 `() => import()` 交给 router-view 的是异步组件包装，KeepAlive 取不到
 // 里面真实组件的 name，include 匹配落空、缓存失效——对话/VibeCoding 面板切菜单再回来就被销毁重建、
@@ -86,8 +87,13 @@ router.beforeEach(async (to) => {
   }
   // 待审核/已拒绝账号即使手工输入已知地址，也只能停留在首页。真正的数据权限仍由后端
   // UserRoleResolver + 接口权限校验兜底；这里负责把前端可见范围收敛到“首页 + 品牌 Logo”。
-  if (!auth.isApproved && to.name !== 'Home') {
-    return { name: 'Home' }
+  if (!auth.isApproved) {
+    if (to.name !== 'Home') {
+      return { name: 'Home' }
+    }
+    // Home 只渲染本地准入状态；未审核账号不得继续落入菜单/权限 bootstrap，
+    // 否则即使数据接口受后端保护，也会泄露完整业务导航与功能结构。
+    return true
   }
 
   const menuStore = useMenuStore()
@@ -102,6 +108,7 @@ router.beforeEach(async (to) => {
       console.error('menu bootstrap failed, redirect to login', e)
       auth.clear()
       menuStore.reset()
+      useTabsStore().reset()
       return { name: 'Login', query: { redirect: to.fullPath } }
     }
     // 动态路由刚注册完，重新触发一次导航解析，命中新加入的路由记录。

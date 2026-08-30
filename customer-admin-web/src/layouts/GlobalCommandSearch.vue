@@ -115,6 +115,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleGlobalShortcut
     ref="triggerButton"
     type="button"
     class="global-search-trigger"
+    title="搜索菜单、智能体或配置"
     aria-label="搜索菜单、智能体或配置"
     @click="openSearch"
   >
@@ -198,22 +199,24 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleGlobalShortcut
 .global-search-trigger {
   width: min(420px, 30vw);
   min-width: 220px;
-  height: 38px;
+  height: 36px;
   display: flex;
   align-items: center;
   gap: 9px;
   padding: 0 10px 0 12px;
-  border: 1px solid var(--el-border-color);
-  border-radius: 9px;
-  background: var(--el-fill-color-extra-light);
-  color: var(--el-text-color-secondary);
+  border: 1px solid var(--cw-line-strong, var(--el-border-color));
+  border-radius: var(--cw-radius-md, 8px);
+  background: var(--cw-canvas, var(--el-fill-color-extra-light));
+  color: var(--cw-text-muted, var(--el-text-color-secondary));
   cursor: pointer;
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .global-search-trigger:hover {
-  border-color: color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 55%, var(--el-border-color));
-  background: var(--el-bg-color);
+  border-color: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 48%, var(--cw-line, var(--el-border-color)));
+  background: var(--cw-paper, var(--el-bg-color));
+  color: var(--cw-cobalt, var(--el-color-primary));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 7%, transparent);
 }
 
 .global-search-placeholder {
@@ -233,12 +236,12 @@ kbd {
   align-items: center;
   justify-content: center;
   padding: 0 5px;
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--cw-line-strong, var(--el-border-color));
   border-radius: 5px;
-  background: var(--el-bg-color);
-  color: var(--el-text-color-secondary);
+  background: var(--cw-paper, var(--el-bg-color));
+  color: var(--cw-text-muted, var(--el-text-color-secondary));
   font: 11px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--el-border-color) 80%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--cw-line-strong, var(--el-border-color)) 80%, transparent);
 }
 
 .sr-only {
@@ -255,9 +258,10 @@ kbd {
 
 :global(.navigation-command-dialog) {
   overflow: hidden;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 14px;
-  box-shadow: 0 24px 80px rgb(15 23 42 / 24%);
+  border: 1px solid var(--cw-line, var(--el-border-color-lighter));
+  border-radius: var(--cw-radius-lg, 12px);
+  background: var(--cw-paper, var(--el-bg-color));
+  box-shadow: var(--cw-shadow-lg, 0 24px 80px rgb(15 23 42 / 24%));
 }
 
 :global(.navigation-command-dialog .el-dialog__header) {
@@ -275,7 +279,7 @@ kbd {
   align-items: center;
   gap: 10px;
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--cw-line, var(--el-border-color-lighter));
 }
 
 .command-search-box :deep(.el-input) {
@@ -294,7 +298,7 @@ kbd {
 
 .command-escape {
   padding-right: 4px;
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-text-muted, var(--el-text-color-placeholder));
   font-size: 11px;
   white-space: nowrap;
 }
@@ -314,15 +318,16 @@ kbd {
   gap: 11px;
   padding: 8px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--cw-radius-md, 8px);
   background: transparent;
-  color: var(--el-text-color-primary);
+  color: var(--cw-text, var(--el-text-color-primary));
   text-align: left;
   cursor: pointer;
 }
 
 .command-result.is-selected {
-  background: var(--el-color-primary-light-9);
+  background: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 10%, var(--cw-paper, var(--el-bg-color)));
+  color: var(--cw-cobalt, var(--el-color-primary));
 }
 
 .command-result-icon {
@@ -332,16 +337,16 @@ kbd {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 9px;
-  background: var(--el-bg-color);
-  color: var(--el-text-color-secondary);
+  border: 1px solid var(--cw-line, var(--el-border-color-lighter));
+  border-radius: var(--cw-radius-md, 8px);
+  background: var(--cw-paper, var(--el-bg-color));
+  color: var(--cw-text-muted, var(--el-text-color-secondary));
 }
 
 .command-result-icon.is-agent {
-  border-color: color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 30%, transparent);
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  border-color: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 30%, transparent);
+  background: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 9%, var(--cw-paper, var(--el-bg-color)));
+  color: var(--cw-cobalt, var(--el-color-primary));
 }
 
 .command-result-copy {
@@ -362,7 +367,7 @@ kbd {
 
 .command-result-meta,
 .command-result-path {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted, var(--el-text-color-secondary));
   font-size: 12px;
 }
 
@@ -376,7 +381,8 @@ kbd {
 
 .command-enter {
   flex: 0 0 auto;
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-text-muted, var(--el-text-color-placeholder));
+  opacity: 0.65;
 }
 
 .command-footer {
@@ -386,9 +392,9 @@ kbd {
   gap: 14px;
   margin: 0 -12px;
   padding: 0 14px;
-  border-top: 1px solid var(--el-border-color-lighter);
-  background: var(--el-fill-color-extra-light);
-  color: var(--el-text-color-secondary);
+  border-top: 1px solid var(--cw-line, var(--el-border-color-lighter));
+  background: var(--cw-canvas, var(--el-fill-color-extra-light));
+  color: var(--cw-text-muted, var(--el-text-color-secondary));
   font-size: 11px;
 }
 
@@ -412,9 +418,43 @@ kbd {
 }
 
 @media (max-width: 760px) {
+  .global-search-trigger {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    font-size: 17px;
+  }
+
+  .global-search-trigger:hover {
+    border-color: transparent;
+  }
+
+  .global-search-placeholder,
+  .global-search-trigger kbd,
   .command-result-path,
   .command-footer span:last-child {
     display: none;
+  }
+
+  :global(.navigation-command-dialog .el-dialog__body) {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .command-result {
+    gap: 8px;
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+
+  .command-footer {
+    margin-right: -8px;
+    margin-left: -8px;
   }
 }
 

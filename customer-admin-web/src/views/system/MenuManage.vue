@@ -27,6 +27,9 @@ const ICON_NAMES = Object.keys(ElementPlusIconsVue)
 
 const loading = ref(false)
 const tree = ref<PermissionVO[]>([])
+const submitting = ref(false)
+const publishing = ref(false)
+const reordering = ref(false)
 /** 有未发布的改动（增删改/拖拽都会置位），点"发布"广播给其它在线用户后清零，只是本地 UI 提示，不影响任何实际行为。 */
 const dirty = ref(false)
 const treeProps = { label: 'permName', children: 'children' }
@@ -117,20 +120,26 @@ async function handleIconUpload(options: UploadRequestOptions) {
 }
 
 async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
+  if (submitting.value) return
+  submitting.value = true
+  try {
+    const valid = await formRef.value?.validate().catch(() => false)
+    if (!valid) {
+      return
+    }
+    if (dialogMode.value === 'create') {
+      await createMenuNode(form)
+      ElMessage.success('新建成功')
+    } else if (editingId.value) {
+      await updateMenuNode(editingId.value, form)
+      ElMessage.success('保存成功')
+    }
+    dirty.value = true
+    dialogVisible.value = false
+    await loadTree()
+  } finally {
+    submitting.value = false
   }
-  if (dialogMode.value === 'create') {
-    await createMenuNode(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
-    await updateMenuNode(editingId.value, form)
-    ElMessage.success('保存成功')
-  }
-  dirty.value = true
-  dialogVisible.value = false
-  await loadTree()
 }
 
 async function handleDelete(node: PermissionVO) {
@@ -162,19 +171,39 @@ function flattenForReorder(nodes: PermissionVO[], parentId: number): MenuReorder
 }
 
 async function handleNodeDrop() {
+  if (reordering.value) return
   // el-tree 拖拽后已经把新顺序写回了 tree.value（受控 :data），这里整树摊平重新计算 parentId/sort
   // 一次性提交，不做增量 diff——菜单树节点量小，简单可靠比抠性能更重要。
-  await reorderMenuNodes(flattenForReorder(tree.value, 0))
-  ElMessage.success('顺序已调整')
-  dirty.value = true
-  await loadTree()
+  reordering.value = true
+  try {
+    await reorderMenuNodes(flattenForReorder(tree.value, 0))
+    ElMessage.success('顺序已调整')
+    dirty.value = true
+    await loadTree()
+  } catch (error) {
+    // el-tree 已乐观改写本地树；持久化失败时必须回读服务端真值，避免展示并不存在的顺序。
+    try {
+      await loadTree()
+    } catch {
+      // 原始 reorder 错误由请求层负责展示并继续向上传递。
+    }
+    throw error
+  } finally {
+    reordering.value = false
+  }
 }
 
 // ---------- 发布 ----------
 async function handlePublish() {
-  await publishMenu()
-  dirty.value = false
-  ElMessage.success('已发布，其它在线用户的菜单将在下次轮询时自动刷新')
+  if (publishing.value) return
+  publishing.value = true
+  try {
+    await publishMenu()
+    dirty.value = false
+    ElMessage.success('已发布，其它在线用户的菜单将在下次轮询时自动刷新')
+  } finally {
+    publishing.value = false
+  }
 }
 
 // ---------- 变更记录 ----------
@@ -212,8 +241,8 @@ onMounted(loadTree)
   <div class="page">
     <el-card>
       <div class="toolbar">
-        <el-button v-permission="'menu:add'" type="primary" @click="openCreateRoot">新增根菜单</el-button>
-        <el-button v-permission="'menu:edit'" type="success" :disabled="!dirty" @click="handlePublish">
+        <el-button v-permission="'menu:add'" class="cw-final-action" type="primary" @click="openCreateRoot">新增根菜单</el-button>
+        <el-button v-permission="'menu:edit'" class="cw-final-action" type="primary" :disabled="!dirty" :loading="publishing" @click="handlePublish">
           发布<el-badge v-if="dirty" is-dot class="publish-badge" />
         </el-button>
         <el-button v-permission="'menu:view'" @click="openChangeLog()">变更记录</el-button>
@@ -224,7 +253,7 @@ onMounted(loadTree)
         :data="tree"
         :props="treeProps"
         node-key="id"
-        draggable
+        :draggable="!reordering"
         default-expand-all
         :allow-drop="allowDrop"
         @node-drop="handleNodeDrop"
@@ -281,16 +310,19 @@ onMounted(loadTree)
               <el-tab-pane label="图标库" name="library">
                 <el-input v-model="iconSearch" placeholder="搜索图标名" clearable style="margin-bottom: 8px" />
                 <div class="icon-grid">
-                  <div
+                  <button
                     v-for="name in filteredIconNames"
                     :key="name"
+                    type="button"
                     class="icon-grid-item"
                     :class="{ active: form.icon === name && form.iconType === 'library' }"
                     :title="name"
+                    :aria-label="`选择图标 ${name}`"
+                    :aria-pressed="form.icon === name && form.iconType === 'library'"
                     @click="selectLibraryIcon(name)"
                   >
                     <el-icon><component :is="name" /></el-icon>
-                  </div>
+                  </button>
                 </div>
               </el-tab-pane>
               <el-tab-pane label="上传图片" name="image">
@@ -307,7 +339,7 @@ onMounted(loadTree)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存菜单</el-button>
       </template>
     </el-dialog>
 
@@ -362,6 +394,7 @@ onMounted(loadTree)
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-height: 38px;
   padding-right: 8px;
 }
 
@@ -395,7 +428,8 @@ onMounted(loadTree)
   white-space: nowrap;
 }
 
-.tree-node:hover .node-actions {
+.tree-node:hover .node-actions,
+.tree-node:focus-within .node-actions {
   display: inline-flex;
 }
 
@@ -448,6 +482,9 @@ onMounted(loadTree)
   border-radius: 4px;
   cursor: pointer;
   border: 1px solid transparent;
+  color: inherit;
+  background: transparent;
+  font: inherit;
 }
 
 .icon-grid-item:hover {
@@ -458,6 +495,11 @@ onMounted(loadTree)
   border-color: var(--el-color-primary);
   color: var(--el-color-primary);
   background: var(--el-color-primary-light-9);
+}
+
+.icon-grid-item:focus-visible {
+  outline: 2px solid var(--cw-focus-ring);
+  outline-offset: 1px;
 }
 
 .upload-tip {
@@ -491,5 +533,41 @@ onMounted(loadTree)
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+@media (max-width: 767px) {
+  .tree-node {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-block: 5px;
+  }
+
+  .node-name {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .node-code {
+    flex-basis: calc(100% - 28px);
+    margin-left: 28px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .node-actions {
+    display: inline-flex;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    margin-left: 28px;
+  }
+
+  .icon-picker,
+  .snapshot-pair {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

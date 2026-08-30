@@ -56,6 +56,9 @@ export interface CrudPageOptions<VO, Q extends PageQuery, F extends object> {
  */
 export function useCrudPage<VO, Q extends PageQuery, F extends object>(options: CrudPageOptions<VO, Q, F>) {
   const loading = ref(false)
+  const loadError = ref<unknown>(null)
+  const submitting = ref(false)
+  const deletingId = ref<number | null>(null)
   const list = ref([]) as Ref<VO[]>
   const total = ref(0)
   const query = reactive(options.initQuery()) as Q
@@ -64,23 +67,37 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(options: 
   const dialogMode = ref<CrudDialogMode>('create')
   const editingId = ref<number | null>(null)
   const form = reactive(options.initForm()) as F
+  let loadRequestId = 0
 
   const rowId = options.rowId ?? ((row: VO) => (row as { id: number }).id)
 
   async function loadList() {
+    const requestId = ++loadRequestId
     loading.value = true
     try {
       const result = await options.page(query)
+      if (requestId !== loadRequestId) {
+        return
+      }
       list.value = result.list
       total.value = result.total
+      loadError.value = null
+    } catch (error) {
+      // request.ts 已负责全局错误提示；这里保留页面级状态，避免失败被伪装成“暂无数据”。
+      if (requestId === loadRequestId) {
+        loadError.value = error
+      }
     } finally {
-      loading.value = false
+      // 快速切换筛选条件时，旧请求结束不能提前关闭新请求的 loading。
+      if (requestId === loadRequestId) {
+        loading.value = false
+      }
     }
   }
 
   function handleSearch() {
     query.pageNum = 1
-    loadList()
+    return loadList()
   }
 
   function openCreate() {
@@ -98,43 +115,74 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(options: 
   }
 
   async function handleSubmit() {
-    if (options.formRef) {
-      const valid = await options.formRef.value?.validate().catch(() => false)
-      if (!valid) {
-        return
-      }
-    }
-    if (options.beforeSubmit && !options.beforeSubmit(dialogMode.value, form)) {
+    if (submitting.value) {
       return
     }
-    if (dialogMode.value === 'create' && options.create) {
-      await options.create(form)
-      ElMessage.success(options.messages?.created ?? '新建成功')
-    } else if (dialogMode.value === 'edit' && options.update) {
-      if (!editingId.value) {
+    submitting.value = true
+    try {
+      if (options.formRef) {
+        const valid = await options.formRef.value?.validate().catch(() => false)
+        if (!valid) {
+          return
+        }
+      }
+      if (options.beforeSubmit && !options.beforeSubmit(dialogMode.value, form)) {
         return
       }
-      await options.update(editingId.value, form)
-      ElMessage.success(options.messages?.updated ?? '保存成功')
-    } else {
-      return
+      if (dialogMode.value === 'create' && options.create) {
+        await options.create(form)
+        ElMessage.success(options.messages?.created ?? '新建成功')
+      } else if (dialogMode.value === 'edit' && options.update) {
+        if (!editingId.value) {
+          return
+        }
+        await options.update(editingId.value, form)
+        ElMessage.success(options.messages?.updated ?? '保存成功')
+      } else {
+        return
+      }
+      dialogVisible.value = false
+      await loadList()
+    } finally {
+      submitting.value = false
     }
-    dialogVisible.value = false
-    await loadList()
   }
 
   async function handleDelete(row: VO) {
-    if (!options.remove) {
+    if (!options.remove || deletingId.value !== null) {
       return
     }
-    await ElMessageBox.confirm(options.deleteConfirm?.(row) ?? '确认删除该条记录？', '提示', { type: 'warning' })
-    await options.remove(row)
-    ElMessage.success(options.messages?.deleted ?? '删除成功')
-    await loadList()
+    const id = rowId(row)
+    deletingId.value = id
+    try {
+      try {
+        await ElMessageBox.confirm(options.deleteConfirm?.(row) ?? '确认删除该条记录？', '提示', { type: 'warning' })
+      } catch (error) {
+        // Element Plus 用 reject 表达用户主动取消；这是正常交互，不应冒泡成未处理异常。
+        const reason = error instanceof Error ? error.message : error
+        if (reason === 'cancel' || reason === 'close') {
+          return
+        }
+        throw error
+      }
+      await options.remove(row)
+      ElMessage.success(options.messages?.deleted ?? '删除成功')
+      // 删除当前页最后一条时先回到上一页，避免成功后展示一个不存在的空页。
+      const currentPage = query.pageNum ?? 1
+      if (list.value.length === 1 && currentPage > 1) {
+        query.pageNum = currentPage - 1
+      }
+      await loadList()
+    } finally {
+      deletingId.value = null
+    }
   }
 
   return {
     loading,
+    loadError,
+    submitting,
+    deletingId,
     list,
     total,
     query,

@@ -307,7 +307,7 @@ function formatTime(value: string | null | undefined) {
         </div>
         <div class="header-actions">
           <span>{{ activeCount }} 个生效策略 / {{ policies.length }} 个策略</span>
-          <el-button v-permission="'model:edit'" type="primary" @click="openCreate">新建策略</el-button>
+          <el-button v-permission="'model:edit'" class="cw-final-action" type="primary" @click="openCreate">新建策略</el-button>
         </div>
       </div>
     </template>
@@ -448,7 +448,7 @@ function formatTime(value: string | null | undefined) {
       <template #footer>
         <el-button @click="editorVisible = false">取消</el-button>
         <el-button @click="validateDraft">校验冲突</el-button>
-        <el-button type="primary" :loading="saving" @click="saveDraft">{{ editorMode === 'create' ? '创建 v1 草稿' : '创建不可变版本' }}</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="saving" @click="saveDraft">{{ editorMode === 'create' ? '创建 v1 草稿' : '创建不可变版本' }}</el-button>
       </template>
     </el-dialog>
 
@@ -462,7 +462,7 @@ function formatTime(value: string | null | undefined) {
           <el-form-item label="能力要求"><el-checkbox v-model="dryRun.requiresTools">工具调用</el-checkbox><el-checkbox v-model="dryRun.requiresStructuredOutput">结构化输出</el-checkbox></el-form-item>
           <el-form-item label="配额降级"><el-switch v-model="dryRun.preferFallback" active-text="仅备用候选" inactive-text="常规规则" /></el-form-item>
         </div>
-        <el-button type="primary" :loading="dryRunLoading" @click="executeDryRun">执行 Dry-run</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="dryRunLoading" @click="executeDryRun">执行 Dry-run</el-button>
       </el-form>
 
       <section v-if="dryRunResult" class="dry-result" :class="{ 'is-closed': dryRunResult.failClosed }">
@@ -486,29 +486,29 @@ function formatTime(value: string | null | undefined) {
 <style scoped>
 .routing-panel { margin-top: 20px; border: 0; border-radius: 16px; }
 .panel-header, .header-actions, .drawer-title, .version-heading, .rules-heading, .dry-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.panel-header h2, .drawer-title h2, .rules-heading h3 { margin: 2px 0 5px; color: #172033; }
-.panel-header p, .rules-heading p { margin: 0; color: #64748b; font-size: 13px; }
-.eyebrow { color: #2457d6 !important; font-size: 10px !important; font-weight: 700; letter-spacing: .15em; }
-.header-actions { flex-shrink: 0; color: #64748b; font-size: 12px; }
+.panel-header h2, .drawer-title h2, .rules-heading h3 { margin: 2px 0 5px; color: var(--cw-text); }
+.panel-header p, .rules-heading p { margin: 0; color: var(--cw-text-muted); font-size: 13px; }
+.eyebrow { color: var(--cw-cobalt) !important; font-size: 10px !important; font-weight: 700; letter-spacing: .15em; }
+.header-actions { flex-shrink: 0; color: var(--cw-text-muted); font-size: 12px; }
 .policy-table { margin-top: 14px; }
 .primary-cell strong, .primary-cell span { display: block; }
-.primary-cell span { margin-top: 3px; color: #64748b; font-size: 11px; }
-.version-card { margin-bottom: 14px; padding: 16px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fbfcfe; }
+.primary-cell span { margin-top: 3px; color: var(--cw-text-muted); font-size: 11px; }
+.version-card { margin-bottom: 14px; padding: 16px; border: 1px solid var(--cw-line); border-radius: 12px; background: var(--el-fill-color-extra-light); }
 .version-heading > div { display: flex; align-items: center; gap: 9px; }
 .version-heading > div > strong { font-size: 20px; }
-.version-heading > div > span { color: #64748b; font-size: 13px; }
-.version-meta { display: flex; flex-wrap: wrap; gap: 16px; margin: 8px 0 12px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.version-heading > div > span { color: var(--cw-text-muted); font-size: 13px; }
+.version-meta { display: flex; flex-wrap: wrap; gap: 16px; margin: 8px 0 12px; color: var(--cw-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .policy-form-grid, .rule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
 .full-row { grid-column: 1 / -1; }
 .rules-heading { margin: 12px 0; }
-.rule-editor { margin-bottom: 12px; padding: 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
-.rule-index { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #2457d6; font-size: 11px; letter-spacing: .08em; }
-.dry-result { margin-top: 18px; padding: 16px; border: 1px solid #a7e1d0; border-radius: 12px; background: #effbf7; }
-.dry-result.is-closed { border-color: #fecaca; background: #fff5f5; }
+.rule-editor { margin-bottom: 12px; padding: 14px; border: 1px solid var(--cw-line); border-radius: 12px; background: var(--el-fill-color-extra-light); }
+.rule-index { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--cw-cobalt); font-size: 11px; letter-spacing: .08em; }
+.dry-result { margin-top: 18px; padding: 16px; border: 1px solid color-mix(in srgb, var(--cw-success) 42%, var(--cw-line)); border-radius: 12px; background: color-mix(in srgb, var(--cw-success) 8%, var(--cw-paper)); }
+.dry-result.is-closed { border-color: color-mix(in srgb, var(--cw-danger) 42%, var(--cw-line)); background: color-mix(in srgb, var(--cw-danger) 8%, var(--cw-paper)); }
 .dry-summary span, .dry-summary strong { display: block; }
-.dry-summary span { color: #64748b; font-size: 11px; letter-spacing: .1em; }
+.dry-summary span { color: var(--cw-text-muted); font-size: 11px; letter-spacing: .1em; }
 .dry-summary strong { margin-top: 3px; font-size: 18px; }
-.dry-result > p { color: #475569; font-size: 13px; }
+.dry-result > p { color: var(--el-text-color-regular); font-size: 13px; }
 @media (max-width: 760px) {
   .panel-header, .header-actions, .rules-heading { align-items: flex-start; flex-direction: column; }
   .policy-form-grid, .rule-grid { grid-template-columns: 1fr; }

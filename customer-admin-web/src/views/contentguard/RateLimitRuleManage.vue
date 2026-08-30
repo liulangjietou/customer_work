@@ -11,6 +11,7 @@ import {
   updateRateLimitRule,
 } from '@/api/contentGuard'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { PageQuery, RateLimitRuleSaveRequest, RateLimitRuleVO } from '@/types/api'
 
 const formRef = ref<FormInstance>()
@@ -18,7 +19,7 @@ const dimensions = ref<string[]>([])
 const algorithms = ref<string[]>([])
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, deletingId, list, total, query,
   dialogVisible, dialogMode, form,
   loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
 } = useCrudPage<RateLimitRuleVO, PageQuery, RateLimitRuleSaveRequest>({
@@ -67,6 +68,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-alert type="warning" :closable="false" show-icon class="notice">
       规则按<b>优先级升序首匹配即止</b>（不叠加），都不命中才落到客服端 yml 里的全局兜底参数。
       规则仅在客服端开启 <code>customer-work.security.rate-limit.rule-enabled=true</code> 且
@@ -87,12 +89,14 @@ onMounted(async () => {
           <el-option label="停用" :value="0" />
         </el-select>
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'rate-limit-rule:add'" type="primary" @click="openCreate">新增规则</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'rate-limit-rule:add'" class="cw-final-action" type="primary" @click="openCreate">新增规则</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的限流规则">
         <el-table-column prop="priority" label="优先级" width="90" sortable />
-        <el-table-column prop="ruleName" label="规则名" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="ruleName" label="规则名" min-width="140" show-overflow-tooltip class-name="primary-column" />
         <el-table-column prop="pathPrefix" label="路径前缀" min-width="180" show-overflow-tooltip />
         <el-table-column label="计数维度" width="130">
           <template #default="{ row }">{{ dimensionLabels[row.dimension] ?? row.dimension }}</template>
@@ -103,7 +107,7 @@ onMounted(async () => {
         <el-table-column label="算法" width="110">
           <template #default="{ row }">{{ algorithmLabels[row.algorithm] ?? row.algorithm }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag>
           </template>
@@ -117,7 +121,7 @@ onMounted(async () => {
             <el-button v-permission="'rate-limit-rule:edit'" link type="primary" @click="handleToggle(row)">
               {{ row.enabled ? '停用' : '启用' }}
             </el-button>
-            <el-button v-permission="'rate-limit-rule:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'rate-limit-rule:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -127,7 +131,7 @@ onMounted(async () => {
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -179,7 +183,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存规则</el-button>
       </template>
     </el-dialog>
   </div>
@@ -192,9 +196,26 @@ onMounted(async () => {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
   align-items: center;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .form-hint {
@@ -202,5 +223,16 @@ onMounted(async () => {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   line-height: 1.6;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 </style>

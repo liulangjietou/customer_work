@@ -19,20 +19,32 @@ const emit = defineEmits<{
 const route = useRoute()
 const router = useRouter()
 const menuStore = useMenuStore()
+const COMPACT_VIEWPORT_QUERY = '(max-width: 1023px)'
 const navigationSections = computed(() => buildNavigationSections(menuStore.tree))
 const selectedSectionKey = ref<NavigationSectionKey>('overview')
 const contextQuery = ref('')
-const compactViewport = ref(false)
+// 首帧就按真实视口计算，避免窄屏先渲染 272px 侧栏、挂载后再突然收起。
+const compactViewport = ref(
+  typeof window !== 'undefined'
+  && typeof window.matchMedia === 'function'
+  && window.matchMedia(COMPACT_VIEWPORT_QUERY).matches,
+)
 const overlayOpen = ref(false)
 const contextSearchInput = ref<InputInstance>()
+const navigationShell = ref<HTMLElement>()
 let compactViewportQuery: MediaQueryList | null = null
 let overlayTrigger: HTMLElement | null = null
 
 // SQL 通用查询页靠 defineKey 区分菜单，高亮必须保留 query；普通页面仍按 path 对齐。
 const activePath = computed(() => (route.path === '/sql/query' ? route.fullPath : route.path))
 const isNavigationCompact = computed(() => menuStore.collapsed || compactViewport.value)
+const isDesktopCollapsed = computed(() => menuStore.collapsed && !compactViewport.value)
 const asideWidth = computed(() => (
-  isNavigationCompact.value ? 'var(--cw-nav-rail-width)' : 'var(--cw-shell-expanded-width)'
+  compactViewport.value
+    ? '0px'
+    : isDesktopCollapsed.value
+      ? 'var(--cw-nav-rail-width)'
+      : 'var(--cw-shell-expanded-width)'
 ))
 const currentSection = computed(() => (
   navigationSections.value.find((section) => section.key === selectedSectionKey.value)
@@ -54,7 +66,11 @@ function focusContextSearch() {
 }
 
 function openOverlay(trigger: HTMLElement | null) {
-  overlayTrigger = trigger
+  // 移动端先由顶栏按钮打开完整抽屉，随后点击生命周期阶段时不能把焦点归还目标
+  // 覆盖成抽屉内部按钮；否则关闭抽屉后焦点会落到不可见元素。
+  if (!overlayOpen.value) {
+    overlayTrigger = trigger
+  }
   overlayOpen.value = true
   focusContextSearch()
 }
@@ -129,8 +145,26 @@ function handleEscape(event: KeyboardEvent) {
   }
 }
 
+function handleNavigationKeydown(event: KeyboardEvent) {
+  if (!compactViewport.value || !overlayOpen.value || event.key !== 'Tab') return
+  const focusable = Array.from(navigationShell.value?.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), a[href], input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  ) ?? []).filter((element) => element.offsetParent !== null)
+  if (focusable.length === 0) return
+
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
 onMounted(() => {
-  compactViewportQuery = window.matchMedia('(max-width: 1023px)')
+  compactViewportQuery = window.matchMedia(COMPACT_VIEWPORT_QUERY)
   updateCompactViewport(compactViewportQuery)
   compactViewportQuery.addEventListener('change', updateCompactViewport)
   window.addEventListener('keydown', handleEscape)
@@ -148,87 +182,102 @@ defineExpose({ toggleFromHeader })
   <el-aside
     :width="asideWidth"
     class="layout-aside"
-    :class="{ 'is-compact': isNavigationCompact }"
+    :class="{
+      'is-compact': isNavigationCompact,
+      'is-desktop-collapsed': isDesktopCollapsed,
+      'is-mobile': compactViewport,
+      'is-mobile-open': compactViewport && overlayOpen,
+    }"
   >
-    <div class="primary-rail">
-      <button
-        class="rail-brand"
-        type="button"
-        title="返回首页"
-        aria-label="返回首页"
-        @click="router.push('/home')"
-      >
-        <span class="logo-mark">CW</span>
-      </button>
-
-      <nav class="rail-nav" aria-label="智能体生命周期导航">
-        <button
-          v-for="section in navigationSections"
-          :key="section.key"
-          type="button"
-          class="rail-item"
-          :class="{ 'is-active': selectedSectionKey === section.key }"
-          :title="section.label"
-          :aria-current="selectedSectionKey === section.key ? 'true' : undefined"
-          aria-controls="lifecycle-context-menu"
-          :aria-expanded="selectedSectionKey === section.key && (!isNavigationCompact || overlayOpen)"
-          @click="selectSection(section.key, $event)"
-        >
-          <el-icon class="rail-icon"><component :is="section.icon" /></el-icon>
-          <span class="rail-label">{{ section.label }}</span>
-        </button>
-      </nav>
-    </div>
-
-    <section
-      v-show="!isNavigationCompact || overlayOpen"
-      id="lifecycle-context-menu"
-      class="context-pane"
-      :class="{ 'is-overlay': isNavigationCompact }"
-      :aria-label="currentSection ? `${currentSection.title}菜单` : '上下文菜单'"
+    <div
+      id="lifecycle-navigation-shell"
+      ref="navigationShell"
+      class="navigation-shell"
+      :role="compactViewport && overlayOpen ? 'dialog' : undefined"
+      :aria-modal="compactViewport && overlayOpen ? 'true' : undefined"
+      :aria-label="compactViewport && overlayOpen ? '页面导航' : undefined"
+      @keydown="handleNavigationKeydown"
     >
-      <div v-if="currentSection" class="context-head">
-        <div class="context-eyebrow">CUSTOMER WORK</div>
-        <div class="context-title-row">
-          <strong>{{ currentSection.title }}</strong>
-          <span class="context-count">{{ currentSection.itemCount }}</span>
+      <div class="primary-rail">
+        <button
+          class="rail-brand"
+          type="button"
+          title="返回首页"
+          aria-label="返回首页"
+          @click="router.push('/home')"
+        >
+          <span class="logo-mark">CW</span>
+        </button>
+
+        <nav class="rail-nav" aria-label="智能体生命周期导航">
+          <button
+            v-for="section in navigationSections"
+            :key="section.key"
+            type="button"
+            class="rail-item"
+            :class="{ 'is-active': selectedSectionKey === section.key }"
+            :title="section.label"
+            :aria-current="selectedSectionKey === section.key ? 'true' : undefined"
+            aria-controls="lifecycle-context-menu"
+            :aria-expanded="selectedSectionKey === section.key && (!isNavigationCompact || overlayOpen)"
+            @click="selectSection(section.key, $event)"
+          >
+            <el-icon class="rail-icon"><component :is="section.icon" /></el-icon>
+            <span class="rail-label">{{ section.label }}</span>
+          </button>
+        </nav>
+      </div>
+
+      <section
+        v-show="!isNavigationCompact || overlayOpen"
+        id="lifecycle-context-menu"
+        class="context-pane"
+        :class="{ 'is-overlay': isDesktopCollapsed }"
+        :aria-label="currentSection ? `${currentSection.title}菜单` : '上下文菜单'"
+      >
+        <div v-if="currentSection" class="context-head">
+          <div class="context-eyebrow">CUSTOMER WORK</div>
+          <div class="context-title-row">
+            <strong>{{ currentSection.title }}</strong>
+            <span class="context-count">{{ currentSection.itemCount }}</span>
+          </div>
+          <el-button
+            v-if="isNavigationCompact"
+            class="context-close"
+            text
+            :icon="'Close'"
+            aria-label="关闭上下文菜单"
+            @click="closeOverlay()"
+          />
         </div>
-        <el-button
-          v-if="isNavigationCompact"
-          class="context-close"
-          text
-          :icon="'Close'"
-          aria-label="关闭上下文菜单"
-          @click="closeOverlay()"
-        />
-      </div>
 
-      <div v-if="currentSection" class="context-search-wrap">
-        <el-input
-          ref="contextSearchInput"
-          v-model="contextQuery"
-          class="context-search"
-          :placeholder="currentSection.searchPlaceholder"
-          clearable
-          :aria-label="currentSection.searchPlaceholder"
-        >
-          <template #prefix><el-icon><Search /></el-icon></template>
-        </el-input>
-      </div>
+        <div v-if="currentSection" class="context-search-wrap">
+          <el-input
+            ref="contextSearchInput"
+            v-model="contextQuery"
+            class="context-search"
+            :placeholder="currentSection.searchPlaceholder"
+            clearable
+            :aria-label="currentSection.searchPlaceholder"
+          >
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+        </div>
 
-      <div class="context-scroll">
-        <el-menu
-          v-if="filteredContextNodes.length > 0"
-          class="context-menu"
-          :default-active="activePath"
-          router
-          unique-opened
-        >
-          <MenuTree :nodes="filteredContextNodes" />
-        </el-menu>
-        <el-empty v-else description="没有匹配的入口" :image-size="52" />
-      </div>
-    </section>
+        <div class="context-scroll">
+          <el-menu
+            v-if="filteredContextNodes.length > 0"
+            class="context-menu"
+            :default-active="activePath"
+            router
+            unique-opened
+          >
+            <MenuTree :nodes="filteredContextNodes" />
+          </el-menu>
+          <el-empty v-else description="没有匹配的入口" :image-size="52" />
+        </div>
+      </section>
+    </div>
   </el-aside>
 
   <button
@@ -242,16 +291,21 @@ defineExpose({ toggleFromHeader })
 
 <style scoped>
 .layout-aside {
-  --cw-rail-bg: var(--cw-brand-ink);
-  --cw-rail-hover: var(--cw-brand-ink-hover);
   height: 100%;
-  display: flex;
   position: relative;
   z-index: 1200;
+  flex: 0 0 auto;
   overflow: visible;
-  background: var(--cw-rail-bg);
-  border-right: 1px solid var(--el-border-color-lighter);
+  background: transparent;
   transition: width 180ms ease-out;
+}
+
+.navigation-shell {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  background: var(--cw-ink, var(--cw-brand-ink));
 }
 
 .primary-rail {
@@ -260,8 +314,8 @@ defineExpose({ toggleFromHeader })
   flex: 0 0 var(--cw-nav-rail-width);
   display: flex;
   flex-direction: column;
-  background: var(--cw-rail-bg);
-  color: #b7c5d8;
+  background: var(--cw-ink, var(--cw-brand-ink));
+  color: rgb(255 255 255 / 68%);
 }
 
 .rail-brand {
@@ -279,18 +333,19 @@ defineExpose({ toggleFromHeader })
 }
 
 .logo-mark {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  background: linear-gradient(145deg, var(--cw-brand-logo-start), var(--cw-brand-logo-end));
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 9px;
+  background: linear-gradient(145deg, var(--cw-brand-logo-start), var(--cw-cobalt, var(--cw-brand-logo-end)));
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.04em;
-  box-shadow: 0 7px 18px rgb(58 86 210 / 32%);
+  letter-spacing: 0.05em;
+  box-shadow: 0 7px 18px rgb(62 99 221 / 28%);
 }
 
 .rail-nav {
@@ -299,58 +354,67 @@ defineExpose({ toggleFromHeader })
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 14px 8px;
+  gap: 3px;
+  padding: 11px 8px;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.rail-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .rail-item {
-  width: 56px;
-  min-height: 55px;
+  width: 48px;
+  min-height: 48px;
   position: relative;
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 7px 4px 6px;
-  border: 0;
-  border-radius: 10px;
+  gap: 3px;
+  padding: 5px 2px;
+  border: 1px solid transparent;
+  border-radius: 9px;
   background: transparent;
-  color: #91a1b7;
+  color: rgb(255 255 255 / 58%);
   cursor: pointer;
-  transition: background-color 160ms ease, color 160ms ease;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
-.rail-item:hover {
-  background: var(--cw-rail-hover);
-  color: #e6edf7;
+.rail-item::before {
+  width: 3px;
+  height: 0;
+  position: absolute;
+  top: 50%;
+  left: -7px;
+  border-radius: 0 3px 3px 0;
+  background: var(--cw-amber);
+  content: '';
+  transform: translateY(-50%);
+  transition: height 180ms ease-out;
 }
 
+.rail-item:hover,
 .rail-item.is-active {
-  background: rgb(79 110 247 / 17%);
+  border-color: rgb(255 255 255 / 9%);
+  background: rgb(255 255 255 / 9%);
   color: #fff;
 }
 
-.rail-item.is-active::after {
-  content: '';
-  width: 3px;
-  height: 24px;
-  position: absolute;
-  right: -8px;
-  top: 50%;
-  border-radius: 3px 0 0 3px;
-  background: var(--cw-brand-signal);
-  transform: translateY(-50%);
+.rail-item.is-active::before {
+  height: 25px;
 }
 
 .rail-icon {
-  font-size: 19px;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .rail-label {
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 10px;
+  line-height: 14px;
   letter-spacing: 0.02em;
 }
 
@@ -361,18 +425,16 @@ defineExpose({ toggleFromHeader })
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--el-bg-color);
-  color: var(--el-text-color-primary);
-  box-shadow: 1px 0 0 var(--el-border-color-lighter);
+  border-right: 1px solid var(--cw-line, var(--el-border-color-lighter));
+  background: var(--cw-paper, var(--el-bg-color));
+  color: var(--cw-text, var(--el-text-color-primary));
 }
 
 .context-pane.is-overlay {
-  width: 220px;
-  min-width: 220px;
   position: absolute;
   inset: 0 auto 0 var(--cw-nav-rail-width);
   z-index: 2;
-  box-shadow: 14px 0 36px rgb(15 23 42 / 18%);
+  box-shadow: var(--cw-shadow-lg, 14px 0 36px rgb(15 23 42 / 18%));
 }
 
 .context-head {
@@ -381,16 +443,17 @@ defineExpose({ toggleFromHeader })
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 4px;
+  gap: 3px;
   padding: 0 14px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--cw-line, var(--el-border-color-lighter));
 }
 
 .context-eyebrow {
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-cobalt, var(--el-color-primary));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+  font-weight: 750;
+  letter-spacing: 0.13em;
 }
 
 .context-title-row {
@@ -405,8 +468,8 @@ defineExpose({ toggleFromHeader })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 680;
 }
 
 .context-count {
@@ -417,25 +480,30 @@ defineExpose({ toggleFromHeader })
   justify-content: center;
   padding: 0 5px;
   border-radius: 9px;
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-secondary);
-  font-size: 10px;
+  background: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 9%, transparent);
+  color: var(--cw-cobalt, var(--el-color-primary));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .context-close {
+  width: 32px;
+  height: 32px;
   position: absolute;
-  top: 16px;
+  top: 12px;
   right: 8px;
+  padding: 0;
 }
 
 .context-search-wrap {
-  padding: 12px 10px 8px;
+  padding: 11px 10px 8px;
 }
 
 .context-search :deep(.el-input__wrapper) {
-  border-radius: 8px;
+  border-radius: var(--cw-radius-sm, 6px);
   background: var(--el-fill-color-extra-light);
-  box-shadow: 0 0 0 1px var(--el-border-color-lighter) inset;
+  box-shadow: 0 0 0 1px var(--cw-line, var(--el-border-color-lighter)) inset;
 }
 
 .context-search :deep(.el-input__inner) {
@@ -447,6 +515,8 @@ defineExpose({ toggleFromHeader })
   min-height: 0;
   overflow-y: auto;
   padding: 2px 8px 14px;
+  scrollbar-color: var(--cw-line, var(--el-border-color)) transparent;
+  scrollbar-width: thin;
 }
 
 .context-menu {
@@ -454,19 +524,19 @@ defineExpose({ toggleFromHeader })
   background: transparent;
   --el-menu-bg-color: transparent;
   --el-menu-hover-bg-color: var(--el-fill-color-light);
-  --el-menu-active-color: var(--el-text-color-primary);
+  --el-menu-active-color: var(--cw-cobalt, var(--el-color-primary));
   --el-menu-text-color: var(--el-text-color-regular);
 }
 
 .context-menu :deep(.el-menu-item),
 .context-menu :deep(.el-sub-menu__title) {
   min-width: 0;
-  height: 40px;
+  height: 38px;
   position: relative;
   margin: 2px 0;
-  border-radius: 8px;
-  line-height: 40px;
-  font-size: 13px;
+  border-radius: var(--cw-radius-sm, 6px);
+  line-height: 38px;
+  font-size: 12px;
 }
 
 .context-menu :deep(.el-menu-item .el-icon),
@@ -482,20 +552,24 @@ defineExpose({ toggleFromHeader })
 }
 
 .context-menu :deep(.el-menu-item.is-active) {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-text-color-primary);
-  font-weight: 600;
+  background: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 10%, var(--cw-paper, var(--el-bg-color)));
+  color: var(--cw-cobalt, var(--el-color-primary));
+  font-weight: 650;
+}
+
+.context-menu :deep(.el-menu-item.is-active .el-icon) {
+  color: var(--cw-cobalt, var(--el-color-primary)) !important;
 }
 
 .context-menu :deep(.el-menu-item.is-active::before) {
-  content: '';
   width: 2px;
-  height: 22px;
+  height: 21px;
   position: absolute;
-  left: 0;
   top: 50%;
+  left: 0;
   border-radius: 0 2px 2px 0;
-  background: var(--theme-primary, var(--el-color-primary));
+  background: var(--cw-cobalt, var(--el-color-primary));
+  content: '';
   transform: translateY(-50%);
 }
 
@@ -505,13 +579,40 @@ defineExpose({ toggleFromHeader })
   z-index: 1180;
   padding: 0;
   border: 0;
-  background: rgb(15 23 42 / 18%);
+  background: rgb(5 13 30 / 52%);
   cursor: default;
+}
+
+.layout-aside.is-mobile .navigation-shell {
+  width: min(var(--cw-shell-expanded-width), calc(100vw - 24px));
+  position: fixed;
+  inset: 0 auto 0 0;
+  visibility: hidden;
+  overflow: hidden;
+  box-shadow: var(--cw-shadow-lg, 18px 0 48px rgb(5 13 30 / 26%));
+  pointer-events: none;
+  transform: translateX(-100%);
+  transition: visibility 180ms step-end, transform 180ms ease-out;
+}
+
+.layout-aside.is-mobile-open .navigation-shell {
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+  transition: transform 180ms ease-out;
+}
+
+.layout-aside.is-mobile .context-pane {
+  width: calc(100% - var(--cw-nav-rail-width));
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .layout-aside,
-  .rail-item {
+  .navigation-shell,
+  .rail-item,
+  .rail-item::before {
     transition: none;
   }
 }

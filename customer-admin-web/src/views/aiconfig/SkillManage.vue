@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import type { FormInstance, UploadRequestOptions } from 'element-plus'
 import { createSkill, deleteSkill, downloadSkill, fetchSkillVersions, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { PageQuery, SkillSaveRequest, SkillVersionVO, SkillVO } from '@/types/api'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
@@ -23,7 +24,7 @@ const storageTargetOptions = [
 ]
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, deletingId, list, total, query,
   dialogVisible, dialogMode, form,
   loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
 } = useCrudPage<SkillVO, PageQuery, SkillSaveRequest>({
@@ -127,15 +128,18 @@ onMounted(loadList)
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'skill:add'" type="primary" @click="openCreateWithReset">新建 Skill</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'skill:add'" class="cw-final-action" type="primary" @click="openCreateWithReset">新建 Skill</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="skillName" label="名称" />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的 Skill">
+        <el-table-column prop="skillName" label="名称" class-name="primary-column" />
         <el-table-column prop="skillCode" label="编码" width="160" />
         <el-table-column label="存储目标" width="200">
           <template #default="{ row }">
@@ -157,7 +161,7 @@ onMounted(loadList)
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
           </template>
@@ -177,7 +181,7 @@ onMounted(loadList)
               下载
             </el-button>
             <el-button v-permission="'skill:edit'" link type="primary" @click="openEditWithRow(row)">编辑</el-button>
-            <el-button v-permission="'skill:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'skill:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -187,7 +191,7 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -243,12 +247,12 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存 Skill</el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="versionsVisible" :title="`不可变版本 · ${versionSkill?.skillName ?? ''}`" width="820px">
-      <el-table v-loading="versionsLoading" :data="versions" border>
+      <el-table v-loading="versionsLoading" :data="versions" border empty-text="暂无不可变版本">
         <el-table-column prop="versionNo" label="版本" width="90">
           <template #default="{ row }">v{{ row.versionNo }}</template>
         </el-table-column>
@@ -294,8 +298,26 @@ onMounted(loadList)
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .preview-split {
@@ -322,7 +344,7 @@ onMounted(loadList)
 .preview-files {
   margin-top: 12px;
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 4px;
+  border-radius: var(--cw-radius-sm);
   overflow: hidden;
 }
 
@@ -340,7 +362,7 @@ onMounted(loadList)
   display: flex;
   flex-direction: column;
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 4px;
+  border-radius: var(--cw-radius-sm);
   overflow: hidden;
 }
 
@@ -372,5 +394,25 @@ onMounted(loadList)
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--el-text-color-primary);
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
+
+  .preview-split {
+    flex-direction: column;
+    height: auto;
+  }
+
+  .preview-pane {
+    min-height: 240px;
+  }
 }
 </style>
