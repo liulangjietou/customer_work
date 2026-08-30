@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import { createScrollFollower } from '@/utils/scrollFollower'
 import { shouldRestoreMostRecentSession } from '@/utils/conversationRestore'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
+import { useVibeCodingPanelResize } from '@/composables/useVibeCodingPanelResize'
 import {
   confirmVibeCodingPlan,
   generateCommitMessage,
@@ -73,6 +74,24 @@ const historyLoading = ref(false)
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
 const historyCollapsed = ref(false)
+const panelRef = ref<HTMLElement>()
+const chatColumnId = useId()
+const artifactsColumnId = useId()
+const {
+  ariaValueText: artifactsResizeAriaValueText,
+  effectiveWidth: effectiveArtifactsWidth,
+  handleKeydown: handleArtifactsResizeKeydown,
+  handleLostPointerCapture: handleArtifactsResizeLostPointerCapture,
+  handlePointerCancel: handleArtifactsResizePointerCancel,
+  handlePointerDown: handleArtifactsResizePointerDown,
+  handlePointerMove: handleArtifactsResizePointerMove,
+  handlePointerUp: handleArtifactsResizePointerUp,
+  isResizing: isArtifactsResizing,
+  layout: artifactsResizeLayout,
+  panelStyle,
+  resetWidth: resetArtifactsWidth,
+  resizeEnabled: artifactsResizeEnabled,
+} = useVibeCodingPanelResize({ panelRef, historyCollapsed })
 const themeStore = useThemeStore()
 const toolsDrawer = ref<InstanceType<typeof VibeCodingToolsDrawer>>()
 
@@ -572,9 +591,17 @@ defineExpose({ newSession })
 </script>
 
 <template>
-  <div class="vibecoding-panel workspace-conversation" :class="{ 'is-history-collapsed': historyCollapsed }">
+  <div
+    ref="panelRef"
+    class="vibecoding-panel workspace-conversation"
+    :class="{
+      'is-history-collapsed': historyCollapsed,
+      'is-resizing': isArtifactsResizing,
+    }"
+    :style="panelStyle"
+  >
     <!-- 左列：对话区 -->
-    <div class="chat-column">
+    <div :id="chatColumnId" class="chat-column">
       <div
         ref="scrollRef"
         class="messages"
@@ -727,7 +754,31 @@ defineExpose({ newSession })
     </div>
 
     <!-- 中列：产物文件树 -->
-    <div class="artifacts-column">
+    <div :id="artifactsColumnId" class="artifacts-column">
+      <button
+        v-if="artifactsResizeEnabled"
+        type="button"
+        class="artifacts-resizer"
+        role="separator"
+        aria-label="调整对话区与产物文件区宽度"
+        aria-orientation="vertical"
+        :aria-controls="`${chatColumnId} ${artifactsColumnId}`"
+        :aria-valuemin="artifactsResizeLayout.minWidth"
+        :aria-valuemax="artifactsResizeLayout.maxWidth"
+        :aria-valuenow="effectiveArtifactsWidth"
+        :aria-valuetext="artifactsResizeAriaValueText"
+        title="拖动调整产物文件区宽度；双击恢复默认宽度"
+        @pointerdown="handleArtifactsResizePointerDown"
+        @pointermove="handleArtifactsResizePointerMove"
+        @pointerup="handleArtifactsResizePointerUp"
+        @pointercancel="handleArtifactsResizePointerCancel"
+        @lostpointercapture="handleArtifactsResizeLostPointerCapture"
+        @keydown="handleArtifactsResizeKeydown"
+        @dblclick="resetArtifactsWidth"
+      >
+        <span class="artifacts-resizer-grip" aria-hidden="true"><i /><i /></span>
+        <span class="artifacts-resizer-value" aria-hidden="true">{{ effectiveArtifactsWidth }} px</span>
+      </button>
       <div class="artifacts-header">
         <span>
           产物文件
@@ -972,15 +1023,21 @@ defineExpose({ newSession })
 .vibecoding-panel {
   --conversation-messages-padding: 28px 28px 36px;
   --conversation-composer-padding: 10px 20px 14px;
-  grid-template-columns: minmax(520px, 1fr) minmax(220px, 260px) 300px;
+  --vibe-artifacts-column-width: 260px;
+  grid-template-columns: minmax(520px, 1fr) minmax(220px, var(--vibe-artifacts-column-width)) 300px;
 }
 
 .vibecoding-panel.is-history-collapsed {
-  grid-template-columns: minmax(520px, 1fr) minmax(220px, 280px) 0;
+  grid-template-columns: minmax(520px, 1fr) minmax(220px, var(--vibe-artifacts-column-width)) 0;
+}
+
+.vibecoding-panel.is-resizing {
+  transition: none;
 }
 
 /* 产物文件树列 */
 .artifacts-column {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -989,6 +1046,108 @@ defineExpose({ newSession })
   padding: 15px 14px 12px 16px;
   background: color-mix(in srgb, var(--el-fill-color-lighter) 42%, var(--el-bg-color));
   border-left: 1px solid var(--el-border-color-lighter);
+}
+
+.artifacts-resizer {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.artifacts-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.artifacts-resizer-grip {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 8px;
+  height: 42px;
+  border: 1px solid color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 36%, var(--el-border-color));
+  border-radius: 999px;
+  background: var(--el-bg-color);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--el-text-color-primary) 12%, transparent);
+  opacity: 0;
+  transform: translateY(-50%) scale(0.9);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.artifacts-resizer-grip i {
+  display: block;
+  width: 1px;
+  height: 16px;
+  background: var(--theme-primary, var(--el-color-primary));
+}
+
+.artifacts-resizer-value {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: #fff;
+  background: rgba(24, 31, 42, 0.92);
+  box-shadow: 0 4px 12px rgba(24, 31, 42, 0.16);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.artifacts-resizer:hover::before,
+.artifacts-resizer:focus-visible::before,
+.vibecoding-panel.is-resizing .artifacts-resizer::before {
+  background: var(--theme-primary, var(--el-color-primary));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 14%, transparent);
+}
+
+.artifacts-resizer:hover .artifacts-resizer-grip,
+.artifacts-resizer:focus-visible .artifacts-resizer-grip,
+.vibecoding-panel.is-resizing .artifacts-resizer-grip {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+.artifacts-resizer:focus-visible .artifacts-resizer-grip {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 18%, transparent),
+    0 4px 12px color-mix(in srgb, var(--el-text-color-primary) 12%, transparent);
+}
+
+.artifacts-resizer:focus-visible .artifacts-resizer-value,
+.vibecoding-panel.is-resizing .artifacts-resizer-value {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+:global(body.is-vibecoding-panel-resizing),
+:global(body.is-vibecoding-panel-resizing *) {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .artifacts-header {
@@ -1221,13 +1380,21 @@ defineExpose({ newSession })
 
 .tree-node {
   display: flex;
+  flex: 1;
   align-items: center;
+  width: 100%;
+  min-width: 0;
   font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+}
+
+.tree-node > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 160px;
 }
 
 .tree-node:hover {
@@ -1313,13 +1480,13 @@ defineExpose({ newSession })
   .vibecoding-panel {
     --conversation-messages-padding: 28px 20px 36px;
     --conversation-composer-padding: 10px 14px 14px;
-    grid-template-columns: minmax(480px, 1fr) minmax(220px, 280px);
+    grid-template-columns: minmax(480px, 1fr) minmax(220px, var(--vibe-artifacts-column-width));
     grid-template-rows: minmax(480px, 1fr) 210px;
     overflow-y: auto;
   }
 
   .vibecoding-panel.is-history-collapsed {
-    grid-template-columns: minmax(480px, 1fr) minmax(220px, 280px);
+    grid-template-columns: minmax(480px, 1fr) minmax(220px, var(--vibe-artifacts-column-width));
     grid-template-rows: minmax(0, 1fr) 0;
   }
 
@@ -1341,6 +1508,10 @@ defineExpose({ newSession })
     padding: 14px 16px;
     border-top: 1px solid var(--el-border-color-lighter);
     border-left: 0;
+  }
+
+  .artifacts-resizer {
+    display: none;
   }
 
   .history-column {
