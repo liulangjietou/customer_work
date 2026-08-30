@@ -373,18 +373,18 @@ test.describe('VibeCoding 产物栏宽度', () => {
     expect(await separator.evaluate((element, activePointerId) => (
       element.hasPointerCapture(activePointerId)
     ), pointerId)).toBe(true)
-    await separator.evaluate((element, activePointerId) => new Promise<void>((resolve, reject) => {
-      const timeoutId = window.setTimeout(() => reject(new Error('lostpointercapture was not dispatched')), 1000)
+    await separator.evaluate((element, activePointerId) => {
       element.addEventListener('lostpointercapture', (event) => {
-        window.clearTimeout(timeoutId)
-        if (event.pointerId !== activePointerId) {
-          reject(new Error(`Unexpected pointer id: ${event.pointerId}`))
-          return
-        }
-        resolve()
+        element.setAttribute('data-e2e-lost-pointer-id', String(event.pointerId))
+        element.setAttribute('data-e2e-lost-pointer-trusted', String(event.isTrusted))
       }, { once: true })
       element.releasePointerCapture(activePointerId)
-    }), pointerId)
+    }, pointerId)
+    // releasePointerCapture 只更新待处理捕获目标；下一次真实指针事件才会派发 lostpointercapture。
+    await page.mouse.move(0, 0)
+    await expect(separator).toHaveAttribute('data-e2e-lost-pointer-id', String(pointerId))
+    await expect(separator).toHaveAttribute('data-e2e-lost-pointer-trusted', 'true')
+    await expect(separator).toHaveAttribute('aria-valuenow', '308')
     await expect(page.locator('body')).not.toHaveClass(/is-vibecoding-panel-resizing/)
     await page.mouse.up()
 
