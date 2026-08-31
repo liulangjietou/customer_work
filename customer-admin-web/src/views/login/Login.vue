@@ -205,6 +205,12 @@ async function handleSubmit() {
   }
 }
 
+async function handleCaptchaVerified(proof: string) {
+  // 滑块 proof 是一次性登录凭据；验证通过后直接续接统一提交链路，避免用户再次点击。
+  captchaProof.value = proof
+  await handleSubmit()
+}
+
 loadRememberedUsername(loginMode.value)
 
 onMounted(() => {
@@ -308,7 +314,7 @@ onMounted(() => {
               ref="loginCaptchaRef"
               :disabled="submitting"
               :primary-text-color="primaryTextColor"
-              @verified="captchaProof = $event"
+              @verified="handleCaptchaVerified"
               @invalidated="captchaProof = ''"
             />
 
