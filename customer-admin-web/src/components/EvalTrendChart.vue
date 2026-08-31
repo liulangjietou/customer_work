@@ -5,6 +5,7 @@ import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useThemeStore } from '@/store/theme'
+import { readThemeChartPalette } from '@/utils/themeChartPalette'
 import type { EvalRun } from '@/api/eval'
 
 // 按需引入：只注册折线图 + 网格/图例/tooltip + Canvas 渲染器，不拉全量 echarts
@@ -35,24 +36,29 @@ function toPercent(value: number): number {
 }
 
 function buildOption() {
-  const dark = themeStore.isDark
-  const textColor = dark ? '#c9cdd4' : '#606266'
-  const axisLineColor = dark ? '#3c3f45' : '#dcdfe6'
+  const palette = readThemeChartPalette()
   // 后端时间倒序，反转成正序才是一条从左到右的时间线
   const ordered = [...props.runs].reverse()
   const categories = ordered.map((run) => formatTime(run.createdAtMs))
   const rotate = categories.length > 12 ? 30 : 0
 
   return {
-    textStyle: { color: textColor },
-    tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${v}%` },
-    legend: { textStyle: { color: textColor }, top: 0 },
+    color: palette.series,
+    textStyle: { color: palette.text },
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (v: number) => `${v}%`,
+      backgroundColor: palette.tooltipBackground,
+      borderColor: palette.tooltipBorder,
+      textStyle: { color: palette.text },
+    },
+    legend: { textStyle: { color: palette.text }, top: 0 },
     grid: { left: 56, right: 24, top: 36, bottom: rotate ? 56 : 30 },
     xAxis: {
       type: 'category',
       data: categories,
-      axisLine: { lineStyle: { color: axisLineColor } },
-      axisLabel: { color: textColor, rotate },
+      axisLine: { lineStyle: { color: palette.axis } },
+      axisLabel: { color: palette.text, rotate },
     },
     yAxis: {
       type: 'value',
@@ -60,23 +66,27 @@ function buildOption() {
       max: 100,
       min: 0,
       name: '%',
-      axisLine: { lineStyle: { color: axisLineColor } },
-      axisLabel: { color: textColor },
-      splitLine: { lineStyle: { color: axisLineColor, opacity: 0.5 } },
+      axisLine: { lineStyle: { color: palette.axis } },
+      axisLabel: { color: palette.text },
+      splitLine: { lineStyle: { color: palette.grid } },
     },
     series: [
       {
         name: props.primaryLabel,
         type: 'line',
         smooth: true,
+        symbol: 'circle',
         symbolSize: 7,
+        lineStyle: { type: 'solid', width: 2.5 },
         data: ordered.map((run) => toPercent(run.primaryMetric)),
       },
       {
         name: props.secondaryLabel,
         type: 'line',
         smooth: true,
+        symbol: 'diamond',
         symbolSize: 7,
+        lineStyle: { type: 'dashed', width: 2.5 },
         data: ordered.map((run) => toPercent(run.secondaryMetric)),
       },
     ],
@@ -105,8 +115,12 @@ onBeforeUnmount(() => {
   chart = null
 })
 
-// 数据变化与深浅主题切换都要重绘
-watch(() => [props.runs, themeStore.isDark], render, { deep: false })
+// Canvas 不会自动消费 CSS 变量；同明暗主题之间切换也必须重绘。
+watch(
+  () => [props.runs, themeStore.primaryColor, themeStore.mode, themeStore.systemDark],
+  render,
+  { deep: false },
+)
 </script>
 
 <template>

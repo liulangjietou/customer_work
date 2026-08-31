@@ -43,7 +43,6 @@ import type {
   RefactorTaskRequest,
 } from '@/types/api'
 import hljs from 'highlight.js'
-import 'highlight.js/styles/github.css'
 
 // AI 代码审查异步化（提交后轮询任务终态）：5 秒一次，最多轮询 40 次（约 200 秒）后停止，
 // 提示用户可等站内信通知——避免无限轮询在模型响应异常慢/任务卡住时占着定时器不放。
@@ -810,9 +809,9 @@ defineExpose({ newSession })
         </div>
         <el-scrollbar max-height="120px">
           <div v-for="(fc, idx) in active.fileChanges" :key="idx" class="file-change-item">
-            <el-icon v-if="fc.operation === 'CREATE'" style="color:#67c23a"><CirclePlus /></el-icon>
-            <el-icon v-else-if="fc.operation === 'MODIFY'" style="color:#e6a23c"><EditPen /></el-icon>
-            <el-icon v-else style="color:#f56c6c"><Delete /></el-icon>
+            <el-icon v-if="fc.operation === 'CREATE'" class="file-operation-icon is-create"><CirclePlus /></el-icon>
+            <el-icon v-else-if="fc.operation === 'MODIFY'" class="file-operation-icon is-modify"><EditPen /></el-icon>
+            <el-icon v-else class="file-operation-icon is-delete"><Delete /></el-icon>
             <span class="file-change-path" :title="fc.path">{{ fc.path }}</span>
           </div>
         </el-scrollbar>
@@ -842,8 +841,8 @@ defineExpose({ newSession })
         >
           <template #default="{ node, data }">
             <span class="tree-node">
-              <el-icon v-if="data.directory" style="margin-right:4px;color:#e6a23c"><Folder /></el-icon>
-              <el-icon v-else style="margin-right:4px;color:var(--theme-primary, #409eff)"><Document /></el-icon>
+              <el-icon v-if="data.directory" class="tree-node-icon is-directory"><Folder /></el-icon>
+              <el-icon v-else class="tree-node-icon is-file"><Document /></el-icon>
               <span :title="data.relativePath">{{ node.label }}</span>
             </span>
           </template>
@@ -1200,6 +1199,18 @@ defineExpose({ newSession })
   padding: 2px 0;
 }
 
+.file-operation-icon.is-create {
+  color: var(--cw-success);
+}
+
+.file-operation-icon.is-modify {
+  color: var(--cw-amber);
+}
+
+.file-operation-icon.is-delete {
+  color: var(--cw-danger);
+}
+
 .file-change-path {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1388,6 +1399,19 @@ defineExpose({ newSession })
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+}
+
+.tree-node-icon {
+  flex: 0 0 auto;
+  margin-right: 4px;
+}
+
+.tree-node-icon.is-directory {
+  color: var(--cw-amber);
+}
+
+.tree-node-icon.is-file {
+  color: var(--theme-primary, var(--el-color-primary));
 }
 
 .tree-node > span {

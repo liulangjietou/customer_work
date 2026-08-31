@@ -61,12 +61,8 @@ answer.verify();</code>
   position: absolute;
   z-index: -1;
   inset: 0;
-  background: linear-gradient(180deg, color-mix(in srgb, #fff 34%, transparent), transparent 38%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cw-paper, var(--el-bg-color)) 34%, transparent), transparent 38%);
   content: '';
-}
-
-:global(html.dark) .workspace-empty-state::before {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--el-fill-color-light) 34%, transparent), transparent 42%);
 }
 
 .workspace-empty-state__status {

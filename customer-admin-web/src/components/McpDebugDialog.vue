@@ -296,17 +296,18 @@ watch(visible, (val) => {
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 600;
-  color: #606266;
-  background: #f5f7fa;
-  border-bottom: 1px solid #ebeef5;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .tool-list-pane {
   flex: 0 0 260px;
   display: flex;
   flex-direction: column;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color);
   border-radius: 4px;
+  background: var(--cw-paper, var(--el-bg-color));
   overflow: hidden;
 }
 
@@ -318,30 +319,30 @@ watch(visible, (val) => {
 .tool-item {
   padding: 10px 12px;
   cursor: pointer;
-  border-bottom: 1px solid #f2f3f5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .tool-item:hover {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
 }
 
 .tool-item.active {
-  background: #ecf5ff;
-  border-left: 3px solid #409eff;
+  background: color-mix(in srgb, var(--theme-primary) 11%, var(--cw-paper, var(--el-bg-color)));
+  border-left: 3px solid var(--theme-primary-solid);
   padding-left: 9px;
 }
 
 .tool-item-name {
   font-size: 13px;
   font-weight: 600;
-  color: #303133;
+  color: var(--el-text-color-primary);
   font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 }
 
 .tool-item-desc {
   margin-top: 2px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -352,8 +353,9 @@ watch(visible, (val) => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color);
   border-radius: 4px;
+  background: var(--cw-paper, var(--el-bg-color));
   overflow: hidden;
 }
 
@@ -366,20 +368,20 @@ watch(visible, (val) => {
 .tool-header {
   margin-bottom: 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .tool-header-name {
   font-size: 15px;
   font-weight: 700;
   font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 
 .tool-header-desc {
   margin-top: 4px;
   font-size: 13px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .field-label {
@@ -392,7 +394,7 @@ watch(visible, (val) => {
 .field-desc {
   font-family: initial;
   font-weight: 400;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 
@@ -407,7 +409,9 @@ watch(visible, (val) => {
 .result-content {
   margin: 0;
   padding: 12px;
-  background: #f5f7fa;
+  color: var(--el-text-color-primary);
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
   font-size: 13px;
   line-height: 1.6;
@@ -427,7 +431,7 @@ watch(visible, (val) => {
 .result-image {
   width: 140px;
   height: 140px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color);
   border-radius: 4px;
   cursor: zoom-in;
 }
@@ -439,12 +443,12 @@ watch(visible, (val) => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
 }
 
 .pane-error {
-  color: #f56c6c;
+  color: var(--el-color-danger);
   padding: 0 16px;
   text-align: center;
 }

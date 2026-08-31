@@ -5,6 +5,7 @@ import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useThemeStore } from '@/store/theme'
+import { readThemeChartPalette } from '@/utils/themeChartPalette'
 import type { ContentGuardCountVO } from '@/types/api'
 
 // 按需引入：只注册柱状图 + 网格/tooltip + Canvas 渲染器，不拉全量 echarts 包体积
@@ -28,30 +29,40 @@ function shortenLabel(label: string): string {
 }
 
 function buildOption() {
-  const dark = themeStore.isDark
-  const textColor = dark ? '#c9cdd4' : '#606266'
-  const axisLineColor = dark ? '#3c3f45' : '#dcdfe6'
+  const palette = readThemeChartPalette()
   const categories = props.points.map((p) => p.label)
   const rotate = categories.length > 12 ? 30 : 0
 
   return {
-    textStyle: { color: textColor },
-    tooltip: { trigger: 'axis' },
+    color: palette.series,
+    textStyle: { color: palette.text },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: palette.tooltipBackground,
+      borderColor: palette.tooltipBorder,
+      textStyle: { color: palette.text },
+    },
     grid: { left: 56, right: 24, top: 24, bottom: rotate ? 56 : 30 },
     xAxis: {
       type: 'category',
       data: categories,
-      axisLine: { lineStyle: { color: axisLineColor } },
-      axisLabel: { color: textColor, formatter: shortenLabel, rotate },
+      axisLine: { lineStyle: { color: palette.axis } },
+      axisLabel: { color: palette.text, formatter: shortenLabel, rotate },
     },
     yAxis: {
       type: 'value',
       name: '命中数',
-      axisLine: { lineStyle: { color: axisLineColor } },
-      axisLabel: { color: textColor },
-      splitLine: { lineStyle: { color: axisLineColor, opacity: 0.5 } },
+      axisLine: { lineStyle: { color: palette.axis } },
+      axisLabel: { color: palette.text },
+      splitLine: { lineStyle: { color: palette.grid } },
     },
-    series: [{ name: '命中数', type: 'bar', barMaxWidth: 32, data: props.points.map((p) => p.total) }],
+    series: [{
+      name: '命中数',
+      type: 'bar',
+      barMaxWidth: 32,
+      itemStyle: { color: palette.series[0], borderRadius: [5, 5, 0, 0] },
+      data: props.points.map((p) => p.total),
+    }],
   }
 }
 
@@ -77,8 +88,12 @@ onBeforeUnmount(() => {
   chart = null
 })
 
-// 筛选条件变化与深浅主题切换都要重绘
-watch(() => [props.points, props.granularity, themeStore.isDark], render, { deep: false })
+// Canvas 不会自动消费 CSS 变量；同明暗主题之间切换也必须重绘。
+watch(
+  () => [props.points, props.granularity, themeStore.primaryColor, themeStore.mode, themeStore.systemDark],
+  render,
+  { deep: false },
+)
 </script>
 
 <template>

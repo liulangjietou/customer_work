@@ -5,6 +5,7 @@ import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useThemeStore } from '@/store/theme'
+import { readThemeChartPalette } from '@/utils/themeChartPalette'
 import type { AgentCallStatsTrendPoint, AgentCallTrendGranularity } from '@/types/api'
 
 // 按需引入：只注册用到的折线图 + 网格/图例/tooltip + Canvas 渲染器，不拉全量 echarts 包体积。
@@ -31,34 +32,40 @@ function shortenBucket(bucket: string): string {
 }
 
 function buildOption() {
-  const dark = themeStore.isDark
-  const textColor = dark ? '#c9cdd4' : '#606266'
-  const axisLineColor = dark ? '#3c3f45' : '#dcdfe6'
+  const palette = readThemeChartPalette()
   const categories = props.points.map((p) => p.bucket)
   const rotate = categories.length > 12 ? 30 : 0
+  const linePatterns = ['solid', 'solid', 'dashed', 'dotted', 'dashed', 'dotted', 'solid'] as const
+  const symbols = ['circle', 'rect', 'triangle', 'diamond', 'roundRect', 'pin', 'arrow'] as const
 
   return {
-    textStyle: { color: textColor },
-    tooltip: { trigger: 'axis' },
+    color: palette.series,
+    textStyle: { color: palette.text },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: palette.tooltipBackground,
+      borderColor: palette.tooltipBorder,
+      textStyle: { color: palette.text },
+    },
     legend: {
       // Token 量纲（可达数万）与耗时 ms 不同，单列一条曲线绑独立右侧 Y 轴，默认不选中避免首屏喧宾夺主，
       // 用户按需点亮；调用量/耗时各占一条 Y 轴。
       data: ['调用量', '平均总耗时', '大模型', '工具', 'MCP', 'Skill', 'Token'],
       selected: { Token: false },
       top: 0,
-      textStyle: { color: textColor },
+      textStyle: { color: palette.text },
     },
     grid: { left: 56, right: 88, top: 44, bottom: rotate ? 56 : 30 },
     xAxis: {
       type: 'category',
       data: categories,
-      axisLine: { lineStyle: { color: axisLineColor } },
-      axisLabel: { color: textColor, formatter: shortenBucket, rotate },
+      axisLine: { lineStyle: { color: palette.axis } },
+      axisLabel: { color: palette.text, formatter: shortenBucket, rotate },
     },
     yAxis: [
-      { type: 'value', name: '调用量', position: 'left', axisLine: { lineStyle: { color: axisLineColor } }, axisLabel: { color: textColor }, splitLine: { lineStyle: { color: axisLineColor, opacity: 0.5 } } },
-      { type: 'value', name: '耗时(ms)', position: 'right', axisLine: { lineStyle: { color: axisLineColor } }, axisLabel: { color: textColor }, splitLine: { show: false } },
-      { type: 'value', name: 'Token', position: 'right', offset: 52, axisLine: { lineStyle: { color: axisLineColor } }, axisLabel: { color: textColor }, splitLine: { show: false } },
+      { type: 'value', name: '调用量', position: 'left', axisLine: { lineStyle: { color: palette.axis } }, axisLabel: { color: palette.text }, splitLine: { lineStyle: { color: palette.grid } } },
+      { type: 'value', name: '耗时(ms)', position: 'right', axisLine: { lineStyle: { color: palette.axis } }, axisLabel: { color: palette.text }, splitLine: { show: false } },
+      { type: 'value', name: 'Token', position: 'right', offset: 52, axisLine: { lineStyle: { color: palette.axis } }, axisLabel: { color: palette.text }, splitLine: { show: false } },
     ],
     series: [
       { name: '调用量', type: 'line', yAxisIndex: 0, smooth: true, data: props.points.map((p) => p.count) },
@@ -68,7 +75,12 @@ function buildOption() {
       { name: 'MCP', type: 'line', yAxisIndex: 1, smooth: true, data: props.points.map((p) => p.avgMcpMs) },
       { name: 'Skill', type: 'line', yAxisIndex: 1, smooth: true, data: props.points.map((p) => p.avgSkillMs) },
       { name: 'Token', type: 'line', yAxisIndex: 2, smooth: true, data: props.points.map((p) => p.totalTokens) },
-    ],
+    ].map((series, index) => ({
+      ...series,
+      symbol: symbols[index],
+      symbolSize: 6,
+      lineStyle: { type: linePatterns[index], width: index === 0 ? 2.5 : 2 },
+    })),
   }
 }
 
@@ -94,8 +106,12 @@ onBeforeUnmount(() => {
   chart = null
 })
 
-// points/granularity 变化（切筛选条件、切粒度）与深浅主题切换都要重绘
-watch(() => [props.points, props.granularity, themeStore.isDark], render, { deep: false })
+// Canvas 不会自动消费 CSS 变量；数据、主题色或系统明暗变化时都必须重绘。
+watch(
+  () => [props.points, props.granularity, themeStore.primaryColor, themeStore.mode, themeStore.systemDark],
+  render,
+  { deep: false },
+)
 </script>
 
 <template>

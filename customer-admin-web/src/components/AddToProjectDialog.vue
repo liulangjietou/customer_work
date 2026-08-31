@@ -97,9 +97,10 @@ async function confirm() {
 }
 
 .project-list {
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color);
   border-radius: 4px;
   padding: 4px 12px;
+  background: var(--cw-paper, var(--el-bg-color));
 }
 
 .project-radio-group {
@@ -112,7 +113,7 @@ async function confirm() {
   height: auto;
   padding: 8px 0;
   margin-right: 0;
-  border-bottom: 1px solid #f2f3f5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .project-radio-item:last-child {
@@ -129,11 +130,11 @@ async function confirm() {
 
 .project-name {
   font-size: 13px;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 
 .project-count {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 </style>
