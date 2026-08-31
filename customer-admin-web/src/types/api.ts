@@ -60,6 +60,13 @@ export interface SsoLoginRequest {
 export interface LoginCaptchaChallenge {
   challengeId: string
   ttlSeconds: number
+  backgroundImage: string
+  puzzlePieceImage: string
+  canvasWidth: number
+  canvasHeight: number
+  pieceWidth: number
+  pieceHeight: number
+  pieceY: number
 }
 
 /** 拖动轨迹点：横纵坐标归一到千分比，t 为按下后的相对毫秒数。 */
@@ -71,6 +78,8 @@ export interface LoginCaptchaTrackPoint {
 
 export interface LoginCaptchaVerifyRequest {
   challengeId: string
+  /** 拼图块当前位置，按 canvasWidth-pieceWidth 行程归一到 0..1000。 */
+  placementX: number
   trajectory: LoginCaptchaTrackPoint[]
 }
 

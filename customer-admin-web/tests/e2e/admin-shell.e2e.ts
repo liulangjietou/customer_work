@@ -2,6 +2,8 @@ import { expect, test } from './fixtures/adminTestFixture'
 import type { Page, Route } from '@playwright/test'
 import { SQL_REPORT_MENU_TITLE, SQL_REPORT_PATH } from './fixtures/adminRoutes'
 
+const TEST_CAPTCHA_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WnWQAAAAASUVORK5CYII='
+
 type RgbColor = readonly [number, number, number]
 
 function parseCssColor(rawColor: string): RgbColor {
@@ -461,6 +463,13 @@ test.describe('后台壳层契约', () => {
     await page.route('**/api/auth/login-captcha/challenge', (route) => fulfill(route, {
       challengeId: 'theme-entry-challenge',
       ttlSeconds: 120,
+      backgroundImage: TEST_CAPTCHA_IMAGE,
+      puzzlePieceImage: TEST_CAPTCHA_IMAGE,
+      canvasWidth: 320,
+      canvasHeight: 160,
+      pieceWidth: 56,
+      pieceHeight: 56,
+      pieceY: 52,
     }))
 
     await page.goto('/login', { waitUntil: 'domcontentloaded' })

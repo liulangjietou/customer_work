@@ -21,13 +21,13 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 登录滑块的 challenge → proof → 登录消费链路。
+ * 登录拼图的 challenge → proof → 登录消费链路。
  *
  * <p>proof 是 32 字节随机数的 Base64URL 表达；存储只接收其 SHA-256 摘要。
  * challenge 与 proof 都绑定来源 IP 和归一化 User-Agent 的摘要，并且只能成功消费一次。</p>
  *
- * <p>这套基础轨迹约束能拦截直接绕过、重放与简单瞬移，不宣称能够识别人类：
- * 客户端轨迹本身没有服务端秘密，脚本仍可构造满足约束的数据。</p>
+ * <p>challenge 保存随机缺口坐标与服务端容差，客户端只能从图片识别目标；核验同时检查
+ * 放置位置、轨迹终点、时序与采样质量。这不是强身份认证，公网入口仍应叠加网关风控。</p>
  * @author owlzhangfq@gmail.com
  */
 @Slf4j
@@ -46,6 +46,7 @@ public class LoginCaptchaService {
     private final WindowCounter counter;
     private final Clock clock;
     private final SecureRandom random;
+    private final LoginPuzzleImageGenerator imageGenerator;
 
     public LoginCaptchaService(LoginCaptchaStore store, LoginCaptchaProperties properties,
                                WindowCounter counter) {
@@ -54,11 +55,18 @@ public class LoginCaptchaService {
 
     LoginCaptchaService(LoginCaptchaStore store, LoginCaptchaProperties properties,
                         WindowCounter counter, Clock clock, SecureRandom random) {
+        this(store, properties, counter, clock, random, new LoginPuzzleImageGenerator(random));
+    }
+
+    LoginCaptchaService(LoginCaptchaStore store, LoginCaptchaProperties properties,
+                        WindowCounter counter, Clock clock, SecureRandom random,
+                        LoginPuzzleImageGenerator imageGenerator) {
         this.store = store;
         this.properties = properties;
         this.counter = counter;
         this.clock = clock;
         this.random = random;
+        this.imageGenerator = imageGenerator;
     }
 
     /** 签发独立 challenge；按来源 IP 做滑动窗口限流。 */
@@ -69,8 +77,17 @@ public class LoginCaptchaService {
         long now = clock.millis();
         long expireAtMs = expireAt(now, properties.getChallengeTtlSeconds());
         String challengeId = randomToken(CHALLENGE_ID_BYTES);
+        LoginPuzzleImageGenerator.GeneratedPuzzle puzzle;
+        try {
+            puzzle = imageGenerator.generate();
+        } catch (Exception e) {
+            log.error("login puzzle image generation failed, code={}",
+                "LOGIN-CAPTCHA-IMAGE-GENERATE-FAIL", e);
+            throw new BizException(ResultCode.LOGIN_CAPTCHA_UNAVAILABLE);
+        }
         LoginCaptchaStore.ChallengeState state = new LoginCaptchaStore.ChallengeState(
-            fingerprint(clientIp, userAgent), now, expireAtMs);
+            fingerprint(clientIp, userAgent), now, expireAtMs,
+            puzzle.targetXNormalized(), puzzle.toleranceNormalized());
         try {
             store.saveChallenge(challengeId, state, properties.getChallengeTtlSeconds());
         } catch (Exception e) {
@@ -78,7 +95,7 @@ public class LoginCaptchaService {
                 "LOGIN-CAPTCHA-CHALLENGE-PERSIST-FAIL", e);
             throw new BizException(ResultCode.LOGIN_CAPTCHA_UNAVAILABLE);
         }
-        return new LoginCaptchaChallengeResponse(challengeId, properties.getChallengeTtlSeconds());
+        return puzzle.toResponse(challengeId, properties.getChallengeTtlSeconds());
     }
 
     /** 原子消费 challenge，轨迹满足约束后签发一次性 proof。 */
@@ -104,9 +121,10 @@ public class LoginCaptchaService {
 
         long now = clock.millis();
         LoginCaptchaStore.ChallengeState challenge = consumed.state();
-        if (challenge.expireAtMs() <= now
+        if (!validChallengeState(challenge, now)
             || now - challenge.issuedAtMs() < LoginCaptchaProtocol.MIN_DURATION_MS
-            || !validTrajectory(request.trajectory())) {
+            || !validPlacement(request.placementX(), challenge)
+            || !validTrajectory(request.trajectory(), request.placementX())) {
             throw invalid();
         }
 
@@ -146,9 +164,28 @@ public class LoginCaptchaService {
         }
     }
 
-    private boolean validTrajectory(List<SliderTrackPoint> points) {
+    private boolean validChallengeState(LoginCaptchaStore.ChallengeState challenge, long now) {
+        return challenge.issuedAtMs() >= 0
+            && challenge.issuedAtMs() <= now
+            && challenge.expireAtMs() > now
+            && challenge.expireAtMs() > challenge.issuedAtMs()
+            && challenge.targetXNormalized() >= LoginCaptchaProtocol.TRACK_MIN_X
+            && challenge.targetXNormalized() <= LoginCaptchaProtocol.TRACK_MAX_X
+            && challenge.toleranceNormalized() > 0
+            && challenge.toleranceNormalized() <= LoginCaptchaProtocol.TRACK_MAX_X;
+    }
+
+    private boolean validPlacement(Integer placementX, LoginCaptchaStore.ChallengeState challenge) {
+        return placementX != null
+            && placementX >= LoginCaptchaProtocol.TRACK_MIN_X
+            && placementX <= LoginCaptchaProtocol.TRACK_MAX_X
+            && Math.abs(placementX - challenge.targetXNormalized()) <= challenge.toleranceNormalized();
+    }
+
+    private boolean validTrajectory(List<SliderTrackPoint> points, Integer placementX) {
         if (points == null || points.size() < LoginCaptchaProtocol.MIN_POINTS
-            || points.size() > LoginCaptchaProtocol.MAX_POINTS) {
+            || points.size() > LoginCaptchaProtocol.MAX_POINTS
+            || placementX == null) {
             return false;
         }
         SliderTrackPoint first = points.get(0);
@@ -156,7 +193,7 @@ public class LoginCaptchaService {
         if (first == null || last == null
             || first.x() > LoginCaptchaProtocol.START_X_MAX
             || first.t() < 0 || first.t() > LoginCaptchaProtocol.MAX_INITIAL_TIME_MS
-            || last.x() < LoginCaptchaProtocol.END_X_MIN
+            || Math.abs(last.x() - placementX) > LoginCaptchaProtocol.ENDPOINT_PLACEMENT_TOLERANCE
             || last.t() < LoginCaptchaProtocol.MIN_DURATION_MS
             || last.t() > LoginCaptchaProtocol.MAX_DURATION_MS) {
             return false;
@@ -179,7 +216,7 @@ public class LoginCaptchaService {
             distinctX.add(point.x());
             if (index > 0 && index < points.size() - 1
                 && point.x() > LoginCaptchaProtocol.START_X_MAX
-                && point.x() < LoginCaptchaProtocol.END_X_MIN) {
+                && point.x() < placementX - LoginCaptchaProtocol.ENDPOINT_PLACEMENT_TOLERANCE) {
                 intermediatePoints++;
             }
         }

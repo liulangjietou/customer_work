@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** 进程内登录滑块凭据存储的过期、容量与一次性消费语义。 */
+/** 进程内登录拼图凭据存储的过期、容量与一次性消费语义。 */
 class InMemoryLoginCaptchaStoreTest {
 
     private static final String FINGERPRINT = "fingerprint";
@@ -168,7 +168,7 @@ class InMemoryLoginCaptchaStoreTest {
     }
 
     private LoginCaptchaStore.ChallengeState challenge(String fingerprint, long expireAtMs) {
-        return new LoginCaptchaStore.ChallengeState(fingerprint, 0L, expireAtMs);
+        return new LoginCaptchaStore.ChallengeState(fingerprint, 0L, expireAtMs, 620, 25);
     }
 
     private LoginCaptchaStore.ProofState proof(String fingerprint, long expireAtMs) {

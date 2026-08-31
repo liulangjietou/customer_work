@@ -61,14 +61,14 @@ public class AuthController {
         return Result.success(authService.login(request, client.ip(), client.userAgent()));
     }
 
-    /** 下发登录滑块 challenge；签发限流、TTL 与指纹绑定均由独立服务负责。 */
+    /** 下发登录拼图 challenge；签发限流、TTL 与指纹绑定均由独立服务负责。 */
     @PostMapping("/login-captcha/challenge")
     public Result<LoginCaptchaChallengeResponse> loginCaptchaChallenge(HttpServletRequest httpRequest) {
         ClientContext client = clientContextOf(httpRequest);
         return Result.success(loginCaptchaService.issueChallenge(client.ip(), client.userAgent()));
     }
 
-    /** 校验一次滑动轨迹并签发仅能消费一次的登录 proof。 */
+    /** 校验一次拼图落点与轨迹，并签发仅能消费一次的登录 proof。 */
     @PostMapping("/login-captcha/verify")
     public Result<LoginCaptchaProofResponse> verifyLoginCaptcha(
         @Valid @RequestBody LoginCaptchaVerifyRequest request, HttpServletRequest httpRequest) {

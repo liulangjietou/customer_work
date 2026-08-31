@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** 登录滑块存储只允许在启动选型时二选一。 */
+/** 登录拼图存储只允许在启动选型时二选一。 */
 class AuthGuardConfigLoginCaptchaTest {
 
     private final AuthGuardConfig config = new AuthGuardConfig();

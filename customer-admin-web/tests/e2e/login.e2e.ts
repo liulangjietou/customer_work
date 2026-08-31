@@ -23,6 +23,15 @@ const PASSWORD_TOO_WEAK_CODE = 30011
 const EMAIL_CODE_INVALID_CODE = 30012
 const EMAIL_CODE_REISSUE_REQUIRED_CODE = 30013
 const TEST_CAPTCHA_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WnWQAAAAASUVORK5CYII='
+const LOGIN_PUZZLE_CHALLENGE_DEFAULTS = {
+  backgroundImage: TEST_CAPTCHA_IMAGE,
+  puzzlePieceImage: TEST_CAPTCHA_IMAGE,
+  canvasWidth: 320,
+  canvasHeight: 160,
+  pieceWidth: 56,
+  pieceHeight: 56,
+  pieceY: 52,
+}
 
 const REGISTER_OPTIONS: RegisterOptionsVO = {
   selfServiceEnabled: true,
@@ -41,7 +50,7 @@ interface PendingLoginRequest {
 interface LoginBootstrapOverrides {
   images?: string[]
   challengeResponse?: (attempt: number) => unknown | Promise<unknown>
-  verifyResponse?: (attempt: number, payload: Record<string, unknown>) => unknown
+  verifyResponse?: (attempt: number, payload: Record<string, unknown>) => unknown | Promise<unknown>
 }
 
 interface LoginCaptchaHarness {
@@ -49,8 +58,31 @@ interface LoginCaptchaHarness {
   verificationPayloads: Record<string, unknown>[]
 }
 
+const loginUnknownApiRequests = new WeakMap<Page, string[]>()
+const loginApiFallbackInstalled = new WeakSet<Page>()
+
+test.beforeEach(async ({ page }) => {
+  await installLoginApiFallback(page)
+})
+
+test.afterEach(async ({ page }) => {
+  expect(loginUnknownApiRequests.get(page) ?? [], '登录页存在未显式 mock 的同源 API 请求').toEqual([])
+})
+
 function successResult<T>(data: T) {
   return { code: 0, message: 'success', data }
+}
+
+async function installLoginApiFallback(page: Page) {
+  if (loginApiFallbackInstalled.has(page)) return
+  loginApiFallbackInstalled.add(page)
+  const unknownRequests: string[] = []
+  loginUnknownApiRequests.set(page, unknownRequests)
+  // 先注册兜底，再注册各用例的精确 mock；Playwright 后注册的精确路由优先命中。
+  await page.route(`${LOGIN_E2E_ORIGIN}/api/**`, async (route) => {
+    unknownRequests.push(`${route.request().method()} ${route.request().url()}`)
+    await route.abort('blockedbyclient')
+  })
 }
 
 async function mockLoginCaptcha(
@@ -67,7 +99,15 @@ async function mockLoginCaptcha(
       ?? successResult({
         challengeId: `login-challenge-${harness.challengeRequestCount}`,
         ttlSeconds: 120,
+        ...LOGIN_PUZZLE_CHALLENGE_DEFAULTS,
       })
+    // 兼容各用例只覆盖 challengeId/ttlSeconds 的旧 mock，同时保证拼图响应完整。
+    if (response && typeof response === 'object' && 'data' in response && response.data && typeof response.data === 'object') {
+      ;(response as { data: Record<string, unknown> }).data = {
+        ...LOGIN_PUZZLE_CHALLENGE_DEFAULTS,
+        ...(response.data as Record<string, unknown>),
+      }
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -78,7 +118,7 @@ async function mockLoginCaptcha(
     const payload = route.request().postDataJSON() as Record<string, unknown>
     harness.verificationPayloads.push(payload)
     const attempt = harness.verificationPayloads.length
-    const response = overrides.verifyResponse?.(attempt, payload) ?? successResult({
+    const response = await overrides.verifyResponse?.(attempt, payload) ?? successResult({
       proof: `login-proof-${attempt}`,
       ttlSeconds: 120,
     })
@@ -222,19 +262,30 @@ async function openLogin(
   await page.goto(LOGIN_PATH, { waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible()
   await expect(page.getByRole('button', { name: '创建账号' })).toBeVisible()
-  await expect(page.getByRole('slider', { name: '拖动验证码' }))
-    .toHaveAttribute('aria-valuetext', '按住滑块，拖动完成验证')
+  await expect(page.locator('[data-login-captcha-entry]')).toBeVisible()
   return captchaHarness
 }
 
-async function dragLoginCaptcha(page: Page) {
+async function openLoginCaptcha(page: Page) {
+  const dialog = page.locator('#login-captcha-dialog')
+  if (!(await dialog.isVisible().catch(() => false))) {
+    await page.locator('[data-login-captcha-entry]').click()
+  }
+  await expect(dialog).toBeVisible()
+}
+
+async function dragLoginCaptcha(page: Page, normalizedPlacement = 560) {
+  await openLoginCaptcha(page)
   const track = page.locator('[data-login-captcha]')
   const handle = page.getByRole('slider', { name: '拖动验证码' })
   await expect(handle).toHaveAttribute('aria-disabled', 'false')
-  await expect.poll(async () => {
-    const [trackBox, handleBox] = await Promise.all([track.boundingBox(), handle.boundingBox()])
-    return trackBox && handleBox ? Math.abs(handleBox.x - trackBox.x - 2) : Number.POSITIVE_INFINITY
-  }).toBeLessThanOrEqual(2)
+
+  // 失败恢复时滑块可能仍在返回起点的 CSS 过渡中；先用 Home 归零并等待几何稳定，
+  // 再量取真实起点和终点，避免把过渡中的中间位置当成拖动原点。
+  await handle.focus()
+  await page.keyboard.press('Home')
+  await expect(handle).toHaveAttribute('aria-valuenow', '0')
+  await page.waitForTimeout(150)
   const [trackBox, handleBox] = await Promise.all([track.boundingBox(), handle.boundingBox()])
   expect(trackBox).not.toBeNull()
   expect(handleBox).not.toBeNull()
@@ -244,7 +295,21 @@ async function dragLoginCaptcha(page: Page) {
 
   const startX = handleBox.x + handleBox.width / 2
   const startY = handleBox.y + handleBox.height / 2
-  const endX = trackBox.x + trackBox.width - handleBox.width / 2
+  // 用真实 End/Home 位置测出完整行程，避免复制组件内部的滑块宽度或边框常量。
+  await page.keyboard.press('End')
+  await expect(handle).toHaveAttribute('aria-valuenow', '1000')
+  await page.waitForTimeout(150)
+  const maxHandleBox = await handle.boundingBox()
+  expect(maxHandleBox).not.toBeNull()
+  if (!maxHandleBox) return
+  const measuredMaxCenterX = maxHandleBox.x + maxHandleBox.width / 2
+  const travel = Math.max(0, measuredMaxCenterX - startX)
+  expect(travel).toBeGreaterThan(0)
+
+  await page.keyboard.press('Home')
+  await expect(handle).toHaveAttribute('aria-valuenow', '0')
+  await page.waitForTimeout(150)
+  const endX = startX + travel * normalizedPlacement / 1000
   await page.mouse.move(startX, startY)
   await page.mouse.down()
   for (let step = 1; step <= 10; step += 1) {
@@ -260,8 +325,8 @@ async function dragLoginCaptcha(page: Page) {
 
 async function completeLoginCaptcha(page: Page) {
   await dragLoginCaptcha(page)
-  await expect(page.getByRole('slider', { name: '拖动验证码' }))
-    .toHaveAttribute('aria-valuetext', '验证通过')
+  await expect(page.locator('#login-captcha-dialog')).toHaveCount(0)
+  await expect(page.locator('[data-login-captcha-entry] strong')).toHaveText('验证通过')
 }
 
 async function documentScrollTop(page: Page) {
@@ -419,14 +484,17 @@ test.describe('桌面登录布局', () => {
       localRequest.release()
     }
     await expect(localTab).toBeEnabled()
+    await expect(page.locator('[data-login-captcha-entry]')).toBeFocused()
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}${LOGIN_PATH}`)
     await expect(page.locator('#login-username')).toHaveValue('local.richard')
     await expect(page.locator('#login-password')).toHaveValue('Local1234')
     await expect.poll(() => captchaHarness.challengeRequestCount)
       .toBe(challengeCountBeforeRejectedLogin + 1)
+    await openLoginCaptcha(page)
     await expect(page.getByRole('slider', { name: '拖动验证码' }))
-      .toHaveAttribute('aria-valuetext', '按住滑块，拖动完成验证')
+      .toHaveAttribute('aria-valuetext', /按住滑块/)
     expect(localCapture.requestCount()).toBe(1)
+    await page.getByRole('button', { name: '关闭安全验证' }).click()
 
     await ssoTab.click()
     const ssoCapture = await captureRejectedLogin(page, SSO_LOGIN_API)
@@ -446,11 +514,11 @@ test.describe('桌面登录布局', () => {
       })
       expect(ssoRequest.body).not.toHaveProperty('trajectory')
       expect(ssoCapture.requestCount()).toBe(1)
-      await expect(localTab).toBeDisabled()
-      await expect(ssoTab).toBeDisabled()
+      await expect(page.locator('[data-login-captcha-entry]')).toBeVisible()
     } finally {
       ssoRequest.release()
     }
+    await expect(page.locator('[data-login-captcha-entry]')).toBeVisible()
     await expect(ssoTab).toBeEnabled()
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}${LOGIN_PATH}`)
     await page.waitForTimeout(50)
@@ -477,7 +545,7 @@ test.describe('桌面登录布局', () => {
     await expect(page.locator('.el-message')).toHaveCount(0)
     await expect.poll(() => captchaHarness.challengeRequestCount).toBe(2)
     const slider = page.getByRole('slider', { name: '拖动验证码' })
-    await expect(slider).toHaveAttribute('aria-valuetext', '拖动轨迹无效，请重试')
+    await expect(slider).toHaveAttribute('aria-valuetext', /拖动轨迹无效，请重试/)
     await expect(slider).toHaveAttribute('aria-disabled', 'false')
 
     await page.waitForTimeout(50)
@@ -499,7 +567,7 @@ test.describe('桌面登录布局', () => {
     await page.waitForTimeout(50)
     expect(localCapture.requestCount()).toBe(1)
 
-    expect(captchaHarness.verificationPayloads).toHaveLength(2)
+    await expect.poll(() => captchaHarness.verificationPayloads.length).toBe(2)
     expect(captchaHarness.verificationPayloads[0]).toMatchObject({
       challengeId: 'login-challenge-1',
     })
@@ -510,7 +578,9 @@ test.describe('桌面登录布局', () => {
       const trajectory = payload.trajectory as Array<{ x: number; y: number; t: number }>
       expect(trajectory.length).toBeGreaterThanOrEqual(6)
       expect(trajectory.at(0)).toEqual({ x: 0, y: 0, t: 0 })
-      expect(trajectory.at(-1)?.x).toBe(1000)
+      expect(payload.placementX).toBeGreaterThanOrEqual(550)
+      expect(payload.placementX).toBeLessThanOrEqual(570)
+      expect(trajectory.at(-1)?.x).toBe(payload.placementX)
     }
   })
 
@@ -541,7 +611,7 @@ test.describe('桌面登录布局', () => {
       const slider = page.getByRole('slider', { name: '拖动验证码' })
       await slider.focus()
       await page.keyboard.press('Enter')
-      await expect(slider).toHaveAttribute('aria-valuetext', '正在准备安全验证…')
+      await expect(slider).toHaveAttribute('aria-valuetext', /正在准备安全验证/)
       for (let attempt = 0; attempt < 4; attempt += 1) {
         await slider.click({ force: true })
       }
@@ -549,14 +619,14 @@ test.describe('桌面登录布局', () => {
       await page.waitForTimeout(100)
 
       expect(captchaHarness.challengeRequestCount).toBe(2)
-      await expect(slider).toHaveAttribute('aria-valuetext', '正在准备安全验证…')
+      await expect(slider).toHaveAttribute('aria-valuetext', /正在准备安全验证/)
       await expect(page.getByText('拖动轨迹无效，请重试', { exact: true })).toHaveCount(0)
     } finally {
       releaseSecondChallenge()
     }
 
     const slider = page.getByRole('slider', { name: '拖动验证码' })
-    await expect(slider).toHaveAttribute('aria-valuetext', '按住滑块，拖动完成验证')
+    await expect(slider).toHaveAttribute('aria-valuetext', /按住滑块/)
     await expect(slider).toHaveAttribute('aria-disabled', 'false')
     await expect(page.getByText('拖动轨迹无效，请重试', { exact: true })).toHaveCount(0)
     expect(captchaHarness.challengeRequestCount).toBe(2)
@@ -574,16 +644,19 @@ test.describe('桌面登录布局', () => {
       await route.abort()
     })
     await openLogin(page)
+    await openLoginCaptcha(page)
     const slider = page.getByRole('slider', { name: '拖动验证码' })
     await slider.focus()
 
-    for (let step = 0; step < 10; step += 1) {
+    for (let step = 0; step < 28; step += 1) {
       await page.keyboard.press('ArrowRight')
     }
+    await page.keyboard.press('Enter')
 
-    await expect(slider).toHaveAttribute('aria-valuetext', '验证通过')
+    await expect(page.locator('[data-login-captcha-entry] strong')).toHaveText('验证通过')
     await expect(page.getByText('请输入用户名', { exact: true })).toBeVisible()
     await expect(page.getByText('请输入密码', { exact: true })).toBeVisible()
+    await expect(page.locator('#login-username')).toBeFocused()
     await page.waitForTimeout(50)
     expect(localLoginRequests).toBe(0)
     expect(ssoLoginRequests).toBe(0)
@@ -595,14 +668,16 @@ test.describe('桌面登录布局', () => {
     const localCapture = await captureRejectedLogin(page, LOCAL_LOGIN_API)
     await page.locator('#login-username').fill('keyboard.richard')
     await page.locator('#login-password').fill('Local1234')
+    await openLoginCaptcha(page)
     const slider = page.getByRole('slider', { name: '拖动验证码' })
     await slider.focus()
 
-    for (let step = 0; step < 10; step += 1) {
+    for (let step = 0; step < 28; step += 1) {
       await page.keyboard.press('ArrowRight')
     }
+    await page.keyboard.press('Enter')
 
-    await expect(slider).toHaveAttribute('aria-valuetext', '验证通过')
+    await expect(page.locator('[data-login-captcha-entry] strong')).toHaveText('验证通过')
     const loginRequest = await localCapture.requestCaptured
     try {
       expect(loginRequest.body).toEqual({
@@ -618,9 +693,158 @@ test.describe('桌面登录布局', () => {
     }
     await page.waitForTimeout(50)
     expect(localCapture.requestCount()).toBe(1)
-    expect(captchaHarness.verificationPayloads).toHaveLength(1)
+    await expect.poll(() => captchaHarness.verificationPayloads.length).toBe(1)
     const trajectory = captchaHarness.verificationPayloads[0].trajectory as Array<{ t: number }>
     expect(trajectory.at(-1)?.t).toBeGreaterThanOrEqual(300)
+  })
+})
+
+test.describe('拼图验证浮层可访问性与响应式', () => {
+  test.use({ viewport: { width: 1280, height: 720 } })
+
+  test('浮层打开时隔离背景、陷阱 Tab，Escape 关闭并回到入口，支持中段 placement', async ({ page }) => {
+    await suppressExpectedLoginRejection(page)
+    const captchaHarness = await openLogin(page)
+    await page.locator('[data-login-captcha-entry]').click()
+    const dialog = page.locator('#login-captcha-dialog')
+    await expect(dialog).toBeVisible()
+    await expect(page.locator('[data-login-scroll]')).toHaveAttribute('aria-hidden', 'true')
+    await expect(page.locator('.brand-stage')).toHaveAttribute('aria-hidden', 'true')
+    await expect(page.getByRole('button', { name: '关闭安全验证' })).toBeFocused()
+
+    const refresh = page.getByRole('button', { name: '刷新验证' })
+    const slider = page.getByRole('slider', { name: '拖动验证码' })
+    await slider.focus()
+    await page.keyboard.press('Tab')
+    await expect(refresh).toBeFocused()
+    await refresh.focus()
+    await page.keyboard.press('Shift+Tab')
+    await expect(slider).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('[data-login-captcha-entry]')).toBeFocused()
+    await expect(page.locator('[data-login-scroll]')).toHaveAttribute('aria-hidden', 'false')
+
+    await page.locator('[data-login-captcha-entry]').click()
+    const challengeCountBeforeRefresh = captchaHarness.challengeRequestCount
+    await refresh.click()
+    await expect.poll(() => captchaHarness.challengeRequestCount)
+      .toBe(challengeCountBeforeRefresh + 1)
+    await expect(page.getByText('验证已刷新，请重新拖动', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '关闭安全验证' }).click()
+
+    await page.locator('#login-username').fill('middle.placement')
+    await page.locator('#login-password').fill('Local1234')
+    await page.route(LOCAL_LOGIN_API, async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: TEST_BUSINESS_REJECTION_CODE, message: 'E2E rejected', data: null }) })
+    })
+    await dragLoginCaptcha(page, 560)
+    await expect.poll(() => captchaHarness.verificationPayloads.length).toBe(1)
+    const payload = captchaHarness.verificationPayloads[0]
+    expect(payload.placementX).toBeGreaterThanOrEqual(550)
+    expect(payload.placementX).toBeLessThanOrEqual(570)
+    const points = payload.trajectory as Array<{ x: number }>
+    expect(points.at(-1)?.x).toBe(payload.placementX)
+  })
+
+  test('320px 小屏使用 bottom-sheet 内部滚动且无横向溢出', async ({ page }) => {
+    const viewportWidth = 320
+    await page.setViewportSize({ width: viewportWidth, height: 480 })
+    await openLogin(page)
+    await openLoginCaptcha(page)
+    const dialog = page.locator('#login-captcha-dialog')
+    await expect(dialog).toBeVisible()
+    const layout = await dialog.evaluate((element) => ({
+      width: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      overflowY: getComputedStyle(element).overflowY,
+      maxHeight: getComputedStyle(element).maxHeight,
+    }))
+    expect(layout.width).toBeLessThanOrEqual(viewportWidth)
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width)
+    expect(layout.overflowY).toBe('auto')
+    expect(layout.maxHeight).not.toBe('none')
+    await expect(page.locator('[data-login-captcha-refresh]')).toBeVisible()
+    await expect(page.getByRole('button', { name: '关闭安全验证' })).toHaveCSS('height', '44px')
+  })
+
+  test('TTL 到期会刷新 challenge 并保留明确的过期恢复提示', async ({ page }) => {
+    const captchaHarness = await openLogin(page, {
+      challengeResponse: (attempt) => successResult({
+        challengeId: `short-lived-${attempt}`,
+        ttlSeconds: attempt === 1 ? 1 : 120,
+        ...LOGIN_PUZZLE_CHALLENGE_DEFAULTS,
+      }),
+    })
+    await openLoginCaptcha(page)
+    await expect.poll(() => captchaHarness.challengeRequestCount).toBe(2, { timeout: 3_000 })
+    await expect(page.getByText('验证已过期，已刷新，请重新拖动', { exact: true })).toBeVisible({ timeout: 3_000 })
+  })
+
+  test('浮层关闭后 challenge 过期不会循环签发，重新打开才获取新挑战', async ({ page }) => {
+    const captchaHarness = await openLogin(page, {
+      challengeResponse: (attempt) => successResult({
+        challengeId: `closed-short-lived-${attempt}`,
+        ttlSeconds: attempt === 1 ? 1 : 120,
+        ...LOGIN_PUZZLE_CHALLENGE_DEFAULTS,
+      }),
+    })
+    await openLoginCaptcha(page)
+    await page.getByRole('button', { name: '关闭安全验证' }).click()
+    await page.waitForTimeout(1_300)
+    expect(captchaHarness.challengeRequestCount).toBe(1)
+    await openLoginCaptcha(page)
+    await expect.poll(() => captchaHarness.challengeRequestCount).toBe(2, { timeout: 3_000 })
+  })
+
+  test('验证慢网时保留背景和拼图块，直到响应完成', async ({ page }) => {
+    let releaseVerification!: () => void
+    const verificationReleased = new Promise<void>((resolve) => {
+      releaseVerification = resolve
+    })
+    const captchaHarness = await openLogin(page, {
+      verifyResponse: async () => {
+        await verificationReleased
+        return successResult({ proof: 'slow-login-proof', ttlSeconds: 120 })
+      },
+    })
+
+    await dragLoginCaptcha(page, 560)
+    await expect(page.locator('[data-login-captcha]')).toHaveClass(/is-verifying/)
+    await expect(page.locator('.captcha-background')).toBeVisible()
+    await expect(page.locator('.captcha-piece')).toBeVisible()
+    await expect(page.getByRole('slider', { name: '拖动验证码' })).toHaveAttribute('aria-disabled', 'true')
+    await expect.poll(() => captchaHarness.verificationPayloads.length).toBe(1)
+
+    releaseVerification()
+    await expect(page.locator('#login-captcha-dialog')).toHaveCount(0)
+    await expect(page.locator('[data-login-captcha-entry] strong')).toHaveText('验证通过')
+  })
+
+  test('challenge 刷新失败时倒计时归零并保留明确恢复状态', async ({ page }) => {
+    const captchaHarness = await openLogin(page, {
+      challengeResponse: (attempt) => attempt === 1
+        ? successResult({ challengeId: 'refreshable-challenge', ttlSeconds: 120 })
+        : { code: 30015, message: '刷新失败，请稍后重试', data: null },
+    })
+    await openLoginCaptcha(page)
+    await page.getByRole('button', { name: '刷新验证' }).click()
+    await expect.poll(() => captchaHarness.challengeRequestCount).toBe(2)
+    await expect(page.getByText('刷新失败，请稍后重试', { exact: true })).toBeVisible()
+    await expect(page.getByText('等待验证挑战', { exact: true })).toBeVisible()
+  })
+
+  test('proof 一秒到期后回收入口状态且不重复签发 challenge', async ({ page }) => {
+    const captchaHarness = await openLogin(page, {
+      verifyResponse: () => successResult({ proof: 'short-proof', ttlSeconds: 1 }),
+    })
+    await dragLoginCaptcha(page, 560)
+    await expect(page.locator('[data-login-captcha-entry] strong')).toHaveText('验证通过')
+    await expect(page.locator('[data-login-captcha-entry] small')).toHaveText('完成拼图后自动继续登录')
+    await page.waitForTimeout(1_300)
+    await expect(page.locator('[data-login-captcha-entry] strong')).toHaveText('完成安全验证')
+    await expect(page.locator('[data-login-captcha-entry] small')).toHaveText('验证失败，点击重试')
+    expect(captchaHarness.challengeRequestCount).toBe(1)
   })
 })
 

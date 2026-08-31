@@ -22,6 +22,8 @@ import {
   type LoginMode,
 } from './loginPageModel'
 
+type LoginSubmitOutcome = 'busy' | 'invalid' | 'verification-required' | 'rejected' | 'navigated'
+
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
@@ -41,6 +43,7 @@ const formRef = ref<FormInstance>()
 const loginCaptchaRef = ref<InstanceType<typeof LoginSliderCaptcha>>()
 const submitting = ref(false)
 const captchaProof = ref('')
+const captchaOpen = ref(false)
 const form = reactive({ username: '', password: '', rememberMe: false })
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -154,19 +157,32 @@ async function loadRegisterOptions() {
   }
 }
 
-async function handleSubmit() {
+async function focusFirstInvalidField() {
+  // Element Plus 在 validate() rejected 后还需要一次渲染提交错误样式，再查找可聚焦输入框。
+  await nextTick()
+  await nextTick()
+  // handleSubmit 的 finally 会在当前调用栈结束时解除 submitting；等一个宏任务避免聚焦到 disabled input。
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  const firstInvalidFieldId = form.username.trim().length === 0
+    ? 'login-username'
+    : form.password.trim().length === 0 ? 'login-password' : undefined
+  if (firstInvalidFieldId) document.getElementById(firstInvalidFieldId)?.focus()
+}
+
+async function handleSubmit(): Promise<LoginSubmitOutcome> {
   if (submitting.value) {
-    return
+    return 'busy'
   }
   submitting.value = true
   try {
     const valid = await formRef.value?.validate().catch(() => false)
     if (!valid) {
-      return
+      void focusFirstInvalidField()
+      return 'invalid'
     }
     if (!captchaProof.value) {
       loginCaptchaRef.value?.requireVerification()
-      return
+      return 'verification-required'
     }
     // 请求发出后，界面仍可能因脚本触发变化；后续处理必须绑定本次提交身份。
     const submission = createLoginSubmission(loginMode.value, form, captchaProof.value)
@@ -180,7 +196,7 @@ async function handleSubmit() {
     } catch {
       // 请求层已展示业务或网络错误，组件只负责恢复可提交状态。
       await loginCaptchaRef.value?.reset()
-      return
+      return 'rejected'
     }
     const rememberKey = REMEMBER_KEY_PREFIX + submission.mode
     if (submission.credentials.rememberMe) {
@@ -197,19 +213,26 @@ async function handleSubmit() {
     if (result.forceChangePassword) {
       ElMessage.warning('首次登录请先修改密码')
       await router.replace({ name: 'ChangePassword' })
-      return
+      return 'navigated'
     }
     const redirect = (route.query.redirect as string) || '/'
     await router.replace(redirect)
+    return 'navigated'
   } finally {
     submitting.value = false
   }
 }
 
 async function handleCaptchaVerified(proof: string) {
-  // 滑块 proof 是一次性登录凭据；验证通过后直接续接统一提交链路，避免用户再次点击。
+  // 拼图 proof 是一次性登录凭据；验证通过后直接续接统一提交链路，避免用户再次点击。
   captchaProof.value = proof
-  await handleSubmit()
+  const outcome = await handleSubmit()
+  // 只有登录业务/网络拒绝才回到验证码入口；表单校验失败由 handleSubmit 聚焦首个无效输入，
+  // 成功导航或强制改密导航则不打断目标页面的焦点。
+  if (outcome === 'rejected' && route.name === 'Login') {
+    await nextTick()
+    loginCaptchaRef.value?.focusEntry()
+  }
 }
 
 loadRememberedUsername(loginMode.value)
@@ -222,9 +245,16 @@ onMounted(() => {
 
 <template>
   <main class="login-page">
-    <LoginBrandStage :images="bgImages" />
+    <LoginBrandStage :images="bgImages" :inert="captchaOpen" :aria-hidden="captchaOpen" />
 
-    <section ref="authSurfaceRef" class="auth-surface" data-login-scroll aria-label="身份验证">
+    <section
+      ref="authSurfaceRef"
+      class="auth-surface"
+      data-login-scroll
+      aria-label="身份验证"
+      :inert="captchaOpen"
+      :aria-hidden="captchaOpen"
+    >
       <div class="auth-toolbar">
         <span class="secure-context"><i aria-hidden="true" /> 安全登录</span>
         <ThemePresetSelector compact />
@@ -275,7 +305,15 @@ onMounted(() => {
             </button>
           </div>
 
-          <el-form ref="formRef" class="login-form" :model="form" :rules="rules" @submit.prevent="handleSubmit">
+          <el-form
+            ref="formRef"
+            class="login-form"
+            :model="form"
+            :rules="rules"
+            :inert="captchaOpen"
+            :aria-hidden="captchaOpen"
+            @submit.prevent="handleSubmit"
+          >
             <label class="field-label" for="login-username">{{ modePresentation.usernameLabel }}</label>
             <el-form-item prop="username">
               <el-input
@@ -310,6 +348,7 @@ onMounted(() => {
               :primary-text-color="primaryTextColor"
               @verified="handleCaptchaVerified"
               @invalidated="captchaProof = ''"
+              @open-change="captchaOpen = $event"
             />
 
             <div class="remember-row">

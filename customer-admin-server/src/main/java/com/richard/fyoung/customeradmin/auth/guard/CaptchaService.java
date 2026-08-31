@@ -34,8 +34,6 @@ public class CaptchaService {
     private static final char[] ALPHABET = "34679ACDEFGHJKLMNPQRTUVWXY".toCharArray();
 
     private static final String IMAGE_FORMAT = "png";
-    private static final String DATA_URI_PREFIX = "data:image/png;base64,";
-
     private final CaptchaStore store;
     private final RegistrationGuardProperties.Captcha config;
     private final SecureRandom random = new SecureRandom();
@@ -50,7 +48,7 @@ public class CaptchaService {
         String answer = randomText(config.getLength());
         String captchaId = UUID.randomUUID().toString().replace("-", "");
         store.save(captchaId, answer.toLowerCase(Locale.ROOT), config.getTtlSeconds());
-        return new CaptchaChallenge(captchaId, DATA_URI_PREFIX + render(answer), config.getTtlSeconds());
+        return new CaptchaChallenge(captchaId, PngDataUri.PREFIX + render(answer), config.getTtlSeconds());
     }
 
     /**

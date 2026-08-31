@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Redis 登录滑块存储的真服务门禁，覆盖 Lua 原子消费、TTL、并发重放与故障关闭。
+ * Redis 登录拼图存储的真服务门禁，覆盖 Lua 原子消费、TTL、并发重放与故障关闭。
  *
  * <p>真实 Redis 用例在服务不可达或鉴权不匹配时按仓库惯例跳过；故障关闭用例使用本进程
  * black-hole 端口独立执行，不依赖外部 Redis 的可用状态。</p>
@@ -91,7 +91,8 @@ class RedissonLoginCaptchaStoreIntegrationTest {
             long now = System.currentTimeMillis();
             try {
                 store.saveChallenge(mismatchId,
-                    new LoginCaptchaStore.ChallengeState(FINGERPRINT, now, now + 10_000), 10);
+                    new LoginCaptchaStore.ChallengeState(
+                        FINGERPRINT, now, now + 10_000, 620, 25), 10);
 
                 assertEquals(LoginCaptchaStore.ConsumeStatus.FINGERPRINT_MISMATCH,
                     store.consumeChallenge(mismatchId, "other-fingerprint").status());
@@ -102,7 +103,8 @@ class RedissonLoginCaptchaStoreIntegrationTest {
                     store.consumeChallenge(mismatchId, FINGERPRINT).status());
 
                 store.saveChallenge(expiringId,
-                    new LoginCaptchaStore.ChallengeState(FINGERPRINT, now, now + 2_000), 2);
+                    new LoginCaptchaStore.ChallengeState(
+                        FINGERPRINT, now, now + 2_000, 620, 25), 2);
                 store.saveProof(expiringProofHash,
                     new LoginCaptchaStore.ProofState(FINGERPRINT, now + 2_000), 2);
                 assertRedisTtl(challengeBucket, "challenge");
@@ -168,6 +170,24 @@ class RedissonLoginCaptchaStoreIntegrationTest {
                 executor.shutdownNow();
                 assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS), "并发测试线程未正常退出");
                 proofBucket.delete();
+            }
+        }
+
+        @Test
+        void challenge_shouldFailClosedForLegacyUnversionedRedisValue() {
+            String challengeId = UUID.randomUUID().toString();
+            RBucket<String> challengeBucket = bucket("challenge:", challengeId);
+            long now = System.currentTimeMillis();
+            try {
+                challengeBucket.set(
+                    FINGERPRINT + ":" + now + ":" + (now + 10_000), Duration.ofSeconds(10));
+
+                assertThrows(IllegalStateException.class,
+                    () -> store.consumeChallenge(challengeId, FINGERPRINT));
+                assertTrue(challengeBucket.isExists(),
+                    "旧格式没有通过版本校验时不得被误当成匹配 challenge 消费");
+            } finally {
+                challengeBucket.delete();
             }
         }
 

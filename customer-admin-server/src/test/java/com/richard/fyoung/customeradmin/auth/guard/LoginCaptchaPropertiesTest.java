@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 登录滑块运维配置必须在启动期失败，而不是把错误推迟到请求期。 */
+/** 登录拼图运维配置必须在启动期失败，而不是把错误推迟到请求期。 */
 class LoginCaptchaPropertiesTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
@@ -21,7 +21,24 @@ class LoginCaptchaPropertiesTest {
         contextRunner.run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context).hasSingleBean(LoginCaptchaProperties.class);
+            LoginCaptchaProperties properties = context.getBean(LoginCaptchaProperties.class);
+            assertThat(properties.getMaxVerifyPerWindow()).isEqualTo(3);
+            assertThat(properties.getRateLimitWindowSeconds()).isEqualTo(3_600);
+            assertThat(properties.isRateLimitWindowCoveringChallengeLifetime()).isTrue();
         });
+    }
+
+    @Test
+    void verifyWindowShorterThanChallengeLifetime_shouldFailStartupValidation() {
+        contextRunner
+            .withPropertyValues(
+                "admin.login-captcha.challenge-ttl-seconds=121",
+                "admin.login-captcha.rate-limit-window-seconds=120")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasRootCauseInstanceOf(BindValidationException.class);
+            });
     }
 
     @ParameterizedTest
