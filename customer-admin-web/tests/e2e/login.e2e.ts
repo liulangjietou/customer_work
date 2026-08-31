@@ -164,23 +164,29 @@ function successfulLoginResult(forceChangePassword = false): LoginResponse {
 
 async function captureRejectedLogin(page: Page, url: string): Promise<{
   requestCaptured: Promise<PendingLoginRequest>
+  requestCount: () => number
 }> {
+  let requestCount = 0
   let captureRequest!: (request: PendingLoginRequest) => void
   const requestCaptured = new Promise<PendingLoginRequest>((resolve) => {
     captureRequest = resolve
   })
+  let releaseResponses!: () => void
+  const responsesReleased = new Promise<void>((resolve) => {
+    releaseResponses = resolve
+  })
 
   await page.route(url, async (route) => {
-    let releaseResponse!: () => void
-    const responseReleased = new Promise<void>((resolve) => {
-      releaseResponse = resolve
-    })
-    captureRequest({
-      url: route.request().url(),
-      body: route.request().postDataJSON() as Record<string, unknown>,
-      release: releaseResponse,
-    })
-    await responseReleased
+    requestCount += 1
+    if (requestCount === 1) {
+      captureRequest({
+        url: route.request().url(),
+        body: route.request().postDataJSON() as Record<string, unknown>,
+        // 所有并发请求共用释放闸门，重复请求回归不会把测试永久挂起。
+        release: releaseResponses,
+      })
+    }
+    await responsesReleased
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -193,7 +199,7 @@ async function captureRejectedLogin(page: Page, url: string): Promise<{
   })
 
   // 包一层对象，避免 async 返回值把内部 Promise 自动展开并在请求发出前形成死锁。
-  return { requestCaptured }
+  return { requestCaptured, requestCount: () => requestCount }
 }
 
 async function suppressExpectedLoginRejection(page: Page) {
@@ -351,10 +357,10 @@ async function prepareEmailCodeOnlyRegistration(
 test.describe('桌面登录布局', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
-  test('主操作无需滚动，键盘可切换模式，登录请求严格按身份分流', async ({ page }) => {
+  test('主操作无需滚动，键盘可切换模式，滑块成功后自动按身份分流登录', async ({ page }) => {
     // 业务失败是本用例刻意构造的终态，只抑制对应测试错误，避免 Vite 把含虚拟密码的表单快照写进 CI 日志。
     await suppressExpectedLoginRejection(page)
-    await openLogin(page)
+    const captchaHarness = await openLogin(page)
 
     await expect(page.getByRole('button', { name: '进入运营台' })).toBeInViewport()
     await expect(page.getByRole('button', { name: '创建账号' })).toBeInViewport()
@@ -387,9 +393,9 @@ test.describe('桌面登录布局', () => {
     await page.getByRole('button', { name: '进入运营台' }).click()
     expect(await loginBeforeCaptcha).toBe(false)
     await expect(page.getByText('请先完成拖动验证', { exact: true })).toBeVisible()
+    const challengeCountBeforeRejectedLogin = captchaHarness.challengeRequestCount
 
     await completeLoginCaptcha(page)
-    await page.getByRole('button', { name: '进入运营台' }).click()
 
     const localRequest = await localCapture.requestCaptured
     try {
@@ -403,6 +409,12 @@ test.describe('桌面登录布局', () => {
       expect(localRequest.body).not.toHaveProperty('trajectory')
       await expect(localTab).toBeDisabled()
       await expect(ssoTab).toBeDisabled()
+      await page.locator('.login-form').evaluate((form: HTMLFormElement) => {
+        form.requestSubmit()
+        form.requestSubmit()
+      })
+      await page.waitForTimeout(50)
+      expect(localCapture.requestCount()).toBe(1)
     } finally {
       localRequest.release()
     }
@@ -410,6 +422,11 @@ test.describe('桌面登录布局', () => {
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}${LOGIN_PATH}`)
     await expect(page.locator('#login-username')).toHaveValue('local.richard')
     await expect(page.locator('#login-password')).toHaveValue('Local1234')
+    await expect.poll(() => captchaHarness.challengeRequestCount)
+      .toBe(challengeCountBeforeRejectedLogin + 1)
+    await expect(page.getByRole('slider', { name: '拖动验证码' }))
+      .toHaveAttribute('aria-valuetext', '按住滑块，拖动完成验证')
+    expect(localCapture.requestCount()).toBe(1)
 
     await ssoTab.click()
     const ssoCapture = await captureRejectedLogin(page, SSO_LOGIN_API)
@@ -417,7 +434,6 @@ test.describe('桌面登录布局', () => {
     await page.locator('#login-password').fill('Sso12345')
     await expect(page.getByRole('checkbox', { name: '保持登录' })).not.toBeChecked()
     await completeLoginCaptcha(page)
-    await page.getByRole('button', { name: '使用 OA 账号登录' }).click()
 
     const ssoRequest = await ssoCapture.requestCaptured
     try {
@@ -429,6 +445,7 @@ test.describe('桌面登录布局', () => {
         captchaProof: 'login-proof-2',
       })
       expect(ssoRequest.body).not.toHaveProperty('trajectory')
+      expect(ssoCapture.requestCount()).toBe(1)
       await expect(localTab).toBeDisabled()
       await expect(ssoTab).toBeDisabled()
     } finally {
@@ -436,9 +453,12 @@ test.describe('桌面登录布局', () => {
     }
     await expect(ssoTab).toBeEnabled()
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}${LOGIN_PATH}`)
+    await page.waitForTimeout(50)
+    expect(ssoCapture.requestCount()).toBe(1)
   })
 
   test('轨迹校验失败就地恢复，不清空账号密码，也不弹全局消息', async ({ page }) => {
+    await suppressExpectedLoginRejection(page)
     const captchaHarness = await openLogin(page, {
       verifyResponse: (attempt) => (
         attempt === 1
@@ -461,7 +481,23 @@ test.describe('桌面登录布局', () => {
     await expect(slider).toHaveAttribute('aria-disabled', 'false')
 
     await page.waitForTimeout(50)
+    const localCapture = await captureRejectedLogin(page, LOCAL_LOGIN_API)
     await completeLoginCaptcha(page)
+
+    const loginRequest = await localCapture.requestCaptured
+    try {
+      expect(loginRequest.body).toEqual({
+        username: 'local.richard',
+        password: 'Local1234',
+        rememberMe: false,
+        captchaProof: 'recovered-login-proof',
+      })
+      expect(localCapture.requestCount()).toBe(1)
+    } finally {
+      loginRequest.release()
+    }
+    await page.waitForTimeout(50)
+    expect(localCapture.requestCount()).toBe(1)
 
     expect(captchaHarness.verificationPayloads).toHaveLength(2)
     expect(captchaHarness.verificationPayloads[0]).toMatchObject({
@@ -526,8 +562,18 @@ test.describe('桌面登录布局', () => {
     expect(captchaHarness.challengeRequestCount).toBe(2)
   })
 
-  test('键盘可完成验证，并满足服务端最短轨迹时长契约', async ({ page }) => {
-    const captchaHarness = await openLogin(page)
+  test('空账号密码用键盘完成验证只显示表单错误，不发起登录', async ({ page }) => {
+    let localLoginRequests = 0
+    let ssoLoginRequests = 0
+    await page.route(LOCAL_LOGIN_API, async (route) => {
+      localLoginRequests += 1
+      await route.abort()
+    })
+    await page.route(SSO_LOGIN_API, async (route) => {
+      ssoLoginRequests += 1
+      await route.abort()
+    })
+    await openLogin(page)
     const slider = page.getByRole('slider', { name: '拖动验证码' })
     await slider.focus()
 
@@ -536,6 +582,42 @@ test.describe('桌面登录布局', () => {
     }
 
     await expect(slider).toHaveAttribute('aria-valuetext', '验证通过')
+    await expect(page.getByText('请输入用户名', { exact: true })).toBeVisible()
+    await expect(page.getByText('请输入密码', { exact: true })).toBeVisible()
+    await page.waitForTimeout(50)
+    expect(localLoginRequests).toBe(0)
+    expect(ssoLoginRequests).toBe(0)
+  })
+
+  test('有效账号用键盘完成验证后自动登录一次，并满足最短轨迹时长契约', async ({ page }) => {
+    await suppressExpectedLoginRejection(page)
+    const captchaHarness = await openLogin(page)
+    const localCapture = await captureRejectedLogin(page, LOCAL_LOGIN_API)
+    await page.locator('#login-username').fill('keyboard.richard')
+    await page.locator('#login-password').fill('Local1234')
+    const slider = page.getByRole('slider', { name: '拖动验证码' })
+    await slider.focus()
+
+    for (let step = 0; step < 10; step += 1) {
+      await page.keyboard.press('ArrowRight')
+    }
+
+    await expect(slider).toHaveAttribute('aria-valuetext', '验证通过')
+    const loginRequest = await localCapture.requestCaptured
+    try {
+      expect(loginRequest.body).toEqual({
+        username: 'keyboard.richard',
+        password: 'Local1234',
+        rememberMe: false,
+        captchaProof: 'login-proof-1',
+      })
+      await page.waitForTimeout(50)
+      expect(localCapture.requestCount()).toBe(1)
+    } finally {
+      loginRequest.release()
+    }
+    await page.waitForTimeout(50)
+    expect(localCapture.requestCount()).toBe(1)
     expect(captchaHarness.verificationPayloads).toHaveLength(1)
     const trajectory = captchaHarness.verificationPayloads[0].trajectory as Array<{ t: number }>
     expect(trajectory.at(-1)?.t).toBeGreaterThanOrEqual(300)
@@ -598,12 +680,14 @@ test.describe('品牌背景轮播', () => {
 test.describe('登录成功状态机', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
-  test('本地普通登录持久化完整状态、记住用户名并完成 redirect=/home', async ({ page }) => {
+  test('本地账号滑块成功后自动登录一次，持久化完整状态并完成 redirect=/home', async ({ page }) => {
     const bootstrapRequests: string[] = []
+    let loginRequestCount = 0
     let loginPayload: Record<string, unknown> | undefined
 
     await mockAuthenticatedBootstrap(page, (url) => bootstrapRequests.push(url))
     await page.route(LOCAL_LOGIN_API, async (route) => {
+      loginRequestCount += 1
       loginPayload = route.request().postDataJSON() as Record<string, unknown>
       await route.fulfill({
         status: 200,
@@ -617,10 +701,12 @@ test.describe('登录成功状态机', () => {
     await page.locator('#login-password').fill('Local1234')
     await page.getByRole('checkbox', { name: '保持登录' })
       .evaluate((element: HTMLInputElement) => element.click())
-    await completeLoginCaptcha(page)
-    await page.getByRole('button', { name: '进入运营台' }).click()
+    const loginRequest = page.waitForRequest(LOCAL_LOGIN_API)
+    await dragLoginCaptcha(page)
+    await loginRequest
 
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}/home`)
+    expect(loginRequestCount).toBe(1)
     expect(loginPayload).toEqual({
       username: 'local.richard',
       password: 'Local1234',
@@ -668,8 +754,9 @@ test.describe('登录成功状态机', () => {
 
     await page.locator('#login-username').fill('first.login')
     await page.locator('#login-password').fill('Local1234')
-    await completeLoginCaptcha(page)
-    await page.getByRole('button', { name: '进入运营台' }).click()
+    const loginRequest = page.waitForRequest(LOCAL_LOGIN_API)
+    await dragLoginCaptcha(page)
+    await loginRequest
 
     await expect(page).toHaveURL(`${LOGIN_E2E_ORIGIN}/change-password`)
     await expect(page.getByText('首次登录请修改密码', { exact: true })).toBeVisible()
