@@ -54,6 +54,7 @@ async function loadTenants() {
 
 const quotaTenant = ref('')
 const quotaLoading = ref(false)
+const quotaSubmitting = ref(false)
 const quotas = ref<TenantQuotaVO[]>([])
 
 async function loadQuota() {
@@ -92,14 +93,20 @@ function openQuotaDialog(row?: TenantQuotaVO) {
 }
 
 async function submitQuota() {
+  if (quotaSubmitting.value) return
   if (!quotaForm.tenantId) {
     ElMessage.warning('请先选择租户')
     return
   }
-  await saveQuota(quotaForm)
-  ElMessage.success('配额已保存')
-  quotaDialogVisible.value = false
-  await loadQuota()
+  quotaSubmitting.value = true
+  try {
+    await saveQuota(quotaForm)
+    ElMessage.success('配额已保存')
+    quotaDialogVisible.value = false
+    await loadQuota()
+  } finally {
+    quotaSubmitting.value = false
+  }
 }
 
 async function removeQuota(row: TenantQuotaVO) {
@@ -116,6 +123,7 @@ async function removeQuota(row: TenantQuotaVO) {
 // ---------- 单价 ----------
 
 const priceLoading = ref(false)
+const priceSubmitting = ref(false)
 const prices = ref<ModelPriceVO[]>([])
 
 async function loadPrice() {
@@ -154,14 +162,20 @@ function openPriceDialog() {
 }
 
 async function submitPrice() {
+  if (priceSubmitting.value) return
   if (!priceForm.modelName) {
     ElMessage.warning('请填写模型名')
     return
   }
-  await createPrice(priceForm)
-  ElMessage.success('单价已新增')
-  priceDialogVisible.value = false
-  await loadPrice()
+  priceSubmitting.value = true
+  try {
+    await createPrice(priceForm)
+    ElMessage.success('单价已新增')
+    priceDialogVisible.value = false
+    await loadPrice()
+  } finally {
+    priceSubmitting.value = false
+  }
 }
 
 async function removePrice(row: ModelPriceVO) {
@@ -347,6 +361,7 @@ onMounted(async () => {
             </el-select>
             <el-button
               v-permission="'billing:quota-edit'"
+              class="cw-final-action"
               type="primary"
               :disabled="!quotaTenant"
               @click="openQuotaDialog()"
@@ -402,7 +417,7 @@ onMounted(async () => {
         <!-- 单价 -->
         <el-tab-pane v-if="crossTenantAuthority" label="模型单价" name="price">
           <div class="toolbar">
-            <el-button v-permission="'billing:price-edit'" type="primary" @click="openPriceDialog">
+            <el-button v-permission="'billing:price-edit'" class="cw-final-action" type="primary" @click="openPriceDialog">
               新增单价
             </el-button>
             <span class="tip">调价请新增一条生效记录，不要改旧记录——历史账单要按当时的价格算得回去。</span>
@@ -658,7 +673,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="quotaDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitQuota">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="quotaSubmitting" @click="submitQuota">保存配额</el-button>
       </template>
     </el-dialog>
 
@@ -694,7 +709,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="priceDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitPrice">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="priceSubmitting" @click="submitPrice">保存价格</el-button>
       </template>
     </el-dialog>
   </div>
@@ -711,21 +726,33 @@ onMounted(async () => {
 .tip {
   margin-top: 12px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   line-height: 1.7;
 }
 
 .form-tip {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
 }
 
 .forecast-card {
   margin-bottom: 20px;
+  overflow-x: auto;
 }
 
 .section-title {
   margin: 24px 0 12px;
+  color: var(--cw-text);
   font-size: 15px;
+}
+
+@media (max-width: 767px) {
+  .page :deep(.el-tabs__nav-wrap) {
+    padding-inline: 2px;
+  }
+
+  .forecast-card :deep(.el-descriptions__body) {
+    min-width: 680px;
+  }
 }
 </style>

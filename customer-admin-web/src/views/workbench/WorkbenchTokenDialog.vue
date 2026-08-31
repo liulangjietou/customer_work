@@ -87,7 +87,7 @@ watch(visible, (v) => {
   <el-dialog v-model="visible" title="我的令牌" width="720px">
     <div class="toolbar">
       <span class="hint">令牌供 ScriptCat 脚本回调工作台取密码使用，绑定你的账号，可随时吊销。</span>
-      <el-button type="primary" @click="openCreate">新建令牌</el-button>
+      <el-button class="cw-final-action" type="primary" @click="openCreate">新建令牌</el-button>
     </div>
 
     <el-table v-loading="loading" :data="tokens" style="width: 100%">
@@ -146,7 +146,7 @@ watch(visible, (v) => {
       <template #footer>
         <template v-if="!plaintextToken">
           <el-button @click="createFormVisible = false">取消</el-button>
-          <el-button type="primary" :loading="creating" @click="submitCreate">生成</el-button>
+          <el-button class="cw-final-action" type="primary" :loading="creating" @click="submitCreate">生成令牌</el-button>
         </template>
         <el-button v-else type="primary" @click="createFormVisible = false">我已保存</el-button>
       </template>

@@ -52,6 +52,7 @@ onMounted(load)
     size="default"
     :loading="switching"
     filterable
+    title="切换租户视角"
     aria-label="租户视角"
   >
     <template #prefix>
@@ -75,5 +76,54 @@ onMounted(load)
 .tenant-switcher {
   width: 220px;
   margin-right: 8px;
+}
+
+.tenant-switcher :deep(.el-select__wrapper) {
+  min-height: 34px;
+  border-radius: var(--cw-radius-md, 8px);
+  background: var(--cw-canvas, var(--el-fill-color-extra-light));
+  box-shadow: 0 0 0 1px var(--cw-line, var(--el-border-color-lighter)) inset;
+}
+
+.tenant-switcher:hover :deep(.el-select__wrapper) {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 45%, var(--cw-line, var(--el-border-color))) inset;
+}
+
+.tenant-switcher :deep(.el-select__prefix) {
+  color: var(--cw-cobalt, var(--el-color-primary));
+}
+
+@media (max-width: 760px) {
+  .tenant-switcher {
+    width: 36px;
+    margin-right: 0;
+  }
+
+  .tenant-switcher :deep(.el-select__wrapper) {
+    min-height: 34px;
+    justify-content: center;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .tenant-switcher:hover :deep(.el-select__wrapper) {
+    background: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 8%, transparent);
+    box-shadow: none;
+  }
+
+  .tenant-switcher :deep(.el-select__selection),
+  .tenant-switcher :deep(.el-select__suffix) {
+    width: 0;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    opacity: 0;
+  }
+
+  .tenant-switcher :deep(.el-select__prefix) {
+    margin: 0;
+    font-size: 16px;
+  }
 }
 </style>

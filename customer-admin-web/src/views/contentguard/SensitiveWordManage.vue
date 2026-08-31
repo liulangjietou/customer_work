@@ -13,6 +13,7 @@ import {
   updateSensitiveWord,
 } from '@/api/contentGuard'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { SensitiveWordPageQuery, SensitiveWordSaveRequest, SensitiveWordVO } from '@/types/api'
 
 const formRef = ref<FormInstance>()
@@ -23,7 +24,7 @@ const importText = ref('')
 const importing = ref(false)
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, deletingId, list, total, query,
   dialogVisible, dialogMode, form,
   loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
 } = useCrudPage<SensitiveWordVO, SensitiveWordPageQuery, SensitiveWordSaveRequest>({
@@ -102,6 +103,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-alert type="info" :closable="false" show-icon class="notice">
       词库存放于客服端库，是客服链路与后台工作区共用的唯一真源。改动后由客服端轮询版本指纹自动生效
       （默认 60 秒内），无需重启任何服务。
@@ -127,26 +129,26 @@ onMounted(async () => {
           <el-option label="停用" :value="0" />
         </el-select>
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <div class="toolbar-right">
+        <div class="toolbar-actions">
           <el-button v-permission="'sensitive-word:add'" @click="importVisible = true">批量导入</el-button>
           <el-button @click="handleExport">导出</el-button>
-          <el-button v-permission="'sensitive-word:add'" type="primary" @click="openCreate">新增敏感词</el-button>
+          <el-button v-permission="'sensitive-word:add'" class="cw-final-action" type="primary" @click="openCreate">新增敏感词</el-button>
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="word" label="敏感词" min-width="180" show-overflow-tooltip />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的敏感词">
+        <el-table-column prop="word" label="敏感词" min-width="180" show-overflow-tooltip class-name="primary-column" />
         <el-table-column label="类目" width="120">
           <template #default="{ row }">{{ categoryLabels[row.category] ?? row.category }}</template>
         </el-table-column>
-        <el-table-column label="处置动作" width="120">
+        <el-table-column label="处置动作" width="120" align="center">
           <template #default="{ row }">
             <el-tag :type="actionMeta[row.action]?.type ?? 'info'">
               {{ actionMeta[row.action]?.label ?? row.action }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag>
           </template>
@@ -160,7 +162,7 @@ onMounted(async () => {
             <el-button v-permission="'sensitive-word:edit'" link type="primary" @click="handleToggle(row)">
               {{ row.enabled ? '停用' : '启用' }}
             </el-button>
-            <el-button v-permission="'sensitive-word:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'sensitive-word:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -170,7 +172,7 @@ onMounted(async () => {
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -197,7 +199,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存敏感词</el-button>
       </template>
     </el-dialog>
 
@@ -215,7 +217,7 @@ onMounted(async () => {
       <div class="form-hint import-count">待导入 {{ importLineCount }} 条</div>
       <template #footer>
         <el-button @click="importVisible = false">取消</el-button>
-        <el-button type="primary" :loading="importing" @click="handleImport">导入</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="importing" @click="handleImport">确认导入</el-button>
       </template>
     </el-dialog>
   </div>
@@ -228,15 +230,27 @@ onMounted(async () => {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
   align-items: center;
 }
 
-.toolbar-right {
+.toolbar-actions {
   margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .form-hint {
@@ -253,5 +267,16 @@ onMounted(async () => {
 .import-count {
   margin-top: 8px;
   text-align: right;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 </style>

@@ -7,6 +7,7 @@ import { fetchLoginCarouselUrls } from '@/api/login-image'
 import FooterCopyright from '@/components/FooterCopyright.vue'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
+import { useTabsStore } from '@/store/tabs'
 import { useThemeStore } from '@/store/theme'
 import type { LoginResponse, RegisterOptionsVO } from '@/types/api'
 import { chooseButtonTextColor } from '@/utils/themeContrast'
@@ -24,6 +25,7 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const menuStore = useMenuStore()
+const tabsStore = useTabsStore()
 const themeStore = useThemeStore()
 
 const authSurfaceRef = ref<HTMLElement>()
@@ -185,6 +187,10 @@ async function handleSubmit() {
     } else {
       localStorage.removeItem(rememberKey)
     }
+    // 先回收上一账号的前端权限投影，再应用本次登录结果。强制改密、待审核、已拒绝账号
+    // 不会进入菜单 bootstrap，因此尤其不能继承旧账号的菜单路由与页签。
+    menuStore.reset()
+    tabsStore.reset()
     // 必须应用完整登录结果，保留昵称、强制改密与账号审核状态。
     auth.applyLoginResult(result, submission.credentials.username)
     if (result.forceChangePassword) {
@@ -192,7 +198,6 @@ async function handleSubmit() {
       await router.replace({ name: 'ChangePassword' })
       return
     }
-    menuStore.reset()
     const redirect = (route.query.redirect as string) || '/'
     await router.replace(redirect)
   } finally {

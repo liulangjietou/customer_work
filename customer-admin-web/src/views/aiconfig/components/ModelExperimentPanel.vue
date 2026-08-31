@@ -216,7 +216,7 @@ function futureDateTimeValue(days: number) {
           <h2>模型在线实验</h2>
           <span>{{ experiments.length }} 个定义 · {{ runningCount }} 个期望 RUNNING · {{ activeCount }} 个运行时 ACTIVE</span>
         </div>
-        <el-button v-permission="'model-experiment:create'" type="primary" :loading="optionLoading" @click="openCreate">新建双臂实验</el-button>
+        <el-button v-permission="'model-experiment:create'" class="cw-final-action" type="primary" :loading="optionLoading" @click="openCreate">新建双臂实验</el-button>
       </div>
     </template>
 
@@ -337,7 +337,7 @@ function futureDateTimeValue(days: number) {
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="createExperiment">创建草稿</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="saving" @click="createExperiment">创建草稿</el-button>
       </template>
     </el-dialog>
 
@@ -461,22 +461,22 @@ function futureDateTimeValue(days: number) {
 <style scoped>
 .experiment-card { margin-top: 20px; border: 0; border-radius: 16px; }
 .section-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.section-header h2 { margin: 2px 0 4px; color: #172033; font-size: 21px; }
-.section-header span { color: #64748b; font-size: 12px; }
-.eyebrow { margin: 0; color: #2457d6; font-size: 10px; font-weight: 800; letter-spacing: .15em; }
+.section-header h2 { margin: 2px 0 4px; color: var(--cw-text); font-size: 21px; }
+.section-header span { color: var(--cw-text-muted); font-size: 12px; }
+.eyebrow { margin: 0; color: var(--cw-cobalt); font-size: 10px; font-weight: 800; letter-spacing: .15em; }
 .runtime-alert { margin-bottom: 16px; }
 .filter-row { display: flex; gap: 10px; margin-bottom: 14px; }
 .primary-cell strong, .primary-cell span, .arm-cell span, .guardrail-cell span { display: block; }
 .status-cell { display: flex; align-items: flex-start; flex-direction: column; gap: 5px; }
-.primary-cell span, .arm-cell span, .guardrail-cell span, small { margin-top: 4px; color: #64748b; font-size: 11px; }
-.arm-cell span:first-child { color: #334155; }
+.primary-cell span, .arm-cell span, .guardrail-cell span, small { margin-top: 4px; color: var(--cw-text-muted); font-size: 11px; }
+.arm-cell span:first-child { color: var(--el-text-color-regular); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
 .full-row { grid-column: 1 / -1; }
-h3 { margin: 24px 0 12px; color: #172033; font-size: 15px; }
+h3 { margin: 24px 0 12px; color: var(--cw-text); font-size: 15px; }
 .arm-metrics { margin-top: 12px; }
 .effective-error { margin-top: 14px; }
 code { font-size: 11px; word-break: break-all; }
-.el-timeline p { margin: 5px 0 0; color: #64748b; }
+.el-timeline p { margin: 5px 0 0; color: var(--cw-text-muted); }
 @media (max-width: 760px) {
   .section-header { align-items: flex-start; flex-direction: column; }
   .filter-row, .form-grid { display: flex; flex-direction: column; }

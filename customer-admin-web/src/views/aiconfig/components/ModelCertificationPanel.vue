@@ -217,7 +217,7 @@ function formatTime(value: string | null | undefined) {
             <el-checkbox v-model="form.requireStructuredOutput">结构化</el-checkbox>
           </el-form-item>
         </div>
-        <el-button v-permission="'model:certify'" type="primary" :loading="certifying" @click="certify">
+        <el-button v-permission="'model:certify'" class="cw-final-action" type="primary" :loading="certifying" @click="certify">
           运行上线认证
         </el-button>
       </el-form>
@@ -245,21 +245,21 @@ function formatTime(value: string | null | undefined) {
 </template>
 
 <style scoped>
-.certification-panel { color: #172033; }
-.cert-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; border: 1px solid #dce5f0; border-radius: 12px; background: #f8fafc; }
-.cert-hero span, .cert-hero small { display: block; color: #64748b; font-size: 12px; }
+.certification-panel { color: var(--cw-text); }
+.cert-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; border: 1px solid var(--cw-line); border-radius: 12px; background: var(--el-fill-color-extra-light); }
+.cert-hero span, .cert-hero small { display: block; color: var(--cw-text-muted); font-size: 12px; }
 .cert-hero strong { display: block; margin: 4px 0; font-size: 24px; letter-spacing: .04em; }
-.cert-hero.is-passed { border-color: #a7e1d0; background: #effbf7; }
-.cert-hero.is-failed { border-color: #fecaca; background: #fff5f5; }
-.cert-hero.is-expired, .cert-hero.is-stale { border-color: #fde3aa; background: #fffaf0; }
+.cert-hero.is-passed { border-color: color-mix(in srgb, var(--cw-success) 42%, var(--cw-line)); background: color-mix(in srgb, var(--cw-success) 8%, var(--cw-paper)); }
+.cert-hero.is-failed { border-color: color-mix(in srgb, var(--cw-danger) 42%, var(--cw-line)); background: color-mix(in srgb, var(--cw-danger) 8%, var(--cw-paper)); }
+.cert-hero.is-expired, .cert-hero.is-stale { border-color: color-mix(in srgb, var(--cw-amber) 42%, var(--cw-line)); background: color-mix(in srgb, var(--cw-amber) 8%, var(--cw-paper)); }
 .evidence-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
-.evidence-grid > div { padding: 13px; border: 1px solid #e2e8f0; border-radius: 10px; background: white; }
-.evidence-grid span { display: block; margin-bottom: 5px; color: #64748b; font-size: 11px; }
+.evidence-grid > div { padding: 13px; border: 1px solid var(--cw-line); border-radius: 10px; background: var(--cw-paper); }
+.evidence-grid span { display: block; margin-bottom: 5px; color: var(--cw-text-muted); font-size: 11px; }
 .evidence-grid strong { font-size: 13px; }
 .check-table { margin-top: 16px; }
-.cert-form { margin-top: 22px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
+.cert-form { margin-top: 22px; padding: 18px; border: 1px solid var(--cw-line); border-radius: 12px; background: var(--el-fill-color-extra-light); }
 .section-heading h3, .history-section h3 { margin: 0; }
-.section-heading p { margin: 5px 0 16px; color: #64748b; font-size: 13px; }
+.section-heading p { margin: 5px 0 16px; color: var(--cw-text-muted); font-size: 13px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
 .history-section { margin-top: 22px; }
 .history-section h3 { margin-bottom: 12px; }

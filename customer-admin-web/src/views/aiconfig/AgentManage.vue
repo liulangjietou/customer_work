@@ -335,11 +335,13 @@ onMounted(() => {
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'agent:add'" type="primary" @click="openCreate">新建智能体</el-button>
-        <el-button v-permission="'agent:view'" @click="channelBindingVisible = true">渠道绑定</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'agent:view'" @click="channelBindingVisible = true">渠道绑定</el-button>
+          <el-button v-permission="'agent:add'" class="cw-final-action" type="primary" @click="openCreate">新建智能体</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的智能体">
         <el-table-column label="图标" width="70">
           <template #default="{ row }">
             <el-icon v-if="row.icon" :size="18">
@@ -347,13 +349,13 @@ onMounted(() => {
             </el-icon>
           </template>
         </el-table-column>
-        <el-table-column prop="agentName" label="名称" />
+        <el-table-column prop="agentName" label="名称" class-name="primary-column" />
         <el-table-column prop="agentCode" label="编码" width="140" />
         <el-table-column prop="modelName" label="主模型" width="140" />
         <el-table-column label="备用模型" width="180">
           <template #default="{ row }">
             <el-tag v-for="n in row.backupModelNames" :key="n" type="info" style="margin-right: 4px">{{ n }}</el-tag>
-            <span v-if="!row.backupModelNames?.length" style="color: #909399">-</span>
+            <span v-if="!row.backupModelNames?.length" class="muted">-</span>
           </template>
         </el-table-column>
         <!-- 知识库名称由后端 AgentVO.knowledgeBaseNames 直接回填，前端不再二次查询 -->
@@ -362,7 +364,7 @@ onMounted(() => {
             <el-tooltip v-for="(k, index) in row.knowledgeBaseNames" :key="`${k}-${index}`" :content="`冻结版本 ID：${row.knowledgeBaseVersionIds?.[index] ?? '-'}`">
               <el-tag type="success" style="margin: 2px">{{ k }}</el-tag>
             </el-tooltip>
-            <span v-if="!row.knowledgeBaseNames?.length" style="color: #909399">-</span>
+            <span v-if="!row.knowledgeBaseNames?.length" class="muted">-</span>
           </template>
         </el-table-column>
         <el-table-column label="Skill" width="180">
@@ -370,7 +372,7 @@ onMounted(() => {
             <el-tooltip v-for="(skillId, index) in row.skillIds" :key="skillId" :content="`冻结版本 ID：${row.skillVersionIds?.[index] ?? '-'}`">
               <el-tag type="warning" style="margin: 2px">{{ skillName(skillId) }}</el-tag>
             </el-tooltip>
-            <span v-if="!row.skillIds?.length" style="color: #909399">-</span>
+            <span v-if="!row.skillIds?.length" class="muted">-</span>
           </template>
         </el-table-column>
         <el-table-column label="能力" width="260">
@@ -378,7 +380,7 @@ onMounted(() => {
             <el-tag v-for="c in row.capabilities" :key="c" style="margin: 2px">{{ capabilityLabel(c) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
           </template>
@@ -408,7 +410,7 @@ onMounted(() => {
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -578,7 +580,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :disabled="!canSubmit" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :disabled="!canSubmit" @click="handleSubmit">保存智能体</el-button>
       </template>
     </el-dialog>
 
@@ -614,8 +616,27 @@ onMounted(() => {
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .connectivity-row {
@@ -628,7 +649,7 @@ onMounted(() => {
 .connectivity-hint {
   margin-top: 4px;
   font-size: 12px;
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
 
 .version-hint {
@@ -641,7 +662,11 @@ onMounted(() => {
 .memory-meta {
   margin-bottom: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
+}
+
+.muted {
+  color: var(--el-text-color-placeholder);
 }
 
 .memory-content {
@@ -654,6 +679,17 @@ onMounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
   background: var(--el-fill-color-light);
-  border-radius: 4px;
+  border-radius: var(--cw-radius-sm);
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 </style>

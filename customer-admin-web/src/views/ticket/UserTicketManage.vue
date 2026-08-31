@@ -170,16 +170,16 @@ onUnmounted(() => {
         <el-button type="primary" @click="handleSearch">刷新</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的用户工单">
         <el-table-column prop="id" label="工单号" width="90" />
-        <el-table-column prop="title" label="标题" show-overflow-tooltip />
+        <el-table-column prop="title" label="标题" show-overflow-tooltip class-name="primary-column" />
         <el-table-column prop="userId" label="用户" width="140" show-overflow-tooltip />
-        <el-table-column label="状态" width="120">
+        <el-table-column label="状态" width="120" align="center">
           <template #default="{ row }: { row: TicketVO }">
             <el-tag :type="STATUS_TAG_TYPE[row.status]" size="small">{{ STATUS_LABELS[row.status] }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="优先级" width="90">
+        <el-table-column label="优先级" width="90" align="center">
           <template #default="{ row }: { row: TicketVO }">
             <el-tag :type="PRIORITY_TAG_TYPE[row.priority]" size="small">{{ PRIORITY_LABELS[row.priority] }}</el-tag>
           </template>
@@ -214,7 +214,7 @@ onUnmounted(() => {
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="handlePageChange"
       />
     </el-card>
@@ -233,7 +233,19 @@ onUnmounted(() => {
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 </style>

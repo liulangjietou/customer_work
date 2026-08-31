@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import ImprovementClosurePanel from '@/components/ImprovementClosurePanel.vue'
@@ -21,6 +21,9 @@ const list = ref<KnowledgeGap[]>([])
 const scopeId = ref('default')
 const closureVisible = ref(false)
 const closureGap = ref<KnowledgeGap | null>(null)
+const totalMisses = computed(() => list.value.reduce((sum, item) => sum + item.missCount, 0))
+const urgentGapCount = computed(() => list.value.filter((item) => item.missCount >= 10).length)
+const recurringGapCount = computed(() => list.value.filter((item) => item.missCount >= 3).length)
 
 async function loadList() {
   loading.value = true
@@ -105,12 +108,37 @@ onMounted(loadList)
         补进去的内容会直接影响线上回答，请写成知识的样子，不要照抄用户的口语化提问。"
     />
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-input v-model="scopeId" placeholder="租户码" style="width: 180px" />
         <el-button type="primary" :loading="loading" @click="loadList">查询</el-button>
       </div>
+    </el-card>
 
+    <div class="summary-row" v-loading="loading">
+      <div class="stat">
+        <strong>{{ list.length }}</strong>
+        <span>知识盲区</span>
+      </div>
+      <div class="stat">
+        <strong>{{ totalMisses }}</strong>
+        <span>累计未命中</span>
+      </div>
+      <div class="stat stat-danger">
+        <strong>{{ urgentGapCount }}</strong>
+        <span>高优先级（≥10 次）</span>
+      </div>
+      <div class="stat stat-warning">
+        <strong>{{ recurringGapCount }}</strong>
+        <span>反复出现（≥3 次）</span>
+      </div>
+    </div>
+
+    <el-card shadow="never" class="list-card">
+      <div class="section-heading">
+        <strong>未命中证据明细</strong>
+        <span>按真实提问频次排序，补知识后可继续进入治理闭环验证是否复发</span>
+      </div>
       <el-table v-loading="loading" :data="list" style="width: 100%">
         <el-table-column label="未命中" width="100">
           <template #default="{ row }">
@@ -174,7 +202,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitFill">补进知识库</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="submitFill">补进知识库</el-button>
       </template>
     </el-dialog>
 
@@ -192,17 +220,119 @@ onMounted(loadList)
 .knowledge-gap-board {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
+}
+
+.filter-card .toolbar {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .origin {
   margin-bottom: 16px;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  min-height: 88px;
+  padding: 15px 16px 14px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: var(--cw-paper);
+  box-shadow: var(--cw-shadow-xs);
+}
+
+.stat strong {
+  display: block;
+  color: var(--cw-text);
+  font-size: 25px;
+  font-weight: 720;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.stat span {
+  display: block;
+  margin-top: 7px;
+  color: var(--cw-text-muted);
+  font-size: 12px;
+}
+
+.stat-danger strong {
+  color: var(--cw-danger);
+}
+
+.stat-warning strong {
+  color: var(--cw-amber);
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.section-heading strong {
+  color: var(--cw-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.section-heading span {
+  color: var(--cw-text-muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+@media (max-width: 1023px) {
+  .summary-row {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .summary-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-heading span {
+    text-align: left;
+  }
+
+  .knowledge-gap-board :deep(.el-dialog .el-form-item__label) {
+    width: 100% !important;
+    justify-content: flex-start;
+  }
+
+  .knowledge-gap-board :deep(.el-dialog .el-form-item__content) {
+    margin-left: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .summary-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

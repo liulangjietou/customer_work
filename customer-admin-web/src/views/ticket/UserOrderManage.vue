@@ -130,8 +130,8 @@ async function handleCancelSubmit() {
         <el-button v-permission="'user-order:view'" type="primary" @click="handleSearch">查询</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="orderId" label="订单号" width="160" show-overflow-tooltip />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的订单">
+        <el-table-column prop="orderId" label="订单号" width="160" show-overflow-tooltip class-name="primary-column" />
         <el-table-column label="用户" width="160">
           <template #default="{ row }: { row: OrderVO }">
             <div>{{ row.username || '-' }}</div>
@@ -140,7 +140,7 @@ async function handleCancelSubmit() {
         </el-table-column>
         <el-table-column prop="productName" label="商品" show-overflow-tooltip />
         <el-table-column prop="amount" label="金额" width="100" />
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }: { row: OrderVO }">
             <el-tag :type="orderTagType(row.status)" size="small">{{ row.status }}</el-tag>
           </template>
@@ -157,14 +157,12 @@ async function handleCancelSubmit() {
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!loading && list.length === 0" description="暂无订单数据" />
-
       <el-pagination
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="handlePageChange"
       />
     </el-card>
@@ -198,7 +196,7 @@ async function handleCancelSubmit() {
       </el-form>
       <template #footer>
         <el-button @click="addressDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleAddressSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" @click="handleAddressSubmit">确认改址</el-button>
       </template>
     </el-dialog>
 
@@ -210,7 +208,7 @@ async function handleCancelSubmit() {
       </el-form>
       <template #footer>
         <el-button @click="cancelDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleCancelSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" @click="handleCancelSubmit">确认取消</el-button>
       </template>
     </el-dialog>
   </div>
@@ -219,8 +217,20 @@ async function handleCancelSubmit() {
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .sub-text {

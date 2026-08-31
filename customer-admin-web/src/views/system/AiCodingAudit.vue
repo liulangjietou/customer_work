@@ -2,6 +2,7 @@
 import { onMounted } from 'vue'
 import { pageAiCodingAudit } from '@/api/aiCodingAudit'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { AiCodingAuditLog, AiCodingAuditQuery } from '@/types/api'
 
 /** 操作类型 -> 中文展示与标签色（与后端 AiCodingOperation 枚举一一对应）。 */
@@ -15,7 +16,7 @@ const OPERATION_META: Record<string, { label: string; tag: 'primary' | 'success'
 
 // 只读审计日志：无新建/编辑/删除能力，只接列表半套
 const {
-  loading, list, total, query,
+  loading, loadError, list, total, query,
   loadList, handleSearch,
 } = useCrudPage<AiCodingAuditLog, AiCodingAuditQuery, Record<string, never>>({
   page: pageAiCodingAudit,
@@ -47,6 +48,7 @@ onMounted(loadList)
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按操作人搜索" style="width: 180px" clearable @keyup.enter="handleSearch" />
@@ -57,7 +59,7 @@ onMounted(loadList)
         <el-button type="primary" @click="handleSearch">搜索</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无 AI 编码审计记录">
         <el-table-column prop="createTime" label="时间" width="170" />
         <el-table-column prop="username" label="操作人" width="100" />
         <el-table-column label="操作类型" width="140">
@@ -65,7 +67,7 @@ onMounted(loadList)
             <el-tag :type="operationTag(row.operation)">{{ operationLabel(row.operation) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="agentCode" label="智能体" width="110" />
+        <el-table-column prop="agentCode" label="智能体" width="110" class-name="primary-column" />
         <el-table-column prop="sessionId" label="会话ID" width="150" show-overflow-tooltip />
         <el-table-column label="变更文件" min-width="160">
           <template #default="{ row }">
@@ -93,7 +95,7 @@ onMounted(loadList)
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="结果" width="90">
+        <el-table-column label="结果" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.result === 1 ? 'success' : 'danger'">{{ row.result === 1 ? '成功' : '失败' }}</el-tag>
           </template>
@@ -106,7 +108,7 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -116,8 +118,18 @@ onMounted(loadList)
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 .changed-files {
   color: var(--el-color-primary);

@@ -32,9 +32,38 @@ const shouldShow = computed(() => crumbs.value.length > 2)
   min-height: 30px;
   display: flex;
   align-items: center;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  background: var(--el-bg-color);
+  padding: 0 16px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--cw-line, var(--el-border-color-lighter));
+  background: var(--cw-paper, var(--el-bg-color));
   font-size: 12px;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.app-breadcrumb::-webkit-scrollbar {
+  display: none;
+}
+
+.app-breadcrumb :deep(.el-breadcrumb__inner) {
+  color: var(--cw-text-muted, var(--el-text-color-secondary));
+  font-weight: 500;
+}
+
+.app-breadcrumb :deep(.el-breadcrumb__item:last-child .el-breadcrumb__inner) {
+  color: var(--cw-cobalt, var(--el-color-primary));
+  font-weight: 650;
+}
+
+.app-breadcrumb :deep(.el-breadcrumb__separator) {
+  color: var(--cw-text-muted, var(--el-text-color-placeholder));
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+@media (max-width: 760px) {
+  .app-breadcrumb {
+    padding: 0 10px;
+  }
 }
 </style>

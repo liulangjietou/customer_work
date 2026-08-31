@@ -614,8 +614,8 @@ defineExpose({ reset, requireVerification })
   box-sizing: border-box;
   place-items: center;
   border-radius: 6px;
-  background: linear-gradient(135deg, var(--el-color-primary), var(--el-color-primary-dark-2));
-  box-shadow: 0 5px 14px color-mix(in srgb, var(--el-color-primary) 28%, transparent);
+  background: linear-gradient(135deg, var(--theme-primary-solid, var(--el-color-primary)), var(--theme-primary-solid-active, var(--el-color-primary-dark-2)));
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--theme-primary-solid, var(--el-color-primary)) 28%, transparent);
   color: var(--captcha-thumb-text);
   cursor: grab;
   outline: none;
@@ -641,14 +641,16 @@ defineExpose({ reset, requireVerification })
 }
 
 .is-verified .captcha-handle {
-  background: linear-gradient(135deg, var(--el-color-success), var(--el-color-success-dark-2, #168d78));
-  box-shadow: 0 5px 14px color-mix(in srgb, var(--el-color-success) 24%, transparent);
+  color: var(--cw-on-success, #fff);
+  background: linear-gradient(135deg, var(--cw-success-solid, #16856a), var(--cw-success-solid-active, #127159));
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--cw-success-solid, #16856a) 24%, transparent);
   cursor: default;
 }
 
 .is-failed .captcha-handle {
-  background: linear-gradient(135deg, var(--el-color-danger-light-3), var(--el-color-danger));
-  box-shadow: 0 5px 14px color-mix(in srgb, var(--el-color-danger) 20%, transparent);
+  color: var(--cw-on-danger, #fff);
+  background: linear-gradient(135deg, var(--cw-danger-solid, #c2414b), var(--cw-danger-solid-active, #a63840));
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--cw-danger-solid, #c2414b) 20%, transparent);
   transition: background-color 160ms ease-out, box-shadow 160ms ease-out;
 }
 

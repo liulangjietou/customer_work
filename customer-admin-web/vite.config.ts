@@ -49,6 +49,11 @@ export default defineConfig({
   optimizeDeps: {
     include: ['element-plus/es', '@element-plus/icons-vue', ...elementPlusStyleDeps],
   },
+  // Vitest 在 Node 池里若把 Element Plus 外部化，会由原生 ESM 直接加载其 CSS side effect，
+  // 从而报 Unknown file extension ".css"。交给 Vite 转换后，组件逻辑与 CRUD composable 才能稳定单测。
+  ssr: {
+    noExternal: ['element-plus'],
+  },
   server: {
     port: 5174,
     // 监听所有网卡（不只是 127.0.0.1），局域网内其它设备才能通过本机 IP（如 10.123.45.678:5174）访问；

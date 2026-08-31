@@ -57,16 +57,18 @@ watch(
     <div class="devtoolbox-sidebar">
       <el-input v-model="search" placeholder="搜索工具" clearable :prefix-icon="'Search'" class="devtoolbox-search" />
       <el-scrollbar class="devtoolbox-list">
-        <div
+        <button
           v-for="tool in filteredTools"
           :key="tool.key"
+          type="button"
           class="devtoolbox-item"
           :class="{ active: tool.key === activeKey }"
+          :aria-pressed="tool.key === activeKey"
           @click="selectTool(tool.key)"
         >
           <div class="devtoolbox-item-label">{{ tool.label }}</div>
           <div class="devtoolbox-item-desc">{{ tool.description }}</div>
-        </div>
+        </button>
         <el-empty v-if="filteredTools.length === 0" description="没有匹配的工具" :image-size="60" />
       </el-scrollbar>
     </div>
@@ -99,7 +101,7 @@ watch(
   gap: 10px;
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border-radius: var(--cw-radius-md);
   padding: 12px;
   height: 100%;
   min-height: 0;
@@ -115,10 +117,17 @@ watch(
 }
 
 .devtoolbox-item {
+  position: relative;
+  width: 100%;
   padding: 8px 10px;
-  border-radius: 6px;
+  color: inherit;
+  text-align: left;
+  border: 0;
+  border-radius: var(--cw-radius-sm);
+  background: transparent;
   cursor: pointer;
   margin-bottom: 4px;
+  font: inherit;
   transition: background-color 0.15s ease;
 }
 
@@ -127,12 +136,18 @@ watch(
 }
 
 .devtoolbox-item.active {
-  background: var(--theme-primary-lighter, var(--el-color-primary-light-9));
+  background: color-mix(in srgb, var(--cw-cobalt) 10%, var(--cw-paper));
+  box-shadow: inset 3px 0 var(--cw-cobalt);
 }
 
 .devtoolbox-item.active .devtoolbox-item-label {
-  color: var(--theme-primary, var(--el-color-primary));
+  color: var(--cw-cobalt);
   font-weight: 600;
+}
+
+.devtoolbox-item:focus-visible {
+  outline: 2px solid var(--cw-focus-ring);
+  outline-offset: -2px;
 }
 
 .devtoolbox-item-label {
@@ -159,5 +174,15 @@ watch(
 .panel-title {
   font-size: 15px;
   font-weight: 600;
+}
+
+@media (max-width: 767px) {
+  .devtoolbox-sidebar {
+    padding: 10px;
+  }
+
+  .devtoolbox-list {
+    max-height: 220px;
+  }
 }
 </style>

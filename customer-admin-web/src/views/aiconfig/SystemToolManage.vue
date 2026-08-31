@@ -3,13 +3,14 @@ import { onMounted, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { fetchSystemTools, updateSystemTool } from '@/api/system-tool'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { PageQuery, SystemToolSaveRequest, SystemToolVO } from '@/types/api'
 
 const formRef = ref<FormInstance>()
 
 // 系统工具只有"编辑"能力（无新建/删除），只接 page/update 半套
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, list, total, query,
   dialogVisible, form,
   loadList, handleSearch, openEdit, handleSubmit,
 } = useCrudPage<SystemToolVO, PageQuery, SystemToolSaveRequest>({
@@ -41,17 +42,18 @@ onMounted(loadList)
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无系统工具">
         <el-table-column prop="toolCode" label="编码" width="160" />
-        <el-table-column prop="toolName" label="名称" width="180" />
+        <el-table-column prop="toolName" label="名称" width="180" class-name="primary-column" />
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-switch
               v-model="row.enabled"
@@ -75,7 +77,7 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -97,7 +99,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存工具</el-button>
       </template>
     </el-dialog>
   </div>
@@ -106,7 +108,19 @@ onMounted(loadList)
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 </style>

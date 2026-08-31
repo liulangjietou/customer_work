@@ -105,7 +105,7 @@ async function handleDelete(row: LoginCarouselImageVO) {
       <template #header>
         <div class="page-header">
           <div>
-            <span class="page-title">登录页图片</span>
+            <span class="page-title">轮播素材</span>
             <span class="page-subtitle">上传多张图片作为登录页轮播背景，登录页实时获取；全部禁用或为空时回退内置默认图</span>
           </div>
           <el-upload
@@ -113,7 +113,7 @@ async function handleDelete(row: LoginCarouselImageVO) {
             :http-request="handleUpload"
             accept="image/png,image/jpeg,image/webp"
           >
-            <el-button v-permission="'login-image:add'" type="primary">上传图片</el-button>
+            <el-button v-permission="'login-image:add'" class="cw-final-action" type="primary">上传图片</el-button>
           </el-upload>
         </div>
       </template>
@@ -177,6 +177,7 @@ async function handleDelete(row: LoginCarouselImageVO) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
 }
 
 .page-title {
@@ -199,7 +200,7 @@ async function handleDelete(row: LoginCarouselImageVO) {
 .image-preview {
   width: 100%;
   height: 160px;
-  border-radius: 4px;
+  border-radius: var(--cw-radius-sm);
   display: block;
 }
 
@@ -247,5 +248,34 @@ async function handleDelete(row: LoginCarouselImageVO) {
   margin-top: 16px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
+@media (max-width: 767px) {
+  .page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .page-subtitle {
+    display: block;
+    margin: 6px 0 0;
+    line-height: 1.5;
+  }
+
+  .page-header :deep(.el-upload),
+  .page-header :deep(.el-button) {
+    width: 100%;
+  }
+
+  .image-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .image-actions {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
 }
 </style>

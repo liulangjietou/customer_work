@@ -18,15 +18,18 @@ import org.mockito.MockedStatic;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -148,6 +151,34 @@ class SloAlertServiceTest {
             assertThrows(BizException.class, () -> service.acknowledge(101L, 9L));
         }
         verify(eventMapper, never()).insert(any(SloAlertEvent.class));
+    }
+
+    @Test
+    void summary_shouldCountAllActiveAlertsByTenantAndStatus() {
+        when(alertMapper.selectCount(any())).thenReturn(203L, 17L);
+
+        try (MockedStatic<TenantSession> session = mockStatic(TenantSession.class)) {
+            session.when(TenantSession::effectiveTenant).thenReturn("tenant-a");
+            var summary = service.summary();
+
+            assertEquals(203L, summary.openCount());
+            assertEquals(17L, summary.acknowledgedCount());
+        }
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<SloAlert>> captor =
+            ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.QueryWrapper.class);
+        verify(alertMapper, times(2)).selectCount(captor.capture());
+        captor.getAllValues().forEach(wrapper -> {
+            String sql = wrapper.getExpression().getNormal().getSqlSegment();
+            assertTrue(sql.contains("tenant_id ="));
+            assertTrue(sql.contains("status ="));
+            assertTrue(wrapper.getParamNameValuePairs().containsValue("tenant-a"));
+        });
+        assertTrue(captor.getAllValues().get(0).getParamNameValuePairs()
+            .containsValue(SloAlertStatus.OPEN.name()));
+        assertTrue(captor.getAllValues().get(1).getParamNameValuePairs()
+            .containsValue(SloAlertStatus.ACKED.name()));
     }
 
     private SloPolicy policy() {

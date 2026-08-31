@@ -5,6 +5,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.slo.dto.SloAlertEventVO;
+import com.richard.fyoung.customeradmin.slo.dto.SloAlertSummaryVO;
 import com.richard.fyoung.customeradmin.slo.dto.SloAlertVO;
 import com.richard.fyoung.customeradmin.slo.dto.SloEvaluationVO;
 import com.richard.fyoung.customeradmin.slo.dto.SloPolicySaveRequest;
@@ -65,6 +66,12 @@ public class SloController {
     public Result<List<SloAlertVO>> alerts(@RequestParam(required = false) String status,
                                            @RequestParam(required = false) Integer limit) {
         return Result.success(alertService.list(status, limit));
+    }
+
+    @SaCheckPermission("slo:view")
+    @GetMapping("/alerts/summary")
+    public Result<SloAlertSummaryVO> alertSummary() {
+        return Result.success(alertService.summary());
     }
 
     @SaCheckPermission("slo:view")

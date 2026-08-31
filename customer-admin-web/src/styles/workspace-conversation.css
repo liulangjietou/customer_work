@@ -195,13 +195,21 @@
 
 /* link“继续”靠透明背景显示主题文字，不能与实心主按钮共用背景覆盖。 */
 .workspace-conversation .input-bar .el-button--primary:not(.is-link) {
-  background-color: var(--theme-primary, var(--el-color-primary));
-  border-color: var(--theme-primary, var(--el-color-primary));
+  color: var(--cw-on-primary, #fff);
+  background-color: var(--theme-primary-solid, var(--el-color-primary));
+  border-color: var(--theme-primary-solid, var(--el-color-primary));
 }
 
 .workspace-conversation .input-bar .el-button--primary:not(.is-link):hover {
-  background-color: var(--theme-primary-light, #79bbff);
-  border-color: var(--theme-primary-light, #79bbff);
+  color: var(--cw-on-primary, #fff);
+  background-color: var(--theme-primary-solid-hover, var(--theme-primary-solid));
+  border-color: var(--theme-primary-solid-hover, var(--theme-primary-solid));
+}
+
+.workspace-conversation .input-bar .el-button--primary:not(.is-link):active {
+  color: var(--cw-on-primary, #fff);
+  background-color: var(--theme-primary-solid-active, var(--theme-primary-solid));
+  border-color: var(--theme-primary-solid-active, var(--theme-primary-solid));
 }
 
 .workspace-conversation .history-column {

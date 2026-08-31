@@ -9,6 +9,7 @@ import { installPermissionDirective } from './directives/permission'
 import { installElementPlusIcons } from './plugins/icons'
 import './style.css'
 import './theme.css'
+import './page-templates.css'
 
 const app = createApp(App)
 

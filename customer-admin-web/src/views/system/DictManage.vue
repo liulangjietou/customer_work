@@ -57,6 +57,7 @@ const typeDialogVisible = ref(false)
 const typeDialogMode = ref<'create' | 'edit'>('create')
 const typeFormRef = ref<FormInstance>()
 const editingTypeId = ref<number | null>(null)
+const typeSubmitting = ref(false)
 const typeForm = reactive<DictTypeSaveRequest>({ dictType: '', typeName: '', remark: '', enabled: true })
 
 const typeRules: FormRules = {
@@ -84,16 +85,22 @@ function openEditType(row: DictTypeVO) {
 }
 
 async function submitType() {
-  await typeFormRef.value?.validate()
-  if (typeDialogMode.value === 'create') {
-    await createDictType({ ...typeForm })
-    ElMessage.success('类型已创建')
-  } else if (editingTypeId.value != null) {
-    await updateDictType(editingTypeId.value, { ...typeForm })
-    ElMessage.success('类型已更新')
+  if (typeSubmitting.value) return
+  typeSubmitting.value = true
+  try {
+    await typeFormRef.value?.validate()
+    if (typeDialogMode.value === 'create') {
+      await createDictType({ ...typeForm })
+      ElMessage.success('类型已创建')
+    } else if (editingTypeId.value != null) {
+      await updateDictType(editingTypeId.value, { ...typeForm })
+      ElMessage.success('类型已更新')
+    }
+    typeDialogVisible.value = false
+    await loadTypes()
+  } finally {
+    typeSubmitting.value = false
   }
-  typeDialogVisible.value = false
-  await loadTypes()
 }
 
 async function handleDeleteType(row: DictTypeVO) {
@@ -113,17 +120,26 @@ async function handleDeleteType(row: DictTypeVO) {
 
 const itemLoading = ref(false)
 const items = ref<DictItemVO[]>([])
+let itemRequestId = 0
 
 async function loadItems() {
-  if (!activeType.value) {
+  const requestId = ++itemRequestId
+  const selectedType = activeType.value?.dictType
+  if (!selectedType) {
     items.value = []
+    itemLoading.value = false
     return
   }
   itemLoading.value = true
   try {
-    items.value = await listDictItems(activeType.value.dictType)
+    const nextItems = await listDictItems(selectedType)
+    if (requestId === itemRequestId && activeType.value?.dictType === selectedType) {
+      items.value = nextItems
+    }
   } finally {
-    itemLoading.value = false
+    if (requestId === itemRequestId) {
+      itemLoading.value = false
+    }
   }
 }
 
@@ -133,6 +149,7 @@ const itemDialogVisible = ref(false)
 const itemDialogMode = ref<'create' | 'edit'>('create')
 const itemFormRef = ref<FormInstance>()
 const editingItemId = ref<number | null>(null)
+const itemSubmitting = ref(false)
 const itemForm = reactive<DictItemSaveRequest>({ itemKey: '', itemLabel: '', sort: 0, enabled: true, remark: '' })
 
 const itemRules: FormRules = {
@@ -158,18 +175,24 @@ function openEditItem(row: DictItemVO) {
 }
 
 async function submitItem() {
-  await itemFormRef.value?.validate()
-  if (itemDialogMode.value === 'create') {
-    if (!activeType.value) return
-    await createDictItem(activeType.value.dictType, { ...itemForm })
-    ElMessage.success('字典项已创建')
-  } else if (editingItemId.value != null) {
-    await updateDictItem(editingItemId.value, { ...itemForm })
-    ElMessage.success('字典项已更新')
+  if (itemSubmitting.value) return
+  itemSubmitting.value = true
+  try {
+    await itemFormRef.value?.validate()
+    if (itemDialogMode.value === 'create') {
+      if (!activeType.value) return
+      await createDictItem(activeType.value.dictType, { ...itemForm })
+      ElMessage.success('字典项已创建')
+    } else if (editingItemId.value != null) {
+      await updateDictItem(editingItemId.value, { ...itemForm })
+      ElMessage.success('字典项已更新')
+    }
+    itemDialogVisible.value = false
+    await loadItems()
+    await refreshTypeCounts()
+  } finally {
+    itemSubmitting.value = false
   }
-  itemDialogVisible.value = false
-  await loadItems()
-  await refreshTypeCounts()
 }
 
 async function toggleItem(row: DictItemVO) {
@@ -217,7 +240,7 @@ onMounted(loadTypes)
         <template #header>
           <div class="panel-header">
             <span>字典类型</span>
-            <el-button v-permission="'dict:add'" type="primary" size="small" @click="openCreateType">新增类型</el-button>
+            <el-button v-permission="'dict:add'" class="cw-final-action" type="primary" size="small" @click="openCreateType">新增类型</el-button>
           </div>
         </template>
         <el-input v-model="typeKeyword" placeholder="按编码或名称过滤" clearable class="type-filter" />
@@ -230,10 +253,16 @@ onMounted(loadTypes)
         >
           <el-table-column label="类型" min-width="140">
             <template #default="{ row }">
-              <div class="type-cell">
+              <button
+                type="button"
+                class="type-cell"
+                :aria-label="`选择字典类型 ${row.typeName}`"
+                :aria-pressed="row.id === activeType?.id"
+                @click.stop="selectType(row)"
+              >
                 <span class="type-name">{{ row.typeName }}</span>
                 <span class="type-code">{{ row.dictType }}</span>
-              </div>
+              </button>
             </template>
           </el-table-column>
           <el-table-column label="项数" width="60" align="center">
@@ -321,7 +350,7 @@ onMounted(loadTypes)
       </el-form>
       <template #footer>
         <el-button @click="typeDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitType">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="typeSubmitting" @click="submitType">保存类型</el-button>
       </template>
     </el-dialog>
 
@@ -350,7 +379,7 @@ onMounted(loadTypes)
       </el-form>
       <template #footer>
         <el-button @click="itemDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitItem">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="itemSubmitting" @click="submitItem">保存字典项</el-button>
       </template>
     </el-dialog>
   </div>
@@ -362,14 +391,14 @@ onMounted(loadTypes)
 }
 
 .layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
   gap: 12px;
   align-items: flex-start;
 }
 
 .type-panel {
-  width: 420px;
-  flex-shrink: 0;
+  width: auto;
 }
 
 .item-panel {
@@ -390,7 +419,24 @@ onMounted(loadTypes)
 .type-cell {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  padding: 4px 2px;
+  color: inherit;
+  text-align: left;
+  border: 0;
+  border-radius: var(--cw-radius-sm);
+  background: transparent;
   cursor: pointer;
+  font: inherit;
+}
+
+.type-cell:hover {
+  background: var(--el-fill-color-light);
+}
+
+.type-cell:focus-visible {
+  outline: 2px solid var(--cw-focus-ring);
+  outline-offset: 1px;
 }
 
 .type-name {
@@ -398,11 +444,22 @@ onMounted(loadTypes)
 }
 
 .type-code {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
 }
 
 :deep(.active-row) {
-  background: var(--el-color-primary-light-9);
+  background: color-mix(in srgb, var(--cw-cobalt) 9%, var(--cw-paper));
+}
+
+@media (max-width: 767px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .type-panel,
+  .item-panel {
+    width: 100%;
+  }
 }
 </style>

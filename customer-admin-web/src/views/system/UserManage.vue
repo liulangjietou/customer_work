@@ -13,6 +13,7 @@ import { pageRoles } from '@/api/role'
 import { fetchCurrentView } from '@/api/tenant'
 import { useAuthStore } from '@/store/auth'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type {
   RoleVO,
   UserApprovalRoleOption,
@@ -50,7 +51,7 @@ const reviewTenantMode = ref<'existing' | 'new'>('existing')
 const reviewNewTenant = reactive({ tenantCode: '', tenantName: '' })
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, deletingId, list, total, query,
   dialogVisible, dialogMode, form,
   loadList, handleSearch, openCreate, openEdit: openEditCrud, handleSubmit, handleDelete,
 } = useCrudPage<UserVO, UserPageQuery, UserSaveRequest>({
@@ -207,6 +208,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按用户名搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
@@ -220,11 +222,13 @@ onMounted(async () => {
           <el-option label="已拒绝" value="REJECTED" />
         </el-select>
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'user:add'" type="primary" @click="openCreate">新建用户</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'user:add'" class="cw-final-action" type="primary" @click="openCreate">新建用户</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="username" label="用户名" />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的用户">
+        <el-table-column prop="username" label="用户名" class-name="primary-column" />
         <el-table-column prop="tenantId" label="归属租户" min-width="120" />
         <el-table-column prop="nickname" label="昵称" />
         <el-table-column label="邮箱" min-width="160" show-overflow-tooltip>
@@ -233,12 +237,12 @@ onMounted(async () => {
         <el-table-column label="角色">
           <template #default="{ row }">{{ row.roleNames?.join('、') || '-' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="审核状态" width="100">
+        <el-table-column label="审核状态" width="100" align="center">
           <template #default="{ row }">
             <el-tag :type="approvalTagType(row.approvalStatus)">{{ approvalText(row.approvalStatus) }}</el-tag>
           </template>
@@ -258,7 +262,7 @@ onMounted(async () => {
               {{ row.approvalStatus === 'PENDING' ? '审核' : '重新审核' }}
             </el-button>
             <el-button v-permission="'user:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'user:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'user:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -268,7 +272,7 @@ onMounted(async () => {
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -307,7 +311,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存用户</el-button>
       </template>
     </el-dialog>
 
@@ -400,7 +404,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="reviewDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="reviewSubmitting" @click="submitReview">确认审核</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="reviewSubmitting" @click="submitReview">确认审核</el-button>
       </template>
     </el-dialog>
   </div>
@@ -409,8 +413,37 @@ onMounted(async () => {
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 
 .review-user {

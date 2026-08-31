@@ -234,7 +234,7 @@ async function handleGateOverride() {
 <template>
   <el-drawer v-model="visible" title="渠道绑定" size="980px">
     <div class="toolbar">
-      <el-button v-permission="'agent:edit'" type="primary" @click="openCreate">新建绑定</el-button>
+      <el-button v-permission="'agent:edit'" class="cw-final-action" type="primary" @click="openCreate">新建绑定</el-button>
     </div>
 
     <el-table v-loading="loading" :data="list" style="width: 100%">
@@ -309,7 +309,7 @@ async function handleGateOverride() {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存绑定</el-button>
       </template>
     </el-dialog>
 

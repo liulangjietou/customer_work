@@ -193,7 +193,7 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <el-alert type="info" :closable="false" show-icon title="钉钉机器人接入指引" style="margin-bottom: 16px">
+    <el-alert type="info" :closable="false" show-icon title="钉钉机器人接入指引">
       <template #default>
         <div>1. 到钉钉开放平台创建「企业内部应用」。</div>
         <div>2. 为应用添加「机器人」能力。</div>
@@ -202,7 +202,7 @@ onMounted(() => {
       </template>
     </el-alert>
 
-    <el-alert type="warning" :closable="false" show-icon title="微信公众号接入指引" style="margin-bottom: 16px">
+    <el-alert type="warning" :closable="false" show-icon title="微信公众号接入指引">
       <template #default>
         <div>
           1. 申请
@@ -232,19 +232,21 @@ onMounted(() => {
           @keyup.enter="handleSearch"
         />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'channel-robot:add'" type="primary" @click="openCreate">新增机器人</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'channel-robot:add'" class="cw-final-action" type="primary" @click="openCreate">新增机器人</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column label="渠道类型" width="110">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的渠道机器人">
+        <el-table-column label="渠道类型" width="110" align="center">
           <template #default="{ row }: { row: ChannelRobotVO }">
             <el-tag :type="channelMetaOf(row.channelType).tagType">{{ channelMetaOf(row.channelType).label }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="robotName" label="机器人名称" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="robotName" label="机器人名称" min-width="140" show-overflow-tooltip class-name="primary-column" />
         <el-table-column prop="appKey" label="AppKey" min-width="160" show-overflow-tooltip />
         <el-table-column prop="robotCode" label="RobotCode" min-width="160" show-overflow-tooltip />
-        <el-table-column label="回调模式" width="100">
+        <el-table-column label="回调模式" width="100" align="center">
           <template #default="{ row }: { row: ChannelRobotVO }">
             <el-tag v-if="row.channelType === 'wechat'" :type="row.callbackMode === 'safe' ? 'success' : 'warning'" effect="plain">
               {{ row.callbackMode === 'safe' ? '安全' : '明文' }}
@@ -257,14 +259,14 @@ onMounted(() => {
             {{ agentNameOf(row.agentCode) }}
           </template>
         </el-table-column>
-        <el-table-column label="会话模式" width="100">
+        <el-table-column label="会话模式" width="100" align="center">
           <template #default="{ row }: { row: ChannelRobotVO }">
             <el-tag :type="row.sessionMode === 'per_message' ? 'warning' : 'success'" effect="plain">
               {{ row.sessionMode === 'per_message' ? '单次问答' : '持续会话' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }: { row: ChannelRobotVO }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
           </template>
@@ -284,7 +286,7 @@ onMounted(() => {
         v-model:page-size="query.size"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="handlePageChange"
       />
     </el-card>
@@ -301,7 +303,7 @@ onMounted(() => {
               :disabled="!c.selectable"
             >
               <span>{{ c.label }}</span>
-              <span v-if="!c.selectable" style="float: right; color: #c0c4cc; font-size: 12px">即将支持</span>
+              <span v-if="!c.selectable" style="float: right; color: var(--el-text-color-placeholder); font-size: 12px">即将支持</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -374,7 +376,7 @@ onMounted(() => {
               :disabled="agent.status !== 1"
             >
               <span>{{ agent.agentName }}</span>
-              <span v-if="agent.status !== 1" style="float: right; color: #c0c4cc; font-size: 12px">已停用</span>
+              <span v-if="agent.status !== 1" style="float: right; color: var(--el-text-color-placeholder); font-size: 12px">已停用</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -396,7 +398,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存机器人</el-button>
       </template>
     </el-dialog>
   </div>
@@ -405,8 +407,26 @@ onMounted(() => {
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .form-tip {
@@ -417,5 +437,16 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.5;
   margin-top: 4px;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 </style>

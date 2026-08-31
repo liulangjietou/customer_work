@@ -161,18 +161,20 @@ onMounted(loadList)
           <el-option label="已退租" value="TERMINATED" />
         </el-select>
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'tenant:add'" type="primary" @click="openCreate">新建租户</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'tenant:add'" class="cw-final-action" type="primary" @click="openCreate">新建租户</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的租户">
         <el-table-column prop="tenantCode" label="租户编码" width="160">
           <template #default="{ row }">
             {{ row.tenantCode }}
             <el-tag v-if="row.reserved" size="small" type="info" style="margin-left: 6px">系统保留</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="tenantName" label="租户名称" />
-        <el-table-column label="状态" width="100">
+        <el-table-column prop="tenantName" label="租户名称" class-name="primary-column" />
+        <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
             <el-tag :type="STATUS_LABELS[row.status]?.type ?? 'info'">
               {{ STATUS_LABELS[row.status]?.text ?? row.status }}
@@ -235,7 +237,7 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -275,7 +277,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" @click="submit">保存租户</el-button>
       </template>
     </el-dialog>
   </div>
@@ -284,8 +286,37 @@ onMounted(loadList)
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 
 .form-tip {

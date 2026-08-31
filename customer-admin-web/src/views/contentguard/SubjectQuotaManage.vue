@@ -33,6 +33,7 @@ const levelDialogVisible = ref(false)
 const levelDialogMode = ref<'create' | 'edit'>('create')
 const levelFormRef = ref<FormInstance>()
 const levelForm = reactive<SubjectQuotaLevelSaveRequest>(initLevelForm())
+const levelSubmitting = ref(false)
 
 function initLevelForm(): SubjectQuotaLevelSaveRequest {
   return {
@@ -73,12 +74,18 @@ function openLevelEdit(row: SubjectQuotaLevelVO) {
 }
 
 async function submitLevel() {
+  if (levelSubmitting.value) return
   if (!levelFormRef.value) return
-  await levelFormRef.value.validate()
-  await saveSubjectQuotaLevel({ ...levelForm })
-  ElMessage.success('已保存。后台档位立即生效，客服端档位最长 60 秒')
-  levelDialogVisible.value = false
-  await loadLevels()
+  levelSubmitting.value = true
+  try {
+    await levelFormRef.value.validate()
+    await saveSubjectQuotaLevel({ ...levelForm })
+    ElMessage.success('已保存。后台档位立即生效，客服端档位最长 60 秒')
+    levelDialogVisible.value = false
+    await loadLevels()
+  } finally {
+    levelSubmitting.value = false
+  }
 }
 
 async function removeLevel(row: SubjectQuotaLevelVO) {
@@ -215,7 +222,7 @@ onMounted(async () => {
       <el-tab-pane label="额度等级" name="levels">
         <el-card>
           <div class="toolbar">
-            <el-button v-permission="'subject-quota:level-edit'" type="primary" @click="openLevelCreate">
+            <el-button v-permission="'subject-quota:level-edit'" class="cw-final-action" type="primary" @click="openLevelCreate">
               新增等级
             </el-button>
             <el-button @click="loadLevels">刷新</el-button>
@@ -499,7 +506,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="levelDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitLevel">保存</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="levelSubmitting" @click="submitLevel">保存配额层级</el-button>
       </template>
     </el-dialog>
   </div>
@@ -507,7 +514,7 @@ onMounted(async () => {
 
 <style scoped>
 .page {
-  padding: 16px;
+  min-width: 0;
 }
 
 .notice {
@@ -522,7 +529,7 @@ onMounted(async () => {
 }
 
 .hint {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
 }
 
@@ -532,8 +539,15 @@ onMounted(async () => {
 }
 
 .form-hint {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+@media (max-width: 767px) {
+  .hint {
+    flex-basis: 100%;
+    line-height: 1.6;
+  }
 }
 </style>

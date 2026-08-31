@@ -10,19 +10,17 @@ import {
   updateKnowledgeBaseStatus,
 } from '@/api/knowledgeBase'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { KnowledgeBaseSaveRequest, KnowledgeBaseVO, PageQuery } from '@/types/api'
 import KnowledgeSourceDrawer from './components/KnowledgeSourceDrawer.vue'
 
 const testingId = ref<number | null>(null)
-// 保存会触发后端同步实测连通性（可达数秒），单独维护提交中状态给保存按钮加 loading，
-// 不进 useCrudPage（该动作是本页特有的耗时语义，composable 只收敛通用 CRUD 状态机）。
-const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const knowledgeOpsVisible = ref(false)
 const knowledgeOpsRow = ref<KnowledgeBaseVO | null>(null)
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, deletingId, list, total, query,
   dialogVisible, dialogMode, form,
   loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
 } = useCrudPage<KnowledgeBaseVO, PageQuery, KnowledgeBaseSaveRequest>({
@@ -72,15 +70,6 @@ function validateExtraHeadersJson(_rule: unknown, value: string, callback: (erro
   }
 }
 
-async function handleSubmitWithLoading() {
-  submitting.value = true
-  try {
-    await handleSubmit()
-  } finally {
-    submitting.value = false
-  }
-}
-
 async function handleTest(row: KnowledgeBaseVO) {
   testingId.value = row.id
   try {
@@ -114,15 +103,18 @@ onMounted(loadList)
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按知识库名称搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'knowledge-base:add'" type="primary" @click="openCreate">新建知识库</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'knowledge-base:add'" class="cw-final-action" type="primary" @click="openCreate">新建知识库</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column prop="kbName" label="知识库名称" />
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的知识库">
+        <el-table-column prop="kbName" label="知识库名称" class-name="primary-column" />
         <el-table-column prop="baseUrl" label="服务地址" show-overflow-tooltip />
         <el-table-column prop="appId" label="app_id" width="140" />
         <el-table-column label="appkey" width="140">
@@ -136,12 +128,12 @@ onMounted(loadList)
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="连通性" width="140">
+        <el-table-column label="连通性" width="140" align="center">
           <template #default="{ row }">
             <el-tooltip :content="row.testTime ? `测试时间：${row.testTime}` : '尚未测试'" placement="top">
               <el-tag :type="testStatusMap[row.testStatus]?.type ?? 'info'">{{ testStatusMap[row.testStatus]?.label ?? '未测试' }}</el-tag>
@@ -157,7 +149,7 @@ onMounted(loadList)
             <el-button v-permission="'knowledge-base:edit'" link type="primary" @click="handleToggleStatus(row)">
               {{ row.status === 1 ? '停用' : '启用' }}
             </el-button>
-            <el-button v-permission="'knowledge-base:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'knowledge-base:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -167,7 +159,7 @@ onMounted(loadList)
         v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadList"
       />
     </el-card>
@@ -213,7 +205,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleSubmitWithLoading">确定</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存知识库</el-button>
       </template>
     </el-dialog>
 
@@ -228,8 +220,37 @@ onMounted(loadList)
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 
 .score-hint {

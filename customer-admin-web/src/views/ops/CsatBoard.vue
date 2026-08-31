@@ -75,7 +75,7 @@ onMounted(loadData)
 
 <template>
   <div class="csat-board">
-    <el-card shadow="never">
+    <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-input v-model="query.scopeId" placeholder="租户码" style="width: 160px" />
         <el-select v-model="query.days" style="width: 130px">
@@ -86,35 +86,35 @@ onMounted(loadData)
         <el-button type="primary" :loading="loading" @click="loadData">查询</el-button>
         <span class="hint">CSAT 是按周看的指标，按天看噪声太大</span>
       </div>
-
-      <div v-loading="loading" class="stats">
-        <div class="stat">
-          <div class="stat-value stat-primary">{{ formatPercent(summary?.csat) }}</div>
-          <div class="stat-label">CSAT（4 分及以上占回收数）</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value" :class="{ 'stat-warn': responseRateTooLow }">
-            {{ formatPercent(summary?.responseRate) }}
-          </div>
-          <div class="stat-label">回收率（{{ summary?.answered ?? 0 }} / {{ summary?.invited ?? 0 }}）</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">{{ formatScore(summary?.averageScore) }}</div>
-          <div class="stat-label">平均分（辅助看，主指标是 CSAT）</div>
-        </div>
-      </div>
-
-      <el-alert
-        v-if="responseRateTooLow"
-        class="section"
-        type="warning"
-        show-icon
-        :closable="false"
-        title="回收率偏低，上面的 CSAT 不可尽信"
-        description="愿意主动评价的往往是特别满意或特别不满的两头，中间的沉默大多数不在样本里。
-          此时这个分数更像是「两极用户的比例」而非整体满意度。"
-      />
     </el-card>
+
+    <div v-loading="loading" class="stats">
+      <div class="stat">
+        <div class="stat-value stat-primary">{{ formatPercent(summary?.csat) }}</div>
+        <div class="stat-label">CSAT（4 分及以上占回收数）</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" :class="{ 'stat-warn': responseRateTooLow }">
+          {{ formatPercent(summary?.responseRate) }}
+        </div>
+        <div class="stat-label">回收率（{{ summary?.answered ?? 0 }} / {{ summary?.invited ?? 0 }}）</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">{{ formatScore(summary?.averageScore) }}</div>
+        <div class="stat-label">平均分（辅助看，主指标是 CSAT）</div>
+      </div>
+    </div>
+
+    <el-alert
+      v-if="responseRateTooLow"
+      class="section"
+      type="warning"
+      show-icon
+      :closable="false"
+      title="回收率偏低，上面的 CSAT 不可尽信"
+      description="愿意主动评价的往往是特别满意或特别不满的两头，中间的沉默大多数不在样本里。
+        此时这个分数更像是「两极用户的比例」而非整体满意度。"
+    />
 
     <el-card shadow="never">
       <div class="section-title">
@@ -151,7 +151,7 @@ onMounted(loadData)
 .csat-board {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .toolbar {
@@ -162,38 +162,57 @@ onMounted(loadData)
   flex-wrap: wrap;
 }
 
+.filter-card .toolbar {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .stats {
-  display: flex;
-  gap: 56px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  min-height: 88px;
+  padding: 15px 16px 14px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: var(--cw-paper);
+  box-shadow: var(--cw-shadow-xs);
 }
 
 .stat-value {
-  font-size: 30px;
-  font-weight: 600;
+  font-size: 27px;
+  font-weight: 720;
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-primary {
-  color: var(--el-color-primary);
+  color: var(--cw-cobalt);
 }
 
 .stat-warn {
-  color: var(--el-color-warning);
+  color: var(--cw-amber);
 }
 
 .stat-label {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
   margin-top: 4px;
 }
 
 .section {
-  margin-top: 16px;
+  margin: 0;
 }
 
 .section-title {
-  font-weight: 600;
+  color: var(--cw-text);
+  font-weight: 700;
   margin-bottom: 12px;
   display: flex;
   align-items: baseline;
@@ -201,12 +220,30 @@ onMounted(loadData)
 }
 
 .hint {
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-size: 12px;
   font-weight: 400;
 }
 
 .muted {
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-text-muted);
+  opacity: 0.72;
+}
+
+@media (max-width: 767px) {
+  .stats {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .section-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 480px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

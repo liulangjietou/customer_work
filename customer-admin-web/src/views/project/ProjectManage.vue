@@ -122,17 +122,19 @@ loadList()
       <div class="toolbar">
         <el-input v-model="keyword" placeholder="按项目名搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button type="primary" @click="openCreate">新建 Project</el-button>
+        <div class="toolbar-actions">
+          <el-button class="cw-final-action" type="primary" @click="openCreate">新建 Project</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
-        <el-table-column label="项目名称">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="还没有项目，点击“新建 Project”开始整理会话">
+        <el-table-column label="项目名称" class-name="primary-column">
           <template #default="{ row }">
             <el-link type="primary" :underline="false" @click="openDetail(row)">{{ row.projectName }}</el-link>
           </template>
         </el-table-column>
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
-        <el-table-column label="会话数" width="90">
+        <el-table-column label="会话数" width="90" align="center">
           <template #default="{ row }">
             <el-tag size="small">{{ row.sessionCount }}</el-tag>
           </template>
@@ -146,7 +148,6 @@ loadList()
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!loading && list.length === 0" description="还没有项目，点右上角新建一个" />
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建 Project' : '编辑 Project'" width="480px">
@@ -160,12 +161,12 @@ loadList()
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存 Project</el-button>
       </template>
     </el-dialog>
 
     <el-drawer v-model="detailVisible" :title="detailProject ? `Project · ${detailProject.projectName}` : 'Project'" size="480px">
-      <el-table v-loading="detailLoading" :data="detailSessions" style="width: 100%">
+      <el-table v-loading="detailLoading" :data="detailSessions" style="width: 100%" empty-text="还没有会话，去对话页把会话加入这个项目">
         <el-table-column label="会话">
           <template #default="{ row }: { row: ProjectSessionVO }">
             <template v-if="row.stale">
@@ -188,7 +189,6 @@ loadList()
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-if="!detailLoading && detailSessions.length === 0" description="还没有会话，去对话页把会话加入这个项目" />
     </el-drawer>
   </div>
 </template>
@@ -196,8 +196,26 @@ loadList()
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .session-preview {
@@ -212,5 +230,16 @@ loadList()
   margin-top: 4px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 </style>

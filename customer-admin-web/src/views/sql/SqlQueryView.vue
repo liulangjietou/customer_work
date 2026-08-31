@@ -19,6 +19,8 @@ const result = ref<SqlQueryResultVO | null>(null)
 const paramValues = reactive<Record<string, unknown>>({})
 const pageNum = ref(1)
 const pageSize = ref(DEFAULT_PAGE_SIZE)
+let metaRequestId = 0
+let queryRequestId = 0
 
 /** 排除分页标记参数后的表单参数，按 sort 升序渲染。 */
 const formParams = computed(() =>
@@ -87,11 +89,19 @@ function buildParams(): Record<string, unknown> {
 
 async function runQuery() {
   if (!meta.value) return
+  const requestId = ++queryRequestId
+  const defineKey = meta.value.defineKey
+  const params = buildParams()
   executing.value = true
   try {
-    result.value = await executeSqlQuery({ defineKey: meta.value.defineKey, params: buildParams() })
+    const nextResult = await executeSqlQuery({ defineKey, params })
+    if (requestId === queryRequestId && route.query.defineKey === defineKey) {
+      result.value = nextResult
+    }
   } finally {
-    executing.value = false
+    if (requestId === queryRequestId) {
+      executing.value = false
+    }
   }
 }
 
@@ -139,24 +149,37 @@ async function handleExport() {
 }
 
 async function load() {
+  const requestId = ++metaRequestId
   const defineKey = route.query.defineKey as string | undefined
+  // 路由切换立即作废旧查询，旧响应不得覆盖新报表或提前关闭 loading。
+  queryRequestId += 1
+  executing.value = false
   meta.value = null
   result.value = null
   loadError.value = null
   if (!defineKey) {
+    metaLoading.value = false
     return
   }
   metaLoading.value = true
   try {
-    meta.value = await fetchSqlQueryMeta(defineKey)
+    const nextMeta = await fetchSqlQueryMeta(defineKey)
+    if (requestId !== metaRequestId || route.query.defineKey !== defineKey) {
+      return
+    }
+    meta.value = nextMeta
     resetParamValues()
-    if (meta.value.autoLoad) {
+    if (nextMeta.autoLoad) {
       await runQuery()
     }
   } catch (e) {
-    loadError.value = (e as { message?: string })?.message || '加载查询配置失败'
+    if (requestId === metaRequestId) {
+      loadError.value = (e as { message?: string })?.message || '加载查询配置失败'
+    }
   } finally {
-    metaLoading.value = false
+    if (requestId === metaRequestId) {
+      metaLoading.value = false
+    }
   }
 }
 
@@ -173,7 +196,9 @@ watch(() => route.query.defineKey, load, { immediate: true })
 
         <template v-if="meta">
           <div class="page-header">
-            <h3>{{ meta.sqlDescribe || meta.defineKey }}</h3>
+            <span>QUERY CONTRACT</span>
+            <h2>{{ meta.sqlDescribe || meta.defineKey }}</h2>
+            <code>{{ meta.defineKey }}</code>
           </div>
 
           <el-form :model="paramValues" inline class="param-form">
@@ -222,7 +247,7 @@ watch(() => route.query.defineKey, load, { immediate: true })
 
           <div v-if="result" class="result-meta">耗时 {{ result.useMillis }} ms，共 {{ result.rows.length }} 行</div>
 
-          <el-table v-loading="executing" :data="result?.rows ?? []" style="width: 100%" border>
+          <el-table v-if="result" v-loading="executing" :data="result.rows" style="width: 100%" border>
             <el-table-column
               v-for="col in result?.columns ?? []"
               :key="col"
@@ -232,6 +257,7 @@ watch(() => route.query.defineKey, load, { immediate: true })
               min-width="120"
             />
           </el-table>
+          <el-empty v-if="!result && !executing" description="设置查询条件后执行，结果与耗时会保留在当前工作面" :image-size="72" />
           <el-empty v-if="result && result.rows.length === 0" description="没有查询到数据" />
 
           <div v-if="result" class="pagination-bar">
@@ -259,13 +285,29 @@ watch(() => route.query.defineKey, load, { immediate: true })
 
 <style scoped>
 .page-header {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--cw-line);
 }
 
-.page-header h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+.page-header > span {
+  color: var(--cw-cobalt);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.page-header h2 {
+  margin: 5px 0 6px;
+  color: var(--cw-text);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+
+.page-header code {
+  color: var(--cw-text-muted);
+  font-size: 12px;
 }
 
 .param-form {
@@ -275,7 +317,7 @@ watch(() => route.query.defineKey, load, { immediate: true })
 .result-meta {
   margin-bottom: 8px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
 }
 
 .pagination-bar {
@@ -291,7 +333,20 @@ watch(() => route.query.defineKey, load, { immediate: true })
 }
 
 .simple-pager-current {
-  color: var(--el-text-color-regular);
+  color: var(--cw-text-muted);
   font-size: 13px;
+}
+
+@media (max-width: 767px) {
+  .pagination-bar,
+  .simple-pager {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .simple-pager {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+  }
 }
 </style>

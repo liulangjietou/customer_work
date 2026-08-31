@@ -378,7 +378,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="grayVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitGray">创建安全灰度任务</el-button>
+        <el-button class="cw-final-action" type="primary" @click="submitGray">创建安全灰度任务</el-button>
       </template>
     </el-dialog>
 
@@ -409,6 +409,7 @@ onMounted(async () => {
 
 .approval-card {
   margin-top: 16px;
+  border-top: 3px solid var(--cw-cobalt);
 }
 
 .card-head {
@@ -419,7 +420,7 @@ onMounted(async () => {
 
 .hash-line {
   margin-top: 4px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
@@ -427,13 +428,13 @@ onMounted(async () => {
 .tip {
   margin-top: 12px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   line-height: 1.7;
 }
 
 .form-tip {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
   line-height: 1.6;
 }
 
@@ -443,32 +444,33 @@ onMounted(async () => {
   align-items: center;
   margin-bottom: 12px;
   font-size: 13px;
-  color: var(--el-text-color-regular);
+  color: var(--cw-text-muted);
 }
 
 .diff-body {
   max-height: 65vh;
   overflow: auto;
-  border: 1px solid var(--el-border-color);
-  border-radius: 4px;
+  border: 1px solid var(--cw-line);
+  border-radius: var(--cw-radius-md);
+  background: var(--cw-paper);
 }
 
 .diff-row {
   display: grid;
   grid-template-columns: 56px 1fr 1fr;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--cw-line);
 }
 
 .diff-row.changed {
-  background: var(--el-color-warning-light-9);
+  background: color-mix(in srgb, var(--cw-amber) 12%, var(--cw-paper));
 }
 
 .diff-no {
   padding: 2px 8px;
-  color: var(--el-text-color-placeholder);
+  color: var(--cw-text-muted);
   text-align: right;
   font-size: 12px;
-  border-right: 1px solid var(--el-border-color-lighter);
+  border-right: 1px solid var(--cw-line);
 }
 
 .diff-cell {
@@ -476,8 +478,16 @@ onMounted(async () => {
   padding: 2px 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+  color: var(--cw-text);
   white-space: pre-wrap;
   word-break: break-all;
-  border-right: 1px solid var(--el-border-color-lighter);
+  border-right: 1px solid var(--cw-line);
+}
+
+@media (max-width: 767px) {
+  .card-head {
+    align-items: flex-start;
+    gap: 8px;
+  }
 }
 </style>

@@ -218,7 +218,6 @@ onMounted(() => {
       :closable="false"
       show-icon
       title="当前为内置调度模式：调度周期（cron）直接在本页配置，无需外部 XXL-JOB"
-      style="margin-bottom: 16px"
     >
       <template #default>
         <div>任务「启用」且填写了 cron 时按周期自动执行；cron 留空则仅可手动触发。</div>
@@ -231,7 +230,6 @@ onMounted(() => {
       :closable="false"
       show-icon
       title="当前为 XXL-JOB 调度模式：调度周期与启停在公司 XXL-JOB 控制台配置，本页 cron 仅保存展示"
-      style="margin-bottom: 16px"
     >
       <template #default>
         <div>执行器 JobHandler 填 <code>agentScheduledTask</code>，执行器参数填本页对应任务的「任务编码」。</div>
@@ -243,12 +241,14 @@ onMounted(() => {
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按任务编码/名称搜索" style="width: 240px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
-        <el-button v-permission="'scheduler:add'" type="primary" @click="openCreate">新建定时任务</el-button>
+        <div class="toolbar-actions">
+          <el-button v-permission="'scheduler:add'" class="cw-final-action" type="primary" @click="openCreate">新建定时任务</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的定时任务">
         <el-table-column prop="taskCode" label="任务编码" width="180" />
-        <el-table-column prop="taskName" label="任务名称" />
+        <el-table-column prop="taskName" label="任务名称" class-name="primary-column" />
         <el-table-column label="关联智能体" width="160">
           <template #default="{ row }: { row: ScheduledTaskVO }">
             {{ row.agentName || `#${row.agentId}` }}
@@ -260,7 +260,7 @@ onMounted(() => {
             <span v-else class="cron-empty">仅手动触发</span>
           </template>
         </el-table-column>
-        <el-table-column label="启用状态" width="100">
+        <el-table-column label="启用状态" width="100" align="center">
           <template #default="{ row }: { row: ScheduledTaskVO }">
             <el-switch
               v-permission="'scheduler:edit'"
@@ -294,7 +294,7 @@ onMounted(() => {
         v-model:page-size="query.size"
         :total="total"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="handlePageChange"
       />
     </el-card>
@@ -317,7 +317,7 @@ onMounted(() => {
               :disabled="agent.status !== 1"
             >
               <span>{{ agent.agentName }}</span>
-              <span v-if="agent.status !== 1" style="float: right; color: #c0c4cc; font-size: 12px">已停用</span>
+              <span v-if="agent.status !== 1" style="float: right; color: var(--el-text-color-placeholder); font-size: 12px">已停用</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -341,7 +341,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit">确定</el-button>
+        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存任务</el-button>
       </template>
     </el-dialog>
 
@@ -368,7 +368,7 @@ onMounted(() => {
     </el-dialog>
 
     <el-drawer v-model="runsVisible" :title="`执行历史 · ${runsTaskName}`" size="640px">
-      <el-table v-loading="runsLoading" :data="runsList" style="width: 100%">
+      <el-table v-loading="runsLoading" :data="runsList" style="width: 100%" empty-text="暂无执行记录">
         <el-table-column label="触发方式" width="100">
           <template #default="{ row }: { row: ScheduledTaskRunVO }">
             <el-tag :type="row.triggerType === 'MANUAL' ? 'warning' : 'info'" size="small">
@@ -382,7 +382,7 @@ onMounted(() => {
             {{ row.costMs != null ? `${row.costMs} ms` : '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="80">
+        <el-table-column label="状态" width="80" align="center">
           <template #default="{ row }: { row: ScheduledTaskRunVO }">
             <el-tag :type="row.status === 'SUCCESS' ? 'success' : 'danger'" size="small">
               {{ row.status === 'SUCCESS' ? '成功' : '失败' }}
@@ -395,13 +395,12 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-if="!runsLoading && runsList.length === 0" description="还没有执行记录" />
       <el-pagination
         v-model:current-page="runsQuery.current"
         v-model:page-size="runsQuery.size"
         :total="runsTotal"
         layout="total, prev, pager, next"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="pagination"
         @current-change="loadRuns"
       />
     </el-drawer>
@@ -420,8 +419,26 @@ onMounted(() => {
 <style scoped>
 .toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.data-table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:deep(.primary-column .cell) {
+  color: var(--cw-text);
+  font-weight: 650;
 }
 
 .cron-empty {
@@ -448,5 +465,16 @@ onMounted(() => {
   word-break: break-word;
   max-height: 50vh;
   overflow-y: auto;
+}
+
+@media (max-width: 767px) {
+  .toolbar-actions {
+    margin-left: 0;
+  }
+
+  .toolbar-actions > .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }
 </style>

@@ -80,6 +80,11 @@ export interface SloAlertEvent {
   occurredAt: string
 }
 
+export interface SloAlertSummary {
+  openCount: number
+  acknowledgedCount: number
+}
+
 export function listSloPolicies() {
   return request<SloPolicy[]>({ url: '/slo/policies', method: 'get' })
 }
@@ -94,6 +99,10 @@ export function evaluateSloPolicy(id: number) {
 
 export function listSloAlerts(status?: SloAlertStatus) {
   return request<SloAlert[]>({ url: '/slo/alerts', method: 'get', params: { status, limit: 200 } })
+}
+
+export function getSloAlertSummary() {
+  return request<SloAlertSummary>({ url: '/slo/alerts/summary', method: 'get' })
 }
 
 export function acknowledgeSloAlert(id: number) {

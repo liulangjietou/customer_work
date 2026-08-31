@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.slo.domain.SloAlertEventType;
 import com.richard.fyoung.customeradmin.slo.domain.SloAlertStatus;
 import com.richard.fyoung.customeradmin.slo.dto.SloAlertEventVO;
+import com.richard.fyoung.customeradmin.slo.dto.SloAlertSummaryVO;
 import com.richard.fyoung.customeradmin.slo.dto.SloAlertVO;
 import com.richard.fyoung.customeradmin.slo.dto.SloWindowEvaluation;
 import com.richard.fyoung.customeradmin.slo.entity.SloAlert;
@@ -102,6 +103,20 @@ public class SloAlertService {
                 alerts.stream().map(SloAlert::getPolicyId).distinct().toList())
             .stream().collect(Collectors.toMap(SloPolicy::getId, Function.identity()));
         return alerts.stream().map(alert -> toVO(alert, policies.get(alert.getPolicyId()))).toList();
+    }
+
+    /** 顶部指标必须直接聚合事实表，不能从最多 200 条的明细窗口反推。 */
+    public SloAlertSummaryVO summary() {
+        String tenantId = SloPolicyService.requireTenant();
+        return new SloAlertSummaryVO(
+            countByStatus(tenantId, SloAlertStatus.OPEN),
+            countByStatus(tenantId, SloAlertStatus.ACKED));
+    }
+
+    private long countByStatus(String tenantId, SloAlertStatus status) {
+        return alertMapper.selectCount(new QueryWrapper<SloAlert>()
+            .eq("tenant_id", tenantId)
+            .eq("status", status.name()));
     }
 
     public List<SloAlertEventVO> events(Long alertId) {

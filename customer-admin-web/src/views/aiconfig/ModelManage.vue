@@ -11,6 +11,7 @@ import {
   updateModel,
 } from '@/api/model'
 import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import { useAuthStore } from '@/store/auth'
 import type { ModelAssetOption, ModelSaveRequest, ModelVO, PageQuery } from '@/types/api'
 import ModelExperimentPanel from './components/ModelExperimentPanel.vue'
@@ -18,6 +19,8 @@ import ModelGovernanceDrawer from './components/ModelGovernanceDrawer.vue'
 import ModelRoutingPanel from './components/ModelRoutingPanel.vue'
 
 const testingId = ref<number | null>(null)
+const preflightingSave = ref(false)
+const deletingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 const assets = ref<ModelAssetOption[]>([])
 const assetMode = ref<'existing' | 'new'>('new')
@@ -27,7 +30,7 @@ const governanceModelId = ref<number | null>(null)
 const auth = useAuthStore()
 
 const {
-  loading, list, total, query,
+  loading, loadError, submitting, list, total, query,
   dialogVisible, dialogMode, editingId, form,
   loadList, handleSearch, openCreate, openEdit, handleSubmit: submitCrud,
 } = useCrudPage<ModelVO, PageQuery, ModelSaveRequest>({
@@ -112,6 +115,7 @@ const healthyCount = computed(() => list.value.filter((row) => row.health?.healt
 const unknownCount = computed(() => list.value.filter((row) => !row.health || row.health.healthStatus === 'UNKNOWN').length)
 const credentialRiskCount = computed(() => list.value.filter((row) =>
   row.credential && row.credential.status !== 'ACTIVE').length)
+const savePending = computed(() => preflightingSave.value || submitting.value)
 
 interface ProviderPreset {
   value: string
@@ -166,25 +170,34 @@ function openEditModel(row: ModelVO) {
 }
 
 async function handleSubmitModel() {
-  if (dialogMode.value === 'edit'
-    && editingId.value
-    && editingRow.value?.status === 1
-    && form.status === 0) {
-    const impact = await getModelImpact(editingId.value, 'DISABLE')
-    if (!impact.allowed) {
-      ElMessage.error(`禁用被阻断：仍有 ${impact.blockerCount} 个生效引用`)
-      openGovernance(editingRow.value)
-      return
+  if (savePending.value) return
+  preflightingSave.value = true
+  try {
+    if (dialogMode.value === 'edit'
+      && editingId.value
+      && editingRow.value?.status === 1
+      && form.status === 0) {
+      const impact = await getModelImpact(editingId.value, 'DISABLE')
+      if (!impact.allowed) {
+        ElMessage.error(`禁用被阻断：仍有 ${impact.blockerCount} 个生效引用`)
+        openGovernance(editingRow.value)
+        return
+      }
     }
+    if (assetMode.value === 'new') {
+      form.assetId = null
+    }
+    await submitCrud()
+    if (!dialogVisible.value) {
+      await loadAssets()
+    }
+  } finally {
+    preflightingSave.value = false
   }
-  if (assetMode.value === 'new') {
-    form.assetId = null
-  }
-  await submitCrud()
-  await loadAssets()
 }
 
 async function handleTest(row: ModelVO) {
+  if (testingId.value !== null) return
   testingId.value = row.id
   try {
     const result = await runModelHealthCheck(row.id)
@@ -200,20 +213,30 @@ async function handleTest(row: ModelVO) {
 }
 
 async function handleDelete(row: ModelVO) {
-  const impact = await getModelImpact(row.id, 'DELETE')
-  if (!impact.allowed) {
-    ElMessage.error(`删除被阻断：仍有 ${impact.blockerCount} 个生效引用`)
-    openGovernance(row)
-    return
+  if (deletingId.value !== null) return
+  deletingId.value = row.id
+  try {
+    const impact = await getModelImpact(row.id, 'DELETE')
+    if (!impact.allowed) {
+      ElMessage.error(`删除被阻断：仍有 ${impact.blockerCount} 个生效引用`)
+      openGovernance(row)
+      return
+    }
+    await ElMessageBox.confirm(
+      `预检已通过。确认删除部署「${row.modelName}」？资产和凭据审计记录将保留。`,
+      '删除模型部署',
+      { type: 'warning' },
+    )
+    await deleteModel(row.id)
+    ElMessage.success('删除成功')
+    const currentPage = query.pageNum ?? 1
+    if (list.value.length === 1 && currentPage > 1) {
+      query.pageNum = currentPage - 1
+    }
+    await loadList()
+  } finally {
+    deletingId.value = null
   }
-  await ElMessageBox.confirm(
-    `预检已通过。确认删除部署「${row.modelName}」？资产和凭据审计记录将保留。`,
-    '删除模型部署',
-    { type: 'warning' },
-  )
-  await deleteModel(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
 }
 
 function openGovernance(row: ModelVO) {
@@ -245,13 +268,14 @@ onMounted(async () => {
 
 <template>
   <div class="modelops-page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <section class="page-hero">
       <div>
         <p class="eyebrow">ENTERPRISE MODEL CONTROL PLANE</p>
-        <h1>模型治理工作台</h1>
+        <h2>模型治理工作台</h2>
         <p>把模型能力资产、运行部署、SecretRef 和健康证据放在同一条可审计链路中。</p>
       </div>
-      <el-button v-permission="'model:add'" type="primary" size="large" @click="openCreateModel">新建部署</el-button>
+      <el-button v-permission="'model:add'" class="cw-final-action" type="primary" size="large" @click="openCreateModel">新建部署</el-button>
     </section>
 
     <section class="summary-strip">
@@ -312,9 +336,16 @@ onMounted(async () => {
         <el-table-column label="操作" width="286" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openGovernance(row)">治理详情</el-button>
-            <el-button v-permission="'model:health-test'" link type="primary" :loading="testingId === row.id" @click="handleTest(row)">健康探测</el-button>
+            <el-button
+              v-permission="'model:health-test'"
+              link
+              type="primary"
+              :loading="testingId === row.id"
+              :disabled="testingId !== null && testingId !== row.id"
+              @click="handleTest(row)"
+            >健康探测</el-button>
             <el-button v-permission="'model:edit'" link type="primary" @click="openEditModel(row)">编辑</el-button>
-            <el-button v-permission="'model:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'model:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -413,7 +444,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmitModel">保存部署</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="savePending" @click="handleSubmitModel">保存部署</el-button>
       </template>
     </el-dialog>
 
@@ -422,30 +453,30 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.modelops-page { --ink: #172033; --muted: #64748b; --line: #dfe5ed; --accent: #2457d6; min-height: 100%; background: #f3f6fa; }
+.modelops-page { --ink: var(--cw-text); --muted: var(--cw-text-muted); --line: var(--cw-line); --accent: var(--cw-cobalt); min-height: 100%; background: var(--cw-canvas); }
 .page-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; padding: 30px 34px 28px; color: white; border-radius: 16px 16px 0 0; background: linear-gradient(120deg, rgb(10 22 43 / 98%), rgb(31 55 91 / 94%)), repeating-linear-gradient(90deg, transparent 0 47px, rgb(255 255 255 / 4%) 48px); }
-.page-hero h1 { margin: 3px 0 8px; font-size: 30px; letter-spacing: -.03em; }
+.page-hero h2 { margin: 3px 0 8px; font-size: 30px; letter-spacing: -.03em; }
 .page-hero p { margin: 0; color: #cbd5e1; }
 .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .16em; }
-.summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-top: 0; background: white; }
+.summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-top: 0; background: var(--cw-paper); }
 .summary-strip > div { padding: 18px 24px; border-right: 1px solid var(--line); }
 .summary-strip > div:last-child { border-right: 0; }
 .summary-strip span { display: block; color: var(--muted); font-size: 12px; }
 .summary-strip strong { display: block; margin-top: 4px; color: var(--ink); font-size: 24px; }
-.summary-strip .is-good strong { color: #0f8b6d; }
-.summary-strip .is-risk strong { color: #c2413b; }
+.summary-strip .is-good strong { color: var(--cw-success); }
+.summary-strip .is-risk strong { color: var(--cw-danger); }
 .workspace-card { border: 0; border-radius: 0 0 16px 16px; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; color: var(--muted); font-size: 13px; }
 .toolbar > div { display: flex; gap: 8px; }
 .primary-cell strong, .primary-cell span, .endpoint-cell span, .endpoint-cell small, .cell-note { display: block; }
 .primary-cell strong { color: var(--ink); font-size: 14px; }
 .primary-cell span, .endpoint-cell small, .cell-note { margin-top: 4px; color: var(--muted); font-size: 11px; }
-.endpoint-cell span { color: #334155; }
-.lifecycle { color: #0f8b6d; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
-.lifecycle.muted { color: #94a3b8; }
+.endpoint-cell span { color: var(--el-text-color-regular); }
+.lifecycle { color: var(--cw-success); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.lifecycle.muted { color: var(--cw-text-muted); }
 .default-tag { display: block; width: fit-content; margin-top: 5px; }
 .pagination { margin-top: 18px; justify-content: flex-end; }
-.form-section { margin-bottom: 20px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
+.form-section { margin-bottom: 20px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--el-fill-color-extra-light); }
 .form-section-title { display: flex; gap: 11px; margin-bottom: 16px; }
 .form-section-title > span { display: grid; place-items: center; width: 28px; height: 28px; color: white; border-radius: 8px; background: var(--accent); font-size: 11px; font-weight: 700; }
 .form-section-title strong, .form-section-title small { display: block; }
