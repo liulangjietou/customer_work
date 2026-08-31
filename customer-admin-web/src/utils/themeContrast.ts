@@ -2,12 +2,21 @@ const HEX_COLOR_PATTERN = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i
 
 export const LIGHT_BUTTON_TEXT = '#ffffff'
 export const DARK_BUTTON_TEXT = '#000000'
+export const SAFE_THEME_COLOR = '#3e63dd'
 
 export interface SolidColorPalette {
   base: string
   hover: string
   active: string
   onColor: string
+}
+
+/** 持久化与目录统一使用小写六位十六进制颜色。 */
+export function normalizeHexColor(color: unknown): string | null {
+  if (typeof color !== 'string' || !HEX_COLOR_PATTERN.test(color)) {
+    return null
+  }
+  return color.toLowerCase()
 }
 
 /**
@@ -42,7 +51,7 @@ export function ensureColorContrast(foreground: string, background: string, mini
   const foregroundRgb = parseHexColor(foreground)
   const backgroundLuminance = relativeLuminance(background)
   if (!foregroundRgb || backgroundLuminance === null) {
-    return '#3e63dd'
+    return SAFE_THEME_COLOR
   }
   if ((colorContrastRatio(foreground, background) ?? 0) >= minimumRatio) {
     return foreground.toLowerCase()
@@ -65,7 +74,7 @@ export function ensureColorContrast(foreground: string, background: string, mini
 
 /** 实心交互色：hover/active 始终向文字的反方向移动，因此不会牺牲文字对比度。 */
 export function createSolidColorPalette(background: string): SolidColorPalette {
-  const base = parseHexColor(background) ? background.toLowerCase() : '#3e63dd'
+  const base = normalizeHexColor(background) ?? SAFE_THEME_COLOR
   const onColor = chooseButtonTextColor(base)
   const target = onColor === DARK_BUTTON_TEXT ? [255, 255, 255] : [0, 0, 0]
   return {
@@ -76,8 +85,23 @@ export function createSolidColorPalette(background: string): SolidColorPalette {
   }
 }
 
+/** 按比例把 source 混向 target；用于根据真实 paper 生成组件交互色阶。 */
+export function mixHexColors(source: string, target: string, ratio: number): string {
+  const sourceRgb = parseHexColor(source)
+  const targetRgb = parseHexColor(target)
+  if (!sourceRgb || !targetRgb) {
+    return SAFE_THEME_COLOR
+  }
+  const safeRatio = Math.min(1, Math.max(0, ratio))
+  return rgbToHex(sourceRgb.map((channel, index) => (
+    Math.round(channel + (targetRgb[index] - channel) * safeRatio)
+  )))
+}
+
 function parseHexColor(color: string): [number, number, number] | null {
-  const matched = HEX_COLOR_PATTERN.exec(color)
+  const normalized = normalizeHexColor(color)
+  if (!normalized) return null
+  const matched = HEX_COLOR_PATTERN.exec(normalized)
   if (!matched) return null
   return [
     Number.parseInt(matched[1], 16),
@@ -92,14 +116,16 @@ function rgbToHex(channels: number[]): string {
 
 function mixHexColor(source: string, target: number[], ratio: number): string {
   const sourceRgb = parseHexColor(source)
-  if (!sourceRgb) return '#3e63dd'
+  if (!sourceRgb) return SAFE_THEME_COLOR
   return rgbToHex(sourceRgb.map((channel, index) => (
     Math.round(channel + (target[index] - channel) * ratio)
   )))
 }
 
 function relativeLuminance(color: string): number | null {
-  const matched = HEX_COLOR_PATTERN.exec(color)
+  const normalized = normalizeHexColor(color)
+  if (!normalized) return null
+  const matched = HEX_COLOR_PATTERN.exec(normalized)
   if (!matched) {
     return null
   }

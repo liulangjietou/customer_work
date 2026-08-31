@@ -17,8 +17,11 @@
   --cw-ink-elevated: #152441;
   --cw-canvas: #f4f6fa;
   --cw-paper: #ffffff;
-  --cw-cobalt: #3e63dd;
-  --cw-cobalt-solid: #3e63dd;
+  --theme-primary: #3e63dd;
+  --cw-cobalt: var(--theme-primary);
+  --cw-cobalt-solid: var(--theme-primary-solid);
+  --cw-cobalt-solid-hover: var(--theme-primary-solid-hover);
+  --cw-cobalt-solid-active: var(--theme-primary-solid-active);
   --cw-amber: #925500;
   --cw-amber-solid: #d99217;
   --cw-success: #16856a;
@@ -56,6 +59,21 @@
   --cw-brand-logo-end: var(--cw-cobalt-solid);
   --cw-brand-signal: #8ba0ef;
 
+  /* Canvas 图表无法直接继承 DOM 颜色，组件重绘时统一读取这组主题令牌。 */
+  --cw-chart-text: var(--cw-text-muted);
+  --cw-chart-axis: var(--cw-line-strong);
+  --cw-chart-grid: var(--cw-line);
+  --cw-chart-tooltip-bg: var(--cw-paper);
+  --cw-chart-tooltip-border: var(--cw-line-strong);
+  --cw-chart-series-1: var(--theme-primary-solid);
+  --cw-chart-series-2: var(--cw-success-solid);
+  --cw-chart-series-3: var(--cw-amber-solid);
+  --cw-chart-series-4: var(--cw-danger-solid);
+  --cw-chart-series-5: #806bff;
+  --cw-chart-series-6: #16778b;
+  --cw-chart-series-7: #a84f28;
+  --cw-chart-series-8: var(--cw-info-solid);
+
   --cw-shadow-xs: 0 1px 2px rgb(15 23 42 / 5%);
   --cw-shadow-sm: 0 8px 24px rgb(15 23 42 / 7%);
   --cw-shadow-lg: 0 24px 72px rgb(15 23 42 / 14%);
@@ -63,6 +81,8 @@
   --cw-radius-md: 10px;
   --cw-radius-lg: 16px;
 
+  --el-bg-color: var(--cw-paper);
+  --el-bg-color-overlay: var(--cw-paper);
   --el-bg-color-page: var(--cw-canvas);
   --el-border-color: var(--cw-line);
   --el-border-color-light: #e4e8ef;
@@ -162,17 +182,12 @@ body .el-card__body {
 
 body .el-table {
   --el-table-border-color: var(--cw-line);
-  --el-table-header-bg-color: #eef1f6;
-  --el-table-header-text-color: #465066;
+  --el-table-header-bg-color: var(--el-fill-color-light);
+  --el-table-header-text-color: var(--el-text-color-regular);
   --el-table-row-hover-bg-color: color-mix(in srgb, var(--theme-primary, var(--cw-cobalt)) 7%, var(--cw-paper));
   overflow: hidden;
   border: 1px solid var(--cw-line);
   border-radius: var(--cw-radius-md);
-}
-
-html.dark body .el-table {
-  --el-table-header-bg-color: #172338;
-  --el-table-header-text-color: #b5c0d3;
 }
 
 body .el-table th.el-table__cell {
@@ -442,7 +457,7 @@ body .el-button.cw-final-action {
   --el-button-text-color: var(--cw-on-warning);
   --el-button-hover-text-color: var(--cw-on-warning);
   --el-button-active-text-color: var(--cw-on-warning);
-  box-shadow: 0 4px 14px rgb(217 146 23 / 22%);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--cw-amber-solid) 22%, transparent);
 }
 
 body .el-input__wrapper,

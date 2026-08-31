@@ -7,7 +7,7 @@ import type { MenuNode, ReviewResult } from '@/types/api'
 import ChatPanel from './ChatPanel.vue'
 import VibeCodingPanel from './VibeCodingPanel.vue'
 import KnowledgeDrawer from './KnowledgeDrawer.vue'
-import ThemeToolbar from '@/components/ThemeToolbar.vue'
+import WorkspaceActions from '@/components/WorkspaceActions.vue'
 import ReviewReport from '@/components/ReviewReport.vue'
 
 // 供 MainLayout 的 <keep-alive :include> 按组件名精确命中——离开本页（切到其它菜单）时不销毁，
@@ -43,7 +43,7 @@ const agentNode = computed(() => findNode(menuStore.tree, props.agentCode))
 const agentDisplayName = computed(() => agentNode.value?.name ?? props.agentCode)
 const supportsVibeCoding = computed(() => agentNode.value?.capabilities?.includes('vibecoding') ?? false)
 
-// 主题色/新建会话工具栏上提到 Tab 上方后，"新建会话"要按当前激活的 Tab 分发到对应面板
+// "新建会话"上提到 Tab 上方后，要按当前激活的 Tab 分发到对应面板。
 const activeTab = ref<'chat' | 'vibecoding'>('chat')
 
 // keep-alive 复用同一实例后，切智能体不再重建本组件，activeTab 会带着上一个智能体的值——
@@ -156,7 +156,7 @@ watch(
           <el-icon aria-hidden="true"><Collection /></el-icon>
           <span>代码知识库</span>
         </button>
-        <ThemeToolbar :on-new-session="newSession" />
+        <WorkspaceActions @new-session="newSession" />
       </div>
     </div>
     <KnowledgeDrawer v-model="knowledgeVisible" />

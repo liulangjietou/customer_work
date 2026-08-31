@@ -5,6 +5,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { fetchRegisterOptions, login, ssoLogin } from '@/api/auth'
 import { fetchLoginCarouselUrls } from '@/api/login-image'
 import FooterCopyright from '@/components/FooterCopyright.vue'
+import ThemePresetSelector from '@/components/ThemePresetSelector.vue'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
 import { useTabsStore } from '@/store/tabs'
@@ -226,14 +227,7 @@ onMounted(() => {
     <section ref="authSurfaceRef" class="auth-surface" data-login-scroll aria-label="身份验证">
       <div class="auth-toolbar">
         <span class="secure-context"><i aria-hidden="true" /> 安全登录</span>
-        <el-button
-          circle
-          plain
-          :icon="themeStore.isDark ? 'Sunny' : 'Moon'"
-          :aria-label="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
-          :title="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
-          @click="themeStore.toggleDark()"
-        />
+        <ThemePresetSelector compact />
       </div>
 
       <div class="auth-content">

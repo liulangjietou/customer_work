@@ -67,7 +67,7 @@ const auth = useAuthStore()
 }
 
 .empty-mark span:last-child {
-  color: #1e1608;
+  color: var(--cw-on-warning);
   border-color: var(--cw-amber-solid);
   background: var(--cw-amber-solid);
 }

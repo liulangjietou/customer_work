@@ -340,12 +340,12 @@ defineExpose({ toggleFromHeader })
   justify-content: center;
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 9px;
-  background: linear-gradient(145deg, var(--cw-brand-logo-start), var(--cw-cobalt, var(--cw-brand-logo-end)));
-  color: #fff;
+  background: var(--cw-cobalt-solid, var(--theme-primary-solid));
+  color: var(--cw-on-primary, #fff);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.05em;
-  box-shadow: 0 7px 18px rgb(62 99 221 / 28%);
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--cw-cobalt-solid, var(--theme-primary-solid)) 28%, transparent);
 }
 
 .rail-nav {

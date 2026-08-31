@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { useMenuStore } from '@/store/menu'
 import { useTabsStore } from '@/store/tabs'
-import { useThemeStore } from '@/store/theme'
+import ThemePresetSelector from '@/components/ThemePresetSelector.vue'
 import GlobalCommandSearch from './GlobalCommandSearch.vue'
 import NotificationBell from '@/components/NotificationBell.vue'
 import TenantSwitcher from '@/components/TenantSwitcher.vue'
@@ -20,7 +20,6 @@ const router = useRouter()
 const auth = useAuthStore()
 const menuStore = useMenuStore()
 const tabsStore = useTabsStore()
-const themeStore = useThemeStore()
 const userInitial = computed(() => (
   (auth.nickname || auth.username || 'U').trim().slice(0, 1).toLocaleUpperCase()
 ))
@@ -68,14 +67,7 @@ async function handleLogout() {
 
     <div class="header-right">
       <TenantSwitcher v-if="auth.isApproved" />
-      <el-button
-        class="icon-button"
-        text
-        :icon="themeStore.isDark ? 'Sunny' : 'Moon'"
-        :title="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
-        :aria-label="themeStore.isDark ? '切换到亮色模式' : '切换到暗色模式'"
-        @click="themeStore.toggleDark()"
-      />
+      <ThemePresetSelector />
       <NotificationBell v-if="auth.isApproved" />
       <el-dropdown trigger="click">
         <button type="button" class="user-menu-trigger" aria-label="打开用户菜单">
@@ -96,6 +88,8 @@ async function handleLogout() {
 
 <style scoped>
 .layout-header {
+  position: relative;
+  z-index: 1200;
   flex: 0 0 var(--cw-topbar-height);
   display: flex;
   align-items: center;
@@ -104,6 +98,7 @@ async function handleLogout() {
   border-bottom: 1px solid var(--cw-line, var(--el-border-color-lighter));
   background: color-mix(in srgb, var(--cw-paper, var(--el-bg-color)) 97%, transparent);
   backdrop-filter: blur(12px);
+  overflow: visible;
 }
 
 .header-left,

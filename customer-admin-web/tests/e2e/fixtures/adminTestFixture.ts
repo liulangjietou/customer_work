@@ -317,10 +317,16 @@ async function installBrowserState(context: BrowserContext) {
     localStorage.setItem('admin-username', 'admin-shell-e2e')
     localStorage.setItem('admin-force-change-password', 'false')
     localStorage.setItem('admin-approval-status', 'APPROVED')
-    if (!localStorage.getItem('customer-admin-theme-mode')) {
+    const hasThemeSelection = localStorage.getItem('customer-admin-theme-selection') !== null
+    const hasThemeColor = localStorage.getItem('customer-admin-theme-color') !== null
+    const hasThemeMode = localStorage.getItem('customer-admin-theme-mode') !== null
+    if (!hasThemeSelection && !hasThemeColor && !hasThemeMode) {
+      localStorage.setItem('customer-admin-theme-selection', JSON.stringify({
+        version: 1,
+        kind: 'preset',
+        id: 'ocean',
+      }))
       localStorage.setItem('customer-admin-theme-mode', 'light')
-    }
-    if (!localStorage.getItem('customer-admin-theme-color')) {
       localStorage.setItem('customer-admin-theme-color', '#3e63dd')
     }
   }, LOGIN_E2E_ORIGIN)
