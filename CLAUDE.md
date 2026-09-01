@@ -43,7 +43,9 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   **e2e 与 maven 全量并行跑会假红**：本批次同时跑两者时，2 条登录拼图用例 5s `toBeVisible` 超时失败，
   看着像回归；空闲复跑 main 26 条、分支 25 条全过，耗时从 2.2 分钟回落到 1.3 分钟。
   **判回归必须在同等负载下对比**——"在 main 上单跑那两条"通过，证明不了任何事，差点据此误判成真回归。
-  另有 `workspace-resize.e2e.ts` 的宽度用例偶发失败（期望差 ≤1px 实得 1.125），是亚像素舍入，与本批次无交集。
+  **`workspace-resize.e2e.ts` 的宽度用例在本机是常态失败**（期望差 ≤1px 实得 1.125，亚像素舍入），
+  与本批次无关：main 空闲连跑三轮同样每轮 1 failed / 3 passed，分支表现一致。
+  它一度看着像本批次引入的回归——第一次跑 main 恰好 4 条全过，差点据此判成真回归，多跑几轮才看清。
   **门禁的"合法配置基准"要跟着放宽后的条件补**：`AdminProductionReadinessValidatorTest#validEnvironment()`
   是全部生产门禁用例的基准，邮件校验条件从「开了邮箱验证」放宽成「开了自助注册」后，
   不给基准补 mail 配置，几十条无关用例会连带全红。
