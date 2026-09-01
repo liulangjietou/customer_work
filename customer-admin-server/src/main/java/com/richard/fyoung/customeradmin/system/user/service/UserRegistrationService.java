@@ -46,9 +46,6 @@ import java.util.Locale;
 public class UserRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(UserRegistrationService.class);
-    private static final String LOCAL_LOGIN_TYPE = "LOCAL";
-    private static final int EMAIL_VERIFIED = 1;
-
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final RegistrationGuard registrationGuard;
@@ -93,8 +90,8 @@ public class UserRegistrationService {
         user.setNickname(StringUtils.hasText(request.nickname()) ? request.nickname().trim() : username);
         user.setEmail(email);
         // 走到这里必然过了验证码核验（Guard 无条件校验），所以此刻邮箱确实归申请人所有
-        user.setEmailVerified(EMAIL_VERIFIED);
-        user.setLoginType(LOCAL_LOGIN_TYPE);
+        user.setEmailVerified(SysUser.EMAIL_VERIFIED);
+        user.setLoginType(SysUser.LOGIN_TYPE_LOCAL);
         user.setStatus(1);
         user.setApprovalStatus(UserApprovalStatus.PENDING.name());
 

@@ -59,8 +59,6 @@ public class AuthService {
     private static final String INITIAL_ADMIN_PASSWORD_HASH =
         "$2a$10$M7Z.8TA1.6l01JSeZRGAb.olJkoDmvk4JSX81kNlZ5rzE1LCsDCFC";
 
-    private static final String LDAP_LOGIN_TYPE = "LDAP";
-
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final OperationLogMapper operationLogMapper;
@@ -325,7 +323,7 @@ public class AuthService {
         created.setUsername(username);
         created.setPassword(null);
         created.setNickname(username);
-        created.setLoginType(LDAP_LOGIN_TYPE);
+        created.setLoginType(SysUser.LOGIN_TYPE_LDAP);
         created.setStatus(1);
         created.setApprovalStatus(UserApprovalStatus.APPROVED.name());
         // 显式写租户而非依赖拦截器或 DDL 默认值，让账号归属在领域代码里保持可见。
@@ -351,7 +349,7 @@ public class AuthService {
      * LDAP Bind 只证明目录账号有效，不能据此接管同名本地账号；否则本地控制面账号可被绕过密码登录。
      */
     private SysUser requireLdapAccount(SysUser user) {
-        if (!LDAP_LOGIN_TYPE.equals(user.getLoginType())) {
+        if (!SysUser.LOGIN_TYPE_LDAP.equals(user.getLoginType())) {
             log.error("LDAP login rejected due to local account collision, code={}, username={}, userId={}",
                 "LDAP-LOCAL-ACCOUNT-COLLISION", user.getUsername(), user.getId());
             throw new BizException(ResultCode.SSO_LOGIN_FAILED);

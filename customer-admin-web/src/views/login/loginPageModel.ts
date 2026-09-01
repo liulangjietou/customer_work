@@ -1,4 +1,9 @@
-import type { EmailCodeRequest, RegisterRequest } from '@/types/api'
+import type {
+  EmailCodeRequest,
+  PasswordResetEmailCodeRequest,
+  PasswordResetRequest,
+  RegisterRequest,
+} from '@/types/api'
 
 export type LoginMode = 'local' | 'sso'
 
@@ -78,6 +83,20 @@ export function shouldShowRegisterEntry(
   selfServiceEnabled: boolean,
 ): boolean {
   return mode === 'local' && optionsLoaded && selfServiceEnabled
+}
+
+/**
+ * 找回密码入口同样以后端能力接口成功返回为前提。
+ *
+ * 服务端没有独立开关，这一位跟随「邮件到底能不能发」；旧服务端不返回该字段时按关闭处理——
+ * 渲染一个点进去必然失败的入口，比不渲染更糟。
+ */
+export function shouldShowForgotPasswordEntry(
+  mode: LoginMode,
+  optionsLoaded: boolean,
+  passwordResetEnabled: boolean | undefined,
+): boolean {
+  return mode === 'local' && optionsLoaded && passwordResetEnabled === true
 }
 
 export type RegisterVerificationField = 'captcha' | 'emailCode'
@@ -292,7 +311,12 @@ export interface RegisterEnterEventState {
   keyCode: number
 }
 
-/** 输入法合成、长按重复和按钮自身的 Enter 都不能推进注册状态机。 */
+/**
+ * 输入法合成、长按重复和按钮自身的 Enter 都不能推进表单状态机。
+ *
+ * 注册面板与找回密码面板共用这一份判定：这几种「看起来像回车」的事件与具体表单无关，
+ * 两边各写一遍必然只修其中一处。名字里的 Register 是它最初的出处，不代表适用范围。
+ */
 export function shouldHandleRegisterEnter(
   event: Readonly<RegisterEnterEventState>,
   targetInsideButton: boolean,
@@ -317,4 +341,73 @@ export const DEFAULT_EMAIL_CODE_COOLDOWN_SECONDS = 60
  */
 export function resolveEmailCodeCooldownSeconds(configuredSeconds?: number): number {
   return Math.max(0, configuredSeconds ?? DEFAULT_EMAIL_CODE_COOLDOWN_SECONDS)
+}
+
+export interface PasswordResetFormData {
+  username: string
+  email: string
+  captchaId: string
+  captcha: string
+  emailCode: string
+  newPassword: string
+  confirmPassword: string
+}
+
+export type PasswordResetField = keyof PasswordResetFormData
+
+/**
+ * 发码前要校验的字段：账号信息与图形码。
+ *
+ * 图形码在这一步无条件参与，与注册链路不同——那边内网实例可以省掉它，
+ * 而这里对着的是一个已经存在的账号，服务端也是无条件校验的。
+ */
+export const PASSWORD_RESET_EMAIL_CODE_FIELDS: readonly PasswordResetField[] =
+  ['username', 'email', 'captcha']
+
+/** 提交重置时要校验的字段：图形码已在发码那一步消费，不再参与。 */
+export const PASSWORD_RESET_SUBMIT_FIELDS: readonly PasswordResetField[] =
+  ['username', 'email', 'emailCode', 'newPassword', 'confirmPassword']
+
+/** 发码请求与契约测试共用同一个载荷构造入口。 */
+export function buildPasswordResetEmailCodePayload(
+  form: Readonly<PasswordResetFormData>,
+): PasswordResetEmailCodeRequest {
+  return {
+    username: form.username,
+    email: form.email,
+    captchaId: form.captchaId,
+    captcha: form.captcha,
+  }
+}
+
+/** 重置请求与契约测试共用同一个载荷构造入口。 */
+export function buildPasswordResetPayload(
+  form: Readonly<PasswordResetFormData>,
+): PasswordResetRequest {
+  return {
+    username: form.username,
+    email: form.email,
+    emailCode: form.emailCode,
+    newPassword: form.newPassword,
+    confirmPassword: form.confirmPassword,
+  }
+}
+
+const PASSWORD_RESET_REJECTED_CODE = 30015
+
+/**
+ * 重置失败后那份邮箱验证码还能不能继续用。
+ *
+ * 服务端把「码填错了」「码已失效」「账号对不上」合并成同一个码 30015，前端<b>无从分辨</b>——
+ * 这是刻意的，分开报会让这个接口变成账号存在性探针。因此一律保留输入让用户自行决定：
+ * 输错一位就清空、逼他重新收信，而重发还要等一个冷却周期，代价比让他自己改一位大得多。
+ * 表单类错误（参数、弱口令）更是发生在核验之前，码根本没被碰过。
+ */
+export function shouldKeepEmailCodeAfterPasswordResetFailure(error: unknown): boolean {
+  const body = registrationFailureBody(error)
+  const code = typeof body?.code === 'number' ? body.code : undefined
+  return code === PASSWORD_RESET_REJECTED_CODE
+    || code === PARAM_INVALID_CODE
+    || code === PARAM_MISSING_CODE
+    || code === PASSWORD_TOO_WEAK_CODE
 }

@@ -74,6 +74,18 @@ public class LoginAttemptGuard {
 
     /** 登录成功，清零该组合的失败计数。 */
     public void recordSuccess(String username, String clientIp) {
+        clearFailures(username, clientIp);
+    }
+
+    /**
+     * 清零该"账号+来源 IP"的失败计数。
+     *
+     * <p>除登录成功外，找回密码成功也要调一次：真实用户往往正是被自己输错的几次锁在门外，
+     * 才想起来去重置密码；重置完还得干等锁定窗口过去，等于这个功能只解决了一半问题。
+     * 清的只是<b>重置者自己这个 IP</b> 的计数——攻击者从别处打出来的锁本就锁在别人的桶里，
+     * 不影响他登录。</p>
+     */
+    public void clearFailures(String username, String clientIp) {
         if (!enabled()) {
             return;
         }

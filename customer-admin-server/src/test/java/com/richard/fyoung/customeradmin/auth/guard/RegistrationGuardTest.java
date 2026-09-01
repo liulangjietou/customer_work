@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.auth.guard;
 
+import com.richard.fyoung.customeradmin.auth.email.EmailCodePurpose;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationCode;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
 import com.richard.fyoung.customeradmin.auth.email.InMemoryEmailVerificationStore;
@@ -234,7 +235,7 @@ class RegistrationGuardTest {
 
         assertEquals(ResultCode.REGISTER_TOO_FREQUENT, error.getResultCode());
         // 核验没跑：失败次数未累加，那份码原样还在
-        EmailVerificationCode stored = emailCodeStore.get(EMAIL);
+        EmailVerificationCode stored = emailCodeStore.get(EmailCodePurpose.REGISTER, EMAIL);
         assertNotNull(stored);
         assertEquals(0, stored.attempts());
     }
@@ -352,12 +353,12 @@ class RegistrationGuardTest {
         int ttlSeconds = guard.sendEmailCode(EMAIL, challenge.captchaId(), answerOf(challenge), IP);
 
         assertEquals(properties.getEmailVerification().getTtlSeconds(), ttlSeconds);
-        assertNotNull(emailCodeStore.get(EMAIL));
+        assertNotNull(emailCodeStore.get(EmailCodePurpose.REGISTER, EMAIL));
     }
 
     /** 往存储里放一份有效验证码，等价于"用户已经收到了那封信"。 */
     private void issueEmailCode() {
-        emailCodeStore.save(EMAIL, new EmailVerificationCode(
+        emailCodeStore.save(EmailCodePurpose.REGISTER, EMAIL, new EmailVerificationCode(
             EMAIL_CODE, 0, System.currentTimeMillis() + TEN_MINUTES_MS));
     }
 

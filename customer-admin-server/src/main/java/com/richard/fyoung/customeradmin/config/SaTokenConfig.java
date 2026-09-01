@@ -32,6 +32,11 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 // 注册邮箱验证码：登录前的匿名接口。它会真的发出一封邮件，
                 // 防滥用由图形验证码 + IP 限流 + 单邮箱冷却与日限四道负责（见 EmailVerificationService）
                 "/api/auth/email-code",
+                // 找回密码：两步都在登录前。第一步同样会真的发出一封邮件，
+                // 防滥用比注册那条更紧一档——图形验证码无条件要求（不看部署形态），
+                // 再叠加与注册发码共用的 IP、单邮箱冷却与日限（见 PasswordResetService）
+                "/api/auth/password-reset",
+                "/api/auth/password-reset/email-code",
                 "/api/auth/sso-login",
                 // 内网工作台脚本回调：ScriptCat 脚本运行在目标站点页面里，拿不到后台登录态，
                 // 改用个人访问令牌鉴权（见 WorkbenchAgentController，自行校验 X-Workbench-Token）

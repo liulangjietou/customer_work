@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.system.user.service;
 
 import com.richard.fyoung.customeradmin.auth.dto.RegisterRequest;
+import com.richard.fyoung.customeradmin.auth.email.EmailCodePurpose;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationCode;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
 import com.richard.fyoung.customeradmin.auth.email.InMemoryEmailVerificationStore;
@@ -107,7 +108,7 @@ class UserRegistrationServiceTest {
 
     /** 往存储里放一份有效验证码，等价于"用户已经收到了那封信"。 */
     private void issueEmailCode() {
-        emailCodeStore.save(EMAIL, new EmailVerificationCode(
+        emailCodeStore.save(EmailCodePurpose.REGISTER, EMAIL, new EmailVerificationCode(
             EMAIL_CODE, 0, System.currentTimeMillis() + TEN_MINUTES_MS));
     }
 

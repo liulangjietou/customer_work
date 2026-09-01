@@ -12,7 +12,7 @@ import java.security.SecureRandom;
 import java.util.Locale;
 
 /**
- * 注册邮箱验证码：发码与核验。
+ * 邮箱验证码：发码与核验。注册与找回密码共用这一套。
  *
  * <p>发码是<b>唯一一个会向站外第三方产生副作用的匿名接口</b>——它让服务端给任意地址发一封信。
  * 因此这里的防护比注册本身还密：图形验证码（在 Controller 那一层）、来源 IP 限流、
@@ -23,6 +23,15 @@ import java.util.Locale;
  *   <li>冷却挡对同一个受害者的高频轰炸；</li>
  *   <li>日总量挡"每 60 秒一封、发一整天"——冷却对这种打法完全无效。</li>
  * </ul>
+ *
+ * <p><b>验证码按用途分键，限流键刻意不分</b>：分键是为了让注册码不能拿去重置密码
+ * （见 {@link EmailCodePurpose}）；而后三道限流保护的是"同一个收件人邮箱不被轰炸"与
+ * "服务端不被刷"，与发的是哪种码无关——按用途各给一份额度，等于让攻击者交替调用两个接口
+ * 就把对同一受害者的发信量翻倍。</p>
+ *
+ * <p><b>{@link #reserveSendQuota} 与 {@link #issueAndSend} 是拆开的</b>：找回密码那条链路
+ * 在"邮箱压根没注册"时同样要消耗额度却不能发信——否则"有没有被限流"本身就成了
+ * 账号存在性探针，含糊的响应文案也就白写了。</p>
  * @author owlzhangfq@gmail.com
  */
 @Slf4j
@@ -51,17 +60,37 @@ public class EmailVerificationService {
     }
 
     /**
-     * 向注册邮箱发送一封验证码。
+     * 向指定邮箱发送一封验证码。
      *
      * <p>四道限制按"代价从低到高"排：冷却与日限只查计数器，发信才是真正贵的那一步。
      * 只有全部通过才生成验证码——先生成再判定的话，被拒的请求也会把上一份还能用的
      * 验证码覆盖掉，用户手里那封信就莫名其妙失效了。</p>
      *
+     * @param purpose  验证码用途，决定存储键与邮件文案
      * @param email    收件邮箱（调用方已归一为小写）
      * @param clientIp 来源 IP
      * @return 验证码有效期（秒），供前端提示
      */
-    public int sendCode(String email, String clientIp) {
+    public int sendCode(EmailCodePurpose purpose, String email, String clientIp) {
+        reserveSendQuota(email, clientIp);
+        issueAndSend(purpose, email);
+        return properties.getEmailVerification().getTtlSeconds();
+    }
+
+    /** 验证码有效期（秒）：找回密码那条链路即使不发信也要返回它，让两种响应完全一致。 */
+    public int codeTtlSeconds() {
+        return properties.getEmailVerification().getTtlSeconds();
+    }
+
+    /**
+     * 预扣一次发信额度：可用性 + 冷却 + 日总量 + 来源 IP，四道全过才返回。
+     *
+     * <p>单独暴露是给找回密码用的——那条链路必须在"这个用户名和邮箱到底对不对得上"之前
+     * 就把额度扣掉，让存在与不存在的两种请求在限流上完全一致。</p>
+     *
+     * @throws BizException 邮件不可用或触及任一道限制
+     */
+    public void reserveSendQuota(String email, String clientIp) {
         RegistrationGuardProperties.EmailVerification config = properties.getEmailVerification();
         if (!mailSender.available()) {
             // 发不出去就别让用户干等一封永远不会到的信
@@ -73,20 +102,29 @@ public class EmailVerificationService {
         checkCooldown(email, config);
         checkDailyQuota(email, config);
         checkIpQuota(clientIp, config);
+    }
 
+    /**
+     * 生成验证码、落存储并真的发出去。额度必须已由 {@link #reserveSendQuota} 预扣。
+     *
+     * @throws BizException 发信失败（此时刚写入的码已被清掉，不留死码）
+     */
+    public void issueAndSend(EmailCodePurpose purpose, String email) {
+        RegistrationGuardProperties.EmailVerification config = properties.getEmailVerification();
         String code = randomCode(config.getCodeLength());
         long expireAtMs = System.currentTimeMillis() + config.getTtlSeconds() * 1000L;
-        store.save(email, new EmailVerificationCode(code, 0, expireAtMs));
+        store.save(purpose, email, new EmailVerificationCode(code, 0, expireAtMs));
         try {
-            mailSender.send(email, "注册验证码", buildMailText(code, config.getTtlSeconds()));
+            mailSender.send(email, purpose.mailSubject(),
+                buildMailText(purpose, code, config.getTtlSeconds()));
         } catch (Exception e) {
             // 信没发出去，手里那份验证码就是死码，留着只会让下一次发码被冷却挡住
-            store.invalidate(email);
-            log.error("email verification code send failed, code={}", "AUTH-EMAIL-CODE-SEND-FAIL", e);
+            store.invalidate(purpose, email);
+            log.error("email verification code send failed, code={}, purpose={}",
+                "AUTH-EMAIL-CODE-SEND-FAIL", purpose, e);
             throw new BizException(ResultCode.EMAIL_CODE_SEND_FAILED);
         }
-        log.info("email verification code sent, ttlSeconds={}", config.getTtlSeconds());
-        return config.getTtlSeconds();
+        log.info("email verification code sent, purpose={}, ttlSeconds={}", purpose, config.getTtlSeconds());
     }
 
     /**
@@ -95,11 +133,11 @@ public class EmailVerificationService {
      * <p>通过即销毁（同一份码不能注册两个账号）；失败累加次数，达到上限一并销毁——
      * 6 位数字在不限次数下是可以直接猜穿的。</p>
      */
-    public void verify(String email, String input) {
+    public void verify(EmailCodePurpose purpose, String email, String input) {
         if (!StringUtils.hasText(input)) {
             throw new BizException(ResultCode.EMAIL_CODE_INVALID, "请输入邮箱验证码");
         }
-        EmailVerificationCode stored = store.get(email);
+        EmailVerificationCode stored = store.get(purpose, email);
         if (stored == null) {
             throw new BizException(ResultCode.EMAIL_CODE_REISSUE_REQUIRED);
         }
@@ -107,14 +145,15 @@ public class EmailVerificationService {
             int maxAttempts = properties.getEmailVerification().getMaxAttempts();
             EmailVerificationCode failed = stored.withOneMoreFailure();
             if (failed.attempts() >= maxAttempts) {
-                store.invalidate(email);
-                log.info("email verification code invalidated after {} failed attempts", maxAttempts);
+                store.invalidate(purpose, email);
+                log.info("email verification code invalidated after {} failed attempts, purpose={}",
+                    maxAttempts, purpose);
                 throw new BizException(ResultCode.EMAIL_CODE_REISSUE_REQUIRED);
             }
-            store.save(email, failed);
+            store.save(purpose, email, failed);
             throw new BizException(ResultCode.EMAIL_CODE_INVALID);
         }
-        store.invalidate(email);
+        store.invalidate(purpose, email);
     }
 
     /** 同一邮箱的重发冷却：窗口内只放行一次。 */
@@ -166,14 +205,15 @@ public class EmailVerificationService {
     /**
      * 邮件正文。
      *
-     * <p>刻意不带任何链接：注册验证码邮件是钓鱼最爱模仿的形态，正文里出现可点的链接
-     * 会把"别点邮件里的链接"这条常识教反。用户回到自己打开的那个页面填码即可。</p>
+     * <p>刻意不带任何链接：验证码邮件是钓鱼最爱模仿的形态，正文里出现可点的链接
+     * 会把"别点邮件里的链接"这条常识教反。找回密码那封尤其如此——"重置密码链接"
+     * 正是钓鱼邮件最常用的幌子。用户回到自己打开的那个页面填码即可。</p>
      */
-    private String buildMailText(String code, int ttlSeconds) {
-        return "您正在注册 " + mailSender.platformName() + " 账号。\n\n"
+    private String buildMailText(EmailCodePurpose purpose, String code, int ttlSeconds) {
+        return purpose.intro(mailSender.platformName()) + "\n\n"
             + "验证码：" + code + "\n"
             + "有效期：" + (ttlSeconds / 60) + " 分钟\n\n"
-            + "请回到注册页面填写该验证码。若非本人操作，请忽略本邮件。";
+            + purpose.guidance();
     }
 
     /** 邮箱归一：大小写不同的同一邮箱是同一个人，键与唯一约束都必须能挡住。 */

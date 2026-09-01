@@ -20,6 +20,18 @@ import java.time.LocalDateTime;
 @TableName("sys_user")
 public class SysUser {
 
+    /** {@link #emailVerified} 取值：邮箱尚未经本人证实。 */
+    public static final int EMAIL_UNVERIFIED = 0;
+
+    /** {@link #emailVerified} 取值：本人已通过验证码证明控制该邮箱。 */
+    public static final int EMAIL_VERIFIED = 1;
+
+    /** {@link #loginType} 取值：本地账号，密码存在本表。 */
+    public static final String LOGIN_TYPE_LOCAL = "LOCAL";
+
+    /** {@link #loginType} 取值：OA 域账号影子行，密码由企业域控管理，本表为空。 */
+    public static final String LOGIN_TYPE_LDAP = "LDAP";
+
     @TableId(type = IdType.AUTO)
     private Long id;
 
@@ -43,19 +55,22 @@ public class SysUser {
      * 注册邮箱：自助注册一律必填并经验证码核验（见 {@code RegistrationGuard}），
      * LDAP 影子账号与管理员预建账号可空。
      *
-     * <p>没有它就无法通知审核结果、无法找回密码，也无法在同一个人重复注册时识别出来——
+     * <p>没有它就无法通知审核结果、无法找回密码（{@code PasswordResetService} 正是按
+     * "用户名 + 本列"这对组合定位账号的），也无法在同一个人重复注册时识别出来——
      * 用户名可以随便再取一个，邮箱不行。</p>
      */
     private String email;
 
     /**
-     * 邮箱是否已验证：0否 / 1是。
+     * 邮箱是否已验证：{@link #EMAIL_UNVERIFIED} / {@link #EMAIL_VERIFIED}。
      *
-     * <p>自助注册创建的账号恒为 1（注册那一步已核验验证码）；为 0 的只可能是 LDAP 影子账号、
-     * 管理员预建账号，或本能力上线前的存量数据。</p>
+     * <p>置 1 的两条路径都是"本人拿到了发往该地址的验证码并填了回来"：自助注册那一步的核验
+     * （因此自助注册创建的账号恒为 1），以及找回密码成功那一刻（见 {@code PasswordResetService}）。
+     * 为 0 的只可能是 LDAP 影子账号、管理员预建账号，或邮箱验证上线前的存量数据——
+     * 管理员建号时填的地址只是个联系方式，不算已验证。</p>
      */
     private Integer emailVerified;
-    /** 账号来源：LOCAL 本地账号 / LDAP 域账号（OA 单点登录，见 AuthService#ssoLogin）。 */
+    /** 账号来源：{@link #LOGIN_TYPE_LOCAL} / {@link #LOGIN_TYPE_LDAP}（OA 单点登录，见 AuthService#ssoLogin）。 */
     private String loginType;
 
     /**

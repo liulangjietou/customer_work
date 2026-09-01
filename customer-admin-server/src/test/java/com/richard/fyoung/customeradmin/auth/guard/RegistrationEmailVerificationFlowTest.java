@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.auth.guard;
 
+import com.richard.fyoung.customeradmin.auth.email.EmailCodePurpose;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationStore;
 import com.richard.fyoung.customeradmin.auth.email.InMemoryEmailVerificationStore;
@@ -64,7 +65,7 @@ class RegistrationEmailVerificationFlowTest {
     void flow_shouldAcceptRegistrationAfterEmailCodeVerified() {
         int ttl = guard.sendEmailCode(EMAIL, null, null, IP);
         assertEquals(properties.getEmailVerification().getTtlSeconds(), ttl);
-        String code = emailStore.get(EMAIL).code();
+        String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
 
         assertDoesNotThrow(() -> guard.admit(IP, EMAIL, code,
             STRONG_PASSWORD, STRONG_PASSWORD));
@@ -83,7 +84,7 @@ class RegistrationEmailVerificationFlowTest {
     @Test
     void admit_shouldRejectCodeIssuedForAnotherAddress() {
         guard.sendEmailCode(EMAIL, null, null, IP);
-        String code = emailStore.get(EMAIL).code();
+        String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
 
         BizException error = assertThrows(BizException.class,
             () -> guard.admit(IP, "someone-else@example.com", code,
@@ -96,7 +97,7 @@ class RegistrationEmailVerificationFlowTest {
     @Test
     void admit_shouldKeepCurrentCodeRetryableAfterOrdinaryMismatch() {
         guard.sendEmailCode(EMAIL, null, null, IP);
-        String code = emailStore.get(EMAIL).code();
+        String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
 
         BizException mismatch = assertThrows(BizException.class,
             () -> guard.admit(IP, EMAIL, wrongCodeFor(code),
@@ -111,7 +112,7 @@ class RegistrationEmailVerificationFlowTest {
     @Test
     void admit_shouldRequireReissueAfterAttemptsExhausted() {
         guard.sendEmailCode(EMAIL, null, null, IP);
-        String code = emailStore.get(EMAIL).code();
+        String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
         String wrongCode = wrongCodeFor(code);
         int maxAttempts = properties.getEmailVerification().getMaxAttempts();
 
@@ -145,7 +146,7 @@ class RegistrationEmailVerificationFlowTest {
 
         CaptchaChallenge challenge = guard.issueCaptcha(IP);
         guard.sendEmailCode(EMAIL, challenge.captchaId(), answerOf(challenge), IP);
-        String code = emailStore.get(EMAIL).code();
+        String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
 
         // 注册这一步不再要图形码——手里的邮箱码已经是更强的证据
         assertDoesNotThrow(() -> guard.admit(IP, EMAIL, code,
@@ -190,7 +191,7 @@ class RegistrationEmailVerificationFlowTest {
 
         CaptchaChallenge challenge = guard.issueCaptcha(IP);
         assertDoesNotThrow(() -> guard.sendEmailCode(EMAIL, challenge.captchaId(), answerOf(challenge), IP));
-        String code = emailStore.get(EMAIL).code();
+        String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
         assertDoesNotThrow(() -> guard.admit(IP, EMAIL, code,
             STRONG_PASSWORD, STRONG_PASSWORD));
     }

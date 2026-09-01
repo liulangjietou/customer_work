@@ -131,6 +131,12 @@ public class AdminProductionReadinessValidator implements InitializingBean {
      * <p><b>前置条件只剩自助注册开着</b>：关掉自助注册的实例只由管理员预建账号，
      * 既不会发验证码、也没有待审核的人要通知，此时强制配 SMTP 只是白挡一道。
      * 反过来说，开着自助注册就没有"不配 SMTP"这个选项了——这正是邮箱验证不可配的代价。</p>
+     *
+     * <p><b>找回密码刻意不参与这里的判定</b>，尽管它同样要发信：它的能力跟随
+     * {@code AdminMailSender#available()}，邮件不可用时登录页干脆不渲染入口、接口直接拒绝，
+     * 不存在"用户走到一半才发现发不出去"的状态。把它也列成硬性前置，等于强迫每一个
+     * 只由管理员建号的内网实例都去配一套 SMTP。开着自助注册的实例本就已被上一条强制配好邮件，
+     * 找回密码在那里必然可用。</p>
      */
     private void validateEmailVerification(List<String> violations) {
         if (!environment.getProperty("admin.registration.self-service-enabled", Boolean.class, true)) {

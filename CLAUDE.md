@@ -35,6 +35,25 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-01 找回密码批次实测（已 rebase 到含 PR #173 的 main 之后）：全模块 BUILD SUCCESS，
+  0 失败 0 错误，starter 1705/5 skip、app-server 129、customer-channel 80、admin 1732/1 skip、gateway 1，
+  **合计 3647**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+35**
+  （重置服务 25 + 匿名接口契约 4 + register-options 契约扩 1 + 验证码用途分键 3 + 存储分键 2），
+  前端 vitest 203 全过（本批次 +9）、playwright login.e2e.ts 28 条全过（本批次 +3）。
+  本批次无迁移，cw Flyway 仍是下次 **V24**、admin **V102**。
+  **改 Controller 的构造参数会打红两个 `@WebMvcTest`**：`AuthControllerLoginCaptchaTest` 与
+  `AuthControllerRegisterOptionsTest` 各自的 `WebMvcTestConfig` 手工声明每一个协作者，少一个就整类
+  `Failed to load ApplicationContext`，而报错只说上下文加载失败、不点名少了哪个 Bean。
+  后者还硬编码了 register-options 的完整 JSON 契约，往 VO 里加字段必须同步。
+  **全量跑到一半改源码 = 这次全量作废**：本批次踩过一次——admin 编译到的是半成品测试文件，
+  报"对 insert 的引用不明确"，看着像新代码有问题，实际是它编译的那份已经不是最终要跑的那份。
+  与本文件早记过的"两个 Maven 进程同时写 target/"是同一类，只是这次的另一个写手是我自己。
+  **改了 SPI 签名后，合并别人的分支要用编译当验收而不是看冲突数**：本批次把
+  `EmailVerificationStore` 的三个方法都加了 `EmailCodePurpose` 参数，合 PR #173 时 git 报了 11 处冲突、
+  全部解完，但 `UserRegistrationServiceTest` 与 `RegistrationGuardTest` 里对方**新增**的
+  `emailCodeStore.save/get(EMAIL, ...)` 干净合入、一个冲突标记都没有，直到 `test-compile` 才炸出来。
+  语义冲突不会以冲突标记的形式出现，解完冲突只是开始。
+  上一版基线 2026-09-01 注册强制邮箱验证批次：合计 3612。）
   （2026-09-01 注册强制邮箱验证批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1697/1 skip、gateway 1，
   **合计 3612**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+13**
@@ -596,6 +615,29 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   被锁期间只读不累加，否则锁定期被无限延长；成功即清零。
   **注册重名仍明确提示**——那是注册页的可用性底线，批量枚举由 IP 限流兜住，而登录侧本就不区分
   「账号不存在」与「密码错误」。
+  ⑦ **找回密码（`PasswordResetService`）没有独立开关**，能力跟随 `AdminMailSender.available()`——
+  多一个开关就多一个漏配点，而这个功能配错的后果是「用户永远找不回密码」且没人会收到告警。
+  它与自助注册开关无关：关掉注册的内网实例照样需要它。凭证走**邮箱验证码而不是重置链接**，
+  理由与注册验证码同源（「点此重置密码」是钓鱼最爱模仿的形态），另加两条实际问题：
+  链接方案要一个可靠的对外基础 URL（多域名/反代下极易配错，配错就是把凭据发向错误的域名），
+  且企业邮件安全网关会预取链接、把一次性 token 静默消费掉。
+  **用户名与邮箱必须同时匹配同一个账号，但对不上时的响应与「邮箱压根没注册」完全一致**，
+  这条含糊必须贯穿整条链路，任何一处露出差别，这个匿名接口就成了账号与邮箱的关联查询服务：
+  发码时**账号对不上也照扣发信额度**（先查账号再扣的话，「有没有被限流」本身就是存在性探针，
+  为此把 `EmailVerificationService#sendCode` 拆成了 `reserveSendQuota` + `issueAndSend`）；
+  重置时账号不匹配、验证码错、验证码过期三者合并成 `PASSWORD_RESET_REJECTED(30015)`，连文案都一样；
+  **不能重置的账号（OA 域账号、已禁用）改发一封说明信**而不是在响应里说明——信只有邮箱的主人收得到。
+  另有四条：**账号匹配判定必须排在验证码核验之前**（否则任何人拿一个错的用户名反复提交，
+  就能把受害者手里那份真码的重试次数耗光）；**图形码在发码那一步无条件校验**，不看
+  `captchaRequired()`——注册在内网可以省掉它（要过审核、建出来的号零权限），
+  而这里对着的是一个已存在、多半已获授权的账号；收尾三件事与 `AuthService#changePassword`
+  逐条一致（递增 `auth_epoch`、撤销既有会话、清零该「账号+来源 IP」的登录失败计数——
+  真实用户往往正是被自己输错的几次锁在门外才来重置的），并把 `email_verified` 置 1；
+  **它跑在匿名请求里，写库必须自带 `TenantContext.runWith`**，否则 `sys_user` 的租户行过滤会 fail-closed。
+  ⑦.1 **邮箱验证码按用途分键、限流键刻意不分**（`EmailCodePurpose`）：分键是因为共用键空间意味着
+  两种码可以互相顶替——而注册码是任何人对着一个未注册邮箱都能索取的，拿它去重置同邮箱下账号的密码就成立了；
+  而 IP、单邮箱冷却、单邮箱日总量保护的是「收件人不被轰炸」与「服务端不被刷」，与发的是哪种码无关，
+  按用途各给一份等于让攻击者交替调两个接口就把对同一受害者的发信量翻倍。
   存量库的越权授权由 admin `V101` 回收（只动 `control_plane=0` 的角色，幂等，空库无操作）；
   对外配额档 `public-trial` 是客服端库 `V23` 的纯种子迁移，已在 `resolveBaselineVersion` 补数据判定。
 - **本机开发库是所有分支共用的，Flyway 版本号常年被并行分支占走**：新增迁移前先查

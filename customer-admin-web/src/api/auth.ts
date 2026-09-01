@@ -8,6 +8,8 @@ import type {
   LoginCaptchaVerifyRequest,
   LoginRequest,
   LoginResponse,
+  PasswordResetEmailCodeRequest,
+  PasswordResetRequest,
   RegisterOptionsVO,
   RegisterRequest,
   SsoLoginRequest,
@@ -31,6 +33,21 @@ export function fetchCaptcha() {
 /** 向注册邮箱发送验证码，返回有效期（秒）。 */
 export function sendRegisterEmailCode(data: EmailCodeRequest) {
   return request<number>({ url: '/auth/email-code', method: 'post', data })
+}
+
+/**
+ * 向账号登记的邮箱发送密码重置验证码，返回有效期（秒）。
+ *
+ * 无论该用户名与邮箱是否真的对应一个账号，服务端都返回同样的结果——
+ * 这是刻意的，差异会让这个匿名接口变成账号与邮箱的关联查询服务。
+ */
+export function sendPasswordResetEmailCode(data: PasswordResetEmailCodeRequest) {
+  return request<number>({ url: '/auth/password-reset/email-code', method: 'post', data })
+}
+
+/** 凭邮箱验证码重置登录密码。成功后既有登录态全部失效，需用新密码重新登录。 */
+export function resetPassword(data: PasswordResetRequest) {
+  return request<void>({ url: '/auth/password-reset', method: 'post', data })
 }
 
 /** 签发与当前来源 IP、浏览器绑定的登录拖动挑战。 */

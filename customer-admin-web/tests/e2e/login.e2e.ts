@@ -10,6 +10,8 @@ const LOGIN_CAPTCHA_VERIFY_API = `${LOGIN_E2E_ORIGIN}/api/auth/login-captcha/ver
 const CAPTCHA_API = `${LOGIN_E2E_ORIGIN}/api/auth/captcha`
 const EMAIL_CODE_API = `${LOGIN_E2E_ORIGIN}/api/auth/email-code`
 const REGISTER_API = `${LOGIN_E2E_ORIGIN}/api/auth/register`
+const PASSWORD_RESET_EMAIL_CODE_API = `${LOGIN_E2E_ORIGIN}/api/auth/password-reset/email-code`
+const PASSWORD_RESET_API = `${LOGIN_E2E_ORIGIN}/api/auth/password-reset`
 const LOCAL_LOGIN_API = `${LOGIN_E2E_ORIGIN}/api/auth/login`
 const SSO_LOGIN_API = `${LOGIN_E2E_ORIGIN}/api/auth/sso-login`
 const PERMISSIONS_API = `${LOGIN_E2E_ORIGIN}/api/auth/permissions`
@@ -22,6 +24,7 @@ const RESOURCE_DUPLICATE_CODE = 30004
 const PASSWORD_TOO_WEAK_CODE = 30011
 const EMAIL_CODE_INVALID_CODE = 30012
 const EMAIL_CODE_REISSUE_REQUIRED_CODE = 30013
+const PASSWORD_RESET_REJECTED_CODE = 30015
 const TEST_CAPTCHA_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WnWQAAAAASUVORK5CYII='
 const LOGIN_PUZZLE_CHALLENGE_DEFAULTS = {
   backgroundImage: TEST_CAPTCHA_IMAGE,
@@ -1387,5 +1390,146 @@ test.describe('移动端整页滚动', () => {
 
     expect(await authSurface.evaluate((element) => element.scrollTop)).toBe(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  })
+})
+
+const PASSWORD_RESET_OPTIONS: RegisterOptionsVO = {
+  ...REGISTER_OPTIONS,
+  emailRequired: true,
+  passwordResetEnabled: true,
+}
+
+interface PasswordResetHarness {
+  captchaIssueCount: number
+  emailCodePayloads: Record<string, unknown>[]
+  resetPayloads: Record<string, unknown>[]
+}
+
+async function openForgotPassword(
+  page: Page,
+  resetResponseForAttempt: (attempt: number) => unknown = () => successResult(null),
+): Promise<PasswordResetHarness> {
+  const harness: PasswordResetHarness = {
+    captchaIssueCount: 0,
+    emailCodePayloads: [],
+    resetPayloads: [],
+  }
+  await page.route(CAPTCHA_API, async (route) => {
+    harness.captchaIssueCount += 1
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(successResult({
+        captchaId: `reset-captcha-${harness.captchaIssueCount}`,
+        image: TEST_CAPTCHA_IMAGE,
+        ttlSeconds: 300,
+      })),
+    })
+  })
+  await page.route(PASSWORD_RESET_EMAIL_CODE_API, async (route) => {
+    harness.emailCodePayloads.push(route.request().postDataJSON() as Record<string, unknown>)
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(successResult(600)),
+    })
+  })
+  await page.route(PASSWORD_RESET_API, async (route) => {
+    harness.resetPayloads.push(route.request().postDataJSON() as Record<string, unknown>)
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(resetResponseForAttempt(harness.resetPayloads.length)),
+    })
+  })
+  await mockLoginBootstrap(page, PASSWORD_RESET_OPTIONS)
+  await page.goto(LOGIN_PATH, { waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: '忘记密码？' }).click()
+  await expect(page.getByRole('heading', { name: '用注册邮箱重设密码' })).toBeVisible()
+  return harness
+}
+
+async function fillForgotIdentity(page: Page) {
+  await page.locator('#forgot-username').fill('richard.ui')
+  await page.locator('#forgot-email').fill('richard@example.com')
+  await page.locator('#forgot-captcha').fill('AB12')
+}
+
+test.describe('找回密码', () => {
+  test.use({ viewport: { width: 1280, height: 900 } })
+
+  test('发码带账号与图形码、重置只带邮箱码，成功后把用户名带回登录页', async ({ page }) => {
+    const harness = await openForgotPassword(page)
+
+    await fillForgotIdentity(page)
+    await page.getByRole('button', { name: '发送验证码' }).click()
+    await expect(page.locator('#forgot-email-code')).toBeEnabled()
+
+    expect(harness.emailCodePayloads).toHaveLength(1)
+    expect(harness.emailCodePayloads[0]).toMatchObject({
+      username: 'richard.ui',
+      email: 'richard@example.com',
+      captchaId: 'reset-captcha-1',
+      captcha: 'AB12',
+    })
+    // 图形码是一次性挑战，发码后必须换一张，旧的既不能复用也不该留在输入框里
+    await expect(page.locator('#forgot-captcha')).toHaveValue('')
+    expect(harness.captchaIssueCount).toBe(1)
+
+    await page.locator('#forgot-email-code').fill('123456')
+    await page.locator('#forgot-new-password').fill('Reset2026pwd')
+    await page.locator('#forgot-confirm-password').fill('Reset2026pwd')
+    await page.getByRole('button', { name: '重设密码' }).click()
+
+    await expect(page.getByRole('heading', { name: /可以用新密码登录了/ })).toBeVisible()
+    expect(harness.resetPayloads).toHaveLength(1)
+    expect(harness.resetPayloads[0]).toMatchObject({
+      username: 'richard.ui',
+      email: 'richard@example.com',
+      emailCode: '123456',
+      newPassword: 'Reset2026pwd',
+      confirmPassword: 'Reset2026pwd',
+    })
+    expect(harness.resetPayloads[0]).not.toHaveProperty('captcha')
+    expect(harness.resetPayloads[0]).not.toHaveProperty('captchaId')
+
+    await page.getByRole('button', { name: '返回登录' }).click()
+    await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible()
+    await expect(page.locator('#login-username')).toHaveValue('richard.ui')
+  })
+
+  /**
+   * 服务端把「码填错了」与「码已失效」合并成同一个 30015，前端分辨不出来。
+   * 一律清空会让输错一位的人再等一个冷却周期，因此保留输入让他自己决定。
+   */
+  test('重置被拒时保留已填的验证码与新密码，不强迫重新收信', async ({ page }) => {
+    const harness = await openForgotPassword(page, () => ({
+      code: PASSWORD_RESET_REJECTED_CODE,
+      message: '验证信息有误或已失效，请重新获取验证码',
+      data: null,
+    }))
+
+    await fillForgotIdentity(page)
+    await page.getByRole('button', { name: '发送验证码' }).click()
+    await expect(page.locator('#forgot-email-code')).toBeEnabled()
+    await page.locator('#forgot-email-code').fill('000000')
+    await page.locator('#forgot-new-password').fill('Reset2026pwd')
+    await page.locator('#forgot-confirm-password').fill('Reset2026pwd')
+    await page.getByRole('button', { name: '重设密码' }).click()
+
+    await expect.poll(() => harness.resetPayloads.length).toBe(1)
+    await expect(page.getByRole('heading', { name: '用注册邮箱重设密码' })).toBeVisible()
+    await expect(page.locator('#forgot-email-code')).toHaveValue('000000')
+    await expect(page.locator('#forgot-new-password')).toHaveValue('Reset2026pwd')
+  })
+
+  test('服务端邮件不可用时不渲染入口——点进去必然失败的入口比没有更糟', async ({ page }) => {
+    await mockLoginBootstrap(page, { ...PASSWORD_RESET_OPTIONS, passwordResetEnabled: false })
+    await page.goto(LOGIN_PATH, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible()
+
+    await expect(page.getByRole('button', { name: '忘记密码？' })).toHaveCount(0)
+    // 注册入口不受影响：两者是彼此独立的开关
+    await expect(page.getByRole('button', { name: '创建账号' })).toBeVisible()
   })
 })

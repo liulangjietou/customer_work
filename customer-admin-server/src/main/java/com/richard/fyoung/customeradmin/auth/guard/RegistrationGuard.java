@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.auth.guard;
 
+import com.richard.fyoung.customeradmin.auth.email.EmailCodePurpose;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -127,7 +128,7 @@ public class RegistrationGuard {
         checkRateLimit(clientIp);
         // 注册这一步只认邮箱验证码：图形码已经在发码那一步挡过一次脚本，而手里这份邮箱码
         // 进一步证明申请人确实控制着那个邮箱——比图形码强得多，再要一次只是多一个输入框。
-        emailVerificationService.verify(email, emailCode);
+        emailVerificationService.verify(EmailCodePurpose.REGISTER, email, emailCode);
     }
 
     /**
@@ -148,7 +149,7 @@ public class RegistrationGuard {
         if (captchaRequired() && !captchaService.verify(captchaId, captcha)) {
             throw new BizException(ResultCode.CAPTCHA_INVALID);
         }
-        return emailVerificationService.sendCode(email, clientIp);
+        return emailVerificationService.sendCode(EmailCodePurpose.REGISTER, email, clientIp);
     }
 
     /**
