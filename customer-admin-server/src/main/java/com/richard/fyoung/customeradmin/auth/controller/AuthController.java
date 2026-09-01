@@ -8,6 +8,8 @@ import com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaChallengeResponse;
 import com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaProofResponse;
 import com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaVerifyRequest;
 import com.richard.fyoung.customeradmin.auth.dto.LoginResponse;
+import com.richard.fyoung.customeradmin.auth.dto.PasswordResetEmailCodeRequest;
+import com.richard.fyoung.customeradmin.auth.dto.PasswordResetRequest;
 import com.richard.fyoung.customeradmin.auth.dto.RegisterRequest;
 import com.richard.fyoung.customeradmin.auth.dto.SsoLoginRequest;
 import com.richard.fyoung.customeradmin.auth.guard.CaptchaChallenge;
@@ -15,6 +17,7 @@ import com.richard.fyoung.customeradmin.auth.guard.ClientIpResolver;
 import com.richard.fyoung.customeradmin.auth.guard.LoginCaptchaService;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuard;
 import com.richard.fyoung.customeradmin.auth.service.AuthService;
+import com.richard.fyoung.customeradmin.auth.service.PasswordResetService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.system.user.service.UserRegistrationService;
@@ -30,7 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 登录认证：登录（含失败记录）/ 登出 / 改密 / 当前用户信息。
+ * 登录认证：登录（含失败记录）/ 登出 / 改密 / 找回密码 / 当前用户信息。
  * @author owlzhangfq@gmail.com
  */
 @RestController
@@ -42,16 +45,19 @@ public class AuthController {
     private final RegistrationGuard registrationGuard;
     private final ClientIpResolver clientIpResolver;
     private final LoginCaptchaService loginCaptchaService;
+    private final PasswordResetService passwordResetService;
 
     public AuthController(AuthService authService, UserRegistrationService userRegistrationService,
                           RegistrationGuard registrationGuard,
                           ClientIpResolver clientIpResolver,
-                          LoginCaptchaService loginCaptchaService) {
+                          LoginCaptchaService loginCaptchaService,
+                          PasswordResetService passwordResetService) {
         this.authService = authService;
         this.userRegistrationService = userRegistrationService;
         this.registrationGuard = registrationGuard;
         this.clientIpResolver = clientIpResolver;
         this.loginCaptchaService = loginCaptchaService;
+        this.passwordResetService = passwordResetService;
     }
 
     @PostMapping("/login")
@@ -77,9 +83,9 @@ public class AuthController {
     }
 
     /**
-     * 注册页的开关与验证码要求，前端据此决定是否渲染验证码框与邮箱必填星号。
+     * 登录页需要知道的部署形态：开不开放注册、要不要验证码与邮箱、能不能自助找回密码。
      *
-     * <p>放在登录前的匿名接口里：注册页此刻还没有任何登录态，
+     * <p>放在登录前的匿名接口里：登录页此刻还没有任何登录态，
      * 而"这个实例开不开放注册"本身不是敏感信息。</p>
      */
     @GetMapping("/register-options")
@@ -89,7 +95,37 @@ public class AuthController {
             registrationGuard.captchaRequired(),
             registrationGuard.emailRequired(),
             registrationGuard.emailVerificationRequired(),
-            registrationGuard.emailCodeResendCooldownSeconds()));
+            registrationGuard.emailCodeResendCooldownSeconds(),
+            passwordResetService.available()));
+    }
+
+    /**
+     * 找回密码第一步：向账号登记的邮箱发验证码。
+     *
+     * <p>图形验证码在这里<b>无条件</b>校验（不看部署形态），理由与注册发码同源，
+     * 但更强一层：这个接口对着的是已经存在的账号。</p>
+     *
+     * <p><b>返回值与"邮箱压根没注册"时完全一致</b>，见 {@code PasswordResetService} 的类注释。</p>
+     *
+     * @return 验证码有效期（秒），供前端做倒计时提示
+     */
+    @PostMapping("/password-reset/email-code")
+    public Result<Integer> sendPasswordResetEmailCode(@Valid @RequestBody PasswordResetEmailCodeRequest request,
+                                                      HttpServletRequest httpRequest) {
+        return Result.success(passwordResetService.sendCode(request, clientIpOf(httpRequest)));
+    }
+
+    /**
+     * 找回密码第二步：核验验证码并设置新密码。
+     *
+     * <p>不做 {@code @OperationLog}：那个切面靠 {@code StpUtil.isLogin()} 解析操作人，
+     * 而这里是匿名请求。留痕由 Service 的 info 日志承担。</p>
+     */
+    @PostMapping("/password-reset")
+    public Result<Void> resetPassword(@Valid @RequestBody PasswordResetRequest request,
+                                      HttpServletRequest httpRequest) {
+        passwordResetService.reset(request, clientIpOf(httpRequest));
+        return Result.success();
     }
 
     /**
@@ -139,18 +175,21 @@ public class AuthController {
     }
 
     /**
-     * 注册页需要知道的部署形态。
+     * 登录页需要知道的部署形态。
      *
      * @param selfServiceEnabled       是否开放自助注册
      * @param captchaRequired          是否需要图形验证码。开启邮箱验证时它用在<b>发码</b>那一步，
-     *                                 否则用在注册那一步
+     *                                 否则用在注册那一步。<b>找回密码不看这一位</b>，它无条件要求图形码
      * @param emailRequired            是否必须填邮箱
      * @param emailVerificationRequired 是否需要邮箱验证码（决定注册表单渲染"获取验证码"按钮）
-     * @param emailCodeCooldownSeconds 同一邮箱两次发码之间的服务端冷却时间（秒）
+     * @param emailCodeCooldownSeconds 同一邮箱两次发码之间的服务端冷却时间（秒），注册与找回密码共用
+     * @param passwordResetEnabled     能否自助找回密码。它跟随邮件服务是否真的可用，
+     *                                 没有对应的配置开关——多一个开关就多一个漏配点，
+     *                                 而配错的后果是"用户永远找不回密码"且无人告警
      */
     public record RegisterOptionsVO(boolean selfServiceEnabled, boolean captchaRequired,
                                     boolean emailRequired, boolean emailVerificationRequired,
-                                    int emailCodeCooldownSeconds) {
+                                    int emailCodeCooldownSeconds, boolean passwordResetEnabled) {
     }
 
     /** OA 域账号（LDAP/AD）单点登录，与上面的账号密码登录入口共存，前端登录页 Tab 切换。 */

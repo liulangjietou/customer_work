@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.auth.guard;
 
+import com.richard.fyoung.customeradmin.auth.email.EmailCodePurpose;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
@@ -158,7 +159,7 @@ public class RegistrationGuard {
      */
     private void verifyHumanEvidence(String captchaId, String captcha, String email, String emailCode) {
         if (emailVerificationRequired()) {
-            emailVerificationService.verify(email, emailCode);
+            emailVerificationService.verify(EmailCodePurpose.REGISTER, email, emailCode);
             return;
         }
         if (captchaRequired() && !captchaService.verify(captchaId, captcha)) {
@@ -187,7 +188,7 @@ public class RegistrationGuard {
         if (captchaRequired() && !captchaService.verify(captchaId, captcha)) {
             throw new BizException(ResultCode.CAPTCHA_INVALID);
         }
-        return emailVerificationService.sendCode(email, clientIp);
+        return emailVerificationService.sendCode(EmailCodePurpose.REGISTER, email, clientIp);
     }
 
     /**

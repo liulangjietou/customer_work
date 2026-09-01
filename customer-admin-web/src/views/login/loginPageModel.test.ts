@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildEmailCodeRequestPayload,
+  buildPasswordResetEmailCodePayload,
+  buildPasswordResetPayload,
   buildRegistrationPayload,
   calculateCountdownSeconds,
   createLoginSubmission,
@@ -11,13 +13,18 @@ import {
   getRegistrationStepValidationFields,
   isCaptchaConsumedByEmailCodeRequest,
   isCaptchaConsumedByRegistration,
+  PASSWORD_RESET_EMAIL_CODE_FIELDS,
+  PASSWORD_RESET_SUBMIT_FIELDS,
   REGISTER_ACCOUNT_STEP,
   REGISTER_SECURITY_STEP,
   resolveEmailCodeCooldownSeconds,
   shouldHandleRegisterEnter,
   shouldClearEmailCodeAfterRegistrationFailure,
+  shouldKeepEmailCodeAfterPasswordResetFailure,
+  shouldShowForgotPasswordEntry,
   shouldShowRegisterEntry,
   usesEmailCodeForRegistration,
+  type PasswordResetFormData,
   type RegisterField,
   type RegisterFormData,
   type RegisterVerificationOptions,
@@ -292,5 +299,87 @@ describe('calculateCountdownSeconds', () => {
     ['服务端非正值统一视为关闭', -1, 0],
   ] as const)('%s', (_name, configuredSeconds, expected) => {
     expect(resolveEmailCodeCooldownSeconds(configuredSeconds)).toBe(expected)
+  })
+})
+
+describe('shouldShowForgotPasswordEntry', () => {
+  it('服务端确认邮件可用时才在本地账号模式下展示入口', () => {
+    expect(shouldShowForgotPasswordEntry('local', true, true)).toBe(true)
+  })
+
+  it.each([
+    ['OA 模式：域账号密码在企业域控，本平台改不了', 'sso' as const, true, true],
+    ['能力接口未成功返回', 'local' as const, false, true],
+    ['服务端邮件不可用', 'local' as const, true, false],
+    ['旧服务端不返回该字段', 'local' as const, true, undefined],
+  ])('%s 时不展示', (_name, mode, loaded, enabled) => {
+    expect(shouldShowForgotPasswordEntry(mode, loaded, enabled)).toBe(false)
+  })
+
+  it('与注册入口相互独立：关掉自助注册的实例照样要能找回密码', () => {
+    expect(shouldShowRegisterEntry('local', true, false)).toBe(false)
+    expect(shouldShowForgotPasswordEntry('local', true, true)).toBe(true)
+  })
+})
+
+describe('密码重置载荷', () => {
+  const form: PasswordResetFormData = {
+    username: 'richard',
+    email: 'richard@example.com',
+    captchaId: 'cid-1',
+    captcha: 'a1b2',
+    emailCode: '123456',
+    newPassword: 'Reset2026pwd',
+    confirmPassword: 'Reset2026pwd',
+  }
+
+  it('发码请求带上用户名、邮箱与图形码，不夹带新密码', () => {
+    const payload = buildPasswordResetEmailCodePayload(form)
+
+    expect(payload).toEqual({
+      username: 'richard',
+      email: 'richard@example.com',
+      captchaId: 'cid-1',
+      captcha: 'a1b2',
+    })
+    expect(payload).not.toHaveProperty('newPassword')
+  })
+
+  it('重置请求不再带图形码——它已经在发码那一步被消费掉了', () => {
+    const payload = buildPasswordResetPayload(form)
+
+    expect(payload).toEqual({
+      username: 'richard',
+      email: 'richard@example.com',
+      emailCode: '123456',
+      newPassword: 'Reset2026pwd',
+      confirmPassword: 'Reset2026pwd',
+    })
+    expect(payload).not.toHaveProperty('captchaId')
+    expect(payload).not.toHaveProperty('captcha')
+  })
+
+  it('两个阶段各校验各的字段：发码不看新密码，提交不看图形码', () => {
+    expect(PASSWORD_RESET_EMAIL_CODE_FIELDS).toEqual(['username', 'email', 'captcha'])
+    expect(PASSWORD_RESET_SUBMIT_FIELDS).not.toContain('captcha')
+    expect(PASSWORD_RESET_SUBMIT_FIELDS).toContain('emailCode')
+  })
+})
+
+describe('shouldKeepEmailCodeAfterPasswordResetFailure', () => {
+  const failure = (code: number) => ({ response: { data: { code } } })
+
+  it.each([
+    ['服务端合并后的统一拒绝码（分不出是码错还是码过期）', 30015],
+    ['参数不合法', 30001],
+    ['缺少必填参数', 30002],
+    ['弱口令', 30011],
+  ] as const)('%s 时保留输入，让用户自己决定改一位还是重新获取', (_name, code) => {
+    expect(shouldKeepEmailCodeAfterPasswordResetFailure(failure(code))).toBe(true)
+  })
+
+  it('结果未知时按已消费收敛，不假装那份码还能用', () => {
+    expect(shouldKeepEmailCodeAfterPasswordResetFailure(new Error('network down'))).toBe(false)
+    expect(shouldKeepEmailCodeAfterPasswordResetFailure(failure(50000))).toBe(false)
   })
 })

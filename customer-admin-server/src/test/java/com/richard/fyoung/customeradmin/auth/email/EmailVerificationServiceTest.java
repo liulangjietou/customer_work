@@ -33,6 +33,7 @@ import static org.mockito.Mockito.when;
  */
 class EmailVerificationServiceTest {
 
+    private static final EmailCodePurpose PURPOSE = EmailCodePurpose.REGISTER;
     private static final String EMAIL = "richard@example.com";
     private static final String IP = "203.0.113.31";
 
@@ -54,10 +55,10 @@ class EmailVerificationServiceTest {
 
     @Test
     void sendCode_shouldStoreCodeAndMailItToTheAddress() {
-        int ttl = service.sendCode(EMAIL, IP);
+        int ttl = service.sendCode(PURPOSE, EMAIL, IP);
 
         assertEquals(properties.getEmailVerification().getTtlSeconds(), ttl);
-        EmailVerificationCode stored = store.get(EMAIL);
+        EmailVerificationCode stored = store.get(PURPOSE, EMAIL);
         assertNotNull(stored);
         assertEquals(properties.getEmailVerification().getCodeLength(), stored.code().length());
         assertTrue(stored.code().matches("\\d+"), "验证码应为纯数字，便于在手机上转录");
@@ -77,7 +78,7 @@ class EmailVerificationServiceTest {
      */
     @Test
     void sendCode_shouldNotPutAnyClickableLinkInMailBody() {
-        service.sendCode(EMAIL, IP);
+        service.sendCode(PURPOSE, EMAIL, IP);
 
         ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
         verify(mailSender).send(any(), any(), textCaptor.capture());
@@ -88,14 +89,14 @@ class EmailVerificationServiceTest {
 
     @Test
     void verify_shouldPassWithCorrectCodeAndConsumeIt() {
-        service.sendCode(EMAIL, IP);
-        String code = store.get(EMAIL).code();
+        service.sendCode(PURPOSE, EMAIL, IP);
+        String code = store.get(PURPOSE, EMAIL).code();
 
-        assertDoesNotThrow(() -> service.verify(EMAIL, code));
+        assertDoesNotThrow(() -> service.verify(PURPOSE, EMAIL, code));
 
         // 同一份码不能注册两个账号
-        assertNull(store.get(EMAIL));
-        BizException replay = assertThrows(BizException.class, () -> service.verify(EMAIL, code));
+        assertNull(store.get(PURPOSE, EMAIL));
+        BizException replay = assertThrows(BizException.class, () -> service.verify(PURPOSE, EMAIL, code));
         assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, replay.getResultCode());
     }
 
@@ -107,93 +108,93 @@ class EmailVerificationServiceTest {
      */
     @Test
     void verify_shouldAllowRetriesUntilMaxAttemptsThenInvalidate() {
-        service.sendCode(EMAIL, IP);
-        String code = store.get(EMAIL).code();
+        service.sendCode(PURPOSE, EMAIL, IP);
+        String code = store.get(PURPOSE, EMAIL).code();
         String wrongCode = wrongCodeFor(code);
         int maxAttempts = properties.getEmailVerification().getMaxAttempts();
 
         for (int i = 0; i < maxAttempts - 1; i++) {
             BizException retryable = assertThrows(BizException.class,
-                () -> service.verify(EMAIL, wrongCode));
+                () -> service.verify(PURPOSE, EMAIL, wrongCode));
             assertEquals(ResultCode.EMAIL_CODE_INVALID, retryable.getResultCode(),
                 "未耗尽尝试次数时客户端应允许继续输入当前验证码");
-            assertNotNull(store.get(EMAIL), "未达上限前验证码应当仍然有效");
+            assertNotNull(store.get(PURPOSE, EMAIL), "未达上限前验证码应当仍然有效");
         }
         // 中途输对仍然算数
-        assertDoesNotThrow(() -> service.verify(EMAIL, code));
+        assertDoesNotThrow(() -> service.verify(PURPOSE, EMAIL, code));
     }
 
     @Test
     void verify_shouldInvalidateCodeAfterMaxFailedAttempts() {
-        service.sendCode(EMAIL, IP);
-        String code = store.get(EMAIL).code();
+        service.sendCode(PURPOSE, EMAIL, IP);
+        String code = store.get(PURPOSE, EMAIL).code();
         String wrongCode = wrongCodeFor(code);
         int maxAttempts = properties.getEmailVerification().getMaxAttempts();
 
         for (int i = 0; i < maxAttempts - 1; i++) {
             BizException retryable = assertThrows(BizException.class,
-                () -> service.verify(EMAIL, wrongCode));
+                () -> service.verify(PURPOSE, EMAIL, wrongCode));
             assertEquals(ResultCode.EMAIL_CODE_INVALID, retryable.getResultCode());
         }
         BizException exhausted = assertThrows(BizException.class,
-            () -> service.verify(EMAIL, wrongCode));
+            () -> service.verify(PURPOSE, EMAIL, wrongCode));
 
         assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, exhausted.getResultCode(),
             "次数耗尽后客户端必须引导重新获取验证码");
-        assertNull(store.get(EMAIL), "失败次数耗尽后验证码必须作废");
-        BizException error = assertThrows(BizException.class, () -> service.verify(EMAIL, code));
+        assertNull(store.get(PURPOSE, EMAIL), "失败次数耗尽后验证码必须作废");
+        BizException error = assertThrows(BizException.class, () -> service.verify(PURPOSE, EMAIL, code));
         assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
     }
 
     @Test
     void verify_shouldRequireReissueWhenCodeDoesNotExist() {
         BizException error = assertThrows(BizException.class,
-            () -> service.verify(EMAIL, "123456"));
+            () -> service.verify(PURPOSE, EMAIL, "123456"));
 
         assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
     }
 
     @Test
     void verify_shouldRequireReissueWhenCodeExpired() {
-        store.save(EMAIL, new EmailVerificationCode("123456", 0, System.currentTimeMillis() - 1));
+        store.save(PURPOSE, EMAIL, new EmailVerificationCode("123456", 0, System.currentTimeMillis() - 1));
 
         BizException error = assertThrows(BizException.class,
-            () -> service.verify(EMAIL, "123456"));
+            () -> service.verify(PURPOSE, EMAIL, "123456"));
 
         assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
-        assertNull(store.get(EMAIL));
+        assertNull(store.get(PURPOSE, EMAIL));
     }
 
     /** 失败重写不得续期，否则不断试错就能让验证码永不过期，正好方便暴力猜码。 */
     @Test
     void verify_shouldKeepOriginalExpiryWhenRecordingFailure() {
-        service.sendCode(EMAIL, IP);
-        String code = store.get(EMAIL).code();
-        long expireAtBefore = store.get(EMAIL).expireAtMs();
+        service.sendCode(PURPOSE, EMAIL, IP);
+        String code = store.get(PURPOSE, EMAIL).code();
+        long expireAtBefore = store.get(PURPOSE, EMAIL).expireAtMs();
 
         BizException error = assertThrows(BizException.class,
-            () -> service.verify(EMAIL, wrongCodeFor(code)));
+            () -> service.verify(PURPOSE, EMAIL, wrongCodeFor(code)));
 
         assertEquals(ResultCode.EMAIL_CODE_INVALID, error.getResultCode());
-        assertEquals(expireAtBefore, store.get(EMAIL).expireAtMs());
+        assertEquals(expireAtBefore, store.get(PURPOSE, EMAIL).expireAtMs());
     }
 
     @Test
     void verify_shouldRejectBlankInput() {
-        service.sendCode(EMAIL, IP);
+        service.sendCode(PURPOSE, EMAIL, IP);
 
-        BizException error = assertThrows(BizException.class, () -> service.verify(EMAIL, "  "));
+        BizException error = assertThrows(BizException.class, () -> service.verify(PURPOSE, EMAIL, "  "));
 
         assertEquals(ResultCode.EMAIL_CODE_INVALID, error.getResultCode());
-        assertNotNull(store.get(EMAIL), "空输入不该消耗尝试次数之外的东西，码仍应有效");
+        assertNotNull(store.get(PURPOSE, EMAIL), "空输入不该消耗尝试次数之外的东西，码仍应有效");
     }
 
     /** 冷却挡的是对同一个受害者的高频轰炸。 */
     @Test
     void sendCode_shouldRejectResendWithinCooldown() {
-        service.sendCode(EMAIL, IP);
+        service.sendCode(PURPOSE, EMAIL, IP);
 
-        BizException error = assertThrows(BizException.class, () -> service.sendCode(EMAIL, IP));
+        BizException error = assertThrows(BizException.class, () -> service.sendCode(PURPOSE, EMAIL, IP));
 
         assertEquals(ResultCode.EMAIL_CODE_TOO_FREQUENT, error.getResultCode());
         verify(mailSender, times(1)).send(any(), any(), any());
@@ -206,10 +207,10 @@ class EmailVerificationServiceTest {
         properties.getEmailVerification().setMaxSendPerEmailPerDay(3);
 
         for (int i = 0; i < 3; i++) {
-            assertDoesNotThrow(() -> service.sendCode(EMAIL, IP));
+            assertDoesNotThrow(() -> service.sendCode(PURPOSE, EMAIL, IP));
         }
 
-        BizException error = assertThrows(BizException.class, () -> service.sendCode(EMAIL, IP));
+        BizException error = assertThrows(BizException.class, () -> service.sendCode(PURPOSE, EMAIL, IP));
         assertEquals(ResultCode.EMAIL_CODE_TOO_FREQUENT, error.getResultCode());
     }
 
@@ -221,14 +222,14 @@ class EmailVerificationServiceTest {
 
         for (int i = 0; i < 3; i++) {
             int index = i;
-            assertDoesNotThrow(() -> service.sendCode("victim" + index + "@example.com", IP));
+            assertDoesNotThrow(() -> service.sendCode(PURPOSE, "victim" + index + "@example.com", IP));
         }
 
         BizException error = assertThrows(BizException.class,
-            () -> service.sendCode("victim9@example.com", IP));
+            () -> service.sendCode(PURPOSE, "victim9@example.com", IP));
         assertEquals(ResultCode.EMAIL_CODE_TOO_FREQUENT, error.getResultCode());
         // 换个来源仍然放行，证明限的是 IP 而不是全局
-        assertDoesNotThrow(() -> service.sendCode("victim9@example.com", "198.51.100.44"));
+        assertDoesNotThrow(() -> service.sendCode(PURPOSE, "victim9@example.com", "198.51.100.44"));
     }
 
     /** 邮件服务没配好时当场失败，而不是让用户干等一封永远不会到的信。 */
@@ -236,10 +237,10 @@ class EmailVerificationServiceTest {
     void sendCode_shouldFailFastWhenMailIsUnavailable() {
         when(mailSender.available()).thenReturn(false);
 
-        BizException error = assertThrows(BizException.class, () -> service.sendCode(EMAIL, IP));
+        BizException error = assertThrows(BizException.class, () -> service.sendCode(PURPOSE, EMAIL, IP));
 
         assertEquals(ResultCode.EMAIL_CODE_SEND_FAILED, error.getResultCode());
-        assertNull(store.get(EMAIL));
+        assertNull(store.get(PURPOSE, EMAIL));
         verify(mailSender, never()).send(any(), any(), any());
     }
 
@@ -253,10 +254,10 @@ class EmailVerificationServiceTest {
     void sendCode_shouldNotLeaveDeadCodeWhenMailFails() {
         doThrow(new MailSendException("smtp down")).when(mailSender).send(any(), any(), any());
 
-        BizException error = assertThrows(BizException.class, () -> service.sendCode(EMAIL, IP));
+        BizException error = assertThrows(BizException.class, () -> service.sendCode(PURPOSE, EMAIL, IP));
 
         assertEquals(ResultCode.EMAIL_CODE_SEND_FAILED, error.getResultCode());
-        assertNull(store.get(EMAIL), "发送失败必须清掉刚写入的验证码");
+        assertNull(store.get(PURPOSE, EMAIL), "发送失败必须清掉刚写入的验证码");
     }
 
     /** 大小写不同的同一邮箱是同一个人，键与唯一约束都必须能挡住。 */
@@ -264,6 +265,55 @@ class EmailVerificationServiceTest {
     void normalize_shouldLowercaseAndTrim() {
         assertEquals("richard@example.com", EmailVerificationService.normalize("  Richard@Example.COM "));
         assertNull(EmailVerificationService.normalize(null));
+    }
+
+    /**
+     * 验证码按用途分空间：一封注册码核验不了重置那一侧。
+     *
+     * <p>而且这次失败的尝试不该动到注册码本身——两条链路互不影响，
+     * 也就没法拿一条去骚扰另一条。</p>
+     */
+    @Test
+    void verify_shouldNotAcceptACodeIssuedForAnotherPurpose() {
+        service.sendCode(EmailCodePurpose.REGISTER, EMAIL, IP);
+        String registrationCode = store.get(EmailCodePurpose.REGISTER, EMAIL).code();
+
+        assertNull(store.get(EmailCodePurpose.PASSWORD_RESET, EMAIL));
+        BizException error = assertThrows(BizException.class,
+            () -> service.verify(EmailCodePurpose.PASSWORD_RESET, EMAIL, registrationCode));
+
+        assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
+        assertNotNull(store.get(EmailCodePurpose.REGISTER, EMAIL), "另一条链路的失败不该消耗这份码");
+        assertEquals(0, store.get(EmailCodePurpose.REGISTER, EMAIL).attempts());
+    }
+
+    /**
+     * 而发信额度<b>刻意</b>跨用途共用。
+     *
+     * <p>各给一份的话，攻击者交替调用注册发码与重置发码，对同一个受害者邮箱的发信量就翻倍——
+     * 这几道限制保护的是收件人不被轰炸，与发的是哪种码无关。</p>
+     */
+    @Test
+    void sendCode_shouldShareTheSendingQuotaAcrossPurposes() {
+        service.sendCode(EmailCodePurpose.REGISTER, EMAIL, IP);
+
+        BizException error = assertThrows(BizException.class,
+            () -> service.sendCode(EmailCodePurpose.PASSWORD_RESET, EMAIL, IP));
+
+        assertEquals(ResultCode.EMAIL_CODE_TOO_FREQUENT, error.getResultCode());
+        verify(mailSender, times(1)).send(any(), any(), any());
+    }
+
+    /** 用途决定邮件主题与正文口径，两封信不能长得一模一样。 */
+    @Test
+    void sendCode_shouldUsePurposeSpecificSubjectAndWording() {
+        service.sendCode(EmailCodePurpose.PASSWORD_RESET, EMAIL, IP);
+
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(mailSender).send(any(), subject.capture(), body.capture());
+        assertEquals("密码重置验证码", subject.getValue());
+        assertTrue(body.getValue().contains("重置"), "正文要说清这是重置而不是注册：" + body.getValue());
     }
 
     private String wrongCodeFor(String code) {

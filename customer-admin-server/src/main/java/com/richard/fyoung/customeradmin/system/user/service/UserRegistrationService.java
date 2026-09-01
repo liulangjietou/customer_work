@@ -42,10 +42,6 @@ import java.util.Locale;
 public class UserRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(UserRegistrationService.class);
-    private static final String LOCAL_LOGIN_TYPE = "LOCAL";
-    private static final int EMAIL_UNVERIFIED = 0;
-    private static final int EMAIL_VERIFIED = 1;
-
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final RegistrationGuard registrationGuard;
@@ -91,9 +87,9 @@ public class UserRegistrationService {
         user.setEmail(email);
         // 验证码核验通过才走到这里，所以此刻邮箱确实归申请人所有；
         // 未开启邮箱验证的内网实例只是"填了个地址"，不能算已验证
-        user.setEmailVerified(
-            registrationGuard.emailVerificationRequired() ? EMAIL_VERIFIED : EMAIL_UNVERIFIED);
-        user.setLoginType(LOCAL_LOGIN_TYPE);
+        user.setEmailVerified(registrationGuard.emailVerificationRequired()
+            ? SysUser.EMAIL_VERIFIED : SysUser.EMAIL_UNVERIFIED);
+        user.setLoginType(SysUser.LOGIN_TYPE_LOCAL);
         user.setStatus(1);
         user.setApprovalStatus(UserApprovalStatus.PENDING.name());
 

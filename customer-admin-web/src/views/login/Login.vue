@@ -15,9 +15,11 @@ import { chooseButtonTextColor } from '@/utils/themeContrast'
 import LoginBrandStage from './LoginBrandStage.vue'
 import LoginSliderCaptcha from './LoginSliderCaptcha.vue'
 import RegisterPanel from './RegisterPanel.vue'
+import ForgotPasswordPanel from './ForgotPasswordPanel.vue'
 import {
   createLoginSubmission,
   getLoginModePresentation,
+  shouldShowForgotPasswordEntry,
   shouldShowRegisterEntry,
   type LoginMode,
 } from './loginPageModel'
@@ -32,7 +34,7 @@ const tabsStore = useTabsStore()
 const themeStore = useThemeStore()
 
 const authSurfaceRef = ref<HTMLElement>()
-const authPanel = ref<'login' | 'register'>('login')
+const authPanel = ref<'login' | 'register' | 'forgot'>('login')
 const loginMode = ref<LoginMode>('local')
 const modePresentation = computed(() => getLoginModePresentation(loginMode.value))
 const localModePresentation = getLoginModePresentation('local')
@@ -62,6 +64,13 @@ const canRegister = computed(() => shouldShowRegisterEntry(
   loginMode.value,
   registerOptionsLoaded.value,
   registerOptions.value.selfServiceEnabled,
+))
+// 找回密码与自助注册是两个独立开关：关掉注册的内网实例照样需要它，
+// 而它本身跟随服务端邮件是否可用
+const canResetPassword = computed(() => shouldShowForgotPasswordEntry(
+  loginMode.value,
+  registerOptionsLoaded.value,
+  registerOptions.value.passwordResetEnabled,
 ))
 
 // 后台仍可配置多张登录图；接口不可用时用首页同源客服视觉兜底。
@@ -119,6 +128,15 @@ async function openRegister() {
   }
   captchaProof.value = ''
   authPanel.value = 'register'
+  await resetAuthScroll()
+}
+
+async function openForgotPassword() {
+  if (submitting.value || !canResetPassword.value) {
+    return
+  }
+  captchaProof.value = ''
+  authPanel.value = 'forgot'
   await resetAuthScroll()
 }
 
@@ -372,6 +390,12 @@ onMounted(() => {
             OA 身份由企业目录校验，首次登录会关联后台身份。
           </p>
 
+          <div v-if="canResetPassword" class="forgot-entry">
+            <el-button link type="primary" :disabled="submitting" @click="openForgotPassword">
+              忘记密码？
+            </el-button>
+          </div>
+
           <div v-if="canRegister" class="register-entry">
             <span>还没有本地账号？</span>
             <el-button link type="primary" :disabled="submitting" @click="openRegister">创建账号</el-button>
@@ -380,6 +404,16 @@ onMounted(() => {
         </section>
 
         <RegisterPanel
+          v-else-if="authPanel === 'register'"
+          class="auth-panel"
+          :options="registerOptions"
+          :primary-text-color="primaryTextColor"
+          @back="backToLogin()"
+          @complete="backToLogin"
+          @request-scroll-top="resetAuthScroll"
+        />
+
+        <ForgotPasswordPanel
           v-else
           class="auth-panel"
           :options="registerOptions"
@@ -569,6 +603,11 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.6;
   text-align: center;
+}
+
+.forgot-entry {
+  margin-top: 14px;
+  text-align: right;
 }
 
 .register-entry {

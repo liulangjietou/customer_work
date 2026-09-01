@@ -8,6 +8,7 @@ import com.richard.fyoung.customeradmin.auth.guard.LoginCaptchaService;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuard;
 import com.richard.fyoung.customeradmin.auth.guard.RegistrationGuardProperties;
 import com.richard.fyoung.customeradmin.auth.service.AuthService;
+import com.richard.fyoung.customeradmin.auth.service.PasswordResetService;
 import com.richard.fyoung.customeradmin.common.exception.GlobalExceptionHandler;
 import com.richard.fyoung.customeradmin.config.SaTokenConfig;
 import com.richard.fyoung.customeradmin.system.user.service.UserRegistrationService;
@@ -315,6 +316,11 @@ class AuthControllerLoginCaptchaTest {
         @Bean
         LoginCaptchaService loginCaptchaService() {
             return mock(LoginCaptchaService.class);
+        }
+
+        @Bean
+        PasswordResetService passwordResetService() {
+            return mock(PasswordResetService.class);
         }
     }
 }

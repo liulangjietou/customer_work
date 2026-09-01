@@ -120,7 +120,25 @@ export interface EmailCodeRequest {
   captcha?: string | null
 }
 
-/** 注册页的部署形态：决定是否渲染验证码框与邮箱必填标记 */
+/** 请求向账号登记的邮箱发送密码重置验证码；用户名与邮箱必须指向同一个账号 */
+export interface PasswordResetEmailCodeRequest {
+  username: string
+  email: string
+  /** 图形验证码在这一步无条件校验，不看部署形态 */
+  captchaId: string
+  captcha: string
+}
+
+/** 凭邮箱验证码重置登录密码 */
+export interface PasswordResetRequest {
+  username: string
+  email: string
+  emailCode: string
+  newPassword: string
+  confirmPassword: string
+}
+
+/** 登录页的部署形态：决定是否渲染注册入口、验证码框、邮箱必填标记与找回密码入口 */
 export interface RegisterOptionsVO {
   selfServiceEnabled: boolean
   /** 是否需要图形验证码。开启邮箱验证时它用在「获取验证码」那一步，否则用在注册那一步 */
@@ -128,8 +146,13 @@ export interface RegisterOptionsVO {
   emailRequired: boolean
   /** 是否需要邮箱验证码 */
   emailVerificationRequired: boolean
-  /** 服务端配置的同邮箱发码冷却秒数；可选以兼容滚动升级期间的旧服务端。 */
+  /** 服务端配置的同邮箱发码冷却秒数；可选以兼容滚动升级期间的旧服务端。注册与找回密码共用 */
   emailCodeCooldownSeconds?: number
+  /**
+   * 能否自助找回密码。它跟随服务端邮件是否真的可用，没有独立开关；
+   * 可选以兼容滚动升级期间的旧服务端（缺失时按不可用处理，宁可不渲染入口也不给死路）。
+   */
+  passwordResetEnabled?: boolean
 }
 
 /** 一次验证码挑战；image 是 PNG 的 data URI，直接塞进 <img src> */

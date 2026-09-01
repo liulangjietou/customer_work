@@ -18,35 +18,42 @@ public class InMemoryEmailVerificationStore implements EmailVerificationStore {
     private final Map<String, EmailVerificationCode> entries = new ConcurrentHashMap<>();
 
     @Override
-    public void save(String email, EmailVerificationCode code) {
+    public void save(EmailCodePurpose purpose, String email, EmailVerificationCode code) {
         purgeExpired();
-        if (entries.size() >= MAX_ENTRIES && !entries.containsKey(email)) {
+        String key = key(purpose, email);
+        if (entries.size() >= MAX_ENTRIES && !entries.containsKey(key)) {
             // 超限时丢弃新的而不是清空旧的：清空会让正在填表的人全部失败
             return;
         }
-        entries.put(email, code);
+        entries.put(key, code);
     }
 
     @Override
-    public EmailVerificationCode get(String email) {
-        EmailVerificationCode code = entries.get(email);
+    public EmailVerificationCode get(EmailCodePurpose purpose, String email) {
+        String key = key(purpose, email);
+        EmailVerificationCode code = entries.get(key);
         if (code == null) {
             return null;
         }
         if (code.remainingSeconds(System.currentTimeMillis()) <= 0) {
-            entries.remove(email);
+            entries.remove(key);
             return null;
         }
         return code;
     }
 
     @Override
-    public void invalidate(String email) {
-        entries.remove(email);
+    public void invalidate(EmailCodePurpose purpose, String email) {
+        entries.remove(key(purpose, email));
     }
 
     private void purgeExpired() {
         long now = System.currentTimeMillis();
         entries.entrySet().removeIf(e -> e.getValue().remainingSeconds(now) <= 0);
+    }
+
+    /** 用途在前、邮箱在后：注册码与重置码互不可见。 */
+    private String key(EmailCodePurpose purpose, String email) {
+        return purpose.storageKey() + ":" + email;
     }
 }

@@ -30,25 +30,25 @@ public class RedissonEmailVerificationStore implements EmailVerificationStore {
     }
 
     @Override
-    public void save(String email, EmailVerificationCode code) {
+    public void save(EmailCodePurpose purpose, String email, EmailVerificationCode code) {
         int remaining = code.remainingSeconds(System.currentTimeMillis());
         if (remaining <= 0) {
-            invalidate(email);
+            invalidate(purpose, email);
             return;
         }
         try {
-            RBucket<EmailVerificationCode> bucket = redisson.getBucket(key(email));
+            RBucket<EmailVerificationCode> bucket = redisson.getBucket(key(purpose, email));
             bucket.set(code, Duration.ofSeconds(remaining));
         } catch (Exception e) {
             log.error("email code save failed, fallback to in-process, code={}", "AUTH-EMAIL-CODE-SAVE-FAIL", e);
-            fallback.save(email, code);
+            fallback.save(purpose, email, code);
         }
     }
 
     @Override
-    public EmailVerificationCode get(String email) {
+    public EmailVerificationCode get(EmailCodePurpose purpose, String email) {
         try {
-            RBucket<EmailVerificationCode> bucket = redisson.getBucket(key(email));
+            RBucket<EmailVerificationCode> bucket = redisson.getBucket(key(purpose, email));
             EmailVerificationCode code = bucket.get();
             if (code != null && code.remainingSeconds(System.currentTimeMillis()) <= 0) {
                 bucket.delete();
@@ -57,22 +57,27 @@ public class RedissonEmailVerificationStore implements EmailVerificationStore {
             return code;
         } catch (Exception e) {
             log.error("email code read failed, fallback to in-process, code={}", "AUTH-EMAIL-CODE-READ-FAIL", e);
-            return fallback.get(email);
+            return fallback.get(purpose, email);
         }
     }
 
     @Override
-    public void invalidate(String email) {
+    public void invalidate(EmailCodePurpose purpose, String email) {
         try {
-            redisson.getBucket(key(email)).delete();
+            redisson.getBucket(key(purpose, email)).delete();
         } catch (Exception e) {
             log.error("email code invalidate failed, code={}", "AUTH-EMAIL-CODE-DELETE-FAIL", e);
         }
-        fallback.invalidate(email);
+        fallback.invalidate(purpose, email);
     }
 
-    /** 邮箱直接入键：调用方已统一小写，且 Redis 键不进日志（验证码本身才是敏感物）。 */
-    private String key(String email) {
-        return KEY_PREFIX + email;
+    /**
+     * 用途与邮箱共同入键：调用方已把邮箱统一小写，且 Redis 键不进日志（验证码本身才是敏感物）。
+     *
+     * <p>键形状因加入用途段而变化，升级那一刻仍挂在旧键上的注册验证码会读不到，
+     * 当事人需要重新获取一次。TTL 只有十分钟，这个一次性代价换的是两条链路的凭证不再互通。</p>
+     */
+    private String key(EmailCodePurpose purpose, String email) {
+        return KEY_PREFIX + purpose.storageKey() + ":" + email;
     }
 }
