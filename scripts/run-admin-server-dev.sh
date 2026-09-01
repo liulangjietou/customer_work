@@ -18,5 +18,8 @@ export ADMIN_XXL_JOB_ACCESS_TOKEN=default_token
 # export ADMIN_MAIL_PORT=587
 # export ADMIN_MAIL_USERNAME=noreply@example.com
 # export ADMIN_MAIL_PASSWORD=your-smtp-authorization-code
+# 465 端口是隐式 SSL（QQ/163/企业邮多为此类），此时下面两行必须一起打开：
+# export ADMIN_MAIL_SSL=true
+# export ADMIN_MAIL_STARTTLS=false
 cd "$(dirname "$0")/../customer-admin-server"
 exec mvn spring-boot:run -Dspring-boot.run.profiles=dev -q

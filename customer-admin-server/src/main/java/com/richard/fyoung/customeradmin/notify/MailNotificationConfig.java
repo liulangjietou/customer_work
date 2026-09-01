@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.util.StringUtils;
 
 import java.util.Properties;
 
@@ -66,7 +67,9 @@ public class MailNotificationConfig {
         sender.setDefaultEncoding("UTF-8");
 
         Properties mailProps = sender.getJavaMailProperties();
-        mailProps.put(PROP_AUTH, String.valueOf(properties.getUsername() != null));
+        // 空串不算"配了账号"：yml 的 ${ADMIN_MAIL_USERNAME:} 在未设环境变量时解析成空串而非 null，
+        // 按 != null 判定会开着 auth 去做一次注定失败的空账号认证，报错还指向别处
+        mailProps.put(PROP_AUTH, String.valueOf(StringUtils.hasText(properties.getUsername())));
         mailProps.put(PROP_STARTTLS, String.valueOf(properties.isStartTlsEnabled()));
         mailProps.put(PROP_SSL_ENABLE, String.valueOf(properties.isSslEnabled()));
         String timeout = String.valueOf(properties.getTimeoutMs());

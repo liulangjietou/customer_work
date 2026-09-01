@@ -153,6 +153,10 @@ admin:
       username: ${ADMIN_MAIL_USERNAME:}
       password: ${ADMIN_MAIL_PASSWORD:}
       from: ${ADMIN_MAIL_FROM:}
+      # 587 走 STARTTLS（默认），465 走隐式 SSL。国内多数邮箱服务商（QQ/163/企业邮）用的是 465，
+      # 那种情况要 ADMIN_MAIL_SSL=true 且 ADMIN_MAIL_STARTTLS=false，否则握手失败、验证码发不出去
+      start-tls-enabled: ${ADMIN_MAIL_STARTTLS:true}
+      ssl-enabled: ${ADMIN_MAIL_SSL:false}
       login-url: ${ADMIN_MAIL_LOGIN_URL:}
   data-scope:
     # 用户维度行级隔离：角色数据范围为 SELF 时，只看本人创建的个人产出物

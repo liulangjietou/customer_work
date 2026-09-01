@@ -35,6 +35,22 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-01 注册强制邮箱验证批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1697/1 skip、gateway 1，
+  **合计 3612**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+13**
+  （准入判定 +8、注册服务 +3、邮件装配 +4，邮箱验证流程 −2：可关闭邮箱验证的那两条路径已不存在）。
+  前端 vitest 189 全通过，playwright login.e2e.ts 25 条全通过。
+  **e2e 与 maven 全量并行跑会假红**：本批次同时跑两者时，2 条登录拼图用例 5s `toBeVisible` 超时失败，
+  看着像回归；空闲复跑 main 26 条、分支 25 条全过，耗时从 2.2 分钟回落到 1.3 分钟。
+  **判回归必须在同等负载下对比**——"在 main 上单跑那两条"通过，证明不了任何事，差点据此误判成真回归。
+  另有 `workspace-resize.e2e.ts` 的宽度用例偶发失败（期望差 ≤1px 实得 1.125），是亚像素舍入，与本批次无交集。
+  **门禁的"合法配置基准"要跟着放宽后的条件补**：`AdminProductionReadinessValidatorTest#validEnvironment()`
+  是全部生产门禁用例的基准，邮件校验条件从「开了邮箱验证」放宽成「开了自助注册」后，
+  不给基准补 mail 配置，几十条无关用例会连带全红。
+  **e2e 目录不在 `tsconfig.app.json` 的 include 里**（只 include `src/**`），
+  `npm run build` 照不出 e2e 的类型错误，改了 e2e 必须真跑 playwright。
+  cw Flyway 下次 **V24**、admin Flyway 下次 **V102**（本批次无库表变更）。
+  上一版基线 2026-08-27 对外开放注册批次：合计 3471。）
   （2026-08-27 对外开放注册批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1556/1 skip、gateway 1，**合计 3471**
   （排除 `RedisSessionPersistenceTest`，数字为 rebase 到含 PR #157 的 main 之后实测）。
