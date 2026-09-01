@@ -44,7 +44,6 @@ class EmailVerificationServiceTest {
     @BeforeEach
     void setUp() {
         properties = new RegistrationGuardProperties();
-        properties.getEmailVerification().setEnabled(true);
         store = new InMemoryEmailVerificationStore();
         mailSender = mock(AdminMailSender.class);
         when(mailSender.available()).thenReturn(true);

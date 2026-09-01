@@ -84,7 +84,6 @@ export type RegisterVerificationField = 'captcha' | 'emailCode'
 
 export interface RegisterVerificationOptions {
   captchaRequired: boolean
-  emailVerificationRequired: boolean
 }
 
 /**
@@ -102,23 +101,19 @@ export interface RegisterVerificationPlan {
 const CAPTCHA_FIELD: RegisterVerificationField = 'captcha'
 const EMAIL_CODE_FIELD: RegisterVerificationField = 'emailCode'
 
+/**
+ * 邮箱验证码是注册的固定要求，注册提交只认它；随部署形态变化的只有
+ * 「发码那一步要不要图形码」这一件事。
+ */
 export function getRegisterVerificationPlan(
   options: RegisterVerificationOptions,
 ): RegisterVerificationPlan {
-  if (options.emailVerificationRequired) {
-    return {
-      presentationFields: options.captchaRequired
-        ? [CAPTCHA_FIELD, EMAIL_CODE_FIELD]
-        : [EMAIL_CODE_FIELD],
-      emailCodeRequestFields: options.captchaRequired ? [CAPTCHA_FIELD] : [],
-      registrationFields: [EMAIL_CODE_FIELD],
-    }
-  }
-
   return {
-    presentationFields: options.captchaRequired ? [CAPTCHA_FIELD] : [],
-    emailCodeRequestFields: [],
-    registrationFields: options.captchaRequired ? [CAPTCHA_FIELD] : [],
+    presentationFields: options.captchaRequired
+      ? [CAPTCHA_FIELD, EMAIL_CODE_FIELD]
+      : [EMAIL_CODE_FIELD],
+    emailCodeRequestFields: options.captchaRequired ? [CAPTCHA_FIELD] : [],
+    registrationFields: [EMAIL_CODE_FIELD],
   }
 }
 
@@ -170,7 +165,7 @@ export function isCaptchaConsumedByEmailCodeRequest(
 }
 
 /**
- * 最终注册按步骤校验，邮箱验证模式只要求邮箱验证码，不再校验已消费的图形码。
+ * 最终注册按步骤校验：只要求邮箱验证码，不再校验发码那一步已消费的图形码。
  */
 export function getRegistrationStepValidationFields(
   step: RegisterStep,
@@ -184,20 +179,6 @@ export function getRegistrationStepValidationFields(
     ...REGISTER_SECURITY_FIELDS,
     ...plan.registrationFields,
   ]
-}
-
-/** 最终注册请求是否会消费图形码；失败后旧挑战同样失效。 */
-export function isCaptchaConsumedByRegistration(
-  plan: RegisterVerificationPlan,
-): boolean {
-  return plan.registrationFields.includes(CAPTCHA_FIELD)
-}
-
-/** 最终注册是否使用邮箱验证码；失败后能否继续复用由服务端错误结果决定。 */
-export function usesEmailCodeForRegistration(
-  plan: RegisterVerificationPlan,
-): boolean {
-  return plan.registrationFields.includes(EMAIL_CODE_FIELD)
 }
 
 const PARAM_INVALID_CODE = 30001
@@ -293,15 +274,11 @@ export function buildRegistrationPayload(
   const payload: RegisterRequest = {
     username: form.username,
     nickname: form.nickname || null,
-    email: form.email || null,
+    email: form.email,
     password: form.password,
     confirmPassword: form.confirmPassword,
   }
 
-  if (plan.registrationFields.includes(CAPTCHA_FIELD)) {
-    payload.captchaId = form.captchaId
-    payload.captcha = form.captcha
-  }
   if (plan.registrationFields.includes(EMAIL_CODE_FIELD)) {
     payload.emailCode = form.emailCode
   }

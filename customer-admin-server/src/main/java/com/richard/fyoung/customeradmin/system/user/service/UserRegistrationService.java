@@ -27,6 +27,10 @@ import java.util.Locale;
  * <p>公开注册只创建最小权限账号：固定归入 {@code default} 租户、审核状态为 PENDING、
  * 不写任何用户角色关系。用户名全局唯一，已软删除的同名账号也不能被匿名注册者复活。</p>
  *
+ * <p><b>邮箱是硬前提</b>：必须填写、必须通过邮箱验证码核验，任何部署形态都一样
+ * （见 {@code RegistrationGuard}）。因此落库的账号 {@code email_verified} 恒为 1，
+ * 而管理员在后台预建的账号仍可以没有邮箱——那条路不经过这里。</p>
+ *
  * <p><b>为什么待审核账号先落 {@code default} 租户</b>：此刻还不知道它该归谁。这一步只是
  * 待审核池，账号在 PENDING 状态下拿不到任何角色，也就拿不到任何权限点
  * （见 {@code UserApprovalStatus#allowsPermissions}）；真正的归属由审核那一步写入，
@@ -43,7 +47,6 @@ public class UserRegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(UserRegistrationService.class);
     private static final String LOCAL_LOGIN_TYPE = "LOCAL";
-    private static final int EMAIL_UNVERIFIED = 0;
     private static final int EMAIL_VERIFIED = 1;
 
     private final SysUserMapper userMapper;
@@ -71,15 +74,15 @@ public class UserRegistrationService {
 
         // 准入判定（开关/表单校验/频率/验证码）统一在 Guard 一处，这里不再重复任何一项。
         // 传归一后的邮箱：邮箱验证码是按收件人存的，大小写不同会查不到自己刚收到的那份码。
-        registrationGuard.admit(clientIp, request.captchaId(), request.captcha(),
-            email, request.emailCode(), request.password(), request.confirmPassword());
+        registrationGuard.admit(clientIp, email, request.emailCode(),
+            request.password(), request.confirmPassword());
 
         SysUser occupied = CrossTenantOperations.execute(
             () -> userMapper.selectByUsernameIgnoreLogicDelete(username));
         if (occupied != null) {
             throw duplicateUsername();
         }
-        if (email != null && emailTaken(email)) {
+        if (emailTaken(email)) {
             throw duplicateEmail();
         }
 
@@ -89,10 +92,8 @@ public class UserRegistrationService {
         user.setPassword(passwordEncoder.encode(request.password()));
         user.setNickname(StringUtils.hasText(request.nickname()) ? request.nickname().trim() : username);
         user.setEmail(email);
-        // 验证码核验通过才走到这里，所以此刻邮箱确实归申请人所有；
-        // 未开启邮箱验证的内网实例只是"填了个地址"，不能算已验证
-        user.setEmailVerified(
-            registrationGuard.emailVerificationRequired() ? EMAIL_VERIFIED : EMAIL_UNVERIFIED);
+        // 走到这里必然过了验证码核验（Guard 无条件校验），所以此刻邮箱确实归申请人所有
+        user.setEmailVerified(EMAIL_VERIFIED);
         user.setLoginType(LOCAL_LOGIN_TYPE);
         user.setStatus(1);
         user.setApprovalStatus(UserApprovalStatus.PENDING.name());
@@ -124,6 +125,7 @@ public class UserRegistrationService {
         if (normalized != null && emailTaken(normalized)) {
             throw duplicateEmail();
         }
+        // normalized 为空时不在这里报错：Guard 的 sendEmailCode 会给出统一口径的"请填写注册邮箱"
         return registrationGuard.sendEmailCode(normalized, captchaId, captcha, clientIp);
     }
 

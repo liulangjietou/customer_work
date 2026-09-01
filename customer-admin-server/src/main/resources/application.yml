@@ -119,21 +119,20 @@ admin:
     # 单租户部署也不必关——所有数据都在同一个 tenant_id 下，过滤条件恒真，行为与关掉一致。
     enabled: ${ADMIN_TENANT_ENABLED:true}
   # 对外开放部署总开关。打开后：内部运维工具（SQL 客户端/账号本/开发者工具箱）的菜单与接口
-  # 一并下架、自助注册强制验证码与邮箱、审核通过不允许并入平台自用的 default 租户。
+  # 一并下架、发码强制图形验证码、审核通过不允许并入平台自用的 default 租户。
+  # （邮箱与邮箱验证码不在其中：它们无条件强制，与本开关无关）
   # 默认 false（内网自用）——误判成对外只是工具消失，误判成内网等于把这些工具挂到公网上。
   public-deployment:
     enabled: ${ADMIN_PUBLIC_DEPLOYMENT_ENABLED:false}
   registration:
     # 是否开放自助注册；关闭后只能由管理员预建账号
     self-service-enabled: ${ADMIN_REGISTRATION_SELF_SERVICE:true}
-    # 下面三项在 public-deployment.enabled=true 时被强制为 true，配 false 也不生效
+    # 注册必须填邮箱、必须填回收到的邮箱验证码——这是不变式，没有开关（见 RegistrationGuard）。
+    # 代价是自助注册开着时 SMTP 必须可用，否则链路在「获取验证码」那一步就走不下去；
+    # prod profile 由 AdminProductionReadinessValidator 在启动时直接拒绝这种配置。
+    # 图形验证码只用在「发码」那一步，注册那一步不再要——手里的邮箱验证码已经是更强的证据。
+    # 下面这项在 public-deployment.enabled=true 时被强制为 true，配 false 也不生效
     captcha-enabled: ${ADMIN_REGISTRATION_CAPTCHA:false}
-    email-required: ${ADMIN_REGISTRATION_EMAIL_REQUIRED:false}
-    email-verification:
-      # 注册必须先收一封邮箱验证码。开启后 SMTP 必须可用（AdminProductionReadinessValidator 强制校验），
-      # 否则整条注册链路在"获取验证码"那一步就走不下去。
-      # 开启时图形验证码改在「发码」那一步校验，注册那一步不再要——手里的邮箱验证码已经是更强的证据。
-      enabled: ${ADMIN_REGISTRATION_EMAIL_VERIFICATION:false}
     # 默认不采信客户端可控的转发头。开启时必须同时配置直接连接方的可信代理 CIDR；
     # 服务端从右向左剥离可信代理链，直连、异常头和伪造的最左段都不会被采信
     trust-forwarded-header: ${ADMIN_REGISTRATION_TRUST_XFF:false}
@@ -143,8 +142,11 @@ admin:
       enabled: ${ADMIN_LOGIN_LOCK_ENABLED:false}
   notification:
     mail:
-      # 审核结果邮件通知。开着但不配 host 会让每次审核都去连一个不存在的 SMTP，
-      # 故装配处额外校验 host 非空（见 MailNotificationConfig）
+      # 后台唯一的邮件出口，注册验证码与审核结果通知共用。
+      # 自助注册开着时这里必须配：邮箱验证码是注册的硬前提，不配的话用户在「获取验证码」
+      # 那一步就会收到"邮件服务未配置，请联系管理员"。
+      # 开着但不配 host 会让每次发信都去连一个不存在的 SMTP，故装配处额外校验 host 非空
+      # （见 MailNotificationConfig）
       enabled: ${ADMIN_MAIL_ENABLED:false}
       host: ${ADMIN_MAIL_HOST:}
       port: ${ADMIN_MAIL_PORT:587}

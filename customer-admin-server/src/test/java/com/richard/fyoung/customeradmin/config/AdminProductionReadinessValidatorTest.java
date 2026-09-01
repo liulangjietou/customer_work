@@ -273,16 +273,15 @@ class AdminProductionReadinessValidatorTest {
     }
 
     /**
-     * 开了邮箱验证码就必须真的能发信。
+     * 自助注册开着就必须真的能发信。
      *
-     * <p>与对外部署那组门禁的区别是它不看部署形态：内网实例手工打开邮箱验证却没配 SMTP 时，
+     * <p>它不看部署形态，因为邮箱验证码是注册的硬前提、没有关闭开关：没配 SMTP 的实例，
      * 注册链路会在"获取验证码"那一步整体失败——运行时有 fail-closed 兜底，
-     * 但那时用户已经在注册页上了，不如启动时就拒绝。</p>
+     * 但那时用户已经站在注册页上了，不如启动时就拒绝。</p>
      */
     @Test
-    void emailVerification_shouldRequireWorkingMailEvenOnInternalDeployment() {
+    void selfRegistration_shouldRequireWorkingMailOnEveryDeploymentShape() {
         MockEnvironment environment = validEnvironment()
-            .withProperty("admin.registration.email-verification.enabled", "true")
             .withProperty("admin.notification.mail.enabled", "false");
 
         IllegalStateException error = assertThrows(IllegalStateException.class,
@@ -291,12 +290,10 @@ class AdminProductionReadinessValidatorTest {
         assertTrue(error.getMessage().contains("admin.notification.mail.enabled"));
     }
 
-    /** 邮箱验证开着、host 却是空的：同样拒绝启动。 */
+    /** 邮件开着、host 却是空的：同样拒绝启动。 */
     @Test
-    void emailVerification_shouldRequireMailHost() {
+    void selfRegistration_shouldRequireMailHost() {
         MockEnvironment environment = validEnvironment()
-            .withProperty("admin.registration.email-verification.enabled", "true")
-            .withProperty("admin.notification.mail.enabled", "true")
             .withProperty("admin.notification.mail.host", "  ");
 
         IllegalStateException error = assertThrows(IllegalStateException.class,
@@ -305,12 +302,17 @@ class AdminProductionReadinessValidatorTest {
         assertTrue(error.getMessage().contains("admin.notification.mail.host"));
     }
 
+    /**
+     * 关掉自助注册的实例不强制 SMTP。
+     *
+     * <p>那种实例只由管理员预建账号，既不会发验证码、也没有待审核的人要通知，
+     * 强制配 SMTP 只是白挡一道。</p>
+     */
     @Test
-    void emailVerification_shouldPassWithWorkingMail() {
+    void selfServiceDisabled_shouldNotRequireMail() {
         MockEnvironment environment = validEnvironment()
-            .withProperty("admin.registration.email-verification.enabled", "true")
-            .withProperty("admin.notification.mail.enabled", "true")
-            .withProperty("admin.notification.mail.host", "smtp.example.com");
+            .withProperty("admin.registration.self-service-enabled", "false")
+            .withProperty("admin.notification.mail.enabled", "false");
 
         assertDoesNotThrow(() -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
     }
@@ -331,6 +333,9 @@ class AdminProductionReadinessValidatorTest {
 
     private MockEnvironment validEnvironment() {
         return new MockEnvironment()
+            // 自助注册默认开着，而邮箱验证码是注册的硬前提，故一份合法的生产配置必须能发信
+            .withProperty("admin.notification.mail.enabled", "true")
+            .withProperty("admin.notification.mail.host", "smtp.example.com")
             .withProperty("spring.datasource.url", "jdbc:mysql://mysql.internal:3306/customer_admin")
             .withProperty("spring.datasource.password", "database-secret")
             .withProperty("admin.redis.host", "redis.internal")
