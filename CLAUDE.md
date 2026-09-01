@@ -35,20 +35,24 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
-  （2026-09-01 找回密码批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
-  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1719/1 skip、gateway 1，
-  **合计 3634**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+35**
-  （重置服务 25 + 匿名接口契约 4 + register-options 契约扩 1 + 验证码用途分键 3 + 存储分键 2），
-  前端加 vitest **+9**、playwright e2e **+3**。本批次无迁移，cw Flyway 仍是下次 **V24**、admin **V102**。
-  **下面那条 3471 记于 2026-08-27，其后 main 又合入了登录拼图验证码等多个批次，差额不全来自本批次**——
-  拿两个基线相减去推断"这次加了多少"会得出离谱的数字，本批次自身的增量以上面括号里的分解为准。
-  **改 Controller 的构造参数会打红两个 `@WebMvcTest`**：`AuthControllerLoginCaptchaTest` 与
-  `AuthControllerRegisterOptionsTest` 各自的 `WebMvcTestConfig` 手工声明每一个协作者，少一个就整类
-  `Failed to load ApplicationContext`，而报错只说上下文加载失败、不点名少了哪个 Bean。
-  后者还硬编码了 register-options 的完整 JSON 契约，往 VO 里加字段必须同步。
-  **全量跑到一半改源码 = 这次全量作废**：本批次踩过一次——admin 编译到的是半成品测试文件，
-  报"对 insert 的引用不明确"，看着像新代码有问题，实际是它编译的那份已经不是最终要跑的那份。
-  与本文件早记过的"两个 Maven 进程同时写 target/"是同一类，只是这次的另一个写手是我自己。）
+  （2026-09-01 注册强制邮箱验证批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1697/1 skip、gateway 1，
+  **合计 3612**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+13**
+  （准入判定 +8、注册服务 +3、邮件装配 +4，邮箱验证流程 −2：可关闭邮箱验证的那两条路径已不存在）。
+  前端 vitest 189 全通过，playwright login.e2e.ts 25 条全通过。
+  **e2e 与 maven 全量并行跑会假红**：本批次同时跑两者时，2 条登录拼图用例 5s `toBeVisible` 超时失败，
+  看着像回归；空闲复跑 main 26 条、分支 25 条全过，耗时从 2.2 分钟回落到 1.3 分钟。
+  **判回归必须在同等负载下对比**——"在 main 上单跑那两条"通过，证明不了任何事，差点据此误判成真回归。
+  **`workspace-resize.e2e.ts` 的宽度用例在本机是常态失败**（期望差 ≤1px 实得 1.125，亚像素舍入），
+  与本批次无关：main 空闲连跑三轮同样每轮 1 failed / 3 passed，分支表现一致。
+  它一度看着像本批次引入的回归——第一次跑 main 恰好 4 条全过，差点据此判成真回归，多跑几轮才看清。
+  **门禁的"合法配置基准"要跟着放宽后的条件补**：`AdminProductionReadinessValidatorTest#validEnvironment()`
+  是全部生产门禁用例的基准，邮件校验条件从「开了邮箱验证」放宽成「开了自助注册」后，
+  不给基准补 mail 配置，几十条无关用例会连带全红。
+  **e2e 目录不在 `tsconfig.app.json` 的 include 里**（只 include `src/**`），
+  `npm run build` 照不出 e2e 的类型错误，改了 e2e 必须真跑 playwright。
+  cw Flyway 下次 **V24**、admin Flyway 下次 **V102**（本批次无库表变更）。
+  上一版基线 2026-08-27 对外开放注册批次：合计 3471。）
   （2026-08-27 对外开放注册批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1556/1 skip、gateway 1，**合计 3471**
   （排除 `RedisSessionPersistenceTest`，数字为 rebase 到含 PR #157 的 main 之后实测）。
@@ -534,7 +538,8 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   （见 `AdminA2aServerConfigTenantTest`），并且退出作用域后为假。
 - **对外开放部署（公网自助注册）**：把后台开放给陌生人时，`admin.public-deployment.enabled=true`
   是**唯一**总开关，别逐项勾选——漏配任何一条都是实打实的暴露面。它一次性生效三件事：
-  内部运维工具下架（菜单不下发 + 接口 403）、注册强制验证码与邮箱、审核不允许并入 `default`。
+  内部运维工具下架（菜单不下发 + 接口 403）、发码强制图形验证码、审核不允许并入 `default`。
+  （**邮箱必填与邮箱验证码不归这个开关管**：它们对所有部署形态无条件强制，见 ⑤。）
   六条约定：
   ① **权限边界只有 `ControlPlanePermissions` 一处定义**（29 族 + 1 个逐点码）。判定标准是
   「租户管理员拿到它，影响面会不会越出自己的租户」，不是菜单挂在哪一级。三类必须收：
@@ -555,10 +560,18 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   靠 SELF 隔离」在公网场景下不成立，审核必须走「新开租户」路径（复用 `TenantService#create`，
   它内部已含 provision）。新租户的角色 ID 由服务端从 `tenant_admin` 反查——那个角色是上一行
   刚插入的，调用方不可能提前知道；
-  ⑤ **邮箱验证码是注册的准入条件（对外强制）**：只"填了邮箱"不等于"这邮箱是他的"，
-  不验证的话审核结果与密码重置都会发到别人手里。**两道验证码各在各的位置，不是叠加**——
-  图形码在「发码」那一步（`POST /api/auth/email-code`，发信是唯一会向站外第三方产生副作用的
-  匿名操作，那里才最该挡脚本），邮箱码在「注册」那一步；开了邮箱验证后注册就不再要图形码，
+  ⑤ **邮箱验证码是注册的准入条件，且没有关闭开关**（2026-09-01 起）：只"填了邮箱"不等于
+  "这邮箱是他的"，不验证的话审核结果与密码重置都会发到别人手里。此前它由
+  `admin.registration.email-required` / `email-verification.enabled` 两个默认 false 的开关控制、
+  只在对外部署下强制——那等于把"注册者是否真的拥有那个邮箱"做成一件可以漏配的事，
+  而漏配不报错。现在两个开关整个删掉，`RegistrationGuard#admit` 无条件核验邮箱验证码，
+  `register-options` 契约里也不再返回这两个布尔（返回一个恒 true 的布尔就是在告诉前端它可能为假，
+  后来的人会照着写死分支）。**代价必须一并接受**：自助注册开着时 SMTP 必须可用，
+  `AdminProductionReadinessValidator` 只看 `self-service-enabled` 就强制校验邮件配置；
+  不想配 SMTP 的实例应当关掉自助注册（管理员预建账号），而不是关掉验证。
+  **两道验证码各在各的位置，不是叠加**——图形码在「发码」那一步
+  （`POST /api/auth/email-code`，发信是唯一会向站外第三方产生副作用的匿名操作，那里才最该挡脚本），
+  邮箱码在「注册」那一步；注册那一步不再要图形码（`RegisterRequest` 里那两个字段已删），
   手里那份邮箱码是更强的证据，再要一次只是多一个输入框。发码接口四道防线各挡一种打法：
   图形码挡脚本、IP 限流挡「一个来源换着邮箱轰炸」、单邮箱冷却挡「对同一受害者高频轰炸」、
   单邮箱日总量挡「每 60 秒一封发一整天」（冷却对最后这种完全无效）。三条实现约定：
@@ -569,10 +582,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   发码前先查邮箱占用（`UserRegistrationService#sendEmailCode`），否则那封信已经发到别人邮箱里了。
   邮件出口统一在 `AdminMailSender`（审核通知与验证码共用），它一律抛异常、吞不吞由调用方定：
   审核通知是旁路可以吞，验证码发不出去必须让用户当场看到失败；
-  ⑤.1 **注册准入判定收敛在 `RegistrationGuard#admit` 一处**，顺序按代价从低到高：开关 → IP 限流
-  → 验证码 → 邮箱 → 密码强度。**限流必须排在验证码之前**，否则每次攻击尝试都会先让服务端画一张图。
-  对外部署的强制项（验证码、邮箱、登录锁定）不看 `admin.registration.*` 的开关——
-  把公网实例的验证码配成关，等于把注册接口变成匿名可打的免费入口，这不该是一个能配错的选项。
+  ⑤.1 **注册准入判定收敛在 `RegistrationGuard#admit` 一处**，分两段：先做无副作用的表单校验
+  （密码一致 → 密码强度 → 邮箱必填），再做有副作用的防滥用判定（IP 限流 → 邮箱验证码核验）。
+  表单校验排前面是为了不让真人填错一次就白扣一次注册额度（默认 5 次/小时）；
+  **限流必须排在验证码核验之前**——核验失败要写一次失败计数，而失败次数有上限（默认 5 次），
+  密集试码能把受害者手里那份还有效的验证码提前耗到作废。
+  对外部署的强制项（图形验证码、登录锁定）不看 `admin.registration.*` 的开关——
+  把公网实例的验证码配成关，等于把发码接口变成匿名可打的免费入口，这不该是一个能配错的选项。
   **验证码签发本身也要限流且单独计数**：`/api/auth/captcha` 是免登接口，每次调用都要画一张图 +
   写一次 Redis，不限的话攻击者根本不必尝试注册；与注册共用一个桶则会让真人换几张图就把注册额度用光；
   ⑥ **登录失败锁定的维度是「账号+来源 IP」的组合**：只锁账号，任何人拿一个已知用户名连打几次

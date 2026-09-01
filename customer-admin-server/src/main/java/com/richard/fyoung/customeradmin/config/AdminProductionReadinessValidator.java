@@ -123,27 +123,23 @@ public class AdminProductionReadinessValidator implements InitializingBean {
     /**
      * 自助注册开着时，邮件必须真的能发。
      *
-     * <p>两件事都指向它：<b>审核结果要通知到人</b>（只发站内信的话，被拒绝的人永远看不到，
-     * 通过的人也不知道自己已经可以用了），以及<b>注册验证码要发得出去</b>
-     * （开了邮箱验证却没配 SMTP，注册链路会在"获取验证码"那一步整体失败——
-     * 运行时有 fail-closed 兜底，但那时用户已经在注册页上了，不如启动时就拒绝）。</p>
+     * <p>两件事都指向它：<b>注册验证码要发得出去</b>（邮箱验证码是注册的硬前提，没配 SMTP
+     * 的话注册链路会在"获取验证码"那一步整体失败——运行时有 fail-closed 兜底，
+     * 但那时用户已经站在注册页上了，不如启动时就拒绝），以及<b>审核结果要通知到人</b>
+     * （只发站内信的话，被拒绝的人永远看不到，通过的人也不知道自己已经可以用了）。</p>
      *
-     * <p><b>前置条件是自助注册开着</b>：关掉自助注册的实例只由管理员预建账号，
-     * 既不会发验证码、也没有待审核的人要通知，此时强制配 SMTP 只是白挡一道。</p>
+     * <p><b>前置条件只剩自助注册开着</b>：关掉自助注册的实例只由管理员预建账号，
+     * 既不会发验证码、也没有待审核的人要通知，此时强制配 SMTP 只是白挡一道。
+     * 反过来说，开着自助注册就没有"不配 SMTP"这个选项了——这正是邮箱验证不可配的代价。</p>
      *
      * <p><b>找回密码刻意不参与这里的判定</b>，尽管它同样要发信：它的能力跟随
      * {@code AdminMailSender#available()}，邮件不可用时登录页干脆不渲染入口、接口直接拒绝，
      * 不存在"用户走到一半才发现发不出去"的状态。把它也列成硬性前置，等于强迫每一个
-     * 只用管理员建号的内网实例都去配一套 SMTP。对外实例本就因邮箱验证被强制配好了邮件，
+     * 只由管理员建号的内网实例都去配一套 SMTP。开着自助注册的实例本就已被上一条强制配好邮件，
      * 找回密码在那里必然可用。</p>
      */
     private void validateEmailVerification(List<String> violations) {
         if (!environment.getProperty("admin.registration.self-service-enabled", Boolean.class, true)) {
-            return;
-        }
-        boolean required = environment.getProperty("admin.public-deployment.enabled", Boolean.class, false)
-            || environment.getProperty("admin.registration.email-verification.enabled", Boolean.class, false);
-        if (!required) {
             return;
         }
         requireWorkingMail(violations);

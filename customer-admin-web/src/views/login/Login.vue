@@ -57,8 +57,6 @@ const registerOptionsLoaded = ref(false)
 const registerOptions = ref<RegisterOptionsVO>({
   selfServiceEnabled: false,
   captchaRequired: false,
-  emailRequired: false,
-  emailVerificationRequired: false,
 })
 const canRegister = computed(() => shouldShowRegisterEntry(
   loginMode.value,

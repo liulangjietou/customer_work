@@ -10,7 +10,13 @@ import java.util.List;
 /**
  * 自助注册与登录的防滥用参数。
  *
- * <p>内网实例可以整体关掉（默认即关），对外开放实例由
+ * <p><b>邮箱必填与邮箱验证码不在这里配</b>：注册必须填邮箱、必须收到并填回验证码，
+ * 是本系统的不变式而不是部署选项（{@code RegistrationGuard#admit} 无条件核验）。
+ * 留一个能配成 false 的开关，
+ * 等于把"注册者是否真的拥有那个邮箱"变成一件可以漏配的事——而漏配不报错，
+ * 只在某天审核结果发到别人邮箱时才被发现。</p>
+ *
+ * <p>其余几项内网实例可以整体关掉（默认即关），对外开放实例由
  * {@code admin.public-deployment.enabled=true} 强制打开——见
  * {@code RegistrationGuard#captchaRequired()}，那里不看本类的开关。
  * 理由是这几项一旦漏配，注册接口就是个匿名可打的免费入口。</p>
@@ -26,9 +32,6 @@ public class RegistrationGuardProperties {
 
     /** 是否要求图形验证码。对外部署强制为 true，此处配置只对内网实例生效。 */
     private boolean captchaEnabled = false;
-
-    /** 注册是否必须填写邮箱。对外部署强制为 true。 */
-    private boolean emailRequired = false;
 
     @NestedConfigurationProperty
     private RateLimit rateLimit = new RateLimit();
@@ -98,16 +101,17 @@ public class RegistrationGuardProperties {
     /**
      * 邮箱验证码参数。
      *
-     * <p>开启后注册必须先向邮箱收一封验证码，核验通过才创建账号——这是"这个邮箱确实归申请人所有"
-     * 的唯一证据。对外部署强制开启（见 {@code RegistrationGuard#emailVerificationRequired()}），
-     * 且要求 SMTP 真的可用，否则注册整条链路无法完成。</p>
+     * <p>注册必须先向邮箱收一封验证码、核验通过才创建账号——这是"这个邮箱确实归申请人所有"
+     * 的唯一证据，<b>没有关闭开关</b>。代价是 SMTP 必须真的可用，否则整条自助注册链路
+     * 在"获取验证码"那一步就走不下去；prod profile 由
+     * {@code AdminProductionReadinessValidator} 在启动时就拒绝这种配置，
+     * 而不是等用户站在注册页上才发现。</p>
+     *
+     * <p>下面几项只调参数，不回答"要不要验"。</p>
      */
     @Getter
     @Setter
     public static class EmailVerification {
-
-        /** 是否要求邮箱验证码。对外部署强制为 true。 */
-        private boolean enabled = false;
 
         /** 验证码位数。 */
         private int codeLength = 6;

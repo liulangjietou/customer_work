@@ -52,7 +52,7 @@ public class SysUser {
     private String nickname;
 
     /**
-     * 注册邮箱：对外开放实例的自助注册必填（{@code RegistrationGuard#emailRequired()}），
+     * 注册邮箱：自助注册一律必填并经验证码核验（见 {@code RegistrationGuard}），
      * LDAP 影子账号与管理员预建账号可空。
      *
      * <p>没有它就无法通知审核结果、无法找回密码（{@code PasswordResetService} 正是按
@@ -64,9 +64,10 @@ public class SysUser {
     /**
      * 邮箱是否已验证：{@link #EMAIL_UNVERIFIED} / {@link #EMAIL_VERIFIED}。
      *
-     * <p>置 1 的两条路径都是"本人拿到了发往该地址的验证码并填了回来"：自助注册时的邮箱验证，
-     * 以及找回密码成功那一刻（见 {@code PasswordResetService}）。管理员预建账号时填的地址
-     * 只是个联系方式，不算已验证。</p>
+     * <p>置 1 的两条路径都是"本人拿到了发往该地址的验证码并填了回来"：自助注册那一步的核验
+     * （因此自助注册创建的账号恒为 1），以及找回密码成功那一刻（见 {@code PasswordResetService}）。
+     * 为 0 的只可能是 LDAP 影子账号、管理员预建账号，或邮箱验证上线前的存量数据——
+     * 管理员建号时填的地址只是个联系方式，不算已验证。</p>
      */
     private Integer emailVerified;
     /** 账号来源：{@link #LOGIN_TYPE_LOCAL} / {@link #LOGIN_TYPE_LDAP}（OA 单点登录，见 AuthService#ssoLogin）。 */

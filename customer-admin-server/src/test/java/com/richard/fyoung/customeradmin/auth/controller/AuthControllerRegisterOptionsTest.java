@@ -48,8 +48,6 @@ class AuthControllerRegisterOptionsTest {
     void registerOptions_shouldExposeTheCompleteAnonymousRegistrationJsonContract() throws Exception {
         when(registrationGuard.selfServiceEnabled()).thenReturn(true);
         when(registrationGuard.captchaRequired()).thenReturn(true);
-        when(registrationGuard.emailRequired()).thenReturn(false);
-        when(registrationGuard.emailVerificationRequired()).thenReturn(true);
         when(registrationGuard.emailCodeResendCooldownSeconds()).thenReturn(37);
         when(passwordResetService.available()).thenReturn(true);
         MockMvc mockMvc = MockMvcBuilders.webAppContextSetup(applicationContext).build();
@@ -61,10 +59,12 @@ class AuthControllerRegisterOptionsTest {
             .andExpect(jsonPath("$.message").value("ok"))
             .andExpect(jsonPath("$.data.selfServiceEnabled").value(true))
             .andExpect(jsonPath("$.data.captchaRequired").value(true))
-            .andExpect(jsonPath("$.data.emailRequired").value(false))
-            .andExpect(jsonPath("$.data.emailVerificationRequired").value(true))
             .andExpect(jsonPath("$.data.emailCodeCooldownSeconds").value(37))
-            .andExpect(jsonPath("$.data.passwordResetEnabled").value(true));
+            .andExpect(jsonPath("$.data.passwordResetEnabled").value(true))
+            // 邮箱与邮箱验证码恒为必需，契约里不再出现这两个字段——留一个恒 true 的布尔
+            // 等于告诉前端它可能为假，后来的人就会照着写一条永远走不到的分支
+            .andExpect(jsonPath("$.data.emailRequired").doesNotExist())
+            .andExpect(jsonPath("$.data.emailVerificationRequired").doesNotExist());
     }
 
     /**
@@ -77,8 +77,6 @@ class AuthControllerRegisterOptionsTest {
     void registerOptions_shouldReportPasswordResetSeparatelyFromSelfService() throws Exception {
         when(registrationGuard.selfServiceEnabled()).thenReturn(false);
         when(registrationGuard.captchaRequired()).thenReturn(false);
-        when(registrationGuard.emailRequired()).thenReturn(false);
-        when(registrationGuard.emailVerificationRequired()).thenReturn(false);
         when(registrationGuard.emailCodeResendCooldownSeconds()).thenReturn(60);
         when(passwordResetService.available()).thenReturn(true);
         MockMvc mockMvc = MockMvcBuilders.webAppContextSetup(applicationContext).build();

@@ -19,10 +19,15 @@ import java.util.Objects;
  * 就会出现"某一条路径漏了其中一项"——这正是本项目反复踩过的形状。
  * 现在 {@code UserRegistrationService} 只调 {@link #admit} 一次，新增判定只改这里。</p>
  *
- * <p><b>对外部署的强制项不看自身配置</b>：{@link #captchaRequired()} 与
- * {@link #emailRequired()} 在 {@code admin.public-deployment.enabled=true} 时恒为真，
- * 不接受被 {@code admin.registration.*} 关掉。把公网实例的验证码配成关，
- * 等于把注册接口变成匿名可打的免费入口，这不该是一个能配错的选项。</p>
+ * <p><b>邮箱验证码是不变式，不是选项</b>：{@link #admit} 无条件核验它，没有任何开关能关掉——
+ * 任何部署形态下，注册都必须填邮箱并填回收到的验证码。"光填了邮箱"不等于"这个邮箱是他的"，
+ * 而审核结果、密码重置都会发到那个地址；不验证的话，注册者随手填一个别人的邮箱，
+ * 系统不会有任何异常表现，直到那封信真的寄到陌生人手里。</p>
+ *
+ * <p><b>图形验证码在对外部署下同样不看自身配置</b>：{@link #captchaRequired()} 在
+ * {@code admin.public-deployment.enabled=true} 时恒为真，不接受被
+ * {@code admin.registration.captcha-enabled} 关掉。把公网实例的验证码配成关，
+ * 等于把发码接口变成匿名可打的免费入口，这不该是一个能配错的选项。</p>
  * @author owlzhangfq@gmail.com
  */
 @Slf4j
@@ -55,28 +60,6 @@ public class RegistrationGuard {
     /** 对外实例强制要求验证码，内网实例按配置。 */
     public boolean captchaRequired() {
         return publicDeployment.isEnabled() || properties.isCaptchaEnabled();
-    }
-
-    /**
-     * 对外实例强制要求邮箱：没有联系方式就无法通知审核结果，也无法找回密码。
-     *
-     * <p><b>开了邮箱验证就必然要求填邮箱</b>——两者独立判定的话，内网实例只开
-     * {@code email-verification.enabled} 而忘了开 {@code email-required} 时，
-     * 表单会放行一个空邮箱，然后在发码那一步才报"请填写注册邮箱"，
-     * 把一个配置疏漏变成用户眼里的莫名其妙。</p>
-     */
-    public boolean emailRequired() {
-        return publicDeployment.isEnabled() || properties.isEmailRequired() || emailVerificationRequired();
-    }
-
-    /**
-     * 是否要求邮箱验证码。对外实例强制开启。
-     *
-     * <p>光"填了邮箱"不等于"这个邮箱是他的"——不验证的话，注册者可以随手填一个别人的地址，
-     * 而审核结果、密码重置都会发到那个人手里。收到验证码并填回来，是这件事的唯一证据。</p>
-     */
-    public boolean emailVerificationRequired() {
-        return publicDeployment.isEnabled() || properties.getEmailVerification().isEnabled();
     }
 
     /** 前端发码按钮应与服务端使用同一重发冷却时间，避免配置变化后出现假倒计时。 */
@@ -115,21 +98,19 @@ public class RegistrationGuard {
      *       不碰任何计数器，把它们排在后面会让真人填错一次就白扣一次注册额度——
      *       默认 5 次/小时，试错几回就被自己的防线锁在门外。攻击者可以用合法参数跳过这一段，
      *       所以放前面不削弱防护，只让真人不受罚。</li>
-     *   <li><b>有副作用的防滥用判定后做</b>：先 IP 限流，再验证码。这个先后不能反——
-     *       验证码是一次性的，先校验意味着每一次攻击尝试都要让服务端画一张图并写一次 Redis，
-     *       防滥用措施自己成了负载。</li>
+     *   <li><b>有副作用的防滥用判定后做</b>：先 IP 限流，再核验邮箱验证码。这个先后不能反——
+     *       核验失败要写一次失败计数，先校验意味着每一次攻击尝试都落一次存储；更要紧的是
+     *       失败次数有上限，密集试码能把受害者手里那份还有效的验证码提前耗到作废。</li>
      * </ol>
      *
      * @param clientIp        来源 IP，用于频率统计
-     * @param captchaId       图形验证码凭据（仅在未开启邮箱验证时使用）
-     * @param captcha         用户输入的图形验证码
-     * @param email           注册邮箱（调用方已归一为小写）
-     * @param emailCode       邮箱验证码
+     * @param email           注册邮箱（调用方已归一为小写），必填
+     * @param emailCode       邮箱验证码，必填
      * @param password        明文密码，仅用于强度判定，不做任何记录
      * @param confirmPassword 确认密码，与上一项比对
      */
-    public void admit(String clientIp, String captchaId, String captcha, String email,
-                      String emailCode, String password, String confirmPassword) {
+    public void admit(String clientIp, String email, String emailCode,
+                      String password, String confirmPassword) {
         if (!selfServiceEnabled()) {
             throw new BizException(ResultCode.FEATURE_NOT_AVAILABLE, "本系统未开放自助注册，请联系管理员开通账号");
         }
@@ -140,31 +121,14 @@ public class RegistrationGuard {
         if (!PasswordPolicy.isStrongEnough(password)) {
             throw new BizException(ResultCode.PASSWORD_TOO_WEAK);
         }
-        if (emailRequired() && !StringUtils.hasText(email)) {
+        if (!StringUtils.hasText(email)) {
             throw new BizException(ResultCode.PARAM_MISSING, "请填写注册邮箱");
         }
         // ---- 第二段：有副作用的防滥用判定 ----
         checkRateLimit(clientIp);
-        verifyHumanEvidence(captchaId, captcha, email, emailCode);
-    }
-
-    /**
-     * "这不是脚本"的证据，二选一而不是两个都要。
-     *
-     * <p>开了邮箱验证时，图形码已经在<b>发码那一步</b>挡过一次脚本，而手里这份邮箱验证码
-     * 进一步证明了申请人确实控制着那个邮箱——比图形码强得多。此时再要一次图形码是纯粹的
-     * 体验损耗：多一个输入框，换不到任何额外保证。</p>
-     *
-     * <p>没开邮箱验证时（内网实例），图形码就是唯一的那道，仍在注册这一步校验。</p>
-     */
-    private void verifyHumanEvidence(String captchaId, String captcha, String email, String emailCode) {
-        if (emailVerificationRequired()) {
-            emailVerificationService.verify(EmailCodePurpose.REGISTER, email, emailCode);
-            return;
-        }
-        if (captchaRequired() && !captchaService.verify(captchaId, captcha)) {
-            throw new BizException(ResultCode.CAPTCHA_INVALID);
-        }
+        // 注册这一步只认邮箱验证码：图形码已经在发码那一步挡过一次脚本，而手里这份邮箱码
+        // 进一步证明申请人确实控制着那个邮箱——比图形码强得多，再要一次只是多一个输入框。
+        emailVerificationService.verify(EmailCodePurpose.REGISTER, email, emailCode);
     }
 
     /**
@@ -178,9 +142,6 @@ public class RegistrationGuard {
     public int sendEmailCode(String email, String captchaId, String captcha, String clientIp) {
         if (!selfServiceEnabled()) {
             throw new BizException(ResultCode.FEATURE_NOT_AVAILABLE, "本系统未开放自助注册，请联系管理员开通账号");
-        }
-        if (!emailVerificationRequired()) {
-            throw new BizException(ResultCode.FEATURE_NOT_AVAILABLE, "本实例未开启邮箱验证");
         }
         if (!StringUtils.hasText(email)) {
             throw new BizException(ResultCode.PARAM_MISSING, "请填写注册邮箱");

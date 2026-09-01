@@ -25,7 +25,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 开启邮箱验证后的注册链路：发码 → 收码 → 注册。
+ * 注册链路：发码 → 收码 → 注册。邮箱验证码是所有部署形态下的硬前提，没有关闭开关。
  *
  * <p>钉住的核心是<b>两道验证码各自的位置</b>：图形码在「发码」那一步（挡住无人值守的脚本，
  * 因为发信是唯一会向站外第三方产生副作用的匿名操作），邮箱验证码在「注册」那一步
@@ -49,7 +49,6 @@ class RegistrationEmailVerificationFlowTest {
     @BeforeEach
     void setUp() {
         properties = new RegistrationGuardProperties();
-        properties.getEmailVerification().setEnabled(true);
         publicDeployment = new PublicDeploymentProperties();
         captchaStore = new InMemoryCaptchaStore();
         captchaService = new CaptchaService(captchaStore, properties.getCaptcha());
@@ -68,7 +67,7 @@ class RegistrationEmailVerificationFlowTest {
         assertEquals(properties.getEmailVerification().getTtlSeconds(), ttl);
         String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
 
-        assertDoesNotThrow(() -> guard.admit(IP, null, null, EMAIL, code,
+        assertDoesNotThrow(() -> guard.admit(IP, EMAIL, code,
             STRONG_PASSWORD, STRONG_PASSWORD));
     }
 
@@ -76,7 +75,7 @@ class RegistrationEmailVerificationFlowTest {
     @Test
     void admit_shouldRejectWithoutEmailCode() {
         BizException error = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, EMAIL, null, STRONG_PASSWORD, STRONG_PASSWORD));
+            () -> guard.admit(IP, EMAIL, null, STRONG_PASSWORD, STRONG_PASSWORD));
 
         assertEquals(ResultCode.EMAIL_CODE_INVALID, error.getResultCode());
     }
@@ -88,7 +87,7 @@ class RegistrationEmailVerificationFlowTest {
         String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
 
         BizException error = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, "someone-else@example.com", code,
+            () -> guard.admit(IP, "someone-else@example.com", code,
                 STRONG_PASSWORD, STRONG_PASSWORD));
 
         assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, error.getResultCode());
@@ -101,11 +100,11 @@ class RegistrationEmailVerificationFlowTest {
         String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
 
         BizException mismatch = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, EMAIL, wrongCodeFor(code),
+            () -> guard.admit(IP, EMAIL, wrongCodeFor(code),
                 STRONG_PASSWORD, STRONG_PASSWORD));
 
         assertEquals(ResultCode.EMAIL_CODE_INVALID, mismatch.getResultCode());
-        assertDoesNotThrow(() -> guard.admit(IP, null, null, EMAIL, code,
+        assertDoesNotThrow(() -> guard.admit(IP, EMAIL, code,
             STRONG_PASSWORD, STRONG_PASSWORD));
     }
 
@@ -119,12 +118,12 @@ class RegistrationEmailVerificationFlowTest {
 
         for (int i = 0; i < maxAttempts - 1; i++) {
             BizException retryable = assertThrows(BizException.class,
-                () -> guard.admit(IP, null, null, EMAIL, wrongCode,
+                () -> guard.admit(IP, EMAIL, wrongCode,
                     STRONG_PASSWORD, STRONG_PASSWORD));
             assertEquals(ResultCode.EMAIL_CODE_INVALID, retryable.getResultCode());
         }
         BizException exhausted = assertThrows(BizException.class,
-            () -> guard.admit(IP, null, null, EMAIL, wrongCode,
+            () -> guard.admit(IP, EMAIL, wrongCode,
                 STRONG_PASSWORD, STRONG_PASSWORD));
 
         assertEquals(ResultCode.EMAIL_CODE_REISSUE_REQUIRED, exhausted.getResultCode());
@@ -150,32 +149,8 @@ class RegistrationEmailVerificationFlowTest {
         String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
 
         // 注册这一步不再要图形码——手里的邮箱码已经是更强的证据
-        assertDoesNotThrow(() -> guard.admit(IP, null, null, EMAIL, code,
+        assertDoesNotThrow(() -> guard.admit(IP, EMAIL, code,
             STRONG_PASSWORD, STRONG_PASSWORD));
-    }
-
-    /** 关掉邮箱验证的内网实例保持原样：图形码仍在注册那一步。 */
-    @Test
-    void internalDeployment_shouldFallBackToCaptchaAtRegisterStep() {
-        properties.getEmailVerification().setEnabled(false);
-        properties.setCaptchaEnabled(true);
-
-        BizException error = assertThrows(BizException.class,
-            () -> guard.admit(IP, "not-exist", "0000", EMAIL, null, STRONG_PASSWORD, STRONG_PASSWORD));
-
-        assertEquals(ResultCode.CAPTCHA_INVALID, error.getResultCode());
-    }
-
-    /** 未开启邮箱验证时不该有发码入口——那会让内网实例白白具备一个对外发信的匿名接口。 */
-    @Test
-    void sendEmailCode_shouldBeRejectedWhenEmailVerificationDisabled() {
-        properties.getEmailVerification().setEnabled(false);
-
-        BizException error = assertThrows(BizException.class,
-            () -> guard.sendEmailCode(EMAIL, null, null, IP));
-
-        assertEquals(ResultCode.FEATURE_NOT_AVAILABLE, error.getResultCode());
-        verify(mailSender, never()).send(any(), any(), any());
     }
 
     @Test
@@ -198,18 +173,16 @@ class RegistrationEmailVerificationFlowTest {
     }
 
     /**
-     * 对外部署强制开启邮箱验证与图形码，配置里关掉都不生效。
+     * 对外部署强制图形码，配置里关掉不生效；邮箱验证本就无条件强制。
      *
-     * <p>两道同时强制，且各在各的位置：发码要图形码（挡脚本），注册要邮箱码（证明邮箱归属）。
+     * <p>两道各在各的位置：发码要图形码（挡脚本），注册要邮箱码（证明邮箱归属）。
      * 这里走一遍完整链路，顺带钉住"对外部署下发码这一步不接受没有图形码"。</p>
      */
     @Test
     void publicDeployment_shouldForceBothGuardsAtTheirOwnStep() {
-        properties.getEmailVerification().setEnabled(false);
         properties.setCaptchaEnabled(false);
         publicDeployment.setEnabled(true);
 
-        assertTrue(guard.emailVerificationRequired());
         assertTrue(guard.captchaRequired());
 
         BizException noCaptcha = assertThrows(BizException.class,
@@ -219,25 +192,26 @@ class RegistrationEmailVerificationFlowTest {
         CaptchaChallenge challenge = guard.issueCaptcha(IP);
         assertDoesNotThrow(() -> guard.sendEmailCode(EMAIL, challenge.captchaId(), answerOf(challenge), IP));
         String code = emailStore.get(EmailCodePurpose.REGISTER, EMAIL).code();
-        assertDoesNotThrow(() -> guard.admit(IP, null, null, EMAIL, code,
+        assertDoesNotThrow(() -> guard.admit(IP, EMAIL, code,
             STRONG_PASSWORD, STRONG_PASSWORD));
     }
 
     /**
-     * 开了邮箱验证就必然要求填邮箱。
+     * 邮箱必填与邮箱验证码是同一件事的两面，都没有开关。
      *
-     * <p>两者独立判定的话，只开邮箱验证而忘了开 email-required 时，表单会放行一个空邮箱，
-     * 然后在发码那一步才报"请填写注册邮箱"——把一个配置疏漏变成用户眼里的莫名其妙。</p>
+     * <p>两者一旦能分开配，只开验证而忘了要求填邮箱时，表单会放行一个空邮箱，
+     * 然后在发码那一步才报"请填写注册邮箱"——把一个配置疏漏变成用户眼里的莫名其妙。
+     * 现在它们同为不变式，这类错配不再可能出现。</p>
      */
     @Test
-    void emailVerification_shouldImplyEmailRequired() {
-        properties.setEmailRequired(false);
-        properties.getEmailVerification().setEnabled(true);
+    void emailAndEmailCode_shouldBeRequiredWithoutAnySwitch() {
+        BizException missingEmail = assertThrows(BizException.class,
+            () -> guard.admit(IP, null, "246810", STRONG_PASSWORD, STRONG_PASSWORD));
+        assertEquals(ResultCode.PARAM_MISSING, missingEmail.getResultCode());
 
-        assertTrue(guard.emailRequired());
-
-        properties.getEmailVerification().setEnabled(false);
-        assertTrue(!guard.emailRequired(), "两项都关时才允许不填邮箱");
+        BizException missingCode = assertThrows(BizException.class,
+            () -> guard.admit(IP, EMAIL, null, STRONG_PASSWORD, STRONG_PASSWORD));
+        assertEquals(ResultCode.EMAIL_CODE_INVALID, missingCode.getResultCode());
     }
 
     /** 读出刚签发的图形验证码答案；读完写回去，不影响被测代码正常消费一次。 */

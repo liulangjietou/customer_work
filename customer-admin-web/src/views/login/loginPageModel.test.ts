@@ -12,7 +12,6 @@ import {
   getRegisterVerificationPlan,
   getRegistrationStepValidationFields,
   isCaptchaConsumedByEmailCodeRequest,
-  isCaptchaConsumedByRegistration,
   PASSWORD_RESET_EMAIL_CODE_FIELDS,
   PASSWORD_RESET_SUBMIT_FIELDS,
   REGISTER_ACCOUNT_STEP,
@@ -23,7 +22,6 @@ import {
   shouldKeepEmailCodeAfterPasswordResetFailure,
   shouldShowForgotPasswordEntry,
   shouldShowRegisterEntry,
-  usesEmailCodeForRegistration,
   type PasswordResetFormData,
   type RegisterField,
   type RegisterFormData,
@@ -118,6 +116,7 @@ describe('注册选项契约', () => {
     password: 'Secret123',
     confirmPassword: 'Secret123',
   }
+  // 邮箱验证码恒为注册的必需项，随部署形态变化的只有「发码那一步要不要图形码」。
   const cases: ReadonlyArray<{
     name: string
     options: RegisterVerificationOptions
@@ -127,52 +126,20 @@ describe('注册选项契约', () => {
     emailCodePayload: Record<string, string>
     registrationPayload: Record<string, string>
     captchaConsumedByEmailCodeRequest: boolean
-    captchaConsumedByRegistration: boolean
-    emailCodeUsedForRegistration: boolean
   }> = [
     {
-      name: '无需验证码',
-      options: { captchaRequired: false, emailVerificationRequired: false },
-      presentationFields: [],
-      emailCodeRequestFields: [],
-      registrationFields: [],
-      emailCodePayload: { email: 'richard@example.com' },
-      registrationPayload: baseRegistrationPayload,
-      captchaConsumedByEmailCodeRequest: false,
-      captchaConsumedByRegistration: false,
-      emailCodeUsedForRegistration: false,
-    },
-    {
-      name: '图形验证码保护最终注册',
-      options: { captchaRequired: true, emailVerificationRequired: false },
-      presentationFields: ['captcha'],
-      emailCodeRequestFields: [],
-      registrationFields: ['captcha'],
-      emailCodePayload: { email: 'richard@example.com' },
-      registrationPayload: {
-        ...baseRegistrationPayload,
-        captchaId: 'captcha-id',
-        captcha: 'ABCD',
-      },
-      captchaConsumedByEmailCodeRequest: false,
-      captchaConsumedByRegistration: true,
-      emailCodeUsedForRegistration: false,
-    },
-    {
-      name: '最终注册只校验邮箱验证码',
-      options: { captchaRequired: false, emailVerificationRequired: true },
+      name: '发码无需图形码时，注册只校验邮箱验证码',
+      options: { captchaRequired: false },
       presentationFields: ['emailCode'],
       emailCodeRequestFields: [],
       registrationFields: ['emailCode'],
       emailCodePayload: { email: 'richard@example.com' },
       registrationPayload: { ...baseRegistrationPayload, emailCode: '246810' },
       captchaConsumedByEmailCodeRequest: false,
-      captchaConsumedByRegistration: false,
-      emailCodeUsedForRegistration: true,
     },
     {
-      name: '图形验证码只保护发码且最终只校验邮箱验证码',
-      options: { captchaRequired: true, emailVerificationRequired: true },
+      name: '图形验证码只保护发码，注册仍只校验邮箱验证码',
+      options: { captchaRequired: true },
       presentationFields: ['captcha', 'emailCode'],
       emailCodeRequestFields: ['captcha'],
       registrationFields: ['emailCode'],
@@ -183,8 +150,6 @@ describe('注册选项契约', () => {
       },
       registrationPayload: { ...baseRegistrationPayload, emailCode: '246810' },
       captchaConsumedByEmailCodeRequest: true,
-      captchaConsumedByRegistration: false,
-      emailCodeUsedForRegistration: true,
     },
   ]
 
@@ -196,8 +161,6 @@ describe('注册选项契约', () => {
     emailCodePayload,
     registrationPayload,
     captchaConsumedByEmailCodeRequest,
-    captchaConsumedByRegistration,
-    emailCodeUsedForRegistration,
   }) => {
     expect(getRegisterVerificationPlan(options)).toEqual({
       presentationFields,
@@ -218,27 +181,21 @@ describe('注册选项契约', () => {
     expect(buildEmailCodeRequestPayload(form, plan)).toEqual(emailCodePayload)
     expect(buildRegistrationPayload(form, plan)).toEqual(registrationPayload)
     expect(isCaptchaConsumedByEmailCodeRequest(plan)).toBe(captchaConsumedByEmailCodeRequest)
-    expect(isCaptchaConsumedByRegistration(plan)).toBe(captchaConsumedByRegistration)
-    expect(usesEmailCodeForRegistration(plan)).toBe(emailCodeUsedForRegistration)
+    // 图形码从不由注册请求消费：它只在发码那一步用掉。
+    expect(registrationFields).not.toContain('captcha')
     expect(accountFields.filter((field) => securityPresentationFields.includes(field))).toEqual([])
   })
 
-  it('空的选填昵称与邮箱归一化为 null，且不混入未启用的验证字段', () => {
-    const plan = getRegisterVerificationPlan({
-      captchaRequired: false,
-      emailVerificationRequired: false,
-    })
+  it('空的选填昵称归一化为 null，邮箱作为必填项原样提交，且不混入图形码字段', () => {
+    const plan = getRegisterVerificationPlan({ captchaRequired: true })
 
-    expect(buildRegistrationPayload({
-      ...form,
-      nickname: '',
-      email: '',
-    }, plan)).toEqual({
+    expect(buildRegistrationPayload({ ...form, nickname: '' }, plan)).toEqual({
       username: 'richard',
       nickname: null,
-      email: null,
+      email: 'richard@example.com',
       password: 'Secret123',
       confirmPassword: 'Secret123',
+      emailCode: '246810',
     })
   })
 })

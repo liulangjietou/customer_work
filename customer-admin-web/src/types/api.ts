@@ -104,12 +104,9 @@ export interface RegisterRequest {
   password: string
   confirmPassword: string
   nickname?: string | null
-  /** 注册邮箱；对外开放实例必填，用于接收审核结果与找回密码 */
-  email?: string | null
-  /** 图形验证码凭据，取自 GET /auth/captcha；开启邮箱验证时图形码用在发码那一步 */
-  captchaId?: string | null
-  captcha?: string | null
-  /** 邮箱验证码，来自 POST /auth/email-code 发出的那封邮件 */
+  /** 注册邮箱，必填：用于接收注册验证码、审核结果与找回密码 */
+  email: string
+  /** 邮箱验证码，来自 POST /auth/email-code 发出的那封邮件，必填 */
   emailCode?: string | null
 }
 
@@ -138,14 +135,15 @@ export interface PasswordResetRequest {
   confirmPassword: string
 }
 
-/** 登录页的部署形态：决定是否渲染注册入口、验证码框、邮箱必填标记与找回密码入口 */
+/**
+ * 登录页的部署形态：决定是否渲染注册入口、图形验证码框与找回密码入口。
+ *
+ * 邮箱与邮箱验证码不在其中——它们是服务端的不变式，注册页无条件渲染并要求填写。
+ */
 export interface RegisterOptionsVO {
   selfServiceEnabled: boolean
-  /** 是否需要图形验证码。开启邮箱验证时它用在「获取验证码」那一步，否则用在注册那一步 */
+  /** 「获取验证码」那一步是否需要图形验证码；注册那一步只认邮箱验证码 */
   captchaRequired: boolean
-  emailRequired: boolean
-  /** 是否需要邮箱验证码 */
-  emailVerificationRequired: boolean
   /** 服务端配置的同邮箱发码冷却秒数；可选以兼容滚动升级期间的旧服务端。注册与找回密码共用 */
   emailCodeCooldownSeconds?: number
   /**

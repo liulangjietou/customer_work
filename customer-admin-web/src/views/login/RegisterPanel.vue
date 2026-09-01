@@ -12,13 +12,11 @@ import {
   getRegisterVerificationPlan,
   getRegistrationStepValidationFields,
   isCaptchaConsumedByEmailCodeRequest,
-  isCaptchaConsumedByRegistration,
   REGISTER_ACCOUNT_STEP,
   REGISTER_SECURITY_STEP,
   resolveEmailCodeCooldownSeconds,
   shouldHandleRegisterEnter,
   shouldClearEmailCodeAfterRegistrationFailure,
-  usesEmailCodeForRegistration,
   type RegisterFormData,
   type RegisterStep,
 } from './loginPageModel'
@@ -65,7 +63,6 @@ const form = reactive<RegisterFormData>({
 
 const verificationPlan = computed(() => getRegisterVerificationPlan(props.options))
 const showCaptcha = computed(() => verificationPlan.value.presentationFields.includes('captcha'))
-const showEmailCode = computed(() => verificationPlan.value.presentationFields.includes('emailCode'))
 const captchaUsedForEmailCode = computed(() => (
   isCaptchaConsumedByEmailCodeRequest(verificationPlan.value)
 ))
@@ -91,8 +88,7 @@ const rules: FormRules = {
     {
       validator: (_rule, value, callback) => {
         if (!value) {
-          callback(props.options.emailRequired || props.options.emailVerificationRequired
-            ? new Error('请输入邮箱') : undefined)
+          callback(new Error('请输入邮箱'))
           return
         }
         callback(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? undefined : new Error('邮箱格式不正确'))
@@ -111,13 +107,13 @@ const rules: FormRules = {
   emailCode: [
     {
       validator: (_rule, value, callback) => {
-        if (showEmailCode.value && !value) {
+        if (!value) {
           callback(new Error('请输入邮箱验证码'))
           return
         }
-        callback(showEmailCode.value && issuedEmail.value !== form.email
-          ? new Error('请先向当前邮箱发送验证码')
-          : undefined)
+        callback(issuedEmail.value === form.email
+          ? undefined
+          : new Error('请先向当前邮箱发送验证码'))
       },
       trigger: 'blur',
     },
@@ -374,14 +370,9 @@ async function handleRegister() {
     await scrollToTop()
   } catch (error) {
     // 只有已通过验证码核验的冲突或结果未知的异常才按“已消费”收敛；前置校验失败与普通输错允许原地修正。
-    if (!disposed
-      && usesEmailCodeForRegistration(verificationPlan.value)
-      && shouldClearEmailCodeAfterRegistrationFailure(error)) {
+    // 图形码不在这一步消费（它只用于发码），失败后无需清空。
+    if (!disposed && shouldClearEmailCodeAfterRegistrationFailure(error)) {
       clearIssuedEmailCode()
-    }
-    // 邮箱验证关闭时，图形码由最终注册请求消费；失败后清空并由用户按需重新获取。
-    if (!disposed && isCaptchaConsumedByRegistration(verificationPlan.value)) {
-      clearCaptchaChallenge()
     }
   } finally {
     if (!disposed && generation === registerRequestGeneration) {
@@ -434,7 +425,7 @@ onBeforeUnmount(() => {
         <div>
           <p class="eyebrow">创建本地账号</p>
           <h1 id="register-title">加入智能体运营台</h1>
-          <p>完成注册后即可登录查看审核状态，管理员审核并分配角色后需重新登录。</p>
+          <p>注册需验证邮箱：我们会向你填写的邮箱发送验证码。完成注册后即可登录查看审核状态，管理员审核并分配角色后需重新登录。</p>
         </div>
         <el-button class="back-login" link :disabled="operationPending" @click="backToLogin">返回登录</el-button>
       </div>
@@ -479,9 +470,9 @@ onBeforeUnmount(() => {
             <el-input id="register-nickname" v-model="form.nickname" size="large" autocomplete="name" placeholder="你希望被如何称呼" :prefix-icon="'Postcard'" />
           </el-form-item>
 
-          <label class="field-label" for="register-email">邮箱 <span>{{ options.emailRequired || options.emailVerificationRequired ? '必填' : '选填' }}</span></label>
+          <label class="field-label" for="register-email">邮箱 <span>必填</span></label>
           <el-form-item prop="email">
-            <el-input id="register-email" v-model="form.email" size="large" autocomplete="email" :placeholder="options.emailRequired || options.emailVerificationRequired ? '用于验证身份与接收审核结果' : '用于接收审核结果'" :prefix-icon="'Message'" />
+            <el-input id="register-email" v-model="form.email" size="large" autocomplete="email" placeholder="用于接收注册验证码与审核结果" :prefix-icon="'Message'" />
           </el-form-item>
 
           <el-button
@@ -514,17 +505,15 @@ onBeforeUnmount(() => {
             </el-form-item>
           </template>
 
-          <template v-if="showEmailCode">
-            <label class="field-label" for="register-email-code">邮箱验证码 <span>必填</span></label>
-            <el-form-item prop="emailCode">
-              <div class="verification-row">
-                <el-input id="register-email-code" v-model="form.emailCode" size="large" maxlength="16" inputmode="numeric" autocomplete="one-time-code" placeholder="请输入邮件中的验证码" :prefix-icon="'Message'" />
-                <el-button class="email-code-button" size="large" :loading="emailCodeSending" :disabled="verificationRequestPending || emailCodeCountdown > 0" @click="handleSendEmailCode">
-                  {{ emailCodeCountdown > 0 ? `${emailCodeCountdown} 秒后重发` : '发送验证码' }}
-                </el-button>
-              </div>
-            </el-form-item>
-          </template>
+          <label class="field-label" for="register-email-code">邮箱验证码 <span>必填</span></label>
+          <el-form-item prop="emailCode">
+            <div class="verification-row">
+              <el-input id="register-email-code" v-model="form.emailCode" size="large" maxlength="16" inputmode="numeric" autocomplete="one-time-code" placeholder="请输入邮件中的验证码" :prefix-icon="'Message'" />
+              <el-button class="email-code-button" size="large" :loading="emailCodeSending" :disabled="verificationRequestPending || emailCodeCountdown > 0" @click="handleSendEmailCode">
+                {{ emailCodeCountdown > 0 ? `${emailCodeCountdown} 秒后重发` : '发送验证码' }}
+              </el-button>
+            </div>
+          </el-form-item>
 
           <label class="field-label" for="register-password">密码 <span>必填</span></label>
           <el-form-item prop="password">
