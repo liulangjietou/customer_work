@@ -77,18 +77,19 @@ public class AuthController {
     }
 
     /**
-     * 注册页的开关与验证码要求，前端据此决定是否渲染验证码框与邮箱必填星号。
+     * 注册页的开关与验证码要求，前端据此决定是否渲染图形验证码框。
      *
      * <p>放在登录前的匿名接口里：注册页此刻还没有任何登录态，
      * 而"这个实例开不开放注册"本身不是敏感信息。</p>
+     *
+     * <p><b>不返回"要不要邮箱验证"</b>：那件事恒为真，返回一个恒 true 的布尔等于告诉前端
+     * 它可能为假，后来的人就会照着写一条永远走不到的分支。</p>
      */
     @GetMapping("/register-options")
     public Result<RegisterOptionsVO> registerOptions() {
         return Result.success(new RegisterOptionsVO(
             registrationGuard.selfServiceEnabled(),
             registrationGuard.captchaRequired(),
-            registrationGuard.emailRequired(),
-            registrationGuard.emailVerificationRequired(),
             registrationGuard.emailCodeResendCooldownSeconds()));
     }
 
@@ -141,15 +142,13 @@ public class AuthController {
     /**
      * 注册页需要知道的部署形态。
      *
+     * <p>邮箱必填与邮箱验证码不在其中：它们恒为必需，前端无条件渲染邮箱与验证码输入框。</p>
+     *
      * @param selfServiceEnabled       是否开放自助注册
-     * @param captchaRequired          是否需要图形验证码。开启邮箱验证时它用在<b>发码</b>那一步，
-     *                                 否则用在注册那一步
-     * @param emailRequired            是否必须填邮箱
-     * @param emailVerificationRequired 是否需要邮箱验证码（决定注册表单渲染"获取验证码"按钮）
+     * @param captchaRequired          <b>发码</b>那一步是否需要图形验证码；注册那一步只认邮箱验证码
      * @param emailCodeCooldownSeconds 同一邮箱两次发码之间的服务端冷却时间（秒）
      */
     public record RegisterOptionsVO(boolean selfServiceEnabled, boolean captchaRequired,
-                                    boolean emailRequired, boolean emailVerificationRequired,
                                     int emailCodeCooldownSeconds) {
     }
 

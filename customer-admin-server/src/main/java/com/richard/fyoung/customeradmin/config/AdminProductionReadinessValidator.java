@@ -123,21 +123,17 @@ public class AdminProductionReadinessValidator implements InitializingBean {
     /**
      * 自助注册开着时，邮件必须真的能发。
      *
-     * <p>两件事都指向它：<b>审核结果要通知到人</b>（只发站内信的话，被拒绝的人永远看不到，
-     * 通过的人也不知道自己已经可以用了），以及<b>注册验证码要发得出去</b>
-     * （开了邮箱验证却没配 SMTP，注册链路会在"获取验证码"那一步整体失败——
-     * 运行时有 fail-closed 兜底，但那时用户已经在注册页上了，不如启动时就拒绝）。</p>
+     * <p>两件事都指向它：<b>注册验证码要发得出去</b>（邮箱验证码是注册的硬前提，没配 SMTP
+     * 的话注册链路会在"获取验证码"那一步整体失败——运行时有 fail-closed 兜底，
+     * 但那时用户已经站在注册页上了，不如启动时就拒绝），以及<b>审核结果要通知到人</b>
+     * （只发站内信的话，被拒绝的人永远看不到，通过的人也不知道自己已经可以用了）。</p>
      *
-     * <p><b>前置条件是自助注册开着</b>：关掉自助注册的实例只由管理员预建账号，
-     * 既不会发验证码、也没有待审核的人要通知，此时强制配 SMTP 只是白挡一道。</p>
+     * <p><b>前置条件只剩自助注册开着</b>：关掉自助注册的实例只由管理员预建账号，
+     * 既不会发验证码、也没有待审核的人要通知，此时强制配 SMTP 只是白挡一道。
+     * 反过来说，开着自助注册就没有"不配 SMTP"这个选项了——这正是邮箱验证不可配的代价。</p>
      */
     private void validateEmailVerification(List<String> violations) {
         if (!environment.getProperty("admin.registration.self-service-enabled", Boolean.class, true)) {
-            return;
-        }
-        boolean required = environment.getProperty("admin.public-deployment.enabled", Boolean.class, false)
-            || environment.getProperty("admin.registration.email-verification.enabled", Boolean.class, false);
-        if (!required) {
             return;
         }
         requireWorkingMail(violations);

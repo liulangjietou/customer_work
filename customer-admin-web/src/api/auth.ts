@@ -18,7 +18,7 @@ export function register(data: RegisterRequest) {
   return request<void>({ url: '/auth/register', method: 'post', data })
 }
 
-/** 本实例是否开放注册、是否要求验证码与邮箱。登录前匿名可调。 */
+/** 本实例是否开放注册、发码是否要求图形验证码。登录前匿名可调。 */
 export function fetchRegisterOptions() {
   return request<RegisterOptionsVO>({ url: '/auth/register-options', method: 'get' })
 }

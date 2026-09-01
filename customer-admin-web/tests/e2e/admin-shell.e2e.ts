@@ -457,8 +457,6 @@ test.describe('后台壳层契约', () => {
     await page.route('**/api/auth/register-options', (route) => fulfill(route, {
       selfServiceEnabled: false,
       captchaRequired: false,
-      emailRequired: false,
-      emailVerificationRequired: false,
     }))
     await page.route('**/api/auth/login-captcha/challenge', (route) => fulfill(route, {
       challengeId: 'theme-entry-challenge',

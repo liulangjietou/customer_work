@@ -119,21 +119,20 @@ admin:
     # 单租户部署也不必关——所有数据都在同一个 tenant_id 下，过滤条件恒真，行为与关掉一致。
     enabled: ${ADMIN_TENANT_ENABLED:true}
   # 对外开放部署总开关。打开后：内部运维工具（SQL 客户端/账号本/开发者工具箱）的菜单与接口
-  # 一并下架、自助注册强制验证码与邮箱、审核通过不允许并入平台自用的 default 租户。
+  # 一并下架、发码强制图形验证码、审核通过不允许并入平台自用的 default 租户。
+  # （邮箱与邮箱验证码不在其中：它们无条件强制，与本开关无关）
   # 默认 false（内网自用）——误判成对外只是工具消失，误判成内网等于把这些工具挂到公网上。
   public-deployment:
     enabled: ${ADMIN_PUBLIC_DEPLOYMENT_ENABLED:false}
   registration:
     # 是否开放自助注册；关闭后只能由管理员预建账号
     self-service-enabled: ${ADMIN_REGISTRATION_SELF_SERVICE:true}
-    # 下面三项在 public-deployment.enabled=true 时被强制为 true，配 false 也不生效
+    # 注册必须填邮箱、必须填回收到的邮箱验证码——这是不变式，没有开关（见 RegistrationGuard）。
+    # 代价是自助注册开着时 SMTP 必须可用，否则链路在「获取验证码」那一步就走不下去；
+    # prod profile 由 AdminProductionReadinessValidator 在启动时直接拒绝这种配置。
+    # 图形验证码只用在「发码」那一步，注册那一步不再要——手里的邮箱验证码已经是更强的证据。
+    # 下面这项在 public-deployment.enabled=true 时被强制为 true，配 false 也不生效
     captcha-enabled: ${ADMIN_REGISTRATION_CAPTCHA:false}
-    email-required: ${ADMIN_REGISTRATION_EMAIL_REQUIRED:false}
-    email-verification:
-      # 注册必须先收一封邮箱验证码。开启后 SMTP 必须可用（AdminProductionReadinessValidator 强制校验），
-      # 否则整条注册链路在"获取验证码"那一步就走不下去。
-      # 开启时图形验证码改在「发码」那一步校验，注册那一步不再要——手里的邮箱验证码已经是更强的证据。
-      enabled: ${ADMIN_REGISTRATION_EMAIL_VERIFICATION:false}
     # 默认不采信客户端可控的转发头。开启时必须同时配置直接连接方的可信代理 CIDR；
     # 服务端从右向左剥离可信代理链，直连、异常头和伪造的最左段都不会被采信
     trust-forwarded-header: ${ADMIN_REGISTRATION_TRUST_XFF:false}
@@ -143,14 +142,23 @@ admin:
       enabled: ${ADMIN_LOGIN_LOCK_ENABLED:false}
   notification:
     mail:
-      # 审核结果邮件通知。开着但不配 host 会让每次审核都去连一个不存在的 SMTP，
-      # 故装配处额外校验 host 非空（见 MailNotificationConfig）
-      enabled: ${ADMIN_MAIL_ENABLED:false}
+      # 后台唯一的邮件出口，注册验证码与审核结果通知共用。
+      # 自助注册开着时这里必须配：邮箱验证码是注册的硬前提，不配的话用户在「获取验证码」
+      # 那一步就会收到"邮件服务未配置，请联系管理员"。
+      # 这里默认 true 而 Java 默认值是 false，属于刻意不同：配了 host 就该自动可用，
+      # 不该再要求记得多开一个开关——"配了却不生效、还不报错"是本仓库反复踩过的形状。
+      # host 留空时装配处不创建发送器、只记一条 info（那是"没配邮件"的合法状态，不是故障），
+      # 真正的拦截交给发码时的 fail-closed 与 prod 启动门禁。
+      enabled: ${ADMIN_MAIL_ENABLED:true}
       host: ${ADMIN_MAIL_HOST:}
       port: ${ADMIN_MAIL_PORT:587}
       username: ${ADMIN_MAIL_USERNAME:}
       password: ${ADMIN_MAIL_PASSWORD:}
       from: ${ADMIN_MAIL_FROM:}
+      # 587 走 STARTTLS（默认），465 走隐式 SSL。国内多数邮箱服务商（QQ/163/企业邮）用的是 465，
+      # 那种情况要 ADMIN_MAIL_SSL=true 且 ADMIN_MAIL_STARTTLS=false，否则握手失败、验证码发不出去
+      start-tls-enabled: ${ADMIN_MAIL_STARTTLS:true}
+      ssl-enabled: ${ADMIN_MAIL_SSL:false}
       login-url: ${ADMIN_MAIL_LOGIN_URL:}
   data-scope:
     # 用户维度行级隔离：角色数据范围为 SELF 时，只看本人创建的个人产出物

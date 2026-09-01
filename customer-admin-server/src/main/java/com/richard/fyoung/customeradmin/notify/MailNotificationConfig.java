@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.util.StringUtils;
 
 import java.util.Properties;
 
@@ -48,14 +49,19 @@ public class MailNotificationConfig {
     }
 
     /**
-     * 仅在启用且配了 host 时创建。缺 host 却创建，会让每次通知都去连 {@code null} 主机，
-     * 表现为审核接口卡住到超时——而通知本该是旁路。
+     * 仅在启用且配了 host 时创建。缺 host 却创建，会让每次发信都去连 {@code null} 主机，
+     * 表现为接口卡住到超时。
+     *
+     * <p><b>缺 host 记 info 而不是 error</b>：{@code enabled} 在 yml 里默认开着，
+     * 所以"没配 host"是内网自用实例的常态而不是故障——按 error 记会让每个不发信的实例
+     * 每次启动都产生一条会污染告警的假错误。真正该拦的地方各自 fail-closed：
+     * 发码时当场报错给用户，prod profile 由 {@code AdminProductionReadinessValidator} 启动即拒绝。</p>
      */
     @Bean
     @ConditionalOnProperty(prefix = "admin.notification.mail", name = "enabled", havingValue = "true")
     public JavaMailSender adminJavaMailSender(MailNotificationProperties properties) {
         if (properties.getHost() == null || properties.getHost().isBlank()) {
-            log.error("mail notification enabled but host is blank, code={}", "NOTIFY-MAIL-NO-HOST");
+            log.info("mail sender not configured: host is blank, mail-dependent features stay unavailable");
             return null;
         }
         JavaMailSenderImpl sender = new JavaMailSenderImpl();
@@ -66,7 +72,9 @@ public class MailNotificationConfig {
         sender.setDefaultEncoding("UTF-8");
 
         Properties mailProps = sender.getJavaMailProperties();
-        mailProps.put(PROP_AUTH, String.valueOf(properties.getUsername() != null));
+        // 空串不算"配了账号"：yml 的 ${ADMIN_MAIL_USERNAME:} 在未设环境变量时解析成空串而非 null，
+        // 按 != null 判定会开着 auth 去做一次注定失败的空账号认证，报错还指向别处
+        mailProps.put(PROP_AUTH, String.valueOf(StringUtils.hasText(properties.getUsername())));
         mailProps.put(PROP_STARTTLS, String.valueOf(properties.isStartTlsEnabled()));
         mailProps.put(PROP_SSL_ENABLE, String.valueOf(properties.isSslEnabled()));
         String timeout = String.valueOf(properties.getTimeoutMs());

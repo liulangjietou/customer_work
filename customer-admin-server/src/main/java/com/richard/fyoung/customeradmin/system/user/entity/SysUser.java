@@ -40,7 +40,7 @@ public class SysUser {
     private String nickname;
 
     /**
-     * 注册邮箱：对外开放实例的自助注册必填（{@code RegistrationGuard#emailRequired()}），
+     * 注册邮箱：自助注册一律必填并经验证码核验（见 {@code RegistrationGuard}），
      * LDAP 影子账号与管理员预建账号可空。
      *
      * <p>没有它就无法通知审核结果、无法找回密码，也无法在同一个人重复注册时识别出来——
@@ -48,7 +48,12 @@ public class SysUser {
      */
     private String email;
 
-    /** 邮箱是否已验证：0否 / 1是。当前由管理员审核兜底，预留给后续的邮箱验证链路。 */
+    /**
+     * 邮箱是否已验证：0否 / 1是。
+     *
+     * <p>自助注册创建的账号恒为 1（注册那一步已核验验证码）；为 0 的只可能是 LDAP 影子账号、
+     * 管理员预建账号，或本能力上线前的存量数据。</p>
+     */
     private Integer emailVerified;
     /** 账号来源：LOCAL 本地账号 / LDAP 域账号（OA 单点登录，见 AuthService#ssoLogin）。 */
     private String loginType;

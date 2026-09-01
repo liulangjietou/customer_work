@@ -36,8 +36,6 @@ const LOGIN_PUZZLE_CHALLENGE_DEFAULTS = {
 const REGISTER_OPTIONS: RegisterOptionsVO = {
   selfServiceEnabled: true,
   captchaRequired: false,
-  emailRequired: false,
-  emailVerificationRequired: false,
   emailCodeCooldownSeconds: 60,
 }
 
@@ -408,8 +406,6 @@ async function prepareEmailCodeOnlyRegistration(
   await openRegisterSecurityStep(page, {
     selfServiceEnabled: true,
     captchaRequired: false,
-    emailRequired: true,
-    emailVerificationRequired: true,
     emailCodeCooldownSeconds: 60,
   })
   await page.getByRole('button', { name: '发送验证码' }).click()
@@ -1064,8 +1060,6 @@ test.describe('邮箱验证码异步状态', () => {
     await openRegisterSecurityStep(page, {
       selfServiceEnabled: true,
       captchaRequired: true,
-      emailRequired: true,
-      emailVerificationRequired: true,
       emailCodeCooldownSeconds: 37,
     })
 
@@ -1138,8 +1132,6 @@ test.describe('邮箱验证码异步状态', () => {
     await openRegisterSecurityStep(page, {
       selfServiceEnabled: true,
       captchaRequired: true,
-      emailRequired: true,
-      emailVerificationRequired: true,
       emailCodeCooldownSeconds: 37,
     })
 
@@ -1224,8 +1216,6 @@ test.describe('注册失败恢复', () => {
     await openRegisterSecurityStep(page, {
       selfServiceEnabled: true,
       captchaRequired: true,
-      emailRequired: true,
-      emailVerificationRequired: true,
       emailCodeCooldownSeconds: 2,
     })
 
@@ -1323,71 +1313,6 @@ test.describe('注册失败恢复', () => {
       confirmPassword: 'SaferPassword456',
       emailCode: '123456',
     })
-  })
-
-  test('纯图形码注册业务失败后清空挑战，并仅允许新挑战参与重试', async ({ page }) => {
-    let captchaRequestCount = 0
-    const registrationPayloads: Record<string, unknown>[] = []
-
-    await page.route(CAPTCHA_API, async (route) => {
-      captchaRequestCount += 1
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(successResult({
-          captchaId: `captcha-${captchaRequestCount}`,
-          image: TEST_CAPTCHA_IMAGE,
-          ttlSeconds: 300,
-        })),
-      })
-    })
-    await page.route(REGISTER_API, async (route) => {
-      registrationPayloads.push(route.request().postDataJSON() as Record<string, unknown>)
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          code: TEST_BUSINESS_REJECTION_CODE,
-          message: 'E2E 注册业务失败',
-          data: null,
-        }),
-      })
-    })
-    await openRegisterSecurityStep(page, {
-      selfServiceEnabled: true,
-      captchaRequired: true,
-      emailRequired: false,
-      emailVerificationRequired: false,
-      emailCodeCooldownSeconds: 60,
-    })
-
-    await expect(page.getByRole('button', { name: '刷新图形验证码' })).toBeVisible()
-    await page.locator('#register-captcha').fill('OLD1')
-    await page.locator('#register-password').fill('Password123')
-    await page.locator('#register-confirm-password').fill('Password123')
-    await page.getByRole('button', { name: '提交注册' }).click()
-
-    await expect(page.getByText('E2E 注册业务失败', { exact: true })).toBeVisible()
-    await expect(page.locator('#register-captcha')).toHaveValue('')
-    await expect(page.getByRole('button', { name: '获取验证码' })).toBeVisible()
-    expect(registrationPayloads).toHaveLength(1)
-    expect(registrationPayloads[0]).toMatchObject({
-      captchaId: 'captcha-1',
-      captcha: 'OLD1',
-    })
-
-    await page.getByRole('button', { name: '获取验证码' }).click()
-    await expect(page.getByRole('button', { name: '刷新图形验证码' })).toBeVisible()
-    await page.locator('#register-captcha').fill('NEW2')
-    await page.getByRole('button', { name: '提交注册' }).click()
-
-    await expect.poll(() => registrationPayloads.length).toBe(2)
-    expect(registrationPayloads[1]).toMatchObject({
-      captchaId: 'captcha-2',
-      captcha: 'NEW2',
-    })
-    expect(registrationPayloads[1]).not.toHaveProperty('emailCode')
-    expect(captchaRequestCount).toBe(2)
   })
 })
 
