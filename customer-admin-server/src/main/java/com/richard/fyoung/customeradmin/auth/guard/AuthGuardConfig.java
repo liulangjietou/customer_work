@@ -25,7 +25,7 @@ import org.springframework.util.StringUtils;
  * （它只有 {@code @ConfigurationProperties}，没有 {@code @Component}），删掉会在启动时报
  * {@code NoSuchBeanDefinitionException}——本项目在批量重构配置类时踩过这个坑。</p>
  *
- * <p>计数器与注册验证码延续原有 Redis 运行期降级策略。登录滑块更严格：仅在启动时
+ * <p>计数器与注册验证码延续原有 Redis 运行期降级策略。登录拼图更严格：仅在启动时
  * 没有 Redisson Bean 才选用进程内存储；一旦选用 Redis，请求期异常直接失败关闭，
  * 防止 challenge/proof 因跨存储切换而复活。</p>
  * @author owlzhangfq@gmail.com

@@ -45,15 +45,18 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 登录滑块从 challenge 到 proof 的安全边界。 */
+/** 登录拼图从 challenge 到 proof 的安全边界。 */
 class LoginCaptchaServiceTest {
 
     private static final String IP = "203.0.113.31";
     private static final String USER_AGENT = "Mozilla/5.0 customer-admin-test";
+    private static final int TARGET_X = 620;
+    private static final int TARGET_TOLERANCE = 12;
 
     private MutableClock clock;
     private LoginCaptchaProperties properties;
     private WindowCounter counter;
+    private LoginPuzzleImageGenerator imageGenerator;
     private LoginCaptchaService service;
 
     @BeforeEach
@@ -62,8 +65,32 @@ class LoginCaptchaServiceTest {
         properties = new LoginCaptchaProperties();
         counter = mock(WindowCounter.class);
         when(counter.tryAcquireSliding(anyString(), anyInt(), anyInt())).thenReturn(true);
+        imageGenerator = mock(LoginPuzzleImageGenerator.class);
+        when(imageGenerator.generate()).thenReturn(generatedPuzzle());
         service = new LoginCaptchaService(new InMemoryLoginCaptchaStore(100, clock), properties,
-            counter, clock, new SecureRandom());
+            counter, clock, new SecureRandom(), imageGenerator);
+    }
+
+    @Test
+    void issueChallenge_shouldReturnPuzzleAssetsAndPersistOnlyServerSecret() {
+        LoginCaptchaStore store = mock(LoginCaptchaStore.class);
+        LoginCaptchaService localService = serviceWith(store);
+
+        LoginCaptchaChallengeResponse challenge = localService.issueChallenge(IP, USER_AGENT);
+
+        assertEquals("data:image/png;base64,YmFja2dyb3VuZA==", challenge.backgroundImage());
+        assertEquals("data:image/png;base64,cGllY2U=", challenge.puzzlePieceImage());
+        assertEquals(320, challenge.canvasWidth());
+        assertEquals(160, challenge.canvasHeight());
+        assertEquals(56, challenge.pieceWidth());
+        assertEquals(56, challenge.pieceHeight());
+        assertEquals(52, challenge.pieceY());
+        org.mockito.ArgumentCaptor<LoginCaptchaStore.ChallengeState> state =
+            org.mockito.ArgumentCaptor.forClass(LoginCaptchaStore.ChallengeState.class);
+        verify(store).saveChallenge(eq(challenge.challengeId()), state.capture(),
+            eq(properties.getChallengeTtlSeconds()));
+        assertEquals(TARGET_X, state.getValue().targetXNormalized());
+        assertEquals(TARGET_TOLERANCE, state.getValue().toleranceNormalized());
     }
 
     @Test
@@ -83,7 +110,7 @@ class LoginCaptchaServiceTest {
     void verify_shouldIssue32ByteBase64UrlProofAndStoreOnlyItsSha256() throws Exception {
         InMemoryLoginCaptchaStore store = spy(new InMemoryLoginCaptchaStore(100, clock));
         LoginCaptchaService localService = new LoginCaptchaService(
-            store, properties, counter, clock, new SecureRandom());
+            store, properties, counter, clock, new SecureRandom(), imageGenerator);
         LoginCaptchaChallengeResponse challenge = localService.issueChallenge(IP, USER_AGENT);
         clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
 
@@ -131,7 +158,8 @@ class LoginCaptchaServiceTest {
         LoginCaptchaChallengeResponse challenge = issue();
         clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
         List<SliderTrackPoint> teleport = List.of(
-            point(0, 0), point(0, 80), point(0, 160), point(0, 240), point(0, 320), point(1000, 400));
+            point(0, 0), point(0, 80), point(0, 160), point(0, 240), point(0, 320),
+            point(TARGET_X, 400));
 
         assertInvalid(() -> service.verify(request(challenge, teleport), IP, USER_AGENT));
         assertInvalid(() -> service.verify(request(challenge, validTrajectory()), IP, USER_AGENT));
@@ -142,7 +170,8 @@ class LoginCaptchaServiceTest {
         LoginCaptchaChallengeResponse challenge = issue();
         clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
         List<SliderTrackPoint> incomplete = new ArrayList<>(validTrajectory());
-        incomplete.set(incomplete.size() - 1, point(LoginCaptchaProtocol.END_X_MIN - 1, 400));
+        incomplete.set(incomplete.size() - 1,
+            point(TARGET_X - LoginCaptchaProtocol.ENDPOINT_PLACEMENT_TOLERANCE - 1, 400));
 
         assertInvalid(() -> service.verify(request(challenge, incomplete), IP, USER_AGENT));
         assertInvalid(() -> service.verify(request(challenge, validTrajectory()), IP, USER_AGENT));
@@ -164,8 +193,8 @@ class LoginCaptchaServiceTest {
         LoginCaptchaChallengeResponse challenge = issue();
         clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
         List<SliderTrackPoint> sparse = List.of(
-            point(0, 0), point(10, 80), point(200, 160), point(500, 240), point(800, 320),
-            point(1000, 400));
+            point(0, 0), point(10, 80), point(12, 160), point(14, 240), point(16, 320),
+            point(TARGET_X, 400));
 
         assertInvalid(() -> service.verify(request(challenge, sparse), IP, USER_AGENT));
         assertInvalid(() -> service.verify(request(challenge, validTrajectory()), IP, USER_AGENT));
@@ -203,6 +232,39 @@ class LoginCaptchaServiceTest {
     }
 
     @Test
+    void verify_shouldRejectPlacementOutsideServerTargetToleranceAndConsumeChallenge() {
+        LoginCaptchaChallengeResponse challenge = issue();
+        clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+        int wrongPlacement = TARGET_X + TARGET_TOLERANCE + 1;
+
+        assertInvalid(() -> service.verify(
+            request(challenge, wrongPlacement, validTrajectory(wrongPlacement)), IP, USER_AGENT));
+        assertInvalid(() -> service.verify(request(challenge, validTrajectory()), IP, USER_AGENT));
+    }
+
+    @Test
+    void verify_shouldAcceptPlacementAtServerToleranceBoundary() {
+        LoginCaptchaChallengeResponse challenge = issue();
+        clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+        int boundaryPlacement = TARGET_X + TARGET_TOLERANCE;
+
+        assertNotNull(service.verify(
+            request(challenge, boundaryPlacement, validTrajectory(boundaryPlacement)), IP, USER_AGENT));
+    }
+
+    @Test
+    void verify_shouldRejectTrajectoryEndpointThatDiffersFromPlacement() {
+        LoginCaptchaChallengeResponse challenge = issue();
+        clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+        List<SliderTrackPoint> mismatched = new ArrayList<>(validTrajectory());
+        mismatched.set(mismatched.size() - 1,
+            point(TARGET_X - LoginCaptchaProtocol.ENDPOINT_PLACEMENT_TOLERANCE - 1, 400));
+
+        assertInvalid(() -> service.verify(
+            request(challenge, TARGET_X, mismatched), IP, USER_AGENT));
+    }
+
+    @Test
     void consumeProof_shouldBeOneTimeAndKeepProofOnFingerprintMismatch() {
         LoginCaptchaProofResponse proof = verifiedProof();
 
@@ -230,6 +292,16 @@ class LoginCaptchaServiceTest {
     }
 
     @Test
+    void issueChallenge_shouldMapImageGenerationFailureToUnavailableWithoutPersisting() {
+        LoginCaptchaStore store = mock(LoginCaptchaStore.class);
+        when(imageGenerator.generate()).thenThrow(new IllegalStateException("png unavailable"));
+
+        assertUnavailable(() -> serviceWith(store).issueChallenge(IP, USER_AGENT));
+
+        verify(store, never()).saveChallenge(anyString(), any(), anyInt());
+    }
+
+    @Test
     void verify_shouldMapChallengeConsumeFailureToUnavailable() {
         LoginCaptchaStore failingStore = mock(LoginCaptchaStore.class);
         LoginCaptchaService failingService = serviceWith(failingStore);
@@ -251,7 +323,9 @@ class LoginCaptchaServiceTest {
         clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
         when(failingStore.consumeChallenge(eq(challenge.challengeId()), anyString()))
             .thenReturn(LoginCaptchaStore.ConsumeResult.matched(
-                new LoginCaptchaStore.ChallengeState("fingerprint", issuedAt, clock.millis() + 10_000L)));
+                new LoginCaptchaStore.ChallengeState(
+                    "fingerprint", issuedAt, clock.millis() + 10_000L,
+                    TARGET_X, TARGET_TOLERANCE)));
         doThrow(new IllegalStateException("redis timeout")).when(failingStore)
             .saveProof(anyString(), any(), anyInt());
 
@@ -316,7 +390,8 @@ class LoginCaptchaServiceTest {
         properties.setMaxVerifyPerWindow(7);
         when(counter.tryAcquireSliding(anyString(), anyInt(), anyInt())).thenReturn(false);
         LoginCaptchaVerifyRequest request = new LoginCaptchaVerifyRequest(
-            Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]), validTrajectory());
+            Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]),
+            TARGET_X, validTrajectory());
 
         BizException error = assertThrows(BizException.class,
             () -> serviceWith(store).verify(request, IP, USER_AGENT));
@@ -326,6 +401,40 @@ class LoginCaptchaServiceTest {
         verify(counter).tryAcquireSliding(
             eq("admin:login-captcha:verify:" + sha256(IP)),
             eq(7), eq(properties.getRateLimitWindowSeconds()));
+    }
+
+    @Test
+    void verify_shouldAllowOnlyThreeAttemptsPerHourAcrossSuccessFailureAndUserAgentChanges() {
+        InMemoryLoginCaptchaStore store = spy(new InMemoryLoginCaptchaStore(100, clock));
+        LoginCaptchaService localService = new LoginCaptchaService(
+            store, properties, counter, clock, new SecureRandom(), imageGenerator);
+        when(counter.tryAcquireSliding(
+            org.mockito.ArgumentMatchers.startsWith("admin:login-captcha:verify:"),
+            eq(3), eq(3_600)))
+            .thenReturn(true, true, true, false);
+        List<LoginCaptchaChallengeResponse> challenges = List.of(
+            localService.issueChallenge(IP, USER_AGENT),
+            localService.issueChallenge(IP, USER_AGENT),
+            localService.issueChallenge(IP, USER_AGENT),
+            localService.issueChallenge(IP, USER_AGENT));
+        clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+
+        assertNotNull(localService.verify(
+            request(challenges.get(0), validTrajectory()), IP, USER_AGENT));
+        int wrongPlacement = TARGET_X + TARGET_TOLERANCE + 1;
+        assertInvalid(() -> localService.verify(
+            request(challenges.get(1), wrongPlacement, validTrajectory(wrongPlacement)),
+            IP, USER_AGENT));
+        assertInvalid(() -> localService.verify(
+            request(challenges.get(2), validTrajectory()), IP, "rotated-user-agent"));
+
+        BizException exhausted = assertThrows(BizException.class, () -> localService.verify(
+            request(challenges.get(3), validTrajectory()), IP, USER_AGENT));
+        assertEquals(ResultCode.LOGIN_CAPTCHA_TOO_FREQUENT, exhausted.getResultCode());
+        verify(counter, times(4)).tryAcquireSliding(
+            org.mockito.ArgumentMatchers.startsWith("admin:login-captcha:verify:"),
+            eq(3), eq(3_600));
+        verify(store, times(3)).consumeChallenge(anyString(), anyString());
     }
 
     @Test
@@ -350,7 +459,8 @@ class LoginCaptchaServiceTest {
     }
 
     private LoginCaptchaService serviceWith(LoginCaptchaStore store) {
-        return new LoginCaptchaService(store, properties, counter, clock, new SecureRandom());
+        return new LoginCaptchaService(
+            store, properties, counter, clock, new SecureRandom(), imageGenerator);
     }
 
     private LoginCaptchaProofResponse verifiedProof() {
@@ -361,12 +471,23 @@ class LoginCaptchaServiceTest {
 
     private LoginCaptchaVerifyRequest request(LoginCaptchaChallengeResponse challenge,
                                               List<SliderTrackPoint> trajectory) {
-        return new LoginCaptchaVerifyRequest(challenge.challengeId(), trajectory);
+        return request(challenge, TARGET_X, trajectory);
+    }
+
+    private LoginCaptchaVerifyRequest request(LoginCaptchaChallengeResponse challenge,
+                                              int placementX,
+                                              List<SliderTrackPoint> trajectory) {
+        return new LoginCaptchaVerifyRequest(challenge.challengeId(), placementX, trajectory);
     }
 
     private List<SliderTrackPoint> validTrajectory() {
-        return List.of(point(0, 0), point(120, 50), point(300, 120),
-            point(520, 210), point(760, 320), point(1000, 400));
+        return validTrajectory(TARGET_X);
+    }
+
+    private List<SliderTrackPoint> validTrajectory(int placementX) {
+        return List.of(point(0, 0), point(placementX * 16 / 100, 50),
+            point(placementX * 35 / 100, 120), point(placementX * 55 / 100, 210),
+            point(placementX * 78 / 100, 320), point(placementX, 400));
     }
 
     private SliderTrackPoint point(int x, long timeMs) {
@@ -382,25 +503,25 @@ class LoginCaptchaServiceTest {
         initialPointTooLate.set(1, trackPoint(120, 0, 150));
 
         List<SliderTrackPoint> durationTooShort = mutableValidTrajectory();
-        durationTooShort.set(1, trackPoint(120, 0, 40));
-        durationTooShort.set(2, trackPoint(300, 0, 90));
-        durationTooShort.set(3, trackPoint(520, 0, 150));
-        durationTooShort.set(4, trackPoint(760, 0, 220));
-        durationTooShort.set(5, trackPoint(1000, 0, 299));
+        durationTooShort.set(1, trackPoint(100, 0, 40));
+        durationTooShort.set(2, trackPoint(220, 0, 90));
+        durationTooShort.set(3, trackPoint(340, 0, 150));
+        durationTooShort.set(4, trackPoint(480, 0, 220));
+        durationTooShort.set(5, trackPoint(TARGET_X, 0, 299));
 
         List<SliderTrackPoint> durationTooLong = mutableValidTrajectory();
-        durationTooLong.set(5, trackPoint(1000, 0, 8_001));
+        durationTooLong.set(5, trackPoint(TARGET_X, 0, 8_001));
 
         List<SliderTrackPoint> tooManyPoints = IntStream.rangeClosed(0, 80)
-            .mapToObj(index -> trackPoint(index * 1_000 / 80, 0, index * 10L))
+            .mapToObj(index -> trackPoint(index * TARGET_X / 80, 0, index * 10L))
             .toList();
 
         List<SliderTrackPoint> yTooLarge = mutableValidTrajectory();
         yTooLarge.set(3, trackPoint(520, 1_001, 210));
 
         List<SliderTrackPoint> nullIntermediate = new ArrayList<>(
-            Arrays.asList(trackPoint(0, 0, 0), trackPoint(120, 0, 50), null,
-                trackPoint(520, 0, 210), trackPoint(760, 0, 320), trackPoint(1000, 0, 400)));
+            Arrays.asList(trackPoint(0, 0, 0), trackPoint(100, 0, 50), null,
+                trackPoint(340, 0, 210), trackPoint(480, 0, 320), trackPoint(TARGET_X, 0, 400)));
 
         return Stream.of(
             Arguments.of("起点超过 20", startTooFar),
@@ -413,9 +534,16 @@ class LoginCaptchaServiceTest {
     }
 
     private static List<SliderTrackPoint> mutableValidTrajectory() {
-        return new ArrayList<>(List.of(trackPoint(0, 0, 0), trackPoint(120, 0, 50),
-            trackPoint(300, 0, 120), trackPoint(520, 0, 210), trackPoint(760, 0, 320),
-            trackPoint(1000, 0, 400)));
+        return new ArrayList<>(List.of(trackPoint(0, 0, 0), trackPoint(100, 0, 50),
+            trackPoint(220, 0, 120), trackPoint(340, 0, 210), trackPoint(480, 0, 320),
+            trackPoint(TARGET_X, 0, 400)));
+    }
+
+    private LoginPuzzleImageGenerator.GeneratedPuzzle generatedPuzzle() {
+        return new LoginPuzzleImageGenerator.GeneratedPuzzle(
+            "data:image/png;base64,YmFja2dyb3VuZA==",
+            "data:image/png;base64,cGllY2U=",
+            320, 160, 56, 56, 52, TARGET_X, TARGET_TOLERANCE);
     }
 
     private static SliderTrackPoint trackPoint(int x, int y, long timeMs) {

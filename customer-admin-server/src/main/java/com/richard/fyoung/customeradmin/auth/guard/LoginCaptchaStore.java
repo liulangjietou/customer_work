@@ -1,7 +1,7 @@
 package com.richard.fyoung.customeradmin.auth.guard;
 
 /**
- * 登录滑块 challenge/proof 的一次性存储。
+ * 登录拼图 challenge/proof 的一次性存储。
  *
  * <p>实现必须保证：指纹匹配时读取与删除是同一个原子操作；指纹不匹配时不删除，
  * 避免第三方仅凭 challengeId 或 proof 摘要让真实用户的凭据失效。分布式实现的任何
@@ -20,7 +20,9 @@ public interface LoginCaptchaStore {
     /** @param proofHash proof 明文的 SHA-256 十六进制摘要。 */
     ConsumeResult<ProofState> consumeProof(String proofHash, String fingerprint);
 
-    record ChallengeState(String fingerprint, long issuedAtMs, long expireAtMs) {
+    /** 图片不进入存储，只保存核验所需的服务端秘密与生命周期信息。 */
+    record ChallengeState(String fingerprint, long issuedAtMs, long expireAtMs,
+                          int targetXNormalized, int toleranceNormalized) {
     }
 
     record ProofState(String fingerprint, long expireAtMs) {

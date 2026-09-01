@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 /**
- * 登录滑块的进程内存储，供没有 Redisson Bean 的单实例部署在启动时选用。
+ * 登录拼图的进程内存储，供没有 Redisson Bean 的单实例部署在启动时选用。
  *
  * <p>消费通过 {@link ConcurrentHashMap#compute(Object, java.util.function.BiFunction)} 完成，
  * 同一键的指纹判断与删除不可被并发请求拆开。challenge/proof 各自用容量锁串行完成

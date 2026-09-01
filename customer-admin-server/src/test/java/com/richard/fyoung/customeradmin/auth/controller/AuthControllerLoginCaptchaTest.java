@@ -44,7 +44,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** 登录滑块匿名接口、请求契约及同一来源上下文传递。 */
+/** 登录拼图匿名接口、请求契约及同一来源上下文传递。 */
 @ExtendWith(SpringExtension.class)
 @WebAppConfiguration
 @ContextConfiguration(classes = AuthControllerLoginCaptchaTest.WebMvcTestConfig.class)
@@ -73,7 +73,7 @@ class AuthControllerLoginCaptchaTest {
     @Test
     void challenge_shouldBeAnonymousAndExposeStableContract() throws Exception {
         when(loginCaptchaService.issueChallenge(CLIENT_IP, USER_AGENT))
-            .thenReturn(new LoginCaptchaChallengeResponse("challenge-id", 120));
+            .thenReturn(challengeResponse());
 
         mockMvc.perform(post("/api/auth/login-captcha/challenge")
                 .accept(MediaType.APPLICATION_JSON)
@@ -82,7 +82,18 @@ class AuthControllerLoginCaptchaTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.code").value(0))
             .andExpect(jsonPath("$.data.challengeId").value("challenge-id"))
-            .andExpect(jsonPath("$.data.ttlSeconds").value(120));
+            .andExpect(jsonPath("$.data.ttlSeconds").value(120))
+            .andExpect(jsonPath("$.data.backgroundImage").value("data:image/png;base64,YmFja2dyb3VuZA=="))
+            .andExpect(jsonPath("$.data.puzzlePieceImage").value("data:image/png;base64,cGllY2U="))
+            .andExpect(jsonPath("$.data.canvasWidth").value(320))
+            .andExpect(jsonPath("$.data.canvasHeight").value(160))
+            .andExpect(jsonPath("$.data.pieceWidth").value(56))
+            .andExpect(jsonPath("$.data.pieceHeight").value(56))
+            .andExpect(jsonPath("$.data.pieceY").value(52))
+            .andExpect(jsonPath("$.data.targetX").doesNotExist())
+            .andExpect(jsonPath("$.data.targetXNormalized").doesNotExist())
+            .andExpect(jsonPath("$.data.tolerance").doesNotExist())
+            .andExpect(jsonPath("$.data.toleranceNormalized").doesNotExist());
 
         verify(loginCaptchaService).issueChallenge(CLIENT_IP, USER_AGENT);
     }
@@ -91,7 +102,7 @@ class AuthControllerLoginCaptchaTest {
     void challenge_shouldKeepSameSourceForChangingForgedHeadersFromUntrustedPeer() throws Exception {
         String directPeer = "192.0.2.44";
         when(loginCaptchaService.issueChallenge(directPeer, USER_AGENT))
-            .thenReturn(new LoginCaptchaChallengeResponse("challenge-id", 120));
+            .thenReturn(challengeResponse());
 
         for (String forgedIp : java.util.List.of(CLIENT_IP, "198.51.100.99")) {
             mockMvc.perform(post("/api/auth/login-captcha/challenge")
@@ -120,10 +131,10 @@ class AuthControllerLoginCaptchaTest {
                 .header("X-Forwarded-For", CLIENT_IP)
                 .header("User-Agent", USER_AGENT)
                 .content("""
-                    {"challengeId":"challenge-id","trajectory":[
-                      {"x":0,"y":0,"t":0},{"x":120,"y":1,"t":60},
-                      {"x":320,"y":-1,"t":120},{"x":560,"y":2,"t":190},
-                      {"x":800,"y":0,"t":260},{"x":1000,"y":1,"t":340}
+                    {"challengeId":"challenge-id","placementX":620,"trajectory":[
+                      {"x":0,"y":0,"t":0},{"x":100,"y":1,"t":60},
+                      {"x":220,"y":-1,"t":120},{"x":340,"y":2,"t":190},
+                      {"x":480,"y":0,"t":260},{"x":620,"y":1,"t":340}
                     ]}
                     """))
             .andExpect(status().isOk())
@@ -131,7 +142,13 @@ class AuthControllerLoginCaptchaTest {
             .andExpect(jsonPath("$.data.proof").value("opaque-proof"))
             .andExpect(jsonPath("$.data.ttlSeconds").value(120));
 
-        verify(loginCaptchaService).verify(any(), eq(CLIENT_IP), eq(USER_AGENT));
+        org.mockito.ArgumentCaptor<com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaVerifyRequest> request =
+            org.mockito.ArgumentCaptor.forClass(
+                com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaVerifyRequest.class);
+        verify(loginCaptchaService).verify(request.capture(), eq(CLIENT_IP), eq(USER_AGENT));
+        org.junit.jupiter.api.Assertions.assertEquals(620, request.getValue().placementX());
+        org.junit.jupiter.api.Assertions.assertEquals(620,
+            request.getValue().trajectory().get(request.getValue().trajectory().size() - 1).x());
     }
 
     @Test
@@ -141,7 +158,7 @@ class AuthControllerLoginCaptchaTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("User-Agent", USER_AGENT)
                 .content("""
-                    {"challengeId":"challenge-id","trajectory":[
+                    {"challengeId":"challenge-id","placementX":620,"trajectory":[
                       {"x":0,"y":0,"t":0},{"x":120,"y":1,"t":60},
                       {"x":320,"y":-1,"t":120},{"x":560,"y":2,"t":190},
                       {"x":800,"y":0,"t":260},{"x":1001,"y":1,"t":340}
@@ -150,6 +167,23 @@ class AuthControllerLoginCaptchaTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.code").value(30001))
             .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("trajectory[5].x")));
+
+        verify(loginCaptchaService, never()).verify(any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @MethodSource("invalidPlacementPayloads")
+    void verify_invalidPlacement_shouldFailBeforeService(String placementJson) throws Exception {
+        mockMvc.perform(post("/api/auth/login-captcha/verify")
+                .accept(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("User-Agent", USER_AGENT)
+                .content("{\"challengeId\":\"challenge-id\"," + placementJson + "\"trajectory\":["
+                    + "{\"x\":0,\"y\":0,\"t\":0},{\"x\":100,\"y\":1,\"t\":60},"
+                    + "{\"x\":220,\"y\":0,\"t\":120},{\"x\":340,\"y\":0,\"t\":190},"
+                    + "{\"x\":480,\"y\":0,\"t\":260},{\"x\":620,\"y\":0,\"t\":340}]}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(30001));
 
         verify(loginCaptchaService, never()).verify(any(), any(), any());
     }
@@ -218,6 +252,22 @@ class AuthControllerLoginCaptchaTest {
             Arguments.of("/api/auth/sso-login", loginPayload("u".repeat(257), "password")),
             Arguments.of("/api/auth/sso-login", loginPayload("richard", "p".repeat(257))),
             Arguments.of("/api/auth/sso-login", loginPayload("richard", "password", "p".repeat(257))));
+    }
+
+    private static Stream<Arguments> invalidPlacementPayloads() {
+        return Stream.of(
+            Arguments.of(""),
+            Arguments.of("\"placementX\":-1,"),
+            Arguments.of("\"placementX\":1001,"),
+            Arguments.of("\"placementX\":null,"));
+    }
+
+    private static LoginCaptchaChallengeResponse challengeResponse() {
+        return new LoginCaptchaChallengeResponse(
+            "challenge-id", 120,
+            "data:image/png;base64,YmFja2dyb3VuZA==",
+            "data:image/png;base64,cGllY2U=",
+            320, 160, 56, 56, 52);
     }
 
     private static String loginPayload(String username, String password) {
