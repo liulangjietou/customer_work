@@ -35,6 +35,25 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-01 找回密码批次实测（已 rebase 到含 PR #173 的 main 之后）：全模块 BUILD SUCCESS，
+  0 失败 0 错误，starter 1705/5 skip、app-server 129、customer-channel 80、admin 1732/1 skip、gateway 1，
+  **合计 3647**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+35**
+  （重置服务 25 + 匿名接口契约 4 + register-options 契约扩 1 + 验证码用途分键 3 + 存储分键 2），
+  前端 vitest 203 全过（本批次 +9）、playwright login.e2e.ts 28 条全过（本批次 +3）。
+  本批次无迁移，cw Flyway 仍是下次 **V24**、admin **V102**。
+  **改 Controller 的构造参数会打红两个 `@WebMvcTest`**：`AuthControllerLoginCaptchaTest` 与
+  `AuthControllerRegisterOptionsTest` 各自的 `WebMvcTestConfig` 手工声明每一个协作者，少一个就整类
+  `Failed to load ApplicationContext`，而报错只说上下文加载失败、不点名少了哪个 Bean。
+  后者还硬编码了 register-options 的完整 JSON 契约，往 VO 里加字段必须同步。
+  **全量跑到一半改源码 = 这次全量作废**：本批次踩过一次——admin 编译到的是半成品测试文件，
+  报"对 insert 的引用不明确"，看着像新代码有问题，实际是它编译的那份已经不是最终要跑的那份。
+  与本文件早记过的"两个 Maven 进程同时写 target/"是同一类，只是这次的另一个写手是我自己。
+  **改了 SPI 签名后，合并别人的分支要用编译当验收而不是看冲突数**：本批次把
+  `EmailVerificationStore` 的三个方法都加了 `EmailCodePurpose` 参数，合 PR #173 时 git 报了 11 处冲突、
+  全部解完，但 `UserRegistrationServiceTest` 与 `RegistrationGuardTest` 里对方**新增**的
+  `emailCodeStore.save/get(EMAIL, ...)` 干净合入、一个冲突标记都没有，直到 `test-compile` 才炸出来。
+  语义冲突不会以冲突标记的形式出现，解完冲突只是开始。
+  上一版基线 2026-09-01 注册强制邮箱验证批次：合计 3612。）
   （2026-09-01 注册强制邮箱验证批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1697/1 skip、gateway 1，
   **合计 3612**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+13**
