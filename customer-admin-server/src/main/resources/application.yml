@@ -145,9 +145,11 @@ admin:
       # 后台唯一的邮件出口，注册验证码与审核结果通知共用。
       # 自助注册开着时这里必须配：邮箱验证码是注册的硬前提，不配的话用户在「获取验证码」
       # 那一步就会收到"邮件服务未配置，请联系管理员"。
-      # 开着但不配 host 会让每次发信都去连一个不存在的 SMTP，故装配处额外校验 host 非空
-      # （见 MailNotificationConfig）
-      enabled: ${ADMIN_MAIL_ENABLED:false}
+      # 这里默认 true 而 Java 默认值是 false，属于刻意不同：配了 host 就该自动可用，
+      # 不该再要求记得多开一个开关——"配了却不生效、还不报错"是本仓库反复踩过的形状。
+      # host 留空时装配处不创建发送器、只记一条 info（那是"没配邮件"的合法状态，不是故障），
+      # 真正的拦截交给发码时的 fail-closed 与 prod 启动门禁。
+      enabled: ${ADMIN_MAIL_ENABLED:true}
       host: ${ADMIN_MAIL_HOST:}
       port: ${ADMIN_MAIL_PORT:587}
       username: ${ADMIN_MAIL_USERNAME:}
