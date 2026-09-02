@@ -35,6 +35,14 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-02 知识库连通性租户上下文修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1705/5 skip、app-server 129、customer-channel 80、admin 1733/2 skip、gateway 1，
+  **合计 3648**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+1**
+  （知识库连通性测试的租户上下文回归）。**"异步回调要显式恢复租户上下文"这条已复发一次**：
+  MCP 与模型健康探测都做了，知识库测完回写时漏了，表现是前端显示测试通过、库里 test_status 不变，
+  同时抛一个 500。补测试时注意**既有的两条用例只断言"updateById 被调用过"，照不出这个缺陷**——
+  单测没挂 MP 拦截器，缺上下文也不会抛，必须断言"落库那一刻 `TenantContext.get()` 是发起时的租户"。
+  本批次无迁移，cw Flyway 仍是下次 **V24**、admin **V102**。上一版基线见下。）
   （2026-09-01 找回密码批次实测（已 rebase 到含 PR #173 的 main 之后）：全模块 BUILD SUCCESS，
   0 失败 0 错误，starter 1705/5 skip、app-server 129、customer-channel 80、admin 1732/1 skip、gateway 1，
   **合计 3647**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+35**
