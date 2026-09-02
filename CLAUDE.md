@@ -35,6 +35,22 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-02 后台库快照带系统种子批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1710/5 skip、app-server 129、customer-channel 80、admin 1734/1 skip、gateway 1，
+  **合计 3654**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+5**（差异定位单测）、
+  admin **+1**（种子可复现 + admin 登录链路门禁）。本批次无迁移，cw Flyway 仍是下次 **V24**、admin **V102**。
+  **`mysql/schema-snapshot/customer_admin.sql` 从本批次起含系统种子数据**，执行完即可 admin/admin 登录，
+  详见下方「结构快照」那条。三个坑：
+  ① **种子导出必须跳过 `DEFAULT_GENERATED` 的 CURRENT_TIMESTAMP 列**——12 张种子表的
+  create_time/update_time 全是「迁移执行那一秒」，写死进 INSERT 会让漂移门禁**每跑必红**，
+  而红的原因与任何人的改动都无关，几次之后这道门禁就没人信了；
+  ② **验「导出可复现」必须建两个独立的库**：同一个库连导两次，时间列取的是同一次迁移的时刻，
+  结果当然一样——那是恒真断言。本批次先写成了那样，靠变异测试（故意不跳过时间列）才发现它照不出问题，
+  改成两次独立建库后同一个变异立刻红；
+  ③ **差异定位只认 `CREATE TABLE` 会把种子段的差异全归到最后一张表上**（实测报成 `workbench_token`，
+  实际差在 `ai_model_price`）——指着一张不相干的表报错比不报表名更误导，`tableHint` 已一并认 `INSERT INTO`。
+  另：**用快照建的库没有 `flyway_schema_history`**，应用要以 Flyway 关闭的方式启动（生产 profile 本就关闭），
+  dev profile 直接起会从 V1 重跑撞上已存在的表。上一版基线见下。）
   （2026-09-02 知识库连通性租户上下文修复批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1705/5 skip、app-server 129、customer-channel 80、admin 1733/2 skip、gateway 1，
   **合计 3648**（排除 `RedisSessionPersistenceTest`）。本批次自身加 admin **+1**
@@ -357,7 +373,19 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   实测：全新库跑完镜像后有数据的表共 11 张（cw 侧）+ 12 张（admin 侧），清理后只剩系统种子。
 - **改完任何一条迁移都要跑 `./scripts/export-schema-snapshot.sh` 刷新结构快照**
   （`mysql/schema-snapshot/{agent_scope_customer_work,customer_admin}.sql`）。这两份是「这两个库现在长什么样」
-  的直接答案，只读、不参与建库，改它们不会对任何库生效。**生成源必须是临时空库跑完迁移的产物，不是开发机的
+  的直接答案，**由迁移产物生成，手工改它们不会对任何库生效**（真源永远是迁移）。
+  **admin 那份自 2026-09-02 起在结构之后带系统种子数据段**（菜单权限树 166 行、角色、默认租户、
+  admin 账号等 12 张表），执行完就是一个能直接 `admin/admin` 登录的库——此前它自称能「全新建库」，
+  建出来却是谁也进不去的空壳。三条约定：
+  ① **导哪些行不由人工清单决定，照实导出迁移产物里的全部数据行**。挑子集会让快照与迁移产物不再等价，
+  两条建库路径给出不同结果，正是本仓库反复踩过的形状；随迁移带出的示例配置交给
+  `scripts/clear-demo-data.sh --public` 清，不在导出器里另立一套判定；
+  ② **cw 侧刻意不开这个开关**（`CustomerAdminSchemaSnapshotTest.INCLUDE_SEED_DATA`）：
+  客服端的演示业务数据归 `mysql/01` 完整镜像管，引进快照只会多一份要清理的脏数据；
+  ③ **快照重放在 `SHOW CREATE TABLE` 层面不幂等**：只写 `COLLATE` 不写 `CHARACTER SET` 的列，
+  建库后 MySQL 会回吐 `CHARACTER SET utf8mb4`。这只是显示形态，实测结构等价
+  （1308 列、536 索引、12 张种子表逐项一致），**比对两条建库路径要用 information_schema，
+  不要 diff `SHOW CREATE` 文本**。**生成源必须是临时空库跑完迁移的产物，不是开发机的
   长期业务库**——本机库被并行分支的迁移反复试跑过，沉积的结构与迁移产物无法区分，直接 dump 等于把污染固化。
   漏刷新由 `CustomerWorkSchemaSnapshotTest` / `CustomerAdminSchemaSnapshotTest` 拦下：它们每次跑测试都重新
   迁移一个临时库比对快照，不一致会指出是哪张表的第几行。**门禁与生成共用 `SchemaSnapshotExporter` 一段逻辑**，
