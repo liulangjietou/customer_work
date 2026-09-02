@@ -25,7 +25,7 @@
 > 🛡️ **评估生产边界**：[企业级 AI 智能体能力与运维边界](docs/企业级AI智能体能力与运维边界.md)
 
 ## 作品演示
-[![作品演示](https://www.bilibili.com/video/BV1o6tJ69E6s)](https://www.bilibili.com/video/BV1o6tJ69E6s)
+[![作品演示](https://www.bilibili.com/video/BV1o6tJ69E6s/?vd_source=03686e8b5675ab4a5314432c9c02feeb)](https://www.bilibili.com/video/BV1o6tJ69E6s)
 
 ## 导航
 
