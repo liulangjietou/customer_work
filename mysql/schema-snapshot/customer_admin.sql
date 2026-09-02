@@ -7,17 +7,24 @@
 -- 对应版本：Flyway V101
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
--- 用途：结构查阅与全新建库。**不要对已有库执行**，这里没有 IF NOT EXISTS 保护。
+-- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
+--       种子行里的 create_time/update_time 不进 INSERT，由建库时的默认值现场填充——
+--       那两列的值是迁移执行那一秒，写死会让快照每次重新生成都不一样。
+-- 用途：结构查阅与全新建库。执行完即可用 admin / admin 登录（超级管理员，
+--       AuthService 检测到仍是初始密码会强制改密）。**不要对已有库执行**，
+--       这里既没有 IF NOT EXISTS 保护，种子数据也会撞主键。
 --       生产手工初始化仍按 mysql/02-customer-admin/ 的迁移副本顺序执行，
---       那条路径会留下 flyway_schema_history，之后能继续增量升级。
+--       那条路径会留下 flyway_schema_history，之后能继续增量升级；本文件没有它，
+--       建出来的库无法再走 Flyway 增量升级。
+--       随迁移带出的示例配置（SQL 查询功能等）用 scripts/clear-demo-data.sh --public 清理。
 -- 建库：CREATE DATABASE `customer_admin`
 --         DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
--- COLLATE 说明：快照里同时出现 utf8mb4_0900_ai_ci 与 utf8mb4_unicode_ci 是既有状况，
---               不是导出错误。MySQL 8 的规则：建表语句写了 DEFAULT CHARSET=utf8mb4
---               却没写 COLLATE 时，用的是该字符集的默认 collation(utf8mb4_0900_ai_ci)
---               而非库的；显式写了 COLLATE 的按其声明；只有既不写 CHARSET 也不写
---               COLLATE 的少数表才继承上面的建库参数——所以导出必须固定按上面的参数
---               建库，换一套参数会让那几张表的输出跟着变。
+-- COLLATE 说明：V100 全量对齐之后，本快照应只出现 utf8mb4_unicode_ci 一种排序规则；
+--               再冒出 utf8mb4_0900_ai_ci 就是有人建表漏写了 COLLATE。MySQL 8 的规则：
+--               建表语句写了 DEFAULT CHARSET=utf8mb4 却没写 COLLATE 时，用的是该字符集
+--               的默认 collation(utf8mb4_0900_ai_ci) 而非库的；显式写了 COLLATE 的按其
+--               声明；只有既不写 CHARSET 也不写 COLLATE 的表才继承上面的建库参数——
+--               所以导出必须固定按上面的参数建库，换一套参数会让那几张表的输出跟着变。
 -- ----------------------------------------------------------------------------
 
 SET NAMES utf8mb4;
@@ -2200,3 +2207,314 @@ CREATE TABLE `workbench_token` (
   KEY `idx_workbench_token_user` (`user_id`),
   KEY `idx_workbench_token_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='内网工作台个人访问令牌';
+
+-- ----------------------------------------------------------------------------
+-- ai_model_price · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `ai_model_price` (`id`, `provider`, `model_name`, `input_price`, `output_price`, `cached_price`, `currency`, `effective_from`, `remark`, `create_by`, `update_by`, `deleted`) VALUES
+  (1, 'dashscope', 'qwen-max', 2.400000, 9.600000, 0.480000, 'CNY', '2026-01-01 00:00:00', '示意价格，上线前按厂商实际报价维护', NULL, NULL, 0);
+
+-- ----------------------------------------------------------------------------
+-- ai_system_tool · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `ai_system_tool` (`id`, `tool_code`, `tool_name`, `description`, `enabled`, `remark`, `create_by`, `update_by`, `deleted`) VALUES
+  (1, 'httpclient', 'HTTP请求工具', 'http请求工具', 1, 'http请求工具', NULL, NULL, 0),
+  (2, 'devtoolbox', '开发者工具箱', '开发者常用本地工具集：JSON格式化/压缩/校验/转义/去转义/Unicode解码、时间戳转换、Base64/URL/Hex编解码、哈希(HMAC)、UUID生成、AES加解密(CBC/ECB/CTR/GCM)、正则测试、X.509证书/CSR解析、私钥与证书配对校验、cron表达式解析、JWT解析、文本比对、JSON/YAML/XML互转', 1, '纯本地计算，无外部依赖；注意 cert_match 需传入私钥明文、jwt_decode 可能传入令牌与签名密钥，均会进入模型上下文与对话历史', NULL, NULL, 0);
+
+-- ----------------------------------------------------------------------------
+-- sql_datasource · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sql_datasource` (`id`, `name`, `jdbc_url`, `username`, `password`, `enabled`, `remark`, `create_by`, `update_by`, `deleted`, `tenant_id`) VALUES
+  (1, '审计日志测试查看', 'jdbc:mysql://localhost:3306/agent_scope_customer_work', 'root', 'J9DLVag0gGSLSKGUpocWq72j0qZ4cuke/NYhL9fW3XU=', 1, '', 1, 1, 0, 'default');
+
+-- ----------------------------------------------------------------------------
+-- sql_define · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sql_define` (`id`, `define_key`, `datasource_id`, `sql_describe`, `query_sql`, `count_sql`, `auto_load`, `enabled`, `remark`, `create_by`, `update_by`, `deleted`, `tenant_id`) VALUES
+  (1, 'defineKey', 1, '审计日志', 'SELECT id, session_id AS \'会话ID\',duration_ms as \'操作耗时\', create_time AS \'创建时间\'\nFROM customer_admin.ai_coding_audit_log WHERE create_time >= :startTime\nORDER BY id DESC LIMIT :pageNum, :pageSize', 'SELECT count(*)\nFROM customer_admin.ai_coding_audit_log WHERE create_time >= :startTime', 1, 1, '', 1, 1, 0, 'default');
+
+-- ----------------------------------------------------------------------------
+-- sql_define_param · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sql_define_param` (`id`, `define_id`, `param_name`, `param_desc`, `param_type`, `date_format`, `required`, `default_value`, `drop_down`, `is_page_num`, `is_page_size`, `sort`, `create_by`, `update_by`, `deleted`, `tenant_id`) VALUES
+  (1, 1, 'startTime', '', 'STRING', NULL, 0, '${now-14d}', '', 0, 0, 0, 1, 1, 0, 'default'),
+  (2, 1, 'pageNum', '分页页码', 'INTEGER', NULL, 0, '0', '', 1, 0, 0, 1, 1, 0, 'default'),
+  (3, 1, 'pageSize', '', 'INTEGER', NULL, 0, '30', '', 0, 1, 0, 1, 1, 0, 'default');
+
+-- ----------------------------------------------------------------------------
+-- sql_field_transform · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sql_field_transform` (`id`, `define_id`, `field_name`, `transform_type`, `transform_config`, `create_by`, `update_by`, `deleted`, `tenant_id`) VALUES
+  (1, 1, 'create_time', 'DATE_FORMAT', 'yyyy-MM-dd HH:mm:ss', 1, 1, 0, 'default');
+
+-- ----------------------------------------------------------------------------
+-- sys_permission · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type`, `path`, `icon`, `icon_type`, `sort`, `create_by`, `update_by`, `deleted`) VALUES
+  (1, 0, '系统管理', 'system', 1, '/system', 'Setting', 'library', 1, NULL, NULL, 0),
+  (2, 0, 'AI 配置', 'aiconfig', 1, '/aiconfig', 'Opportunity', 'library', 2, NULL, NULL, 0),
+  (3, 0, '智能体工作区', 'workspace', 1, '/workspace', 'Service', 'library', 3, NULL, NULL, 0),
+  (4, 0, 'Projects', 'project', 1, '/project', 'Files', 'library', 4, NULL, NULL, 0),
+  (10, 1, '用户管理', 'user', 1, '/system/user', 'User', 'library', 1, NULL, NULL, 0),
+  (11, 1, '角色权限', 'role', 1, '/system/role', 'Avatar', 'library', 2, NULL, NULL, 0),
+  (12, 1, '操作日志', 'log', 1, '/system/log', 'Tickets', 'library', 3, NULL, NULL, 0),
+  (13, 1, '菜单管理', 'menu', 1, '/system/menu', 'Menu', 'library', 4, NULL, NULL, 0),
+  (20, 2, '模型配置', 'model', 1, '/aiconfig/model', 'Cpu', 'library', 1, NULL, NULL, 0),
+  (21, 2, 'MCP 管理', 'mcp', 1, '/aiconfig/mcp', 'Connection', 'library', 2, NULL, NULL, 0),
+  (22, 2, 'Skill 管理', 'skill', 1, '/aiconfig/skill', 'Tools', 'library', 3, NULL, NULL, 0),
+  (23, 2, '智能体管理', 'agent', 1, '/aiconfig/agent', 'MagicStick', 'library', 4, NULL, NULL, 0),
+  (24, 10, '查看用户', 'user:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (25, 10, '新增用户', 'user:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (26, 10, '编辑用户', 'user:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (27, 10, '删除用户', 'user:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (28, 11, '查看角色', 'role:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (29, 11, '新增角色', 'role:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (30, 11, '编辑角色', 'role:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (31, 11, '删除角色', 'role:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (32, 12, '查看日志', 'log:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (33, 20, '查看模型', 'model:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (34, 20, '新增模型', 'model:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (35, 20, '编辑模型', 'model:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (36, 20, '删除模型', 'model:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (37, 21, '查看MCP', 'mcp:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (38, 21, '新增MCP', 'mcp:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (39, 21, '编辑MCP', 'mcp:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (40, 21, '删除MCP', 'mcp:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (41, 22, '查看Skill', 'skill:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (42, 22, '新增Skill', 'skill:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (43, 22, '编辑Skill', 'skill:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (44, 22, '删除Skill', 'skill:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (45, 23, '查看智能体', 'agent:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (46, 23, '新增智能体', 'agent:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (47, 23, '编辑智能体', 'agent:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (48, 23, '删除智能体', 'agent:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (49, 13, '查看菜单', 'menu:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (50, 13, '新增菜单', 'menu:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (51, 13, '编辑菜单', 'menu:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (52, 13, '删除菜单', 'menu:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (60, 2, '定时任务', 'scheduler', 1, '/aiconfig/scheduled-task', 'Timer', 'library', 5, NULL, NULL, 0),
+  (61, 60, '查看定时任务', 'scheduler:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (62, 60, '新增定时任务', 'scheduler:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (63, 60, '编辑定时任务', 'scheduler:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (64, 60, '删除定时任务', 'scheduler:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (65, 60, '手动触发定时任务', 'scheduler:trigger', 2, NULL, NULL, 'library', 5, NULL, NULL, 0),
+  (100, 1, 'AI编码审计', 'ai-audit', 1, '/system/ai-audit', 'DataAnalysis', 'library', 5, NULL, NULL, 0),
+  (101, 100, '查看AI编码审计', 'ai-audit:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (110, 0, 'SQL配置管理', 'sql-config', 1, '', 'DataLine', 'library', 6, NULL, NULL, 0),
+  (111, 110, '数据源管理', 'sql-datasource', 1, '/sql/datasource', 'Coin', 'library', 1, NULL, NULL, 0),
+  (112, 110, 'SQL定义', 'sql-define', 1, '/sql/define', 'Document', 'library', 2, NULL, NULL, 0),
+  (113, 111, '查看数据源', 'sql-datasource:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (114, 111, '新增数据源', 'sql-datasource:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (115, 111, '编辑数据源', 'sql-datasource:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (116, 111, '删除数据源', 'sql-datasource:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (117, 112, '查看SQL定义', 'sql-define:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (118, 112, '新增SQL定义', 'sql-define:add', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (119, 112, '编辑SQL定义', 'sql-define:edit', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (120, 112, '删除SQL定义', 'sql-define:delete', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (121, 110, '执行SQL查询', 'sql-query:view', 2, NULL, NULL, 'library', 5, NULL, NULL, 0),
+  (122, 110, '导出SQL查询', 'sql-query:export', 2, NULL, NULL, 'library', 6, NULL, NULL, 0),
+  (124, 2, '系统工具', 'system-tool', 1, '/aiconfig/system-tool', 'SetUp', 'library', 6, NULL, NULL, 0),
+  (125, 124, '查看系统工具', 'system-tool:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (126, 124, '编辑系统工具', 'system-tool:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (130, 0, '客服工单', 'ticket', 1, '/ticket', 'Headset', 'library', 6, NULL, NULL, 0),
+  (131, 130, '用户工单', 'user-ticket', 1, '/ticket/user-ticket', 'Tickets', 'library', 1, NULL, NULL, 0),
+  (132, 131, '查看用户工单', 'user-ticket:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (133, 131, '抢单受理工单', 'user-ticket:claim', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (134, 131, '回复工单', 'user-ticket:reply', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (135, 131, '转派工单', 'user-ticket:transfer', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (136, 131, '解决工单', 'user-ticket:resolve', 2, NULL, NULL, 'library', 5, NULL, NULL, 0),
+  (137, 131, '关闭工单', 'user-ticket:close', 2, NULL, NULL, 'library', 6, NULL, NULL, 0),
+  (138, 131, '编辑工单', 'user-ticket:edit', 2, NULL, NULL, 'library', 7, NULL, NULL, 0),
+  (139, 130, '用户订单', 'user-order', 1, '/ticket/user-order', 'List', 'library', 2, NULL, NULL, 0),
+  (140, 139, '查看用户订单', 'user-order:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (141, 139, '编辑用户订单', 'user-order:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (150, 1, '开发者工具箱', 'devtools', 1, '/system/devtools', 'Tools', 'library', 6, NULL, NULL, 0),
+  (151, 150, '查看开发者工具箱', 'devtools:view', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (160, 0, '我的工作台', 'workbench', 1, '', 'Grid', 'library', 7, NULL, NULL, 0),
+  (161, 160, '内网工作台', 'workbench-site:view', 1, '/workbench/site', 'Monitor', 'library', 1, NULL, NULL, 0),
+  (162, 161, '新增内网工作台站点', 'workbench-site:add', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (163, 161, '编辑内网工作台站点', 'workbench-site:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (164, 161, '删除内网工作台站点', 'workbench-site:delete', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (165, 160, 'SQL 客户端', 'sql-console:query', 1, '/workbench/sql-console', 'DataAnalysis', 'library', 2, NULL, NULL, 0),
+  (166, 165, '导出SQL查询结果', 'sql-console:export', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (180, 1, '登录页图片', 'login-image:view', 1, '/system/login-image', 'Picture', 'library', 7, NULL, NULL, 0),
+  (181, 180, '上传登录页图片', 'login-image:add', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (182, 180, '编辑登录页图片', 'login-image:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (183, 180, '删除登录页图片', 'login-image:delete', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (190, 2, '渠道接入', 'channel-robot:view', 1, '/aiconfig/channel-robot', 'Connection', 'library', 7, NULL, NULL, 0),
+  (191, 190, '新增渠道机器人', 'channel-robot:add', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (192, 190, '编辑渠道机器人', 'channel-robot:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (193, 190, '删除渠道机器人', 'channel-robot:delete', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (194, 1, '智能体耗时统计', 'agent-call-stats:view', 1, '/system/agent-call-stats', 'Timer', 'library', 6, NULL, NULL, 0),
+  (195, 194, '删除调用日志', 'agent-call-stats:delete', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (200, 2, '知识库管理', 'knowledge-base:view', 1, '/aiconfig/knowledge-base', 'Collection', 'library', 8, NULL, NULL, 0),
+  (201, 200, '新增知识库', 'knowledge-base:add', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (202, 200, '编辑知识库', 'knowledge-base:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (203, 200, '删除知识库', 'knowledge-base:delete', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (204, 0, '内容风控', 'contentguard', 1, '/contentguard', 'Lock', 'library', 8, NULL, NULL, 0),
+  (205, 204, '敏感词词库', 'sensitive-word:view', 1, '/contentguard/sensitive-word', 'ChatLineSquare', 'library', 1, NULL, NULL, 0),
+  (206, 205, '新增敏感词', 'sensitive-word:add', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (207, 205, '编辑敏感词', 'sensitive-word:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (208, 205, '删除敏感词', 'sensitive-word:delete', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (209, 204, '限流规则', 'rate-limit-rule:view', 1, '/contentguard/rate-limit', 'Odometer', 'library', 2, NULL, NULL, 0),
+  (210, 209, '新增限流规则', 'rate-limit-rule:add', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (211, 209, '编辑限流规则', 'rate-limit-rule:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (212, 209, '删除限流规则', 'rate-limit-rule:delete', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (213, 204, '命中看板', 'sensitive-hit-log:view', 1, '/contentguard/hit-log', 'DataAnalysis', 'library', 3, NULL, NULL, 0),
+  (214, 2, '后台任务', 'agent-task:view', 1, '/aiconfig/agent-task', 'Timer', 'library', 9, NULL, NULL, 0),
+  (215, 214, '取消任务', 'agent-task:cancel', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (216, 1, '字典管理', 'dict:view', 1, '/system/dict', 'Collection', 'library', 8, NULL, NULL, 0),
+  (217, 216, '新增字典', 'dict:add', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (218, 216, '编辑字典', 'dict:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (219, 216, '删除字典', 'dict:delete', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (220, 1, '租户管理', 'tenant:view', 1, '/system/tenant', 'OfficeBuilding', 'library', 9, NULL, NULL, 0),
+  (221, 220, '新增租户', 'tenant:add', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (222, 220, '编辑租户', 'tenant:edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (223, 220, '删除租户', 'tenant:delete', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (224, 1, '配额与计费', 'billing:view', 1, '/system/billing', 'Wallet', 'library', 10, NULL, NULL, 0),
+  (225, 224, '编辑配额', 'billing:quota-edit', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (226, 224, '编辑单价', 'billing:price-edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (227, 224, '导出账单', 'billing:export', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (228, 1, '配置版本', 'config-version:view', 1, '/system/config-version', 'DocumentCopy', 'library', 11, NULL, NULL, 0),
+  (229, 228, '回滚配置', 'config-version:rollback', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (230, 228, '灰度发布', 'config-version:gray', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (231, 0, '运营闭环', 'ops', 1, '/ops', 'TrendCharts', 'library', 4, NULL, NULL, 0),
+  (232, 231, '评测中心', 'eval:view', 1, '/ops/eval', 'DataAnalysis', 'library', 1, NULL, NULL, 0),
+  (233, 232, '触发评测', 'eval:run', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (234, 231, 'badcase回流', 'badcase:view', 1, '/ops/badcase', 'Warning', 'library', 2, NULL, NULL, 0),
+  (235, 234, '筛选与回流', 'badcase:adopt', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (236, 231, '语义缓存', 'semantic-cache:view', 1, '/ops/semantic-cache', 'Lightning', 'library', 3, NULL, NULL, 0),
+  (237, 231, '提示词版本', 'prompt-version:view', 1, '/ops/prompt-version', 'Document', 'library', 4, NULL, NULL, 0),
+  (238, 231, '满意度看板', 'csat:view', 1, '/ops/csat', 'Star', 'library', 5, NULL, NULL, 0),
+  (239, 231, '知识盲区', 'knowledge-gap:view', 1, '/ops/knowledge-gap', 'QuestionFilled', 'library', 6, NULL, NULL, 0),
+  (240, 231, '死信队列', 'dead-letter:view', 1, '/ops/dead-letter', 'RefreshRight', 'library', 7, NULL, NULL, 0),
+  (241, 236, '清除缓存', 'semantic-cache:evict', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (242, 239, '补充知识', 'knowledge-gap:fill', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (243, 240, '重开死信', 'dead-letter:reopen', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (244, 204, '用户额度', 'subject-quota:view', 1, '/contentguard/subject-quota', 'Stopwatch', 'library', 4, NULL, NULL, 0),
+  (245, 244, '维护等级', 'subject-quota:level-edit', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (246, 244, '分配用户等级', 'subject-quota:user-edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (247, 22, '下载技能包', 'skill:export', 2, NULL, NULL, 'library', 5, NULL, NULL, 0),
+  (248, 224, '手工归集', 'billing:aggregate', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (249, 20, '模型健康探测', 'model:health-test', 2, NULL, NULL, 'library', 5, NULL, NULL, 0),
+  (250, 232, '编辑发布门禁策略', 'eval:gate-policy-edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (251, 232, '紧急豁免发布门禁', 'eval:gate-override', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (252, 20, '模型上线认证', 'model:certify', 2, NULL, NULL, 'library', 6, NULL, NULL, 0),
+  (253, 20, '查看模型实验', 'model-experiment:view', 2, NULL, NULL, 'library', 7, NULL, NULL, 0),
+  (254, 20, '创建模型实验', 'model-experiment:create', 2, NULL, NULL, 'library', 8, NULL, NULL, 0),
+  (255, 20, '启动模型实验', 'model-experiment:start', 2, NULL, NULL, 'library', 9, NULL, NULL, 0),
+  (256, 20, '停止模型实验', 'model-experiment:stop', 2, NULL, NULL, 'library', 10, NULL, NULL, 0),
+  (257, 1, 'SLO 错误预算', 'slo:view', 1, '/system/slo', 'DataAnalysis', 'library', 9, NULL, NULL, 0),
+  (258, 257, '编辑 SLO 策略', 'slo:edit', 2, NULL, NULL, 'library', 1, NULL, NULL, 0),
+  (259, 257, '评估错误预算', 'slo:evaluate', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (260, 231, '业务结果与成本', 'business-outcome:view', 1, '/ops/business-outcome', 'PieChart', 'library', 8, NULL, NULL, 0),
+  (261, 228, '查看高风险审批', 'governance:view', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (262, 228, '复核高风险变更', 'governance:approve', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (263, 20, '模型健康路由覆盖', 'model:health-override', 2, NULL, NULL, 'library', 7, NULL, NULL, 0),
+  (264, 200, '同步知识文档源', 'knowledge-base:source-sync', 2, NULL, NULL, 'library', 4, NULL, NULL, 0),
+  (265, 232, '编辑评测数据集', 'eval:dataset-edit', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (266, 232, '审核评测数据集版本', 'eval:dataset-review', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (267, 194, '隔离重放调用', 'agent-call-stats:replay', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
+  (268, 257, '确认 SLO 告警', 'slo:ack', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
+  (269, 231, '管理改进闭环', 'improvement:manage', 2, NULL, NULL, 'library', 20, NULL, NULL, 0);
+
+-- ----------------------------------------------------------------------------
+-- sys_role · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sys_role` (`id`, `role_name`, `role_code`, `remark`, `status`, `create_by`, `update_by`, `deleted`, `tenant_id`, `data_scope`, `control_plane`) VALUES
+  (1, '超级管理员', 'super_admin', '拥有全部权限，系统初始化内置', 1, NULL, NULL, 0, 'default', 'ALL', 1),
+  (2, '运营管理员', 'operator', '默认无权限，需超管手动分配', 1, NULL, NULL, 0, 'default', 'ALL', 1),
+  (3, '租户管理员', 'tenant_admin', '租户开通时自动创建，拥有本租户内全部管理权限', 1, NULL, NULL, 0, 'default', 'TENANT', 0);
+
+-- ----------------------------------------------------------------------------
+-- sys_role_permission · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sys_role_permission` (`id`, `role_id`, `permission_id`, `tenant_id`) VALUES
+  (1, 3, 23, 'default'),
+  (2, 3, 195, 'default'),
+  (3, 3, 267, 'default'),
+  (4, 3, 194, 'default'),
+  (5, 3, 215, 'default'),
+  (6, 3, 214, 'default'),
+  (7, 3, 46, 'default'),
+  (8, 3, 48, 'default'),
+  (9, 3, 47, 'default'),
+  (10, 3, 45, 'default'),
+  (13, 3, 2, 'default'),
+  (14, 3, 235, 'default'),
+  (15, 3, 234, 'default'),
+  (17, 3, 260, 'default'),
+  (18, 3, 191, 'default'),
+  (19, 3, 193, 'default'),
+  (20, 3, 192, 'default'),
+  (21, 3, 190, 'default'),
+  (22, 3, 204, 'default'),
+  (23, 3, 238, 'default'),
+  (32, 3, 265, 'default'),
+  (33, 3, 266, 'default'),
+  (34, 3, 251, 'default'),
+  (35, 3, 250, 'default'),
+  (36, 3, 233, 'default'),
+  (37, 3, 232, 'default'),
+  (41, 3, 201, 'default'),
+  (42, 3, 203, 'default'),
+  (43, 3, 202, 'default'),
+  (44, 3, 264, 'default'),
+  (45, 3, 200, 'default'),
+  (46, 3, 242, 'default'),
+  (47, 3, 239, 'default'),
+  (48, 3, 12, 'default'),
+  (49, 3, 32, 'default'),
+  (67, 3, 231, 'default'),
+  (68, 3, 4, 'default'),
+  (69, 3, 237, 'default'),
+  (74, 3, 11, 'default'),
+  (75, 3, 29, 'default'),
+  (76, 3, 31, 'default'),
+  (77, 3, 30, 'default'),
+  (78, 3, 28, 'default'),
+  (79, 3, 60, 'default'),
+  (80, 3, 62, 'default'),
+  (81, 3, 64, 'default'),
+  (82, 3, 63, 'default'),
+  (83, 3, 65, 'default'),
+  (84, 3, 61, 'default'),
+  (115, 3, 246, 'default'),
+  (116, 3, 244, 'default'),
+  (117, 3, 1, 'default'),
+  (118, 3, 130, 'default'),
+  (119, 3, 10, 'default'),
+  (120, 3, 139, 'default'),
+  (121, 3, 141, 'default'),
+  (122, 3, 140, 'default'),
+  (123, 3, 131, 'default'),
+  (124, 3, 133, 'default'),
+  (125, 3, 137, 'default'),
+  (126, 3, 138, 'default'),
+  (127, 3, 134, 'default'),
+  (128, 3, 136, 'default'),
+  (129, 3, 135, 'default'),
+  (130, 3, 132, 'default'),
+  (131, 3, 25, 'default'),
+  (132, 3, 27, 'default'),
+  (133, 3, 26, 'default'),
+  (134, 3, 24, 'default'),
+  (140, 3, 3, 'default');
+
+-- ----------------------------------------------------------------------------
+-- sys_tenant · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sys_tenant` (`id`, `tenant_code`, `tenant_name`, `status`, `contact_name`, `contact_phone`, `contact_email`, `remark`, `expire_time`, `create_by`, `update_by`, `deleted`, `access_epoch`) VALUES
+  (1, 'default', '默认租户', 'ACTIVE', NULL, NULL, NULL, '升级前的存量数据归属，等价于原单租户系统', NULL, NULL, NULL, 0, 0);
+
+-- ----------------------------------------------------------------------------
+-- sys_user · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sys_user` (`id`, `username`, `password`, `nickname`, `email`, `email_verified`, `login_type`, `status`, `approval_status`, `approval_by`, `approval_time`, `approval_remark`, `last_login_time`, `last_login_ip`, `create_by`, `update_by`, `deleted`, `tenant_id`, `level_code`, `auth_epoch`) VALUES
+  (1, 'admin', '$2a$10$M7Z.8TA1.6l01JSeZRGAb.olJkoDmvk4JSX81kNlZ5rzE1LCsDCFC', '超级管理员', NULL, 0, 'LOCAL', 1, 'APPROVED', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, 'default', NULL, 0);
+
+-- ----------------------------------------------------------------------------
+-- sys_user_role · 系统种子数据
+-- ----------------------------------------------------------------------------
+INSERT INTO `sys_user_role` (`id`, `user_id`, `role_id`, `tenant_id`) VALUES
+  (1, 1, 1, 'default');
