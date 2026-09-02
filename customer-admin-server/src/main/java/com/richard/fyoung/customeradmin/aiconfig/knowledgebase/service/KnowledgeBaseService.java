@@ -22,6 +22,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -212,6 +213,7 @@ public class KnowledgeBaseService {
     public CompletableFuture<KnowledgeBaseTestResult> testConnectivity(Long id) {
         AiKnowledgeBase entity = requireKnowledgeBase(id);
         KnowledgeBaseEndpoint endpoint = toEndpoint(entity, cryptoUtil.decrypt(entity.getApiKey()));
+        String tenantId = currentTenant();
 
         return CompletableFuture
             .supplyAsync(() -> probe(endpoint), TEST_EXECUTOR)
@@ -227,7 +229,8 @@ public class KnowledgeBaseService {
                 return KnowledgeBaseTestResult.failed("连通性测试超时或执行异常");
             })
             .thenApply(result -> {
-                persistTestResult(id, result);
+                // CompletableFuture 回调不继承 Servlet 线程的租户上下文，按发起测试时已校验的租户恢复后回写。
+                TenantContext.runWith(tenantId, () -> persistTestResult(id, result));
                 return result;
             });
     }
@@ -346,6 +349,11 @@ public class KnowledgeBaseService {
         vo.setCreateTime(entity.getCreateTime());
         vo.setUpdateTime(entity.getUpdateTime());
         return vo;
+    }
+
+    /** 当前请求线程的租户；无上下文（理论上不会发生，Controller 都在拦截器覆盖范围内）时回落默认租户。 */
+    private String currentTenant() {
+        return TenantContext.isPresent() ? TenantContext.require() : TenantContext.DEFAULT;
     }
 
     /** 知识库存在性校验（本模块唯一防御点）。 */

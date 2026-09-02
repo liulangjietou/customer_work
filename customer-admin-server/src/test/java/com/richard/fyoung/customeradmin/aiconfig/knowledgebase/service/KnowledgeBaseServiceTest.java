@@ -17,6 +17,7 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.config.AdminRagProperties;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -27,6 +28,7 @@ import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -288,6 +290,33 @@ class KnowledgeBaseServiceTest {
 
         assertEquals(ConnectivityTestStatus.FAILED, result.testStatus());
         verify(knowledgeBaseMapper).updateById(any(AiKnowledgeBase.class));
+    }
+
+    /**
+     * 回写发生在 {@code CompletableFuture} 的工作线程上，它不继承 Servlet 线程的 ThreadLocal。
+     * 缺租户上下文时持久层拦截器会 fail-closed 抛 {@code TenantContextMissingException}，
+     * 表现为测试结果显示成功、库里的 test_status 却纹丝不动（异常还被 500 抛回前端）。
+     * 断言"落库那一刻"看得到租户，而不是"没抛异常"——单测没挂拦截器，后者恒真。
+     */
+    @Test
+    void testConnectivity_shouldPersistResultWithinCapturedTenant() throws Exception {
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(existing(1L, "sk-1"));
+        AtomicReference<String> persistedTenant = new AtomicReference<>();
+        when(knowledgeBaseMapper.updateById(any(AiKnowledgeBase.class))).thenAnswer(invocation -> {
+            persistedTenant.set(TenantContext.get());
+            return 1;
+        });
+
+        KnowledgeBaseTestResult result;
+        TenantContext.set("tenant-a");
+        try {
+            result = service.testConnectivity(1L).get();
+        } finally {
+            TenantContext.clear();
+        }
+
+        assertEquals(ConnectivityTestStatus.SUCCESS, result.testStatus());
+        assertEquals("tenant-a", persistedTenant.get());
     }
 
     @Test
