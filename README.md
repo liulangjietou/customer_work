@@ -24,6 +24,9 @@
 > [生产接口使用手册](docs/生产接口使用手册.md) · [部署手册](docs/部署手册.md)<br>
 > 🛡️ **评估生产边界**：[企业级 AI 智能体能力与运维边界](docs/企业级AI智能体能力与运维边界.md)
 
+## 作品演示
+[![作品演示](https://www.bilibili.com/video/BV1o6tJ69E6s)](https://www.bilibili.com/video/BV1o6tJ69E6s)
+
 ## 导航
 
 - [项目定位](#一项目定位)
