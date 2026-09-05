@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.tool;
 
 import io.agentscope.core.tool.Toolkit;
+import com.richard.fyoung.customerwork.infra.config.properties.ToolExecutionProperties;
 import io.agentscope.core.tool.ToolkitConfig;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
 import org.slf4j.Logger;
@@ -38,9 +39,12 @@ public class ManagedToolkit extends Toolkit implements AutoCloseable {
      * <p>把配置放在构造器里而不是要求每个调用方记得传——本项目已经在
      * "上下文窗口认证"那次吃过亏：建模路径有四条，逐个要求"记得传窗口"必然漏，
      * 漏了还不报错。Toolkit 的实例化点同样有 7 处。</p>
+     *
+     * <p>默认同时带上工具执行超时：框架的 {@code TOOL_DEFAULTS} 是 5 分钟，
+     * 对客服对话等于没有超时。默认值就该是安全的，需要按配置调整的链路用带参构造器。</p>
      */
     public ManagedToolkit() {
-        super(ToolkitConfigs.sequential());
+        super(ToolkitConfigs.sequentialWith(new ToolExecutionProperties()));
     }
 
     /** 需要自定义执行配置时使用（例如后续接入工具级超时与重试）。 */

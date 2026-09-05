@@ -11,6 +11,7 @@ import com.richard.fyoung.customerwork.data.skill.MysqlSkillMaterializer;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
+import com.richard.fyoung.customerwork.tool.ToolkitConfigs;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -176,7 +177,9 @@ public class CustomerServiceAgentFactory implements DisposableBean {
      * @param sessionId 会话标识；非空时转人工工具以真实会话驱动工单域
      */
     Toolkit buildToolkit(String sessionId) {
-        Toolkit toolkit = new DefaultActiveGroupsToolkit();
+        // 按部署配置指定工具执行超时：框架默认 5 分钟，对客服对话等于没有超时
+        Toolkit toolkit = new DefaultActiveGroupsToolkit(
+            ToolkitConfigs.sequentialWith(properties.getToolExecution()));
 
         // 业务工具按域分组注册（壳 + 可替换后端），透传真实会话以驱动工单域
         toolRegistrar.registerBusinessTools(toolkit, sessionId);

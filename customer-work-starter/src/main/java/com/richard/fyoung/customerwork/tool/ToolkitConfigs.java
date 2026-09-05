@@ -1,6 +1,10 @@
 package com.richard.fyoung.customerwork.tool;
 
+import com.richard.fyoung.customerwork.infra.config.properties.ToolExecutionProperties;
+import io.agentscope.core.model.ExecutionConfig;
 import io.agentscope.core.tool.ToolkitConfig;
+
+import java.time.Duration;
 
 /**
  * Toolkit 运行配置。
@@ -38,5 +42,35 @@ public final class ToolkitConfigs {
      */
     public static ToolkitConfig sequential() {
         return ToolkitConfig.builder().parallel(false).build();
+    }
+
+    /**
+     * 串行 + 显式的执行超时与重试。
+     *
+     * <p><b>为什么必须显式给</b>：实测框架的 {@code ExecutionConfig.TOOL_DEFAULTS} 是
+     * {@code timeout=5分钟, maxAttempts=1}。5 分钟对客服对话等于没有超时——订单库慢一次，
+     * 用户就对着不动的界面等五分钟。项目在模型侧做了失败转移、熔断、分级路由一整套弹性，
+     * 工具侧此前一样都没配。</p>
+     *
+     * <p><b>重试默认关闭</b>：框架的重试对整个工具集统一生效、不区分幂等性，
+     * 而客服工具里有「发起退款」「创建工单」这类重试一次就多做一次的操作——
+     * 超时往往意味着请求已经到达下游、只是响应慢了。详见 {@code ToolExecutionProperties#maxAttempts}。</p>
+     */
+    public static ToolkitConfig sequentialWith(ToolExecutionProperties execution) {
+        if (execution == null) {
+            return sequential();
+        }
+        ExecutionConfig.Builder builder = ExecutionConfig.builder()
+            .timeout(Duration.ofMillis(execution.getTimeoutMs()))
+            .maxAttempts(execution.getMaxAttempts());
+        if (execution.getMaxAttempts() > 1) {
+            builder.initialBackoff(Duration.ofMillis(execution.getInitialBackoffMs()))
+                .maxBackoff(Duration.ofMillis(execution.getMaxBackoffMs()))
+                .backoffMultiplier(execution.getBackoffMultiplier());
+        }
+        return ToolkitConfig.builder()
+            .parallel(false)
+            .executionConfig(builder.build())
+            .build();
     }
 }

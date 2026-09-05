@@ -226,6 +226,10 @@ public class CustomerWorkProperties {
     @NestedConfigurationProperty
     private final ToolBackendProperties toolBackend = new ToolBackendProperties();
 
+    /** 工具执行的超时与重试（{@code customer-work.tool-execution.*}）。 */
+    @NestedConfigurationProperty
+    private final ToolExecutionProperties toolExecution = new ToolExecutionProperties();
+
     /** 坐席访问凭证（HMAC 令牌）配置。 */
     @NestedConfigurationProperty
     private final AgentAccessProperties agentAccess = new AgentAccessProperties();

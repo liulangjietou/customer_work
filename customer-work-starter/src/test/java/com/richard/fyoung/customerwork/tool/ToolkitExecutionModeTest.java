@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.tool;
 
+import com.richard.fyoung.customerwork.infra.config.properties.ToolExecutionProperties;
+import io.agentscope.core.model.ExecutionConfig;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.core.tool.ToolkitConfig;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +18,8 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -69,6 +73,75 @@ class ToolkitExecutionModeTest {
         }
         // 行为本身由上面的配置断言保证；这里确认默认构造器不抛异常且走的是带 config 的那条路
         assertFalse(ToolkitConfigs.sequential().isParallel());
+    }
+
+    /**
+     * 工具执行必须有可用的超时。
+     *
+     * <p>实测框架 {@code ExecutionConfig.TOOL_DEFAULTS} 是 {@code timeout=5分钟, maxAttempts=1}。
+     * 5 分钟对客服对话等于没有超时——订单库慢一次，用户就对着不动的界面等五分钟。
+     * 项目在模型侧做了失败转移、熔断、分级路由一整套弹性，工具侧此前一样都没配。</p>
+     */
+    @Test
+    @DisplayName("工具执行超时必须远小于框架默认的 5 分钟")
+    void toolExecutionTimeoutIsUsableForConversation() {
+        ToolExecutionProperties defaults = new ToolExecutionProperties();
+        ToolkitConfig config = ToolkitConfigs.sequentialWith(defaults);
+
+        assertFalse(config.isParallel(), "仍然必须是串行");
+        ExecutionConfig execution = config.getExecutionConfig();
+        assertNotNull(execution, "必须显式给出执行配置，否则落到框架的 5 分钟默认值");
+        assertTrue(execution.getTimeout().toSeconds() <= 60,
+            "对话场景的工具超时应在一分钟以内，实际 " + execution.getTimeout());
+        assertTrue(execution.getTimeout().toSeconds() >= 5,
+            "太短会把正常的慢查询误判成故障，实际 " + execution.getTimeout());
+        assertTrue(ExecutionConfig.TOOL_DEFAULTS.getTimeout().toMinutes() >= 5,
+            "这里变红说明框架改了默认值，需要重新评估本项目的取值是否还有必要覆盖");
+    }
+
+    /**
+     * <b>默认必须不重试</b>——这条是安全约束，不是性能取舍。
+     *
+     * <p>框架的重试对整个工具集统一生效、不区分幂等性，而客服工具里有「发起退款」
+     * 「创建工单」「转人工」这类重试一次就多做一次的操作。超时往往意味着请求已经到达下游、
+     * 只是响应慢了——这时重试会退两次款。</p>
+     *
+     * <p>要打开重试的部署，必须先确认全部已注册工具（含 MCP 侧接进来的）都是幂等的。</p>
+     */
+    @Test
+    @DisplayName("默认不重试：框架重试不区分工具幂等性，退款类操作会重复执行")
+    void retryIsDisabledByDefault() {
+        ToolExecutionProperties defaults = new ToolExecutionProperties();
+
+        assertEquals(1, defaults.getMaxAttempts(),
+            "默认必须是 1（不重试）——框架的重试不区分幂等性，退款类工具会被重复执行");
+
+        ExecutionConfig execution = ToolkitConfigs.sequentialWith(defaults).getExecutionConfig();
+        assertEquals(1, execution.getMaxAttempts());
+        assertNull(execution.getInitialBackoff(), "不重试时不该设退避");
+    }
+
+    /** 显式打开重试时才配退避参数。 */
+    @Test
+    @DisplayName("显式打开重试后才带退避")
+    void backoffOnlyWhenRetryEnabled() {
+        ToolExecutionProperties retrying = new ToolExecutionProperties();
+        retrying.setMaxAttempts(3);
+
+        ExecutionConfig execution = ToolkitConfigs.sequentialWith(retrying).getExecutionConfig();
+
+        assertEquals(3, execution.getMaxAttempts());
+        assertNotNull(execution.getInitialBackoff(), "重试必须带退避，密集重试是自制雪崩");
+        assertTrue(execution.getMaxBackoff().toMillis() >= execution.getInitialBackoff().toMillis());
+    }
+
+    @Test
+    @DisplayName("配置为空时退回纯串行，不伪造执行参数")
+    void nullExecutionFallsBackToPlainSequential() {
+        ToolkitConfig config = ToolkitConfigs.sequentialWith(null);
+
+        assertFalse(config.isParallel());
+        assertNull(config.getExecutionConfig(), "没有配置就不该编造一个出来");
     }
 
     /**
