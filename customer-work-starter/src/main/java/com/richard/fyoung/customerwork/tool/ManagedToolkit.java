@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.tool;
 
 import io.agentscope.core.tool.Toolkit;
+import io.agentscope.core.tool.ToolkitConfig;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,22 @@ public class ManagedToolkit extends Toolkit implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ManagedToolkit.class);
     private static final String CODE_MCP_CLOSE_FAIL = "MCP-CLIENT-CLOSE-FAIL";
     private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(10);
+
+    /**
+     * 默认构造：显式固定为串行执行。
+     *
+     * <p>把配置放在构造器里而不是要求每个调用方记得传——本项目已经在
+     * "上下文窗口认证"那次吃过亏：建模路径有四条，逐个要求"记得传窗口"必然漏，
+     * 漏了还不报错。Toolkit 的实例化点同样有 7 处。</p>
+     */
+    public ManagedToolkit() {
+        super(ToolkitConfigs.sequential());
+    }
+
+    /** 需要自定义执行配置时使用（例如后续接入工具级超时与重试）。 */
+    public ManagedToolkit(ToolkitConfig config) {
+        super(config);
+    }
 
     private final Object lifecycleMonitor = new Object();
     private final Set<String> mcpClientNames = new LinkedHashSet<>();
