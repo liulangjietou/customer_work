@@ -850,6 +850,53 @@ test.describe('拼图验证浮层可访问性与响应式', () => {
 test.describe('品牌背景轮播', () => {
   test.use({ viewport: { width: 1280, height: 720 } })
 
+  test('跳过加载失败的图片，剩余图片仍可切换', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.route('**/missing-brand.jpg', (route) => route.fulfill({ status: 404 }))
+    await openLogin(page, { images: ['/missing-brand.jpg', '/A1.jpg', '/A2.jpg'] })
+
+    await expect(page.locator('.carousel-dots button')).toHaveCount(2)
+    await page.getByRole('button', { name: '查看第 2 张品牌背景图' }).click()
+    const activeImage = page.locator('.el-carousel__item.is-active img.brand-image')
+    await expect(activeImage).toHaveAttribute('src', '/A2.jpg')
+    await expect.poll(() => activeImage.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+  })
+
+  test('配置图片全部不可用时显示内置图片，兜底也失败则回到品牌说明', async ({ page }) => {
+    await page.route('**/missing-brand-*.jpg', (route) => route.fulfill({ status: 404 }))
+    await openLogin(page, { images: ['/missing-brand-1.jpg', '/missing-brand-2.jpg'] })
+
+    const fallback = page.locator('img.brand-image')
+    await expect(fallback).toHaveAttribute('src', '/home-cover.jpg')
+    await expect.poll(() => fallback.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+    await expect(page.locator('.carousel-controls')).toHaveCount(0)
+
+    await page.route('**/home-cover.jpg', (route) => route.fulfill({ status: 404 }))
+    await page.reload()
+    await expect(page.locator('.brand-stage')).not.toHaveClass(/has-images/)
+    await expect(page.getByLabel('智能体执行轨迹示意')).toBeVisible()
+    await expect(page.locator('img.brand-image')).toHaveCount(0)
+    await expect(page.locator('#login-username')).toBeVisible()
+  })
+
+  test('手机端完整展示图片并保留切换与暂停入口', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openLogin(page, { images: ['/A1.jpg', '/A2.jpg'] })
+    await page.getByRole('button', { name: '暂停轮播' }).click()
+    await page.getByRole('button', { name: '查看第 2 张品牌背景图' }).click()
+
+    const activeImage = page.locator('.el-carousel__item.is-active img.brand-image')
+    await expect(activeImage).toBeVisible()
+    await expect(activeImage).toHaveAttribute('src', '/A2.jpg')
+    await expect(page.getByRole('button', { name: '继续轮播' })).toBeVisible()
+    const media = await page.locator('.brand-media').boundingBox()
+    const header = await page.locator('.brand-header').boundingBox()
+    expect(media!.height).toBeGreaterThanOrEqual(150)
+    expect(media!.y).toBeGreaterThanOrEqual(header!.y + header!.height)
+    expect(await activeImage.evaluate((image) => getComputedStyle(image).objectFit)).toBe('contain')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+  })
+
   test('严格按 3 秒轮播，悬停、聚焦和圆点选择都不会永久停止', async ({ page }) => {
     await openLogin(page, { images: ['/A1.jpg', '/A2.jpg', '/A3.jpg'] })
 
@@ -1353,7 +1400,8 @@ test.describe('注册入口能力', () => {
 })
 
 test.describe('移动端整页滚动', () => {
-  test.use({ viewport: { width: 390, height: 720 } })
+  // 短视口保证各步骤都实际溢出；紧凑表单在 CI 字体环境下可能完整落入 720px，无法验证回顶。
+  test.use({ viewport: { width: 390, height: 600 } })
 
   test('模式与注册步骤切换回顶，且不产生嵌套或横向滚动', async ({ page }) => {
     await openLogin(page)

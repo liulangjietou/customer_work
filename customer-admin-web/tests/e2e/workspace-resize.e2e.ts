@@ -42,11 +42,12 @@ async function installWorkspaceFixtures(page: Page): Promise<WorkspaceFixtures> 
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname.replace(/^\/api/, '')
-    const fulfill = (data: unknown) => route.fulfill({
-      status: 200,
-      contentType: 'application/json; charset=utf-8',
-      body: JSON.stringify(successResult(data)),
-    })
+    const fulfill = (data: unknown) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify(successResult(data)),
+      })
 
     if (path === '/auth/permissions') return fulfill([])
     if (path === '/menu/version') return fulfill(1)
@@ -159,7 +160,10 @@ async function installWorkspaceFixtures(page: Page): Promise<WorkspaceFixtures> 
 async function openVibeCodingWorkspace(page: Page) {
   await page.goto(WORKSPACE_PATH, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('.workspace-view')).toBeVisible()
-  await expect(page.getByRole('tab', { name: 'VibeCoding' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: '代码工作区' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
   await expect(page.locator('.vibecoding-panel')).toBeVisible()
   await expect(page.locator(`.tree-node > span[title="${LONG_FILE_PATH}"]`)).toBeVisible()
 }
@@ -174,8 +178,12 @@ async function panelMetrics(page: Page): Promise<PanelMetrics> {
     const panelRect = panel.getBoundingClientRect()
     const chatRect = rect('.chat-column')
     const artifactsRect = rect('.artifacts-column')
-    const historyRect = rect('.history-column')
-    const longFileLabel = panel.querySelector<HTMLElement>(`.tree-node > span[title="${longFilePath}"]`)
+    const history = document.querySelector<HTMLElement>('#workspace-history-slot')
+    if (!history) throw new Error('Missing workspace history in navigation')
+    const historyRect = history.getBoundingClientRect()
+    const longFileLabel = panel.querySelector<HTMLElement>(
+      `.tree-node > span[title="${longFilePath}"]`,
+    )
     if (!longFileLabel) throw new Error('Missing long workspace filename')
     return {
       panelWidth: panelRect.width,
@@ -199,9 +207,13 @@ async function dragSeparator(page: Page, deltaX: number) {
 async function startSeparatorDrag(page: Page, deltaX: number): Promise<number> {
   const separator = page.getByRole('separator', { name: '调整对话区与产物文件区宽度' })
   await separator.evaluate((element) => {
-    element.addEventListener('pointerdown', (event) => {
-      element.setAttribute('data-e2e-pointer-id', String(event.pointerId))
-    }, { once: true })
+    element.addEventListener(
+      'pointerdown',
+      (event) => {
+        element.setAttribute('data-e2e-pointer-id', String(event.pointerId))
+      },
+      { once: true },
+    )
   })
   const box = await separator.boundingBox()
   expect(box).not.toBeNull()
@@ -268,47 +280,63 @@ test.describe('VibeCoding 产物栏宽度', () => {
     await expect(separator).toHaveAttribute('aria-valuenow', String(preferredWidth + 16))
     await page.keyboard.press('ArrowRight')
     await expect(separator).toHaveAttribute('aria-valuenow', String(preferredWidth))
-    expect(await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY))
-      .toBe(String(preferredWidth))
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY),
+    ).toBe(String(preferredWidth))
 
     const beforeReload = await panelMetrics(page)
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await expect(page.getByRole('tab', { name: 'VibeCoding' })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('tab', { name: '代码工作区' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
     await expect(page.locator(`.tree-node > span[title="${LONG_FILE_PATH}"]`)).toBeVisible()
     await expect(separator).toHaveAttribute('aria-valuenow', String(preferredWidth))
-    await expect.poll(async () => (
-      Math.abs((await panelMetrics(page)).artifactsWidth - beforeReload.artifactsWidth)
-    )).toBeLessThanOrEqual(1)
+    await expect
+      .poll(async () =>
+        Math.abs((await panelMetrics(page)).artifactsWidth - beforeReload.artifactsWidth),
+      )
+      .toBeLessThanOrEqual(1)
 
     await dragSeparator(page, -100)
     const compactPreferredWidth = preferredWidth + 100
     await expect(separator).toHaveAttribute('aria-valuenow', String(compactPreferredWidth))
     await page.setViewportSize({ width: 1100, height: 1000 })
-    await expect.poll(async () => {
-      const width = (await panelMetrics(page)).panelWidth
-      return width > 700 && width <= 1040
-    }).toBe(true)
+    await expect
+      .poll(async () => {
+        const width = (await panelMetrics(page)).panelWidth
+        return width > 700 && width <= 1040
+      })
+      .toBe(true)
     await expect(separator).toBeVisible()
-    await expect.poll(async () => Number(await separator.getAttribute('aria-valuenow'))
-      - Number(await separator.getAttribute('aria-valuemax'))).toBe(0)
+    await expect
+      .poll(
+        async () =>
+          Number(await separator.getAttribute('aria-valuenow')) -
+          Number(await separator.getAttribute('aria-valuemax')),
+      )
+      .toBe(0)
     const compactMetrics = await panelMetrics(page)
-    expect(compactMetrics.historyTop - compactMetrics.chatTop).toBeGreaterThan(400)
-    expect(await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY))
-      .toBe(String(compactPreferredWidth))
+    expect(compactMetrics.historyLeft + compactMetrics.historyWidth).toBeLessThan(228)
+    await expect(page.locator('#workspace-history-slot .history-sidebar')).toBeVisible()
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY),
+    ).toBe(String(compactPreferredWidth))
 
     await page.setViewportSize({ width: 1600, height: 1000 })
     await expect(separator).toHaveAttribute('aria-valuenow', String(compactPreferredWidth))
-    await expect.poll(async () => Math.abs(
-      (await panelMetrics(page)).artifactsWidth - compactPreferredWidth,
-    )).toBeLessThanOrEqual(1)
+    await expect
+      .poll(async () => Math.abs((await panelMetrics(page)).artifactsWidth - compactPreferredWidth))
+      .toBeLessThanOrEqual(1)
     await dragSeparator(page, 100)
     await expect(separator).toHaveAttribute('aria-valuenow', String(preferredWidth))
 
-    await page.setViewportSize({ width: 760, height: 1000 })
+    await page.setViewportSize({ width: 680, height: 1000 })
     await expect.poll(async () => (await panelMetrics(page)).panelWidth).toBeLessThanOrEqual(700)
     await expect(separator).toHaveCount(0)
-    expect(await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY))
-      .toBe(String(preferredWidth))
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY),
+    ).toBe(String(preferredWidth))
 
     await page.setViewportSize({ width: 1600, height: 1000 })
     await expect(separator).toBeVisible()
@@ -318,11 +346,21 @@ test.describe('VibeCoding 产物栏宽度', () => {
     await expect(separator).toBeVisible()
     await separator.focus()
     await page.keyboard.press('Home')
-    await expect.poll(async () => Number(await separator.getAttribute('aria-valuenow'))
-      - Number(await separator.getAttribute('aria-valuemin'))).toBe(0)
+    await expect
+      .poll(
+        async () =>
+          Number(await separator.getAttribute('aria-valuenow')) -
+          Number(await separator.getAttribute('aria-valuemin')),
+      )
+      .toBe(0)
     await page.keyboard.press('End')
-    await expect.poll(async () => Number(await separator.getAttribute('aria-valuenow'))
-      - Number(await separator.getAttribute('aria-valuemax'))).toBe(0)
+    await expect
+      .poll(
+        async () =>
+          Number(await separator.getAttribute('aria-valuenow')) -
+          Number(await separator.getAttribute('aria-valuemax')),
+      )
+      .toBe(0)
     await page.keyboard.press('Enter')
     await expect(separator).toHaveAttribute('aria-valuenow', '260')
     expect(fixtures.unknownRequests).toEqual([])
@@ -337,16 +375,21 @@ test.describe('VibeCoding 产物栏宽度', () => {
     await separator.focus()
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.press('ArrowRight')
-    await expect.poll(async () => Math.abs((await panelMetrics(page)).artifactsWidth - 260))
+    await expect
+      .poll(async () => Math.abs((await panelMetrics(page)).artifactsWidth - 260))
       .toBeLessThanOrEqual(1)
 
     const pointerId = await startSeparatorDrag(page, -64)
     await expect(separator).toHaveAttribute('aria-valuenow', '324')
     await expect(page.locator('body')).toHaveClass(/is-vibecoding-panel-resizing/)
     await separator.evaluate((element) => {
-      element.addEventListener('lostpointercapture', () => {
-        element.setAttribute('data-e2e-cancel-capture-released', 'true')
-      }, { once: true })
+      element.addEventListener(
+        'lostpointercapture',
+        () => {
+          element.setAttribute('data-e2e-cancel-capture-released', 'true')
+        },
+        { once: true },
+      )
     })
     await separator.dispatchEvent('pointercancel', {
       pointerId,
@@ -359,7 +402,9 @@ test.describe('VibeCoding 产物栏宽度', () => {
     await expect(separator).toHaveAttribute('data-e2e-cancel-capture-released', 'true')
     await expect(separator).toHaveAttribute('aria-valuenow', '260')
     await expect(page.locator('body')).not.toHaveClass(/is-vibecoding-panel-resizing/)
-    expect(await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY)).toBe('260')
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY),
+    ).toBe('260')
     expect(fixtures.unknownRequests).toEqual([])
   })
 
@@ -370,14 +415,21 @@ test.describe('VibeCoding 产物栏宽度', () => {
 
     const pointerId = await startSeparatorDrag(page, -48)
     await expect(separator).toHaveAttribute('aria-valuenow', '308')
-    expect(await separator.evaluate((element, activePointerId) => (
-      element.hasPointerCapture(activePointerId)
-    ), pointerId)).toBe(true)
+    expect(
+      await separator.evaluate(
+        (element, activePointerId) => element.hasPointerCapture(activePointerId),
+        pointerId,
+      ),
+    ).toBe(true)
     await separator.evaluate((element, activePointerId) => {
-      element.addEventListener('lostpointercapture', (event) => {
-        element.setAttribute('data-e2e-lost-pointer-id', String(event.pointerId))
-        element.setAttribute('data-e2e-lost-pointer-trusted', String(event.isTrusted))
-      }, { once: true })
+      element.addEventListener(
+        'lostpointercapture',
+        (event) => {
+          element.setAttribute('data-e2e-lost-pointer-id', String(event.pointerId))
+          element.setAttribute('data-e2e-lost-pointer-trusted', String(event.isTrusted))
+        },
+        { once: true },
+      )
       element.releasePointerCapture(activePointerId)
     }, pointerId)
     // releasePointerCapture 只更新待处理捕获目标；下一次真实指针事件才会派发 lostpointercapture。
@@ -388,10 +440,17 @@ test.describe('VibeCoding 产物栏宽度', () => {
     await expect(page.locator('body')).not.toHaveClass(/is-vibecoding-panel-resizing/)
     await page.mouse.up()
 
-    await expect.poll(() => separator.evaluate((element, activePointerId) => (
-      element.hasPointerCapture(activePointerId)
-    ), pointerId)).toBe(false)
-    expect(await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY)).toBe('308')
+    await expect
+      .poll(() =>
+        separator.evaluate(
+          (element, activePointerId) => element.hasPointerCapture(activePointerId),
+          pointerId,
+        ),
+      )
+      .toBe(false)
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY),
+    ).toBe('308')
     expect(fixtures.unknownRequests).toEqual([])
   })
 
@@ -403,22 +462,26 @@ test.describe('VibeCoding 产物栏宽度', () => {
     await separator.focus()
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.press('ArrowRight')
-    await expect.poll(async () => Math.abs((await panelMetrics(page)).artifactsWidth - 260))
+    await expect
+      .poll(async () => Math.abs((await panelMetrics(page)).artifactsWidth - 260))
       .toBeLessThanOrEqual(1)
     await startSeparatorDrag(page, -48)
     await expect(page.locator('body')).toHaveClass(/is-vibecoding-panel-resizing/)
 
-    await page.setViewportSize({ width: 760, height: 1000 })
+    await page.setViewportSize({ width: 680, height: 1000 })
     await expect.poll(async () => (await panelMetrics(page)).panelWidth).toBeLessThanOrEqual(700)
     await expect(separator).toHaveCount(0)
     await expect(page.locator('body')).not.toHaveClass(/is-vibecoding-panel-resizing/)
     await page.mouse.up()
-    expect(await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY)).toBe('260')
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY),
+    ).toBe('260')
 
     await page.setViewportSize({ width: 1600, height: 1000 })
     await expect(separator).toBeVisible()
     await expect(separator).toHaveAttribute('aria-valuenow', '260')
-    await expect.poll(async () => Math.abs((await panelMetrics(page)).artifactsWidth - 260))
+    await expect
+      .poll(async () => Math.abs((await panelMetrics(page)).artifactsWidth - 260))
       .toBeLessThanOrEqual(1)
     await dragSeparator(page, -32)
     await expect(separator).toHaveAttribute('aria-valuenow', '292')

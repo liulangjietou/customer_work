@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMenuStore } from '@/store/menu'
 import { getReviewTask } from '@/api/vibecoding'
@@ -41,10 +41,26 @@ function findNode(nodes: MenuNode[], agentCode: string): MenuNode | null {
 
 const agentNode = computed(() => findNode(menuStore.tree, props.agentCode))
 const agentDisplayName = computed(() => agentNode.value?.name ?? props.agentCode)
-const supportsVibeCoding = computed(() => agentNode.value?.capabilities?.includes('vibecoding') ?? false)
+const supportsVibeCoding = computed(
+  () => agentNode.value?.capabilities?.includes('vibecoding') ?? false,
+)
 
 // "新建会话"上提到 Tab 上方后，要按当前激活的 Tab 分发到对应面板。
 const activeTab = ref<'chat' | 'vibecoding'>('chat')
+function handleModeKeydown(event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  activeTab.value =
+    event.key === 'Home'
+      ? 'chat'
+      : event.key === 'End'
+        ? 'vibecoding'
+        : activeTab.value === 'chat'
+          ? 'vibecoding'
+          : 'chat'
+  const group = event.currentTarget as HTMLElement
+  nextTick(() => group.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus())
+}
 
 // keep-alive 复用同一实例后，切智能体不再重建本组件，activeTab 会带着上一个智能体的值——
 // 从支持 vibecoding 的智能体的 VibeCoding tab 切到不支持的智能体时，'vibecoding' 这个 tab-pane
@@ -136,7 +152,9 @@ watch(
   <div class="workspace-view">
     <div class="workspace-header">
       <div class="agent-identity">
-        <span class="agent-mark" aria-hidden="true">&lt;/&gt;</span>
+        <span class="agent-mark" aria-hidden="true"
+          ><el-icon><Cpu /></el-icon
+        ></span>
         <div class="agent-copy">
           <h1 class="agent-title">{{ agentDisplayName }}</h1>
           <div class="agent-meta">
@@ -147,6 +165,34 @@ watch(
         </div>
       </div>
       <div class="header-actions">
+        <div
+          v-if="supportsVibeCoding"
+          class="workspace-mode-switch"
+          role="tablist"
+          aria-label="工作区模式"
+          @keydown="handleModeKeydown"
+        >
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'chat'"
+            :tabindex="activeTab === 'chat' ? 0 : -1"
+            aria-controls="pane-chat"
+            @click="activeTab = 'chat'"
+          >
+            对话
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'vibecoding'"
+            :tabindex="activeTab === 'vibecoding' ? 0 : -1"
+            aria-controls="pane-vibecoding"
+            @click="activeTab = 'vibecoding'"
+          >
+            代码工作区
+          </button>
+        </div>
         <button
           type="button"
           class="knowledge-btn"
@@ -169,23 +215,24 @@ watch(
       <el-tab-pane label="对话" name="chat">
         <!-- workspace/:agentCode 是同一条路由，只换参数，Vue Router 默认复用组件实例——
              不加 :key 的话切换智能体时 ChatPanel 内部的 messages/sessionId 状态会跟着串到下一个
-             智能体身上。加 :key 强制按 agentCode 重建实例，天然顺带把上一个智能体未结束的 SSE
-             流也一起 abort 掉（复用 ChatPanel 自己 onUnmounted 里已有的 abortStream 逻辑）。 -->
+             智能体身上。加 :key 按 agentCode 重建视图，正在执行的 SSE 与草稿仍由对应智能体的 Store 保持。 -->
         <ChatPanel
           ref="chatPanelRef"
           :key="agentCode"
           :agent-code="agentCode"
           :assistant-name="agentDisplayName"
           :initial-session-id="initialSessionId"
+          :history-active="activeTab === 'chat'"
         />
       </el-tab-pane>
-      <el-tab-pane v-if="supportsVibeCoding" label="VibeCoding" name="vibecoding">
+      <el-tab-pane v-if="supportsVibeCoding" label="代码工作区" name="vibecoding">
         <VibeCodingPanel
           ref="vibeCodingPanelRef"
           :key="agentCode"
           :agent-code="agentCode"
           :assistant-name="agentDisplayName"
           :initial-session-id="initialSessionId"
+          :history-active="activeTab === 'vibecoding'"
         />
       </el-tab-pane>
     </el-tabs>
@@ -202,9 +249,8 @@ watch(
   flex-direction: column;
   overflow: hidden;
   background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 18px;
-  box-shadow: var(--cw-card-shadow, 0 1px 3px rgb(16 24 40 / 6%));
+  border: 0;
+  border-radius: 0;
 }
 
 .workspace-header {
@@ -212,10 +258,10 @@ watch(
   align-items: center;
   justify-content: space-between;
   flex: 0 0 auto;
-  min-height: 64px;
+  min-height: 60px;
   gap: 24px;
   padding: 10px 18px 10px 20px;
-  background: color-mix(in srgb, var(--el-bg-color) 96%, var(--theme-primary, var(--el-color-primary)) 4%);
+  background: var(--cw-paper);
 }
 
 .agent-identity {
@@ -236,7 +282,7 @@ watch(
   background: linear-gradient(145deg, #2d374b, #151c2a);
   border-radius: 11px;
   box-shadow: 0 5px 14px rgb(18 25 39 / 18%);
-  font-family: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  font-family: 'SFMono-Regular', 'JetBrains Mono', Consolas, monospace;
   font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.08em;
@@ -252,7 +298,7 @@ watch(
   margin: 0;
   overflow: hidden;
   color: var(--el-text-color-primary);
-  font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: 20px;
   font-weight: 680;
   letter-spacing: -0.02em;
@@ -278,7 +324,7 @@ watch(
 .agent-code {
   overflow: hidden;
   color: var(--el-text-color-regular);
-  font-family: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  font-family: 'SFMono-Regular', 'JetBrains Mono', Consolas, monospace;
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -306,7 +352,11 @@ watch(
   font-size: 12px;
   font-weight: 560;
   box-shadow: 0 1px 2px rgb(16 24 40 / 3%);
-  transition: border-color 160ms ease, color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .knowledge-btn .el-icon {
@@ -340,39 +390,31 @@ watch(
   overflow: hidden;
 }
 
-.workspace-tabs :deep(.el-tabs__header) {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 0 20px;
-  background: color-mix(in srgb, var(--el-bg-color) 97%, var(--theme-primary, var(--el-color-primary)) 3%);
+.workspace-tabs :deep(> .el-tabs__header) {
+  display: none;
 }
-
-.workspace-tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 1px;
-  background: var(--el-border-color-lighter);
+.workspace-mode-switch {
+  display: flex;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--cw-line);
+  background: var(--cw-canvas);
+  border-radius: 7px;
 }
-
-.workspace-tabs :deep(.el-tabs__item) {
-  height: 42px;
-  padding: 0 2px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  font-weight: 560;
+.workspace-mode-switch button {
+  border: 0;
+  padding: 6px 10px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cw-text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
-
-.workspace-tabs :deep(.el-tabs__item + .el-tabs__item) {
-  margin-left: 22px;
-}
-
-.workspace-tabs :deep(.el-tabs__item:hover),
-.workspace-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--el-text-color-primary);
-}
-
-.workspace-tabs :deep(.el-tabs__active-bar) {
-  height: 2px;
-  background: var(--theme-primary, var(--el-color-primary));
-  border-radius: 2px 2px 0 0;
+.workspace-mode-switch button[aria-selected='true'] {
+  background: var(--cw-paper);
+  color: var(--cw-cobalt);
+  box-shadow: var(--cw-shadow-xs);
 }
 
 .workspace-tabs :deep(.el-tabs__content) {
@@ -390,7 +432,7 @@ watch(
 
 @media (max-width: 760px) {
   .workspace-view {
-    border-radius: 12px;
+    border-radius: 0;
   }
 
   .workspace-header {

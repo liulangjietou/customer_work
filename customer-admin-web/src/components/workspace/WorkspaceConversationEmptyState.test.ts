@@ -29,7 +29,8 @@ describe('WorkspaceConversationEmptyState', () => {
 
     expect(html).toContain('>从一个任务开始</h2>')
     expect(html).toContain('描述目标，或直接补充资料、上下文和约束。')
-    expect(html).toContain('例如：梳理需求 · 定位问题 · 完成一个可验证的结果')
+    expect(html).toContain('梳理需求')
+    expect(html).toContain('定位问题')
     expect(html).not.toContain('从一个 Java 任务开始')
     expect(html).not.toContain('重构长方法')
     expect(html).not.toContain('补充单元测试')
@@ -38,20 +39,20 @@ describe('WorkspaceConversationEmptyState', () => {
   it('动态展示当前助手名称，技术标识不写死 Java', async () => {
     const html = await renderEmptyState('OA考勤助手')
 
-    expect(html).toContain('AGENT WORKBENCH / READY')
-    expect(html).toContain('OA考勤助手 · READY')
+    expect(html).toContain('OA考勤助手')
     expect(html).not.toContain('Java助手')
     expect(html).not.toContain('JAVA WORKBENCH')
     expect(html).not.toContain('JAVA ASSISTANT')
   })
 
-  it('让技术装饰层退出无障碍树', async () => {
+  it('任务起点提供四个可操作的建议入口', async () => {
     const html = await renderEmptyState()
 
     expect(html).toContain('aria-hidden="true"')
-    expect(html).toContain('context.read();')
-    expect(html).toContain('intent.resolve();')
-    expect(html).toContain('answer.verify();')
+    expect(html.match(/<button /g)).toHaveLength(4)
+    expect(html).toContain('分析资料')
+    expect(html).toContain('制定方案')
+    expect(html).not.toContain('context.read();')
   })
 })
 

@@ -5,11 +5,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <button
-    type="button"
-    class="new-session-btn"
-    @click="emit('newSession')"
-  >
+  <button type="button" class="new-session-btn" @click="emit('newSession')">
     <el-icon aria-hidden="true"><Plus /></el-icon>
     新建会话
   </button>
@@ -25,19 +21,22 @@ const emit = defineEmits<{
   gap: 6px;
   padding: 0 14px;
   border: 1px solid var(--theme-primary-solid, var(--el-color-primary));
-  border-radius: 10px;
+  border-radius: 7px;
   background: var(--theme-primary-solid, var(--el-color-primary));
   color: var(--cw-on-primary);
-  box-shadow: 0 4px 10px color-mix(in srgb, var(--theme-primary-solid, var(--el-color-primary)) 25%, transparent);
+  box-shadow: var(--cw-shadow-xs);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
-  transition: background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  transition:
+    background-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .new-session-btn:hover {
   background: var(--theme-primary-solid-hover, var(--theme-primary-solid));
-  box-shadow: 0 6px 14px color-mix(in srgb, var(--theme-primary-solid, var(--el-color-primary)) 32%, transparent);
+  box-shadow: var(--cw-shadow-xs);
   transform: translateY(-1px);
 }
 

@@ -1,5 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, onUnmounted, ref, useId, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onBeforeUnmount,
+  onMounted,
+  onUnmounted,
+  ref,
+  useId,
+  watch,
+} from 'vue'
+import { handleComposerKeydown } from '@/utils/composerKeyboard'
 import { createScrollFollower } from '@/utils/scrollFollower'
 import { shouldRestoreMostRecentSession } from '@/utils/conversationRestore'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
@@ -49,7 +61,12 @@ import hljs from 'highlight.js'
 const REVIEW_POLL_INTERVAL_MS = 5000
 const MAX_REVIEW_POLL_COUNT = 40
 
-const props = defineProps<{ agentCode: string; assistantName: string; initialSessionId?: string }>()
+const props = defineProps<{
+  agentCode: string
+  assistantName: string
+  initialSessionId?: string
+  historyActive?: boolean
+}>()
 
 /**
  * 会话状态全部在 Pinia store（vibeConversations）里，本组件只是视图：切页面、切智能体、组件销毁
@@ -61,18 +78,38 @@ store.ensureAgent(props.agentCode)
 const active = computed<VibeConversation | undefined>(() => store.activeOf(props.agentCode))
 const liveSessions = computed(() => store.liveSessionsOf(props.agentCode))
 const activeSessionId = computed(() => store.activeIdOf(props.agentCode))
-const anyAttachmentUploading = computed(() => active.value?.attachments.some((a) => a.status === 'uploading') ?? false)
+const attachmentBlocked = computed(
+  () => active.value?.attachments.some((a) => a.status !== 'success') ?? false,
+)
+const canSend = computed(
+  () =>
+    !attachmentBlocked.value &&
+    !!active.value &&
+    !active.value.streaming &&
+    (!!active.value.input.trim() ||
+      active.value.attachments.some((a) => a.status === 'success' && a.id)),
+)
 
 const input = computed({
   get: () => active.value?.input ?? '',
-  set: (v) => { if (active.value) active.value.input = v },
+  set: (v) => {
+    if (active.value) active.value.input = v
+  },
 })
 // 协作模式开关（P3-1）：发送选项，面板级
 const collaborationMode = ref(false)
 const historyLoading = ref(false)
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
-const historyCollapsed = ref(false)
+// 历史已移入全局导航，产物宽度计算不再预留右侧历史列。
+const historyCollapsed = ref(true)
+const viewActive = ref(true)
+onActivated(() => {
+  viewActive.value = true
+})
+onDeactivated(() => {
+  viewActive.value = false
+})
 const panelRef = ref<HTMLElement>()
 const chatColumnId = useId()
 const artifactsColumnId = useId()
@@ -124,14 +161,6 @@ const saving = ref(false)
 
 function newSession() {
   store.newSession(props.agentCode)
-}
-
-function collapseHistory() {
-  historyCollapsed.value = true
-}
-
-function restoreHistory() {
-  historyCollapsed.value = false
 }
 
 // 附件上传（回形针按钮 + 输入框 ⌘/Ctrl+V 粘贴）统一走组合式函数，与 ChatPanel 共用同一条链路
@@ -188,6 +217,7 @@ function isStreamingMessage(index: number): boolean {
 onBeforeUnmount(() => scrollFollower.cancel())
 
 function send() {
+  if (!canSend.value) return
   store.send(props.agentCode, collaborationMode.value, buildMessageWithAttachments, scrollToBottom)
 }
 
@@ -207,9 +237,14 @@ function handleRefactor(request: Omit<RefactorTaskRequest, 'sessionId'>) {
 function resumeInterrupted() {
   const conv = active.value
   if (!conv) return
-  conv.interrupted = false
+  if (conv.streaming) return
+  const draft = conv.input
+  const attachments = conv.attachments
   conv.input = '请继续刚才的任务。'
+  conv.attachments = []
   send()
+  conv.input = draft
+  conv.attachments = attachments
 }
 
 function refreshFiles() {
@@ -333,7 +368,9 @@ async function loadGitDiff() {
   try {
     gitDiff.value = await getGitDiffSummary(props.agentCode, conv.sessionId)
   } catch (error) {
-    ElMessage.error('diff 摘要加载失败：' + (error instanceof Error ? error.message : String(error)))
+    ElMessage.error(
+      'diff 摘要加载失败：' + (error instanceof Error ? error.message : String(error)),
+    )
   } finally {
     gitDiffLoading.value = false
   }
@@ -344,10 +381,15 @@ async function handleGenerateCommitMessage() {
   if (!conv) return
   commitLoading.value = true
   try {
-    const res = await generateCommitMessage(props.agentCode, { sessionId: conv.sessionId, style: commitStyle.value })
+    const res = await generateCommitMessage(props.agentCode, {
+      sessionId: conv.sessionId,
+      style: commitStyle.value,
+    })
     commitMessageText.value = res.message
   } catch (error) {
-    ElMessage.error('commit message 生成失败：' + (error instanceof Error ? error.message : String(error)))
+    ElMessage.error(
+      'commit message 生成失败：' + (error instanceof Error ? error.message : String(error)),
+    )
   } finally {
     commitLoading.value = false
   }
@@ -361,7 +403,9 @@ async function handleGeneratePrDescription() {
     const res = await generatePrDescription(props.agentCode, conv.sessionId)
     prDescriptionText.value = res.description
   } catch (error) {
-    ElMessage.error('PR description 生成失败：' + (error instanceof Error ? error.message : String(error)))
+    ElMessage.error(
+      'PR description 生成失败：' + (error instanceof Error ? error.message : String(error)),
+    )
   } finally {
     prLoading.value = false
   }
@@ -417,7 +461,9 @@ function startReviewPolling(sessionId: string, taskId: number) {
       if (reviewPollCount >= MAX_REVIEW_POLL_COUNT) {
         reviewLoading.value = false
         stopReviewPolling()
-        ElMessage.error('代码审查结果查询失败：' + (error instanceof Error ? error.message : String(error)))
+        ElMessage.error(
+          '代码审查结果查询失败：' + (error instanceof Error ? error.message : String(error)),
+        )
         return
       }
       reviewPollTimer = setTimeout(poll, REVIEW_POLL_INTERVAL_MS)
@@ -446,7 +492,12 @@ function stopReviewPolling() {
 /** 点击审查意见里的文件，定位到工作区文件查看器（复用现有文件读取/预览抽屉）。 */
 async function openIssueFile(issue: ReviewIssue) {
   if (!issue.file) return
-  await openFilePreview({ name: issue.file, relativePath: issue.file, directory: false, children: [] })
+  await openFilePreview({
+    name: issue.file,
+    relativePath: issue.file,
+    directory: false,
+    children: [],
+  })
 }
 
 /**
@@ -458,13 +509,16 @@ function generateFixFromReview() {
   if (!conv) return
   const result = reviewResult.value
   if (!result || result.issues.length === 0) return
-  const actionable = result.issues.filter((i) => i.severity === 'CRITICAL' || i.severity === 'WARNING')
+  const actionable = result.issues.filter(
+    (i) => i.severity === 'CRITICAL' || i.severity === 'WARNING',
+  )
   if (actionable.length === 0) {
     ElMessage.info('没有需要修复的 CRITICAL/WARNING 问题')
     return
   }
   const lines = actionable.map(
-    (i) => `- [${i.severity}] ${i.file}${i.line ? `:${i.line}` : ''} ${i.message}（建议：${i.suggestion}）`,
+    (i) =>
+      `- [${i.severity}] ${i.file}${i.line ? `:${i.line}` : ''} ${i.message}（建议：${i.suggestion}）`,
   )
   conv.input = `请根据以下代码审查意见修复问题，并在沙箱内重新验证：\n${lines.join('\n')}`
   gitDrawerVisible.value = false
@@ -491,7 +545,11 @@ async function openFilePreview(node: WorkspaceFileNode) {
   editMode.value = false
   editContent.value = ''
   try {
-    previewFile.value = await readWorkspaceFileContent(props.agentCode, conv.sessionId, node.relativePath)
+    previewFile.value = await readWorkspaceFileContent(
+      props.agentCode,
+      conv.sessionId,
+      node.relativePath,
+    )
     // 等 DOM 更新后触发代码高亮
     await nextTick()
     highlightPreview()
@@ -607,7 +665,12 @@ defineExpose({ newSession })
         :class="{ 'is-empty': (active?.messages.length ?? 0) === 0 }"
         v-loading="historyLoading"
       >
-        <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
+        <div
+          v-for="(msg, index) in active?.messages ?? []"
+          :key="index"
+          class="message-row"
+          :class="msg.role"
+        >
           <div class="bubble">
             <AssistantResponse
               v-if="msg.role === 'assistant'"
@@ -615,31 +678,44 @@ defineExpose({ newSession })
               :text="msg.text"
               :active="isStreamingMessage(index)"
               :failed="msg.failed"
+              :error="msg.error"
             >
               <!-- 沙箱编译/测试报告卡片时间线（P0-3）：每轮验证一张，通过绿/失败红，可展开看失败明细 -->
-              <div
-                v-if="msg.testReports && msg.testReports.length > 0"
-                class="test-reports"
-              >
+              <div v-if="msg.testReports && msg.testReports.length > 0" class="test-reports">
                 <el-collapse>
                   <el-collapse-item v-for="(report, ri) in msg.testReports" :key="ri" :name="ri">
                     <template #title>
-                      <span class="test-report-title" :class="report.success ? 'is-success' : 'is-failure'">
+                      <span
+                        class="test-report-title"
+                        :class="report.success ? 'is-success' : 'is-failure'"
+                      >
                         <el-icon v-if="report.success"><SuccessFilled /></el-icon>
                         <el-icon v-else><CircleCloseFilled /></el-icon>
                         <span class="test-report-title-text">{{ testReportTitle(report) }}</span>
-                        <el-tag v-if="report.exhausted" type="danger" size="small" effect="dark" class="exhausted-tag">
+                        <el-tag
+                          v-if="report.exhausted"
+                          type="danger"
+                          size="small"
+                          effect="dark"
+                          class="exhausted-tag"
+                        >
                           已达最大修复轮次
                         </el-tag>
                       </span>
                     </template>
-                    <div v-if="report.durationMs != null" class="test-report-meta">耗时 {{ report.durationMs }} ms</div>
+                    <div v-if="report.durationMs != null" class="test-report-meta">
+                      耗时 {{ report.durationMs }} ms
+                    </div>
                     <ul v-if="report.failureDetails.length > 0" class="test-report-failures">
                       <li v-for="(d, di) in report.failureDetails" :key="di">{{ d }}</li>
                     </ul>
-                    <pre v-if="report.rawOutput" class="test-report-raw">{{ report.rawOutput }}</pre>
+                    <pre v-if="report.rawOutput" class="test-report-raw">{{
+                      report.rawOutput
+                    }}</pre>
                     <div
-                      v-if="report.success && report.failureDetails.length === 0 && !report.rawOutput"
+                      v-if="
+                        report.success && report.failureDetails.length === 0 && !report.rawOutput
+                      "
                       class="test-report-ok"
                     >
                       验证通过 ✓
@@ -648,10 +724,7 @@ defineExpose({ newSession })
                 </el-collapse>
               </div>
               <!-- 协作模式多角色阶段进度（P3-1）：每个角色一张卡片，展示状态标签、类型徽标与文本产物 -->
-              <div
-                v-if="msg.stages && msg.stages.length > 0"
-                class="role-stages"
-              >
+              <div v-if="msg.stages && msg.stages.length > 0" class="role-stages">
                 <div
                   v-for="(stage, si) in msg.stages"
                   :key="si"
@@ -660,7 +733,9 @@ defineExpose({ newSession })
                 >
                   <div class="role-stage-header">
                     <span class="role-stage-name">{{ stage.role }}</span>
-                    <el-tag size="small" class="role-stage-type">{{ roleStageTypeText(stage.type) }}</el-tag>
+                    <el-tag size="small" class="role-stage-type">{{
+                      roleStageTypeText(stage.type)
+                    }}</el-tag>
                     <span class="role-stage-index">{{ stage.index }}/{{ stage.total }}</span>
                     <el-tag
                       :type="roleStageStatusTag(stage.status)"
@@ -695,6 +770,11 @@ defineExpose({ newSession })
         <WorkspaceConversationEmptyState
           v-if="(active?.messages.length ?? 0) === 0"
           :assistant-name="assistantName"
+          @prompt="
+            (prompt: string) => {
+              if (active) active.input = prompt
+            }
+          "
         />
       </div>
       <div class="composer-wrap">
@@ -709,33 +789,59 @@ defineExpose({ newSession })
             <el-input
               v-model="input"
               placeholder="描述需求，回车发送；⌘/Ctrl+V 可粘贴截图或文件作为附件"
-              :disabled="active?.streaming"
-              @keyup.enter="send"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 6 }"
+              aria-label="消息内容"
+              @keydown="handleComposerKeydown($event, send, !!active?.streaming)"
               @paste="handleAttachmentPaste"
             />
             <div class="composer-send">
-              <el-button v-if="!active?.streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
-              <el-button v-else type="danger" :loading="active?.interrupting" @click="handleInterrupt">
+              <el-button v-if="!active?.streaming" type="primary" :disabled="!canSend" @click="send"
+                >发送</el-button
+              >
+              <el-button
+                v-else
+                type="danger"
+                :loading="active?.interrupting"
+                @click="handleInterrupt"
+              >
                 {{ active?.interrupting ? '终止中…' : '终止' }}
               </el-button>
-              <el-button v-if="active?.interrupted && !active?.streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
+              <el-button
+                v-if="active?.interrupted && !active?.streaming"
+                link
+                type="primary"
+                @click="resumeInterrupted"
+                >继续</el-button
+              >
             </div>
           </div>
           <div class="composer-toolbar">
-            <el-button title="运行命令、诊断日志、自动化重构与沙箱管理" @click="toolsDrawer?.open('run')">
+            <span v-if="attachmentBlocked" class="composer-warning" role="status"
+              >请等待附件上传完成，或移除失败附件</span
+            >
+            <el-button
+              title="运行命令、诊断日志、自动化重构与沙箱管理"
+              @click="toolsDrawer?.open('run')"
+            >
               <el-icon><Tools /></el-icon>
               开发工具
             </el-button>
-            <el-upload :show-file-list="false" :http-request="handleAttachmentUpload" :before-upload="beforeAttachmentUpload" :accept="ATTACHMENT_ACCEPT">
-              <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
+            <el-upload
+              :show-file-list="false"
+              :http-request="handleAttachmentUpload"
+              :before-upload="beforeAttachmentUpload"
+              :accept="ATTACHMENT_ACCEPT"
+            >
+              <el-button
+                :disabled="active?.streaming"
+                aria-label="上传附件"
+                title="上传附件（文档/表格/图片等），随消息一起发给智能体"
+              >
                 <el-icon><Paperclip /></el-icon>
               </el-button>
             </el-upload>
-            <ExecutionModeSelect
-              v-if="active"
-              v-model="active.mode"
-              :disabled="active.streaming"
-            />
+            <ExecutionModeSelect v-if="active" v-model="active.mode" :disabled="active.streaming" />
             <el-tooltip
               placement="top"
               content="开启后按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作"
@@ -776,18 +882,27 @@ defineExpose({ newSession })
         @dblclick="resetArtifactsWidth"
       >
         <span class="artifacts-resizer-grip" aria-hidden="true"><i /><i /></span>
-        <span class="artifacts-resizer-value" aria-hidden="true">{{ effectiveArtifactsWidth }} px</span>
+        <span class="artifacts-resizer-value" aria-hidden="true"
+          >{{ effectiveArtifactsWidth }} px</span
+        >
       </button>
       <div class="artifacts-header">
         <span>
           产物文件
-          <el-tag v-if="active?.sandboxMode" size="small" :type="active.sandboxMode === 'docker' ? 'warning' : 'info'" class="sandbox-mode-tag">
+          <el-tag
+            v-if="active?.sandboxMode"
+            size="small"
+            :type="active.sandboxMode === 'docker' ? 'warning' : 'info'"
+            class="sandbox-mode-tag"
+          >
             {{ active.sandboxMode === 'docker' ? 'docker' : 'local' }}
           </el-tag>
         </span>
         <div class="artifacts-header-actions">
           <el-button link type="primary" @click="openGitAssistant">Git 助手</el-button>
-          <el-button link type="primary" :loading="active?.filesLoading" @click="refreshFiles">刷新</el-button>
+          <el-button link type="primary" :loading="active?.filesLoading" @click="refreshFiles"
+            >刷新</el-button
+          >
         </div>
       </div>
 
@@ -809,8 +924,12 @@ defineExpose({ newSession })
         </div>
         <el-scrollbar max-height="120px">
           <div v-for="(fc, idx) in active.fileChanges" :key="idx" class="file-change-item">
-            <el-icon v-if="fc.operation === 'CREATE'" class="file-operation-icon is-create"><CirclePlus /></el-icon>
-            <el-icon v-else-if="fc.operation === 'MODIFY'" class="file-operation-icon is-modify"><EditPen /></el-icon>
+            <el-icon v-if="fc.operation === 'CREATE'" class="file-operation-icon is-create"
+              ><CirclePlus
+            /></el-icon>
+            <el-icon v-else-if="fc.operation === 'MODIFY'" class="file-operation-icon is-modify"
+              ><EditPen
+            /></el-icon>
             <el-icon v-else class="file-operation-icon is-delete"><Delete /></el-icon>
             <span class="file-change-path" :title="fc.path">{{ fc.path }}</span>
           </div>
@@ -818,11 +937,7 @@ defineExpose({ newSession })
       </div>
 
       <!-- 空状态 -->
-      <el-empty
-        v-if="!active?.filesLoaded"
-        description="对话结束后自动刷新"
-        :image-size="50"
-      />
+      <el-empty v-if="!active?.filesLoaded" description="对话结束后自动刷新" :image-size="50" />
       <el-empty
         v-else-if="active?.filesLoaded && active.fileNodes.length === 0"
         description="本次会话暂无产出文件"
@@ -833,7 +948,11 @@ defineExpose({ newSession })
       <el-scrollbar v-else height="100%">
         <el-tree
           :data="active?.fileNodes ?? []"
-          :props="{ label: 'name', children: 'children', isLeaf: (n: WorkspaceFileNode) => !n.directory }"
+          :props="{
+            label: 'name',
+            children: 'children',
+            isLeaf: (n: WorkspaceFileNode) => !n.directory,
+          }"
           node-key="relativePath"
           default-expand-all
           highlight-current
@@ -841,7 +960,9 @@ defineExpose({ newSession })
         >
           <template #default="{ node, data }">
             <span class="tree-node">
-              <el-icon v-if="data.directory" class="tree-node-icon is-directory"><Folder /></el-icon>
+              <el-icon v-if="data.directory" class="tree-node-icon is-directory"
+                ><Folder
+              /></el-icon>
               <el-icon v-else class="tree-node-icon is-file"><Document /></el-icon>
               <span :title="data.relativePath">{{ node.label }}</span>
             </span>
@@ -851,36 +972,22 @@ defineExpose({ newSession })
     </div>
 
     <!-- 右列：历史会话 -->
-    <div class="history-column" :aria-hidden="historyCollapsed">
-      <ChatHistorySidebar
-        ref="historySidebar"
-        :agent-code="agentCode"
-        :active-session-id="activeSessionId"
-        :live-sessions="liveSessions"
-        @select="openSession"
-        @initial-session="restoreMostRecentSession"
-        @collapse="collapseHistory"
-      />
-    </div>
-
-    <el-button
-      v-if="historyCollapsed"
-      class="history-restore"
-      circle
-      title="展开历史会话"
-      aria-label="展开历史会话"
-      @click="restoreHistory"
-    >
-      <el-icon><Expand /></el-icon>
-    </el-button>
+    <Teleport defer to="#workspace-history-slot" :disabled="!historyActive || !viewActive">
+      <div v-show="historyActive && viewActive" class="workspace-history-content">
+        <ChatHistorySidebar
+          ref="historySidebar"
+          :agent-code="agentCode"
+          :active-session-id="activeSessionId"
+          :live-sessions="liveSessions"
+          :collapsible="false"
+          @select="openSession"
+          @initial-session="restoreMostRecentSession"
+        />
+      </div>
+    </Teleport>
 
     <!-- 文件内容预览抽屉 -->
-    <el-drawer
-      v-model="previewVisible"
-      direction="rtl"
-      size="55%"
-      :destroy-on-close="false"
-    >
+    <el-drawer v-model="previewVisible" direction="rtl" size="55%" :destroy-on-close="false">
       <!-- 自定义标题：文件路径 + 右侧预览/编辑按鈕 -->
       <template #header>
         <div class="drawer-header">
@@ -893,12 +1000,14 @@ defineExpose({ newSession })
                 :title="previewFile?.truncated ? '文件过大，不支持编辑' : '编辑文件'"
                 @click="enterEditMode"
               >
-                <el-icon style="margin-right:4px"><Edit /></el-icon>编辑
+                <el-icon style="margin-right: 4px"><Edit /></el-icon>编辑
               </el-button>
             </template>
             <template v-else>
               <el-button size="small" @click="cancelEdit" :disabled="saving">取消</el-button>
-              <el-button size="small" type="primary" :loading="saving" @click="saveEdit">保存</el-button>
+              <el-button size="small" type="primary" :loading="saving" @click="saveEdit"
+                >保存</el-button
+              >
             </template>
           </div>
         </div>
@@ -914,7 +1023,9 @@ defineExpose({ newSession })
         </div>
         <!-- 预览模式 -->
         <el-scrollbar v-else-if="!editMode" height="calc(100vh - 120px)">
-          <pre class="code-block"><code ref="previewCodeRef" :class="`language-${previewFile.language}`">{{ previewFile.content }}</code></pre>
+          <pre
+            class="code-block"
+          ><code ref="previewCodeRef" :class="`language-${previewFile.language}`">{{ previewFile.content }}</code></pre>
         </el-scrollbar>
         <!-- 编辑模式 -->
         <el-scrollbar v-else height="calc(100vh - 120px)">
@@ -934,7 +1045,9 @@ defineExpose({ newSession })
         <div class="git-section">
           <div class="git-section-header">
             <span>变更摘要</span>
-            <el-button link type="primary" :loading="gitDiffLoading" @click="loadGitDiff">刷新</el-button>
+            <el-button link type="primary" :loading="gitDiffLoading" @click="loadGitDiff"
+              >刷新</el-button
+            >
           </div>
           <div v-if="gitDiffLoading" class="git-loading">
             <el-icon class="is-loading"><Loading /></el-icon>
@@ -943,7 +1056,13 @@ defineExpose({ newSession })
           <template v-else-if="gitDiff">
             <p class="git-summary-text">{{ gitDiff.summary }}</p>
             <div v-if="gitDiff.changedFiles.length > 0" class="git-changed-files">
-              <el-tag v-for="f in gitDiff.changedFiles" :key="f" size="small" class="git-changed-file-tag">{{ f }}</el-tag>
+              <el-tag
+                v-for="f in gitDiff.changedFiles"
+                :key="f"
+                size="small"
+                class="git-changed-file-tag"
+                >{{ f }}</el-tag
+              >
             </div>
           </template>
         </div>
@@ -958,7 +1077,13 @@ defineExpose({ newSession })
               <el-radio-button value="simple">Simple</el-radio-button>
             </el-radio-group>
           </div>
-          <el-button type="primary" size="small" :loading="commitLoading" @click="handleGenerateCommitMessage">生成</el-button>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="commitLoading"
+            @click="handleGenerateCommitMessage"
+            >生成</el-button
+          >
           <el-input
             v-if="commitMessageText"
             v-model="commitMessageText"
@@ -967,7 +1092,12 @@ defineExpose({ newSession })
             readonly
             class="git-result-text"
           />
-          <el-button v-if="commitMessageText" link type="primary" @click="copyToClipboard(commitMessageText, 'commit message')">
+          <el-button
+            v-if="commitMessageText"
+            link
+            type="primary"
+            @click="copyToClipboard(commitMessageText, 'commit message')"
+          >
             复制
           </el-button>
         </div>
@@ -978,11 +1108,22 @@ defineExpose({ newSession })
           <div class="git-section-header">
             <span>PR Description</span>
           </div>
-          <el-button type="primary" size="small" :loading="prLoading" @click="handleGeneratePrDescription">生成</el-button>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="prLoading"
+            @click="handleGeneratePrDescription"
+            >生成</el-button
+          >
           <div v-if="prDescriptionText" class="git-pr-description">
             <MarkdownRenderer :text="prDescriptionText" />
           </div>
-          <el-button v-if="prDescriptionText" link type="primary" @click="copyToClipboard(prDescriptionText, 'PR description')">
+          <el-button
+            v-if="prDescriptionText"
+            link
+            type="primary"
+            @click="copyToClipboard(prDescriptionText, 'PR description')"
+          >
             复制
           </el-button>
         </div>
@@ -1070,7 +1211,9 @@ defineExpose({ newSession })
   left: 0;
   width: 2px;
   background: transparent;
-  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .artifacts-resizer-grip {
@@ -1083,13 +1226,16 @@ defineExpose({ newSession })
   gap: 2px;
   width: 8px;
   height: 42px;
-  border: 1px solid color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 36%, var(--el-border-color));
+  border: 1px solid
+    color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 36%, var(--el-border-color));
   border-radius: 999px;
   background: var(--el-bg-color);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--el-text-color-primary) 12%, transparent);
   opacity: 0;
   transform: translateY(-50%) scale(0.9);
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
 }
 
 .artifacts-resizer-grip i {
@@ -1114,14 +1260,17 @@ defineExpose({ newSession })
   opacity: 0;
   pointer-events: none;
   transform: translateY(-50%) translateX(4px);
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
 }
 
 .artifacts-resizer:hover::before,
 .artifacts-resizer:focus-visible::before,
 .vibecoding-panel.is-resizing .artifacts-resizer::before {
   background: var(--theme-primary, var(--el-color-primary));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 14%, transparent);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 14%, transparent);
 }
 
 .artifacts-resizer:hover .artifacts-resizer-grip,

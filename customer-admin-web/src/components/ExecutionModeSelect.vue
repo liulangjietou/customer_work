@@ -18,14 +18,37 @@ interface ModeOption {
 
 // 文案与后端契约的语义一一对应，不在别处重复定义。
 const MODE_OPTIONS: ModeOption[] = [
-  { value: 'auto', label: '自动 · 默认', shortLabel: 'Auto', description: '高风险操作才需确认' },
-  { value: 'manual', label: '手动确认', shortLabel: 'Manual', description: '每步工具执行都需确认' },
-  { value: 'accept_edits', label: '接受编辑', shortLabel: 'Accept Edits', description: '文件编辑自动放行，命令/删除仍确认' },
-  { value: 'plan', label: '计划模式', shortLabel: 'Plan', description: '只读研究，不执行写操作，输出方案' },
-  { value: 'bypass', label: '跳过确认', shortLabel: 'Bypass', description: '全部自动执行（危险操作）', danger: true },
+  { value: 'auto', label: '自动 · 默认', shortLabel: '自动', description: '高风险操作才需确认' },
+  {
+    value: 'manual',
+    label: '手动确认',
+    shortLabel: '手动确认',
+    description: '每步工具执行都需确认',
+  },
+  {
+    value: 'accept_edits',
+    label: '接受编辑',
+    shortLabel: '接受编辑',
+    description: '文件编辑自动放行，命令/删除仍确认',
+  },
+  {
+    value: 'plan',
+    label: '计划模式',
+    shortLabel: '计划',
+    description: '只读研究，不执行写操作，输出方案',
+  },
+  {
+    value: 'bypass',
+    label: '跳过确认',
+    shortLabel: '跳过确认',
+    description: '全部自动执行（危险操作）',
+    danger: true,
+  },
 ]
 
-const current = computed<ModeOption>(() => MODE_OPTIONS.find((o) => o.value === props.modelValue) ?? MODE_OPTIONS[0])
+const current = computed<ModeOption>(
+  () => MODE_OPTIONS.find((o) => o.value === props.modelValue) ?? MODE_OPTIONS[0],
+)
 
 function handleCommand(mode: ExecutionMode) {
   if (mode === props.modelValue) return
@@ -50,7 +73,11 @@ function handleCommand(mode: ExecutionMode) {
           <div class="mode-option">
             <el-icon class="mode-option-check"><Check v-if="opt.value === modelValue" /></el-icon>
             <div class="mode-option-text">
-              <span class="mode-option-label" :class="{ 'mode-option-label--danger': opt.danger }">{{ opt.label }}</span>
+              <span
+                class="mode-option-label"
+                :class="{ 'mode-option-label--danger': opt.danger }"
+                >{{ opt.label }}</span
+              >
               <span class="mode-option-desc">{{ opt.description }}</span>
             </div>
           </div>

@@ -11,8 +11,13 @@ import type { ChatSessionSummary, LiveSession } from '@/types/api'
 
 /** liveSessions：父面板内存里"活着"的会话（进行中/本次加载过的），默认空数组兼容尚未接入的调用方。 */
 const props = withDefaults(
-  defineProps<{ agentCode: string; activeSessionId: string; liveSessions?: LiveSession[] }>(),
-  { liveSessions: () => [] },
+  defineProps<{
+    agentCode: string
+    activeSessionId: string
+    liveSessions?: LiveSession[]
+    collapsible?: boolean
+  }>(),
+  { liveSessions: () => [], collapsible: true },
 )
 const emit = defineEmits<{
   select: [sessionId: string]
@@ -84,8 +89,12 @@ const displaySessions = computed<DisplaySession[]>(() => {
 
 /** 搜索严格限定在已加载的合并列表，不触发请求、不改变分页游标。 */
 const hasSearchQuery = computed(() => searchQuery.value.trim().length > 0)
-const filteredSessions = computed(() => filterLoadedChatSessions(displaySessions.value, searchQuery.value))
-const groupedSessions = computed(() => groupChatHistorySessions(filteredSessions.value, currentDate.value))
+const filteredSessions = computed(() =>
+  filterLoadedChatSessions(displaySessions.value, searchQuery.value),
+)
+const groupedSessions = computed(() =>
+  groupChatHistorySessions(filteredSessions.value, currentDate.value),
+)
 
 /** keep-alive 页面跨午夜后重新计算“今天”分组；定时器按下一个本地午夜重排，兼容夏令时。 */
 function scheduleMidnightRefresh() {
@@ -96,7 +105,10 @@ function scheduleMidnightRefresh() {
   currentDate.value = now
   const nextMidnight = new Date(now)
   nextMidnight.setHours(24, 0, 0, 0)
-  midnightRefreshTimer = setTimeout(scheduleMidnightRefresh, Math.max(1000, nextMidnight.getTime() - now.getTime()))
+  midnightRefreshTimer = setTimeout(
+    scheduleMidnightRefresh,
+    Math.max(1000, nextMidnight.getTime() - now.getTime()),
+  )
 }
 
 /** 拉取指定页并去重合并到累积列表（同 sessionId 以已有为准，防加载间隙新会话导致的页间重复）。 */
@@ -199,6 +211,7 @@ function openAddToProject(sessionId: string) {
         <button
           type="button"
           class="mini-action"
+          v-if="collapsible"
           title="收起历史会话"
           aria-label="收起历史会话"
           @click="emit('collapse')"
@@ -219,7 +232,11 @@ function openAddToProject(sessionId: string) {
       />
     </label>
 
-    <el-empty v-if="!loading && displaySessions.length === 0" description="暂无历史会话" :image-size="48" />
+    <el-empty
+      v-if="!loading && displaySessions.length === 0"
+      description="暂无历史会话"
+      :image-size="48"
+    />
     <div
       v-else
       class="session-scroll"
@@ -255,13 +272,26 @@ function openAddToProject(sessionId: string) {
                     {{ session.preview || '（空会话）' }}
                   </span>
                   <span class="session-meta">
-                    <el-tag v-if="session.streaming" type="warning" size="small" effect="light" class="streaming-tag">进行中</el-tag>
+                    <el-tag
+                      v-if="session.streaming"
+                      type="warning"
+                      size="small"
+                      effect="light"
+                      class="streaming-tag"
+                      >进行中</el-tag
+                    >
                     <span>{{ session.messageCount }} 条</span>
-                    <span v-if="session.lastMessageTime">{{ formatChatHistoryTime(session.lastMessageTime) }}</span>
+                    <span v-if="session.lastMessageTime">{{
+                      formatChatHistoryTime(session.lastMessageTime)
+                    }}</span>
                   </span>
                 </span>
               </button>
-              <el-dropdown trigger="click" @command="openAddToProject(session.sessionId)" @click.stop>
+              <el-dropdown
+                trigger="click"
+                @command="openAddToProject(session.sessionId)"
+                @click.stop
+              >
                 <button
                   type="button"
                   class="session-more"
@@ -281,14 +311,20 @@ function openAddToProject(sessionId: string) {
           </ul>
         </section>
       </template>
-      <div v-if="hasSearchQuery" class="search-scope">仅搜索已加载的 {{ displaySessions.length }} 条会话</div>
+      <div v-if="hasSearchQuery" class="search-scope">
+        仅搜索已加载的 {{ displaySessions.length }} 条会话
+      </div>
       <template v-else>
         <div v-if="loadingMore" class="load-status">加载中…</div>
         <div v-else-if="noMore && displaySessions.length > 0" class="load-status">没有更多了</div>
       </template>
     </div>
 
-    <AddToProjectDialog v-model="addToProjectVisible" :agent-code="agentCode" :session-id="addToProjectSessionId" />
+    <AddToProjectDialog
+      v-model="addToProjectVisible"
+      :agent-code="agentCode"
+      :session-id="addToProjectSessionId"
+    />
   </div>
 </template>
 
@@ -475,7 +511,9 @@ function openAddToProject(sessionId: string) {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 10px;
-  transition: background-color 140ms ease, border-color 140ms ease;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
 }
 
 .session-item:hover {
@@ -610,12 +648,19 @@ function openAddToProject(sessionId: string) {
 }
 
 @keyframes history-rotate {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes streaming-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
