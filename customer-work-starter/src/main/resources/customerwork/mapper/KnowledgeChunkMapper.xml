@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeChunkMapper">
+
+    <!--
+      打分阶段的窄投影：只取标识、分区与向量，刻意不取 content。
+      参与打分的可能是上万条分片，而最终只有 topN 的正文会被用到——
+      把 LONGTEXT 正文一起拉出来是这条链路原本最大的开销来源。
+      tenant_id 由 TenantLineInnerInterceptor 自动补，此处不列。
+    -->
+    <select id="selectVectorsByPartitions"
+            resultType="com.richard.fyoung.customerwork.data.knowledge.entity.ChunkVectorDO">
+        SELECT id, doc_revision_id, embedding
+        FROM cw_knowledge_chunk
+        WHERE kb_version_id = #{kbVersionId}
+          AND id &gt; #{afterId}
+          <if test="partitions != null and partitions.size() > 0">
+              AND doc_revision_id IN
+              <foreach collection="partitions" item="p" open="(" separator="," close=")">#{p}</foreach>
+          </if>
+        ORDER BY id
+        LIMIT #{limit}
+    </select>
+
+    <!-- 命中确定后按 id 回查正文。 -->
+    <select id="selectByIds"
+            resultType="com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeChunkDO">
+        SELECT id, tenant_id, kb_version_id, doc_revision_id, chunk_index, content,
+               dimensions, acl_mode, external_id, created_at_ms, updated_at_ms
+        FROM cw_knowledge_chunk
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
+
+    <!-- 重新投影前清场。 -->
+    <delete id="deleteByVersion">
+        DELETE FROM cw_knowledge_chunk WHERE kb_version_id = #{kbVersionId}
+    </delete>
+
+</mapper>
