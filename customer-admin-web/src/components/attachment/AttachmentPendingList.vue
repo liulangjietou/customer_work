@@ -20,11 +20,7 @@ const emit = defineEmits<{ remove: [localId: string] }>()
 
 <template>
   <div class="attachment-pending-list">
-    <div
-      v-for="a in attachments"
-      :key="a.localId"
-      class="pending-item"
-    >
+    <div v-for="a in attachments" :key="a.localId" class="pending-item">
       <!-- 图片：缩略图 + 悬浮移除按钮 + 上传中遮罩 -->
       <div
         v-if="isImageMimeType(a.mimeType) && a.previewUrl"
@@ -46,6 +42,7 @@ const emit = defineEmits<{ remove: [localId: string] }>()
           v-if="a.status !== 'uploading'"
           type="button"
           class="pending-thumb-remove"
+          :aria-label="`移除附件 ${a.name}`"
           title="移除"
           @click.stop="emit('remove', a.localId)"
         >
@@ -55,20 +52,46 @@ const emit = defineEmits<{ remove: [localId: string] }>()
       <!-- 非图片：原有芯片样式 -->
       <el-tag
         v-else
-        :closable="a.status !== 'uploading'"
         :type="a.status === 'failed' ? 'danger' : undefined"
         size="small"
         :title="a.status === 'failed' ? a.errorMessage : undefined"
-        @close="emit('remove', a.localId)"
       >
         <el-icon v-if="a.status === 'uploading'" class="is-loading"><Loading /></el-icon>
         📎 {{ a.name }}
+        <span v-if="a.status === 'failed'"> · 解析失败</span>
+        <button
+          v-if="a.status !== 'uploading'"
+          type="button"
+          class="pending-tag-remove"
+          :aria-label="`移除附件 ${a.name}`"
+          @click="emit('remove', a.localId)"
+        >
+          <el-icon><Close /></el-icon>
+        </button>
       </el-tag>
     </div>
   </div>
 </template>
 
 <style scoped>
+.pending-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.pending-tag-remove:hover {
+  background: var(--el-fill-color);
+}
+
 .attachment-pending-list {
   display: flex;
   flex-wrap: wrap;

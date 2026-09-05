@@ -1,9 +1,20 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue'
+import { handleComposerKeydown } from '@/utils/composerKeyboard'
 import { createScrollFollower } from '@/utils/scrollFollower'
 import { shouldRestoreMostRecentSession } from '@/utils/conversationRestore'
 import { ATTACHMENT_ACCEPT, useChatAttachments } from '@/composables/useChatAttachments'
 import { confirmChatPlan } from '@/api/chat'
+import ExecutionRecord from '@/components/workspace/ExecutionRecord.vue'
 import AssistantResponse from '@/components/AssistantResponse.vue'
 import ChatHistorySidebar from '@/components/ChatHistorySidebar.vue'
 import ExecutionModeSelect from '@/components/ExecutionModeSelect.vue'
@@ -13,13 +24,15 @@ import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
 import WorkspaceConversationEmptyState from '@/components/workspace/WorkspaceConversationEmptyState.vue'
 import { useThemeStore } from '@/store/theme'
 import '@/styles/workspace-conversation.css'
-import {
-  useChatConversationsStore,
-  type ChatConversation,
-} from '@/store/chatConversations'
+import { useChatConversationsStore, type ChatConversation } from '@/store/chatConversations'
 import type { PlanCard } from '@/utils/planCard'
 
-const props = defineProps<{ agentCode: string; assistantName: string; initialSessionId?: string }>()
+const props = defineProps<{
+  agentCode: string
+  assistantName: string
+  initialSessionId?: string
+  historyActive?: boolean
+}>()
 
 /**
  * 会话状态全部在 Pinia store（chatConversations）里，本组件只是"当前正在看哪个会话"的视图：
@@ -32,24 +45,65 @@ store.ensureAgent(props.agentCode)
 const active = computed<ChatConversation | undefined>(() => store.activeOf(props.agentCode))
 const liveSessions = computed(() => store.liveSessionsOf(props.agentCode))
 const activeSessionId = computed(() => store.activeIdOf(props.agentCode))
-const anyAttachmentUploading = computed(() => active.value?.attachments.some((a) => a.status === 'uploading') ?? false)
+const attachmentBlocked = computed(
+  () => active.value?.attachments.some((a) => a.status !== 'success') ?? false,
+)
+const canSend = computed(
+  () =>
+    !attachmentBlocked.value &&
+    !!active.value &&
+    !active.value.streaming &&
+    (!!active.value.input.trim() ||
+      active.value.attachments.some((a) => a.status === 'success' && a.id)),
+)
 
 const historyLoading = ref(false)
 const scrollRef = ref<HTMLElement>()
 const historySidebar = ref<InstanceType<typeof ChatHistorySidebar>>()
-const historyCollapsed = ref(false)
+const viewActive = ref(true)
+onActivated(() => {
+  viewActive.value = true
+})
+onDeactivated(() => {
+  viewActive.value = false
+  // 抽屉挂载在 body，缓存工作区时需显式关闭，避免浏览器返回后仍遮挡其他页面。
+  detailsOpen.value = false
+})
 const themeStore = useThemeStore()
+const detailsOpen = ref(false)
+const detailsMobile = ref(window.matchMedia('(max-width: 1100px)').matches)
+const selectedMessageIndex = ref(-1)
+const detailsTrigger = ref<{ $el: HTMLButtonElement }>()
+const selectedIndex = computed(() => {
+  if (selectedMessageIndex.value >= 0) return selectedMessageIndex.value
+  const messages = active.value?.messages ?? []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'assistant') return index
+  }
+  return -1
+})
+const selectedMessage = computed(() => active.value?.messages[selectedIndex.value])
+const selectedRequest = computed(() => active.value?.messages[selectedIndex.value - 1])
+const detailsQuery = window.matchMedia('(max-width: 1100px)')
+function updateDetailsViewport(event: MediaQueryListEvent) {
+  detailsMobile.value = event.matches
+}
+onMounted(() => detailsQuery.addEventListener('change', updateDetailsViewport))
+onBeforeUnmount(() => detailsQuery.removeEventListener('change', updateDetailsViewport))
+watch(activeSessionId, () => {
+  selectedMessageIndex.value = -1
+})
+function inspectMessage(index = -1) {
+  selectedMessageIndex.value = index
+  detailsOpen.value = true
+}
+function closeDetails() {
+  detailsOpen.value = false
+  nextTick(() => detailsTrigger.value?.$el.focus())
+}
 
 function newSession() {
   store.newSession(props.agentCode)
-}
-
-function collapseHistory() {
-  historyCollapsed.value = true
-}
-
-function restoreHistory() {
-  historyCollapsed.value = false
 }
 
 // 附件上传（回形针按钮 + 输入框 ⌘/Ctrl+V 粘贴）统一走组合式函数，与 VibeCodingPanel 共用同一条链路
@@ -112,6 +166,7 @@ function isStreamingMessage(index: number): boolean {
 onBeforeUnmount(() => scrollFollower.cancel())
 
 function send() {
+  if (!canSend.value) return
   store.send(props.agentCode, buildMessageWithAttachments, scrollToBottom)
 }
 
@@ -124,9 +179,14 @@ function handleInterrupt() {
 function resumeInterrupted() {
   const conv = active.value
   if (!conv) return
-  conv.interrupted = false
+  if (conv.streaming) return
+  const draft = conv.input
+  const attachments = conv.attachments
   conv.input = '请继续刚才的任务。'
+  conv.attachments = []
   send()
+  conv.input = draft
+  conv.attachments = attachments
 }
 
 /** 用户对某个计划卡片点批准/拒绝：调后端确认接口，成功后翻成终态。逻辑镜像 VibeCodingPanel 的
@@ -189,7 +249,10 @@ defineExpose({ newSession })
 </script>
 
 <template>
-  <div class="chat-panel workspace-conversation" :class="{ 'is-history-collapsed': historyCollapsed }">
+  <div
+    class="chat-panel workspace-conversation"
+    :class="{ 'has-details': detailsOpen && !detailsMobile }"
+  >
     <div class="chat-column">
       <div
         ref="scrollRef"
@@ -197,7 +260,12 @@ defineExpose({ newSession })
         :class="{ 'is-empty': (active?.messages.length ?? 0) === 0 }"
         v-loading="historyLoading"
       >
-        <div v-for="(msg, index) in active?.messages ?? []" :key="index" class="message-row" :class="msg.role">
+        <div
+          v-for="(msg, index) in active?.messages ?? []"
+          :key="index"
+          class="message-row"
+          :class="msg.role"
+        >
           <div class="bubble">
             <AssistantResponse
               v-if="msg.role === 'assistant'"
@@ -205,6 +273,9 @@ defineExpose({ newSession })
               :text="msg.text"
               :active="isStreamingMessage(index)"
               :failed="msg.failed"
+              :error="msg.error"
+              :show-trace="false"
+              @inspect="inspectMessage(index)"
             >
               <!-- Plan Mode 确认卡片（P1-1 HITL）：高风险操作待人工确认，批准/拒绝按钮 + 倒计时 -->
               <PlanConfirmCard
@@ -225,6 +296,11 @@ defineExpose({ newSession })
         <WorkspaceConversationEmptyState
           v-if="(active?.messages.length ?? 0) === 0"
           :assistant-name="assistantName"
+          @prompt="
+            (prompt: string) => {
+              if (active) active.input = prompt
+            }
+          "
         />
       </div>
       <div class="composer-wrap">
@@ -240,86 +316,165 @@ defineExpose({ newSession })
               v-if="active"
               v-model="active.input"
               placeholder="输入消息，回车发送；⌘/Ctrl+V 可粘贴截图或文件作为附件"
-              :disabled="active.streaming"
-              @keyup.enter="send"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 6 }"
+              aria-label="消息内容"
+              @keydown="handleComposerKeydown($event, send, !!active?.streaming)"
               @paste="handleAttachmentPaste"
             />
             <div class="composer-send">
-              <el-button v-if="!active?.streaming" type="primary" :disabled="anyAttachmentUploading" @click="send">发送</el-button>
-              <el-button v-else type="danger" :loading="active?.interrupting" @click="handleInterrupt">
+              <el-button v-if="!active?.streaming" type="primary" :disabled="!canSend" @click="send"
+                >发送</el-button
+              >
+              <el-button
+                v-else
+                type="danger"
+                :loading="active?.interrupting"
+                @click="handleInterrupt"
+              >
                 {{ active?.interrupting ? '终止中…' : '终止' }}
               </el-button>
-              <el-button v-if="active?.interrupted && !active?.streaming" link type="primary" @click="resumeInterrupted">继续</el-button>
+              <el-button
+                v-if="active?.interrupted && !active?.streaming"
+                link
+                type="primary"
+                @click="resumeInterrupted"
+                >继续</el-button
+              >
             </div>
           </div>
           <div class="composer-toolbar">
+            <span v-if="attachmentBlocked" class="composer-warning" role="status"
+              >请等待附件上传完成，或移除失败附件</span
+            >
             <el-upload
               :show-file-list="false"
               :http-request="handleAttachmentUpload"
               :before-upload="beforeAttachmentUpload"
               :accept="ATTACHMENT_ACCEPT"
             >
-              <el-button :disabled="active?.streaming" title="上传附件（文档/表格/图片等），随消息一起发给智能体">
+              <el-button
+                :disabled="active?.streaming"
+                aria-label="上传附件"
+                title="上传附件（文档/表格/图片等），随消息一起发给智能体"
+              >
                 <el-icon><Paperclip /></el-icon>
               </el-button>
             </el-upload>
-            <ExecutionModeSelect
-              v-if="active"
-              v-model="active.mode"
-              :disabled="active.streaming"
-            />
+            <el-button
+              ref="detailsTrigger"
+              :aria-expanded="detailsOpen"
+              aria-controls="chat-execution-details"
+              @click="inspectMessage()"
+              ><el-icon><List /></el-icon>执行详情</el-button
+            >
+            <ExecutionModeSelect v-if="active" v-model="active.mode" :disabled="active.streaming" />
           </div>
         </div>
+        <p class="composer-hint">
+          {{
+            active?.streaming
+              ? '任务进行中，可继续编写下一条草稿'
+              : 'Enter 发送 · Shift + Enter 换行'
+          }}
+        </p>
       </div>
     </div>
-    <div class="history-column" :aria-hidden="historyCollapsed">
-      <ChatHistorySidebar
-        ref="historySidebar"
-        :agent-code="agentCode"
-        :active-session-id="activeSessionId"
-        :live-sessions="liveSessions"
-        @select="openSession"
-        @initial-session="restoreMostRecentSession"
-        @collapse="collapseHistory"
-      />
-    </div>
-    <el-button
-      v-if="historyCollapsed"
-      class="history-restore"
-      circle
-      title="展开历史会话"
-      aria-label="展开历史会话"
-      @click="restoreHistory"
+    <aside
+      v-if="detailsOpen && !detailsMobile"
+      id="chat-execution-details"
+      class="execution-details"
+      aria-label="执行详情"
+      @keydown.esc.stop="closeDetails"
     >
-      <el-icon><Expand /></el-icon>
-    </el-button>
+      <header>
+        <h2>执行详情</h2>
+        <el-button text aria-label="关闭执行详情" @click="closeDetails"
+          ><el-icon><Close /></el-icon
+        ></el-button>
+      </header>
+      <ExecutionRecord
+        :agent-code="agentCode"
+        :assistant-name="assistantName"
+        :message="selectedMessage"
+        :request="selectedRequest"
+        :active="isStreamingMessage(selectedIndex)"
+      />
+    </aside>
+    <el-drawer
+      v-if="detailsMobile"
+      v-model="detailsOpen"
+      title="执行详情"
+      size="min(390px, 100vw)"
+      append-to-body
+      :show-close="false"
+      @closed="closeDetails"
+    >
+      <template #header="{ titleId, titleClass }"
+        ><h2 :id="titleId" :class="titleClass">执行详情</h2>
+        <el-button text aria-label="关闭执行详情" @click="closeDetails"
+          ><el-icon><Close /></el-icon></el-button
+      ></template>
+      <ExecutionRecord
+        :agent-code="agentCode"
+        :assistant-name="assistantName"
+        :message="selectedMessage"
+        :request="selectedRequest"
+        :active="isStreamingMessage(selectedIndex)"
+      />
+    </el-drawer>
+    <Teleport defer to="#workspace-history-slot" :disabled="!historyActive || !viewActive">
+      <div v-show="historyActive && viewActive" class="workspace-history-content">
+        <ChatHistorySidebar
+          ref="historySidebar"
+          :agent-code="agentCode"
+          :active-session-id="activeSessionId"
+          :live-sessions="liveSessions"
+          :collapsible="false"
+          @select="openSession"
+          @initial-session="restoreMostRecentSession"
+        />
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .chat-panel {
   --conversation-messages-padding: 28px 32px 36px;
-  --conversation-composer-padding: 10px 24px 14px;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  --conversation-composer-padding: 10px 28px 16px;
+  grid-template-columns: minmax(0, 1fr);
 }
-
-.chat-panel.is-history-collapsed {
-  grid-template-columns: minmax(0, 1fr) 0;
+.chat-panel.has-details {
+  grid-template-columns: minmax(0, 1fr) 320px;
 }
-
-@container workspace-panel (max-width: 900px) {
+.execution-details {
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid var(--cw-line);
+  background: var(--cw-paper);
+}
+.execution-details > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--cw-paper);
+  padding: 8px 12px 8px 18px;
+  border-bottom: 1px solid var(--cw-line);
+}
+.execution-details h2 {
+  font-size: 13px;
+  margin: 0;
+  font-weight: 600;
+}
+@container workspace-panel (max-width: 700px) {
   .chat-panel {
-    --conversation-messages-padding: 24px 16px 30px;
-    --conversation-composer-padding: 10px 12px 14px;
-    --conversation-user-bubble-max-width: 88%;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(420px, 1fr) 210px;
-    overflow-y: auto;
-  }
-
-  .chat-panel.is-history-collapsed {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) 0;
+    --conversation-messages-padding: 20px 16px;
+    --conversation-composer-padding: 8px 12px 12px;
+    --conversation-user-bubble-max-width: 90%;
   }
 }
 </style>

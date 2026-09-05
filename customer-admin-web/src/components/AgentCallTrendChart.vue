@@ -15,6 +15,7 @@ const props = defineProps<{
   points: AgentCallStatsTrendPoint[]
   granularity: AgentCallTrendGranularity
   loading?: boolean
+  compact?: boolean
 }>()
 
 const themeStore = useThemeStore()
@@ -50,12 +51,14 @@ function buildOption() {
     legend: {
       // Token 量纲（可达数万）与耗时 ms 不同，单列一条曲线绑独立右侧 Y 轴，默认不选中避免首屏喧宾夺主，
       // 用户按需点亮；调用量/耗时各占一条 Y 轴。
-      data: ['调用量', '平均总耗时', '大模型', '工具', 'MCP', 'Skill', 'Token'],
+      data: props.compact
+        ? ['调用量', '平均总耗时']
+        : ['调用量', '平均总耗时', '大模型', '工具', 'MCP', 'Skill', 'Token'],
       selected: { Token: false },
       top: 0,
       textStyle: { color: palette.text },
     },
-    grid: { left: 56, right: 88, top: 44, bottom: rotate ? 56 : 30 },
+    grid: { left: 50, right: props.compact ? 56 : 88, top: 44, bottom: rotate ? 56 : 30 },
     xAxis: {
       type: 'category',
       data: categories,
@@ -63,24 +66,91 @@ function buildOption() {
       axisLabel: { color: palette.text, formatter: shortenBucket, rotate },
     },
     yAxis: [
-      { type: 'value', name: '调用量', position: 'left', axisLine: { lineStyle: { color: palette.axis } }, axisLabel: { color: palette.text }, splitLine: { lineStyle: { color: palette.grid } } },
-      { type: 'value', name: '耗时(ms)', position: 'right', axisLine: { lineStyle: { color: palette.axis } }, axisLabel: { color: palette.text }, splitLine: { show: false } },
-      { type: 'value', name: 'Token', position: 'right', offset: 52, axisLine: { lineStyle: { color: palette.axis } }, axisLabel: { color: palette.text }, splitLine: { show: false } },
+      {
+        type: 'value',
+        name: '调用量',
+        position: 'left',
+        axisLine: { lineStyle: { color: palette.axis } },
+        axisLabel: { color: palette.text },
+        splitLine: { lineStyle: { color: palette.grid } },
+      },
+      {
+        type: 'value',
+        name: '耗时(ms)',
+        position: 'right',
+        axisLine: { lineStyle: { color: palette.axis } },
+        axisLabel: { color: palette.text },
+        splitLine: { show: false },
+      },
+      {
+        show: !props.compact,
+        type: 'value',
+        name: 'Token',
+        position: 'right',
+        offset: 52,
+        axisLine: { lineStyle: { color: palette.axis } },
+        axisLabel: { color: palette.text },
+        splitLine: { show: false },
+      },
     ],
     series: [
-      { name: '调用量', type: 'line', yAxisIndex: 0, smooth: true, data: props.points.map((p) => p.count) },
-      { name: '平均总耗时', type: 'line', yAxisIndex: 1, smooth: true, data: props.points.map((p) => p.avgDurationMs) },
-      { name: '大模型', type: 'line', yAxisIndex: 1, smooth: true, data: props.points.map((p) => p.avgModelMs) },
-      { name: '工具', type: 'line', yAxisIndex: 1, smooth: true, data: props.points.map((p) => p.avgToolMs) },
-      { name: 'MCP', type: 'line', yAxisIndex: 1, smooth: true, data: props.points.map((p) => p.avgMcpMs) },
-      { name: 'Skill', type: 'line', yAxisIndex: 1, smooth: true, data: props.points.map((p) => p.avgSkillMs) },
-      { name: 'Token', type: 'line', yAxisIndex: 2, smooth: true, data: props.points.map((p) => p.totalTokens) },
-    ].map((series, index) => ({
-      ...series,
-      symbol: symbols[index],
-      symbolSize: 6,
-      lineStyle: { type: linePatterns[index], width: index === 0 ? 2.5 : 2 },
-    })),
+      {
+        name: '调用量',
+        type: 'line',
+        yAxisIndex: 0,
+        smooth: true,
+        data: props.points.map((p) => p.count),
+      },
+      {
+        name: '平均总耗时',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: props.points.map((p) => p.avgDurationMs),
+      },
+      {
+        name: '大模型',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: props.points.map((p) => p.avgModelMs),
+      },
+      {
+        name: '工具',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: props.points.map((p) => p.avgToolMs),
+      },
+      {
+        name: 'MCP',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: props.points.map((p) => p.avgMcpMs),
+      },
+      {
+        name: 'Skill',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: props.points.map((p) => p.avgSkillMs),
+      },
+      {
+        name: 'Token',
+        type: 'line',
+        yAxisIndex: 2,
+        smooth: true,
+        data: props.points.map((p) => p.totalTokens),
+      },
+    ]
+      .filter((_series, index) => !props.compact || index < 2)
+      .map((series, index) => ({
+        ...series,
+        symbol: symbols[index],
+        symbolSize: 6,
+        lineStyle: { type: linePatterns[index], width: index === 0 ? 2.5 : 2 },
+      })),
   }
 }
 
@@ -108,20 +178,30 @@ onBeforeUnmount(() => {
 
 // Canvas 不会自动消费 CSS 变量；数据、主题色或系统明暗变化时都必须重绘。
 watch(
-  () => [props.points, props.granularity, themeStore.primaryColor, themeStore.mode, themeStore.systemDark],
+  () => [
+    props.points,
+    props.granularity,
+    themeStore.primaryColor,
+    themeStore.mode,
+    themeStore.systemDark,
+  ],
   render,
   { deep: false },
 )
 </script>
 
 <template>
-  <div v-loading="loading" class="trend-chart-wrap">
+  <div v-loading="loading" class="trend-chart-wrap" :class="{ 'is-compact': compact }">
     <div v-if="!loading && points.length === 0" class="empty-tip">暂无趋势数据</div>
     <div ref="chartEl" class="trend-chart" />
   </div>
 </template>
 
 <style scoped>
+.trend-chart-wrap.is-compact .trend-chart {
+  height: 250px;
+}
+
 .trend-chart-wrap {
   position: relative;
   width: 100%;

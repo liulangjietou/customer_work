@@ -106,7 +106,7 @@ async function handleDelete(row: LoginCarouselImageVO) {
         <div class="page-header">
           <div>
             <span class="page-title">轮播素材</span>
-            <span class="page-subtitle">上传多张图片作为登录页轮播背景，登录页实时获取；全部禁用或为空时回退内置默认图</span>
+            <span class="page-subtitle">上传多张图片供登录页轮播，图片按原比例完整展示；全部禁用或为空时展示默认品牌说明</span>
           </div>
           <el-upload
             :show-file-list="false"
@@ -118,7 +118,7 @@ async function handleDelete(row: LoginCarouselImageVO) {
         </div>
       </template>
 
-      <el-empty v-if="!loading && images.length === 0" description="暂无轮播图，登录页正在使用内置默认图" />
+      <el-empty v-if="!loading && images.length === 0" description="暂无轮播图，登录页正在展示默认品牌说明" />
 
       <div v-else v-loading="loading" class="image-grid">
         <el-card v-for="(row, index) in images" :key="row.id" shadow="hover" class="image-card">

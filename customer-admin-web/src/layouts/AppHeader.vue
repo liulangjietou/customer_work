@@ -6,6 +6,7 @@ import { useMenuStore } from '@/store/menu'
 import { useTabsStore } from '@/store/tabs'
 import ThemePresetSelector from '@/components/ThemePresetSelector.vue'
 import GlobalCommandSearch from './GlobalCommandSearch.vue'
+import AppBreadcrumb from './AppBreadcrumb.vue'
 import NotificationBell from '@/components/NotificationBell.vue'
 import TenantSwitcher from '@/components/TenantSwitcher.vue'
 
@@ -20,9 +21,9 @@ const router = useRouter()
 const auth = useAuthStore()
 const menuStore = useMenuStore()
 const tabsStore = useTabsStore()
-const userInitial = computed(() => (
-  (auth.nickname || auth.username || 'U').trim().slice(0, 1).toLocaleUpperCase()
-))
+const userInitial = computed(() =>
+  (auth.nickname || auth.username || 'U').trim().slice(0, 1).toLocaleUpperCase(),
+)
 
 const navigationToggleIcon = computed(() => {
   if (props.compactViewport) return props.overlayOpen ? 'Close' : 'Expand'
@@ -56,8 +57,7 @@ async function handleLogout() {
       />
       <span class="header-separator" aria-hidden="true" />
       <div class="location-copy">
-        <span class="location-product">customer_work · Agent Console</span>
-        <strong>智能体运营台</strong>
+        <AppBreadcrumb />
       </div>
     </div>
 
@@ -77,7 +77,9 @@ async function handleLogout() {
         </button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item @click="router.push({ name: 'ChangePassword' })">修改密码</el-dropdown-item>
+            <el-dropdown-item @click="router.push({ name: 'ChangePassword' })"
+              >修改密码</el-dropdown-item
+            >
             <el-dropdown-item divided @click="handleLogout">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -108,8 +110,8 @@ async function handleLogout() {
 }
 
 .header-left {
-  flex: 0 1 auto;
-  min-width: 154px;
+  flex: 1 1 240px;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -154,24 +156,8 @@ async function handleLogout() {
 
 .location-copy {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  overflow: hidden;
   white-space: nowrap;
-}
-
-.location-product {
-  color: var(--cw-cobalt, var(--el-color-primary));
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 0.09em;
-}
-
-.location-copy strong {
-  color: var(--cw-text, var(--el-text-color-primary));
-  font-size: 14px;
-  font-weight: 680;
 }
 
 .user-menu-trigger {
@@ -199,7 +185,11 @@ async function handleLogout() {
   align-items: center;
   justify-content: center;
   border-radius: var(--cw-radius-md, 8px);
-  background: color-mix(in srgb, var(--cw-cobalt, var(--el-color-primary)) 11%, var(--cw-paper, var(--el-bg-color)));
+  background: color-mix(
+    in srgb,
+    var(--cw-cobalt, var(--el-color-primary)) 11%,
+    var(--cw-paper, var(--el-bg-color))
+  );
   color: var(--cw-cobalt, var(--el-color-primary));
   font-size: 12px;
   font-weight: 750;
@@ -216,10 +206,6 @@ async function handleLogout() {
 @media (max-width: 1280px) {
   .header-right :deep(.tenant-switcher) {
     width: 168px;
-  }
-
-  .location-product {
-    display: none;
   }
 }
 

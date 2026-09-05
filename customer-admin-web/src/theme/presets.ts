@@ -74,16 +74,16 @@ export interface ResolvedThemePreset {
 }
 
 const SYSTEM_LIGHT_SURFACE: ThemeSurfacePalette = {
-  canvas: '#f4f6fa',
+  canvas: '#f6f8fb',
   paper: '#ffffff',
   ink: '#0b1630',
   inkElevated: '#152441',
-  text: '#172033',
-  textRegular: '#465066',
-  textMuted: '#677189',
-  textPlaceholder: '#677189',
+  text: '#1d2637',
+  textRegular: '#465166',
+  textMuted: '#626d80',
+  textPlaceholder: '#626d80',
   textDisabled: '#7b8496',
-  line: '#dce1ea',
+  line: '#e3e7ef',
   lineStrong: '#c9d0dc',
   borderLight: '#e4e8ef',
   borderLighter: '#edf0f5',
@@ -147,14 +147,14 @@ const ATLAS_LIGHT_SURFACE: ThemeSurfacePalette = {
 
 const OCEAN_LIGHT_SURFACE: ThemeSurfacePalette = {
   ...SYSTEM_LIGHT_SURFACE,
-  canvas: '#f2f6fc',
+  canvas: '#f6f8fb',
   ink: '#0b1733',
   inkElevated: '#14284f',
-  text: '#17243d',
-  textRegular: '#44536d',
-  textMuted: '#62718a',
-  textPlaceholder: '#62718a',
-  line: '#d8e1ee',
+  text: '#1d2637',
+  textRegular: '#465166',
+  textMuted: '#626d80',
+  textPlaceholder: '#657187',
+  line: '#e3e7ef',
   lineStrong: '#c3cfdf',
   borderLight: '#e1e8f1',
   borderLighter: '#eaf0f6',
@@ -340,22 +340,85 @@ export const SYSTEM_THEME_PRESET: SelectableThemePreset = {
   description: '跟随系统明暗，自动切换清爽与深色工作面',
   primaryColor: '#2563eb',
   mode: 'auto',
-  preview: { primary: '#2563eb', canvas: SYSTEM_LIGHT_SURFACE.canvas, paper: SYSTEM_DARK_SURFACE.paper },
+  preview: {
+    primary: '#2563eb',
+    canvas: SYSTEM_LIGHT_SURFACE.canvas,
+    paper: SYSTEM_DARK_SURFACE.paper,
+  },
   surfaces: { light: SYSTEM_LIGHT_SURFACE, dark: SYSTEM_DARK_SURFACE },
 }
 
 export const VISUAL_THEME_PRESETS: readonly SelectableThemePreset[] = [
-  fixedPreset('atlas', 'Atlas', '翡翠', '沉稳清晰的知识工作台', '#0f827a', 'light', ATLAS_LIGHT_SURFACE),
-  fixedPreset('ocean', 'Ocean', '深海', '理性专注的蓝色界面', '#3e63dd', 'light', OCEAN_LIGHT_SURFACE),
-  fixedPreset('violet', 'Violet', '智紫', '富有创造力的智能界面', '#7347bd', 'light', VIOLET_LIGHT_SURFACE),
-  fixedPreset('ember', 'Ember', '暖焰', '温暖醒目的行动工作台', '#b45309', 'light', EMBER_LIGHT_SURFACE),
+  fixedPreset(
+    'atlas',
+    'Atlas',
+    '翡翠',
+    '沉稳清晰的知识工作台',
+    '#0f827a',
+    'light',
+    ATLAS_LIGHT_SURFACE,
+  ),
+  fixedPreset(
+    'ocean',
+    'Ocean',
+    '深海',
+    '理性专注的蓝色界面',
+    '#3e63dd',
+    'light',
+    OCEAN_LIGHT_SURFACE,
+  ),
+  fixedPreset(
+    'violet',
+    'Violet',
+    '智紫',
+    '富有创造力的智能界面',
+    '#7347bd',
+    'light',
+    VIOLET_LIGHT_SURFACE,
+  ),
+  fixedPreset(
+    'ember',
+    'Ember',
+    '暖焰',
+    '温暖醒目的行动工作台',
+    '#b45309',
+    'light',
+    EMBER_LIGHT_SURFACE,
+  ),
   fixedPreset('dawn', 'Dawn', '晨曦', '柔和从容的协作界面', '#b42362', 'light', DAWN_LIGHT_SURFACE),
-  fixedPreset('night', 'Night', '夜航', '低眩光的深色工作环境', '#14b8a6', 'dark', NIGHT_DARK_SURFACE),
-  fixedPreset('aurora', 'Aurora', '极光', '深靛紫光的探索界面', '#8b5cf6', 'dark', AURORA_DARK_SURFACE),
-  fixedPreset('graphite', 'Graphite', '墨岩', '克制中性的石墨工作台', '#94a3b8', 'dark', GRAPHITE_DARK_SURFACE),
+  fixedPreset(
+    'night',
+    'Night',
+    '夜航',
+    '低眩光的深色工作环境',
+    '#14b8a6',
+    'dark',
+    NIGHT_DARK_SURFACE,
+  ),
+  fixedPreset(
+    'aurora',
+    'Aurora',
+    '极光',
+    '深靛紫光的探索界面',
+    '#8b5cf6',
+    'dark',
+    AURORA_DARK_SURFACE,
+  ),
+  fixedPreset(
+    'graphite',
+    'Graphite',
+    '墨岩',
+    '克制中性的石墨工作台',
+    '#94a3b8',
+    'dark',
+    GRAPHITE_DARK_SURFACE,
+  ),
 ]
 
-export const THEME_PRESETS: readonly SelectableThemePreset[] = [SYSTEM_THEME_PRESET, ...VISUAL_THEME_PRESETS]
+export const THEME_PRESETS: readonly SelectableThemePreset[] = [
+  SYSTEM_THEME_PRESET,
+  ...VISUAL_THEME_PRESETS,
+]
 
 export const DEFAULT_THEME_PRESET = VISUAL_THEME_PRESETS.find((preset) => preset.id === 'ocean')!
 
@@ -408,8 +471,9 @@ export function createCustomThemePreset(
       canvas: resolved.surface.canvas,
       paper: resolved.surface.paper,
     },
-    surfaces: mode === 'auto'
-      ? { light: SYSTEM_LIGHT_SURFACE, dark: SYSTEM_DARK_SURFACE }
-      : { [mode]: resolved.surface },
+    surfaces:
+      mode === 'auto'
+        ? { light: SYSTEM_LIGHT_SURFACE, dark: SYSTEM_DARK_SURFACE }
+        : { [mode]: resolved.surface },
   }
 }
