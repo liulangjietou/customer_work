@@ -23,6 +23,18 @@ public class DistributedProperties {
     private String counterKeyPrefix = "cw:counter:";
 
     /**
+     * WebSocket 下行推送模式：memory（单副本）| redis（跨副本广播）。
+     *
+     * <p><b>多副本部署必须切 redis</b>：连接注册表是进程内的，坐席在 A 副本回复而用户连在 B 副本时，
+     * 消息发不出去<b>且不报错</b>——用户界面就是一直没有下文。工单状态变更、满意度邀请这类
+     * 由后台侧发起的下行同理。</p>
+     */
+    private String wsDownstreamMode = "memory";
+
+    /** 下行推送广播的 Redis 频道名。 */
+    private String wsDownstreamTopic = "cw:ws:downstream";
+
+    /**
      * 会话串行锁实现：{@code memory} 进程内信号量 / {@code redis} 分布式锁。
      *
      * <p>进程内锁要求网关按会话做 sticky 路由才成立；一旦同一会话可能落到不同实例，
