@@ -143,4 +143,10 @@ public class ToolGuardMiddleware implements MiddlewareBase {
         }
         return null;
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：工具入参护栏。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.TOOL_GUARD;
+    }
 }

@@ -131,4 +131,10 @@ public class LatencyMiddleware implements MiddlewareBase {
             log.debug("[LAT] {} = {} ms", metric, d.toMillis());
         }
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：计时需包含内层全部耗时。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.LATENCY;
+    }
 }

@@ -503,4 +503,10 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
             return new MsgScan(null, null, null, null);
         }
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：比脱敏更外，命中记录里的片段因此已脱敏。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.SENSITIVE_WORD;
+    }
 }

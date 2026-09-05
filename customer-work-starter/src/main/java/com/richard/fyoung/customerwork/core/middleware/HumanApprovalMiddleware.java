@@ -50,4 +50,10 @@ public class HumanApprovalMiddleware implements MiddlewareBase {
     boolean isGuarded(String toolName) {
         return toolName != null && guardedTools.contains(toolName);
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：工具级人工确认。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.HUMAN_APPROVAL;
+    }
 }

@@ -44,4 +44,10 @@ public class AgentLifecycleMiddleware implements MiddlewareBase {
             .build();
         return Flux.just(new AgentResultEvent(reply));
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：撤销态必须在进入任何链路之前拦下。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.AGENT_LIFECYCLE;
+    }
 }

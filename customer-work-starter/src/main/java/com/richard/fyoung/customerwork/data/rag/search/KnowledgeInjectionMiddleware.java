@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.rag.search;
 
+import com.richard.fyoung.customerwork.core.middleware.MiddlewareOrders;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.data.calllog.AgentReplayCapture;
 import com.richard.fyoung.customerwork.safety.security.spotlight.ContentSpotlighter;
@@ -240,4 +241,10 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
      * 与"尚未检索"（键不存在）区分开。
      */
     private record RetrievedBlock(String block) { }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：RAG 知识瞬态注入，须在预算裁剪之外。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.KNOWLEDGE_INJECTION;
+    }
 }

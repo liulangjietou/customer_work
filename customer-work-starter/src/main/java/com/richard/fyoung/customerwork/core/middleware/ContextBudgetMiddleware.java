@@ -192,4 +192,10 @@ public class ContextBudgetMiddleware implements MiddlewareBase {
         }
         return msg.getMetadata() != null && Boolean.TRUE.equals(msg.getMetadata().get(Msg.METADATA_SYNTHETIC));
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：必须最内层：所有注入完成后才算得准。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.CONTEXT_BUDGET;
+    }
 }

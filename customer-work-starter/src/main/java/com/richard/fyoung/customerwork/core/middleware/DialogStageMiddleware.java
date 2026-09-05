@@ -122,4 +122,10 @@ public class DialogStageMiddleware implements MiddlewareBase {
     private String sessionId(RuntimeContext ctx) {
         return ctx == null ? null : ctx.getSessionId();
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：按阶段动态组装系统提示词。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.DIALOG_STAGE;
+    }
 }
