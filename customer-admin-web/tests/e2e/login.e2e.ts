@@ -1353,7 +1353,8 @@ test.describe('注册入口能力', () => {
 })
 
 test.describe('移动端整页滚动', () => {
-  test.use({ viewport: { width: 390, height: 720 } })
+  // 短视口保证各步骤都实际溢出；紧凑表单在 CI 字体环境下可能完整落入 720px，无法验证回顶。
+  test.use({ viewport: { width: 390, height: 600 } })
 
   test('模式与注册步骤切换回顶，且不产生嵌套或横向滚动', async ({ page }) => {
     await openLogin(page)

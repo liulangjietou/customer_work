@@ -132,3 +132,18 @@ for (const width of [390, 1280]) {
     expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(844)
   })
 }
+
+test('移动端从打开的执行详情返回上一页时，抽屉不会残留遮挡页面', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/home')
+  await page.getByRole('button', { name: '进入Java 智能体', exact: true }).click()
+  await expect(page).toHaveURL(/\/workspace\/java-assistant$/)
+  await page.getByRole('button', { name: '执行详情', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '执行详情', exact: true })).toBeVisible()
+  await page.goBack()
+  await expect(page).toHaveURL(/\/home$/)
+  await expect(page.getByRole('heading', { name: '执行详情', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '进入Java 智能体', exact: true }).click()
+  await expect(page).toHaveURL(/\/workspace\/java-assistant$/)
+  await expect(page.getByRole('heading', { name: '执行详情', exact: true })).toHaveCount(0)
+})

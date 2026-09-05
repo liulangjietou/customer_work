@@ -66,6 +66,8 @@ onActivated(() => {
 })
 onDeactivated(() => {
   viewActive.value = false
+  // 抽屉挂载在 body，缓存工作区时需显式关闭，避免浏览器返回后仍遮挡其他页面。
+  detailsOpen.value = false
 })
 const themeStore = useThemeStore()
 const detailsOpen = ref(false)
