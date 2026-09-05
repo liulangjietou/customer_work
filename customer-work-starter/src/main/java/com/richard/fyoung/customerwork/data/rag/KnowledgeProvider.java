@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.rag;
 
+import com.richard.fyoung.customerwork.core.constant.KnowledgeProviders;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.agentscope.core.embedding.dashscope.DashScopeTextEmbedding;
 import io.agentscope.core.rag.Knowledge;
@@ -78,21 +79,37 @@ public class KnowledgeProvider {
         return cached;
     }
 
+    /**
+     * 按配置构建知识库实现。
+     *
+     * <p><b>未知取值一律 fast fail，不再静默降级</b>：此前 default 分支兜住了拼写错误
+     * （{@code bailain}）与未实现的取值（javadoc 曾声称支持的 {@code ragflow} / {@code haystack}），
+     * 一律落到内置的 4 条演示文本上，只打一行 info 日志。运营会以为知识库在工作，
+     * 而客服智能体的全部知识就是那 4 句话——这类静默降级比启动失败难查得多。</p>
+     */
     private Knowledge build() {
-        String provider = properties.getRag().getProvider();
-        switch (provider == null ? "memory" : provider.toLowerCase()) {
-            case "simple":
+        String provider = KnowledgeProviders.normalize(properties.getRag().getProvider());
+        switch (provider) {
+            case KnowledgeProviders.SIMPLE:
                 return buildSimple();
-            case "bailian":
+            case KnowledgeProviders.BAILIAN:
                 return buildBailian();
-            case "dify":
+            case KnowledgeProviders.DIFY:
                 return buildDify();
-            default:
+            case KnowledgeProviders.MEMORY:
                 InMemoryKeywordKnowledge knowledge =
                     new InMemoryKeywordKnowledge(properties.getRag().getTopK());
                 knowledge.addTexts(KNOWLEDGE_DOCS).block();
-                log.info("[RAG] 使用内存知识库，预置文档 {} 条", KNOWLEDGE_DOCS.size());
+                log.info("[RAG] built-in demo knowledge in use, docs={} —— development only, "
+                    + "production must set customer-work.rag.provider to one of {}",
+                    KNOWLEDGE_DOCS.size(), KnowledgeProviders.PRODUCTION_ALLOWED);
                 return knowledge;
+            default:
+                log.error("[RAG] unknown knowledge provider, code={} provider={} implemented={}",
+                    "RAG-PROVIDER-UNKNOWN", provider, KnowledgeProviders.IMPLEMENTED);
+                throw new IllegalStateException("未知的 customer-work.rag.provider 取值：" + provider
+                    + "，已实现的取值为 " + KnowledgeProviders.IMPLEMENTED
+                    + "。此前这里会静默降级成内置演示知识库，现改为显式失败。");
         }
     }
 

@@ -334,3 +334,25 @@ export interface UserQuota {
   /** 是否真的受限（levelCode 为空时为 false） */
   limited: boolean
 }
+
+/**
+ * 长期记忆的同意状态。
+ *
+ * 生产强制 `customer-work.memory.consent-required=true`，服务端在查不到同意记录时 fail-closed。
+ * 也就是说：没有这份授权，L2/L3 长期记忆整条链路都是空转的——表照建、清理任务照跑、日志一行不报错。
+ * 此前后端接口齐备而 H5 没有任何调用方，正是这个原因。
+ */
+export interface MemoryConsent {
+  granted: boolean
+  consentVersion: string | null
+  grantedAtMs: number | null
+  withdrawnAtMs: number | null
+  updatedAtMs: number
+}
+
+/** 本人可见的长期记忆内容。memories 为可召回记忆，facts 为只追加的事实审计。 */
+export interface MemoryList {
+  memories: string[]
+  facts: string[]
+  count: number
+}

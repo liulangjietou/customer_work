@@ -195,6 +195,14 @@ async function confirmLogout() {
                 </span>
                 <van-icon class="menu-chevron" name="arrow" />
               </button>
+              <button type="button" class="menu-row" @click="router.push('/profile/privacy')">
+                <span class="menu-icon"><van-icon name="shield-o" /></span>
+                <span class="menu-copy">
+                  <strong>个性化记忆</strong>
+                  <small>授权后跨会话记住你的偏好，可随时查看与删除</small>
+                </span>
+                <van-icon class="menu-chevron" name="arrow" />
+              </button>
             </div>
           </section>
 

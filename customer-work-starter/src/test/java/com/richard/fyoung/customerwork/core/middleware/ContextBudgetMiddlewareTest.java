@@ -2,6 +2,8 @@ package com.richard.fyoung.customerwork.core.middleware;
 
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.middleware.ReasoningInput;
 import org.junit.jupiter.api.DisplayName;
@@ -45,6 +47,24 @@ class ContextBudgetMiddlewareTest {
             .content(TextBlock.builder().text(text).build())
             .metadata(Map.of(Msg.METADATA_SYNTHETIC, true))
             .build();
+    }
+
+
+    /** 携带 tool_use 的 assistant 消息。 */
+    private Msg toolUse(String id, String toolName) {
+        return Msg.builder().role(MsgRole.ASSISTANT).name("assistant")
+            .content(new ToolUseBlock(id, toolName, Map.of())).build();
+    }
+
+    /** 携带 tool_result 的消息，与上面的 tool_use 通过 id 对应。 */
+    private Msg toolResult(String id, String toolName, String text) {
+        return Msg.builder().role(MsgRole.ASSISTANT).name("assistant")
+            .content(new ToolResultBlock(id, toolName, TextBlock.builder().text(text).build()))
+            .build();
+    }
+
+    private boolean hasBlock(Msg msg, Class<?> type) {
+        return msg.getContent() != null && msg.getContent().stream().anyMatch(type::isInstance);
     }
 
     private List<Msg> conversation(int count) {
@@ -116,6 +136,97 @@ class ContextBudgetMiddlewareTest {
         assertEquals("m49", out.get(out.size() - 1).getTextContent(), "最近一条应保留");
         assertTrue(out.stream().noneMatch(m -> "m25".equals(m.getTextContent())),
             "中间部分应被丢弃");
+    }
+
+
+    /**
+     * 裁剪不得把 tool_use 与它的 tool_result 切散。
+     *
+     * <p><b>守的是什么 bug</b>：原实现按位置直接 subList 首尾切，完全不看消息内容。
+     * 这里刻意把工具调用对放在切口两侧——tool_use 在尾段预算之外、tool_result 在之内，
+     * 按位置切会送出一个孤立的 tool_result，多数厂商对此直接返 400。
+     * 也就是说这个中间件一旦按 javadoc 建议在生产开启，长会话会从"上下文超限"变成"整轮请求失败"。</p>
+     */
+    @Test
+    @DisplayName("裁剪不得切散 tool_use 与 tool_result")
+    void toolCallPairsSurviveTrimming() {
+        ContextBudgetMiddleware mw = new ContextBudgetMiddleware(true, 10, 3);
+
+        List<Msg> input = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            input.add(user("m" + i));
+        }
+        // 尾段预算为 10-3=7 条，从尾数第 7 条正好落在 tool_result 上，tool_use 在它之外
+        input.add(toolUse("call-1", "queryOrder"));
+        input.add(toolResult("call-1", "queryOrder", "订单已发货"));
+        for (int i = 14; i < 20; i++) {
+            input.add(user("m" + i));
+        }
+
+        List<Msg> out = mw.trim(input);
+
+        boolean keptUse = out.stream().anyMatch(m -> hasBlock(m, ToolUseBlock.class));
+        boolean keptResult = out.stream().anyMatch(m -> hasBlock(m, ToolResultBlock.class));
+        assertEquals(keptUse, keptResult,
+            "tool_use 与 tool_result 必须同去同留，出现孤立的一半会让厂商直接返 400");
+        assertTrue(keptResult, "本场景下工具调用对落在尾段，应当被保留");
+
+        int useIdx = -1;
+        int resultIdx = -1;
+        for (int i = 0; i < out.size(); i++) {
+            if (hasBlock(out.get(i), ToolUseBlock.class)) {
+                useIdx = i;
+            }
+            if (hasBlock(out.get(i), ToolResultBlock.class)) {
+                resultIdx = i;
+            }
+        }
+        assertEquals(useIdx + 1, resultIdx, "tool_result 必须紧跟在它的 tool_use 之后");
+    }
+
+    /**
+     * 为保住配对，允许略微超出条数预算。
+     *
+     * <p>预算是防上下文膨胀的近似手段，配对完整性却是硬性协议约束——
+     * 超一两条只是多花点 token，切散则是整轮请求失败。两者冲突时选后者。</p>
+     */
+    @Test
+    @DisplayName("保住配对时允许略微超出条数预算")
+    void pairingMayExceedBudgetSlightly() {
+        ContextBudgetMiddleware mw = new ContextBudgetMiddleware(true, 10, 3);
+
+        List<Msg> input = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            input.add(user("m" + i));
+        }
+        input.add(toolUse("call-1", "queryOrder"));
+        input.add(toolResult("call-1", "queryOrder", "订单已发货"));
+        for (int i = 14; i < 20; i++) {
+            input.add(user("m" + i));
+        }
+
+        List<Msg> out = mw.trim(input);
+
+        assertTrue(out.size() >= 10, "至少要达到预算");
+        assertTrue(out.size() <= 12, "超出幅度应限于保住配对所需，实际 " + out.size());
+        assertTrue(out.size() < input.size(), "仍然要有实际裁剪效果");
+    }
+
+    /** 整段都是一个巨大的工具调用组时无从下手，原样返回而不是切出一个残缺序列。 */
+    @Test
+    @DisplayName("无法在不切散配对的前提下裁剪时原样返回")
+    void unsplittableConversationReturnsOriginal() {
+        ContextBudgetMiddleware mw = new ContextBudgetMiddleware(true, 5, 2);
+
+        List<Msg> input = new ArrayList<>();
+        input.add(toolUse("call-1", "queryOrder"));
+        for (int i = 0; i < 9; i++) {
+            input.add(toolResult("call-1", "queryOrder", "分片" + i));
+        }
+
+        List<Msg> out = mw.trim(input);
+
+        assertSame(input, out, "整段是一个不可拆分的组，应原样返回");
     }
 
     /** system 消息承载的是角色设定与规则，裁掉它模型会当场失忆。 */

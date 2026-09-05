@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerworkapp.config;
 
 import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
+import com.richard.fyoung.customerwork.core.constant.KnowledgeProviders;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentProperties;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SecurityProperties;
@@ -21,6 +22,51 @@ class ProductionReadinessValidatorTest {
     @Test
     void validProductionProperties_shouldPass() {
         CustomerWorkProperties properties = validProperties();
+        AttachmentProperties attachment = validAttachmentProperties();
+
+        assertDoesNotThrow(() -> new ProductionReadinessValidator(properties, attachment).afterPropertiesSet());
+    }
+
+    /**
+     * 内置演示知识库不得上生产。
+     *
+     * <p>{@code provider=memory} 的语料是 {@code KnowledgeProvider} 里硬编码的 4 条售后政策文本。
+     * 漏配 {@code RAG_PROVIDER} 环境变量时 prod yml 会落到这个兜底值上，
+     * 后果是客服智能体只认那 4 条政策，而后台整套企业知识库对线上对话零影响，且不报任何错。</p>
+     */
+    @Test
+    void memoryKnowledgeProvider_shouldFailInProduction() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getRag().setEnabled(true);
+        properties.getRag().setProvider(KnowledgeProviders.MEMORY);
+        AttachmentProperties attachment = validAttachmentProperties();
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, attachment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.rag.provider"));
+    }
+
+    /** 未实现的取值同样要被拒——此前它们会静默落进 default 分支降级成演示语料。 */
+    @Test
+    void unimplementedKnowledgeProvider_shouldFailInProduction() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getRag().setEnabled(true);
+        properties.getRag().setProvider("ragflow");
+        AttachmentProperties attachment = validAttachmentProperties();
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new ProductionReadinessValidator(properties, attachment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("customer-work.rag.provider"));
+    }
+
+    /** RAG 整体关闭时不校验知识库取值——没有知识库就谈不上演示语料泄漏到生产。 */
+    @Test
+    void disabledRag_shouldSkipKnowledgeProviderCheck() {
+        CustomerWorkProperties properties = validProperties();
+        properties.getRag().setEnabled(false);
+        properties.getRag().setProvider(KnowledgeProviders.MEMORY);
         AttachmentProperties attachment = validAttachmentProperties();
 
         assertDoesNotThrow(() -> new ProductionReadinessValidator(properties, attachment).afterPropertiesSet());
@@ -174,6 +220,9 @@ class ProductionReadinessValidatorTest {
 
     private CustomerWorkProperties validProperties() {
         CustomerWorkProperties properties = new CustomerWorkProperties();
+        // 生产禁用内置演示知识库（provider=memory 的语料是硬编码的 4 条政策文本），
+        // 基准配置必须给一个合法取值，否则本类其余用例会因这条新门禁连带全红。
+        properties.getRag().setProvider(KnowledgeProviders.SIMPLE);
         properties.getModel().setApiKey("model-secret");
         properties.getSession().getMysql().setPassword("database-secret");
         properties.getSession().getMysql().setMigrationEnabled(true);
