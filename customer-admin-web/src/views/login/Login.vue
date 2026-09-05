@@ -75,7 +75,7 @@ const canResetPassword = computed(() =>
   ),
 )
 
-// 后台仍可配置多张登录图；接口不可用时用首页同源客服视觉兜底。
+// 空列表展示品牌说明；配置图片的加载失败兜底由品牌组件负责。
 const bgImages = ref<string[]>([])
 
 const REMEMBER_KEY_PREFIX = 'admin-remember-username-'
@@ -164,7 +164,7 @@ async function loadLoginImages() {
       bgImages.value = urls
     }
   } catch {
-    // 后端不可用时静默使用内置图，不干扰身份验证主流程。
+    // 后端不可用时保留品牌说明，不干扰身份验证主流程。
   }
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   images: string[]
@@ -10,11 +10,23 @@ const activeImageIndex = ref(0)
 const manuallyPaused = ref(false)
 const prefersReducedMotion = ref(false)
 const pageVisible = ref(true)
+const failedImages = ref<string[]>([])
 let reducedMotionQuery: MediaQueryList | undefined
 
 const CAROUSEL_INTERVAL_MS = 3000
+const FALLBACK_IMAGE = '/home-cover.jpg'
 
-const displayImages = computed(() => props.images.map((image) => image.trim()).filter(Boolean))
+const configuredImages = computed(() => [
+  ...new Set(props.images.map((image) => image.trim()).filter(Boolean)),
+])
+const displayImages = computed(() => {
+  const available = configuredImages.value.filter((image) => !failedImages.value.includes(image))
+  if (available.length > 0) return available
+  // 未配置图片时保留品牌说明；仅在配置图片失效时使用内置图，且兜底不循环重试。
+  return configuredImages.value.length > 0 && !failedImages.value.includes(FALLBACK_IMAGE)
+    ? [FALLBACK_IMAGE]
+    : []
+})
 const hasMultipleImages = computed(() => displayImages.value.length > 1)
 const shouldAutoplay = computed(
   () =>
@@ -42,6 +54,23 @@ function toggleAutoplay() {
 function syncPageVisibility() {
   pageVisible.value = document.visibilityState === 'visible'
 }
+
+function markImageFailed(event: Event) {
+  // 使用触发错误的元素地址；旧图片的延迟事件不能误删列表更新后的当前图片。
+  const image = (event.currentTarget as HTMLImageElement).getAttribute('src')!
+  if (!failedImages.value.includes(image)) failedImages.value.push(image)
+}
+
+watch(configuredImages, () => {
+  failedImages.value = []
+})
+
+watch(displayImages, async () => {
+  // 图片失败后列表会缩短，等待轮播项更新再复位，避免指示器指向已移除的图片。
+  activeImageIndex.value = 0
+  await nextTick()
+  carouselRef.value?.setActiveItem(0)
+})
 
 onMounted(() => {
   reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -76,15 +105,18 @@ onBeforeUnmount(() => {
         @change="activeImageIndex = $event"
       >
         <el-carousel-item v-for="image in displayImages" :key="image">
-          <div class="brand-image" :style="{ backgroundImage: `url(${JSON.stringify(image)})` }" />
+          <img class="brand-image" :src="image" alt="" @error="markImageFailed" />
         </el-carousel-item>
       </el-carousel>
-      <div
+      <img
         v-else-if="displayImages[0]"
+        :key="displayImages[0]"
         class="brand-image"
-        :style="{ backgroundImage: `url(${JSON.stringify(displayImages[0])})` }"
+        :src="displayImages[0]"
+        alt=""
+        @error="markImageFailed"
       />
-      <div class="brand-scrim" />
+      <div v-else class="brand-scrim" />
     </div>
 
     <div class="brand-content">
@@ -102,7 +134,7 @@ onBeforeUnmount(() => {
         <p class="brand-summary">连接企业知识与业务工具，从任务到交付，让每一步清晰可见。</p>
       </div>
 
-      <div class="execution-trace" aria-label="智能体执行轨迹示意">
+      <div v-if="displayImages.length === 0" class="execution-trace" aria-label="智能体执行轨迹示意">
         <div class="trace-heading">
           <span>执行轨迹</span>
           <small>示意链路</small>
@@ -185,9 +217,11 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--cw-line);
 }
 .brand-stage.has-images {
-  --brand-text: #f8fbff;
-  --brand-muted: #dce5f4;
-  background: #142340;
+  display: grid;
+  grid-template-rows: auto minmax(220px, 1fr) auto auto;
+  gap: 24px;
+  box-sizing: border-box;
+  padding: 32px clamp(24px, 3vw, 48px);
 }
 .brand-media {
   position: absolute;
@@ -200,8 +234,9 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 .brand-image {
-  background-size: cover;
-  background-position: center;
+  display: block;
+  object-fit: contain;
+  object-position: center;
 }
 .brand-scrim {
   position: absolute;
@@ -217,8 +252,14 @@ onBeforeUnmount(() => {
       40px 40px;
   pointer-events: none;
 }
-.has-images .brand-scrim {
-  background: rgb(10 24 46 / 80%);
+.has-images .brand-media {
+  position: relative;
+  grid-row: 2;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--cw-paper);
+  border: 1px solid var(--cw-line);
 }
 .brand-content {
   position: relative;
@@ -232,6 +273,31 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.has-images .brand-content {
+  display: contents;
+}
+.has-images .brand-header {
+  grid-row: 1;
+}
+.has-images .brand-message {
+  grid-row: 3;
+  margin: 0;
+  padding: 0;
+}
+.has-images .brand-kicker {
+  display: none;
+}
+.has-images .brand-message h1 {
+  font-size: clamp(24px, 2.2vw, 32px);
+}
+.has-images .brand-summary {
+  max-width: none;
+  margin-top: 12px;
+}
+.has-images .carousel-controls {
+  grid-row: 4;
+  margin: 0;
 }
 .brand-mark {
   width: 38px;
@@ -388,6 +454,10 @@ onBeforeUnmount(() => {
   background: var(--brand-text);
 }
 @media (max-height: 760px) and (min-width: 981px) {
+  .brand-stage.has-images {
+    gap: 16px;
+    padding-block: 24px;
+  }
   .brand-content {
     padding-block: 24px;
   }
@@ -408,6 +478,15 @@ onBeforeUnmount(() => {
   }
   .brand-content {
     padding: 24px;
+  }
+  .brand-stage.has-images {
+    grid-template-rows: auto 180px auto;
+    gap: 12px;
+    padding: 20px;
+  }
+  .has-images .carousel-controls {
+    display: flex;
+    grid-row: 3;
   }
   .brand-message,
   .execution-trace,
