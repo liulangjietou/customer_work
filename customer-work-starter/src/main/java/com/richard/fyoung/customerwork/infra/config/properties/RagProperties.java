@@ -33,6 +33,21 @@ public class RagProperties {
     private final Bailian bailian = new Bailian();
     /** Dify 知识库配置（provider=dify 时生效）。 */
     private final Dify dify = new Dify();
+    /** 受管知识库配置（provider=managed 时生效）。 */
+    private final Managed managed = new Managed();
+
+    /** 受管知识库：客服端直连后台投影过来的企业知识库。 */
+    @Data
+    public static class Managed {
+        /**
+         * 参与检索的知识库编码；<b>留空表示本租户全部已投影版本</b>。
+         *
+         * <p>留空是刻意的默认：运营在后台建了知识库、同步任务把它投影过来了，
+         * 就说明它是打算给客服用的。要求再在客服端配一遍编码，等于给"知识库明明建好了却查不到"
+         * 多留一个漏配点。需要精确控制时才显式列出。</p>
+         */
+        private java.util.List<String> knowledgeBaseCodes = new ArrayList<>();
+    }
 
     @Data
     public static class Dify {

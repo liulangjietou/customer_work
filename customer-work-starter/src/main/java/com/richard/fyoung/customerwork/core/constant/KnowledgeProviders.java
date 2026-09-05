@@ -30,8 +30,16 @@ public final class KnowledgeProviders {
     /** Dify 知识库。 */
     public static final String DIFY = "dify";
 
+    /**
+     * 受管知识库：客服端直连后台维护的那套企业知识库（{@code cw_knowledge_chunk}）。
+     *
+     * <p>此前客服端与后台是两套互不相通的知识栈——运营在后台做的版本管理、ACL、新鲜度门禁
+     * 对线上对话零影响。这个取值是把两者接上的那一条。</p>
+     */
+    public static final String MANAGED = "managed";
+
     /** 已实现的全部取值。不在这里面的一律视为配置错误。 */
-    public static final Set<String> IMPLEMENTED = Set.of(MEMORY, SIMPLE, BAILIAN, DIFY);
+    public static final Set<String> IMPLEMENTED = Set.of(MEMORY, SIMPLE, BAILIAN, DIFY, MANAGED);
 
     /**
      * 允许在生产使用的取值：{@link #MEMORY} 刻意排除在外。
@@ -40,7 +48,7 @@ public final class KnowledgeProviders {
      * {@code scripts/clear-demo-data.sh} 要清的数据库演示数据是同一类问题的两面，
      * 区别在于代码里的这份没有任何脚本能清理，只能靠配置与门禁挡住。</p>
      */
-    public static final Set<String> PRODUCTION_ALLOWED = Set.of(SIMPLE, BAILIAN, DIFY);
+    public static final Set<String> PRODUCTION_ALLOWED = Set.of(SIMPLE, BAILIAN, DIFY, MANAGED);
 
     private KnowledgeProviders() {
     }

@@ -33,6 +33,17 @@
         <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
     </select>
 
+    <!--
+      C 端可检索的分区：只放行 PUBLIC。终端用户没有可做细粒度 ACL 判定的身份，
+      这条约束落在 SQL 里而不是交给调用方过滤。
+    -->
+    <select id="selectPublicPartitions" resultType="java.lang.Long">
+        SELECT DISTINCT doc_revision_id
+        FROM cw_knowledge_chunk
+        WHERE kb_version_id = #{kbVersionId}
+          AND acl_mode = 'PUBLIC'
+    </select>
+
     <!-- 重新投影前清场。 -->
     <delete id="deleteByVersion">
         DELETE FROM cw_knowledge_chunk WHERE kb_version_id = #{kbVersionId}
