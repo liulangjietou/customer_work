@@ -35,6 +35,21 @@ public class DistributedProperties {
     private String wsDownstreamTopic = "cw:ws:downstream";
 
     /**
+     * 状态机型定时任务是否加多副本互斥锁。
+     *
+     * <p><b>多副本部署应当开启</b>：审批超时、转人工 SLA、工单 SLA 这类调度器是
+     * 「扫一批处于某状态的行，逐条改状态并触发动作」，没有抢占机制。多副本下每个副本都会
+     * 扫到同一批行——超时动作执行两次、SLA 告警重复发。队列型调度（Outbox、死信）
+     * 靠表里的 lease_owner 抢占，不受此影响。</p>
+     *
+     * <p>默认关闭：单副本不需要，而无条件加锁会让所有部署都依赖 Redis 可用性。</p>
+     */
+    private boolean schedulerLeaseEnabled = false;
+
+    /** 定时任务锁的租期（秒）：应大于任务单轮最长执行时间，否则会在执行中途被别的副本抢走。 */
+    private long schedulerLeaseSeconds = 300L;
+
+    /**
      * 会话串行锁实现：{@code memory} 进程内信号量 / {@code redis} 分布式锁。
      *
      * <p>进程内锁要求网关按会话做 sticky 路由才成立；一旦同一会话可能落到不同实例，
