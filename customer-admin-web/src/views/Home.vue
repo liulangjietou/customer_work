@@ -6,6 +6,7 @@ import { useMenuStore } from '@/store/menu'
 import { useTabsStore } from '@/store/tabs'
 import HomeAdmission from './home/components/HomeAdmission.vue'
 import HomeHero from './home/components/HomeHero.vue'
+import HomeOperations from './home/components/HomeOperations.vue'
 import HomeWorkBoard from './home/components/HomeWorkBoard.vue'
 import {
   buildHomeAdmissionPresentation,
@@ -18,11 +19,13 @@ const menuStore = useMenuStore()
 const tabsStore = useTabsStore()
 const router = useRouter()
 
-const snapshot = computed(() => buildHomeSnapshot({
-  approved: auth.isApproved,
-  menuTree: menuStore.tree,
-  tabs: tabsStore.tabs,
-}))
+const snapshot = computed(() =>
+  buildHomeSnapshot({
+    approved: auth.isApproved,
+    menuTree: menuStore.tree,
+    tabs: tabsStore.tabs,
+  }),
+)
 
 const displayName = computed(() => auth.nickname || auth.username || '使用者')
 const accountName = computed(() => auth.username || '当前登录账号')
@@ -41,15 +44,14 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
-const primaryEntry = computed<HomeEntry | undefined>(() => (
-  snapshot.value.quickEntries.find((entry) => entry.dynamic)
-  ?? snapshot.value.quickEntries[0]
-))
+const primaryEntry = computed<HomeEntry | undefined>(
+  () =>
+    snapshot.value.quickEntries.find((entry) => entry.dynamic) ?? snapshot.value.quickEntries[0],
+)
 
-const admissionPresentation = computed(() => buildHomeAdmissionPresentation(
-  auth.approvalStatus,
-  auth.approvalRemark,
-))
+const admissionPresentation = computed(() =>
+  buildHomeAdmissionPresentation(auth.approvalStatus, auth.approvalRemark),
+)
 
 function navigate(path: string) {
   router.push(path)
@@ -63,11 +65,10 @@ function navigate(path: string) {
         :display-name="displayName"
         :today-label="todayLabel"
         :greeting="greeting"
-        :routes-registered="menuStore.routesRegistered"
-        :snapshot="snapshot"
         :primary-entry="primaryEntry"
         @navigate="navigate"
       />
+      <HomeOperations :agent-count="snapshot.agentEntryCount" @navigate="navigate" />
       <HomeWorkBoard :snapshot="snapshot" @navigate="navigate" />
     </div>
   </main>
@@ -103,11 +104,7 @@ function navigate(path: string) {
   min-height: 0;
   overflow: auto;
   color: var(--home-text);
-  background:
-    linear-gradient(color-mix(in srgb, var(--home-line) 25%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--home-line) 25%, transparent) 1px, transparent 1px),
-    var(--home-canvas);
-  background-size: 32px 32px;
+  background: var(--home-canvas);
   scrollbar-gutter: stable;
 }
 

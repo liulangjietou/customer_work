@@ -58,21 +58,25 @@ const registerOptions = ref<RegisterOptionsVO>({
   selfServiceEnabled: false,
   captchaRequired: false,
 })
-const canRegister = computed(() => shouldShowRegisterEntry(
-  loginMode.value,
-  registerOptionsLoaded.value,
-  registerOptions.value.selfServiceEnabled,
-))
+const canRegister = computed(() =>
+  shouldShowRegisterEntry(
+    loginMode.value,
+    registerOptionsLoaded.value,
+    registerOptions.value.selfServiceEnabled,
+  ),
+)
 // 找回密码与自助注册是两个独立开关：关掉注册的内网实例照样需要它，
 // 而它本身跟随服务端邮件是否可用
-const canResetPassword = computed(() => shouldShowForgotPasswordEntry(
-  loginMode.value,
-  registerOptionsLoaded.value,
-  registerOptions.value.passwordResetEnabled,
-))
+const canResetPassword = computed(() =>
+  shouldShowForgotPasswordEntry(
+    loginMode.value,
+    registerOptionsLoaded.value,
+    registerOptions.value.passwordResetEnabled,
+  ),
+)
 
 // 后台仍可配置多张登录图；接口不可用时用首页同源客服视觉兜底。
-const bgImages = ref<string[]>(['/home-cover.jpg'])
+const bgImages = ref<string[]>([])
 
 const REMEMBER_KEY_PREFIX = 'admin-remember-username-'
 
@@ -179,9 +183,12 @@ async function focusFirstInvalidField() {
   await nextTick()
   // handleSubmit 的 finally 会在当前调用栈结束时解除 submitting；等一个宏任务避免聚焦到 disabled input。
   await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
-  const firstInvalidFieldId = form.username.trim().length === 0
-    ? 'login-username'
-    : form.password.trim().length === 0 ? 'login-password' : undefined
+  const firstInvalidFieldId =
+    form.username.trim().length === 0
+      ? 'login-username'
+      : form.password.trim().length === 0
+        ? 'login-password'
+        : undefined
   if (firstInvalidFieldId) document.getElementById(firstInvalidFieldId)?.focus()
 }
 
@@ -206,9 +213,10 @@ async function handleSubmit(): Promise<LoginSubmitOutcome> {
     captchaProof.value = ''
     let result: LoginResponse
     try {
-      result = submission.mode === 'local'
-        ? await login(submission.credentials)
-        : await ssoLogin(submission.credentials)
+      result =
+        submission.mode === 'local'
+          ? await login(submission.credentials)
+          : await ssoLogin(submission.credentials)
     } catch {
       // 请求层已展示业务或网络错误，组件只负责恢复可提交状态。
       await loginCaptchaRef.value?.reset()
@@ -330,7 +338,9 @@ onMounted(() => {
             :aria-hidden="captchaOpen"
             @submit.prevent="handleSubmit"
           >
-            <label class="field-label" for="login-username">{{ modePresentation.usernameLabel }}</label>
+            <label class="field-label" for="login-username">{{
+              modePresentation.usernameLabel
+            }}</label>
             <el-form-item prop="username">
               <el-input
                 id="login-username"
@@ -343,7 +353,9 @@ onMounted(() => {
               />
             </el-form-item>
 
-            <label class="field-label" for="login-password">{{ modePresentation.passwordLabel }}</label>
+            <label class="field-label" for="login-password">{{
+              modePresentation.passwordLabel
+            }}</label>
             <el-form-item prop="password">
               <el-input
                 id="login-password"
@@ -396,7 +408,9 @@ onMounted(() => {
 
           <div v-if="canRegister" class="register-entry">
             <span>还没有本地账号？</span>
-            <el-button link type="primary" :disabled="submitting" @click="openRegister">创建账号</el-button>
+            <el-button link type="primary" :disabled="submitting" @click="openRegister"
+              >创建账号</el-button
+            >
             <small>注册后由管理员审核并分配菜单权限</small>
           </div>
         </section>
@@ -433,7 +447,7 @@ onMounted(() => {
   height: 100%;
   min-height: 560px;
   display: grid;
-  grid-template-columns: minmax(0, 58fr) minmax(500px, 42fr);
+  grid-template-columns: minmax(0, 52fr) minmax(480px, 48fr);
   overflow: hidden;
   background: var(--el-bg-color-page);
 }
@@ -445,9 +459,7 @@ onMounted(() => {
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
-  background:
-    radial-gradient(circle at 100% 0%, var(--el-color-primary-light-9) 0%, transparent 31%),
-    var(--el-bg-color);
+  background: var(--cw-paper);
   color: var(--el-text-color-primary);
   scrollbar-gutter: stable;
 }
@@ -545,7 +557,10 @@ onMounted(() => {
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
-  transition: background-color 160ms ease-out, color 160ms ease-out, box-shadow 160ms ease-out;
+  transition:
+    background-color 160ms ease-out,
+    color 160ms ease-out,
+    box-shadow 160ms ease-out;
 }
 
 .mode-switch button.active {

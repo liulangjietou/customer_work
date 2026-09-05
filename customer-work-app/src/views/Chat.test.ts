@@ -10,6 +10,7 @@ const {
   fetchMyQuotaMock,
   fetchSessionFeedbackMock,
   fetchTicketDetailMock,
+  uploadAttachmentMock,
   sendMock,
   submitFeedbackMock,
   wsHandlers,
@@ -18,6 +19,7 @@ const {
   fetchMyQuotaMock: vi.fn(),
   fetchSessionFeedbackMock: vi.fn(),
   fetchTicketDetailMock: vi.fn(),
+  uploadAttachmentMock: vi.fn(),
   sendMock: vi.fn(),
   submitFeedbackMock: vi.fn(),
   wsHandlers: new Map<string, (data: unknown) => void>(),
@@ -39,7 +41,7 @@ vi.mock('@/api/feedback', () => ({
   submitFeedback: submitFeedbackMock,
 }))
 
-vi.mock('@/api/chat', () => ({ uploadChatAttachment: vi.fn() }))
+vi.mock('@/api/chat', () => ({ uploadChatAttachment: uploadAttachmentMock }))
 vi.mock('@/api/quota', () => ({ fetchMyQuota: fetchMyQuotaMock }))
 vi.mock('@/components/CsatSurveyCard.vue', () => ({
   default: defineComponent({ name: 'CsatSurveyCard', template: '<div></div>' }),
@@ -71,12 +73,14 @@ const FieldStub = defineComponent({
   props: { disabled: Boolean, modelValue: { type: String, default: '' } },
   emits: ['update:modelValue'],
   setup(props, { attrs, emit }) {
-    return () => h('input', {
-      ...attrs,
-      disabled: props.disabled,
-      value: props.modelValue,
-      onInput: (event: Event) => emit('update:modelValue', (event.target as HTMLInputElement).value),
-    })
+    return () =>
+      h('input', {
+        ...attrs,
+        disabled: props.disabled,
+        value: props.modelValue,
+        onInput: (event: Event) =>
+          emit('update:modelValue', (event.target as HTMLInputElement).value),
+      })
   },
 })
 
@@ -86,12 +90,17 @@ const ButtonStub = defineComponent({
   props: { disabled: Boolean, loading: Boolean },
   emits: ['click'],
   setup(props, { attrs, emit, slots }) {
-    return () => h('button', {
-      ...attrs,
-      disabled: props.disabled || props.loading,
-      type: 'button',
-      onClick: () => emit('click'),
-    }, slots.default?.())
+    return () =>
+      h(
+        'button',
+        {
+          ...attrs,
+          disabled: props.disabled || props.loading,
+          type: 'button',
+          onClick: () => emit('click'),
+        },
+        slots.default?.(),
+      )
   },
 })
 
@@ -109,6 +118,14 @@ const NavBarStub = defineComponent({
   },
 })
 
+const UploaderStub = defineComponent({
+  name: 'VanUploader',
+  props: { afterRead: Function },
+  setup(_props, { slots }) {
+    return () => h('div', slots.default?.())
+  },
+})
+
 const globalOptions = {
   config: { errorHandler: vi.fn() },
   stubs: {
@@ -121,7 +138,7 @@ const globalOptions = {
     'van-loading': SlotStub,
     'van-nav-bar': NavBarStub,
     'van-tag': SlotStub,
-    'van-uploader': SlotStub,
+    'van-uploader': UploaderStub,
   },
 }
 
@@ -192,9 +209,43 @@ describe('Chat', () => {
     fetchSessionFeedbackMock.mockReset().mockResolvedValue([])
     fetchTicketDetailMock.mockReset().mockResolvedValue(detail)
     sendMock.mockReset()
-    submitFeedbackMock.mockReset().mockImplementation(({ type }: { type: FeedbackType }) =>
-      Promise.resolve(savedFeedback(type)),
-    )
+    submitFeedbackMock
+      .mockReset()
+      .mockImplementation(({ type }: { type: FeedbackType }) =>
+        Promise.resolve(savedFeedback(type)),
+      )
+  })
+
+  it('附件解析失败时保留草稿并阻止静默丢弃附件后发送', async () => {
+    uploadAttachmentMock.mockResolvedValueOnce({
+      parseStatus: 'FAILED',
+      errorMessage: '无法解析文件',
+    })
+    const wrapper = await mountReadyChat()
+    const input = wrapper.get('.message-input')
+    await input.setValue('请参考附件')
+    await wrapper.findComponent(UploaderStub).props('afterRead')!({
+      file: new File(['content'], 'notes.txt'),
+    })
+    await flushPromises()
+    expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined()
+    expect((input.element as HTMLInputElement).value).toBe('请参考附件')
+    expect(sendMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each([
+    { shiftKey: true, isComposing: false },
+    { shiftKey: false, isComposing: true },
+  ])('换行或输入法确认不发送消息：%j', async (modifiers) => {
+    const wrapper = await mountReadyChat()
+    const input = wrapper.get('.message-input')
+    await input.setValue('尚未完成的草稿')
+    await input.trigger('keydown', { key: 'Enter', ...modifiers })
+    await input.trigger('keyup', { key: 'Enter', ...modifiers })
+    expect(sendMock).not.toHaveBeenCalled()
+    expect((input.element as HTMLInputElement).value).toBe('尚未完成的草稿')
+    wrapper.unmount()
   })
 
   it('发送前裁剪空格，使用当前会话构造 WebSocket 帧，并立即更新本地消息', async () => {
@@ -247,7 +298,8 @@ describe('Chat', () => {
   })
 
   it('反馈提交失败后释放提交锁，允许用户原地重试', async () => {
-    submitFeedbackMock.mockRejectedValueOnce(new Error('network unavailable'))
+    submitFeedbackMock
+      .mockRejectedValueOnce(new Error('network unavailable'))
       .mockResolvedValueOnce(savedFeedback('UP'))
     const wrapper = await mountReadyChat()
     const up = wrapper.get('button[aria-label="回复有帮助"]')

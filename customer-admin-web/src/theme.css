@@ -1,21 +1,21 @@
 /*
  * Customer Work 全站视觉语言。
- * 设计锚点：深墨生命周期轨道、安静的数据工作面、清晰的 Agent 证据轨迹。
+ * 设计锚点：单列任务导航、安静的数据工作面、清晰的 Agent 证据轨迹。
  * 只使用运行时 CSS 变量，保留 store/theme.ts 的换肤与明暗能力。
  */
 
 :root {
   color-scheme: light;
   --cw-nav-rail-width: 64px;
-  --cw-context-nav-width: 208px;
-  --cw-shell-expanded-width: calc(var(--cw-nav-rail-width) + var(--cw-context-nav-width));
+  --cw-context-nav-width: 228px;
+  --cw-shell-expanded-width: var(--cw-context-nav-width);
   --cw-topbar-height: 56px;
   --cw-tabs-height: 38px;
   --cw-footer-height: 32px;
 
   --cw-ink: #0b1630;
   --cw-ink-elevated: #152441;
-  --cw-canvas: #f4f6fa;
+  --cw-canvas: #f6f8fb;
   --cw-paper: #ffffff;
   --theme-primary: #3e63dd;
   --cw-cobalt: var(--theme-primary);
@@ -26,7 +26,7 @@
   --cw-amber-solid: #d99217;
   --cw-success: #16856a;
   --cw-danger: #c2414b;
-  --cw-info: #677189;
+  --cw-info: #626d80;
   --cw-success-solid: #16856a;
   --cw-success-solid-hover: #147b62;
   --cw-success-solid-active: #127159;
@@ -42,9 +42,9 @@
   --cw-on-warning: #1e1608;
   --cw-on-danger: #ffffff;
   --cw-on-info: #ffffff;
-  --cw-text: #172033;
-  --cw-text-muted: #677189;
-  --cw-line: #dce1ea;
+  --cw-text: #1d2637;
+  --cw-text-muted: #626d80;
+  --cw-line: #e3e7ef;
   --cw-line-strong: #c9d0dc;
   --cw-focus-ring: #3e63dd;
   --theme-primary-solid: #3e63dd;
@@ -75,11 +75,11 @@
   --cw-chart-series-8: var(--cw-info-solid);
 
   --cw-shadow-xs: 0 1px 2px rgb(15 23 42 / 5%);
-  --cw-shadow-sm: 0 8px 24px rgb(15 23 42 / 7%);
+  --cw-shadow-sm: 0 4px 16px rgb(15 23 42 / 5%);
   --cw-shadow-lg: 0 24px 72px rgb(15 23 42 / 14%);
   --cw-radius-sm: 6px;
-  --cw-radius-md: 10px;
-  --cw-radius-lg: 16px;
+  --cw-radius-md: 8px;
+  --cw-radius-lg: 12px;
 
   --el-bg-color: var(--cw-paper);
   --el-bg-color-overlay: var(--cw-paper);
@@ -151,7 +151,15 @@ body {
   overflow: hidden;
   background: var(--cw-canvas);
   color: var(--cw-text);
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -161,7 +169,10 @@ body .el-card {
   --el-card-border-color: var(--cw-line);
   border-radius: var(--cw-radius-md);
   box-shadow: var(--cw-shadow-xs);
-  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
 
 body .el-card.is-always-shadow,
@@ -184,7 +195,11 @@ body .el-table {
   --el-table-border-color: var(--cw-line);
   --el-table-header-bg-color: var(--el-fill-color-light);
   --el-table-header-text-color: var(--el-text-color-regular);
-  --el-table-row-hover-bg-color: color-mix(in srgb, var(--theme-primary, var(--cw-cobalt)) 7%, var(--cw-paper));
+  --el-table-row-hover-bg-color: color-mix(
+    in srgb,
+    var(--theme-primary, var(--cw-cobalt)) 7%,
+    var(--cw-paper)
+  );
   overflow: hidden;
   border: 1px solid var(--cw-line);
   border-radius: var(--cw-radius-md);
@@ -211,7 +226,12 @@ body .el-button {
   min-height: 32px;
   border-radius: var(--cw-radius-sm);
   font-weight: 600;
-  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 body .el-button:not(.is-disabled):active {
@@ -229,7 +249,7 @@ body .el-button--primary:not(.is-link):not(.is-text):not(.is-plain):not(.is-dash
   --el-button-hover-text-color: var(--cw-on-primary, #ffffff);
   --el-button-active-text-color: var(--cw-on-primary, #ffffff);
   --el-button-outline-color: var(--cw-focus-ring);
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--theme-primary-solid) 22%, transparent);
+  box-shadow: var(--cw-shadow-xs);
 }
 
 body .el-button--primary.is-link,
@@ -294,7 +314,10 @@ body .el-button--danger {
   --cw-on-semantic: var(--cw-on-danger);
 }
 
-body :is(.el-button--success, .el-button--warning, .el-button--danger):not(.is-link):not(.is-text):not(.is-plain):not(.is-dashed) {
+body
+  :is(.el-button--success, .el-button--warning, .el-button--danger):not(.is-link):not(.is-text):not(
+    .is-plain
+  ):not(.is-dashed) {
   --el-button-bg-color: var(--cw-semantic-solid);
   --el-button-border-color: var(--cw-semantic-solid);
   --el-button-hover-bg-color: var(--cw-semantic-solid-hover);
@@ -307,7 +330,12 @@ body :is(.el-button--success, .el-button--warning, .el-button--danger):not(.is-l
   --el-button-outline-color: var(--cw-focus-ring);
 }
 
-body :is(.el-button--success, .el-button--warning, .el-button--danger):is(.is-link, .is-text, .is-dashed) {
+body
+  :is(.el-button--success, .el-button--warning, .el-button--danger):is(
+    .is-link,
+    .is-text,
+    .is-dashed
+  ) {
   --el-button-text-color: var(--cw-semantic-foreground);
   --el-button-hover-text-color: var(--cw-semantic-foreground);
   --el-button-hover-link-text-color: var(--cw-semantic-foreground);
@@ -372,21 +400,46 @@ body .el-tag.el-tag--info {
  * Element Plus 的 light tag 默认把语义前景叠在同色浅底上；品牌色可配置后，这个组合无法稳定达到 AA。
  * light/plain 统一回到工作面上的可访问前景，dark 则显式消费实心色盘，关闭所有主题预设的对比度缺口。
  */
-body .el-tag:is(.el-tag--primary, .el-tag--success, .el-tag--warning, .el-tag--danger, .el-tag--error, .el-tag--info):not(.el-tag--dark) {
+body
+  .el-tag:is(
+    .el-tag--primary,
+    .el-tag--success,
+    .el-tag--warning,
+    .el-tag--danger,
+    .el-tag--error,
+    .el-tag--info
+  ):not(.el-tag--dark) {
   --el-tag-text-color: var(--cw-tag-foreground);
   --el-tag-bg-color: var(--cw-paper);
   --el-tag-border-color: color-mix(in srgb, var(--cw-tag-foreground) 58%, var(--cw-paper));
   --el-tag-hover-color: var(--cw-tag-solid-hover);
 }
 
-body .el-tag.el-tag--dark:is(.el-tag--primary, .el-tag--success, .el-tag--warning, .el-tag--danger, .el-tag--error, .el-tag--info) {
+body
+  .el-tag.el-tag--dark:is(
+    .el-tag--primary,
+    .el-tag--success,
+    .el-tag--warning,
+    .el-tag--danger,
+    .el-tag--error,
+    .el-tag--info
+  ) {
   --el-tag-text-color: var(--cw-tag-on-color);
   --el-tag-bg-color: var(--cw-tag-solid);
   --el-tag-border-color: var(--cw-tag-solid);
   --el-tag-hover-color: var(--cw-tag-solid-hover);
 }
 
-body .el-tag:is(.el-tag--primary, .el-tag--success, .el-tag--warning, .el-tag--danger, .el-tag--error, .el-tag--info) .el-tag__close:hover {
+body
+  .el-tag:is(
+    .el-tag--primary,
+    .el-tag--success,
+    .el-tag--warning,
+    .el-tag--danger,
+    .el-tag--error,
+    .el-tag--info
+  )
+  .el-tag__close:hover {
   color: var(--cw-tag-on-color);
 }
 
@@ -447,30 +500,21 @@ body .el-date-table td.today.current .el-date-table-cell__text {
   background-color: var(--theme-primary-solid);
 }
 
-body .el-button.cw-final-action {
-  --el-button-bg-color: var(--cw-amber-solid);
-  --el-button-border-color: var(--cw-amber-solid);
-  --el-button-hover-bg-color: var(--cw-warning-solid-hover);
-  --el-button-hover-border-color: var(--cw-warning-solid-hover);
-  --el-button-active-bg-color: var(--cw-warning-solid-active);
-  --el-button-active-border-color: var(--cw-warning-solid-active);
-  --el-button-text-color: var(--cw-on-warning);
-  --el-button-hover-text-color: var(--cw-on-warning);
-  --el-button-active-text-color: var(--cw-on-warning);
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--cw-amber-solid) 22%, transparent);
-}
-
 body .el-input__wrapper,
 body .el-select__wrapper,
 body .el-textarea__inner {
   box-shadow: 0 0 0 1px var(--cw-line) inset;
-  transition: box-shadow 160ms ease, background-color 160ms ease;
+  transition:
+    box-shadow 160ms ease,
+    background-color 160ms ease;
 }
 
 body .el-input__wrapper.is-focus,
 body .el-select__wrapper.is-focused,
 body .el-textarea__inner:focus {
-  box-shadow: 0 0 0 1px var(--cw-focus-ring) inset, 0 0 0 3px color-mix(in srgb, var(--cw-focus-ring) 14%, transparent);
+  box-shadow:
+    0 0 0 1px var(--cw-focus-ring) inset,
+    0 0 0 3px color-mix(in srgb, var(--cw-focus-ring) 14%, transparent);
 }
 
 body .el-dialog,

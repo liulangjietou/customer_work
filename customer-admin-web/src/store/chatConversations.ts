@@ -23,6 +23,8 @@ export interface ChatMessage {
    * 还是"系统告诉你这轮没成"，差别很大。
    */
   failed?: boolean
+  /** 执行错误独立于回答保存，避免流式失败覆盖已经生成的内容。 */
+  error?: string
   // 本条助手消息内的 Plan Mode 确认卡片（P1-1），Manual/高风险操作待人工确认
   plans?: PlanCard[]
   // 该条消息携带的附件（用户消息才有）；历史消息来自后端，新发送消息由 send() 本地拼装并转移 previewUrl 所有权
@@ -72,7 +74,10 @@ interface AgentChatState {
 
 const PREVIEW_MAX_LENGTH = 40
 
-export function createChatConversation(sessionId: string, messages: ChatMessage[] = []): ChatConversation {
+export function createChatConversation(
+  sessionId: string,
+  messages: ChatMessage[] = [],
+): ChatConversation {
   return {
     sessionId,
     messages,
@@ -93,7 +98,9 @@ export function createChatConversation(sessionId: string, messages: ChatMessage[
  * 不这样兜底的话纯附件消息在侧边栏会显示空白预览。
  */
 export function previewOfMessages(messages: ChatMessage[]): string {
-  const firstUser = messages.find((m) => m.role === 'user' && (m.text.trim().length > 0 || (m.attachments?.length ?? 0) > 0))
+  const firstUser = messages.find(
+    (m) => m.role === 'user' && (m.text.trim().length > 0 || (m.attachments?.length ?? 0) > 0),
+  )
   if (!firstUser) return ''
   const text = firstUser.text.trim()
   if (!text) {
@@ -120,31 +127,41 @@ export const useChatConversationsStore = defineStore('chatConversations', {
   }),
   getters: {
     /** 某智能体当前激活的会话（未初始化时 undefined，组件应先 ensureAgent）。 */
-    activeOf: (state) => (agentCode: string): ChatConversation | undefined => {
-      const agent = state.byAgent[agentCode]
-      return agent ? agent.conversations[agent.activeId] : undefined
-    },
+    activeOf:
+      (state) =>
+      (agentCode: string): ChatConversation | undefined => {
+        const agent = state.byAgent[agentCode]
+        return agent ? agent.conversations[agent.activeId] : undefined
+      },
     /** 供历史侧边栏合并展示的内存会话（只含非空或进行中的，空白新会话不进列表）。 */
-    liveSessionsOf: (state) => (agentCode: string): LiveSession[] => {
-      const agent = state.byAgent[agentCode]
-      if (!agent) return []
-      return Object.values(agent.conversations)
-        .map((c) => ({
-          sessionId: c.sessionId,
-          preview: previewOfMessages(c.messages),
-          messageCount: c.messages.length,
-          streaming: c.streaming,
-        }))
-        .filter((c) => c.messageCount > 0 || c.streaming)
-    },
-    activeIdOf: (state) => (agentCode: string): string => state.byAgent[agentCode]?.activeId ?? '',
+    liveSessionsOf:
+      (state) =>
+      (agentCode: string): LiveSession[] => {
+        const agent = state.byAgent[agentCode]
+        if (!agent) return []
+        return Object.values(agent.conversations)
+          .map((c) => ({
+            sessionId: c.sessionId,
+            preview: previewOfMessages(c.messages),
+            messageCount: c.messages.length,
+            streaming: c.streaming,
+          }))
+          .filter((c) => c.messageCount > 0 || c.streaming)
+      },
+    activeIdOf:
+      (state) =>
+      (agentCode: string): string =>
+        state.byAgent[agentCode]?.activeId ?? '',
   },
   actions: {
     /** 确保某智能体的状态已初始化（至少有一个空会话作为激活会话），组件挂载时调用。 */
     ensureAgent(agentCode: string) {
       if (this.byAgent[agentCode]) return
       const sid = generateUuid()
-      this.byAgent[agentCode] = { conversations: { [sid]: createChatConversation(sid) }, activeId: sid }
+      this.byAgent[agentCode] = {
+        conversations: { [sid]: createChatConversation(sid) },
+        activeId: sid,
+      }
     },
 
     /**
@@ -196,7 +213,11 @@ export const useChatConversationsStore = defineStore('chatConversations', {
      * 发送当前激活会话的输入。SSE 回调按 (agentCode, sessionId) 写回 store 对应会话——用户切走、
      * 组件销毁都不影响；onScroll 由组件传入，仅当该会话仍是激活会话时组件才滚动视图。
      */
-    send(agentCode: string, buildMessage: (conv: ChatConversation, text: string) => string, onScroll?: () => void) {
+    send(
+      agentCode: string,
+      buildMessage: (conv: ChatConversation, text: string) => string,
+      onScroll?: () => void,
+    ) {
       const agent = this.byAgent[agentCode]
       const conv = agent?.conversations[agent.activeId]
       if (!conv) return
@@ -205,10 +226,18 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       conv.input = text
       const successfulAttachments = conv.attachments.filter((a) => a.status === 'success' && a.id)
       // 有解析成功的附件时允许"只发附件不写文字"（正文即附件内容，满足后端 message 非空要求）
-      if ((!text && successfulAttachments.length === 0) || conv.streaming || conv.attachments.some((a) => a.status === 'uploading')) return
+      if (
+        (!text && successfulAttachments.length === 0) ||
+        conv.streaming ||
+        conv.attachments.some((a) => a.status === 'uploading')
+      )
+        return
       conv.interrupted = false
       const messageToSend = buildMessage(conv, text)
-      const attachmentIds = successfulAttachments.length > 0 ? successfulAttachments.map((a) => a.id as string) : undefined
+      const attachmentIds =
+        successfulAttachments.length > 0
+          ? successfulAttachments.map((a) => a.id as string)
+          : undefined
       // 用户气泡展示原始输入 + 独立的附件区（图片缩略图/文件芯片），不把拼进正文的附件全文也显示出来
       // （那部分只是发给模型看的）。previewUrl 所有权从待发送区转移给消息对象——发送后立即清空
       // conv.attachments（见下方），这里转移完就不再由待发送区持有，也不 revoke，气泡还要接着用它。
@@ -216,16 +245,17 @@ export const useChatConversationsStore = defineStore('chatConversations', {
         role: 'user',
         text,
         nodes: [],
-        attachments: successfulAttachments.length > 0
-          ? successfulAttachments.map((a) => ({
-              id: a.id as string,
-              fileName: a.name,
-              mimeType: a.mimeType ?? '',
-              fileSize: a.fileSize ?? 0,
-              parseStatus: 'SUCCESS',
-              previewUrl: a.previewUrl,
-            }))
-          : undefined,
+        attachments:
+          successfulAttachments.length > 0
+            ? successfulAttachments.map((a) => ({
+                id: a.id as string,
+                fileName: a.name,
+                mimeType: a.mimeType ?? '',
+                fileSize: a.fileSize ?? 0,
+                parseStatus: 'SUCCESS',
+                previewUrl: a.previewUrl,
+              }))
+            : undefined,
       })
       conv.messages.push({ role: 'assistant', text: '', nodes: [] })
       // 坑：不能拿 push 前创建的原始对象引用去改——响应式数组对存进去的对象是"读取时才转代理"，
@@ -241,79 +271,97 @@ export const useChatConversationsStore = defineStore('chatConversations', {
         if (isActive()) onScroll?.()
       })
 
-      const abortStream = streamChat(agentCode, { sessionId: sid, message: messageToSend, mode: conv.mode, attachmentIds }, {
-        onEvent: (event) => {
-          const c = this.byAgent[agentCode]?.conversations[sid]
-          if (!c) return
-          if (event.event === 'done') {
-            textBatcher.flush()
-            c.streaming = false
-            return
-          }
-          if (event.event === 'plan') {
-            textBatcher.flush()
-            this.applyPlanEvent(c, assistantMessage, event.data)
-            if (isActive()) onScroll?.()
-            return
-          }
-          if (event.event === 'plan_result') {
-            textBatcher.flush()
-            try {
-              const parsed = JSON.parse(event.data) as PlanResultEvent
-              const card = c.pendingPlans.get(parsed.planId)
-              if (card) {
-                card.status = parsed.status
-                card.submitting = false
-                c.pendingPlans.delete(parsed.planId)
-              }
-            } catch { /* 静默丢弃 */ }
-            return
-          }
-          if (event.event.startsWith('node:')) {
-            textBatcher.flush()
-            const kind = event.event.slice('node:'.length)
-            const payload = parseChatStreamPayload(event.data)
-            appendChatStreamNode(assistantMessage.nodes, kind, payload.text, payload.source, payload.subagentName)
-          } else if (event.event === 'message') {
-            const payload = parseChatStreamPayload(event.data)
-            if (payload.source) {
-              // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板
-              appendChatStreamNode(assistantMessage.nodes, ANSWER_KIND, payload.text, payload.source, payload.subagentName)
-            } else {
-              textBatcher.append(payload.text)
+      const abortStream = streamChat(
+        agentCode,
+        { sessionId: sid, message: messageToSend, mode: conv.mode, attachmentIds },
+        {
+          onEvent: (event) => {
+            const c = this.byAgent[agentCode]?.conversations[sid]
+            if (!c) return
+            if (event.event === 'done') {
+              textBatcher.flush()
+              c.streaming = false
               return
             }
-          }
-          // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
-          if (isActive()) onScroll?.()
-        },
-        onError: (error) => {
-          textBatcher.discard()
-          const c = this.byAgent[agentCode]?.conversations[sid]
-          if (c) {
-            c.streaming = false
-            c.interrupting = false
-          }
-          // 失败信息落在对话流里，紧跟用户刚发出的那句话——飘在页面顶部的提示与它无从对应，
-          // 用户看到的是自己的消息孤零零挂在那儿、没有任何回应
-          const text = error instanceof Error ? error.message : String(error)
-          assistantMessage.text = text
-          assistantMessage.failed = true
-        },
-        onComplete: () => {
-          textBatcher.flush()
-          const c = this.byAgent[agentCode]?.conversations[sid]
-          if (c) {
-            c.streaming = false
-            // 若这轮是用户主动点了"终止"后自然结束的，翻转成"可继续"状态，冒出继续按钮
-            if (c.interrupting) {
-              c.interrupting = false
-              c.interrupted = true
+            if (event.event === 'plan') {
+              textBatcher.flush()
+              this.applyPlanEvent(c, assistantMessage, event.data)
+              if (isActive()) onScroll?.()
+              return
             }
-          }
-          this.historyVersion[agentCode] = (this.historyVersion[agentCode] ?? 0) + 1
+            if (event.event === 'plan_result') {
+              textBatcher.flush()
+              try {
+                const parsed = JSON.parse(event.data) as PlanResultEvent
+                const card = c.pendingPlans.get(parsed.planId)
+                if (card) {
+                  card.status = parsed.status
+                  card.submitting = false
+                  c.pendingPlans.delete(parsed.planId)
+                }
+              } catch {
+                /* 静默丢弃 */
+              }
+              return
+            }
+            if (event.event.startsWith('node:')) {
+              textBatcher.flush()
+              const kind = event.event.slice('node:'.length)
+              const payload = parseChatStreamPayload(event.data)
+              appendChatStreamNode(
+                assistantMessage.nodes,
+                kind,
+                payload.text,
+                payload.source,
+                payload.subagentName,
+              )
+            } else if (event.event === 'message') {
+              const payload = parseChatStreamPayload(event.data)
+              if (payload.source) {
+                // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板
+                appendChatStreamNode(
+                  assistantMessage.nodes,
+                  ANSWER_KIND,
+                  payload.text,
+                  payload.source,
+                  payload.subagentName,
+                )
+              } else {
+                textBatcher.append(payload.text)
+                return
+              }
+            }
+            // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
+            if (isActive()) onScroll?.()
+          },
+          onError: (error) => {
+            textBatcher.flush()
+            const c = this.byAgent[agentCode]?.conversations[sid]
+            if (c) {
+              c.streaming = false
+              c.interrupting = false
+            }
+            // 失败信息落在对话流里，紧跟用户刚发出的那句话——飘在页面顶部的提示与它无从对应，
+            // 用户看到的是自己的消息孤零零挂在那儿、没有任何回应
+            const text = error instanceof Error ? error.message : String(error)
+            assistantMessage.error = text
+            assistantMessage.failed = true
+          },
+          onComplete: () => {
+            textBatcher.flush()
+            const c = this.byAgent[agentCode]?.conversations[sid]
+            if (c) {
+              c.streaming = false
+              // 若这轮是用户主动点了"终止"后自然结束的，翻转成"可继续"状态，冒出继续按钮
+              if (c.interrupting) {
+                c.interrupting = false
+                c.interrupted = true
+              }
+            }
+            this.historyVersion[agentCode] = (this.historyVersion[agentCode] ?? 0) + 1
+          },
         },
-      })
+      )
       conv.abort = () => {
         textBatcher.flush()
         abortStream()
@@ -346,7 +394,9 @@ export const useChatConversationsStore = defineStore('chatConversations', {
         // 存响应式代理引用（push 后再取），否则定时器/plan_result 改原始对象视图不更新
         conv.pendingPlans.set(card.planId, plans[plans.length - 1])
         this.ensurePlanCountdown()
-      } catch { /* 静默丢弃 */ }
+      } catch {
+        /* 静默丢弃 */
+      }
     },
 
     /** 全局单定时器：每秒扫全部智能体全部会话的待确认卡片递减，归零本地标记超时；无剩余时自停。 */

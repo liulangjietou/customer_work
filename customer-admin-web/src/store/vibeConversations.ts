@@ -45,6 +45,8 @@ export interface VibeChatMessage {
   nodes: TraceNode[]
   /** 这条助手消息是一次失败的结果（额度用尽、后端异常等），UI 渲染成提示样式而不是正常回答。 */
   failed?: boolean
+  /** 执行错误独立于回答保存，避免流式失败覆盖已经生成的内容。 */
+  error?: string
   // 本条助手消息内累积的沙箱编译/测试报告（P0-3），按到达顺序渲染成测试报告卡片时间线
   testReports?: TestReport[]
   // 本条助手消息内的 Plan Mode 确认卡片（P1-1），高风险操作待人工确认
@@ -114,7 +116,10 @@ interface AgentVibeState {
   activeId: string
 }
 
-export function createVibeConversation(sessionId: string, messages: VibeChatMessage[] = []): VibeConversation {
+export function createVibeConversation(
+  sessionId: string,
+  messages: VibeChatMessage[] = [],
+): VibeConversation {
   return {
     sessionId,
     messages,
@@ -155,30 +160,40 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
     planCountdownTimer: null as ReturnType<typeof setInterval> | null,
   }),
   getters: {
-    activeOf: (state) => (agentCode: string): VibeConversation | undefined => {
-      const agent = state.byAgent[agentCode]
-      return agent ? agent.conversations[agent.activeId] : undefined
-    },
-    liveSessionsOf: (state) => (agentCode: string): LiveSession[] => {
-      const agent = state.byAgent[agentCode]
-      if (!agent) return []
-      return Object.values(agent.conversations)
-        .map((c) => ({
-          sessionId: c.sessionId,
-          preview: previewOfMessages(c.messages),
-          messageCount: c.messages.length,
-          streaming: c.streaming,
-        }))
-        .filter((c) => c.messageCount > 0 || c.streaming)
-    },
-    activeIdOf: (state) => (agentCode: string): string => state.byAgent[agentCode]?.activeId ?? '',
+    activeOf:
+      (state) =>
+      (agentCode: string): VibeConversation | undefined => {
+        const agent = state.byAgent[agentCode]
+        return agent ? agent.conversations[agent.activeId] : undefined
+      },
+    liveSessionsOf:
+      (state) =>
+      (agentCode: string): LiveSession[] => {
+        const agent = state.byAgent[agentCode]
+        if (!agent) return []
+        return Object.values(agent.conversations)
+          .map((c) => ({
+            sessionId: c.sessionId,
+            preview: previewOfMessages(c.messages),
+            messageCount: c.messages.length,
+            streaming: c.streaming,
+          }))
+          .filter((c) => c.messageCount > 0 || c.streaming)
+      },
+    activeIdOf:
+      (state) =>
+      (agentCode: string): string =>
+        state.byAgent[agentCode]?.activeId ?? '',
   },
   actions: {
     /** 确保某智能体的状态已初始化，并给初始空会话拉一次全局沙箱模式。 */
     ensureAgent(agentCode: string) {
       if (this.byAgent[agentCode]) return
       const sid = generateUuid()
-      this.byAgent[agentCode] = { conversations: { [sid]: createVibeConversation(sid) }, activeId: sid }
+      this.byAgent[agentCode] = {
+        conversations: { [sid]: createVibeConversation(sid) },
+        activeId: sid,
+      }
       this.loadCurrentSandboxMode(agentCode)
     },
 
@@ -213,8 +228,14 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       if (!agent) return
       const sid = agent.activeId
       getSandboxMode(agentCode)
-        .then((res) => { const c = this.byAgent[agentCode]?.conversations[sid]; if (c) c.sandboxMode = res.mode })
-        .catch(() => { const c = this.byAgent[agentCode]?.conversations[sid]; if (c) c.sandboxMode = null })
+        .then((res) => {
+          const c = this.byAgent[agentCode]?.conversations[sid]
+          if (c) c.sandboxMode = res.mode
+        })
+        .catch(() => {
+          const c = this.byAgent[agentCode]?.conversations[sid]
+          if (c) c.sandboxMode = null
+        })
     },
 
     /** 打开会话：store 已有直接切激活（保留实时增量与文件树）；纯历史会话才回源拉消息 + 产物文件。 */
@@ -237,7 +258,9 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         })),
       )
       const firstUserMessage = history.find((msg) => msg.role === 'user')
-      conv.sandboxMode = firstUserMessage ? parseSandboxModeFromMessage(firstUserMessage.text) : null
+      conv.sandboxMode = firstUserMessage
+        ? parseSandboxModeFromMessage(firstUserMessage.text)
+        : null
       agent.conversations[targetSessionId] = conv
       agent.activeId = targetSessionId
       // 切到历史会话时该会话可能已有产物文件，无需等用户手动点"刷新"
@@ -274,25 +297,34 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       conv.input = text
       const successfulAttachments = conv.attachments.filter((a) => a.status === 'success' && a.id)
       // 有解析成功的附件时允许"只发附件不写文字"（正文即附件内容，满足后端 message 非空要求）
-      if ((!text && successfulAttachments.length === 0) || conv.streaming || conv.attachments.some((a) => a.status === 'uploading')) return
+      if (
+        (!text && successfulAttachments.length === 0) ||
+        conv.streaming ||
+        conv.attachments.some((a) => a.status === 'uploading')
+      )
+        return
       conv.interrupted = false
       const messageToSend = buildMessage(conv, text)
-      const attachmentIds = successfulAttachments.length > 0 ? successfulAttachments.map((a) => a.id as string) : undefined
+      const attachmentIds =
+        successfulAttachments.length > 0
+          ? successfulAttachments.map((a) => a.id as string)
+          : undefined
       // previewUrl 所有权从待发送区转移给消息对象（不 revoke）——见下方 conv.attachments 清空前的说明
       conv.messages.push({
         role: 'user',
         text,
         nodes: [],
-        attachments: successfulAttachments.length > 0
-          ? successfulAttachments.map((a) => ({
-              id: a.id as string,
-              fileName: a.name,
-              mimeType: a.mimeType ?? '',
-              fileSize: a.fileSize ?? 0,
-              parseStatus: 'SUCCESS',
-              previewUrl: a.previewUrl,
-            }))
-          : undefined,
+        attachments:
+          successfulAttachments.length > 0
+            ? successfulAttachments.map((a) => ({
+                id: a.id as string,
+                fileName: a.name,
+                mimeType: a.mimeType ?? '',
+                fileSize: a.fileSize ?? 0,
+                parseStatus: 'SUCCESS',
+                previewUrl: a.previewUrl,
+              }))
+            : undefined,
       })
       conv.messages.push({ role: 'assistant', text: '', nodes: [], testReports: [] })
       // 同 chat store：push 完再取，拿响应式代理而不是原始对象
@@ -302,14 +334,24 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       conv.streaming = true
       const sid = conv.sessionId
 
-      this.bindCodingStream(agentCode, conv, assistantMessage, (handlers) =>
-        streamVibeCoding(agentCode, {
-          sessionId: sid,
-          message: messageToSend,
-          collaboration,
-          mode: conv.mode,
-          attachmentIds,
-        }, handlers), onScroll)
+      this.bindCodingStream(
+        agentCode,
+        conv,
+        assistantMessage,
+        (handlers) =>
+          streamVibeCoding(
+            agentCode,
+            {
+              sessionId: sid,
+              message: messageToSend,
+              collaboration,
+              mode: conv.mode,
+              attachmentIds,
+            },
+            handlers,
+          ),
+        onScroll,
+      )
       onScroll?.()
     },
 
@@ -317,16 +359,29 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
     sendDiagnosis(agentCode: string, log: string, onScroll?: () => void) {
       const text = log.trim()
       if (!text) return
-      this.startSpecialTask(agentCode, `/diagnose\n${text}`, (sessionId, handlers) =>
-        streamDiagnosis(agentCode, sessionId, text, handlers), onScroll)
+      this.startSpecialTask(
+        agentCode,
+        `/diagnose\n${text}`,
+        (sessionId, handlers) => streamDiagnosis(agentCode, sessionId, text, handlers),
+        onScroll,
+      )
     },
 
     /** P2-2：服务端任务级 plan 的事件也走同一个处理器，现有 PlanConfirmCard 可直接确认。 */
-    sendRefactor(agentCode: string, request: Omit<RefactorTaskRequest, 'sessionId'>, onScroll?: () => void) {
-      const targets = request.targetFiles.length > 0 ? `\n目标文件：${request.targetFiles.join(', ')}` : ''
+    sendRefactor(
+      agentCode: string,
+      request: Omit<RefactorTaskRequest, 'sessionId'>,
+      onScroll?: () => void,
+    ) {
+      const targets =
+        request.targetFiles.length > 0 ? `\n目标文件：${request.targetFiles.join(', ')}` : ''
       const display = `/refactor ${request.taskType}${targets}\n${request.description}`
-      this.startSpecialTask(agentCode, display, (sessionId, handlers) =>
-        streamRefactor(agentCode, { ...request, sessionId }, handlers), onScroll)
+      this.startSpecialTask(
+        agentCode,
+        display,
+        (sessionId, handlers) => streamRefactor(agentCode, { ...request, sessionId }, handlers),
+        onScroll,
+      )
     },
 
     startSpecialTask(
@@ -343,8 +398,13 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       conv.messages.push({ role: 'assistant', text: '', nodes: [], testReports: [] })
       const assistantMessage = conv.messages[conv.messages.length - 1]
       conv.streaming = true
-      this.bindCodingStream(agentCode, conv, assistantMessage,
-        (handlers) => starter(conv.sessionId, handlers), onScroll)
+      this.bindCodingStream(
+        agentCode,
+        conv,
+        assistantMessage,
+        (handlers) => starter(conv.sessionId, handlers),
+        onScroll,
+      )
       onScroll?.()
     },
 
@@ -379,7 +439,9 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
             try {
               const parsed = JSON.parse(event.data) as FileChangeEvent
               c.fileChanges.push({ ...parsed, time: Date.now() })
-            } catch { /* 解析失败不影响主对话流程，静默丢弃 */ }
+            } catch {
+              /* 解析失败不影响主对话流程，静默丢弃 */
+            }
             return
           }
           if (event.event === 'test_report') {
@@ -387,7 +449,9 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
             try {
               const parsed = JSON.parse(event.data) as TestReport
               ;(assistantMessage.testReports ??= []).push(parsed)
-            } catch { /* 静默丢弃 */ }
+            } catch {
+              /* 静默丢弃 */
+            }
             if (isActive()) onScroll?.()
             return
           }
@@ -413,19 +477,33 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
                 card.submitting = false
                 c.pendingPlans.delete(parsed.planId)
               }
-            } catch { /* 静默丢弃 */ }
+            } catch {
+              /* 静默丢弃 */
+            }
             return
           }
           if (event.event.startsWith('node:')) {
             textBatcher.flush()
             const kind = event.event.slice('node:'.length)
             const payload = parseChatStreamPayload(event.data)
-            appendChatStreamNode(assistantMessage.nodes, kind, payload.text, payload.source, payload.subagentName)
+            appendChatStreamNode(
+              assistantMessage.nodes,
+              kind,
+              payload.text,
+              payload.source,
+              payload.subagentName,
+            )
           } else if (event.event === 'message') {
             const payload = parseChatStreamPayload(event.data)
             if (payload.source) {
               // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板
-              appendChatStreamNode(assistantMessage.nodes, ANSWER_KIND, payload.text, payload.source, payload.subagentName)
+              appendChatStreamNode(
+                assistantMessage.nodes,
+                ANSWER_KIND,
+                payload.text,
+                payload.source,
+                payload.subagentName,
+              )
             } else {
               // 合并进本帧待发文本；滚动由 batcher 的回调统一触发，此处直接返回避免每片都滚
               textBatcher.append(payload.text)
@@ -436,7 +514,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
           if (isActive()) onScroll?.()
         },
         onError: (error) => {
-          textBatcher.discard()
+          textBatcher.flush()
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (c) {
             c.streaming = false
@@ -444,7 +522,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
           }
           // 与对话面板同理：失败信息要落在对话流里，紧跟用户刚发出的那句话
           const text = error instanceof Error ? error.message : String(error)
-          assistantMessage.text = text
+          assistantMessage.error = text
           assistantMessage.failed = true
         },
         onComplete: () => {
@@ -492,11 +570,17 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
           if (event.event === 'command_output') {
             try {
               current.output += (JSON.parse(event.data) as CommandOutputEvent).text
-            } catch { /* 非法增量不影响命令终态 */ }
+            } catch {
+              /* 非法增量不影响命令终态 */
+            }
             return
           }
           if (event.event === 'test_report') {
-            try { current.testReport = JSON.parse(event.data) as TestReport } catch { /* 静默降级 */ }
+            try {
+              current.testReport = JSON.parse(event.data) as TestReport
+            } catch {
+              /* 静默降级 */
+            }
             return
           }
           if (event.event === 'command_result') {
@@ -514,7 +598,9 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
             try {
               const error = JSON.parse(event.data) as { message: string }
               current.output += `\n${error.message}\n`
-            } catch { /* 静默降级 */ }
+            } catch {
+              /* 静默降级 */
+            }
             current.status = 'FAILED'
           }
           if (event.event === 'done') {
@@ -563,7 +649,9 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         } else {
           stages.push({ ...parsed })
         }
-      } catch { /* 静默丢弃 */ }
+      } catch {
+        /* 静默丢弃 */
+      }
     },
 
     /** plan 事件（P1-1 HITL）：追加待确认卡片并确保全局倒计时在跑。 */
@@ -576,7 +664,9 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         // 存响应式代理引用（push 后再取），否则定时器/plan_result 改原始对象视图不更新
         conv.pendingPlans.set(card.planId, plans[plans.length - 1])
         this.ensurePlanCountdown()
-      } catch { /* 静默丢弃 */ }
+      } catch {
+        /* 静默丢弃 */
+      }
     },
 
     /** 全局单定时器：每秒扫全部智能体全部会话的待确认卡片递减，归零本地标记超时；无剩余时自停。 */

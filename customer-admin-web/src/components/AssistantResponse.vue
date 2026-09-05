@@ -11,10 +11,13 @@ const props = withDefaults(
     text: string
     active: boolean
     failed?: boolean
+    error?: string
+    showTrace?: boolean
   }>(),
-  { failed: false },
+  { failed: false, showTrace: true },
 )
 
+const emit = defineEmits<{ inspect: [] }>()
 const copied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -34,7 +37,9 @@ async function copyResult() {
     await navigator.clipboard.writeText(props.text)
     copied.value = true
     if (copiedTimer) clearTimeout(copiedTimer)
-    copiedTimer = setTimeout(() => { copied.value = false }, 1600)
+    copiedTimer = setTimeout(() => {
+      copied.value = false
+    }, 1600)
   } catch {
     ElMessage.error('复制失败，请手动选择内容复制')
   }
@@ -44,12 +49,21 @@ async function copyResult() {
 <template>
   <article class="assistant-response" :class="{ 'is-active': active, 'is-failed': failed }">
     <TraceTimeline
-      v-if="nodes.length > 0"
+      v-if="showTrace && nodes.length > 0"
       :nodes="nodes"
       :active="active"
       :failed="failed"
     />
 
+    <button
+      v-else-if="!showTrace && nodes.length"
+      type="button"
+      class="trace-receipt"
+      @click="emit('inspect')"
+    >
+      <el-icon><Loading v-if="active" class="is-loading" /><CircleCheck v-else /></el-icon>
+      {{ active ? '正在执行任务' : '查看执行记录' }}<span aria-hidden="true">↗</span>
+    </button>
     <div v-else-if="active" class="connecting-state" role="status" aria-live="polite">
       <span class="connecting-icon" aria-hidden="true">
         <el-icon class="is-loading"><Loading /></el-icon>
@@ -81,12 +95,17 @@ async function copyResult() {
         </button>
       </header>
 
+      <div v-if="error" class="response-error" role="alert">
+        {{ error }}<small v-if="text">已保留生成的内容，可补充要求后再次发送。</small>
+      </div>
       <MarkdownRenderer v-if="text" :text="text" variant="answer" />
       <div v-else-if="active" class="result-placeholder" role="status" aria-live="polite">
         <span></span><span></span><span></span>
         <small>正在生成清晰、可执行的结果</small>
       </div>
-      <p v-else-if="failed" class="failed-empty">本轮未返回可展示的结果，请根据上方过程信息重试。</p>
+      <p v-else-if="failed && !error" class="failed-empty">
+        本轮未返回可展示的结果，请根据上方过程信息重试。
+      </p>
     </section>
 
     <div class="response-extras">
@@ -96,44 +115,50 @@ async function copyResult() {
 </template>
 
 <style scoped>
+.response-error {
+  padding: 12px 14px;
+  margin: 12px 0;
+  border: 1px solid var(--cw-danger);
+  border-radius: 7px;
+  color: var(--cw-danger);
+  background: var(--cw-paper);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.response-error small {
+  display: block;
+  color: var(--cw-text-muted);
+  font-size: 12px;
+  margin-top: 5px;
+}
+
 .assistant-response {
   --response-accent: var(--theme-primary, var(--el-color-primary));
   position: relative;
   width: min(100%, 880px);
   min-width: 0;
   box-sizing: border-box;
-  padding: 0 0 2px 22px;
+  padding: 0 0 2px;
   color: var(--el-text-color-primary);
 }
 
-.assistant-response::before {
-  position: absolute;
-  top: 2px;
-  bottom: 0;
-  left: 3px;
-  width: 2px;
-  background: linear-gradient(
-    180deg,
-    var(--response-accent),
-    color-mix(in srgb, var(--response-accent) 22%, transparent) 78%,
-    transparent
-  );
-  border-radius: 999px;
-  content: '';
+.trace-receipt {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 7px 10px;
+  border: 1px solid var(--cw-line);
+  border-radius: 6px;
+  background: var(--cw-canvas);
+  color: var(--cw-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
 }
-
-.assistant-response::after {
-  position: absolute;
-  top: 5px;
-  left: 0;
-  width: 8px;
-  height: 8px;
-  box-sizing: border-box;
-  background: var(--el-bg-color);
-  border: 2px solid var(--response-accent);
-  border-radius: 50%;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--response-accent) 10%, transparent);
-  content: '';
+.trace-receipt:hover {
+  color: var(--cw-cobalt);
+  border-color: var(--cw-cobalt);
 }
 
 .assistant-response.is-failed {
@@ -147,8 +172,17 @@ async function copyResult() {
   margin-bottom: 16px;
   padding: 12px 14px;
   color: var(--el-text-color-primary);
-  background: color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 6%, var(--el-bg-color));
-  border: 1px solid color-mix(in srgb, var(--theme-primary, var(--el-color-primary)) 20%, var(--el-border-color-lighter));
+  background: color-mix(
+    in srgb,
+    var(--theme-primary, var(--el-color-primary)) 6%,
+    var(--el-bg-color)
+  );
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--theme-primary, var(--el-color-primary)) 20%,
+      var(--el-border-color-lighter)
+    );
   border-radius: 12px;
 }
 
@@ -291,8 +325,16 @@ async function copyResult() {
 }
 
 @keyframes result-pulse {
-  0%, 60%, 100% { opacity: 0.28; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-2px); }
+  0%,
+  60%,
+  100% {
+    opacity: 0.28;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
 @media (max-width: 640px) {

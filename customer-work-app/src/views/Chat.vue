@@ -21,14 +21,26 @@ import { fetchMyQuota } from '@/api/quota'
 import { useAuthStore } from '@/store/auth'
 import { chatSocket } from '@/utils/ws'
 import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT, isTicketEnded } from '@/types/api'
-import type { ChatMessage, FeedbackType, Ticket, UserQuota, WsChatChunk, WsChatDone, WsChatMessage, WsErrorMessage, WsSystemMessage, WsTicketEvent } from '@/types/api'
+import type {
+  ChatMessage,
+  FeedbackType,
+  Ticket,
+  UserQuota,
+  WsChatChunk,
+  WsChatDone,
+  WsChatMessage,
+  WsErrorMessage,
+  WsSystemMessage,
+  WsTicketEvent,
+} from '@/types/api'
 
 const HTTP_CONFLICT = 409
 /** Outbox 是至少一次投递；按工单事件主键去重，避免重试帧重复弹提示。 */
 const processedTicketEvents = new Set<string>()
 
 // 附件：与后端 starter AttachmentParseService 白名单/大小限制保持一致（customer-work.attachment.max-file-size-mb=10）
-const ATTACHMENT_ACCEPT = '.md,.txt,.csv,.tsv,.json,.xml,.yaml,.yml,.toml,.proto,.properties,.ini,.conf,.cfg,.log,.env,.sql,.sh,.bash,.zsh,.bat,.ps1,.java,.kt,.kts,.groovy,.gradle,.scala,.py,.js,.ts,.jsx,.tsx,.vue,.css,.scss,.less,.c,.h,.cpp,.hpp,.cs,.go,.rs,.rb,.php,.swift,.lua,.r,.dart,.html,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.bmp,.webp'
+const ATTACHMENT_ACCEPT =
+  '.md,.txt,.csv,.tsv,.json,.xml,.yaml,.yml,.toml,.proto,.properties,.ini,.conf,.cfg,.log,.env,.sql,.sh,.bash,.zsh,.bat,.ps1,.java,.kt,.kts,.groovy,.gradle,.scala,.py,.js,.ts,.jsx,.tsx,.vue,.css,.scss,.less,.c,.h,.cpp,.hpp,.cs,.go,.rs,.rb,.php,.swift,.lua,.r,.dart,.html,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.bmp,.webp'
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 const route = useRoute()
@@ -66,7 +78,7 @@ interface ChatAttachmentItem {
 }
 
 const attachments = ref<ChatAttachmentItem[]>([])
-const anyAttachmentUploading = computed(() => attachments.value.some((a) => a.status === 'uploading'))
+const attachmentBlocked = computed(() => attachments.value.some((a) => a.status !== 'success'))
 
 const rejectVisible = ref(false)
 const rejectReason = ref('')
@@ -124,7 +136,11 @@ const sessionStorageKey = computed(() => `chat-session-${auth.userId}`)
 const ticketStorageKey = computed(() => `chat-ticket-${auth.userId}`)
 
 const canSend = computed(
-  () => wsConnected.value && !!sessionId.value && inputContent.value.trim().length > 0 && !anyAttachmentUploading.value,
+  () =>
+    wsConnected.value &&
+    !!sessionId.value &&
+    inputContent.value.trim().length > 0 &&
+    !attachmentBlocked.value,
 )
 const canHandoff = computed(() => {
   const status = ticket.value?.status
@@ -361,7 +377,10 @@ function onWsChatChunk(data: unknown) {
 function onWsChatDone(data: unknown) {
   const payload = data as WsChatDone
   const frameSessionId = payload.sessionId || streamingSessionId.value
-  if (frameSessionId !== sessionId.value || (payload.ticketId && payload.ticketId !== ticketId.value)) {
+  if (
+    frameSessionId !== sessionId.value ||
+    (payload.ticketId && payload.ticketId !== ticketId.value)
+  ) {
     return
   }
   messages.value.push({
@@ -501,6 +520,23 @@ function buildMessageWithAttachments(text: string): string {
     .map((a) => `【附件：${a.name}】\n---\n${a.content}\n---`)
     .join('\n\n')
   return `${attachmentText}\n\n${text}`
+}
+
+/** 输入法确认与 Shift+Enter 仅编辑草稿，普通回车沿用发送门禁。 */
+function handleInputKeydown(event: KeyboardEvent) {
+  if (
+    event.key !== 'Enter' ||
+    event.isComposing ||
+    event.keyCode === 229 ||
+    event.shiftKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.repeat
+  )
+    return
+  event.preventDefault()
+  sendMessage()
 }
 
 function sendMessage() {
@@ -703,7 +739,12 @@ onUnmounted(() => {
         <div>
           <div class="status-title">
             {{ ticket ? TICKET_STATUS_TEXT[ticket.status] : '正在连接' }}
-            <van-tag v-if="ticket" :type="TICKET_STATUS_TAG_TYPE[ticket.status]" plain size="medium">
+            <van-tag
+              v-if="ticket"
+              :type="TICKET_STATUS_TAG_TYPE[ticket.status]"
+              plain
+              size="medium"
+            >
               {{ wsConnected ? '在线' : '连接中' }}
             </van-tag>
           </div>
@@ -753,17 +794,31 @@ onUnmounted(() => {
           class="message-row"
           :class="`row-${message.senderType}`"
         >
-          <div v-if="message.senderType === 'SYSTEM'" class="system-line">{{ message.content }}</div>
+          <div v-if="message.senderType === 'SYSTEM'" class="system-line">
+            {{ message.content }}
+          </div>
           <template v-else>
             <div class="sender-avatar" aria-hidden="true">
-              {{ message.senderType === 'BOT' ? 'AI' : message.senderType === 'AGENT' ? '客' : '我' }}
+              {{
+                message.senderType === 'BOT' ? 'AI' : message.senderType === 'AGENT' ? '客' : '我'
+              }}
             </div>
             <div class="bubble-wrap">
               <div class="badge">
-                {{ message.senderType === 'AGENT' ? '人工客服' : message.senderType === 'BOT' ? '智能助手' : '我' }}
+                {{
+                  message.senderType === 'AGENT'
+                    ? '人工客服'
+                    : message.senderType === 'BOT'
+                      ? '智能助手'
+                      : '我'
+                }}
               </div>
               <div class="bubble">{{ message.content }}</div>
-              <div v-if="message.senderType === 'BOT'" class="feedback-actions" aria-label="评价这条回复">
+              <div
+                v-if="message.senderType === 'BOT'"
+                class="feedback-actions"
+                aria-label="评价这条回复"
+              >
                 <button
                   type="button"
                   aria-label="回复有帮助"
@@ -771,7 +826,11 @@ onUnmounted(() => {
                   :class="{ active: feedbackByMessage[message.messageId] === 'UP' }"
                   @click="onFeedback(message, 'UP')"
                 >
-                  <van-icon :name="feedbackByMessage[message.messageId] === 'UP' ? 'good-job' : 'good-job-o'" />
+                  <van-icon
+                    :name="
+                      feedbackByMessage[message.messageId] === 'UP' ? 'good-job' : 'good-job-o'
+                    "
+                  />
                 </button>
                 <button
                   type="button"
@@ -781,7 +840,11 @@ onUnmounted(() => {
                   :class="{ active: feedbackByMessage[message.messageId] === 'DOWN' }"
                   @click="onFeedback(message, 'DOWN')"
                 >
-                  <van-icon :name="feedbackByMessage[message.messageId] === 'DOWN' ? 'good-job' : 'good-job-o'" />
+                  <van-icon
+                    :name="
+                      feedbackByMessage[message.messageId] === 'DOWN' ? 'good-job' : 'good-job-o'
+                    "
+                  />
                 </button>
               </div>
             </div>
@@ -791,7 +854,9 @@ onUnmounted(() => {
           <div class="sender-avatar" aria-hidden="true">AI</div>
           <div class="bubble-wrap">
             <div class="badge">智能助手</div>
-            <div class="bubble">{{ streamingContent }}<span class="cursor" aria-hidden="true">|</span></div>
+            <div class="bubble">
+              {{ streamingContent }}<span class="cursor" aria-hidden="true">|</span>
+            </div>
           </div>
         </div>
       </template>
@@ -800,17 +865,29 @@ onUnmounted(() => {
     <div v-if="ticket?.status === 'WAITING_CONFIRM'" class="confirm-card">
       <div class="confirm-copy">
         <span class="confirm-icon" aria-hidden="true">✓</span>
-        <div><strong>问题已处理完成</strong><p>请确认本次服务是否解决了您的问题</p></div>
+        <div>
+          <strong>问题已处理完成</strong>
+          <p>请确认本次服务是否解决了您的问题</p>
+        </div>
       </div>
       <div class="confirm-actions">
-        <van-button size="small" type="primary" round :loading="acting" @click="onConfirmResolved">确认解决</van-button>
-        <van-button size="small" plain round :loading="acting" @click="openReject">仍有问题</van-button>
+        <van-button size="small" type="primary" round :loading="acting" @click="onConfirmResolved"
+          >确认解决</van-button
+        >
+        <van-button size="small" plain round :loading="acting" @click="openReject"
+          >仍有问题</van-button
+        >
       </div>
     </div>
 
     <div v-if="ended" class="ended-bar">
-      <div><strong>本次会话已结束</strong><p>历史消息会一直保留，您也可以继续咨询。</p></div>
-      <van-button block round type="primary" :loading="acting" @click="onReopen">重新开始对话</van-button>
+      <div>
+        <strong>本次会话已结束</strong>
+        <p>历史消息会一直保留，您也可以继续咨询。</p>
+      </div>
+      <van-button block round type="primary" :loading="acting" @click="onReopen"
+        >重新开始对话</van-button
+      >
     </div>
     <template v-else>
       <div class="composer-shell">
@@ -828,6 +905,9 @@ onUnmounted(() => {
             📎 {{ a.name }}
           </van-tag>
         </div>
+        <p v-if="attachmentBlocked" class="attachment-warning" role="status">
+          请等待附件上传完成，或移除失败附件
+        </p>
         <div v-if="quotaHint" class="quota-hint">
           <van-icon name="info-o" class="quota-hint-icon" />
           {{ quotaHint }}
@@ -842,22 +922,42 @@ onUnmounted(() => {
               <van-icon name="link-o" size="22" />
             </button>
           </van-uploader>
+          <label for="chat-message-input" class="composer-label">消息内容</label>
           <van-field
             v-model="inputContent"
             class="message-input"
             placeholder="输入消息…"
-            :disabled="!wsConnected"
-            @keyup.enter="sendMessage"
+            type="textarea"
+            :autosize="{ minHeight: 28, maxHeight: 120 }"
+            id="chat-message-input"
+            @keydown="handleInputKeydown"
           />
-          <van-button class="send-button" round type="primary" :disabled="!canSend" @click="sendMessage">
+          <van-button
+            class="send-button"
+            round
+            type="primary"
+            :disabled="!canSend"
+            @click="sendMessage"
+          >
             {{ wsConnected ? '发送' : '重连中' }}
           </van-button>
         </div>
       </div>
     </template>
 
-    <van-dialog v-model:show="rejectVisible" title="仍有问题" show-cancel-button @confirm="submitReject">
-      <van-field v-model="rejectReason" type="textarea" rows="3" placeholder="请描述遗留问题" class="dialog-field" />
+    <van-dialog
+      v-model:show="rejectVisible"
+      title="仍有问题"
+      show-cancel-button
+      @confirm="submitReject"
+    >
+      <van-field
+        v-model="rejectReason"
+        type="textarea"
+        rows="3"
+        placeholder="请描述遗留问题"
+        class="dialog-field"
+      />
     </van-dialog>
 
     <van-action-sheet
@@ -875,6 +975,21 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.composer-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.attachment-warning {
+  margin: 0 0 6px;
+  color: var(--cw-danger);
+  font-size: 12px;
+}
+
 .chat-page {
   display: flex;
   flex-direction: column;
@@ -884,9 +999,7 @@ onUnmounted(() => {
   max-height: 100dvh;
   overflow: hidden;
   box-sizing: border-box;
-  background:
-    radial-gradient(circle at 10% 4%, rgba(24, 119, 242, 0.09), transparent 27%),
-    var(--cw-page-bg, #f4f7fb);
+  background: var(--cw-page-bg);
 }
 
 .nav-action,
@@ -908,12 +1021,10 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 10px 12px 4px;
-  padding: 13px 14px;
-  border: 1px solid rgba(24, 119, 242, 0.12);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.93);
-  box-shadow: 0 10px 26px rgba(21, 52, 92, 0.07);
+  margin: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--cw-line);
+  background: var(--cw-card-bg);
 }
 
 .status-copy {
@@ -973,7 +1084,7 @@ onUnmounted(() => {
 
 .handoff-button {
   flex: 0 0 auto;
-  min-height: 36px;
+  min-height: 44px;
 }
 
 .reconnect-tip {
@@ -1193,8 +1304,14 @@ onUnmounted(() => {
 }
 
 @keyframes status-pulse {
-  from { transform: scale(0.75); opacity: 1; }
-  to { transform: scale(1.55); opacity: 0; }
+  from {
+    transform: scale(0.75);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.55);
+    opacity: 0;
+  }
 }
 
 .confirm-card {
@@ -1240,8 +1357,7 @@ onUnmounted(() => {
   z-index: 2;
   padding: 7px 10px calc(8px + env(safe-area-inset-bottom));
   border-top: 1px solid rgba(19, 35, 58, 0.06);
-  background: rgba(244, 247, 251, 0.92);
-  backdrop-filter: blur(14px);
+  background: var(--cw-card-bg);
 }
 
 .attachment-chips {
@@ -1278,14 +1394,20 @@ onUnmounted(() => {
   gap: 6px;
   padding: 4px 5px;
   border: 1px solid rgba(19, 35, 58, 0.08);
-  border-radius: 18px;
+  border-radius: 12px;
   background: var(--cw-card-bg, #fff);
-  box-shadow: 0 9px 28px rgba(21, 52, 92, 0.1);
+  box-shadow: var(--cw-card-shadow-soft);
 }
 
 .attach-button {
   color: var(--cw-text-secondary, #718096);
   border-radius: 14px;
+}
+
+.message-input :deep(textarea) {
+  font-size: 16px;
+  line-height: 1.6;
+  padding: 5px 0;
 }
 
 .message-input {
@@ -1297,7 +1419,7 @@ onUnmounted(() => {
 .send-button {
   flex: 0 0 auto;
   min-width: 66px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 16px;
 }
 
