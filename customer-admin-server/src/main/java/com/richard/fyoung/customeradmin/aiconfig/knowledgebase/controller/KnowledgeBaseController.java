@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.controller;
 
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionService;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseOptionVO;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseSaveRequest;
@@ -39,11 +40,31 @@ public class KnowledgeBaseController {
 
     private final KnowledgeBaseService knowledgeBaseService;
     private final KnowledgeBaseVersionService versionService;
+    private final KnowledgeProjectionService projectionService;
 
     public KnowledgeBaseController(KnowledgeBaseService knowledgeBaseService,
-                                   KnowledgeBaseVersionService versionService) {
+                                   KnowledgeBaseVersionService versionService,
+                                   KnowledgeProjectionService projectionService) {
         this.knowledgeBaseService = knowledgeBaseService;
         this.versionService = versionService;
+        this.projectionService = projectionService;
+    }
+
+    /**
+     * 把某个知识库版本投影到客服端库，让 C 端能真正检索到它。
+     *
+     * <p><b>为什么需要一个显式动作</b>：知识资产的编辑、审核、版本都在后台，而运行时要读的表
+     * 在客服端库。没有这一步，运营在后台做的一切对线上对话零影响——那正是这套知识栈此前的状态：
+     * 看板显示知识库好好的，用户那边一问三不知。</p>
+     *
+     * <p>用 {@code knowledge-base:edit} 而不新开权限点：能编辑知识库的人本就决定着
+     * 客服端看到什么内容，投影只是把这个决定生效，不构成新的数据出口。</p>
+     */
+    @SaCheckPermission("knowledge-base:edit")
+    @OperationLog(operation = "知识库投影到客服端", target = "ai_knowledge_base")
+    @PostMapping("/{id}/versions/{versionId}/project")
+    public Result<Integer> project(@PathVariable Long id, @PathVariable Long versionId) {
+        return Result.success(projectionService.project(id, versionId));
     }
 
     @SaCheckPermission("knowledge-base:view")

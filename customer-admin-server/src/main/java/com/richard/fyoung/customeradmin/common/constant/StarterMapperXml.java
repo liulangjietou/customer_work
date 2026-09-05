@@ -25,6 +25,7 @@ public final class StarterMapperXml {
     public static final String EVAL_RUN = PREFIX + "EvalRunMapper.xml";
     public static final String KNOWLEDGE = PREFIX + "KnowledgeMapper.xml";
     public static final String KNOWLEDGE_GAP = PREFIX + "KnowledgeGapMapper.xml";
+    public static final String KNOWLEDGE_CHUNK = PREFIX + "KnowledgeChunkMapper.xml";
     public static final String PROMPT_VERSION = PREFIX + "PromptVersionMapper.xml";
     public static final String RATE_LIMIT_RULE = PREFIX + "RateLimitRuleMapper.xml";
     public static final String SEMANTIC_CACHE = PREFIX + "SemanticCacheMapper.xml";
