@@ -35,6 +35,30 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-05 能力差距批次一二实测（**AgentScope 已升 2.0.2**）：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1730/6 skip、app-server 132、customer-channel 82、admin 1734/1 skip、gateway 1，
+  **合计 3679**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+20**
+  （MCP 超时门禁 3 + 上下文配对保护 3 + 对话阶段中间件 8 + Toolkit 执行模式 3 + 中间件顺序契约 3）、
+  app-server **+3**（RAG 生产门禁）、customer-channel **+2**（渠道装配运行时门禁）；
+  前端 vitest 34（本批 +7）。本批次无迁移，cw Flyway 仍是下次 **V24**、admin **V102**。
+  四个坑：
+  ① **框架升级要显式钉住 Toolkit 执行模式**——v2.0.1 把默认改成并行，而这条写在 release notes 的
+  "Refactored" 段落、不在 Breaking Changes。实测 `ToolkitConfig.defaultConfig().isParallel()` 已是 true。
+  并行本身对无状态工具安全，危险的是审批交错（一轮里同时发起查询与退款，审批拦住一个而另一个已执行）、
+  租户上下文跨线程传播、token 计量口径三处。开关在 `ToolkitConfig` 而不是 `ExecutionConfig`
+  （后者只有超时与重试，没有并行字段），已收敛进 `ToolkitConfigs.sequential()` + `ManagedToolkit` 构造器；
+  ② **`ToolkitConfig.executionConfig` 已提供工具级超时与重试**，项目一直用无参 `Toolkit()` 从没配过——
+  排查"工具没有超时重试"这类问题前先查框架有没有现成能力，别急着自建；
+  ③ **文本扫描门禁挡不住"调用了但装进去是空的"**：`AgentAssemblyAlignmentTest` 断言源码里有
+  `governanceAssembler.applyTo` 这个字符串，而 customer-channel 确实调了、装配器拿到的
+  `ObjectProvider` 却解析不出任何 Bean（该模块不扫 starter 的 `@Component`）。
+  这类装配完整性必须用 `@SpringBootTest` 起真实容器断言，见 `ChannelGovernanceMiddlewareTest`；
+  ④ **全量跑到一半改源码这次又踩了一遍**（本文件早记过）：升级后的第一次全量在 starter 与 app-server
+  已 SUCCESS 时，因我并发修改 customer-channel 源码而在该模块编译失败，那次全量对 channel 的结论作废，
+  重跑才有效。**中间件顺序契约见 `MiddlewareOrders`**：此前 20 个中间件全用框架默认 `order()=1`
+  且无一标 `@Order`，实际顺序由 Bean 定义顺序偶然决定；新增中间件必须在那里定值，
+  `MiddlewareOrderContractTest` 会对"不留默认值 / 取值不重复 / 关键相对次序"下断言。
+  能力差距全量清单与后续批次三四五见 `docs/智能体能力差距与演进路线图.md`。上一版基线见下。）
   （2026-09-02 后台库快照带系统种子批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1710/5 skip、app-server 129、customer-channel 80、admin 1734/1 skip、gateway 1，
   **合计 3654**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+5**（差异定位单测）、
