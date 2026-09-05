@@ -35,6 +35,22 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-05 能力差距批次三四实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1771/6 skip、app-server 132、customer-channel 82、admin 1741/1 skip、gateway 1，
+  **合计 3727**（排除 `RedisSessionPersistenceTest`）。**cw Flyway 已到 V24**（受管知识库分片表），
+  下次 **V25**；admin 仍是下次 **V102**。
+  本批次的两条经验：
+  ① **动手前先验证 gap 是否成立**——`docs/智能体能力差距与演进路线图.md` 里有 3 条【待复核】结论
+  被实施期核实推翻：「工具执行没有超时重试」（框架 `ToolkitConfig.executionConfig` 已提供，
+  实测 `TOOL_DEFAULTS` 是 5 分钟超时 + 不重试，问题是默认值不可用而非能力缺失）、
+  「优雅停机空转」（在途登记由 `AgentBase#runLifecycle` 承担，`streamEvents` 也走它，
+  已补 `GracefulShutdownRequestTrackingProbeTest` 实测钉住）、「7 个调度器全量重复执行」
+  （多数 `@Scheduled` 是本地缓存刷新，重复无害；`HandoffSlaScheduler` 根本没有 `@Scheduled`）。
+  被推翻的全在【待复核】档，【实测】档无一被推翻；
+  ② **降级方向要逐个想清楚**：本批次三处降级方向各不相同——WS 广播失败退回"离线"语义（旁路不打断主链路）、
+  调度锁拿不到时**照常执行**（跳过会让超时审批永远没人处理，重复执行反而可恢复）、
+  受管知识库依赖缺失时**显式失败不降级**（降级会回到 4 条演示文本，而运营以为知识库在生效）。
+  上一版基线见下。）
   （2026-09-05 能力差距批次一二实测（**AgentScope 已升 2.0.2**）：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1730/6 skip、app-server 132、customer-channel 82、admin 1734/1 skip、gateway 1，
   **合计 3679**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+20**
