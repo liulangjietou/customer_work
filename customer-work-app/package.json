@@ -23,7 +23,7 @@
     "@vue/test-utils": "^2.5.0",
     "@vue/tsconfig": "^0.9.1",
     "happy-dom": "^20.11.12",
-    "typescript": "~6.0.2",
+    "typescript": "~7.0.2",
     "vite": "^8.1.1",
     "vitest": "^4.1.11",
     "vue-tsc": "^3.3.5"
