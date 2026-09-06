@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.core.middleware.MiddlewareOrders;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
 import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttributionContext;
@@ -591,5 +592,11 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             return b;
         }
         return c;
+    }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：token 唯一落点，需看到完整的一轮。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.AGENT_CALL_TIMING;
     }
 }

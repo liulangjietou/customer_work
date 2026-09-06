@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.core.middleware.MiddlewareOrders;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -34,5 +35,11 @@ public class ModelReplayCaptureMiddleware implements MiddlewareBase {
             }
         }
         return next.apply(input);
+    }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：模型调用回放快照。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.MODEL_REPLAY_CAPTURE;
     }
 }

@@ -64,4 +64,10 @@ public class SubjectToolAuthorizationMiddleware implements MiddlewareBase {
             super(ERROR_CODE + ": tool=" + toolName + ", subjectType=" + subjectType);
         }
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：授权判定必须在工具执行之前。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.SUBJECT_TOOL_AUTHORIZATION;
+    }
 }

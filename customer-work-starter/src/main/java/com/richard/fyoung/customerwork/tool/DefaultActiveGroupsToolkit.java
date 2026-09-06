@@ -26,6 +26,16 @@ import java.util.List;
  */
 public class DefaultActiveGroupsToolkit extends ManagedToolkit {
 
+    /** 默认构造：串行 + 安全的工具执行超时。 */
+    public DefaultActiveGroupsToolkit() {
+        super();
+    }
+
+    /** 按部署配置指定执行超时与重试。 */
+    public DefaultActiveGroupsToolkit(io.agentscope.core.tool.ToolkitConfig config) {
+        super(config);
+    }
+
     /**
      * 返回自身而非防御性拷贝。
      *

@@ -289,4 +289,10 @@ public class IndirectInjectionGuardMiddleware implements MiddlewareBase {
             .metadata(source.getMetadata())
             .build();
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：针对工具结果与外部内容。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.INDIRECT_INJECTION_GUARD;
+    }
 }

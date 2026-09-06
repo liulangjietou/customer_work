@@ -97,4 +97,10 @@ public class DynamicOptionsMiddleware implements MiddlewareBase {
         }
         return null;
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：动态模型参数。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.DYNAMIC_OPTIONS;
+    }
 }

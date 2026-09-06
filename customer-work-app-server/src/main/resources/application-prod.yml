@@ -70,6 +70,10 @@ customer-work:
     retention-cleanup-batch-size: ${MEMORY_RETENTION_CLEANUP_BATCH_SIZE:1000}
 
   rag:
+    # 生产必配项：memory 的语料是代码里硬编码的 4 条演示文本，上生产等于智能体只认那 4 条政策。
+    # ProductionReadinessValidator#validateKnowledge 会拒绝 memory 启动——这里保留 memory 作为
+    # 兜底值只是为了让「漏配环境变量」表现为启动失败而不是静默降级；真正的取值必须由 RAG_PROVIDER 注入
+    # （simple / bailian / dify）。
     provider: ${RAG_PROVIDER:memory}
 
   # ------------------------------------------------------------------

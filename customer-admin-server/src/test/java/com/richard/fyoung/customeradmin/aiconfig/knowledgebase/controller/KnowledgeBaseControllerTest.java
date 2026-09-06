@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.controller;
 
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionService;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseOptionVO;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseTestResult;
@@ -31,12 +32,31 @@ import static org.mockito.Mockito.when;
 class KnowledgeBaseControllerTest {
 
     private KnowledgeBaseService service;
+    private KnowledgeProjectionService projectionService;
     private KnowledgeBaseController controller;
 
     @BeforeEach
     void setUp() {
         service = mock(KnowledgeBaseService.class);
-        controller = new KnowledgeBaseController(service, mock(KnowledgeBaseVersionService.class));
+        projectionService = mock(KnowledgeProjectionService.class);
+        controller = new KnowledgeBaseController(service, mock(KnowledgeBaseVersionService.class),
+            projectionService);
+    }
+
+    /**
+     * 投影是知识库真正生效的那一步。
+     *
+     * <p>没有它，运营在后台做的一切对线上对话零影响——看板显示知识库好好的，
+     * 用户那边一问三不知。</p>
+     */
+    @Test
+    void project_shouldReturnWrittenChunkCount() {
+        when(projectionService.project(7L, 70L)).thenReturn(42);
+
+        Result<Integer> result = controller.project(7L, 70L);
+
+        assertEquals(ResultCode.SUCCESS.getCode(), result.getCode());
+        assertEquals(42, result.getData());
     }
 
     @Test

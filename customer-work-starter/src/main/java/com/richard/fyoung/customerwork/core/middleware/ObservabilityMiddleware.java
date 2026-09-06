@@ -88,4 +88,10 @@ public class ObservabilityMiddleware implements MiddlewareBase {
                 .increment();
         }
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：打点需覆盖内层全链路。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.OBSERVABILITY;
+    }
 }

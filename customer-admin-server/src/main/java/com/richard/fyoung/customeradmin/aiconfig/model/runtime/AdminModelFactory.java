@@ -24,7 +24,7 @@ import java.util.List;
  * 模型运行时构建（admin 薄壳）：连通性测试（{@link #testConnectivity}）+ 现场构建真实 {@link Model} 实例
  * （{@link #buildModel}，供动态智能体运行时注入 {@code ReActAgent}）。
  *
- * <p>两件事的通用能力都已下沉 starter：建模走 {@link ChatModelFactory}（五厂商静态工厂），
+ * <p>两件事的通用能力都已下沉 starter：建模走 {@link ChatModelFactory}（九厂商静态工厂：五家原生 + GLM/DeepSeek/Kimi/MiniMax 专用 Formatter），
  * 探活走 {@link ChatModelProber}（四厂商最小探活协议 + 固定 DNS 解析结果）。本类只保留 admin 侧职责——
  * 用 {@link ModelProvider#of} 做 provider 合法性 fast fail 收口，并把探活结果译成前端用的
  * {@link ModelTestResult}（带测试时刻，落库到 {@code ai_model_config.test_status}）。</p>
@@ -115,7 +115,7 @@ public class AdminModelFactory {
      * 构建可直接注入 {@code ReActAgent.Builder#model(Model)} 的真实模型实例（动态智能体运行时用，
      * 区别于 {@link #testConnectivity}——后者是短生命周期的连通性探测请求）。
      *
-     * <p>四家厂商全部走框架原生 ChatModel（由 {@link ChatModelFactory} 统一构建）；未知 provider 由
+     * <p>各厂商全部走框架原生 ChatModel（由 {@link ChatModelFactory} 统一构建）；未知 provider 由
      * {@link ModelProvider#of} fast fail，不会落到工厂的默认厂商分支。高级生成参数（温度/maxTokens）
      * 交给模型默认值，与 {@code ModelSaveRequest} 不暴露调参保持一致。构建前会重新校验当次运行时
      * baseUrl，阻断已发布配置绕过保存期校验；该校验不替代厂商 SDK 自身连接阶段的 DNS 与重定向控制。</p>

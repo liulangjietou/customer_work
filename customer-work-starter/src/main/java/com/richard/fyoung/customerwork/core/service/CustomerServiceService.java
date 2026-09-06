@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.service;
 
+import com.richard.fyoung.customerwork.capability.dialog.DialogStageService;
 import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.core.agent.AgentResourceCloser;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectKey;
@@ -161,6 +162,9 @@ public class CustomerServiceService {
     /** 会话级满意度；未装配时为 {@code null}，会话结束不发邀请。 */
     private CsatService csatService;
 
+    /** 对话阶段状态机；未装配时为 {@code null}，会话销毁不清理阶段。 */
+    private DialogStageService dialogStageService;
+
     /** Spring 注入构造：MeterRegistry 经 ObjectProvider 可选注入（actuator 缺席时降级为无指标）。 */
     @Autowired
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
@@ -172,8 +176,11 @@ public class CustomerServiceService {
                                   ObjectProvider<SessionLock> sessionLockProvider,
                                   ObjectProvider<TenantQuotaGuard> quotaGuardProvider,
                                   ObjectProvider<SemanticCacheService> semanticCacheProvider,
-                                  ObjectProvider<CsatService> csatServiceProvider) {
+                                  ObjectProvider<CsatService> csatServiceProvider,
+                                  ObjectProvider<DialogStageService> dialogStageServiceProvider) {
         this(agentFactory, sessionStateManager, properties, memorySubjectResolver);
+        this.dialogStageService = dialogStageServiceProvider == null
+            ? null : dialogStageServiceProvider.getIfAvailable();
         this.meterRegistry = meterRegistryProvider.getIfAvailable();
         this.sensitiveWordFilter = sensitiveWordFilterProvider.getIfAvailable();
         this.semanticCache = semanticCacheProvider == null ? null : semanticCacheProvider.getIfAvailable();
@@ -200,7 +207,7 @@ public class CustomerServiceService {
                                   ObjectProvider<CsatService> csatServiceProvider) {
         this(agentFactory, sessionStateManager, properties, new MemorySubjectResolver(),
             meterRegistryProvider, sensitiveWordFilterProvider, sessionLockProvider,
-            quotaGuardProvider, semanticCacheProvider, csatServiceProvider);
+            quotaGuardProvider, semanticCacheProvider, csatServiceProvider, null);
     }
 
     /** 无指标构造（单测 / 未接入 Micrometer 场景）；properties 为空时使用默认配置。 */
@@ -678,6 +685,26 @@ public class CustomerServiceService {
         } catch (Exception e) {
             log.error("[session {}] delete persisted state failed (ignored), code={}", sessionId,
                 "SESSION_DELETE_ERROR", e);
+        }
+        resetDialogStage(sessionId);
+    }
+
+    /**
+     * 会话销毁时清理对话阶段。
+     *
+     * <p>不清理的话，同一个 sessionId 再次进来会带着上一轮的终态：停在 {@code ESCALATED} 的会话
+     * 一开口就被指示"不要自行办理业务、引导用户等待坐席"，停在 {@code CONFIRMING} 的会话
+     * 则会让模型去复述一个不存在的处理结果。两种都不报错，只是答非所问。</p>
+     */
+    private void resetDialogStage(String sessionId) {
+        if (dialogStageService == null) {
+            return;
+        }
+        try {
+            dialogStageService.reset(sessionId);
+        } catch (Exception e) {
+            log.error("[session {}] reset dialog stage failed (ignored), code={}", sessionId,
+                "DIALOG_STAGE_RESET_ERROR", e);
         }
     }
 

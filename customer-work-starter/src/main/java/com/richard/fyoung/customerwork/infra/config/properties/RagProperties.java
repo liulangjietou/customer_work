@@ -13,8 +13,16 @@ public class RagProperties {
     /** 是否启用 RAG。 */
     private boolean enabled = true;
     /**
-     * 知识库实现：memory（内置内存关键词）| simple（百炼 Embedding + 内存向量库，真实语义检索）
-     * | bailian（百炼企业知识库）| dify | ragflow | haystack。
+     * 知识库实现，取值见 {@code KnowledgeProviders}：
+     * memory（内置演示语料，<b>仅开发用</b>）| simple（百炼 Embedding + 内存向量库）
+     * | bailian（百炼企业知识库）| dify。
+     *
+     * <p>此前这里还列了 {@code ragflow} 与 {@code haystack}，但 {@code KnowledgeProvider#build()}
+     * 里并没有对应分支，配上去会落进 default 静默降级成演示语料。它们属于待实现的扩展点，
+     * 已从取值清单移除，避免文档与实现两套说法。</p>
+     *
+     * <p><b>生产必须显式配置为非 memory 的取值</b>，否则 {@code ProductionReadinessValidator}
+     * 会拒绝启动——memory 的语料是代码里硬编码的 4 条演示文本。</p>
      */
     private String provider = "memory";
     /** 召回条数上限。 */
@@ -25,6 +33,21 @@ public class RagProperties {
     private final Bailian bailian = new Bailian();
     /** Dify 知识库配置（provider=dify 时生效）。 */
     private final Dify dify = new Dify();
+    /** 受管知识库配置（provider=managed 时生效）。 */
+    private final Managed managed = new Managed();
+
+    /** 受管知识库：客服端直连后台投影过来的企业知识库。 */
+    @Data
+    public static class Managed {
+        /**
+         * 参与检索的知识库编码；<b>留空表示本租户全部已投影版本</b>。
+         *
+         * <p>留空是刻意的默认：运营在后台建了知识库、同步任务把它投影过来了，
+         * 就说明它是打算给客服用的。要求再在客服端配一遍编码，等于给"知识库明明建好了却查不到"
+         * 多留一个漏配点。需要精确控制时才显式列出。</p>
+         */
+        private java.util.List<String> knowledgeBaseCodes = new ArrayList<>();
+    }
 
     @Data
     public static class Dify {

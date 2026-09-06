@@ -1,5 +1,21 @@
 package com.richard.fyoung.customerchannel;
 
+import com.richard.fyoung.customerwork.capability.dialog.DialogStageService;
+import com.richard.fyoung.customerwork.core.middleware.AuditMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.ChatTerminalCaptureMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.ContextBudgetMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.DialogStageMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.DynamicOptionsMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.LatencyMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.SelfCorrectionMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.TenantContextMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.ToolGuardMiddleware;
+import com.richard.fyoung.customerwork.observability.AuditSink;
+import com.richard.fyoung.customerwork.observability.LoggingAuditSink;
+import com.richard.fyoung.customerwork.safety.security.SensitiveDataMasker;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.ModelConfig;
 import com.richard.fyoung.customerwork.infra.config.PermissionConfig;
@@ -72,6 +88,98 @@ public class CustomerWebAgentConfig {
     @Bean
     public RuntimeAgentAccessState runtimeAgentAccessState() {
         return new RuntimeAgentAccessState();
+    }
+
+    /**
+     * 治理中间件（本模块必须逐个显式声明）。
+     *
+     * <p><b>为什么这段代码此前不存在，而问题一直没被发现</b>：{@code AgentGovernanceAssembler#applyTo}
+     * 里只有生命周期与可观测两个中间件是直接 new 的，其余全部走
+     * {@code pluggableMiddlewares.orderedStream()} 从容器里取。本模块用 {@code @SpringBootApplication}
+     * 只扫自己的包，starter 里带 {@code @Component} 的中间件一个都不会被注册——
+     * 于是钉钉/企微/微信/飞书四条对外渠道上，出站敏感词过滤、PII 脱敏、提示词注入防护、
+     * 租户上下文、token 计量与审计<b>全部缺失</b>，而 {@code AgentAssemblyAlignmentTest} 是文本扫描，
+     * 只断言源码里出现过 {@code governanceAssembler.applyTo} 这个字符串，本模块确实调了，门禁照常通过。</p>
+     *
+     * <p>IM 渠道是面向真实客户的对外入口，却曾是全项目治理最薄弱的一条链路。
+     * 逐个声明是本模块复用 starter 能力的既定方式（{@code chatModel} / {@code agentStateStore} 同理），
+     * 漏声明由 {@code ChannelGovernanceMiddlewareTest} 的运行时断言兜住——那是文本扫描照不出来的。</p>
+     */
+    @Bean
+    public SensitiveDataMasker sensitiveDataMasker(CustomerWorkProperties properties) {
+        return new SensitiveDataMasker(properties);
+    }
+
+    @Bean
+    public AuditSink auditSink() {
+        return new LoggingAuditSink();
+    }
+
+    @Bean
+    public MaskingMiddleware maskingMiddleware(CustomerWorkProperties properties,
+                                               SensitiveDataMasker masker) {
+        return new MaskingMiddleware(properties, masker);
+    }
+
+    @Bean
+    public AuditMiddleware auditMiddleware(CustomerWorkProperties properties,
+                                           AuditSink sink,
+                                           SensitiveDataMasker masker) {
+        return new AuditMiddleware(properties, sink, masker);
+    }
+
+    @Bean
+    public PromptInjectionGuardMiddleware promptInjectionGuardMiddleware(
+            CustomerWorkProperties properties, ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new PromptInjectionGuardMiddleware(properties, meterRegistryProvider);
+    }
+
+    @Bean
+    public IndirectInjectionGuardMiddleware indirectInjectionGuardMiddleware(
+            CustomerWorkProperties properties, ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new IndirectInjectionGuardMiddleware(properties, meterRegistryProvider);
+    }
+
+    @Bean
+    public TenantContextMiddleware tenantContextMiddleware() {
+        return new TenantContextMiddleware();
+    }
+
+    @Bean
+    public ToolGuardMiddleware toolGuardMiddleware(CustomerWorkProperties properties) {
+        return new ToolGuardMiddleware(properties);
+    }
+
+    @Bean
+    public ContextBudgetMiddleware contextBudgetMiddleware(CustomerWorkProperties properties) {
+        return new ContextBudgetMiddleware(properties);
+    }
+
+    @Bean
+    public SelfCorrectionMiddleware selfCorrectionMiddleware(CustomerWorkProperties properties) {
+        return new SelfCorrectionMiddleware(properties);
+    }
+
+    @Bean
+    public DynamicOptionsMiddleware dynamicOptionsMiddleware(CustomerWorkProperties properties) {
+        return new DynamicOptionsMiddleware(properties);
+    }
+
+    @Bean
+    public LatencyMiddleware latencyMiddleware(
+            CustomerWorkProperties properties, ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new LatencyMiddleware(properties, meterRegistryProvider);
+    }
+
+    /** 采集终止原因与真实 token 用量；无采集上下文时完全透传。 */
+    @Bean
+    public ChatTerminalCaptureMiddleware chatTerminalCaptureMiddleware() {
+        return new ChatTerminalCaptureMiddleware();
+    }
+
+    @Bean
+    public DialogStageMiddleware dialogStageMiddleware() {
+        return new DialogStageMiddleware(new DialogStageService());
     }
 
     @Bean
