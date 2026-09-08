@@ -35,6 +35,24 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-09 能力差距批次五（模型层与成本可见性）实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1781/9 skip、app-server 132、customer-channel 82、admin 1741/1 skip、gateway 1，
+  **合计 3737**（排除 `RedisSessionPersistenceTest`）。**skip 比上一版多 3 个是本机 Nacos 容器没起**
+  （`NacosRuntimeConfig` / `NacosPrompt` / `NacosServiceRegistrar` 三个门控集成测试），与改动无关。
+  本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。三条经验：
+  ① **国产模型（GLM/DeepSeek/Kimi/MiniMax）不需要新增依赖**——它们在
+  `agentscope-extensions-model-openai` 的 `compat` 子包里（Maven Central 上没有独立模块），
+  项目本就依赖这个包。走"通用 `OpenAIChatModel.Builder` + 厂商专用 Formatter"这条路，
+  既拿到专用消息格式（通用兼容路径会**丢 system role**，上游为此修过 #2189），
+  又能继续显式注入 `contextWindowSize`（`ModelProvider.create()` 返回 `Model` 之后就设不了了）；
+  ② **同名 meter 的标签键集合必须一致**：Micrometer/Prometheus 在不一致时直接拒绝，
+  而本地 `SimpleMeterRegistry` 不报错、只是查不到。给视觉 OCR 的 token 加 `source` 标签时，
+  对话链路那侧也必须一并补上，既有断言随之更新属预期内；指标名与标签已收敛到 `TokenMetrics`；
+  ③ **视觉 OCR 是一次真实的模型调用，但它绕开 Agent 链路**，因此不经过
+  `AgentCallTimingMiddleware`（token 唯一落点）——此前 `recognize()` 连 `usage` 都没读，
+  这部分成本完全不可见。记账做成 `VisionOcrUsageRecorder` SPI：指标一定记、配额尽力记
+  （主体来自 `QuotaSubjectContext`，而 OCR 跑在 boundedElastic 上，能否还原取决于
+  `tenant.enabled` 是否开启了 Reactor 自动传播）。上一版基线见下。）
   （2026-09-05 能力差距批次三四实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1771/6 skip、app-server 132、customer-channel 82、admin 1741/1 skip、gateway 1，
   **合计 3727**（排除 `RedisSessionPersistenceTest`）。**cw Flyway 已到 V24**（受管知识库分片表），
