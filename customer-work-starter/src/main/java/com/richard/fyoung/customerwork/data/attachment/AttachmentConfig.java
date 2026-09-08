@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.attachment;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.data.attachment.mapper.ChatAttachmentMapper;
@@ -65,7 +67,9 @@ public class AttachmentConfig {
     @Bean
     @ConditionalOnMissingBean(VisionOcrService.class)
     public VisionOcrService visionOcrService(AttachmentProperties properties,
-                                             CustomerWorkProperties customerWorkProperties) {
+                                             CustomerWorkProperties customerWorkProperties,
+                                             ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                             ObjectProvider<SubjectQuotaGuard> quotaGuardProvider) {
         AttachmentProperties.Ocr ocr = properties.getOcr();
         String modelApiKey = customerWorkProperties.getModel().getApiKey();
         Supplier<Model> modelSupplier = () -> {
@@ -77,7 +81,11 @@ public class AttachmentConfig {
             return ChatModelFactory.build(ocr.getProvider(), ocr.getModelName(), apiKey, ocr.getBaseUrl(),
                 false, GenerateOptions.builder().build(), null, null);
         };
-        return VisionOcrServices.create(properties, modelSupplier);
+        // OCR 是一次真实的模型调用，必须记账——它绕开了 Agent 链路，此前 token 完全不可见
+        VisionOcrUsageRecorder usageRecorder = new MeteredVisionOcrUsageRecorder(
+            meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable(),
+            quotaGuardProvider == null ? null : quotaGuardProvider.getIfAvailable());
+        return VisionOcrServices.create(properties, modelSupplier, usageRecorder);
     }
 
     /** 附件文件存储：文件统一进入 MinIO，构造逻辑收敛在 {@link AttachmentFileStorages}。 */

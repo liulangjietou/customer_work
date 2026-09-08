@@ -33,7 +33,13 @@ public final class VisionOcrServices {
      * @param visionModelSupplier engine=model 时惰性构建视觉模型的工厂（缺 Key 不影响启动，首次识别才构建）
      * @return 选定引擎的 {@link VisionOcrService} 实现
      */
+    /** 兼容既有调用：不记账。 */
     public static VisionOcrService create(AttachmentProperties properties, Supplier<Model> visionModelSupplier) {
+        return create(properties, visionModelSupplier, VisionOcrUsageRecorder.noop());
+    }
+
+    public static VisionOcrService create(AttachmentProperties properties, Supplier<Model> visionModelSupplier,
+                                          VisionOcrUsageRecorder usageRecorder) {
         AttachmentProperties.Ocr ocr = properties.getOcr();
         if (ENGINE_PADDLEOCR.equalsIgnoreCase(ocr.getEngine())) {
             AttachmentProperties.Paddle paddle = ocr.getPaddle();
@@ -41,6 +47,7 @@ public final class VisionOcrServices {
             return new PaddleOcrVisionOcrService(paddle.getBaseUrl(), paddle.getOcrPath(), paddle.getTimeoutSeconds());
         }
         log.info("vision ocr engine: model (vision LLM, provider={}, model={})", ocr.getProvider(), ocr.getModelName());
-        return new ModelVisionOcrService(visionModelSupplier, ocr.getPrompt(), ocr.getTimeoutSeconds());
+        return new ModelVisionOcrService(visionModelSupplier, ocr.getPrompt(), ocr.getTimeoutSeconds(),
+            usageRecorder);
     }
 }
