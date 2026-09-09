@@ -66,6 +66,7 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
     private final MultiAgentOrchestrator orchestrator;
     private final TenantResolver tenantResolver;
     private final SemanticCacheProperties properties;
+    private final SemanticCacheMetrics metrics;
     /** 每租户配置代际与切换锁；contentHash 不落 ThreadLocal，异步缓存写仍可校验发起时版本。 */
     private final Map<String, GenerationState> generationStates = new ConcurrentHashMap<>();
 
@@ -74,6 +75,20 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
                                 MultiAgentOrchestrator orchestrator,
                                 TenantResolver tenantResolver,
                                 SemanticCacheProperties properties) {
+        this(store, embeddingClient, orchestrator, tenantResolver, properties, null);
+    }
+
+    /**
+     * @param meterRegistry 可空：没有它时全部埋点退化为空操作，
+     *                      可观测缺失不该让缓存本身不可用
+     */
+    public SemanticCacheService(SemanticCacheStore store,
+                                EmbeddingClient embeddingClient,
+                                MultiAgentOrchestrator orchestrator,
+                                TenantResolver tenantResolver,
+                                SemanticCacheProperties properties,
+                                io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+        this.metrics = new SemanticCacheMetrics(meterRegistry);
         this.store = store;
         this.embeddingClient = embeddingClient;
         this.orchestrator = orchestrator;
@@ -98,18 +113,25 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
      */
     public Optional<String> lookup(CacheGeneration generation, String sessionId, String question) {
         if (!active()) {
+            metrics.recordLookup(SemanticCacheMetrics.RESULT_SKIP);
             return Optional.empty();
         }
         return withGeneration(generation, Optional.empty(), () -> {
             String intent = resolveIntent(question);
             if (!cacheable(question, intent)) {
+                metrics.recordLookup(SemanticCacheMetrics.RESULT_SKIP);
                 return Optional.empty();
             }
             String scopeId = tenantResolver.resolveDataScope(sessionId);
             long now = System.currentTimeMillis();
+            int limit = properties.getMaxCandidates();
             List<SemanticCacheEntry> candidates = store.findCandidates(scopeId, intent,
-                generation.configGeneration(), notBefore(now), properties.getMaxCandidates());
+                generation.configGeneration(), notBefore(now), limit);
+            // 候选触顶意味着"还有更相似的条目没进入比较范围"——这正是
+            // 「要不要把召回改成真正的向量检索」的判据，靠猜没有意义
+            metrics.recordCandidates(candidates.size(), limit);
             if (candidates.isEmpty()) {
+                metrics.recordLookup(SemanticCacheMetrics.RESULT_MISS);
                 return Optional.empty();
             }
             float[] queryVector = embeddingClient.embedQuery(question);
@@ -123,8 +145,13 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
                 }
             }
             if (best == null || bestScore < properties.getSimilarityThreshold()) {
+                // 记下"差多少才命中"：大量落在阈值下沿说明阈值太严，
+                // 调一个配置就能解决，比改存储格式便宜得多
+                metrics.recordMissBestScore(bestScore);
+                metrics.recordLookup(SemanticCacheMetrics.RESULT_MISS);
                 return Optional.empty();
             }
+            metrics.recordLookup(SemanticCacheMetrics.RESULT_HIT);
             store.recordHit(best.id(), now);
             log.info("semantic cache hit: scopeId={}, intent={}, score={}, cachedQuestion={}",
                 scopeId, intent, String.format("%.4f", bestScore), best.question());
