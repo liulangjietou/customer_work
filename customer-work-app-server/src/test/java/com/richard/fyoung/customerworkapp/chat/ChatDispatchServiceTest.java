@@ -95,7 +95,7 @@ class ChatDispatchServiceTest {
         ChatMessage message = ChatMessage.of("MSG-9", SESSION_ID, "TK-1",
             TicketActorType.BOT, null, reply.toString());
         ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-9", "MODEL_STOP",
-            new ChatUsageSnapshot(8, 2, 0, 10, 0.1), "trace-ws", List.of());
+            new ChatUsageSnapshot(8, 2, 0, 10, 0.1), "trace-ws", List.of(), List.of());
         events.add(new ChatTurnEvent.Completed(new ChatTurnCompletion(message, terminal)));
         return Flux.fromIterable(events);
     }

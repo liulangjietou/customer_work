@@ -211,6 +211,7 @@ export interface ChatMessage {
    * 因此刷新页面后重新拉取的历史消息没有来源，这是已知缺口而不是数据丢失。
    */
   citations?: KnowledgeCitation[]
+  taskPlan?: TaskPlanItem[]
 }
 
 export interface ReasonPayload {
@@ -279,6 +280,19 @@ export interface KnowledgeCitation {
   score: number | null
 }
 
+/**
+ * 任务清单里的一项：智能体本轮要办的一件事及其状态。
+ *
+ * 多步任务在智能体那边是几轮工具调用，在用户这边是一段沉默的等待——
+ * 他不知道办到哪一步，也不知道自己提的第二件事有没有被记住。
+ */
+export interface TaskPlanItem {
+  content: string
+  /** pending / in_progress / completed */
+  status: string
+  priority: string
+}
+
 /** 四种对话协议共用的终止元数据。 */
 export interface ChatTerminalEnvelope {
   messageId: string
@@ -292,6 +306,8 @@ export interface ChatTerminalEnvelope {
   }
   traceId: string
   citations?: KnowledgeCitation[]
+  /** 本轮的任务清单；单步问题或模型未拆解时为空 */
+  taskPlan?: TaskPlanItem[]
 }
 
 /** 服务端 -> 用户：流式完成，含已落库全文与会话归属。 */

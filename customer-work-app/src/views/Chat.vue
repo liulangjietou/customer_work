@@ -421,6 +421,7 @@ function onWsChatDone(data: unknown) {
     content: payload.content,
     createdAtMs: payload.ts,
     citations: payload.citations ?? [],
+    taskPlan: payload.taskPlan ?? [],
   })
   streamingContent.value = ''
   streamingSessionId.value = null
@@ -846,6 +847,23 @@ onUnmounted(() => {
                 }}
               </div>
               <div class="bubble">{{ message.content }}</div>
+              <div
+                v-if="message.senderType === 'BOT' && message.taskPlan?.length"
+                class="task-plan"
+              >
+                <div class="task-plan-title">处理清单</div>
+                <div
+                  v-for="(task, index) in message.taskPlan"
+                  :key="`${message.messageId}-task-${index}`"
+                  class="task-item"
+                  :class="`task-${task.status || 'pending'}`"
+                >
+                  <span class="task-mark" aria-hidden="true">{{
+                    task.status === 'completed' ? '✓' : task.status === 'in_progress' ? '…' : '○'
+                  }}</span>
+                  <span class="task-text">{{ task.content }}</span>
+                </div>
+              </div>
               <div
                 v-if="message.senderType === 'BOT' && message.citations?.length"
                 class="citations"
@@ -1309,6 +1327,45 @@ onUnmounted(() => {
   color: #fff;
   background: linear-gradient(135deg, #268cff, #1268df);
   box-shadow: 0 9px 22px rgba(24, 119, 242, 0.2);
+}
+
+.task-plan {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(100, 110, 130, 0.06);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.task-plan-title {
+  color: var(--cw-text-weak, #9aa0a6);
+  margin-bottom: 2px;
+}
+
+.task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.task-mark {
+  flex: none;
+  width: 12px;
+  text-align: center;
+}
+
+/* 已完成的压暗、进行中的高亮：一眼看出"办到哪了" */
+.task-completed {
+  color: var(--cw-text-weak, #9aa0a6);
+}
+
+.task-completed .task-text {
+  text-decoration: line-through;
+}
+
+.task-in_progress {
+  color: #1989fa;
 }
 
 .citations {

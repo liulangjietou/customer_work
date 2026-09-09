@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.core.service;
 import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
 import com.richard.fyoung.customerwork.core.dto.ChatUsageSnapshot;
 import com.richard.fyoung.customerwork.core.dto.KnowledgeCitation;
+import com.richard.fyoung.customerwork.core.dto.TaskPlanItem;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ModelCallEndEvent;
@@ -64,6 +65,26 @@ public final class ChatTerminalCapture {
         finishReason.set(ERROR);
     }
 
+    /**
+     * 本轮的任务清单，只保留<b>最后一次</b>写入。
+     *
+     * <p>模型每完成一项就会重写整份清单（框架 {@code todo_write} 的语义是全量覆盖），
+     * 累加会得到同一件事的多个历史状态——用户要看的是"现在办到哪了"，不是变更流水。</p>
+     */
+    private final AtomicReference<List<TaskPlanItem>> taskPlan = new AtomicReference<>(List.of());
+
+    /** 记录本轮的任务清单；后写覆盖先写。 */
+    public void acceptTaskPlan(List<TaskPlanItem> items) {
+        if (items != null && !items.isEmpty()) {
+            taskPlan.set(List.copyOf(items));
+        }
+    }
+
+    /** 本轮任务清单（模型没列过则为空）。 */
+    public List<TaskPlanItem> taskPlan() {
+        return taskPlan.get();
+    }
+
     /** 记录本轮召回的知识来源；重复调用累加（一轮可能检索多次）。 */
     public void acceptCitations(List<KnowledgeCitation> found) {
         if (found != null && !found.isEmpty()) {
@@ -97,6 +118,6 @@ public final class ChatTerminalCapture {
         } else if (reason == null) {
             reason = usageByReplyId.isEmpty() ? CACHE_HIT : MODEL_STOP;
         }
-        return new ChatTerminalEnvelope(messageId, reason, usage(), traceId, citations());
+        return new ChatTerminalEnvelope(messageId, reason, usage(), traceId, citations(), taskPlan());
     }
 }

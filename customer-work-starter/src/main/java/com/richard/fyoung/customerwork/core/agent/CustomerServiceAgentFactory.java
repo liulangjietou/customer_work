@@ -71,7 +71,9 @@ public class CustomerServiceAgentFactory implements DisposableBean {
            立即调用人工转接工具升级到人工坐席。
         6. 回答简洁、准确、有礼貌；信息不足时主动向用户追问订单号等关键信息。
         7. 不得编造订单、物流、政策等事实；工具 / 知识库查不到就如实说明并引导用户。
-        8. 涉及多步骤的复杂任务，可借助计划工具拆解为子任务并按序推进。
+        8. 用户一次提出多件事（如"既要退货又要改地址"），或任务需要多个步骤才能办完时，
+           先用 todo_write 列出待办清单，每完成一项就更新它的状态再做下一项；
+           单步就能答完的问题不必列清单。
         """;
 
     private final Model model;
@@ -220,6 +222,15 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             .maxIters(properties.getAgent().getMaxIters())
             // 中断后无缝恢复：保留并恢复被打断的待执行工具调用
             .enablePendingToolRecovery(properties.getInterrupt().isPendingToolRecoveryEnabled());
+
+        // 任务清单（框架内置 TodoTools）：多步任务拆解为子任务并逐项推进。
+        //
+        // 系统提示词第 8 条一直写着"可借助计划工具拆解为子任务"，而这个工具此前从没挂上——
+        // 每一轮对话都在指示模型使用一个不存在的能力。与批次一修掉的"每轮提示词说
+        // 暂不调用业务工具"是同一形状：提示词描述的能力与实际装配对不上，且不报任何错。
+        if (properties.getPlan().isEnabled()) {
+            builder.enableTaskList();
+        }
 
         // 治理中间件（可观测 / 人工确认 / 脱敏 / 审计 / 护栏 / 租户 / 分段耗时与 token 计量）：
         // 统一走装配器，与多 Agent 编排器共用同一份装配，杜绝"能力只接在一条路径上"
