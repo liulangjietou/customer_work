@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.attachment;
 
+import com.richard.fyoung.customerwork.core.constant.MetricTags;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,7 +30,6 @@ public class FallbackVisionOcrService implements VisionOcrService {
     private static final String M_FALLBACK = "customerwork.attachment.ocr.fallback";
     private static final String TAG_FROM = "from";
     private static final String TAG_TO = "to";
-    private static final String TAG_RESULT = "result";
     private static final String RESULT_RECOVERED = "recovered";
     private static final String RESULT_BOTH_FAILED = "both-failed";
 
@@ -82,6 +82,6 @@ public class FallbackVisionOcrService implements VisionOcrService {
             return;
         }
         meterRegistry.counter(M_FALLBACK, TAG_FROM, primaryEngine, TAG_TO, fallbackEngine,
-            TAG_RESULT, result).increment();
+            MetricTags.RESULT, result).increment();
     }
 }

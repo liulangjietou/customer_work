@@ -11,6 +11,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.SemanticCacheProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -80,13 +81,14 @@ public class SemanticCacheConfig {
                                                      ObjectProvider<EmbeddingClient> embeddingProvider,
                                                      MultiAgentOrchestrator orchestrator,
                                                      TenantResolver tenantResolver,
-                                                     CustomerWorkProperties properties) {
+                                                     CustomerWorkProperties properties,
+                                                     ObjectProvider<MeterRegistry> meterRegistryProvider) {
         EmbeddingClient embeddingClient = embeddingProvider.getIfAvailable();
         if (properties.getSemanticCache().isEnabled() && embeddingClient == null) {
             log.error("semantic cache enabled but no EmbeddingClient available, errorCode={}",
                 "SEMCACHE-NO-EMBEDDING");
         }
         return new SemanticCacheService(store, embeddingClient, orchestrator, tenantResolver,
-            properties.getSemanticCache());
+            properties.getSemanticCache(), meterRegistryProvider.getIfAvailable());
     }
 }

@@ -35,6 +35,22 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 语义缓存可观测批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1841/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
+  **合计 3806**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+6**（缓存指标）。
+  本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。三条经验：
+  ① **报告里的缺陷理由要逐条核实，理由错了修法就会错**：P1-13 说「新条目冷启动饿死」，
+  而 `SemanticCacheEntry.of()` 把 `lastHitAtMs` 设为写入时刻、候选按它倒序——
+  新条目排最前，最不可能饿死。真实代价是 `maxSize`/`maxCandidates` 的比值（只看得到一成缓存），
+  但那是接口注释里写明的**刻意取舍**（"不限候选数的话查缓存比调模型还慢"），不是疏漏；
+  ② **改「质量/效果」类问题之前先看有没有尺子**：语义缓存此前零指标，
+  「要不要改成向量检索」完全没有数据支撑。本批只补埋点不动召回逻辑，
+  判据留给真实流量的读数——与检索质量批次同一思路；
+  ③ **Micrometer 标签键要收敛**：`"result"` 在两处各定义一遍被
+  `SharedConstantAlignmentTest` 当场抓住。判定是同一个概念而非巧合——
+  **标签键是监控查询的接口**，同一语义用不同的键会让跨 meter 聚合断掉，
+  而这在写代码时完全看不出来。已建 `MetricTags`；域内独有的标签仍留在各自常量类
+  （如 `TokenMetrics.SOURCE_*`）。上一版基线见下。）
   （2026-09-10 本地模型治理批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1835/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
   **合计 3800**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+4**（本地建模）、
