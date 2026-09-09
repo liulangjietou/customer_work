@@ -77,7 +77,8 @@ public class AdminAttachmentConfig {
         VisionOcrUsageRecorder usageRecorder = new MeteredVisionOcrUsageRecorder(
             meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable(),
             quotaGuardProvider == null ? null : quotaGuardProvider.getIfAvailable());
-        return VisionOcrServices.create(properties, modelSupplier, usageRecorder);
+        return VisionOcrServices.create(properties, modelSupplier, usageRecorder,
+            meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable());
     }
 
     /** 附件文件存储：按 {@code storage.type} 选后端（local 本地磁盘 / minio 对象存储），选型收敛在 starter 的 {@link AttachmentFileStorages}（与 8080 侧同一份）。 */

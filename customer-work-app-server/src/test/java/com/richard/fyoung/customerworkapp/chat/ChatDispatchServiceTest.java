@@ -37,6 +37,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
+
 /**
  * 对话分发核心单测：关键词转人工不进 LLM、AI 流式桥接、坐席转发、新会话自动建单、标题回填、坐席消息离线只落库。
  * @author owlzhangfq@gmail.com
@@ -87,7 +89,7 @@ class ChatDispatchServiceTest {
         ChatMessage message = ChatMessage.of("MSG-9", SESSION_ID, "TK-1",
             TicketActorType.BOT, null, reply.toString());
         ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-9", "MODEL_STOP",
-            new ChatUsageSnapshot(8, 2, 0, 10, 0.1), "trace-ws");
+            new ChatUsageSnapshot(8, 2, 0, 10, 0.1), "trace-ws", List.of());
         events.add(new ChatTurnEvent.Completed(new ChatTurnCompletion(message, terminal)));
         return Flux.fromIterable(events);
     }

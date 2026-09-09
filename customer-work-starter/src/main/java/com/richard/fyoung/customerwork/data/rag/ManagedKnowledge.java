@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.rag;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.richard.fyoung.customerwork.core.dto.KnowledgeCitation;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
 import com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeChunkDO;
 import com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeVersionDO;
@@ -164,11 +165,14 @@ public class ManagedKnowledge implements Knowledge {
             }
             String docId = chunk.getExternalId() != null && !chunk.getExternalId().isBlank()
                 ? chunk.getExternalId() : String.valueOf(chunk.getDocRevisionId());
+            KnowledgeCitation citation = new KnowledgeCitation(
+                scored.version().getKbName(), docId, String.valueOf(chunk.getId()), scored.score());
             DocumentMetadata metadata = new DocumentMetadata(
-                TextBlock.builder().text(chunk.getContent()).build(),
+                // 来源写进正文首行而不是只放 metadata：AGENTIC 模式下框架把命中结果格式化成
+                // 工具返回文本时只取 contentText，metadata 整个丢掉，回传与模型都看不到出处
+                TextBlock.builder().text(citation.marker() + "\n" + chunk.getContent()).build(),
                 docId,
                 String.valueOf(chunk.getId()),
-                // 来源信息随文档带出，供回答里的引用标注使用
                 Map.of("knowledgeBase", scored.version().getKbName(),
                     "kbCode", scored.version().getKbCode(),
                     "chunkIndex", chunk.getChunkIndex()));

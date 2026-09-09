@@ -204,6 +204,13 @@ export interface ChatMessage {
   senderId: string | null
   content: string
   createdAtMs: number
+  /**
+   * 本条回复引用的知识来源。
+   *
+   * 只有本次会话中实时收到的回复带这个字段——服务端不把引用落进聊天记录，
+   * 因此刷新页面后重新拉取的历史消息没有来源，这是已知缺口而不是数据丢失。
+   */
+  citations?: KnowledgeCitation[]
 }
 
 export interface ReasonPayload {
@@ -260,6 +267,18 @@ export interface WsChatChunk {
   content: string
 }
 
+/**
+ * 一条知识引用：这次回答用到了哪一段知识。
+ *
+ * 兼容旧服务端时整个 citations 字段可能缺失，取值处一律按空数组处理。
+ */
+export interface KnowledgeCitation {
+  knowledgeBase: string
+  documentId: string
+  chunkId: string
+  score: number | null
+}
+
 /** 四种对话协议共用的终止元数据。 */
 export interface ChatTerminalEnvelope {
   messageId: string
@@ -272,6 +291,7 @@ export interface ChatTerminalEnvelope {
     timeSeconds: number
   }
   traceId: string
+  citations?: KnowledgeCitation[]
 }
 
 /** 服务端 -> 用户：流式完成，含已落库全文与会话归属。 */

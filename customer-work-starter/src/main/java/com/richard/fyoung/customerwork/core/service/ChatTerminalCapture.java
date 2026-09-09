@@ -2,13 +2,18 @@ package com.richard.fyoung.customerwork.core.service;
 
 import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
 import com.richard.fyoung.customerwork.core.dto.ChatUsageSnapshot;
+import com.richard.fyoung.customerwork.core.dto.KnowledgeCitation;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ModelCallEndEvent;
 import io.agentscope.core.message.Msg;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -28,6 +33,14 @@ public final class ChatTerminalCapture {
 
     private final Map<String, ChatUsageSnapshot> usageByReplyId = new ConcurrentHashMap<>();
     private final AtomicReference<String> finishReason = new AtomicReference<>();
+
+    /**
+     * 本轮用到的知识引用。
+     *
+     * <p>用并发容器而不是普通 List：RAGMode.AGENTIC 下检索是模型自己发起的<b>工具调用</b>，
+     * 一轮里可能触发多次，而工具执行是否并行由 Toolkit 配置决定——这里不该依赖它当前是串行的。</p>
+     */
+    private final Queue<KnowledgeCitation> citations = new ConcurrentLinkedQueue<>();
 
     /** 捕获 AgentScope 事件；同一事件重复经过嵌套中间件时不会重复计量。 */
     public void accept(AgentEvent event) {
@@ -51,6 +64,22 @@ public final class ChatTerminalCapture {
         finishReason.set(ERROR);
     }
 
+    /** 记录本轮召回的知识来源；重复调用累加（一轮可能检索多次）。 */
+    public void acceptCitations(List<KnowledgeCitation> found) {
+        if (found != null && !found.isEmpty()) {
+            citations.addAll(found);
+        }
+    }
+
+    /** 本轮全部知识引用，按加入顺序去重（同一分片被多次召回只算一条）。 */
+    public List<KnowledgeCitation> citations() {
+        Map<String, KnowledgeCitation> unique = new LinkedHashMap<>();
+        for (KnowledgeCitation citation : citations) {
+            unique.putIfAbsent(citation.chunkId(), citation);
+        }
+        return List.copyOf(unique.values());
+    }
+
     public ChatUsageSnapshot usage() {
         return usageByReplyId.values().stream()
             .reduce(ChatUsageSnapshot.empty(), ChatUsageSnapshot::plus);
@@ -68,6 +97,6 @@ public final class ChatTerminalCapture {
         } else if (reason == null) {
             reason = usageByReplyId.isEmpty() ? CACHE_HIT : MODEL_STOP;
         }
-        return new ChatTerminalEnvelope(messageId, reason, usage(), traceId);
+        return new ChatTerminalEnvelope(messageId, reason, usage(), traceId, citations());
     }
 }

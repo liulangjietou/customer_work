@@ -27,6 +27,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
+
 /**
  * 控制器 Web 层切片测试：用 WebTestClient 驱动 HTTP 行为，
  * Service 被 mock，不触达模型与 Spring 全量上下文（无需 API Key）。
@@ -55,7 +57,7 @@ class CustomerServiceControllerTest {
     void chat_shouldReturnReply() {
         when(chatTurnService.chat(anyString(), eq("你好"))).thenReturn(Mono.just(
             new ChatResponse("u1", "您好，有什么可以帮您？", "MSG-9", "MODEL_STOP",
-                new ChatUsageSnapshot(10, 4, 0, 14, 0.2), "trace-9")));
+                new ChatUsageSnapshot(10, 4, 0, 14, 0.2), "trace-9", List.of())));
 
         webTestClient.post().uri("/api/customer/chat")
             .bodyValue(new ChatRequest("u1", "你好"))
@@ -85,7 +87,7 @@ class CustomerServiceControllerTest {
         when(chatTurnService.chat(anyString(), anyString())).thenAnswer(invocation -> {
             String sessionId = invocation.getArgument(0);
             return Mono.just(new ChatResponse(sessionId, "hi", "MSG-1", "CACHE_HIT",
-                ChatUsageSnapshot.empty(), "trace-1"));
+                ChatUsageSnapshot.empty(), "trace-1", List.of()));
         });
 
         webTestClient.post().uri("/api/customer/chat")
@@ -101,7 +103,7 @@ class CustomerServiceControllerTest {
     @Test
     void chatStream_shouldStreamChunks() {
         ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-9", "MODEL_STOP",
-            new ChatUsageSnapshot(10, 4, 0, 14, 0.2), "trace-9");
+            new ChatUsageSnapshot(10, 4, 0, 14, 0.2), "trace-9", List.of());
         ChatMessage message = ChatMessage.of("MSG-9", "u1", null,
             TicketActorType.BOT, null, "您好");
         when(chatTurnService.stream(anyString(), anyString(), org.mockito.ArgumentMatchers.isNull()))

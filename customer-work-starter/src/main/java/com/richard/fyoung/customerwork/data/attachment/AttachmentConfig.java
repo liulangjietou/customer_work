@@ -85,7 +85,8 @@ public class AttachmentConfig {
         VisionOcrUsageRecorder usageRecorder = new MeteredVisionOcrUsageRecorder(
             meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable(),
             quotaGuardProvider == null ? null : quotaGuardProvider.getIfAvailable());
-        return VisionOcrServices.create(properties, modelSupplier, usageRecorder);
+        return VisionOcrServices.create(properties, modelSupplier, usageRecorder,
+            meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable());
     }
 
     /** 附件文件存储：文件统一进入 MinIO，构造逻辑收敛在 {@link AttachmentFileStorages}。 */

@@ -52,7 +52,7 @@ class WsFrameTest {
     @Test
     void chatDone_shouldCarryUnifiedTerminalEnvelopeAndPersistedMessageScope() throws Exception {
         ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-9", "MODEL_STOP",
-            new ChatUsageSnapshot(8, 2, 1, 10, 0.3), "trace-9");
+            new ChatUsageSnapshot(8, 2, 1, 10, 0.3), "trace-9", java.util.List.of());
 
         WsFrame frame = WsFrame.chatDone(terminal, "u1:conv-1", "TK-1", "您好", 123L);
         JsonNode data = mapper.readTree(mapper.writeValueAsString(frame)).get("data");

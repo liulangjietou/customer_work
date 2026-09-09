@@ -93,6 +93,27 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   且无一标 `@Order`，实际顺序由 Bean 定义顺序偶然决定；新增中间件必须在那里定值，
   `MiddlewareOrderContractTest` 会对"不留默认值 / 取值不重复 / 关键相对次序"下断言。
   能力差距全量清单与后续批次三四五见 `docs/智能体能力差距与演进路线图.md`。上一版基线见下。）
+  （2026-09-09 引用回传批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1801/9 skip、app-server 132、customer-channel 82、admin 1741/1 skip、gateway 1，
+  **合计 3757**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+13**
+  （来源标记往返 7 + 中间件采集 6）。本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。
+  三个坑：
+  ① **框架在 `RAGMode.AGENTIC` 下用 `Mono.block()` 调 `Knowledge#retrieve`**（2.0.2 字节码实证），
+  `block()` 开新订阅、**Reactor Context 为空**——在任何 `Knowledge` 实现里 `deferContextual`
+  都读不到调用方 Context。**而这条错路用 `StepVerifier` 手工塞 context 去测会全绿**，
+  线上一条都采不到；ThreadLocal 替代路要靠 Reactor 自动传播，那套机制绑在
+  `customer-work.tenant.enabled` 上，单租户部署静默失效；`Knowledge` 又是
+  `KnowledgeProvider.get()` 缓存的全局单例，挂不住请求态。可靠的接入点是
+  `onActing` 的事件流（已回到 Agent 主链，与部署形态无关）；
+  ② **`onReasoning` 的 `messages()` 是整个会话上下文**，拿它采本轮的工具结果会把
+  **前几轮**的一并算进来；`onActing` 的事件流才只含本轮。相应地
+  `ToolResultTextDeltaEvent` 是**增量**，要按 `toolCallId` 累积到 `ToolResultEndEvent`
+  再解析——标记行被切在两个分片之间时，逐片解析会稳定漏掉且不报错；
+  ③ **给 record 加字段要先跑一次全反应堆 `test-compile`**：本批次给
+  `ChatTerminalEnvelope` 与 `ChatResponse` 各加一个字段，只 grep 了前者的构造点，
+  **连续两轮全量都红在 app-server 的测试编译上**（starter 单模块编译通过，照不出来），
+  各浪费 2 分 40 秒。另注意仓库里有**两个同名 `ChatResponse`**
+  （框架 `io.agentscope.core.model` 与项目 DTO），grep 时要分辨。上一版基线见下。）
   （2026-09-02 后台库快照带系统种子批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1710/5 skip、app-server 129、customer-channel 80、admin 1734/1 skip、gateway 1，
   **合计 3654**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+5**（差异定位单测）、

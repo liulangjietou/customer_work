@@ -95,6 +95,19 @@ public class AttachmentProperties {
         /** OCR 提示词（engine=model 生效，中文：逐字提取、保留排版、输出 Markdown、不加解释）。 */
         private String prompt = "请逐字提取这张图片中的全部文字内容，保持原有排版结构，以 Markdown 格式输出，不要添加任何解释说明。";
 
+        /**
+         * 主引擎失败时的备用引擎；<b>留空即不降级</b>，与既有单引擎行为完全一致。
+         *
+         * <p>项目本来就有两个 OCR 引擎，此前却是二选一：视觉模型 API 抖动、限流或欠费时，
+         * 附件解析直接落 FAILED，用户看到"解析失败"，而旁边那个能用的引擎闲着。
+         * 客服场景里"有结果"明显优于"没结果"——自建 PaddleOCR 质量不如视觉大模型，
+         * 但它成本为零、可用性独立于外部模型 API。</p>
+         *
+         * <p>默认留空而不是自动配一个：不能假设备用引擎在这个部署里存在
+         * （PaddleOCR 需要自建 serving）。取值同 {@code engine}。</p>
+         */
+        private String fallbackEngine;
+
         /** PaddleOCR 开源 serving 配置（engine=paddleocr 生效）。 */
         private final Paddle paddle = new Paddle();
     }

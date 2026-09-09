@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.rag;
 
+import com.richard.fyoung.customerwork.core.dto.KnowledgeCitation;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
 import com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeChunkDO;
 import com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeVersionDO;
@@ -84,10 +85,21 @@ class ManagedKnowledgeTest {
 
         assertNotNull(docs);
         assertEquals(1, docs.size());
-        assertEquals("七天无理由从签收次日算起", docs.get(0).getMetadata().getContentText());
         assertEquals(0.92d, docs.get(0).getScore(), 1e-6);
         assertEquals("售后FAQ", docs.get(0).getMetadata().getPayloadValue("knowledgeBase"),
             "来源信息要随文档带出，供回答里的引用标注使用");
+
+        // 正文 = 来源标记行 + 原文。标记必须在 getContentText() 里，因为框架把命中结果
+        // 格式化成工具返回文本时只取这一个字段，metadata 整个丢掉
+        String content = docs.get(0).getMetadata().getContentText();
+        assertTrue(content.endsWith("七天无理由从签收次日算起"), "原文必须原样保留在标记之后");
+
+        List<KnowledgeCitation> parsed = KnowledgeCitation.parseAll(content);
+        assertEquals(1, parsed.size(), "检索侧写的标记必须能被采集侧解析回来");
+        assertEquals("售后FAQ", parsed.get(0).knowledgeBase());
+        assertEquals("doc-a", parsed.get(0).documentId());
+        assertEquals("100", parsed.get(0).chunkId(), "分片标识要指向 cw_knowledge_chunk 的主键");
+        assertEquals(0.92d, parsed.get(0).score(), 1e-6);
     }
 
     /**

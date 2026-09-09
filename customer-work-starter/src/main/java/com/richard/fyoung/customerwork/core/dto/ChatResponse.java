@@ -26,10 +26,12 @@ public record ChatResponse(
         @Schema(description = "本轮 token 用量")
         ChatUsageSnapshot usage,
         @Schema(description = "调用链标识")
-        String traceId) {
+        String traceId,
+        @Schema(description = "本轮回答用到的知识引用，供用户看出处、运营核查是哪条知识误导了模型")
+        java.util.List<KnowledgeCitation> citations) {
 
     public static ChatResponse from(String sessionId, String reply, ChatTerminalEnvelope terminal) {
         return new ChatResponse(sessionId, reply, terminal.messageId(), terminal.finishReason(),
-            terminal.usage(), terminal.traceId());
+            terminal.usage(), terminal.traceId(), terminal.citations());
     }
 }
