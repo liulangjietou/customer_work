@@ -42,6 +42,16 @@ public class AdminKnowledgeProperties {
     /** 单个分块的最大字符数（超过按行边界继续切）。 */
     private int maxChunkChars = 1500;
 
+    /**
+     * 超长段落被迫切开时，相邻两片的重叠字符数。
+     *
+     * <p>零重叠会让切点两侧各剩半句：前一片没有结论、后一片没有前提，
+     * 而检索照常返回结果，只是那段话读不通——不报错，只是答得不对。
+     * 代价是分片数与向量数增加约 overlap/maxChunkChars，这是召回率的合理对价。
+     * 设为 0 可退回旧行为。</p>
+     */
+    private int chunkOverlapChars = 120;
+
     /** 单文件最大读取字节数（超过跳过，避免超大文件撑爆内存）。 */
     private long maxFileBytes = 512 * 1024;
 

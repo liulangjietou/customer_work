@@ -52,7 +52,9 @@ public class KnowledgeDocumentIndexer {
                 "文档内容超过 " + MAX_DOCUMENT_CHARS + " 字符限制: " + change.externalId());
         }
         NormalizedAcl acl = normalizeAcl(change.acl() == null ? sourceDefaultAcl : change.acl());
-        List<String> chunks = chunk(content, Math.max(MIN_CHUNK_CHARS, properties.getMaxChunkChars()));
+        List<String> chunks = DocumentChunker.chunk(content,
+            Math.max(MIN_CHUNK_CHARS, properties.getMaxChunkChars()),
+            properties.getChunkOverlapChars());
         List<float[]> vectors = embeddingClient.embedDocuments(chunks);
         if (vectors.size() != chunks.size()) {
             throw new BizException(ResultCode.KNOWLEDGE_EMBEDDING_FAILED,
@@ -99,38 +101,6 @@ public class KnowledgeDocumentIndexer {
             readList(normalized.allowedChannels())));
     }
 
-    static List<String> chunk(String content, int maxChars) {
-        List<String> chunks = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        for (String paragraph : content.split("\\R\\s*\\R")) {
-            String normalized = paragraph.strip();
-            if (!StringUtils.hasText(normalized)) {
-                continue;
-            }
-            if (normalized.length() > maxChars) {
-                flush(current, chunks);
-                for (int start = 0; start < normalized.length(); start += maxChars) {
-                    chunks.add(normalized.substring(start, Math.min(normalized.length(), start + maxChars)));
-                }
-            } else if (current.length() == 0) {
-                current.append(normalized);
-            } else if (current.length() + 2 + normalized.length() <= maxChars) {
-                current.append("\n\n").append(normalized);
-            } else {
-                flush(current, chunks);
-                current.append(normalized);
-            }
-        }
-        flush(current, chunks);
-        return chunks.isEmpty() ? List.of(content) : List.copyOf(chunks);
-    }
-
-    private static void flush(StringBuilder current, List<String> chunks) {
-        if (current.length() > 0) {
-            chunks.add(current.toString());
-            current.setLength(0);
-        }
-    }
 
     private KnowledgeAclMode parseMode(String raw) {
         if (!StringUtils.hasText(raw)) {
