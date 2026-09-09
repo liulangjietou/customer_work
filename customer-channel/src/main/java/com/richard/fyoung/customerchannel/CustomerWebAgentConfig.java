@@ -12,6 +12,7 @@ import com.richard.fyoung.customerwork.core.middleware.LatencyMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.LoopGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.TaskPlanCaptureMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.SelfCorrectionMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.TenantContextMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.ToolGuardMiddleware;
@@ -172,6 +173,14 @@ public class CustomerWebAgentConfig {
             ObjectProvider<MeterRegistry> meterRegistryProvider) {
         return new SelfCorrectionMiddleware(properties, handoffProvider,
             auditSinkProvider, meterRegistryProvider);
+    }
+
+    /** 任务清单采集：把智能体列出的多步计划带给用户看。 */
+    @Bean
+    public TaskPlanCaptureMiddleware taskPlanCaptureMiddleware(
+            CustomerWorkProperties properties,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new TaskPlanCaptureMiddleware(properties, meterRegistryProvider);
     }
 
     /** 循环守卫：迭代耗尽与工具重复调用的观测与兜底。 */

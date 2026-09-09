@@ -89,6 +89,11 @@ class SharedConstantAlignmentTest {
         "memory",
         // 默认租户码 / 默认会话名
         "default",
+        // 框架 todo_write 工具入参 schema 的字段名（由 TodoTools.TodoItem 定义）
+        // vs 本项目 WS 帧的契约字段名。两者的所有权完全不同：
+        // 前者跟着框架升级走，后者是我们与前端的约定。绑在一起会让"框架改了字段名"
+        // 变成"前端契约被意外改动"，那比现在多一份声明危险得多
+        "content", "status", "priority",
         // 未知主体 / 未知调用类型 / 缺省会话 ID
         "unknown",
         // WS 帧类型 / 指标标签名

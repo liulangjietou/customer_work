@@ -35,6 +35,17 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 多步任务分解批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1849/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
+  **合计 3814**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+8**（任务清单采集）。
+  本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。两条经验：
+  ① **提示词里提到的能力要去核对有没有真的装上**：系统提示词第 8 条一直写着
+  「可借助计划工具拆解为子任务」，而框架 `TodoTools` 从没挂过（一行 `enableTaskList()` 的事）。
+  这是 P0-2「每轮提示词说暂不调用业务工具」的同一形状——**提示词描述的能力与实际装配对不上，
+  不报任何错**。改提示词或改装配时，两边要一起看；
+  ② **接一个能力要问四遍**：工具挂了吗 → 提示词讲清怎么用了吗 → 结果用户看得到吗 →
+  **模型到底用不用有计数吗**。本仓库反复出现的「造了但没接线」，下一层就是「接了但没人用」，
+  没有计数就永远发现不了。上一版基线见下。）
   （2026-09-10 语义缓存可观测批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1841/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
   **合计 3806**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+6**（缓存指标）。
