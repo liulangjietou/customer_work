@@ -12,6 +12,7 @@ import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorages;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParseService;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentParser;
+import com.richard.fyoung.customerwork.data.attachment.DocumentTextExtractor;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentProperties;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentStore;
 import com.richard.fyoung.customerwork.data.attachment.ExcelMarkdownParser;
@@ -28,6 +29,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -96,11 +98,31 @@ public class AdminAttachmentConfig {
                                                          AttachmentStore attachmentStore,
                                                          AttachmentFileStorage attachmentFileStorage,
                                                          VisionOcrService visionOcrService) {
-        List<AttachmentParser> parsers = List.of(
+        List<AttachmentParser> parsers = new ArrayList<>(documentParsers(properties));
+        // 图片 OCR 只属于对话附件：那里用户传的就是截图，一次视觉模型调用是预期内的
+        parsers.add(new VisionOcrParser(visionOcrService));
+        return new AttachmentParseService(List.copyOf(parsers), attachmentStore,
+            attachmentFileStorage, properties);
+    }
+
+    /**
+     * 知识库文档入库用的文本提取器。
+     *
+     * <p>starter 的自动装配在 admin 被整体 exclude，需要它的能力就得在这里显式 new
+     * （项目既定约定）。刻意<b>不</b>把 {@code VisionOcrParser} 交给它：
+     * {@code DocumentTextExtractor} 的类型白名单本就不含图片，传进去是死代码，
+     * 还会让知识库入库凭空依赖视觉模型的可用性与配置。</p>
+     */
+    @Bean
+    public DocumentTextExtractor documentTextExtractor(AttachmentProperties properties) {
+        return new DocumentTextExtractor(documentParsers(properties));
+    }
+
+    /** 纯文档解析器（不含图片 OCR），两处装配共用同一份定义。 */
+    private List<AttachmentParser> documentParsers(AttachmentProperties properties) {
+        return List.of(
             new TextAttachmentParser(properties.getExtraTextExtensions()),
             new ExcelMarkdownParser(),
-            new TikaDocumentParser(),
-            new VisionOcrParser(visionOcrService));
-        return new AttachmentParseService(parsers, attachmentStore, attachmentFileStorage, properties);
+            new TikaDocumentParser());
     }
 }

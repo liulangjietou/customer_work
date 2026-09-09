@@ -6,6 +6,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeSour
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeSourceVO;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeSyncRequest;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeSyncRunVO;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service.KnowledgeDocumentUploadService;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service.KnowledgeSourceService;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service.KnowledgeSourceSyncService;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
@@ -19,9 +20,14 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+import com.richard.fyoung.customerwork.data.attachment.DocumentTextExtractor;
 
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 /** 知识库文档源、同步运行和 lineage 运维接口。 */
 @RestController
@@ -30,11 +36,14 @@ public class KnowledgeSourceController {
 
     private final KnowledgeSourceService sourceService;
     private final KnowledgeSourceSyncService syncService;
+    private final KnowledgeDocumentUploadService uploadService;
 
     public KnowledgeSourceController(KnowledgeSourceService sourceService,
-                                     KnowledgeSourceSyncService syncService) {
+                                     KnowledgeSourceSyncService syncService,
+                                     KnowledgeDocumentUploadService uploadService) {
         this.sourceService = sourceService;
         this.syncService = syncService;
+        this.uploadService = uploadService;
     }
 
     @SaCheckPermission("knowledge-base:view")
@@ -67,6 +76,29 @@ public class KnowledgeSourceController {
     public Result<Void> delete(@PathVariable Long knowledgeBaseId, @PathVariable Long sourceId) {
         sourceService.delete(knowledgeBaseId, sourceId);
         return Result.success();
+    }
+
+    /**
+     * 上传文档文件入库（pdf/word/ppt/excel/文本等）。
+     *
+     * <p>与 {@code /sync} 是同一件事的两个入口，因此共用 {@code source-sync} 权限：
+     * 它们最终都走同一条 UPSERT 链路，区别只是正文由服务端从文件里提取还是调用方直接给。
+     * 单独发一个权限点会让「谁能往知识库灌内容」这件事有两处答案。</p>
+     */
+    @SaCheckPermission("knowledge-base:source-sync")
+    @OperationLog(operation = "上传知识文档", target = "ai_knowledge_sync_run")
+    @PostMapping("/{sourceId}/documents/upload")
+    public Result<KnowledgeSyncRunVO> upload(@PathVariable Long knowledgeBaseId,
+                                             @PathVariable Long sourceId,
+                                             @RequestPart("files") List<MultipartFile> files) {
+        return Result.success(uploadService.upload(knowledgeBaseId, sourceId, files));
+    }
+
+    /** 可上传的文件类型，供前端做选择器过滤与错误提示，避免前后端各维护一份清单。 */
+    @SaCheckPermission("knowledge-base:view")
+    @GetMapping("/document-upload-options")
+    public Result<Set<String>> uploadOptions(@PathVariable Long knowledgeBaseId) {
+        return Result.success(new TreeSet<>(DocumentTextExtractor.allowedExtensions()));
     }
 
     @SaCheckPermission("knowledge-base:source-sync")

@@ -87,6 +87,29 @@ export function syncKnowledgeSource(knowledgeBaseId: number, sourceId: number,
   })
 }
 
+/**
+ * 上传文档文件入库。
+ *
+ * 与 syncKnowledgeSource 是同一条 UPSERT 链路的两个入口，区别只是正文由服务端
+ * 从文件里提取还是调用方直接给，因此共用同一个超时（解析 + 向量化都在这一次请求里完成）。
+ */
+export function uploadKnowledgeDocuments(knowledgeBaseId: number, sourceId: number, files: File[]) {
+  const formData = new FormData()
+  files.forEach((file) => formData.append('files', file))
+  return request<KnowledgeSyncRunVO>({
+    url: `/aiconfig/knowledge-base/${knowledgeBaseId}/sources/${sourceId}/documents/upload`,
+    method: 'post', data: formData, timeout: KNOWLEDGE_BASE_TIMEOUT_MS,
+  })
+}
+
+/** 可上传的文件扩展名，由服务端给出，避免前后端各维护一份清单。 */
+export function fetchDocumentUploadOptions(knowledgeBaseId: number) {
+  return request<string[]>({
+    url: `/aiconfig/knowledge-base/${knowledgeBaseId}/sources/document-upload-options`,
+    method: 'get',
+  })
+}
+
 export function fetchKnowledgeSyncRuns(knowledgeBaseId: number, sourceId: number) {
   return request<KnowledgeSyncRunVO[]>({
     url: `/aiconfig/knowledge-base/${knowledgeBaseId}/sources/${sourceId}/sync-runs`, method: 'get',

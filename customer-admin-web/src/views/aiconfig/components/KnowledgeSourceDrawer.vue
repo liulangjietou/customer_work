@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
+import { UploadFilled } from '@element-plus/icons-vue'
 import {
   createKnowledgeSource,
   deleteKnowledgeSource,
@@ -9,6 +10,8 @@ import {
   fetchKnowledgeSources,
   fetchKnowledgeSyncRuns,
   syncKnowledgeSource,
+  uploadKnowledgeDocuments,
+  fetchDocumentUploadOptions,
   updateKnowledgeSource,
 } from '@/api/knowledgeBase'
 import type {
@@ -193,6 +196,59 @@ async function removeSource(source: KnowledgeSourceVO) {
   await loadAll()
 }
 
+const uploadVisible = ref(false)
+const uploading = ref(false)
+const uploadSource = ref<KnowledgeSourceVO | null>(null)
+const uploadFiles = ref<File[]>([])
+const allowedExtensions = ref<string[]>([])
+
+/** el-upload 的 accept 形态（.pdf,.docx,…）；清单由服务端给，前端不另维护一份。 */
+const uploadAccept = computed(() => allowedExtensions.value.map((ext) => `.${ext}`).join(','))
+
+async function openUpload(source: KnowledgeSourceVO) {
+  uploadSource.value = source
+  uploadFiles.value = []
+  if (allowedExtensions.value.length === 0 && props.knowledgeBase) {
+    try {
+      allowedExtensions.value = await fetchDocumentUploadOptions(props.knowledgeBase.id)
+    } catch {
+      // 取不到清单不挡上传，服务端仍会按白名单校验；此时只是少了选择器过滤
+      allowedExtensions.value = []
+    }
+  }
+  uploadVisible.value = true
+}
+
+/** 接管 el-upload 的选择动作：只收集文件，真正的提交在“开始上传”里一次性完成。 */
+function onUploadChange(file: { raw?: File }) {
+  if (file.raw) {
+    uploadFiles.value = [...uploadFiles.value, file.raw]
+  }
+}
+
+function removeUploadFile(index: number) {
+  uploadFiles.value = uploadFiles.value.filter((_, i) => i !== index)
+}
+
+async function submitUpload() {
+  if (!props.knowledgeBase || !uploadSource.value) return
+  if (uploadFiles.value.length === 0) {
+    ElMessage.warning('请先选择文件')
+    return
+  }
+  uploading.value = true
+  try {
+    const result = await uploadKnowledgeDocuments(
+      props.knowledgeBase.id, uploadSource.value.id, uploadFiles.value)
+    ElMessage.success(`已入库 ${uploadFiles.value.length} 个文件：${result.status}`)
+    uploadVisible.value = false
+    uploadFiles.value = []
+    await loadAll()
+  } finally {
+    uploading.value = false
+  }
+}
+
 function openSync(source: KnowledgeSourceVO) {
   syncSource.value = source
   syncPayload.value = JSON.stringify({
@@ -322,8 +378,9 @@ function shortHash(hash: string | null) {
         <el-table-column label="状态" width="80">
           <template #default="{ row }"><el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
+            <el-button v-permission="'knowledge-base:source-sync'" link type="primary" @click="openUpload(row)">上传文档</el-button>
             <el-button v-permission="'knowledge-base:source-sync'" link type="primary" @click="openSync(row)">同步</el-button>
             <el-button link type="primary" @click="openRuns(row)">运行记录</el-button>
             <el-button link type="primary" @click="openLineage(row)">lineage</el-button>
@@ -382,6 +439,40 @@ function shortHash(hash: string | null) {
         <el-form-item label="状态"><el-switch v-model="sourceForm.status" :active-value="1" :inactive-value="0" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="sourceDialogVisible = false">取消</el-button><el-button class="cw-final-action" type="primary" @click="saveSource">保存文档源</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="uploadVisible" title="上传文档入库" width="640px" append-to-body>
+      <el-alert type="info" :closable="false" show-icon
+        title="文件正文会由服务端提取后切分入库；同名文件视为同一篇文档的新版本，将覆盖旧版。本次上传只新增或更新这些文档，不影响该文档源里的其它文档。" />
+      <el-upload class="upload-area" drag multiple :auto-upload="false"
+        :accept="uploadAccept" :show-file-list="false" :on-change="onUploadChange">
+        <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+        <div class="el-upload__text">拖拽文件到此处，或<em>点击选择</em></div>
+        <template #tip>
+          <div class="el-upload__tip">
+            支持 {{ allowedExtensions.join(' / ') || '常见文档格式' }}；单个文件不超过 20MB，单次最多 20 个。
+            扫描件 PDF 没有文本层，需先做 OCR。
+          </div>
+        </template>
+      </el-upload>
+      <el-table v-if="uploadFiles.length" :data="uploadFiles" border max-height="240" class="upload-list">
+        <el-table-column label="文件名" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.name }}</template>
+        </el-table-column>
+        <el-table-column label="大小" width="110">
+          <template #default="{ row }">{{ (row.size / 1024).toFixed(1) }} KB</template>
+        </el-table-column>
+        <el-table-column label="操作" width="80">
+          <template #default="{ $index }">
+            <el-button link type="danger" @click="removeUploadFile($index)">移除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="uploadVisible = false">取消</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="uploading"
+          :disabled="uploadFiles.length === 0" @click="submitUpload">开始上传</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="syncDialogVisible" title="提交文档同步批次" width="820px" append-to-body>
