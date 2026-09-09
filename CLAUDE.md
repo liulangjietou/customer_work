@@ -93,6 +93,25 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   且无一标 `@Order`，实际顺序由 Bean 定义顺序偶然决定；新增中间件必须在那里定值，
   `MiddlewareOrderContractTest` 会对"不留默认值 / 取值不重复 / 关键相对次序"下断言。
   能力差距全量清单与后续批次三四五见 `docs/智能体能力差距与演进路线图.md`。上一版基线见下。）
+  （2026-09-09 检索质量批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1808/9 skip、app-server 132、customer-channel 82、admin 1760/1 skip、gateway 1，
+  **合计 3783**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+7**（文档文本提取）、
+  admin **+19**（切分 7 + 检索质量基线 2 + 重叠必要性 2 + 文档上传 8）。
+  本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。三条经验：
+  ① **改检索/切分这类「质量」问题，先建一把能分辨好坏的尺子再动手**，否则改完无法证明是改进。
+  基线设计有三个要点：答案按**原文字符区间**标注而非 chunk id（切分一变 chunk 边界全变，
+  按 id 标注每改一次就得重标）；embedding 用**确定性桩**（字符 bigram 词袋）隔离模型变量；
+  同时量 Recall 与**完整覆盖**——只看 Recall 会漏掉无重叠最典型的伤害：
+  答案被劈成两半时，topK 里那半句照样算召回成功。见
+  `customer-admin-server/src/test/.../knowledgebase/retrieval/`；
+  ② **基线的第一版是恒真的**：只跑 `maxChars=300`，新旧都满分，因为那个上限下旧切点落在 316、
+  十个答案区间恰好都没跨过它。**由自己挑一个能证明自己的参数本质上是选择性报告**，
+  现改为扫 150/200/250/300，要求每个上限不劣化 + 至少一处严格更好（后者防「改了等于没改」也全绿）。
+  这与后台库快照批次的「同库导两次比时间列」是同一类错误，第二次踩了；
+  ③ **反直觉的实测结果**：`maxChars=200` 下只做句子对齐仍是 0.900，是**重叠**补到 1.000——
+  评估语料那条运费条款自身带分号，句子对齐精准切在了它中间。**一个知识点常跨多个句子，
+  对齐保证的是句子完整而非语义完整**，两者不等价。`ChunkOverlapNecessityTest` 钉住这一点，
+  免得日后有人为省 17% 的分片开销把重叠去掉。上一版基线见下。）
   （2026-09-09 引用回传批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1801/9 skip、app-server 132、customer-channel 82、admin 1741/1 skip、gateway 1，
   **合计 3757**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+13**
