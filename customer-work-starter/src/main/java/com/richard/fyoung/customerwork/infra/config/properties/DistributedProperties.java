@@ -35,6 +35,18 @@ public class DistributedProperties {
     private String wsDownstreamTopic = "cw:ws:downstream";
 
     /**
+     * 入站消息去重窗口（秒）；{@code <= 0} 关闭去重。
+     *
+     * <p>取 300 秒：它要覆盖的是「断连 → 重连 → 客户端重发」这段，
+     * 移动网络下重连通常在几十秒内完成，五分钟留足余量。
+     * 再长没有意义——隔了五分钟又发同一句话的，那是用户真的在追问。</p>
+     *
+     * <p>去重键走 {@code counter-mode} 那套计数器，因此多副本部署时
+     * 重发落到别的副本上照样能识别——那恰恰是最需要去重的场景。</p>
+     */
+    private int wsInboundDedupWindowSeconds = 300;
+
+    /**
      * 状态机型定时任务是否加多副本互斥锁。
      *
      * <p><b>多副本部署应当开启</b>：审批超时、转人工 SLA、工单 SLA 这类调度器是

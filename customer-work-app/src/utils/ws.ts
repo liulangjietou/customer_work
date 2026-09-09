@@ -56,9 +56,12 @@ class ChatSocket {
     this.ws = new WebSocket(this.url)
 
     this.ws.onopen = () => {
+      // 连上之后再清零，才能把「这次是重连」这个事实告诉订阅方：
+      // 断线期间服务端推的帧已经没了，重连方必须自己补拉，而首连不需要
+      const reconnected = this.reconnectAttempts > 0
       this.reconnectAttempts = 0
       this.startHeartbeat()
-      this.emit('open', null)
+      this.emit('open', { reconnected })
     }
 
     this.ws.onmessage = (evt: MessageEvent<string>) => {

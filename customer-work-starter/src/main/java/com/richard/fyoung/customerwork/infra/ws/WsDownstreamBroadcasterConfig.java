@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -38,5 +39,20 @@ public class WsDownstreamBroadcasterConfig {
             return new NoOpWsDownstreamBroadcaster();
         }
         return new RedissonWsDownstreamBroadcaster(redisson, cfg.getWsDownstreamTopic());
+    }
+
+    /**
+     * 入站消息去重器。
+     *
+     * <p>窗口配 {@code <= 0} 时给一个窗口为 1 秒的实例而不是不装配——
+     * 让调用方永远拿得到一个可用对象，省掉一处 null 判断；
+     * 1 秒窗口在效果上等同于「几乎不去重」。</p>
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public InboundMessageDeduplicator inboundMessageDeduplicator(
+            WindowCounter windowCounter, CustomerWorkProperties properties) {
+        int window = properties.getDistributed().getWsInboundDedupWindowSeconds();
+        return new InboundMessageDeduplicator(windowCounter, window > 0 ? window : 1);
     }
 }

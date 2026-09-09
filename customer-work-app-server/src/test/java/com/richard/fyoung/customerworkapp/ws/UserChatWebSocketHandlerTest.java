@@ -75,6 +75,40 @@ class UserChatWebSocketHandlerTest {
         verify(registry).unregisterUser("user-1", sink);
     }
 
+    /**
+     * 帧里的 clientMsgId 必须原样传到分发层——服务端的去重全靠它。
+     *
+     * <p>解析漏掉这个字段不会报任何错，只是去重<b>静默失效</b>：
+     * 每条消息都被当成首次，重发照样产生两次完整的对话轮。</p>
+     */
+    @Test
+    void chatFrameShouldCarryClientMsgIdToDispatch() {
+        UserJwtService jwtService = mock(UserJwtService.class);
+        ChatDispatchService dispatch = mock(ChatDispatchService.class);
+        WsSessionRegistry registry = mock(WsSessionRegistry.class);
+        WebSocketSession session = mock(WebSocketSession.class);
+        UserPrincipal principal = new UserPrincipal("user-1", "alice", "Alice", "tenant-a");
+        Sinks.Many<String> sink = Sinks.many().unicast().onBackpressureBuffer();
+
+        // textFrame 内部也在 stub mock，写进 when(...) 的参数里会打断外层 stubbing
+        WebSocketMessage frame = textFrame(
+            "{\"type\":\"chat\",\"data\":{\"sessionId\":\"session-1\","
+                + "\"content\":\"你好\",\"clientMsgId\":\"cmid-7\"}}");
+
+        when(jwtService.verify("jwt-token")).thenReturn(Optional.of(principal));
+        when(session.getHandshakeInfo()).thenReturn(handshake("/ws/user?token=jwt-token"));
+        when(session.receive()).thenReturn(Flux.just(frame));
+        when(session.send(any())).thenReturn(Mono.never());
+        when(registry.registerUser("user-1")).thenReturn(sink);
+        when(dispatch.onUserMessage(principal, "session-1", "你好", "cmid-7")).thenReturn(Mono.empty());
+
+        UserChatWebSocketHandler handler = new UserChatWebSocketHandler(
+            jwtService, dispatch, registry, new ObjectMapper());
+        handler.handle(session).subscribe().dispose();
+
+        verify(dispatch).onUserMessage(principal, "session-1", "你好", "cmid-7");
+    }
+
     @Test
     void legacyTenantTokenShouldCloseWithPolicyViolation() {
         UserJwtService jwtService = mock(UserJwtService.class);
@@ -211,7 +245,7 @@ class UserChatWebSocketHandlerTest {
         when(accessGuard.check("tenant-a", 4L, true)).thenAnswer(invocation -> revoked.get()
             ? new TenantAccessDecision(TenantAccessDecision.Kind.CREDENTIAL_REVOKED, 5L)
             : TenantAccessDecision.allowed(4L));
-        when(dispatch.onUserMessage(principal, "session-1", "first")).thenAnswer(invocation -> {
+        when(dispatch.onUserMessage(principal, "session-1", "first", null)).thenAnswer(invocation -> {
             revoked.set(true);
             return Mono.empty();
         });
@@ -226,7 +260,7 @@ class UserChatWebSocketHandlerTest {
 
         StepVerifier.create(handler.handle(session)).verifyComplete();
 
-        verify(dispatch).onUserMessage(principal, "session-1", "first");
+        verify(dispatch).onUserMessage(principal, "session-1", "first", null);
         verifyNoMoreInteractions(dispatch);
         verify(accessGuard, times(5)).check("tenant-a", 4L, true);
         verify(registry).disconnectTenant("tenant-a");

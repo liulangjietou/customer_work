@@ -17,6 +17,7 @@ import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaDecision;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.infra.ws.InboundMessageDeduplicator;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.slf4j.Logger;
@@ -69,19 +70,22 @@ public class ChatDispatchService {
      * 等于这个功能对主战场不生效。</p>
      */
     private final SubjectQuotaGuard subjectQuotaGuard;
+    private final InboundMessageDeduplicator deduplicator;
 
     public ChatDispatchService(TicketService ticketService,
                                ChatLogService chatLogService,
                                ChatTurnService chatTurnService,
                                HandoffKeywordDetector keywordDetector,
                                WsSessionRegistry registry,
-                               SubjectQuotaGuard subjectQuotaGuard) {
+                               SubjectQuotaGuard subjectQuotaGuard,
+                               InboundMessageDeduplicator deduplicator) {
         this.ticketService = ticketService;
         this.chatLogService = chatLogService;
         this.chatTurnService = chatTurnService;
         this.keywordDetector = keywordDetector;
         this.registry = registry;
         this.subjectQuotaGuard = subjectQuotaGuard;
+        this.deduplicator = deduplicator;
     }
 
     /** 分发动作：由工单状态与关键词共同决定。 */
@@ -99,8 +103,21 @@ public class ChatDispatchService {
      * @return 处理完成信号（含 AI 流式全过程，寿命绑定调用方订阅）
      */
     public Mono<Void> onUserMessage(UserPrincipal user, String sessionId, String content) {
+        return onUserMessage(user, sessionId, content, null);
+    }
+
+    /**
+     * @param clientMsgId 客户端消息标识，重发时沿用同一个值；为空表示客户端不支持去重
+     */
+    public Mono<Void> onUserMessage(UserPrincipal user, String sessionId, String content,
+                                    String clientMsgId) {
         if (!ownsSession(user.userId(), sessionId)) {
             registry.pushToUser(user.userId(), WsFrame.error("CHAT-SESSION-DENIED", ERR_SESSION_OWNERSHIP));
+            return Mono.empty();
+        }
+        // 去重排在配额判定之前：重发不该扣额度，也不该产生第二次记账。
+        // 排在归属校验之后，是因为别人的会话本就不该走到这里、更不该在去重键里留下痕迹
+        if (deduplicator.isDuplicate(user.userId(), clientMsgId)) {
             return Mono.empty();
         }
         QuotaSubject subject = QuotaSubject.user(user.userId());
