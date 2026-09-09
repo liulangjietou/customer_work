@@ -314,8 +314,9 @@ customer-work:
       # 审计中的工具入参是否复用脱敏规则
       mask-args: true
     self-correction:
-      # 自我纠错：纯文本最终答复承诺打款却未走工具时强制重新推理（会多一轮推理）。默认关闭
-      enabled: false
+      # 资金结论闸门：智能体凭空说「已退款」时拦下、追加澄清并转人工。默认开启
+      # （2026-09-09 由关改开：它拦的是直接的客诉与合规风险，不该是一个需要有人想起来去打开的开关）
+      enabled: true
       max-corrections: 1
     tool-guard:
       # 工具护栏：执行前注入公共参数 / 对数值参数做上限钳制（PreActingEvent.setToolUse）。默认关闭

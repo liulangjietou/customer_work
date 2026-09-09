@@ -16,6 +16,9 @@ import java.util.Map;
  */
 @Data
 public class HooksProperties {
+    /** 循环守卫（迭代耗尽 / 工具重复调用）。 */
+    private final LoopGuard loopGuard = new LoopGuard();
+
     /** 延迟埋点：端到端 / 每轮推理 / 每个工具耗时 + 首字时间（TTFT）。 */
     private final Latency latency = new Latency();
     /** 出站脱敏：对最终回复中的手机号 / 身份证 / 银行卡 / 邮箱做掩码。 */
@@ -76,12 +79,72 @@ public class HooksProperties {
     /** 自我纠错配置。默认关闭（会触发额外一轮推理）。 */
     @Data
     public static class SelfCorrection {
-        private boolean enabled = false;
+        /**
+         * 默认开启。
+         *
+         * <p>此前默认关闭，配合"只打一行日志"的实现，等于这条防线完全不存在。
+         * 它拦的是<b>智能体凭空告诉用户钱已经退了</b>——那是直接的客诉与合规风险，
+         * 不该是一个需要有人想起来去打开的开关。</p>
+         */
+        private boolean enabled = true;
         /** 单次请求内最多强制纠错的次数（防止无限自我纠错）。 */
         private int maxCorrections = 1;
-        /** 视为"已承诺打款/退款"的关键词。 */
+        /**
+         * 视为「资金已完成」断言的关键词。
+         *
+         * <p>刻意只收<b>完成时态</b>的说法：智能体没有能力完成打款
+         * （{@code submitRefund} 的工具描述写得很清楚——只生成待人工确认的工单），
+         * 所以这些话由它说出口，要么是编造，要么是把"已提交工单"错当成了"钱已到账"。
+         * 「可以退款」「符合退款条件」这类<b>判断</b>不在此列，那是它该做的事。</p>
+         */
         private List<String> paymentKeywords = new ArrayList<>(List.of(
             "已退款", "已打款", "已为您退款", "退款成功", "已经退", "已到账", "款项已退"));
+        /**
+         * 能为资金结论提供依据的<b>查询类</b>工具。
+         *
+         * <p>本轮调用过其中任意一个，说明模型是在转述系统查到的真实状态，放行；
+         * 一个都没调就断言"已退款"，那是凭空生成，拦下。</p>
+         *
+         * <p><b>刻意不含 {@code submitRefund}</b>：它只生成待人工复核的退款工单，
+         * 调用成功不等于钱已经退。调了它却说"已退款"是本条防线最该拦住的一种——
+         * 链路上看一切正常（工具调了、返回成功），错的是模型对工具语义的理解。</p>
+         */
+        private List<String> evidenceTools = new ArrayList<>(List.of(
+            "queryRefundProgress", "checkRefundEligibility"));
+        /**
+         * 命中后追加给用户的澄清话术。
+         *
+         * <p>流式下前面的字已经在用户屏幕上，收不回来，所以这句话必须明确否定刚才那段，
+         * 而不只是含糊地说"正在处理"。</p>
+         */
+        private String clarification =
+            "\n\n【系统提示】以上关于退款/到账状态的说明未经系统核实，请以实际处理结果为准。"
+                + "已为您转接人工客服核实处理。";
+        /** 命中后是否自动转人工。资金类误告知一旦发生，人工介入比任何自动补救都可靠。 */
+        private boolean handoffOnHit = true;
+    }
+
+    /**
+     * 循环守卫：迭代耗尽与工具重复调用。
+     *
+     * <p>默认开启。它不改变任何正常对话的行为，只在「智能体转不出来」时留下痕迹并把人接进来——
+     * 那种时刻恰恰是用户最需要帮助、而系统此前完全沉默的时刻。</p>
+     */
+    @Data
+    public static class LoopGuard {
+        private boolean enabled = true;
+        /**
+         * 同一工具用同样的参数重复调用多少次算疑似循环。
+         *
+         * <p>取 3 而不是 2：模型偶尔会因为工具返回的措辞没读懂而重试一次，那是正常的自我修正；
+         * 连续三次同样的调用则说明它没有从结果里学到任何东西。</p>
+         */
+        private int repeatedToolCallThreshold = 3;
+        /** 迭代耗尽后追加给用户的话。框架自己会生成一段收尾，但那段话不会告诉用户「接下来怎么办」。 */
+        private String exhaustedNotice =
+            "\n\n【系统提示】本次问题处理超出了自动应答的轮次上限，已为您转接人工客服继续跟进。";
+        /** 迭代耗尽时是否自动转人工。用户已经在这一轮里等了十次模型调用，不该再让他自己想办法。 */
+        private boolean handoffOnExhausted = true;
     }
 
     /** 工具调用护栏配置。默认关闭。 */

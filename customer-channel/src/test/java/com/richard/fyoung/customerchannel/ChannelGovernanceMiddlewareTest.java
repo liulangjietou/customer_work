@@ -60,7 +60,7 @@ class ChannelGovernanceMiddlewareTest {
      * <p>这三项需要把对应基础设施一并接进本模块，属于独立的一件事；在此之前如实记录，
      * 不用"声明了 12 个"制造覆盖完整的错觉。</p>
      */
-    private static final int MIN_GOVERNANCE_MIDDLEWARES = 13;
+    private static final int MIN_GOVERNANCE_MIDDLEWARES = 14;
 
     @Autowired
     private ObjectProvider<MiddlewareBase> pluggableMiddlewares;
