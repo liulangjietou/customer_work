@@ -35,6 +35,23 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-09 WS 投递保证批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1831/9 skip、app-server 137、customer-channel 82、admin 1741/1 skip、gateway 1，
+  **合计 3792**（排除 `RedisSessionPersistenceTest`）；前端 vitest 38 全过（本批 +1）。
+  本批次自身加 starter **+7**（入站去重器）、app-server **+5**（分发链路 4 + handler 契约 1）。
+  本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。三条经验：
+  ① **给方法加重载后，既有测试 stub 的是旧签名、代码走的是新签名，mock 会静默返回 null**——
+  编译期完全看不出来，运行时炸在离改动点很远的地方（本批表现为
+  `handleInbound(...) is null` 的 NPE）。加重载后要 grep 全部 `when(...旧签名...)` 与
+  `verify(...旧签名...)`；
+  ② **`when(mock.x()).thenReturn(...)` 的参数里不要调用会 stub 别的 mock 的辅助方法**：
+  Mockito 会报 `UnfinishedStubbingException`，而错误信息指向的是外层那一行，
+  容易以为是外层写错了。既有用例都是先把辅助方法的结果赋给变量再用，照做即可；
+  ③ **「消息丢失」类问题先分清「数据丢了」还是「界面没显示」**：本批报告原判断是
+  「断线重连期间消息永久丢失」，实测帧内容全部落库、数据没丢，真正的病根在
+  前端重连后不补拉（`Chat.vue` 只订阅了 `reconnecting`，`open` 上什么也没做）。
+  这个区分直接决定方案——是做服务端离线队列（存储+过期+去重三套机制），
+  还是客户端重连后补拉一次历史（一个订阅）。上一版基线见下。）
   （2026-09-09 答复安全闸门批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1824/9 skip、app-server 132、customer-channel 82、admin 1741/1 skip、gateway 1，
   **合计 3780**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+23**
