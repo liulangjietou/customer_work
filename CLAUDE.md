@@ -35,6 +35,27 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-09 答复安全闸门批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1824/9 skip、app-server 132、customer-channel 82、admin 1741/1 skip、gateway 1，
+  **合计 3780**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+23**
+  （流式关键词匹配 7 + 自我纠错链路 9 + 循环守卫 7）。本批次无迁移，
+  cw Flyway 仍是下次 **V25**、admin **V102**。四条经验：
+  ① **「只看 `AgentResultEvent`」在流式路径上是假性生效**，这是同一形状的第二次复发：
+  接入层把 `TextBlockDeltaEvent` 逐片推给前端，正文流完后最终结果会被丢弃，
+  等它到达时用户早已读完。出站敏感词过滤的注释里早写过这条
+  （「只改最终结果等于改了个没人看的事件……这种假性生效比不做更危险」），
+  而 `SelfCorrectionMiddleware` 照样踩了。**任何「对最终答复做检查」的中间件都要先问一句：
+  用户看到的是这个事件吗**；
+  ② **不要用 Reactor Context 在 `onActing` 与 `onAgent` 之间传状态**——那要依赖
+  「框架对 `onActing` 的调用落在 `onAgent` 的 next 链上」这个假设，而引用回传批次
+  刚栽在同类假设上。工具调用以 `ToolCallStartEvent`/`ToolCallDeltaEvent`/`ToolCallEndEvent`
+  流过同一条事件流且必然先于最终答复，从事件流取就没有这个假设；
+  ③ **类注释声称的判定条件不等于代码里有那个判定**：`SelfCorrectionMiddleware` 的注释写着
+  「在未走退款工具的情况下」，而代码里只有纯关键词 `contains`。读到这类注释要去代码里确认一遍；
+  ④ **翻转 `@ConfigurationProperties` 的默认值会打红 `YmlTrimEquivalenceTest`**：
+  瘦身前的基线 yml 里那一项还写着旧默认值，两边不再等价。正解在该测试的注释里已写好——
+  同步更新 `application-ymlbaseline.yml`，不要删测试；按项目惯例还应把新的安全默认值
+  写进 prod profile 的安全基线段（即使与默认值相同）。上一版基线见下。）
   （2026-09-09 能力差距批次五（模型层与成本可见性）实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1781/9 skip、app-server 132、customer-channel 82、admin 1741/1 skip、gateway 1，
   **合计 3737**（排除 `RedisSessionPersistenceTest`）。**skip 比上一版多 3 个是本机 Nacos 容器没起**
