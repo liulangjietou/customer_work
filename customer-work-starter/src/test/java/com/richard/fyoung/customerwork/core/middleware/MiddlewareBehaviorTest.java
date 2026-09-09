@@ -112,14 +112,30 @@ class MiddlewareBehaviorTest {
     }
 
     // ---------- SelfCorrectionMiddleware ----------
+    /**
+     * 纯判定的最小回归。
+     *
+     * <p>完整的链路行为（流式拦截、工具上下文判定、转人工）在
+     * {@code SelfCorrectionMiddlewareTest} 里——只断言这个方法照不出「拦没拦住」，
+     * 而它此前恰恰是唯一的覆盖。</p>
+     */
     @Test
     void selfCorrection_shouldDetectPaymentPromise() {
         CustomerWorkProperties props = new CustomerWorkProperties();
         props.getHooks().getSelfCorrection().setEnabled(true);
-        SelfCorrectionMiddleware mw = new SelfCorrectionMiddleware(props);
+        SelfCorrectionMiddleware mw = new SelfCorrectionMiddleware(props,
+            emptyProvider(), emptyProvider(), emptyProvider());
 
         assertTrue(mw.promisesPayment("已为您退款到账"));
         assertFalse(mw.promisesPayment("您好，请提供订单号"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> org.springframework.beans.factory.ObjectProvider<T> emptyProvider() {
+        org.springframework.beans.factory.ObjectProvider<T> provider =
+            mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(null);
+        return provider;
     }
 
     // ---------- HumanApprovalMiddleware ----------

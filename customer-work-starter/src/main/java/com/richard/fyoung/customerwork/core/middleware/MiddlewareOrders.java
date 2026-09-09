@@ -103,6 +103,14 @@ public final class MiddlewareOrders {
 
     // ---------- 内容质量 ----------
 
+    /**
+     * 循环守卫：迭代耗尽与工具重复调用的观测与兜底。
+     *
+     * <p>排在自我纠错之外：它要看到<b>整轮</b>的工具调用与最终结果，
+     * 包括自我纠错改写之后的那一版——追加的"已转人工"提示应当落在最外层可见的文本上。</p>
+     */
+    public static final int LOOP_GUARD = 105;
+
     /** 模型输出的自我纠错与越权承诺检测。 */
     public static final int SELF_CORRECTION = 100;
 

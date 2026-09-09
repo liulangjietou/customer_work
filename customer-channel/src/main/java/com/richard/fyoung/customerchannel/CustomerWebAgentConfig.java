@@ -11,6 +11,7 @@ import com.richard.fyoung.customerwork.core.middleware.KnowledgeCitationMiddlewa
 import com.richard.fyoung.customerwork.core.middleware.LatencyMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.LoopGuardMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.SelfCorrectionMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.TenantContextMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.ToolGuardMiddleware;
@@ -156,9 +157,32 @@ public class CustomerWebAgentConfig {
         return new ContextBudgetMiddleware(properties);
     }
 
+    /**
+     * 拦住智能体凭空告诉用户「钱已经退了」。
+     *
+     * <p>渠道容器里没有 {@code HandoffService} Bean（工具那侧是就地 new 的独立实例），
+     * 因此 provider 解析为 null、不自动转人工——IM 渠道的转人工语义与 H5 不同，
+     * 应当由渠道自身的人工接入流程承接。拦截、澄清与审计不受影响。</p>
+     */
     @Bean
-    public SelfCorrectionMiddleware selfCorrectionMiddleware(CustomerWorkProperties properties) {
-        return new SelfCorrectionMiddleware(properties);
+    public SelfCorrectionMiddleware selfCorrectionMiddleware(
+            CustomerWorkProperties properties,
+            ObjectProvider<com.richard.fyoung.customerwork.capability.handoff.HandoffService> handoffProvider,
+            ObjectProvider<AuditSink> auditSinkProvider,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new SelfCorrectionMiddleware(properties, handoffProvider,
+            auditSinkProvider, meterRegistryProvider);
+    }
+
+    /** 循环守卫：迭代耗尽与工具重复调用的观测与兜底。 */
+    @Bean
+    public LoopGuardMiddleware loopGuardMiddleware(
+            CustomerWorkProperties properties,
+            ObjectProvider<com.richard.fyoung.customerwork.capability.handoff.HandoffService> handoffProvider,
+            ObjectProvider<AuditSink> auditSinkProvider,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new LoopGuardMiddleware(properties, handoffProvider,
+            auditSinkProvider, meterRegistryProvider);
     }
 
     @Bean
