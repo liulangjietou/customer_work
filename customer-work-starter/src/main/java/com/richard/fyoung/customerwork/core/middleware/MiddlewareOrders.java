@@ -71,6 +71,14 @@ public final class MiddlewareOrders {
     /** 直接提示词注入防护：恶意输入越早挡住越好。 */
     public static final int PROMPT_INJECTION_GUARD = 140;
 
+    /**
+     * 知识引用采集：从工具结果里认领本轮召回的知识来源。
+     *
+     * <p>排在间接注入护栏之外，是为了拿到未被隔离标签包裹的工具结果原文——
+     * 逐行解析虽然不受包裹影响，但让采集依赖"护栏怎么包"是没必要的耦合。</p>
+     */
+    public static final int KNOWLEDGE_CITATION = 137;
+
     /** 间接注入防护：针对工具结果与外部内容。 */
     public static final int INDIRECT_INJECTION_GUARD = 135;
 

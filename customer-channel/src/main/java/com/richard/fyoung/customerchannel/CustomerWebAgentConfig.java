@@ -7,6 +7,7 @@ import com.richard.fyoung.customerwork.core.middleware.ContextBudgetMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.DialogStageMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.DynamicOptionsMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.KnowledgeCitationMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.LatencyMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
@@ -175,6 +176,12 @@ public class CustomerWebAgentConfig {
     @Bean
     public ChatTerminalCaptureMiddleware chatTerminalCaptureMiddleware() {
         return new ChatTerminalCaptureMiddleware();
+    }
+
+    /** 采集本轮召回的知识来源；无采集上下文时完全透传。 */
+    @Bean
+    public KnowledgeCitationMiddleware knowledgeCitationMiddleware() {
+        return new KnowledgeCitationMiddleware();
     }
 
     @Bean

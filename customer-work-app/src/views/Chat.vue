@@ -392,6 +392,7 @@ function onWsChatDone(data: unknown) {
     senderId: null,
     content: payload.content,
     createdAtMs: payload.ts,
+    citations: payload.citations ?? [],
   })
   streamingContent.value = ''
   streamingSessionId.value = null
@@ -814,6 +815,20 @@ onUnmounted(() => {
                 }}
               </div>
               <div class="bubble">{{ message.content }}</div>
+              <div
+                v-if="message.senderType === 'BOT' && message.citations?.length"
+                class="citations"
+              >
+                <span class="citations-label">参考来源</span>
+                <span
+                  v-for="citation in message.citations"
+                  :key="citation.chunkId"
+                  class="citation-chip"
+                  :title="`文档 ${citation.documentId} · 片段 ${citation.chunkId}`"
+                >
+                  {{ citation.knowledgeBase }}
+                </span>
+              </div>
               <div
                 v-if="message.senderType === 'BOT'"
                 class="feedback-actions"
@@ -1263,6 +1278,29 @@ onUnmounted(() => {
   color: #fff;
   background: linear-gradient(135deg, #268cff, #1268df);
   box-shadow: 0 9px 22px rgba(24, 119, 242, 0.2);
+}
+
+.citations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.citations-label {
+  color: var(--cw-text-weak, #9aa0a6);
+}
+
+/* 只显示知识库名，文档与片段号放 title：手机屏幕上把整串标识铺开会挤掉正文 */
+.citation-chip {
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(25, 137, 250, 0.08);
+  color: #1989fa;
+  white-space: nowrap;
 }
 
 .feedback-actions {
