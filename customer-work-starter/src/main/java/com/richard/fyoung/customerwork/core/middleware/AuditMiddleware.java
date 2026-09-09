@@ -109,4 +109,10 @@ public class AuditMiddleware implements MiddlewareBase {
         String t = msg.getTextContent();
         return t == null ? "" : t;
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：出站时最后执行，记录已脱敏已过滤的最终内容。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.AUDIT;
+    }
 }

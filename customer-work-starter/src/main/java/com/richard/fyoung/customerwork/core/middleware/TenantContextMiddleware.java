@@ -28,4 +28,10 @@ public class TenantContextMiddleware implements MiddlewareBase {
             ctx.getSessionId() == null ? "default" : ctx.getSessionId());
         return Mono.just((currentPrompt == null ? "" : currentPrompt) + tenantNote);
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：内层所有落库与配额都依赖它。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.TENANT_CONTEXT;
+    }
 }

@@ -1,5 +1,13 @@
 package com.richard.fyoung.customerwork.infra.config;
 
+import io.agentscope.core.formatter.Formatter;
+import io.agentscope.extensions.model.openai.compat.deepseek.DeepSeekFormatter;
+import io.agentscope.extensions.model.openai.compat.glm.GLMFormatter;
+import io.agentscope.extensions.model.openai.compat.kimi.KimiFormatter;
+import io.agentscope.extensions.model.openai.compat.minimax.MiniMaxFormatter;
+import io.agentscope.extensions.model.openai.dto.OpenAIMessage;
+import io.agentscope.extensions.model.openai.dto.OpenAIRequest;
+import io.agentscope.extensions.model.openai.dto.OpenAIResponse;
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
@@ -69,6 +77,18 @@ public final class ChatModelFactory {
         String p = provider == null ? ModelProviders.DASHSCOPE : provider.toLowerCase();
         boolean declaredWindow = contextWindowSize != null && contextWindowSize > 0;
         switch (p) {
+            case ModelProviders.GLM:
+                return openAiCompatible(modelName, apiKey, baseUrl, stream, options,
+                    contextWindowSize, new GLMFormatter(), ModelProviders.DefaultBaseUrls.GLM);
+            case ModelProviders.DEEPSEEK:
+                return openAiCompatible(modelName, apiKey, baseUrl, stream, options,
+                    contextWindowSize, new DeepSeekFormatter(), ModelProviders.DefaultBaseUrls.DEEPSEEK);
+            case ModelProviders.KIMI:
+                return openAiCompatible(modelName, apiKey, baseUrl, stream, options,
+                    contextWindowSize, new KimiFormatter(), ModelProviders.DefaultBaseUrls.KIMI);
+            case ModelProviders.MINIMAX:
+                return openAiCompatible(modelName, apiKey, baseUrl, stream, options,
+                    contextWindowSize, new MiniMaxFormatter(), ModelProviders.DefaultBaseUrls.MINIMAX);
             case ModelProviders.OPENAI: {
                 OpenAIChatModel.Builder b = OpenAIChatModel.builder()
                     .apiKey(apiKey).modelName(modelName).stream(stream).generateOptions(options);
@@ -166,5 +186,36 @@ public final class ChatModelFactory {
         throw new IllegalStateException(
             "未找到百炼 API Key。请配置 customer-work.model.api-key，"
           + "或设置环境变量 " + ENV_DASHSCOPE_API_KEY + "=你的密钥");
+    }
+
+    /**
+     * 走 OpenAI 兼容协议、但使用厂商专用 Formatter 的建模路径。
+     *
+     * <p><b>为什么不直接用 provider=openai 配一个 base-url 了事</b>：通用 OpenAI 兼容路径的
+     * 消息格式是"尽力而为"的。上游为此修过一个 {@code DeepSeek formatter: preserve system role}
+     * 的缺陷（#2189）——也就是说通用路径会<b>丢掉 system role</b>。
+     * 系统提示词是客服智能体全部行为约束的载体，丢了意味着人设、边界、话术规范
+     * 在那一次调用里静默失效，而且不报错。</p>
+     *
+     * <p><b>顺带解决上下文窗口推断为 0 的问题</b>：框架按模型名前缀查表推断窗口，
+     * 表里只有各厂商官方模型名。此前这几家走 openai 兼容接入时一律推断为 0，
+     * 而 0 的含义是"表里没有这个名字"而不是"窗口为零"——上线认证的窗口检查因此恒为失败。
+     * 显式声明的窗口在这里照常生效（{@code declaredWindow}），未声明时由专用 provider 自行处理。</p>
+     */
+    private static Model openAiCompatible(String modelName, String apiKey, String baseUrl,
+                                          boolean stream, GenerateOptions options,
+                                          Integer contextWindowSize,
+                                          Formatter<OpenAIMessage, OpenAIResponse, OpenAIRequest> formatter,
+                                          String defaultBaseUrl) {
+        OpenAIChatModel.Builder b = OpenAIChatModel.builder()
+            .apiKey(apiKey).modelName(modelName).stream(stream)
+            .generateOptions(options)
+            .formatter(formatter);
+        if (contextWindowSize != null && contextWindowSize > 0) {
+            b.contextWindowSize(contextWindowSize);
+        }
+        // 配置优先：自建网关、代理、私有化部署都靠 base-url 覆盖官方端点
+        b.baseUrl(StringUtils.hasText(baseUrl) ? baseUrl : defaultBaseUrl);
+        return b.build();
     }
 }

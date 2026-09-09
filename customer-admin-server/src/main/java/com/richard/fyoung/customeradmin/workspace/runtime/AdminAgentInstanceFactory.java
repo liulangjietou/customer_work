@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
+import com.richard.fyoung.customerwork.core.constant.McpTimeouts;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentBackupModel;
@@ -792,14 +793,6 @@ public class AdminAgentInstanceFactory {
         return new PolicyRoutingModel(RuntimeModelRouteMapper.toSpec(policy), candidates);
     }
 
-    /**
-     * MCP 握手（{@code registerMcpClient} 内部先 {@code initialize()} 再 {@code listTools()}）的硬超时。
-     * 必须显式给 {@code .block(...)} 传超时——不传时 {@code Mono.block()} 会无限等待，一旦某个 MCP
-     * 服务握手卡住（比如服务端不支持可选的 SSE 长连接导致 SDK 内部状态卡死，见批次六联调排查），
-     * 整个 {@code /chat/stream} 请求线程会跟着永久挂起、前端界面看起来"没有响应"，且不会抛出任何
-     * 异常——下面的 try/catch 根本等不到超时异常被抛出。
-     */
-    private static final java.time.Duration MCP_REGISTER_TIMEOUT = java.time.Duration.ofSeconds(10);
 
     /**
      * 读 {@code ai_agent_mcp} 关联行，逐个动态注册进 Toolkit（参考 McpToolkitConfigurer 的写法）。
@@ -817,9 +810,9 @@ public class AdminAgentInstanceFactory {
             McpClientWrapper wrapper = null;
             try {
                 Set<String> before = new HashSet<>(toolkit.getToolNames());
-                wrapper = buildMcpClient(mcp).block(MCP_REGISTER_TIMEOUT);
+                wrapper = buildMcpClient(mcp).block(McpTimeouts.BUILD);
                 if (wrapper != null) {
-                    toolkit.registerMcpClient(wrapper).block(MCP_REGISTER_TIMEOUT);
+                    toolkit.registerMcpClient(wrapper).block(McpTimeouts.REGISTER);
                     Set<String> added = new HashSet<>(toolkit.getToolNames());
                     added.removeAll(before);
                     mcpToolNames.addAll(added);

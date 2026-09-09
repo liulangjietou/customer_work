@@ -76,4 +76,10 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
         }
         return false;
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：模型输出的自我纠错。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.SELF_CORRECTION;
+    }
 }

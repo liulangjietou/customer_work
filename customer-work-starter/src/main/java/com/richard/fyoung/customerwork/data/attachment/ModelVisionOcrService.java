@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.data.attachment;
 
+import com.richard.fyoung.customerwork.core.dto.ChatUsageSnapshot;
 import com.richard.fyoung.customerwork.core.model.ModelResponses;
 import io.agentscope.core.message.Base64Source;
 import io.agentscope.core.message.ImageBlock;
@@ -38,10 +39,20 @@ public class ModelVisionOcrService implements VisionOcrService {
     /** 惰性构建成功后缓存的视觉模型（volatile + synchronized 双检，避免并发重复构建）。 */
     private volatile Model cachedModel;
 
+    /** 用量记账；默认不记，由装配侧注入真实实现。 */
+    private final VisionOcrUsageRecorder usageRecorder;
+
+    /** 兼容既有显式构造（离线单测）：不记账。 */
     public ModelVisionOcrService(Supplier<Model> modelSupplier, String prompt, long timeoutSeconds) {
+        this(modelSupplier, prompt, timeoutSeconds, VisionOcrUsageRecorder.noop());
+    }
+
+    public ModelVisionOcrService(Supplier<Model> modelSupplier, String prompt, long timeoutSeconds,
+                                 VisionOcrUsageRecorder usageRecorder) {
         this.modelSupplier = modelSupplier;
         this.prompt = prompt;
         this.timeoutSeconds = timeoutSeconds;
+        this.usageRecorder = usageRecorder == null ? VisionOcrUsageRecorder.noop() : usageRecorder;
     }
 
     @Override
@@ -63,11 +74,30 @@ public class ModelVisionOcrService implements VisionOcrService {
         if (responses == null || responses.isEmpty()) {
             throw new IllegalStateException("vision model returned empty response");
         }
+        // 这是一次真实的模型调用，必须记账——它此前完全绕开了 AgentCallTimingMiddleware
+        usageRecorder.record(model.getModelName(), lastUsage(responses));
         String text = ModelResponses.text(responses);
         if (!StringUtils.hasText(text)) {
             throw new IllegalStateException("vision model returned no text content");
         }
         return text.trim();
+    }
+
+    /**
+     * 取本次调用的最终用量。
+     *
+     * <p><b>取最后一个非空而不是逐片累加</b>：{@code ChatUsage} 的语义是"本次调用的累计用量"，
+     * 逐片相加会把同一批 token 重复计数。而 OCR 建模时 {@code stream=false}，
+     * 响应通常只有一片，这里的"最后一个"多数时候就是唯一一个。</p>
+     */
+    private ChatUsageSnapshot lastUsage(List<ChatResponse> responses) {
+        for (int i = responses.size() - 1; i >= 0; i--) {
+            ChatResponse response = responses.get(i);
+            if (response != null && response.getUsage() != null) {
+                return ChatUsageSnapshot.from(response.getUsage());
+            }
+        }
+        return ChatUsageSnapshot.empty();
     }
 
     /** 惰性构建 + 缓存视觉模型；构建失败向上抛（由编排层落 FAILED），不缓存失败结果以便下次重试。 */

@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.capability.approval;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import com.richard.fyoung.customerwork.core.runtime.SchedulerLease;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,17 +33,34 @@ public class ApprovalTimeoutScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(ApprovalTimeoutScheduler.class);
 
+    /** 多副本互斥；单副本部署下等价于直接执行。 */
+    private final SchedulerLease schedulerLease;
+
     private final CustomerWorkProperties properties;
     private final PendingApprovalService approvalService;
 
+    /** 兼容既有显式构造（单副本 / 离线单测）：不加多副本互斥。 */
     public ApprovalTimeoutScheduler(CustomerWorkProperties properties,
                                      PendingApprovalService approvalService) {
+        this(properties, approvalService, null);
+    }
+
+    @Autowired
+    public ApprovalTimeoutScheduler(CustomerWorkProperties properties,
+                                     PendingApprovalService approvalService, SchedulerLease schedulerLease) {
         this.properties = properties;
         this.approvalService = approvalService;
+        this.schedulerLease = schedulerLease == null ? SchedulerLease.noLease() : schedulerLease;
     }
 
     @Scheduled(fixedDelayString = "${customer-work.runtime.scheduler-fixed-delay-ms:60000}")
     public void checkTimeouts() {
+        // 审批超时：多副本同时扫到同一批待审批单会把超时动作执行两次
+        schedulerLease.runExclusively("approval-timeout", this::doCheckTimeouts);
+    }
+
+    /** 一轮实际逻辑；单测入口直接调它，不经过多副本互斥。 */
+    private void doCheckTimeouts() {
         long timeoutSeconds = properties.getHumanApproval().getTimeoutSeconds();
         if (timeoutSeconds <= 0) {
             return;
@@ -80,7 +99,7 @@ public class ApprovalTimeoutScheduler {
 
     /** 可被单测调用的同步入口（跳过 @Scheduled 注解）。 */
     public void runTimeoutCheck() {
-        checkTimeouts();
+        doCheckTimeouts();
     }
 
     /** 巡检重试执行失败的审批单（如打款回调异常）；{@code maxExecutionRetryAttempts<=1} 时禁用。 */

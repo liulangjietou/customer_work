@@ -15,6 +15,14 @@ public final class ToolConstants {
      */
     public static final String AGENT_TOOL_SESSION = "agent-tool";
 
+    /**
+     * 转人工工具名（{@code @Tool} 未指定 name 时框架取方法名）。
+     *
+     * <p>对话阶段状态机靠它把会话切到 {@code ESCALATED}，权限规则也按这个名字配 ask 规则。
+     * 方法改名而这里没跟着改，表现是"转人工之后智能体还在自己办业务"，且不报错。</p>
+     */
+    public static final String TRANSFER_TO_HUMAN = "transferToHuman";
+
     private ToolConstants() {
     }
 }

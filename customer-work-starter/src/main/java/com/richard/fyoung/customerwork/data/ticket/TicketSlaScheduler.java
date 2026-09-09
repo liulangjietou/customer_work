@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.ticket;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import com.richard.fyoung.customerwork.core.runtime.SchedulerLease;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +47,9 @@ public class TicketSlaScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(TicketSlaScheduler.class);
 
+    /** 多副本互斥；单副本部署下等价于直接执行。 */
+    private final SchedulerLease schedulerLease;
+
     private static final String SLA_BREACH_CODE = "TICKET-SLA-BREACH";
     private static final String SLA_AUTO_FLOW_FAIL = "TICKET-SLA-AUTOFLOW-FAIL";
     private static final String SYSTEM_ACTOR = "sla-scheduler";
@@ -61,13 +66,26 @@ public class TicketSlaScheduler {
     private final CustomerWorkProperties properties;
     private final TicketService ticketService;
 
+    /** 兼容既有显式构造（单副本 / 离线单测）：不加多副本互斥。 */
     public TicketSlaScheduler(CustomerWorkProperties properties, TicketService ticketService) {
+        this(properties, ticketService, null);
+    }
+
+    @Autowired
+    public TicketSlaScheduler(CustomerWorkProperties properties, TicketService ticketService, SchedulerLease schedulerLease) {
         this.properties = properties;
         this.ticketService = ticketService;
+        this.schedulerLease = schedulerLease == null ? SchedulerLease.noLease() : schedulerLease;
     }
 
     @Scheduled(fixedDelayString = "${customer-work.runtime.scheduler-fixed-delay-ms:60000}")
     public void checkSla() {
+        // 工单 SLA：多副本会把同一条超时告警重复发出去，淹没真正需要处理的那条
+        schedulerLease.runExclusively("ticket-sla", this::doCheckSla);
+    }
+
+    /** 一轮实际逻辑；单测入口直接调它，不经过多副本互斥。 */
+    private void doCheckSla() {
         if (!properties.getTicket().isSlaEnabled()) {
             return;
         }
@@ -188,6 +206,6 @@ public class TicketSlaScheduler {
 
     /** 可被单测调用的同步入口（跳过 @Scheduled 注解）。 */
     public void runSlaCheck() {
-        checkSla();
+        doCheckSla();
     }
 }

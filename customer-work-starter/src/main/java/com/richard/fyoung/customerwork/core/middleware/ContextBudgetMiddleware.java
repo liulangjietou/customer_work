@@ -5,6 +5,9 @@ import com.richard.fyoung.customerwork.infra.config.properties.ContextProperties
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
+import io.agentscope.core.message.ContentBlock;
+import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.middleware.MiddlewareBase;
@@ -104,11 +107,79 @@ public class ContextBudgetMiddleware implements MiddlewareBase {
         if (budgeted.size() <= maxMessages) {
             return messages;
         }
-        int tailCount = maxMessages - keepEarliest;
+
+        // 按工具调用配对分组后再裁剪：切散 tool_use / tool_result 会让厂商直接返 400
+        List<List<Msg>> groups = groupByToolCallPairing(budgeted);
+        int tailBudget = maxMessages - keepEarliest;
+
+        int headGroupEnd = 0;
+        int headMessages = 0;
+        while (headGroupEnd < groups.size() && headMessages < keepEarliest) {
+            headMessages += groups.get(headGroupEnd).size();
+            headGroupEnd++;
+        }
+
+        int tailGroupStart = groups.size();
+        int tailMessages = 0;
+        while (tailGroupStart > headGroupEnd && tailMessages < tailBudget) {
+            tailGroupStart--;
+            tailMessages += groups.get(tailGroupStart).size();
+        }
+
+        // 首尾两段已经吃满全部分组：中间没有可牺牲的内容，原样返回而不是切出一个残缺序列
+        if (tailGroupStart <= headGroupEnd) {
+            return messages;
+        }
+
         List<Msg> kept = new ArrayList<>(pinned);
-        kept.addAll(budgeted.subList(0, keepEarliest));
-        kept.addAll(budgeted.subList(budgeted.size() - tailCount, budgeted.size()));
+        for (int i = 0; i < headGroupEnd; i++) {
+            kept.addAll(groups.get(i));
+        }
+        for (int i = tailGroupStart; i < groups.size(); i++) {
+            kept.addAll(groups.get(i));
+        }
         return kept;
+    }
+
+    /**
+     * 把消息切成不可拆分的单元：含 {@code tool_use} 的消息与紧随其后的 {@code tool_result} 必须同去同留。
+     *
+     * <p><b>为什么必须分组</b>：此前 {@code trim} 是按位置直接 {@code subList} 首尾切，
+     * 完全不看消息内容。一条 assistant 的 {@code tool_use} 与它的 {@code tool_result} 落在切口两侧时，
+     * 送给模型的就是一个孤立的 {@code tool_result}——多数厂商对此直接返 400，
+     * 也就是说这个中间件一旦按 javadoc 建议的那样在生产开启，长会话会从"上下文超限"
+     * 变成"整轮请求失败"。</p>
+     *
+     * <p>分组规则用「紧随其后」而不是按 id 匹配：ReAct 循环里工具结果总是紧跟在发起调用的那条消息之后，
+     * 而 system 与合成消息已经在 {@link #isPinned} 里被摘走、不会插进这段序列。</p>
+     */
+    private List<List<Msg>> groupByToolCallPairing(List<Msg> messages) {
+        List<List<Msg>> groups = new ArrayList<>();
+        List<Msg> openGroup = null;
+        for (Msg msg : messages) {
+            if (openGroup != null && containsBlock(msg, ToolResultBlock.class)) {
+                openGroup.add(msg);
+                continue;
+            }
+            List<Msg> group = new ArrayList<>();
+            group.add(msg);
+            groups.add(group);
+            openGroup = containsBlock(msg, ToolUseBlock.class) ? group : null;
+        }
+        return groups;
+    }
+
+    /** 这条消息是否携带指定类型的内容块。 */
+    private boolean containsBlock(Msg msg, Class<? extends ContentBlock> type) {
+        if (msg == null || msg.getContent() == null) {
+            return false;
+        }
+        for (ContentBlock block : msg.getContent()) {
+            if (type.isInstance(block)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** system 消息与框架合成的瞬态消息不参与预算。 */
@@ -120,5 +191,11 @@ public class ContextBudgetMiddleware implements MiddlewareBase {
             return true;
         }
         return msg.getMetadata() != null && Boolean.TRUE.equals(msg.getMetadata().get(Msg.METADATA_SYNTHETIC));
+    }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：必须最内层：所有注入完成后才算得准。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.CONTEXT_BUDGET;
     }
 }

@@ -48,6 +48,11 @@ const router = createRouter({
       component: () => import('@/views/ProfileInfo.vue'),
     },
     {
+      path: '/profile/privacy',
+      name: 'PrivacyMemory',
+      component: () => import('@/views/PrivacyMemory.vue'),
+    },
+    {
       path: '/tickets/:id',
       name: 'TicketDetail',
       component: () => import('@/views/TicketDetail.vue'),

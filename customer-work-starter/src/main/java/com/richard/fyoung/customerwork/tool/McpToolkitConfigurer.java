@@ -6,6 +6,7 @@ import com.richard.fyoung.customerwork.tool.mcp.McpClientFactory;
 import com.richard.fyoung.customerwork.tool.mcp.McpSecurityPolicy;
 import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import com.richard.fyoung.customerwork.tool.mcp.McpToolAuthorizationRegistry;
+import com.richard.fyoung.customerwork.core.constant.McpTimeouts;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
 import org.slf4j.Logger;
@@ -88,12 +89,12 @@ public class McpToolkitConfigurer {
         for (McpProperties.Server server : properties.getMcp().getServers()) {
             McpClientWrapper wrapper = null;
             try {
-                wrapper = buildClient(server).block();
+                wrapper = buildClient(server).block(McpTimeouts.BUILD);
                 if (wrapper != null) {
                     // 快照注册前工具名，注册后取增量即为本 MCP 服务贡献的工具，登记为 MCP 类别
                     // （直接用 toolkit 实际工具名做键，与 onActing 的 ToolUseBlock.getName() 一致，最可靠）
                     Set<String> before = new HashSet<>(toolkit.getToolNames());
-                    toolkit.registerMcpClient(wrapper).block();
+                    toolkit.registerMcpClient(wrapper).block(McpTimeouts.REGISTER);
                     Set<String> added = new HashSet<>(toolkit.getToolNames());
                     added.removeAll(before);
                     toolKindRegistry.registerMcpTools(added);

@@ -1,5 +1,10 @@
 package com.richard.fyoung.customeradmin.config;
 
+import org.springframework.beans.factory.ObjectProvider;
+import io.micrometer.core.instrument.MeterRegistry;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
+import com.richard.fyoung.customerwork.data.attachment.VisionOcrUsageRecorder;
+import com.richard.fyoung.customerwork.data.attachment.MeteredVisionOcrUsageRecorder;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.AiChatAttachmentMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.store.AdminChatAttachmentStore;
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
@@ -57,7 +62,9 @@ public class AdminAttachmentConfig {
      * {@code DASHSCOPE_API_KEY} 环境变量），其它厂商直接用配置值。
      */
     @Bean
-    public VisionOcrService visionOcrService(AttachmentProperties properties) {
+    public VisionOcrService visionOcrService(AttachmentProperties properties,
+                                             ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                             ObjectProvider<SubjectQuotaGuard> quotaGuardProvider) {
         AttachmentProperties.Ocr ocr = properties.getOcr();
         Supplier<Model> modelSupplier = () -> {
             String apiKey = ModelProviders.DASHSCOPE.equalsIgnoreCase(ocr.getProvider())
@@ -66,7 +73,11 @@ public class AdminAttachmentConfig {
             return ChatModelFactory.build(ocr.getProvider(), ocr.getModelName(), apiKey, ocr.getBaseUrl(),
                 false, GenerateOptions.builder().build(), null, null);
         };
-        return VisionOcrServices.create(properties, modelSupplier);
+        // 与 8080 侧同一套记账口径，避免两边对同一次 OCR 算出不同的账
+        VisionOcrUsageRecorder usageRecorder = new MeteredVisionOcrUsageRecorder(
+            meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable(),
+            quotaGuardProvider == null ? null : quotaGuardProvider.getIfAvailable());
+        return VisionOcrServices.create(properties, modelSupplier, usageRecorder);
     }
 
     /** 附件文件存储：按 {@code storage.type} 选后端（local 本地磁盘 / minio 对象存储），选型收敛在 starter 的 {@link AttachmentFileStorages}（与 8080 侧同一份）。 */

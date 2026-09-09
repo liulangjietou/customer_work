@@ -1,5 +1,12 @@
 package com.richard.fyoung.customerwork.data.rag;
 
+import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeChunkMapper;
+import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeVersionMapper;
+import com.richard.fyoung.customerwork.data.knowledge.vector.VectorStore;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.richard.fyoung.customerwork.core.constant.KnowledgeProviders;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.agentscope.core.embedding.dashscope.DashScopeTextEmbedding;
 import io.agentscope.core.rag.Knowledge;
@@ -46,8 +53,39 @@ public class KnowledgeProvider {
     private final CustomerWorkProperties properties;
     private volatile Knowledge cached;
 
+    /** 受管知识库所需的协作者；未装配时为 {@code null}，此时 provider=managed 会显式失败。 */
+    private final ObjectProvider<VectorStore> vectorStoreProvider;
+    private final ObjectProvider<KnowledgeChunkMapper> chunkMapperProvider;
+    private final ObjectProvider<KnowledgeVersionMapper> versionMapperProvider;
+    private final ObjectProvider<EmbeddingClient> embeddingClientProvider;
+
+    /**
+     * Spring 注入构造。
+     *
+     * <p>受管知识库的协作者走 {@code ObjectProvider} 可选注入：它们只在
+     * {@code provider=managed} 时才需要，而那条分支缺依赖时会显式失败并说明缺的是哪一个——
+     * 比在启动期因为一个用不上的 Bean 起不来要好。</p>
+     */
+    @Autowired
+    public KnowledgeProvider(CustomerWorkProperties properties,
+                             ObjectProvider<VectorStore> vectorStoreProvider,
+                             ObjectProvider<KnowledgeChunkMapper> chunkMapperProvider,
+                             ObjectProvider<KnowledgeVersionMapper> versionMapperProvider,
+                             ObjectProvider<EmbeddingClient> embeddingClientProvider) {
+        this.properties = properties;
+        this.vectorStoreProvider = vectorStoreProvider;
+        this.chunkMapperProvider = chunkMapperProvider;
+        this.versionMapperProvider = versionMapperProvider;
+        this.embeddingClientProvider = embeddingClientProvider;
+    }
+
+    /** 兼容既有显式构造（离线单测）：不带受管知识库的协作者。 */
     public KnowledgeProvider(CustomerWorkProperties properties) {
         this.properties = properties;
+        this.vectorStoreProvider = null;
+        this.chunkMapperProvider = null;
+        this.versionMapperProvider = null;
+        this.embeddingClientProvider = null;
     }
 
     /**
@@ -78,22 +116,70 @@ public class KnowledgeProvider {
         return cached;
     }
 
+    /**
+     * 按配置构建知识库实现。
+     *
+     * <p><b>未知取值一律 fast fail，不再静默降级</b>：此前 default 分支兜住了拼写错误
+     * （{@code bailain}）与未实现的取值（javadoc 曾声称支持的 {@code ragflow} / {@code haystack}），
+     * 一律落到内置的 4 条演示文本上，只打一行 info 日志。运营会以为知识库在工作，
+     * 而客服智能体的全部知识就是那 4 句话——这类静默降级比启动失败难查得多。</p>
+     */
     private Knowledge build() {
-        String provider = properties.getRag().getProvider();
-        switch (provider == null ? "memory" : provider.toLowerCase()) {
-            case "simple":
+        String provider = KnowledgeProviders.normalize(properties.getRag().getProvider());
+        switch (provider) {
+            case KnowledgeProviders.SIMPLE:
                 return buildSimple();
-            case "bailian":
+            case KnowledgeProviders.BAILIAN:
                 return buildBailian();
-            case "dify":
+            case KnowledgeProviders.DIFY:
                 return buildDify();
-            default:
+            case KnowledgeProviders.MANAGED:
+                return buildManaged();
+            case KnowledgeProviders.MEMORY:
                 InMemoryKeywordKnowledge knowledge =
                     new InMemoryKeywordKnowledge(properties.getRag().getTopK());
                 knowledge.addTexts(KNOWLEDGE_DOCS).block();
-                log.info("[RAG] 使用内存知识库，预置文档 {} 条", KNOWLEDGE_DOCS.size());
+                log.info("[RAG] built-in demo knowledge in use, docs={} —— development only, "
+                    + "production must set customer-work.rag.provider to one of {}",
+                    KNOWLEDGE_DOCS.size(), KnowledgeProviders.PRODUCTION_ALLOWED);
                 return knowledge;
+            default:
+                log.error("[RAG] unknown knowledge provider, code={} provider={} implemented={}",
+                    "RAG-PROVIDER-UNKNOWN", provider, KnowledgeProviders.IMPLEMENTED);
+                throw new IllegalStateException("未知的 customer-work.rag.provider 取值：" + provider
+                    + "，已实现的取值为 " + KnowledgeProviders.IMPLEMENTED
+                    + "。此前这里会静默降级成内置演示知识库，现改为显式失败。");
         }
+    }
+
+    /**
+     * 受管知识库：客服端直连后台投影过来的企业知识库。
+     *
+     * <p>缺协作者时显式失败而不是降级：降级的结果是回到那 4 条演示文本，
+     * 而运营会以为自己维护的知识库正在生效——这正是这条链路原本的病症，不能用同样的方式收场。</p>
+     */
+    private Knowledge buildManaged() {
+        VectorStore vectorStore = resolve(vectorStoreProvider, "VectorStore");
+        KnowledgeChunkMapper chunkMapper = resolve(chunkMapperProvider, "KnowledgeChunkMapper");
+        KnowledgeVersionMapper versionMapper = resolve(versionMapperProvider, "KnowledgeVersionMapper");
+        EmbeddingClient embeddingClient = resolve(embeddingClientProvider, "EmbeddingClient");
+        List<String> codes = properties.getRag().getManaged().getKnowledgeBaseCodes();
+        log.info("[RAG] managed knowledge in use, embeddingModel={} dimensions={} kbCodes={}",
+            embeddingClient.modelName(), embeddingClient.dimensions(),
+            codes.isEmpty() ? "(all projected versions)" : codes);
+        return new ManagedKnowledge(vectorStore, chunkMapper, versionMapper, embeddingClient, codes);
+    }
+
+    private <T> T resolve(ObjectProvider<T> provider, String name) {
+        T bean = provider == null ? null : provider.getIfAvailable();
+        if (bean == null) {
+            log.error("managed knowledge dependency missing, code={} bean={}",
+                "KB-MANAGED-DEP-MISSING", name);
+            throw new IllegalStateException("customer-work.rag.provider=managed 需要 " + name
+                + "，但容器里没有——请确认持久化环境已激活且 Embedding 已配置。"
+                + "这里刻意不降级到内置演示知识库：降级会让运营以为自己维护的知识库正在生效。");
+        }
+        return bean;
     }
 
     /** 真实 Embedding 向量 RAG：百炼 Embedding + 内存向量库（语义检索）。 */

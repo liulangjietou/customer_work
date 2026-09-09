@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/customerwork/migration 的全部迁移
 --           （含 V2/V9 两个 Java 迁移）后逐表导出，自增当前值已抹除。
--- 对应版本：Flyway V23
+-- 对应版本：Flyway V24
 -- 真源：customer-work-starter/src/main/resources/db/customerwork/migration/
 --       + com.richard.fyoung.customerwork.infra.migration 下的 Java 迁移。
 --       改结构一律新增迁移，改本文件不会生效。
@@ -516,6 +516,28 @@ CREATE TABLE `cw_knowledge` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库 FAQ（JDBC 后端演示表）';
 
 -- ----------------------------------------------------------------------------
+-- cw_knowledge_chunk
+-- ----------------------------------------------------------------------------
+CREATE TABLE `cw_knowledge_chunk` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID',
+  `kb_version_id` bigint NOT NULL COMMENT '知识库版本ID（对应后台 ai_knowledge_base_version.id）',
+  `doc_revision_id` bigint NOT NULL COMMENT '文档修订ID，同时作为检索分区键与 ACL 归属',
+  `chunk_index` int NOT NULL COMMENT '分块序号',
+  `content` longtext COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '分块正文；检索打分阶段不读它，命中后才回查',
+  `embedding` varbinary(16384) NOT NULL COMMENT '定长 float32 向量，大端字节序，见 VectorCodec',
+  `dimensions` int NOT NULL COMMENT '向量维度；与 embedding 长度必须一致',
+  `acl_mode` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'PUBLIC' COMMENT '访问控制模式，随后台文档修订冗余',
+  `external_id` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '来源文档的外部标识，供回答溯源展示',
+  `created_at_ms` bigint NOT NULL COMMENT '创建时间（毫秒）',
+  `updated_at_ms` bigint NOT NULL COMMENT '更新时间（毫秒）',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_cw_kb_chunk` (`doc_revision_id`,`chunk_index`),
+  KEY `idx_cw_kb_chunk_version` (`tenant_id`,`kb_version_id`),
+  KEY `idx_cw_kb_chunk_revision` (`doc_revision_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='受管知识库向量分片（运行时检索用）';
+
+-- ----------------------------------------------------------------------------
 -- cw_knowledge_gap
 -- ----------------------------------------------------------------------------
 CREATE TABLE `cw_knowledge_gap` (
@@ -533,6 +555,27 @@ CREATE TABLE `cw_knowledge_gap` (
   UNIQUE KEY `uk_knowledge_gap` (`tenant_id`,`scope_id`,`question_hash`),
   KEY `idx_knowledge_gap_rank` (`tenant_id`,`scope_id`,`miss_count`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识盲区（反复检索不到的问题，计数表）';
+
+-- ----------------------------------------------------------------------------
+-- cw_knowledge_version
+-- ----------------------------------------------------------------------------
+CREATE TABLE `cw_knowledge_version` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID',
+  `kb_version_id` bigint NOT NULL COMMENT '知识库版本ID（对应后台 ai_knowledge_base_version.id）',
+  `kb_code` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '知识库编码',
+  `kb_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '知识库名称，用于回答里的来源标注',
+  `top_n` int NOT NULL DEFAULT '3' COMMENT '召回条数上限',
+  `score_threshold` decimal(10,6) NOT NULL DEFAULT '0.000000' COMMENT '相似度下限，低于它的命中直接丢弃',
+  `dimensions` int NOT NULL COMMENT '该版本向量维度；与查询向量维度不一致时检索必须失败而不是算出一个无意义的分数',
+  `chunk_count` int NOT NULL DEFAULT '0' COMMENT '分片总数，供后台核对投影是否完整',
+  `synced_at_ms` bigint NOT NULL COMMENT '最近一次投影完成时间（毫秒）',
+  `created_at_ms` bigint NOT NULL COMMENT '创建时间（毫秒）',
+  `updated_at_ms` bigint NOT NULL COMMENT '更新时间（毫秒）',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_cw_kb_version` (`kb_version_id`),
+  KEY `idx_cw_kb_version_code` (`tenant_id`,`kb_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='受管知识库版本在客服端的检索投影';
 
 -- ----------------------------------------------------------------------------
 -- cw_long_term_memory

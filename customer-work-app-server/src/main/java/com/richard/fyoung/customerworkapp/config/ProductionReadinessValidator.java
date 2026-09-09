@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.config;
 
+import com.richard.fyoung.customerwork.core.constant.KnowledgeProviders;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalExecutionHandler;
 import com.richard.fyoung.customerwork.core.constant.DevDefaultCredentials;
 import com.richard.fyoung.customerwork.core.constant.ModelProviders;
@@ -72,6 +73,7 @@ public class ProductionReadinessValidator implements InitializingBean {
         validateDistributedRuntime(violations);
         validateStorage(violations);
         validateMemoryPrivacy(violations);
+        validateKnowledge(violations);
         validateNotification(violations);
         validateRuntimeConfig(violations);
         require(violations, "customer-work.human-approval.execution-handler",
@@ -166,6 +168,25 @@ public class ProductionReadinessValidator implements InitializingBean {
             properties.getMemory().getWithdrawnConsentRetentionDays() > 0);
         require(violations, "customer-work.memory.provider.external-erasure-capability",
             "memory".equalsIgnoreCase(properties.getMemory().getProvider()));
+    }
+
+    /**
+     * RAG 知识库不得使用内置演示语料。
+     *
+     * <p>{@code provider=memory} 的语料是 {@code KnowledgeProvider} 里硬编码的 4 条售后政策演示文本，
+     * 打分函数只是"查询里有几个字出现在文档中"。它上生产的后果是：客服智能体的全部知识就是那 4 句话，
+     * 而后台整套企业知识库（版本、ACL、新鲜度门禁、同步任务）对线上对话零影响——
+     * 运营看着后台以为知识库在工作，用户那边一问三不知，且不报任何错。</p>
+     *
+     * <p>这与数据库里的演示数据是同一类问题的两面：那边有 {@code scripts/clear-demo-data.sh} 可清，
+     * 代码里的这份没有任何脚本能处理，只能在这里挡住。</p>
+     */
+    private void validateKnowledge(List<String> violations) {
+        if (!properties.getRag().isEnabled()) {
+            return;
+        }
+        require(violations, "customer-work.rag.provider",
+            KnowledgeProviders.isProductionAllowed(properties.getRag().getProvider()));
     }
 
     private void validateRuntimeConfig(List<String> violations) {

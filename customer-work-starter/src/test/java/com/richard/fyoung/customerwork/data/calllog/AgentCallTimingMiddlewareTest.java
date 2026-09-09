@@ -330,9 +330,13 @@ class AgentCallTimingMiddlewareTest {
 
         mw.onAgent(agent, ctx, new AgentInput(List.of(msg(MsgRole.USER, "你好"))), inner).blockLast();
 
-        assertEquals(198.0d, meterRegistry.counter("customerwork.agent.tokens", "type", "input").count(),
+        // source 标签用于把视觉 OCR 的用量从对话总量里拆出来；两条链路必须用同一套标签键，
+        // 否则 Prometheus registry 会拒绝同名 meter（本地 SimpleMeterRegistry 不会报，只会查不到）
+        assertEquals(198.0d, meterRegistry.counter("customerwork.agent.tokens",
+                "type", "input", "source", "conversation").count(),
             0.001d, "输入 token 按 type=input 累加");
-        assertEquals(40.0d, meterRegistry.counter("customerwork.agent.tokens", "type", "output").count(),
+        assertEquals(40.0d, meterRegistry.counter("customerwork.agent.tokens",
+                "type", "output", "source", "conversation").count(),
             0.001d, "输出 token 按 type=output 累加");
     }
 

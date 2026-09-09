@@ -147,4 +147,10 @@ public class PromptInjectionGuardMiddleware implements MiddlewareBase {
             .textContent(refusalReply)
             .build();
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：恶意输入越早挡住越好。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.PROMPT_INJECTION_GUARD;
+    }
 }

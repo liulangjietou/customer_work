@@ -45,6 +45,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String BADCASE_RECURRENCE_SIGNAL_MIRROR_VERSION = "21";
     private static final String COLLATION_ALIGNMENT_MIRROR_VERSION = "22";
     private static final String PUBLIC_TRIAL_QUOTA_MIRROR_VERSION = "23";
+    private static final String KNOWLEDGE_CHUNK_MIRROR_VERSION = "24";
 
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
@@ -228,9 +229,15 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             // V23 同样没有结构痕迹（纯种子），只能问那行数据在不在。
             // 漏掉这条判定，完整镜像会被当成"停在 V22"而重跑 V23——虽然它带了
             // ON DUPLICATE KEY 不会炸，但历史里会多出一条本不该存在的执行记录。
-            return rowExists(connection,
-                "SELECT 1 FROM `cw_subject_quota_level` WHERE `level_code` = 'public-trial' LIMIT 1")
-                ? PUBLIC_TRIAL_QUOTA_MIRROR_VERSION : COLLATION_ALIGNMENT_MIRROR_VERSION;
+            boolean publicTrialQuotaMirror = rowExists(connection,
+                "SELECT 1 FROM `cw_subject_quota_level` WHERE `level_code` = 'public-trial' LIMIT 1");
+            if (!publicTrialQuotaMirror) {
+                return COLLATION_ALIGNMENT_MIRROR_VERSION;
+            }
+            // V24 是建表迁移，有结构痕迹，按表在不在判定即可。
+            return tableExists(connection, "cw_knowledge_chunk")
+                && tableExists(connection, "cw_knowledge_version")
+                ? KNOWLEDGE_CHUNK_MIRROR_VERSION : PUBLIC_TRIAL_QUOTA_MIRROR_VERSION;
         }
     }
 

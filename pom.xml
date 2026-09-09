@@ -31,7 +31,7 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <agentscope.version>2.0.0</agentscope.version>
+        <agentscope.version>2.0.2</agentscope.version>
         <springdoc.version>2.3.0</springdoc.version>
         <nacos.version>3.0.2</nacos.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>

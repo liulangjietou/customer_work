@@ -5,6 +5,7 @@ import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import reactor.core.publisher.Sinks;
 
 import java.util.Map;
@@ -36,8 +37,25 @@ public class WsSessionRegistry {
 
     private final ObjectMapper objectMapper;
 
+    /** 跨副本广播：单副本部署下是 no-op。 */
+    private final WsDownstreamBroadcaster broadcaster;
+
+    /** 兼容既有显式构造（单副本 / 离线单测）。 */
     public WsSessionRegistry(ObjectMapper objectMapper) {
+        this(objectMapper, new NoOpWsDownstreamBroadcaster());
+    }
+
+    /**
+     * Spring 注入构造。
+     *
+     * <p>订阅在构造期完成：本副本要能收到其他副本转发过来的下行帧，
+     * 否则多副本下"坐席在 A 回复、用户连在 B"这条路仍然是断的。</p>
+     */
+    @Autowired
+    public WsSessionRegistry(ObjectMapper objectMapper, WsDownstreamBroadcaster broadcaster) {
         this.objectMapper = objectMapper;
+        this.broadcaster = broadcaster;
+        this.broadcaster.subscribe(this::deliverFromBroadcast);
     }
 
     /** 登记用户连接（顶号旧连接），返回该连接下行帧 Sink（处理器用其 asFlux() 作出站流）。 */
@@ -195,16 +213,40 @@ public class WsSessionRegistry {
     }
 
     private boolean push(Map<String, Sinks.Many<String>> sinks, String id, WsFrame frame, String kind) {
-        Sinks.Many<String> sink = sinks.get(id);
-        if (sink == null) {
-            log.info("ws push skipped, {} offline: id={}, type={}", kind, id, frame.type());
-            return false;
-        }
         String json = serialize(frame);
         if (json == null) {
             return false;
         }
-        return sink.tryEmitNext(json).isSuccess();
+        if (deliverLocally(sinks, id, json)) {
+            return true;
+        }
+        // 本地没有这个连接：多副本部署下它可能连在别的副本上。
+        // 不广播的话，坐席在 A 副本回复而用户连在 B 副本时，这帧就无声地消失了。
+        WsDownstreamTarget target = sinks == userSinks ? WsDownstreamTarget.USER : WsDownstreamTarget.AGENT;
+        boolean broadcast = broadcaster.broadcast(target, id, json);
+        if (!broadcast) {
+            log.info("ws push skipped, {} offline: id={}, type={}", kind, id, frame.type());
+        }
+        return broadcast;
+    }
+
+    /** 只投递本副本持有的连接。 */
+    private boolean deliverLocally(Map<String, Sinks.Many<String>> sinks, String id, String json) {
+        Sinks.Many<String> sink = sinks.get(id);
+        return sink != null && sink.tryEmitNext(json).isSuccess();
+    }
+
+    /**
+     * 处理其他副本广播过来的下行帧。
+     *
+     * <p><b>只做本地投递，不再广播</b>——再广播会让两个副本互相转发同一帧直到消息风暴。
+     * id 已经是带租户前缀的完整键，这里不再走 {@code scoped()}：
+     * 广播发生在请求线程之外，那时候没有租户上下文可用。</p>
+     */
+    private boolean deliverFromBroadcast(WsDownstreamTarget target, String id, String frameJson) {
+        Map<String, Sinks.Many<String>> sinks =
+            target == WsDownstreamTarget.USER ? userSinks : agentSinks;
+        return deliverLocally(sinks, id, frameJson);
     }
 
     /** 同名用户/坐席在不同租户下必须落入不同连接槽位。 */

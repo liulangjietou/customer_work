@@ -35,4 +35,10 @@ public class ChatTerminalCaptureMiddleware implements MiddlewareBase {
                 .doOnError(error -> capture.markError());
         });
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：需看到完整的一轮。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.CHAT_TERMINAL_CAPTURE;
+    }
 }

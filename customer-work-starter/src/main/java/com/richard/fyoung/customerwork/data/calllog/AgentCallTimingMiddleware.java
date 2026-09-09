@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
+import com.richard.fyoung.customerwork.core.constant.TokenMetrics;
+import com.richard.fyoung.customerwork.core.middleware.MiddlewareOrders;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttribution;
 import com.richard.fyoung.customerwork.core.model.attribution.ModelCallAttributionContext;
@@ -67,11 +69,7 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
     private static final String CANCELLED = "cancelled";
 
     /** token 消耗计数器名（与 Grafana 面板约定，不可改名）。 */
-    private static final String M_TOKENS = "customerwork.agent.tokens";
     /** token 计数器的类型 tag 与取值。 */
-    private static final String TAG_TYPE = "type";
-    private static final String TYPE_INPUT = "input";
-    private static final String TYPE_OUTPUT = "output";
 
     private final boolean enabled;
     private final ToolKindRegistry toolKindRegistry;
@@ -401,10 +399,12 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             return;
         }
         if (inputTokens != null && inputTokens > 0) {
-            meterRegistry.counter(M_TOKENS, TAG_TYPE, TYPE_INPUT).increment(inputTokens);
+            meterRegistry.counter(TokenMetrics.NAME, TokenMetrics.TAG_TYPE, TokenMetrics.TYPE_INPUT,
+                TokenMetrics.TAG_SOURCE, TokenMetrics.SOURCE_CONVERSATION).increment(inputTokens);
         }
         if (outputTokens != null && outputTokens > 0) {
-            meterRegistry.counter(M_TOKENS, TAG_TYPE, TYPE_OUTPUT).increment(outputTokens);
+            meterRegistry.counter(TokenMetrics.NAME, TokenMetrics.TAG_TYPE, TokenMetrics.TYPE_OUTPUT,
+                TokenMetrics.TAG_SOURCE, TokenMetrics.SOURCE_CONVERSATION).increment(outputTokens);
         }
     }
 
@@ -591,5 +591,11 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             return b;
         }
         return c;
+    }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：token 唯一落点，需看到完整的一轮。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.AGENT_CALL_TIMING;
     }
 }

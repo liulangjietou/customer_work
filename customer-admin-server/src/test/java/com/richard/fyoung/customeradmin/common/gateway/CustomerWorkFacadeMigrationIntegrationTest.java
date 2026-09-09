@@ -54,7 +54,8 @@ class CustomerWorkFacadeMigrationIntegrationTest {
                 .aggregate("default", null, 0L, 1_000L);
 
             assertEquals(0L, aggregate.getTotalSessions());
-            assertEquals("23", query(database,
+            // 客服端当前 schema 版本；starter 加迁移时这里要跟着涨
+            assertEquals("24", query(database,
                 "SELECT `version` FROM `flyway_schema_history` WHERE `success` = 1 "
                     + "ORDER BY `installed_rank` DESC LIMIT 1"));
             // BusinessOutcomeMapper 正是按 session_id 关联三张 cw_* 表的那条查询，

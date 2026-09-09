@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.tool;
 
+import com.richard.fyoung.customerwork.core.constant.McpTimeouts;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.tool.mcp.McpServerSpec;
 import com.richard.fyoung.customerwork.tool.mcp.McpSecurityPolicy;
@@ -53,9 +54,9 @@ public class HigressToolkitConfigurer {
         HigressProperties h = properties.getHigress();
         HigressMcpClientWrapper wrapper = null;
         try {
-            wrapper = buildClient(h).block();
+            wrapper = buildClient(h).block(McpTimeouts.BUILD);
             if (wrapper != null) {
-                toolkit.registerMcpClient(wrapper).block();
+                toolkit.registerMcpClient(wrapper).block(McpTimeouts.REGISTER);
                 log.info("[Higress] AI gateway registered, endpoint={} toolSearch={}",
                     h.getEndpoint(), h.getToolSearch());
                 wrapper = null; // 生命周期已交给 ManagedToolkit。

@@ -193,4 +193,10 @@ public class MaskingMiddleware implements MiddlewareBase {
             this.blockId = blockId;
         }
     }
+
+    /** 顺序契约见 {@link MiddlewareOrders}：出站方向最先执行，把个人信息挡在后续留痕之前。 */
+    @Override
+    public int order() {
+        return MiddlewareOrders.MASKING;
+    }
 }
