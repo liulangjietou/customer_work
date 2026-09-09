@@ -15,6 +15,7 @@ import io.agentscope.extensions.model.anthropic.AnthropicChatModel;
 import io.agentscope.extensions.model.dashscope.DashScopeChatModel;
 import io.agentscope.extensions.model.gemini.GeminiChatModel;
 import io.agentscope.extensions.model.ollama.OllamaChatModel;
+import io.agentscope.extensions.model.ollama.options.OllamaOptions;
 import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import org.springframework.util.StringUtils;
 import com.richard.fyoung.customerwork.infra.config.properties.ModelProperties;
@@ -124,8 +125,19 @@ public final class ChatModelFactory {
                 return b.build();
             }
             case ModelProviders.OLLAMA: {
-                // Ollama 本地私有化：使用 OllamaOptions（生成参数另行配置），默认 localhost:11434
-                OllamaChatModel.Builder b = OllamaChatModel.builder().modelName(modelName);
+                // Ollama 本地私有化，默认 localhost:11434。
+                //
+                // 生成参数必须显式映射过去：Ollama 用的是自己的 OllamaOptions 而不是通用
+                // GenerateOptions，此前这一分支两者都没传——温度、maxTokens、topP 配了等于没配，
+                // DynamicOptionsMiddleware 的"精确模式"（温度压到 0.1）在私有化部署上也完全无效。
+                // 而它不报任何错，只表现为"模型好像没按设置来"。框架其实早就提供了
+                // fromGenerateOptions 这个映射，项目只是一直没调。
+                OllamaChatModel.Builder b = OllamaChatModel.builder()
+                    .modelName(modelName)
+                    .stream(stream);
+                if (options != null) {
+                    b.defaultOptions(OllamaOptions.fromGenerateOptions(options));
+                }
                 if (declaredWindow) {
                     b.contextWindowSize(contextWindowSize);
                 }

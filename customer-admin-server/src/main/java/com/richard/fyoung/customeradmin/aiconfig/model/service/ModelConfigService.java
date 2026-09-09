@@ -180,7 +180,9 @@ public class ModelConfigService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(ModelSaveRequest request) {
-        if (!StringUtils.hasText(request.apiKey())) {
+        // 本地私有化部署（ollama）跑在自己机房里，没有 API Key。
+        // 此前这里无条件要求 apiKey，于是「把本地模型纳入 ModelOps」这件事卡在这一行上
+        if (ModelProviders.requiresApiKey(request.provider()) && !StringUtils.hasText(request.apiKey())) {
             throw new BizException(ResultCode.PARAM_MISSING, "新建模型配置必须提供 apiKey");
         }
         String normalizedBaseUrl = validateEndpoint(request.baseUrl());
