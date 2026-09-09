@@ -12,6 +12,12 @@ import java.util.Arrays;
  *
  * <p>baseUrl 必填由 {@code ModelSaveRequest} 的 {@code @NotBlank} 收口（防御一处），
  * 各厂商默认 Base URL 的预填由前端 {@code ModelManage.vue} 的 providerPresets 负责，后端不重复兜底。</p>
+ *
+ * <p><b>成员必须与 {@link ModelProviders#SUPPORTED} 完全一致</b>，由
+ * {@code ModelProviderCoverageTest} 下断言。此前这里只有四家原生厂商，
+ * 而 starter 的建模工厂已支持九家——批次五新增的 GLM/DeepSeek/Kimi/MiniMax
+ * 在后台根本登记不进去，Ollama 本地部署更是整个进不了 ModelOps。
+ * 「支持哪些厂商」有两处真相，就一定会出现这种一边能用一边不能用的状态。</p>
  * @author owlzhangfq@gmail.com
  */
 public enum ModelProvider {
@@ -23,7 +29,17 @@ public enum ModelProvider {
     /** Anthropic Claude 原生协议。 */
     ANTHROPIC(ModelProviders.ANTHROPIC),
     /** Google Gemini（Gemini Developer API，非 Vertex）。 */
-    GEMINI(ModelProviders.GEMINI);
+    GEMINI(ModelProviders.GEMINI),
+    /** Ollama 本地私有化部署：跑在自己机房里，<b>不需要 API Key</b>。 */
+    OLLAMA(ModelProviders.OLLAMA),
+    /** 智谱 GLM（OpenAI 兼容协议 + 专用 Formatter）。 */
+    GLM(ModelProviders.GLM),
+    /** DeepSeek（OpenAI 兼容协议 + 专用 Formatter）。 */
+    DEEPSEEK(ModelProviders.DEEPSEEK),
+    /** 月之暗面 Kimi（OpenAI 兼容协议 + 专用 Formatter）。 */
+    KIMI(ModelProviders.KIMI),
+    /** MiniMax（OpenAI 兼容协议 + 专用 Formatter）。 */
+    MINIMAX(ModelProviders.MINIMAX);
 
     private final String code;
 

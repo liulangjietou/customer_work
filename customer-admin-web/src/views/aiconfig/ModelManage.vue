@@ -129,7 +129,20 @@ const providerPresets: ProviderPreset[] = [
   { value: 'dashscope', label: '百炼 DashScope', defaultBaseUrl: 'https://dashscope.aliyuncs.com', modelPlaceholder: '如 qwen-max' },
   { value: 'anthropic', label: 'Anthropic Claude', defaultBaseUrl: 'https://api.anthropic.com', modelPlaceholder: '如 claude-sonnet-4-5' },
   { value: 'gemini', label: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com', modelPlaceholder: '如 gemini-2.5-flash' },
+  { value: 'glm', label: '智谱 GLM', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelPlaceholder: '如 glm-4-plus' },
+  { value: 'deepseek', label: 'DeepSeek', defaultBaseUrl: 'https://api.deepseek.com', modelPlaceholder: '如 deepseek-chat' },
+  { value: 'kimi', label: '月之暗面 Kimi', defaultBaseUrl: 'https://api.moonshot.cn/v1', modelPlaceholder: '如 moonshot-v1-8k' },
+  { value: 'minimax', label: 'MiniMax', defaultBaseUrl: 'https://api.minimaxi.com/v1', modelPlaceholder: '如 abab6.5s-chat' },
+  // 本地私有化部署：跑在自己机房里，没有 API Key，服务端据此免除凭据校验
+  { value: 'ollama', label: 'Ollama（本地部署）', defaultBaseUrl: 'http://localhost:11434', modelPlaceholder: '如 qwen2.5' },
 ]
+
+/** 本地部署没有 API Key，表单不该把它标成必填、也不该拦住提交。 */
+const LOCAL_DEPLOYMENT_PROVIDERS = ['ollama']
+
+function requiresApiKey(provider: string | null | undefined): boolean {
+  return !LOCAL_DEPLOYMENT_PROVIDERS.includes(provider ?? '')
+}
 
 function presetOf(provider: string | null | undefined): ProviderPreset {
   return providerPresets.find((preset) => preset.value === provider) ?? providerPresets[0]
@@ -433,7 +446,13 @@ onMounted(async () => {
             <div><strong>凭据与状态</strong><small>编辑留空不会读取旧值；独立轮换请进入治理详情。</small></div>
           </div>
           <div class="form-grid">
-            <el-form-item :label="dialogMode === 'edit' ? '新凭据（留空不变）' : '凭据'"><el-input v-model="form.apiKey!" type="password" show-password autocomplete="new-password" /></el-form-item>
+            <el-form-item :label="dialogMode === 'edit' ? '新凭据（留空不变）' : '凭据'">
+              <el-input v-model="form.apiKey!" type="password" show-password autocomplete="new-password"
+                :placeholder="requiresApiKey(form.provider) ? '' : '本地部署无需凭据，可留空'" />
+              <div v-if="!requiresApiKey(form.provider)" class="form-tip">
+                本地私有化部署跑在自己的机房里，没有 API Key；凭据留空即可。
+              </div>
+            </el-form-item>
             <el-form-item label="凭据到期时间">
               <el-date-picker v-model="form.secretExpiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="可选" style="width: 100%" />
             </el-form-item>
@@ -492,5 +511,12 @@ onMounted(async () => {
   .form-grid { grid-template-columns: 1fr; }
   .full-row { grid-column: auto; }
   .toolbar { align-items: stretch; flex-direction: column; }
+}
+
+.form-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
 }
 </style>

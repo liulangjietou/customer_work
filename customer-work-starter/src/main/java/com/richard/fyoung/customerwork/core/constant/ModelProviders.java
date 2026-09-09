@@ -48,6 +48,40 @@ public final class ModelProviders {
     public static final String MINIMAX = "minimax";
 
     /**
+     * {@link com.richard.fyoung.customerwork.infra.config.ChatModelFactory} 实际支持的全部厂商。
+     *
+     * <p><b>为什么要有这份清单</b>：「支持哪些厂商」此前有两处真相——starter 的建模工厂
+     * switch 与 admin 的 {@code ModelProvider} 枚举。两边不同步的后果是
+     * <b>starter 能建、后台却登记不进去</b>：批次五给 starter 加了 GLM/DeepSeek/Kimi/MiniMax
+     * 四家专用 Formatter，而 admin 枚举至今只有四家原生厂商，那四个模型在后台完全用不了；
+     * Ollama 同理，本地私有化部署整个进不了 ModelOps。</p>
+     *
+     * <p>现在以这份清单为唯一真相，两侧都引用它，并由门禁测试断言三者一致
+     * （常量清单 / 工厂 switch / admin 枚举）。新增厂商只需改这里再补工厂分支。</p>
+     */
+    public static final java.util.Set<String> SUPPORTED = java.util.Set.of(
+        DASHSCOPE, OPENAI, ANTHROPIC, GEMINI, OLLAMA, GLM, DEEPSEEK, KIMI, MINIMAX);
+
+    /**
+     * 本地/私有化部署的厂商：跑在自己机房里，<b>没有 API Key</b>。
+     *
+     * <p>后台新建模型此前无条件要求 apiKey，于是即便把 ollama 加进支持清单也仍然登记不了——
+     * 「本地部署纳入模型治理」这件事卡在这一行校验上。</p>
+     */
+    public static final java.util.Set<String> LOCAL_DEPLOYMENT = java.util.Set.of(OLLAMA);
+
+    /** 该厂商是否需要 API Key（本地私有化部署不需要）。 */
+    public static boolean requiresApiKey(String provider) {
+        return !LOCAL_DEPLOYMENT.contains(normalize(provider));
+    }
+
+    /** 归一化 provider 编码：null 与空白按默认厂商处理，其余转小写去空格。 */
+    public static String normalize(String provider) {
+        String normalized = provider == null ? "" : provider.trim().toLowerCase();
+        return normalized.isEmpty() ? DASHSCOPE : normalized;
+    }
+
+    /**
      * 各厂商的默认端点。
      *
      * <p>取自框架各 {@code ModelProvider} 内置的默认值——写在这里是为了让"没配 base-url 时
