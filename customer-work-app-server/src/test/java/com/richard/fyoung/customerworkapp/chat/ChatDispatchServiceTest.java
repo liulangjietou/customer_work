@@ -16,6 +16,8 @@ import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaDecision;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
+import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
+import com.richard.fyoung.customerwork.infra.ws.InboundMessageDeduplicator;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,6 +56,7 @@ class ChatDispatchServiceTest {
     private HandoffKeywordDetector keywordDetector;
     private WsSessionRegistry registry;
     private SubjectQuotaGuard subjectQuotaGuard;
+    private InboundMessageDeduplicator deduplicator;
     private ChatDispatchService dispatch;
 
     private final UserPrincipal user = new UserPrincipal(USER_ID, "alice", "Alice", TenantContext.DEFAULT);
@@ -68,8 +71,11 @@ class ChatDispatchServiceTest {
         // 默认放行：本类测的是分发路由，配额行为另有专门用例
         subjectQuotaGuard = mock(SubjectQuotaGuard.class);
         lenient().when(subjectQuotaGuard.check(any(), any())).thenReturn(SubjectQuotaDecision.allow());
+        // 真实的去重器配进程内计数器：mock 掉它就等于不测去重那一段，
+        // 而"重发只处理一次"恰恰是这条链路最容易在改动中丢掉的性质
+        deduplicator = new InboundMessageDeduplicator(new InMemoryWindowCounter(), 300);
         dispatch = new ChatDispatchService(ticketService, chatLogService, chatTurnService,
-            keywordDetector, registry, subjectQuotaGuard);
+            keywordDetector, registry, subjectQuotaGuard, deduplicator);
         // 落库统一返回一条带 messageId 的消息（AI 流式收尾需要读 messageId）
         lenient().when(chatLogService.append(any(), any(), any(), any(), any()))
             .thenReturn(ChatMessage.of("MSG-9", SESSION_ID, "TK-1", TicketActorType.BOT, null, "txt"));
@@ -105,6 +111,67 @@ class ChatDispatchServiceTest {
         }
         java.util.Map<?, ?> data = (java.util.Map<?, ?>) ((WsFrame) frame).data();
         return sessionId.equals(data.get("sessionId")) && ticketId.equals(data.get("ticketId"));
+    }
+
+    /**
+     * 这条是本次改动的核心断言。
+     *
+     * <p>WebSocket 在移动网络下断连是常态，客户端重发是必须的。没有去重时，同一句话到两次
+     * 就是<b>两次完整的对话轮</b>——双份 token 只是账面代价，更麻烦的是智能体会调工具：
+     * 可能提交两张退款工单、发两次通知。用户看到同一个问题被回答两遍，
+     * 而业务后端看到的是两次真实操作。</p>
+     */
+    @Test
+    void duplicateClientMsgId_shouldNotTriggerSecondLlmCall() {
+        when(ticketService.findActiveBySession(SESSION_ID)).thenReturn(Optional.of(aiServing()));
+        when(keywordDetector.hit(anyString())).thenReturn(false);
+        when(chatTurnService.stream(SESSION_ID, "你好", "TK-1")).thenReturn(turn("你", "好"));
+
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好", "cmid-1")).verifyComplete();
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好", "cmid-1")).verifyComplete();
+
+        verify(chatTurnService, times(1)).stream(SESSION_ID, "你好", "TK-1");
+        verify(chatLogService, times(1)).append(any(), any(), any(), any(), any());
+    }
+
+    /** 重发被丢弃时不该扣额度——去重排在配额判定之前正是为了这个。 */
+    @Test
+    void duplicateDelivery_shouldNotConsumeQuota() {
+        when(ticketService.findActiveBySession(SESSION_ID)).thenReturn(Optional.of(aiServing()));
+        when(keywordDetector.hit(anyString())).thenReturn(false);
+        when(chatTurnService.stream(SESSION_ID, "你好", "TK-1")).thenReturn(turn("你", "好"));
+
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好", "cmid-2")).verifyComplete();
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好", "cmid-2")).verifyComplete();
+
+        verify(subjectQuotaGuard, times(1)).recordRequest(any());
+    }
+
+    /** 两条不同的消息各走各的，去重不能把正常对话吞掉。 */
+    @Test
+    void distinctClientMsgIds_bothProcessed() {
+        when(ticketService.findActiveBySession(SESSION_ID)).thenReturn(Optional.of(aiServing()));
+        when(keywordDetector.hit(anyString())).thenReturn(false);
+        when(chatTurnService.stream(eq(SESSION_ID), anyString(), eq("TK-1"))).thenReturn(turn("回", "复"));
+
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "第一句", "cmid-a")).verifyComplete();
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "第二句", "cmid-b")).verifyComplete();
+
+        verify(chatTurnService).stream(SESSION_ID, "第一句", "TK-1");
+        verify(chatTurnService).stream(SESSION_ID, "第二句", "TK-1");
+    }
+
+    /** 老客户端不带标识：一律按首次处理，不能因为服务端升级就把它们的消息吞了。 */
+    @Test
+    void missingClientMsgId_alwaysProcessed() {
+        when(ticketService.findActiveBySession(SESSION_ID)).thenReturn(Optional.of(aiServing()));
+        when(keywordDetector.hit(anyString())).thenReturn(false);
+        when(chatTurnService.stream(SESSION_ID, "你好", "TK-1")).thenReturn(turn("你", "好"));
+
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好")).verifyComplete();
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好")).verifyComplete();
+
+        verify(chatTurnService, times(2)).stream(SESSION_ID, "你好", "TK-1");
     }
 
     @Test

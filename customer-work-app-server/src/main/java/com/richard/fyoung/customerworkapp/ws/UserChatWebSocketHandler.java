@@ -189,7 +189,8 @@ public class UserChatWebSocketHandler implements WebSocketHandler {
         JsonNode data = root.path(WsFrame.KEY_DATA);
         switch (type) {
             case WsFrame.TYPE_CHAT:
-                return dispatch.onUserMessage(user, text(data, WsFrame.KEY_SESSION_ID), text(data, WsFrame.KEY_CONTENT));
+                return dispatch.onUserMessage(user, text(data, WsFrame.KEY_SESSION_ID),
+                    text(data, WsFrame.KEY_CONTENT), text(data, WsFrame.KEY_CLIENT_MSG_ID));
             case "handoff":
                 return dispatch.requestHandoff(user, text(data, WsFrame.KEY_SESSION_ID), text(data, FIELD_REASON));
             case WsFrame.TYPE_PING:

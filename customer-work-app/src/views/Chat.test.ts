@@ -259,11 +259,36 @@ describe('Chat', () => {
     expect(sendMock).toHaveBeenCalledTimes(1)
     expect(sendMock).toHaveBeenCalledWith({
       type: 'chat',
-      data: { sessionId: 'session-1', content: '请帮我查询物流' },
+      data: {
+        sessionId: 'session-1',
+        content: '请帮我查询物流',
+        // 服务端据此去重：重连后客户端重发时沿用同一个值，否则同一句话会被处理两次
+        clientMsgId: expect.any(String),
+      },
     })
+    expect(sendMock.mock.calls[0][0].data.clientMsgId).toBeTruthy()
     expect(wrapper.text()).toContain('请帮我查询物流')
     expect(wrapper.findAll('.row-USER')).toHaveLength(1)
     expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('每条消息带各自的 clientMsgId，不同消息不得复用同一个值', async () => {
+    const wrapper = await mountReadyChat()
+    const input = wrapper.get('.message-input')
+
+    await input.setValue('第一句')
+    await wrapper.get('.send-button').trigger('click')
+    await flushPromises()
+    await input.setValue('第二句')
+    await wrapper.get('.send-button').trigger('click')
+    await flushPromises()
+
+    const first = sendMock.mock.calls[0][0].data.clientMsgId
+    const second = sendMock.mock.calls[1][0].data.clientMsgId
+    expect(first).toBeTruthy()
+    expect(second).toBeTruthy()
+    // 复用同一个值会让第二句被服务端当成重发丢掉，用户以为消息发出去了却永远等不到回复
+    expect(second).not.toBe(first)
   })
 
   it('同类型反馈不重复提交，切换类型后更新选中状态', async () => {

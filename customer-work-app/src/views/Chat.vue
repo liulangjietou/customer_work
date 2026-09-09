@@ -328,9 +328,30 @@ function disconnectWs() {
   chatSocket.close()
 }
 
-function onWsOpen() {
+/**
+ * 连接建立。
+ *
+ * <p>断线期间服务端推给本用户的帧（坐席回复、工单状态变更、系统提示）<b>不会补发</b>——
+ * 它们在服务端只留了一行日志。数据本身都已落库，所以重连后重新拉一次历史就能补齐；
+ * 不拉的话用户会一直以为坐席没回，而实际上回复早就在库里了，刷新页面就能看到。</p>
+ *
+ * <p>只在<b>重连</b>时拉：首次连接前 onMounted 已经拉过一次，再拉一次纯属浪费。</p>
+ */
+async function onWsOpen(data: unknown) {
   wsConnected.value = true
   wsReconnecting.value = false
+  if (!(data as { reconnected?: boolean } | null)?.reconnected) {
+    return
+  }
+  // 断线时正在流式的那次回复已经收不全了，先清掉半截内容再补历史，
+  // 否则残留片段会和拉回来的正文重复显示
+  streamingContent.value = ''
+  streamingSessionId.value = null
+  try {
+    await loadHistory()
+  } catch {
+    // 补拉失败不打断会话：用户仍可继续发消息，重进页面同样能拿到历史
+  }
 }
 
 function onWsClose() {
@@ -339,6 +360,13 @@ function onWsClose() {
 
 function onWsReconnecting() {
   wsReconnecting.value = true
+}
+
+/** 每条消息一个标识，供服务端去重——重连后客户端重发时沿用同一个值。 */
+function newClientMsgId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 /**
@@ -560,7 +588,10 @@ function sendMessage() {
   })
   // 标记本次流式回复归属的会话，供 onWsChatChunk/onWsChatDone 比对，见 streamingSessionId 定义处注释
   streamingSessionId.value = sessionId.value
-  chatSocket.send({ type: 'chat', data: { sessionId: sessionId.value, content: messageToSend } })
+  chatSocket.send({
+    type: 'chat',
+    data: { sessionId: sessionId.value, content: messageToSend, clientMsgId: newClientMsgId() },
+  })
   inputContent.value = ''
   attachments.value = []
   scrollToBottom()

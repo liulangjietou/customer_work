@@ -49,6 +49,15 @@ public record WsFrame(String type, Object data) {
     public static final String KEY_SENDER_ID = "senderId";
     public static final String KEY_TS = "ts";
     public static final String KEY_CODE = "code";
+
+    /**
+     * 客户端为每条消息生成的标识，重发时沿用同一个值。
+     *
+     * <p>服务端据此去重：WebSocket 在移动网络下断连是常态、客户端重发是必须的，
+     * 而同一句话到两次就是两次完整的对话轮——双份 token，还可能提交两张退款工单。
+     * 不带这个字段的老客户端一律按首次处理（去重是增益，不是安全边界）。</p>
+     */
+    public static final String KEY_CLIENT_MSG_ID = "clientMsgId";
     public static final String KEY_MESSAGE = "message";
     public static final String KEY_FINISH_REASON = "finishReason";
     public static final String KEY_USAGE = "usage";
