@@ -35,6 +35,24 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 本地模型治理批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1835/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
+  **合计 3800**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+4**（本地建模）、
+  admin **+4**（厂商覆盖门禁）。本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。三条经验：
+  ① **「支持哪些 X」这类清单只能有一处真相**：本批发现 starter 的 `ChatModelFactory` switch
+  与 admin 的 `ModelProvider` 枚举各写一份，不同步不报错，只表现为「一边能建、另一边登记不进去」——
+  **批次五给 starter 加的四个国产模型在后台一直用不了，隔了一个批次才发现**。
+  已收敛到 `ModelProviders.SUPPORTED` 并加 `ModelProviderCoverageTest`；
+  **光对齐两份清单还不够**，还要断言工厂 switch 真有对应 case，否则清单里写了、
+  工厂没分支的厂商会静默落到 default（用户选 Kimi、请求发去 DashScope，两份清单看起来都对）；
+  ② **`assertNotNull` 常常是无效断言**：本批测「生成参数有没有传进 Ollama 模型」时写了
+  `assertNotNull(options)`，而框架 Builder 自带一份默认 `OllamaOptions`——参数被丢掉时它照样非空、
+  只是里面的值全是 null。**变异测试报的是 NPE 而不是我写的提示语，才暴露出这条断言从未生效**。
+  断言要直接比对目标值，不要断言「容器存在」；
+  ③ **注释声称「另行配置」的东西要去 grep 有没有真的配**：Ollama 分支的注释写着
+  「使用 OllamaOptions（生成参数另行配置）」，而全仓没有任何地方配置它们。
+  这与 `SelfCorrectionMiddleware` 注释声称「在未走退款工具的情况下」而代码里没有那个判定，
+  是同一类问题——**注释描述的是意图，不是事实**。上一版基线见下。）
   （2026-09-09 WS 投递保证批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1831/9 skip、app-server 137、customer-channel 82、admin 1741/1 skip、gateway 1，
   **合计 3792**（排除 `RedisSessionPersistenceTest`）；前端 vitest 38 全过（本批 +1）。
