@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
+import com.richard.fyoung.customerwork.core.agent.AgentResourceCloser;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -22,6 +23,7 @@ import io.agentscope.core.permission.PermissionMode;
 import io.agentscope.core.state.InMemoryAgentStateStore;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.harness.agent.HarnessAgent;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -29,15 +31,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -112,6 +118,59 @@ class SubagentEventForwardingTest {
     private final AtomicInteger childModelCalls = new AtomicInteger();
     /** 父 Model 每轮拿到的工具名清单（诊断装配：spawn 工具是否被接线进父 toolkit）。 */
     private final List<String> parentToolNamesOffered = new CopyOnWriteArrayList<>();
+
+    /** 本次用例建过的 HarnessAgent，收尾统一释放（见 {@link #releaseAgents()}）。 */
+    private final List<HarnessAgent> builtAgents = new CopyOnWriteArrayList<>();
+
+    /**
+     * 释放建过的每一个 HarnessAgent，并当场验证 workspace 真的可以删干净。
+     *
+     * <h3>不释放会怎样</h3>
+     * <p>{@code HarnessAgent#close()} 做的第一件事就是等后台任务停下来——反编译 2.0.3 的实现，
+     * 依次是 {@code SessionTree.awaitMirrorQuiescence}、{@code MemoryBackgroundTasks.awaitQuiescence}、
+     * {@code shutdownTaskRepository}、{@code WorkspaceIndex.close}。**这两个 awaitQuiescence 都是
+     * 2.0.3 新增的**：从这个版本起，会话镜像与记忆刷写会在 Agent 之外的线程上继续写 workspace。</p>
+     *
+     * <p>本类此前从不释放，于是 JUnit 删 {@code @TempDir} 时后台还在往 {@code probe-user} 里写，
+     * CI 上表现为 {@code IOException: Failed to delete temp directory ... probe-user}，
+     * suppressed 是 {@code DirectoryNotEmptyException}。三轮 CI 里炸了两轮，
+     * 且两次挂的<b>不是同一个用例</b>——谁最后跑完谁触发清理，谁就背锅。</p>
+     *
+     * <h3>为什么还要自己删一遍，以及它守不住什么</h3>
+     * <p>关闭之后主动递归删一次并断言删空，作用是<b>把 JUnit 那句通用的
+     * {@code IOException: Failed to delete temp directory} 换成带具体路径与异常类型的失败信息</b>——
+     * 排查时能直接看出是哪个子目录、被什么挡住。</p>
+     *
+     * <p><b>但它照不出本机的差别</b>：实测把上面那行 {@code builtAgents.add(parent)} 去掉
+     * （即回到不释放的状态），本机这条断言<b>照样是绿的</b>——机器快，后台任务在删之前就写完了。
+     * 所以别把它当成"这个竞态已经被钉死"的证据，它只是在 CI 真的失败时给出更有用的信息。
+     * 真正防复发的是 {@code HarnessAgentReleaseContractTest} 那道结构门禁：
+     * 建了 HarnessAgent 却不释放，源码扫描当场红，不依赖任何运行时时序。</p>
+     */
+    @AfterEach
+    void releaseAgents() throws IOException {
+        builtAgents.forEach(agent -> AgentResourceCloser.closeQuietly(agent, "subagent-probe"));
+        builtAgents.clear();
+
+        if (workspace == null || !Files.exists(workspace)) {
+            return;
+        }
+        List<Path> leftovers;
+        try (Stream<Path> walk = Files.walk(workspace)) {
+            leftovers = walk.sorted(Comparator.reverseOrder()).toList();
+        }
+        List<String> undeletable = new ArrayList<>();
+        for (Path path : leftovers) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException e) {
+                undeletable.add(path + " (" + e.getClass().getSimpleName() + ")");
+            }
+        }
+        assertTrue(undeletable.isEmpty(),
+            "Agent 释放后 workspace 仍有删不掉的内容，说明后台任务没有停干净："
+                + String.join(", ", undeletable));
+    }
 
     // ==================== 结局①/②/③ 探针（核心） ====================
 
@@ -246,6 +305,7 @@ class SubagentEventForwardingTest {
             .subagentFactory(SUBAGENT_ID, id -> buildChildAgent(stateStore, permission))
             .disableDynamicSubagents()  // 只测静态注册的子 Agent 路径，关掉运行时动态造 Agent 的噪音
             .build();
+        builtAgents.add(parent);
 
         RuntimeContext ctx = RuntimeContext.builder()
             .userId("probe-user").sessionId("probe-session").build();

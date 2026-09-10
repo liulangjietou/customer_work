@@ -69,11 +69,16 @@ class HarnessAgentInterruptForwardingProbeTest {
      */
     @Test
     void delegateReActAgent_shouldExposeSessionAwareInterrupt() throws NoSuchMethodException {
-        HarnessAgent agent = buildHarnessAgent();
-        ReActAgent delegate = agent.getDelegate();
-        assertNotNull(delegate, "getDelegate() 仍被 AgentStateAccessor 依赖："
-            + "HarnessAgent.getAgentState() 只有无参版本，按会话取状态只能下钻");
-        assertInstanceOf(ReActAgent.class, delegate);
+        // try-with-resources 不可省：2.0.3 起 HarnessAgent#close() 的头两件事是
+        // SessionTree.awaitMirrorQuiescence 与 MemoryBackgroundTasks.awaitQuiescence，
+        // 也就是等会话镜像与记忆刷写的后台线程停下来。不关就一直往 workspace 写，
+        // 在 @TempDir 上表现为 CI 偶发的 "Failed to delete temp directory"。
+        try (HarnessAgent agent = buildHarnessAgent()) {
+            ReActAgent delegate = agent.getDelegate();
+            assertNotNull(delegate, "getDelegate() 仍被 AgentStateAccessor 依赖："
+                + "HarnessAgent.getAgentState() 只有无参版本，按会话取状态只能下钻");
+            assertInstanceOf(ReActAgent.class, delegate);
+        }
         // 委托类具备 session-aware interrupt（框架在 ReActAgent 层原生支持）
         assertNotNull(ReActAgent.class.getMethod("interrupt", RuntimeContext.class));
         assertNotNull(ReActAgent.class.getMethod("interrupt", String.class, String.class));

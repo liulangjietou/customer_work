@@ -579,6 +579,17 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   拿不准归属时先问，不要默认放业务模块。starter 改完给下游用要先 `mvn install`（下游解析本地仓库 jar）。
 - 日志只用 info/error（不用 warn），日志文本英文，error 带错误码占位符：
   `log.error("xxx failed, code={}, id={}", "MODULE-ACTION-FAIL", id, e)`
+- **测试里真建出来的 `HarnessAgent` 必须释放**（2.0.3 起）：`HarnessAgent#close()` 的头两件事是
+  `SessionTree.awaitMirrorQuiescence` 与 `MemoryBackgroundTasks.awaitQuiescence`——等会话镜像与
+  记忆刷写的后台线程停下来，**这两个 API 都是 2.0.3 新增的**。不关就会在测试方法返回后继续写
+  workspace，`@TempDir` 上表现为 CI 偶发的 `Failed to delete temp directory`
+  （suppressed 是 `DirectoryNotEmptyException`）。`SubagentEventForwardingTest` 上真实发生过：
+  **三轮 CI 炸了两轮，且两次挂的不是同一个用例**——谁最后跑完谁触发清理谁背锅，
+  看着像随机不稳定，根因其实唯一。
+  `HarnessAgentReleaseContractTest` 扫源码对此下断言（跨四个模块的测试目录），
+  建了不释放当场红。**必须是结构断言而不是运行时断言**：这个竞态本机复现不出来，
+  实测把释放去掉之后，连「关闭后主动删一次 workspace」这种最直接的断言都照样是绿的
+  （机器快，后台在删之前就写完了）。同一形状见 PR #157 的 git 后台维护锁。
 - 持久化扩展走 Store SPI 模式（接口 + InMemory 默认 + MyBatis-Plus 实现 + `@ConditionalOnMissingBean`，
   已套用 8 次：Approval/SlotFilling/DialogStage/Handoff/Feedback/Ticket/UserAccount/ChatLog），别发明新模式。
   持久层规范：贫血 DO(entity/)+BaseMapper(mapper/)+复杂 SQL 进 resources/customerwork/mapper/*.xml，
