@@ -118,8 +118,16 @@ public class MybatisTaskRepository implements TaskRepository {
             ownerId, properties.getLeaseSeconds(), properties.getHeartbeatSeconds());
     }
 
+    /**
+     * 关闭本仓库持有的调度与执行资源。
+     *
+     * <p>2.0.3 起 {@code TaskRepository} 接口本身声明了 {@code shutdown()}，
+     * 这个原本只服务 {@code @PreDestroy} 的包级方法正好是它的实现——
+     * 提升为 public 并显式标注，让"容器销毁时清理"与"框架主动关闭"走同一段代码。</p>
+     */
+    @Override
     @PreDestroy
-    void shutdown() {
+    public void shutdown() {
         if (maintenanceScheduler != null) {
             maintenanceScheduler.shutdownNow();
         }
@@ -268,13 +276,18 @@ public class MybatisTaskRepository implements TaskRepository {
         return true;
     }
 
-    @Override
+    /**
+     * 摘除内存中的任务引用。
+     *
+     * <p>2.0.3 起框架的 {@code TaskRepository} 不再声明这个方法，故去掉 {@code @Override}；
+     * 方法本身保留——本项目的管理台按会话清理时仍在用它。</p>
+     */
     public void removeTask(RuntimeContext rc, String sessionId, String taskId) {
         // 只摘内存引用，不删库：库里那条是管理台要看的历史，删了就查不到"这个任务当时跑成什么样"
         activeTasks.remove(key(rc, sessionId, taskId));
     }
 
-    @Override
+    /** 清空内存引用。同 {@link #removeTask}：2.0.3 起不再是接口方法，但本项目仍在用。 */
     public void clear() {
         activeTasks.clear();
     }

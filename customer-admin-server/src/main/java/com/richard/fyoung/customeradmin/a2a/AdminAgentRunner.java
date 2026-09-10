@@ -13,9 +13,9 @@ import io.agentscope.core.a2a.server.executor.runner.AgentRequestOptions;
 import io.agentscope.core.a2a.server.executor.runner.AgentRunner;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.Event;
-import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.agent.StreamOptions;
+import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.slf4j.Logger;
@@ -70,7 +70,7 @@ public class AdminAgentRunner implements AgentRunner {
     }
 
     @Override
-    public Flux<Event> stream(List<Msg> requestMessages, AgentRequestOptions options) {
+    public Flux<AgentEvent> streamEvents(List<Msg> requestMessages, AgentRequestOptions options) {
         // defer：装配失败（模型配置缺失、MCP 握手超时等）是同步抛异常而非发错误信号，
         // 不包一层的话异常会直接穿透 A2A 的请求处理链，客户端拿到的是连接中断而不是协议错误响应
         return Flux.defer(() -> {
@@ -78,13 +78,13 @@ public class AdminAgentRunner implements AgentRunner {
             AgentInvocationIdentity identity = new AgentInvocationIdentity(
                 tenantId, QuotaSubjectType.API_KEY, subjectId, true)
                 .forInvocation(AgentInvocationIdentity.CHANNEL_A2A, sessionId, agentCode);
-            Flux<Event> body = TenantContext.callWith(tenantId,
+            Flux<AgentEvent> body = TenantContext.callWith(tenantId,
                 () -> AgentInvocationIdentityContext.callWith(identity, () -> {
                     Agent agent = agentInstanceCache.getOrBuild(agentCode);
                     RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
                     log.info("[a2a] agent invoke: agentCode={} sessionId={} taskId={}",
                         agentCode, ctx.getSessionId(), options == null ? null : options.getTaskId());
-                    return streamEvents(agent, requestMessages, ctx);
+                    return agentEvents(agent, requestMessages, ctx);
                 }));
             return body.contextWrite(context -> context
                 .put(TenantContextThreadLocalAccessor.KEY, tenantId)
@@ -112,29 +112,27 @@ public class AdminAgentRunner implements AgentRunner {
     }
 
     /**
-     * {@code stream(List, StreamOptions, RuntimeContext)} 只声明在 {@link ReActAgent}/{@link HarnessAgent}
-     * 上而不在 {@code Agent} 接口上，因此这里按运行时类型分派。
+     * 按运行时类型分派到细粒度事件流。
      *
-     * <p><b>为什么这里还在用已标记 {@code forRemoval} 的 {@code stream(...)}</b>（对话链路的
-     * {@code ChatService} 已迁到 {@code streamEvents(...)}，本处刻意没跟）：{@link AgentRunner#stream}
-     * 的返回类型被框架写死为 {@code Flux<}{@link Event}{@code >}，就是那个废弃类型本身；框架自带的参考
-     * 实现 {@code BaseReActAgentRunner} 也仍在调 {@code agent.stream(msgs)}——A2A 这一层框架自己都没迁。
-     * 若本方法改用 {@code streamEvents(...)}，拿到 {@code AgentEvent} 后还得手工 {@code new Event(...)}
-     * 喂回接口，废弃 API 的暴露面一点没减少，反而要自行复刻 {@code AgentScopeAgentExecutor} 依赖的
-     * {@code isLast}/{@code messageId} 去重语义（它靠这两个字段判重与拼装回包），平白引入一层易错的
-     * 翻译。等框架把 A2A 层迁到细粒度事件后再跟进。</p>
+     * <p>{@code streamEvents(List, RuntimeContext)} 只声明在 {@link ReActAgent}/{@link HarnessAgent}
+     * 上而不在 {@code Agent} 接口上，因此这里按运行时类型分派。</p>
+     *
+     * <p><b>2.0.3 起改用 {@code streamEvents}</b>。此前刻意停在废弃的 {@code stream(...)} 上，
+     * 原因写在当时的注释里：{@code AgentRunner#stream} 的返回类型被框架写死为
+     * {@code Flux<Event>}（就是那个废弃类型本身），框架自带的 {@code BaseReActAgentRunner}
+     * 也仍在调 {@code agent.stream(msgs)}——A2A 这一层框架自己都没迁，硬迁只会平白多一层
+     * {@code AgentEvent → Event} 的手工翻译。2.0.3 把 {@code AgentRunner} 的返回类型换成了
+     * {@code Flux<AgentEvent>}，协议转换收归框架，那条注释预告的时机到了。</p>
+     *
+     * <p>随之去掉的还有 {@code StreamOptions} 的事件类型过滤：新接口下由框架决定哪些事件
+     * 进 A2A 协议包，调用方不再自行裁剪——自行裁剪会与框架的去重/拼包语义打架。</p>
      */
-    private Flux<Event> streamEvents(Agent agent, List<Msg> msgs, RuntimeContext ctx) {
-        StreamOptions options = StreamOptions.builder()
-            // A2A 客户端要的是可交付的回答与工具产出，思考过程增量不属于协议内容，故不订阅 REASONING 细节
-            .eventTypes(EventType.REASONING, EventType.TOOL_RESULT, EventType.AGENT_RESULT)
-            .incremental(true)
-            .build();
+    private Flux<AgentEvent> agentEvents(Agent agent, List<Msg> msgs, RuntimeContext ctx) {
         if (agent instanceof ReActAgent reActAgent) {
-            return reActAgent.stream(msgs, options, ctx);
+            return reActAgent.streamEvents(msgs, ctx);
         }
         if (agent instanceof HarnessAgent harnessAgent) {
-            return harnessAgent.stream(msgs, options, ctx);
+            return harnessAgent.streamEvents(msgs, ctx);
         }
         return Flux.error(new IllegalStateException("unsupported agent runtime type: " + agent.getClass()));
     }
