@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.core.middleware;
 
 import com.richard.fyoung.customerwork.capability.dialog.DialogStage;
 import com.richard.fyoung.customerwork.capability.dialog.DialogStageService;
+import com.richard.fyoung.customerwork.tool.RefundIntakeTools;
 import com.richard.fyoung.customerwork.tool.ToolConstants;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
@@ -36,9 +37,10 @@ import java.util.function.Function;
  *   <li>本轮回复正常结束且当前在 {@code PROCESSING} → {@code CONFIRMING}（复述结果、确认收尾）。</li>
  * </ul>
  *
- * <p><b>{@code COLLECTING} 目前不会被进入</b>，这是刻意的：它的语义是"缺信息正在逐项追问"，
- * 可靠信号来自槽位填充，而槽位填充当前不在用户主链路上。与其用"连续两轮没调工具"这类脆弱启发式
- * 猜一个阶段出来，不如先只实现有确切信号的那几段——等槽位填充接入主链路时再补这一跳。</p>
+ * <p><b>{@code COLLECTING} 由信息收集工具驱动</b>：模型调用
+ * {@code collectRefundInfo} 说明它判断"要办这件事但信息还不全"，这是个确切信号。
+ * 此前这一跳空着，因为槽位填充虽然建好却不在主链路上——现在它作为工具交给了模型，
+ * 这个接口才真正接上（P1-4）。仍然刻意不用"连续两轮没调工具"这类脆弱启发式去猜阶段。</p>
  *
  * @author owlzhangfq@gmail.com
  */
@@ -105,9 +107,27 @@ public class DialogStageMiddleware implements MiddlewareBase {
             stageService.set(sessionId, DialogStage.ESCALATED);
             return;
         }
+        // 信息收集工具是 COLLECTING 的可靠信号：模型调它，说明它判断"要办这件事但信息还不全"。
+        // 这正是批次一留下的接口——那时槽位填充不在主链路上，只好让 COLLECTING 空着
+        if (containsIntake(input)) {
+            if (current != DialogStage.COLLECTING) {
+                stageService.set(sessionId, DialogStage.COLLECTING);
+            }
+            return;
+        }
         if (current != DialogStage.PROCESSING) {
             stageService.set(sessionId, DialogStage.PROCESSING);
         }
+    }
+
+    /** 本批工具调用里是否含信息收集类工具。 */
+    private boolean containsIntake(ActingInput input) {
+        for (ToolUseBlock use : input.toolCalls()) {
+            if (use != null && RefundIntakeTools.COLLECT_REFUND_INFO.equals(use.getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean containsHandoff(ActingInput input) {

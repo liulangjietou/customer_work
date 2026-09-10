@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.core.middleware;
 
 import com.richard.fyoung.customerwork.capability.dialog.DialogStage;
 import com.richard.fyoung.customerwork.capability.dialog.DialogStageService;
+import com.richard.fyoung.customerwork.tool.RefundIntakeTools;
 import com.richard.fyoung.customerwork.tool.ToolConstants;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -73,6 +74,37 @@ class DialogStageMiddlewareTest {
 
         assertEquals(DialogStage.PROCESSING, service.current(SESSION),
             "模型能调工具说明意图已明确，应进入业务处理阶段");
+    }
+
+    /**
+     * COLLECTING 此前是空的——批次一做对话阶段时，槽位填充还不在主链路上，
+     * 没有可靠信号可用，只好让这一跳空着（当时的类注释写明了这一点）。
+     * 信息收集工具接进主链路后，这个接口才真正接上。
+     */
+    @Test
+    @DisplayName("发起信息收集工具即进入 COLLECTING，而不是直接跳到 PROCESSING")
+    void intakeToolAdvancesToCollecting() {
+        DialogStageService service = new DialogStageService();
+        DialogStageMiddleware mw = new DialogStageMiddleware(service);
+
+        mw.onActing(null, ctx(), acting(RefundIntakeTools.COLLECT_REFUND_INFO), in -> Flux.empty()).blockLast();
+
+        assertEquals(DialogStage.COLLECTING, service.current(SESSION),
+            "模型在收集信息却被标成「业务处理」，那一轮的提示词会让它去办事而不是继续问");
+    }
+
+    /** 收齐信息后转而调业务工具，阶段应当推进到 PROCESSING。 */
+    @Test
+    @DisplayName("收集完转调业务工具后进入 PROCESSING")
+    void businessToolAfterCollectingAdvancesToProcessing() {
+        DialogStageService service = new DialogStageService();
+        DialogStageMiddleware mw = new DialogStageMiddleware(service);
+
+        mw.onActing(null, ctx(), acting(RefundIntakeTools.COLLECT_REFUND_INFO), in -> Flux.empty()).blockLast();
+        mw.onActing(null, ctx(), acting("checkRefundEligibility"), in -> Flux.empty()).blockLast();
+
+        assertEquals(DialogStage.PROCESSING, service.current(SESSION),
+            "信息收齐、开始办理了，却还停在收集阶段");
     }
 
     @Test
