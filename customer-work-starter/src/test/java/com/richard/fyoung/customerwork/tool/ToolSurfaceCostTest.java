@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
+import com.richard.fyoung.customerwork.capability.slotfilling.SlotFillingService;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
 import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.MockComplaintBackend;
@@ -149,9 +150,19 @@ class ToolSurfaceCostTest {
         return schemas.stream().map(ToolSchema::getName).collect(java.util.stream.Collectors.joining(","));
     }
 
+    /**
+     * 构造与生产一致的注册器。
+     *
+     * <p><b>可选依赖必须一起装上</b>：{@code SlotFillingService} 是 {@code @Autowired(required = false)}
+     * 注入的，不装它就少注册一个工具——那样这里量出的 token 数会<b>比生产环境低</b>，
+     * 而新加的工具恰恰绕过了这道开销护栏。本测试是"加工具有代价"的唯一提醒，
+     * 它自己漏算就等于没有。</p>
+     */
     private ToolRegistrar registrar() {
-        return new ToolRegistrar(new MockOrderBackend(), new MockAfterSalesBackend(),
+        ToolRegistrar registrar = new ToolRegistrar(new MockOrderBackend(), new MockAfterSalesBackend(),
             new MockKnowledgeBackend(), new MockProductBackend(), new MockMemberBackend(),
             new MockComplaintBackend(), new PendingApprovalService(), new HandoffService(), null);
+        registrar.setSlotFillingService(new SlotFillingService());
+        return registrar;
     }
 }

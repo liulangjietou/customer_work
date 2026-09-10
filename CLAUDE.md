@@ -35,6 +35,20 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 槽位填充接入主链路批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1871/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
+  **合计 3836**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+8**
+  （退款信息收集工具 6 + 阶段流转 2）。本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。三条经验：
+  ① **把已有能力接进对话，优先做成工具而不是在链路里加分支**：加分支等于给对话加状态机，
+  用户会被锁在表单里、中途问别的就答不了；做成工具则完全落在 ReAct 范式内，
+  权限/审计/超时重试自动获得，模型也能随时切换话题；
+  ② **给 `ToolRegistrar` 加依赖走 `@Autowired(required=false)` setter，别加构造参数**——
+  `new ToolRegistrar(...)` 在四处被调用（channel + 三个测试），加参数会连锁改动，
+  而这类增益型依赖本就不该是必需的（照 `knowledgeGapService` 先例）；
+  ③ **护栏自己会漏算**：`ToolSurfaceCostTest` 没注入可选的 `SlotFillingService`，
+  于是本批新增的工具**不计入 token 统计**——那道"加工具有代价"的提醒自己漏了新工具，
+  就等于没有。**建了护栏之后，每次新增同类东西都要回头确认护栏真的覆盖到了。**
+  修后如实反映 24 个工具 / 4346 token / 占 54%（本批把占比从 52% 抬到 54%）。上一版基线见下。）
   （2026-09-10 工具面开销批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1863/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
   **合计 3828**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+5**（工具面开销与停用）。

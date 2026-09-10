@@ -11,6 +11,7 @@ import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
 import com.richard.fyoung.customerwork.tool.backend.MemberBackend;
 import com.richard.fyoung.customerwork.tool.backend.OrderBackend;
 import com.richard.fyoung.customerwork.tool.backend.ProductBackend;
+import com.richard.fyoung.customerwork.capability.slotfilling.SlotFillingService;
 import io.agentscope.core.tool.Toolkit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,6 +78,22 @@ public class ToolRegistrar {
         this.ticketService = ticketService;
     }
 
+    /**
+     * 槽位填充（可选）。
+     *
+     * <p>装配了才把退款信息收集工具交给模型——它是<b>增益而非必需</b>：
+     * 没有它时模型照样会自己追问缺失信息，只是丢了跨轮次持久化与格式校验。
+     * 走可选注入而不是加构造参数，是因为 {@code new ToolRegistrar(...)} 在四处被调用
+     * （含 channel 与三个测试），加参数会连锁改动，而这个依赖本就不是必需的。</p>
+     */
+    private SlotFillingService slotFillingService;
+
+    /** 注入槽位填充（可选，Spring 装配时自动调用；未装配则不注册退款信息收集工具）。 */
+    @Autowired(required = false)
+    public void setSlotFillingService(SlotFillingService slotFillingService) {
+        this.slotFillingService = slotFillingService;
+    }
+
     /** 注入知识盲区分析（可选，Spring 装配时自动调用；未装配则保持 null）。 */
     @Autowired(required = false)
     public void setKnowledgeGapService(KnowledgeGapService knowledgeGapService) {
@@ -132,6 +149,12 @@ public class ToolRegistrar {
         if (!disabled.contains(GROUP_AFTER_SALES)) {
             toolkit.registration().tool(new AfterSalesTools(afterSalesBackend, approvalService, sessionId))
                 .group(GROUP_AFTER_SALES).apply();
+            // 退款信息收集并入售后组而不是新开一组：工具面的 schema 已占上下文预算约一半
+            //（见 ToolSurfaceCostTest），新开组等于让所有部署都多付一份组描述的钱
+            if (slotFillingService != null) {
+                toolkit.registration().tool(new RefundIntakeTools(slotFillingService, sessionId))
+                    .group(GROUP_AFTER_SALES).apply();
+            }
         }
         if (!disabled.contains(GROUP_PRESALE)) {
             toolkit.registration().tool(new ProductTools(productBackend)).group(GROUP_PRESALE).apply();
