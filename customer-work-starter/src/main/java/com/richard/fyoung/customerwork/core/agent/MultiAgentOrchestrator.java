@@ -1,12 +1,14 @@
 package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.MultiAgentProperties;
 import com.richard.fyoung.customerwork.core.dto.IntentResult;
 import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import com.richard.fyoung.customerwork.tool.AfterSalesTools;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.KnowledgeBaseTools;
 import com.richard.fyoung.customerwork.tool.ManagedToolkit;
+import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import com.richard.fyoung.customerwork.tool.OrderTools;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
@@ -29,6 +31,8 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,28 +80,13 @@ public class MultiAgentOrchestrator {
     static final String DISABLED_REPLY = "多智能体协作当前未启用，请通过常规对话入口咨询。";
 
     private static final String MODE_SEQUENTIAL = "sequential";
-    /** 专家名常量（路由映射与装配共用，避免魔法值）。 */
-    private static final String EXPERT_ORDER = "OrderExpert";
-    private static final String EXPERT_AFTERSALES = "AfterSalesExpert";
-    private static final String EXPERT_KNOWLEDGE = "KnowledgeExpert";
     /** 错误码。 */
     private static final String ERR_EXPERT_FAIL = "MAS-EXPERT-FAIL";
     private static final String ERR_ROUTE_FAIL = "MAS-ROUTE-FAIL";
     private static final String ERR_REDUCE_FAIL = "MAS-REDUCE-FAIL";
 
-    /**
-     * 规则快车道关键词表（intent → 触发词）。命中<b>唯一</b>意图时直路由、跳过 LLM 分诊；
-     * 命中多类或无命中则交慢车道（LLM）。借鉴 AliGo「快慢车道」：规则保确定性、LLM 保灵活性。
-     * 用 {@link LinkedHashMap} 固定遍历序，避免魔法值散落。
-     */
-    private static final Map<String, List<String>> FAST_ROUTE_KEYWORDS = new LinkedHashMap<>();
-
-    static {
-        FAST_ROUTE_KEYWORDS.put("refund", List.of("退款", "退货", "退钱", "申请退", "已读不退"));
-        FAST_ROUTE_KEYWORDS.put("order", List.of("物流", "快递", "到哪了", "发货", "签收", "运单", "几天到"));
-        FAST_ROUTE_KEYWORDS.put("complaint", List.of("投诉", "差评", "举报", "态度", "315", "曝光"));
-        FAST_ROUTE_KEYWORDS.put("consult", List.of("发票", "运费", "政策", "几天无理由", "保修", "能不能开票"));
-    }
+    /** 配置里引用了编排器手里没有的工具组时的错误码。 */
+    private static final String ERR_UNKNOWN_TOOL_GROUP = "MAS-TOOL-GROUP-UNKNOWN";
 
     /** 可观测指标名（并行编排健康度，经 Micrometer 暴露到 /actuator/prometheus）。 */
     private static final String M_ROUTE = "customerwork.mas.route";
@@ -190,21 +179,61 @@ public class MultiAgentOrchestrator {
      * 这里每次新建——纯对象组装、不含 IO，成本远低于一次模型调用。</p>
      */
     public List<ReActAgent> buildSpecialists() {
-        return List.of(
-            specialist(EXPERT_ORDER,
-                "你是订单与物流专家。只就订单状态、物流轨迹、金额等问题作答，调用订单工具查询后回答；与你无关的问题简要说明并建议转交对应专家。",
-                new OrderTools(orderBackend)),
-            specialist(EXPERT_AFTERSALES,
-                "你是售后与退款专家。处理退款资格校验与退款工单；涉及资金只生成待人工确认工单，绝不承诺已打款。",
-                new AfterSalesTools(afterSalesBackend)),
-            specialist(EXPERT_KNOWLEDGE,
-                "你是政策咨询专家。依据知识库回答退换货、发票、运费等政策问题，并保留来源标注。",
-                new KnowledgeBaseTools(knowledgeBackend)));
+        return enabledExperts().stream().map(this::specialist).collect(Collectors.toList());
     }
 
-    private ReActAgent specialist(String name, String prompt, Object tool) {
+    /**
+     * 参与编排的专家：按配置顺序（{@code order}）稳定排序，跳过 {@code enabled=false} 的。
+     *
+     * <p>排序对 sequential 模式是语义的一部分（问题依次流过各专家逐步细化），
+     * 对 fanout 只影响事件顺序；两种模式共用同一份顺序，免得同一份配置在两条路径上表现不一致。</p>
+     */
+    List<MultiAgentProperties.Expert> enabledExperts() {
+        List<MultiAgentProperties.Expert> experts =
+            new ArrayList<>(properties.getMultiAgent().getExperts());
+        experts.removeIf(e -> e == null || !e.isEnabled() || e.getName() == null || e.getName().isBlank());
+        experts.sort(Comparator.comparingInt(MultiAgentProperties.Expert::getOrder)
+            .thenComparing(MultiAgentProperties.Expert::getName));
+        return experts;
+    }
+
+    private ReActAgent specialist(MultiAgentProperties.Expert expert) {
         Toolkit toolkit = new DefaultActiveGroupsToolkit();
-        toolkit.registerTool(tool);
+        for (String group : expert.getToolGroups()) {
+            Object tool = toolFor(group);
+            if (tool == null) {
+                // 刻意记 error 而不是静默跳过：「配了不生效」比没有这个配置项更糟，
+                // 而这种错配只会表现为「这个专家什么都查不到」，从日志里看不出原因。
+                log.error("multi-agent expert references unknown tool group, code={}, expert={}, group={}",
+                    ERR_UNKNOWN_TOOL_GROUP, expert.getName(), group);
+                continue;
+            }
+            toolkit.registerTool(tool);
+        }
+        return buildSpecialistAgent(expert.getName(), expert.getSysPrompt(), toolkit);
+    }
+
+    /**
+     * 工具组 → 工具实例。
+     *
+     * <p><b>只认三个组</b>：编排器只注入了订单、售后、知识库三个后端，售前 / 会员 / 投诉 / 转人工
+     * 那几个组它手里没有。要支持全部七个组，得把这三个 backend 换成 {@code ToolRegistrar}——
+     * 而那会改动它的三个构造器与九处测试调用点，是独立的一件事。</p>
+     */
+    private Object toolFor(String group) {
+        if (ToolRegistrar.GROUP_ORDER.equals(group)) {
+            return new OrderTools(orderBackend);
+        }
+        if (ToolRegistrar.GROUP_AFTER_SALES.equals(group)) {
+            return new AfterSalesTools(afterSalesBackend);
+        }
+        if (ToolRegistrar.GROUP_KNOWLEDGE.equals(group)) {
+            return new KnowledgeBaseTools(knowledgeBackend);
+        }
+        return null;
+    }
+
+    private ReActAgent buildSpecialistAgent(String name, String prompt, Toolkit toolkit) {
         ReActAgent.Builder builder = ReActAgent.builder()
             .name(name)
             .sysPrompt(prompt)
@@ -305,20 +334,17 @@ public class MultiAgentOrchestrator {
      */
     List<ReActAgent> expertsForIntent(String intent, List<ReActAgent> all) {
         String key = intent == null ? "" : intent.trim().toLowerCase();
-        Set<String> names;
-        switch (key) {
-            case "order":
-                names = Set.of(EXPERT_ORDER);
-                break;
-            case "refund":
-            case "complaint":
-                names = Set.of(EXPERT_AFTERSALES);
-                break;
-            case "consult":
-                names = Set.of(EXPERT_KNOWLEDGE);
-                break;
-            default:
-                return all;
+        if (key.isEmpty()) {
+            return all;
+        }
+        Set<String> names = enabledExperts().stream()
+            .filter(e -> e.getIntents().stream()
+                .anyMatch(i -> i != null && i.trim().toLowerCase().equals(key)))
+            .map(MultiAgentProperties.Expert::getName)
+            .collect(Collectors.toSet());
+        if (names.isEmpty()) {
+            // 没有专家认领这个意图（含 other / 未知）：广播全部，宁可多问几个也不要答不上来
+            return all;
         }
         List<ReActAgent> picked = all.stream()
             .filter(a -> names.contains(a.getName()))
@@ -337,7 +363,7 @@ public class MultiAgentOrchestrator {
             return Optional.empty();
         }
         String hit = null;
-        for (Map.Entry<String, List<String>> e : FAST_ROUTE_KEYWORDS.entrySet()) {
+        for (Map.Entry<String, List<String>> e : properties.getMultiAgent().getRouteKeywords().entrySet()) {
             boolean matched = e.getValue().stream().anyMatch(userText::contains);
             if (matched) {
                 if (hit != null) {

@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { McpDebugCallResult, McpDebugToolVO, McpSaveRequest, McpTestResult, McpVO, PageQuery, PageResult } from '@/types/api'
+import type { McpContractSnapshotVO, McpDebugCallResult, McpDebugToolVO, McpSaveRequest, McpTestResult, McpVO, PageQuery, PageResult } from '@/types/api'
 
 /** 后端详情接口用于表达“沿用原 secret”的保留值；新建/复制时必须替换为真实凭据。 */
 export const MCP_SECRET_PLACEHOLDER = '__MCP_SECRET_REDACTED__'
@@ -39,5 +39,24 @@ export function debugMcpCallTool(id: number, toolName: string, args: Record<stri
     url: `/aiconfig/mcp/${id}/debug/call`,
     method: 'post',
     data: { toolName, arguments: args },
+  })
+}
+
+/**
+ * 契约快照 · 采集一次：连远端列一遍工具，与上一条快照比对后落库。
+ *
+ * 检测到破坏性漂移只报告、不停用这个 MCP——上游演进是常态，
+ * 为一次漂移把业务能力整个关掉代价远大于收益。
+ */
+export function captureMcpContract(id: number) {
+  return request<McpContractSnapshotVO>({ url: `/aiconfig/mcp/${id}/contract/capture`, method: 'post' })
+}
+
+/** 契约快照 · 历史（最新在前）。从未采集过返回空数组。 */
+export function listMcpContractHistory(id: number, limit?: number) {
+  return request<McpContractSnapshotVO[]>({
+    url: `/aiconfig/mcp/${id}/contract/history`,
+    method: 'get',
+    params: limit ? { limit } : undefined,
   })
 }

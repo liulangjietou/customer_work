@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V102
+-- 对应版本：Flyway V103
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -838,6 +838,26 @@ CREATE TABLE `ai_mcp` (
   KEY `idx_ai_mcp_tenant` (`tenant_id`),
   KEY `idx_ai_mcp_secret_ref` (`secret_ref_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MCP 配置';
+
+-- ----------------------------------------------------------------------------
+-- ai_mcp_tool_contract
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_mcp_tool_contract` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '租户编码',
+  `mcp_id` bigint NOT NULL COMMENT 'ai_mcp.id',
+  `contract_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '规范化契约的 SHA-256（工具名/描述/字段类型/必填项）',
+  `tool_count` int NOT NULL DEFAULT '0' COMMENT '本次快照的工具数量',
+  `contract_json` longtext COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '规范化后的完整契约，供回溯与 diff 展示',
+  `drift_severity` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'NONE' COMMENT '相对上一条快照：NONE/COMPATIBLE/BREAKING',
+  `drift_detail` longtext COLLATE utf8mb4_unicode_ci COMMENT '逐条变更明细（JSON 数组）；无漂移时为空',
+  `captured_at` datetime NOT NULL COMMENT '采集时刻',
+  `captured_by` bigint DEFAULT NULL COMMENT '触发采集的用户；调度采集为空',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_mcp_captured` (`tenant_id`,`mcp_id`,`id` DESC),
+  KEY `idx_drift` (`tenant_id`,`drift_severity`,`captured_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MCP 工具契约快照与漂移记录';
 
 -- ----------------------------------------------------------------------------
 -- ai_model_asset
