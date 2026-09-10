@@ -184,7 +184,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             ToolkitConfigs.sequentialWith(properties.getToolExecution()));
 
         // 业务工具按域分组注册（壳 + 可替换后端），透传真实会话以驱动工单域
-        toolRegistrar.registerBusinessTools(toolkit, sessionId);
+        toolRegistrar.registerBusinessTools(toolkit, sessionId,
+            java.util.Set.copyOf(properties.getToolSurface().getDisabledGroups()));
 
         if (properties.getAgent().isMetaToolEnabled()) {
             toolkit.registerMetaTool();
