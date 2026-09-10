@@ -70,6 +70,65 @@ class AgentCallTimingMiddlewareTest {
     }
 
     /** onAgent 内嵌 model + tool + mcp 三段，验证完整采集链路。 */
+    /**
+     * 一批多工具时，工具名要记全。
+     *
+     * <p>模型一轮可以同时发起 {@code queryOrder} 与 {@code queryLogistics}——这与工具串行还是
+     * 并行执行无关，{@code toolCalls()} 本就是列表。此前只取第一个，于是第二个工具的耗时
+     * 被算到第一个头上：**工具级 P95 张冠李戴，而报表上看不出任何异常**。</p>
+     */
+    @Test
+    void multiToolBatch_shouldRecordAllToolNames() {
+        ToolKindRegistry registry = new ToolKindRegistry();
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), registry, captured::set, null);
+        RuntimeContext ctx = ctx();
+
+        mw.onAgent(agent, ctx, new AgentInput(List.of(msg(MsgRole.USER, "查订单和物流"))), ai ->
+            mw.onActing(agent, ctx, new ActingInput(List.of(
+                    new ToolUseBlock("t1", "queryOrder", Map.of()),
+                    new ToolUseBlock("t2", "queryLogistics", Map.of()))),
+                act -> Flux.just(
+                    new ToolResultEndEvent("r", "t1", "queryOrder", ToolResultState.SUCCESS),
+                    new ToolResultEndEvent("r", "t2", "queryLogistics", ToolResultState.SUCCESS)))
+        ).blockLast();
+
+        String names = captured.get().segments().stream()
+            .map(AgentCallSegment::name).collect(java.util.stream.Collectors.joining(","));
+        assertTrue(names.contains("queryOrder") && names.contains("queryLogistics"),
+            "批内第二个工具没被记下来，它的耗时会被算到第一个头上：" + names);
+    }
+
+    /**
+     * 批内任一工具失败，整段就不算成功。
+     *
+     * <p>此前取"最后一个"结果状态：前面的工具失败、最后一个成功，整段被记成成功——
+     * <b>失败率被静默抹平</b>，而那正是最需要被看见的数据。</p>
+     */
+    @Test
+    void multiToolBatch_failureMustNotBeMaskedByLaterSuccess() {
+        ToolKindRegistry registry = new ToolKindRegistry();
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), registry, captured::set, null);
+        RuntimeContext ctx = ctx();
+
+        mw.onAgent(agent, ctx, new AgentInput(List.of(msg(MsgRole.USER, "查订单和物流"))), ai ->
+            mw.onActing(agent, ctx, new ActingInput(List.of(
+                    new ToolUseBlock("t1", "queryOrder", Map.of()),
+                    new ToolUseBlock("t2", "queryLogistics", Map.of()))),
+                // 先失败后成功：按"最后一个"会把整段记成成功
+                act -> Flux.just(
+                    new ToolResultEndEvent("r", "t1", "queryOrder", ToolResultState.ERROR),
+                    new ToolResultEndEvent("r", "t2", "queryLogistics", ToolResultState.SUCCESS)))
+        ).blockLast();
+
+        boolean anyFailed = captured.get().segments().stream()
+            .filter(seg -> seg.kind() == AgentCallKind.TOOL)
+            .anyMatch(seg -> !seg.success());
+        assertTrue(anyFailed,
+            "批内有工具失败却被记成成功——失败率被静默抹平，运维在真出问题时看到的是一条平稳曲线");
+    }
+
     @Test
     void onAgent_shouldCollectSegmentsAnswerAndEmitRecord() {
         when(agent.getName()).thenReturn("客服Agent");

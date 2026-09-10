@@ -35,6 +35,20 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 P2 清扫批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1853/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
+  **合计 3818**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+4**
+  （多工具批次统计 2 + 多 Agent 开关 2）。本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。三条经验：
+  ① **「一批工具」与「工具并行执行」是两件事**：批次二强制了 `parallel(false)`，
+  但 `ActingInput.toolCalls()` 本就是列表——模型一轮可以同时发起多个工具调用，
+  与串并行无关。我一度以为串行化顺带修好了工具统计，核实后发现没有；
+  ② **聚合状态要取「最差」而不是「最后一个」**：`lastState.set(...)` 在一批多工具时，
+  前面失败、最后成功会把整段记成功，**失败率被静默抹平**——而那正是最需要被看见的数据。
+  同类聚合（批量结果、多副本健康度）一律按此办；
+  ③ **同一个判定不要写两遍**：修上一条时自己写的 `worstOf` 只比 `SUCCESS`，
+  而既有的 `isSuccess` 把 `RUNNING` 也算成功——previous 是 RUNNING、current 是 ERROR 时误判成功。
+  抽成 `isSuccessState` 一处两边共用。这与「同一个字面量只允许一个定义处」是同一条规矩，
+  只是这次是判定逻辑而非常量。上一版基线见下。）
   （2026-09-10 多步任务分解批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1849/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
   **合计 3814**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+8**（任务清单采集）。
