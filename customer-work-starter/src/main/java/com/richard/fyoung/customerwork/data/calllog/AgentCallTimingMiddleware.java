@@ -34,6 +34,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -64,6 +65,9 @@ import java.util.function.Function;
 public class AgentCallTimingMiddleware implements MiddlewareBase {
 
     private static final Logger log = LoggerFactory.getLogger(AgentCallTimingMiddleware.class);
+
+    /** 一批多工具时的名称连接符：让读报表的人一眼看出这段包含哪几个工具。 */
+    private static final String TOOL_NAME_SEPARATOR = "+";
 
     private static final String UNKNOWN = "unknown";
     private static final String CANCELLED = "cancelled";
@@ -235,10 +239,13 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         if (collector == null) {
             return next.apply(input);
         }
-        String toolName = firstToolName(input);
+        String toolName = batchToolName(input);
         AgentCallKind kind = toolKindRegistry.classify(toolName);
         AgentReplayCapture.ToolBatchCapture replayBatch = beginReplayTools(collector, input);
         // 工具执行成败取自流中的 ToolResultEndEvent（onError 兜底捕获异常）
+        // 记"这一批里最差的那个结果"而不是最后一个：一批多工具时，
+        // 前面的工具失败、最后一个成功，按"最后一个"会把整段记成成功——失败率被静默抹平，
+        // 而那正是最需要被看见的数据
         AtomicReference<ToolResultState> lastState = new AtomicReference<>(null);
         Flux<AgentEvent> upstream = next.apply(input)
             .doOnNext(event -> {
@@ -246,7 +253,7 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
                     replayBatch.onEvent(event);
                 }
                 if (event instanceof ToolResultEndEvent tre && tre.getState() != null) {
-                    lastState.set(tre.getState());
+                    lastState.updateAndGet(prev -> worstOf(prev, tre.getState()));
                 }
             })
             .doOnError(error -> completeReplayTools(replayBatch, "ERROR", safeMsg(error)))
@@ -304,7 +311,7 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             return true;
         }
         ToolResultState state = stateRef.get();
-        return state == null || state == ToolResultState.SUCCESS || state == ToolResultState.RUNNING;
+        return isSuccessState(state);
     }
 
     /** 追加分段（异常安全：采集失败不影响主链路）。{@code usageRef} 携带 MODEL 段 token，工具段/缺失为 null。 */
@@ -461,13 +468,55 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         return first == null ? null : first.getTextContent();
     }
 
-    private String firstToolName(ActingInput input) {
+    /**
+     * 本批次的工具名。
+     *
+     * <p><b>一批可能有多个工具</b>：模型一轮可以同时发起 {@code queryOrder} 与
+     * {@code queryLogistics}，而这与工具是串行还是并行执行无关（{@code toolCalls()} 本就是列表）。
+     * 此前只取第一个，于是第二个工具的耗时被算到第一个头上——工具级 P95 张冠李戴，
+     * 而报表上看不出任何异常。</p>
+     *
+     * <p>现在把这一批的工具名全记下来（{@code a+b} 形式）。这仍不是"每个工具各自耗时"，
+     * 但至少不再冤枉任何一个：看到 {@code queryOrder+queryLogistics} 的人知道这段是两者之和。
+     * 精确到单工具需要按事件流的 {@code toolCallId} 逐个计时，而那依赖框架事件时序的语义
+     * （哪个事件才是"该工具开始执行"），需要单独确认后再做。</p>
+     */
+    /**
+     * 取两个工具结果里"更差"的那个：只要批内有一个不成功，整段就不算成功。
+     *
+     * <p>方向是刻意的——把失败漏报成成功，会让运维在真正出问题时看到一条平稳的曲线。</p>
+     */
+    /** 单个工具结果是否算成功：{@code RUNNING} 视为尚未失败，{@code null} 视为无结果即成功。 */
+    private boolean isSuccessState(ToolResultState state) {
+        return state == null || state == ToolResultState.SUCCESS || state == ToolResultState.RUNNING;
+    }
+
+    private ToolResultState worstOf(ToolResultState previous, ToolResultState current) {
+        if (previous == null) {
+            return current;
+        }
+        // 走与 isSuccess 相同的判定口径：RUNNING 同样视为"尚未失败"。
+        // 各写一遍的话，哪天口径变了只改一处，这里就会把失败悄悄放行
+        return isSuccessState(previous) ? current : previous;
+    }
+
+    private String batchToolName(ActingInput input) {
         List<ToolUseBlock> calls = input == null ? null : input.toolCalls();
-        if (calls == null || calls.isEmpty() || calls.get(0) == null) {
+        if (calls == null || calls.isEmpty()) {
             return UNKNOWN;
         }
-        String name = calls.get(0).getName();
-        return name == null || name.isBlank() ? UNKNOWN : name;
+        List<String> names = new ArrayList<>(calls.size());
+        for (ToolUseBlock call : calls) {
+            String name = call == null ? null : call.getName();
+            if (name != null && !name.isBlank() && !names.contains(name)) {
+                names.add(name);
+            }
+        }
+        if (names.isEmpty()) {
+            return UNKNOWN;
+        }
+        // 单个工具时保持原样，不给绝大多数场景的指标名引入变化
+        return names.size() == 1 ? names.get(0) : String.join(TOOL_NAME_SEPARATOR, names);
     }
 
     private void putCollector(RuntimeContext ctx, AgentCallCollector collector) {

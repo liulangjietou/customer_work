@@ -67,6 +67,14 @@ public class MultiAgentOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(MultiAgentOrchestrator.class);
 
     /** 编排模式常量（避免魔法值）。 */
+    /**
+     * 多 Agent 协作关闭时的答复。
+     *
+     * <p>返回一句可读的话而不是空串或异常：这个入口对调用方（后台工作台）是一个正常接口，
+     * 关闭是运维的选择而不是故障。</p>
+     */
+    static final String DISABLED_REPLY = "多智能体协作当前未启用，请通过常规对话入口咨询。";
+
     private static final String MODE_SEQUENTIAL = "sequential";
     /** 专家名常量（路由映射与装配共用，避免魔法值）。 */
     private static final String EXPERT_ORDER = "OrderExpert";
@@ -218,9 +226,16 @@ public class MultiAgentOrchestrator {
      * @return 聚合后的回复（fanout 模式经路由 + 并行 + 归纳；sequential 模式取最终结论）
      */
     public Mono<String> consult(String sessionId, String userText) {
+        MultiAgentProperties cfg = properties.getMultiAgent();
+        // 关掉开关就真的关掉：此前 enabled 在全仓无人读取，置 false 不会关闭任何东西，
+        // 而运维看到配置里写着 false 会以为多 Agent 协作已经停用——
+        // 一个"配了不生效"的开关比没有开关更危险
+        if (!cfg.isEnabled()) {
+            log.info("multi-agent orchestration disabled by configuration, sessionId={}", sessionId);
+            return Mono.just(DISABLED_REPLY);
+        }
         List<ReActAgent> all = buildSpecialists();
         Msg msg = userMsg(userText);
-        MultiAgentProperties cfg = properties.getMultiAgent();
         RuntimeContext consultCtx = contextFor(sessionId, "consult");
 
         if (MODE_SEQUENTIAL.equalsIgnoreCase(cfg.getMode())) {
