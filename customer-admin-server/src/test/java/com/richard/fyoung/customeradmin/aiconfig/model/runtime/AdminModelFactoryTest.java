@@ -168,6 +168,47 @@ class AdminModelFactoryTest {
         assertEquals(0, model.getContextWindowSize());
     }
 
+    /**
+     * 按真实厂商登记时，窗口能从框架的厂商表推断出来（AgentScope 2.0.0 之后补上了
+     * GLM / DeepSeek / Kimi / MiniMax 四张表，此前它们一律推断为 0）。
+     *
+     * <p>与上一条的差别只有 provider 一个字段：同一个 {@code glm-5.2}，
+     * 登记成 OpenAI 兼容端点时框架查 OPENAI 表得 0，登记成 glm 时查 GLM 表得到真实窗口。
+     * 两条一起看才说明白「0 是怎么来的」——那是登记方式决定的，不是能力缺失。</p>
+     */
+    @Test
+    void buildModel_withoutDeclaredWindow_infersWindowForNativelyRegisteredProvider() {
+        Model model = publicEndpointFactory().buildModel(
+            "glm", "https://open.bigmodel.cn/api/paas/v4", "sk-test", "glm-5.2");
+
+        assertTrue(model.getContextWindowSize() > 0,
+            "按 glm 厂商登记的 glm-5.2 应能推断出窗口，实际 " + model.getContextWindowSize()
+                + "——框架的 GLM 窗口表要么没被查到，要么已不再收录这个模型名");
+    }
+
+    /**
+     * 本地部署没有窗口推断表，仍然交回框架（表现为 0）。
+     *
+     * <p>Ollama 的模型名由部署者自己起，任何硬编码清单都猜不中；
+     * 这类部署的窗口只能靠运营在资产里登记。</p>
+     */
+    @Test
+    void buildModel_localDeploymentHasNoInferenceTable() {
+        Model model = publicEndpointFactory().buildModel(
+            "ollama", "http://localhost:11434", "", "qwen3-8b-my-finetune");
+
+        assertEquals(0, model.getContextWindowSize());
+    }
+
+    /** 运营登记的声明值永远优先于厂商推断。 */
+    @Test
+    void declaredWindowWinsOverProviderInference() {
+        Model model = publicEndpointFactory().buildModelWithWindow(
+            "glm", "https://open.bigmodel.cn/api/paas/v4", "sk-test", "glm-5.2", 12_345);
+
+        assertEquals(12_345, model.getContextWindowSize());
+    }
+
     @Test
     void buildModelWithWindow_shouldOverrideFrameworkInference() {
         Model model = publicEndpointFactory().buildModelWithWindow(

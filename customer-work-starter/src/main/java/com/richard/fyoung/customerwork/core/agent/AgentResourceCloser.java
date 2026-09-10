@@ -26,6 +26,11 @@ public final class AgentResourceCloser {
         if (agent == null) {
             return;
         }
+        // 状态冲突计量：读的是 Agent 实例级累计值，必须赶在释放之前。
+        // 2.0.3 起写状态默认走乐观并发，冲突被 ConflictPolicy.OVERWRITE 静默吸收，
+        // 这里是它唯一的信号出口，详见 AgentStateConflictMetrics。
+        AgentStateConflictMetrics.recordQuietly(agent, owner);
+
         Toolkit toolkit = toolkitOf(agent);
         try {
             if (agent instanceof AutoCloseable closeable) {

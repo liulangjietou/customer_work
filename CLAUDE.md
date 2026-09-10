@@ -35,6 +35,15 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 AgentScope 2.0.3 能力采纳批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1884/9 skip、app-server 137、customer-channel 82、admin 1748/1 skip、gateway 1，
+  **合计 3852**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+13**
+  （装饰器版本化转发 3 + 冲突策略装配 4 + 冲突计量 6）、admin **+3**（窗口按厂商推断）。
+  admin Flyway 本批次用掉 **V102**，下次 **V103**；cw Flyway 仍是下次 **V24**。
+  **改了迁移记得刷 `./scripts/export-schema-snapshot.sh`**——本批次的 V102 给
+  `ai_chat_session_state` 加了 `version` 列，快照不刷新门禁直接红。
+  一个自己撞上的旧坑：**全量跑到一半改源码 = 这次全量作废**，本批次跑到 starter 一半时发现
+  冲突计量漏了 `HarnessAgent` 那条路径（它包了一层、状态在内层 delegate 上），改完只能杀掉重跑。）
   （2026-09-10 AgentScope 2.0.3 升级批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1871/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
   **合计 3836**——与升级前完全一致，无行为回归。本批次无新增用例、无迁移，
@@ -529,9 +538,13 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   **`@ConfigurationProperties` 的字段默认值刻意保持字面量**：`spring-boot-configuration-processor`
   只从字面量初始化表达式提取 `defaultValue`，改成常量引用会让那 336 项默认值元数据静默消失。
 - **外部依赖返回的 0 / 空值，先分清是「未知」还是「零」**：框架 `Model#getContextWindowSize()` 走
-  `ModelContextWindows.lookup` 按模型名前缀查一张硬编码表，表里只有各厂商**官方**模型名；
-  `glm` / `deepseek` 这类走 OpenAI 兼容协议接入的第三方模型一律返回 `0`，含义是「表里没有这个名字」
-  而不是「窗口为零」。上线认证早期实现把它当能力值参与 `min` 交集（`runtime == 0 || declared == 0 ? 0`），
+  `ModelContextWindows.lookup(modelName, table)` 按模型名前缀查表，**表由调用方传**：
+  `OpenAIChatModel` 传的是 `OPENAI` 表。因此把 `glm` / `deepseek` 这类模型按 OpenAI 兼容端点登记时
+  一律返回 `0`，含义是「按这个协议查不到这个名字」而不是「窗口为零」。
+  （**2026-09-10 更正**：此前这里写的是「表里只有各厂商官方模型名」——不成立。AgentScope 2.0.0
+  之后陆续补上了 `GLM`/`DEEPSEEK`/`KIMI`/`MINIMAX` 四张表，那些名字都在里面，只是按 openai
+  provider 登记时查不到。据此 `ModelProvider#inferContextWindow` 已按真实厂商做兜底推断，
+  推断不出返回 `null` 交回框架而不是返回 0。）上线认证早期实现把它当能力值参与 `min` 交集（`runtime == 0 || declared == 0 ? 0`），
   结果**所有 OpenAI 兼容第三方部署的窗口检查恒为失败**，与运营在资产里登记多大窗口无关。
   三个既有单测全用 `StubModel` 直接返回非零值，一个都没照出来——又一次「注了 mock 就照不出真实链路」。
   现在两侧收口：① 建模一律走 `AdminModelFactory.buildModelWithWindow` 或
@@ -590,6 +603,27 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   建了不释放当场红。**必须是结构断言而不是运行时断言**：这个竞态本机复现不出来，
   实测把释放去掉之后，连「关闭后主动删一次 workspace」这种最直接的断言都照样是绿的
   （机器快，后台在删之前就写完了）。同一形状见 PR #157 的 git 后台维护锁。
+- **装饰器必须转发接口的每一个方法，包括带 default 实现的那些**：AgentScope 2.0.3 给
+  `AgentStateStore` 加了乐观并发三件套（`supportsVersioning` / `getVersioned` / `saveIfVersion`），
+  三者都有 default 实现，于是 `SandboxSafeAgentStateStore` **不转发也能编译通过**——
+  只是 `supportsVersioning()` 恒返回默认的 `false`，被装饰的 MySQL store 明明支持版本化，
+  套上壳之后框架就退回无版本写入。升级当天全量绿，没有任何信号。
+  **接口每加一个 default 方法，所有装饰器就多欠一处转发**。升级框架后 grep 一遍
+  `implements <框架接口>` 与 `extends <项目装饰器>`，逐个对照新接口的方法列表。
+  `SandboxSafeAgentStateStoreVersioningTest` 用真实 store 验 CAS 语义穿过装饰器后依然成立。
+- **会话状态乐观并发（2.0.3 起默认生效，不是可选项）**：`MysqlAgentStateStore#supportsVersioning()`
+  硬编码返回 `true`，框架读状态走 `getVersioned`、写回走 `saveIfVersion` 做 CAS。三条约定：
+  ① **CAS 依赖表上的 `version` 列**，框架在 **Store 构造器**里自动补列（`auto-create=false` 时
+  照样执行），补列失败抛 `RuntimeException: Failed to ensure version column`，**应用直接起不来**。
+  两条都是实测的（临时库 + 只授 DML 权限的账号），不是只看反编译。
+  admin 库那张表归 Flyway 管，已由 `V102` 补列；客服端的 `agentscope_sessions` 由框架自建、
+  无迁移也不进结构快照，DML-only 的生产部署用
+  `mysql/01-agent-scope-customer-work/customer-work-agent-state-version-alter.sql` 手工加；
+  ② **默认策略 `OVERWRITE` 会把冲突悄悄吸收掉**（重读最新版本再覆盖，不抛异常不打日志），
+  故加了指标 `customerwork.agent.state.conflicts`，采集点在 `AgentResourceCloser` 这个唯一释放入口。
+  长期为 0 说明会话串行锁在守，突然抬头通常意味着 `SessionLock` 已在 Redis 故障时降级进程内；
+  ③ 策略配置 `customer-work.agent.state-conflict-policy` 设在 `AgentGovernanceAssembler` 一处——
+  它是构建期设定，散到各建 Agent 的入口里各写一遍必然重演「能力只接在一条路径上」。
 - 持久化扩展走 Store SPI 模式（接口 + InMemory 默认 + MyBatis-Plus 实现 + `@ConditionalOnMissingBean`，
   已套用 8 次：Approval/SlotFilling/DialogStage/Handoff/Feedback/Ticket/UserAccount/ChatLog），别发明新模式。
   持久层规范：贫血 DO(entity/)+BaseMapper(mapper/)+复杂 SQL 进 resources/customerwork/mapper/*.xml，

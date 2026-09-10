@@ -9,6 +9,7 @@ import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.middleware.FinalAnswerFilterMiddleware;
 import io.agentscope.core.middleware.MiddlewareBase;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
@@ -79,6 +80,11 @@ public class AgentGovernanceAssembler {
      * @param builder 待装配的 Agent builder
      */
     public void applyTo(ReActAgent.Builder builder) {
+        // 会话状态并发写策略（2.0.3 起框架默认走乐观并发的 saveIfVersion）。
+        // 放在装配器而不是各个工厂里，理由与中间件相同：三条建 Agent 的路径必须给出同一个策略，
+        // 否则同一份会话状态在不同入口上表现不一致，而两边都不会报错。
+        builder.conflictPolicy(properties.getAgent().getStateConflictPolicy());
+
         // 生命周期必须最先判定：撤销态不允许进入模型、MCP、Skill 或任何其它工具链。
         builder.middleware(new AgentLifecycleMiddleware(runtimeAccessState));
 
@@ -95,6 +101,13 @@ public class AgentGovernanceAssembler {
         // + 下游自定义 MiddlewareBase Bean
         if (pluggableMiddlewares != null) {
             pluggableMiddlewares.orderedStream().forEach(builder::middleware);
+        }
+
+        // 最终答复过滤（框架 2.0.3 新增，默认关闭）。它的 order 取框架默认值 1，比本项目全部治理中间件
+        // （50~200）都小，因此稳定落在最内层：先由它决定这一轮的文本放不放，放出来的那份再依次经过
+        // 自我纠错、脱敏、敏感词等出站处理。打开前先读 AgentProperties 上关于打字机效果的那段说明。
+        if (properties.getAgent().isFinalAnswerFilterEnabled()) {
+            builder.middleware(new FinalAnswerFilterMiddleware());
         }
     }
 

@@ -140,7 +140,27 @@ public class AdminModelFactory {
         ModelProvider p = ModelProvider.of(provider);
         String validatedBaseUrl = endpointPolicy.validateAndNormalizeBaseUrl(baseUrl);
         return ChatModelFactory.build(p.getCode(), modelName, apiKey, validatedBaseUrl, true,
-            GenerateOptions.builder().build(), null, null, contextWindowSize);
+            GenerateOptions.builder().build(), null, null,
+            effectiveContextWindow(p, modelName, contextWindowSize));
+    }
+
+    /**
+     * 决定注入运行时的窗口：<b>运营登记的声明值优先</b>，缺失或非正时按厂商推断，都没有就交回框架。
+     *
+     * <p>推断这一层是 AgentScope 2.0.0 之后陆续补上 GLM / DeepSeek / Kimi / MiniMax 四张窗口表
+     * 带来的，此前它们一律推断为 0。注意<b>只对按真实厂商登记的部署有效</b>：
+     * 把智谱模型登记成 OpenAI 兼容端点时，provider 是 openai，查的就是 OPENAI 表，
+     * 结果仍然是 0——那是登记方式决定的，不是这里没做。</p>
+     *
+     * <p>交回框架（返回 {@code null}）与推断出 0 是两件事，不能合并：前者让框架自己按协议查表，
+     * 后者会把「窗口为零」这个错误结论写死进运行时。</p>
+     */
+    private Integer effectiveContextWindow(ModelProvider provider, String modelName,
+                                           Integer declared) {
+        if (declared != null && declared > 0) {
+            return declared;
+        }
+        return provider.inferContextWindow(modelName);
     }
 
     /**

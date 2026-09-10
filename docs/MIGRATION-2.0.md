@@ -325,7 +325,7 @@ starter 零改动。
 | `ThinkingBlock` token 按真实内容计数（#3009） | token 统计数字会变，**影响配额判定与账单金额** |
 | `Retry empty final responses`（#2755） | 推理模型把答案写进 `reasoning_content` 时会重试，可能多一次模型调用 |
 | `OkHttpTransport` SSE 背压修复（#2963） | 流式首字延迟的**收益**，无需改动 |
-| `ToolResultBlock.metadata` 通过细粒度事件传播（#2315） | 引用回传（PR #180）当初正是因为拿不到 metadata 才改走文本标记，现在有了更干净的替代路径 |
+| `ToolResultBlock.metadata` 通过细粒度事件传播（#2315） | **对本项目无用，见 11.4 的更正**——文本标记方案仍是必须的 |
 
 ### 10.4 一个从 2.0.2 起就存在、此前被漏看的事实
 
@@ -347,3 +347,218 @@ starter 零改动。
 **待办**：这几套 API 一旦在某个版本真被移除，项目会直接编译不过。下次升级前应当先查清
 框架给出的替代路径（`Knowledge` 那 37 处可能随知识库改用外部 kb-rag 而自然消解，
 但长期记忆的 32 处、Hook 的 20 处仍需迁移方案）。
+
+---
+
+## 11. 2.0.3 能力采纳（2026-09-10）
+
+第 10 节做的是「让它编译过、跑起来」，本节做的是「把 2.0.3 真正带来的东西用上」。
+
+### 11.1 2.0.3 到底改了什么：按 jar 的公开 API 逐项 diff
+
+不看 release notes，把 2.0.2 与 2.0.3 两套 jar 全部解开，对每个类（**含内部类与 Builder**）
+出一遍 `javap` 签名再逐行比对。这个方法在 9.1 节已经用过一次，本次补上一个教训：
+**第一遍我过滤掉了带 `$` 的类名，于是漏掉了 `ReActAgent$Builder`**——而 2.0.3 最重要的新入口
+`conflictPolicy(...)` 恰恰只在 Builder 上。Builder 是框架最主要的 API 面，绝不能被当成内部类跳过。
+
+`agentscope-core` 的结论：**零删除、零签名变更**，纯新增。
+
+| 新增 | 内容 |
+|---|---|
+| 状态版本化（主线特性） | `AgentStateStore` 加 `supportsVersioning()` / `getVersioned()` / `saveIfVersion()` / 常量 `UNVERSIONED`；新类 `VersionedState` / `ConflictPolicy` / `ConcurrentSessionModificationException`；`ReActAgent.Builder#conflictPolicy` 与 `ReActAgent#getStateConflictCount()` |
+| `FinalAnswerFilterMiddleware` | 抑制「产生了工具调用那一轮」的中间文本 |
+| ToolResult 四个事件加 `metadata` 构造参数 | #2315 |
+| `Toolkit#addToolToGroup(String, String)` | 运行时把已注册工具并入某个组 |
+| `ToolResultBlock.error(String, String)` | 错误结果的静态工厂 |
+| `ExceptionUtils.containsInterruptedException` | 中断判定 |
+| `LegacyStateLoader` 两个带 `PermissionContextState` 的重载 | 旧会话加载 |
+| `GracefulShutdownManager#checkAndClearShutdownInterruptedForState` | 优雅停机 |
+| `Msg.METADATA_EXTERNAL_EXECUTION_REQUEST_REPLY_ID` | AG-UI 外部执行 |
+
+其余模块：`extensions-mysql` / `extensions-redis`（三种客户端）各自实现了版本化三件套，
+redis 侧新增 `RedisStateVersionSupport`（Lua 脚本做 CAS）；`extensions-a2a-server` 的
+`AgentRunner.stream` → `streamEvents`（第 10 节已处理）；`extensions-a2a-client` 新增
+`HintBlockParser`；`harness` 大面积新增（Team 多智能体协作、Transcript 存储、Artifact 交付、
+SessionTurnGate、PeriodicGate、SkillUsageBackend、WebTools）；上游还多了两个全新模块
+`extensions-jdbc`（通用 JDBC 状态存储 + H2/MySQL/Postgres/SQLite 四方言）与
+`extensions-aistio`（控制平面 gRPC 数据面）。
+
+### 11.2 状态版本化：升级后**默认就在生效**，且有一个必须先处理的库结构前提
+
+这一条是本次升级里唯一有生产风险的。
+
+**默认生效**：`ReActAgent` 读状态走 `getVersioned`、写回走 `saveIfVersion`，是否走这条路径由
+`store.supportsVersioning()` 决定——而 `MysqlAgentStateStore` 的这个方法**硬编码返回 true**
+（字节码就是 `iconst_1; ireturn`）。`Builder#conflictPolicy` 不设时默认 `OVERWRITE`。
+也就是说，不做任何配置，升级后每一次会话状态写入都在做 CAS。
+
+**库结构前提**：CAS 依赖表上的 `version` 列。框架在 `MysqlAgentStateStore` 的**构造器**里
+执行 `ensureVersionColumn()` 自动补列，这一步在 `autoCreate` 分支**汇合之后**，
+即 `autoCreate=false` 时照样执行；补列失败会把 `SQLException` 包成 `RuntimeException` 抛出，
+**构造器失败 = 应用起不来**。
+
+这两条都做了实测（临时库 + 只授 DML 权限的账号，验完即删），不是只有反编译推断：
+
+```
+# autoCreate 传 false，表上没有 version 列
+构造前 version 列: false
+构造后 version 列: true          ← 框架照样补了列
+supportsVersioning(): true
+
+# 换成只有 SELECT/INSERT/UPDATE/DELETE 权限的账号
+构造前 version 列: false
+Exception in thread "main" java.lang.RuntimeException: Failed to ensure version column on table: agentscope_sessions
+    at ...MysqlAgentStateStore.ensureVersionColumn(MysqlAgentStateStore.java:201)
+    at ...MysqlAgentStateStore.<init>(MysqlAgentStateStore.java:178)
+Caused by: java.sql.SQLSyntaxErrorException: ALTER command denied to user 'cw_dml_only'@'...'
+```
+
+两种部署形态因此有不同的动作：
+
+| 库 | 表 | 归谁管 | 升级动作 |
+|---|---|---|---|
+| `customer_admin` | `ai_chat_session_state` | Flyway（V4 建表，`createIfNotExist=false`） | **已加 `V102__agent_state_optimistic_version.sql`**，先由迁移补列，框架那一步查到列已存在即跳过 |
+| `agent_scope_customer_work` | `agentscope_sessions` | 框架自建，无迁移、不进结构快照 | 应用账号有 DDL 权限时框架自动补列；生产按 DBA 模式部署的，用 `mysql/01-agent-scope-customer-work/customer-work-agent-state-version-alter.sql` 先手工加列 |
+
+让框架自己去改一张归 Flyway 管的表有两个坏结果，V102 的抬头注释里写了：结构与迁移产物不一致
+（结构快照门禁会红，而红的原因与任何人的改动无关），或者应用账号只有 DML 权限时直接起不来。
+
+**项目侧采纳**：
+
+- 冲突策略做成配置项 `customer-work.agent.state-conflict-policy`，默认 `OVERWRITE`
+  （保持框架默认，也就是保持升级前「最后写入者赢」的行为）。设定点在
+  `AgentGovernanceAssembler` 一处——它是构建期设定，散到各个建 Agent 的入口里各写一遍
+  必然重演「能力只接在一条路径上」。
+- 冲突计量 `customerwork.agent.state.conflicts`（`AgentStateConflictMetrics`）。
+  **`OVERWRITE` 会把 CAS 失败悄悄吸收掉**：重读最新版本再覆盖，不抛异常、不打日志，
+  会话状态互相覆盖这件事发生了却毫无痕迹。采集点选在 `AgentResourceCloser.closeQuietly`
+  ——那是全部 11 处 Agent 释放的唯一入口，而 `getStateConflictCount()` 是 Agent 实例级累计值，
+  Agent 又按会话缓存，释放时读一次即「这个会话一共冲突了几次」，不重不漏。
+  这个指标顺带是 `SessionLock` 在 Redis 故障时保护性降级进程内之后，
+  唯一能看出「串行锁其实已经不管用了」的间接证据。
+- **修掉一个被静默吞掉的能力**：`SandboxSafeAgentStateStore`（Docker 沙箱模式下装饰 MySQL store）
+  没有转发新增的三个方法。它们**都带 default 实现**，所以不转发照样编译通过，
+  只是 `supportsVersioning()` 恒返回默认的 `false`，被装饰的 MySQL store 支持版本化、
+  套上壳之后框架就退回无版本写入。**接口每加一个 default 方法，所有装饰器就多欠一处转发**，
+  而欠着不报错。`SandboxSafeAgentStateStoreVersioningTest` 用真实 store 验 CAS 语义
+  （版本对得上才写、对不上返回 `UNVERSIONED` 且不覆盖）穿过装饰器后依然成立。
+- admin 侧显式建 `AgentStateConflictMetrics` Bean（那个模块 `spring.autoconfigure.exclude`
+  掉了 starter 自动装配）。不建的后果是无声：客服端能看到冲突、后台看不到——
+  而后台的 VibeCoding 长任务与多标签页同会话恰恰更容易并发写状态。
+
+### 11.3 FinalAnswerFilterMiddleware：接了，但默认关闭
+
+反编译确认它的逐事件行为：按 `ModelCallStartEvent` 开一轮，缓冲 `TextBlock*` 三种事件；
+该轮一旦出现同 `replyId` 的 `ToolCallStartEvent`，就把已缓冲的文本整段丢弃并对后续文本直接返回
+`Flux.empty()`；直到 `ModelCallEndEvent` 且该轮没有工具调用，才把缓冲的文本一次性放出。
+
+**代价是流式打字机效果完全消失**：即使那一轮就是最终答复，文本也要攒到 `ModelCallEndEvent`
+才整段吐出来，用户会盯着空白等几秒。而客服场景里「好的，我帮您查一下」这类过渡语恰恰是
+有价值的等待反馈，不是噪声。因此 `customer-work.agent.final-answer-filter-enabled` 默认 `false`，
+只在非流式集成（如渠道机器人只取最终文本）里才值得打开。
+
+顺序上它取框架默认 `order=1`，比本项目全部治理中间件（50~200）都内，
+`AgentStateConflictPolicyAssemblyTest` 对此下断言：先由它决定这一轮的文本放不放，
+放出来的那份再依次经过自我纠错、脱敏、敏感词等出站处理。框架哪天把它的 order 抬上来，
+顺序会翻转成「先脱敏再决定丢不丢」，白做一遍且不报错。
+
+### 11.4 更正：`ToolResultBlock.metadata` 事件传播对本项目无用
+
+第 10.3 节曾写「引用回传现在有了更干净的替代路径」，**这个说法不成立**。
+
+反编译确认 2.0.3 的 `ReActAgent$CallExecution` 的确会读 `ToolResultBlock.getMetadata()`
+并 `withMetadata()` 填进三个 ToolResult 事件（2.0.2 没有这一步），传播链路本身是通的。
+但源头没有 metadata：`KnowledgeRetrievalTools` 返回的是 `String`，框架据此构造 `ToolResultBlock`
+时 metadata 为空。要用上这条路径得先改造工具返回类型，而那比 PR #180 现有的文本标记方案更重。
+**文本标记方案保留。**
+
+### 11.5 明确不采纳的部分及理由
+
+| 能力 | 不做的理由 |
+|---|---|
+| `extensions-jdbc` 通用状态存储 | 项目已用 `extensions-mysql`，换过去零功能收益，只多一次存储层迁移风险 |
+| `extensions-aistio` 控制平面 | 需要独立部署一套控制面服务并接 gRPC 数据面，是一个独立的架构决策，不是升级的一部分 |
+| harness 的 Team 协作 / Transcript / Artifact 交付 / PeriodicGate | Harness 栈在本项目零调用方（见能力差距报告附录 D），先有调用方再谈接能力 |
+| `Toolkit#addToolToGroup(String, String)` | 项目的工具分组在注册时就定好（`ToolRegistrar`），没有运行时改组的场景 |
+| `ToolResultBlock.error(String, String)` | 项目工具一律返回 String 结果文本，没有直接构造 `ToolResultBlock` 的地方 |
+| `ExceptionUtils.containsInterruptedException` | 全仓没有等价的自写判定可替换 |
+| `LegacyStateLoader` 的新重载 | 项目没有旧格式会话要加载 |
+| AG-UI 外部执行 / 权限确认事件转换器 | 项目的 AG-UI 用法不涉及外部执行与权限确认交互 |
+| `McpServerRegistrationListener` | 在 harness 模块，项目 MCP 走 starter 的 `McpToolkitConfigurer`，不经 harness |
+
+---
+
+## 12. 2.0.0 GA → 2.0.3 累计变更全量清单
+
+第 9~11 节是按升级批次写的（RC4→GA、GA→2.0.2、2.0.2→2.0.3）。本节给的是**跨三个版本的累计视图**：
+从 `main` 当初的 2.0.0 GA 一路到 2.0.3，框架总共变了什么。
+
+方法与 9.1 节一致：把 2.0.0 与 2.0.3 两套 jar 全部解开，对每个类（**含内部类与 Builder**）
+出 `javap` 签名逐行比对。项目从未用过 2.0.1，故不单独区分 2.0.1 与 2.0.2 的贡献。
+
+### 12.1 破坏性变更：只有两处，都在 A2A 与 Harness
+
+`agentscope-core` **零删除、零签名变更**，纯新增。全部破坏性变更如下：
+
+| 模块 | 变更 | 项目影响 |
+|---|---|---|
+| `extensions-a2a-server` | `AgentRunner.stream(...): Flux<Event>` → `streamEvents(...): Flux<AgentEvent>`；`AgentScopeAgentExecutor` 的三个事件处理器同步改签名（`handleEvent` 多一个 `Msg` 参数） | `AdminAgentRunner` 改调 `agent.streamEvents(msgs, ctx)`，见 10.1 |
+| `harness` | `TaskRepository` 新增 `shutdown()`、`removeTask`/`clear` 不再是接口方法；`ProjectAwareOverlay` 与 `SandboxBackedFilesystem` 多处方法加 `RuntimeContext` 参数 | `MybatisTaskRepository` 的 `shutdown()` 提升为 public，见 10.1 |
+
+`spring-boot-starter` / `extensions-rag-simple` / 各模型扩展：**零变更**。
+
+### 12.2 core 新增能力（按主题归类）
+
+| 主题 | 新增 API | 本项目状态 |
+|---|---|---|
+| **中间件排序** | `MiddlewareBase#order()`（2.0.0 没有） | **已采纳**：`MiddlewareOrders` 顺序契约 + `MiddlewareOrderContractTest`，24 个中间件此前全用默认值、顺序由 Bean 定义顺序偶然决定 |
+| **状态乐观并发** | `AgentStateStore` 的 `supportsVersioning` / `getVersioned` / `saveIfVersion` / `UNVERSIONED`；`VersionedState` / `ConflictPolicy` / `ConcurrentSessionModificationException`；`ReActAgent.Builder#conflictPolicy`、`ReActAgent#getStateConflictCount/getConflictPolicy` | **已采纳**，见 11.2 |
+| **最终答复过滤** | `FinalAnswerFilterMiddleware` | **已采纳但默认关闭**，见 11.3 |
+| **上下文与状态缓存的显式清理** | `ReActAgent#clearContext(RuntimeContext)` / `clearContext(String,String)`、`clearStateCache()` 三个重载、`replacePermissionContext(String,String,PermissionContextState)` | 未采纳：项目按会话缓存 Agent 并整体释放（`AgentResourceCloser`），没有"留着 Agent 但清空它的上下文"的场景 |
+| **第三方模型窗口推断** | `ModelContextWindows` 新增 `GLM` / `DEEPSEEK` / `KIMI` / `MINIMAX` 四张表 | **本批次采纳**，见 12.4 |
+| **模型扩展辅助** | `ModelProviderSupport`（`stringOption` / `intOption` / `booleanOption` / `findAssignableComponent` / `firstNonBlank` / `trimToNull`） | 未采纳：项目不自研 Model 实现，只用框架的 `ChatModelFactory` |
+| **HTTP 传输超时** | `HttpTransportConfig` 的 `responseTimeout` / `streamIdleTimeout` 及默认值 | 未采纳：项目的模型超时走 `model.retry.*` 与厂商 SDK 默认值；要接的话得先回答"流式空闲多久算卡死"，那是独立的一件事 |
+| **事件元数据** | `AgentEvent#withMetadataEntry`、`METADATA_TASK_ID`、`METADATA_PARENT_SESSION_ID`；ToolResult 四个事件的 `metadata` 构造参数（#2315） | 未采纳，`metadata` 那条对引用回传无用，见 11.4 |
+| **消息元数据** | `Msg#withMetadata(Map)`、`METADATA_CONFIRM_REQUEST_REPLY_ID`、`METADATA_EXTERNAL_EXECUTION_REQUEST_REPLY_ID` | 未采纳：项目的人工确认走自己的 `HumanApprovalMiddleware` + Permission ask，不经 AG-UI 的确认回传协议 |
+| **工具** | `Toolkit#addToolToGroup(String,String)`、`ToolResultBlock.error(String,String)`、`AllToolsDeniedEvent` | 未采纳，理由见 11.5 |
+| **优雅停机** | `GracefulShutdownManager#checkAndClearShutdownInterruptedForState` / `unbindStateSaver` | 未采纳：项目的停机链路（`GracefulShutdownRequestTrackingProbe`）不涉及按状态判定中断来源 |
+| **旧会话加载** | `LegacyStateLoader` 的 `LegacyLoadResult` 与带 `PermissionContextState` 的重载 | 未采纳：项目没有 1.x 格式的存量会话 |
+| **文本累加器改写** | `ReasoningContext#replaceAccumulatedText`、`TextAccumulator#replace` | 未采纳：项目的输出改写走中间件事件流（`SelfCorrectionMiddleware`），不直接操作累加器 |
+| **中断判定** | `ExceptionUtils#containsInterruptedException` | 未采纳：全仓没有等价的自写判定可替换 |
+
+### 12.3 扩展模块新增
+
+- **`extensions-mysql` / `extensions-redis`**：三种 Redis 客户端（Jedis / Lettuce / Redisson）与 MySQL
+  全部实现版本化三件套；Redis 侧新增 `RedisStateVersionSupport`（Lua 脚本做 CAS）与
+  `RedisClientAdapter#evalScript`。
+- **`extensions-a2a-client`**：`HintBlockParser` 与两个 hint metadata 键。
+- **`extensions-agui`**：外部执行与权限确认的事件转换器、`AguiRequestBodyParser`、
+  `AguiRuntimeContextResolver`（从 `agui-spring-boot-starter` 下沉过来）。
+- **两个全新模块**：`extensions-jdbc`（通用 JDBC 状态存储 + H2/MySQL/Postgres/SQLite 四方言）、
+  `extensions-aistio`（控制平面 gRPC 数据面）。
+- **`harness` 新增 55 个类**，成规模的有六块：Team 多智能体协作（`TeamClient` / `TeamTool` /
+  `TeamsMiddleware` / `TeamWakeups`）、Transcript 存储（文件系统与对象存储两种实现 +
+  `TranscriptMiddleware`）、Artifact 交付（`ArtifactDeliveryTool`）、远程子智能体协议
+  （`RemoteEventCodec` / `RemoteSubagentTransport` / `AgentProtocolTransport`）、
+  跨副本协调（`PeriodicGate` / `SessionTurnGate` / `TurnLease`）、技能使用度量
+  （`SkillUsageBackend` 两种实现），另有 `WebTools` 与 `HarnessPlatformTools`。
+  **本项目 Harness 栈零调用方**，故整块不采纳，理由见能力差距报告附录 D。
+
+### 12.4 顺带修正一条已过时的项目结论：第三方模型窗口
+
+`CLAUDE.md` 里写着「框架的窗口推断表只收录各厂商**官方**模型名，`glm` / `deepseek` 这类
+走 OpenAI 兼容协议接入的第三方模型一律返回 0」。**前半句现在不成立了**：
+2.0.0 之后框架补上了 GLM / DEEPSEEK / KIMI / MINIMAX 四张表，`glm-5.2`、`deepseek-v4-pro`、
+`kimi-k3`、`minimax-m3` 这些名字都在里面。
+
+返回 0 这个现象仍然成立，但**理由变了**：`ModelContextWindows.lookup(modelName, table)` 的表由
+调用方传，`OpenAIChatModel` 传的是 `OPENAI` 表——所以把智谱模型按 OpenAI 兼容端点登记时，
+框架查的是 OPENAI 表，自然查不到。**是登记方式决定的，不是框架没收录。**
+
+据此本批次给 `ModelProvider` 加了 `inferContextWindow(modelName)`：按真实厂商登记的部署，
+运营没登记窗口时从对应的厂商表推断，推断不出返回 `null` 交回框架（**不是返回 0**——
+把"推断不出来"写成"窗口是 0"正是上线认证曾经对所有第三方部署恒判失败的病根）。
+Ollama 刻意没有表：本地部署的模型名由部署者自己起，任何硬编码清单都猜不中。
+
+`AdminModelFactoryTest` 里原来那条钉住"glm-5.2 推断为 0"的用例**保留不动**，
+并在旁边加了一条只差 provider 一个字段的对照用例——两条一起看才说明白 0 是怎么来的。
