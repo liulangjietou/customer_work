@@ -12,6 +12,10 @@ import com.richard.fyoung.customerwork.tool.backend.MemberBackend;
 import com.richard.fyoung.customerwork.tool.backend.OrderBackend;
 import com.richard.fyoung.customerwork.tool.backend.ProductBackend;
 import io.agentscope.core.tool.Toolkit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.util.Set;
+import java.util.HashSet;
 import org.springframework.stereotype.Component;
 
 /**
@@ -23,6 +27,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class ToolRegistrar {
+
+    private static final Logger log = LoggerFactory.getLogger(ToolRegistrar.class);
 
     public static final String GROUP_KNOWLEDGE = "knowledge";
     public static final String GROUP_ORDER = "order";
@@ -88,23 +94,86 @@ public class ToolRegistrar {
      * @param sessionId 会话标识；非空且工单域已装配时，转人工工具会以真实会话驱动 {@link TicketService}
      */
     public void registerBusinessTools(Toolkit toolkit, String sessionId) {
-        toolkit.createToolGroup(GROUP_KNOWLEDGE, "知识库检索：产品政策、售后规则、发票运费等 FAQ", true);
-        toolkit.createToolGroup(GROUP_ORDER, "订单与物流：查询/改址/取消/催发货", true);
-        toolkit.createToolGroup(GROUP_AFTER_SALES, "售后：退款/退货/换货/价保/发票/进度（涉资金走人工确认）", true);
-        toolkit.createToolGroup(GROUP_PRESALE, "售前导购：商品咨询/推荐/库存/优惠", true);
-        toolkit.createToolGroup(GROUP_MEMBER, "会员/账户：积分/等级权益/账户问题", true);
-        toolkit.createToolGroup(GROUP_COMPLAINT, "投诉工单：建单/查单", true);
+        registerBusinessTools(toolkit, sessionId, Set.of());
+    }
+
+    /**
+     * 创建各业务域工具组并注册对应工具，跳过本部署停用的组。
+     *
+     * <p><b>为什么允许停用</b>：全部业务工具的 schema 实测约 4100 token，
+     * 占 {@code context.max-token} 默认值的 52%——每一轮对话有一半以上的上下文预算
+     * 花在工具定义上。一个只做售后的部署，售前导购那几个工具从头到尾用不上，却每轮都在付这份成本。</p>
+     *
+     * <p><b>转人工组不可停用</b>：把它关掉，用户就被困在智能体里出不来了。
+     * 这不是配置项该有的权力，因此在这里硬性忽略，而不是靠文档提醒。</p>
+     *
+     * @param disabledGroups 本部署不注册的组；转人工组即使出现在其中也会被忽略
+     */
+    public void registerBusinessTools(Toolkit toolkit, String sessionId, Set<String> disabledGroups) {
+        Set<String> disabled = normalizeDisabled(disabledGroups);
+
+        createGroupIfEnabled(toolkit, disabled, GROUP_KNOWLEDGE,
+            "知识库检索：产品政策、售后规则、发票运费等 FAQ");
+        createGroupIfEnabled(toolkit, disabled, GROUP_ORDER, "订单与物流：查询/改址/取消/催发货");
+        createGroupIfEnabled(toolkit, disabled, GROUP_AFTER_SALES,
+            "售后：退款/退货/换货/价保/发票/进度（涉资金走人工确认）");
+        createGroupIfEnabled(toolkit, disabled, GROUP_PRESALE, "售前导购：商品咨询/推荐/库存/优惠");
+        createGroupIfEnabled(toolkit, disabled, GROUP_MEMBER, "会员/账户：积分/等级权益/账户问题");
+        createGroupIfEnabled(toolkit, disabled, GROUP_COMPLAINT, "投诉工单：建单/查单");
         toolkit.createToolGroup(GROUP_HUMAN, "人工坐席转接与风险熔断", true);
 
-        toolkit.registration().tool(new KnowledgeBaseTools(knowledgeBackend, knowledgeGapService))
-            .group(GROUP_KNOWLEDGE).apply();
-        toolkit.registration().tool(new OrderTools(orderBackend)).group(GROUP_ORDER).apply();
-        toolkit.registration().tool(new AfterSalesTools(afterSalesBackend, approvalService, sessionId))
-            .group(GROUP_AFTER_SALES).apply();
-        toolkit.registration().tool(new ProductTools(productBackend)).group(GROUP_PRESALE).apply();
-        toolkit.registration().tool(new MemberTools(memberBackend)).group(GROUP_MEMBER).apply();
-        toolkit.registration().tool(new ComplaintTools(complaintBackend)).group(GROUP_COMPLAINT).apply();
+        if (!disabled.contains(GROUP_KNOWLEDGE)) {
+            toolkit.registration().tool(new KnowledgeBaseTools(knowledgeBackend, knowledgeGapService))
+                .group(GROUP_KNOWLEDGE).apply();
+        }
+        if (!disabled.contains(GROUP_ORDER)) {
+            toolkit.registration().tool(new OrderTools(orderBackend)).group(GROUP_ORDER).apply();
+        }
+        if (!disabled.contains(GROUP_AFTER_SALES)) {
+            toolkit.registration().tool(new AfterSalesTools(afterSalesBackend, approvalService, sessionId))
+                .group(GROUP_AFTER_SALES).apply();
+        }
+        if (!disabled.contains(GROUP_PRESALE)) {
+            toolkit.registration().tool(new ProductTools(productBackend)).group(GROUP_PRESALE).apply();
+        }
+        if (!disabled.contains(GROUP_MEMBER)) {
+            toolkit.registration().tool(new MemberTools(memberBackend)).group(GROUP_MEMBER).apply();
+        }
+        if (!disabled.contains(GROUP_COMPLAINT)) {
+            toolkit.registration().tool(new ComplaintTools(complaintBackend)).group(GROUP_COMPLAINT).apply();
+        }
         toolkit.registration().tool(buildHumanHandoffTools(sessionId)).group(GROUP_HUMAN).apply();
+
+        if (!disabled.isEmpty()) {
+            log.info("business tool groups disabled by configuration: {}", disabled);
+        }
+    }
+
+    /** 归一化停用清单：去空白、转小写，并强制保留转人工组。 */
+    private Set<String> normalizeDisabled(Set<String> disabledGroups) {
+        if (disabledGroups == null || disabledGroups.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> normalized = new HashSet<>();
+        for (String group : disabledGroups) {
+            if (group == null || group.isBlank()) {
+                continue;
+            }
+            String code = group.trim().toLowerCase();
+            if (GROUP_HUMAN.equals(code)) {
+                // 不是"忽略了一个笔误"，是明确拒绝一个会把用户困住的配置
+                log.error("refuse to disable human handoff tool group, code={}", "TOOL-GROUP-HUMAN-PROTECTED");
+                continue;
+            }
+            normalized.add(code);
+        }
+        return Set.copyOf(normalized);
+    }
+
+    private void createGroupIfEnabled(Toolkit toolkit, Set<String> disabled, String group, String description) {
+        if (!disabled.contains(group)) {
+            toolkit.createToolGroup(group, description, true);
+        }
     }
 
     /** 有真实会话时传入 sessionId；HandoffService 内部只推进一次权威工单状态机。 */

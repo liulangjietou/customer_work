@@ -35,6 +35,21 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 工具面开销批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1863/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
+  **合计 3828**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+5**（工具面开销与停用）。
+  本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。三条经验：
+  ① **实测：23 个业务工具的 schema 约 4145 token，占 `context.max-token` 默认值的 52%**。
+  加一个工具的代价落在**每一轮对话**上，而加工具的人通常只看到自己那一个。
+  `ToolSurfaceCostTest` 把这个数字与工具数量上限固定了下来；
+  ② **收敛工具面别先想动态激活**：按意图激活的风险是「判错就办不了事」，
+  而 `fastRouteIntent` 返回 `Optional<String>`、**没有置信度**，做不了「判不准就全量激活」的兜底；
+  `DefaultActiveGroupsToolkit` 的注释还记录着框架会用会话状态**全量覆盖**激活组、
+  项目已因此踩过「业务工具组被整体清空」的坑。静态配置（运维明确知道自己有没有这块业务）零判错风险；
+  ③ **有些开关不该存在**：转人工组一旦被停用，用户就被困在智能体里出不来。
+  这类配置在代码里直接拒绝并打错误日志，而不是靠文档提醒——配置文件里不该有能把用户困住的开关。
+  另：`Process Exit Code: 143` 是 SIGTERM，**会话结束杀掉后台 Maven 会伪装成测试失败**
+  （本批表现为 admin 的 `CustomerAdminSchemaSnapshotTest` "crashed"），重跑即绿。上一版基线见下。）
   （2026-09-10 记忆召回打分批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1858/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
   **合计 3823**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+5**（记忆召回质量）。

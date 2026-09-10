@@ -226,6 +226,10 @@ public class CustomerWorkProperties {
     @NestedConfigurationProperty
     private final ToolBackendProperties toolBackend = new ToolBackendProperties();
 
+    /** 工具面：本部署向模型暴露哪些业务工具组（{@code customer-work.tool-surface.*}）。 */
+    @NestedConfigurationProperty
+    private final ToolSurfaceProperties toolSurface = new ToolSurfaceProperties();
+
     /** 工具执行的超时与重试（{@code customer-work.tool-execution.*}）。 */
     @NestedConfigurationProperty
     private final ToolExecutionProperties toolExecution = new ToolExecutionProperties();
