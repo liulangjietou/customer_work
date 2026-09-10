@@ -1166,6 +1166,36 @@ export interface McpTestResult {
   message: string | null
 }
 
+// ---------- aiconfig.mcp.contract ----------
+/** 契约变更类型；BREAKING 的那几种会让模型按旧契约发出的调用直接失败。 */
+export type McpChangeType =
+  | 'TOOL_REMOVED'
+  | 'REQUIRED_ADDED'
+  | 'FIELD_REMOVED'
+  | 'FIELD_TYPE_CHANGED'
+  | 'SCHEMA_TYPE_CHANGED'
+  | 'TOOL_ADDED'
+  | 'FIELD_ADDED'
+  | 'REQUIRED_REMOVED'
+  | 'DESCRIPTION_CHANGED'
+
+export interface McpToolChange {
+  toolName: string
+  type: McpChangeType
+  detail: string | null
+}
+
+/** 一次契约快照，以及它相对上一条快照的差异。 */
+export interface McpContractSnapshotVO {
+  id: number
+  contractHash: string
+  toolCount: number
+  /** NONE / COMPATIBLE / BREAKING */
+  driftSeverity: string
+  changes: McpToolChange[]
+  capturedAt: string
+}
+
 // ---------- aiconfig.mcp.debug ----------
 export interface McpDebugToolVO {
   name: string

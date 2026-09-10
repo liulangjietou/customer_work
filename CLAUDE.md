@@ -35,6 +35,14 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 MCP 契约漂移 + 编排拓扑可配批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1911/6 skip、app-server 137、customer-channel 82、admin 1751/1 skip、gateway 1，
+  **合计 3882**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+24**
+  （契约指纹 8 + 漂移分级 9 + 编排拓扑 7）、admin **+3**（契约采集与租户上下文）。
+  admin Flyway 本批次用掉 **V103**（`ai_mcp_tool_contract`），下次 **V104**；cw Flyway 仍是下次 **V24**。
+  **刻意没新增 sys_permission**，下次仍从 **271** 起——契约就是 MCP 的工具定义，
+  拿得到 `mcp:view` 的人本来就能在调试面板看到，它不是新的数据出口；
+  判据是「是不是新的数据出口」而不是「是不是新功能」。改了迁移记得刷结构快照（89 张表）。）
   （2026-09-10 AgentScope 2.0.3 能力采纳批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1884/9 skip、app-server 137、customer-channel 82、admin 1748/1 skip、gateway 1，
   **合计 3852**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+13**
@@ -873,6 +881,10 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   写这类测试时**别断言"没抛异常"**——单测里本就没挂拦截器，怎么写都不会抛，那种断言恒真；
   要断言 `InterceptorIgnoreHelper.willIgnoreTenantLine(...)` 在查询发生的那一刻为真
   （见 `AdminA2aServerConfigTenantTest`），并且退出作用域后为假。
+  **造这个场景比看起来难**：用 `CompletableFuture.supplyAsync(...)` 喂一个<b>立刻完成</b>的 future，
+  后面的 `thenApply` 会<b>同步跑在调用线程上</b>——那时上下文还在，断言照样恒真，
+  撤掉 `TenantContext.callWith` 做变异测试也打不红（`McpContractServiceTest` 踩过）。
+  必须让 future 在被测方法**返回之后**、由另一个线程完成，回调才会真的落到没有上下文的线程上。
 - **对外开放部署（公网自助注册）**：把后台开放给陌生人时，`admin.public-deployment.enabled=true`
   是**唯一**总开关，别逐项勾选——漏配任何一条都是实打实的暴露面。它一次性生效三件事：
   内部运维工具下架（菜单不下发 + 接口 403）、发码强制图形验证码、审核不允许并入 `default`。

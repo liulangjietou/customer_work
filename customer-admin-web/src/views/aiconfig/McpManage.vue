@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import { createMcp, deleteMcp, getMcp, MCP_SECRET_PLACEHOLDER, pageMcps, testMcpConnectivity, updateMcp } from '@/api/mcp'
+import McpContractDialog from '@/components/McpContractDialog.vue'
 import McpDebugDialog from '@/components/McpDebugDialog.vue'
 import { useAuthStore } from '@/store/auth'
 import type { McpSaveRequest, McpVO, PageQuery } from '@/types/api'
@@ -163,6 +164,9 @@ async function handleTest(row: McpVO) {
 }
 
 const debugVisible = ref(false)
+const contractVisible = ref(false)
+const contractMcpId = ref<number | null>(null)
+const contractMcpName = ref('')
 const debugMcpId = ref<number | null>(null)
 const debugMcpName = ref('')
 
@@ -170,6 +174,12 @@ function openDebug(row: McpVO) {
   debugMcpId.value = row.id
   debugMcpName.value = row.mcpName
   debugVisible.value = true
+}
+
+function openContract(row: McpVO) {
+  contractMcpId.value = row.id
+  contractMcpName.value = row.mcpName
+  contractVisible.value = true
 }
 
 onMounted(loadList)
@@ -212,6 +222,7 @@ onMounted(loadList)
           <template #default="{ row }">
             <el-button link type="primary" :loading="testingId === row.id" @click="handleTest(row)">测试连通性</el-button>
             <el-button v-permission="'mcp:edit'" link type="primary" @click="openDebug(row)">调试</el-button>
+            <el-button v-permission="'mcp:view'" link type="primary" @click="openContract(row)">契约</el-button>
             <el-button v-permission="'mcp:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="auth.hasPermission('mcp:add') && auth.hasPermission('mcp:edit')" link type="primary" @click="openCopy(row)">复制</el-button>
             <el-button v-permission="'mcp:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
@@ -277,6 +288,7 @@ onMounted(loadList)
     </el-dialog>
 
     <McpDebugDialog v-model="debugVisible" :mcp-id="debugMcpId" :mcp-name="debugMcpName" />
+    <McpContractDialog v-model="contractVisible" :mcp-id="contractMcpId" :mcp-name="contractMcpName" />
   </div>
 </template>
 
