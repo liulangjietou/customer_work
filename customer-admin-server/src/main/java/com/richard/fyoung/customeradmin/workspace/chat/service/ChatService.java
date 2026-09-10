@@ -172,27 +172,37 @@ public class ChatService {
      */
     public boolean interrupt(String agentCode, String sessionId) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
-        ReActAgent interruptible = resolveInterruptible(agent);
-        if (interruptible == null) {
+        RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
+        if (!interruptBySession(agent, ctx)) {
             log.info("[workspace] interrupt skipped: unsupported agent runtime, agentCode={}", agentCode);
             return false;
         }
-        RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
-        interruptible.interrupt(ctx);
         log.info("[workspace] interrupt issued, agentCode={}, sessionId={}", agentCode, sessionId);
         return true;
     }
 
-    /** {@link HarnessAgent} 本身只暴露不带 session 参数的 interrupt()（走错误的 defaultSessionId=agentCode），
-     * 真正按 (agentCode, sessionId) 精确路由需要拿到它内部委托的 {@link ReActAgent}。 */
-    private ReActAgent resolveInterruptible(Agent agent) {
+    /**
+     * 按 {@code (agentCode, sessionId)} 精确中断。
+     *
+     * <p><b>2.0.3 起不再下钻 {@code getDelegate()}</b>：上游 issue #1683 在该版本修复，
+     * {@code HarnessAgent} 补齐了 session-aware 的 {@code interrupt(RuntimeContext)}。
+     * 反编译确认它的实现就是 {@code delegate.interrupt(ctx)}——与原绕行<b>行为完全等价</b>，
+     * 但不再依赖内部结构，框架哪天重构 delegate 也不会断。
+     * （{@code AgentStateAccessor} 那处的 {@code getDelegate()} 仍然必需：
+     * {@code HarnessAgent.getAgentState()} 只有无参版本，取不到按会话的状态。）</p>
+     *
+     * @return 该运行时类型是否支持按会话中断
+     */
+    private boolean interruptBySession(Agent agent, RuntimeContext ctx) {
         if (agent instanceof ReActAgent reActAgent) {
-            return reActAgent;
+            reActAgent.interrupt(ctx);
+            return true;
         }
         if (agent instanceof HarnessAgent harnessAgent) {
-            return harnessAgent.getDelegate();
+            harnessAgent.interrupt(ctx);
+            return true;
         }
-        return null;
+        return false;
     }
 
     /**

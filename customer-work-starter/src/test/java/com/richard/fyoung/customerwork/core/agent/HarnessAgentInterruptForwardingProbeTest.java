@@ -14,7 +14,6 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 
 /**
@@ -51,18 +50,18 @@ class HarnessAgentInterruptForwardingProbeTest {
     }
 
     /**
-     * #1683 现状锁定：{@code HarnessAgent} <b>不</b>暴露 session-aware interrupt 重载。
-     * 若某次框架升级后这两个断言开始失败（方法出现了），说明 #1683 已被修复——行为漂移报警。
+     * #1683 已修复：{@code HarnessAgent} 暴露 session-aware interrupt 重载。
+     *
+     * <p>这两个方法一旦消失，{@code ChatService#interrupt} 会退回到按
+     * {@code defaultSessionId} 中断——那意味着<b>中断信号发给了错误的会话</b>，
+     * 用户点了停止而对话继续跑，且不报任何错。</p>
      */
     @Test
-    void harnessAgent_shouldNotExposeSessionAwareInterrupt_lockingIssue1683() {
-        // 只有无 session 的 interrupt() / interrupt(Msg)，没有 interrupt(RuntimeContext) / interrupt(String,String)
-        assertThrows(NoSuchMethodException.class,
-            () -> HarnessAgent.class.getMethod("interrupt", RuntimeContext.class),
-            "#1683 现状：HarnessAgent 不应有 interrupt(RuntimeContext)——出现即说明框架已修复，需复核绕行方案");
-        assertThrows(NoSuchMethodException.class,
-            () -> HarnessAgent.class.getMethod("interrupt", String.class, String.class),
-            "#1683 现状：HarnessAgent 不应有 interrupt(userId, sessionId)——出现即说明框架已修复");
+    void harnessAgent_exposesSessionAwareInterrupt_issue1683Fixed() throws NoSuchMethodException {
+        assertNotNull(HarnessAgent.class.getMethod("interrupt", RuntimeContext.class),
+            "HarnessAgent 失去了 interrupt(RuntimeContext)——中断会发给错误的会话且不报错");
+        assertNotNull(HarnessAgent.class.getMethod("interrupt", String.class, String.class),
+            "HarnessAgent 失去了 interrupt(userId, sessionId)");
     }
 
     /**
@@ -72,7 +71,8 @@ class HarnessAgentInterruptForwardingProbeTest {
     void delegateReActAgent_shouldExposeSessionAwareInterrupt() throws NoSuchMethodException {
         HarnessAgent agent = buildHarnessAgent();
         ReActAgent delegate = agent.getDelegate();
-        assertNotNull(delegate, "HarnessAgent.getDelegate() 应返回内层 ReActAgent（绕行 #1683 的抓手）");
+        assertNotNull(delegate, "getDelegate() 仍被 AgentStateAccessor 依赖："
+            + "HarnessAgent.getAgentState() 只有无参版本，按会话取状态只能下钻");
         assertInstanceOf(ReActAgent.class, delegate);
         // 委托类具备 session-aware interrupt（框架在 ReActAgent 层原生支持）
         assertNotNull(ReActAgent.class.getMethod("interrupt", RuntimeContext.class));
@@ -80,19 +80,21 @@ class HarnessAgentInterruptForwardingProbeTest {
     }
 
     /**
-     * "中断 → 会话状态不损坏"最小验收：经绕行路径按 (userId, sessionId) 发出中断信号不抛异常，
-     * 且 StateStore 仍可用（中断只是协作式置信号，不破坏已持久化的会话状态）。完整"中断→再次对话"
-     * 需真实模型驱动，属上线联调阶段，此处以离线可判定的状态完好性作门控。
+     * "中断 → 会话状态不损坏"最小验收：直接调 {@code HarnessAgent.interrupt(ctx)}
+     * （2.0.3 起的正路，不再经 delegate）不抛异常，且 StateStore 仍可用——
+     * 中断只是协作式置信号，不破坏已持久化的会话状态。
+     *
+     * <p>完整的"中断 → 再次对话"需真实模型驱动，属上线联调阶段；
+     * 这里以离线可判定的状态完好性作门控。</p>
      */
     @Test
-    void interruptViaDelegate_shouldNotCorruptSession() {
+    void interruptBySession_shouldNotCorruptSession() {
         HarnessAgent agent = buildHarnessAgent();
         RuntimeContext ctx = RuntimeContext.builder().userId("coder").sessionId("s1").build();
 
-        assertDoesNotThrow(() -> agent.getDelegate().interrupt(ctx),
-            "经委托按会话中断不应抛异常");
+        assertDoesNotThrow(() -> agent.interrupt(ctx), "按会话中断不应抛异常");
         assertNotNull(agent.getStateStore(), "中断后 StateStore 仍应可用，会话状态不因中断而损坏");
         // 幂等：再次中断同一会话仍安全
-        assertDoesNotThrow(() -> agent.getDelegate().interrupt(ctx));
+        assertDoesNotThrow(() -> agent.interrupt(ctx));
     }
 }

@@ -8,7 +8,6 @@ import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.a2a.server.AgentScopeA2aServer;
 import io.agentscope.core.agent.RuntimeContext;
-import io.agentscope.core.agent.StreamOptions;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -64,11 +63,12 @@ class AdminA2aSecurityTest {
             captured.set(AgentInvocationIdentity.capture());
             return RuntimeContext.builder().userId("agent-a").sessionId("agent-a").build();
         });
-        when(agent.stream(anyList(), any(StreamOptions.class), any(RuntimeContext.class)))
+        // 2.0.3：A2A runner 改吐细粒度 AgentEvent，协议转换收归框架
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
             .thenReturn(Flux.empty());
 
         new AdminAgentRunner(cache, factory, "agent-a", "test", "tenant-a", "fingerprint")
-            .stream(List.of(), null).blockLast();
+            .streamEvents(List.of(), null).blockLast();
 
         AgentInvocationIdentity identity = captured.get();
         assertEquals("tenant-a", identity.tenantId());
