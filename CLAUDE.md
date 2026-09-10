@@ -35,6 +35,20 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 记忆召回打分批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1858/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
+  **合计 3823**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+5**（记忆召回质量）。
+  本批次无迁移，cw Flyway 仍是下次 **V25**、admin **V102**。两条经验：
+  ① **一把混合了两类问题的尺子会给出相反的结论**：记忆召回改成 bigram 后，
+  按单一总召回率算是 0.80→0.60（看着是退步），而掉的全是「忌口 vs 过敏」这类
+  **没有共同实词**的同义改写——旧算法在它们上"召回成功"靠的是虚词碰巧命中，
+  同一个策略却会把「我的那个是不是耳机的」的正确答案挤出前三。
+  **按「该由这个策略负责」与「本就超出它能力」分组之后**，字面组 1.00、同义组 0.00，
+  真相才显出来。建评估集时先问：这些用例是不是同一类问题；
+  ② **记录现状的测试要写清「哪天它红了该怎么办」**：
+  `semanticParaphraseNotYetRecalled` 断言的是"同义改写当前召不回"，
+  注释里明确写了红了说明有人接上了语义召回、那时该把这组并入字面组的要求，
+  而不是把断言改回去——否则后来人会当成失效断言删掉。上一版基线见下。）
   （2026-09-10 P2 清扫批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1853/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
   **合计 3818**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+4**
