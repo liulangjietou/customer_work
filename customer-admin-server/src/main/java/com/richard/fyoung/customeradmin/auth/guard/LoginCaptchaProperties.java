@@ -35,19 +35,22 @@ public class LoginCaptchaProperties {
     /**
      * 单个来源 IP 在窗口内最多提交的拼图校验次数。
      *
-     * <p>校验次数必须远小于 challenge 签发数：刷新题目只消耗图片签发额度，
-     * 真正提交落点才消耗这里的猜测预算。</p>
+     * <p>允许正常拖动重试及同一出口的连续登录；仍低于 challenge 签发额度，
+     * 刷新题目不消耗落点校验预算。成功和失败均计数，防止通过成功请求绕过限流。</p>
      */
     @Positive
-    private int maxVerifyPerWindow = 3;
+    private int maxVerifyPerWindow = 10;
 
     /** 单个来源 IP 在窗口内最多尝试消费的登录 proof 次数。 */
     @Positive
     private int maxProofConsumePerWindow = 120;
 
-    /** challenge 签发、轨迹校验和 proof 消费共用的限流窗口（秒）。 */
+    /**
+     * challenge 签发、轨迹校验和 proof 消费共用的限流窗口（秒）。
+     * 默认覆盖一份 challenge 的生命周期，避免少量正常操作耗尽整小时登录额度。
+     */
     @Positive
-    private int rateLimitWindowSeconds = 3600;
+    private int rateLimitWindowSeconds = 120;
 
     /** 进程内模式下 challenge 与 proof 各自允许驻留的最大条数。 */
     @Positive

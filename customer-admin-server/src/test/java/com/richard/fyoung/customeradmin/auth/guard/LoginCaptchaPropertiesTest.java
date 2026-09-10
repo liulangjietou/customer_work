@@ -22,8 +22,8 @@ class LoginCaptchaPropertiesTest {
             assertThat(context).hasNotFailed();
             assertThat(context).hasSingleBean(LoginCaptchaProperties.class);
             LoginCaptchaProperties properties = context.getBean(LoginCaptchaProperties.class);
-            assertThat(properties.getMaxVerifyPerWindow()).isEqualTo(3);
-            assertThat(properties.getRateLimitWindowSeconds()).isEqualTo(3_600);
+            assertThat(properties.getMaxVerifyPerWindow()).isEqualTo(10);
+            assertThat(properties.getRateLimitWindowSeconds()).isEqualTo(120);
             assertThat(properties.isRateLimitWindowCoveringChallengeLifetime()).isTrue();
         });
     }

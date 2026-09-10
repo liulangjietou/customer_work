@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.auth.dto.LoginCaptchaVerifyRequest;
 import com.richard.fyoung.customeradmin.auth.dto.SliderTrackPoint;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.infra.counter.WindowCounter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -404,7 +405,43 @@ class LoginCaptchaServiceTest {
     }
 
     @Test
-    void verify_shouldAllowOnlyThreeAttemptsPerHourAcrossSuccessFailureAndUserAgentChanges() {
+    void defaults_shouldAllowRepeatedSuccessfulLoginsFromSameIp() {
+        LoginCaptchaService localService = new LoginCaptchaService(
+            new InMemoryLoginCaptchaStore(100, clock), properties,
+            new InMemoryWindowCounter(), clock, new SecureRandom(), imageGenerator);
+
+        // 使用真实计数器，覆盖同一出口连续登录，而非把放行结果预设为 true。
+        for (int attempt = 0; attempt < 4; attempt++) {
+            LoginCaptchaChallengeResponse challenge = localService.issueChallenge(IP, USER_AGENT);
+            clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+            LoginCaptchaProofResponse proof = assertDoesNotThrow(() -> localService.verify(
+                request(challenge, validTrajectory()), IP, USER_AGENT));
+            assertDoesNotThrow(() -> localService.consumeProof(proof.proof(), IP, USER_AGENT));
+        }
+    }
+
+    @Test
+    void defaults_shouldAllowRetryAfterThreeMisalignedDrags() {
+        LoginCaptchaService localService = new LoginCaptchaService(
+            new InMemoryLoginCaptchaStore(100, clock), properties,
+            new InMemoryWindowCounter(), clock, new SecureRandom(), imageGenerator);
+        int wrongPlacement = TARGET_X + TARGET_TOLERANCE + 1;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            LoginCaptchaChallengeResponse challenge = localService.issueChallenge(IP, USER_AGENT);
+            clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+            assertInvalid(() -> localService.verify(
+                request(challenge, wrongPlacement, validTrajectory(wrongPlacement)), IP, USER_AGENT));
+        }
+
+        LoginCaptchaChallengeResponse retry = localService.issueChallenge(IP, USER_AGENT);
+        clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+        assertDoesNotThrow(() -> localService.verify(request(retry, validTrajectory()), IP, USER_AGENT));
+    }
+
+    @Test
+    void verify_shouldHonorExplicitStricterLimitsAcrossSuccessFailureAndUserAgentChanges() {
+        properties.setMaxVerifyPerWindow(3);
+        properties.setRateLimitWindowSeconds(3_600);
         InMemoryLoginCaptchaStore store = spy(new InMemoryLoginCaptchaStore(100, clock));
         LoginCaptchaService localService = new LoginCaptchaService(
             store, properties, counter, clock, new SecureRandom(), imageGenerator);
@@ -435,6 +472,27 @@ class LoginCaptchaServiceTest {
             org.mockito.ArgumentMatchers.startsWith("admin:login-captcha:verify:"),
             eq(3), eq(3_600));
         verify(store, times(3)).consumeChallenge(anyString(), anyString());
+    }
+
+    @Test
+    void defaults_shouldStillRejectExcessiveVerificationWithoutConsumingChallenge() {
+        InMemoryLoginCaptchaStore store = spy(new InMemoryLoginCaptchaStore(100, clock));
+        LoginCaptchaService localService = new LoginCaptchaService(
+            store, properties, new InMemoryWindowCounter(), clock, new SecureRandom(), imageGenerator);
+        for (int attempt = 0; attempt < properties.getMaxVerifyPerWindow(); attempt++) {
+            LoginCaptchaChallengeResponse challenge = localService.issueChallenge(IP, USER_AGENT);
+            clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+            assertDoesNotThrow(() -> localService.verify(
+                request(challenge, validTrajectory()), IP, USER_AGENT));
+        }
+        LoginCaptchaChallengeResponse excess = localService.issueChallenge(IP, USER_AGENT);
+        clock.advance(LoginCaptchaProtocol.MIN_DURATION_MS);
+
+        BizException error = assertThrows(BizException.class, () -> localService.verify(
+            request(excess, validTrajectory()), IP, USER_AGENT));
+
+        assertEquals(ResultCode.LOGIN_CAPTCHA_TOO_FREQUENT, error.getResultCode());
+        verify(store, times(properties.getMaxVerifyPerWindow())).consumeChallenge(anyString(), anyString());
     }
 
     @Test
