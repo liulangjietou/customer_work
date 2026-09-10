@@ -104,12 +104,17 @@ public class AgentStateConflictMetrics {
      */
     static void recordQuietly(Agent agent, String owner) {
         AgentStateConflictMetrics current = instance;
-        ReActAgent reActAgent = unwrap(agent);
-        if (current == null || reActAgent == null) {
+        if (current == null) {
             return;
         }
+        // try 必须罩住 unwrap 在内的每一步：调用方 AgentResourceCloser#closeQuietly 的契约是
+        // 「异常只记录、不阻断释放」，而本方法排在它的 try 之前。这里漏出去一个异常，
+        // 关 Agent 与关 Toolkit 就都不会执行——为了一个旁路指标丢掉资源释放，代价完全不成比例。
         try {
-            current.record(reActAgent.getStateConflictCount(), owner);
+            ReActAgent reActAgent = unwrap(agent);
+            if (reActAgent != null) {
+                current.record(reActAgent.getStateConflictCount(), owner);
+            }
         } catch (Exception e) {
             log.error("Agent state conflict metrics failed, code={}, owner={}",
                 "AGENT-STATE-CONFLICT-METRIC-FAIL", owner, e);
