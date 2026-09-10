@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V101
+-- 对应版本：Flyway V102
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -368,6 +368,7 @@ CREATE TABLE `ai_chat_session_state` (
   `state_data` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `version` bigint NOT NULL DEFAULT '0' COMMENT '乐观锁版本号（AgentScope 2.0.3 saveIfVersion 的 CAS 依据）',
   PRIMARY KEY (`session_id`,`state_key`,`item_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体对话状态持久化（AgentStateStore，含短期记忆/对话历史）';
 

@@ -5,6 +5,7 @@ import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.SubjectToolAuthorizationMiddleware;
 import com.richard.fyoung.customerwork.safety.security.SensitiveDataMasker;
+import com.richard.fyoung.customerwork.core.agent.AgentStateConflictMetrics;
 import com.richard.fyoung.customerwork.tool.mcp.McpToolAuthorizationRegistry;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.permission.PermissionMode;
@@ -58,6 +59,20 @@ public class AdminAgentRuntimeConfig {
     @Bean
     public AgentStateStore agentStateStore(DataSource dataSource) {
         return new MysqlAgentStateStore(dataSource, databaseName, TABLE_NAME, false);
+    }
+
+    /**
+     * 会话状态并发写冲突计量（starter 的 {@code @Component}，本模块排除了自动装配后必须显式建）。
+     *
+     * <p>不建的后果是<b>无声</b>而不是报错：{@code AgentResourceCloser} 是 admin 也在用的静态释放入口，
+     * 它按进程内唯一实例上报，实例不存在时静默跳过。于是升级到 2.0.3 之后，客服端能看到状态冲突、
+     * 后台看不到——而后台的 VibeCoding 长任务与多标签页同会话恰恰是更容易并发写状态的场景。
+     * 这正是本文件里已经记过一次的"能力只接在一条路径上"，脱敏与注入防护当年就是这么漏的。</p>
+     */
+    @Bean
+    public AgentStateConflictMetrics agentStateConflictMetrics(
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        return new AgentStateConflictMetrics(meterRegistryProvider.getIfAvailable());
     }
 
     @Bean

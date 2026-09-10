@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.core.runtime;
 
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.state.State;
+import io.agentscope.core.state.VersionedState;
 
 import java.util.List;
 import java.util.Optional;
@@ -20,6 +21,13 @@ import java.util.Set;
  * <p>只在 {@code sessionId} 里替换掉路径分隔符再转发给底层 store，其余参数原样透传；真实业务
  * sessionId（VibeCoding 用的 UUID）本身不含 {@code /}，转义是幂等的，不影响正常对话状态的存取。
  * 由调用方决定何时套这层装饰（如仅在 docker 沙箱模式下），starter 不注册为 Bean。</p>
+ *
+ * <p><b>装饰器必须转发接口的每一个方法，包括带默认实现的那些</b>。AgentScope 2.0.3 给
+ * {@link AgentStateStore} 新增了乐观并发三件套（{@code supportsVersioning} /
+ * {@code getVersioned} / {@code saveIfVersion}），三者都带 default 实现——不转发不会编译失败，
+ * 只会让 {@code supportsVersioning()} 恒返回 default 的 {@code false}，于是被装饰的
+ * MySQL store 明明支持版本化，套上这层壳之后框架就退回无版本写入了。
+ * 能力被中途吞掉且不报任何错，是本仓库反复踩过的形状。</p>
  * @author owlzhangfq@gmail.com
  */
 public class SandboxSafeAgentStateStore implements AgentStateStore {
@@ -67,6 +75,25 @@ public class SandboxSafeAgentStateStore implements AgentStateStore {
     @Override
     public void delete(String userId, String sessionId, String stateKey) {
         delegate.delete(userId, sanitize(sessionId), stateKey);
+    }
+
+    // ---------- 乐观并发（2.0.3）：一律转发给被装饰的 store 判定与执行 ----------
+
+    @Override
+    public boolean supportsVersioning() {
+        return delegate.supportsVersioning();
+    }
+
+    @Override
+    public <T extends State> VersionedState<T> getVersioned(String userId, String sessionId,
+                                                           String stateKey, Class<T> clazz) {
+        return delegate.getVersioned(userId, sanitize(sessionId), stateKey, clazz);
+    }
+
+    @Override
+    public long saveIfVersion(String userId, String sessionId, String stateKey,
+                              State state, long expectedVersion) {
+        return delegate.saveIfVersion(userId, sanitize(sessionId), stateKey, state, expectedVersion);
     }
 
     @Override
