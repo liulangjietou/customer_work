@@ -282,3 +282,68 @@ AgentScope Java 官方 Release Notes 对"2.0 系列"的描述偏总览性质，�
 - **未做"RC4 之后新提交且已关闭"的全量搜索**——只核对了文档历史引用过的 29 个 legacy issue 的关闭情况，
   可能遗漏其他已随 GA 修复、但未被本文档历史引用过的 bug。
 - 详细的逐条结论更新见 [生产就绪评估.md](生产就绪评估.md) 第四～七节。
+
+---
+
+## 10. 2.0.2 → 2.0.3 升级（2026-09-10）
+
+### 10.1 两处编译期破坏，都在 admin 侧
+
+starter 零改动。
+
+**`AgentRunner`**：`stream(List, AgentRequestOptions)` → `streamEvents(...)`，返回类型从
+`Flux<Event>`（A2A 协议事件）换成 `Flux<AgentEvent>`（框架细粒度事件），**协议转换收归框架**。
+
+这正是 `AdminAgentRunner` 那段注释预告的时机——它当时写着「`AgentRunner#stream` 的返回类型被框架
+写死为 `Flux<Event>`，就是那个废弃类型本身；框架自带的 `BaseReActAgentRunner` 也仍在调
+`agent.stream(msgs)`——A2A 这一层框架自己都没迁……等框架把 A2A 层迁到细粒度事件后再跟进」。
+2.0.3 迁了，于是跟进：内部改调 `agent.streamEvents(msgs, ctx)`，并去掉 `StreamOptions`
+的事件类型过滤（新接口下由框架决定哪些事件进协议包，调用方自行裁剪会与框架的去重/拼包语义打架）。
+
+**`TaskRepository`**：接口新增 `public shutdown()`，与项目那个包级私有的 `@PreDestroy` 方法撞名
+（报「正在尝试分配更低的访问权限」）；`removeTask` / `clear` 不再是接口方法。
+前者提升为 public 并标 `@Override`，后者去掉 `@Override` 但保留方法本身（管理台仍在用）。
+
+### 10.2 上游 #1683 修复：探针如期变红
+
+`HarnessAgentInterruptForwardingProbeTest` 断言的是「框架**还没**修 #1683」，
+失败消息写着「出现即说明框架已修复，需复核绕行方案」。升级当天它立刻变红——
+**这正是这类「记录现状」的探针被设计出来要做的事**。
+
+2.0.3 给 `HarnessAgent` 补齐了全部四个 session-aware `interrupt` 重载。反编译确认
+`interrupt(RuntimeContext)` 的实现就是 `delegate.interrupt(ctx)`——与项目原绕行**行为完全等价**，
+所以 `ChatService#interrupt` 改用新 API 是零风险的，收益是不再依赖内部结构。
+
+`AgentStateAccessor` 那处的 `getDelegate()` **刻意保留**：`HarnessAgent.getAgentState()`
+只有无参版本，取不到按会话的状态。
+
+### 10.3 需要留意的行为变更（本次未处理）
+
+| 变更 | 影响 |
+|---|---|
+| agent state 加载失败**不再静默替换**为新会话（#2760） | 原本靠静默降级跑着的部署会开始报错——这是好事，但升级后可能出现新的失败告警 |
+| `ThinkingBlock` token 按真实内容计数（#3009） | token 统计数字会变，**影响配额判定与账单金额** |
+| `Retry empty final responses`（#2755） | 推理模型把答案写进 `reasoning_content` 时会重试，可能多一次模型调用 |
+| `OkHttpTransport` SSE 背压修复（#2963） | 流式首字延迟的**收益**，无需改动 |
+| `ToolResultBlock.metadata` 通过细粒度事件传播（#2315） | 引用回传（PR #180）当初正是因为拿不到 metadata 才改走文本标记，现在有了更干净的替代路径 |
+
+### 10.4 一个从 2.0.2 起就存在、此前被漏看的事实
+
+编译告警显示框架已把**整套 RAG 与长期记忆 API 标记为 `forRemoval`**：
+
+| API | 项目引用处 |
+|---|---|
+| `rag.Knowledge` | 37 |
+| `memory.LongTermMemory` | 32 |
+| `hook.Hook` | 20 |
+| `hook.recorder.JsonlTraceExporter` | 11 |
+| `rag.model.RetrieveConfig` | 10 |
+| `tracing.TracerRegistry` | 7 |
+
+**这不是 2.0.3 引入的**——逐个反编译对比确认 2.0.2 的 class 文件里就带着 `Deprecated` 标记，
+是批次二升级到 2.0.2 时漏看了编译告警。2.0.3 的 release notes 也没有 Deprecated 段、
+未给出替代方案。
+
+**待办**：这几套 API 一旦在某个版本真被移除，项目会直接编译不过。下次升级前应当先查清
+框架给出的替代路径（`Knowledge` 那 37 处可能随知识库改用外部 kb-rag 而自然消解，
+但长期记忆的 32 处、Hook 的 20 处仍需迁移方案）。

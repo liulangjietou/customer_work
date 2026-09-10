@@ -1,6 +1,6 @@
 # customer-work 项目工作手册（AI 会话用）
 
-基于 AgentScope Java 2.0.0 GA 的生产级智能客服系统 + 后台管理系统。本文件只放**每次会话都需要的事实与坑**；
+基于 AgentScope Java 2.0.3 的生产级智能客服系统 + 后台管理系统。本文件只放**每次会话都需要的事实与坑**；
 细节现场读代码和 docs/ 下的文档，不要在这里复制它们。
 
 ## 模块结构
@@ -16,7 +16,7 @@
 
 ## 分支策略
 
-- `main` = AgentScope 2.0.0 GA（2026-07 起）。**有分支保护，禁止直接 push，必须走 PR**。
+- `main` = AgentScope 2.0.3（2026-07 起 2.0.0 GA，批次二升 2.0.2，2026-09-10 升 2.0.3）。**有分支保护，禁止直接 push，必须走 PR**。
 - `legacy-main-1.0.12` 标签 = 升级前 1.0.12 最后状态；`rc2.0` 分支 = RC4 首轮迁移存档；`ga2.0` 分支 = 已并入 main 的历史开发分支（保留不删）。
 
 ## 构建与测试（关键坑，全部实测踩过）
@@ -35,6 +35,24 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-10 AgentScope 2.0.3 升级批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 1871/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
+  **合计 3836**——与升级前完全一致，无行为回归。本批次无新增用例、无迁移，
+  cw Flyway 仍是下次 **V25**、admin **V102**。四条经验：
+  ① **两处编译期破坏都在 admin 侧，starter 零改动**：`AgentRunner.stream` → `streamEvents`
+  且返回类型换成 `Flux<AgentEvent>`（协议转换收归框架）；`TaskRepository` 新增
+  `public shutdown()` 与项目的包级 `@PreDestroy` 方法撞名、`removeTask`/`clear` 不再是接口方法；
+  ② **「记录现状」的探针如期变红，这是它的使命**：`HarnessAgentInterruptForwardingProbeTest`
+  断言"框架还没修 #1683"，升级当天立刻红。2.0.3 补齐了 session-aware interrupt，
+  **反编译确认新 API 的实现就是 `delegate.interrupt(ctx)`、与原绕行等价**，故改用新 API 零风险。
+  写这类探针时一定要在失败消息里写清"红了说明什么、该怎么办"；
+  ③ **升级后要看 deprecation 告警，不只看编译是否通过**：本次发现框架已把整套
+  `rag.Knowledge`（37 处）、`memory.LongTermMemory`（32 处）、`hook.Hook`（20 处）
+  标记为 `forRemoval`——而**逐个反编译对比确认 2.0.2 就带着这些标记，是批次二漏看了**。
+  release notes 没有 Deprecated 段，只有编译告警会说。下次升级前要先查清替代路径；
+  ④ 三条行为变更需留意：agent state 加载失败**不再静默替换**为新会话（原本静默降级的部署会开始报错）、
+  `ThinkingBlock` token 按真实内容计数（**影响配额与账单金额**）、
+  推理模型答案落在 `reasoning_content` 时会重试（可能多一次模型调用）。上一版基线见下。）
   （2026-09-10 槽位填充接入主链路批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1871/9 skip、app-server 137、customer-channel 82、admin 1745/1 skip、gateway 1，
   **合计 3836**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+8**
