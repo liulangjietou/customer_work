@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V104
+-- 对应版本：Flyway V105
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -2454,7 +2454,8 @@ INSERT INTO `sys_permission` (`id`, `parent_id`, `perm_name`, `perm_code`, `type
   (266, 232, '审核评测数据集版本', 'eval:dataset-review', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
   (267, 194, '隔离重放调用', 'agent-call-stats:replay', 2, NULL, NULL, 'library', 2, NULL, NULL, 0),
   (268, 257, '确认 SLO 告警', 'slo:ack', 2, NULL, NULL, 'library', 3, NULL, NULL, 0),
-  (269, 231, '管理改进闭环', 'improvement:manage', 2, NULL, NULL, 'library', 20, NULL, NULL, 0);
+  (269, 231, '管理改进闭环', 'improvement:manage', 2, NULL, NULL, 'library', 20, NULL, NULL, 0),
+  (270, 200, '预览知识原文', 'knowledge-base:source-preview', 2, NULL, NULL, 'library', 5, NULL, NULL, 0);
 
 -- ----------------------------------------------------------------------------
 -- sys_role · 系统种子数据

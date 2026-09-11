@@ -1036,6 +1036,28 @@ export interface KnowledgeBaseVersionVO {
   createTime: string
 }
 
+export interface KnowledgeVersionDocumentVO {
+  knowledgeBaseId: number
+  versionId: number
+  versionNo: number
+  revisionId: number
+  status: 'AVAILABLE' | 'FORBIDDEN' | 'UNAVAILABLE'
+  title: string | null
+  externalId: string | null
+  sourceName: string | null
+  sourceVersion: string | null
+  sourceUri: string | null
+  contentHash: string | null
+  currentRevision: boolean
+  sourceUpdatedAt: string | null
+  revisionCreatedAt: string | null
+}
+
+export interface KnowledgeDocumentPreviewVO {
+  document: KnowledgeVersionDocumentVO
+  content: string
+}
+
 export interface KnowledgeSourceVO {
   id: number
   knowledgeBaseId: number
