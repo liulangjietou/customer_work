@@ -24,6 +24,8 @@ export function streamVibeCoding(agentCode: string, req: ChatRequest, handlers: 
   const body = {
     sessionId: req.sessionId,
     message: req.message,
+    // 原文可能为空（仅附件输入），不能用模型材料作为空字符串的兜底。
+    rawInput: req.rawInput,
     collaboration: req.collaboration ?? false,
     mode: req.mode,
     attachmentIds: req.attachmentIds,
