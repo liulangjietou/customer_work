@@ -48,6 +48,20 @@ class AgentAccessCredentialTest {
     }
 
     @Test
+    void subscriptionScopeIsSignedAndCannotBeRemovedToGainCommandAccess() {
+        long now = System.currentTimeMillis();
+        String token = AgentAccessCredential.signSubscription("agent-1", "tenant-a", now + 60_000, SECRET);
+        var identity = AgentAccessCredential.verifyIdentity(token, SECRET, now).orElseThrow();
+        assertTrue(identity.subscriptionOnly());
+        assertEquals(now + 60_000, identity.expiresAtMs());
+        assertTrue(AgentAccessCredential.verifyIdentity(token.replace(":SUBSCRIBE", ""), SECRET, now).isEmpty());
+        assertTrue(AgentAccessCredential.verifyIdentity(token.replace(":SUBSCRIBE", ":COMMAND"), SECRET, now).isEmpty());
+        org.junit.jupiter.api.Assertions.assertFalse(AgentAccessCredential.verifyIdentity(
+            AgentAccessCredential.sign("agent-1", "tenant-a", now + 60_000, SECRET), SECRET, now)
+            .orElseThrow().subscriptionOnly());
+    }
+
+    @Test
     void verify_expiredToken_shouldReject() {
         long now = System.currentTimeMillis();
         String token = AgentAccessCredential.sign("agent-1", now - 1_000, SECRET);

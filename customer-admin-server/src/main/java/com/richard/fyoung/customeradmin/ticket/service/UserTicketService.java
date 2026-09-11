@@ -4,6 +4,7 @@ import com.richard.fyoung.customeradmin.ticket.client.CustomerWorkTicketClient;
 import com.richard.fyoung.customeradmin.ticket.config.CustomerWorkClientProperties;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketDetailVO;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketMessageVO;
+import com.richard.fyoung.customeradmin.ticket.dto.TicketMessageReceiptVO;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageResult;
 import com.richard.fyoung.customeradmin.ticket.dto.WsCredentialVO;
@@ -46,8 +47,14 @@ public class UserTicketService {
         client.claim(id);
     }
 
-    public void reply(String id, String content) {
-        client.reply(id, content);
+    /** 透传实际保存结果，后台不生成第二套消息号。 */
+    public TicketMessageVO reply(String id, String content, String clientMsgId) {
+        return client.reply(id, content, clientMsgId);
+    }
+
+    /** 按当前坐席凭证核对回复。 */
+    public TicketMessageReceiptVO receipt(String id, String clientMsgId) {
+        return client.receipt(id, clientMsgId);
     }
 
     public void hold(String id, String reason) {
@@ -88,9 +95,9 @@ public class UserTicketService {
         long expiresAtMs = System.currentTimeMillis()
             + Duration.ofHours(properties.getCredentialExpireHours()).toMillis();
         String tenantId = TenantContext.get();
-        String token = tenantId == null
-            ? AgentAccessCredential.sign(agentId, expiresAtMs, properties.getAgentSecret())
-            : AgentAccessCredential.sign(agentId, tenantId, expiresAtMs, properties.getAgentSecret());
-        return new WsCredentialVO(token, properties.getWsUrl(), expiresAtMs, agentId);
+        String token = AgentAccessCredential.signSubscription(agentId,
+            tenantId == null ? TenantContext.DEFAULT : tenantId, expiresAtMs, properties.getAgentSecret());
+        return new WsCredentialVO(token, properties.getWsUrl(), expiresAtMs, agentId,
+            tenantId == null ? TenantContext.DEFAULT : tenantId);
     }
 }

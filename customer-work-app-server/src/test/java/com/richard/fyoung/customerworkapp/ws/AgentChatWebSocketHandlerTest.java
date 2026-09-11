@@ -34,6 +34,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
+import java.time.Duration;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.argThat;
 
 class AgentChatWebSocketHandlerTest {
 
@@ -42,6 +49,50 @@ class AgentChatWebSocketHandlerTest {
     @AfterEach
     void clearTenantContext() {
         TenantContext.clear();
+    }
+
+    @Test
+    void subscriptionCredentialCanListenAndPingButCannotSubmitChat() {
+        CustomerWorkProperties properties = new CustomerWorkProperties();
+        properties.getTenant().setEnabled(true);
+        properties.getAgentAccess().setSecret(SECRET);
+        ChatDispatchService dispatch = mock(ChatDispatchService.class);
+        WsSessionRegistry registry = mock(WsSessionRegistry.class);
+        WebSocketSession session = mock(WebSocketSession.class);
+        Sinks.Many<String> sink = Sinks.many().unicast().onBackpressureBuffer();
+        String token = AgentAccessCredential.signSubscription("agent-1", "tenant-a", System.currentTimeMillis() + 60_000L, SECRET);
+        when(session.getHandshakeInfo()).thenReturn(handshake("/ws/agent?token=" + token));
+        WebSocketMessage reply = textFrame("{\"type\":\"chat\",\"data\":{\"ticketId\":\"TK-1\",\"content\":\"reply\",\"clientMsgId\":\"req-1\"}}");
+        WebSocketMessage ping = textFrame("{\"type\":\"ping\"}");
+        when(session.receive()).thenReturn(Flux.just(reply, ping));
+        when(session.send(any())).thenReturn(Mono.never());
+        when(registry.registerAgent("agent-1")).thenReturn(sink);
+        List<String> publishTenants = new ArrayList<>();
+        when(registry.pushToAgent(any(), any())).thenAnswer(call -> { publishTenants.add(TenantContext.get()); return true; });
+        StepVerifier.create(new AgentChatWebSocketHandler(properties, dispatch, registry, new ObjectMapper())
+            .handle(session)).verifyComplete();
+        verifyNoInteractions(dispatch);
+        verify(registry).pushToAgent(eq("agent-1"), argThat(frame ->
+            frame.data() instanceof Map<?, ?> data && "AGENT_SUBSCRIPTION_ONLY".equals(data.get("code"))));
+        verify(registry).pushToAgent(eq("agent-1"), argThat(frame -> "pong".equals(frame.type())));
+        assertEquals(List.of("tenant-a", "tenant-a"), publishTenants);
+    }
+
+    @Test
+    void activeConnectionClosesAtSignedCredentialExpiry() {
+        CustomerWorkProperties properties = new CustomerWorkProperties();
+        properties.getAgentAccess().setSecret(SECRET);
+        WsSessionRegistry registry = mock(WsSessionRegistry.class);
+        WebSocketSession session = mock(WebSocketSession.class);
+        String token = AgentAccessCredential.signSubscription("agent-1", "default", System.currentTimeMillis() + 60_000L, SECRET);
+        when(session.getHandshakeInfo()).thenReturn(handshake("/ws/agent?token=" + token));
+        when(session.receive()).thenReturn(Flux.never());
+        when(session.send(any())).thenReturn(Mono.never());
+        when(session.close(CloseStatus.POLICY_VIOLATION)).thenReturn(Mono.empty());
+        when(registry.registerAgent("agent-1")).thenReturn(Sinks.many().unicast().onBackpressureBuffer());
+        var handler = new AgentChatWebSocketHandler(properties, mock(ChatDispatchService.class), registry, new ObjectMapper());
+        StepVerifier.withVirtualTime(() -> handler.handle(session)).thenAwait(Duration.ofSeconds(61)).verifyComplete();
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
     }
 
     @Test
@@ -196,7 +247,7 @@ class AgentChatWebSocketHandlerTest {
         when(accessGuard.check("tenant-a", null, false)).thenAnswer(invocation -> frozen.get()
             ? new TenantAccessDecision(TenantAccessDecision.Kind.ACCESS_DENIED, 5L)
             : TenantAccessDecision.allowed(4L));
-        when(dispatch.onAgentMessage("agent-1", "ticket-1", "first")).thenAnswer(invocation -> {
+        when(dispatch.onAgentMessage("agent-1", "ticket-1", "first", null)).thenAnswer(invocation -> {
             frozen.set(true);
             return Mono.empty();
         });
@@ -211,7 +262,7 @@ class AgentChatWebSocketHandlerTest {
 
         StepVerifier.create(handler.handle(session)).verifyComplete();
 
-        verify(dispatch).onAgentMessage("agent-1", "ticket-1", "first");
+        verify(dispatch).onAgentMessage("agent-1", "ticket-1", "first", null);
         verifyNoMoreInteractions(dispatch);
         verify(accessGuard, times(5)).check("tenant-a", null, false);
         verify(registry).disconnectTenant("tenant-a");

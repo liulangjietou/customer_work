@@ -22,7 +22,7 @@ for (const item of [
   {
     path: '/ticket/user-ticket',
     api: '/ticket/page',
-    empty: '暂无符合条件的用户工单',
+    empty: '暂无符合条件的工单',
     payload: { items: [], total: 0 },
   },
   {
@@ -46,6 +46,7 @@ for (const item of [
 ]) {
   test(`${item.path} 首次加载失败后可原地重试，不呈现空数据`, async ({ page }) => {
     let attempts = 0
+    let failing = true
     await page.route(`**/api${item.api}?**`, async (route) => {
       // 智能体编辑器加载关联选项使用独立大页查询，不干扰列表故障场景。
       if (new URL(route.request().url()).searchParams.get('pageSize') !== '10')
@@ -55,7 +56,7 @@ for (const item of [
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(
-          attempts === 1
+          failing
             ? { code: 50000, message: '暂时无法连接数据服务' }
             : { code: 0, message: 'success', data: item.payload },
         ),
@@ -66,10 +67,12 @@ for (const item of [
     const error = page.locator('.crud-load-state')
     await expect(error).toContainText('数据加载失败')
     await expect(page.getByText(item.empty, { exact: true })).not.toBeVisible()
+    const attemptsBeforeRetry = attempts
+    failing = false
     await error.getByRole('button', { name: '重新加载', exact: true }).click()
     await expect(error).not.toBeVisible()
     await expect(page.getByText(item.empty, { exact: true })).toBeVisible()
-    expect(attempts).toBe(2)
+    expect(attempts).toBeGreaterThan(attemptsBeforeRetry)
   })
 }
 
@@ -137,14 +140,16 @@ test('切换评测类型遇到失败时，不沿用前一类型的指标与数�
 })
 
 test('工单刷新失败保留已有记录，成功重试后替换', async ({ page }) => {
-  let attempts = 0
+  let failNext = false
+  let refreshed = false
   await page.route('**/api/ticket/page?**', async (route) => {
-    attempts += 1
+    const failing = failNext
+    failNext = false
     const row = {
       id: 'ticket-example',
       sessionId: 'session-example',
       userId: 'customer-example',
-      title: attempts === 1 ? '需要核对配送时间' : '配送时间已确认',
+      title: refreshed ? '配送时间已确认' : '需要核对配送时间',
       category: 'ORDER',
       priority: 'NORMAL',
       status: 'PROCESSING',
@@ -156,7 +161,7 @@ test('工单刷新失败保留已有记录，成功重试后替换', async ({ pa
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(
-        attempts === 2
+        failing
           ? { code: 50000, message: '暂时无法连接数据服务' }
           : { code: 0, message: 'success', data: { total: 1, items: [row] } },
       ),
@@ -164,9 +169,13 @@ test('工单刷新失败保留已有记录，成功重试后替换', async ({ pa
   })
   await page.goto('/ticket/user-ticket')
   await expect(page.getByText('需要核对配送时间', { exact: true })).toBeVisible()
+  await expect(page.getByText('实时在线', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).not.toHaveClass(/is-loading/)
+  failNext = true
   await page.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(page.locator('.crud-load-state')).toContainText('已保留上次结果')
   await expect(page.getByText('需要核对配送时间', { exact: true })).toBeVisible()
+  refreshed = true
   await page.getByRole('button', { name: '重新加载', exact: true }).click()
   await expect(page.getByText('配送时间已确认', { exact: true })).toBeVisible()
   await expect(page.locator('.crud-load-state')).not.toBeVisible()

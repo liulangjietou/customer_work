@@ -7,11 +7,14 @@ import com.richard.fyoung.customeradmin.ticket.dto.OrderPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.OrderPageResult;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketDetailVO;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketMessageVO;
+import com.richard.fyoung.customeradmin.ticket.dto.TicketMessageReceiptVO;
+import com.richard.fyoung.customeradmin.ticket.dto.TicketReplyRequest;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.ResourceAccessException;
@@ -97,8 +100,16 @@ public class CustomerWorkTicketClient {
     }
 
     /** 坐席回复。 */
-    public void reply(String id, String content) {
-        post(id, "/reply", Map.of("content", content));
+    public TicketMessageVO reply(String id, String content, String clientMsgId) {
+        return execute(() -> restClient.post().uri(TICKETS_PATH + "/{id}/reply", id)
+            .body(new TicketReplyRequest(content, clientMsgId)).retrieve().body(TicketMessageVO.class));
+    }
+
+    /** 核对本人发送的消息，不计为再次回复。 */
+    public TicketMessageReceiptVO receipt(String id, String clientMsgId) {
+        return execute(() -> restClient.get()
+            .uri(TICKETS_PATH + "/{id}/receipts/{clientMsgId}", id, clientMsgId)
+            .retrieve().body(TicketMessageReceiptVO.class));
     }
 
     /** 挂起（reason 可选）。 */
@@ -219,6 +230,15 @@ public class CustomerWorkTicketClient {
         int status = e.getStatusCode().value();
         if (status == HTTP_CONFLICT) {
             return new BizException(ResultCode.TICKET_STATE_CONFLICT);
+        }
+        if (status == HTTP_NOT_FOUND) {
+            return new BizException(ResultCode.RESOURCE_NOT_FOUND);
+        }
+        if (status == HttpStatus.FORBIDDEN.value()) {
+            return new BizException(ResultCode.FORBIDDEN);
+        }
+        if (status == HttpStatus.BAD_REQUEST.value()) {
+            return new BizException(ResultCode.PARAM_INVALID);
         }
         if (status == HTTP_UNAUTHORIZED) {
             log.error("customer-work auth failed, code={}, status={}", CLIENT_AUTH_FAIL, status, e);

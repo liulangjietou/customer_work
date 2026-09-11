@@ -42,6 +42,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import static org.mockito.Mockito.doReturn;
 
 /**
  * 对话分发核心单测：关键词转人工不进 LLM、AI 流式桥接、坐席转发、新会话自动建单、标题回填、坐席消息离线只落库。
@@ -66,6 +67,8 @@ class ChatDispatchServiceTest {
     @BeforeEach
     void setUp() {
         ticketService = mock(TicketService.class);
+        lenient().doAnswer(call -> ticketService.findActiveBySession(SESSION_ID))
+            .when(ticketService).findForUpdate(anyString());
         chatLogService = spy(new ChatLogService(new InMemoryChatMessageStore()));
         chatTurnService = mock(ChatTurnService.class);
         keywordDetector = mock(HandoffKeywordDetector.class);
@@ -246,6 +249,7 @@ class ChatDispatchServiceTest {
         when(ticketService.findActiveBySession(SESSION_ID)).thenReturn(Optional.empty());
         when(ticketService.createForSession(SESSION_ID, USER_ID, null, TicketCategory.CONSULT))
             .thenReturn(created);
+        doReturn(Optional.of(created)).when(ticketService).findForUpdate("TK-1");
         when(keywordDetector.hit(anyString())).thenReturn(false);
         when(chatTurnService.stream(anyString(), anyString(), anyString())).thenReturn(turn("hi"));
 
@@ -267,7 +271,7 @@ class ChatDispatchServiceTest {
         Ticket processing = aiServing();
         processing.requestHandoff("x");
         processing.claim("agent-1");
-        when(ticketService.find("TK-1")).thenReturn(Optional.of(processing));
+        doReturn(Optional.of(processing)).when(ticketService).findForUpdate("TK-1");
         when(registry.pushToUser(eq(USER_ID), any())).thenReturn(false); // 用户离线
 
         StepVerifier.create(dispatch.onAgentMessage("agent-1", "TK-1", "已为您处理")).verifyComplete();
@@ -282,7 +286,7 @@ class ChatDispatchServiceTest {
         Ticket processing = aiServing();
         processing.requestHandoff("x");
         processing.claim("agent-1");
-        when(ticketService.find("TK-1")).thenReturn(Optional.of(processing));
+        doReturn(Optional.of(processing)).when(ticketService).findForUpdate("TK-1");
 
         StepVerifier.create(dispatch.onAgentMessage("agent-2", "TK-1", "越权回复")).verifyComplete();
 

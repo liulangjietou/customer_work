@@ -76,6 +76,20 @@ public record WsFrame(String type, Object data) {
         return new WsFrame(TYPE_CHAT, data);
     }
 
+    /** 客户和坐席转发共用持久化消息投影，游标必须来自消息表。 */
+    public static WsFrame chatMessage(ChatMessage message) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_ID, message.id());
+        data.put(KEY_MESSAGE_ID, message.messageId());
+        data.put(KEY_SESSION_ID, message.sessionId());
+        data.put(KEY_TICKET_ID, message.ticketId());
+        data.put(KEY_SENDER_TYPE, message.senderType().name());
+        data.put(KEY_SENDER_ID, message.senderId());
+        data.put(KEY_CONTENT, message.content());
+        data.put(KEY_TS, message.createdAtMs());
+        return chat(data);
+    }
+
     /** 受理回执只使用存储返回的消息号和游标，前端据此替换临时气泡并核对重发。 */
     public static WsFrame chatAccepted(String clientMsgId, ChatMessage message) {
         Map<String, Object> data = new LinkedHashMap<>();
@@ -185,6 +199,15 @@ public record WsFrame(String type, Object data) {
         data.put(KEY_CLIENT_MSG_ID, clientMsgId);
         data.put(KEY_ACCEPTANCE, acceptance);
         return new WsFrame(TYPE_ERROR, data);
+    }
+
+    /** 坐席按工单核对发送，错误帧必须携带对应工单而非拿工单号冒充会话号。 */
+    @SuppressWarnings("unchecked")
+    public static WsFrame agentMessageError(String code, String message, String ticketId,
+                                             String clientMsgId, String acceptance) {
+        WsFrame frame = messageError(code, message, null, clientMsgId, acceptance);
+        ((Map<String, Object>) frame.data()).put(KEY_TICKET_ID, ticketId);
+        return frame;
     }
 
     /** 心跳响应帧。 */

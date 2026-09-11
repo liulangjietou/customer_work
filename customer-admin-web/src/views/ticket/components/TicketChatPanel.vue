@@ -1,586 +1,791 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import {
-  claimTicket,
-  closeTicket,
-  getTicketDetail,
-  getTicketMessages,
-  holdTicket,
-  replyTicket,
-  resolveTicket,
-  resumeTicket,
-  transferTicket,
-  updateTicketCategory,
-  updateTicketPriority,
-} from '@/api/user-ticket'
+import { computed, nextTick, onMounted, onScopeDispose, ref, toRef, watch } from 'vue'
+import { useAuthStore } from '@/store/auth'
+import { useTicketReplies } from '@/store/ticketReplies'
 import type { WsClient } from '@/utils/ws'
-import {
-  CATEGORY_LABELS,
-  PRIORITY_LABELS,
-  SENDER_TYPE_LABELS,
-  STATUS_LABELS,
-  STATUS_TAG_TYPE,
-  type TicketCategory,
-  type TicketDetailVO,
-  type TicketMessageVO,
-  type TicketPriority,
-  type WsChatFrameData,
-  type WsTicketEventFrameData,
-} from '@/types/ticket'
+import { SENDER_TYPE_LABELS, STATUS_LABELS, STATUS_TAG_TYPE } from '@/types/ticket'
+import { useTicketConversation } from '../useTicketConversation'
+import TicketContextPanel from './TicketContextPanel.vue'
 
+const MAX_REPLY_CONTENT_BYTES = 65_535
 const props = defineProps<{
-  visible: boolean
   ticketId: string | null
   ws: WsClient
-  /** 当前登录坐席在工单系统里的标识，与后端 assignee 字段比对，判断"是否本人负责"的输入权限。 */
   agentId: string
+  ready: boolean
+  connected: boolean
 }>()
-
-const emit = defineEmits<{
-  (e: 'update:visible', value: boolean): void
-  /** 工单状态被本面板的操作改变后，通知列表页刷新对应行。 */
-  (e: 'refresh'): void
-}>()
-
-const MESSAGE_PAGE_SIZE = 30
-
-const detailLoading = ref(false)
-const detail = ref<TicketDetailVO | null>(null)
-const messages = ref<TicketMessageVO[]>([])
-const messagesLoading = ref(false)
-const processedTicketEvents = new Set<string>()
-const hasMoreHistory = ref(true)
+const emit = defineEmits<{ back: []; refresh: [] }>()
+const auth = useAuthStore()
+const replies = useTicketReplies()
+const {
+  detail,
+  messages,
+  loading,
+  historyLoading,
+  detailError,
+  historyError,
+  hasMore,
+  loadHistory,
+  synchronize,
+} = useTicketConversation(toRef(props, 'ticketId'), toRef(props, 'ready'), props.ws)
+const panelRef = ref<HTMLElement>()
 const scrollRef = ref<HTMLElement>()
-const input = ref('')
-const sending = ref(false)
+const contextVisible = ref(false)
+const wideContext = ref(false)
+const nearBottom = ref(true)
+const unseen = ref(0)
+const inputError = ref('')
+const readingPositions = new Map<string, { top: number; nearBottom: boolean }>()
+let observer: ResizeObserver | null = null
+let disposed = false
+let restored = false
 
-let unsubscribeChat: (() => void) | null = null
-let unsubscribeEvent: (() => void) | null = null
-
-const isSelfAssignee = computed(() => !!detail.value && detail.value.ticket.assignee === props.agentId)
+const draft = computed(() => (props.ticketId ? replies.state(props.ticketId) : null))
+const input = computed({
+  get: () => draft.value?.content ?? '',
+  set: (value) => {
+    if (props.ticketId) replies.setDraft(props.ticketId, value)
+    inputError.value = ''
+  },
+})
 const canInput = computed(
-  () => !!detail.value && ['PROCESSING', 'ON_HOLD'].includes(detail.value.ticket.status) && isSelfAssignee.value,
+  () =>
+    props.ready &&
+    !loading.value &&
+    !detailError.value &&
+    !!detail.value &&
+    detail.value.ticket.assignee === props.agentId &&
+    ['PROCESSING', 'ON_HOLD'].includes(detail.value.ticket.status) &&
+    auth.hasPermission('user-ticket:reply'),
 )
+const samePending = computed(() =>
+  draft.value?.pending.find((pending) => pending.content === input.value),
+)
+const sending = computed(() => samePending.value?.status === 'SENDING' && samePending.value.busy)
+const readonlyReason = computed(() => {
+  if (!props.ready) return '正在确认坐席身份，草稿将在确认后显示。'
+  if (detailError.value || loading.value) return '工单状态尚未确认，刷新后再回复。'
+  if (!auth.hasPermission('user-ticket:reply')) return '当前账号可查看此工单，没有回复权限。'
+  if (detail.value?.ticket.status === 'CLOSED' || detail.value?.ticket.status === 'RESOLVED')
+    return '工单已结束，当前会话为只读。'
+  if (detail.value?.ticket.assignee !== props.agentId) return '接入本人负责的工单后即可回复。'
+  return '当前正在等待客户确认，暂时不能继续回复。'
+})
+const stage = computed(() => {
+  const status = detail.value?.ticket.status
+  if (status === 'CLOSED' || status === 'RESOLVED') return 3
+  if (status === 'WAITING_CONFIRM') return 2
+  if (status === 'PROCESSING' || status === 'ON_HOLD') return 1
+  return 0
+})
 
-function closeDrawer() {
-  emit('update:visible', false)
-}
-
-async function loadDetail() {
-  if (!props.ticketId) {
-    return
-  }
-  detailLoading.value = true
-  try {
-    detail.value = await getTicketDetail(props.ticketId)
-  } finally {
-    detailLoading.value = false
-  }
-}
-
-async function loadInitialMessages() {
-  if (!props.ticketId) {
-    return
-  }
-  messagesLoading.value = true
-  try {
-    const list = await getTicketMessages(props.ticketId, undefined, MESSAGE_PAGE_SIZE)
-    messages.value = list
-    hasMoreHistory.value = list.length >= MESSAGE_PAGE_SIZE
-    scrollToBottom()
-  } finally {
-    messagesLoading.value = false
-  }
-}
-
-/** 上滑到顶加载更早的消息：取当前最早一条的 id 作为 beforeId，保持滚动位置不跳动。 */
-async function loadMoreHistory() {
-  if (!props.ticketId || messagesLoading.value || !hasMoreHistory.value || messages.value.length === 0) {
-    return
-  }
-  const el = scrollRef.value
-  const prevScrollHeight = el?.scrollHeight ?? 0
-  messagesLoading.value = true
-  try {
-    const beforeId = messages.value[0].id
-    const older = await getTicketMessages(props.ticketId, beforeId, MESSAGE_PAGE_SIZE)
-    hasMoreHistory.value = older.length >= MESSAGE_PAGE_SIZE
-    messages.value = [...older, ...messages.value]
-    await nextTick()
-    if (el) {
-      el.scrollTop = el.scrollHeight - prevScrollHeight
-    }
-  } finally {
-    messagesLoading.value = false
-  }
-}
-
-function handleScroll() {
-  const el = scrollRef.value
-  if (el && el.scrollTop < 40) {
-    loadMoreHistory()
-  }
-}
-
-function scrollToBottom() {
-  nextTick(() => {
-    scrollRef.value?.scrollTo({ top: scrollRef.value.scrollHeight, behavior: 'smooth' })
+function formatTime(ms: number) {
+  return new Date(ms).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   })
 }
-
-function subscribeWs() {
-  unsubscribeChat = props.ws.on('chat', (data) => {
-    const frame = data as WsChatFrameData
-    if (frame.ticketId !== props.ticketId) {
-      return
-    }
-    messages.value.push({
-      id: -frame.ts, // WS 推送没有落库自增 id，用负时间戳占位，避免与历史消息 key 冲突；仅供 v-for key 使用
-      messageId: frame.messageId,
-      sessionId: detail.value?.ticket.sessionId ?? '',
-      ticketId: frame.ticketId,
-      senderType: frame.senderType,
-      senderId: frame.senderId,
-      content: frame.content,
-      createdAtMs: frame.ts,
-    })
-    scrollToBottom()
-  })
-  unsubscribeEvent = props.ws.on('ticket_event', (data) => {
-    const frame = data as WsTicketEventFrameData
-    if (frame.ticketId !== props.ticketId || !detail.value) {
-      return
-    }
-    const eventKey = frame.eventId == null ? null : `${frame.ticketId}:${frame.eventId}`
-    if (eventKey && processedTicketEvents.has(eventKey)) {
-      return
-    }
-    if (eventKey) {
-      processedTicketEvents.add(eventKey)
-    }
-    // 状态被其他坐席/系统动作改变时（如超时自动关闭），同步刷新详情兜底，事件时间线一起重拉，
-    // 比本地拼接单条事件更可靠（events 列表字段较多，本地拼接容易漏字段）。
-    loadDetail()
-  })
+function readPosition() {
+  const element = scrollRef.value
+  if (!element || !props.ticketId) return
+  nearBottom.value = element.scrollHeight - element.clientHeight - element.scrollTop < 64
+  if (nearBottom.value) unseen.value = 0
+  readingPositions.set(props.ticketId, { top: element.scrollTop, nearBottom: nearBottom.value })
 }
-
-function unsubscribeWs() {
-  unsubscribeChat?.()
-  unsubscribeEvent?.()
-  unsubscribeChat = null
-  unsubscribeEvent = null
+function latest() {
+  const element = scrollRef.value
+  if (element) element.scrollTop = element.scrollHeight
+  nearBottom.value = true
+  unseen.value = 0
+  readPosition()
 }
-
+async function older() {
+  const element = scrollRef.value
+  const id = props.ticketId
+  const previousHeight = element?.scrollHeight ?? 0
+  const previousTop = element?.scrollTop ?? 0
+  await loadHistory(true)
+  await nextTick()
+  if (id === props.ticketId && element && !disposed) {
+    element.scrollTop = previousTop + element.scrollHeight - previousHeight
+    readPosition()
+  }
+}
+async function send() {
+  if (!props.ticketId || !canInput.value || !input.value.trim() || samePending.value) return
+  if (new TextEncoder().encode(input.value).length > MAX_REPLY_CONTENT_BYTES) {
+    inputError.value = '回复内容过长，请缩短后再发送。'
+    return
+  }
+  latest()
+  await replies.send(props.ticketId)
+}
+function onEnter(event: KeyboardEvent) {
+  if (
+    event.key !== 'Enter' ||
+    event.shiftKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.isComposing ||
+    event.keyCode === 229
+  )
+    return
+  event.preventDefault()
+  void send()
+}
+function refresh() {
+  void synchronize()
+  emit('refresh')
+}
 watch(
-  () => props.visible,
-  (visible) => {
-    if (visible && props.ticketId) {
-      processedTicketEvents.clear()
-      loadDetail()
-      loadInitialMessages()
-      subscribeWs()
-    } else {
-      unsubscribeWs()
-    }
+  () => props.ticketId,
+  () => {
+    contextVisible.value = false
+    inputError.value = ''
+    unseen.value = 0
+    restored = false
+    nearBottom.value = props.ticketId
+      ? (readingPositions.get(props.ticketId)?.nearBottom ?? true)
+      : true
   },
 )
-
-async function handleSend() {
-  const content = input.value.trim()
-  if (!content || !props.ticketId || sending.value) {
-    return
-  }
-  sending.value = true
-  try {
-    if (props.ws.isOpen()) {
-      props.ws.send('chat', { ticketId: props.ticketId, content })
-    } else {
-      // WS 断开时降级走 HTTP 接口，保证坐席回复不因连接抖动丢失；成功后本地立即回显，
-      // 不等 WS 恢复后的回声帧（服务端是否会给 HTTP 提交的消息也广播一份 WS 回声未知，
-      // 宁可本地先显示，即使真收到回声也只是极小概率的重复气泡，不影响可用性）。
-      await replyTicket(props.ticketId, { content })
-      messages.value.push({
-        id: -Date.now(),
-        messageId: `local-${Date.now()}`,
-        sessionId: detail.value?.ticket.sessionId ?? '',
-        ticketId: props.ticketId,
-        senderType: 'AGENT',
-        senderId: props.agentId,
-        content,
-        createdAtMs: Date.now(),
-      })
-      scrollToBottom()
+watch(
+  [
+    messages,
+    historyLoading,
+    () => draft.value?.pending.map((pending) => [pending.status, pending.error]),
+  ],
+  async ([rows], [previousRows]) => {
+    const id = props.ticketId
+    // 消息可能先于本帧 scroll 事件到达；更新 DOM 前读取实际位置，不能沿用过期的底部标记。
+    if (restored) readPosition()
+    const followLatest = nearBottom.value
+    await nextTick()
+    if (disposed || id !== props.ticketId) return
+    if (!restored && !historyLoading.value) {
+      const position = id ? readingPositions.get(id) : undefined
+      if (position && !position.nearBottom && scrollRef.value)
+        scrollRef.value.scrollTop = position.top
+      else latest()
+      restored = true
+    } else if (restored) {
+      if (followLatest) latest()
+      else unseen.value += Math.max(0, rows.length - (previousRows?.length ?? 0))
     }
-    input.value = ''
-  } catch (error) {
-    ElMessage.error('发送失败：' + (error instanceof Error ? error.message : String(error)))
-  } finally {
-    sending.value = false
-  }
-}
-
-// ---------- 操作按钮 ----------
-const acting = ref(false)
-
-async function runAction(action: () => Promise<void>, successMessage: string) {
-  if (!props.ticketId) {
-    return
-  }
-  acting.value = true
-  try {
-    await action()
-    ElMessage.success(successMessage)
-    await loadDetail()
-    emit('refresh')
-  } catch (error) {
-    ElMessage.error('操作失败：' + (error instanceof Error ? error.message : String(error)))
-  } finally {
-    acting.value = false
-  }
-}
-
-function handleClaim() {
-  if (!props.ticketId) return
-  runAction(() => claimTicket(props.ticketId!), '已接入')
-}
-
-async function handleHold() {
-  if (!props.ticketId) return
-  const { value } = await ElMessageBox.prompt('挂起原因（可选）', '挂起工单', { inputType: 'textarea', confirmButtonText: '确定', cancelButtonText: '取消' }).catch(() => ({ value: undefined }))
-  if (value === undefined) return
-  runAction(() => holdTicket(props.ticketId!, { reason: value || undefined }), '已挂起')
-}
-
-function handleResume() {
-  if (!props.ticketId) return
-  runAction(() => resumeTicket(props.ticketId!), '已恢复')
-}
-
-async function handleTransferBack() {
-  if (!props.ticketId) return
-  await ElMessageBox.confirm('确认将该工单转回接单池？转回后需要其他坐席重新接入。', '转回接单池', { type: 'warning' })
-  runAction(() => transferTicket(props.ticketId!, {}), '已转回接单池')
-}
-
-async function handleTransferTo() {
-  if (!props.ticketId) return
-  const { value } = await ElMessageBox.prompt('转派给哪位坐席（填坐席标识）', '转派工单', {
-    inputPattern: /\S+/,
-    inputErrorMessage: '请输入坐席标识',
-  }).catch(() => ({ value: undefined }))
-  if (!value) return
-  runAction(() => transferTicket(props.ticketId!, { toAgent: value }), '已转派')
-}
-
-async function handleResolve() {
-  if (!props.ticketId) return
-  const { value } = await ElMessageBox.prompt('请填写解决结论', '标记解决', {
-    inputType: 'textarea',
-    inputPattern: /\S+/,
-    inputErrorMessage: '请输入解决结论',
-  }).catch(() => ({ value: undefined }))
-  if (!value) return
-  runAction(() => resolveTicket(props.ticketId!, { note: value }), '已标记解决')
-}
-
-async function handleClose() {
-  if (!props.ticketId) return
-  const { value } = await ElMessageBox.prompt('请填写关闭原因', '关闭工单', {
-    inputType: 'textarea',
-    inputPattern: /\S+/,
-    inputErrorMessage: '请输入关闭原因',
-  }).catch(() => ({ value: undefined }))
-  if (!value) return
-  runAction(() => closeTicket(props.ticketId!, { reason: value }), '已关闭')
-}
-
-function handlePriorityChange(priority: TicketPriority) {
-  if (!props.ticketId) return
-  runAction(() => updateTicketPriority(props.ticketId!, priority), '优先级已更新')
-}
-
-function handleCategoryChange(category: TicketCategory) {
-  if (!props.ticketId) return
-  runAction(() => updateTicketCategory(props.ticketId!, category), '分类已更新')
-}
-
-const priorityOptions = Object.entries(PRIORITY_LABELS) as [TicketPriority, string][]
-const categoryOptions = Object.entries(CATEGORY_LABELS) as [TicketCategory, string][]
+  },
+  { flush: 'pre' },
+)
+onMounted(() => {
+  observer = new ResizeObserver(([entry]) => {
+    wideContext.value = (entry?.contentRect.width ?? 0) >= 730
+    if (wideContext.value) contextVisible.value = false
+  })
+  if (panelRef.value) observer.observe(panelRef.value)
+})
+onScopeDispose(() => {
+  disposed = true
+  observer?.disconnect()
+})
 </script>
 
 <template>
-  <el-drawer :model-value="visible" title="工单详情" size="900px" @update:model-value="(v: boolean) => emit('update:visible', v)" @close="closeDrawer">
-    <div v-loading="detailLoading" class="panel">
-      <div class="chat-column">
-        <div ref="scrollRef" class="messages" @scroll="handleScroll">
-          <div v-if="messagesLoading" class="loading-more">加载中…</div>
-          <div v-for="msg in messages" :key="msg.id" class="message-row" :class="msg.senderType.toLowerCase()">
-            <div v-if="msg.senderType === 'SYSTEM'" class="system-text">{{ msg.content }}</div>
-            <div v-else class="bubble">
-              <div v-if="msg.senderType === 'BOT'" class="bot-badge">机器人</div>
-              <div class="content">{{ msg.content }}</div>
+  <section
+    ref="panelRef"
+    class="ticket-workspace"
+    :class="{ 'with-context': wideContext && ticketId }"
+    aria-label="当前服务会话"
+  >
+    <div v-if="!ticketId" class="desk-welcome">
+      <div class="welcome-symbol">
+        <el-icon><ChatDotRound /></el-icon>
+      </div>
+      <h2>从一张工单开始</h2>
+      <p>在左侧选择会话，查看问题和处理记录。</p>
+      <span>切换工单时，回复草稿会保留。</span>
+    </div>
+    <template v-else>
+      <section class="conversation-column">
+        <header class="conversation-header">
+          <button class="back-to-queue" aria-label="返回工单队列" @click="emit('back')">
+            <el-icon><ArrowLeft /></el-icon>
+          </button>
+          <div class="customer-avatar">{{ detail?.ticket.userId.slice(-2) || '客' }}</div>
+          <div class="conversation-heading">
+            <h2>{{ detail?.ticket.title || '加载工单…' }}</h2>
+            <p>
+              {{ detail?.ticket.userId || ticketId
+              }}<span v-if="detail"> · {{ detail.ticket.id }}</span>
+            </p>
+          </div>
+          <el-button
+            v-if="!wideContext"
+            class="context-button"
+            :disabled="!detail"
+            @click="contextVisible = true"
+            >工单信息</el-button
+          >
+        </header>
+        <div class="service-progress" aria-label="服务处理进度">
+          <span
+            v-for="(label, index) in ['接收问题', '人工跟进', '确认解决', '结束服务']"
+            :key="label"
+            :class="{ current: !!detail && index === stage }"
+            :aria-current="detail && index === stage ? 'step' : undefined"
+            ><i>{{ index + 1 }}</i
+            >{{ label }}</span
+          >
+        </div>
+        <div class="conversation-status">
+          <el-tag v-if="detail" :type="STATUS_TAG_TYPE[detail.ticket.status]" size="small">{{
+            STATUS_LABELS[detail.ticket.status]
+          }}</el-tag
+          ><span>{{ connected ? '实时连接已建立' : '实时连接暂未建立，可刷新记录核对' }}</span
+          ><el-button text size="small" :loading="loading || historyLoading" @click="synchronize"
+            >同步记录</el-button
+          >
+        </div>
+        <div v-if="detailError || historyError" class="conversation-error" role="alert">
+          <span>{{ detailError || historyError }} 现有内容已保留。</span
+          ><el-button size="small" @click="synchronize">重新加载记录</el-button>
+        </div>
+        <div ref="scrollRef" class="messages" @scroll="readPosition" :aria-busy="historyLoading">
+          <div v-if="hasMore" class="history-action">
+            <el-button text :loading="historyLoading" @click="older">加载更早消息</el-button>
+          </div>
+          <div v-if="historyLoading && !messages.length" class="history-placeholder">
+            正在同步会话记录…
+          </div>
+          <div
+            v-for="message in messages"
+            :key="message.messageId"
+            class="message-row"
+            :class="{
+              self: message.senderType === 'AGENT' && message.senderId === agentId,
+              system: message.senderType === 'SYSTEM',
+            }"
+          >
+            <template v-if="message.senderType === 'SYSTEM'"
+              ><span>{{ message.content }}</span></template
+            >
+            <template v-else
+              ><div class="message-meta">
+                {{
+                  message.senderId === agentId && message.senderType === 'AGENT'
+                    ? '你'
+                    : SENDER_TYPE_LABELS[message.senderType]
+                }}
+                · {{ formatTime(message.createdAtMs)
+                }}<span v-if="message.senderType === 'AGENT' && message.senderId === agentId">
+                  · 已保存</span
+                >
+              </div>
+              <div class="bubble" :class="{ bot: message.senderType === 'BOT' }">
+                {{ message.content }}
+              </div></template
+            >
+          </div>
+          <div
+            v-for="pending in draft?.pending"
+            :key="pending.clientMsgId"
+            class="message-row self pending-message"
+          >
+            <div class="message-meta">你 · {{ formatTime(pending.createdAtMs) }}</div>
+            <div class="bubble">{{ pending.content }}</div>
+            <div class="receipt-status" :class="pending.status.toLowerCase()" role="status">
+              <span>{{
+                pending.status === 'SENDING'
+                  ? '等待保存确认'
+                  : pending.status === 'REJECTED'
+                    ? '未受理'
+                    : '保存结果待确认'
+              }}</span
+              ><span v-if="pending.error">{{ pending.error }}</span>
+            </div>
+            <div v-if="pending.status !== 'SENDING'" class="receipt-actions">
+              <el-button
+                size="small"
+                :loading="pending.busy"
+                @click="replies.reconcile(ticketId, pending)"
+                >查询结果</el-button
+              >
+              <el-button
+                v-if="canInput"
+                size="small"
+                :disabled="pending.busy"
+                @click="replies.reconcile(ticketId, pending, true)"
+                >核对后重试</el-button
+              >
+              <el-button
+                v-if="pending.status === 'REJECTED'"
+                text
+                size="small"
+                @click="replies.dismissRejected(ticketId, pending.clientMsgId)"
+                >移除未受理记录</el-button
+              >
             </div>
           </div>
-          <el-empty v-if="!messagesLoading && messages.length === 0" description="暂无消息" />
+          <div
+            v-if="!historyLoading && !messages.length && !draft?.pending.length && !historyError"
+            class="empty-conversation"
+          >
+            <el-icon><ChatLineRound /></el-icon>
+            <p>暂无会话消息</p>
+            <span>客户的新消息会显示在这里</span>
+          </div>
         </div>
-        <div class="input-bar">
+        <button v-if="!nearBottom" class="latest-message" @click="latest">
+          回到最新<span v-if="unseen"> · {{ unseen }} 条新消息</span
+          ><el-icon><ArrowDown /></el-icon>
+        </button>
+        <footer class="reply-composer">
+          <div class="composer-title">
+            <strong>回复客户</strong
+            ><span>{{ canInput ? '按 Enter 发送，Shift + Enter 换行' : '当前会话只读' }}</span>
+          </div>
+          <p v-if="!canInput" class="readonly-reason">{{ readonlyReason }}</p>
           <el-input
             v-model="input"
             type="textarea"
-            :rows="2"
-            :disabled="!canInput"
-            :placeholder="canInput ? '输入回复内容，Enter 发送' : '仅本人负责的处理中/已挂起工单可回复'"
-            @keyup.enter.exact.prevent="handleSend"
+            :rows="3"
+            :readonly="!canInput"
+            :disabled="!ready"
+            aria-label="回复客户"
+            :placeholder="canInput ? '输入回复内容…' : '此处保留你的草稿，可选中复制'"
+            @keydown="onEnter"
           />
-          <el-button type="primary" :disabled="!canInput" :loading="sending" @click="handleSend">发送</el-button>
-        </div>
-      </div>
-
-      <div class="info-column">
-        <template v-if="detail">
-          <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="工单号">{{ detail.ticket.id }}</el-descriptions-item>
-            <el-descriptions-item label="标题">{{ detail.ticket.title }}</el-descriptions-item>
-            <el-descriptions-item label="用户">{{ detail.ticket.userId }}</el-descriptions-item>
-            <el-descriptions-item label="状态">
-              <el-tag :type="STATUS_TAG_TYPE[detail.ticket.status]" size="small">{{ STATUS_LABELS[detail.ticket.status] }}</el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="优先级">
-              <el-select
-                v-permission="'user-ticket:edit'"
-                :model-value="detail.ticket.priority"
-                size="small"
-                :disabled="detail.ticket.status === 'CLOSED'"
-                @change="handlePriorityChange"
-              >
-                <el-option v-for="[value, label] in priorityOptions" :key="value" :value="value" :label="label" />
-              </el-select>
-            </el-descriptions-item>
-            <el-descriptions-item label="分类">
-              <el-select
-                v-permission="'user-ticket:edit'"
-                :model-value="detail.ticket.category"
-                size="small"
-                :disabled="detail.ticket.status === 'CLOSED'"
-                @change="handleCategoryChange"
-              >
-                <el-option v-for="[value, label] in categoryOptions" :key="value" :value="value" :label="label" />
-              </el-select>
-            </el-descriptions-item>
-            <el-descriptions-item label="当前坐席">{{ detail.ticket.assignee || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="转人工原因">{{ detail.ticket.handoffReason || '-' }}</el-descriptions-item>
-            <el-descriptions-item v-if="detail.ticket.resolveNote" label="解决结论">{{ detail.ticket.resolveNote }}</el-descriptions-item>
-            <el-descriptions-item label="重开次数">{{ detail.ticket.reopenCount }}</el-descriptions-item>
-          </el-descriptions>
-
-          <div class="action-group">
-            <el-button
-              v-if="detail.ticket.status === 'WAITING_AGENT'"
-              v-permission="'user-ticket:claim'"
+          <div class="composer-bottom">
+            <span v-if="inputError" role="alert" class="input-error">{{ inputError }}</span
+            ><span v-else-if="samePending">此内容正在核对，原文已保留</span
+            ><span v-else>{{ input ? '草稿仅保留在当前登录会话' : '发送后以保存回执确认' }}</span
+            ><el-button
               type="primary"
-              size="small"
-              :loading="acting"
-              @click="handleClaim"
+              :disabled="!canInput || !input.trim() || !!samePending"
+              :loading="sending"
+              @click="send"
+              >发送</el-button
             >
-              接入
-            </el-button>
-            <el-button
-              v-if="detail.ticket.status === 'PROCESSING' && isSelfAssignee"
-              v-permission="'user-ticket:edit'"
-              size="small"
-              :loading="acting"
-              @click="handleHold"
-            >
-              挂起
-            </el-button>
-            <el-button
-              v-if="detail.ticket.status === 'ON_HOLD' && isSelfAssignee"
-              v-permission="'user-ticket:edit'"
-              size="small"
-              :loading="acting"
-              @click="handleResume"
-            >
-              恢复
-            </el-button>
-            <el-button
-              v-if="['PROCESSING', 'ON_HOLD'].includes(detail.ticket.status) && isSelfAssignee"
-              v-permission="'user-ticket:transfer'"
-              size="small"
-              :loading="acting"
-              @click="handleTransferBack"
-            >
-              转回接单池
-            </el-button>
-            <el-button
-              v-if="['PROCESSING', 'ON_HOLD'].includes(detail.ticket.status) && isSelfAssignee"
-              v-permission="'user-ticket:transfer'"
-              size="small"
-              :loading="acting"
-              @click="handleTransferTo"
-            >
-              转派
-            </el-button>
-            <el-button
-              v-if="['PROCESSING', 'ON_HOLD', 'WAITING_CONFIRM'].includes(detail.ticket.status) && isSelfAssignee"
-              v-permission="'user-ticket:resolve'"
-              type="success"
-              size="small"
-              :loading="acting"
-              @click="handleResolve"
-            >
-              标记解决
-            </el-button>
-            <el-button
-              v-if="detail.ticket.status !== 'CLOSED'"
-              v-permission="'user-ticket:close'"
-              type="danger"
-              size="small"
-              :loading="acting"
-              @click="handleClose"
-            >
-              关闭
-            </el-button>
           </div>
-
-          <div class="timeline-title">状态时间线</div>
-          <el-timeline>
-            <el-timeline-item
-              v-for="event in detail.events"
-              :key="event.id"
-              :timestamp="new Date(event.createdAtMs).toLocaleString()"
-              size="normal"
-            >
-              <div>{{ event.eventType }}</div>
-              <div v-if="event.fromStatus || event.toStatus" class="event-status">
-                {{ event.fromStatus ? STATUS_LABELS[event.fromStatus] : '-' }} → {{ event.toStatus ? STATUS_LABELS[event.toStatus] : '-' }}
-              </div>
-              <div v-if="event.note" class="event-note">{{ event.note }}</div>
-              <div class="event-actor">{{ SENDER_TYPE_LABELS[event.actorType] }}{{ event.actorId ? ` · ${event.actorId}` : '' }}</div>
-            </el-timeline-item>
-          </el-timeline>
-        </template>
+        </footer>
+      </section>
+      <div v-if="wideContext" class="context-column">
+        <TicketContextPanel
+          v-if="detail"
+          :detail="detail"
+          :agent-id="agentId"
+          :disabled="!ready || loading || !!detailError"
+          @refresh="refresh"
+        />
+        <div v-else class="history-placeholder">正在加载工单信息…</div>
       </div>
-    </div>
-  </el-drawer>
+      <el-drawer
+        v-if="!wideContext"
+        v-model="contextVisible"
+        title="工单信息"
+        size="min(360px, 100vw)"
+        append-to-body
+        class="ticket-context-drawer"
+        ><TicketContextPanel
+          v-if="detail"
+          :detail="detail"
+          :agent-id="agentId"
+          :show-heading="false"
+          :disabled="!ready || loading || !!detailError"
+          @refresh="refresh"
+      /></el-drawer>
+    </template>
+  </section>
 </template>
 
 <style scoped>
-.panel {
-  display: flex;
-  gap: 16px;
-  height: calc(100vh - 108px);
+.ticket-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--cw-paper);
+  border-radius: 12px;
+  border: 1px solid var(--cw-line);
 }
-
-.chat-column {
-  flex: 2;
+.ticket-workspace.with-context {
+  grid-template-columns: minmax(0, 1fr) 296px;
+}
+.conversation-column {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
+}
+.conversation-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 22px 16px;
+}
+.customer-avatar {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--cw-cobalt) 9%, var(--cw-paper));
+  color: var(--cw-cobalt);
+  font-weight: 650;
+}
+.conversation-heading {
   min-width: 0;
-}
-
-.messages {
   flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
 }
-
-.loading-more {
-  text-align: center;
-  color: var(--el-text-color-secondary);
+.conversation-heading h2 {
+  font-size: 17px;
+  line-height: 1.4;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-heading p {
   font-size: 12px;
-  padding: 4px;
+  color: var(--cw-text-muted);
+  margin: 5px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.message-row {
+.service-progress {
   display: flex;
-  margin-bottom: 12px;
-}
-
-.message-row.user,
-.message-row.bot {
-  justify-content: flex-start;
-}
-
-.message-row.agent {
-  justify-content: flex-end;
-}
-
-.message-row.system {
-  justify-content: center;
-}
-
-.bubble {
-  max-width: 70%;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--el-fill-color-light);
-  word-break: break-word;
-}
-
-.message-row.agent .bubble {
-  background: var(--theme-primary-solid, var(--el-color-primary));
-  color: var(--cw-on-primary, #fff);
-}
-
-.bot-badge {
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 22px 14px;
+  border-bottom: 1px solid var(--cw-line);
   font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 2px;
+  color: var(--cw-text-muted);
 }
-
-.message-row.agent .bot-badge {
-  color: var(--cw-on-primary, #fff);
-}
-
-.content {
-  white-space: pre-wrap;
-}
-
-.system-text {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
-
-.input-bar {
+.service-progress span {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  align-items: flex-end;
+  align-items: center;
+  gap: 6px;
 }
-
-.info-column {
-  flex: 1;
-  min-width: 320px;
-  overflow-y: auto;
-  padding-left: 4px;
+.service-progress i {
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--cw-canvas);
+  font-style: normal;
+  font-size: 11px;
 }
-
-.action-group {
+.service-progress .current {
+  color: var(--cw-cobalt);
+  font-weight: 650;
+}
+.service-progress .current i {
+  background: var(--cw-cobalt);
+  color: white;
+}
+.conversation-status {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin: 16px 0;
-}
-
-.timeline-title {
-  font-weight: 600;
-  margin: 12px 0 8px;
-}
-
-.event-status {
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-}
-
-.event-note {
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-}
-
-.event-actor {
+  padding: 9px 18px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--cw-text-muted);
+  background: color-mix(in srgb, var(--cw-canvas) 70%, var(--cw-paper));
+}
+.conversation-status .el-button {
+  margin-left: auto;
+}
+.messages {
+  flex: 1;
+  min-height: 140px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 24px;
+  background: var(--cw-paper);
+}
+.message-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+.message-row.self {
+  align-items: flex-end;
+}
+.message-meta {
+  color: var(--cw-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0 2px 6px;
+}
+.bubble {
+  max-width: 88%;
+  padding: 12px 15px;
+  background: var(--cw-canvas);
+  color: var(--cw-text);
+  border: 1px solid var(--cw-line);
+  border-radius: 3px 12px 12px 12px;
+  font-size: 14px;
+  line-height: 1.85;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.self .bubble {
+  background: color-mix(in srgb, var(--cw-cobalt) 8%, var(--cw-paper));
+  border-color: color-mix(in srgb, var(--cw-cobalt) 16%, var(--cw-line));
+  border-radius: 12px 3px 12px 12px;
+}
+.system {
+  display: block;
+  text-align: center;
+  color: var(--cw-text-muted);
+  font-size: 12px;
+}
+.history-action {
+  text-align: center;
+  margin: -12px 0 16px;
+}
+.history-placeholder {
+  padding: 26px;
+  color: var(--cw-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.receipt-status {
+  max-width: 92%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 12px;
+  color: var(--cw-text-muted);
+  margin-top: 7px;
+  gap: 4px;
+  line-height: 1.6;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.receipt-status.rejected {
+  color: var(--el-color-danger);
+}
+.receipt-status.unknown {
+  color: var(--el-color-warning-dark-2);
+}
+.receipt-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.receipt-actions .el-button {
+  margin: 0;
+}
+.reply-composer {
+  border-top: 1px solid var(--cw-line);
+  padding: 14px 20px 16px;
+  background: var(--cw-paper);
+}
+.composer-title,
+.composer-bottom {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+.composer-title {
+  margin-bottom: 9px;
+  font-size: 13px;
+}
+.composer-title span,
+.composer-bottom > span {
+  color: var(--cw-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.reply-composer :deep(.el-textarea__inner) {
+  resize: none;
+  min-height: 80px !important;
+  line-height: 1.7;
+  padding: 10px 12px;
+  box-shadow: 0 0 0 1px var(--cw-line) inset;
+  border-radius: 8px;
+  background: var(--cw-canvas);
+}
+.reply-composer :deep(.el-textarea__inner:focus) {
+  box-shadow: 0 0 0 1px var(--cw-cobalt) inset;
+}
+.composer-bottom {
+  margin-top: 10px;
+}
+.composer-bottom .el-button {
+  min-width: 88px;
+  min-height: 36px;
+}
+.readonly-reason {
+  font-size: 12px;
+  color: var(--cw-text-muted);
+  margin: 0 0 8px;
+  line-height: 1.6;
+}
+.conversation-error {
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.conversation-error span {
+  flex: 1;
+  min-width: 0;
+}
+.context-column {
+  border-left: 1px solid var(--cw-line);
+  overflow-y: auto;
+  min-width: 0;
+  background: color-mix(in srgb, var(--cw-canvas) 28%, var(--cw-paper));
+}
+.desk-welcome {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  padding: 30px;
+  text-align: center;
+  color: var(--cw-text-muted);
+}
+.welcome-symbol {
+  width: 66px;
+  height: 66px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--cw-cobalt) 8%, var(--cw-paper));
+  color: var(--cw-cobalt);
+  font-size: 30px;
+}
+.desk-welcome h2 {
+  font-size: 20px;
+  color: var(--cw-text);
+  margin-top: 22px;
+}
+.desk-welcome p {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.desk-welcome span {
+  font-size: 12px;
+}
+.empty-conversation {
+  text-align: center;
+  padding: 45px 20px;
+  color: var(--cw-text-muted);
+  font-size: 13px;
+}
+.empty-conversation .el-icon {
+  font-size: 25px;
+}
+.empty-conversation span {
+  font-size: 12px;
+}
+.back-to-queue {
+  display: none;
+  border: 0;
+  background: transparent;
+  color: var(--cw-text);
+}
+.latest-message {
+  position: absolute;
+  bottom: 210px;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  background: var(--cw-paper);
+  color: var(--cw-cobalt);
+  box-shadow: 0 2px 10px #172d4820;
+  border: 1px solid var(--cw-line);
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 12px;
+}
+@media (max-width: 700px) {
+  .conversation-header {
+    padding: 12px;
+    gap: 8px;
+  }
+  .conversation-heading h2 {
+    font-size: 15px;
+  }
+  .customer-avatar {
+    display: none;
+  }
+  .back-to-queue {
+    display: grid;
+    place-items: center;
+    min-width: 36px;
+    min-height: 44px;
+  }
+  .context-button {
+    min-height: 44px;
+  }
+  .service-progress {
+    padding: 0 12px 12px;
+    font-size: 11px;
+  }
+  .service-progress span {
+    gap: 4px;
+  }
+  .service-progress i {
+    width: 17px;
+    height: 17px;
+  }
+  .conversation-status {
+    padding: 6px 12px;
+    gap: 6px;
+  }
+  .conversation-status .el-button {
+    min-height: 36px;
+  }
+  .messages {
+    padding: 18px 12px;
+  }
+  .bubble {
+    max-width: 94%;
+    padding: 10px 12px;
+  }
+  .message-meta {
+    font-size: 11px;
+  }
+  .reply-composer {
+    padding: 12px;
+  }
+  .composer-title span {
+    display: none;
+  }
+  .composer-bottom .el-button,
+  .receipt-actions .el-button,
+  .history-action .el-button {
+    min-height: 44px;
+  }
+  .conversation-error {
+    padding: 10px 12px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .latest-message {
+    bottom: 216px;
+    min-height: 40px;
+  }
 }
 </style>
