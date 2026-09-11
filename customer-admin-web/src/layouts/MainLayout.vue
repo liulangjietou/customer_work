@@ -23,9 +23,11 @@ const navigationState = reactive({
 
 // 工作区需要接管 el-main 的剩余高度来承载内部滚动；只按精确路由名收口，避免表格、表单页受影响。
 const isWorkspaceRoute = computed(() => route.name === 'Workspace')
+const isServiceDeskRoute = computed(() => route.path === '/ticket/user-ticket')
 const pageTemplate = computed(() => resolvePageTemplate(route.path))
 const shouldShowPageContext = computed(
   () =>
+    !isServiceDeskRoute.value &&
     !['Home', 'Workspace', 'WorkspaceEmpty', 'ChangePassword', 'NotFound'].includes(
       String(route.name ?? ''),
     ),
@@ -73,8 +75,9 @@ function focusMainContent() {
         :class="{
           'layout-main--home': route.name === 'Home',
           'layout-main--workspace': isWorkspaceRoute,
+          'layout-main--service-desk': isServiceDeskRoute,
         }"
-        :data-page-template="pageTemplate"
+        :data-page-template="isServiceDeskRoute ? 'service-desk' : pageTemplate"
       >
         <PageContextHeader v-if="shouldShowPageContext" />
         <!-- 只精确缓存 WorkspaceView：不要给 component 增加 fullPath key，也不要因主导航切换卸载
@@ -120,5 +123,16 @@ function focusMainContent() {
   padding: 0;
   overflow: hidden;
   background: var(--el-bg-color);
+}
+.layout-main--service-desk {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 22px 24px;
+}
+@media (max-width: 700px) {
+  .layout-main--service-desk {
+    padding: 12px;
+  }
 }
 </style>

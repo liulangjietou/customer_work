@@ -22,6 +22,9 @@ public class ChatLogService {
     /** 受理入口与回执查询共用的客户端标识长度上限。 */
     public static final int CLIENT_MESSAGE_ID_MAX_LENGTH = 128;
 
+    /** 消息表 TEXT 列的 UTF-8 字节上限，由受理入口统一检查。 */
+    public static final int MESSAGE_CONTENT_MAX_BYTES = 65_535;
+
     private static final String MESSAGE_ID_PREFIX = "MSG-";
 
     private final ChatMessageStore store;
@@ -44,14 +47,14 @@ public class ChatLogService {
         return store.append(message);
     }
 
-    /** 客户端标识只在租户、会话和发送主体内生效；长度前缀避免分隔符碰撞，结果适配既有 64 字符唯一键。 */
-    public static String clientMessageId(String tenantId, String sessionId, TicketActorType senderType,
+    /** 标识按租户、业务范围和发送主体隔离；客户使用会话、坐席使用工单，结果适配 64 字符唯一键。 */
+    public static String clientMessageId(String tenantId, String conversationScope, TicketActorType senderType,
                                           String senderId, String clientMsgId) {
         if (clientMsgId == null || clientMsgId.isBlank()) {
             return null;
         }
         StringBuilder scope = new StringBuilder();
-        for (String part : List.of(tenantId, sessionId, senderType.name(), senderId, clientMsgId)) {
+        for (String part : List.of(tenantId, conversationScope, senderType.name(), senderId, clientMsgId)) {
             scope.append(part.length()).append(':').append(part);
         }
         try {

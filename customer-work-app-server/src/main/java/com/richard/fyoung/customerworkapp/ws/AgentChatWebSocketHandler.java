@@ -26,6 +26,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 import java.util.Optional;
+import java.time.Duration;
 
 /**
  * 坐席对话 WebSocket 处理器（映射 {@code /ws/agent}）。
@@ -90,12 +91,13 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
             log.info("ws agent handshake rejected: code={}, tenantId={}", access.code(), effectiveTenant);
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
-        return handleAuthenticated(session, authenticated.agentId(), effectiveTenant, access.accessEpoch())
+        return handleAuthenticated(session, authenticated, effectiveTenant, access.accessEpoch())
             .contextWrite(ctx -> ctx.put(TenantContextThreadLocalAccessor.KEY, effectiveTenant));
     }
 
-    private Mono<Void> handleAuthenticated(WebSocketSession session, String agent, String tenantId,
+    private Mono<Void> handleAuthenticated(WebSocketSession session, AgentIdentity identity, String tenantId,
                                            long handshakeAccessEpoch) {
+        String agent = identity.agentId();
         return Mono.defer(() -> TenantContext.callWith(tenantId, () -> {
             TenantAccessDecision beforeRegistration = currentAccess(tenantId);
             if (!sameAllowedEpoch(beforeRegistration, handshakeAccessEpoch)) {
@@ -117,11 +119,14 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
             Flux<WebSocketMessage> outbound = sink.asFlux().map(session::textMessage);
             Mono<Void> receive = session.receive()
                 .map(WebSocketMessage::getPayloadAsText)
-                .concatMap(payload -> handleAuthorizedInbound(session, agent, tenantId, payload))
+                .concatMap(payload -> handleAuthorizedInbound(session, agent, tenantId, identity.subscriptionOnly(), payload))
                 .then();
 
             // 任一方向结束就取消另一侧：撤权完成出站 Sink 后，不能继续等待客户端 receive 无限存活。
-            return Mono.firstWithSignal(session.send(outbound), receive)
+            Mono<Void> expired = Mono.delay(Duration.ofMillis(
+                    Math.max(0L, identity.expiresAtMs() - System.currentTimeMillis())))
+                .flatMap(ignored -> session.close(CloseStatus.POLICY_VIOLATION));
+            return Mono.firstWithSignal(session.send(outbound), receive, expired)
                 .doFinally(signal -> TenantContext.runWith(tenantId,
                     () -> registry.unregisterAgent(agent, sink)));
         }));
@@ -134,6 +139,7 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
     private Mono<Void> handleAuthorizedInbound(WebSocketSession session,
                                                String agent,
                                                String tenantId,
+                                               boolean subscriptionOnly,
                                                String payload) {
         TenantAccessDecision access = currentAccess(tenantId);
         if (!access.isAllowed()) {
@@ -141,14 +147,15 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
             registry.disconnectTenant(tenantId);
             return session.close(CloseStatus.POLICY_VIOLATION);
         }
-        return handleInbound(agent, payload)
-            .onErrorResume(e -> {
+        return Mono.defer(() -> TenantContext.callWith(tenantId,
+                () -> handleInbound(agent, payload, subscriptionOnly)))
+            .onErrorResume(e -> TenantContext.callWith(tenantId, () -> {
                 log.error("ws agent inbound failed, code={}, agent={}",
                     "WS-AGENT-INBOUND-FAIL", agent, e);
                 registry.pushToAgent(agent,
                     WsFrame.error("CHAT-FRAME-INVALID", "消息格式错误或处理失败"));
                 return Mono.empty();
-            });
+            }));
     }
 
     private TenantAccessDecision currentAccess(String tenantId) {
@@ -157,7 +164,7 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
             : tenantAccessGuard.check(tenantId, null, false);
     }
 
-    private Mono<Void> handleInbound(String agent, String payload) {
+    private Mono<Void> handleInbound(String agent, String payload, boolean subscriptionOnly) {
         JsonNode root;
         try {
             root = objectMapper.readTree(payload);
@@ -168,7 +175,14 @@ public class AgentChatWebSocketHandler implements WebSocketHandler {
         JsonNode data = root.path(WsFrame.KEY_DATA);
         switch (type) {
             case WsFrame.TYPE_CHAT:
-                return dispatch.onAgentMessage(agent, text(data, WsFrame.KEY_TICKET_ID), text(data, WsFrame.KEY_CONTENT));
+                if (subscriptionOnly) {
+                    registry.pushToAgent(agent, WsFrame.agentMessageError("AGENT_SUBSCRIPTION_ONLY",
+                        "请通过工作台回复，实时订阅凭证不能发送消息。", text(data, WsFrame.KEY_TICKET_ID),
+                        text(data, WsFrame.KEY_CLIENT_MSG_ID), WsFrame.ACCEPTANCE_REJECTED));
+                    return Mono.empty();
+                }
+                return dispatch.onAgentMessage(agent, text(data, WsFrame.KEY_TICKET_ID),
+                    text(data, WsFrame.KEY_CONTENT), text(data, WsFrame.KEY_CLIENT_MSG_ID));
             case WsFrame.TYPE_PING:
                 registry.pushToAgent(agent, WsFrame.pong());
                 return Mono.empty();

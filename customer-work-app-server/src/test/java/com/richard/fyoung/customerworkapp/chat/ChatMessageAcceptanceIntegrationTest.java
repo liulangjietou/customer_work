@@ -62,6 +62,18 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
+import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
+import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
+import java.util.NoSuchElementException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import reactor.core.scheduler.Schedulers;
+import org.springframework.dao.DataAccessResourceFailureException;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 使用隔离 MySQL 库、生产租户插件及真实事务验证受理；故意不依赖实例内锁证明跨实例竞争。 */
 class ChatMessageAcceptanceIntegrationTest {
@@ -74,6 +86,7 @@ class ChatMessageAcceptanceIntegrationTest {
     private MybatisChatMessageStore store;
     private ChatLogService chatLog;
     private TicketService tickets;
+    private MybatisTicketStore ticketStore;
     private ChatTurnService turns;
     private SubjectQuotaGuard quota;
     private WsSessionRegistry registry;
@@ -129,8 +142,8 @@ class ChatMessageAcceptanceIntegrationTest {
         chatLog = spy(new ChatLogService(store));
         OutboxService outbox = new OutboxService(new MybatisOutboxStore(sql.getMapper(OutboxMessageMapper.class)),
             new OutboxProperties(), List.of());
-        tickets = new TicketService(new MybatisTicketStore(sql.getMapper(TicketMapper.class), sql.getMapper(TicketEventMapper.class)),
-            new OutboxTicketEventPublisher(outbox, new ObjectMapper()), transactions);
+        ticketStore = spy(new MybatisTicketStore(sql.getMapper(TicketMapper.class), sql.getMapper(TicketEventMapper.class)));
+        tickets = new TicketService(ticketStore, new OutboxTicketEventPublisher(outbox, new ObjectMapper()), transactions);
         turns = mock(ChatTurnService.class);
         when(turns.stream(anyString(), anyString(), anyString())).thenReturn(Flux.empty());
         quota = mock(SubjectQuotaGuard.class);
@@ -191,6 +204,150 @@ class ChatMessageAcceptanceIntegrationTest {
         assertEquals(1, second.size());
         assertNotEquals(first.get(0).messageId(), second.get(0).messageId());
         assertNull(TenantContext.get());
+    }
+
+    @Test
+    void twoAgentInstancesWithSameRequestCommitOneReplyAndOneNotification() throws Exception {
+        String id = claimedTicket("tenant-a");
+        var results = Mono.zip(agentSend("tenant-a", id, "reply-race"), agentSend("tenant-a", id, "reply-race"))
+            .block(Duration.ofSeconds(15));
+        assertEquals(results.getT1(), results.getT2());
+        assertEquals(1, count("cw_chat_message"));
+        verify(registry, times(1)).pushToUser(eq("U1"), any());
+    }
+
+    @Test
+    void agentInsertFailureRollsBackAndCanRetryWithoutFalseAcceptance() throws Exception {
+        String id = claimedTicket("tenant-a");
+        doAnswer(call -> {
+            call.callRealMethod();
+            throw new IllegalStateException("simulated agent transaction failure");
+        }).when(store).append(any());
+        assertThrows(DataAccessResourceFailureException.class,
+            () -> agentSend("tenant-a", id, "reply-rollback").block(Duration.ofSeconds(10)));
+        assertEquals(0, count("cw_chat_message"));
+        verifyNoInteractions(registry);
+        doCallRealMethod().when(store).append(any());
+        agentSend("tenant-a", id, "reply-rollback").block(Duration.ofSeconds(10));
+        assertEquals(1, count("cw_chat_message"));
+        verify(registry, times(1)).pushToUser(eq("U1"), any());
+    }
+
+    @Test
+    void foreignTenantCannotReadAgentReceiptOrReplyToTicket() {
+        String id = claimedTicket("tenant-a");
+        agentSend("tenant-a", id, "reply-private").block(Duration.ofSeconds(10));
+        var replies = agentReplies();
+        assertThrows(NoSuchElementException.class,
+            () -> TenantContext.callWith("tenant-b", () -> replies.receipt("agent-1", id, "reply-private")));
+        assertThrows(NoSuchElementException.class,
+            () -> agentSend("tenant-b", id, "reply-private").block(Duration.ofSeconds(10)));
+    }
+
+    @Test
+    void transferCommittedWhileReplyWaitsForRowLockRejectsPreviousAgent() throws Exception {
+        String id = claimedTicket("tenant-a");
+        CountDownLatch transferred = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var transfer = executor.submit(() -> TenantContext.callWith("tenant-a", () -> transactions.execute(() -> {
+                tickets.transferToAgent(id, "agent-2", TicketActorType.AGENT, "agent-1");
+                transferred.countDown();
+                try {
+                    assertTrue(release.await(10, TimeUnit.SECONDS), "测试协调超时，不能继续提交转派");
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(error);
+                }
+                return null;
+            })));
+            assertTrue(transferred.await(5, TimeUnit.SECONDS));
+            var pending = agentSend("tenant-a", id, "reply-after-transfer").toFuture();
+            release.countDown();
+            transfer.get(5, TimeUnit.SECONDS);
+            var error = assertThrows(ExecutionException.class,
+                () -> pending.get(5, TimeUnit.SECONDS));
+            assertEquals(AgentMessageAcceptanceService.Rejection.NOT_ASSIGNEE,
+                ((AgentMessageAcceptanceService.Rejected) error.getCause()).reason());
+            assertEquals(0, count("cw_chat_message"));
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void updatingUserActivityCannotRestorePreviousAssignee() throws Exception {
+        String id = claimedTicket("tenant-a");
+        var read = new CountDownLatch(1);
+        var resume = new CountDownLatch(1);
+        doAnswer(call -> {
+            Object oldSnapshot = call.callRealMethod();
+            read.countDown();
+            resume.await(10, TimeUnit.SECONDS);
+            return oldSnapshot;
+        }).when(ticketStore).findActiveBySession(SESSION);
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var activity = executor.submit(() -> TenantContext.callWith("tenant-a", () -> tickets.touchUserActive(SESSION)));
+            assertTrue(read.await(5, TimeUnit.SECONDS));
+            TenantContext.runWith("tenant-a", () -> tickets.transferToAgent(id, "agent-2",
+                TicketActorType.AGENT, "agent-1"));
+            resume.countDown();
+            activity.get(5, TimeUnit.SECONDS);
+            assertEquals("agent-2", TenantContext.callWith("tenant-a", () -> tickets.find(id).orElseThrow().getAssignee()));
+        } finally {
+            resume.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void userMessageRoutedAfterTransferUsesCurrentAssignee() throws Exception {
+        String id = claimedTicket("tenant-a");
+        var read = new CountDownLatch(1);
+        var resume = new CountDownLatch(1);
+        var firstRead = new AtomicBoolean(true);
+        doAnswer(call -> {
+            Object snapshot = call.callRealMethod();
+            if (firstRead.getAndSet(false)) {
+                read.countDown();
+                resume.await(10, TimeUnit.SECONDS);
+            }
+            return snapshot;
+        }).when(ticketStore).findActiveBySession(SESSION);
+        var pending = send(dispatch(), "tenant-a", "user-during-transfer").toFuture();
+        try {
+            assertTrue(read.await(5, TimeUnit.SECONDS));
+            TenantContext.runWith("tenant-a", () -> tickets.transferToAgent(id, "agent-2",
+                TicketActorType.AGENT, "agent-1"));
+            resume.countDown();
+            pending.get(5, TimeUnit.SECONDS);
+            verify(registry).pushToAgent(eq("agent-2"), argThat(frame -> WsFrame.TYPE_CHAT.equals(frame.type())));
+            verify(registry, never()).pushToAgent(eq("agent-1"), any());
+        } finally {
+            resume.countDown();
+        }
+    }
+
+    private String claimedTicket(String tenant) {
+        return TenantContext.callWith(tenant, () -> {
+            var ticket = tickets.createForSession(SESSION, "U1", "人工服务", TicketCategory.CONSULT);
+            tickets.requestHandoff(SESSION, "人工核对", TicketActorType.USER, "U1");
+            tickets.claim(ticket.getId(), "agent-1");
+            return ticket.getId();
+        });
+    }
+
+    private AgentMessageAcceptanceService agentReplies() {
+        return new AgentMessageAcceptanceService(tickets, chatLog, registry, ignored -> () -> { }, transactions);
+    }
+
+    private Mono<ChatMessage> agentSend(String tenant, String ticket, String client) {
+        return Mono.fromCallable(() -> TenantContext.callWith(tenant,
+            () -> agentReplies().accept("agent-1", ticket, "正在核对处理进度", client)))
+            .subscribeOn(Schedulers.boundedElastic());
     }
 
     private ChatDispatchService dispatch() {

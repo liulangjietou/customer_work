@@ -58,8 +58,8 @@ class UserTicketServiceTest {
         service.claim(ticketId);
         verify(client).claim(ticketId);
 
-        service.reply(ticketId, "hello");
-        verify(client).reply(ticketId, "hello");
+        service.reply(ticketId, "hello", "request-1");
+        verify(client).reply(ticketId, "hello", "request-1");
 
         service.hold(ticketId, "wait customer");
         verify(client).hold(ticketId, "wait customer");
@@ -81,6 +81,24 @@ class UserTicketServiceTest {
 
         service.updateCategory(ticketId, "REFUND");
         verify(client).updateCategory(ticketId, "REFUND");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"GET", "POST"})
+    void browserSubscriptionCredentialCannotSubmitAgentCommands(String method) {
+        var credential = TenantContext.callWith("tenant-a", () -> service.issueWsCredential("alice"));
+        var upstream = new com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties();
+        upstream.getAgentAccess().setSecret(SECRET);
+        upstream.getTenant().setEnabled(true);
+        var request = org.springframework.mock.http.server.reactive.MockServerHttpRequest
+            .method(org.springframework.http.HttpMethod.valueOf(method), "/api/customer/agent/tickets/TK-1/reply").header("X-Agent-Token", credential.token()).build();
+        var exchange = org.springframework.mock.web.server.MockServerWebExchange.from(request);
+        var reachedController = new java.util.concurrent.atomic.AtomicBoolean();
+        new com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter(upstream)
+            .filter(exchange, chain -> { reachedController.set(true); return reactor.core.publisher.Mono.empty(); })
+            .block(java.time.Duration.ofSeconds(2));
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, exchange.getResponse().getStatusCode());
+        org.junit.jupiter.api.Assertions.assertFalse(reachedController.get());
     }
 
     @Test

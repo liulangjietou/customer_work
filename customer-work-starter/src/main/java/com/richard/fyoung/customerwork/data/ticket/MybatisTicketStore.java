@@ -77,6 +77,13 @@ public class MybatisTicketStore implements TicketStore {
     }
 
     @Override
+    public Optional<Ticket> findForUpdate(String id) {
+        // 固定 SQL 片段，不接收用户 SQL；租户插件仍对 selectOne 注入当前租户条件。
+        TicketDO record = ticketMapper.selectOne(new QueryWrapper<TicketDO>().eq("id", id).last("FOR UPDATE"));
+        return Optional.ofNullable(record).map(this::toTicket);
+    }
+
+    @Override
     public Optional<Ticket> findBySession(String sessionId) {
         try {
             TicketDO record = ticketMapper.findBySession(sessionId);

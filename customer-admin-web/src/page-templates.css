@@ -34,7 +34,7 @@
   line-height: 1.55;
 }
 
-.layout-main:not(.layout-main--home):not(.layout-main--workspace) {
+.layout-main:not(.layout-main--home):not(.layout-main--workspace):not(.layout-main--service-desk) {
   padding: 24px 24px 28px;
   overflow: auto;
   background: var(--cw-canvas);
@@ -176,7 +176,7 @@
 }
 
 @media (max-width: 1023px) {
-  .layout-main:not(.layout-main--home):not(.layout-main--workspace) {
+  .layout-main:not(.layout-main--home):not(.layout-main--workspace):not(.layout-main--service-desk) {
     padding: 18px 16px 24px;
   }
 
@@ -190,7 +190,7 @@
 }
 
 @media (max-width: 767px) {
-  .layout-main:not(.layout-main--home):not(.layout-main--workspace) {
+  .layout-main:not(.layout-main--home):not(.layout-main--workspace):not(.layout-main--service-desk) {
     padding: 16px 12px 20px;
     background: var(--cw-canvas);
   }

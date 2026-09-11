@@ -69,8 +69,9 @@ public class TicketService {
      */
     public Ticket requestHandoff(String sessionId, String reason, TicketActorType actorType, String actorId) {
         return transactionExecutor.execute(() -> {
-            Ticket ticket = store.findActiveBySession(sessionId)
+            String ticketId = store.findActiveBySession(sessionId).map(Ticket::getId)
                 .orElseThrow(() -> new IllegalStateException("no active ticket for session: " + sessionId));
+            Ticket ticket = require(ticketId);
             TicketStatus from = ticket.getStatus();
             boolean flowed = ticket.requestHandoff(reason);
             if (flowed) {
@@ -231,7 +232,10 @@ public class TicketService {
             if (active.isEmpty()) {
                 return false;
             }
-            Ticket ticket = active.get();
+            Ticket ticket = require(active.get().getId());
+            if (ticket.getStatus() == TicketStatus.CLOSED || ticket.getStatus() == TicketStatus.RESOLVED) {
+                return false;
+            }
             ticket.markUserActive();
             store.update(ticket);
             return true;
@@ -242,6 +246,11 @@ public class TicketService {
 
     public Optional<Ticket> find(String ticketId) {
         return store.find(ticketId);
+    }
+
+    /** 供同库回复事务读取可串行化的工单状态，调用方负责事务边界。 */
+    public Optional<Ticket> findForUpdate(String ticketId) {
+        return store.findForUpdate(ticketId);
     }
 
     public Optional<Ticket> findActiveBySession(String sessionId) {
@@ -290,7 +299,7 @@ public class TicketService {
 
     /** 单一防御点：工单必须存在，否则 fast-fail。 */
     private Ticket require(String ticketId) {
-        return store.find(ticketId)
+        return store.findForUpdate(ticketId)
             .orElseThrow(() -> new NoSuchElementException("ticket not found: " + ticketId));
     }
 

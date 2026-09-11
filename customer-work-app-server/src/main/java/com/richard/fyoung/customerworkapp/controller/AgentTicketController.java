@@ -1,6 +1,9 @@
 package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerworkapp.web.HttpErrors;
+import com.richard.fyoung.customerworkapp.chat.AgentMessageAcceptanceService;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
 import com.richard.fyoung.customerwork.core.common.PageResult;
@@ -12,8 +15,6 @@ import com.richard.fyoung.customerwork.data.ticket.TicketQuery;
 import com.richard.fyoung.customerwork.data.ticket.TicketService;
 import com.richard.fyoung.customerwork.data.ticket.TicketStatus;
 import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
-import com.richard.fyoung.customerwork.infra.ws.WsFrame;
-import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -36,12 +37,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.concurrent.Callable;
+import java.util.function.Function;
 
 /**
  * 坐席侧工单端点（{@code /api/customer/agent}，X-Agent-Token 鉴权）。
  *
  * <p>坐席身份由 {@code AgentAuthWebFilter} 凭令牌解析后放入 exchange 属性。抢单冲突（IllegalStateException）
- * 本地翻译为 409；{@code /reply} 是 WS 不可用时的 HTTP 兜底通道——落库坐席消息并尽力推送用户（离线只落库、
+ * 本地翻译为 409；{@code /reply} 与 WS 共用受理服务——落库坐席消息并尽力推送用户（离线只落库、
  * 不报错）。工单流转均以 {@code AGENT} 身份记账。</p>
  * @author owlzhangfq@gmail.com
  */
@@ -52,17 +54,17 @@ public class AgentTicketController {
 
     private final TicketService ticketService;
     private final ChatLogService chatLogService;
-    private final WsSessionRegistry registry;
+    private final AgentMessageAcceptanceService agentReplies;
 
     public AgentTicketController(TicketService ticketService, ChatLogService chatLogService,
-                                 WsSessionRegistry registry) {
+                                 AgentMessageAcceptanceService agentReplies) {
         this.ticketService = ticketService;
         this.chatLogService = chatLogService;
-        this.registry = registry;
+        this.agentReplies = agentReplies;
     }
 
     /** 坐席回复请求体。 */
-    public record ReplyRequest(String content) {
+    public record ReplyRequest(String content, String clientMsgId) {
     }
 
     /** 带原因/备注的请求体（挂起 / 结案 / 关闭复用）。 */
@@ -117,7 +119,10 @@ public class AgentTicketController {
     public Mono<List<ChatMessage>> messages(@PathVariable String id,
                                             @RequestParam(required = false) Long beforeId,
                                             @RequestParam(defaultValue = "50") int limit) {
-        return blocking(() -> chatLogService.historyByTicket(id, beforeId, limit));
+        return blocking(() -> {
+            require(id);
+            return chatLogService.historyByTicket(id, beforeId, limit);
+        });
     }
 
     @Operation(summary = "抢单", description = "已被抢返回 409")
@@ -127,30 +132,37 @@ public class AgentTicketController {
         return blocking(() -> ticketService.claim(id, agent));
     }
 
-    @Operation(summary = "坐席回复(HTTP 兜底)", description = "落库并尽力推送用户；用户离线只落库、不报错")
+    @Operation(summary = "坐席回复", description = "返回持久化回执；同标识同内容重试只核对已有记录")
     @PostMapping("/tickets/{id}/reply")
     public Mono<ChatMessage> reply(@PathVariable String id, ServerWebExchange exchange,
                                    @RequestBody ReplyRequest request) {
         String agent = agentId(exchange);
-        return blocking(() -> {
-            Ticket ticket = require(id);
-            if (!agent.equals(ticket.getAssignee())) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "not the assignee of this ticket");
-            }
-            ChatMessage message = chatLogService.append(
-                ticket.getSessionId(), id, TicketActorType.AGENT, agent, request.content());
-            // chat 帧字段与前端契约一致（messageId/sessionId/ticketId/senderType/senderId/content/ts）
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("messageId", message.messageId());
-            data.put("sessionId", message.sessionId());
-            data.put("ticketId", message.ticketId());
-            data.put("senderType", message.senderType().name());
-            data.put("senderId", message.senderId());
-            data.put("content", message.content());
-            data.put("ts", message.createdAtMs());
-            registry.pushToUser(ticket.getUserId(), WsFrame.chat(data));
-            return message;
-        });
+        return blocking(() -> agentReplies.accept(agent, id, request.content(), request.clientMsgId()),
+            this::replyError);
+    }
+
+    @Operation(summary = "核对本人回复回执", description = "当前租户内按工单与坐席查询，空记录不等于查询失败")
+    @GetMapping("/tickets/{id}/receipts/{clientMsgId}")
+    public Mono<AgentMessageAcceptanceService.Receipt> receipt(@PathVariable String id,
+            @PathVariable String clientMsgId, ServerWebExchange exchange) {
+        String agent = agentId(exchange);
+        return blocking(() -> agentReplies.receipt(agent, id, clientMsgId), this::replyError);
+    }
+
+    private Throwable replyError(Throwable error) {
+        if (error instanceof AgentMessageAcceptanceService.Rejected rejected) {
+            HttpStatus status = switch (rejected.reason()) {
+                case INVALID_INPUT -> HttpStatus.BAD_REQUEST;
+                case NOT_ASSIGNEE -> HttpStatus.FORBIDDEN;
+                case NOT_REPLYABLE, ID_CONFLICT -> HttpStatus.CONFLICT;
+            };
+            return new ResponseStatusException(status, rejected.getMessage());
+        }
+        if (error instanceof NoSuchElementException) {
+            return new ResponseStatusException(HttpStatus.NOT_FOUND, "工单不存在或已不可访问。");
+        }
+        // 回复只把明确的领域拒绝映射为 4xx；存储查询失败不能被旧工单状态映射误译为 409。
+        return error;
     }
 
     @Operation(summary = "挂起", description = "PROCESSING → ON_HOLD，非法状态 409")
@@ -270,9 +282,22 @@ public class AgentTicketController {
     }
 
     private <T> Mono<T> blocking(Callable<T> callable) {
-        return Mono.fromCallable(callable)
-            .subscribeOn(Schedulers.boundedElastic())
-            .onErrorMap(HttpErrors::translate);
+        return blocking(callable, HttpErrors::translate);
+    }
+
+    private <T> Mono<T> blocking(Callable<T> callable, Function<Throwable, Throwable> errorMapper) {
+        return Mono.deferContextual(context -> {
+            String tenant = context.getOrDefault(TenantContextThreadLocalAccessor.KEY, TenantContext.DEFAULT);
+            return Mono.fromCallable(() -> {
+                String previous = TenantContext.get();
+                TenantContext.set(tenant);
+                try {
+                    return callable.call();
+                } finally {
+                    TenantContext.set(previous);
+                }
+            }).subscribeOn(Schedulers.boundedElastic());
+        }).onErrorMap(errorMapper);
     }
 
 }

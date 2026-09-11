@@ -28,6 +28,7 @@ export class WsClient {
   private manualClosed = false
 
   connect(url: string): void {
+    this.close()
     this.url = url
     this.manualClosed = false
     this.reconnectAttempts = 0
@@ -35,24 +36,36 @@ export class WsClient {
   }
 
   private open(): void {
-    this.socket = new WebSocket(this.url)
-    this.socket.onopen = () => {
+    const socket = new WebSocket(this.url)
+    this.socket = socket
+    const current = () => this.socket === socket && !this.manualClosed
+    socket.onopen = () => {
+      if (!current()) return
       this.reconnectAttempts = 0
       this.startHeartbeat()
+      this.emit('open', undefined)
     }
-    this.socket.onmessage = (event: MessageEvent<string>) => {
-      this.dispatch(event.data)
+    socket.onmessage = (event: MessageEvent<string>) => {
+      if (current()) this.dispatch(event.data)
     }
-    this.socket.onclose = () => {
+    socket.onclose = (event) => {
+      if (!current()) return
       this.stopHeartbeat()
-      if (!this.manualClosed) {
-        this.scheduleReconnect()
-      }
+      this.emit('close', { code: event?.code })
+      // 无效或已过期凭证需要业务层重新取凭证，禁止拿旧身份无限重连。
+      if (event?.code === 1008) this.emit('unauthorized', undefined)
+      else this.scheduleReconnect()
     }
-    // onerror 之后浏览器总会紧接着触发 onclose，重连统一交给 onclose 里处理，这里不重复调度。
-    this.socket.onerror = () => {
-      this.socket?.close()
+    socket.onerror = () => {
+      if (current()) socket.close()
     }
+  }
+
+  private emit(type: string, data: unknown): void {
+    this.handlers
+      .get(type)
+      ?.slice()
+      .forEach((handler) => handler(data))
   }
 
   private dispatch(raw: string): void {
@@ -65,8 +78,7 @@ export class WsClient {
     if (!frame || typeof frame.type !== 'string') {
       return
     }
-    const list = this.handlers.get(frame.type)
-    list?.forEach((handler) => handler(frame.data))
+    this.emit(frame.type, frame.data)
   }
 
   /** 订阅某个帧类型，返回取消订阅函数，组件卸载时调用避免重复注册。 */
@@ -79,15 +91,22 @@ export class WsClient {
       if (!current) {
         return
       }
-      this.handlers.set(type, current.filter((h) => h !== handler))
+      this.handlers.set(
+        type,
+        current.filter((h) => h !== handler),
+      )
     }
   }
 
-  send(type: string, data?: unknown): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) {
-      return
+  /** 返回值只证明浏览器写出，业务保存以 HTTP 回执和历史为准。 */
+  send(type: string, data?: unknown): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    try {
+      this.socket.send(JSON.stringify({ type, data }))
+      return true
+    } catch {
+      return false
     }
-    this.socket.send(JSON.stringify({ type, data }))
   }
 
   /** 连接是否处于可发送状态，供业务代码判断"WS 不可用时降级走 HTTP 接口"。 */
@@ -110,9 +129,15 @@ export class WsClient {
   }
 
   private scheduleReconnect(): void {
-    const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempts, RECONNECT_MAX_DELAY_MS)
+    if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer)
+    this.emit('reconnecting', undefined)
+    const delay = Math.min(
+      RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempts,
+      RECONNECT_MAX_DELAY_MS,
+    )
     this.reconnectAttempts += 1
     this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null
       if (!this.manualClosed) {
         this.open()
       }
