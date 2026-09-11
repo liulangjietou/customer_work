@@ -47,6 +47,8 @@ public enum ResultCode {
     PASSWORD_RESET_REJECTED(30015, "验证信息有误或已失效，请重新获取验证码"),
     CONFIG_EDIT_CONFLICT(30016, "配置已在其他位置更新，请保留当前内容并重新核对"),
 
+    KNOWLEDGE_GAP_REVIEW_CONFLICT(30017, "该问题已被其他人复核，请保留输入并重新核对"),
+
     // 4xxxx 外部依赖类
     MODEL_TEST_TIMEOUT(40001, "模型连通性测试超时"),
     MODEL_TEST_FAILED(40002, "模型连通性测试失败"),

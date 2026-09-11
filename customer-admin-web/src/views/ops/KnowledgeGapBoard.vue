@@ -4,6 +4,9 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/store/auth'
 import { getRequestErrorMessage } from '@/api/request'
 import CrudLoadState from '@/components/CrudLoadState.vue'
+import KnowledgeGapReviewDrawer from './KnowledgeGapReviewDrawer.vue'
+import { GAP_CATEGORY_LABELS, GAP_VIEW_OPTIONS } from './knowledgeGapPresentation'
+import type { KnowledgeGapView } from '@/api/ops'
 import type { FormInstance, FormRules } from 'element-plus'
 import ImprovementClosurePanel from '@/components/ImprovementClosurePanel.vue'
 import {
@@ -19,6 +22,8 @@ const hasLoaded = ref(false)
 const loadError = ref<unknown>(null)
 const list = ref<KnowledgeGap[]>([])
 const search = ref('')
+const view = ref<KnowledgeGapView>('WORK')
+const reviewHash = ref<string | null>(null)
 const visibleList = computed(() =>
   list.value.filter(
     (gap) =>
@@ -40,7 +45,7 @@ async function loadList() {
   const requestId = ++listRequest
   loading.value = true
   try {
-    const result = await listKnowledgeGaps()
+    const result = await listKnowledgeGaps(undefined, 50, view.value)
     if (requestId !== listRequest) return
     list.value = result
     hasLoaded.value = true
@@ -56,7 +61,7 @@ function formatTime(ms: number): string {
   return ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '-'
 }
 
-/** 未命中次数越多越该优先补，用色阶让排行一眼可见。 */
+/** 色阶只表达出现频次，处理优先级由人工复核确定。 */
 function missTagType(count: number): 'danger' | 'warning' | 'info' {
   if (count >= 10) return 'danger'
   if (count >= 3) return 'warning'
@@ -81,6 +86,19 @@ const rules: FormRules = {
   title: [{ required: true, message: '请填写条目标题', trigger: 'blur' }],
   content: [{ required: true, message: '请填写条目内容', trigger: 'blur' }],
   keyword: [{ required: true, message: '请填写命中关键词', trigger: 'blur' }],
+}
+
+function changeView() {
+  listRequest += 1
+  list.value = []
+  hasLoaded.value = false
+  loadError.value = null
+  void loadList()
+}
+
+function openReview(row: KnowledgeGap) {
+  if (!auth.hasPermission('knowledge-gap:view') || loading.value || loadError.value) return
+  reviewHash.value = row.questionHash
 }
 
 function openFill(row: KnowledgeGap) {
@@ -135,6 +153,7 @@ watch(
     loadError.value = null
     closureVisible.value = false
     closureGap.value = null
+    reviewHash.value = null
     dialogVisible.value = false
     if (auth.token) void loadList()
   },
@@ -165,7 +184,15 @@ onScopeDispose(() => {
           clearable
           class="gap-search"
         />
-        <span class="scope-note">当前租户 · 按未命中次数取前 50 条</span>
+        <el-select v-model="view" aria-label="问题处理视图" class="gap-view" @change="changeView">
+          <el-option
+            v-for="option in GAP_VIEW_OPTIONS"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+        <span class="scope-note">当前租户 · 当前筛选前 50 条</span>
         <el-button type="primary" :loading="loading" @click="loadList">刷新</el-button>
       </div>
     </el-card>
@@ -226,14 +253,36 @@ onScopeDispose(() => {
           min-width="220"
           show-overflow-tooltip
         />
+        <el-table-column label="处理分类" width="170"
+          ><template #default="{ row }">
+            <el-tag :type="row.classification?.origin === 'MANUAL' ? 'success' : 'info'">{{
+              GAP_CATEGORY_LABELS[
+                (row.classification?.category as keyof typeof GAP_CATEGORY_LABELS) ?? 'PENDING'
+              ]
+            }}</el-tag>
+            <span v-if="row.classification?.priority === 'HIGH'" class="high-priority"
+              >高优先级</span
+            >
+            <small v-else-if="row.classification?.origin === 'RULE'" class="classification-origin"
+              >规则建议</small
+            >
+          </template></el-table-column
+        >
         <el-table-column label="首次出现" width="170">
           <template #default="{ row }">{{ formatTime(row.firstSeenAtMs) }}</template>
         </el-table-column>
         <el-table-column label="最近出现" width="170">
           <template #default="{ row }">{{ formatTime(row.lastSeenAtMs) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">
+            <el-button
+              link
+              type="primary"
+              :disabled="loading || !!loadError"
+              @click="openReview(row)"
+              >问题详情</el-button
+            >
             <el-button
               v-permission="'knowledge-gap:fill'"
               link
@@ -256,6 +305,13 @@ onScopeDispose(() => {
         </el-table-column>
       </el-table>
     </el-card>
+
+    <KnowledgeGapReviewDrawer
+      v-if="reviewHash"
+      :question-hash="reviewHash"
+      @close="reviewHash = null"
+      @saved="loadList"
+    />
 
     <el-dialog
       v-model="dialogVisible"
@@ -338,6 +394,20 @@ onScopeDispose(() => {
   gap: 12px;
   margin-bottom: 0;
   flex-wrap: wrap;
+}
+
+.gap-view {
+  width: 180px;
+}
+.high-priority,
+.classification-origin {
+  display: block;
+  font-size: 12px;
+  margin-top: 5px;
+  color: var(--cw-text-muted);
+}
+.high-priority {
+  color: var(--cw-danger);
 }
 
 .gap-search {

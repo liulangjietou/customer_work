@@ -8,18 +8,18 @@ import com.richard.fyoung.customerwork.capability.csat.CsatSurvey;
 import com.richard.fyoung.customerwork.capability.deadletter.DeadLetter;
 import com.richard.fyoung.customerwork.capability.deadletter.DeadLetterStatus;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGap;
-import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
+import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapView;
 import com.richard.fyoung.customerwork.capability.prompt.PromptVersion;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheEntry;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheScope;
+import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
 import com.richard.fyoung.customerwork.tool.backend.entity.KnowledgeDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
-
-import java.util.List;
 
 /**
  * 运营闭环后台服务：五个域的读与少量运营动作。
@@ -113,6 +113,12 @@ public class OpsAdminService {
     public List<KnowledgeGap> topKnowledgeGaps(String scopeId, int limit) {
         String scope = StringUtils.hasText(scopeId) ? scopeId : new OpsScopeResolver().resolve();
         return gatewayProvider.get().knowledgeGap().topGaps(scope, limit);
+    }
+
+    /** 分类过滤在数据库排序截取前完成；旧排行接口继续兼容。 */
+    public List<KnowledgeGap> topKnowledgeGaps(String scopeId, int limit, KnowledgeGapView view) {
+        String scope = StringUtils.hasText(scopeId) ? scopeId : new OpsScopeResolver().resolve();
+        return gatewayProvider.get().knowledgeGap().topGaps(scope, limit, view);
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap;
 
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapEvidence;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -26,14 +27,20 @@ public class InMemoryKnowledgeGapStore implements KnowledgeGapStore {
 
     @Override
     public void recordMiss(String question, String scopeId, long nowMs) {
+        recordMiss(question, scopeId, nowMs, null);
+    }
+
+    @Override
+    public void recordMiss(String question, String scopeId, long nowMs, KnowledgeGapEvidence evidence) {
         String normalized = KnowledgeGap.normalize(question);
         if (normalized.isEmpty()) {
             return;
         }
         String key = scopeId + '#' + KnowledgeGap.hashOf(normalized);
         gaps.compute(key, (k, existing) -> existing == null
-            ? KnowledgeGap.firstMiss(normalized, scopeId, nowMs)
-            : existing.hitAgain(nowMs));
+            ? new KnowledgeGap(KnowledgeGap.hashOf(normalized), normalized, scopeId, 1, nowMs, nowMs,
+                evidence, KnowledgeGapClassification.suggest(question))
+            : existing.hitAgain(nowMs, evidence));
     }
 
     @Override

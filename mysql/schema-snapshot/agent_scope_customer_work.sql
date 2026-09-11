@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/customerwork/migration 的全部迁移
 --           （含 V2/V9 两个 Java 迁移）后逐表导出，自增当前值已抹除。
--- 对应版本：Flyway V24
+-- 对应版本：Flyway V26
 -- 真源：customer-work-starter/src/main/resources/db/customerwork/migration/
 --       + com.richard.fyoung.customerwork.infra.migration 下的 Java 迁移。
 --       改结构一律新增迁移，改本文件不会生效。
@@ -551,10 +551,45 @@ CREATE TABLE `cw_knowledge_gap` (
   `last_seen_at_ms` bigint NOT NULL COMMENT '最近出现时间戳（毫秒）',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
+  `retrieval_path` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '最近样本的检索路径',
+  `source_agent_code` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '最近样本的实际智能体',
+  `source_channel_code` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '最近样本的可信入口',
+  `source_session_type` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '最近样本的会话类型',
+  `retrieval_result` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '最近样本的检索结果',
+  `category` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'PENDING' COMMENT '运营分类',
+  `priority` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'NORMAL' COMMENT '人工优先级',
+  `classification_origin` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'UNKNOWN' COMMENT '规则建议或人工结论',
+  `classification_reason` varchar(1000) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '只有检索未命中证据，尚不足以判断原因' COMMENT '当前分类理由',
+  `review_revision` bigint NOT NULL DEFAULT '0' COMMENT '人工复核修订',
+  `reviewed_by` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '复核后台用户ID',
+  `reviewed_at_ms` bigint DEFAULT NULL COMMENT '最近复核时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_knowledge_gap` (`tenant_id`,`scope_id`,`question_hash`),
   KEY `idx_knowledge_gap_rank` (`tenant_id`,`scope_id`,`miss_count`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识盲区（反复检索不到的问题，计数表）';
+
+-- ----------------------------------------------------------------------------
+-- cw_knowledge_gap_review
+-- ----------------------------------------------------------------------------
+CREATE TABLE `cw_knowledge_gap_review` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID',
+  `scope_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '原始信号分区',
+  `question_hash` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '原始问题哈希',
+  `revision` bigint NOT NULL COMMENT '复核修订',
+  `previous_category` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '修改前类别',
+  `previous_priority` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '修改前优先级',
+  `category` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '修改后类别',
+  `priority` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '修改后优先级',
+  `reason` varchar(1000) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '人工判断理由',
+  `reviewed_by` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '复核后台用户ID',
+  `reviewed_at_ms` bigint NOT NULL COMMENT '复核时间',
+  `signal_count` bigint NOT NULL COMMENT '复核保存时的计数快照',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_gap_review` (`tenant_id`,`scope_id`,`question_hash`,`revision`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识缺口人工复核流水';
 
 -- ----------------------------------------------------------------------------
 -- cw_knowledge_version
