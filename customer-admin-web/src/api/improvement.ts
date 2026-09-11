@@ -1,4 +1,4 @@
-import { request } from './request'
+import { LLM_TIMEOUT_MS, request } from './request'
 import type { EvalTypeCode } from './eval'
 
 export type ImprovementSourceType = 'KNOWLEDGE_GAP' | 'BADCASE'
@@ -16,11 +16,7 @@ export type ImprovementCaseStatus =
   | 'INCONCLUSIVE'
   | 'CANCELLED'
 export type ImprovementEffectStatus =
-  | 'NOT_STARTED'
-  | 'OBSERVING'
-  | 'EFFECTIVE'
-  | 'INEFFECTIVE'
-  | 'INCONCLUSIVE'
+  'NOT_STARTED' | 'OBSERVING' | 'EFFECTIVE' | 'INEFFECTIVE' | 'INCONCLUSIVE'
 export type ImprovementSlaStatus = 'ON_TRACK' | 'OVERDUE' | 'CLOSED'
 
 export interface ImprovementCase {
@@ -66,7 +62,11 @@ function sourcePath(sourceType: ImprovementSourceType, sourceKey: string) {
 }
 
 export function getImprovementCase(sourceType: ImprovementSourceType, sourceKey: string) {
-  return request<ImprovementCase | null>({ url: sourcePath(sourceType, sourceKey), method: 'get' })
+  return request<ImprovementCase | null>({
+    suppressErrorMessage: true,
+    url: sourcePath(sourceType, sourceKey),
+    method: 'get',
+  })
 }
 
 export function triageImprovementCase(
@@ -75,6 +75,7 @@ export function triageImprovementCase(
   data: { ownerId?: string; slaDueAtMs: number },
 ) {
   return request<ImprovementCase>({
+    suppressErrorMessage: true,
     url: `${sourcePath(sourceType, sourceKey)}/triage`,
     method: 'post',
     data,
@@ -85,28 +86,48 @@ export function createImprovementEvalCase(
   id: number,
   data: { caseId: string; evalType: EvalTypeCode; expected?: string; category?: string },
 ) {
-  return request<ImprovementCase>({ url: `/improvement-cases/${id}/eval-case`, method: 'post', data })
+  return request<ImprovementCase>({
+    suppressErrorMessage: true,
+    url: `/improvement-cases/${id}/eval-case`,
+    method: 'post',
+    data,
+  })
 }
 
 export function bindImprovementArtifact(
   id: number,
   data: { agentId: number; evalType: EvalTypeCode; evalCaseId?: string },
 ) {
-  return request<ImprovementCase>({ url: `/improvement-cases/${id}/artifact`, method: 'post', data })
+  return request<ImprovementCase>({
+    suppressErrorMessage: true,
+    url: `/improvement-cases/${id}/artifact`,
+    method: 'post',
+    data,
+  })
 }
 
 export function reevaluateImprovementCase(id: number, remark?: string) {
   return request<ImprovementCase>({
+    suppressErrorMessage: true,
     url: `/improvement-cases/${id}/reevaluate`,
+    timeout: LLM_TIMEOUT_MS,
     method: 'post',
     data: { remark },
   })
 }
 
 export function publishImprovementCase(id: number) {
-  return request<ImprovementCase>({ url: `/improvement-cases/${id}/publish`, method: 'post' })
+  return request<ImprovementCase>({
+    suppressErrorMessage: true,
+    url: `/improvement-cases/${id}/publish`,
+    method: 'post',
+  })
 }
 
 export function refreshImprovementCase(id: number) {
-  return request<ImprovementCase>({ url: `/improvement-cases/${id}/refresh`, method: 'post' })
+  return request<ImprovementCase>({
+    suppressErrorMessage: true,
+    url: `/improvement-cases/${id}/refresh`,
+    method: 'post',
+  })
 }

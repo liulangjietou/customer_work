@@ -290,7 +290,7 @@ onMounted(loadList)
       />
     </el-card>
 
-    <el-drawer v-model="drawerVisible" title="badcase 筛选与回流" size="640px">
+    <el-drawer v-model="drawerVisible" title="badcase 筛选与回流" size="min(640px, 100vw)">
       <div v-if="current">
         <el-descriptions :column="1" border>
           <el-descriptions-item label="来源">
@@ -419,7 +419,11 @@ onMounted(loadList)
             上线效果闭环
             <span class="hint">责任、SLA、精确制品、复评、可靠发布与同类问题复发观察</span>
           </div>
-          <ImprovementClosurePanel source-type="BADCASE" :source-key="current.id" />
+          <ImprovementClosurePanel
+            source-type="BADCASE"
+            :source-key="current.id"
+            :active="drawerVisible"
+          />
         </div>
       </div>
     </el-drawer>
