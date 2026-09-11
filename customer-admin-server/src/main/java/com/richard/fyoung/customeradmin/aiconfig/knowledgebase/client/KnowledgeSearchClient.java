@@ -8,12 +8,12 @@ import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchException;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchOps;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchResult;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchSettings;
 import com.richard.fyoung.customerwork.safety.security.HttpTargetForbiddenException;
-import org.springframework.stereotype.Component;
-
 import java.util.List;
 import java.util.Map;
+import org.springframework.stereotype.Component;
 
 /**
  * 外部 RAG 知识库检索客户端（admin 侧调用壳）。
@@ -78,6 +78,11 @@ public class KnowledgeSearchClient {
      */
     public List<KnowledgeNode> searchAll(List<KnowledgeBaseEndpoint> endpoints, String query) {
         return searchOps.searchAll(endpoints, query);
+    }
+
+    /** 对话继续使用成功的部分召回，统计方同时取得故障或超时后的不完整状态。 */
+    public KnowledgeSearchResult searchAllResult(List<KnowledgeBaseEndpoint> endpoints, String query) {
+        return searchOps.searchAllResult(endpoints, query);
     }
 
     /**

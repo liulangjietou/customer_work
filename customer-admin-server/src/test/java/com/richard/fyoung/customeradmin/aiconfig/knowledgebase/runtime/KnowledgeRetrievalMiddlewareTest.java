@@ -1,18 +1,18 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime;
 
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeInjectionMiddleware;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalResult;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.middleware.ReasoningInput;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
-
-import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -25,7 +25,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * {@link KnowledgeRetrievalMiddleware} 单测：本类是 starter {@link KnowledgeInjectionMiddleware} 的
- * 调用壳，故这里只验证<b>属于薄壳的两件事</b>——把 {@link KnowledgeRetrievalService#retrieve} 正确接成
+ * 调用壳，故这里只验证<b>属于薄壳的两件事</b>——把 {@link KnowledgeRetrievalService#retrieveResult} 正确接成
  * starter 的召回来源（agentCode 构建期绑定、query 原样透传），以及壳确实沿用了父类的注入行为。
  * 瞬态注入、每轮一次、boundedElastic 调度、隔离包裹、失败不打断等语义在 starter 的
  * {@code KnowledgeInjectionMiddlewareTest} 覆盖，不在此重复。
@@ -55,7 +55,8 @@ class KnowledgeRetrievalMiddlewareTest {
     /** 壳必须把构建期绑定的 agentCode 与本轮提问原样交给查表服务，接错了整条 RAG 链路会静默不召回。 */
     @Test
     void shouldWireRetrievalServiceAsProvider() {
-        when(retrievalService.retrieve(anyString(), anyString(), isNull())).thenReturn(BLOCK);
+        when(retrievalService.retrieveResult(anyString(), anyString(), isNull()))
+            .thenReturn(KnowledgeRetrievalResult.completed(BLOCK));
         AtomicReference<ReasoningInput> passed = new AtomicReference<>();
 
         middleware.onReasoning(null, RuntimeContext.builder().sessionId("s1").build(),
@@ -64,7 +65,7 @@ class KnowledgeRetrievalMiddlewareTest {
                 return Flux.<AgentEvent>empty();
             }).blockLast();
 
-        verify(retrievalService).retrieve(AGENT_CODE, "公积金怎么提取", null);
+        verify(retrievalService).retrieveResult(AGENT_CODE, "公积金怎么提取", null);
         // 壳确实继承了父类的注入行为：原消息不动，末尾多一条隔离包裹的合成消息
         List<Msg> sent = passed.get().messages();
         assertEquals(2, sent.size());
@@ -73,10 +74,11 @@ class KnowledgeRetrievalMiddlewareTest {
         assertEquals(Boolean.TRUE, sent.get(1).getMetadata().get(Msg.METADATA_SYNTHETIC));
     }
 
-    /** 查表服务返回 null（未绑知识库/未命中/降级）时原样透传，壳不得自己造空块。 */
+    /** 查表服务明确没有执行检索时原样透传，壳不得自己造空块。 */
     @Test
-    void shouldPassThrough_whenRetrievalServiceReturnsNull() {
-        when(retrievalService.retrieve(anyString(), anyString(), isNull())).thenReturn(null);
+    void shouldPassThrough_whenRetrievalServiceSkipsSearch() {
+        when(retrievalService.retrieveResult(anyString(), anyString(), isNull()))
+            .thenReturn(KnowledgeRetrievalResult.skipped());
         ReasoningInput input = inputOf("问题");
         AtomicReference<ReasoningInput> passed = new AtomicReference<>();
 
