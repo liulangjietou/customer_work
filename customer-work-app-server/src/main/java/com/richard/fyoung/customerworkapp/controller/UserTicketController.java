@@ -4,6 +4,7 @@ import com.richard.fyoung.customerworkapp.web.HttpErrors;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipals;
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.core.common.PageResult;
 import com.richard.fyoung.customerwork.data.ticket.Ticket;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
@@ -82,6 +83,10 @@ public class UserTicketController {
     public record CloseRequest(String reason, Boolean force) {
     }
 
+    /** message 为空表示本次查询未发现已保存的输入；查询失败由 HTTP 错误表达，不冒充未受理。 */
+    public record MessageReceipt(String clientMsgId, ChatMessage message) {
+    }
+
     @Operation(summary = "新建会话",
         description = "用户级唯一活跃会话：已有进行中会话返回 409（体带 sessionId/ticketId/status），否则建单")
     @PostMapping("/sessions")
@@ -143,6 +148,26 @@ public class UserTicketController {
             sessionGuard.requireOwned(sessionId, user.userId());
             return chatLogService.historyBySession(sessionId, beforeId, limit);
         });
+    }
+
+    /** 回执丢失后按原标识查询，只读取本人会话和本人输入，不触发模型或业务操作。 */
+    @GetMapping("/sessions/{sessionId}/receipts/{clientMsgId}")
+    public Mono<MessageReceipt> receipt(@PathVariable String sessionId, @PathVariable String clientMsgId,
+                                          ServerWebExchange exchange) {
+        UserPrincipal user = UserPrincipals.require(exchange);
+        return blocking(() -> TenantContext.callWith(user.tenantId(), () -> {
+            sessionGuard.requireOwned(sessionId, user.userId());
+            if (clientMsgId.isBlank() || clientMsgId.length() > ChatLogService.CLIENT_MESSAGE_ID_MAX_LENGTH) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid client message identity");
+            }
+            String messageId = ChatLogService.clientMessageId(user.tenantId(), sessionId,
+                TicketActorType.USER, user.userId(), clientMsgId);
+            ChatMessage message = chatLogService.findByMessageId(messageId)
+                .filter(saved -> sessionId.equals(saved.sessionId()) && saved.senderType() == TicketActorType.USER
+                    && user.userId().equals(saved.senderId()))
+                .orElse(null);
+            return new MessageReceipt(clientMsgId, message);
+        }));
     }
 
     @Operation(summary = "请求转人工", description = "非法状态返回 409")

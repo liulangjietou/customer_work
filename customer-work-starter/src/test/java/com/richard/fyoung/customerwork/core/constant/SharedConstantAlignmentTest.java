@@ -77,6 +77,10 @@ class SharedConstantAlignmentTest {
     private static final Set<String> DISTINCT_CONCEPTS = Set.of(
         // 五个互不相干的状态机各有自己的成功/失败态（配置版本、代码评审、知识索引、角色阶段、定时任务）
         "FAILED", "SUCCESS", "APPROVED",
+        // 消息受理与计划审批的拒绝态独立；受理未知与工单情绪未知也不共享状态转换。
+        "REJECTED", "UNKNOWN",
+        // WS 持久化游标字段与 MCP 契约表主键列，分别归协议和数据库模型所有。
+        "id",
         // 文件操作类型 / 沙箱危险动作 / 权限动作，三套动作词汇
         "DELETE", "CREATE",
         // Nacos 注册的 URL scheme 与 MCP 的传输类型，值撞了而已

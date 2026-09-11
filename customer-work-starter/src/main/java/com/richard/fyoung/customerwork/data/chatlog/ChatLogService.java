@@ -5,6 +5,10 @@ import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 
 /**
  * 聊天日志服务：落库对话消息并按会话 / 工单双维度回放历史。
@@ -14,6 +18,9 @@ import java.util.UUID;
  * @author owlzhangfq@gmail.com
  */
 public class ChatLogService {
+
+    /** 受理入口与回执查询共用的客户端标识长度上限。 */
+    public static final int CLIENT_MESSAGE_ID_MAX_LENGTH = 128;
 
     private static final String MESSAGE_ID_PREFIX = "MSG-";
 
@@ -27,8 +34,32 @@ public class ChatLogService {
     public ChatMessage append(String sessionId, String ticketId, TicketActorType senderType,
                               String senderId, String content) {
         String messageId = MESSAGE_ID_PREFIX + UUID.randomUUID();
+        return appendWithMessageId(messageId, sessionId, ticketId, senderType, senderId, content);
+    }
+
+    /** 应用受理事务已确定幂等消息号时使用；唯一键冲突交由事务外回读，不吞掉真实写入失败。 */
+    public ChatMessage appendWithMessageId(String messageId, String sessionId, String ticketId,
+                                           TicketActorType senderType, String senderId, String content) {
         ChatMessage message = ChatMessage.of(messageId, sessionId, ticketId, senderType, senderId, content);
         return store.append(message);
+    }
+
+    /** 客户端标识只在租户、会话和发送主体内生效；长度前缀避免分隔符碰撞，结果适配既有 64 字符唯一键。 */
+    public static String clientMessageId(String tenantId, String sessionId, TicketActorType senderType,
+                                          String senderId, String clientMsgId) {
+        if (clientMsgId == null || clientMsgId.isBlank()) {
+            return null;
+        }
+        StringBuilder scope = new StringBuilder();
+        for (String part : List.of(tenantId, sessionId, senderType.name(), senderId, clientMsgId)) {
+            scope.append(part.length()).append(':').append(part);
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(scope.toString().getBytes(StandardCharsets.UTF_8));
+            return "REQ-" + Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required by the Java runtime", impossible);
+        }
     }
 
     /** 按业务消息号精确查询。 */
