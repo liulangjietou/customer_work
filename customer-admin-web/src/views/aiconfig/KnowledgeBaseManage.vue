@@ -250,7 +250,7 @@ onMounted(loadList)
       </div>
       <el-empty
         v-if="!loading && list.length === 0"
-        description="暂无符合条件的知识库"
+        :description="loadError ? '知识库加载失败，请重试' : '暂无符合条件的知识库'"
         :image-size="72"
       />
 

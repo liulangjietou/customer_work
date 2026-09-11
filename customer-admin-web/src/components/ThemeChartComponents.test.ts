@@ -25,7 +25,16 @@ const paletteMocks = vi.hoisted(() => ({
     grid: '#dfe5ed',
     tooltipBackground: '#ffffff',
     tooltipBorder: '#dfe5ed',
-    series: ['#2864b7', '#16856a', '#b66b19', '#b94f73', '#7347bd', '#16778b', '#a84f28', '#8793a8'],
+    series: [
+      '#2864b7',
+      '#16856a',
+      '#b66b19',
+      '#b94f73',
+      '#7347bd',
+      '#16778b',
+      '#a84f28',
+      '#8793a8',
+    ],
   },
   read: vi.fn(),
 }))
@@ -276,10 +285,22 @@ type ChartKind = 'agent' | 'contentGuard' | 'eval'
 function expectSeriesEncoding(option: CapturedOption, kind: ChartKind, palette: ThemeChartPalette) {
   if (kind === 'agent') {
     expect(option.series.map((series) => series.symbol)).toEqual([
-      'circle', 'rect', 'triangle', 'diamond', 'roundRect', 'pin', 'arrow',
+      'circle',
+      'rect',
+      'triangle',
+      'diamond',
+      'roundRect',
+      'pin',
+      'arrow',
     ])
     expect(option.series.map((series) => series.lineStyle?.type)).toEqual([
-      'solid', 'solid', 'dashed', 'dotted', 'dashed', 'dotted', 'solid',
+      'solid',
+      'solid',
+      'dashed',
+      'dotted',
+      'dashed',
+      'dotted',
+      'solid',
     ])
     expect(option.series[0]?.lineStyle?.width).toBe(2.5)
     return
@@ -339,16 +360,18 @@ const CHART_CASES: ChartCase[] = [
     component: AgentCallTrendChart,
     props: {
       granularity: 'day',
-      points: [{
-        bucket: '2026-08-31',
-        count: 12,
-        avgDurationMs: 230,
-        avgModelMs: 150,
-        avgToolMs: 30,
-        avgMcpMs: 20,
-        avgSkillMs: 10,
-        totalTokens: 4096,
-      }],
+      points: [
+        {
+          bucket: '2026-08-31',
+          count: 12,
+          avgDurationMs: 230,
+          avgModelMs: 150,
+          avgToolMs: 30,
+          avgMcpMs: 20,
+          avgSkillMs: 10,
+          totalTokens: 4096,
+        },
+      ],
     },
   },
   {
@@ -367,21 +390,23 @@ const CHART_CASES: ChartCase[] = [
     props: {
       primaryLabel: '准确率',
       secondaryLabel: '快车道覆盖率',
-      runs: [{
-        runId: 'run-1',
-        evalType: 'INTENT',
-        total: 10,
-        passed: 9,
-        primaryMetric: 0.9,
-        secondaryMetric: 0.7,
-        failedCaseIds: ['case-10'],
-        failures: [],
-        metrics: {},
-        trigger: 'MANUAL',
-        datasetSize: 10,
-        remark: null,
-        createdAtMs: Date.UTC(2026, 7, 31, 8, 30),
-      }],
+      runs: [
+        {
+          runId: 'run-1',
+          evalType: 'INTENT',
+          total: 10,
+          passed: 9,
+          primaryMetric: 0.9,
+          secondaryMetric: 0.7,
+          failedCaseIds: ['case-10'],
+          failures: [],
+          metrics: {},
+          trigger: 'MANUAL',
+          datasetSize: 10,
+          remark: null,
+          createdAtMs: Date.UTC(2026, 7, 31, 8, 30),
+        },
+      ],
     },
   },
 ]
@@ -394,6 +419,67 @@ describe.each(CHART_CASES)('$name 主题重绘', ({ component, kind, props }) =>
     app = undefined
     vi.clearAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('容器尺寸变化时合并重绘，卸载后清理观察与待执行帧', async () => {
+    installBrowser()
+    const chart = createChartStub()
+    echartsMocks.init.mockReturnValue(chart)
+    paletteMocks.read.mockReturnValue(OCEAN_PALETTE)
+    let resizeCallback: ResizeObserverCallback | undefined
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback
+        }
+        observe = observe
+        disconnect = disconnect
+      },
+    )
+    const frames = new Map<number, FrameRequestCallback>()
+    let frameId = 0
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++frameId, callback)
+      return frameId
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    app = renderer.createApp(createSetupHarness(component, props))
+    app.use(pinia)
+    app.provide(ssrContextKey, { modules: new Set<string>() })
+    app.mount(createHostNode('root'))
+    await nextTick()
+
+    expect(observe).toHaveBeenCalledOnce()
+    const notifySize = (width: number, height: number) => {
+      resizeCallback?.(
+        [{ contentRect: { width, height } } as ResizeObserverEntry],
+        {} as ResizeObserver,
+      )
+    }
+    notifySize(700, 280)
+    notifySize(810, 280)
+    expect(frames.size).toBe(1)
+    const queued = [...frames.values()]
+    frames.clear()
+    queued.forEach((callback) => callback(0))
+    expect(chart.resize).toHaveBeenCalledOnce()
+
+    notifySize(810, 280)
+    expect(frames.size).toBe(0)
+    notifySize(0, 0)
+    expect(frames.size).toBe(0)
+    notifySize(900, 280)
+    expect(frames.size).toBe(1)
+    app.unmount()
+    app = undefined
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(frames.size).toBe(0)
+    expect(chart.dispose).toHaveBeenCalledOnce()
   })
 
   it('初始绘制并在 light→light、light→dark、System 媒体变化时读取最新色盘', async () => {

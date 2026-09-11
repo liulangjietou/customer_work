@@ -41,12 +41,48 @@ export interface NavigationCommand {
 }
 
 const SECTION_DEFINITIONS: readonly NavigationSectionDefinition[] = [
-  { key: 'overview', label: '总览', title: '工作总览', icon: 'Grid', searchPlaceholder: '查找工作入口' },
-  { key: 'agents', label: '智能体', title: '智能体工作区', icon: 'Cpu', searchPlaceholder: '查找智能体' },
-  { key: 'build', label: '构建', title: '构建与配置', icon: 'Tools', searchPlaceholder: '查找构建能力' },
-  { key: 'operate', label: '运营', title: '监控与运营', icon: 'DataAnalysis', searchPlaceholder: '查找运营能力' },
-  { key: 'govern', label: '治理', title: '安全治理', icon: 'Lock', searchPlaceholder: '查找治理能力' },
-  { key: 'settings', label: '设置', title: '平台设置', icon: 'Setting', searchPlaceholder: '查找系统设置' },
+  {
+    key: 'overview',
+    label: '总览',
+    title: '工作总览',
+    icon: 'Grid',
+    searchPlaceholder: '查找工作入口',
+  },
+  {
+    key: 'agents',
+    label: '智能体',
+    title: '智能体工作区',
+    icon: 'Cpu',
+    searchPlaceholder: '查找智能体',
+  },
+  {
+    key: 'build',
+    label: '构建',
+    title: '构建与配置',
+    icon: 'Tools',
+    searchPlaceholder: '查找构建能力',
+  },
+  {
+    key: 'operate',
+    label: '运营',
+    title: '监控与运营',
+    icon: 'DataAnalysis',
+    searchPlaceholder: '查找运营能力',
+  },
+  {
+    key: 'govern',
+    label: '治理',
+    title: '安全治理',
+    icon: 'Lock',
+    searchPlaceholder: '查找治理能力',
+  },
+  {
+    key: 'settings',
+    label: '设置',
+    title: '平台设置',
+    icon: 'Setting',
+    searchPlaceholder: '查找系统设置',
+  },
 ]
 
 /** 后端一级菜单的稳定权限码到生命周期分区的映射，不依赖可编辑的中文名称。 */
@@ -79,8 +115,10 @@ const HOME_NODE: MenuNode = {
 
 function sectionKeyForPath(path: string): NavigationSectionKey {
   if (path.startsWith('/workspace')) return 'agents'
-  if (path.startsWith('/aiconfig') || path.startsWith('/project') || path.startsWith('/sql')) return 'build'
-  if (path.startsWith('/monitor') || path.startsWith('/ops') || path.startsWith('/ticket')) return 'operate'
+  if (path.startsWith('/aiconfig') || path.startsWith('/project') || path.startsWith('/sql'))
+    return 'build'
+  if (path.startsWith('/monitor') || path.startsWith('/ops') || path.startsWith('/ticket'))
+    return 'operate'
   if (path.startsWith('/contentguard')) return 'govern'
   if (path.startsWith('/system')) return 'settings'
   return 'overview'
@@ -111,15 +149,14 @@ export function buildNavigationSections(tree: MenuNode[]): NavigationSection[] {
   return SECTION_DEFINITIONS.flatMap((definition) => {
     const sourceNodes = sourceBuckets.get(definition.key) ?? []
     let menuNodes = sourceNodes
-    let itemCount = sourceNodes.length
+    let itemCount = countMenuEntries(sourceNodes)
 
     if (definition.key === 'overview') {
       menuNodes = [HOME_NODE, ...sourceNodes]
-      itemCount = menuNodes.length
+      itemCount = countMenuEntries(menuNodes)
     } else if (definition.key === 'agents') {
-      const canonicalWorkspace = sourceNodes.length === 1 && sourceNodes[0].permCode === 'workspace'
-        ? sourceNodes[0]
-        : null
+      const canonicalWorkspace =
+        sourceNodes.length === 1 && sourceNodes[0].permCode === 'workspace' ? sourceNodes[0] : null
       if (canonicalWorkspace && canonicalWorkspace.children.length > 0) {
         // 真实后端的标准形态直接复用只读 children 引用，避免每次 computed 求值制造新数组。
         menuNodes = canonicalWorkspace.children
@@ -150,6 +187,15 @@ export function buildNavigationSections(tree: MenuNode[]): NavigationSection[] {
   })
 }
 
+/** 目录只负责展开，计数以用户实际可以进入的末级页面为准。 */
+function countMenuEntries(nodes: MenuNode[]): number {
+  return nodes.reduce(
+    (total, node) =>
+      total + (node.children?.length ? countMenuEntries(node.children) : node.path ? 1 : 0),
+    0,
+  )
+}
+
 function menuPathMatches(nodePath: string | null, fullPath: string, path: string): boolean {
   if (!nodePath) return false
   if (nodePath === fullPath) return true
@@ -158,10 +204,11 @@ function menuPathMatches(nodePath: string | null, fullPath: string, path: string
 }
 
 function containsPath(nodes: MenuNode[], fullPath: string, path: string): boolean {
-  return nodes.some((node) => (
-    menuPathMatches(node.path, fullPath, path)
-    || (node.children?.length > 0 && containsPath(node.children, fullPath, path))
-  ))
+  return nodes.some(
+    (node) =>
+      menuPathMatches(node.path, fullPath, path) ||
+      (node.children?.length > 0 && containsPath(node.children, fullPath, path)),
+  )
 }
 
 /** 按当前完整路由反推生命周期分区，先信任后端树的真实归属，再用路径前缀兜底。 */
@@ -184,7 +231,10 @@ function nodeMatchesQuery(node: MenuNode, normalizedQuery: string): boolean {
     node.permCode,
     node.agentCode,
     ...(node.capabilities ?? []),
-  ].filter(Boolean).join(' ').toLocaleLowerCase()
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase()
   return searchable.includes(normalizedQuery)
 }
 
@@ -235,7 +285,9 @@ function collectCommands(
         sectionTitle: section.title,
         trail: nextTrail,
         dynamic: node.dynamic,
-        keywords: [node.permCode, node.agentCode, ...(node.capabilities ?? [])].filter(Boolean).join(' '),
+        keywords: [node.permCode, node.agentCode, ...(node.capabilities ?? [])]
+          .filter(Boolean)
+          .join(' '),
       })
     }
     collectCommands(node.children ?? [], section, nextTrail, commands)
@@ -270,15 +322,31 @@ export function searchNavigationCommands(
   return commands
     .map((command) => {
       const title = command.title.toLocaleLowerCase()
-      const haystack = [title, command.sectionTitle, command.trail.join(' '), command.path, command.keywords]
+      const haystack = [
+        title,
+        command.sectionTitle,
+        command.trail.join(' '),
+        command.path,
+        command.keywords,
+      ]
         .join(' ')
         .toLocaleLowerCase()
       if (!terms.every((term) => haystack.includes(term))) return null
-      const score = title === normalizedQuery ? 100 : title.startsWith(normalizedQuery) ? 60 : title.includes(normalizedQuery) ? 40 : 10
+      const score =
+        title === normalizedQuery
+          ? 100
+          : title.startsWith(normalizedQuery)
+            ? 60
+            : title.includes(normalizedQuery)
+              ? 40
+              : 10
       return { command, score }
     })
     .filter((item): item is { command: NavigationCommand; score: number } => item !== null)
-    .sort((left, right) => right.score - left.score || left.command.title.localeCompare(right.command.title, 'zh-CN'))
+    .sort(
+      (left, right) =>
+        right.score - left.score || left.command.title.localeCompare(right.command.title, 'zh-CN'),
+    )
     .slice(0, limit)
     .map((item) => item.command)
 }

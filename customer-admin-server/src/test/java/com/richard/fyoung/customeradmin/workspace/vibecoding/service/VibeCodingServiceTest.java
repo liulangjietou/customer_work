@@ -47,6 +47,7 @@ class VibeCodingServiceTest {
     private AgentWorkspaceManager workspaceManager;
     private AiAgentMapper agentMapper;
     private GitWorkspaceService gitWorkspaceService;
+    private AgentCallMetaFactory callMetaFactory;
     private VibeCodingService service;
 
     /** agentCode=coder 的 agentRoot（等价于 data/admin-workspace/coder） */
@@ -65,12 +66,13 @@ class VibeCodingServiceTest {
         workspaceManager = mock(AgentWorkspaceManager.class);
         agentMapper = mock(AiAgentMapper.class);
         gitWorkspaceService = mock(GitWorkspaceService.class);
+        callMetaFactory = mock(AgentCallMetaFactory.class);
         // 默认 local 模式（isDockerMode()=false）；docker 模式的容器↔宿主机 bind mount 产物同步（P1-3）
         // 需真起容器，由门控式 DockerSandboxIntegrationTest 覆盖，本单测聚焦模式无关的流式/快照/审计逻辑。
         // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
         service = new VibeCodingService(chatService, agentInstanceFactory, agentMapper, gitWorkspaceService,
             new AdminSandboxProperties(), mock(AiCodingAuditService.class), new PlanConfirmationService(),
-            mock(AgentCallMetaFactory.class), workspaceManager);
+            callMetaFactory, workspaceManager);
 
         // resolveWorkspace 返回 agentRoot（向后兼容，listChangedArtifacts 旧逻辑已不使用此方法）
         when(workspaceManager.resolveWorkspace("coder")).thenReturn(agentRoot);
@@ -136,6 +138,19 @@ class VibeCodingServiceTest {
         assertTrue(enriched.contains("sessions/sess-abc/"), "注入消息应包含会话目录路径");
         assertTrue(enriched.contains("write_file"), "注入消息应提示调用 write_file 工具");
         assertTrue(enriched.contains("写一个 Hello World"), "注入消息应保留原始用户输入");
+    }
+
+    @Test
+    void stream_shouldKeepRawInputSeparateFromAttachedMaterials() {
+        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            .thenReturn(Flux.empty());
+
+        service.stream("coder", "s1", "附件全文\n用户需求", "auto", List.of("attachment-1"), "用户需求")
+            .blockLast();
+
+        org.mockito.Mockito.verify(callMetaFactory).build("coder",
+            com.richard.fyoung.customerwork.data.calllog.AgentCallSessionType.VIBE_CODING, "用户需求");
     }
 
     // ===== 产物清单 diff（会话隔离目录）=====

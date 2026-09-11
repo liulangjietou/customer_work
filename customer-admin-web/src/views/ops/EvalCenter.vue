@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import EvalTrendChart from '@/components/EvalTrendChart.vue'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import {
   createDatasetCase,
   createDatasetVersion,
@@ -46,7 +47,10 @@ const METRIC_LABELS: Record<EvalTypeCode, { primary: string; secondary: string; 
   },
 }
 
-const VERDICT_LABELS: Record<EvalVerdict, { text: string; type: 'success' | 'danger' | 'info' | 'primary' }> = {
+const VERDICT_LABELS: Record<
+  EvalVerdict,
+  { text: string; type: 'success' | 'danger' | 'info' | 'primary' }
+> = {
   FIRST_RUN: { text: '首次运行', type: 'primary' },
   IMPROVED: { text: '变好', type: 'success' },
   REGRESSED: { text: '变差', type: 'danger' },
@@ -64,9 +68,13 @@ const evalType = ref<EvalTypeCode>('INTENT')
 const loading = ref(false)
 const running = ref(false)
 const runs = ref<EvalRun[]>([])
+const runsError = ref<unknown>(null)
+const runsLoaded = ref(false)
 const datasetLoading = ref(false)
 const datasetCases = ref<EvalDatasetCase[]>([])
 const datasetVersions = ref<EvalDatasetRelease[]>([])
+const datasetError = ref<unknown>(null)
+const datasetLoaded = ref(false)
 let runRequestId = 0
 let datasetRequestId = 0
 let detailRequestId = 0
@@ -80,11 +88,15 @@ async function loadRuns() {
   const requestId = ++runRequestId
   const selectedType = evalType.value
   loading.value = true
+  runsError.value = null
   try {
     const nextRuns = await listRuns(selectedType)
     if (requestId === runRequestId && evalType.value === selectedType) {
       runs.value = nextRuns
+      runsLoaded.value = true
     }
+  } catch (error) {
+    if (requestId === runRequestId && evalType.value === selectedType) runsError.value = error
   } finally {
     if (requestId === runRequestId) {
       loading.value = false
@@ -93,6 +105,14 @@ async function loadRuns() {
 }
 
 function handleTypeChange() {
+  // 两类评测使用不同指标口径，旧类型的数据不能继续出现在新类型的标题下。
+  runs.value = []
+  runsLoaded.value = false
+  runsError.value = null
+  datasetCases.value = []
+  datasetVersions.value = []
+  datasetLoaded.value = false
+  datasetError.value = null
   detailVisible.value = false
   diffVisible.value = false
   cancelDetailRequest()
@@ -104,6 +124,7 @@ async function loadDatasetGovernance() {
   const requestId = ++datasetRequestId
   const selectedType = evalType.value
   datasetLoading.value = true
+  datasetError.value = null
   try {
     const [nextCases, nextVersions] = await Promise.all([
       listDatasetCases(selectedType),
@@ -112,7 +133,11 @@ async function loadDatasetGovernance() {
     if (requestId === datasetRequestId && evalType.value === selectedType) {
       datasetCases.value = nextCases
       datasetVersions.value = nextVersions
+      datasetLoaded.value = true
     }
+  } catch (error) {
+    if (requestId === datasetRequestId && evalType.value === selectedType)
+      datasetError.value = error
   } finally {
     if (requestId === datasetRequestId) {
       datasetLoading.value = false
@@ -190,7 +215,11 @@ async function openDetail(run: EvalRun) {
   comparison.value = null
   try {
     const nextComparison = await getComparison(runId)
-    if (requestId === detailRequestId && detailVisible.value && nextComparison.current.runId === runId) {
+    if (
+      requestId === detailRequestId &&
+      detailVisible.value &&
+      nextComparison.current.runId === runId
+    ) {
       comparison.value = nextComparison
     }
   } finally {
@@ -234,7 +263,14 @@ const datasetDiff = ref<EvalDatasetDiff | null>(null)
 
 function openCreateCase() {
   editingCase.value = false
-  Object.assign(caseForm, { caseId: '', input: '', expected: '', category: '', enabled: true, originRef: null })
+  Object.assign(caseForm, {
+    caseId: '',
+    input: '',
+    expected: '',
+    category: '',
+    enabled: true,
+    originRef: null,
+  })
   caseDialogVisible.value = true
 }
 
@@ -371,6 +407,12 @@ function reviewTagType(status: string) {
 }
 
 onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
+onBeforeUnmount(() => {
+  runRequestId += 1
+  datasetRequestId += 1
+  detailRequestId += 1
+  diffRequestId += 1
+})
 </script>
 
 <template>
@@ -396,9 +438,16 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
       </div>
     </el-card>
 
+    <CrudLoadState
+      class="eval-runs-error"
+      :error="runsError"
+      :has-stale-data="runs.length > 0"
+      :loading="loading"
+      @retry="loadRuns"
+    />
     <div class="summary-row" v-loading="loading">
       <div class="stat">
-        <strong>{{ runs.length }}</strong>
+        <strong>{{ runsLoaded ? runs.length : '—' }}</strong>
         <span>当前类型运行记录</span>
       </div>
       <div class="stat">
@@ -410,7 +459,7 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
         <span>最新{{ labels.secondary }}</span>
       </div>
       <div class="stat" :class="{ 'stat-danger': (latestRun?.failedCaseIds.length ?? 0) > 0 }">
-        <strong>{{ latestRun?.failedCaseIds.length ?? 0 }}</strong>
+        <strong>{{ latestRun?.failedCaseIds.length ?? '—' }}</strong>
         <span>最新失败用例</span>
       </div>
     </div>
@@ -429,7 +478,12 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
     </el-card>
 
     <el-card shadow="never" class="list-card">
-      <el-table v-loading="loading" :data="runs" style="width: 100%">
+      <el-table
+        v-loading="loading"
+        :data="runs"
+        style="width: 100%"
+        :empty-text="runsError ? '评测记录加载失败，请重试' : '当前类型暂无评测记录'"
+      >
         <el-table-column label="运行时间" width="180">
           <template #default="{ row }">{{ formatTime(row.createdAtMs) }}</template>
         </el-table-column>
@@ -462,25 +516,48 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
       </el-table>
     </el-card>
 
+    <CrudLoadState
+      class="eval-dataset-error"
+      :error="datasetError"
+      :has-stale-data="datasetCases.length > 0 || datasetVersions.length > 0"
+      :loading="datasetLoading"
+      @retry="loadDatasetGovernance"
+    />
     <el-card v-loading="datasetLoading" shadow="never" class="list-card">
       <template #header>
         <div class="dataset-header">
           <div>
             <strong>评测数据集治理</strong>
-            <span>当前有效 {{ datasetCases.length }} 条 · {{ datasetVersions.length }} 个不可变版本</span>
+            <span
+              >当前有效
+              {{ datasetLoaded ? datasetCases.filter((item) => item.enabled).length : '—' }} 条 ·
+              {{ datasetLoaded ? datasetVersions.length : '—' }} 个不可变版本</span
+            >
           </div>
           <div class="dataset-actions">
             <el-button v-permission="'eval:dataset-edit'" @click="importCases">导入 JSON</el-button>
             <el-button @click="exportCases">导出 JSON</el-button>
-            <el-button v-permission="'eval:dataset-edit'" @click="createVersion">创建命名版本</el-button>
-            <el-button v-permission="'eval:dataset-edit'" class="cw-final-action" type="primary" @click="openCreateCase">新增用例</el-button>
+            <el-button v-permission="'eval:dataset-edit'" @click="createVersion"
+              >创建命名版本</el-button
+            >
+            <el-button
+              v-permission="'eval:dataset-edit'"
+              class="cw-final-action"
+              type="primary"
+              @click="openCreateCase"
+              >新增用例</el-button
+            >
           </div>
         </div>
       </template>
 
       <el-tabs>
         <el-tab-pane label="工作集用例">
-          <el-table :data="datasetCases" row-key="caseId">
+          <el-table
+            :data="datasetCases"
+            row-key="caseId"
+            :empty-text="datasetError ? '评测用例加载失败，请重试' : '当前类型暂无评测用例'"
+          >
             <el-table-column prop="caseId" label="用例编号" width="170" />
             <el-table-column prop="input" label="用户输入" min-width="230" show-overflow-tooltip />
             <el-table-column prop="expected" label="期望" min-width="260" show-overflow-tooltip />
@@ -495,21 +572,32 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
             </el-table-column>
             <el-table-column label="操作" width="145" fixed="right">
               <template #default="{ row }">
-                <el-button v-permission="'eval:dataset-edit'" link type="primary" @click="openEditCase(row)">编辑</el-button>
+                <el-button
+                  v-permission="'eval:dataset-edit'"
+                  link
+                  type="primary"
+                  @click="openEditCase(row)"
+                  >编辑</el-button
+                >
                 <el-button
                   v-if="row.source !== 'SEED'"
                   v-permission="'eval:dataset-edit'"
                   link
                   type="danger"
                   @click="removeCase(row)"
-                >删除覆盖</el-button>
+                  >删除覆盖</el-button
+                >
               </template>
             </el-table-column>
           </el-table>
         </el-tab-pane>
 
         <el-tab-pane label="命名版本与审核">
-          <el-table :data="datasetVersions" row-key="releaseId">
+          <el-table
+            :data="datasetVersions"
+            row-key="releaseId"
+            :empty-text="datasetError ? '评测版本加载失败，请重试' : '当前类型暂无命名版本'"
+          >
             <el-table-column prop="versionName" label="版本名" min-width="190" />
             <el-table-column label="快照" min-width="220">
               <template #default="{ row }">
@@ -518,18 +606,39 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
               </template>
             </el-table-column>
             <el-table-column label="状态" width="120">
-              <template #default="{ row }"><el-tag :type="reviewTagType(row.status)">{{ row.status }}</el-tag></template>
+              <template #default="{ row }"
+                ><el-tag :type="reviewTagType(row.status)">{{ row.status }}</el-tag></template
+              >
             </el-table-column>
             <el-table-column label="创建时间" width="180">
               <template #default="{ row }">{{ formatTime(row.createdAtMs) }}</template>
             </el-table-column>
-            <el-table-column prop="reviewComment" label="审核意见" min-width="180" show-overflow-tooltip />
+            <el-table-column
+              prop="reviewComment"
+              label="审核意见"
+              min-width="180"
+              show-overflow-tooltip
+            />
             <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row, $index }">
-                <el-button link type="primary" @click="openVersionDiff(row, $index)">与前版 diff</el-button>
+                <el-button link type="primary" @click="openVersionDiff(row, $index)"
+                  >与前版 diff</el-button
+                >
                 <template v-if="row.status === 'DRAFT'">
-                  <el-button v-permission="'eval:dataset-review'" link type="success" @click="reviewVersion(row, 'APPROVED')">通过</el-button>
-                  <el-button v-permission="'eval:dataset-review'" link type="danger" @click="reviewVersion(row, 'REJECTED')">驳回</el-button>
+                  <el-button
+                    v-permission="'eval:dataset-review'"
+                    link
+                    type="success"
+                    @click="reviewVersion(row, 'APPROVED')"
+                    >通过</el-button
+                  >
+                  <el-button
+                    v-permission="'eval:dataset-review'"
+                    link
+                    type="danger"
+                    @click="reviewVersion(row, 'REJECTED')"
+                    >驳回</el-button
+                  >
                 </template>
               </template>
             </el-table-column>
@@ -538,14 +647,37 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
       </el-tabs>
     </el-card>
 
-    <el-dialog v-model="caseDialogVisible" :title="editingCase ? '编辑评测用例' : '新增评测用例'" width="min(620px, 94vw)">
+    <el-dialog
+      v-model="caseDialogVisible"
+      :title="editingCase ? '编辑评测用例' : '新增评测用例'"
+      width="min(620px, 94vw)"
+    >
       <el-form :model="caseForm" label-position="top">
-        <el-form-item label="用例编号"><el-input v-model="caseForm.caseId" :disabled="editingCase" maxlength="64" /></el-form-item>
-        <el-form-item label="用户输入"><el-input v-model="caseForm.input" type="textarea" :rows="3" maxlength="1024" show-word-limit /></el-form-item>
-        <el-form-item :label="evalType === 'QUALITY' ? '期望要点' : '期望意图（留空表示不应命中快车道）'">
-          <el-input v-model="caseForm.expected" type="textarea" :rows="3" maxlength="1024" show-word-limit />
+        <el-form-item label="用例编号"
+          ><el-input v-model="caseForm.caseId" :disabled="editingCase" maxlength="64"
+        /></el-form-item>
+        <el-form-item label="用户输入"
+          ><el-input
+            v-model="caseForm.input"
+            type="textarea"
+            :rows="3"
+            maxlength="1024"
+            show-word-limit
+        /></el-form-item>
+        <el-form-item
+          :label="evalType === 'QUALITY' ? '期望要点' : '期望意图（留空表示不应命中快车道）'"
+        >
+          <el-input
+            v-model="caseForm.expected"
+            type="textarea"
+            :rows="3"
+            maxlength="1024"
+            show-word-limit
+          />
         </el-form-item>
-        <el-form-item label="分类"><el-input v-model="caseForm.category" maxlength="64" /></el-form-item>
+        <el-form-item label="分类"
+          ><el-input v-model="caseForm.category" maxlength="64"
+        /></el-form-item>
         <el-form-item label="参与评测"><el-switch v-model="caseForm.enabled" /></el-form-item>
       </el-form>
       <template #footer>
@@ -554,18 +686,35 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
       </template>
     </el-dialog>
 
-    <el-dialog v-model="diffVisible" v-loading="diffLoading" title="数据集版本差异" width="min(760px, 94vw)" @close="cancelVersionDiffRequest">
+    <el-dialog
+      v-model="diffVisible"
+      v-loading="diffLoading"
+      title="数据集版本差异"
+      width="min(760px, 94vw)"
+      @close="cancelVersionDiffRequest"
+    >
       <template v-if="datasetDiff">
         <el-descriptions :column="3" border>
-          <el-descriptions-item label="新增">{{ datasetDiff.addedCaseIds.length }}</el-descriptions-item>
-          <el-descriptions-item label="删除">{{ datasetDiff.removedCaseIds.length }}</el-descriptions-item>
-          <el-descriptions-item label="修改">{{ datasetDiff.changedCases.length }}</el-descriptions-item>
+          <el-descriptions-item label="新增">{{
+            datasetDiff.addedCaseIds.length
+          }}</el-descriptions-item>
+          <el-descriptions-item label="删除">{{
+            datasetDiff.removedCaseIds.length
+          }}</el-descriptions-item>
+          <el-descriptions-item label="修改">{{
+            datasetDiff.changedCases.length
+          }}</el-descriptions-item>
         </el-descriptions>
         <pre class="diff-json">{{ JSON.stringify(datasetDiff, null, 2) }}</pre>
       </template>
     </el-dialog>
 
-    <el-drawer v-model="detailVisible" title="运行详情与版本对比" size="620px" @close="cancelDetailRequest">
+    <el-drawer
+      v-model="detailVisible"
+      title="运行详情与版本对比"
+      size="620px"
+      @close="cancelDetailRequest"
+    >
       <div v-loading="detailLoading">
         <template v-if="comparison">
           <el-descriptions :column="2" border>
@@ -653,9 +802,7 @@ onMounted(() => void Promise.all([loadRuns(), loadDatasetGovernance()]))
           </div>
 
           <div class="section">
-            <div class="section-title">
-              失败明细（{{ comparison.current.failures.length }}）
-            </div>
+            <div class="section-title">失败明细（{{ comparison.current.failures.length }}）</div>
             <el-empty
               v-if="comparison.current.failures.length === 0"
               description="本次全部通过"

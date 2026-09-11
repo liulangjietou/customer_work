@@ -2,6 +2,7 @@ import { reactive, ref } from 'vue'
 import type { Ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import type { PageQuery, PageResult } from '@/types/api'
+import { usePagedList } from './usePagedList'
 
 export type CrudDialogMode = 'create' | 'edit'
 
@@ -11,8 +12,7 @@ export type CrudDialogMode = 'create' | 'edit'
  * 设计约束（抽"逻辑"不抽"模板"）：
  * - 只收敛行为逻辑（分页加载/搜索/弹窗状态机/提交/删除确认），模板保持显式的
  *   el-table/el-form——列与表单是每页的本质差异，留在模板里才可读。
- * - 不包 try/catch 做错误提示：api/request.ts 拦截器已统一 ElMessage.error，
- *   这里只负责 finally 收 loading，保持全链路单点防御。
+ * - api/request.ts 拦截器负责即时错误提示，usePagedList 保留页面错误与旧结果，供原地重试。
  * - 页面特有动作（测试连通性、启停、审批等）不进本 composable，留在页面里调
  *   loadList 刷新。
  */
@@ -54,51 +54,21 @@ export interface CrudPageOptions<VO, Q extends PageQuery, F extends object> {
  * 标准管理页 CRUD 状态机：列表分页加载 + 搜索 + 新建/编辑弹窗 + 删除确认。
  * 使用方式见试点页 views/aiconfig/ModelManage.vue。
  */
-export function useCrudPage<VO, Q extends PageQuery, F extends object>(options: CrudPageOptions<VO, Q, F>) {
-  const loading = ref(false)
-  const loadError = ref<unknown>(null)
+export function useCrudPage<VO, Q extends PageQuery, F extends object>(
+  options: CrudPageOptions<VO, Q, F>,
+) {
+  const { loading, loadError, list, total, query, loadList, handleSearch } = usePagedList<VO, Q>(
+    options,
+  )
   const submitting = ref(false)
   const deletingId = ref<number | null>(null)
-  const list = ref([]) as Ref<VO[]>
-  const total = ref(0)
-  const query = reactive(options.initQuery()) as Q
 
   const dialogVisible = ref(false)
   const dialogMode = ref<CrudDialogMode>('create')
   const editingId = ref<number | null>(null)
   const form = reactive(options.initForm()) as F
-  let loadRequestId = 0
 
   const rowId = options.rowId ?? ((row: VO) => (row as { id: number }).id)
-
-  async function loadList() {
-    const requestId = ++loadRequestId
-    loading.value = true
-    try {
-      const result = await options.page(query)
-      if (requestId !== loadRequestId) {
-        return
-      }
-      list.value = result.list
-      total.value = result.total
-      loadError.value = null
-    } catch (error) {
-      // request.ts 已负责全局错误提示；这里保留页面级状态，避免失败被伪装成“暂无数据”。
-      if (requestId === loadRequestId) {
-        loadError.value = error
-      }
-    } finally {
-      // 快速切换筛选条件时，旧请求结束不能提前关闭新请求的 loading。
-      if (requestId === loadRequestId) {
-        loading.value = false
-      }
-    }
-  }
-
-  function handleSearch() {
-    query.pageNum = 1
-    return loadList()
-  }
 
   function openCreate() {
     dialogMode.value = 'create'
@@ -156,7 +126,9 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(options: 
     deletingId.value = id
     try {
       try {
-        await ElMessageBox.confirm(options.deleteConfirm?.(row) ?? '确认删除该条记录？', '提示', { type: 'warning' })
+        await ElMessageBox.confirm(options.deleteConfirm?.(row) ?? '确认删除该条记录？', '提示', {
+          type: 'warning',
+        })
       } catch (error) {
         // Element Plus 用 reject 表达用户主动取消；这是正常交互，不应冒泡成未处理异常。
         const reason = error instanceof Error ? error.message : error

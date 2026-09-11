@@ -2,7 +2,8 @@ import { expect, test } from './fixtures/adminTestFixture'
 import type { Page, Route } from '@playwright/test'
 import { SQL_REPORT_MENU_TITLE, SQL_REPORT_PATH } from './fixtures/adminRoutes'
 
-const TEST_CAPTCHA_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WnWQAAAAASUVORK5CYII='
+const TEST_CAPTCHA_IMAGE =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WnWQAAAAASUVORK5CYII='
 
 type RgbColor = readonly [number, number, number]
 
@@ -10,9 +11,13 @@ function parseCssColor(rawColor: string): RgbColor {
   const color = rawColor.trim().toLowerCase()
   const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)?.[1]
   if (hex) {
-    const expanded = hex.length === 3
-      ? hex.split('').map((channel) => channel + channel).join('')
-      : hex
+    const expanded =
+      hex.length === 3
+        ? hex
+            .split('')
+            .map((channel) => channel + channel)
+            .join('')
+        : hex
     return [
       Number.parseInt(expanded.slice(0, 2), 16),
       Number.parseInt(expanded.slice(2, 4), 16),
@@ -30,9 +35,7 @@ function parseCssColor(rawColor: string): RgbColor {
 function relativeLuminance(color: RgbColor): number {
   const [red, green, blue] = color.map((channel) => {
     const normalized = channel / 255
-    return normalized <= 0.04045
-      ? normalized / 12.92
-      : ((normalized + 0.055) / 1.055) ** 2.4
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
   })
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 }
@@ -51,7 +54,7 @@ function themePresetOption(page: Page, label: string) {
 
 async function selectThemePreset(page: Page, label: string) {
   const trigger = page.getByLabel('选择界面主题', { exact: true })
-  if (await trigger.getAttribute('aria-expanded') !== 'true') {
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') {
     await trigger.click()
   }
   const listbox = page.getByRole('listbox', { name: '界面主题' })
@@ -73,11 +76,14 @@ test.describe('后台壳层契约', () => {
     await expect(lifecycleNavigation).toBeVisible()
     await expect(lifecycleNavigation.getByRole('button')).toHaveCount(6)
     for (const section of ['总览', '智能体', '构建', '运营', '治理', '设置']) {
-      await expect(lifecycleNavigation.getByRole('button', { name: section, exact: true })).toBeVisible()
+      await expect(
+        lifecycleNavigation.getByRole('button', { name: section, exact: true }),
+      ).toBeVisible()
     }
 
-    await expect(lifecycleNavigation.getByRole('button', { name: '设置', exact: true }))
-      .toHaveAttribute('aria-current', 'true')
+    await expect(
+      lifecycleNavigation.getByRole('button', { name: '设置', exact: true }),
+    ).toHaveAttribute('aria-current', 'true')
     await expect(page.locator('#cw-page-title')).toHaveText('成员与身份（服务端菜单）')
 
     await lifecycleNavigation.getByRole('button', { name: '智能体', exact: true }).click()
@@ -112,15 +118,20 @@ test.describe('后台壳层契约', () => {
       remark: '缺少可验证的准入材料，请补充后重新申请。',
     },
   ] as const) {
-    test(`未审核准入 ${admissionCase.status} 阻断手工业务路由且不加载菜单与页面数据`, async ({ page }) => {
-      await page.addInitScript(({ status, remark }) => {
-        localStorage.setItem('admin-approval-status', status)
-        if (remark) {
-          localStorage.setItem('admin-approval-remark', remark)
-        } else {
-          localStorage.removeItem('admin-approval-remark')
-        }
-      }, { status: admissionCase.status, remark: admissionCase.remark })
+    test(`未审核准入 ${admissionCase.status} 阻断手工业务路由且不加载菜单与页面数据`, async ({
+      page,
+    }) => {
+      await page.addInitScript(
+        ({ status, remark }) => {
+          localStorage.setItem('admin-approval-status', status)
+          if (remark) {
+            localStorage.setItem('admin-approval-remark', remark)
+          } else {
+            localStorage.removeItem('admin-approval-remark')
+          }
+        },
+        { status: admissionCase.status, remark: admissionCase.remark },
+      )
 
       const requestedApiPaths: string[] = []
       page.on('request', (request) => {
@@ -138,9 +149,11 @@ test.describe('后台壳层契约', () => {
       if (admissionCase.remark) {
         await expect(page.getByText(admissionCase.remark, { exact: true })).toBeVisible()
       }
-      expect(requestedApiPaths.filter((path) => (
-        path === '/api/menu/routes' || path === '/api/system/user'
-      ))).toEqual([])
+      expect(
+        requestedApiPaths.filter(
+          (path) => path === '/api/menu/routes' || path === '/api/system/user',
+        ),
+      ).toEqual([])
       for (const businessMenu of [
         '成员与身份（服务端菜单）',
         'Java 智能体',
@@ -224,15 +237,19 @@ test.describe('后台壳层契约', () => {
       const styles = getComputedStyle(button)
       return { color: styles.color, background: styles.backgroundColor }
     })
-    expect(contrastRatio(successButtonColors.color, successButtonColors.background)).toBeGreaterThanOrEqual(4.5)
+    expect(
+      contrastRatio(successButtonColors.color, successButtonColors.background),
+    ).toBeGreaterThanOrEqual(4.5)
 
     await page.goto('/system/dict', { waitUntil: 'domcontentloaded' })
 
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(page.locator('html')).toHaveClass(/dark/)
     await expect(page.locator('#cw-page-title')).toHaveText('字典管理')
-    await expect(page.getByLabel('选择界面主题', { exact: true }))
-      .toHaveAttribute('title', '当前主题：Night 夜航')
+    await expect(page.getByLabel('选择界面主题', { exact: true })).toHaveAttribute(
+      'title',
+      '当前主题：Night 夜航',
+    )
   })
 
   test('System 主题在暗色系统下选择、冷启动与刷新保持，并实时跟随系统切亮', async ({ page }) => {
@@ -241,7 +258,9 @@ test.describe('后台壳层契约', () => {
 
     await selectThemePreset(page, 'System 随行')
     await expect(page.locator('html')).toHaveClass(/dark/)
-    expect(await page.evaluate(() => localStorage.getItem('customer-admin-theme-mode'))).toBe('auto')
+    expect(await page.evaluate(() => localStorage.getItem('customer-admin-theme-mode'))).toBe(
+      'auto',
+    )
 
     const darkColors = await page.evaluate(() => {
       const styles = getComputedStyle(document.documentElement)
@@ -262,16 +281,24 @@ test.describe('后台壳层契约', () => {
 
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(page.locator('html')).toHaveClass(/dark/)
-    expect(await page.evaluate(() => localStorage.getItem('customer-admin-theme-mode'))).toBe('auto')
+    expect(await page.evaluate(() => localStorage.getItem('customer-admin-theme-mode'))).toBe(
+      'auto',
+    )
 
     await page.emulateMedia({ colorScheme: 'light' })
     await expect(page.locator('html')).not.toHaveClass(/dark/)
-    await expect(page.getByLabel('选择界面主题', { exact: true }))
-      .toHaveAttribute('title', '当前主题：System 随行')
-    expect(await page.evaluate(() => localStorage.getItem('customer-admin-theme-mode'))).toBe('auto')
+    await expect(page.getByLabel('选择界面主题', { exact: true })).toHaveAttribute(
+      'title',
+      '当前主题：System 随行',
+    )
+    expect(await page.evaluate(() => localStorage.getItem('customer-admin-theme-mode'))).toBe(
+      'auto',
+    )
   })
 
-  test('命名主题选择器提供完整单选语义、键盘路径、关闭行为与 Violet 冷启动持久化', async ({ page }) => {
+  test('命名主题选择器提供完整单选语义、键盘路径、关闭行为与 Violet 冷启动持久化', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/system/dict', { waitUntil: 'domcontentloaded' })
 
@@ -332,14 +359,20 @@ test.describe('后台壳层契约', () => {
     expect(violetState.color).toBeTruthy()
 
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await expect(page.getByLabel('选择界面主题', { exact: true }))
-      .toHaveAttribute('title', '当前主题：Violet 智紫')
-    expect(await page.evaluate(() => localStorage.getItem('customer-admin-theme-color'))).toBe(violetState.color)
+    await expect(page.getByLabel('选择界面主题', { exact: true })).toHaveAttribute(
+      'title',
+      '当前主题：Violet 智紫',
+    )
+    expect(await page.evaluate(() => localStorage.getItem('customer-admin-theme-color'))).toBe(
+      violetState.color,
+    )
 
     const coldPage = await page.context().newPage()
     await coldPage.goto('/system/dict', { waitUntil: 'domcontentloaded' })
-    await expect(coldPage.getByLabel('选择界面主题', { exact: true }))
-      .toHaveAttribute('title', '当前主题：Violet 智紫')
+    await expect(coldPage.getByLabel('选择界面主题', { exact: true })).toHaveAttribute(
+      'title',
+      '当前主题：Violet 智紫',
+    )
     await coldPage.close()
 
     await trigger.press(' ')
@@ -405,7 +438,9 @@ test.describe('后台壳层契约', () => {
       await page.setViewportSize({ width, height: 844 })
       const trigger = page.getByLabel('选择界面主题', { exact: true })
       await expect(trigger).toBeVisible()
-      const triggerWidth = await trigger.evaluate((element) => element.getBoundingClientRect().width)
+      const triggerWidth = await trigger.evaluate(
+        (element) => element.getBoundingClientRect().width,
+      )
       if (width <= 760) {
         expect(triggerWidth, `${width}px compact trigger`).toBeLessThanOrEqual(36)
       } else {
@@ -417,8 +452,12 @@ test.describe('后台壳层契约', () => {
         viewportWidth: window.innerWidth,
         documentScrollWidth: document.documentElement.scrollWidth,
       }))
-      expect(overflow.headerRight, `${width}px header right`).toBeLessThanOrEqual(overflow.viewportWidth)
-      expect(overflow.documentScrollWidth, `${width}px document width`).toBeLessThanOrEqual(overflow.viewportWidth)
+      expect(overflow.headerRight, `${width}px header right`).toBeLessThanOrEqual(
+        overflow.viewportWidth,
+      )
+      expect(overflow.documentScrollWidth, `${width}px document width`).toBeLessThanOrEqual(
+        overflow.viewportWidth,
+      )
 
       if (width === 390) {
         await trigger.press('End')
@@ -454,34 +493,42 @@ test.describe('后台壳层契约', () => {
       })
     }
     await page.route('**/api/login-images/list', (route) => fulfill(route, []))
-    await page.route('**/api/auth/register-options', (route) => fulfill(route, {
-      selfServiceEnabled: false,
-      captchaRequired: false,
-    }))
-    await page.route('**/api/auth/login-captcha/challenge', (route) => fulfill(route, {
-      challengeId: 'theme-entry-challenge',
-      ttlSeconds: 120,
-      backgroundImage: TEST_CAPTCHA_IMAGE,
-      puzzlePieceImage: TEST_CAPTCHA_IMAGE,
-      canvasWidth: 320,
-      canvasHeight: 160,
-      pieceWidth: 56,
-      pieceHeight: 56,
-      pieceY: 52,
-    }))
+    await page.route('**/api/auth/register-options', (route) =>
+      fulfill(route, {
+        selfServiceEnabled: false,
+        captchaRequired: false,
+      }),
+    )
+    await page.route('**/api/auth/login-captcha/challenge', (route) =>
+      fulfill(route, {
+        challengeId: 'theme-entry-challenge',
+        ttlSeconds: 120,
+        backgroundImage: TEST_CAPTCHA_IMAGE,
+        puzzlePieceImage: TEST_CAPTCHA_IMAGE,
+        canvasWidth: 320,
+        canvasHeight: 160,
+        pieceWidth: 56,
+        pieceHeight: 56,
+        pieceY: 52,
+      }),
+    )
 
     await page.goto('/login', { waitUntil: 'domcontentloaded' })
     await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible()
     const loginThemeTrigger = page.getByLabel('选择界面主题', { exact: true })
     await expect(loginThemeTrigger).toBeVisible()
-    expect(await loginThemeTrigger.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(38)
+    expect(
+      await loginThemeTrigger.evaluate((element) => element.getBoundingClientRect().width),
+    ).toBeLessThanOrEqual(38)
     await selectThemePreset(page, 'Violet 智紫')
 
     await page.goto('/workspace/java-assistant', { waitUntil: 'domcontentloaded' })
     await expect(page.locator('.workspace-view')).toBeVisible()
     await expect(page.getByLabel('选择界面主题', { exact: true })).toHaveCount(1)
-    await expect(page.getByLabel('选择界面主题', { exact: true }))
-      .toHaveAttribute('title', '当前主题：Violet 智紫')
+    await expect(page.getByLabel('选择界面主题', { exact: true })).toHaveAttribute(
+      'title',
+      '当前主题：Violet 智紫',
+    )
     await expect(page.getByLabel('切换主题色', { exact: true })).toHaveCount(0)
     await expect(page.locator('.theme-toolbar, .theme-btn, .color-popover')).toHaveCount(0)
     const newSession = page.getByRole('button', { name: '新建会话', exact: true })
@@ -514,9 +561,15 @@ test.describe('后台壳层契约', () => {
           onSolid: styles.getPropertyValue('--cw-on-primary').trim(),
         }
       })
-      expect(contrastRatio(colors.foreground, colors.surface), 'primary foreground').toBeGreaterThanOrEqual(4.5)
+      expect(
+        contrastRatio(colors.foreground, colors.surface),
+        'primary foreground',
+      ).toBeGreaterThanOrEqual(4.5)
       for (const state of ['solid', 'hover', 'active'] as const) {
-        expect(contrastRatio(colors[state], colors.onSolid), `primary ${state}`).toBeGreaterThanOrEqual(4.5)
+        expect(
+          contrastRatio(colors[state], colors.onSolid),
+          `primary ${state}`,
+        ).toBeGreaterThanOrEqual(4.5)
       }
 
       const newSession = page.locator('.new-session-btn')
@@ -525,13 +578,19 @@ test.describe('后台壳层契约', () => {
         const styles = getComputedStyle(button)
         return { color: styles.color, background: styles.backgroundColor }
       })
-      expect(contrastRatio(normal.color, normal.background), 'new session normal').toBeGreaterThanOrEqual(4.5)
+      expect(
+        contrastRatio(normal.color, normal.background),
+        'new session normal',
+      ).toBeGreaterThanOrEqual(4.5)
       await newSession.hover()
       const hovered = await newSession.evaluate((button) => {
         const styles = getComputedStyle(button)
         return { color: styles.color, background: styles.backgroundColor }
       })
-      expect(contrastRatio(hovered.color, hovered.background), 'new session hover').toBeGreaterThanOrEqual(4.5)
+      expect(
+        contrastRatio(hovered.color, hovered.background),
+        'new session hover',
+      ).toBeGreaterThanOrEqual(4.5)
     }
 
     const assertCheckedControlContrast = async (expectedTheme?: 'night') => {
@@ -540,13 +599,18 @@ test.describe('后台壳层契约', () => {
         await expect(page.locator('html')).toHaveClass(/dark/)
         await expect(page.locator('html')).toHaveAttribute('data-theme', 'night')
       }
-      const checkedRadio = page.locator('.el-radio-button__original-radio:checked + .el-radio-button__inner').first()
+      const checkedRadio = page
+        .locator('.el-radio-button__original-radio:checked + .el-radio-button__inner')
+        .first()
       await expect(checkedRadio).toBeVisible()
       const colors = await checkedRadio.evaluate((control) => {
         const styles = getComputedStyle(control)
         return { color: styles.color, background: styles.backgroundColor }
       })
-      expect(contrastRatio(colors.color, colors.background), 'checked radio button').toBeGreaterThanOrEqual(4.5)
+      expect(
+        contrastRatio(colors.color, colors.background),
+        'checked radio button',
+      ).toBeGreaterThanOrEqual(4.5)
     }
 
     const assertTagContrast = async (expectedTheme?: 'night') => {
@@ -607,7 +671,10 @@ test.describe('后台壳层契约', () => {
       await page.goto(pageTemplate.path, { waitUntil: 'domcontentloaded' })
 
       await expect(page.locator(pageTemplate.readySelector)).toBeVisible()
-      await expect(page.locator('.layout-main')).toHaveAttribute('data-page-template', pageTemplate.template)
+      await expect(page.locator('.layout-main')).toHaveAttribute(
+        'data-page-template',
+        pageTemplate.template,
+      )
     })
   }
 
@@ -627,7 +694,10 @@ test.describe('后台壳层契约', () => {
     let sessionListRequests = 0
     page.on('request', (request) => {
       const url = new URL(request.url())
-      if (request.method() === 'GET' && url.pathname === '/api/workspace/java-assistant/chat/sessions') {
+      if (
+        request.method() === 'GET' &&
+        url.pathname === '/api/workspace/java-assistant/chat/sessions'
+      ) {
         sessionListRequests += 1
       }
     })
@@ -643,7 +713,6 @@ test.describe('后台壳层契约', () => {
 
     const lifecycleNavigation = page.getByRole('navigation', { name: '智能体生命周期导航' })
     await lifecycleNavigation.getByRole('button', { name: '设置', exact: true }).click()
-    await page.getByRole('menuitem', { name: '系统管理', exact: true }).click()
     await page.getByRole('menuitem', { name: '成员与身份（服务端菜单）', exact: true }).click()
     await expect(page.locator('#cw-page-title')).toHaveText('成员与身份（服务端菜单）')
 
@@ -664,7 +733,11 @@ test.describe('后台壳层契约', () => {
         body: JSON.stringify({
           code: 0,
           message: 'success',
-          data: { userTenantId: 'default', effectiveTenantId: 'default', crossTenantAuthority: true },
+          data: {
+            userTenantId: 'default',
+            effectiveTenantId: 'default',
+            crossTenantAuthority: true,
+          },
           timestamp: Date.UTC(2026, 7, 30, 10, 0, 0),
         }),
       })
@@ -672,7 +745,9 @@ test.describe('后台壳层契约', () => {
     await page.goto('/system/user', { waitUntil: 'domcontentloaded' })
 
     const aside = page.locator('.layout-aside')
-    await expect.poll(() => aside.evaluate((element) => element.getBoundingClientRect().width)).toBe(0)
+    await expect
+      .poll(() => aside.evaluate((element) => element.getBoundingClientRect().width))
+      .toBe(0)
 
     for (const label of [
       '打开导航菜单',

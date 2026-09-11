@@ -678,6 +678,7 @@ defineExpose({ newSession })
               :text="msg.text"
               :active="isStreamingMessage(index)"
               :failed="msg.failed"
+              :phase="msg.phase"
               :error="msg.error"
             >
               <!-- 沙箱编译/测试报告卡片时间线（P0-3）：每轮验证一张，通过绿/失败红，可展开看失败明细 -->

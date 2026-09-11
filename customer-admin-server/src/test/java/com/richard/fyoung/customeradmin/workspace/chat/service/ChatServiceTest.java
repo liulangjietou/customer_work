@@ -626,6 +626,22 @@ class ChatServiceTest {
         assertEquals(directivePrefixed, capturedUserText());
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void chatStream_shouldRetainOriginalInputAsStructuredDisplayMetadata() {
+        stubEvents(new AgentResultEvent(assistantMsg("好的")));
+        AgentCallMeta meta = new AgentCallMeta("request", "admin", "coder", "编码助手",
+            AgentCallSessionType.VIBE_CODING, "  原始需求\n保持格式  ");
+        chatService.chatStream("coder", "s1", "运行指引和原始需求", null, meta).blockLast();
+        ArgumentCaptor<List<Msg>> captor = ArgumentCaptor.forClass(List.class);
+        verify(agent).streamEvents(captor.capture(), any(RuntimeContext.class));
+        Msg sent = captor.getValue().get(0);
+
+        assertEquals("  原始需求\n保持格式  ", sent.getMetadata().get("workspace.rawInput"));
+        assertEquals("VIBE_CODING", sent.getMetadata().get("workspace.sessionType"));
+        assertEquals("运行指引和原始需求", sent.getTextContent());
+    }
+
     // ==================== 小工具 ====================
 
     private Msg assistantMsg(String text) {

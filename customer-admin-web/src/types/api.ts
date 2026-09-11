@@ -1650,6 +1650,8 @@ export type ExecutionMode = 'auto' | 'manual' | 'accept_edits' | 'plan' | 'bypas
 export interface ChatRequest {
   sessionId: string
   message: string
+  /** 用户原文；message 可含附件材料，原文独立用于历史气泡。 */
+  rawInput?: string
   /** 协作模式（P3-1）：开启后后端按 需求分析→方案设计→编码实现→自测审查 多角色顺序协作。 */
   collaboration?: boolean
   /** 执行模式（会话内记忆，未传时后端按 auto 处理）。 */
@@ -1693,7 +1695,20 @@ export interface ChatMessageVO {
   timestamp: string
   /** 该条消息携带的附件，恒为数组（可能为空数组）。 */
   attachments: ChatMessageAttachment[]
+  turnId?: string | null
+  phase?: ChatMessagePhase
+  finishReason?: string | null
+  sessionType?: string | null
 }
+
+export type ChatMessagePhase =
+  | 'USER_INPUT'
+  | 'PROCESS'
+  | 'FINAL'
+  | 'STOPPED'
+  | 'WAITING'
+  | 'FAILED'
+  | 'UNKNOWN'
 
 /** 附件上传解析结果（落盘+落库，解析失败时 content 为空、errorMessage 说明原因，由调用方决定是否拼进消息） */
 export interface ChatAttachmentResult {

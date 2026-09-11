@@ -273,6 +273,7 @@ defineExpose({ newSession })
               :text="msg.text"
               :active="isStreamingMessage(index)"
               :failed="msg.failed"
+              :phase="msg.phase"
               :error="msg.error"
               :show-trace="false"
               @inspect="inspectMessage(index)"

@@ -6,6 +6,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useThemeStore } from '@/store/theme'
 import { readThemeChartPalette } from '@/utils/themeChartPalette'
+import { observeChartResize } from '@/utils/observeChartResize'
 import type { ContentGuardCountVO } from '@/types/api'
 
 // 按需引入：只注册柱状图 + 网格/tooltip + Canvas 渲染器，不拉全量 echarts 包体积
@@ -22,6 +23,7 @@ const props = defineProps<{
 const themeStore = useThemeStore()
 const chartEl = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
+let stopObservingSize: (() => void) | undefined
 
 /** 标签裁掉年份前缀：day 粒度形如 2026-07-28，hour 粒度形如 2026-07-28 14:00。 */
 function shortenLabel(label: string): string {
@@ -56,13 +58,15 @@ function buildOption() {
       axisLabel: { color: palette.text },
       splitLine: { lineStyle: { color: palette.grid } },
     },
-    series: [{
-      name: '命中数',
-      type: 'bar',
-      barMaxWidth: 32,
-      itemStyle: { color: palette.series[0], borderRadius: [5, 5, 0, 0] },
-      data: props.points.map((p) => p.total),
-    }],
+    series: [
+      {
+        name: '命中数',
+        type: 'bar',
+        barMaxWidth: 32,
+        itemStyle: { color: palette.series[0], borderRadius: [5, 5, 0, 0] },
+        data: props.points.map((p) => p.total),
+      },
+    ],
   }
 }
 
@@ -79,18 +83,24 @@ onMounted(() => {
   if (!chartEl.value) return
   chart = echarts.init(chartEl.value)
   render()
-  window.addEventListener('resize', handleResize)
+  stopObservingSize = observeChartResize(chartEl.value, handleResize)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
+  stopObservingSize?.()
   chart?.dispose()
   chart = null
 })
 
 // Canvas 不会自动消费 CSS 变量；同明暗主题之间切换也必须重绘。
 watch(
-  () => [props.points, props.granularity, themeStore.primaryColor, themeStore.mode, themeStore.systemDark],
+  () => [
+    props.points,
+    props.granularity,
+    themeStore.primaryColor,
+    themeStore.mode,
+    themeStore.systemDark,
+  ],
   render,
   { deep: false },
 )

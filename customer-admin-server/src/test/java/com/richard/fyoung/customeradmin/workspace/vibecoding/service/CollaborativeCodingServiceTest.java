@@ -84,6 +84,25 @@ class CollaborativeCodingServiceTest {
     }
 
     @Test
+    void codingRole_shouldKeepOriginalInputOutOfGeneratedRoleContext() {
+        AdminCollaborationProperties properties = new AdminCollaborationProperties();
+        properties.setRoles(List.of(new AdminCollaborationProperties.Role(
+            "开发者", RoleStageEvent.TYPE_CODING, "按方案编码")));
+        CollaborativeCodingService service = newService(properties, mock(Model.class));
+        when(vibeCodingService.stream(any(), any(), any(), any(), any(), any())).thenReturn(Flux.empty());
+
+        service.stream("demo", "s1", "附件材料\n用户需求", "auto", List.of("attachment-1"), "用户需求")
+            .blockLast();
+
+        ArgumentCaptor<String> modelInput = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(vibeCodingService).stream(org.mockito.ArgumentMatchers.eq("demo"),
+            org.mockito.ArgumentMatchers.eq("s1"), modelInput.capture(), org.mockito.ArgumentMatchers.eq("auto"),
+            org.mockito.ArgumentMatchers.eq(List.of("attachment-1")), org.mockito.ArgumentMatchers.eq("用户需求"));
+        assertTrue(modelInput.getValue().contains("附件材料"));
+        assertTrue(modelInput.getValue().contains("按方案编码"));
+    }
+
+    @Test
     void runsRolesInOrderAndAccumulatesContext() {
         AdminCollaborationProperties properties = new AdminCollaborationProperties();
         properties.setRoles(List.of(planRole("需求分析师"), planRole("架构师")));
