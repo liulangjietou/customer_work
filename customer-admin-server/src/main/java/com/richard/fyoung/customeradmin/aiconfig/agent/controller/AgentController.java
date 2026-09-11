@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -59,8 +60,9 @@ public class AgentController {
     @SaCheckPermission("agent:edit")
     @OperationLog(operation = "编辑智能体", target = "ai_agent")
     @PutMapping("/{id}")
-    public Result<Void> update(@PathVariable Long id, @Valid @RequestBody AgentSaveRequest request) {
-        agentService.update(id, request);
+    public Result<Void> update(@PathVariable Long id, @Valid @RequestBody AgentSaveRequest request,
+                              @RequestHeader(value = "X-Agent-Revision", required = false) Long revision) {
+        agentService.update(id, request, revision);
         return Result.success();
     }
 
