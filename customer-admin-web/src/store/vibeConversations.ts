@@ -18,6 +18,7 @@ import {
 } from '@/utils/traceTimeline'
 import { createTextChunkBatcher } from '@/utils/textChunkBatcher'
 import { presentChatHistory } from '@/utils/chatMessagePresentation'
+import { createChatCompletion } from '@/utils/chatCompletion'
 import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
 import type { SseHandlers } from '@/utils/sse'
@@ -132,7 +133,7 @@ export function createVibeConversation(
     attachments: [],
     streaming: false,
     interrupting: false,
-    interrupted: false,
+    interrupted: messages.at(-1)?.phase === 'STOPPED',
     abort: null,
     fileChanges: [],
     pendingPlans: new Map(),
@@ -421,15 +422,18 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         assistantMessage.text += chunk
         if (isActive()) onScroll?.()
       })
+      const completion = createChatCompletion(assistantMessage, conv)
       const abortStream = starter({
         onEvent: (event) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
           if (!c) return
+          if (event.event === 'terminal') {
+            textBatcher.flush()
+            completion.terminal(event.data)
+            return
+          }
           if (event.event === 'done') {
             textBatcher.flush()
-            c.streaming = false
-            // 对话结束后自动刷新该会话文件目录树
-            this.loadFiles(agentCode, sid)
             return
           }
           if (event.event === 'file_change') {
@@ -512,26 +516,12 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         },
         onError: (error) => {
           textBatcher.flush()
-          const c = this.byAgent[agentCode]?.conversations[sid]
-          if (c) {
-            c.streaming = false
-            c.interrupting = false
-          }
-          // 与对话面板同理：失败信息要落在对话流里，紧跟用户刚发出的那句话
-          const text = error instanceof Error ? error.message : String(error)
-          assistantMessage.error = text
-          assistantMessage.failed = true
+          completion.fail(error)
         },
         onComplete: () => {
           textBatcher.flush()
-          const c = this.byAgent[agentCode]?.conversations[sid]
-          if (c) {
-            c.streaming = false
-            if (c.interrupting) {
-              c.interrupting = false
-              c.interrupted = true
-            }
-          }
+          completion.complete()
+          this.loadFiles(agentCode, sid)
           this.historyVersion[agentCode] = (this.historyVersion[agentCode] ?? 0) + 1
         },
       })

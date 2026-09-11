@@ -1,5 +1,11 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.service;
 
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessagePhase;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatTerminal;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
@@ -49,6 +55,7 @@ class VibeCodingServiceTest {
     private GitWorkspaceService gitWorkspaceService;
     private AgentCallMetaFactory callMetaFactory;
     private VibeCodingService service;
+    private AiCodingAuditService auditService;
 
     /** agentCode=coder 的 agentRoot（等价于 data/admin-workspace/coder） */
     @TempDir
@@ -70,10 +77,12 @@ class VibeCodingServiceTest {
         // 默认 local 模式（isDockerMode()=false）；docker 模式的容器↔宿主机 bind mount 产物同步（P1-3）
         // 需真起容器，由门控式 DockerSandboxIntegrationTest 覆盖，本单测聚焦模式无关的流式/快照/审计逻辑。
         // 审计服务用 mock（旁路能力，埋点行为由 AiCodingAuditServiceTest 单独覆盖）
+        auditService = mock(AiCodingAuditService.class);
         service = new VibeCodingService(chatService, agentInstanceFactory, agentMapper, gitWorkspaceService,
-            new AdminSandboxProperties(), mock(AiCodingAuditService.class), new PlanConfirmationService(),
+            new AdminSandboxProperties(), auditService, new PlanConfirmationService(),
             callMetaFactory, workspaceManager);
 
+        when(workspaceManager.prepareSessionPersistence(anyString(), anyString())).thenReturn(() -> true);
         // resolveWorkspace 返回 agentRoot（向后兼容，listChangedArtifacts 旧逻辑已不使用此方法）
         when(workspaceManager.resolveWorkspace("coder")).thenReturn(agentRoot);
         // resolveSessionWorkspace 返回 agentRoot/sessions/{sessionId}
@@ -90,6 +99,62 @@ class VibeCodingServiceTest {
         agent.setAgentCode("coder");
         agent.setCapabilities("chat,vibecoding");
         return agent;
+    }
+
+    @Test
+    void terminal_shouldFollowWorkspacePersistence() {
+        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+        var saved = new AtomicBoolean();
+        when(workspaceManager.prepareSessionPersistence("coder", "s1"))
+            .thenReturn(() -> { saved.set(true); return true; });
+        var terminal = new ChatTerminal("turn-1", "reply-1",
+            ChatMessagePhase.FINAL, "MODEL_STOP", true, null, null);
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            .thenReturn(Flux.just(ChatStreamChunk.terminal(terminal)));
+
+        service.stream("coder", "s1", "写文件").doOnNext(chunk -> {
+            if (chunk.kind() == ChatNodeKind.TERMINAL) {
+                assertTrue(saved.get(), "最终状态必须在产物保存之后，doFinally 已晚于下游完成通知");
+            }
+        }).blockLast();
+    }
+
+    @Test
+    void persistenceFailure_shouldPreventSuccessfulTerminal() {
+        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+        when(workspaceManager.prepareSessionPersistence("coder", "s1")).thenReturn(() -> false);
+        var terminal = new ChatTerminal("turn-1", "reply-1",
+            ChatMessagePhase.FINAL, "MODEL_STOP", true, null, null);
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            .thenReturn(Flux.just(ChatStreamChunk.terminal(terminal)));
+        var result = service.stream("coder", "s1", "写文件").blockLast().terminal();
+        assertEquals(ChatMessagePhase.UNKNOWN, result.phase());
+        assertTrue(result.historySaved(), "消息已保存不等于产物保存成功");
+        assertFalse(result.artifactsSaved());
+        Mockito.verify(auditService).finish(any(), ArgumentMatchers.eq("VIBECODING_WORKSPACE_PERSIST_FAILED"));
+    }
+
+    @Test
+    void cancellation_shouldPersistOnceWithoutPublishingTerminal() {
+        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+        var saves = new AtomicInteger();
+        when(workspaceManager.prepareSessionPersistence("coder", "s1")).thenReturn(() -> { saves.incrementAndGet(); return true; });
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            .thenReturn(Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "部分回复")).concatWith(Flux.never()));
+        var result = service.stream("coder", "s1", "写文件").take(1).collectList().block();
+        assertEquals(1, result.size());
+        assertEquals(1, saves.get());
+        Mockito.verify(auditService).finish(any(), ArgumentMatchers.eq("VIBECODING_STREAM_CANCEL"));
+    }
+
+    @Test
+    void failedChatTerminal_shouldNotBecomeSuccessfulCodingAudit() {
+        when(agentMapper.selectOne(any())).thenReturn(vibeCodingAgent());
+        when(chatService.chatStream(anyString(), anyString(), anyString(), any(), any(), any(), any()))
+            .thenReturn(Flux.just(ChatStreamChunk.terminal(
+                ChatTerminal.failed("turn-1", "WORKSPACE_CHAT_ERROR", "本轮失败"))));
+        service.stream("coder", "s1", "写文件").blockLast();
+        Mockito.verify(auditService).finish(any(), ArgumentMatchers.eq("WORKSPACE_CHAT_ERROR"));
     }
 
     // ===== 能力校验 =====
@@ -119,7 +184,10 @@ class VibeCodingServiceTest {
 
         List<ChatStreamChunk> emitted = service.stream("coder", "s1", "write 文件").collectList().block();
 
-        assertEquals(List.of(new ChatStreamChunk(ChatNodeKind.ANSWER, "好的")), emitted);
+        assertEquals(List.of(new ChatStreamChunk(ChatNodeKind.ANSWER, "好的")),
+            emitted.stream().filter(chunk -> chunk.kind() != ChatNodeKind.TERMINAL).toList());
+        assertEquals(ChatMessagePhase.UNKNOWN,
+            emitted.get(emitted.size() - 1).terminal().phase());
     }
 
     @Test
@@ -149,7 +217,7 @@ class VibeCodingServiceTest {
         service.stream("coder", "s1", "附件全文\n用户需求", "auto", List.of("attachment-1"), "用户需求")
             .blockLast();
 
-        org.mockito.Mockito.verify(callMetaFactory).build("coder",
+        Mockito.verify(callMetaFactory).build("coder",
             com.richard.fyoung.customerwork.data.calllog.AgentCallSessionType.VIBE_CODING, "用户需求");
     }
 

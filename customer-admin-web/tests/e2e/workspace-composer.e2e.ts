@@ -80,7 +80,7 @@ test('生成期间可以编写草稿，终止与继续保留草稿并展示执�
     if (requests.length === 1) await firstResponse
     await route.fulfill({
       contentType: 'text/event-stream',
-      body: 'event: node:thinking\ndata: 读取任务上下文\n\nevent: node:tool_builtin\ndata: 查询任务状态\n\nevent: node:tool_result\ndata: 已完成状态查询\n\nevent: message\ndata: 已获得任务结果。\n\n',
+      body: 'event: node:thinking\ndata: 读取任务上下文\n\nevent: node:tool_builtin\ndata: 查询任务状态\n\nevent: node:tool_result\ndata: 已完成状态查询\n\nevent: message\ndata: 已获得任务结果。\n\n' + `event: terminal\ndata: ${JSON.stringify({ phase: requests.length === 1 ? 'STOPPED' : 'FINAL', finishReason: requests.length === 1 ? 'INTERRUPTED' : 'MODEL_STOP' })}\n\n`,
     })
   })
   await page.route('**/api/workspace/java-assistant/chat/sessions/*/interrupt', async (route) => {

@@ -61,6 +61,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatTerminal;
 import java.util.function.Consumer;
 import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
 
@@ -99,6 +101,7 @@ public class ChatService {
     private final PlanConfirmationService planConfirmationService;
     private final ChatAttachmentService chatAttachmentService;
     private final SessionLock sessionLock;
+    private final ChatCompletionVerifier completionVerifier;
     /** 出站敏感词过滤器；未开启 {@code admin.content-guard.agent-filter-enabled} 时为 null，跳过过滤。 */
     private final SensitiveWordFilter sensitiveWordFilter;
     /** 出站命中 BLOCK 时替换用的安全话术。 */
@@ -113,7 +116,9 @@ public class ChatService {
                         ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
                         ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider,
                         ObjectProvider<SessionLock> sessionLockProvider,
-                                    AgentWorkspaceManager workspaceManager) {
+                        AgentWorkspaceManager workspaceManager,
+                        ChatCompletionVerifier completionVerifier) {
+        this.completionVerifier = completionVerifier;
         this.workspaceManager = workspaceManager;
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
@@ -132,6 +137,17 @@ public class ChatService {
         this.outboundSafeReply = guardProperties == null || !StringUtils.hasText(guardProperties.getSafeReply())
             ? SensitiveWordProperties.DEFAULT_OUTBOUND_SAFE_REPLY
             : guardProperties.getSafeReply();
+    }
+
+    /** 兼容未配置权威回读的嵌入式调用；该路径只会发送 UNKNOWN，不声称历史已保存。 */
+    public ChatService(AgentInstanceCache cache, AdminAgentInstanceFactory factory,
+                       ChatHistoryCache history, AgentMemorySyncService memorySync,
+                       ExecutionModeRegistry modes, PlanConfirmationService plans,
+                       ChatAttachmentService attachments, ObjectProvider<SensitiveWordFilter> filters,
+                       ObjectProvider<ContentGuardProperties> guards, ObjectProvider<SessionLock> locks,
+                       AgentWorkspaceManager workspaces) {
+        this(cache, factory, history, memorySync, modes, plans, attachments, filters, guards,
+            locks, workspaces, null);
     }
 
     /** 保留既有单测/嵌入式调用构造；生产由 Spring 注入强一致分布式锁。 */
@@ -334,6 +350,8 @@ public class ChatService {
         // {@code AgentEvent#getSource()} 标记），父子共用一份状态会把两股文本互相串进对方的缓冲区。
         // 每次 chatStream 各建一份，不跨请求共享。
         Map<String, StreamState> stateBySource = new ConcurrentHashMap<>();
+        AtomicReference<Msg> rootResult = new AtomicReference<>();
+        AtomicReference<ChatTerminal> failure = new AtomicReference<>();
 
         // 本轮各次模型调用的用量，流终止时汇总回调一次（完成/取消各有入口，正常只会命中其一）
         Map<String, ChatUsage> usageByModelCall = new ConcurrentHashMap<>();
@@ -359,7 +377,12 @@ public class ChatService {
             // streamEvents 没有：不切走的话下面的事件拼装、敏感词过滤与 SSE 写出全跑在模型 IO 线程上，
             // 拖慢框架侧读取模型 chunk 的速度。
             .publishOn(Schedulers.boundedElastic())
-            .doOnNext(event -> collectUsage(usageByModelCall, event))
+            .doOnNext(event -> {
+                collectUsage(usageByModelCall, event);
+                if (event.getSource() == null && event instanceof AgentResultEvent result) {
+                    rootResult.set(result.getResult());
+                }
+            })
             .concatMap(event -> Flux.fromIterable(toChunks(event, toolSource, stateBySource)))
             .concatMap(chunk -> guardChunk(chunk, outboundGuards))
             .concatWith(Flux.defer(() -> flushGuards(outboundGuards)));
@@ -367,6 +390,7 @@ public class ChatService {
         Flux<ChatStreamChunk> conversation = Flux.concat(Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_START, "开始思考")), body)
             .concatWith(Flux.defer(() -> Flux.just(new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"))))
             .onErrorResume(e -> {
+                failure.set(ChatTerminal.failed(userMsg.getId(), "WORKSPACE_CHAT_ERROR", FALLBACK_REPLY));
                 log.error("[workspace] chat stream failed, code={}, agentCode={}", "WORKSPACE_CHAT_ERROR", agentCode, e);
                 return Flux.just(
                     new ChatStreamChunk(ChatNodeKind.THINKING_END, "结束思考"),
@@ -404,7 +428,20 @@ public class ChatService {
                 : context.put(QuotaSubjectContextThreadLocalAccessor.KEY, quotaSubject))
             // 渠道事实与配额主体使用不同 Context key，两者可同时传播且仅影响本次订阅。
             .contextWrite(context -> ModelRoutingContext.withHint(context, routeHint));
-        return withSessionLock(tenantId + ":" + agentCode + ":" + safeSession, serializedConversation);
+        // 等主流、计划通道和已有收尾逻辑都结束后才发终态；回读在锁内完成，避免下一轮串入。
+        Flux<ChatStreamChunk> completed = serializedConversation
+            .onErrorResume(error -> {
+                log.error("Chat finalization failed, errorCode={}, agentCode={}",
+                    "WORKSPACE_CHAT_FINALIZE_ERROR", agentCode, error);
+                failure.set(ChatTerminal.failed(userMsg.getId(), "WORKSPACE_CHAT_FINALIZE_ERROR", FALLBACK_REPLY));
+                return Flux.empty();
+            })
+            .concatWith(reactor.core.publisher.Mono.fromCallable(() -> ChatStreamChunk.terminal(
+                failure.get() != null ? failure.get()
+                    : completionVerifier == null ? ChatTerminal.unknown(userMsg.getId())
+                    : completionVerifier.verify(ctx, userMsg.getId(), rootResult.get())))
+                .subscribeOn(Schedulers.boundedElastic()));
+        return withSessionLock(tenantId + ":" + agentCode + ":" + safeSession, completed);
     }
 
     /** 获取动作会阻塞，放到 boundedElastic；释放句柄与线程无关，可安全挂在流终止钩子。 */

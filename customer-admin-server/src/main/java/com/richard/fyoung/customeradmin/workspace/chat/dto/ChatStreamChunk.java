@@ -23,7 +23,18 @@ import org.slf4j.LoggerFactory;
  *                     {@code null} 表示来自父 Agent 自身
  * @author owlzhangfq@gmail.com
  */
-public record ChatStreamChunk(ChatNodeKind kind, String text, String source, String subagentName) {
+public record ChatStreamChunk(ChatNodeKind kind, String text, String source, String subagentName,
+                              ChatTerminal terminal) {
+
+    /** 兼容既有文本片段的构造。 */
+    public ChatStreamChunk(ChatNodeKind kind, String text, String source, String subagentName) {
+        this(kind, text, source, subagentName, null);
+    }
+
+    /** 终态保留结构化载荷，编排层不重复解析 JSON。 */
+    public static ChatStreamChunk terminal(ChatTerminal terminal) {
+        return new ChatStreamChunk(ChatNodeKind.TERMINAL, null, null, null, terminal);
+    }
 
     /**
      * 父 Agent 片段的便捷构造：{@code source}/{@code subagentName} 均为 {@code null}。
@@ -45,11 +56,11 @@ public record ChatStreamChunk(ChatNodeKind kind, String text, String source, Str
      * 序列化异常时回退纯文本（丢失来源标识但不中断流）。
      */
     public String sseData() {
-        if (source == null) {
+        if (source == null && terminal == null) {
             return text;
         }
         try {
-            return SSE_MAPPER.writeValueAsString(this);
+            return SSE_MAPPER.writeValueAsString(terminal == null ? this : terminal);
         } catch (Exception e) {
             log.error("[chat] sse chunk json encode failed, code={}, kind={}, source={}",
                 "CHAT-SSE-ENCODE-FAIL", kind, source, e);

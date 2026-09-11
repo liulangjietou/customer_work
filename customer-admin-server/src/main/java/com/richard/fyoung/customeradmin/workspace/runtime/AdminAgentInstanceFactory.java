@@ -1,5 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
+import com.richard.fyoung.customerwork.core.middleware.ModelCompletionMiddleware;
+import io.agentscope.core.state.AgentState;
 import com.richard.fyoung.customerwork.core.constant.McpTimeouts;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
@@ -435,6 +437,7 @@ public class AdminAgentInstanceFactory {
         // onActing 逐段计时，只读透传不改事件、不打断主链路（异常安全收敛在中间件内）。放在模式闸门之外，
         // 统计口径覆盖完整链路。chat 与 vibecoding 走同一内层 ReActAgent，均被采集。
         builder.middleware(agentCallTimingMiddleware);
+        builder.middleware(new ModelCompletionMiddleware());
         // OTel 追踪紧挨耗时统计（观测类中间件聚在一起，都是只读透传、不改事件）：放在耗时统计之内层，
         // 是因为耗时统计要覆盖"完整链路含 OTel 自身开销"，而 OTel 的 agent span 只需覆盖真正的业务执行；
         // 两者顺序对彼此的数值影响都是微秒级，聚在最外层的意义是——后面所有会短路/改写的中间件
