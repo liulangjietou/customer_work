@@ -12,7 +12,7 @@
   "dependencies": {
     "@vant/touch-emulator": "^1.4.0",
     "axios": "^1.18.1",
-    "pinia": "^2.3.1",
+    "pinia": "^4.0.3",
     "vant": "^4.9.15",
     "vue": "^3.5.39",
     "vue-router": "^4.6.4"
