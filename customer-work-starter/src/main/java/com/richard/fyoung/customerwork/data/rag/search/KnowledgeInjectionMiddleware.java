@@ -17,7 +17,6 @@ import io.agentscope.core.middleware.ReasoningInput;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,9 +60,9 @@ import reactor.core.scheduler.Schedulers;
  * 新建一个，天然是"一轮一份"），后续迭代直接复用同一个块重新注入——既保证工具调用循环里模型始终
  * 看得到参考资料，又只付一次检索代价。</p>
  *
- * <p><b>失败绝不打断对话</b>：{@link KnowledgeRetrievalProvider#retrieve} 的实现内部应已 catch 一切
- * 异常回退 null，本类再叠一层 {@code onErrorResume} 兜住调度层面的意外，任何情况下都会照常
- * {@code next.apply}。</p>
+ * <p><b>失败绝不打断对话</b>：宿主通过 {@link KnowledgeRetrievalProvider#retrieveResult} 声明
+ * 跳过、正常结果或故障降级；本类的 {@code onErrorResume} 兜住调度和旧实现抛出的异常。
+ * 只有明确的正常未命中进入知识缺口统计，故障时仍会照常 {@code next.apply}。</p>
  *
  * <p>本中间件<b>按智能体实例构建</b>（{@code agentCode} 构建期绑定），不是共享单例 Bean——省得
  * 运行时再从上下文反推"当前是哪个 agent"。</p>
@@ -118,29 +117,28 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
         if (!StringUtils.hasText(query)) {
             return next.apply(input);
         }
-        // 检索故障标志：故障与"检索正常但没查到"都表现为空串，但只有后者是知识盲区。
-        // 把故障也计进盲区会让运营看到一批根本不存在的"用户在问但答不上来的问题"。
-        AtomicBoolean retrievalFailed = new AtomicBoolean(false);
         // 阻塞式 HTTP 检索强制丢到 boundedElastic：不管本流被谁订阅（Spring MVC 的 SSE 适配器可能在
         // 请求线程上订阅），都保证不会占住 Tomcat 请求线程。
         AgentInvocationIdentity identity = ctx == null ? null : ctx.get(AgentInvocationIdentity.class);
         Runnable recordMiss = gapRecorder == null ? null : gapRecorder.captureMiss(
             query, ctx, KnowledgeGapEvidence.Path.INJECTION, agentCode);
-        return Mono.fromCallable(() -> retrievalProvider.retrieve(agentCode, query, identity))
+        return Mono.fromCallable(() -> retrievalProvider.retrieveResult(agentCode, query, identity))
             .subscribeOn(Schedulers.boundedElastic())
-            // retrieve 返回 null 时 fromCallable 发出的是空信号，统一归一成空串走同一条注入分支
-            .defaultIfEmpty("")
+            .defaultIfEmpty(KnowledgeRetrievalResult.degraded(null))
             .onErrorResume(e -> {
-                retrievalFailed.set(true);
-                log.error("[rag] retrieval dispatch failed, code={}, agentCode={}", CODE_INJECT_FAIL, agentCode, e);
-                return Mono.just("");
+                log.error("[rag] retrieval dispatch failed, errorCode={}, agentCode={}", CODE_INJECT_FAIL, agentCode, e);
+                return Mono.just(KnowledgeRetrievalResult.degraded(null));
             })
-            .flatMapMany(block -> {
+            .flatMapMany(result -> {
+                String block = result.block();
                 if (ctx != null) {
                     ctx.put(cacheKey, RetrievedBlock.class, new RetrievedBlock(block));
                 }
-                recordReplayFact(ctx, query, block, retrievalFailed.get());
-                if (recordMiss != null && !retrievalFailed.get() && !StringUtils.hasText(block)) {
+                if (result.status() != KnowledgeRetrievalResult.Status.SKIPPED) {
+                    recordReplayFact(ctx, query, block,
+                        result.status() == KnowledgeRetrievalResult.Status.DEGRADED);
+                }
+                if (recordMiss != null && result.status() == KnowledgeRetrievalResult.Status.MISS) {
                     recordMiss.run();
                 }
                 return next.apply(withKnowledge(input, block));

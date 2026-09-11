@@ -12,13 +12,13 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledg
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseVersionMapper;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchResult;
+import java.math.BigDecimal;
+import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-
-import java.math.BigDecimal;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
@@ -78,11 +78,11 @@ class KnowledgeRetrievalVersionTest {
         when(relationMapper.selectList(any())).thenReturn(List.of(relation));
         when(knowledgeBaseMapper.selectBatchIds(any())).thenReturn(List.of(mutable));
         when(versionMapper.selectBatchIds(any())).thenReturn(List.of(frozen));
-        when(searchClient.searchAll(any(), any())).thenReturn(List.of());
+        when(searchClient.searchAllResult(any(), any())).thenReturn(new KnowledgeSearchResult(List.of(), true));
 
         assertNull(service.retrieve("agent-a", "问题"));
 
-        verify(searchClient).searchAll(List.of(new KnowledgeBaseEndpoint(7L, "产品知识库",
+        verify(searchClient).searchAllResult(List.of(new KnowledgeBaseEndpoint(7L, "产品知识库",
             "https://frozen.example.test", "frozen-app", "frozen-key", "application/json", "", 3,
             new BigDecimal("0.100000"))), "问题");
     }
