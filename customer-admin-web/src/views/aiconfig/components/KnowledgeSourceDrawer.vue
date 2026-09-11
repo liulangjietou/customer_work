@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import {
   createKnowledgeSource,
   deleteKnowledgeSource,
@@ -32,6 +33,9 @@ const emit = defineEmits<{
 }>()
 
 const loading = ref(false)
+const loadError = ref<unknown>(null)
+const activeTab = ref('sources')
+let loadRequestId = 0
 const sources = ref<KnowledgeSourceVO[]>([])
 const versions = ref<KnowledgeBaseVersionVO[]>([])
 const sourceDialogVisible = ref(false)
@@ -63,40 +67,79 @@ interface SourceFormState {
 }
 
 const sourceForm = reactive<SourceFormState>({
-  sourceCode: '', sourceName: '', status: 1, freshnessSlaMinutes: 1440,
-  qualityThreshold: 0.8, aclMode: 'PUBLIC', allowedSubjectTypes: [],
-  allowedSubjectIdsText: '', allowedChannelsText: '',
+  sourceCode: '',
+  sourceName: '',
+  status: 1,
+  freshnessSlaMinutes: 1440,
+  qualityThreshold: 0.8,
+  aclMode: 'PUBLIC',
+  allowedSubjectTypes: [],
+  allowedSubjectIdsText: '',
+  allowedChannelsText: '',
 })
 
 const freshnessLabel: Record<string, string> = {
-  NEVER_SYNCED: '未同步', FRESH: '新鲜', STALE: '已过期', FAILED: '最近失败',
+  NEVER_SYNCED: '未同步',
+  FRESH: '新鲜',
+  STALE: '已过期',
+  FAILED: '最近失败',
 }
 const freshnessType: Record<string, 'info' | 'success' | 'warning' | 'danger'> = {
-  NEVER_SYNCED: 'info', FRESH: 'success', STALE: 'warning', FAILED: 'danger',
+  NEVER_SYNCED: 'info',
+  FRESH: 'success',
+  STALE: 'warning',
+  FAILED: 'danger',
 }
 const qualityLabel: Record<string, string> = {
-  UNKNOWN: '未评估', PASSED: '通过', FAILED: '未通过',
+  UNKNOWN: '未评估',
+  PASSED: '通过',
+  FAILED: '未通过',
 }
 const syncType: Record<string, 'info' | 'success' | 'danger' | 'warning'> = {
-  PROCESSING: 'info', SUCCEEDED: 'success', FAILED: 'danger', QUALITY_FAILED: 'warning',
+  PROCESSING: 'info',
+  SUCCEEDED: 'success',
+  FAILED: 'danger',
+  QUALITY_FAILED: 'warning',
 }
 
-watch(() => props.modelValue, (visible) => {
-  if (visible && props.knowledgeBase) loadAll()
+watch([() => props.modelValue, () => props.knowledgeBase?.id], ([visible]) => {
+  // 抽屉复用同一组件；每次切换都开始新的读请求代次，防止旧知识库的结果落在新标题下。
+  loadRequestId += 1
+  sources.value = []
+  versions.value = []
+  loadError.value = null
+  activeTab.value = 'sources'
+  sourceDialogVisible.value = false
+  syncDialogVisible.value = false
+  runsVisible.value = false
+  lineageVisible.value = false
+  if (visible && props.knowledgeBase) void loadAll()
+})
+onBeforeUnmount(() => {
+  loadRequestId += 1
 })
 
 async function loadAll() {
   if (!props.knowledgeBase) return
+  const knowledgeBaseId = props.knowledgeBase.id
+  const requestId = ++loadRequestId
+  const isCurrent = () =>
+    requestId === loadRequestId && props.modelValue && props.knowledgeBase?.id === knowledgeBaseId
   loading.value = true
+  loadError.value = null
   try {
     const [sourceRows, versionRows] = await Promise.all([
-      fetchKnowledgeSources(props.knowledgeBase.id),
-      fetchKnowledgeBaseVersions(props.knowledgeBase.id),
+      fetchKnowledgeSources(knowledgeBaseId),
+      fetchKnowledgeBaseVersions(knowledgeBaseId),
     ])
-    sources.value = sourceRows
-    versions.value = versionRows
+    if (isCurrent()) {
+      sources.value = sourceRows
+      versions.value = versionRows
+    }
+  } catch (error) {
+    if (isCurrent()) loadError.value = error
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
 
@@ -106,9 +149,15 @@ function close() {
 
 function resetSourceForm() {
   Object.assign(sourceForm, {
-    sourceCode: '', sourceName: '', status: 1, freshnessSlaMinutes: 1440,
-    qualityThreshold: 0.8, aclMode: 'PUBLIC', allowedSubjectTypes: [],
-    allowedSubjectIdsText: '', allowedChannelsText: '',
+    sourceCode: '',
+    sourceName: '',
+    status: 1,
+    freshnessSlaMinutes: 1440,
+    qualityThreshold: 0.8,
+    aclMode: 'PUBLIC',
+    allowedSubjectTypes: [],
+    allowedSubjectIdsText: '',
+    allowedChannelsText: '',
   })
 }
 
@@ -137,7 +186,14 @@ function openEditSource(source: KnowledgeSourceVO) {
 }
 
 function splitValues(raw: string) {
-  return [...new Set(raw.split(',').map((value) => value.trim()).filter(Boolean))]
+  return [
+    ...new Set(
+      raw
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ]
 }
 
 function sourceRequest(): KnowledgeSourceSaveRequest {
@@ -150,20 +206,23 @@ function sourceRequest(): KnowledgeSourceSaveRequest {
     qualityThreshold: sourceForm.qualityThreshold,
     defaultAcl: {
       mode: sourceForm.aclMode,
-      allowedSubjectTypes: sourceForm.aclMode === 'RESTRICTED' ? sourceForm.allowedSubjectTypes : [],
-      allowedSubjectIds: sourceForm.aclMode === 'RESTRICTED'
-        ? splitValues(sourceForm.allowedSubjectIdsText) : [],
-      allowedChannels: sourceForm.aclMode === 'RESTRICTED'
-        ? splitValues(sourceForm.allowedChannelsText) : [],
+      allowedSubjectTypes:
+        sourceForm.aclMode === 'RESTRICTED' ? sourceForm.allowedSubjectTypes : [],
+      allowedSubjectIds:
+        sourceForm.aclMode === 'RESTRICTED' ? splitValues(sourceForm.allowedSubjectIdsText) : [],
+      allowedChannels:
+        sourceForm.aclMode === 'RESTRICTED' ? splitValues(sourceForm.allowedChannelsText) : [],
     },
   }
 }
 
 function restrictedAclValid() {
-  return sourceForm.aclMode !== 'RESTRICTED'
-    || sourceForm.allowedSubjectTypes.length > 0
-    || splitValues(sourceForm.allowedSubjectIdsText).length > 0
-    || splitValues(sourceForm.allowedChannelsText).length > 0
+  return (
+    sourceForm.aclMode !== 'RESTRICTED' ||
+    sourceForm.allowedSubjectTypes.length > 0 ||
+    splitValues(sourceForm.allowedSubjectIdsText).length > 0 ||
+    splitValues(sourceForm.allowedChannelsText).length > 0
+  )
 }
 
 async function saveSource() {
@@ -187,7 +246,9 @@ async function saveSource() {
 
 async function removeSource(source: KnowledgeSourceVO) {
   if (!props.knowledgeBase) return
-  await ElMessageBox.confirm(`确认删除文档源「${source.sourceName}」？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(`确认删除文档源「${source.sourceName}」？`, '提示', {
+    type: 'warning',
+  })
   await deleteKnowledgeSource(props.knowledgeBase.id, source.id)
   ElMessage.success('文档源已删除')
   await loadAll()
@@ -195,14 +256,18 @@ async function removeSource(source: KnowledgeSourceVO) {
 
 function openSync(source: KnowledgeSourceVO) {
   syncSource.value = source
-  syncPayload.value = JSON.stringify({
-    requestId: `manual-${Date.now()}`,
-    expectedCheckpoint: source.currentCheckpoint,
-    checkpoint: '',
-    fullSnapshot: false,
-    expectedDocumentCount: null,
-    documents: [],
-  } satisfies KnowledgeSyncRequest, null, 2)
+  syncPayload.value = JSON.stringify(
+    {
+      requestId: `manual-${Date.now()}`,
+      expectedCheckpoint: source.currentCheckpoint,
+      checkpoint: '',
+      fullSnapshot: false,
+      expectedDocumentCount: null,
+      documents: [],
+    } satisfies KnowledgeSyncRequest,
+    null,
+    2,
+  )
   syncDialogVisible.value = true
 }
 
@@ -222,7 +287,9 @@ async function submitSync() {
   syncing.value = true
   try {
     const result = await syncKnowledgeSource(props.knowledgeBase.id, syncSource.value.id, payload)
-    ElMessage.success(`同步已提交：${result.status}${result.knowledgeBaseVersionId ? `，版本 #${result.knowledgeBaseVersionId}` : ''}`)
+    ElMessage.success(
+      `同步已提交：${result.status}${result.knowledgeBaseVersionId ? `，版本 #${result.knowledgeBaseVersionId}` : ''}`,
+    )
     syncDialogVisible.value = false
     await loadAll()
     emit('changed')
@@ -246,7 +313,9 @@ async function openLineage(source: KnowledgeSourceVO) {
   if (!props.knowledgeBase) return
   try {
     const result = await ElMessageBox.prompt('输入上游文档 externalId', '查询文档 lineage', {
-      confirmButtonText: '查询', cancelButtonText: '取消', inputPattern: /\S+/,
+      confirmButtonText: '查询',
+      cancelButtonText: '取消',
+      inputPattern: /\S+/,
       inputErrorMessage: 'externalId 不能为空',
     })
     lineageExternalId.value = result.value
@@ -254,7 +323,9 @@ async function openLineage(source: KnowledgeSourceVO) {
     lineageLoading.value = true
     try {
       lineage.value = await fetchKnowledgeDocumentLineage(
-        props.knowledgeBase.id, source.id, result.value,
+        props.knowledgeBase.id,
+        source.id,
+        result.value,
       )
     } finally {
       lineageLoading.value = false
@@ -273,131 +344,282 @@ function shortHash(hash: string | null) {
   <el-drawer :model-value="modelValue" size="86%" destroy-on-close @close="close">
     <template #header>
       <div>
-        <strong>KnowledgeOps · {{ knowledgeBase?.kbName }}</strong>
+        <strong>知识源与版本 · {{ knowledgeBase?.kbName }}</strong>
         <div class="header-meta">
-          当前版本 v{{ knowledgeBase?.latestVersionNo ?? 0 }} / #{{ knowledgeBase?.currentVersionId ?? '-' }}
+          {{
+            knowledgeBase?.latestVersionNo
+              ? `当前版本 v${knowledgeBase.latestVersionNo}`
+              : '尚无发布版本'
+          }}
         </div>
       </div>
     </template>
 
-    <div v-loading="loading">
-      <div class="section-title">
-        <span>文档源</span>
-        <el-button v-permission="'knowledge-base:edit'" class="cw-final-action" type="primary" @click="openCreateSource">新增文档源</el-button>
-      </div>
-      <el-table :data="sources" border>
-        <el-table-column label="文档源" min-width="180">
-          <template #default="{ row }">
-            <div>{{ row.sourceName }}</div>
-            <code>{{ row.sourceCode }}</code>
-          </template>
-        </el-table-column>
-        <el-table-column label="checkpoint" min-width="150" show-overflow-tooltip>
-          <template #default="{ row }"><code>{{ row.currentCheckpoint ?? '-' }}</code></template>
-        </el-table-column>
-        <el-table-column label="新鲜度" width="110">
-          <template #default="{ row }">
-            <el-tooltip :content="row.freshnessDeadline ? `SLA 截止：${row.freshnessDeadline}` : '尚未成功同步'">
-              <el-tag :type="freshnessType[row.freshnessStatus] ?? 'info'">
-                {{ freshnessLabel[row.freshnessStatus] ?? row.freshnessStatus }}
-              </el-tag>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column label="质量" width="130">
-          <template #default="{ row }">
-            <el-tag :type="row.qualityStatus === 'PASSED' ? 'success' : row.qualityStatus === 'FAILED' ? 'danger' : 'info'">
-              {{ qualityLabel[row.qualityStatus] }} {{ row.qualityScore == null ? '' : Number(row.qualityScore).toFixed(4) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="activeDocumentCount" label="有效文档" width="90" />
-        <el-table-column label="最近同步" min-width="180">
-          <template #default="{ row }">
-            <el-tag v-if="row.lastSyncStatus" :type="syncType[row.lastSyncStatus] ?? 'info'">{{ row.lastSyncStatus }}</el-tag>
-            <span v-else>-</span>
-            <div class="subtle">{{ row.lastSyncAt ?? '' }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="80">
-          <template #default="{ row }"><el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag></template>
-        </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
-          <template #default="{ row }">
-            <el-button v-permission="'knowledge-base:source-sync'" link type="primary" @click="openSync(row)">同步</el-button>
-            <el-button link type="primary" @click="openRuns(row)">运行记录</el-button>
-            <el-button link type="primary" @click="openLineage(row)">lineage</el-button>
-            <el-button v-permission="'knowledge-base:edit'" link type="primary" @click="openEditSource(row)">编辑</el-button>
-            <el-button v-permission="'knowledge-base:delete'" link type="danger" @click="removeSource(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="sources.length === 0" description="暂无托管文档源；该知识库仍可按冻结版本访问外部 RAG" />
+    <CrudLoadState
+      :error="loadError"
+      :has-stale-data="sources.length > 0 || versions.length > 0"
+      :loading="loading"
+      @retry="loadAll"
+    />
+    <el-tabs v-model="activeTab" class="knowledge-ops-tabs" aria-label="知识源与版本">
+      <el-tab-pane label="文档源" name="sources">
+        <div v-loading="loading">
+          <div class="section-title">
+            <span>文档源</span>
+            <el-button
+              v-permission="'knowledge-base:edit'"
+              class="cw-final-action"
+              type="primary"
+              @click="openCreateSource"
+              >新增文档源</el-button
+            >
+          </div>
+          <el-table
+            :data="sources"
+            border
+            :empty-text="loadError ? '文档源加载失败，请重试' : '暂无文档源'"
+          >
+            <el-table-column label="文档源" min-width="180">
+              <template #default="{ row }">
+                <div>{{ row.sourceName }}</div>
+                <code>{{ row.sourceCode }}</code>
+              </template>
+            </el-table-column>
+            <el-table-column label="同步位置" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }"
+                ><code>{{ row.currentCheckpoint ?? '-' }}</code></template
+              >
+            </el-table-column>
+            <el-table-column label="新鲜度" width="110">
+              <template #default="{ row }">
+                <el-tooltip
+                  :content="
+                    row.freshnessDeadline ? `SLA 截止：${row.freshnessDeadline}` : '尚未成功同步'
+                  "
+                >
+                  <el-tag :type="freshnessType[row.freshnessStatus] ?? 'info'">
+                    {{ freshnessLabel[row.freshnessStatus] ?? row.freshnessStatus }}
+                  </el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="质量" width="130">
+              <template #default="{ row }">
+                <el-tag
+                  :type="
+                    row.qualityStatus === 'PASSED'
+                      ? 'success'
+                      : row.qualityStatus === 'FAILED'
+                        ? 'danger'
+                        : 'info'
+                  "
+                >
+                  {{ qualityLabel[row.qualityStatus] }}
+                  {{ row.qualityScore == null ? '' : Number(row.qualityScore).toFixed(4) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="activeDocumentCount" label="有效文档" width="90" />
+            <el-table-column label="最近同步" min-width="180">
+              <template #default="{ row }">
+                <el-tag v-if="row.lastSyncStatus" :type="syncType[row.lastSyncStatus] ?? 'info'">{{
+                  row.lastSyncStatus
+                }}</el-tag>
+                <span v-else>-</span>
+                <div class="subtle">{{ row.lastSyncAt ?? '' }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }"
+                ><el-tag :type="row.status === 1 ? 'success' : 'info'">{{
+                  row.status === 1 ? '启用' : '停用'
+                }}</el-tag></template
+              >
+            </el-table-column>
+            <el-table-column label="操作" width="280" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-permission="'knowledge-base:source-sync'"
+                  link
+                  type="primary"
+                  @click="openSync(row)"
+                  >同步</el-button
+                >
+                <el-button link type="primary" @click="openRuns(row)">运行记录</el-button>
+                <el-button link type="primary" @click="openLineage(row)">修订记录</el-button>
+                <el-button
+                  v-permission="'knowledge-base:edit'"
+                  link
+                  type="primary"
+                  @click="openEditSource(row)"
+                  >编辑</el-button
+                >
+                <el-button
+                  v-permission="'knowledge-base:delete'"
+                  link
+                  type="danger"
+                  @click="removeSource(row)"
+                  >删除</el-button
+                >
+              </template>
+            </el-table-column>
+          </el-table>
+          <p v-if="!loading && !loadError && sources.length === 0" class="subtle">
+            可新增文档源，或在连接配置中核对已接入的外部检索服务。
+          </p>
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="版本记录" name="versions">
+        <div v-loading="loading">
+          <div class="section-title versions-title"><span>不可变版本</span></div>
+          <el-table
+            :data="versions"
+            border
+            max-height="420"
+            :empty-text="loadError ? '版本加载失败，请重试' : '暂无发布版本'"
+          >
+            <el-table-column prop="versionNo" label="版本" width="80">
+              <template #default="{ row }">v{{ row.versionNo }}</template>
+            </el-table-column>
+            <el-table-column prop="id" label="版本 ID" width="100" />
+            <el-table-column
+              prop="checkpoint"
+              label="同步位置"
+              min-width="150"
+              show-overflow-tooltip
+            />
+            <el-table-column prop="documentCount" label="文档数" width="90" />
+            <el-table-column label="质量" width="120">
+              <template #default="{ row }"
+                >{{ qualityLabel[row.qualityStatus] ?? '未评估' }} /
+                {{ row.qualityScore == null ? '—' : Number(row.qualityScore).toFixed(3) }}</template
+              >
+            </el-table-column>
+            <el-table-column label="内容指纹" width="150">
+              <template #default="{ row }"
+                ><el-tooltip :content="row.snapshotHash"
+                  ><code>{{ shortHash(row.snapshotHash) }}</code></el-tooltip
+                ></template
+              >
+            </el-table-column>
+            <el-table-column prop="changeNote" label="变更说明" min-width="180" />
+            <el-table-column prop="createTime" label="创建时间" width="180" />
+          </el-table>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
 
-      <div class="section-title versions-title"><span>不可变版本</span></div>
-      <el-table :data="versions" border max-height="320">
-        <el-table-column prop="versionNo" label="版本" width="80">
-          <template #default="{ row }">v{{ row.versionNo }}</template>
-        </el-table-column>
-        <el-table-column prop="id" label="版本 ID" width="100" />
-        <el-table-column prop="checkpoint" label="checkpoint" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="documentCount" label="文档数" width="90" />
-        <el-table-column label="质量" width="120">
-          <template #default="{ row }">{{ row.qualityStatus }} / {{ Number(row.qualityScore).toFixed(4) }}</template>
-        </el-table-column>
-        <el-table-column label="snapshotHash" width="150">
-          <template #default="{ row }"><el-tooltip :content="row.snapshotHash"><code>{{ shortHash(row.snapshotHash) }}</code></el-tooltip></template>
-        </el-table-column>
-        <el-table-column prop="changeNote" label="变更说明" min-width="180" />
-        <el-table-column prop="createTime" label="创建时间" width="180" />
-      </el-table>
-    </div>
-
-    <el-dialog v-model="sourceDialogVisible" :title="sourceDialogMode === 'create' ? '新增文档源' : '编辑文档源'" width="620px" append-to-body>
+    <el-dialog
+      v-model="sourceDialogVisible"
+      :title="sourceDialogMode === 'create' ? '新增文档源' : '编辑文档源'"
+      width="620px"
+      append-to-body
+    >
       <el-form ref="sourceFormRef" :model="sourceForm" label-width="130px">
-        <el-form-item label="sourceCode" prop="sourceCode" :rules="[{ required: true, message: '请输入 sourceCode' }, { pattern: /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/, message: '格式不合法' }]">
+        <el-form-item
+          label="sourceCode"
+          prop="sourceCode"
+          :rules="[
+            { required: true, message: '请输入 sourceCode' },
+            { pattern: /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/, message: '格式不合法' },
+          ]"
+        >
           <el-input v-model="sourceForm.sourceCode" :disabled="sourceDialogMode === 'edit'" />
         </el-form-item>
-        <el-form-item label="名称" prop="sourceName" :rules="[{ required: true, message: '请输入名称' }]">
+        <el-form-item
+          label="名称"
+          prop="sourceName"
+          :rules="[{ required: true, message: '请输入名称' }]"
+        >
           <el-input v-model="sourceForm.sourceName" maxlength="128" />
         </el-form-item>
         <el-form-item label="新鲜度 SLA">
           <el-input-number v-model="sourceForm.freshnessSlaMinutes" :min="1" :max="525600" /> 分钟
         </el-form-item>
         <el-form-item label="质量门槛">
-          <el-input-number v-model="sourceForm.qualityThreshold" :min="0" :max="1" :step="0.05" :precision="4" />
+          <el-input-number
+            v-model="sourceForm.qualityThreshold"
+            :min="0"
+            :max="1"
+            :step="0.05"
+            :precision="4"
+          />
         </el-form-item>
         <el-form-item label="默认 ACL">
-          <el-radio-group v-model="sourceForm.aclMode"><el-radio value="PUBLIC">公开</el-radio><el-radio value="RESTRICTED">受限</el-radio></el-radio-group>
+          <el-radio-group v-model="sourceForm.aclMode"
+            ><el-radio value="PUBLIC">公开</el-radio
+            ><el-radio value="RESTRICTED">受限</el-radio></el-radio-group
+          >
         </el-form-item>
         <template v-if="sourceForm.aclMode === 'RESTRICTED'">
           <el-form-item label="主体类型">
             <el-checkbox-group v-model="sourceForm.allowedSubjectTypes">
-              <el-checkbox v-for="type in ['USER', 'ADMIN_USER', 'IP', 'API_KEY']" :key="type" :value="type">{{ type }}</el-checkbox>
+              <el-checkbox
+                v-for="type in ['USER', 'ADMIN_USER', 'IP', 'API_KEY']"
+                :key="type"
+                :value="type"
+                >{{ type }}</el-checkbox
+              >
             </el-checkbox-group>
           </el-form-item>
-          <el-form-item label="主体 ID"><el-input v-model="sourceForm.allowedSubjectIdsText" placeholder="逗号分隔；为空表示不限制此维度" /></el-form-item>
-          <el-form-item label="渠道"><el-input v-model="sourceForm.allowedChannelsText" placeholder="如 user-http,user-ws；逗号分隔" /></el-form-item>
+          <el-form-item label="主体 ID"
+            ><el-input
+              v-model="sourceForm.allowedSubjectIdsText"
+              placeholder="逗号分隔；为空表示不限制此维度"
+          /></el-form-item>
+          <el-form-item label="渠道"
+            ><el-input
+              v-model="sourceForm.allowedChannelsText"
+              placeholder="如 user-http,user-ws；逗号分隔"
+          /></el-form-item>
         </template>
-        <el-form-item label="状态"><el-switch v-model="sourceForm.status" :active-value="1" :inactive-value="0" /></el-form-item>
+        <el-form-item label="状态"
+          ><el-switch v-model="sourceForm.status" :active-value="1" :inactive-value="0"
+        /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="sourceDialogVisible = false">取消</el-button><el-button class="cw-final-action" type="primary" @click="saveSource">保存文档源</el-button></template>
+      <template #footer
+        ><el-button @click="sourceDialogVisible = false">取消</el-button
+        ><el-button class="cw-final-action" type="primary" @click="saveSource"
+          >保存文档源</el-button
+        ></template
+      >
     </el-dialog>
 
     <el-dialog v-model="syncDialogVisible" title="提交文档同步批次" width="820px" append-to-body>
       <el-alert type="info" :closable="false" show-icon>
-        checkpoint 采用 CAS：expectedCheckpoint 必须等于服务端当前值，成功后才推进。全量快照只传 UPSERT，缺失文档自动生成 DELETE 修订。
+        checkpoint 采用 CAS：expectedCheckpoint 必须等于服务端当前值，成功后才推进。全量快照只传
+        UPSERT，缺失文档自动生成 DELETE 修订。
       </el-alert>
       <el-input v-model="syncPayload" type="textarea" :rows="20" class="json-editor" />
-      <template #footer><el-button @click="syncDialogVisible = false">取消</el-button><el-button class="cw-final-action" type="primary" :loading="syncing" @click="submitSync">提交同步</el-button></template>
+      <template #footer
+        ><el-button @click="syncDialogVisible = false">取消</el-button
+        ><el-button class="cw-final-action" type="primary" :loading="syncing" @click="submitSync"
+          >提交同步</el-button
+        ></template
+      >
     </el-dialog>
 
-    <el-dialog v-model="runsVisible" title="同步运行记录（最近 100 次）" width="1100px" append-to-body>
+    <el-dialog
+      v-model="runsVisible"
+      title="同步运行记录（最近 100 次）"
+      width="1100px"
+      append-to-body
+    >
       <el-table v-loading="runsLoading" :data="runs" border>
         <el-table-column prop="requestId" label="requestId" min-width="160" show-overflow-tooltip />
         <el-table-column prop="syncMode" label="模式" width="100" />
-        <el-table-column label="状态" width="130"><template #default="{ row }"><el-tag :type="syncType[row.status] ?? 'info'">{{ row.status }}</el-tag></template></el-table-column>
-        <el-table-column label="变更" width="180"><template #default="{ row }">+{{ row.upsertedCount ?? '-' }} / -{{ row.deletedCount ?? '-' }} / ={{ row.unchangedCount ?? '-' }}</template></el-table-column>
+        <el-table-column label="状态" width="130"
+          ><template #default="{ row }"
+            ><el-tag :type="syncType[row.status] ?? 'info'">{{ row.status }}</el-tag></template
+          ></el-table-column
+        >
+        <el-table-column label="变更" width="180"
+          ><template #default="{ row }"
+            >+{{ row.upsertedCount ?? '-' }} / -{{ row.deletedCount ?? '-' }} / ={{
+              row.unchangedCount ?? '-'
+            }}</template
+          ></el-table-column
+        >
         <el-table-column prop="qualityScore" label="质量" width="90" />
         <el-table-column prop="knowledgeBaseVersionId" label="版本 ID" width="100" />
         <el-table-column prop="errorMessage" label="错误" min-width="180" show-overflow-tooltip />
@@ -405,7 +627,12 @@ function shortHash(hash: string | null) {
       </el-table>
     </el-dialog>
 
-    <el-dialog v-model="lineageVisible" :title="`文档 lineage · ${lineageExternalId}`" width="1100px" append-to-body>
+    <el-dialog
+      v-model="lineageVisible"
+      :title="`文档 lineage · ${lineageExternalId}`"
+      width="1100px"
+      append-to-body
+    >
       <el-table v-loading="lineageLoading" :data="lineage" border>
         <el-table-column prop="id" label="修订 ID" width="90" />
         <el-table-column prop="parentRevisionId" label="父修订" width="90" />
@@ -413,7 +640,13 @@ function shortHash(hash: string | null) {
         <el-table-column prop="sourceVersion" label="上游版本" width="120" />
         <el-table-column prop="title" label="标题" min-width="160" show-overflow-tooltip />
         <el-table-column prop="aclMode" label="ACL" width="110" />
-        <el-table-column label="contentHash" width="150"><template #default="{ row }"><el-tooltip :content="row.contentHash ?? ''"><code>{{ shortHash(row.contentHash) }}</code></el-tooltip></template></el-table-column>
+        <el-table-column label="contentHash" width="150"
+          ><template #default="{ row }"
+            ><el-tooltip :content="row.contentHash ?? ''"
+              ><code>{{ shortHash(row.contentHash) }}</code></el-tooltip
+            ></template
+          ></el-table-column
+        >
         <el-table-column prop="createTime" label="创建时间" width="180" />
       </el-table>
     </el-dialog>
@@ -421,9 +654,29 @@ function shortHash(hash: string | null) {
 </template>
 
 <style scoped>
-.header-meta, .subtle { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; }
-.section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font-size: 16px; font-weight: 600; }
-.versions-title { margin-top: 28px; }
-code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; }
-.json-editor { margin-top: 12px; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+.header-meta,
+.subtle {
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.versions-title {
+  margin-top: 28px;
+}
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+.json-editor {
+  margin-top: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
 </style>

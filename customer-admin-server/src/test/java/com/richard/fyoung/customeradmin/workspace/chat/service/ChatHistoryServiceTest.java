@@ -19,6 +19,8 @@ import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.GenerateReason;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agentscope.core.state.AgentState;
 import io.agentscope.core.state.AgentStateStore;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +28,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -98,6 +101,66 @@ class ChatHistoryServiceTest {
 
     private Msg assistantMsg(String text) {
         return Msg.builder().role(MsgRole.ASSISTANT).textContent(text).build();
+    }
+
+    @Test
+    void getMessages_shouldProjectOriginalInputAndPreserveUnmarkedLegacyText() {
+        String runtimeText = "[VibeCoding指引-docker] 内部运行指引\n\n写个脚本";
+        Msg input = Msg.builder().id("input-1").role(MsgRole.USER).textContent(runtimeText)
+            .metadata(Map.of("workspace.rawInput", "写个脚本", "workspace.sessionType", "VIBE_CODING"))
+            .build();
+        Msg legacy = userMsg("[VibeCoding指引-local] 这段是用户主动引用的文字，不能删掉");
+        AgentState saved = AgentState.builder().userId(AGENT_CODE).sessionId("display")
+            .context(List.of(input, assistantMsg("好的"), legacy)).build();
+        stubContext("display", AgentState.fromJsonString(saved.toJson()).getContext().toArray(Msg[]::new));
+
+        List<ChatMessageVO> messages = service.getMessages(AGENT_CODE, "display");
+
+        assertEquals("写个脚本", messages.get(0).text());
+        assertEquals(legacy.getTextContent(), messages.get(2).text());
+        assertEquals(runtimeText, input.getTextContent(), "展示投影不能改写模型与审计原始记录");
+        assertEquals("写个脚本", service.getSessionSummary(AGENT_CODE, "display").orElseThrow().preview());
+    }
+
+    @Test
+    void getMessages_shouldExposeTurnAndPhaseWithoutInventingLegacyCompletion() {
+        Msg input = Msg.builder().id("turn-input").role(MsgRole.USER).textContent("查一下进度").build();
+        stubContext("phases", input,
+            Msg.builder().role(MsgRole.ASSISTANT).textContent("我先查询订单")
+                .generateReason(GenerateReason.TOOL_CALLS).build(),
+            Msg.builder().role(MsgRole.ASSISTANT).textContent("已发货")
+                .generateReason(GenerateReason.MODEL_STOP).build(),
+            Msg.builder().role(MsgRole.ASSISTANT).textContent("已生成的部分内容")
+                .generateReason(GenerateReason.INTERRUPTED).build(),
+            assistantMsg("缺少结束原因的旧回复"),
+            Msg.builder().role(MsgRole.ASSISTANT).textContent("无法识别结束原因的旧回复")
+                .metadata(Map.of(Msg.METADATA_GENERATE_REASON, "UNRECOGNIZED_REASON")).build());
+
+        List<ChatMessageVO> messages = service.getMessages(AGENT_CODE, "phases");
+        ObjectMapper mapper = new ObjectMapper();
+        List<String> phases = messages.stream()
+            .map(message -> mapper.valueToTree(message).path("phase").asText()).toList();
+
+        assertEquals(List.of("USER_INPUT", "PROCESS", "FINAL", "STOPPED", "UNKNOWN", "UNKNOWN"), phases);
+        assertEquals("turn-input", mapper.valueToTree(messages.get(2)).path("turnId").asText());
+        assertEquals("MODEL_STOP", mapper.valueToTree(messages.get(2)).path("finishReason").asText());
+    }
+
+    @Test
+    void getMessages_shouldKeepAttachmentOnlyInputWhenDisplayedTextIsEmpty() {
+        Msg input = Msg.builder().id("attachment-input").role(MsgRole.USER)
+            .textContent("【附件：report.pdf】材料正文")
+            .metadata(Map.of("workspace.rawInput", "")).build();
+        stubContext("attachment-only", input);
+        when(attachmentStore.listBySession("attachment-only")).thenReturn(List.of(
+            ChatAttachment.builder().id("attachment-1").messageId(input.getId()).fileName("report.pdf")
+                .mimeType("application/pdf").fileSize(1024L).parseStatus(AttachmentParseStatus.SUCCESS).build()));
+
+        List<ChatMessageVO> messages = service.getMessages(AGENT_CODE, "attachment-only");
+
+        assertEquals(1, messages.size());
+        assertEquals("", messages.get(0).text());
+        assertEquals("report.pdf", messages.get(0).attachments().get(0).fileName());
     }
 
     @Test

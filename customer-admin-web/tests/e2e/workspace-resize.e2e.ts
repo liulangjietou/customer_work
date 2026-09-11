@@ -284,6 +284,10 @@ test.describe('VibeCoding 产物栏宽度', () => {
       await page.evaluate((key) => localStorage.getItem(key), ARTIFACTS_WIDTH_STORAGE_KEY),
     ).toBe(String(preferredWidth))
 
+    // 键盘变更会触发 200ms 网格动画，先核对稳定尺寸，再验证刷新后的持久化结果。
+    await expect
+      .poll(async () => Math.abs((await panelMetrics(page)).artifactsWidth - preferredWidth))
+      .toBeLessThanOrEqual(1)
     const beforeReload = await panelMetrics(page)
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(page.getByRole('tab', { name: '代码工作区' })).toHaveAttribute(

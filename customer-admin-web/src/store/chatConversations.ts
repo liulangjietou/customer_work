@@ -10,12 +10,22 @@ import {
 import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
 import { createTextChunkBatcher } from '@/utils/textChunkBatcher'
-import type { ExecutionMode, LiveSession, PlanEvent, PlanResultEvent } from '@/types/api'
+import { presentChatHistory } from '@/utils/chatMessagePresentation'
+import type {
+  ChatMessagePhase,
+  ExecutionMode,
+  LiveSession,
+  PlanEvent,
+  PlanResultEvent,
+} from '@/types/api'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
+  phase?: ChatMessagePhase
+  turnId?: string | null
+  finishReason?: string | null
   /**
    * 这条助手消息是一次失败的结果（额度用尽、后端异常等）。
    *
@@ -198,13 +208,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       const history = await getChatSessionMessages(agentCode, targetSessionId)
       agent.conversations[targetSessionId] = createChatConversation(
         targetSessionId,
-        history.map((msg) => ({
-          role: msg.role,
-          text: msg.text,
-          nodes: [],
-          // 历史附件没有本地 previewUrl，图片缩略图交给 MessageAttachments 组件按需拉后端 blob
-          attachments: msg.attachments.length > 0 ? msg.attachments : undefined,
-        })),
+        presentChatHistory(history),
       )
       agent.activeId = targetSessionId
     },
@@ -273,7 +277,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
 
       const abortStream = streamChat(
         agentCode,
-        { sessionId: sid, message: messageToSend, mode: conv.mode, attachmentIds },
+        { sessionId: sid, message: messageToSend, rawInput: text, mode: conv.mode, attachmentIds },
         {
           onEvent: (event) => {
             const c = this.byAgent[agentCode]?.conversations[sid]

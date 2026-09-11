@@ -17,10 +17,12 @@ import {
   type TraceNode,
 } from '@/utils/traceTimeline'
 import { createTextChunkBatcher } from '@/utils/textChunkBatcher'
+import { presentChatHistory } from '@/utils/chatMessagePresentation'
 import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
 import type { SseHandlers } from '@/utils/sse'
 import type {
+  ChatMessagePhase,
   CommandOutputEvent,
   CommandResultEvent,
   ExecutionMode,
@@ -43,6 +45,9 @@ export interface VibeChatMessage {
   role: 'user' | 'assistant'
   text: string
   nodes: TraceNode[]
+  phase?: ChatMessagePhase
+  turnId?: string | null
+  finishReason?: string | null
   /** 这条助手消息是一次失败的结果（额度用尽、后端异常等），UI 渲染成提示样式而不是正常回答。 */
   failed?: boolean
   /** 执行错误独立于回答保存，避免流式失败覆盖已经生成的内容。 */
@@ -247,16 +252,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         return
       }
       const history = await getChatSessionMessages(agentCode, targetSessionId)
-      const conv = createVibeConversation(
-        targetSessionId,
-        history.map((msg) => ({
-          role: msg.role,
-          text: msg.text,
-          nodes: [],
-          // 历史附件没有本地 previewUrl，图片缩略图交给 MessageAttachments 组件按需拉后端 blob
-          attachments: msg.attachments.length > 0 ? msg.attachments : undefined,
-        })),
-      )
+      const conv = createVibeConversation(targetSessionId, presentChatHistory(history))
       const firstUserMessage = history.find((msg) => msg.role === 'user')
       conv.sandboxMode = firstUserMessage
         ? parseSandboxModeFromMessage(firstUserMessage.text)
@@ -344,6 +340,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
             {
               sessionId: sid,
               message: messageToSend,
+              rawInput: text,
               collaboration,
               mode: conv.mode,
               attachmentIds,

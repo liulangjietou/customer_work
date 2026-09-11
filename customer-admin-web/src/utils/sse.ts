@@ -10,11 +10,6 @@ export interface SseHandlers {
 }
 
 /**
- * 用 fetch + ReadableStream 手动解析 SSE，而不是浏览器原生 EventSource——后端聊天/VibeCoding
- * 端点是 POST + 需要携带 Authorization 头传 token，原生 EventSource 只支持 GET 且不能自定义头。
- * 返回一个 abort() 函数，供调用方中途取消。
- */
-/**
  * 带业务码的流式请求错误。
  *
  * <p>调用方据此区分"这一轮为什么失败"：额度用尽（{@link #QUOTA_EXCEEDED}）该作为一条消息
@@ -39,6 +34,7 @@ export class SseHttpError extends Error {
   }
 }
 
+/** POST 流式请求需要携带登录头；返回取消函数供聊天和编码工作区使用。 */
 export function streamSse(path: string, body: unknown, handlers: SseHandlers): () => void {
   const controller = new AbortController()
   const auth = useAuthStore()
@@ -48,42 +44,51 @@ export function streamSse(path: string, body: unknown, handlers: SseHandlers): (
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
       Authorization: auth.token ?? '',
     },
     body: JSON.stringify(body),
     signal: controller.signal,
   })
     .then(async (response) => {
-      if (!response.ok || !response.body) {
-        // 非 2xx 的响应体同样是 Result 包装（如额度用尽返回 429 + code 40043），先把后端文案取出来：
-        // 只抛 HTTP 状态码的话，对话框里显示的是"SSE 请求失败: HTTP 429"，
-        // 而真正该让用户看到的"额度已用完，请稍后再试"就丢了
-        const body = await response.json()
+      const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
+      if (!response.ok || !response.body || contentType !== 'text/event-stream') {
+        // 业务异常可能返回 HTTP 200 + Result JSON，必须先校验协议，不能将空流当作成功。
+        const body = await response
+          .json()
           .then((parsed: { code?: number; message?: string }) => parsed)
           .catch(() => null)
-        throw new SseHttpError(body?.message || `SSE 请求失败: HTTP ${response.status}`,
-          response.status, body?.code)
+        throw new SseHttpError(
+          body?.message || `SSE 请求失败: HTTP ${response.status}`,
+          response.status,
+          body?.code,
+        )
       }
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
 
-      for (;;) {
-        const { value, done } = await reader.read()
-        if (done) {
-          break
-        }
-        buffer += decoder.decode(value, { stream: true })
+      try {
+        for (;;) {
+          const { value, done } = await reader.read()
+          if (done) {
+            break
+          }
+          buffer += decoder.decode(value, { stream: true })
 
-        let separatorIndex: number
-        while ((separatorIndex = buffer.indexOf('\n\n')) !== -1) {
-          const rawEvent = buffer.slice(0, separatorIndex)
-          buffer = buffer.slice(separatorIndex + 2)
-          const parsed = parseSseBlock(rawEvent)
-          if (parsed) {
-            handlers.onEvent(parsed)
+          // 分隔符可能跨网络块到达；只切事件边界，不改动正文中的空格和换行。
+          let separator: RegExpExecArray | null
+          while ((separator = /\r?\n\r?\n/.exec(buffer)) !== null) {
+            const rawEvent = buffer.slice(0, separator.index)
+            buffer = buffer.slice(separator.index + separator[0].length)
+            const parsed = parseSseBlock(rawEvent)
+            if (parsed) {
+              handlers.onEvent(parsed)
+            }
           }
         }
+      } finally {
+        reader.releaseLock()
       }
       handlers.onComplete?.()
     })

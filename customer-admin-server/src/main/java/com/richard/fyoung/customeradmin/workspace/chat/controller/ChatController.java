@@ -75,7 +75,7 @@ public class ChatController {
         sessionGuard.claimOrRequire(agentCode, request.sessionId(), userId);
         String tenantId = TenantContext.get();
         // 采集元数据必须在请求线程同步段构建（用户名取自 Sa-Token 的 ThreadLocal）；渠道=admin_chat → CHAT
-        AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.CHAT, request.message());
+        AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.CHAT, request.originalInput());
         Flux<ServerSentEvent<String>> result = chatService.chatStreamWithAttachments(agentCode, request.sessionId(), request.message(), request.mode(), callMeta, request.attachmentIds())
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())

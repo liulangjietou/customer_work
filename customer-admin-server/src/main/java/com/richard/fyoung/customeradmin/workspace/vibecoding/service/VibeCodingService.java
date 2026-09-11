@@ -173,6 +173,12 @@ public class VibeCodingService {
      */
     public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText, String mode,
                                          List<String> attachmentIds) {
+        return stream(agentCode, sessionId, userText, mode, attachmentIds, userText);
+    }
+
+    /** 模型上下文可以包含附件和协作指引；rawInput 单独用于历史气泡与调用记录。 */
+    public Flux<ChatStreamChunk> stream(String agentCode, String sessionId, String userText, String mode,
+                                         List<String> attachmentIds, String rawInput) {
         if (sandboxProperties.isDisabledMode()) {
             return Flux.error(new IllegalStateException(
                 "VibeCoding disabled: isolated sandbox runtime is not configured"));
@@ -196,7 +202,7 @@ public class VibeCodingService {
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.CHAT_STREAM, agentCode, safeSession);
         // 采集元数据同样在请求线程同步段构建：渠道=vibecoding → VIBE_CODING，question 用用户原始输入
         // （而非注入路径指引后的 enrichedText，报表展示的是用户真实提问）。
-        AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.VIBE_CODING, userText);
+        AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.VIBE_CODING, rawInput);
         AtomicReference<ChatUsage> usageTotal = new AtomicReference<>();
 
         AtomicReference<Map<String, FileFingerprint>> lastSnapshot = new AtomicReference<>(initialSnapshot);
