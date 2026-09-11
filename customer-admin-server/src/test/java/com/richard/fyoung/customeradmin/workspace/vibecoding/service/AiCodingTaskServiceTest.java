@@ -39,7 +39,7 @@ class AiCodingTaskServiceTest {
     void diagnose_shouldUseDedicatedPromptAndExistingVibeCodingStream() {
         properties.getFeatures().setDiagnosisEnabled(true);
         when(auditService.begin(any(), eq("coder"), eq("s1"))).thenReturn(new AiCodingAuditLog());
-        when(vibeCodingService.stream(eq("coder"), eq("s1"), contains("NullPointerException"), eq("auto")))
+        when(vibeCodingService.stream(eq("coder"), eq("s1"), contains("NullPointerException"), eq("auto"), any(), eq("NullPointerException")))
             .thenReturn(Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "已修复")));
         when(vibeCodingService.listChangedArtifacts("coder", "s1")).thenReturn(List.of("Foo.java"));
 
@@ -47,7 +47,7 @@ class AiCodingTaskServiceTest {
             .collectList().block();
 
         assertEquals("已修复", chunks.get(0).text());
-        verify(vibeCodingService).stream(eq("coder"), eq("s1"), contains("<untrusted_log>"), eq("auto"));
+        verify(vibeCodingService).stream(eq("coder"), eq("s1"), contains("<untrusted_log>"), eq("auto"), any(), eq("NullPointerException"));
         verify(auditService).applyChangedFiles(any(), eq(List.of("Foo.java")));
     }
 
@@ -58,7 +58,7 @@ class AiCodingTaskServiceTest {
         when(auditService.begin(any(), eq("coder"), eq("s1"))).thenReturn(new AiCodingAuditLog());
         when(vibeCodingService.listWorkspaceFiles("coder", "s1")).thenReturn(List.of());
         when(vibeCodingService.listChangedArtifacts("coder", "s1")).thenReturn(List.of("A.java"));
-        when(vibeCodingService.stream(eq("coder"), eq("s1"), contains("API_MIGRATION"), eq("accept_edits")))
+        when(vibeCodingService.stream(eq("coder"), eq("s1"), contains("API_MIGRATION"), eq("accept_edits"), any(), eq("替换废弃 API")))
             .thenReturn(Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER, "重构完成")));
         RefactorTask task = new RefactorTask("s1", RefactorTask.TaskType.API_MIGRATION,
             "替换废弃 API", List.of("A.java"));
@@ -79,13 +79,13 @@ class AiCodingTaskServiceTest {
             .collectList().toFuture();
 
         assertTrue(planArrived.await(2, TimeUnit.SECONDS));
-        verify(vibeCodingService, never()).stream(eq("coder"), eq("s1"), any(), eq("accept_edits"));
+        verify(vibeCodingService, never()).stream(eq("coder"), eq("s1"), any(), eq("accept_edits"), any(), any());
         assertTrue(planService.confirm("coder", "s1", planId.get(), true));
         List<ChatStreamChunk> chunks = future.get(3, TimeUnit.SECONDS);
 
         assertTrue(chunks.stream().anyMatch(chunk -> chunk.kind() == ChatNodeKind.PLAN_RESULT));
         assertTrue(chunks.stream().anyMatch(chunk -> "重构完成".equals(chunk.text())));
-        verify(vibeCodingService).stream(eq("coder"), eq("s1"), contains("API_MIGRATION"), eq("accept_edits"));
+        verify(vibeCodingService).stream(eq("coder"), eq("s1"), contains("API_MIGRATION"), eq("accept_edits"), any(), eq("替换废弃 API"));
     }
 
     @Test
@@ -114,6 +114,8 @@ class AiCodingTaskServiceTest {
         List<ChatStreamChunk> chunks = future.get(3, TimeUnit.SECONDS);
 
         assertTrue(chunks.stream().anyMatch(chunk -> chunk.text().contains("未执行")));
-        verify(vibeCodingService, never()).stream(eq("coder"), eq("s1"), any(), eq("accept_edits"));
+        verify(vibeCodingService, never()).stream(eq("coder"), eq("s1"), any(), eq("accept_edits"), any(), any());
+        assertEquals(1, chunks.stream().filter(chunk -> chunk.kind() == ChatNodeKind.TERMINAL).count(),
+            "确认被拒绝也必须给出明确状态，不能让前端按 EOF 推断");
     }
 }

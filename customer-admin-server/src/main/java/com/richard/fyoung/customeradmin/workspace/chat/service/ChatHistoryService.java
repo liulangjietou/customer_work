@@ -161,11 +161,11 @@ public class ChatHistoryService {
                 continue;
             }
             // id=框架 Msg.id：附件按 message_id 挂回对应消息；无附件时给空列表（契约要求非 null）
-            var finishReason = ChatMessagePhase.recordedReason(msg);
+            var finishReason = ChatMessagePhase.finishReason(msg);
             messages.add(new ChatMessageVO(msg.getId(),
                 msg.getRole() == MsgRole.USER ? "user" : "assistant", text, msg.getTimestamp(), msgAttachments,
                 turnId, ChatMessagePhase.of(msg),
-                finishReason == null ? null : finishReason.name(),
+                finishReason,
                 sessionType));
         }
         historyCache.putMessages(memoryScope, sessionId, messages);

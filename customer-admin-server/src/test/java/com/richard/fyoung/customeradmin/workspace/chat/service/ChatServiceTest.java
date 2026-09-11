@@ -1,5 +1,9 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.agentscope.core.message.GenerateReason;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
@@ -129,7 +133,8 @@ class ChatServiceTest {
     }
 
     private List<ChatStreamChunk> stream(String message) {
-        return chatService.chatStream("coder", "s1", message).collectList().block();
+        return chatService.chatStream("coder", "s1", message)
+            .filter(chunk -> chunk.kind() != ChatNodeKind.TERMINAL).collectList().block();
     }
 
     private void assertKinds(List<ChatStreamChunk> chunks, ChatNodeKind... expected) {
@@ -137,6 +142,36 @@ class ChatServiceTest {
         for (int i = 0; i < expected.length; i++) {
             assertEquals(expected[i], chunks.get(i).kind(), "第 " + i + " 个 chunk kind 不符，实际=" + chunks);
         }
+    }
+
+    /** 旧用例只断言展示片段，未验证流关闭时是否携带权威业务状态。 */
+    @Test
+    void chatStream_shouldEmitUnknownTerminal_withoutPersistedProof() throws Exception {
+        stubEvents(new AgentResultEvent(Msg.builder().role(MsgRole.ASSISTANT).textContent("结果")
+            .generateReason(GenerateReason.MODEL_STOP).build()));
+        List<ChatStreamChunk> chunks = chatService.chatStream("coder", "s1", "问题").collectList().block();
+        List<ChatStreamChunk> terminals = chunks.stream()
+            .filter(chunk -> "terminal".equals(chunk.kind().sseEventName())).toList();
+        assertEquals(1, terminals.size(), "没有独立终态时 EOF 不能证明完成");
+        var terminal = new ObjectMapper().readTree(terminals.get(0).sseData());
+        assertEquals("UNKNOWN", terminal.path("phase").asText());
+        assertFalse(terminal.path("historySaved").asBoolean());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void chatStream_shouldEmitFailedTerminal_afterPartialOutputAndRuntimeFailure() throws Exception {
+        when(agent.streamEvents(any(List.class), any(RuntimeContext.class)))
+            .thenReturn(Flux.concat(Flux.just(new TextBlockDeltaEvent(REPLY_ID, "text", "已生成内容")),
+                Flux.error(new IllegalStateException("storage unavailable"))));
+        List<ChatStreamChunk> chunks = chatService.chatStream("coder", "s1", "问题").collectList().block();
+        List<ChatStreamChunk> terminals = chunks.stream()
+            .filter(chunk -> "terminal".equals(chunk.kind().sseEventName())).toList();
+        assertEquals(1, terminals.size(), "兜底文字不能被记为完成");
+        var terminal = new ObjectMapper().readTree(terminals.get(0).sseData());
+        assertEquals("FAILED", terminal.path("phase").asText());
+        assertTrue(chunks.stream().anyMatch(chunk -> "已生成内容".equals(chunk.text())));
+        assertFalse(terminal.path("error").asText().contains("storage unavailable"), "不外发内部异常");
     }
 
     // ==================== 父 Agent 主链路 ====================
