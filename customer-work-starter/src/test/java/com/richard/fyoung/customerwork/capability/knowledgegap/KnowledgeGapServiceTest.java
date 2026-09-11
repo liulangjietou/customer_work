@@ -142,6 +142,14 @@ class KnowledgeGapServiceTest {
     }
 
     @Test
+    void omittedReadScopeShouldMatchTheCurrentTenantWriteScope() {
+        service.recordMiss("u42:conv-abc", "你们支持货到付款吗");
+
+        assertEquals(1, service.topGaps(null, 10).size());
+        assertEquals("tenantA", service.topGaps(" ", 10).get(0).scopeId());
+    }
+
+    @Test
     void toolWithoutGapService_shouldBehaveAsBefore() {
         KnowledgeBackend missBackend = query -> Mono.just(KnowledgeBackend.NO_HIT_REPLY);
 

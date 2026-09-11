@@ -136,17 +136,18 @@ export interface FillKnowledgeGapRequest {
   keyword: string
 }
 
-export function listKnowledgeGaps(scopeId = 'default', limit = 50) {
+export function listKnowledgeGaps(scopeId?: string, limit = 50) {
   return request<KnowledgeGap[]>({
     url: '/ops/knowledge-gap/top',
     method: 'get',
     params: { scopeId, limit },
+    suppressErrorMessage: true,
   })
 }
 
 /** 一键补知识，返回新建的知识条目 ID。 */
 export function fillKnowledgeGap(data: FillKnowledgeGapRequest) {
-  return request<number>({ url: '/ops/knowledge-gap/fill', method: 'post', data })
+  return request<number>({ url: '/ops/knowledge-gap/fill', method: 'post', data, suppressErrorMessage: true })
 }
 
 // ---------- 死信队列 ----------

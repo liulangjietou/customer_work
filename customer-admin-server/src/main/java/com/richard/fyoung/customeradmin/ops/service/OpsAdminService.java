@@ -8,6 +8,7 @@ import com.richard.fyoung.customerwork.capability.csat.CsatSurvey;
 import com.richard.fyoung.customerwork.capability.deadletter.DeadLetter;
 import com.richard.fyoung.customerwork.capability.deadletter.DeadLetterStatus;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGap;
+import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
 import com.richard.fyoung.customerwork.capability.prompt.PromptVersion;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheEntry;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheScope;
@@ -16,6 +17,7 @@ import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
 
@@ -109,7 +111,8 @@ public class OpsAdminService {
 
     /** 盲区排行：反复查不到的问题，越靠前越该优先补。 */
     public List<KnowledgeGap> topKnowledgeGaps(String scopeId, int limit) {
-        return gatewayProvider.get().knowledgeGap().topGaps(scopeId, limit);
+        String scope = StringUtils.hasText(scopeId) ? scopeId : new OpsScopeResolver().resolve();
+        return gatewayProvider.get().knowledgeGap().topGaps(scope, limit);
     }
 
     /**
