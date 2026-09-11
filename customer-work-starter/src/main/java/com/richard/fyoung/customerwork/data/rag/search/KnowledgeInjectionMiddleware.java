@@ -3,9 +3,9 @@ package com.richard.fyoung.customerwork.data.rag.search;
 import com.richard.fyoung.customerwork.core.middleware.MiddlewareOrders;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
 import com.richard.fyoung.customerwork.data.calllog.AgentReplayCapture;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import com.richard.fyoung.customerwork.safety.security.spotlight.ContentSpotlighter;
 import com.richard.fyoung.customerwork.safety.security.spotlight.UntrustedSource;
-import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -14,6 +14,11 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.middleware.MiddlewareBase;
 import io.agentscope.core.middleware.ReasoningInput;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.CollectionUtils;
@@ -21,12 +26,6 @@ import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-
-import java.util.ArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
 
 /**
  * 知识库召回内容的<b>瞬态</b>注入中间件：每轮推理前把召回块挂成一条只对模型可见的消息。
@@ -125,6 +124,8 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
         // 阻塞式 HTTP 检索强制丢到 boundedElastic：不管本流被谁订阅（Spring MVC 的 SSE 适配器可能在
         // 请求线程上订阅），都保证不会占住 Tomcat 请求线程。
         AgentInvocationIdentity identity = ctx == null ? null : ctx.get(AgentInvocationIdentity.class);
+        Runnable recordMiss = gapRecorder == null ? null : gapRecorder.captureMiss(
+            query, ctx, KnowledgeGapEvidence.Path.INJECTION, agentCode);
         return Mono.fromCallable(() -> retrievalProvider.retrieve(agentCode, query, identity))
             .subscribeOn(Schedulers.boundedElastic())
             // retrieve 返回 null 时 fromCallable 发出的是空信号，统一归一成空串走同一条注入分支
@@ -139,23 +140,11 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
                     ctx.put(cacheKey, RetrievedBlock.class, new RetrievedBlock(block));
                 }
                 recordReplayFact(ctx, query, block, retrievalFailed.get());
-                recordGapIfMiss(query, block, retrievalFailed.get());
+                if (recordMiss != null && !retrievalFailed.get() && !StringUtils.hasText(block)) {
+                    recordMiss.run();
+                }
                 return next.apply(withKnowledge(input, block));
             });
-    }
-
-    /**
-     * 检索正常返回但没有任何召回内容 = 一次知识盲区，记一笔。
-     *
-     * <p>检索故障不计：那是外部服务的可用性问题，混进盲区排行会污染运营判断。
-     * 分区键传 null 走默认分区，与工具路径 {@code KnowledgeBaseTools#recordGapIfMiss} 同口径——
-     * 盲区排行是全局视角的运营数据（"这批用户在问什么我们答不上来"），不按会话细分。</p>
-     */
-    private void recordGapIfMiss(String query, String block, boolean retrievalFailed) {
-        if (gapRecorder == null || retrievalFailed || StringUtils.hasText(block)) {
-            return;
-        }
-        gapRecorder.recordMiss(null, query);
     }
 
     private void recordReplayFact(RuntimeContext context, String query, String block,

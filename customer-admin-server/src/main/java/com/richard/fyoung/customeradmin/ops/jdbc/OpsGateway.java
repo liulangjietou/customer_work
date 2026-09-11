@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.ops.jdbc;
 import com.richard.fyoung.customerwork.capability.csat.CsatStore;
 import com.richard.fyoung.customerwork.capability.deadletter.DeadLetterStore;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapStore;
+import com.richard.fyoung.customerwork.capability.knowledgegap.MybatisKnowledgeGapReviewStore;
 import com.richard.fyoung.customerwork.capability.prompt.PromptVersionStore;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheStore;
 import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
@@ -31,6 +32,7 @@ public record OpsGateway(
     CsatStore csat,
     KnowledgeGapStore knowledgeGap,
     DeadLetterStore deadLetter,
-    KnowledgeMapper knowledgeMapper
+    KnowledgeMapper knowledgeMapper,
+    MybatisKnowledgeGapReviewStore knowledgeGapReview
 ) {
 }

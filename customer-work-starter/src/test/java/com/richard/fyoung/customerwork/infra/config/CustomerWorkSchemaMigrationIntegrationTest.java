@@ -52,10 +52,10 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
-    private static final int CURRENT_SCHEMA_VERSION = 24;
+    private static final int CURRENT_SCHEMA_VERSION = 26;
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
-    private static final int CURRENT_BUSINESS_TABLE_COUNT = 49;
+    private static final int CURRENT_BUSINESS_TABLE_COUNT = 50;
     private static final List<String> AUDIT_TIMESTAMP_TABLES = List.of(
         "cw_slot_filling_progress", "cw_dialog_stage", "cw_agent_call_segment", "cw_product",
         "cw_member", "cw_knowledge", "cw_fact_log", "cw_prompt_version", "cw_csat_survey",
@@ -372,6 +372,12 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private void verifyPreviousMirrorUpgrade(String database) throws Exception {
         try (HikariDataSource dataSource = dataSource(database, "flyway-previous-mirror-test")) {
             populateSchemaMirror(dataSource);
+            execute(dataSource, "DROP TABLE `cw_knowledge_gap_review`");
+            execute(dataSource, "ALTER TABLE `cw_knowledge_gap` "
+                + "DROP COLUMN `retrieval_path`, DROP COLUMN `source_agent_code`, DROP COLUMN `source_channel_code`, "
+                + "DROP COLUMN `source_session_type`, DROP COLUMN `retrieval_result`, DROP COLUMN `category`, "
+                + "DROP COLUMN `priority`, DROP COLUMN `classification_origin`, DROP COLUMN `classification_reason`, "
+                + "DROP COLUMN `review_revision`, DROP COLUMN `reviewed_by`, DROP COLUMN `reviewed_at_ms`");
             execute(dataSource, "DROP TABLE `cw_eval_dataset_release`");
             execute(dataSource, "ALTER TABLE `cw_agent_call_log` "
                 + "DROP INDEX `idx_agent_call_cost_window`, "
@@ -389,8 +395,9 @@ class CustomerWorkSchemaMigrationIntegrationTest {
 
             migrate(dataSource, database);
 
-            // 1 条接管基线 + V18~V24 七条补跑；加迁移时这个数要跟着涨
-            assertEquals(8, countHistoryRows(dataSource), "V17 镜像应登记接管基线并补跑 V18-V24");
+            // 1 条 V17 接管基线，加上此后的全部迁移。
+            assertEquals(CURRENT_SCHEMA_VERSION - 17 + 1, countHistoryRows(dataSource),
+                "V17 镜像应登记接管基线并补跑其后迁移");
             // 上一版镜像的 6 张表还是 utf8mb4_0900_ai_ci，V22 必须把它们一并转过来。
             assertTablesUseTargetCollation(dataSource, "上一版完整镜像补跑 V22");
             assertEquals(1, countHistoryVersion(dataSource, "17"), "上一版完整镜像应从 V17 接管");

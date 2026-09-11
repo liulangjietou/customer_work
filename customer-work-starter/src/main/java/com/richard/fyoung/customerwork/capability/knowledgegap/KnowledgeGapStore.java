@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap;
 
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapEvidence;
 import java.util.List;
 
 /**
@@ -17,8 +18,23 @@ public interface KnowledgeGapStore {
     /** 记一次未命中：同问题累加计数并刷新最近出现时间。 */
     void recordMiss(String question, String scopeId, long nowMs);
 
-    /** 未命中次数排行（降序），即"最该优先补的知识"。 */
+    /** 携带最近一次来源；旧自定义存储可继续仅记录计数。 */
+    default void recordMiss(String question, String scopeId, long nowMs, KnowledgeGapEvidence evidence) {
+        recordMiss(question, scopeId, nowMs);
+    }
+
+    /** 原始未命中次数排行（降序），保留没有分类筛选的兼容读取。 */
     List<KnowledgeGap> topGaps(String scopeId, int limit);
+
+    /** 先筛选再截取排行，避免高频问候占满工作清单；JDBC 实现在 SQL 内完成。 */
+    default List<KnowledgeGap> topGaps(String scopeId, int limit, KnowledgeGapView view) {
+        return findAll(scopeId).stream().filter(view::includes)
+            .sorted(java.util.Comparator
+                .comparing((KnowledgeGap gap) -> gap.classification().priority() == KnowledgeGapPriority.HIGH)
+                .thenComparingLong(KnowledgeGap::missCount).thenComparingLong(KnowledgeGap::lastSeenAtMs)
+                .reversed())
+            .limit(Math.max(limit, 0)).toList();
+    }
 
     /** 查询某分区的全部未命中记录；读取失败应由调用方处理。 */
     List<KnowledgeGap> findAll(String scopeId);

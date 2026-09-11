@@ -6,15 +6,16 @@ import com.richard.fyoung.customerwork.capability.csat.MybatisCsatStore;
 import com.richard.fyoung.customerwork.capability.csat.mapper.CsatSurveyMapper;
 import com.richard.fyoung.customerwork.capability.deadletter.MybatisDeadLetterStore;
 import com.richard.fyoung.customerwork.capability.deadletter.mapper.DeadLetterMapper;
+import com.richard.fyoung.customerwork.capability.knowledgegap.MybatisKnowledgeGapReviewStore;
 import com.richard.fyoung.customerwork.capability.knowledgegap.MybatisKnowledgeGapStore;
 import com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapMapper;
+import com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapReviewMapper;
 import com.richard.fyoung.customerwork.capability.prompt.MybatisPromptVersionStore;
 import com.richard.fyoung.customerwork.capability.prompt.mapper.PromptVersionMapper;
 import com.richard.fyoung.customerwork.capability.semanticcache.MybatisSemanticCacheStore;
 import com.richard.fyoung.customerwork.capability.semanticcache.mapper.SemanticCacheMapper;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
 import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
-
 import java.util.List;
 
 /**
@@ -26,7 +27,7 @@ import java.util.List;
  */
 final class OpsGatewayFactory {
 
-    static final List<Class<?>> MAPPER_CLASSES = List.of();
+    static final List<Class<?>> MAPPER_CLASSES = List.of(KnowledgeGapReviewMapper.class);
 
     /** 末位的知识库 FAQ 是盲区"一键补知识"的落点，其余是运营看板自身的表。 */
     static final List<String> MAPPER_XML_LOCATIONS = List.of(
@@ -43,6 +44,8 @@ final class OpsGatewayFactory {
             new MybatisCsatStore(gateway.getMapper(CsatSurveyMapper.class)),
             new MybatisKnowledgeGapStore(gateway.getMapper(KnowledgeGapMapper.class)),
             new MybatisDeadLetterStore(gateway.getMapper(DeadLetterMapper.class)),
-            gateway.getMapper(KnowledgeMapper.class));
+            gateway.getMapper(KnowledgeMapper.class),
+            new MybatisKnowledgeGapReviewStore(gateway.getMapper(KnowledgeGapMapper.class),
+                gateway.getMapper(KnowledgeGapReviewMapper.class), gateway.dataSource()));
     }
 }

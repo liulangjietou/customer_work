@@ -1,7 +1,9 @@
 package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapService;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapEvidence;
 import com.richard.fyoung.customerwork.tool.backend.KnowledgeBackend;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import reactor.core.publisher.Mono;
@@ -29,27 +31,22 @@ public class KnowledgeBaseTools {
         this.knowledgeGapService = knowledgeGapService;
     }
 
+    /** 兼容直接 Java 调用；无运行上下文时不推测来源。 */
+    public Mono<String> searchKnowledge(String query) {
+        return searchKnowledge(query, null);
+    }
+
+    /** 检索结果保持原契约，未命中统计使用框架注入的可信来源。 */
     @Tool(description = "从企业知识库检索产品政策、售后规则、发票运费等常见问题答案。回答咨询类问题时优先调用，结果会带来源标注。")
     public Mono<String> searchKnowledge(
             @ToolParam(name = "query", description = "用户问题的关键描述，例如 '怎么退货' '能开发票吗'")
-            String query) {
+            String query, RuntimeContext context) {
+        Runnable record = knowledgeGapService == null ? null : knowledgeGapService.captureMiss(
+            query, context, KnowledgeGapEvidence.Path.TOOL, null);
         return backend.searchKnowledge(query)
-            .doOnNext(result -> recordGapIfMiss(query, result));
+            .doOnNext(result -> {
+                if (record != null && KnowledgeBackend.isMiss(result)) record.run();
+            });
     }
 
-    /**
-     * 未命中即记一笔。
-     *
-     * <p>判定走 {@link KnowledgeBackend#isMiss}——未命中文案是接口契约的一部分，不是这里自己认的字符串；
-     * 后端改文案时会连带改常量，埋点不会静默失效。</p>
-     *
-     * <p>工具层拿不到 sessionId，故分区键传空走默认分区。盲区排行是<b>全局</b>视角的运营数据
-     * （"这批用户在问什么我们答不上来"），本就不需要按会话细分。</p>
-     */
-    private void recordGapIfMiss(String query, String result) {
-        if (knowledgeGapService == null || !KnowledgeBackend.isMiss(result)) {
-            return;
-        }
-        knowledgeGapService.recordMiss(null, query);
-    }
 }

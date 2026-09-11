@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap;
 
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapEvidence;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -16,7 +17,7 @@ import java.security.NoSuchAlgorithmException;
  * @param questionHash  问题原文的 SHA-256（主键；问题可能很长，不适合直接做键）
  * @param question      问题原文（截断保存，运营要看的是这个）
  * @param scopeId       运营统计分区键（OpsScopeResolver 取当前租户，无上下文回落 default）
- * @param missCount     累计未命中次数——排序依据，越大越该优先补
+ * @param missCount     累计未命中次数，辅助人工判断处理顺序
  * @param firstSeenAtMs 首次出现时间戳（毫秒）
  * @param lastSeenAtMs  最近一次出现时间戳（毫秒）
  * @author owlzhangfq@gmail.com
@@ -27,16 +28,26 @@ public record KnowledgeGap(
     String scopeId,
     long missCount,
     long firstSeenAtMs,
-    long lastSeenAtMs
+    long lastSeenAtMs,
+    KnowledgeGapEvidence evidence,
+    KnowledgeGapClassification classification
 ) {
 
-    /** 问题原文入库上限：超长的多半是粘贴进来的大段文本，截断不影响识别。 */
+    /** 保留六字段构造器；历史来源缺失保持为空，分类只提供明确标记的规则建议。 */
+    public KnowledgeGap(String questionHash, String question, String scopeId, long missCount,
+                         long firstSeenAtMs, long lastSeenAtMs) {
+        this(questionHash, question, scopeId, missCount, firstSeenAtMs, lastSeenAtMs,
+            null, KnowledgeGapClassification.suggestFromStoredQuestion(question));
+    }
+
+    /** 问题原文的存储上限；分类规则必须使用截断前的完整提问。 */
     public static final int MAX_QUESTION_LENGTH = 500;
 
     /** 新建一条盲区记录（首次未命中）。 */
     public static KnowledgeGap firstMiss(String question, String scopeId, long nowMs) {
         String normalized = normalize(question);
-        return new KnowledgeGap(hashOf(normalized), normalized, scopeId, 1L, nowMs, nowMs);
+        return new KnowledgeGap(hashOf(normalized), normalized, scopeId, 1L, nowMs, nowMs,
+            null, KnowledgeGapClassification.suggest(question));
     }
 
     /** 归一化：去首尾空白并截断——同一个问题不该因为多打了个空格就被算成两条。 */
@@ -65,6 +76,13 @@ public record KnowledgeGap(
 
     /** 再次未命中：计数 +1 并刷新最近出现时间。 */
     public KnowledgeGap hitAgain(long nowMs) {
-        return new KnowledgeGap(questionHash, question, scopeId, missCount + 1, firstSeenAtMs, nowMs);
+        return hitAgain(nowMs, null);
+    }
+
+    /** 最近样本替换来源，旧时间的回调不能覆盖更新证据；人工分类保持不变。 */
+    public KnowledgeGap hitAgain(long nowMs, KnowledgeGapEvidence latestEvidence) {
+        return new KnowledgeGap(questionHash, question, scopeId, missCount + 1, firstSeenAtMs,
+            Math.max(lastSeenAtMs, nowMs), nowMs >= lastSeenAtMs ? latestEvidence : evidence,
+            classification);
     }
 }

@@ -4,7 +4,9 @@
 <mapper namespace="com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapMapper">
 
     <sql id="columns">
-        id, question_hash, question, scope_id, miss_count, first_seen_at_ms, last_seen_at_ms
+        id, question_hash, question, scope_id, miss_count, first_seen_at_ms, last_seen_at_ms,
+        retrieval_path, source_agent_code, source_channel_code, source_session_type, retrieval_result,
+        category, priority, classification_origin, classification_reason, review_revision, reviewed_by, reviewed_at_ms
     </sql>
 
     <!-- 计数 upsert：这是计数表不是流水表——未命中的绝对量很大，逐条落库既贵又淹没重点。
@@ -12,11 +14,19 @@
          miss_count 用 miss_count+1 而非 VALUES(miss_count)，否则并发下会互相覆盖成 1。 -->
     <insert id="upsertMiss" parameterType="com.richard.fyoung.customerwork.capability.knowledgegap.entity.KnowledgeGapDO">
         INSERT INTO cw_knowledge_gap (question_hash, question, scope_id, miss_count,
-            first_seen_at_ms, last_seen_at_ms)
-        VALUES (#{questionHash}, #{question}, #{scopeId}, 1, #{firstSeenAtMs}, #{lastSeenAtMs})
+            first_seen_at_ms, last_seen_at_ms, retrieval_path, source_agent_code, source_channel_code,
+            source_session_type, retrieval_result, category, priority, classification_origin, classification_reason)
+        VALUES (#{questionHash}, #{question}, #{scopeId}, 1, #{firstSeenAtMs}, #{lastSeenAtMs},
+            #{retrievalPath}, #{sourceAgentCode}, #{sourceChannelCode}, #{sourceSessionType}, #{retrievalResult},
+            #{category}, #{priority}, #{classificationOrigin}, #{classificationReason})
         ON DUPLICATE KEY UPDATE
             miss_count = miss_count + 1,
-            last_seen_at_ms = VALUES(last_seen_at_ms)
+            retrieval_path = IF(VALUES(last_seen_at_ms) >= last_seen_at_ms, VALUES(retrieval_path), retrieval_path),
+            source_agent_code = IF(VALUES(last_seen_at_ms) >= last_seen_at_ms, VALUES(source_agent_code), source_agent_code),
+            source_channel_code = IF(VALUES(last_seen_at_ms) >= last_seen_at_ms, VALUES(source_channel_code), source_channel_code),
+            source_session_type = IF(VALUES(last_seen_at_ms) >= last_seen_at_ms, VALUES(source_session_type), source_session_type),
+            retrieval_result = IF(VALUES(last_seen_at_ms) >= last_seen_at_ms, VALUES(retrieval_result), retrieval_result),
+            last_seen_at_ms = GREATEST(last_seen_at_ms, VALUES(last_seen_at_ms))
     </insert>
 
     <!-- 同次数按最近出现时间降序：一样常问的，先补最近还在问的 -->
@@ -31,4 +41,30 @@
         SELECT <include refid="columns"/> FROM cw_knowledge_gap
         WHERE scope_id = #{scopeId}
     </select>
+    <select id="selectReviewedGaps" resultType="com.richard.fyoung.customerwork.capability.knowledgegap.entity.KnowledgeGapDO">
+        SELECT <include refid="columns"/> FROM cw_knowledge_gap WHERE scope_id = #{scopeId}
+        <choose>
+            <when test="view == 'WORK'">
+                AND (category NOT IN ('NON_BUSINESS', 'REALTIME') OR priority = 'HIGH')
+            </when>
+            <when test="view != 'ALL'">AND category = #{view}</when>
+        </choose>
+        ORDER BY (priority = 'HIGH') DESC, miss_count DESC, last_seen_at_ms DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectByHash" resultType="com.richard.fyoung.customerwork.capability.knowledgegap.entity.KnowledgeGapDO">
+        SELECT <include refid="columns"/> FROM cw_knowledge_gap
+        WHERE scope_id = #{scopeId} AND question_hash = #{questionHash}
+        LIMIT 1
+    </select>
+
+    <update id="updateClassification">
+        UPDATE cw_knowledge_gap
+        SET category = #{row.category}, priority = #{row.priority}, classification_origin = 'MANUAL',
+            classification_reason = #{row.classificationReason}, review_revision = review_revision + 1,
+            reviewed_by = #{row.reviewedBy}, reviewed_at_ms = #{row.reviewedAtMs}
+        WHERE scope_id = #{row.scopeId} AND question_hash = #{row.questionHash}
+          AND review_revision = #{expectedRevision}
+    </update>
 </mapper>

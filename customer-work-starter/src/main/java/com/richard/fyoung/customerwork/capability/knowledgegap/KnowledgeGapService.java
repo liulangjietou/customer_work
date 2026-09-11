@@ -1,13 +1,13 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap;
 
-import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapRecorder;
 import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapEvidence;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapRecorder;
 import com.richard.fyoung.customerwork.infra.config.properties.KnowledgeGapProperties;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
-
-import java.util.List;
 
 /**
  * 知识盲区分析：告诉运营该补哪些知识。
@@ -49,6 +49,12 @@ public class KnowledgeGapService implements KnowledgeGapRecorder {
      */
     @Override
     public void recordMiss(String sessionId, String question) {
+        recordMiss(sessionId, question, null);
+    }
+
+    /** 来源随计数一并保存，旁路失败不改变对话结果。 */
+    @Override
+    public void recordMiss(String sessionId, String question, KnowledgeGapEvidence evidence) {
         if (!properties.isEnabled() || !StringUtils.hasText(question)) {
             return;
         }
@@ -58,7 +64,7 @@ public class KnowledgeGapService implements KnowledgeGapRecorder {
             return;
         }
         try {
-            store.recordMiss(question, opsScopeResolver.resolve(), System.currentTimeMillis());
+            store.recordMiss(question, opsScopeResolver.resolve(), System.currentTimeMillis(), evidence);
         } catch (Exception e) {
             log.error("record knowledge gap failed, errorCode={}, sessionId={}",
                 "KNOWLEDGE-GAP-RECORD-FAIL", sessionId, e);
