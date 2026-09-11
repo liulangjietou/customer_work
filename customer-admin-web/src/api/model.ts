@@ -1,4 +1,4 @@
-import { request } from './request'
+import { request, type AppRequestConfig } from './request'
 import type {
   ModelAssetOption,
   ModelCertification,
@@ -47,8 +47,15 @@ export function deleteModel(id: number) {
   return request<void>({ url: `/aiconfig/model/${id}`, method: 'delete' })
 }
 
-export function testModelConnectivity(id: number) {
-  return request<ModelTestResult>({ url: `/aiconfig/model/${id}/test-connectivity`, method: 'post' })
+export function testModelConnectivity(
+  id: number,
+  options: Pick<AppRequestConfig, 'suppressErrorMessage'> = {},
+) {
+  return request<ModelTestResult>({
+    url: `/aiconfig/model/${id}/test-connectivity`,
+    method: 'post',
+    ...options,
+  })
 }
 
 export function runModelHealthCheck(id: number) {

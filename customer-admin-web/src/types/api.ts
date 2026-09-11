@@ -1300,6 +1300,7 @@ export interface SystemToolSaveRequest {
 // ---------- aiconfig.agent ----------
 export interface AgentVO {
   id: number
+  runtimeRevision?: number
   agentName: string
   agentCode: string
   modelId: number

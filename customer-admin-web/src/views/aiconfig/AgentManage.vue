@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { buildNavigationCommands, buildNavigationSections } from '@/layouts/navigationModel'
 import type { FormInstance } from 'element-plus'
@@ -13,6 +13,7 @@ import {
   disableAgent,
   enableAgent,
   getAgentMemory,
+  getAgent,
   pageAgents,
   updateAgent,
 } from '@/api/agent'
@@ -25,6 +26,12 @@ import { useMenuStore } from '@/store/menu'
 import IconPicker from '@/components/IconPicker.vue'
 import ChannelBindingDrawer from '@/views/aiconfig/ChannelBindingDrawer.vue'
 import AgentActions from './components/AgentActions.vue'
+import AgentDraftDrawer from './components/AgentDraftDrawer.vue'
+import AgentScenarioTemplates, { type AgentScenario } from './components/AgentScenarioTemplates.vue'
+import { useAgentDraftWorkflow } from './useAgentDraftWorkflow'
+import type { AgentDraft } from '@/api/agentDraft'
+import { useAuthStore } from '@/store/auth'
+import { getRequestErrorMessage } from '@/api/request'
 import AgentOverviewCard from './components/AgentOverviewCard.vue'
 import type {
   AgentSaveRequest,
@@ -39,6 +46,19 @@ import type {
 } from '@/types/api'
 
 const menuStore = useMenuStore()
+const auth = useAuthStore()
+const draftDrawerVisible = ref(false)
+const scenarioChecks = ref<string[]>([])
+const restoreConflict = ref('')
+const submitError = ref('')
+const templatesVisible = ref(true)
+const optionsLoading = ref(false)
+const optionsError = ref('')
+let editorGeneration = 0
+let optionsRequest = 0
+const canManageDrafts = computed(
+  () => auth.hasPermission('agent:add') || auth.hasPermission('agent:edit'),
+)
 const router = useRouter()
 const workspacePaths = computed(
   () =>
@@ -89,10 +109,18 @@ const CAPABILITY_MEMORY = 'memory'
 const CAPABILITY_OPTIONS: { value: string; label: string; tip?: string }[] = [
   { value: 'chat', label: 'chat（对话）' },
   { value: 'vibecoding', label: 'vibecoding（代码生成）' },
-  { value: CAPABILITY_SUBAGENT, label: '子Agent协作', tip: '允许使用子 Agent 协作' },
+  {
+    value: CAPABILITY_SUBAGENT,
+    label: '子Agent协作',
+    tip: '允许使用子 Agent 协作',
+  },
   { value: 'plan', label: '计划模式', tip: '支持多步骤计划推演' },
   { value: 'tasklist', label: '任务列表', tip: '跟踪和维护任务列表' },
-  { value: 'skill-learning', label: '学习新技能', tip: '与用户互动学习并沉淀新技能' },
+  {
+    value: 'skill-learning',
+    label: '学习新技能',
+    tip: '与用户互动学习并沉淀新技能',
+  },
   {
     value: 'dynamic-subagent',
     label: '动态子Agent',
@@ -142,6 +170,14 @@ const form = reactive<AgentSaveRequest>({
   compressKeepMsgs: null,
 })
 
+const draftWorkflow = useAgentDraftWorkflow(form, editorVisible, editingId, saving)
+const {
+  saving: draftSaving,
+  error: draftError,
+  dirty: draftDirty,
+  updatedAtMs: draftSavedAt,
+} = draftWorkflow
+
 const agentCodePattern = /^[a-z0-9-]+$/
 
 // ---------- 主模型连通性门禁 ----------
@@ -151,19 +187,42 @@ type PrimaryTestState = 'untested' | 'testing' | 'passed' | 'failed'
 const primaryTestState = ref<PrimaryTestState>('untested')
 const primaryTestMessage = ref<string | null>(null)
 const originalModelId = ref<number | null>(null)
+let primaryTestRequest = 0
+
+// 验证结果属于一次表单操作；切模型、关闭或切换编辑对象时立即使旧请求失效。
+watch(
+  [() => form.modelId, editorVisible, editorMode, editingId],
+  () => {
+    primaryTestRequest += 1
+  },
+  { flush: 'sync' },
+)
+onBeforeUnmount(() => {
+  primaryTestRequest += 1
+  optionsRequest += 1
+  editorGeneration += 1
+})
 
 const enabledModelOptions = computed(() => modelOptions.value.filter((m) => m.status === 1))
 // 备用模型候选需排除当前已选的主模型，避免主备重复。
 const backupModelOptions = computed(() =>
   enabledModelOptions.value.filter((m) => m.id !== form.modelId),
 )
-const canSubmit = computed(() => primaryTestState.value === 'passed')
+const canSubmit = computed(() => primaryTestState.value === 'passed' && !restoreConflict.value)
 
 async function runPrimaryModelTest(modelId: number) {
+  if (!auth.hasPermission('model:edit')) {
+    primaryTestState.value = 'untested'
+    return
+  }
+  const requestId = ++primaryTestRequest
   primaryTestState.value = 'testing'
   primaryTestMessage.value = null
   try {
-    const result = await testModelConnectivity(modelId)
+    const result = await testModelConnectivity(modelId, {
+      suppressErrorMessage: true,
+    })
+    if (requestId !== primaryTestRequest) return
     if (result.testStatus === 1) {
       primaryTestState.value = 'passed'
     } else {
@@ -171,6 +230,7 @@ async function runPrimaryModelTest(modelId: number) {
       primaryTestMessage.value = result.message || '连通性测试失败'
     }
   } catch {
+    if (requestId !== primaryTestRequest) return
     primaryTestState.value = 'failed'
     primaryTestMessage.value = '连通性测试请求异常'
   }
@@ -214,27 +274,82 @@ watch(showSubAgentSelect, (visible) => {
 })
 
 async function loadOptions() {
-  const [models, mcps, skills, systemTools, agents, knowledgeBases, routePolicies] =
-    await Promise.all([
-      pageModels({ pageNum: 1, pageSize: 100 }),
-      pageMcps({ pageNum: 1, pageSize: 100 }),
-      pageSkills({ pageNum: 1, pageSize: 100 }),
-      fetchSystemTools({ pageNum: 1, pageSize: 100 }),
-      pageAgents({ pageNum: 1, pageSize: AGENT_OPTION_PAGE_SIZE }),
-      fetchKnowledgeBaseOptions(),
-      listModelRoutePolicies(),
-    ])
-  modelOptions.value = models.list
-  mcpOptions.value = mcps.list
-  skillOptions.value = skills.list
-  // 只展示已启用的系统工具供挂载（停用的不出现在下拉里）。
-  systemToolOptions.value = systemTools.list.filter((t) => t.enabled === 1)
-  agentOptions.value = agents.list
-  knowledgeBaseOptions.value = knowledgeBases
-  routePolicyOptions.value = routePolicies.filter((policy) => policy.status === 'ACTIVE')
+  const request = ++optionsRequest
+  optionsLoading.value = true
+  optionsError.value = ''
+  const failed: string[] = []
+  async function read<T>(
+    permission: string,
+    label: string,
+    action: () => Promise<T[]>,
+    target: Ref<T[]>,
+  ) {
+    if (!auth.hasPermission(permission)) {
+      target.value = []
+      return
+    }
+    try {
+      const result = await action()
+      if (request === optionsRequest) target.value = result
+    } catch {
+      failed.push(label)
+    }
+  }
+  await Promise.all([
+    read(
+      'model:view',
+      '模型',
+      async () => (await pageModels({ pageNum: 1, pageSize: 100 })).list,
+      modelOptions,
+    ),
+    read(
+      'mcp:view',
+      'MCP',
+      async () => (await pageMcps({ pageNum: 1, pageSize: 100 })).list,
+      mcpOptions,
+    ),
+    read(
+      'skill:view',
+      'Skill',
+      async () => (await pageSkills({ pageNum: 1, pageSize: 100 })).list,
+      skillOptions,
+    ),
+    read(
+      'system-tool:view',
+      '系统工具',
+      async () =>
+        (await fetchSystemTools({ pageNum: 1, pageSize: 100 })).list.filter(
+          (tool) => tool.enabled === 1,
+        ),
+      systemToolOptions,
+    ),
+    read(
+      'agent:view',
+      '子智能体',
+      async () => (await pageAgents({ pageNum: 1, pageSize: AGENT_OPTION_PAGE_SIZE })).list,
+      agentOptions,
+    ),
+    read('knowledge-base:view', '知识库', fetchKnowledgeBaseOptions, knowledgeBaseOptions),
+    read(
+      'model:view',
+      '路由策略',
+      async () => (await listModelRoutePolicies()).filter((policy) => policy.status === 'ACTIVE'),
+      routePolicyOptions,
+    ),
+  ])
+  if (request !== optionsRequest) return
+  optionsLoading.value = false
+  optionsError.value = failed.length
+    ? `${failed.join('、')}选项加载失败，已保留当前配置。可重新加载后继续选择。`
+    : ''
 }
 
 function openCreate() {
+  submitError.value = ''
+  editorGeneration += 1
+  templatesVisible.value = true
+  restoreConflict.value = ''
+  scenarioChecks.value = []
   editorMode.value = 'create'
   editingId.value = null
   Object.assign(form, {
@@ -262,9 +377,15 @@ function openCreate() {
   primaryTestState.value = 'untested'
   primaryTestMessage.value = null
   editorVisible.value = true
+  draftWorkflow.begin()
 }
 
 function openEdit(row: AgentVO) {
+  submitError.value = ''
+  editorGeneration += 1
+  templatesVisible.value = false
+  restoreConflict.value = ''
+  scenarioChecks.value = []
   editorMode.value = 'edit'
   editingId.value = row.id
   Object.assign(form, {
@@ -272,16 +393,16 @@ function openEdit(row: AgentVO) {
     agentCode: row.agentCode,
     modelId: row.modelId,
     backupModelIds: [...(row.backupModelIds ?? [])],
-    mcpIds: row.mcpIds,
-    skillIds: row.skillIds,
-    systemToolIds: row.systemToolIds,
+    mcpIds: [...(row.mcpIds ?? [])],
+    skillIds: [...(row.skillIds ?? [])],
+    systemToolIds: [...(row.systemToolIds ?? [])],
     knowledgeBaseIds: [...(row.knowledgeBaseIds ?? [])],
     modelRoutePolicyId: row.modelRoutePolicyId ?? null,
     systemPrompt: row.systemPrompt,
-    capabilities: row.capabilities,
+    capabilities: [...(row.capabilities ?? [])],
     icon: row.icon,
     status: row.status,
-    subAgentIds: row.subAgentIds ?? [],
+    subAgentIds: [...(row.subAgentIds ?? [])],
     maxIters: row.maxIters ?? null,
     toolTimeoutSeconds: row.toolTimeoutSeconds ?? null,
     toolMaxAttempts: row.toolMaxAttempts ?? null,
@@ -293,6 +414,55 @@ function openEdit(row: AgentVO) {
   primaryTestState.value = 'passed'
   primaryTestMessage.value = null
   editorVisible.value = true
+  draftWorkflow.begin(undefined, row.runtimeRevision)
+}
+
+async function chooseScenario(scenario: AgentScenario) {
+  if (form.agentName || form.systemPrompt) {
+    try {
+      await ElMessageBox.confirm(
+        '使用模板会替换名称和提示词，其他配置保持当前选择。',
+        '使用场景模板',
+        { type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
+  form.agentName = `${scenario.title}助手`
+  form.systemPrompt = scenario.prompt
+  scenarioChecks.value = scenario.checks
+  templatesVisible.value = false
+}
+
+async function restoreDraft(draft: AgentDraft) {
+  if (!draft.configuration || !auth.hasPermission(draft.agentId ? 'agent:edit' : 'agent:add'))
+    return
+  const token = auth.token
+  const opening = ++editorGeneration
+  let current: AgentVO | undefined
+  if (draft.agentId != null) {
+    try {
+      current = await getAgent(draft.agentId)
+    } catch (cause) {
+      ElMessage.error(getRequestErrorMessage(cause, '原智能体暂时无法读取，草稿仍已保存'))
+      return
+    }
+    if (auth.token !== token || opening !== editorGeneration) return
+    openEdit(current)
+  } else openCreate()
+  Object.assign(form, JSON.parse(JSON.stringify(draft.configuration)), {
+    modelId: draft.configuration.modelId ?? undefined,
+  })
+  draftWorkflow.begin(draft)
+  templatesVisible.value = false
+  if (current && current.runtimeRevision !== draft.baseRevision) {
+    restoreConflict.value =
+      '正式配置已更新。当前草稿已保留，请返回列表打开最新配置核对，避免覆盖他人的修改。'
+  }
+  // 恢复个人草稿不执行模型请求；用户明确点击测试后才使用模型。
+  primaryTestState.value = current && current.modelId === form.modelId ? 'passed' : 'untested'
+  primaryTestMessage.value = null
 }
 
 /** 压缩触发消息数与保留消息数同时填写时，保留数须小于触发数，否则压缩逻辑无意义 */
@@ -319,11 +489,13 @@ function validateSubAgents(): boolean {
 }
 
 async function handleSubmit() {
-  if (saving.value) return
+  if (saving.value || draftSaving.value) return
   if (!canSubmit.value) {
     ElMessage.warning('主模型连通性测试尚未通过，无法提交')
     return
   }
+  const submittingToken = auth.token
+  submitError.value = ''
   saving.value = true
   try {
     const valid = await formRef.value?.validate().catch(() => false)
@@ -335,22 +507,31 @@ async function handleSubmit() {
     }
     if (editorMode.value === 'create') {
       await createAgent(form)
+      if (auth.token !== submittingToken) return
       ElMessage.success('新建成功')
     } else if (editingId.value) {
-      await updateAgent(editingId.value, form)
+      await updateAgent(editingId.value, form, draftWorkflow.baseRevision.value)
+      if (auth.token !== submittingToken) return
       ElMessage.success('保存成功')
     }
+    await draftWorkflow.applied()
     editorVisible.value = false
     await loadList()
     await loadOptions()
     await menuStore.refreshMenu()
+  } catch (cause) {
+    if (auth.token === submittingToken) {
+      submitError.value = getRequestErrorMessage(cause, '智能体保存失败，当前内容已保留。')
+    }
   } finally {
     saving.value = false
   }
 }
 
 async function handleDelete(row: AgentVO) {
-  await ElMessageBox.confirm(`确认删除智能体「${row.agentName}」？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(`确认删除智能体「${row.agentName}」？`, '提示', {
+    type: 'warning',
+  })
   await deleteAgent(row.id)
   ElMessage.success('删除成功')
   await loadList()
@@ -443,6 +624,7 @@ onMounted(() => {
           <el-radio-button value="table">列表</el-radio-button>
         </el-radio-group>
         <div class="toolbar-actions">
+          <el-button v-if="canManageDrafts" @click="draftDrawerVisible = true">我的草稿</el-button>
           <el-button v-permission="'agent:view'" @click="channelBindingVisible = true"
             >渠道绑定</el-button
           >
@@ -590,7 +772,7 @@ onMounted(() => {
     <section v-if="editorVisible" class="agent-editor" aria-label="智能体配置">
       <header class="editor-header">
         <div>
-          <el-button text :disabled="saving" @click="editorVisible = false"
+          <el-button text :disabled="saving || draftSaving" @click="draftWorkflow.close"
             ><el-icon><ArrowLeft /></el-icon>返回列表</el-button
           >
           <h2>{{ editorMode === 'create' ? '新建智能体' : form.agentName }}</h2>
@@ -598,12 +780,52 @@ onMounted(() => {
         <el-button
           class="cw-final-action"
           type="primary"
-          :disabled="!canSubmit"
+          :disabled="!canSubmit || draftSaving"
           :loading="saving"
           @click="handleSubmit"
           >保存智能体</el-button
         >
       </header>
+      <div class="draft-status" role="status">
+        <span v-if="draftDirty">有未保存的修改</span>
+        <span v-else-if="draftSavedAt"
+          >个人草稿已保存 · {{ new Date(draftSavedAt).toLocaleTimeString() }}</span
+        >
+        <span v-else>可以先保存草稿，稍后继续完成配置</span>
+        <el-button :disabled="saving" :loading="draftSaving" @click="draftWorkflow.save"
+          >保存草稿</el-button
+        >
+      </div>
+      <el-alert
+        v-if="draftError || restoreConflict || submitError"
+        :title="draftError || restoreConflict || submitError"
+        type="error"
+        :closable="false"
+        show-icon
+        class="draft-error"
+      />
+      <el-button
+        v-if="editorMode === 'create' && !templatesVisible"
+        class="template-toggle"
+        :disabled="saving || draftSaving"
+        @click="templatesVisible = true"
+        >选择其他场景模板</el-button
+      >
+      <AgentScenarioTemplates
+        v-if="editorMode === 'create' && templatesVisible && !saving && !draftSaving"
+        @choose="chooseScenario"
+      />
+      <el-alert
+        v-if="optionsError"
+        :title="optionsError"
+        type="warning"
+        :closable="false"
+        class="draft-error"
+      >
+        <el-button link type="primary" :disabled="optionsLoading" @click="loadOptions"
+          >重新加载配置选项</el-button
+        >
+      </el-alert>
       <div class="editor-body">
         <nav class="editor-nav" aria-label="配置章节">
           <button
@@ -620,7 +842,13 @@ onMounted(() => {
             {{ section.title }}
           </button>
         </nav>
-        <el-form ref="formRef" :model="form" label-position="top" class="editor-form">
+        <el-form
+          ref="formRef"
+          :disabled="saving || draftSaving"
+          :model="form"
+          label-position="top"
+          class="editor-form"
+        >
           <section id="agent-basics" class="editor-section">
             <h3>基本信息</h3>
             <p>定义智能体的名称与访问标识。</p>
@@ -636,7 +864,10 @@ onMounted(() => {
               prop="agentCode"
               :rules="[
                 { required: true, message: '请输入编码' },
-                { pattern: agentCodePattern, message: '仅支持小写字母/数字/短横线' },
+                {
+                  pattern: agentCodePattern,
+                  message: '仅支持小写字母/数字/短横线',
+                },
               ]"
             >
               <el-input
@@ -657,6 +888,7 @@ onMounted(() => {
               <div style="width: 100%">
                 <el-select
                   v-model="form.modelId"
+                  :disabled="!auth.hasPermission('model:view')"
                   style="width: 100%"
                   @change="handlePrimaryModelChange"
                 >
@@ -683,20 +915,25 @@ onMounted(() => {
                     v-if="form.modelId != null"
                     link
                     type="primary"
-                    :disabled="primaryTestState === 'testing'"
+                    :disabled="primaryTestState === 'testing' || !auth.hasPermission('model:edit')"
                     @click="handleRetestPrimaryModel"
                   >
                     重新测试
                   </el-button>
                 </div>
                 <div v-if="!canSubmit" class="connectivity-hint">
-                  主模型连通性测试通过后才能提交
+                  {{
+                    auth.hasPermission('model:edit')
+                      ? '主模型连通性测试通过后才能提交'
+                      : '当前账号没有模型测试权限，可先保存草稿'
+                  }}
                 </div>
               </div>
             </el-form-item>
             <el-form-item label="备用模型">
               <el-select
                 v-model="form.backupModelIds"
+                :disabled="!auth.hasPermission('model:view')"
                 multiple
                 style="width: 100%"
                 placeholder="可选，主模型异常时的降级候选"
@@ -712,6 +949,7 @@ onMounted(() => {
             <el-form-item label="路由策略">
               <el-select
                 v-model="form.modelRoutePolicyId"
+                :disabled="!auth.hasPermission('model:view')"
                 clearable
                 style="width: 100%"
                 placeholder="可选；绑定后按 ACTIVE 不可变版本在线选模"
@@ -732,12 +970,24 @@ onMounted(() => {
             <h3>知识与能力</h3>
             <p>选择完成任务所需的知识、技能与工具。</p>
             <el-form-item label="MCP">
-              <el-select v-model="form.mcpIds" multiple style="width: 100%" placeholder="可选">
+              <el-select
+                v-model="form.mcpIds"
+                :disabled="!auth.hasPermission('mcp:view')"
+                multiple
+                style="width: 100%"
+                placeholder="可选"
+              >
                 <el-option v-for="m in mcpOptions" :key="m.id" :label="m.mcpName" :value="m.id" />
               </el-select>
             </el-form-item>
             <el-form-item label="Skill">
-              <el-select v-model="form.skillIds" multiple style="width: 100%" placeholder="可选">
+              <el-select
+                v-model="form.skillIds"
+                :disabled="!auth.hasPermission('skill:view')"
+                multiple
+                style="width: 100%"
+                placeholder="可选"
+              >
                 <el-option
                   v-for="s in skillOptions"
                   :key="s.id"
@@ -752,6 +1002,7 @@ onMounted(() => {
             <el-form-item label="系统工具">
               <el-select
                 v-model="form.systemToolIds"
+                :disabled="!auth.hasPermission('system-tool:view')"
                 multiple
                 style="width: 100%"
                 placeholder="可选"
@@ -767,6 +1018,7 @@ onMounted(() => {
             <el-form-item label="知识库">
               <el-select
                 v-model="form.knowledgeBaseIds"
+                :disabled="!auth.hasPermission('knowledge-base:view')"
                 multiple
                 style="width: 100%"
                 placeholder="可选，仅展示连通性测试通过的知识库"
@@ -907,15 +1159,22 @@ onMounted(() => {
           <el-tag :type="canSubmit ? 'success' : 'info'">{{
             canSubmit ? '模型连接已验证' : '等待模型验证'
           }}</el-tag>
-          <p>保存后配置生效。知识库与 Skill 将绑定当前版本。</p>
+          <p>保存智能体后配置生效。知识库与 Skill 将绑定当前版本；渠道发布仍执行后端门禁。</p>
+          <div v-if="scenarioChecks.length" class="scenario-checks">
+            <h4>建议试用的场景</h4>
+            <ul>
+              <li v-for="check in scenarioChecks" :key="check">{{ check }}</li>
+            </ul>
+            <p>这些是待验证场景，不代表测试已通过。</p>
+          </div>
         </aside>
       </div>
       <div class="editor-footer">
-        <el-button :disabled="saving" @click="editorVisible = false">取消</el-button>
+        <el-button :disabled="saving || draftSaving" @click="draftWorkflow.close">取消</el-button>
         <el-button
           class="cw-final-action"
           type="primary"
-          :disabled="!canSubmit"
+          :disabled="!canSubmit || draftSaving"
           :loading="saving"
           @click="handleSubmit"
           >保存智能体</el-button
@@ -948,11 +1207,41 @@ onMounted(() => {
       </template>
     </el-dialog>
 
+    <AgentDraftDrawer v-model="draftDrawerVisible" @restore="restoreDraft" />
     <ChannelBindingDrawer v-model="channelBindingVisible" />
   </div>
 </template>
 
 <style scoped>
+.template-toggle {
+  margin-bottom: 18px;
+}
+.draft-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  background: var(--cw-canvas);
+  border: 1px solid var(--cw-line);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--cw-text-muted);
+}
+.draft-error {
+  margin-bottom: 18px;
+}
+.scenario-checks h4 {
+  font-size: 14px;
+  margin: 20px 0 10px;
+}
+.scenario-checks ul {
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
 .agent-catalog.is-card-view {
   border: 0;
   background: transparent;

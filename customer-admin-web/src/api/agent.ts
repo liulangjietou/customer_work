@@ -13,8 +13,13 @@ export function createAgent(data: AgentSaveRequest) {
   return request<void>({ url: '/aiconfig/agent', method: 'post', data })
 }
 
-export function updateAgent(id: number, data: AgentSaveRequest) {
-  return request<void>({ url: `/aiconfig/agent/${id}`, method: 'put', data })
+export function updateAgent(id: number, data: AgentSaveRequest, revision?: number | null) {
+  return request<void>({
+    url: `/aiconfig/agent/${id}`,
+    method: 'put',
+    data,
+    headers: revision == null ? undefined : { 'X-Agent-Revision': String(revision) },
+  })
 }
 
 export function deleteAgent(id: number) {
