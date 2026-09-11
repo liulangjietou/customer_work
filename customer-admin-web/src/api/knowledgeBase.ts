@@ -4,6 +4,8 @@ import type {
   KnowledgeBaseSaveRequest,
   KnowledgeBaseTestResult,
   KnowledgeBaseVersionVO,
+  KnowledgeVersionDocumentVO,
+  KnowledgeDocumentPreviewVO,
   KnowledgeDocumentRevisionVO,
   KnowledgeSourceSaveRequest,
   KnowledgeSourceVO,
@@ -52,6 +54,21 @@ export function fetchKnowledgeBaseOptions() {
 
 export function fetchKnowledgeBaseVersions(id: number) {
   return request<KnowledgeBaseVersionVO[]>({ url: `/aiconfig/knowledge-base/${id}/versions`, method: 'get' })
+}
+
+/** 元数据与原文分开读取；错误由原文抽屉就地呈现。 */
+export function pageKnowledgeVersionDocuments(knowledgeBaseId: number, versionId: number, pageNum: number) {
+  return request<PageResult<KnowledgeVersionDocumentVO>>({
+    url: `/aiconfig/knowledge-base/${knowledgeBaseId}/versions/${versionId}/documents`,
+    method: 'get', params: { pageNum }, suppressErrorMessage: true,
+  })
+}
+
+export function previewKnowledgeVersionDocument(knowledgeBaseId: number, versionId: number, revisionId: number) {
+  return request<KnowledgeDocumentPreviewVO>({
+    url: `/aiconfig/knowledge-base/${knowledgeBaseId}/versions/${versionId}/documents/${revisionId}/preview`,
+    method: 'get', suppressErrorMessage: true,
+  })
 }
 
 export function fetchKnowledgeSources(knowledgeBaseId: number) {

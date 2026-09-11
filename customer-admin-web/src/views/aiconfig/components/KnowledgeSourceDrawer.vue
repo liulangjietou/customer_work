@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import CrudLoadState from '@/components/CrudLoadState.vue'
+import KnowledgeVersionPreviewDrawer from './KnowledgeVersionPreviewDrawer.vue'
+import { useAuthStore } from '@/store/auth'
 import {
   createKnowledgeSource,
   deleteKnowledgeSource,
@@ -33,6 +35,14 @@ const emit = defineEmits<{
 }>()
 
 const loading = ref(false)
+const auth = useAuthStore()
+const canPreview = computed(
+  () =>
+    auth.hasPermission('knowledge-base:view') &&
+    auth.hasPermission('knowledge-base:source-preview'),
+)
+const previewVisible = ref(false)
+const previewVersion = ref<KnowledgeBaseVersionVO | null>(null)
 const loadError = ref<unknown>(null)
 const activeTab = ref('sources')
 let loadRequestId = 0
@@ -113,6 +123,8 @@ watch([() => props.modelValue, () => props.knowledgeBase?.id], ([visible]) => {
   syncDialogVisible.value = false
   runsVisible.value = false
   lineageVisible.value = false
+  previewVisible.value = false
+  previewVersion.value = null
   if (visible && props.knowledgeBase) void loadAll()
 })
 onBeforeUnmount(() => {
@@ -335,6 +347,12 @@ async function openLineage(source: KnowledgeSourceVO) {
   }
 }
 
+function openVersionPreview(version: KnowledgeBaseVersionVO) {
+  if (!canPreview.value) return
+  previewVersion.value = version
+  previewVisible.value = true
+}
+
 function shortHash(hash: string | null) {
   return hash ? `${hash.slice(0, 12)}…` : '-'
 }
@@ -504,10 +522,29 @@ function shortHash(hash: string | null) {
             </el-table-column>
             <el-table-column prop="changeNote" label="变更说明" min-width="180" />
             <el-table-column prop="createTime" label="创建时间" width="180" />
+            <el-table-column v-if="canPreview" label="原文" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-if="row.documentCount > 0"
+                  link
+                  type="primary"
+                  @click="openVersionPreview(row)"
+                  >查看版本原文</el-button
+                >
+                <span v-else class="subtle">无托管文档</span>
+              </template>
+            </el-table-column>
           </el-table>
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <KnowledgeVersionPreviewDrawer
+      v-model="previewVisible"
+      :knowledge-base-id="knowledgeBase?.id ?? null"
+      :knowledge-base-name="knowledgeBase?.kbName ?? ''"
+      :version="previewVersion"
+    />
 
     <el-dialog
       v-model="sourceDialogVisible"
