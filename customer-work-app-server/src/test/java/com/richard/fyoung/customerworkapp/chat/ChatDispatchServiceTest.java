@@ -2,6 +2,7 @@ package com.richard.fyoung.customerworkapp.chat;
 
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
+import com.richard.fyoung.customerwork.data.chatlog.InMemoryChatMessageStore;
 import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
 import com.richard.fyoung.customerwork.core.dto.ChatUsageSnapshot;
 import com.richard.fyoung.customerwork.core.service.ChatTurnCompletion;
@@ -33,6 +34,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -64,7 +66,7 @@ class ChatDispatchServiceTest {
     @BeforeEach
     void setUp() {
         ticketService = mock(TicketService.class);
-        chatLogService = mock(ChatLogService.class);
+        chatLogService = spy(new ChatLogService(new InMemoryChatMessageStore()));
         chatTurnService = mock(ChatTurnService.class);
         keywordDetector = mock(HandoffKeywordDetector.class);
         registry = mock(WsSessionRegistry.class);
@@ -77,8 +79,8 @@ class ChatDispatchServiceTest {
         dispatch = new ChatDispatchService(ticketService, chatLogService, chatTurnService,
             keywordDetector, registry, subjectQuotaGuard, deduplicator);
         // 落库统一返回一条带 messageId 的消息（AI 流式收尾需要读 messageId）
-        lenient().when(chatLogService.append(any(), any(), any(), any(), any()))
-            .thenReturn(ChatMessage.of("MSG-9", SESSION_ID, "TK-1", TicketActorType.BOT, null, "txt"));
+        lenient().doReturn(ChatMessage.of("MSG-9", SESSION_ID, "TK-1", TicketActorType.BOT, null, "txt"))
+            .when(chatLogService).append(any(), any(), any(), any(), any());
     }
 
     private Ticket aiServing() {
@@ -93,7 +95,7 @@ class ChatDispatchServiceTest {
             events.add(new ChatTurnEvent.Delta(chunk));
         }
         ChatMessage message = ChatMessage.of("MSG-9", SESSION_ID, "TK-1",
-            TicketActorType.BOT, null, reply.toString());
+            TicketActorType.BOT, null, reply.toString()).withId(24);
         ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-9", "MODEL_STOP",
             new ChatUsageSnapshot(8, 2, 0, 10, 0.1), "trace-ws", List.of(), List.of());
         events.add(new ChatTurnEvent.Completed(new ChatTurnCompletion(message, terminal)));
@@ -131,7 +133,7 @@ class ChatDispatchServiceTest {
         StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好", "cmid-1")).verifyComplete();
 
         verify(chatTurnService, times(1)).stream(SESSION_ID, "你好", "TK-1");
-        verify(chatLogService, times(1)).append(any(), any(), any(), any(), any());
+        verify(chatLogService, times(1)).appendWithMessageId(any(), any(), any(), any(), any(), any());
     }
 
     /** 重发被丢弃时不该扣额度——去重排在配额判定之前正是为了这个。 */
@@ -206,6 +208,9 @@ class ChatDispatchServiceTest {
         StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "你好")).verifyComplete();
 
         verify(registry, times(2)).pushToUser(eq(USER_ID), argThat(f -> typeIs(f, WsFrame.TYPE_CHAT_CHUNK)));
+        verify(registry, times(2)).pushToUser(eq(USER_ID), argThat(frame -> typeIs(frame, WsFrame.TYPE_CHAT_CHUNK)
+            && SESSION_ID.equals(((java.util.Map<?, ?>) frame.data()).get("sessionId"))
+            && "TK-1".equals(((java.util.Map<?, ?>) frame.data()).get("ticketId"))));
         verify(registry).pushToUser(eq(USER_ID), argThat(f -> typeIs(f, WsFrame.TYPE_CHAT_DONE)));
         verify(registry).pushToUser(eq(USER_ID), argThat(frame -> {
             if (!typeIs(frame, WsFrame.TYPE_CHAT_DONE)) {
@@ -214,6 +219,7 @@ class ChatDispatchServiceTest {
             java.util.Map<?, ?> data = (java.util.Map<?, ?>) ((WsFrame) frame).data();
             return "MSG-9".equals(data.get("messageId"))
                 && "MODEL_STOP".equals(data.get("finishReason"))
+                && Long.valueOf(24).equals(data.get("id"))
                 && "trace-ws".equals(data.get("traceId"));
         }));
         // 首条消息回填标题

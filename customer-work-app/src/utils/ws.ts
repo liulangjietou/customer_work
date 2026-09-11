@@ -21,7 +21,9 @@ class ChatSocket {
   private manuallyClosed = true
 
   connect(token: string) {
+    this.close()
     this.manuallyClosed = false
+    this.reconnectAttempts = 0
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     this.url = `${protocol}//${location.host}/ws/user?token=${encodeURIComponent(token)}`
     this.open()
@@ -38,9 +40,15 @@ class ChatSocket {
     this.handlers.get(type)?.delete(handler)
   }
 
-  send(frame: { type: string; data?: unknown }) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+  /** 返回是否交给当前连接；服务端是否受理仍需等待独立回执。 */
+  send(frame: { type: string; data?: unknown }): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false
+    try {
       this.ws.send(JSON.stringify(frame))
+      return true
+    } catch {
+      this.ws?.close()
+      return false
     }
   }
 
@@ -48,14 +56,17 @@ class ChatSocket {
     this.manuallyClosed = true
     this.clearHeartbeat()
     this.clearReconnectTimer()
-    this.ws?.close()
+    const socket = this.ws
     this.ws = null
+    socket?.close()
   }
 
   private open() {
-    this.ws = new WebSocket(this.url)
+    const socket = new WebSocket(this.url)
+    this.ws = socket
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket || this.manuallyClosed) return
       // 连上之后再清零，才能把「这次是重连」这个事实告诉订阅方：
       // 断线期间服务端推的帧已经没了，重连方必须自己补拉，而首连不需要
       const reconnected = this.reconnectAttempts > 0
@@ -64,7 +75,8 @@ class ChatSocket {
       this.emit('open', { reconnected })
     }
 
-    this.ws.onmessage = (evt: MessageEvent<string>) => {
+    socket.onmessage = (evt: MessageEvent<string>) => {
+      if (this.ws !== socket || this.manuallyClosed) return
       let frame: { type?: string; data?: unknown }
       try {
         frame = JSON.parse(evt.data)
@@ -77,14 +89,15 @@ class ChatSocket {
       this.emit(frame.type, frame.data)
     }
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (this.ws !== socket || this.manuallyClosed) return
       this.clearHeartbeat()
       this.emit('close', null)
       this.scheduleReconnect()
     }
 
-    this.ws.onerror = () => {
-      this.ws?.close()
+    socket.onerror = () => {
+      if (this.ws === socket) socket.close()
     }
   }
 

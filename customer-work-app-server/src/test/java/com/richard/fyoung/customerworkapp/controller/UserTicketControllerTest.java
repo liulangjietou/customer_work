@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
+import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.data.ticket.Ticket;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
@@ -57,6 +58,56 @@ class UserTicketControllerTest {
 
     private Ticket ownedTicket() {
         return Ticket.create("TK-1", "uU1:conv-1", USER_ID, "标题", TicketCategory.CONSULT);
+    }
+
+    @Test
+    void receipt_shouldReturnOnlyTheCurrentUsersPersistedInput() {
+        String messageId = ChatLogService.clientMessageId("default", "uU1:conv-1", TicketActorType.USER, USER_ID, "retry-1");
+        when(chatLogService.findByMessageId(messageId)).thenReturn(Optional.of(
+            ChatMessage.of(messageId, "uU1:conv-1", "TK-1", TicketActorType.USER, USER_ID, "原消息").withId(12)));
+        webTestClient.get().uri("/api/customer/user/sessions/uU1:conv-1/receipts/retry-1")
+            .header(HttpHeaders.AUTHORIZATION, bearer()).exchange()
+            .expectStatus().isOk().expectBody()
+            .jsonPath("$.clientMsgId").isEqualTo("retry-1")
+            .jsonPath("$.message.messageId").isEqualTo(messageId)
+            .jsonPath("$.message.id").isEqualTo(12);
+        org.mockito.Mockito.verify(userSessionGuard).requireOwned("uU1:conv-1", USER_ID);
+    }
+
+    @Test
+    void missingReceipt_shouldExplicitlyReturnNoPersistedMessage() {
+        when(chatLogService.findByMessageId(anyString())).thenReturn(Optional.empty());
+        webTestClient.get().uri("/api/customer/user/sessions/uU1:conv-1/receipts/retry-2")
+            .header(HttpHeaders.AUTHORIZATION, bearer()).exchange()
+            .expectStatus().isOk().expectBody().jsonPath("$.message").isEmpty();
+    }
+
+    @Test
+    void receiptOfForeignSession_shouldFailBeforeLookingUpTheMessage() {
+        org.mockito.Mockito.doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND)).when(userSessionGuard).requireOwned("uOTHER:private", USER_ID);
+        webTestClient.get().uri("/api/customer/user/sessions/uOTHER:private/receipts/retry-3")
+            .header(HttpHeaders.AUTHORIZATION, bearer()).exchange().expectStatus().isNotFound();
+        org.mockito.Mockito.verifyNoInteractions(chatLogService);
+    }
+
+    @Test
+    void receiptMustNotExposeAnotherSenderEvenIfTheStoreReturnsIt() {
+        when(chatLogService.findByMessageId(anyString())).thenReturn(Optional.of(
+            ChatMessage.of("untrusted-row", "uU1:conv-1", "TK-1", TicketActorType.AGENT, "agent-2", "私有记录").withId(13)));
+        webTestClient.get().uri("/api/customer/user/sessions/uU1:conv-1/receipts/retry-4")
+            .header(HttpHeaders.AUTHORIZATION, bearer()).exchange().expectStatus().isOk()
+            .expectBody().jsonPath("$.message").isEmpty();
+    }
+
+    @Test
+    void failedReceiptLookup_mustNotPretendTheMessageWasNotAccepted() {
+        var mapper = org.mockito.Mockito.mock(com.richard.fyoung.customerwork.data.chatlog.mapper.ChatMessageMapper.class);
+        when(mapper.findByMessageId(anyString())).thenThrow(new IllegalStateException("database offline"));
+        var store = new com.richard.fyoung.customerwork.data.chatlog.MybatisChatMessageStore(mapper);
+        when(chatLogService.findByMessageId(anyString())).thenAnswer(call -> store.findByMessageId(call.getArgument(0)));
+        webTestClient.get().uri("/api/customer/user/sessions/uU1:conv-1/receipts/retry-5")
+            .header(HttpHeaders.AUTHORIZATION, bearer()).exchange().expectStatus().is5xxServerError();
     }
 
     @Test

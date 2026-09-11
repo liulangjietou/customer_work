@@ -8,6 +8,8 @@ import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityCo
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
@@ -92,6 +94,31 @@ class SubjectQuotaWebFilterTest {
         SubjectQuotaWebFilter f = filter(guard(true));
         StepVerifier.create(f.filter(get("/api/customer/user/quota"), chain)).verifyComplete();
         assertNull(seen.get());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/api/customer/user/sessions/uU1:conv/receipts/request-1",
+        "/api/customer/user/sessions/uU1:conv/messages",
+        "/api/customer/user/tickets/TK-1"
+    })
+    void recoveryReads_shouldNotConsumeOrRequireMessageQuota(String path) {
+        levelStore.save(new SubjectQuotaLevel(null, TenantContext.DEFAULT, "anonymous", "匿名",
+            QuotaSubjectType.IP, 1800, 0, 1, SubjectExceedAction.BLOCK, true, null));
+        SubjectQuotaGuard quotaGuard = guard(true);
+        SubjectQuotaWebFilter f = filter(quotaGuard);
+        StepVerifier.create(f.filter(get(path), chain)).verifyComplete();
+        assertTrue(!quotaGuard.check(QuotaSubject.ip("10.0.0.7"), CHAT_PATH).shouldBlock(),
+            "恢复查询不能消耗发送额度");
+        StepVerifier.create(f.filter(get(CHAT_PATH), chain)).verifyComplete();
+        MockServerWebExchange recovery = get(path);
+        StepVerifier.create(f.filter(recovery, chain)).verifyComplete();
+        assertNull(recovery.getResponse().getStatusCode(), "额度耗尽仍能核对已保存消息与工单状态");
+        MockServerWebExchange mutation = MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/customer/user/tickets/TK-1/close")
+                .remoteAddress(new java.net.InetSocketAddress("10.0.0.7", 12345)));
+        StepVerifier.create(f.filter(mutation, chain)).verifyComplete();
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, mutation.getResponse().getStatusCode(), "写入口仍受原额度控制");
     }
 
     @Test
