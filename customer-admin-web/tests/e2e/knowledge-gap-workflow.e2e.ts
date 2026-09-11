@@ -363,7 +363,7 @@ test('只读缺口和 Badcase 页面不读取无权的治理记录', async ({ pa
   expect(deniedRequests).toEqual([])
 })
 
-test('同一候选复评未过不能发布，通过后只在明确点击时创建任务，并适配窄屏', async ({ page }) => {
+test('同一候选复评未过不能发布，通过后只在明确点击时创建任务，并适配窄屏', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 960 })
   await page.route('**/api/auth/permissions', (route) =>
     route.fulfill({
@@ -422,7 +422,7 @@ test('同一候选复评未过不能发布，通过后只在明确点击时创�
   expect(publishes).toBe(0)
   await expect(page.locator('.el-message')).toHaveCount(0)
   await page.screenshot({
-    path: '/fyoung/tmp/customer-work-experience-20260910/implementation-evidence/knowledge-gap-governance-desktop.png',
+    path: testInfo.outputPath('knowledge-gap-governance-desktop.png'),
     fullPage: true,
   })
   await publish.click()
@@ -450,7 +450,7 @@ test('同一候选复评未过不能发布，通过后只在明确点击时创�
   await drawer.getByRole('button', { name: '立即同步状态', exact: true }).scrollIntoViewIfNeeded()
   await expect(page.locator('.el-message')).toHaveCount(0)
   await page.screenshot({
-    path: '/fyoung/tmp/customer-work-experience-20260910/implementation-evidence/knowledge-gap-governance-mobile.png',
+    path: testInfo.outputPath('knowledge-gap-governance-mobile.png'),
     fullPage: true,
   })
 })
