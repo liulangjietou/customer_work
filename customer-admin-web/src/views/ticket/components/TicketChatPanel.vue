@@ -4,8 +4,10 @@ import { useAuthStore } from '@/store/auth'
 import { useTicketReplies } from '@/store/ticketReplies'
 import type { WsClient } from '@/utils/ws'
 import { SENDER_TYPE_LABELS, STATUS_LABELS, STATUS_TAG_TYPE } from '@/types/ticket'
+import type { TicketAssistAdoption } from '@/types/ticket'
 import { useTicketConversation } from '../useTicketConversation'
 import TicketContextPanel from './TicketContextPanel.vue'
+import TicketAssistPanel from './TicketAssistPanel.vue'
 
 const MAX_REPLY_CONTENT_BYTES = 65_535
 const props = defineProps<{
@@ -36,10 +38,13 @@ const wideContext = ref(false)
 const nearBottom = ref(true)
 const unseen = ref(0)
 const inputError = ref('')
+const inputRef = ref<{ focus: () => void }>()
+const adopting = ref(false)
 const readingPositions = new Map<string, { top: number; nearBottom: boolean }>()
 let observer: ResizeObserver | null = null
 let disposed = false
 let restored = false
+let adoptionGeneration = 0
 
 const draft = computed(() => (props.ticketId ? replies.state(props.ticketId) : null))
 const input = computed({
@@ -63,6 +68,30 @@ const samePending = computed(() =>
   draft.value?.pending.find((pending) => pending.content === input.value),
 )
 const sending = computed(() => samePending.value?.status === 'SENDING' && samePending.value.busy)
+const messageRevision = computed(() =>
+  JSON.stringify([
+    props.ticketId,
+    detail.value?.ticket.updatedAtMs,
+    messages.value
+      .slice(-30)
+      .map((message) => [
+        message.id,
+        message.messageId,
+        message.content,
+        message.senderType,
+        message.createdAtMs,
+      ]),
+  ]),
+)
+const assistDisabled = computed(
+  () =>
+    !props.ready ||
+    loading.value ||
+    !!detailError.value ||
+    historyLoading.value ||
+    !!historyError.value,
+)
+const canAdopt = computed(() => canInput.value && !samePending.value && !adopting.value)
 const readonlyReason = computed(() => {
   if (!props.ready) return '正在确认坐席身份，草稿将在确认后显示。'
   if (detailError.value || loading.value) return '工单状态尚未确认，刷新后再回复。'
@@ -142,6 +171,73 @@ function refresh() {
   void synchronize()
   emit('refresh')
 }
+/** 采用只更新本工单草稿；对话、身份或草稿在确认期间变化时，原文保持不动。 */
+async function adoptSuggestion(value: TicketAssistAdoption) {
+  if (
+    !canAdopt.value ||
+    assistDisabled.value ||
+    props.ticketId !== value.ticketId ||
+    messageRevision.value !== value.messageRevision ||
+    !value.reply.trim()
+  )
+    return
+  const original = draft.value!
+  const originalVersion = original.version
+  const originalContent = original.content
+  const generation = adoptionGeneration
+  const reply = value.reply.trim()
+  if (originalContent.trim() === reply || originalContent.trimEnd().endsWith(`\n\n${reply}`)) {
+    ElMessage.info('这条建议已在当前草稿中。')
+    return
+  }
+  const combined = originalContent.trim() ? `${originalContent}\n\n${reply}` : reply
+  if (new TextEncoder().encode(combined).length > MAX_REPLY_CONTENT_BYTES) {
+    inputError.value = '采用后内容过长，请先缩短草稿。现有内容已保留。'
+    return
+  }
+  adopting.value = true
+  try {
+    if (originalContent.trim()) {
+      await ElMessageBox.confirm('已有草稿将完整保留，建议回复会追加到末尾。', '追加建议到草稿', {
+        confirmButtonText: '保留并追加',
+        cancelButtonText: '取消',
+      })
+    }
+    if (
+      disposed ||
+      generation !== adoptionGeneration ||
+      !canInput.value ||
+      assistDisabled.value ||
+      samePending.value ||
+      props.ticketId !== value.ticketId ||
+      messageRevision.value !== value.messageRevision ||
+      draft.value !== original ||
+      original.version !== originalVersion ||
+      original.content !== originalContent
+    ) {
+      ElMessage.info('工单、会话或草稿已有变化，请重新核对建议后采用。')
+      return
+    }
+    replies.setDraft(value.ticketId, combined)
+    inputError.value = ''
+    contextVisible.value = false
+    await nextTick()
+    if (!disposed && generation === adoptionGeneration) inputRef.value?.focus()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error('暂时无法采用建议，原草稿已保留。')
+    }
+  } finally {
+    adopting.value = false
+  }
+}
+watch(
+  () => [props.ticketId, props.agentId, auth.token, canInput.value],
+  () => {
+    adoptionGeneration += 1
+  },
+  { flush: 'sync' },
+)
 watch(
   () => props.ticketId,
   () => {
@@ -349,6 +445,7 @@ onScopeDispose(() => {
           </div>
           <p v-if="!canInput" class="readonly-reason">{{ readonlyReason }}</p>
           <el-input
+            ref="inputRef"
             v-model="input"
             type="textarea"
             :rows="3"
@@ -373,6 +470,16 @@ onScopeDispose(() => {
         </footer>
       </section>
       <div v-if="wideContext" class="context-column">
+        <TicketAssistPanel
+          :ticket-id="ticketId"
+          :message-revision="messageRevision"
+          :disabled="assistDisabled"
+          :can-adopt="canAdopt"
+          :adopt-reason="
+            samePending ? '当前草稿正在核对保存结果，请完成核对后再采用。' : readonlyReason
+          "
+          @adopt="adoptSuggestion"
+        />
         <TicketContextPanel
           v-if="detail"
           :detail="detail"
@@ -389,7 +496,16 @@ onScopeDispose(() => {
         size="min(360px, 100vw)"
         append-to-body
         class="ticket-context-drawer"
-        ><TicketContextPanel
+        ><TicketAssistPanel
+          v-if="contextVisible"
+          :ticket-id="ticketId"
+          :message-revision="messageRevision"
+          :disabled="assistDisabled"
+          :can-adopt="canAdopt"
+          :adopt-reason="
+            samePending ? '当前草稿正在核对保存结果，请完成核对后再采用。' : readonlyReason
+          "
+          @adopt="adoptSuggestion" /><TicketContextPanel
           v-if="detail"
           :detail="detail"
           :agent-id="agentId"

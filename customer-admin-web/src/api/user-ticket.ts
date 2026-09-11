@@ -1,5 +1,6 @@
 import { request } from './request'
 import type {
+  TicketAssistView,
   TicketCloseRequest,
   TicketDetailVO,
   TicketHoldRequest,
@@ -134,6 +135,15 @@ export function updateTicketCategory(id: string, category: TicketCategory) {
 export function getTicketWsCredential() {
   return request<WsCredentialVO>({
     url: `${BASE_URL}/ws-credential`,
+    method: 'get',
+    suppressErrorMessage: true,
+  })
+}
+
+/** 读取工单当前摘要与依据，不发起新的模型调用。 */
+export function getTicketAssist(id: string) {
+  return request<TicketAssistView>({
+    url: `${BASE_URL}/${encodeURIComponent(id)}/assist`,
     method: 'get',
     suppressErrorMessage: true,
   })

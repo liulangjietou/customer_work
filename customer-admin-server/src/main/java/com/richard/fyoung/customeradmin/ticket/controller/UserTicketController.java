@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.ticket.controller;
 
+import com.richard.fyoung.customerwork.capability.assist.TicketAssistView;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
 import com.richard.fyoung.customeradmin.common.result.Result;
@@ -86,6 +87,13 @@ public class UserTicketController {
     @PostMapping("/{id}/reply")
     public Result<TicketMessageVO> reply(@PathVariable String id, @Valid @RequestBody TicketReplyRequest request) {
         return Result.success(ticketService.reply(id, request.content(), request.clientMsgId()));
+    }
+
+    /** 辅助记录只读，来源会话由客服服务从授权工单推导。 */
+    @SaCheckPermission("user-ticket:view")
+    @GetMapping("/{id}/assist")
+    public Result<TicketAssistView> assist(@PathVariable String id) {
+        return Result.success(ticketService.assist(id));
     }
 
     /** 回执只提供已有消息视图，不赋予发送权限；调用端和客服服务仍校验当前租户与本人身份。 */
