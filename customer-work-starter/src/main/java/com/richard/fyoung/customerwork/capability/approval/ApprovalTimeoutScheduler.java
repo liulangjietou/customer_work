@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.capability.approval;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.richard.fyoung.customerwork.core.runtime.SchedulerLease;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -56,7 +57,7 @@ public class ApprovalTimeoutScheduler {
     @Scheduled(fixedDelayString = "${customer-work.runtime.scheduler-fixed-delay-ms:60000}")
     public void checkTimeouts() {
         // 审批超时：多副本同时扫到同一批待审批单会把超时动作执行两次
-        schedulerLease.runExclusively("approval-timeout", this::doCheckTimeouts);
+        schedulerLease.runExclusively("approval-timeout", () -> runWithinStoredTenants(this::doCheckTimeouts));
     }
 
     /** 一轮实际逻辑；单测入口直接调它，不经过多副本互斥。 */
@@ -99,16 +100,31 @@ public class ApprovalTimeoutScheduler {
 
     /** 可被单测调用的同步入口（跳过 @Scheduled 注解）。 */
     public void runTimeoutCheck() {
-        doCheckTimeouts();
+        runWithinStoredTenants(this::doCheckTimeouts);
     }
 
     /** 巡检重试执行失败的审批单（如打款回调异常）；{@code maxExecutionRetryAttempts<=1} 时禁用。 */
     @Scheduled(fixedDelayString = "${customer-work.runtime.scheduler-fixed-delay-ms:60000}")
     public void retryExecutionFailures() {
+        runWithinStoredTenants(this::doRetryExecutionFailures);
+    }
+
+    private void doRetryExecutionFailures() {
         int maxAttempts = properties.getHumanApproval().getMaxExecutionRetryAttempts();
         int retried = approvalService.retryExecutionFailures(maxAttempts);
         if (retried > 0) {
             log.info("approval execution retry batch: retried={}", retried);
         }
+    }
+
+    /** 内存巡检没有请求身份，按实际分区逐租户执行；显式租户调用仍只处理当前租户。 */
+    private void runWithinStoredTenants(Runnable action) {
+        if (!TenantContext.isPresent() && approvalService.getStore() instanceof InMemoryApprovalStore memoryStore) {
+            for (String tenantId : memoryStore.tenantIds()) {
+                TenantContext.runWith(tenantId, action);
+            }
+            return;
+        }
+        action.run();
     }
 }

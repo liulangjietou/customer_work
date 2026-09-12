@@ -3,7 +3,10 @@ package com.richard.fyoung.customerwork.tool;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalRequest;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalType;
 import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.tool.backend.AfterSalesBackend;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import reactor.core.publisher.Mono;
@@ -48,6 +51,7 @@ public class AfterSalesTools {
         return backend.checkRefundEligibility(orderId, withinSevenDays);
     }
 
+    /** 原生 Toolkit 在调用方法前切换线程，身份必须来自本轮运行快照；该上下文不进入工具参数。 */
     @Tool(description = "对满足条件的订单发起退款。注意：本工具只生成待人工确认的退款工单，不会直接打款，需人工坐席复核后执行。")
     public Mono<String> submitRefund(
             @ToolParam(name = "orderId", description = "订单号")
@@ -55,14 +59,24 @@ public class AfterSalesTools {
             @ToolParam(name = "amount", description = "退款金额，单位元，例如 '299.00'")
             String amount,
             @ToolParam(name = "reason", description = "退款原因")
-            String reason) {
+            String reason,
+            RuntimeContext context) {
+        AgentInvocationIdentity identity = context == null ? null : context.get(AgentInvocationIdentity.class);
+        String tenantId = identity == null ? null : identity.tenantId();
+        return TenantContext.callWith(tenantId, () -> submitRefund(orderId, amount, reason));
+    }
+
+    /** 保留非原生调用方的三参入口；审批使用入口租户快照，不依赖后端完成时所在的线程。 */
+    public Mono<String> submitRefund(String orderId, String amount, String reason) {
+        // 后端 Mono 可能切换线程；登记审批时必须恢复工具入口的真实租户。
+        String tenantId = approvalService == null ? null : TenantContext.require();
         return backend.submitRefund(orderId, amount, reason)
             .map(result -> {
                 if (approvalService == null) {
                     return result;
                 }
-                ApprovalRequest req = approvalService.submit(
-                    ApprovalType.REFUND, requireSessionId(), orderId, amount, reason);
+                ApprovalRequest req = TenantContext.callWith(tenantId, () -> approvalService.submit(
+                    ApprovalType.REFUND, requireSessionId(), orderId, amount, reason));
                 return result + "（审批单号 " + req.getId() + "，需人工坐席放行后执行打款）";
             });
     }

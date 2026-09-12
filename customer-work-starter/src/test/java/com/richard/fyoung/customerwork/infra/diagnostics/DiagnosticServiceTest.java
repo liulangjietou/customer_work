@@ -1,5 +1,9 @@
 package com.richard.fyoung.customerwork.infra.diagnostics;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+
 import com.richard.fyoung.customerwork.capability.approval.ApprovalType;
 import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -33,6 +37,13 @@ import static org.mockito.Mockito.when;
  */
 class DiagnosticServiceTest {
 
+    @BeforeEach
+    void bindTenant() { TenantContext.set(TenantContext.DEFAULT); }
+
+    @AfterEach
+    void clearTenant() { TenantContext.clear(); }
+
+
     private final TenantResolver tenantResolver = new TenantResolver(new CustomerWorkProperties());
 
     @SuppressWarnings("unchecked")
@@ -44,6 +55,7 @@ class DiagnosticServiceTest {
 
     @Test
     void aggregatesAllSources(@TempDir Path tempDir) {
+        TenantContext.set("tenantA");
         String sessionId = "tenantA:conv-1";
 
         SessionStateManager stateManager = mock(SessionStateManager.class);

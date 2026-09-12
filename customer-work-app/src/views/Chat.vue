@@ -6,6 +6,7 @@ import { showConfirmDialog, showToast } from 'vant'
 import type { UploaderAfterRead, UploaderBeforeRead, UploaderFileListItem } from 'vant'
 import CsatSurveyCard from '@/components/CsatSurveyCard.vue'
 import CustomerAnswerSourcesPanel from '@/components/CustomerAnswerSourcesPanel.vue'
+import CustomerBusinessProgressPanel from '@/components/CustomerBusinessProgressPanel.vue'
 import { useMessageDelivery } from '@/composables/useMessageDelivery'
 import {
   closeTicket,
@@ -55,18 +56,27 @@ const ticketId = ref<string | null>(null)
 const ticket = ref<Ticket | null>(null)
 const messages = ref<ChatMessage[]>([])
 const sourcesOpen = ref(false)
+const progressOpen = ref(false)
+const progressTrigger = shallowRef<HTMLElement | null>(null)
 const sourceMessageId = ref('')
 const sourceTrigger = shallowRef<HTMLElement | null>(null)
 
 function openAnswerSources(message: ChatMessage, event: MouseEvent) {
+  progressOpen.value = false
   sourceMessageId.value = message.messageId
   sourceTrigger.value = event.currentTarget as HTMLElement
   sourcesOpen.value = true
 }
 
+function openBusinessProgress(event: MouseEvent) {
+  sourcesOpen.value = false
+  progressTrigger.value = event.currentTarget as HTMLElement
+  progressOpen.value = true
+}
+
 watch(
   () => [sessionId.value, ticketId.value, auth.token, route.fullPath],
-  () => { sourcesOpen.value = false },
+  () => { sourcesOpen.value = false; progressOpen.value = false },
   { flush: 'sync' },
 )
 const inputContent = ref('')
@@ -913,7 +923,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chat-page" :inert="sourcesOpen" :aria-hidden="sourcesOpen ? 'true' : undefined">
+  <div class="chat-page" :inert="sourcesOpen || progressOpen" :aria-hidden="sourcesOpen || progressOpen ? 'true' : undefined">
     <van-nav-bar title="智能客服" left-arrow safe-area-inset-top @click-left="router.back()">
       <template #right>
         <button class="nav-action" type="button" aria-label="会话管理" @click="openSessionMenu">
@@ -940,6 +950,9 @@ onUnmounted(() => {
           <p>{{ statusHint }}</p>
         </div>
       </div>
+      <div class="status-actions">
+        <button v-if="ticketId && sessionId" type="button" class="business-progress-trigger"
+          aria-haspopup="dialog" :aria-expanded="progressOpen" @click="openBusinessProgress">办理进度</button>
       <van-button
         class="handoff-button"
         size="small"
@@ -952,6 +965,7 @@ onUnmounted(() => {
       >
         转人工
       </van-button>
+      </div>
     </div>
 
     <div v-if="wsReconnecting" class="reconnect-tip" role="status">
@@ -1233,6 +1247,13 @@ onUnmounted(() => {
     <!-- 会话结束后弹满意度评分：组件内部会先查"有没有待评价的邀请"，
          没被邀请或已评过都不会弹，不会重复打扰 -->
     <CsatSurveyCard :session-id="sessionId" :session-ended="ended" />
+    <CustomerBusinessProgressPanel
+      v-model:open="progressOpen"
+      :session-id="sessionId"
+      :ticket-id="ticketId ?? ''"
+      :identity-key="auth.token ?? ''"
+      :trigger="progressTrigger"
+    />
     <CustomerAnswerSourcesPanel
       v-model:open="sourcesOpen"
       :session-id="sessionId"
@@ -1397,6 +1418,31 @@ onUnmounted(() => {
   color: var(--cw-text-secondary, #718096);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.status-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.business-progress-trigger {
+  min-height: 44px;
+  min-width: 80px;
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--cw-primary-soft, #edf1ff);
+  color: var(--cw-primary, #3658cb);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.business-progress-trigger:focus-visible {
+  outline: 3px solid var(--cw-focus-ring, #9cb6ff);
+  outline-offset: 2px;
 }
 
 .handoff-button {

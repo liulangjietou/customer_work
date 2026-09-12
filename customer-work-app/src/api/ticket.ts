@@ -50,8 +50,8 @@ export function fetchTickets(params: FetchTicketsParams): Promise<TicketPage> {
   return request({ url: '/customer/user/tickets', method: 'get', params })
 }
 
-export function fetchTicketDetail(id: string): Promise<TicketDetail> {
-  return request({ url: `/customer/user/tickets/${id}`, method: 'get' })
+export function fetchTicketDetail(id: string, options: { silentError?: boolean } = {}): Promise<TicketDetail> {
+  return request({ url: `/customer/user/tickets/${encodeURIComponent(id)}`, method: 'get', silentError: options.silentError })
 }
 
 export interface FetchMessagesParams {

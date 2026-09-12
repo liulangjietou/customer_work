@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TicketDetail } from '@/types/api'
 import TicketDetailView from './TicketDetail.vue'
 
-const { fetchTicketDetailMock } = vi.hoisted(() => ({ fetchTicketDetailMock: vi.fn() }))
+const { fetchTicketDetailMock, push } = vi.hoisted(() => ({ fetchTicketDetailMock: vi.fn(), push: vi.fn() }))
 
 vi.mock('@/api/ticket', () => ({
   closeTicket: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock('@/api/ticket', () => ({
 }))
 
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ back: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ back: vi.fn(), push }),
 }))
 
 vi.mock('vant', () => ({ showToast: vi.fn() }))
@@ -55,6 +55,15 @@ const globalOptions = {
 }
 
 describe('TicketDetail', () => {
+  it('返回客服携带当前工单，不能误打开另一个进行中会话', async () => {
+    fetchTicketDetailMock.mockResolvedValueOnce(detail)
+    const wrapper = mount(TicketDetailView, { props: { id: detail.ticket.id }, global: globalOptions })
+    await flushPromises()
+    const button = wrapper.findAll('button').find((item) => item.text() === '继续对话')!
+    await button.trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/chat', query: { ticketId: detail.ticket.id } })
+    wrapper.unmount()
+  })
   beforeEach(() => {
     fetchTicketDetailMock.mockReset()
   })

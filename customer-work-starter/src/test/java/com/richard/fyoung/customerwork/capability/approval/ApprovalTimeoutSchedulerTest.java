@@ -1,5 +1,9 @@
 package com.richard.fyoung.customerwork.capability.approval;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +14,13 @@ import static org.junit.jupiter.api.Assertions.*;
  * @author owlzhangfq@gmail.com
  */
 class ApprovalTimeoutSchedulerTest {
+
+    @BeforeEach
+    void bindTenant() { TenantContext.set(TenantContext.DEFAULT); }
+
+    @AfterEach
+    void clearTenant() { TenantContext.clear(); }
+
 
     @Test
     void shouldAutoDenyTimedOutApproval_whenActionIsDeny() {

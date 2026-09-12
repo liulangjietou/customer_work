@@ -57,6 +57,11 @@ vi.mock('@/components/CustomerAnswerSourcesPanel.vue', () => ({
     template: '<div></div>',
   }),
 }))
+vi.mock('@/components/CustomerBusinessProgressPanel.vue', () => ({
+  default: defineComponent({ name: 'CustomerBusinessProgressPanel',
+    props: ['open', 'sessionId', 'ticketId', 'identityKey', 'trigger'], template: '<div></div>',
+  }),
+}))
 vi.mock('@/store/auth', () => ({
   useAuthStore: () => ({ token: 'token-1', userId: 'user-1' }),
 }))
@@ -257,6 +262,20 @@ describe('Chat', () => {
     const sourcePanel = wrapper.findComponent({ name: 'CustomerAnswerSourcesPanel' })
     expect(sourcePanel.props()).toMatchObject({ open: true, sessionId: 'session-1', messageId: 'source-message', identityKey: 'token-1' })
     expect(sourcePanel.props('trigger')).toBe(entries[0]!.element)
+    wrapper.unmount()
+  })
+
+  it('办理进度绑定当前工单与登录身份，打开时关闭原文面板', async () => {
+    fetchMessagesMock.mockResolvedValue([{ ...botMessage, ...answerEvidence }])
+    const wrapper = await mountReadyChat()
+    await wrapper.get('.answer-sources-entry').trigger('click')
+    await wrapper.get('.business-progress-trigger').trigger('click')
+    const panel = wrapper.findComponent({ name: 'CustomerBusinessProgressPanel' })
+    expect(panel.props()).toMatchObject({ open: true, sessionId: 'session-1', ticketId: 'ticket-1', identityKey: 'token-1' })
+    expect(panel.props('trigger')).toBe(wrapper.get('.business-progress-trigger').element)
+    expect(wrapper.findComponent({ name: 'CustomerAnswerSourcesPanel' }).props('open')).toBe(false)
+    await wrapper.get('.answer-sources-entry').trigger('click')
+    expect(panel.props('open')).toBe(false)
     wrapper.unmount()
   })
 
