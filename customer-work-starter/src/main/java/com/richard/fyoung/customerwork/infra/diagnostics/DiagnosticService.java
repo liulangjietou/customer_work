@@ -74,9 +74,16 @@ public class DiagnosticService {
      * @param factLimit  质检事实返回上限（取最近的）
      */
     public SessionDiagnostic diagnose(String sessionId, int auditLimit, int factLimit) {
+        return diagnose(sessionId, auditLimit, factLimit, false);
+    }
+
+    /** 入口明确允许匿名兼容时仅保留短期状态的历史查询键，业务数据仍按当前可信租户读取。 */
+    public SessionDiagnostic diagnose(String sessionId, int auditLimit, int factLimit,
+                                      boolean preserveLegacyStateNamespace) {
         SessionDiagnostic d = new SessionDiagnostic();
         d.setSessionId(sessionId);
-        String stateTenant = tenantResolver.resolve(sessionId);
+        String stateTenant = preserveLegacyStateNamespace
+            ? tenantResolver.resolveLegacyStateScope(sessionId) : tenantResolver.resolve(sessionId);
         String dataTenant = tenantResolver.resolveDataScope(sessionId);
         d.setTenantId(dataTenant);
 

@@ -65,7 +65,7 @@ class UserOrderControllerTest {
     @Test
     void detail_owned_shouldReturnWithLogistics() {
         when(orderDao.isEnabled()).thenReturn(true);
-        when(orderDao.findById("2026071500001")).thenReturn(Optional.of(new OwnedOrder(USER_ID, sampleView())));
+        when(orderDao.findById(USER_ID, "2026071500001")).thenReturn(Optional.of(new OwnedOrder(USER_ID, sampleView())));
 
         webTestClient.get().uri("/api/customer/user/orders/2026071500001")
             .header(HttpHeaders.AUTHORIZATION, bearer())
@@ -79,7 +79,7 @@ class UserOrderControllerTest {
     @Test
     void detail_notOwner_shouldReturn404() {
         when(orderDao.isEnabled()).thenReturn(true);
-        when(orderDao.findById("2026071500001")).thenReturn(Optional.of(new OwnedOrder("OTHER", sampleView())));
+        when(orderDao.findById(USER_ID, "2026071500001")).thenReturn(Optional.of(new OwnedOrder("OTHER", sampleView())));
 
         webTestClient.get().uri("/api/customer/user/orders/2026071500001")
             .header(HttpHeaders.AUTHORIZATION, bearer())
@@ -90,7 +90,7 @@ class UserOrderControllerTest {
     @Test
     void detail_notFound_shouldReturn404() {
         when(orderDao.isEnabled()).thenReturn(true);
-        when(orderDao.findById("nope")).thenReturn(Optional.empty());
+        when(orderDao.findById(USER_ID, "nope")).thenReturn(Optional.empty());
 
         webTestClient.get().uri("/api/customer/user/orders/nope")
             .header(HttpHeaders.AUTHORIZATION, bearer())

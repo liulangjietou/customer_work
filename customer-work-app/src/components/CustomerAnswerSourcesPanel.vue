@@ -135,12 +135,13 @@ function onKeydown(event: KeyboardEvent) {
   if (!buttons?.length) return
   const first = buttons[0]!
   const last = buttons[buttons.length - 1]!
-  if (event.shiftKey && document.activeElement === first) {
+  const outsidePanel = !panel.value?.contains(document.activeElement)
+  if (event.shiftKey && (document.activeElement === first || outsidePanel)) {
     event.preventDefault()
     last.focus()
   } else if (
     !event.shiftKey &&
-    (document.activeElement === last || !panel.value?.contains(document.activeElement))
+    (document.activeElement === last || outsidePanel)
   ) {
     event.preventDefault()
     first.focus()

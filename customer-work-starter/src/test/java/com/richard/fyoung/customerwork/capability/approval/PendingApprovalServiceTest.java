@@ -1,5 +1,9 @@
 package com.richard.fyoung.customerwork.capability.approval;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -24,6 +28,13 @@ import static org.mockito.Mockito.when;
  * @author owlzhangfq@gmail.com
  */
 class PendingApprovalServiceTest {
+
+    @BeforeEach
+    void bindTenant() { TenantContext.set(TenantContext.DEFAULT); }
+
+    @AfterEach
+    void clearTenant() { TenantContext.clear(); }
+
 
     @Test
     void submit_shouldCreatePendingAndBeListable() {
@@ -97,7 +108,7 @@ class PendingApprovalServiceTest {
             .map(operator -> CompletableFuture.runAsync(() -> {
                 try {
                     start.await(3, TimeUnit.SECONDS);
-                    svc.approve(req.getId(), operator);
+                    TenantContext.callWith(TenantContext.DEFAULT, () -> svc.approve(req.getId(), operator));
                     decisions.incrementAndGet();
                 } catch (IllegalStateException ignored) {
                     // 另一位操作者已完成 PENDING -> APPROVED CAS。

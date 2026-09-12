@@ -32,6 +32,11 @@ public class TenantResolver {
         if (TenantContext.isPresent()) {
             return TenantContext.require();
         }
+        return resolveLegacyStateScope(sessionId);
+    }
+
+    /** 仅解析历史短期状态命名空间，不读取线程上下文；返回值不能用作请求的业务租户身份。 */
+    public String resolveLegacyStateScope(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             return DEFAULT_TENANT;
         }

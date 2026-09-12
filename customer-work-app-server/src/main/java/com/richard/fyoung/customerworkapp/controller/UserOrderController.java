@@ -4,8 +4,8 @@ import com.richard.fyoung.customerwork.safety.security.UserPrincipals;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao.OrderView;
 import com.richard.fyoung.customerworkapp.dao.UserOrderDao.OwnedOrder;
-import com.richard.fyoung.customerwork.safety.security.UserAuthWebFilter;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -44,30 +44,29 @@ public class UserOrderController {
     @GetMapping
     public Mono<List<OrderView>> list(ServerWebExchange exchange) {
         UserPrincipal user = UserPrincipals.require(exchange);
-        return blocking(() -> {
+        // 在线程切换后恢复已认证租户，不依赖宿主是否启用 Reactor 自动传播。
+        return blocking(() -> TenantContext.callWith(user.tenantId(), () -> {
             requireEnabled();
             return orderDao.listByUser(user.userId());
-        });
+        }));
     }
 
     @Operation(summary = "订单详情", description = "含物流轨迹；非本人和不存在统一返回 404")
     @GetMapping("/{orderId}")
     public Mono<OrderView> detail(@PathVariable String orderId, ServerWebExchange exchange) {
         UserPrincipal user = UserPrincipals.require(exchange);
-        return blocking(() -> {
+        return blocking(() -> TenantContext.callWith(user.tenantId(), () -> {
             requireEnabled();
-            OwnedOrder owned = orderDao.findById(orderId)
+            OwnedOrder owned = orderDao.findById(user.userId(), orderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "order not found: " + orderId));
             if (!user.userId().equals(owned.userId())) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "order not found: " + orderId);
             }
             return owned.view();
-        });
+        }));
     }
 
     // ---- 内部 ----
-
-    /** 从 exchange 属性取当前用户主体（过滤器已保证存在，此处为单一防御点）。 */
 
     /** 订单数据源未启用（mode!=jdbc）时语义化 503。 */
     private void requireEnabled() {

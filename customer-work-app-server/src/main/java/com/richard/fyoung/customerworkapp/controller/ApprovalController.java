@@ -1,14 +1,18 @@
 package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerworkapp.web.HttpErrors;
+import com.richard.fyoung.customerworkapp.web.ApiRequestTenant;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalRequest;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalStatus;
 import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.observability.AuditSink;
 import com.richard.fyoung.customerwork.safety.security.ApprovalAuthWebFilter;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,11 +23,11 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 
 /**
  * 人工审批端点（Human-in-the-Loop 闭环）：退款等高风险动作生成待审单，人工坐席经此 approve/deny 放行。
@@ -47,27 +51,39 @@ public class ApprovalController {
 
     private final PendingApprovalService approvalService;
     private final AuditSink auditSink;
+    private final ApiRequestTenant requestTenant;
 
+    /** 无 Spring 构造保留本地匿名模式；运行时使用注入的实际配置。 */
     public ApprovalController(PendingApprovalService approvalService, AuditSink auditSink) {
+        this(approvalService, auditSink, new ApiRequestTenant(new CustomerWorkProperties()));
+    }
+
+    @Autowired
+    public ApprovalController(PendingApprovalService approvalService, AuditSink auditSink,
+                              ApiRequestTenant requestTenant) {
         this.approvalService = approvalService;
         this.auditSink = auditSink;
+        this.requestTenant = requestTenant;
     }
 
     @Operation(summary = "审批单列表", description = "可选 ?status=pending/approved/denied 过滤")
     @GetMapping
-    public Mono<List<ApprovalRequest>> list(@RequestParam(required = false) String status) {
-        if (StringUtils.hasText(status)) {
-            return Mono.fromCallable(() -> approvalService.listByStatus(parseStatus(status)));
-        }
-        return Mono.fromCallable(approvalService::list);
+    public Mono<List<ApprovalRequest>> list(@RequestParam(required = false) String status,
+                                            ServerWebExchange exchange) {
+        String tenantId = requestTenant.require(exchange);
+        ApprovalStatus filter = StringUtils.hasText(status) ? parseStatus(status) : null;
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> filter == null
+                ? approvalService.list() : approvalService.listByStatus(filter)))
+            .subscribeOn(Schedulers.boundedElastic());
     }
 
     @Operation(summary = "审批单详情")
     @GetMapping("/{id}")
-    public Mono<ApprovalRequest> get(@PathVariable String id) {
-        return Mono.justOrEmpty(approvalService.find(id))
-            .switchIfEmpty(Mono.error(new ResponseStatusException(
-                HttpStatus.NOT_FOUND, "approval not found: " + id)));
+    public Mono<ApprovalRequest> get(@PathVariable String id, ServerWebExchange exchange) {
+        String tenantId = requestTenant.require(exchange);
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> approvalService.find(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "approval not found: " + id))))
+            .subscribeOn(Schedulers.boundedElastic());
     }
 
     @Operation(summary = "放行审批单", description = "人工坐席放行，触发下游执行（如打款）")
@@ -75,9 +91,14 @@ public class ApprovalController {
     public Mono<ApprovalRequest> approve(@PathVariable String id,
                                          @RequestParam(defaultValue = DEFAULT_OPERATOR) String operator,
                                          ServerWebExchange exchange) {
+        String tenantId = requestTenant.require(exchange);
         String resolvedOperator = resolveOperator(exchange, operator);
-        return Mono.fromCallable(() -> approvalService.approve(id, resolvedOperator))
-            .doOnNext(req -> audit(req, "approve", resolvedOperator, null))
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> {
+                ApprovalRequest req = approvalService.approve(id, resolvedOperator);
+                audit(req, "approve", resolvedOperator, null);
+                return req;
+            }))
+            .subscribeOn(Schedulers.boundedElastic())
             .onErrorMap(HttpErrors::translate);
     }
 
@@ -87,9 +108,14 @@ public class ApprovalController {
                                       @RequestParam(defaultValue = DEFAULT_OPERATOR) String operator,
                                       @RequestParam(required = false) String note,
                                       ServerWebExchange exchange) {
+        String tenantId = requestTenant.require(exchange);
         String resolvedOperator = resolveOperator(exchange, operator);
-        return Mono.fromCallable(() -> approvalService.deny(id, resolvedOperator, note))
-            .doOnNext(req -> audit(req, "deny", resolvedOperator, note))
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> {
+                ApprovalRequest req = approvalService.deny(id, resolvedOperator, note);
+                audit(req, "deny", resolvedOperator, note);
+                return req;
+            }))
+            .subscribeOn(Schedulers.boundedElastic())
             .onErrorMap(HttpErrors::translate);
     }
 
@@ -116,8 +142,6 @@ public class ApprovalController {
         }
         auditSink.record(AUDIT_TYPE_APPROVAL_DECISION, fields);
     }
-
-    /** 领域异常 → HTTP 状态：不存在 404，重复决策 409。 */
 
     private ApprovalStatus parseStatus(String status) {
         try {

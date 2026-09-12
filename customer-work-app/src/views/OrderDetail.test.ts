@@ -4,11 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OrderView } from '@/types/api'
 import OrderDetailView from './OrderDetail.vue'
 
-const { fetchOrderDetailMock } = vi.hoisted(() => ({ fetchOrderDetailMock: vi.fn() }))
+const { fetchOrderDetailMock, push, route } = vi.hoisted(() => ({
+  fetchOrderDetailMock: vi.fn(), push: vi.fn(), route: { query: {} as Record<string, string> },
+}))
 
 vi.mock('@/api/order', () => ({ fetchOrderDetail: fetchOrderDetailMock }))
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  useRoute: () => route,
+  useRouter: () => ({ back: vi.fn(), push, replace: vi.fn() }),
 }))
 
 const detail: OrderView = {
@@ -31,6 +34,20 @@ const globalOptions = {
 describe('OrderDetail', () => {
   beforeEach(() => {
     fetchOrderDetailMock.mockReset()
+    push.mockReset()
+    route.query = {}
+  })
+
+  it.each([undefined, 'ticket-history'])('从订单继续客服保留来源会话 %s', async (ticketId) => {
+    route.query = ticketId ? { ticketId } : {}
+    fetchOrderDetailMock.mockResolvedValueOnce(detail)
+    const wrapper = mount(OrderDetailView, { props: { id: detail.orderId }, global: globalOptions })
+    await flushPromises()
+    await wrapper.get('.service-button').trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/chat', query: {
+      orderId: detail.orderId, ...(ticketId ? { ticketId } : {}),
+    } })
+    wrapper.unmount()
   })
 
   it('首次失败后可重新加载订单，并将最新物流节点排在最前', async () => {

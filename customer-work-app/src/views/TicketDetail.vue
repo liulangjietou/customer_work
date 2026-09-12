@@ -107,7 +107,7 @@ async function onClose() {
 }
 
 function goChat() {
-  router.push('/chat')
+  router.push({ path: '/chat', query: { ticketId: ticketId.value } })
 }
 </script>
 
