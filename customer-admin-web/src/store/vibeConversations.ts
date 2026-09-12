@@ -48,6 +48,9 @@ export interface VibeChatMessage {
   nodes: TraceNode[]
   phase?: ChatMessagePhase
   turnId?: string | null
+  messageId?: string | null
+  historySaved?: boolean | null
+  knowledgeSourcesSaved?: boolean | null
   finishReason?: string | null
   /** 这条助手消息是一次失败的结果（额度用尽、后端异常等），UI 渲染成提示样式而不是正常回答。 */
   failed?: boolean

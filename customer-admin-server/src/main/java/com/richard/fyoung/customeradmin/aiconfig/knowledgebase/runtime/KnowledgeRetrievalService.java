@@ -17,6 +17,7 @@ import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalProvider;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalResult;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalSource;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchResult;
 import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -118,8 +120,10 @@ public class KnowledgeRetrievalService implements KnowledgeRetrievalProvider {
             log.info("[rag] retrieval hit, agentCode={}, targetCount={}, nodeCount={}",
                 agentCode, targets.count(), ranked.size());
             String block = renderBlock(ranked);
-            return complete ? KnowledgeRetrievalResult.completed(block)
-                : KnowledgeRetrievalResult.degraded(block);
+            List<KnowledgeRetrievalSource> sources = IntStream.range(0, ranked.size())
+                .mapToObj(index -> KnowledgeRetrievalSource.from(index + 1, ranked.get(index))).toList();
+            return complete ? KnowledgeRetrievalResult.completed(block, sources)
+                : KnowledgeRetrievalResult.degraded(block, sources);
         } catch (Exception e) {
             log.error("[rag] retrieval failed, errorCode={}, agentCode={}", CODE_RETRIEVAL_FAIL, agentCode, e);
             return KnowledgeRetrievalResult.degraded(null);

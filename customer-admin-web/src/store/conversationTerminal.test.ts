@@ -31,15 +31,30 @@ afterEach(() => vi.useRealTimers())
 
 for (const mode of ['chat', 'vibe'] as const) {
   describe(`${mode} 的权威终态`, () => {
-    it.each(['STOPPED', 'FINAL', 'UNKNOWN'] as const)('重新打开 %s 历史时只依据已记录阶段提供继续入口', async (phase) => {
-      vi.mocked(getChatSessionMessages).mockResolvedValueOnce([{
-        id: 'reply-1', role: 'assistant', text: '已保存的内容', attachments: [],
-        timestamp: '2026-09-11T10:00:00', turnId: 'turn-1', phase,
-      }])
-      const store = mode === 'chat' ? useChatConversationsStore() : useVibeConversationsStore()
-      await store.openSession('terminal-agent', 'history-stopped')
-      expect(store.activeOf('terminal-agent')?.interrupted).toBe(phase === 'STOPPED')
-    })
+    it.each(['STOPPED', 'FINAL', 'UNKNOWN'] as const)(
+      '重新打开 %s 历史时只依据已记录阶段提供继续入口',
+      async (phase) => {
+        vi.mocked(getChatSessionMessages).mockResolvedValueOnce([
+          {
+            id: 'reply-1',
+            role: 'assistant',
+            text: '已保存的内容',
+            attachments: [],
+            timestamp: '2026-09-11T10:00:00',
+            turnId: 'turn-1',
+            phase,
+          },
+        ])
+        const store = mode === 'chat' ? useChatConversationsStore() : useVibeConversationsStore()
+        await store.openSession('terminal-agent', 'history-stopped')
+        expect(store.activeOf('terminal-agent')?.interrupted).toBe(phase === 'STOPPED')
+        expect(store.activeOf('terminal-agent')?.messages[0]).toMatchObject({
+          messageId: 'reply-1',
+          historySaved: true,
+        })
+        expect(store.activeOf('terminal-agent')?.messages[0]?.knowledgeSourcesSaved).toBeUndefined()
+      },
+    )
 
     function start() {
       let handlers!: SseHandlers
@@ -69,6 +84,23 @@ for (const mode of ['chat', 'vibe'] as const) {
       expect(conversation.interrupting).toBe(false)
       expect(conversation.interrupted).toBe(false)
       expect(conversation.input).toBe('  下一条草稿\n')
+      expect(message.messageId).toBeUndefined()
+      expect(message.historySaved).toBeUndefined()
+      expect(message.knowledgeSourcesSaved).toBeUndefined()
+    })
+
+    it.each([
+      { phase: 'FINAL', historySaved: true, knowledgeSourcesSaved: false },
+      { phase: 'STOPPED', historySaved: false, knowledgeSourcesSaved: true },
+      { phase: 'UNKNOWN', historySaved: true, knowledgeSourcesSaved: null },
+    ])('消息与来源留存状态独立于 $phase 传递', (saved) => {
+      const { message, handlers } = start()
+      handlers.onEvent({
+        event: 'terminal',
+        data: JSON.stringify({ ...saved, turnId: 'turn-1', messageId: 'reply-1' }),
+      })
+      handlers.onComplete?.()
+      expect(message).toMatchObject({ ...saved, messageId: 'reply-1' })
     })
 
     it('点击停止后收到正常终态，以后端结果为准，不误显示可继续', () => {
@@ -77,11 +109,18 @@ for (const mode of ['chat', 'vibe'] as const) {
       handlers.onEvent({
         event: 'terminal',
         data: JSON.stringify({
-          turnId: 'turn-1', messageId: 'reply-1', phase: 'FINAL', finishReason: 'MODEL_STOP',
+          turnId: 'turn-1',
+          messageId: 'reply-1',
+          phase: 'FINAL',
+          finishReason: 'MODEL_STOP',
         }),
       })
       handlers.onComplete?.()
-      expect(message).toMatchObject({ phase: 'FINAL', turnId: 'turn-1', finishReason: 'MODEL_STOP' })
+      expect(message).toMatchObject({
+        phase: 'FINAL',
+        turnId: 'turn-1',
+        finishReason: 'MODEL_STOP',
+      })
       expect(message.failed).not.toBe(true)
       expect(conversation.interrupted).toBe(false)
       expect(conversation.interrupting).toBe(false)

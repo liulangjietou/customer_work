@@ -59,10 +59,26 @@ for (const mode of ['chat', 'vibe'] as const) {
       expect(messages).toHaveLength(3)
       expect(messages[1]).toMatchObject({
         text: '订单已发货',
+        messageId: 'final-1',
+        historySaved: true,
         phase: 'FINAL',
         nodes: [{ kind: 'stage_output', text: '先查询订单记录' }],
       })
-      expect(messages[2]).toMatchObject({ text: '旧回复', phase: 'UNKNOWN' })
+      expect(messages[2]).toMatchObject({ text: '旧回复', phase: 'UNKNOWN', messageId: 'legacy-1' })
+      expect(messages[1]?.knowledgeSourcesSaved).toBeUndefined()
+    })
+
+    it('已停止历史合并保留最后一条消息标识，不把过程记录当成来源所属轮次', async () => {
+      const common = { timestamp: '2026-09-11T09:00:00', attachments: [], turnId: 'input-1' }
+      streams.history.mockResolvedValue([
+        { ...common, id: 'process-1', role: 'assistant', text: '正在查询', phase: 'PROCESS' },
+        { ...common, id: 'stopped-1', role: 'assistant', text: '已查询到一部分', phase: 'STOPPED' },
+      ])
+      const store = mode === 'chat' ? useChatConversationsStore() : useVibeConversationsStore()
+      await store.openSession('test-agent', 'history-session')
+      expect(store.activeOf('test-agent')!.messages).toMatchObject([
+        { messageId: 'stopped-1', phase: 'STOPPED', text: '已查询到一部分', historySaved: true },
+      ])
     })
 
     it('保留已展示和帧内待渲染的回答，错误单独展示且不覆盖下一条草稿', () => {

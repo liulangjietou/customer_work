@@ -15,7 +15,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -131,6 +130,8 @@ class KnowledgeInjectionGapRecordingTest {
             RuntimeContext context = RuntimeContext.builder().userId("u1").sessionId("s1").build();
             AgentReplayCapture capture = new AgentReplayCapture();
             AgentReplayCapture.bind(context, capture);
+            KnowledgeRetrievalCapture knowledgeCapture = new KnowledgeRetrievalCapture();
+            KnowledgeRetrievalCapture.bind(context, knowledgeCapture);
             ReasoningInput input = inputWith("如何申请退款");
             for (int i = 0; i < 2; i++) {
                 middleware.onReasoning(null, context, input, injected -> {
@@ -143,6 +144,8 @@ class KnowledgeInjectionGapRecordingTest {
                 }).blockLast(Duration.ofSeconds(5));
             }
             assertEquals(1, retrievals.get(), "同一轮的再次推理应复用已取得的内容");
+            assertEquals(1, knowledgeCapture.snapshot().size());
+            assertEquals(result.status(), knowledgeCapture.snapshot().get(0).status());
             assertEquals(result.status() == KnowledgeRetrievalResult.Status.MISS ? 1 : 0,
                 recorder.questions.size(), result.status().name());
             if (result.status() == KnowledgeRetrievalResult.Status.SKIPPED) {
