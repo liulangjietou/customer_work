@@ -21,6 +21,11 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-12 客户答复信息留存使用客服端 **V27**（消息 JSON 列），后台保持工作区来源批次的 **V106**。
+  下一客服端版本从 **V28**、下一 Admin 版本从 **V107** 核对活动分支与共享库后分配。
+  新库、旧库、完整镜像与 Admin 跨库迁移版本断言须一起同步；本批完整门禁 4,121 项，
+  0 失败、0 错误、7 项外部环境条件跳过。范围见 `docs/admin-experience/customer-answer-evidence-validation.md`。
+
 - 2026-09-11 后台版本原文预览新增 Admin **V105**（独立 source-preview 权限，不隐式授予业务角色）；
   下一 Admin 版本从 **V106** 核对。客服端仍为 **V26**，下一版本 **V27**。
   本批没有新增表，权限和预览契约见 `docs/admin-experience/knowledge-version-preview-validation.md`。

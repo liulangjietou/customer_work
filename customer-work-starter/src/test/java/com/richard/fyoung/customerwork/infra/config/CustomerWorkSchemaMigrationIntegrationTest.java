@@ -52,7 +52,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
-    private static final int CURRENT_SCHEMA_VERSION = 26;
+    private static final int CURRENT_SCHEMA_VERSION = 27;
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
     private static final int CURRENT_BUSINESS_TABLE_COUNT = 50;
@@ -372,6 +372,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private void verifyPreviousMirrorUpgrade(String database) throws Exception {
         try (HikariDataSource dataSource = dataSource(database, "flyway-previous-mirror-test")) {
             populateSchemaMirror(dataSource);
+            execute(dataSource, "ALTER TABLE `cw_chat_message` DROP COLUMN `answer_evidence`");
             execute(dataSource, "DROP TABLE `cw_knowledge_gap_review`");
             execute(dataSource, "ALTER TABLE `cw_knowledge_gap` "
                 + "DROP COLUMN `retrieval_path`, DROP COLUMN `source_agent_code`, DROP COLUMN `source_channel_code`, "
@@ -494,6 +495,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     }
 
     private void assertCurrentAgentSchema(HikariDataSource dataSource) throws Exception {
+        assertTrue(columnExists(dataSource, "cw_chat_message", "answer_evidence"));
         assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
         assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
         assertTrue(columnExists(dataSource, "cw_eval_dataset_version", "content_hash"));

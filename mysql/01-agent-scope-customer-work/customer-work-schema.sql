@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS `cw_chat_message` (
     `sender_id`      VARCHAR(64) COMMENT '发送方标识（可空）',
     `content`        TEXT NOT NULL COMMENT '消息内容',
     `created_at_ms`  BIGINT NOT NULL COMMENT '创建时间戳（毫秒）',
+    `answer_evidence` JSON NULL COMMENT '答复终态、来源线索、任务进度及实际检索引用',
     UNIQUE KEY `uk_chat_message_id` (`message_id`),
     INDEX `idx_chat_session` (`session_id`, `id`),
     INDEX `idx_chat_ticket` (`ticket_id`, `id`),

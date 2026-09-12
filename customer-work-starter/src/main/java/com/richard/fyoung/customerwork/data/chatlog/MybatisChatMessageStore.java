@@ -1,5 +1,7 @@
 package com.richard.fyoung.customerwork.data.chatlog;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.data.chatlog.entity.ChatMessageDO;
 import com.richard.fyoung.customerwork.data.chatlog.mapper.ChatMessageMapper;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
@@ -22,6 +24,7 @@ import java.util.stream.Collectors;
 public class MybatisChatMessageStore implements ChatMessageStore {
 
     private static final Logger log = LoggerFactory.getLogger(MybatisChatMessageStore.class);
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final ChatMessageMapper chatMessageMapper;
 
@@ -94,6 +97,7 @@ public class MybatisChatMessageStore implements ChatMessageStore {
         record.setSenderId(message.senderId());
         record.setContent(message.content());
         record.setCreatedAtMs(message.createdAtMs());
+        record.setAnswerEvidence(encodeEvidence(message.answerEvidence()));
         return record;
     }
 
@@ -106,6 +110,29 @@ public class MybatisChatMessageStore implements ChatMessageStore {
             TicketActorType.valueOf(record.getSenderType()),
             record.getSenderId(),
             record.getContent(),
-            record.getCreatedAtMs() == null ? 0L : record.getCreatedAtMs());
+            record.getCreatedAtMs() == null ? 0L : record.getCreatedAtMs(),
+            decodeEvidence(record.getAnswerEvidence()));
+    }
+
+    private String encodeEvidence(ChatAnswerEvidence evidence) {
+        if (evidence == null) {
+            return null;
+        }
+        try {
+            return JSON.writeValueAsString(evidence);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("Cannot encode chat answer evidence", error);
+        }
+    }
+
+    private ChatAnswerEvidence decodeEvidence(String json) {
+        if (json == null) {
+            return null;
+        }
+        try {
+            return JSON.readValue(json, ChatAnswerEvidence.class);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("Cannot decode chat answer evidence", error);
+        }
     }
 }

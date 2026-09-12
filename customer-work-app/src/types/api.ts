@@ -208,14 +208,12 @@ export interface ChatMessage {
   clientMsgId?: string
   deliveryStatus?: 'SENDING' | 'ACCEPTED' | 'REJECTED' | 'UNKNOWN'
   deliveryError?: string
-  /**
-   * 本条回复引用的知识来源。
-   *
-   * 只有本次会话中实时收到的回复带这个字段——服务端不把引用落进聊天记录，
-   * 因此刷新页面后重新拉取的历史消息没有来源，这是已知缺口而不是数据丢失。
-   */
-  citations?: KnowledgeCitation[]
-  taskPlan?: TaskPlanItem[]
+  /** 助手答复的结束原因，与工单或订单的办理结果无关；旧记录可能未提供。 */
+  finishReason?: string | null
+  /** 答复附带的参考线索；缺失或 null 表示未提供，空数组表示没有线索。 */
+  citations?: KnowledgeCitation[] | null
+  /** 助手记录的计划及进度，不能据此确认业务执行成功。 */
+  taskPlan?: TaskPlanItem[] | null
 }
 
 export interface ReasonPayload {
@@ -276,11 +274,7 @@ export interface WsChatChunk {
   clientMsgId?: string
 }
 
-/**
- * 一条知识引用：这次回答用到了哪一段知识。
- *
- * 兼容旧服务端时整个 citations 字段可能缺失，取值处一律按空数组处理。
- */
+/** 答复附带的知识参考线索，不代表原文已获授权或每条均被模型引用。 */
 export interface KnowledgeCitation {
   knowledgeBase: string
   documentId: string
@@ -288,12 +282,7 @@ export interface KnowledgeCitation {
   score: number | null
 }
 
-/**
- * 任务清单里的一项：智能体本轮要办的一件事及其状态。
- *
- * 多步任务在智能体那边是几轮工具调用，在用户这边是一段沉默的等待——
- * 他不知道办到哪一步，也不知道自己提的第二件事有没有被记住。
- */
+/** 助手计划中的一项；状态由助手记录，实际办理结果以业务记录为准。 */
 export interface TaskPlanItem {
   content: string
   /** pending / in_progress / completed */
@@ -313,9 +302,9 @@ export interface ChatTerminalEnvelope {
     timeSeconds: number
   }
   traceId: string
-  citations?: KnowledgeCitation[]
+  citations?: KnowledgeCitation[] | null
   /** 本轮的任务清单；单步问题或模型未拆解时为空 */
-  taskPlan?: TaskPlanItem[]
+  taskPlan?: TaskPlanItem[] | null
 }
 
 /** 服务端 -> 用户：流式完成，含已落库全文与会话归属。 */

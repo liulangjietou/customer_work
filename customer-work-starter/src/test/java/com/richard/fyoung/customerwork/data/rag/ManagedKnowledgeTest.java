@@ -9,14 +9,17 @@ import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeVersionMap
 import com.richard.fyoung.customerwork.data.knowledge.vector.VectorMatch;
 import com.richard.fyoung.customerwork.data.knowledge.vector.VectorQuery;
 import com.richard.fyoung.customerwork.data.knowledge.vector.VectorStore;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeDocumentReference;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalSource;
 import io.agentscope.core.rag.model.Document;
 import io.agentscope.core.rag.model.RetrieveConfig;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -42,7 +45,7 @@ class ManagedKnowledgeTest {
     private KnowledgeVersionDO version(long id, int dimensions) {
         KnowledgeVersionDO v = new KnowledgeVersionDO();
         v.setKbVersionId(id);
-        v.setKbCode("kb-faq");
+        v.setKbCode("7");
         v.setKbName("售后FAQ");
         v.setTopN(3);
         v.setScoreThreshold(BigDecimal.ZERO);
@@ -53,11 +56,40 @@ class ManagedKnowledgeTest {
     private KnowledgeChunkDO chunk(long id, String content) {
         KnowledgeChunkDO c = new KnowledgeChunkDO();
         c.setId(id);
+        c.setKbVersionId(1L);
+        c.setAclMode("PUBLIC");
         c.setDocRevisionId(10L);
         c.setChunkIndex(0);
         c.setContent(content);
         c.setExternalId("doc-a");
         return c;
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"acl", "version", "partition", "unrequestedPartition"})
+    void materialization_shouldRecheckActualPublicChunkAndMembership(String mismatch) {
+        VectorStore store = mock(VectorStore.class);
+        KnowledgeChunkMapper chunks = mock(KnowledgeChunkMapper.class);
+        KnowledgeVersionMapper versions = mock(KnowledgeVersionMapper.class);
+        KnowledgeChunkDO source = chunk(100L, "不可向客户返回的正文");
+        String partition = "10";
+        switch (mismatch) {
+            case "acl" -> source.setAclMode("PRIVATE");
+            case "version" -> source.setKbVersionId(2L);
+            case "partition" -> source.setDocRevisionId(20L);
+            case "unrequestedPartition" -> {
+                source.setDocRevisionId(20L);
+                partition = "20";
+            }
+            default -> throw new IllegalArgumentException(mismatch);
+        }
+        when(versions.selectList(any())).thenReturn(List.of(version(1L, 4)));
+        when(chunks.selectPublicPartitions(1L)).thenReturn(List.of(10L));
+        when(store.search(any())).thenReturn(List.of(new VectorMatch("100", partition, 0.92)));
+        when(chunks.selectByIds(any())).thenReturn(List.of(source));
+        var documents = new ManagedKnowledge(store, chunks, versions, embedding(4), List.of())
+            .retrieve("退款", RetrieveConfig.builder().build()).block();
+        assertTrue(documents.isEmpty(), "向量索引只是线索，正文必须仍属于本次公开范围：" + mismatch);
     }
 
     private EmbeddingClient embedding(int dimensions) {
@@ -100,6 +132,12 @@ class ManagedKnowledgeTest {
         assertEquals("doc-a", parsed.get(0).documentId());
         assertEquals("100", parsed.get(0).chunkId(), "分片标识要指向 cw_knowledge_chunk 的主键");
         assertEquals(0.92d, parsed.get(0).score(), 1e-6);
+        var source = (KnowledgeRetrievalSource)
+            docs.get(0).getMetadata().getPayloadValue(
+                KnowledgeRetrievalSource.class.getName());
+        assertEquals(new KnowledgeDocumentReference(7L, 1L, 10L, 100L),
+            source.documentReference());
+        assertEquals(1, source.number());
     }
 
     /**

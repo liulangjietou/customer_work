@@ -2,6 +2,7 @@ import { onScopeDispose, reactive, watch, type Ref } from 'vue'
 import { showToast } from 'vant'
 import { fetchMessageReceipt } from '@/api/ticket'
 import type { ChatMessage, WsChatAccepted, WsErrorMessage } from '@/types/api'
+import { mergeChatMessage } from '@/utils/chatMessage'
 import { chatSocket } from '@/utils/ws'
 
 const RECEIPT_TIMEOUT_MS = 15_000
@@ -166,8 +167,8 @@ export function useMessageDelivery(context: DeliveryContext) {
     const current = new Map(context.messages.value.map(message => [message.messageId, message]))
     const combined = new Map<string, ChatMessage>(current)
     for (const message of list) {
-      const previous = current.get(message.messageId)
-      combined.set(message.messageId, { ...message, clientMsgId: previous?.clientMsgId, deliveryStatus: previous?.deliveryStatus })
+      const previous = combined.get(message.messageId)
+      combined.set(message.messageId, mergeChatMessage(previous, message))
     }
     return [...combined.values()].sort((left, right) => left.createdAtMs - right.createdAtMs || left.id - right.id)
   }

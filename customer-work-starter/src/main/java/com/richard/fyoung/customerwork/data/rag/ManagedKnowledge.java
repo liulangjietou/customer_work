@@ -10,22 +10,25 @@ import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeVersionMap
 import com.richard.fyoung.customerwork.data.knowledge.vector.VectorMatch;
 import com.richard.fyoung.customerwork.data.knowledge.vector.VectorQuery;
 import com.richard.fyoung.customerwork.data.knowledge.vector.VectorStore;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeDocumentReference;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalSource;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.rag.Knowledge;
 import io.agentscope.core.rag.model.Document;
 import io.agentscope.core.rag.model.DocumentMetadata;
 import io.agentscope.core.rag.model.RetrieveConfig;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
-
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 受管知识库：让客服端真正用上后台维护的那套企业知识库。
@@ -134,11 +137,13 @@ public class ManagedKnowledge implements Knowledge {
         double threshold = resolveThreshold(version, config);
         int topN = version.getTopN() != null && version.getTopN() > 0
             ? Math.max(version.getTopN(), limit) : limit;
+        List<String> allowedPartitions = partitions.stream().map(String::valueOf).toList();
         List<VectorMatch> matches = vectorStore.search(new VectorQuery(
             String.valueOf(version.getKbVersionId()),
-            partitions.stream().map(String::valueOf).toList(),
+            allowedPartitions,
             queryVector, topN, threshold));
-        return matches.stream().map(m -> new Scored(version, m, m.score())).toList();
+        return matches.stream().filter(match -> allowedPartitions.contains(match.partition()))
+            .map(m -> new Scored(version, m, m.score())).toList();
     }
 
     /** 版本自带阈值与调用方传入的阈值取较严格的一个：两者都是"不要低质量召回"的表达。 */
@@ -160,7 +165,10 @@ public class ManagedKnowledge implements Knowledge {
         List<Document> documents = new ArrayList<>(top.size());
         for (Scored scored : top) {
             KnowledgeChunkDO chunk = byId.get(Long.valueOf(scored.match().chunkId()));
-            if (chunk == null) {
+            // 向量索引不授予正文权限；检索期间撤权或索引串版时，不把旧命中送给模型。
+            if (chunk == null || !"PUBLIC".equals(chunk.getAclMode())
+                || !Objects.equals(chunk.getKbVersionId(), scored.version().getKbVersionId())
+                || !Objects.equals(String.valueOf(chunk.getDocRevisionId()), scored.match().partition())) {
                 continue;
             }
             String docId = chunk.getExternalId() != null && !chunk.getExternalId().isBlank()
@@ -175,12 +183,26 @@ public class ManagedKnowledge implements Knowledge {
                 String.valueOf(chunk.getId()),
                 Map.of("knowledgeBase", scored.version().getKbName(),
                     "kbCode", scored.version().getKbCode(),
-                    "chunkIndex", chunk.getChunkIndex()));
+                    "chunkIndex", chunk.getChunkIndex(),
+                    KnowledgeRetrievalSource.class.getName(), new KnowledgeRetrievalSource(documents.size() + 1,
+                        scored.version().getKbName(), docId, String.valueOf(chunk.getId()),
+                        BigDecimal.valueOf(scored.score()), reference(scored.version(), chunk))));
             Document document = new Document(metadata);
             document.setScore(scored.score());
             documents.add(document);
         }
         return List.copyOf(documents);
+    }
+
+    private KnowledgeDocumentReference reference(KnowledgeVersionDO version, KnowledgeChunkDO chunk) {
+        try {
+            // 后台投影的 kbCode 是知识库主键；旧的手工外部编码仍保留线索，但不能生成内部预览引用。
+            var reference = new KnowledgeDocumentReference(Long.valueOf(version.getKbCode()), version.getKbVersionId(),
+                chunk.getDocRevisionId(), chunk.getId());
+            return reference.complete() ? reference : null;
+        } catch (NumberFormatException legacyCode) {
+            return null;
+        }
     }
 
     /** 解析本租户可用的知识库版本；配置了编码则只取这些，否则取该租户全部已投影版本。 */

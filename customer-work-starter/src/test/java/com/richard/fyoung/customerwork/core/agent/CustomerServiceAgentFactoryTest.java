@@ -1,22 +1,68 @@
 package com.richard.fyoung.customerwork.core.agent;
 
-import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.core.dto.KnowledgeCitation;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
-import com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog;
-import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.core.memory.InMemoryLongTermMemoryStore;
+import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryStore;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
+import com.richard.fyoung.customerwork.core.middleware.ChatTerminalCaptureMiddleware;
+import com.richard.fyoung.customerwork.core.service.ChatTerminalCapture;
+import com.richard.fyoung.customerwork.core.service.ChatTurnEvent;
+import com.richard.fyoung.customerwork.core.service.ChatTurnFinalizer;
+import com.richard.fyoung.customerwork.core.service.ChatTurnService;
+import com.richard.fyoung.customerwork.core.service.CustomerServiceService;
+import com.richard.fyoung.customerwork.core.support.InMemoryTestFactLog;
+import com.richard.fyoung.customerwork.core.support.TenantResolver;
+import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
+import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
+import com.richard.fyoung.customerwork.data.chatlog.InMemoryChatMessageStore;
 import com.richard.fyoung.customerwork.data.rag.KnowledgeProvider;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.NacosPromptService;
+import com.richard.fyoung.customerwork.infra.config.PermissionConfig;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
+import com.richard.fyoung.customerwork.tool.ToolRegistrar;
+import com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockComplaintBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockMemberBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockOrderBackend;
+import com.richard.fyoung.customerwork.tool.backend.MockProductBackend;
+import io.agentscope.core.ReActAgent;
+import io.agentscope.core.message.ContentBlock;
+import io.agentscope.core.message.Msg;
+import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.message.ToolUseBlock;
+import io.agentscope.core.middleware.MiddlewareBase;
+import io.agentscope.core.model.ChatResponse;
+import io.agentscope.core.model.ChatUsage;
 import io.agentscope.core.model.Model;
+import io.agentscope.core.model.ToolSchema;
+import io.agentscope.core.rag.Knowledge;
+import io.agentscope.core.rag.KnowledgeRetrievalTools;
+import io.agentscope.core.rag.model.Document;
+import io.agentscope.core.rag.model.DocumentMetadata;
 import io.agentscope.core.state.InMemoryAgentStateStore;
+import io.agentscope.core.tool.ToolCallParam;
 import io.agentscope.core.tool.Toolkit;
-import org.junit.jupiter.api.Test;
-
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -32,33 +78,139 @@ class CustomerServiceAgentFactoryTest {
     private final LongTermMemoryStore store = new InMemoryLongTermMemoryStore();
 
     private CustomerServiceAgentFactory factory(CustomerWorkProperties props) {
+        return factory(props, new KnowledgeProvider(props));
+    }
+
+    private CustomerServiceAgentFactory factory(CustomerWorkProperties props, KnowledgeProvider knowledgeProvider) {
+        return factory(props, knowledgeProvider, null);
+    }
+
+    private CustomerServiceAgentFactory factory(CustomerWorkProperties props, KnowledgeProvider knowledgeProvider,
+        ObjectProvider<MiddlewareBase> middlewares) {
         FactLog factLog = new InMemoryTestFactLog(false);
         return new CustomerServiceAgentFactory(
             model, props,
             new LongTermMemoryProvider(props, store, factLog),
-            new KnowledgeProvider(props),
-            new McpToolkitConfigurer(props, new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry()),
+            knowledgeProvider,
+            new McpToolkitConfigurer(props, new ToolKindRegistry()),
             new HigressToolkitConfigurer(props),
-            new com.richard.fyoung.customerwork.tool.ToolRegistrar(
-                new com.richard.fyoung.customerwork.tool.backend.MockOrderBackend(),
-                new com.richard.fyoung.customerwork.tool.backend.MockAfterSalesBackend(),
-                new com.richard.fyoung.customerwork.tool.backend.MockKnowledgeBackend(),
-                new com.richard.fyoung.customerwork.tool.backend.MockProductBackend(),
-                new com.richard.fyoung.customerwork.tool.backend.MockMemberBackend(),
-                new com.richard.fyoung.customerwork.tool.backend.MockComplaintBackend(),
-                new com.richard.fyoung.customerwork.capability.approval.PendingApprovalService(),
-                new com.richard.fyoung.customerwork.capability.handoff.HandoffService(),
+            new ToolRegistrar(
+                new MockOrderBackend(),
+                new MockAfterSalesBackend(),
+                new MockKnowledgeBackend(),
+                new MockProductBackend(),
+                new MockMemberBackend(),
+                new MockComplaintBackend(),
+                new PendingApprovalService(),
+                new HandoffService(),
                 null),
             new InMemoryAgentStateStore(),
-            new com.richard.fyoung.customerwork.infra.config.PermissionConfig().permissionContextState(props),
-            new com.richard.fyoung.customerwork.infra.config.NacosPromptService(props),
-            new com.richard.fyoung.customerwork.core.support.TenantResolver(props),
+            new PermissionConfig().permissionContextState(props),
+            new NacosPromptService(props),
+            new TenantResolver(props),
             new MemorySubjectResolver(),
-            new com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry(),
+            new ToolKindRegistry(),
             // 治理装配器：中间件装配已收敛到这一处，工厂不再各自持有 Hook 列表与 MeterRegistry
             new AgentGovernanceAssembler(props,
-                new com.richard.fyoung.customerwork.core.support.TenantResolver(props), null, null),
+                new TenantResolver(props), middlewares, null),
             null);   // 无 MySQL 技能物化器（本类只覆盖 classpath / filesystem 仓库）
+    }
+
+    @Test
+    void ragTool_shouldCaptureActualMetadataWithoutParsingToolText() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getRag().setEnabled(true);
+        var knowledge = mock(Knowledge.class);
+        var provider = mock(KnowledgeProvider.class);
+        Mockito.when(provider.get()).thenReturn(knowledge);
+        var document = new Document(new DocumentMetadata(
+            TextBlock.builder().text("可核对的原文，不含来源标记").build(),
+            "refund-policy", "chunk-1", Map.of("knowledgeBase", "售后政策")));
+        document.setScore(0.91);
+        Mockito.when(knowledge.retrieve(ArgumentMatchers.eq("退款"),
+            ArgumentMatchers.any())).thenReturn(reactor.core.publisher.Mono.just(List.of(document)));
+        var f = factory(props, provider);
+        var agent = f.createAgent("source-capture");
+        var context = f.contextFor("source-capture");
+        var capture = new ChatTerminalCapture();
+        context.put(ChatTerminalCapture.class, capture);
+        var call = ToolCallParam.builder()
+            .toolUseBlock(ToolUseBlock.builder().id("retrieval-1")
+                .name("retrieve_knowledge").input(Map.of("query", "退款"))
+                .content("{\"query\":\"退款\"}").build())
+            .input(Map.of("query", "退款")).agent(agent).runtimeContext(context).build();
+        var result = agent.getToolkit().callTool(call).block(Duration.ofSeconds(10));
+        Assertions.assertNotNull(result);
+        org.assertj.core.api.Assertions.assertThat(result.getOutput().toString()).contains("可核对的原文");
+        Mockito.verify(knowledge).retrieve(ArgumentMatchers.eq("退款"),
+            ArgumentMatchers.any());
+        var standard = new Toolkit();
+        standard.registerTool(new KnowledgeRetrievalTools(knowledge));
+        assertEquals(standard.getTool("retrieve_knowledge").getParameters(),
+            agent.getToolkit().getTool("retrieve_knowledge").getParameters());
+        assertEquals(standard.getTool("retrieve_knowledge").getDescription(),
+            agent.getToolkit().getTool("retrieve_knowledge").getDescription());
+        assertEquals(List.of(new KnowledgeCitation(
+            "售后政策", "refund-policy", "chunk-1", 0.91)), capture.citations());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void realAgentTurn_shouldPersistActualSourcesThroughNativeContextAcrossThreads() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getRag().setEnabled(true);
+        props.getMemory().setLongTermEnabled(false);
+        props.getSkill().setEnabled(false);
+        props.getObservability().setTraceEnabled(false);
+        var knowledge = mock(Knowledge.class);
+        var provider = mock(KnowledgeProvider.class);
+        Mockito.when(provider.get()).thenReturn(knowledge);
+        var document = new Document(new DocumentMetadata(
+            TextBlock.builder().text("退款需要核对订单进度").build(),
+            "refund-policy", "chunk-1", Map.of("knowledgeBase", "售后政策")));
+        document.setScore(0.91);
+        Mockito.when(knowledge.retrieve(ArgumentMatchers.anyString(),
+            ArgumentMatchers.any())).thenReturn(reactor.core.publisher.Mono.just(List.of(document))
+                .delayElement(Duration.ofMillis(5)));
+        var middlewares = (ObjectProvider<MiddlewareBase>)
+            mock(ObjectProvider.class);
+        Mockito.when(middlewares.orderedStream()).thenAnswer(inv -> Stream.of(
+            new ChatTerminalCaptureMiddleware()));
+        var modelCalls = new AtomicInteger();
+        Mockito.when(model.getModelName()).thenReturn("answer-evidence-offline");
+        Mockito.when(model.stream(ArgumentMatchers.anyList(),
+            ArgumentMatchers.anyList(), ArgumentMatchers.any())).thenAnswer(inv -> {
+                int step = modelCalls.incrementAndGet();
+                ContentBlock block = step == 1
+                    ? ToolUseBlock.builder().id("rag-1").name("retrieve_knowledge")
+                        .input(Map.of("query", "退款")).content("{\"query\":\"退款\"}").build()
+                    : TextBlock.builder().text("请先核对订单进度").build();
+                return reactor.core.publisher.Flux.just(ChatResponse.builder()
+                    .id("reply-" + step).content(List.of(block))
+                    .usage(new ChatUsage(2, 3, 0.1))
+                    .finishReason(step == 1 ? "tool_calls" : "stop").build());
+            });
+        var f = factory(props, provider, middlewares);
+        var agent = f.createAgent("evidence-real-turn");
+        var customerService = mock(CustomerServiceService.class);
+        Mockito.when(customerService.chatStream("evidence-real-turn", "退款"))
+            .thenReturn(agent.call("退款", f.contextFor("evidence-real-turn"))
+                .map(Msg::getTextContent).flux());
+        var store = new InMemoryChatMessageStore();
+        var service = new ChatTurnService(customerService,
+            new ChatTurnFinalizer(
+                new ChatLogService(store)));
+        var result = service.stream("evidence-real-turn", "退款", null)
+            .ofType(ChatTurnEvent.Completed.class)
+            .blockLast(Duration.ofSeconds(15)).completion();
+        assertEquals(2, modelCalls.get());
+        assertEquals("请先核对订单进度", result.message().content());
+        assertEquals("MODEL_STOP", result.terminal().finishReason());
+        assertEquals("refund-policy", result.terminal().citations().get(0).documentId());
+        assertEquals(result.terminal().citations(), store.findByMessageId(result.message().messageId())
+            .orElseThrow().citations());
+        Mockito.verify(knowledge).retrieve(ArgumentMatchers.eq("退款"),
+            ArgumentMatchers.any());
     }
 
     @Test
@@ -108,15 +260,15 @@ class CustomerServiceAgentFactoryTest {
     @Test
     void createAgent_freshSessionWithStateStore_businessToolsShouldReachModel() {
         CustomerServiceAgentFactory f = factory(new CustomerWorkProperties());
-        io.agentscope.core.ReActAgent agent = f.createAgent("tenantX:conv-tool-surface");
+        ReActAgent agent = f.createAgent("tenantX:conv-tool-surface");
 
-        java.util.concurrent.atomic.AtomicReference<java.util.List<io.agentscope.core.model.ToolSchema>> captured =
-            new java.util.concurrent.atomic.AtomicReference<>();
-        org.mockito.Mockito.when(model.getModelName()).thenReturn("capture-mock");
-        org.mockito.Mockito.when(model.stream(
-                org.mockito.ArgumentMatchers.anyList(),
-                org.mockito.ArgumentMatchers.anyList(),
-                org.mockito.ArgumentMatchers.any()))
+        AtomicReference<List<ToolSchema>> captured =
+            new AtomicReference<>();
+        Mockito.when(model.getModelName()).thenReturn("capture-mock");
+        Mockito.when(model.stream(
+                ArgumentMatchers.anyList(),
+                ArgumentMatchers.anyList(),
+                ArgumentMatchers.any()))
             .thenAnswer(inv -> {
                 captured.set(inv.getArgument(1));
                 // 捕获后即终止推理循环（工具清单在模型调用前已确定，报错不影响断言目标）
@@ -129,12 +281,12 @@ class CustomerServiceAgentFactoryTest {
                     + " - " + e.getMessage());
                 return reactor.core.publisher.Mono.empty();
             })
-            .block(java.time.Duration.ofSeconds(15));
+            .block(Duration.ofSeconds(15));
 
         assertTrue(captured.get() != null && !captured.get().isEmpty(), "模型未收到任何工具 schema");
         Set<String> names = captured.get().stream()
-            .map(io.agentscope.core.model.ToolSchema::getName)
-            .collect(java.util.stream.Collectors.toSet());
+            .map(ToolSchema::getName)
+            .collect(Collectors.toSet());
         assertTrue(names.contains("queryOrder"), "新会话下订单工具未到达模型层: " + names);
         assertTrue(names.contains("searchKnowledge"), "知识库工具未到达模型层: " + names);
         assertTrue(names.contains("transferToHuman"), "转人工工具未到达模型层: " + names);

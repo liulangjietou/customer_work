@@ -48,6 +48,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String KNOWLEDGE_CHUNK_MIRROR_VERSION = "24";
     private static final String KNOWLEDGE_GAP_REVIEW_MIRROR_VERSION = "25";
     private static final String KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION = "26";
+    private static final String CHAT_ANSWER_EVIDENCE_MIRROR_VERSION = "27";
 
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
@@ -252,9 +253,12 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             if (!knowledgeGapReviewMirror) {
                 return KNOWLEDGE_CHUNK_MIRROR_VERSION;
             }
-            return columnExists(connection, "cw_knowledge_gap_review", "created_at")
-                    && columnExists(connection, "cw_knowledge_gap_review", "updated_at")
-                ? KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION : KNOWLEDGE_GAP_REVIEW_MIRROR_VERSION;
+            if (!columnExists(connection, "cw_knowledge_gap_review", "created_at")
+                    || !columnExists(connection, "cw_knowledge_gap_review", "updated_at")) {
+                return KNOWLEDGE_GAP_REVIEW_MIRROR_VERSION;
+            }
+            return columnExists(connection, "cw_chat_message", "answer_evidence")
+                ? CHAT_ANSWER_EVIDENCE_MIRROR_VERSION : KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION;
         }
     }
 
