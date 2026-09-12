@@ -30,9 +30,18 @@ public class ChatTerminalCaptureMiddleware implements MiddlewareBase {
             if (capture == null) {
                 return next.apply(input);
             }
-            return next.apply(input)
+            ChatTerminalCapture previous = ctx == null ? null : ctx.get(ChatTerminalCapture.class);
+            if (ctx != null) {
+                ctx.put(ChatTerminalCapture.class, capture);
+            }
+            return Flux.defer(() -> next.apply(input))
                 .doOnNext(capture::accept)
-                .doOnError(error -> capture.markError());
+                .doOnError(error -> capture.markError())
+                .doFinally(signal -> {
+                    if (ctx != null && ctx.get(ChatTerminalCapture.class) == capture) {
+                        ctx.put(ChatTerminalCapture.class, previous);
+                    }
+                });
         });
     }
 

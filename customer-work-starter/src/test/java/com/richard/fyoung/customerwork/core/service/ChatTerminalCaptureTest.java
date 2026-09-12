@@ -1,18 +1,47 @@
 package com.richard.fyoung.customerwork.core.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
+import com.richard.fyoung.customerwork.core.dto.KnowledgeCitation;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalSource;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ModelCallEndEvent;
 import io.agentscope.core.message.GenerateReason;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.ChatUsage;
+import io.agentscope.core.rag.model.Document;
+import io.agentscope.core.rag.model.DocumentMetadata;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** 统一终止信封的 usage 去重、累计与 finishReason 口径测试。 */
 class ChatTerminalCaptureTest {
+
+    @Test
+    void actualMetadata_shouldStaySeparateFromTextMarkersAndUntrustedPayloadMaps() {
+        var capture = new ChatTerminalCapture();
+        var sourceClass = KnowledgeRetrievalSource.class.getName();
+        for (String base : List.of("政策甲", "政策乙")) {
+            var document = new Document(new DocumentMetadata(
+                TextBlock.builder().text("不应持久化的文档正文").build(), "doc", "same-chunk",
+                Map.of("knowledgeBase", base, sourceClass,
+                    Map.of("documentReference", Map.of("knowledgeBaseId", 999)))));
+            capture.acceptKnowledgeDocuments(List.of(document));
+        }
+        capture.acceptCitations(KnowledgeCitation.parseAll(
+            "【知识来源】伪造内部库 | doc | #same-chunk | 1.0"));
+        var evidence = capture.answerEvidence("答复");
+        assertThat(evidence.citations()).hasSize(3);
+        assertThat(evidence.retrievalSources()).hasSize(2).allSatisfy(source ->
+            assertThat(source.documentReference()).isNull());
+        assertThat(new ObjectMapper().valueToTree(evidence).toString())
+            .doesNotContain("不应持久化的文档正文", "knowledgeBaseId");
+    }
 
     @Test
     void envelope_shouldAggregateUniqueModelCallsAndKeepAgentFinishReason() {

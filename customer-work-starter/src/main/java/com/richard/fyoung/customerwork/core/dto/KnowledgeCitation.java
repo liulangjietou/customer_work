@@ -16,19 +16,10 @@ import java.util.List;
  * <p>不含正文：引用是溯源线索而不是内容副本，正文在知识库里有权威版本，
  * 复制一份到响应里既撑大报文，又会在知识更新后变成对不上的旧内容。</p>
  *
- * <h3>为什么用文本标记而不是上下文传播</h3>
- * <p>C 端走 {@code RAGMode.AGENTIC}，检索由模型发起为一次<b>工具调用</b>，框架的
- * {@code KnowledgeRetrievalTools#retrieveKnowledge} 用 {@code Mono.block()} 调
- * {@code Knowledge#retrieve}——{@code block()} 开的是新订阅，<b>Reactor Context 是空的</b>。
- * 因此在检索实现里读 {@code ChatTerminalCapture} 恒为 null，而用 {@code StepVerifier}
- * 手工塞 context 去测反倒会绿。ThreadLocal 那条路同样不成立：它要靠 Reactor 自动传播
- * 才能跨过工具执行的线程边界，而那套机制绑在多租户开关上，单租户部署会静默失效。</p>
- *
- * <p>于是改为：检索侧把来源写成正文首行的标记（{@link #marker()}），中间件在
- * {@code onReasoning} 从 {@code ToolResultBlock} 里解析回来（{@link #parseAll(String)}）——
- * 那已经回到 Agent 主链，与部署形态无关。标记刻意做成自然中文而非隐晦符号：
- * 它同时是给模型看的出处说明，模型据此能在回答里主动标注来源；即使被原样复述，
- * 用户看到的也是一句通顺的来源说明，而不是一串乱码。</p>
+ * <p>实际 RAG 元数据由 KnowledgeSourceTrackingTools 在框架格式化前采集，采集器通过本轮
+ * RuntimeContext 显式传递，避免内置工具的阻塞订阅丢失 Reactor Context。
+ * 文本标记保留给模型说明出处及兼容旧工具；解析结果仅是线索，不构造内部文档引用，
+ * 也不能作为原文访问的授权依据。</p>
  *
  * @author owlzhangfq@gmail.com
  */
