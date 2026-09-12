@@ -1,19 +1,20 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessagePhase;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalCapture;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalResult;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.GenerateReason;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.state.AgentState;
 import io.agentscope.core.state.AgentStateStore;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
-
-import java.util.List;
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -77,6 +78,64 @@ class ChatCompletionVerifierTest {
     void verify_shouldNotGuessFinalWhenNoRootResultExists() {
         assertEquals(ChatMessagePhase.UNKNOWN, verifier.verify(context, input.getId(), null).phase());
         verifyNoInteractions(store);
+    }
+
+    @Test
+    void persistedReplyShouldNotImplyItsCapturedSourcesWerePersisted() {
+        KnowledgeRetrievalCapture capture = new KnowledgeRetrievalCapture();
+        capture.record("refund", KnowledgeRetrievalResult.completed(null));
+        KnowledgeRetrievalCapture.bind(context, capture);
+        Msg result = result(GenerateReason.MODEL_STOP);
+        saved(input, result);
+
+        var terminal = verifier.verify(context, input.getId(), result);
+        var json = new ObjectMapper().valueToTree(terminal);
+
+        assertTrue(terminal.historySaved());
+        assertTrue(json.has("knowledgeSourcesSaved"), "消息保存与来源保存需要分别确认");
+        assertFalse(json.get("knowledgeSourcesSaved").asBoolean(), "本测试未接入来源存储，不能声明已保存");
+    }
+
+    @Test
+    void sourcesAreWrittenOnlyAfterTheExactReplyWasReadBack() {
+        KnowledgeRetrievalCapture.bind(context, new KnowledgeRetrievalCapture());
+        var sources = mock(ChatKnowledgeSourcesService.class);
+        var verifierWithSources = new ChatCompletionVerifier(store, sources);
+        Msg result = result(GenerateReason.MODEL_STOP);
+        saved(input, result);
+        when(sources.saveConfirmed(context, input.getId(), result.getId())).thenReturn(true);
+        var terminal = verifierWithSources.verify(context, input.getId(), result);
+        assertTrue(terminal.knowledgeSourcesSaved());
+        assertTrue(terminal.historySaved());
+        var order = inOrder(store, sources);
+        order.verify(store).get(USER_ID, SESSION_ID, "agent_state", AgentState.class);
+        order.verify(sources).saveConfirmed(context, input.getId(), result.getId());
+        assertTrue(terminal.withArtifactsSaved(false).knowledgeSourcesSaved(), "产物状态不能清除来源状态");
+    }
+
+    @Test
+    void aSourceWriteFailureKeepsTheSavedAnswerAndItsOriginalPhase() {
+        KnowledgeRetrievalCapture.bind(context, new KnowledgeRetrievalCapture());
+        var sources = mock(ChatKnowledgeSourcesService.class);
+        Msg result = result(GenerateReason.INTERRUPTED);
+        saved(input, result);
+        when(sources.saveConfirmed(context, input.getId(), result.getId()))
+            .thenThrow(new IllegalStateException("private connection information"));
+        var terminal = new ChatCompletionVerifier(store, sources).verify(context, input.getId(), result);
+        assertTrue(terminal.historySaved());
+        assertFalse(terminal.knowledgeSourcesSaved());
+        assertEquals(ChatMessagePhase.STOPPED, terminal.phase());
+        assertNull(terminal.error());
+    }
+
+    @Test
+    void unverifiedHistoryNeverWritesCapturedSources() {
+        KnowledgeRetrievalCapture.bind(context, new KnowledgeRetrievalCapture());
+        var sources = mock(ChatKnowledgeSourcesService.class);
+        Msg result = result(GenerateReason.MODEL_STOP);
+        saved(Msg.builder().id("different-turn").role(MsgRole.USER).textContent("另一轮").build(), result);
+        assertFalse(new ChatCompletionVerifier(store, sources).verify(context, input.getId(), result).historySaved());
+        verifyNoInteractions(sources);
     }
 
     private void assertUnknown(Msg result) {

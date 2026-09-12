@@ -1,27 +1,36 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
-import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
-import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatTerminal;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
+import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
+import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionMode;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
-import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService.PlanChannel;
+import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
 import com.richard.fyoung.customerwork.core.model.routing.ModelRouteHint;
 import com.richard.fyoung.customerwork.core.model.routing.ModelRoutingContext;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalCapture;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
+import com.richard.fyoung.customerwork.infra.lock.InMemorySessionLock;
+import com.richard.fyoung.customerwork.infra.lock.SessionLock;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordFilter;
+import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStreamGuard;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
-import com.richard.fyoung.customerwork.infra.lock.InMemorySessionLock;
-import com.richard.fyoung.customerwork.infra.lock.SessionLock;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.Agent;
@@ -41,20 +50,6 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.ChatUsage;
 import io.agentscope.harness.agent.HarnessAgent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.util.CollectionUtils;
-import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
-import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordFilter;
-import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStreamGuard;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.util.StringUtils;
-import reactor.core.publisher.Flux;
-import reactor.core.scheduler.Schedulers;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,9 +57,16 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatTerminal;
 import java.util.function.Consumer;
-import com.richard.fyoung.customerwork.infra.config.properties.SensitiveWordProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 工作区对话服务：从 {@link AgentInstanceCache} 取（或惰性构建）智能体实例，流式对话。
@@ -317,6 +319,10 @@ public class ChatService {
                                               Consumer<ChatUsage> usageTotalObserver, ModelRouteHint routeHint) {
         Agent agent = agentInstanceCache.getOrBuild(agentCode);
         RuntimeContext ctx = agentInstanceFactory.contextFor(agentCode, sessionId);
+        AgentInvocationIdentity identity = ctx.get(AgentInvocationIdentity.class);
+        if (identity != null && identity.authenticated() && identity.subjectType() == QuotaSubjectType.ADMIN_USER) {
+            KnowledgeRetrievalCapture.bind(ctx, new KnowledgeRetrievalCapture());
+        }
         AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
         Path memoryWorkspace = workspaceManager.resolveWorkspace(memoryScope);
         // 在 Tomcat 线程上把限流主体取下来：下面整条链会切到 Reactor 线程，ThreadLocal 到不了那边，

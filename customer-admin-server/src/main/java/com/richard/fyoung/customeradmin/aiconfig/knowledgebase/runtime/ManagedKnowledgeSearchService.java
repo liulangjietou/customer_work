@@ -12,13 +12,9 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledg
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentRevisionMapper;
 import com.richard.fyoung.customerwork.data.knowledge.VectorMath;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeDocumentReference;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
 import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
-
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Comparator;
@@ -27,6 +23,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 
 /** 对不可变知识库版本执行本地向量检索，并在读取正文前实施文档 ACL。 */
 @Component
@@ -100,7 +100,9 @@ public class ManagedKnowledgeSearchService {
                 AiKnowledgeBaseVersionDocument member = memberByRevision
                     .get(scored.chunk().getDocumentRevisionId());
                 return new KnowledgeNode(knowledgeBaseName, scored.chunk().getContent(), scored.score(),
-                    member.getExternalId(), String.valueOf(scored.chunk().getId()));
+                    member.getExternalId(), String.valueOf(scored.chunk().getId()),
+                    new KnowledgeDocumentReference(version.getKnowledgeBaseId(), version.getId(),
+                        scored.chunk().getDocumentRevisionId(), scored.chunk().getId()));
             })
             .toList();
     }

@@ -12,5 +12,11 @@ import java.math.BigDecimal;
  * @param chunkId 分块 ID
  * @author owlzhangfq@gmail.com
  */
-public record KnowledgeNode(String kbName, String content, BigDecimal score, String docId, String chunkId) {
+public record KnowledgeNode(String kbName, String content, BigDecimal score, String docId, String chunkId,
+                            KnowledgeDocumentReference documentReference) {
+
+    /** 外部服务和旧调用方只有文本定位线索，不能据此伪造托管版本成员。 */
+    public KnowledgeNode(String kbName, String content, BigDecimal score, String docId, String chunkId) {
+        this(kbName, content, score, docId, chunkId, null);
+    }
 }

@@ -7,6 +7,8 @@ export interface HistoryMessage {
   text: string
   nodes: TraceNode[]
   turnId?: string | null
+  messageId: string
+  historySaved: boolean
   phase: ChatMessagePhase
   finishReason?: string | null
   attachments?: MessageAttachmentVM[]
@@ -32,10 +34,13 @@ export function presentChatHistory(history: ChatMessageVO[]): HistoryMessage[] {
           text: '',
           nodes: [],
           turnId: message.turnId,
+          messageId: message.id,
+          historySaved: true,
           phase,
         }
     if (!canJoinProcess) messages.push(target)
     target.phase = phase
+    target.messageId = message.id
     target.finishReason = message.finishReason
     if (phase === 'PROCESS') {
       target.nodes.push({ kind: 'stage_output', text: message.text })
