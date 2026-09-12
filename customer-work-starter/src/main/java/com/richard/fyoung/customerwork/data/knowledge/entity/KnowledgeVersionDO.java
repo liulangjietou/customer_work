@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.data.knowledge.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.richard.fyoung.customerwork.data.knowledge.KnowledgeProjectionStatus;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -26,6 +27,11 @@ public class KnowledgeVersionDO {
     private String kbCode;
 
     private String kbName;
+
+    /** 客户访问授权核对未完成、失败或已撤权时均不可读。 */
+    private KnowledgeProjectionStatus accessStatus;
+
+    private Integer versionNo;
 
     private Integer topN;
 

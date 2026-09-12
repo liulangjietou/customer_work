@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.data.rag;
 
 import com.richard.fyoung.customerwork.core.service.ChatTerminalCapture;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.rag.Knowledge;
@@ -48,6 +50,10 @@ public final class KnowledgeSourceTrackingTools {
                 return knowledge.retrieve(text, config).doOnNext(capture::acceptKnowledgeDocuments);
             }
         };
-        return new KnowledgeRetrievalTools(source).retrieveKnowledge(query, limit, agent, context);
+        // 原生调用快照跨越模型与工具调度；不得把执行线程残留的租户当成本轮身份。
+        AgentInvocationIdentity identity = context == null ? null : context.get(AgentInvocationIdentity.class);
+        String tenantId = identity == null ? TenantContext.get() : identity.tenantId();
+        return TenantContext.callWith(tenantId,
+            () -> new KnowledgeRetrievalTools(source).retrieveKnowledge(query, limit, agent, context));
     }
 }

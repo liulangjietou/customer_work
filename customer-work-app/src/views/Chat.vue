@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { AxiosError } from 'axios'
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { UploaderAfterRead, UploaderBeforeRead, UploaderFileListItem } from 'vant'
 import CsatSurveyCard from '@/components/CsatSurveyCard.vue'
+import CustomerAnswerSourcesPanel from '@/components/CustomerAnswerSourcesPanel.vue'
 import { useMessageDelivery } from '@/composables/useMessageDelivery'
 import {
   closeTicket,
@@ -53,6 +54,21 @@ const sessionId = ref('')
 const ticketId = ref<string | null>(null)
 const ticket = ref<Ticket | null>(null)
 const messages = ref<ChatMessage[]>([])
+const sourcesOpen = ref(false)
+const sourceMessageId = ref('')
+const sourceTrigger = shallowRef<HTMLElement | null>(null)
+
+function openAnswerSources(message: ChatMessage, event: MouseEvent) {
+  sourceMessageId.value = message.messageId
+  sourceTrigger.value = event.currentTarget as HTMLElement
+  sourcesOpen.value = true
+}
+
+watch(
+  () => [sessionId.value, ticketId.value, auth.token, route.fullPath],
+  () => { sourcesOpen.value = false },
+  { flush: 'sync' },
+)
 const inputContent = ref('')
 const wsConnected = ref(false)
 const wsReconnecting = ref(false)
@@ -897,7 +913,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="chat-page">
+  <div class="chat-page" :inert="sourcesOpen" :aria-hidden="sourcesOpen ? 'true' : undefined">
     <van-nav-bar title="智能客服" left-arrow safe-area-inset-top @click-left="router.back()">
       <template #right>
         <button class="nav-action" type="button" aria-label="会话管理" @click="openSessionMenu">
@@ -1047,6 +1063,14 @@ onUnmounted(() => {
                   <dd>{{ citation.chunkId }}</dd>
                 </dl>
               </details>
+              <button
+                v-if="message.senderType === 'BOT' && message.citations?.length && message.messageId"
+                type="button"
+                class="answer-sources-entry"
+                aria-haspopup="dialog"
+                :aria-expanded="sourcesOpen && sourceMessageId === message.messageId"
+                @click="openAnswerSources(message, $event)"
+              >查看参考资料</button>
               <div
                 v-if="message.senderType === 'BOT'"
                 class="feedback-actions"
@@ -1209,6 +1233,13 @@ onUnmounted(() => {
     <!-- 会话结束后弹满意度评分：组件内部会先查"有没有待评价的邀请"，
          没被邀请或已评过都不会弹，不会重复打扰 -->
     <CsatSurveyCard :session-id="sessionId" :session-ended="ended" />
+    <CustomerAnswerSourcesPanel
+      v-model:open="sourcesOpen"
+      :session-id="sessionId"
+      :message-id="sourceMessageId"
+      :identity-key="auth.token ?? ''"
+      :trigger="sourceTrigger"
+    />
   </div>
 </template>
 
@@ -1651,6 +1682,21 @@ onUnmounted(() => {
   gap: 2px;
   margin-top: 2px;
   color: var(--cw-text-secondary, #718096);
+}
+
+.answer-sources-entry {
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--cw-line, #e3e7ef);
+  border-radius: 10px;
+  color: var(--cw-primary, #315bde);
+  background: var(--cw-card-bg, #fff);
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .feedback-actions button {
