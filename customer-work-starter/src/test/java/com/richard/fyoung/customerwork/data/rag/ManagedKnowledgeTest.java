@@ -17,6 +17,9 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -30,6 +33,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -41,6 +45,17 @@ import static org.mockito.Mockito.when;
  * @author owlzhangfq@gmail.com
  */
 class ManagedKnowledgeTest {
+
+    @BeforeEach
+    void setTenant() {
+        TenantContext.set("tenant-a");
+    }
+
+    @AfterEach
+    void clearTenant() {
+        TenantContext.clear();
+    }
+
 
     private KnowledgeVersionDO version(long id, int dimensions) {
         KnowledgeVersionDO v = new KnowledgeVersionDO();
@@ -235,6 +250,19 @@ class ManagedKnowledgeTest {
             embedding(4), List.of()).retrieve("问题", RetrieveConfig.builder().build()).block();
 
         assertTrue(docs != null && docs.isEmpty());
+    }
+
+    @Test
+    void missingTenantCannotQueryKnowledgeOrEmbed() {
+        TenantContext.clear();
+        var versions = mock(KnowledgeVersionMapper.class);
+        var chunks = mock(KnowledgeChunkMapper.class);
+        var vectors = mock(VectorStore.class);
+        var embeddings = mock(EmbeddingClient.class);
+        var result = new ManagedKnowledge(vectors, chunks, versions, embeddings, List.of())
+            .retrieve("退款", RetrieveConfig.builder().build()).block();
+        assertEquals(List.of(), result);
+        verifyNoInteractions(versions, chunks, vectors, embeddings);
     }
 
     @Test

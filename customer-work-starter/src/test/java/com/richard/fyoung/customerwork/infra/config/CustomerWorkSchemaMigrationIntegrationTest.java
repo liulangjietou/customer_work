@@ -52,7 +52,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
-    private static final int CURRENT_SCHEMA_VERSION = 27;
+    private static final int CURRENT_SCHEMA_VERSION = 28;
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
     private static final int CURRENT_BUSINESS_TABLE_COUNT = 50;
@@ -77,6 +77,38 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         "cw_user", "cw_knowledge", "cw_sensitive_word", "cw_rate_limit_rule", "cw_dict_type",
         "cw_dict_item", "cw_tenant_quota", "cw_long_term_memory", "cw_harness_memory", "cw_skill",
         "cw_eval_case", "cw_knowledge_gap", "cw_subject_quota_level");
+
+    @Test
+    void v28ShouldCompletePartialUpgradeAndBlockOldPublicProjections() throws Exception {
+        assumeTrue(reachable(), "MySQL 不可达，跳过客户来源迁移测试");
+        String database = "cw_projection_v28_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        assumeTrue(canCreateDatabases(database), "MySQL 测试账号无建库权限，跳过");
+        try (HikariDataSource dataSource = dataSource(database, "projection-upgrade-test")) {
+            migrateTo(dataSource, "27");
+            execute(dataSource, "INSERT INTO cw_knowledge_version(tenant_id,kb_version_id,kb_code,kb_name,dimensions,"
+                + "synced_at_ms,created_at_ms,updated_at_ms) VALUES('default',901,'9','历史知识',1,1,1,1)");
+            execute(dataSource, "INSERT INTO cw_knowledge_chunk(id,tenant_id,kb_version_id,doc_revision_id,chunk_index,"
+                + "content,embedding,dimensions,acl_mode,created_at_ms,updated_at_ms) "
+                + "VALUES(9901,'default',901,990,0,'历史公开正文',X'00000000',1,'PUBLIC',1,1)");
+            // 模拟手工升级只加了首列；迁移必须继续补齐其他列和唯一键。
+            execute(dataSource, "ALTER TABLE cw_knowledge_version ADD COLUMN access_status VARCHAR(16) "
+                + "NOT NULL DEFAULT 'BLOCKED' COMMENT '客户授权投影状态：BLOCKED/READY'");
+            migrate(dataSource, database);
+            assertCurrentAgentSchema(dataSource);
+            assertEquals("BLOCKED", queryString(dataSource,
+                "SELECT access_status FROM cw_knowledge_version WHERE kb_version_id=901"));
+            assertEquals("历史公开正文", queryString(dataSource,
+                "SELECT content FROM cw_knowledge_chunk WHERE id=9901"));
+            execute(dataSource, "INSERT INTO cw_knowledge_chunk(tenant_id,kb_version_id,doc_revision_id,chunk_index,"
+                + "content,embedding,dimensions,acl_mode,created_at_ms,updated_at_ms) "
+                + "VALUES('default',902,990,0,'同修订另版本',X'00000000',1,'PUBLIC',1,1)");
+            assertEquals(2, queryInt(dataSource, "SELECT COUNT(*) FROM cw_knowledge_chunk WHERE doc_revision_id=990"));
+            migrate(dataSource, database);
+            assertEquals(1, countHistoryVersion(dataSource, "28"));
+        } finally {
+            dropDatabase(database);
+        }
+    }
 
     @Test
     void v7ShouldExplicitlyCoverEveryTenantTable() throws Exception {
@@ -373,6 +405,9 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         try (HikariDataSource dataSource = dataSource(database, "flyway-previous-mirror-test")) {
             populateSchemaMirror(dataSource);
             execute(dataSource, "ALTER TABLE `cw_chat_message` DROP COLUMN `answer_evidence`");
+            execute(dataSource, "ALTER TABLE `cw_knowledge_version` DROP COLUMN `access_status`, DROP COLUMN `version_no`");
+            execute(dataSource, "ALTER TABLE `cw_knowledge_chunk` DROP COLUMN `document_title`, DROP COLUMN `source_version`, "
+                + "DROP INDEX `uk_cw_kb_chunk`, ADD UNIQUE KEY `uk_cw_kb_chunk` (`doc_revision_id`, `chunk_index`)");
             execute(dataSource, "DROP TABLE `cw_knowledge_gap_review`");
             execute(dataSource, "ALTER TABLE `cw_knowledge_gap` "
                 + "DROP COLUMN `retrieval_path`, DROP COLUMN `source_agent_code`, DROP COLUMN `source_channel_code`, "
@@ -496,6 +531,14 @@ class CustomerWorkSchemaMigrationIntegrationTest {
 
     private void assertCurrentAgentSchema(HikariDataSource dataSource) throws Exception {
         assertTrue(columnExists(dataSource, "cw_chat_message", "answer_evidence"));
+        assertTrue(columnExists(dataSource, "cw_knowledge_version", "access_status"));
+        assertTrue(columnExists(dataSource, "cw_knowledge_version", "version_no"));
+        assertTrue(columnExists(dataSource, "cw_knowledge_chunk", "document_title"));
+        assertTrue(columnExists(dataSource, "cw_knowledge_chunk", "source_version"));
+        assertEquals("tenant_id,kb_version_id,doc_revision_id,chunk_index", queryString(dataSource,
+            "SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') "
+                + "FROM information_schema.statistics WHERE table_schema=DATABASE() "
+                + "AND table_name='cw_knowledge_chunk' AND index_name='uk_cw_kb_chunk'"));
         assertTrue(columnExists(dataSource, "cw_memory_consent", "scope_id"));
         assertTrue(columnExists(dataSource, "cw_eval_run", "version_binding_json"));
         assertTrue(columnExists(dataSource, "cw_eval_dataset_version", "content_hash"));

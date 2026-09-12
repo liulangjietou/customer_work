@@ -21,6 +21,11 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledg
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentRevisionMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeSourceMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeSyncRunMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionAccessGuard;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionGateway;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionGatewayProvider;
+import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeVersionMapper;
+import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeChunkMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -58,6 +63,7 @@ class KnowledgeSourceSyncCoordinatorTest {
     private AiKnowledgeDocumentChunkMapper chunkMapper;
     private AiKnowledgeSyncRunMapper runMapper;
     private KnowledgeBaseVersionService versionService;
+    private KnowledgeVersionMapper customerVersions;
     private KnowledgeSourceSyncCoordinator coordinator;
     private AiKnowledgeSource source;
     private AiKnowledgeSyncRun run;
@@ -80,7 +86,11 @@ class KnowledgeSourceSyncCoordinatorTest {
         chunkMapper = mock(AiKnowledgeDocumentChunkMapper.class);
         runMapper = mock(AiKnowledgeSyncRunMapper.class);
         versionService = mock(KnowledgeBaseVersionService.class);
-        coordinator = new KnowledgeSourceSyncCoordinator(sourceMapper, knowledgeBaseMapper,
+        var provider = mock(KnowledgeProjectionGatewayProvider.class);
+        customerVersions = mock(KnowledgeVersionMapper.class);
+        when(provider.get()).thenReturn(new KnowledgeProjectionGateway(mock(KnowledgeChunkMapper.class), customerVersions));
+        coordinator = new KnowledgeSourceSyncCoordinator(sourceMapper,
+            new KnowledgeProjectionAccessGuard(knowledgeBaseMapper, provider),
             documentMapper, revisionMapper, chunkMapper, runMapper, versionService);
 
         source = new AiKnowledgeSource();
@@ -93,14 +103,25 @@ class KnowledgeSourceSyncCoordinatorTest {
         source.setRevision(3);
         AiKnowledgeBase knowledgeBase = new AiKnowledgeBase();
         knowledgeBase.setId(7L);
+        knowledgeBase.setDeleted(0);
         run = new AiKnowledgeSyncRun();
         run.setId(11L);
         run.setSourceId(8L);
         run.setStatus(KnowledgeSyncStatus.PROCESSING.name());
 
         when(sourceMapper.selectOne(any(QueryWrapper.class))).thenReturn(source);
-        when(knowledgeBaseMapper.selectOne(any(QueryWrapper.class))).thenReturn(knowledgeBase);
+        when(knowledgeBaseMapper.selectByIdForUpdate(7L)).thenReturn(knowledgeBase);
         when(runMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(run);
+    }
+
+    @Test
+    void sourceRevisionChangeMustRejectPreparedDefaultAclEvenWhenCheckpointUnchanged() {
+        source.setRevision(4);
+        when(versionService.createDocumentSnapshotVersion(any(), any(), any(), any(), any(), any()))
+            .thenReturn(version(502L, "prepared-with-old-default-acl"));
+        var request = new KnowledgeSyncRequest("stale-default-acl", "cp-0", "cp-1", true, 0, List.of());
+        assertThrows(BizException.class, () -> coordinator.commit(7L, 8L, 3, 11L, request, Map.of()));
+        verifyNoInteractions(customerVersions, documentMapper, revisionMapper, chunkMapper, runMapper, versionService);
     }
 
     @Test
@@ -134,7 +155,7 @@ class KnowledgeSourceSyncCoordinatorTest {
             .thenReturn(version);
 
         AiKnowledgeSyncRun result = coordinator.commit(
-            8L, 11L, request, Map.of("doc-1", prepared));
+            7L, 8L, 3, 11L, request, Map.of("doc-1", prepared));
 
         assertSame(run, result);
         ArgumentCaptor<AiKnowledgeDocumentRevision> revisionCaptor =
@@ -193,7 +214,7 @@ class KnowledgeSourceSyncCoordinatorTest {
         KnowledgeSyncRequest request = new KnowledgeSyncRequest(
             "req-full", "cp-0", "cp-1", true, 0, List.of());
 
-        coordinator.commit(8L, 11L, request, Map.of());
+        coordinator.commit(7L, 8L, 3, 11L, request, Map.of());
 
         ArgumentCaptor<AiKnowledgeDocumentRevision> revisionCaptor =
             ArgumentCaptor.forClass(AiKnowledgeDocumentRevision.class);
@@ -210,14 +231,15 @@ class KnowledgeSourceSyncCoordinatorTest {
     }
 
     @Test
-    void checkpointConflict_shouldFailBeforeLockingKnowledgeBaseOrMutatingDocuments() {
+    void checkpointConflict_shouldFailBeforeBlockingCustomerOrMutatingDocuments() {
         KnowledgeSyncRequest request = new KnowledgeSyncRequest(
             "req-stale", "stale", "cp-1", false, 0, List.of());
 
         assertThrows(BizException.class,
-            () -> coordinator.commit(8L, 11L, request, Map.of()));
+            () -> coordinator.commit(7L, 8L, 3, 11L, request, Map.of()));
 
-        verify(knowledgeBaseMapper, never()).selectOne(any(QueryWrapper.class));
+        verify(knowledgeBaseMapper).selectByIdForUpdate(7L);
+        verifyNoInteractions(customerVersions);
         verifyNoInteractions(documentMapper, revisionMapper, chunkMapper, runMapper, versionService);
     }
 
@@ -229,7 +251,7 @@ class KnowledgeSourceSyncCoordinatorTest {
             "req-low-quality", "cp-0", "cp-1", false, 2, List.of());
 
         KnowledgeQualityGateException failure = assertThrows(KnowledgeQualityGateException.class,
-            () -> coordinator.commit(8L, 11L, request, Map.of()));
+            () -> coordinator.commit(7L, 8L, 3, 11L, request, Map.of()));
 
         assertEquals(0, failure.getActiveDocumentCount());
         assertEquals(new BigDecimal("0.0000"), failure.getQualityScore());

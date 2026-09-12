@@ -7,29 +7,33 @@
       打分阶段的窄投影：只取标识、分区与向量，刻意不取 content。
       参与打分的可能是上万条分片，而最终只有 topN 的正文会被用到——
       把 LONGTEXT 正文一起拉出来是这条链路原本最大的开销来源。
-      tenant_id 由 TenantLineInnerInterceptor 自动补，此处不列。
+      租户条件显式绑定已认证的上下文，不依赖可选的租户插件。
     -->
-    <select id="selectVectorsByPartitions"
+    <select id="selectVectorsByPartitionsForTenant"
             resultType="com.richard.fyoung.customerwork.data.knowledge.entity.ChunkVectorDO">
-        SELECT id, doc_revision_id, embedding
-        FROM cw_knowledge_chunk
-        WHERE kb_version_id = #{kbVersionId}
-          AND id &gt; #{afterId}
+        SELECT c.id, c.doc_revision_id, c.embedding
+        FROM cw_knowledge_chunk c
+        JOIN cw_knowledge_version v ON v.kb_version_id = c.kb_version_id AND v.tenant_id = c.tenant_id
+        WHERE c.tenant_id = #{tenantId} AND c.kb_version_id = #{kbVersionId}
+          AND v.access_status = 'READY' AND c.acl_mode = 'PUBLIC'
+          AND c.id &gt; #{afterId}
           <if test="partitions != null and partitions.size() > 0">
-              AND doc_revision_id IN
+              AND c.doc_revision_id IN
               <foreach collection="partitions" item="p" open="(" separator="," close=")">#{p}</foreach>
           </if>
-        ORDER BY id
+        ORDER BY c.id
         LIMIT #{limit}
     </select>
 
     <!-- 命中确定后按 id 回查正文。 -->
-    <select id="selectByIds"
+    <select id="selectByIdsForTenant"
             resultType="com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeChunkDO">
-        SELECT id, tenant_id, kb_version_id, doc_revision_id, chunk_index, content,
-               dimensions, acl_mode, external_id, created_at_ms, updated_at_ms
-        FROM cw_knowledge_chunk
-        WHERE id IN
+        SELECT c.id, c.tenant_id, c.kb_version_id, c.doc_revision_id, c.chunk_index, c.content,
+               c.dimensions, c.acl_mode, c.external_id, c.document_title, c.source_version,
+               c.created_at_ms, c.updated_at_ms
+        FROM cw_knowledge_chunk c
+        JOIN cw_knowledge_version v ON v.kb_version_id = c.kb_version_id AND v.tenant_id = c.tenant_id
+        WHERE c.tenant_id = #{tenantId} AND v.access_status = 'READY' AND c.acl_mode = 'PUBLIC' AND c.id IN
         <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
     </select>
 
@@ -37,16 +41,46 @@
       C 端可检索的分区：只放行 PUBLIC。终端用户没有可做细粒度 ACL 判定的身份，
       这条约束落在 SQL 里而不是交给调用方过滤。
     -->
-    <select id="selectPublicPartitions" resultType="java.lang.Long">
-        SELECT DISTINCT doc_revision_id
-        FROM cw_knowledge_chunk
-        WHERE kb_version_id = #{kbVersionId}
-          AND acl_mode = 'PUBLIC'
+    <select id="selectPublicPartitionsForTenant" resultType="java.lang.Long">
+        SELECT DISTINCT c.doc_revision_id
+        FROM cw_knowledge_chunk c
+        JOIN cw_knowledge_version v ON v.kb_version_id = c.kb_version_id AND v.tenant_id = c.tenant_id
+        WHERE c.tenant_id = #{tenantId} AND c.kb_version_id = #{kbVersionId}
+          AND v.access_status = 'READY' AND c.acl_mode = 'PUBLIC'
     </select>
 
-    <!-- 重新投影前清场。 -->
-    <delete id="deleteByVersion">
-        DELETE FROM cw_knowledge_chunk WHERE kb_version_id = #{kbVersionId}
+    <!-- 唯一键含租户和版本；LAST_INSERT_ID 使重复写入仍回填原主键。 -->
+    <insert id="upsertProjection" useGeneratedKeys="true" keyProperty="chunk.id" keyColumn="id">
+        INSERT INTO cw_knowledge_chunk
+            (kb_version_id, doc_revision_id, chunk_index, content, embedding, dimensions,
+             acl_mode, external_id, document_title, source_version, created_at_ms, updated_at_ms)
+        VALUES (#{chunk.kbVersionId}, #{chunk.docRevisionId}, #{chunk.chunkIndex}, #{chunk.content},
+                #{chunk.embedding}, #{chunk.dimensions}, #{chunk.aclMode}, #{chunk.externalId},
+                #{chunk.documentTitle}, #{chunk.sourceVersion}, #{chunk.createdAtMs}, #{chunk.updatedAtMs})
+        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), content = VALUES(content),
+            embedding = VALUES(embedding), dimensions = VALUES(dimensions), acl_mode = VALUES(acl_mode),
+            external_id = VALUES(external_id), document_title = VALUES(document_title),
+            source_version = VALUES(source_version), updated_at_ms = VALUES(updated_at_ms)
+    </insert>
+
+    <delete id="deleteVersionChunksExcept">
+        DELETE FROM cw_knowledge_chunk WHERE kb_version_id = #{versionId}
+        <if test="retainedIds != null and retainedIds.size() > 0">
+            AND id NOT IN
+            <foreach collection="retainedIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+        </if>
     </delete>
+
+    <!-- 每次打开都在同一条 SQL 里检查授权版本和真实分片归属，禁止用当前正文替代历史引用。 -->
+    <select id="findPublicSource" resultType="com.richard.fyoung.customerwork.data.knowledge.KnowledgePublicSource">
+        SELECT c.id AS chunk_id, c.document_title AS title, v.kb_name AS knowledge_base,
+               v.version_no, c.source_version,
+               <choose><when test="includeContent">c.content</when><otherwise>NULL AS content</otherwise></choose>
+        FROM cw_knowledge_chunk c
+        JOIN cw_knowledge_version v ON v.kb_version_id = c.kb_version_id AND v.tenant_id = c.tenant_id
+        WHERE c.tenant_id = #{tenantId} AND v.kb_code = #{knowledgeBaseId} AND c.kb_version_id = #{versionId}
+          AND c.doc_revision_id = #{revisionId} AND c.id = #{chunkId}
+          AND v.access_status = 'READY' AND c.acl_mode = 'PUBLIC'
+    </select>
 
 </mapper>

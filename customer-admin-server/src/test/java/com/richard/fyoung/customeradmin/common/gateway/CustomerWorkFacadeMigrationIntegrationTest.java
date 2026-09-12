@@ -55,7 +55,7 @@ class CustomerWorkFacadeMigrationIntegrationTest {
 
             assertEquals(0L, aggregate.getTotalSessions());
             // 客服端当前 schema 版本；starter 加迁移时这里要跟着涨
-            assertEquals("27", query(database,
+            assertEquals("28", query(database,
                 "SELECT `version` FROM `flyway_schema_history` WHERE `success` = 1 "
                     + "ORDER BY `installed_rank` DESC LIMIT 1"));
             // BusinessOutcomeMapper 正是按 session_id 关联三张 cw_* 表的那条查询，
@@ -77,6 +77,9 @@ class CustomerWorkFacadeMigrationIntegrationTest {
                 "SELECT COUNT(*) FROM information_schema.columns "
                     + "WHERE table_schema = DATABASE() AND table_name = 'cw_chat_message' "
                     + "AND column_name = 'answer_evidence' AND data_type = 'json'"));
+            assertEquals("BLOCKED", query(database,
+                "SELECT column_default FROM information_schema.columns WHERE table_schema=DATABASE() "
+                    + "AND table_name='cw_knowledge_version' AND column_name='access_status'"));
         } finally {
             if (facade != null) {
                 facade.close();

@@ -35,6 +35,10 @@ http.interceptors.response.use(
 
     if (status === HTTP_UNAUTHORIZED) {
       const auth = useAuthStore()
+      // 旧请求可能在用户重新登录后才返回；只有当前凭据自身失效才清理登录。
+      const sentAuthorization = error.config?.headers?.get('Authorization') ?? null
+      const currentAuthorization = auth.token ? `Bearer ${auth.token}` : null
+      if (sentAuthorization !== currentAuthorization) return Promise.reject(error)
       auth.clear()
       // 用 replace 而不是 push：避免堆叠历史记录；若当前已在 /login 则不重复触发导航
       if (router.currentRoute.value.name !== 'Login') {

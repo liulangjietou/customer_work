@@ -3,6 +3,8 @@ package com.richard.fyoung.customerwork.data.rag;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.richard.fyoung.customerwork.core.dto.KnowledgeCitation;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.data.knowledge.KnowledgeProjectionStatus;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeChunkDO;
 import com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeVersionDO;
 import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeChunkMapper;
@@ -88,11 +90,12 @@ public class ManagedKnowledge implements Knowledge {
         if (query == null || query.isBlank()) {
             return Mono.just(List.of());
         }
-        // 查库与 embedding 都是阻塞调用，必须挪出响应式线程
-        return Mono.fromCallable(() -> doRetrieve(query, config))
+        // 调度前冻结调用租户；默认关闭租户插件时也不能依赖线程自动传播。
+        String tenantId = TenantContext.get();
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> doRetrieve(query, config)))
             .subscribeOn(Schedulers.boundedElastic())
             .onErrorResume(e -> {
-                log.error("managed knowledge retrieve failed, code={} query={}",
+                log.error("managed knowledge retrieve failed, errorCode={} query={}",
                     "KB-MANAGED-RETRIEVE-FAIL", abbreviate(query), e);
                 // 检索失败不该让整轮对话崩掉，退化成"没查到"由模型自行应对
                 return Mono.just(List.of());
@@ -113,7 +116,7 @@ public class ManagedKnowledge implements Knowledge {
         List<Scored> all = new ArrayList<>();
         for (KnowledgeVersionDO version : versions) {
             if (version.getDimensions() != null && version.getDimensions() != queryVector.length) {
-                log.error("knowledge version dimension mismatch, code={} kbVersionId={} "
+                log.error("knowledge version dimension mismatch, errorCode={} kbVersionId={} "
                         + "versionDim={} queryDim={}", "KB-VERSION-DIM-MISMATCH",
                     version.getKbVersionId(), version.getDimensions(), queryVector.length);
                 continue;
@@ -207,7 +210,9 @@ public class ManagedKnowledge implements Knowledge {
 
     /** 解析本租户可用的知识库版本；配置了编码则只取这些，否则取该租户全部已投影版本。 */
     private List<KnowledgeVersionDO> resolveVersions() {
-        QueryWrapper<KnowledgeVersionDO> wrapper = new QueryWrapper<>();
+        QueryWrapper<KnowledgeVersionDO> wrapper = new QueryWrapper<KnowledgeVersionDO>()
+            .eq("tenant_id", TenantContext.require())
+            .eq("access_status", KnowledgeProjectionStatus.READY.name());
         if (!knowledgeBaseCodes.isEmpty()) {
             wrapper.in("kb_code", knowledgeBaseCodes);
         }

@@ -50,6 +50,13 @@ vi.mock('@/api/quota', () => ({ fetchMyQuota: fetchMyQuotaMock }))
 vi.mock('@/components/CsatSurveyCard.vue', () => ({
   default: defineComponent({ name: 'CsatSurveyCard', template: '<div></div>' }),
 }))
+vi.mock('@/components/CustomerAnswerSourcesPanel.vue', () => ({
+  default: defineComponent({
+    name: 'CustomerAnswerSourcesPanel',
+    props: ['open', 'sessionId', 'messageId', 'identityKey', 'trigger'],
+    template: '<div></div>',
+  }),
+}))
 vi.mock('@/store/auth', () => ({
   useAuthStore: () => ({ token: 'token-1', userId: 'user-1' }),
 }))
@@ -234,6 +241,38 @@ describe('Chat', () => {
       .mockImplementation(({ type }: { type: FeedbackType }) =>
         Promise.resolve(savedFeedback(type)),
       )
+  })
+
+  it('只有带来源线索的助手消息提供入口，按该条消息打开且保留文字线索', async () => {
+    fetchMessagesMock.mockResolvedValue([
+      botMessage,
+      { ...botMessage, ...answerEvidence, id: 2, messageId: 'source-message' },
+      { ...botMessage, ...answerEvidence, id: 3, messageId: 'user-message', senderType: 'USER', senderId: 'user-1' },
+    ])
+    const wrapper = await mountReadyChat()
+    const entries = wrapper.findAll('.answer-sources-entry')
+    expect(entries).toHaveLength(1)
+    expect(wrapper.get('.citations').text()).toContain('参考线索')
+    await entries[0]!.trigger('click')
+    const sourcePanel = wrapper.findComponent({ name: 'CustomerAnswerSourcesPanel' })
+    expect(sourcePanel.props()).toMatchObject({ open: true, sessionId: 'session-1', messageId: 'source-message', identityKey: 'token-1' })
+    expect(sourcePanel.props('trigger')).toBe(entries[0]!.element)
+    wrapper.unmount()
+  })
+
+  it('不同轮次来源入口绑定各自的稳定消息号，当前回复也可以核对', async () => {
+    fetchMessagesMock.mockResolvedValue([{ ...botMessage, ...answerEvidence }])
+    const wrapper = await mountReadyChat()
+    wsHandlers.get('chat_done')?.(doneReply({ id: 2, messageId: 'new-answer' }))
+    await flushPromises()
+    const entries = wrapper.findAll('.answer-sources-entry')
+    expect(entries).toHaveLength(2)
+    await entries[0]!.trigger('click')
+    const sourcePanel = wrapper.findComponent({ name: 'CustomerAnswerSourcesPanel' })
+    expect(sourcePanel.props('messageId')).toBe(botMessage.messageId)
+    await entries[1]!.trigger('click')
+    expect(sourcePanel.props('messageId')).toBe('new-answer')
+    wrapper.unmount()
   })
 
   it.each([
