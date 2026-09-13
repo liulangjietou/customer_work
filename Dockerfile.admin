@@ -6,7 +6,7 @@ RUN mvn -q -B -pl customer-admin-server -am -DskipTests package \
     && cp customer-admin-server/target/customer-admin-server-*.jar /build/admin.jar
 
 # ---- runtime stage ----
-FROM eclipse-temurin:17-jre
+FROM eclipse-temurin:24-jre
 WORKDIR /app
 COPY --from=build /build/admin.jar app.jar
 EXPOSE 8082
