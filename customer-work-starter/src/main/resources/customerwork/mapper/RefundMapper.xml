@@ -2,12 +2,26 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.RefundMapper">
 
-    <!-- 某订单指定类型的最近一笔工单状态（对应旧 JdbcAfterSalesBackend.doQueryRefundProgress 的 ORDER BY ... LIMIT 1） -->
+    <!-- 归属校验与插入同一条 SQL，订单已删除或归属变化时不产生孤立申请。 -->
+    <insert id="insertForOwner">
+        INSERT INTO cw_refund
+            (tenant_id, refund_no, order_id, type, status, amount, reason, new_spec, created_at_ms)
+        SELECT #{record.tenantId}, #{record.refundNo}, o.order_id, #{record.type}, #{record.status},
+               #{record.amount}, #{record.reason}, #{record.newSpec}, #{record.createdAtMs}
+        FROM cw_order o
+        WHERE o.tenant_id = #{record.tenantId}
+          AND CAST(o.user_id AS BINARY) = CAST(#{userId} AS BINARY) AND o.order_id = #{record.orderId}
+    </insert>
+
+    <!-- 退款记录和订单同时限定租户，不能被另一租户较新的同订单号记录覆盖。 -->
     <select id="queryLatestRefundStatus" resultType="java.lang.String">
-        SELECT status
-        FROM cw_refund
-        WHERE order_id = #{orderId} AND type = #{type}
-        ORDER BY created_at_ms DESC
+        SELECT r.status
+        FROM cw_refund r
+        JOIN cw_order o ON o.tenant_id = r.tenant_id AND o.order_id = r.order_id
+        WHERE r.tenant_id = #{tenantId} AND o.tenant_id = #{tenantId}
+          AND CAST(o.user_id AS BINARY) = CAST(#{userId} AS BINARY)
+          AND r.order_id = #{orderId} AND r.type = #{type}
+        ORDER BY r.created_at_ms DESC, r.refund_no DESC
         LIMIT 1
     </select>
 </mapper>

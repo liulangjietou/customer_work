@@ -13,6 +13,9 @@ import lombok.Data;
 @TableName("cw_invoice_request")
 public class InvoiceRequestDO {
 
+    /** 创建申请时经过认证的订单租户；显式写入，不依赖租户插件或数据库默认值。 */
+    private String tenantId;
+
     /** 发票申请自增主键。 */
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;

@@ -2,6 +2,15 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.OrderMapper">
 
+    <!-- 用户身份来自服务端；不能用订单查询结果反推调用者。 -->
+    <select id="findOwned" resultType="com.richard.fyoung.customerwork.tool.backend.entity.OrderDO">
+        SELECT order_id, user_id, product_id, product_name, amount, status,
+               receiver_addr, logistics_trace, created_at_ms
+        FROM cw_order
+        WHERE tenant_id = #{tenantId}
+          AND CAST(user_id AS BINARY) = CAST(#{userId} AS BINARY) AND order_id = #{orderId}
+    </select>
+
     <!-- 催发货：物流轨迹尾部追加加急标记（对应旧 JdbcOrderBackend.doUrgeShipment 的 CONCAT UPDATE） -->
     <update id="urgeShipment">
         UPDATE cw_order

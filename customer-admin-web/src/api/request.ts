@@ -1,4 +1,4 @@
-import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios'
+import axios, { type AxiosRequestConfig, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 import router from '@/router'
 import { useAuthStore } from '@/store/auth'
 import type { Result } from '@/types/api'
@@ -7,6 +7,8 @@ import type { Result } from '@/types/api'
 export interface AppRequestConfig extends AxiosRequestConfig {
   suppressErrorMessage?: boolean
 }
+
+type SentRequestConfig = InternalAxiosRequestConfig & AppRequestConfig
 
 // ResultCode 分段（与后端 common/result/ResultCode.java 保持一致）
 const CODE_UNAUTHORIZED = 10001
@@ -28,9 +30,16 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+/** 全局登录与提示只能由仍属于当前凭据的请求改变，不能被旧身份的迟到响应覆盖。 */
+function belongsToCurrentLogin(config?: SentRequestConfig): boolean {
+  if (!config) return false
+  const requestToken = config.headers.get('Authorization') ?? null
+  return requestToken === useAuthStore().token
+}
+
 // 拦截器把 AxiosResponse<Result<T>> 拆箱为 T 直接返回，与 axios 自身的类型声明（要求返回
 // AxiosResponse）不一致，是该封装模式的既有取舍，用 any 顶掉这一层类型摩擦。
-http.interceptors.response.use(((response: { data: Result<unknown> | Blob; config: AppRequestConfig }) => {
+http.interceptors.response.use(((response: { data: Result<unknown> | Blob; config: SentRequestConfig }) => {
   // 二进制下载（responseType: 'blob'，如 SQL 查询导出 xlsx）响应体不是 Result 包装，
   // 原样透传整个 response，交给下面的 download() 解析 Content-Disposition 后再落盘，
   // 不复用下面的 Result 拆箱逻辑（body.code 在 Blob 上访问不到，会被误判成请求失败）。
@@ -40,6 +49,9 @@ http.interceptors.response.use(((response: { data: Result<unknown> | Blob; confi
   const body = response.data as Result<unknown>
   if (body.code === 0) {
     return body.data
+  }
+  if (!belongsToCurrentLogin(response.config)) {
+    return Promise.reject(body)
   }
   if (body.code === CODE_UNAUTHORIZED) {
     const auth = useAuthStore()
@@ -66,8 +78,8 @@ http.interceptors.response.use(((response: { data: Result<unknown> | Blob; confi
   // 只读 error.message 的话用户看到的是 "Request failed with status code 429"，
   // 而真正该看的"最近 60 分钟内已达 N 次上限"就被吞掉了
   const body = error.response?.data as Result<unknown> | undefined
-  const config = error.config as AppRequestConfig | undefined
-  if (!config?.suppressErrorMessage) {
+  const config = error.config as SentRequestConfig | undefined
+  if (belongsToCurrentLogin(config) && !config?.suppressErrorMessage) {
     ElMessage.error(body?.message || error.message || '网络异常')
   }
   return Promise.reject(error)
@@ -131,7 +143,9 @@ export async function download(config: AxiosRequestConfig, fallbackFilename: str
   if (contentType && contentType.includes('application/json')) {
     const text = await response.data.text()
     const body = JSON.parse(text) as Result<unknown>
-    ElMessage.error(body.message || '导出失败')
+    if (belongsToCurrentLogin(response.config)) {
+      ElMessage.error(body.message || '导出失败')
+    }
     throw body
   }
   const filename = parseFilename(response.headers['content-disposition'] as string | undefined) || fallbackFilename

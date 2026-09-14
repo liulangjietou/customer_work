@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.InvoiceRequestMapper">
+
+    <!-- 权限过滤在数据库内完成，避免先查订单、后写发票之间的归属变化。 -->
+    <insert id="insertForOwner" useGeneratedKeys="true" keyProperty="record.id">
+        INSERT INTO cw_invoice_request (tenant_id, order_id, invoice_title, status, created_at_ms)
+        SELECT #{record.tenantId}, o.order_id, #{record.invoiceTitle}, #{record.status}, #{record.createdAtMs}
+        FROM cw_order o
+        WHERE o.tenant_id = #{record.tenantId}
+          AND CAST(o.user_id AS BINARY) = CAST(#{userId} AS BINARY) AND o.order_id = #{record.orderId}
+    </insert>
+</mapper>
