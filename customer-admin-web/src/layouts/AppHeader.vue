@@ -35,7 +35,14 @@ const navigationToggleLabel = computed(() => {
 })
 
 async function handleLogout() {
-  await auth.logout()
+  const loginGeneration = auth.loginGeneration
+  try {
+    await auth.logout()
+  } catch {
+    // 请求层已经提示失败，auth.logout 的 finally 仍完成当前登录的本地凭据清理。
+  }
+  // clear 只递增一次；期间如应用过新登录，旧按钮回调不再拥有菜单、页签和导航。
+  if (auth.token || auth.loginGeneration !== loginGeneration + 1) return
   menuStore.reset()
   tabsStore.reset()
   await router.replace({ name: 'Login' })
