@@ -34,6 +34,9 @@ public class AgentAuthWebFilter implements WebFilter {
     /** 坐席 ID 在 exchange 属性中的键。 */
     public static final String AGENT_ID_ATTR = "cw.agent.id";
 
+    /** 经过验签的完整坐席身份；跨线程业务入口从此处取得签名租户。 */
+    public static final String AGENT_IDENTITY_ATTR = "cw.agent.identity";
+
     private final CustomerWorkProperties properties;
     private final TenantAccessGuard tenantAccessGuard;
 
@@ -63,6 +66,7 @@ public class AgentAuthWebFilter implements WebFilter {
             return AuthResponses.forbidden(exchange, "subscription credential cannot access agent HTTP APIs");
         }
         exchange.getAttributes().put(AGENT_ID_ATTR, authenticated.agentId());
+        exchange.getAttributes().put(AGENT_IDENTITY_ATTR, authenticated);
         if (!properties.getTenant().isEnabled()) {
             return chain.filter(exchange);
         }

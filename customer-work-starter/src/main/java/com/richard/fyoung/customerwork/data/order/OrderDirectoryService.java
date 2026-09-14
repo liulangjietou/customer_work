@@ -1,15 +1,14 @@
 package com.richard.fyoung.customerwork.data.order;
 
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.richard.fyoung.customerwork.core.common.PageResult;
-import com.richard.fyoung.customerwork.tool.backend.entity.OrderDO;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.tool.backend.mapper.OrderMapper;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -27,11 +26,6 @@ import java.util.Optional;
 @Service
 public class OrderDirectoryService {
 
-    /** 取消终态（与 {@code MybatisOrderBackend} 保持一致）。 */
-
-    /** 可取消的状态集合（未发货阶段）。 */
-    private static final List<String> CANCELLABLE_STATUSES = OrderStatuses.CANCELLABLE;
-
     private final OrderMapper orderMapper;
 
     public OrderDirectoryService(ObjectProvider<OrderMapper> orderMapperProvider) {
@@ -47,39 +41,32 @@ public class OrderDirectoryService {
     public PageResult<OrderDirectoryRow> page(OrderDirectoryQuery query) {
         Page<OrderDirectoryRow> page = Page.of(query.normalizedPageNum(), query.normalizedPageSize());
         IPage<OrderDirectoryRow> result = orderMapper.pageForAgent(
-            page, query.userId(), query.orderId(), query.status(), query.username());
+            page, TenantContext.require(), query.userId(), query.orderId(), query.status(), query.username());
         return new PageResult<>(result.getTotal(), result.getRecords());
     }
 
     /** 按订单号查详情（含物流轨迹与用户名），不存在返回 empty。 */
     public Optional<OrderDirectoryRow> findDetail(String orderId) {
-        return Optional.ofNullable(orderMapper.detailForAgent(orderId));
+        return Optional.ofNullable(orderMapper.detailForAgent(TenantContext.require(), orderId));
     }
 
-    /** 改址：订单不存在返回 NOT_FOUND，否则更新收货地址并返回 OK。 */
+    /** 改址只更新当前租户；零行时核对当前事实，不能把并发删除报告为成功。 */
     public OrderMutationResult modifyAddress(String orderId, String newAddress) {
-        OrderDO order = orderMapper.selectById(orderId);
-        if (order == null) {
-            return OrderMutationResult.NOT_FOUND;
+        int affected = orderMapper.modifyAddressForAgent(TenantContext.require(), orderId, newAddress);
+        if (affected == 1) {
+            return OrderMutationResult.OK;
         }
-        orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>()
-            .set(OrderDO::getReceiverAddr, newAddress)
-            .eq(OrderDO::getOrderId, orderId));
-        return OrderMutationResult.OK;
+        return findDetail(orderId).map(order -> Objects.equals(order.getReceiverAddr(), newAddress)
+            ? OrderMutationResult.OK : OrderMutationResult.STATE_CONFLICT).orElse(OrderMutationResult.NOT_FOUND);
     }
 
-    /** 取消：不存在 NOT_FOUND，已发货及之后 STATE_CONFLICT，否则置为已取消并返回 OK。 */
+    /** 状态条件与更新原子执行；并发发货返回冲突，并发删除返回不存在。 */
     public OrderMutationResult cancel(String orderId, String reason) {
-        OrderDO order = orderMapper.selectById(orderId);
-        if (order == null) {
-            return OrderMutationResult.NOT_FOUND;
+        int affected = orderMapper.cancelForAgent(TenantContext.require(), orderId,
+            OrderStatuses.CANCELLABLE, OrderStatuses.CANCELLED);
+        if (affected == 1) {
+            return OrderMutationResult.OK;
         }
-        if (!CANCELLABLE_STATUSES.contains(order.getStatus())) {
-            return OrderMutationResult.STATE_CONFLICT;
-        }
-        orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>()
-            .set(OrderDO::getStatus, OrderStatuses.CANCELLED)
-            .eq(OrderDO::getOrderId, orderId));
-        return OrderMutationResult.OK;
+        return findDetail(orderId).isPresent() ? OrderMutationResult.STATE_CONFLICT : OrderMutationResult.NOT_FOUND;
     }
 }

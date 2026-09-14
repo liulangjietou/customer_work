@@ -32,12 +32,12 @@ public class UserOrderDao {
     /** 列表查询不取 logistics_trace（列表页无需物流轨迹，减少行传输）。 */
     private static final String LIST_SQL =
         "SELECT order_id, product_id, product_name, amount, status, receiver_addr, created_at_ms "
-        + "FROM cw_order WHERE tenant_id = ? AND user_id = ? ORDER BY created_at_ms DESC";
+        + "FROM cw_order WHERE tenant_id = ? AND CAST(user_id AS BINARY) = CAST(? AS BINARY) ORDER BY created_at_ms DESC";
 
     /** 详情查询含 user_id（供归属校验）与 logistics_trace。 */
     private static final String DETAIL_SQL =
         "SELECT user_id, order_id, product_id, product_name, amount, status, receiver_addr, "
-        + "logistics_trace, created_at_ms FROM cw_order WHERE tenant_id = ? AND user_id = ? AND order_id = ?";
+        + "logistics_trace, created_at_ms FROM cw_order WHERE tenant_id = ? AND CAST(user_id AS BINARY) = CAST(? AS BINARY) AND order_id = ?";
 
     private final DataSource dataSource;
 

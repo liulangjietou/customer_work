@@ -1,46 +1,57 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.OrderMapper">
+    <!-- 主体来自服务端；数据库排序规则不能把大小写或尾空格别名当作同一用户。 -->
+    <sql id="ownerPredicate">
+        tenant_id = #{tenantId} AND CAST(user_id AS BINARY) = CAST(#{userId} AS BINARY)
+        AND order_id = #{orderId}
+    </sql>
+    <sql id="cancellablePredicate">
+        status IN <foreach collection="cancellable" item="state" open="(" separator="," close=")">#{state}</foreach>
+    </sql>
 
-    <!-- 用户身份来自服务端；不能用订单查询结果反推调用者。 -->
     <select id="findOwned" resultType="com.richard.fyoung.customerwork.tool.backend.entity.OrderDO">
         SELECT order_id, user_id, product_id, product_name, amount, status,
                receiver_addr, logistics_trace, created_at_ms
-        FROM cw_order
-        WHERE tenant_id = #{tenantId}
-          AND CAST(user_id AS BINARY) = CAST(#{userId} AS BINARY) AND order_id = #{orderId}
+        FROM cw_order WHERE <include refid="ownerPredicate" />
     </select>
-
-    <!-- 催发货：物流轨迹尾部追加加急标记（对应旧 JdbcOrderBackend.doUrgeShipment 的 CONCAT UPDATE） -->
-    <update id="urgeShipment">
-        UPDATE cw_order
-        SET logistics_trace = CONCAT(COALESCE(logistics_trace, ''), '→[已加急]')
-        WHERE order_id = #{orderId}
+    <update id="modifyAddressForOwner">
+        UPDATE cw_order SET receiver_addr = #{address} WHERE <include refid="ownerPredicate" />
+    </update>
+    <update id="cancelForOwner">
+        UPDATE cw_order SET status = #{cancelled}
+        WHERE <include refid="ownerPredicate" /> AND <include refid="cancellablePredicate" />
+    </update>
+    <update id="urgeShipmentForOwner">
+        UPDATE cw_order SET logistics_trace = CONCAT(COALESCE(logistics_trace, ''), '→[已加急]')
+        WHERE <include refid="ownerPredicate" />
     </update>
 
-    <!-- 坐席侧订单分页：JOIN cw_user 带出用户名；LIMIT 由分页插件注入，此处不写 -->
+    <!-- 分页由既有 PaginationInnerInterceptor 接管，不能在跨租户 JOIN 后才过滤订单。 -->
     <select id="pageForAgent" resultType="com.richard.fyoung.customerwork.data.order.OrderDirectoryRow">
         SELECT o.order_id, o.user_id, u.username, o.product_id, o.product_name,
                o.amount, o.status, o.receiver_addr, o.created_at_ms
         FROM cw_order o
-        LEFT JOIN cw_user u ON u.id = o.user_id
-        <where>
-            <if test="userId != null and userId != ''">AND o.user_id = #{userId}</if>
+        LEFT JOIN cw_user u ON u.tenant_id = o.tenant_id AND CAST(u.id AS BINARY) = CAST(o.user_id AS BINARY)
+        WHERE o.tenant_id = #{tenantId}
+            <if test="userId != null and userId != ''">AND CAST(o.user_id AS BINARY) = CAST(#{userId} AS BINARY)</if>
             <if test="orderId != null and orderId != ''">AND o.order_id = #{orderId}</if>
             <if test="status != null and status != ''">AND o.status = #{status}</if>
-            <if test="username != null and username != ''">
-                AND u.username LIKE CONCAT('%', #{username}, '%')
-            </if>
-        </where>
+            <if test="username != null and username != ''">AND u.username LIKE CONCAT('%', #{username}, '%')</if>
         ORDER BY o.created_at_ms DESC
     </select>
-
-    <!-- 坐席侧订单详情：含物流轨迹与用户名 -->
     <select id="detailForAgent" resultType="com.richard.fyoung.customerwork.data.order.OrderDirectoryRow">
         SELECT o.order_id, o.user_id, u.username, o.product_id, o.product_name,
                o.amount, o.status, o.receiver_addr, o.logistics_trace, o.created_at_ms
         FROM cw_order o
-        LEFT JOIN cw_user u ON u.id = o.user_id
-        WHERE o.order_id = #{orderId}
+        LEFT JOIN cw_user u ON u.tenant_id = o.tenant_id AND CAST(u.id AS BINARY) = CAST(o.user_id AS BINARY)
+        WHERE o.tenant_id = #{tenantId} AND o.order_id = #{orderId}
     </select>
+    <update id="modifyAddressForAgent">
+        UPDATE cw_order SET receiver_addr = #{address} WHERE tenant_id = #{tenantId} AND order_id = #{orderId}
+    </update>
+    <update id="cancelForAgent">
+        UPDATE cw_order SET status = #{cancelled}
+        WHERE tenant_id = #{tenantId} AND order_id = #{orderId} AND <include refid="cancellablePredicate" />
+    </update>
 </mapper>
