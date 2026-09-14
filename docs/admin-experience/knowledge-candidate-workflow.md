@@ -241,3 +241,17 @@ Admin 首次最终浏览器检查为 285 通过、1 失败。失败轨迹显示�
 | 凭据与差异检查 | 通过 | verify-no-committed-secrets.sh、git diff --check |
 
 日志均保留在 /fyoung/tmp。最终 104 个产品/测试/SQL 文件哈希一致；后端通过后仅补充了一项浏览器用例的关闭等待和正向断言，后端、构建与单测涉及源码均未变化。已查看发布前正文确认和正式 FAQ 回执截图。七项跳过为百炼、四项 Nacos、Paddle OCR 与外部 RAG 集成的环境条件；不记成执行通过。提交使用个人身份，远端四项 CI 继续作为交付检查。
+
+## 远端并发受理失败与修复（2026-09-15）
+
+PR #217 首次提交 `26b2fb30` 的远端后端门禁捕获真实 MySQL 死锁：六个相同消息同时插入受理记录时，`WorkspaceMessageAcceptanceIntegrationTest.simultaneousDuplicateRequestsHaveOneExecutionWinner` 出现 `CannotAcquireLockException`。原测试只运行一次竞争，没有稳定覆盖被数据库回滚的受理事务。本地通过不能替代远端门禁结果。
+
+调用链为 ChatController / VibeCodingController → WorkspaceMessageAcceptanceService → WorkspaceMessageReceiptStore 独立事务 → 模型和工具流。受理服务现在只对锁获取失败做最多三次重新受理，每次都在前一 Store 事务完成回滚后开始，沿用同一身份、指纹和时间。并发方已经受理时只返回原回执；连接故障和提交结果未知不重试，业务流始终位于重试范围外。唯一键竞争可能产生死锁的依据见 [MySQL InnoDB 锁说明](https://dev.mysql.com/doc/refman/8.0/en/innodb-locks-set.html)。
+
+有效 RED：`customer-receipt-deadlock-red.log`，22 项中 1 失败、3 错误，退出码 1。除了可控的锁异常分支，还在真实 MySQL 插入之后注入回滚，验证重试必须跨越事务边界。修复后 `customer-receipt-deadlock-green2.log` 39 项通过，0 跳过；包含十轮六请求并发、回滚后唯一执行、竞争方胜出、三次耗尽、连接故障不重试和 HTTP 回执归属。
+
+完整后端门禁 `customer-knowledge-g9-ci-fix-backend-full.log` 退出码 0：4,638 项，0 失败、0 错误、7 条件跳过（starter 2,146 / app 302 / channel 82 / Admin 2,107 / gateway 1）。三处后端产品/测试文件冻结哈希一致，两库结构快照只读比对通过。
+
+远端 Admin 首轮为 284 通过、2 失败，两项均为候选抽屉的固定宽度断言：Linux 缺少中文字库，截图显示方框，标签宽度 52px 未达到测试写死的 60px。现在 CI 两端安装 Noto CJK 并检查中文字库可用；标签测试改为判断入场动画结束且完整文字位于实际标签内。Ember/Night 窄屏各重复三次，`customer-candidate-font-portability.log` 6 项通过，退出码 0；工作流 YAML 语法检查通过。
+
+两端前端产品源码未变化，保留本批最终构建、303/108 单测及 286/23 浏览器通过记录；这次两处断言修正以六次范围回归和新提交的完整远端检查核对，未额外重跑无关模型验收。PR #217 仍为 OPEN/Ready，远端 CI 须在修复提交上重新核对，未合并。

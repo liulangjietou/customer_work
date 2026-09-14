@@ -178,7 +178,17 @@ for (const theme of ['ember', 'night']) {
     await expect(page.getByRole('button', { name: '保存候选', exact: true })).toBeInViewport()
     const reviewTag = page.getByText('人工复核 v2', { exact: true })
     await expect(reviewTag).toBeVisible()
-    await expect.poll(() => reviewTag.evaluate(tag => tag.getBoundingClientRect().width)).toBeGreaterThan(60)
+    // 字形宽度因系统字体而异；直接验证动画结束后完整文字落在标签内，避免固定像素假失败。
+    await expect.poll(() => reviewTag.evaluate(tag => {
+      const pill = tag.closest('.el-tag') ?? tag
+      const range = document.createRange()
+      range.selectNodeContents(tag)
+      const text = range.getBoundingClientRect()
+      const bounds = pill.getBoundingClientRect()
+      return text.width > 0 && getComputedStyle(pill).transform === 'none'
+        && text.left >= bounds.left && text.right <= bounds.right
+        && text.top >= bounds.top && text.bottom <= bounds.bottom
+    })).toBe(true)
     const dimensions = await page.locator('.knowledge-candidate-drawer').evaluate(drawer => ({ scroll: drawer.scrollWidth, width: drawer.clientWidth }))
     expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.width + 1)
     await page.locator('.knowledge-candidate-drawer .el-drawer__body').evaluate(body => { body.scrollTop = 0 })
