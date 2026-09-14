@@ -29,6 +29,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import static org.junit.jupiter.api.Assertions.assertAll;
 
 /** 真实迁移、SQL 筛选、租户插件与同库回滚，均使用本测试独占的随机数据库。 */
 class KnowledgeGapReviewIntegrationTest {
@@ -148,6 +151,87 @@ class KnowledgeGapReviewIntegrationTest {
             provider.close();
             execute(serverUrl, properties, "DROP DATABASE " + database);
         }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true,other,TenantA,a", "false,other,TenantA,a",
+        "true,tenanta,tenanta,a", "false,tenanta,tenanta,a",
+        "true,TenantA,tenanta,a", "false,TenantA,TenantA,A"})
+    void sourceAndHistoryRemainExactWhenTenantPluginIsDisabledOrCollationIgnoresCase(
+        boolean enabled, String caller, String scope, String hashCharacter) throws Exception {
+        var properties = new CustomerWorkDbProperties();
+        properties.setHost(System.getenv().getOrDefault("MYSQL_HOST", "localhost"));
+        properties.setPort(Integer.parseInt(System.getenv().getOrDefault("MYSQL_PORT", "3306")));
+        properties.setUsername(System.getenv().getOrDefault("MYSQL_USERNAME", "root"));
+        properties.setPassword(System.getenv().getOrDefault("MYSQL_PASSWORD", "root"));
+        String database = "gap_boundary_" + UUID.randomUUID().toString().replace("-", "");
+        properties.setDatabase("");
+        String serverUrl = properties.jdbcUrl();
+        execute(serverUrl, properties, "CREATE DATABASE " + database + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        properties.setDatabase(database);
+        var tenant = new AdminTenantProperties(); tenant.setEnabled(enabled);
+        var provider = new OpsGatewayProvider(properties, new AdminCrossDbTenantPlugins(tenant));
+        try {
+            Flyway.configure().dataSource(properties.jdbcUrl(), properties.getUsername(), properties.getPassword())
+                .locations("classpath:db/customerwork/migration")
+                .javaMigrations(new V2__ReconcileLegacySchema(), new V9__AddAuditTimestamps()).load().migrate();
+            String hash = "a".repeat(64);
+            execute(properties.jdbcUrl(), properties, "INSERT INTO cw_knowledge_gap "
+                + "(tenant_id,scope_id,question_hash,question,first_seen_at_ms,last_seen_at_ms) VALUES "
+                + "('TenantA','TenantA','" + hash + "','本租户内部问题',1,1)");
+            var reviews = provider.get().knowledgeGapReview();
+            TenantContext.set("TenantA");
+            reviews.review("TenantA", hash, 0, KnowledgeGapCategory.KNOWLEDGE,
+                KnowledgeGapPriority.NORMAL, "本租户复核理由", "42");
+            TenantContext.set(caller);
+            String requestedHash = hashCharacter.repeat(64);
+            assertAll(
+                () -> assertTrue(reviews.find(scope, requestedHash).isEmpty(), "不得读到其它租户或大小写别名来源"),
+                () -> assertTrue(reviews.history(scope, requestedHash, Long.MAX_VALUE).isEmpty(), "不得读到其它边界的复核理由"),
+                () -> assertThrows(java.util.NoSuchElementException.class, () -> reviews.review(scope, requestedHash, 1,
+                    KnowledgeGapCategory.DEPENDENCY, KnowledgeGapPriority.HIGH, "越界修改", "99")));
+            TenantContext.set("TenantA");
+            assertEquals(1, reviews.find("TenantA", hash).orElseThrow().classification().revision());
+            assertEquals(1, reviews.history("TenantA", hash, Long.MAX_VALUE).size());
+        } finally {
+            TenantContext.clear(); provider.close();
+            execute(serverUrl, properties, "DROP DATABASE " + database);
+        }
+    }
+
+    @Test
+    void improvementSourceRejectsCaseVariantTenantAndHashBeforeCreatingRegressionCase() throws Exception {
+        var properties = new CustomerWorkDbProperties();
+        properties.setHost(System.getenv().getOrDefault("MYSQL_HOST", "localhost"));
+        properties.setPort(Integer.parseInt(System.getenv().getOrDefault("MYSQL_PORT", "3306")));
+        properties.setUsername(System.getenv().getOrDefault("MYSQL_USERNAME", "root"));
+        properties.setPassword(System.getenv().getOrDefault("MYSQL_PASSWORD", "root"));
+        String database = "gap_signal_" + UUID.randomUUID().toString().replace("-", "");
+        properties.setDatabase(""); String serverUrl = properties.jdbcUrl();
+        execute(serverUrl, properties, "CREATE DATABASE " + database + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        properties.setDatabase(database);
+        try {
+            var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                properties.jdbcUrl(), properties.getUsername(), properties.getPassword());
+            Flyway.configure().dataSource(source).locations("classpath:db/customerwork/migration")
+                .javaMigrations(new V2__ReconcileLegacySchema(), new V9__AddAuditTimestamps()).load().migrate();
+            String hash = "a".repeat(64);
+            var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+            jdbc.update("INSERT INTO cw_knowledge_gap(tenant_id,scope_id,question_hash,question,first_seen_at_ms,last_seen_at_ms) "
+                + "VALUES('TenantA','TenantA',?,'内部问题',1,1)", hash);
+            var configuration = new com.baomidou.mybatisplus.core.MybatisConfiguration();
+            configuration.setMapUnderscoreToCamelCase(true);
+            configuration.addMapper(com.richard.fyoung.customeradmin.improvement.mapper.ImprovementSignalMapper.class);
+            var factory = new com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean();
+            factory.setDataSource(source); factory.setConfiguration(configuration);
+            var mapper = new org.mybatis.spring.SqlSessionTemplate(factory.getObject()).getMapper(
+                com.richard.fyoung.customeradmin.improvement.mapper.ImprovementSignalMapper.class);
+            assertAll(
+                () -> assertNull(mapper.findKnowledgeGap("tenanta", hash)),
+                () -> assertNull(mapper.findKnowledgeGap("TenantA", hash.toUpperCase(java.util.Locale.ROOT))),
+                () -> assertEquals(0L, mapper.knowledgeGapSignalCount("tenanta", hash)));
+            assertEquals("内部问题", mapper.findKnowledgeGap("TenantA", hash).getQuestion());
+        } finally { execute(serverUrl, properties, "DROP DATABASE " + database); }
     }
 
     private void execute(String url, CustomerWorkDbProperties properties, String sql) throws Exception {

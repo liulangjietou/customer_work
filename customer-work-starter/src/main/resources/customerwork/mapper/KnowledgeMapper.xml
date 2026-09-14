@@ -2,13 +2,36 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper">
 
-    <!-- 关键词召回：keyword/title/content 任一命中，取前 5 条（对应旧 RECALL_LIMIT） -->
+    <!-- 正式查询与冻结快照共享匹配、排序和数量规则，保证候选不会无条件进入评测上下文。 -->
+    <sql id="recallFilter">
+        WHERE keyword COLLATE utf8mb4_unicode_ci LIKE CONCAT('%', #{q}, '%')
+           OR title COLLATE utf8mb4_unicode_ci LIKE CONCAT('%', #{q}, '%')
+           OR content COLLATE utf8mb4_unicode_ci LIKE CONCAT('%', #{q}, '%')
+        ORDER BY id ASC
+        LIMIT 5
+    </sql>
+
     <select id="search" resultType="com.richard.fyoung.customerwork.tool.backend.entity.KnowledgeDO">
         SELECT *
         FROM cw_knowledge
-        WHERE keyword LIKE CONCAT('%', #{q}, '%')
-           OR title LIKE CONCAT('%', #{q}, '%')
-           OR content LIKE CONCAT('%', #{q}, '%')
-        LIMIT 5
+        <include refid="recallFilter" />
+    </select>
+
+    <select id="snapshotForTenant" resultType="com.richard.fyoung.customerwork.tool.backend.entity.KnowledgeDO">
+        SELECT id, keyword, title, content, source FROM cw_knowledge
+        WHERE BINARY tenant_id = BINARY #{tenantId}
+        ORDER BY id ASC
+    </select>
+
+    <select id="searchSnapshot" resultType="com.richard.fyoung.customerwork.tool.backend.entity.KnowledgeDO">
+        SELECT id, keyword, title, content, source
+        FROM JSON_TABLE(#{snapshotJson}, '$[*]' COLUMNS (
+            id BIGINT PATH '$.id' ERROR ON EMPTY ERROR ON ERROR,
+            keyword VARCHAR(255) PATH '$.keyword' ERROR ON EMPTY ERROR ON ERROR,
+            title VARCHAR(255) PATH '$.title' ERROR ON EMPTY ERROR ON ERROR,
+            content TEXT PATH '$.content' ERROR ON EMPTY ERROR ON ERROR,
+            source VARCHAR(255) PATH '$.source' NULL ON EMPTY ERROR ON ERROR
+        )) AS frozen_knowledge
+        <include refid="recallFilter" />
     </select>
 </mapper>

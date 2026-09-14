@@ -19,7 +19,7 @@ class ImprovementSignalMapperSqlTest {
         for (Method method : ImprovementSignalMapper.class.getDeclaredMethods()) {
             InterceptorIgnore ignore = method.getAnnotation(InterceptorIgnore.class);
             assertEquals("1", ignore.tenantLine(), method.getName());
-            assertTrue(sql(method).contains("tenant_id = #{tenantId}"), method.getName());
+            assertTrue(sql(method).replace("BINARY ", "").contains("tenant_id = #{tenantId}"), method.getName());
         }
     }
 

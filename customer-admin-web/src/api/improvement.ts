@@ -9,6 +9,7 @@ export type ImprovementCaseStatus =
   | 'REEVALUATION_FAILED'
   | 'READY_TO_PUBLISH'
   | 'PUBLISHING'
+  | 'PUBLISHED'
   | 'PUBLISH_FAILED'
   | 'OBSERVING'
   | 'VERIFIED'
@@ -40,6 +41,7 @@ export interface ImprovementCase {
   reevaluationStatus: 'NOT_RUN' | 'RUNNING' | 'PASSED' | 'FAILED'
   reevaluationVerdict: string | null
   reevaluationError: string | null
+  reevaluationDeadlineAtMs?: number | null
   publishTaskId: string | null
   publishRevision: string | null
   publishStatus: string | null

@@ -79,6 +79,8 @@ class SharedConstantAlignmentTest {
         "FAILED", "SUCCESS", "APPROVED",
         // 消息受理与计划审批的拒绝态独立；受理未知与工单情绪未知也不共享状态转换。
         "REJECTED", "UNKNOWN",
+        // 配置版本发布与正式 FAQ 候选发布各有独立生命周期，改动任一侧无需另一侧同步。
+        "PUBLISHED",
         // WS 持久化游标字段与 MCP 契约表主键列，分别归协议和数据库模型所有。
         "id",
         // 文件操作类型 / 沙箱危险动作 / 权限动作，三套动作词汇

@@ -1,18 +1,14 @@
 <script setup lang="ts">
-import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useAuthStore } from '@/store/auth'
-import { getRequestErrorMessage } from '@/api/request'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import KnowledgeGapReviewDrawer from './KnowledgeGapReviewDrawer.vue'
+import KnowledgeCandidateDrawer from './KnowledgeCandidateDrawer.vue'
 import { GAP_CATEGORY_LABELS, GAP_VIEW_OPTIONS } from './knowledgeGapPresentation'
 import type { KnowledgeGapView } from '@/api/ops'
-import type { FormInstance, FormRules } from 'element-plus'
 import ImprovementClosurePanel from '@/components/ImprovementClosurePanel.vue'
 import {
-  fillKnowledgeGap,
   listKnowledgeGaps,
-  type FillKnowledgeGapRequest,
   type KnowledgeGap,
 } from '@/api/ops'
 
@@ -24,6 +20,7 @@ const list = ref<KnowledgeGap[]>([])
 const search = ref('')
 const view = ref<KnowledgeGapView>('WORK')
 const reviewHash = ref<string | null>(null)
+const candidateGap = ref<KnowledgeGap | null>(null)
 const visibleList = computed(() =>
   list.value.filter(
     (gap) =>
@@ -33,11 +30,11 @@ const visibleList = computed(() =>
 )
 const closureVisible = ref(false)
 const closureGap = ref<KnowledgeGap | null>(null)
+const closureUsesKnowledge = ref(false)
 const totalMisses = computed(() => list.value.reduce((sum, item) => sum + item.missCount, 0))
 const urgentGapCount = computed(() => list.value.filter((item) => item.missCount >= 10).length)
 const recurringGapCount = computed(() => list.value.filter((item) => item.missCount >= 3).length)
 let listRequest = 0
-let editorGeneration = 0
 
 /** 当前租户由已认证入口解析；刷新失败保留旧结果并明确标记。 */
 async function loadList() {
@@ -68,26 +65,6 @@ function missTagType(count: number): 'danger' | 'warning' | 'info' {
   return 'info'
 }
 
-// ---------- 一键补知识 ----------
-
-const dialogVisible = ref(false)
-const submitting = ref(false)
-const fillError = ref('')
-const currentGap = ref<KnowledgeGap | null>(null)
-const formRef = ref<FormInstance>()
-const form = reactive<FillKnowledgeGapRequest>({
-  questionHash: '',
-  title: '',
-  content: '',
-  keyword: '',
-})
-
-const rules: FormRules = {
-  title: [{ required: true, message: '请填写条目标题', trigger: 'blur' }],
-  content: [{ required: true, message: '请填写条目内容', trigger: 'blur' }],
-  keyword: [{ required: true, message: '请填写命中关键词', trigger: 'blur' }],
-}
-
 function changeView() {
   listRequest += 1
   list.value = []
@@ -101,67 +78,42 @@ function openReview(row: KnowledgeGap) {
   reviewHash.value = row.questionHash
 }
 
-function openFill(row: KnowledgeGap) {
-  if (!auth.hasPermission('knowledge-gap:fill') || loading.value || loadError.value) return
-  editorGeneration += 1
-  fillError.value = ''
-  submitting.value = false
-  currentGap.value = row
-  form.questionHash = row.questionHash
-  form.title = ''
-  form.content = ''
-  // 关键词预填原问题，运营在此基础上改比从空白写快
-  form.keyword = row.question
-  dialogVisible.value = true
-  formRef.value?.clearValidate()
+function openCandidate(row: KnowledgeGap) {
+  if (!auth.hasPermission('knowledge-gap:view') || loading.value || loadError.value) return
+  candidateGap.value = row
 }
 
-function openClosure(row: KnowledgeGap) {
+function openCandidateGovernance() {
+  const selected = candidateGap.value
+  if (!selected) return
+  candidateGap.value = null
+  openClosure(selected, true)
+}
+
+function openClosure(row: KnowledgeGap, knowledgeMode = false) {
   if (!auth.hasPermission('improvement:manage') || loading.value || loadError.value) return
   closureGap.value = row
+  closureUsesKnowledge.value = knowledgeMode
   closureVisible.value = true
 }
 
-async function submitFill() {
-  if (!formRef.value || submitting.value || !auth.hasPermission('knowledge-gap:fill')) return
-  const valid = await formRef.value.validate().catch(() => false)
-  if (!valid) return
-  const generation = editorGeneration
-  submitting.value = true
-  fillError.value = ''
-  try {
-    const knowledgeId = await fillKnowledgeGap({ ...form })
-    if (generation !== editorGeneration) return
-    ElMessage.success(`已写入 FAQ（条目 #${knowledgeId}），检索效果待验证`)
-    dialogVisible.value = false
-  } catch (error) {
-    if (generation === editorGeneration) {
-      fillError.value = getRequestErrorMessage(error, '写入结果尚未核实，请核对记录后再操作')
-    }
-  } finally {
-    if (generation === editorGeneration) submitting.value = false
-  }
-}
-
 watch(
-  () => auth.token,
+  () => auth.loginGeneration,
   () => {
     listRequest += 1
-    editorGeneration += 1
     list.value = []
     hasLoaded.value = false
     loadError.value = null
     closureVisible.value = false
     closureGap.value = null
     reviewHash.value = null
-    dialogVisible.value = false
+    candidateGap.value = null
     if (auth.token) void loadList()
   },
   { immediate: true, flush: 'sync' },
 )
 onScopeDispose(() => {
   listRequest += 1
-  editorGeneration += 1
 })
 </script>
 
@@ -284,13 +236,12 @@ onScopeDispose(() => {
               >问题详情</el-button
             >
             <el-button
-              v-permission="'knowledge-gap:fill'"
               link
               type="primary"
               :disabled="loading || !!loadError"
-              @click="openFill(row)"
+              @click="openCandidate(row)"
             >
-              补充知识
+              知识候选
             </el-button>
             <el-button
               v-permission="'improvement:manage'"
@@ -313,54 +264,12 @@ onScopeDispose(() => {
       @saved="loadList"
     />
 
-    <el-dialog
-      v-model="dialogVisible"
-      title="补充 FAQ 条目"
-      width="620px"
-      :close-on-click-modal="!submitting"
-      :close-on-press-escape="!submitting"
-      :show-close="!submitting"
-    >
-      <el-alert
-        v-if="currentGap"
-        class="origin"
-        type="warning"
-        show-icon
-        :closable="false"
-        :title="`该问题已记录 ${currentGap.missCount} 次未命中：${currentGap.question}`"
-      />
-      <el-alert
-        type="warning"
-        :closable="false"
-        show-icon
-        class="origin"
-        title="保存会直接写入线上 FAQ"
-        description="此入口沿用直接写入流程，尚未经过候选评测。写入后仍需验证检索效果，治理闭环不会自动标记完成。"
-      />
-      <el-alert v-if="fillError" :title="fillError" type="error" :closable="false" class="origin" />
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="88px">
-        <el-form-item label="条目标题" prop="title">
-          <el-input v-model="form.title" placeholder="如：货到付款支持范围" />
-        </el-form-item>
-        <el-form-item label="条目内容" prop="content">
-          <el-input
-            v-model="form.content"
-            type="textarea"
-            :rows="4"
-            placeholder="这个问题该怎么答——写成知识的样子，不要照抄用户的口语化提问"
-          />
-        </el-form-item>
-        <el-form-item label="关键词" prop="keyword">
-          <el-input v-model="form.keyword" placeholder="逗号分隔，决定这条知识能否被检索到" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button :disabled="submitting" @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="submitFill"
-          >确认写入线上 FAQ</el-button
-        >
-      </template>
-    </el-dialog>
+    <KnowledgeCandidateDrawer
+      v-if="candidateGap"
+      :question-hash="candidateGap.questionHash"
+      @close="candidateGap = null"
+      @governance="openCandidateGovernance"
+    />
 
     <el-drawer
       v-model="closureVisible"
@@ -376,6 +285,7 @@ onScopeDispose(() => {
         v-if="closureVisible && closureGap"
         source-type="KNOWLEDGE_GAP"
         :source-key="closureGap.questionHash"
+        :knowledge-mode="closureUsesKnowledge"
       />
     </el-drawer>
   </div>

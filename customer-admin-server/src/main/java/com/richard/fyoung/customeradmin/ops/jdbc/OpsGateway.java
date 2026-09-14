@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.ops.jdbc;
 import com.richard.fyoung.customerwork.capability.csat.CsatStore;
 import com.richard.fyoung.customerwork.capability.deadletter.DeadLetterStore;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapStore;
+import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgePublicationStore;
 import com.richard.fyoung.customerwork.capability.knowledgegap.MybatisKnowledgeGapReviewStore;
 import com.richard.fyoung.customerwork.capability.prompt.PromptVersionStore;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheStore;
@@ -23,7 +24,9 @@ import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
  * @param csat            会话满意度：算 CSAT 与回收率
  * @param knowledgeGap    知识盲区：反复查不到的问题排行
  * @param deadLetter      死信队列：待重投与已放弃列表
- * @param knowledgeMapper 知识库 FAQ：盲区"一键补知识"的落点（与 badcase 转知识库同一张表）
+ * @param knowledgeMapper 知识库 FAQ：候选评测的正式语料读取入口
+ * @param knowledgeGapReview 原始知识缺口分类与复核流水
+ * @param knowledgePublication 正式 FAQ 与同库发布回执
  * @author owlzhangfq@gmail.com
  */
 public record OpsGateway(
@@ -33,6 +36,7 @@ public record OpsGateway(
     KnowledgeGapStore knowledgeGap,
     DeadLetterStore deadLetter,
     KnowledgeMapper knowledgeMapper,
-    MybatisKnowledgeGapReviewStore knowledgeGapReview
+    MybatisKnowledgeGapReviewStore knowledgeGapReview,
+    KnowledgePublicationStore knowledgePublication
 ) {
 }

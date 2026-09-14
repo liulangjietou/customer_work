@@ -10,6 +10,9 @@ import com.richard.fyoung.customeradmin.aiconfig.channel.publish.service.Runtime
 import com.richard.fyoung.customeradmin.badcase.config.BadcaseGatewayProvider;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.eval.service.EvalAdminService;
+import com.richard.fyoung.customeradmin.eval.config.EvalGateway;
+import com.richard.fyoung.customeradmin.eval.config.EvalGatewayProvider;
+import com.richard.fyoung.customeradmin.eval.service.EvalDatasetAdminService;
 import com.richard.fyoung.customeradmin.improvement.config.ImprovementAutomationProperties;
 import com.richard.fyoung.customeradmin.improvement.config.ImprovementSignalGatewayProvider;
 import com.richard.fyoung.customeradmin.improvement.domain.ImprovementCaseStatus;
@@ -22,7 +25,16 @@ import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSignalGatewa
 import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSourceFact;
 import com.richard.fyoung.customeradmin.improvement.mapper.AgentImprovementCaseMapper;
 import com.richard.fyoung.customeradmin.improvement.mapper.ImprovementSignalMapper;
+import com.richard.fyoung.customeradmin.ops.domain.KnowledgeCandidateBinding;
+import com.richard.fyoung.customeradmin.ops.dto.KnowledgeCandidateBindRequest;
+import com.richard.fyoung.customeradmin.ops.dto.KnowledgeCandidatePublishRequest;
+import com.richard.fyoung.customeradmin.ops.service.KnowledgeCandidateBindingService;
+import com.richard.fyoung.customeradmin.ops.service.KnowledgeCandidateEvaluationService;
+import com.richard.fyoung.customeradmin.ops.service.KnowledgeCandidatePublicationService;
 import com.richard.fyoung.customerwork.capability.eval.EvalCaseStore;
+import com.richard.fyoung.customerwork.capability.eval.EvalDatasetSnapshot;
+import com.richard.fyoung.customerwork.capability.eval.EvalDatasetSnapshotter;
+import com.richard.fyoung.customerwork.capability.eval.InMemoryEvalDatasetSnapshotStore;
 import com.richard.fyoung.customerwork.capability.eval.EvalComparison;
 import com.richard.fyoung.customerwork.capability.eval.EvalFingerprint;
 import com.richard.fyoung.customerwork.capability.eval.EvalRun;
@@ -31,6 +43,7 @@ import com.richard.fyoung.customerwork.capability.eval.EvalType;
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -45,12 +58,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static com.richard.fyoung.customeradmin.ops.KnowledgeCandidateTestInputs.HASH;
+import static com.richard.fyoung.customeradmin.ops.KnowledgeCandidateTestInputs.ID;
+import static com.richard.fyoung.customeradmin.ops.KnowledgeCandidateTestInputs.binding;
+import static com.richard.fyoung.customeradmin.ops.KnowledgeCandidateTestInputs.evaluation;
 
 class ImprovementCaseServiceTest {
 
@@ -64,9 +84,14 @@ class ImprovementCaseServiceTest {
     private ObjectMapper objectMapper;
     private ImprovementCaseService service;
     private EvalCaseStore evalCaseStore;
+    private EvalDatasetSnapshot evalSnapshot;
+    private KnowledgeCandidateBindingService knowledgeBindings;
+    private KnowledgeCandidateEvaluationService knowledgeEvaluations;
+    private KnowledgeCandidatePublicationService knowledgePublications;
 
     @BeforeEach
     void setUp() {
+        TenantContext.set("tenant-a");
         caseMapper = mock(AgentImprovementCaseMapper.class);
         signalMapper = mock(ImprovementSignalMapper.class);
         publisher = mock(CustomerWorkConfigPublisher.class);
@@ -79,6 +104,12 @@ class ImprovementCaseServiceTest {
         properties.setMinExposureCalls(20);
         properties.setMaxRecurrenceSignals(0);
         objectMapper = new ObjectMapper();
+        var snapshotStore = new InMemoryEvalDatasetSnapshotStore();
+        evalSnapshot = new EvalDatasetSnapshotter(snapshotStore).snapshot(EvalType.INTENT,
+            List.of(Map.of("id", "case-target"), Map.of("id", "case-old")));
+        var evalGateway = mock(EvalGatewayProvider.class);
+        when(evalGateway.dataset()).thenReturn(new EvalGateway(null, null, snapshotStore, null));
+        var datasetService = new EvalDatasetAdminService(evalGateway, objectMapper);
 
         evalCaseStore = mock(EvalCaseStore.class);
         ImprovementSignalGatewayProvider gatewayProvider = mock(ImprovementSignalGatewayProvider.class);
@@ -86,10 +117,295 @@ class ImprovementCaseServiceTest {
             new ImprovementSignalGateway(signalMapper, evalCaseStore));
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
+        knowledgeBindings = mock(KnowledgeCandidateBindingService.class);
+        knowledgeEvaluations = mock(KnowledgeCandidateEvaluationService.class);
+        knowledgePublications = mock(KnowledgeCandidatePublicationService.class);
         service = new ImprovementCaseService(caseMapper, gatewayProvider,
             mock(BadcaseGatewayProvider.class), mock(AiAgentMapper.class), publisher,
-            evalAdminService, publishTaskService, publishTaskMapper, properties, objectMapper,
+            evalAdminService, datasetService,
+            knowledgeBindings, knowledgeEvaluations, knowledgePublications,
+            publishTaskService, publishTaskMapper, properties, objectMapper,
             transactionManager);
+    }
+
+    @AfterEach
+    void clearTenant() { TenantContext.clear(); }
+
+    @Test
+    void knowledgeBindingPersistsImmutableInputBeforeAdvancingParent() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.OWNED);
+        row.setArtifactVersion("previous-version"); row.setEvalRunId("previous-run");
+        row.setPublishTaskId("previous-task");
+        when(knowledgeBindings.prepare(1, HASH, knowledgeRequest())).thenReturn(binding);
+        var result = TenantContext.callWith("tenant-a", () -> service.bindKnowledgeCandidate(1L, knowledgeRequest(), 42));
+        assertEquals(KnowledgeCandidateBinding.ARTIFACT_TYPE, result.artifactType());
+        assertEquals(binding.versions(), result.candidateVersions());
+        assertEquals(binding.fingerprint(), result.artifactVersion());
+        assertEquals(ImprovementCaseStatus.READY_FOR_REEVALUATION, result.status());
+        assertNull(result.evalRunId()); assertNull(result.publishTaskId());
+        var order = inOrder(caseMapper, knowledgeBindings);
+        order.verify(caseMapper).selectById(1L);
+        order.verify(knowledgeBindings).prepare(1, HASH, knowledgeRequest());
+        order.verify(caseMapper).lockById(1L, "tenant-a");
+        order.verify(knowledgeBindings).save(binding, 42);
+        order.verify(caseMapper).updateById(row);
+        verifyNoInteractions(publisher, publishTaskService, evalAdminService);
+    }
+
+    /** 原绑定只测试不可变行去重，未覆盖响应丢失重试对父记录已完成评测的影响。 */
+    @Test
+    void knowledgeBindingRetryMustPreserveAlreadyCompletedEvaluation() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.READY_TO_PUBLISH);
+        row.setEvalRunId("completed-run"); row.setReevaluationStatus("PASSED");
+        when(knowledgeBindings.prepare(1, HASH, knowledgeRequest())).thenReturn(binding);
+        var result = TenantContext.callWith("tenant-a", () -> service.bindKnowledgeCandidate(1L, knowledgeRequest(), 42));
+        assertEquals("completed-run", result.evalRunId());
+        assertEquals(ImprovementCaseStatus.READY_TO_PUBLISH, result.status());
+        verify(knowledgeBindings, never()).save(any(), anyLong());
+        verify(caseMapper, never()).updateById(any(AgentImprovementCase.class));
+    }
+
+    @Test
+    void knowledgeBindingRechecksLockedStateBeforeSaving() throws Exception {
+        var binding = binding("tenant-a");
+        var snapshot = knowledgeRow(binding, ImprovementCaseStatus.OWNED);
+        snapshot.setArtifactVersion("previous");
+        var locked = row(ImprovementCaseStatus.REEVALUATING, binding.versions());
+        locked.setSourceType("KNOWLEDGE_GAP"); locked.setSourceKey(HASH);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(locked);
+        when(knowledgeBindings.prepare(1, HASH, knowledgeRequest())).thenReturn(binding);
+        TenantContext.runWith("tenant-a", () -> assertThrows(BizException.class,
+            () -> service.bindKnowledgeCandidate(1L, knowledgeRequest(), 42)));
+        verify(knowledgeBindings, never()).save(any(), anyLong());
+        verify(caseMapper, never()).updateById(any(AgentImprovementCase.class));
+    }
+
+    @Test
+    void knowledgeInputsCannotAttachToAnotherTenantOrBadcase() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.OWNED);
+        TenantContext.runWith("Tenant-A", () -> assertThrows(BizException.class,
+            () -> service.bindKnowledgeCandidate(1L, knowledgeRequest(), 42)));
+        row.setSourceType("BADCASE");
+        TenantContext.runWith("tenant-a", () -> assertThrows(BizException.class,
+            () -> service.bindKnowledgeCandidate(1L, knowledgeRequest(), 42)));
+        verifyNoInteractions(knowledgeBindings, knowledgeEvaluations);
+    }
+
+    @Test
+    void knowledgeReevaluationUsesItsPairedEvidenceAndPersistsBeforeReady() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.READY_FOR_REEVALUATION);
+        var evaluation = evaluation(binding);
+        when(knowledgeEvaluations.run(eq(binding), eq(HASH), eq("复评"), anyLong())).thenReturn(evaluation);
+        when(knowledgeEvaluations.failures(binding, evaluation)).thenReturn(List.of());
+        var result = TenantContext.callWith("tenant-a", () -> service.reevaluateKnowledgeCandidate(1L, "复评"));
+        assertEquals(ImprovementCaseStatus.READY_TO_PUBLISH, result.status());
+        assertEquals(evaluation.current().runId(), result.evalRunId());
+        var order = inOrder(knowledgeEvaluations, caseMapper);
+        order.verify(caseMapper).lockById(1L, "tenant-a");
+        order.verify(caseMapper).updateById(row);
+        order.verify(knowledgeEvaluations).run(eq(binding), eq(HASH), eq("复评"), anyLong());
+        order.verify(knowledgeEvaluations).failures(binding, evaluation);
+        order.verify(caseMapper).lockById(1L, "tenant-a");
+        order.verify(knowledgeEvaluations).save(evaluation);
+        order.verify(caseMapper).updateById(row);
+        verifyNoInteractions(evalAdminService, publisher, publishTaskService);
+    }
+
+    @Test
+    void inputsChangedDuringReevaluationKeepTheResultButPreventReadiness() throws Exception {
+        var binding = binding("tenant-a");
+        knowledgeRow(binding, ImprovementCaseStatus.READY_FOR_REEVALUATION);
+        var evaluation = evaluation(binding);
+        when(knowledgeEvaluations.run(eq(binding), eq(HASH), eq(null), anyLong())).thenReturn(evaluation);
+        when(knowledgeEvaluations.failures(binding, evaluation)).thenReturn(List.of());
+        doThrow(new BizException(com.richard.fyoung.customeradmin.common.result.ResultCode.CONFIG_EDIT_CONFLICT,
+            "正式知识已改变")).when(knowledgeBindings).requireCurrent(binding, HASH);
+        var result = TenantContext.callWith("tenant-a", () -> service.reevaluateKnowledgeCandidate(1L, null));
+        assertEquals(ImprovementCaseStatus.REEVALUATION_FAILED, result.status());
+        assertEquals(evaluation.current().runId(), result.evalRunId());
+        assertTrue(result.reevaluationError().contains("正式知识已改变"));
+        verify(knowledgeEvaluations).save(evaluation);
+    }
+
+    @Test
+    void failedEvaluationPersistenceCannotAdvanceParentToReady() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.READY_FOR_REEVALUATION);
+        var evaluation = evaluation(binding);
+        when(knowledgeEvaluations.run(eq(binding), eq(HASH), eq(null), anyLong())).thenReturn(evaluation);
+        when(knowledgeEvaluations.failures(binding, evaluation)).thenReturn(List.of());
+        doThrow(new IllegalStateException("evaluation store unavailable")).when(knowledgeEvaluations).save(evaluation);
+        TenantContext.runWith("tenant-a", () -> assertThrows(IllegalStateException.class,
+            () -> service.reevaluateKnowledgeCandidate(1L, null)));
+        assertEquals(ImprovementCaseStatus.REEVALUATION_FAILED.name(), row.getStatus());
+        assertNull(row.getEvalRunId());
+        verifyNoInteractions(evalAdminService, publisher, publishTaskService);
+    }
+
+    @Test
+    void legacyEndpointsCannotEvaluateOrPublishKnowledgeAsRuntimeConfiguration() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.READY_FOR_REEVALUATION);
+        TenantContext.runWith("tenant-a", () -> {
+            assertThrows(BizException.class, () -> service.reevaluate(1L, null));
+            assertThrows(BizException.class, () -> service.publish(1L));
+        });
+        assertEquals(ImprovementCaseStatus.READY_FOR_REEVALUATION.name(), row.getStatus());
+        verifyNoInteractions(evalAdminService, publisher, publishTaskService, knowledgeEvaluations);
+    }
+
+    private AgentImprovementCase knowledgeRow(KnowledgeCandidateBinding binding, ImprovementCaseStatus status) throws Exception {
+        var row = row(status, binding.versions());
+        row.setAgentId(binding.agentId()); row.setAgentCode(binding.agentCode());
+        row.setSourceType("KNOWLEDGE_GAP"); row.setSourceKey(HASH);
+        row.setArtifactType(KnowledgeCandidateBinding.ARTIFACT_TYPE); row.setArtifactVersion(binding.fingerprint());
+        row.setEvalType("QUALITY"); row.setEvalCaseId(binding.targetCaseId());
+        when(caseMapper.selectById(1L)).thenReturn(row); when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
+        when(knowledgeBindings.require(1, binding.fingerprint())).thenReturn(binding);
+        return row;
+    }
+
+    private KnowledgeCandidateBindRequest knowledgeRequest() {
+        return new KnowledgeCandidateBindRequest(ID, 2, 7L, 11L, 12L, "release-1", "target");
+    }
+
+    /** 旧测试只覆盖一次完整请求，没有复现上次执行结束时下一次执行已经开始的情况。 */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void previousReevaluationSuccessOrFailureCannotOverwriteTheReplacementAttempt(boolean failure) throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.READY_FOR_REEVALUATION);
+        var result = evaluation(binding);
+        when(knowledgeEvaluations.run(eq(binding), eq(HASH), eq(null), anyLong())).thenAnswer(call -> {
+            // 模拟超时已恢复、另一请求已开始同一候选的新执行；父记录再次处于 REEVALUATING。
+            row.setReevaluationAttemptId("replacement-attempt");
+            row.setReevaluationDeadlineAtMs(System.currentTimeMillis() + 60000);
+            if (failure) throw new IllegalStateException("previous request failed late");
+            return result;
+        });
+        when(knowledgeEvaluations.failures(binding, result)).thenReturn(List.of());
+        TenantContext.runWith("tenant-a", () -> assertThrows(RuntimeException.class,
+            () -> service.reevaluateKnowledgeCandidate(1L, null)));
+        assertEquals("REEVALUATING", row.getStatus());
+        assertEquals("replacement-attempt", row.getReevaluationAttemptId());
+        assertNull(row.getEvalRunId());
+        verify(knowledgeEvaluations, never()).save(any());
+    }
+
+    @Test
+    void completedResultPastItsDeadlineCannotMakeTheCandidatePublishable() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.READY_FOR_REEVALUATION);
+        var result = evaluation(binding);
+        when(knowledgeEvaluations.run(eq(binding), eq(HASH), eq(null), anyLong())).thenAnswer(call -> {
+            row.setReevaluationDeadlineAtMs(System.currentTimeMillis() - 1);
+            return result;
+        });
+        when(knowledgeEvaluations.failures(binding, result)).thenReturn(List.of());
+        TenantContext.runWith("tenant-a", () -> assertThrows(BizException.class,
+            () -> service.reevaluateKnowledgeCandidate(1L, null)));
+        assertEquals("REEVALUATION_FAILED", row.getStatus());
+        assertNull(row.getEvalRunId());
+        verify(knowledgeEvaluations, never()).save(any());
+    }
+
+    @Test
+    void workerRecoversAnExpiredReevaluationWithoutCallingAnyModel() throws Exception {
+        var row = knowledgeRow(binding("tenant-a"), ImprovementCaseStatus.REEVALUATING);
+        row.setReevaluationStatus("RUNNING"); row.setReevaluationAttemptId("interrupted-attempt");
+        row.setReevaluationDeadlineAtMs(System.currentTimeMillis() - 1); row.setLeaseOwner("worker");
+        TenantContext.runWith("tenant-a", () -> service.processAutomation(row));
+        assertEquals("REEVALUATION_FAILED", row.getStatus());
+        assertEquals("FAILED", row.getReevaluationStatus());
+        assertEquals(Long.MAX_VALUE, row.getNextActionAtMs());
+        assertTrue(row.getReevaluationError().contains("重新"));
+        verifyNoInteractions(knowledgeEvaluations, evalAdminService, knowledgePublications);
+    }
+
+    @Test
+    void knowledgePublicationEnqueuesOnceAndKeepsOriginalActorOnRetry() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.READY_TO_PUBLISH);
+        row.setReevaluationStatus("PASSED"); row.setEvalRunId("run");
+        var request = new KnowledgeCandidatePublishRequest(binding.fingerprint(), "run");
+        var result = TenantContext.callWith("tenant-a", () -> service.publishKnowledgeCandidate(1L, request, 42));
+        assertEquals(ImprovementCaseStatus.PUBLISHING, result.status());
+        assertEquals(42L, row.getPublishRequestedBy());
+        assertEquals(result.publishTaskId(), TenantContext.callWith("tenant-a",
+            () -> service.publishKnowledgeCandidate(1L, request, 43)).publishTaskId());
+        assertEquals(42L, row.getPublishRequestedBy());
+        verify(knowledgePublications).reserve(binding, HASH, "run");
+        verifyNoInteractions(publisher, publishTaskService, publishTaskMapper);
+    }
+
+    @Test
+    void knowledgeReceiptAdvancesToPublishedWithoutPretendingOnlineEffectWasVerified() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgePublishingRow(binding);
+        when(knowledgePublications.publish(binding, HASH, "run", "task", 42))
+            .thenReturn(new com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgePublicationReceipt("task", "hash", 812, 1000));
+        TenantContext.runWith("tenant-a", () -> service.processAutomation(row));
+        assertEquals("PUBLISHED", row.getStatus());
+        assertEquals("APPLIED", row.getPublishStatus());
+        assertEquals("faq/812", row.getPublishRevision());
+        assertEquals(1000L, row.getPublishedAtMs());
+        assertEquals("NOT_STARTED", row.getEffectStatus());
+        assertNull(row.getObservationStartedAtMs());
+        verify(knowledgePublications).finish(binding, true);
+        verifyNoInteractions(publishTaskMapper, signalMapper);
+    }
+
+    @Test
+    void confirmedKnowledgeConflictUnlocksCandidateButUnknownResultKeepsOriginalTask() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgePublishingRow(binding);
+        when(knowledgePublications.publish(binding, HASH, "run", "task", 42))
+            .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("unknown commit result"))
+            .thenThrow(new com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgePublicationConflictException("正式知识已变化"));
+        TenantContext.runWith("tenant-a", () -> assertThrows(org.springframework.dao.DataAccessResourceFailureException.class,
+            () -> service.processAutomation(row)));
+        assertEquals("PUBLISHING", row.getStatus()); assertEquals("task", row.getPublishTaskId());
+        verify(knowledgePublications, never()).finish(any(), org.mockito.ArgumentMatchers.anyBoolean());
+        TenantContext.runWith("tenant-a", () -> service.processAutomation(row));
+        assertEquals("PUBLISH_FAILED", row.getStatus());
+        assertEquals("正式知识已变化", row.getLastError());
+        verify(knowledgePublications).finish(binding, false);
+    }
+
+    @Test
+    void failedKnowledgePublicationCanBeReboundAndReevaluatedEvenWithSameInputs() throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.PUBLISH_FAILED);
+        row.setPublishTaskId("failed-task"); row.setPublishRequestedBy(42L);
+        when(knowledgeBindings.prepare(1, HASH, knowledgeRequest())).thenReturn(binding);
+        var result = TenantContext.callWith("tenant-a", () -> service.bindKnowledgeCandidate(1L, knowledgeRequest(), 42));
+        assertEquals(ImprovementCaseStatus.READY_FOR_REEVALUATION, result.status());
+        assertNull(result.publishTaskId()); assertNull(row.getPublishRequestedBy());
+    }
+
+    private AgentImprovementCase knowledgePublishingRow(KnowledgeCandidateBinding binding) throws Exception {
+        var row = knowledgeRow(binding, ImprovementCaseStatus.PUBLISHING);
+        row.setEvalRunId("run"); row.setPublishTaskId("task"); row.setPublishRequestedBy(42L); row.setLeaseOwner("worker");
+        return row;
+    }
+
+    /** 先前测试只证明服务端当前证据有效，未证明它仍是操作者在确认页审阅过的版本。 */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void stalePublicationReviewCannotPublishAnotherAdministratorsNewCandidate(boolean changedArtifact) throws Exception {
+        var binding = binding("tenant-a");
+        var row = knowledgeRow(binding, ImprovementCaseStatus.READY_TO_PUBLISH);
+        row.setReevaluationStatus("PASSED"); row.setEvalRunId("current-run");
+        var request = new KnowledgeCandidatePublishRequest(changedArtifact ? "f".repeat(64) : binding.fingerprint(),
+            changedArtifact ? "current-run" : "previous-run");
+        TenantContext.runWith("tenant-a", () -> assertThrows(BizException.class,
+            () -> service.publishKnowledgeCandidate(1L, request, 42)));
+        assertEquals("READY_TO_PUBLISH", row.getStatus());
+        verifyNoInteractions(knowledgePublications);
     }
 
     /** 原测试只覆盖复评与发布，没有验证创建用例被拒绝时是否已在客服库写入。 */
@@ -104,7 +420,7 @@ class ImprovementCaseServiceTest {
         locked.setSourceType(ImprovementSourceType.KNOWLEDGE_GAP.name());
         locked.setSourceKey("knowledge-gap-1");
         when(caseMapper.selectById(1L)).thenReturn(before);
-        when(caseMapper.lockById(1L)).thenReturn(locked);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(locked);
         var fact = new ImprovementSourceFact();
         fact.setQuestion("退款进度如何");
         fact.setSignalHash("signal-a");
@@ -129,7 +445,7 @@ class ImprovementCaseServiceTest {
             service.createEvalCase(1L, request, "operator-a"));
 
         var order = inOrder(caseMapper, evalCaseStore);
-        order.verify(caseMapper).lockById(1L);
+        order.verify(caseMapper).lockById(1L, "tenant-a");
         order.verify(evalCaseStore).save(any());
         order.verify(caseMapper).updateById(row);
         assertEquals("case-new", result.evalCaseId());
@@ -156,7 +472,7 @@ class ImprovementCaseServiceTest {
     void reevaluate_shouldFreezeExactCandidateAndTargetRegressionCase() throws Exception {
         EvalVersionBinding candidate = candidate("model-v1");
         AgentImprovementCase row = row(ImprovementCaseStatus.READY_FOR_REEVALUATION, candidate);
-        when(caseMapper.lockById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
         when(evalAdminService.trigger(EvalType.INTENT, "fix refund")).thenReturn(
             comparison(completeBinding("model-v1"), List.of(), List.of("case-old")));
 
@@ -168,10 +484,27 @@ class ImprovementCaseServiceTest {
     }
 
     @Test
+    void reevaluateMustNotPassWhenTheTargetWasOmittedFromTheDataset() throws Exception {
+        AgentImprovementCase row = row(ImprovementCaseStatus.READY_FOR_REEVALUATION,
+            candidate("model-v1"));
+        row.setEvalCaseId("case-disabled-and-omitted");
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
+        when(evalAdminService.trigger(EvalType.INTENT, null)).thenReturn(
+            comparison(completeBinding("model-v1"), List.of(), List.of()));
+
+        service.reevaluate(1L, null);
+
+        assertEquals(ImprovementCaseStatus.REEVALUATION_FAILED.name(), row.getStatus());
+        assertEquals(ImprovementReevaluationStatus.FAILED.name(), row.getReevaluationStatus());
+        assertTrue(row.getReevaluationError().contains("目标回归用例未进入本次评测"));
+        verify(publishTaskService, never()).enqueueAgent(any());
+    }
+
+    @Test
     void reevaluate_shouldRejectMismatchedCandidateAndStillFailingTargetCase() throws Exception {
         EvalVersionBinding candidate = candidate("model-v1");
         AgentImprovementCase row = row(ImprovementCaseStatus.READY_FOR_REEVALUATION, candidate);
-        when(caseMapper.lockById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
         when(evalAdminService.trigger(EvalType.INTENT, null)).thenReturn(
             comparison(completeBinding("model-v2"), List.of("case-target"), List.of()));
 
@@ -189,10 +522,58 @@ class ImprovementCaseServiceTest {
         AgentImprovementCase row = row(ImprovementCaseStatus.READY_TO_PUBLISH, evaluated);
         row.setReevaluationStatus(ImprovementReevaluationStatus.PASSED.name());
         when(caseMapper.selectById(1L)).thenReturn(row);
-        when(caseMapper.lockById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
         when(publisher.previewVersionBinding(7L)).thenReturn(candidate("model-v2"));
 
         assertThrows(BizException.class, () -> service.publish(1L));
+
+        verify(publishTaskService, never()).enqueueAgent(any());
+        assertEquals(ImprovementCaseStatus.READY_TO_PUBLISH.name(), row.getStatus());
+    }
+
+    @Test
+    void publishMustNotTrustAPassedFlagWithoutAnEvaluationRecord() throws Exception {
+        AgentImprovementCase row = row(ImprovementCaseStatus.READY_TO_PUBLISH, candidate("model-v1"));
+        row.setReevaluationStatus(ImprovementReevaluationStatus.PASSED.name());
+        when(caseMapper.selectById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
+        when(publisher.previewVersionBinding(7L)).thenReturn(candidate("model-v1"));
+
+        assertThrows(BizException.class, () -> service.publish(1L));
+
+        verify(publishTaskService, never()).enqueueAgent(any());
+    }
+
+    @Test
+    void publishMustRecheckHistoricalPassedRecordsForAnOmittedTarget() throws Exception {
+        AgentImprovementCase row = row(ImprovementCaseStatus.READY_TO_PUBLISH, candidate("model-v1"));
+        row.setReevaluationStatus(ImprovementReevaluationStatus.PASSED.name());
+        row.setEvalRunId("run-current");
+        row.setEvalCaseId("case-disabled-and-omitted");
+        when(caseMapper.selectById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
+        when(publisher.previewVersionBinding(7L)).thenReturn(candidate("model-v1"));
+        when(evalAdminService.comparison("run-current")).thenReturn(
+            comparison(completeBinding("model-v1"), List.of(), List.of()));
+
+        BizException rejected = assertThrows(BizException.class, () -> service.publish(1L));
+
+        assertTrue(rejected.getMessage().contains("目标回归用例未进入本次评测"));
+        verify(publishTaskService, never()).enqueueAgent(any());
+    }
+
+    @Test
+    void publishMustNotEnqueueWhenTheEvaluationStoreIsUnavailable() throws Exception {
+        AgentImprovementCase row = row(ImprovementCaseStatus.READY_TO_PUBLISH, candidate("model-v1"));
+        row.setReevaluationStatus(ImprovementReevaluationStatus.PASSED.name());
+        row.setEvalRunId("run-current");
+        when(caseMapper.selectById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
+        when(publisher.previewVersionBinding(7L)).thenReturn(candidate("model-v1"));
+        when(evalAdminService.comparison("run-current"))
+            .thenThrow(new IllegalStateException("evaluation store unavailable"));
+
+        assertThrows(IllegalStateException.class, () -> service.publish(1L));
 
         verify(publishTaskService, never()).enqueueAgent(any());
         assertEquals(ImprovementCaseStatus.READY_TO_PUBLISH.name(), row.getStatus());
@@ -203,10 +584,13 @@ class ImprovementCaseServiceTest {
         EvalVersionBinding candidate = candidate("model-v1");
         AgentImprovementCase row = row(ImprovementCaseStatus.READY_TO_PUBLISH, candidate);
         row.setReevaluationStatus(ImprovementReevaluationStatus.PASSED.name());
+        row.setEvalRunId("run-current");
         when(caseMapper.selectById(1L)).thenReturn(row);
-        when(caseMapper.lockById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
         when(publisher.previewVersionBinding(7L)).thenReturn(candidate);
         when(publishTaskService.enqueueAgent(7L)).thenReturn("task-1");
+        when(evalAdminService.comparison("run-current")).thenReturn(
+            comparison(completeBinding("model-v1"), List.of(), List.of("case-old")));
 
         service.publish(1L);
 
@@ -306,7 +690,7 @@ class ImprovementCaseServiceTest {
     private AgentImprovementCase publishingRow(String taskId) throws Exception {
         AgentImprovementCase row = row(ImprovementCaseStatus.PUBLISHING, candidate("model-v1"));
         row.setPublishTaskId(taskId);
-        when(caseMapper.lockById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
         return row;
     }
 
@@ -321,7 +705,7 @@ class ImprovementCaseServiceTest {
     @Test
     void observe_shouldMarkRecurrenceIneffectiveAndLowTrafficInconclusive() throws Exception {
         AgentImprovementCase recurrence = observingRow();
-        when(caseMapper.lockById(1L)).thenReturn(recurrence);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(recurrence);
         when(signalMapper.badcaseSignalCount("tenant-a", "signal-a")).thenReturn(11L);
         when(signalMapper.exposureCalls(any(), any(), anyLong(), anyLong())).thenReturn(30L);
 
@@ -332,7 +716,7 @@ class ImprovementCaseServiceTest {
 
         AgentImprovementCase lowTraffic = observingRow();
         lowTraffic.setObservationEndsAtMs(System.currentTimeMillis() - 1L);
-        when(caseMapper.lockById(1L)).thenReturn(lowTraffic);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(lowTraffic);
         when(signalMapper.badcaseSignalCount("tenant-a", "signal-a")).thenReturn(10L);
         when(signalMapper.exposureCalls(any(), any(), anyLong(), anyLong())).thenReturn(3L);
 
@@ -346,7 +730,7 @@ class ImprovementCaseServiceTest {
         AgentImprovementCase row = row(ImprovementCaseStatus.OWNED, candidate("model-v1"));
         row.setSourceType(ImprovementSourceType.KNOWLEDGE_GAP.name());
         row.setSourceKey("knowledge-gap-1");
-        when(caseMapper.lockById(1L)).thenReturn(row);
+        when(caseMapper.lockById(1L, "tenant-a")).thenReturn(row);
         var fact = new ImprovementSourceFact();
         fact.setQuestion("退款进度如何");
         fact.setSignalHash("signal-a");
@@ -422,7 +806,7 @@ class ImprovementCaseServiceTest {
     }
 
     private EvalVersionBinding completeBinding(String modelVersion) {
-        return new EvalVersionBinding("dataset-v1", "dataset-hash-v1", modelVersion, "prompt-v1",
+        return new EvalVersionBinding(evalSnapshot.versionId(), evalSnapshot.contentHash(), modelVersion, "prompt-v1",
             "agent-v1", "knowledge-v1", "tool-v1", "judge-v1", "rubric-v1");
     }
 

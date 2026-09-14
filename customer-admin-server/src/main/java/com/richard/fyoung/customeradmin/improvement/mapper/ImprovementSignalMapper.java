@@ -13,7 +13,8 @@ public interface ImprovementSignalMapper {
         SELECT question_hash AS source_key, question, question_hash AS signal_hash,
                miss_count AS signal_count, NULL AS eval_case_id
         FROM cw_knowledge_gap
-        WHERE tenant_id = #{tenantId} AND question_hash = #{sourceKey}
+        WHERE BINARY tenant_id = BINARY #{tenantId} AND BINARY scope_id = BINARY #{tenantId}
+          AND BINARY question_hash = BINARY #{sourceKey}
         LIMIT 1
         """)
     ImprovementSourceFact findKnowledgeGap(@Param("tenantId") String tenantId,
@@ -37,7 +38,8 @@ public interface ImprovementSignalMapper {
     @Select("""
         SELECT COALESCE(MAX(miss_count), 0)
         FROM cw_knowledge_gap
-        WHERE tenant_id = #{tenantId} AND question_hash = #{signalHash}
+        WHERE BINARY tenant_id = BINARY #{tenantId} AND BINARY scope_id = BINARY #{tenantId}
+          AND BINARY question_hash = BINARY #{signalHash}
         """)
     long knowledgeGapSignalCount(@Param("tenantId") String tenantId,
                                  @Param("signalHash") String signalHash);

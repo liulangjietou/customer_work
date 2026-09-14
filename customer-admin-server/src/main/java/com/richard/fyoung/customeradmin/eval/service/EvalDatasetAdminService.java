@@ -19,6 +19,7 @@ import com.richard.fyoung.customerwork.capability.eval.EvalDatasetReleaseConflic
 import com.richard.fyoung.customerwork.capability.eval.EvalDatasetReviewStatus;
 import com.richard.fyoung.customerwork.capability.eval.EvalDatasetSnapshot;
 import com.richard.fyoung.customerwork.capability.eval.EvalDatasetSnapshotter;
+import com.richard.fyoung.customerwork.capability.eval.EvalRun;
 import com.richard.fyoung.customerwork.capability.eval.EvalType;
 import com.richard.fyoung.customerwork.capability.eval.PersistedEvalCase;
 import org.springframework.dao.DuplicateKeyException;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -183,15 +185,60 @@ public class EvalDatasetAdminService {
         EvalDatasetRelease release = requireRelease(gatewayProvider.dataset(), releaseId);
         if (release.evalType() != EvalType.QUALITY
             || release.status() != EvalDatasetReviewStatus.APPROVED) {
-            throw new BizException(ResultCode.PARAM_INVALID, "模型实验必须绑定 APPROVED 的 QUALITY 数据集版本");
+            throw new BizException(ResultCode.PARAM_INVALID, "评测必须绑定 APPROVED 的 QUALITY 数据集版本");
         }
         return release;
+    }
+
+    /** 知识回归只接受审核版本中的实际目标，工作集中同名用例不构成版本内参评证据。 */
+    public EvalDatasetSnapshot requireApprovedQualityCase(String releaseId, String targetCaseId) {
+        EvalDatasetRelease release = requireApprovedQualityRelease(releaseId);
+        EvalDatasetSnapshot snapshot = requireSnapshot(release.snapshotVersionId());
+        if (snapshot.evalType() != EvalType.QUALITY || !snapshot.isContentIntact()
+            || !Objects.equals(release.contentHash(), snapshot.contentHash())
+            || release.caseCount() != snapshot.caseCount()) {
+            throw new BizException(ResultCode.PARAM_INVALID, "审核版本与评测数据集快照不一致");
+        }
+        Map<String, JsonNode> cases = snapshotCases(snapshot);
+        if (cases.isEmpty() || cases.size() != snapshot.caseCount() || !cases.containsKey(targetCaseId)) {
+            throw new BizException(ResultCode.PARAM_INVALID, "目标回归用例必须进入所选审核版本");
+        }
+        for (JsonNode item : cases.values()) {
+            if (!item.path("input").isTextual() || !StringUtils.hasText(item.path("input").asText())
+                || !item.path("expected").isTextual() || !StringUtils.hasText(item.path("expected").asText())) {
+                throw new BizException(ResultCode.PARAM_INVALID, "质量回归用例缺少问题或期望要点");
+            }
+        }
+        return snapshot;
     }
 
     public EvalDatasetSnapshot requireSnapshot(String versionId) {
         return gatewayProvider.dataset().snapshotStore().find(versionId)
             .orElseThrow(() -> new BizException(ResultCode.RESOURCE_NOT_FOUND,
                 "评测数据集快照不存在: " + versionId));
+    }
+
+    /** 按运行绑定的不可变快照核验目标实际参评，不使用可能已被编辑或停用的当前工作集。 */
+    public void requireExecutedCase(EvalRun run, EvalType expectedType, String caseId) {
+        if (run.evalType() != expectedType || !StringUtils.hasText(run.versionBinding().datasetVersion())) {
+            throw new BizException(ResultCode.PARAM_INVALID, "评测类型不一致或缺少实际数据集版本");
+        }
+        EvalDatasetSnapshot snapshot = requireSnapshot(run.versionBinding().datasetVersion());
+        if (snapshot.evalType() != expectedType || !snapshot.isContentIntact()
+            || !Objects.equals(snapshot.contentHash(), run.versionBinding().datasetFingerprint())) {
+            throw new BizException(ResultCode.PARAM_INVALID, "评测数据集快照类型或指纹不一致");
+        }
+        Map<String, JsonNode> cases = snapshotCases(snapshot);
+        if (cases.size() != snapshot.caseCount() || run.datasetSize() != cases.size()
+            || run.total() != cases.size() || run.passed() < 0
+            || run.passed() + run.failedCaseIds().size() != run.total()
+            || new HashSet<>(run.failedCaseIds()).size() != run.failedCaseIds().size()
+            || !cases.keySet().containsAll(run.failedCaseIds())) {
+            throw new BizException(ResultCode.PARAM_INVALID, "评测运行数量或结果与实际数据集不一致");
+        }
+        if (!cases.containsKey(caseId)) {
+            throw new BizException(ResultCode.PARAM_INVALID, "目标回归用例未进入本次评测：" + caseId);
+        }
     }
 
     private PersistedEvalCase toCase(EvalType type, String caseId, EvalCaseSaveRequest request,
@@ -215,6 +262,10 @@ public class EvalDatasetAdminService {
         EvalDatasetSnapshot snapshot = gateway.snapshotStore().find(snapshotVersionId)
             .orElseThrow(() -> new BizException(ResultCode.RESOURCE_NOT_FOUND,
                 "评测数据集快照不存在: " + snapshotVersionId));
+        return snapshotCases(snapshot);
+    }
+
+    private Map<String, JsonNode> snapshotCases(EvalDatasetSnapshot snapshot) {
         try {
             JsonNode root = objectMapper.readTree(snapshot.casesJson());
             if (!root.isArray()) {
@@ -230,7 +281,7 @@ public class EvalDatasetAdminService {
             return cases;
         } catch (Exception e) {
             throw new BizException(ResultCode.PARAM_INVALID,
-                "评测数据集快照损坏，无法比较: " + snapshotVersionId);
+                "评测数据集快照损坏，无法核验: " + snapshot.versionId());
         }
     }
 

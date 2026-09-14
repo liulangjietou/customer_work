@@ -44,6 +44,7 @@ public record ImprovementCaseVO(
     Long lastObservedAtMs,
     String lastError,
     long createdAtMs,
-    long updatedAtMs
+    long updatedAtMs,
+    Long reevaluationDeadlineAtMs
 ) {
 }

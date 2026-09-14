@@ -18,4 +18,6 @@ public class ImprovementAutomationProperties {
     private int minExposureCalls = 20;
     private int maxRecurrenceSignals = 0;
     private long maxBackoffMs = 300000L;
+    /** 一次复评的总时限，包含两组答复与评分；超时只标失败，不自动重复模型调用。 */
+    private long reevaluationTimeoutMs = 1800000L;
 }

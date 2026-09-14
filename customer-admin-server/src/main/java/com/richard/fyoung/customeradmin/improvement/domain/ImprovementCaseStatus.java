@@ -8,6 +8,7 @@ public enum ImprovementCaseStatus {
     REEVALUATION_FAILED,
     READY_TO_PUBLISH,
     PUBLISHING,
+    PUBLISHED,
     PUBLISH_FAILED,
     OBSERVING,
     VERIFIED,
@@ -16,7 +17,7 @@ public enum ImprovementCaseStatus {
     CANCELLED;
 
     public boolean terminal() {
-        return this == VERIFIED || this == INEFFECTIVE
+        return this == PUBLISHED || this == VERIFIED || this == INEFFECTIVE
             || this == INCONCLUSIVE || this == CANCELLED;
     }
 }

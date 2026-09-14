@@ -1,6 +1,9 @@
 package com.richard.fyoung.customeradmin.config;
 
 import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.SensitiveWordMiddleware;
+import com.richard.fyoung.customerwork.data.calllog.AgentCallTimingMiddleware;
+import com.richard.fyoung.customerwork.capability.eval.KnowledgeCandidateTrialRunner;
 import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.SubjectToolAuthorizationMiddleware;
@@ -55,6 +58,14 @@ public class AdminAgentRuntimeConfig {
 
     @Value("${admin.mysql.database-name}")
     private String databaseName;
+
+    /** 候选试评复用平台基础治理，独立会话与固定只读工具由试评运行器负责。 */
+    @Bean
+    public KnowledgeCandidateTrialRunner knowledgeCandidateTrialRunner(AgentCallTimingMiddleware timing,
+        ObjectProvider<SensitiveWordMiddleware> sensitive, MaskingMiddleware masking,
+        PromptInjectionGuardMiddleware promptGuard, IndirectInjectionGuardMiddleware indirectGuard) {
+        return new KnowledgeCandidateTrialRunner(timing, sensitive.getIfAvailable(), masking, promptGuard, indirectGuard);
+    }
 
     @Bean
     public AgentStateStore agentStateStore(DataSource dataSource) {

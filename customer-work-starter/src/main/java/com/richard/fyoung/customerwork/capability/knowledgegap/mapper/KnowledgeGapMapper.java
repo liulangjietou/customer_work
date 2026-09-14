@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.capability.knowledgegap.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.richard.fyoung.customerwork.capability.knowledgegap.entity.KnowledgeGapDO;
 import java.util.List;
 import org.apache.ibatis.annotations.Param;
@@ -21,11 +22,13 @@ public interface KnowledgeGapMapper extends BaseMapper<KnowledgeGapDO> {
     List<KnowledgeGapDO> selectReviewedGaps(@Param("scopeId") String scopeId,
                                             @Param("limit") int limit, @Param("view") String view);
 
-    /** 当前分区的原始信号，仍受租户 SQL 拦截。 */
-    KnowledgeGapDO selectByHash(@Param("scopeId") String scopeId, @Param("questionHash") String questionHash);
+    /** 精确定位可信租户与分区，不依赖可选租户插件或数据库排序规则。 */
+    @InterceptorIgnore(tenantLine = "1")
+    KnowledgeGapDO selectByHash(@Param("tenantId") String tenantId, @Param("scopeId") String scopeId, @Param("questionHash") String questionHash);
 
     /** 复核版本比较更新；计数变化不构成编辑冲突。 */
-    int updateClassification(@Param("row") KnowledgeGapDO row, @Param("expectedRevision") long expectedRevision);
+    @InterceptorIgnore(tenantLine = "1")
+    int updateClassification(@Param("tenantId") String tenantId, @Param("row") KnowledgeGapDO row, @Param("expectedRevision") long expectedRevision);
 
     /** 某分区全部盲区（统计用）。 */
     List<KnowledgeGapDO> selectByScope(@Param("scopeId") String scopeId);

@@ -13,8 +13,6 @@ import com.richard.fyoung.customerwork.capability.prompt.PromptVersion;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheEntry;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheScope;
 import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
-import com.richard.fyoung.customerwork.tool.backend.entity.KnowledgeDO;
-import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,9 +31,6 @@ import org.springframework.util.StringUtils;
 public class OpsAdminService {
 
     private static final Logger log = LoggerFactory.getLogger(OpsAdminService.class);
-
-    /** 从知识盲区一键补知识时的来源标注，便于日后审计"这条知识哪来的"。 */
-    private static final String KNOWLEDGE_SOURCE_PREFIX = "knowledge-gap:";
 
     private final OpsGatewayProvider gatewayProvider;
 
@@ -121,23 +116,9 @@ public class OpsAdminService {
         return gatewayProvider.get().knowledgeGap().topGaps(scope, limit, view);
     }
 
-    /**
-     * 从盲区一键补知识：直接往客服端库的 FAQ 表插一条。
-     *
-     * <p>标题正文由运营填而非拿盲区原问题照抄——用户的提问是口语化的，直接入库会污染检索质量。</p>
-     *
-     * @return 新建的知识条目 ID
-     */
+    /** 兼容旧客户端的明确拒绝入口，禁止绕过候选版本、实际评测和发布回执。 */
     public Long fillKnowledgeGap(String title, String content, String keyword, String questionHash) {
-        KnowledgeMapper mapper = gatewayProvider.get().knowledgeMapper();
-        KnowledgeDO entry = new KnowledgeDO();
-        entry.setTitle(title);
-        entry.setContent(content);
-        entry.setKeyword(keyword);
-        entry.setSource(KNOWLEDGE_SOURCE_PREFIX + questionHash);
-        mapper.insert(entry);
-        log.info("knowledge gap filled: knowledgeId={}, questionHash={}", entry.getId(), questionHash);
-        return entry.getId();
+        throw new BizException(ResultCode.PARAM_INVALID, "旧的直接补知识入口已关闭，请保存知识候选，在治理闭环完成复评后发布");
     }
 
     // ---------- 死信队列 ----------
