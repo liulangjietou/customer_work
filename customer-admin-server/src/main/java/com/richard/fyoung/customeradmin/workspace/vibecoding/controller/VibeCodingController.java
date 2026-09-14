@@ -1,5 +1,8 @@
 package com.richard.fyoung.customeradmin.workspace.vibecoding.controller;
 
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatReceipt;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
+import com.richard.fyoung.customeradmin.workspace.chat.service.WorkspaceMessageAcceptanceService;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.common.log.OperationLog;
@@ -40,6 +43,7 @@ import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAcc
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,6 +55,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
+import java.util.function.Supplier;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -63,6 +68,14 @@ import java.util.concurrent.CompletableFuture;
 @RestController
 @RequestMapping("/api/workspace/{agentCode}/vibecoding")
 public class VibeCodingController {
+
+    private WorkspaceMessageAcceptanceService acceptanceService;
+
+    /** Spring 装配必须提供受理服务；保留既有构造器以兼容非容器调用方。 */
+    @Autowired
+    public void setAcceptanceService(WorkspaceMessageAcceptanceService acceptanceService) {
+        this.acceptanceService = acceptanceService;
+    }
 
     private final VibeCodingService vibeCodingService;
     private final GitAssistantService gitAssistantService;
@@ -93,19 +106,33 @@ public class VibeCodingController {
     @SaCheckPermission("workspace")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@PathVariable String agentCode, @Valid @RequestBody ChatRequest request) {
-        sessionGuard.claimOrRequire(agentCode, request.sessionId(), StpUtil.getLoginIdAsLong());
+        long userId = StpUtil.getLoginIdAsLong();
+        sessionGuard.claimOrRequire(agentCode, request.sessionId(), userId);
         String tenantId = TenantContext.get();
-        Flux<com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk> source = request.collaborationEnabled()
-            ? collaborativeCodingService.stream(agentCode, request.sessionId(), request.message(),
-                request.mode(), request.attachmentIds(), request.originalInput())
-            : vibeCodingService.stream(agentCode, request.sessionId(), request.message(),
-                request.mode(), request.attachmentIds(), request.originalInput());
+        Supplier<Flux<ChatStreamChunk>> sourceFactory =
+            () -> request.collaborationEnabled()
+                ? collaborativeCodingService.stream(agentCode, request.sessionId(), request.message(),
+                    request.mode(), request.attachmentIds(), request.originalInput())
+                : vibeCodingService.stream(agentCode, request.sessionId(), request.message(),
+                    request.mode(), request.attachmentIds(), request.originalInput());
+        Flux<ChatStreamChunk> source = request.clientMessageId() == null
+            ? sourceFactory.get() : acceptanceService.execute(agentCode, userId, "vibecoding", request, sourceFactory);
         Flux<ServerSentEvent<String>> result = source
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
         return tenantId == null ? result
             : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));
+    }
+
+    /** 查本人已受理消息；权限或会话失效时不返回旧回执，也不重新执行模型。 */
+    @SaCheckPermission("workspace")
+    @GetMapping("/sessions/{sessionId}/receipts/{clientMessageId}")
+    public Result<ChatReceipt> receipt(@PathVariable String agentCode, @PathVariable String sessionId,
+                                       @PathVariable String clientMessageId) {
+        long userId = StpUtil.getLoginIdAsLong();
+        sessionGuard.requireOwned(agentCode, sessionId, userId);
+        return Result.success(acceptanceService.receipt(agentCode, sessionId, userId, "vibecoding", clientMessageId));
     }
 
     /** 当前 VibeCoding 沙箱模式（local/docker），全局配置，供前端在产物文件标题旁标注来源。 */
@@ -324,7 +351,7 @@ public class VibeCodingController {
     }
 
     private Flux<ServerSentEvent<String>> codingTaskStream(
-            Flux<com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk> source) {
+            Flux<ChatStreamChunk> source) {
         String tenantId = TenantContext.get();
         Flux<ServerSentEvent<String>> result = source
             .map(chunk -> ServerSentEvent.<String>builder()

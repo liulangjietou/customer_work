@@ -86,6 +86,7 @@ const canSend = computed(
     !attachmentBlocked.value &&
     !!active.value &&
     !active.value.streaming &&
+    !active.value.pendingMessage &&
     (!!active.value.input.trim() ||
       active.value.attachments.some((a) => a.status === 'success' && a.id)),
 )
@@ -237,7 +238,7 @@ function handleRefactor(request: Omit<RefactorTaskRequest, 'sessionId'>) {
 function resumeInterrupted() {
   const conv = active.value
   if (!conv) return
-  if (conv.streaming) return
+  if (conv.streaming || conv.pendingMessage) return
   const draft = conv.input
   const attachments = conv.attachments
   conv.input = '请继续刚才的任务。'
@@ -779,6 +780,11 @@ defineExpose({ newSession })
         />
       </div>
       <div class="composer-wrap">
+        <el-alert v-if="active?.pendingMessage" type="warning" :closable="false" show-icon
+          :title="active.pendingMessage.error || '受理尚未确认，原文和附件已保留。请先核对，避免重复执行。'">
+          <el-button v-if="!active.streaming" :loading="active.pendingMessage.checking"
+            @click="store.reconcileMessage(props.agentCode)">核对并重试原消息</el-button>
+        </el-alert>
         <div class="composer-shell">
           <AttachmentPendingList
             v-if="active && active.attachments.length > 0"
@@ -810,6 +816,7 @@ defineExpose({ newSession })
               </el-button>
               <el-button
                 v-if="active?.interrupted && !active?.streaming"
+                :disabled="!!active?.pendingMessage"
                 link
                 type="primary"
                 @click="resumeInterrupted"

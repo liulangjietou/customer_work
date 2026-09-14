@@ -1,3 +1,4 @@
+import type { WorkspaceReceipt } from '@/utils/workspaceMessageAcceptance'
 import { download, request as httpRequest, requestBlob } from './request'
 import { streamSse, type SseHandlers } from '@/utils/sse'
 import type {
@@ -122,5 +123,13 @@ export function confirmChatPlan(agentCode: string, req: PlanConfirmRequest) {
     url: `/workspace/${agentCode}/chat/plan/confirm`,
     method: 'post',
     data: req,
+  })
+}
+
+/** 核对本人原消息的持久受理记录，失败时由编辑器保留原请求。 */
+export function getChatReceipt(agentCode: string, sessionId: string, clientMessageId: string) {
+  return httpRequest<WorkspaceReceipt>({
+    url: `/workspace/${encodeURIComponent(agentCode)}/chat/sessions/${encodeURIComponent(sessionId)}/receipts/${encodeURIComponent(clientMessageId)}`,
+    method: 'get', suppressErrorMessage: true,
   })
 }

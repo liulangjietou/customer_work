@@ -126,6 +126,8 @@ public enum ResultCode {
     LOGIN_CAPTCHA_TOO_FREQUENT(40054, "拼图验证请求过于频繁，请稍后再试"),
     LOGIN_CAPTCHA_UNAVAILABLE(40055, "拼图验证服务暂不可用，请稍后重试"),
 
+    WORKSPACE_MESSAGE_CONFLICT(40056, "消息标识已用于不同内容，请保留输入并核对原请求"),
+
     // 5xxxx 系统兜底
     SYSTEM_ERROR(50000, "系统繁忙，请稍后重试");
 

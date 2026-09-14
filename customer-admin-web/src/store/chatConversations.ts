@@ -1,5 +1,7 @@
+import { prepareWorkspaceMessage, confirmWorkspaceMessage, reconcileWorkspaceMessage, type PendingWorkspaceMessage } from '@/utils/workspaceMessageAcceptance'
+import { disposeWorkspaceConversations } from '@/utils/workspaceConversationLifecycle'
 import { defineStore } from 'pinia'
-import { getChatSessionMessages, interruptChat, streamChat } from '@/api/chat'
+import { getChatSessionMessages, interruptChat, streamChat, getChatReceipt } from '@/api/chat'
 import { generateUuid } from '@/utils/uuid'
 import {
   ANSWER_KIND,
@@ -67,6 +69,7 @@ export interface ChatAttachmentItem {
  * 会话与组件生命周期彻底解耦：切页面、切智能体、组件销毁重建都不影响进行中的会话与 SSE 流。
  */
 export interface ChatConversation {
+  pendingMessage: PendingWorkspaceMessage | null
   sessionId: string
   messages: ChatMessage[]
   input: string
@@ -94,6 +97,7 @@ export function createChatConversation(
   messages: ChatMessage[] = [],
 ): ChatConversation {
   return {
+    pendingMessage: null,
     sessionId,
     messages,
     input: '',
@@ -169,6 +173,16 @@ export const useChatConversationsStore = defineStore('chatConversations', {
         state.byAgent[agentCode]?.activeId ?? '',
   },
   actions: {
+    /** 新登录、退出和强制改密立即撤销旧会话内存；先断开归属，再取消连接以拒绝迟到回调。 */
+    resetForLogin() {
+      const previous = Object.values(this.byAgent).flatMap(agent => Object.values(agent.conversations))
+      this.byAgent = {}
+      this.historyVersion = {}
+      if (this.planCountdownTimer) clearInterval(this.planCountdownTimer)
+      this.planCountdownTimer = null
+      disposeWorkspaceConversations(previous)
+    },
+
     /** 确保某智能体的状态已初始化（至少有一个空会话作为激活会话），组件挂载时调用。 */
     ensureAgent(agentCode: string) {
       if (this.byAgent[agentCode]) return
@@ -211,6 +225,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
         return
       }
       const history = await getChatSessionMessages(agentCode, targetSessionId)
+      if (this.byAgent[agentCode] !== agent) return
       agent.conversations[targetSessionId] = createChatConversation(
         targetSessionId,
         presentChatHistory(history),
@@ -222,6 +237,16 @@ export const useChatConversationsStore = defineStore('chatConversations', {
      * 发送当前激活会话的输入。SSE 回调按 (agentCode, sessionId) 写回 store 对应会话——用户切走、
      * 组件销毁都不影响；onScroll 由组件传入，仅当该会话仍是激活会话时组件才滚动视图。
      */
+    /** 回执丢失时先查库；仅明确未受理时重试冻结的原请求。 */
+    async reconcileMessage(agentCode: string) {
+      const conv = this.activeOf(agentCode)
+      if (!conv) return
+      await reconcileWorkspaceMessage(conv,
+        id => getChatReceipt(agentCode, conv.sessionId, id),
+        () => this.byAgent[agentCode]?.conversations[conv.sessionId] === conv,
+        () => getChatSessionMessages(agentCode, conv.sessionId))
+    },
+
     send(
       agentCode: string,
       buildMessage: (conv: ChatConversation, text: string) => string,
@@ -229,7 +254,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
     ) {
       const agent = this.byAgent[agentCode]
       const conv = agent?.conversations[agent.activeId]
-      if (!conv) return
+      if (!conv || conv.pendingMessage) return
       const text = conv.input.trim()
       // 输入框内容自动去首尾空白：纯空白输入被拦下时框里的空格也一并清掉，避免"有空格但发不出去"的困惑
       conv.input = text
@@ -247,9 +272,13 @@ export const useChatConversationsStore = defineStore('chatConversations', {
         successfulAttachments.length > 0
           ? successfulAttachments.map((a) => a.id as string)
           : undefined
+      conv.pendingMessage = prepareWorkspaceMessage(conv, {
+        sessionId: conv.sessionId, message: messageToSend, rawInput: text,
+        mode: conv.mode, attachmentIds
+      })
+      const pending = conv.pendingMessage
       // 用户气泡展示原始输入 + 独立的附件区（图片缩略图/文件芯片），不把拼进正文的附件全文也显示出来
-      // （那部分只是发给模型看的）。previewUrl 所有权从待发送区转移给消息对象——发送后立即清空
-      // conv.attachments（见下方），这里转移完就不再由待发送区持有，也不 revoke，气泡还要接着用它。
+      // （那部分只是发给模型看的）。受理确认前保留编辑区附件；消息气泡继续使用同一预览。
       conv.messages.push({
         role: 'user',
         text,
@@ -270,99 +299,110 @@ export const useChatConversationsStore = defineStore('chatConversations', {
       // 坑：不能拿 push 前创建的原始对象引用去改——响应式数组对存进去的对象是"读取时才转代理"，
       // 改原始对象绕过代理 setter，视图不会增量刷新。push 完再从数组里取，拿到的才是代理本身。
       const assistantMessage = conv.messages[conv.messages.length - 1]
-      conv.input = ''
-      conv.attachments = []
-      conv.streaming = true
-      const sid = conv.sessionId
-      const isActive = () => this.byAgent[agentCode]?.activeId === sid
-      const textBatcher = createTextChunkBatcher((chunk) => {
-        assistantMessage.text += chunk
-        if (isActive()) onScroll?.()
-      })
+      const start = () => {
+        conv.streaming = true
+        const sid = conv.sessionId
+        const isCurrent = () => this.byAgent[agentCode]?.conversations[sid] === conv
+        const isActive = () => isCurrent() && this.byAgent[agentCode]?.activeId === sid
+        const textBatcher = createTextChunkBatcher((chunk) => {
+          if (!isCurrent()) return
+          assistantMessage.text += chunk
+          if (isActive()) onScroll?.()
+        })
 
-      const completion = createChatCompletion(assistantMessage, conv)
-      const abortStream = streamChat(
-        agentCode,
-        { sessionId: sid, message: messageToSend, rawInput: text, mode: conv.mode, attachmentIds },
-        {
-          onEvent: (event) => {
-            const c = this.byAgent[agentCode]?.conversations[sid]
-            if (!c) return
-            if (event.event === 'terminal') {
-              textBatcher.flush()
-              completion.terminal(event.data)
-              return
-            }
-            if (event.event === 'done') {
-              textBatcher.flush()
-              return
-            }
-            if (event.event === 'plan') {
-              textBatcher.flush()
-              this.applyPlanEvent(c, assistantMessage, event.data)
-              if (isActive()) onScroll?.()
-              return
-            }
-            if (event.event === 'plan_result') {
-              textBatcher.flush()
-              try {
-                const parsed = JSON.parse(event.data) as PlanResultEvent
-                const card = c.pendingPlans.get(parsed.planId)
-                if (card) {
-                  card.status = parsed.status
-                  card.submitting = false
-                  c.pendingPlans.delete(parsed.planId)
-                }
-              } catch {
-                /* 静默丢弃 */
+        const completion = createChatCompletion(assistantMessage, conv)
+        const abortStream = streamChat(
+          agentCode,
+          pending.request,
+          {
+            onEvent: (event) => {
+              const c = this.byAgent[agentCode]?.conversations[sid]
+              if (!c || !isCurrent()) return
+              if (event.event === 'accepted') {
+                confirmWorkspaceMessage(conv, pending, event.data)
+                return
               }
-              return
-            }
-            if (event.event.startsWith('node:')) {
-              textBatcher.flush()
-              const kind = event.event.slice('node:'.length)
-              const payload = parseChatStreamPayload(event.data)
-              appendChatStreamNode(
-                assistantMessage.nodes,
-                kind,
-                payload.text,
-                payload.source,
-                payload.subagentName,
-              )
-            } else if (event.event === 'message') {
-              const payload = parseChatStreamPayload(event.data)
-              if (payload.source) {
-                // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板
+              if (event.event !== 'done') pending.sawExecution = true
+              if (event.event === 'terminal') {
+                textBatcher.flush()
+                completion.terminal(event.data)
+                return
+              }
+              if (event.event === 'done') {
+                textBatcher.flush()
+                return
+              }
+              if (event.event === 'plan') {
+                textBatcher.flush()
+                this.applyPlanEvent(c, assistantMessage, event.data)
+                if (isActive()) onScroll?.()
+                return
+              }
+              if (event.event === 'plan_result') {
+                textBatcher.flush()
+                try {
+                  const parsed = JSON.parse(event.data) as PlanResultEvent
+                  const card = c.pendingPlans.get(parsed.planId)
+                  if (card) {
+                    card.status = parsed.status
+                    card.submitting = false
+                    c.pendingPlans.delete(parsed.planId)
+                  }
+                } catch {
+                  /* 静默丢弃 */
+                }
+                return
+              }
+              if (event.event.startsWith('node:')) {
+                textBatcher.flush()
+                const kind = event.event.slice('node:'.length)
+                const payload = parseChatStreamPayload(event.data)
                 appendChatStreamNode(
                   assistantMessage.nodes,
-                  ANSWER_KIND,
+                  kind,
                   payload.text,
                   payload.source,
                   payload.subagentName,
                 )
-              } else {
-                textBatcher.append(payload.text)
-                return
+              } else if (event.event === 'message') {
+                const payload = parseChatStreamPayload(event.data)
+                if (payload.source) {
+                  // 带 source 的正文增量是子Agent 内部产出，复用 ANSWER kind 挂进对应嵌套面板
+                  appendChatStreamNode(
+                    assistantMessage.nodes,
+                    ANSWER_KIND,
+                    payload.text,
+                    payload.source,
+                    payload.subagentName,
+                  )
+                } else {
+                  textBatcher.append(payload.text)
+                  return
+                }
               }
-            }
-            // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
-            if (isActive()) onScroll?.()
+              // 其余未知事件静默忽略：后端新增 SSE 事件类型时旧前端不受影响（需求 §5.5 向后兼容）
+              if (isActive()) onScroll?.()
+            },
+            onError: (error) => {
+              if (!isCurrent()) return
+              textBatcher.flush()
+              completion.fail(error)
+            },
+            onComplete: () => {
+              if (!isCurrent()) return
+              textBatcher.flush()
+              completion.complete()
+              this.historyVersion[agentCode] = (this.historyVersion[agentCode] ?? 0) + 1
+            },
           },
-          onError: (error) => {
-            textBatcher.flush()
-            completion.fail(error)
-          },
-          onComplete: () => {
-            textBatcher.flush()
-            completion.complete()
-            this.historyVersion[agentCode] = (this.historyVersion[agentCode] ?? 0) + 1
-          },
-        },
-      )
-      conv.abort = () => {
-        textBatcher.flush()
-        abortStream()
+        )
+        conv.abort = () => {
+          textBatcher.flush()
+          abortStream()
+        }
       }
+      pending.retry = start
+      start()
       onScroll?.()
     },
 
