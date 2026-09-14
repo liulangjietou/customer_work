@@ -51,6 +51,11 @@ function buildOption() {
       textStyle: { color: palette.text },
     },
     legend: {
+      // 单行分页保留全部指标，避免窄屏换行后覆盖坐标轴标题。
+      type: 'scroll',
+      pageIconColor: palette.text,
+      pageIconInactiveColor: palette.axis,
+      pageTextStyle: { color: palette.text },
       // Token 量纲（可达数万）与耗时 ms 不同，单列一条曲线绑独立右侧 Y 轴，默认不选中避免首屏喧宾夺主，
       // 用户按需点亮；调用量/耗时各占一条 Y 轴。
       data: props.compact
@@ -60,7 +65,7 @@ function buildOption() {
       top: 0,
       textStyle: { color: palette.text },
     },
-    grid: { left: 50, right: props.compact ? 56 : 88, top: 44, bottom: rotate ? 56 : 30 },
+    grid: { left: 50, right: props.compact ? 56 : 88, top: 56, bottom: rotate ? 56 : 30 },
     xAxis: {
       type: 'category',
       data: categories,

@@ -360,7 +360,7 @@ watch(
 }
 
 .knowledge-btn .el-icon {
-  color: #2563eb;
+  color: var(--theme-primary, var(--el-color-primary));
   font-size: 15px;
 }
 
