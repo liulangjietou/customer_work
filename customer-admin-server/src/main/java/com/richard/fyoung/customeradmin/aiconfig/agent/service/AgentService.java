@@ -166,7 +166,7 @@ public class AgentService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(AgentSaveRequest request) {
-        validate(request, null);
+        validateConfiguration(request, null);
         // 新建：主模型必须实测连通性通过才允许保存
         assertPrimaryModelConnectivity(request.modelId());
         AiAgent agent = new AiAgent();
@@ -193,7 +193,7 @@ public class AgentService {
         AiAgent agent = requireAgent(id);
         String oldAgentCode = agent.getAgentCode();
         Long oldModelId = agent.getModelId();
-        validate(request, id);
+        validateConfiguration(request, id);
         // 编辑：仅当主模型变更时才实测连通性
         if (!request.modelId().equals(oldModelId)) {
             assertPrimaryModelConnectivity(request.modelId());
@@ -265,11 +265,11 @@ public class AgentService {
 
     /**
      * modelId 必须引用真实存在的模型；mcpIds/skillIds/subAgentIds（若提供）里每个 id 也必须真实存在；
-     * agentCode 格式、能力标识与高级参数取值范围做一处防御式校验（fast-fail），供 create/update 复用。
+     * agentCode 格式、能力标识与高级参数取值范围做一处防御式校验（fast-fail），供正式保存与个人草稿试用复用；本方法不写配置、不发布、不调用模型。
      *
      * @param selfId update 场景传当前智能体 id（用于拦截"子智能体包含自身"），create 场景传 null
      */
-    private void validate(AgentSaveRequest request, Long selfId) {
+    public void validateConfiguration(AgentSaveRequest request, Long selfId) {
         if (!AGENT_CODE_PATTERN.matcher(request.agentCode()).matches()) {
             throw new BizException(ResultCode.PARAM_INVALID, "agentCode 仅支持小写字母/数字/短横线");
         }

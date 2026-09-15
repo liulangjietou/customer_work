@@ -27,6 +27,9 @@ import IconPicker from '@/components/IconPicker.vue'
 import ChannelBindingDrawer from '@/views/aiconfig/ChannelBindingDrawer.vue'
 import AgentActions from './components/AgentActions.vue'
 import AgentDraftDrawer from './components/AgentDraftDrawer.vue'
+import AgentDraftTrialDrawer from './components/AgentDraftTrialDrawer.vue'
+import AgentPublicationCheckDrawer from './components/AgentPublicationCheckDrawer.vue'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
 import AgentScenarioTemplates, { type AgentScenario } from './components/AgentScenarioTemplates.vue'
 import { useAgentDraftWorkflow } from './useAgentDraftWorkflow'
 import type { AgentDraft } from '@/api/agentDraft'
@@ -48,6 +51,21 @@ import type {
 const menuStore = useMenuStore()
 const auth = useAuthStore()
 const draftDrawerVisible = ref(false)
+const trialVisible = ref(false)
+const trialDraftId = ref('')
+const trialTitle = ref('')
+const publicationVisible = ref(false)
+const publicationAgentId = ref<number | null>(null)
+function openPublication(row: AgentVO) {
+  if (!auth.hasPermission('agent:view') || !auth.hasPermission('eval:view')) return
+  publicationAgentId.value = row.id
+  publicationVisible.value = true
+}
+function openPublicationChannels() {
+  publicationVisible.value = false
+  channelBindingVisible.value = true
+}
+const captureTrialAction = useAuthSubmissionScope()
 const scenarioChecks = ref<string[]>([])
 const restoreConflict = ref('')
 const submitError = ref('')
@@ -177,6 +195,27 @@ const {
   dirty: draftDirty,
   updatedAtMs: draftSavedAt,
 } = draftWorkflow
+
+/** 只有原编辑目标的保存得到确认后才打开试用，保存过程中继续编辑则保留当前输入。 */
+async function saveAndTrial() {
+  const request = editorGeneration
+  const isCurrent = captureTrialAction()
+  if (!await draftWorkflow.save() || !isCurrent() || request !== editorGeneration || !editorVisible.value) return
+  if (draftWorkflow.dirty.value) {
+    ElMessage.warning('保存期间内容又有修改，请再次保存后试用。')
+    return
+  }
+  trialDraftId.value = draftWorkflow.id.value
+  trialTitle.value = form.agentName
+  trialVisible.value = true
+}
+function trialSavedDraft(draft: AgentDraft) {
+  if (!auth.hasPermission(draft.agentId ? 'agent:edit' : 'agent:add')) return
+  trialDraftId.value = draft.id
+  trialTitle.value = draft.title
+  draftDrawerVisible.value = false
+  trialVisible.value = true
+}
 
 const agentCodePattern = /^[a-z0-9-]+$/
 
@@ -660,6 +699,7 @@ onMounted(() => {
                 @edit="openEdit(row)"
                 @toggle="handleToggleStatus(row)"
                 @memory="openMemory(row)"
+                @publication="openPublication(row)"
                 @delete="handleDelete(row)"
               />
             </template>
@@ -753,6 +793,7 @@ onMounted(() => {
               @edit="openEdit(row)"
               @toggle="handleToggleStatus(row)"
               @memory="openMemory(row)"
+                @publication="openPublication(row)"
               @delete="handleDelete(row)"
             />
           </template>
@@ -795,6 +836,7 @@ onMounted(() => {
         <el-button :disabled="saving" :loading="draftSaving" @click="draftWorkflow.save"
           >保存草稿</el-button
         >
+        <el-button type="primary" plain :disabled="saving || draftSaving" @click="saveAndTrial">保存草稿并试用</el-button>
       </div>
       <el-alert
         v-if="draftError || restoreConflict || submitError"
@@ -1207,7 +1249,9 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <AgentDraftDrawer v-model="draftDrawerVisible" @restore="restoreDraft" />
+    <AgentDraftDrawer v-model="draftDrawerVisible" @restore="restoreDraft" @trial="trialSavedDraft" />
+    <AgentDraftTrialDrawer v-model="trialVisible" :draft-id="trialDraftId" :title="trialTitle" />
+    <AgentPublicationCheckDrawer v-model="publicationVisible" :agent-id="publicationAgentId" @channels="openPublicationChannels" />
     <ChannelBindingDrawer v-model="channelBindingVisible" />
   </div>
 </template>

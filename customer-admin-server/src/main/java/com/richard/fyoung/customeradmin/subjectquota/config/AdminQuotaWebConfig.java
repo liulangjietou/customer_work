@@ -41,6 +41,8 @@ public class AdminQuotaWebConfig implements WebMvcConfigurer {
         }
         registry.addInterceptor(new AdminQuotaInterceptor(guard, objectMapper))
             .addPathPatterns(properties.getPathPatterns())
+            // 试用由持久受理后的唯一执行方计数，广域自定义路径也不能重复计数或向 GET 回执收费。
+            .excludePathPatterns("/api/aiconfig/agent-drafts/*/trials/**")
             .order(Ordered.LOWEST_PRECEDENCE - 10);
     }
 }
