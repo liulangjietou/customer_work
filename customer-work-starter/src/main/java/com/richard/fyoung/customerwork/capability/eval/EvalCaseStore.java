@@ -19,12 +19,12 @@ public interface EvalCaseStore {
     void save(PersistedEvalCase evalCase);
 
     /**
-     * 仅创建新用例，编号冲突时拒绝，不能覆盖其它 Badcase 的采纳结果。
+     * 仅创建新用例，编号冲突时抛出 {@link EvalCaseConflictException}，不能覆盖已有内容。
      * 默认实现兼容现有 SPI；支持并发的存储须以原子写入覆盖此实现。
      */
     default void create(PersistedEvalCase evalCase) {
         if (find(evalCase.evalType(), evalCase.caseId()).isPresent()) {
-            throw new IllegalStateException("eval case id already exists: " + evalCase.caseId());
+            throw new EvalCaseConflictException("eval case id already exists: " + evalCase.caseId());
         }
         save(evalCase);
     }

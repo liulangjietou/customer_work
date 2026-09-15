@@ -77,6 +77,9 @@ for (const item of [
 }
 
 test('切换评测类型遇到失败时，不沿用前一类型的指标与数据集', async ({ page }) => {
+  await page.route('**/api/auth/permissions', route => route.fulfill({
+    json: { code: 0, data: ['eval:view'] },
+  }))
   await page.route('**/api/eval/runs?*', (route) =>
     route.fulfill({
       json:
@@ -179,4 +182,39 @@ test('工单刷新失败保留已有记录，成功重试后替换', async ({ pa
   await page.getByRole('button', { name: '重新加载', exact: true }).click()
   await expect(page.getByText('配送时间已确认', { exact: true })).toBeVisible()
   await expect(page.locator('.crud-load-state')).not.toBeVisible()
+})
+
+
+test('评测没有查看权限时不请求数据，授权后只恢复当前类型', async ({ page }) => {
+  const reads: string[] = []
+  await page.route('**/api/eval/**', route => {
+    const url = new URL(route.request().url())
+    reads.push(url.pathname + url.search)
+    return route.fulfill({ json: { code: 0, data: url.pathname === '/api/eval/runs' ? [{
+      runId: 'permission-quality-run', evalType: 'QUALITY', total: 1, passed: 1,
+      primaryMetric: 1, secondaryMetric: 1, failedCaseIds: [], failures: [], metrics: {},
+      trigger: 'MANUAL', datasetSize: 1, remark: '授权后的质量记录', createdAtMs: 1789444800000,
+    }] : [] } })
+  })
+  await page.goto('/ops/eval')
+  await page.locator('.el-radio-button').filter({ hasText: '回复质量' }).click()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  expect(reads).toEqual([])
+  await page.evaluate(async () => {
+    const source = '/src/store/auth.ts'
+    const { useAuthStore } = await import(source)
+    useAuthStore().permissions = ['eval:view']
+  })
+  await expect(page.getByText('授权后的质量记录', { exact: true })).toBeVisible()
+  await expect.poll(() => reads.length).toBe(3)
+  expect(reads.every(path => path.includes('QUALITY'))).toBe(true)
+  await page.evaluate(async () => {
+    const source = '/src/store/auth.ts'
+    const { useAuthStore } = await import(source)
+    useAuthStore().permissions = []
+  })
+  await expect(page.getByText('授权后的质量记录', { exact: true })).not.toBeVisible()
+  await page.locator('.el-radio-button').filter({ hasText: '意图路由' }).click()
+  await page.getByRole('button', { name: '刷新', exact: true }).click()
+  expect(reads).toHaveLength(3)
 })

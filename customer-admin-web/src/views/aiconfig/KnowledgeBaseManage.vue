@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
   createKnowledgeBase,
@@ -10,11 +10,15 @@ import {
   updateKnowledgeBaseStatus,
 } from '@/api/knowledgeBase'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { KnowledgeBaseSaveRequest, KnowledgeBaseVO, PageQuery } from '@/types/api'
 import KnowledgeSourceDrawer from './components/KnowledgeSourceDrawer.vue'
 
-const testingId = ref<number | null>(null)
+const auth = useAuthStore()
+const probe = useRowMutation('knowledge-base:view')
+const statusMutation = useRowMutation('knowledge-base:edit')
 const formRef = ref<FormInstance>()
 const knowledgeOpsVisible = ref(false)
 const knowledgeOpsRow = ref<KnowledgeBaseVO | null>(null)
@@ -103,32 +107,32 @@ function validateExtraHeadersJson(
 }
 
 async function handleTest(row: KnowledgeBaseVO) {
-  testingId.value = row.id
-  try {
+  await probe.run(row.id, async isCurrent => {
     const result = await testKnowledgeBaseConnectivity(row.id)
-    if (result.testStatus === 1) {
-      ElMessage.success(`连通性测试成功，召回 ${result.hitCount ?? 0} 条`)
-    } else {
-      ElMessage.error(result.message || '连通性测试失败')
-    }
-    await loadList()
-  } finally {
-    testingId.value = null
-  }
+    if (!isCurrent()) return
+    if (result.testStatus === 1) ElMessage.success(`连通性测试成功，召回 ${result.hitCount ?? 0} 条`)
+    else ElMessage.error(result.message || '连通性测试失败')
+  }, loadList)
 }
 
-// 状态开关直接调专用状态接口，不走整条更新（与"启用/停用"作为独立操作的语义一致）
+/** 启停独立于配置提交，按行锁定并在身份变化后忽略旧响应。 */
 async function handleToggleStatus(row: KnowledgeBaseVO) {
   const nextStatus = row.status === 1 ? 0 : 1
-  await updateKnowledgeBaseStatus(row.id, nextStatus)
-  ElMessage.success(nextStatus === 1 ? '已启用' : '已停用')
-  await loadList()
+  await statusMutation.run(row.id, () => updateKnowledgeBaseStatus(row.id, nextStatus), async () => {
+    ElMessage.success(nextStatus === 1 ? '已启用' : '已停用')
+    await loadList()
+  })
 }
 
 function openKnowledgeOps(row: KnowledgeBaseVO) {
   knowledgeOpsRow.value = row
   knowledgeOpsVisible.value = true
 }
+
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  knowledgeOpsVisible.value = false
+  knowledgeOpsRow.value = null
+}, { flush: 'sync' })
 
 onMounted(loadList)
 </script>
@@ -228,10 +232,11 @@ onMounted(loadList)
                   ><el-icon><MoreFilled /></el-icon></el-button
                 ><template #dropdown
                   ><el-dropdown-menu
-                    ><el-dropdown-item :disabled="testingId === row.id" @click="handleTest(row)"
+                    ><el-dropdown-item :disabled="probe.isPending(row.id)" @click="handleTest(row)"
                       >测试连通性</el-dropdown-item
                     ><el-dropdown-item
                       v-permission="'knowledge-base:edit'"
+                      :disabled="statusMutation.isPending(row.id)"
                       @click="handleToggleStatus(row)"
                       >{{ row.status === 1 ? '停用' : '启用' }}</el-dropdown-item
                     ><el-dropdown-item

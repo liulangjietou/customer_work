@@ -2,15 +2,24 @@
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { captureMcpContract, listMcpContractHistory } from '@/api/mcp'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 import type { McpChangeType, McpContractSnapshotVO, McpToolChange } from '@/types/api'
 
 const props = defineProps<{ mcpId: number | null; mcpName: string }>()
 const visible = defineModel<boolean>({ default: false })
 
-const loading = ref(false)
+const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
+let generation = 0
 const capturing = ref(false)
-const snapshots = ref<McpContractSnapshotVO[]>([])
-const loadError = ref('')
+const history = useQueryState<McpContractSnapshotVO[]>(
+  () => props.mcpId && visible.value && auth.hasPermission('mcp:view')
+    ? listMcpContractHistory(props.mcpId) : Promise.resolve([]),
+  () => [],
+)
+const { data: snapshots, loading, error: loadError, load: loadHistory } = history
 
 /**
  * 变更类型 → 中文与是否破坏性，与后端 McpChangeType 的分级一一对应。
@@ -56,24 +65,16 @@ function severityText(severity: string) {
   return '无变化'
 }
 
-async function loadHistory() {
-  if (!props.mcpId) return
-  loading.value = true
-  loadError.value = ''
-  try {
-    snapshots.value = await listMcpContractHistory(props.mcpId)
-  } catch (e) {
-    loadError.value = e instanceof Error ? e.message : '加载失败'
-  } finally {
-    loading.value = false
-  }
-}
-
 async function capture() {
-  if (!props.mcpId) return
+  if (!visible.value || !props.mcpId || capturing.value || !auth.hasPermission('mcp:view')) return
+  const currentIdentity = captureSubmission()
+  const currentGeneration = generation
+  const id = props.mcpId
+  const current = () => currentIdentity() && currentGeneration === generation && visible.value && id === props.mcpId
   capturing.value = true
   try {
-    const snapshot = await captureMcpContract(props.mcpId)
+    const snapshot = await captureMcpContract(id)
+    if (!current()) return
     if (snapshot.driftSeverity === 'BREAKING') {
       ElMessage.warning(`检测到破坏性变更，共 ${snapshot.changes.length} 处`)
     } else if (snapshot.driftSeverity === 'COMPATIBLE') {
@@ -82,19 +83,25 @@ async function capture() {
       ElMessage.success(`契约无变化，当前 ${snapshot.toolCount} 个工具`)
     }
     await loadHistory()
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '采集失败')
+  } catch {
+    // 请求层提示失败；当前弹窗允许重新采集，不让旧目标回调操作新弹窗。
   } finally {
-    capturing.value = false
+    if (current()) capturing.value = false
   }
 }
 
-watch(visible, (opened) => {
-  if (opened) {
-    snapshots.value = []
-    loadHistory()
-  }
-})
+watch([visible, () => props.mcpId], () => {
+  generation += 1
+  capturing.value = false
+  history.reset()
+  if (visible.value) void loadHistory()
+}, { flush: 'sync' })
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  generation += 1
+  capturing.value = false
+  visible.value = false
+  history.reset()
+}, { flush: 'sync' })
 </script>
 
 <template>
@@ -110,7 +117,7 @@ watch(visible, (opened) => {
       <el-button :loading="loading" @click="loadHistory">刷新</el-button>
     </div>
 
-    <el-alert v-if="loadError" type="error" :closable="false" show-icon :title="loadError" />
+    <el-alert v-if="loadError" type="error" :closable="false" show-icon title="契约历史加载失败，请重试" />
 
     <el-empty v-else-if="!loading && snapshots.length === 0" description="还没有采集过契约快照" />
 

@@ -33,10 +33,10 @@ public class MybatisEvalCaseStore implements EvalCaseStore {
     @Override
     public void create(PersistedEvalCase evalCase) {
         try {
-            // 新采纳必须由唯一键原子判重，不能使用编辑/导入所需的 upsert。
+            // 新建必须由唯一键原子判重，不能使用编辑/导入所需的 upsert。
             mapper.insert(toDO(evalCase));
         } catch (DuplicateKeyException conflict) {
-            throw new IllegalStateException("eval case id already exists: " + evalCase.caseId(), conflict);
+            throw new EvalCaseConflictException("eval case id already exists: " + evalCase.caseId(), conflict);
         }
     }
 

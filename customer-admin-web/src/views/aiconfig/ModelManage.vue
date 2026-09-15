@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
   createModel,
@@ -11,6 +11,9 @@ import {
   updateModel,
 } from '@/api/model'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import { useAuthStore } from '@/store/auth'
 import { credentialStatusLabel } from '@/utils/credentialPresentation'
@@ -25,16 +28,18 @@ import ModelExperimentPanel from './components/ModelExperimentPanel.vue'
 import ModelGovernanceDrawer from './components/ModelGovernanceDrawer.vue'
 import ModelRoutingPanel from './components/ModelRoutingPanel.vue'
 
-const testingId = ref<number | null>(null)
 const preflightingSave = ref(false)
-const deletingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
-const assets = ref<ModelAssetOption[]>([])
 const assetMode = ref<'existing' | 'new'>('new')
 const editingRow = ref<ModelVO | null>(null)
 const governanceVisible = ref(false)
 const governanceModelId = ref<number | null>(null)
 const auth = useAuthStore()
+const captureIdentity = useAuthSubmissionScope()
+const healthMutation = useRowMutation('model:health-test')
+const deleteMutation = useRowMutation('model:delete')
+const assetQuery = useQueryState(listModelAssetOptions, () => [] as ModelAssetOption[])
+const { data: assets, loading: assetsLoading, error: assetsError } = assetQuery
 const activeSection = ref('deployments')
 const HEALTH_LABELS: Record<ModelHealthStatus, string> = {
   UNKNOWN: '未检测',
@@ -70,6 +75,7 @@ const {
   handleSearch,
   openCreate,
   openEdit,
+  captureDialog,
   handleSubmit: submitCrud,
 } = useCrudPage<ModelVO, PageQuery, ModelSaveRequest>({
   page: pageModels,
@@ -133,7 +139,8 @@ const {
     lifecycleStatus: row.lifecycleStatus ?? 'ACTIVE',
   }),
   beforeSubmit: (mode, value) => {
-    if (mode === 'create' && !value.apiKey?.trim()) {
+    if (!auth.hasPermission(mode === 'create' ? 'model:add' : 'model:edit')) return false
+    if (mode === 'create' && requiresApiKey(value.provider) && !value.apiKey?.trim()) {
       ElMessage.warning('新建部署必须填写凭据')
       return false
     }
@@ -254,10 +261,11 @@ function handleAssetSelected(assetId: number | null | undefined) {
 }
 
 async function loadAssets() {
-  assets.value = await listModelAssetOptions()
+  if (auth.hasPermission('model:view')) await assetQuery.load()
 }
 
 function openCreateModel() {
+  preflightingSave.value = false
   editingRow.value = null
   assetMode.value = assets.value.length > 0 ? 'existing' : 'new'
   openCreate()
@@ -268,61 +276,67 @@ function openCreateModel() {
 }
 
 function openEditModel(row: ModelVO) {
+  preflightingSave.value = false
   editingRow.value = row
   assetMode.value = row.assetId ? 'existing' : 'new'
   openEdit(row)
 }
 
 async function handleSubmitModel() {
-  if (savePending.value) return
+  if (savePending.value || !dialogVisible.value) return
+  const current = captureDialog()
+  const identity = captureIdentity()
+  const permissions = auth.permissions.join('\0')
+  const row = editingRow.value
+  const id = editingId.value
   preflightingSave.value = true
   try {
     if (
       dialogMode.value === 'edit' &&
-      editingId.value &&
-      editingRow.value?.status === 1 &&
+      id &&
+      row?.status === 1 &&
       form.status === 0
     ) {
-      const impact = await getModelImpact(editingId.value, 'DISABLE')
+      const impact = await getModelImpact(id, 'DISABLE')
+      if (!current()) return
       if (!impact.allowed) {
         ElMessage.error(`禁用被阻断：仍有 ${impact.blockerCount} 个生效引用`)
-        openGovernance(editingRow.value)
+        openGovernance(row)
         return
       }
     }
+    if (!current()) return
     if (assetMode.value === 'new') {
       form.assetId = null
     }
     await submitCrud()
-    if (!dialogVisible.value) {
+    if (identity() && permissions === auth.permissions.join('\0') && !dialogVisible.value) {
       await loadAssets()
     }
+  } catch {
+    // 请求层提示预检失败，保留当前输入以便重试。
   } finally {
-    preflightingSave.value = false
+    if (current()) preflightingSave.value = false
   }
 }
 
 async function handleTest(row: ModelVO) {
-  if (testingId.value !== null) return
-  testingId.value = row.id
-  try {
+  await healthMutation.run(row.id, async isCurrent => {
     const result = await runModelHealthCheck(row.id)
+    if (!isCurrent()) return
     if (result.testStatus === 1) {
       ElMessage.success(`健康探测通过 · ${result.latencyMs ?? 0} ms`)
     } else {
       ElMessage.error(`${result.errorCategory ?? 'UNKNOWN'} · ${result.message || '健康探测失败'}`)
     }
-    await loadList()
-  } finally {
-    testingId.value = null
-  }
+  }, loadList)
 }
 
 async function handleDelete(row: ModelVO) {
-  if (deletingId.value !== null) return
-  deletingId.value = row.id
-  try {
+  let deleted = false
+  await deleteMutation.run(row.id, async isCurrent => {
     const impact = await getModelImpact(row.id, 'DELETE')
+    if (!isCurrent()) return
     if (!impact.allowed) {
       ElMessage.error(`删除被阻断：仍有 ${impact.blockerCount} 个生效引用`)
       openGovernance(row)
@@ -333,17 +347,28 @@ async function handleDelete(row: ModelVO) {
       '删除模型部署',
       { type: 'warning' },
     )
+    if (!isCurrent()) return
     await deleteModel(row.id)
+    deleted = true
+  }, async () => {
+    if (!deleted) return
     ElMessage.success('删除成功')
     const currentPage = query.pageNum ?? 1
     if (list.value.length === 1 && currentPage > 1) {
       query.pageNum = currentPage - 1
     }
     await loadList()
-  } finally {
-    deletingId.value = null
-  }
+  })
 }
+
+watch(dialogVisible, visible => { if (!visible) preflightingSave.value = false }, { flush: 'sync' })
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  preflightingSave.value = false
+  editingRow.value = null
+  governanceVisible.value = false
+  governanceModelId.value = null
+  void loadAssets()
+}, { flush: 'sync' })
 
 function openGovernance(row: ModelVO) {
   governanceModelId.value = row.id
@@ -502,8 +527,7 @@ onMounted(async () => {
                   v-permission="'model:health-test'"
                   link
                   type="primary"
-                  :loading="testingId === row.id"
-                  :disabled="testingId !== null && testingId !== row.id"
+                  :loading="healthMutation.isPending(row.id)"
                   @click="handleTest(row)"
                   >健康探测</el-button
                 >
@@ -518,7 +542,7 @@ onMounted(async () => {
                   v-permission="'model:delete'"
                   link
                   type="danger"
-                  :loading="deletingId === row.id"
+                  :loading="deleteMutation.isPending(row.id)"
                   @click="handleDelete(row)"
                   >删除</el-button
                 >
@@ -555,7 +579,8 @@ onMounted(async () => {
       width="min(760px, 94vw)"
       destroy-on-close
     >
-      <el-form ref="formRef" :model="form" label-position="top">
+      <CrudLoadState :error="assetsError" :has-stale-data="assets.length > 0" :loading="assetsLoading" @retry="loadAssets" />
+      <el-form ref="formRef" :model="form" label-position="top" :disabled="savePending">
         <div class="form-section">
           <div class="form-section-title">
             <span>01</span>

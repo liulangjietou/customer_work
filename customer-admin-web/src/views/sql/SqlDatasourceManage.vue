@@ -9,10 +9,11 @@ import {
   updateSqlDatasource,
 } from '@/api/sql'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useRowMutation } from '@/composables/useRowMutation'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { PageQuery, SqlDatasourceSaveRequest, SqlDatasourceVO } from '@/types/api'
 
-const testingId = ref<number | null>(null)
+const connectionTest = useRowMutation('sql-datasource:view')
 const formRef = ref<FormInstance>()
 
 const {
@@ -42,15 +43,9 @@ const {
 })
 
 async function handleTest(row: SqlDatasourceVO) {
-  testingId.value = row.id
-  try {
-    await testSqlDatasourceConnection(row.id)
+  await connectionTest.run(row.id, () => testSqlDatasourceConnection(row.id), () => {
     ElMessage.success('连通性测试成功')
-  } catch {
-    // 连接失败的错误提示已由 request.ts 拦截器统一弹出（Result.code!=0 时），这里不用重复弹
-  } finally {
-    testingId.value = null
-  }
+  })
 }
 
 onMounted(loadList)
@@ -83,7 +78,7 @@ onMounted(loadList)
         <el-table-column prop="updateTime" label="更新时间" width="170" />
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" :loading="testingId === row.id" @click="handleTest(row)">测试连接</el-button>
+            <el-button v-permission="'sql-datasource:view'" link type="primary" :loading="connectionTest.isPending(row.id)" @click="handleTest(row)">测试连接</el-button>
             <el-button v-permission="'sql-datasource:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button v-permission="'sql-datasource:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
