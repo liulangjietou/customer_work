@@ -72,6 +72,10 @@ for (const item of cases) {
     await page.route(url => url.pathname === '/api' + item.endpoint, r => { held = r })
     await page.goto(item.path)
     await expect.poll(() => Boolean(held)).toBe(true)
+    const oldRoute = held!
+    const oldRequest = oldRoute.request()
+    // 身份切换可立即发起新查询；固定旧请求，并给新身份独立响应，避免 held 被后来的请求覆盖。
+    await page.route(url => url.pathname === '/api' + item.endpoint, r => r.fulfill({ json: ok([]) }))
     await page.evaluate(async permission => {
       const modulePath = '/src/store/auth.ts'
       const { useAuthStore } = await import(modulePath)
@@ -80,8 +84,8 @@ for (const item of cases) {
         approvalStatus: 'APPROVED', approvalRemark: null }, 'new-user')
       auth.permissions = [permission]
     }, item.permission)
-    const response = page.waitForResponse(r => r.url() === held!.request().url())
-    await held!.fulfill({ json: ok(item.data) })
+    const response = page.waitForResponse(r => r.request() === oldRequest)
+    await oldRoute.fulfill({ json: ok(item.data) })
     await (await response).finished()
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     await expect(page.locator('.layout-main').getByText(item.marker, { exact: false })).toHaveCount(0)

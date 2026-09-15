@@ -178,6 +178,9 @@ watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join
   changeVersion += 1
   changeLogVisible.value = false
 }, { flush: 'sync' })
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  if (auth.hasPermission('menu:view')) void loadTree()
+})
 
 function openChangeLog(node?: PermissionVO) {
   resetHistory()

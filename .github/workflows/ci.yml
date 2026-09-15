@@ -70,6 +70,22 @@ jobs:
           sudo apt-get update && sudo apt-get install -y redis-tools
           redis-cli -h 127.0.0.1 -p 6379 CONFIG SET requirepass 123456
 
+      # 与项目 compose 使用相同版本；轮播存取验收必须访问真实对象存储，不能在 CI 中跳过。
+      - name: Start MinIO for object storage acceptance
+        run: |
+          docker run --detach --name customer-work-ci-minio \
+            --publish 127.0.0.1:9000:9000 \
+            --env MINIO_ROOT_USER=minioadmin --env MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:RELEASE.2025-07-23T15-54-02Z server /data
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs customer-work-ci-minio
+          exit 1
+
       # 防复发：mysql/02-customer-admin/ 是 Flyway 迁移的镜像副本（供生产手工初始化）。漏同步在本地
       # 不显形（本地走 Flyway），却会让手工部署建出残缺的库——曾漏 7 个迁移。下面的 mirror 构建验证
       # 也能发现这类问题，但报错要从 SQL 异常反推是哪个迁移；这一步纯文件名比对，缺谁直接点名。
@@ -129,9 +145,19 @@ jobs:
           # ADMIN_REDIS_PASSWORD（默认空）。不注入这一项，登录态持久化的门控集成测试
           # （SaTokenRedisPersistenceIntegrationTest）会因鉴权失败自动跳过——不红，但也就白跑了。
           ADMIN_REDIS_PASSWORD: "123456"
+          MINIO_ENDPOINT: "http://127.0.0.1:9000"
+          MINIO_ACCESS_KEY: "minioadmin"
+          MINIO_SECRET_KEY: "minioadmin"
         # 说明：
         # - Redis/MySQL/Nacos 服务容器在线，相关集成测试真实执行（探测可达性后运行）
         # - 百炼集成测试默认跳过（未设置 RUN_BAILIAN_IT）
+
+      - name: Remove acceptance MinIO container
+        if: always()
+        run: |
+          if docker container inspect customer-work-ci-minio > /dev/null 2>&1; then
+            docker rm --force customer-work-ci-minio
+          fi
 
       - name: Upload coverage report
         if: always()
