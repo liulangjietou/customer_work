@@ -12,6 +12,8 @@ import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.ManagedSandboxV
 import com.richard.fyoung.customeradmin.workspace.vibecoding.dto.SandboxConfigView;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.TestReportParser;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
 import io.agentscope.harness.agent.sandbox.Sandbox;
 import io.agentscope.harness.agent.sandbox.SandboxContext;
@@ -105,6 +107,7 @@ public class SandboxCommandService {
             cleanupExpired();
 
             String tenantId = currentTenant();
+            AgentInvocationIdentity identity = AgentInvocationIdentity.capture();
             SandboxKey key = new SandboxKey(tenantId, userId, agentCode, safeSession);
             Path workspace = workspaceManager.resolveSessionWorkspace(agentCode, safeSession);
             ManagedSandbox managed = sandboxes.computeIfAbsent(key,
@@ -118,8 +121,12 @@ public class SandboxCommandService {
 
             return Flux.create(sink -> {
                 sink.onCancel(() -> cancelProcess(managed));
+                // 工作区和 Docker 挂载也依赖主体分区，不能只向执行线程传递租户。
                 commandExecutor.execute(() -> TenantContext.runWith(tenantId,
-                    () -> runCommand(managed, command, audit, sink)));
+                    () -> AgentInvocationIdentityContext.callWith(identity, () -> {
+                        runCommand(managed, command, audit, sink);
+                        return null;
+                    })));
             }, FluxSink.OverflowStrategy.BUFFER);
         } catch (RuntimeException e) {
             auditService.finish(audit, e);
@@ -181,10 +188,12 @@ public class SandboxCommandService {
         StringBuilder reportOutput = new StringBuilder();
         AtomicBoolean timedOut = new AtomicBoolean(false);
         int exitCode = -1;
+        CommandResultEvent result = null;
+        Exception failure = null;
+        String auditErrorCode = null;
         try {
             if (managed.cancelRequested.get()) {
-                auditService.finish(audit, "COMMAND_CANCELLED");
-                sink.complete();
+                auditErrorCode = "COMMAND_CANCELLED";
                 return;
             }
             List<String> processCommand = managed.mode.equals("docker")
@@ -243,28 +252,46 @@ public class SandboxCommandService {
             TestReportParser.parseCommand(command, reportOutput.toString(), exitCode, durationMs)
                 .ifPresent(report -> sink.next(new SandboxCommandEvent(EVENT_TEST_REPORT, report)));
             String containerId = managed.containerId;
-            sink.next(new SandboxCommandEvent(EVENT_RESULT,
-                new CommandResultEvent(exitCode, exitCode == 0, durationMs, timedOut.get(), containerId)));
-            auditService.finish(audit, exitCode == 0 ? null : (timedOut.get() ? "COMMAND_TIMEOUT" : "COMMAND_EXIT_" + exitCode));
-            sink.complete();
+            result = new CommandResultEvent(exitCode, exitCode == 0, durationMs, timedOut.get(), containerId);
+            auditErrorCode = exitCode == 0 ? null : (timedOut.get() ? "COMMAND_TIMEOUT" : "COMMAND_EXIT_" + exitCode);
         } catch (Exception e) {
+            failure = e;
             managed.status = SandboxStatus.FAILED;
             log.error("interactive sandbox command failed, code={}, agentCode={}, sessionId={}",
                 "SANDBOX-COMMAND-EXECUTE-FAIL", managed.key.agentCode, managed.key.sessionId, e);
-            auditService.finish(audit, e);
-            sink.error(new BizException(ResultCode.SANDBOX_RUNTIME_FAILED));
             if (managed.mode.equals("docker") && managed.sandbox == null) {
                 sandboxes.remove(managed.key, managed);
             }
         } finally {
+            // 保存期间仍占用会话，避免新命令改动正在归档的文件；释放后才能通知调用方结束。
+            try {
+                workspaceManager.persistSessionWorkspace(managed.key.agentCode, managed.key.sessionId);
+            } catch (Exception e) {
+                if (failure == null) {
+                    failure = e;
+                }
+                managed.status = SandboxStatus.FAILED;
+                log.error("persist sandbox command workspace failed, errorCode={}, agentCode={}, sessionId={}",
+                    "SANDBOX-COMMAND-PERSIST-FAIL", managed.key.agentCode, managed.key.sessionId, e);
+            }
             managed.process = null;
             managed.command = null;
             managed.lastActiveAt = Instant.now();
-            managed.inUse.set(false);
             if (managed.status != SandboxStatus.FAILED) {
                 managed.status = SandboxStatus.IDLE;
             }
-            workspaceManager.persistSessionWorkspace(managed.key.agentCode, managed.key.sessionId);
+            managed.inUse.set(false);
+            // 审计只提交一次，避免收尾异常将同一条审计先报成功再重复插入失败记录。
+            if (failure != null) {
+                auditService.finish(audit, failure);
+                sink.error(new BizException(ResultCode.SANDBOX_RUNTIME_FAILED));
+            } else {
+                auditService.finish(audit, auditErrorCode);
+                if (result != null) {
+                    sink.next(new SandboxCommandEvent(EVENT_RESULT, result));
+                }
+                sink.complete();
+            }
         }
     }
 
