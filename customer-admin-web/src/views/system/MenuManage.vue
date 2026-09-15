@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import type { AllowDropFunction } from 'element-plus/es/components/tree/src/tree.type'
 import type { UploadRequestOptions } from 'element-plus/es/components/upload/src/upload'
@@ -14,6 +14,12 @@ import {
   updateMenuNode,
   uploadMenuIcon,
 } from '@/api/menu-admin'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useCrudForm } from '@/composables/useCrudForm'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 import type { MenuChangeLogVO, MenuReorderItem, MenuSaveRequest, PermissionVO } from '@/types/api'
 
 const TYPE_OPTIONS = [
@@ -25,129 +31,96 @@ const TYPE_LABEL: Record<number, string> = { 1: '菜单', 2: '按钮', 3: '接�
 const ACTION_LABEL: Record<string, string> = { CREATE: '新建', UPDATE: '编辑', DELETE: '删除', MOVE: '移动' }
 const ICON_NAMES = Object.keys(ElementPlusIconsVue)
 
-const loading = ref(false)
-const tree = ref<PermissionVO[]>([])
-const submitting = ref(false)
-const publishing = ref(false)
-const reordering = ref(false)
-/** 有未发布的改动（增删改/拖拽都会置位），点"发布"广播给其它在线用户后清零，只是本地 UI 提示，不影响任何实际行为。 */
+const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
+const { data: tree, loading, error: loadError, loaded, load: loadTree } = useQueryState(menuAdminTree, () => [] as PermissionVO[])
+const changes = useRowMutation('menu:edit')
+const deletions = useRowMutation('menu:delete')
+const publishing = computed(() => changes.isPending(1))
+const reordering = computed(() => changes.isPending(0))
 const dirty = ref(false)
+let changeVersion = 0
+function markDirty() { changeVersion += 1; dirty.value = true }
+/** 写入已成功时仍提示待发布；关闭旧弹窗只隔离表单，不能抹掉同一身份已经保存的菜单变更。 */
+async function persistMenu(write: () => Promise<void>) {
+  const current = captureSubmission()
+  await write()
+  if (current()) markDirty()
+}
 const treeProps = { label: 'permName', children: 'children' }
 
-async function loadTree() {
-  loading.value = true
-  try {
-    tree.value = await menuAdminTree()
-  } finally {
-    loading.value = false
-  }
-}
-
-// ---------- 新建/编辑弹窗 ----------
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
+// 弹窗拥有提交目标；附属图标上传使用同一个弹窗生命周期。
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
 const iconTab = ref<'library' | 'image'>('library')
 const iconSearch = ref('')
-const form = reactive<MenuSaveRequest>({
-  parentId: null,
-  permName: '',
-  permCode: '',
-  type: 1,
-  path: '',
-  icon: '',
-  iconType: 'library',
-  sort: 0,
+const iconUploading = ref(false)
+const { form, dialogVisible, dialogMode, submitting, openCreate, openEdit: editForm,
+  handleSubmit, captureDialog } = useCrudForm<PermissionVO, MenuSaveRequest>({
+  formRef,
+  initForm: () => ({ parentId: null, permName: '', permCode: '', type: 1, path: '', icon: '', iconType: 'library', sort: 0 }),
+  toForm: node => ({ parentId: node.parentId, permName: node.permName, permCode: node.permCode,
+    type: node.type, path: node.path ?? '', icon: node.icon ?? '', iconType: node.iconType ?? 'library', sort: node.sort ?? 0 }),
+  create: form => persistMenu(() => createMenuNode(form)),
+  update: (id, form) => persistMenu(() => updateMenuNode(id, form)),
+  beforeSubmit: mode => !iconUploading.value && auth.hasPermission(mode === 'create' ? 'menu:add' : 'menu:edit'),
+  onSaved: async () => { await loadTree() },
 })
+watch(dialogVisible, () => { iconUploading.value = false }, { flush: 'sync' })
 
 const filteredIconNames = computed(() =>
   iconSearch.value ? ICON_NAMES.filter((n) => n.toLowerCase().includes(iconSearch.value.toLowerCase())) : ICON_NAMES,
 )
 
-function resetForm(parentId: number | null) {
-  Object.assign(form, { parentId, permName: '', permCode: '', type: 1, path: '', icon: '', iconType: 'library', sort: 0 })
+function openCreateRoot() {
+  openCreate()
   iconTab.value = 'library'
   iconSearch.value = ''
 }
 
-function openCreateRoot() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  resetForm(null)
-  dialogVisible.value = true
-}
-
 function openCreateChild(parent: PermissionVO) {
-  dialogMode.value = 'create'
-  editingId.value = null
-  resetForm(parent.id)
-  dialogVisible.value = true
+  openCreateRoot()
+  form.parentId = parent.id
 }
 
 function openEdit(node: PermissionVO) {
-  dialogMode.value = 'edit'
-  editingId.value = node.id
-  Object.assign(form, {
-    parentId: node.parentId,
-    permName: node.permName,
-    permCode: node.permCode,
-    type: node.type,
-    path: node.path ?? '',
-    icon: node.icon ?? '',
-    iconType: node.iconType ?? 'library',
-    sort: node.sort ?? 0,
-  })
+  editForm(node)
   iconTab.value = form.iconType === 'image' ? 'image' : 'library'
   iconSearch.value = ''
-  dialogVisible.value = true
 }
 
 function selectLibraryIcon(name: string) {
+  if (submitting.value || iconUploading.value) return
   form.icon = name
   form.iconType = 'library'
 }
 
 async function handleIconUpload(options: UploadRequestOptions) {
+  if (iconUploading.value || submitting.value) return
+  const current = captureDialog()
+  if (!current()) return
+  iconUploading.value = true
   try {
     const url = await uploadMenuIcon(options.file as File)
+    if (!current()) return
     form.icon = url
     form.iconType = 'image'
     ElMessage.success('图标上传成功')
   } catch {
-    // 全局 axios 拦截器已经弹过错误提示，这里不用重复弹
-  }
-}
-
-async function handleSubmit() {
-  if (submitting.value) return
-  submitting.value = true
-  try {
-    const valid = await formRef.value?.validate().catch(() => false)
-    if (!valid) {
-      return
-    }
-    if (dialogMode.value === 'create') {
-      await createMenuNode(form)
-      ElMessage.success('新建成功')
-    } else if (editingId.value) {
-      await updateMenuNode(editingId.value, form)
-      ElMessage.success('保存成功')
-    }
-    dirty.value = true
-    dialogVisible.value = false
-    await loadTree()
+    // 请求层提示失败，旧上传不能回填另一张菜单。
   } finally {
-    submitting.value = false
+    if (current()) iconUploading.value = false
   }
 }
 
 async function handleDelete(node: PermissionVO) {
-  await ElMessageBox.confirm(`确认删除「${node.permName}」？删除前请先清空子节点。`, '提示', { type: 'warning' })
-  await deleteMenuNode(node.id)
-  ElMessage.success('删除成功')
-  dirty.value = true
-  await loadTree()
+  await deletions.run(node.id, async current => {
+    await ElMessageBox.confirm(`确认删除「${node.permName}」？删除前请先清空子节点。`, '提示', { type: 'warning' })
+    if (current()) await deleteMenuNode(node.id)
+  }, async () => {
+    ElMessage.success('删除成功')
+    markDirty()
+    await loadTree()
+  })
 }
 
 // ---------- 拖拽排序 ----------
@@ -171,67 +144,48 @@ function flattenForReorder(nodes: PermissionVO[], parentId: number): MenuReorder
 }
 
 async function handleNodeDrop() {
-  if (reordering.value) return
-  // el-tree 拖拽后已经把新顺序写回了 tree.value（受控 :data），这里整树摊平重新计算 parentId/sort
-  // 一次性提交，不做增量 diff——菜单树节点量小，简单可靠比抠性能更重要。
-  reordering.value = true
-  try {
-    await reorderMenuNodes(flattenForReorder(tree.value, 0))
+  // el-tree 已改写本地顺序；失败回读服务端，成功才标记为待发布。
+  await changes.run(0, () => reorderMenuNodes(flattenForReorder(tree.value, 0)), async () => {
     ElMessage.success('顺序已调整')
-    dirty.value = true
+    markDirty()
     await loadTree()
-  } catch (error) {
-    // el-tree 已乐观改写本地树；持久化失败时必须回读服务端真值，避免展示并不存在的顺序。
-    try {
-      await loadTree()
-    } catch {
-      // 原始 reorder 错误由请求层负责展示并继续向上传递。
-    }
-    throw error
-  } finally {
-    reordering.value = false
-  }
+  }, () => { void loadTree() })
 }
 
-// ---------- 发布 ----------
 async function handlePublish() {
-  if (publishing.value) return
-  publishing.value = true
-  try {
-    await publishMenu()
-    dirty.value = false
+  const version = changeVersion
+  await changes.run(1, publishMenu, () => {
+    if (version === changeVersion) dirty.value = false
     ElMessage.success('已发布，其它在线用户的菜单将在下次轮询时自动刷新')
-  } finally {
-    publishing.value = false
-  }
+  })
 }
 
-// ---------- 变更记录 ----------
+// 记录与目标一起重置，后打开的抽屉不会暂显上一张菜单的历史。
 const changeLogVisible = ref(false)
-const changeLogLoading = ref(false)
-const changeLogList = ref<MenuChangeLogVO[]>([])
-const changeLogTotal = ref(0)
 const changeLogPage = reactive({ pageNum: 1, pageSize: 10 })
 const changeLogMenuId = ref<number | undefined>(undefined)
 const changeLogMenuName = ref('')
-
-async function loadChangeLog() {
-  changeLogLoading.value = true
-  try {
-    const result = await fetchMenuChangeLog(changeLogMenuId.value, changeLogPage)
-    changeLogList.value = result.list
-    changeLogTotal.value = result.total
-  } finally {
-    changeLogLoading.value = false
-  }
-}
+const { data: history, loading: changeLogLoading, error: changeLogError, loaded: historyLoaded,
+  load: loadChangeLog, reset: resetHistory } = useQueryState(
+  () => fetchMenuChangeLog(changeLogMenuId.value, { ...changeLogPage }),
+  () => ({ list: [] as MenuChangeLogVO[], total: 0 }),
+)
+const changeLogList = computed(() => history.value.list)
+const changeLogTotal = computed(() => history.value.total)
+watch(changeLogVisible, visible => { if (!visible) resetHistory() }, { flush: 'sync' })
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  dirty.value = false
+  changeVersion += 1
+  changeLogVisible.value = false
+}, { flush: 'sync' })
 
 function openChangeLog(node?: PermissionVO) {
+  resetHistory()
   changeLogMenuId.value = node?.id
   changeLogMenuName.value = node?.permName ?? ''
   changeLogPage.pageNum = 1
   changeLogVisible.value = true
-  loadChangeLog()
+  void loadChangeLog()
 }
 
 onMounted(loadTree)
@@ -241,19 +195,22 @@ onMounted(loadTree)
   <div class="page">
     <el-card>
       <div class="toolbar">
+        <el-button :loading="loading" :disabled="reordering" @click="loadTree">刷新</el-button>
         <el-button v-permission="'menu:add'" class="cw-final-action" type="primary" @click="openCreateRoot">新增根菜单</el-button>
-        <el-button v-permission="'menu:edit'" class="cw-final-action" type="primary" :disabled="!dirty" :loading="publishing" @click="handlePublish">
+        <el-button v-permission="'menu:edit'" class="cw-final-action" type="primary" :disabled="!dirty || reordering" :loading="publishing" @click="handlePublish">
           发布<el-badge v-if="dirty" is-dot class="publish-badge" />
         </el-button>
         <el-button v-permission="'menu:view'" @click="openChangeLog()">变更记录</el-button>
       </div>
 
+      <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading" @retry="loadTree" />
       <el-tree
+        v-if="!loadError || loaded"
         v-loading="loading"
         :data="tree"
         :props="treeProps"
         node-key="id"
-        :draggable="!reordering"
+        :draggable="auth.hasPermission('menu:edit') && !reordering && !publishing && !loading && !loadError"
         default-expand-all
         :allow-drop="allowDrop"
         @node-drop="handleNodeDrop"
@@ -273,7 +230,7 @@ onMounted(loadTree)
               <el-button v-permission="'menu:add'" link type="primary" @click.stop="openCreateChild(data)">新增子节点</el-button>
               <el-button v-permission="'menu:edit'" link type="primary" @click.stop="openEdit(data)">编辑</el-button>
               <el-button v-permission="'menu:view'" link @click.stop="openChangeLog(data)">历史</el-button>
-              <el-button v-permission="'menu:delete'" link type="danger" @click.stop="handleDelete(data)">删除</el-button>
+              <el-button v-permission="'menu:delete'" link type="danger" :loading="deletions.isPending(data.id)" @click.stop="handleDelete(data)">删除</el-button>
             </span>
           </div>
         </template>
@@ -281,7 +238,7 @@ onMounted(loadTree)
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建菜单节点' : '编辑菜单节点'" width="600px">
-      <el-form ref="formRef" :model="form" label-width="90px">
+      <el-form ref="formRef" :model="form" :disabled="submitting || iconUploading" label-width="90px">
         <el-form-item label="名称" prop="permName" :rules="[{ required: true, message: '请输入名称' }]">
           <el-input v-model="form.permName" />
         </el-form-item>
@@ -315,6 +272,7 @@ onMounted(loadTree)
                     :key="name"
                     type="button"
                     class="icon-grid-item"
+                    :disabled="submitting || iconUploading"
                     :class="{ active: form.icon === name && form.iconType === 'library' }"
                     :title="name"
                     :aria-label="`选择图标 ${name}`"
@@ -326,7 +284,7 @@ onMounted(loadTree)
                 </div>
               </el-tab-pane>
               <el-tab-pane label="上传图片" name="image">
-                <el-upload :show-file-list="false" :http-request="handleIconUpload" accept="image/png,image/jpeg,image/gif,image/svg+xml">
+                <el-upload :disabled="submitting || iconUploading" :show-file-list="false" :http-request="handleIconUpload" accept="image/png,image/jpeg,image/gif,image/svg+xml">
                   <el-button>选择图片上传</el-button>
                   <template #tip>
                     <div class="upload-tip">支持 png/jpg/jpeg/gif/svg，不超过 1MB</div>
@@ -339,11 +297,12 @@ onMounted(loadTree)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存菜单</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" :disabled="iconUploading" @click="handleSubmit">保存菜单</el-button>
       </template>
     </el-dialog>
 
     <el-drawer v-model="changeLogVisible" :title="changeLogMenuName ? `变更记录 · ${changeLogMenuName}` : '变更记录（全部）'" size="480px">
+      <CrudLoadState :error="changeLogError" :has-stale-data="historyLoaded" :loading="changeLogLoading" @retry="loadChangeLog" />
       <el-table v-loading="changeLogLoading" :data="changeLogList" style="width: 100%">
         <el-table-column label="操作" width="70">
           <template #default="{ row }">{{ ACTION_LABEL[row.action] || row.action }}</template>
@@ -536,6 +495,12 @@ onMounted(loadTree)
 }
 
 @media (max-width: 767px) {
+  :deep(.el-tree-node__content) {
+    height: auto;
+    min-height: 38px;
+    align-items: flex-start;
+  }
+
   .tree-node {
     flex-wrap: wrap;
     gap: 6px;

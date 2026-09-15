@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customerwork.safety.subjectquota.entity.SubjectQuotaHitDO;
 import com.richard.fyoung.customerwork.safety.subjectquota.mapper.SubjectQuotaHitMapper;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
+import com.richard.fyoung.customerwork.safety.tenant.ExactTenantSql;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,31 +39,19 @@ public class MybatisSubjectQuotaHitStore implements SubjectQuotaHitStore {
 
     @Override
     public List<SubjectQuotaHit> findRecent(String tenantId, long sinceMs, int limit) {
-        try {
-            List<SubjectQuotaHitDO> rows = CrossTenantOperations.execute(() -> mapper.selectList(
-                new LambdaQueryWrapper<SubjectQuotaHitDO>()
-                    .eq(SubjectQuotaHitDO::getTenantId, tenantId)
-                    .ge(SubjectQuotaHitDO::getCreatedAtMs, sinceMs)
-                    .orderByDesc(SubjectQuotaHitDO::getCreatedAtMs)
-                    .last("LIMIT " + Math.max(1, limit))));
-            return rows.stream().map(MybatisSubjectQuotaHitStore::toDomain).toList();
-        } catch (Exception e) {
-            log.error("subject quota hit query failed, code={}, tenant={}",
-                "SQUOTA-HIT-QUERY-FAIL", tenantId, e);
-            return List.of();
-        }
+        List<SubjectQuotaHitDO> rows = CrossTenantOperations.execute(() -> mapper.selectList(
+            new LambdaQueryWrapper<SubjectQuotaHitDO>()
+                .apply(ExactTenantSql.CONDITION, tenantId)
+                .ge(SubjectQuotaHitDO::getCreatedAtMs, sinceMs)
+                .orderByDesc(SubjectQuotaHitDO::getCreatedAtMs)
+                .last("LIMIT " + Math.max(1, limit))));
+        return rows.stream().map(MybatisSubjectQuotaHitStore::toDomain).toList();
     }
 
     @Override
     public List<SubjectQuotaHitRank> rank(String tenantId, long sinceMs, int limit) {
-        try {
-            return CrossTenantOperations.execute(
-                () -> mapper.selectRank(tenantId, sinceMs, Math.max(1, limit)));
-        } catch (Exception e) {
-            log.error("subject quota hit rank failed, code={}, tenant={}",
-                "SQUOTA-HIT-RANK-FAIL", tenantId, e);
-            return List.of();
-        }
+        return CrossTenantOperations.execute(
+            () -> mapper.selectRank(tenantId, sinceMs, Math.max(1, limit)));
     }
 
     private static SubjectQuotaHitDO toDO(SubjectQuotaHit hit) {

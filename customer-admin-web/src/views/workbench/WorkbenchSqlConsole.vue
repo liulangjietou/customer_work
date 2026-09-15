@@ -8,30 +8,46 @@ import {
   listAllSqlDatasources,
 } from '@/api/sql'
 import type { SqlDatasourceVO, SqlQueryResultVO } from '@/types/api'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 import { format, type SqlLanguage } from 'sql-formatter'
 
-const datasources = ref<SqlDatasourceVO[]>([])
+const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
+const { data: datasources, loading: datasourceLoading, error: datasourceError, loaded: datasourcesLoaded,
+  load: loadDatasources } = useQueryState(listAllSqlDatasources, () => [] as SqlDatasourceVO[])
 const datasourceId = ref<number>()
 const sql = ref('')
-const executing = ref(false)
-const exporting = ref(false)
-const result = ref<SqlQueryResultVO | null>(null)
-const executedQuery = ref<{ datasourceId: number; sql: string } | null>(null)
 const sqlInputRef = ref<{ textarea?: HTMLTextAreaElement } | null>(null)
-let databaseRequestId = 0
-let queryRequestId = 0
+const exports = useRowMutation('sql-console:export')
+const exporting = computed(() => exports.isPending(0))
 
-// ===== 左侧库树（库列表 + 点库懒加载表）=====
 interface DbNode {
   name: string
   expanded: boolean
   loading: boolean
   loaded: boolean
   tables: string[]
+  error: unknown
 }
-const databases = ref<DbNode[]>([])
-const treeLoading = ref(false)
+const { data: databases, loading: treeLoading, error: treeError, loaded: treeLoaded,
+  load: loadDatabases, reset: resetDatabases } = useQueryState<DbNode[]>(async () => {
+  if (!datasourceId.value) return []
+  return (await listAdhocDatabases(datasourceId.value)).map(name => ({ name, expanded: false, loading: false, loaded: false, tables: [], error: null }))
+}, () => [])
 const dbFilter = ref('')
+const { data: querySnapshot, loading: executing, error: queryError, loaded: queryLoaded,
+  load: executeQuery, reset: resetQuery } = useQueryState<{
+    result: SqlQueryResultVO; request: { datasourceId: number; sql: string }
+  } | null>(async () => {
+    const request = { datasourceId: datasourceId.value!, sql: sql.value }
+    return { request, result: await executeAdhocSql(request) }
+  }, () => null)
+const result = computed(() => querySnapshot.value?.result ?? null)
+const executedQuery = computed(() => querySnapshot.value?.request ?? null)
 
 const filteredDatabases = computed(() => {
   const kw = dbFilter.value.trim().toLowerCase()
@@ -42,48 +58,27 @@ const resultOutdated = computed(() => {
   return Boolean(snapshot && (snapshot.datasourceId !== datasourceId.value || snapshot.sql !== sql.value))
 })
 
-async function loadDatasources() {
-  datasources.value = await listAllSqlDatasources()
-}
-
-async function loadDatabases() {
-  const requestId = ++databaseRequestId
-  const selectedDatasourceId = datasourceId.value
-  databases.value = []
-  if (!selectedDatasourceId) {
-    treeLoading.value = false
-    return
-  }
-  treeLoading.value = true
+async function loadTables(db: DbNode) {
+  const selected = datasourceId.value
+  if (!selected || db.loading) return
+  const identityCurrent = captureSubmission()
+  const current = () => identityCurrent() && datasourceId.value === selected && databases.value.includes(db)
+  db.loading = true
   try {
-    const names = await listAdhocDatabases(selectedDatasourceId)
-    if (requestId === databaseRequestId && datasourceId.value === selectedDatasourceId) {
-      databases.value = names.map((name) => ({ name, expanded: false, loading: false, loaded: false, tables: [] }))
-    }
+    const tables = await listAdhocTables(selected, db.name)
+    if (!current()) return
+    db.tables = tables
+    db.loaded = true
+    db.error = null
+  } catch (failure) {
+    if (current()) db.error = failure
   } finally {
-    if (requestId === databaseRequestId) {
-      treeLoading.value = false
-    }
+    if (current()) db.loading = false
   }
 }
-
 async function toggleDb(db: DbNode) {
   db.expanded = !db.expanded
-  const selectedDatasourceId = datasourceId.value
-  if (db.expanded && !db.loaded && selectedDatasourceId) {
-    db.loading = true
-    try {
-      const tables = await listAdhocTables(selectedDatasourceId, db.name)
-      if (datasourceId.value === selectedDatasourceId && databases.value.includes(db)) {
-        db.tables = tables
-        db.loaded = true
-      }
-    } finally {
-      if (databases.value.includes(db)) {
-        db.loading = false
-      }
-    }
-  }
+  if (db.expanded && !db.loaded) await loadTables(db)
 }
 
 /** 点表名 → 在 SQL 编辑器光标处插入全限定表名（反引号包裹，adhoc 无 USE 需带库名）。 */
@@ -160,37 +155,15 @@ function validate(): boolean {
 }
 
 async function runQuery() {
-  if (executing.value || !validate()) {
-    return
-  }
-  const requestId = ++queryRequestId
-  const snapshot = { datasourceId: datasourceId.value!, sql: sql.value }
-  executing.value = true
-  try {
-    const nextResult = await executeAdhocSql(snapshot)
-    if (requestId === queryRequestId && datasourceId.value === snapshot.datasourceId) {
-      result.value = nextResult
-      executedQuery.value = snapshot
-    }
-  } finally {
-    if (requestId === queryRequestId) {
-      executing.value = false
-    }
-  }
+  if (executing.value || !auth.hasPermission('sql-console:query') || !validate()) return
+  await executeQuery()
 }
 
 async function handleExport() {
-  if (exporting.value || !result.value || !executedQuery.value) {
-    return
-  }
+  if (!result.value || !executedQuery.value) return
   const snapshot = executedQuery.value
-  exporting.value = true
-  try {
-    // 导出必须绑定产生当前结果表的执行快照，不能读取用户随后编辑但尚未执行的 SQL。
-    await exportAdhocSql(snapshot)
-  } finally {
-    exporting.value = false
-  }
+  // 导出绑定已执行结果的查询快照；请求层负责下载时的身份核验。
+  await exports.run(0, () => exportAdhocSql(snapshot), () => {})
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -200,15 +173,16 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-// 切换数据源：清空结果并重载库树
 watch(datasourceId, () => {
-  queryRequestId += 1
-  executing.value = false
-  result.value = null
-  executedQuery.value = null
+  resetQuery()
+  resetDatabases()
   dbFilter.value = ''
-  void loadDatabases()
-})
+  if (datasourceId.value) void loadDatabases()
+}, { flush: 'sync' })
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  datasourceId.value = undefined
+  sql.value = ''
+}, { flush: 'sync' })
 
 onMounted(loadDatasources)
 </script>
@@ -219,6 +193,7 @@ onMounted(loadDatasources)
       <div class="console-body">
         <!-- 左侧：数据源 + 库树 -->
         <aside class="sidebar">
+          <CrudLoadState :error="datasourceError" :has-stale-data="datasourcesLoaded" :loading="datasourceLoading" @retry="loadDatasources" />
           <el-select
             v-model="datasourceId"
             placeholder="选择数据源"
@@ -236,6 +211,7 @@ onMounted(loadDatasources)
             style="margin: 8px 0"
           />
 
+          <CrudLoadState :error="treeError" :has-stale-data="treeLoaded" :loading="treeLoading" @retry="loadDatabases" />
           <div v-loading="treeLoading" class="db-tree">
             <el-empty v-if="!datasourceId" :image-size="60" description="请先选择数据源" />
             <template v-else>
@@ -246,6 +222,7 @@ onMounted(loadDatasources)
                 </button>
                 <div v-if="db.expanded" class="table-list">
                   <div v-if="db.loading" class="hint">加载中…</div>
+                  <CrudLoadState v-else-if="db.error" :error="db.error" :has-stale-data="db.loaded" :loading="db.loading" @retry="loadTables(db)" />
                   <div v-else-if="db.tables.length === 0" class="hint">（无表）</div>
                   <button
                     v-for="t in db.tables"
@@ -260,7 +237,7 @@ onMounted(loadDatasources)
                   </button>
                 </div>
               </div>
-              <el-empty v-if="filteredDatabases.length === 0" :image-size="60" description="无匹配数据库" />
+              <el-empty v-if="!treeError && !treeLoading && filteredDatabases.length === 0" :image-size="60" description="无匹配数据库" />
             </template>
           </div>
         </aside>
@@ -298,6 +275,7 @@ onMounted(loadDatasources)
             @keydown="onKeydown"
           />
 
+          <CrudLoadState :error="queryError" :has-stale-data="queryLoaded" :loading="executing" @retry="runQuery" />
           <div v-if="result" class="result-meta">
             耗时 {{ result.useMillis }} ms，返回 {{ result.rows.length }} 行<span v-if="result.rows.length >= 2000">（已达 2000 行上限，可能被截断）</span>
             <span v-if="resultOutdated" class="result-outdated"> · SQL 已修改，结果与导出仍对应上一次执行</span>

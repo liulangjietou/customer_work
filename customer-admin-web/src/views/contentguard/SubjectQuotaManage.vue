@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
   assignAdminUserLevel,
@@ -12,6 +12,11 @@ import {
   pageSubjectQuotaUsers,
   saveSubjectQuotaLevel,
 } from '@/api/subjectQuota'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useCrudForm } from '@/composables/useCrudForm'
+import { useQueryState } from '@/composables/useQueryState'
+import { usePagedList } from '@/composables/usePagedList'
+import { useRowMutation } from '@/composables/useRowMutation'
 import { useAuthStore } from '@/store/auth'
 import type {
   AdminQuotaUserVO,
@@ -27,13 +32,21 @@ const auth = useAuthStore()
 const activeTab = ref('levels')
 
 // ---------- 等级 ----------
-const levelLoading = ref(false)
-const levels = ref<SubjectQuotaLevelVO[]>([])
-const levelDialogVisible = ref(false)
-const levelDialogMode = ref<'create' | 'edit'>('create')
+const { data: levels, loading: levelLoading, error: levelError, loaded: levelsLoaded,
+  load: loadLevels } = useQueryState(fetchSubjectQuotaLevels, () => [] as SubjectQuotaLevelVO[])
 const levelFormRef = ref<FormInstance>()
-const levelForm = reactive<SubjectQuotaLevelSaveRequest>(initLevelForm())
-const levelSubmitting = ref(false)
+const { form: levelForm, dialogVisible: levelDialogVisible, dialogMode: levelDialogMode,
+  submitting: levelSubmitting, openCreate: openLevelCreate, openEdit: openLevelEdit, handleSubmit: submitLevel } = useCrudForm<SubjectQuotaLevelVO, SubjectQuotaLevelSaveRequest, string>({
+  formRef: levelFormRef, initForm: initLevelForm, rowId: row => row.levelCode,
+  toForm: row => ({ levelCode: row.levelCode, levelName: row.levelName, subjectType: row.subjectType,
+    windowSeconds: row.windowSeconds, tokenLimit: row.tokenLimit, requestLimit: row.requestLimit,
+    exceedAction: row.exceedAction, enabled: row.enabled, remark: row.remark ?? '' }),
+  create: saveSubjectQuotaLevel, update: (code, form) => saveSubjectQuotaLevel({ ...form, levelCode: code }),
+  beforeSubmit: () => auth.hasPermission('subject-quota:level-edit'),
+  messages: { created: '已保存。后台档位立即生效，客服端档位最长 60 秒', updated: '已保存。后台档位立即生效，客服端档位最长 60 秒' },
+  onSaved: async () => { await loadLevels() },
+})
+const levelDeletes = useRowMutation<string>('subject-quota:level-edit')
 
 function initLevelForm(): SubjectQuotaLevelSaveRequest {
   return {
@@ -48,132 +61,42 @@ const levelRules = {
   windowSeconds: [{ required: true, message: '请填写窗口长度', trigger: 'blur' }],
 }
 
-async function loadLevels() {
-  levelLoading.value = true
-  try {
-    levels.value = await fetchSubjectQuotaLevels()
-  } finally {
-    levelLoading.value = false
-  }
-}
-
-function openLevelCreate() {
-  levelDialogMode.value = 'create'
-  Object.assign(levelForm, initLevelForm())
-  levelDialogVisible.value = true
-}
-
-function openLevelEdit(row: SubjectQuotaLevelVO) {
-  levelDialogMode.value = 'edit'
-  Object.assign(levelForm, {
-    levelCode: row.levelCode, levelName: row.levelName, subjectType: row.subjectType,
-    windowSeconds: row.windowSeconds, tokenLimit: row.tokenLimit, requestLimit: row.requestLimit,
-    exceedAction: row.exceedAction, enabled: row.enabled, remark: row.remark ?? '',
-  })
-  levelDialogVisible.value = true
-}
-
-async function submitLevel() {
-  if (levelSubmitting.value) return
-  if (!levelFormRef.value) return
-  levelSubmitting.value = true
-  try {
-    await levelFormRef.value.validate()
-    await saveSubjectQuotaLevel({ ...levelForm })
-    ElMessage.success('已保存。后台档位立即生效，客服端档位最长 60 秒')
-    levelDialogVisible.value = false
-    await loadLevels()
-  } finally {
-    levelSubmitting.value = false
-  }
-}
-
 async function removeLevel(row: SubjectQuotaLevelVO) {
-  await ElMessageBox.confirm(
-    `确认删除等级「${row.levelName}」？删除后挂在该档的用户会落回配置里的默认档。`,
-    '提示', { type: 'warning' },
-  )
-  await deleteSubjectQuotaLevel(row.levelCode)
-  ElMessage.success('已删除')
-  await loadLevels()
+  await levelDeletes.run(row.levelCode, async current => {
+    await ElMessageBox.confirm(`确认删除等级「${row.levelName}」？删除后挂在该档的用户会落回配置里的默认档。`, '提示', { type: 'warning' })
+    if (current()) await deleteSubjectQuotaLevel(row.levelCode)
+  }, async () => { ElMessage.success('已删除'); await loadLevels() })
 }
 
-// ---------- 用户分档 ----------
-const userLoading = ref(false)
-const users = ref<SubjectQuotaUserVO[]>([])
-const userTotal = ref(0)
-const userQuery = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
-
-async function loadUsers() {
-  userLoading.value = true
-  try {
-    const page = await pageSubjectQuotaUsers(userQuery)
-    users.value = page.list
-    userTotal.value = page.total
-  } finally {
-    userLoading.value = false
-  }
-}
-
-function searchUsers() {
-  userQuery.pageNum = 1
-  return loadUsers()
-}
-
-/** 改档立即提交：这个下拉本身就是操作，再加一个"保存"按钮只会让人以为没生效。 */
+const { list: users, total: userTotal, query: userQuery, loading: userLoading, loadError: userError,
+  loadList: loadUsers, handleSearch: searchUsers } = usePagedList<SubjectQuotaUserVO, PageQuery>({
+  page: pageSubjectQuotaUsers, initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+})
+const userChanges = useRowMutation<string>('subject-quota:user-edit')
 async function changeUserLevel(row: SubjectQuotaUserVO, levelCode: string | undefined) {
-  await assignUserLevel({ userId: row.userId, levelCode: levelCode || undefined })
-  ElMessage.success('已调整，客服端最长 60 秒后生效')
-  await loadUsers()
+  await userChanges.run(row.userId, () => assignUserLevel({ userId: row.userId, levelCode: levelCode || undefined }),
+    async () => { ElMessage.success('已调整，客服端最长 60 秒后生效'); await loadUsers() })
 }
 
-// ---------- 后台用户分档 ----------
-const adminUserLoading = ref(false)
-const adminUsers = ref<AdminQuotaUserVO[]>([])
-const adminUserTotal = ref(0)
-const adminUserQuery = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
-
-async function loadAdminUsers() {
-  adminUserLoading.value = true
-  try {
-    const page = await pageAdminQuotaUsers(adminUserQuery)
-    adminUsers.value = page.list
-    adminUserTotal.value = page.total
-  } finally {
-    adminUserLoading.value = false
-  }
-}
-
-function searchAdminUsers() {
-  adminUserQuery.pageNum = 1
-  return loadAdminUsers()
-}
-
+const { list: adminUsers, total: adminUserTotal, query: adminUserQuery, loading: adminUserLoading, loadError: adminUserError,
+  loadList: loadAdminUsers, handleSearch: searchAdminUsers } = usePagedList<AdminQuotaUserVO, PageQuery>({
+  page: pageAdminQuotaUsers, initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+})
+const adminUserChanges = useRowMutation('subject-quota:user-edit')
 async function changeAdminUserLevel(row: AdminQuotaUserVO, levelCode: string | undefined) {
-  await assignAdminUserLevel({ userId: row.userId, levelCode: levelCode || undefined })
-  ElMessage.success('已调整，立即生效')
-  await loadAdminUsers()
+  await adminUserChanges.run(row.userId, () => assignAdminUserLevel({ userId: row.userId, levelCode: levelCode || undefined }),
+    async () => { ElMessage.success('已调整，立即生效'); await loadAdminUsers() })
 }
 
-// ---------- 超限命中 ----------
-const hitLoading = ref(false)
+// 明细与排行使用相同时间窗，一起成功后才替换可见结果。
 const hitHours = ref(24)
-const hits = ref<SubjectQuotaHitVO[]>([])
-const hitRank = ref<SubjectQuotaHitRank[]>([])
-
-async function loadHits() {
-  hitLoading.value = true
-  try {
-    const [rank, detail] = await Promise.all([
-      fetchSubjectQuotaHitRank(hitHours.value, 20),
-      fetchSubjectQuotaHits(hitHours.value, 100),
-    ])
-    hitRank.value = rank
-    hits.value = detail
-  } finally {
-    hitLoading.value = false
-  }
-}
+const { data: hitSnapshot, loading: hitLoading, error: hitError, loaded: hitsLoaded, load: loadHits } = useQueryState(async () => {
+  const hours = hitHours.value
+  const [rank, detail] = await Promise.all([fetchSubjectQuotaHitRank(hours, 20), fetchSubjectQuotaHits(hours, 100)])
+  return { rank, detail }
+}, () => ({ rank: [] as SubjectQuotaHitRank[], detail: [] as SubjectQuotaHitVO[] }))
+const hits = computed(() => hitSnapshot.value.detail)
+const hitRank = computed(() => hitSnapshot.value.rank)
 
 // ---------- 公共 ----------
 const subjectTypeLabels: Record<string, string> = {
@@ -209,12 +132,13 @@ onMounted(async () => {
 <template>
   <div class="page">
     <el-alert type="warning" :closable="false" show-icon class="notice">
-      按<b>调用者</b>限流：每个登录用户 / 每个匿名 IP / 每把 API Key 在最近一段时间内的 token 量与请求次数上限。
-      与同级的<b>限流规则</b>（按路径限）、<b>配额与计费</b>（按租户限月度花费）三者并存，任一触顶都会被拦。
-      客服端需开 <code>customer-work.subject-quota.enabled=true</code>、后台需开
-      <code>admin.subject-quota.enabled=true</code> 才真正生效——这里能配，不等于一定在跑。
-      <b>后台侧（ADMIN_USER 档）改完立即生效</b>；客服端是另一个进程，它的档位改动要等它自己的
-      快照轮询，<b>最长 60 秒</b>。
+      设置每个用户、匿名 IP 或 API Key 的调用额度。<b>后台改档立即生效，客服端最长等待 60 秒。</b>
+      <details>
+        <summary>查看规则生效条件</summary>
+        主体配额功能启用后才执行限额；它与路径限流、租户配额同时生效，任一触顶都会被拦。
+        客服端配置为 <code>customer-work.subject-quota.enabled=true</code>，后台配置为
+        <code>admin.subject-quota.enabled=true</code>。
+      </details>
     </el-alert>
 
     <el-tabs v-model="activeTab">
@@ -228,7 +152,8 @@ onMounted(async () => {
             <el-button @click="loadLevels">刷新</el-button>
           </div>
 
-          <el-table v-loading="levelLoading" :data="levels" style="width: 100%">
+          <CrudLoadState :error="levelError" :has-stale-data="levelsLoaded" :loading="levelLoading" @retry="loadLevels" />
+          <el-table v-if="!levelError || levelsLoaded" v-loading="levelLoading" :data="levels" style="width: 100%">
             <el-table-column prop="levelCode" label="等级编码" width="130" />
             <el-table-column prop="levelName" label="等级名称" min-width="130" show-overflow-tooltip />
             <el-table-column label="适用主体" width="110">
@@ -256,12 +181,12 @@ onMounted(async () => {
               </template>
             </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
-            <el-table-column label="操作" width="140" fixed="right">
+            <el-table-column v-if="auth.hasPermission('subject-quota:level-edit')" label="操作" width="140" fixed="right">
               <template #default="{ row }">
                 <el-button v-permission="'subject-quota:level-edit'" link type="primary" @click="openLevelEdit(row)">
                   编辑
                 </el-button>
-                <el-button v-permission="'subject-quota:level-edit'" link type="danger" @click="removeLevel(row)">
+                <el-button v-permission="'subject-quota:level-edit'" link type="danger" :loading="levelDeletes.isPending(row.levelCode)" @click="removeLevel(row)">
                   删除
                 </el-button>
               </template>
@@ -284,6 +209,7 @@ onMounted(async () => {
             <el-button type="primary" @click="searchUsers">搜索</el-button>
           </div>
 
+          <CrudLoadState :error="userError" :has-stale-data="users.length > 0" :loading="userLoading" @retry="loadUsers" />
           <el-table v-loading="userLoading" :data="users" style="width: 100%">
             <el-table-column prop="username" label="用户名" min-width="140" show-overflow-tooltip />
             <el-table-column prop="nickname" label="昵称" min-width="120" show-overflow-tooltip />
@@ -305,7 +231,7 @@ onMounted(async () => {
                   placeholder="默认档"
                   clearable
                   style="width: 100%"
-                  :disabled="!auth.hasPermission('subject-quota:user-edit')"
+                  :disabled="!auth.hasPermission('subject-quota:user-edit') || userChanges.isPending(row.userId)"
                   @change="(value: string) => changeUserLevel(row, value)"
                 >
                   <el-option
@@ -351,6 +277,7 @@ onMounted(async () => {
             <el-button type="primary" @click="searchAdminUsers">搜索</el-button>
           </div>
 
+          <CrudLoadState :error="adminUserError" :has-stale-data="adminUsers.length > 0" :loading="adminUserLoading" @retry="loadAdminUsers" />
           <el-table v-loading="adminUserLoading" :data="adminUsers" style="width: 100%">
             <el-table-column prop="username" label="用户名" min-width="140" show-overflow-tooltip />
             <el-table-column prop="nickname" label="昵称" min-width="120" show-overflow-tooltip />
@@ -370,7 +297,7 @@ onMounted(async () => {
                   placeholder="默认档"
                   clearable
                   style="width: 100%"
-                  :disabled="!auth.hasPermission('subject-quota:user-edit')"
+                  :disabled="!auth.hasPermission('subject-quota:user-edit') || adminUserChanges.isPending(row.userId)"
                   @change="(value: string) => changeAdminUserLevel(row, value)"
                 >
                   <el-option
@@ -410,6 +337,7 @@ onMounted(async () => {
             <span class="hint">只在真的触顶时才记录，正常流量不产生任何数据。</span>
           </div>
 
+          <CrudLoadState :error="hitError" :has-stale-data="hitsLoaded" :loading="hitLoading" @retry="loadHits" />
           <el-divider content-position="left">谁在刷（命中次数排行）</el-divider>
           <el-table v-loading="hitLoading" :data="hitRank" style="width: 100%">
             <el-table-column label="主体类型" width="110">
@@ -459,7 +387,7 @@ onMounted(async () => {
       :title="levelDialogMode === 'create' ? '新增等级' : '编辑等级'"
       width="560px"
     >
-      <el-form ref="levelFormRef" :model="levelForm" :rules="levelRules" label-width="110px">
+      <el-form ref="levelFormRef" :model="levelForm" :disabled="levelSubmitting" :rules="levelRules" label-width="110px">
         <el-form-item label="等级编码" prop="levelCode">
           <el-input
             v-model="levelForm.levelCode"

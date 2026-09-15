@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customerwork.safety.subjectquota.entity.SubjectQuotaLevelDO;
 import com.richard.fyoung.customerwork.safety.subjectquota.mapper.SubjectQuotaLevelMapper;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
+import com.richard.fyoung.customerwork.safety.tenant.ExactTenantSql;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,8 +19,7 @@ import java.util.Optional;
  * 后台跨租户维护同理——两类调用方共用一个 Store，让 Store 自己按显式 tenantId 取数，
  * 比让调用方各自记得切上下文更不容易出错（同 {@code MybatisTenantQuotaStore}）。</p>
  *
- * <p>异常一律 {@code catch(Exception)}：HikariPool / MyBatis 初始化异常是 RuntimeException，
- * 不是 SQLException 子类。</p>
+ * <p>运行时快照读取失败保留旧快照；后台查询与写入失败向调用方传播，避免把故障展示成空配置。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisSubjectQuotaLevelStore implements SubjectQuotaLevelStore {
@@ -47,17 +47,11 @@ public class MybatisSubjectQuotaLevelStore implements SubjectQuotaLevelStore {
 
     @Override
     public List<SubjectQuotaLevel> findByTenant(String tenantId) {
-        try {
-            List<SubjectQuotaLevelDO> rows = CrossTenantOperations.execute(() -> mapper.selectList(
-                new LambdaQueryWrapper<SubjectQuotaLevelDO>()
-                    .eq(SubjectQuotaLevelDO::getTenantId, tenantId)
-                    .orderByAsc(SubjectQuotaLevelDO::getLevelCode)));
-            return rows.stream().map(MybatisSubjectQuotaLevelStore::toDomain).toList();
-        } catch (Exception e) {
-            log.error("subject quota level findByTenant failed, code={}, tenant={}",
-                "SQUOTA-LEVEL-QUERY-FAIL", tenantId, e);
-            return List.of();
-        }
+        List<SubjectQuotaLevelDO> rows = CrossTenantOperations.execute(() -> mapper.selectList(
+            new LambdaQueryWrapper<SubjectQuotaLevelDO>()
+                .apply(ExactTenantSql.CONDITION, tenantId)
+                .orderByAsc(SubjectQuotaLevelDO::getLevelCode)));
+        return rows.stream().map(MybatisSubjectQuotaLevelStore::toDomain).toList();
     }
 
     @Override
@@ -65,7 +59,7 @@ public class MybatisSubjectQuotaLevelStore implements SubjectQuotaLevelStore {
         long now = System.currentTimeMillis();
         CrossTenantOperations.run(() -> {
             SubjectQuotaLevelDO existing = mapper.selectOne(new LambdaQueryWrapper<SubjectQuotaLevelDO>()
-                .eq(SubjectQuotaLevelDO::getTenantId, level.tenantId())
+                .apply(ExactTenantSql.CONDITION, level.tenantId())
                 .eq(SubjectQuotaLevelDO::getLevelCode, level.levelCode()));
 
             SubjectQuotaLevelDO row = existing == null ? new SubjectQuotaLevelDO() : existing;
@@ -92,7 +86,7 @@ public class MybatisSubjectQuotaLevelStore implements SubjectQuotaLevelStore {
     @Override
     public void delete(String tenantId, String levelCode) {
         CrossTenantOperations.run(() -> mapper.delete(new LambdaQueryWrapper<SubjectQuotaLevelDO>()
-            .eq(SubjectQuotaLevelDO::getTenantId, tenantId)
+            .apply(ExactTenantSql.CONDITION, tenantId)
             .eq(SubjectQuotaLevelDO::getLevelCode, levelCode)));
     }
 
