@@ -76,7 +76,7 @@ jobs:
           docker run --detach --name customer-work-ci-minio \
             --publish 127.0.0.1:9000:9000 \
             --env MINIO_ROOT_USER=minioadmin --env MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2025-07-23T15-54-02Z server /data
+            quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z server /data
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
               exit 0
