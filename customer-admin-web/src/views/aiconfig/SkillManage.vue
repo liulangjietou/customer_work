@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { FormInstance, UploadRequestOptions } from 'element-plus'
 import { createSkill, deleteSkill, downloadSkill, fetchSkillVersions, pageSkills, parseSkillUpload, updateSkill } from '@/api/skill'
+import { useRowMutation } from '@/composables/useRowMutation'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { PageQuery, SkillSaveRequest, SkillVersionVO, SkillVO } from '@/types/api'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
@@ -40,33 +43,57 @@ const {
     skillName: row.skillName, skillCode: row.skillCode, content: row.content, description: row.description, status: row.status,
     storageTargets: [...(row.storageTargets ?? [])], files: null,
   }),
+  beforeSubmit: () => !uploading.value,
   deleteConfirm: (row) => `确认删除 Skill「${row.skillName}」？`,
 })
 
+const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
 const previewVisible = ref(false)
 const previewSkill = ref<SkillVO | null>(null)
 const versionsVisible = ref(false)
 const versionsLoading = ref(false)
 const versionSkill = ref<SkillVO | null>(null)
 const versions = ref<SkillVersionVO[]>([])
+const versionsError = ref<unknown>(null)
+let versionsGeneration = 0
 
-async function openVersions(row: SkillVO) {
+function openVersions(row: SkillVO) {
+  versionsGeneration += 1
   versionSkill.value = row
+  versions.value = []
+  versionsError.value = null
   versionsVisible.value = true
+  void loadVersions()
+}
+
+/** 版本响应只能更新当前打开的技能，切换目标后旧结果失效。 */
+async function loadVersions() {
+  const id = versionSkill.value?.id
+  if (!id || !versionsVisible.value) return
+  const generation = ++versionsGeneration
+  const currentIdentity = captureSubmission()
+  const isCurrent = () => currentIdentity() && generation === versionsGeneration && versionsVisible.value
   versionsLoading.value = true
   try {
-    versions.value = await fetchSkillVersions(row.id)
+    const result = await fetchSkillVersions(id)
+    if (isCurrent()) { versions.value = result; versionsError.value = null }
+  } catch (error) {
+    if (isCurrent()) versionsError.value = error
   } finally {
-    versionsLoading.value = false
+    if (isCurrent()) versionsLoading.value = false
   }
 }
+watch(versionsVisible, visible => {
+  if (!visible) { versionsGeneration += 1; versionsLoading.value = false }
+}, { flush: 'sync' })
 
 function shortHash(hash: string | null) {
   return hash ? `${hash.slice(0, 12)}…` : '-'
 }
 
-/** 正在下载的行 id：同一行的按钮转 loading，避免大包重复点。 */
-const downloadingId = ref<number | null>(null)
+/** 下载锁按行和登录归属管理，旧下载不能占用或释放新身份的按钮。 */
+const downloadMutation = useRowMutation('skill:export')
 
 /**
  * 下载技能包 zip。
@@ -75,12 +102,7 @@ const downloadingId = ref<number | null>(null)
  * 所以这个按钮也是「复制一个 skill 到别的环境」的路径。
  */
 async function handleDownload(row: SkillVO) {
-  downloadingId.value = row.id
-  try {
-    await downloadSkill(row.id, row.skillCode)
-  } finally {
-    downloadingId.value = null
-  }
+  await downloadMutation.run(row.id, () => downloadSkill(row.id, row.skillCode), () => undefined)
 }
 
 function openPreview(row: SkillVO) {
@@ -92,6 +114,24 @@ function openPreview(row: SkillVO) {
 const editingRow = ref<SkillVO | null>(null)
 
 const uploading = ref(false)
+let uploadGeneration = 0
+function invalidateUpload() {
+  uploadGeneration += 1
+  uploading.value = false
+}
+watch(dialogVisible, visible => {
+  if (!visible) { invalidateUpload(); editingRow.value = null }
+}, { flush: 'sync' })
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  invalidateUpload()
+  editingRow.value = null
+  previewVisible.value = false
+  previewSkill.value = null
+  versionsVisible.value = false
+  versionSkill.value = null
+  versions.value = []
+  versionsError.value = null
+}, { flush: 'sync' })
 
 /** 表单当前生效的附属文件清单：本次上传解析出的优先，否则显示后端现有的。 */
 const formFileList = computed(() => {
@@ -100,26 +140,35 @@ const formFileList = computed(() => {
 })
 
 function openCreateWithReset() {
+  invalidateUpload()
   editingRow.value = null
   openCreate()
 }
 
 function openEditWithRow(row: SkillVO) {
+  invalidateUpload()
   editingRow.value = row
   openEdit(row)
 }
 
 async function handleUpload(options: UploadRequestOptions) {
+  if (uploading.value || submitting.value || !dialogVisible.value) return
+  const generation = ++uploadGeneration
+  const currentIdentity = captureSubmission()
+  const isCurrent = () => currentIdentity() && generation === uploadGeneration && dialogVisible.value
   uploading.value = true
   try {
     const result = await parseSkillUpload(options.file as File)
+    if (!isCurrent()) return
     form.content = result.content
     // zip 解析出的附属文件随保存全量替换；.md 直传 files 为空数组，同样按"清空附属文件"处理
     form.files = result.files
     const fileTip = result.files.length > 0 ? `，含 ${result.files.length} 个附属文件` : ''
     ElMessage.success(`解析成功，已回填 SKILL.md 正文${fileTip}，确认无误后点“确定”保存`)
+  } catch {
+    // 请求拦截器已提示解析失败，原正文和附属文件保留，用户可以重试。
   } finally {
-    uploading.value = false
+    if (isCurrent()) uploading.value = false
   }
 }
 
@@ -175,7 +224,7 @@ onMounted(loadList)
               v-permission="'skill:export'"
               link
               type="primary"
-              :loading="downloadingId === row.id"
+              :loading="downloadMutation.isPending(row.id)"
               @click="handleDownload(row)"
             >
               下载
@@ -248,12 +297,13 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存 Skill</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" :disabled="uploading" @click="handleSubmit">保存 Skill</el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="versionsVisible" :title="`不可变版本 · ${versionSkill?.skillName ?? ''}`" width="820px">
-      <el-table v-loading="versionsLoading" :data="versions" border empty-text="暂无不可变版本">
+      <CrudLoadState :error="versionsError" :has-stale-data="versions.length > 0" :loading="versionsLoading" @retry="loadVersions" />
+      <el-table v-if="!versionsError || versions.length > 0" v-loading="versionsLoading" :data="versions" border empty-text="暂无不可变版本">
         <el-table-column prop="versionNo" label="版本" width="90">
           <template #default="{ row }">v{{ row.versionNo }}</template>
         </el-table-column>

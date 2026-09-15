@@ -1,17 +1,23 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { cancelAgentTask, getAgentTask, listAgentTaskStatuses, pageAgentTasks } from '@/api/agent-task'
-import type { AgentTaskPageQuery, AgentTaskStatus, AgentTaskVO } from '@/types/api'
+import { usePagedList } from '@/composables/usePagedList'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import type { AgentTaskStatus, AgentTaskVO } from '@/types/api'
 
 /** 非终态任务的列表自动刷新间隔：任务是分钟级的长活儿，5 秒足够跟上进度又不至于打爆接口。 */
 const AUTO_REFRESH_MS = 5000
 
-const loading = ref(false)
-const list = ref<AgentTaskVO[]>([])
-const total = ref(0)
+const { loading, loadError, list, total, query, loadList: loadListBase } = usePagedList({
+  page: async ({ pageNum, pageSize, ...filters }) => {
+    const result = await pageAgentTasks({ current: pageNum, size: pageSize, ...filters })
+    return { list: result.records, total: result.total }
+  },
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '', status: '', agentCode: '' }),
+})
 const statusOptions = ref<string[]>([])
-const query = reactive<AgentTaskPageQuery>({ current: 1, size: 10, keyword: '', status: '', agentCode: '' })
+const silentRefreshing = ref(false)
 
 const detailVisible = ref(false)
 const detailLoading = ref(false)
@@ -25,16 +31,8 @@ function hasRunningTask() {
 }
 
 async function loadList(silent = false) {
-  if (!silent) {
-    loading.value = true
-  }
-  try {
-    const result = await pageAgentTasks(query)
-    list.value = result.records
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
+  silentRefreshing.value = silent
+  await loadListBase()
 }
 
 async function loadStatuses() {
@@ -42,8 +40,8 @@ async function loadStatuses() {
 }
 
 function handleSearch() {
-  query.current = 1
-  loadList()
+  query.pageNum = 1
+  return loadList()
 }
 
 function handleReset() {
@@ -106,7 +104,7 @@ onMounted(() => {
   loadList()
   // 静默刷新：不打开 loading 遮罩，免得列表每 5 秒闪一次
   refreshTimer = setInterval(() => {
-    if (hasRunningTask() && !detailVisible.value) {
+    if (hasRunningTask() && !detailVisible.value && !loading.value) {
       loadList(true)
     }
   }, AUTO_REFRESH_MS)
@@ -122,6 +120,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList()" />
     <el-alert type="info" :closable="false" show-icon title="关于后台任务">
       <template #default>
         <div>
@@ -149,7 +148,7 @@ onBeforeUnmount(() => {
         <el-button @click="handleReset">重置</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的后台任务">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading && !silentRefreshing" :data="list" class="data-table" empty-text="暂无符合条件的后台任务">
         <el-table-column prop="taskId" label="任务ID" width="180" show-overflow-tooltip class-name="primary-column" />
         <el-table-column prop="subAgentId" label="子智能体" width="150" show-overflow-tooltip />
         <el-table-column prop="parentAgentCode" label="父智能体" width="150" show-overflow-tooltip />
@@ -158,7 +157,7 @@ onBeforeUnmount(() => {
             <el-tag :type="statusTagType(row.status)">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="结果 / 错误" min-width="240">
+        <el-table-column label="结果 / 错误" min-width="240" show-overflow-tooltip>
           <template #default="{ row }: { row: AgentTaskVO }">
             <span v-if="row.errorMessage" class="error-text">{{ row.errorMessage }}</span>
             <span v-else-if="row.result">
@@ -188,8 +187,9 @@ onBeforeUnmount(() => {
       </el-table>
 
       <el-pagination
-        v-model:current-page="query.current"
-        v-model:page-size="query.size"
+        v-if="!loadError || list.length > 0"
+        v-model:current-page="query.pageNum"
+        v-model:page-size="query.pageSize"
         :total="total"
         :page-sizes="[10, 20, 50]"
         layout="total, sizes, prev, pager, next"

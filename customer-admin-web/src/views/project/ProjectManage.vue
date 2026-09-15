@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance } from 'element-plus'
 import {
   createProject,
@@ -10,74 +12,28 @@ import {
   removeSessionFromProject,
   updateProject,
 } from '@/api/project'
-import type { ProjectSaveRequest, ProjectSessionVO, ProjectVO } from '@/types/api'
+import type { PageQuery, ProjectSaveRequest, ProjectSessionVO, ProjectVO } from '@/types/api'
 
 const router = useRouter()
 
-const loading = ref(false)
-const list = ref<ProjectVO[]>([])
-const keyword = ref('')
-
-async function loadList() {
-  loading.value = true
-  try {
-    list.value = await listProjects(keyword.value || undefined)
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  loadList()
-}
-
-// ---------- 新建/编辑 ----------
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<ProjectSaveRequest>({ projectName: '', description: '' })
-
-function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  Object.assign(form, { projectName: '', description: '' })
-  dialogVisible.value = true
-}
-
-function openEdit(row: ProjectVO) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, { projectName: row.projectName, description: row.description })
-  dialogVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (dialogMode.value === 'create') {
-    await createProject(form)
-    ElMessage.success('新建成功')
-  } else if (editingId.value) {
-    await updateProject(editingId.value, form)
-    ElMessage.success('保存成功')
-  }
-  dialogVisible.value = false
-  await loadList()
-}
-
-async function handleDelete(row: ProjectVO) {
-  await ElMessageBox.confirm(
-    `确认删除项目「${row.projectName}」？项目下 ${row.sessionCount} 条会话关联会一并清除（不影响会话本身）。`,
-    '提示',
-    { type: 'warning' },
-  )
-  await deleteProject(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
-}
+const {
+  loading, loadError, submitting, deletingId, list, query, dialogVisible, dialogMode, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
+} = useCrudPage<ProjectVO, PageQuery, ProjectSaveRequest>({
+  page: async ({ keyword }) => {
+    const rows = await listProjects(keyword || undefined)
+    return { list: rows, total: rows.length, pageNum: 1, pageSize: rows.length }
+  },
+  formRef,
+  create: createProject,
+  update: updateProject,
+  remove: row => deleteProject(row.id),
+  initQuery: () => ({ keyword: '' }),
+  initForm: () => ({ projectName: '', description: '' }),
+  toForm: row => ({ projectName: row.projectName, description: row.description }),
+  deleteConfirm: row => `确认删除项目「${row.projectName}」？项目下 ${row.sessionCount} 条会话关联会一并清除（不影响会话本身）。`,
+})
 
 // ---------- 项目详情：会话列表 ----------
 const detailVisible = ref(false)
@@ -118,16 +74,17 @@ loadList()
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
-        <el-input v-model="keyword" placeholder="按项目名搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
+        <el-input v-model="query.keyword" placeholder="按项目名搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
         <div class="toolbar-actions">
           <el-button class="cw-final-action" type="primary" @click="openCreate">新建 Project</el-button>
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="还没有项目，点击“新建 Project”开始整理会话">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="还没有项目，点击“新建 Project”开始整理会话">
         <el-table-column label="项目名称" class-name="primary-column">
           <template #default="{ row }">
             <el-link type="primary" :underline="false" @click="openDetail(row)">{{ row.projectName }}</el-link>
@@ -143,7 +100,7 @@ loadList()
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -151,7 +108,7 @@ loadList()
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建 Project' : '编辑 Project'" width="480px">
-      <el-form ref="formRef" :model="form" label-width="80px">
+      <el-form ref="formRef" :disabled="submitting" :model="form" label-width="80px">
         <el-form-item label="名称" prop="projectName" :rules="[{ required: true, message: '请输入名称' }]">
           <el-input v-model="form.projectName" />
         </el-form-item>
@@ -161,7 +118,7 @@ loadList()
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存 Project</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存 Project</el-button>
       </template>
     </el-dialog>
 

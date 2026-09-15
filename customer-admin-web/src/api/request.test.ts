@@ -34,6 +34,11 @@ function delayedNetwork() {
         config, status: 503, statusText: 'Unavailable', headers: {}, data: { code: 50000, message: '后端暂不可用' },
       }))
     },
+    blobSuccess(config: InternalAxiosRequestConfig) {
+      resolve({ config, status: 200, statusText: 'OK', headers: { 'content-type': 'application/zip' },
+        data: new Blob(['sample archive'], { type: 'application/zip' }),
+      })
+    },
     blobError(config: InternalAxiosRequestConfig) {
       resolve({ config, status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' },
         data: new Blob([JSON.stringify({ code: 50000, message: '导出暂不可用' })], { type: 'application/json' }),
@@ -175,6 +180,30 @@ describe('Admin 请求凭据与全局副作用隔离', () => {
     network.result(await network.sent, 50000)
 
     expect(await pending).toMatchObject({ code: 50000 })
+    expect(feedback.error).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('二进制下载归属', () => {
+  it.each(['current', 'different-token', 'same-token'])('成功文件只交给发起登录，transition=%s', async transition => {
+    applyLogin('current-token')
+    const click = vi.fn()
+    const createObjectURL = vi.fn().mockReturnValue('blob:download-result')
+    const revokeObjectURL = vi.fn()
+    const anchor = { href: '', download: '', click }
+    vi.stubGlobal('document', { createElement: vi.fn().mockReturnValue(anchor), body: { appendChild: vi.fn(), removeChild: vi.fn() } })
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    const network = delayedNetwork()
+    const pending = download({ url: '/aiconfig/skill/73/download' }, 'skill-73.zip')
+    const sent = await network.sent
+    if (transition !== 'current') applyLogin(transition === 'same-token' ? 'current-token' : 'new-token')
+    network.blobSuccess(sent)
+    await pending
+    expect(click).toHaveBeenCalledTimes(transition === 'current' ? 1 : 0)
+    expect(createObjectURL).toHaveBeenCalledTimes(transition === 'current' ? 1 : 0)
+    expect(revokeObjectURL).toHaveBeenCalledTimes(transition === 'current' ? 1 : 0)
+    if (transition === 'current') expect(anchor.download).toBe('skill-73.zip')
     expect(feedback.error).not.toHaveBeenCalled()
   })
 })

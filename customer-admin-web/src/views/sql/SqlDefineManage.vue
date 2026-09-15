@@ -359,7 +359,7 @@ onMounted(() => {
     <!-- 参数配置 -->
     <el-dialog v-model="paramsDialogVisible" :title="`参数配置 · ${paramsDefineKey}`" width="900px">
       <div class="toolbar">
-        <el-button class="cw-final-action" type="primary" @click="openParamCreate">新增参数</el-button>
+        <el-button class="cw-final-action" type="primary" v-permission="'sql-define:edit'" @click="openParamCreate">新增参数</el-button>
       </div>
       <el-table v-loading="paramsLoading" :data="paramsList" style="width: 100%" size="small">
         <el-table-column prop="paramName" label="参数名" width="130" />
@@ -384,8 +384,8 @@ onMounted(() => {
         <el-table-column prop="sort" label="排序" width="70" />
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }: { row: SqlDefineParamVO }">
-            <el-button link type="primary" @click="openParamEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="handleParamDelete(row)">删除</el-button>
+            <el-button link type="primary" v-permission="'sql-define:edit'" @click="openParamEdit(row)">编辑</el-button>
+            <el-button link type="danger" v-permission="'sql-define:edit'" @click="handleParamDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -448,7 +448,7 @@ onMounted(() => {
     <!-- 列转换器 -->
     <el-dialog v-model="transformsDialogVisible" :title="`列转换器 · ${transformsDefineKey}`" width="700px">
       <div class="toolbar">
-        <el-button class="cw-final-action" type="primary" @click="openTransformCreate">新增转换器</el-button>
+        <el-button class="cw-final-action" type="primary" v-permission="'sql-define:edit'" @click="openTransformCreate">新增转换器</el-button>
       </div>
       <el-table v-loading="transformsLoading" :data="transformsList" style="width: 100%" size="small">
         <el-table-column prop="fieldName" label="列名" width="140" />
@@ -460,8 +460,8 @@ onMounted(() => {
         <el-table-column prop="transformConfig" label="配置" show-overflow-tooltip />
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }: { row: SqlFieldTransformVO }">
-            <el-button link type="primary" @click="openTransformEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="handleTransformDelete(row)">删除</el-button>
+            <el-button link type="primary" v-permission="'sql-define:edit'" @click="openTransformEdit(row)">编辑</el-button>
+            <el-button link type="danger" v-permission="'sql-define:edit'" @click="handleTransformDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

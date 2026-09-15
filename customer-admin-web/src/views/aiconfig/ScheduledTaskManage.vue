@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance } from 'element-plus'
 import {
   createScheduledTask,
@@ -12,12 +14,27 @@ import {
   updateScheduledTask,
 } from '@/api/scheduled-task'
 import { pageAgents } from '@/api/agent'
-import type { AgentVO, MpPageQuery, ScheduledTaskRunVO, ScheduledTaskSaveRequest, ScheduledTaskVO, ScheduleMode } from '@/types/api'
+import type { AgentVO, PageQuery, MpPageQuery, ScheduledTaskRunVO, ScheduledTaskSaveRequest, ScheduledTaskVO, ScheduleMode } from '@/types/api'
 
-const loading = ref(false)
-const list = ref<ScheduledTaskVO[]>([])
-const total = ref(0)
-const query = reactive<MpPageQuery>({ current: 1, size: 10, keyword: '' })
+const formRef = ref<FormInstance>()
+const {
+  loading, loadError, submitting, deletingId, list, total, query, dialogVisible, dialogMode, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit, handleDelete,
+} = useCrudPage<ScheduledTaskVO, PageQuery, ScheduledTaskSaveRequest>({
+  page: async ({ pageNum = 1, pageSize = 10, keyword }) => {
+    const result = await pageScheduledTasks({ current: pageNum, size: pageSize, keyword })
+    return { list: result.records, total: result.total, pageNum, pageSize }
+  },
+  formRef,
+  create: createScheduledTask,
+  update: updateScheduledTask,
+  remove: row => deleteScheduledTask(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+  initForm: () => ({ taskCode: '', taskName: '', agentId: undefined as unknown as number, prompt: '', cron: '', enabled: true, remark: '' }),
+  toForm: row => ({ taskCode: row.taskCode, taskName: row.taskName, agentId: row.agentId, prompt: row.prompt,
+    cron: row.cron, enabled: row.enabled, remark: row.remark }),
+  deleteConfirm: row => `确认删除定时任务「${row.taskName}」？`,
+})
 
 const agentOptions = ref<AgentVO[]>([])
 
@@ -25,42 +42,14 @@ const agentOptions = ref<AgentVO[]>([])
 const scheduleMode = ref<ScheduleMode>('internal')
 const isInternalMode = computed(() => scheduleMode.value !== 'xxl-job')
 
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageScheduledTasks(query)
-    list.value = result.records
-    total.value = result.total
-    if (result.records.length > 0 && result.records[0].scheduleMode) {
-      scheduleMode.value = result.records[0].scheduleMode
-    }
-  } finally {
-    loading.value = false
-  }
-}
+watch(list, rows => {
+  if (rows[0]?.scheduleMode) scheduleMode.value = rows[0].scheduleMode
+})
 
 async function loadAgentOptions() {
   const result = await pageAgents({ pageNum: 1, pageSize: 100 })
   agentOptions.value = result.list
 }
-
-function handleSearch() {
-  query.current = 1
-  loadList()
-}
-
-function handlePageChange() {
-  loadList()
-}
-
-// ---------- 新建/编辑 ----------
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
-const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<ScheduledTaskSaveRequest>({
-  taskCode: '', taskName: '', agentId: undefined as unknown as number, prompt: '', cron: '', enabled: true, remark: '',
-})
 
 // Spring cron 为 6 位（秒 分 时 日 月 周），前端只做位数粗校验拦低级错误，合法性以后端 CronExpression 校验为准
 const cronRule = {
@@ -76,51 +65,6 @@ const cronRule = {
     callback()
   },
   trigger: 'blur',
-}
-
-function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  Object.assign(form, { taskCode: '', taskName: '', agentId: undefined, prompt: '', cron: '', enabled: true, remark: '' })
-  dialogVisible.value = true
-}
-
-function openEdit(row: ScheduledTaskVO) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, {
-    taskCode: row.taskCode,
-    taskName: row.taskName,
-    agentId: row.agentId,
-    prompt: row.prompt,
-    cron: row.cron,
-    enabled: row.enabled,
-    remark: row.remark,
-  })
-  dialogVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (dialogMode.value === 'edit' && editingId.value) {
-    await updateScheduledTask(editingId.value, form)
-    ElMessage.success('保存成功')
-  } else {
-    await createScheduledTask(form)
-    ElMessage.success('新建成功')
-  }
-  dialogVisible.value = false
-  await loadList()
-}
-
-async function handleDelete(row: ScheduledTaskVO) {
-  await ElMessageBox.confirm(`确认删除定时任务「${row.taskName}」？`, '提示', { type: 'warning' })
-  await deleteScheduledTask(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
 }
 
 async function handleToggleEnabled(row: ScheduledTaskVO, value: boolean) {
@@ -212,6 +156,7 @@ onMounted(() => {
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-alert
       v-if="isInternalMode"
       type="info"
@@ -246,7 +191,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的定时任务">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的定时任务">
         <el-table-column prop="taskCode" label="任务编码" width="180" />
         <el-table-column prop="taskName" label="任务名称" class-name="primary-column" />
         <el-table-column label="关联智能体" width="160">
@@ -284,23 +229,24 @@ onMounted(() => {
               手动触发
             </el-button>
             <el-button link type="primary" @click="openRuns(row)">执行历史</el-button>
-            <el-button v-permission="'scheduler:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'scheduler:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
 
       <el-pagination
-        v-model:current-page="query.current"
-        v-model:page-size="query.size"
+        v-if="!loadError || list.length > 0"
+        v-model:current-page="query.pageNum"
+        v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
         class="pagination"
-        @current-change="handlePageChange"
+        @current-change="loadList"
       />
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'edit' ? '编辑定时任务' : '新建定时任务'" width="560px">
-      <el-form ref="formRef" :model="form" label-width="90px">
+      <el-form ref="formRef" :disabled="submitting" :model="form" label-width="90px">
         <el-form-item label="任务编码" prop="taskCode" :rules="[{ required: true, message: '请输入任务编码' }]">
           <el-input v-model="form.taskCode" :disabled="dialogMode === 'edit'" placeholder="XXL-JOB 执行器参数填这个值，建议英文+下划线" />
         </el-form-item>
@@ -341,7 +287,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存任务</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存任务</el-button>
       </template>
     </el-dialog>
 

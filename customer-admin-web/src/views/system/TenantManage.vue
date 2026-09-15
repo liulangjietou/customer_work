@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import {
   changeTenantStatus,
@@ -8,6 +10,7 @@ import {
   deleteTenant,
   pageTenants,
   updateTenant,
+  type TenantPageQuery,
   type TenantSaveRequest,
   type TenantVO,
 } from '@/api/tenant'
@@ -21,40 +24,22 @@ const STATUS_LABELS: Record<string, { text: string; type: 'success' | 'warning' 
   TERMINATED: { text: '已退租', type: 'info' },
 }
 
-const loading = ref(false)
-const list = ref<TenantVO[]>([])
-const total = ref(0)
-const query = reactive({ pageNum: 1, pageSize: 10, keyword: '', tenantStatus: '' })
-
-async function loadList() {
-  loading.value = true
-  try {
-    const data = await pageTenants(query)
-    list.value = data.list
-    total.value = data.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  return loadList()
-}
-
-// ---------- 新建 / 编辑 ----------
-
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
-const form = reactive<TenantSaveRequest>({
-  tenantCode: '',
-  tenantName: '',
-  contactName: '',
-  contactPhone: '',
-  contactEmail: '',
-  remark: '',
-  expireTime: null,
+const {
+  loading, loadError, submitting, deletingId, list, total, query, dialogVisible, dialogMode, form,
+  loadList, handleSearch, openCreate, openEdit, handleSubmit: submit, handleDelete,
+} = useCrudPage<TenantVO, TenantPageQuery, TenantSaveRequest>({
+  page: pageTenants,
+  formRef,
+  create: createTenant,
+  update: (id, value) => updateTenant({ ...value, id }),
+  remove: row => deleteTenant(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '', tenantStatus: '' }),
+  initForm: () => ({ tenantCode: '', tenantName: '', contactName: '', contactPhone: '', contactEmail: '', remark: '', expireTime: null }),
+  toForm: row => ({ tenantCode: row.tenantCode, tenantName: row.tenantName, contactName: row.contactName ?? '',
+    contactPhone: row.contactPhone ?? '', contactEmail: row.contactEmail ?? '', remark: row.remark ?? '', expireTime: row.expireTime }),
+  deleteConfirm: row => `确认删除租户「${row.tenantName}」？删除后该租户无法登录，但其业务数据仍保留在库中。`,
+  messages: { created: '租户已创建，已自动初始化租户管理员角色', updated: '租户已更新', deleted: '租户已删除' },
 })
 
 const rules: FormRules = {
@@ -68,50 +53,6 @@ const rules: FormRules = {
   ],
   tenantName: [{ required: true, message: '请输入租户名称', trigger: 'blur' }],
   contactEmail: [{ type: 'email', message: '邮箱格式不正确', trigger: 'blur' }],
-}
-
-function openCreate() {
-  dialogMode.value = 'create'
-  Object.assign(form, {
-    id: undefined,
-    tenantCode: '',
-    tenantName: '',
-    contactName: '',
-    contactPhone: '',
-    contactEmail: '',
-    remark: '',
-    expireTime: null,
-  })
-  dialogVisible.value = true
-}
-
-function openEdit(row: TenantVO) {
-  dialogMode.value = 'edit'
-  Object.assign(form, {
-    id: row.id,
-    tenantCode: row.tenantCode,
-    tenantName: row.tenantName,
-    contactName: row.contactName ?? '',
-    contactPhone: row.contactPhone ?? '',
-    contactEmail: row.contactEmail ?? '',
-    remark: row.remark ?? '',
-    expireTime: row.expireTime,
-  })
-  dialogVisible.value = true
-}
-
-async function submit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
-  if (dialogMode.value === 'create') {
-    await createTenant(form)
-    ElMessage.success('租户已创建，已自动初始化租户管理员角色')
-  } else {
-    await updateTenant(form)
-    ElMessage.success('租户已更新')
-  }
-  dialogVisible.value = false
-  await loadList()
 }
 
 // ---------- 生命周期 ----------
@@ -130,22 +71,12 @@ async function handleStatusChange(row: TenantVO, target: string) {
   await loadList()
 }
 
-async function handleDelete(row: TenantVO) {
-  await ElMessageBox.confirm(
-    `确认删除租户「${row.tenantName}」？删除后该租户无法登录，但其业务数据仍保留在库中。`,
-    '删除确认',
-    { type: 'warning' },
-  )
-  await deleteTenant(row.id)
-  ElMessage.success('租户已删除')
-  await loadList()
-}
-
 onMounted(loadList)
 </script>
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input
@@ -166,7 +97,7 @@ onMounted(loadList)
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的租户">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的租户">
         <el-table-column prop="tenantCode" label="租户编码" width="160">
           <template #default="{ row }">
             {{ row.tenantCode }}
@@ -224,7 +155,7 @@ onMounted(loadList)
               link
               type="danger"
               :disabled="row.reserved"
-              @click="handleDelete(row)"
+              :loading="deletingId === row.id" @click="handleDelete(row)"
             >
               删除
             </el-button>
@@ -233,6 +164,7 @@ onMounted(loadList)
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"
@@ -243,7 +175,7 @@ onMounted(loadList)
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建租户' : '编辑租户'" width="560px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
+      <el-form ref="formRef" :disabled="submitting" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="租户编码" prop="tenantCode">
           <el-input v-model="form.tenantCode" :disabled="dialogMode === 'edit'" placeholder="如 acme" />
           <div v-if="dialogMode === 'create'" class="form-tip">
@@ -277,7 +209,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" @click="submit">保存租户</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="submit">保存租户</el-button>
       </template>
     </el-dialog>
   </div>
