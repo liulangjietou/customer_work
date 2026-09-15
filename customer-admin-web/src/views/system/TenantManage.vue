@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useRowMutation } from '@/composables/useRowMutation'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import {
@@ -57,18 +58,22 @@ const rules: FormRules = {
 
 // ---------- 生命周期 ----------
 
+const statusMutation = useRowMutation<number>('tenant:edit')
 async function handleStatusChange(row: TenantVO, target: string) {
   const action = target === 'ACTIVE' ? '恢复' : target === 'SUSPENDED' ? '冻结' : '退租'
   const extra =
     target === 'ACTIVE'
       ? ''
       : '该租户下的所有账号将立即无法登录，业务数据保留不受影响。'
-  await ElMessageBox.confirm(`确认${action}租户「${row.tenantName}」？${extra}`, `${action}确认`, {
-    type: 'warning',
+  await statusMutation.run(row.id, async isCurrent => {
+    await ElMessageBox.confirm(`确认${action}租户「${row.tenantName}」？${extra}`, `${action}确认`, {
+      type: 'warning',
+    })
+    if (isCurrent()) await changeTenantStatus(row.id, target)
+  }, async () => {
+    ElMessage.success(`租户已${action}`)
+    await loadList()
   })
-  await changeTenantStatus(row.id, target)
-  ElMessage.success(`租户已${action}`)
-  await loadList()
 }
 
 onMounted(loadList)
@@ -126,7 +131,8 @@ onMounted(loadList)
               v-permission="'tenant:edit'"
               link
               type="warning"
-              :disabled="row.reserved"
+              :disabled="row.reserved || statusMutation.isPending(row.id)"
+              :loading="statusMutation.isPending(row.id)"
               @click="handleStatusChange(row, 'SUSPENDED')"
             >
               冻结
@@ -136,7 +142,8 @@ onMounted(loadList)
               v-permission="'tenant:edit'"
               link
               type="success"
-              :disabled="row.reserved"
+              :disabled="row.reserved || statusMutation.isPending(row.id)"
+              :loading="statusMutation.isPending(row.id)"
               @click="handleStatusChange(row, 'ACTIVE')"
             >
               恢复
@@ -145,7 +152,8 @@ onMounted(loadList)
               v-permission="'tenant:edit'"
               link
               type="info"
-              :disabled="row.reserved || row.status === 'TERMINATED'"
+              :disabled="row.reserved || row.status === 'TERMINATED' || statusMutation.isPending(row.id)"
+              :loading="statusMutation.isPending(row.id)"
               @click="handleStatusChange(row, 'TERMINATED')"
             >
               退租

@@ -14,6 +14,7 @@ import { fetchCurrentView } from '@/api/tenant'
 import { useAuthStore } from '@/store/auth'
 import { useCrudPage } from '@/composables/useCrudPage'
 import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useQueryState } from '@/composables/useQueryState'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type {
   RoleVO,
@@ -29,8 +30,19 @@ import type {
 const auth = useAuthStore()
 const captureSubmission = useAuthSubmissionScope()
 
-const roleOptions = ref<RoleVO[]>([])
-const crossTenantAuthority = ref(false)
+const { data: roleSnapshot, loading: roleLoading, error: roleError, loaded: rolesLoaded, load: loadRoleOptions } =
+  useQueryState<{ roles: RoleVO[]; crossTenantAuthority: boolean } | null>(async () => {
+    const identityIsCurrent = captureSubmission()
+    const permissions = auth.permissions.join('\0')
+    const view = await fetchCurrentView()
+    // 授权和目录属于同一身份；旧授权返回后不能继续借新登录查询角色。
+    if (!identityIsCurrent() || permissions !== auth.permissions.join('\0')) return null
+    const result = await pageRoles({ pageNum: 1, pageSize: 100 })
+    return { roles: result.list, crossTenantAuthority: view.crossTenantAuthority === true }
+  }, () => null)
+const roleOptions = computed(() => roleSnapshot.value?.roles ?? [])
+const crossTenantAuthority = computed(() => roleSnapshot.value?.crossTenantAuthority === true)
+const roleSelectionBlocked = computed(() => roleLoading.value || !!roleError.value || !rolesLoaded.value)
 const formRef = ref<FormInstance>()
 const editingApprovalStatus = ref<UserApprovalStatus>('APPROVED')
 const reviewDialogVisible = ref(false)
@@ -123,6 +135,7 @@ const {
     roleIds: row.approvalStatus === 'APPROVED' ? row.roleIds : [],
   }),
   deleteConfirm: (row) => `确认删除用户「${row.username}」？`,
+  beforeSubmit: () => !roleSelectionBlocked.value,
 })
 
 function openEdit(row: UserVO) {
@@ -242,22 +255,12 @@ async function submitReview() {
   }
 }
 
-async function loadRoleOptions() {
-  try {
-    const result = await pageRoles({ pageNum: 1, pageSize: 100 })
-    roleOptions.value = result.list
-  } catch {
-    roleOptions.value = []
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  if (auth.isLoggedIn && auth.isApproved && (auth.hasPermission('user:add') || auth.hasPermission('user:edit'))) {
+    void loadRoleOptions()
   }
-}
-
-onMounted(async () => {
-  loadList()
-  crossTenantAuthority.value = await fetchCurrentView()
-    .then((view) => view.crossTenantAuthority === true)
-    .catch(() => false)
-  await loadRoleOptions()
-})
+}, { immediate: true })
+onMounted(loadList)
 </script>
 
 <template>
@@ -333,6 +336,7 @@ onMounted(async () => {
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建用户' : '编辑用户'" width="480px">
+      <CrudLoadState :error="roleError" :has-stale-data="!!roleSnapshot" :loading="roleLoading" @retry="loadRoleOptions" />
       <el-form ref="formRef" :model="form" label-width="80px">
         <el-form-item label="用户名" prop="username" :rules="[{ required: true, message: '请输入用户名' }]">
           <el-input v-model="form.username" :disabled="dialogMode === 'edit'" />
@@ -348,7 +352,8 @@ onMounted(async () => {
             v-model="form.roleIds"
             multiple
             style="width: 100%"
-            :disabled="dialogMode === 'edit' && editingApprovalStatus !== 'APPROVED'"
+            :loading="roleLoading"
+            :disabled="roleSelectionBlocked || (dialogMode === 'edit' && editingApprovalStatus !== 'APPROVED')"
             :placeholder="dialogMode === 'edit' && editingApprovalStatus !== 'APPROVED' ? '请通过审核操作分配角色' : '请选择角色'"
           >
             <el-option
@@ -366,7 +371,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存用户</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" :disabled="submitting || roleSelectionBlocked" @click="handleSubmit">保存用户</el-button>
       </template>
     </el-dialog>
 

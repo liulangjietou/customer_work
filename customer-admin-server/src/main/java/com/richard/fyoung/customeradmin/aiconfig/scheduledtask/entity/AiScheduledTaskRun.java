@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.scheduledtask.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -31,6 +32,8 @@ public class AiScheduledTaskRun {
     private Long costMs;
     /** 执行结果：SUCCESS / FAILED。 */
     private String status;
+    /** output 也是 SQL 解析器的语法关键字，映射转义以兼容租户插件对 INSERT 的解析。 */
+    @TableField("`output`")
     private String output;
     private String errorMessage;
 }

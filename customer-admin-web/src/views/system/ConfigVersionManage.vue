@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { usePagedList } from '@/composables/usePagedList'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
 import CrudLoadState from '@/components/CrudLoadState.vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getVersion,
@@ -35,26 +37,30 @@ const { loading, loadError, list, total, query, loadList, handleSearch } = usePa
   page: pageVersions,
   initQuery: () => ({ pageNum: 1, pageSize: 10, configType: '', targetCode: '' }),
 })
-const tenants = ref<TenantVO[]>([])
-const approvals = ref<GovernedChangeVO[]>([])
-const approvalLoading = ref(false)
+const { data: tenants, loading: tenantLoading, error: tenantError, loaded: tenantsLoaded, load: loadTenants } =
+  useQueryState<TenantVO[]>(listTenantOptions, () => [])
+const tenantSelectionBlocked = computed(() => tenantLoading.value || !!tenantError.value || !tenantsLoaded.value)
+const { data: approvals, loading: approvalLoading, error: approvalError, load: queryApprovals } =
+  useQueryState<GovernedChangeVO[]>(listGovernedChanges, () => [])
 
 async function loadApprovals() {
   if (!auth.hasPermission('governance:view')) return
-  approvalLoading.value = true
-  try {
-    approvals.value = await listGovernedChanges()
-  } finally {
-    approvalLoading.value = false
-  }
+  await queryApprovals()
 }
 
 // ---------- 版本对比 ----------
 
 const diffVisible = ref(false)
-const leftVersion = ref<ConfigVersionVO | null>(null)
-const rightVersion = ref<ConfigVersionVO | null>(null)
 const selected = ref<ConfigVersionVO[]>([])
+const diffTarget = ref<[number, number] | null>(null)
+const { data: diffSnapshot, loading: diffLoading, error: diffError, load: loadDiff, reset: resetDiff } =
+  useQueryState<[ConfigVersionVO, ConfigVersionVO] | null>(async () => {
+    const [a, b] = diffTarget.value!
+    const [left, right] = await Promise.all([getVersion(a), getVersion(b)])
+    return left.version <= right.version ? [left, right] : [right, left]
+  }, () => null)
+const leftVersion = computed(() => diffSnapshot.value?.[0] ?? null)
+const rightVersion = computed(() => diffSnapshot.value?.[1] ?? null)
 
 function handleSelectionChange(rows: ConfigVersionVO[]) {
   selected.value = rows
@@ -66,14 +72,14 @@ async function openDiff() {
     return
   }
   // 列表不返回 content；对比时按需拉取服务端结构化脱敏后的快照。
-  const [a, b] = selected.value
-  const [left, right] = await Promise.all([getVersion(a.id), getVersion(b.id)])
-  // 版本号小的放左边，读起来才是"从旧到新"
-  const ordered = left.version <= right.version ? [left, right] : [right, left]
-  leftVersion.value = ordered[0]
-  rightVersion.value = ordered[1]
+  resetDiff()
+  diffTarget.value = [selected.value[0].id, selected.value[1].id]
   diffVisible.value = true
+  await loadDiff()
 }
+watch(diffVisible, visible => {
+  if (!visible) { resetDiff(); diffTarget.value = null }
+}, { flush: 'sync' })
 
 /** 简易逐行差异标记：内容是 JSON，行级比对足以看出改了哪个字段。 */
 function diffLines(a: string | null, b: string | null) {
@@ -94,15 +100,20 @@ const changedCount = computed(() => diffRows.value.filter((r) => r.changed).leng
 
 // ---------- 回滚 ----------
 
+const rollback = useRowMutation<number>('config-version:rollback')
 async function handleRollback(row: ConfigVersionVO) {
-  const { value } = await ElMessageBox.prompt(
-    `将只提取 v${row.version} 的提示词和最大迭代次数；模型、凭据、MCP、路由与实验使用当前配置。请填写回滚原因：`,
-    `回滚到 v${row.version}`,
-    { inputPlaceholder: '如：v5 的提示词导致答非所问', confirmButtonText: '创建安全回滚任务', type: 'warning' },
-  )
-  const approval = await rollbackVersion(row.id, value)
-  ElMessage.success(`审批请求 ${approval.id} 已提交，需另一名管理员复核后才会发布`)
-  await loadApprovals()
+  let approvalId = ''
+  await rollback.run(row.id, async isCurrent => {
+    const { value } = await ElMessageBox.prompt(
+      `将只提取 v${row.version} 的提示词和最大迭代次数；模型、凭据、MCP、路由与实验使用当前配置。请填写回滚原因：`,
+      `回滚到 v${row.version}`,
+      { inputPlaceholder: '如：v5 的提示词导致答非所问', confirmButtonText: '创建安全回滚任务', type: 'warning' },
+    )
+    if (isCurrent()) approvalId = (await rollbackVersion(row.id, value)).id
+  }, async () => {
+    ElMessage.success(`审批请求 ${approvalId} 已提交，需另一名管理员复核后才会发布`)
+    await loadApprovals()
+  })
 }
 
 // ---------- 灰度发布 ----------
@@ -110,24 +121,41 @@ async function handleRollback(row: ConfigVersionVO) {
 const grayVisible = ref(false)
 const grayTarget = ref<ConfigVersionVO | null>(null)
 const grayForm = reactive<{ tenantCodes: string[]; remark: string }>({ tenantCodes: [], remark: '' })
+const grayMutation = useRowMutation<number>('config-version:gray')
+const graySubmitting = computed(() => grayTarget.value !== null && grayMutation.isPending(grayTarget.value.id))
+let grayGeneration = 0
 
 function openGray(row: ConfigVersionVO) {
+  grayGeneration += 1
   grayTarget.value = row
   grayForm.tenantCodes = []
   grayForm.remark = ''
   grayVisible.value = true
 }
+watch(grayVisible, visible => {
+  if (!visible) { grayGeneration += 1; grayTarget.value = null }
+}, { flush: 'sync' })
 
 async function submitGray() {
-  if (!grayTarget.value) return
+  if (!grayTarget.value || graySubmitting.value || tenantSelectionBlocked.value) return
   if (grayForm.tenantCodes.length === 0) {
     ElMessage.warning('请至少选择一个租户')
     return
   }
-  const approval = await grayRelease(grayTarget.value.id, grayForm.tenantCodes, grayForm.remark)
-  ElMessage.success(`审批请求 ${approval.id} 已提交，需另一名管理员复核后才会执行整批预检`)
-  grayVisible.value = false
-  await loadApprovals()
+  const targetId = grayTarget.value.id
+  const generation = grayGeneration
+  const tenantCodes = [...grayForm.tenantCodes]
+  const remark = grayForm.remark
+  let approvalId = ''
+  await grayMutation.run(targetId, async () => {
+    approvalId = (await grayRelease(targetId, tenantCodes, remark)).id
+  }, async () => {
+    if (generation === grayGeneration && grayVisible.value) {
+      ElMessage.success(`审批请求 ${approvalId} 已提交，需另一名管理员复核后才会执行整批预检`)
+      grayVisible.value = false
+    }
+    await loadApprovals()
+  })
 }
 
 const CHANGE_LABELS: Record<string, string> = {
@@ -140,34 +168,54 @@ const APPROVAL_STATUS_TYPES: Record<string, 'info' | 'success' | 'danger' | 'war
   REJECTED: 'info', FAILED: 'danger', EXPIRED: 'info',
 }
 
+const decisionMutation = useRowMutation<string>('governance:approve')
 async function decide(row: GovernedChangeVO, decision: 'approve' | 'reject') {
   if (row.makerName === auth.username) {
     ElMessage.error('发起人与复核人必须是不同用户')
     return
   }
-  const { value } = await ElMessageBox.prompt(
-    decision === 'approve' ? '确认复核通过并执行该变更？' : '确认拒绝该变更？',
-    decision === 'approve' ? '复核通过' : '拒绝变更',
-    { inputPlaceholder: '请填写复核依据', inputValidator: (text) => !!text?.trim() || '复核理由不能为空' },
-  )
-  if (decision === 'approve') {
-    await approveGovernedChange(row.id, value)
-    ElMessage.success('复核通过，变更已进入执行终态；运行时发布仍以 ACK APPLIED 为准')
-    await Promise.all([loadApprovals(), loadList()])
-  } else {
-    await rejectGovernedChange(row.id, value)
-    ElMessage.success('变更已拒绝')
+  await decisionMutation.run(row.id, async isCurrent => {
+    const { value } = await ElMessageBox.prompt(
+      decision === 'approve' ? '确认复核通过并执行该变更？' : '确认拒绝该变更？',
+      decision === 'approve' ? '复核通过' : '拒绝变更',
+      { inputPlaceholder: '请填写复核依据', inputValidator: (text) => !!text?.trim() || '复核理由不能为空' },
+    )
+    if (!isCurrent()) return
+    if (decision === 'approve') await approveGovernedChange(row.id, value)
+    else await rejectGovernedChange(row.id, value)
+  }, async () => {
+    ElMessage.success(decision === 'approve'
+      ? '复核通过，变更已进入执行终态；运行时发布仍以 ACK APPLIED 为准' : '变更已拒绝')
     await loadApprovals()
-  }
+    if (decision === 'approve') await loadList()
+  })
 }
 
 const auditVisible = ref(false)
-const auditEvents = ref<GovernanceAuditEventVO[]>([])
+const auditTarget = ref<string | null>(null)
+const { data: auditEvents, loading: auditLoading, error: auditError, load: loadAudit, reset: resetAudit } =
+  useQueryState<GovernanceAuditEventVO[]>(() => listGovernanceAudit(auditTarget.value!), () => [])
 
 async function openAudit(row: GovernedChangeVO) {
-  auditEvents.value = await listGovernanceAudit(row.id)
+  resetAudit()
+  auditTarget.value = row.id
   auditVisible.value = true
+  await loadAudit()
 }
+watch(auditVisible, visible => {
+  if (!visible) { resetAudit(); auditTarget.value = null }
+}, { flush: 'sync' })
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  auditVisible.value = false
+  diffVisible.value = false
+  grayVisible.value = false
+  selected.value = []
+  if (auth.isLoggedIn && auth.isApproved) {
+    void loadList()
+    void loadApprovals()
+    if (auth.hasPermission('config-version:gray')) void loadTenants()
+  }
+}, { immediate: true })
 
 function shortHash(hash: string) {
   return `${hash.slice(0, 12)}…${hash.slice(-8)}`
@@ -182,9 +230,6 @@ function formatGrayTenants(raw: string | null) {
   }
 }
 
-onMounted(async () => {
-  await Promise.all([loadList(), loadApprovals(), listTenantOptions().then((t) => (tenants.value = t))])
-})
 </script>
 
 <template>
@@ -250,7 +295,8 @@ onMounted(async () => {
               v-permission="'config-version:rollback'"
               link
               type="primary"
-              :disabled="row.status === 'FAILED'"
+              :loading="rollback.isPending(row.id)"
+              :disabled="row.status === 'FAILED' || rollback.isPending(row.id)"
               @click="handleRollback(row)"
             >
               回滚至此
@@ -291,7 +337,8 @@ onMounted(async () => {
           <el-button link type="primary" @click="loadApprovals">刷新</el-button>
         </div>
       </template>
-      <el-table v-loading="approvalLoading" :data="approvals" style="width: 100%">
+      <CrudLoadState :error="approvalError" :has-stale-data="approvals.length > 0" :loading="approvalLoading" @retry="loadApprovals" />
+      <el-table v-if="!approvalError || approvals.length > 0" v-loading="approvalLoading" :data="approvals" style="width: 100%">
         <el-table-column label="类型" width="110">
           <template #default="{ row }">{{ CHANGE_LABELS[row.changeType] ?? row.changeType }}</template>
         </el-table-column>
@@ -314,14 +361,16 @@ onMounted(async () => {
                 v-permission="'governance:approve'"
                 link
                 type="primary"
-                :disabled="row.makerName === auth.username"
+                :loading="decisionMutation.isPending(row.id)"
+                :disabled="row.makerName === auth.username || decisionMutation.isPending(row.id)"
                 @click="decide(row, 'approve')"
               >通过</el-button>
               <el-button
                 v-permission="'governance:approve'"
                 link
                 type="danger"
-                :disabled="row.makerName === auth.username"
+                :loading="decisionMutation.isPending(row.id)"
+                :disabled="row.makerName === auth.username || decisionMutation.isPending(row.id)"
                 @click="decide(row, 'reject')"
               >拒绝</el-button>
             </template>
@@ -331,14 +380,15 @@ onMounted(async () => {
     </el-card>
 
     <el-dialog v-model="diffVisible" title="版本对比" width="90%" top="5vh">
-      <div class="diff-head">
+      <CrudLoadState :error="diffError" :has-stale-data="!!diffSnapshot" :loading="diffLoading" @retry="loadDiff" />
+      <div v-if="diffSnapshot" class="diff-head">
         <span>左：v{{ leftVersion?.version }}（{{ leftVersion?.createTime }}）</span>
         <span>右：v{{ rightVersion?.version }}（{{ rightVersion?.createTime }}）</span>
         <el-tag :type="changedCount ? 'warning' : 'success'">
           {{ changedCount ? `${changedCount} 行有差异` : '两版内容一致' }}
         </el-tag>
       </div>
-      <div class="diff-body">
+      <div v-if="diffSnapshot" class="diff-body">
         <div v-for="row in diffRows" :key="row.no" class="diff-row" :class="{ changed: row.changed }">
           <span class="diff-no">{{ row.no }}</span>
           <pre class="diff-cell">{{ row.left }}</pre>
@@ -348,9 +398,10 @@ onMounted(async () => {
     </el-dialog>
 
     <el-dialog v-model="grayVisible" :title="`灰度发布 v${grayTarget?.version ?? ''}`" width="560px">
-      <el-form label-width="100px">
+      <CrudLoadState :error="tenantError" :has-stale-data="tenants.length > 0" :loading="tenantLoading" @retry="loadTenants" />
+      <el-form label-width="100px" :disabled="graySubmitting">
         <el-form-item label="目标租户">
-          <el-select v-model="grayForm.tenantCodes" multiple filterable style="width: 100%">
+          <el-select v-model="grayForm.tenantCodes" multiple filterable style="width: 100%" :loading="tenantLoading" :disabled="tenantSelectionBlocked">
             <el-option
               v-for="t in tenants"
               :key="t.tenantCode"
@@ -368,12 +419,13 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="grayVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" @click="submitGray">创建安全灰度任务</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="graySubmitting" :disabled="graySubmitting || tenantSelectionBlocked" @click="submitGray">创建安全灰度任务</el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="auditVisible" title="审批审计哈希链" width="760px">
-      <el-timeline>
+      <CrudLoadState :error="auditError" :has-stale-data="auditEvents.length > 0" :loading="auditLoading" @retry="loadAudit" />
+      <el-timeline v-if="!auditError || auditEvents.length > 0" v-loading="auditLoading">
         <el-timeline-item
           v-for="event in auditEvents"
           :key="event.sequenceNo"
