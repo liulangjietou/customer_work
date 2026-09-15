@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useQueryState } from '@/composables/useQueryState'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getDeadLetterStats,
@@ -20,22 +23,16 @@ const STATUS_LABELS: Record<DeadLetterStatusCode, { text: string; type: 'primary
   ABANDONED: { text: '已放弃', type: 'danger' },
 }
 
-const loading = ref(false)
-const list = ref<DeadLetter[]>([])
-const stats = ref<Record<string, number>>({})
-// 默认看已放弃：那批是真正需要人介入的
+// 默认看已放弃：重试已耗尽，需要人工核对。
 const status = ref<DeadLetterStatusCode>('ABANDONED')
-
-async function loadData() {
-  loading.value = true
-  try {
-    const [listData, statsData] = await Promise.all([listDeadLetters(status.value), getDeadLetterStats()])
-    list.value = listData
-    stats.value = statsData
-  } finally {
-    loading.value = false
-  }
-}
+const { data: snapshot, loading, error: loadError, loaded, load: loadData } = useQueryState<{
+  list: DeadLetter[]; stats: Record<string, number>
+}>(async () => {
+  const [list, stats] = await Promise.all([listDeadLetters(status.value), getDeadLetterStats()])
+  return { list, stats }
+}, () => ({ list: [], stats: {} }))
+const list = computed(() => snapshot.value.list)
+const stats = computed(() => snapshot.value.stats)
 
 function formatTime(ms: number): string {
   return ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '-'
@@ -65,6 +62,9 @@ async function handleReopen(row: DeadLetter) {
 
 const detailVisible = ref(false)
 const current = ref<DeadLetter | null>(null)
+watch(loaded, ready => {
+  if (!ready) { detailVisible.value = false; current.value = null }
+}, { flush: 'sync' })
 
 function openDetail(row: DeadLetter) {
   current.value = row
@@ -76,7 +76,8 @@ onMounted(loadData)
 
 <template>
   <div class="dead-letter-board">
-    <div class="summary-row" v-loading="loading">
+    <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading" @retry="loadData" />
+    <div v-if="!loadError || loaded" class="summary-row" v-loading="loading">
       <div class="stat">
         <div class="stat-value">{{ stats.PENDING ?? 0 }}</div>
         <div class="stat-label">待重投（巡检器会自动补）</div>
@@ -108,7 +109,7 @@ onMounted(loadData)
         <strong>死信处置证据</strong>
         <span>保留失败原因、重试轨迹和原始载荷，人工重开后由巡检器继续投递</span>
       </div>
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-if="!loadError || loaded" v-loading="loading" :data="list" style="width: 100%" empty-text="该状态下暂无死信">
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusLabel(row).type">{{ statusLabel(row).text }}</el-tag>
@@ -119,7 +120,7 @@ onMounted(loadData)
         <el-table-column label="重试" width="80">
           <template #default="{ row }">{{ row.attempts }} 次</template>
         </el-table-column>
-        <el-table-column prop="lastError" label="最近失败原因" show-overflow-tooltip />
+        <el-table-column prop="lastError" label="最近失败原因" min-width="240" show-overflow-tooltip />
         <el-table-column label="发生时间" width="170">
           <template #default="{ row }">{{ formatTime(row.createdAtMs) }}</template>
         </el-table-column>
@@ -139,7 +140,7 @@ onMounted(loadData)
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!loading && list.length === 0" description="该状态下暂无死信" />
+
     </el-card>
 
     <el-drawer v-model="detailVisible" title="死信详情" size="560px">

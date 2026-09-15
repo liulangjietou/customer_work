@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
+import { useQueryState } from '@/composables/useQueryState'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+
 import { getCsatSummary, listCsatSurveys, type CsatSummary, type CsatSurvey } from '@/api/ops'
 
 // CSAT 看板：会话级满意度。
@@ -12,30 +15,18 @@ const DAY_MS = 24 * 60 * 60 * 1000
 /** 回收率警戒线：低于此值时那个满意度分数只代表愿意评价的一小撮人，不该当真。 */
 const RESPONSE_RATE_WARN = 0.3
 
-const loading = ref(false)
-const summary = ref<CsatSummary | null>(null)
-const surveys = ref<CsatSurvey[]>([])
-// 分区键 = 租户码（客服端按当前租户上下文记录，未开多租户时统一落 default）。
-// 它一度取自 sessionId 前缀，而用户端 sessionId 形如 u{userId}:conv-xxx，
-// 于是每个用户各成一个分区，这个看板按任何口径都查不出数据。
-const query = reactive({ scopeId: 'default', days: 7 })
-
-async function loadData() {
-  loading.value = true
-  try {
-    const end = Date.now()
-    const start = end - query.days * DAY_MS
-    const params = { scopeId: query.scopeId, windowStartMs: start, windowEndMs: end }
-    const [summaryData, listData] = await Promise.all([
-      getCsatSummary(params),
-      listCsatSurveys(params),
-    ])
-    summary.value = summaryData
-    surveys.value = listData
-  } finally {
-    loading.value = false
-  }
-}
+// 留空时由后端按当前可信租户解析运营分区。
+const query = reactive({ scopeId: '', days: 7 })
+const { data: snapshot, loading, error: loadError, loaded, load: loadData } = useQueryState<{
+  summary: CsatSummary | null; surveys: CsatSurvey[]
+}>(async () => {
+  const end = Date.now()
+  const params = { scopeId: query.scopeId || undefined, windowStartMs: end - query.days * DAY_MS, windowEndMs: end }
+  const [summary, surveys] = await Promise.all([getCsatSummary(params), listCsatSurveys(params)])
+  return { summary, surveys }
+}, () => ({ summary: null, surveys: [] }))
+const summary = computed(() => snapshot.value.summary)
+const surveys = computed(() => snapshot.value.surveys)
 
 // 两个 formatter 都容忍 undefined：后端漏个字段不该让整张页面白掉。
 // 这不是假想——CsatSummary 的派生指标一度没标 @JsonProperty，JSON 里压根没有这几个键，
@@ -75,9 +66,10 @@ onMounted(loadData)
 
 <template>
   <div class="csat-board">
+    <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading" @retry="loadData" />
     <el-card shadow="never" class="filter-card">
       <div class="toolbar">
-        <el-input v-model="query.scopeId" placeholder="租户码" style="width: 160px" />
+        <el-input v-model="query.scopeId" placeholder="租户码（默认当前租户）" style="width: 160px" />
         <el-select v-model="query.days" style="width: 130px">
           <el-option label="最近 7 天" :value="7" />
           <el-option label="最近 30 天" :value="30" />
@@ -88,7 +80,7 @@ onMounted(loadData)
       </div>
     </el-card>
 
-    <div v-loading="loading" class="stats">
+    <div v-if="!loadError || loaded" v-loading="loading" class="stats">
       <div class="stat">
         <div class="stat-value stat-primary">{{ formatPercent(summary?.csat) }}</div>
         <div class="stat-label">CSAT（4 分及以上占回收数）</div>
@@ -121,14 +113,14 @@ onMounted(loadData)
         评价明细（低分优先）
         <span class="hint">低分留言才是能拿来改进的东西</span>
       </div>
-      <el-table v-loading="loading" :data="answeredSurveys" style="width: 100%">
+      <el-table v-if="!loadError || loaded" v-loading="loading" :data="answeredSurveys" style="width: 100%" empty-text="该窗口内还没有用户评价（会话结束时会自动发出邀请）">
         <el-table-column label="评分" width="90">
           <template #default="{ row }">
             <el-tag :type="scoreTagType(row.score)">{{ row.score }} 分</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="sessionId" label="会话" width="240" show-overflow-tooltip />
-        <el-table-column prop="comment" label="用户留言" show-overflow-tooltip>
+        <el-table-column prop="comment" label="用户留言" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.comment">{{ row.comment }}</span>
             <span v-else class="muted">（未填写）</span>
@@ -139,10 +131,7 @@ onMounted(loadData)
         </el-table-column>
       </el-table>
 
-      <el-empty
-        v-if="!loading && answeredSurveys.length === 0"
-        description="该窗口内还没有用户评价（会话结束时会自动发出邀请）"
-      />
+
     </el-card>
   </div>
 </template>

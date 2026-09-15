@@ -93,13 +93,13 @@ public class OpsAdminService {
      * 平均分会被大量 3 分拉成一个看着还行的数字，掩盖真正不满的那批人。</p>
      */
     public CsatSummary csatSummary(String scopeId, long startMs, long endMs) {
-        List<CsatSurvey> surveys = gatewayProvider.get().csat().findByWindow(scopeId, startMs, endMs);
-        return CsatSummary.of(surveys);
+        return CsatSummary.of(csatSurveys(scopeId, startMs, endMs));
     }
 
-    /** 窗口内的原始调查记录（看低分留言）。 */
+    /** 窗口内的原始调查记录；未指定运营分区时使用当前可信租户，行级权限仍由存储插件约束。 */
     public List<CsatSurvey> csatSurveys(String scopeId, long startMs, long endMs) {
-        return gatewayProvider.get().csat().findByWindow(scopeId, startMs, endMs);
+        String scope = StringUtils.hasText(scopeId) ? scopeId : new OpsScopeResolver().resolve();
+        return gatewayProvider.get().csat().findByWindow(scope, startMs, endMs);
     }
 
     // ---------- 知识盲区 ----------

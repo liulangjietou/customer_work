@@ -74,7 +74,7 @@ public final class TenantInterceptors {
         if (extraIgnored != null) {
             ignored.addAll(extraIgnored);
         }
-        return new TenantLineInnerInterceptor(new CustomerWorkTenantLineHandler(columnName, ignored));
+        return new ExactTenantLineInnerInterceptor(new CustomerWorkTenantLineHandler(columnName, ignored));
     }
 
     /** 便捷重载：默认列名 {@code tenant_id}，无额外忽略表。 */

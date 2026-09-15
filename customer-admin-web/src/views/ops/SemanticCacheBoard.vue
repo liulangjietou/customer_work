@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthStore } from '@/store/auth'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   clearCacheScope,
@@ -15,60 +18,23 @@ import {
 // 按命中次数降序排——命中 0 次的条目只是白占容量，而 MySQL 没有原生向量索引、
 // 相似度是在应用层逐条算的，容量越大查缓存越慢。
 
-const loading = ref(false)
-const scopesLoading = ref(false)
-const list = ref<SemanticCacheEntry[]>([])
-const scopes = ref<SemanticCacheScope[]>([])
-// 分区键是用户级隔离键（形如 u42），运营手填是猜不出来的，故进页面先把实际存在的分区拉回来。
-// 留空而不是预填 'default'：预填一个多半查不到东西的值，只会让人以为"缓存没在工作"。
 const scopeId = ref('')
-let scopesRequestId = 0
-let listRequestId = 0
+const auth = useAuthStore()
+const { data: scopes, loading: scopesLoading, error: scopesError, loaded: scopesLoaded, load: queryScopes } =
+  useQueryState<SemanticCacheScope[]>(() => listCacheScopes(), () => [])
+const { data: list, loading, error: listError, loaded, load: loadList } = useQueryState<SemanticCacheEntry[]>(
+  () => scopeId.value ? listCacheEntries(scopeId.value) : Promise.resolve([]), () => [],
+)
+const loadError = computed(() => scopesError.value || listError.value)
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  scopeId.value = ''
+}, { flush: 'sync' })
 
-/** 拉分区列表并默认选中条目最多的那个——运营多半就是想看它。 */
-async function loadScopes() {
-  const requestId = ++scopesRequestId
-  scopesLoading.value = true
-  try {
-    const rows = await listCacheScopes()
-    if (requestId === scopesRequestId) {
-      scopes.value = rows
-      if (!scopeId.value) {
-        scopeId.value = rows[0]?.scopeId ?? ''
-      }
-    }
-  } finally {
-    if (requestId === scopesRequestId) {
-      scopesLoading.value = false
-    }
-  }
-}
-
-async function loadList() {
-  const requestId = ++listRequestId
-  const requestedScope = scopeId.value
-  // 没有任何分区时不必空跑一次查询
-  if (!requestedScope) {
-    list.value = []
-    loading.value = false
-    return
-  }
-  loading.value = true
-  try {
-    const rows = await listCacheEntries(requestedScope)
-    if (requestId === listRequestId && scopeId.value === requestedScope) {
-      list.value = rows
-    }
-  } finally {
-    if (requestId === listRequestId) {
-      loading.value = false
-    }
-  }
-}
-
-/** 清空/删除之后分区可能整个消失，得连选择器一起刷新。 */
+/** 只有本次分区读取成功才继续加载条目，避免错误被当作没有分区。 */
 async function reload() {
-  await loadScopes()
+  const rows = await queryScopes()
+  if (!rows) return
+  if (!scopeId.value) scopeId.value = rows[0]?.scopeId ?? ''
   await loadList()
 }
 
@@ -120,6 +86,7 @@ onMounted(reload)
 
 <template>
   <div class="semantic-cache-board">
+    <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading || scopesLoading" @retry="reload" />
     <el-alert
       type="info"
       show-icon
@@ -129,7 +96,7 @@ onMounted(reload)
         两个用户都问「我的订单到哪了」时语义高度相似但答案完全不同，无差别缓存会造成数据泄露。"
     />
 
-    <div class="stats" v-loading="loading">
+    <div v-if="!loadError || loaded" class="stats" v-loading="loading">
       <div class="stat">
         <div class="stat-value">{{ list.length }}</div>
         <div class="stat-label">当前列表条目</div>
@@ -167,7 +134,7 @@ onMounted(reload)
         </el-select>
         <el-button type="primary" :loading="loading" @click="loadList">查询</el-button>
         <el-button :loading="scopesLoading" @click="reload">刷新分区</el-button>
-        <span v-if="!scopesLoading && scopes.length === 0" class="hint">
+        <span v-if="scopesLoaded && !scopesError && !scopesLoading && scopes.length === 0" class="hint">
           当前还没有任何缓存分区
         </span>
         <div class="spacer" />
@@ -188,7 +155,7 @@ onMounted(reload)
         <strong>缓存证据明细</strong>
         <span>按实际命中次数识别有效复用与长期占用容量的低价值条目</span>
       </div>
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-if="!loadError || loaded" v-loading="loading" :data="list" style="width: 100%" empty-text="该分区暂无缓存（功能默认关闭，需显式开启）">
         <el-table-column label="命中" width="90" sortable :sort-by="'hitCount'">
           <template #default="{ row }">
             <el-tag v-if="row.hitCount > 0" type="success">{{ row.hitCount }}</el-tag>
@@ -196,8 +163,8 @@ onMounted(reload)
           </template>
         </el-table-column>
         <el-table-column prop="intent" label="意图" width="100" />
-        <el-table-column prop="question" label="缓存的问题" show-overflow-tooltip />
-        <el-table-column prop="answer" label="缓存的答案" show-overflow-tooltip />
+        <el-table-column prop="question" label="缓存的问题" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="answer" label="缓存的答案" min-width="260" show-overflow-tooltip />
         <el-table-column label="写入时间" width="170">
           <template #default="{ row }">{{ formatTime(row.createdAtMs) }}</template>
         </el-table-column>
@@ -213,7 +180,7 @@ onMounted(reload)
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!loading && list.length === 0" description="该分区暂无缓存（功能默认关闭，需显式开启）" />
+
     </el-card>
   </div>
 </template>

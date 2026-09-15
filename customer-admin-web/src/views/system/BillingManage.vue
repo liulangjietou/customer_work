@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useQueryState } from '@/composables/useQueryState'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createPrice,
@@ -42,30 +44,24 @@ const ALERT_LABELS: Record<string, string> = {
 }
 
 const activeTab = ref('bill')
-const crossTenantAuthority = ref(false)
-const currentTenantId = ref('')
-const tenants = ref<TenantVO[]>([])
-
-async function loadTenants() {
-  tenants.value = await listTenantOptions()
-}
+const { data: viewSnapshot, loading: viewLoading, error: viewError, loaded: viewLoaded, load: loadView } = useQueryState<{
+  view: Awaited<ReturnType<typeof fetchCurrentView>>; tenants: TenantVO[]
+} | null>(async () => {
+  const view = await fetchCurrentView()
+  const tenants = view.crossTenantAuthority ? await listTenantOptions() : []
+  return { view, tenants }
+}, () => null)
+const crossTenantAuthority = computed(() => viewSnapshot.value?.view.crossTenantAuthority === true)
+const currentTenantId = computed(() => viewSnapshot.value?.view.effectiveTenantId ?? viewSnapshot.value?.view.userTenantId ?? '')
+const tenants = computed(() => viewSnapshot.value?.tenants ?? [])
 
 // ---------- 配额 ----------
 
 const quotaTenant = ref('')
-const quotaLoading = ref(false)
 const quotaSubmitting = ref(false)
-const quotas = ref<TenantQuotaVO[]>([])
 
-async function loadQuota() {
-  if (!quotaTenant.value) return
-  quotaLoading.value = true
-  try {
-    quotas.value = await listQuota(quotaTenant.value)
-  } finally {
-    quotaLoading.value = false
-  }
-}
+const { data: quotas, loading: quotaLoading, error: quotaError, loaded: quotaLoaded, load: loadQuota } =
+  useQueryState<TenantQuotaVO[]>(() => quotaTenant.value ? listQuota(quotaTenant.value) : Promise.resolve([]), () => [])
 
 const quotaDialogVisible = ref(false)
 const quotaForm = reactive<TenantQuotaSaveRequest>({
@@ -122,18 +118,10 @@ async function removeQuota(row: TenantQuotaVO) {
 
 // ---------- 单价 ----------
 
-const priceLoading = ref(false)
 const priceSubmitting = ref(false)
-const prices = ref<ModelPriceVO[]>([])
 
-async function loadPrice() {
-  priceLoading.value = true
-  try {
-    prices.value = await listPrice()
-  } finally {
-    priceLoading.value = false
-  }
-}
+const { data: prices, loading: priceLoading, error: priceError, loaded: priceLoaded, load: loadPrice } =
+  useQueryState<ModelPriceVO[]>(() => listPrice(), () => [])
 
 const priceDialogVisible = ref(false)
 const priceForm = reactive<Partial<ModelPriceVO>>({
@@ -192,17 +180,28 @@ async function removePrice(row: ModelPriceVO) {
 
 // ---------- 账单 ----------
 
-const billLoading = ref(false)
 const billRange = ref<[string, string]>(['', ''])
 const billTenant = ref('')
-const billRows = ref<UsageAggregate[]>([])
-const overviewRows = ref<UsageAggregate[]>([])
-const reconciliationRows = ref<UsageReconciliationVO[]>([])
+const { data: billSnapshot, loading: billLoading, error: billError, loaded: billLoaded, load: queryBill } = useQueryState<{
+  rows: UsageAggregate[]; reconciliation: UsageReconciliationVO[]; overview: boolean
+}>(async () => {
+  const [from, to] = billRange.value
+  if (crossTenantAuthority.value && !billTenant.value) {
+    return { rows: await fetchPlatformOverview({ from, to }), reconciliation: [], overview: true }
+  }
+  const params = { from, to, tenantId: crossTenantAuthority.value ? billTenant.value : undefined }
+  const [rows, reconciliation] = await Promise.all([
+    fetchTenantBill(params), canReconcile(from, to) ? fetchUsageReconciliation(params) : Promise.resolve([]),
+  ])
+  return { rows, reconciliation, overview: false }
+}, () => ({ rows: [], reconciliation: [], overview: false }))
+const billRows = computed(() => billSnapshot.value.rows)
+const reconciliationRows = computed(() => billSnapshot.value.reconciliation)
 
 function defaultRange(): [string, string] {
   const now = new Date()
   const first = new Date(now.getFullYear(), now.getMonth(), 1)
-  const fmt = (d: Date) => d.toISOString().slice(0, 10)
+  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   return [fmt(first), fmt(now)]
 }
 
@@ -212,34 +211,7 @@ async function loadBill() {
     ElMessage.warning('请选择日期区间')
     return
   }
-  billLoading.value = true
-  try {
-    if (!crossTenantAuthority.value) {
-      const [bill, reconciliation] = await Promise.all([
-        fetchTenantBill({ from, to }),
-        canReconcile(from, to) ? fetchUsageReconciliation({ from, to }) : Promise.resolve([]),
-      ])
-      billRows.value = bill
-      reconciliationRows.value = reconciliation
-      overviewRows.value = []
-    } else if (billTenant.value) {
-      const [bill, reconciliation] = await Promise.all([
-        fetchTenantBill({ tenantId: billTenant.value, from, to }),
-        canReconcile(from, to)
-          ? fetchUsageReconciliation({ tenantId: billTenant.value, from, to })
-          : Promise.resolve([]),
-      ])
-      billRows.value = bill
-      reconciliationRows.value = reconciliation
-      overviewRows.value = []
-    } else {
-      overviewRows.value = await fetchPlatformOverview({ from, to })
-      billRows.value = []
-      reconciliationRows.value = []
-    }
-  } finally {
-    billLoading.value = false
-  }
+  return queryBill()
 }
 
 function canReconcile(from: string, to: string) {
@@ -273,29 +245,22 @@ async function handleExport() {
 
 // ---------- 成本预测与告警 ----------
 
-const costLoading = ref(false)
 const costTenant = ref('')
 const forecastPeriod = ref('MONTHLY')
 const alertStatus = ref('OPEN')
-const forecast = ref<CostForecastVO | null>(null)
-const alerts = ref<CostAlertVO[]>([])
-
-async function loadCost() {
-  costLoading.value = true
-  try {
-    const tenantId = costTenant.value || undefined
-    const alertPromise = listCostAlerts({ tenantId, status: alertStatus.value || undefined, limit: 200 })
-    const canForecast = Boolean(costTenant.value) || !crossTenantAuthority.value
-    const forecastPromise = canForecast
-      ? fetchCostForecast({ tenantId, period: forecastPeriod.value })
-      : Promise.resolve(null)
-    const [alertRows, forecastResult] = await Promise.all([alertPromise, forecastPromise])
-    alerts.value = alertRows
-    forecast.value = forecastResult
-  } finally {
-    costLoading.value = false
-  }
-}
+const { data: costSnapshot, loading: costLoading, error: costError, loaded: costLoaded, load: loadCost } = useQueryState<{
+  forecast: CostForecastVO | null; alerts: CostAlertVO[]
+}>(async () => {
+  const tenantId = costTenant.value || undefined
+  const canForecast = Boolean(costTenant.value) || !crossTenantAuthority.value
+  const [alerts, forecast] = await Promise.all([
+    listCostAlerts({ tenantId, status: alertStatus.value || undefined, limit: 200 }),
+    canForecast ? fetchCostForecast({ tenantId, period: forecastPeriod.value }) : Promise.resolve(null),
+  ])
+  return { alerts, forecast }
+}, () => ({ forecast: null, alerts: [] }))
+const forecast = computed(() => costSnapshot.value.forecast)
+const alerts = computed(() => costSnapshot.value.alerts)
 
 async function handleAcknowledge(row: CostAlertVO) {
   await acknowledgeCostAlert(row.id, row.tenantId)
@@ -321,26 +286,25 @@ function alertTagType(type: CostAlertVO['alertType']) {
   return type === 'BUDGET_WARNING' ? 'warning' : 'danger'
 }
 
-onMounted(async () => {
+async function initialize() {
   billRange.value = defaultRange()
-  const view = await fetchCurrentView()
-  crossTenantAuthority.value = view.crossTenantAuthority === true
-  currentTenantId.value = view.effectiveTenantId ?? view.userTenantId ?? ''
+  const snapshot = await loadView()
+  if (!snapshot) return
   billTenant.value = crossTenantAuthority.value ? '' : currentTenantId.value
   costTenant.value = crossTenantAuthority.value ? '' : currentTenantId.value
-  if (crossTenantAuthority.value) {
-    activeTab.value = 'quota'
-    await loadTenants()
-    await Promise.all([loadPrice(), loadBill(), loadCost()])
-    return
-  }
-  await Promise.all([loadBill(), loadCost()])
-})
+  activeTab.value = crossTenantAuthority.value ? 'quota' : 'bill'
+  await Promise.all([...(crossTenantAuthority.value ? [loadPrice()] : []), loadBill(), loadCost()])
+}
+
+onMounted(initialize)
 </script>
 
 <template>
   <div class="page">
-    <el-card>
+    <CrudLoadState :error="viewError" :has-stale-data="viewLoaded" :loading="viewLoading" @retry="initialize" />
+    <el-skeleton v-if="viewLoading && !viewSnapshot" animated />
+    <el-button v-if="!viewSnapshot && !viewLoading && !viewError" @click="initialize">重新加载账单</el-button>
+    <el-card v-if="viewSnapshot">
       <el-tabs v-model="activeTab">
         <!-- 配额 -->
         <el-tab-pane v-if="crossTenantAuthority" label="租户配额" name="quota">
@@ -370,7 +334,8 @@ onMounted(async () => {
             </el-button>
           </div>
 
-          <el-table v-loading="quotaLoading" :data="quotas" style="width: 100%">
+          <CrudLoadState :error="quotaError" :has-stale-data="quotaLoaded" :loading="quotaLoading" @retry="loadQuota" />
+          <el-table v-if="!quotaError || quotaLoaded" v-loading="quotaLoading" :data="quotas" style="width: 100%">
             <el-table-column label="周期" width="100">
               <template #default="{ row }">{{ PERIOD_LABELS[row.period] ?? row.period }}</template>
             </el-table-column>
@@ -423,7 +388,8 @@ onMounted(async () => {
             <span class="tip">调价请新增一条生效记录，不要改旧记录——历史账单要按当时的价格算得回去。</span>
           </div>
 
-          <el-table v-loading="priceLoading" :data="prices" style="width: 100%">
+          <CrudLoadState :error="priceError" :has-stale-data="priceLoaded" :loading="priceLoading" @retry="loadPrice" />
+          <el-table v-if="!priceError || priceLoaded" v-loading="priceLoading" :data="prices" style="width: 100%">
             <el-table-column prop="provider" label="厂商" width="130" />
             <el-table-column prop="modelName" label="模型" width="180" />
             <el-table-column prop="inputPrice" label="输入价（元/百万token）" width="190" />
@@ -477,8 +443,9 @@ onMounted(async () => {
             </el-button>
           </div>
 
-          <!-- 选了租户看按模型明细，没选看按租户总览 -->
-          <el-table v-if="billTenant || !crossTenantAuthority" v-loading="billLoading" :data="billRows" style="width: 100%">
+          <CrudLoadState :error="billError" :has-stale-data="billLoaded" :loading="billLoading" @retry="loadBill" />
+          <!-- 展示已接受查询对应的视图，修改筛选本身不能改写旧结果的含义。 -->
+          <el-table v-if="(!billError || billLoaded) && !billSnapshot.overview" v-loading="billLoading" :data="billRows" style="width: 100%" empty-text="该区间暂无账单">
             <el-table-column prop="provider" label="厂商" width="130" />
             <el-table-column prop="modelName" label="模型" width="200" />
             <el-table-column prop="currency" label="币种" width="90" />
@@ -499,7 +466,7 @@ onMounted(async () => {
             </el-table-column>
           </el-table>
 
-          <el-table v-else v-loading="billLoading" :data="overviewRows" style="width: 100%">
+          <el-table v-else-if="(!billError || billLoaded) && billSnapshot.overview" v-loading="billLoading" :data="billRows" style="width: 100%" empty-text="该区间暂无账单">
             <el-table-column prop="tenantId" label="租户" width="200" />
             <el-table-column prop="callCount" label="调用次数" width="120" />
             <el-table-column prop="totalTokens" label="总 token" width="160" />
@@ -514,7 +481,7 @@ onMounted(async () => {
             对账查询单次最多 31 天，超出时仅展示账单。
           </div>
 
-          <template v-if="billTenant || !crossTenantAuthority">
+          <template v-if="(!billError || billLoaded) && !billSnapshot.overview">
             <h3 class="section-title">账实对账</h3>
             <el-table v-loading="billLoading" :data="reconciliationRows" style="width: 100%">
               <el-table-column prop="statDate" label="日期" width="120" />
@@ -543,6 +510,7 @@ onMounted(async () => {
 
         <!-- 成本预测与告警 -->
         <el-tab-pane label="成本告警" name="cost">
+          <CrudLoadState :error="costError" :has-stale-data="costLoaded" :loading="costLoading" @retry="loadCost" />
           <div class="toolbar">
             <el-select
               v-if="crossTenantAuthority"
@@ -597,7 +565,7 @@ onMounted(async () => {
             :image-size="72"
           />
 
-          <el-table v-loading="costLoading" :data="alerts" style="width: 100%">
+          <el-table v-if="!costError || costLoaded" v-loading="costLoading" :data="alerts" style="width: 100%">
             <el-table-column prop="tenantId" label="租户" width="160" />
             <el-table-column prop="periodKey" label="周期" width="120" />
             <el-table-column label="类型" width="120">
