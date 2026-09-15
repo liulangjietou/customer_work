@@ -107,6 +107,13 @@ for (const [name, path] of hosts) {
     test.setTimeout(120_000)
     await page.setViewportSize({ width: 1440, height: 1000 })
     await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+    const readPermission = name === 'calls' ? 'agent-call-stats:view'
+      : name === 'content-guard' ? 'sensitive-hit-log:view' : null
+    if (readPermission) {
+      await page.route('**/api/auth/permissions', route => route.fulfill({
+        json: { code: 0, data: [readPermission] },
+      }))
+    }
     await data(page)
     await page.goto(path)
     const chart = page.locator('.trend-chart').first()

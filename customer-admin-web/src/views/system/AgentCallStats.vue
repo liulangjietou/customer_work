@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   deleteAgentCallStats,
@@ -12,6 +12,10 @@ import {
 } from '@/api/agentCallStats'
 import { pageAgents } from '@/api/agent'
 import AgentCallTrendChart from '@/components/AgentCallTrendChart.vue'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import type {
   AgentCallSegmentKind,
   AgentCallReplayManifest,
@@ -29,6 +33,7 @@ import type {
 } from '@/types/api'
 
 const router = useRouter()
+const auth = useAuthStore()
 
 const DEFAULT_PAGE_SIZE = 10
 // 智能体下拉复用「智能体管理」的分页接口，无独立全量接口时拉大页兜底（同 ChannelBindingDrawer 用法）。
@@ -131,42 +136,37 @@ function buildFilterParams(): AgentCallStatsQuery {
   return q
 }
 
-// ---------- 智能体下拉选项 ----------
-const agentOptions = ref<AgentVO[]>([])
-async function loadAgentOptions() {
-  const result = await pageAgents({ pageNum: 1, pageSize: AGENT_OPTION_PAGE_SIZE })
-  agentOptions.value = result.list
-}
+// 选项查询独立于统计本身；只读统计权限不能被升级为智能体目录读取。
+const { data: agentOptions, loading: agentOptionsLoading, error: agentOptionsError, load: loadAgentOptions } =
+  useQueryState<AgentVO[]>(async () => (await pageAgents({ pageNum: 1, pageSize: AGENT_OPTION_PAGE_SIZE })).list, () => [])
 
-// ---------- 明细分页列表 ----------
-const loading = ref(false)
-const list = ref<AgentCallStatsRow[]>([])
-const total = ref(0)
 const pageNum = ref(1)
 const pageSize = ref(DEFAULT_PAGE_SIZE)
-
-async function loadList() {
-  loading.value = true
-  try {
-    const res = await pageAgentCallStats({ ...buildFilterParams(), pageNum: pageNum.value, pageSize: pageSize.value })
-    list.value = res.rows
-    total.value = res.total
-  } finally {
-    loading.value = false
-  }
+const submittedFilters = shallowRef<AgentCallStatsQuery>(buildFilterParams())
+interface CallStatsSnapshot {
+  query: AgentCallStatsQuery
+  granularity: AgentCallTrendGranularity
+  rows: AgentCallStatsRow[]
+  total: number
+  summary: AgentCallStatsSummary
+  trend: AgentCallStatsTrendPoint[]
 }
-
-// ---------- 汇总卡片 ----------
-const summaryLoading = ref(false)
-const summary = ref<AgentCallStatsSummary | null>(null)
-async function loadSummary() {
-  summaryLoading.value = true
-  try {
-    summary.value = await getAgentCallStatsSummary(buildFilterParams())
-  } finally {
-    summaryLoading.value = false
-  }
-}
+// 列表、统计、趋势整体接受；分页沿用提交过的筛选，行操作沿用产生列表的来源。
+const { data: snapshot, loading, error: loadError, load: loadList } = useQueryState<CallStatsSnapshot | null>(async () => {
+  const params = { ...submittedFilters.value, pageNum: pageNum.value, pageSize: pageSize.value }
+  const granularity = effectiveGranularity.value
+  const [page, summary, trend] = await Promise.all([
+    pageAgentCallStats(params), getAgentCallStatsSummary(params), getAgentCallStatsTrend(params, granularity),
+  ])
+  return { query: params, granularity, rows: page.rows, total: page.total, summary, trend }
+}, () => null)
+const list = computed(() => snapshot.value?.rows ?? [])
+const total = computed(() => snapshot.value?.total ?? 0)
+const summary = computed(() => snapshot.value?.summary ?? null)
+const trendPoints = computed(() => snapshot.value?.trend ?? [])
+const acceptedSource = computed<AgentCallSource>(() => snapshot.value?.query.source ?? 'ADMIN')
+const summaryLoading = loading
+const trendLoading = loading
 
 const SUMMARY_CARDS = [
   { key: 'totalCalls', label: '总调用数', unit: '次' },
@@ -197,42 +197,30 @@ function summaryDisplay(card: (typeof SUMMARY_CARDS)[number]): string {
 }
 
 // ---------- 趋势图 ----------
-const trendLoading = ref(false)
-const trendPoints = ref<AgentCallStatsTrendPoint[]>([])
 const trendGranularityMode = ref<'auto' | AgentCallTrendGranularity>('auto')
 
 /** auto 模式按当前时间跨度自动选粒度：跨度 <= 2 天用小时，否则按天，避免小跨度下按天只出一两个点。 */
 const effectiveGranularity = computed<AgentCallTrendGranularity>(() => {
   if (trendGranularityMode.value !== 'auto') return trendGranularityMode.value
-  const start = timeRange.value?.[0]
-  const end = timeRange.value?.[1]
+  const start = submittedFilters.value.startTime
+  const end = submittedFilters.value.endTime
   if (!start || !end) return 'day'
   const spanMs = new Date(end).getTime() - new Date(start).getTime()
   const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000
   return spanMs > 0 && spanMs <= TWO_DAYS_MS ? 'hour' : 'day'
 })
 
-async function loadTrend() {
-  trendLoading.value = true
-  try {
-    trendPoints.value = await getAgentCallStatsTrend(buildFilterParams(), effectiveGranularity.value)
-  } finally {
-    trendLoading.value = false
-  }
-}
+// 切换粒度只刷新已提交条件，不带入尚未搜索的输入。
+watch(trendGranularityMode, () => { void refreshAll() })
 
-// 用户切换粒度开关时立即重绘趋势图，不需要重新点搜索
-watch(trendGranularityMode, () => {
-  loadTrend()
-})
-
-async function refreshAll() {
-  await Promise.all([loadList(), loadSummary(), loadTrend()])
-}
+async function refreshAll() { await loadList() }
 
 function handleSearch() {
   pageNum.value = 1
-  refreshAll()
+  submittedFilters.value = buildFilterParams()
+  detailVisible.value = false
+  replayVisible.value = false
+  void refreshAll()
 }
 
 function handleReset() {
@@ -247,8 +235,8 @@ function handleReset() {
   filters.experimentId = ''
   filters.experimentArm = ''
   timeRange.value = defaultTimeRange()
-  pageNum.value = 1
-  refreshAll()
+  pageSize.value = DEFAULT_PAGE_SIZE
+  handleSearch()
 }
 
 // ---------- 耗时格式化 ----------
@@ -296,65 +284,56 @@ function segmentBreakdown(row: AgentCallStatsRow): Array<{ kind: AgentCallSegmen
   ).filter((s) => s.ms > 0)
 }
 
-// ---------- 行操作：耗时详情 ----------
+// 抽屉保留原目标供重试；关闭或换目标时立即废弃前一轮查询。
+interface CallTarget { id: number; source: AgentCallSource }
 const detailVisible = ref(false)
-const detailLoading = ref(false)
-const detail = ref<AgentCallStatsDetail | null>(null)
+const detailTarget = shallowRef<CallTarget | null>(null)
+const { data: detail, loading: detailLoading, error: detailError, load: loadDetail, reset: resetDetail } =
+  useQueryState<AgentCallStatsDetail | null>(() => {
+    const target = detailTarget.value!
+    return getAgentCallStatsDetail(target.id, target.source)
+  }, () => null)
 
 async function openDetail(row: AgentCallStatsRow) {
+  resetDetail()
+  detailTarget.value = { id: row.id, source: acceptedSource.value }
   detailVisible.value = true
-  detailLoading.value = true
-  detail.value = null
-  try {
-    detail.value = await getAgentCallStatsDetail(row.id, filters.source)
-  } catch (error) {
-    ElMessage.error('详情加载失败：' + (error instanceof Error ? error.message : String(error)))
-    detailVisible.value = false
-  } finally {
-    detailLoading.value = false
-  }
+  await loadDetail()
 }
+watch(detailVisible, visible => {
+  if (!visible) { resetDetail(); detailTarget.value = null }
+}, { flush: 'sync' })
 
-// ---------- 行操作：只读重放清单 ----------
 const replayVisible = ref(false)
-const replayLoading = ref(false)
-const replayManifest = ref<AgentCallReplayManifest | null>(null)
-const replayExecution = ref<AgentReplayExecution | null>(null)
-
-const replayJson = computed(() =>
-  replayManifest.value ? JSON.stringify(replayManifest.value, null, 2) : '',
-)
+const replayTarget = shallowRef<CallTarget | null>(null)
+const { data: replayManifest, loading: manifestLoading, error: manifestError, load: loadManifest, reset: resetManifest } =
+  useQueryState<AgentCallReplayManifest | null>(() => {
+    const target = replayTarget.value!
+    return getAgentCallReplayManifest(target.id, target.source)
+  }, () => null)
+const { data: replayExecution, loading: executingReplay, error: executionError, load: runReplay, reset: resetReplay } =
+  useQueryState<AgentReplayExecution | null>(() => {
+    const manifest = replayManifest.value!
+    return executeAgentCallReplay(manifest.callLogId, manifest.source, 'MOCK')
+  }, () => null)
+const replayLoading = computed(() => manifestLoading.value || executingReplay.value)
+const replayJson = computed(() => replayManifest.value ? JSON.stringify(replayManifest.value, null, 2) : '')
 
 async function openReplayManifest(row: AgentCallStatsRow) {
+  resetManifest()
+  resetReplay()
+  replayTarget.value = { id: row.id, source: acceptedSource.value }
   replayVisible.value = true
-  replayLoading.value = true
-  replayManifest.value = null
-  replayExecution.value = null
-  try {
-    replayManifest.value = await getAgentCallReplayManifest(row.id, filters.source)
-  } catch (error) {
-    ElMessage.error('重放清单加载失败：' + (error instanceof Error ? error.message : String(error)))
-    replayVisible.value = false
-  } finally {
-    replayLoading.value = false
-  }
+  await loadManifest()
 }
+watch(replayVisible, visible => {
+  if (!visible) { resetManifest(); resetReplay(); replayTarget.value = null }
+}, { flush: 'sync' })
 
 async function executeMockReplay() {
-  if (!replayManifest.value) return
-  replayLoading.value = true
-  try {
-    replayExecution.value = await executeAgentCallReplay(
-      replayManifest.value.callLogId,
-      replayManifest.value.source,
-      'MOCK',
-    )
-    ElMessage.success('MOCK 重放完成，外部调用数为 0')
-  } catch (error) {
-    ElMessage.error('MOCK 重放失败：' + (error instanceof Error ? error.message : String(error)))
-  } finally {
-    replayLoading.value = false
-  }
+  if (!replayManifest.value || replayLoading.value || !auth.hasPermission('agent-call-stats:replay')) return
+  const result = await runReplay()
+  if (result) ElMessage.success(`MOCK 重放完成，外部调用数为 ${result.externalCallCount}`)
 }
 
 async function copyReplayManifest() {
@@ -401,37 +380,46 @@ function openInWorkspace(row: AgentCallStatsRow) {
   })
 }
 
-// ---------- 行操作：删除 ----------
+// 删除绑定原列表来源和记录，确认期间与在途期间都锁定同一目标。
+const deletion = useRowMutation<string>('agent-call-stats:delete')
 async function handleDelete(row: AgentCallStatsRow) {
-  await ElMessageBox.confirm(`确认删除这条调用记录？（请求ID：${row.requestId}）`, '提示', { type: 'warning' })
-  // 后端返回的布尔值表示「是否真的删掉了一行」，false = 这条记录已经不在了（可能被别人先删）。
-  // 此前无条件提示「删除成功」，用户在没删掉的时候也会看到成功——列表刷新后记录还在，很费解。
-  const deleted = await deleteAgentCallStats(row.id, filters.source)
-  if (deleted) {
-    ElMessage.success('删除成功')
-  } else {
-    ElMessage.warning('该记录已不存在，可能已被其他管理员删除')
-  }
-  await refreshAll()
+  const source = acceptedSource.value
+  if (source !== 'ADMIN') return
+  let deleted = false
+  await deletion.run(`${source}:${row.id}`, async isCurrent => {
+    await ElMessageBox.confirm(`确认删除这条调用记录？（请求ID：${row.requestId}）`, '提示', { type: 'warning' })
+    if (isCurrent()) deleted = await deleteAgentCallStats(row.id, source)
+  }, async () => {
+    if (deleted) ElMessage.success('删除成功')
+    else ElMessage.warning('该记录已不存在，可能已被其他管理员删除')
+    await refreshAll()
+  })
 }
 
-onMounted(() => {
-  loadAgentOptions()
-  refreshAll()
-})
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  detailVisible.value = false
+  replayVisible.value = false
+  if (!auth.isLoggedIn || !auth.isApproved || !auth.hasPermission('agent-call-stats:view')) return
+  if (auth.hasPermission('agent:view')) void loadAgentOptions()
+  handleReset()
+}, { immediate: true })
+
 </script>
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="!!snapshot" :loading="loading" @retry="loadList" />
+    <CrudLoadState :error="agentOptionsError" :has-stale-data="agentOptions.length > 0" :loading="agentOptionsLoading" @retry="loadAgentOptions" />
     <el-card class="filter-card" shadow="never">
       <div class="toolbar">
         <el-select v-model="filters.source" placeholder="来源" style="width: 160px">
           <el-option v-for="opt in SOURCE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
         <el-input v-model="filters.username" placeholder="用户名" style="width: 140px" clearable @keyup.enter="handleSearch" />
-        <el-select v-model="filters.agentCode" placeholder="智能体" style="width: 160px" clearable filterable>
+        <el-select v-if="auth.hasPermission('agent:view')" v-model="filters.agentCode" placeholder="智能体" style="width: 160px" clearable filterable :loading="agentOptionsLoading">
           <el-option v-for="a in agentOptions" :key="a.agentCode" :label="a.agentName" :value="a.agentCode" />
         </el-select>
+        <el-input v-else v-model="filters.agentCode" placeholder="智能体编码" style="width: 160px" clearable @keyup.enter="handleSearch" />
         <el-select
           v-model="filters.sessionType"
           placeholder="会话类型"
@@ -471,14 +459,14 @@ onMounted(() => {
       <div v-if="sourceIsApp" class="filter-tip">客服端来源恒为「对话」，无 VibeCoding 会话</div>
     </el-card>
 
-    <div class="summary-row">
+    <div v-if="snapshot" class="summary-row">
       <div v-for="card in SUMMARY_CARDS" :key="card.key" class="stat-card" v-loading="summaryLoading">
         <div class="stat-label">{{ card.label }}</div>
         <div class="stat-value">{{ summaryDisplay(card) }}</div>
       </div>
     </div>
 
-    <el-card class="trend-card" shadow="never">
+    <el-card v-if="snapshot" class="trend-card" shadow="never">
       <div class="trend-header">
         <span class="trend-title">调用趋势</span>
         <el-radio-group v-model="trendGranularityMode" size="small">
@@ -487,10 +475,10 @@ onMounted(() => {
           <el-radio-button value="hour">按小时</el-radio-button>
         </el-radio-group>
       </div>
-      <AgentCallTrendChart :points="trendPoints" :granularity="effectiveGranularity" :loading="trendLoading" />
+      <AgentCallTrendChart :points="trendPoints" :granularity="snapshot.granularity" :loading="trendLoading" />
     </el-card>
 
-    <el-card class="list-card" shadow="never">
+    <el-card v-if="snapshot" class="list-card" shadow="never">
       <div class="section-heading">
         <strong>调用证据明细</strong>
         <span>每条记录可继续下钻耗时、Token、成本、运行配置与安全重放证据</span>
@@ -587,10 +575,12 @@ onMounted(() => {
           <template #default="{ row }: { row: AgentCallStatsRow }">
             <el-button link type="primary" @click="openDetail(row)">耗时详情</el-button>
             <el-button link type="primary" @click="openReplayManifest(row)">重放清单</el-button>
-            <el-button v-if="filters.source === 'ADMIN' && (row.sessionType === 'CHAT' || row.sessionType === 'VIBE_CODING')" link type="primary" @click="openInWorkspace(row)">打开会话</el-button>
+            <el-button v-if="acceptedSource === 'ADMIN' && (row.sessionType === 'CHAT' || row.sessionType === 'VIBE_CODING')" link type="primary" @click="openInWorkspace(row)">打开会话</el-button>
             <!-- 删除仅 ADMIN 行可用：APP 是客服端运行库，写入方是 8080 那条链路，后台只查不写。
                  后端 AgentCallStatsService#delete 与只读连接池各有一道防线，这里只是不给出无效按钮 -->
-            <el-button v-if="!sourceIsApp" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-if="acceptedSource === 'ADMIN'" v-permission="'agent-call-stats:delete'" link type="danger"
+              :loading="deletion.isPending(`${acceptedSource}:${row.id}`)"
+              :disabled="deletion.isPending(`${acceptedSource}:${row.id}`)" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -608,6 +598,7 @@ onMounted(() => {
     </el-card>
 
     <el-drawer v-model="detailVisible" title="调用耗时详情" size="640px" destroy-on-close>
+      <CrudLoadState :error="detailError" :has-stale-data="!!detail" :loading="detailLoading" @retry="loadDetail" />
       <div v-loading="detailLoading">
         <template v-if="detail">
           <el-descriptions :column="2" border size="small">
@@ -752,6 +743,8 @@ onMounted(() => {
     </el-drawer>
 
     <el-drawer v-model="replayVisible" title="安全重放与差异" size="760px" destroy-on-close>
+      <CrudLoadState :error="manifestError" :has-stale-data="!!replayManifest" :loading="manifestLoading" @retry="loadManifest" />
+      <CrudLoadState :error="executionError" :has-stale-data="!!replayExecution" :loading="executingReplay" @retry="executeMockReplay" />
       <div v-loading="replayLoading">
         <template v-if="replayManifest">
           <el-alert
@@ -801,6 +794,7 @@ onMounted(() => {
               v-permission="'agent-call-stats:replay'"
               type="success"
               :loading="replayLoading"
+              :disabled="replayLoading"
               @click="executeMockReplay"
             >执行 MOCK</el-button>
             <el-button type="primary" @click="copyReplayManifest">复制 JSON</el-button>

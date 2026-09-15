@@ -195,6 +195,12 @@ watch(
 }
 
 @media (max-width: 767px) {
+  /* 编码选择框在窄屏占满一行，密钥输入必须换行，避免被横向 flex 挤成零宽。 */
+  .devtoolbox-panel :deep(.key-row) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .devtoolbox-sidebar {
     padding: 10px;
   }
