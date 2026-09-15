@@ -1,4 +1,6 @@
-import { getCurrentScope, onScopeDispose, reactive, ref, type Ref } from 'vue'
+import { getCurrentScope, onScopeDispose, reactive, ref, watch, type Ref } from 'vue'
+import { useAuthStore } from '@/store/auth'
+import { useAuthSubmissionScope } from './useAuthSubmissionScope'
 
 interface PagedQuery {
   pageNum?: number
@@ -18,21 +20,36 @@ export function usePagedList<VO, Q extends PagedQuery>(options: PagedListOptions
   const total = ref(0)
   const query = reactive(options.initQuery()) as Q
   let loadRequestId = 0
+  const auth = useAuthStore()
+  const captureSubmission = useAuthSubmissionScope()
+
+  // 请求拦截器隔离网络响应；页面自身还要清除上个身份留下的结果和错误。
+  watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+    loadRequestId += 1
+    list.value = []
+    total.value = 0
+    loadError.value = null
+    loading.value = false
+    Object.assign(query, options.initQuery())
+  }, { flush: 'sync' })
 
   async function loadList() {
+    const isCurrentIdentity = captureSubmission()
+    if (!isCurrentIdentity()) return
     const requestId = ++loadRequestId
+    const isCurrent = () => isCurrentIdentity() && requestId === loadRequestId
     loading.value = true
     try {
       const result = await options.page({ ...query })
-      if (requestId !== loadRequestId) return
+      if (!isCurrent()) return
       list.value = result.list
       total.value = result.total
       loadError.value = null
     } catch (error) {
       // 接口拦截器负责即时提示；页面状态保留错误和旧数据，供用户查看与重试。
-      if (requestId === loadRequestId) loadError.value = error
+      if (isCurrent()) loadError.value = error
     } finally {
-      if (requestId === loadRequestId) loading.value = false
+      if (isCurrent()) loading.value = false
     }
   }
 

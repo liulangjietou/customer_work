@@ -1,8 +1,10 @@
-import { reactive, ref } from 'vue'
+import { onScopeDispose, reactive, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import type { PageQuery, PageResult } from '@/types/api'
 import { usePagedList } from './usePagedList'
+import { useAuthStore } from '@/store/auth'
+import { useAuthSubmissionScope } from './useAuthSubmissionScope'
 
 export type CrudDialogMode = 'create' | 'edit'
 
@@ -60,6 +62,10 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
   const { loading, loadError, list, total, query, loadList, handleSearch } = usePagedList<VO, Q>(
     options,
   )
+  const auth = useAuthStore()
+  const captureSubmission = useAuthSubmissionScope()
+  let dialogGeneration = 0
+  let deleteGeneration = 0
   const submitting = ref(false)
   const deletingId = ref<number | null>(null)
 
@@ -70,7 +76,25 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
 
   const rowId = options.rowId ?? ((row: VO) => (row as { id: number }).id)
 
+  function invalidateDialog() {
+    dialogGeneration += 1
+    submitting.value = false
+  }
+
+  // 关闭或重开表单后，旧校验与保存结果不能占用后来编辑的目标。
+  watch(dialogVisible, visible => { if (!visible) invalidateDialog() }, { flush: 'sync' })
+  watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+    invalidateDialog()
+    deleteGeneration += 1
+    deletingId.value = null
+    dialogVisible.value = false
+    editingId.value = null
+    Object.assign(form, options.initForm())
+  }, { flush: 'sync' })
+  onScopeDispose(() => { invalidateDialog(); deleteGeneration += 1 })
+
   function openCreate() {
+    invalidateDialog()
     dialogMode.value = 'create'
     editingId.value = null
     Object.assign(form, options.initForm())
@@ -78,16 +102,33 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
   }
 
   function openEdit(row: VO) {
+    invalidateDialog()
     dialogMode.value = 'edit'
     editingId.value = rowId(row)
     Object.assign(form, options.toForm ? options.toForm(row) : options.initForm())
     dialogVisible.value = true
   }
 
+  /** API 拦截器已提示写入失败；事件入口消费拒绝并保留表单，避免再抛为页面未处理异常。 */
+  async function tryWrite(action: Promise<unknown>): Promise<boolean> {
+    try {
+      await action
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async function handleSubmit() {
-    if (submitting.value) {
+    if (submitting.value || !dialogVisible.value) {
       return
     }
+    const generation = dialogGeneration
+    const mode = dialogMode.value
+    const id = editingId.value
+    const isCurrentIdentity = captureSubmission()
+    const isCurrent = () => isCurrentIdentity() && generation === dialogGeneration && dialogVisible.value
+    if (!isCurrent()) return
     submitting.value = true
     try {
       if (options.formRef) {
@@ -96,25 +137,31 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
           return
         }
       }
-      if (options.beforeSubmit && !options.beforeSubmit(dialogMode.value, form)) {
+      if (!isCurrent()) return
+      if (options.beforeSubmit && !options.beforeSubmit(mode, form)) {
         return
       }
-      if (dialogMode.value === 'create' && options.create) {
-        await options.create(form)
+      if (!isCurrent()) return
+      if (mode === 'create' && options.create) {
+        if (!await tryWrite(options.create({ ...form }))) return
+        if (!isCurrent()) return
         ElMessage.success(options.messages?.created ?? '新建成功')
-      } else if (dialogMode.value === 'edit' && options.update) {
-        if (!editingId.value) {
+      } else if (mode === 'edit' && options.update) {
+        if (!id) {
           return
         }
-        await options.update(editingId.value, form)
+        if (!await tryWrite(options.update(id, { ...form }))) return
+        if (!isCurrent()) return
         ElMessage.success(options.messages?.updated ?? '保存成功')
       } else {
         return
       }
       dialogVisible.value = false
       await loadList()
+    } catch (error) {
+      if (isCurrent()) throw error
     } finally {
-      submitting.value = false
+      if (isCurrent()) submitting.value = false
     }
   }
 
@@ -123,6 +170,10 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
       return
     }
     const id = rowId(row)
+    const generation = ++deleteGeneration
+    const isCurrentIdentity = captureSubmission()
+    const isCurrent = () => isCurrentIdentity() && generation === deleteGeneration
+    if (!isCurrent()) return
     deletingId.value = id
     try {
       try {
@@ -137,7 +188,9 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
         }
         throw error
       }
-      await options.remove(row)
+      if (!isCurrent()) return
+      if (!await tryWrite(options.remove(row))) return
+      if (!isCurrent()) return
       ElMessage.success(options.messages?.deleted ?? '删除成功')
       // 删除当前页最后一条时先回到上一页，避免成功后展示一个不存在的空页。
       const currentPage = query.pageNum ?? 1
@@ -145,8 +198,10 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
         query.pageNum = currentPage - 1
       }
       await loadList()
+    } catch (error) {
+      if (isCurrent()) throw error
     } finally {
-      deletingId.value = null
+      if (isCurrent()) deletingId.value = null
     }
   }
 

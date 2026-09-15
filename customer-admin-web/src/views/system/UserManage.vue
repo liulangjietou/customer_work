@@ -13,6 +13,7 @@ import { pageRoles } from '@/api/role'
 import { fetchCurrentView } from '@/api/tenant'
 import { useAuthStore } from '@/store/auth'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type {
   RoleVO,
@@ -26,6 +27,7 @@ import type {
 } from '@/types/api'
 
 const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
 
 const roleOptions = ref<RoleVO[]>([])
 const crossTenantAuthority = ref(false)
@@ -59,13 +61,14 @@ const {
   formRef,
   create: createUser,
   update: async (id, f) => {
+    const isCurrent = captureSubmission()
     // 编辑时密码框留空表示"不改密码"：必须传 null 而不是空字符串——后端 password 字段有
     // @Size(min=6) 校验，只对 null 跳过校验，空字符串会被当成"长度 0 的密码"直接拦截。
     const payload: UserSaveRequest = { ...f, password: f.password?.trim() ? f.password : null }
     await updateUser(id, payload)
     // 编辑的如果是当前登录用户自己，同步刷新右上角昵称缓存——否则要等重新登录才会更新，
     // 页面上会一直显示登录时缓存的旧昵称，改了跟没改一样。
-    if (f.username === auth.username && f.nickname) {
+    if (isCurrent() && f.username === auth.username && f.nickname) {
       auth.updateNickname(f.nickname)
     }
   },
