@@ -1,116 +1,99 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import {
-  exportKeystorePrivateKey,
-  matchCertKey,
-  parseCertPem,
-  parseKeystore,
-  type CertMatchResponse,
-  type CertParseResponse,
-  type KeystoreParseResponse,
-  type PrivateKeyExportResponse,
+  exportKeystorePrivateKey, matchCertKey, parseCertPem, parseKeystore,
+  type CertMatchResponse, type CertParseResponse, type KeystoreParseResponse, type PrivateKeyExportResponse,
 } from '@/api/devtools'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
 import { usePersistedRef } from './composables/useToolStorage'
 import { downloadText, safeFileBase } from './composables/useDownload'
 import CertInfoCard from './CertInfoCard.vue'
 import CopyButton from './CopyButton.vue'
 
 type CertMode = 'parse' | 'match' | 'keystore'
-
 const mode = usePersistedRef<CertMode>('cert:mode', 'parse')
-
-// ---------- 证书 / CSR 解析 ----------
+const captureSubmission = useAuthSubmissionScope()
 
 const pemContent = usePersistedRef('cert:pem', '')
-const parsing = ref(false)
-const parseResult = ref<CertParseResponse | null>(null)
+const { data: parseResult, loading: parsing, error: parseError, load: runParse, reset: resetParse } =
+  useQueryState<CertParseResponse | null>(() => parseCertPem(pemContent.value), () => null)
 
 async function handleParse() {
-  if (!pemContent.value.trim()) {
-    ElMessage.warning('请先粘贴 PEM 内容')
-    return
-  }
-  parsing.value = true
-  try {
-    parseResult.value = await parseCertPem(pemContent.value)
-  } finally {
-    parsing.value = false
-  }
+  if (parsing.value) return
+  if (!pemContent.value.trim()) { ElMessage.warning('请先粘贴 PEM 内容'); return }
+  await runParse()
 }
-
 function clearParse() {
   pemContent.value = ''
-  parseResult.value = null
+  resetParse()
 }
 
-// ---------- 私钥匹配校验 ----------
-// 私钥属敏感信息，与 AES 工具的密钥同等对待：用普通 ref，不进 localStorage
-
+// 私钥与密码仅属于当前组件，不能进入本地输入持久化。
 const matchCertPem = usePersistedRef('cert:matchCert', '')
 const matchKeyPem = ref('')
-const matching = ref(false)
-const matchResult = ref<CertMatchResponse | null>(null)
+const { data: matchResult, loading: matching, error: matchError, load: runMatch, reset: resetMatch } =
+  useQueryState<CertMatchResponse | null>(() => matchCertKey(matchCertPem.value, matchKeyPem.value), () => null)
 
 async function handleMatch() {
-  if (!matchCertPem.value.trim() || !matchKeyPem.value.trim()) {
-    ElMessage.warning('证书与私钥都要填写')
-    return
-  }
-  matching.value = true
-  try {
-    matchResult.value = await matchCertKey(matchCertPem.value, matchKeyPem.value)
-  } finally {
-    matching.value = false
-  }
+  if (matching.value) return
+  if (!matchCertPem.value.trim() || !matchKeyPem.value.trim()) { ElMessage.warning('证书与私钥都要填写'); return }
+  await runMatch()
 }
-
 function clearMatch() {
   matchCertPem.value = ''
   matchKeyPem.value = ''
-  matchResult.value = null
+  resetMatch()
 }
 
-// ---------- 密钥库 ----------
-// 库密码同样不持久化
-
+interface KeystoreInput { file: File; password: string }
 const keystorePassword = ref('')
 const keystoreFileName = ref('')
-const keystoreLoading = ref(false)
-const keystoreResult = ref<KeystoreParseResponse | null>(null)
-// 留住文件对象供"导出私钥"二次上传（私钥不随条目列举返回，需要显式再发一次请求）
-const keystoreFile = ref<File | null>(null)
+const keystoreInput = shallowRef<KeystoreInput | null>(null)
+const { data: keystoreSnapshot, loading: keystoreLoading, error: keystoreError,
+  load: runKeystore, reset: resetKeystore } = useQueryState<{ parsed: KeystoreParseResponse; input: KeystoreInput } | null>(async () => {
+    const input = keystoreInput.value!
+    return { parsed: await parseKeystore(input.file, input.password), input }
+  }, () => null)
+const keystoreResult = computed(() => keystoreSnapshot.value?.parsed ?? null)
 
 async function handleKeystoreUpload(options: { file: File }) {
-  keystoreLoading.value = true
+  resetKeystore()
+  closeKeyDialog()
   keystoreFileName.value = options.file.name
-  keystoreFile.value = options.file
-  try {
-    keystoreResult.value = await parseKeystore(options.file, keystorePassword.value)
-  } finally {
-    keystoreLoading.value = false
-  }
+  keystoreInput.value = { file: options.file, password: keystorePassword.value }
+  await runKeystore()
 }
-
+async function retryKeystore() {
+  if (!keystoreInput.value || keystoreLoading.value) return
+  keystoreInput.value = { file: keystoreInput.value.file, password: keystorePassword.value }
+  await runKeystore()
+}
 function clearKeystore() {
   keystorePassword.value = ''
   keystoreFileName.value = ''
-  keystoreResult.value = null
-  keystoreFile.value = null
+  keystoreInput.value = null
+  resetKeystore()
   closeKeyDialog()
 }
 
-// ---------- 私钥导出 ----------
-// 私钥只在对话框打开期间存在于内存，关闭即丢弃，不持久化、不写回列表数据
-
+// 导出使用产生当前条目列表的文件和密码，确认期间的输入修改不能改变导出目标。
 const keyDialogVisible = ref(false)
-const keyExporting = ref(false)
-const keyResult = ref<PrivateKeyExportResponse | null>(null)
+const confirmingExport = ref(false)
+const exportRequest = shallowRef<{ input: KeystoreInput; alias: string } | null>(null)
+const { data: keyResult, loading: keyExporting, error: keyError, load: runExport, reset: resetExport } =
+  useQueryState<PrivateKeyExportResponse | null>(() => {
+    const request = exportRequest.value!
+    return exportKeystorePrivateKey(request.input.file, request.input.password, request.alias, '')
+  }, () => null)
 
 async function handleExportPrivateKey(alias: string) {
-  if (!keystoreFile.value) {
-    ElMessage.warning('请先上传密钥库文件')
-    return
-  }
+  const snapshot = keystoreSnapshot.value
+  if (!snapshot || confirmingExport.value || keyExporting.value || keystoreLoading.value) return
+  const identityIsCurrent = captureSubmission()
+  const isCurrent = () => identityIsCurrent() && keystoreSnapshot.value === snapshot
+  confirmingExport.value = true
   try {
     await ElMessageBox.confirm(
       '私钥将以未加密的 PKCS#8 PEM 明文返回并显示在页面上，请确认当前环境适合展示私钥。',
@@ -118,29 +101,29 @@ async function handleExportPrivateKey(alias: string) {
       { type: 'warning', confirmButtonText: '确认导出', cancelButtonText: '取消' },
     )
   } catch {
-    return // 用户取消
-  }
-  keyExporting.value = true
-  try {
-    // 条目私钥密码留空，后端回落库密码（PKCS12 惯例两者相同）
-    keyResult.value = await exportKeystorePrivateKey(keystoreFile.value, keystorePassword.value, alias, '')
-    keyDialogVisible.value = true
+    return // 用户取消。
   } finally {
-    keyExporting.value = false
+    confirmingExport.value = false
   }
+  if (!isCurrent()) return
+  exportRequest.value = { input: snapshot.input, alias }
+  const result = await runExport()
+  if (result) keyDialogVisible.value = true
 }
-
+function retryExport() {
+  const alias = exportRequest.value?.alias
+  if (alias) void handleExportPrivateKey(alias)
+}
 function handleDownloadKey() {
-  if (!keyResult.value) {
-    return
-  }
-  downloadText(keyResult.value.privateKeyPem, `${safeFileBase(keyResult.value.alias, 'private')}.key`)
+  if (keyResult.value) downloadText(keyResult.value.privateKeyPem, `${safeFileBase(keyResult.value.alias, 'private')}.key`)
 }
-
 function closeKeyDialog() {
   keyDialogVisible.value = false
-  keyResult.value = null
+  resetExport()
+  exportRequest.value = null
 }
+watch(keyDialogVisible, visible => { if (!visible) closeKeyDialog() }, { flush: 'sync' })
+watch(mode, closeKeyDialog)
 </script>
 
 <template>
@@ -158,6 +141,7 @@ function closeKeyDialog() {
 
     <!-- 证书 / CSR 解析 -->
     <div v-if="mode === 'parse'">
+      <CrudLoadState :error="parseError" :has-stale-data="!!parseResult" :loading="parsing" @retry="handleParse" />
       <el-input
         v-model="pemContent"
         type="textarea"
@@ -202,6 +186,7 @@ function closeKeyDialog() {
 
     <!-- 私钥匹配校验 -->
     <div v-else-if="mode === 'match'">
+      <CrudLoadState :error="matchError" :has-stale-data="!!matchResult" :loading="matching" @retry="handleMatch" />
       <div class="match-inputs">
         <div class="match-col">
           <div class="field-label">证书 PEM</div>
@@ -226,6 +211,8 @@ function closeKeyDialog() {
 
     <!-- 密钥库 -->
     <div v-else>
+      <CrudLoadState :error="keystoreError" :has-stale-data="!!keystoreResult" :loading="keystoreLoading" @retry="retryKeystore" />
+      <CrudLoadState :error="keyError" :has-stale-data="!!keyResult" :loading="keyExporting" @retry="retryExport" />
       <div class="keystore-form">
         <el-input
           v-model="keystorePassword"
@@ -262,6 +249,7 @@ function closeKeyDialog() {
                 type="primary"
                 size="small"
                 :loading="keyExporting"
+                :disabled="confirmingExport || keyExporting || keystoreLoading"
                 @click="handleExportPrivateKey(entry.alias)"
               >
                 <el-icon><Key /></el-icon>
@@ -285,7 +273,6 @@ function closeKeyDialog() {
       v-model="keyDialogVisible"
       title="私钥导出"
       width="640px"
-      @closed="closeKeyDialog"
     >
       <template v-if="keyResult">
         <el-alert type="warning" :closable="false" show-icon class="notice">

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // 文本比对：LCS 行级 diff 走后端（starter 的 DiffDevToolOps），与智能体侧 text_diff 同一实现。
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { diffText, type TextDiffResponse } from '@/api/devtools'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
 import { usePersistedRef } from './composables/useToolStorage'
 
 const oldText = usePersistedRef('diff:oldText', '')
@@ -9,8 +11,10 @@ const newText = usePersistedRef('diff:newText', '')
 const ignoreWhitespace = usePersistedRef('diff:ignoreWhitespace', false)
 const ignoreCase = usePersistedRef('diff:ignoreCase', false)
 
-const loading = ref(false)
-const result = ref<TextDiffResponse | null>(null)
+const { data: result, loading, error, load: runDiff, reset: resetResult } = useQueryState<TextDiffResponse | null>(
+  () => diffText({ oldText: oldText.value, newText: newText.value,
+    ignoreWhitespace: ignoreWhitespace.value, ignoreCase: ignoreCase.value }), () => null,
+)
 
 /** 只看差异时过滤掉相同行——配置文件比对里相同行往往占绝大多数。 */
 const onlyDifferences = usePersistedRef('diff:onlyDifferences', false)
@@ -32,30 +36,20 @@ const summary = computed(() => {
 })
 
 async function handleDiff() {
-  loading.value = true
-  try {
-    result.value = await diffText({
-      oldText: oldText.value,
-      newText: newText.value,
-      ignoreWhitespace: ignoreWhitespace.value,
-      ignoreCase: ignoreCase.value,
-    })
-  } finally {
-    loading.value = false
-  }
+  if (!loading.value) await runDiff()
 }
 
 function handleSwap() {
   const temp = oldText.value
   oldText.value = newText.value
   newText.value = temp
-  result.value = null
+  resetResult()
 }
 
 function handleClear() {
   oldText.value = ''
   newText.value = ''
-  result.value = null
+  resetResult()
 }
 
 function lineMarker(type: string): string {
@@ -67,6 +61,7 @@ function lineMarker(type: string): string {
 
 <template>
   <div class="diff-tool">
+    <CrudLoadState :error="error" :has-stale-data="!!result" :loading="loading" @retry="handleDiff" />
     <div class="panes">
       <div class="pane">
         <div class="pane-header"><span>原文本</span></div>

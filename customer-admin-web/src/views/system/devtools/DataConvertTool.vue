@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // JSON / YAML / XML 互转：走后端（starter 的 DataFormatDevToolOps），与智能体侧 data_convert 同一实现。
 // 后端解析 XML 时已禁用 DTD 与外部实体（防 XXE）。
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { convertFormat, type DataFormat } from '@/api/devtools'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
 import { usePersistedRef } from './composables/useToolStorage'
 import CopyButton from './CopyButton.vue'
 
@@ -11,14 +13,21 @@ const targetFormat = usePersistedRef<DataFormat>('convert:targetFormat', 'yaml')
 const rootName = usePersistedRef('convert:rootName', 'root')
 const input = usePersistedRef('convert:input', '')
 
-const loading = ref(false)
-const output = ref('')
+const { data: result, loading, error, load: runConvert, reset: resetResult } =
+  useQueryState<{ result: string; targetFormat: DataFormat } | null>(async () => {
+    const target = targetFormat.value
+    const response = await convertFormat({ content: input.value, sourceFormat: sourceFormat.value,
+      targetFormat: target, rootName: target === 'xml' ? rootName.value : undefined })
+    return { result: response.result, targetFormat: target }
+  }, () => null)
+const output = computed(() => result.value?.result ?? '')
 
 const needsRootName = computed(() => targetFormat.value === 'xml')
 
 const formatLabels: Record<DataFormat, string> = { json: 'JSON', yaml: 'YAML', xml: 'XML' }
 
 async function handleConvert() {
+  if (loading.value) return
   if (!input.value.trim()) {
     ElMessage.warning('请先输入待转换的内容')
     return
@@ -27,18 +36,7 @@ async function handleConvert() {
     ElMessage.warning('源格式与目标格式相同，无需转换')
     return
   }
-  loading.value = true
-  try {
-    const response = await convertFormat({
-      content: input.value,
-      sourceFormat: sourceFormat.value,
-      targetFormat: targetFormat.value,
-      rootName: needsRootName.value ? rootName.value : undefined,
-    })
-    output.value = response.result
-  } finally {
-    loading.value = false
-  }
+  await runConvert()
 }
 
 /** 互换源与目标格式，并把上次的输出接力成新的输入，便于来回转换核对。 */
@@ -48,18 +46,19 @@ function handleSwap() {
   targetFormat.value = from
   if (output.value) {
     input.value = output.value
-    output.value = ''
   }
+  resetResult()
 }
 
 function handleClear() {
   input.value = ''
-  output.value = ''
+  resetResult()
 }
 </script>
 
 <template>
   <div class="convert-tool">
+    <CrudLoadState :error="error" :has-stale-data="!!result" :loading="loading" @retry="handleConvert" />
     <el-form label-width="100px" class="param-form" inline>
       <el-form-item label="源格式">
         <el-radio-group v-model="sourceFormat">
@@ -95,7 +94,7 @@ function handleClear() {
       </div>
       <div class="pane">
         <div class="pane-header">
-          <span>{{ formatLabels[targetFormat] }} 输出</span>
+          <span>{{ formatLabels[result?.targetFormat ?? targetFormat] }} 输出</span>
           <CopyButton :text="output" label="转换结果" />
         </div>
         <textarea class="code-textarea" readonly spellcheck="false" :value="output" />

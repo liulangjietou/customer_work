@@ -1,19 +1,19 @@
-import { ref, watch } from 'vue'
-import type { Ref } from 'vue'
+import { inject, ref, watch, type InjectionKey, type Ref } from 'vue'
 
-const STORAGE_PREFIX = 'devtools:'
+const STORAGE_PREFIX = 'devtools:v2:'
+export const TOOL_STORAGE_OWNER: InjectionKey<Readonly<Ref<string | null>>> = Symbol('tool-storage-owner')
 
 /**
- * 单个工具输入字段的 localStorage 持久化 ref：刷新/重开页面不丢，key 统一带 `devtools:` 前缀。
- *
- * 约定：AES 工具的密钥/IV 属于敏感信息，不接入本函数，直接用普通 ref——这是本工具箱唯一的
- * 持久化例外，其余所有工具输入（含哈希 HMAC 密钥）按验收要求一律持久化。
+ * 输入按已确认的账号和租户视角持久化；无归属的历史键原样保留，但不能自动归给当前用户。
+ * 未知账号只提供本次页面内的输入。AES 密钥/IV、JWT、证书私钥与密码继续使用普通 ref。
  */
 export function usePersistedRef<T>(key: string, defaultValue: T): Ref<T> {
-  const storageKey = STORAGE_PREFIX + key
+  const owner = inject(TOOL_STORAGE_OWNER, null)
+  const initialOwner = owner?.value
+  const storageKey = initialOwner ? STORAGE_PREFIX + initialOwner + ':' + key : null
   let initial = defaultValue
   try {
-    const raw = localStorage.getItem(storageKey)
+    const raw = storageKey ? localStorage.getItem(storageKey) : null
     if (raw !== null) {
       initial = JSON.parse(raw) as T
     }
@@ -25,6 +25,7 @@ export function usePersistedRef<T>(key: string, defaultValue: T): Ref<T> {
   watch(
     state,
     (value) => {
+      if (!storageKey || owner?.value !== initialOwner) return
       try {
         localStorage.setItem(storageKey, JSON.stringify(value))
       } catch {

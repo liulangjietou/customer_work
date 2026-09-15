@@ -3,14 +3,17 @@
 // 令牌与密钥属敏感信息，与 AES 的密钥同等对待——用普通 ref，刷新即清空，不落 localStorage。
 import { computed, ref } from 'vue'
 import { decodeJwt, type JwtDecodeResponse } from '@/api/devtools'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
 import CopyButton from './CopyButton.vue'
 
 const token = ref('')
 const secret = ref('')
 const secretEncoding = ref<'utf8' | 'hex' | 'base64'>('utf8')
 
-const loading = ref(false)
-const result = ref<JwtDecodeResponse | null>(null)
+const { data: result, loading, error, load: runDecode, reset: resetResult } = useQueryState<JwtDecodeResponse | null>(
+  () => decodeJwt(token.value.trim(), secret.value || undefined, secretEncoding.value), () => null,
+)
 
 /** 签名状态映射成人话与配色，避免用户把"没校验"误读成"校验通过"。 */
 const signatureHint = computed(() => {
@@ -54,27 +57,24 @@ function formatRemaining(seconds: number | null): string {
 }
 
 async function handleDecode() {
+  if (loading.value) return
   if (!token.value.trim()) {
     ElMessage.warning('请先粘贴 JWT')
     return
   }
-  loading.value = true
-  try {
-    result.value = await decodeJwt(token.value.trim(), secret.value || undefined, secretEncoding.value)
-  } finally {
-    loading.value = false
-  }
+  await runDecode()
 }
 
 function handleClear() {
   token.value = ''
   secret.value = ''
-  result.value = null
+  resetResult()
 }
 </script>
 
 <template>
   <div class="jwt-tool">
+    <CrudLoadState :error="error" :has-stale-data="!!result" :loading="loading" @retry="handleDecode" />
     <el-alert
       type="info"
       :closable="false"

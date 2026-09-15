@@ -1,14 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchCurrentView, listTenantOptions, switchTenantView, type TenantVO } from '@/api/tenant'
+import { fetchCurrentView, listTenantOptions, switchTenantView, type TenantViewVO, type TenantVO } from '@/api/tenant'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 
 // 顶栏租户切换器：只有具备控制面跨租户能力的用户看得到。
 // 普通租户管理员的视角恒等于自己所属租户，无需渲染只有一项的下拉。
-const crossTenantAuthority = ref(false)
-const userTenant = ref<string | null>(null)
-const effectiveTenant = ref<string | null>(null)
-const options = ref<TenantVO[]>([])
+const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
+const { data: snapshot, loading, error, load } = useQueryState<{ view: TenantViewVO; options: TenantVO[] } | null>(async () => {
+  const identityIsCurrent = captureSubmission()
+  const permissions = auth.permissions.join('\0')
+  const view = await fetchCurrentView()
+  // 旧请求在中间步骤就停止，不能借新登录继续访问控制面选项。
+  if (!identityIsCurrent() || auth.permissions.join('\0') !== permissions) return null
+  const options: TenantVO[] = view.crossTenantAuthority ? await listTenantOptions() : []
+  return { view, options: options.filter(tenant => tenant.tenantCode !== view.userTenantId) }
+}, () => null)
+const crossTenantAuthority = computed(() => snapshot.value?.view.crossTenantAuthority === true)
+const userTenant = computed(() => snapshot.value?.view.userTenantId ?? null)
+const effectiveTenant = computed(() => snapshot.value?.view.effectiveTenantId ?? null)
+const options = computed(() => snapshot.value?.options ?? [])
 const switching = ref(false)
 
 const selected = computed({
@@ -16,41 +30,41 @@ const selected = computed({
   set: (value: string) => void handleSwitch(value),
 })
 
-async function load() {
-  const view = await fetchCurrentView()
-  crossTenantAuthority.value = view.crossTenantAuthority === true
-  userTenant.value = view.userTenantId
-  effectiveTenant.value = view.effectiveTenantId
-  if (crossTenantAuthority.value) {
-    options.value = (await listTenantOptions())
-      .filter((tenant) => tenant.tenantCode !== userTenant.value)
-  }
-}
-
 async function handleSwitch(tenantCode: string) {
-  if (switching.value || tenantCode === (effectiveTenant.value ?? userTenant.value)) return
+  if (switching.value || !crossTenantAuthority.value || tenantCode === (effectiveTenant.value ?? userTenant.value)) return
+  const identityIsCurrent = captureSubmission()
+  const originalView = snapshot.value
+  const isCurrent = () => identityIsCurrent() && snapshot.value === originalView
   switching.value = true
   try {
     const returnToOwnTenant = tenantCode === userTenant.value
     await switchTenantView(returnToOwnTenant ? undefined : tenantCode)
+    if (!isCurrent()) return
     ElMessage.success(returnToOwnTenant ? '已回到自身租户视角' : `已切换到租户 ${tenantCode}`)
     // 整页重载：当前页面上的列表、详情、缓存都属于上一个租户，逐个刷新既繁琐又容易漏掉一处
     window.location.reload()
+  } catch {
+    // 请求层提示失败，保留原视角并允许重试。
   } finally {
-    switching.value = false
+    if (isCurrent()) switching.value = false
   }
 }
 
-onMounted(load)
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  switching.value = false
+  if (auth.isLoggedIn && auth.isApproved) void load()
+}, { immediate: true })
 </script>
 
 <template>
+  <el-button v-if="error" text :loading="loading" @click="load">重试租户视角</el-button>
   <el-select
     v-if="crossTenantAuthority"
     v-model="selected"
     class="tenant-switcher"
     size="default"
-    :loading="switching"
+    :loading="switching || loading"
+    :disabled="switching || loading"
     filterable
     title="切换租户视角"
     aria-label="租户视角"
