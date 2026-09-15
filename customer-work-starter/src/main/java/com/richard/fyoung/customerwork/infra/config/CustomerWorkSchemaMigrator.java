@@ -51,6 +51,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String CHAT_ANSWER_EVIDENCE_MIRROR_VERSION = "27";
     private static final String KNOWLEDGE_PROJECTION_ACCESS_MIRROR_VERSION = "28";
     private static final String KNOWLEDGE_PUBLICATION_MIRROR_VERSION = "29";
+    private static final String SENSITIVE_WORD_EXACT_TENANT_MIRROR_VERSION = "30";
 
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
@@ -271,8 +272,15 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
             // V29 每张表的 CREATE 是原子操作；两表均已导入才接管，否则继续补齐缺失表。
             boolean publicationMirror = tableExists(connection, "cw_knowledge_publication_lock")
                 && tableExists(connection, "cw_knowledge_publication");
-            return publicationMirror ? KNOWLEDGE_PUBLICATION_MIRROR_VERSION
-                : KNOWLEDGE_PROJECTION_ACCESS_MIRROR_VERSION;
+            if (!publicationMirror) return KNOWLEDGE_PROJECTION_ACCESS_MIRROR_VERSION;
+            // V30 只修改词表身份列；已导入该列定义的完整镜像无需再次重建词表。
+            boolean exactWordTenantMirror = rowExists(connection,
+                "SELECT 1 FROM information_schema.columns WHERE table_schema=DATABASE() "
+                    + "AND table_name='cw_sensitive_word' AND column_name='tenant_id' "
+                    + "AND data_type='varchar' AND character_maximum_length=64 "
+                    + "AND collation_name='utf8mb4_bin' AND is_nullable='NO' AND column_default='default'");
+            return exactWordTenantMirror ? SENSITIVE_WORD_EXACT_TENANT_MIRROR_VERSION
+                : KNOWLEDGE_PUBLICATION_MIRROR_VERSION;
         }
     }
 

@@ -55,7 +55,7 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
-    private static final int CURRENT_SCHEMA_VERSION = 29;
+    private static final int CURRENT_SCHEMA_VERSION = 30;
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
     private static final int CURRENT_BUSINESS_TABLE_COUNT = 52;
@@ -81,6 +81,31 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         "cw_dict_item", "cw_tenant_quota", "cw_long_term_memory", "cw_harness_memory", "cw_skill",
         "cw_eval_case", "cw_knowledge_gap", "cw_subject_quota_level");
 
+    @Test
+    void v30PreservesExistingWordWhileSeparatingCaseDistinctTenantKeys() throws Exception {
+        assumeTrue(reachable(), "MySQL 不可达，跳过词表身份迁移测试");
+        String database = "cw_word_v30_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        assumeTrue(canCreateDatabases(database), "MySQL 测试账号无建库权限，跳过");
+        try (HikariDataSource dataSource = dataSource(database, "word-tenant-upgrade-test")) {
+            migrateTo(dataSource, "29");
+            execute(dataSource, "INSERT INTO cw_sensitive_word(tenant_id,word,category,action,enabled) "
+                + "VALUES('TENANT-WORD','历史词条','CUSTOM','REVIEW',0)");
+            migrate(dataSource, database);
+            assertEquals("utf8mb4_bin", queryString(dataSource,
+                "SELECT collation_name FROM information_schema.columns WHERE table_schema=DATABASE() "
+                    + "AND table_name='cw_sensitive_word' AND column_name='tenant_id'"));
+            assertEquals("REVIEW:0", queryString(dataSource,
+                "SELECT CONCAT(action,':',enabled) FROM cw_sensitive_word WHERE tenant_id='TENANT-WORD' AND word='历史词条'"));
+            execute(dataSource, "INSERT INTO cw_sensitive_word(tenant_id,word,category,action,enabled) "
+                + "VALUES('tenant-word','历史词条','CUSTOM','BLOCK',1)");
+            assertEquals(2, queryInt(dataSource, "SELECT COUNT(*) FROM cw_sensitive_word WHERE word='历史词条'"));
+            migrate(dataSource, database);
+            assertEquals(1, countHistoryVersion(dataSource, "30"));
+        } finally {
+            dropDatabase(database);
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"none", "cw_knowledge_publication", "cw_knowledge_publication_lock"})
     void v29AdoptsCompleteMirrorOrFinishesAnInterruptedTwoTableImport(String missingTable) throws Exception {
@@ -96,11 +121,11 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             if (!"none".equals(missingTable)) execute(dataSource, "DROP TABLE " + missingTable);
             assertDoesNotThrow(() -> migrate(dataSource, database));
             assertDoesNotThrow(() -> migrate(dataSource, database));
-            assertEquals("29", latestHistoryVersion(dataSource));
+            assertEquals(String.valueOf(CURRENT_SCHEMA_VERSION), latestHistoryVersion(dataSource));
             assertEquals("保留正文", queryString(dataSource, "SELECT content FROM cw_knowledge WHERE id=777"));
             assertEquals("utf8mb4_bin", queryString(dataSource, "SELECT collation_name FROM information_schema.columns "
                 + "WHERE table_schema=DATABASE() AND table_name='cw_knowledge_publication' AND column_name='tenant_id'"));
-            assertEquals("none".equals(missingTable) ? 1 : 2, countHistoryRows(dataSource));
+            assertEquals(("none".equals(missingTable) ? 1 : 2) + CURRENT_SCHEMA_VERSION - 29, countHistoryRows(dataSource));
         } finally { dropDatabase(database); }
     }
 
@@ -817,8 +842,9 @@ class CustomerWorkSchemaMigrationIntegrationTest {
                 + "FROM information_schema.columns WHERE table_schema = DATABASE() "
                 + "AND table_name LIKE 'cw\\_%' AND collation_name IS NOT NULL "
                 + "AND collation_name <> ?");
-        // 发布身份是区分大小写的独立键，存储按二进制精确定位；其它业务关联列仍要求统一排序规则。
-        Set<String> publicationIdentifiers = Set.of(
+        // 身份键按二进制精确定位；其它业务关联列仍要求统一排序规则。
+        Set<String> exactIdentifiers = Set.of(
+            "cw_sensitive_word.tenant_id(列)=utf8mb4_bin",
             "cw_knowledge_publication.tenant_id(列)=utf8mb4_bin",
             "cw_knowledge_publication_lock.tenant_id(列)=utf8mb4_bin",
             "cw_knowledge_publication.task_id(列)=ascii_bin",
@@ -827,8 +853,8 @@ class CustomerWorkSchemaMigrationIntegrationTest {
             "cw_knowledge_publication.evaluation_run_id(列)=ascii_bin",
             "cw_knowledge_publication.question_hash(列)=ascii_bin",
             "cw_knowledge_publication.command_fingerprint(列)=ascii_bin");
-        assertTrue(offenders.containsAll(publicationIdentifiers), "发布身份列必须全部保留精确比较规则");
-        offenders.removeAll(publicationIdentifiers);
+        assertTrue(offenders.containsAll(exactIdentifiers), "身份列必须全部保留精确比较规则");
+        offenders.removeAll(exactIdentifiers);
         assertTrue(offenders.isEmpty(), scope + "后仍有对象不是 " + TARGET_COLLATION
             + "，跨表比较字符串列时会炸 1267：" + offenders);
     }

@@ -4,6 +4,7 @@ import com.richard.fyoung.customerwork.capability.eval.entity.EvalCaseDO;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalCaseMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,16 @@ public class MybatisEvalCaseStore implements EvalCaseStore {
 
     public MybatisEvalCaseStore(EvalCaseMapper mapper) {
         this.mapper = mapper;
+    }
+
+    @Override
+    public void create(PersistedEvalCase evalCase) {
+        try {
+            // 新采纳必须由唯一键原子判重，不能使用编辑/导入所需的 upsert。
+            mapper.insert(toDO(evalCase));
+        } catch (DuplicateKeyException conflict) {
+            throw new IllegalStateException("eval case id already exists: " + evalCase.caseId(), conflict);
+        }
     }
 
     @Override

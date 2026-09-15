@@ -21,6 +21,14 @@ public interface BadcaseStore {
     /** 按 ID 查找。 */
     Optional<Badcase> find(String id);
 
+    /**
+     * 为状态变更读取记录；JDBC 实现须在调用方事务内持有行锁直至回流目标与状态一起提交。
+     * 默认委托普通读取，保留现有内存实现及外部 SPI 实现的兼容性。
+     */
+    default Optional<Badcase> findForUpdate(String id) {
+        return find(id);
+    }
+
     /** 按条件查询，时间倒序（最新在前）。 */
     List<Badcase> query(BadcaseQuery query);
 

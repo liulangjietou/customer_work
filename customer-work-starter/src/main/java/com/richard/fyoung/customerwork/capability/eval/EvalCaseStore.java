@@ -19,6 +19,17 @@ public interface EvalCaseStore {
     void save(PersistedEvalCase evalCase);
 
     /**
+     * 仅创建新用例，编号冲突时拒绝，不能覆盖其它 Badcase 的采纳结果。
+     * 默认实现兼容现有 SPI；支持并发的存储须以原子写入覆盖此实现。
+     */
+    default void create(PersistedEvalCase evalCase) {
+        if (find(evalCase.evalType(), evalCase.caseId()).isPresent()) {
+            throw new IllegalStateException("eval case id already exists: " + evalCase.caseId());
+        }
+        save(evalCase);
+    }
+
+    /**
      * 批量保存（新建或覆盖）用例。
      *
      * <p>默认实现保持 SPI 向后兼容；JDBC 实现会覆盖为单条批量 SQL，确保导入不会只成功一半。</p>
