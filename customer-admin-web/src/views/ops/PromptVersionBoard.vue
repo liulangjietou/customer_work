@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listPromptVersions, type PromptVersion } from '@/api/ops'
 import { diffPromptLines } from './promptLineDiff'
+import { usePagedList } from '@/composables/usePagedList'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 
 // 提示词版本看板：版本历史 + 两版全文比对。
 //
@@ -10,22 +12,18 @@ import { diffPromptLines } from './promptLineDiff'
 // 灰度未覆盖、推送未到达、有人直接改了 Nacos 没走发布流程，都会让两者不一致——
 // 而能跟评测指标对上号的只有后者。
 
-const loading = ref(false)
-const list = ref<PromptVersion[]>([])
+const { loading, loadError, list, loadList } = usePagedList<PromptVersion, { pageSize: number }>({
+  initQuery: () => ({ pageSize: 30 }),
+  page: async ({ pageSize }) => {
+    const versions = await listPromptVersions(pageSize)
+    return { list: versions, total: versions.length }
+  },
+})
 const selected = ref<PromptVersion[]>([])
 const latestVersion = computed(() => list.value.reduce<PromptVersion | null>(
   (latest, item) => (!latest || item.capturedAtMs > latest.capturedAtMs ? item : latest),
   null,
 ))
-
-async function loadList() {
-  loading.value = true
-  try {
-    list.value = await listPromptVersions()
-  } finally {
-    loading.value = false
-  }
-}
 
 function formatTime(ms: number): string {
   return ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '-'
@@ -40,6 +38,14 @@ function handleSelectionChange(rows: PromptVersion[]) {
 const diffVisible = ref(false)
 const leftVersion = ref<PromptVersion | null>(null)
 const rightVersion = ref<PromptVersion | null>(null)
+
+// 新结果或身份变化后，不能继续拿旧快照当作当前选择进行比较。
+watch(list, () => {
+  selected.value = []
+  diffVisible.value = false
+  leftVersion.value = null
+  rightVersion.value = null
+}, { flush: 'sync' })
 
 function openDiff() {
   if (selected.value.length !== 2) {
@@ -68,6 +74,7 @@ onMounted(loadList)
 
 <template>
   <div class="prompt-version-board">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-alert
       type="info"
       show-icon
@@ -85,7 +92,7 @@ onMounted(loadList)
       </div>
     </el-card>
 
-    <div class="summary-row" v-loading="loading">
+    <div v-if="!loadError || list.length > 0" class="summary-row" v-loading="loading">
       <div class="stat">
         <strong>{{ list.length }}</strong>
         <span>运行时版本</span>
@@ -110,6 +117,7 @@ onMounted(loadList)
         <span>指纹对应评测报告中的 promptFingerprint，可直接定位指标变化前后的实际内容</span>
       </div>
       <el-table
+        v-if="list.length > 0 || loading"
         v-loading="loading"
         :data="list"
         style="width: 100%"
@@ -131,7 +139,7 @@ onMounted(loadList)
       </el-table>
 
       <el-empty
-        v-if="!loading && list.length === 0"
+        v-if="!loading && !loadError && list.length === 0"
         description="暂无版本记录（需开启 prompt-version.store-mode=jdbc，且至少跑过一次评测）"
       />
     </el-card>

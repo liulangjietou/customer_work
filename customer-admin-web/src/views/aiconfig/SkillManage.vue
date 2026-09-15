@@ -138,7 +138,7 @@ onMounted(loadList)
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的 Skill">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的 Skill">
         <el-table-column prop="skillName" label="名称" class-name="primary-column" />
         <el-table-column prop="skillCode" label="编码" width="160" />
         <el-table-column label="存储目标" width="200">
@@ -187,6 +187,7 @@ onMounted(loadList)
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"
