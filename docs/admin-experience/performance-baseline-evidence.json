@@ -1,0 +1,938 @@
+{
+  "status": "LOCAL_REGRESSION_VISUAL_AND_TWO_PERFORMANCE_RUNS_PASSED_PENDING_READY_PR_CI",
+  "checkedAt": "2026-09-16T02:52:53.954734+08:00",
+  "baseCommit": "6dd4fa09af0cf454392c11fa3123ef4a5b241df8",
+  "hardware": "hw.model: MacBookPro18,2\nhw.memsize: 68719476736\nhw.physicalcpu: 10\nhw.logicalcpu: 10\n",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6\nBuildVersion:\t\t25G72\n",
+  "javaVersion": "openjdk version \"17.0.16\" 2025-07-15 LTS\nOpenJDK Runtime Environment Corretto-17.0.16.8.1 (build 17.0.16+8-LTS)\nOpenJDK 64-Bit Server VM Corretto-17.0.16.8.1 (build 17.0.16+8-LTS, mixed mode, sharing)\n",
+  "nodeVersion": "v23.11.0",
+  "browserConditions": {
+    "mode": "measure",
+    "productionBuild": true,
+    "browser": "153.0.8010.37",
+    "warmups": 10,
+    "samples": 50,
+    "ownRows": 10000,
+    "otherRows": 500,
+    "messagesPerConversation": 200,
+    "pageSize": 20,
+    "messagePageSize": 30,
+    "proxy": "local Node HTTP → Admin MVC → signed HTTP → customer WebFlux → production MyBatis",
+    "excluded": [
+      "login",
+      "Sa-Token permission interceptor",
+      "websocket delivery",
+      "model inference",
+      "assist summary service"
+    ]
+  },
+  "productionAssetsSha256": "18ab80c6232574933fb97af23e0c4bb7ddad7718dc98997cc1ed81f5e055ee4a",
+  "sourceHashes": {
+    "scripts/performance/check-budget.py": "ba54c738a48eeeb1c1cba42a265c6219df73702aa47b8f5acc677edee3f49a50",
+    "scripts/performance/prepare-classpath.py": "d15967d853c7e6482493c510e6d299deb3feb47626babf2246af712065661831",
+    "scripts/performance/browser-baseline.mjs": "dfafac419dd52eb3a4d6e6b7d73116ba19d695a418674f96ef855c8d3e772aae",
+    "scripts/performance/TicketPerformanceDataset.java": "3cec6a6baba1b8b666d9fe9a91e9276a9933ce4726f8f3475a1a20ec928a6e2b",
+    "scripts/performance/CustomerServicePerformanceServer.java": "d4d99bf39934159a708d4d23b732d56e56c8ae0a9efda795d65fdc0bdaab8cbb",
+    "scripts/performance/README.md": "0545c45bd5d67ff669359d3040c4cfb16148a7ef97568880ea5245e5e37293a7",
+    "scripts/performance/CustomerTicketQueryBaseline.java": "f0f19bc7d05062b9861b2d1f049a40f6460a632da01e1b895b14f53459b44153",
+    "scripts/performance/summarize-baseline.py": "a28be616f5ee328fa7beaebc3ac3acd713616e459aa5b68b9f28a5bda4851e45",
+    "scripts/performance/budgets.json": "a21f725d63325d127ea4580da3c2eec87d3092f34ef07df37561f745ef3cb428",
+    "scripts/performance/run-baseline.py": "08c503d339c8c353a3abcade30edd97b27c59dd1578f2b8b3850c959877263f0",
+    "customer-admin-web/src/views/ticket/UserTicketManage.vue": "722babeb609349f4bd648db909c490bacda6c80c491d76d0bb10d5d68d2bee0c"
+  },
+  "rawArchive": {
+    "file": "customer-performance-two-formal-runs.tar.gz",
+    "sha256": "9b5a91b336a957a3df9eaf0fe2c18555173def28c36fac0381de08475026b87b"
+  },
+  "runs": {
+    "first": {
+      "summary": {
+        "mode": "MEASURED_NOT_BUDGET_REVIEWED",
+        "browser": [
+          {
+            "scenario": "conversation-switch-200",
+            "viewportWidth": 390,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 81.09999990463257,
+              "p95": 82.5,
+              "max": 83,
+              "mean": 81.1239999628067
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 48.199999928474426,
+              "p95": 50.09999990463257,
+              "max": 53,
+              "mean": 48.28199997901916
+            },
+            "requestMs": {
+              "n": 100,
+              "p50": 8.300000071525574,
+              "p95": 9.300000071525574,
+              "max": 15.700000047683716,
+              "mean": 8.560999995470047
+            }
+          },
+          {
+            "scenario": "conversation-switch-200",
+            "viewportWidth": 1680,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 79.60000002384186,
+              "p95": 81.69999992847443,
+              "max": 86.10000002384186,
+              "mean": 79.80200000047684
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 48,
+              "p95": 49.5,
+              "max": 50.10000002384186,
+              "mean": 48.04199999332428
+            },
+            "requestMs": {
+              "n": 150,
+              "p50": 8.800000071525574,
+              "p95": 10.199999928474426,
+              "max": 12.200000047683716,
+              "mean": 8.927999997138977
+            }
+          },
+          {
+            "scenario": "queue-assignee-filter",
+            "viewportWidth": 390,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 64.20000004768372,
+              "p95": 66,
+              "max": 109.60000002384186,
+              "mean": 64.61600000619889
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 32.799999952316284,
+              "p95": 34.5,
+              "max": 78.40000009536743,
+              "mean": 33.32400000810623
+            },
+            "requestMs": {
+              "n": 50,
+              "p50": 11.5,
+              "p95": 19.299999952316284,
+              "max": 60.59999990463257,
+              "mean": 15.636000006198882
+            }
+          },
+          {
+            "scenario": "queue-assignee-filter",
+            "viewportWidth": 1680,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 64.19999992847443,
+              "p95": 64.40000009536743,
+              "max": 80.79999995231628,
+              "mean": 64.39399996519089
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 32.5,
+              "p95": 32.800000071525574,
+              "max": 49.10000002384186,
+              "mean": 32.734000005722045
+            },
+            "requestMs": {
+              "n": 50,
+              "p50": 13.399999976158142,
+              "p95": 21.100000023841858,
+              "max": 30.799999952316284,
+              "mean": 16.51200001001358
+            }
+          },
+          {
+            "scenario": "queue-page",
+            "viewportWidth": 390,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 64.10000002384186,
+              "p95": 65.29999995231628,
+              "max": 66.09999990463257,
+              "mean": 63.89799998760223
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 32.5,
+              "p95": 33.299999952316284,
+              "max": 34.09999990463257,
+              "mean": 32.22399998664856
+            },
+            "requestMs": {
+              "n": 50,
+              "p50": 18.799999952316284,
+              "p95": 22.100000023841858,
+              "max": 24.799999952316284,
+              "mean": 19.137999987602235
+            }
+          },
+          {
+            "scenario": "queue-page",
+            "viewportWidth": 1680,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 64.10000002384186,
+              "p95": 64.40000009536743,
+              "max": 80.60000002384186,
+              "mean": 64.41600002288818
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 32.5,
+              "p95": 32.700000047683716,
+              "max": 49,
+              "mean": 32.795999994277956
+            },
+            "requestMs": {
+              "n": 50,
+              "p50": 21,
+              "p95": 24.40000009536743,
+              "max": 25.299999952316284,
+              "mean": 21.322000005245208
+            }
+          },
+          {
+            "scenario": "scroll-200",
+            "viewportWidth": 390,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 1012.7000000476837,
+              "p95": 1015.3999999761581,
+              "max": 1016.1000000238419,
+              "mean": 1012.6820000052452
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "frameMs": {
+              "n": 3000,
+              "p50": 16.69999999999709,
+              "p95": 16.79999999998836,
+              "max": 16.80000000000291,
+              "mean": 16.66561600000001
+            },
+            "framesOver50Ms": 0,
+            "framesOver50Ratio": 0.0
+          },
+          {
+            "scenario": "scroll-200",
+            "viewportWidth": 1680,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 1013,
+              "p95": 1016.8999999761581,
+              "max": 1018.6000000238419,
+              "mean": 1013.0020000052452
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "frameMs": {
+              "n": 3000,
+              "p50": 16.69999999999709,
+              "p95": 16.70000000001164,
+              "max": 16.80000000000291,
+              "mean": 16.665592666666626
+            },
+            "framesOver50Ms": 0,
+            "framesOver50Ratio": 0.0
+          }
+        ],
+        "queries": [
+          {
+            "scenario": "assignee-filter",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 6.147042,
+              "p95": 6.43625,
+              "max": 6.674417,
+              "mean": 6.133799140000001
+            }
+          },
+          {
+            "scenario": "empty-filter",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 1.846,
+              "p95": 2.138208,
+              "max": 2.570834,
+              "mean": 1.8609425400000001
+            }
+          },
+          {
+            "scenario": "first-page",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 14.754625,
+              "p95": 15.895166,
+              "max": 17.620917,
+              "mean": 14.961190000000002
+            }
+          },
+          {
+            "scenario": "last-page",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 17.6055,
+              "p95": 21.0115,
+              "max": 23.476959,
+              "mean": 17.894647519999992
+            }
+          },
+          {
+            "scenario": "status-filter",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 8.188209,
+              "p95": 8.920708,
+              "max": 12.875583,
+              "mean": 8.31940418
+            }
+          }
+        ],
+        "failedSamples": 0,
+        "budgetPassed": null
+      },
+      "budgetVerification": {
+        "passed": true,
+        "budgetSha256": "a21f725d63325d127ea4580da3c2eec87d3092f34ef07df37561f745ef3cb428",
+        "summarySha256": "9fe181a07f8ae714f9c4a258530a88e2a807c0bbba24e50d5a50d418a1af62c3",
+        "referenceRun": "customer-performance-measure-20260916-first",
+        "checks": [
+          {
+            "name": "conversation-switch-200:390:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "conversation-switch-200:390:p95-ms",
+            "actual": 82.5,
+            "limit": 200,
+            "passed": true
+          },
+          {
+            "name": "conversation-switch-200:1680:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "conversation-switch-200:1680:p95-ms",
+            "actual": 81.69999992847443,
+            "limit": 200,
+            "passed": true
+          },
+          {
+            "name": "queue-assignee-filter:390:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "queue-assignee-filter:390:p95-ms",
+            "actual": 66,
+            "limit": 150,
+            "passed": true
+          },
+          {
+            "name": "queue-assignee-filter:1680:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "queue-assignee-filter:1680:p95-ms",
+            "actual": 64.40000009536743,
+            "limit": 150,
+            "passed": true
+          },
+          {
+            "name": "queue-page:390:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "queue-page:390:p95-ms",
+            "actual": 65.29999995231628,
+            "limit": 150,
+            "passed": true
+          },
+          {
+            "name": "queue-page:1680:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "queue-page:1680:p95-ms",
+            "actual": 64.40000009536743,
+            "limit": 150,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:390:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:390:frame-p95-ms",
+            "actual": 16.79999999998836,
+            "limit": 20,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:390:frames-over-50-ratio",
+            "actual": 0.0,
+            "limit": 0.01,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:1680:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:1680:frame-p95-ms",
+            "actual": 16.70000000001164,
+            "limit": 20,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:1680:frames-over-50-ratio",
+            "actual": 0.0,
+            "limit": 0.01,
+            "passed": true
+          },
+          {
+            "name": "sql:assignee-filter:p95-ms",
+            "actual": 6.43625,
+            "limit": 50,
+            "passed": true
+          },
+          {
+            "name": "sql:empty-filter:p95-ms",
+            "actual": 2.138208,
+            "limit": 50,
+            "passed": true
+          },
+          {
+            "name": "sql:first-page:p95-ms",
+            "actual": 15.895166,
+            "limit": 50,
+            "passed": true
+          },
+          {
+            "name": "sql:last-page:p95-ms",
+            "actual": 21.0115,
+            "limit": 50,
+            "passed": true
+          },
+          {
+            "name": "sql:status-filter:p95-ms",
+            "actual": 8.920708,
+            "limit": 50,
+            "passed": true
+          }
+        ]
+      },
+      "ownedDatabasesCleaned": true,
+      "browserSamples": 400,
+      "querySamples": 250,
+      "loadAverageAtStart": [
+        7.4326171875,
+        8.0029296875,
+        8.70458984375
+      ]
+    },
+    "confirmation": {
+      "summary": {
+        "mode": "MEASURED_NOT_BUDGET_REVIEWED",
+        "browser": [
+          {
+            "scenario": "conversation-switch-200",
+            "viewportWidth": 390,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 81.19999992847443,
+              "p95": 81.39999997615814,
+              "max": 81.39999997615814,
+              "mean": 81.19199998617172
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 48.299999952316284,
+              "p95": 49,
+              "max": 52.89999997615814,
+              "mean": 48.4459999704361
+            },
+            "requestMs": {
+              "n": 100,
+              "p50": 8.399999976158142,
+              "p95": 9.200000047683716,
+              "max": 16.300000071525574,
+              "mean": 8.594000004529953
+            }
+          },
+          {
+            "scenario": "conversation-switch-200",
+            "viewportWidth": 1680,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 79.90000009536743,
+              "p95": 83.59999990463257,
+              "max": 86.5,
+              "mean": 79.74600000619888
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 49.300000071525574,
+              "p95": 50.60000002384186,
+              "max": 51,
+              "mean": 49.045999994277956
+            },
+            "requestMs": {
+              "n": 150,
+              "p50": 9.100000023841858,
+              "p95": 11.100000023841858,
+              "max": 13,
+              "mean": 9.226666663487752
+            }
+          },
+          {
+            "scenario": "queue-assignee-filter",
+            "viewportWidth": 390,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 64.40000009536743,
+              "p95": 64.70000004768372,
+              "max": 64.80000007152557,
+              "mean": 64.39000003576278
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 32.800000071525574,
+              "p95": 33.200000047683716,
+              "max": 35.799999952316284,
+              "mean": 32.890000014305116
+            },
+            "requestMs": {
+              "n": 50,
+              "p50": 13,
+              "p95": 19.600000023841858,
+              "max": 22.799999952316284,
+              "mean": 15.082000000476837
+            }
+          },
+          {
+            "scenario": "queue-assignee-filter",
+            "viewportWidth": 1680,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 64.20000004768372,
+              "p95": 66,
+              "max": 66.10000002384186,
+              "mean": 63.84200000286102
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 32.39999997615814,
+              "p95": 34.10000002384186,
+              "max": 34.299999952316284,
+              "mean": 32.17800000190735
+            },
+            "requestMs": {
+              "n": 50,
+              "p50": 15.5,
+              "p95": 22,
+              "max": 26.700000047683716,
+              "mean": 17.089999992847442
+            }
+          },
+          {
+            "scenario": "queue-page",
+            "viewportWidth": 390,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 64.10000002384186,
+              "p95": 64.30000007152557,
+              "max": 64.79999995231628,
+              "mean": 64.1560000371933
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 32.700000047683716,
+              "p95": 32.90000009536743,
+              "max": 33.60000002384186,
+              "mean": 32.700000028610226
+            },
+            "requestMs": {
+              "n": 50,
+              "p50": 19.100000023841858,
+              "p95": 20.300000071525574,
+              "max": 20.699999928474426,
+              "mean": 19.150000009536743
+            }
+          },
+          {
+            "scenario": "queue-page",
+            "viewportWidth": 1680,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 64.20000004768372,
+              "p95": 80.60000002384186,
+              "max": 163.80000007152557,
+              "mean": 66.94000002145768
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "domMs": {
+              "n": 50,
+              "p50": 32.60000002384186,
+              "p95": 49.10000002384186,
+              "max": 132.30000007152557,
+              "mean": 35.39200001716614
+            },
+            "requestMs": {
+              "n": 50,
+              "p50": 21.399999976158142,
+              "p95": 29.100000023841858,
+              "max": 122,
+              "mean": 23.957999999523164
+            }
+          },
+          {
+            "scenario": "scroll-200",
+            "viewportWidth": 390,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 1013.2999999523163,
+              "p95": 1016.5,
+              "max": 1016.8999999761581,
+              "mean": 1013.3840000081062
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "frameMs": {
+              "n": 3000,
+              "p50": 16.69999999999709,
+              "p95": 16.70000000001164,
+              "max": 16.80000000000291,
+              "mean": 16.66549199999999
+            },
+            "framesOver50Ms": 0,
+            "framesOver50Ratio": 0.0
+          },
+          {
+            "scenario": "scroll-200",
+            "viewportWidth": 1680,
+            "elapsedMs": {
+              "n": 50,
+              "p50": 1013.5,
+              "p95": 1017,
+              "max": 1018.5,
+              "mean": 1013.2080000019073
+            },
+            "longTaskCount": 0,
+            "maxLongTaskMs": 0,
+            "frameMs": {
+              "n": 3000,
+              "p50": 16.69999999999709,
+              "p95": 16.70000000001164,
+              "max": 16.80000000000291,
+              "mean": 16.665627333333294
+            },
+            "framesOver50Ms": 0,
+            "framesOver50Ratio": 0.0
+          }
+        ],
+        "queries": [
+          {
+            "scenario": "assignee-filter",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 5.928458,
+              "p95": 6.590583,
+              "max": 11.408875,
+              "mean": 6.052451620000003
+            }
+          },
+          {
+            "scenario": "empty-filter",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 1.837041,
+              "p95": 2.079209,
+              "max": 3.033458,
+              "mean": 1.8233558399999998
+            }
+          },
+          {
+            "scenario": "first-page",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 14.899166,
+              "p95": 16.075,
+              "max": 16.332833,
+              "mean": 14.95252488
+            }
+          },
+          {
+            "scenario": "last-page",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 17.334041,
+              "p95": 18.473958,
+              "max": 19.318084,
+              "mean": 17.4536916
+            }
+          },
+          {
+            "scenario": "status-filter",
+            "elapsedMs": {
+              "n": 50,
+              "p50": 8.268666,
+              "p95": 10.025542,
+              "max": 12.840417,
+              "mean": 8.490604939999999
+            }
+          }
+        ],
+        "failedSamples": 0,
+        "budgetPassed": null
+      },
+      "budgetVerification": {
+        "passed": true,
+        "budgetSha256": "a21f725d63325d127ea4580da3c2eec87d3092f34ef07df37561f745ef3cb428",
+        "summarySha256": "b2177ed4c66dbd5be6d204d19e033d2639b49f8c065e60df30d0df3f5775a95a",
+        "referenceRun": "customer-performance-measure-20260916-first",
+        "checks": [
+          {
+            "name": "conversation-switch-200:390:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "conversation-switch-200:390:p95-ms",
+            "actual": 81.39999997615814,
+            "limit": 200,
+            "passed": true
+          },
+          {
+            "name": "conversation-switch-200:1680:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "conversation-switch-200:1680:p95-ms",
+            "actual": 83.59999990463257,
+            "limit": 200,
+            "passed": true
+          },
+          {
+            "name": "queue-assignee-filter:390:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "queue-assignee-filter:390:p95-ms",
+            "actual": 64.70000004768372,
+            "limit": 150,
+            "passed": true
+          },
+          {
+            "name": "queue-assignee-filter:1680:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "queue-assignee-filter:1680:p95-ms",
+            "actual": 66,
+            "limit": 150,
+            "passed": true
+          },
+          {
+            "name": "queue-page:390:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "queue-page:390:p95-ms",
+            "actual": 64.30000007152557,
+            "limit": 150,
+            "passed": true
+          },
+          {
+            "name": "queue-page:1680:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "queue-page:1680:p95-ms",
+            "actual": 80.60000002384186,
+            "limit": 150,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:390:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:390:frame-p95-ms",
+            "actual": 16.70000000001164,
+            "limit": 20,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:390:frames-over-50-ratio",
+            "actual": 0.0,
+            "limit": 0.01,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:1680:max-long-task-ms",
+            "actual": 0,
+            "limit": 100,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:1680:frame-p95-ms",
+            "actual": 16.70000000001164,
+            "limit": 20,
+            "passed": true
+          },
+          {
+            "name": "scroll-200:1680:frames-over-50-ratio",
+            "actual": 0.0,
+            "limit": 0.01,
+            "passed": true
+          },
+          {
+            "name": "sql:assignee-filter:p95-ms",
+            "actual": 6.590583,
+            "limit": 50,
+            "passed": true
+          },
+          {
+            "name": "sql:empty-filter:p95-ms",
+            "actual": 2.079209,
+            "limit": 50,
+            "passed": true
+          },
+          {
+            "name": "sql:first-page:p95-ms",
+            "actual": 16.075,
+            "limit": 50,
+            "passed": true
+          },
+          {
+            "name": "sql:last-page:p95-ms",
+            "actual": 18.473958,
+            "limit": 50,
+            "passed": true
+          },
+          {
+            "name": "sql:status-filter:p95-ms",
+            "actual": 10.025542,
+            "limit": 50,
+            "passed": true
+          }
+        ]
+      },
+      "ownedDatabasesCleaned": true,
+      "browserSamples": 400,
+      "querySamples": 250,
+      "loadAverageAtStart": [
+        9.77978515625,
+        8.134765625,
+        8.46240234375
+      ]
+    }
+  },
+  "localQuality": {
+    "steps": {
+      "admin-unit": 0,
+      "admin-build": 0,
+      "related-browser": 0,
+      "admin-browser": 0,
+      "performance-first": 0,
+      "performance-confirmation": 0,
+      "budget-first": 0,
+      "budget-confirmation": 0
+    },
+    "adminUnit": 341,
+    "relatedBrowser": 19,
+    "adminBrowser": 632,
+    "frozenFiles": 13,
+    "sameSourceBackendAndH5": {
+      "sourceCommit": "6dd4fa09af0cf454392c11fa3123ef4a5b241df8",
+      "backend": {
+        "tests": 4804,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 7
+      },
+      "h5Unit": 108,
+      "h5Browser": 23,
+      "buildPassed": true
+    },
+    "performance": {
+      "runs": 2,
+      "browserSamples": 800,
+      "querySamples": 500,
+      "budgetChecksPerRun": 23
+    },
+    "browserArchive": {
+      "file": "customer-performance-final-browser-reports.tar.gz",
+      "sha256": "55f7f8119e19214e10f6a4eb097faad4a0ccc1bcf06703176f9b6d18dfbc2dd2"
+    },
+    "remoteCi": "PENDING",
+    "checkedAt": "2026-09-16T02:52:53.954734+08:00"
+  },
+  "finalImageHashes": {
+    "desk-390.png": "075a3f5fd25b75656a970e3d60b3154b545c0605298256d3e1025c998d6254b3",
+    "desk-sources-1680.png": "796a52195d0c06b1494a9bbab160f27dbc381972d79b5d6d91e53e230f07e47b",
+    "desk-1680.png": "42d5fea2b754ea21671b169f56d162651c5d98cc892ee7b740fdadac9be2785b",
+    "desk-sources-390.png": "80b54582efa191b11931bea076ebe220b3c7534c19385fcf8a91738145ec9763",
+    "desk-pagination-ocean-390.png": "177528ee2cb9eb7e811dcd55dc018063b8b9c69b1552b250a5b27465d38e8985"
+  }
+}

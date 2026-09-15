@@ -31,11 +31,11 @@ export const STATUS_LABELS: Record<TicketStatus, string> = {
   CLOSED: '已关闭',
 }
 
-export const STATUS_TAG_TYPE: Record<TicketStatus, '' | 'success' | 'warning' | 'danger' | 'info'> =
+export const STATUS_TAG_TYPE: Record<TicketStatus, 'primary' | 'success' | 'warning' | 'danger' | 'info'> =
   {
     AI_SERVING: 'info',
     WAITING_AGENT: 'warning',
-    PROCESSING: '',
+    PROCESSING: 'primary',
     ON_HOLD: 'warning',
     WAITING_CONFIRM: 'warning',
     RESOLVED: 'success',
