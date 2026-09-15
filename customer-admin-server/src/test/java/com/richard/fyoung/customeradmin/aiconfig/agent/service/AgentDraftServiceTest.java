@@ -11,6 +11,9 @@ import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import jakarta.validation.Validation;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.mockito.ArgumentCaptor;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -21,6 +24,12 @@ class AgentDraftServiceTest {
     private final AgentService agents = mock(AgentService.class);
     private final AgentDraftService service = new AgentDraftService(mapper, agents, new ObjectMapper());
     private static final String ID = "ba9c14f0-64e3-43e4-928f-ef3d74db4aa1";
+
+    @BeforeEach
+    void tenant() { TenantContext.set("tenant-a"); }
+
+    @AfterEach
+    void clearTenant() { TenantContext.clear(); }
 
     @Test
     void incompleteDraftShouldRoundTripWithoutRuntimeWritesOrModelCalls() {

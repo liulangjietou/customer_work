@@ -11,6 +11,8 @@ import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgentDraft;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentDraftMapper;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
+import com.richard.fyoung.customeradmin.tenant.TenantSqlConditions;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
@@ -39,9 +41,9 @@ public class AgentDraftService {
 
     /** 返回当前用户的草稿概要，不向同租户其他管理员共享个人提示词。 */
     public List<AgentDraftVO> list(long ownerUserId) {
-        return mapper.selectList(new QueryWrapper<AiAgentDraft>()
+        return mapper.selectList(ownedBy(ownerUserId)
                 .select("id", "agent_id", "base_revision", "title", "version", "updated_at_ms")
-                .eq("owner_user_id", ownerUserId).orderByDesc("updated_at_ms"))
+                .orderByDesc("updated_at_ms"))
             .stream().map(draft -> view(draft, false)).toList();
     }
 
@@ -74,6 +76,7 @@ public class AgentDraftService {
         if (request.expectedVersion() == 0) {
             AiAgentDraft draft = new AiAgentDraft();
             draft.setId(id);
+            draft.setTenantId(TenantContext.require());
             draft.setOwnerUserId(ownerUserId);
             draft.setAgentId(request.agentId());
             draft.setBaseRevision(request.baseRevision());
@@ -94,6 +97,7 @@ public class AgentDraftService {
             throw new BizException(ResultCode.CONFIG_EDIT_CONFLICT, "草稿关联的智能体或原配置版本已变化");
         }
         int changed = mapper.update(null, new UpdateWrapper<AiAgentDraft>()
+            .apply(TenantSqlConditions.EXACT_TENANT, TenantContext.require())
             .eq("id", id).eq("owner_user_id", ownerUserId).eq("version", request.expectedVersion())
             .set("title", title).set("configuration", configuration).set("updated_at_ms", now)
             .setSql("version = version + 1"));
@@ -109,20 +113,26 @@ public class AgentDraftService {
 
     /** 删除也比较版本，避免保存完成后的清理删除另一个标签页刚写入的内容。 */
     public void delete(String id, long ownerUserId, long expectedVersion) {
-        int changed = mapper.delete(new QueryWrapper<AiAgentDraft>()
-            .eq("id", id).eq("owner_user_id", ownerUserId).eq("version", expectedVersion));
+        int changed = mapper.delete(ownedBy(ownerUserId)
+            .eq("id", id).eq("version", expectedVersion));
         if (changed != 1) {
             throw new BizException(ResultCode.CONFIG_EDIT_CONFLICT);
         }
     }
 
     private AiAgentDraft require(String id, long ownerUserId) {
-        AiAgentDraft draft = mapper.selectOne(new QueryWrapper<AiAgentDraft>()
-            .eq("id", id).eq("owner_user_id", ownerUserId));
+        AiAgentDraft draft = mapper.selectOne(ownedBy(ownerUserId).eq("id", id));
         if (draft == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND);
         }
         return draft;
+    }
+
+    /** 个人配置是敏感内容，精确租户条件不依赖数据库排序规则或全局兼容开关。 */
+    private QueryWrapper<AiAgentDraft> ownedBy(long ownerUserId) {
+        String tenant = TenantContext.require();
+        return new QueryWrapper<AiAgentDraft>().eq("tenant_id", tenant)
+            .apply(TenantSqlConditions.EXACT_TENANT, tenant).eq("owner_user_id", ownerUserId);
     }
 
     private String encode(AgentSaveRequest configuration) {

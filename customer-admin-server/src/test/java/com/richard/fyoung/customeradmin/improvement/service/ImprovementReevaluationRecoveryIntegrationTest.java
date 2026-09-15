@@ -9,6 +9,13 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.richard.fyoung.customerwork.safety.tenant.TenantInterceptors;
+import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSignalGateway;
+import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSourceFact;
+import com.richard.fyoung.customeradmin.improvement.mapper.ImprovementSignalMapper;
+import com.richard.fyoung.customeradmin.improvement.dto.ImprovementTriageRequest;
+import java.util.List;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
@@ -212,6 +219,44 @@ class ImprovementReevaluationRecoveryIntegrationTest {
         foreign.setTenantId("other"); mapper.insert(foreign);
         var own = seededRow(2, binding("TenantA")); own.setSourceKey(HASH); mapper.insert(own);
         assertEquals(2L, cases.findBySource(ImprovementSourceType.KNOWLEDGE_GAP, HASH).orElseThrow().id());
+    }
+
+    @Test
+    void sourceLookupAndTriageMustWorkWithProductionTenantSqlParser() throws Exception {
+        // 原恢复测试刻意不装插件，验证显式隔离；此处补真实生产插件，避免 SQL 只在裸 JDBC 下可用。
+        var factory = new MybatisSqlSessionFactoryBean();
+        factory.setDataSource(source);
+        factory.setMapperLocations(new ClassPathResource("mapper/AgentImprovementCaseMapper.xml"));
+        var configuration = new MybatisConfiguration(); configuration.setMapUnderscoreToCamelCase(true);
+        factory.setConfiguration(configuration);
+        var plugin = new MybatisPlusInterceptor();
+        plugin.addInnerInterceptor(TenantInterceptors.build("tenant_id", List.of()));
+        factory.setPlugins(plugin);
+        var filteredMapper = new SqlSessionTemplate(factory.getObject()).getMapper(AgentImprovementCaseMapper.class);
+        var signals = mock(ImprovementSignalMapper.class);
+        var provider = mock(ImprovementSignalGatewayProvider.class);
+        when(provider.get()).thenReturn(new ImprovementSignalGateway(signals, null));
+        var fact = new ImprovementSourceFact(); fact.setSignalHash(HASH); fact.setSignalCount(1L);
+        when(signals.findKnowledgeGap("TenantA", HASH)).thenReturn(fact);
+        var filtered = new ImprovementCaseService(filteredMapper, provider,
+            mock(BadcaseGatewayProvider.class), mock(AiAgentMapper.class), mock(CustomerWorkConfigPublisher.class),
+            mock(EvalAdminService.class), mock(EvalDatasetAdminService.class), bindings, evaluations,
+            mock(KnowledgeCandidatePublicationService.class), mock(RuntimePublishTaskService.class),
+            mock(RuntimePublishTaskMapper.class), new ImprovementAutomationProperties(), json, manager);
+        mapper.insert(seededRow(1, binding("TenantA")));
+        assertEquals(1L, filtered.findBySource(ImprovementSourceType.KNOWLEDGE_GAP, HASH).orElseThrow().id());
+        long deadline = System.currentTimeMillis() + 60000;
+        assertEquals("43", filtered.triage(ImprovementSourceType.KNOWLEDGE_GAP, HASH,
+            new ImprovementTriageRequest("43", deadline), "43").ownerId());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_agent_improvement_case WHERE id=1 AND owner_id='43'", Integer.class));
+        when(signals.findKnowledgeGap("TenantA", "NewSource")).thenReturn(fact);
+        var created = filtered.triage(ImprovementSourceType.KNOWLEDGE_GAP, "NewSource",
+            new ImprovementTriageRequest("43", deadline), "43");
+        assertEquals(created.id(), filtered.findBySource(ImprovementSourceType.KNOWLEDGE_GAP, "NewSource")
+            .orElseThrow().id());
+        assertTrue(filtered.findBySource(ImprovementSourceType.KNOWLEDGE_GAP, "newsource").isEmpty());
+        TenantContext.set("tenanta");
+        assertTrue(filtered.findBySource(ImprovementSourceType.KNOWLEDGE_GAP, HASH).isEmpty());
     }
 
     private void seed(long id, long deadlineAtMs) throws Exception {
