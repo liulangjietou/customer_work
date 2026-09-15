@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useQueryState } from '@/composables/useQueryState'
+import { useCrudForm } from '@/composables/useCrudForm'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 
 import { ElMessage } from 'element-plus'
@@ -35,18 +38,31 @@ const STATUS_LABELS: Record<SloEvaluation['status'], string> = {
   INSUFFICIENT_DATA: '样本不足',
 }
 
-const dialogVisible = ref(false)
 const evaluationVisible = ref(false)
 const eventVisible = ref(false)
 const evaluation = ref<SloEvaluation | null>(null)
-const alertEvents = ref<SloAlertEvent[]>([])
 const activeAlert = ref<SloAlert | null>(null)
 const evaluatingId = ref<number | null>(null)
-const acknowledgingId = ref<number | null>(null)
-const eventLoadingId = ref<number | null>(null)
 const alertStatus = ref<SloAlertStatus | undefined>(undefined)
-const saving = ref(false)
-let eventRequestId = 0
+const auth = useAuthStore()
+const evaluations = useRowMutation('slo:evaluate')
+const acknowledgements = useRowMutation('slo:ack')
+const { data: alertEvents, loading: eventsLoading, error: eventsError, loaded: eventsLoaded,
+  load: loadEvents, reset: resetEvents } = useQueryState<SloAlertEvent[]>(
+  () => activeAlert.value ? listSloAlertEvents(activeAlert.value.id) : Promise.resolve([]), () => [],
+)
+const eventLoadingId = computed(() => eventsLoading.value ? activeAlert.value?.id ?? null : null)
+watch(eventVisible, visible => {
+  if (!visible) { resetEvents(); activeAlert.value = null }
+}, { flush: 'sync' })
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  evaluationVisible.value = false
+  evaluation.value = null
+  evaluatingId.value = null
+  eventVisible.value = false
+  activeAlert.value = null
+}, { flush: 'sync' })
+
 
 const { data: snapshot, loading, error: loadError, loaded, load: loadPolicies } = useQueryState<{
   policies: SloPolicy[]; alerts: SloAlert[]; alertSummary: SloAlertSummary
@@ -69,6 +85,7 @@ const openAlertCount = computed(() => alertSummary.value.openCount)
 const acknowledgedAlertCount = computed(() => alertSummary.value.acknowledgedCount)
 
 const emptyForm = (): SloPolicySaveRequest => ({
+  id: undefined,
   policyName: '',
   scopeType: 'TENANT',
   scopeKey: null,
@@ -81,111 +98,63 @@ const emptyForm = (): SloPolicySaveRequest => ({
   burnRateThreshold: 2,
   enabled: true,
 })
-const form = reactive<SloPolicySaveRequest>(emptyForm())
-
-function openCreate() {
-  // Object.assign 不会移除编辑态遗留的可选 id；必须显式删除，避免“新建”误走服务端 upsert 更新旧策略。
-  delete form.id
-  Object.assign(form, emptyForm())
-  dialogVisible.value = true
+function saveForm(id: number | undefined, value: SloPolicySaveRequest) {
+  return saveSloPolicy({ ...value, id, scopeKey: value.scopeType === 'TENANT' ? null : value.scopeKey })
 }
-
-function openEdit(row: SloPolicy) {
-  Object.assign(form, {
-    id: row.id,
-    policyName: row.policyName,
-    scopeType: row.scopeType,
-    scopeKey: row.scopeKey,
-    availabilityTarget: row.availabilityTarget,
-    latencyTarget: row.latencyTarget,
-    latencyThresholdMs: row.latencyThresholdMs,
-    shortWindowMinutes: row.shortWindowMinutes,
-    longWindowMinutes: row.longWindowMinutes,
-    minimumSampleCount: row.minimumSampleCount,
-    burnRateThreshold: row.burnRateThreshold,
-    enabled: row.enabled,
+const { form, dialogVisible, submitting: saving, openCreate, openEdit, handleSubmit: submit } =
+  useCrudForm<SloPolicy, SloPolicySaveRequest>({
+    initForm: emptyForm,
+    toForm: row => ({
+      id: row.id, policyName: row.policyName, scopeType: row.scopeType, scopeKey: row.scopeKey,
+      availabilityTarget: row.availabilityTarget, latencyTarget: row.latencyTarget,
+      latencyThresholdMs: row.latencyThresholdMs, shortWindowMinutes: row.shortWindowMinutes,
+      longWindowMinutes: row.longWindowMinutes, minimumSampleCount: row.minimumSampleCount,
+      burnRateThreshold: row.burnRateThreshold, enabled: row.enabled,
+    }),
+    // 新建明确去掉 id，不能被上一次编辑留下的可选字段转成 upsert 更新。
+    create: value => saveForm(undefined, value),
+    update: (id, value) => saveForm(id, value),
+    beforeSubmit: (_mode, value) => {
+      if (!auth.hasPermission('slo:edit')) return false
+      if (!value.policyName.trim()) { ElMessage.warning('请填写策略名称'); return false }
+      if (value.scopeType !== 'TENANT' && !value.scopeKey?.trim()) { ElMessage.warning('请填写 Agent 编码或渠道编码'); return false }
+      if (value.shortWindowMinutes >= value.longWindowMinutes) { ElMessage.warning('短窗口必须小于长窗口'); return false }
+      if (value.minimumSampleCount < 1) { ElMessage.warning('最低样本数必须大于 0'); return false }
+      return true
+    },
+    messages: { created: 'SLO 策略已保存', updated: 'SLO 策略已保存' },
+    onSaved: async () => { await loadPolicies() },
   })
-  dialogVisible.value = true
-}
-
-async function submit() {
-  if (saving.value) return
-  if (!form.policyName.trim()) {
-    ElMessage.warning('请填写策略名称')
-    return
-  }
-  if (form.scopeType !== 'TENANT' && !form.scopeKey?.trim()) {
-    ElMessage.warning('请填写 Agent 编码或渠道编码')
-    return
-  }
-  if (form.shortWindowMinutes >= form.longWindowMinutes) {
-    ElMessage.warning('短窗口必须小于长窗口')
-    return
-  }
-  if (form.minimumSampleCount < 1) {
-    ElMessage.warning('最低样本数必须大于 0')
-    return
-  }
-  saving.value = true
-  try {
-    await saveSloPolicy({ ...form, scopeKey: form.scopeType === 'TENANT' ? null : form.scopeKey })
-    ElMessage.success('SLO 策略已保存')
-    dialogVisible.value = false
-    await loadPolicies()
-  } finally {
-    saving.value = false
-  }
-}
 
 async function evaluate(row: SloPolicy) {
-  if (evaluatingId.value !== null) return
+  if (evaluations.isPending(0)) return
   evaluatingId.value = row.id
-  try {
-    evaluation.value = await evaluateSloPolicy(row.id)
+  let result: SloEvaluation | undefined
+  await evaluations.run(0, async () => { result = await evaluateSloPolicy(row.id) }, async () => {
+    if (!result) return
+    evaluation.value = result
     evaluationVisible.value = true
-    if (evaluation.value.alertCreated) {
+    if (result.alertCreated) {
       ElMessage.warning('短、长窗口均超过阈值，已打开告警并进入可靠通知队列')
-    } else if (evaluation.value.alertTransition === 'RESOLVED') {
+    } else if (result.alertTransition === 'RESOLVED') {
       ElMessage.success('指标已恢复，告警状态与恢复通知已持久化')
     }
     await loadPolicies()
-  } finally {
-    if (evaluatingId.value === row.id) {
-      evaluatingId.value = null
-    }
-  }
+  })
 }
 
 async function acknowledge(row: SloAlert) {
-  if (acknowledgingId.value !== null) return
-  acknowledgingId.value = row.id
-  try {
-    await acknowledgeSloAlert(row.id)
+  await acknowledgements.run(row.id, () => acknowledgeSloAlert(row.id), async () => {
     ElMessage.success('告警已确认')
     await loadPolicies()
-  } finally {
-    if (acknowledgingId.value === row.id) {
-      acknowledgingId.value = null
-    }
-  }
+  })
 }
 
 async function showEvents(row: SloAlert) {
-  const requestId = ++eventRequestId
+  resetEvents()
   activeAlert.value = row
-  alertEvents.value = []
   eventVisible.value = true
-  eventLoadingId.value = row.id
-  try {
-    const events = await listSloAlertEvents(row.id)
-    if (requestId === eventRequestId && activeAlert.value?.id === row.id) {
-      alertEvents.value = events
-    }
-  } finally {
-    if (requestId === eventRequestId) {
-      eventLoadingId.value = null
-    }
-  }
+  await loadEvents()
 }
 
 function percent(value: number) {
@@ -284,7 +253,7 @@ onMounted(loadPolicies)
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'slo:evaluate'" link type="primary" :loading="evaluatingId === row.id" :disabled="evaluatingId !== null && evaluatingId !== row.id" @click="evaluate(row)">
+            <el-button v-permission="'slo:evaluate'" link type="primary" :loading="evaluations.isPending(0) && evaluatingId === row.id" :disabled="evaluations.isPending(0)" @click="evaluate(row)">
               立即评估
             </el-button>
             <el-button v-permission="'slo:edit'" link @click="openEdit(row)">编辑</el-button>
@@ -327,8 +296,8 @@ onMounted(loadPolicies)
               v-permission="'slo:ack'"
               link
               type="primary"
-              :loading="acknowledgingId === row.id"
-              :disabled="acknowledgingId !== null && acknowledgingId !== row.id"
+              :loading="acknowledgements.isPending(row.id)"
+              :disabled="acknowledgements.isPending(row.id)"
               @click="acknowledge(row)"
             >确认</el-button>
             <el-button link :loading="eventLoadingId === row.id" @click="showEvents(row)">事件</el-button>
@@ -338,7 +307,7 @@ onMounted(loadPolicies)
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑 SLO 策略' : '新建 SLO 策略'" width="620px">
-      <el-form label-width="130px">
+      <el-form :disabled="saving" label-width="130px">
         <el-form-item label="策略名称"><el-input v-model="form.policyName" maxlength="128" /></el-form-item>
         <el-form-item label="统计范围">
           <el-select v-model="form.scopeType" @change="form.scopeKey = null">
@@ -396,7 +365,9 @@ onMounted(loadPolicies)
     </el-dialog>
 
     <el-dialog v-model="eventVisible" v-loading="eventLoadingId !== null" :title="`${activeAlert?.policyName || 'SLO'} · 状态事件`" width="720px">
-      <el-timeline>
+      <CrudLoadState :error="eventsError" :has-stale-data="eventsLoaded" :loading="eventsLoading" @retry="loadEvents" />
+      <el-empty v-if="eventsLoaded && !eventsError && alertEvents.length === 0" description="暂无状态事件" :image-size="60" />
+      <el-timeline v-if="!eventsError || eventsLoaded">
         <el-timeline-item v-for="item in alertEvents" :key="item.id" :timestamp="item.occurredAt" placement="top">
           <strong>{{ item.eventType }}</strong>
           <span class="event-rate">短窗 {{ item.shortBurnRate }}× / 长窗 {{ item.longBurnRate }}×</span>

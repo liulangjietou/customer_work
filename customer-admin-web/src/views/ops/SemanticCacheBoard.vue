@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
 import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -20,11 +21,13 @@ import {
 
 const scopeId = ref('')
 const auth = useAuthStore()
+const mutations = useRowMutation('semantic-cache:evict')
 const { data: scopes, loading: scopesLoading, error: scopesError, loaded: scopesLoaded, load: queryScopes } =
   useQueryState<SemanticCacheScope[]>(() => listCacheScopes(), () => [])
-const { data: list, loading, error: listError, loaded, load: loadList } = useQueryState<SemanticCacheEntry[]>(
+const { data: list, loading, error: listError, loaded, load: loadList, reset: resetList } = useQueryState<SemanticCacheEntry[]>(
   () => scopeId.value ? listCacheEntries(scopeId.value) : Promise.resolve([]), () => [],
 )
+watch(scopeId, resetList, { flush: 'sync' })
 const loadError = computed(() => scopesError.value || listError.value)
 watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
   scopeId.value = ''
@@ -46,39 +49,40 @@ const totalHits = computed(() => list.value.reduce((sum, entry) => sum + entry.h
 const zeroHitCount = computed(() => list.value.filter((entry) => entry.hitCount === 0).length)
 
 async function handleEvict(row: SemanticCacheEntry) {
-  try {
+  if (loading.value || scopesLoading.value) return
+  const selectedScope = scopeId.value
+  let removed = false
+  await mutations.run(0, async current => {
     await ElMessageBox.confirm(
       `将删除这条缓存，下次问到同类问题会重新调模型。\n\n问题：${row.question}`,
       '删除缓存条目',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
     )
-    await evictCacheEntry(row.id)
-    ElMessage.success('已删除')
-    // 列表只返回前 50 条；仅当当前结果确实只有这一条时，才可判定分区已被删空。
-    if (list.value.length === 1) {
-      scopeId.value = ''
-    }
+    if (current()) removed = await evictCacheEntry(row.id)
+  }, async () => {
+    ElMessage.success(removed ? '已删除' : '记录已不存在')
+    if (scopeId.value === selectedScope && list.value.length === 1) scopeId.value = ''
     await reload()
-  } catch (error) {
-    if (error !== 'cancel') throw error
-  }
+  })
 }
 
 async function handleClear() {
-  try {
+  if (!scopeId.value || loading.value || scopesLoading.value) return
+  const selectedScope = scopeId.value
+  let removed = 0
+  await mutations.run(0, async current => {
     await ElMessageBox.confirm(
       '知识库或提示词改过之后，旧答案不再可信，应整体作废。清空后命中率会归零一段时间，属正常。',
-      `清空分区 ${scopeId.value} 的全部缓存`,
+      `清空分区 ${selectedScope} 的全部缓存`,
       { confirmButtonText: '清空', cancelButtonText: '取消', type: 'warning' },
     )
-    const removed = await clearCacheScope(scopeId.value)
+    if (current()) removed = await clearCacheScope(selectedScope)
+  }, async () => {
     ElMessage.success(`已清空 ${removed} 条`)
-    // 分区已空，选择器里那一项会消失，得重新挑一个
-    scopeId.value = ''
+    // 原分区完成清理不能改变用户在等待期间新选中的分区。
+    if (scopeId.value === selectedScope) scopeId.value = ''
     await reload()
-  } catch (error) {
-    if (error !== 'cancel') throw error
-  }
+  })
 }
 
 onMounted(reload)
@@ -142,7 +146,8 @@ onMounted(reload)
           v-permission="'semantic-cache:evict'"
           type="danger"
           plain
-          :disabled="!scopeId"
+          :loading="mutations.isPending(0)"
+          :disabled="!scopeId || mutations.isPending(0) || loading || scopesLoading"
           @click="handleClear"
         >
           清空该分区
@@ -171,9 +176,9 @@ onMounted(reload)
         <el-table-column label="最近命中" width="170">
           <template #default="{ row }">{{ formatTime(row.lastHitAtMs) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column v-if="auth.hasPermission('semantic-cache:evict')" label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'semantic-cache:evict'" link type="danger" @click="handleEvict(row)">
+            <el-button v-permission="'semantic-cache:evict'" link type="danger" :disabled="mutations.isPending(0) || loading || scopesLoading" @click="handleEvict(row)">
               删除
             </el-button>
           </template>

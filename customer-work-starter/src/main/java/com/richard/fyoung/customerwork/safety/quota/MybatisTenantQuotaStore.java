@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.richard.fyoung.customerwork.safety.quota.entity.TenantQuotaDO;
 import com.richard.fyoung.customerwork.safety.quota.mapper.TenantQuotaMapper;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
+import com.richard.fyoung.customerwork.safety.tenant.ExactTenantSql;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -15,7 +16,8 @@ import java.util.Optional;
  * <p>查询走 {@link CrossTenantOperations}：配额判定发生在请求链路上，那时上下文里的租户
  * 正是要判定的对象，本该能自动过滤到。但配额也会被<b>控制面跨租户读写</b>（后台配额度、
  * 定时任务批量核对），两种调用方都用同一个 Store，让 Store 自己按显式 tenantId 取数
- * 比让调用方各自记得切上下文更不容易出错。</p>
+ * 比让调用方各自记得切上下文更不容易出错。显式租户条件使用精确比较，
+ * 避免数据库排序规则把不同租户的额度合并。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisTenantQuotaStore implements TenantQuotaStore {
@@ -30,7 +32,7 @@ public class MybatisTenantQuotaStore implements TenantQuotaStore {
     public Optional<TenantQuota> find(String tenantId, QuotaPeriod period) {
         TenantQuotaDO row = CrossTenantOperations.execute(() -> mapper.selectOne(
             new LambdaQueryWrapper<TenantQuotaDO>()
-                .eq(TenantQuotaDO::getTenantId, tenantId)
+                .apply(ExactTenantSql.CONDITION, tenantId)
                 .eq(TenantQuotaDO::getPeriod, period.name())));
         return Optional.ofNullable(row).map(MybatisTenantQuotaStore::toDomain);
     }
@@ -38,7 +40,7 @@ public class MybatisTenantQuotaStore implements TenantQuotaStore {
     @Override
     public List<TenantQuota> findByTenant(String tenantId) {
         List<TenantQuotaDO> rows = CrossTenantOperations.execute(() -> mapper.selectList(
-            new LambdaQueryWrapper<TenantQuotaDO>().eq(TenantQuotaDO::getTenantId, tenantId)));
+            new LambdaQueryWrapper<TenantQuotaDO>().apply(ExactTenantSql.CONDITION, tenantId)));
         return rows.stream().map(MybatisTenantQuotaStore::toDomain).toList();
     }
 
@@ -47,7 +49,7 @@ public class MybatisTenantQuotaStore implements TenantQuotaStore {
         long now = System.currentTimeMillis();
         CrossTenantOperations.run(() -> {
             TenantQuotaDO existing = mapper.selectOne(new LambdaQueryWrapper<TenantQuotaDO>()
-                .eq(TenantQuotaDO::getTenantId, quota.tenantId())
+                .apply(ExactTenantSql.CONDITION, quota.tenantId())
                 .eq(TenantQuotaDO::getPeriod, quota.period().name()));
 
             TenantQuotaDO row = existing == null ? new TenantQuotaDO() : existing;
@@ -71,7 +73,7 @@ public class MybatisTenantQuotaStore implements TenantQuotaStore {
     @Override
     public void delete(String tenantId, QuotaPeriod period) {
         CrossTenantOperations.run(() -> mapper.delete(new LambdaQueryWrapper<TenantQuotaDO>()
-            .eq(TenantQuotaDO::getTenantId, tenantId)
+            .apply(ExactTenantSql.CONDITION, tenantId)
             .eq(TenantQuotaDO::getPeriod, period.name())));
     }
 
