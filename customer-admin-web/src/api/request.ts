@@ -152,6 +152,8 @@ export async function download(config: AxiosRequestConfig, fallbackFilename: str
     }
     throw body
   }
+  // 文件保存属于发起登录；成功响应同样不能把旧身份的数据交给后来登录的用户。
+  if (!belongsToCurrentLogin(response.config)) return
   const filename = parseFilename(response.headers['content-disposition'] as string | undefined) || fallbackFilename
   const url = URL.createObjectURL(response.data)
   const link = document.createElement('a')

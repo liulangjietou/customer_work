@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { usePagedList } from '@/composables/usePagedList'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -28,25 +30,14 @@ const STATUS_LABELS: Record<string, { text: string; type: 'success' | 'info' | '
   FAILED: { text: '发布失败', type: 'danger' },
 }
 
-const loading = ref(false)
 const auth = useAuthStore()
-const list = ref<ConfigVersionVO[]>([])
-const total = ref(0)
-const query = reactive({ pageNum: 1, pageSize: 10, configType: '', targetCode: '' })
+const { loading, loadError, list, total, query, loadList, handleSearch } = usePagedList({
+  page: pageVersions,
+  initQuery: () => ({ pageNum: 1, pageSize: 10, configType: '', targetCode: '' }),
+})
 const tenants = ref<TenantVO[]>([])
 const approvals = ref<GovernedChangeVO[]>([])
 const approvalLoading = ref(false)
-
-async function loadList() {
-  loading.value = true
-  try {
-    const data = await pageVersions(query)
-    list.value = data.list
-    total.value = data.total
-  } finally {
-    loading.value = false
-  }
-}
 
 async function loadApprovals() {
   if (!auth.hasPermission('governance:view')) return
@@ -56,11 +47,6 @@ async function loadApprovals() {
   } finally {
     approvalLoading.value = false
   }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  return loadList()
 }
 
 // ---------- 版本对比 ----------
@@ -203,6 +189,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input
@@ -221,6 +208,8 @@ onMounted(async () => {
       </div>
 
       <el-table
+        v-if="!loadError || list.length > 0"
+        empty-text="暂无配置发布记录"
         v-loading="loading"
         :data="list"
         style="width: 100%"
@@ -280,6 +269,7 @@ onMounted(async () => {
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"

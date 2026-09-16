@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useCrudPage } from '@/composables/useCrudPage'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance } from 'element-plus'
 import {
   createChannelRobot,
@@ -10,7 +12,7 @@ import {
 import { pageAgents } from '@/api/agent'
 import type {
   AgentVO,
-  ChannelRobotPageQuery,
+  PageQuery,
   ChannelRobotSaveRequest,
   ChannelRobotVO,
   ChannelType,
@@ -33,26 +35,10 @@ function channelMetaOf(type: ChannelType): ChannelTypeMeta {
   return channelTypes.find((c) => c.value === type) ?? channelTypes[0]
 }
 
-const loading = ref(false)
-const list = ref<ChannelRobotVO[]>([])
-const total = ref(0)
-const query = reactive<ChannelRobotPageQuery>({ current: 1, size: 10, channelType: '', keyword: '' })
-
 // 启用中的智能体下拉：value 取 agentCode（后端绑定关系存的是 agentCode，非 id）。
 const agentOptions = ref<AgentVO[]>([])
 function agentNameOf(agentCode: string): string {
   return agentOptions.value.find((a) => a.agentCode === agentCode)?.agentName ?? agentCode
-}
-
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageChannelRobots(query)
-    list.value = result.records
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
 }
 
 async function loadAgentOptions() {
@@ -60,20 +46,7 @@ async function loadAgentOptions() {
   agentOptions.value = result.list
 }
 
-function handleSearch() {
-  query.current = 1
-  loadList()
-}
-
-function handlePageChange() {
-  loadList()
-}
-
-// ---------- 新建/编辑 ----------
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit'>('create')
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
 // hasSecret 仅用于编辑时展示「已配置」标识，不随表单提交。
 const editingHasSecret = ref(false)
 const editingHasEncodingAesKey = ref(false)
@@ -93,94 +66,60 @@ function emptyForm(): ChannelRobotSaveRequest {
     remark: '',
   }
 }
-const form = reactive<ChannelRobotSaveRequest>(emptyForm())
+const {
+  loading, loadError, submitting, deletingId, list, total, query, dialogVisible, dialogMode, form,
+  loadList, handleSearch, openCreate: openCreateBase, openEdit: openEditBase, handleSubmit, handleDelete,
+} = useCrudPage<ChannelRobotVO, PageQuery & { channelType: string }, ChannelRobotSaveRequest>({
+  page: async ({ pageNum = 1, pageSize = 10, keyword, channelType }) => {
+    const result = await pageChannelRobots({ current: pageNum, size: pageSize, keyword, channelType })
+    return { list: result.records, total: result.total, pageNum, pageSize }
+  },
+  formRef,
+  create: value => createChannelRobot(toPayload(value)),
+  update: (id, value) => updateChannelRobot(id, toPayload(value)),
+  remove: row => deleteChannelRobot(row.id),
+  initQuery: () => ({ pageNum: 1, pageSize: 10, channelType: '', keyword: '' }),
+  initForm: emptyForm,
+  toForm: row => ({ channelType: row.channelType, robotName: row.robotName, appKey: row.appKey, appSecret: '',
+    robotCode: row.robotCode, callbackMode: row.callbackMode ?? 'plaintext', encodingAesKey: '', agentCode: row.agentCode,
+    sessionMode: row.sessionMode ?? 'continuous', status: row.status, remark: row.remark }),
+  beforeSubmit: (mode, value) => {
+    if (mode === 'create' && !value.appSecret) {
+      ElMessage.warning('新建渠道机器人必须填写 AppSecret')
+      return false
+    }
+    if (value.channelType === 'wechat' && value.callbackMode === 'safe'
+      && (mode === 'create' || !editingHasEncodingAesKey.value) && !value.encodingAesKey?.trim()) {
+      ElMessage.warning('微信安全模式必须填写 EncodingAESKey')
+      return false
+    }
+    return true
+  },
+  deleteConfirm: row => `确认删除渠道机器人「${row.robotName}」？`,
+})
+
+/** 渠道特有的空值与回调契约在 API 调用边界处理，不改写用户当前输入。 */
+function toPayload(value: ChannelRobotSaveRequest): ChannelRobotSaveRequest {
+  const wechat = value.channelType === 'wechat'
+  return { ...value, robotCode: wechat ? value.robotCode?.trim() ?? '' : value.robotCode?.trim() || value.appKey.trim(),
+    callbackMode: wechat ? value.callbackMode : 'plaintext',
+    encodingAesKey: wechat && value.callbackMode === 'safe' ? value.encodingAesKey?.trim() : null }
+}
 
 // 当前表单选中的是否为微信：微信下 RobotCode 语义为「回调 Token」，必填且不自动回填 AppKey。
 const isWechat = computed(() => form.channelType === 'wechat')
 const isWechatSafe = computed(() => isWechat.value && form.callbackMode === 'safe')
 
 function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
   editingHasSecret.value = false
   editingHasEncodingAesKey.value = false
-  Object.assign(form, emptyForm())
-  dialogVisible.value = true
+  openCreateBase()
 }
 
 function openEdit(row: ChannelRobotVO) {
-  dialogMode.value = 'edit'
-  editingId.value = row.id
   editingHasSecret.value = row.hasSecret
   editingHasEncodingAesKey.value = row.hasEncodingAesKey
-  Object.assign(form, {
-    channelType: row.channelType,
-    robotName: row.robotName,
-    appKey: row.appKey,
-    // 编辑回填 appSecret 置空表示「留空则不修改」
-    appSecret: '',
-    robotCode: row.robotCode,
-    callbackMode: row.callbackMode ?? 'plaintext',
-    encodingAesKey: '',
-    agentCode: row.agentCode,
-    // 旧数据无 sessionMode 时按后端默认 continuous 展示
-    sessionMode: row.sessionMode ?? 'continuous',
-    status: row.status,
-    remark: row.remark,
-  })
-  dialogVisible.value = true
-}
-
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (dialogMode.value === 'create' && !form.appSecret) {
-    ElMessage.warning('新建渠道机器人必须填写 AppSecret')
-    return
-  }
-  if (isWechatSafe.value
-    && dialogMode.value === 'create'
-    && !form.encodingAesKey?.trim()) {
-    ElMessage.warning('微信安全模式必须填写 EncodingAESKey')
-    return
-  }
-  if (isWechatSafe.value
-    && dialogMode.value === 'edit'
-    && !editingHasEncodingAesKey.value
-    && !form.encodingAesKey?.trim()) {
-    ElMessage.warning('微信安全模式必须填写 EncodingAESKey')
-    return
-  }
-  // 微信下 RobotCode = 回调 Token，必填且不回填 AppKey；钉钉留空时按契约默认与 AppKey 一致。
-  const robotCode = isWechat.value
-    ? (form.robotCode?.trim() ?? '')
-    : form.robotCode?.trim()
-      ? form.robotCode.trim()
-      : form.appKey.trim()
-  const payload: ChannelRobotSaveRequest = {
-    ...form,
-    robotCode,
-    callbackMode: isWechat.value ? form.callbackMode : 'plaintext',
-    encodingAesKey: isWechatSafe.value ? form.encodingAesKey?.trim() : null,
-  }
-  if (dialogMode.value === 'edit' && editingId.value) {
-    await updateChannelRobot(editingId.value, payload)
-    ElMessage.success('保存成功')
-  } else {
-    await createChannelRobot(payload)
-    ElMessage.success('新建成功')
-  }
-  dialogVisible.value = false
-  await loadList()
-}
-
-async function handleDelete(row: ChannelRobotVO) {
-  await ElMessageBox.confirm(`确认删除渠道机器人「${row.robotName}」？`, '提示', { type: 'warning' })
-  await deleteChannelRobot(row.id)
-  ElMessage.success('删除成功')
-  await loadList()
+  openEditBase(row)
 }
 
 const dialogTitle = computed(() => (dialogMode.value === 'edit' ? '编辑渠道机器人' : '新建渠道机器人'))
@@ -193,6 +132,7 @@ onMounted(() => {
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-alert type="info" :closable="false" show-icon title="钉钉机器人接入指引">
       <template #default>
         <div>1. 到钉钉开放平台创建「企业内部应用」。</div>
@@ -237,7 +177,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的渠道机器人">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的渠道机器人">
         <el-table-column label="渠道类型" width="110" align="center">
           <template #default="{ row }: { row: ChannelRobotVO }">
             <el-tag :type="channelMetaOf(row.channelType).tagType">{{ channelMetaOf(row.channelType).label }}</el-tag>
@@ -276,23 +216,24 @@ onMounted(() => {
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }: { row: ChannelRobotVO }">
             <el-button v-permission="'channel-robot:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'channel-robot:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'channel-robot:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
 
       <el-pagination
-        v-model:current-page="query.current"
-        v-model:page-size="query.size"
+        v-if="!loadError || list.length > 0"
+        v-model:current-page="query.pageNum"
+        v-model:page-size="query.pageSize"
         :total="total"
         layout="total, prev, pager, next"
         class="pagination"
-        @current-change="handlePageChange"
+        @current-change="loadList"
       />
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="560px">
-      <el-form ref="formRef" :model="form" label-width="100px">
+      <el-form ref="formRef" :disabled="submitting" :model="form" label-width="100px">
         <el-form-item label="渠道类型" prop="channelType" :rules="[{ required: true, message: '请选择渠道类型' }]">
           <el-select v-model="form.channelType" style="width: 100%">
             <el-option
@@ -398,13 +339,24 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存机器人</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存机器人</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <style scoped>
+/* 长回调地址可以换行，避免说明区域被 el-alert 的边界裁切。 */
+:deep(.el-alert__content) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+:deep(.el-alert code) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

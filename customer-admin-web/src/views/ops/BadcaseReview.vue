@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { usePagedList } from '@/composables/usePagedList'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -49,14 +51,9 @@ function statusLabel(row: Badcase) {
   return STATUS_LABELS[row.status]
 }
 
-const loading = ref(false)
-const list = ref<Badcase[]>([])
-const total = ref(0)
-const query = reactive({
-  status: 'PENDING' as BadcaseStatusCode | undefined,
-  source: undefined as BadcaseSourceCode | undefined,
-  pageNum: 1,
-  pageSize: 20,
+const { loading, loadError, list, total, query, loadList, handleSearch } = usePagedList({
+  page: pageBadcases,
+  initQuery: () => ({ status: 'PENDING' as BadcaseStatusCode | undefined, source: undefined as BadcaseSourceCode | undefined, pageNum: 1, pageSize: 20 }),
 })
 
 const currentPendingCount = computed(() => list.value.filter((item) => item.status === 'PENDING').length)
@@ -66,22 +63,6 @@ const negativeFeedbackCount = computed(() => (
 const qualityFailureCount = computed(() => (
   list.value.filter((item) => item.source === 'QUALITY_FAILURE').length
 ))
-
-async function loadList() {
-  loading.value = true
-  try {
-    const data = await pageBadcases(query)
-    list.value = data.list
-    total.value = data.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  return loadList()
-}
 
 function formatTime(ms: number): string {
   return ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '-'
@@ -187,6 +168,7 @@ onMounted(loadList)
 
 <template>
   <div class="badcase-review">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card shadow="never" class="filter-card">
       <div class="toolbar">
         <el-select v-model="query.status" placeholder="全部状态" clearable style="width: 130px">
@@ -205,7 +187,7 @@ onMounted(loadList)
       </div>
     </el-card>
 
-    <div class="summary-row" v-loading="loading">
+    <div v-if="!loadError || list.length > 0" class="summary-row" v-loading="loading">
       <div class="stat">
         <strong>{{ total }}</strong>
         <span>匹配记录</span>
@@ -229,7 +211,7 @@ onMounted(loadList)
         <strong>回流证据明细</strong>
         <span>筛选原始信号后，可分别补知识与加入评测集，两个出口互不冲突</span>
       </div>
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-if="!loadError || list.length > 0" empty-text="暂无符合条件的 Badcase" v-loading="loading" :data="list" style="width: 100%">
         <el-table-column label="发生时间" width="170">
           <template #default="{ row }">{{ formatTime(row.createdAtMs) }}</template>
         </el-table-column>
@@ -279,6 +261,7 @@ onMounted(loadList)
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"
