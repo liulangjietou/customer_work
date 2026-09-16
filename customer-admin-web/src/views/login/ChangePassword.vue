@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { changePassword } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
 import FooterCopyright from '@/components/FooterCopyright.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
 
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
@@ -32,13 +34,20 @@ const rules: FormRules = {
 
 async function handleSubmit() {
   if (submitting.value) return
+  const isCurrent = captureSubmission()
   submitting.value = true
   try {
     const valid = await formRef.value?.validate().catch(() => false)
-    if (!valid) {
+    if (!valid || !isCurrent()) {
       return
     }
-    await changePassword({ oldPassword: form.oldPassword, newPassword: form.newPassword })
+    try {
+      await changePassword({ oldPassword: form.oldPassword, newPassword: form.newPassword })
+    } catch {
+      // 请求层展示当前身份的错误；页面保留输入，不将业务拒绝抛成未处理的 Vue 事件异常。
+      return
+    }
+    if (!isCurrent()) return
     ElMessage.success('密码修改成功，请重新登录')
     auth.clear()
     await router.replace({ name: 'Login' })

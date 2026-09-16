@@ -7,6 +7,7 @@ import { fetchLoginCarouselUrls } from '@/api/login-image'
 import FooterCopyright from '@/components/FooterCopyright.vue'
 import ThemePresetSelector from '@/components/ThemePresetSelector.vue'
 import { useAuthStore } from '@/store/auth'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
 import { useMenuStore } from '@/store/menu'
 import { useTabsStore } from '@/store/tabs'
 import { useThemeStore } from '@/store/theme'
@@ -24,11 +25,12 @@ import {
   type LoginMode,
 } from './loginPageModel'
 
-type LoginSubmitOutcome = 'busy' | 'invalid' | 'verification-required' | 'rejected' | 'navigated'
+type LoginSubmitOutcome = 'busy' | 'invalid' | 'verification-required' | 'rejected' | 'navigated' | 'stale'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
 const menuStore = useMenuStore()
 const tabsStore = useTabsStore()
 const themeStore = useThemeStore()
@@ -177,12 +179,13 @@ async function loadRegisterOptions() {
   }
 }
 
-async function focusFirstInvalidField() {
+async function focusFirstInvalidField(isCurrent: () => boolean) {
   // Element Plus 在 validate() rejected 后还需要一次渲染提交错误样式，再查找可聚焦输入框。
   await nextTick()
   await nextTick()
   // handleSubmit 的 finally 会在当前调用栈结束时解除 submitting；等一个宏任务避免聚焦到 disabled input。
   await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  if (!isCurrent()) return
   const firstInvalidFieldId =
     form.username.trim().length === 0
       ? 'login-username'
@@ -196,11 +199,13 @@ async function handleSubmit(): Promise<LoginSubmitOutcome> {
   if (submitting.value) {
     return 'busy'
   }
+  const isCurrent = captureSubmission()
   submitting.value = true
   try {
     const valid = await formRef.value?.validate().catch(() => false)
+    if (!isCurrent()) return 'stale'
     if (!valid) {
-      void focusFirstInvalidField()
+      void focusFirstInvalidField(isCurrent)
       return 'invalid'
     }
     if (!captchaProof.value) {
@@ -218,10 +223,12 @@ async function handleSubmit(): Promise<LoginSubmitOutcome> {
           ? await login(submission.credentials)
           : await ssoLogin(submission.credentials)
     } catch {
+      if (!isCurrent()) return 'stale'
       // 请求层已展示业务或网络错误，组件只负责恢复可提交状态。
       await loginCaptchaRef.value?.reset()
       return 'rejected'
     }
+    if (!isCurrent()) return 'stale'
     const rememberKey = REMEMBER_KEY_PREFIX + submission.mode
     if (submission.credentials.rememberMe) {
       localStorage.setItem(rememberKey, submission.credentials.username)
@@ -248,14 +255,15 @@ async function handleSubmit(): Promise<LoginSubmitOutcome> {
 }
 
 async function handleCaptchaVerified(proof: string) {
+  const isCurrent = captureSubmission()
   // 拼图 proof 是一次性登录凭据；验证通过后直接续接统一提交链路，避免用户再次点击。
   captchaProof.value = proof
   const outcome = await handleSubmit()
   // 只有登录业务/网络拒绝才回到验证码入口；表单校验失败由 handleSubmit 聚焦首个无效输入，
   // 成功导航或强制改密导航则不打断目标页面的焦点。
-  if (outcome === 'rejected' && route.name === 'Login') {
+  if (isCurrent() && outcome === 'rejected' && route.name === 'Login') {
     await nextTick()
-    loginCaptchaRef.value?.focusEntry()
+    if (isCurrent()) loginCaptchaRef.value?.focusEntry()
   }
 }
 
