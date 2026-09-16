@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
+import { useQueryState } from '@/composables/useQueryState'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+
 import {
   getBusinessOutcomeSummary,
   listBusinessOutcomeSessions,
@@ -8,30 +11,24 @@ import {
 } from '@/api/businessOutcome'
 
 const DAY_MS = 24 * 60 * 60 * 1000
-const loading = ref(false)
-const summary = ref<BusinessOutcomeSummary | null>(null)
-const sessions = ref<BusinessOutcomeSession[]>([])
-const total = ref(0)
 const query = reactive({ days: 7, agentCode: '', page: 1, size: 20 })
+const { data: snapshot, loading, error: loadError, loaded, load } = useQueryState<{
+  summary: BusinessOutcomeSummary | null; sessions: BusinessOutcomeSession[]; total: number
+}>(async () => {
+  const toMs = Date.now()
+  const params = { fromMs: toMs - query.days * DAY_MS, toMs, agentCode: query.agentCode.trim() || undefined }
+  const [summary, sessionData] = await Promise.all([
+    getBusinessOutcomeSummary(params), listBusinessOutcomeSessions({ ...params, page: query.page, size: query.size }),
+  ])
+  return { summary, sessions: sessionData.records, total: sessionData.total }
+}, () => ({ summary: null, sessions: [], total: 0 }))
+const summary = computed(() => snapshot.value.summary)
+const sessions = computed(() => snapshot.value.sessions)
+const total = computed(() => snapshot.value.total)
 
-async function loadData(resetPage = false) {
+function loadData(resetPage = false) {
   if (resetPage) query.page = 1
-  loading.value = true
-  try {
-    const toMs = Date.now()
-    const fromMs = toMs - query.days * DAY_MS
-    const agentCode = query.agentCode.trim() || undefined
-    const params = { fromMs, toMs, agentCode }
-    const [summaryData, sessionData] = await Promise.all([
-      getBusinessOutcomeSummary(params),
-      listBusinessOutcomeSessions({ ...params, page: query.page, size: query.size }),
-    ])
-    summary.value = summaryData
-    sessions.value = sessionData.records
-    total.value = sessionData.total
-  } finally {
-    loading.value = false
-  }
+  return load()
 }
 
 function percent(value: number | null | undefined) {
@@ -64,6 +61,7 @@ onMounted(() => loadData())
 
 <template>
   <div class="outcome-board">
+    <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading" @retry="loadData()" />
     <el-card class="filter-card" shadow="never">
       <div class="filter-head">
         <div>
@@ -92,7 +90,7 @@ onMounted(() => loadData())
       :description="summary?.definitions.autoResolvedProxy || '技术调用全部成功且没有转人工事实，不能证明用户问题确已解决。'"
     />
 
-    <div v-loading="loading" class="metric-grid" aria-label="业务结果指标">
+    <div v-if="!loadError || loaded" v-loading="loading" class="metric-grid" aria-label="业务结果指标">
       <div class="metric"><strong>{{ valueOrDash(summary?.totalSessions) }}</strong><span>观测会话</span></div>
       <div class="metric"><strong>{{ percent(summary?.successfulSessionRate) }}</strong><span>技术成功会话</span></div>
       <div class="metric primary"><strong>{{ percent(summary?.autoResolvedProxyRate) }}</strong><span>自动解决代理率</span></div>
@@ -104,7 +102,7 @@ onMounted(() => loadData())
       <div class="metric primary"><strong>{{ formatCost(summary?.costPerAutoResolvedSession, summary?.costCurrency) }}</strong><span>单次自动解决代理成本</span></div>
     </div>
 
-    <el-card v-loading="loading" class="evidence-card" shadow="never">
+    <el-card v-if="!loadError || loaded" v-loading="loading" class="evidence-card" shadow="never">
       <div class="section-heading">
         <div>
           <span class="section-eyebrow">DATA AVAILABILITY</span>
@@ -154,7 +152,7 @@ onMounted(() => loadData())
         </div>
       </template>
       <div class="table-scroll">
-        <el-table v-loading="loading" :data="sessions" stripe>
+        <el-table v-if="!loadError || loaded" v-loading="loading" :data="sessions" stripe empty-text="该窗口内暂无会话记录">
           <el-table-column prop="sessionId" label="Session" min-width="210" show-overflow-tooltip />
           <el-table-column prop="agentCodes" label="Agent" min-width="150" show-overflow-tooltip />
           <el-table-column label="最后调用" width="180">
@@ -185,7 +183,7 @@ onMounted(() => loadData())
           </el-table-column>
         </el-table>
       </div>
-      <el-pagination
+      <el-pagination v-if="!loadError || loaded"
         v-model:current-page="query.page"
         v-model:page-size="query.size"
         class="pagination"

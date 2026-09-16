@@ -5,7 +5,6 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.ops.service.OpsAdminService;
 import com.richard.fyoung.customerwork.capability.csat.CsatSummary;
 import com.richard.fyoung.customerwork.capability.csat.CsatSurvey;
-import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -42,7 +41,7 @@ public class CsatBoardController {
      */
     @SaCheckPermission("csat:view")
     @GetMapping("/summary")
-    public Result<CsatSummary> summary(@RequestParam(defaultValue = TenantContext.DEFAULT) String scopeId,
+    public Result<CsatSummary> summary(@RequestParam(required = false) String scopeId,
                                        @RequestParam(required = false) Long windowStartMs,
                                        @RequestParam(required = false) Long windowEndMs) {
         long end = windowEndMs != null ? windowEndMs : System.currentTimeMillis();
@@ -53,7 +52,7 @@ public class CsatBoardController {
     /** 窗口内的原始评价（含低分留言——那才是能拿来改进的东西）。 */
     @SaCheckPermission("csat:view")
     @GetMapping("/list")
-    public Result<List<CsatSurvey>> list(@RequestParam(defaultValue = TenantContext.DEFAULT) String scopeId,
+    public Result<List<CsatSurvey>> list(@RequestParam(required = false) String scopeId,
                                          @RequestParam(required = false) Long windowStartMs,
                                          @RequestParam(required = false) Long windowEndMs) {
         long end = windowEndMs != null ? windowEndMs : System.currentTimeMillis();

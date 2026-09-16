@@ -16,8 +16,8 @@ import java.util.List;
  *
  * <p><b>普通查写失败只记日志、不抛异常</b>：与其他 Store 相反。缓存是纯粹的加速手段，
  * 它挂了最坏的结果是"这次没省下那一次模型调用"，绝不该让用户问不了问题。
- * 上层 {@link SemanticCacheService} 也做了同样的兜底，这里是第二层。唯一例外是
- * {@link #clearCurrentTenant()}：它是配置切换的一致性前置条件，失败必须上抛。</p>
+ * 上层 {@link SemanticCacheService} 也做了同样的兜底，这里是第二层。运营列表及分区查询必须上抛读取故障，避免被误认为没有缓存；
+ * {@link #clearCurrentTenant()} 是配置切换的一致性前置条件，失败也必须上抛。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisSemanticCacheStore implements SemanticCacheStore {
@@ -156,7 +156,7 @@ public class MybatisSemanticCacheStore implements SemanticCacheStore {
         } catch (Exception e) {
             log.error("[MybatisSemanticCacheStore] listByHits failed, errorCode={}, scopeId={}",
                 "SEMCACHE-STORE-LIST-FAIL", scopeId, e);
-            return List.of();
+            throw new IllegalStateException("failed to list semantic cache entries", e);
         }
     }
 
@@ -172,7 +172,7 @@ public class MybatisSemanticCacheStore implements SemanticCacheStore {
         } catch (Exception e) {
             log.error("[MybatisSemanticCacheStore] listScopes failed, errorCode={}, limit={}",
                 "SEMCACHE-STORE-SCOPES-FAIL", limit, e);
-            return List.of();
+            throw new IllegalStateException("failed to list semantic cache scopes", e);
         }
     }
 

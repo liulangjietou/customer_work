@@ -13,7 +13,7 @@ import java.util.Optional;
  * MyBatis-Plus CSAT 存储（{@code csat.store-mode=jdbc} 时装配）。
  *
  * <p>{@link #save} 失败抛异常：用户点了评分却没存下来，这个分就永远丢了——CSAT 是按周按月看的指标，
- * 静默丢分会让趋势失真且无从察觉。读操作降级返回空。</p>
+ * 静默丢分会让趋势失真且无从察觉。单条调查查询可降级，运营窗口查询失败必须上抛，不能冒充没有评价。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisCsatStore implements CsatStore {
@@ -64,7 +64,7 @@ public class MybatisCsatStore implements CsatStore {
         } catch (Exception e) {
             log.error("[MybatisCsatStore] findByWindow failed, errorCode={}, scopeId={}",
                 "CSAT-WINDOW-FAIL", scopeId, e);
-            return List.of();
+            throw new IllegalStateException("failed to query csat window", e);
         }
     }
 

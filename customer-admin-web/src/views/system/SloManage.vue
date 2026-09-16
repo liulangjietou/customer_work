@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useQueryState } from '@/composables/useQueryState'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+
 import { ElMessage } from 'element-plus'
 import {
   acknowledgeSloAlert,
@@ -32,10 +35,6 @@ const STATUS_LABELS: Record<SloEvaluation['status'], string> = {
   INSUFFICIENT_DATA: '样本不足',
 }
 
-const loading = ref(false)
-const policies = ref<SloPolicy[]>([])
-const alerts = ref<SloAlert[]>([])
-const alertSummary = ref<SloAlertSummary>({ openCount: 0, acknowledgedCount: 0 })
 const dialogVisible = ref(false)
 const evaluationVisible = ref(false)
 const eventVisible = ref(false)
@@ -47,8 +46,19 @@ const acknowledgingId = ref<number | null>(null)
 const eventLoadingId = ref<number | null>(null)
 const alertStatus = ref<SloAlertStatus | undefined>(undefined)
 const saving = ref(false)
-let loadRequestId = 0
 let eventRequestId = 0
+
+const { data: snapshot, loading, error: loadError, loaded, load: loadPolicies } = useQueryState<{
+  policies: SloPolicy[]; alerts: SloAlert[]; alertSummary: SloAlertSummary
+}>(async () => {
+  const [policies, alerts, alertSummary] = await Promise.all([
+    listSloPolicies(), listSloAlerts(alertStatus.value), getSloAlertSummary(),
+  ])
+  return { policies, alerts, alertSummary }
+}, () => ({ policies: [], alerts: [], alertSummary: { openCount: 0, acknowledgedCount: 0 } }))
+const policies = computed(() => snapshot.value.policies)
+const alerts = computed(() => snapshot.value.alerts)
+const alertSummary = computed(() => snapshot.value.alertSummary)
 
 const enabledPolicyCount = computed(() => policies.value.filter((item) => item.enabled).length)
 const healthyPolicyCount = computed(() => (
@@ -72,27 +82,6 @@ const emptyForm = (): SloPolicySaveRequest => ({
   enabled: true,
 })
 const form = reactive<SloPolicySaveRequest>(emptyForm())
-
-async function loadPolicies() {
-  const requestId = ++loadRequestId
-  loading.value = true
-  try {
-    const [policyRows, alertRows, summary] = await Promise.all([
-      listSloPolicies(),
-      listSloAlerts(alertStatus.value),
-      getSloAlertSummary(),
-    ])
-    if (requestId === loadRequestId) {
-      policies.value = policyRows
-      alerts.value = alertRows
-      alertSummary.value = summary
-    }
-  } finally {
-    if (requestId === loadRequestId) {
-      loading.value = false
-    }
-  }
-}
 
 function openCreate() {
   // Object.assign 不会移除编辑态遗留的可选 id；必须显式删除，避免“新建”误走服务端 upsert 更新旧策略。
@@ -226,7 +215,8 @@ onMounted(loadPolicies)
 
 <template>
   <div class="slo-page">
-    <div class="summary-row" v-loading="loading">
+    <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading" @retry="loadPolicies" />
+    <div v-if="!loadError || loaded" class="summary-row" v-loading="loading">
       <div class="stat">
         <strong>{{ enabledPolicyCount }}</strong>
         <span>启用策略</span>
@@ -252,12 +242,13 @@ onMounted(loadPolicies)
             <h2>SLO 错误预算</h2>
             <p>多副本通过数据库租约周期评估；短、长窗口同时超限打开告警，恢复后自动闭环并可靠投递通知。</p>
           </div>
+          <el-button :loading="loading" @click="loadPolicies">刷新</el-button>
           <el-button v-permission="'slo:edit'" class="cw-final-action" type="primary" @click="openCreate">新建策略</el-button>
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="policies" stripe>
-        <el-table-column prop="policyName" label="策略" min-width="150" />
+      <el-table v-if="!loadError || loaded" v-loading="loading" :data="policies" stripe empty-text="暂无 SLO 策略">
+        <el-table-column prop="policyName" label="策略" min-width="180" show-overflow-tooltip />
         <el-table-column label="范围" min-width="150">
           <template #default="{ row }">
             <el-tag effect="plain">{{ SCOPE_LABELS[row.scopeType as SloScopeType] }}</el-tag>
@@ -316,8 +307,8 @@ onMounted(loadPolicies)
           </el-select>
         </div>
       </template>
-      <el-table v-loading="loading" :data="alerts" stripe>
-        <el-table-column prop="policyName" label="策略" min-width="150" />
+      <el-table v-if="!loadError || loaded" v-loading="loading" :data="alerts" stripe>
+        <el-table-column prop="policyName" label="策略" min-width="180" show-overflow-tooltip />
         <el-table-column label="范围" min-width="150">
           <template #default="{ row }">{{ row.scopeType || '-' }}<span v-if="row.scopeKey"> · {{ row.scopeKey }}</span></template>
         </el-table-column>
