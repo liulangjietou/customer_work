@@ -2,8 +2,9 @@
 // cron 解析：解析与推算一律走后端（starter 的 CronDevToolOps），与 XXL-JOB 的 6 段 Quartz 语义
 // 保持同源。浏览器端 cron 库多按 Unix 5 段解析，若在前端算，页面显示的"下次执行时间"可能与调度
 // 中心实际触发时间不符——排查问题时这种偏差比没有工具更糟。
-import { ref } from 'vue'
 import { explainCron, type CronExplainResponse } from '@/api/devtools'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
 import { usePersistedRef } from './composables/useToolStorage'
 import CopyButton from './CopyButton.vue'
 
@@ -11,8 +12,9 @@ const expression = usePersistedRef('cron:expression', '0 0 2 * * ?')
 const count = usePersistedRef('cron:count', 5)
 const timezone = usePersistedRef('cron:timezone', 'Asia/Shanghai')
 
-const loading = ref(false)
-const result = ref<CronExplainResponse | null>(null)
+const { data: result, loading, error, load: runExplain, reset: resetResult } = useQueryState<CronExplainResponse | null>(
+  () => explainCron(expression.value, count.value, timezone.value), () => null,
+)
 
 /** 常用表达式，点一下直接填入——多数排查场景就是拿这几个改改。 */
 const presets: { label: string; value: string }[] = [
@@ -25,19 +27,16 @@ const presets: { label: string; value: string }[] = [
 ]
 
 async function handleExplain() {
+  if (loading.value) return
   if (!expression.value.trim()) {
     ElMessage.warning('请先输入 cron 表达式')
     return
   }
-  loading.value = true
-  try {
-    result.value = await explainCron(expression.value, count.value, timezone.value)
-  } finally {
-    loading.value = false
-  }
+  await runExplain()
 }
 
 function applyPreset(value: string) {
+  resetResult()
   expression.value = value
   handleExplain()
 }
@@ -45,6 +44,7 @@ function applyPreset(value: string) {
 
 <template>
   <div class="cron-tool">
+    <CrudLoadState :error="error" :has-stale-data="!!result" :loading="loading" @retry="handleExplain" />
     <el-form label-width="100px" class="param-form">
       <el-form-item label="cron 表达式">
         <div class="expression-row">

@@ -2,13 +2,29 @@
 // 开发者工具箱：左侧导航与搜索、右侧当前工具面板；各工具自行选择本地计算或调用后端接口。
 // 当前工具用 route query ?tool= 同步，支持浏览器收藏直达/刷新保持；query 缺失或指向不存在的工具时
 // 兜底规整成默认工具（第一个），保持 URL 与实际展示始终一致。
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { fetchCurrentView, type TenantViewVO } from '@/api/tenant'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthStore } from '@/store/auth'
 import { defaultToolKey, devTools } from './devtools/toolRegistry'
+import { TOOL_STORAGE_OWNER } from './devtools/composables/useToolStorage'
 
 const route = useRoute()
 const router = useRouter()
 const search = ref('')
+const auth = useAuthStore()
+const { data: tenantView, loading: contextLoading, error: contextError, load: loadContext } =
+  useQueryState<TenantViewVO | null>(fetchCurrentView, () => null)
+const storageOwner = computed(() => tenantView.value && auth.username
+  ? JSON.stringify([auth.username, tenantView.value.userTenantId, tenantView.value.effectiveTenantId]) : null)
+provide(TOOL_STORAGE_OWNER, storageOwner)
+
+// 先确定输入归属再挂载工具；重登时重建组件，清除普通 ref 中的密钥和在途结果。
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  if (auth.isLoggedIn && auth.isApproved && auth.hasPermission('devtools:view')) void loadContext()
+}, { immediate: true })
 
 const filteredTools = computed(() => {
   const keyword = search.value.trim().toLowerCase()
@@ -77,7 +93,10 @@ watch(
         <template #header>
           <span class="panel-title">{{ activeTool.label }}</span>
         </template>
-        <component :is="activeComponent" :key="activeTool.key" />
+        <CrudLoadState :error="contextError" :has-stale-data="false" :loading="contextLoading" @retry="loadContext" />
+        <el-skeleton v-if="contextLoading && !tenantView" animated :rows="4" />
+        <component v-if="tenantView && auth.hasPermission('devtools:view')" :is="activeComponent"
+          :key="`${auth.loginGeneration}:${storageOwner}:${activeTool.key}`" />
       </el-card>
     </div>
   </div>
