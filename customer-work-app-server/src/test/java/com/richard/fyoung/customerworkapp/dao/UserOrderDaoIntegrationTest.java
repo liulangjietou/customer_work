@@ -19,6 +19,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -117,6 +119,28 @@ class UserOrderDaoIntegrationTest {
     @Test
     void detailDoesNotReadAnotherUsersOrderWithinTheTenant() {
         assertTrue(dao.findById("shared-user", "A-OTHER").isEmpty(), "读取行之前就应限定已认证用户，不能先取出他人的订单");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"SHARED-USER", "shared-user "})
+    void userCollationAliasesCannotReadOwnedRowsFromDao(String alias) {
+        org.junit.jupiter.api.Assertions.assertAll(
+            () -> assertTrue(dao.listByUser(alias).isEmpty(), "数据库宽松排序规则不能把另一个用户映射为订单归属人"),
+            () -> assertTrue(dao.findById(alias, "A-NEW").isEmpty(), "DAO 详情读取也必须精确限定用户")
+        );
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"SHARED-USER", "shared-user "})
+    void authenticatedHttpRejectsUserCollationAliases(String alias) {
+        TenantContext.clear();
+        String credential = "Bearer " + jwtService.issue(alias, alias, "Alias User", "tenant-A");
+        webTestClient.get().uri("/api/customer/user/orders")
+            .header(HttpHeaders.AUTHORIZATION, credential)
+            .exchange().expectStatus().isOk().expectBody().jsonPath("$.length()").isEqualTo(0);
+        webTestClient.get().uri("/api/customer/user/orders/A-NEW")
+            .header(HttpHeaders.AUTHORIZATION, credential)
+            .exchange().expectStatus().isNotFound();
     }
 
     @Test

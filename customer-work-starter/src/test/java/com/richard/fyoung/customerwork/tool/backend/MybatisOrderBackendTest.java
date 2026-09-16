@@ -1,6 +1,11 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
 import com.richard.fyoung.customerwork.core.support.MybatisTestSupport;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import java.util.NoSuchElementException;
 import com.richard.fyoung.customerwork.tool.backend.entity.OrderDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.OrderMapper;
 import com.zaxxer.hikari.HikariDataSource;
@@ -13,13 +18,14 @@ import java.net.Socket;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * MyBatis 订单后端测试（对接本机 MySQL；不可达自动跳过）：种子文案断言 + modifyAddress 真实落库。
  *
- * <p>种子文案与 {@link MockOrderBackend} 一致，验证 jdbc 模式下系统提示词示例连续。</p>
+ * <p>认证主体与正式迁移种子一致；保留查询字段契约，拒绝结果通过 Mono 错误信号返回。</p>
  * @author owlzhangfq@gmail.com
  */
 class MybatisOrderBackendTest {
@@ -38,10 +44,13 @@ class MybatisOrderBackendTest {
         MybatisTestSupport.ensureSchema(dataSource);
         orderMapper = MybatisTestSupport.mapper(dataSource, OrderMapper.class);
         backend = new MybatisOrderBackend(orderMapper);
+        authenticate("U-demo-1");
     }
 
     @AfterEach
     void tearDown() {
+        AgentInvocationIdentityContext.clear();
+        TenantContext.clear();
         if (dataSource != null) {
             dataSource.close();
         }
@@ -69,13 +78,13 @@ class MybatisOrderBackendTest {
     }
 
     @Test
-    void queryOrder_unknownOrder_shouldReturnNotFound() {
-        String result = backend.queryOrder("99999999999").block();
-        assertTrue(result.contains("未查询到订单"));
+    void queryOrder_unknownOrder_shouldReturnErrorSignal() {
+        assertThrows(NoSuchElementException.class, () -> backend.queryOrder("99999999999").block());
     }
 
     @Test
     void modifyAddress_shouldReallyPersist() {
+        authenticate("U-demo-2");
         // 不污染种子订单：改址前记录原值，断言后恢复（种子数据同时被演示环境使用）
         String orderId = "20260613003";
         String originalAddr = readAddr(orderId);
@@ -89,6 +98,11 @@ class MybatisOrderBackendTest {
                 backend.modifyAddress(orderId, originalAddr).block();
             }
         }
+    }
+
+    private void authenticate(String userId) {
+        TenantContext.set(TenantContext.DEFAULT);
+        AgentInvocationIdentityContext.set(new AgentInvocationIdentity(TenantContext.DEFAULT, QuotaSubjectType.USER, userId, true));
     }
 
     private String readAddr(String orderId) {

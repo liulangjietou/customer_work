@@ -1,6 +1,11 @@
 package com.richard.fyoung.customerwork.tool;
 
 import com.richard.fyoung.customerwork.tool.backend.OrderBackend;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentityContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import io.agentscope.core.agent.RuntimeContext;
+import java.util.function.Supplier;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import reactor.core.publisher.Mono;
@@ -23,14 +28,26 @@ public class OrderTools {
     @Tool(description = "根据订单号查询订单状态、金额、创建时间等基础信息。当用户询问订单进度、物流、金额时调用。")
     public Mono<String> queryOrder(
             @ToolParam(name = "orderId", description = "订单号，例如 '20260613001'")
-            String orderId) {
+            String orderId,
+            RuntimeContext context) {
+        return withInvocationIdentity(context, () -> queryOrder(orderId));
+    }
+
+    /** 保留非原生入口，调用方须已建立可信身份上下文。 */
+    public Mono<String> queryOrder(String orderId) {
         return backend.queryOrder(orderId);
     }
 
     @Tool(description = "查询订单的物流轨迹。当用户询问'我的快递到哪了'之类的问题时调用。")
     public Mono<String> queryLogistics(
             @ToolParam(name = "orderId", description = "订单号，例如 '20260613001'")
-            String orderId) {
+            String orderId,
+            RuntimeContext context) {
+        return withInvocationIdentity(context, () -> queryLogistics(orderId));
+    }
+
+    /** 保留非原生入口，调用方须已建立可信身份上下文。 */
+    public Mono<String> queryLogistics(String orderId) {
         return backend.queryLogistics(orderId);
     }
 
@@ -39,7 +56,13 @@ public class OrderTools {
             @ToolParam(name = "orderId", description = "订单号")
             String orderId,
             @ToolParam(name = "newAddress", description = "新的完整收货地址")
-            String newAddress) {
+            String newAddress,
+            RuntimeContext context) {
+        return withInvocationIdentity(context, () -> modifyAddress(orderId, newAddress));
+    }
+
+    /** 保留非原生入口，调用方须已建立可信身份上下文。 */
+    public Mono<String> modifyAddress(String orderId, String newAddress) {
         return backend.modifyAddress(orderId, newAddress);
     }
 
@@ -48,14 +71,33 @@ public class OrderTools {
             @ToolParam(name = "orderId", description = "订单号")
             String orderId,
             @ToolParam(name = "reason", description = "取消原因")
-            String reason) {
+            String reason,
+            RuntimeContext context) {
+        return withInvocationIdentity(context, () -> cancelOrder(orderId, reason));
+    }
+
+    /** 保留非原生入口，调用方须已建立可信身份上下文。 */
+    public Mono<String> cancelOrder(String orderId, String reason) {
         return backend.cancelOrder(orderId, reason);
     }
 
     @Tool(description = "催发货（售中）。用户催促'怎么还不发货''能不能快点发'时调用。")
     public Mono<String> urgeShipment(
             @ToolParam(name = "orderId", description = "订单号")
-            String orderId) {
+            String orderId,
+            RuntimeContext context) {
+        return withInvocationIdentity(context, () -> urgeShipment(orderId));
+    }
+
+    /** 保留非原生入口，调用方须已建立可信身份上下文。 */
+    public Mono<String> urgeShipment(String orderId) {
         return backend.urgeShipment(orderId);
+    }
+    /** 原生工具的上下文不进入模型参数；后端在本方法作用域内冻结调用身份。 */
+    private Mono<String> withInvocationIdentity(RuntimeContext context, Supplier<Mono<String>> invocation) {
+        AgentInvocationIdentity identity = context == null ? null : context.get(AgentInvocationIdentity.class);
+        String tenantId = identity == null ? null : identity.tenantId();
+        return AgentInvocationIdentityContext.callWith(identity,
+            () -> TenantContext.callWith(tenantId, invocation));
     }
 }

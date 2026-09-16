@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.data.order;
 
 import com.richard.fyoung.customerwork.core.common.PageResult;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextMissingException;
 import com.richard.fyoung.customerwork.core.support.MybatisTestSupport;
 import com.richard.fyoung.customerwork.tool.backend.entity.OrderDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.OrderMapper;
@@ -18,6 +20,8 @@ import java.net.Socket;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -52,6 +56,7 @@ class OrderDirectoryServiceTest {
         orderMapper = MybatisTestSupport.mapper(dataSource, OrderMapper.class);
         userMapper = MybatisTestSupport.mapper(dataSource, UserMapper.class);
         service = new OrderDirectoryService(providerOf(orderMapper));
+        TenantContext.set(TenantContext.DEFAULT);
         cleanup();
         seedUser();
         seedOrder(ORDER_PENDING, "待发货", null);
@@ -64,6 +69,7 @@ class OrderDirectoryServiceTest {
             cleanup();
             dataSource.close();
         }
+        TenantContext.clear();
     }
 
     @Test
@@ -122,6 +128,19 @@ class OrderDirectoryServiceTest {
     @Test
     void cancel_unknown_shouldReturnNotFound() {
         assertEquals(OrderMutationResult.NOT_FOUND, service.cancel("ODT-NO-SUCH", "x"));
+    }
+
+    @Test
+    void missingTenantCannotReadOrMutateTheDefaultDirectory() {
+        TenantContext.clear();
+        assertAll(
+            () -> assertThrows(TenantContextMissingException.class,
+                () -> service.page(new OrderDirectoryQuery(null, null, null, null, 1, 20))),
+            () -> assertThrows(TenantContextMissingException.class, () -> service.findDetail(ORDER_PENDING)),
+            () -> assertThrows(TenantContextMissingException.class, () -> service.modifyAddress(ORDER_PENDING, "越权地址")),
+            () -> assertThrows(TenantContextMissingException.class, () -> service.cancel(ORDER_PENDING, "越权取消"))
+        );
+        assertEquals("待发货", orderMapper.selectById(ORDER_PENDING).getStatus());
     }
 
     @Test

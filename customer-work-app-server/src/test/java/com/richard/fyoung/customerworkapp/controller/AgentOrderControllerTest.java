@@ -51,7 +51,7 @@ class AgentOrderControllerTest {
     private OrderDirectoryService orderDirectoryService;
 
     private String token() {
-        return AgentAccessCredential.sign(AGENT_ID, System.currentTimeMillis() + 60_000, SECRET);
+        return AgentAccessCredential.sign(AGENT_ID, "default", System.currentTimeMillis() + 60_000, SECRET);
     }
 
     private static OrderDirectoryRow row(String orderId, String status) {

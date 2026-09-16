@@ -5,34 +5,44 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.richard.fyoung.customerwork.data.order.OrderDirectoryRow;
 import com.richard.fyoung.customerwork.tool.backend.entity.OrderDO;
+import java.util.List;
 import org.apache.ibatis.annotations.Param;
 
-/**
- * 订单 Mapper（由 {@code CustomerWorkPersistenceConfig} 的 {@code @MapperScan} 扫描绑定，不加 {@code @Mapper}）。
- *
- * <p>查询/改址/取消走 {@link BaseMapper} 与 Wrapper；催发货（{@code CONCAT}）与坐席侧多维查询
- * （JOIN {@code cw_user} 取用户名）因需自定义 SQL 写在 XML 中。</p>
- * @author owlzhangfq@gmail.com
- */
+/** 订单 SQL 边界：用户方法必须限定精确归属，坐席方法限定服务端签名租户；不依赖租户插件。 */
 public interface OrderMapper extends BaseMapper<OrderDO> {
-
-    /** 读取认证用户自己的订单；关闭租户插件时仍按真实租户和用户约束。 */
+    /** 读取认证用户自己的订单。 */
     OrderDO findOwned(@Param("tenantId") String tenantId, @Param("userId") String userId,
                       @Param("orderId") String orderId);
 
-    /** 催发货：在物流轨迹尾部追加加急标记（对应旧 JdbcOrderBackend 的 urgeShipment UPDATE）。 */
-    int urgeShipment(String orderId);
+    /** 归属校验与改址在同一条 UPDATE 完成。 */
+    int modifyAddressForOwner(@Param("tenantId") String tenantId, @Param("userId") String userId,
+                              @Param("orderId") String orderId, @Param("address") String address);
 
-    /**
-     * 坐席侧订单分页：JOIN {@code cw_user} 带出用户名，按下单时间倒序。各过滤项为空则不限制
-     * （userId/orderId/status 精确、username 模糊）。分页由 {@code PaginationInnerInterceptor} 自动接管。
-     */
+    /** 状态条件与归属条件同时参与取消写入。 */
+    int cancelForOwner(@Param("tenantId") String tenantId, @Param("userId") String userId,
+                       @Param("orderId") String orderId, @Param("cancellable") List<String> cancellable,
+                       @Param("cancelled") String cancelled);
+
+    /** 仅向认证用户的订单追加加急标记。 */
+    int urgeShipmentForOwner(@Param("tenantId") String tenantId, @Param("userId") String userId,
+                             @Param("orderId") String orderId);
+
+    /** 坐席多维分页，用户 JOIN 也限定同租户与精确用户 ID。 */
     IPage<OrderDirectoryRow> pageForAgent(Page<OrderDirectoryRow> page,
-                                          @Param("userId") String userId,
-                                          @Param("orderId") String orderId,
-                                          @Param("status") String status,
-                                          @Param("username") String username);
+                                         @Param("tenantId") String tenantId,
+                                         @Param("userId") String userId,
+                                         @Param("orderId") String orderId,
+                                         @Param("status") String status,
+                                         @Param("username") String username);
 
-    /** 坐席侧订单详情（含物流轨迹与用户名），不存在返回 null。 */
-    OrderDirectoryRow detailForAgent(@Param("orderId") String orderId);
+    /** 坐席查询当前签名租户内的订单详情。 */
+    OrderDirectoryRow detailForAgent(@Param("tenantId") String tenantId, @Param("orderId") String orderId);
+
+    /** 坐席改址，租户条件直接参与更新。 */
+    int modifyAddressForAgent(@Param("tenantId") String tenantId, @Param("orderId") String orderId,
+                              @Param("address") String address);
+
+    /** 坐席取消只影响当前租户且仍处于可取消状态的订单。 */
+    int cancelForAgent(@Param("tenantId") String tenantId, @Param("orderId") String orderId,
+                       @Param("cancellable") List<String> cancellable, @Param("cancelled") String cancelled);
 }

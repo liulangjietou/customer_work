@@ -5,6 +5,13 @@ import com.richard.fyoung.customerwork.data.order.OrderDirectoryQuery;
 import com.richard.fyoung.customerwork.data.order.OrderDirectoryRow;
 import com.richard.fyoung.customerwork.data.order.OrderDirectoryService;
 import com.richard.fyoung.customerwork.data.order.OrderMutationResult;
+import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential.AgentIdentity;
+import com.richard.fyoung.customerwork.safety.security.AgentAuthWebFilter;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.springframework.dao.DataAccessException;
+import org.springframework.web.server.ServerWebExchange;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
@@ -23,7 +30,7 @@ import reactor.core.scheduler.Schedulers;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
-import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -39,6 +46,8 @@ import java.util.stream.Collectors;
 @Tag(name = "坐席订单", description = "订单多维查询 / 详情 / 改址 / 取消")
 public class AgentOrderController {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentOrderController.class);
+    private static final String ERROR_REQUEST = "AGENT-ORDER-REQUEST-FAIL";
     private final OrderDirectoryService orderDirectoryService;
 
     public AgentOrderController(OrderDirectoryService orderDirectoryService) {
@@ -72,9 +81,9 @@ public class AgentOrderController {
                                                @RequestParam(required = false) String orderId,
                                                @RequestParam(required = false) String status,
                                                @RequestParam(defaultValue = "1") int page,
-                                               @RequestParam(defaultValue = "20") int size) {
+                                               @RequestParam(defaultValue = "20") int size, ServerWebExchange exchange) {
         OrderDirectoryQuery query = new OrderDirectoryQuery(userId, orderId, status, username, page, size);
-        return blocking(() -> {
+        return blocking(exchange, () -> {
             requireEnabled();
             PageResult<OrderDirectoryRow> result = orderDirectoryService.page(query);
             List<AgentOrderVO> items = result.items().stream().map(this::toVO).collect(Collectors.toList());
@@ -84,8 +93,8 @@ public class AgentOrderController {
 
     @Operation(summary = "订单详情", description = "含物流轨迹；不存在 404")
     @GetMapping("/{orderId}")
-    public Mono<AgentOrderDetailVO> detail(@PathVariable String orderId) {
-        return blocking(() -> {
+    public Mono<AgentOrderDetailVO> detail(@PathVariable String orderId, ServerWebExchange exchange) {
+        return blocking(exchange, () -> {
             requireEnabled();
             OrderDirectoryRow row = orderDirectoryService.findDetail(orderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "order not found: " + orderId));
@@ -95,11 +104,12 @@ public class AgentOrderController {
 
     @Operation(summary = "修改收货地址", description = "newAddress 非空；不存在 404")
     @PostMapping("/{orderId}/modify-address")
-    public Mono<Void> modifyAddress(@PathVariable String orderId, @RequestBody ModifyAddressRequest request) {
+    public Mono<Void> modifyAddress(@PathVariable String orderId, @RequestBody ModifyAddressRequest request,
+                                    ServerWebExchange exchange) {
         if (request == null || !StringUtils.hasText(request.newAddress())) {
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "newAddress required"));
         }
-        return blocking(() -> {
+        return blocking(exchange, () -> {
             requireEnabled();
             translate(orderDirectoryService.modifyAddress(orderId, request.newAddress()), orderId);
             return null;
@@ -108,9 +118,10 @@ public class AgentOrderController {
 
     @Operation(summary = "取消订单", description = "仅未发货可取消；不存在 404，状态不允许 409")
     @PostMapping("/{orderId}/cancel")
-    public Mono<Void> cancel(@PathVariable String orderId, @RequestBody(required = false) CancelRequest request) {
+    public Mono<Void> cancel(@PathVariable String orderId, @RequestBody(required = false) CancelRequest request,
+                             ServerWebExchange exchange) {
         String reason = request == null ? null : request.reason();
-        return blocking(() -> {
+        return blocking(exchange, () -> {
             requireEnabled();
             translate(orderDirectoryService.cancel(orderId, reason), orderId);
             return null;
@@ -153,8 +164,13 @@ public class AgentOrderController {
         }
     }
 
-    private <T> Mono<T> blocking(Callable<T> callable) {
-        return Mono.fromCallable(callable)
+    private <T> Mono<T> blocking(ServerWebExchange exchange, Supplier<T> action) {
+        AgentIdentity identity = exchange.getAttribute(AgentAuthWebFilter.AGENT_IDENTITY_ATTR);
+        if (identity == null || !StringUtils.hasText(identity.tenantId())) {
+            return Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "agent token tenant is missing"));
+        }
+        // 即使 SQL 租户插件关闭，订单边界也必须使用服务端签名租户；不能继承调度线程残留值。
+        return Mono.fromSupplier(() -> TenantContext.callWith(identity.tenantId(), action))
             .subscribeOn(Schedulers.boundedElastic())
             .onErrorMap(this::mapError);
     }
@@ -164,7 +180,8 @@ public class AgentOrderController {
         if (e instanceof ResponseStatusException) {
             return e;
         }
-        if (e instanceof IllegalStateException) {
+        if (e instanceof IllegalStateException || e instanceof DataAccessException) {
+            log.error("agent order request failed, errorCode={}", ERROR_REQUEST, e);
             return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "订单系统暂时不可用");
         }
         return e;
