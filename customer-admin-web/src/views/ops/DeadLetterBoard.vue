@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -42,20 +43,21 @@ function statusLabel(row: DeadLetter) {
   return STATUS_LABELS[row.status]
 }
 
+const reopens = useRowMutation<string>('dead-letter:reopen')
 async function handleReopen(row: DeadLetter) {
-  try {
+  if (row.status !== 'ABANDONED') return
+  await reopens.run(row.id, async current => {
     await ElMessageBox.confirm(
       `将把这条重新放回待重投队列，重试次数清零，由客服端巡检器按退避策略重投。\n\n` +
         `类型：${row.type}\n业务标识：${row.bizKey ?? '-'}\n最近失败：${row.lastError ?? '-'}`,
       '重开死信',
       { confirmButtonText: '重开', cancelButtonText: '取消', type: 'warning' },
     )
-    await reopenDeadLetter(row.id)
+    if (current()) await reopenDeadLetter(row.id)
+  }, async () => {
     ElMessage.success('已放回待重投队列')
     await loadData()
-  } catch (error) {
-    if (error !== 'cancel') throw error
-  }
+  })
 }
 
 // ---------- 详情 ----------
@@ -131,7 +133,8 @@ onMounted(loadData)
               v-permission="'dead-letter:reopen'"
               link
               type="warning"
-              :disabled="row.status !== 'ABANDONED'"
+              :loading="reopens.isPending(row.id)"
+              :disabled="row.status !== 'ABANDONED' || reopens.isPending(row.id)"
               @click="handleReopen(row)"
             >
               重开

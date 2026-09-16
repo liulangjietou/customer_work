@@ -1,11 +1,13 @@
 package com.richard.fyoung.customeradmin.common.acceptance;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -26,6 +28,7 @@ import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiAgentSystem
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.mapper.AiSystemToolMapper;
 import com.richard.fyoung.customeradmin.aiconfig.systemtool.service.SystemToolService;
 import com.richard.fyoung.customeradmin.auth.service.SessionRevocationService;
+import com.richard.fyoung.customeradmin.billing.config.QuotaGatewayProvider;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
@@ -47,6 +50,18 @@ import com.richard.fyoung.customeradmin.dict.config.DictGatewayProvider;
 import com.richard.fyoung.customeradmin.dict.dto.DictItemSaveRequest;
 import com.richard.fyoung.customeradmin.dict.dto.DictTypeSaveRequest;
 import com.richard.fyoung.customeradmin.dict.service.DictService;
+import com.richard.fyoung.customeradmin.message.service.SiteMessageService;
+import com.richard.fyoung.customeradmin.ops.config.OpsGatewayProvider;
+import com.richard.fyoung.customeradmin.ops.service.OpsAdminService;
+import com.richard.fyoung.customeradmin.slo.config.SloAutomationProperties;
+import com.richard.fyoung.customeradmin.slo.dto.SloPolicySaveRequest;
+import com.richard.fyoung.customeradmin.slo.mapper.SloAlertEventMapper;
+import com.richard.fyoung.customeradmin.slo.mapper.SloAlertMapper;
+import com.richard.fyoung.customeradmin.slo.mapper.SloNotificationTaskMapper;
+import com.richard.fyoung.customeradmin.slo.mapper.SloPolicyMapper;
+import com.richard.fyoung.customeradmin.slo.service.SloAlertService;
+import com.richard.fyoung.customeradmin.slo.service.SloNotificationService;
+import com.richard.fyoung.customeradmin.slo.service.SloPolicyService;
 import com.richard.fyoung.customeradmin.subjectquota.config.SubjectQuotaGatewayProvider;
 import com.richard.fyoung.customeradmin.system.loginimage.dto.LoginImageReorderRequest;
 import com.richard.fyoung.customeradmin.system.loginimage.mapper.LoginCarouselImageMapper;
@@ -61,6 +76,7 @@ import com.richard.fyoung.customeradmin.system.user.mapper.SysUserRoleMapper;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customeradmin.tenant.CrossTenantAuthority;
+import com.richard.fyoung.customeradmin.tenant.TenantSession;
 import com.richard.fyoung.customeradmin.tenant.access.TenantChannelDisableService;
 import com.richard.fyoung.customeradmin.tenant.access.service.TenantAccessPublishTaskService;
 import com.richard.fyoung.customeradmin.tenant.dto.TenantSaveRequest;
@@ -75,12 +91,18 @@ import com.richard.fyoung.customeradmin.workspace.project.service.ProjectService
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.session.service.WorkspaceSessionGuard;
+import com.richard.fyoung.customerwork.capability.deadletter.DeadLetterStatus;
+import com.richard.fyoung.customerwork.safety.quota.MybatisTenantQuotaStore;
+import com.richard.fyoung.customerwork.safety.quota.QuotaExceedAction;
+import com.richard.fyoung.customerwork.safety.quota.QuotaPeriod;
+import com.richard.fyoung.customerwork.safety.quota.TenantQuota;
 import com.richard.fyoung.customerwork.safety.subjectquota.MybatisSubjectQuotaHitStore;
 import com.richard.fyoung.customerwork.safety.subjectquota.MybatisSubjectQuotaLevelStore;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectExceedAction;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaLevel;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.sql.DriverManager;
@@ -94,6 +116,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.SqlSessionTemplate;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -481,7 +505,7 @@ class AdminRowMutationAcceptanceTest {
                 store.save(new SubjectQuotaLevel(null, "quota-save", "protected-save", "本租户等级",
                     QuotaSubjectType.USER, 1800, 50000, 100, SubjectExceedAction.BLOCK, true, null));
                 assertEquals(List.of("本租户等级"), store.findByTenant("quota-save").stream().map(SubjectQuotaLevel::levelName).toList());
-            } catch (org.springframework.dao.DuplicateKeyException conflict) {
+            } catch (DuplicateKeyException conflict) {
                 // 存量不区分大小写的唯一索引可以拒绝同码插入，但绝不能挪用另一个租户的记录。
             }
             assertEquals("其他租户等级", customerJdbc.queryForObject("SELECT level_name FROM cw_subject_quota_level "
@@ -498,7 +522,7 @@ class AdminRowMutationAcceptanceTest {
         var provider = new SubjectQuotaGatewayProvider(customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
         try {
             var store = new MybatisSubjectQuotaHitStore(provider.get().hitMapper());
-            org.junit.jupiter.api.Assertions.assertAll(
+            assertAll(
                 () -> assertEquals(List.of("own-subject"), store.findRecent("quota-hits", 0, 20).stream().map(hit -> hit.subjectId()).toList()),
                 () -> assertEquals(List.of("own-subject"), store.rank("quota-hits", 0, 20).stream().map(hit -> hit.getSubjectId()).toList()));
         } finally {
@@ -514,6 +538,166 @@ class AdminRowMutationAcceptanceTest {
         properties.setPassword(PASSWORD);
         properties.setDatabase(OWN_DATABASES.get(1));
         return properties;
+    }
+
+    @Test
+    void privilegedTenantQuotaReadsKeepExactTenantAndPeriod() {
+        customerJdbc.update("INSERT INTO cw_tenant_quota(tenant_id,period,token_limit) "
+            + "VALUES ('bill-case','DAILY',11),('BILL-CASE','MONTHLY',22)");
+        var provider = new QuotaGatewayProvider(
+            customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var store = new MybatisTenantQuotaStore(provider.get().quotaMapper());
+            assertAll(
+                () -> assertEquals(List.of(11L), store.findByTenant("bill-case").stream().map(quota -> quota.tokenLimit()).toList()),
+                () -> assertEquals(11L, store.find("bill-case", QuotaPeriod.DAILY).orElseThrow().tokenLimit()),
+                () -> assertTrue(store.find("bill-case", QuotaPeriod.MONTHLY).isEmpty()));
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void privilegedTenantQuotaDeleteCannotRemoveCaseVariantTenantPeriod() {
+        customerJdbc.update("INSERT INTO cw_tenant_quota(tenant_id,period,token_limit) VALUES ('BILL-DELETE','MONTHLY',22)");
+        var provider = new QuotaGatewayProvider(
+            customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var store = new MybatisTenantQuotaStore(provider.get().quotaMapper());
+            store.delete("bill-delete", QuotaPeriod.MONTHLY);
+            assertEquals(1, customerJdbc.queryForObject("SELECT COUNT(*) FROM cw_tenant_quota "
+                + "WHERE BINARY tenant_id='BILL-DELETE' AND period='MONTHLY'", Integer.class));
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void privilegedTenantQuotaSaveCannotTakeOverAnotherTenant() {
+        customerJdbc.update("INSERT INTO cw_tenant_quota(tenant_id,period,token_limit) VALUES ('BILL-SAVE','MONTHLY',22)");
+        var provider = new QuotaGatewayProvider(
+            customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var store = new MybatisTenantQuotaStore(provider.get().quotaMapper());
+            try {
+                store.save(new TenantQuota("bill-save",
+                    QuotaPeriod.MONTHLY, 33L, BigDecimal.ONE,
+                    QuotaExceedAction.BLOCK, 80, true));
+                assertEquals(33L, store.find("bill-save", QuotaPeriod.MONTHLY).orElseThrow().tokenLimit());
+            } catch (DuplicateKeyException conflict) {
+                // 存量唯一索引可以拒绝大小写冲突，不能改归其他租户的行。
+            }
+            assertEquals(List.of(22L), customerJdbc.queryForList("SELECT token_limit FROM cw_tenant_quota "
+                + "WHERE BINARY tenant_id='BILL-SAVE' AND period='MONTHLY'", Long.class));
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void deadLetterReopenPersistsPendingAndRejectsAnotherTenant() {
+        customerJdbc.update("INSERT INTO cw_dead_letter(id,tenant_id,type,payload,biz_key,status,attempts,"
+            + "last_error,next_retry_at_ms,created_at_ms,finished_at_ms) VALUES "
+            + "('owned-reopen','row-acceptance','NOTIFICATION','{}','own','ABANDONED',4,'failed',1,1,2),"
+            + "('foreign-reopen','ROW-ACCEPTANCE','NOTIFICATION','{}','foreign','ABANDONED',4,'failed',1,1,2)");
+        var provider = new OpsGatewayProvider(customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var service = new OpsAdminService(provider);
+            long before = System.currentTimeMillis();
+            var reopened = service.reopenDeadLetter("owned-reopen");
+            assertEquals(DeadLetterStatus.PENDING, reopened.getStatus());
+            assertEquals("PENDING", customerJdbc.queryForObject(
+                "SELECT status FROM cw_dead_letter WHERE id='owned-reopen'", String.class));
+            assertEquals(0, customerJdbc.queryForObject(
+                "SELECT attempts FROM cw_dead_letter WHERE id='owned-reopen'", Integer.class));
+            assertTrue(reopened.getNextRetryAtMs() >= before);
+            assertEquals(0, reopened.getFinishedAtMs());
+            assertThrows(BizException.class, () -> service.reopenDeadLetter("foreign-reopen"));
+            assertEquals("ABANDONED", customerJdbc.queryForObject(
+                "SELECT status FROM cw_dead_letter WHERE id='foreign-reopen'", String.class));
+        } finally { provider.close(); }
+    }
+
+    @Test
+    void cacheEvictionAndScopeClearKeepOtherTenantAndOtherScope() {
+        customerJdbc.update("INSERT INTO cw_semantic_cache(id,tenant_id,scope_id,intent,question,question_vector,"
+            + "answer,created_at_ms,last_hit_at_ms) VALUES "
+            + "(811,'row-acceptance','shared','consult','one','0.1','answer',1,1),"
+            + "(812,'row-acceptance','shared','consult','two','0.1','answer',1,1),"
+            + "(813,'ROW-ACCEPTANCE','shared','consult','foreign','0.1','answer',1,1),"
+            + "(814,'row-acceptance','other','consult','other','0.1','answer',1,1)");
+        var provider = new OpsGatewayProvider(customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var service = new OpsAdminService(provider);
+            assertFalse(service.evictCacheEntry(813L));
+            assertTrue(service.evictCacheEntry(811L));
+            assertFalse(service.evictCacheEntry(811L));
+            assertEquals(1, service.clearCache("shared"));
+            assertEquals(0, service.clearCache("shared"));
+            assertEquals(List.of(813L, 814L), customerJdbc.queryForList(
+                "SELECT id FROM cw_semantic_cache WHERE id BETWEEN 811 AND 814 ORDER BY id", Long.class));
+        } finally { provider.close(); }
+    }
+
+    @Test
+    void sloPolicySaveKeepsOriginalIdentityAndRejectsForeignUpdate() throws Exception {
+        // 会话身份由入口提供；本用例使用真实 Mapper、事务和生产租户插件验证持久结果。
+        try (var identity = mockStatic(TenantSession.class)) {
+            identity.when(TenantSession::effectiveTenant).thenReturn("row-acceptance");
+            var service = new SloPolicyService(adminTemplate().getMapper(SloPolicyMapper.class));
+            var transaction = new TransactionTemplate(new DataSourceTransactionManager(adminSource));
+            Long id = transaction.execute(status -> service.upsert(sloRequest(null, " initial policy ")));
+            transaction.executeWithoutResult(status -> service.upsert(sloRequest(id, " updated policy ")));
+            assertEquals("updated policy", adminJdbc.queryForObject(
+                "SELECT policy_name FROM ai_slo_policy WHERE id=?", String.class, id));
+            assertEquals("row-acceptance", adminJdbc.queryForObject(
+                "SELECT tenant_id FROM ai_slo_policy WHERE id=?", String.class, id));
+            assertEquals(0, adminJdbc.queryForObject(
+                "SELECT COUNT(*) FROM ai_slo_policy WHERE id=? AND scope_key IS NOT NULL", Integer.class, id));
+            adminJdbc.update("UPDATE ai_slo_policy SET tenant_id='ROW-ACCEPTANCE' WHERE id=?", id);
+            assertThrows(BizException.class, () -> transaction.executeWithoutResult(
+                status -> service.upsert(sloRequest(id, "unauthorized"))));
+            assertEquals("updated policy", adminJdbc.queryForObject(
+                "SELECT policy_name FROM ai_slo_policy WHERE id=?", String.class, id));
+        }
+    }
+
+    @Test
+    void sloAcknowledgementPersistsOneEventAndNotificationWithoutResolvingAlert() throws Exception {
+        // 会话身份由入口提供；本用例使用真实 Mapper、事务和生产租户插件验证持久结果。
+        try (var identity = mockStatic(TenantSession.class)) {
+            identity.when(TenantSession::effectiveTenant).thenReturn("row-acceptance");
+            var template = adminTemplate();
+            var policies = new SloPolicyService(template.getMapper(SloPolicyMapper.class));
+            var transaction = new TransactionTemplate(new DataSourceTransactionManager(adminSource));
+            Long id = transaction.execute(status -> policies.upsert(sloRequest(null, "ack policy")));
+            adminJdbc.update("INSERT INTO ai_slo_alert(id,tenant_id,policy_id,window_end_minute,alert_type,"
+                + "active_policy_id,status,short_burn_rate,long_burn_rate,first_seen_at,last_seen_at) "
+                + "VALUES(871,'row-acceptance',?,1,'MULTI_WINDOW_BURN',?,'OPEN',3,4,NOW(),NOW())", id, id);
+            var delivery = mock(SiteMessageService.class);
+            var notifications = new SloNotificationService(template.getMapper(SloNotificationTaskMapper.class),
+                delivery, new SloAutomationProperties());
+            var service = new SloAlertService(template.getMapper(SloAlertMapper.class),
+                template.getMapper(SloAlertEventMapper.class), template.getMapper(SloPolicyMapper.class), notifications);
+            transaction.executeWithoutResult(status -> service.acknowledge(871L, 7L));
+            transaction.executeWithoutResult(status -> service.acknowledge(871L, 7L));
+            assertEquals("ACKED", adminJdbc.queryForObject("SELECT status FROM ai_slo_alert WHERE id=871", String.class));
+            assertEquals(0, adminJdbc.queryForObject(
+                "SELECT COUNT(*) FROM ai_slo_alert WHERE id=871 AND resolved_at IS NOT NULL", Integer.class));
+            assertEquals(1, adminJdbc.queryForObject(
+                "SELECT COUNT(*) FROM ai_slo_alert_event WHERE alert_id=871 AND event_type='ACKED' AND actor_user_id=7", Integer.class));
+            assertEquals(1, adminJdbc.queryForObject(
+                "SELECT COUNT(*) FROM ai_slo_notification_task WHERE alert_id=871 AND status='PENDING'", Integer.class));
+            verifyNoInteractions(delivery);
+            adminJdbc.update("UPDATE ai_slo_alert SET tenant_id='ROW-ACCEPTANCE' WHERE id=871");
+            assertThrows(BizException.class, () -> service.acknowledge(871L, 7L));
+            assertThrows(BizException.class, () -> service.events(871L));
+        }
+    }
+
+    private static SloPolicySaveRequest sloRequest(Long id, String name) {
+        return new SloPolicySaveRequest(id, name, "TENANT", "ignored-key", new BigDecimal("0.99"),
+            new BigDecimal("0.95"), 3000L, 5, 60, 100, new BigDecimal("2"), true);
     }
 
     private static void seedAgent(long id, String code) {
@@ -540,6 +724,12 @@ class AdminRowMutationAcceptanceTest {
         configuration.addMapper(AiProjectMapper.class);
         configuration.addMapper(AiProjectSessionMapper.class);
         configuration.addMapper(LoginCarouselImageMapper.class);
+        configuration.addMapper(SloPolicyMapper.class);
+        configuration.addMapper(SloAlertMapper.class);
+        configuration.addMapper(SloAlertEventMapper.class);
+        configuration.addMapper(SloNotificationTaskMapper.class);
+        factory.setMapperLocations(new PathMatchingResourcePatternResolver()
+            .getResources("classpath*:mapper/Slo*Mapper.xml"));
         factory.setConfiguration(configuration);
         factory.setPlugins(new MybatisPlusConfig().mybatisPlusInterceptor(tenantProperties, new DataScopeProperties()));
         var sqlFactory = factory.getObject();

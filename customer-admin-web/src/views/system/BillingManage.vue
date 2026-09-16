@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useQueryState } from '@/composables/useQueryState'
+import { useCrudForm } from '@/composables/useCrudForm'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -43,6 +46,12 @@ const ALERT_LABELS: Record<string, string> = {
   FORECAST_EXCEEDED: '预测超限',
 }
 
+const auth = useAuthStore()
+const quotaDeletes = useRowMutation<string>('billing:quota-edit')
+const priceDeletes = useRowMutation('billing:price-edit')
+const aggregates = useRowMutation('billing:aggregate')
+const exports = useRowMutation('billing:export')
+const costAcknowledgements = useRowMutation('billing:view')
 const activeTab = ref('bill')
 const { data: viewSnapshot, loading: viewLoading, error: viewError, loaded: viewLoaded, load: loadView } = useQueryState<{
   view: Awaited<ReturnType<typeof fetchCurrentView>>; tenants: TenantVO[]
@@ -58,143 +67,98 @@ const tenants = computed(() => viewSnapshot.value?.tenants ?? [])
 // ---------- 配额 ----------
 
 const quotaTenant = ref('')
-const quotaSubmitting = ref(false)
-
-const { data: quotas, loading: quotaLoading, error: quotaError, loaded: quotaLoaded, load: loadQuota } =
-  useQueryState<TenantQuotaVO[]>(() => quotaTenant.value ? listQuota(quotaTenant.value) : Promise.resolve([]), () => [])
-
-const quotaDialogVisible = ref(false)
-const quotaForm = reactive<TenantQuotaSaveRequest>({
-  tenantId: '',
-  period: 'MONTHLY',
-  tokenLimit: 0,
-  amountLimit: 0,
-  exceedAction: 'BLOCK',
-  warnPercent: 80,
-  enabled: true,
-})
+const { data: quotas, loading: quotaLoading, error: quotaError, loaded: quotaLoaded,
+  load: loadQuota, reset: resetQuota } = useQueryState<TenantQuotaVO[]>(
+  () => quotaTenant.value ? listQuota(quotaTenant.value) : Promise.resolve([]), () => [],
+)
+const { form: quotaForm, dialogVisible: quotaDialogVisible, submitting: quotaSubmitting,
+  openCreate: createQuota, openEdit: editQuota, handleSubmit: submitQuota } =
+  useCrudForm<TenantQuotaVO, TenantQuotaSaveRequest, string>({
+    initForm: () => ({ tenantId: quotaTenant.value, period: 'MONTHLY', tokenLimit: 0,
+      amountLimit: 0, exceedAction: 'BLOCK', warnPercent: 80, enabled: true }),
+    toForm: row => ({ ...row }),
+    rowId: row => JSON.stringify([row.tenantId, row.period]),
+    create: saveQuota,
+    update: (_id, value) => saveQuota(value),
+    beforeSubmit: (_mode, value) => {
+      if (!crossTenantAuthority.value || !auth.hasPermission('billing:quota-edit')) return false
+      if (!value.tenantId) { ElMessage.warning('请先选择租户'); return false }
+      return true
+    },
+    messages: { created: '配额已保存', updated: '配额已保存' },
+    onSaved: async () => { await loadQuota() },
+  })
+watch(quotaTenant, () => { resetQuota(); quotaDialogVisible.value = false }, { flush: 'sync' })
 
 function openQuotaDialog(row?: TenantQuotaVO) {
-  Object.assign(quotaForm, row ?? {
-    tenantId: quotaTenant.value,
-    period: 'MONTHLY',
-    tokenLimit: 0,
-    amountLimit: 0,
-    exceedAction: 'BLOCK',
-    warnPercent: 80,
-    enabled: true,
-  })
-  quotaForm.tenantId = row?.tenantId ?? quotaTenant.value
-  quotaDialogVisible.value = true
-}
-
-async function submitQuota() {
-  if (quotaSubmitting.value) return
-  if (!quotaForm.tenantId) {
-    ElMessage.warning('请先选择租户')
-    return
-  }
-  quotaSubmitting.value = true
-  try {
-    await saveQuota(quotaForm)
-    ElMessage.success('配额已保存')
-    quotaDialogVisible.value = false
-    await loadQuota()
-  } finally {
-    quotaSubmitting.value = false
-  }
+  if (row) editQuota(row)
+  else createQuota()
 }
 
 async function removeQuota(row: TenantQuotaVO) {
-  await ElMessageBox.confirm(
-    `确认删除租户「${row.tenantId}」的${PERIOD_LABELS[row.period] ?? row.period}配额？删除后该周期不再限额。`,
-    '删除确认',
-    { type: 'warning' },
-  )
-  await deleteQuota(row.tenantId, row.period)
-  ElMessage.success('配额已删除')
-  await loadQuota()
+  if (!crossTenantAuthority.value) return
+  const { tenantId, period } = row
+  await quotaDeletes.run(JSON.stringify([tenantId, period]), async current => {
+    await ElMessageBox.confirm(
+      `确认删除租户「${tenantId}」的${PERIOD_LABELS[period] ?? period}配额？删除后该周期不再限额。`,
+      '删除确认', { type: 'warning' },
+    )
+    if (current()) await deleteQuota(tenantId, period)
+  }, async () => { ElMessage.success('配额已删除'); await loadQuota() })
 }
 
 // ---------- 单价 ----------
 
-const priceSubmitting = ref(false)
-
 const { data: prices, loading: priceLoading, error: priceError, loaded: priceLoaded, load: loadPrice } =
   useQueryState<ModelPriceVO[]>(() => listPrice(), () => [])
-
-const priceDialogVisible = ref(false)
-const priceForm = reactive<Partial<ModelPriceVO>>({
-  provider: 'dashscope',
-  modelName: '',
-  inputPrice: 0,
-  outputPrice: 0,
-  cachedPrice: 0,
-  currency: 'CNY',
-  effectiveFrom: '',
-  remark: '',
-})
-
-function openPriceDialog() {
-  Object.assign(priceForm, {
-    provider: 'dashscope',
-    modelName: '',
-    inputPrice: 0,
-    outputPrice: 0,
-    cachedPrice: 0,
-    currency: 'CNY',
-    effectiveFrom: '',
-    remark: '',
+const { form: priceForm, dialogVisible: priceDialogVisible, submitting: priceSubmitting,
+  openCreate: openPriceDialog, handleSubmit: submitPrice } = useCrudForm<ModelPriceVO, Partial<ModelPriceVO>>({
+    initForm: () => ({ provider: 'dashscope', modelName: '', inputPrice: 0, outputPrice: 0,
+      cachedPrice: 0, currency: 'CNY', effectiveFrom: '', remark: '' }),
+    create: createPrice,
+    beforeSubmit: (_mode, value) => {
+      if (!crossTenantAuthority.value || !auth.hasPermission('billing:price-edit')) return false
+      if (!value.modelName?.trim()) { ElMessage.warning('请填写模型名'); return false }
+      return true
+    },
+    messages: { created: '单价已新增' },
+    onSaved: async () => { await loadPrice() },
   })
-  priceDialogVisible.value = true
-}
-
-async function submitPrice() {
-  if (priceSubmitting.value) return
-  if (!priceForm.modelName) {
-    ElMessage.warning('请填写模型名')
-    return
-  }
-  priceSubmitting.value = true
-  try {
-    await createPrice(priceForm)
-    ElMessage.success('单价已新增')
-    priceDialogVisible.value = false
-    await loadPrice()
-  } finally {
-    priceSubmitting.value = false
-  }
-}
 
 async function removePrice(row: ModelPriceVO) {
-  await ElMessageBox.confirm(
-    `确认删除 ${row.provider}/${row.modelName} 自 ${row.effectiveFrom} 起的单价？` +
-      '历史账单已按当时价格结算落库，删除不影响已出的账。',
-    '删除确认',
-    { type: 'warning' },
-  )
-  await deletePrice(row.id)
-  ElMessage.success('单价已删除')
-  await loadPrice()
+  if (!crossTenantAuthority.value) return
+  await priceDeletes.run(row.id, async current => {
+    await ElMessageBox.confirm(
+      `确认删除 ${row.provider}/${row.modelName} 自 ${row.effectiveFrom} 起的单价？` +
+        '历史账单已按当时价格结算落库，删除不影响已出的账。',
+      '删除确认', { type: 'warning' },
+    )
+    if (current()) await deletePrice(row.id)
+  }, async () => { ElMessage.success('单价已删除'); await loadPrice() })
 }
 
 // ---------- 账单 ----------
 
 const billRange = ref<[string, string]>(['', ''])
 const billTenant = ref('')
+type BillingQuery = { from: string; to: string; tenantId?: string }
 const { data: billSnapshot, loading: billLoading, error: billError, loaded: billLoaded, load: queryBill } = useQueryState<{
-  rows: UsageAggregate[]; reconciliation: UsageReconciliationVO[]; overview: boolean
+  rows: UsageAggregate[]; reconciliation: UsageReconciliationVO[]; overview: boolean; request: BillingQuery | null
 }>(async () => {
   const [from, to] = billRange.value
-  if (crossTenantAuthority.value && !billTenant.value) {
-    return { rows: await fetchPlatformOverview({ from, to }), reconciliation: [], overview: true }
-  }
-  const params = { from, to, tenantId: crossTenantAuthority.value ? billTenant.value : undefined }
+  const request: BillingQuery = { from, to, tenantId: crossTenantAuthority.value ? billTenant.value || undefined : undefined }
+  const overview = crossTenantAuthority.value && !request.tenantId
+  if (overview) return { rows: await fetchPlatformOverview({ from, to }), reconciliation: [], overview, request }
   const [rows, reconciliation] = await Promise.all([
-    fetchTenantBill(params), canReconcile(from, to) ? fetchUsageReconciliation(params) : Promise.resolve([]),
+    fetchTenantBill(request), canReconcile(from, to) ? fetchUsageReconciliation(request) : Promise.resolve([]),
   ])
-  return { rows, reconciliation, overview: false }
-}, () => ({ rows: [], reconciliation: [], overview: false }))
+  return { rows, reconciliation, overview, request }
+}, () => ({ rows: [], reconciliation: [], overview: false, request: null }))
+const billOutdated = computed(() => {
+  const request = billSnapshot.value.request
+  return Boolean(request && (request.from !== billRange.value[0] || request.to !== billRange.value[1]
+    || request.tenantId !== (crossTenantAuthority.value ? billTenant.value || undefined : undefined)))
+})
 const billRows = computed(() => billSnapshot.value.rows)
 const reconciliationRows = computed(() => billSnapshot.value.reconciliation)
 
@@ -220,27 +184,22 @@ function canReconcile(from: string, to: string) {
 }
 
 async function handleAggregate() {
-  await ElMessageBox.confirm(
-    '将重新归集最近的用量数据（幂等，重复执行只是覆盖）。用于补数据或验证配置。',
-    '手工归集',
-    { type: 'info' },
-  )
-  const count = await triggerAggregate()
-  ElMessage.success(`归集完成，写入 ${count} 条`)
-  await loadBill()
+  if (!crossTenantAuthority.value) return
+  let count = 0
+  await aggregates.run(0, async current => {
+    await ElMessageBox.confirm(
+      '将重新归集最近的用量数据（幂等，重复执行只是覆盖）。用于补数据或验证配置。',
+      '手工归集', { type: 'info' },
+    )
+    if (current()) count = await triggerAggregate()
+  }, async () => { ElMessage.success(`归集完成，写入 ${count} 条`); await loadBill() })
 }
 
 async function handleExport() {
-  const [from, to] = billRange.value
-  if (!from || !to) {
-    ElMessage.warning('请选择日期区间')
-    return
-  }
-  await exportBilling({
-    tenantId: billTenant.value || undefined,
-    from,
-    to,
-  })
+  const request = billSnapshot.value.request
+  if (!request) return
+  // 修改筛选尚未查询时，导出仍与正在展示的账单使用同一查询口径。
+  await exports.run(0, () => exportBilling(request), () => {})
 }
 
 // ---------- 成本预测与告警 ----------
@@ -263,9 +222,10 @@ const forecast = computed(() => costSnapshot.value.forecast)
 const alerts = computed(() => costSnapshot.value.alerts)
 
 async function handleAcknowledge(row: CostAlertVO) {
-  await acknowledgeCostAlert(row.id, row.tenantId)
-  ElMessage.success('告警已确认')
-  await loadCost()
+  await costAcknowledgements.run(row.id, () => acknowledgeCostAlert(row.id, row.tenantId), async () => {
+    ElMessage.success('告警已确认')
+    await loadCost()
+  })
 }
 
 function formatMoney(value: number | null | undefined) {
@@ -296,6 +256,12 @@ async function initialize() {
   await Promise.all([...(crossTenantAuthority.value ? [loadPrice()] : []), loadBill(), loadCost()])
 }
 
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  quotaTenant.value = ''
+  billTenant.value = ''
+  costTenant.value = ''
+  billRange.value = defaultRange()
+}, { flush: 'sync' })
 onMounted(initialize)
 </script>
 
@@ -367,7 +333,7 @@ onMounted(initialize)
                 <el-button v-permission="'billing:quota-edit'" link type="primary" @click="openQuotaDialog(row)">
                   编辑
                 </el-button>
-                <el-button v-permission="'billing:quota-edit'" link type="danger" @click="removeQuota(row)">
+                <el-button v-permission="'billing:quota-edit'" link type="danger" :disabled="quotaDeletes.isPending(JSON.stringify([row.tenantId, row.period]))" @click="removeQuota(row)">
                   删除
                 </el-button>
               </template>
@@ -399,7 +365,7 @@ onMounted(initialize)
             <el-table-column prop="remark" label="备注" show-overflow-tooltip />
             <el-table-column label="操作" width="90" fixed="right">
               <template #default="{ row }">
-                <el-button v-permission="'billing:price-edit'" link type="danger" @click="removePrice(row)">
+                <el-button v-permission="'billing:price-edit'" link type="danger" :disabled="priceDeletes.isPending(row.id)" @click="removePrice(row)">
                   删除
                 </el-button>
               </template>
@@ -435,14 +401,15 @@ onMounted(initialize)
             </el-select>
             <el-tag v-else type="info">当前租户：{{ currentTenantId || 'default' }}</el-tag>
             <el-button type="primary" @click="loadBill">查询</el-button>
-            <el-button v-permission="'billing:export'" @click="handleExport">
+            <el-button v-permission="'billing:export'" :loading="exports.isPending(0)" :disabled="!billSnapshot.request || billLoading || exports.isPending(0)" @click="handleExport">
               导出 CSV
             </el-button>
-            <el-button v-if="crossTenantAuthority" v-permission="'billing:aggregate'" @click="handleAggregate">
+            <el-button v-if="crossTenantAuthority" v-permission="'billing:aggregate'" :loading="aggregates.isPending(0)" :disabled="aggregates.isPending(0)" @click="handleAggregate">
               手工归集
             </el-button>
           </div>
 
+          <p v-if="billOutdated" class="tip">筛选已修改，结果与导出仍对应上一次查询。</p>
           <CrudLoadState :error="billError" :has-stale-data="billLoaded" :loading="billLoading" @retry="loadBill" />
           <!-- 展示已接受查询对应的视图，修改筛选本身不能改写旧结果的含义。 -->
           <el-table v-if="(!billError || billLoaded) && !billSnapshot.overview" v-loading="billLoading" :data="billRows" style="width: 100%" empty-text="该区间暂无账单">
@@ -593,7 +560,7 @@ onMounted(initialize)
             </el-table-column>
             <el-table-column label="操作" width="100" fixed="right">
               <template #default="{ row }">
-                <el-button v-if="row.status === 'OPEN'" link type="primary" @click="handleAcknowledge(row)">
+                <el-button v-if="row.status === 'OPEN'" link type="primary" :loading="costAcknowledgements.isPending(row.id)" :disabled="costAcknowledgements.isPending(row.id)" @click="handleAcknowledge(row)">
                   确认
                 </el-button>
               </template>
@@ -607,7 +574,7 @@ onMounted(initialize)
     </el-card>
 
     <el-dialog v-model="quotaDialogVisible" title="租户配额" width="520px">
-      <el-form :model="quotaForm" label-width="130px">
+      <el-form :disabled="quotaSubmitting" :model="quotaForm" label-width="130px">
         <el-form-item label="租户">
           <el-input v-model="quotaForm.tenantId" disabled />
         </el-form-item>
@@ -646,7 +613,7 @@ onMounted(initialize)
     </el-dialog>
 
     <el-dialog v-model="priceDialogVisible" title="新增模型单价" width="520px">
-      <el-form :model="priceForm" label-width="150px">
+      <el-form :disabled="priceSubmitting" :model="priceForm" label-width="150px">
         <el-form-item label="厂商">
           <el-input v-model="priceForm.provider!" placeholder="如 dashscope" />
         </el-form-item>
