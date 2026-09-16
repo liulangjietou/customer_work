@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V113
+-- 对应版本：Flyway V114
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -51,7 +51,7 @@ CREATE TABLE `ai_agent` (
   `max_iters` int DEFAULT NULL COMMENT 'ReAct 最大迭代轮数（null=默认10）',
   `tool_timeout_seconds` int DEFAULT NULL COMMENT '工具执行超时秒数（null=框架默认5分钟）',
   `tool_max_attempts` int DEFAULT NULL COMMENT '工具执行最大尝试次数（null=框架默认1次）',
-  `compress_trigger_msgs` int DEFAULT NULL COMMENT '上下文压缩触发消息数（null=不启用压缩）',
+  `compress_trigger_msgs` int DEFAULT NULL COMMENT '上下文压缩触发消息数（null=使用系统默认压缩策略，仅当智能体具备长任务能力时生效）',
   `compress_keep_msgs` int DEFAULT NULL COMMENT '压缩后保留最近消息数（null=默认10）',
   `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
   PRIMARY KEY (`id`),

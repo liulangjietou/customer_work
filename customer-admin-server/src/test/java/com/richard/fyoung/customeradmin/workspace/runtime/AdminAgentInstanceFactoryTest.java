@@ -53,6 +53,29 @@ class AdminAgentInstanceFactoryTest {
         assertTrue(AdminAgentInstanceFactory.requiresHarness(List.of("chat", "tasklist"), 100));
     }
 
+    // ---------------------- 长任务型智能体默认压缩兜底 ----------------------
+
+    @Test
+    void resolveCompressTriggerMsgs_shouldUseConfiguredValue_whenExplicitlySet() {
+        assertEquals(100, AdminAgentInstanceFactory.resolveCompressTriggerMsgs(100));
+    }
+
+    @Test
+    void resolveCompressTriggerMsgs_shouldFallBackToDefault_whenNotConfigured() {
+        // 存量/新建的长任务型智能体未显式配置时，不再是"不压缩"，而是套用系统默认值
+        assertEquals(40, AdminAgentInstanceFactory.resolveCompressTriggerMsgs(null));
+    }
+
+    @Test
+    void resolveCompressKeepMsgs_shouldUseConfiguredValue_whenExplicitlySet() {
+        assertEquals(50, AdminAgentInstanceFactory.resolveCompressKeepMsgs(50));
+    }
+
+    @Test
+    void resolveCompressKeepMsgs_shouldFallBackToDefault_whenNotConfigured() {
+        assertEquals(10, AdminAgentInstanceFactory.resolveCompressKeepMsgs(null));
+    }
+
     // ---------------------- sessionId 路径穿越防御 ----------------------
 
 }

@@ -145,6 +145,8 @@ public class AdminAgentInstanceFactory {
     private static final int DEFAULT_MAX_ITERS = 10;
     /** compress_trigger_msgs 已填但 compress_keep_msgs 未填时的保留消息数默认值。 */
     private static final int DEFAULT_COMPRESS_KEEP_MSGS = 10;
+    /** compress_trigger_msgs 未配置时的默认压缩触发消息数，对齐 customer-work-starter msgThreshold 经验值。 */
+    private static final int DEFAULT_COMPRESS_TRIGGER_MSGS = 40;
     /** Plan Mode 计划文件目录名（workspace 下的子目录）。 */
     private static final String PLAN_DIR_NAME = "plans";
     private static final long BYTES_PER_MB = 1024L * 1024L;
@@ -403,6 +405,19 @@ public class AdminAgentInstanceFactory {
             || compressTriggerMsgs != null;
     }
 
+    /**
+     * 计算最终生效的压缩触发消息数：管理员已配置则用其值，否则套用系统默认值
+     * （长任务型智能体不应因未配置而失去压缩保护）。抽成纯函数便于单测。
+     */
+    static int resolveCompressTriggerMsgs(Integer configured) {
+        return configured != null ? configured : DEFAULT_COMPRESS_TRIGGER_MSGS;
+    }
+
+    /** 计算最终生效的压缩保留消息数：语义同 {@link #resolveCompressTriggerMsgs}。 */
+    static int resolveCompressKeepMsgs(Integer configured) {
+        return configured != null ? configured : DEFAULT_COMPRESS_KEEP_MSGS;
+    }
+
     /** 返回运行时真正使用的系统提示词，供实例组装与调用谱系统一计算版本。 */
     public static String effectiveSystemPrompt(AiAgent agent) {
         return agent != null && StringUtils.hasText(agent.getSystemPrompt())
@@ -558,9 +573,13 @@ public class AdminAgentInstanceFactory {
         boolean staticSubagentsEnabled = capabilities.contains(AgentCapabilities.SUBAGENT);
         boolean dynamicSubagentsEnabled = capabilities.contains(AgentCapabilities.DYNAMIC_SUBAGENT);
         boolean dynamicSkillsEnabled = capabilities.contains(AgentCapabilities.SKILL_LEARNING);
+        // 进入本方法即代表已具备长任务能力，一律套用压缩（未显式配置时走系统默认值），
+        // 不再由 compressTriggerMsgs 是否非空决定是否启用——避免长会话在无压缩保护下涨到模型报错为止。
+        int compressTriggerMsgs = resolveCompressTriggerMsgs(agent.getCompressTriggerMsgs());
+        int compressKeepMsgs = resolveCompressKeepMsgs(agent.getCompressKeepMsgs());
         HarnessOptInPolicy.apply(harnessBuilder,
             vibecoding,
-            agent.getCompressTriggerMsgs() != null,
+            true,
             false,
             staticSubagentsEnabled,
             dynamicSubagentsEnabled,
@@ -594,15 +613,13 @@ public class AdminAgentInstanceFactory {
             log.info("[workspace] layered memory enabled: agentCode={}", agentCode);
         }
         HarnessMemoryPolicy.apply(harnessBuilder, memoryEnabled, model);
-        if (agent.getCompressTriggerMsgs() != null) {
-            int keepMsgs = agent.getCompressKeepMsgs() != null
-                ? agent.getCompressKeepMsgs() : DEFAULT_COMPRESS_KEEP_MSGS;
-            harnessBuilder.compaction(CompactionConfig.builder()
-                .triggerMessages(agent.getCompressTriggerMsgs())
-                .keepMessages(keepMsgs)
-                .model(model)
-                .build());
-        }
+        harnessBuilder.compaction(CompactionConfig.builder()
+            .triggerMessages(compressTriggerMsgs)
+            .keepMessages(compressKeepMsgs)
+            .model(model)
+            .build());
+        log.info("[workspace] compaction applied: agentCode={} triggerMsgs={} keepMsgs={} explicit={}",
+            agentCode, compressTriggerMsgs, compressKeepMsgs, agent.getCompressTriggerMsgs() != null);
         if (staticSubagentsEnabled) {
             registerSubagents(harnessBuilder, agent, visited);
         }
