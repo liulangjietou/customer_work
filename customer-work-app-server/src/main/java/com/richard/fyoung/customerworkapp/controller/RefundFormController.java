@@ -7,15 +7,21 @@ import com.richard.fyoung.customerwork.core.dto.ChatRequest;
 import com.richard.fyoung.customerwork.capability.slotfilling.SlotFillingForm;
 import com.richard.fyoung.customerwork.capability.slotfilling.SlotFillingResult;
 import com.richard.fyoung.customerwork.capability.slotfilling.SlotFillingService;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerworkapp.web.ApiRequestTenant;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.Map;
 import java.util.UUID;
@@ -35,37 +41,52 @@ public class RefundFormController {
 
     private final SlotFillingService slotFillingService;
     private final PendingApprovalService approvalService;
+    private final ApiRequestTenant requestTenant;
 
+    /** 无 Spring 构造保留本地匿名模式；运行时使用注入的实际配置。 */
     public RefundFormController(SlotFillingService slotFillingService,
                                PendingApprovalService approvalService) {
+        this(slotFillingService, approvalService, new ApiRequestTenant(new CustomerWorkProperties()));
+    }
+
+    @Autowired
+    public RefundFormController(SlotFillingService slotFillingService,
+                                PendingApprovalService approvalService, ApiRequestTenant requestTenant) {
         this.slotFillingService = slotFillingService;
         this.approvalService = approvalService;
+        this.requestTenant = requestTenant;
     }
 
     @Operation(summary = "提交一轮退款信息", description = "多轮收集订单号/原因，收齐后生成待审退款单")
     @PostMapping
-    public Mono<Map<String, Object>> collect(@Valid @RequestBody ChatRequest request) {
+    public Mono<Map<String, Object>> collect(@Valid @RequestBody ChatRequest request, ServerWebExchange exchange) {
+        String tenantId = requestTenant.require(exchange);
         String sessionId = StringUtils.hasText(request.sessionId())
             ? request.sessionId() : "refund-" + UUID.randomUUID();
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId, () -> collectForSession(sessionId, request)))
+            .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private Map<String, Object> collectForSession(String sessionId, ChatRequest request) {
         SlotFillingResult result = slotFillingService.submit(
             sessionId, SlotFillingForm.refundForm(), request.message());
 
         if (!result.isComplete()) {
-            return Mono.just(Map.of(
+            return Map.of(
                 "sessionId", sessionId,
                 "complete", false,
                 "nextPrompt", result.getNextPrompt(),
-                "collected", result.getValues()));
+                "collected", result.getValues());
         }
         // 收齐 → 生成待人工审批退款单（串接 HITL 闭环）
         ApprovalRequest approval = approvalService.submit(
             ApprovalType.REFUND, sessionId,
             result.getValues().get("orderId"), null, result.getValues().get("reason"));
-        return Mono.just(Map.of(
+        return Map.of(
             "sessionId", sessionId,
             "complete", true,
             "collected", result.getValues(),
             "approvalId", approval.getId(),
-            "message", "信息已收齐，已生成待人工审批退款单 " + approval.getId() + "，人工坐席放行后执行打款。"));
+            "message", "信息已收齐，已生成待人工审批退款单 " + approval.getId() + "，人工坐席放行后执行打款。");
     }
 }

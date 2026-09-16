@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerworkapp.dao;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -31,12 +32,12 @@ public class UserOrderDao {
     /** 列表查询不取 logistics_trace（列表页无需物流轨迹，减少行传输）。 */
     private static final String LIST_SQL =
         "SELECT order_id, product_id, product_name, amount, status, receiver_addr, created_at_ms "
-        + "FROM cw_order WHERE user_id = ? ORDER BY created_at_ms DESC";
+        + "FROM cw_order WHERE tenant_id = ? AND user_id = ? ORDER BY created_at_ms DESC";
 
     /** 详情查询含 user_id（供归属校验）与 logistics_trace。 */
     private static final String DETAIL_SQL =
         "SELECT user_id, order_id, product_id, product_name, amount, status, receiver_addr, "
-        + "logistics_trace, created_at_ms FROM cw_order WHERE order_id = ?";
+        + "logistics_trace, created_at_ms FROM cw_order WHERE tenant_id = ? AND user_id = ? AND order_id = ?";
 
     private final DataSource dataSource;
 
@@ -49,12 +50,14 @@ public class UserOrderDao {
         return dataSource != null;
     }
 
-    /** 当前用户全部订单（按下单时间倒序）；列表页 {@code logisticsTrace} 恒为 null（不查）。 */
+    /** 当前租户下当前用户的全部订单（按下单时间倒序）；列表页 {@code logisticsTrace} 恒为 null。 */
     public List<OrderView> listByUser(String userId) {
+        String tenantId = TenantContext.require();
         List<OrderView> orders = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(LIST_SQL)) {
-            ps.setString(1, userId);
+            ps.setString(1, tenantId);
+            ps.setString(2, userId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     orders.add(new OrderView(
@@ -69,17 +72,20 @@ public class UserOrderDao {
                 }
             }
         } catch (Exception e) {
-            log.error("user order list query failed, code={}, userId={}", "USER-ORDER-LIST-FAIL", userId, e);
+            log.error("user order list query failed, errorCode={}, userId={}", "USER-ORDER-LIST-FAIL", userId, e);
             throw new IllegalStateException("order query failed", e);
         }
         return orders;
     }
 
-    /** 按订单号查详情（含物流轨迹与归属 userId，供控制器判定 403/404）。 */
-    public Optional<OwnedOrder> findById(String orderId) {
+    /** 按当前租户、已认证用户与订单号查详情；不存在或非本人的订单均不取出。 */
+    public Optional<OwnedOrder> findById(String userId, String orderId) {
+        String tenantId = TenantContext.require();
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(DETAIL_SQL)) {
-            ps.setString(1, orderId);
+            ps.setString(1, tenantId);
+            ps.setString(2, userId);
+            ps.setString(3, orderId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
                     return Optional.empty();
@@ -96,7 +102,7 @@ public class UserOrderDao {
                 return Optional.of(new OwnedOrder(rs.getString("user_id"), view));
             }
         } catch (Exception e) {
-            log.error("user order detail query failed, code={}, orderId={}", "USER-ORDER-DETAIL-FAIL", orderId, e);
+            log.error("user order detail query failed, errorCode={}, orderId={}", "USER-ORDER-DETAIL-FAIL", orderId, e);
             throw new IllegalStateException("order query failed", e);
         }
     }
@@ -122,7 +128,7 @@ public class UserOrderDao {
                             String status, String receiverAddr, String logisticsTrace, Long createdAtMs) {
     }
 
-    /** 订单归属 + 视图（详情查询单次返回，供控制器做 403/404 判定，userId 不外泄给前端）。 */
+    /** 订单归属 + 视图（控制器再次确认归属，不匹配时返回 404，userId 不外泄给前端）。 */
     public record OwnedOrder(String userId, OrderView view) {
     }
 }

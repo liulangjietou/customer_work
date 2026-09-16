@@ -1,5 +1,6 @@
 import { expect, test, type Page, type WebSocketRoute } from '@playwright/test'
 import type { ChatMessage, TicketDetail } from '../../src/types/api'
+import type { RefundApprovalView } from '../../src/types/businessProgress'
 import type { CustomerAnswerSource, CustomerAnswerSourcePreview } from '../../src/types/customerAnswerSources'
 
 const sessionId = 'uU1:browser'
@@ -18,6 +19,9 @@ async function installConversation(page: Page, initialMessages: ChatMessage[] = 
   const unexpected: string[] = []
   const sourceReplies = new Map<string, SourceReply>()
   const sourceRequests: Array<{ path: string; cacheControl: string | undefined }> = []
+  const businessReplies = new Map<string, SourceReply>()
+  const businessRequests: Array<{ path: string; page: number; size: number; cache: string | undefined }> = []
+  const orders = new Map<string, unknown>()
   const extraTickets = new Map<string, TicketDetail>()
   const extraMessages = new Map<string, ChatMessage[]>()
   let receiptQueries = 0
@@ -47,6 +51,14 @@ async function installConversation(page: Page, initialMessages: ChatMessage[] = 
       return route.abort()
     }
     let body: unknown
+    if (path.endsWith('/refund-approvals')) {
+      const number = Number(url.searchParams.get('page') || 1)
+      businessRequests.push({ path, page: number, size: Number(url.searchParams.get('size')), cache: route.request().headers()['cache-control'] })
+      const reply = businessReplies.get(`${path}?page=${number}`) ?? { body: { total: 0, items: [] } }
+      if (reply.gate) await reply.gate
+      return route.fulfill({ status: reply.status ?? 200, json: reply.body, headers: { 'Cache-Control': 'no-store' } })
+    }
+    if (orders.has(path)) return route.fulfill({ json: orders.get(path) })
     if (sourceReplies.has(path)) {
       const reply = sourceReplies.get(path)!
       sourceRequests.push({ path, cacheControl: route.request().headers()['cache-control'] })
@@ -124,6 +136,7 @@ async function installConversation(page: Page, initialMessages: ChatMessage[] = 
   await expect(page.getByLabel('消息内容')).toBeVisible()
   return { commands, sockets, messages, detail, persist, send, acknowledge, unexpected,
     historyQueries, failures, sourceReplies, sourceRequests, extraTickets, extraMessages,
+    businessReplies, businessRequests, orders,
     receiptQueries: () => receiptQueries }
 }
 
@@ -353,7 +366,10 @@ for (const width of [390, 360]) {
     await page.screenshot({ path: testInfo.outputPath(`customer-source-preview-end-${width}.png`), fullPage: true })
     await panel.getByRole('button', { name: '返回列表', exact: true }).click()
     await expect(panel.locator('[data-source-index="0"]')).toBeFocused()
-    await panel.press('Escape')
+    await panel.getByRole('heading', { name: '参考资料', exact: true }).click()
+    await page.keyboard.press('Shift+Tab')
+    await expect(panel.getByRole('button', { name: '刷新参考资料' })).toBeFocused()
+    await page.keyboard.press('Escape')
     await expect(panel).toHaveCount(0)
     await expect(entry).toBeFocused()
     await entry.click()
@@ -588,5 +604,134 @@ test('答复中断、生成故障、额度不足与未完成均有清晰状态',
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('h5-answer-states-390.png'), fullPage: true })
+  expect(fixture.unexpected).toEqual([])
+})
+
+
+const approvalPath = (session = sessionId, page = 1) => `/api/customer/user/sessions/${session}/refund-approvals?page=${page}`
+const approvalRecord: RefundApprovalView = {
+  id: 'approval-browser', orderId: 'ORDER-20260912-008', amount: '299.00',
+  approvalStatus: 'APPROVED', executionStatus: 'NOT_APPLICABLE',
+  createdAtMs: 1789188600000, decidedAtMs: 1789188900000,
+}
+
+for (const width of [360, 390]) {
+  test(`办理进度 ${width}px 可核对独立状态，纯文本长内容和关闭焦点可用`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 })
+    const fixture = await installConversation(page)
+    fixture.detail.ticket.status = 'WAITING_CONFIRM'
+    fixture.detail.ticket.title = '退款与原订单状态核对'
+    fixture.businessReplies.set(approvalPath(), { body: { total: 3, items: [
+      approvalRecord,
+      { ...approvalRecord, id: 'failure', orderId: '<img src=x onerror=alert(1)>长订单编号'.repeat(4), approvalStatus: 'APPROVED', executionStatus: 'EXECUTE_FAILED' },
+      { ...approvalRecord, id: 'completed', approvalStatus: 'APPROVED', executionStatus: 'EXECUTED' },
+    ] } })
+    const trigger = page.getByRole('button', { name: '办理进度', exact: true })
+    await trigger.click()
+    const panel = page.getByRole('dialog', { name: '办理进度', exact: true })
+    await expect(panel).toContainText('待您确认')
+    await expect(panel).toContainText('已批准，执行待核对')
+    await expect(panel).toContainText('处理未完成')
+    await expect(panel).toContainText('到账情况请核对支付渠道记录')
+    await expect(panel).not.toContainText('已到账')
+    await expect(panel.locator('img')).toHaveCount(0)
+    await expect.poll(async () => {
+      const bounds = await panel.boundingBox()
+      return bounds ? Math.abs(bounds.y + bounds.height - 844) : 999
+    }).toBeLessThan(1)
+    expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    const sizes = await panel.locator('button').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height))
+    expect(sizes.every(height => height >= 44)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`business-progress-${width}.png`), fullPage: true, animations: 'disabled' })
+    await panel.locator('.refund-card').last().scrollIntoViewIfNeeded()
+    await page.screenshot({ path: testInfo.outputPath(`business-progress-end-${width}.png`), fullPage: true, animations: 'disabled' })
+    const refresh = panel.getByRole('button', { name: '刷新办理进度' })
+    await refresh.focus()
+    await page.keyboard.press('Tab')
+    await expect(panel.getByRole('button', { name: '关闭', exact: true })).toBeFocused()
+    // 点击非交互标题后，Vant 将焦点交给 Popup 根节点，反向 Tab 也必须留在弹层内。
+    await panel.getByRole('heading', { name: '办理进度', exact: true }).click()
+    await page.keyboard.press('Shift+Tab')
+    await expect(refresh).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(panel).toHaveCount(0)
+    await expect(trigger).toBeFocused()
+    expect(fixture.businessRequests).toEqual([{ path: approvalPath().split('?')[0], page: 1, size: 10, cache: 'no-store' }])
+    expect(fixture.commands).toHaveLength(0)
+    expect(fixture.unexpected).toEqual([])
+  })
+}
+
+test('办理进度失败不会冒充空记录，重试恢复后工单与订单都能回原会话', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const fixture = await installConversation(page)
+  fixture.businessReplies.set(approvalPath(), { status: 503, body: { message: 'private-failure-trace' } })
+  await page.getByRole('button', { name: '办理进度', exact: true }).click()
+  const panel = page.getByRole('dialog', { name: '办理进度', exact: true })
+  await expect(panel.locator('[data-section="refund"] [role="alert"]')).toContainText('退款进度暂时无法加载')
+  await expect(panel).not.toContainText('暂无退款审批记录')
+  await expect(panel).not.toContainText('private-failure-trace')
+  await expect.poll(async () => {
+    const bounds = await panel.boundingBox()
+    return bounds ? Math.abs(bounds.y + bounds.height - 844) : 999
+  }).toBeLessThan(1)
+  await page.screenshot({ path: testInfo.outputPath('business-progress-retry-390.png'), fullPage: true, animations: 'disabled' })
+  fixture.businessReplies.set(approvalPath(), { body: { total: 0, items: [] } })
+  await panel.locator('[data-action="retry-refunds"]').click()
+  await expect(panel).toContainText('暂无退款审批记录')
+  await panel.getByRole('button', { name: '查看工单详情' }).click()
+  await expect(page).toHaveURL(`/tickets/${ticketId}`)
+  await page.getByRole('button', { name: '继续对话' }).click()
+  await expect(page).toHaveURL(`/chat?ticketId=${ticketId}`)
+  fixture.businessReplies.set(approvalPath(), { body: { total: 1, items: [approvalRecord] } })
+  fixture.orders.set(`/api/customer/user/orders/${approvalRecord.orderId}`, {
+    orderId: approvalRecord.orderId, productId: 'headphone', productName: '无线耳机', amount: '299.00',
+    status: 'PAID', receiverAddr: '', logisticsTrace: '', createdAtMs: approvalRecord.createdAtMs,
+  })
+  await page.getByRole('button', { name: '办理进度', exact: true }).click()
+  await panel.getByRole('button', { name: '查看订单', exact: false }).click()
+  await expect(page).toHaveURL(`/orders/${approvalRecord.orderId}?ticketId=${ticketId}`)
+  await page.locator('.service-button').click()
+  await expect(page).toHaveURL(`/chat?orderId=${approvalRecord.orderId}&ticketId=${ticketId}`)
+  expect(fixture.commands).toHaveLength(0)
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('办理进度分页、记录减少与刷新都读取当前会话，旧页不会残留', async ({ page }) => {
+  const fixture = await installConversation(page)
+  fixture.businessReplies.set(approvalPath(), { body: { total: 11, items: [approvalRecord] } })
+  fixture.businessReplies.set(approvalPath(sessionId, 2), { body: { total: 11, items: [{ ...approvalRecord, id: 'second-page', amount: '29.00' }] } })
+  await page.getByRole('button', { name: '办理进度', exact: true }).click()
+  const panel = page.getByRole('dialog', { name: '办理进度', exact: true })
+  await panel.getByRole('button', { name: '下一页' }).click()
+  await expect(panel.locator('.refund-amount')).toContainText('29.00')
+  await expect(panel.locator('.progress-pagination')).toContainText('2 / 2')
+  fixture.businessReplies.set(approvalPath(sessionId, 2), { body: { total: 1, items: [] } })
+  fixture.businessReplies.set(approvalPath(), { body: { total: 1, items: [{ ...approvalRecord, approvalStatus: 'PENDING' }] } })
+  await panel.getByRole('button', { name: '刷新办理进度' }).click()
+  await expect(panel.locator('.refund-amount')).toContainText('299.00')
+  await expect(panel).toContainText('待人工审核')
+  expect(fixture.businessRequests.map(request => request.page)).toEqual([1, 2, 2, 1])
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('办理进度切换会话丢弃迟到记录，认证失效清空后回到登录', async ({ page }) => {
+  const fixture = await installConversation(page)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  fixture.businessReplies.set(approvalPath(), { gate, body: { total: 1, items: [approvalRecord] } })
+  const nextTicket = 'TK-progress-other'
+  const nextSession = 'uU1:progress-other'
+  fixture.extraTickets.set(nextTicket, { ...fixture.detail, ticket: { ...fixture.detail.ticket, id: nextTicket, sessionId: nextSession } })
+  fixture.extraMessages.set(nextSession, [])
+  await page.getByRole('button', { name: '办理进度', exact: true }).click()
+  await expect.poll(() => fixture.businessRequests.length).toBe(1)
+  try { await page.goto(`/chat?ticketId=${nextTicket}`) } finally { release() }
+  await expect(page.getByRole('dialog', { name: '办理进度', exact: true })).toHaveCount(0)
+  fixture.businessReplies.set(approvalPath(nextSession), { status: 401, body: {} })
+  await page.getByRole('button', { name: '办理进度', exact: true }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(page.locator('.refund-card')).toHaveCount(0)
   expect(fixture.unexpected).toEqual([])
 })

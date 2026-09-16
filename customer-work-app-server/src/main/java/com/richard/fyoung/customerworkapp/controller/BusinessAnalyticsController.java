@@ -2,12 +2,20 @@ package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.observability.analytics.BusinessAnalyticsReport;
 import com.richard.fyoung.customerwork.observability.analytics.BusinessAnalyticsService;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerworkapp.web.ApiRequestTenant;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -29,24 +37,39 @@ public class BusinessAnalyticsController {
     private static final long DEFAULT_WINDOW_MS = Duration.ofHours(24).toMillis();
 
     private final BusinessAnalyticsService analyticsService;
+    private final ApiRequestTenant requestTenant;
 
+    /** 无 Spring 构造保留本地匿名模式；运行时使用注入的实际配置。 */
     public BusinessAnalyticsController(BusinessAnalyticsService analyticsService) {
+        this(analyticsService, new ApiRequestTenant(new CustomerWorkProperties()));
+    }
+
+    @Autowired
+    public BusinessAnalyticsController(BusinessAnalyticsService analyticsService, ApiRequestTenant requestTenant) {
         this.analyticsService = analyticsService;
+        this.requestTenant = requestTenant;
     }
 
     @Operation(summary = "业务数据分析报表",
         description = "按时间窗口聚合审批放行率/平均决策时长、人机切换平均接单结案时长、"
-            + "质检失败数与均分(需指定 tenantId)；windowStartMs/windowEndMs 缺省时默认最近 24 小时")
+            + "质检失败数与均分(需指定当前租户 tenantId)；windowStartMs/windowEndMs 缺省时默认最近 24 小时")
     @GetMapping("/business")
     public Mono<BusinessAnalyticsReport> business(
             @RequestParam(required = false) Long windowStartMs,
             @RequestParam(required = false) Long windowEndMs,
-            @RequestParam(required = false) String tenantId) {
-        return Mono.fromCallable(() -> {
+            @RequestParam(required = false) String tenantId,
+            ServerWebExchange exchange) {
+        String authenticatedTenant = requestTenant.require(exchange);
+        boolean includeQuality = StringUtils.hasText(tenantId);
+        if (includeQuality && !TenantContext.sameTenant(authenticatedTenant, tenantId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "quality tenant does not match request identity");
+        }
+        // tenantId 仅选择是否包含本租户质检，不改变审批、转人工或底层存储的租户。
+        return Mono.fromCallable(() -> TenantContext.callWith(authenticatedTenant, () -> {
                 long end = windowEndMs != null ? windowEndMs : System.currentTimeMillis();
                 long start = windowStartMs != null ? windowStartMs : end - DEFAULT_WINDOW_MS;
-                return analyticsService.report(start, end, tenantId);
-            })
+                return analyticsService.report(start, end, includeQuality ? authenticatedTenant : null);
+            }))
             .subscribeOn(Schedulers.boundedElastic());
     }
 }

@@ -3,13 +3,18 @@ package com.richard.fyoung.customerworkapp.controller;
 import com.richard.fyoung.customerwork.infra.diagnostics.DiagnosticService;
 import com.richard.fyoung.customerwork.infra.diagnostics.SessionDiagnostic;
 import com.richard.fyoung.customerwork.observability.AuditRecord;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerworkapp.web.ApiRequestTenant;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -29,9 +34,17 @@ import java.util.List;
 public class DiagnosticController {
 
     private final DiagnosticService diagnosticService;
+    private final ApiRequestTenant requestTenant;
 
+    /** 无 Spring 构造保留本地匿名模式；运行时使用注入的实际配置。 */
     public DiagnosticController(DiagnosticService diagnosticService) {
+        this(diagnosticService, new ApiRequestTenant(new CustomerWorkProperties()));
+    }
+
+    @Autowired
+    public DiagnosticController(DiagnosticService diagnosticService, ApiRequestTenant requestTenant) {
         this.diagnosticService = diagnosticService;
+        this.requestTenant = requestTenant;
     }
 
     @Operation(summary = "会话诊断全景",
@@ -40,8 +53,12 @@ public class DiagnosticController {
     public Mono<SessionDiagnostic> diagnose(
             @PathVariable String sessionId,
             @RequestParam(defaultValue = "" + DiagnosticService.DEFAULT_AUDIT_LIMIT) int auditLimit,
-            @RequestParam(defaultValue = "" + DiagnosticService.DEFAULT_FACT_LIMIT) int factLimit) {
-        return Mono.fromCallable(() -> diagnosticService.diagnose(sessionId, auditLimit, factLimit))
+            @RequestParam(defaultValue = "" + DiagnosticService.DEFAULT_FACT_LIMIT) int factLimit,
+            ServerWebExchange exchange) {
+        String tenantId = requestTenant.require(exchange);
+        boolean preserveLegacyStateNamespace = requestTenant.isAnonymousLocalMode(exchange);
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId,
+                () -> diagnosticService.diagnose(sessionId, auditLimit, factLimit, preserveLegacyStateNamespace)))
             .subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -50,8 +67,11 @@ public class DiagnosticController {
     @GetMapping("/session/{sessionId}/audit")
     public Mono<List<AuditRecord>> audit(
             @PathVariable String sessionId,
-            @RequestParam(defaultValue = "100") int limit) {
-        return Mono.fromCallable(() -> diagnosticService.diagnose(sessionId, limit, 0).getRecentAudit())
+            @RequestParam(defaultValue = "100") int limit, ServerWebExchange exchange) {
+        String tenantId = requestTenant.require(exchange);
+        boolean preserveLegacyStateNamespace = requestTenant.isAnonymousLocalMode(exchange);
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantId,
+                () -> diagnosticService.diagnose(sessionId, limit, 0, preserveLegacyStateNamespace).getRecentAudit()))
             .subscribeOn(Schedulers.boundedElastic());
     }
 }

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { fetchOrderDetail } from '@/api/order'
 import type { OrderView } from '@/types/api'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
+const route = useRoute()
 
 const order = ref<OrderView | null>(null)
 const initialLoading = ref(true)
@@ -63,7 +64,8 @@ function goOrders() {
 
 // 携带订单号跳转聊天页，Chat 页继续按既有逻辑预填订单咨询文案。
 function goChat() {
-  router.push({ path: '/chat', query: { orderId: orderId.value } })
+  const ticketId = typeof route.query.ticketId === 'string' ? route.query.ticketId : undefined
+  router.push({ path: '/chat', query: { orderId: orderId.value, ...(ticketId ? { ticketId } : {}) } })
 }
 </script>
 

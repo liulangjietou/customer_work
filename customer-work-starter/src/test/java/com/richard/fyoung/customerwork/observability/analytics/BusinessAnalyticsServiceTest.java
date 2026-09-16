@@ -1,5 +1,9 @@
 package com.richard.fyoung.customerwork.observability.analytics;
 
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+
 import com.richard.fyoung.customerwork.capability.approval.ApprovalRequest;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalStore;
 import com.richard.fyoung.customerwork.capability.approval.ApprovalType;
@@ -28,6 +32,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * @author owlzhangfq@gmail.com
  */
 class BusinessAnalyticsServiceTest {
+
+    @BeforeEach
+    void bindTenant() { TenantContext.set(TenantContext.DEFAULT); }
+
+    @AfterEach
+    void clearTenant() { TenantContext.clear(); }
+
 
     @Test
     void approvalStats_shouldComputeRateAvgDecisionAndBacklog(@TempDir Path tempDir) {
