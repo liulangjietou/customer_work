@@ -2,20 +2,23 @@ package com.richard.fyoung.customerwork.capability.routing;
 
 import com.richard.fyoung.customerwork.capability.assist.ConversationSummary;
 import com.richard.fyoung.customerwork.capability.assist.ConversationSummaryService;
-import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.observability.AuditSink;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.stereotype.Service;
-
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import jakarta.annotation.PreDestroy;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
 
 /**
  * 转人工增强器（智能路由中控·会话总结 + 工单智能分配的挂载点）：在建单后<b>异步</b>做会话摘要预生成 +
@@ -85,10 +88,13 @@ public class HandoffCreatedEnricher {
             return;
         }
         try {
-            executor.submit(() -> enrich(ticket));
+            String tenant = properties.getTenant().isEnabled() ? TenantContext.require() : TenantContext.get();
+            QuotaSubject subject = QuotaSubjectContext.get();
+            executor.submit(() -> TenantContext.runWith(tenant,
+                () -> QuotaSubjectContext.runWith(subject, () -> enrich(ticket))));
         } catch (Exception e) {
             // 线程池拒绝等极端情况也不能影响转人工
-            log.error("[HandoffCreatedEnricher] dispatch failed, code={}, id={}",
+            log.error("[HandoffCreatedEnricher] dispatch failed, errorCode={}, id={}",
                 "HANDOFF-ENRICH-DISPATCH-FAIL", ticket.getId(), e);
         }
     }
@@ -103,24 +109,30 @@ public class HandoffCreatedEnricher {
             maybeAssign(ticket, summary);
         } catch (Exception e) {
             // 兜底：增强链路任何未预期异常都不能逃逸（fail-open，转人工已在主链路完成）
-            log.error("[HandoffCreatedEnricher] enrich failed, code={}, id={}",
+            log.error("[HandoffCreatedEnricher] enrich failed, errorCode={}, id={}",
                 "HANDOFF-ENRICH-FAIL", ticket.getId(), e);
         }
     }
 
-    /** 会话摘要预生成（开关关则跳过、返回 null）。摘要服务自身 fail-open，此处只做审计埋点。 */
+    /** 摘要读取和生成失败只影响摘要本身；分配仍可依赖原始转人工原因继续执行。 */
     private ConversationSummary maybeSummarize(HandoffTicket ticket) {
         if (!properties.getAssist().isSummaryEnabled()) {
             return null;
         }
-        ConversationSummary summary = summaryService.summarize(ticket.getSessionId());
-        Map<String, Object> fields = new LinkedHashMap<>();
-        fields.put("handoffId", ticket.getId());
-        fields.put("sessionId", ticket.getSessionId());
-        fields.put("fromModel", summary.fromModel());
-        fields.put("emotion", summary.emotion());
-        auditSink.record(AUDIT_TYPE_SUMMARY, fields);
-        return summary;
+        try {
+            ConversationSummary summary = summaryService.summarize(ticket.getSessionId());
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("handoffId", ticket.getId());
+            fields.put("sessionId", ticket.getSessionId());
+            fields.put("fromModel", summary.fromModel());
+            fields.put("emotion", summary.emotion());
+            auditSink.record(AUDIT_TYPE_SUMMARY, fields);
+            return summary;
+        } catch (Exception e) {
+            log.error("[HandoffCreatedEnricher] summary failed, errorCode={}, id={}",
+                "HANDOFF-SUMMARY-FAIL", ticket.getId(), e);
+            return null;
+        }
     }
 
     /** 工单分类 + 坐席打分 + 回写推荐（开关关则跳过）。分类器/打分器自身 fail-open。 */
@@ -147,5 +159,11 @@ public class HandoffCreatedEnricher {
         fields.put("priority", classification.priority().name());
         fields.put("recommendCount", recommendations.size());
         auditSink.record(AUDIT_TYPE_ROUTING, fields);
+    }
+
+    /** 应用关闭时释放本组件拥有的线程池；不影响已经完成的转人工记录。 */
+    @PreDestroy
+    public void shutdown() {
+        executor.shutdownNow();
     }
 }

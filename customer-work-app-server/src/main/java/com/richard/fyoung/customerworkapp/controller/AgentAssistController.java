@@ -6,8 +6,14 @@ import com.richard.fyoung.customerwork.capability.assist.ConversationSummary;
 import com.richard.fyoung.customerwork.capability.assist.ConversationSummaryService;
 import com.richard.fyoung.customerwork.capability.quality.QualityFeedbackRecorder;
 import com.richard.fyoung.customerwork.capability.quality.QualityReport;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAccessor;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,8 +23,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-
-import java.util.List;
 
 /**
  * 坐席辅助 + 会话质检端点（借鉴 AliGo 坐席辅助 / 质检）。
@@ -53,12 +57,18 @@ public class AgentAssistController {
     }
 
     @Operation(summary = "会话总结建议", description = "对整段会话历史做一次性 LLM 结构化总结（意图/情绪/已尝试/待解决/建议）；"
-        + "模型不可用时自动降级到规则版建议（fail-open，永不失败）。供坐席接手前快速了解上下文。")
+        + "模型不可用时使用原文和规则建议；历史读取失败返回错误。摘要附实际使用的消息依据。")
     @GetMapping("/assist/summary")
     public Mono<ConversationSummary> summary(@RequestParam String sessionId) {
-        // summarize 内部会阻塞式调用模型（model.stream().block()），派发到弹性线程池，不占用事件循环线程
-        return Mono.fromCallable(() -> conversationSummaryService.summarize(sessionId))
-            .subscribeOn(Schedulers.boundedElastic());
+        // 此入口属于服务凭证接口；跨线程显式还原入口上下文，不接受调用方自报租户或主体。
+        return Mono.deferContextual(context -> {
+            String tenant = context.getOrDefault(TenantContextThreadLocalAccessor.KEY, TenantContext.get());
+            QuotaSubject subject = context.getOrDefault(QuotaSubjectContextThreadLocalAccessor.KEY,
+                QuotaSubjectContext.get());
+            return Mono.fromCallable(() -> TenantContext.callWith(tenant,
+                () -> QuotaSubjectContext.callWith(subject, () -> conversationSummaryService.summarize(sessionId))))
+                .subscribeOn(Schedulers.boundedElastic());
+        });
     }
 
     @Operation(summary = "会话质检", description = "对一组坐席/Agent 回复做合规与服务规范打分；"

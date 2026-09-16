@@ -1,10 +1,19 @@
 package com.richard.fyoung.customerwork.capability.routing;
 
 import com.richard.fyoung.customerwork.capability.assist.ConversationSummaryService;
-import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffTicket;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.observability.AuditSink;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -29,10 +38,18 @@ class HandoffCreatedEnricherTest {
     private final SeatRoutingScorer scorer = new SeatRoutingScorer();
     private final SeatAgentStore seatStore = new InMemorySeatAgentStore();
     private final AuditSink auditSink = mock(AuditSink.class);
+    private final List<HandoffCreatedEnricher> enrichers = new ArrayList<>();
+
+    @AfterEach
+    void releaseWorkers() {
+        enrichers.forEach(HandoffCreatedEnricher::shutdown);
+    }
 
     private HandoffCreatedEnricher enricher(CustomerWorkProperties props, HandoffService handoffService) {
-        return new HandoffCreatedEnricher(handoffService, summaryService, classifier, scorer,
+        HandoffCreatedEnricher created = new HandoffCreatedEnricher(handoffService, summaryService, classifier, scorer,
             seatStore, props, auditSink);
+        enrichers.add(created);
+        return created;
     }
 
     @Test
@@ -85,5 +102,49 @@ class HandoffCreatedEnricherTest {
         verify(classifier, never()).classify(anyString(), any());
         verify(summaryService, never()).summarize(anyString());
         assertFalse(handoffService.find(ticket.getId()).orElseThrow().getSuggestedAssignees() != null);
+    }
+
+    @Test
+    void onHandoffCreated_shouldRestoreTenantAndSubjectOnWorkerThread() throws Exception {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getRouting().setAssignEnabled(true);
+        CountDownLatch completed = new CountDownLatch(1);
+        AtomicReference<String> observedTenant = new AtomicReference<>();
+        AtomicReference<QuotaSubject> observedSubject = new AtomicReference<>();
+        when(classifier.classify(anyString(), any())).thenAnswer(invocation -> {
+            observedTenant.set(TenantContext.get());
+            observedSubject.set(QuotaSubjectContext.get());
+            completed.countDown();
+            return new TicketClassification("退款", "refund", TicketPriority.HIGH, "不满");
+        });
+        HandoffService handoffService = new HandoffService();
+        HandoffTicket ticket = handoffService.create("sess-async", "退款");
+        HandoffCreatedEnricher enricher = enricher(props, handoffService);
+        QuotaSubject subject = QuotaSubject.user("customer-42");
+
+        TenantContext.runWith("tenant-a", () -> QuotaSubjectContext.runWith(subject,
+            () -> enricher.onHandoffCreated(ticket)));
+
+        assertTrue(completed.await(3, TimeUnit.SECONDS), "必须真正经过工作线程后再检查上下文");
+        assertEquals("tenant-a", observedTenant.get());
+        assertEquals(subject, observedSubject.get());
+        assertFalse(TenantContext.isPresent());
+        assertFalse(QuotaSubjectContext.isPresent());
+    }
+
+    @Test
+    void enrich_shouldKeepRoutingWhenSummaryHistoryFails() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getAssist().setSummaryEnabled(true);
+        props.getRouting().setAssignEnabled(true);
+        when(summaryService.summarize(anyString())).thenThrow(new IllegalStateException("history unavailable"));
+        when(classifier.classify(anyString(), any()))
+            .thenReturn(new TicketClassification("退款", "refund", TicketPriority.HIGH, "不满"));
+        HandoffService handoffService = new HandoffService();
+        HandoffTicket ticket = handoffService.create("sess-summary-failed", "退款");
+
+        enricher(props, handoffService).enrich(ticket);
+
+        assertEquals("退款", handoffService.find(ticket.getId()).orElseThrow().getCategory());
     }
 }
