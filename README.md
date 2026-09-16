@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/liulangjietou/customer_work)](https://github.com/liulangjietou/customer_work/releases)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](docs/新人必读.md)
-[![AgentScope](https://img.shields.io/badge/AgentScope-2.0.0%20GA-green.svg)](https://github.com/agentscope-ai/agentscope-java)
+[![AgentScope](https://img.shields.io/badge/AgentScope-2.0.3-green.svg)](https://github.com/agentscope-ai/agentscope-java)
 [![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.2.5-6DB33F.svg)](https://spring.io/projects/spring-boot)
 [![MyBatis-Plus](https://img.shields.io/badge/MyBatis--Plus-3.5.7-0F766E.svg)](https://baomidou.com)
 [![Sa-Token](https://img.shields.io/badge/Sa--Token-1.39.0-FF5C5C.svg)](https://sa-token.cc)
@@ -45,7 +45,7 @@ customer-work 把典型客服流程落成一套可运行的 Java Agent 系统：
 客服产品参考实现，也能只引入 `customer-work-starter`，把 Agent 基础设施嵌入已有 Spring Boot 应用；
 默认启动成功不等于已经完成真实业务、身份、数据主权与生产环境集成。
 
-- **技术基线**：项目版本 `2.4.0`，JDK 17、Spring Boot 3.2.5、AgentScope Java 2.0.0 GA；默认模型为
+- **技术基线**：项目版本 `2.4.0`，JDK 17、Spring Boot 3.2.5、AgentScope Java 2.0.3；默认模型为
   阿里云百炼，同时已接入 OpenAI、Anthropic、Gemini 与 Ollama 模型扩展。
 - **两套产品面**：用户侧客服系统（H5 / HTTP / SSE / WebSocket / 工单）与运营控制台（模型、Agent、MCP、
   渠道、评测、发布、账单、工单与 AI 编码助手）。
@@ -149,7 +149,46 @@ flowchart LR
 
 ## 三、架构图与核心流程
 
-### 3.1 H5 对话、转人工与 CSAT 闭环
+### 3.1 企业智能客服与 Agent 平台全景架构
+
+[![customer-work 全景架构：触点与输入、接入与上下文、Agent 运行、受控执行、运营控制及反馈闭环](docs/assets/architecture-overview.png)](docs/assets/architecture-overview.svg)
+
+[查看可编辑 SVG](docs/assets/architecture-overview.svg) · [查看高清 PNG（4096 × 3072）](docs/assets/architecture-overview.png)
+
+图示按 `2026-09-16` 的 `efc2f159` 源码快照绘制。蓝色箭头表示请求与调用，橙色表示运行配置，绿色表示
+结果与反馈；虚线框表示可选能力或独立入口。五栏按职责组织，具体入口之间的依赖关系见上一节模块图。
+
+- **运行面**：H5 / HTTP / SSE 对话通过 `ChatTurnService` 复用单一客服 `ReActAgent`；`/consult` 多 Agent、
+  Harness、渠道和网关分别按入口或配置启用。
+- **受控执行**：Agent 经 Toolkit、业务后端 SPI 或 MCP 调用工具；退款申请先经人工决策，再交已配置的执行器。
+  审批状态与执行状态分别记录，真实支付仍需对接业务系统。
+- **控制与反馈**：控制面管理模型、Agent、知识和工具资产，经发布门禁与 Nacos 下发运行配置，实例 ACK 汇总生效状态；
+  消息证据、工单事件、CSAT、Badcase 与知识候选进入运营改进流程。
+- **数据与部署**：MySQL 业务库 / 管理库、Redis、MinIO、Nacos 与 XXL-JOB 各负其责；根 Compose、独立监控栈和
+  Kubernetes 清单的覆盖范围见上节，生产启用条件见[部署手册](docs/部署手册.md)。
+
+图中关键实现：[`ChatTurnService`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/core/service/ChatTurnService.java)、
+[`CustomerServiceAgentFactory`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/core/agent/CustomerServiceAgentFactory.java)、
+[`AgentGovernanceAssembler`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/core/agent/AgentGovernanceAssembler.java)、
+[`PendingApprovalService`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/capability/approval/PendingApprovalService.java)、
+[`RuntimePublishWorker`](customer-admin-server/src/main/java/com/richard/fyoung/customeradmin/aiconfig/channel/publish/RuntimePublishWorker.java)。
+
+<details>
+<summary>维护图源与导出 PNG</summary>
+
+SVG 保留可编辑文字、分组、节点与连线，不嵌入位图或外部资源。修改 SVG 后，使用 librsvg 的 `rsvg-convert`
+重新生成 PNG；导出环境需安装中文字体（例如 Hiragino Sans GB、Noto Sans CJK SC 或 Microsoft YaHei）。
+
+```bash
+rsvg-convert --width 4096 --height 3072 \
+  --output docs/assets/architecture-overview.png docs/assets/architecture-overview.svg
+```
+
+两份图稿一并更新，并检查中文缺字、文字越界、连线和源码边界。
+
+</details>
+
+### 3.2 H5 对话、转人工与 CSAT 闭环
 
 H5 的逐消息主链路是单一客服 `ReActAgent`。多 Agent 编排是独立能力，不在 WebSocket 每条消息中隐式执行。
 
@@ -162,7 +201,8 @@ flowchart TD
     DISPATCH --> KEYWORD{"命中转人工关键词？"}
     KEYWORD -->|是| HANDOFF["TicketService.requestHandoff<br/>AI_SERVING → WAITING_AGENT"]
     KEYWORD -->|否| STATUS{"工单状态"}
-    STATUS -->|AI_SERVING| CHAT["CustomerServiceService.chatStream"]
+    STATUS -->|AI_SERVING| TURN["ChatTurnService.stream<br/>统一对话编排"]
+    TURN --> CHAT["CustomerServiceService.chatStream"]
     STATUS -->|PROCESSING / ON_HOLD| AGENTWS["转发给已受理坐席 /ws/agent"]
     STATUS -->|WAITING_AGENT / WAITING_CONFIRM| NOTICE["返回排队或待确认提示"]
 
@@ -173,8 +213,10 @@ flowchart TD
     GOV --> CAP["模型 + RAG + 业务工具 + MCP + Skill"]
     CAP -->|transferToHuman| HANDOFF
     CAP --> DELTA["过滤后的增量文本"]
+    DELTA -->|chat_chunk| H5
     DELTA --> CACHEWRITE["仅正常完成后<br/>缓存用户实际看到的完整答案"]
-    REFILTER --> DONE["BOT 消息落库<br/>chat_chunk → chat_done"]
+    REFILTER -->|chat_chunk| H5
+    REFILTER --> DONE["ChatTurnFinalizer 保存答复、引用与计划<br/>chat_done 返回真实 messageId"]
     CACHEWRITE --> DONE
     DONE --> H5
 
@@ -190,21 +232,22 @@ flowchart TD
 缓存查找发生在主 Agent 中间件之前：命中时不会再次跑入站 `SensitiveWordMiddleware`，但会执行专门的
 出站敏感词过滤；未命中才进入完整 Agent 治理链。关键实现：
 [`ChatDispatchService`](customer-work-app-server/src/main/java/com/richard/fyoung/customerworkapp/chat/ChatDispatchService.java)、
+[`ChatTurnService`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/core/service/ChatTurnService.java)、
 [`CustomerServiceService`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/core/service/CustomerServiceService.java)、
 [`CsatTicketInviteListener`](customer-work-starter/src/main/java/com/richard/fyoung/customerwork/capability/csat/CsatTicketInviteListener.java)。
 
-### 3.2 HTTP 与多 Agent 编排边界
+### 3.3 HTTP 与多 Agent 编排边界
 
 ```mermaid
 flowchart LR
-    H5["H5 实时聊天"] --> WS["/ws/user"] --> MAIN["CustomerServiceService.chatStream"] --> SINGLE["单一客服 ReActAgent"]
+    H5["H5 实时聊天"] --> WS["/ws/user"] --> TURN["ChatTurnService.stream"] --> MAIN["CustomerServiceService.chatStream"] --> SINGLE["单一客服 ReActAgent"]
 
     CALLER["服务接入方"] --> CHAT["POST /api/customer/chat"]
     CALLER --> SSE["POST /api/customer/chat/stream"]
     CALLER --> INTENT["POST /api/customer/intent"]
     CALLER --> CONSULT["POST /api/customer/consult"]
-    CHAT --> MAIN
-    SSE --> MAIN
+    CHAT --> TURN
+    SSE --> TURN
     INTENT --> CLASSIFIER["一次性结构化意图分类 Agent"]
 
     CONSULT --> MAS["MultiAgentOrchestrator.consult"]
@@ -223,7 +266,7 @@ flowchart LR
 不会触发 RouterAgent、专家 fanout 或 ReducerAgent。接口入口见
 [`CustomerServiceController`](customer-work-app-server/src/main/java/com/richard/fyoung/customerworkapp/controller/CustomerServiceController.java)。
 
-### 3.3 运行时配置发布、热更新与 ACK
+### 3.4 运行时配置发布、热更新与 ACK
 
 ```mermaid
 flowchart LR
@@ -265,24 +308,33 @@ flowchart LR
 - 当前发布器组装主模型、兜底 / 路由策略、系统提示词、MCP、在线实验与 `maxIters`；`retry`、temperature、
   maxTokens、topP、stream 尚未从后台资产完整下发，列入 Roadmap。
 
-### 3.4 退款人工审批闭环（挂起 → 人工决策 → 生效）
+### 3.5 退款人工审批闭环（申请 → 人工决策 → 执行状态）
 
-高风险工具不直接生效：`submitRefund` 只登记待审单，人工放行后才执行退款回调（详见 [全量参考 §6.11](docs/功能与配置全量参考.md)）：
+`submitRefund` 登记退款申请与待审单；人工放行后，`PendingApprovalService` 取得执行租约，再调用
+已配置的 `ApprovalExecutionHandler`。审批通过与资金执行分别留存，失败进入执行重试；真实打款需接入业务支付系统
+（详见 [全量参考 §6.11](docs/功能与配置全量参考.md)）。
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as 用户
     participant A as ReActAgent
-    participant P as ApprovalStore（SPI：内存 / JDBC）
+    participant P as PendingApprovalService / ApprovalStore
     participant S as 坐席 / 管理员
+    participant E as ApprovalExecutionHandler（业务系统实现）
 
     U->>A: 我要退款 500 元
     A->>P: submitRefund 不直接打款，登记待审单（挂起）
     A-->>U: 已提交人工审批（返回审批单号）
     S->>P: 查看待审列表 GET /api/customer/approvals
     alt 放行 approve
-        P->>P: 执行退款回调，终态 APPROVED
+        P->>P: 记录 APPROVED，取得执行租约
+        P->>E: 执行批准动作（幂等键 + fencingToken）
+        alt 执行成功
+            E-->>P: 完成，记录 EXECUTED
+        else 执行失败
+            E-->>P: 记录 EXECUTE_FAILED，供重试与告警
+        end
     else 拒绝 deny
         P->>P: 终态 DENIED（决策幂等，重复决策返回 409）
     else 审批超时
@@ -290,7 +342,7 @@ sequenceDiagram
     end
 ```
 
-### 3.5 用户工单 7 态状态机（AI 自助 ↔ 人工坐席全生命周期）
+### 3.6 用户工单 7 态状态机（AI 自助 ↔ 人工坐席全生命周期）
 
 状态名与代码 `TicketStatus` 枚举一一对应，非法流转 fast-fail：
 
@@ -532,7 +584,7 @@ Roadmap 按风险与验收出口排序，不承诺未经评估的日期，也不
 
 - **分支策略**：`main` 有分支保护、禁止直接 push，开发从 `main` 切分支走 PR；`legacy-main-1.0.12` 标签与
   `rc2.0` 分支为历史存档，不再更新。
-- 基于官方 GA 坐标 `io.agentscope:agentscope-harness:2.0.0`（`agentscope-bom` 统一管理版本）；框架高速迭代，
+- 基于官方坐标 `io.agentscope:agentscope-harness:2.0.3`（`agentscope-bom` 统一管理版本）；框架高速迭代，
   升级遇 API 不匹配请对照该版本源码微调。
 - API Key 使用 `keyId + SHA-256 hash + scope + expiry + epoch`；生产门禁拒绝旧明文列表，原始 secret 只由调用方通过 Secret / KMS 保管。
 - 客服业务库由 starter Flyway 管理；admin 在 dev / test 运行 Flyway、生产由 DBA 执行镜像 SQL。存量库升级只新增迁移，
