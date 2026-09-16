@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { buildNavigationCommands, buildNavigationSections } from '@/layouts/navigationModel'
 import type { FormInstance } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
+import { usePagedList } from '@/composables/usePagedList'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import {
   clearAgentMemory,
   createAgent,
@@ -22,6 +24,8 @@ import { fetchKnowledgeBaseOptions } from '@/api/knowledgeBase'
 import { useMenuStore } from '@/store/menu'
 import IconPicker from '@/components/IconPicker.vue'
 import ChannelBindingDrawer from '@/views/aiconfig/ChannelBindingDrawer.vue'
+import AgentActions from './components/AgentActions.vue'
+import AgentOverviewCard from './components/AgentOverviewCard.vue'
 import type {
   AgentSaveRequest,
   AgentVO,
@@ -53,12 +57,16 @@ function scrollToSection(id: string) {
 
 // 渠道绑定抽屉：后台菜单为动态 DB 驱动，不新增菜单种子，改为在本页复用 agent 权限入口打开。
 const channelBindingVisible = ref(false)
+const displayMode = ref<'cards' | 'table'>('cards')
 
-const loading = ref(false)
 const saving = ref(false)
-const list = ref<AgentVO[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
+const { loading, loadError, list, total, query, loadList, handleSearch } = usePagedList<
+  AgentVO,
+  PageQuery
+>({
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+  page: pageAgents,
+})
 
 const modelOptions = ref<ModelVO[]>([])
 const routePolicyOptions = ref<ModelRoutePolicy[]>([])
@@ -205,17 +213,6 @@ watch(showSubAgentSelect, (visible) => {
   }
 })
 
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageAgents(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
 async function loadOptions() {
   const [models, mcps, skills, systemTools, agents, knowledgeBases, routePolicies] =
     await Promise.all([
@@ -235,11 +232,6 @@ async function loadOptions() {
   agentOptions.value = agents.list
   knowledgeBaseOptions.value = knowledgeBases
   routePolicyOptions.value = routePolicies.filter((policy) => policy.status === 'ACTIVE')
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
 }
 
 function openCreate() {
@@ -425,7 +417,18 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <el-card v-show="!editorVisible">
+    <CrudLoadState
+      v-if="!editorVisible"
+      :error="loadError"
+      :has-stale-data="list.length > 0"
+      :loading="loading"
+      @retry="loadList"
+    />
+    <el-card
+      v-show="!editorVisible"
+      class="agent-catalog"
+      :class="{ 'is-card-view': displayMode === 'cards' }"
+    >
       <div class="toolbar">
         <el-input
           v-model="query.keyword"
@@ -434,7 +437,11 @@ onMounted(() => {
           clearable
           @keyup.enter="handleSearch"
         />
-        <el-button type="primary" @click="handleSearch">搜索</el-button>
+        <el-button @click="handleSearch">搜索</el-button>
+        <el-radio-group v-model="displayMode" aria-label="智能体展示方式">
+          <el-radio-button value="cards">卡片</el-radio-button>
+          <el-radio-button value="table">列表</el-radio-button>
+        </el-radio-group>
         <div class="toolbar-actions">
           <el-button v-permission="'agent:view'" @click="channelBindingVisible = true"
             >渠道绑定</el-button
@@ -449,11 +456,47 @@ onMounted(() => {
         </div>
       </div>
 
+      <div
+        v-if="displayMode === 'cards'"
+        v-loading="loading"
+        class="agent-catalog-body"
+        :aria-busy="loading"
+      >
+        <div v-if="list.length" class="agent-cards">
+          <AgentOverviewCard
+            v-for="row in list"
+            :key="row.id"
+            :agent="row"
+            :capability-labels="(row.capabilities ?? []).map(capabilityLabel)"
+          >
+            <template #actions>
+              <AgentActions
+                :agent="row"
+                :can-open="workspacePaths.has(`/workspace/${row.agentCode}`)"
+                prominent
+                @open="openWorkspace(row)"
+                @edit="openEdit(row)"
+                @toggle="handleToggleStatus(row)"
+                @memory="openMemory(row)"
+                @delete="handleDelete(row)"
+              />
+            </template>
+          </AgentOverviewCard>
+        </div>
+        <el-empty
+          v-else
+          :description="
+            loading ? '正在加载智能体…' : loadError ? '智能体暂时无法加载' : '暂无符合条件的智能体'
+          "
+        />
+      </div>
+
       <el-table
+        v-else
         v-loading="loading"
         :data="list"
         class="data-table"
-        empty-text="暂无符合条件的智能体"
+        :empty-text="loadError ? '智能体暂时无法加载' : '暂无符合条件的智能体'"
       >
         <el-table-column label="智能体" min-width="210" class-name="primary-column">
           <template #default="{ row }"
@@ -521,41 +564,15 @@ onMounted(() => {
         >
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button
-              v-if="workspacePaths.has(`/workspace/${row.agentCode}`)"
-              link
-              type="primary"
-              @click="openWorkspace(row)"
-              >打开</el-button
-            >
-            <el-button v-permission="'agent:edit'" link type="primary" @click="openEdit(row)"
-              >配置</el-button
-            >
-            <el-dropdown trigger="click" class="agent-more">
-              <el-button text :aria-label="`${row.agentName}的更多操作`"
-                ><el-icon><MoreFilled /></el-icon
-              ></el-button>
-              <template #dropdown
-                ><el-dropdown-menu>
-                  <el-dropdown-item v-permission="'agent:edit'" @click="handleToggleStatus(row)">{{
-                    row.status === 1 ? '停用智能体' : '启用智能体'
-                  }}</el-dropdown-item>
-                  <el-dropdown-item
-                    v-if="row.capabilities?.includes(CAPABILITY_MEMORY)"
-                    v-permission="'agent:view'"
-                    @click="openMemory(row)"
-                    >查看长期记忆</el-dropdown-item
-                  >
-                  <el-dropdown-item
-                    v-permission="'agent:delete'"
-                    divided
-                    class="danger-action"
-                    @click="handleDelete(row)"
-                    >删除智能体</el-dropdown-item
-                  >
-                </el-dropdown-menu></template
-              >
-            </el-dropdown>
+            <AgentActions
+              :agent="row"
+              :can-open="workspacePaths.has(`/workspace/${row.agentCode}`)"
+              @open="openWorkspace(row)"
+              @edit="openEdit(row)"
+              @toggle="handleToggleStatus(row)"
+              @memory="openMemory(row)"
+              @delete="handleDelete(row)"
+            />
           </template>
         </el-table-column>
       </el-table>
@@ -936,6 +953,32 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.agent-catalog.is-card-view {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.agent-catalog.is-card-view :deep(> .el-card__body) {
+  padding: 0;
+}
+.agent-catalog-body {
+  min-height: 260px;
+}
+.agent-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+@media (max-width: 1199px) {
+  .agent-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .agent-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .agent-list-identity {
   display: flex;
   align-items: center;
@@ -970,10 +1013,6 @@ onMounted(() => {
   border: 1px solid var(--cw-line);
   font-size: 20px;
 }
-.agent-more {
-  margin-left: 5px;
-  vertical-align: middle;
-}
 .agent-capability-detail h3 {
   font-size: 12px;
   margin: 12px 0 8px;
@@ -983,9 +1022,6 @@ onMounted(() => {
   white-space: normal;
   height: auto;
   min-height: 24px;
-}
-.danger-action {
-  color: var(--cw-danger);
 }
 .agent-editor {
   min-width: 0;

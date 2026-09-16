@@ -23,7 +23,18 @@ import java.util.List;
  * @author owlzhangfq@gmail.com
  */
 public record ChatRequest(String sessionId, @NotBlank(message = "message 不能为空") String message,
-                          Boolean collaboration, String mode, List<String> attachmentIds) {
+                          Boolean collaboration, String mode, List<String> attachmentIds, String rawInput) {
+
+    /** 兼容未分离原文的调用方，原文为空字符串时仍保留仅附件的输入语义。 */
+    public ChatRequest(String sessionId, String message, Boolean collaboration, String mode,
+                        List<String> attachmentIds) {
+        this(sessionId, message, collaboration, mode, attachmentIds, null);
+    }
+
+    /** 用户气泡与调用记录采用原文；模型仍读取包含附件材料的 message。 */
+    public String originalInput() {
+        return rawInput == null ? message : rawInput;
+    }
 
     /** 是否启用协作模式（null 视为关闭）。 */
     public boolean collaborationEnabled() {

@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.datascope.DataScopeContext;
 import com.richard.fyoung.customeradmin.tenant.AdminTenantProperties;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageAttachmentVO;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessageVO;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessagePhase;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatSessionSummary;
 import com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatSessionStateQueryMapper;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
@@ -144,18 +145,28 @@ public class ChatHistoryService {
                 Collectors.mapping(this::toAttachmentVO, Collectors.toList())));
 
         List<ChatMessageVO> messages = new ArrayList<>();
+        String turnId = null;
+        String sessionType = null;
         for (Msg msg : context) {
             if (msg.getRole() != MsgRole.USER && msg.getRole() != MsgRole.ASSISTANT) {
                 continue;
             }
-            String text = msg.getTextContent();
-            if (!StringUtils.hasText(text)) {
+            if (msg.getRole() == MsgRole.USER) {
+                turnId = msg.getId();
+                sessionType = ChatMessagePresentation.sessionType(msg);
+            }
+            String text = ChatMessagePresentation.text(msg);
+            List<ChatMessageAttachmentVO> msgAttachments = attachmentsByMessage.getOrDefault(msg.getId(), List.of());
+            if (!StringUtils.hasText(text) && msgAttachments.isEmpty()) {
                 continue;
             }
             // id=框架 Msg.id：附件按 message_id 挂回对应消息；无附件时给空列表（契约要求非 null）
-            List<ChatMessageAttachmentVO> msgAttachments = attachmentsByMessage.getOrDefault(msg.getId(), List.of());
+            var finishReason = ChatMessagePhase.recordedReason(msg);
             messages.add(new ChatMessageVO(msg.getId(),
-                msg.getRole() == MsgRole.USER ? "user" : "assistant", text, msg.getTimestamp(), msgAttachments));
+                msg.getRole() == MsgRole.USER ? "user" : "assistant", text, msg.getTimestamp(), msgAttachments,
+                turnId, ChatMessagePhase.of(msg),
+                finishReason == null ? null : finishReason.name(),
+                sessionType));
         }
         historyCache.putMessages(memoryScope, sessionId, messages);
         return messages;
@@ -212,9 +223,11 @@ public class ChatHistoryService {
 
     private String previewOf(List<Msg> context) {
         for (Msg msg : context) {
-            if (msg.getRole() == MsgRole.USER && StringUtils.hasText(msg.getTextContent())) {
-                String text = msg.getTextContent();
-                return text.length() > PREVIEW_MAX_LENGTH ? text.substring(0, PREVIEW_MAX_LENGTH) + "..." : text;
+            if (msg.getRole() == MsgRole.USER) {
+                String text = ChatMessagePresentation.text(msg);
+                if (StringUtils.hasText(text)) {
+                    return text.length() > PREVIEW_MAX_LENGTH ? text.substring(0, PREVIEW_MAX_LENGTH) + "..." : text;
+                }
             }
         }
         return "";

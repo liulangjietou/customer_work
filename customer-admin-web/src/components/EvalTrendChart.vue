@@ -6,6 +6,7 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers'
 import { useThemeStore } from '@/store/theme'
 import { readThemeChartPalette } from '@/utils/themeChartPalette'
+import { observeChartResize } from '@/utils/observeChartResize'
 import type { EvalRun } from '@/api/eval'
 
 // 按需引入：只注册折线图 + 网格/图例/tooltip + Canvas 渲染器，不拉全量 echarts
@@ -23,6 +24,7 @@ const props = defineProps<{
 const themeStore = useThemeStore()
 const chartEl = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
+let stopObservingSize: (() => void) | undefined
 
 /** 时间戳压成 MM-DD HH:mm：同一天可能跑好几次，只到日期会挤成一堆同名刻度。 */
 function formatTime(ms: number): string {
@@ -106,21 +108,19 @@ onMounted(() => {
   if (!chartEl.value) return
   chart = echarts.init(chartEl.value)
   render()
-  window.addEventListener('resize', handleResize)
+  stopObservingSize = observeChartResize(chartEl.value, handleResize)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
+  stopObservingSize?.()
   chart?.dispose()
   chart = null
 })
 
 // Canvas 不会自动消费 CSS 变量；同明暗主题之间切换也必须重绘。
-watch(
-  () => [props.runs, themeStore.primaryColor, themeStore.mode, themeStore.systemDark],
-  render,
-  { deep: false },
-)
+watch(() => [props.runs, themeStore.primaryColor, themeStore.mode, themeStore.systemDark], render, {
+  deep: false,
+})
 </script>
 
 <template>

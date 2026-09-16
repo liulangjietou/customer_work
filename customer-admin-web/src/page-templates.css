@@ -9,7 +9,7 @@
   justify-content: space-between;
   gap: 24px;
   max-width: 1600px;
-  margin: 0 auto 18px;
+  margin: 0 auto 20px;
   padding: 4px 2px 0;
 }
 
@@ -20,21 +20,22 @@
 .cw-page-context h1 {
   margin: 0;
   color: var(--cw-text);
-  font-size: clamp(22px, 2vw, 26px);
+  font-size: clamp(22px, 2vw, 24px);
   font-weight: 650;
   letter-spacing: -0.025em;
-  line-height: 1.18;
+  line-height: 1.35;
 }
 
 .cw-page-context p {
   max-width: 760px;
   margin: 7px 0 0;
   color: var(--cw-text-muted);
+  font-size: 13px;
   line-height: 1.55;
 }
 
 .layout-main:not(.layout-main--home):not(.layout-main--workspace) {
-  padding: 22px 24px 28px;
+  padding: 24px 24px 28px;
   overflow: auto;
   background: var(--cw-canvas);
 }

@@ -59,7 +59,6 @@ test('历史移入导航后，切换模式与离开返回仍保留草稿和唯�
   await expect(composer).toHaveValue('对话中的下一步草稿')
   const navigation = page.getByRole('navigation', { name: '智能体生命周期导航' })
   await navigation.getByRole('button', { name: '设置', exact: true }).click()
-  await page.getByRole('menuitem', { name: '系统管理', exact: true }).click()
   await page.getByRole('menuitem', { name: '成员与身份（服务端菜单）', exact: true }).click()
   await expect(page.locator('#cw-page-title')).toHaveText('成员与身份（服务端菜单）')
   await expect(page.locator('#workspace-history-slot')).toBeHidden()

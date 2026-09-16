@@ -46,16 +46,18 @@ function fixtureTree(): MenuNode[] {
       name: '智能体工作区',
       path: '/workspace',
       permCode: 'workspace',
-      children: [node({
-        id: 300,
-        name: 'OA 考勤与周报',
-        path: '/workspace/oa-assistant',
-        icon: '/agent-icon.png',
-        iconType: 'image',
-        agentCode: 'oa-assistant',
-        capabilities: ['chat', 'vibecoding'],
-        dynamic: true,
-      })],
+      children: [
+        node({
+          id: 300,
+          name: 'OA 考勤与周报',
+          path: '/workspace/oa-assistant',
+          icon: '/agent-icon.png',
+          iconType: 'image',
+          agentCode: 'oa-assistant',
+          capabilities: ['chat', 'vibecoding'],
+          dynamic: true,
+        }),
+      ],
     }),
     node({
       id: 160,
@@ -82,25 +84,39 @@ function fixtureTree(): MenuNode[] {
       name: '监控大屏',
       path: '/monitor',
       permCode: 'monitor:view',
-      children: [node({
-        id: 194,
-        name: '智能体耗时统计',
-        path: '/system/agent-call-stats',
-        permCode: 'agent-call-stats:view',
-      })],
+      children: [
+        node({
+          id: 194,
+          name: '智能体耗时统计',
+          path: '/system/agent-call-stats',
+          permCode: 'agent-call-stats:view',
+        }),
+      ],
     }),
     node({ id: 999, name: '未来能力', path: '/future/overview', permCode: 'future' }),
   ]
 }
 
 describe('buildNavigationSections', () => {
+  it('分组计数显示可进入的页面数量，不把目录当作一个页面', () => {
+    const sections = buildNavigationSections(fixtureTree())
+    // 首页、工具箱、两张 SQL 报表和未来入口；工作台目录自身不可进入。
+    expect(sections.find((section) => section.key === 'overview')?.itemCount).toBe(5)
+  })
+
   it('按稳定权限码分组、提升动态智能体，同时不改写后端原树', () => {
     const tree = fixtureTree()
     const originalWorkspaceChildren = tree[2].children
 
     const sections = buildNavigationSections(tree)
 
-    expect(sections.map((section) => section.key)).toEqual(['overview', 'agents', 'build', 'operate', 'settings'])
+    expect(sections.map((section) => section.key)).toEqual([
+      'overview',
+      'agents',
+      'build',
+      'operate',
+      'settings',
+    ])
     const agents = sections.find((section) => section.key === 'agents')!
     expect(agents.menuNodes).toBe(originalWorkspaceChildren)
     expect(agents.menuNodes[0]).toMatchObject({
@@ -116,8 +132,9 @@ describe('buildNavigationSections', () => {
 
   it('未知一级菜单进入总览兜底且不丢失，空权限分区不占导航位', () => {
     const sections = buildNavigationSections(fixtureTree())
-    expect(sections.find((section) => section.key === 'overview')?.menuNodes.map((item) => item.name))
-      .toEqual(['首页', '我的工作台', '未来能力'])
+    expect(
+      sections.find((section) => section.key === 'overview')?.menuNodes.map((item) => item.name),
+    ).toEqual(['首页', '我的工作台', '未来能力'])
     expect(sections.some((section) => section.key === 'operate')).toBe(true)
     expect(sections.some((section) => section.key === 'govern')).toBe(false)
   })
@@ -135,17 +152,21 @@ describe('buildNavigationSections', () => {
       name: '智能体工作区',
       path: '/workspace',
       permCode: 'workspace',
-      children: [node({
-        id: 301,
-        name: 'OA 助手',
-        path: '/workspace/oa-assistant',
-        agentCode: 'oa-assistant',
-        dynamic: true,
-      })],
+      children: [
+        node({
+          id: 301,
+          name: 'OA 助手',
+          path: '/workspace/oa-assistant',
+          agentCode: 'oa-assistant',
+          dynamic: true,
+        }),
+      ],
     })
     const futureEntry = node({ id: 302, name: '智能体市场', path: '/workspace/market' })
 
-    const agents = buildNavigationSections([workspace, futureEntry]).find((section) => section.key === 'agents')!
+    const agents = buildNavigationSections([workspace, futureEntry]).find(
+      (section) => section.key === 'agents',
+    )!
 
     expect(agents.menuNodes.map((item) => item.name)).toEqual(['OA 助手', '智能体市场'])
     expect(agents.itemCount).toBe(2)
@@ -168,17 +189,28 @@ describe('buildNavigationSections', () => {
     const sections = buildNavigationSections(roots)
 
     expect(sections.map((section) => section.key)).toEqual([
-      'overview', 'agents', 'build', 'operate', 'govern', 'settings',
+      'overview',
+      'agents',
+      'build',
+      'operate',
+      'govern',
+      'settings',
     ])
-    expect(sections.find((section) => section.key === 'build')?.sourceNodes.map((item) => item.permCode))
-      .toEqual(['aiconfig', 'project', 'sql-config'])
-    expect(sections.find((section) => section.key === 'operate')?.sourceNodes.map((item) => item.permCode))
-      .toEqual(['monitor:view', 'ops', 'ticket'])
+    expect(
+      sections.find((section) => section.key === 'build')?.sourceNodes.map((item) => item.permCode),
+    ).toEqual(['aiconfig', 'project', 'sql-config'])
+    expect(
+      sections
+        .find((section) => section.key === 'operate')
+        ?.sourceNodes.map((item) => item.permCode),
+    ).toEqual(['monitor:view', 'ops', 'ticket'])
   })
 
   it('菜单热刷新后基于新树重算，不复用旧分区', () => {
     const before = buildNavigationSections([node({ id: 1, name: '系统管理', permCode: 'system' })])
-    const after = buildNavigationSections([node({ id: 204, name: '内容风控', permCode: 'contentguard' })])
+    const after = buildNavigationSections([
+      node({ id: 204, name: '内容风控', permCode: 'contentguard' }),
+    ])
     expect(before.some((section) => section.key === 'settings')).toBe(true)
     expect(before.some((section) => section.key === 'govern')).toBe(false)
     expect(after.some((section) => section.key === 'settings')).toBe(false)
@@ -247,36 +279,47 @@ describe('navigation commands', () => {
       path: '/workspace/oa-assistant',
       dynamic: true,
     })
-    expect(commands.find((command) => command.title === '资金对账')?.path)
-      .toBe('/sql/query?defineKey=repayment')
-    expect(commands.find((command) => command.title === '库存报表')?.path)
-      .toBe('/sql/query?defineKey=inventory')
+    expect(commands.find((command) => command.title === '资金对账')?.path).toBe(
+      '/sql/query?defineKey=repayment',
+    )
+    expect(commands.find((command) => command.title === '库存报表')?.path).toBe(
+      '/sql/query?defineKey=inventory',
+    )
   })
 
   it('支持大小写、祖先标题和能力关键词，并按标题匹配优先', () => {
     const commands = buildNavigationCommands(buildNavigationSections(fixtureTree()))
     expect(searchNavigationCommands(commands, '  OA  ')[0].title).toBe('OA 考勤与周报')
-    expect(searchNavigationCommands(commands, '我的工作台').map((command) => command.title))
-      .toContain('资金对账')
+    expect(
+      searchNavigationCommands(commands, '我的工作台').map((command) => command.title),
+    ).toContain('资金对账')
     expect(searchNavigationCommands(commands, 'VIBECODING')[0].title).toBe('OA 考勤与周报')
   })
 
   it('支持多关键词全匹配、空结果和自定义上限', () => {
     const commands = buildNavigationCommands(buildNavigationSections(fixtureTree()))
-    expect(searchNavigationCommands(commands, 'OA chat').map((command) => command.title))
-      .toEqual(['OA 考勤与周报'])
+    expect(searchNavigationCommands(commands, 'OA chat').map((command) => command.title)).toEqual([
+      'OA 考勤与周报',
+    ])
     expect(searchNavigationCommands(commands, '不存在的入口')).toEqual([])
     expect(searchNavigationCommands(commands, '', 1)).toHaveLength(1)
   })
 
   it('workspace 无动态智能体时仍可搜索空态入口，同路径命令保留第一项', () => {
-    const emptyWorkspace = node({ id: 3, name: '智能体工作区', path: '/workspace', permCode: 'workspace' })
+    const emptyWorkspace = node({
+      id: 3,
+      name: '智能体工作区',
+      path: '/workspace',
+      permCode: 'workspace',
+    })
     const duplicatePathRoots = [
       node({ id: 501, name: '未来入口 A', path: '/future/shared' }),
       node({ id: 502, name: '未来入口 B', path: '/future/shared' }),
     ]
 
-    const commands = buildNavigationCommands(buildNavigationSections([emptyWorkspace, ...duplicatePathRoots]))
+    const commands = buildNavigationCommands(
+      buildNavigationSections([emptyWorkspace, ...duplicatePathRoots]),
+    )
 
     expect(commands.find((command) => command.path === '/workspace')?.title).toBe('智能体工作区')
     expect(commands.filter((command) => command.path === '/future/shared')).toHaveLength(1)
@@ -301,30 +344,28 @@ describe('navigation commands', () => {
       command('exact', 'Agent'),
     ]
 
-    expect(searchNavigationCommands(commands, 'agent').map((item) => item.key))
-      .toEqual(['exact', 'prefix', 'contains', 'metadata'])
+    expect(searchNavigationCommands(commands, 'agent').map((item) => item.key)).toEqual([
+      'exact',
+      'prefix',
+      'contains',
+      'metadata',
+    ])
   })
 })
 
 describe('findMenuTrail', () => {
   it('SQL 报表优先按 fullPath 返回完整祖先链', () => {
-    expect(findMenuTrail(
-      fixtureTree(),
-      '/sql/query?defineKey=repayment',
-      '/sql/query',
-    )).toEqual(['我的工作台', '资金对账'])
+    expect(findMenuTrail(fixtureTree(), '/sql/query?defineKey=repayment', '/sql/query')).toEqual([
+      '我的工作台',
+      '资金对账',
+    ])
   })
 
   it('SQL 报表严格区分 defineKey，未知 query 不误命中第一项', () => {
-    expect(findMenuTrail(
-      fixtureTree(),
-      '/sql/query?defineKey=inventory',
-      '/sql/query',
-    )).toEqual(['我的工作台', '库存报表'])
-    expect(findMenuTrail(
-      fixtureTree(),
-      '/sql/query?defineKey=unknown',
-      '/sql/query',
-    )).toBeNull()
+    expect(findMenuTrail(fixtureTree(), '/sql/query?defineKey=inventory', '/sql/query')).toEqual([
+      '我的工作台',
+      '库存报表',
+    ])
+    expect(findMenuTrail(fixtureTree(), '/sql/query?defineKey=unknown', '/sql/query')).toBeNull()
   })
 })

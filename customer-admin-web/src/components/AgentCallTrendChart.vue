@@ -6,6 +6,7 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers'
 import { useThemeStore } from '@/store/theme'
 import { readThemeChartPalette } from '@/utils/themeChartPalette'
+import { observeChartResize } from '@/utils/observeChartResize'
 import type { AgentCallStatsTrendPoint, AgentCallTrendGranularity } from '@/types/api'
 
 // 按需引入：只注册用到的折线图 + 网格/图例/tooltip + Canvas 渲染器，不拉全量 echarts 包体积。
@@ -21,6 +22,7 @@ const props = defineProps<{
 const themeStore = useThemeStore()
 const chartEl = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
+let stopObservingSize: (() => void) | undefined
 
 /**
  * 后端未强约束 bucket 的具体字符串格式（day 粒度大概率 yyyy-MM-dd，hour 粒度大概率
@@ -167,11 +169,11 @@ onMounted(() => {
   if (!chartEl.value) return
   chart = echarts.init(chartEl.value)
   render()
-  window.addEventListener('resize', handleResize)
+  stopObservingSize = observeChartResize(chartEl.value, handleResize)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
+  stopObservingSize?.()
   chart?.dispose()
   chart = null
 })

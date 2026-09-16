@@ -45,6 +45,7 @@ const NODE_META: Record<string, { label: string; icon: Component; tone: string }
   tool_builtin: { label: '调用工具', icon: Tools, tone: 'tool' },
   tool_result: { label: '工具返回', icon: CircleCheck, tone: 'result' },
   answer: { label: '生成回答', icon: MagicStick, tone: 'answer' },
+  stage_output: { label: '阶段输出', icon: DocumentChecked, tone: 'answer' },
   subagent_result: { label: '产出结果', icon: DocumentChecked, tone: 'result' },
 }
 
@@ -59,7 +60,7 @@ function formatDuration(durationMs: number): string {
 
 const statusTitle = computed(() => {
   if (props.failed) return '执行未完成'
-  return props.active ? '正在执行' : '分析完成'
+  return props.active ? '正在执行' : '执行记录'
 })
 
 const summaryText = computed(() => {
@@ -113,7 +114,7 @@ function toolResultPreview(node: TraceNode): string {
       <span class="trace-status-icon" aria-hidden="true">
         <el-icon v-if="failed"><WarningFilled /></el-icon>
         <el-icon v-else-if="active" class="is-loading"><Loading /></el-icon>
-        <el-icon v-else><CircleCheck /></el-icon>
+        <el-icon v-else><DocumentChecked /></el-icon>
       </span>
       <span class="trace-header-copy">
         <strong>{{ statusTitle }}</strong>
@@ -154,11 +155,15 @@ function toolResultPreview(node: TraceNode): string {
                   <span>{{ node.subagent.nodes.length }} 个内部步骤</span>
                 </span>
                 <span class="subagent-state" :class="`is-${node.subagent.status}`">
-                  <el-icon v-if="node.subagent.status === 'running'" class="is-loading"><Loading /></el-icon>
+                  <el-icon v-if="node.subagent.status === 'running'" class="is-loading"
+                    ><Loading
+                  /></el-icon>
                   <el-icon v-else><CircleCheck /></el-icon>
                   {{ node.subagent.status === 'running' ? '运行中' : '已完成' }}
                 </span>
-                <el-icon class="trace-chevron" :class="{ expanded: node.subagent.expanded }"><ArrowRight /></el-icon>
+                <el-icon class="trace-chevron" :class="{ expanded: node.subagent.expanded }"
+                  ><ArrowRight
+                /></el-icon>
               </button>
               <div v-show="node.subagent.expanded" class="subagent-body">
                 <TraceTimeline
@@ -174,13 +179,21 @@ function toolResultPreview(node: TraceNode): string {
             <div class="trace-node-heading">
               <strong>{{ metaOf(node.kind).label }}</strong>
               <span v-if="isCurrentNode(index)" class="current-label">当前</span>
-              <span v-if="node.kind === 'tool_result' && toolResultOf(node).toolName" class="tool-name">
+              <span
+                v-if="node.kind === 'tool_result' && toolResultOf(node).toolName"
+                class="tool-name"
+              >
                 {{ toolResultOf(node).toolName }}
               </span>
             </div>
 
             <!-- 思考增量与子 Agent 结果完整保留，不做摘要替换。 -->
-            <pre v-if="shouldShowText(node)" class="trace-text" :class="`trace-text--${metaOf(node.kind).tone}`">{{ node.text }}</pre>
+            <pre
+              v-if="shouldShowText(node)"
+              class="trace-text"
+              :class="`trace-text--${metaOf(node.kind).tone}`"
+              >{{ node.text }}</pre
+            >
 
             <!-- 工具结果可能很长：短结果直接展示；长结果展示预览并保留可展开的完整原文。 -->
             <template v-if="node.kind === 'tool_result'">

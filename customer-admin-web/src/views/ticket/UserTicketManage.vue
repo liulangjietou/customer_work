@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { usePagedList } from '@/composables/usePagedList'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import { claimTicket, getTicketWsCredential, pageTickets } from '@/api/user-ticket'
 import { WsClient } from '@/utils/ws'
 import TicketChatPanel from './components/TicketChatPanel.vue'
@@ -18,10 +20,16 @@ import {
   type WsTicketNewFrameData,
 } from '@/types/ticket'
 
-const loading = ref(false)
-const list = ref<TicketVO[]>([])
-const total = ref(0)
-const query = reactive<TicketPageQuery>({ status: '', category: '', priority: '', pageNum: 1, pageSize: 10 })
+const { loading, loadError, list, total, query, loadList, handleSearch } = usePagedList<
+  TicketVO,
+  TicketPageQuery
+>({
+  initQuery: () => ({ status: '', category: '', priority: '', pageNum: 1, pageSize: 10 }),
+  page: async (query) => {
+    const result = await pageTickets(query)
+    return { list: result.items, total: result.total }
+  },
+})
 
 const statusOptions = Object.entries(STATUS_LABELS) as [TicketStatus, string][]
 const priorityOptions = Object.entries(PRIORITY_LABELS) as [TicketPriority, string][]
@@ -47,22 +55,6 @@ function duplicated(kind: string, ticketId: string, eventId?: number): boolean {
   return false
 }
 
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageTickets(query)
-    list.value = result.items
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
-
 function handlePageChange() {
   loadList()
 }
@@ -77,7 +69,9 @@ async function setupWs() {
     agentId.value = credential.agentId
     ws.connect(`${credential.wsUrl}?token=${encodeURIComponent(credential.token)}`)
   } catch (error) {
-    ElMessage.error('工单实时连接建立失败：' + (error instanceof Error ? error.message : String(error)))
+    ElMessage.error(
+      '工单实时连接建立失败：' + (error instanceof Error ? error.message : String(error)),
+    )
     return
   }
   ws.on('ticket_new', (data) => {
@@ -156,42 +150,99 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
+    <CrudLoadState
+      :error="loadError"
+      :has-stale-data="list.length > 0"
+      :loading="loading"
+      @retry="loadList"
+    />
     <el-card>
       <div class="toolbar">
-        <el-select v-model="query.status" placeholder="状态" clearable style="width: 160px" @change="handleSearch">
-          <el-option v-for="[value, label] in statusOptions" :key="value" :value="value" :label="label" />
+        <el-select
+          v-model="query.status"
+          placeholder="状态"
+          clearable
+          style="width: 160px"
+          @change="handleSearch"
+        >
+          <el-option
+            v-for="[value, label] in statusOptions"
+            :key="value"
+            :value="value"
+            :label="label"
+          />
         </el-select>
-        <el-select v-model="query.priority" placeholder="优先级" clearable style="width: 140px" @change="handleSearch">
-          <el-option v-for="[value, label] in priorityOptions" :key="value" :value="value" :label="label" />
+        <el-select
+          v-model="query.priority"
+          placeholder="优先级"
+          clearable
+          style="width: 140px"
+          @change="handleSearch"
+        >
+          <el-option
+            v-for="[value, label] in priorityOptions"
+            :key="value"
+            :value="value"
+            :label="label"
+          />
         </el-select>
-        <el-select v-model="query.category" placeholder="分类" clearable style="width: 140px" @change="handleSearch">
-          <el-option v-for="[value, label] in categoryOptions" :key="value" :value="value" :label="label" />
+        <el-select
+          v-model="query.category"
+          placeholder="分类"
+          clearable
+          style="width: 140px"
+          @change="handleSearch"
+        >
+          <el-option
+            v-for="[value, label] in categoryOptions"
+            :key="value"
+            :value="value"
+            :label="label"
+          />
         </el-select>
         <el-button type="primary" @click="handleSearch">刷新</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的用户工单">
+      <el-table
+        v-loading="loading"
+        :data="list"
+        class="data-table"
+        :empty-text="loadError ? '工单暂时无法加载' : '暂无符合条件的用户工单'"
+      >
         <el-table-column prop="id" label="工单号" width="90" />
-        <el-table-column prop="title" label="标题" show-overflow-tooltip class-name="primary-column" />
+        <el-table-column
+          prop="title"
+          label="标题"
+          show-overflow-tooltip
+          class-name="primary-column"
+        />
         <el-table-column prop="userId" label="用户" width="140" show-overflow-tooltip />
         <el-table-column label="状态" width="120" align="center">
           <template #default="{ row }: { row: TicketVO }">
-            <el-tag :type="STATUS_TAG_TYPE[row.status]" size="small">{{ STATUS_LABELS[row.status] }}</el-tag>
+            <el-tag :type="STATUS_TAG_TYPE[row.status]" size="small">{{
+              STATUS_LABELS[row.status]
+            }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="优先级" width="90" align="center">
           <template #default="{ row }: { row: TicketVO }">
-            <el-tag :type="PRIORITY_TAG_TYPE[row.priority]" size="small">{{ PRIORITY_LABELS[row.priority] }}</el-tag>
+            <el-tag :type="PRIORITY_TAG_TYPE[row.priority]" size="small">{{
+              PRIORITY_LABELS[row.priority]
+            }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="分类" width="90">
-          <template #default="{ row }: { row: TicketVO }">{{ CATEGORY_LABELS[row.category] }}</template>
+          <template #default="{ row }: { row: TicketVO }">{{
+            CATEGORY_LABELS[row.category]
+          }}</template>
         </el-table-column>
         <el-table-column label="当前坐席" width="120">
           <template #default="{ row }: { row: TicketVO }">{{ row.assignee || '-' }}</template>
         </el-table-column>
         <el-table-column label="更新时间" width="170">
-          <template #default="{ row }: { row: TicketVO }">{{ formatTime(row.updatedAtMs) }}</template>
+          <template #default="{ row }: { row: TicketVO }">{{
+            formatTime(row.updatedAtMs)
+          }}</template>
         </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }: { row: TicketVO }">

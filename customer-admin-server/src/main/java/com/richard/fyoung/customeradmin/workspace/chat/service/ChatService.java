@@ -321,7 +321,7 @@ public class ChatService {
         // 且每轮重发累积 token。现改由 KnowledgeRetrievalMiddleware 在推理阶段做瞬态注入（挂载点见
         // AdminAgentInstanceFactory#buildInnerReActAgent），本方法只管把用户原文送进去。
         // 本条用户消息提前构建，供附件绑定拿到稳定的 Msg.id（框架 Msg.Builder 构造即生成随机 UUID）。
-        Msg userMsg = toUserMsg(userText);
+        Msg userMsg = toUserMsg(userText, callMeta);
         // 附件绑定：请求线程同步段完成（订阅前），把本条消息 id 与其携带的附件关联，供历史回显。
         if (!CollectionUtils.isEmpty(attachmentIds)) {
             chatAttachmentService.bindToMessage(agentCode, safeSession, userMsg.getId(), attachmentIds);
@@ -671,11 +671,12 @@ public class ChatService {
         throw new IllegalStateException("unsupported agent runtime type: " + agent.getClass());
     }
 
-    private Msg toUserMsg(String userText) {
+    private Msg toUserMsg(String userText, AgentCallMeta callMeta) {
         return Msg.builder()
             .role(MsgRole.USER)
             .name("user")
             .content(TextBlock.builder().text(userText).build())
+            .metadata(ChatMessagePresentation.metadata(callMeta))
             .build();
     }
 

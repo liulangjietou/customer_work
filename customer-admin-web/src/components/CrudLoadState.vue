@@ -22,8 +22,14 @@ defineEmits<{
     aria-live="polite"
   >
     <div class="crud-load-state__content">
-      <span>{{ hasStaleData ? '当前内容可能已过期，请重试获取最新数据。' : '没有把错误伪装成空数据，请检查连接后重试。' }}</span>
-      <el-button type="primary" plain :loading="loading" @click="$emit('retry')">重新加载</el-button>
+      <span>{{
+        hasStaleData
+          ? '当前内容可能已过期，请重试获取最新数据。'
+          : '暂时无法获取数据，请检查连接后重试。'
+      }}</span>
+      <el-button type="primary" plain :loading="loading" @click="$emit('retry')"
+        >重新加载</el-button
+      >
     </div>
   </el-alert>
 </template>

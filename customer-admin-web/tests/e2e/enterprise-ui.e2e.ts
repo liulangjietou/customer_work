@@ -1,34 +1,7 @@
 import { expect, test } from './fixtures/adminTestFixture'
 import { buildAdminMenuTree } from './fixtures/adminRoutes'
 
-const agent = {
-  id: 7,
-  agentName: 'Java 智能体',
-  agentCode: 'java-assistant',
-  modelId: 11,
-  modelName: '企业推理模型',
-  backupModelIds: [12],
-  backupModelNames: ['备用模型'],
-  modelRoutePolicyId: null,
-  mcpIds: [21],
-  skillIds: [31],
-  skillVersionIds: [301],
-  systemToolIds: [41],
-  knowledgeBaseIds: [51],
-  knowledgeBaseNames: ['研发规范'],
-  knowledgeBaseVersionIds: [501],
-  systemPrompt: '根据企业规范处理任务。',
-  capabilities: ['chat', 'plan'],
-  icon: 'Cpu',
-  status: 1,
-  subAgentIds: [],
-  maxIters: 12,
-  toolTimeoutSeconds: 90,
-  toolMaxAttempts: 2,
-  compressTriggerMsgs: 30,
-  compressKeepMsgs: 10,
-  createTime: '2026-09-01 10:00:00',
-}
+import { EXAMPLE_AGENT as agent } from './fixtures/adminEntities'
 
 test('完整配置页保留模型、知识版本关联、提示词与高级参数的提交契约', async ({ page }) => {
   let saved: Record<string, unknown> | undefined

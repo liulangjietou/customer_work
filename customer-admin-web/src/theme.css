@@ -7,7 +7,7 @@
 :root {
   color-scheme: light;
   --cw-nav-rail-width: 64px;
-  --cw-context-nav-width: 228px;
+  --cw-context-nav-width: 224px;
   --cw-shell-expanded-width: var(--cw-context-nav-width);
   --cw-topbar-height: 56px;
   --cw-tabs-height: 38px;
@@ -15,21 +15,21 @@
 
   --cw-ink: #0b1630;
   --cw-ink-elevated: #152441;
-  --cw-canvas: #f6f8fb;
+  --cw-canvas: #eff3f8;
   --cw-paper: #ffffff;
-  --theme-primary: #3e63dd;
+  --theme-primary: #3658cb;
   --cw-cobalt: var(--theme-primary);
   --cw-cobalt-solid: var(--theme-primary-solid);
   --cw-cobalt-solid-hover: var(--theme-primary-solid-hover);
   --cw-cobalt-solid-active: var(--theme-primary-solid-active);
-  --cw-amber: #925500;
+  --cw-amber: #925e13;
   --cw-amber-solid: #d99217;
-  --cw-success: #16856a;
+  --cw-success: #267765;
   --cw-danger: #c2414b;
   --cw-info: #626d80;
-  --cw-success-solid: #16856a;
-  --cw-success-solid-hover: #147b62;
-  --cw-success-solid-active: #127159;
+  --cw-success-solid: #267765;
+  --cw-success-solid-hover: #226b5b;
+  --cw-success-solid-active: #1e5f51;
   --cw-danger-solid: #c2414b;
   --cw-danger-solid-hover: #b23c45;
   --cw-danger-solid-active: #a63840;
@@ -42,14 +42,14 @@
   --cw-on-warning: #1e1608;
   --cw-on-danger: #ffffff;
   --cw-on-info: #ffffff;
-  --cw-text: #1d2637;
-  --cw-text-muted: #626d80;
-  --cw-line: #e3e7ef;
+  --cw-text: #18273b;
+  --cw-text-muted: #5d6d83;
+  --cw-line: #dfe6ef;
   --cw-line-strong: #c9d0dc;
-  --cw-focus-ring: #3e63dd;
-  --theme-primary-solid: #3e63dd;
-  --theme-primary-solid-hover: #395bcb;
-  --theme-primary-solid-active: #3555be;
+  --cw-focus-ring: #3658cb;
+  --theme-primary-solid: #3658cb;
+  --theme-primary-solid-hover: #314fb7;
+  --theme-primary-solid-active: #2b46a2;
   --cw-on-primary: #ffffff;
 
   /* 兼容既有壳层变量。 */
@@ -152,7 +152,7 @@ body {
   background: var(--cw-canvas);
   color: var(--cw-text);
   font-family:
-    Inter,
+    'Avenir Next',
     ui-sans-serif,
     -apple-system,
     BlinkMacSystemFont,
@@ -161,6 +161,7 @@ body {
     'Microsoft YaHei',
     sans-serif;
   font-size: 14px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -206,16 +207,16 @@ body .el-table {
 }
 
 body .el-table th.el-table__cell {
-  height: 42px;
+  height: 44px;
   padding: 8px 0;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.035em;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 body .el-table td.el-table__cell {
-  height: 46px;
-  padding: 7px 0;
+  height: 48px;
+  padding: 9px 0;
 }
 
 body .el-table .cell {
@@ -223,7 +224,7 @@ body .el-table .cell {
 }
 
 body .el-button {
-  min-height: 32px;
+  min-height: 36px;
   border-radius: var(--cw-radius-sm);
   font-weight: 600;
   transition:
@@ -526,8 +527,17 @@ body .el-message-box {
   box-shadow: var(--cw-shadow-lg);
 }
 
+/* 长表单只滚动正文，让标题、关闭和提交动作始终可见。 */
+body .el-dialog:not(.is-fullscreen) {
+  --el-dialog-margin-top: 6vh;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 48px);
+}
+
 body .el-dialog__header,
 body .el-drawer__header {
+  flex: 0 0 auto;
   margin: 0;
   padding: 18px 20px 14px;
   border-bottom: 1px solid var(--cw-line);
@@ -535,11 +545,14 @@ body .el-drawer__header {
 }
 
 body .el-dialog__body {
+  min-height: 0;
+  overflow: auto;
   padding: 20px;
 }
 
 body .el-dialog__footer,
 body .el-drawer__footer {
+  flex: 0 0 auto;
   padding: 14px 20px 18px;
   border-top: 1px solid var(--cw-line);
 }
@@ -559,6 +572,14 @@ body .el-empty {
 }
 
 @media (max-width: 767px) {
+  body :is(.el-button, .el-input__wrapper, .el-select__wrapper) {
+    min-height: 40px;
+  }
+
+  body :is(.cw-final-action, .el-dialog__footer .el-button, .el-drawer__footer .el-button) {
+    min-height: 44px;
+  }
+
   body .el-dialog {
     width: calc(100vw - 20px) !important;
     max-width: none;

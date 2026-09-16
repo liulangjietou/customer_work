@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { CircleCheck, CopyDocument, Loading, WarningFilled } from '@element-plus/icons-vue'
+import {
+  CircleCheck,
+  CopyDocument,
+  Document,
+  Loading,
+  WarningFilled,
+} from '@element-plus/icons-vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import TraceTimeline from '@/components/TraceTimeline.vue'
 import type { TraceNode } from '@/utils/traceTimeline'
+import type { ChatMessagePhase } from '@/types/api'
 
 const props = withDefaults(
   defineProps<{
@@ -12,6 +19,7 @@ const props = withDefaults(
     active: boolean
     failed?: boolean
     error?: string
+    phase?: ChatMessagePhase
     showTrace?: boolean
   }>(),
   { failed: false, showTrace: true },
@@ -28,7 +36,22 @@ onBeforeUnmount(() => {
 const resultTitle = computed(() => {
   if (props.failed) return '本轮未完成'
   if (props.active) return props.text ? '正在生成结果' : '正在整理结果'
-  return '最终结果'
+  switch (props.phase) {
+    case 'FINAL':
+      return '最终结果'
+    case 'PROCESS':
+      return '阶段输出'
+    case 'STOPPED':
+      return '本轮已停止'
+    case 'WAITING':
+      return '等待处理'
+    case 'FAILED':
+      return '本轮未完成'
+    case 'UNKNOWN':
+      return '历史回复'
+    default:
+      return '本轮回复'
+  }
 })
 
 async function copyResult() {
@@ -47,7 +70,14 @@ async function copyResult() {
 </script>
 
 <template>
-  <article class="assistant-response" :class="{ 'is-active': active, 'is-failed': failed }">
+  <article
+    class="assistant-response"
+    :class="{
+      'is-active': active,
+      'is-failed': failed || phase === 'FAILED',
+      'is-complete': phase === 'FINAL',
+    }"
+  >
     <TraceTimeline
       v-if="showTrace && nodes.length > 0"
       :nodes="nodes"
@@ -61,7 +91,7 @@ async function copyResult() {
       class="trace-receipt"
       @click="emit('inspect')"
     >
-      <el-icon><Loading v-if="active" class="is-loading" /><CircleCheck v-else /></el-icon>
+      <el-icon><Loading v-if="active" class="is-loading" /><Document v-else /></el-icon>
       {{ active ? '正在执行任务' : '查看执行记录' }}<span aria-hidden="true">↗</span>
     </button>
     <div v-else-if="active" class="connecting-state" role="status" aria-live="polite">
@@ -77,9 +107,10 @@ async function copyResult() {
     <section v-if="text || active || failed" class="result-section" aria-label="智能体回答">
       <header class="result-header">
         <span class="result-status" aria-hidden="true">
-          <el-icon v-if="failed"><WarningFilled /></el-icon>
+          <el-icon v-if="failed || phase === 'FAILED'"><WarningFilled /></el-icon>
           <el-icon v-else-if="active" class="is-loading"><Loading /></el-icon>
-          <el-icon v-else><CircleCheck /></el-icon>
+          <el-icon v-else-if="phase === 'FINAL'"><CircleCheck /></el-icon>
+          <el-icon v-else><Document /></el-icon>
         </span>
         <strong>{{ resultTitle }}</strong>
         <span v-if="active" class="live-label">实时输出</span>
@@ -235,8 +266,12 @@ async function copyResult() {
 }
 
 .result-status {
-  color: var(--el-color-success);
+  color: var(--el-text-color-secondary);
   font-size: 15px;
+}
+
+.is-complete .result-status {
+  color: var(--el-color-success);
 }
 
 .is-active .result-status {
