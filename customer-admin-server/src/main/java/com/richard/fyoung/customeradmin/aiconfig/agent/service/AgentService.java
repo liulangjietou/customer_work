@@ -181,6 +181,15 @@ public class AgentService {
 
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, AgentSaveRequest request) {
+        update(id, request, null);
+    }
+
+    /** 草稿恢复或较早打开的表单提交时，原子拒绝覆盖后来保存的配置。 */
+    @Transactional(rollbackFor = Exception.class)
+    public void update(Long id, AgentSaveRequest request, Long expectedRevision) {
+        if (expectedRevision != null && agentMapper.claimRevision(id, expectedRevision) != 1) {
+            throw new BizException(ResultCode.CONFIG_EDIT_CONFLICT);
+        }
         AiAgent agent = requireAgent(id);
         String oldAgentCode = agent.getAgentCode();
         Long oldModelId = agent.getModelId();
@@ -487,6 +496,7 @@ public class AgentService {
     private AgentVO toVo(AiAgent agent) {
         AgentVO vo = new AgentVO();
         vo.setId(agent.getId());
+        vo.setRuntimeRevision(agent.getRuntimeRevision());
         vo.setAgentName(agent.getAgentName());
         vo.setAgentCode(agent.getAgentCode());
         vo.setModelId(agent.getModelId());

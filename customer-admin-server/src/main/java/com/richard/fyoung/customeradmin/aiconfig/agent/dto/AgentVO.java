@@ -12,6 +12,7 @@ import java.util.List;
 @Data
 public class AgentVO {
     private Long id;
+    private Long runtimeRevision;
     private String agentName;
     private String agentCode;
     private Long modelId;

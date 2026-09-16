@@ -163,6 +163,16 @@ class AgentServiceTest {
     }
 
     @Test
+    void staleConfigurationShouldFailBeforeModelValidationOrWrites() {
+        AgentSaveRequest request = requestWithSubAgents(List.of("chat"), List.of());
+        BizException error = assertThrows(BizException.class, () -> service.update(7L, request, 3L));
+        assertEquals(ResultCode.CONFIG_EDIT_CONFLICT, error.getResultCode());
+        verify(agentMapper).claimRevision(7L, 3L);
+        verify(agentMapper, never()).updateById(any(AiAgent.class));
+        verify(modelConfigService, never()).testConnectivity(any());
+    }
+
+    @Test
     void create_shouldRejectUnknownModelId() {
         when(modelConfigAccess.findVisibleById(999L)).thenReturn(null);
         AgentSaveRequest request = new AgentSaveRequest("客服助手", "customer-helper", 999L, null, null, null, null,

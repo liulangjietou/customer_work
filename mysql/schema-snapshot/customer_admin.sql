@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V103
+-- 对应版本：Flyway V104
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -76,6 +76,23 @@ CREATE TABLE `ai_agent_backup_model` (
   KEY `idx_backup_model` (`model_id`),
   KEY `idx_ai_agent_backup_model_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体-备用模型关联';
+
+-- ----------------------------------------------------------------------------
+-- ai_agent_draft
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_agent_draft` (
+  `id` char(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default',
+  `owner_user_id` bigint NOT NULL,
+  `agent_id` bigint DEFAULT NULL COMMENT '为空表示新建智能体草稿',
+  `base_revision` bigint DEFAULT NULL COMMENT '开始编辑时的运行配置修订号',
+  `title` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `configuration` json NOT NULL COMMENT '未完成的配置，不包含模型或工具凭据',
+  `version` bigint NOT NULL DEFAULT '1' COMMENT '草稿并发编辑版本',
+  `updated_at_ms` bigint NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_agent_draft_owner` (`tenant_id`,`owner_user_id`,`updated_at_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体个人配置草稿';
 
 -- ----------------------------------------------------------------------------
 -- ai_agent_improvement_case

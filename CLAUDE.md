@@ -21,6 +21,11 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-11 智能体个人配置草稿新增 admin **V104**（`ai_agent_draft`），下一版本从 **V105** 起核对；
+  本批结构快照为 90 张表。草稿不参与运行装配与发布，正式保存仍走 `AgentService`；编辑页面的
+  `X-Agent-Revision` 在同一事务中比较原配置修订，过期时返回 30016。完整契约与验证记录见
+  `docs/admin-experience/configuration-drafts-validation.md`，客服端库本批没有新增迁移。
+
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)   # shell 默认 java 是 1.8，必须显式切 17
 mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.xml clean test -Djacoco.skip=true
