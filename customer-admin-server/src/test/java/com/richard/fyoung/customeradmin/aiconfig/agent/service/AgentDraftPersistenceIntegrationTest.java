@@ -68,6 +68,14 @@ class AgentDraftPersistenceIntegrationTest {
                 assertThrows(BizException.class, () -> service.save(id, 8L,
                     new AgentDraftSaveRequest(1L, null, null, first.configuration())));
 
+                // 租户 ID 是精确身份；MySQL 默认不区分大小写的排序规则不能扩大草稿归属。
+                TenantContext.set("Tenant-A");
+                assertTrue(service.list(7L).isEmpty(), "大小写不同的租户不能看到个人草稿标题");
+                assertThrows(BizException.class, () -> service.get(id, 7L));
+                assertThrows(BizException.class, () -> service.delete(id, 7L, 1L));
+                assertThrows(BizException.class, () -> service.save(id, 7L,
+                    new AgentDraftSaveRequest(1L, null, null, first.configuration())));
+
                 TenantContext.set("tenant-b");
                 assertTrue(service.list(7L).isEmpty());
                 assertThrows(BizException.class, () -> service.get(id, 7L));

@@ -43,6 +43,7 @@ import com.richard.fyoung.customerwork.capability.badcase.Badcase;
 import com.richard.fyoung.customerwork.capability.eval.EvalCaseSource;
 import com.richard.fyoung.customerwork.capability.eval.EvalComparison;
 import com.richard.fyoung.customerwork.capability.eval.EvalFingerprint;
+import com.richard.fyoung.customeradmin.tenant.TenantSqlConditions;
 import com.richard.fyoung.customerwork.capability.eval.EvalType;
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
 import com.richard.fyoung.customerwork.capability.eval.PersistedEvalCase;
@@ -121,12 +122,19 @@ public class ImprovementCaseService {
     }
 
     public Optional<ImprovementCaseVO> findBySource(ImprovementSourceType sourceType, String sourceKey) {
-        AgentImprovementCase row = caseMapper.selectOne(new LambdaQueryWrapper<AgentImprovementCase>()
-            .apply("BINARY tenant_id = BINARY {0}", TenantContext.require())
-            .eq(AgentImprovementCase::getSourceType, sourceType.name())
-            .apply("BINARY source_key = BINARY {0}", sourceKey)
-            .last("LIMIT 1"));
+        AgentImprovementCase row = caseMapper.selectOne(sourceQuery(sourceType, sourceKey));
         return Optional.ofNullable(row).map(this::toVO);
+    }
+
+    /** 查询与认领共用精确身份条件；普通等值条件保留索引筛选，CAST 防止排序规则扩大匹配。 */
+    private LambdaQueryWrapper<AgentImprovementCase> sourceQuery(ImprovementSourceType sourceType, String sourceKey) {
+        String tenant = TenantContext.require();
+        return new LambdaQueryWrapper<AgentImprovementCase>()
+            .eq(AgentImprovementCase::getTenantId, tenant)
+            .apply(TenantSqlConditions.EXACT_TENANT, tenant)
+            .eq(AgentImprovementCase::getSourceType, sourceType.name())
+            .eq(AgentImprovementCase::getSourceKey, sourceKey)
+            .apply("CAST(source_key AS BINARY) = CAST({0} AS BINARY)", sourceKey);
     }
 
     public ImprovementCaseVO detail(Long id) {
@@ -143,11 +151,9 @@ public class ImprovementCaseService {
         }
         ImprovementSourceFact source = requireSource(sourceType, sourceKey);
         return transactionTemplate.execute(status -> {
-            AgentImprovementCase row = caseMapper.selectOne(new LambdaQueryWrapper<AgentImprovementCase>()
-                .apply("BINARY tenant_id = BINARY {0}", TenantContext.require())
-                .eq(AgentImprovementCase::getSourceType, sourceType.name())
-                .apply("BINARY source_key = BINARY {0}", sourceKey)
-                .last("LIMIT 1 FOR UPDATE"));
+            // uk_improvement_source 已保证至多一行；无需 LIMIT，避免解析器把锁子句重排成非法 SQL。
+            AgentImprovementCase row = caseMapper.selectOne(sourceQuery(sourceType, sourceKey)
+                .last("FOR UPDATE"));
             if (row == null) {
                 row = new AgentImprovementCase();
                 row.setTenantId(TenantContext.require());
