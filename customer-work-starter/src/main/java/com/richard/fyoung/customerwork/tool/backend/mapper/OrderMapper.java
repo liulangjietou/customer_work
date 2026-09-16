@@ -16,6 +16,10 @@ import org.apache.ibatis.annotations.Param;
  */
 public interface OrderMapper extends BaseMapper<OrderDO> {
 
+    /** 读取认证用户自己的订单；关闭租户插件时仍按真实租户和用户约束。 */
+    OrderDO findOwned(@Param("tenantId") String tenantId, @Param("userId") String userId,
+                      @Param("orderId") String orderId);
+
     /** 催发货：在物流轨迹尾部追加加急标记（对应旧 JdbcOrderBackend 的 urgeShipment UPDATE）。 */
     int urgeShipment(String orderId);
 

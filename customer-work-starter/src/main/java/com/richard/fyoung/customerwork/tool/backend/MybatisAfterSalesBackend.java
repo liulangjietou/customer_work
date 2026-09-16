@@ -1,44 +1,48 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
 import com.richard.fyoung.customerwork.data.order.OrderStatuses;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.tool.backend.entity.InvoiceRequestDO;
 import com.richard.fyoung.customerwork.tool.backend.entity.OrderDO;
 import com.richard.fyoung.customerwork.tool.backend.entity.RefundDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.InvoiceRequestMapper;
 import com.richard.fyoung.customerwork.tool.backend.mapper.OrderMapper;
 import com.richard.fyoung.customerwork.tool.backend.mapper.RefundMapper;
+import java.math.BigDecimal;
+import java.util.NoSuchElementException;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.util.StringUtils;
 import reactor.core.publisher.Mono;
 
-import java.math.BigDecimal;
-
 /**
- * 售后后端的 MyBatis-Plus 实现：退款/退货/换货工单真实落库到 {@code cw_refund}，发票申请落库到
- * {@code cw_invoice_request}，退款资格 / 价保联查 {@code cw_order}（订单存在且状态允许才可退）。
+ * 真实订单的售后查询与申请：只允许已认证用户访问本租户自己的订单。
  *
- * <p>保留资金安全红线：{@code submitRefund} 只生成 {@code PENDING} 待人工复核工单，<b>不直接打款</b>，
- * 语义与 {@link MockAfterSalesBackend} 完全一致。输出文案对齐 Mock。工单落库走 {@link RefundMapper} /
- * {@link InvoiceRequestMapper} 的 BaseMapper insert，最近退款状态查询走 XML；联查订单走 {@link OrderMapper}。
- * 本类由 starter 的 {@code ToolBackendConfig} 在 {@code tool-backend.mode=jdbc} 时装配。</p>
+ * <p>调用时冻结可信主体，延迟 SQL 执行时恢复租户；读写同时显式约束租户与订单用户，不依赖
+ * 宿主是否安装租户插件。创建只登记待处理申请，数据库失败通过错误信号传播，不代表支付或通知已执行。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisAfterSalesBackend implements AfterSalesBackend {
 
     private static final Logger log = LoggerFactory.getLogger(MybatisAfterSalesBackend.class);
-
-    /** 售后工单类型：退款 / 退货 / 换货。 */
     private static final String TYPE_REFUND = "REFUND";
     private static final String TYPE_RETURN = "RETURN";
     private static final String TYPE_EXCHANGE = "EXCHANGE";
-
-    /** 工单状态：待人工复核 / 已通过。 */
     private static final String STATUS_PENDING = "PENDING";
     private static final String STATUS_APPROVED = "APPROVED";
-
-    /** 不可再退款的订单终态。 */
-
+    private static final String STATUS_DENIED = "DENIED";
     private static final String TRUE_FLAG = "true";
+    private static final String CODE_ELIGIBILITY = "AFTERSALES-BACKEND-ELIGIBILITY-FAIL";
+    private static final String CODE_REFUND = "AFTERSALES-BACKEND-REFUND-FAIL";
+    private static final String CODE_PROGRESS = "AFTERSALES-BACKEND-PROGRESS-FAIL";
+    private static final String CODE_RETURN = "AFTERSALES-BACKEND-RETURN-FAIL";
+    private static final String CODE_EXCHANGE = "AFTERSALES-BACKEND-EXCHANGE-FAIL";
+    private static final String CODE_PRICE_PROTECTION = "AFTERSALES-BACKEND-PRICEPROTECT-FAIL";
+    private static final String CODE_INVOICE = "AFTERSALES-BACKEND-INVOICE-FAIL";
 
     private final RefundMapper refundMapper;
     private final InvoiceRequestMapper invoiceRequestMapper;
@@ -51,181 +55,151 @@ public class MybatisAfterSalesBackend implements AfterSalesBackend {
         this.orderMapper = orderMapper;
     }
 
+    /** 在自有订单范围内沿用现有七天与订单终态规则。 */
     @Override
     public Mono<String> checkRefundEligibility(String orderId, String withinSevenDays) {
-        return Mono.fromSupplier(() -> doCheckRefundEligibility(orderId, withinSevenDays));
-    }
-
-    @Override
-    public Mono<String> submitRefund(String orderId, String amount, String reason) {
-        return Mono.fromSupplier(() -> doSubmitRefund(orderId, amount, reason));
-    }
-
-    @Override
-    public Mono<String> queryRefundProgress(String orderId) {
-        return Mono.fromSupplier(() -> doQueryRefundProgress(orderId));
-    }
-
-    @Override
-    public Mono<String> submitReturn(String orderId, String reason) {
-        return Mono.fromSupplier(() -> doSubmitReturn(orderId, reason));
-    }
-
-    @Override
-    public Mono<String> submitExchange(String orderId, String reason, String newSpec) {
-        return Mono.fromSupplier(() -> doSubmitExchange(orderId, reason, newSpec));
-    }
-
-    @Override
-    public Mono<String> checkPriceProtection(String orderId) {
-        return Mono.fromSupplier(() -> doCheckPriceProtection(orderId));
-    }
-
-    @Override
-    public Mono<String> requestInvoice(String orderId, String invoiceTitle) {
-        return Mono.fromSupplier(() -> doRequestInvoice(orderId, invoiceTitle));
-    }
-
-    /** 退款资格校验：联查 cw_order（订单存在且非终态才可退），再按七天无理由标记裁决。 */
-    private String doCheckRefundEligibility(String orderId, String withinSevenDays) {
-        try {
-            OrderDO order = orderMapper.selectById(orderId);
-            if (order == null) {
-                return "未查询到订单 " + orderId + "，无法校验退款资格，请核对订单号。";
-            }
+        return execute(orderId, CODE_ELIGIBILITY, identity -> {
+            OrderDO order = requireOwnedOrder(identity, orderId);
             String status = order.getStatus();
             if (OrderStatuses.REFUNDED.equals(status) || OrderStatuses.CANCELLED.equals(status)) {
                 return "订单 " + orderId + " 当前状态为" + status + "，不可重复退款。";
             }
             if (!TRUE_FLAG.equalsIgnoreCase(withinSevenDays)) {
-                return "订单 " + orderId + " 已超出七天无理由期，不满足无理由退款条件，"
-                     + "如确需退款请走特殊申诉流程（转人工）。";
+                return "订单 " + orderId + " 已超出七天无理由期，不满足无理由退款条件。";
             }
             return "订单 " + orderId + " 满足七天无理由退款条件，可发起退款申请。";
-        } catch (Exception e) {
-            log.error("refund eligibility check failed, code={}, orderId={}",
-                "AFTERSALES-BACKEND-ELIGIBILITY-FAIL", orderId, e);
-            return "退款规则引擎暂时不可用，建议转人工处理。";
-        }
+        });
     }
 
-    /** 生成退款工单：仅落 PENDING 待人工复核记录，不打款（资金安全红线）。 */
-    private String doSubmitRefund(String orderId, String amount, String reason) {
-        String refundNo = TYPE_REFUND.substring(0, 2) + System.currentTimeMillis();
-        boolean ok = insertRefund(refundNo, orderId, TYPE_REFUND, STATUS_PENDING,
-            toDecimal(amount), reason, null, "AFTERSALES-BACKEND-REFUND-FAIL");
-        if (!ok) {
-            return "退款工单系统暂时不可用，已为您转接人工坐席。";
-        }
-        return String.format(
-            "已生成退款工单 %s：订单=%s，金额=%s 元，原因=%s。"
-          + "【涉及资金，已转人工坐席复核，预计 1 个工作日内处理完成】",
-            refundNo, orderId, amount, reason);
+    /** 为真实自有订单创建待人工复核的退款申请，不执行支付。 */
+    @Override
+    public Mono<String> submitRefund(String orderId, String amount, String reason) {
+        return execute(orderId, CODE_REFUND, identity -> {
+            RefundDO record = insertRefund(identity, orderId, TYPE_REFUND, toDecimal(amount), reason, null);
+            String recordedAmount = record.getAmount() == null ? "未确认" : record.getAmount().toPlainString() + " 元";
+            return "已生成退款工单 " + record.getRefundNo() + "：订单=" + orderId
+                + "，金额=" + recordedAmount + "，原因=" + reason + "。当前状态：待人工复核。";
+        });
     }
 
-    /** 按订单查询最近一笔退款工单进度。 */
-    private String doQueryRefundProgress(String orderId) {
-        try {
-            String status = refundMapper.queryLatestRefundStatus(orderId, TYPE_REFUND);
+    /** 读取自有订单的真实审批状态；审核通过不等于资金到账。 */
+    @Override
+    public Mono<String> queryRefundProgress(String orderId) {
+        return execute(orderId, CODE_PROGRESS, identity -> {
+            requireOwnedOrder(identity, orderId);
+            String status = refundMapper.queryLatestRefundStatus(
+                TenantContext.require(), identity.subjectId(), orderId, TYPE_REFUND);
             if (status == null) {
-                return "未查询到订单 " + orderId + " 的退款记录，请确认是否已提交退款申请。";
+                return "未查询到订单 " + orderId + " 的退款记录。";
             }
-            if (STATUS_APPROVED.equals(status)) {
-                return "订单 " + orderId + " 的退款进度：审核通过，款项已原路退回，预计 1-3 个工作日到账"
-                     + "（具体以银行/支付渠道为准）。";
-            }
-            return "订单 " + orderId + " 的退款进度：待人工复核，预计 1 个工作日内处理完成。";
-        } catch (Exception e) {
-            log.error("refund progress query failed, code={}, orderId={}",
-                "AFTERSALES-BACKEND-PROGRESS-FAIL", orderId, e);
-            return "退款进度查询暂时不可用，建议稍后再试。";
-        }
+            return "订单 " + orderId + " 的退款进度：" + switch (status) {
+                case STATUS_PENDING -> "待人工复核。";
+                case STATUS_APPROVED -> "审核通过，到账情况尚未确认。";
+                case STATUS_DENIED -> "审核未通过。";
+                default -> "当前状态为 " + status + "。";
+            };
+        });
     }
 
-    /** 提交退货工单（cw_refund 同表 type=RETURN）。 */
-    private String doSubmitReturn(String orderId, String reason) {
-        String refundNo = TYPE_RETURN.substring(0, 2) + System.currentTimeMillis();
-        boolean ok = insertRefund(refundNo, orderId, TYPE_RETURN, STATUS_PENDING,
-            null, reason, null, "AFTERSALES-BACKEND-RETURN-FAIL");
-        if (!ok) {
-            return "退货工单系统暂时不可用，已为您转接人工坐席。";
-        }
-        return "已生成退货工单 " + refundNo + "：订单=" + orderId + "，原因=" + reason
-            + "。请在 7 天内将商品寄回，回寄地址与运费规则将以短信发送。";
+    /** 只创建自有订单的退货申请，不承诺寄回期限或通知已经发送。 */
+    @Override
+    public Mono<String> submitReturn(String orderId, String reason) {
+        return execute(orderId, CODE_RETURN, identity -> {
+            RefundDO record = insertRefund(identity, orderId, TYPE_RETURN, null, reason, null);
+            return "已生成退货工单 " + record.getRefundNo() + "：订单=" + orderId
+                + "，原因=" + reason + "。当前状态：待人工复核。";
+        });
     }
 
-    /** 提交换货工单（cw_refund 同表 type=EXCHANGE，new_spec 记录目标规格）。 */
-    private String doSubmitExchange(String orderId, String reason, String newSpec) {
-        String refundNo = TYPE_EXCHANGE.substring(0, 2) + System.currentTimeMillis();
-        boolean ok = insertRefund(refundNo, orderId, TYPE_EXCHANGE, STATUS_PENDING,
-            null, reason, newSpec, "AFTERSALES-BACKEND-EXCHANGE-FAIL");
-        if (!ok) {
-            return "换货工单系统暂时不可用，已为您转接人工坐席。";
-        }
-        return "已生成换货工单 " + refundNo + "：订单=" + orderId
-            + "，换为「" + newSpec + "」，原因=" + reason + "。新规格有货，收到回寄商品后为您发出。";
+    /** 记录换货诉求与目标规格，不把申请当成库存确认或发货。 */
+    @Override
+    public Mono<String> submitExchange(String orderId, String reason, String newSpec) {
+        return execute(orderId, CODE_EXCHANGE, identity -> {
+            RefundDO record = insertRefund(identity, orderId, TYPE_EXCHANGE, null, reason, newSpec);
+            return "已生成换货工单 " + record.getRefundNo() + "：订单=" + orderId
+                + "，申请换为「" + newSpec + "」，原因=" + reason + "。当前状态：待人工复核。";
+        });
     }
 
-    /** 价保校验：联查 cw_order 下单金额，比对当前是否降价（只读，不打款）。 */
-    private String doCheckPriceProtection(String orderId) {
-        try {
-            OrderDO order = orderMapper.selectById(orderId);
-            if (order == null) {
-                return "未查询到订单 " + orderId + "，无法办理价保，请核对订单号。";
-            }
-            String paid = order.getAmount().toPlainString();
-            return "订单 " + orderId + " 价保校验：在价保有效期内，当前未监测到降价，暂无可补差价"
-                 + "（下单金额 " + paid + " 元）；若后续降价可再次发起价保申请。";
-        } catch (Exception e) {
-            log.error("price protection check failed, code={}, orderId={}",
-                "AFTERSALES-BACKEND-PRICEPROTECT-FAIL", orderId, e);
-            return "价保系统暂时不可用，建议稍后再试。";
-        }
+    /** 只返回已经读取的订单金额，价格变动与价保资格尚无可核实的数据。 */
+    @Override
+    public Mono<String> checkPriceProtection(String orderId) {
+        return execute(orderId, CODE_PRICE_PROTECTION, identity -> {
+            OrderDO order = requireOwnedOrder(identity, orderId);
+            return "订单 " + orderId + " 下单金额 " + order.getAmount().toPlainString()
+                + " 元。是否符合价保条件尚未确认，需核实价格与适用规则。";
+        });
     }
 
-    /** 发票申请：真实落库到 cw_invoice_request（PENDING）。 */
-    private String doRequestInvoice(String orderId, String invoiceTitle) {
-        try {
+    /** 为真实自有订单创建待处理的发票申请，不代表发票已开具或邮件已发送。 */
+    @Override
+    public Mono<String> requestInvoice(String orderId, String invoiceTitle) {
+        return execute(orderId, CODE_INVOICE, identity -> {
             InvoiceRequestDO record = new InvoiceRequestDO();
+            record.setTenantId(TenantContext.require());
             record.setOrderId(orderId);
             record.setInvoiceTitle(invoiceTitle);
             record.setStatus(STATUS_PENDING);
             record.setCreatedAtMs(System.currentTimeMillis());
-            invoiceRequestMapper.insert(record);
-            return "已受理订单 " + orderId + " 的发票申请，抬头=「" + invoiceTitle + "」，"
-                + "电子发票将于 24 小时内发送至您账户预留邮箱。";
-        } catch (Exception e) {
-            log.error("invoice request failed, code={}, orderId={}",
-                "AFTERSALES-BACKEND-INVOICE-FAIL", orderId, e);
-            return "发票系统暂时不可用，建议稍后再试。";
-        }
+            if (invoiceRequestMapper.insertForOwner(record, identity.subjectId()) != 1) {
+                throw orderUnavailable();
+            }
+            return "已受理订单 " + orderId + " 的发票申请，抬头=「" + invoiceTitle + "」。当前状态：待处理。";
+        });
     }
 
-    /** 插入一条售后工单（退款/退货/换货共表），返回是否成功。 */
-    private boolean insertRefund(String refundNo, String orderId, String type, String status,
-                                 BigDecimal amount, String reason, String newSpec, String errorCode) {
-        try {
-            RefundDO record = new RefundDO();
-            record.setRefundNo(refundNo);
-            record.setOrderId(orderId);
-            record.setType(type);
-            record.setStatus(status);
-            record.setAmount(amount);
-            record.setReason(reason);
-            record.setNewSpec(newSpec);
-            record.setCreatedAtMs(System.currentTimeMillis());
-            refundMapper.insert(record);
-            return true;
-        } catch (Exception e) {
-            log.error("aftersales ticket insert failed, code={}, orderId={}, type={}",
-                errorCode, orderId, type, e);
-            return false;
-        }
+    /**
+     * 七个公共入口共用的身份边界：调用时捕获，订阅时使用，不读取订阅线程可能残留的其他身份。
+     * USER 以外的主体缺少订单用户授权事实；不能把 API Key 指纹或后台用户 ID 当作订单用户。
+     */
+    private Mono<String> execute(String orderId, String errorCode, Function<AgentInvocationIdentity, String> action) {
+        AgentInvocationIdentity identity = AgentInvocationIdentity.capture();
+        return Mono.fromSupplier(() -> {
+            if (identity == null || !identity.authenticated() || identity.subjectType() != QuotaSubjectType.USER
+                || !TenantContext.isValidTenantId(identity.tenantId()) || !StringUtils.hasText(identity.subjectId())) {
+                throw new SecurityException("authenticated order user identity is required");
+            }
+            return TenantContext.callWith(identity.tenantId(), () -> action.apply(identity));
+        }).doOnError(error -> log.error("aftersales operation failed, errorCode={}, orderId={}", errorCode, orderId, error))
+            // 工具执行器会解包根异常；原始原因只保留在服务端日志，避免 SQL 与库内数据进入模型结果。
+            .onErrorMap(DataAccessException.class,
+                error -> new IllegalStateException("售后服务暂时不可用，请稍后重试。"));
     }
 
-    /** String 金额转 BigDecimal，非数值返回 null（不阻断工单生成）。 */
+    private OrderDO requireOwnedOrder(AgentInvocationIdentity identity, String orderId) {
+        OrderDO order = orderMapper.findOwned(TenantContext.require(), identity.subjectId(), orderId);
+        if (order == null) {
+            throw orderUnavailable();
+        }
+        return order;
+    }
+
+    /** 订单归属校验与写入由同一条 SQL 完成；影响行数为零不能报告创建成功。 */
+    private RefundDO insertRefund(AgentInvocationIdentity identity, String orderId, String type,
+                                  BigDecimal amount, String reason, String newSpec) {
+        RefundDO record = new RefundDO();
+        record.setTenantId(TenantContext.require());
+        record.setRefundNo(type.substring(0, 2) + System.currentTimeMillis());
+        record.setOrderId(orderId);
+        record.setType(type);
+        record.setStatus(STATUS_PENDING);
+        record.setAmount(amount);
+        record.setReason(reason);
+        record.setNewSpec(newSpec);
+        record.setCreatedAtMs(System.currentTimeMillis());
+        if (refundMapper.insertForOwner(record, identity.subjectId()) != 1) {
+            throw orderUnavailable();
+        }
+        return record;
+    }
+
+    private static NoSuchElementException orderUnavailable() {
+        return new NoSuchElementException("order not found or not owned by the authenticated user");
+    }
+
+    /** 沿用现有金额输入契约：未确认或非数值金额保存为空，不在权限修复中增加退款政策。 */
     private static BigDecimal toDecimal(String amount) {
-        if (amount == null || amount.trim().isEmpty()) {
+        if (!StringUtils.hasText(amount)) {
             return null;
         }
         try {

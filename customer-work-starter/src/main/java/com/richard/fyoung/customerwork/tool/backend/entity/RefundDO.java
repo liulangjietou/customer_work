@@ -15,6 +15,9 @@ import java.math.BigDecimal;
 @TableName("cw_refund")
 public class RefundDO {
 
+    /** 创建申请时经过认证的订单租户；显式写入，不依赖租户插件或数据库默认值。 */
+    private String tenantId;
+
     /** 售后工单号（应用赋值，非自增）。 */
     @TableId(value = "refund_no", type = IdType.INPUT)
     private String refundNo;
