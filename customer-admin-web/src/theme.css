@@ -15,21 +15,21 @@
 
   --cw-ink: #0b1630;
   --cw-ink-elevated: #152441;
-  --cw-canvas: #eff3f8;
+  --cw-canvas: #f6f8fb;
   --cw-paper: #ffffff;
-  --theme-primary: #3658cb;
+  --theme-primary: #3e63dd;
   --cw-cobalt: var(--theme-primary);
   --cw-cobalt-solid: var(--theme-primary-solid);
   --cw-cobalt-solid-hover: var(--theme-primary-solid-hover);
   --cw-cobalt-solid-active: var(--theme-primary-solid-active);
-  --cw-amber: #925e13;
+  --cw-amber: #925500;
   --cw-amber-solid: #d99217;
-  --cw-success: #267765;
+  --cw-success: #16856a;
   --cw-danger: #c2414b;
   --cw-info: #626d80;
-  --cw-success-solid: #267765;
-  --cw-success-solid-hover: #226b5b;
-  --cw-success-solid-active: #1e5f51;
+  --cw-success-solid: #16856a;
+  --cw-success-solid-hover: #147b62;
+  --cw-success-solid-active: #127159;
   --cw-danger-solid: #c2414b;
   --cw-danger-solid-hover: #b23c45;
   --cw-danger-solid-active: #a63840;
@@ -42,14 +42,14 @@
   --cw-on-warning: #1e1608;
   --cw-on-danger: #ffffff;
   --cw-on-info: #ffffff;
-  --cw-text: #18273b;
-  --cw-text-muted: #5d6d83;
-  --cw-line: #dfe6ef;
+  --cw-text: #1d2637;
+  --cw-text-muted: #626d80;
+  --cw-line: #e3e7ef;
   --cw-line-strong: #c9d0dc;
-  --cw-focus-ring: #3658cb;
-  --theme-primary-solid: #3658cb;
-  --theme-primary-solid-hover: #314fb7;
-  --theme-primary-solid-active: #2b46a2;
+  --cw-focus-ring: #3e63dd;
+  --theme-primary-solid: #3e63dd;
+  --theme-primary-solid-hover: #395bcb;
+  --theme-primary-solid-active: #3555be;
   --cw-on-primary: #ffffff;
 
   /* 兼容既有壳层变量。 */

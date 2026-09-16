@@ -85,6 +85,22 @@ describe('Admin 请求凭据与全局副作用隔离', () => {
     })
   }
 
+  it.each([10001, 20002, 50000])('同一令牌重新登录后，上一轮请求 code=%s 不恢复全局副作用', async code => {
+    applyLogin('reused-token')
+    const network = delayedNetwork()
+    const pending = request({ url: '/ticket/orders/previous-login' }).catch(error => error)
+    const sent = await network.sent
+    useAuthStore().clear()
+    applyLogin('reused-token')
+    network.result(sent, code)
+
+    expect(await pending).toMatchObject({ code })
+    expect(useAuthStore().token).toBe('reused-token')
+    expect(feedback.replace).not.toHaveBeenCalled()
+    expect(feedback.push).not.toHaveBeenCalled()
+    expect(feedback.error).not.toHaveBeenCalled()
+  })
+
   it('当前登录的 10001 仍清凭据、跳登录并提示，不受局部提示配置影响', async () => {
     applyLogin('current-token')
     const network = delayedNetwork()
@@ -108,6 +124,9 @@ describe('Admin 请求凭据与全局副作用隔离', () => {
 
     expect(await pending).toMatchObject({ code: 20002 })
     expect(useAuthStore().token).toBe('current-token')
+    expect(useAuthStore().forceChangePassword).toBe(true)
+    expect(useAuthStore().permissions).toEqual([])
+    expect(localStorage.getItem('admin-force-change-password')).toBe('true')
     expect(feedback.push).toHaveBeenCalledExactlyOnceWith('/change-password')
     expect(feedback.replace).not.toHaveBeenCalled()
   })

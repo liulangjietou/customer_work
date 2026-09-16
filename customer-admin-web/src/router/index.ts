@@ -98,9 +98,14 @@ router.beforeEach(async (to) => {
 
   const menuStore = useMenuStore()
   if (!menuStore.routesRegistered) {
+    const loginGeneration = auth.loginGeneration
+    const token = auth.token
     try {
-      await menuStore.bootstrap()
+      const registered = await menuStore.bootstrap()
+      if (!registered || loginGeneration !== auth.loginGeneration || token !== auth.token) return false
     } catch (e) {
+      // 导航结束前可能已完成另一轮登录；旧失败只能结束旧导航，不能清理新凭据或路由。
+      if (loginGeneration !== auth.loginGeneration || token !== auth.token) return false
       // 拉菜单/权限失败（网络抖动、token 失效等）时，由本守卫自己统一做重定向。
       // 不能任异常未接住向外抛：否则会与 request.ts 拦截器里的 router.push('/login')
       // 形成两个并发导航互打，在 Vue 卸载中那个组件上触发

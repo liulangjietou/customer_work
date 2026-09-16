@@ -27,6 +27,8 @@ interface AuthState {
   approvalStatus: UserApprovalStatus
   approvalRemark: string | null
   permissions: string[]
+  /** 每次应用或清理登录都递增，识别同一凭据退出后重新登录的生命周期。 */
+  loginGeneration: number
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -41,6 +43,7 @@ export const useAuthStore = defineStore('auth', {
     approvalStatus: storedApprovalStatus(),
     approvalRemark: localStorage.getItem(STORAGE_APPROVAL_REMARK_KEY),
     permissions: [],
+    loginGeneration: 0,
   }),
   getters: {
     isLoggedIn: (state) => !!state.token,
@@ -48,6 +51,8 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     applyLoginResult(result: LoginResponse, username: string) {
+      this.loginGeneration += 1
+      this.permissions = []
       this.token = result.token
       this.nickname = result.nickname
       this.username = username
@@ -71,17 +76,31 @@ export const useAuthStore = defineStore('auth', {
       this.nickname = nickname
       localStorage.setItem(STORAGE_NICKNAME_KEY, nickname)
     },
+    /** 服务端要求改密时保留凭据，撤销业务权限及在途初始化，刷新仍停留在改密态。 */
+    requirePasswordChange() {
+      this.loginGeneration += 1
+      this.permissions = []
+      this.forceChangePassword = true
+      localStorage.setItem(STORAGE_FORCE_CHANGE_PASSWORD_KEY, 'true')
+    },
     clearForceChangePassword() {
       this.forceChangePassword = false
       localStorage.removeItem(STORAGE_FORCE_CHANGE_PASSWORD_KEY)
     },
     async loadPermissions() {
-      this.permissions = await fetchMyPermissions()
+      const generation = this.loginGeneration
+      const token = this.token
+      const permissions = await fetchMyPermissions()
+      // 旧成功响应同样不能越过登录边界；新账号尚未加载权限时也保持空权限。
+      if (generation === this.loginGeneration && token === this.token) {
+        this.permissions = permissions
+      }
     },
     hasPermission(permCode: string): boolean {
       return this.permissions.includes(permCode)
     },
     clear() {
+      this.loginGeneration += 1
       this.token = null
       this.nickname = null
       this.username = null
@@ -97,10 +116,12 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem(STORAGE_APPROVAL_REMARK_KEY)
     },
     async logout() {
+      const generation = this.loginGeneration
+      const token = this.token
       try {
         await logoutApi()
       } finally {
-        this.clear()
+        if (generation === this.loginGeneration && token === this.token) this.clear()
       }
     },
   },

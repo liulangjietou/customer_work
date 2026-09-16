@@ -34,24 +34,29 @@ export const useMenuStore = defineStore('menu', {
     async bootstrap() {
       const auth = useAuthStore()
       const generation = this.routeGeneration
+      const loginGeneration = auth.loginGeneration
       await auth.loadPermissions()
-      if (generation !== this.routeGeneration) {
-        return
+      if (generation !== this.routeGeneration || loginGeneration !== auth.loginGeneration) {
+        return false
       }
       const refreshed = await this.refreshMenu()
-      if (!refreshed || generation !== this.routeGeneration) {
-        return
+      if (!refreshed || generation !== this.routeGeneration || loginGeneration !== auth.loginGeneration) {
+        return false
       }
       this.routesRegistered = true
       this.startPolling()
+      return true
     },
     /** 拉取最新菜单树并（重新）注册动态路由；智能体 CRUD/启停操作后主动调用，≤1s 内生效。 */
     async refreshMenu() {
+      const auth = useAuthStore()
+      const loginGeneration = auth.loginGeneration
       const generation = this.routeGeneration
       const requestId = ++this.refreshRequestId
       const [nextTree, nextVersion] = await Promise.all([fetchMenuRoutes(), fetchMenuVersion()])
       // reset 或更新的 refresh 已发生时，晚到的旧请求不得把上一账号/旧版本路由重新注册回来。
-      if (generation !== this.routeGeneration || requestId !== this.refreshRequestId) {
+      if (generation !== this.routeGeneration || loginGeneration !== auth.loginGeneration
+          || requestId !== this.refreshRequestId) {
         return false
       }
 

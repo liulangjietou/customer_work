@@ -8,7 +8,7 @@ export interface AppRequestConfig extends AxiosRequestConfig {
   suppressErrorMessage?: boolean
 }
 
-type SentRequestConfig = InternalAxiosRequestConfig & AppRequestConfig
+type SentRequestConfig = InternalAxiosRequestConfig & AppRequestConfig & { loginGeneration?: number }
 
 // ResultCode 分段（与后端 common/result/ResultCode.java 保持一致）
 const CODE_UNAUTHORIZED = 10001
@@ -24,6 +24,8 @@ const http = axios.create({
 
 http.interceptors.request.use((config) => {
   const auth = useAuthStore()
+  const sentConfig = config as SentRequestConfig
+  sentConfig.loginGeneration = auth.loginGeneration
   if (auth.token) {
     config.headers.Authorization = auth.token
   }
@@ -34,7 +36,8 @@ http.interceptors.request.use((config) => {
 function belongsToCurrentLogin(config?: SentRequestConfig): boolean {
   if (!config) return false
   const requestToken = config.headers.get('Authorization') ?? null
-  return requestToken === useAuthStore().token
+  const auth = useAuthStore()
+  return requestToken === auth.token && config.loginGeneration === auth.loginGeneration
 }
 
 // 拦截器把 AxiosResponse<Result<T>> 拆箱为 T 直接返回，与 axios 自身的类型声明（要求返回
@@ -66,6 +69,7 @@ http.interceptors.response.use(((response: { data: Result<unknown> | Blob; confi
     return Promise.reject(body)
   }
   if (body.code === CODE_FORCE_CHANGE_PASSWORD) {
+    useAuthStore().requirePasswordChange()
     router.push('/change-password')
     return Promise.reject(body)
   }
