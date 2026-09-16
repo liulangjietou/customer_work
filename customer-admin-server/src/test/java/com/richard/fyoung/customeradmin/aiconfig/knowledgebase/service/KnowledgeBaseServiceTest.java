@@ -1,6 +1,11 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service;
 
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionAccessGuard;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionGateway;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionGatewayProvider;
+import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeVersionMapper;
+import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeChunkMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.client.KnowledgeSearchClient;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseOptionVO;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseSaveRequest;
@@ -72,8 +77,14 @@ class KnowledgeBaseServiceTest {
         agentKnowledgeBaseMapper = mock(AiAgentKnowledgeBaseMapper.class);
         searchClient = mock(KnowledgeSearchClient.class);
         versionService = mock(KnowledgeBaseVersionService.class);
+        var provider = mock(KnowledgeProjectionGatewayProvider.class);
+        when(provider.get()).thenReturn(new KnowledgeProjectionGateway(mock(KnowledgeChunkMapper.class),
+            mock(KnowledgeVersionMapper.class)));
+        when(knowledgeBaseMapper.selectByIdForUpdate(any())).thenAnswer(invocation ->
+            knowledgeBaseMapper.selectById((Long) invocation.getArgument(0)));
         service = new KnowledgeBaseService(knowledgeBaseMapper, agentKnowledgeBaseMapper,
-            new AesGcmCryptoUtil(TEST_SECRET_KEY), searchClient, new AdminRagProperties(), versionService);
+            new AesGcmCryptoUtil(TEST_SECRET_KEY), searchClient, new AdminRagProperties(), versionService,
+            new KnowledgeProjectionAccessGuard(knowledgeBaseMapper, provider));
         // 默认探测成功（个别用例覆写为失败）
         when(searchClient.searchOne(any(KnowledgeBaseEndpoint.class), anyString()))
             .thenReturn(List.of(new KnowledgeNode("kb", "片段", new BigDecimal("0.18"), "d1", "c1")));
@@ -87,6 +98,7 @@ class KnowledgeBaseServiceTest {
     private AiKnowledgeBase existing(Long id, String plainApiKey) {
         AiKnowledgeBase kb = new AiKnowledgeBase();
         kb.setId(id);
+        kb.setDeleted(0);
         kb.setKbName("产品知识库");
         kb.setBaseUrl("http://localhost:20002");
         kb.setAppId("app_123");
@@ -340,6 +352,8 @@ class KnowledgeBaseServiceTest {
     @Test
     void create_shouldReviveSoftDeletedRow_whenSameNameRecreated() {
         AiKnowledgeBase softDeleted = existing(7L, "sk-old");
+        softDeleted.setDeleted(1);
+        when(knowledgeBaseMapper.selectByIdForUpdate(7L)).thenReturn(softDeleted);
         when(knowledgeBaseMapper.selectDeletedByName("产品知识库")).thenReturn(softDeleted);
 
         service.create(request("产品知识库", "sk-new"));

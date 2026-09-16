@@ -13,6 +13,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKno
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiAgentKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionAccessGuard;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
@@ -69,19 +70,22 @@ public class KnowledgeBaseService {
     private final KnowledgeSearchClient searchClient;
     private final AdminRagProperties properties;
     private final KnowledgeBaseVersionService versionService;
+    private final KnowledgeProjectionAccessGuard projectionAccess;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public KnowledgeBaseService(AiKnowledgeBaseMapper knowledgeBaseMapper,
                                  AiAgentKnowledgeBaseMapper agentKnowledgeBaseMapper,
                                  AesGcmCryptoUtil cryptoUtil, KnowledgeSearchClient searchClient,
                                  AdminRagProperties properties,
-                                 KnowledgeBaseVersionService versionService) {
+                                 KnowledgeBaseVersionService versionService,
+                                 KnowledgeProjectionAccessGuard projectionAccess) {
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.agentKnowledgeBaseMapper = agentKnowledgeBaseMapper;
         this.cryptoUtil = cryptoUtil;
         this.searchClient = searchClient;
         this.properties = properties;
         this.versionService = versionService;
+        this.projectionAccess = projectionAccess;
     }
 
     public PageResult<KnowledgeBaseVO> page(PageQuery query) {
@@ -140,6 +144,11 @@ public class KnowledgeBaseService {
         // create_by/create_time 保留旧值（与 AuthService 的复活语义一致，不额外重置）。
         AiKnowledgeBase softDeleted = knowledgeBaseMapper.selectDeletedByName(request.kbName());
         if (softDeleted != null) {
+            AiKnowledgeBase locked = projectionAccess.lockIncludingDeleted(softDeleted.getId());
+            if (!Integer.valueOf(1).equals(locked.getDeleted())) {
+                throw new BizException(ResultCode.RESOURCE_DUPLICATE, "知识库名称已存在: " + request.kbName());
+            }
+            projectionAccess.blockAll(locked.getId());
             knowledgeBaseMapper.reviveDeleted(softDeleted.getId());
             entity.setId(softDeleted.getId());
             knowledgeBaseMapper.updateById(entity);
@@ -160,7 +169,7 @@ public class KnowledgeBaseService {
 
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, KnowledgeBaseSaveRequest request) {
-        AiKnowledgeBase entity = requireKnowledgeBase(id);
+        AiKnowledgeBase entity = projectionAccess.lockActive(id);
         assertNameAvailable(request.kbName(), id);
         validateExtraHeaders(request.extraHeaders());
 
@@ -178,6 +187,8 @@ public class KnowledgeBaseService {
             entity.setTestStatus(result.testStatus());
             entity.setTestTime(result.testTime());
         }
+        // 配置更新也可能启停或替换后端身份，旧版本须经显式投影重新核对当前权限。
+        projectionAccess.blockAll(id);
         // 改名撞上被软删除的同名旧行同样会抛 DuplicateKeyException（原因同 create 里的注释）。改名场景
         // 不能走"复活"（那会变成两行同名），只能给出友好提示让用户换个名字。
         try {
@@ -188,18 +199,22 @@ public class KnowledgeBaseService {
         versionService.createConfigurationVersion(entity.getId(), "编辑知识库配置");
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireKnowledgeBase(id);
+        projectionAccess.lockActive(id);
         if (agentKnowledgeBaseMapper.exists(new LambdaQueryWrapper<AiAgentKnowledgeBase>()
             .eq(AiAgentKnowledgeBase::getKnowledgeBaseId, id))) {
             throw new BizException(ResultCode.RESOURCE_IN_USE, "该知识库正被智能体引用，无法删除");
         }
+        projectionAccess.blockAll(id);
         knowledgeBaseMapper.deleteById(id);
     }
 
     /** 启用/停用（生命周期），不改动其余字段。停用后运行时立即不再参与检索。 */
+    @Transactional(rollbackFor = Exception.class)
     public void updateStatus(Long id, int status) {
-        requireKnowledgeBase(id);
+        projectionAccess.lockActive(id);
+        projectionAccess.blockAll(id);
         AiKnowledgeBase update = new AiKnowledgeBase();
         update.setId(id);
         update.setStatus(status);

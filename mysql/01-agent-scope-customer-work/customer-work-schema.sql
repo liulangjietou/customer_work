@@ -1136,9 +1136,11 @@ CREATE TABLE IF NOT EXISTS `cw_knowledge_chunk` (
     `dimensions`        INT          NOT NULL COMMENT '向量维度；与 embedding 长度必须一致',
     `acl_mode`          VARCHAR(32)  NOT NULL DEFAULT 'PUBLIC' COMMENT '访问控制模式，随后台文档修订冗余',
     `external_id`       VARCHAR(255) NULL COMMENT '来源文档的外部标识，供回答溯源展示',
+    `document_title`    VARCHAR(512) NULL COMMENT '历史文档修订标题',
+    `source_version`    VARCHAR(255) NULL COMMENT '历史文档上游版本',
     `created_at_ms`     BIGINT       NOT NULL COMMENT '创建时间（毫秒）',
     `updated_at_ms`     BIGINT       NOT NULL COMMENT '更新时间（毫秒）',
-    UNIQUE KEY `uk_cw_kb_chunk` (`doc_revision_id`, `chunk_index`),
+    UNIQUE KEY `uk_cw_kb_chunk` (`tenant_id`, `kb_version_id`, `doc_revision_id`, `chunk_index`),
     KEY `idx_cw_kb_chunk_version` (`tenant_id`, `kb_version_id`),
     KEY `idx_cw_kb_chunk_revision` (`doc_revision_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='受管知识库向量分片（运行时检索用）';
@@ -1151,6 +1153,8 @@ CREATE TABLE IF NOT EXISTS `cw_knowledge_version` (
     `kb_version_id`     BIGINT       NOT NULL COMMENT '知识库版本ID（对应后台 ai_knowledge_base_version.id）',
     `kb_code`           VARCHAR(128) NOT NULL COMMENT '知识库编码',
     `kb_name`           VARCHAR(255) NOT NULL COMMENT '知识库名称，用于回答里的来源标注',
+    `access_status`     VARCHAR(16) NOT NULL DEFAULT 'BLOCKED' COMMENT '客户授权投影状态：BLOCKED/READY',
+    `version_no`        INT NULL COMMENT '后台知识库版本号',
     `top_n`             INT          NOT NULL DEFAULT 3 COMMENT '召回条数上限',
     `score_threshold`   DECIMAL(10,6) NOT NULL DEFAULT 0 COMMENT '相似度下限，低于它的命中直接丢弃',
     `dimensions`        INT          NOT NULL COMMENT '该版本向量维度；与查询向量维度不一致时检索必须失败而不是算出一个无意义的分数',

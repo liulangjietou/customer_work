@@ -20,6 +20,9 @@ import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
 import com.richard.fyoung.customerwork.data.chatlog.InMemoryChatMessageStore;
 import com.richard.fyoung.customerwork.data.rag.KnowledgeProvider;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.NacosPromptService;
 import com.richard.fyoung.customerwork.infra.config.PermissionConfig;
@@ -127,11 +130,17 @@ class CustomerServiceAgentFactoryTest {
             TextBlock.builder().text("可核对的原文，不含来源标记").build(),
             "refund-policy", "chunk-1", Map.of("knowledgeBase", "售后政策")));
         document.setScore(0.91);
+        var retrievalTenant = new AtomicReference<String>();
         Mockito.when(knowledge.retrieve(ArgumentMatchers.eq("退款"),
-            ArgumentMatchers.any())).thenReturn(reactor.core.publisher.Mono.just(List.of(document)));
+            ArgumentMatchers.any())).thenAnswer(invocation -> {
+                retrievalTenant.set(TenantContext.get());
+                return reactor.core.publisher.Mono.just(List.of(document));
+            });
         var f = factory(props, provider);
         var agent = f.createAgent("source-capture");
         var context = f.contextFor("source-capture");
+        context.put(AgentInvocationIdentity.class,
+            new AgentInvocationIdentity("tenant-a", QuotaSubjectType.USER, "customer-a", true));
         var capture = new ChatTerminalCapture();
         context.put(ChatTerminalCapture.class, capture);
         var call = ToolCallParam.builder()
@@ -139,7 +148,12 @@ class CustomerServiceAgentFactoryTest {
                 .name("retrieve_knowledge").input(Map.of("query", "退款"))
                 .content("{\"query\":\"退款\"}").build())
             .input(Map.of("query", "退款")).agent(agent).runtimeContext(context).build();
-        var result = agent.getToolkit().callTool(call).block(Duration.ofSeconds(10));
+        var result = TenantContext.callWith("stale-b", () -> {
+            var output = agent.getToolkit().callTool(call).block(Duration.ofSeconds(10));
+            assertEquals("stale-b", TenantContext.require(), "工具调用不得污染调用方上下文");
+            return output;
+        });
+        assertEquals("tenant-a", retrievalTenant.get(), "工具必须使用原生调用快照，不能读迟到线程的租户");
         Assertions.assertNotNull(result);
         org.assertj.core.api.Assertions.assertThat(result.getOutput().toString()).contains("可核对的原文");
         Mockito.verify(knowledge).retrieve(ArgumentMatchers.eq("退款"),

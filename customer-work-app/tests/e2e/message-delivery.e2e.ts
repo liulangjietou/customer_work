@@ -1,10 +1,12 @@
 import { expect, test, type Page, type WebSocketRoute } from '@playwright/test'
 import type { ChatMessage, TicketDetail } from '../../src/types/api'
+import type { CustomerAnswerSource, CustomerAnswerSourcePreview } from '../../src/types/customerAnswerSources'
 
 const sessionId = 'uU1:browser'
 const ticketId = 'TK-browser'
 const userId = 'U1'
 interface ChatCommand { sessionId: string; content: string; clientMsgId: string }
+interface SourceReply { body: unknown; status?: number; gate?: Promise<void> }
 
 async function installConversation(page: Page, initialMessages: ChatMessage[] = []) {
   const commands: ChatCommand[] = []
@@ -14,6 +16,10 @@ async function installConversation(page: Page, initialMessages: ChatMessage[] = 
   const historyQueries: Array<number | null> = []
   const failures = { history: false }
   const unexpected: string[] = []
+  const sourceReplies = new Map<string, SourceReply>()
+  const sourceRequests: Array<{ path: string; cacheControl: string | undefined }> = []
+  const extraTickets = new Map<string, TicketDetail>()
+  const extraMessages = new Map<string, ChatMessage[]>()
   let receiptQueries = 0
   const detail: TicketDetail = {
     ticket: {
@@ -41,7 +47,16 @@ async function installConversation(page: Page, initialMessages: ChatMessage[] = 
       return route.abort()
     }
     let body: unknown
-    if (path === `/api/customer/user/tickets/${ticketId}`) body = detail
+    if (sourceReplies.has(path)) {
+      const reply = sourceReplies.get(path)!
+      sourceRequests.push({ path, cacheControl: route.request().headers()['cache-control'] })
+      if (reply.gate) await reply.gate
+      return route.fulfill({ status: reply.status ?? 200, json: reply.body, headers: { 'Cache-Control': 'no-store' } })
+    }
+    if (path === '/api/customer/user/tickets') body = { total: 1, items: [detail.ticket] }
+    else if (path.startsWith('/api/customer/user/tickets/') && extraTickets.has(path.split('/').at(-1)!)) body = extraTickets.get(path.split('/').at(-1)!)
+    else if (path.endsWith('/messages') && extraMessages.has(path.split('/').at(-2)!)) body = extraMessages.get(path.split('/').at(-2)!)
+    else if (path === `/api/customer/user/tickets/${ticketId}`) body = detail
     else if (path === `/api/customer/user/sessions/${sessionId}/messages`) {
       if (failures.history) return route.fulfill({ status: 503, json: { message: '会话记录暂时无法加载' } })
       const beforeId = url.searchParams.has('beforeId') ? Number(url.searchParams.get('beforeId')) : null
@@ -108,7 +123,8 @@ async function installConversation(page: Page, initialMessages: ChatMessage[] = 
   await expect.poll(() => sockets.length).toBe(1)
   await expect(page.getByLabel('消息内容')).toBeVisible()
   return { commands, sockets, messages, detail, persist, send, acknowledge, unexpected,
-    historyQueries, failures, receiptQueries: () => receiptQueries }
+    historyQueries, failures, sourceReplies, sourceRequests, extraTickets, extraMessages,
+    receiptQueries: () => receiptQueries }
 }
 
 test('手机端保留发送中的草稿，收到回执后确认受理', async ({ page }, testInfo) => {
@@ -233,7 +249,7 @@ const savedAnswer = (id = 1, extra = {}): ChatMessage => ({
   ...extra,
 })
 
-test('答复历史恢复状态、助手计划与长参考线索，390px 可展开核对且没有原文入口', async ({ page }, testInfo) => {
+test('答复历史恢复状态、助手计划与长参考线索，390px 保留本地线索展开', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
@@ -276,6 +292,231 @@ test('答复历史恢复状态、助手计划与长参考线索，390px 可展�
   await expect(page.locator('.answer-status')).toContainText('答复已中断')
   await expect(page.locator('.task-plan')).toContainText(evidence.taskPlan[0]!.content)
   expect(errors).toEqual([])
+  expect(fixture.unexpected).toEqual([])
+})
+
+const savedSource: CustomerAnswerSource = {
+  sourceIndex: 0, status: 'AVAILABLE', title: '退货政策的历史适用条件与办理说明'.repeat(6),
+  knowledgeBase: '售后服务知识库', versionNo: 7, sourceVersion: 'policy-revision-2026-09-01',
+}
+const savedPreview: CustomerAnswerSourcePreview = {
+  ...savedSource,
+  content: '本段资料用于核对签收时间和适用条件，办理结果以业务记录为准。\n'.repeat(85)
+    + '<img src="https://invalid.example/private.png">\n历史段落结束。',
+}
+const unavailableSource: CustomerAnswerSourcePreview = {
+  sourceIndex: 0, status: 'UNAVAILABLE', title: null, knowledgeBase: null,
+  versionNo: null, sourceVersion: null, content: null,
+}
+const sourcePath = (messageId: string, targetSession = sessionId) =>
+  `/api/customer/user/sessions/${targetSession}/messages/${messageId}/sources`
+
+for (const width of [390, 360]) {
+  test(`参考资料 ${width}px 使用真实面板展示长历史段落，触控与关闭焦点可达`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 })
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    const fixture = await installConversation(page, [savedAnswer(1, evidence), savedAnswer(2)])
+    const listPath = sourcePath('MSG-answer-1')
+    fixture.sourceReplies.set(listPath, { body: [savedSource] })
+    fixture.sourceReplies.set(`${listPath}/0`, { body: savedPreview })
+    const entry = page.getByRole('button', { name: '查看参考资料', exact: true })
+    await expect(entry).toHaveCount(1)
+    const entryBounds = await entry.boundingBox()
+    expect(entryBounds!.width).toBeGreaterThanOrEqual(44)
+    expect(entryBounds!.height).toBeGreaterThanOrEqual(44)
+    await entry.click()
+    const panel = page.getByRole('dialog', { name: '参考资料', exact: true })
+    await expect(panel).toBeVisible()
+    await expect(panel).toContainText('知识库版本 7')
+    await expect(panel).toContainText('来源版本 policy-revision-2026-09-01')
+    for (const target of [panel.getByRole('button', { name: '关闭', exact: true }),
+      panel.getByRole('button', { name: '刷新参考资料' }), panel.locator('[data-source-index="0"]')]) {
+      const bounds = await target.boundingBox()
+      expect(bounds!.width).toBeGreaterThanOrEqual(44)
+      expect(bounds!.height).toBeGreaterThanOrEqual(44)
+    }
+    await panel.locator('[data-source-index="0"]').click()
+    await expect(panel.locator('pre')).toHaveText(savedPreview.content!)
+    await expect(panel.locator('img, a, script')).toHaveCount(0)
+    for (const name of ['返回列表', '重新核验原文']) {
+      const bounds = await panel.getByRole('button', { name, exact: true }).boundingBox()
+      expect(bounds!.width).toBeGreaterThanOrEqual(44)
+      expect(bounds!.height).toBeGreaterThanOrEqual(44)
+    }
+    await expect(panel.locator('.source-body')).toHaveJSProperty('scrollLeft', 0)
+    expect(await panel.locator('.source-body').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`customer-source-preview-${width}.png`), fullPage: true })
+    await panel.locator('.source-body').evaluate(element => { element.scrollTop = element.scrollHeight })
+    expect(await panel.locator('.source-body').evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(1)
+    await page.screenshot({ path: testInfo.outputPath(`customer-source-preview-end-${width}.png`), fullPage: true })
+    await panel.getByRole('button', { name: '返回列表', exact: true }).click()
+    await expect(panel.locator('[data-source-index="0"]')).toBeFocused()
+    await panel.press('Escape')
+    await expect(panel).toHaveCount(0)
+    await expect(entry).toBeFocused()
+    await entry.click()
+    await expect(panel.locator('[data-source-index="0"]')).toBeVisible()
+    expect(fixture.sourceRequests.filter(request => request.path === listPath)).toHaveLength(3)
+    expect(fixture.sourceRequests.every(request => request.cacheControl === 'no-store')).toBe(true)
+    expect(errors).toEqual([])
+    expect(fixture.unexpected).toEqual([])
+  })
+}
+
+test('参考资料空列表、失效来源和读取失败各自展示，缺失版本不补造', async ({ page }) => {
+  const fixture = await installConversation(page, [savedAnswer(1, evidence)])
+  const path = sourcePath('MSG-answer-1')
+  fixture.sourceReplies.set(path, { body: [] })
+  await page.getByRole('button', { name: '查看参考资料' }).click()
+  const panel = page.getByRole('dialog', { name: '参考资料', exact: true })
+  await expect(panel).toContainText('这条答复没有可打开的参考资料')
+  await expect(panel.locator('[data-source-index]')).toHaveCount(0)
+  fixture.sourceReplies.set(path, { status: 503, body: { message: 'internal-source-trace' } })
+  await panel.getByRole('button', { name: '刷新参考资料' }).click()
+  await expect(panel.getByRole('alert')).toContainText('参考资料暂时无法加载')
+  await expect(panel.getByRole('button', { name: '重新核验原文' })).toHaveCount(0)
+  await expect(panel).not.toContainText('没有可打开的参考资料')
+  await expect(panel).not.toContainText('internal-source-trace')
+  fixture.sourceReplies.set(path, { body: [unavailableSource] })
+  await panel.getByRole('button', { name: '重新核对', exact: true }).click()
+  await expect(panel).toContainText('资料已不可用')
+  await expect(panel.locator('[data-source-index]')).toHaveCount(0)
+  fixture.sourceReplies.set(path, { body: [{ ...savedSource, versionNo: null, sourceVersion: null }] })
+  fixture.sourceReplies.set(`${path}/0`, { status: 404, body: { message: 'not found' } })
+  await panel.getByRole('button', { name: '刷新参考资料' }).click()
+  await expect(panel.locator('[data-source-index="0"]')).toBeVisible()
+  await expect(panel).not.toContainText('知识库版本')
+  await expect(panel).not.toContainText('来源版本')
+  await panel.locator('[data-source-index="0"]').click()
+  await expect(panel.getByRole('alert')).toContainText('参考资料当前不可访问')
+  await expect(panel).not.toContainText(savedSource.title!)
+  await expect(panel.locator('pre')).toHaveCount(0)
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('参考资料重新核验先清原文，503 可重试而撤权不保留旧标题正文', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const fixture = await installConversation(page, [savedAnswer(1, evidence)])
+  const path = sourcePath('MSG-answer-1')
+  const actual = { ...savedPreview, title: '历史政策', content: '已授权的历史原文。' }
+  fixture.sourceReplies.set(path, { body: [savedSource] })
+  fixture.sourceReplies.set(`${path}/0`, { body: actual })
+  await page.getByRole('button', { name: '查看参考资料' }).click()
+  const panel = page.getByRole('dialog', { name: '参考资料', exact: true })
+  await panel.locator('[data-source-index="0"]').click()
+  await expect(panel.locator('pre')).toHaveText(actual.content)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  fixture.sourceReplies.set(`${path}/0`, { status: 503, body: { message: 'private-service-error' }, gate })
+  try {
+    await panel.getByRole('button', { name: '重新核验原文' }).click()
+    await expect.poll(() => fixture.sourceRequests.length).toBe(3)
+    await expect(panel.locator('pre')).toHaveCount(0)
+    await expect(panel).not.toContainText(actual.title)
+  } finally {
+    release()
+  }
+  await expect(panel.getByRole('alert')).toContainText('参考资料暂时无法加载')
+  fixture.sourceReplies.set(`${path}/0`, { body: actual })
+  await panel.getByRole('button', { name: '重新核对', exact: true }).click()
+  await expect(panel.locator('pre')).toHaveText(actual.content)
+  fixture.sourceReplies.set(`${path}/0`, { body: unavailableSource })
+  await panel.getByRole('button', { name: '重新核验原文' }).click()
+  await expect(panel.getByRole('alert')).toContainText('资料已不可用')
+  await expect(panel.getByRole('button', { name: '重新核验原文' })).toHaveCount(0)
+  await expect(panel.locator('pre')).toHaveCount(0)
+  await expect(panel).not.toContainText(actual.title)
+  await expect(panel).not.toContainText(actual.knowledgeBase!)
+  await page.screenshot({ path: testInfo.outputPath('customer-source-revoked-390.png'), fullPage: true })
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('参考资料关闭后切到当前新答复，旧消息迟到原文不能覆盖新消息', async ({ page }) => {
+  const fixture = await installConversation(page, [savedAnswer(1, evidence)])
+  const current = savedAnswer(2, evidence)
+  fixture.send('chat_done', { ...current, ts: current.createdAtMs, usage: {}, traceId: 'fixture' })
+  const oldPath = sourcePath('MSG-answer-1')
+  const newPath = sourcePath('MSG-answer-2')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  fixture.sourceReplies.set(oldPath, { body: [savedSource] })
+  fixture.sourceReplies.set(`${oldPath}/0`, { body: { ...savedPreview, content: '不得复活的旧消息原文' }, gate })
+  fixture.sourceReplies.set(newPath, { body: [{ ...savedSource, title: '当前消息的资料' }] })
+  fixture.sourceReplies.set(`${newPath}/0`, { body: { ...savedPreview, title: '当前消息的资料', content: '当前消息的授权段落' } })
+  const entries = page.getByRole('button', { name: '查看参考资料', exact: true })
+  await expect(entries).toHaveCount(2)
+  await entries.nth(0).click()
+  const panel = page.getByRole('dialog', { name: '参考资料', exact: true })
+  try {
+    await panel.locator('[data-source-index="0"]').click()
+    await expect.poll(() => fixture.sourceRequests.some(request => request.path === `${oldPath}/0`)).toBe(true)
+    await panel.getByRole('button', { name: '关闭', exact: true }).click()
+    await expect(panel).toHaveCount(0)
+    await entries.nth(1).click()
+    await panel.locator('[data-source-index="0"]').click()
+    await expect(panel.locator('pre')).toHaveText('当前消息的授权段落')
+    const lateResponse = page.waitForResponse(response =>
+      decodeURIComponent(new URL(response.url()).pathname) === `${oldPath}/0`)
+    release()
+    await (await lateResponse).finished()
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  } finally {
+    release()
+  }
+  await expect(panel.locator('pre')).toHaveText('当前消息的授权段落')
+  await expect(page.locator('body')).not.toContainText('不得复活的旧消息原文')
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('参考资料切会话和离开页面清除正文，迟到读取不能复活旧面板', async ({ page }) => {
+  const fixture = await installConversation(page, [savedAnswer(1, evidence)])
+  const oldPath = sourcePath('MSG-answer-1')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  fixture.sourceReplies.set(oldPath, { body: [savedSource] })
+  fixture.sourceReplies.set(`${oldPath}/0`, { body: { ...savedPreview, content: '旧会话迟到的段落' }, gate })
+  const nextTicket = 'TK-source-next'
+  const nextSession = 'uU1:source-next'
+  fixture.extraTickets.set(nextTicket, { ...fixture.detail, ticket: { ...fixture.detail.ticket, id: nextTicket, sessionId: nextSession } })
+  fixture.extraMessages.set(nextSession, [savedAnswer(2, { ...evidence, sessionId: nextSession, ticketId: nextTicket, content: '第二会话的答复' })])
+  const newPath = sourcePath('MSG-answer-2', nextSession)
+  fixture.sourceReplies.set(newPath, { body: [{ ...savedSource, title: '第二会话资料' }] })
+  await page.getByRole('button', { name: '查看参考资料' }).click()
+  const panel = page.getByRole('dialog', { name: '参考资料', exact: true })
+  try {
+    await panel.locator('[data-source-index="0"]').click()
+    await expect.poll(() => fixture.sourceRequests.some(request => request.path === `${oldPath}/0`)).toBe(true)
+    await page.goto(`/chat?ticketId=${nextTicket}`)
+    await expect(page.getByText('第二会话的答复', { exact: true })).toBeVisible()
+  } finally {
+    release()
+  }
+  await expect(panel).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('旧会话迟到的段落')
+  await page.getByRole('button', { name: '查看参考资料' }).click()
+  await expect(panel).toContainText('第二会话资料')
+  await page.goto('/messages')
+  await expect(panel).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('第二会话资料')
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('参考资料核验时登录失效清除已读原文并回到登录页', async ({ page }) => {
+  const fixture = await installConversation(page, [savedAnswer(1, evidence)])
+  const path = sourcePath('MSG-answer-1')
+  fixture.sourceReplies.set(path, { body: [savedSource] })
+  fixture.sourceReplies.set(`${path}/0`, { body: { ...savedPreview, content: '登录主体限定的原文' } })
+  await page.getByRole('button', { name: '查看参考资料' }).click()
+  const panel = page.getByRole('dialog', { name: '参考资料', exact: true })
+  await panel.locator('[data-source-index="0"]').click()
+  await expect(panel.locator('pre')).toHaveText('登录主体限定的原文')
+  fixture.sourceReplies.set(`${path}/0`, { status: 401, body: {} })
+  await panel.getByRole('button', { name: '重新核验原文' }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(panel).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('登录主体限定的原文')
   expect(fixture.unexpected).toEqual([])
 })
 

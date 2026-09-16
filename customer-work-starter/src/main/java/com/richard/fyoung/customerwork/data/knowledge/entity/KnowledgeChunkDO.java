@@ -37,6 +37,11 @@ public class KnowledgeChunkDO {
 
     private String externalId;
 
+    /** 引用的历史修订标题；不由当前版本或正文推测。 */
+    private String documentTitle;
+
+    private String sourceVersion;
+
     private Long createdAtMs;
 
     private Long updatedAtMs;

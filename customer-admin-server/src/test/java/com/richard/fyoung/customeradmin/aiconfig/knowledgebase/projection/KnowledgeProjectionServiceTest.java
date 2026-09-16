@@ -4,25 +4,30 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBaseVersion;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBaseVersionDocument;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeDocument;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeDocumentChunk;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeDocumentRevision;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeSource;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseVersionDocumentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseVersionMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentChunkMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentRevisionMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeSourceMapper;
 import com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeChunkDO;
 import com.richard.fyoung.customerwork.data.knowledge.entity.KnowledgeVersionDO;
 import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeChunkMapper;
 import com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeVersionMapper;
 import com.richard.fyoung.customerwork.data.knowledge.vector.VectorCodec;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import java.math.BigDecimal;
+import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-
-import java.math.BigDecimal;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -55,6 +60,7 @@ class KnowledgeProjectionServiceTest {
 
     @BeforeEach
     void setUp() {
+        TenantContext.set("tenant-a");
         gatewayProvider = mock(KnowledgeProjectionGatewayProvider.class);
         cwChunkMapper = mock(KnowledgeChunkMapper.class);
         cwVersionMapper = mock(KnowledgeVersionMapper.class);
@@ -69,11 +75,15 @@ class KnowledgeProjectionServiceTest {
 
         AiKnowledgeBase kb = new AiKnowledgeBase();
         kb.setId(7L);
+        kb.setStatus(1);
+        kb.setDeleted(0);
         kb.setKbName("售后FAQ");
-        when(kbMapper.selectById(7L)).thenReturn(kb);
+        when(kbMapper.selectByIdForUpdate(7L)).thenReturn(kb);
 
         AiKnowledgeBaseVersion version = new AiKnowledgeBaseVersion();
         version.setId(70L);
+        version.setTenantId("tenant-a");
+        version.setVersionNo(3);
         version.setKnowledgeBaseId(7L);
         version.setTopN(5);
         version.setScoreThreshold(new BigDecimal("0.25"));
@@ -81,22 +91,58 @@ class KnowledgeProjectionServiceTest {
 
         AiKnowledgeBaseVersionDocument member = new AiKnowledgeBaseVersionDocument();
         member.setKnowledgeBaseVersionId(70L);
+        member.setTenantId("tenant-a");
+        member.setSourceId(8L);
         member.setDocumentRevisionId(700L);
         member.setExternalId("doc-a");
         when(memberMapper.selectList(any())).thenReturn(List.of(member));
 
         AiKnowledgeDocumentRevision revision = new AiKnowledgeDocumentRevision();
         revision.setId(700L);
+        revision.setTenantId("tenant-a");
+        revision.setDocumentId(20L);
+        revision.setSourceId(8L);
+        revision.setOperation("UPSERT");
+        revision.setContent("原始文档");
         revision.setAclMode("PUBLIC");
         when(revisionMapper.selectBatchIds(any())).thenReturn(List.of(revision));
 
-        service = new KnowledgeProjectionService(gatewayProvider, kbMapper, versionMapper,
-            memberMapper, revisionMapper, chunkMapper, new ObjectMapper());
+        var documents = mock(AiKnowledgeDocumentMapper.class);
+        var document = new AiKnowledgeDocument();
+        document.setId(20L);
+        document.setTenantId("tenant-a");
+        document.setKnowledgeBaseId(7L);
+        document.setSourceId(8L);
+        document.setExternalId("doc-a");
+        document.setCurrentRevisionId(700L);
+        document.setDeleted(0);
+        when(documents.selectBatchIds(any())).thenReturn(List.of(document));
+        var sources = mock(AiKnowledgeSourceMapper.class);
+        var source = new AiKnowledgeSource();
+        source.setId(8L);
+        source.setTenantId("tenant-a");
+        source.setKnowledgeBaseId(7L);
+        source.setStatus(1);
+        source.setDeleted(0);
+        when(sources.selectBatchIds(any())).thenReturn(List.of(source));
+        when(cwChunkMapper.upsertProjection(any())).thenAnswer(invocation -> {
+            invocation.<KnowledgeChunkDO>getArgument(0).setId(100L);
+            return 1;
+        });
+        service = new KnowledgeProjectionService(gatewayProvider,
+            new KnowledgeProjectionAccessGuard(kbMapper, gatewayProvider), versionMapper,
+            memberMapper, revisionMapper, chunkMapper, documents, sources, new ObjectMapper());
+    }
+
+    @AfterEach
+    void clearTenant() {
+        TenantContext.clear();
     }
 
     private AiKnowledgeDocumentChunk sourceChunk(long id, String embeddingJson) {
         AiKnowledgeDocumentChunk c = new AiKnowledgeDocumentChunk();
         c.setId(id);
+        c.setTenantId("tenant-a");
         c.setDocumentRevisionId(700L);
         c.setChunkIndex(0);
         c.setContent("七天无理由从签收次日算起");
@@ -104,20 +150,15 @@ class KnowledgeProjectionServiceTest {
         return c;
     }
 
-    /**
-     * 整版替换：先清场再整批写入。
-     *
-     * <p>知识库版本是不可变快照，投影出来就该与后台那一版逐字一致。不清场的话，
-     * 上一版被删掉的文档会永远留在客服端——而两边看各自都"正常"。</p>
-     */
+    /** 保留本次分片标识，并清除目标版本中不再存在的分片。 */
     @Test
-    @DisplayName("投影前先清空该版本的旧分片")
-    void clearsVersionBeforeWriting() {
+    @DisplayName("投影后清除该版本多余分片并保留历史引用标识")
+    void removesOnlyChunksOutsideCompletedProjection() {
         when(chunkMapper.selectList(any())).thenReturn(List.of(sourceChunk(1L, "[1.0,0.0]")));
 
         service.project(7L, 70L);
 
-        verify(cwChunkMapper).deleteByVersion(70L);
+        verify(cwChunkMapper).deleteVersionChunksExcept(70L, List.of(100L));
     }
 
     @Test
@@ -128,7 +169,7 @@ class KnowledgeProjectionServiceTest {
         service.project(7L, 70L);
 
         ArgumentCaptor<KnowledgeChunkDO> captor = ArgumentCaptor.forClass(KnowledgeChunkDO.class);
-        verify(cwChunkMapper).insert(captor.capture());
+        verify(cwChunkMapper).upsertProjection(captor.capture());
         KnowledgeChunkDO written = captor.getValue();
         assertArrayEquals(VectorCodec.encode(new float[]{1.0f, 0.0f}), written.getEmbedding(),
             "向量格式转换要在投影这一步完成——放到检索时每次都转，这次优化就白做了");
@@ -153,7 +194,7 @@ class KnowledgeProjectionServiceTest {
         int written = service.project(7L, 70L);
 
         assertEquals(1, written, "只有可用向量的那条被写入");
-        verify(cwChunkMapper, times(1)).insert(any(KnowledgeChunkDO.class));
+        verify(cwChunkMapper, times(1)).upsertProjection(any(KnowledgeChunkDO.class));
     }
 
     @Test

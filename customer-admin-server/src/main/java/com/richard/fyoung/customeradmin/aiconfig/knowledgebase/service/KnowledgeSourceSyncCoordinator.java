@@ -7,19 +7,18 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.domain.KnowledgeQ
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.domain.KnowledgeSyncStatus;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeDocumentChangeRequest;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeSyncRequest;
-import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBase;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeBaseVersion;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeDocument;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeDocumentChunk;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeDocumentRevision;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeSource;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiKnowledgeSyncRun;
-import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentChunkMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentRevisionMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeSourceMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeSyncRunMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionAccessGuard;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
@@ -44,7 +43,7 @@ import java.util.stream.Collectors;
 public class KnowledgeSourceSyncCoordinator {
 
     private final AiKnowledgeSourceMapper sourceMapper;
-    private final AiKnowledgeBaseMapper knowledgeBaseMapper;
+    private final KnowledgeProjectionAccessGuard projectionAccess;
     private final AiKnowledgeDocumentMapper documentMapper;
     private final AiKnowledgeDocumentRevisionMapper revisionMapper;
     private final AiKnowledgeDocumentChunkMapper chunkMapper;
@@ -52,14 +51,14 @@ public class KnowledgeSourceSyncCoordinator {
     private final KnowledgeBaseVersionService versionService;
 
     public KnowledgeSourceSyncCoordinator(AiKnowledgeSourceMapper sourceMapper,
-                                          AiKnowledgeBaseMapper knowledgeBaseMapper,
+                                          KnowledgeProjectionAccessGuard projectionAccess,
                                           AiKnowledgeDocumentMapper documentMapper,
                                           AiKnowledgeDocumentRevisionMapper revisionMapper,
                                           AiKnowledgeDocumentChunkMapper chunkMapper,
                                           AiKnowledgeSyncRunMapper runMapper,
                                           KnowledgeBaseVersionService versionService) {
         this.sourceMapper = sourceMapper;
-        this.knowledgeBaseMapper = knowledgeBaseMapper;
+        this.projectionAccess = projectionAccess;
         this.documentMapper = documentMapper;
         this.revisionMapper = revisionMapper;
         this.chunkMapper = chunkMapper;
@@ -67,17 +66,24 @@ public class KnowledgeSourceSyncCoordinator {
         this.versionService = versionService;
     }
 
+    /** KB→源锁序内同步封锁客服投影，然后一次提交文档与 checkpoint。 */
     @Transactional(rollbackFor = Exception.class)
-    public AiKnowledgeSyncRun commit(Long sourceId,
+    public AiKnowledgeSyncRun commit(Long knowledgeBaseId,
+                                     Long sourceId,
+                                     Integer expectedSourceRevision,
                                      Long runId,
                                      KnowledgeSyncRequest request,
                                      Map<String, KnowledgeDocumentIndexer.PreparedDocument> prepared) {
-        AiKnowledgeSource source = lockSource(sourceId);
+        projectionAccess.lockActive(knowledgeBaseId);
+        AiKnowledgeSource source = lockSource(knowledgeBaseId, sourceId);
         if (!Integer.valueOf(StatusFlags.ENABLED).equals(source.getStatus())) {
             throw new BizException(ResultCode.PARAM_INVALID, "文档源已停用: " + sourceId);
         }
+        if (!Objects.equals(source.getRevision(), expectedSourceRevision)) {
+            throw new BizException(ResultCode.PARAM_INVALID, "文档源配置已变化，请重新提交同步");
+        }
         assertCheckpoint(source, request.expectedCheckpoint());
-        lockKnowledgeBase(source.getKnowledgeBaseId());
+        projectionAccess.blockAll(knowledgeBaseId);
 
         List<AiKnowledgeDocument> currentDocuments = documentMapper.selectList(
             new LambdaQueryWrapper<AiKnowledgeDocument>().eq(AiKnowledgeDocument::getSourceId, sourceId));
@@ -320,21 +326,13 @@ public class KnowledgeSourceSyncCoordinator {
         }
     }
 
-    private AiKnowledgeSource lockSource(Long sourceId) {
+    private AiKnowledgeSource lockSource(Long knowledgeBaseId, Long sourceId) {
         AiKnowledgeSource source = sourceMapper.selectOne(new QueryWrapper<AiKnowledgeSource>()
-            .eq("id", sourceId).eq("deleted", 0).last("FOR UPDATE"));
+            .eq("id", sourceId).eq("knowledge_base_id", knowledgeBaseId).eq("deleted", 0).last("FOR UPDATE"));
         if (source == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "文档源不存在: " + sourceId);
         }
         return source;
-    }
-
-    private void lockKnowledgeBase(Long knowledgeBaseId) {
-        AiKnowledgeBase knowledgeBase = knowledgeBaseMapper.selectOne(new QueryWrapper<AiKnowledgeBase>()
-            .eq("id", knowledgeBaseId).last("FOR UPDATE"));
-        if (knowledgeBase == null) {
-            throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在: " + knowledgeBaseId);
-        }
     }
 
     private AiKnowledgeSyncRun requireProcessingRun(Long runId, Long sourceId) {

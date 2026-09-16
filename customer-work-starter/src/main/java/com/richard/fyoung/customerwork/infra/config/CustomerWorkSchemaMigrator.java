@@ -49,6 +49,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String KNOWLEDGE_GAP_REVIEW_MIRROR_VERSION = "25";
     private static final String KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION = "26";
     private static final String CHAT_ANSWER_EVIDENCE_MIRROR_VERSION = "27";
+    private static final String KNOWLEDGE_PROJECTION_ACCESS_MIRROR_VERSION = "28";
 
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
@@ -257,8 +258,27 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
                     || !columnExists(connection, "cw_knowledge_gap_review", "updated_at")) {
                 return KNOWLEDGE_GAP_REVIEW_MIRROR_VERSION;
             }
-            return columnExists(connection, "cw_chat_message", "answer_evidence")
-                ? CHAT_ANSWER_EVIDENCE_MIRROR_VERSION : KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION;
+            if (!columnExists(connection, "cw_chat_message", "answer_evidence")) {
+                return KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION;
+            }
+            boolean publicProjectionMirror = columnExists(connection, "cw_knowledge_version", "access_status")
+                && columnExists(connection, "cw_knowledge_version", "version_no")
+                && columnExists(connection, "cw_knowledge_chunk", "document_title")
+                && columnExists(connection, "cw_knowledge_chunk", "source_version")
+                && knowledgeProjectionIndexMatches(connection);
+            return publicProjectionMirror ? KNOWLEDGE_PROJECTION_ACCESS_MIRROR_VERSION
+                : CHAT_ANSWER_EVIDENCE_MIRROR_VERSION;
+        }
+    }
+
+    /** V28 的四个字段和包含租户、版本的唯一键必须同时存在，部分手工升级不能跳过迁移。 */
+    private boolean knowledgeProjectionIndexMatches(Connection connection) throws Exception {
+        String sql = "SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') "
+            + "FROM information_schema.statistics WHERE table_schema = DATABASE() "
+            + "AND table_name = 'cw_knowledge_chunk' AND index_name = 'uk_cw_kb_chunk'";
+        try (PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet resultSet = statement.executeQuery()) {
+            return resultSet.next() && "tenant_id,kb_version_id,doc_revision_id,chunk_index".equals(resultSet.getString(1));
         }
     }
 

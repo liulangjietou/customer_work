@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customerwork.data.knowledge.mapper.KnowledgeVersionMapper">
+    <update id="blockByKnowledgeBase">
+        UPDATE cw_knowledge_version SET access_status = 'BLOCKED', updated_at_ms = #{updatedAtMs}
+        WHERE kb_code = #{knowledgeBaseId}
+    </update>
+    <update id="blockByVersion">
+        UPDATE cw_knowledge_version SET access_status = 'BLOCKED', updated_at_ms = #{updatedAtMs}
+        WHERE kb_version_id = #{versionId}
+    </update>
+</mapper>

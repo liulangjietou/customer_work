@@ -17,6 +17,10 @@ import org.apache.ibatis.annotations.Update;
  */
 public interface AiKnowledgeBaseMapper extends BaseMapper<AiKnowledgeBase> {
 
+    /** 含已软删除行的当前读；复活、撤权和重新投影统一锁定同一 KB 行。 */
+    @Select("SELECT * FROM ai_knowledge_base WHERE id = #{id} FOR UPDATE")
+    AiKnowledgeBase selectByIdForUpdate(@Param("id") Long id);
+
     /**
      * 按名称查一条<b>已被软删除</b>的知识库行（{@code deleted=1}）。用原生 {@code @Select}，
      * 不会被自动追加 {@code AND deleted=0}，因此能看见被逻辑删除、但仍占着唯一索引的那一行。

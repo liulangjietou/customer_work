@@ -59,7 +59,8 @@ public class KnowledgeSourceSyncService {
         try {
             KnowledgeAclRequest defaultAcl = documentIndexer.parseAcl(source.getDefaultAclJson());
             Map<String, KnowledgeDocumentIndexer.PreparedDocument> prepared = prepare(request, defaultAcl);
-            AiKnowledgeSyncRun completed = coordinator.commit(sourceId, start.run().getId(), request, prepared);
+            AiKnowledgeSyncRun completed = coordinator.commit(knowledgeBaseId, sourceId,
+                source.getRevision(), start.run().getId(), request, prepared);
             return runRecorder.toVo(completed);
         } catch (Exception e) {
             runRecorder.fail(start.run().getId(), sourceId, e);

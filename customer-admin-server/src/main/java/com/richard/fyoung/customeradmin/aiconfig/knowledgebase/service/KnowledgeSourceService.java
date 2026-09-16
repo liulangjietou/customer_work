@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.domain.KnowledgeFreshnessStatus;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.domain.KnowledgeQualityStatus;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.domain.KnowledgeSourceType;
@@ -19,6 +20,7 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledg
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentRevisionMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeSourceMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeSyncRunMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.projection.KnowledgeProjectionAccessGuard;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customerwork.core.constant.StatusFlags;
@@ -47,6 +49,7 @@ public class KnowledgeSourceService {
     private final AiKnowledgeSyncRunMapper runMapper;
     private final KnowledgeDocumentIndexer documentIndexer;
     private final KnowledgeSyncRunRecorder runRecorder;
+    private final KnowledgeProjectionAccessGuard projectionAccess;
 
     public KnowledgeSourceService(AiKnowledgeSourceMapper sourceMapper,
                                   AiKnowledgeBaseMapper knowledgeBaseMapper,
@@ -54,7 +57,8 @@ public class KnowledgeSourceService {
                                   AiKnowledgeDocumentRevisionMapper revisionMapper,
                                   AiKnowledgeSyncRunMapper runMapper,
                                   KnowledgeDocumentIndexer documentIndexer,
-                                  KnowledgeSyncRunRecorder runRecorder) {
+                                  KnowledgeSyncRunRecorder runRecorder,
+                                  KnowledgeProjectionAccessGuard projectionAccess) {
         this.sourceMapper = sourceMapper;
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.documentMapper = documentMapper;
@@ -62,6 +66,7 @@ public class KnowledgeSourceService {
         this.runMapper = runMapper;
         this.documentIndexer = documentIndexer;
         this.runRecorder = runRecorder;
+        this.projectionAccess = projectionAccess;
     }
 
     public List<KnowledgeSourceVO> list(Long knowledgeBaseId) {
@@ -74,7 +79,7 @@ public class KnowledgeSourceService {
 
     @Transactional(rollbackFor = Exception.class)
     public Long create(Long knowledgeBaseId, KnowledgeSourceSaveRequest request) {
-        requireKnowledgeBase(knowledgeBaseId);
+        projectionAccess.lockActive(knowledgeBaseId);
         AiKnowledgeSource source = new AiKnowledgeSource();
         source.setKnowledgeBaseId(knowledgeBaseId);
         source.setSourceCode(normalizeCode(request.sourceCode()));
@@ -100,7 +105,8 @@ public class KnowledgeSourceService {
 
     @Transactional(rollbackFor = Exception.class)
     public void update(Long knowledgeBaseId, Long sourceId, KnowledgeSourceSaveRequest request) {
-        AiKnowledgeSource source = requireSource(knowledgeBaseId, sourceId);
+        projectionAccess.lockActive(knowledgeBaseId);
+        AiKnowledgeSource source = lockSource(knowledgeBaseId, sourceId);
         String requestedCode = normalizeCode(request.sourceCode());
         if (!source.getSourceCode().equals(requestedCode)) {
             throw new BizException(ResultCode.PARAM_INVALID, "sourceCode 是文档稳定身份，创建后不可修改");
@@ -117,16 +123,19 @@ public class KnowledgeSourceService {
             DEFAULT_QUALITY_THRESHOLD));
         source.setDefaultAclJson(documentIndexer.writeAcl(request.defaultAcl()));
         source.setRevision(defaultIfNull(source.getRevision(), 0) + 1);
+        projectionAccess.blockAll(knowledgeBaseId);
         sourceMapper.updateById(source);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long knowledgeBaseId, Long sourceId) {
-        AiKnowledgeSource source = requireSource(knowledgeBaseId, sourceId);
+        projectionAccess.lockActive(knowledgeBaseId);
+        AiKnowledgeSource source = lockSource(knowledgeBaseId, sourceId);
         if (defaultIfNull(source.getActiveDocumentCount(), 0) > 0) {
             throw new BizException(ResultCode.RESOURCE_IN_USE,
                 "文档源仍有有效文档，请先提交全量空快照删除文档");
         }
+        projectionAccess.blockAll(knowledgeBaseId);
         sourceMapper.deleteById(sourceId);
     }
 
@@ -160,6 +169,16 @@ public class KnowledgeSourceService {
         AiKnowledgeSource source = sourceMapper.selectOne(new LambdaQueryWrapper<AiKnowledgeSource>()
             .eq(AiKnowledgeSource::getId, sourceId)
             .eq(AiKnowledgeSource::getKnowledgeBaseId, knowledgeBaseId));
+        if (source == null) {
+            throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "文档源不存在: " + sourceId);
+        }
+        return source;
+    }
+
+    /** 调用方已先锁定知识库，源锁必须在其后获取。 */
+    private AiKnowledgeSource lockSource(Long knowledgeBaseId, Long sourceId) {
+        AiKnowledgeSource source = sourceMapper.selectOne(new QueryWrapper<AiKnowledgeSource>()
+            .eq("id", sourceId).eq("knowledge_base_id", knowledgeBaseId).last("FOR UPDATE"));
         if (source == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "文档源不存在: " + sourceId);
         }

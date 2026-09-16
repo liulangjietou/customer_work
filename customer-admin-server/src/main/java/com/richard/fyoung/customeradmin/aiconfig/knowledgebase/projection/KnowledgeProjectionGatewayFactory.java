@@ -14,11 +14,12 @@ import java.util.List;
  */
 final class KnowledgeProjectionGatewayFactory {
 
-    /** 只用 BaseMapper CRUD 的 Mapper 接口。 */
-    static final List<Class<?>> MAPPER_CLASSES = List.of(KnowledgeVersionMapper.class);
+    /** 本门面的 Mapper 均由 XML namespace 注册。 */
+    static final List<Class<?>> MAPPER_CLASSES = List.of();
 
     /** 需加载的 starter Mapper XML。 */
-    static final List<String> MAPPER_XML_LOCATIONS = List.of(StarterMapperXml.KNOWLEDGE_CHUNK);
+    static final List<String> MAPPER_XML_LOCATIONS = List.of(StarterMapperXml.KNOWLEDGE_CHUNK,
+        StarterMapperXml.KNOWLEDGE_VERSION);
 
     private KnowledgeProjectionGatewayFactory() {
     }

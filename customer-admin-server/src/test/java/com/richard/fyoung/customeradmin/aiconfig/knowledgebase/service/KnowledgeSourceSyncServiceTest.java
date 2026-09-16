@@ -64,13 +64,13 @@ class KnowledgeSourceSyncServiceTest {
         when(recorder.start(source, request)).thenReturn(new KnowledgeSyncRunRecorder.StartResult(started, true));
         when(indexer.parseAcl(source.getDefaultAclJson())).thenReturn(publicAcl);
         when(indexer.prepare(request.documents().get(0), publicAcl)).thenReturn(prepared);
-        when(coordinator.commit(eq(8L), eq(11L), eq(request), anyMap())).thenReturn(completed);
+        when(coordinator.commit(eq(7L), eq(8L), eq(source.getRevision()), eq(11L), eq(request), anyMap())).thenReturn(completed);
         when(recorder.toVo(completed)).thenReturn(expected);
 
         KnowledgeSyncRunVO actual = service.sync(7L, 8L, request);
 
         assertSame(expected, actual);
-        verify(coordinator).commit(8L, 11L, request, Map.of("doc-1", prepared));
+        verify(coordinator).commit(7L, 8L, source.getRevision(), 11L, request, Map.of("doc-1", prepared));
         verify(recorder, never()).fail(any(), any(), any());
     }
 
@@ -85,7 +85,7 @@ class KnowledgeSourceSyncServiceTest {
 
         assertSame(expected, service.sync(7L, 8L, request));
         verify(indexer, never()).prepare(any(), any());
-        verify(coordinator, never()).commit(any(), any(), any(), anyMap());
+        verify(coordinator, never()).commit(any(), any(), any(), any(), any(), anyMap());
     }
 
     @Test
@@ -101,7 +101,7 @@ class KnowledgeSourceSyncServiceTest {
         when(recorder.start(source, request)).thenReturn(new KnowledgeSyncRunRecorder.StartResult(started, true));
         when(indexer.parseAcl(source.getDefaultAclJson())).thenReturn(publicAcl);
         when(indexer.prepare(any(), any())).thenReturn(prepared);
-        when(coordinator.commit(eq(8L), eq(11L), eq(request), anyMap())).thenThrow(failure);
+        when(coordinator.commit(eq(7L), eq(8L), eq(source.getRevision()), eq(11L), eq(request), anyMap())).thenThrow(failure);
 
         assertThrows(BizException.class, () -> service.sync(7L, 8L, request));
 
