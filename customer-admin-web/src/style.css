@@ -27,3 +27,8 @@ body {
     scroll-behavior: auto;
   }
 }
+
+/* 权限撤销后退出布局与键盘焦点顺序，恢复授权时仍由原组件管理显示状态。 */
+[data-permission-denied] {
+  display: none !important;
+}

@@ -1,17 +1,33 @@
-import type { App, Directive } from 'vue'
+import { ref, watchEffect, type App, type Directive, type Ref, type WatchStopHandle } from 'vue'
 import { useAuthStore } from '@/store/auth'
 
-/**
- * v-permission="'user:add'"：当前用户没有该权限点时，直接移除元素（不是仅隐藏，避免 DevTools 里
- * 还能看到/改 display 绕过）。按钮级权限隐藏，与后端 @SaCheckPermission 的最终裁决互为表里
- * （前端只是体验层，真正兜底始终是后端接口校验）。
- */
+interface PermissionBinding {
+  permission: Ref<string>
+  apply: () => void
+  stop: WatchStopHandle
+}
+
+const bindings = new WeakMap<HTMLElement, PermissionBinding>()
+
+/** 按当前权限更新操作入口；按钮可见性属于体验层，实际写入仍由后端权限校验裁决。 */
 const permissionDirective: Directive<HTMLElement, string> = {
   mounted(el, binding) {
     const auth = useAuthStore()
-    if (!auth.hasPermission(binding.value)) {
-      el.parentNode?.removeChild(el)
-    }
+    const permission = ref(binding.value)
+    // 独立属性配合全局样式隐藏，保留 Vue 的节点归属，并兼容原有 class/style/v-show。
+    const apply = () => el.toggleAttribute('data-permission-denied', !auth.hasPermission(permission.value))
+    const stop = watchEffect(apply, { flush: 'sync' })
+    bindings.set(el, { permission, apply, stop })
+  },
+  updated(el, binding) {
+    const state = bindings.get(el)
+    if (!state) return
+    state.permission.value = binding.value
+    state.apply()
+  },
+  beforeUnmount(el) {
+    bindings.get(el)?.stop()
+    bindings.delete(el)
   },
 }
 

@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { effectScope, type EffectScope } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useCrudPage } from './useCrudPage'
 
 const feedback = vi.hoisted(() => ({
   success: vi.fn(),
   confirm: vi.fn(),
 }))
+
+vi.mock('@/api/auth', () => ({ fetchMyPermissions: vi.fn(), logout: vi.fn() }))
 
 vi.mock('element-plus/es', () => ({
   ElMessage: { success: feedback.success },
@@ -36,19 +40,28 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+let scope: EffectScope
 beforeEach(() => {
+  const storage = new Map<string, string>()
+  vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key) })
+  setActivePinia(createPinia())
+  scope = effectScope()
   feedback.success.mockReset()
   feedback.confirm.mockReset().mockResolvedValue(undefined)
 })
 
+afterEach(() => { scope.stop(); vi.unstubAllGlobals() })
+
 describe('useCrudPage', () => {
   it('搜索会回到第一页', async () => {
     const page = vi.fn().mockResolvedValue({ list: [], total: 0 })
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       initQuery: () => ({ pageNum: 3, pageSize: 10, keyword: 'agent' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
 
     crud.handleSearch()
     expect(crud.query.pageNum).toBe(1)
@@ -61,11 +74,11 @@ describe('useCrudPage', () => {
       .mockResolvedValueOnce({ list: [{ id: 1, name: 'cached' }], total: 1 })
       .mockRejectedValueOnce(failure)
       .mockResolvedValueOnce({ list: [{ id: 2, name: 'fresh' }], total: 1 })
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
 
     await crud.loadList()
     await crud.loadList()
@@ -83,11 +96,11 @@ describe('useCrudPage', () => {
     const page = vi.fn()
       .mockImplementationOnce(() => slow.promise)
       .mockImplementationOnce(() => fast.promise)
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
 
     const first = crud.loadList()
     crud.query.keyword = 'latest'
@@ -108,11 +121,11 @@ describe('useCrudPage', () => {
     const page = vi.fn()
       .mockImplementationOnce(() => stale.promise)
       .mockImplementationOnce(() => latest.promise)
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
 
     const staleLoad = crud.loadList()
     crud.query.keyword = 'latest'
@@ -133,12 +146,12 @@ describe('useCrudPage', () => {
     const createResult = deferred<unknown>()
     const create = vi.fn(() => createResult.promise)
     const page = vi.fn().mockResolvedValue({ list: [], total: 0 })
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       create,
       initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
     crud.openCreate()
     crud.form.name = 'Customer Agent'
 
@@ -158,16 +171,16 @@ describe('useCrudPage', () => {
     const failure = new Error('create failed')
     const create = vi.fn().mockRejectedValue(failure)
     const page = vi.fn().mockResolvedValue({ list: [], total: 0 })
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       create,
       initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
     crud.openCreate()
     crud.form.name = 'Customer Agent'
 
-    await expect(crud.handleSubmit()).rejects.toBe(failure)
+    await expect(crud.handleSubmit()).resolves.toBeUndefined()
 
     expect(crud.submitting.value).toBe(false)
     expect(crud.dialogVisible.value).toBe(true)
@@ -180,17 +193,17 @@ describe('useCrudPage', () => {
     const failure = new Error('update failed')
     const update = vi.fn().mockRejectedValue(failure)
     const page = vi.fn().mockResolvedValue({ list: [], total: 0 })
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       update,
       initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
       toForm: (row) => ({ name: row.name }),
-    })
+    }))!
     crud.openEdit({ id: 7, name: 'Existing Agent' })
     crud.form.name = 'Edited Agent'
 
-    await expect(crud.handleSubmit()).rejects.toBe(failure)
+    await expect(crud.handleSubmit()).resolves.toBeUndefined()
 
     expect(update).toHaveBeenCalledWith(7, crud.form)
     expect(crud.submitting.value).toBe(false)
@@ -207,12 +220,12 @@ describe('useCrudPage', () => {
     feedback.confirm.mockReturnValueOnce(confirmation.promise)
     const remove = vi.fn()
     const page = vi.fn().mockResolvedValue({ list: [], total: 0 })
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       remove,
       initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
 
     const deletion = crud.handleDelete({ id: 5, name: 'Protected Agent' })
     expect(feedback.confirm).toHaveBeenCalledTimes(1)
@@ -230,14 +243,14 @@ describe('useCrudPage', () => {
     const failure = new Error('delete failed')
     const remove = vi.fn().mockRejectedValue(failure)
     const page = vi.fn().mockResolvedValue({ list: [], total: 0 })
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       remove,
       initQuery: () => ({ pageNum: 2, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
 
-    await expect(crud.handleDelete({ id: 6, name: 'Failing Agent' })).rejects.toBe(failure)
+    await expect(crud.handleDelete({ id: 6, name: 'Failing Agent' })).resolves.toBeUndefined()
 
     expect(remove).toHaveBeenCalledTimes(1)
     expect(crud.deletingId.value).toBeNull()
@@ -252,12 +265,12 @@ describe('useCrudPage', () => {
     const page = vi.fn()
       .mockResolvedValueOnce({ list: [{ id: 9, name: 'last' }], total: 11 })
       .mockResolvedValueOnce({ list: [{ id: 8, name: 'previous' }], total: 10 })
-    const crud = useCrudPage<Row, Query, Form>({
+    const crud = scope.run(() => useCrudPage<Row, Query, Form>({
       page,
       remove,
       initQuery: () => ({ pageNum: 2, pageSize: 10, keyword: '' }),
       initForm: () => ({ name: '' }),
-    })
+    }))!
     await crud.loadList()
 
     const first = crud.handleDelete(crud.list.value[0])
