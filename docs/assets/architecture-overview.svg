@@ -1,0 +1,437 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4096" height="3072" viewBox="0 0 2560 1920" role="img" aria-labelledby="diagram-title diagram-desc" lang="zh-CN">
+<title id="diagram-title">customer-work 企业智能客服与 Agent 平台全景架构</title>
+<desc id="diagram-desc">以源码 efc2f159 为基线。五栏依次展示触点与输入、接入与业务上下文、Agent 运行与推理、受控工具与业务执行、运营控制与持续改进。安全治理贯穿所有层；底部展示售后请求闭环、可观测、开发交付和存储部署。H5 默认使用单一 ReActAgent；多 Agent、Harness、网关、MCP 与运行配置发布按入口或配置启用。审批通过与支付执行分别记录。</desc>
+<metadata>Source snapshot: efc2f159265bdcc6ef18108d03e8f641be2e41f7 | 2026-09-16 | Java 17 | Spring Boot 3.2.5 | AgentScope Java 2.0.3. Editable vector source; no embedded bitmap or external resource.</metadata>
+<defs>
+<marker id="blue-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 Z" fill="#158fc5"/></marker>
+<marker id="green-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 Z" fill="#119769"/></marker>
+<marker id="orange-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 Z" fill="#ef871e"/></marker>
+<marker id="purple-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 Z" fill="#7860b7"/></marker>
+<linearGradient id="column-0" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#226da6"/><stop offset="1" stop-color="#226da6" stop-opacity="0.9"/></linearGradient>
+<linearGradient id="column-1" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#187eb1"/><stop offset="1" stop-color="#187eb1" stop-opacity="0.9"/></linearGradient>
+<linearGradient id="column-2" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#7860b7"/><stop offset="1" stop-color="#7860b7" stop-opacity="0.9"/></linearGradient>
+<linearGradient id="column-3" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#488c49"/><stop offset="1" stop-color="#488c49" stop-opacity="0.9"/></linearGradient>
+<linearGradient id="column-4" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#ee861d"/><stop offset="1" stop-color="#ee861d" stop-opacity="0.9"/></linearGradient>
+<symbol id="shield" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3 27 7v9c0 7-6 11-11 14C11 27 5 23 5 16V7Z"/><path d="m10 16 4 4 8-9"/></symbol>
+<symbol id="user" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="9" r="5"/><path d="M6 29v-6a10 10 0 0 1 20 0v6M12 28v-7m8 7v-7"/></symbol>
+<symbol id="key" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="11" r="6"/><path d="m15 15 13 13m-5-5 4-4m-9-1 4-4"/></symbol>
+<symbol id="layers" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 13-7 13 7-13 7Zm0 7 13 7 13-7M3 24l13 7 13-7"/></symbol>
+<symbol id="chart" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3v25h25M10 22v-6m7 6V9m7 13V4"/></symbol>
+<symbol id="code" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 8-8 8 8 8m12-16 8 8-8 8M19 3l-6 26"/></symbol>
+<symbol id="database" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="16" cy="7" rx="12" ry="5"/><path d="M4 7v18c0 7 24 7 24 0V7M4 16c0 7 24 7 24 0"/></symbol>
+<symbol id="audit" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2h15l5 5v23H7ZM21 2v7h6M11 14h12m-12 6h12m-12 6h8"/></symbol>
+</defs>
+<g font-family="Arial, Hiragino Sans GB, Noto Sans CJK SC, Microsoft YaHei, sans-serif">
+<rect x="0" y="0" width="2560" height="1920" rx="4" fill="white" stroke="none" stroke-width="1.4"/>
+<text x="1280" y="77" font-size="49" font-weight="700" fill="#153365" text-anchor="middle">customer-work 企业智能客服与 Agent 平台全景架构</text>
+<text x="1280" y="123" font-size="28" font-weight="400" fill="#153365" text-anchor="middle">用户与业务输入 → 可信上下文 → Agent 推理 → 受控执行 → 运营反馈</text>
+<text x="2528" y="26" font-size="17" font-weight="400" fill="#506786" text-anchor="end">源码快照 · 2026-09-16 · efc2f159</text>
+<rect x="28" y="154" width="2504" height="80" rx="4" fill="#eaf5fc" stroke="#b6d6ed" stroke-width="1.4"/>
+<use href="#shield" x="48" y="178" width="34" height="34" color="#153365"/>
+<text x="96" y="195" font-size="28" font-weight="700" fill="#153365" text-anchor="start">安全与治理贯穿全链路</text>
+<use href="#user" x="446" y="179" width="29" height="29" color="#153365"/>
+<text x="488" y="183" font-size="23" font-weight="700" fill="#153365" text-anchor="start">可信身份</text>
+<text x="488" y="215" font-size="20" font-weight="400" fill="#153365" text-anchor="start">JWT / Sa-Token / API Key</text>
+<use href="#layers" x="850" y="179" width="29" height="29" color="#153365"/>
+<text x="892" y="183" font-size="23" font-weight="700" fill="#153365" text-anchor="start">数据边界</text>
+<text x="892" y="215" font-size="20" font-weight="400" fill="#153365" text-anchor="start">租户隔离 / 角色数据范围</text>
+<use href="#key" x="1254" y="179" width="29" height="29" color="#153365"/>
+<text x="1296" y="183" font-size="23" font-weight="700" fill="#153365" text-anchor="start">工具与访问权限</text>
+<text x="1296" y="215" font-size="20" font-weight="400" fill="#153365" text-anchor="start">主体授权 / access epoch</text>
+<use href="#shield" x="1684" y="179" width="29" height="29" color="#153365"/>
+<text x="1726" y="183" font-size="23" font-weight="700" fill="#153365" text-anchor="start">内容与用量保护</text>
+<text x="1726" y="215" font-size="20" font-weight="400" fill="#153365" text-anchor="start">注入防护 / 脱敏 / 配额</text>
+<use href="#audit" x="2115" y="179" width="29" height="29" color="#153365"/>
+<text x="2157" y="183" font-size="23" font-weight="700" fill="#153365" text-anchor="start">全过程留痕</text>
+<text x="2157" y="215" font-size="20" font-weight="400" fill="#153365" text-anchor="start">调用审计 / 操作日志 / Trace</text>
+<rect x="28" y="250" width="1922" height="32" rx="2" fill="#f0f7fc" stroke="none" stroke-width="1.4"/>
+<text x="44" y="273" font-size="21" font-weight="600" fill="#32628b" text-anchor="start">客服运行面 · 各入口按协议复用 starter，按需调用模型、知识与业务工具</text>
+<rect x="1974" y="250" width="558" height="32" rx="2" fill="#fff1df" stroke="none" stroke-width="1.4"/>
+<text x="1990" y="273" font-size="21" font-weight="600" fill="#995412" text-anchor="start">运营控制面 · 资产、发布、工作区与质量反馈</text>
+<rect x="28" y="296" width="350" height="1038" rx="4" fill="white" stroke="#b8d9ee" stroke-width="1.7"/>
+<rect x="28" y="296" width="350" height="88" rx="4" fill="url(#column-0)" stroke="none" stroke-width="1.4"/>
+<rect x="42" y="309" width="45" height="47" rx="5" fill="white" stroke="none" stroke-width="1.4"/>
+<text x="64.5" y="345" font-size="37" font-weight="700" fill="#226da6" text-anchor="middle">1</text>
+<text x="101" y="335" font-size="28" font-weight="700" fill="white" text-anchor="start">触点与输入</text>
+<text x="102" y="367" font-size="20" font-weight="400" fill="white" text-anchor="start">用户 / 接口 / 渠道 / 资料</text>
+<rect x="402" y="296" width="470" height="1038" rx="4" fill="white" stroke="#acd8eb" stroke-width="1.7"/>
+<rect x="402" y="296" width="470" height="88" rx="4" fill="url(#column-1)" stroke="none" stroke-width="1.4"/>
+<rect x="416" y="309" width="45" height="47" rx="5" fill="white" stroke="none" stroke-width="1.4"/>
+<text x="438.5" y="345" font-size="37" font-weight="700" fill="#187eb1" text-anchor="middle">2</text>
+<text x="475" y="335" font-size="28" font-weight="700" fill="white" text-anchor="start">接入 · 会话 · 上下文</text>
+<text x="476" y="367" font-size="20" font-weight="400" fill="white" text-anchor="start">app-server + starter 服务编排</text>
+<rect x="896" y="296" width="510" height="1038" rx="4" fill="white" stroke="#ccbeea" stroke-width="1.7"/>
+<rect x="896" y="296" width="510" height="88" rx="4" fill="url(#column-2)" stroke="none" stroke-width="1.4"/>
+<rect x="910" y="309" width="45" height="47" rx="5" fill="white" stroke="none" stroke-width="1.4"/>
+<text x="932.5" y="345" font-size="37" font-weight="700" fill="#7860b7" text-anchor="middle">3</text>
+<text x="969" y="335" font-size="28" font-weight="700" fill="white" text-anchor="start">Agent 运行与推理</text>
+<text x="970" y="367" font-size="20" font-weight="400" fill="white" text-anchor="start">customer-work-starter 可复用内核</text>
+<rect x="1430" y="296" width="520" height="1038" rx="4" fill="white" stroke="#b8dabb" stroke-width="1.7"/>
+<rect x="1430" y="296" width="520" height="88" rx="4" fill="url(#column-3)" stroke="none" stroke-width="1.4"/>
+<rect x="1444" y="309" width="45" height="47" rx="5" fill="white" stroke="none" stroke-width="1.4"/>
+<text x="1466.5" y="345" font-size="37" font-weight="700" fill="#488c49" text-anchor="middle">4</text>
+<text x="1503" y="335" font-size="28" font-weight="700" fill="white" text-anchor="start">受控工具与业务执行</text>
+<text x="1504" y="367" font-size="20" font-weight="400" fill="white" text-anchor="start">工具授权、人工决策与业务状态</text>
+<rect x="1974" y="296" width="558" height="1038" rx="4" fill="white" stroke="#efcca2" stroke-width="1.7"/>
+<rect x="1974" y="296" width="558" height="88" rx="4" fill="url(#column-4)" stroke="none" stroke-width="1.4"/>
+<rect x="1988" y="309" width="45" height="47" rx="5" fill="white" stroke="none" stroke-width="1.4"/>
+<text x="2010.5" y="345" font-size="37" font-weight="700" fill="#ee861d" text-anchor="middle">5</text>
+<text x="2047" y="335" font-size="28" font-weight="700" fill="white" text-anchor="start">运营控制与持续改进</text>
+<text x="2048" y="367" font-size="20" font-weight="400" fill="white" text-anchor="start">admin-server + admin-web</text>
+<g id="h5-client" data-frame="42,400,322,180">
+<rect x="42" y="400" width="322" height="180" rx="4" fill="#eef7fc" stroke="#b8d9ee" stroke-width="1.4"/>
+<rect x="43" y="401" width="320" height="43" rx="3" fill="#dceff9" stroke="none" stroke-width="1.4"/>
+<text x="56" y="430" font-size="25" font-weight="700" fill="#153365" text-anchor="start">用户 H5</text>
+<text x="57" y="476" font-size="21" font-weight="400" fill="#153365" text-anchor="start">customer-work-app · 5175</text>
+<text x="57" y="505" font-size="21" font-weight="400" fill="#153365" text-anchor="start">Vue 3 / TypeScript / Vant 4</text>
+<text x="57" y="534" font-size="21" font-weight="400" fill="#153365" text-anchor="start">登录 · 聊天 · 工单 · CSAT</text>
+<text x="57" y="563" font-size="21" font-weight="400" fill="#153365" text-anchor="start">WebSocket：/ws/user</text>
+</g>
+<g id="service-callers" data-frame="42,596,322,162">
+<rect x="42" y="596" width="322" height="162" rx="4" fill="#eef7fc" stroke="#b8d9ee" stroke-width="1.4"/>
+<rect x="43" y="597" width="320" height="43" rx="3" fill="#dceff9" stroke="none" stroke-width="1.4"/>
+<text x="56" y="626" font-size="25" font-weight="700" fill="#153365" text-anchor="start">服务接入方</text>
+<text x="57" y="672" font-size="20" font-weight="400" fill="#153365" text-anchor="start">HTTP / SSE / AG-UI</text>
+<text x="57" y="704" font-size="20" font-weight="400" fill="#153365" text-anchor="start">chat / stream / intent / consult</text>
+<text x="57" y="736" font-size="20" font-weight="400" fill="#153365" text-anchor="start">/api/customer/*</text>
+</g>
+<g id="channels" data-frame="42,774,322,184">
+<rect x="42" y="774" width="322" height="184" rx="4" fill="#eef7fc" stroke="#b8d9ee" stroke-width="1.4" stroke-dasharray="7 4"/>
+<rect x="43" y="775" width="320" height="43" rx="3" fill="#dceff9" stroke="none" stroke-width="1.4"/>
+<text x="56" y="804" font-size="25" font-weight="700" fill="#153365" text-anchor="start">多渠道适配 · 可选</text>
+<text x="57" y="850" font-size="20" font-weight="400" fill="#153365" text-anchor="start">customer-channel · 8081</text>
+<text x="57" y="879" font-size="20" font-weight="400" fill="#153365" text-anchor="start">钉钉 / 飞书 / 企业微信</text>
+<text x="57" y="908" font-size="20" font-weight="400" fill="#153365" text-anchor="start">微信公众号 / Studio / AG-UI</text>
+<text x="57" y="937" font-size="20" font-weight="400" fill="#153365" text-anchor="start">协议适配后复用 starter</text>
+</g>
+<g id="business-input" data-frame="42,974,322,184">
+<rect x="42" y="974" width="322" height="184" rx="4" fill="#eef7fc" stroke="#b8d9ee" stroke-width="1.4"/>
+<rect x="43" y="975" width="320" height="43" rx="3" fill="#dceff9" stroke="none" stroke-width="1.4"/>
+<text x="56" y="1004" font-size="25" font-weight="700" fill="#153365" text-anchor="start">业务与知识输入</text>
+<text x="57" y="1050" font-size="21" font-weight="400" fill="#153365" text-anchor="start">订单 / 商品 / 会员 / 售后</text>
+<text x="57" y="1079" font-size="21" font-weight="400" fill="#153365" text-anchor="start">FAQ / 文档 / 图片 / 附件</text>
+<text x="57" y="1108" font-size="21" font-weight="400" fill="#153365" text-anchor="start">资料进入知识与附件能力</text>
+<text x="57" y="1137" font-size="21" font-weight="400" fill="#153365" text-anchor="start">业务数据经工具后端访问</text>
+</g>
+<g id="optional-gateway" data-frame="42,1174,322,144">
+<rect x="42" y="1174" width="322" height="144" rx="4" fill="#eef7fc" stroke="#b8d9ee" stroke-width="1.4" stroke-dasharray="7 4"/>
+<rect x="43" y="1175" width="320" height="43" rx="3" fill="#dceff9" stroke="none" stroke-width="1.4"/>
+<text x="56" y="1204" font-size="25" font-weight="700" fill="#153365" text-anchor="start">统一网关 · 可选</text>
+<text x="57" y="1250" font-size="19" font-weight="400" fill="#153365" text-anchor="start">customer-work-gateway · 8888</text>
+<text x="57" y="1278" font-size="19" font-weight="400" fill="#153365" text-anchor="start">Spring Cloud Gateway / Nacos</text>
+<text x="57" y="1306" font-size="19" font-weight="400" fill="#153365" text-anchor="start">按需路由 app / admin</text>
+</g>
+<g id="app-entry" data-frame="416,400,442,180">
+<rect x="416" y="400" width="442" height="180" rx="4" fill="#edf8fc" stroke="#acd8eb" stroke-width="1.4"/>
+<rect x="417" y="401" width="440" height="43" rx="3" fill="#d9eff8" stroke="none" stroke-width="1.4"/>
+<text x="430" y="430" font-size="25" font-weight="700" fill="#153365" text-anchor="start">运行入口 · app-server</text>
+<text x="431" y="476" font-size="22" font-weight="400" fill="#153365" text-anchor="start">customer-work-app-server · 8080</text>
+<text x="431" y="505" font-size="22" font-weight="400" fill="#153365" text-anchor="start">WebFlux：REST / SSE / WebSocket</text>
+<text x="431" y="534" font-size="22" font-weight="400" fill="#153365" text-anchor="start">UserChatWebSocketHandler</text>
+<text x="431" y="563" font-size="22" font-weight="400" fill="#153365" text-anchor="start">JWT / access epoch / 会话归属</text>
+</g>
+<g id="message-acceptance" data-frame="416,596,442,164">
+<rect x="416" y="596" width="442" height="164" rx="4" fill="#edf8fc" stroke="#acd8eb" stroke-width="1.4"/>
+<rect x="417" y="597" width="440" height="43" rx="3" fill="#d9eff8" stroke="none" stroke-width="1.4"/>
+<text x="430" y="626" font-size="25" font-weight="700" fill="#153365" text-anchor="start">消息受理与工单分流</text>
+<text x="431" y="672" font-size="22" font-weight="400" fill="#153365" text-anchor="start">ChatDispatchService</text>
+<text x="431" y="704" font-size="22" font-weight="400" fill="#153365" text-anchor="start">clientMsgId 幂等 · 事务保存输入</text>
+<text x="431" y="736" font-size="22" font-weight="400" fill="#153365" text-anchor="start">AI 服务 / 人工队列 / 坐席消息</text>
+</g>
+<g id="conversation-lifecycle" data-frame="416,776,442,160">
+<rect x="416" y="776" width="442" height="160" rx="4" fill="#edf8fc" stroke="#acd8eb" stroke-width="1.4"/>
+<rect x="417" y="777" width="440" height="43" rx="3" fill="#d9eff8" stroke="none" stroke-width="1.4"/>
+<text x="430" y="806" font-size="25" font-weight="700" fill="#153365" text-anchor="start">对话生命周期</text>
+<text x="431" y="852" font-size="20" font-weight="400" fill="#153365" text-anchor="start">ChatTurnService → CustomerServiceService</text>
+<text x="431" y="884" font-size="20" font-weight="400" fill="#153365" text-anchor="start">会话锁 · 状态恢复 · 租户与主体配额</text>
+<text x="431" y="916" font-size="20" font-weight="400" fill="#153365" text-anchor="start">中断恢复 · ChatTurnFinalizer 统一收尾</text>
+</g>
+<g id="context-data" data-frame="416,952,442,200">
+<rect x="416" y="952" width="442" height="200" rx="4" fill="#edf8fc" stroke="#acd8eb" stroke-width="1.4"/>
+<rect x="417" y="953" width="440" height="43" rx="3" fill="#d9eff8" stroke="none" stroke-width="1.4"/>
+<text x="430" y="982" font-size="25" font-weight="700" fill="#153365" text-anchor="start">记忆 · 知识 · 附件</text>
+<text x="431" y="1028" font-size="21" font-weight="400" fill="#153365" text-anchor="start">短期状态 / 长期记忆 / 事实日志</text>
+<text x="431" y="1059" font-size="21" font-weight="400" fill="#153365" text-anchor="start">RAG：内置 / 百炼 / Dify / 托管知识库</text>
+<text x="431" y="1090" font-size="21" font-weight="400" fill="#153365" text-anchor="start">知识来源引用 · 公开投影权限检查</text>
+<text x="431" y="1121" font-size="21" font-weight="400" fill="#153365" text-anchor="start">MinIO 附件 → 文档解析 / PaddleOCR</text>
+</g>
+<g id="semantic-cache" data-frame="416,1168,442,150">
+<rect x="416" y="1168" width="442" height="150" rx="4" fill="#edf8fc" stroke="#acd8eb" stroke-width="1.4" stroke-dasharray="7 4"/>
+<rect x="417" y="1169" width="440" height="43" rx="3" fill="#d9eff8" stroke="none" stroke-width="1.4"/>
+<text x="430" y="1198" font-size="25" font-weight="700" fill="#153365" text-anchor="start">语义缓存 · 按配置</text>
+<text x="431" y="1244" font-size="21" font-weight="400" fill="#153365" text-anchor="start">安全意图 + 用户分区 + 配置代际</text>
+<text x="431" y="1274" font-size="21" font-weight="400" fill="#153365" text-anchor="start">命中后重新执行出站文本过滤</text>
+<text x="431" y="1304" font-size="21" font-weight="400" fill="#153365" text-anchor="start">starter 默认关；示例 app 显式开</text>
+</g>
+<g id="react-agent" data-frame="910,400,482,200">
+<rect x="910" y="400" width="482" height="200" rx="4" fill="#f5f1fc" stroke="#ccbeea" stroke-width="1.4"/>
+<rect x="911" y="401" width="480" height="43" rx="3" fill="#e9e1f8" stroke="none" stroke-width="1.4"/>
+<text x="924" y="430" font-size="25" font-weight="700" fill="#153365" text-anchor="start">客服主 Agent</text>
+<text x="926" y="476" font-size="24" font-weight="600" fill="#153365" text-anchor="start">AgentScope Java 2.0.3 · ReActAgent</text>
+<rect x="926" y="493" width="130" height="39" rx="3" fill="white" stroke="#ccbeea" stroke-width="1"/>
+<text x="991.0" y="520" font-size="23" font-weight="600" fill="#7058a8" text-anchor="middle">Model</text>
+<rect x="1087" y="493" width="130" height="39" rx="3" fill="white" stroke="#ccbeea" stroke-width="1"/>
+<text x="1152.0" y="520" font-size="23" font-weight="600" fill="#7058a8" text-anchor="middle">Memory</text>
+<rect x="1248" y="493" width="130" height="39" rx="3" fill="white" stroke="#ccbeea" stroke-width="1"/>
+<text x="1313.0" y="520" font-size="23" font-weight="600" fill="#7058a8" text-anchor="middle">Toolkit</text>
+<text x="1068" y="520" font-size="24" font-weight="500" fill="#7860b7" text-anchor="start">+</text>
+<text x="1229" y="520" font-size="24" font-weight="500" fill="#7860b7" text-anchor="start">+</text>
+<text x="926" y="560" font-size="22" font-weight="400" fill="#153365" text-anchor="start">推理 → 工具调用 → 观察结果 → 继续 / 完成</text>
+<text x="926" y="587" font-size="20" font-weight="600" fill="#7058a8" text-anchor="start">H5 逐消息默认走单一客服 ReActAgent</text>
+</g>
+<g id="governance-assembly" data-frame="910,616,482,168">
+<rect x="910" y="616" width="482" height="168" rx="4" fill="#f5f1fc" stroke="#ccbeea" stroke-width="1.4"/>
+<rect x="911" y="617" width="480" height="43" rx="3" fill="#e9e1f8" stroke="none" stroke-width="1.4"/>
+<text x="924" y="646" font-size="25" font-weight="700" fill="#153365" text-anchor="start">统一治理装配</text>
+<text x="925" y="692" font-size="22" font-weight="400" fill="#153365" text-anchor="start">CustomerServiceAgentFactory</text>
+<text x="925" y="724" font-size="22" font-weight="400" fill="#153365" text-anchor="start">AgentGovernanceAssembler</text>
+<text x="925" y="756" font-size="22" font-weight="400" fill="#153365" text-anchor="start">脱敏 / 注入防护 / 审计 / Token 计量</text>
+</g>
+<g id="model-capabilities" data-frame="910,800,482,184">
+<rect x="910" y="800" width="482" height="184" rx="4" fill="#f5f1fc" stroke="#ccbeea" stroke-width="1.4"/>
+<rect x="911" y="801" width="480" height="43" rx="3" fill="#e9e1f8" stroke="none" stroke-width="1.4"/>
+<text x="924" y="830" font-size="25" font-weight="700" fill="#153365" text-anchor="start">模型与知识能力</text>
+<text x="925" y="876" font-size="21" font-weight="400" fill="#153365" text-anchor="start">百炼 / OpenAI / Anthropic / Gemini / Ollama</text>
+<text x="925" y="906" font-size="21" font-weight="400" fill="#153365" text-anchor="start">模型路由与故障回退 · 上下文预算</text>
+<text x="925" y="936" font-size="21" font-weight="400" fill="#153365" text-anchor="start">RAG 检索 / SkillBox / TodoTools 按需启用</text>
+<text x="925" y="966" font-size="21" font-weight="400" fill="#153365" text-anchor="start">短期状态 CAS · 长期记忆按主体隔离</text>
+</g>
+<g id="multi-agent" data-frame="910,1000,482,156">
+<rect x="910" y="1000" width="482" height="156" rx="4" fill="#f5f1fc" stroke="#ccbeea" stroke-width="1.4" stroke-dasharray="7 4"/>
+<rect x="911" y="1001" width="480" height="43" rx="3" fill="#e9e1f8" stroke="none" stroke-width="1.4"/>
+<text x="924" y="1030" font-size="25" font-weight="700" fill="#153365" text-anchor="start">多 Agent 编排 · 独立入口</text>
+<text x="925" y="1076" font-size="21" font-weight="400" fill="#153365" text-anchor="start">/consult → MultiAgentOrchestrator</text>
+<text x="925" y="1106" font-size="21" font-weight="400" fill="#153365" text-anchor="start">规则 / Router → 订单、售后、知识专家</text>
+<text x="925" y="1136" font-size="21" font-weight="400" fill="#153365" text-anchor="start">顺序或受控并发 → Reducer 按策略汇总</text>
+</g>
+<g id="harness" data-frame="910,1172,482,146">
+<rect x="910" y="1172" width="482" height="146" rx="4" fill="#f5f1fc" stroke="#ccbeea" stroke-width="1.4" stroke-dasharray="7 4"/>
+<rect x="911" y="1173" width="480" height="43" rx="3" fill="#e9e1f8" stroke="none" stroke-width="1.4"/>
+<text x="924" y="1202" font-size="25" font-weight="700" fill="#153365" text-anchor="start">Harness · 可选运行路径</text>
+<text x="925" y="1248" font-size="22" font-weight="400" fill="#153365" text-anchor="start">长任务 / 子 Agent / 分层记忆</text>
+<text x="925" y="1278" font-size="22" font-weight="400" fill="#153365" text-anchor="start">按显式配置构建独立运行路径</text>
+<text x="925" y="1308" font-size="22" font-weight="400" fill="#153365" text-anchor="start">与 H5 默认主链路分开启用</text>
+</g>
+<g id="toolkit" data-frame="1444,400,492,200">
+<rect x="1444" y="400" width="492" height="200" rx="4" fill="#f0f8f0" stroke="#b8dabb" stroke-width="1.4"/>
+<rect x="1445" y="401" width="490" height="43" rx="3" fill="#dff0df" stroke="none" stroke-width="1.4"/>
+<text x="1458" y="430" font-size="25" font-weight="700" fill="#153365" text-anchor="start">统一工具层 · Toolkit</text>
+<text x="1459" y="476" font-size="23" font-weight="600" fill="#153365" text-anchor="start">ToolRegistrar → tool.backend.* SPI</text>
+<rect x="1459" y="493" width="69" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1493.5" y="520" font-size="21" font-weight="600" fill="#447b47" text-anchor="middle">订单</text>
+<rect x="1537" y="493" width="69" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1571.5" y="520" font-size="21" font-weight="600" fill="#447b47" text-anchor="middle">售后</text>
+<rect x="1615" y="493" width="69" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1649.5" y="520" font-size="21" font-weight="600" fill="#447b47" text-anchor="middle">知识</text>
+<rect x="1693" y="493" width="69" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1727.5" y="520" font-size="21" font-weight="600" fill="#447b47" text-anchor="middle">商品</text>
+<rect x="1771" y="493" width="69" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1805.5" y="520" font-size="21" font-weight="600" fill="#447b47" text-anchor="middle">会员</text>
+<rect x="1849" y="493" width="69" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1883.5" y="520" font-size="21" font-weight="600" fill="#447b47" text-anchor="middle">投诉</text>
+<text x="1459" y="560" font-size="22" font-weight="400" fill="#153365" text-anchor="start">自定义 Bean 可替换演示 / JDBC 后端</text>
+<text x="1459" y="587" font-size="21" font-weight="400" fill="#153365" text-anchor="start">MCP / Higress / Skills 按配置接入</text>
+</g>
+<g id="execution-guards" data-frame="1444,616,492,140">
+<rect x="1444" y="616" width="492" height="140" rx="4" fill="#f0f8f0" stroke="#b8dabb" stroke-width="1.4"/>
+<rect x="1445" y="617" width="490" height="43" rx="3" fill="#dff0df" stroke="none" stroke-width="1.4"/>
+<text x="1458" y="646" font-size="25" font-weight="700" fill="#153365" text-anchor="start">调用前的执行约束</text>
+<text x="1459" y="692" font-size="21" font-weight="400" fill="#153365" text-anchor="start">身份快照 · 工具授权 · 参数校验</text>
+<text x="1459" y="720" font-size="21" font-weight="400" fill="#153365" text-anchor="start">MCP 出站策略 / 契约快照 / 调用约束</text>
+<text x="1459" y="748" font-size="21" font-weight="400" fill="#153365" text-anchor="start">工具超时与重试按配置执行</text>
+</g>
+<g id="refund-approval" data-frame="1444,772,492,236">
+<rect x="1444" y="772" width="492" height="236" rx="4" fill="#f0f8f0" stroke="#b8dabb" stroke-width="1.4"/>
+<rect x="1445" y="773" width="490" height="43" rx="3" fill="#dff0df" stroke="none" stroke-width="1.4"/>
+<text x="1458" y="802" font-size="25" font-weight="700" fill="#153365" text-anchor="start">退款：审批与执行分离</text>
+<rect x="1459" y="830" width="132" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1525.0" y="857" font-size="22" font-weight="600" fill="#427b47" text-anchor="middle">登记申请</text>
+<path d="M 1594 850 L 1618 850" fill="none" stroke="#119769" stroke-width="2" marker-end="url(#green-arrow)"/>
+<rect x="1622" y="830" width="132" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1688.0" y="857" font-size="22" font-weight="600" fill="#427b47" text-anchor="middle">人工决策</text>
+<path d="M 1757 850 L 1781 850" fill="none" stroke="#119769" stroke-width="2" marker-end="url(#green-arrow)"/>
+<rect x="1785" y="830" width="132" height="39" rx="3" fill="white" stroke="#b8dabb" stroke-width="1"/>
+<text x="1851.0" y="857" font-size="22" font-weight="600" fill="#427b47" text-anchor="middle">执行器</text>
+<text x="1459" y="901" font-size="21" font-weight="400" fill="#153365" text-anchor="start">submitRefund → PendingApprovalService</text>
+<text x="1459" y="931" font-size="21" font-weight="400" fill="#153365" text-anchor="start">批准后交 ApprovalExecutionHandler</text>
+<text x="1459" y="961" font-size="21" font-weight="400" fill="#153365" text-anchor="start">执行状态单独留存 · 失败可重试</text>
+<rect x="1454" y="972" width="472" height="28" rx="2" fill="#fff0ef" stroke="none" stroke-width="1.4"/>
+<text x="1466" y="993" font-size="20" font-weight="600" fill="#c54848" text-anchor="start">真实打款需要对接支付执行器</text>
+</g>
+<g id="human-ticket" data-frame="1444,1024,492,174">
+<rect x="1444" y="1024" width="492" height="174" rx="4" fill="#f0f8f0" stroke="#b8dabb" stroke-width="1.4"/>
+<rect x="1445" y="1025" width="490" height="43" rx="3" fill="#dff0df" stroke="none" stroke-width="1.4"/>
+<text x="1458" y="1054" font-size="25" font-weight="700" fill="#153365" text-anchor="start">人工协同与工单</text>
+<text x="1459" y="1100" font-size="21" font-weight="400" fill="#153365" text-anchor="start">转人工 → 排队 → 坐席受理</text>
+<text x="1459" y="1128" font-size="21" font-weight="400" fill="#153365" text-anchor="start">接单 / 转派 / 挂起 / 解决 / 关闭</text>
+<text x="1459" y="1156" font-size="21" font-weight="400" fill="#153365" text-anchor="start">7 态 Ticket 状态机 + 事务 Outbox</text>
+<text x="1459" y="1184" font-size="21" font-weight="400" fill="#153365" text-anchor="start">工单终态 → CSAT 邀请 → 用户反馈</text>
+</g>
+<g id="reply-result" data-frame="1444,1214,492,104">
+<rect x="1444" y="1214" width="492" height="104" rx="4" fill="#f0f8f0" stroke="#b8dabb" stroke-width="1.4"/>
+<rect x="1445" y="1215" width="490" height="43" rx="3" fill="#dff0df" stroke="none" stroke-width="1.4"/>
+<text x="1458" y="1244" font-size="25" font-weight="700" fill="#153365" text-anchor="start">结果持久化与返回</text>
+<text x="1459" y="1290" font-size="20" font-weight="400" fill="#153365" text-anchor="start">消息 + 引用 + 任务计划 → WebSocket / SSE</text>
+</g>
+<g id="admin-products" data-frame="1988,400,530,170">
+<rect x="1988" y="400" width="530" height="170" rx="4" fill="#fff7ec" stroke="#efcca2" stroke-width="1.4"/>
+<rect x="1989" y="401" width="528" height="43" rx="3" fill="#ffebd0" stroke="none" stroke-width="1.4"/>
+<text x="2002" y="430" font-size="25" font-weight="700" fill="#153365" text-anchor="start">运营后台与 Agent 工作区</text>
+<text x="2003" y="476" font-size="21" font-weight="400" fill="#153365" text-anchor="start">customer-admin-web · Vue 3 / Element Plus · 5174</text>
+<text x="2003" y="504" font-size="21" font-weight="400" fill="#153365" text-anchor="start">customer-admin-server · 8082</text>
+<text x="2003" y="532" font-size="21" font-weight="400" fill="#153365" text-anchor="start">Spring MVC / Sa-Token / MyBatis-Plus</text>
+<text x="2003" y="560" font-size="21" font-weight="400" fill="#153365" text-anchor="start">配置管理 · 工作区聊天 · 坐席工作台</text>
+</g>
+<g id="control-assets" data-frame="1988,586,530,174">
+<rect x="1988" y="586" width="530" height="174" rx="4" fill="#fff7ec" stroke="#efcca2" stroke-width="1.4"/>
+<rect x="1989" y="587" width="528" height="43" rx="3" fill="#ffebd0" stroke="none" stroke-width="1.4"/>
+<text x="2002" y="616" font-size="25" font-weight="700" fill="#153365" text-anchor="start">配置资产与个人工作区</text>
+<text x="2003" y="662" font-size="22" font-weight="400" fill="#153365" text-anchor="start">模型 / Agent / Prompt / MCP / Skill</text>
+<text x="2003" y="690" font-size="22" font-weight="400" fill="#153365" text-anchor="start">知识库 / 渠道 / 路由 / XXL-JOB 调度</text>
+<text x="2003" y="718" font-size="22" font-weight="400" fill="#153365" text-anchor="start">个人草稿 → 只读试用 → 发布检查</text>
+<text x="2003" y="746" font-size="22" font-weight="400" fill="#153365" text-anchor="start">独立 Agent 工作区 · AI 编码助手</text>
+</g>
+<g id="runtime-publish" data-frame="1988,776,530,238">
+<rect x="1988" y="776" width="530" height="238" rx="4" fill="#fff7ec" stroke="#efcca2" stroke-width="1.4"/>
+<rect x="1989" y="777" width="528" height="43" rx="3" fill="#ffebd0" stroke="none" stroke-width="1.4"/>
+<text x="2002" y="806" font-size="25" font-weight="700" fill="#153365" text-anchor="start">配置发布与生效确认</text>
+<text x="2003" y="852" font-size="22" font-weight="400" fill="#153365" text-anchor="start">变更 → 发布任务 → Eval 门禁</text>
+<text x="2003" y="883" font-size="22" font-weight="400" fill="#153365" text-anchor="start">Worker 租约 / fencing → Nacos</text>
+<text x="2003" y="914" font-size="22" font-weight="400" fill="#153365" text-anchor="start">签名与指纹校验 → 运行面原子应用</text>
+<text x="2003" y="945" font-size="22" font-weight="400" fill="#153365" text-anchor="start">实例 ACK Outbox → 控制面聚合生效状态</text>
+<rect x="1998" y="963" width="510" height="39" rx="2" fill="#ffe8c8" stroke="none" stroke-width="1.4"/>
+<text x="2010" y="990" font-size="21" font-weight="700" fill="#98540e" text-anchor="start">PUBLISHED ≠ 冻结目标实例全部 APPLIED</text>
+</g>
+<g id="quality-loop" data-frame="1988,1030,530,170">
+<rect x="1988" y="1030" width="530" height="170" rx="4" fill="#fff7ec" stroke="#efcca2" stroke-width="1.4"/>
+<rect x="1989" y="1031" width="528" height="43" rx="3" fill="#ffebd0" stroke="none" stroke-width="1.4"/>
+<text x="2002" y="1060" font-size="25" font-weight="700" fill="#153365" text-anchor="start">质量评估与知识闭环</text>
+<text x="2003" y="1106" font-size="22" font-weight="400" fill="#153365" text-anchor="start">真实运行链评测 · Badcase · CSAT</text>
+<text x="2003" y="1134" font-size="22" font-weight="400" fill="#153365" text-anchor="start">知识盲区 → 候选审核 / 冻结复评</text>
+<text x="2003" y="1162" font-size="22" font-weight="400" fill="#153365" text-anchor="start">授权发布 FAQ → 幂等回执</text>
+<text x="2003" y="1190" font-size="22" font-weight="400" fill="#153365" text-anchor="start">调用分析 / Token 用量 / T+1 账单</text>
+</g>
+<g id="control-data-boundary" data-frame="1988,1216,530,102">
+<rect x="1988" y="1216" width="530" height="102" rx="4" fill="#fff7ec" stroke="#efcca2" stroke-width="1.4"/>
+<rect x="1989" y="1217" width="528" height="43" rx="3" fill="#ffebd0" stroke="none" stroke-width="1.4"/>
+<text x="2002" y="1246" font-size="25" font-weight="700" fill="#153365" text-anchor="start">控制面数据边界</text>
+<text x="2003" y="1292" font-size="19" font-weight="400" fill="#153365" text-anchor="start">customer_admin 独立库 · 跨库经 CustomerWorkFacade</text>
+</g>
+<path d="M 380 483 L 400 483" fill="none" stroke="#158fc5" stroke-width="2.6" marker-end="url(#blue-arrow)"/>
+<path d="M 874 483 L 894 483" fill="none" stroke="#158fc5" stroke-width="2.6" marker-end="url(#blue-arrow)"/>
+<path d="M 1408 483 L 1428 483" fill="none" stroke="#158fc5" stroke-width="2.6" marker-end="url(#blue-arrow)"/>
+<path d="M 1430 606 L 1408 606" fill="none" stroke="#119769" stroke-width="2.6" marker-end="url(#green-arrow)"/>
+<path d="M 1952 1104 L 1972 1104" fill="none" stroke="#119769" stroke-width="2.6" marker-end="url(#green-arrow)"/>
+<rect x="28" y="1348" width="2504" height="80" rx="4" fill="#fbfcfe" stroke="#d6e1ed" stroke-width="1.4"/>
+<path d="M 2164 1372 L 1093 1372" fill="none" stroke="#ef871e" stroke-width="2.5" marker-end="url(#orange-arrow)" stroke-dasharray="7 5"/>
+<rect x="1250" y="1355" width="764" height="34" rx="0" fill="#fbfcfe" stroke="none" stroke-width="1.4"/>
+<text x="1632" y="1379" font-size="22" font-weight="600" fill="#a65c0e" text-anchor="middle">配置：控制面 → Nacos → 运行面（两侧显式启用）</text>
+<path d="M 1065 1408 L 2190 1408" fill="none" stroke="#119769" stroke-width="2.5" marker-end="url(#green-arrow)"/>
+<rect x="1220" y="1391" width="864" height="31" rx="0" fill="#fbfcfe" stroke="none" stroke-width="1.4"/>
+<text x="1652" y="1414" font-size="21" font-weight="600" fill="#119769" text-anchor="middle">反馈：工具结果 / 消息证据 / 工单事件 / ACK → 运营评估</text>
+<text x="48" y="1379" font-size="23" font-weight="700" fill="#153365" text-anchor="start">图例</text>
+<path d="M 120 1372 L 169 1372" fill="none" stroke="#158fc5" stroke-width="2.4" marker-end="url(#blue-arrow)"/>
+<text x="181" y="1380" font-size="21" font-weight="400" fill="#153365" text-anchor="start">请求与调用</text>
+<path d="M 330 1372 L 379 1372" fill="none" stroke="#ef871e" stroke-width="2.4" marker-end="url(#orange-arrow)" stroke-dasharray="7 5"/>
+<text x="391" y="1380" font-size="21" font-weight="400" fill="#153365" text-anchor="start">运行配置</text>
+<path d="M 530 1372 L 579 1372" fill="none" stroke="#119769" stroke-width="2.4" marker-end="url(#green-arrow)"/>
+<text x="591" y="1380" font-size="21" font-weight="400" fill="#153365" text-anchor="start">结果与反馈</text>
+<rect x="48" y="1396" width="37" height="22" rx="2" fill="white" stroke="#8d9db1" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="99" y="1414" font-size="20" font-weight="400" fill="#506786" text-anchor="start">虚线框：可选能力或独立入口；具体默认值见正文</text>
+<rect x="28" y="1444" width="2504" height="182" rx="3" fill="white" stroke="#a8bbd2" stroke-width="1.4" stroke-dasharray="8 5"/>
+<text x="48" y="1482" font-size="28" font-weight="700" fill="#153365" text-anchor="start">如何运转：一次用户售后请求的完整闭环</text>
+<text x="2510" y="1482" font-size="21" font-weight="600" fill="#506786" text-anchor="end">审批与转人工按业务需要触发</text>
+<rect x="47" y="1500" width="289" height="108" rx="4" fill="#f9fcff" stroke="#cadae9" stroke-width="1.4"/>
+<circle cx="72" cy="1526" r="16" fill="#226da6"/>
+<text x="72" y="1533" font-size="21" font-weight="700" fill="white" text-anchor="middle">1</text>
+<text x="96" y="1534" font-size="22" font-weight="700" fill="#153365" text-anchor="start">用户提交</text>
+<text x="62" y="1568" font-size="20" font-weight="400" fill="#153365" text-anchor="start">H5 / API / 渠道请求</text>
+<text x="62" y="1594" font-size="20" font-weight="400" fill="#153365" text-anchor="start">携带可信主体与会话</text>
+<path d="M 339 1554 L 353 1554" fill="none" stroke="#158fc5" stroke-width="2" marker-end="url(#blue-arrow)"/>
+<rect x="357" y="1500" width="289" height="108" rx="4" fill="#f9fcff" stroke="#cadae9" stroke-width="1.4"/>
+<circle cx="382" cy="1526" r="16" fill="#226da6"/>
+<text x="382" y="1533" font-size="21" font-weight="700" fill="white" text-anchor="middle">2</text>
+<text x="406" y="1534" font-size="22" font-weight="700" fill="#153365" text-anchor="start">受理与建单</text>
+<text x="372" y="1568" font-size="20" font-weight="400" fill="#153365" text-anchor="start">幂等保存用户消息</text>
+<text x="372" y="1594" font-size="20" font-weight="400" fill="#153365" text-anchor="start">工单状态决定 AI / 人工</text>
+<path d="M 649 1554 L 663 1554" fill="none" stroke="#158fc5" stroke-width="2" marker-end="url(#blue-arrow)"/>
+<rect x="667" y="1500" width="289" height="108" rx="4" fill="#f9fcff" stroke="#cadae9" stroke-width="1.4"/>
+<circle cx="692" cy="1526" r="16" fill="#226da6"/>
+<text x="692" y="1533" font-size="21" font-weight="700" fill="white" text-anchor="middle">3</text>
+<text x="716" y="1534" font-size="22" font-weight="700" fill="#153365" text-anchor="start">恢复上下文</text>
+<text x="682" y="1568" font-size="20" font-weight="400" fill="#153365" text-anchor="start">会话状态、记忆、知识</text>
+<text x="682" y="1594" font-size="20" font-weight="400" fill="#153365" text-anchor="start">配额与访问边界检查</text>
+<path d="M 959 1554 L 973 1554" fill="none" stroke="#158fc5" stroke-width="2" marker-end="url(#blue-arrow)"/>
+<rect x="977" y="1500" width="289" height="108" rx="4" fill="#f9fcff" stroke="#cadae9" stroke-width="1.4"/>
+<circle cx="1002" cy="1526" r="16" fill="#226da6"/>
+<text x="1002" y="1533" font-size="21" font-weight="700" fill="white" text-anchor="middle">4</text>
+<text x="1026" y="1534" font-size="22" font-weight="700" fill="#153365" text-anchor="start">Agent 推理</text>
+<text x="992" y="1568" font-size="20" font-weight="400" fill="#153365" text-anchor="start">模型理解意图并规划</text>
+<text x="992" y="1594" font-size="20" font-weight="400" fill="#153365" text-anchor="start">选择已授权业务工具</text>
+<path d="M 1269 1554 L 1283 1554" fill="none" stroke="#ef871e" stroke-width="2" marker-end="url(#orange-arrow)"/>
+<rect x="1287" y="1500" width="289" height="108" rx="4" fill="#f9fcff" stroke="#cadae9" stroke-width="1.4"/>
+<circle cx="1312" cy="1526" r="16" fill="#226da6"/>
+<text x="1312" y="1533" font-size="21" font-weight="700" fill="white" text-anchor="middle">5</text>
+<text x="1336" y="1534" font-size="22" font-weight="700" fill="#153365" text-anchor="start">业务工具执行</text>
+<text x="1302" y="1568" font-size="20" font-weight="400" fill="#153365" text-anchor="start">经工具 SPI 查询或登记</text>
+<text x="1302" y="1594" font-size="20" font-weight="400" fill="#153365" text-anchor="start">工具结果返回 Agent</text>
+<path d="M 1579 1554 L 1593 1554" fill="none" stroke="#ef871e" stroke-width="2" marker-end="url(#orange-arrow)"/>
+<rect x="1597" y="1500" width="289" height="108" rx="4" fill="#f9fcff" stroke="#cadae9" stroke-width="1.4"/>
+<circle cx="1622" cy="1526" r="16" fill="#226da6"/>
+<text x="1622" y="1533" font-size="21" font-weight="700" fill="white" text-anchor="middle">6</text>
+<text x="1646" y="1534" font-size="22" font-weight="700" fill="#153365" text-anchor="start">审批 / 人工协同</text>
+<text x="1612" y="1568" font-size="20" font-weight="400" fill="#153365" text-anchor="start">退款申请先经人工决策</text>
+<text x="1612" y="1594" font-size="20" font-weight="400" fill="#153365" text-anchor="start">按需由坐席接管工单</text>
+<path d="M 1889 1554 L 1903 1554" fill="none" stroke="#ef871e" stroke-width="2" marker-end="url(#orange-arrow)"/>
+<rect x="1907" y="1500" width="289" height="108" rx="4" fill="#f9fcff" stroke="#cadae9" stroke-width="1.4"/>
+<circle cx="1932" cy="1526" r="16" fill="#226da6"/>
+<text x="1932" y="1533" font-size="21" font-weight="700" fill="white" text-anchor="middle">7</text>
+<text x="1956" y="1534" font-size="22" font-weight="700" fill="#153365" text-anchor="start">持久化并返回</text>
+<text x="1922" y="1568" font-size="20" font-weight="400" fill="#153365" text-anchor="start">答案、引用与计划入库</text>
+<text x="1922" y="1594" font-size="20" font-weight="400" fill="#153365" text-anchor="start">流式正文 + 完成事件</text>
+<path d="M 2199 1554 L 2213 1554" fill="none" stroke="#158fc5" stroke-width="2" marker-end="url(#blue-arrow)"/>
+<rect x="2217" y="1500" width="289" height="108" rx="4" fill="#f9fcff" stroke="#cadae9" stroke-width="1.4"/>
+<circle cx="2242" cy="1526" r="16" fill="#226da6"/>
+<text x="2242" y="1533" font-size="21" font-weight="700" fill="white" text-anchor="middle">8</text>
+<text x="2266" y="1534" font-size="22" font-weight="700" fill="#153365" text-anchor="start">反馈与改进</text>
+<text x="2232" y="1568" font-size="20" font-weight="400" fill="#153365" text-anchor="start">工单结束后收集 CSAT</text>
+<text x="2232" y="1594" font-size="20" font-weight="400" fill="#153365" text-anchor="start">评测、知识候选与发布</text>
+<rect x="28" y="1642" width="2504" height="76" rx="4" fill="#effaf4" stroke="#83c8a7" stroke-width="1.4"/>
+<use href="#chart" x="47" y="1663" width="34" height="34" color="#119769"/>
+<text x="95" y="1687" font-size="29" font-weight="700" fill="#153365" text-anchor="start">可观测与评估</text>
+<text x="348" y="1673" font-size="24" font-weight="400" fill="#153365" text-anchor="start">Micrometer / Prometheus · Grafana · 调用审计 · Token / 耗时 / 工具成功率 · Badcase / CSAT</text>
+<text x="348" y="1702" font-size="21" font-weight="400" fill="#506786" text-anchor="start">按需开启 OTel / Tempo 链路追踪、SLO 与合成巡检；监控栈独立部署</text>
+<rect x="28" y="1732" width="2504" height="76" rx="4" fill="#f2f9fc" stroke="#9cc6da" stroke-width="1.4"/>
+<use href="#code" x="47" y="1754" width="34" height="34" color="#153365"/>
+<text x="95" y="1777" font-size="29" font-weight="700" fill="#153365" text-anchor="start">开发与交付</text>
+<rect x="342" y="1748" width="327" height="44" rx="3" fill="white" stroke="#bbd8e8" stroke-width="1.4"/>
+<text x="505.5" y="1778" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">Java 17 / Maven</text>
+<path d="M 673 1770 L 693 1770" fill="none" stroke="#158fc5" stroke-width="2" marker-end="url(#blue-arrow)"/>
+<rect x="698" y="1748" width="327" height="44" rx="3" fill="white" stroke="#bbd8e8" stroke-width="1.4"/>
+<text x="861.5" y="1778" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">Vue 3 / Vite / TypeScript</text>
+<path d="M 1029 1770 L 1049 1770" fill="none" stroke="#158fc5" stroke-width="2" marker-end="url(#blue-arrow)"/>
+<rect x="1054" y="1748" width="442" height="44" rx="3" fill="white" stroke="#bbd8e8" stroke-width="1.4"/>
+<text x="1275.0" y="1778" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">单元测试 / 浏览器验收 / 构建</text>
+<path d="M 1500 1770 L 1520 1770" fill="none" stroke="#158fc5" stroke-width="2" marker-end="url(#blue-arrow)"/>
+<rect x="1525" y="1748" width="390" height="44" rx="3" fill="white" stroke="#bbd8e8" stroke-width="1.4"/>
+<text x="1720.0" y="1778" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">GitHub Actions / Docker</text>
+<path d="M 1919 1770 L 1939 1770" fill="none" stroke="#158fc5" stroke-width="2" marker-end="url(#blue-arrow)"/>
+<rect x="1944" y="1748" width="566" height="44" rx="3" fill="white" stroke="#bbd8e8" stroke-width="1.4"/>
+<text x="2227.0" y="1778" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">Kubernetes：app / admin 工作负载</text>
+<rect x="28" y="1822" width="2504" height="70" rx="4" fill="#eaf5fb" stroke="#91bfd5" stroke-width="1.4"/>
+<use href="#database" x="47" y="1842" width="33" height="33" color="#153365"/>
+<text x="95" y="1866" font-size="29" font-weight="700" fill="#153365" text-anchor="start">存储与部署</text>
+<rect x="342" y="1836" width="492" height="42" rx="3" fill="#f9fcff" stroke="#bdd6e5" stroke-width="1.4"/>
+<text x="588.0" y="1865" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">MySQL 双库 / Flyway</text>
+<rect x="850" y="1836" width="546" height="42" rx="3" fill="#f9fcff" stroke="#bdd6e5" stroke-width="1.4"/>
+<text x="1123.0" y="1865" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">Redis：登录态 / 分布式锁与配额</text>
+<rect x="1412" y="1836" width="290" height="42" rx="3" fill="#f9fcff" stroke="#bdd6e5" stroke-width="1.4"/>
+<text x="1557.0" y="1865" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">MinIO：文件存储</text>
+<rect x="1718" y="1836" width="392" height="42" rx="3" fill="#f9fcff" stroke="#bdd6e5" stroke-width="1.4"/>
+<text x="1914.0" y="1865" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">Nacos：配置 / 服务发现</text>
+<rect x="2126" y="1836" width="384" height="42" rx="3" fill="#f9fcff" stroke="#bdd6e5" stroke-width="1.4"/>
+<text x="2318.0" y="1865" font-size="21" font-weight="500" fill="#153365" text-anchor="middle">XXL-JOB：定时调度</text>
+<text x="30" y="1912" font-size="17" font-weight="400" fill="#506786" text-anchor="start">部署边界：根 Compose 编排 app 与基础设施；admin / channel / gateway / 前端 / 监控栈另行部署。</text>
+<text x="2530" y="1912" font-size="17" font-weight="400" fill="#506786" text-anchor="end">依源码绘制 · 详细链路与启用条件见 README</text>
+</g></svg>
