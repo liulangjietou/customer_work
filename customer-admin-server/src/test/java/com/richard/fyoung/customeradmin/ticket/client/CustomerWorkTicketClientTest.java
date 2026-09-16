@@ -68,6 +68,26 @@ class CustomerWorkTicketClientTest {
     }
 
     @Test
+    void assistMustReadTicketScopedEvidenceWithoutPosting() {
+        server.expect(requestTo(BASE_URL + "/api/customer/agent/tickets/TK-1/assist"))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess("""
+                {"ticketId":"TK-1","summary":{"oneLineSummary":"用户咨询进度","userIntent":"查询进度",
+                "emotion":null,"triedSolutions":[],"pendingIssues":[],"suggestedNextStep":"先查证",
+                "suggestedReply":"我会先核对记录","fromModel":false,
+                "evidence":{"version":"summary-v1:a","generatedAtMs":1789000000000,"historyLimit":30,
+                "truncated":false,"sources":[{"id":12,"messageId":"message-12","senderType":"USER",
+                "excerpt":"退款进度如何","createdAtMs":1789000000000,"truncated":false}]}}}
+                """, MediaType.APPLICATION_JSON));
+        var result = client.assist("TK-1");
+        assertEquals("TK-1", result.ticketId());
+        assertEquals("summary-v1:a", result.summary().evidence().version());
+        assertEquals("退款进度如何", result.summary().evidence().sources().get(0).excerpt());
+        assertEquals(false, result.summary().fromModel());
+        server.verify();
+    }
+
+    @Test
     void messages_shouldParse200JsonArray() {
         server.expect(requestTo(containsString("/api/customer/agent/tickets/TK-1007/messages")))
             .andExpect(method(HttpMethod.GET))

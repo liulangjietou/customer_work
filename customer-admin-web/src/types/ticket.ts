@@ -31,15 +31,16 @@ export const STATUS_LABELS: Record<TicketStatus, string> = {
   CLOSED: '已关闭',
 }
 
-export const STATUS_TAG_TYPE: Record<TicketStatus, '' | 'success' | 'warning' | 'danger' | 'info'> = {
-  AI_SERVING: 'info',
-  WAITING_AGENT: 'warning',
-  PROCESSING: '',
-  ON_HOLD: 'warning',
-  WAITING_CONFIRM: 'warning',
-  RESOLVED: 'success',
-  CLOSED: 'info',
-}
+export const STATUS_TAG_TYPE: Record<TicketStatus, '' | 'success' | 'warning' | 'danger' | 'info'> =
+  {
+    AI_SERVING: 'info',
+    WAITING_AGENT: 'warning',
+    PROCESSING: '',
+    ON_HOLD: 'warning',
+    WAITING_CONFIRM: 'warning',
+    RESOLVED: 'success',
+    CLOSED: 'info',
+  }
 
 export const PRIORITY_LABELS: Record<TicketPriority, string> = {
   LOW: '低',
@@ -48,7 +49,10 @@ export const PRIORITY_LABELS: Record<TicketPriority, string> = {
   URGENT: '紧急',
 }
 
-export const PRIORITY_TAG_TYPE: Record<TicketPriority, '' | 'success' | 'warning' | 'danger' | 'info'> = {
+export const PRIORITY_TAG_TYPE: Record<
+  TicketPriority,
+  '' | 'success' | 'warning' | 'danger' | 'info'
+> = {
   LOW: 'info',
   NORMAL: '',
   HIGH: 'warning',
@@ -207,4 +211,39 @@ export interface WsSystemFrameData {
 export interface WsErrorFrameData {
   code: string
   message: string
+}
+
+/** 工单辅助依据只包含客服服务实际读取的消息。 */
+export interface TicketAssistView {
+  ticketId: string
+  summary: {
+    oneLineSummary: string
+    userIntent: string
+    emotion: string | null
+    triedSolutions: string[]
+    pendingIssues: string[]
+    suggestedNextStep: string
+    suggestedReply: string
+    fromModel: boolean
+    evidence: {
+      version: string
+      generatedAtMs: number
+      historyLimit: number
+      truncated: boolean
+      sources: {
+        id: number
+        messageId: string
+        senderType: TicketSenderType | null
+        excerpt: string
+        createdAtMs: number
+        truncated: boolean
+      }[]
+    }
+  }
+}
+
+export interface TicketAssistAdoption {
+  ticketId: string
+  reply: string
+  messageRevision: string
 }

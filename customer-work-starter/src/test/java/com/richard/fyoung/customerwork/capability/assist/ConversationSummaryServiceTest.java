@@ -61,6 +61,51 @@ class ConversationSummaryServiceTest {
     }
 
     @Test
+    void readCurrentMustUseRulesWithoutCallingModelWhenNoSummaryExists() {
+        Model model = mock(Model.class);
+        var service = new ConversationSummaryService(model, storeWith("退款进度到哪里了"),
+            assistService, properties);
+        var current = service.readCurrent(SESSION);
+        assertFalse(current.fromModel());
+        assertTrue(current.userIntent().contains("退款进度"));
+        assertEquals("退款进度到哪里了", current.evidence().sources().get(0).excerpt());
+        verifyNoInteractions(model);
+    }
+
+    @Test
+    void readCurrentMustKeepValidSummaryButUseNewEvidenceAfterMessagesChange() {
+        var model = modelReturning("{\"oneLineSummary\":\"客户咨询退款\",\"userIntent\":\"退款\","
+            + "\"emotion\":\"焦虑\",\"triedSolutions\":[],\"pendingIssues\":[\"核对进度\"],"
+            + "\"suggestedNextStep\":\"查证订单\",\"suggestedReply\":\"我会先核对订单记录\"}");
+        var store = storeWith("查询退款进度");
+        var service = new ConversationSummaryService(model, store, assistService, properties);
+        var generated = service.summarize(SESSION);
+        assertTrue(generated.fromModel());
+        assertEquals(generated, service.readCurrent(SESSION));
+        store.append(ChatMessage.of("new-invoice", SESSION, null, TicketActorType.USER,
+            "u", "还有发票没有收到"));
+        var current = service.readCurrent(SESSION);
+        assertFalse(current.fromModel());
+        assertTrue(current.userIntent().contains("发票"));
+        assertNotEquals(generated.evidence().version(), current.evidence().version());
+        verify(model, times(1)).stream(any(), any(), any());
+    }
+
+    @Test
+    void readCurrentMustPropagateHistoryFailuresAndRequireTenantWhenEnabled() {
+        Model model = mock(Model.class);
+        var store = mock(ChatMessageStore.class);
+        when(store.findBySession(SESSION, null, 30)).thenThrow(new IllegalStateException("history down"));
+        var service = new ConversationSummaryService(model, store, assistService, properties);
+        assertThrows(IllegalStateException.class, () -> service.readCurrent(SESSION));
+        properties.getTenant().setEnabled(true);
+        TenantContext.clear();
+        assertThrows(com.richard.fyoung.customerwork.safety.tenant.TenantContextMissingException.class,
+            () -> service.readCurrent(SESSION));
+        verifyNoInteractions(model);
+    }
+
+    @Test
     void summarize_shouldParseStructuredJson_whenModelReturnsValidJson() {
         String json = "{\"oneLineSummary\":\"用户要退款\",\"userIntent\":\"退款\",\"emotion\":\"不满\","
             + "\"triedSolutions\":[\"已引导自助退款\"],\"pendingIssues\":[\"退款未到账\"],"

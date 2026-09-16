@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.ticket.client;
 
+import com.richard.fyoung.customerwork.capability.assist.TicketAssistView;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.ticket.dto.OrderDetailVO;
@@ -92,6 +93,12 @@ public class CustomerWorkTicketClient {
                 .build(id))
             .retrieve()
             .body(MESSAGE_LIST_TYPE));
+    }
+
+    /** 工单辅助使用同一枚短期坐席令牌，客服服务核对工单归属后读取。 */
+    public TicketAssistView assist(String id) {
+        return execute(() -> restClient.get().uri(TICKETS_PATH + "/{id}/assist", id)
+            .retrieve().body(TicketAssistView.class));
     }
 
     /** 抢单（受理），坐席身份由 X-Agent-Token 携带。 */

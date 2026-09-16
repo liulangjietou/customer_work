@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.ticket.service;
 
+import com.richard.fyoung.customerwork.capability.assist.TicketAssistView;
 import com.richard.fyoung.customeradmin.ticket.client.CustomerWorkTicketClient;
 import com.richard.fyoung.customeradmin.ticket.config.CustomerWorkClientProperties;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketDetailVO;
@@ -41,6 +42,11 @@ public class UserTicketService {
 
     public List<TicketMessageVO> messages(String id, Long beforeId, Integer limit) {
         return client.messages(id, beforeId, limit);
+    }
+
+    /** 读取当前工单的摘要与实际依据，不改变工单或发送状态。 */
+    public TicketAssistView assist(String id) {
+        return client.assist(id);
     }
 
     public void claim(String id) {

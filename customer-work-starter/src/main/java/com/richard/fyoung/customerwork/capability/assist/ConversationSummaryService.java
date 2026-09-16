@@ -131,6 +131,27 @@ public class ConversationSummaryService {
         return Optional.of(cached);
     }
 
+    /**
+     * 为坐席读取当前依据：复用同版本的已有摘要，否则按原始记录整理规则建议。
+     * 此读取不触发模型请求，不改变自动预生成开关，也不把已过期的摘要当作当前结论。
+     */
+    public ConversationSummary readCurrent(String sessionId) {
+        CacheKey key = cacheKey(sessionId);
+        List<ChatMessage> history = loadHistory(sessionId);
+        String version = version(history);
+        ConversationSummary cached = latestBySession.get(key);
+        if (cached != null && cached.evidence().version().equals(version)) {
+            return cached;
+        }
+        if (cached != null) {
+            latestBySession.remove(key, cached);
+        }
+        HistoryWindow window = window(history);
+        return fallbackSummary(window.transcript(), lastUserMessage(window.sources()))
+            .withEvidence(new SummaryEvidence(version, System.currentTimeMillis(), historyLimit(),
+                window.truncated(), window.sources()));
+    }
+
     // ---------------------- private helpers ----------------------
 
     private List<ChatMessage> loadHistory(String sessionId) {
