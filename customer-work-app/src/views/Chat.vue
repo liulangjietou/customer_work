@@ -21,6 +21,7 @@ import { uploadChatAttachment } from '@/api/chat'
 import { fetchMyQuota } from '@/api/quota'
 import { useAuthStore } from '@/store/auth'
 import { chatSocket } from '@/utils/ws'
+import { mergeChatMessage } from '@/utils/chatMessage'
 import { TICKET_STATUS_TAG_TYPE, TICKET_STATUS_TEXT, isTicketEnded } from '@/types/api'
 import type {
   ChatMessage,
@@ -63,6 +64,48 @@ const delivery = useMessageDelivery({ sessionId, ticketId, messages,
   userId: () => auth.userId, identity: () => auth.token ?? '',
 })
 const DELIVERY_LABELS = { SENDING: '发送中', ACCEPTED: '已受理', REJECTED: '未受理', UNKNOWN: '受理状态未知' }
+
+/** 仅说明助手答复的生成情况，业务办理状态由工单与订单各自确认。 */
+function answerStatus(reason: ChatMessage['finishReason']) {
+  switch (reason) {
+    case 'MODEL_STOP':
+    case 'CACHE_HIT':
+    case 'STRUCTURED_OUTPUT':
+      return { label: '答复已生成', tone: 'neutral' }
+    case 'INTERRUPTED':
+    case 'REASONING_STOP_REQUESTED':
+    case 'ACTING_STOP_REQUESTED':
+    case 'MIDDLEWARE_STOP_REQUESTED':
+      return { label: '答复已中断', tone: 'warning' }
+    case 'ERROR':
+      return { label: '答复生成失败', tone: 'error' }
+    case 'QUOTA_EXCEEDED':
+      return { label: '本轮额度不足', tone: 'warning' }
+    case 'MAX_ITERATIONS':
+    case 'TOOL_CALLS':
+      return { label: '答复尚未完成', tone: 'warning' }
+    case 'TOOL_SUSPENDED':
+    case 'PERMISSION_ASKING':
+      return { label: '等待后续处理', tone: 'warning' }
+    case 'ALL_TOOLS_DENIED':
+      return { label: '本轮操作未获授权', tone: 'warning' }
+    case null:
+    case undefined:
+    case '':
+      return { label: '未记录结束状态', tone: 'neutral' }
+    default:
+      return { label: '结束状态待核对', tone: 'warning' }
+  }
+}
+
+function taskStatusLabel(status: string) {
+  switch (status) {
+    case 'completed': return '助手标记完成'
+    case 'in_progress': return '助手标记进行中'
+    case 'pending': return '助手标记待处理'
+    default: return '助手状态待核对'
+  }
+}
 
 // 机器人流式回复：chat_chunk 增量拼接到这里做打字机效果，chat_done 定稿后清空并落入 messages
 const streamingContent = ref('')
@@ -474,7 +517,7 @@ function onWsChat(data: unknown) {
 /** HTTP 快照和 WS 可能覆盖同一消息；只能按持久化消息号合并，时间戳不能充当数据库游标。 */
 function upsertIncomingMessage(message: ChatMessage) {
   const existing = messages.value.find(item => item.messageId === message.messageId)
-  if (existing) Object.assign(existing, message, { id: message.id || existing.id })
+  if (existing) Object.assign(existing, mergeChatMessage(existing, message))
   else messages.value.push(message)
 }
 
@@ -508,8 +551,9 @@ function onWsChatDone(data: unknown) {
     senderId: null,
     content: payload.content,
     createdAtMs: payload.ts,
-    citations: payload.citations ?? [],
-    taskPlan: payload.taskPlan ?? [],
+    finishReason: payload.finishReason,
+    citations: payload.citations,
+    taskPlan: payload.taskPlan,
   })
   if (!payload.clientMsgId || payload.clientMsgId === streamingClientMessageId.value) {
     streamingContent.value = ''
@@ -953,6 +997,14 @@ onUnmounted(() => {
                 }}
               </div>
               <div class="bubble">{{ message.content }}</div>
+              <div
+                v-if="message.senderType === 'BOT'"
+                class="answer-status"
+                :class="`answer-status-${answerStatus(message.finishReason).tone}`"
+                role="status"
+              >
+                {{ answerStatus(message.finishReason).label }}
+              </div>
               <div v-if="message.deliveryStatus" class="delivery-state" :class="`delivery-${message.deliveryStatus}`" role="status">
                 <span>{{ DELIVERY_LABELS[message.deliveryStatus] }}</span>
                 <span v-if="message.deliveryError" class="delivery-error">{{ message.deliveryError }}</span>
@@ -965,33 +1017,36 @@ onUnmounted(() => {
                 v-if="message.senderType === 'BOT' && message.taskPlan?.length"
                 class="task-plan"
               >
-                <div class="task-plan-title">处理清单</div>
+                <div class="task-plan-title">助手计划</div>
+                <p class="task-plan-note">实际办理结果以订单或工单为准</p>
                 <div
                   v-for="(task, index) in message.taskPlan"
                   :key="`${message.messageId}-task-${index}`"
                   class="task-item"
-                  :class="`task-${task.status || 'pending'}`"
                 >
-                  <span class="task-mark" aria-hidden="true">{{
-                    task.status === 'completed' ? '✓' : task.status === 'in_progress' ? '…' : '○'
-                  }}</span>
                   <span class="task-text">{{ task.content }}</span>
+                  <span class="task-state">{{ taskStatusLabel(task.status) }}</span>
                 </div>
               </div>
-              <div
+              <details
                 v-if="message.senderType === 'BOT' && message.citations?.length"
                 class="citations"
               >
-                <span class="citations-label">参考来源</span>
-                <span
-                  v-for="citation in message.citations"
-                  :key="citation.chunkId"
-                  class="citation-chip"
-                  :title="`文档 ${citation.documentId} · 片段 ${citation.chunkId}`"
+                <summary>参考线索 · {{ message.citations.length }} 条</summary>
+                <p class="citations-note">答复附带的线索，供核对相关资料。</p>
+                <dl
+                  v-for="(citation, index) in message.citations"
+                  :key="`${message.messageId}-citation-${index}`"
+                  class="citation-detail"
                 >
-                  {{ citation.knowledgeBase }}
-                </span>
-              </div>
+                  <dt>知识库</dt>
+                  <dd>{{ citation.knowledgeBase }}</dd>
+                  <dt>文档标识</dt>
+                  <dd>{{ citation.documentId }}</dd>
+                  <dt>片段标识</dt>
+                  <dd>{{ citation.chunkId }}</dd>
+                </dl>
+              </details>
               <div
                 v-if="message.senderType === 'BOT'"
                 class="feedback-actions"
@@ -1463,6 +1518,7 @@ onUnmounted(() => {
 }
 
 .bubble-wrap {
+  min-width: 0;
   max-width: calc(82% - 42px);
 }
 
@@ -1496,6 +1552,21 @@ onUnmounted(() => {
   box-shadow: 0 9px 22px rgba(24, 119, 242, 0.2);
 }
 
+.answer-status {
+  margin: 6px 2px 0;
+  color: var(--cw-text-secondary, #718096);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.answer-status-warning {
+  color: #946200;
+}
+
+.answer-status-error {
+  color: #b53638;
+}
+
 .task-plan {
   margin-top: 8px;
   padding: 8px 10px;
@@ -1506,56 +1577,73 @@ onUnmounted(() => {
 }
 
 .task-plan-title {
-  color: var(--cw-text-weak, #9aa0a6);
-  margin-bottom: 2px;
+  font-weight: 600;
+  color: var(--cw-text-primary, #13233a);
+}
+
+.task-plan-note,
+.citations-note {
+  margin: 2px 0 0;
+  color: var(--cw-text-secondary, #718096);
 }
 
 .task-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(19, 35, 58, 0.08);
 }
 
-.task-mark {
-  flex: none;
-  width: 12px;
-  text-align: center;
+.task-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
-/* 已完成的压暗、进行中的高亮：一眼看出"办到哪了" */
-.task-completed {
-  color: var(--cw-text-weak, #9aa0a6);
-}
-
-.task-completed .task-text {
-  text-decoration: line-through;
-}
-
-.task-in_progress {
-  color: #1989fa;
+.task-state {
+  color: var(--cw-text-secondary, #718096);
 }
 
 .citations {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
   margin-top: 6px;
-  font-size: 11px;
-  line-height: 1.6;
-}
-
-.citations-label {
-  color: var(--cw-text-weak, #9aa0a6);
-}
-
-/* 只显示知识库名，文档与片段号放 title：手机屏幕上把整串标识铺开会挤掉正文 */
-.citation-chip {
-  padding: 1px 8px;
+  border: 1px solid rgba(24, 119, 242, 0.14);
   border-radius: 10px;
-  background: rgba(25, 137, 250, 0.08);
-  color: #1989fa;
-  white-space: nowrap;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  background: rgba(24, 119, 242, 0.03);
+}
+
+.citations summary {
+  min-height: 44px;
+  padding: 12px 0;
+  color: var(--van-primary-color, #1677ff);
+  cursor: pointer;
+}
+
+.citations summary:focus-visible {
+  outline: 2px solid var(--van-primary-color, #1677ff);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.citation-detail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 8px;
+  margin: 10px 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(24, 119, 242, 0.12);
+}
+
+.citation-detail dt {
+  color: var(--cw-text-secondary, #718096);
+}
+
+.citation-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .feedback-actions {

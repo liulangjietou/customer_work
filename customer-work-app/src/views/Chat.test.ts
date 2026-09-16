@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatMessage, FeedbackType, TicketDetail, UserQuota } from '@/types/api'
+import type { ChatMessage, FeedbackType, TicketDetail, UserQuota, WsChatDone } from '@/types/api'
 import ChatView from './Chat.vue'
 import { chatSocket } from '@/utils/ws'
 
@@ -176,6 +176,21 @@ const botMessage: ChatMessage = {
   createdAtMs: 1_777_520_060_000,
 }
 
+const answerEvidence = {
+  finishReason: 'INTERRUPTED',
+  citations: [{ knowledgeBase: '售后政策库', documentId: 'refund-policy', chunkId: 'refund-7-days', score: 0.9 }],
+  taskPlan: [{ content: '核对退款进度', status: 'completed', priority: 'high' }],
+}
+
+function doneReply(overrides: Partial<WsChatDone> = {}): WsChatDone {
+  return {
+    id: botMessage.id, messageId: botMessage.messageId, sessionId: botMessage.sessionId,
+    ticketId: botMessage.ticketId, content: botMessage.content, ts: botMessage.createdAtMs,
+    usage: { inputTokens: 1, outputTokens: 1, cachedTokens: 0, totalTokens: 2, timeSeconds: 1 },
+    traceId: 'trace-fixture', ...answerEvidence, ...overrides,
+  }
+}
+
 const unlimitedQuota: UserQuota = {
   levelCode: null,
   windowSeconds: 3600,
@@ -219,6 +234,101 @@ describe('Chat', () => {
       .mockImplementation(({ type }: { type: FeedbackType }) =>
         Promise.resolve(savedFeedback(type)),
       )
+  })
+
+  it.each([
+    ['MODEL_STOP', '答复已生成'], ['CACHE_HIT', '答复已生成'],
+    ['INTERRUPTED', '答复已中断'], ['ERROR', '答复生成失败'],
+    ['QUOTA_EXCEEDED', '本轮额度不足'], ['MAX_ITERATIONS', '答复尚未完成'],
+    ['TOOL_SUSPENDED', '等待后续处理'], ['FUTURE_REASON', '结束状态待核对'],
+  ])('实时 %s 只陈述答复状态，不表示业务办理成功', async (finishReason, label) => {
+    const wrapper = await mountReadyChat()
+    wsHandlers.get('chat_done')?.(doneReply({ finishReason }))
+    await flushPromises()
+    expect(wrapper.get('.answer-status').text()).toContain(label)
+    expect(wrapper.get('.task-plan').text()).toContain('助手计划')
+    expect(wrapper.get('.task-plan').text()).toContain('实际办理结果以订单或工单为准')
+    expect(wrapper.get('.task-plan').text()).toContain('助手标记完成')
+    expect(wrapper.findAll('.row-BOT')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('本次服务已解决')
+    wrapper.unmount()
+  })
+
+  it('首连 HTTP 快照恢复答复元数据，旧消息缺失字段不冒充已完成', async () => {
+    fetchMessagesMock.mockResolvedValueOnce([botMessage]).mockResolvedValue([
+      botMessage,
+      { ...botMessage, ...answerEvidence, id: 2, messageId: 'first-connect-evidence' },
+    ])
+    const wrapper = await mountReadyChat()
+    const rows = wrapper.findAll('.row-BOT')
+    expect(rows[0]!.get('.answer-status').text()).toContain('未记录结束状态')
+    expect(rows[0]!.find('.task-plan').exists()).toBe(false)
+    expect(rows[1]!.get('.answer-status').text()).toContain('答复已中断')
+    expect(rows[1]!.text()).toContain('核对退款进度')
+    expect(rows[1]!.text()).toContain('refund-7-days')
+    wrapper.unmount()
+  })
+
+  for (const missing of [undefined, null]) {
+    it(`旧 HTTP 的 ${missing} 字段不擦掉同消息 WS 已知元数据`, async () => {
+      const wrapper = await mountReadyChat()
+      wsHandlers.get('chat_done')?.(doneReply())
+      await flushPromises()
+      fetchMessagesMock.mockResolvedValue([{ ...botMessage,
+        finishReason: missing, citations: missing, taskPlan: missing }])
+      wsHandlers.get('open')?.({ reconnected: true })
+      await flushPromises()
+      expect(wrapper.get('.task-plan').text()).toContain('核对退款进度')
+      expect(wrapper.get('.citations').text()).toContain('售后政策库')
+      expect(wrapper.get('.answer-status').text()).toContain('答复已中断')
+      expect(wrapper.findAll('.row-BOT')).toHaveLength(1)
+      wrapper.unmount()
+    })
+
+    it(`旧 WS 的 ${missing} 字段不擦掉同消息 HTTP 已知元数据`, async () => {
+      fetchMessagesMock.mockResolvedValue([{ ...botMessage, ...answerEvidence }])
+      const wrapper = await mountReadyChat()
+      wsHandlers.get('chat_done')?.({ ...doneReply(), id: undefined,
+        finishReason: missing, citations: missing, taskPlan: missing })
+      await flushPromises()
+      expect(wrapper.get('.task-plan').text()).toContain('核对退款进度')
+      expect(wrapper.get('.citations').text()).toContain('售后政策库')
+      expect(wrapper.get('.answer-status').text()).toContain('答复已中断')
+      expect(wrapper.findAll('.row-BOT')).toHaveLength(1)
+      wrapper.unmount()
+    })
+  }
+
+  it('同消息明确的空集合能清除旧清单和线索，新的结束原因替换旧值', async () => {
+    fetchMessagesMock.mockResolvedValue([{ ...botMessage, ...answerEvidence }])
+    const wrapper = await mountReadyChat()
+    wsHandlers.get('chat_done')?.(doneReply({ finishReason: 'MODEL_STOP', citations: [], taskPlan: [] }))
+    await flushPromises()
+    expect(wrapper.find('.task-plan').exists()).toBe(false)
+    expect(wrapper.find('.citations').exists()).toBe(false)
+    expect(wrapper.get('.answer-status').text()).toContain('答复已生成')
+    fetchMessagesMock.mockResolvedValue([{ ...botMessage, ...answerEvidence }])
+    wsHandlers.get('open')?.({ reconnected: true })
+    await flushPromises()
+    expect(wrapper.get('.answer-status').text()).toContain('答复已中断')
+    expect(wrapper.get('.task-plan').text()).toContain('核对退款进度')
+    wrapper.unmount()
+  })
+
+  it('分页加载更早消息时恢复该轮清单和结束原因', async () => {
+    const recent = Array.from({ length: 50 }, (_, index) => ({ ...botMessage,
+      id: index + 2, messageId: `recent-${index + 2}`, createdAtMs: botMessage.createdAtMs + index + 1 }))
+    fetchMessagesMock.mockResolvedValue(recent)
+    const wrapper = await mountReadyChat()
+    fetchMessagesMock.mockResolvedValueOnce([{ ...botMessage, ...answerEvidence }])
+    await wrapper.get('.history-control button').trigger('click')
+    await flushPromises()
+    const oldest = wrapper.findAll('.row-BOT')[0]!
+    expect(oldest.get('.answer-status').text()).toContain('答复已中断')
+    expect(oldest.get('.task-plan').text()).toContain('核对退款进度')
+    expect(oldest.get('.citations').text()).toContain('refund-7-days')
+    expect(wrapper.findAll('.row-BOT')).toHaveLength(51)
+    wrapper.unmount()
   })
 
   it('附件解析失败时保留草稿并阻止静默丢弃附件后发送', async () => {

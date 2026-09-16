@@ -13,7 +13,7 @@ public record ChatTerminalEnvelope(
         @Schema(description = "Agent 终止原因", example = "MODEL_STOP") String finishReason,
         @Schema(description = "本轮模型调用累计用量") ChatUsageSnapshot usage,
         @Schema(description = "本轮调用 traceId") String traceId,
-        @Schema(description = "本轮回答用到的知识引用；未启用受管知识库或未召回时为空列表")
+        @Schema(description = "本轮获得的参考线索；不代表每项已被引用或具备原文访问权限")
         java.util.List<KnowledgeCitation> citations,
         @Schema(description = "本轮的任务清单；单步问题或模型未拆解时为空列表")
         java.util.List<TaskPlanItem> taskPlan) {

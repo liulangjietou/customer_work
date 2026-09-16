@@ -27,4 +27,6 @@ public class ChatMessageDO {
     private String senderId;
     private String content;
     private Long createdAtMs;
+    /** 本轮答复信息的 JSON；旧消息为 null，不含正文或追踪上下文。 */
+    private String answerEvidence;
 }

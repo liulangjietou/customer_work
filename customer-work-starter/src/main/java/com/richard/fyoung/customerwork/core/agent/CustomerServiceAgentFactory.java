@@ -1,24 +1,27 @@
 package com.richard.fyoung.customerwork.core.agent;
 
-import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
-import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
-import com.richard.fyoung.customerwork.core.support.TenantResolver;
-import com.richard.fyoung.customerwork.infra.config.NacosPromptService;
 import com.richard.fyoung.customerwork.core.memory.LongTermMemoryProvider;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
+import com.richard.fyoung.customerwork.core.support.TenantResolver;
+import com.richard.fyoung.customerwork.data.calllog.ToolKindRegistry;
 import com.richard.fyoung.customerwork.data.rag.KnowledgeProvider;
+import com.richard.fyoung.customerwork.data.rag.KnowledgeSourceTrackingTools;
 import com.richard.fyoung.customerwork.data.skill.MysqlSkillMaterializer;
+import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.infra.config.NacosPromptService;
+import com.richard.fyoung.customerwork.infra.config.properties.SkillProperties;
+import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
-import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
-import com.richard.fyoung.customerwork.tool.ToolkitConfigs;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
+import com.richard.fyoung.customerwork.tool.ToolkitConfigs;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.hook.recorder.JsonlTraceExporter;
 import io.agentscope.core.memory.LongTermMemoryMode;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.permission.PermissionContextState;
+import io.agentscope.core.rag.Knowledge;
 import io.agentscope.core.rag.RAGMode;
 import io.agentscope.core.skill.AgentSkill;
 import io.agentscope.core.skill.SkillBox;
@@ -26,16 +29,18 @@ import io.agentscope.core.skill.repository.ClasspathSkillRepository;
 import io.agentscope.core.skill.repository.FileSystemSkillRepository;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDate;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
-
-import java.nio.file.Path;
-import java.util.List;
-import java.util.Set;
-import com.richard.fyoung.customerwork.infra.config.properties.SkillProperties;
 
 /**
  * 客服 Agent 工厂（对应 ③主 Agent 与 ④子 Agent 执行层）。
@@ -164,7 +169,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
      */
     private String runtimeFacts() {
         return "\n补充事实与约束：\n"
-            + "- 当前日期：" + java.time.LocalDate.now() + "（以此为准判断时间，不要依赖你训练记忆里的年份）。\n"
+            + "- 当前日期：" + LocalDate.now() + "（以此为准判断时间，不要依赖你训练记忆里的年份）。\n"
             + "- 订单号 / 单据编号不要凭格式或日期做有效性猜测，一律直接调用对应查询工具核实。\n";
     }
 
@@ -185,7 +190,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
 
         // 业务工具按域分组注册（壳 + 可替换后端），透传真实会话以驱动工单域
         toolRegistrar.registerBusinessTools(toolkit, sessionId,
-            java.util.Set.copyOf(properties.getToolSurface().getDisabledGroups()));
+            Set.copyOf(properties.getToolSurface().getDisabledGroups()));
 
         if (properties.getAgent().isMetaToolEnabled()) {
             toolkit.registerMetaTool();
@@ -250,8 +255,9 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         }
 
         // RAG 知识检索（memory / 百炼企业知识库，由 Provider 选择）
-        if (properties.getRag().isEnabled()) {
-            builder.knowledge(knowledgeProvider.get()).ragMode(RAGMode.AGENTIC);
+        Knowledge ragKnowledge = properties.getRag().isEnabled() ? knowledgeProvider.get() : null;
+        if (ragKnowledge != null) {
+            builder.knowledge(ragKnowledge).ragMode(RAGMode.AGENTIC);
         }
 
         // Skill 技能库
@@ -269,7 +275,11 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             }
         }
 
-        return builder.build();
+        ReActAgent agent = builder.build();
+        if (ragKnowledge != null) {
+            KnowledgeSourceTrackingTools.install(agent.getToolkit(), ragKnowledge);
+        }
+        return agent;
     }
 
     /**
@@ -280,8 +290,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
      * <p>物化器取不到（持久化环境未激活）或物化失败时，<b>降级</b>读该目录里已有的内容：上一次物化的产物
      * 还在的话技能仍可用，好过整个技能能力消失。物化器缺席属于配置错配，记 error 便于排查。</p>
      */
-    private List<AgentSkill> loadSkillsFromMysql(SkillProperties cfg) throws java.io.IOException {
-        java.nio.file.Path dir = Path.of(cfg.getDirectory());
+    private List<AgentSkill> loadSkillsFromMysql(SkillProperties cfg) throws IOException {
+        Path dir = Path.of(cfg.getDirectory());
         MysqlSkillMaterializer materializer =
             skillMaterializerProvider == null ? null : skillMaterializerProvider.getIfAvailable();
         if (materializer == null) {
@@ -295,7 +305,7 @@ public class CustomerServiceAgentFactory implements DisposableBean {
                     "SKILL-MATERIALIZE-FAIL", dir.toAbsolutePath(), e);
             }
         }
-        java.nio.file.Files.createDirectories(dir);
+        Files.createDirectories(dir);
         // 物化目录是 MySQL 的投影，写回它没有意义（下次启动即被覆盖），故一律只读挂载
         List<AgentSkill> skills = new FileSystemSkillRepository(dir, false).getAllSkills();
         log.info("[Skill] mysql 仓库（物化目录 {}，只读），技能数={}", dir.toAbsolutePath(), skills.size());
@@ -311,8 +321,8 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             if ("mysql".equalsIgnoreCase(repository)) {
                 skills = loadSkillsFromMysql(cfg);
             } else if ("filesystem".equalsIgnoreCase(repository)) {
-                java.nio.file.Path dir = Path.of(cfg.getDirectory());
-                java.nio.file.Files.createDirectories(dir);
+                Path dir = Path.of(cfg.getDirectory());
+                Files.createDirectories(dir);
                 skills = new FileSystemSkillRepository(dir, cfg.isWritable()).getAllSkills();
                 log.info("[Skill] filesystem 仓库({}, writable={})", dir.toAbsolutePath(), cfg.isWritable());
             } else {
@@ -320,12 +330,12 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             }
             // 快照注册前工具名，注册 skill 后取增量即为 skill 贡献的工具，登记为 SKILL 类别
             // （用 toolkit 实际工具名做键，与 onActing 的 ToolUseBlock.getName() 一致）
-            java.util.Set<String> beforeSkill = new java.util.HashSet<>(toolkit.getToolNames());
+            Set<String> beforeSkill = new HashSet<>(toolkit.getToolNames());
             SkillBox skillBox = new SkillBox(toolkit);
             for (AgentSkill skill : skills) {
                 skillBox.registerSkill(skill);
             }
-            java.util.Set<String> skillTools = new java.util.HashSet<>(toolkit.getToolNames());
+            Set<String> skillTools = new HashSet<>(toolkit.getToolNames());
             skillTools.removeAll(beforeSkill);
             // 兜底：skill 可能以懒激活形式尚未落 toolkit，同时登记 skillId / skillName，覆盖 onActing 可能出现的两种名
             skillTools.addAll(skillBox.getAllSkillIds());

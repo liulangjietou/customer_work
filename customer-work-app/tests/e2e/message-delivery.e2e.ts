@@ -219,3 +219,133 @@ test('补拉失败保留可展开的中断片段，恢复后可原地同步', as
   expect(fixture.commands).toHaveLength(1)
   expect(fixture.unexpected).toEqual([])
 })
+
+const evidence = {
+  finishReason: 'INTERRUPTED',
+  citations: [{ knowledgeBase: '售后服务政策与退款办理参考说明'.repeat(5),
+    documentId: 'refund-policy-document-'.repeat(12), chunkId: 'refund-7-days', score: 0.9 }],
+  taskPlan: [{ content: '核对这笔订单的退款申请、实际退款进度以及到账渠道，保留待确认的事项。'.repeat(3),
+    status: 'completed', priority: 'high' }],
+}
+const savedAnswer = (id = 1, extra = {}): ChatMessage => ({
+  id, messageId: `MSG-answer-${id}`, sessionId, ticketId, senderType: 'BOT', senderId: null,
+  content: `第 ${id} 条答复：已整理可供核对的信息。`, createdAtMs: 1_780_000_000_000 + id,
+  ...extra,
+})
+
+test('答复历史恢复状态、助手计划与长参考线索，390px 可展开核对且没有原文入口', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  const fixture = await installConversation(page, [savedAnswer(1, evidence)])
+  const row = page.locator('.row-BOT')
+  await expect(row.locator('.answer-status')).toContainText('答复已中断')
+  await expect(row.locator('.task-plan')).toContainText('助手计划')
+  await expect(row.locator('.task-plan')).toContainText('实际办理结果以订单或工单为准')
+  await expect(row.locator('.task-plan')).toContainText('助手标记完成')
+  const reference = row.locator('.citations summary')
+  await reference.scrollIntoViewIfNeeded()
+  await reference.click()
+  await expect(row.getByText(evidence.citations[0]!.documentId, { exact: true })).toBeVisible()
+  const bounds = await reference.boundingBox()
+  expect(bounds!.width).toBeGreaterThanOrEqual(44)
+  expect(bounds!.height).toBeGreaterThanOrEqual(44)
+  await expect(row.getByRole('button', { name: /原文|预览/ })).toHaveCount(0)
+  await expect(row.locator('a')).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  for (const selector of ['.task-plan', '.citations']) {
+    expect(await row.locator(selector).evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+  }
+  await page.screenshot({ path: testInfo.outputPath('h5-answer-evidence-390.png'), fullPage: true })
+  const lastReference = row.getByText(evidence.citations[0]!.chunkId, { exact: true })
+  await lastReference.scrollIntoViewIfNeeded()
+  const lastBounds = await lastReference.boundingBox()
+  const messageArea = await page.locator('.message-area').boundingBox()
+  expect(lastBounds!.y).toBeGreaterThanOrEqual(messageArea!.y)
+  expect(lastBounds!.y + lastBounds!.height).toBeLessThanOrEqual(messageArea!.y + messageArea!.height)
+  await testInfo.attach('mobile-reference-geometry', {
+    body: JSON.stringify({ summary: bounds, lastReference: lastBounds, messageArea }),
+    contentType: 'application/json',
+  })
+  await page.screenshot({ path: testInfo.outputPath('h5-answer-reference-bottom-390.png'), fullPage: true })
+  await reference.scrollIntoViewIfNeeded()
+  await reference.press('Space')
+  await expect(row.locator('.citations')).not.toHaveAttribute('open')
+  await expect(reference).toBeFocused()
+  await page.reload()
+  await expect(page.locator('.answer-status')).toContainText('答复已中断')
+  await expect(page.locator('.task-plan')).toContainText(evidence.taskPlan[0]!.content)
+  expect(errors).toEqual([])
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('答复实时元数据经过旧历史重连补拉仍保留，同消息不会重复', async ({ page }) => {
+  const fixture = await installConversation(page)
+  const saved = savedAnswer()
+  fixture.messages.push(saved)
+  fixture.send('chat_done', { ...saved, ...evidence, ts: saved.createdAtMs,
+    traceId: 'fixture', usage: { inputTokens: 1, outputTokens: 1, cachedTokens: 0, totalTokens: 2, timeSeconds: 1 } })
+  await expect(page.locator('.answer-status')).toContainText('答复已中断')
+  fixture.sockets[0]!.close({ code: 1012, reason: 'fixture evidence reconnect' })
+  await expect.poll(() => fixture.sockets.length).toBe(2)
+  await expect.poll(() => fixture.historyQueries.length).toBeGreaterThanOrEqual(3)
+  await expect(page.locator('.task-plan')).toContainText(evidence.taskPlan[0]!.content)
+  await expect(page.locator('.citations')).toContainText('参考线索')
+  await expect(page.locator('.answer-status')).toContainText('答复已中断')
+  await expect(page.locator('.row-BOT')).toHaveCount(1)
+  fixture.messages[0] = savedAnswer(1, { finishReason: 'ERROR', taskPlan: [], citations: [] })
+  fixture.sockets[1]!.close({ code: 1012, reason: 'fixture authoritative snapshot' })
+  await expect.poll(() => fixture.sockets.length).toBe(3)
+  await expect(page.locator('.answer-status')).toContainText('答复生成失败')
+  await expect(page.locator('.task-plan')).toHaveCount(0)
+  await expect(page.locator('.citations')).toHaveCount(0)
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('答复历史元数据不会被缺失字段的旧 WS 擦除，明确空集合可替换', async ({ page }) => {
+  const saved = savedAnswer()
+  const fixture = await installConversation(page, [savedAnswer(1, evidence)])
+  fixture.send('chat_done', { ...saved, ts: saved.createdAtMs })
+  await expect(page.locator('.answer-status')).toContainText('答复已中断')
+  await expect(page.locator('.task-plan')).toContainText(evidence.taskPlan[0]!.content)
+  await expect(page.locator('.row-BOT')).toHaveCount(1)
+  fixture.send('chat_done', { ...saved, finishReason: 'MODEL_STOP', citations: [], taskPlan: [], ts: saved.createdAtMs })
+  await expect(page.locator('.answer-status')).toContainText('答复已生成')
+  await expect(page.locator('.task-plan')).toHaveCount(0)
+  await expect(page.locator('.citations')).toHaveCount(0)
+  await expect(page.getByText('本次服务已解决', { exact: true })).toHaveCount(0)
+  expect(fixture.detail.ticket.status).toBe('PROCESSING')
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('答复分页恢复更早的清单与线索，不把旧记录标为已生成', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const fixture = await installConversation(page, [savedAnswer(1, evidence),
+    ...Array.from({ length: 50 }, (_, index) => savedAnswer(index + 2))])
+  const older = page.getByRole('button', { name: '加载更早消息' })
+  await older.scrollIntoViewIfNeeded()
+  await older.click()
+  const first = page.locator('.row-BOT').first()
+  await expect(first.locator('.answer-status')).toContainText('答复已中断')
+  await expect(first.locator('.task-plan')).toContainText(evidence.taskPlan[0]!.content)
+  await expect(first.locator('.citations')).toContainText('参考线索')
+  await expect(page.locator('.row-BOT').nth(1).locator('.answer-status')).toContainText('未记录结束状态')
+  expect(fixture.historyQueries).toContain(2)
+  expect(fixture.unexpected).toEqual([])
+})
+
+test('答复中断、生成故障、额度不足与未完成均有清晰状态', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const phases = [
+    ['INTERRUPTED', '答复已中断'], ['ERROR', '答复生成失败'],
+    ['QUOTA_EXCEEDED', '本轮额度不足'], ['MAX_ITERATIONS', '答复尚未完成'],
+  ] as const
+  const fixture = await installConversation(page,
+    phases.map(([finishReason], index) => savedAnswer(index + 1, { finishReason })))
+  for (const [index, [, label]] of phases.entries()) {
+    await expect(page.locator('.row-BOT').nth(index).locator('.answer-status')).toHaveText(label)
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('h5-answer-states-390.png'), fullPage: true })
+  expect(fixture.unexpected).toEqual([])
+})

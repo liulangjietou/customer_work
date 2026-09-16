@@ -40,6 +40,13 @@ public class ChatLogService {
         return appendWithMessageId(messageId, sessionId, ticketId, senderType, senderId, content);
     }
 
+    /** 正文与本轮答复信息使用同一条存储写入，成功返回后才能发出完成事件。 */
+    public ChatMessage appendAnswer(String sessionId, String ticketId, String content, ChatAnswerEvidence evidence) {
+        ChatMessage message = ChatMessage.of(MESSAGE_ID_PREFIX + UUID.randomUUID(), sessionId, ticketId,
+            TicketActorType.BOT, null, content).withAnswerEvidence(evidence);
+        return store.append(message);
+    }
+
     /** 应用受理事务已确定幂等消息号时使用；唯一键冲突交由事务外回读，不吞掉真实写入失败。 */
     public ChatMessage appendWithMessageId(String messageId, String sessionId, String ticketId,
                                            TicketActorType senderType, String senderId, String content) {

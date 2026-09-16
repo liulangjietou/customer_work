@@ -4,7 +4,7 @@
 <mapper namespace="com.richard.fyoung.customerwork.data.chatlog.mapper.ChatMessageMapper">
 
     <select id="findByMessageId" resultType="com.richard.fyoung.customerwork.data.chatlog.entity.ChatMessageDO">
-        SELECT id, message_id, session_id, ticket_id, sender_type, sender_id, content, created_at_ms
+        SELECT id, message_id, session_id, ticket_id, sender_type, sender_id, content, created_at_ms, answer_evidence
         FROM cw_chat_message
         WHERE message_id = #{messageId}
         LIMIT 1
@@ -12,7 +12,7 @@
 
     <!-- 会话维度游标翻页：id 倒序取最新 limit 条，beforeId 非空时只取更早消息。返回结果由 Store 翻转成升序。 -->
     <select id="findBySessionPage" resultType="com.richard.fyoung.customerwork.data.chatlog.entity.ChatMessageDO">
-        SELECT id, message_id, session_id, ticket_id, sender_type, sender_id, content, created_at_ms
+        SELECT id, message_id, session_id, ticket_id, sender_type, sender_id, content, created_at_ms, answer_evidence
         FROM cw_chat_message
         WHERE session_id = #{sessionId}
         <if test="beforeId != null">
@@ -24,7 +24,7 @@
 
     <!-- 工单维度游标翻页：语义同上。 -->
     <select id="findByTicketPage" resultType="com.richard.fyoung.customerwork.data.chatlog.entity.ChatMessageDO">
-        SELECT id, message_id, session_id, ticket_id, sender_type, sender_id, content, created_at_ms
+        SELECT id, message_id, session_id, ticket_id, sender_type, sender_id, content, created_at_ms, answer_evidence
         FROM cw_chat_message
         WHERE ticket_id = #{ticketId}
         <if test="beforeId != null">
