@@ -11,8 +11,8 @@ import java.util.List;
 /**
  * MyBatis-Plus 知识盲区存储（{@code knowledge-gap.store-mode=jdbc} 时装配）。
  *
- * <p>全部操作失败只记日志：盲区统计挂在每次知识检索的尾巴上，它出问题最坏是少一条排行数据，
- * 绝不该让用户的问题因此答不出来。</p>
+ * <p>记录未命中是旁路统计，写失败只记日志；运营查询必须传播读取失败，
+ * 避免把数据不可用误当成没有待处理问题。</p>
  * @author owlzhangfq@gmail.com
  */
 public class MybatisKnowledgeGapStore implements KnowledgeGapStore {
@@ -47,24 +47,12 @@ public class MybatisKnowledgeGapStore implements KnowledgeGapStore {
 
     @Override
     public List<KnowledgeGap> topGaps(String scopeId, int limit) {
-        try {
-            return toDomain(mapper.selectTopGaps(scopeId, limit));
-        } catch (Exception e) {
-            log.error("[MybatisKnowledgeGapStore] topGaps failed, errorCode={}, scopeId={}",
-                "KNOWLEDGE-GAP-TOP-FAIL", scopeId, e);
-            return List.of();
-        }
+        return toDomain(mapper.selectTopGaps(scopeId, limit));
     }
 
     @Override
     public List<KnowledgeGap> findAll(String scopeId) {
-        try {
-            return toDomain(mapper.selectByScope(scopeId));
-        } catch (Exception e) {
-            log.error("[MybatisKnowledgeGapStore] findAll failed, errorCode={}, scopeId={}",
-                "KNOWLEDGE-GAP-FIND-FAIL", scopeId, e);
-            return List.of();
-        }
+        return toDomain(mapper.selectByScope(scopeId));
     }
 
     private List<KnowledgeGap> toDomain(List<KnowledgeGapDO> rows) {

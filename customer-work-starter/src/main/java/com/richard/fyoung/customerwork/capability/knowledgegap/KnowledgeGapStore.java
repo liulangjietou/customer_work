@@ -20,6 +20,6 @@ public interface KnowledgeGapStore {
     /** 未命中次数排行（降序），即"最该优先补的知识"。 */
     List<KnowledgeGap> topGaps(String scopeId, int limit);
 
-    /** 按问题哈希查一条。 */
+    /** 查询某分区的全部未命中记录；读取失败应由调用方处理。 */
     List<KnowledgeGap> findAll(String scopeId);
 }

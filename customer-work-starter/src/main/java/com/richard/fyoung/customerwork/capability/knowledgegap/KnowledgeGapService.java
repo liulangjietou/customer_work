@@ -2,7 +2,6 @@ package com.richard.fyoung.customerwork.capability.knowledgegap;
 
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapRecorder;
 import com.richard.fyoung.customerwork.core.support.OpsScopeResolver;
-import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import com.richard.fyoung.customerwork.infra.config.properties.KnowledgeGapProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,7 +67,7 @@ public class KnowledgeGapService implements KnowledgeGapRecorder {
 
     /** 盲区排行：未命中次数最多的若干条，即"最该优先补的知识"。 */
     public List<KnowledgeGap> topGaps(String scopeId, int limit) {
-        String scope = StringUtils.hasText(scopeId) ? scopeId : TenantContext.DEFAULT;
+        String scope = StringUtils.hasText(scopeId) ? scopeId : opsScopeResolver.resolve();
         return store.topGaps(scope, limit);
     }
 }

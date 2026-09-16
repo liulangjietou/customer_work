@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useAuthStore } from '@/store/auth'
+import { getRequestErrorMessage } from '@/api/request'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import ImprovementClosurePanel from '@/components/ImprovementClosurePanel.vue'
 import {
@@ -10,27 +13,42 @@ import {
   type KnowledgeGap,
 } from '@/api/ops'
 
-// 知识盲区看板：哪些问题反复查不到知识。
-//
-// 这份数据本来唾手可得（检索未命中时记一笔），此前没人记，于是补知识全靠拍脑袋——
-// 而拍出来的往往是运营自己关心的，不是用户实际在问的。
-
+const auth = useAuthStore()
 const loading = ref(false)
+const hasLoaded = ref(false)
+const loadError = ref<unknown>(null)
 const list = ref<KnowledgeGap[]>([])
-// 分区键 = 租户码（未开多租户时统一落 default），与 CSAT 看板同一口径
-const scopeId = ref('default')
+const search = ref('')
+const visibleList = computed(() =>
+  list.value.filter(
+    (gap) =>
+      !search.value.trim() ||
+      gap.question.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()),
+  ),
+)
 const closureVisible = ref(false)
 const closureGap = ref<KnowledgeGap | null>(null)
 const totalMisses = computed(() => list.value.reduce((sum, item) => sum + item.missCount, 0))
 const urgentGapCount = computed(() => list.value.filter((item) => item.missCount >= 10).length)
 const recurringGapCount = computed(() => list.value.filter((item) => item.missCount >= 3).length)
+let listRequest = 0
+let editorGeneration = 0
 
+/** 当前租户由已认证入口解析；刷新失败保留旧结果并明确标记。 */
 async function loadList() {
+  if (!auth.hasPermission('knowledge-gap:view')) return
+  const requestId = ++listRequest
   loading.value = true
   try {
-    list.value = await listKnowledgeGaps(scopeId.value)
+    const result = await listKnowledgeGaps()
+    if (requestId !== listRequest) return
+    list.value = result
+    hasLoaded.value = true
+    loadError.value = null
+  } catch (error) {
+    if (requestId === listRequest) loadError.value = error
   } finally {
-    loading.value = false
+    if (requestId === listRequest) loading.value = false
   }
 }
 
@@ -49,6 +67,7 @@ function missTagType(count: number): 'danger' | 'warning' | 'info' {
 
 const dialogVisible = ref(false)
 const submitting = ref(false)
+const fillError = ref('')
 const currentGap = ref<KnowledgeGap | null>(null)
 const formRef = ref<FormInstance>()
 const form = reactive<FillKnowledgeGapRequest>({
@@ -65,6 +84,10 @@ const rules: FormRules = {
 }
 
 function openFill(row: KnowledgeGap) {
+  if (!auth.hasPermission('knowledge-gap:fill') || loading.value || loadError.value) return
+  editorGeneration += 1
+  fillError.value = ''
+  submitting.value = false
   currentGap.value = row
   form.questionHash = row.questionHash
   form.title = ''
@@ -76,25 +99,51 @@ function openFill(row: KnowledgeGap) {
 }
 
 function openClosure(row: KnowledgeGap) {
+  if (!auth.hasPermission('improvement:manage') || loading.value || loadError.value) return
   closureGap.value = row
   closureVisible.value = true
 }
 
 async function submitFill() {
-  if (!formRef.value) return
-  await formRef.value.validate()
+  if (!formRef.value || submitting.value || !auth.hasPermission('knowledge-gap:fill')) return
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+  const generation = editorGeneration
   submitting.value = true
+  fillError.value = ''
   try {
     const knowledgeId = await fillKnowledgeGap({ ...form })
-    ElMessage.success(`已补进知识库（条目 #${knowledgeId}），下次问到就能答上来了`)
+    if (generation !== editorGeneration) return
+    ElMessage.success(`已写入 FAQ（条目 #${knowledgeId}），检索效果待验证`)
     dialogVisible.value = false
-    await loadList()
+  } catch (error) {
+    if (generation === editorGeneration) {
+      fillError.value = getRequestErrorMessage(error, '写入结果尚未核实，请核对记录后再操作')
+    }
   } finally {
-    submitting.value = false
+    if (generation === editorGeneration) submitting.value = false
   }
 }
 
-onMounted(loadList)
+watch(
+  () => auth.token,
+  () => {
+    listRequest += 1
+    editorGeneration += 1
+    list.value = []
+    hasLoaded.value = false
+    loadError.value = null
+    closureVisible.value = false
+    closureGap.value = null
+    dialogVisible.value = false
+    if (auth.token) void loadList()
+  },
+  { immediate: true, flush: 'sync' },
+)
+onScopeDispose(() => {
+  listRequest += 1
+  editorGeneration += 1
+})
 </script>
 
 <template>
@@ -103,33 +152,46 @@ onMounted(loadList)
       type="info"
       show-icon
       :closable="false"
-      title="按未命中次数排序——越靠前的越该优先补"
-      description="只出现过一次的问法没有补知识的价值；反复被问却查不到的，才是知识库真正的缺口。
-        补进去的内容会直接影响线上回答，请写成知识的样子，不要照抄用户的口语化提问。"
+      title="先核对原始问题，再决定处理方式"
+      description="未命中表示本次没有检索到资料，不代表一定缺少知识。实时查询、工具异常和流程问题需要分别核对；低频问题也可进入人工复核。"
     />
 
     <el-card shadow="never" class="filter-card">
       <div class="toolbar">
-        <el-input v-model="scopeId" placeholder="租户码" style="width: 180px" />
-        <el-button type="primary" :loading="loading" @click="loadList">查询</el-button>
+        <el-input
+          v-model="search"
+          aria-label="搜索当前问题"
+          placeholder="搜索当前问题"
+          clearable
+          class="gap-search"
+        />
+        <span class="scope-note">当前租户 · 按未命中次数取前 50 条</span>
+        <el-button type="primary" :loading="loading" @click="loadList">刷新</el-button>
       </div>
     </el-card>
 
-    <div class="summary-row" v-loading="loading">
+    <CrudLoadState
+      :error="loadError"
+      :has-stale-data="hasLoaded"
+      :loading="loading"
+      @retry="loadList"
+    />
+
+    <div class="summary-row" :aria-busy="loading">
       <div class="stat">
-        <strong>{{ list.length }}</strong>
-        <span>知识盲区</span>
+        <strong>{{ hasLoaded ? list.length : '—' }}</strong>
+        <span>当前问题数</span>
       </div>
       <div class="stat">
-        <strong>{{ totalMisses }}</strong>
-        <span>累计未命中</span>
+        <strong>{{ hasLoaded ? totalMisses : '—' }}</strong>
+        <span>这些问题的未命中次数</span>
       </div>
       <div class="stat stat-danger">
-        <strong>{{ urgentGapCount }}</strong>
-        <span>高优先级（≥10 次）</span>
+        <strong>{{ hasLoaded ? urgentGapCount : '—' }}</strong>
+        <span>高频信号（≥10 次）</span>
       </div>
       <div class="stat stat-warning">
-        <strong>{{ recurringGapCount }}</strong>
+        <strong>{{ hasLoaded ? recurringGapCount : '—' }}</strong>
         <span>反复出现（≥3 次）</span>
       </div>
     </div>
@@ -137,15 +199,33 @@ onMounted(loadList)
     <el-card shadow="never" class="list-card">
       <div class="section-heading">
         <strong>未命中证据明细</strong>
-        <span>按真实提问频次排序，补知识后可继续进入治理闭环验证是否复发</span>
+        <span>保留原始检索问题与频次，处理后通过治理闭环验证效果</span>
       </div>
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table
+        v-loading="loading"
+        :data="visibleList"
+        :empty-text="
+          loading
+            ? '正在读取…'
+            : loadError
+              ? '数据暂不可用'
+              : search
+                ? '没有匹配的问题'
+                : '暂无未命中记录'
+        "
+        style="width: 100%"
+      >
         <el-table-column label="未命中" width="100">
           <template #default="{ row }">
             <el-tag :type="missTagType(row.missCount)">{{ row.missCount }} 次</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="question" label="查不到的问题" show-overflow-tooltip />
+        <el-table-column
+          prop="question"
+          label="原始检索问题"
+          min-width="220"
+          show-overflow-tooltip
+        />
         <el-table-column label="首次出现" width="170">
           <template #default="{ row }">{{ formatTime(row.firstSeenAtMs) }}</template>
         </el-table-column>
@@ -154,13 +234,20 @@ onMounted(loadList)
         </el-table-column>
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'knowledge-gap:fill'" link type="primary" @click="openFill(row)">
+            <el-button
+              v-permission="'knowledge-gap:fill'"
+              link
+              type="primary"
+              :disabled="loading || !!loadError"
+              @click="openFill(row)"
+            >
               补充知识
             </el-button>
             <el-button
               v-permission="'improvement:manage'"
               link
               type="success"
+              :disabled="loading || !!loadError"
               @click="openClosure(row)"
             >
               治理闭环
@@ -168,22 +255,33 @@ onMounted(loadList)
           </template>
         </el-table-column>
       </el-table>
-
-      <el-empty
-        v-if="!loading && list.length === 0"
-        description="暂无盲区记录（需开启 knowledge-gap.store-mode=jdbc）"
-      />
     </el-card>
 
-    <el-dialog v-model="dialogVisible" title="补充知识库条目" width="620px">
+    <el-dialog
+      v-model="dialogVisible"
+      title="补充 FAQ 条目"
+      width="620px"
+      :close-on-click-modal="!submitting"
+      :close-on-press-escape="!submitting"
+      :show-close="!submitting"
+    >
       <el-alert
         v-if="currentGap"
         class="origin"
         type="warning"
         show-icon
         :closable="false"
-        :title="`用户问过 ${currentGap.missCount} 次但查不到：${currentGap.question}`"
+        :title="`该问题已记录 ${currentGap.missCount} 次未命中：${currentGap.question}`"
       />
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        class="origin"
+        title="保存会直接写入线上 FAQ"
+        description="此入口沿用直接写入流程，尚未经过候选评测。写入后仍需验证检索效果，治理闭环不会自动标记完成。"
+      />
+      <el-alert v-if="fillError" :title="fillError" type="error" :closable="false" class="origin" />
       <el-form ref="formRef" :model="form" :rules="rules" label-width="88px">
         <el-form-item label="条目标题" prop="title">
           <el-input v-model="form.title" placeholder="如：货到付款支持范围" />
@@ -201,14 +299,25 @@ onMounted(loadList)
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="submitFill">补进知识库</el-button>
+        <el-button :disabled="submitting" @click="dialogVisible = false">取消</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="submitFill"
+          >确认写入线上 FAQ</el-button
+        >
       </template>
     </el-dialog>
 
-    <el-drawer v-model="closureVisible" title="知识盲区治理闭环" size="760px">
+    <el-drawer
+      v-model="closureVisible"
+      title="知识缺口治理闭环"
+      size="min(760px, 100vw)"
+      destroy-on-close
+    >
+      <blockquote v-if="closureGap" class="gap-source-quote">
+        <span>原始检索问题</span>
+        <p>{{ closureGap.question }}</p>
+      </blockquote>
       <ImprovementClosurePanel
-        v-if="closureGap"
+        v-if="closureVisible && closureGap"
         source-type="KNOWLEDGE_GAP"
         :source-key="closureGap.questionHash"
       />
@@ -228,6 +337,17 @@ onMounted(loadList)
   align-items: center;
   gap: 12px;
   margin-bottom: 0;
+  flex-wrap: wrap;
+}
+
+.gap-search {
+  flex: 1 1 220px;
+  max-width: 380px;
+}
+
+.scope-note {
+  color: var(--cw-text-muted);
+  font-size: 13px;
 }
 
 .filter-card .toolbar {
@@ -235,6 +355,25 @@ onMounted(loadList)
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.gap-source-quote {
+  margin: 0 0 16px;
+  border-left: 3px solid var(--el-color-primary);
+  padding: 8px 12px;
+  background: var(--cw-paper);
+  overflow-wrap: anywhere;
+}
+
+.gap-source-quote span {
+  color: var(--cw-text-muted);
+  font-size: 12px;
+}
+
+.gap-source-quote p {
+  margin: 6px 0 0;
+  font-size: 16px;
+  line-height: 1.6;
 }
 
 .origin {
@@ -331,8 +470,13 @@ onMounted(loadList)
 }
 
 @media (max-width: 480px) {
+  .toolbar .el-button,
+  .knowledge-gap-board :deep(.el-table .el-button) {
+    min-height: 44px;
+  }
+
   .summary-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>
