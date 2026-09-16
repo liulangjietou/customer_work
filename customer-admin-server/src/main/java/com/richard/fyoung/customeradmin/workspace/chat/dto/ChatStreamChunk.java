@@ -24,7 +24,17 @@ import org.slf4j.LoggerFactory;
  * @author owlzhangfq@gmail.com
  */
 public record ChatStreamChunk(ChatNodeKind kind, String text, String source, String subagentName,
-                              ChatTerminal terminal) {
+                              ChatTerminal terminal, ChatReceipt receipt) {
+
+    /** 保留既有结构化终态的构造签名。 */
+    public ChatStreamChunk(ChatNodeKind kind, String text, String source, String subagentName, ChatTerminal terminal) {
+        this(kind, text, source, subagentName, terminal, null);
+    }
+
+    /** 持久受理是独立事件，不能由开始思考或网络写出替代。 */
+    public static ChatStreamChunk accepted(ChatReceipt receipt) {
+        return new ChatStreamChunk(ChatNodeKind.ACCEPTED, null, null, null, null, receipt);
+    }
 
     /** 兼容既有文本片段的构造。 */
     public ChatStreamChunk(ChatNodeKind kind, String text, String source, String subagentName) {
@@ -56,11 +66,11 @@ public record ChatStreamChunk(ChatNodeKind kind, String text, String source, Str
      * 序列化异常时回退纯文本（丢失来源标识但不中断流）。
      */
     public String sseData() {
-        if (source == null && terminal == null) {
+        if (source == null && terminal == null && receipt == null) {
             return text;
         }
         try {
-            return SSE_MAPPER.writeValueAsString(terminal == null ? this : terminal);
+            return SSE_MAPPER.writeValueAsString(receipt != null ? receipt : terminal == null ? this : terminal);
         } catch (Exception e) {
             log.error("[chat] sse chunk json encode failed, code={}, kind={}, source={}",
                 "CHAT-SSE-ENCODE-FAIL", kind, source, e);

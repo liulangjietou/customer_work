@@ -1,3 +1,5 @@
+import { request as receiptRequest } from './request'
+import type { WorkspaceReceipt } from '@/utils/workspaceMessageAcceptance'
 import { LLM_TIMEOUT_MS, request } from './request'
 import { streamSse, type SseHandlers } from '@/utils/sse'
 import type {
@@ -22,6 +24,7 @@ export function streamVibeCoding(agentCode: string, req: ChatRequest, handlers: 
   // 显式列出请求体字段：collaboration 为协作模式开关（P3-1）；mode 为执行模式（会话内记忆），
   // attachmentIds 为本次消息携带的解析成功附件 id 列表；透传给后端多角色流水线/工具执行确认逻辑。
   const body = {
+    clientMessageId: req.clientMessageId,
     sessionId: req.sessionId,
     message: req.message,
     // 原文可能为空（仅附件输入），不能用模型材料作为空字符串的兜底。
@@ -194,5 +197,13 @@ export function confirmVibeCodingPlan(agentCode: string, req: PlanConfirmRequest
     url: `/workspace/${agentCode}/vibecoding/plan/confirm`,
     method: 'post',
     data: req,
+  })
+}
+
+/** 核对本人原消息的持久受理记录，失败时由编辑器保留原请求。 */
+export function getVibeReceipt(agentCode: string, sessionId: string, clientMessageId: string) {
+  return receiptRequest<WorkspaceReceipt>({
+    url: `/workspace/${encodeURIComponent(agentCode)}/vibecoding/sessions/${encodeURIComponent(sessionId)}/receipts/${encodeURIComponent(clientMessageId)}`,
+    method: 'get', suppressErrorMessage: true,
   })
 }

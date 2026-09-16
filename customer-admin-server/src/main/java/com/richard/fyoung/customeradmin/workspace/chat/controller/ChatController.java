@@ -1,5 +1,8 @@
 package com.richard.fyoung.customeradmin.workspace.chat.controller;
 
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatReceipt;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
+import com.richard.fyoung.customeradmin.workspace.chat.service.WorkspaceMessageAcceptanceService;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.stp.StpUtil;
 import com.richard.fyoung.customeradmin.common.page.PageResult;
@@ -23,6 +26,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -52,6 +56,14 @@ import java.util.List;
 @RequestMapping("/api/workspace/{agentCode}/chat")
 public class ChatController {
 
+    private WorkspaceMessageAcceptanceService acceptanceService;
+
+    /** Spring 装配必须提供受理服务；保留既有构造器以兼容非容器调用方。 */
+    @Autowired
+    public void setAcceptanceService(WorkspaceMessageAcceptanceService acceptanceService) {
+        this.acceptanceService = acceptanceService;
+    }
+
     private final ChatService chatService;
     private final ChatHistoryService chatHistoryService;
     private final ChatAttachmentService chatAttachmentService;
@@ -76,12 +88,26 @@ public class ChatController {
         String tenantId = TenantContext.get();
         // 采集元数据必须在请求线程同步段构建（用户名取自 Sa-Token 的 ThreadLocal）；渠道=admin_chat → CHAT
         AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.CHAT, request.originalInput());
-        Flux<ServerSentEvent<String>> result = chatService.chatStreamWithAttachments(agentCode, request.sessionId(), request.message(), request.mode(), callMeta, request.attachmentIds())
+        Flux<ChatStreamChunk> source = request.clientMessageId() == null
+            ? chatService.chatStreamWithAttachments(agentCode, request.sessionId(), request.message(), request.mode(), callMeta, request.attachmentIds())
+            : acceptanceService.execute(agentCode, userId, "chat", request,
+                () -> chatService.chatStreamWithAttachments(agentCode, request.sessionId(), request.message(), request.mode(), callMeta, request.attachmentIds()));
+        Flux<ServerSentEvent<String>> result = source
             // data 编码见 ChatStreamChunk#sseData：父 Agent 纯文本，子 Agent 片段 JSON 包装携带来源标识
             .map(chunk -> ServerSentEvent.<String>builder().event(chunk.kind().sseEventName()).data(chunk.sseData()).build())
             .concatWithValues(ServerSentEvent.<String>builder().event("done").data("[DONE]").build());
         return tenantId == null ? result
             : result.contextWrite(context -> context.put(TenantContextThreadLocalAccessor.KEY, tenantId));
+    }
+
+    /** 查本人已受理消息；权限或会话失效时不返回旧回执，也不重新执行模型。 */
+    @SaCheckPermission("workspace")
+    @GetMapping("/sessions/{sessionId}/receipts/{clientMessageId}")
+    public Result<ChatReceipt> receipt(@PathVariable String agentCode, @PathVariable String sessionId,
+                                       @PathVariable String clientMessageId) {
+        long userId = StpUtil.getLoginIdAsLong();
+        sessionGuard.requireOwned(agentCode, sessionId, userId);
+        return Result.success(acceptanceService.receipt(agentCode, sessionId, userId, "chat", clientMessageId));
     }
 
     /**

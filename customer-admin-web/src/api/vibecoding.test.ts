@@ -35,4 +35,10 @@ describe('编码工作区请求契约', () => {
       handlers,
     )
   })
+  it.each([false, true])('协作模式 %j 也保留稳定消息标识', collaboration => {
+    const clientMessageId = '478b7f10-46ba-4217-947f-d86528aa8fbe'
+    streamVibeCoding('test-agent', { sessionId: 's1', message: '原任务', collaboration, clientMessageId }, { onEvent: vi.fn() })
+    expect(transport.stream.mock.calls[0][1]).toMatchObject({ clientMessageId, collaboration })
+  })
+
 })

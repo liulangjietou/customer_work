@@ -1,6 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.chat.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 
 import java.util.List;
 
@@ -23,7 +24,20 @@ import java.util.List;
  * @author owlzhangfq@gmail.com
  */
 public record ChatRequest(String sessionId, @NotBlank(message = "message 不能为空") String message,
-                          Boolean collaboration, String mode, List<String> attachmentIds, String rawInput) {
+                          Boolean collaboration, String mode, List<String> attachmentIds, String rawInput,
+                          @Pattern(regexp = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                              message = "clientMessageId 必须为小写 UUID") String clientMessageId) {
+
+    /** 请求附件列表冻结，受理指纹与随后执行使用同一份材料。 */
+    public ChatRequest {
+        attachmentIds = attachmentIds == null ? null : List.copyOf(attachmentIds);
+    }
+
+    /** 旧服务调用没有客户端标识时保持原协议。 */
+    public ChatRequest(String sessionId, String message, Boolean collaboration, String mode,
+                        List<String> attachmentIds, String rawInput) {
+        this(sessionId, message, collaboration, mode, attachmentIds, rawInput, null);
+    }
 
     /** 兼容未分离原文的调用方，原文为空字符串时仍保留仅附件的输入语义。 */
     public ChatRequest(String sessionId, String message, Boolean collaboration, String mode,

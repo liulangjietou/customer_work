@@ -1,3 +1,6 @@
+import { getVibeReceipt } from '@/api/vibecoding'
+import { prepareWorkspaceMessage, confirmWorkspaceMessage, reconcileWorkspaceMessage, type PendingWorkspaceMessage } from '@/utils/workspaceMessageAcceptance'
+import { disposeWorkspaceConversations } from '@/utils/workspaceConversationLifecycle'
 import { defineStore } from 'pinia'
 import {
   getSandboxMode,
@@ -98,6 +101,7 @@ type CodingStreamStarter = (handlers: SseHandlers) => () => void
  * 提到全局 store 的动机同 chatConversations：会话与组件生命周期解耦，切页面/切智能体都不丢。
  */
 export interface VibeConversation {
+  pendingMessage: PendingWorkspaceMessage | null
   sessionId: string
   messages: VibeChatMessage[]
   input: string
@@ -130,6 +134,7 @@ export function createVibeConversation(
   messages: VibeChatMessage[] = [],
 ): VibeConversation {
   return {
+    pendingMessage: null,
     sessionId,
     messages,
     input: '',
@@ -195,6 +200,16 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         state.byAgent[agentCode]?.activeId ?? '',
   },
   actions: {
+    /** 新登录、退出和强制改密立即撤销旧会话内存；先断开归属，再取消连接以拒绝迟到回调。 */
+    resetForLogin() {
+      const previous = Object.values(this.byAgent).flatMap(agent => Object.values(agent.conversations))
+      this.byAgent = {}
+      this.historyVersion = {}
+      if (this.planCountdownTimer) clearInterval(this.planCountdownTimer)
+      this.planCountdownTimer = null
+      disposeWorkspaceConversations(previous)
+    },
+
     /** 确保某智能体的状态已初始化，并给初始空会话拉一次全局沙箱模式。 */
     ensureAgent(agentCode: string) {
       if (this.byAgent[agentCode]) return
@@ -239,11 +254,11 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       getSandboxMode(agentCode)
         .then((res) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
-          if (c) c.sandboxMode = res.mode
+          if (this.byAgent[agentCode] === agent && c) c.sandboxMode = res.mode
         })
         .catch(() => {
           const c = this.byAgent[agentCode]?.conversations[sid]
-          if (c) c.sandboxMode = null
+          if (this.byAgent[agentCode] === agent && c) c.sandboxMode = null
         })
     },
 
@@ -256,6 +271,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         return
       }
       const history = await getChatSessionMessages(agentCode, targetSessionId)
+      if (this.byAgent[agentCode] !== agent) return
       const conv = createVibeConversation(targetSessionId, presentChatHistory(history))
       const firstUserMessage = history.find((msg) => msg.role === 'user')
       conv.sandboxMode = firstUserMessage
@@ -273,9 +289,12 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       if (!conv) return
       conv.filesLoading = true
       try {
-        conv.fileNodes = await listWorkspaceFiles(agentCode, sessionId)
+        const nodes = await listWorkspaceFiles(agentCode, sessionId)
+        if (this.byAgent[agentCode]?.conversations[sessionId] !== conv) return
+        conv.fileNodes = nodes
         conv.filesLoaded = true
       } catch (error) {
+        if (this.byAgent[agentCode]?.conversations[sessionId] !== conv) return
         ElMessage.error('目录加载失败：' + (error instanceof Error ? error.message : String(error)))
       } finally {
         conv.filesLoading = false
@@ -283,6 +302,16 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
     },
 
     /** 发送当前激活会话的输入；SSE 事件按 (agentCode, sessionId) 写回原会话，切走不受影响。 */
+    /** 回执丢失时先查库；仅明确未受理时重试冻结的原请求。 */
+    async reconcileMessage(agentCode: string) {
+      const conv = this.activeOf(agentCode)
+      if (!conv) return
+      await reconcileWorkspaceMessage(conv,
+        id => getVibeReceipt(agentCode, conv.sessionId, id),
+        () => this.byAgent[agentCode]?.conversations[conv.sessionId] === conv,
+        () => getChatSessionMessages(agentCode, conv.sessionId))
+    },
+
     send(
       agentCode: string,
       collaboration: boolean,
@@ -291,7 +320,7 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
     ) {
       const agent = this.byAgent[agentCode]
       const conv = agent?.conversations[agent.activeId]
-      if (!conv) return
+      if (!conv || conv.pendingMessage) return
       const text = conv.input.trim()
       // 输入框内容自动去首尾空白：纯空白输入被拦下时框里的空格也一并清掉，避免"有空格但发不出去"的困惑
       conv.input = text
@@ -309,7 +338,12 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
         successfulAttachments.length > 0
           ? successfulAttachments.map((a) => a.id as string)
           : undefined
-      // previewUrl 所有权从待发送区转移给消息对象（不 revoke）——见下方 conv.attachments 清空前的说明
+      conv.pendingMessage = prepareWorkspaceMessage(conv, {
+        sessionId: conv.sessionId, message: messageToSend, rawInput: text,
+        mode: conv.mode, attachmentIds, collaboration
+      })
+      const pending = conv.pendingMessage
+      // 受理确认前保留编辑区附件；消息气泡继续使用同一预览，不在发送时撤销 URL。
       conv.messages.push({
         role: 'user',
         text,
@@ -329,30 +363,15 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       conv.messages.push({ role: 'assistant', text: '', nodes: [], testReports: [] })
       // 同 chat store：push 完再取，拿响应式代理而不是原始对象
       const assistantMessage = conv.messages[conv.messages.length - 1]
-      conv.input = ''
-      conv.attachments = []
       conv.streaming = true
-      const sid = conv.sessionId
 
-      this.bindCodingStream(
-        agentCode,
-        conv,
-        assistantMessage,
-        (handlers) =>
-          streamVibeCoding(
-            agentCode,
-            {
-              sessionId: sid,
-              message: messageToSend,
-              rawInput: text,
-              collaboration,
-              mode: conv.mode,
-              attachmentIds,
-            },
-            handlers,
-          ),
-        onScroll,
-      )
+      const start = () => {
+        conv.streaming = true
+        this.bindCodingStream(agentCode, conv, assistantMessage,
+          handlers => streamVibeCoding(agentCode, pending.request, handlers), onScroll, pending)
+      }
+      pending.retry = start
+      start()
       onScroll?.()
     },
 
@@ -416,12 +435,15 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       assistantMessage: VibeChatMessage,
       starter: CodingStreamStarter,
       onScroll?: () => void,
+      pending?: PendingWorkspaceMessage,
     ) {
       const sid = conv.sessionId
-      const isActive = () => this.byAgent[agentCode]?.activeId === sid
+      const isCurrent = () => this.byAgent[agentCode]?.conversations[sid] === conv
+      const isActive = () => isCurrent() && this.byAgent[agentCode]?.activeId === sid
       // 与对话面板同款的整帧合并：模型流可能在一帧内推多次正文增量，逐片改 Pinia 会反复触发
       // Markdown 解析与 DOM patch。此前只有 ChatPanel 做了合并，VibeCoding 漏了，两边行为不一致。
       const textBatcher = createTextChunkBatcher((chunk) => {
+        if (!isCurrent()) return
         assistantMessage.text += chunk
         if (isActive()) onScroll?.()
       })
@@ -429,7 +451,12 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
       const abortStream = starter({
         onEvent: (event) => {
           const c = this.byAgent[agentCode]?.conversations[sid]
-          if (!c) return
+          if (!c || !isCurrent()) return
+          if (pending && event.event === 'accepted') {
+            confirmWorkspaceMessage(conv, pending, event.data)
+            return
+          }
+          if (pending && event.event !== 'done') pending.sawExecution = true
           if (event.event === 'terminal') {
             textBatcher.flush()
             completion.terminal(event.data)
@@ -518,10 +545,12 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
           if (isActive()) onScroll?.()
         },
         onError: (error) => {
+          if (!isCurrent()) return
           textBatcher.flush()
           completion.fail(error)
         },
         onComplete: () => {
+          if (!isCurrent()) return
           textBatcher.flush()
           completion.complete()
           this.loadFiles(agentCode, sid)
@@ -599,12 +628,14 @@ export const useVibeConversationsStore = defineStore('vibeConversations', {
           }
         },
         onError: (error) => {
+          if (this.byAgent[agentCode]?.conversations[conv.sessionId] !== conv) return
           current.status = 'FAILED'
           current.output += `\n${error instanceof Error ? error.message : String(error)}\n`
           conv.commandRunning = false
           conv.commandAbort = null
         },
         onComplete: () => {
+          if (this.byAgent[agentCode]?.conversations[conv.sessionId] !== conv) return
           conv.commandRunning = false
           conv.commandAbort = null
         },

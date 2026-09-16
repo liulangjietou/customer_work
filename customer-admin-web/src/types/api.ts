@@ -1671,6 +1671,8 @@ export type ExecutionMode = 'auto' | 'manual' | 'accept_edits' | 'plan' | 'bypas
 
 // ---------- workspace.chat ----------
 export interface ChatRequest {
+  /** 本次发送的稳定 UUID；受理核对和重试不得重新生成。 */
+  clientMessageId?: string
   sessionId: string
   message: string
   /** 用户原文；message 可含附件材料，原文独立用于历史气泡。 */

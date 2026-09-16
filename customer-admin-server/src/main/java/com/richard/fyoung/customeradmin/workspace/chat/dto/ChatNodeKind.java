@@ -48,7 +48,10 @@ public enum ChatNodeKind {
     ROLE_STAGE,
 
     /** 主调用结束且完成状态已核对后的独立终态，旧 done 只保留传输兼容。 */
-    TERMINAL;
+    TERMINAL,
+
+    /** 请求已经持久受理，不代表执行完成。 */
+    ACCEPTED;
 
     /**
      * 映射成 SSE {@code event} 名：{@link #ANSWER} 走 {@code message}（向后兼容旧协议，前端正文
@@ -57,6 +60,9 @@ public enum ChatNodeKind {
      * 前缀分流渲染成执行轨迹时间线，不用解析 JSON。
      */
     public String sseEventName() {
+        if (this == ACCEPTED) {
+            return "accepted";
+        }
         if (this == TERMINAL) {
             return "terminal";
         }

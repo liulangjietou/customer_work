@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V106
+-- 对应版本：Flyway V107
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -1736,6 +1736,31 @@ CREATE TABLE `ai_system_tool` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_ai_system_tool_code` (`tool_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统工具目录（代码定义，库存启停状态）';
+
+-- ----------------------------------------------------------------------------
+-- ai_workspace_message_receipt
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_workspace_message_receipt` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '受理记录主键',
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT '服务端租户',
+  `owner_user_id` bigint NOT NULL COMMENT '实际发起用户',
+  `agent_code` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT '智能体编码',
+  `session_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT '会话标识',
+  `channel` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'chat 或 vibecoding',
+  `client_message_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '客户端稳定消息 UUID',
+  `input_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '原始请求 SHA256',
+  `accepted_at_ms` bigint NOT NULL COMMENT '持久受理时间',
+  `terminal_phase` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '为空时结果尚未记录',
+  `turn_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '框架用户消息标识',
+  `message_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '框架助手消息标识',
+  `finish_reason` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '框架终止原因',
+  `history_saved` tinyint(1) DEFAULT NULL COMMENT '历史回读事实',
+  `artifacts_saved` tinyint(1) DEFAULT NULL COMMENT '产物保存事实',
+  `knowledge_sources_saved` tinyint(1) DEFAULT NULL COMMENT '来源保存事实',
+  `error_message` text COLLATE utf8mb4_unicode_ci COMMENT '可展示的结果核对提示',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_workspace_message_owner` (`tenant_id`,`owner_user_id`,`client_message_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工作区持久消息受理';
 
 -- ----------------------------------------------------------------------------
 -- ai_workspace_session

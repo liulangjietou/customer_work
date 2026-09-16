@@ -141,6 +141,7 @@ test('当前终态按消息标识取来源，保存未确认与传输结束均�
     return route.fulfill({
       contentType: 'text/event-stream',
       body:
+        `event: accepted\ndata: ${JSON.stringify({ clientMessageId: route.request().postDataJSON().clientMessageId, acceptedAtMs: 1 })}\n\n` +
         'event: message\ndata: 已生成的答复\n\n' +
         (round === 1
           ? 'event: terminal\ndata: {"phase":"STOPPED","messageId":"current-1","historySaved":false,"knowledgeSourcesSaved":false}\n\n'
