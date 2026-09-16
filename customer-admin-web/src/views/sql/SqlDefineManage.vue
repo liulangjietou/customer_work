@@ -269,7 +269,7 @@ onMounted(() => {
         <el-button v-permission="'sql-define:add'" class="cw-final-action" type="primary" @click="openCreate">新建 SQL 定义</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" style="width: 100%" empty-text="暂无符合条件的 SQL 定义">
         <el-table-column prop="defineKey" label="defineKey" width="180" />
         <el-table-column prop="sqlDescribe" label="描述" show-overflow-tooltip />
         <el-table-column prop="datasourceName" label="数据源" width="140" />
@@ -297,6 +297,7 @@ onMounted(() => {
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"

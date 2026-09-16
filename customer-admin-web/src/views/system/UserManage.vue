@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, reactive, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
   createUser,
@@ -36,6 +36,7 @@ const editingApprovalStatus = ref<UserApprovalStatus>('APPROVED')
 const reviewDialogVisible = ref(false)
 const reviewSubmitting = ref(false)
 const reviewOptionsLoading = ref(false)
+const reviewOptionsError = ref(false)
 const reviewTarget = ref<UserVO | null>(null)
 const reviewTenantOptions = ref<UserApprovalTenantOption[]>([])
 const reviewRoleOptions = ref<UserApprovalRoleOption[]>([])
@@ -51,6 +52,39 @@ const reviewForm = reactive<UserApprovalRequest>({
 // 共享全部配置资产（智能体、知识库、技能、MCP、渠道、字典、敏感词都是租户内共享的）。
 const reviewTenantMode = ref<'existing' | 'new'>('existing')
 const reviewNewTenant = reactive({ tenantCode: '', tenantName: '' })
+let reviewGeneration = 0
+let reviewOptionsGeneration = 0
+const reviewOptionsRequired = computed(() => reviewForm.decision === 'APPROVED' && reviewTenantMode.value === 'existing')
+const reviewSubmissionBlocked = computed(() => reviewOptionsRequired.value && (reviewOptionsLoading.value || reviewOptionsError.value))
+
+function invalidateReview() {
+  reviewGeneration += 1
+  reviewOptionsGeneration += 1
+  reviewSubmitting.value = false
+  reviewOptionsLoading.value = false
+  reviewOptionsError.value = false
+}
+
+/** 审核有独立的目标与表单生命周期，不能仅依赖通用 CRUD 弹窗的代次。 */
+function captureReview() {
+  const generation = reviewGeneration
+  const targetId = reviewTarget.value?.id
+  const isCurrentIdentity = captureSubmission()
+  return () => isCurrentIdentity() && generation === reviewGeneration
+    && reviewDialogVisible.value && targetId === reviewTarget.value?.id
+}
+
+watch(reviewDialogVisible, visible => { if (!visible) invalidateReview() }, { flush: 'sync' })
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  invalidateReview()
+  reviewDialogVisible.value = false
+  reviewTarget.value = null
+  reviewTenantOptions.value = []
+  reviewRoleOptions.value = []
+  Object.assign(reviewForm, { decision: 'APPROVED', tenantId: '', roleIds: [], remark: '' })
+  Object.assign(reviewNewTenant, { tenantCode: '', tenantName: '' })
+}, { flush: 'sync' })
+onScopeDispose(invalidateReview)
 
 const {
   loading, loadError, submitting, deletingId, list, total, query,
@@ -108,6 +142,9 @@ function approvalTagType(status: UserApprovalStatus): 'warning' | 'success' | 'd
 }
 
 async function openReview(row: UserVO) {
+  invalidateReview()
+  reviewTenantOptions.value = []
+  reviewRoleOptions.value = []
   reviewTarget.value = row
   Object.assign(reviewForm, {
     decision: row.approvalStatus === 'REJECTED' ? 'REJECTED' : 'APPROVED',
@@ -123,18 +160,24 @@ async function openReview(row: UserVO) {
 }
 
 async function loadReviewOptions(tenantId?: string) {
+  const isCurrentReview = captureReview()
+  const generation = ++reviewOptionsGeneration
+  const isCurrent = () => isCurrentReview() && generation === reviewOptionsGeneration
+  reviewForm.roleIds = []
+  reviewRoleOptions.value = []
+  reviewOptionsError.value = false
   reviewOptionsLoading.value = true
   try {
     const options = await getUserApprovalOptions(tenantId)
+    if (!isCurrent()) return
     reviewTenantOptions.value = options.tenants
     reviewRoleOptions.value = options.roles
     reviewForm.tenantId = options.selectedTenantId
     reviewForm.roleIds = []
   } catch {
-    reviewTenantOptions.value = []
-    reviewRoleOptions.value = []
+    if (isCurrent()) reviewOptionsError.value = true
   } finally {
-    reviewOptionsLoading.value = false
+    if (isCurrent()) reviewOptionsLoading.value = false
   }
 }
 
@@ -143,7 +186,8 @@ async function handleReviewTenantChange(tenantId: string) {
 }
 
 async function submitReview() {
-  if (!reviewTarget.value) {
+  if (!reviewTarget.value || !reviewDialogVisible.value || reviewSubmitting.value
+    || reviewSubmissionBlocked.value || !auth.hasPermission('user:edit')) {
     return
   }
   const provisioning = reviewForm.decision === 'APPROVED' && reviewTenantMode.value === 'new'
@@ -162,32 +206,39 @@ async function submitReview() {
       return
     }
   }
+  const target = reviewTarget.value
+  const isCurrent = captureReview()
+  const payload: UserApprovalRequest = {
+    decision: reviewForm.decision,
+    // 新开租户时租户与角色都由服务端接管：那个租户管理员角色是建租户时刚生成的，
+    // 前端不可能提前知道它的 ID
+    tenantId: provisioning
+      ? null
+      : (reviewForm.decision === 'APPROVED' ? reviewForm.tenantId : target.tenantId),
+    roleIds: provisioning || reviewForm.decision !== 'APPROVED' ? [] : [...(reviewForm.roleIds ?? [])],
+    remark: reviewForm.remark?.trim() || null,
+    newTenant: provisioning
+      ? {
+          tenantCode: reviewNewTenant.tenantCode.trim(),
+          tenantName: reviewNewTenant.tenantName.trim(),
+          contactEmail: target.email || null,
+        }
+      : null,
+  }
+  const successMessage = reviewForm.decision === 'APPROVED'
+    ? `审核通过，用户已归属 ${provisioning ? reviewNewTenant.tenantCode.trim() : reviewForm.tenantId}`
+    : '已拒绝该注册申请'
   reviewSubmitting.value = true
   try {
-    await reviewUser(reviewTarget.value.id, {
-      decision: reviewForm.decision,
-      // 新开租户时租户与角色都由服务端接管：那个租户管理员角色是建租户时刚生成的，
-      // 前端不可能提前知道它的 ID
-      tenantId: provisioning
-        ? null
-        : (reviewForm.decision === 'APPROVED' ? reviewForm.tenantId : reviewTarget.value.tenantId),
-      roleIds: provisioning || reviewForm.decision !== 'APPROVED' ? [] : reviewForm.roleIds,
-      remark: reviewForm.remark?.trim() || null,
-      newTenant: provisioning
-        ? {
-            tenantCode: reviewNewTenant.tenantCode.trim(),
-            tenantName: reviewNewTenant.tenantName.trim(),
-            contactEmail: reviewTarget.value.email || null,
-          }
-        : null,
-    })
-    ElMessage.success(reviewForm.decision === 'APPROVED'
-      ? `审核通过，用户已归属 ${provisioning ? reviewNewTenant.tenantCode.trim() : reviewForm.tenantId}`
-      : '已拒绝该注册申请')
+    await reviewUser(target.id, payload)
+    if (!isCurrent()) return
+    ElMessage.success(successMessage)
     reviewDialogVisible.value = false
     await loadList()
+  } catch {
+    // 拦截器已提示请求失败；保留当前输入，允许用户核对后重新提交。
   } finally {
-    reviewSubmitting.value = false
+    if (isCurrent()) reviewSubmitting.value = false
   }
 }
 
@@ -230,14 +281,14 @@ onMounted(async () => {
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的用户">
-        <el-table-column prop="username" label="用户名" class-name="primary-column" />
-        <el-table-column prop="tenantId" label="归属租户" min-width="120" />
-        <el-table-column prop="nickname" label="昵称" />
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的用户">
+        <el-table-column prop="username" label="用户名" class-name="primary-column" show-overflow-tooltip />
+        <el-table-column prop="tenantId" label="归属租户" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="nickname" label="昵称" show-overflow-tooltip />
         <el-table-column label="邮箱" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ row.email || '-' }}</template>
         </el-table-column>
-        <el-table-column label="角色">
+        <el-table-column label="角色" show-overflow-tooltip>
           <template #default="{ row }">{{ row.roleNames?.join('、') || '-' }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
@@ -253,7 +304,7 @@ onMounted(async () => {
         <el-table-column prop="approvalRemark" label="审核说明" min-width="140" show-overflow-tooltip />
         <el-table-column prop="lastLoginTime" label="最近登录" width="180" />
         <el-table-column prop="createTime" label="创建时间" width="180" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column v-if="auth.hasPermission('user:edit') || auth.hasPermission('user:delete')" label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.approvalStatus !== 'APPROVED'"
@@ -271,6 +322,7 @@ onMounted(async () => {
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"
@@ -324,7 +376,10 @@ onMounted(async () => {
         <el-descriptions-item label="昵称">{{ reviewTarget.nickname || '-' }}</el-descriptions-item>
         <el-descriptions-item label="当前租户">{{ reviewTarget.tenantId }}</el-descriptions-item>
       </el-descriptions>
-      <el-form :model="reviewForm" label-width="84px">
+      <el-alert v-if="reviewOptionsError" title="审核选项加载失败" type="error" :closable="false" show-icon>
+        <el-button link type="primary" @click="loadReviewOptions(reviewForm.tenantId || undefined)">重新加载</el-button>
+      </el-alert>
+      <el-form :model="reviewForm" label-width="84px" :disabled="reviewSubmitting">
         <el-form-item label="审核结果">
           <el-radio-group v-model="reviewForm.decision">
             <el-radio-button value="APPROVED">通过</el-radio-button>
@@ -384,6 +439,7 @@ onMounted(async () => {
             style="width: 100%"
             placeholder="至少选择一个目标租户角色"
             :loading="reviewOptionsLoading"
+            :disabled="reviewOptionsLoading || reviewOptionsError"
           >
             <el-option
               v-for="role in reviewRoleOptions"
@@ -407,7 +463,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="reviewDialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="reviewSubmitting" @click="submitReview">确认审核</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="reviewSubmitting" :disabled="reviewSubmissionBlocked" @click="submitReview">确认审核</el-button>
       </template>
     </el-dialog>
   </div>

@@ -68,7 +68,7 @@ onMounted(loadList)
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的数据源">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的数据源">
         <el-table-column prop="name" label="名称" width="160" class-name="primary-column" />
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column label="密码" width="120">
@@ -91,6 +91,7 @@ onMounted(loadList)
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"

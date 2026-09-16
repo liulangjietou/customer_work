@@ -11,12 +11,16 @@ import {
   updateRateLimitRule,
 } from '@/api/contentGuard'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { PageQuery, RateLimitRuleSaveRequest, RateLimitRuleVO } from '@/types/api'
 
 const formRef = ref<FormInstance>()
+const auth = useAuthStore()
 const dimensions = ref<string[]>([])
 const algorithms = ref<string[]>([])
+const { isPending: isToggling, run: toggleRow } = useRowMutation('rate-limit-rule:edit')
 
 const {
   loading, loadError, submitting, deletingId, list, total, query,
@@ -54,9 +58,12 @@ function formatTime(ms: number | null): string {
 }
 
 async function handleToggle(row: RateLimitRuleVO) {
-  await toggleRateLimitRule(row.id, !row.enabled)
-  ElMessage.success(row.enabled ? '已停用' : '已启用')
-  await loadList()
+  const enabled = !row.enabled
+  await toggleRow(row.id, () => toggleRateLimitRule(row.id, enabled), async () => {
+    row.enabled = enabled
+    ElMessage.success(enabled ? '已启用' : '已停用')
+    await loadList()
+  })
 }
 
 onMounted(async () => {
@@ -94,7 +101,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的限流规则">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的限流规则">
         <el-table-column prop="priority" label="优先级" width="90" sortable />
         <el-table-column prop="ruleName" label="规则名" min-width="140" show-overflow-tooltip class-name="primary-column" />
         <el-table-column prop="pathPrefix" label="路径前缀" min-width="180" show-overflow-tooltip />
@@ -115,18 +122,19 @@ onMounted(async () => {
         <el-table-column label="更新时间" width="180">
           <template #default="{ row }">{{ formatTime(row.updatedAtMs) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column v-if="auth.hasPermission('rate-limit-rule:edit') || auth.hasPermission('rate-limit-rule:delete')" label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'rate-limit-rule:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'rate-limit-rule:edit'" link type="primary" @click="handleToggle(row)">
+            <el-button v-permission="'rate-limit-rule:edit'" link type="primary" :disabled="isToggling(row.id)" @click="openEdit(row)">编辑</el-button>
+            <el-button v-permission="'rate-limit-rule:edit'" link type="primary" :disabled="isToggling(row.id) || deletingId === row.id" :loading="isToggling(row.id)" @click="handleToggle(row)">
               {{ row.enabled ? '停用' : '启用' }}
             </el-button>
-            <el-button v-permission="'rate-limit-rule:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'rate-limit-rule:delete'" link type="danger" :disabled="isToggling(row.id)" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"

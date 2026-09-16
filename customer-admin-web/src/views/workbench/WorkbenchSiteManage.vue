@@ -165,7 +165,7 @@ onMounted(loadList)
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的工作台站点">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的工作台站点">
         <el-table-column prop="name" label="名称" width="160" show-overflow-tooltip class-name="primary-column" />
         <el-table-column label="分类" width="110">
           <template #default="{ row }">
@@ -209,6 +209,7 @@ onMounted(loadList)
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"

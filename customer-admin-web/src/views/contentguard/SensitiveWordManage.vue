@@ -13,6 +13,7 @@ import {
   updateSensitiveWord,
 } from '@/api/contentGuard'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useRowMutation } from '@/composables/useRowMutation'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { SensitiveWordPageQuery, SensitiveWordSaveRequest, SensitiveWordVO } from '@/types/api'
 
@@ -22,6 +23,7 @@ const actions = ref<string[]>([])
 const importVisible = ref(false)
 const importText = ref('')
 const importing = ref(false)
+const rowMutation = useRowMutation('sensitive-word:edit')
 
 const {
   loading, loadError, submitting, deletingId, list, total, query,
@@ -58,9 +60,12 @@ function formatTime(ms: number | null): string {
 }
 
 async function handleToggle(row: SensitiveWordVO) {
-  await toggleSensitiveWord(row.id, !row.enabled)
-  ElMessage.success(row.enabled ? '已停用' : '已启用')
-  await loadList()
+  const enabled = !row.enabled
+  await rowMutation.run(row.id, () => toggleSensitiveWord(row.id, enabled), async () => {
+    row.enabled = enabled
+    ElMessage.success(enabled ? '已启用' : '已停用')
+    await loadList()
+  })
 }
 
 async function handleImport() {
@@ -136,7 +141,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的敏感词">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的敏感词">
         <el-table-column prop="word" label="敏感词" min-width="180" show-overflow-tooltip class-name="primary-column" />
         <el-table-column label="类目" width="120">
           <template #default="{ row }">{{ categoryLabels[row.category] ?? row.category }}</template>
@@ -158,16 +163,17 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'sensitive-word:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'sensitive-word:edit'" link type="primary" @click="handleToggle(row)">
+            <el-button v-permission="'sensitive-word:edit'" link type="primary" :disabled="rowMutation.isPending(row.id)" @click="openEdit(row)">编辑</el-button>
+            <el-button v-permission="'sensitive-word:edit'" link type="primary" :loading="rowMutation.isPending(row.id)" :disabled="rowMutation.isPending(row.id) || deletingId === row.id" @click="handleToggle(row)">
               {{ row.enabled ? '停用' : '启用' }}
             </el-button>
-            <el-button v-permission="'sensitive-word:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'sensitive-word:delete'" link type="danger" :loading="deletingId === row.id" :disabled="rowMutation.isPending(row.id)" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"

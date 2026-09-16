@@ -1,41 +1,28 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted } from 'vue'
 import { pageLogs } from '@/api/log'
+import { usePagedList } from '@/composables/usePagedList'
+import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { PageQuery, SysOperationLog } from '@/types/api'
 
-const loading = ref(false)
-const list = ref<SysOperationLog[]>([])
-const total = ref(0)
-const query = reactive<PageQuery>({ pageNum: 1, pageSize: 10, keyword: '' })
-
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageLogs(query)
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() {
-  query.pageNum = 1
-  loadList()
-}
+const { loading, loadError, list, total, query, loadList, handleSearch } = usePagedList<SysOperationLog, PageQuery>({
+  page: pageLogs,
+  initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
+})
 
 onMounted(loadList)
 </script>
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="按操作人搜索" style="width: 220px" clearable @keyup.enter="handleSearch" />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无操作日志">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无操作日志">
         <el-table-column prop="username" label="操作人" width="120" />
         <el-table-column prop="operation" label="操作内容" width="160" class-name="primary-column" />
         <el-table-column prop="target" label="操作对象" width="140" />
@@ -56,6 +43,7 @@ onMounted(loadList)
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"

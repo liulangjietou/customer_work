@@ -59,7 +59,7 @@ onMounted(loadList)
         <el-button type="primary" @click="handleSearch">搜索</el-button>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无 AI 编码审计记录">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无 AI 编码审计记录">
         <el-table-column prop="createTime" label="时间" width="170" />
         <el-table-column prop="username" label="操作人" width="100" />
         <el-table-column label="操作类型" width="140">
@@ -104,6 +104,7 @@ onMounted(loadList)
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"

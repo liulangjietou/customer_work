@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { FormInstance, TreeInstance } from 'element-plus'
 import { createRole, deleteRole, pageRoles, updateRole } from '@/api/role'
 import { permissionTree } from '@/api/permission'
 import { fetchCurrentView } from '@/api/tenant'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { DataScope, PageQuery, PermissionVO, RoleSaveRequest, RoleVO } from '@/types/api'
 
@@ -29,6 +31,11 @@ const scopeOptions = computed(() =>
 const tree = ref<PermissionVO[]>([])
 const formRef = ref<FormInstance>()
 const treeRef = ref<TreeInstance>()
+const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
+const permissionsLoading = ref(true)
+const permissionsError = ref(false)
+let permissionsGeneration = 0
 
 const treeProps = { label: 'permName', children: 'children' }
 
@@ -49,6 +56,7 @@ const {
   toForm: (row) => ({ roleName: row.roleName, roleCode: row.roleCode, remark: row.remark, status: row.status, dataScope: row.dataScope ?? 'SELF', permissionIds: row.permissionIds }),
   // 提交前把权限树的选中态（含半选的父节点）收集进表单，与原 handleSubmit 里的顺序一致
   beforeSubmit: (_mode, f) => {
+    if (permissionsLoading.value || permissionsError.value) return false
     const checkedKeys = (treeRef.value?.getCheckedKeys() ?? []) as number[]
     const halfCheckedKeys = (treeRef.value?.getHalfCheckedKeys() ?? []) as number[]
     f.permissionIds = [...checkedKeys, ...halfCheckedKeys]
@@ -60,23 +68,49 @@ const {
 // 弹窗打开后权限树的勾选状态需要单独同步（新建清空/编辑回填），composable 不感知树组件，留在页面包一层
 function openCreate() {
   openCreateBase()
-  requestAnimationFrame(() => treeRef.value?.setCheckedKeys([]))
+  void nextTick(() => treeRef.value?.setCheckedKeys(form.permissionIds ?? []))
 }
 
 function openEdit(row: RoleVO) {
   if (row.controlPlane && !crossTenantAuthority.value) return
   openEditBase(row)
-  requestAnimationFrame(() => treeRef.value?.setCheckedKeys(row.permissionIds))
+  void nextTick(() => treeRef.value?.setCheckedKeys(form.permissionIds ?? []))
 }
 
-onMounted(async () => {
-  loadList()
-  tree.value = await permissionTree().catch(() => [])
-  // 拿不到就当作不具备跨租户能力：多显示一个越权选项的代价，比少显示一个大得多
-  crossTenantAuthority.value = await fetchCurrentView()
-    .then((view) => view.crossTenantAuthority === true)
-    .catch(() => false)
-})
+/** 权限树失败时保留表单中的原授权，不能把加载失败解释为用户主动清空。 */
+async function loadPermissionOptions() {
+  const identityCurrent = captureSubmission()
+  const generation = ++permissionsGeneration
+  const isCurrent = () => identityCurrent() && generation === permissionsGeneration
+  permissionsLoading.value = true
+  permissionsError.value = false
+  try {
+    const [permissions, authority] = await Promise.all([
+      permissionTree(),
+      fetchCurrentView().then(view => view.crossTenantAuthority === true).catch(() => false),
+    ])
+    if (!isCurrent()) return
+    tree.value = permissions
+    crossTenantAuthority.value = authority
+    await nextTick()
+    if (isCurrent() && dialogVisible.value) treeRef.value?.setCheckedKeys(form.permissionIds ?? [])
+  } catch {
+    if (isCurrent()) permissionsError.value = true
+  } finally {
+    if (isCurrent()) permissionsLoading.value = false
+  }
+}
+
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  permissionsGeneration += 1
+  tree.value = []
+  crossTenantAuthority.value = false
+  permissionsLoading.value = true
+  permissionsError.value = false
+  if (auth.hasPermission('role:view')) void loadPermissionOptions()
+}, { flush: 'sync' })
+
+onMounted(() => { void loadList(); void loadPermissionOptions() })
 </script>
 
 <template>
@@ -91,7 +125,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的角色">
+      <el-table v-if="!loadError || list.length > 0" v-loading="loading" :data="list" class="data-table" empty-text="暂无符合条件的角色">
         <el-table-column prop="roleName" label="角色名称" class-name="primary-column" />
         <el-table-column prop="roleCode" label="角色编码" />
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
@@ -108,7 +142,7 @@ onMounted(async () => {
           </template>
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="180" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column v-if="auth.hasPermission('role:edit') || auth.hasPermission('role:delete')" label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button
               v-permission="'role:edit'"
@@ -134,6 +168,7 @@ onMounted(async () => {
       </el-table>
 
       <el-pagination
+        v-if="!loadError || list.length > 0"
         v-model:current-page="query.pageNum"
         v-model:page-size="query.pageSize"
         :total="total"
@@ -167,8 +202,12 @@ onMounted(async () => {
           <div class="form-tip">范围在每次请求时实时判定，保存后对该角色下的用户立即生效，无需重新登录。</div>
         </el-form-item>
         <el-form-item label="权限">
+          <el-alert v-if="permissionsError" type="error" :closable="false" show-icon title="权限加载失败，已有授权尚未变更">
+            <el-button link type="primary" :loading="permissionsLoading" @click="loadPermissionOptions">重新加载权限</el-button>
+          </el-alert>
           <el-tree
             ref="treeRef"
+            v-loading="permissionsLoading"
             :data="tree"
             :props="treeProps"
             node-key="id"
@@ -179,7 +218,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存角色</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" :disabled="permissionsLoading || permissionsError" @click="handleSubmit">保存角色</el-button>
       </template>
     </el-dialog>
   </div>

@@ -190,6 +190,17 @@
 }
 
 @media (max-width: 767px) {
+  /* 窄屏管理表格整体横向滚动，避免宽操作列固定后遮住记录。工作区与客服台各自管理布局。 */
+  .layout-main:not(.layout-main--workspace):not(.layout-main--service-desk)
+    .el-table__cell.el-table-fixed-column--right {
+    position: static !important;
+  }
+
+  .layout-main:not(.layout-main--workspace):not(.layout-main--service-desk)
+    .el-table__cell.el-table-fixed-column--right::before {
+    display: none;
+  }
+
   .layout-main:not(.layout-main--home):not(.layout-main--workspace):not(.layout-main--service-desk) {
     padding: 16px 12px 20px;
     background: var(--cw-canvas);
